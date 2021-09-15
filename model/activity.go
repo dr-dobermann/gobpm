@@ -3,18 +3,11 @@ package model
 type TaskClass uint8
 
 const (
-<<<<<<< HEAD
 	Abstract TaskClass = 1 << iota
 	Loop
 	MultiInstance
 	Compensation
 	Call
-=======
-	Normal TaskClass = iota
-	Loop
-	MultiInstance
-	Compensation
->>>>>>> cd1bb6ab4d496deef6cc2b2baa563bdcafa033d0
 )
 
 type LoopDef struct {
@@ -49,14 +42,11 @@ type Activity struct {
 	complQuantity  uint8
 }
 
-<<<<<<< HEAD
 type CallActivity struct {
 	Activity
 	calledElementRef *CallableElement
 }
 
-=======
->>>>>>> cd1bb6ab4d496deef6cc2b2baa563bdcafa033d0
 type ServiceTask struct {
 	Activity
 	// could be "##unspecified", "##WebService" or
@@ -97,7 +87,6 @@ type UserTask struct {
 	owner          string
 	priority       int
 }
-<<<<<<< HEAD
 
 // ------------- Sub-Processes ------------------------------
 
@@ -121,5 +110,3 @@ type AdHocSubProc struct {
 	order                    AdHocOrdering
 	cancelRemainingInstances bool
 }
-=======
->>>>>>> cd1bb6ab4d496deef6cc2b2baa563bdcafa033d0
