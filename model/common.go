@@ -83,9 +83,12 @@ type SequenceFlow struct {
 	sourceRef id
 	targetRef id
 }
+<<<<<<< HEAD
 
 type CallableElement struct {
 	BaseElement
 	name            string
 	ioSpecification InputOutputSpecification
 }
+=======
+>>>>>>> cd1bb6ab4d496deef6cc2b2baa563bdcafa033d0
