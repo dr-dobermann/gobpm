@@ -1,15 +1,19 @@
 package model
 
 type Variable struct {
-	ID    uint64
-	Doc   Documentation
-	Value interface{}
+	BaseElement
+	value interface{}
 }
 
-type VarsPack struct {
-	ID   uint64
-	Vars []Variable
+type VPack struct {
+	BaseElement
+	vars map[string]*Variable
 }
 
 type Expression struct {
+	BaseElement
+	language string // Formal Expression language (FEEL) in URI format
+	body     string // in future it could be changed to another specialized type or
+	// realized by interface
+	retType string // TODO: should be changed to standard go type in the future
 }
