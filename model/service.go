@@ -1,7 +1,7 @@
 package model
 
 type Executor interface {
-	Exec() Error
+	Exec(op *Operation) Error
 }
 
 type Operation struct {
@@ -10,4 +10,12 @@ type Operation struct {
 	outMessageRef id
 	errors        []id
 	impl          *Executor
+}
+
+type Interface struct {
+	BaseElement
+	name              string
+	operations        []*Operation
+	callabeElements   []*CallableElement
+	implementationRef *interface{}
 }

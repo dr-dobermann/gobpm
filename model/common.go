@@ -87,5 +87,7 @@ type SequenceFlow struct {
 type CallableElement struct {
 	BaseElement
 	name            string
+	interfaces      []*Interface
 	ioSpecification InputOutputSpecification
+	ioBindings      []InputOutputBinding
 }

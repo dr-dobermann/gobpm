@@ -16,3 +16,8 @@ type Process struct {
 	monitor *ctr.Monitor
 	audit   *ctr.Audit
 }
+
+type GlobalTask struct {
+	CallableElement
+	resources []ResourceRole
+}
