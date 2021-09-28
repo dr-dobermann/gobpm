@@ -27,7 +27,7 @@ const (
 
 type Event struct {
 	BaseElement
-	attachedTo   id // 0 if not bounded (intermediate event)
+	attachedTo   Id // 0 if not bounded (intermediate event)
 	interrupting bool
 	eType        EventClass
 	trigger      EventTrigger

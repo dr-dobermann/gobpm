@@ -1,5 +1,7 @@
 package model
 
+import "context"
+
 type TaskClass uint8
 
 const (
@@ -18,7 +20,7 @@ type LoopDef struct {
 
 type ParameterBinding struct {
 	BaseElement
-	parRef id
+	parRef Id
 	expr   *Expression
 }
 
@@ -28,14 +30,20 @@ type ResourceRole struct {
 	bindings   []*ParameterBinding
 }
 
+// interface to execute all tasks
+type Performer interface {
+	Perfom(ctx context.Context) error
+}
+
 type Activity struct {
 	FlowElement
 	forCompensation bool
 	loop            *LoopDef
-	defaultFlow     id // that will receive a token when none of the
+	defaultFlow     Id // that will receive a token when none of the
 	// conditionExpressions on other outgoing Sequence Flows evaluate
 	// to true. The default Sequence Flow should not have a
 	// conditionExpression. Any such Expression SHALL be ignored
+	class          TaskClass
 	boundaryEvents []*Event
 	data           InputOutputSpecification
 	startQuantity  uint8
@@ -58,14 +66,14 @@ type ServiceTask struct {
 type SendTask struct {
 	Activity
 	implementation string
-	message        id
+	message        Id
 	operation      *Operation
 }
 
 type ReceiveTask struct {
 	Activity
 	implementation string
-	message        id
+	message        Id
 	operation      *Operation
 }
 

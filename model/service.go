@@ -1,14 +1,16 @@
 package model
 
+import "context"
+
 type Executor interface {
-	Exec(op *Operation) Error
+	Execute(ctx context.Context) Error
 }
 
 type Operation struct {
 	BaseElement
-	inMessageRef  id
-	outMessageRef id
-	errors        []id
+	inMessageRef  Id
+	outMessageRef Id
+	errors        []Id
 	impl          *Executor
 }
 
@@ -17,5 +19,6 @@ type Interface struct {
 	name              string
 	operations        []*Operation
 	callabeElements   []*CallableElement
-	implementationRef *interface{}
+	implementationRef *interface{} // TODO: need to decide how to use this field
+	// or just abandon it for Operation Executor
 }

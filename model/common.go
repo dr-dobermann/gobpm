@@ -3,14 +3,14 @@ package model
 import "github.com/dr-dobermann/gobpm/ctr"
 
 type Documentation struct {
-	text   string
-	format string
+	Text   string
+	Format string
 }
 
-type id uint64
+type Id uint64
 
 type BaseElement struct {
-	ID id
+	ID Id
 	Documentation
 }
 
@@ -46,7 +46,7 @@ type Error struct {
 // and SequenceFlow
 type FlowElement struct {
 	BaseElement
-	name    string
+	Name    string
 	audit   *ctr.Audit
 	monitor *ctr.Monitor
 }
@@ -80,13 +80,13 @@ type SequenceFlow struct {
 	// Could be empty. If not, the path
 	// couldn't start from Parallel Gate or
 	// Event FloatNode
-	sourceRef id
-	targetRef id
+	sourceRef Id
+	targetRef Id
 }
 
 type CallableElement struct {
 	BaseElement
-	name            string
+	Name            string
 	interfaces      []*Interface
 	ioSpecification InputOutputSpecification
 	ioBindings      []InputOutputBinding

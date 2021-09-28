@@ -61,3 +61,9 @@ type InputOutputSpecification struct {
 	dataInputs []DataInput
 	dataOutput []DataOutput
 }
+
+type InputOutputBinding struct {
+	inputDataRef  DataInput
+	outputDataRef DataOutput
+	operationRef  *Operation
+}

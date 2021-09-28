@@ -2,15 +2,15 @@ package model
 
 type MessageFlow struct {
 	FlowElement
-	startRef id
-	endRef   id
+	startRef Id
+	endRef   Id
 	dir      FlowDirection
-	message  id
+	message  Id
 }
 
 type Message struct {
 	FlowElement
 	vPack VPack
-	flow  id
-	event id // Message event processor
+	flow  Id
+	event Id // Message event processor
 }
