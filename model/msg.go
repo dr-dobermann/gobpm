@@ -4,7 +4,6 @@ type MessageFlow struct {
 	FlowElement
 	startRef Id
 	endRef   Id
-	dir      FlowDirection
 	message  Id
 }
 

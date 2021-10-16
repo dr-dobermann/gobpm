@@ -48,6 +48,10 @@ type Activity struct {
 	transaction   *Transaction
 }
 
+func (a Activity) Class() TaskClass {
+	return a.class
+}
+
 type ServiceTask struct {
 	Activity
 	// could be "##unspecified", "##WebService" or
@@ -102,5 +106,4 @@ type AdHocSubProc struct {
 
 type Task interface {
 	Run(ctx context.Context) error
-	Class() TaskClass
 }

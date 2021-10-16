@@ -1,21 +1,22 @@
 package model
 
-import "github.com/dr-dobermann/gobpm/ctr"
+import (
+	"context"
+
+	"github.com/dr-dobermann/gobpm/ctr"
+	"github.com/google/uuid"
+)
 
 type Documentation struct {
 	Text   string
 	Format string
 }
 
-type Id uint64
+type Id uuid.UUID
 
 type BaseElement struct {
 	id Id
 	Documentation
-}
-
-type Identifyer interface {
-	ID() Id
 }
 
 func (be BaseElement) ID() Id {
@@ -58,6 +59,7 @@ const (
 	EtGate
 	EtDataObject
 	EtDataAssociation
+	EtContainer
 )
 
 // base for FlowNode(Activities, Events, Gates), Data Objects, Data Associations
@@ -72,10 +74,6 @@ type FlowElement struct {
 
 func (fe FlowElement) Type() FlowElementType {
 	return fe.elementType
-}
-
-type Namer interface {
-	Name() string
 }
 
 func (fe FlowElement) Name() string {
@@ -94,15 +92,6 @@ type FlowElementsContainer struct {
 	FlowElement
 	elements []FlowElement
 }
-
-type FlowDirection uint8
-
-const (
-	None FlowDirection = iota
-	Begin
-	End
-	Both
-)
 
 type SequenceFlow struct {
 	FlowElement
@@ -125,4 +114,46 @@ type CallableElement struct {
 
 func (ce CallableElement) Name() string {
 	return ce.name
+}
+
+type TokenState uint16
+
+const (
+	TSLive TokenState = iota
+	TSEnded
+)
+
+type Token struct {
+	id      Id
+	m       *Model
+	state   TokenState
+	parents []*Token
+}
+
+func (t Token) ID() Id {
+	return t.id
+}
+
+func (t *Token) Split(n uint16) []Token {
+	tt := []Token{}
+
+	for i := 0; i < int(n); i++ {
+		tt = append(tt,
+			Token{Id(uuid.New()), t.m, TSLive, append(t.parents, t)})
+	}
+
+	return tt
+}
+
+func (t *Token) Join(jt *Token) *Token {
+	t.parents = append(t.parents, jt)
+	jt.state = TSEnded
+
+	return t
+}
+
+type Node interface {
+	ProcessToken(ctx context.Context, t Token) error
+	Link(to Node) error
+	IsEqual(n Node) bool
 }
