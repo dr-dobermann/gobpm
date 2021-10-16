@@ -30,56 +30,46 @@ type ResourceRole struct {
 	bindings   []*ParameterBinding
 }
 
-// interface to execute all tasks
-type Performer interface {
-	Perfom(ctx context.Context) error
+type Transaction struct {
 }
 
 type Activity struct {
-	FlowElement
-	forCompensation bool
-	loop            *LoopDef
-	defaultFlow     Id // that will receive a token when none of the
+	FlowNode
+	loop        *LoopDef
+	defaultFlow Id // that will receive a token when none of the
 	// conditionExpressions on other outgoing Sequence Flows evaluate
 	// to true. The default Sequence Flow should not have a
 	// conditionExpression. Any such Expression SHALL be ignored
 	class          TaskClass
 	boundaryEvents []*Event
 	data           InputOutputSpecification
-	startQuantity  uint8
-	complQuantity  uint8
-}
-
-type CallActivity struct {
-	Activity
-	calledElementRef *CallableElement
+	// not empty in case the Activity used as CallActivity
+	calledElement *CallableElement
+	transaction   *Transaction
 }
 
 type ServiceTask struct {
 	Activity
 	// could be "##unspecified", "##WebService" or
 	// URI or coordination protocl
-	implementation string
-	operation      *Operation // invoked operation
+	Implementation string
+	Operation      *Operation // invoked operation
 }
 
 type SendTask struct {
 	Activity
-	implementation string
-	message        Id
-	operation      *Operation
+	message   Id
+	operation *Operation
 }
 
 type ReceiveTask struct {
 	Activity
-	implementation string
-	message        Id
-	operation      *Operation
+	message   Id
+	operation *Operation
 }
 
 type BusinessRuleTask struct {
 	Activity
-	implementation string
 }
 
 type ScriptTask struct {
@@ -90,21 +80,12 @@ type ScriptTask struct {
 
 type UserTask struct {
 	Activity
-	implementation string
-	renderings     map[string]string
-	owner          string
-	priority       int
+	renderings map[string]string
+	owner      string
+	priority   int
 }
 
 // ------------- Sub-Processes ------------------------------
-
-type TransactionalSubProc struct {
-	Activity
-	// TODO: should be changed to method used to commit or cancel
-	// Transaction.
-	method string
-}
-
 type AdHocOrdering uint8
 
 const (
@@ -114,7 +95,12 @@ const (
 
 type AdHocSubProc struct {
 	Activity
-	completionCond           *Expression
-	order                    AdHocOrdering
-	cancelRemainingInstances bool
+	CompletionCond           *Expression
+	Order                    AdHocOrdering
+	CancelRemainingInstances bool
+}
+
+type Task interface {
+	Run(ctx context.Context) error
+	Class() TaskClass
 }

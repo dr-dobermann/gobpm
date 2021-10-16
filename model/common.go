@@ -10,8 +10,16 @@ type Documentation struct {
 type Id uint64
 
 type BaseElement struct {
-	ID Id
+	id Id
 	Documentation
+}
+
+type Identifyer interface {
+	ID() Id
+}
+
+func (be BaseElement) ID() Id {
+	return be.id
 }
 
 type ItemKind uint8
@@ -42,13 +50,36 @@ type Error struct {
 	structure ItemDefinition
 }
 
+type FlowElementType uint8
+
+const (
+	EtActivity FlowElementType = iota
+	EtEvent
+	EtGate
+	EtDataObject
+	EtDataAssociation
+)
+
 // base for FlowNode(Activities, Events, Gates), Data Objects, Data Associations
 // and SequenceFlow
 type FlowElement struct {
 	BaseElement
-	Name    string
-	audit   *ctr.Audit
-	monitor *ctr.Monitor
+	name        string
+	audit       *ctr.Audit
+	monitor     *ctr.Monitor
+	elementType FlowElementType
+}
+
+func (fe FlowElement) Type() FlowElementType {
+	return fe.elementType
+}
+
+type Namer interface {
+	Name() string
+}
+
+func (fe FlowElement) Name() string {
+	return fe.name
 }
 
 // base for Activities, Gates and Events
@@ -86,8 +117,12 @@ type SequenceFlow struct {
 
 type CallableElement struct {
 	BaseElement
-	Name            string
-	interfaces      []*Interface
-	ioSpecification InputOutputSpecification
-	ioBindings      []InputOutputBinding
+	name       string
+	interfaces []*Interface
+	ioSpec     InputOutputSpecification
+	ioBinds    []InputOutputBinding
+}
+
+func (ce CallableElement) Name() string {
+	return ce.name
 }

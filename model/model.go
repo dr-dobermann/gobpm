@@ -1,5 +1,11 @@
 package model
 
 type Model struct {
-	name string
+	name    string
+	version string
 }
+
+func (m Model) Name() string {
+	return m.name
+}
+
