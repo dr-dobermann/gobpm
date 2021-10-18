@@ -2,6 +2,8 @@ package model
 
 import (
 	"context"
+	"fmt"
+	"io"
 
 	"github.com/dr-dobermann/gobpm/ctr"
 	"github.com/google/uuid"
@@ -14,6 +16,10 @@ type Documentation struct {
 
 type Id uuid.UUID
 
+func (id Id) String() string {
+	return fmt.Sprint(uuid.UUID(id))
+}
+
 type BaseElement struct {
 	id Id
 	Documentation
@@ -21,6 +27,24 @@ type BaseElement struct {
 
 func (be BaseElement) ID() Id {
 	return be.id
+}
+
+type NamedElement struct {
+	BaseElement
+	name string
+}
+
+func (ne NamedElement) Name() string {
+	return ne.name
+}
+
+type NamedVersionedElement struct {
+	NamedElement
+	version string
+}
+
+func (nve NamedVersionedElement) Version() string {
+	return nve.name
 }
 
 type ItemKind uint8
@@ -45,8 +69,7 @@ type ItemDefinition struct {
 }
 
 type Error struct {
-	BaseElement
-	name      string
+	NamedElement
 	errorCode string
 	structure ItemDefinition
 }
@@ -65,8 +88,8 @@ const (
 // base for FlowNode(Activities, Events, Gates), Data Objects, Data Associations
 // and SequenceFlow
 type FlowElement struct {
-	BaseElement
-	name        string
+	NamedElement
+	cntainer    *FlowElementsContainer
 	audit       *ctr.Audit
 	monitor     *ctr.Monitor
 	elementType FlowElementType
@@ -76,37 +99,34 @@ func (fe FlowElement) Type() FlowElementType {
 	return fe.elementType
 }
 
-func (fe FlowElement) Name() string {
-	return fe.name
-}
-
 // base for Activities, Gates and Events
 type FlowNode struct {
 	FlowElement
-	incoming  []SequenceFlow
-	outcoming []SequenceFlow
+	incoming  []*SequenceFlow
+	outcoming []*SequenceFlow
 }
 
 // base for Process, Sub-Process, Choreography and Sub-Choreography
 type FlowElementsContainer struct {
 	FlowElement
-	elements []FlowElement
+	containers []*FlowElementsContainer
+	elements   []*FlowElement
 }
 
 type SequenceFlow struct {
 	FlowElement
-	Expression // Expression determines the possibility of
+	// Expression determines the possibility of
 	// using path over this SequenceFlow.
 	// Could be empty. If not, the path
 	// couldn't start from Parallel Gate or
 	// Event FloatNode
+	expr      *Expression
 	sourceRef Id
 	targetRef Id
 }
 
 type CallableElement struct {
-	BaseElement
-	name       string
+	NamedElement
 	interfaces []*Interface
 	ioSpec     InputOutputSpecification
 	ioBinds    []InputOutputBinding
@@ -153,7 +173,16 @@ func (t *Token) Join(jt *Token) *Token {
 }
 
 type Node interface {
+	ID() Id
 	ProcessToken(ctx context.Context, t Token) error
+	// Link links one Node to another via SequenceFlow object.
+	// Should check if the both Nodes related to the same Model
 	Link(to Node) error
 	IsEqual(n Node) bool
+	PutIn(c *FlowElementsContainer) error
+}
+
+type Persister interface {
+	io.Reader
+	io.Writer
 }
