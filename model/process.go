@@ -20,6 +20,33 @@ type Process struct {
 	audit   *ctr.Audit
 }
 
+func NewProcess(pid Id, nm string, ver string) *Process {
+	if pid == Id(uuid.Nil) {
+		pid = Id(uuid.New())
+	}
+
+	if len(nm) == 0 {
+		nm = "Process #" + pid.String()
+	}
+
+	if len(ver) == 0 {
+		ver = "0.1.0"
+	}
+
+	return &Process{FlowElementsContainer: FlowElementsContainer{
+		FlowElement: FlowElement{
+			NamedElement: NamedElement{
+				BaseElement: BaseElement{
+					id:            pid,
+					Documentation: Documentation{"", ""}},
+				name: nm},
+			elementType: EtProcess},
+		containers: make([]*FlowElementsContainer, 0),
+		elements:   make([]*FlowElement, 0)},
+		version: ver,
+		lanes:   make(map[string]Lane)}
+}
+
 func (p Process) Version() string {
 	return p.version
 }
@@ -31,16 +58,16 @@ type ProcessModelError struct {
 }
 
 func (pme ProcessModelError) Error() string {
-	e := "<nil>"
+	e := ""
 	if pme.Err != nil {
-		e = pme.Err.Error()
+		e = " : " + pme.Err.Error()
 	}
 	if pme.processID == Id(uuid.Nil) {
 		return "P[ <nil> ] " +
-			pme.msg + " : " + e
+			pme.msg + e
 	}
 	return "P[" + pme.processID.String() + "] " +
-		pme.msg + " : " + e
+		pme.msg + e
 }
 
 func (pme ProcessModelError) Unwrap() error { return pme.Err }
@@ -61,11 +88,7 @@ func (p *Process) NewLane(nm string) error {
 		name: nm}}
 
 	if len(l.name) == 0 {
-		l.name = "Line " + l.id.String()
-	}
-
-	if p.lanes == nil {
-		p.lanes = make(map[string]Lane)
+		l.name = "Lane " + l.id.String()
 	}
 
 	p.lanes[l.name] = l

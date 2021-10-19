@@ -83,13 +83,14 @@ const (
 	EtDataObject
 	EtDataAssociation
 	EtContainer
+	EtProcess
 )
 
 // base for FlowNode(Activities, Events, Gates), Data Objects, Data Associations
 // and SequenceFlow
 type FlowElement struct {
 	NamedElement
-	cntainer    *FlowElementsContainer
+	container   *FlowElementsContainer
 	audit       *ctr.Audit
 	monitor     *ctr.Monitor
 	elementType FlowElementType
