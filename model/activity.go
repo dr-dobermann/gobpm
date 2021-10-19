@@ -104,6 +104,11 @@ type AdHocSubProc struct {
 	CancelRemainingInstances bool
 }
 
+type GlobalTask struct {
+	CallableElement
+	resources []ResourceRole
+}
+
 type Task interface {
 	Run(ctx context.Context) error
 }

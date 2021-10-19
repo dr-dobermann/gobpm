@@ -24,14 +24,24 @@ func (p Process) Version() string {
 	return p.version
 }
 
-type GlobalTask struct {
-	CallableElement
-	resources []ResourceRole
+type ProcessModelError struct {
+	processID Id
+	msg       string
+	Err       error
+}
+
+func (pme ProcessModelError) Error() string {
+	return "P[" + pme.processID.String() + "] " +
+		pme.msg + " : " + pme.Err.Error()
+}
+
+func NewProcessModelError(pid Id, m string, err error) error {
+	return ProcessModelError{pid, m, err}
 }
 
 func (p *Process) NewLine(nm string) error {
 	if _, ok := p.lanes[nm]; ok {
-		return NewModelError(uuid.Nil,
+		return NewProcessModelError(p.id,
 			"Lane ["+nm+"] already exists", nil)
 	}
 
@@ -61,11 +71,11 @@ func (p *Process) ListLanes() []string {
 
 func (p *Process) RemoveLane(ln string) error {
 	if _, ok := p.lanes[ln]; !ok {
-		return NewModelError(uuid.Nil, "lane ["+ln+"] isn't found", nil)
+		return NewProcessModelError(p.id, "lane ["+ln+"] isn't found", nil)
 	}
 
 	if len(p.lanes[ln].elements) > 0 {
-		return NewModelError(uuid.Nil,
+		return NewProcessModelError(p.id,
 			"couldn't remove non-empty lane ["+ln+"]", nil)
 	}
 
