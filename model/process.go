@@ -31,15 +31,25 @@ type ProcessModelError struct {
 }
 
 func (pme ProcessModelError) Error() string {
+	e := "<nil>"
+	if pme.Err != nil {
+		e = pme.Err.Error()
+	}
+	if pme.processID == Id(uuid.Nil) {
+		return "P[ <nil> ] " +
+			pme.msg + " : " + e
+	}
 	return "P[" + pme.processID.String() + "] " +
-		pme.msg + " : " + pme.Err.Error()
+		pme.msg + " : " + e
 }
+
+func (pme ProcessModelError) Unwrap() error { return pme.Err }
 
 func NewProcessModelError(pid Id, m string, err error) error {
 	return ProcessModelError{pid, m, err}
 }
 
-func (p *Process) NewLine(nm string) error {
+func (p *Process) NewLane(nm string) error {
 	if _, ok := p.lanes[nm]; ok {
 		return NewProcessModelError(p.id,
 			"Lane ["+nm+"] already exists", nil)
@@ -52,6 +62,10 @@ func (p *Process) NewLine(nm string) error {
 
 	if len(l.name) == 0 {
 		l.name = "Line " + l.id.String()
+	}
+
+	if p.lanes == nil {
+		p.lanes = make(map[string]Lane)
 	}
 
 	p.lanes[l.name] = l
