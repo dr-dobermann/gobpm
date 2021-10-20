@@ -96,7 +96,7 @@ func (p *Process) NewLane(nm string) error {
 	return nil
 }
 
-func (p *Process) ListLanes() []string {
+func (p *Process) Lanes() []string {
 	ln := []string{}
 
 	for l := range p.lanes {

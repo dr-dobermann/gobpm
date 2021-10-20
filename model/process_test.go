@@ -84,7 +84,7 @@ func TestProcessLanes(t *testing.T) {
 	}
 
 	// listing lanes
-	res := p.ListLanes()
+	res := p.Lanes()
 	if len(res) != 2 {
 		t.Error("Invalid lanes count. Expected 2, got ", len(res))
 	}
@@ -112,7 +112,7 @@ func TestProcessLanes(t *testing.T) {
 	if err != nil {
 		t.Error("couldn't remove lane ", ln[0], " : ", err)
 	}
-	res = p.ListLanes()
+	res = p.Lanes()
 	if len(res) != 1 || res[0] != ln[1] {
 		t.Error("couldn't remove lane. Got lane's names ", res)
 	}

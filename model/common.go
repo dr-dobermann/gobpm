@@ -48,7 +48,7 @@ type NamedVersionedElement struct {
 }
 
 func (nve NamedVersionedElement) Version() string {
-	return nve.name
+	return nve.version
 }
 
 type ItemKind uint8
@@ -116,6 +116,61 @@ type FlowElementsContainer struct {
 	FlowElement
 	containers []*FlowElementsContainer
 	elements   []*FlowElement
+}
+
+func (fec *FlowElementsContainer) InsertElement(fe *FlowElement) error {
+	if fe == nil {
+		return NewModelError(uuid.Nil, "Couldn't insert nil FlowElement into container", nil)
+	}
+
+	for _, e := range fec.elements {
+		if e.id == fe.id {
+			return NewModelError(uuid.Nil,
+				"Element "+fe.id.String()+" already exists in the contatiner "+fec.id.String(),
+				nil)
+		}
+	}
+
+	fec.elements = append(fec.elements, fe)
+	fe.container = fec
+
+	return nil
+}
+
+func (fec *FlowElementsContainer) Elements() []Id {
+	fes := []Id{}
+
+	for _, e := range fec.elements {
+		fes = append(fes, e.id)
+	}
+
+	return fes
+}
+
+func (fec *FlowElementsContainer) RemoveElement(id Id) error {
+	if id == Id(uuid.Nil) {
+		return NewModelError(uuid.Nil, "Couldn't remove element with Nil id", nil)
+	}
+
+	var fe *FlowElement
+	pos := -1
+	for i, e := range fec.elements {
+		if e.id == id {
+			pos, fe = i, e
+			break
+		}
+	}
+
+	if pos == -1 {
+		return NewModelError(uuid.Nil,
+			"Element "+id.String()+" doesn't found in the container "+fec.id.String(),
+			nil)
+	}
+
+	fe.container = nil
+	fec.elements = append(fec.elements[:pos], fec.elements[pos+1:]...)
+
+	return nil
 }
 
 type SequenceFlow struct {

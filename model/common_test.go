@@ -89,3 +89,68 @@ func TestSplitJoinToken(t *testing.T) {
 	// should fire panic due to joining to Inactive token
 	// tt[1].Join(tt[2])
 }
+
+func TestElementContainer4Elements(t *testing.T) {
+	fec := &FlowElementsContainer{
+		FlowElement: FlowElement{
+			NamedElement: NamedElement{
+				BaseElement: BaseElement{
+					id:            NewID(),
+					Documentation: Documentation{"", ""}},
+				name: "test_container"},
+			elementType: EtContainer},
+		containers: []*FlowElementsContainer{},
+		elements:   []*FlowElement{}}
+
+	fe := &FlowElement{
+		NamedElement: NamedElement{
+			BaseElement: BaseElement{
+				id:            NewID(),
+				Documentation: Documentation{"", ""}},
+			name: "test_element"},
+		elementType: EtActivity}
+
+	// inserting tests
+	if err := fec.InsertElement(nil); err == nil {
+		t.Error("Error inserting nil element into container")
+	}
+
+	if err := fec.InsertElement(fe); err != nil {
+		t.Error("Couldn't insert element into container ", err)
+	}
+
+	if fe.container == nil || fe.container.ID() != fec.ID() {
+		t.Error("Linking to container error")
+	}
+
+	if len(fec.elements) != 1 || fec.elements[0].ID() != fe.ID() {
+		t.Error("Inserting to container error")
+	}
+
+	if err := fec.InsertElement(fe); err == nil {
+		t.Error("Double insert into container")
+	}
+
+	// removing tests
+	if err := fec.RemoveElement(Id(uuid.Nil)); err == nil {
+		t.Error("Removing an unidentifyed element")
+	}
+
+	el := fec.Elements()
+	if len(el) != 1 {
+		t.Error("Error ilsting elements")
+	}
+
+	if err := fec.RemoveElement(el[0]); err != nil {
+		t.Error("Error removing element")
+	}
+
+	if len(fec.elements) != 0 || fe.container != nil {
+		t.Error("Failed to remove element")
+	}
+
+	// double removing
+	if err := fec.RemoveElement(el[0]); err == nil {
+		t.Error("Removing non-existing element")
+	}
+}
