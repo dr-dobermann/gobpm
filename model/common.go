@@ -204,6 +204,7 @@ type Token struct {
 	pID   Id
 	state TokenState
 	prevs []*Token
+	nexts []*Token
 }
 
 func (t Token) ID() Id {
@@ -229,7 +230,7 @@ func NewToken(tID Id, pID Id) *Token {
 		tID = NewID()
 	}
 
-	return &Token{tID, pID, TSLive, []*Token{}}
+	return &Token{tID, pID, TSLive, []*Token{}, []*Token{}}
 }
 
 // Split token onto n new tokens.
@@ -250,21 +251,22 @@ func (t *Token) Split(n uint16) []*Token {
 	}
 
 	for i := 0; i < int(n); i++ {
-		tt = append(tt,
-			&Token{NewID(), t.pID, TSLive, append([]*Token{}, t)})
+		nt := &Token{NewID(), t.pID, TSLive, append([]*Token{}, t), []*Token{}}
+		tt = append(tt, nt)
+		t.nexts = append(t.nexts, nt)
 	}
 	t.state = TSInactive
 
 	return tt
 }
 
-func (t *Token) GetPrevious() []*Token {
-	tt := make([]*Token, len(t.prevs))
+// func (t *Token) GetPrevious() []*Token {
+// 	tt := make([]*Token, len(t.prevs))
 
-	copy(tt, t.prevs)
+// 	copy(tt, t.prevs)
 
-	return tt
-}
+// 	return tt
+// }
 
 // Join joins one token to another and returns the first one.
 // Only tokens with Live status could be joined.
@@ -279,6 +281,7 @@ func (t *Token) Join(jt *Token) *Token {
 		return t
 	}
 
+	jt.nexts = append(t.nexts, t)
 	t.prevs = append(t.prevs, jt)
 	jt.state = TSInactive
 
@@ -287,12 +290,12 @@ func (t *Token) Join(jt *Token) *Token {
 
 type Node interface {
 	ID() Id
-	ProcessToken(ctx context.Context, t Token) error
+	ProcessToken(ctx context.Context, t *Token) error
 	// Link links one Node to another via SequenceFlow object.
 	// Should check if the both Nodes related to the same Model
 	Link(to Node) error
 	IsEqual(n Node) bool
-	PutIn(c *FlowElementsContainer) error
+	PutOn(l *Lane) error
 }
 
 type Persister interface {

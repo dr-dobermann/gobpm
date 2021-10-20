@@ -15,6 +15,7 @@ type Process struct {
 	version     string
 	supportedBy []string // processes supported this one
 	lanes       map[string]Lane
+	nodes       []Node
 
 	monitor *ctr.Monitor
 	audit   *ctr.Audit

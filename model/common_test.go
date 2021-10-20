@@ -53,36 +53,60 @@ func TestSplitJoinToken(t *testing.T) {
 	// tok.Split(3)
 
 	for _, tk := range tt {
+		// status forked tokens
 		if tk.State() != TSLive {
 			t.Error("Created by splitting token has Inactive status")
 		}
-		if len(tk.GetPrevious()) == 0 {
+
+		// check reverse chain links presence
+		if len(tk.prevs) == 0 {
 			t.Error("Invalid splitted token. Has no previous token")
 		}
-		if tk.GetPrevious()[0].ID() != tok.ID() {
+
+		// check reverse chain links value
+		if tk.prevs[0].ID() != tok.ID() {
 			t.Error("Splitting error no previous token in the new one")
+		}
+
+		// check forward links in original token
+		i := -1
+		for ti, t := range tok.nexts {
+			if t.id == tk.id {
+				i = ti
+				break
+			}
+		}
+
+		if i == -1 {
+			t.Error("Forward chain in split broken " + tok.id.String())
 		}
 	}
 
 	// join tests
 	tt[0].Join(tt[1])
 
+	// check state of joined token
 	if tt[1].State() == TSLive {
 		t.Error("Invalid token state after joining. Still Live")
 	}
 
-	pp := tt[0].GetPrevious()
-	if len(pp) != 2 {
+	// check reverse chain links in result token
+	if len(tt[0].prevs) != 2 {
 		t.Error("Invalid tokens joining. Chain information is lost")
 	}
-	if pp[0].ID() != tok.ID() || pp[1].ID() != tt[1].ID() {
+
+	if tt[0].prevs[0] != tok || tt[0].prevs[1] != tt[1] {
 		t.Error("Invalid token joining. Chain information is incomplete")
+	}
+
+	// check forvar chain link in joined token
+	if len(tt[1].nexts) != 1 || tt[1].nexts[0] != tt[0] {
+		t.Error("Invalid token joining. Forward chain links is broken")
 	}
 
 	tt[0].Join(tt[1])
 
-	pp = tt[0].GetPrevious()
-	if len(pp) > 2 {
+	if len(tt[0].prevs) > 2 {
 		t.Error("Iactive token joining")
 	}
 
