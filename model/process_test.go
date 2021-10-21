@@ -117,3 +117,14 @@ func TestProcessLanes(t *testing.T) {
 		t.Error("couldn't remove lane. Got lane's names ", res)
 	}
 }
+
+func TestNodesList(t *testing.T) {
+	// p := NewProcess(Id(uuid.Nil), "test", "0.1.0")
+
+	// n := NewOutputTask("")
+
+	// err := p.AddNode(n Node)
+	// if err != nil {
+	// 	t.Error("Couldn't add node ")
+	// }
+}

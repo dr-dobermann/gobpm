@@ -288,14 +288,22 @@ func (t *Token) Join(jt *Token) *Token {
 	return t
 }
 
+type FlowDirection uint8
+
+const (
+	FdIncoming FlowDirection = iota
+	FdOutcoming
+)
+
 type Node interface {
 	ID() Id
-	ProcessToken(ctx context.Context, t *Token) error
+	ProcessToken(ctx context.Context, t *Token) (map[*Token]*SequenceFlow, error)
 	// Link links one Node to another via SequenceFlow object.
 	// Should check if the both Nodes related to the same Model
-	Link(to Node) error
+	Link(to Node) (*SequenceFlow, error)
 	IsEqual(n Node) bool
 	PutOn(l *Lane) error
+	GetFlows(dir FlowDirection) []*SequenceFlow
 }
 
 type Persister interface {

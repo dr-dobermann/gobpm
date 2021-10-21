@@ -16,6 +16,7 @@ type Process struct {
 	supportedBy []string // processes supported this one
 	lanes       map[string]Lane
 	nodes       []Node
+	flows       []*SequenceFlow
 
 	monitor *ctr.Monitor
 	audit   *ctr.Audit
@@ -45,7 +46,9 @@ func NewProcess(pid Id, nm string, ver string) *Process {
 		containers: make([]*FlowElementsContainer, 0),
 		elements:   make([]*FlowElement, 0)},
 		version: ver,
-		lanes:   make(map[string]Lane)}
+		lanes:   make(map[string]Lane),
+		nodes:   []Node{},
+		flows:   []*SequenceFlow{}}
 }
 
 func (p Process) Version() string {
