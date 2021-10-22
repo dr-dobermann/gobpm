@@ -1,6 +1,7 @@
 package model
 
 import (
+	"math"
 	"strconv"
 
 	"github.com/google/uuid"
@@ -48,29 +49,42 @@ func (v *Variable) SetPrecision(p int) {
 	v.prec = p
 }
 
+// Int returns a integer representation of variable v.
+// if v is the VtString and converstion errror from string to float64 happened
+// then panic fired
 func (v *Variable) Int() int {
+	var i int
+
 	switch v.vtype {
+	case VtInt:
+		i = v.value.(int)
+
+	case VtBool:
+		b := v.value.(bool)
+		if b {
+			i = 1
+		} else {
+			i = 0
+		}
+
 	case VtString:
 		s := v.value.(string)
-
-		if i, err := strconv.ParseInt(s, 10, 64); err != nil {
+		if f, err := strconv.ParseFloat(s, 64); err != nil {
 			panic("cannot convert string var " + v.name +
 				"[" + s + "] to int" + err.Error())
 		} else {
-			return int(i)
+			i = int(math.Round(f))
 		}
 
 	case VtFloat:
 		f := v.value.(float64)
-		return int(f)
-
+		i = int(f)
 	}
-
-	i := v.value.(int)
 
 	return i
 }
 
+// String returns a string representation of variable v.
 func (v *Variable) String() string {
 	var s string
 
@@ -98,6 +112,7 @@ func (v *Variable) String() string {
 	return s
 }
 
+// Bool returns a boolean representation of variable v.
 func (v *Variable) Bool() bool {
 	var b bool
 
@@ -113,8 +128,8 @@ func (v *Variable) Bool() bool {
 
 	case VtFloat:
 		f := v.value.(float64)
-		if f == 0.0 {
-			b = false
+		if f != 0.0 {
+			b = true
 		}
 
 	case VtString:
@@ -127,6 +142,9 @@ func (v *Variable) Bool() bool {
 	return b
 }
 
+// Float64 returns a float64 representation of variable v.
+// if v is the VtString and converstion errror from string to float64 happened
+// then panic fired
 func (v *Variable) Float64() float64 {
 	var (
 		f   float64
@@ -157,24 +175,6 @@ func (v *Variable) Float64() float64 {
 	}
 
 	return f
-}
-
-type VPack struct {
-	BaseElement
-	name string
-	vars map[string]*Variable
-}
-
-func (v *VPack) Name() string {
-	return v.name
-}
-
-type Expression struct {
-	NamedElement
-	language string // Formal Expression language (FEEL) in URI format
-	body     string // in future it could be changed to another specialized type or
-	// realized by interface
-	retType string // TODO: should be changed to standard go type in the future
 }
 
 type varMap map[VarType]*Variable
@@ -218,6 +218,8 @@ func (vs *VarStore) getVar(vn string, vt VarType, returnEmpty bool) *Variable {
 	return v
 }
 
+// GetVar returns variable vn of tyep vt form namespace vs
+// if the variable isn't found, then error returned
 func (vs *VarStore) GetVar(vn string, vt VarType) (*Variable, error) {
 	v := vs.getVar(vn, vt, false)
 	if v == nil {
@@ -228,6 +230,8 @@ func (vs *VarStore) GetVar(vn string, vt VarType) (*Variable, error) {
 	return v, nil
 }
 
+// DelVar deletes variable vn of type vt from namespace vs
+// if there is no such variable, then error returned
 func (vs *VarStore) DelVar(vn string, vt VarType) error {
 	vm := map[string]varMap(*vs)[vn]
 	if vm == nil {
@@ -251,8 +255,8 @@ func (vs *VarStore) DelVar(vn string, vt VarType) error {
 	return nil
 }
 
-// NewInt creates a new int variable
-// if the variable exists, the error returned
+// NewInt creates a new int variable in namespace vs
+// if the variable with the same name and the same type exists, the error returned
 func (vs *VarStore) NewInt(vn string, val int) (*Variable, error) {
 	v := vs.getVar(vn, VtInt, true)
 
@@ -268,6 +272,8 @@ func (vs *VarStore) NewInt(vn string, val int) (*Variable, error) {
 	return v, nil
 }
 
+// NewBool creates a new bool variable in namespace vs
+// if the variable with the same name and the same type exists, the error returned
 func (vs *VarStore) NewBool(vn string, val bool) (*Variable, error) {
 	v := vs.getVar(vn, VtBool, true)
 
@@ -283,6 +289,8 @@ func (vs *VarStore) NewBool(vn string, val bool) (*Variable, error) {
 	return v, nil
 }
 
+// NewString creates a new string variable in namespace vs
+// if the variable with the same name and the same type exists, the error returned
 func (vs *VarStore) NewString(vn string, val string) (*Variable, error) {
 	v := vs.getVar(vn, VtString, true)
 
@@ -298,6 +306,8 @@ func (vs *VarStore) NewString(vn string, val string) (*Variable, error) {
 	return v, nil
 }
 
+// NewFloat creates a new string variable in namespace vs
+// if the variable with the same name and the same type exists, the error returned
 func (vs *VarStore) NewFloat(vn string, val float64) (*Variable, error) {
 	v := vs.getVar(vn, VtFloat, true)
 
@@ -311,4 +321,12 @@ func (vs *VarStore) NewFloat(vn string, val float64) (*Variable, error) {
 	v.initialized = true
 
 	return v, nil
+}
+
+type Expression struct {
+	NamedElement
+	language string // Formal Expression language (FEEL) in URI format
+	body     string // in future it could be changed to another specialized type or
+	// realized by interface
+	retType string // TODO: should be changed to standard go type in the future
 }

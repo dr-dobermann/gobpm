@@ -1,53 +1,103 @@
 package model
 
 import (
+	"log"
 	"testing"
 )
 
 func TestVariablesValues(t *testing.T) {
-	// int variable
-	v, err := global.NewInt("x", 2)
-	if err != nil {
-		t.Error("Couldn't create a new variable ", err)
+	td := []struct {
+		i int
+		b bool
+		s string
+		f float64
+	}{
+		{2, true, "2", 2.0},                   // VtInt
+		{1, true, "true", 1.0},                // VtBool
+		{4, true, "3.66", 3.66},               // VtString
+		{3, true, "3.33333", float64(10) / 3}, // VtFloat
 	}
 
-	if _, err = global.NewInt("x", 3); err == nil {
-		t.Error("Double variable in namespace")
+	for i := 0; i < 4; i++ {
+		var (
+			v   *Variable
+			err error
+		)
+		// creating variables
+		//vn := fmt.Sprintf("v%d", i)
+		vn := "v"
+		switch VarType(i) {
+		case VtInt:
+			_, err = global.NewInt(vn, td[i].i)
+
+		case VtBool:
+			_, err = global.NewBool(vn, td[i].b)
+
+		case VtString:
+			_, err = global.NewString(vn, td[i].s)
+
+		case VtFloat:
+			_, err = global.NewFloat(vn, td[i].f)
+		}
+
+		if err != nil {
+			t.Error("cannot create variable " + vn + " of type " + string(VarType(i)))
+		}
+
+		// creating duplicates
+		switch VarType(i) {
+		case VtInt:
+			_, err = global.NewInt(vn, td[i].i)
+
+		case VtBool:
+			_, err = global.NewBool(vn, td[i].b)
+
+		case VtString:
+			_, err = global.NewString(vn, td[i].s)
+
+		case VtFloat:
+			_, err = global.NewFloat(vn, td[i].f)
+		}
+
+		if err == nil {
+			t.Error("create duplicate variable " + vn + " of type " + string(VarType(i)))
+		}
+
+		// checking values
+		v, err = global.GetVar(vn, VarType(i))
+		if err != nil {
+			t.Error("cannot get variable value for " + vn + " of type " + string(VarType(i)))
+		}
+		if VarType(i) == VtFloat {
+			v.SetPrecision(5)
+		}
+
+		log.Printf("Got variable %s of type %s with precision %d", v.Name(), v.Type().String(), v.Precision())
+
+		in := v.Int()
+		b := v.Bool()
+		s := v.String()
+		f := v.Float64()
+
+		if in != td[i].i || b != td[i].b || s != td[i].s || f != td[i].f {
+			t.Error("Invalid variable ", vn, " value. Expected ", td[i], ", got ", in, b, s, f)
+		}
 	}
 
-	if v == nil {
-		t.Error("New variable is empty!")
-	}
-
-	i := v.Int()
-	if i != 2 {
-		t.Error("invalid int variable value : ", i)
-	}
-
-	s := v.String()
-	if s != "2" {
-		t.Error("invalid string variable value : ", s)
-	}
-
-	b := v.Bool()
-	if !b {
-		t.Error("invalid bool variable value : ", b)
-	}
-
-	f := v.Float64()
-	if f != 2.0 {
-		t.Error("invalid float64 variable value : ", f)
-	}
 }
 
 func TestVariableGetter(t *testing.T) {
-	global.NewInt("x", 2)
+	global.NewInt("x", 0)
 	v1, err := global.GetVar("x", VtInt)
 	if v1 == nil || err != nil {
 		t.Error("couldn't get a variable : ", err)
 	}
 
-	if v1 == nil || v1.Int() != 2 {
+	if v1 == nil || v1.Int() != 0 {
+		t.Error("invalid variable value")
+	}
+
+	if v1 == nil || v1.Bool() {
 		t.Error("invalid variable value")
 	}
 

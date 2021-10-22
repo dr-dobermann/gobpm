@@ -9,7 +9,6 @@ type MessageFlow struct {
 
 type Message struct {
 	FlowElement
-	vPack VPack
 	flow  Id
 	event Id // Message event processor
 }
