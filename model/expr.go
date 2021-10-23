@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 
@@ -44,9 +45,44 @@ func (v *Variable) Precision() int {
 
 func (v *Variable) SetPrecision(p int) {
 	if p < 0 {
-		p = 0
+		p = 2
 	}
 	v.prec = p
+}
+
+func (v *Variable) update(newVal interface{}) error {
+	switch v.vtype {
+	case VtInt:
+		if i, ok := newVal.(int); !ok {
+			return NewModelError(uuid.Nil, fmt.Sprintf("couldn't convert %v to int", newVal), nil)
+		} else {
+			v.value = i
+		}
+
+	case VtBool:
+		if b, ok := newVal.(bool); !ok {
+			return NewModelError(uuid.Nil, fmt.Sprintf("couldn't convert %v to int", newVal), nil)
+		} else {
+			v.value = b
+		}
+
+	case VtString:
+		if s, ok := newVal.(string); !ok {
+			return NewModelError(uuid.Nil, fmt.Sprintf("couldn't convert %v to int", newVal), nil)
+		} else {
+			v.value = s
+		}
+
+	case VtFloat:
+		if f, ok := newVal.(float64); !ok {
+			return NewModelError(uuid.Nil, fmt.Sprintf("couldn't convert %v to int", newVal), nil)
+		} else {
+			v.value = f
+		}
+
+	}
+
+	return nil
 }
 
 // Int returns a integer representation of variable v.
@@ -255,6 +291,18 @@ func (vs *VarStore) DelVar(vn string, vt VarType) error {
 	return nil
 }
 
+func (vs *VarStore) Update(vn string, vt VarType, newVal interface{}) error {
+	v := vs.getVar(vn, vt, false)
+
+	if v == nil {
+		return NewModelError(uuid.Nil,
+			"couldn't find variable "+vn+" of type "+vt.String(),
+			nil)
+	}
+
+	return v.update(newVal)
+}
+
 // NewInt creates a new int variable in namespace vs
 // if the variable with the same name and the same type exists, the error returned
 func (vs *VarStore) NewInt(vn string, val int) (*Variable, error) {
@@ -323,10 +371,20 @@ func (vs *VarStore) NewFloat(vn string, val float64) (*Variable, error) {
 	return v, nil
 }
 
+type ExpressionType uint8
+
+const (
+	ExTEmbedded ExpressionType = iota
+)
+
 type Expression struct {
 	NamedElement
 	language string // Formal Expression language (FEEL) in URI format
-	body     string // in future it could be changed to another specialized type or
-	// realized by interface
-	retType string // TODO: should be changed to standard go type in the future
+	body     string
+	etype    ExpressionType
+	retType  VarType
+}
+
+func (e Expression) Type() ExpressionType {
+	return e.etype
 }
