@@ -2,7 +2,6 @@ package model
 
 import (
 	"fmt"
-	"log"
 	"testing"
 )
 
@@ -51,7 +50,7 @@ func TestVariablesValues(t *testing.T) {
 			t.Error("cannot create variable " + vn + " of type " + string(VarType(i)))
 		}
 
-		// creating duplicates
+		// checking duplicates
 		switch VarType(i) {
 		case VtInt:
 			_, err = global.NewInt(vn, td[i].i)
@@ -76,10 +75,26 @@ func TestVariablesValues(t *testing.T) {
 			t.Error("cannot get variable value for " + vn + " of type " + string(VarType(i)))
 		}
 		if VarType(i) == VtFloat {
+			v.SetPrecision(-2)
+
+			if v.Precision() != 2 {
+				t.Error("invalid default precision. expected 2, got ", v.Precision())
+			}
+
 			v.SetPrecision(5)
+
+			if v.Precision() != 5 {
+				t.Error("coulnd't change float precision to 5, got ", v.Precision())
+			}
 		}
 
-		log.Printf("Got variable %s of type %s with precision %d", v.Name(), v.Type().String(), v.Precision())
+		if v.Name() != vn {
+			t.Error("invalid variable name, expected ", vn, ", got ", v.Name())
+		}
+
+		if v.Type() != VarType(i) {
+			t.Error("invalid variable type. expected ", VarType(i).String(), ", got ", v.Type())
+		}
 
 		in := v.Int()
 		b := v.Bool()
@@ -182,19 +197,49 @@ func TestVariableUpdate(t *testing.T) {
 			t.Error("cannot create variable "+vn+" of type "+VarType(i).String(), err)
 		}
 
+		// update non-existent (by name) variable
+		if err = global.Update("fake_var", VtInt, 100); err == nil {
+			t.Error("updating non-existent variable fake_var")
+		}
+
 		// update
 		switch VarType(i) {
 		case VtInt:
 			err = global.Update(vn, vt, td[i+4].i)
 
+			// update non-existent (by type) variable
+			if errr := global.Update(vn, VtString, "200"); errr == nil {
+				t.Error("updating non-existent variable ", vn, ":VtString")
+			}
+
+			// update by wrong type
+			if errr := global.Update(vn, vt, "200"); errr == nil {
+				t.Error("updating variable ", vn, " type VtInt with string(\"200\")")
+			}
+
 		case VtBool:
 			err = global.Update(vn, vt, td[i+4].b)
+
+			// update by wrong type
+			if errr := global.Update(vn, vt, "200"); errr == nil {
+				t.Error("updating variable ", vn, " type VtBool with string(\"200\")")
+			}
 
 		case VtString:
 			err = global.Update(vn, vt, td[i+4].s)
 
+			// update by wrong type
+			if errr := global.Update(vn, vt, 200); errr == nil {
+				t.Error("updating variable ", vn, " type VtString with int(\"200\")")
+			}
+
 		case VtFloat:
 			err = global.Update(vn, vt, td[i+4].f)
+
+			// update by wrong type
+			if errr := global.Update(vn, vt, "200"); errr == nil {
+				t.Error("updating variable ", vn, " type VtFloat with string(\"200\")")
+			}
 		}
 
 		if err != nil {

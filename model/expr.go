@@ -61,21 +61,21 @@ func (v *Variable) update(newVal interface{}) error {
 
 	case VtBool:
 		if b, ok := newVal.(bool); !ok {
-			return NewModelError(uuid.Nil, fmt.Sprintf("couldn't convert %v to int", newVal), nil)
+			return NewModelError(uuid.Nil, fmt.Sprintf("couldn't convert %v to bool", newVal), nil)
 		} else {
 			v.value = b
 		}
 
 	case VtString:
 		if s, ok := newVal.(string); !ok {
-			return NewModelError(uuid.Nil, fmt.Sprintf("couldn't convert %v to int", newVal), nil)
+			return NewModelError(uuid.Nil, fmt.Sprintf("couldn't convert %v to string", newVal), nil)
 		} else {
 			v.value = s
 		}
 
 	case VtFloat:
 		if f, ok := newVal.(float64); !ok {
-			return NewModelError(uuid.Nil, fmt.Sprintf("couldn't convert %v to int", newVal), nil)
+			return NewModelError(uuid.Nil, fmt.Sprintf("couldn't convert %v to float64", newVal), nil)
 		} else {
 			v.value = f
 		}
@@ -107,7 +107,7 @@ func (v *Variable) Int() int {
 		s := v.value.(string)
 		if f, err := strconv.ParseFloat(s, 64); err != nil {
 			panic("cannot convert string var " + v.name +
-				"[" + s + "] to int" + err.Error())
+				"[" + s + "] to float64" + err.Error())
 		} else {
 			i = int(math.Round(f))
 		}
@@ -379,10 +379,11 @@ const (
 
 type Expression struct {
 	NamedElement
-	language string // Formal Expression language (FEEL) in URI format
-	body     string
-	etype    ExpressionType
-	retType  VarType
+	language   string // Formal Expression language (FEEL) in URI format
+	body       string
+	etype      ExpressionType
+	retType    VarType
+	calculated bool
 }
 
 func (e Expression) Type() ExpressionType {
