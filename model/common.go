@@ -81,20 +81,23 @@ type Error struct {
 type FlowElementType uint8
 
 const (
-	EtActivity FlowElementType = iota
+	EtUnspecified FlowElementType = iota
+	EtActivity
 	EtEvent
 	EtGate
 	EtDataObject
 	EtDataAssociation
 	EtContainer
 	EtProcess
+	EtMessage
+	EtLane
 )
 
 // base for FlowNode(Activities, Events, Gates), Data Objects, Data Associations
 // and SequenceFlow
 type FlowElement struct {
 	NamedElement
-	container   *FlowElementsContainer
+	container   interface{}
 	audit       *ctr.Audit
 	monitor     *ctr.Monitor
 	elementType FlowElementType
@@ -102,6 +105,16 @@ type FlowElement struct {
 
 func (fe FlowElement) Type() FlowElementType {
 	return fe.elementType
+}
+
+func (fe FlowElement) Container() *FlowElementsContainer {
+	if fe.container == nil {
+		return nil
+	}
+
+	fec := fe.container.(*FlowElementsContainer)
+
+	return fec
 }
 
 // base for Activities, Gates and Events
@@ -114,39 +127,69 @@ type FlowNode struct {
 // base for Process, Sub-Process, Choreography and Sub-Choreography
 type FlowElementsContainer struct {
 	FlowElement
-	containers []*FlowElementsContainer
-	elements   []*FlowElement
+	containers []interface{}
+	elements   []interface{}
 }
 
-func (fec *FlowElementsContainer) InsertElement(fe *FlowElement) error {
+func (fec *FlowElementsContainer) InsertElement(fe interface{}) error {
+	ne, ok := fe.(*FlowElement)
+	if !ok {
+		return NewModelError(uuid.Nil, "couldn't insert element with no relation to FlowElement", nil)
+	}
+
 	if fe == nil {
-		return NewModelError(uuid.Nil, "Couldn't insert nil FlowElement into container", nil)
+		return NewModelError(uuid.Nil, "couldn't insert nil FlowElement into container", nil)
 	}
 
 	for _, e := range fec.elements {
-		if e.id == fe.id {
+		el, ok := e.(*FlowElement)
+		if !ok {
+			return NewModelError(uuid.Nil, "couldn't cast element to FlowElement", nil)
+		}
+
+		if ne.id == el.id {
 			return NewModelError(uuid.Nil,
-				"Element "+fe.id.String()+" already exists in the contatiner "+fec.id.String(),
+				"Element "+ne.id.String()+" already exists in the contatiner "+fec.id.String(),
 				nil)
 		}
 	}
 
 	fec.elements = append(fec.elements, fe)
-	fe.container = fec
+	ne.container = fec
 
 	return nil
 }
+func (fec *FlowElementsContainer) Elements(ets FlowElementType) []interface{} {
+	fes := []interface{}{}
 
-func (fec *FlowElementsContainer) Elements() []Id {
-	fes := []Id{}
+	for i, e := range fec.elements {
+		fe, ok := e.(*FlowElement)
+		if !ok {
+			panic(fmt.Sprintf("couldn't cast %d elemtnt of %v container to *FlowElelement", i, fec.id))
+		}
 
-	for _, e := range fec.elements {
-		fes = append(fes, e.id)
+		if ets == EtUnspecified || fe.elementType == ets {
+			fes = append(fes, e)
+		}
 	}
 
 	return fes
 }
 
+func (fec *FlowElementsContainer) GetElementByName(et FlowElementType, en string) interface{} {
+
+	for _, el := range fec.Elements(et) {
+		e, ok := el.(*FlowElement)
+		if !ok {
+			panic(fmt.Sprintf("couldn't convert element %v into *FlowElement", el))
+		}
+		if e.Name() == en {
+			return el
+		}
+	}
+
+	return nil
+}
 func (fec *FlowElementsContainer) RemoveElement(id Id) error {
 	if id == Id(uuid.Nil) {
 		return NewModelError(uuid.Nil, "Couldn't remove element with Nil id", nil)
@@ -155,8 +198,13 @@ func (fec *FlowElementsContainer) RemoveElement(id Id) error {
 	var fe *FlowElement
 	pos := -1
 	for i, e := range fec.elements {
-		if e.id == id {
-			pos, fe = i, e
+		el, ok := e.(*FlowElement)
+		if !ok {
+			return NewModelError(uuid.Nil, "couldn't cast element to FlowElement", nil)
+		}
+
+		if el.id == id {
+			pos, fe = i, el
 			break
 		}
 	}
