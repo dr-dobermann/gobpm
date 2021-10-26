@@ -78,7 +78,6 @@ func newMessage(p *Process, mn string, dir MessageFlowDirection, vars ...Message
 					Documentation: Documentation{"", ""},
 				},
 				name: mn},
-			container:   &p.FlowElementsContainer,
 			elementType: EtMessage},
 		direction: dir,
 		vList:     vl}, nil

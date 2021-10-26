@@ -97,7 +97,6 @@ const (
 // and SequenceFlow
 type FlowElement struct {
 	NamedElement
-	container   interface{}
 	audit       *ctr.Audit
 	monitor     *ctr.Monitor
 	elementType FlowElementType
@@ -107,119 +106,11 @@ func (fe FlowElement) Type() FlowElementType {
 	return fe.elementType
 }
 
-func (fe FlowElement) Container() *FlowElementsContainer {
-	if fe.container == nil {
-		return nil
-	}
-
-	fec := fe.container.(FlowElementsContainer)
-
-	return &fec
-}
-
 // base for Activities, Gates and Events
 type FlowNode struct {
 	FlowElement
 	incoming  []*SequenceFlow
 	outcoming []*SequenceFlow
-}
-
-// base for Process, Sub-Process, Choreography and Sub-Choreography
-type FlowElementsContainer struct {
-	FlowElement
-	elements []interface{}
-}
-
-func (fec *FlowElementsContainer) InsertElement(fe interface{}) error {
-	if fe == nil {
-		return NewModelError(uuid.Nil,
-			fmt.Sprintf("couldn't insert a nil element into container %v", fec), nil)
-	}
-
-	ne, ok := fe.(FlowElement)
-	if !ok {
-		return NewModelError(uuid.Nil,
-			fmt.Sprintf("couldn't insert element non-casting to FlowElement. Has %T type", fe), nil)
-	}
-
-	for _, e := range fec.elements {
-		el, ok := e.(*FlowElement)
-		if !ok {
-			return NewModelError(uuid.Nil, "couldn't cast element to FlowElement", nil)
-		}
-
-		if ne.id == el.id {
-			return NewModelError(uuid.Nil,
-				"Element "+ne.id.String()+" already exists in the contatiner "+fec.id.String(),
-				nil)
-		}
-	}
-
-	fec.elements = append(fec.elements, fe)
-	ne.container = fec
-
-	return nil
-}
-func (fec *FlowElementsContainer) Elements(ets FlowElementType) []interface{} {
-	fes := []interface{}{}
-
-	for i, e := range fec.elements {
-		fe, ok := e.(FlowElement)
-		if !ok {
-			panic(fmt.Sprintf("couldn't cast %d elemtnt of %v container to *FlowElelement", i, fec.id))
-		}
-
-		if ets == EtUnspecified || fe.elementType == ets {
-			fes = append(fes, e)
-		}
-	}
-
-	return fes
-}
-
-func (fec *FlowElementsContainer) GetElementByName(et FlowElementType, en string) interface{} {
-
-	for _, el := range fec.Elements(et) {
-		e, ok := el.(*FlowElement)
-		if !ok {
-			panic(fmt.Sprintf("couldn't convert element %v into *FlowElement", el))
-		}
-		if e.Name() == en {
-			return el
-		}
-	}
-
-	return nil
-}
-func (fec *FlowElementsContainer) RemoveElement(id Id) error {
-	if id == Id(uuid.Nil) {
-		return NewModelError(uuid.Nil, "Couldn't remove element with Nil id", nil)
-	}
-
-	var fe *FlowElement
-	pos := -1
-	for i, e := range fec.elements {
-		el, ok := e.(FlowElement)
-		if !ok {
-			return NewModelError(uuid.Nil, "couldn't cast element to FlowElement", nil)
-		}
-
-		if el.id == id {
-			pos, fe = i, &el
-			break
-		}
-	}
-
-	if pos == -1 {
-		return NewModelError(uuid.Nil,
-			"Element "+id.String()+" doesn't found in the container "+fec.id.String(),
-			nil)
-	}
-
-	fe.container = nil
-	fec.elements = append(fec.elements[:pos], fec.elements[pos+1:]...)
-
-	return nil
 }
 
 type SequenceFlow struct {
