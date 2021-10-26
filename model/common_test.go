@@ -125,7 +125,7 @@ func TestElementContainer4Elements(t *testing.T) {
 		elements: make([]interface{}, 0),
 	}
 
-	fe := &FlowElement{
+	fe := FlowElement{
 		NamedElement: NamedElement{
 			BaseElement: BaseElement{
 				id:            NewID(),
@@ -144,13 +144,13 @@ func TestElementContainer4Elements(t *testing.T) {
 	}
 
 	// check link to container
-	if fe.Container() == nil || fe.Container().ID() != fec.ID() {
+	if fe.Container() != nil && fe.Container().ID() != fec.ID() {
 		t.Error("Linking to container error")
 	}
 
 	// check inserted element
 	if len(fec.elements) == 1 {
-		fe0 := fec.elements[0].(*FlowElement)
+		fe0 := fec.elements[0].(FlowElement)
 		if fe0.ID() != fe.ID() {
 			t.Error("Invalid element was saved to container")
 		}
@@ -173,9 +173,9 @@ func TestElementContainer4Elements(t *testing.T) {
 		t.Error("Error ilsting elements")
 	}
 
-	e := el[0].(*FlowElement)
+	e := el[0].(FlowElement)
 	if err := fec.RemoveElement(e.id); err != nil {
-		t.Error("Error removing element")
+		t.Error("Error removing element", err)
 	}
 
 	if len(fec.elements) != 0 || fe.container != nil {

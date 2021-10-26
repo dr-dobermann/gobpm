@@ -112,9 +112,9 @@ func (fe FlowElement) Container() *FlowElementsContainer {
 		return nil
 	}
 
-	fec := fe.container.(*FlowElementsContainer)
+	fec := fe.container.(FlowElementsContainer)
 
-	return fec
+	return &fec
 }
 
 // base for Activities, Gates and Events
@@ -127,18 +127,19 @@ type FlowNode struct {
 // base for Process, Sub-Process, Choreography and Sub-Choreography
 type FlowElementsContainer struct {
 	FlowElement
-	containers []interface{}
-	elements   []interface{}
+	elements []interface{}
 }
 
 func (fec *FlowElementsContainer) InsertElement(fe interface{}) error {
-	ne, ok := fe.(*FlowElement)
-	if !ok {
-		return NewModelError(uuid.Nil, "couldn't insert element with no relation to FlowElement", nil)
+	if fe == nil {
+		return NewModelError(uuid.Nil,
+			fmt.Sprintf("couldn't insert a nil element into container %v", fec), nil)
 	}
 
-	if fe == nil {
-		return NewModelError(uuid.Nil, "couldn't insert nil FlowElement into container", nil)
+	ne, ok := fe.(FlowElement)
+	if !ok {
+		return NewModelError(uuid.Nil,
+			fmt.Sprintf("couldn't insert element non-casting to FlowElement. Has %T type", fe), nil)
 	}
 
 	for _, e := range fec.elements {
@@ -163,7 +164,7 @@ func (fec *FlowElementsContainer) Elements(ets FlowElementType) []interface{} {
 	fes := []interface{}{}
 
 	for i, e := range fec.elements {
-		fe, ok := e.(*FlowElement)
+		fe, ok := e.(FlowElement)
 		if !ok {
 			panic(fmt.Sprintf("couldn't cast %d elemtnt of %v container to *FlowElelement", i, fec.id))
 		}
@@ -198,13 +199,13 @@ func (fec *FlowElementsContainer) RemoveElement(id Id) error {
 	var fe *FlowElement
 	pos := -1
 	for i, e := range fec.elements {
-		el, ok := e.(*FlowElement)
+		el, ok := e.(FlowElement)
 		if !ok {
 			return NewModelError(uuid.Nil, "couldn't cast element to FlowElement", nil)
 		}
 
 		if el.id == id {
-			pos, fe = i, el
+			pos, fe = i, &el
 			break
 		}
 	}

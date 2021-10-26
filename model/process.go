@@ -1,6 +1,8 @@
 package model
 
 import (
+	"fmt"
+
 	"github.com/dr-dobermann/gobpm/ctr"
 	"github.com/google/uuid"
 )
@@ -39,12 +41,10 @@ func NewProcess(pid Id, nm string, ver string) *Process {
 		FlowElement: FlowElement{
 			NamedElement: NamedElement{
 				BaseElement: BaseElement{
-					id:            pid,
-					Documentation: Documentation{"", ""}},
+					id: pid},
 				name: nm},
 			elementType: EtProcess},
-		containers: make([]interface{}, 0),
-		elements:   make([]interface{}, 0)},
+		elements: make([]interface{}, 0)},
 		version:  ver,
 		nodes:    []Node{},
 		flows:    []*SequenceFlow{},
@@ -81,13 +81,12 @@ func NewProcessModelError(pid Id, m string, err error) error {
 }
 
 func (p *Process) NewLane(nm string) error {
-	if len(nm) == 0 {
-		return NewProcessModelError(p.id, "couldn't add non-named lane", nil)
-	}
 
-	if _, ok := p.lanes[nm]; ok {
-		return NewProcessModelError(p.id,
-			"Lane ["+nm+"] already exists", nil)
+	if len(nm) > 0 {
+		if ln := p.GetElementByName(EtLane, nm); ln != nil {
+			return NewProcessModelError(p.id,
+				"Lane ["+nm+"] already exists", nil)
+		}
 	}
 
 	l := Lane{FlowElementsContainer: FlowElementsContainer{
@@ -96,16 +95,14 @@ func (p *Process) NewLane(nm string) error {
 				BaseElement: BaseElement{
 					id: NewID()},
 				name: nm},
-			container: p,
-		},
-	}}
+			container: p},
+		elements: make([]interface{}, 0)}}
 
 	if len(l.name) == 0 {
 		l.name = "Lane " + l.id.String()
 	}
 
-	p.lanes[l.name] = l
-	if err := p.FlowElementsContainer.InsertElement(&l.FlowElement); err != nil {
+	if err := p.InsertElement(l); err != nil {
 		return NewProcessModelError(p.id,
 			"couldn't add lane "+nm+" as process elelment", err)
 	}
@@ -113,27 +110,34 @@ func (p *Process) NewLane(nm string) error {
 	return nil
 }
 
-func (p *Process) Lanes() []string {
-	ln := []string{}
+func (p *Process) Lanes() []*Lane {
+	ln := []*Lane{}
 
-	for l := range p.lanes {
-		ln = append(ln, l)
+	for _, l := range p.Elements(EtLane) {
+		lane, ok := l.(*Lane)
+		if !ok {
+			panic(fmt.Sprintf("couldn't cast %v into *Lane in process %v", l, p.id))
+		}
+		ln = append(ln, lane)
 	}
 
 	return ln
 }
 
 func (p *Process) RemoveLane(ln string) error {
-	if _, ok := p.lanes[ln]; !ok {
+	l, ok := p.GetElementByName(EtLane, ln).(*Lane)
+	if l == nil || !ok {
 		return NewProcessModelError(p.id, "lane ["+ln+"] isn't found", nil)
 	}
 
-	if len(p.Elements(EtLane)) > 0 {
+	if len(l.elements) > 0 {
 		return NewProcessModelError(p.id,
 			"couldn't remove non-empty lane ["+ln+"]", nil)
 	}
 
-	delete(p.lanes, ln)
+	if err := p.RemoveElement(l.id); err != nil {
+		return NewProcessModelError(p.id, "couldn't remove Lane "+ln, err)
+	}
 
 	return nil
 }

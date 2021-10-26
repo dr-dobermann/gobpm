@@ -92,7 +92,7 @@ func TestProcessLanes(t *testing.T) {
 	n := 2
 	for _, l := range ln {
 		for _, r := range res {
-			if l == r {
+			if l == r.name {
 				n--
 				break
 			}
@@ -113,7 +113,7 @@ func TestProcessLanes(t *testing.T) {
 		t.Error("couldn't remove lane ", ln[0], " : ", err)
 	}
 	res = p.Lanes()
-	if len(res) != 1 || res[0] != ln[1] {
+	if len(res) != 1 || res[0].name != ln[1] {
 		t.Error("couldn't remove lane. Got lane's names ", res)
 	}
 }
