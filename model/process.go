@@ -92,12 +92,13 @@ func (p *Process) NewLane(nm string) error {
 		NamedElement: NamedElement{
 			BaseElement: BaseElement{
 				id: NewID()},
-			name: nm}},
+			name: nm},
+		elementType: EtLane},
 		process: p,
 		nodes:   []*FlowNode{}}
 
 	if len(nm) == 0 {
-		nm = "Lane " + l.id.String()
+		l.name = "Lane " + l.id.String()
 	}
 
 	p.lanes[l.name] = &l
