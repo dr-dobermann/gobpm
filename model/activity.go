@@ -48,6 +48,10 @@ const (
 	AtBusinessRuleTask
 	AtScriptTask
 	AtCustomTask // the task with user-defined function
+
+	// temporary tasks until DMN realization
+	AtStoreTask
+	AtCalculateTask
 )
 
 type Activity struct {
@@ -81,6 +85,7 @@ func (a Activity) Type() ActivityType {
 	return a.aType
 }
 
+//------------------ Standard tasks -------------------------------------------
 type GenericTask struct {
 	Activity
 }
@@ -122,7 +127,7 @@ type UserTask struct {
 	priority   int
 }
 
-// ------------- Sub-Processes ------------------------------
+// ------------- Ad-Hoc Sub-Processes -----------------------------------------
 type AdHocOrdering uint8
 
 const (
@@ -137,11 +142,55 @@ type AdHocSubProc struct {
 	CancelRemainingInstances bool
 }
 
+//------------ Global task ----------------------------------------------------
 type GlobalTask struct {
 	CallableElement
 	resources []ResourceRole
 }
 
+//------------ Task interfaces ------------------------------------------------
 type Task interface {
 	Exec(ctx context.Context, pi *ProcessInstance) error
+}
+
+//------------ Special tasks --------------------------------------------------
+// Those tasks are introduced until DMN-engine built
+// As soon as DMN will be realized those task will become unneccessary
+//-----------------------------------------------------------------------------
+
+//StoreTask stores a bunch of variables into local VarStore of process instance
+type StoreTask struct {
+	Activity
+	vars []VarDefinition
+}
+
+func (st StoreTask) Exec(ctx context.Context, pi *ProcessInstance) error {
+
+	return nil
+}
+
+// Calc function provides generic interface to custom fuctions which
+// could be expressed out as equation
+//               out = F(in)
+// where in and out variables mapped to the variables from the Process
+// Instance local VarStorage. For a success mapping the variables
+// should have identical names and types.
+// In case user needs a constant in equation such as x**2,
+// variable doesn't have a name, only type and value
+// If output variable doesn't have correlated variable in the
+// local VarStore, a new variable would be created
+type CalcFunc func(
+	ctx context.Context,
+	pi *ProcessInstance,
+	in []VarDefinition,
+	out []VarDefinition) error
+
+type CalculateTask struct {
+	Activity
+	funcs []CalcFunc
+}
+
+func (ct CalculateTask) Exec(ctx context.Context, pi *ProcessInstance) error {
+
+	return nil
 }

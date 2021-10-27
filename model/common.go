@@ -125,7 +125,7 @@ type SequenceFlow struct {
 	targetRef Id
 }
 
-type CallableElement struc	t {
+type CallableElement struct {
 	NamedElement
 	interfaces []*Interface
 	ioSpec     InputOutputSpecification
