@@ -2,14 +2,14 @@ package model
 
 import "context"
 
-type TaskClass uint8
+type ActivityClass uint8
 
 const (
-	Abstract TaskClass = 1 << iota
-	Loop
-	MultiInstance
-	Compensation
-	Call
+	AcAbstract ActivityClass = 1 << iota
+	AcLoop
+	AcMultiInstance
+	AcCompensation
+	AcCall
 )
 
 type LoopDef struct {
@@ -33,6 +33,23 @@ type ResourceRole struct {
 type Transaction struct {
 }
 
+type CustomTaskInvoker interface {
+	Invoke(pi *ProcessInstance) error
+}
+
+type ActivityType uint8
+
+const (
+	AtGenericTask ActivityType = iota
+	AtUserTask
+	AtRecieveTask
+	AtSendTask
+	AtServiceTask
+	AtBusinessRuleTask
+	AtScriptTask
+	AtCustomTask // the task with user-defined function
+)
+
 type Activity struct {
 	FlowNode
 	loop        *LoopDef
@@ -40,16 +57,32 @@ type Activity struct {
 	// conditionExpressions on other outgoing Sequence Flows evaluate
 	// to true. The default Sequence Flow should not have a
 	// conditionExpression. Any such Expression SHALL be ignored
-	class          TaskClass
+	class          ActivityClass
+	aType          ActivityType
 	boundaryEvents []*Event
 	data           InputOutputSpecification
 	// not empty in case the Activity used as CallActivity
 	calledElement *CallableElement
 	transaction   *Transaction
+
+	// variables should be in the instance's VarStore
+	// _before_ Task starts execution
+	input []VarDefinition
+	// variables should be in the instance's VarStore
+	// _after_ Tasks finishes execution
+	output []VarDefinition
 }
 
-func (a Activity) Class() TaskClass {
+func (a Activity) Class() ActivityClass {
 	return a.class
+}
+
+func (a Activity) Type() ActivityType {
+	return a.aType
+}
+
+type GenericTask struct {
+	Activity
 }
 
 type ServiceTask struct {
@@ -110,5 +143,5 @@ type GlobalTask struct {
 }
 
 type Task interface {
-	Run(ctx context.Context) error
+	Exec(ctx context.Context, pi *ProcessInstance) error
 }

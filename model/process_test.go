@@ -119,12 +119,23 @@ func TestProcessLanes(t *testing.T) {
 }
 
 func TestNodesList(t *testing.T) {
-	// p := NewProcess(Id(uuid.Nil), "test", "0.1.0")
+	p := NewProcess(Id(uuid.Nil), "test", "0.1.0")
 
-	// n := NewOutputTask("")
+	t1 := GenericTask{
+		Activity: Activity{
+			FlowNode: FlowNode{
+				FlowElement: FlowElement{
+					NamedElement: NamedElement{
+						BaseElement: BaseElement{
+							id: NewID()},
+						name: "Task1"},
+					elementType: EtActivity}},
+			class: AcAbstract,
+			aType: AtGenericTask}}
+	t1.output = append(t1.output, VarDefinition{"x", VtInt, 2})
 
-	// err := p.AddNode(n Node)
-	// if err != nil {
-	// 	t.Error("Couldn't add node ")
-	// }
+	n, err := p.AddTask("task1", AtGenericTask, nil, &t1, "")
+	if n == nil || err != nil {
+		t.Error("couldn't add task1")
+	}
 }

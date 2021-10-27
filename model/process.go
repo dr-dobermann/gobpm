@@ -11,6 +11,10 @@ type Lane struct {
 	nodes   []*FlowNode
 }
 
+type ProcessInstance struct {
+	vs VarStore
+}
+
 type Process struct {
 	FlowElement
 	version     string
@@ -155,4 +159,14 @@ func (p *Process) AddMessage(mn string,
 	}
 
 	return m, nil
+}
+
+func (p *Process) AddTask(
+	tn string,
+	tt ActivityType,
+	pNode *Node,
+	t Task,
+	ln string) (Node, error) {
+
+	return nil, nil
 }

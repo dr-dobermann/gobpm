@@ -31,6 +31,12 @@ type Variable struct {
 	prec int
 }
 
+type VarDefinition struct {
+	Name  string
+	Type  VarType
+	Value interface{}
+}
+
 func (v *Variable) Name() string {
 	return v.name
 }
