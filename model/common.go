@@ -1,7 +1,6 @@
 package model
 
 import (
-	"context"
 	"fmt"
 	"io"
 
@@ -106,23 +105,120 @@ func (fe FlowElement) Type() FlowElementType {
 	return fe.elementType
 }
 
+type Node interface {
+	FloatNode() *FlowNode
+	BindToProcess(p *Process, laneName string)
+	// ConnectFlow connects SequenceFlow to incoming or outcoming
+	// slot of Node.
+	// if se is SeSource then Node is the source end of the sequence,
+	// else the Node is the target of the sequence
+	ConnectFlow(sf *SequenceFlow, se SequenceEnd) error
+}
+
 // base for Activities, Gates and Events
 type FlowNode struct {
 	FlowElement
+	process   *Process
+	instance  *ProcessInstance
+	laneName  string
 	incoming  []*SequenceFlow
 	outcoming []*SequenceFlow
 }
 
+func (fn *FlowNode) BindToProcess(p *Process, laneName string) {
+	if p == nil {
+		panic("couldn't bind task to a nil process")
+	}
+
+	if len(laneName) == 0 {
+		panic("lane name shouldn't be empty for task " + fn.name)
+	}
+
+	fn.process = p
+	fn.laneName = laneName
+}
+
+func (fn *FlowNode) ConnectFlow(sf *SequenceFlow, se SequenceEnd) error {
+
+	if sf == nil {
+		return NewProcessModelError(fn.process.id,
+			fmt.Sprintf("couldn't bind nil flow to no node %s", fn.name),
+			nil)
+	}
+
+	// Node fn is the source of the sequence flow sf
+	if se == SeSource {
+		if fn.outcoming == nil {
+			fn.outcoming = make([]*SequenceFlow, 0)
+		}
+		// check for correctness
+		if sf.sourceRef.FloatNode().id != fn.id {
+			return NewProcessModelError(fn.process.id,
+				fmt.Sprintf("invalid connection. Node %v "+
+					"should be the source of the flow %v",
+					fn.id, sf.id),
+				nil)
+		}
+		// check for duplicates
+		for _, f := range fn.outcoming {
+			if f.targetRef.FloatNode().id == sf.targetRef.FloatNode().id {
+				return NewProcessModelError(fn.process.id,
+					fmt.Sprintf("sequence flow %v already "+
+						"connected to node %v",
+						sf.id, fn.id),
+					nil)
+			}
+		}
+
+		fn.outcoming = append(fn.outcoming, sf)
+
+	} else { // Node fn is the target of sequence flow sf
+		if fn.incoming == nil {
+			fn.incoming = make([]*SequenceFlow, 0)
+		}
+
+		if sf.targetRef.FloatNode().id != fn.id {
+			return NewProcessModelError(fn.process.id,
+				fmt.Sprintf("Node %v should be the target "+
+					"of the sequence flow %v", fn.id, sf.id),
+				nil)
+		}
+
+		for _, f := range fn.incoming {
+			if f.sourceRef.FloatNode().id == sf.sourceRef.FloatNode().id {
+				return NewProcessModelError(fn.process.id,
+					fmt.Sprintf("sequence flow %v already connected to "+
+						"Node %v", sf.id, fn.id),
+					nil)
+			}
+		}
+
+		fn.incoming = append(fn.incoming, sf)
+
+	}
+
+	return nil
+}
+
+type SequenceEnd uint8
+
+const (
+	SeSource SequenceEnd = iota
+	SeTarget
+)
+
 type SequenceFlow struct {
 	FlowElement
+	process  *Process
+	instance *ProcessInstance
 	// Expression determines the possibility of
 	// using path over this SequenceFlow.
 	// Could be empty. If not, the path
 	// couldn't start from Parallel Gate or
 	// Event FloatNode
 	expr      *Expression
-	sourceRef Id
-	targetRef Id
+	sourceRef Node
+	targetRef Node
 }
 
 type CallableElement struct {
@@ -226,24 +322,6 @@ func (t *Token) Join(jt *Token) *Token {
 	jt.state = TSInactive
 
 	return t
-}
-
-type FlowDirection uint8
-
-const (
-	FdIncoming FlowDirection = iota
-	FdOutcoming
-)
-
-type Node interface {
-	ID() Id
-	ProcessToken(ctx context.Context, t *Token) (map[*Token]*SequenceFlow, error)
-	// Link links one Node to another via SequenceFlow object.
-	// Should check if the both Nodes related to the same Model
-	Link(to Node) (*SequenceFlow, error)
-	IsEqual(n Node) bool
-	PutOn(l *Lane) error
-	GetFlows(dir FlowDirection) []*SequenceFlow
 }
 
 type Persister interface {

@@ -52,6 +52,7 @@ const (
 	// temporary tasks until DMN realization
 	AtStoreTask
 	AtCalculateTask
+	AtOutputTask
 )
 
 type Activity struct {
@@ -81,11 +82,15 @@ func (a Activity) Class() ActivityClass {
 	return a.class
 }
 
-func (a Activity) Type() ActivityType {
+func (a Activity) ActivityType() ActivityType {
 	return a.aType
 }
 
-//------------------ Standard tasks -------------------------------------------
+func (a *Activity) FloatNode() *FlowNode {
+	return &a.FlowNode
+}
+
+// ------------------ Standard tasks -------------------------------------------
 type GenericTask struct {
 	Activity
 }
@@ -142,31 +147,49 @@ type AdHocSubProc struct {
 	CancelRemainingInstances bool
 }
 
-//------------ Global task ----------------------------------------------------
+// ------------ Global task ----------------------------------------------------
 type GlobalTask struct {
 	CallableElement
 	resources []ResourceRole
 }
 
-//------------ Task interfaces ------------------------------------------------
+// ------------ Task interfaces ------------------------------------------------
 type Task interface {
+	Node
 	Exec(ctx context.Context, pi *ProcessInstance) error
 }
 
-//------------ Special tasks --------------------------------------------------
+// ------------ Special tasks --------------------------------------------------
 // Those tasks are introduced until DMN-engine built
 // As soon as DMN will be realized those task will become unneccessary
-//-----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 
-//StoreTask stores a bunch of variables into local VarStore of process instance
+// StoreTask stores a bunch of variables into local VarStore of process instance
 type StoreTask struct {
 	Activity
 	vars []VarDefinition
 }
 
-func (st StoreTask) Exec(ctx context.Context, pi *ProcessInstance) error {
+func (st *StoreTask) Exec(ctx context.Context, pi *ProcessInstance) error {
 
 	return nil
+}
+
+func (st *StoreTask) FloatNode() *FlowNode {
+	return &st.FlowNode
+}
+
+func (st *StoreTask) BindToProcess(p *Process, laneName string) {
+	if p == nil {
+		panic("couldn't bind task to a nil process")
+	}
+
+	if len(laneName) == 0 {
+		panic("lane name shouldn't be empty for task " + st.name)
+	}
+
+	st.process = p
+	st.laneName = laneName
 }
 
 // Calc function provides generic interface to custom fuctions which
@@ -190,7 +213,20 @@ type CalculateTask struct {
 	funcs []CalcFunc
 }
 
-func (ct CalculateTask) Exec(ctx context.Context, pi *ProcessInstance) error {
+func (ct *CalculateTask) Exec(ctx context.Context, pi *ProcessInstance) error {
 
 	return nil
+}
+
+type OutputTask struct {
+	Activity
+	vars []VarDefinition
+}
+
+func (ot *OutputTask) Exec(ctx context.Context, pi *ProcessInstance) error {
+	return nil
+}
+
+func (ot *OutputTask) FloatNode() *FlowNode {
+	return &ot.FlowNode
 }

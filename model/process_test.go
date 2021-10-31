@@ -118,25 +118,89 @@ func TestProcessLanes(t *testing.T) {
 	}
 }
 
-func TestNodesList(t *testing.T) {
+func TestNodes(t *testing.T) {
 	p := NewProcess(Id(uuid.Nil), "test", "0.1.0")
 
-	t1 := StoreTask{
+	tn1 := "Task1"
+	t1 := &StoreTask{
 		Activity: Activity{
 			FlowNode: FlowNode{
 				FlowElement: FlowElement{
 					NamedElement: NamedElement{
 						BaseElement: BaseElement{
 							id: NewID()},
-						name: "Task1"},
+						name: tn1},
 					elementType: EtActivity}},
 			class:  AcAbstract,
 			aType:  AtStoreTask,
 			output: []VarDefinition{{"x", VtInt, nil}}},
 		vars: []VarDefinition{{"x", VtInt, 2}}}
 
-	n, err := p.AddTask("task1", AtGenericTask, nil, &t1, "")
-	if n == nil || err != nil {
-		t.Error("couldn't add task1")
+	ln := "Lane 1"
+	err := p.NewLane(ln)
+	if err != nil {
+		t.Error("couldn't add lane "+ln+" ; ", err)
+	}
+
+	err = p.AddTask(t1, ln)
+	if err != nil {
+		t.Error("couldn't add task1", err)
+	}
+
+	if len(p.tasks) != 1 {
+		t.Error("task wasn't added to process")
+	}
+
+	if len(p.lanes[ln].nodes) == 0 ||
+		p.lanes[ln].nodes[0].FloatNode().id != t1.id {
+		t.Error("task washn't added to lane " + ln)
+	}
+
+	if err = p.AddTask(nil, ""); err == nil {
+		t.Error("Nil task added")
+	}
+
+	if t1.laneName != p.lanes[ln].name {
+		t.Error("Task ", t1.name, " washn't linked to lane ", ln)
+	}
+
+	// trying to add a duplicate
+	if err = p.AddTask(t1, ln); err == nil {
+		t.Error("duplicate task added")
+	}
+
+	tn2 := "Task2"
+	t2 := &OutputTask{
+		Activity: Activity{
+			FlowNode: FlowNode{
+				FlowElement: FlowElement{
+					NamedElement: NamedElement{
+						BaseElement: BaseElement{
+							id: NewID()},
+						name: tn2},
+					elementType: EtActivity}},
+			aType: AtOutputTask,
+			class: AcAbstract,
+			input: []VarDefinition{{"x", VtInt, nil}},
+		},
+		vars: []VarDefinition{{"x", VtInt, nil}}}
+
+	err = p.AddTask(t2, ln)
+	if err != nil {
+		t.Error("couldn't add t2")
+	}
+
+	err = p.LinkNodes(t1, t2, nil)
+	if err != nil {
+		t.Error("couldn;t link t1 and t2", err)
+	}
+
+	if len(p.flows) == 0 {
+		t.Fatal("there is no link registered in process")
+	}
+
+	if t1.outcoming[0].id != p.flows[0].id ||
+		t2.incoming[0].id != p.flows[0].id {
+		t.Error("invalid flow between t1 and t2")
 	}
 }

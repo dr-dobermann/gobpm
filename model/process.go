@@ -1,6 +1,8 @@
 package model
 
 import (
+	"fmt"
+
 	"github.com/dr-dobermann/gobpm/ctr"
 	"github.com/google/uuid"
 )
@@ -8,7 +10,22 @@ import (
 type Lane struct {
 	FlowElement
 	process *Process
-	nodes   []*FlowNode
+	nodes   []Node
+}
+
+func (l *Lane) addNode(n Node) error {
+
+	for _, ln := range l.nodes {
+		if ln.FloatNode().id == n.FloatNode().id {
+			return NewProcessModelError(l.process.id,
+				"Node "+n.FloatNode().name+"already exists on lane "+l.name,
+				nil)
+		}
+	}
+
+	l.nodes = append(l.nodes, n)
+
+	return nil
 }
 
 type ProcessInstance struct {
@@ -20,7 +37,7 @@ type Process struct {
 	version     string
 	supportedBy []string // processes supported this one
 	lanes       map[string]*Lane
-	nodes       []Node
+	tasks       []Task
 	flows       []*SequenceFlow
 
 	messages []*Message
@@ -49,7 +66,7 @@ func NewProcess(pid Id, nm string, ver string) *Process {
 			name: nm},
 		elementType: EtProcess},
 		version:  ver,
-		nodes:    []Node{},
+		tasks:    []Task{},
 		flows:    []*SequenceFlow{},
 		messages: make([]*Message, 0),
 		lanes:    make(map[string]*Lane)}
@@ -99,7 +116,7 @@ func (p *Process) NewLane(nm string) error {
 			name: nm},
 		elementType: EtLane},
 		process: p,
-		nodes:   []*FlowNode{}}
+		nodes:   []Node{}}
 
 	if len(nm) == 0 {
 		l.name = "Lane " + l.id.String()
@@ -161,12 +178,72 @@ func (p *Process) AddMessage(mn string,
 	return m, nil
 }
 
-func (p *Process) AddTask(
-	tn string,
-	tt ActivityType,
-	pNode *Node,
-	t Task,
-	ln string) (Node, error) {
+// AddTask adds a new task into the Process Model into lane named ln.
+// If t is nil, or ln is the wrong lane name the error would be
+// returned.
+func (p *Process) AddTask(t Task, ln string) error {
+	if t == nil {
+		return NewProcessModelError(p.id,
+			"сouldn't add nil task or task with an empty name", nil)
+	}
 
-	return nil, nil
+	l, ok := p.lanes[ln]
+	if !ok {
+		return NewProcessModelError(p.id, "cannot find lane "+ln, nil)
+	}
+
+	for _, pt := range p.tasks {
+		if pt.FloatNode().id == t.FloatNode().id {
+			return NewProcessModelError(p.id, "task "+t.FloatNode().name+
+				" already exists in the process", nil)
+		}
+	}
+	p.tasks = append(p.tasks, t)
+	l.addNode(t)
+
+	t.BindToProcess(p, l.name)
+
+	return nil
+}
+
+func (p *Process) LinkNodes(src Node, trg Node, sExpr *Expression) error {
+
+	if src == nil || trg == nil {
+		return NewProcessModelError(p.id,
+			fmt.Sprintf("trying to link nil-nodes. src: %v, dest: %v", src, trg),
+			nil)
+
+	}
+
+	if src.FloatNode().process == nil ||
+		src.FloatNode().process.id != p.id {
+		return NewProcessModelError(p.id,
+			fmt.Sprintf("src isnt't binded to process (%v)",
+				src.FloatNode().process),
+			nil)
+	}
+
+	if trg.FloatNode().process == nil ||
+		trg.FloatNode().process.id != p.id {
+		return NewProcessModelError(p.id,
+			fmt.Sprintf("src isnt't binded to process (%v)",
+				trg.FloatNode().process),
+			nil)
+	}
+
+	sf := &SequenceFlow{
+		FlowElement: FlowElement{
+			NamedElement: NamedElement{
+				BaseElement: BaseElement{
+					id: NewID()}}},
+		process:   p,
+		expr:      sExpr,
+		sourceRef: src,
+		targetRef: trg}
+	p.flows = append(p.flows, sf)
+
+	src.ConnectFlow(sf, SeSource)
+	trg.ConnectFlow(sf, SeTarget)
+
+	return nil
 }
