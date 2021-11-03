@@ -175,23 +175,6 @@ func (st *StoreTask) Exec(ctx context.Context, pi *ProcessInstance) error {
 	return nil
 }
 
-func (st *StoreTask) FloatNode() *FlowNode {
-	return &st.FlowNode
-}
-
-func (st *StoreTask) BindToProcess(p *Process, laneName string) {
-	if p == nil {
-		panic("couldn't bind task to a nil process")
-	}
-
-	if len(laneName) == 0 {
-		panic("lane name shouldn't be empty for task " + st.name)
-	}
-
-	st.process = p
-	st.laneName = laneName
-}
-
 // Calc function provides generic interface to custom fuctions which
 // could be expressed out as equation
 //               out = F(in)
