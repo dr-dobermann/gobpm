@@ -395,3 +395,16 @@ type Expression struct {
 func (e Expression) Type() ExpressionType {
 	return e.etype
 }
+
+func (e *Expression) Copy() *Expression {
+
+	ec := Expression{
+		NamedElement: e.NamedElement,
+		language:     e.language,
+		body:         e.body,
+		etype:        e.etype,
+		retType:      e.retType}
+	ec.id = NewID()
+
+	return &ec
+}

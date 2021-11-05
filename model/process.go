@@ -28,22 +28,83 @@ func (l *Lane) addNode(n Node) error {
 	return nil
 }
 
+// ProcessInstance represents a single run-time process instance
 type ProcessInstance struct {
-	vs VarStore
-}
-
-type Process struct {
-	FlowElement
-	version     string
-	supportedBy []string // processes supported this one
-	lanes       map[string]*Lane
-	tasks       []Task
-	flows       []*SequenceFlow
-
-	messages []*Message
+	// the copy of the process model the instance is based on
+	snapshot *Process
+	vs       VarStore
 
 	monitor *ctr.Monitor
 	audit   *ctr.Audit
+}
+
+type ProcessDataType uint8
+
+const (
+	PdtModel ProcessDataType = iota
+	PdtSnapshot
+)
+
+type Process struct {
+	FlowElement
+	version string
+	// supportedBy []string // processes supported this one
+	lanes map[string]*Lane
+	tasks []Task
+	flows []*SequenceFlow
+
+	dataType ProcessDataType
+
+	messages []*Message
+}
+
+func (p Process) Copy() *Process {
+
+	if p.dataType == PdtSnapshot {
+		return nil
+	}
+
+	pc := Process{
+		FlowElement: p.FlowElement,
+		lanes:       make(map[string]*Lane),
+		tasks:       make([]Task, 0),
+		flows:       make([]*SequenceFlow, 0),
+		dataType:    PdtSnapshot}
+
+	// copy lanes
+	for l := range p.lanes {
+		pc.NewLane(l)
+	}
+
+	tm := make(map[Id]Task)
+
+	// copy tasks and place them on lanes
+	for _, ot := range p.tasks {
+		t := ot.Copy(&pc)
+		tm[ot.FloatNode().id] = t
+		pc.tasks = append(pc.tasks, t)
+		pc.lanes[ot.FloatNode().laneName].addNode(t)
+	}
+
+	// copy sequence flows
+	for _, osf := range p.flows {
+		sf := SequenceFlow{
+			FlowElement: osf.FlowElement,
+			expr:        osf.expr.Copy(),
+			process:     &pc}
+
+		if osf.sourceRef != nil {
+			sf.sourceRef = tm[osf.sourceRef.FloatNode().id]
+		}
+
+		if osf.targetRef != nil {
+			sf.targetRef = tm[osf.targetRef.FloatNode().id]
+		}
+
+		pc.flows = append(pc.flows, &sf)
+	}
+
+	return &pc
 }
 
 func NewProcess(pid Id, nm string, ver string) *Process {

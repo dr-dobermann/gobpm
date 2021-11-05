@@ -156,6 +156,8 @@ type GlobalTask struct {
 // ------------ Task interfaces ------------------------------------------------
 type Task interface {
 	Node
+	// Copy returns a copy of the Task with a new Id
+	Copy(snapshot *Process) Task
 	Exec(ctx context.Context, pi *ProcessInstance) error
 }
 
@@ -168,6 +170,25 @@ type Task interface {
 type StoreTask struct {
 	Activity
 	vars []VarDefinition
+}
+
+func (st *StoreTask) Copy(snapshot *Process) Task {
+
+	stc := StoreTask{
+		Activity: Activity{
+			FlowNode: FlowNode{
+				FlowElement: st.FlowElement,
+				incoming:    make([]*SequenceFlow, len(st.incoming)),
+				outcoming:   make([]*SequenceFlow, len(st.outcoming)),
+			},
+		},
+		vars: make([]VarDefinition, len(st.vars))}
+
+	stc.process = snapshot
+	stc.id = NewID()
+	copy(stc.vars, st.vars)
+
+	return &stc
 }
 
 func (st *StoreTask) Exec(ctx context.Context, pi *ProcessInstance) error {
@@ -204,6 +225,25 @@ func (ct *CalculateTask) Exec(ctx context.Context, pi *ProcessInstance) error {
 type OutputTask struct {
 	Activity
 	vars []VarDefinition
+}
+
+func (ot *OutputTask) Copy(snapshot *Process) Task {
+
+	otc := OutputTask{
+		Activity: Activity{
+			FlowNode: FlowNode{
+				FlowElement: ot.FlowElement,
+				incoming:    make([]*SequenceFlow, len(ot.incoming)),
+				outcoming:   make([]*SequenceFlow, len(ot.outcoming)),
+			},
+		},
+		vars: make([]VarDefinition, len(ot.vars))}
+
+	otc.process = snapshot
+	otc.id = NewID()
+	copy(otc.vars, ot.vars)
+
+	return &otc
 }
 
 func (ot *OutputTask) Exec(ctx context.Context, pi *ProcessInstance) error {
