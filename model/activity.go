@@ -1,7 +1,5 @@
 package model
 
-import "context"
-
 type ActivityClass uint8
 
 const (
@@ -34,7 +32,7 @@ type Transaction struct {
 }
 
 type CustomTaskInvoker interface {
-	Invoke(pi *ProcessInstance) error
+	Invoke(t TaskDefinition) error
 }
 
 type ActivityType uint8
@@ -72,10 +70,10 @@ type Activity struct {
 
 	// variables should be in the instance's VarStore
 	// _before_ Task starts execution
-	input []VarDefinition
+	input []Variable
 	// variables should be in the instance's VarStore
 	// _after_ Tasks finishes execution
-	output []VarDefinition
+	output []Variable
 }
 
 func (a Activity) Class() ActivityClass {
@@ -149,12 +147,11 @@ type GlobalTask struct {
 	resources []ResourceRole
 }
 
-// ------------ Task interfaces ------------------------------------------------
-type Task interface {
+// ------------ TaskDefinition interfaces --------------------------------------
+type TaskDefinition interface {
 	Node
 	// Copy returns a copy of the Task with a new Id
-	Copy(snapshot *Process) Task
-	Exec(ctx context.Context, pi *ProcessInstance) error
+	Copy(snapshot *Process) TaskDefinition
 }
 
 // ------------ Special tasks --------------------------------------------------
@@ -165,10 +162,10 @@ type Task interface {
 // StoreTask stores a bunch of variables into local VarStore of process instance
 type StoreTask struct {
 	Activity
-	vars []VarDefinition
+	vars []Variable
 }
 
-func NewStoreTask(p *Process, n string, vl ...VarDefinition) *StoreTask {
+func NewStoreTask(p *Process, n string, vl ...Variable) *StoreTask {
 
 	id := NewID()
 
@@ -188,15 +185,15 @@ func NewStoreTask(p *Process, n string, vl ...VarDefinition) *StoreTask {
 				process: p},
 			class:  AcAbstract,
 			aType:  AtStoreTask,
-			output: []VarDefinition{}},
-		vars: []VarDefinition{}}
+			output: []Variable{}},
+		vars: []Variable{}}
 	st.output = append(st.output, vl...)
 	st.vars = append(st.vars, vl...)
 
 	return &st
 }
 
-func (st *StoreTask) Copy(snapshot *Process) Task {
+func (st *StoreTask) Copy(snapshot *Process) TaskDefinition {
 
 	stc := StoreTask{
 		Activity: Activity{
@@ -205,18 +202,13 @@ func (st *StoreTask) Copy(snapshot *Process) Task {
 				incoming:    []*SequenceFlow{},
 				outcoming:   []*SequenceFlow{}},
 		},
-		vars: make([]VarDefinition, len(st.vars))}
+		vars: make([]Variable, len(st.vars))}
 
 	stc.process = snapshot
 	stc.id = NewID()
 	copy(stc.vars, st.vars)
 
 	return &stc
-}
-
-func (st *StoreTask) Exec(ctx context.Context, pi *ProcessInstance) error {
-
-	return nil
 }
 
 // Calc function provides generic interface to custom fuctions which
@@ -228,29 +220,22 @@ func (st *StoreTask) Exec(ctx context.Context, pi *ProcessInstance) error {
 // In case user needs a constant in equation such as x**2,
 // variable doesn't have a name, only type and value
 // If output variable doesn't have correlated variable in the
-// local VarStore, a new variable would be created
+// local VarStore, a new variable would be created in VarStore
 type CalcFunc func(
-	ctx context.Context,
-	pi *ProcessInstance,
-	in []VarDefinition,
-	out []VarDefinition) error
+	in []Variable,
+	out []Variable) error
 
 type CalculateTask struct {
 	Activity
 	funcs []CalcFunc
 }
 
-func (ct *CalculateTask) Exec(ctx context.Context, pi *ProcessInstance) error {
-
-	return nil
-}
-
 type OutputTask struct {
 	Activity
-	vars []VarDefinition
+	vars []Variable
 }
 
-func NewOutputTask(p *Process, n string, vl ...VarDefinition) *OutputTask {
+func NewOutputTask(p *Process, n string, vl ...Variable) *OutputTask {
 
 	id := NewID()
 
@@ -270,16 +255,16 @@ func NewOutputTask(p *Process, n string, vl ...VarDefinition) *OutputTask {
 				process: p},
 			aType: AtOutputTask,
 			class: AcAbstract,
-			input: []VarDefinition{},
+			input: []Variable{},
 		},
-		vars: []VarDefinition{}}
+		vars: []Variable{}}
 	ot.input = append(ot.input, vl...)
 	ot.vars = append(ot.vars, vl...)
 
 	return &ot
 }
 
-func (ot *OutputTask) Copy(snapshot *Process) Task {
+func (ot *OutputTask) Copy(snapshot *Process) TaskDefinition {
 
 	otc := OutputTask{
 		Activity: Activity{
@@ -287,17 +272,13 @@ func (ot *OutputTask) Copy(snapshot *Process) Task {
 				FlowElement: ot.FlowElement,
 				incoming:    []*SequenceFlow{},
 				outcoming:   []*SequenceFlow{}}},
-		vars: make([]VarDefinition, len(ot.vars))}
+		vars: make([]Variable, len(ot.vars))}
 
 	otc.process = snapshot
 	otc.id = NewID()
 	copy(otc.vars, ot.vars)
 
 	return &otc
-}
-
-func (ot *OutputTask) Exec(ctx context.Context, pi *ProcessInstance) error {
-	return nil
 }
 
 func (ot *OutputTask) FloatNode() *FlowNode {

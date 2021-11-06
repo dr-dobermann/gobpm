@@ -129,7 +129,7 @@ func TestNodes(t *testing.T) {
 	p := NewProcess(Id(uuid.Nil), "test", "0.1.0")
 
 	tn1 := "Task1"
-	t1 := NewStoreTask(p, tn1, VarDefinition{"x", VtInt, nil})
+	t1 := NewStoreTask(p, tn1, *V("x", VtInt, nil))
 
 	ln := "Lane 1"
 	err := p.NewLane(ln)
@@ -175,7 +175,7 @@ func TestNodes(t *testing.T) {
 	}
 
 	tn2 := "Task2"
-	t2 := NewOutputTask(p, tn2, VarDefinition{"x", VtInt, nil})
+	t2 := NewOutputTask(p, tn2, *V("x", VtInt, nil))
 
 	err = p.AddTask(t2, ln)
 	if err != nil {
@@ -252,8 +252,11 @@ func TestProcessSnapshot(t *testing.T) {
 func createTestProcess(t *testing.T) *Process {
 	p := NewProcess(Id(uuid.Nil), "test", "0.1.0")
 
-	t1 := NewStoreTask(p, "Task 1", VarDefinition{"x", VtInt, 2})
-	t2 := NewOutputTask(p, "Task 2", VarDefinition{"x", VtInt, 0})
+	t1 := NewStoreTask(p, "Task 1", *V("x", VtInt, 2))
+	t2 := NewOutputTask(p, "Task 2", *V("x", VtInt, 0))
+	if t1 == nil || t2 == nil {
+		t.Fatal("couldn't create tasks for test process")
+	}
 
 	if err := p.NewLane("Lane 1"); err != nil {
 		t.Fatal("Couldn't add Lane 1 to tosting process : ", err)
@@ -267,7 +270,7 @@ func createTestProcess(t *testing.T) *Process {
 	}
 
 	if err := p.LinkNodes(t1, t2, nil); err != nil {
-		panic("couldn't link tasks in test process : " + err.Error())
+		t.Fatal("couldn't link tasks in test process : ", err)
 	}
 
 	return p

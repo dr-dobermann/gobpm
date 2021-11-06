@@ -123,7 +123,6 @@ type Node interface {
 type FlowNode struct {
 	FlowElement
 	process   *Process
-	instance  *ProcessInstance
 	laneName  string
 	incoming  []*SequenceFlow
 	outcoming []*SequenceFlow
@@ -226,8 +225,7 @@ const (
 
 type SequenceFlow struct {
 	FlowElement
-	process  *Process
-	instance *ProcessInstance
+	process *Process
 	// Expression determines the possibility of
 	// using path over this SequenceFlow.
 	// Could be empty. If not, the path

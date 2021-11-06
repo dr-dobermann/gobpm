@@ -3,7 +3,6 @@ package model
 import (
 	"fmt"
 
-	"github.com/dr-dobermann/gobpm/ctr"
 	"github.com/google/uuid"
 )
 
@@ -28,21 +27,11 @@ func (l *Lane) addNode(n Node) error {
 	return nil
 }
 
-// ProcessInstance represents a single run-time process instance
-type ProcessInstance struct {
-	// the copy of the process model the instance is based on
-	snapshot *Process
-	vs       VarStore
-
-	monitor *ctr.Monitor
-	audit   *ctr.Audit
-}
-
 type ProcessDataType uint8
 
 const (
-	PdtModel ProcessDataType = iota
-	PdtSnapshot
+	PdtModel    ProcessDataType = iota
+	PdtSnapshot                 // TODO: Add restiction on updating snapshot
 )
 
 type Process struct {
@@ -50,7 +39,7 @@ type Process struct {
 	version string
 	// supportedBy []string // processes supported this one
 	lanes map[string]*Lane
-	tasks []Task
+	tasks []TaskDefinition
 	flows []*SequenceFlow
 
 	dataType ProcessDataType
@@ -58,7 +47,7 @@ type Process struct {
 	messages []*Message
 }
 
-func (p *Process) GetTask(tid Id) Task {
+func (p *Process) GetTask(tid Id) TaskDefinition {
 	for _, t := range p.tasks {
 		if t.ID() == tid {
 			return t
@@ -77,7 +66,7 @@ func (p Process) Copy() *Process {
 	pc := Process{
 		FlowElement: p.FlowElement,
 		lanes:       make(map[string]*Lane),
-		tasks:       make([]Task, 0),
+		tasks:       make([]TaskDefinition, 0),
 		flows:       make([]*SequenceFlow, 0),
 		dataType:    PdtSnapshot}
 
@@ -86,7 +75,7 @@ func (p Process) Copy() *Process {
 		pc.NewLane(l)
 	}
 
-	tm := make(map[Id]Task)
+	tm := make(map[Id]TaskDefinition)
 
 	// copy tasks and place them on lanes
 	for _, ot := range p.tasks {
@@ -129,7 +118,7 @@ func NewProcess(pid Id, nm string, ver string) *Process {
 			name: nm},
 		elementType: EtProcess},
 		version:  ver,
-		tasks:    []Task{},
+		tasks:    []TaskDefinition{},
 		flows:    []*SequenceFlow{},
 		messages: make([]*Message, 0),
 		lanes:    make(map[string]*Lane)}
@@ -244,7 +233,7 @@ func (p *Process) AddMessage(mn string,
 // AddTask adds a new task into the Process Model into lane named ln.
 // If t is nil, or ln is the wrong lane name the error would be
 // returned.
-func (p *Process) AddTask(t Task, ln string) error {
+func (p *Process) AddTask(t TaskDefinition, ln string) error {
 	if t == nil {
 		return NewProcessModelError(p.id,
 			"сouldn't add nil task or task with an empty name", nil)

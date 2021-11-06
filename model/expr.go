@@ -4,8 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-
-	"github.com/google/uuid"
+	"time"
 )
 
 type VarType uint8
@@ -15,26 +14,24 @@ const (
 	VtBool
 	VtString
 	VtFloat
+	VtTime
 )
 
 func (vt VarType) String() string {
-	return []string{"Int", "Bool", "String", "Float"}[vt]
+	return []string{"Int", "Bool", "String", "Float", "Time"}[vt]
 }
 
 type Variable struct {
-	BaseElement
-	name        string
-	initialized bool
-	vtype       VarType
-	value       interface{}
+	name  string
+	vtype VarType
+	value interface{}
 	// float precision. Default 2
 	prec int
 }
 
-type VarDefinition struct {
-	Name  string
-	Type  VarType
-	Value interface{}
+// V creates new variable
+func V(n string, t VarType, v interface{}) *Variable {
+	return &Variable{n, t, v, 2}
 }
 
 func (v *Variable) Name() string {
@@ -60,32 +57,38 @@ func (v *Variable) update(newVal interface{}) error {
 	switch v.vtype {
 	case VtInt:
 		if i, ok := newVal.(int); !ok {
-			return NewModelError(uuid.Nil, fmt.Sprintf("couldn't convert %v to int", newVal), nil)
+			return NewModelError(fmt.Sprintf("couldn't convert %v to int", newVal), nil)
 		} else {
 			v.value = i
 		}
 
 	case VtBool:
 		if b, ok := newVal.(bool); !ok {
-			return NewModelError(uuid.Nil, fmt.Sprintf("couldn't convert %v to bool", newVal), nil)
+			return NewModelError(fmt.Sprintf("couldn't convert %v to bool", newVal), nil)
 		} else {
 			v.value = b
 		}
 
 	case VtString:
 		if s, ok := newVal.(string); !ok {
-			return NewModelError(uuid.Nil, fmt.Sprintf("couldn't convert %v to string", newVal), nil)
+			return NewModelError(fmt.Sprintf("couldn't convert %v to string", newVal), nil)
 		} else {
 			v.value = s
 		}
 
 	case VtFloat:
 		if f, ok := newVal.(float64); !ok {
-			return NewModelError(uuid.Nil, fmt.Sprintf("couldn't convert %v to float64", newVal), nil)
+			return NewModelError(fmt.Sprintf("couldn't convert %v to float64", newVal), nil)
 		} else {
 			v.value = f
 		}
 
+	case VtTime:
+		if t, ok := newVal.(time.Time); !ok {
+			return NewModelError(fmt.Sprintf("couldn't convert %v to Time", newVal), nil)
+		} else {
+			v.value = t
+		}
 	}
 
 	return nil
@@ -121,6 +124,10 @@ func (v *Variable) Int() int {
 	case VtFloat:
 		f := v.value.(float64)
 		i = int(f)
+
+	case VtTime:
+		t := v.value.(time.Time)
+		i = int(t.Unix())
 	}
 
 	return i
@@ -149,6 +156,10 @@ func (v *Variable) String() string {
 
 	case VtString:
 		s = v.value.(string)
+
+	case VtTime:
+		t := v.value.(time.Time)
+		s = t.String()
 	}
 
 	return s
@@ -214,32 +225,26 @@ func (v *Variable) Float64() float64 {
 			panic("couldn't transform string " +
 				s + " into float64 : " + err.Error())
 		}
+
+	case VtTime:
+		f = 0.0
 	}
 
 	return f
 }
 
-type varMap map[VarType]*Variable
-
 // varStore retpresents the variables store
-// there is one global store and stores in every single process instance
-// variables could have the same name but they should be different by value type
-type VarStore map[string]varMap
+type VarStore map[string]*Variable
 
-var global VarStore = make(VarStore)
+func (vs *VarStore) checkVar(vn string) bool {
+	_, ok := map[string]*Variable(*vs)[vn]
+
+	return ok
+}
 
 func (vs *VarStore) getVar(vn string, vt VarType, returnEmpty bool) *Variable {
-	vm := map[string]varMap(*vs)[vn]
-	if vm == nil {
-		if !returnEmpty {
-			return nil
-		}
 
-		vm = make(varMap)
-		map[string]varMap(*vs)[vn] = vm
-	}
-
-	v, ok := map[VarType]*Variable(vm)[vt]
+	v, ok := map[string]*Variable(*vs)[vn]
 
 	if !ok {
 		if !returnEmpty {
@@ -247,14 +252,11 @@ func (vs *VarStore) getVar(vn string, vt VarType, returnEmpty bool) *Variable {
 		}
 
 		v = &Variable{
-			BaseElement: BaseElement{
-				id:            NewID(),
-				Documentation: Documentation{"", ""}},
 			name:  vn,
 			vtype: vt,
 			prec:  2}
 
-		map[VarType]*Variable(vm)[vt] = v
+		map[string]*Variable(*vs)[vn] = v
 	}
 
 	return v
@@ -262,11 +264,11 @@ func (vs *VarStore) getVar(vn string, vt VarType, returnEmpty bool) *Variable {
 
 // GetVar returns variable vn of tyep vt form namespace vs
 // if the variable isn't found, then error returned
-func (vs *VarStore) GetVar(vn string, vt VarType) (*Variable, error) {
-	v := vs.getVar(vn, vt, false)
+func (vs *VarStore) GetVar(vn string) (*Variable, error) {
+	v := vs.getVar(vn, VtInt, false)
 	if v == nil {
-		return nil, NewModelError(uuid.Nil,
-			"variable "+vn+" of type "+vt.String()+" isn't found", nil)
+		return nil, NewModelError("variable "+vn+
+			" isn't found", nil)
 	}
 
 	return v, nil
@@ -274,36 +276,19 @@ func (vs *VarStore) GetVar(vn string, vt VarType) (*Variable, error) {
 
 // DelVar deletes variable vn of type vt from namespace vs
 // if there is no such variable, then error returned
-func (vs *VarStore) DelVar(vn string, vt VarType) error {
-	vm := map[string]varMap(*vs)[vn]
-	if vm == nil {
-		return NewModelError(uuid.Nil,
-			"couldn't find variable group "+vn,
-			nil)
+func (vs *VarStore) DelVar(vn string) error {
+	if !vs.checkVar(vn) {
+		return NewModelError("couldn't find variable "+vn, nil)
 	}
-	if _, ok := map[VarType]*Variable(vm)[vt]; !ok {
-		return NewModelError(uuid.Nil,
-			"couldn't find variable "+vn+" of type "+vt.String(),
-			nil)
-	}
-	delete(map[VarType]*Variable(vm), vt)
-
-	// if there is no variables in var map, then delete the
-	// variable map itself
-	if len(vm) == 0 {
-		delete(map[string]varMap(*vs), vn)
-	}
+	delete(map[string]*Variable(*vs), vn)
 
 	return nil
 }
 
-func (vs *VarStore) Update(vn string, vt VarType, newVal interface{}) error {
-	v := vs.getVar(vn, vt, false)
-
+func (vs *VarStore) Update(vn string, newVal interface{}) error {
+	v := vs.getVar(vn, VtInt, false)
 	if v == nil {
-		return NewModelError(uuid.Nil,
-			"couldn't find variable "+vn+" of type "+vt.String(),
-			nil)
+		return NewModelError("couldn't find variable "+vn, nil)
 	}
 
 	return v.update(newVal)
@@ -312,16 +297,13 @@ func (vs *VarStore) Update(vn string, vt VarType, newVal interface{}) error {
 // NewInt creates a new int variable in namespace vs
 // if the variable with the same name and the same type exists, the error returned
 func (vs *VarStore) NewInt(vn string, val int) (*Variable, error) {
-	v := vs.getVar(vn, VtInt, true)
-
-	if v.initialized {
-		return nil, NewModelError(uuid.Nil,
-			"variable "+vn+" of Int type already exists",
+	if vs.checkVar(vn) {
+		return nil, NewModelError("variable "+vn+" already exists",
 			nil)
 	}
 
+	v := vs.getVar(vn, VtInt, true)
 	v.value = val
-	v.initialized = true
 
 	return v, nil
 }
@@ -329,16 +311,13 @@ func (vs *VarStore) NewInt(vn string, val int) (*Variable, error) {
 // NewBool creates a new bool variable in namespace vs
 // if the variable with the same name and the same type exists, the error returned
 func (vs *VarStore) NewBool(vn string, val bool) (*Variable, error) {
-	v := vs.getVar(vn, VtBool, true)
-
-	if v.initialized {
-		return nil, NewModelError(uuid.Nil,
-			"variable "+vn+" of Bool type already exists",
+	if vs.checkVar(vn) {
+		return nil, NewModelError("variable "+vn+" already exists",
 			nil)
 	}
 
+	v := vs.getVar(vn, VtBool, true)
 	v.value = val
-	v.initialized = true
 
 	return v, nil
 }
@@ -346,16 +325,13 @@ func (vs *VarStore) NewBool(vn string, val bool) (*Variable, error) {
 // NewString creates a new string variable in namespace vs
 // if the variable with the same name and the same type exists, the error returned
 func (vs *VarStore) NewString(vn string, val string) (*Variable, error) {
-	v := vs.getVar(vn, VtString, true)
-
-	if v.initialized {
-		return nil, NewModelError(uuid.Nil,
-			"variable "+vn+" of String type already exists",
+	if vs.checkVar(vn) {
+		return nil, NewModelError("variable "+vn+" already exists",
 			nil)
 	}
 
+	v := vs.getVar(vn, VtString, true)
 	v.value = val
-	v.initialized = true
 
 	return v, nil
 }
@@ -363,16 +339,25 @@ func (vs *VarStore) NewString(vn string, val string) (*Variable, error) {
 // NewFloat creates a new string variable in namespace vs
 // if the variable with the same name and the same type exists, the error returned
 func (vs *VarStore) NewFloat(vn string, val float64) (*Variable, error) {
-	v := vs.getVar(vn, VtFloat, true)
-
-	if v.initialized {
-		return nil, NewModelError(uuid.Nil,
-			"variable "+vn+" of Float type already exists",
+	if vs.checkVar(vn) {
+		return nil, NewModelError("variable "+vn+" already exists",
 			nil)
 	}
 
+	v := vs.getVar(vn, VtFloat, true)
 	v.value = val
-	v.initialized = true
+
+	return v, nil
+}
+
+func (vs *VarStore) NewTime(vn string, val time.Time) (*Variable, error) {
+	if vs.checkVar(vn) {
+		return nil, NewModelError("variable "+vn+" already exists",
+			nil)
+	}
+
+	v := vs.getVar(vn, VtTime, true)
+	v.value = val
 
 	return v, nil
 }

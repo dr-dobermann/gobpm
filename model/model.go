@@ -2,8 +2,6 @@ package model
 
 import (
 	"fmt"
-
-	"github.com/google/uuid"
 )
 
 type ModelState uint8
@@ -14,26 +12,16 @@ const (
 	MSFinished
 )
 
-type Model struct {
-	NamedVersionedElement
-	state ModelState
-}
-
-func (m Model) State() ModelState {
-	return m.state
-}
-
 type ModelError struct {
-	modelID uuid.UUID
-	msg     string
-	Err     error
+	msg string
+	Err error
 }
 
 func (me ModelError) Error() string {
-	return fmt.Sprintf("M[%v]: %s : %s",
-		me.modelID, me.msg, me.Err.Error())
+	return fmt.Sprintf("ME: %s : %s",
+		me.msg, me.Err.Error())
 }
 
-func NewModelError(mId uuid.UUID, msg string, err error) error {
-	return ModelError{mId, msg, err}
+func NewModelError(msg string, err error) error {
+	return ModelError{msg, err}
 }
