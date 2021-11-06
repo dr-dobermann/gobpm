@@ -16,9 +16,9 @@ type Lane struct {
 func (l *Lane) addNode(n Node) error {
 
 	for _, ln := range l.nodes {
-		if ln.FloatNode().id == n.FloatNode().id {
+		if ln.ID() == n.ID() {
 			return NewProcessModelError(l.process.id,
-				"Node "+n.FloatNode().name+"already exists on lane "+l.name,
+				"Node "+n.Name()+"already exists on lane "+l.name,
 				nil)
 		}
 	}
@@ -58,6 +58,16 @@ type Process struct {
 	messages []*Message
 }
 
+func (p *Process) GetTask(tid Id) Task {
+	for _, t := range p.tasks {
+		if t.ID() == tid {
+			return t
+		}
+	}
+
+	return nil
+}
+
 func (p Process) Copy() *Process {
 
 	if p.dataType == PdtSnapshot {
@@ -81,27 +91,19 @@ func (p Process) Copy() *Process {
 	// copy tasks and place them on lanes
 	for _, ot := range p.tasks {
 		t := ot.Copy(&pc)
-		tm[ot.FloatNode().id] = t
-		pc.tasks = append(pc.tasks, t)
-		pc.lanes[ot.FloatNode().laneName].addNode(t)
+		tm[ot.ID()] = t
+		pc.AddTask(t, ot.LaneName())
 	}
 
 	// copy sequence flows
-	for _, osf := range p.flows {
-		sf := SequenceFlow{
-			FlowElement: osf.FlowElement,
-			expr:        osf.expr.Copy(),
-			process:     &pc}
-
-		if osf.sourceRef != nil {
-			sf.sourceRef = tm[osf.sourceRef.FloatNode().id]
+	for _, of := range p.flows {
+		var e *Expression
+		if of.expr != nil {
+			e = of.expr.Copy()
 		}
-
-		if osf.targetRef != nil {
-			sf.targetRef = tm[osf.targetRef.FloatNode().id]
+		if err := pc.LinkNodes(tm[of.sourceRef.ID()], tm[of.targetRef.ID()], e); err != nil {
+			panic(fmt.Sprintf("couldn't link nodes in snapshot : %v", err))
 		}
-
-		pc.flows = append(pc.flows, &sf)
 	}
 
 	return &pc
@@ -254,8 +256,8 @@ func (p *Process) AddTask(t Task, ln string) error {
 	}
 
 	for _, pt := range p.tasks {
-		if pt.FloatNode().id == t.FloatNode().id {
-			return NewProcessModelError(p.id, "task "+t.FloatNode().name+
+		if pt.ID() == t.ID() {
+			return NewProcessModelError(p.id, "task "+t.Name()+
 				" already exists in the process", nil)
 		}
 	}
@@ -273,22 +275,21 @@ func (p *Process) LinkNodes(src Node, trg Node, sExpr *Expression) error {
 		return NewProcessModelError(p.id,
 			fmt.Sprintf("trying to link nil-nodes. src: %v, dest: %v", src, trg),
 			nil)
-
 	}
 
-	if src.FloatNode().process == nil ||
-		src.FloatNode().process.id != p.id {
+	if src.ProcessID() == Id(uuid.Nil) ||
+		src.ProcessID() != p.id {
 		return NewProcessModelError(p.id,
 			fmt.Sprintf("src isnt't binded to process (%v)",
-				src.FloatNode().process),
+				p.id),
 			nil)
 	}
 
-	if trg.FloatNode().process == nil ||
-		trg.FloatNode().process.id != p.id {
+	if trg.ProcessID() == Id(uuid.Nil) ||
+		trg.ProcessID() != p.id {
 		return NewProcessModelError(p.id,
-			fmt.Sprintf("src isnt't binded to process (%v)",
-				trg.FloatNode().process),
+			fmt.Sprintf("target isnt't binded to process (%v)",
+				p.id),
 			nil)
 	}
 
@@ -303,8 +304,15 @@ func (p *Process) LinkNodes(src Node, trg Node, sExpr *Expression) error {
 		targetRef: trg}
 	p.flows = append(p.flows, sf)
 
-	src.ConnectFlow(sf, SeSource)
-	trg.ConnectFlow(sf, SeTarget)
+	if err := src.ConnectFlow(sf, SeSource); err != nil {
+		panic(fmt.Sprintf("couldn't connect sequence flow %s to task %s as source : %v",
+			sf.ID().String(), src.Name(), err.Error()))
+	}
+
+	if err := trg.ConnectFlow(sf, SeTarget); err != nil {
+		panic(fmt.Sprintf("couldn't connect sequence flow %s to task %s as target: %v",
+			sf.ID().String(), trg.Name(), err.Error()))
+	}
 
 	return nil
 }

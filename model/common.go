@@ -106,7 +106,12 @@ func (fe FlowElement) Type() FlowElementType {
 }
 
 type Node interface {
-	FloatNode() *FlowNode
+	ID() Id
+	Name() string
+	Type() FlowElementType
+	LaneName() string
+	TaskType() ActivityType
+	ProcessID() Id
 	BindToProcess(p *Process, laneName string)
 	// ConnectFlow connects SequenceFlow to incoming or outcoming
 	// slot of Node.
@@ -123,6 +128,19 @@ type FlowNode struct {
 	laneName  string
 	incoming  []*SequenceFlow
 	outcoming []*SequenceFlow
+}
+
+func (fn *FlowNode) LaneName() string {
+	return fn.laneName
+}
+
+func (fn *FlowNode) ProcessID() Id {
+
+	if fn.process == nil {
+		return Id(uuid.Nil)
+	}
+
+	return fn.process.id
 }
 
 func (fn *FlowNode) BindToProcess(p *Process, laneName string) {
@@ -152,7 +170,7 @@ func (fn *FlowNode) ConnectFlow(sf *SequenceFlow, se SequenceEnd) error {
 			fn.outcoming = make([]*SequenceFlow, 0)
 		}
 		// check for correctness
-		if sf.sourceRef.FloatNode().id != fn.id {
+		if sf.sourceRef.ID() != fn.id {
 			return NewProcessModelError(fn.process.id,
 				fmt.Sprintf("invalid connection. Node %v "+
 					"should be the source of the flow %v",
@@ -161,7 +179,7 @@ func (fn *FlowNode) ConnectFlow(sf *SequenceFlow, se SequenceEnd) error {
 		}
 		// check for duplicates
 		for _, f := range fn.outcoming {
-			if f.targetRef.FloatNode().id == sf.targetRef.FloatNode().id {
+			if f.targetRef.ID() == sf.targetRef.ID() {
 				return NewProcessModelError(fn.process.id,
 					fmt.Sprintf("sequence flow %v already "+
 						"connected to node %v",
@@ -177,7 +195,7 @@ func (fn *FlowNode) ConnectFlow(sf *SequenceFlow, se SequenceEnd) error {
 			fn.incoming = make([]*SequenceFlow, 0)
 		}
 
-		if sf.targetRef.FloatNode().id != fn.id {
+		if sf.targetRef.ID() != fn.id {
 			return NewProcessModelError(fn.process.id,
 				fmt.Sprintf("Node %v should be the target "+
 					"of the sequence flow %v", fn.id, sf.id),
@@ -185,7 +203,7 @@ func (fn *FlowNode) ConnectFlow(sf *SequenceFlow, se SequenceEnd) error {
 		}
 
 		for _, f := range fn.incoming {
-			if f.sourceRef.FloatNode().id == sf.sourceRef.FloatNode().id {
+			if f.sourceRef.ID() == sf.sourceRef.ID() {
 				return NewProcessModelError(fn.process.id,
 					fmt.Sprintf("sequence flow %v already connected to "+
 						"Node %v", sf.id, fn.id),

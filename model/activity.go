@@ -82,12 +82,8 @@ func (a Activity) Class() ActivityClass {
 	return a.class
 }
 
-func (a Activity) ActivityType() ActivityType {
+func (a Activity) TaskType() ActivityType {
 	return a.aType
-}
-
-func (a *Activity) FloatNode() *FlowNode {
-	return &a.FlowNode
 }
 
 // ------------------ Standard tasks -------------------------------------------
@@ -172,15 +168,42 @@ type StoreTask struct {
 	vars []VarDefinition
 }
 
+func NewStoreTask(p *Process, n string, vl ...VarDefinition) *StoreTask {
+
+	id := NewID()
+
+	if n == "" {
+		n = "Task " + id.String()
+	}
+
+	st := StoreTask{
+		Activity: Activity{
+			FlowNode: FlowNode{
+				FlowElement: FlowElement{
+					NamedElement: NamedElement{
+						BaseElement: BaseElement{
+							id: id},
+						name: n},
+					elementType: EtActivity},
+				process: p},
+			class:  AcAbstract,
+			aType:  AtStoreTask,
+			output: []VarDefinition{}},
+		vars: []VarDefinition{}}
+	st.output = append(st.output, vl...)
+	st.vars = append(st.vars, vl...)
+
+	return &st
+}
+
 func (st *StoreTask) Copy(snapshot *Process) Task {
 
 	stc := StoreTask{
 		Activity: Activity{
 			FlowNode: FlowNode{
 				FlowElement: st.FlowElement,
-				incoming:    make([]*SequenceFlow, len(st.incoming)),
-				outcoming:   make([]*SequenceFlow, len(st.outcoming)),
-			},
+				incoming:    []*SequenceFlow{},
+				outcoming:   []*SequenceFlow{}},
 		},
 		vars: make([]VarDefinition, len(st.vars))}
 
@@ -227,16 +250,43 @@ type OutputTask struct {
 	vars []VarDefinition
 }
 
+func NewOutputTask(p *Process, n string, vl ...VarDefinition) *OutputTask {
+
+	id := NewID()
+
+	if n == "" {
+		n = "Task " + id.String()
+	}
+
+	ot := OutputTask{
+		Activity: Activity{
+			FlowNode: FlowNode{
+				FlowElement: FlowElement{
+					NamedElement: NamedElement{
+						BaseElement: BaseElement{
+							id: id},
+						name: n},
+					elementType: EtActivity},
+				process: p},
+			aType: AtOutputTask,
+			class: AcAbstract,
+			input: []VarDefinition{},
+		},
+		vars: []VarDefinition{}}
+	ot.input = append(ot.input, vl...)
+	ot.vars = append(ot.vars, vl...)
+
+	return &ot
+}
+
 func (ot *OutputTask) Copy(snapshot *Process) Task {
 
 	otc := OutputTask{
 		Activity: Activity{
 			FlowNode: FlowNode{
 				FlowElement: ot.FlowElement,
-				incoming:    make([]*SequenceFlow, len(ot.incoming)),
-				outcoming:   make([]*SequenceFlow, len(ot.outcoming)),
-			},
-		},
+				incoming:    []*SequenceFlow{},
+				outcoming:   []*SequenceFlow{}}},
 		vars: make([]VarDefinition, len(ot.vars))}
 
 	otc.process = snapshot

@@ -397,7 +397,6 @@ func (e Expression) Type() ExpressionType {
 }
 
 func (e *Expression) Copy() *Expression {
-
 	ec := Expression{
 		NamedElement: e.NamedElement,
 		language:     e.language,
