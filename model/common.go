@@ -110,7 +110,6 @@ type Node interface {
 	Name() string
 	Type() FlowElementType
 	LaneName() string
-	TaskType() ActivityType
 	ProcessID() Id
 	BindToProcess(p *Process, laneName string)
 	// ConnectFlow connects SequenceFlow to incoming or outcoming
