@@ -83,14 +83,27 @@ const (
 	EtUnspecified FlowElementType = iota
 	EtActivity
 	EtEvent
-	EtGate
+	EtGateway
 	EtDataObject
 	EtDataAssociation
-	EtContainer
 	EtProcess
 	EtMessage
 	EtLane
 )
+
+func (fet FlowElementType) String() string {
+	return []string{
+		"Unspecified",
+		"Activity",
+		"Event",
+		"Gateway",
+		"DataObject",
+		"DataAssociation",
+		"Process",
+		"Message",
+		"Lane",
+	}[fet]
+}
 
 // base for FlowNode(Activities, Events, Gates), Data Objects, Data Associations
 // and SequenceFlow

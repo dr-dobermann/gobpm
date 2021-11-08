@@ -12,6 +12,9 @@ loaded or created in model package.
 package thresher
 
 import (
+	"context"
+	"fmt"
+
 	"github.com/dr-dobermann/gobpm/ctr"
 	"github.com/dr-dobermann/gobpm/model"
 )
@@ -23,7 +26,9 @@ const (
 	TsStarted
 	TsAwaitsService
 	TsAwaitsMessage
+	TsMerged
 	TsEnded
+	TsError
 )
 
 // track keeps information about one single business process execution path.
@@ -32,10 +37,53 @@ const (
 // Every task with no incoming flow or intermediate event starts a new track.
 // if track splits, the new track will be started
 type track struct {
+	id       model.Id
 	instance *ProcessInstance
 	state    TrackState
-	prev     *track
-	pos      model.Node
+	prev     []*track
+	node     model.Node
+}
+
+// newTrack creates a new track from single Node
+func newTrack(n model.Node, inst *ProcessInstance) *track {
+
+	t := &track{
+		id:       model.NewID(),
+		instance: inst,
+		node:     n}
+
+	return t
+}
+
+func (tr *track) tick(ctx context.Context) error {
+
+	if tr.state != TsCreated {
+		return nil
+	}
+
+	switch tr.node.Type() {
+	case model.EtActivity:
+		t, ok := tr.node.(Task)
+		if !ok {
+			panic("couldn't convert node " + tr.node.Name() + " to Task")
+		}
+
+		next, err := t.Exec(ctx, tr)
+		if err != nil {
+			panic(err.Error())
+		}
+
+		fmt.Println(next)
+
+	case model.EtGateway:
+
+	case model.EtEvent:
+
+	default:
+		panic(fmt.Sprintf("invalid node type %v. Should be Activity, Gateway or Event", tr.node.Type().String()))
+	}
+
+	return nil
 }
 
 // ProcessInstance represents a single run-time process instance
@@ -43,10 +91,14 @@ type ProcessInstance struct {
 	// the copy of the process model the instance is based on
 	snapshot *model.Process
 	vs       model.VarStore
-	tracks   []track
+	tracks   []*track
 
 	monitor *ctr.Monitor
 	audit   *ctr.Audit
+}
+
+func (pi *ProcessInstance) Start(ctx context.Context, trh *Thresher) {
+
 }
 
 type Thresher struct {
@@ -64,4 +116,8 @@ func GetThreshser() *Thresher {
 	}
 
 	return thresher
+}
+
+func (trh *Thresher) Run(ctx context.Context) {
+
 }
