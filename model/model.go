@@ -1,3 +1,13 @@
+// GoBPM is BPMN v.2 compliant business process engine
+//
+// (c) 2021, Ruslan Gabitov a.k.a. dr-dobermann.
+// Use of this source is governed by LGPL license that
+// can be found in the LICENSE file.
+
+/*
+Package model as а part of the gobpm package allows to load,
+create and save buisiness process models.
+*/
 package model
 
 import (
