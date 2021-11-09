@@ -19,6 +19,11 @@ import (
 	"github.com/dr-dobermann/gobpm/model"
 )
 
+type Task interface {
+	model.Node
+	Exec(ctx context.Context, tr *track) (TrackState, []*model.SequenceFlow, error)
+}
+
 type TrackState uint8
 
 const (
@@ -33,6 +38,18 @@ const (
 	TsError
 )
 
+func (ts TrackState) String() string {
+	return []string{
+		"Created",
+		"Started",
+		"AwaitsService",
+		"AwaitsMessage",
+		"Merged",
+		"Ended",
+		"Error",
+	}[ts]
+}
+
 // track keeps information about one single business process execution path.
 // track consists information about currently executed Node and the history
 // of past executed Nodes.
@@ -44,6 +61,10 @@ type track struct {
 	state    TrackState
 	prev     []*track
 	node     model.Node
+}
+
+func (tr *track) Instance() *ProcessInstance {
+	return tr.instance
 }
 
 type ProcessExecutingError struct {
@@ -72,9 +93,15 @@ func NewProcExecError(trk *track, msg string, err error) ProcessExecutingError {
 }
 
 // newTrack creates a new track started from a Node n.
-func newTrack(n model.Node, inst *ProcessInstance) *track {
+func newTrack(n model.Node, inst *ProcessInstance) (*track, error) {
 	if n == nil {
-		panic("couldn't start track from nil Node")
+		return nil,
+			NewProcExecError(nil, "couldn't start track from nil Node", nil)
+	}
+
+	if inst == nil {
+		return nil,
+			NewProcExecError(nil, "couldn't create a track for a nil instance", nil)
 	}
 
 	t := &track{
@@ -82,7 +109,7 @@ func newTrack(n model.Node, inst *ProcessInstance) *track {
 		instance: inst,
 		node:     n}
 
-	return t
+	return t, nil
 }
 
 // tick make a single step on track if current node isn't started
@@ -99,22 +126,35 @@ func (tr *track) tick(ctx context.Context) error {
 	case model.EtActivity:
 		t, ok := tr.node.(Task)
 		if !ok {
-			panic("couldn't convert node " + tr.node.Name() + " to Task")
+			return NewProcExecError(tr,
+				"couldn't convert node "+tr.node.Name()+" to Task",
+				nil)
 		}
 
-		next, err := t.Exec(ctx, tr)
+		// TODO: check incoming variables demands for the Task
+
+		tr.state = TsStarted
+		ns, next, err := t.Exec(ctx, tr)
 		if err != nil {
-			panic(err.Error())
+			tr.state = TsError
+			return NewProcExecError(tr, "error executing task "+t.Name(), err)
 		}
 
-		fmt.Println(next)
+		// TODO: check resulting variable demands of the Task
+
+		if err = tr.updateState(ns, next); err != nil {
+			return NewProcExecError(tr, "couldn't update track state to "+ns.String(), err)
+		}
 
 	case model.EtGateway:
 
 	case model.EtEvent:
 
 	default:
-		panic(fmt.Sprintf("invalid node type %v. Should be Activity, Gateway or Event", tr.node.Type().String()))
+		return NewProcExecError(tr,
+			fmt.Sprintf("invalid node type %v of %s. Should be Activity, Gateway or Event",
+				tr.node.Type().String(), tr.node.Name()),
+			nil)
 	}
 
 	return nil
@@ -149,9 +189,19 @@ func (tr *track) updateState(ns TrackState, ff []*model.SequenceFlow) error {
 	return nil
 }
 
+type InstanceState uint8
+
+const (
+	IsCreated InstanceState = iota
+	IsPrepared
+	IsRunning
+	IsEnded
+)
+
 // ProcessInstance represents a single run-time process instance
 type ProcessInstance struct {
-	id model.Id
+	id    model.Id
+	state InstanceState
 	// the copy of the process model the instance is based on
 	snapshot *model.Process
 	vs       model.VarStore
@@ -159,6 +209,34 @@ type ProcessInstance struct {
 
 	monitor *ctr.Monitor
 	audit   *ctr.Audit
+}
+
+// prepare prepares the ProcessInstance object for start.
+// prepare looks for nodes that don't have incoming flows and
+// creates a list of tracks to work with
+func (pi *ProcessInstance) prepare() error {
+	if pi.state != IsCreated {
+		return NewProcExecError(nil,
+			fmt.Sprintf("couldn't prepare Instance in %d state", pi.state), nil)
+	}
+
+	// through all nodes except the gateways find ones
+	// don't have an incoming flow
+	// and create tracks with them
+	for _, n := range pi.snapshot.GetNodes(model.EtUnspecified) {
+		if n.Type() != model.EtGateway && !n.HasIncoming() {
+			t, err := newTrack(n, pi)
+			if err != nil {
+				return NewProcExecError(nil, "couldn't prepare an Instance for starting", err)
+			}
+
+			pi.tracks = append(pi.tracks, t)
+		}
+	}
+
+	pi.state = IsPrepared
+
+	return nil
 }
 
 func (pi *ProcessInstance) Start(ctx context.Context, trh *Thresher) {
@@ -180,6 +258,26 @@ func GetThreshser() *Thresher {
 	}
 
 	return thresher
+}
+
+func (thr *Thresher) NewProcessInstance(p *model.Process) (*ProcessInstance, error) {
+	sn := p.Copy()
+	if sn == nil {
+		return nil,
+			NewProcExecError(nil,
+				fmt.Sprintf("couldn't create a copy form process %s[%s]",
+					p.Name(), p.ID().String()),
+				nil)
+	}
+
+	pi := &ProcessInstance{
+		id:       model.NewID(),
+		snapshot: sn,
+		vs:       make(model.VarStore),
+		tracks:   []*track{}}
+	thr.instances = append(thr.instances, pi)
+
+	return pi, nil
 }
 
 func (trh *Thresher) Run(ctx context.Context) {

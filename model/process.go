@@ -47,6 +47,32 @@ type Process struct {
 	messages []*Message
 }
 
+func (p *Process) GetNodes(et FlowElementType) []Node {
+
+	nn := []Node{}
+
+	switch et {
+	case EtUnspecified:
+		for _, t := range p.tasks {
+			nn = append(nn, t)
+		}
+
+	case EtActivity:
+		for _, t := range p.tasks {
+			nn = append(nn, t)
+		}
+
+	case EtGateway:
+
+	case EtEvent:
+
+	default:
+		panic("type " + et.String() + " couldn't be a Node")
+	}
+
+	return nn
+}
+
 func (p *Process) GetTask(tid Id) TaskDefinition {
 	for _, t := range p.tasks {
 		if t.ID() == tid {

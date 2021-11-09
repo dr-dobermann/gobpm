@@ -362,6 +362,18 @@ func (vs *VarStore) NewTime(vn string, val time.Time) (*Variable, error) {
 	return v, nil
 }
 
+func (vs *VarStore) NewVar(v Variable) (*Variable, error) {
+	if vs.checkVar(v.name) {
+		return nil, NewModelError("variable "+v.name+" already exists",
+			nil)
+	}
+
+	vr := vs.getVar(v.name, v.vtype, true)
+	vr.value = v.value
+
+	return vr, nil
+}
+
 type ExpressionType uint8
 
 const (

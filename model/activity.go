@@ -162,7 +162,7 @@ type TaskDefinition interface {
 // StoreTask stores a bunch of variables into local VarStore of process instance
 type StoreTask struct {
 	Activity
-	vars []Variable
+	Vars []Variable
 }
 
 func NewStoreTask(p *Process, n string, vl ...Variable) *StoreTask {
@@ -186,9 +186,9 @@ func NewStoreTask(p *Process, n string, vl ...Variable) *StoreTask {
 			class:  AcAbstract,
 			aType:  AtStoreTask,
 			output: []Variable{}},
-		vars: []Variable{}}
+		Vars: []Variable{}}
 	st.output = append(st.output, vl...)
-	st.vars = append(st.vars, vl...)
+	st.Vars = append(st.Vars, vl...)
 
 	return &st
 }
@@ -202,11 +202,11 @@ func (st *StoreTask) Copy(snapshot *Process) TaskDefinition {
 				incoming:    []*SequenceFlow{},
 				outcoming:   []*SequenceFlow{}},
 		},
-		vars: make([]Variable, len(st.vars))}
+		Vars: make([]Variable, len(st.Vars))}
 
 	stc.process = snapshot
 	stc.id = NewID()
-	copy(stc.vars, st.vars)
+	copy(stc.Vars, st.Vars)
 
 	return &stc
 }

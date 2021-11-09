@@ -130,6 +130,7 @@ type Node interface {
 	// if se is SeSource then Node is the source end of the sequence,
 	// else the Node is the target of the sequence
 	ConnectFlow(sf *SequenceFlow, se SequenceEnd) error
+	HasIncoming() bool
 }
 
 // base for Activities, Gates and Events
@@ -227,6 +228,11 @@ func (fn *FlowNode) ConnectFlow(sf *SequenceFlow, se SequenceEnd) error {
 	}
 
 	return nil
+}
+
+func (fn *FlowNode) HasIncoming() bool {
+
+	return len(fn.incoming) != 0
 }
 
 type SequenceEnd uint8
