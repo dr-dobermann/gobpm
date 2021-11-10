@@ -22,17 +22,17 @@ import (
 // TaskExecutor defines the run-time functionatlity of the Task objects
 type TaskExecutor interface {
 	model.TaskDefinition
-	Exec(ctx context.Context, tr *track) (TrackState, []*model.SequenceFlow, error)
+	Exec(ctx context.Context, tr *track) (StepState, []*model.SequenceFlow, error)
 }
 
+// TrackState represent the state of the whole track
 type TrackState uint8
 
 const (
-	TsCreated TrackState = iota
-	TsStarted
+	TsReady TrackState = iota
+	TsExecutingStep
 	// Intermediate
-	TsAwaitsService
-	TsAwaitsMessage
+	TsAwaitsStepResults
 	// Final status
 	TsMerged
 	TsEnded
@@ -42,13 +42,37 @@ const (
 func (ts TrackState) String() string {
 	return []string{
 		"Created",
-		"Started",
-		"AwaitsService",
-		"AwaitsMessage",
+		"Executing Step",
+		"Awaits Step Completion",
 		"Merged",
 		"Ended",
 		"Error",
 	}[ts]
+}
+
+type StepState uint8
+
+const (
+	SsCreated StepState = iota
+	SsStarted
+	SsAwaitsResults
+	SsEnded
+	SsFailed
+)
+
+func (ss StepState) String() string {
+	return []string{
+		"Created",
+		"Started",
+		"AwaitsResults",
+		"Ended",
+		"Failed",
+	}[ss]
+}
+
+type stepInfo struct {
+	node  model.Node
+	state StepState
 }
 
 // track keeps information about one single business process execution path.
@@ -61,7 +85,11 @@ type track struct {
 	instance *ProcessInstance
 	state    TrackState
 	prev     []*track
-	node     model.Node
+	steps    []stepInfo
+}
+
+func (tr *track) currentStep() *stepInfo {
+	return &tr.steps[len(tr.steps)-1]
 }
 
 func (tr *track) Instance() *ProcessInstance {
@@ -102,13 +130,15 @@ func newTrack(n model.Node, inst *ProcessInstance) (*track, error) {
 
 	if inst == nil {
 		return nil,
-			NewProcExecError(nil, "couldn't create a track for a nil instance", nil)
+			NewProcExecError(nil,
+				"couldn't create a track for a nil instance",
+				nil)
 	}
 
 	t := &track{
 		id:       model.NewID(),
 		instance: inst,
-		node:     n}
+		steps:    []stepInfo{{node: n}}}
 
 	return t, nil
 }
@@ -119,16 +149,25 @@ func newTrack(n model.Node, inst *ProcessInstance) (*track, error) {
 // the Node returns a list of valid outcomes flows.
 func (tr *track) tick(ctx context.Context) error {
 
-	if tr.state != TsCreated {
+	if tr.state != TsReady {
 		return nil
 	}
 
-	switch tr.node.Type() {
+	if tr.currentStep().state != SsCreated {
+		return NewProcExecError(tr,
+			fmt.Sprintf("couldn't start node %s in state %v",
+				tr.currentStep().node.Name(),
+				tr.currentStep().state),
+			nil)
+	}
+
+	n := tr.currentStep().node
+	switch n.Type() {
 	case model.EtActivity:
-		t, ok := tr.node.(model.TaskDefinition)
+		t, ok := n.(model.TaskDefinition)
 		if !ok {
 			return NewProcExecError(tr,
-				"couldn't convert node "+tr.node.Name()+" to TaskDefinition",
+				"couldn't convert node "+n.Name()+" to TaskDefinition",
 				nil)
 		}
 
@@ -140,7 +179,8 @@ func (tr *track) tick(ctx context.Context) error {
 
 		// TODO: check incoming variables demands for the Task
 
-		tr.state = TsStarted
+		tr.state = TsExecutingStep
+		tr.currentStep().state = SsStarted
 		ns, next, err := te.Exec(ctx, tr)
 		if err != nil {
 			tr.state = TsError
@@ -160,37 +200,21 @@ func (tr *track) tick(ctx context.Context) error {
 	default:
 		return NewProcExecError(tr,
 			fmt.Sprintf("invalid node type %v of %s. Should be Activity, Gateway or Event",
-				tr.node.Type().String(), tr.node.Name()),
+				n.Type().String(), n.Name()),
 			nil)
 	}
 
 	return nil
 }
 
-// updateState updates the current track state onto ns.
+// updateState updates the current track state according to Step state.
 // if it's a Final staus and ff isn't empty the next Node selected and
-// new tracks might be created.
+// new tracks might be created if there are splitting flows.
 // if it's a Finel status and there are no more flows, the track is ended.
-func (tr *track) updateState(ns TrackState, ff []*model.SequenceFlow) error {
+func (tr *track) updateState(ns StepState, ff []*model.SequenceFlow) error {
 	if tr.state == TsEnded || tr.state == TsError || tr.state == TsMerged {
 		return NewProcExecError(
 			tr, "couldn't update state on finalized track", nil)
-	}
-
-	switch ns {
-	case TsCreated:
-		return NewProcExecError(
-			tr, "couldn't set a Created status on executing Node", nil)
-
-	case TsStarted:
-
-	// Intermediate statuses
-	case TsAwaitsMessage, TsAwaitsService:
-
-	// Final statuses
-	case TsEnded:
-
-	case TsError:
 	}
 
 	return nil

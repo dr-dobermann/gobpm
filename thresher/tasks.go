@@ -12,11 +12,23 @@ func GetTaskExecutor(t model.TaskDefinition) (TaskExecutor, error) {
 
 	switch t.TaskType() {
 	case model.AtStoreTask:
-		st, ok := t.GetTaskDefStr().(model.StoreTask)
+		st, ok := t.GetTaskDefStr().(*model.StoreTask)
 		if !ok {
 			return nil, NewProcExecError(nil, "cannot get StoreTask struct", nil)
 		}
-		te = NewStoreTaskExecutor(&st)
+		te = NewStoreTaskExecutor(st)
+
+	case model.AtOutputTask:
+		ot, ok := t.GetTaskDefStr().(*model.OutputTask)
+		if !ok {
+			return nil, NewProcExecError(nil, "cannot get OutputTask struct", nil)
+		}
+		te = NewOutputTaskExecutor(ot)
+
+	default:
+		return nil, NewProcExecError(nil,
+			fmt.Sprintf("The task type %s doesn't have an Executor", t.TaskType().String()),
+			nil)
 	}
 
 	return te, nil
@@ -38,18 +50,18 @@ func NewStoreTaskExecutor(st *model.StoreTask) *StoreTaskExecutor {
 }
 
 func (ste *StoreTaskExecutor) Exec(_ context.Context,
-	tr *track) (TrackState, []*model.SequenceFlow, error) {
+	tr *track) (StepState, []*model.SequenceFlow, error) {
 
 	for _, v := range ste.Vars {
 		if _, err := tr.instance.vs.NewVar(v); err != nil {
-			return TsError,
+			return SsFailed,
 				nil,
 				NewProcExecError(tr, "couldn't add variable %s to instance", err)
 		}
 	}
 
 	// TODO: Add expression check on output flows
-	return TsEnded, ste.GetOutputFlows(), nil
+	return SsEnded, ste.GetOutputFlows(), nil
 }
 
 type OutputTaskExecutor struct {
@@ -68,12 +80,14 @@ func NewOutputTaskExecutor(ot *model.OutputTask) *OutputTaskExecutor {
 }
 
 func (ote *OutputTaskExecutor) Exec(_ context.Context,
-	tr *track) (TrackState, []*model.SequenceFlow, error) {
+	tr *track) (StepState, []*model.SequenceFlow, error) {
 
+	// TODO: update to print vars from VS
 	for _, v := range ote.Vars {
+
 		fmt.Printf("%s(%s) = %v\n", v.Name(), v.Type().String(), v.Value())
 	}
 
 	// TODO: Add expression check on output flows
-	return TsEnded, ote.GetOutputFlows(), nil
+	return SsEnded, ote.GetOutputFlows(), nil
 }

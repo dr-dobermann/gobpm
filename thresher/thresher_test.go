@@ -8,18 +8,6 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestThresherCommons(t *testing.T) {
-	states := []string{"Created", "Started", "AwaitsService",
-		"AwaitsMessage", "Merged", "Ended", "Error"}
-
-	for i := 0; i < 7; i++ {
-		if TrackState(i).String() != states[i] {
-			t.Errorf("invalid track state name for %d", i)
-		}
-	}
-
-}
-
 func TestTracks(t *testing.T) {
 	pi := getTestInstance(nil, t)
 
@@ -39,13 +27,19 @@ func TestTracks(t *testing.T) {
 		t.Fatal("Invalid tracks count. have ", len(pi.tracks))
 	}
 
-	if pi.tracks[0].node.Name() != "Store Task" {
-		t.Fatal("Invalid track Node name ", pi.tracks[0].node.Name())
+	n := pi.tracks[0].currentStep().node
+	if n.Name() != "Store Task" {
+		t.Fatal("Invalid track Node name ", n.Name())
 	}
 
 	if err := pi.tracks[0].tick(context.Background()); err != nil {
-		t.Errorf("Couldn't exec Node %s : %v", pi.tracks[0].node.Name(), err)
+		t.Errorf("Couldn't exec Node %s : %v", pi.tracks[0].steps[0].node.Name(), err)
 	}
+
+	if len(pi.tracks[0].steps) != 2 {
+		t.Errorf("Invalid steps count")
+	}
+
 }
 
 func getTestInstance(p *model.Process, t *testing.T) *ProcessInstance {

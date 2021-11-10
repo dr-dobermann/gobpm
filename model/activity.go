@@ -53,6 +53,22 @@ const (
 	AtOutputTask
 )
 
+func (at ActivityType) String() string {
+	return []string{
+		"GenericTask",
+		"UserTask",
+		"RecieveTask",
+		"SendTask",
+		"ServiceTask",
+		"BusinessRuleTask",
+		"ScriptTask",
+		"CustomTask",
+		"StoreTask",
+		"CalculateTask",
+		"OutputTask",
+	}[at]
+}
+
 type Activity struct {
 	FlowNode
 	loop        *LoopDef
@@ -201,13 +217,14 @@ func NewStoreTask(p *Process, n string, vl ...Variable) *StoreTask {
 
 func (st *StoreTask) Copy(snapshot *Process) TaskDefinition {
 
+	// TODO: refactor to new and then copy from *st
 	stc := StoreTask{
 		Activity: Activity{
 			FlowNode: FlowNode{
 				FlowElement: st.FlowElement,
 				incoming:    []*SequenceFlow{},
 				outcoming:   []*SequenceFlow{}},
-		},
+			aType: AtStoreTask},
 		Vars: make([]Variable, len(st.Vars))}
 
 	stc.process = snapshot
@@ -281,7 +298,8 @@ func (ot *OutputTask) Copy(snapshot *Process) TaskDefinition {
 			FlowNode: FlowNode{
 				FlowElement: ot.FlowElement,
 				incoming:    []*SequenceFlow{},
-				outcoming:   []*SequenceFlow{}}},
+				outcoming:   []*SequenceFlow{}},
+			aType: AtOutputTask},
 		Vars: make([]Variable, len(ot.Vars))}
 
 	otc.process = snapshot
