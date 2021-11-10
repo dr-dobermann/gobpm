@@ -2,15 +2,14 @@ package thresher
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/dr-dobermann/gobpm/model"
 )
 
 func GetTaskExecutor(t model.TaskDefinition) (TaskExecutor, error) {
+	var te TaskExecutor
 
-	var (
-		te TaskExecutor
-	)
 	switch t.TaskType() {
 	case model.AtStoreTask:
 		st, ok := t.GetTaskDefStr().(model.StoreTask)
@@ -49,5 +48,32 @@ func (ste *StoreTaskExecutor) Exec(_ context.Context,
 		}
 	}
 
-	return TsEnded, nil, nil
+	// TODO: Add expression check on output flows
+	return TsEnded, ste.GetOutputFlows(), nil
+}
+
+type OutputTaskExecutor struct {
+	model.OutputTask
+}
+
+func NewOutputTaskExecutor(ot *model.OutputTask) *OutputTaskExecutor {
+	if ot == nil {
+		return nil
+	}
+
+	ote := new(OutputTaskExecutor)
+	ote.OutputTask = *ot
+
+	return ote
+}
+
+func (ote *OutputTaskExecutor) Exec(_ context.Context,
+	tr *track) (TrackState, []*model.SequenceFlow, error) {
+
+	for _, v := range ote.Vars {
+		fmt.Printf("%s(%s) = %v\n", v.Name(), v.Type().String(), v.Value())
+	}
+
+	// TODO: Add expression check on output flows
+	return TsEnded, ote.GetOutputFlows(), nil
 }

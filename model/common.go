@@ -155,6 +155,12 @@ func (fn *FlowNode) ProcessID() Id {
 	return fn.process.id
 }
 
+func (fn *FlowNode) GetOutputFlows() (ff []*SequenceFlow) {
+	ff = append(ff, fn.outcoming...)
+
+	return
+}
+
 func (fn *FlowNode) BindToProcess(p *Process, laneName string) {
 	if p == nil {
 		panic("couldn't bind task to a nil process")

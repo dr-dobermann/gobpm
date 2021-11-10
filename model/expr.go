@@ -53,6 +53,12 @@ func (v *Variable) SetPrecision(p int) {
 	v.prec = p
 }
 
+func (v *Variable) Value() interface{} {
+	vv := v.value
+
+	return vv
+}
+
 func (v *Variable) update(newVal interface{}) error {
 	switch v.vtype {
 	case VtInt:

@@ -238,7 +238,7 @@ type CalculateTask struct {
 
 type OutputTask struct {
 	Activity
-	vars []Variable
+	Vars []Variable
 }
 
 func (ot *OutputTask) GetTaskDefStr() interface{} {
@@ -267,9 +267,9 @@ func NewOutputTask(p *Process, n string, vl ...Variable) *OutputTask {
 			class: AcAbstract,
 			input: []Variable{},
 		},
-		vars: []Variable{}}
+		Vars: []Variable{}}
 	ot.input = append(ot.input, vl...)
-	ot.vars = append(ot.vars, vl...)
+	ot.Vars = append(ot.Vars, vl...)
 
 	return &ot
 }
@@ -282,11 +282,11 @@ func (ot *OutputTask) Copy(snapshot *Process) TaskDefinition {
 				FlowElement: ot.FlowElement,
 				incoming:    []*SequenceFlow{},
 				outcoming:   []*SequenceFlow{}}},
-		vars: make([]Variable, len(ot.vars))}
+		Vars: make([]Variable, len(ot.Vars))}
 
 	otc.process = snapshot
 	otc.id = NewID()
-	copy(otc.vars, ot.vars)
+	copy(otc.Vars, ot.Vars)
 
 	return &otc
 }
