@@ -69,6 +69,7 @@ func getTestProcess(t *testing.T) *model.Process {
 	p := model.NewProcess(model.Id(uuid.Nil), "Test Process", "0.1.0")
 
 	t1 := model.NewStoreTask(p, "Store Task", *model.V("x", model.VtInt, 2))
+	// t1 := NewStoreTaskExecutor(model.NewStoreTask(p, "Store Task", *model.V("x", model.VtInt, 2)))
 	t2 := model.NewOutputTask(p, "Output Task", *model.V("x", model.VtInt, 0))
 	if t1 == nil || t2 == nil {
 		t.Fatal("Couldn't create tasks for test process")

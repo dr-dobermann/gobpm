@@ -150,6 +150,8 @@ type GlobalTask struct {
 // ------------ TaskDefinition interfaces --------------------------------------
 type TaskDefinition interface {
 	Node
+	TaskType() ActivityType
+	GetTaskDefStr() interface{}
 	// Copy returns a copy of the Task with a new Id
 	Copy(snapshot *Process) TaskDefinition
 }
@@ -163,6 +165,10 @@ type TaskDefinition interface {
 type StoreTask struct {
 	Activity
 	Vars []Variable
+}
+
+func (st *StoreTask) GetTaskDefStr() interface{} {
+	return st
 }
 
 func NewStoreTask(p *Process, n string, vl ...Variable) *StoreTask {
@@ -233,6 +239,10 @@ type CalculateTask struct {
 type OutputTask struct {
 	Activity
 	vars []Variable
+}
+
+func (ot *OutputTask) GetTaskDefStr() interface{} {
+	return ot
 }
 
 func NewOutputTask(p *Process, n string, vl ...Variable) *OutputTask {

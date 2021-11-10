@@ -19,8 +19,9 @@ import (
 	"github.com/dr-dobermann/gobpm/model"
 )
 
-type Task interface {
-	model.Node
+// TaskExecutor defines the run-time functionatlity of the Task objects
+type TaskExecutor interface {
+	model.TaskDefinition
 	Exec(ctx context.Context, tr *track) (TrackState, []*model.SequenceFlow, error)
 }
 
@@ -124,17 +125,23 @@ func (tr *track) tick(ctx context.Context) error {
 
 	switch tr.node.Type() {
 	case model.EtActivity:
-		t, ok := tr.node.(Task)
+		t, ok := tr.node.(model.TaskDefinition)
 		if !ok {
 			return NewProcExecError(tr,
-				"couldn't convert node "+tr.node.Name()+" to Task",
+				"couldn't convert node "+tr.node.Name()+" to TaskDefinition",
 				nil)
+		}
+
+		te, err := GetTaskExecutor(t)
+		if err != nil {
+			return NewProcExecError(tr,
+				"couldn't get the TaskExecutor", err)
 		}
 
 		// TODO: check incoming variables demands for the Task
 
 		tr.state = TsStarted
-		ns, next, err := t.Exec(ctx, tr)
+		ns, next, err := te.Exec(ctx, tr)
 		if err != nil {
 			tr.state = TsError
 			return NewProcExecError(tr, "error executing task "+t.Name(), err)
