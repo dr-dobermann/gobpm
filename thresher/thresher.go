@@ -122,7 +122,7 @@ func NewProcExecError(trk *track, msg string, err error) ProcessExecutingError {
 }
 
 // newTrack creates a new track started from a Node n.
-func newTrack(n model.Node, inst *ProcessInstance) (*track, error) {
+func newTrack(n model.Node, inst *ProcessInstance, prevTrack *track) (*track, error) {
 	if n == nil {
 		return nil,
 			NewProcExecError(nil, "couldn't start track from nil Node", nil)
@@ -139,6 +139,10 @@ func newTrack(n model.Node, inst *ProcessInstance) (*track, error) {
 		id:       model.NewID(),
 		instance: inst,
 		steps:    []stepInfo{{node: n}}}
+
+	if prevTrack != nil {
+		t.prev = append(t.prev, prevTrack)
+	}
 
 	return t, nil
 }
@@ -190,7 +194,10 @@ func (tr *track) tick(ctx context.Context) error {
 		// TODO: check resulting variable demands of the Task
 
 		if err = tr.updateState(ns, next); err != nil {
-			return NewProcExecError(tr, "couldn't update track state to "+ns.String(), err)
+			return NewProcExecError(
+				tr,
+				"couldn't update track state to "+ns.String(),
+				err)
 		}
 
 	case model.EtGateway:
@@ -199,7 +206,8 @@ func (tr *track) tick(ctx context.Context) error {
 
 	default:
 		return NewProcExecError(tr,
-			fmt.Sprintf("invalid node type %v of %s. Should be Activity, Gateway or Event",
+			fmt.Sprintf(
+				"invalid node type %v of %s. Should be Activity, Gateway or Event",
 				n.Type().String(), n.Name()),
 			nil)
 	}
@@ -215,6 +223,85 @@ func (tr *track) updateState(ns StepState, ff []*model.SequenceFlow) error {
 	if tr.state == TsEnded || tr.state == TsError || tr.state == TsMerged {
 		return NewProcExecError(
 			tr, "couldn't update state on finalized track", nil)
+	}
+
+	if ns <= tr.currentStep().state {
+		return NewProcExecError(
+			tr,
+			fmt.Sprintf("Invalid step state for node %s. current: %s, new: %s",
+				tr.currentStep().node.Name(), tr.currentStep().state, ns),
+			nil)
+	}
+	tr.currentStep().state = ns
+
+	switch ns {
+	case SsAwaitsResults:
+		tr.state = TsAwaitsStepResults
+
+	case SsEnded:
+		if len(ff) == 0 {
+			tr.state = TsEnded
+			return nil
+		}
+
+		// continues track on default flow for activity if it's presented
+		// or on the first item in the flows list.
+		// after taking one flow from the list of outcoming flows,
+		// remove it from the list for further processing
+		if tr.currentStep().node.Type() == model.EtActivity {
+			t, ok := tr.currentStep().node.(model.TaskDefinition)
+			if !ok {
+				tr.state = TsError
+				return NewProcExecError(
+					tr,
+					fmt.Sprintf("couldn't convert node %s into Task",
+						tr.currentStep().node.Name()),
+					nil)
+			}
+
+			// find default flow in the outcoming flows
+			p := -1
+			for i, f := range ff {
+				if f.ID() == t.DefaultFlowId() {
+					p = i
+					break
+				}
+			}
+
+			// if there is no default flow, just take the first one
+			if p == -1 {
+				p = 0
+			}
+
+			tr.steps = append(tr.steps, stepInfo{node: ff[p].GetTarget()})
+
+			// remove processed flow from the list
+			ff = append(ff[:p], ff[p+1:]...)
+
+		} else {
+			tr.steps = append(tr.steps, stepInfo{node: ff[0].GetTarget()})
+			ff = ff[1:]
+		}
+
+		for _, f := range ff {
+			nt, err := newTrack(f.GetTarget(), tr.instance, tr)
+			if err != nil {
+				return NewProcExecError(
+					tr,
+					"couldn't create splitted track from node "+
+						f.GetTarget().Name(),
+					err)
+			}
+			tr.instance.tracks = append(tr.instance.tracks, nt)
+		}
+
+		tr.state = TsReady
+
+	case SsFailed:
+		tr.state = TsError
+
+	default:
+		return NewProcExecError(tr, "invalid step state "+ns.String(), nil)
 	}
 
 	return nil
@@ -256,7 +343,7 @@ func (pi *ProcessInstance) prepare() error {
 	// and create tracks with them
 	for _, n := range pi.snapshot.GetNodes(model.EtUnspecified) {
 		if n.Type() != model.EtGateway && !n.HasIncoming() {
-			t, err := newTrack(n, pi)
+			t, err := newTrack(n, pi, nil)
 			if err != nil {
 				return NewProcExecError(nil, "couldn't prepare an Instance for starting", err)
 			}

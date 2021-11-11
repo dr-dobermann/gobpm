@@ -100,6 +100,10 @@ func (a Activity) TaskType() ActivityType {
 	return a.aType
 }
 
+func (a Activity) DefaultFlowId() Id {
+	return a.defaultFlow
+}
+
 // ------------------ Standard tasks -------------------------------------------
 type GenericTask struct {
 	Activity
@@ -168,6 +172,7 @@ type TaskDefinition interface {
 	Node
 	TaskType() ActivityType
 	GetTaskDefStr() interface{}
+	DefaultFlowId() Id
 	// Copy returns a copy of the Task with a new Id
 	Copy(snapshot *Process) TaskDefinition
 }

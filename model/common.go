@@ -261,6 +261,10 @@ type SequenceFlow struct {
 	targetRef Node
 }
 
+func (sf *SequenceFlow) GetTarget() Node {
+	return sf.targetRef
+}
+
 type CallableElement struct {
 	NamedElement
 	interfaces []*Interface

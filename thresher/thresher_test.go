@@ -37,9 +37,24 @@ func TestTracks(t *testing.T) {
 	}
 
 	if len(pi.tracks[0].steps) != 2 {
-		t.Errorf("Invalid steps count")
+		t.Error("Invalid steps count")
 	}
 
+	if pi.tracks[0].currentStep().node.Name() != "Output Task" {
+		t.Error("Invalid second step name")
+	}
+
+	if len(pi.tracks) > 1 {
+		t.Error("Invalid tracks count")
+	}
+
+	if err := pi.tracks[0].tick(context.Background()); err != nil {
+		t.Errorf("Couldn't exec Node %s : %v", pi.tracks[0].currentStep().node.Name(), err)
+	}
+
+	if pi.tracks[0].state != TsEnded {
+		t.Error("Invalid track state")
+	}
 }
 
 func getTestInstance(p *model.Process, t *testing.T) *ProcessInstance {

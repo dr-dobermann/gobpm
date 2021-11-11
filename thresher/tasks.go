@@ -82,9 +82,15 @@ func NewOutputTaskExecutor(ot *model.OutputTask) *OutputTaskExecutor {
 func (ote *OutputTaskExecutor) Exec(_ context.Context,
 	tr *track) (StepState, []*model.SequenceFlow, error) {
 
-	// TODO: update to print vars from VS
-	for _, v := range ote.Vars {
-
+	for _, ov := range ote.Vars {
+		v, err := tr.instance.vs.GetVar(ov.Name())
+		if err != nil {
+			return SsFailed, nil,
+				NewProcExecError(tr,
+					fmt.Sprintf("couldn't print variable %s : %v",
+						ov.Name(), err),
+					err)
+		}
 		fmt.Printf("%s(%s) = %v\n", v.Name(), v.Type().String(), v.Value())
 	}
 
