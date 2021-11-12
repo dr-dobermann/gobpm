@@ -17,8 +17,8 @@ func TestMessage(t *testing.T) {
 	m, err = p.AddMessage(mn,
 		MfdIncoming,
 		[]MessageVariable{
-			{"x", VtInt, false, nil},
-			{"y", VtInt, false, nil},
+			{*V("x", VtInt, nil), false},
+			{*V("y", VtInt, nil), false},
 		}...)
 
 	if m == nil || err != nil {
@@ -56,8 +56,8 @@ func TestMessage(t *testing.T) {
 	if _, err := p.AddMessage("duplicate_variables",
 		MfdIncoming,
 		[]MessageVariable{
-			{"x", VtInt, false, nil},
-			{"x", VtInt, false, nil},
+			{*V("x", VtInt, nil), false},
+			{*V("x", VtInt, nil), false},
 		}...); err == nil {
 
 		t.Error("Added message with duplicate by name variables")
@@ -67,8 +67,8 @@ func TestMessage(t *testing.T) {
 	if _, err := p.AddMessage("msg_with_empty_var_name",
 		MfdIncoming,
 		[]MessageVariable{
-			{"x", VtInt, false, nil},
-			{"", VtInt, false, nil},
+			{*V("x", VtInt, nil), false},
+			{*V("", VtInt, nil), false},
 		}...); err == nil {
 
 		t.Error("Added message with an empty variable name")

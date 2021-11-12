@@ -83,13 +83,6 @@ type Activity struct {
 	// not empty in case the Activity used as CallActivity
 	calledElement *CallableElement
 	transaction   *Transaction
-
-	// variables should be in the instance's VarStore
-	// _before_ Task starts execution
-	input []Variable
-	// variables should be in the instance's VarStore
-	// _after_ Tasks finishes execution
-	output []Variable
 }
 
 func (a Activity) Class() ActivityClass {
