@@ -486,3 +486,7 @@ func (thr *Thresher) TurnOn() {
 		}
 	}
 }
+
+func (thr *Thresher) TurnOff() {
+	thr.cancel()
+}
