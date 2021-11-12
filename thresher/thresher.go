@@ -181,8 +181,6 @@ func (tr *track) tick(ctx context.Context) error {
 				"couldn't get the TaskExecutor", err)
 		}
 
-		// TODO: check incoming variables demands for the Task
-
 		tr.state = TsExecutingStep
 		tr.currentStep().state = SsStarted
 		ns, next, err := te.Exec(ctx, tr)
@@ -190,8 +188,6 @@ func (tr *track) tick(ctx context.Context) error {
 			tr.state = TsError
 			return NewProcExecError(tr, "error executing task "+t.Name(), err)
 		}
-
-		// TODO: check resulting variable demands of the Task
 
 		if err = tr.updateState(ns, next); err != nil {
 			return NewProcExecError(
@@ -357,8 +353,18 @@ func (pi *ProcessInstance) prepare() error {
 	return nil
 }
 
-func (pi *ProcessInstance) Start(ctx context.Context, trh *Thresher) {
+func (pi *ProcessInstance) Run(ctx context.Context, trh *Thresher) error {
+	if pi.state == IsCreated {
+		if err := pi.prepare(); err != nil {
+			return NewProcExecError(
+				nil,
+				fmt.Sprintf("couldn't prepare the Instance %v for running : %v",
+					pi.id.String(), err),
+				nil)
+		}
+	}
 
+	return nil
 }
 
 type Thresher struct {
@@ -398,6 +404,6 @@ func (thr *Thresher) NewProcessInstance(p *model.Process) (*ProcessInstance, err
 	return pi, nil
 }
 
-func (trh *Thresher) Run(ctx context.Context) {
+func (trh *Thresher) TurnOn(ctx context.Context) {
 
 }
