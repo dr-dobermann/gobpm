@@ -52,6 +52,7 @@ func (p *Process) GetNodes(et FlowElementType) []Node {
 	nn := []Node{}
 
 	switch et {
+	// return all nodes
 	case EtUnspecified:
 		for _, t := range p.tasks {
 			nn = append(nn, t)
@@ -276,6 +277,13 @@ func (p *Process) AddTask(t TaskDefinition, ln string) error {
 				" already exists in the process", nil)
 		}
 	}
+
+	if err := t.Check(); err != nil {
+		return NewProcessModelError(p.id,
+			fmt.Sprintf("task %s didn't pass self-check", t.Name()),
+			err)
+	}
+
 	p.tasks = append(p.tasks, t)
 	l.addNode(t)
 
@@ -320,13 +328,17 @@ func (p *Process) LinkNodes(src Node, trg Node, sExpr *Expression) error {
 	p.flows = append(p.flows, sf)
 
 	if err := src.ConnectFlow(sf, SeSource); err != nil {
-		panic(fmt.Sprintf("couldn't connect sequence flow %s to task %s as source : %v",
-			sf.ID().String(), src.Name(), err.Error()))
+		return NewProcessModelError(p.id,
+			fmt.Sprintf("couldn't connect sequence flow %s to task %s as source : %v",
+				sf.ID().String(), src.Name(), err.Error()),
+			err)
 	}
 
 	if err := trg.ConnectFlow(sf, SeTarget); err != nil {
-		panic(fmt.Sprintf("couldn't connect sequence flow %s to task %s as target: %v",
-			sf.ID().String(), trg.Name(), err.Error()))
+		return NewProcessModelError(p.id,
+			fmt.Sprintf("couldn't connect sequence flow %s to task %s as target: %v",
+				sf.ID().String(), trg.Name(), err.Error()),
+			err)
 	}
 
 	return nil

@@ -6,12 +6,12 @@ import (
 	"github.com/google/uuid"
 )
 
-type MessageFlow struct {
-	FlowElement
-	startRef Id
-	endRef   Id
-	message  Id
-}
+// type MessageFlow struct {
+// 	FlowElement
+// 	startRef Id
+// 	endRef   Id
+// 	message  Id
+// }
 
 type MessageFlowDirection uint8
 
@@ -25,8 +25,8 @@ type MessageState uint8
 
 const (
 	MsCreated  MessageState = 0x00
-	MsRecieved              = 0x01
-	MsSent                  = 0x02
+	MsRecieved MessageState = 0x01
+	MsSent     MessageState = 0x02
 )
 
 type MessageVariable struct {
@@ -36,8 +36,8 @@ type MessageVariable struct {
 
 type Message struct {
 	FlowElement
-	flow  Id
-	event Id // Message event processor
+	//flow  Id
+	//event Id // Message event processor
 
 	direction MessageFlowDirection
 	mstate    MessageState

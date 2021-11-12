@@ -10,22 +10,22 @@ const (
 	AcCall
 )
 
-type LoopDef struct {
-	loopVar   Variable
-	condition *Expression
-	iteration *Expression
-}
+// type LoopDef struct {
+// 	loopVar   Variable
+// 	condition *Expression
+// 	iteration *Expression
+// }
 
 type ParameterBinding struct {
 	BaseElement
-	parRef Id
-	expr   *Expression
+	//parRef Id
+	//expr   *Expression
 }
 
 type ResourceRole struct {
 	BaseElement
-	assignExpr *Expression // should return Users or Groups resources
-	bindings   []*ParameterBinding
+	//assignExpr *Expression // should return Users or Groups resources
+	//bindings   []*ParameterBinding
 }
 
 type Transaction struct {
@@ -71,18 +71,18 @@ func (at ActivityType) String() string {
 
 type Activity struct {
 	FlowNode
-	loop        *LoopDef
+	//loop        *LoopDef
 	defaultFlow Id // that will receive a token when none of the
 	// conditionExpressions on other outgoing Sequence Flows evaluate
 	// to true. The default Sequence Flow should not have a
 	// conditionExpression. Any such Expression SHALL be ignored
-	class          ActivityClass
-	aType          ActivityType
-	boundaryEvents []*Event
-	data           InputOutputSpecification
+	class ActivityClass
+	aType ActivityType
+	//boundaryEvents []*Event
+	//data           InputOutputSpecification
 	// not empty in case the Activity used as CallActivity
-	calledElement *CallableElement
-	transaction   *Transaction
+	//calledElement *CallableElement
+	//transaction   *Transaction
 }
 
 func (a Activity) Class() ActivityClass {
@@ -97,6 +97,11 @@ func (a Activity) DefaultFlowId() Id {
 	return a.defaultFlow
 }
 
+func (a Activity) Check() error {
+
+	return nil
+}
+
 // ------------ TaskDefinition interfaces --------------------------------------
 type TaskDefinition interface {
 	Node
@@ -105,4 +110,7 @@ type TaskDefinition interface {
 	DefaultFlowId() Id
 	// Copy returns a copy of the Task with a new Id
 	Copy(snapshot *Process) TaskDefinition
+	// Check makes a test if it possible to use the Task in the process.
+	// It called in process.AddTask
+	Check() error
 }

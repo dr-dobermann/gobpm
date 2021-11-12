@@ -1,75 +1,189 @@
 package model
 
-// ------------------ Standard tasks -------------------------------------------
-type GenericTask struct {
-	Activity
-}
+import "fmt"
 
-type ServiceTask struct {
-	Activity
-	// could be "##unspecified", "##WebService" or
-	// URI or coordination protocl
-	Implementation string
-	Operation      *Operation // invoked operation
-}
+// ----------------------------------------------------------------------------
+//                              Standard tasks
+// ----------------------------------------------------------------------------
+// type GenericTask struct {
+// 	Activity
+// }
+
+// type ServiceTask struct {
+// 	Activity
+// 	// could be "##unspecified", "##WebService" or
+// 	// URI or coordination protocl
+// 	Implementation string
+// 	Operation      *Operation // invoked operation
+// }
+
+//-----------------------------------------------------------------------------
 
 // SendTask represent the Task that sends the message outside the process.
 type SendTask struct {
 	Activity
-	// message name in process
-	mName string
+	msgName string
+}
+
+func (st *SendTask) GetTaskDefStr() interface{} {
+	return st
+}
+
+func (st *SendTask) Check() error {
+
+	for _, m := range st.process.messages {
+		if m.name == st.msgName && m.direction&MfdOutgoing == MfdOutgoing {
+			return nil
+		}
+	}
+
+	return NewProcessModelError(st.ProcessID(),
+		fmt.Sprintf("couldn't find outgoing message %s nedeed for task %s",
+			st.msgName, st.name),
+		nil)
+}
+
+func NewSendTask(p *Process, n string, msgName string) *SendTask {
+	id := NewID()
+
+	if n == "" {
+		n = "Task " + id.String()
+	}
+
+	return &SendTask{
+		Activity: Activity{
+			FlowNode: FlowNode{
+				FlowElement: FlowElement{
+					NamedElement: NamedElement{
+						BaseElement: BaseElement{
+							id: id},
+						name: n},
+					elementType: EtActivity},
+				process: p},
+			aType: AtSendTask,
+			class: AcAbstract},
+		msgName: msgName}
+}
+
+func (st *SendTask) Copy(snapshot *Process) TaskDefinition {
+	cst := new(SendTask)
+
+	*cst = *st
+
+	cst.id = NewID()
+	cst.process = snapshot
+	cst.incoming = []*SequenceFlow{}
+	cst.outcoming = []*SequenceFlow{}
+
+	return cst
 }
 
 //-----------------------------------------------------------------------------
 
 type ReceiveTask struct {
 	Activity
-	mName string
+	msgName string
+}
+
+func (rt *ReceiveTask) GetTaskDefStr() interface{} {
+	return rt
+}
+
+func (rt *ReceiveTask) Check() error {
+	for _, m := range rt.process.messages {
+		if m.name == rt.msgName && m.direction&MfdIncoming == MfdIncoming {
+			return nil
+		}
+	}
+
+	return NewProcessModelError(rt.ProcessID(),
+		fmt.Sprintf("couldn't find incoming message %s nedeed for task %s",
+			rt.msgName, rt.name),
+		nil)
+}
+
+func NewReceiveTask(p *Process, n string, msgName string) *ReceiveTask {
+	id := NewID()
+
+	if n == "" {
+		n = "Task " + id.String()
+	}
+
+	rt := new(ReceiveTask)
+	rt.id = id
+	rt.name = n
+	rt.process = p
+	rt.elementType = EtActivity
+	rt.aType = AtRecieveTask
+	rt.msgName = msgName
+
+	return rt
+}
+
+func (rt *ReceiveTask) Copy(snapshot *Process) TaskDefinition {
+	crt := new(ReceiveTask)
+
+	*crt = *rt
+
+	crt.id = NewID()
+	crt.process = snapshot
+	crt.incoming = []*SequenceFlow{}
+	crt.outcoming = []*SequenceFlow{}
+
+	return crt
 }
 
 //-----------------------------------------------------------------------------
 
-type BusinessRuleTask struct {
-	Activity
-}
+// type BusinessRuleTask struct {
+// 	Activity
+// }
 
-type ScriptTask struct {
-	Activity
-	format string
-	script string
-}
+// type ScriptTask struct {
+// 	Activity
+// 	format string
+// 	script string
+// }
 
-type UserTask struct {
-	Activity
-	renderings map[string]string
-	owner      string
-	priority   int
-}
+// type UserTask struct {
+// 	Activity
+// 	renderings map[string]string
+// 	owner      string
+// 	priority   int
+// }
 
-// ------------- Ad-Hoc Sub-Processes -----------------------------------------
-type AdHocOrdering uint8
+// ----------------------------------------------------------------------------
+//                            Ad-Hoc Sub-Processes
+// ----------------------------------------------------------------------------
 
-const (
-	ParallelOrder AdHocOrdering = iota
-	SequentalOrder
-)
+// type AdHocOrdering uint8
 
-type AdHocSubProc struct {
-	Activity
-	CompletionCond           *Expression
-	Order                    AdHocOrdering
-	CancelRemainingInstances bool
-}
+// const (
+// 	ParallelOrder AdHocOrdering = iota
+// 	SequentalOrder
+// )
 
-// ------------ Global task ----------------------------------------------------
+// type AdHocSubProc struct {
+// 	Activity
+// 	CompletionCond           *Expression
+// 	Order                    AdHocOrdering
+// 	CancelRemainingInstances bool
+// }
+
+// ----------------------------------------------------------------------------
+//                                  Global task
+// ----------------------------------------------------------------------------
 type GlobalTask struct {
 	CallableElement
-	resources []ResourceRole
+	//resources []ResourceRole
 }
 
-// ------------ Special tasks --------------------------------------------------
+// ----------------------------------------------------------------------------
+//                                Special tasks
+//
 // Those tasks are introduced until DMN-engine be built
-// As soon as DMN will be realized those task will become unneccessary
+// As soon as DMN will be realized those task will become unneccessary and might
+// be deleted
 // -----------------------------------------------------------------------------
 
 // StoreTask stores a bunch of variables into local VarStore of process instance
@@ -127,6 +241,8 @@ func (st *StoreTask) Copy(snapshot *Process) TaskDefinition {
 	return &stc
 }
 
+// ----------------------------------------------------------------------------
+
 // Calc function provides generic interface to custom fuctions which
 // could be expressed out as equation
 //               out = F(in)
@@ -143,9 +259,10 @@ type CalcFunc func(
 
 type CalculateTask struct {
 	Activity
-	funcs []CalcFunc
+	//	funcs []CalcFunc
 }
 
+// ----------------------------------------------------------------------------
 type OutputTask struct {
 	Activity
 	Vars []Variable
@@ -202,3 +319,5 @@ func (ot *OutputTask) Copy(snapshot *Process) TaskDefinition {
 func (ot *OutputTask) FloatNode() *FlowNode {
 	return &ot.FlowNode
 }
+
+// ----------------------------------------------------------------------------
