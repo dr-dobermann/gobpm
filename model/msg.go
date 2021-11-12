@@ -1,6 +1,10 @@
 package model
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/google/uuid"
+)
 
 type MessageFlow struct {
 	FlowElement
@@ -26,10 +30,8 @@ const (
 )
 
 type MessageVariable struct {
-	name     string
-	vtype    VarType
+	Variable
 	optional bool
-	value    interface{}
 }
 
 type Message struct {
@@ -46,24 +48,24 @@ func (m Message) State() MessageState {
 	return m.mstate
 }
 
-func newMessage(p *Process, mn string, dir MessageFlowDirection, vars ...MessageVariable) (*Message, error) {
+func newMessage(mn string, dir MessageFlowDirection, vars ...MessageVariable) (*Message, error) {
 	vl := map[string]MessageVariable{}
 
 	if len(vars) == 0 {
-		return nil, NewProcessModelError(p.id,
+		return nil, NewProcessModelError(Id(uuid.Nil),
 			"couldn't create message "+mn+" with an empty variable list", nil)
 	}
 
 	for i, v := range vars {
 		if len(v.name) == 0 {
-			return nil, NewProcessModelError(p.id,
+			return nil, NewProcessModelError(Id(uuid.Nil),
 				fmt.Sprintf("trying create a message %s with non-named variable (%d)", mn, i),
 				nil)
 		}
 
 		for _, iv := range vl {
 			if iv.name == v.name {
-				return nil, NewProcessModelError(p.id, "variable "+v.name+" already exists in the message "+mn, nil)
+				return nil, NewProcessModelError(Id(uuid.Nil), "variable "+v.name+" already exists in the message "+mn, nil)
 			}
 		}
 
@@ -74,9 +76,7 @@ func newMessage(p *Process, mn string, dir MessageFlowDirection, vars ...Message
 		FlowElement: FlowElement{
 			NamedElement: NamedElement{
 				BaseElement: BaseElement{
-					id:            NewID(),
-					Documentation: Documentation{"", ""},
-				},
+					id: NewID()},
 				name: mn},
 			elementType: EtMessage},
 		direction: dir,

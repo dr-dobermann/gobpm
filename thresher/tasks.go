@@ -91,7 +91,10 @@ func (ote *OutputTaskExecutor) Exec(_ context.Context,
 						ov.Name(), err),
 					err)
 		}
-		fmt.Printf("%s(%s) = %v\n", v.Name(), v.Type().String(), v.Value())
+		fmt.Printf("[%s]%s %s(%s) = %v\n",
+			tr.instance.id,
+			tr.instance.snapshot.Name(),
+			v.Name(), v.Type().String(), v.Value())
 	}
 
 	// TODO: Add expression check on output flows

@@ -246,7 +246,7 @@ func (p *Process) AddMessage(mn string,
 		}
 	}
 
-	if ms, err := newMessage(p, mn, dir, vars...); err != nil {
+	if ms, err := newMessage(mn, dir, vars...); err != nil {
 		return nil, NewProcessModelError(p.id, "couldn't register message "+mn+" to process", err)
 	} else {
 		m = ms
