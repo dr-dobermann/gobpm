@@ -57,6 +57,16 @@ func TestTracks(t *testing.T) {
 	}
 }
 
+func TestThresher(t *testing.T) {
+	thr := GetThreshser()
+
+	if _, err := thr.NewProcessInstance(getTestProcess(t)); err != nil {
+		t.Error("couldn't create an Instance of the test process : ", err)
+	}
+
+	thr.TurnOn()
+}
+
 func getTestInstance(p *model.Process, t *testing.T) *ProcessInstance {
 	if p == nil {
 		p = getTestProcess(t)
@@ -65,10 +75,6 @@ func getTestInstance(p *model.Process, t *testing.T) *ProcessInstance {
 	pi, err := GetThreshser().NewProcessInstance(p)
 	if err != nil {
 		t.Fatal("couldn't create an instance : ", err)
-	}
-
-	if pi == nil {
-		t.Fatal("got nil instance")
 	}
 
 	return pi

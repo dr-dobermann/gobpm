@@ -14,6 +14,7 @@ package thresher
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/dr-dobermann/gobpm/ctr"
 	"github.com/dr-dobermann/gobpm/model"
@@ -86,6 +87,7 @@ type track struct {
 	state    TrackState
 	prev     []*track
 	steps    []stepInfo
+	lastErr  error
 }
 
 func (tr *track) currentStep() *stepInfo {
@@ -158,6 +160,8 @@ func (tr *track) tick(ctx context.Context) error {
 	}
 
 	if tr.currentStep().state != SsCreated {
+		tr.state = TsError
+
 		return NewProcExecError(tr,
 			fmt.Sprintf("couldn't start node %s in state %v",
 				tr.currentStep().node.Name(),
@@ -170,6 +174,8 @@ func (tr *track) tick(ctx context.Context) error {
 	case model.EtActivity:
 		t, ok := n.(model.TaskDefinition)
 		if !ok {
+			tr.state = TsError
+
 			return NewProcExecError(tr,
 				"couldn't convert node "+n.Name()+" to TaskDefinition",
 				nil)
@@ -177,6 +183,8 @@ func (tr *track) tick(ctx context.Context) error {
 
 		te, err := GetTaskExecutor(t)
 		if err != nil {
+			tr.state = TsError
+
 			return NewProcExecError(tr,
 				"couldn't get the TaskExecutor", err)
 		}
@@ -186,10 +194,13 @@ func (tr *track) tick(ctx context.Context) error {
 		ns, next, err := te.Exec(ctx, tr)
 		if err != nil {
 			tr.state = TsError
+
 			return NewProcExecError(tr, "error executing task "+t.Name(), err)
 		}
 
 		if err = tr.updateState(ns, next); err != nil {
+			tr.state = TsError
+
 			return NewProcExecError(
 				tr,
 				"couldn't update track state to "+ns.String(),
@@ -201,6 +212,8 @@ func (tr *track) tick(ctx context.Context) error {
 	case model.EtEvent:
 
 	default:
+		tr.state = TsError
+
 		return NewProcExecError(tr,
 			fmt.Sprintf(
 				"invalid node type %v of %s. Should be Activity, Gateway or Event",
@@ -222,6 +235,7 @@ func (tr *track) updateState(ns StepState, ff []*model.SequenceFlow) error {
 	}
 
 	if ns <= tr.currentStep().state {
+		tr.state = TsError
 		return NewProcExecError(
 			tr,
 			fmt.Sprintf("Invalid step state for node %s. current: %s, new: %s",
@@ -341,7 +355,10 @@ func (pi *ProcessInstance) prepare() error {
 		if n.Type() != model.EtGateway && !n.HasIncoming() {
 			t, err := newTrack(n, pi, nil)
 			if err != nil {
-				return NewProcExecError(nil, "couldn't prepare an Instance for starting", err)
+				return NewProcExecError(
+					nil,
+					"couldn't prepare an Instance for starting",
+					err)
 			}
 
 			pi.tracks = append(pi.tracks, t)
@@ -353,7 +370,14 @@ func (pi *ProcessInstance) prepare() error {
 	return nil
 }
 
-func (pi *ProcessInstance) Run(ctx context.Context, trh *Thresher) error {
+func (pi *ProcessInstance) Run(ctx context.Context) error {
+	if pi.state == IsEnded || pi.state == IsRunning {
+		return NewProcExecError(
+			nil,
+			fmt.Sprintf("Instance %s has wrong state %v", pi.id, pi.state),
+			nil)
+	}
+
 	if pi.state == IsCreated {
 		if err := pi.prepare(); err != nil {
 			return NewProcExecError(
@@ -364,21 +388,69 @@ func (pi *ProcessInstance) Run(ctx context.Context, trh *Thresher) error {
 		}
 	}
 
+	pi.state = IsRunning
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+
+		default:
+		}
+
+		var wg sync.WaitGroup
+
+		tc := 0
+		for _, t := range pi.tracks {
+			if t.state != TsReady {
+				continue
+			}
+
+			tc++
+			wg.Add(1)
+			go func(et *track) {
+				defer wg.Done()
+
+				if err := et.tick(ctx); err != nil {
+					et.state = TsError
+					et.lastErr = err
+				}
+			}(t)
+		}
+		wg.Wait()
+
+		if tc == 0 {
+			pi.state = IsEnded
+			break
+		}
+	}
+
 	return nil
 }
 
 type Thresher struct {
 	id        model.Id
 	instances []*ProcessInstance
+	ctx       context.Context
+	cancel    context.CancelFunc
+	m         *sync.Mutex
+}
+
+func (thr *Thresher) ChangeContext(ctx context.Context, cFunc context.CancelFunc) {
+	thr.ctx = ctx
+	thr.cancel = cFunc
 }
 
 var thresher *Thresher
 
 func GetThreshser() *Thresher {
 	if thresher == nil {
+		ctx, cancel := context.WithCancel(context.Background())
 		thresher = &Thresher{
 			id:        model.NewID(),
-			instances: []*ProcessInstance{}}
+			instances: []*ProcessInstance{},
+			ctx:       ctx,
+			cancel:    cancel,
+			m:         new(sync.Mutex)}
 	}
 
 	return thresher
@@ -404,6 +476,13 @@ func (thr *Thresher) NewProcessInstance(p *model.Process) (*ProcessInstance, err
 	return pi, nil
 }
 
-func (trh *Thresher) TurnOn(ctx context.Context) {
+func (thr *Thresher) TurnOn() {
+	thr.m.Lock()
+	defer thr.m.Unlock()
 
+	for _, pi := range thr.instances {
+		if pi.state == IsCreated {
+			go pi.Run(thr.ctx)
+		}
+	}
 }
