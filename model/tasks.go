@@ -114,7 +114,7 @@ func NewReceiveTask(p *Process, n string, msgName string) *ReceiveTask {
 	rt.name = n
 	rt.process = p
 	rt.elementType = EtActivity
-	rt.aType = AtRecieveTask
+	rt.aType = AtReceiveTask
 	rt.msgName = msgName
 
 	return rt

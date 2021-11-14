@@ -48,6 +48,22 @@ func (m Message) State() MessageState {
 	return m.mstate
 }
 
+// GetVariables returns a list of variables, defined for the Message m.
+// if nonOptionalOnly is true, then only variables with optional == false
+// will be returned.
+func (m Message) GetVariables(nonOptionalOnly bool) []Variable {
+	vv := []Variable{}
+
+	for _, mv := range m.vList {
+		if nonOptionalOnly && mv.optional {
+			continue
+		}
+		vv = append(vv, mv.Variable)
+	}
+
+	return vv
+}
+
 func newMessage(mn string, dir MessageFlowDirection, vars ...MessageVariable) (*Message, error) {
 	vl := map[string]MessageVariable{}
 

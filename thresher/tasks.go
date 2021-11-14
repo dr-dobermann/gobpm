@@ -7,10 +7,27 @@ import (
 	"github.com/dr-dobermann/gobpm/model"
 )
 
+// GetTaskExecutor returns a Task Executor linked to given TaskDefinition.
+// if there is no known Executor or there are errors in retrieving it,
+// error would be returned
 func GetTaskExecutor(t model.TaskDefinition) (TaskExecutor, error) {
 	var te TaskExecutor
 
 	switch t.TaskType() {
+	case model.AtSendTask:
+		st, ok := t.GetTaskDefStr().(*model.SendTask)
+		if !ok {
+			return nil, NewProcExecError(nil, "cannon get SendTask struct", nil)
+		}
+		te = NewSendTaskExecutor(st)
+
+	case model.AtReceiveTask:
+		rt, ok := t.GetTaskDefStr().(*model.ReceiveTask)
+		if !ok {
+			return nil, NewProcExecError(nil, "cannot get ReceiveTask sturct", nil)
+		}
+		te = NewReceiveTaskExecutor(rt)
+
 	case model.AtStoreTask:
 		st, ok := t.GetTaskDefStr().(*model.StoreTask)
 		if !ok {
@@ -34,6 +51,9 @@ func GetTaskExecutor(t model.TaskDefinition) (TaskExecutor, error) {
 	return te, nil
 }
 
+//-----------------------------------------------------------------------------
+//                           Special Tasks
+//-----------------------------------------------------------------------------
 type StoreTaskExecutor struct {
 	model.StoreTask
 }
@@ -63,6 +83,8 @@ func (ste *StoreTaskExecutor) Exec(_ context.Context,
 	// TODO: Add expression check on output flows
 	return SsEnded, ste.GetOutputFlows(), nil
 }
+
+//-----------------------------------------------------------------------------
 
 type OutputTaskExecutor struct {
 	model.OutputTask
@@ -100,3 +122,54 @@ func (ote *OutputTaskExecutor) Exec(_ context.Context,
 	// TODO: Add expression check on output flows
 	return SsEnded, ote.GetOutputFlows(), nil
 }
+
+//-----------------------------------------------------------------------------
+
+type SendTaskExecutor struct {
+	model.SendTask
+}
+
+func NewSendTaskExecutor(st *model.SendTask) *SendTaskExecutor {
+	if st == nil {
+		return nil
+	}
+
+	ste := new(SendTaskExecutor)
+	ste.SendTask = *st
+
+	return ste
+}
+
+func (ste *SendTaskExecutor) Exec(ctx context.Context,
+	tr *track) (StepState, []*model.SequenceFlow, error) {
+
+	// create the results channel
+	// make the call for service
+
+	return SsAwaitsResults, nil, nil
+}
+
+//-----------------------------------------------------------------------------
+
+type ReceiveTaskExecutor struct {
+	model.ReceiveTask
+}
+
+func NewReceiveTaskExecutor(rt *model.ReceiveTask) *ReceiveTaskExecutor {
+	if rt == nil {
+		return nil
+	}
+
+	rte := new(ReceiveTaskExecutor)
+	rte.ReceiveTask = *rt
+
+	return rte
+}
+
+func (rte *ReceiveTaskExecutor) Exec(ctx context.Context,
+	tr *track) (StepState, []*model.SequenceFlow, error) {
+
+	return SsAwaitsResults, nil, nil
+}
+
+//-----------------------------------------------------------------------------

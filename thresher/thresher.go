@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/dr-dobermann/gobpm/ctr"
 	"github.com/dr-dobermann/gobpm/model"
 )
 
@@ -335,8 +334,8 @@ type ProcessInstance struct {
 	vs       model.VarStore
 	tracks   []*track
 
-	monitor *ctr.Monitor
-	audit   *ctr.Audit
+	//monitor *ctr.Monitor
+	//audit   *ctr.Audit
 }
 
 // prepare prepares the ProcessInstance object for start.

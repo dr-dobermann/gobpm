@@ -42,6 +42,51 @@ func getSendProcess(t *testing.T) *Process {
 		return nil
 	}
 
+	if len(p.messages) != 1 {
+		t.Error("Message definition wasn't added")
+		return nil
+	}
+
+	m, err := p.GetMessage("letter_X")
+	if err != nil {
+		t.Error("Couldn't retrieve the message letter_X from the process")
+		return nil
+	}
+
+	if m == nil {
+		t.Error("Message is empty")
+		return nil
+	}
+
+	vv := m.GetVariables(false)
+	if len(vv) != 1 {
+		t.Error("Invalid variables count", len(vv))
+		return nil
+	}
+
+	if vv[0].name != "x" {
+		t.Error("Invalid variable name", vv[0].name)
+		return nil
+	}
+
+	if _, err := p.AddMessage("letter_Y",
+		MfdOutgoing, MessageVariable{*V("y", VtInt, 0), true}); err != nil {
+		t.Error("Couldn't add outgoing message letter_X : ", err)
+		return nil
+	}
+
+	my, err := p.GetMessage("letter_Y")
+	if my == nil {
+		t.Error("Couldn't retrieve message letter_Y")
+		return nil
+	}
+
+	vmy := my.GetVariables(true)
+	if len(vmy) > 0 {
+		t.Error("Invalid letter_Y non-optional variables count", len(vmy))
+		return nil
+	}
+
 	if err := p.AddTask(snd, "Sender"); err != nil {
 		t.Error("Couldn't add Send X on Sender : ", err)
 		return nil

@@ -40,7 +40,7 @@ type ActivityType uint8
 const (
 	AtGenericTask ActivityType = iota
 	AtUserTask
-	AtRecieveTask
+	AtReceiveTask
 	AtSendTask
 	AtServiceTask
 	AtBusinessRuleTask
@@ -57,7 +57,7 @@ func (at ActivityType) String() string {
 	return []string{
 		"GenericTask",
 		"UserTask",
-		"RecieveTask",
+		"ReceiveTask",
 		"SendTask",
 		"ServiceTask",
 		"BusinessRuleTask",

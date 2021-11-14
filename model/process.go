@@ -47,6 +47,12 @@ type Process struct {
 	messages []*Message
 }
 
+// GetNodes returns a list of Nodes in the Process p.
+// Only Task, Gateway or Event could be returned.
+// If et is EtUnspecified then all three types of Node
+// will be returned in the same list.
+// If et is differs from EtAcitvity, EtGateway, EtEvent,
+// the panic will be fired
 func (p *Process) GetNodes(et FlowElementType) []Node {
 
 	nn := []Node{}
@@ -82,6 +88,23 @@ func (p *Process) GetTask(tid Id) TaskDefinition {
 	}
 
 	return nil
+}
+
+// GetMessage returns a *Message from the Process p.
+// If there is no Message with name mn, the error will be returned
+func (p *Process) GetMessage(mn string) (*Message, error) {
+	for _, m := range p.messages {
+		if m.name == mn {
+			return m, nil
+		}
+	}
+
+	return nil,
+		NewProcessModelError(
+			p.id,
+			fmt.Sprintf("couldn't find message %s in process %s",
+				mn, p.name),
+			nil)
 }
 
 func (p Process) Copy() *Process {
