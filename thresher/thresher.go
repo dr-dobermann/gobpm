@@ -19,11 +19,41 @@ import (
 	"github.com/dr-dobermann/gobpm/model"
 )
 
+type ProcessExecutingError struct {
+	piID    model.Id
+	pID     model.Id
+	trackId model.Id
+	msg     string
+	Err     error
+}
+
+func (pee ProcessExecutingError) Error() string {
+	return fmt.Sprintf("%s[%s]:%s: %s : %v",
+		pee.piID, pee.pID, pee.trackId, pee.msg, pee.Err)
+}
+
+func NewProcExecError(trk *track, msg string, err error) ProcessExecutingError {
+	pee := ProcessExecutingError{msg: msg, Err: err}
+
+	if trk != nil {
+		pee.trackId = trk.id
+		pee.piID = trk.instance.id
+		pee.pID = trk.instance.snapshot.ID()
+	}
+
+	return pee
+}
+
+// ----------------------------------------------------------------------------
+
 // TaskExecutor defines the run-time functionatlity of the Task objects
 type TaskExecutor interface {
 	model.TaskDefinition
+
 	Exec(ctx context.Context, tr *track) (StepState, []*model.SequenceFlow, error)
 }
+
+// ----------------------------------------------------------------------------
 
 // TrackState represent the state of the whole track
 type TrackState uint8
@@ -95,31 +125,6 @@ func (tr *track) currentStep() *stepInfo {
 
 func (tr *track) Instance() *ProcessInstance {
 	return tr.instance
-}
-
-type ProcessExecutingError struct {
-	piID    model.Id
-	pID     model.Id
-	trackId model.Id
-	msg     string
-	Err     error
-}
-
-func (pee ProcessExecutingError) Error() string {
-	return fmt.Sprintf("%s[%s]:%s: %s : %v",
-		pee.piID, pee.pID, pee.trackId, pee.msg, pee.Err)
-}
-
-func NewProcExecError(trk *track, msg string, err error) ProcessExecutingError {
-	pee := ProcessExecutingError{msg: msg, Err: err}
-
-	if trk != nil {
-		pee.trackId = trk.id
-		pee.piID = trk.instance.id
-		pee.pID = trk.instance.snapshot.ID()
-	}
-
-	return pee
 }
 
 // newTrack creates a new track started from a Node n.
@@ -316,6 +321,8 @@ func (tr *track) updateState(ns StepState, ff []*model.SequenceFlow) error {
 	return nil
 }
 
+// ----------------------------------------------------------------------------
+
 type InstanceState uint8
 
 const (
@@ -426,6 +433,8 @@ func (pi *ProcessInstance) Run(ctx context.Context) error {
 	return nil
 }
 
+// ----------------------------------------------------------------------------
+
 type Thresher struct {
 	id        model.Id
 	instances []*ProcessInstance
@@ -489,3 +498,5 @@ func (thr *Thresher) TurnOn() {
 func (thr *Thresher) TurnOff() {
 	thr.cancel()
 }
+
+// ----------------------------------------------------------------------------

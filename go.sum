@@ -1,3 +1,5 @@
+github.com/dr-dobermann/srvbus v0.0.0-20211120151148-c3f905f9303f h1:t2hJqKYPE9b7UE0alKAhS3+cHnH8EKOVCAn+KxNVdew=
+github.com/dr-dobermann/srvbus v0.0.0-20211120151148-c3f905f9303f/go.mod h1:uyxJ4pEtPcw12/paGc8igPvKSPyAws9XPlxaDzpFwAg=
 github.com/google/uuid v1.3.0 h1:t6JiXgmwXMjEs8VusXIJk2BXHsn+wx8BZdTaoZ5fu7I=
 github.com/google/uuid v1.3.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
 github.com/matryer/is v1.4.0 h1:sosSmIWwkYITGrxZ25ULNDeKiMNzFSr4V/eqBQP0PeE=

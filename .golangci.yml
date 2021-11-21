@@ -1,0 +1,55 @@
+run:
+    concurrency: 12
+    deadline: 3m
+    issues-exit-code: -1
+    tests: false
+    skip-dirs:
+      - test
+      - vendor
+    skip-files:
+      - ".sol.go"
+
+linters-settings:
+  cyclop:
+    max-complexity: 8
+  errcheck:
+    check-type-assertions: true
+  gci:
+    local-prefixes: poe
+
+output:
+    format: colored-line-number
+    print-issued-lines: true
+    print-linter-name: true
+
+linters:
+    fast: false
+    enable-all: true
+    disable:
+        - varnamelen
+        - interfacer # The linter 'interfacer' is deprecated
+        - maligned # The linter 'maligned' is deprecated
+        - scopelint # The linter 'scopelint' is deprecated Replaced by exportloopref.
+        - golint # The linter 'golint' is deprecated (since v1.41.0)  Replaced by revive.
+        # - gci
+        # - nlreturn
+        # - gomnd
+        # - wsl
+        - exhaustivestruct # ... are missing in ...
+        - funlen
+        # - nolintlint
+        # - revive
+        # - wrapcheck
+        # - nakedret
+        # - gochecknoglobals
+        # - gomoddirectives
+        - lll
+        # - whitespace
+        - gofumpt
+        - godot
+        - godox
+        # - unused
+        # - ifshort
+        # - goerr113
+        # - cyclop
+        # - deadcode

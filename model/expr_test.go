@@ -41,9 +41,9 @@ func TestTimeVariable(t *testing.T) {
 	is.Equal(ts, v.StrVal())
 }
 
-func TestVariablesValues(t *testing.T) {
+func testVs(t *testing.T) {
 
-	global := make(VarStore)
+	testVs := make(VarStore)
 
 	for i := 0; i < 4; i++ {
 		var (
@@ -55,16 +55,16 @@ func TestVariablesValues(t *testing.T) {
 		vn := fmt.Sprintf("v%d", i)
 		switch VarType(i) {
 		case VtInt:
-			_, err = global.NewInt(vn, td[i].i)
+			_, err = testVs.NewInt(vn, td[i].i)
 
 		case VtBool:
-			_, err = global.NewBool(vn, td[i].b)
+			_, err = testVs.NewBool(vn, td[i].b)
 
 		case VtString:
-			_, err = global.NewString(vn, td[i].s)
+			_, err = testVs.NewString(vn, td[i].s)
 
 		case VtFloat:
-			_, err = global.NewFloat(vn, td[i].f)
+			_, err = testVs.NewFloat(vn, td[i].f)
 		}
 
 		if err != nil {
@@ -74,16 +74,16 @@ func TestVariablesValues(t *testing.T) {
 		// checking duplicates
 		switch VarType(i) {
 		case VtInt:
-			_, err = global.NewInt(vn, td[i].i)
+			_, err = testVs.NewInt(vn, td[i].i)
 
 		case VtBool:
-			_, err = global.NewBool(vn, td[i].b)
+			_, err = testVs.NewBool(vn, td[i].b)
 
 		case VtString:
-			_, err = global.NewString(vn, td[i].s)
+			_, err = testVs.NewString(vn, td[i].s)
 
 		case VtFloat:
-			_, err = global.NewFloat(vn, td[i].f)
+			_, err = testVs.NewFloat(vn, td[i].f)
 		}
 
 		if err == nil {
@@ -91,7 +91,7 @@ func TestVariablesValues(t *testing.T) {
 		}
 
 		// checking values
-		v, err = global.GetVar(vn)
+		v, err = testVs.GetVar(vn)
 		if err != nil {
 			t.Error("cannot get variable value for " + vn + " of type " + string(VarType(i)))
 		}
@@ -131,27 +131,27 @@ func TestVariablesValues(t *testing.T) {
 
 func TestVariableDeleter(t *testing.T) {
 
-	global := make(VarStore)
+	testVs := make(VarStore)
 
-	if _, err := global.NewInt("xx", 3); err != nil {
+	if _, err := testVs.NewInt("xx", 3); err != nil {
 		t.Fatal("couldn't create int variable xx :", err)
 	}
 
-	if err := global.DelVar("xx"); err != nil {
+	if err := testVs.DelVar("xx"); err != nil {
 		t.Error("couldn't delete variable")
 	}
 
-	if err := global.DelVar("xx"); err == nil {
+	if err := testVs.DelVar("xx"); err == nil {
 		t.Error("double deleting")
 	}
 
-	if _, err := global.GetVar("xx"); err == nil {
+	if _, err := testVs.GetVar("xx"); err == nil {
 		t.Error("variable isn't deleted")
 	}
 }
 
 func TestVariableUpdate(t *testing.T) {
-	global := make(VarStore)
+	testVs := make(VarStore)
 
 	for i := 0; i < 4; i++ {
 		var (
@@ -163,16 +163,16 @@ func TestVariableUpdate(t *testing.T) {
 		vn := fmt.Sprintf("v%d", i+4)
 		switch VarType(i) {
 		case VtInt:
-			_, err = global.NewInt(vn, td[i].i)
+			_, err = testVs.NewInt(vn, td[i].i)
 
 		case VtBool:
-			_, err = global.NewBool(vn, td[i].b)
+			_, err = testVs.NewBool(vn, td[i].b)
 
 		case VtString:
-			_, err = global.NewString(vn, td[i].s)
+			_, err = testVs.NewString(vn, td[i].s)
 
 		case VtFloat:
-			_, err = global.NewFloat(vn, td[i].f)
+			_, err = testVs.NewFloat(vn, td[i].f)
 		}
 
 		if err != nil {
@@ -180,46 +180,46 @@ func TestVariableUpdate(t *testing.T) {
 		}
 
 		// update non-existent (by name) variable
-		if err = global.Update("fake_var", 100); err == nil {
+		if err = testVs.Update("fake_var", 100); err == nil {
 			t.Error("updating non-existent variable fake_var")
 		}
 
 		// update
 		switch VarType(i) {
 		case VtInt:
-			err = global.Update(vn, td[i+4].i)
+			err = testVs.Update(vn, td[i+4].i)
 
 			// update non-existent (by type) variable
-			if errr := global.Update(vn, "200"); errr == nil {
+			if errr := testVs.Update(vn, "200"); errr == nil {
 				t.Error("updating non-existent variable ", vn, ":VtString")
 			}
 
 			// update by wrong type
-			if errr := global.Update(vn, "200"); errr == nil {
+			if errr := testVs.Update(vn, "200"); errr == nil {
 				t.Error("updating variable ", vn, " type VtInt with string(\"200\")")
 			}
 
 		case VtBool:
-			err = global.Update(vn, td[i+4].b)
+			err = testVs.Update(vn, td[i+4].b)
 
 			// update by wrong type
-			if errr := global.Update(vn, "200"); errr == nil {
+			if errr := testVs.Update(vn, "200"); errr == nil {
 				t.Error("updating variable ", vn, " type VtBool with string(\"200\")")
 			}
 
 		case VtString:
-			err = global.Update(vn, td[i+4].s)
+			err = testVs.Update(vn, td[i+4].s)
 
 			// update by wrong type
-			if errr := global.Update(vn, 200); errr == nil {
+			if errr := testVs.Update(vn, 200); errr == nil {
 				t.Error("updating variable ", vn, " type VtString with int(\"200\")")
 			}
 
 		case VtFloat:
-			err = global.Update(vn, td[i+4].f)
+			err = testVs.Update(vn, td[i+4].f)
 
 			// update by wrong type
-			if errr := global.Update(vn, "200"); errr == nil {
+			if errr := testVs.Update(vn, "200"); errr == nil {
 				t.Error("updating variable ", vn, " type VtFloat with string(\"200\")")
 			}
 		}
@@ -230,7 +230,7 @@ func TestVariableUpdate(t *testing.T) {
 		}
 
 		// checking values
-		v, err = global.GetVar(vn)
+		v, err = testVs.GetVar(vn)
 		if err != nil {
 			t.Error("cannot get variable value for " + vn + " of type " + VarType(i).String())
 		}
