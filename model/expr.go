@@ -21,17 +21,39 @@ func (vt VarType) String() string {
 	return []string{"Int", "Bool", "String", "Float", "Time"}[vt]
 }
 
+// Variable is a variant-based type for using variables in gobpm.
+//
+// When it converts in|from time.Time it uses Unix Milliseconds value.
+//
+// Time converts into|from string it uses time.RFC3339
+// 2006-01-02T15:04:05Z
+// 2006-01-02T15:04:05+07:00
 type Variable struct {
 	name  string
 	vtype VarType
 	value interface{}
 	// float precision. Default 2
 	prec int
+
+	// pre-casted values for eliminating casting on-the-fly.
+	// For every type there is only one casted value.
+	i int64
+	b bool
+	s string
+	f float64
+	t time.Time
 }
 
-// V creates new variable
+// V creates a new variable
 func V(n string, t VarType, v interface{}) *Variable {
-	return &Variable{n, t, v, 2}
+	vv := &Variable{
+		name:  n,
+		vtype: t,
+		prec:  2}
+
+	vv.update(v)
+
+	return vv
 }
 
 func (v *Variable) Name() string {
@@ -59,13 +81,17 @@ func (v *Variable) Value() interface{} {
 	return vv
 }
 
+// update updates a value of the Variable v.
+//
+// it expected to receive the value of internal type of v.
 func (v *Variable) update(newVal interface{}) error {
 	switch v.vtype {
 	case VtInt:
-		if i, ok := newVal.(int); !ok {
+		if i, ok := newVal.(int64); !ok {
 			return NewModelError(fmt.Sprintf("couldn't convert %v to int", newVal), nil)
 		} else {
 			v.value = i
+			v.i = i
 		}
 
 	case VtBool:
@@ -73,6 +99,7 @@ func (v *Variable) update(newVal interface{}) error {
 			return NewModelError(fmt.Sprintf("couldn't convert %v to bool", newVal), nil)
 		} else {
 			v.value = b
+			v.b = b
 		}
 
 	case VtString:
@@ -80,6 +107,7 @@ func (v *Variable) update(newVal interface{}) error {
 			return NewModelError(fmt.Sprintf("couldn't convert %v to string", newVal), nil)
 		} else {
 			v.value = s
+			v.s = s
 		}
 
 	case VtFloat:
@@ -87,6 +115,7 @@ func (v *Variable) update(newVal interface{}) error {
 			return NewModelError(fmt.Sprintf("couldn't convert %v to float64", newVal), nil)
 		} else {
 			v.value = f
+			v.f = f
 		}
 
 	case VtTime:
@@ -94,6 +123,7 @@ func (v *Variable) update(newVal interface{}) error {
 			return NewModelError(fmt.Sprintf("couldn't convert %v to Time", newVal), nil)
 		} else {
 			v.value = t
+			v.t = t
 		}
 	}
 
@@ -103,69 +133,61 @@ func (v *Variable) update(newVal interface{}) error {
 // Int returns a integer representation of variable v.
 // if v is the VtString and converstion errror from string to float64 happened
 // then panic fired
-func (v *Variable) Int() int {
-	var i int
+func (v *Variable) Int() int64 {
+	var i int64
 
 	switch v.vtype {
 	case VtInt:
-		i = v.value.(int)
+		i = v.i
 
 	case VtBool:
-		b := v.value.(bool)
-		if b {
+		if v.b {
 			i = 1
 		} else {
 			i = 0
 		}
 
 	case VtString:
-		s := v.value.(string)
-		if f, err := strconv.ParseFloat(s, 64); err != nil {
+		if f, err := strconv.ParseFloat(v.s, 64); err != nil {
 			panic("cannot convert string var " + v.name +
-				"[" + s + "] to float64" + err.Error())
+				"[" + v.s + "] to float64" + err.Error())
 		} else {
-			i = int(math.Round(f))
+			i = int64(math.Round(f))
 		}
 
 	case VtFloat:
-		f := v.value.(float64)
-		i = int(f)
+		i = int64(v.f)
 
 	case VtTime:
-		t := v.value.(time.Time)
-		i = int(t.Unix())
+		i = v.t.UnixMilli()
 	}
 
 	return i
 }
 
-// String returns a string representation of variable v.
-func (v *Variable) String() string {
+// StrVal returns a string representation of variable v.
+func (v *Variable) StrVal() string {
 	var s string
 
 	switch v.vtype {
 	case VtInt:
-		i := v.value.(int)
-		s = strconv.Itoa(i)
+		s = strconv.Itoa(int(v.i))
 
 	case VtBool:
-		b := v.value.(bool)
-		if b {
+		if v.b {
 			s = "true"
 		} else {
 			s = "false"
 		}
 
 	case VtFloat:
-		f := v.value.(float64)
-		s = strconv.FormatFloat(f, 'f', v.prec, 64)
+		s = strconv.FormatFloat(v.f, 'f', v.prec, 64)
 
 	case VtString:
-		s = v.value.(string)
+		s = v.s
 
 	case VtTime:
-		t := v.value.(time.Time)
-		s = t.String()
+		s = v.t.Format(time.RFC3339)
 	}
 
 	return s
@@ -177,25 +199,25 @@ func (v *Variable) Bool() bool {
 
 	switch v.vtype {
 	case VtInt:
-		i := v.value.(int)
-		if i != 0 {
+		if v.i != 0 {
 			b = true
 		}
 
 	case VtBool:
-		b = v.value.(bool)
+		b = v.b
 
 	case VtFloat:
-		f := v.value.(float64)
-		if f != 0.0 {
+		if v.f != 0.0 {
 			b = true
 		}
 
 	case VtString:
-		s := v.value.(string)
-		if len(s) > 0 {
+		if len(v.s) > 0 {
 			b = true
 		}
+
+	case VtTime:
+		b = !v.t.IsZero()
 	}
 
 	return b
@@ -212,31 +234,59 @@ func (v *Variable) Float64() float64 {
 
 	switch v.vtype {
 	case VtInt:
-		i := v.value.(int)
-		f = float64(i)
+		f = float64(v.i)
 
 	case VtBool:
-		b := v.value.(bool)
-		if b {
+		if v.b {
 			f = 1.0
 		}
 
 	case VtFloat:
-		f = v.value.(float64)
+		f = v.f
 
 	case VtString:
-		s := v.value.(string)
-		f, err = strconv.ParseFloat(s, 64)
+		f, err = strconv.ParseFloat(v.s, 64)
 		if err != nil {
 			panic("couldn't transform string " +
-				s + " into float64 : " + err.Error())
+				v.s + " into float64 : " + err.Error())
 		}
 
 	case VtTime:
-		f = 0.0
+		f = float64(v.t.UnixMilli())
 	}
 
 	return f
+}
+
+func (v *Variable) Time() time.Time {
+	var (
+		t   time.Time
+		err error
+	)
+
+	switch v.vtype {
+	case VtInt:
+		t = time.UnixMilli(v.i)
+
+	case VtBool:
+		if v.b {
+			t = time.Now()
+		}
+
+	case VtString:
+		if t, err = time.Parse(time.RFC3339, v.s); err != nil {
+			panic("couldn't cast string '" + v.s +
+				"' to time : " + err.Error())
+		}
+
+	case VtFloat:
+		t = time.UnixMilli(int64(v.f))
+
+	case VtTime:
+		t = v.t
+	}
+
+	return t
 }
 
 // varStore retpresents the variables store
@@ -302,14 +352,14 @@ func (vs *VarStore) Update(vn string, newVal interface{}) error {
 
 // NewInt creates a new int variable in namespace vs
 // if the variable with the same name and the same type exists, the error returned
-func (vs *VarStore) NewInt(vn string, val int) (*Variable, error) {
+func (vs *VarStore) NewInt(vn string, val int64) (*Variable, error) {
 	if vs.checkVar(vn) {
 		return nil, NewModelError("variable "+vn+" already exists",
 			nil)
 	}
 
 	v := vs.getVar(vn, VtInt, true)
-	v.value = val
+	v.update(val)
 
 	return v, nil
 }
@@ -323,7 +373,7 @@ func (vs *VarStore) NewBool(vn string, val bool) (*Variable, error) {
 	}
 
 	v := vs.getVar(vn, VtBool, true)
-	v.value = val
+	v.update(val)
 
 	return v, nil
 }
@@ -337,7 +387,7 @@ func (vs *VarStore) NewString(vn string, val string) (*Variable, error) {
 	}
 
 	v := vs.getVar(vn, VtString, true)
-	v.value = val
+	v.update(val)
 
 	return v, nil
 }
@@ -351,7 +401,7 @@ func (vs *VarStore) NewFloat(vn string, val float64) (*Variable, error) {
 	}
 
 	v := vs.getVar(vn, VtFloat, true)
-	v.value = val
+	v.update(val)
 
 	return v, nil
 }
@@ -363,7 +413,7 @@ func (vs *VarStore) NewTime(vn string, val time.Time) (*Variable, error) {
 	}
 
 	v := vs.getVar(vn, VtTime, true)
-	v.value = val
+	v.update(val)
 
 	return v, nil
 }
@@ -375,7 +425,7 @@ func (vs *VarStore) NewVar(v Variable) (*Variable, error) {
 	}
 
 	vr := vs.getVar(v.name, v.vtype, true)
-	vr.value = v.value
+	vr.update(v.value)
 
 	return vr, nil
 }

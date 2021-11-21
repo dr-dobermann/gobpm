@@ -3,10 +3,15 @@ package model
 import (
 	"fmt"
 	"testing"
+	"time"
+
+	"github.com/matryer/is"
 )
 
+// testing data except for VtTime.
+// VtTime would be tested separately
 var td = []struct {
-	i int
+	i int64
 	b bool
 	s string
 	f float64
@@ -21,6 +26,19 @@ var td = []struct {
 	{0, false, "false", 0.0},
 	{0, true, "dober", 0.0},
 	{3, true, "3.14", 3.1415928},
+}
+
+func TestTimeVariable(t *testing.T) {
+	is := is.New(t)
+
+	tm := time.Now()
+	ts := tm.Format(time.RFC3339)
+
+	v := V("now", VtTime, tm)
+
+	is.Equal(tm.UnixMilli(), v.Int())
+	is.Equal(float64(tm.UnixMilli()), v.Float64())
+	is.Equal(ts, v.StrVal())
 }
 
 func TestVariablesValues(t *testing.T) {
@@ -101,7 +119,7 @@ func TestVariablesValues(t *testing.T) {
 
 		in := v.Int()
 		b := v.Bool()
-		s := v.String()
+		s := v.StrVal()
 		f := v.Float64()
 
 		if in != td[i].i || b != td[i].b || s != td[i].s || f != td[i].f {
@@ -218,7 +236,7 @@ func TestVariableUpdate(t *testing.T) {
 		}
 
 		var (
-			in int
+			in int64
 			f  float64
 		)
 
@@ -229,7 +247,7 @@ func TestVariableUpdate(t *testing.T) {
 		}
 
 		b := v.Bool()
-		s := v.String()
+		s := v.StrVal()
 
 		if VarType(i) != VtString {
 			f = v.Float64()
