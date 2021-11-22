@@ -104,7 +104,7 @@ func NewOutputTaskExecutor(ot *model.OutputTask) *OutputTaskExecutor {
 
 func (ote *OutputTaskExecutor) RegisterOnTrack(tr *track) error {
 
-	ss := []string{}
+	ss := []interface{}{}
 
 	for _, ov := range ote.Vars {
 		v, err := tr.instance.vs.GetVar(ov.Name())

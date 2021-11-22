@@ -52,6 +52,8 @@ func NewProcExecError(trk *track, msg string, err error) ProcessExecutingError {
 type TaskExecutor interface {
 	model.TaskDefinition
 
+	RegisterOnTrack(tr *track) error
+
 	Exec(ctx context.Context, tr *track) (StepState, []*model.SequenceFlow, error)
 }
 
