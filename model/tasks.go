@@ -1,6 +1,9 @@
 package model
 
-import "fmt"
+import (
+	"fmt"
+	"io"
+)
 
 // ----------------------------------------------------------------------------
 //                              Standard tasks
@@ -265,14 +268,16 @@ type CalculateTask struct {
 // ----------------------------------------------------------------------------
 type OutputTask struct {
 	Activity
-	Vars []Variable
+
+	Destination io.Writer
+	Vars        []Variable
 }
 
 func (ot *OutputTask) GetTaskDefStr() interface{} {
 	return ot
 }
 
-func NewOutputTask(p *Process, n string, vl ...Variable) *OutputTask {
+func NewOutputTask(p *Process, n string, dest io.Writer, vl ...Variable) *OutputTask {
 
 	id := NewID()
 
@@ -292,7 +297,8 @@ func NewOutputTask(p *Process, n string, vl ...Variable) *OutputTask {
 				process: p},
 			aType: AtOutputTask,
 			class: AcAbstract},
-		Vars: []Variable{}}
+		Destination: dest,
+		Vars:        []Variable{}}
 	ot.Vars = append(ot.Vars, vl...)
 
 	return &ot

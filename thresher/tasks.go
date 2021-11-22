@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/dr-dobermann/gobpm/model"
+	"github.com/dr-dobermann/srvbus/s2"
 )
 
 // GetTaskExecutor returns a Task Executor linked to given TaskDefinition.
@@ -101,23 +102,44 @@ func NewOutputTaskExecutor(ot *model.OutputTask) *OutputTaskExecutor {
 	return ote
 }
 
-func (ote *OutputTaskExecutor) Exec(_ context.Context,
-	tr *track) (StepState, []*model.SequenceFlow, error) {
+func (ote *OutputTaskExecutor) RegisterOnTrack(tr *track) error {
+
+	ss := []string{}
 
 	for _, ov := range ote.Vars {
 		v, err := tr.instance.vs.GetVar(ov.Name())
 		if err != nil {
-			return SsFailed, nil,
-				NewProcExecError(tr,
-					fmt.Sprintf("couldn't print variable %s : %v",
-						ov.Name(), err),
-					err)
+			return NewProcExecError(tr,
+				fmt.Sprintf("couldn't find variable %s", ov.Name()),
+				err)
 		}
-		fmt.Printf("[%s]%s %s(%s) = %v\n",
-			tr.instance.id,
-			tr.instance.snapshot.Name(),
-			v.Name(), v.Type().String(), v.Value())
+
+		ss = append(ss,
+			fmt.Sprintf("[%s]%s %s(%s) = %v\n",
+				tr.instance.id,
+				tr.instance.snapshot.Name(),
+				v.Name(), v.Type().String(), v.Value()))
 	}
+
+	os, err := s2.NewOutputSvc(tr.id.String()+": "+ote.Name(), ote.Destination, ss...)
+	if err != nil {
+		return NewProcExecError(tr, "couldn't create s2.OutputSrv : %v", err)
+	}
+
+	if err = tr.Instance().Thr.SSrv.AddService(os); err != nil {
+		return NewProcExecError(
+			tr,
+			fmt.Sprintf("couldn't add service %s: %s to s2.ServiceServer %s",
+				os.ID().String(), os.Name(), tr.Instance().Thr.SSrv.Name),
+			err)
+	}
+
+	return nil
+
+}
+
+func (ote *OutputTaskExecutor) Exec(_ context.Context,
+	tr *track) (StepState, []*model.SequenceFlow, error) {
 
 	// TODO: Add expression check on output flows
 	return SsEnded, ote.GetOutputFlows(), nil

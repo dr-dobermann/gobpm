@@ -21,6 +21,14 @@ func (vt VarType) String() string {
 	return []string{"Int", "Bool", "String", "Float", "Time"}[vt]
 }
 
+type variableValues struct {
+	i int64
+	b bool
+	s string
+	f float64
+	t time.Time
+}
+
 // Variable is a variant-based type for using variables in gobpm.
 //
 // When it converts in|from time.Time it uses Unix Milliseconds value.
@@ -29,19 +37,15 @@ func (vt VarType) String() string {
 // 2006-01-02T15:04:05Z
 // 2006-01-02T15:04:05+07:00
 type Variable struct {
+	// pre-casted values for eliminating casting on-the-fly.
+	// For every type there is only one casted value.
+	variableValues
+
 	name  string
 	vtype VarType
 	value interface{}
 	// float precision. Default 2
 	prec int
-
-	// pre-casted values for eliminating casting on-the-fly.
-	// For every type there is only one casted value.
-	i int64
-	b bool
-	s string
-	f float64
-	t time.Time
 }
 
 // V creates a new variable

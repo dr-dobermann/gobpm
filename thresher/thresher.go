@@ -17,6 +17,8 @@ import (
 	"sync"
 
 	"github.com/dr-dobermann/gobpm/model"
+	"github.com/dr-dobermann/srvbus/msgsrv"
+	"github.com/dr-dobermann/srvbus/s2"
 )
 
 type ProcessExecutingError struct {
@@ -334,6 +336,8 @@ const (
 
 // ProcessInstance represents a single run-time process instance
 type ProcessInstance struct {
+	Thr *Thresher
+
 	id    model.Id
 	state InstanceState
 	// the copy of the process model the instance is based on
@@ -441,6 +445,10 @@ type Thresher struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	m         *sync.Mutex
+
+	// external service and message servers
+	SSrv *s2.ServiceServer
+	MSrv *msgsrv.MessageServer
 }
 
 func (thr *Thresher) ChangeContext(ctx context.Context, cFunc context.CancelFunc) {
@@ -450,15 +458,21 @@ func (thr *Thresher) ChangeContext(ctx context.Context, cFunc context.CancelFunc
 
 var thresher *Thresher
 
+// GetThresher creates a new Thresher and returns its pointer.
+//
+// Threser has its own s2.ServiceServer and msgsrv.MessageServer.
 func GetThreshser() *Thresher {
 	if thresher == nil {
 		ctx, cancel := context.WithCancel(context.Background())
+		id := model.NewID()
 		thresher = &Thresher{
-			id:        model.NewID(),
+			id:        id,
 			instances: []*ProcessInstance{},
 			ctx:       ctx,
 			cancel:    cancel,
-			m:         new(sync.Mutex)}
+			m:         new(sync.Mutex),
+			SSrv:      s2.NewServiceServer(ctx, id.String()+" : SvcSrv"),
+			MSrv:      msgsrv.NewMessageServer(id.String() + " : MsgSrv")}
 	}
 
 	return thresher
