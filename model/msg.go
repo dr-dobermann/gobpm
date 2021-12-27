@@ -16,17 +16,17 @@ import (
 type MessageFlowDirection uint8
 
 const (
-	MfdIncoming MessageFlowDirection = 1 << iota
-	MfdOutgoing
-	MfdBidirectional = MfdIncoming | MfdOutgoing
+	Incoming MessageFlowDirection = 1 << iota
+	Outgoing
+	Bidirectional = Incoming | Outgoing
 )
 
 type MessageState uint8
 
 const (
-	MsCreated  MessageState = 0x00
-	MsRecieved MessageState = 0x01
-	MsSent     MessageState = 0x02
+	Created  MessageState = 0x00
+	Recieved MessageState = 0x01
+	Sent     MessageState = 0x02
 )
 
 type MessageVariable struct {

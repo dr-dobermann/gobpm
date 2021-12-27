@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/google/uuid"
@@ -175,7 +176,7 @@ func TestNodes(t *testing.T) {
 	}
 
 	tn2 := "Task2"
-	t2 := NewOutputTask(p, tn2, *V("x", VtInt, nil))
+	t2 := NewOutputTask(p, tn2, os.Stdout, *V("x", VtInt, nil))
 
 	err = p.AddTask(t2, ln)
 	if err != nil {
@@ -253,7 +254,7 @@ func createTestProcess(t *testing.T) *Process {
 	p := NewProcess(Id(uuid.Nil), "test", "0.1.0")
 
 	t1 := NewStoreTask(p, "Task 1", *V("x", VtInt, 2))
-	t2 := NewOutputTask(p, "Task 2", *V("x", VtInt, 0))
+	t2 := NewOutputTask(p, "Task 2", os.Stdout, *V("x", VtInt, 0))
 	if t1 == nil || t2 == nil {
 		t.Fatal("couldn't create tasks for test process")
 	}

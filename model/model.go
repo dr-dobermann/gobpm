@@ -32,6 +32,6 @@ func (me ModelError) Error() string {
 		me.msg, me.Err.Error())
 }
 
-func NewModelError(msg string, err error) error {
-	return ModelError{msg, err}
+func NewModelError(err error, format string, params ...interface{}) error {
+	return ModelError{fmt.Sprintf(format, params...), err}
 }

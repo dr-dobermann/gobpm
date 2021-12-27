@@ -9,7 +9,7 @@ import (
 )
 
 type Documentation struct {
-	Text   string
+	Text   []byte
 	Format string
 }
 
@@ -20,7 +20,7 @@ func NewID() Id {
 }
 
 func (id Id) String() string {
-	return fmt.Sprint(uuid.UUID(id))
+	return uuid.UUID(id).String()
 }
 
 type BaseElement struct {
@@ -137,13 +137,13 @@ type Node interface {
 type FlowNode struct {
 	FlowElement
 	process   *Process
-	laneName  string
+	lane      *Lane
 	incoming  []*SequenceFlow
 	outcoming []*SequenceFlow
 }
 
 func (fn *FlowNode) LaneName() string {
-	return fn.laneName
+	return fn.lane.name
 }
 
 func (fn *FlowNode) ProcessID() Id {
@@ -155,23 +155,20 @@ func (fn *FlowNode) ProcessID() Id {
 	return fn.process.id
 }
 
-func (fn *FlowNode) GetOutputFlows() (ff []*SequenceFlow) {
-	ff = append(ff, fn.outcoming...)
-
-	return
+// returns flow node's output
+func (fn *FlowNode) GetOutputFlows() []*SequenceFlow {
+	return append([]*SequenceFlow{}, fn.outcoming...)
 }
 
-func (fn *FlowNode) BindToProcess(p *Process, laneName string) {
-	if p == nil {
-		panic("couldn't bind task to a nil process")
+func (fn *FlowNode) BindToLane(lane *Lane) error {
+	if lane == nil {
+		return NewModelError(nil, "lane name shouldn't be empty for task "+fn.name)
 	}
 
-	if len(laneName) == 0 {
-		panic("lane name shouldn't be empty for task " + fn.name)
-	}
+	fn.process = lane.process
+	fn.lane = lane
 
-	fn.process = p
-	fn.laneName = laneName
+	return nil
 }
 
 func (fn *FlowNode) ConnectFlow(sf *SequenceFlow, se SequenceEnd) error {

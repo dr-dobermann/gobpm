@@ -1,6 +1,9 @@
 package model
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestSendProcess(t *testing.T) {
 	p := getSendProcess(t)
@@ -109,7 +112,7 @@ func getRecieveProcess(t *testing.T) *Process {
 	p := NewProcess(NewID(), "Test Receive Process", "0.1.0")
 
 	rcv := NewReceiveTask(p, "Receive X", "letter_X")
-	out := NewOutputTask(p, "Print X", *V("x", VtInt, 0))
+	out := NewOutputTask(p, "Print X", os.Stdout, *V("x", VtInt, 0))
 	if out == nil || rcv == nil {
 		t.Error("Couldn't create receive or output task")
 		return nil
