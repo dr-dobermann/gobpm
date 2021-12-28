@@ -32,7 +32,7 @@ type Transaction struct {
 }
 
 type CustomTaskInvoker interface {
-	Invoke(t TaskDefinition) error
+	Invoke(t TaskModel) error
 }
 
 type ActivityType uint8
@@ -102,14 +102,20 @@ func (a Activity) Check() error {
 	return nil
 }
 
-// ------------ TaskDefinition interfaces --------------------------------------
-type TaskDefinition interface {
+// ------------ TaskModel interfaces --------------------------------------
+type TaskModel interface {
 	Node
+
+	// returns task type
 	TaskType() ActivityType
-	GetTaskDefStr() interface{}
+
+	// GetTaskDefStr() interface{}
+
 	DefaultFlowId() Id
+
 	// Copy returns a copy of the Task with a new Id
-	Copy(snapshot *Process) TaskDefinition
+	Copy(snapshot *Process) TaskModel
+
 	// Check makes a test if it possible to use the Task in the process.
 	// It called in process.AddTask
 	Check() error

@@ -1,9 +1,9 @@
 package model
 
 import (
+	"errors"
 	"fmt"
-
-	"github.com/google/uuid"
+	"strings"
 )
 
 // type MessageFlow struct {
@@ -64,25 +64,39 @@ func (m Message) GetVariables(nonOptionalOnly bool) []Variable {
 	return vv
 }
 
-func newMessage(mn string, dir MessageFlowDirection, vars ...MessageVariable) (*Message, error) {
+func newMessage(
+	mn string,
+	dir MessageFlowDirection,
+	vars ...MessageVariable) (*Message, error) {
+
+	mn = strings.Trim(mn, " ")
+	if mn == "" {
+		return nil, errors.New("couldn't create message with no name")
+	}
+
 	vl := map[string]MessageVariable{}
 
 	if len(vars) == 0 {
-		return nil, NewProcessModelError(Id(uuid.Nil),
-			"couldn't create message "+mn+" with an empty variable list", nil)
+		return nil,
+			fmt.Errorf(
+				"couldn't create message '%s' with an empty variable list",
+				mn)
 	}
 
 	for i, v := range vars {
+		v.name = strings.Trim(v.name, " ")
 		if len(v.name) == 0 {
-			return nil, NewProcessModelError(Id(uuid.Nil),
-				fmt.Sprintf("trying create a message %s with non-named variable (%d)", mn, i),
-				nil)
+			return nil,
+				fmt.Errorf(
+					"trying create a message %s with non-named variable #%d",
+					mn, i)
 		}
 
-		for _, iv := range vl {
-			if iv.name == v.name {
-				return nil, NewProcessModelError(Id(uuid.Nil), "variable "+v.name+" already exists in the message "+mn, nil)
-			}
+		if _, ok := vl[v.name]; ok {
+			return nil,
+				fmt.Errorf(
+					"variable %s already exists in the message %s",
+					v.name, mn)
 		}
 
 		vl[v.name] = v

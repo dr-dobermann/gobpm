@@ -1,7 +1,6 @@
 package model
 
 import (
-	"fmt"
 	"io"
 )
 
@@ -35,15 +34,14 @@ func (st *SendTask) GetTaskDefStr() interface{} {
 func (st *SendTask) Check() error {
 
 	for _, m := range st.process.messages {
-		if m.name == st.msgName && m.direction&MfdOutgoing == MfdOutgoing {
+		if m.name == st.msgName && m.direction&Outgoing != 0 {
 			return nil
 		}
 	}
 
-	return NewProcessModelError(st.ProcessID(),
-		fmt.Sprintf("couldn't find outgoing message %s nedeed for task %s",
-			st.msgName, st.name),
-		nil)
+	return NewPMErr(st.ProcessID(), nil,
+		"couldn't find outgoing message %s nedeed for task %s",
+		st.msgName, st.name)
 }
 
 func NewSendTask(p *Process, n string, msgName string) *SendTask {
@@ -68,7 +66,7 @@ func NewSendTask(p *Process, n string, msgName string) *SendTask {
 		msgName: msgName}
 }
 
-func (st *SendTask) Copy(snapshot *Process) TaskDefinition {
+func (st *SendTask) Copy(snapshot *Process) TaskModel {
 	cst := new(SendTask)
 
 	*cst = *st
@@ -94,15 +92,14 @@ func (rt *ReceiveTask) GetTaskDefStr() interface{} {
 
 func (rt *ReceiveTask) Check() error {
 	for _, m := range rt.process.messages {
-		if m.name == rt.msgName && m.direction&MfdIncoming == MfdIncoming {
+		if m.name == rt.msgName && m.direction&Incoming != 0 {
 			return nil
 		}
 	}
 
-	return NewProcessModelError(rt.ProcessID(),
-		fmt.Sprintf("couldn't find incoming message %s nedeed for task %s",
-			rt.msgName, rt.name),
-		nil)
+	return NewPMErr(rt.ProcessID(), nil,
+		"couldn't find incoming message %s nedeed for task %s",
+		rt.msgName, rt.name)
 }
 
 func NewReceiveTask(p *Process, n string, msgName string) *ReceiveTask {
@@ -123,7 +120,7 @@ func NewReceiveTask(p *Process, n string, msgName string) *ReceiveTask {
 	return rt
 }
 
-func (rt *ReceiveTask) Copy(snapshot *Process) TaskDefinition {
+func (rt *ReceiveTask) Copy(snapshot *Process) TaskModel {
 	crt := new(ReceiveTask)
 
 	*crt = *rt
@@ -225,7 +222,7 @@ func NewStoreTask(p *Process, n string, vl ...Variable) *StoreTask {
 	return &st
 }
 
-func (st *StoreTask) Copy(snapshot *Process) TaskDefinition {
+func (st *StoreTask) Copy(snapshot *Process) TaskModel {
 
 	// TODO: refactor to new and then copy from *st
 	stc := StoreTask{
@@ -304,7 +301,7 @@ func NewOutputTask(p *Process, n string, dest io.Writer, vl ...Variable) *Output
 	return &ot
 }
 
-func (ot *OutputTask) Copy(snapshot *Process) TaskDefinition {
+func (ot *OutputTask) Copy(snapshot *Process) TaskModel {
 
 	otc := OutputTask{
 		Activity: Activity{
@@ -325,5 +322,3 @@ func (ot *OutputTask) Copy(snapshot *Process) TaskDefinition {
 func (ot *OutputTask) FloatNode() *FlowNode {
 	return &ot.FlowNode
 }
-
-// ----------------------------------------------------------------------------
