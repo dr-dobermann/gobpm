@@ -15,7 +15,7 @@ func TestMessage(t *testing.T) {
 
 	mn := "test_msg"
 	m, err = p.AddMessage(mn,
-		MfdIncoming,
+		Incoming,
 		[]MessageVariable{
 			{*V("x", VtInt, nil), false},
 			{*V("y", VtInt, nil), false},
@@ -25,19 +25,19 @@ func TestMessage(t *testing.T) {
 		t.Fatal("Couldn't add message to the process : ", err)
 	}
 
-	if m != nil && (m.Name() != mn || m.State() != MsCreated) {
+	if m != nil && (m.Name() != mn || m.State() != Created) {
 		t.Error("invalid message attributes. Expected name : ",
 			mn, ", state: 0, got name: ", m.Name(), ", state: ", m.State())
 	}
 
 	// empty message name
-	if _, err := p.AddMessage("", MfdIncoming, []MessageVariable{}...); err == nil {
+	if _, err := p.AddMessage("", Incoming, []MessageVariable{}...); err == nil {
 		t.Error("Registered message with an empty name")
 	}
 
 	// add duplicate
 	md, err := p.AddMessage(mn,
-		MfdIncoming,
+		Incoming,
 		[]MessageVariable{}...)
 
 	if md != nil || err == nil {
@@ -46,7 +46,7 @@ func TestMessage(t *testing.T) {
 
 	// add message with an empty variables list
 	if _, err := p.AddMessage("empty_var_list",
-		MfdIncoming,
+		Incoming,
 		[]MessageVariable{}...); err == nil {
 
 		t.Error("Message with an empty variables list added")
@@ -54,7 +54,7 @@ func TestMessage(t *testing.T) {
 
 	// add message with duplicate variables
 	if _, err := p.AddMessage("duplicate_variables",
-		MfdIncoming,
+		Incoming,
 		[]MessageVariable{
 			{*V("x", VtInt, nil), false},
 			{*V("x", VtInt, nil), false},
@@ -65,7 +65,7 @@ func TestMessage(t *testing.T) {
 
 	// add message with empty variable name
 	if _, err := p.AddMessage("msg_with_empty_var_name",
-		MfdIncoming,
+		Incoming,
 		[]MessageVariable{
 			{*V("x", VtInt, nil), false},
 			{*V("", VtInt, nil), false},

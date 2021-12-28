@@ -13,7 +13,7 @@ type ProcessModelError struct {
 }
 
 func (pme ProcessModelError) Error() string {
-	return fmt.Sprintf("ERR: Process[%v]  %s: %v",
+	return fmt.Sprintf("ERR: PRC[%v] %s: %v",
 		pme.processID.String(),
 		pme.msg,
 		pme.Err)

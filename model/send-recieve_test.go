@@ -40,7 +40,7 @@ func getSendProcess(t *testing.T) *Process {
 	}
 
 	if _, err := p.AddMessage("letter_X",
-		MfdOutgoing, MessageVariable{*V("x", VtInt, 0), false}); err != nil {
+		Outgoing, MessageVariable{*V("x", VtInt, 0), false}); err != nil {
 		t.Error("Couldn't add outgoing message letter_X : ", err)
 		return nil
 	}
@@ -73,7 +73,7 @@ func getSendProcess(t *testing.T) *Process {
 	}
 
 	if _, err := p.AddMessage("letter_Y",
-		MfdOutgoing, MessageVariable{*V("y", VtInt, 0), true}); err != nil {
+		Outgoing, MessageVariable{*V("y", VtInt, 0), true}); err != nil {
 		t.Error("Couldn't add outgoing message letter_X : ", err)
 		return nil
 	}
@@ -124,7 +124,7 @@ func getRecieveProcess(t *testing.T) *Process {
 	}
 
 	if _, err := p.AddMessage("letter_X",
-		MfdBidirectional, MessageVariable{*V("x", VtInt, 0), false}); err != nil {
+		Bidirectional, MessageVariable{*V("x", VtInt, 0), false}); err != nil {
 
 		t.Error("Couldn't add message letter_X", err)
 		return nil

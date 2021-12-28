@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/matryer/is"
 )
 
 func TestProcessCreation(t *testing.T) {
@@ -42,22 +43,19 @@ func TestProcessCreation(t *testing.T) {
 }
 
 func TestProcessModelError(t *testing.T) {
-	err := NewProcessModelError(Id(uuid.Nil), "test", nil)
+	err := NewPMErr(Id(uuid.Nil), nil, "test %s", "error")
 	_, ok := err.(ProcessModelError)
 	if !ok {
-		t.Errorf("NewProcessModelError doesnt't create and ProcessModelError. Got %T", err)
-	}
-
-	if err.Error() != "P[ <nil> ] test" {
-		t.Error("Invalid ProcessModelError return ", err.Error())
+		t.Errorf("NewPMErr doesnt't create and ProcessModelError. Got %T", err)
 	}
 
 	id := Id(uuid.New())
-	err = NewProcessModelError(id, "test", fmt.Errorf("test"))
+	err = NewPMErr(id, fmt.Errorf("test"), "test")
 
-	want := "P[" + id.String() + "] test : test"
+	want := "ERR: PRC[" + id.String() + "] test: test"
 	if err.Error() != want {
-		t.Error("Invalid ProcessModelError return ", err.Error())
+		t.Error("Invalid ProcessModelError got [",
+			err.Error(), "] want [", want, "]")
 	}
 
 }
@@ -127,6 +125,8 @@ func TestProcessLanes(t *testing.T) {
 }
 
 func TestNodes(t *testing.T) {
+	is := is.New(t)
+
 	p := NewProcess(Id(uuid.Nil), "test", "0.1.0")
 
 	tn1 := "Task1"
@@ -156,7 +156,7 @@ func TestNodes(t *testing.T) {
 		t.Error("Nil task added")
 	}
 
-	if t1.laneName != p.lanes[ln].name {
+	if t1.lane.name != p.lanes[ln].name {
 		t.Error("Task ", t1.name, " washn't linked to lane ", ln)
 	}
 
@@ -190,12 +190,14 @@ func TestNodes(t *testing.T) {
 
 	err = p.LinkNodes(t1, t2, nil)
 	if err != nil {
-		t.Error("couldn;t link t1 and t2", err)
+		t.Error("couldn't link t1 and t2", err)
 	}
 
 	if len(p.flows) == 0 {
 		t.Fatal("there is no link registered in process")
 	}
+
+	is.True(len(t1.outcoming) > 0 && len(t2.incoming) > 0)
 
 	if t1.outcoming[0].id != p.flows[0].id ||
 		t2.incoming[0].id != p.flows[0].id {
@@ -204,9 +206,12 @@ func TestNodes(t *testing.T) {
 }
 
 func TestProcessSnapshot(t *testing.T) {
+	is := is.New(t)
+
 	p := createTestProcess(t)
 
-	sn := p.Copy()
+	sn, err := p.Copy()
+	is.NoErr(err)
 
 	if len(p.lanes) != len(sn.lanes) {
 		t.Error("different lanes number in snapshot")

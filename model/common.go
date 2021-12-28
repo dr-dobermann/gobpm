@@ -199,6 +199,12 @@ func (fn *FlowNode) ConnectFlow(sf *SequenceFlow, se SequenceEnd) error {
 		}
 	}
 
+	if se == SeSource {
+		fn.outcoming = append(fn.outcoming, sf)
+	} else {
+		fn.incoming = append(fn.incoming, sf)
+	}
+
 	return nil
 }
 

@@ -124,8 +124,7 @@ func (p Process) Copy() (*Process, error) {
 		FlowElement: p.FlowElement,
 		lanes:       make(map[string]*Lane),
 		tasks:       make([]TaskModel, 0),
-		flows:       make([]*SequenceFlow, 0),
-		dataType:    PdtSnapshot}
+		flows:       make([]*SequenceFlow, 0)}
 
 	// copy lanes
 	for l := range p.lanes {
@@ -161,6 +160,8 @@ func (p Process) Copy() (*Process, error) {
 				NewPMErr(p.id, err, "couldn't link nodes in snapshot")
 		}
 	}
+
+	pc.dataType = PdtSnapshot
 
 	return &pc, nil
 }
