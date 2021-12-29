@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/matryer/is"
 )
 
 func TestNewToken(t *testing.T) {
@@ -112,4 +113,14 @@ func TestSplitJoinToken(t *testing.T) {
 
 	// should fire panic due to joining to Inactive token
 	// tt[1].Join(tt[2])
+}
+
+func TestId(t *testing.T) {
+	is := is.New(t)
+
+	id := NewID()
+
+	s := id.String()
+
+	is.True(s[len(s)-4:] == id.GetLast(4))
 }

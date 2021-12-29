@@ -20,6 +20,15 @@ func (id Id) String() string {
 	return uuid.UUID(id).String()
 }
 
+func (id Id) GetLast(n int) string {
+	s := id.String()
+	if n > len(s) {
+		n = len(s)
+	}
+
+	return s[len(s)-n:]
+}
+
 type BaseElement struct {
 	id Id
 	Documentation

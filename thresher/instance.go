@@ -6,6 +6,8 @@ import (
 	"sync"
 
 	"github.com/dr-dobermann/gobpm/model"
+	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 type InstanceState uint8
@@ -17,44 +19,64 @@ const (
 	IsEnded
 )
 
-// ProcessInstance represents a single run-time process instance
-type ProcessInstance struct {
+// Instance represents a single run-time process instance
+type Instance struct {
+	sync.Mutex
+
 	Thr *Thresher
 
 	id    model.Id
 	state InstanceState
+
 	// the copy of the process model the instance is based on
 	snapshot *model.Process
 	vs       model.VarStore
-	tracks   []*track
+
+	// track holds the state for every single token path
+	tracks map[model.Id]*track
+	wg     sync.WaitGroup
 
 	//monitor *ctr.Monitor
 	//audit   *ctr.Audit
+
+	log *zap.SugaredLogger
 }
 
-// prepare prepares the ProcessInstance object for start.
+// creates a new ProcessExecutingError
+func (pi *Instance) NewErr(err error, format string, params ...interface{}) error {
+	return ProcessExecutingError{
+		pID:        pi.id,
+		instanceID: pi.snapshot.ID(),
+		trackID:    model.Id(uuid.Nil),
+		Err:        err,
+		msg:        fmt.Sprintf(format, params...),
+	}
+}
+
+// prepare prepares the Instance object for start.
 // prepare looks for nodes that don't have incoming flows and
 // creates a list of tracks to work with
-func (pi *ProcessInstance) prepare() error {
-	if pi.state != IsCreated {
-		return NewProcExecError(nil,
-			fmt.Sprintf("couldn't prepare Instance in %d state", pi.state), nil)
+func (pi *Instance) prepare() error {
+
+	// get through all nodes except the gateways
+	nn, err := pi.snapshot.GetNodes(model.EtUnspecified)
+	if err != nil {
+		return pi.NewErr(err, "couldn't get nodes list from snapshot")
 	}
 
-	// through all nodes except the gateways find ones
-	// don't have an incoming flow
-	// and create tracks with them
-	for _, n := range pi.snapshot.GetNodes(model.EtUnspecified) {
+	for _, n := range nn {
+		// find tasks and events that
+		// don't have incoming flows
 		if n.Type() != model.EtGateway && !n.HasIncoming() {
+			// create tracks from them
 			t, err := newTrack(n, pi, nil)
 			if err != nil {
-				return NewProcExecError(
-					nil,
-					"couldn't prepare an Instance for starting",
-					err)
+				return pi.NewErr(err,
+					"couldn't prepare an Instance for starting")
 			}
 
-			pi.tracks = append(pi.tracks, t)
+			// and add them to the tracks list
+			pi.tracks[t.id] = t
 		}
 	}
 
@@ -63,59 +85,51 @@ func (pi *ProcessInstance) prepare() error {
 	return nil
 }
 
-func (pi *ProcessInstance) Run(ctx context.Context) error {
-	if pi.state == IsEnded || pi.state == IsRunning {
-		return NewProcExecError(
-			nil,
-			fmt.Sprintf("Instance %s has wrong state %v", pi.id, pi.state),
-			nil)
+// runs an instance and all its tracks
+func (pi *Instance) Run(ctx context.Context) error {
+	if pi.state != IsCreated {
+		return pi.NewErr(nil,
+			"wrong state to run instance '%s' (should be IsCreated)",
+			pi.state)
 	}
 
 	if pi.state == IsCreated {
 		if err := pi.prepare(); err != nil {
-			return NewProcExecError(
-				nil,
-				fmt.Sprintf("couldn't prepare the Instance %v for running : %v",
-					pi.id.String(), err),
-				nil)
+			return pi.NewErr(err,
+				"couldn't prepare the instance for running : %v",
+				err)
 		}
 	}
 
+	pi.log.Info("instance starting...")
+
+	pi.Lock()
 	pi.state = IsRunning
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
 
-		default:
-		}
+	// run prepared tracks
+	for _, t := range pi.tracks {
+		pi.wg.Add(1)
 
-		var wg sync.WaitGroup
+		go func(et *track) {
+			defer pi.wg.Done()
 
-		tc := 0
-		for _, t := range pi.tracks {
-			if t.state != TsReady {
-				continue
-			}
-
-			tc++
-			wg.Add(1)
-			go func(et *track) {
-				defer wg.Done()
-
-				if err := et.tick(ctx); err != nil {
-					et.state = TsError
-					et.lastErr = err
-				}
-			}(t)
-		}
-		wg.Wait()
-
-		if tc == 0 {
-			pi.state = IsEnded
-			break
-		}
+			et.run(ctx)
+		}(t)
 	}
+
+	pi.Unlock()
+
+	pi.log.Info("instance started")
+
+	// wait for context closing
+	<-ctx.Done()
+
+	pi.log.Info("instance stopping: wait for tracks...")
+
+	// wait all tracks stopping and exit
+	pi.wg.Wait()
+
+	pi.log.Info("instance stopped")
 
 	return nil
 }

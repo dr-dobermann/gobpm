@@ -8,6 +8,19 @@ import (
 	"github.com/dr-dobermann/srvbus/s2"
 )
 
+// ----------------------------------------------------------------------------
+// TaskExecutor defines the run-time functionatlity of the Task objects
+type TaskExecutor interface {
+	model.TaskModel
+
+	RegisterOnTrack(tr *track) error
+
+	Exec(ctx context.Context,
+		tr *track) (StepState, []*model.SequenceFlow, error)
+}
+
+// ----------------------------------------------------------------------------
+
 // GetTaskExecutor returns a Task Executor linked to given TaskDefinition.
 // if there is no known Executor or there are errors in retrieving it,
 // error would be returned

@@ -3,57 +3,23 @@ package thresher
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/dr-dobermann/gobpm/model"
+	"go.uber.org/zap"
 )
-
-type ProcessExecutingError struct {
-	piID    model.Id
-	pID     model.Id
-	trackId model.Id
-	msg     string
-	Err     error
-}
-
-func (pee ProcessExecutingError) Error() string {
-	return fmt.Sprintf("%s[%s]:%s: %s : %v",
-		pee.piID, pee.pID, pee.trackId, pee.msg, pee.Err)
-}
-
-func NewProcExecError(trk *track, msg string, err error) ProcessExecutingError {
-	pee := ProcessExecutingError{msg: msg, Err: err}
-
-	if trk != nil {
-		pee.trackId = trk.id
-		pee.piID = trk.instance.id
-		pee.pID = trk.instance.snapshot.ID()
-	}
-
-	return pee
-}
-
-// ----------------------------------------------------------------------------
-
-// TaskExecutor defines the run-time functionatlity of the Task objects
-type TaskExecutor interface {
-	model.TaskDefinition
-
-	RegisterOnTrack(tr *track) error
-
-	Exec(ctx context.Context, tr *track) (StepState, []*model.SequenceFlow, error)
-}
-
-// ----------------------------------------------------------------------------
 
 // TrackState represent the state of the whole track
 type TrackState uint8
 
 const (
 	TsReady TrackState = iota
-	TsExecutingStep
+
 	// Intermediate
+	TsExecutingStep
 	TsAwaitsStepResults
-	// Final status
+
+	// Final statuses
 	TsMerged
 	TsEnded
 	TsError
@@ -100,40 +66,52 @@ type stepInfo struct {
 // Every task with no incoming flow or intermediate event starts a new track.
 // if track splits, the new track(s) will be started
 type track struct {
+	sync.Mutex
+
 	id       model.Id
-	instance *ProcessInstance
+	instance *Instance
 	state    TrackState
 	prev     []*track
 	steps    []stepInfo
 	lastErr  error
+
+	log *zap.SugaredLogger
 }
 
 func (tr *track) currentStep() *stepInfo {
 	return &tr.steps[len(tr.steps)-1]
 }
 
-func (tr *track) Instance() *ProcessInstance {
+func (tr *track) Instance() *Instance {
 	return tr.instance
 }
 
+func (tr *track) checkStates(ts TrackState) bool {
+	tr.Lock()
+	defer tr.Unlock()
+
+	return tr.state == ts
+}
+
 // newTrack creates a new track started from a Node n.
-func newTrack(n model.Node, inst *ProcessInstance, prevTrack *track) (*track, error) {
+func newTrack(n model.Node, inst *Instance, prevTrack *track) (*track, error) {
 	if n == nil {
 		return nil,
-			NewProcExecError(nil, "couldn't start track from nil Node", nil)
+			NewPEErr(nil, nil, "couldn't start track from nil Node")
 	}
 
 	if inst == nil {
 		return nil,
-			NewProcExecError(nil,
-				"couldn't create a track for a nil instance",
-				nil)
+			NewPEErr(nil,
+				nil, "couldn't create a track for a nil instance")
 	}
 
+	trID := model.NewID()
 	t := &track{
-		id:       model.NewID(),
+		id:       trID,
 		instance: inst,
-		steps:    []stepInfo{{node: n}}}
+		steps:    []stepInfo{{node: n}},
+		log:      inst.log.Named("TR:" + trID.GetLast(4))}
 
 	if prevTrack != nil {
 		t.prev = append(t.prev, prevTrack)
@@ -142,12 +120,25 @@ func newTrack(n model.Node, inst *ProcessInstance, prevTrack *track) (*track, er
 	return t, nil
 }
 
+func (tr *track) run(ctx context.Context) {
+	// check track status
+	if !tr.checkStates(TsReady) {
+		return
+	}
+
+	// while there is a step to take
+	// take a step
+	// execute it
+	// check if there is other steps to take
+	// if there is fork needed. create new track(s) and
+	// add it(them) to the instance
+}
+
 // tick make a single step on track if current node isn't started
 // yet.
 // Executed node returns its new status. if status is from Final ones
 // the Node returns a list of valid outcomes flows.
 func (tr *track) tick(ctx context.Context) error {
-
 	if tr.state != TsReady {
 		return nil
 	}
@@ -155,8 +146,8 @@ func (tr *track) tick(ctx context.Context) error {
 	if tr.currentStep().state != SsCreated {
 		tr.state = TsError
 
-		return NewProcExecError(tr,
-			fmt.Sprintf("couldn't start node %s in state %v",
+		return NewPEErr(tr,
+			nil, fmt.Sprintf("couldn't start node %s in state %v",
 				tr.currentStep().node.Name(),
 				tr.currentStep().state),
 			nil)
@@ -165,12 +156,12 @@ func (tr *track) tick(ctx context.Context) error {
 	n := tr.currentStep().node
 	switch n.Type() {
 	case model.EtActivity:
-		t, ok := n.(model.TaskDefinition)
+		t, ok := n.(model.TaskModel)
 		if !ok {
 			tr.state = TsError
 
-			return NewProcExecError(tr,
-				"couldn't convert node "+n.Name()+" to TaskDefinition",
+			return NewPEErr(tr,
+				nil, "couldn't convert node "+n.Name()+" to TaskModel",
 				nil)
 		}
 
@@ -178,8 +169,8 @@ func (tr *track) tick(ctx context.Context) error {
 		if err != nil {
 			tr.state = TsError
 
-			return NewProcExecError(tr,
-				"couldn't get the TaskExecutor", err)
+			return NewPEErr(tr,
+				nil, "couldn't get the TaskExecutor", err)
 		}
 
 		tr.state = TsExecutingStep
@@ -188,14 +179,14 @@ func (tr *track) tick(ctx context.Context) error {
 		if err != nil {
 			tr.state = TsError
 
-			return NewProcExecError(tr, "error executing task "+t.Name(), err)
+			return NewPEErr(tr, err, "nil, error executing task "+t.Name())
 		}
 
 		if err = tr.updateState(ns, next); err != nil {
 			tr.state = TsError
 
-			return NewProcExecError(
-				tr,
+			return NewPEErr(
+				nil, tr,
 				"couldn't update track state to "+ns.String(),
 				err)
 		}
@@ -207,8 +198,8 @@ func (tr *track) tick(ctx context.Context) error {
 	default:
 		tr.state = TsError
 
-		return NewProcExecError(tr,
-			fmt.Sprintf(
+		return NewPEErr(tr,
+			nil, fmt.Sprintf(
 				"invalid node type %v of %s. Should be Activity, Gateway or Event",
 				n.Type().String(), n.Name()),
 			nil)
@@ -223,14 +214,14 @@ func (tr *track) tick(ctx context.Context) error {
 // if it's a Finel status and there are no more flows, the track is ended.
 func (tr *track) updateState(ns StepState, ff []*model.SequenceFlow) error {
 	if tr.state == TsEnded || tr.state == TsError || tr.state == TsMerged {
-		return NewProcExecError(
-			tr, "couldn't update state on finalized track", nil)
+		return NewPEErr(
+			tnil, r, "couldn't update state on finalized track", nil)
 	}
 
 	if ns <= tr.currentStep().state {
 		tr.state = TsError
-		return NewProcExecError(
-			tr,
+		return NewPEErr(
+			tnil, r,
 			fmt.Sprintf("Invalid step state for node %s. current: %s, new: %s",
 				tr.currentStep().node.Name(), tr.currentStep().state, ns),
 			nil)
@@ -252,11 +243,11 @@ func (tr *track) updateState(ns StepState, ff []*model.SequenceFlow) error {
 		// after taking one flow from the list of outcoming flows,
 		// remove it from the list for further processing
 		if tr.currentStep().node.Type() == model.EtActivity {
-			t, ok := tr.currentStep().node.(model.TaskDefinition)
+			t, ok := tr.currentStep().node.(model.TaskModel)
 			if !ok {
 				tr.state = TsError
-				return NewProcExecError(
-					tr,
+				return NewPEErr(
+					nil, tr,
 					fmt.Sprintf("couldn't convert node %s into Task",
 						tr.currentStep().node.Name()),
 					nil)
@@ -289,8 +280,8 @@ func (tr *track) updateState(ns StepState, ff []*model.SequenceFlow) error {
 		for _, f := range ff {
 			nt, err := newTrack(f.GetTarget(), tr.instance, tr)
 			if err != nil {
-				return NewProcExecError(
-					tr,
+				return NewPEErr(
+					nil, tr,
 					"couldn't create splitted track from node "+
 						f.GetTarget().Name(),
 					err)
@@ -304,7 +295,7 @@ func (tr *track) updateState(ns StepState, ff []*model.SequenceFlow) error {
 		tr.state = TsError
 
 	default:
-		return NewProcExecError(tr, "invalid step state "+ns.String(), nil)
+		return NewPEErr(tr, nil, "nil, invalid step state "+ns.String())
 	}
 
 	return nil

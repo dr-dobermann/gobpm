@@ -16,83 +16,178 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/dr-dobermann/gobpm/internal/errs"
 	"github.com/dr-dobermann/gobpm/model"
-	"github.com/dr-dobermann/srvbus/msgsrv"
-	"github.com/dr-dobermann/srvbus/s2"
+	"github.com/dr-dobermann/srvbus"
+	"github.com/dr-dobermann/srvbus/es"
+	"github.com/google/uuid"
+	"go.uber.org/zap"
+)
+
+const (
+	thrStart = "thresher started"
+	thrStop  = "thresher stopped"
+
+	defaultTopic = "/thresher"
+	thrNewEvt    = "NEW_THR_EVT"
+	thrStartEvt  = "THR_START_EVT"
+	thrStopEvt   = "THR_STOP_EVT"
 )
 
 type Thresher struct {
+	sync.Mutex
+
 	id        model.Id
-	instances []*ProcessInstance
+	instances []*Instance
 	ctx       context.Context
-	cancel    context.CancelFunc
-	m         *sync.Mutex
+
+	log *zap.SugaredLogger
 
 	// external service and message servers
-	SSrv *s2.ServiceServer
-	MSrv *msgsrv.MessageServer
+	sBus    *srvbus.ServiceBus
+	esTopic string
+
+	runned bool
 }
 
-func (thr *Thresher) ChangeContext(ctx context.Context, cFunc context.CancelFunc) {
-	thr.ctx = ctx
-	thr.cancel = cFunc
+func (thr *Thresher) IsRunned() bool {
+	thr.Lock()
+	defer thr.Unlock()
+
+	return thr.runned
 }
 
-var thresher *Thresher
+// emits single event into the personal thresher topic
+func (thr *Thresher) EmitEvent(name, descr string) {
+	if thr.sBus == nil || !thr.sBus.IsRunned() {
+		thr.log.Warn("ServiceBus is absent or not runned")
+		return
+	}
+
+	eSrv, err := thr.sBus.GetEventServer()
+	if err != nil {
+		thr.log.Warnw("coudn't get an EventServer from the ServiceBus",
+			zap.Error(err))
+		return
+	}
+
+	// initialize default server topic if needed
+	if thr.esTopic == "" {
+		topic := defaultTopic + "/" + thr.id.String()
+
+		if err := eSrv.AddTopicQueue(topic, "/"); err != nil {
+			thr.log.Warnw("couldn't add thresher topic to Event Server",
+				zap.String("topic", topic),
+				zap.Error(err))
+
+			return
+		}
+
+		thr.esTopic = topic
+	}
+
+	es.EmitEvt(eSrv, thr.esTopic, name, descr, uuid.UUID(thr.id))
+}
 
 // GetThresher creates a new Thresher and returns its pointer.
 //
 // Threser has its own s2.ServiceServer and msgsrv.MessageServer.
-func GetThreshser() *Thresher {
-	if thresher == nil {
-		ctx, cancel := context.WithCancel(context.Background())
-		id := model.NewID()
-		thresher = &Thresher{
-			id:        id,
-			instances: []*ProcessInstance{},
-			ctx:       ctx,
-			cancel:    cancel,
-			m:         new(sync.Mutex),
-			SSrv:      s2.NewServiceServer(ctx, id.String()+" : SvcSrv"),
-			MSrv:      msgsrv.NewMessageServer(id.String() + " : MsgSrv")}
+func New(sb *srvbus.ServiceBus, log *zap.SugaredLogger) (*Thresher, error) {
+	if log == nil {
+		return nil, errs.ErrNoLogger
 	}
 
-	return thresher
+	if sb == nil {
+		var err error
+		sb, err = srvbus.New(uuid.Nil, log)
+		if err != nil {
+			return nil,
+				fmt.Errorf(
+					"couldn't create a ServiceBus for the thresher: %v", err)
+		}
+	}
+
+	id := model.NewID()
+	thresher := &Thresher{
+		id:        id,
+		instances: []*Instance{},
+		log:       log.Named("THR [" + id.String() + "]"),
+		sBus:      sb,
+	}
+
+	return thresher, nil
 }
 
-func (thr *Thresher) NewProcessInstance(p *model.Process) (*ProcessInstance, error) {
-	sn := p.Copy()
-	if sn == nil {
+// create a new instance of the process and register it in the thresher.
+func (thr *Thresher) NewProcessInstance(
+	p *model.Process) (*Instance, error) {
+
+	sn, err := p.Copy()
+	if err != nil {
 		return nil,
-			NewProcExecError(nil,
-				fmt.Sprintf("couldn't create a copy form process %s[%s]",
-					p.Name(), p.ID().String()),
-				nil)
+			NewPEErr(nil, nil, "couldn't create a copy form process '%s'[%s]",
+				p.Name(), p.ID().String())
 	}
 
-	pi := &ProcessInstance{
-		id:       model.NewID(),
+	iID := model.NewID()
+	pi := &Instance{
+		id:       iID,
 		snapshot: sn,
 		vs:       make(model.VarStore),
-		tracks:   []*track{}}
+		tracks:   make(map[model.Id]*track),
+		log:      thr.log.Named("INST:" + iID.GetLast(4))}
+
+	thr.Lock()
 	thr.instances = append(thr.instances, pi)
+	thr.Unlock()
+
+	if thr.IsRunned() {
+		go pi.Run(thr.ctx)
+	}
 
 	return pi, nil
 }
 
-func (thr *Thresher) TurnOn() {
-	thr.m.Lock()
-	defer thr.m.Unlock()
+// runs a thresher.
+func (thr *Thresher) Run(ctx context.Context) error {
+	if thr.IsRunned() {
+		return errs.ErrAlreadyRunned
+	}
+
+	if !thr.sBus.IsRunned() {
+		if err := thr.sBus.Run(ctx); err != nil {
+			return fmt.Errorf("couldn't start a service bus: %v", err)
+		}
+	}
+
+	thr.Lock()
+	thr.runned = true
+	thr.ctx = ctx
+	thr.Unlock()
+
+	// run context listener to stop the thresher
+	go func() {
+		thr.log.Debug("thresher context listener started")
+
+		<-ctx.Done()
+
+		thr.Lock()
+		thr.runned = false
+		thr.Unlock()
+
+		thr.log.Info("thresher stopped by context")
+
+		thr.log.Debug("thresher context listener stopped")
+	}()
+
+	thr.log.Info(thrStart)
+	thr.EmitEvent(thrStartEvt, "")
 
 	for _, pi := range thr.instances {
 		if pi.state == IsCreated {
 			go pi.Run(thr.ctx)
 		}
 	}
-}
 
-func (thr *Thresher) TurnOff() {
-	thr.cancel()
+	return nil
 }
-
-// ----------------------------------------------------------------------------
