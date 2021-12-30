@@ -32,6 +32,8 @@ const (
 	thrNewEvt    = "NEW_THR_EVT"
 	thrStartEvt  = "THR_START_EVT"
 	thrStopEvt   = "THR_STOP_EVT"
+
+	instNewEvt = "NEW_INSTANCE_EVT"
 )
 
 type Thresher struct {
@@ -119,7 +121,7 @@ func New(sb *srvbus.ServiceBus, log *zap.SugaredLogger) (*Thresher, error) {
 }
 
 // create a new instance of the process and register it in the thresher.
-func (thr *Thresher) NewProcessInstance(
+func (thr *Thresher) NewInstance(
 	p *model.Process) (*Instance, error) {
 
 	sn, err := p.Copy()
@@ -140,6 +142,16 @@ func (thr *Thresher) NewProcessInstance(
 	thr.Lock()
 	thr.instances = append(thr.instances, pi)
 	thr.Unlock()
+
+	thr.EmitEvent(instNewEvt,
+		fmt.Sprintf(
+			"{process_id: \"%v\", process_name: \"%s\", instance_id: \"%v\"}",
+			p.ID(), p.Name(), iID))
+
+	thr.log.Infow("new instance created",
+		zap.String("process_name", p.Name()),
+		zap.Stringer("process_id", p.ID()),
+		zap.Stringer("instance_id", iID))
 
 	if thr.IsRunned() {
 		go pi.Run(thr.ctx)

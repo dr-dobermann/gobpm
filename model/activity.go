@@ -109,8 +109,6 @@ type TaskModel interface {
 	// returns task type
 	TaskType() ActivityType
 
-	// GetTaskDefStr() interface{}
-
 	DefaultFlowId() Id
 
 	// Copy returns a copy of the Task with a new Id
