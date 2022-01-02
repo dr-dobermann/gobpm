@@ -59,6 +59,10 @@ func (thr *Thresher) IsRunned() bool {
 	return thr.runned
 }
 
+func (thr *Thresher) SrvBus() *srvbus.ServiceBus {
+	return thr.sBus
+}
+
 // emits single event into the personal thresher topic
 func (thr *Thresher) EmitEvent(name, descr string) {
 	if thr.sBus == nil || !thr.sBus.IsRunned() {
@@ -124,6 +128,10 @@ func New(sb *srvbus.ServiceBus, log *zap.SugaredLogger) (*Thresher, error) {
 func (thr *Thresher) NewInstance(
 	p *model.Process) (*Instance, error) {
 
+	if !thr.IsRunned() {
+		return nil, errs.ErrNotRunned
+	}
+
 	sn, err := p.Copy()
 	if err != nil {
 		return nil,
@@ -135,9 +143,14 @@ func (thr *Thresher) NewInstance(
 	pi := &Instance{
 		id:       iID,
 		snapshot: sn,
+		Thr:      thr,
 		vs:       make(model.VarStore),
 		tracks:   make(map[model.Id]*track),
 		log:      thr.log.Named("INST:" + iID.GetLast(4))}
+
+	if sn.HasMessages() {
+		pi.mQueue = fmt.Sprintf("MQ%v", pi.snapshot.OriginID)
+	}
 
 	thr.Lock()
 	thr.instances = append(thr.instances, pi)

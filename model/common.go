@@ -128,6 +128,11 @@ type Node interface {
 	// else the Node is the target of the sequence
 	ConnectFlow(sf *SequenceFlow, se SequenceEnd) error
 	HasIncoming() bool
+
+	// deletes all incoming and outcoming flows when copying the node
+	// only calls from proccess.Copy method.
+	// DO NOT CALL directly!
+	ClearFlows()
 }
 
 // base for Activities, Gates and Events
@@ -220,6 +225,12 @@ func (fn *FlowNode) ConnectFlow(sf *SequenceFlow, se SequenceEnd) error {
 func (fn *FlowNode) HasIncoming() bool {
 
 	return len(fn.incoming) != 0
+}
+
+func (fn *FlowNode) ClearFlows() {
+
+	fn.incoming = []*SequenceFlow{}
+	fn.outcoming = []*SequenceFlow{}
 }
 
 type SequenceEnd uint8

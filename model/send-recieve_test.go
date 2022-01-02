@@ -3,6 +3,8 @@ package model
 import (
 	"os"
 	"testing"
+
+	"github.com/matryer/is"
 )
 
 func TestSendProcess(t *testing.T) {
@@ -24,6 +26,7 @@ func TestReceiveProcess(t *testing.T) {
 }
 
 func getSendProcess(t *testing.T) *Process {
+	is := is.New(t)
 
 	p := NewProcess(NewID(), "Test Send Process", "0.1.0")
 
@@ -79,6 +82,7 @@ func getSendProcess(t *testing.T) *Process {
 	}
 
 	my, err := p.GetMessage("letter_Y")
+	is.NoErr(err)
 	if my == nil {
 		t.Error("Couldn't retrieve message letter_Y")
 		return nil
@@ -112,7 +116,7 @@ func getRecieveProcess(t *testing.T) *Process {
 	p := NewProcess(NewID(), "Test Receive Process", "0.1.0")
 
 	rcv := NewReceiveTask(p, "Receive X", "letter_X")
-	out := NewOutputTask(p, "Print X", os.Stdout, *V("x", VtInt, 0))
+	out := NewOutputTask(p, "Print X", os.Stdout, nil, *V("x", VtInt, 0))
 	if out == nil || rcv == nil {
 		t.Error("Couldn't create receive or output task")
 		return nil

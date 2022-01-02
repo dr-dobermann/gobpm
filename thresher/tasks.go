@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/dr-dobermann/gobpm/model"
+	"github.com/dr-dobermann/srvbus/ms"
 )
 
 // ----------------------------------------------------------------------------
@@ -29,6 +30,12 @@ func GetTaskExecutor(t model.TaskModel) (TaskExecutor, error) {
 
 	case *model.SendTask:
 		te = NewSendTaskExecutor(ts)
+
+	case *model.OutputTask:
+		te = NewOutputTaskExecutor(ts)
+
+	case *model.ReceiveTask:
+		te = NewReceiveTaskExecutor(ts)
 
 	default:
 		return nil, fmt.Errorf("invalid task type: %s", t.TaskType().String())
@@ -59,7 +66,7 @@ func (ste *StoreTaskExecutor) Exec(_ context.Context,
 	tr *track) ([]*model.SequenceFlow, error) {
 
 	for _, v := range ste.Vars {
-		if _, err := tr.instance.vs.NewVar(v); err != nil {
+		if _, err := tr.Instance().VarStore().NewVar(v); err != nil {
 			return nil,
 				fmt.Errorf(
 					"couldn't add variable %s to instance: %v",
@@ -91,14 +98,49 @@ func NewOutputTaskExecutor(ot *model.OutputTask) *OutputTaskExecutor {
 func (ote *OutputTaskExecutor) Exec(_ context.Context,
 	tr *track) ([]*model.SequenceFlow, error) {
 
-	// TODO: Add expression check on output flows
+	for _, v := range ote.Vars {
+		vv, err := tr.Instance().VarStore().GetVar(v.Name())
+		if err != nil {
+			return nil,
+				fmt.Errorf(
+					"couldn't get a variable `%s`(%s) from "+
+						"instance's var storage: %v",
+					v.Name(), v.Type().String(), err)
+		}
+
+		if ote.DestLocker != nil {
+			ote.DestLocker.Lock()
+			defer ote.DestLocker.Unlock()
+		}
+
+		switch vv.Type() {
+		case model.VtInt:
+			fmt.Fprintf(ote.Destination, "%s = %d\n", vv.Name(), vv.Int())
+
+		case model.VtBool:
+			fmt.Fprintf(ote.Destination, "%s = %t\n", vv.Name(), vv.Bool())
+
+		case model.VtFloat:
+			fmt.Fprintf(ote.Destination, "%s = %f\n", vv.Name(), vv.Float64())
+
+		case model.VtTime:
+			fmt.Fprintf(ote.Destination, "%s = %v\n", vv.Name(), vv.Time())
+
+		default:
+			return nil, fmt.Errorf("invalid var type %s", vv.Type().String())
+		}
+	}
+
 	return ote.GetOutputFlows(), nil
 }
 
 //-----------------------------------------------------------------------------
 
+// Send task uses default message queue of the instance to send messages.
 type SendTaskExecutor struct {
 	model.SendTask
+
+	mSrv *ms.MessageServer
 }
 
 func NewSendTaskExecutor(st *model.SendTask) *SendTaskExecutor {
@@ -115,8 +157,13 @@ func NewSendTaskExecutor(st *model.SendTask) *SendTaskExecutor {
 func (ste *SendTaskExecutor) Exec(ctx context.Context,
 	tr *track) ([]*model.SequenceFlow, error) {
 
-	// create the results channel
-	// make the call for service
+	// if ste.mSrv == nil {
+	// 	mSrv, err := tr.instance.Thr.SrvBus().GetMessageServer()
+	// 	if err != nil {
+	// 		return nil, fmt.Errorf("couldn't get message server: %v", err)
+	// 	}
+
+	// }
 
 	return nil, nil
 }

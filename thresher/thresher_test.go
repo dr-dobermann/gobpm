@@ -1,92 +1,134 @@
 package thresher
 
 import (
+	"bytes"
 	"context"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/model"
+	"github.com/dr-dobermann/srvbus"
+	"github.com/dr-dobermann/srvbus/es"
 	"github.com/google/uuid"
+	"github.com/matryer/is"
+	"go.uber.org/zap"
 )
 
 func TestTracks(t *testing.T) {
-	pi := getTestInstance(nil, t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	if err := pi.prepare(); err != nil {
-		t.Fatal("Couldn't prepare instance for running : ", err)
-	}
+	buf := bytes.NewBuffer([]byte{})
+	locker := new(sync.Mutex)
 
-	if err := pi.prepare(); err == nil {
-		t.Fatal("Double preparation of instance")
-	}
+	thr, inst := getTestInstance(ctx, getTestProcess(t, buf, locker), t)
 
-	if len(pi.tracks) == 0 {
-		t.Fatal("No tracks created")
-	}
-
-	if len(pi.tracks) != 1 {
-		t.Fatal("Invalid tracks count. have ", len(pi.tracks))
-	}
-
-	n := pi.tracks[0].currentStep().node
-	if n.Name() != "Store Task" {
-		t.Fatal("Invalid track Node name ", n.Name())
-	}
-
-	if err := pi.tracks[0].tick(context.Background()); err != nil {
-		t.Errorf("Couldn't exec Node %s : %v", pi.tracks[0].steps[0].node.Name(), err)
-	}
-
-	if len(pi.tracks[0].steps) != 2 {
-		t.Error("Invalid steps count")
-	}
-
-	if pi.tracks[0].currentStep().node.Name() != "Output Task" {
-		t.Error("Invalid second step name")
-	}
-
-	if len(pi.tracks) > 1 {
-		t.Error("Invalid tracks count")
-	}
-
-	if err := pi.tracks[0].tick(context.Background()); err != nil {
-		t.Errorf("Couldn't exec Node %s : %v", pi.tracks[0].currentStep().node.Name(), err)
-	}
-
-	if pi.tracks[0].state != TsEnded {
-		t.Error("Invalid track state")
-	}
-}
-
-func TestThresher(t *testing.T) {
-	thr := GetThreshser()
-
-	if _, err := thr.NewProcessInstance(getTestProcess(t)); err != nil {
-		t.Error("couldn't create an Instance of the test process : ", err)
-	}
-
-	thr.TurnOn()
-}
-
-func getTestInstance(p *model.Process, t *testing.T) *ProcessInstance {
-	if p == nil {
-		p = getTestProcess(t)
-	}
-
-	pi, err := GetThreshser().NewProcessInstance(p)
+	// subscribe to instance finished
+	eSrv, err := thr.SrvBus().GetEventServer()
 	if err != nil {
-		t.Fatal("couldn't create an instance : ", err)
+		t.Fatal("couldn't get event server: ", err)
 	}
 
-	return pi
+	// event channel
+	insCh := make(chan es.EventEnvelope)
+
+	err = eSrv.Subscribe(uuid.UUID(thr.id), es.SubscrReq{
+		Topic:     thr.esTopic,
+		SubCh:     insCh,
+		Recursive: false,
+		Depth:     0,
+		StartPos:  0,
+		Filters: []es.Filter{
+			es.WithName(instEndEvt),
+			es.WithSubData([]byte(inst.id.String())),
+		},
+	})
+	if err != nil {
+		t.Fatal("couldn't subscribe on event:", err)
+	}
+
+	// wait until instance finished
+	<-insCh
+	close(insCh)
+
+	// check results
+	testStr := "x = 2"
+
+	locker.Lock()
+	defer locker.Unlock()
+
+	if !bytes.Contains(buf.Bytes(), []byte(testStr)) {
+		t.Fatalf("unexpected process execution results: '%s' doesn't contain '%s'",
+			buf.String(), testStr)
+	}
+
 }
 
-func getTestProcess(t *testing.T) *model.Process {
+func getTestInstance(ctx context.Context, p *model.Process, t *testing.T) (*Thresher, *Instance) {
+	if p == nil {
+		p = getTestProcess(t, nil, nil)
+	}
+
+	is := is.New(t)
+
+	log, err := zap.NewDevelopment()
+	is.NoErr(err)
+
+	sBus, err := srvbus.New(uuid.New(), log.Sugar())
+	is.NoErr(err)
+
+	is.NoErr(sBus.Run(ctx))
+
+	thr, err := New(sBus, log.Sugar())
+	is.NoErr(err)
+
+	is.NoErr(thr.Run(ctx))
+
+	pi, err := thr.NewInstance(p)
+	is.NoErr(err)
+
+	return thr, pi
+}
+
+// test process creates a process of two tasks (if buf is nil):
+//
+//  ------------       -------------
+// | Store Task | --> | Output Task |
+//  ------------       -------------
+//
+// or three tasks (if buf is not nil)
+//  ------------       -------------
+// | Store Task | --> | Output Task |
+//  ------------       -------------
+//       |
+//       |             -------------
+//        ----------> | Check Task  |
+//                     -------------
+//
+// Store Task puts X == 2 into instance storage
+//
+// Output Task prints X from internal storage onto io.Stdout.
+//
+// Check Task output the X into the given buffer so it's possible to
+// check task execution results
+//
+func getTestProcess(t *testing.T, buf *bytes.Buffer, locker *sync.Mutex) *model.Process {
+
 	p := model.NewProcess(model.Id(uuid.Nil), "Test Process", "0.1.0")
 
 	t1 := model.NewStoreTask(p, "Store Task", *model.V("x", model.VtInt, 2))
-	t2 := model.NewOutputTask(p, "Output Task", os.Stdout, *model.V("x", model.VtInt, 0))
-	if t1 == nil || t2 == nil {
+
+	t2 := model.NewOutputTask(p, "Output Task",
+		os.Stdout, nil, *model.V("x", model.VtInt, 0))
+
+	var t3 *model.OutputTask
+	if buf != nil {
+		t3 = model.NewOutputTask(p, "Check Task",
+			buf, locker, *model.V("x", model.VtInt, 0))
+	}
+
+	if t1 == nil || t2 == nil || t3 == nil {
 		t.Fatal("Couldn't create tasks for test process")
 	}
 
@@ -97,12 +139,25 @@ func getTestProcess(t *testing.T) *model.Process {
 	if err := p.AddTask(t1, "Lane 1"); err != nil {
 		t.Fatal("Couldn't add Task 1 on Lane 1 : ", err)
 	}
+
 	if err := p.AddTask(t2, "Lane 1"); err != nil {
 		t.Fatal("Couldn't add Task 2 on Lane 1 : ", err)
 	}
 
+	if buf != nil {
+		if err := p.AddTask(t3, "Lane 1"); err != nil {
+			t.Fatal("Couldn't add Task 3 on Lane 1 : ", err)
+		}
+	}
+
 	if err := p.LinkNodes(t1, t2, nil); err != nil {
 		t.Fatal("couldn't link tasks in test process : ", err)
+	}
+
+	if buf != nil {
+		if err := p.LinkNodes(t1, t3, nil); err != nil {
+			t.Fatal("couldn't link tasks in test process : ", err)
+		}
 	}
 
 	return p

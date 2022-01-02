@@ -58,12 +58,26 @@ type Instance struct {
 
 	ctx context.Context
 	log *zap.SugaredLogger
+
+	// if the original process has a non-empty messages list
+	// mQueue consists a non-empty message queue name on
+	// Thresher.sBus.MessageServer
+	// Queue name constructs as "MQ" + process_ID
+	mQueue string
 }
 
 func (pi *Instance) setState(newState InstanceState) {
 	pi.Lock()
 	pi.state = newState
 	pi.Unlock()
+}
+
+func (pi *Instance) VarStore() *model.VarStore {
+	return &pi.vs
+}
+
+func (pi *Instance) MsgQueue() string {
+	return pi.mQueue
 }
 
 // creates a new ProcessExecutingError
@@ -159,8 +173,7 @@ func (pi *Instance) Run(ctx context.Context) error {
 	if pi.state == IsCreated {
 		if err := pi.prepare(); err != nil {
 			return pi.NewErr(err,
-				"couldn't prepare the instance for running : %v",
-				err)
+				"couldn't prepare the instance for running")
 		}
 	}
 

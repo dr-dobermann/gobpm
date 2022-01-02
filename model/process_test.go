@@ -176,7 +176,7 @@ func TestNodes(t *testing.T) {
 	}
 
 	tn2 := "Task2"
-	t2 := NewOutputTask(p, tn2, os.Stdout, *V("x", VtInt, nil))
+	t2 := NewOutputTask(p, tn2, os.Stdout, nil, *V("x", VtInt, nil))
 
 	err = p.AddTask(t2, ln)
 	if err != nil {
@@ -235,6 +235,12 @@ func TestProcessSnapshot(t *testing.T) {
 					lt.nodes[i].Type())
 
 			}
+
+			// sadly it's impossible to test equelity of incoming and
+			// outcoming node's flows without adding only-for-test methods.
+			// To prevent errors of duplication flows
+			// 'THE COPIED NODE SHOULD HAVE _EMPTY_ INCOMING AND OUTCOMING FLOWS
+
 		}
 	}
 
@@ -259,7 +265,7 @@ func createTestProcess(t *testing.T) *Process {
 	p := NewProcess(Id(uuid.Nil), "test", "0.1.0")
 
 	t1 := NewStoreTask(p, "Task 1", *V("x", VtInt, 2))
-	t2 := NewOutputTask(p, "Task 2", os.Stdout, *V("x", VtInt, 0))
+	t2 := NewOutputTask(p, "Task 2", os.Stdout, nil, *V("x", VtInt, 0))
 	if t1 == nil || t2 == nil {
 		t.Fatal("couldn't create tasks for test process")
 	}

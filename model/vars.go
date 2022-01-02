@@ -91,7 +91,12 @@ func (v *Variable) update(newVal interface{}) error {
 	switch v.vtype {
 	case VtInt:
 		if i, ok := newVal.(int64); !ok {
-			return NewModelError(nil, "couldn't convert %v to int", newVal)
+			if i, ok := newVal.(int); !ok {
+				return NewModelError(nil, "couldn't convert %v to int", newVal)
+			} else {
+				v.value = int64(i)
+				v.i = int64(i)
+			}
 		} else {
 			v.value = i
 			v.i = i

@@ -181,7 +181,7 @@ func (tr *track) run(ctx context.Context) {
 		// execute it
 		step.state = SsStarted
 		tr.state = TsExecutingStep
-		tr.log.Debugw("execunting step",
+		tr.log.Debugw("executing step",
 			zap.Stringer("type", step.node.Type()),
 			zap.String("name", step.node.Name()))
 
@@ -198,6 +198,9 @@ func (tr *track) run(ctx context.Context) {
 		}
 
 		step.state = SsEnded
+		tr.log.Debugw("step executed",
+			zap.String("node_name", step.node.Name()),
+			zap.Int("out_flows_num", len(nexts)))
 
 		for i, sf := range nexts {
 			// check if there is other steps to take
@@ -207,10 +210,14 @@ func (tr *track) run(ctx context.Context) {
 					state: SsCreated,
 				})
 
+				tr.log.Debugw("new step added",
+					zap.String("node_name", sf.GetTarget().Name()),
+					zap.Stringer("node_id", sf.GetTarget().ID()))
+
 				continue
 			}
 
-			// if there is fork needed. create new track(s) and
+			// if there is fork appears (nexts > 1). create new track(s) and
 			ntr, err := newTrack(sf.GetTarget(), tr.instance, tr)
 			if err != nil {
 				tr.state = TsError
@@ -228,6 +235,10 @@ func (tr *track) run(ctx context.Context) {
 					sf.GetTarget().Name(), sf.ID(), err)
 				return
 			}
+
+			tr.log.Debugw("new forked track added",
+				zap.Stringer("forked_track_id", ntr.id),
+				zap.String("forked_node_name", ntr.currentStep().node.Name()))
 		}
 	}
 }

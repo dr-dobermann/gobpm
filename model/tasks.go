@@ -2,6 +2,7 @@ package model
 
 import (
 	"io"
+	"sync"
 )
 
 // ----------------------------------------------------------------------------
@@ -25,10 +26,6 @@ import (
 type SendTask struct {
 	Activity
 	msgName string
-}
-
-func (st *SendTask) GetTaskDefStr() interface{} {
-	return st
 }
 
 func (st *SendTask) Check() error {
@@ -73,8 +70,6 @@ func (st *SendTask) Copy(snapshot *Process) TaskModel {
 
 	cst.id = NewID()
 	cst.process = snapshot
-	cst.incoming = []*SequenceFlow{}
-	cst.outcoming = []*SequenceFlow{}
 
 	return cst
 }
@@ -84,10 +79,6 @@ func (st *SendTask) Copy(snapshot *Process) TaskModel {
 type ReceiveTask struct {
 	Activity
 	msgName string
-}
-
-func (rt *ReceiveTask) GetTaskDefStr() interface{} {
-	return rt
 }
 
 func (rt *ReceiveTask) Check() error {
@@ -127,8 +118,6 @@ func (rt *ReceiveTask) Copy(snapshot *Process) TaskModel {
 
 	crt.id = NewID()
 	crt.process = snapshot
-	crt.incoming = []*SequenceFlow{}
-	crt.outcoming = []*SequenceFlow{}
 
 	return crt
 }
@@ -192,10 +181,6 @@ type StoreTask struct {
 	Vars []Variable
 }
 
-func (st *StoreTask) GetTaskDefStr() interface{} {
-	return st
-}
-
 func NewStoreTask(p *Process, n string, vl ...Variable) *StoreTask {
 
 	id := NewID()
@@ -204,41 +189,30 @@ func NewStoreTask(p *Process, n string, vl ...Variable) *StoreTask {
 		n = "Task " + id.String()
 	}
 
-	st := StoreTask{
-		Activity: Activity{
-			FlowNode: FlowNode{
-				FlowElement: FlowElement{
-					NamedElement: NamedElement{
-						BaseElement: BaseElement{
-							id: id},
-						name: n},
-					elementType: EtActivity},
-				process: p},
-			class: AcAbstract,
-			aType: AtStoreTask},
-		Vars: []Variable{}}
+	st := new(StoreTask)
+	st.id = id
+	st.name = n
+	st.elementType = EtActivity
+	st.process = p
+	st.class = AcAbstract
+	st.aType = AtStoreTask
 	st.Vars = append(st.Vars, vl...)
 
-	return &st
+	return st
 }
 
 func (st *StoreTask) Copy(snapshot *Process) TaskModel {
 
-	// TODO: refactor to new and then copy from *st
-	stc := StoreTask{
-		Activity: Activity{
-			FlowNode: FlowNode{
-				FlowElement: st.FlowElement,
-				incoming:    []*SequenceFlow{},
-				outcoming:   []*SequenceFlow{}},
-			aType: AtStoreTask},
-		Vars: make([]Variable, len(st.Vars))}
+	stc := new(StoreTask)
 
+	*stc = *st
 	stc.process = snapshot
 	stc.id = NewID()
+
+	stc.Vars = make([]Variable, len(st.Vars))
 	copy(stc.Vars, st.Vars)
 
-	return &stc
+	return stc
 }
 
 // ----------------------------------------------------------------------------
@@ -267,14 +241,12 @@ type OutputTask struct {
 	Activity
 
 	Destination io.Writer
+	DestLocker  *sync.Mutex
 	Vars        []Variable
 }
 
-func (ot *OutputTask) GetTaskDefStr() interface{} {
-	return ot
-}
-
-func NewOutputTask(p *Process, n string, dest io.Writer, vl ...Variable) *OutputTask {
+func NewOutputTask(p *Process, n string, dest io.Writer,
+	locker *sync.Mutex, vl ...Variable) *OutputTask {
 
 	id := NewID()
 
@@ -282,41 +254,34 @@ func NewOutputTask(p *Process, n string, dest io.Writer, vl ...Variable) *Output
 		n = "Task " + id.String()
 	}
 
-	ot := OutputTask{
-		Activity: Activity{
-			FlowNode: FlowNode{
-				FlowElement: FlowElement{
-					NamedElement: NamedElement{
-						BaseElement: BaseElement{
-							id: id},
-						name: n},
-					elementType: EtActivity},
-				process: p},
-			aType: AtOutputTask,
-			class: AcAbstract},
-		Destination: dest,
-		Vars:        []Variable{}}
+	ot := new(OutputTask)
+
+	ot.id = id
+	ot.name = n
+	ot.DestLocker = locker
+	ot.elementType = EtActivity
+	ot.process = p
+	ot.class = AcAbstract
+	ot.aType = AtOutputTask
+	ot.Destination = dest
 	ot.Vars = append(ot.Vars, vl...)
 
-	return &ot
+	return ot
 }
 
 func (ot *OutputTask) Copy(snapshot *Process) TaskModel {
 
-	otc := OutputTask{
-		Activity: Activity{
-			FlowNode: FlowNode{
-				FlowElement: ot.FlowElement,
-				incoming:    []*SequenceFlow{},
-				outcoming:   []*SequenceFlow{}},
-			aType: AtOutputTask},
-		Vars: make([]Variable, len(ot.Vars))}
+	otc := new(OutputTask)
+
+	*otc = *ot
 
 	otc.process = snapshot
 	otc.id = NewID()
+
+	otc.Vars = make([]Variable, len(ot.Vars))
 	copy(otc.Vars, ot.Vars)
 
-	return &otc
+	return otc
 }
 
 func (ot *OutputTask) FloatNode() *FlowNode {

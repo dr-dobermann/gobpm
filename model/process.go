@@ -34,19 +34,28 @@ type Process struct {
 
 	flows []*SequenceFlow
 
-	// the type of process data. could be a real Model or
-	// Snapshot of the model.
-	// Snapshot is used as real-time model for process
+	// the type of process data.
+	// could be a real Model or Snapshot of the model.
+	// Snapshot is used as a real-time model for process
 	// execution
 	dataType ProcessDataType
 
 	// process messages
 	messages []*Message
+
+	// consist an ID of original process
+	// in case of its copying as snapshot
+	// it's empty for the real process
+	OriginID Id
 }
 
 // returns a version of the process.
-func (p Process) Version() string {
+func (p *Process) Version() string {
 	return p.version
+}
+
+func (p *Process) HasMessages() bool {
+	return len(p.messages) > 0
 }
 
 // GetNodes returns a list of Nodes in the Process p.
@@ -139,6 +148,8 @@ func (p Process) Copy() (*Process, error) {
 	for _, ot := range p.tasks {
 		t := ot.Copy(&pc)
 
+		t.ClearFlows()
+
 		tm[ot.ID()] = t
 
 		pc.AddTask(t, ot.LaneName())
@@ -162,6 +173,7 @@ func (p Process) Copy() (*Process, error) {
 	}
 
 	pc.dataType = PdtSnapshot
+	pc.OriginID = p.id
 
 	return &pc, nil
 }
