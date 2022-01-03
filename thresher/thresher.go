@@ -63,6 +63,10 @@ func (thr *Thresher) SrvBus() *srvbus.ServiceBus {
 	return thr.sBus
 }
 
+func (thr *Thresher) EventsTopic() string {
+	return thr.esTopic
+}
+
 // emits single event into the personal thresher topic
 func (thr *Thresher) EmitEvent(name, descr string) {
 	if thr.sBus == nil || !thr.sBus.IsRunned() {

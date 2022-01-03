@@ -1,9 +1,14 @@
 package model
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/dr-dobermann/gobpm/internal/msgmarsh"
+	"github.com/google/uuid"
 )
 
 // type MessageFlow struct {
@@ -62,6 +67,99 @@ func (m Message) GetVariables(nonOptionalOnly bool) []Variable {
 	}
 
 	return vv
+}
+
+func (m Message) MarshalJSON() (bdata []byte, e error) {
+
+	mm := msgmarsh.MsgMarsh{
+		ID:        m.id.String(),
+		Name:      m.name,
+		Direction: uint8(m.direction)}
+
+	for _, v := range m.vList {
+		mm.Variables = append(mm.Variables, struct {
+			Optional bool              `json:"optional"`
+			Variable msgmarsh.VarMarsh `json:"variable"`
+		}{v.optional, msgmarsh.VarMarsh{
+			Name:      v.name,
+			Type:      uint8(v.vtype),
+			Precision: v.prec,
+			Value: struct {
+				Int    int64     `json:"int"`
+				Bool   bool      `json:"bool"`
+				String string    `json:"string"`
+				Float  float64   `json:"float"`
+				Time   time.Time `json:"time"`
+			}{v.variableValues.i, v.variableValues.b,
+				v.variableValues.s, v.variableValues.f, v.variableValues.t},
+		}})
+	}
+
+	return json.Marshal(&mm)
+}
+
+func (m *Message) UnmarshalJSON(b []byte) error {
+	var mm msgmarsh.MsgMarsh
+
+	err := json.Unmarshal(b, &mm)
+	if err != nil {
+		return fmt.Errorf("couldn't unmarshal transported msg: %v", err)
+	}
+
+	m.name = mm.Name
+	m.id = Id(uuid.MustParse(mm.ID))
+	m.mstate = Created
+	m.elementType = EtMessage
+	m.direction = MessageFlowDirection(mm.Direction)
+	if m.vList == nil {
+		m.vList = make(map[string]MessageVariable)
+	}
+
+	for _, v := range mm.Variables {
+		var nv *Variable
+
+		switch VarType(v.Variable.Type) {
+		case VtInt:
+			nv = V(
+				v.Variable.Name,
+				VarType(v.Variable.Type),
+				v.Variable.Value.Int)
+
+		case VtBool:
+			nv = V(
+				v.Variable.Name,
+				VarType(v.Variable.Type),
+				v.Variable.Value.Bool)
+
+		case VtString:
+			nv = V(
+				v.Variable.Name,
+				VarType(v.Variable.Type),
+				v.Variable.Value.String)
+
+		case VtFloat:
+			nv = V(
+				v.Variable.Name,
+				VarType(v.Variable.Type),
+				v.Variable.Value.Float)
+
+		case VtTime:
+			nv = V(
+				v.Variable.Name,
+				VarType(v.Variable.Type),
+				v.Variable.Value.Time)
+
+		}
+
+		nv.SetPrecision(v.Variable.Precision)
+
+		m.vList[nv.name] = MessageVariable{
+			Variable: *nv,
+			optional: v.Optional,
+		}
+	}
+
+	return nil
 }
 
 func newMessage(

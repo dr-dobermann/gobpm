@@ -56,10 +56,7 @@ func NewStoreTaskExecutor(st *model.StoreTask) *StoreTaskExecutor {
 		return nil
 	}
 
-	ste := new(StoreTaskExecutor)
-	ste.StoreTask = *st
-
-	return ste
+	return &StoreTaskExecutor{*st}
 }
 
 func (ste *StoreTaskExecutor) Exec(_ context.Context,
@@ -89,10 +86,7 @@ func NewOutputTaskExecutor(ot *model.OutputTask) *OutputTaskExecutor {
 		return nil
 	}
 
-	ote := new(OutputTaskExecutor)
-	ote.OutputTask = *ot
-
-	return ote
+	return &OutputTaskExecutor{*ot}
 }
 
 func (ote *OutputTaskExecutor) Exec(_ context.Context,
@@ -148,10 +142,7 @@ func NewSendTaskExecutor(st *model.SendTask) *SendTaskExecutor {
 		return nil
 	}
 
-	ste := new(SendTaskExecutor)
-	ste.SendTask = *st
-
-	return ste
+	return &SendTaskExecutor{*st, nil}
 }
 
 func (ste *SendTaskExecutor) Exec(ctx context.Context,
@@ -179,10 +170,7 @@ func NewReceiveTaskExecutor(rt *model.ReceiveTask) *ReceiveTaskExecutor {
 		return nil
 	}
 
-	rte := new(ReceiveTaskExecutor)
-	rte.ReceiveTask = *rt
-
-	return rte
+	return &ReceiveTaskExecutor{*rt}
 }
 
 func (rte *ReceiveTaskExecutor) Exec(ctx context.Context,
