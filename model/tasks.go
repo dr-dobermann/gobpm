@@ -2,6 +2,7 @@ package model
 
 import (
 	"io"
+	"strings"
 	"sync"
 )
 
@@ -25,7 +26,17 @@ import (
 // SendTask represent the Task that sends the message outside the process.
 type SendTask struct {
 	Activity
+
 	msgName string
+	qName   string
+}
+
+func (st *SendTask) MessageName() string {
+	return st.msgName
+}
+
+func (st *SendTask) QueueName() string {
+	return st.qName
 }
 
 func (st *SendTask) Check() error {
@@ -41,12 +52,20 @@ func (st *SendTask) Check() error {
 		st.msgName, st.name)
 }
 
-func NewSendTask(p *Process, n string, msgName string) *SendTask {
+func NewSendTask(p *Process, n string, msgName, qName string) *SendTask {
 	id := NewID()
 
+	n = strings.Trim(n, " ")
 	if n == "" {
 		n = "Task " + id.String()
 	}
+
+	msgName = strings.Trim(msgName, " ")
+	if msgName == "" {
+		return nil
+	}
+
+	qName = strings.Trim(qName, " ")
 
 	return &SendTask{
 		Activity: Activity{
@@ -60,7 +79,8 @@ func NewSendTask(p *Process, n string, msgName string) *SendTask {
 				process: p},
 			aType: AtSendTask,
 			class: AcAbstract},
-		msgName: msgName}
+		msgName: msgName,
+		qName:   qName}
 }
 
 func (st *SendTask) Copy(snapshot *Process) TaskModel {
@@ -78,7 +98,13 @@ func (st *SendTask) Copy(snapshot *Process) TaskModel {
 
 type ReceiveTask struct {
 	Activity
+
+	qName   string
 	msgName string
+}
+
+func (rt *ReceiveTask) QueueName() string {
+	return rt.qName
 }
 
 func (rt *ReceiveTask) Check() error {
@@ -93,7 +119,7 @@ func (rt *ReceiveTask) Check() error {
 		rt.msgName, rt.name)
 }
 
-func NewReceiveTask(p *Process, n string, msgName string) *ReceiveTask {
+func NewReceiveTask(p *Process, n, msgName, qName string) *ReceiveTask {
 	id := NewID()
 
 	if n == "" {
@@ -107,6 +133,7 @@ func NewReceiveTask(p *Process, n string, msgName string) *ReceiveTask {
 	rt.elementType = EtActivity
 	rt.aType = AtReceiveTask
 	rt.msgName = msgName
+	rt.qName = qName
 
 	return rt
 }

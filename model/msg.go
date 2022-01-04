@@ -18,6 +18,11 @@ import (
 // 	message  Id
 // }
 
+const (
+	OnlyNonOptional = true
+	AllVariables    = false
+)
+
 type MessageFlowDirection uint8
 
 const (
@@ -39,6 +44,10 @@ type MessageVariable struct {
 	optional bool
 }
 
+func NewMVar(v *Variable, optional bool) *MessageVariable {
+	return &MessageVariable{Variable: *v, optional: optional}
+}
+
 type Message struct {
 	FlowElement
 	//flow  Id
@@ -56,17 +65,20 @@ func (m Message) State() MessageState {
 // GetVariables returns a list of variables, defined for the Message m.
 // if nonOptionalOnly is true, then only variables with optional == false
 // will be returned.
-func (m Message) GetVariables(nonOptionalOnly bool) []Variable {
+// []bool slice returns a optional characteristic of the according variable.
+func (m Message) GetVariables(nonOptionalOnly bool) ([]Variable, []bool) {
 	vv := []Variable{}
+	vo := []bool{}
 
 	for _, mv := range m.vList {
 		if nonOptionalOnly && mv.optional {
 			continue
 		}
 		vv = append(vv, mv.Variable)
+		vo = append(vo, mv.optional)
 	}
 
-	return vv
+	return vv, vo
 }
 
 func (m Message) MarshalJSON() (bdata []byte, e error) {
@@ -162,7 +174,7 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-func newMessage(
+func NewMessage(
 	mn string,
 	dir MessageFlowDirection,
 	vars ...MessageVariable) (*Message, error) {

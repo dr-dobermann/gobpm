@@ -7,6 +7,8 @@ import (
 	"github.com/matryer/is"
 )
 
+var test_queue = "test_queue"
+
 func TestSendProcess(t *testing.T) {
 	p := getSendProcess(t)
 	if p == nil {
@@ -31,7 +33,7 @@ func getSendProcess(t *testing.T) *Process {
 	p := NewProcess(NewID(), "Test Send Process", "0.1.0")
 
 	str := NewStoreTask(p, "Store X", *V("x", VtInt, 10))
-	snd := NewSendTask(p, "Send X", "letter_X")
+	snd := NewSendTask(p, "Send X", "letter_X", test_queue)
 	if str == nil || snd == nil {
 		t.Error("Couldn't create store|send tasks")
 		return nil
@@ -64,7 +66,7 @@ func getSendProcess(t *testing.T) *Process {
 		return nil
 	}
 
-	vv := m.GetVariables(false)
+	vv, _ := m.GetVariables(AllVariables)
 	if len(vv) != 1 {
 		t.Error("Invalid variables count", len(vv))
 		return nil
@@ -88,7 +90,7 @@ func getSendProcess(t *testing.T) *Process {
 		return nil
 	}
 
-	vmy := my.GetVariables(true)
+	vmy, _ := my.GetVariables(OnlyNonOptional)
 	if len(vmy) > 0 {
 		t.Error("Invalid letter_Y non-optional variables count", len(vmy))
 		return nil
@@ -115,7 +117,7 @@ func getSendProcess(t *testing.T) *Process {
 func getRecieveProcess(t *testing.T) *Process {
 	p := NewProcess(NewID(), "Test Receive Process", "0.1.0")
 
-	rcv := NewReceiveTask(p, "Receive X", "letter_X")
+	rcv := NewReceiveTask(p, "Receive X", "letter_X", test_queue)
 	out := NewOutputTask(p, "Print X", os.Stdout, nil, *V("x", VtInt, 0))
 	if out == nil || rcv == nil {
 		t.Error("Couldn't create receive or output task")
