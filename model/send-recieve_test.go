@@ -66,7 +66,7 @@ func getSendProcess(t *testing.T) *Process {
 		return nil
 	}
 
-	vv, _ := m.GetVariables(AllVariables)
+	vv := m.GetVariables(AllVariables)
 	if len(vv) != 1 {
 		t.Error("Invalid variables count", len(vv))
 		return nil
@@ -90,7 +90,7 @@ func getSendProcess(t *testing.T) *Process {
 		return nil
 	}
 
-	vmy, _ := my.GetVariables(OnlyNonOptional)
+	vmy := my.GetVariables(OnlyNonOptional)
 	if len(vmy) > 0 {
 		t.Error("Invalid letter_Y non-optional variables count", len(vmy))
 		return nil

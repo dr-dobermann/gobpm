@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
-	"github.com/dr-dobermann/gobpm/internal/errs"
 	"github.com/dr-dobermann/gobpm/model"
 	"github.com/dr-dobermann/srvbus/ms"
 	"github.com/google/uuid"
@@ -67,7 +67,18 @@ func NewStoreTaskExecutor(st *model.StoreTask) *StoreTaskExecutor {
 func (ste *StoreTaskExecutor) Exec(_ context.Context,
 	tr *track) ([]*model.SequenceFlow, error) {
 
+	var err error
+
+	log := tr.log.Named(ste.Name())
+
+	log.Debug("task execution started")
+
+	defer log.Debugw("task execution complete",
+		zap.Error(err))
+
 	for _, v := range ste.Vars {
+		log.Debugw("storing variable", zap.String("var_name", v.Name()))
+
 		if _, err := tr.Instance().VarStore().NewVar(v); err != nil {
 			return nil,
 				fmt.Errorf(
@@ -97,7 +108,18 @@ func NewOutputTaskExecutor(ot *model.OutputTask) *OutputTaskExecutor {
 func (ote *OutputTaskExecutor) Exec(_ context.Context,
 	tr *track) ([]*model.SequenceFlow, error) {
 
+	var err error
+
+	log := tr.log.Named(ote.Name())
+
+	log.Debug("task execution started")
+
+	defer log.Debugw("task execution complete",
+		zap.Error(err))
+
 	for _, v := range ote.Vars {
+		log.Debugw("output vairable", zap.String("var_name", v.Name()))
+
 		vv, err := tr.Instance().VarStore().GetVar(v.Name())
 		if err != nil {
 			return nil,
@@ -160,10 +182,8 @@ func (ste *SendTaskExecutor) Exec(ctx context.Context,
 
 	log.Debug("task execution started")
 
-	defer func() {
-		log.Debugw("task execution complete",
-			zap.Error(err))
-	}()
+	defer log.Debugw("task execution complete",
+		zap.Error(err))
 
 	msg, err := tr.instance.snapshot.GetMessage(ste.MessageName())
 	if err != nil {
@@ -175,14 +195,14 @@ func (ste *SendTaskExecutor) Exec(ctx context.Context,
 	vl := []model.MessageVariable{}
 	// check existance of non-optional variables in
 	// instance's VarStore
-	vv, vo := msg.GetVariables(model.AllVariables)
-	for i, mv := range vv {
+	vv := msg.GetVariables(model.AllVariables)
+	for _, mv := range vv {
 		v, err := tr.Instance().vs.GetVar(mv.Name())
-		if err != nil && !vo[i] { // if non-optional
+		if err != nil && !mv.IsOptional() { // if non-optional
 			return nil, NewPEErr(tr, err,
 				"couldn't get variable '%s'", mv.Name())
 		}
-		vl = append(vl, *model.NewMVar(v, vo[i]))
+		vl = append(vl, *model.NewMVar(v, mv.IsOptional()))
 	}
 
 	// create a message snapshot to send and marshall it
@@ -215,7 +235,7 @@ func (ste *SendTaskExecutor) Exec(ctx context.Context,
 	}
 
 	m, err := ms.NewMsg(uuid.New(),
-		"MSG_"+msg.ID().String(),
+		ste.MessageName(),
 		bytes.NewBuffer(marshMsg))
 	if err != nil {
 		return nil, NewPEErr(tr, err,
@@ -253,6 +273,29 @@ func NewReceiveTaskExecutor(rt *model.ReceiveTask) *ReceiveTaskExecutor {
 func (rte *ReceiveTaskExecutor) Exec(ctx context.Context,
 	tr *track) ([]*model.SequenceFlow, error) {
 
+	var err error
+
+	log := tr.log.Named(rte.Name())
+	log.Debug("task execution started")
+	defer log.Debugw("task execution complete",
+		zap.Error(err))
+
+	// get message definition from the process
+	msgDef, err := tr.instance.snapshot.GetMessage(rte.MessageName())
+	if err != nil {
+		return nil, err
+	}
+
+	// check message direction.
+	// for receiving task it should incoming
+	if msgDef.Direction()&model.Incoming == 0 {
+		return nil, errors.New("invalid message direction")
+	}
+
+	if msgDef.State() != model.Created {
+		return nil, errors.New("invalidd message state: should be Created")
+	}
+
 	// get a server
 	if rte.mSrv == nil {
 		mSrv, err := tr.instance.Thr.SrvBus().GetMessageServer()
@@ -264,17 +307,113 @@ func (rte *ReceiveTaskExecutor) Exec(ctx context.Context,
 	}
 
 	// read the message
+	log.Debugw("getting message...",
+		zap.String("name", msgDef.Name()))
+
 	queue := rte.QueueName()
 	if queue == "" {
 		queue = tr.instance.mQueue
 	}
 
+	meCh, err := rte.mSrv.GetMessages(uuid.UUID(rte.ID()), queue, true)
+	if err != nil {
+		return nil, err
+	}
+
+	var mEnv ms.MessageEnvelope
+
+	quit := false
+	for !quit {
+		var ok bool
+
+		select {
+		// if context cancelled, return context error
+		case <-ctx.Done():
+			err = ctx.Err()
+			return nil, err
+
+		// if channel closed, return error
+		case mEnv, ok = <-meCh:
+			if !ok {
+				err = errors.New("message channel closed")
+				return nil, err
+			}
+
+			// read until message name is not equal with
+			// task message name
+			if mEnv.Name == rte.MessageName() {
+				quit = true
+				// read rest of the messages from the channel to
+				// allow MessageServer to close it,
+				go func() {
+					for {
+						select {
+						case <-ctx.Done():
+							return
+
+						case _, ok := <-meCh:
+							if !ok {
+								return
+							}
+						}
+					}
+				}()
+
+				continue
+			}
+		}
+	}
+
 	// unmarshall it
+	var msg model.Message
+
+	log.Debug("unmarshalling json")
+
+	err = json.Unmarshal(mEnv.Data(), &msg)
+	if err != nil {
+		return nil,
+			fmt.Errorf("couldn't get message from the envelope: %v", err)
+	}
 
 	// load all variables from the message into the instance internal
 	// VarStore
+	for _, v := range msgDef.GetVariables(model.OnlyNonOptional) {
 
-	return nil, errs.ErrNotImplementedYet
+		log.Debugw("loading variable",
+			zap.String("name", v.Name()))
+
+		mv, ok := msg.GetVar(v.Name())
+		if !ok {
+			return nil,
+				fmt.Errorf("no required variable '%s' in the message '%s'",
+					v.Name(), msg.Name())
+		}
+
+		switch mv.Type() {
+		case model.VtInt:
+			_, err = tr.instance.vs.NewInt(v.Name(), mv.Int())
+
+		case model.VtBool:
+			_, err = tr.instance.vs.NewBool(v.Name(), mv.Bool())
+
+		case model.VtString:
+			_, err = tr.instance.vs.NewString(v.Name(), mv.StrVal())
+
+		case model.VtFloat:
+			_, err = tr.instance.vs.NewFloat(v.Name(), mv.Float64())
+
+		case model.VtTime:
+			_, err = tr.instance.vs.NewTime(v.Name(), mv.Time())
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("couldn't add var '%s' of %s "+
+				"from message '%s': %v", v.Name(), mv.Type().String(),
+				msgDef.Name(), err)
+		}
+	}
+
+	return rte.GetOutputFlows(), nil
 }
 
 //-----------------------------------------------------------------------------

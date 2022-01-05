@@ -99,8 +99,13 @@ func (st *SendTask) Copy(snapshot *Process) TaskModel {
 type ReceiveTask struct {
 	Activity
 
-	qName   string
 	msgName string
+
+	qName string
+}
+
+func (rt *ReceiveTask) MessageName() string {
+	return rt.msgName
 }
 
 func (rt *ReceiveTask) QueueName() string {

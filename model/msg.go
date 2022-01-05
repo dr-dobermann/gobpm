@@ -44,6 +44,10 @@ type MessageVariable struct {
 	optional bool
 }
 
+func (mv MessageVariable) IsOptional() bool {
+	return mv.optional
+}
+
 func NewMVar(v *Variable, optional bool) *MessageVariable {
 	return &MessageVariable{Variable: *v, optional: optional}
 }
@@ -62,23 +66,30 @@ func (m Message) State() MessageState {
 	return m.mstate
 }
 
+func (m Message) Direction() MessageFlowDirection {
+	return m.direction
+}
+
+func (m Message) GetVar(name string) (MessageVariable, bool) {
+	mv, ok := m.vList[name]
+	return mv, ok
+}
+
 // GetVariables returns a list of variables, defined for the Message m.
 // if nonOptionalOnly is true, then only variables with optional == false
 // will be returned.
 // []bool slice returns a optional characteristic of the according variable.
-func (m Message) GetVariables(nonOptionalOnly bool) ([]Variable, []bool) {
-	vv := []Variable{}
-	vo := []bool{}
+func (m Message) GetVariables(nonOptionalOnly bool) []MessageVariable {
+	vv := []MessageVariable{}
 
 	for _, mv := range m.vList {
 		if nonOptionalOnly && mv.optional {
 			continue
 		}
-		vv = append(vv, mv.Variable)
-		vo = append(vo, mv.optional)
+		vv = append(vv, mv)
 	}
 
-	return vv, vo
+	return vv
 }
 
 func (m Message) MarshalJSON() (bdata []byte, e error) {
