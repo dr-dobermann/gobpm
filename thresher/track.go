@@ -74,27 +74,31 @@ type stepInfo struct {
 // of past executed Nodes.
 // Every task with no incoming flow or intermediate event starts a new track.
 // if track splits, the new track(s) will be started
-type track struct {
+type Track struct {
 	id       model.Id
 	instance *Instance
 	state    TrackState
-	prev     []*track
+	prev     []*Track
 	steps    []*stepInfo
 	lastErr  error
 
 	log *zap.SugaredLogger
 }
 
-func (tr *track) currentStep() *stepInfo {
+func (tr *Track) currentStep() *stepInfo {
 	return tr.steps[len(tr.steps)-1]
 }
 
-func (tr *track) Instance() *Instance {
+func (tr *Track) Instance() *Instance {
 	return tr.instance
 }
 
+func (tr *Track) Logger() *zap.SugaredLogger {
+	return tr.log
+}
+
 // newTrack creates a new track started from a Node n.
-func newTrack(n model.Node, inst *Instance, prevTrack *track) (*track, error) {
+func newTrack(n model.Node, inst *Instance, prevTrack *Track) (*Track, error) {
 	if n == nil {
 		return nil,
 			NewPEErr(nil, nil, "couldn't start track from nil Node")
@@ -107,7 +111,7 @@ func newTrack(n model.Node, inst *Instance, prevTrack *track) (*track, error) {
 	}
 
 	trID := model.NewID()
-	t := &track{
+	t := &Track{
 		id:       trID,
 		instance: inst,
 		steps:    []*stepInfo{{node: n}},
@@ -137,7 +141,7 @@ func newTrack(n model.Node, inst *Instance, prevTrack *track) (*track, error) {
 //
 // if there is no more steps on the track or the exeution of the current
 // one ends with an error, the track running ends.
-func (tr *track) run(ctx context.Context) {
+func (tr *Track) run(ctx context.Context) {
 	if tr.state != TsReady {
 		return
 	}

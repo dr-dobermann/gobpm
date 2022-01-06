@@ -49,9 +49,22 @@ func GetTaskExecutor(t model.TaskModel) (TaskExecutor, error) {
 	return te, nil
 }
 
+// returns a given message queue name if it's not empty or
+// a default message queue name for the instance
+func getQueueName(tr *Track, queue string) string {
+	if queue == "" {
+		return tr.instance.mQueue
+	}
+
+	return queue
+}
+
 //-----------------------------------------------------------------------------
 //                           Special Tasks
 //-----------------------------------------------------------------------------
+
+// StoreTaskExecutor save a list of variables inte the internal VarStore of
+// the instance.
 type StoreTaskExecutor struct {
 	model.StoreTask
 }
@@ -65,11 +78,11 @@ func NewStoreTaskExecutor(st *model.StoreTask) *StoreTaskExecutor {
 }
 
 func (ste *StoreTaskExecutor) Exec(_ context.Context,
-	tr *track) ([]*model.SequenceFlow, error) {
+	tr *Track) ([]*model.SequenceFlow, error) {
 
 	var err error
 
-	log := tr.log.Named(ste.Name())
+	log := tr.Logger().Named(ste.Name())
 
 	log.Debug("task execution started")
 
@@ -93,6 +106,8 @@ func (ste *StoreTaskExecutor) Exec(_ context.Context,
 
 //-----------------------------------------------------------------------------
 
+// OutputTaskExecutors prints a list of instance internal variable onto
+// given io.Writer.
 type OutputTaskExecutor struct {
 	model.OutputTask
 }
@@ -106,7 +121,7 @@ func NewOutputTaskExecutor(ot *model.OutputTask) *OutputTaskExecutor {
 }
 
 func (ote *OutputTaskExecutor) Exec(_ context.Context,
-	tr *track) ([]*model.SequenceFlow, error) {
+	tr *Track) ([]*model.SequenceFlow, error) {
 
 	var err error
 
@@ -158,7 +173,7 @@ func (ote *OutputTaskExecutor) Exec(_ context.Context,
 //-----------------------------------------------------------------------------
 
 // Send task uses concrete or default message queue of the instance
-// to send messages.
+// to send message intp an in-memory MessageServer.
 type SendTaskExecutor struct {
 	model.SendTask
 
@@ -174,7 +189,7 @@ func NewSendTaskExecutor(st *model.SendTask) *SendTaskExecutor {
 }
 
 func (ste *SendTaskExecutor) Exec(ctx context.Context,
-	tr *track) ([]*model.SequenceFlow, error) {
+	tr *Track) ([]*model.SequenceFlow, error) {
 
 	var err error
 
@@ -256,10 +271,11 @@ func (ste *SendTaskExecutor) Exec(ctx context.Context,
 
 //-----------------------------------------------------------------------------
 
+// ReceiveTaskExecutor implements a service that reads from in-memory
+// Message Server a message with stpcific name.
+// Queue name could be specific or default to the process (tr.instance.mQueue)
 type ReceiveTaskExecutor struct {
 	model.ReceiveTask
-
-	mSrv *ms.MessageServer
 }
 
 func NewReceiveTaskExecutor(rt *model.ReceiveTask) *ReceiveTaskExecutor {
@@ -267,11 +283,11 @@ func NewReceiveTaskExecutor(rt *model.ReceiveTask) *ReceiveTaskExecutor {
 		return nil
 	}
 
-	return &ReceiveTaskExecutor{ReceiveTask: *rt, mSrv: nil}
+	return &ReceiveTaskExecutor{ReceiveTask: *rt}
 }
 
 func (rte *ReceiveTaskExecutor) Exec(ctx context.Context,
-	tr *track) ([]*model.SequenceFlow, error) {
+	tr *Track) ([]*model.SequenceFlow, error) {
 
 	var err error
 
@@ -280,14 +296,57 @@ func (rte *ReceiveTaskExecutor) Exec(ctx context.Context,
 	defer log.Debugw("task execution complete",
 		zap.Error(err))
 
-	// get message definition from the process
+	// get message description from the process instance
+	// check message direction.
+	// for receiving task it should incoming
+	msgDef, err := getMsgDescr(tr, rte)
+	if err != nil {
+		return nil,
+			NewPEErr(tr, err,
+				"couldn't get message description '%s' from instance",
+				rte.MessageName())
+	}
+
+	// read the messageEnvelope from the MessageServer
+	log.Debugw("getting message...",
+		zap.String("name", rte.MessageName()))
+
+	mEnv, err := getMessage(ctx,
+		rte.MessageName(), rte.QueueName(),
+		tr, uuid.UUID(rte.ID()))
+	if err != nil {
+		return nil, NewPEErr(tr, err,
+			"couldn't get message '%s' from MessageServer", rte.MessageName())
+	}
+
+	// unmarshall processes message from MessageServer MessageEnvelope
+	var msg model.Message
+
+	log.Debug("unmarshalling json")
+
+	err = json.Unmarshal(mEnv.Data(), &msg)
+	if err != nil {
+		return nil,
+			fmt.Errorf("couldn't get message from the envelope: %v", err)
+	}
+
+	// load all variables from the message into the instance internal
+	// VarStore
+	if err = saveMsgVars(msgDef, log, &msg, tr); err != nil {
+		return nil, err
+	}
+
+	return rte.GetOutputFlows(), nil
+}
+
+// takes message description from the instance's process snapshot
+//  and check it's direction and state.
+func getMsgDescr(tr *Track, rte *ReceiveTaskExecutor) (*model.Message, error) {
 	msgDef, err := tr.instance.snapshot.GetMessage(rte.MessageName())
 	if err != nil {
 		return nil, err
 	}
 
-	// check message direction.
-	// for receiving task it should incoming
 	if msgDef.Direction()&model.Incoming == 0 {
 		return nil, errors.New("invalid message direction")
 	}
@@ -295,27 +354,24 @@ func (rte *ReceiveTaskExecutor) Exec(ctx context.Context,
 	if msgDef.State() != model.Created {
 		return nil, errors.New("invalidd message state: should be Created")
 	}
+	return msgDef, nil
+}
+
+// reads single message from MessageServer queue
+func getMessage(ctx context.Context,
+	name, queue string,
+	tr *Track,
+	receiverID uuid.UUID) (*ms.MessageEnvelope, error) {
 
 	// get a server
-	if rte.mSrv == nil {
-		mSrv, err := tr.instance.Thr.SrvBus().GetMessageServer()
-		if err != nil {
-			return nil, NewPEErr(tr, err,
-				"couldn't get message server")
-		}
-		rte.mSrv = mSrv
+	mSrv, err := tr.instance.Thr.SrvBus().GetMessageServer()
+	if err != nil {
+		return nil, fmt.Errorf("couldn't get message server: %v", err)
 	}
 
-	// read the message
-	log.Debugw("getting message...",
-		zap.String("name", msgDef.Name()))
+	queue = getQueueName(tr, queue)
 
-	queue := rte.QueueName()
-	if queue == "" {
-		queue = tr.instance.mQueue
-	}
-
-	meCh, err := rte.mSrv.GetMessages(uuid.UUID(rte.ID()), queue, true)
+	meCh, err := mSrv.GetMessages(receiverID, queue, true)
 	if err != nil {
 		return nil, err
 	}
@@ -327,22 +383,24 @@ func (rte *ReceiveTaskExecutor) Exec(ctx context.Context,
 		var ok bool
 
 		select {
+
 		// if context cancelled, return context error
 		case <-ctx.Done():
 			err = ctx.Err()
 			return nil, err
 
-		// if channel closed, return error
 		case mEnv, ok = <-meCh:
+			// if channel closed, return error
 			if !ok {
-				err = errors.New("message channel closed")
+				err = fmt.Errorf("message '%s' is not found", name)
 				return nil, err
 			}
 
 			// read until message name is not equal with
-			// task message name
-			if mEnv.Name == rte.MessageName() {
+			// task's message name
+			if mEnv.Name == name {
 				quit = true
+
 				// read rest of the messages from the channel to
 				// allow MessageServer to close it,
 				go func() {
@@ -358,35 +416,30 @@ func (rte *ReceiveTaskExecutor) Exec(ctx context.Context,
 						}
 					}
 				}()
-
-				continue
 			}
 		}
 	}
 
-	// unmarshall it
-	var msg model.Message
+	return &mEnv, nil
+}
 
-	log.Debug("unmarshalling json")
+// saved readed message's variables into the instance's VarStore
+// according to processes message description
+func saveMsgVars(msgDef *model.Message,
+	log *zap.SugaredLogger,
+	msg *model.Message,
+	tr *Track) error {
 
-	err = json.Unmarshal(mEnv.Data(), &msg)
-	if err != nil {
-		return nil,
-			fmt.Errorf("couldn't get message from the envelope: %v", err)
-	}
+	var err error
 
-	// load all variables from the message into the instance internal
-	// VarStore
 	for _, v := range msgDef.GetVariables(model.OnlyNonOptional) {
-
 		log.Debugw("loading variable",
 			zap.String("name", v.Name()))
 
 		mv, ok := msg.GetVar(v.Name())
 		if !ok {
-			return nil,
-				fmt.Errorf("no required variable '%s' in the message '%s'",
-					v.Name(), msg.Name())
+			return fmt.Errorf("no required variable '%s' in the message '%s'",
+				v.Name(), msg.Name())
 		}
 
 		switch mv.Type() {
@@ -407,13 +460,13 @@ func (rte *ReceiveTaskExecutor) Exec(ctx context.Context,
 		}
 
 		if err != nil {
-			return nil, fmt.Errorf("couldn't add var '%s' of %s "+
+			return fmt.Errorf("couldn't add var '%s' of %s "+
 				"from message '%s': %v", v.Name(), mv.Type().String(),
 				msgDef.Name(), err)
 		}
 	}
 
-	return rte.GetOutputFlows(), nil
+	return nil
 }
 
 //-----------------------------------------------------------------------------

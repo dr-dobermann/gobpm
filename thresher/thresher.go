@@ -149,7 +149,7 @@ func (thr *Thresher) NewInstance(
 		snapshot: sn,
 		Thr:      thr,
 		vs:       make(model.VarStore),
-		tracks:   make(map[model.Id]*track),
+		tracks:   make(map[model.Id]*Track),
 		log:      thr.log.Named("INST:" + iID.GetLast(4))}
 
 	if sn.HasMessages() {

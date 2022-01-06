@@ -50,7 +50,7 @@ type Instance struct {
 	vs       model.VarStore
 
 	// track holds the state for every single token path
-	tracks map[model.Id]*track
+	tracks map[model.Id]*Track
 	wg     sync.WaitGroup
 
 	//monitor *ctr.Monitor
@@ -103,7 +103,7 @@ func (pi *Instance) prepare() error {
 	}
 
 	// clear tracks list
-	pi.tracks = make(map[model.Id]*track)
+	pi.tracks = make(map[model.Id]*Track)
 
 	for _, n := range nn {
 		// find tasks and events that
@@ -132,7 +132,7 @@ func (pi *Instance) prepare() error {
 
 // adds single track to the Instance.
 // used from track.run to create a fork
-func (pi *Instance) addTrack(tr *track) error {
+func (pi *Instance) addTrack(tr *Track) error {
 	if tr == nil {
 		return errs.ErrInvalidTrack
 	}
@@ -187,7 +187,7 @@ func (pi *Instance) Run(ctx context.Context) error {
 	for _, t := range pi.tracks {
 		pi.wg.Add(1)
 
-		go func(et *track) {
+		go func(et *Track) {
 			defer pi.wg.Done()
 
 			et.run(ctx)

@@ -13,7 +13,7 @@ type NodeExecutor interface {
 
 	// Exec runs single node and returns its valid
 	// output sequence flows on success or error on a trouble
-	Exec(ctx context.Context, tr *track) ([]*model.SequenceFlow, error)
+	Exec(ctx context.Context, tr *Track) ([]*model.SequenceFlow, error)
 }
 
 func GetNodeExecutor(n model.Node) (NodeExecutor, error) {

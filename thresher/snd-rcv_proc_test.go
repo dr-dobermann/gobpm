@@ -11,7 +11,7 @@ var test_queue = "test_intrch_queue"
 
 func TestSendTaskExecutor(t *testing.T) {
 	p := model.NewProcess(model.NewID(), "SendTask process test", "0.1.0")
-	std := model.NewSendTask(p, "Send X", "letter_X", "")
+	std := model.NewSendTask(p, "Send X", "letter_X", test_queue)
 
 	ste, err := GetTaskExecutor(std)
 	if err != nil {
