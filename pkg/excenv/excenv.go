@@ -1,3 +1,5 @@
+// Package provide interface to access from executed
+// node to the run-time environment.
 package excenv
 
 import (

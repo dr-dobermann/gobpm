@@ -46,6 +46,5 @@ func (ste *StoreTaskExecutor) Exec(_ context.Context,
 		}
 	}
 
-	// TODO: Add expression check on output flows
 	return ste.GetOutputFlows(), nil
 }

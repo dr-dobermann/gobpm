@@ -1,3 +1,4 @@
+// Instance creates a run-time environment for the process.
 package instance
 
 import (

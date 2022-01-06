@@ -18,6 +18,9 @@ import (
 // Queue name could be specific or default to the process (tr.instance.mQueue)
 type ReceiveTaskExecutor struct {
 	model.ReceiveTask
+
+	exEnv excenv.ExecutionEnvironment
+	log   *zap.SugaredLogger
 }
 
 func NewReceiveTaskExecutor(rt *model.ReceiveTask) *ReceiveTaskExecutor {
@@ -28,20 +31,23 @@ func NewReceiveTaskExecutor(rt *model.ReceiveTask) *ReceiveTaskExecutor {
 	return &ReceiveTaskExecutor{ReceiveTask: *rt}
 }
 
-func (rte *ReceiveTaskExecutor) Exec(ctx context.Context,
+func (rte *ReceiveTaskExecutor) Exec(
+	ctx context.Context,
 	exEnv excenv.ExecutionEnvironment) ([]*model.SequenceFlow, error) {
+
+	rte.exEnv = exEnv
 
 	var err error
 
-	log := exEnv.Logger().Named(rte.Name())
-	log.Debug("task execution started")
-	defer log.Debugw("task execution complete",
+	rte.log = rte.exEnv.Logger().Named(rte.Name())
+	rte.log.Debug("task execution started")
+	defer rte.log.Debugw("task execution complete",
 		zap.Error(err))
 
 	// get message description from the process instance
 	// check message direction.
 	// for receiving task it should incoming
-	msgDef, err := getMsgDescr(exEnv, rte)
+	msgDescr, err := rte.getMsgDescr()
 	if err != nil {
 		return nil,
 			fmt.Errorf("couldn't get message description '%s' "+
@@ -49,12 +55,12 @@ func (rte *ReceiveTaskExecutor) Exec(ctx context.Context,
 	}
 
 	// read the messageEnvelope from the MessageServer
-	log.Debugw("getting message...",
+	rte.log.Debugw("getting message...",
 		zap.String("name", rte.MessageName()))
 
-	mEnv, err := getMessage(ctx,
+	mEnv, err := rte.getMessage(ctx,
 		rte.MessageName(), rte.QueueName(),
-		exEnv, uuid.UUID(rte.ID()))
+		uuid.UUID(rte.ID()))
 	if err != nil {
 		return nil,
 			fmt.Errorf("couldn't get message '%s' "+
@@ -63,7 +69,7 @@ func (rte *ReceiveTaskExecutor) Exec(ctx context.Context,
 
 	// load all variables from the message into the instance internal
 	// VarStore
-	if err = saveMsgVars(msgDef, log, mEnv, exEnv); err != nil {
+	if err = rte.saveMsgVars(msgDescr, mEnv); err != nil {
 		return nil, err
 	}
 
@@ -72,10 +78,10 @@ func (rte *ReceiveTaskExecutor) Exec(ctx context.Context,
 
 // takes message description from the instance's process snapshot
 //  and check it's direction and state.
-func getMsgDescr(exEnv excenv.ExecutionEnvironment, rte *ReceiveTaskExecutor) (*model.Message, error) {
+func (rte *ReceiveTaskExecutor) getMsgDescr() (*model.Message, error) {
 	name := rte.MessageName()
 
-	msgDef, err := exEnv.Snapshot().GetMessage(name)
+	msgDef, err := rte.exEnv.Snapshot().GetMessage(name)
 	if err != nil {
 		return nil, err
 	}
@@ -91,18 +97,17 @@ func getMsgDescr(exEnv excenv.ExecutionEnvironment, rte *ReceiveTaskExecutor) (*
 }
 
 // reads single message from MessageServer queue
-func getMessage(ctx context.Context,
+func (rte *ReceiveTaskExecutor) getMessage(ctx context.Context,
 	name, queue string,
-	exEnv excenv.ExecutionEnvironment,
 	receiverID uuid.UUID) (*ms.MessageEnvelope, error) {
 
 	// get a server
-	mSrv, err := exEnv.SrvBus().GetMessageServer()
+	mSrv, err := rte.exEnv.SrvBus().GetMessageServer()
 	if err != nil {
 		return nil, fmt.Errorf("couldn't get message server: %v", err)
 	}
 
-	queue = exEnv.MSQueue(queue)
+	queue = rte.exEnv.MSQueue(queue)
 
 	meCh, err := mSrv.GetMessages(receiverID, queue, true)
 	if err != nil {
@@ -157,17 +162,16 @@ func getMessage(ctx context.Context,
 
 // saved readed message's variables into the instance's VarStore
 // according to processes message description
-func saveMsgVars(msgDef *model.Message,
-	log *zap.SugaredLogger,
-	mEnv *ms.MessageEnvelope,
-	exEnv excenv.ExecutionEnvironment) error {
+func (rte *ReceiveTaskExecutor) saveMsgVars(
+	msgDef *model.Message,
+	mEnv *ms.MessageEnvelope) error {
 
 	var err error
 
 	// unmarshall processes message from MessageServer MessageEnvelope
 	var msg model.Message
 
-	log.Debug("unmarshalling json")
+	rte.log.Debug("unmarshalling json")
 
 	err = json.Unmarshal(mEnv.Data(), &msg)
 	if err != nil {
@@ -175,7 +179,7 @@ func saveMsgVars(msgDef *model.Message,
 	}
 
 	for _, v := range msgDef.GetVariables(model.OnlyNonOptional) {
-		log.Debugw("loading variable",
+		rte.log.Debugw("loading variable",
 			zap.String("name", v.Name()))
 
 		mv, ok := msg.GetVar(v.Name())
@@ -186,19 +190,19 @@ func saveMsgVars(msgDef *model.Message,
 
 		switch mv.Type() {
 		case model.VtInt:
-			_, err = exEnv.VStore().NewInt(v.Name(), mv.Int())
+			_, err = rte.exEnv.VStore().NewInt(v.Name(), mv.Int())
 
 		case model.VtBool:
-			_, err = exEnv.VStore().NewBool(v.Name(), mv.Bool())
+			_, err = rte.exEnv.VStore().NewBool(v.Name(), mv.Bool())
 
 		case model.VtString:
-			_, err = exEnv.VStore().NewString(v.Name(), mv.StrVal())
+			_, err = rte.exEnv.VStore().NewString(v.Name(), mv.StrVal())
 
 		case model.VtFloat:
-			_, err = exEnv.VStore().NewFloat(v.Name(), mv.Float64())
+			_, err = rte.exEnv.VStore().NewFloat(v.Name(), mv.Float64())
 
 		case model.VtTime:
-			_, err = exEnv.VStore().NewTime(v.Name(), mv.Time())
+			_, err = rte.exEnv.VStore().NewTime(v.Name(), mv.Time())
 		}
 
 		if err != nil {

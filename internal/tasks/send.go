@@ -18,7 +18,7 @@ import (
 type SendTaskExecutor struct {
 	model.SendTask
 
-	mSrv *ms.MessageServer
+	exEnv excenv.ExecutionEnvironment
 }
 
 func NewSendTaskExecutor(st *model.SendTask) *SendTaskExecutor {
@@ -26,83 +26,109 @@ func NewSendTaskExecutor(st *model.SendTask) *SendTaskExecutor {
 		return nil
 	}
 
-	return &SendTaskExecutor{*st, nil}
+	return &SendTaskExecutor{SendTask: *st}
 }
 
 func (ste *SendTaskExecutor) Exec(ctx context.Context,
 	exEnv excenv.ExecutionEnvironment) ([]*model.SequenceFlow, error) {
 
+	ste.exEnv = exEnv
+
 	var err error
 
-	log := exEnv.Logger().Named(ste.Name())
-
+	log := ste.exEnv.Logger().Named(ste.Name())
 	log.Debug("task execution started")
-
 	defer log.Debugw("task execution complete",
 		zap.Error(err))
 
-	msg, err := exEnv.Snapshot().GetMessage(ste.MessageName())
+	// compose message to send
+	msg, err := ste.composeMessage()
+	if err != nil {
+		return nil,
+			fmt.Errorf("couldn't compose message '%s': %v",
+				ste.MessageName(), err)
+	}
+
+	// send a message
+	err = ste.sendMsg(msg)
+	if err != nil {
+		return nil,
+			fmt.Errorf("couldn't send message %s: %v",
+				ste.MessageName(), err)
+	}
+
+	return ste.GetOutputFlows(), nil
+}
+
+func (ste *SendTaskExecutor) composeMessage() (*model.Message, error) {
+
+	msg, err := ste.exEnv.Snapshot().GetMessage(ste.MessageName())
 	if err != nil {
 		return nil, fmt.Errorf("couldn't get message '%s': %v",
 			ste.MessageName(), err)
 	}
 
 	vl := []model.MessageVariable{}
-	// check existance of non-optional variables in
-	// instance's VarStore
+
 	vv := msg.GetVariables(model.AllVariables)
 	for _, mv := range vv {
-		v, err := exEnv.VStore().GetVar(mv.Name())
-		if err != nil && !mv.IsOptional() { // if non-optional
-			return nil,
-				fmt.Errorf("couldn't get variable '%s': %v",
-					mv.Name(), err)
+		v, err := ste.exEnv.VStore().GetVar(mv.Name())
+		// check existance of variables in
+		// instance's VarStore
+		if err != nil {
+			if !mv.IsOptional() { // non-optional variable couldn't be found
+				return nil,
+					fmt.Errorf("couldn't get variable '%s': %v",
+						mv.Name(), err)
+			}
+			// create an optional variable
+			v = model.V(mv.Name(), mv.Type(), mv.Value())
 		}
 		vl = append(vl, *model.NewMVar(v, mv.IsOptional()))
 	}
 
-	// create a message snapshot to send and marshall it
+	// create a snapshot of process message with
+	// actual variable's values
 	nm, err := model.NewMessage(msg.Name(), model.Outgoing, vl...)
 	if err != nil {
-		return nil, fmt.Errorf(
-			"couldn't create an message '%s' snapshot: %v",
-			msg.Name(), err)
-	}
-
-	marshMsg, err := json.Marshal(nm)
-	if err != nil {
 		return nil,
-			fmt.Errorf("couldn't marshal message '%s': %v",
+			fmt.Errorf(
+				"couldn't create an message '%s' snapshot: %v",
 				msg.Name(), err)
 	}
 
-	// send a message
-	queue := exEnv.MSQueue(ste.QueueName())
+	return nm, nil
+}
 
-	if ste.mSrv == nil {
-		mSrv, err := exEnv.SrvBus().GetMessageServer()
-		if err != nil {
-			return nil, fmt.Errorf("couldn't get message server: %v", err)
-		}
-		ste.mSrv = mSrv
+func (ste *SendTaskExecutor) sendMsg(msg *model.Message) error {
+	marshMsg, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("couldn't marshal message '%s': %v",
+			msg.Name(), err)
+	}
+
+	queue := ste.exEnv.MSQueue(ste.QueueName())
+
+	mSrv, err := ste.exEnv.SrvBus().GetMessageServer()
+	if err != nil {
+		return fmt.Errorf("couldn't get message server: %v", err)
 	}
 
 	m, err := ms.NewMsg(uuid.New(),
 		ste.MessageName(),
 		bytes.NewBuffer(marshMsg))
 	if err != nil {
-		return nil, fmt.Errorf("couldn't create message to send: %v", err)
+		return fmt.Errorf("couldn't create message to send: %v", err)
 	}
 
-	err = ste.mSrv.PutMessages(
-		uuid.UUID(exEnv.InstanceID()),
+	err = mSrv.PutMessages(
+		uuid.UUID(ste.exEnv.InstanceID()),
 		queue,
 		m)
 	if err != nil {
-		return nil,
-			fmt.Errorf("couldn't put message '%s' on server: %v",
-				msg.Name(), err)
+		return fmt.Errorf("couldn't put message '%s' on server: %v",
+			msg.Name(), err)
 	}
 
-	return ste.GetOutputFlows(), nil
+	return nil
 }
