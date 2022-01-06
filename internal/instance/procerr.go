@@ -1,4 +1,4 @@
-package thresher
+package instance
 
 import (
 	"fmt"
@@ -19,7 +19,7 @@ func (pee ProcessExecutingError) Error() string {
 		pee.instanceID, pee.pID, pee.trackID, pee.msg, pee.Err)
 }
 
-func NewPEErr(trk *Track, err error, format string, params ...interface{}) ProcessExecutingError {
+func NewPEErr(trk *track, err error, format string, params ...interface{}) ProcessExecutingError {
 	pee := ProcessExecutingError{msg: fmt.Sprintf(format, params...), Err: err}
 
 	if trk != nil {

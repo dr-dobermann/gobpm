@@ -1,10 +1,11 @@
-package thresher
+package instance
 
 import (
 	"context"
 	"fmt"
 
 	"github.com/dr-dobermann/gobpm/model"
+	"github.com/dr-dobermann/gobpm/pkg/executor"
 	"go.uber.org/zap"
 )
 
@@ -13,16 +14,16 @@ const (
 	trackStartEvt = "TRACK_START_EVT"
 	trackEndEvt   = "TRACK_END_EVT"
 
-	newTrackMsg = "new track created"
-	startTrack  = "track started"
-	endTrack    = "track finished"
+	newtrackMsg = "new track created"
+	starttrack  = "track started"
+	endtrack    = "track finished"
 )
 
-// TrackState represent the state of the whole track
-type TrackState uint8
+// trackState represent the state of the whole track
+type trackState uint8
 
 const (
-	TsReady TrackState = iota
+	TsReady trackState = iota
 
 	// Intermediate
 	TsExecutingStep
@@ -34,7 +35,7 @@ const (
 	TsError
 )
 
-func (ts TrackState) String() string {
+func (ts trackState) String() string {
 	return []string{
 		"Created",
 		"Executing Step",
@@ -74,31 +75,23 @@ type stepInfo struct {
 // of past executed Nodes.
 // Every task with no incoming flow or intermediate event starts a new track.
 // if track splits, the new track(s) will be started
-type Track struct {
+type track struct {
 	id       model.Id
 	instance *Instance
-	state    TrackState
-	prev     []*Track
+	state    trackState
+	prev     []*track
 	steps    []*stepInfo
 	lastErr  error
 
 	log *zap.SugaredLogger
 }
 
-func (tr *Track) currentStep() *stepInfo {
+func (tr *track) currentStep() *stepInfo {
 	return tr.steps[len(tr.steps)-1]
 }
 
-func (tr *Track) Instance() *Instance {
-	return tr.instance
-}
-
-func (tr *Track) Logger() *zap.SugaredLogger {
-	return tr.log
-}
-
-// newTrack creates a new track started from a Node n.
-func newTrack(n model.Node, inst *Instance, prevTrack *Track) (*Track, error) {
+// newtrack creates a new track started from a Node n.
+func newTrack(n model.Node, inst *Instance, prevtrack *track) (*track, error) {
 	if n == nil {
 		return nil,
 			NewPEErr(nil, nil, "couldn't start track from nil Node")
@@ -111,19 +104,19 @@ func newTrack(n model.Node, inst *Instance, prevTrack *Track) (*Track, error) {
 	}
 
 	trID := model.NewID()
-	t := &Track{
+	t := &track{
 		id:       trID,
 		instance: inst,
 		steps:    []*stepInfo{{node: n}},
 		log:      inst.log.Named("TR:" + trID.GetLast(4))}
 
-	if prevTrack != nil {
-		t.prev = append(t.prev, prevTrack)
+	if prevtrack != nil {
+		t.prev = append(t.prev, prevtrack)
 	}
 
-	t.log.Info(newTrackMsg)
+	t.log.Info(newtrackMsg)
 
-	inst.Thr.EmitEvent(trackNewEvt,
+	inst.Emitter.EmitEvent(trackNewEvt,
 		fmt.Sprintf(
 			"{instance_id: \"%v\", track_id: \"%v\", "+
 				"node_name: \"%s\", node_type: \"%s\"}",
@@ -141,7 +134,7 @@ func newTrack(n model.Node, inst *Instance, prevTrack *Track) (*Track, error) {
 //
 // if there is no more steps on the track or the exeution of the current
 // one ends with an error, the track running ends.
-func (tr *Track) run(ctx context.Context) {
+func (tr *track) run(ctx context.Context) {
 	if tr.state != TsReady {
 		return
 	}
@@ -170,7 +163,7 @@ func (tr *Track) run(ctx context.Context) {
 		}
 
 		// take a step
-		ne, err := GetNodeExecutor(step.node)
+		ne, err := executor.GetNodeExecutor(step.node)
 		if err != nil {
 			step.state = SsFailed
 			tr.state = TsError

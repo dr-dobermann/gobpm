@@ -17,6 +17,7 @@ import (
 	"sync"
 
 	"github.com/dr-dobermann/gobpm/internal/errs"
+	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/model"
 	"github.com/dr-dobermann/srvbus"
 	"github.com/dr-dobermann/srvbus/es"
@@ -40,7 +41,7 @@ type Thresher struct {
 	sync.Mutex
 
 	id        model.Id
-	instances []*Instance
+	instances map[model.Id]*instance.Instance
 	ctx       context.Context
 
 	log *zap.SugaredLogger
@@ -120,7 +121,7 @@ func New(sb *srvbus.ServiceBus, log *zap.SugaredLogger) (*Thresher, error) {
 	id := model.NewID()
 	thresher := &Thresher{
 		id:        id,
-		instances: []*Instance{},
+		instances: make(map[model.Id]*instance.Instance),
 		log:       log.Named("THR [" + id.String() + "]"),
 		sBus:      sb,
 	}
@@ -130,51 +131,38 @@ func New(sb *srvbus.ServiceBus, log *zap.SugaredLogger) (*Thresher, error) {
 
 // create a new instance of the process and register it in the thresher.
 func (thr *Thresher) NewInstance(
-	p *model.Process) (*Instance, error) {
+	p *model.Process) (model.Id, error) {
 
 	if !thr.IsRunned() {
-		return nil, errs.ErrNotRunned
+		return model.EmptyID(), errs.ErrNotRunned
 	}
 
-	sn, err := p.Copy()
+	pi, err := instance.New(p, thr.sBus, thr.log, thr)
 	if err != nil {
-		return nil,
-			NewPEErr(nil, nil, "couldn't create a copy form process '%s'[%s]",
-				p.Name(), p.ID().String())
-	}
-
-	iID := model.NewID()
-	pi := &Instance{
-		id:       iID,
-		snapshot: sn,
-		Thr:      thr,
-		vs:       make(model.VarStore),
-		tracks:   make(map[model.Id]*Track),
-		log:      thr.log.Named("INST:" + iID.GetLast(4))}
-
-	if sn.HasMessages() {
-		pi.mQueue = fmt.Sprintf("MQ%v", pi.snapshot.OriginID)
+		return model.EmptyID(),
+			fmt.Errorf("couldn't create instance for process '%s'[%v]: %v",
+				p.Name(), p.ID(), err)
 	}
 
 	thr.Lock()
-	thr.instances = append(thr.instances, pi)
+	thr.instances[pi.ID()] = pi
 	thr.Unlock()
 
 	thr.EmitEvent(instNewEvt,
 		fmt.Sprintf(
 			"{process_id: \"%v\", process_name: \"%s\", instance_id: \"%v\"}",
-			p.ID(), p.Name(), iID))
+			p.ID(), p.Name(), pi.ID()))
 
 	thr.log.Infow("new instance created",
 		zap.String("process_name", p.Name()),
 		zap.Stringer("process_id", p.ID()),
-		zap.Stringer("instance_id", iID))
+		zap.Stringer("instance_id", pi.ID()))
 
 	if thr.IsRunned() {
 		go pi.Run(thr.ctx)
 	}
 
-	return pi, nil
+	return pi.ID(), nil
 }
 
 // runs a thresher.
@@ -213,7 +201,7 @@ func (thr *Thresher) Run(ctx context.Context) error {
 	thr.EmitEvent(thrStartEvt, "")
 
 	for _, pi := range thr.instances {
-		if pi.state == IsCreated {
+		if pi.State() == instance.Created {
 			go pi.Run(thr.ctx)
 		}
 	}

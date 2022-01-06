@@ -16,6 +16,10 @@ func NewID() Id {
 	return Id(uuid.New())
 }
 
+func EmptyID() Id {
+	return Id(uuid.Nil)
+}
+
 func (id Id) String() string {
 	return uuid.UUID(id).String()
 }

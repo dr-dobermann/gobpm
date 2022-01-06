@@ -1,29 +1,31 @@
-package thresher
+package instance
 
 import (
 	"context"
 	"fmt"
 	"sync"
 
+	"github.com/dr-dobermann/gobpm/internal/emitter"
 	"github.com/dr-dobermann/gobpm/internal/errs"
 	"github.com/dr-dobermann/gobpm/model"
+	"github.com/dr-dobermann/srvbus"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
 const (
-	instStartEvt = "INSTANCE_START_EVT"
-	instEndEvt   = "INSTANCE_END_EVT"
+	InstStartEvt = "INSTANCE_START_EVT"
+	InstEndEvt   = "INSTANCE_END_EVT"
 )
 
 type InstanceState uint8
 
 const (
-	IsCreated InstanceState = iota
-	IsPrepared
-	IsRunning
-	IsStopping // awaits tracks endings
-	IsEnded
+	Created InstanceState = iota
+	Prepared
+	Running
+	Stopping // awaits tracks endings
+	Ended
 )
 
 func (is InstanceState) String() string {
@@ -40,7 +42,7 @@ func (is InstanceState) String() string {
 type Instance struct {
 	sync.Mutex
 
-	Thr *Thresher
+	sBus *srvbus.ServiceBus
 
 	id    model.Id
 	state InstanceState
@@ -50,7 +52,7 @@ type Instance struct {
 	vs       model.VarStore
 
 	// track holds the state for every single token path
-	tracks map[model.Id]*Track
+	tracks map[model.Id]*track
 	wg     sync.WaitGroup
 
 	//monitor *ctr.Monitor
@@ -64,6 +66,19 @@ type Instance struct {
 	// Thresher.sBus.MessageServer
 	// Queue name constructs as "MQ" + process_ID
 	mQueue string
+
+	Emitter emitter.EventEmitter
+}
+
+func (pi *Instance) ID() model.Id {
+	return pi.id
+}
+
+func (pi *Instance) State() InstanceState {
+	pi.Lock()
+	defer pi.Unlock()
+
+	return pi.state
 }
 
 func (pi *Instance) setState(newState InstanceState) {
@@ -72,12 +87,32 @@ func (pi *Instance) setState(newState InstanceState) {
 	pi.Unlock()
 }
 
-func (pi *Instance) VarStore() *model.VarStore {
-	return &pi.vs
-}
+func New(
+	p *model.Process,
+	sb *srvbus.ServiceBus,
+	log *zap.SugaredLogger,
+	ee emitter.EventEmitter) (*Instance, error) {
 
-func (pi *Instance) MsgQueue() string {
-	return pi.mQueue
+	sn, err := p.Copy()
+	if err != nil {
+		return nil,
+			fmt.Errorf("couldn't create a copy form process '%s'[%s]: %v",
+				p.Name(), p.ID().String(), err)
+	}
+
+	iID := model.NewID()
+	pi := Instance{
+		sBus:     sb,
+		id:       iID,
+		snapshot: sn,
+		vs:       make(model.VarStore),
+		tracks:   make(map[model.Id]*track),
+		wg:       sync.WaitGroup{},
+		log:      log.Named("INS:" + iID.GetLast(4)),
+		mQueue:   fmt.Sprintf("MQ%v", p.ID()),
+		Emitter:  ee}
+
+	return &pi, nil
 }
 
 // creates a new ProcessExecutingError
@@ -103,7 +138,7 @@ func (pi *Instance) prepare() error {
 	}
 
 	// clear tracks list
-	pi.tracks = make(map[model.Id]*Track)
+	pi.tracks = make(map[model.Id]*track)
 
 	for _, n := range nn {
 		// find tasks and events that
@@ -125,14 +160,14 @@ func (pi *Instance) prepare() error {
 		return errs.ErrNoTracks
 	}
 
-	pi.state = IsPrepared
+	pi.state = Prepared
 
 	return nil
 }
 
 // adds single track to the Instance.
 // used from track.run to create a fork
-func (pi *Instance) addTrack(tr *Track) error {
+func (pi *Instance) addTrack(tr *track) error {
 	if tr == nil {
 		return errs.ErrInvalidTrack
 	}
@@ -149,7 +184,7 @@ func (pi *Instance) addTrack(tr *Track) error {
 		zap.String("node_name", tr.currentStep().node.Name()))
 
 	// if instance running, run the track too
-	if pi.state == IsRunning {
+	if pi.state == Running {
 		pi.wg.Add(1)
 
 		go func() {
@@ -164,30 +199,28 @@ func (pi *Instance) addTrack(tr *Track) error {
 
 // runs an instance and all its tracks
 func (pi *Instance) Run(ctx context.Context) error {
-	if pi.state != IsCreated {
+	if pi.state != Created {
 		return pi.NewErr(nil,
 			"wrong state to run instance '%s' (should be IsCreated)",
 			pi.state)
 	}
 
-	if pi.state == IsCreated {
-		if err := pi.prepare(); err != nil {
-			return pi.NewErr(err,
-				"couldn't prepare the instance for running")
-		}
+	if err := pi.prepare(); err != nil {
+		return pi.NewErr(err,
+			"couldn't prepare the instance for running")
 	}
 
 	pi.log.Info("instance starting...")
 
 	pi.Lock()
-	pi.state = IsRunning
+	pi.state = Running
 	pi.ctx = ctx
 
 	// run prepared tracks
 	for _, t := range pi.tracks {
 		pi.wg.Add(1)
 
-		go func(et *Track) {
+		go func(et *track) {
 			defer pi.wg.Done()
 
 			et.run(ctx)
@@ -205,12 +238,12 @@ func (pi *Instance) Run(ctx context.Context) error {
 		close(grCh)
 	}()
 
-	pi.Thr.EmitEvent(instStartEvt,
+	pi.Emitter.EmitEvent(InstStartEvt,
 		fmt.Sprintf("{instance_id: \"%v\"}", pi.id))
 
 	pi.log.Info("instance started")
 
-	defer pi.Thr.EmitEvent(instEndEvt,
+	defer pi.Emitter.EmitEvent(InstEndEvt,
 		fmt.Sprintf("{instance_id: \"%v\"}", pi.id))
 
 	defer pi.log.Info("instance stopped")
@@ -218,17 +251,17 @@ func (pi *Instance) Run(ctx context.Context) error {
 	select {
 	// wait for context closing
 	case <-ctx.Done():
-		pi.setState(IsStopping)
+		pi.setState(Stopping)
 
 		pi.wg.Wait()
 
-		pi.setState(IsEnded)
+		pi.setState(Ended)
 
 		return ctx.Err()
 
 	// or all tracks finished
 	case <-grCh:
-		pi.setState(IsEnded)
+		pi.setState(Ended)
 	}
 
 	return nil

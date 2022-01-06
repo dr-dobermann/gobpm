@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/model"
 	"github.com/dr-dobermann/srvbus"
 	"github.com/dr-dobermann/srvbus/es"
@@ -40,8 +41,8 @@ func TestTracks(t *testing.T) {
 		Depth:     0,
 		StartPos:  0,
 		Filters: []es.Filter{
-			es.WithName(instEndEvt),
-			es.WithSubData([]byte(inst.id.String())),
+			es.WithName(instance.InstEndEvt),
+			es.WithSubData([]byte(inst.ID().String())),
 		},
 	})
 	if err != nil {
@@ -65,7 +66,11 @@ func TestTracks(t *testing.T) {
 
 }
 
-func getTestInstance(ctx context.Context, p *model.Process, t *testing.T) (*Thresher, *Instance) {
+func getTestInstance(
+	ctx context.Context,
+	p *model.Process,
+	t *testing.T) (*Thresher, *instance.Instance) {
+
 	if p == nil {
 		p = getTestProcess(t, nil, nil)
 	}
@@ -88,7 +93,7 @@ func getTestInstance(ctx context.Context, p *model.Process, t *testing.T) (*Thre
 	pi, err := thr.NewInstance(p)
 	is.NoErr(err)
 
-	return thr, pi
+	return thr, thr.instances[pi]
 }
 
 // test process creates a process of two tasks (if buf is nil):
