@@ -21,9 +21,11 @@ func TestTracks(t *testing.T) {
 	defer cancel()
 
 	buf := bytes.NewBuffer([]byte{})
-	locker := new(sync.Mutex)
+	out := model.OutputDescr{
+		To:     buf,
+		Locker: new(sync.Mutex)}
 
-	thr, inst := getTestInstance(ctx, getTestProcess(t, buf, locker), t)
+	thr, inst := getTestInstance(ctx, getTestProcess(t, &out), t)
 
 	// subscribe to instance finished
 	eSrv, err := thr.SrvBus().GetEventServer()
@@ -56,8 +58,8 @@ func TestTracks(t *testing.T) {
 	// check results
 	testStr := "x = 2"
 
-	locker.Lock()
-	defer locker.Unlock()
+	out.Locker.Lock()
+	defer out.Locker.Unlock()
 
 	if !bytes.Contains(buf.Bytes(), []byte(testStr)) {
 		t.Fatalf("unexpected process execution results: '%s' doesn't contain '%s'",
@@ -72,7 +74,7 @@ func getTestInstance(
 	t *testing.T) (*Thresher, *instance.Instance) {
 
 	if p == nil {
-		p = getTestProcess(t, nil, nil)
+		p = getTestProcess(t, nil)
 	}
 
 	is := is.New(t)
@@ -118,22 +120,16 @@ func getTestInstance(
 // Check Task output the X into the given buffer so it's possible to
 // check task execution results
 //
-func getTestProcess(t *testing.T, buf *bytes.Buffer, locker *sync.Mutex) *model.Process {
+func getTestProcess(t *testing.T, buf *model.OutputDescr) *model.Process {
 
 	p := model.NewProcess(model.Id(uuid.Nil), "Test Process", "0.1.0")
 
 	t1 := model.NewStoreTask(p, "Store Task", *model.V("x", model.VtInt, 2))
 
 	t2 := model.NewOutputTask(p, "Output Task",
-		os.Stdout, nil, *model.V("x", model.VtInt, 0))
+		model.OutputDescr{nil, os.Stdout}, *model.V("x", model.VtInt, 0))
 
-	var t3 *model.OutputTask
-	if buf != nil {
-		t3 = model.NewOutputTask(p, "Check Task",
-			buf, locker, *model.V("x", model.VtInt, 0))
-	}
-
-	if t1 == nil || t2 == nil || t3 == nil {
+	if t1 == nil || t2 == nil {
 		t.Fatal("Couldn't create tasks for test process")
 	}
 
@@ -149,17 +145,18 @@ func getTestProcess(t *testing.T, buf *bytes.Buffer, locker *sync.Mutex) *model.
 		t.Fatal("Couldn't add Task 2 on Lane 1 : ", err)
 	}
 
-	if buf != nil {
-		if err := p.AddTask(t3, "Lane 1"); err != nil {
-			t.Fatal("Couldn't add Task 3 on Lane 1 : ", err)
-		}
-	}
-
 	if err := p.LinkNodes(t1, t2, nil); err != nil {
 		t.Fatal("couldn't link tasks in test process : ", err)
 	}
 
 	if buf != nil {
+		t3 := model.NewOutputTask(p, "Check Task",
+			*buf, *model.V("x", model.VtInt, 0))
+
+		if err := p.AddTask(t3, "Lane 1"); err != nil {
+			t.Fatal("Couldn't add Task 3 on Lane 1 : ", err)
+		}
+
 		if err := p.LinkNodes(t1, t3, nil); err != nil {
 			t.Fatal("couldn't link tasks in test process : ", err)
 		}

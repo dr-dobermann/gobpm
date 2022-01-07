@@ -47,23 +47,23 @@ func (ote *OutputTaskExecutor) Exec(_ context.Context,
 					v.Name(), v.Type().String(), err)
 		}
 
-		if ote.DestLocker != nil {
-			ote.DestLocker.Lock()
-			defer ote.DestLocker.Unlock()
+		if ote.Destination.Locker != nil {
+			ote.Destination.Locker.Lock()
+			defer ote.Destination.Locker.Unlock()
 		}
 
 		switch vv.Type() {
 		case model.VtInt:
-			fmt.Fprintf(ote.Destination, "%s = %d\n", vv.Name(), vv.Int())
+			fmt.Fprintf(ote.Destination.To, "%s = %d\n", vv.Name(), vv.Int())
 
 		case model.VtBool:
-			fmt.Fprintf(ote.Destination, "%s = %t\n", vv.Name(), vv.Bool())
+			fmt.Fprintf(ote.Destination.To, "%s = %t\n", vv.Name(), vv.Bool())
 
 		case model.VtFloat:
-			fmt.Fprintf(ote.Destination, "%s = %f\n", vv.Name(), vv.Float64())
+			fmt.Fprintf(ote.Destination.To, "%s = %f\n", vv.Name(), vv.Float64())
 
 		case model.VtTime:
-			fmt.Fprintf(ote.Destination, "%s = %v\n", vv.Name(), vv.Time())
+			fmt.Fprintf(ote.Destination.To, "%s = %v\n", vv.Name(), vv.Time())
 
 		default:
 			return nil, fmt.Errorf("invalid var type %s", vv.Type().String())

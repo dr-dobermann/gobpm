@@ -120,3 +120,90 @@ type TaskModel interface {
 	// It called in process.AddTask
 	Check() error
 }
+
+// ----------------------------------------------------------------------------
+//                              Standard tasks
+// ----------------------------------------------------------------------------
+// type GenericTask struct {
+// 	Activity
+// }
+
+// type ServiceTask struct {
+// 	Activity
+// 	// could be "##unspecified", "##WebService" or
+// 	// URI or coordination protocl
+// 	Implementation string
+// 	Operation      *Operation // invoked operation
+// }
+
+// type BusinessRuleTask struct {
+// 	Activity
+// }
+
+// type ScriptTask struct {
+// 	Activity
+// 	format string
+// 	script string
+// }
+
+// type UserTask struct {
+// 	Activity
+// 	renderings map[string]string
+// 	owner      string
+// 	priority   int
+// }
+
+// ----------------------------------------------------------------------------
+//                            Ad-Hoc Sub-Processes
+// ----------------------------------------------------------------------------
+
+// type AdHocOrdering uint8
+
+// const (
+// 	ParallelOrder AdHocOrdering = iota
+// 	SequentalOrder
+// )
+
+// type AdHocSubProc struct {
+// 	Activity
+// 	CompletionCond           *Expression
+// 	Order                    AdHocOrdering
+// 	CancelRemainingInstances bool
+// }
+
+// ----------------------------------------------------------------------------
+//                                  Global task
+// ----------------------------------------------------------------------------
+// type GlobalTask struct {
+// 	CallableElement
+// 	//resources []ResourceRole
+// }
+
+// ----------------------------------------------------------------------------
+//                                Special tasks
+//
+// Those tasks are introduced until DMN-engine be built
+// As soon as DMN will be realized those task will become unneccessary and might
+// be deleted
+// -----------------------------------------------------------------------------
+
+// ----------------------------------------------------------------------------
+
+// Calc function provides generic interface to custom fuctions which
+// could be expressed out as equation
+//               out = F(in)
+// where in and out variables mapped to the variables from the Process
+// Instance local VarStorage. For a success mapping the variables
+// should have identical names and types.
+// In case user needs a constant in equation such as x**2,
+// variable doesn't have a name, only type and value
+// If output variable doesn't have correlated variable in the
+// local VarStore, a new variable would be created in VarStore
+// type CalcFunc func(
+// 	in []Variable,
+// 	out []Variable) error
+
+// type CalculateTask struct {
+// 	Activity
+// 	//	funcs []CalcFunc
+// }

@@ -90,6 +90,12 @@ func (v *Variable) Value() interface{} {
 func (v *Variable) update(newVal interface{}) error {
 	switch v.vtype {
 	case VtInt:
+		if newVal == nil {
+			v.value = int64(0)
+			v.i = 0
+			break
+		}
+
 		if i, ok := newVal.(int64); !ok {
 			if i, ok := newVal.(int); !ok {
 				return NewModelError(nil, "couldn't convert %v to int", newVal)
@@ -103,6 +109,12 @@ func (v *Variable) update(newVal interface{}) error {
 		}
 
 	case VtBool:
+		if newVal == nil {
+			v.value = false
+			v.b = false
+			break
+		}
+
 		if b, ok := newVal.(bool); !ok {
 			return NewModelError(nil, "couldn't convert %v to bool", newVal)
 		} else {
@@ -111,6 +123,12 @@ func (v *Variable) update(newVal interface{}) error {
 		}
 
 	case VtString:
+		if newVal == nil {
+			v.value = ""
+			v.s = ""
+			break
+		}
+
 		if s, ok := newVal.(string); !ok {
 			return NewModelError(nil, "couldn't convert %v to string", newVal)
 		} else {
@@ -119,6 +137,12 @@ func (v *Variable) update(newVal interface{}) error {
 		}
 
 	case VtFloat:
+		if newVal == nil {
+			v.value = float64(0.0)
+			v.f = 0.0
+			break
+		}
+
 		if f, ok := newVal.(float64); !ok {
 			return NewModelError(nil, "couldn't convert %v to float64", newVal)
 		} else {
@@ -127,6 +151,12 @@ func (v *Variable) update(newVal interface{}) error {
 		}
 
 	case VtTime:
+		if newVal == nil {
+			v.t = time.Now()
+			v.value = v.t
+			break
+		}
+
 		if t, ok := newVal.(time.Time); !ok {
 			return NewModelError(nil, "couldn't convert %v to Time", newVal)
 		} else {

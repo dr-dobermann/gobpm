@@ -118,7 +118,7 @@ func getRecieveProcess(t *testing.T) *Process {
 	p := NewProcess(NewID(), "Test Receive Process", "0.1.0")
 
 	rcv := NewReceiveTask(p, "Receive X", "letter_X", test_queue)
-	out := NewOutputTask(p, "Print X", os.Stdout, nil, *V("x", VtInt, 0))
+	out := NewOutputTask(p, "Print X", OutputDescr{nil, os.Stdout}, *V("x", VtInt, 0))
 	if out == nil || rcv == nil {
 		t.Error("Couldn't create receive or output task")
 		return nil
