@@ -10,9 +10,7 @@ import (
 )
 
 const (
-	trackNewEvt   = "NEW_TRACK_EVT"
-	trackStartEvt = "TRACK_START_EVT"
-	trackEndEvt   = "TRACK_END_EVT"
+	TrackNewEvt = "NEW_TRACK_EVT"
 
 	newtrackMsg = "new track created"
 	starttrack  = "track started"
@@ -116,7 +114,7 @@ func newTrack(n model.Node, inst *Instance, prevtrack *track) (*track, error) {
 
 	t.log.Info(newtrackMsg)
 
-	inst.Emitter.EmitEvent(trackNewEvt,
+	inst.Emitter.EmitEvent(TrackNewEvt,
 		fmt.Sprintf(
 			"{instance_id: \"%v\", track_id: \"%v\", "+
 				"node_name: \"%s\", node_type: \"%s\"}",
@@ -175,6 +173,19 @@ func (tr *track) run(ctx context.Context) {
 			return
 		}
 
+		// check node Prologue
+		if err := tr.checkPrologue(ctx, ne); err != nil {
+			step.state = SsFailed
+			tr.state = TsError
+			tr.lastErr = err
+
+			tr.log.Debugw("step prologue failed",
+				zap.String("node_name", step.node.Name()),
+				zap.Error(err))
+
+			return
+		}
+
 		// execute it
 		step.state = SsStarted
 		tr.state = TsExecutingStep
@@ -193,6 +204,8 @@ func (tr *track) run(ctx context.Context) {
 
 			return
 		}
+
+		tr.runStepEpilogue(ctx, ne)
 
 		step.state = SsEnded
 		tr.log.Debugw("step executed",
@@ -237,5 +250,29 @@ func (tr *track) run(ctx context.Context) {
 				zap.Stringer("forked_track_id", ntr.id),
 				zap.String("forked_node_name", ntr.currentStep().node.Name()))
 		}
+	}
+}
+
+func (tr *track) checkPrologue(
+	ctx context.Context,
+	ne executor.NodeExecutor) error {
+
+	np, ok := ne.(executor.NodePrologue)
+	// if node doesn't implement NodePrologue, then prologue check is ok
+	if !ok {
+		return nil
+	}
+
+	return np.Prologue(ctx, tr)
+}
+
+func (tr *track) runStepEpilogue(
+	ctx context.Context,
+	ne executor.NodeExecutor) {
+
+	nEp, ok := ne.(executor.NodeEpliogue)
+
+	if ok {
+		nEp.Epilogue(ctx, tr)
 	}
 }

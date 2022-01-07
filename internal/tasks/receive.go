@@ -8,6 +8,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/model"
 	"github.com/dr-dobermann/gobpm/pkg/excenv"
+	"github.com/dr-dobermann/srvbus/es"
 	"github.com/dr-dobermann/srvbus/ms"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -21,6 +22,8 @@ type ReceiveTaskExecutor struct {
 
 	exEnv excenv.ExecutionEnvironment
 	log   *zap.SugaredLogger
+
+	mSrv *ms.MessageServer
 }
 
 func NewReceiveTaskExecutor(rt *model.ReceiveTask) *ReceiveTaskExecutor {
@@ -31,6 +34,74 @@ func NewReceiveTaskExecutor(rt *model.ReceiveTask) *ReceiveTaskExecutor {
 	return &ReceiveTaskExecutor{ReceiveTask: *rt}
 }
 
+// Prologue avaits event about message described in rte
+// registered on the MessageServer
+func (rte *ReceiveTaskExecutor) Prologue(
+	ctx context.Context,
+	exEnv excenv.ExecutionEnvironment) error {
+
+	rte.exEnv = exEnv
+
+	var err error
+
+	if rte.log == nil {
+		rte.log = rte.exEnv.Logger().Named(rte.Name())
+	}
+	rte.log.Debug("prologue started")
+	defer rte.log.Debugw("prologue finished", zap.Error(err))
+
+	eSrv, err := exEnv.SrvBus().GetEventServer()
+	if err != nil {
+		return fmt.Errorf("couldn't get an EventServer descr: %v", err)
+	}
+
+	mSrv, err := rte.getMsgSrv()
+	if err != nil {
+		return fmt.Errorf("couldn't get an MessageServer descr: %v", err)
+	}
+
+	eCh := make(chan es.EventEnvelope)
+	defer close(eCh)
+
+	err = eSrv.Subscribe(
+		uuid.UUID(rte.ID()),
+		es.SubscrReq{
+			Topic:     mSrv.ESTopic(),
+			SubCh:     eCh,
+			Recursive: false,
+			Depth:     0,
+			StartPos:  0,
+			Filters: []es.Filter{
+				es.WithName("NEW_MSG_EVT"),
+				es.WithSubstr(fmt.Sprintf("{queue: \"%s\",",
+					exEnv.MSQueue(rte.QueueName()))),
+				es.WithSubstr(fmt.Sprintf("msg_name: \"%s\",",
+					rte.MessageName()))}})
+
+	if err != nil {
+		return fmt.Errorf("couldn't subscribe on NEW_MSG: %v", err)
+	}
+
+	rte.log.Debug("wait for new message event...")
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("prologue cancelled by context: %v", ctx.Err())
+
+	case eEnv, ok := <-eCh:
+		rte.log.Debugw("got event",
+			zap.String("name", eEnv.What().Name),
+			zap.String("topic", eEnv.Topic))
+
+		eSrv.UnSubscribe(uuid.UUID(rte.ID()), mSrv.ESTopic())
+
+		if !ok {
+			return errors.New("prologue stopped by EventServer")
+		}
+	}
+
+	return nil
+}
+
 func (rte *ReceiveTaskExecutor) Exec(
 	ctx context.Context,
 	exEnv excenv.ExecutionEnvironment) ([]*model.SequenceFlow, error) {
@@ -39,7 +110,10 @@ func (rte *ReceiveTaskExecutor) Exec(
 
 	var err error
 
-	rte.log = rte.exEnv.Logger().Named(rte.Name())
+	if rte.log == nil {
+		rte.log = rte.exEnv.Logger().Named(rte.Name())
+	}
+
 	rte.log.Debug("task execution started")
 	defer rte.log.Debugw("task execution complete",
 		zap.Error(err))
@@ -81,19 +155,19 @@ func (rte *ReceiveTaskExecutor) Exec(
 func (rte *ReceiveTaskExecutor) getMsgDescr() (*model.Message, error) {
 	name := rte.MessageName()
 
-	msgDef, err := rte.exEnv.Snapshot().GetMessage(name)
+	msgDescr, err := rte.exEnv.Snapshot().GetMessage(name)
 	if err != nil {
 		return nil, err
 	}
 
-	if msgDef.Direction()&model.Incoming == 0 {
+	if msgDescr.Direction()&model.Incoming == 0 {
 		return nil, errors.New("invalid message direction")
 	}
 
-	if msgDef.State() != model.Created {
+	if msgDescr.State() != model.Created {
 		return nil, errors.New("invalidd message state: should be Created")
 	}
-	return msgDef, nil
+	return msgDescr, nil
 }
 
 // reads single message from MessageServer queue
@@ -102,7 +176,7 @@ func (rte *ReceiveTaskExecutor) getMessage(ctx context.Context,
 	receiverID uuid.UUID) (*ms.MessageEnvelope, error) {
 
 	// get a server
-	mSrv, err := rte.exEnv.SrvBus().GetMessageServer()
+	mSrv, err := rte.getMsgSrv()
 	if err != nil {
 		return nil, fmt.Errorf("couldn't get message server: %v", err)
 	}
@@ -163,7 +237,7 @@ func (rte *ReceiveTaskExecutor) getMessage(ctx context.Context,
 // saved readed message's variables into the instance's VarStore
 // according to processes message description
 func (rte *ReceiveTaskExecutor) saveMsgVars(
-	msgDef *model.Message,
+	msgDescr *model.Message,
 	mEnv *ms.MessageEnvelope) error {
 
 	var err error
@@ -178,12 +252,12 @@ func (rte *ReceiveTaskExecutor) saveMsgVars(
 		return fmt.Errorf("couldn't get message from the envelope: %v", err)
 	}
 
-	for _, v := range msgDef.GetVariables(model.OnlyNonOptional) {
+	for _, v := range msgDescr.GetVariables(model.AllVariables) {
 		rte.log.Debugw("loading variable",
 			zap.String("name", v.Name()))
 
 		mv, ok := msg.GetVar(v.Name())
-		if !ok {
+		if !ok && !v.IsOptional() {
 			return fmt.Errorf("no required variable '%s' in the message '%s'",
 				v.Name(), msg.Name())
 		}
@@ -208,9 +282,23 @@ func (rte *ReceiveTaskExecutor) saveMsgVars(
 		if err != nil {
 			return fmt.Errorf("couldn't add var '%s' of %s "+
 				"from message '%s': %v", v.Name(), mv.Type().String(),
-				msgDef.Name(), err)
+				msgDescr.Name(), err)
 		}
 	}
 
 	return nil
+}
+
+func (rte *ReceiveTaskExecutor) getMsgSrv() (*ms.MessageServer, error) {
+
+	var err error
+
+	if rte.mSrv == nil {
+		rte.mSrv, err = rte.exEnv.SrvBus().GetMessageServer()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return rte.mSrv, err
 }

@@ -30,11 +30,11 @@ const (
 	thrStop  = "thresher stopped"
 
 	defaultTopic = "/thresher"
-	thrNewEvt    = "NEW_THR_EVT"
-	thrStartEvt  = "THR_START_EVT"
-	thrStopEvt   = "THR_STOP_EVT"
+	ThrNewEvt    = "NEW_THR_EVT"
+	ThrStartEvt  = "THR_START_EVT"
+	ThrStopEvt   = "THR_STOP_EVT"
 
-	instNewEvt = "NEW_INSTANCE_EVT"
+	InstNewEvt = "NEW_INSTANCE_EVT"
 )
 
 type Thresher struct {
@@ -148,7 +148,7 @@ func (thr *Thresher) NewInstance(
 	thr.instances[pi.ID()] = pi
 	thr.Unlock()
 
-	thr.EmitEvent(instNewEvt,
+	thr.EmitEvent(InstNewEvt,
 		fmt.Sprintf(
 			"{process_id: \"%v\", process_name: \"%s\", instance_id: \"%v\"}",
 			p.ID(), p.Name(), pi.ID()))
@@ -195,10 +195,13 @@ func (thr *Thresher) Run(ctx context.Context) error {
 		thr.log.Info("thresher stopped by context")
 
 		thr.log.Debug("thresher context listener stopped")
+
+		thr.EmitEvent(ThrStopEvt, "")
+
 	}()
 
 	thr.log.Info(thrStart)
-	thr.EmitEvent(thrStartEvt, "")
+	thr.EmitEvent(ThrStartEvt, "")
 
 	for _, pi := range thr.instances {
 		if pi.State() == instance.Created {

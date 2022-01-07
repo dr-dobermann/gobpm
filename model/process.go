@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -133,11 +134,17 @@ func (p Process) Copy() (*Process, error) {
 		FlowElement: p.FlowElement,
 		lanes:       make(map[string]*Lane),
 		tasks:       make([]TaskModel, 0),
-		flows:       make([]*SequenceFlow, 0)}
+		flows:       make([]*SequenceFlow, 0),
+		messages:    make([]*Message, 0)}
 
 	// copy lanes
 	for l := range p.lanes {
 		pc.NewLane(l)
+	}
+
+	// copy messages
+	for _, m := range p.messages {
+		pc.AddMessage(m.name, m.direction, m.GetVariables(AllVariables)...)
 	}
 
 	// tm used as a mapper from source process task id to
@@ -272,39 +279,36 @@ func (p *Process) RemoveLane(ln string) error {
 
 // register a single non-empty, non-duplicating message
 // in the process.
-func (p *Process) AddMessage(mn string,
+func (p *Process) AddMessage(msgName string,
 	dir MessageFlowDirection, vars ...MessageVariable) (*Message, error) {
 
 	if p.dataType == PdtSnapshot {
 		return nil, ErrSnapshotChange
 	}
 
-	var m *Message
-
-	mn = strings.Trim(mn, " ")
-	if len(mn) == 0 {
+	msgName = strings.Trim(msgName, " ")
+	if len(msgName) == 0 {
 		return nil, NewPMErr(p.id, nil,
 			"couldn't register meassage with an empty name")
 	}
 
-	for _, m = range p.messages {
-		if m.name == mn {
+	for _, m := range p.messages {
+		if m.name == msgName {
 			return nil, NewPMErr(p.id, nil,
-				"message '%s' already exists", mn)
+				"message '%s' already exists", msgName)
 		}
 	}
 
-	if ms, err := NewMessage(mn, dir, vars...); err != nil {
+	msg, err := NewMessage(msgName, dir, vars...)
+	if err != nil {
 		return nil,
 			NewPMErr(p.id, err,
-				"couldn't register message '%s' to process", mn)
-	} else {
-		m = ms
-
-		p.messages = append(p.messages, m)
+				"couldn't register message '%s' to process", msgName)
 	}
 
-	return m, nil
+	p.messages = append(p.messages, msg)
+
+	return msg, nil
 }
 
 // AddTask adds a new task into the Process Model into lane named ln.
@@ -325,11 +329,9 @@ func (p *Process) AddTask(t TaskModel, ln string) error {
 		return NewPMErr(p.id, nil, "lane '%s' is not found", ln)
 	}
 
-	for _, pt := range p.tasks {
-		if pt.ID() == t.ID() {
-			return NewPMErr(p.id, nil, "task '%s' "+
-				"already exists in the process", t.Name())
-		}
+	if n := p.getNamedNode(t.Name()); n != nil {
+		return NewPMErr(p.id, nil, "node named '%s'(%s) "+
+			"already exists in the process", n.Name(), n.Type().String())
 	}
 
 	if err := t.Check(); err != nil {
@@ -386,6 +388,36 @@ func (p *Process) LinkNodes(src Node, trg Node, expr *Expression) error {
 	}
 
 	p.flows = append(p.flows, sf)
+
+	return nil
+}
+
+func (p *Process) LinkNamedNodes(src, dest string, expr *Expression) error {
+	const notFound = "couldn't find node named '%s'"
+
+	srcN := p.getNamedNode(src)
+	if srcN == nil {
+		return fmt.Errorf(notFound, src)
+	}
+
+	destN := p.getNamedNode(dest)
+	if destN == nil {
+		return fmt.Errorf(notFound, dest)
+	}
+
+	return p.LinkNodes(srcN, destN, expr)
+}
+
+func (p *Process) getNamedNode(name string) Node {
+	name = strings.Trim(name, " ")
+
+	for _, t := range p.tasks {
+		if name == t.Name() {
+			return t
+		}
+	}
+
+	// should be done the same for gateways and events
 
 	return nil
 }

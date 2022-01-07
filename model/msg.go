@@ -21,6 +21,9 @@ import (
 const (
 	OnlyNonOptional = true
 	AllVariables    = false
+
+	Optional = true
+	Required = false
 )
 
 type MessageFlowDirection uint8
