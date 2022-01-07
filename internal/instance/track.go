@@ -205,6 +205,8 @@ func (tr *track) run(ctx context.Context) {
 			return
 		}
 
+		tr.runStepEpilogue(ctx, ne)
+
 		step.state = SsEnded
 		tr.log.Debugw("step executed",
 			zap.String("node_name", step.node.Name()),
@@ -262,4 +264,15 @@ func (tr *track) checkPrologue(
 	}
 
 	return np.Prologue(ctx, tr)
+}
+
+func (tr *track) runStepEpilogue(
+	ctx context.Context,
+	ne executor.NodeExecutor) {
+
+	nEp, ok := ne.(executor.NodeEpliogue)
+
+	if ok {
+		nEp.Epilogue(ctx, tr)
+	}
 }
