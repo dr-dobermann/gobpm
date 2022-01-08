@@ -34,7 +34,7 @@ type NodePrologue interface {
 type NodeEpliogue interface {
 	Epilogue(
 		ctx context.Context,
-		eEnv excenv.ExecutionEnvironment)
+		eEnv excenv.ExecutionEnvironment) error
 }
 
 func GetNodeExecutor(n model.Node) (NodeExecutor, error) {

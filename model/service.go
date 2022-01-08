@@ -11,7 +11,7 @@ type Operation struct {
 	inMessageRef  Id
 	outMessageRef Id
 	errors        []Id
-	impl          *Executor
+	impl          Executor
 }
 
 type Interface struct {

@@ -19,8 +19,8 @@ type DataInput struct {
 	// A DataInput is used in one or more InputSets
 	inputSets []*InputSet
 	// Each InputSet that uses this DataInput can determine if the Activity
-	// can start executing with this DataInput state in “unavailable.” This attribute
-	// lists those InputSets
+	// can start executing with this DataInput state in “unavailable.”
+	// This attribute lists those InputSets
 	optionalSets []*InputSet
 	// Each InputSet that uses this DataInput can determine if the Activity
 	// can evaluate this DataInput while executing. This attribute lists those

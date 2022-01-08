@@ -137,12 +137,18 @@ func (tr *track) run(ctx context.Context) {
 		return
 	}
 
+	var err error
+	tr.log.Debug("track execution started")
+	defer tr.log.Debugw("track execution finished",
+		zap.Error(err))
+
 	for {
 		// check context cancellation
 		select {
 		case <-ctx.Done():
+			err = ctx.Err()
 			tr.state = TsError
-			tr.lastErr = ctx.Err()
+			tr.lastErr = err
 			return
 
 		default:
@@ -153,8 +159,6 @@ func (tr *track) run(ctx context.Context) {
 		if step.state != SsCreated {
 			// if the last step is finished
 			// stop track running and return
-			tr.log.Debug("track execution finished")
-
 			tr.state = TsEnded
 
 			return
@@ -165,50 +169,33 @@ func (tr *track) run(ctx context.Context) {
 		if err != nil {
 			step.state = SsFailed
 			tr.state = TsError
+			err = NewPEErr(tr, err, "couldn't get node executor for node '%s'",
+				step.node.Name())
 			tr.lastErr = err
-
-			tr.log.Debugw("track ends with errors",
-				zap.Error(NewPEErr(tr, err, "couldn't get node executor")))
 
 			return
 		}
 
-		// check node Prologue
-		if err := tr.checkPrologue(ctx, ne); err != nil {
-			step.state = SsFailed
-			tr.state = TsError
-			tr.lastErr = err
-
-			tr.log.Debugw("step prologue failed",
-				zap.String("node_name", step.node.Name()),
-				zap.Error(err))
-
-			return
-		}
-
-		// execute it
 		step.state = SsStarted
 		tr.state = TsExecutingStep
-		tr.log.Debugw("executing step",
+
+		tr.log.Debugw("node execution started",
 			zap.Stringer("type", step.node.Type()),
 			zap.String("name", step.node.Name()))
 
-		nexts, err := ne.Exec(ctx, tr)
+		nexts, err := tr.makeStep(ctx, ne)
 		if err != nil {
 			step.state = SsFailed
 			tr.state = TsError
+			err = NewPEErr(tr, err, "node '%s' execution failed",
+				step.node.Name())
 			tr.lastErr = err
-
-			tr.log.Debugw("track ends with errors",
-				zap.Error(err))
 
 			return
 		}
 
-		tr.runStepEpilogue(ctx, ne)
-
 		step.state = SsEnded
-		tr.log.Debugw("step executed",
+		tr.log.Debugw("node execution successful",
 			zap.String("node_name", step.node.Name()),
 			zap.Int("out_flows_num", len(nexts)))
 
@@ -228,12 +215,13 @@ func (tr *track) run(ctx context.Context) {
 			}
 
 			// if there is fork appears (nexts > 1). create new track(s) and
+			// add it to the instance
 			ntr, err := newTrack(sf.GetTarget(), tr.instance, tr)
 			if err != nil {
 				tr.state = TsError
-				tr.lastErr = fmt.Errorf("couldn't create a fork "+
-					"for %s on flow %v: %v",
-					sf.GetTarget().Name(), sf.ID(), err)
+				tr.lastErr = NewPEErr(tr, err, "couldn't create a fork "+
+					"for '%s' on flow %v",
+					sf.GetTarget().Name(), sf.ID())
 				return
 			}
 
@@ -253,7 +241,30 @@ func (tr *track) run(ctx context.Context) {
 	}
 }
 
-func (tr *track) checkPrologue(
+func (tr *track) makeStep(
+	ctx context.Context,
+	ne executor.NodeExecutor) ([]*model.SequenceFlow, error) {
+
+	// check node Prologue
+	if err := tr.runNodePrologue(ctx, ne); err != nil {
+		return nil, NewPEErr(tr, err, "node prologue failed")
+	}
+
+	// execute it
+	nexts, err := ne.Exec(ctx, tr)
+	if err != nil {
+		return nil, NewPEErr(tr, err, "node execution failed")
+	}
+
+	err = tr.runNodeEpilogue(ctx, ne)
+	if err != nil {
+		return nil, NewPEErr(tr, err, "node epilogue failed")
+	}
+
+	return nexts, nil
+
+}
+func (tr *track) runNodePrologue(
 	ctx context.Context,
 	ne executor.NodeExecutor) error {
 
@@ -262,17 +273,24 @@ func (tr *track) checkPrologue(
 	if !ok {
 		return nil
 	}
+	tr.log.Debug("prologue started...",
+		zap.String("node_name", tr.currentStep().node.Name()))
 
 	return np.Prologue(ctx, tr)
 }
 
-func (tr *track) runStepEpilogue(
+func (tr *track) runNodeEpilogue(
 	ctx context.Context,
-	ne executor.NodeExecutor) {
+	ne executor.NodeExecutor) error {
 
 	nEp, ok := ne.(executor.NodeEpliogue)
 
 	if ok {
-		nEp.Epilogue(ctx, tr)
+		tr.log.Debug("epilogue started...",
+			zap.String("node_name", tr.currentStep().node.Name()))
+
+		return nEp.Epilogue(ctx, tr)
 	}
+
+	return nil
 }
