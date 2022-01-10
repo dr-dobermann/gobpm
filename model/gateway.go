@@ -1,10 +1,10 @@
 package model
 
-type Direction uint8
+type GatewayDirection uint8
 
 const (
 	// MAY have multiple input and multiple output flows
-	Unspecified Direction = iota
+	Unspecified GatewayDirection = iota
 
 	// MAY have one or multiple input and MUST have only one output flow
 	Converging
@@ -16,21 +16,52 @@ const (
 	Mixed
 )
 
-type EventBasedGatewayType uint8
+type EventGatewayFlowType uint8
 
 const (
-	Parallel EventBasedGatewayType = iota
-	Exclusive
+	ParallelFlow EventGatewayFlowType = iota
+	ExclusiveFlow
 )
+
+type GatewayType uint8
+
+const (
+	Exclusive GatewayType = iota
+	Inclusive
+	Complex
+	Parallel
+	EventBased
+)
+
+func (gt GatewayType) String() string {
+	return []string{
+		"Exclusive",
+		"Inclusive",
+		"Complex",
+		"Parallel",
+		"EventBased",
+	}[gt]
+}
 
 type Gateway struct {
 	FlowNode
-	Expression
 
-	direction   Direction
+	expr        *Expression
+	direction   GatewayDirection
+	flowType    EventGatewayFlowType
+	gType       GatewayType
 	defaultPath Id // if 0 there is no default path
 }
 
+func (g *Gateway) GwayType() GatewayType {
+
+	return g.gType
+}
+
 type GatewayModel interface {
+	Node
+
+	GwayType() GatewayType
+
 	Copy(snapshot *Process) GatewayModel
 }

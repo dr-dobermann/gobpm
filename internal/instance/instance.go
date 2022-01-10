@@ -280,6 +280,7 @@ func (pi *Instance) getGExInstance(
 
 	pi.Lock()
 	defer pi.Unlock()
+
 	g, ok := pi.gates[ge.ID()]
 	if !ok {
 		pi.gates[ge.ID()] = ge

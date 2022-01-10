@@ -23,7 +23,8 @@ func NewOutputTaskExecutor(ot *model.OutputTask) *OutputTaskExecutor {
 	return &OutputTaskExecutor{*ot}
 }
 
-func (ote *OutputTaskExecutor) Exec(_ context.Context,
+func (ote *OutputTaskExecutor) Exec(
+	_ context.Context,
 	exEnv excenv.ExecutionEnvironment) ([]*model.SequenceFlow, error) {
 
 	var err error

@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/model"
+	"github.com/dr-dobermann/gobpm/pkg/executor"
 	"github.com/dr-dobermann/srvbus"
 	"go.uber.org/zap"
 )
@@ -23,7 +24,7 @@ func (tr *track) Snapshot() *model.Process {
 }
 
 func (tr *track) VStore() *model.VarStore {
-	return &tr.instance.vs
+	return tr.instance.vs
 }
 
 func (tr *track) SrvBus() *srvbus.ServiceBus {
@@ -36,4 +37,11 @@ func (tr *track) MSQueue(queue string) string {
 	}
 
 	return queue
+}
+
+// implements GateKeeper interface
+func (tr *track) GetGExecutorInstance(
+	ge executor.GatewayExecutor) executor.GatewayExecutor {
+
+	return tr.instance.getGExInstance(ge)
 }

@@ -148,6 +148,10 @@ type FlowNode struct {
 	outcoming []*SequenceFlow
 }
 
+func (fn *FlowNode) ID() Id {
+	return fn.id
+}
+
 func (fn *FlowNode) LaneName() string {
 	return fn.lane.name
 }

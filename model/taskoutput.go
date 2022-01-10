@@ -59,7 +59,3 @@ func (ot *OutputTask) Copy(snapshot *Process) TaskModel {
 
 	return otc
 }
-
-func (ot *OutputTask) FloatNode() *FlowNode {
-	return &ot.FlowNode
-}
