@@ -395,13 +395,19 @@ func (vs *VarStore) DelVar(vn string) error {
 	return nil
 }
 
+// Update provides thread-safe VarStore variable updating.
 func (vs *VarStore) Update(vn string, newVal interface{}) error {
 	v := vs.getVar(vn, VtInt, false)
 	if v == nil {
 		return NewModelError(nil, "couldn't find variable "+vn)
 	}
 
-	return v.update(newVal)
+	vs.Lock()
+	defer vs.Unlock()
+
+	err := v.update(newVal)
+
+	return err
 }
 
 // NewInt creates a new int variable in namespace vs
@@ -412,6 +418,7 @@ func (vs *VarStore) NewInt(vn string, val int64) (*Variable, error) {
 	}
 
 	v := vs.getVar(vn, VtInt, true)
+
 	v.update(val)
 
 	return v, nil
@@ -425,6 +432,7 @@ func (vs *VarStore) NewBool(vn string, val bool) (*Variable, error) {
 	}
 
 	v := vs.getVar(vn, VtBool, true)
+
 	v.update(val)
 
 	return v, nil
@@ -438,6 +446,7 @@ func (vs *VarStore) NewString(vn string, val string) (*Variable, error) {
 	}
 
 	v := vs.getVar(vn, VtString, true)
+
 	v.update(val)
 
 	return v, nil
