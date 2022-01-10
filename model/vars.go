@@ -3,6 +3,7 @@ package model
 import (
 	"math"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -328,17 +329,30 @@ func (v *Variable) Time() time.Time {
 }
 
 // varStore retpresents the variables store
-type VarStore map[string]*Variable
+type VarStore struct {
+	sync.Mutex
+
+	vars map[string]*Variable
+}
+
+func NewVarStore() *VarStore {
+	return &VarStore{vars: map[string]*Variable{}}
+}
 
 func (vs *VarStore) checkVar(vn string) bool {
-	_, ok := map[string]*Variable(*vs)[vn]
+	vs.Lock()
+	defer vs.Unlock()
+
+	_, ok := vs.vars[vn]
 
 	return ok
 }
 
 func (vs *VarStore) getVar(vn string, vt VarType, returnEmpty bool) *Variable {
+	vs.Lock()
+	defer vs.Unlock()
 
-	v, ok := map[string]*Variable(*vs)[vn]
+	v, ok := vs.vars[vn]
 
 	if !ok {
 		if !returnEmpty {
@@ -350,7 +364,7 @@ func (vs *VarStore) getVar(vn string, vt VarType, returnEmpty bool) *Variable {
 			vtype: vt,
 			prec:  2}
 
-		map[string]*Variable(*vs)[vn] = v
+		vs.vars[vn] = v
 	}
 
 	return v
@@ -374,7 +388,9 @@ func (vs *VarStore) DelVar(vn string) error {
 	if !vs.checkVar(vn) {
 		return NewModelError(nil, "couldn't find variable "+vn)
 	}
-	delete(map[string]*Variable(*vs), vn)
+	vs.Lock()
+	defer vs.Unlock()
+	delete(vs.vars, vn)
 
 	return nil
 }

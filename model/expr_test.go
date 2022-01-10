@@ -43,7 +43,7 @@ func TestTimeVariable(t *testing.T) {
 
 func testVs(t *testing.T) {
 
-	testVs := make(VarStore)
+	testVs := NewVarStore()
 
 	for i := 0; i < 4; i++ {
 		var (
@@ -131,7 +131,7 @@ func testVs(t *testing.T) {
 
 func TestVariableDeleter(t *testing.T) {
 
-	testVs := make(VarStore)
+	testVs := NewVarStore()
 
 	if _, err := testVs.NewInt("xx", 3); err != nil {
 		t.Fatal("couldn't create int variable xx :", err)
@@ -151,7 +151,7 @@ func TestVariableDeleter(t *testing.T) {
 }
 
 func TestVariableUpdate(t *testing.T) {
-	testVs := make(VarStore)
+	testVs := NewVarStore()
 
 	for i := 0; i < 4; i++ {
 		var (

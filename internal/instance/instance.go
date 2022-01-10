@@ -9,6 +9,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/emitter"
 	"github.com/dr-dobermann/gobpm/internal/errs"
 	"github.com/dr-dobermann/gobpm/model"
+	"github.com/dr-dobermann/gobpm/pkg/executor"
 	"github.com/dr-dobermann/srvbus"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -50,7 +51,7 @@ type Instance struct {
 
 	// the copy of the process model the instance is based on
 	snapshot *model.Process
-	vs       model.VarStore
+	vs       *model.VarStore
 
 	// track holds the state for every single token path
 	tracks map[model.Id]*track
@@ -69,6 +70,8 @@ type Instance struct {
 	mQueue string
 
 	Emitter emitter.EventEmitter
+
+	gates map[model.Id]executor.GatewayExecutor
 }
 
 func (pi *Instance) ID() model.Id {
@@ -106,12 +109,13 @@ func New(
 		sBus:     sb,
 		id:       iID,
 		snapshot: sn,
-		vs:       make(model.VarStore),
+		vs:       model.NewVarStore(),
 		tracks:   make(map[model.Id]*track),
 		wg:       sync.WaitGroup{},
 		log:      log.Named("INS:" + iID.GetLast(4)),
 		mQueue:   fmt.Sprintf("MQ%v", p.ID()),
-		Emitter:  ee}
+		Emitter:  ee,
+		gates:    make(map[model.Id]executor.GatewayExecutor)}
 
 	return &pi, nil
 }
@@ -266,4 +270,21 @@ func (pi *Instance) Run(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// returns an instance of GatewayExecutor if it was previously
+// saved. If there is no Gateway with Id from ge, the new instance
+// will be saved into the storage and returned.
+func (pi *Instance) getGExInstance(
+	ge executor.GatewayExecutor) executor.GatewayExecutor {
+
+	pi.Lock()
+	defer pi.Unlock()
+	g, ok := pi.gates[ge.ID()]
+	if !ok {
+		pi.gates[ge.ID()] = ge
+		g = ge
+	}
+
+	return g
 }
