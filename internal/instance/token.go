@@ -59,13 +59,13 @@ func newToken(tID model.Id, inst *Instance) *token {
 	return &token{id: tID, inst: inst}
 }
 
-func (t *token) setStatusUpdater(
-	ctx context.Context,
-	uCh chan tokenUpdateInfo) {
+func (t *token) setStatusUpdater(uCh chan tokenUpdateInfo) {
 
-	if t.updCh == nil && uCh != nil && ctx != nil {
+	st := t.getState()
+
+	if t.updCh == nil && uCh != nil &&
+		st != Inactive && st != Triggered {
 		t.updCh = uCh
-		t.ctx = ctx
 	}
 }
 
@@ -84,11 +84,10 @@ func (t *token) sendStateUpdate(newState tokenState) {
 	if t.updCh != nil {
 		oldState := t.state
 		go func() {
-			select {
-			case <-t.ctx.Done():
-				close(t.updCh)
-
-			case t.updCh <- tokenUpdateInfo{t.id, oldState, newState}:
+			t.updCh <- tokenUpdateInfo{t.id, oldState, newState}
+			if newState == Triggered || newState == Inactive {
+				defer close(t.updCh)
+				t.updCh = nil
 			}
 		}()
 	}

@@ -1,7 +1,6 @@
 package instance
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -77,11 +76,8 @@ func TestTokenState(t *testing.T) {
 	// check token status updater
 	chSt := make(chan tokenUpdateInfo)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	newTk := newToken(model.EmptyID(), inst)
-	newTk.setStatusUpdater(ctx, chSt)
+	newTk.setStatusUpdater(chSt)
 	is.True(newTk.updateState(WaitForTrigger))
 	update := <-chSt
 	is.True(update.oldState == Alive)
@@ -124,10 +120,8 @@ func TestTokenGroup(t *testing.T) {
 	is.True(len(tg.tokens) == 3)
 
 	chUp := make(chan tokenUpdateInfo)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
-	tks[1].setStatusUpdater(ctx, chUp)
+	tks[1].setStatusUpdater(chUp)
 
 	go func() {
 		for sUp := range chUp {
