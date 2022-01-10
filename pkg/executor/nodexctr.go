@@ -11,7 +11,6 @@ import (
 // NodeExecutor should be implemented by every Node to make it
 // possible to execute a node on the instance's track
 type NodeExecutor interface {
-
 	// Exec runs single node and returns its valid
 	// output sequence flows on success or error on an issue
 	Exec(

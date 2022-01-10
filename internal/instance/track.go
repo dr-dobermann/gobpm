@@ -67,6 +67,7 @@ func (ss StepState) String() string {
 type stepInfo struct {
 	node  model.Node
 	state StepState
+	tk    *token
 }
 
 // track consists information about currently executed Node and the history
@@ -89,7 +90,7 @@ func (tr *track) currentStep() *stepInfo {
 }
 
 // newtrack creates a new track started from a Node n.
-func newTrack(n model.Node, inst *Instance, prevtrack *track) (*track, error) {
+func newTrack(n model.Node, inst *Instance, prevTrack *track) (*track, error) {
 	if n == nil {
 		return nil,
 			NewPEErr(nil, nil, "couldn't start track from nil Node")
@@ -108,8 +109,8 @@ func newTrack(n model.Node, inst *Instance, prevtrack *track) (*track, error) {
 		steps:    []*stepInfo{{node: n}},
 		log:      inst.log.Named("TR:" + trID.GetLast(4))}
 
-	if prevtrack != nil {
-		t.prev = append(t.prev, prevtrack)
+	if prevTrack != nil {
+		t.prev = append(t.prev, prevTrack)
 	}
 
 	t.log.Info(newtrackMsg)
