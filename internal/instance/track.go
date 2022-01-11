@@ -44,17 +44,17 @@ func (ts trackState) String() string {
 	}[ts]
 }
 
-type StepState uint8
+type stepState uint8
 
 const (
-	SsCreated StepState = iota
+	SsCreated stepState = iota
 	SsStarted
 	SsAwaitsResults
 	SsEnded
 	SsFailed
 )
 
-func (ss StepState) String() string {
+func (ss stepState) String() string {
 	return []string{
 		"Created",
 		"Started",
@@ -66,8 +66,8 @@ func (ss StepState) String() string {
 
 type stepInfo struct {
 	node  model.Node
-	state StepState
-	tk    *token
+	state stepState
+	tk    *Token
 }
 
 // track consists information about currently executed Node and the history
@@ -90,7 +90,12 @@ func (tr *track) currentStep() *stepInfo {
 }
 
 // newtrack creates a new track started from a Node n.
-func newTrack(n model.Node, inst *Instance, prevTrack *track) (*track, error) {
+func newTrack(
+	n model.Node,
+	inst *Instance,
+	prevTrack *track,
+	tk *Token) (*track, error) {
+
 	if n == nil {
 		return nil,
 			NewPEErr(nil, nil, "couldn't start track from nil Node")
@@ -102,12 +107,19 @@ func newTrack(n model.Node, inst *Instance, prevTrack *track) (*track, error) {
 				nil, "couldn't create a track for a nil instance")
 	}
 
+	if tk == nil {
+		tk = newToken(model.EmptyID(), inst)
+	}
+
 	trID := model.NewID()
 	t := &track{
 		id:       trID,
 		instance: inst,
-		steps:    []*stepInfo{{node: n}},
-		log:      inst.log.Named("TR:" + trID.GetLast(4))}
+		steps: []*stepInfo{
+			{
+				node: n,
+				tk:   tk}},
+		log: inst.log.Named("TR:" + trID.GetLast(4))}
 
 	if prevTrack != nil {
 		t.prev = append(t.prev, prevTrack)
@@ -159,8 +171,10 @@ func (tr *track) run(ctx context.Context) {
 		step := tr.currentStep()
 		if step.state != SsCreated {
 			// if the last step is finished
-			// stop track running and return
+			// stop track running, inactivate token and return
 			tr.state = TsEnded
+
+			step.tk.updateState(Inactive)
 
 			return
 		}
@@ -168,31 +182,69 @@ func (tr *track) run(ctx context.Context) {
 		// take a step
 		ne, err := executor.GetNodeExecutor(step.node)
 		if err != nil {
-			step.state = SsFailed
-			tr.state = TsError
 			err = NewPEErr(tr, err, "couldn't get node executor for node '%s'",
 				step.node.Name())
-			tr.lastErr = err
+			tr.updateState(TsError, SsFailed, err)
 
 			return
 		}
 
-		step.state = SsStarted
-		tr.state = TsExecutingStep
+		tr.updateState(TsExecutingStep, SsStarted, nil)
 
 		tr.log.Debugw("node execution started",
 			zap.Stringer("type", step.node.Type()),
 			zap.String("name", step.node.Name()))
 
-		nexts, err := tr.makeStep(ctx, ne)
+		// pass token to the node if it accept them
+		th, hasTokenHdlr := step.node.(TokenHandler)
+		if hasTokenHdlr {
+			err = th.TakeToken(step.tk)
+			if err != nil {
+				err = NewPEErr(tr, err, "node '%s' didn't take a token",
+					step.node.Name())
+
+				tr.updateState(TsError, SsFailed, err)
+
+				return
+			}
+		}
+
+		nexts, err := tr.execNode(ctx, ne)
 		if err != nil {
-			step.state = SsFailed
-			tr.state = TsError
 			err = NewPEErr(tr, err, "node '%s' execution failed",
 				step.node.Name())
-			tr.lastErr = err
+			tr.updateState(TsError, SsFailed, err)
 
 			return
+		}
+
+		// update outgoing tokens
+		var nextTokens []*Token
+
+		if hasTokenHdlr {
+			nextTokens, err = th.ReturnTokens()
+			if err != nil {
+				err = NewPEErr(tr, err, "couldn't get tokens from node '%s'",
+					step.node.Name())
+
+				tr.updateState(TsError, SsFailed, err)
+
+				return
+			}
+
+			if len(nextTokens) != len(nexts) {
+				err = NewPEErr(
+					tr,
+					err,
+					"number of flows(%d) isn't equal to number of tokens(%d)",
+					len(nexts), len(nextTokens))
+
+				tr.updateState(TsError, SsFailed, err)
+
+				return
+			}
+		} else {
+			nextTokens = step.tk.split(len(nexts), Alive)
 		}
 
 		step.state = SsEnded
@@ -206,7 +258,7 @@ func (tr *track) run(ctx context.Context) {
 				tr.steps = append(tr.steps, &stepInfo{
 					node:  sf.GetTarget(),
 					state: SsCreated,
-				})
+					tk:    nextTokens[i]})
 
 				tr.log.Debugw("new step added",
 					zap.String("node_name", sf.GetTarget().Name()),
@@ -217,7 +269,7 @@ func (tr *track) run(ctx context.Context) {
 
 			// if there is fork appears (nexts > 1). create new track(s) and
 			// add it to the instance
-			ntr, err := newTrack(sf.GetTarget(), tr.instance, tr)
+			ntr, err := newTrack(sf.GetTarget(), tr.instance, tr, nextTokens[i])
 			if err != nil {
 				tr.state = TsError
 				tr.lastErr = NewPEErr(tr, err, "couldn't create a fork "+
@@ -242,7 +294,17 @@ func (tr *track) run(ctx context.Context) {
 	}
 }
 
-func (tr *track) makeStep(
+func (tr *track) updateState(ts trackState, ss stepState, err error) {
+	tr.currentStep().state = ss
+
+	tr.state = ts
+
+	if err != nil {
+		tr.lastErr = err
+	}
+}
+
+func (tr *track) execNode(
 	ctx context.Context,
 	ne executor.NodeExecutor) ([]*model.SequenceFlow, error) {
 

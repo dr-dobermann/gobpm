@@ -150,7 +150,7 @@ func (pi *Instance) prepare() error {
 		// don't have incoming flows
 		if n.Type() != model.EtGateway && !n.HasIncoming() {
 			// create tracks from them
-			t, err := newTrack(n, pi, nil)
+			t, err := newTrack(n, pi, nil, nil)
 			if err != nil {
 				return pi.NewErr(err,
 					"couldn't prepare an Instance for starting")

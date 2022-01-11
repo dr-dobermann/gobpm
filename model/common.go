@@ -1,7 +1,8 @@
 package model
 
 import (
-	"github.com/dr-dobermann/gobpm/ctr"
+	"fmt"
+
 	"github.com/google/uuid"
 )
 
@@ -58,26 +59,6 @@ const (
 	Physical
 )
 
-type Import struct {
-	impType   string
-	location  string
-	namespace string
-}
-
-type ItemDefinition struct {
-	BaseElement
-	itemKind     ItemKind
-	structure    interface{}
-	importRef    *Import
-	isCollection bool
-}
-
-type Error struct {
-	NamedElement
-	errorCode string
-	structure ItemDefinition
-}
-
 type FlowElementType uint8
 
 const (
@@ -110,8 +91,8 @@ func (fet FlowElementType) String() string {
 // and SequenceFlow
 type FlowElement struct {
 	NamedElement
-	audit       *ctr.Audit
-	monitor     *ctr.Monitor
+	// audit       *ctr.Audit
+	// monitor     *ctr.Monitor
 	elementType FlowElementType
 }
 
@@ -134,8 +115,11 @@ type Node interface {
 	HasIncoming() bool
 
 	// deletes all incoming and outcoming flows when copying the node
-	// only calls from proccess.Copy method.
+	// only calls from proccess.Copy method to avoid duplication flows
+	// on copied node.
+	//
 	// DO NOT CALL directly!
+	//
 	ClearFlows()
 }
 
@@ -146,6 +130,11 @@ type FlowNode struct {
 	lane      *Lane
 	incoming  []*SequenceFlow
 	outcoming []*SequenceFlow
+
+	// that one will receive a token when none of the
+	// outcoming flows is true
+	// if EmptyID there is no default flow
+	defaultFlowID Id
 }
 
 func (fn *FlowNode) ID() Id {
@@ -177,6 +166,33 @@ func (fn *FlowNode) PutOnLane(lane *Lane) error {
 
 	fn.process = lane.process
 	fn.lane = lane
+
+	return nil
+}
+
+func (fn *FlowNode) SetDefaultFlow(id Id) error {
+	if id == EmptyID() {
+		return fmt.Errorf("couldn't make nil flow as default")
+	}
+
+	var flow *SequenceFlow
+
+	for i, f := range fn.outcoming {
+		if f.id == id {
+			flow = fn.outcoming[i]
+			break
+		}
+	}
+
+	if flow.GetTarget().ID() == fn.id {
+		return fmt.Errorf("couldn't make default flow on itself")
+	}
+
+	if flow == nil {
+		return fmt.Errorf("Id %v doesn't existed in outgoing flows", id)
+	}
+
+	fn.defaultFlowID = flow.id
 
 	return nil
 }
@@ -269,9 +285,13 @@ func (sf *SequenceFlow) GetTarget() Node {
 	return sf.targetRef
 }
 
+func (sf *SequenceFlow) GetSource() Node {
+	return sf.sourceRef
+}
+
 type CallableElement struct {
 	NamedElement
-	interfaces []*Interface
-	ioSpec     InputOutputSpecification
-	ioBinds    []InputOutputBinding
+	// interfaces []*Interface
+	// ioSpec     InputOutputSpecification
+	// ioBinds    []InputOutputBinding
 }

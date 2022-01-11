@@ -27,6 +27,7 @@ func NewExclusiveGateway(
 
 	eg.id = id
 	eg.name = name
+	eg.expr = expr
 	eg.elementType = EtGateway
 	eg.process = p
 	eg.direction = dir

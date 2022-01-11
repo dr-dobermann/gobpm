@@ -9,6 +9,11 @@ import (
 	"github.com/dr-dobermann/gobpm/model"
 )
 
+type TokenHandler interface {
+	TakeToken(t *Token) error
+	ReturnTokens() ([]*Token, error)
+}
+
 type tokenState uint16
 
 const (
@@ -33,12 +38,12 @@ type tokenUpdateInfo struct {
 	newState tokenState
 }
 
-type token struct {
+type Token struct {
 	id    model.Id
 	inst  *Instance
 	state tokenState
-	prevs []*token
-	nexts []*token
+	prevs []*Token
+	nexts []*Token
 
 	group *tokenGroup
 
@@ -47,7 +52,7 @@ type token struct {
 }
 
 // creates a new token for the instance.
-func newToken(tID model.Id, inst *Instance) *token {
+func newToken(tID model.Id, inst *Instance) *Token {
 	if inst == nil {
 		return nil
 	}
@@ -56,10 +61,10 @@ func newToken(tID model.Id, inst *Instance) *token {
 		tID = model.NewID()
 	}
 
-	return &token{id: tID, inst: inst}
+	return &Token{id: tID, inst: inst}
 }
 
-func (t *token) setStatusUpdater(uCh chan tokenUpdateInfo) {
+func (t *Token) setStatusUpdater(uCh chan tokenUpdateInfo) {
 
 	st := t.getState()
 
@@ -69,7 +74,7 @@ func (t *token) setStatusUpdater(uCh chan tokenUpdateInfo) {
 	}
 }
 
-func (t *token) getState() tokenState {
+func (t *Token) getState() tokenState {
 	if t.group != nil {
 		t.group.Lock()
 		defer t.group.Unlock()
@@ -80,7 +85,7 @@ func (t *token) getState() tokenState {
 	return t.state
 }
 
-func (t *token) sendStateUpdate(newState tokenState) {
+func (t *Token) sendStateUpdate(newState tokenState) {
 	if t.updCh != nil {
 		oldState := t.state
 		go func() {
@@ -93,7 +98,7 @@ func (t *token) sendStateUpdate(newState tokenState) {
 	}
 }
 
-func (t *token) updateState(newState tokenState) bool {
+func (t *Token) updateState(newState tokenState) bool {
 	if t.state == newState {
 		return true
 	}
@@ -125,7 +130,7 @@ func (t *token) updateState(newState tokenState) bool {
 //
 // if splitted token sits in tokenGroup, all grouped tokens' states could be
 // changed.
-func (t *token) split(n uint16, newState tokenState) []*token {
+func (t *Token) split(n int, newState tokenState) []*Token {
 	if t.getState() == Inactive ||
 		newState == Triggered ||
 		newState == Inactive {
@@ -133,18 +138,18 @@ func (t *token) split(n uint16, newState tokenState) []*token {
 		return nil
 	}
 
-	tt := []*token{}
+	tt := []*Token{}
 
-	if n == 0 {
+	if n <= 0 {
 		return append(tt, t)
 	}
 
-	for i := 0; i < int(n); i++ {
-		nt := &token{
+	for i := 0; i < n; i++ {
+		nt := &Token{
 			id:    model.NewID(),
 			inst:  t.inst,
 			state: newState,
-			prevs: append([]*token{}, t)}
+			prevs: append([]*Token{}, t)}
 
 		tt = append(tt, nt)
 
@@ -155,8 +160,8 @@ func (t *token) split(n uint16, newState tokenState) []*token {
 	return tt
 }
 
-// func (t *token) GetPrevious() []*token {
-// 	tt := make([]*token, len(t.prevs))
+// func (t *Token) GetPrevious() []*Token {
+// 	tt := make([]*Token, len(t.prevs))
 
 // 	copy(tt, t.prevs)
 
@@ -164,7 +169,7 @@ func (t *token) split(n uint16, newState tokenState) []*token {
 // }
 
 // joins one token to another.
-func (t *token) join(jt *token) error {
+func (t *Token) join(jt *Token) error {
 	if t.getState() == Inactive {
 		return fmt.Errorf("couldn't join to inactive token %v", t.id)
 	}
@@ -196,7 +201,7 @@ type tokenGroup struct {
 
 	id     model.Id
 	gType  groupType
-	tokens []*token
+	tokens []*Token
 	inst   *Instance
 }
 
@@ -204,7 +209,7 @@ func newTokenGroup(
 	id model.Id,
 	inst *Instance,
 	gType groupType,
-	tt ...*token) *tokenGroup {
+	tt ...*Token) *tokenGroup {
 
 	if inst == nil {
 		return nil
@@ -217,7 +222,7 @@ func newTokenGroup(
 	tg := &tokenGroup{
 		id:     id,
 		gType:  gType,
-		tokens: []*token{},
+		tokens: []*Token{},
 		inst:   inst,
 	}
 
@@ -228,7 +233,7 @@ func newTokenGroup(
 	return tg
 }
 
-func (tg *tokenGroup) addTokens(tt ...*token) int {
+func (tg *tokenGroup) addTokens(tt ...*Token) int {
 	added := 0
 
 	tg.Lock()
@@ -253,7 +258,7 @@ func (tg *tokenGroup) addTokens(tt ...*token) int {
 	return added
 }
 
-func (tg *tokenGroup) updateState(t *token, newState tokenState) bool {
+func (tg *tokenGroup) updateState(t *Token, newState tokenState) bool {
 	if tg != t.group {
 		return false
 	}

@@ -72,16 +72,22 @@ func (at ActivityType) String() string {
 type Activity struct {
 	FlowNode
 	//loop        *LoopDef
-	defaultFlow Id // that will receive a token when none of the
+
 	// conditionExpressions on other outgoing Sequence Flows evaluate
 	// to true. The default Sequence Flow should not have a
 	// conditionExpression. Any such Expression SHALL be ignored
+
 	class ActivityClass
 	aType ActivityType
+
 	//boundaryEvents []*Event
+
 	//data           InputOutputSpecification
+
 	// not empty in case the Activity used as CallActivity
+
 	//calledElement *CallableElement
+
 	//transaction   *Transaction
 }
 
@@ -94,7 +100,7 @@ func (a Activity) TaskType() ActivityType {
 }
 
 func (a Activity) DefaultFlowId() Id {
-	return a.defaultFlow
+	return a.defaultFlowID
 }
 
 func (a Activity) Check() error {

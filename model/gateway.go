@@ -46,11 +46,10 @@ func (gt GatewayType) String() string {
 type Gateway struct {
 	FlowNode
 
-	expr        *Expression
-	direction   GatewayDirection
-	flowType    EventGatewayFlowType
-	gType       GatewayType
-	defaultPath Id // if 0 there is no default path
+	expr      *Expression
+	direction GatewayDirection
+	flowType  EventGatewayFlowType
+	gType     GatewayType
 }
 
 func (g *Gateway) GwayType() GatewayType {

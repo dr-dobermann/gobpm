@@ -1,5 +1,25 @@
 package model
 
+// type Import struct {
+// 	impType   string
+// 	location  string
+// 	namespace string
+// }
+
+type ItemDefinition struct {
+	BaseElement
+	itemKind  ItemKind
+	structure interface{}
+	//	importRef    *Import
+	isCollection bool
+}
+
+type Error struct {
+	NamedElement
+	errorCode string
+	structure ItemDefinition
+}
+
 type DataState int8
 
 const (
