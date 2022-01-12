@@ -62,7 +62,7 @@ func NewSendTask(p *Process, name, msgName, qName string) *SendTask {
 		qName:   qName}
 }
 
-func (st *SendTask) Copy(snapshot *Process) TaskModel {
+func (st *SendTask) Copy(snapshot *Process) (TaskModel, error) {
 	cst := new(SendTask)
 
 	*cst = *st
@@ -70,5 +70,5 @@ func (st *SendTask) Copy(snapshot *Process) TaskModel {
 	cst.id = NewID()
 	cst.process = snapshot
 
-	return cst
+	return cst, nil
 }

@@ -37,7 +37,11 @@ func NewExclusiveGateway(
 	return eg
 }
 
-func (eg *ExclusiveGateway) Copy(snapshot *Process) GatewayModel {
+func (eg *ExclusiveGateway) Copy(snapshot *Process) (GatewayModel, error) {
+	if err := eg.checkGatewayFlows(); err != nil {
+		return nil, err
+	}
+
 	egc := new(ExclusiveGateway)
 
 	*egc = *eg
@@ -45,5 +49,5 @@ func (eg *ExclusiveGateway) Copy(snapshot *Process) GatewayModel {
 	egc.process = snapshot
 	egc.id = NewID()
 
-	return egc
+	return egc, nil
 }

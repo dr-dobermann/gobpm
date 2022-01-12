@@ -45,7 +45,7 @@ func NewOutputTask(
 	return ot
 }
 
-func (ot *OutputTask) Copy(snapshot *Process) TaskModel {
+func (ot *OutputTask) Copy(snapshot *Process) (TaskModel, error) {
 
 	otc := new(OutputTask)
 
@@ -57,5 +57,5 @@ func (ot *OutputTask) Copy(snapshot *Process) TaskModel {
 	otc.Vars = make([]Variable, len(ot.Vars))
 	copy(otc.Vars, ot.Vars)
 
-	return otc
+	return otc, nil
 }

@@ -28,7 +28,7 @@ type Process struct {
 	tasks []TaskModel
 
 	// processes gateways
-	// gates []Gateways
+	gateways []GatewayModel
 
 	// processes events
 	// events []Events
@@ -48,6 +48,35 @@ type Process struct {
 	// in case of its copying as snapshot
 	// it's empty for the real process
 	OriginID Id
+}
+
+// creates a new process
+func NewProcess(pid Id, nm string, ver string) *Process {
+	if pid == Id(uuid.Nil) {
+		pid = NewID()
+	}
+
+	nm = strings.Trim(nm, " ")
+	if len(nm) == 0 {
+		nm = "Process #" + pid.String()
+	}
+
+	if len(ver) == 0 {
+		ver = "0.1.0"
+	}
+
+	return &Process{FlowElement: FlowElement{
+		NamedElement: NamedElement{
+			BaseElement: BaseElement{
+				id: pid},
+			name: nm},
+		elementType: EtProcess},
+		version:  ver,
+		tasks:    []TaskModel{},
+		gateways: []GatewayModel{},
+		flows:    []*SequenceFlow{},
+		messages: make([]*Message, 0),
+		lanes:    make(map[string]*Lane)}
 }
 
 // returns a version of the process.
@@ -72,18 +101,16 @@ func (p *Process) GetNodes(et FlowElementType) ([]Node, error) {
 	switch et {
 	// return all nodes
 	case EtUnspecified:
-		for _, t := range p.tasks {
-			nn = append(nn, t)
-		}
+		nn = append(nn, p.getTasks()...)
+		nn = append(nn, p.getGateways()...)
 
 	case EtActivity:
-		for _, t := range p.tasks {
-			nn = append(nn, t)
-		}
+		nn = p.getTasks()
 
 	case EtGateway:
+		nn = p.getGateways()
 
-	case EtEvent:
+	//case EtEvent:
 
 	default:
 		return nil,
@@ -92,6 +119,27 @@ func (p *Process) GetNodes(et FlowElementType) ([]Node, error) {
 	}
 
 	return nn, nil
+
+}
+
+func (p *Process) getTasks() []Node {
+	nn := []Node{}
+
+	for _, t := range p.tasks {
+		nn = append(nn, t)
+	}
+
+	return nn
+}
+
+func (p *Process) getGateways() []Node {
+	nn := []Node{}
+
+	for _, g := range p.gateways {
+		nn = append(nn, g)
+	}
+
+	return nn
 }
 
 // returns a task by its ID.
@@ -147,36 +195,28 @@ func (p Process) Copy() (*Process, error) {
 		pc.AddMessage(m.name, m.direction, m.GetVariables(AllVariables)...)
 	}
 
-	// tm used as a mapper from source process task id to
-	// a copy process task id in LinkNodes calls below
-	tm := make(map[Id]TaskModel)
-
-	// copy tasks and place them on lanes
-	for _, ot := range p.tasks {
-		t := ot.Copy(&pc)
-
-		t.ClearFlows()
-
-		tm[ot.ID()] = t
-
-		pc.AddTask(t, ot.LaneName())
+	// nm used as a mapper from source process node id to
+	// a copy process node used in copying of sequenceFlow in the new
+	// process
+	nm, err := p.copyTasks(&pc)
+	if err != nil {
+		return nil, NewPMErr(p.id, err, "couldn't copy process tasks")
 	}
 
-	// copy sequence flows
-	for _, of := range p.flows {
-		var e *Expression
+	// get mapper for gateways
+	gm, err := p.copyGateways(&pc)
+	if err != nil {
+		return nil, NewPMErr(p.id, err, "couldn't copy process gateways")
+	}
 
-		if of.expr != nil {
-			e = of.expr.Copy()
-		}
+	// combine task's and gateway's mappers
+	for oldGID, n := range gm {
+		nm[oldGID] = n
+	}
 
-		if err := pc.LinkNodes(
-			tm[of.sourceRef.ID()],
-			tm[of.targetRef.ID()], e); err != nil {
-
-			return nil,
-				NewPMErr(p.id, err, "couldn't link nodes in snapshot")
-		}
+	err = p.copyFlows(&pc, nm)
+	if err != nil {
+		return nil, NewPMErr(p.id, err, "snapshot node linking error")
 	}
 
 	pc.dataType = PdtSnapshot
@@ -185,32 +225,70 @@ func (p Process) Copy() (*Process, error) {
 	return &pc, nil
 }
 
-// creates a new process
-func NewProcess(pid Id, nm string, ver string) *Process {
-	if pid == Id(uuid.Nil) {
-		pid = NewID()
+// copy tasks from p to pc and creates mapping of p.tasks ot a pc.tasks for
+// future linking througt sequenceFlow
+func (p *Process) copyTasks(pc *Process) (map[Id]Node, error) {
+	tm := make(map[Id]Node)
+
+	// copy tasks and place them on lanes
+	for _, ot := range p.tasks {
+		t, err := ot.Copy(pc)
+		if err != nil {
+			return nil,
+				fmt.Errorf("couldn't copy task '%s': %v", ot.Name(), err)
+		}
+
+		t.ClearFlows()
+
+		tm[ot.ID()] = t
+
+		pc.AddTask(t, ot.LaneName())
 	}
 
-	nm = strings.Trim(nm, " ")
-	if len(nm) == 0 {
-		nm = "Process #" + pid.String()
+	return tm, nil
+}
+
+// copies gateway to a new process and return gateway mapper of
+// old gateway id to a copied Node
+func (p *Process) copyGateways(pc *Process) (map[Id]Node, error) {
+	gm := make(map[Id]Node)
+
+	// copy gateway and place them on lanes
+	for _, og := range p.gateways {
+		g, err := og.Copy(pc)
+		if err != nil {
+			return nil,
+				fmt.Errorf("couldn't copy gateway '%s': %v", og.Name(), err)
+		}
+
+		g.ClearFlows()
+
+		gm[og.ID()] = g
+
+		pc.AddGateway(g, og.LaneName())
 	}
 
-	if len(ver) == 0 {
-		ver = "0.1.0"
+	return gm, nil
+}
+
+// copies flows in copied process based on old process flows and node mappers
+func (p *Process) copyFlows(pc *Process, nodeMapper map[Id]Node) error {
+	for _, of := range p.flows {
+		var e *Expression
+
+		if of.expr != nil {
+			e = of.expr.Copy()
+		}
+
+		if err := pc.LinkNodes(
+			nodeMapper[of.sourceRef.ID()],
+			nodeMapper[of.targetRef.ID()], e); err != nil {
+
+			return NewPMErr(p.id, err, "couldn't link nodes in snapshot")
+		}
 	}
 
-	return &Process{FlowElement: FlowElement{
-		NamedElement: NamedElement{
-			BaseElement: BaseElement{
-				id: pid},
-			name: nm},
-		elementType: EtProcess},
-		version:  ver,
-		tasks:    []TaskModel{},
-		flows:    []*SequenceFlow{},
-		messages: make([]*Message, 0),
-		lanes:    make(map[string]*Lane)}
+	return nil
 }
 
 // adds new lane to the process
@@ -342,7 +420,32 @@ func (p *Process) AddTask(t TaskModel, ln string) error {
 	p.tasks = append(p.tasks, t)
 	l.addNode(t)
 
-	return t.PutOnLane(l)
+	return nil
+}
+
+func (p *Process) AddGateway(g GatewayModel, lane string) error {
+	if p.dataType == PdtSnapshot {
+		return ErrSnapshotChange
+	}
+
+	if g == nil {
+		return NewPMErr(p.id, nil, "couldn't add nil gateway")
+	}
+
+	l, ok := p.lanes[lane]
+	if !ok {
+		return NewPMErr(p.id, nil, "lane %s is not found", lane)
+	}
+
+	if n := p.getNamedNode(g.Name()); n != nil {
+		return NewPMErr(p.id, nil, "node named '%s'(%s) "+
+			"already exists in the process", n.Name(), n.Type().String())
+	}
+
+	p.gateways = append(p.gateways, g)
+	l.addNode(g)
+
+	return nil
 }
 
 // links two Nodes by one SequenceFlow.

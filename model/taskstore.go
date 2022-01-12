@@ -29,7 +29,7 @@ func NewStoreTask(p *Process, name string, vl ...Variable) *StoreTask {
 	return st
 }
 
-func (st *StoreTask) Copy(snapshot *Process) TaskModel {
+func (st *StoreTask) Copy(snapshot *Process) (TaskModel, error) {
 
 	stc := new(StoreTask)
 
@@ -40,5 +40,5 @@ func (st *StoreTask) Copy(snapshot *Process) TaskModel {
 	stc.Vars = make([]Variable, len(st.Vars))
 	copy(stc.Vars, st.Vars)
 
-	return stc
+	return stc, nil
 }

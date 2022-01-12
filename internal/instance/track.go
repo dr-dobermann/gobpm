@@ -219,6 +219,9 @@ func (tr *track) run(ctx context.Context) {
 	}
 }
 
+// after successful execution of the node in step,
+// updateFlows creates a next step on the track and forked track if
+// there are more than one output flows
 func (tr *track) updateFlows(
 	nextFlows []*model.SequenceFlow,
 	nextTokens []*Token) error {
@@ -262,6 +265,7 @@ func (tr *track) updateFlows(
 	return nil
 }
 
+// updates track's and current step's state
 func (tr *track) updateState(ts trackState, ss stepState, err error) {
 	tr.currentStep().state = ss
 
@@ -272,6 +276,11 @@ func (tr *track) updateState(ts trackState, ss stepState, err error) {
 	}
 }
 
+// executing one node with prologue and epilogue if node implements such
+// interfaces.
+//
+// execNodes also controls tokens passing to the node and getting it(them)
+// back from the node
 func (tr *track) execNode(
 	ctx context.Context,
 	ne executor.NodeExecutor) ([]*model.SequenceFlow, []*Token, error) {
@@ -327,6 +336,7 @@ func (tr *track) execNode(
 	return nexts, nextTokens, nil
 }
 
+// checks if node implements NodePrologue interface and runs node prologue.
 func (tr *track) runNodePrologue(
 	ctx context.Context,
 	ne executor.NodeExecutor) error {
@@ -342,6 +352,7 @@ func (tr *track) runNodePrologue(
 	return np.Prologue(ctx, tr)
 }
 
+// checks if node implements NodeEpilogue interface and runs node epilogue
 func (tr *track) runNodeEpilogue(
 	ctx context.Context,
 	ne executor.NodeExecutor) error {

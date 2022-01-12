@@ -120,7 +120,7 @@ type TaskModel interface {
 	// Copy returns a copy of the Task with a new Id
 	// To prevent errors of duplication flows
 	// 'THE COPIED NODE SHOULD HAVE _EMPTY_ INCOMING AND OUTCOMING FLOWS
-	Copy(snapshot *Process) TaskModel
+	Copy(snapshot *Process) (TaskModel, error)
 
 	// Check makes a test if it possible to use the Task in the process.
 	// It called in process.AddTask

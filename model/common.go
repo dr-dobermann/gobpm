@@ -197,6 +197,7 @@ func (fn *FlowNode) SetDefaultFlow(id Id) error {
 	return nil
 }
 
+// connects fn over the sf to another FlowNode using fn as a se sequence end.
 func (fn *FlowNode) ConnectFlow(sf *SequenceFlow, se SequenceEnd) error {
 	if sf == nil {
 		return NewPMErr(fn.process.id, nil,

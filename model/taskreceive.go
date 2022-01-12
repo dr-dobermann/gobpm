@@ -50,7 +50,7 @@ func NewReceiveTask(p *Process, name, msgName, qName string) *ReceiveTask {
 	return rt
 }
 
-func (rt *ReceiveTask) Copy(snapshot *Process) TaskModel {
+func (rt *ReceiveTask) Copy(snapshot *Process) (TaskModel, error) {
 	crt := new(ReceiveTask)
 
 	*crt = *rt
@@ -58,5 +58,5 @@ func (rt *ReceiveTask) Copy(snapshot *Process) TaskModel {
 	crt.id = NewID()
 	crt.process = snapshot
 
-	return crt
+	return crt, nil
 }

@@ -1,5 +1,17 @@
 package model
 
+import "fmt"
+
+type GatewayModel interface {
+	Node
+
+	GwayType() GatewayType
+
+	Copy(snapshot *Process) (GatewayModel, error)
+}
+
+// ----------------------------------------------------------------------------
+
 type GatewayDirection uint8
 
 const (
@@ -57,10 +69,50 @@ func (g *Gateway) GwayType() GatewayType {
 	return g.gType
 }
 
-type GatewayModel interface {
-	Node
+// checks standard's restriction and link Nodes if possible.
+func (g *Gateway) ConnectFlow(sf *SequenceFlow, se SequenceEnd) error {
+	// if g is a converging gateway there MUST be ONLY ONE outcoming
+	// flow
+	if g.direction == Converging && len(g.outcoming) > 0 &&
+		se == SeSource {
 
-	GwayType() GatewayType
+		return fmt.Errorf("only one ougoing flow is allowed for "+
+			"converging gateway '%s'", g.name)
+	}
 
-	Copy(snapshot *Process) GatewayModel
+	// if g is a diverging gateway there MUST be ONLY ONE incoming flow
+	if g.direction == Diverging && len(g.incoming) > 0 &&
+		se == SeTarget {
+
+		return fmt.Errorf("only one incoming flow is allowed for "+
+			"diverging gateway '%s'", g.name)
+	}
+
+	return g.FlowNode.ConnectFlow(sf, se)
+}
+
+// checks standard's prescriptions on Copy call. Prevents copying of
+// illegal gateways for instanciate a snapshots.
+func (g *Gateway) checkGatewayFlows() error {
+	switch {
+	case g.direction == Converging && len(g.outcoming) > 0:
+		return fmt.Errorf(
+			"only one outcoming flow is allowed for converging gateway '%s'",
+			g.name)
+
+	case g.direction == Diverging && len(g.incoming) > 0:
+		return fmt.Errorf(
+			"only one incoming flow allowed for diverging gateway '%s'",
+			g.name)
+
+	case g.direction == Mixed &&
+		(len(g.incoming) == 1 || len(g.outcoming) == 1):
+
+		return fmt.Errorf(
+			"mixed gateway '%s' should have multiple incoming "+
+				"and outcoming flows",
+			g.name)
+	}
+
+	return nil
 }

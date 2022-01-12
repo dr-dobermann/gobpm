@@ -17,5 +17,5 @@ func (l *Lane) addNode(n Node) error {
 
 	l.nodes = append(l.nodes, n)
 
-	return nil
+	return n.PutOnLane(l)
 }
