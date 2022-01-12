@@ -195,21 +195,7 @@ func (tr *track) run(ctx context.Context) {
 			zap.Stringer("type", step.node.Type()),
 			zap.String("name", step.node.Name()))
 
-		// pass token to the node if it accept them
-		th, hasTokenHdlr := step.node.(TokenHandler)
-		if hasTokenHdlr {
-			err = th.TakeToken(step.tk)
-			if err != nil {
-				err = NewPEErr(tr, err, "node '%s' didn't take a token",
-					step.node.Name())
-
-				tr.updateState(TsError, SsFailed, err)
-
-				return
-			}
-		}
-
-		nexts, err := tr.execNode(ctx, ne)
+		nextFlows, nextTokens, err := tr.execNode(ctx, ne)
 		if err != nil {
 			err = NewPEErr(tr, err, "node '%s' execution failed",
 				step.node.Name())
@@ -218,80 +204,62 @@ func (tr *track) run(ctx context.Context) {
 			return
 		}
 
-		// update outgoing tokens
-		var nextTokens []*Token
-
-		if hasTokenHdlr {
-			nextTokens, err = th.ReturnTokens()
-			if err != nil {
-				err = NewPEErr(tr, err, "couldn't get tokens from node '%s'",
-					step.node.Name())
-
-				tr.updateState(TsError, SsFailed, err)
-
-				return
-			}
-
-			if len(nextTokens) != len(nexts) {
-				err = NewPEErr(
-					tr,
-					err,
-					"number of flows(%d) isn't equal to number of tokens(%d)",
-					len(nexts), len(nextTokens))
-
-				tr.updateState(TsError, SsFailed, err)
-
-				return
-			}
-		} else {
-			nextTokens = step.tk.split(len(nexts), Alive)
-		}
-
 		step.state = SsEnded
 		tr.log.Debugw("node execution successful",
 			zap.String("node_name", step.node.Name()),
-			zap.Int("out_flows_num", len(nexts)))
+			zap.Int("out_flows_num", len(nextFlows)))
 
-		for i, sf := range nexts {
-			// check if there is other steps to take
-			if i == 0 {
-				tr.steps = append(tr.steps, &stepInfo{
-					node:  sf.GetTarget(),
-					state: SsCreated,
-					tk:    nextTokens[i]})
+		err = tr.updateFlows(nextFlows, nextTokens)
+		if err != nil {
+			tr.state = TsError
+			tr.lastErr = err
 
-				tr.log.Debugw("new step added",
-					zap.String("node_name", sf.GetTarget().Name()),
-					zap.Stringer("node_id", sf.GetTarget().ID()))
-
-				continue
-			}
-
-			// if there is fork appears (nexts > 1). create new track(s) and
-			// add it to the instance
-			ntr, err := newTrack(sf.GetTarget(), tr.instance, tr, nextTokens[i])
-			if err != nil {
-				tr.state = TsError
-				tr.lastErr = NewPEErr(tr, err, "couldn't create a fork "+
-					"for '%s' on flow %v",
-					sf.GetTarget().Name(), sf.ID())
-				return
-			}
-
-			// add it(them) to the instance
-			if err := tr.instance.addTrack(ntr); err != nil {
-				tr.state = TsError
-				tr.lastErr = fmt.Errorf("couldn't add forked track to "+
-					"instance for %s on flow %v: %v",
-					sf.GetTarget().Name(), sf.ID(), err)
-				return
-			}
-
-			tr.log.Debugw("new forked track added",
-				zap.Stringer("forked_track_id", ntr.id),
-				zap.String("forked_node_name", ntr.currentStep().node.Name()))
+			return
 		}
 	}
+}
+
+func (tr *track) updateFlows(
+	nextFlows []*model.SequenceFlow,
+	nextTokens []*Token) error {
+
+	for i, sf := range nextFlows {
+		if i == 0 {
+			// check if there is other steps to take
+			// add it to the same track as next one
+			tr.steps = append(tr.steps, &stepInfo{
+				node:  sf.GetTarget(),
+				state: SsCreated,
+				tk:    nextTokens[i]})
+
+			tr.log.Debugw("new step added",
+				zap.String("node_name", sf.GetTarget().Name()),
+				zap.Stringer("node_id", sf.GetTarget().ID()))
+
+			continue
+		}
+
+		// if there is fork appears. create new track(s) and
+		// add it(them) to the instance
+		ntr, err := newTrack(sf.GetTarget(), tr.instance, tr, nextTokens[i])
+		if err != nil {
+			return NewPEErr(tr, err, "couldn't create a fork "+
+				"for '%s' on flow %v",
+				sf.GetTarget().Name(), sf.ID())
+		}
+
+		if err := tr.instance.addTrack(ntr); err != nil {
+			return fmt.Errorf("couldn't add forked track to "+
+				"instance for %s on flow %v: %v",
+				sf.GetTarget().Name(), sf.ID(), err)
+		}
+
+		tr.log.Debugw("new forked track added",
+			zap.Stringer("forked_track_id", ntr.id),
+			zap.String("forked_node_name", ntr.currentStep().node.Name()))
+	}
+
+	return nil
 }
 
 func (tr *track) updateState(ts trackState, ss stepState, err error) {
@@ -306,27 +274,59 @@ func (tr *track) updateState(ts trackState, ss stepState, err error) {
 
 func (tr *track) execNode(
 	ctx context.Context,
-	ne executor.NodeExecutor) ([]*model.SequenceFlow, error) {
+	ne executor.NodeExecutor) ([]*model.SequenceFlow, []*Token, error) {
+
+	step := tr.currentStep()
+
+	// pass token to the node if it accept them
+	th, hasTokenHdlr := step.node.(TokenHandler)
+	if hasTokenHdlr {
+		err := th.TakeToken(step.tk)
+		if err != nil {
+			return nil, nil, NewPEErr(tr, err, "node '%s' didn't take a token",
+				step.node.Name())
+		}
+	}
 
 	// check node Prologue
 	if err := tr.runNodePrologue(ctx, ne); err != nil {
-		return nil, NewPEErr(tr, err, "node prologue failed")
+		return nil, nil, NewPEErr(tr, err, "node prologue failed")
 	}
 
 	// execute it
 	nexts, err := ne.Exec(ctx, tr)
 	if err != nil {
-		return nil, NewPEErr(tr, err, "node execution failed")
+		return nil, nil, NewPEErr(tr, err, "node execution failed")
 	}
 
 	err = tr.runNodeEpilogue(ctx, ne)
 	if err != nil {
-		return nil, NewPEErr(tr, err, "node epilogue failed")
+		return nil, nil, NewPEErr(tr, err, "node epilogue failed")
 	}
 
-	return nexts, nil
+	// update outgoing tokens
+	var nextTokens []*Token
 
+	if hasTokenHdlr {
+		nextTokens, err = th.ReturnTokens()
+		if err != nil {
+			return nil, nil, NewPEErr(tr, err,
+				"couldn't get tokens from node '%s'",
+				step.node.Name())
+		}
+
+		if len(nextTokens) != len(nexts) {
+			return nil, nil, NewPEErr(tr, err,
+				"number of flows(%d) isn't equal to number of tokens(%d)",
+				len(nexts), len(nextTokens))
+		}
+	} else {
+		nextTokens = step.tk.split(len(nexts), Alive)
+	}
+
+	return nexts, nextTokens, nil
 }
+
 func (tr *track) runNodePrologue(
 	ctx context.Context,
 	ne executor.NodeExecutor) error {
