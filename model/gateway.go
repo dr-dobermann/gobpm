@@ -7,6 +7,8 @@ type GatewayModel interface {
 
 	GwayType() GatewayType
 
+	Direction() GatewayDirection
+
 	Copy(snapshot *Process) (GatewayModel, error)
 }
 
@@ -58,15 +60,20 @@ func (gt GatewayType) String() string {
 type Gateway struct {
 	FlowNode
 
-	expr      *Expression
+	expr      Expression
 	direction GatewayDirection
-	flowType  EventGatewayFlowType
-	gType     GatewayType
+	// used only by
+	flowType EventGatewayFlowType
+	gType    GatewayType
 }
 
 func (g *Gateway) GwayType() GatewayType {
 
 	return g.gType
+}
+
+func (g *Gateway) Direction() GatewayDirection {
+	return g.direction
 }
 
 // checks standard's restriction and link Nodes if possible.

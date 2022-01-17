@@ -274,7 +274,7 @@ func (p *Process) copyGateways(pc *Process) (map[Id]Node, error) {
 // copies flows in copied process based on old process flows and node mappers
 func (p *Process) copyFlows(pc *Process, nodeMapper map[Id]Node) error {
 	for _, of := range p.flows {
-		var e *Expression
+		var e Expression
 
 		if of.expr != nil {
 			e = of.expr.Copy()
@@ -451,7 +451,7 @@ func (p *Process) AddGateway(g GatewayModel, lane string) error {
 // links two Nodes by one SequenceFlow.
 //
 // expr added as Expression on SequenceFlow
-func (p *Process) LinkNodes(src Node, trg Node, expr *Expression) error {
+func (p *Process) LinkNodes(src Node, trg Node, expr Expression) error {
 	if p.dataType == PdtSnapshot {
 		return ErrSnapshotChange
 	}
@@ -495,7 +495,7 @@ func (p *Process) LinkNodes(src Node, trg Node, expr *Expression) error {
 	return nil
 }
 
-func (p *Process) LinkNamedNodes(src, dest string, expr *Expression) error {
+func (p *Process) LinkNamedNodes(src, dest string, expr Expression) error {
 	const notFound = "couldn't find node named '%s'"
 
 	srcN := p.getNamedNode(src)

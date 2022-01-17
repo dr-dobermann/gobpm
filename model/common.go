@@ -277,7 +277,7 @@ type SequenceFlow struct {
 	// Could be empty. If not, the path
 	// couldn't start from Parallel Gate or
 	// Event FloatNode
-	expr      *Expression
+	expr      Expression
 	sourceRef Node
 	targetRef Node
 }

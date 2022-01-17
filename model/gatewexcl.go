@@ -10,8 +10,7 @@ func NewExclusiveGateway(
 	p *Process,
 	name string,
 	dir GatewayDirection,
-	flow EventGatewayFlowType,
-	expr *Expression) *ExclusiveGateway {
+	expr Expression) *ExclusiveGateway {
 
 	if p == nil {
 		return nil
@@ -32,7 +31,6 @@ func NewExclusiveGateway(
 	eg.process = p
 	eg.direction = dir
 	eg.gType = Exclusive
-	eg.flowType = flow
 
 	return eg
 }
