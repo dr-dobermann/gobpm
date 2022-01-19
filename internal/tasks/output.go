@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/dr-dobermann/gobpm/model"
+	"github.com/dr-dobermann/gobpm/model/variables"
 	"github.com/dr-dobermann/gobpm/pkg/excenv"
 	"go.uber.org/zap"
 )
@@ -54,16 +55,16 @@ func (ote *OutputTaskExecutor) Exec(
 		}
 
 		switch vv.Type() {
-		case model.VtInt:
+		case variables.Int:
 			fmt.Fprintf(ote.Destination.To, "%s = %d\n", vv.Name(), vv.Int())
 
-		case model.VtBool:
+		case variables.Bool:
 			fmt.Fprintf(ote.Destination.To, "%s = %t\n", vv.Name(), vv.Bool())
 
-		case model.VtFloat:
+		case variables.Float:
 			fmt.Fprintf(ote.Destination.To, "%s = %f\n", vv.Name(), vv.Float64())
 
-		case model.VtTime:
+		case variables.Time:
 			fmt.Fprintf(ote.Destination.To, "%s = %v\n", vv.Name(), vv.Time())
 
 		default:

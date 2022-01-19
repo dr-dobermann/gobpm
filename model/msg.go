@@ -7,7 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dr-dobermann/gobpm/internal/identity"
+	mid "github.com/dr-dobermann/gobpm/internal/identity"
 	"github.com/dr-dobermann/gobpm/internal/msgmarsh"
+	"github.com/dr-dobermann/gobpm/model/base"
+	vars "github.com/dr-dobermann/gobpm/model/variables"
 	"github.com/google/uuid"
 )
 
@@ -43,7 +47,7 @@ const (
 )
 
 type MessageVariable struct {
-	Variable
+	vars.Variable
 	optional bool
 }
 
@@ -51,7 +55,7 @@ func (mv MessageVariable) IsOptional() bool {
 	return mv.optional
 }
 
-func NewMVar(v *Variable, optional bool) *MessageVariable {
+func NewMVar(v *vars.Variable, optional bool) *MessageVariable {
 	return &MessageVariable{Variable: *v, optional: optional}
 }
 
@@ -78,7 +82,7 @@ func (m Message) GetVar(name string) (MessageVariable, bool) {
 	return mv, ok
 }
 
-// GetVariables returns a list of variables, defined for the Message m.
+// Getv.Variables returns a list of variables, defined for the Message m.
 // if nonOptionalOnly is true, then only variables with optional == false
 // will be returned.
 // []bool slice returns a optional characteristic of the according variable.
@@ -98,26 +102,27 @@ func (m Message) GetVariables(nonOptionalOnly bool) []MessageVariable {
 func (m Message) MarshalJSON() (bdata []byte, e error) {
 
 	mm := msgmarsh.MsgMarsh{
-		ID:        m.id.String(),
+		ID:        m.ID().String(),
 		Name:      m.name,
 		Direction: uint8(m.direction)}
 
 	for _, v := range m.vList {
+		rv := v.RawValues()
+
 		mm.Variables = append(mm.Variables, struct {
 			Optional bool              `json:"optional"`
 			Variable msgmarsh.VarMarsh `json:"variable"`
 		}{v.optional, msgmarsh.VarMarsh{
-			Name:      v.name,
-			Type:      uint8(v.vtype),
-			Precision: v.prec,
+			Name:      v.Name(),
+			Type:      uint8(v.Type()),
+			Precision: v.Precision(),
 			Value: struct {
 				Int    int64     `json:"int"`
 				Bool   bool      `json:"bool"`
 				String string    `json:"string"`
 				Float  float64   `json:"float"`
 				Time   time.Time `json:"time"`
-			}{v.variableValues.i, v.variableValues.b,
-				v.variableValues.s, v.variableValues.f, v.variableValues.t},
+			}{rv.I, rv.B, rv.S, rv.F, rv.T},
 		}})
 	}
 
@@ -133,7 +138,7 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 	}
 
 	m.name = mm.Name
-	m.id = Id(uuid.MustParse(mm.ID))
+	m.SetNewID(mid.Id(uuid.MustParse(mm.ID)))
 	m.mstate = Created
 	m.elementType = EtMessage
 	m.direction = MessageFlowDirection(mm.Direction)
@@ -142,44 +147,44 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 	}
 
 	for _, v := range mm.Variables {
-		var nv *Variable
+		var nv *vars.Variable
 
-		switch VarType(v.Variable.Type) {
-		case VtInt:
-			nv = V(
+		switch vars.Type(v.Variable.Type) {
+		case vars.Int:
+			nv = vars.V(
 				v.Variable.Name,
-				VarType(v.Variable.Type),
+				vars.Type(v.Variable.Type),
 				v.Variable.Value.Int)
 
-		case VtBool:
-			nv = V(
+		case vars.Bool:
+			nv = vars.V(
 				v.Variable.Name,
-				VarType(v.Variable.Type),
+				vars.Type(v.Variable.Type),
 				v.Variable.Value.Bool)
 
-		case VtString:
-			nv = V(
+		case vars.String:
+			nv = vars.V(
 				v.Variable.Name,
-				VarType(v.Variable.Type),
+				vars.Type(v.Variable.Type),
 				v.Variable.Value.String)
 
-		case VtFloat:
-			nv = V(
+		case vars.Float:
+			nv = vars.V(
 				v.Variable.Name,
-				VarType(v.Variable.Type),
+				vars.Type(v.Variable.Type),
 				v.Variable.Value.Float)
 
-		case VtTime:
-			nv = V(
+		case vars.Time:
+			nv = vars.V(
 				v.Variable.Name,
-				VarType(v.Variable.Type),
+				vars.Type(v.Variable.Type),
 				v.Variable.Value.Time)
 
 		}
 
 		nv.SetPrecision(v.Variable.Precision)
 
-		m.vList[nv.name] = MessageVariable{
+		m.vList[nv.Name()] = MessageVariable{
 			Variable: *nv,
 			optional: v.Optional,
 		}
@@ -208,30 +213,28 @@ func NewMessage(
 	}
 
 	for i, v := range vars {
-		v.name = strings.Trim(v.name, " ")
-		if len(v.name) == 0 {
+		if len(strings.Trim(v.Name(), " ")) == 0 {
 			return nil,
 				fmt.Errorf(
 					"trying create a message %s with non-named variable #%d",
 					mn, i)
 		}
 
-		if _, ok := vl[v.name]; ok {
+		if _, ok := vl[v.Name()]; ok {
 			return nil,
 				fmt.Errorf(
 					"variable %s already exists in the message %s",
-					v.name, mn)
+					v.Name(), mn)
 		}
 
-		vl[v.name] = v
+		vl[v.Name()] = v
 	}
 
 	return &Message{
 		FlowElement: FlowElement{
 			NamedElement: NamedElement{
-				BaseElement: BaseElement{
-					id: NewID()},
-				name: mn},
+				BaseElement: *base.New(identity.NewID()),
+				name:        mn},
 			elementType: EtMessage},
 		direction: dir,
 		vList:     vl}, nil

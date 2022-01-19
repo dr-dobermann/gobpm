@@ -1,16 +1,21 @@
 package model
 
-import "strings"
+import (
+	"strings"
+
+	mid "github.com/dr-dobermann/gobpm/internal/identity"
+	vars "github.com/dr-dobermann/gobpm/model/variables"
+)
 
 // StoreTask stores a bunch of variables into local VarStore of process instance
 type StoreTask struct {
 	Activity
-	Vars []Variable
+	Vars []vars.Variable
 }
 
-func NewStoreTask(p *Process, name string, vl ...Variable) *StoreTask {
+func NewStoreTask(p *Process, name string, vl ...vars.Variable) *StoreTask {
 
-	id := NewID()
+	id := mid.NewID()
 
 	name = strings.Trim(name, " ")
 	if name == "" {
@@ -18,7 +23,7 @@ func NewStoreTask(p *Process, name string, vl ...Variable) *StoreTask {
 	}
 
 	st := new(StoreTask)
-	st.id = id
+	st.SetNewID(id)
 	st.name = name
 	st.elementType = EtActivity
 	st.process = p
@@ -35,9 +40,9 @@ func (st *StoreTask) Copy(snapshot *Process) (TaskModel, error) {
 
 	*stc = *st
 	stc.process = snapshot
-	stc.id = NewID()
+	stc.SetNewID(mid.NewID())
 
-	stc.Vars = make([]Variable, len(st.Vars))
+	stc.Vars = make([]vars.Variable, len(st.Vars))
 	copy(stc.Vars, st.Vars)
 
 	return stc, nil

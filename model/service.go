@@ -1,21 +1,26 @@
 package model
 
-import "context"
+import (
+	"context"
+
+	mid "github.com/dr-dobermann/gobpm/internal/identity"
+	"github.com/dr-dobermann/gobpm/model/base"
+)
 
 type Executor interface {
 	Execute(ctx context.Context) Error
 }
 
 type Operation struct {
-	BaseElement
-	inMessageRef  Id
-	outMessageRef Id
-	errors        []Id
+	base.BaseElement
+	inMessageRef  mid.Id
+	outMessageRef mid.Id
+	errors        []mid.Id
 	impl          Executor
 }
 
 type Interface struct {
-	BaseElement
+	base.BaseElement
 	name              string
 	operations        []*Operation
 	callabeElements   []*CallableElement

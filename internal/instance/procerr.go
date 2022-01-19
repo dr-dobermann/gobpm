@@ -3,13 +3,13 @@ package instance
 import (
 	"fmt"
 
-	"github.com/dr-dobermann/gobpm/model"
+	mid "github.com/dr-dobermann/gobpm/internal/identity"
 )
 
 type ProcessExecutingError struct {
-	pID        model.Id
-	instanceID model.Id
-	trackID    model.Id
+	pID        mid.Id
+	instanceID mid.Id
+	trackID    mid.Id
 	Err        error
 	msg        string
 }

@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"strings"
 
+	mid "github.com/dr-dobermann/gobpm/internal/identity"
+	"github.com/dr-dobermann/gobpm/model/base"
+	expr "github.com/dr-dobermann/gobpm/model/expression"
 	"github.com/google/uuid"
 )
 
@@ -47,13 +50,13 @@ type Process struct {
 	// consist an ID of original process
 	// in case of its copying as snapshot
 	// it's empty for the real process
-	OriginID Id
+	OriginID mid.Id
 }
 
 // creates a new process
-func NewProcess(pid Id, nm string, ver string) *Process {
-	if pid == Id(uuid.Nil) {
-		pid = NewID()
+func NewProcess(pid mid.Id, nm string, ver string) *Process {
+	if pid == mid.Id(uuid.Nil) {
+		pid = mid.NewID()
 	}
 
 	nm = strings.Trim(nm, " ")
@@ -67,9 +70,8 @@ func NewProcess(pid Id, nm string, ver string) *Process {
 
 	return &Process{FlowElement: FlowElement{
 		NamedElement: NamedElement{
-			BaseElement: BaseElement{
-				id: pid},
-			name: nm},
+			BaseElement: *base.New(pid),
+			name:        nm},
 		elementType: EtProcess},
 		version:  ver,
 		tasks:    []TaskModel{},
@@ -114,7 +116,7 @@ func (p *Process) GetNodes(et FlowElementType) ([]Node, error) {
 
 	default:
 		return nil,
-			NewPMErr(p.id, nil, "wrong element type for node [%s]",
+			NewPMErr(p.ID(), nil, "wrong element type for node [%s]",
 				et.String())
 	}
 
@@ -145,7 +147,7 @@ func (p *Process) getGateways() []Node {
 // returns a task by its ID.
 //
 // if there is no such task, nil will be returned.
-func (p *Process) GetTask(tid Id) TaskModel {
+func (p *Process) GetTask(tid mid.Id) TaskModel {
 	for _, t := range p.tasks {
 		if t.ID() == tid {
 			return t
@@ -166,7 +168,7 @@ func (p *Process) GetMessage(mn string) (*Message, error) {
 
 	return nil,
 		NewPMErr(
-			p.id,
+			p.ID(),
 			nil, "couldn't find message '%s' in process",
 			mn)
 }
@@ -175,7 +177,7 @@ func (p *Process) GetMessage(mn string) (*Message, error) {
 // copy could not be made from a copy (snapshot) of the process.
 func (p Process) Copy() (*Process, error) {
 	if p.dataType == PdtSnapshot {
-		return nil, NewPMErr(p.id, nil, "couldn't make a copy of snapshot")
+		return nil, NewPMErr(p.ID(), nil, "couldn't make a copy of snapshot")
 	}
 
 	pc := Process{
@@ -200,13 +202,13 @@ func (p Process) Copy() (*Process, error) {
 	// process
 	nm, err := p.copyTasks(&pc)
 	if err != nil {
-		return nil, NewPMErr(p.id, err, "couldn't copy process tasks")
+		return nil, NewPMErr(p.ID(), err, "couldn't copy process tasks")
 	}
 
 	// get mapper for gateways
 	gm, err := p.copyGateways(&pc)
 	if err != nil {
-		return nil, NewPMErr(p.id, err, "couldn't copy process gateways")
+		return nil, NewPMErr(p.ID(), err, "couldn't copy process gateways")
 	}
 
 	// combine task's and gateway's mappers
@@ -216,19 +218,19 @@ func (p Process) Copy() (*Process, error) {
 
 	err = p.copyFlows(&pc, nm)
 	if err != nil {
-		return nil, NewPMErr(p.id, err, "snapshot node linking error")
+		return nil, NewPMErr(p.ID(), err, "snapshot node linking error")
 	}
 
 	pc.dataType = PdtSnapshot
-	pc.OriginID = p.id
+	pc.OriginID = p.ID()
 
 	return &pc, nil
 }
 
 // copy tasks from p to pc and creates mapping of p.tasks ot a pc.tasks for
 // future linking througt sequenceFlow
-func (p *Process) copyTasks(pc *Process) (map[Id]Node, error) {
-	tm := make(map[Id]Node)
+func (p *Process) copyTasks(pc *Process) (map[mid.Id]Node, error) {
+	tm := make(map[mid.Id]Node)
 
 	// copy tasks and place them on lanes
 	for _, ot := range p.tasks {
@@ -250,8 +252,8 @@ func (p *Process) copyTasks(pc *Process) (map[Id]Node, error) {
 
 // copies gateway to a new process and return gateway mapper of
 // old gateway id to a copied Node
-func (p *Process) copyGateways(pc *Process) (map[Id]Node, error) {
-	gm := make(map[Id]Node)
+func (p *Process) copyGateways(pc *Process) (map[mid.Id]Node, error) {
+	gm := make(map[mid.Id]Node)
 
 	// copy gateway and place them on lanes
 	for _, og := range p.gateways {
@@ -272,9 +274,9 @@ func (p *Process) copyGateways(pc *Process) (map[Id]Node, error) {
 }
 
 // copies flows in copied process based on old process flows and node mappers
-func (p *Process) copyFlows(pc *Process, nodeMapper map[Id]Node) error {
+func (p *Process) copyFlows(pc *Process, nodeMapper map[mid.Id]Node) error {
 	for _, of := range p.flows {
-		var e Expression
+		var e expr.Expression
 
 		if of.expr != nil {
 			e = of.expr.Copy()
@@ -284,7 +286,7 @@ func (p *Process) copyFlows(pc *Process, nodeMapper map[Id]Node) error {
 			nodeMapper[of.sourceRef.ID()],
 			nodeMapper[of.targetRef.ID()], e); err != nil {
 
-			return NewPMErr(p.id, err, "couldn't link nodes in snapshot")
+			return NewPMErr(p.ID(), err, "couldn't link nodes in snapshot")
 		}
 	}
 
@@ -300,20 +302,20 @@ func (p *Process) NewLane(nm string) error {
 	nm = strings.Trim(nm, " ")
 	if len(nm) > 0 {
 		if _, ok := p.lanes[nm]; ok {
-			return NewPMErr(p.id, nil,
+			return NewPMErr(p.ID(), nil,
 				"Lane '%s' already exists", nm)
 		}
 	}
 
 	l := new(Lane)
-	l.id = NewID()
+	l.SetNewID(mid.NewID())
 	l.name = nm
 	l.elementType = EtLane
 	l.process = p
 	l.nodes = make([]Node, 0)
 
 	if len(nm) == 0 {
-		l.name = "Lane " + l.id.String()
+		l.name = "Lane " + l.ID().String()
 	}
 
 	p.lanes[l.name] = l
@@ -342,11 +344,11 @@ func (p *Process) RemoveLane(ln string) error {
 
 	l, ok := p.lanes[ln]
 	if l == nil || !ok {
-		return NewPMErr(p.id, nil, "lane '%s' isn't found", ln)
+		return NewPMErr(p.ID(), nil, "lane '%s' isn't found", ln)
 	}
 
 	if len(p.lanes[ln].nodes) > 0 {
-		return NewPMErr(p.id, nil,
+		return NewPMErr(p.ID(), nil,
 			"couldn't remove non-empty lane '%s'", ln)
 	}
 
@@ -366,13 +368,13 @@ func (p *Process) AddMessage(msgName string,
 
 	msgName = strings.Trim(msgName, " ")
 	if len(msgName) == 0 {
-		return nil, NewPMErr(p.id, nil,
+		return nil, NewPMErr(p.ID(), nil,
 			"couldn't register meassage with an empty name")
 	}
 
 	for _, m := range p.messages {
 		if m.name == msgName {
-			return nil, NewPMErr(p.id, nil,
+			return nil, NewPMErr(p.ID(), nil,
 				"message '%s' already exists", msgName)
 		}
 	}
@@ -380,7 +382,7 @@ func (p *Process) AddMessage(msgName string,
 	msg, err := NewMessage(msgName, dir, vars...)
 	if err != nil {
 		return nil,
-			NewPMErr(p.id, err,
+			NewPMErr(p.ID(), err,
 				"couldn't register message '%s' to process", msgName)
 	}
 
@@ -398,22 +400,22 @@ func (p *Process) AddTask(t TaskModel, ln string) error {
 	}
 
 	if t == nil {
-		return NewPMErr(p.id, nil,
+		return NewPMErr(p.ID(), nil,
 			"сouldn't add nil task or task with an empty name")
 	}
 
 	l, ok := p.lanes[ln]
 	if !ok {
-		return NewPMErr(p.id, nil, "lane '%s' is not found", ln)
+		return NewPMErr(p.ID(), nil, "lane '%s' is not found", ln)
 	}
 
 	if n := p.getNamedNode(t.Name()); n != nil {
-		return NewPMErr(p.id, nil, "node named '%s'(%s) "+
+		return NewPMErr(p.ID(), nil, "node named '%s'(%s) "+
 			"already exists in the process", n.Name(), n.Type().String())
 	}
 
 	if err := t.Check(); err != nil {
-		return NewPMErr(p.id, err,
+		return NewPMErr(p.ID(), err,
 			"task %s doesn't pass self-check", t.Name())
 	}
 
@@ -429,16 +431,16 @@ func (p *Process) AddGateway(g GatewayModel, lane string) error {
 	}
 
 	if g == nil {
-		return NewPMErr(p.id, nil, "couldn't add nil gateway")
+		return NewPMErr(p.ID(), nil, "couldn't add nil gateway")
 	}
 
 	l, ok := p.lanes[lane]
 	if !ok {
-		return NewPMErr(p.id, nil, "lane %s is not found", lane)
+		return NewPMErr(p.ID(), nil, "lane %s is not found", lane)
 	}
 
 	if n := p.getNamedNode(g.Name()); n != nil {
-		return NewPMErr(p.id, nil, "node named '%s'(%s) "+
+		return NewPMErr(p.ID(), nil, "node named '%s'(%s) "+
 			"already exists in the process", n.Name(), n.Type().String())
 	}
 
@@ -451,41 +453,42 @@ func (p *Process) AddGateway(g GatewayModel, lane string) error {
 // links two Nodes by one SequenceFlow.
 //
 // expr added as Expression on SequenceFlow
-func (p *Process) LinkNodes(src Node, trg Node, expr Expression) error {
+func (p *Process) LinkNodes(
+	src Node,
+	trg Node,
+	expr expr.Expression) error {
+
 	if p.dataType == PdtSnapshot {
 		return ErrSnapshotChange
 	}
 
 	if src == nil || trg == nil {
-		return NewPMErr(p.id, nil,
+		return NewPMErr(p.ID(), nil,
 			"trying to link nil-nodes. src: %v, dest: %v", src, trg)
 	}
 
-	if src.ProcessID() != p.id ||
-		trg.ProcessID() != p.id {
-		return NewPMErr(p.id, nil,
+	if src.ProcessID() != p.ID() ||
+		trg.ProcessID() != p.ID() {
+		return NewPMErr(p.ID(), nil,
 			"nodes isnt't binded to process src.pID[%v], trg.pID[%v]",
 			src.ProcessID(), trg.ProcessID())
 	}
 
-	sf := &SequenceFlow{
-		FlowElement: FlowElement{
-			NamedElement: NamedElement{
-				BaseElement: BaseElement{
-					id: NewID()}}},
-		process:   p,
-		expr:      expr,
-		sourceRef: src,
-		targetRef: trg}
+	sf := new(SequenceFlow)
+	sf.SetNewID(mid.NewID())
+	sf.process = p
+	sf.expr = expr
+	sf.sourceRef = src
+	sf.targetRef = trg
 
 	if err := src.ConnectFlow(sf, SeSource); err != nil {
-		return NewPMErr(p.id, err,
+		return NewPMErr(p.ID(), err,
 			"couldn't connect sequence flow [%v] to node '%s' as source",
 			sf.ID(), src.Name())
 	}
 
 	if err := trg.ConnectFlow(sf, SeTarget); err != nil {
-		return NewPMErr(p.id, err,
+		return NewPMErr(p.ID(), err,
 			"couldn't connect sequence flow [%v] to node '%s' as target",
 			sf.ID(), trg.Name())
 	}
@@ -495,7 +498,7 @@ func (p *Process) LinkNodes(src Node, trg Node, expr Expression) error {
 	return nil
 }
 
-func (p *Process) LinkNamedNodes(src, dest string, expr Expression) error {
+func (p *Process) LinkNamedNodes(src, dest string, expr expr.Expression) error {
 	const notFound = "couldn't find node named '%s'"
 
 	srcN := p.getNamedNode(src)

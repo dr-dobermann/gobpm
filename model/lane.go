@@ -9,7 +9,7 @@ type Lane struct {
 func (l *Lane) addNode(n Node) error {
 	for _, ln := range l.nodes {
 		if ln.ID() == n.ID() {
-			return NewPMErr(l.process.id, nil,
+			return NewPMErr(l.process.ID(), nil,
 				"Node %s already exists on lane %s",
 				n.Name(), l.name)
 		}

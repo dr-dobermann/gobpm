@@ -1,6 +1,10 @@
 package model
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/dr-dobermann/gobpm/model/expression"
+)
 
 type GatewayModel interface {
 	Node
@@ -60,7 +64,7 @@ func (gt GatewayType) String() string {
 type Gateway struct {
 	FlowNode
 
-	expr      Expression
+	expr      expression.Expression
 	direction GatewayDirection
 	// used only by
 	flowType EventGatewayFlowType

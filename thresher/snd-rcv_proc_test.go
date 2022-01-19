@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	mid "github.com/dr-dobermann/gobpm/internal/identity"
+	vars "github.com/dr-dobermann/gobpm/model/variables"
+
 	"github.com/dr-dobermann/gobpm/model"
 	"github.com/dr-dobermann/gobpm/pkg/executor"
 	"github.com/dr-dobermann/srvbus"
@@ -22,7 +25,7 @@ var (
 
 func TestSelectorExecutor(t *testing.T) {
 	t.Run("SendTaskExecutor", func(t *testing.T) {
-		p := model.NewProcess(model.NewID(), "SendTask process test", "0.1.0")
+		p := model.NewProcess(mid.NewID(), "SendTask process test", "0.1.0")
 		std := model.NewSendTask(p, "Send X", "letter_X", test_queue)
 
 		ste, err := executor.GetTaskExecutor(std)
@@ -36,7 +39,7 @@ func TestSelectorExecutor(t *testing.T) {
 	})
 
 	t.Run("ReceiveTaskExecutor", func(t *testing.T) {
-		p := model.NewProcess(model.NewID(), "ReceiveTask process test", "0.1.0")
+		p := model.NewProcess(mid.NewID(), "ReceiveTask process test", "0.1.0")
 		rtd := model.NewReceiveTask(p, "Receive X", "letter_X", test_queue)
 
 		rte, err := executor.GetTaskExecutor(rtd)
@@ -101,10 +104,10 @@ func createReceivingInstance(
 
 	is := is.New(t)
 
-	p := model.NewProcess(model.EmptyID(), "Receiver", "0.1.0")
+	p := model.NewProcess(mid.EmptyID(), "Receiver", "0.1.0")
 	is.True(p != nil)
 
-	x := model.V("x", model.VtInt, 0)
+	x := vars.V("x", vars.Int, 0)
 
 	_, err := p.AddMessage(
 		"letter_X",
@@ -149,10 +152,10 @@ func createSendingInstance(
 
 	is := is.New(t)
 
-	p := model.NewProcess(model.EmptyID(), "Sender", "0.1.0")
+	p := model.NewProcess(mid.EmptyID(), "Sender", "0.1.0")
 	is.True(p != nil)
 
-	x := model.V("x", model.VtInt, 42)
+	x := vars.V("x", vars.Int, 42)
 
 	msgName := "letter_X"
 	_, err := p.AddMessage(

@@ -1,6 +1,10 @@
 package model
 
-import "strings"
+import (
+	"strings"
+
+	mid "github.com/dr-dobermann/gobpm/internal/identity"
+)
 
 type ReceiveTask struct {
 	Activity
@@ -31,7 +35,7 @@ func (rt *ReceiveTask) Check() error {
 }
 
 func NewReceiveTask(p *Process, name, msgName, qName string) *ReceiveTask {
-	id := NewID()
+	id := mid.NewID()
 
 	name = strings.Trim(name, " ")
 	if name == "" {
@@ -39,7 +43,7 @@ func NewReceiveTask(p *Process, name, msgName, qName string) *ReceiveTask {
 	}
 
 	rt := new(ReceiveTask)
-	rt.id = id
+	rt.SetNewID(id)
 	rt.name = name
 	rt.process = p
 	rt.elementType = EtActivity
@@ -55,7 +59,7 @@ func (rt *ReceiveTask) Copy(snapshot *Process) (TaskModel, error) {
 
 	*crt = *rt
 
-	crt.id = NewID()
+	crt.SetNewID(mid.NewID())
 	crt.process = snapshot
 
 	return crt, nil

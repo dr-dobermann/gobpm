@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/dr-dobermann/gobpm/internal/emitter"
 	"github.com/dr-dobermann/gobpm/internal/errs"
+	mid "github.com/dr-dobermann/gobpm/internal/identity"
 	"github.com/dr-dobermann/gobpm/model"
+	vars "github.com/dr-dobermann/gobpm/model/variables"
 	"github.com/dr-dobermann/gobpm/pkg/executor"
 	"github.com/dr-dobermann/srvbus"
+	"github.com/dr-dobermann/srvbus/es"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -46,15 +48,15 @@ type Instance struct {
 
 	sBus *srvbus.ServiceBus
 
-	id    model.Id
+	id    mid.Id
 	state InstanceState
 
 	// the copy of the process model the instance is based on
 	snapshot *model.Process
-	vs       *model.VarStore
+	vs       *vars.VarStore
 
 	// track holds the state for every single token path
-	tracks map[model.Id]*track
+	tracks map[mid.Id]*track
 	wg     sync.WaitGroup
 
 	//monitor *ctr.Monitor
@@ -69,12 +71,12 @@ type Instance struct {
 	// Queue name constructs as "MQ" + process_ID
 	mQueue string
 
-	Emitter emitter.EventEmitter
+	Emitter es.EventEmitter
 
-	gates map[model.Id]executor.GatewayExecutor
+	gates map[mid.Id]executor.GatewayExecutor
 }
 
-func (pi *Instance) ID() model.Id {
+func (pi *Instance) ID() mid.Id {
 	return pi.id
 }
 
@@ -95,7 +97,7 @@ func New(
 	p *model.Process,
 	sb *srvbus.ServiceBus,
 	log *zap.SugaredLogger,
-	ee emitter.EventEmitter) (*Instance, error) {
+	ee es.EventEmitter) (*Instance, error) {
 
 	sn, err := p.Copy()
 	if err != nil {
@@ -104,18 +106,18 @@ func New(
 				p.Name(), p.ID().String(), err)
 	}
 
-	iID := model.NewID()
+	iID := mid.NewID()
 	pi := Instance{
 		sBus:     sb,
 		id:       iID,
 		snapshot: sn,
-		vs:       model.NewVarStore(),
-		tracks:   make(map[model.Id]*track),
+		vs:       vars.NewVarStore(),
+		tracks:   make(map[mid.Id]*track),
 		wg:       sync.WaitGroup{},
 		log:      log.Named("INS:" + iID.GetLast(4)),
 		mQueue:   fmt.Sprintf("MQ%v", p.ID()),
 		Emitter:  ee,
-		gates:    make(map[model.Id]executor.GatewayExecutor)}
+		gates:    make(map[mid.Id]executor.GatewayExecutor)}
 
 	return &pi, nil
 }
@@ -125,7 +127,7 @@ func (pi *Instance) NewErr(err error, format string, params ...interface{}) erro
 	return ProcessExecutingError{
 		pID:        pi.id,
 		instanceID: pi.snapshot.ID(),
-		trackID:    model.Id(uuid.Nil),
+		trackID:    mid.Id(uuid.Nil),
 		Err:        err,
 		msg:        fmt.Sprintf(format, params...),
 	}
@@ -143,7 +145,7 @@ func (pi *Instance) prepare() error {
 	}
 
 	// clear tracks list
-	pi.tracks = make(map[model.Id]*track)
+	pi.tracks = make(map[mid.Id]*track)
 
 	for _, n := range nn {
 		// find tasks and events that

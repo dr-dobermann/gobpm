@@ -1,5 +1,7 @@
 package model
 
+import "github.com/dr-dobermann/gobpm/model/base"
+
 // type Import struct {
 // 	impType   string
 // 	location  string
@@ -7,7 +9,7 @@ package model
 // }
 
 type ItemDefinition struct {
-	BaseElement
+	base.BaseElement
 	itemKind  ItemKind
 	structure interface{}
 	//	importRef    *Import
@@ -49,7 +51,7 @@ type DataInput struct {
 }
 
 type InputSet struct {
-	BaseElement
+	base.BaseElement
 	name         string
 	dataInputRef *DataInput
 	diItems      []uint
@@ -70,14 +72,14 @@ type DataOutput struct {
 }
 
 type OutputSet struct {
-	BaseElement
+	base.BaseElement
 	name       string
 	dataOutRef *DataOutput
 	doItems    []uint
 }
 
 type InputOutputSpecification struct {
-	BaseElement
+	base.BaseElement
 	dataInputs []DataInput
 	dataOutput []DataOutput
 }

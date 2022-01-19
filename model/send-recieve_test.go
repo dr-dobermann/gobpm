@@ -4,6 +4,8 @@ import (
 	"os"
 	"testing"
 
+	mid "github.com/dr-dobermann/gobpm/internal/identity"
+	vars "github.com/dr-dobermann/gobpm/model/variables"
 	"github.com/matryer/is"
 )
 
@@ -30,9 +32,9 @@ func TestReceiveProcess(t *testing.T) {
 func getSendProcess(t *testing.T) *Process {
 	is := is.New(t)
 
-	p := NewProcess(NewID(), "Test Send Process", "0.1.0")
+	p := NewProcess(mid.NewID(), "Test Send Process", "0.1.0")
 
-	str := NewStoreTask(p, "Store X", *V("x", VtInt, 10))
+	str := NewStoreTask(p, "Store X", *vars.V("x", vars.Int, 10))
 	snd := NewSendTask(p, "Send X", "letter_X", test_queue)
 	if str == nil || snd == nil {
 		t.Error("Couldn't create store|send tasks")
@@ -45,7 +47,7 @@ func getSendProcess(t *testing.T) *Process {
 	}
 
 	if _, err := p.AddMessage("letter_X",
-		Outgoing, MessageVariable{*V("x", VtInt, 0), false}); err != nil {
+		Outgoing, MessageVariable{*vars.V("x", vars.Int, 0), false}); err != nil {
 		t.Error("Couldn't add outgoing message letter_X : ", err)
 		return nil
 	}
@@ -72,13 +74,13 @@ func getSendProcess(t *testing.T) *Process {
 		return nil
 	}
 
-	if vv[0].name != "x" {
-		t.Error("Invalid variable name", vv[0].name)
+	if vv[0].Name() != "x" {
+		t.Error("Invalid variable name", vv[0].Name())
 		return nil
 	}
 
 	if _, err := p.AddMessage("letter_Y",
-		Outgoing, MessageVariable{*V("y", VtInt, 0), true}); err != nil {
+		Outgoing, MessageVariable{*vars.V("y", vars.Int, 0), true}); err != nil {
 		t.Error("Couldn't add outgoing message letter_X : ", err)
 		return nil
 	}
@@ -115,10 +117,10 @@ func getSendProcess(t *testing.T) *Process {
 }
 
 func getRecieveProcess(t *testing.T) *Process {
-	p := NewProcess(NewID(), "Test Receive Process", "0.1.0")
+	p := NewProcess(mid.NewID(), "Test Receive Process", "0.1.0")
 
 	rcv := NewReceiveTask(p, "Receive X", "letter_X", test_queue)
-	out := NewOutputTask(p, "Print X", OutputDescr{nil, os.Stdout}, *V("x", VtInt, 0))
+	out := NewOutputTask(p, "Print X", OutputDescr{nil, os.Stdout}, *vars.V("x", vars.Int, 0))
 	if out == nil || rcv == nil {
 		t.Error("Couldn't create receive or output task")
 		return nil
@@ -130,7 +132,7 @@ func getRecieveProcess(t *testing.T) *Process {
 	}
 
 	if _, err := p.AddMessage("letter_X",
-		Bidirectional, MessageVariable{*V("x", VtInt, 0), false}); err != nil {
+		Bidirectional, MessageVariable{*vars.V("x", vars.Int, 0), false}); err != nil {
 
 		t.Error("Couldn't add message letter_X", err)
 		return nil

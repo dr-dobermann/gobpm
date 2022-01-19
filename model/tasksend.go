@@ -1,6 +1,11 @@
 package model
 
-import "strings"
+import (
+	"strings"
+
+	mid "github.com/dr-dobermann/gobpm/internal/identity"
+	"github.com/dr-dobermann/gobpm/model/base"
+)
 
 // SendTask represent the Task that sends the message outside the process.
 type SendTask struct {
@@ -32,7 +37,7 @@ func (st *SendTask) Check() error {
 }
 
 func NewSendTask(p *Process, name, msgName, qName string) *SendTask {
-	id := NewID()
+	id := mid.NewID()
 
 	name = strings.Trim(name, " ")
 	if name == "" {
@@ -51,9 +56,8 @@ func NewSendTask(p *Process, name, msgName, qName string) *SendTask {
 			FlowNode: FlowNode{
 				FlowElement: FlowElement{
 					NamedElement: NamedElement{
-						BaseElement: BaseElement{
-							id: id},
-						name: name},
+						BaseElement: *base.New(mid.NewID()),
+						name:        name},
 					elementType: EtActivity},
 				process: p},
 			aType: AtSendTask,
@@ -67,7 +71,7 @@ func (st *SendTask) Copy(snapshot *Process) (TaskModel, error) {
 
 	*cst = *st
 
-	cst.id = NewID()
+	cst.SetNewID(mid.NewID())
 	cst.process = snapshot
 
 	return cst, nil

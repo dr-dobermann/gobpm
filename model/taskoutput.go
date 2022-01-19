@@ -4,6 +4,9 @@ import (
 	"io"
 	"strings"
 	"sync"
+
+	mid "github.com/dr-dobermann/gobpm/internal/identity"
+	vars "github.com/dr-dobermann/gobpm/model/variables"
 )
 
 type OutputDescr struct {
@@ -15,16 +18,16 @@ type OutputTask struct {
 	Activity
 
 	Destination OutputDescr
-	Vars        []Variable
+	Vars        []vars.Variable
 }
 
 func NewOutputTask(
 	p *Process,
 	name string,
 	output OutputDescr,
-	vl ...Variable) *OutputTask {
+	vl ...vars.Variable) *OutputTask {
 
-	id := NewID()
+	id := mid.NewID()
 
 	name = strings.Trim(name, " ")
 	if name == "" {
@@ -33,7 +36,7 @@ func NewOutputTask(
 
 	ot := new(OutputTask)
 
-	ot.id = id
+	ot.SetNewID(id)
 	ot.name = name
 	ot.elementType = EtActivity
 	ot.process = p
@@ -52,9 +55,9 @@ func (ot *OutputTask) Copy(snapshot *Process) (TaskModel, error) {
 	*otc = *ot
 
 	otc.process = snapshot
-	otc.id = NewID()
+	otc.SetNewID(mid.NewID())
 
-	otc.Vars = make([]Variable, len(ot.Vars))
+	otc.Vars = make([]vars.Variable, len(ot.Vars))
 	copy(otc.Vars, ot.Vars)
 
 	return otc, nil
