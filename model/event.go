@@ -1,5 +1,9 @@
 package model
 
+import (
+	mid "github.com/dr-dobermann/gobpm/internal/identity"
+)
+
 type EventClass uint8
 
 const (
@@ -26,8 +30,9 @@ const (
 )
 
 type Event struct {
-	BaseElement
-	attachedTo   Id // 0 if not bounded (intermediate event)
+	FlowNode
+
+	attachedTo   mid.Id // 0 if not bounded (intermediate event)
 	interrupting bool
 	eType        EventClass
 	trigger      EventTrigger

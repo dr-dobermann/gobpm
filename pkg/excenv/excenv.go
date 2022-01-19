@@ -3,18 +3,20 @@
 package excenv
 
 import (
+	"github.com/dr-dobermann/gobpm/internal/identity"
 	"github.com/dr-dobermann/gobpm/model"
+	"github.com/dr-dobermann/gobpm/model/variables"
 	"github.com/dr-dobermann/srvbus"
 	"go.uber.org/zap"
 )
 
 type ExecutionEnvironment interface {
-	InstanceID() model.Id
+	InstanceID() identity.Id
 
 	// returns track logger
 	Logger() *zap.SugaredLogger
 	Snapshot() *model.Process
-	VStore() *model.VarStore
+	VStore() *variables.VarStore
 	SrvBus() *srvbus.ServiceBus
 
 	// returns a given queue name or

@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/dr-dobermann/gobpm/model"
+	"github.com/dr-dobermann/gobpm/model/variables"
 	"github.com/dr-dobermann/gobpm/pkg/excenv"
 	"github.com/dr-dobermann/srvbus/ms"
 	"github.com/google/uuid"
@@ -82,7 +83,7 @@ func (ste *SendTaskExecutor) composeMessage() (*model.Message, error) {
 						mv.Name(), err)
 			}
 			// create an optional variable
-			v = model.V(mv.Name(), mv.Type(), mv.Value())
+			v = variables.V(mv.Name(), mv.Type(), mv.Value())
 		}
 		vl = append(vl, *model.NewMVar(v, mv.IsOptional()))
 	}

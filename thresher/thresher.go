@@ -17,6 +17,7 @@ import (
 	"sync"
 
 	"github.com/dr-dobermann/gobpm/internal/errs"
+	mid "github.com/dr-dobermann/gobpm/internal/identity"
 	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/model"
 	"github.com/dr-dobermann/srvbus"
@@ -40,8 +41,8 @@ const (
 type Thresher struct {
 	sync.Mutex
 
-	id        model.Id
-	instances map[model.Id]*instance.Instance
+	id        mid.Id
+	instances map[mid.Id]*instance.Instance
 	ctx       context.Context
 
 	log *zap.SugaredLogger
@@ -118,10 +119,10 @@ func New(sb *srvbus.ServiceBus, log *zap.SugaredLogger) (*Thresher, error) {
 		}
 	}
 
-	id := model.NewID()
+	id := mid.NewID()
 	thresher := &Thresher{
 		id:        id,
-		instances: make(map[model.Id]*instance.Instance),
+		instances: make(map[mid.Id]*instance.Instance),
 		log:       log.Named("THR [" + id.String() + "]"),
 		sBus:      sb,
 	}
@@ -131,15 +132,15 @@ func New(sb *srvbus.ServiceBus, log *zap.SugaredLogger) (*Thresher, error) {
 
 // create a new instance of the process and register it in the thresher.
 func (thr *Thresher) NewInstance(
-	p *model.Process) (model.Id, error) {
+	p *model.Process) (mid.Id, error) {
 
 	if !thr.IsRunned() {
-		return model.EmptyID(), errs.ErrNotRunned
+		return mid.EmptyID(), errs.ErrNotRunned
 	}
 
 	pi, err := instance.New(p, thr.sBus, thr.log, thr)
 	if err != nil {
-		return model.EmptyID(),
+		return mid.EmptyID(),
 			fmt.Errorf("couldn't create instance for process '%s'[%v]: %v",
 				p.Name(), p.ID(), err)
 	}

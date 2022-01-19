@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dr-dobermann/gobpm/model"
+	mid "github.com/dr-dobermann/gobpm/internal/identity"
 	"github.com/matryer/is"
 )
 
@@ -14,11 +14,11 @@ func TestNewToken(t *testing.T) {
 	// dummy instance
 	inst := new(Instance)
 
-	tk := newToken(model.EmptyID(), inst)
+	tk := newToken(mid.EmptyID(), inst)
 	is.True(tk != nil)
-	is.True(tk.id != model.EmptyID())
+	is.True(tk.id != mid.EmptyID())
 
-	id := model.NewID()
+	id := mid.NewID()
 	tk = newToken(id, inst)
 	is.True(tk != nil)
 	is.True(tk.id == id)
@@ -33,7 +33,7 @@ func TestSplitToken(t *testing.T) {
 	// dummy instance
 	inst := new(Instance)
 
-	tk := newToken(model.EmptyID(), inst)
+	tk := newToken(mid.EmptyID(), inst)
 	is.True(tk != nil)
 
 	// invalid new statused
@@ -63,7 +63,7 @@ func TestTokenState(t *testing.T) {
 	// dummy instance
 	inst := new(Instance)
 
-	tk := newToken(model.EmptyID(), inst)
+	tk := newToken(mid.EmptyID(), inst)
 	is.True(tk != nil)
 
 	is.True(tk.updateState(WaitForTrigger))  // Alive -> WaitForTrigger
@@ -76,7 +76,7 @@ func TestTokenState(t *testing.T) {
 	// check token status updater
 	chSt := make(chan tokenUpdateInfo)
 
-	newTk := newToken(model.EmptyID(), inst)
+	newTk := newToken(mid.EmptyID(), inst)
 	newTk.setStatusUpdater(chSt)
 	is.True(newTk.updateState(WaitForTrigger))
 	update := <-chSt
@@ -90,7 +90,7 @@ func TestTokenJoin(t *testing.T) {
 	// dummy instance
 	inst := new(Instance)
 
-	newTks := newToken(model.EmptyID(), inst).split(2, Alive)
+	newTks := newToken(mid.EmptyID(), inst).split(2, Alive)
 	is.True(newTks != nil)
 	is.True(len(newTks) == 2)
 
@@ -112,10 +112,10 @@ func TestTokenGroup(t *testing.T) {
 	inst := new(Instance)
 
 	// testing exclusive tokenGroup
-	tks := newToken(model.EmptyID(), inst).split(3, WaitForTrigger)
+	tks := newToken(mid.EmptyID(), inst).split(3, WaitForTrigger)
 	is.True(len(tks) == 3)
 
-	tg := newTokenGroup(model.EmptyID(), inst, Exclusive, tks...)
+	tg := newTokenGroup(mid.EmptyID(), inst, Exclusive, tks...)
 	is.True(tg != nil)
 	is.True(len(tg.tokens) == 3)
 

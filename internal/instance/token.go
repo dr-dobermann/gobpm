@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/dr-dobermann/gobpm/model"
+	mid "github.com/dr-dobermann/gobpm/internal/identity"
 )
 
 type TokenHandler interface {
@@ -33,13 +33,13 @@ func (ts tokenState) String() string {
 }
 
 type tokenUpdateInfo struct {
-	tokenID  model.Id
+	tokenID  mid.Id
 	oldState tokenState
 	newState tokenState
 }
 
 type Token struct {
-	id    model.Id
+	id    mid.Id
 	inst  *Instance
 	state tokenState
 	prevs []*Token
@@ -52,13 +52,13 @@ type Token struct {
 }
 
 // creates a new token for the instance.
-func newToken(tID model.Id, inst *Instance) *Token {
+func newToken(tID mid.Id, inst *Instance) *Token {
 	if inst == nil {
 		return nil
 	}
 
-	if tID == model.EmptyID() {
-		tID = model.NewID()
+	if tID == mid.EmptyID() {
+		tID = mid.NewID()
 	}
 
 	return &Token{id: tID, inst: inst}
@@ -146,7 +146,7 @@ func (t *Token) split(n int, newState tokenState) []*Token {
 
 	for i := 0; i < n; i++ {
 		nt := &Token{
-			id:    model.NewID(),
+			id:    mid.NewID(),
 			inst:  t.inst,
 			state: newState,
 			prevs: append([]*Token{}, t)}
@@ -199,14 +199,14 @@ const (
 type tokenGroup struct {
 	sync.Mutex
 
-	id     model.Id
+	id     mid.Id
 	gType  groupType
 	tokens []*Token
 	inst   *Instance
 }
 
 func newTokenGroup(
-	id model.Id,
+	id mid.Id,
 	inst *Instance,
 	gType groupType,
 	tt ...*Token) *tokenGroup {
@@ -215,8 +215,8 @@ func newTokenGroup(
 		return nil
 	}
 
-	if id == model.EmptyID() {
-		id = model.NewID()
+	if id == mid.EmptyID() {
+		id = mid.NewID()
 	}
 
 	tg := &tokenGroup{

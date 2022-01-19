@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	mid "github.com/dr-dobermann/gobpm/internal/identity"
 	"github.com/dr-dobermann/gobpm/model"
 	"github.com/dr-dobermann/gobpm/pkg/executor"
 	"go.uber.org/zap"
@@ -75,7 +76,7 @@ type stepInfo struct {
 // Every task with no incoming flow or intermediate event starts a new track.
 // if track splits, the new track(s) will be started
 type track struct {
-	id       model.Id
+	id       mid.Id
 	instance *Instance
 	state    trackState
 	prev     []*track
@@ -108,10 +109,10 @@ func newTrack(
 	}
 
 	if tk == nil {
-		tk = newToken(model.EmptyID(), inst)
+		tk = newToken(mid.EmptyID(), inst)
 	}
 
-	trID := model.NewID()
+	trID := mid.NewID()
 	t := &track{
 		id:       trID,
 		instance: inst,

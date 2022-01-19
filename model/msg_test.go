@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	mid "github.com/dr-dobermann/gobpm/internal/identity"
+	vars "github.com/dr-dobermann/gobpm/model/variables"
 	"github.com/matryer/is"
 )
 
@@ -15,7 +17,7 @@ func TestMessage(t *testing.T) {
 		err error
 	)
 
-	p := NewProcess(NewID(), "test_process", "v0.1.0")
+	p := NewProcess(mid.NewID(), "test_process", "v0.1.0")
 	if p == nil {
 		panic("couldn't create a proccess")
 	}
@@ -24,8 +26,8 @@ func TestMessage(t *testing.T) {
 	m, err = p.AddMessage(mn,
 		Incoming,
 		[]MessageVariable{
-			{*V("x", VtInt, nil), false},
-			{*V("y", VtInt, nil), false},
+			{*vars.V("x", vars.Int, nil), false},
+			{*vars.V("y", vars.Int, nil), false},
 		}...)
 
 	if m == nil || err != nil {
@@ -63,8 +65,8 @@ func TestMessage(t *testing.T) {
 	if _, err := p.AddMessage("duplicate_variables",
 		Incoming,
 		[]MessageVariable{
-			{*V("x", VtInt, nil), false},
-			{*V("x", VtInt, nil), false},
+			{*vars.V("x", vars.Int, nil), false},
+			{*vars.V("x", vars.Int, nil), false},
 		}...); err == nil {
 
 		t.Error("Added message with duplicate by name variables")
@@ -74,8 +76,8 @@ func TestMessage(t *testing.T) {
 	if _, err := p.AddMessage("msg_with_empty_var_name",
 		Incoming,
 		[]MessageVariable{
-			{*V("x", VtInt, nil), false},
-			{*V("", VtInt, nil), false},
+			{*vars.V("x", vars.Int, nil), false},
+			{*vars.V("", vars.Int, nil), false},
 		}...); err == nil {
 
 		t.Error("Added message with an empty variable name")
@@ -89,22 +91,22 @@ func TestMsgMarshalling(t *testing.T) {
 	bd, err := time.Parse(time.RFC3339, "1973-02-23T05:15:00+06:00")
 	is.NoErr(err)
 
-	testVars := map[string]*Variable{
-		"iVar": V("iVar", VtInt, 10),
-		"bVar": V("bVar", VtBool, true),
-		"sVar": V("sVar", VtString, "Hello Dober!"),
-		"fVar": V("fVar", VtFloat, 48.9),
-		"tVal": V("tVal", VtTime, bd)}
+	testVars := map[string]*vars.Variable{
+		"iVar": vars.V("iVar", vars.Int, 10),
+		"bVar": vars.V("bVar", vars.Bool, true),
+		"sVar": vars.V("sVar", vars.String, "Hello Dober!"),
+		"fVar": vars.V("fVar", vars.Float, 48.9),
+		"tVal": vars.V("tVal", vars.Time, bd)}
 
 	msg := new(Message)
 	msg.name = "TestVar"
 	msg.elementType = EtMessage
-	msg.id = NewID()
+	msg.SetNewID(mid.NewID())
 	msg.direction = Outgoing
 	msg.vList = make(map[string]MessageVariable)
 
 	for _, v := range testVars {
-		msg.vList[v.name] = MessageVariable{
+		msg.vList[v.Name()] = MessageVariable{
 			Variable: *v,
 			optional: false,
 		}
@@ -133,11 +135,11 @@ func TestMsgMarshalling(t *testing.T) {
 			t.Fatalf("variable %s is not found\n", mn)
 		}
 
-		if mv.Variable.i != tv.i ||
-			mv.Variable.b != tv.b ||
-			mv.Variable.s != tv.s ||
-			mv.Variable.f != tv.f ||
-			!mv.Variable.t.Equal(tv.t) {
+		if mv.Variable.I != tv.I ||
+			mv.Variable.B != tv.B ||
+			mv.Variable.S != tv.S ||
+			mv.Variable.F != tv.F ||
+			!mv.Variable.T.Equal(tv.T) {
 
 			t.Fatalf("vairable %s has different values: want %v\n, got %v\n",
 				mn, tv, mv)

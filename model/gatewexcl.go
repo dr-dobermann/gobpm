@@ -1,6 +1,11 @@
 package model
 
-import "strings"
+import (
+	"strings"
+
+	mid "github.com/dr-dobermann/gobpm/internal/identity"
+	"github.com/dr-dobermann/gobpm/model/expression"
+)
 
 type ExclusiveGateway struct {
 	Gateway
@@ -10,13 +15,13 @@ func NewExclusiveGateway(
 	p *Process,
 	name string,
 	dir GatewayDirection,
-	expr Expression) *ExclusiveGateway {
+	expr expression.Expression) *ExclusiveGateway {
 
 	if p == nil {
 		return nil
 	}
 
-	id := NewID()
+	id := mid.NewID()
 	name = strings.Trim(name, " ")
 	if name == "" {
 		name = Exclusive.String() + " #" + id.String()
@@ -24,7 +29,7 @@ func NewExclusiveGateway(
 
 	eg := new(ExclusiveGateway)
 
-	eg.id = id
+	eg.SetNewID(id)
 	eg.name = name
 	eg.expr = expr
 	eg.elementType = EtGateway
@@ -45,7 +50,7 @@ func (eg *ExclusiveGateway) Copy(snapshot *Process) (GatewayModel, error) {
 	*egc = *eg
 
 	egc.process = snapshot
-	egc.id = NewID()
+	egc.SetNewID(mid.NewID())
 
 	return egc, nil
 }

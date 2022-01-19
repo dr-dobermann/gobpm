@@ -3,7 +3,7 @@ module github.com/dr-dobermann/gobpm
 go 1.17
 
 require (
-	github.com/dr-dobermann/srvbus v0.4.2
+	github.com/dr-dobermann/srvbus v0.5.0-prerelease
 	github.com/google/uuid v1.3.0
 	github.com/matryer/is v1.4.0
 	go.uber.org/zap v1.19.1

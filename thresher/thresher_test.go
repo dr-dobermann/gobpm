@@ -7,6 +7,9 @@ import (
 	"sync"
 	"testing"
 
+	mid "github.com/dr-dobermann/gobpm/internal/identity"
+	vars "github.com/dr-dobermann/gobpm/model/variables"
+
 	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/model"
 	"github.com/dr-dobermann/srvbus"
@@ -122,12 +125,12 @@ func getTestInstance(
 //
 func getTestProcess(t *testing.T, buf *model.OutputDescr) *model.Process {
 
-	p := model.NewProcess(model.Id(uuid.Nil), "Test Process", "0.1.0")
+	p := model.NewProcess(mid.EmptyID(), "Test Process", "0.1.0")
 
-	t1 := model.NewStoreTask(p, "Store Task", *model.V("x", model.VtInt, 2))
+	t1 := model.NewStoreTask(p, "Store Task", *vars.V("x", vars.Int, 2))
 
 	t2 := model.NewOutputTask(p, "Output Task",
-		model.OutputDescr{nil, os.Stdout}, *model.V("x", model.VtInt, 0))
+		model.OutputDescr{nil, os.Stdout}, *vars.V("x", vars.Int, 0))
 
 	if t1 == nil || t2 == nil {
 		t.Fatal("Couldn't create tasks for test process")
@@ -151,7 +154,7 @@ func getTestProcess(t *testing.T, buf *model.OutputDescr) *model.Process {
 
 	if buf != nil {
 		t3 := model.NewOutputTask(p, "Check Task",
-			*buf, *model.V("x", model.VtInt, 0))
+			*buf, *vars.V("x", vars.Int, 0))
 
 		if err := p.AddTask(t3, "Lane 1"); err != nil {
 			t.Fatal("Couldn't add Task 3 on Lane 1 : ", err)

@@ -5,17 +5,18 @@ import (
 	"os"
 	"testing"
 
-	"github.com/google/uuid"
+	mid "github.com/dr-dobermann/gobpm/internal/identity"
+	vars "github.com/dr-dobermann/gobpm/model/variables"
 	"github.com/matryer/is"
 )
 
 func TestProcessCreation(t *testing.T) {
-	id := uuid.New()
+	id := mid.NewID()
 	nm := "Testing process"
 	ver := "0.1.0"
-	p := NewProcess(Id(id), nm, ver)
+	p := NewProcess(id, nm, ver)
 
-	if p.ID() != Id(id) {
+	if p.ID() != id {
 		t.Errorf("Invalid process id: got %v, expected %v", p.ID(), id)
 	}
 
@@ -27,9 +28,9 @@ func TestProcessCreation(t *testing.T) {
 		t.Errorf("Invalid process version: got %v, expected %v", p.Version(), ver)
 	}
 
-	p = NewProcess(Id(uuid.Nil), "", "")
+	p = NewProcess(mid.EmptyID(), "", "")
 
-	if p.ID() == Id(uuid.Nil) {
+	if p.ID() == mid.EmptyID() {
 		t.Error("Invalid process id autogeneration")
 	}
 
@@ -43,13 +44,13 @@ func TestProcessCreation(t *testing.T) {
 }
 
 func TestProcessModelError(t *testing.T) {
-	err := NewPMErr(Id(uuid.Nil), nil, "test %s", "error")
+	err := NewPMErr(mid.EmptyID(), nil, "test %s", "error")
 	_, ok := err.(ProcessModelError)
 	if !ok {
 		t.Errorf("NewPMErr doesnt't create and ProcessModelError. Got %T", err)
 	}
 
-	id := Id(uuid.New())
+	id := mid.NewID()
 	err = NewPMErr(id, fmt.Errorf("test"), "test")
 
 	want := "ERR: PRC[" + id.String() + "] test: test"
@@ -61,7 +62,7 @@ func TestProcessModelError(t *testing.T) {
 }
 
 func TestProcessLanes(t *testing.T) {
-	p := NewProcess(Id(uuid.New()), "Testing process", "0.1.0")
+	p := NewProcess(mid.NewID(), "Testing process", "0.1.0")
 
 	var err error
 
@@ -127,10 +128,10 @@ func TestProcessLanes(t *testing.T) {
 func TestNodes(t *testing.T) {
 	is := is.New(t)
 
-	p := NewProcess(Id(uuid.Nil), "test", "0.1.0")
+	p := NewProcess(mid.EmptyID(), "test", "0.1.0")
 
 	tn1 := "Task1"
-	t1 := NewStoreTask(p, tn1, *V("x", VtInt, nil))
+	t1 := NewStoreTask(p, tn1, *vars.V("x", vars.Int, nil))
 
 	ln := "Lane 1"
 	err := p.NewLane(ln)
@@ -148,7 +149,7 @@ func TestNodes(t *testing.T) {
 	}
 
 	if len(p.lanes[ln].nodes) == 0 ||
-		p.lanes[ln].nodes[0].ID() != t1.id {
+		p.lanes[ln].nodes[0].ID() != t1.ID() {
 		t.Error("task washn't added to lane " + ln)
 	}
 
@@ -176,7 +177,7 @@ func TestNodes(t *testing.T) {
 	}
 
 	tn2 := "Task2"
-	t2 := NewOutputTask(p, tn2, OutputDescr{nil, os.Stdout}, *V("x", VtInt, nil))
+	t2 := NewOutputTask(p, tn2, OutputDescr{nil, os.Stdout}, *vars.V("x", vars.Int, nil))
 
 	err = p.AddTask(t2, ln)
 	if err != nil {
@@ -199,8 +200,8 @@ func TestNodes(t *testing.T) {
 
 	is.True(len(t1.outcoming) > 0 && len(t2.incoming) > 0)
 
-	if t1.outcoming[0].id != p.flows[0].id ||
-		t2.incoming[0].id != p.flows[0].id {
+	if t1.outcoming[0].ID() != p.flows[0].ID() ||
+		t2.incoming[0].ID() != p.flows[0].ID() {
 		t.Error("invalid flow between t1 and t2")
 	}
 }
@@ -262,10 +263,10 @@ func TestProcessSnapshot(t *testing.T) {
 }
 
 func createTestProcess(t *testing.T) *Process {
-	p := NewProcess(Id(uuid.Nil), "test", "0.1.0")
+	p := NewProcess(mid.EmptyID(), "test", "0.1.0")
 
-	t1 := NewStoreTask(p, "Task 1", *V("x", VtInt, 2))
-	t2 := NewOutputTask(p, "Task 2", OutputDescr{nil, os.Stdout}, *V("x", VtInt, 0))
+	t1 := NewStoreTask(p, "Task 1", *vars.V("x", vars.Int, 2))
+	t2 := NewOutputTask(p, "Task 2", OutputDescr{nil, os.Stdout}, *vars.V("x", vars.Int, 0))
 	if t1 == nil || t2 == nil {
 		t.Fatal("couldn't create tasks for test process")
 	}

@@ -3,6 +3,7 @@ package model
 import (
 	"testing"
 
+	"github.com/dr-dobermann/gobpm/internal/identity"
 	"github.com/matryer/is"
 )
 
@@ -32,7 +33,7 @@ func TestGatewayModel(t *testing.T) {
 	}
 
 	// dummy process
-	p := NewProcess(NewID(), "GTestPrcs", "")
+	p := NewProcess(identity.NewID(), "GTestPrcs", "")
 
 	// dummy empty process copy
 	cp, err := p.Copy()

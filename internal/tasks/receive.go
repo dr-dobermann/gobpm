@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/dr-dobermann/gobpm/model"
+	"github.com/dr-dobermann/gobpm/model/variables"
 	"github.com/dr-dobermann/gobpm/pkg/excenv"
 	"github.com/dr-dobermann/srvbus/es"
 	"github.com/dr-dobermann/srvbus/ms"
@@ -263,19 +264,19 @@ func (rte *ReceiveTaskExecutor) saveMsgVars(
 		}
 
 		switch mv.Type() {
-		case model.VtInt:
+		case variables.Int:
 			_, err = rte.exEnv.VStore().NewInt(v.Name(), mv.Int())
 
-		case model.VtBool:
+		case variables.Bool:
 			_, err = rte.exEnv.VStore().NewBool(v.Name(), mv.Bool())
 
-		case model.VtString:
+		case variables.String:
 			_, err = rte.exEnv.VStore().NewString(v.Name(), mv.StrVal())
 
-		case model.VtFloat:
+		case variables.Float:
 			_, err = rte.exEnv.VStore().NewFloat(v.Name(), mv.Float64())
 
-		case model.VtTime:
+		case variables.Time:
 			_, err = rte.exEnv.VStore().NewTime(v.Name(), mv.Time())
 		}
 

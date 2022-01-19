@@ -1,5 +1,10 @@
 package model
 
+import (
+	mid "github.com/dr-dobermann/gobpm/internal/identity"
+	"github.com/dr-dobermann/gobpm/model/base"
+)
+
 type ActivityClass uint8
 
 const (
@@ -17,13 +22,13 @@ const (
 // }
 
 type ParameterBinding struct {
-	BaseElement
+	base.BaseElement
 	//parRef Id
 	//expr   *Expression
 }
 
 type ResourceRole struct {
-	BaseElement
+	base.BaseElement
 	//assignExpr *Expression // should return Users or Groups resources
 	//bindings   []*ParameterBinding
 }
@@ -99,7 +104,7 @@ func (a Activity) TaskType() ActivityType {
 	return a.aType
 }
 
-func (a Activity) DefaultFlowId() Id {
+func (a Activity) DefaultFlowId() mid.Id {
 	return a.defaultFlowID
 }
 
@@ -115,7 +120,7 @@ type TaskModel interface {
 	// returns task type
 	TaskType() ActivityType
 
-	DefaultFlowId() Id
+	DefaultFlowId() mid.Id
 
 	// Copy returns a copy of the Task with a new Id
 	// To prevent errors of duplication flows
