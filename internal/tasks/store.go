@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/dr-dobermann/gobpm/model"
-	"github.com/dr-dobermann/gobpm/pkg/excenv"
+	"github.com/dr-dobermann/gobpm/thresher/excenv"
 	"go.uber.org/zap"
 )
 

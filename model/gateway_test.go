@@ -3,7 +3,7 @@ package model
 import (
 	"testing"
 
-	"github.com/dr-dobermann/gobpm/internal/identity"
+	"github.com/dr-dobermann/gobpm/pkg/identity"
 	"github.com/matryer/is"
 )
 

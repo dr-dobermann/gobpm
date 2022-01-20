@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dr-dobermann/gobpm/internal/identity"
-	mid "github.com/dr-dobermann/gobpm/internal/identity"
 	"github.com/dr-dobermann/gobpm/internal/msgmarsh"
 	"github.com/dr-dobermann/gobpm/model/base"
-	vars "github.com/dr-dobermann/gobpm/model/variables"
+	"github.com/dr-dobermann/gobpm/pkg/identity"
+	mid "github.com/dr-dobermann/gobpm/pkg/identity"
+	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 	"github.com/google/uuid"
 )
 

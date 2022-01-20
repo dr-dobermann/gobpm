@@ -1,6 +1,6 @@
 package model
 
-import "github.com/dr-dobermann/gobpm/model/expression"
+import "github.com/dr-dobermann/gobpm/pkg/expression"
 
 type SequenceEnd uint8
 

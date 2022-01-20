@@ -3,7 +3,7 @@ package instance
 import (
 	"fmt"
 
-	mid "github.com/dr-dobermann/gobpm/internal/identity"
+	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 )
 
 type ProcessExecutingError struct {

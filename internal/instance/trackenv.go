@@ -3,10 +3,10 @@ package instance
 import (
 	"strings"
 
-	"github.com/dr-dobermann/gobpm/internal/identity"
 	"github.com/dr-dobermann/gobpm/model"
-	"github.com/dr-dobermann/gobpm/model/variables"
-	"github.com/dr-dobermann/gobpm/pkg/executor"
+	"github.com/dr-dobermann/gobpm/pkg/identity"
+	"github.com/dr-dobermann/gobpm/pkg/variables"
+	"github.com/dr-dobermann/gobpm/thresher/executor"
 	"github.com/dr-dobermann/srvbus"
 	"go.uber.org/zap"
 )

@@ -5,24 +5,22 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/internal/errs"
+	"github.com/dr-dobermann/gobpm/pkg/expression"
 )
 
 const (
 	gepLanguage = "GEP"
 )
 
+func 
 // GEP -- GoBPM Expression Processor.
 //
 // GEP implements internal GoBPM Expression functionality for
 //
 type GEP struct {
-	ExpressionBase
+	expression.FormalExpression
 
-	vs         *VarStore
-	calculated bool
-
-	// every step generated result
-	result []Variable
+	operations []Operation
 }
 
 func NewGEP(vs *VarStore) *GEP {

@@ -3,8 +3,8 @@ package model
 import (
 	"strings"
 
-	mid "github.com/dr-dobermann/gobpm/internal/identity"
-	"github.com/dr-dobermann/gobpm/model/expression"
+	"github.com/dr-dobermann/gobpm/pkg/expression"
+	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 )
 
 type ExclusiveGateway struct {

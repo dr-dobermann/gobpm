@@ -3,7 +3,7 @@ package model
 import (
 	"fmt"
 
-	"github.com/dr-dobermann/gobpm/internal/identity"
+	"github.com/dr-dobermann/gobpm/pkg/identity"
 )
 
 // process model error to keep context of the

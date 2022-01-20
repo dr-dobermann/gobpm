@@ -5,7 +5,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/internal/errs"
 	"github.com/dr-dobermann/gobpm/model"
-	"github.com/dr-dobermann/gobpm/pkg/excenv"
+	"github.com/dr-dobermann/gobpm/thresher/excenv"
 )
 
 type ExclusiveGatewayExecutor struct {

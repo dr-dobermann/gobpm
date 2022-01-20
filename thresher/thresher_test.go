@@ -7,8 +7,8 @@ import (
 	"sync"
 	"testing"
 
-	mid "github.com/dr-dobermann/gobpm/internal/identity"
-	vars "github.com/dr-dobermann/gobpm/model/variables"
+	mid "github.com/dr-dobermann/gobpm/pkg/identity"
+	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 
 	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/model"

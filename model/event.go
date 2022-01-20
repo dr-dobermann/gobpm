@@ -1,7 +1,7 @@
 package model
 
 import (
-	mid "github.com/dr-dobermann/gobpm/internal/identity"
+	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 )
 
 type EventClass uint8

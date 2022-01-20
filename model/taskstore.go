@@ -3,8 +3,8 @@ package model
 import (
 	"strings"
 
-	mid "github.com/dr-dobermann/gobpm/internal/identity"
-	vars "github.com/dr-dobermann/gobpm/model/variables"
+	mid "github.com/dr-dobermann/gobpm/pkg/identity"
+	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 )
 
 // StoreTask stores a bunch of variables into local VarStore of process instance

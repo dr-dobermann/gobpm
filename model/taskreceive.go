@@ -3,7 +3,7 @@ package model
 import (
 	"strings"
 
-	mid "github.com/dr-dobermann/gobpm/internal/identity"
+	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 )
 
 type ReceiveTask struct {

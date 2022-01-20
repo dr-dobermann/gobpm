@@ -1,8 +1,8 @@
 package model
 
 import (
-	mid "github.com/dr-dobermann/gobpm/internal/identity"
 	"github.com/dr-dobermann/gobpm/model/base"
+	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 )
 
 type ActivityClass uint8

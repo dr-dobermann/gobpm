@@ -3,7 +3,7 @@ package model
 import (
 	"fmt"
 
-	"github.com/dr-dobermann/gobpm/model/expression"
+	"github.com/dr-dobermann/gobpm/pkg/expression"
 )
 
 type GatewayModel interface {

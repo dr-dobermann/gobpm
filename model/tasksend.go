@@ -3,8 +3,8 @@ package model
 import (
 	"strings"
 
-	mid "github.com/dr-dobermann/gobpm/internal/identity"
 	"github.com/dr-dobermann/gobpm/model/base"
+	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 )
 
 // SendTask represent the Task that sends the message outside the process.

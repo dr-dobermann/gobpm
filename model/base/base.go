@@ -1,6 +1,6 @@
 package base
 
-import mid "github.com/dr-dobermann/gobpm/internal/identity"
+import mid "github.com/dr-dobermann/gobpm/pkg/identity"
 
 type Documentation struct {
 	Text   []byte

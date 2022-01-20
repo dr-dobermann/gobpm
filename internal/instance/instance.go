@@ -7,10 +7,10 @@ import (
 	"sync"
 
 	"github.com/dr-dobermann/gobpm/internal/errs"
-	mid "github.com/dr-dobermann/gobpm/internal/identity"
 	"github.com/dr-dobermann/gobpm/model"
-	vars "github.com/dr-dobermann/gobpm/model/variables"
-	"github.com/dr-dobermann/gobpm/pkg/executor"
+	mid "github.com/dr-dobermann/gobpm/pkg/identity"
+	vars "github.com/dr-dobermann/gobpm/pkg/variables"
+	"github.com/dr-dobermann/gobpm/thresher/executor"
 	"github.com/dr-dobermann/srvbus"
 	"github.com/dr-dobermann/srvbus/es"
 	"github.com/google/uuid"
@@ -123,7 +123,11 @@ func New(
 }
 
 // creates a new ProcessExecutingError
-func (pi *Instance) NewErr(err error, format string, params ...interface{}) error {
+func (pi *Instance) NewErr(
+	err error,
+	format string,
+	params ...interface{}) error {
+
 	return ProcessExecutingError{
 		pID:        pi.id,
 		instanceID: pi.snapshot.ID(),

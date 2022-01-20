@@ -17,9 +17,9 @@ import (
 	"sync"
 
 	"github.com/dr-dobermann/gobpm/internal/errs"
-	mid "github.com/dr-dobermann/gobpm/internal/identity"
 	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/model"
+	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 	"github.com/dr-dobermann/srvbus"
 	"github.com/dr-dobermann/srvbus/es"
 	"github.com/google/uuid"
