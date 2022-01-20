@@ -39,7 +39,7 @@ func (vs *VarStore) getVar(vn string, vt Type, returnEmpty bool) *Variable {
 
 		v = &Variable{
 			name:  vn,
-			vtype: vt,
+			vType: vt,
 			prec:  2}
 
 		vs.vars[vn] = v
@@ -159,7 +159,7 @@ func (vs *VarStore) NewVar(v Variable) (*Variable, error) {
 		return nil, vs.NewVSErr(nil, "variable "+v.name+" already exists")
 	}
 
-	vr := vs.getVar(v.name, v.vtype, true)
+	vr := vs.getVar(v.name, v.vType, true)
 	vr.update(v.value)
 
 	return vr, nil

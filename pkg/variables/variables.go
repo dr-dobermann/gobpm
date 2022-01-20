@@ -43,7 +43,7 @@ type Variable struct {
 	VariableValues
 
 	name  string
-	vtype Type
+	vType Type
 	value interface{}
 	// float precision. Default 2
 	prec int
@@ -55,7 +55,7 @@ func V(n string, t Type, v interface{}) *Variable {
 
 	vv := &Variable{
 		name:  n,
-		vtype: t,
+		vType: t,
 		prec:  2}
 
 	vv.update(v)
@@ -68,7 +68,7 @@ func (v *Variable) Name() string {
 }
 
 func (v *Variable) Type() Type {
-	return v.vtype
+	return v.vType
 }
 
 func (v *Variable) Precision() int {
@@ -92,12 +92,22 @@ func (v *Variable) RawValues() VariableValues {
 	return v.VariableValues
 }
 
+func (v *Variable) Copy() Variable {
+	return Variable{
+		VariableValues: v.VariableValues,
+		name:           v.name,
+		vType:          v.vType,
+		value:          v.value,
+		prec:           v.prec,
+	}
+}
+
 func (v Variable) NewVErr(
 	err error,
 	format string,
 	values ...interface{}) VariableError {
 
-	return VariableError{vName: v.name, vType: v.vtype,
+	return VariableError{vName: v.name, vType: v.vType,
 		msg: fmt.Sprintf(format, values...), Err: err}
 }
 
@@ -105,7 +115,7 @@ func (v Variable) NewVErr(
 //
 // it expected to receive the value of internal type of v.
 func (v *Variable) update(newVal interface{}) error {
-	switch v.vtype {
+	switch v.vType {
 	case Int:
 		if newVal == nil {
 			v.value = int64(0)
@@ -192,7 +202,7 @@ func (v *Variable) update(newVal interface{}) error {
 func (v *Variable) Int() int64 {
 	var i int64
 
-	switch v.vtype {
+	switch v.vType {
 	case Int:
 		i = v.I
 
@@ -225,7 +235,7 @@ func (v *Variable) Int() int64 {
 func (v *Variable) StrVal() string {
 	var s string
 
-	switch v.vtype {
+	switch v.vType {
 	case Int:
 		s = strconv.Itoa(int(v.I))
 
@@ -253,7 +263,7 @@ func (v *Variable) StrVal() string {
 func (v *Variable) Bool() bool {
 	var b bool
 
-	switch v.vtype {
+	switch v.vType {
 	case Int:
 		if v.I != 0 {
 			b = true
@@ -288,7 +298,7 @@ func (v *Variable) Float64() float64 {
 		err error
 	)
 
-	switch v.vtype {
+	switch v.vType {
 	case Int:
 		f = float64(v.I)
 
@@ -320,7 +330,7 @@ func (v *Variable) Time() time.Time {
 		err error
 	)
 
-	switch v.vtype {
+	switch v.vType {
 	case Int:
 		t = time.UnixMilli(v.I)
 
@@ -343,4 +353,25 @@ func (v *Variable) Time() time.Time {
 	}
 
 	return t
+}
+
+func (v *Variable) IsEqual(ov *Variable) bool {
+	switch v.vType {
+	case Int:
+		return v.I == ov.I
+
+	case Bool:
+		return v.B == ov.B
+
+	case String:
+		return v.S == ov.S
+
+	case Float:
+		return v.F == ov.F
+
+	case Time:
+		return v.T.Equal(ov.T)
+	}
+
+	return false
 }
