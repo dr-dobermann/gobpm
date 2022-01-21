@@ -1,3 +1,13 @@
+// variables provides Variable and VarStore objects for the GoBPM project.
+//
+// It could be used separately if needed.
+//
+// Variable is a named storage of a single variant value.
+// Variable could keep int64, bool, string, float64 and time.Time value.
+//
+// Variable creation
+//
+// Variable conversion
 package variables
 
 import (
@@ -278,8 +288,10 @@ func (v *Variable) Bool() bool {
 		}
 
 	case String:
-		if len(v.S) > 0 {
+		if strings.ToUpper(v.S) == "TRUE" {
 			b = true
+		} else {
+			b = false
 		}
 
 	case Time:
@@ -374,4 +386,31 @@ func (v *Variable) IsEqual(ov *Variable) bool {
 	}
 
 	return false
+}
+
+func (v *Variable) CanConvertTo(nt Type) bool {
+	// check only dangerous conversion
+	// all safe conversion could be made with no check
+	switch {
+	case nt == Int && v.vType == String:
+		if _, err := strconv.ParseFloat(v.S, 64); err != nil {
+			return false
+		}
+
+	case nt == Float && v.vType == String:
+		if _, err := strconv.ParseFloat(v.S, 64); err != nil {
+			return false
+		}
+
+	case nt == Bool && v.vType == String:
+		vs := strings.ToUpper(v.S)
+		return vs == "TRUE" || vs == "FALSE"
+
+	case nt == Time && v.vType == String:
+		if _, err := time.Parse(time.RFC3339, v.S); err != nil {
+			return false
+		}
+	}
+
+	return true
 }

@@ -19,13 +19,13 @@ var td = []struct {
 	// original data
 	{2, true, "2", 2.0},                   // Int
 	{1, true, "true", 1.0},                // Bool
-	{4, true, "3.66", 3.66},               // String
+	{4, false, "3.66", 3.66},              // String
 	{3, true, "3.33333", float64(10) / 3}, // Float
 	// updated data
-	{100, true, "100", 100.0},
-	{0, false, "false", 0.0},
-	{0, true, "dober", 0.0},
-	{3, true, "3.14", 3.1415928},
+	{100, true, "100", 100.0},    // Int
+	{0, false, "false", 0.0},     // Bool
+	{0, true, "true", 0.0},       // String
+	{3, true, "3.14", 3.1415928}, // Float
 }
 
 func TestTimeVariable(t *testing.T) {
@@ -33,6 +33,7 @@ func TestTimeVariable(t *testing.T) {
 
 	tm := time.Now()
 	ts := tm.Format(time.RFC3339)
+	t.Log(ts)
 
 	v := V("now", Time, tm)
 
@@ -279,23 +280,7 @@ func TestVar(t *testing.T) {
 	testVars[1] = []*Variable{}
 	i := 0
 	for vt, vv := range testValues {
-		var val interface{}
-		switch vt {
-		case Int:
-			val = vv.I
-
-		case Bool:
-			val = vv.B
-
-		case String:
-			val = vv.S
-
-		case Float:
-			val = vv.F
-
-		case Time:
-			val = vv.T
-		}
+		val := getVarValue(vt, vv)
 
 		// original
 		testVars[0] = append(testVars[0], V(vt.String(), vt, val))
@@ -320,4 +305,61 @@ func TestVarCopy(t *testing.T) {
 	if !v.IsEqual(&nv) {
 		t.Fatalf("couldn't copy variable '%s'", v.name)
 	}
+}
+
+func TestVarConversion(t *testing.T) {
+	is := is.New(t)
+
+	type testCase struct {
+		sType Type
+		val   VariableValues
+	}
+
+	badCases := map[Type]testCase{
+		Int:   {sType: String, val: VariableValues{S: "trash"}},
+		Bool:  {sType: String, val: VariableValues{S: "trash"}},
+		Float: {sType: String, val: VariableValues{S: "trash"}},
+		Time:  {sType: String, val: VariableValues{S: "trash"}},
+	}
+
+	goodCases := map[Type]testCase{
+		Int:   {sType: String, val: VariableValues{S: "10"}},
+		Float: {sType: String, val: VariableValues{S: "10.2"}},
+		Time:  {sType: String, val: VariableValues{S: "2022-01-20T12:30:25+06:00"}},
+		Bool:  {sType: String, val: VariableValues{S: "true"}},
+	}
+
+	for nt, bc := range badCases {
+		tv := V(bc.sType.String(), bc.sType, getVarValue(bc.sType, bc.val))
+		is.True(!tv.CanConvertTo(nt))
+	}
+
+	for nt, bc := range goodCases {
+		tv := V(bc.sType.String(), bc.sType, getVarValue(bc.sType, bc.val))
+		is.True(tv.CanConvertTo(nt))
+	}
+
+}
+
+func getVarValue(t Type, vv VariableValues) interface{} {
+	var val interface{}
+
+	switch t {
+	case Int:
+		val = vv.I
+
+	case Bool:
+		val = vv.B
+
+	case String:
+		val = vv.S
+
+	case Float:
+		val = vv.F
+
+	case Time:
+		val = vv.T
+	}
+
+	return val
 }
