@@ -9,7 +9,6 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/errs"
 	"github.com/dr-dobermann/gobpm/model/base"
 	"github.com/dr-dobermann/gobpm/pkg/identity"
-	"github.com/dr-dobermann/gobpm/pkg/variables"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 )
 
@@ -18,10 +17,31 @@ const (
 )
 
 type Expression interface {
+	// returns an Expression ID
 	ID() identity.Id
+
+	// returns current expression state
+	State() ExpressionState
+
+	// returns list of expression parameters
+	Params() []vars.Variable
+
+	// sets a parameters values of the expression
+	SetParams(pp ...vars.Variable) error
+
+	// evaluates the expression and provides results.
+	// Expression should be in state Parametrized, which
+	// is set by SetParams call
 	Evaluate() error
+
+	// returns results in case of expression Evaluate call ends with no
+	// errors and expression states set to Evaluated
 	GetResult() (vars.Variable, error)
+
+	// copies expression and gives copy a new Id
 	Copy() Expression
+
+	// returns an expression return type
 	ReturnType() vars.Type
 }
 
@@ -111,18 +131,18 @@ func (e *FormalExpression) Params() []vars.Variable {
 	return pl
 }
 
-func (e *FormalExpression) SetParams(vars ...vars.Variable) error {
-	params := map[string]variables.Variable{}
+func (e *FormalExpression) SetParams(pp ...vars.Variable) error {
+	params := map[string]vars.Variable{}
 
-	for _, v := range vars {
+	for _, v := range pp {
 		// check for correctnes
 		if len(strings.Trim(v.Name(), " ")) == 0 {
 			return e.NewExprErr(nil, "parameter should have a non-empty name")
 		}
 
 		// check for duplication
-		if _, ok := e.parameters[v.Name()]; ok {
-			return e.NewExprErr(nil, "parameter '%s' already exists", v.Name())
+		if _, ok := params[v.Name()]; ok {
+			return e.NewExprErr(nil, "duplicate parameter '%s'", v.Name())
 		}
 
 		// add new param
@@ -153,7 +173,7 @@ func (e *FormalExpression) Copy() Expression {
 		state:       Created,
 		language:    e.language,
 		body:        make([]byte, len(e.body)),
-		parameters:  map[string]variables.Variable{},
+		parameters:  map[string]vars.Variable{},
 		retType:     e.retType}
 
 	ec.SetNewID(identity.NewID())

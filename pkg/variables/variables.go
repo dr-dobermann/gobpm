@@ -232,7 +232,7 @@ func (v *Variable) Int() int64 {
 		}
 
 	case Float:
-		i = int64(v.F)
+		i = int64(math.Round(v.F))
 
 	case Time:
 		i = v.T.UnixMilli()
@@ -388,25 +388,38 @@ func (v *Variable) IsEqual(ov *Variable) bool {
 	return false
 }
 
+// check if it's possible to convert variable v to a new type nt
+// without panic of invalid conversion.
 func (v *Variable) CanConvertTo(nt Type) bool {
-	// check only dangerous conversion
+	// check only dangerous or impossible conversion
 	// all safe conversion could be made with no check
 	switch {
-	case nt == Int && v.vType == String:
+	case v.vType == String && nt == Int:
+		_, err := strconv.ParseFloat(v.S, 64)
+		return err == nil
+
+	case v.vType == Bool && nt == Int:
+		return false
+
+	case v.vType == Time && nt == Int:
+		return false
+
+	case v.vType == String && nt == Float:
 		if _, err := strconv.ParseFloat(v.S, 64); err != nil {
 			return false
 		}
 
-	case nt == Float && v.vType == String:
-		if _, err := strconv.ParseFloat(v.S, 64); err != nil {
-			return false
-		}
+	case v.vType == Bool && nt == Float:
+		return false
 
-	case nt == Bool && v.vType == String:
+	case v.vType == Time && nt == Float:
+		return false
+
+	case v.vType == String && nt == Bool:
 		vs := strings.ToUpper(v.S)
 		return vs == "TRUE" || vs == "FALSE"
 
-	case nt == Time && v.vType == String:
+	case v.vType == String && nt == Time:
 		if _, err := time.Parse(time.RFC3339, v.S); err != nil {
 			return false
 		}

@@ -72,6 +72,7 @@ func TestExprCopy(t *testing.T) {
 		*variables.V("x", variables.Int, 3),
 		*variables.V("y", variables.Int, 5))
 	is.NoErr(err)
+	is.True(fe.State() == Parameterized)
 
 	cfe := fe.Copy()
 	_, ok := cfe.(Expression)
