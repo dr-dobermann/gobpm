@@ -1,9 +1,10 @@
-package gep
+package operations
 
 import (
 	"strings"
 	"time"
 
+	"github.com/dr-dobermann/gobpm/pkg/expression/gep"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 )
 
@@ -19,9 +20,9 @@ const (
 // if error occured, error returned with Variable named INVALID_OPERATION_RESULT
 // of bool type with false value.
 //
-// if resName is not empty returned Variable takes it, if it's empty,
+// if resName is not empty returned Variable takes this name. If it's empty,
 // then returned Variable takes OpFunc param v's name.
-func Add(av *vars.Variable, resName string) OpFunc {
+func Add(av *vars.Variable, resName string) gep.OpFunc {
 	opName := "Add"
 
 	if len(strings.Trim(resName, " ")) == 0 {
@@ -35,7 +36,7 @@ func Add(av *vars.Variable, resName string) OpFunc {
 		case vars.Int:
 			if !av.CanConvertTo(vars.Int) {
 				return *vars.V(invalidResVar, vars.Bool, false),
-					NewOpErr(opName, nil,
+					gep.NewOpErr(opName, nil,
 						"cannot convert %q to int", av.Name())
 			}
 
@@ -43,7 +44,7 @@ func Add(av *vars.Variable, resName string) OpFunc {
 
 		case vars.Bool:
 			return *vars.V(invalidResVar, vars.Bool, false),
-				NewOpErr(opName, nil,
+				gep.NewOpErr(opName, nil,
 					"cannot add anything to bool variable %q", av.Name())
 
 		case vars.String:
@@ -52,7 +53,7 @@ func Add(av *vars.Variable, resName string) OpFunc {
 		case vars.Float:
 			if !av.CanConvertTo(vars.Float) {
 				return *vars.V(invalidResVar, vars.Bool, false),
-					NewOpErr(opName, nil,
+					gep.NewOpErr(opName, nil,
 						"cannot convert %q to float64", av.Name())
 			}
 
@@ -62,7 +63,7 @@ func Add(av *vars.Variable, resName string) OpFunc {
 			if av.Type() != vars.Int ||
 				!av.CanConvertTo(vars.Int) {
 				return *vars.V(invalidResVar, vars.Bool, false),
-					NewOpErr(opName, nil,
+					gep.NewOpErr(opName, nil,
 						"couldn't add to time.Time() anything but "+
 							"time.Duration(Int) values to %q", v.Name())
 			}
@@ -73,5 +74,5 @@ func Add(av *vars.Variable, resName string) OpFunc {
 		return *res, nil
 	}
 
-	return OpFunc(add)
+	return gep.OpFunc(add)
 }

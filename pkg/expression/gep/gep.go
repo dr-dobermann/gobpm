@@ -15,17 +15,58 @@ import (
 
 const (
 	gepLanguage = "GEP"
+
+	resNotEvaluated = "NOT_CALCULATED_YET"
 )
 
-// OpFunc is a single step of the expression operation conveyer.
+// OpFunc is a functor used as an Operation executor in expression
+// conveyer.
+//
+// OpFunc uses single Variable and returns a result in a new Variable.
+// If it's needed to create a binary operation, the functor creation
+// function shoul be used.
+//
+// For example, if you need to create operation res = x + y operation,
+// you should call gep.Add(y, res) to get add(x), which adds y to x and
+// returns Variable named res on success.
 type OpFunc func(v *vars.Variable) (vars.Variable, error)
 
-// GEP keeps state of a single GEP instance
+// OperandLoader is a function which returns an Variable which is used
+// as OpFunc operand.
+type OperandLoader func() (*vars.Variable, error)
+
+// Operation describes a single step execution of GEP expression.
+//
+// To implement x = x + y expression next Operation shoulb be created:
+//
+//      AddOp := Operation{
+//	                Func: Add(variables.V("y", variables.Int, yVal), "x")
+//                  OpLoader: func() (*variables.Variable, error) {
+//							      // load x from somewhere
+//                                // and create variable with
+//                                // it's value -- xVar
+//
+//                                return &xVar, nil
+//                            }
+//               }
+//
+// Result of sucessefully executed operation will be stored
+// as intermediate or final GEP's result in GEP structure.
+type Operation struct {
+	Func OpFunc
+
+	// if OpLoader is nil, then the current result of GEP is used.
+	OpLoader OperandLoader
+}
+
+// GEP keeps state of a single GEP instance.
+//
+// Result of GEP Expression calculated as sequential execution of operations.
 type GEP struct {
 	expr.FormalExpression
 
 	// operations conveyer
-	operations []OpFunc
+	operations []Operation
 
 	// result keeps current GEP and final result of expression
 	// conveyer
@@ -35,8 +76,83 @@ type GEP struct {
 func New(id mid.Id, rt vars.Type) *GEP {
 	gep := GEP{
 		FormalExpression: *expr.New(id, gepLanguage, rt),
-		operations:       []OpFunc{},
-		result:           vars.Variable{}}
+		operations:       []Operation{},
+		result:           *vars.V(resNotEvaluated, vars.Bool, false)}
 
 	return &gep
+}
+
+func (g *GEP) AddOperation(op Operation) error {
+	if op.Func == nil {
+		return g.NewExprErr(nil, "operation function couldn't be nil")
+	}
+
+	g.operations = append(g.operations, op)
+
+	return nil
+}
+
+func (g *GEP) Evaluate() error {
+	if len(g.operations) == 0 {
+		return g.NewExprErr(nil, "operation list is empty")
+	}
+
+	for i, op := range g.operations {
+		var (
+			opOperand *vars.Variable
+			err       error
+		)
+
+		if op.OpLoader == nil {
+			opOperand = &g.result
+		} else {
+			opOperand, err = op.OpLoader()
+			if err != nil {
+				return g.NewExprErr(
+					err,
+					"couldn't load an operand for operation #%d",
+					i)
+			}
+		}
+
+		res, err := op.Func(opOperand)
+		if err != nil {
+			return g.NewExprErr(
+				err,
+				"operation #%d function execution failed",
+				i)
+		}
+
+		g.result = res
+	}
+
+	return nil
+}
+
+func (g *GEP) GetResult() (vars.Variable, error) {
+	if g.result.Type() != g.ReturnType() {
+		return *vars.V(resNotEvaluated, vars.Bool, false),
+			g.NewExprErr(
+				nil,
+				"current GEP result type(%v) isn't "+
+					"equal to expression return type(%v)",
+				g.result.Type(), g.ReturnType())
+	}
+
+	return g.result, nil
+}
+
+// -----------------------------------------------------------------------------
+//    Utility functions
+// -----------------------------------------------------------------------------
+func GetVar(v *vars.Variable) OperandLoader {
+	if v == nil {
+		return nil
+	}
+
+	opLoader := func() (*vars.Variable, error) {
+		return v, nil
+	}
+
+	return OperandLoader(opLoader)
 }

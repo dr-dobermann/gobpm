@@ -1,4 +1,4 @@
-package gep
+package operations
 
 import (
 	"fmt"

@@ -26,7 +26,7 @@ type Expression interface {
 	// returns list of expression parameters
 	Params() []vars.Variable
 
-	// sets a parameters values of the expression
+	// adds parameters values of the expression
 	SetParams(pp ...vars.Variable) error
 
 	// evaluates the expression and provides results.
@@ -134,6 +134,8 @@ func (e *FormalExpression) Params() []vars.Variable {
 func (e *FormalExpression) SetParams(pp ...vars.Variable) error {
 	params := map[string]vars.Variable{}
 
+	e.state = Created
+
 	for _, v := range pp {
 		// check for correctnes
 		if len(strings.Trim(v.Name(), " ")) == 0 {
@@ -144,13 +146,25 @@ func (e *FormalExpression) SetParams(pp ...vars.Variable) error {
 		if _, ok := params[v.Name()]; ok {
 			return e.NewExprErr(nil, "duplicate parameter '%s'", v.Name())
 		}
+		if _, ok := e.parameters[v.Name()]; ok {
+			return e.NewExprErr(nil, "duplicate parameter '%s'", v.Name())
+		}
 
 		// add new param
 		params[v.Name()] = v
 	}
 
-	e.parameters = params
 	e.state = Parameterized
+
+	if e.parameters == nil {
+		e.parameters = params
+
+		return nil
+	}
+
+	for pn, p := range params {
+		e.parameters[pn] = p
+	}
 
 	return nil
 }
@@ -164,7 +178,8 @@ func (e *FormalExpression) Evaluate() error {
 }
 
 func (e *FormalExpression) GetResult() (vars.Variable, error) {
-	return *vars.V(InvVariable, vars.Bool, false), errs.ErrDummyFuncImplementation
+	return *vars.V(InvVariable, vars.Bool, false),
+		errs.ErrDummyFuncImplementation
 }
 
 func (e *FormalExpression) Copy() Expression {
