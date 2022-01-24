@@ -29,7 +29,7 @@ func TestGEPAdd(t *testing.T) {
 	err := g.AddOperation(
 		gep.Operation{
 			Func:     operations.Add(y, "x"),
-			OpLoader: gep.GetVar(vars.V("x", vars.Int, xVal))})
+			OpLoader: gep.LoadVar(vars.V("x", vars.Int, xVal))})
 	is.NoErr(err)
 
 	// adding empty operation should return non-nil error
@@ -42,12 +42,4 @@ func TestGEPAdd(t *testing.T) {
 	res, err := g.GetResult()
 	is.NoErr(err)
 	is.True(res.I == 23)
-}
-
-func TestGEPExpressionInterface(t *testing.T) {
-	// g := new(gep.GEP)
-	// _, ok := g.(expression.Expression)
-	// if !ok {
-	// 	t.Fatal("GEP is not implemented experssion.Expression interface")
-	// }
 }

@@ -82,6 +82,10 @@ func New(id mid.Id, rt vars.Type) *GEP {
 	return &gep
 }
 
+func (g *GEP) SetParams(pp ...vars.Variable) error {
+	return g.NewExprErr(nil, "GEP doesn't provide SetParams")
+}
+
 func (g *GEP) AddOperation(op Operation) error {
 	if op.Func == nil {
 		return g.NewExprErr(nil, "operation function couldn't be nil")
@@ -89,11 +93,13 @@ func (g *GEP) AddOperation(op Operation) error {
 
 	g.operations = append(g.operations, op)
 
+	g.FormalExpression.UpdateState(expr.Parameterized)
+
 	return nil
 }
 
 func (g *GEP) Evaluate() error {
-	if len(g.operations) == 0 {
+	if g.State() != expr.Parameterized {
 		return g.NewExprErr(nil, "operation list is empty")
 	}
 
@@ -126,10 +132,17 @@ func (g *GEP) Evaluate() error {
 		g.result = res
 	}
 
+	g.FormalExpression.UpdateState(expr.Evaluated)
+
 	return nil
 }
 
 func (g *GEP) GetResult() (vars.Variable, error) {
+	if g.State() != expr.Evaluated {
+		return *vars.V(resNotEvaluated, vars.Bool, false),
+			g.NewExprErr(nil, "GEP isn't evaluated or evaluated with errors")
+	}
+
 	if g.result.Type() != g.ReturnType() {
 		return *vars.V(resNotEvaluated, vars.Bool, false),
 			g.NewExprErr(
@@ -145,7 +158,7 @@ func (g *GEP) GetResult() (vars.Variable, error) {
 // -----------------------------------------------------------------------------
 //    Utility functions
 // -----------------------------------------------------------------------------
-func GetVar(v *vars.Variable) OperandLoader {
+func LoadVar(v *vars.Variable) OperandLoader {
 	if v == nil {
 		return nil
 	}

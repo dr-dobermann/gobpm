@@ -115,6 +115,10 @@ func (e *FormalExpression) UpdateBody(src io.Reader) error {
 	return nil
 }
 
+func (e *FormalExpression) UpdateState(ns ExpressionState) {
+	e.state = ns
+}
+
 func (e *FormalExpression) State() ExpressionState {
 	return e.state
 }
