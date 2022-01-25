@@ -10,7 +10,7 @@ import (
 	"github.com/matryer/is"
 )
 
-// testing evaluation of x = x + y expression
+// testing evaluation of x = x + y expression (x = 18 + 5)
 func TestGEPAdd(t *testing.T) {
 	is := is.New(t)
 
@@ -41,5 +41,6 @@ func TestGEPAdd(t *testing.T) {
 
 	res, err := g.GetResult()
 	is.NoErr(err)
-	is.True(res.I == 23)
+	is.True(res.Name() == "x")
+	is.True(res.I == int64(xVal+yVal))
 }
