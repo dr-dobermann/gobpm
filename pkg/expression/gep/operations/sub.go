@@ -20,13 +20,13 @@ func Sub(av *vars.Variable, resName string) gep.OpFunc {
 		resName = av.Name()
 	}
 
-	sub := func(v *vars.Variable) (vars.Variable, error) {
+	sub := func(v *vars.Variable) (*vars.Variable, error) {
 		var res *vars.Variable
 
 		switch v.Type() {
 		case vars.Int:
 			if !av.CanConvertTo(vars.Int) {
-				return *vars.V(invalidResVar, vars.Bool, false),
+				return nil,
 					gep.NewOpErr(opName, nil,
 						"cannot convert %q to int", av.Name())
 			}
@@ -34,13 +34,13 @@ func Sub(av *vars.Variable, resName string) gep.OpFunc {
 			res = vars.V(resName, vars.Int, v.I-av.Int())
 
 		case vars.Bool, vars.String, vars.Time:
-			return *vars.V(invalidResVar, vars.Bool, false),
+			return nil,
 				gep.NewOpErr(opName, nil,
 					"substraction isn't allowed for type %v", v.Type())
 
 		case vars.Float:
 			if !av.CanConvertTo(vars.Float) {
-				return *vars.V(invalidResVar, vars.Bool, false),
+				return nil,
 					gep.NewOpErr(opName, nil,
 						"cannot convert %q to float64", av.Name())
 			}
@@ -48,7 +48,7 @@ func Sub(av *vars.Variable, resName string) gep.OpFunc {
 			res = vars.V(resName, vars.Float, v.F-av.Float64())
 		}
 
-		return *res, nil
+		return res, nil
 	}
 
 	return gep.OpFunc(sub)

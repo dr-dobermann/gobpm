@@ -29,11 +29,11 @@ const (
 // For example, if you need to create operation res = x + y operation,
 // you should call gep.Add(y, res) to get add(x), which adds y to x and
 // returns Variable named res on success.
-type OpFunc func(v *vars.Variable) (vars.Variable, error)
+type OpFunc func(v *vars.Variable) (*vars.Variable, error)
 
-// OperandLoader is a function which returns an Variable which is used
+// ParameterLoader is a function which returns an Variable which is used
 // as OpFunc operand.
-type OperandLoader func() (*vars.Variable, error)
+type ParameterLoader func() (*vars.Variable, error)
 
 // Operation describes a single step execution of GEP expression.
 //
@@ -41,7 +41,7 @@ type OperandLoader func() (*vars.Variable, error)
 //
 //      AddOp := Operation{
 //	                Func: Add(variables.V("y", variables.Int, yVal), "x")
-//                  OpLoader: func() (*variables.Variable, error) {
+//                  ParamLdr: func() (*variables.Variable, error) {
 //							      // load x from somewhere
 //                                // and create variable with
 //                                // it's value -- xVar
@@ -55,8 +55,8 @@ type OperandLoader func() (*vars.Variable, error)
 type Operation struct {
 	Func OpFunc
 
-	// if OpLoader is nil, then the current result of GEP is used.
-	OpLoader OperandLoader
+	// if ParamLdr is nil, then the current result of GEP is used.
+	ParamLdr ParameterLoader
 }
 
 // GEP keeps state of a single GEP instance.
@@ -104,15 +104,20 @@ func (g *GEP) Evaluate() error {
 	}
 
 	for i, op := range g.operations {
+		if op.Func == nil {
+			return g.NewExprErr(nil,
+				"OpFunc is empty for operation #%d", i)
+		}
+
 		var (
-			opOperand *vars.Variable
-			err       error
+			opParam *vars.Variable
+			err     error
 		)
 
-		if op.OpLoader == nil {
-			opOperand = &g.result
+		if op.ParamLdr == nil {
+			opParam = &g.result
 		} else {
-			opOperand, err = op.OpLoader()
+			opParam, err = op.ParamLdr()
 			if err != nil {
 				return g.NewExprErr(
 					err,
@@ -121,15 +126,15 @@ func (g *GEP) Evaluate() error {
 			}
 		}
 
-		res, err := op.Func(opOperand)
-		if err != nil {
+		res, err := op.Func(opParam)
+		if err != nil || res == nil {
 			return g.NewExprErr(
 				err,
 				"operation #%d function execution failed",
 				i)
 		}
 
-		g.result = res
+		g.result = *res
 	}
 
 	g.FormalExpression.UpdateState(expr.Evaluated)
@@ -158,14 +163,14 @@ func (g *GEP) GetResult() (vars.Variable, error) {
 // -----------------------------------------------------------------------------
 //    Utility functions
 // -----------------------------------------------------------------------------
-func LoadVar(v *vars.Variable) OperandLoader {
+func LoadVar(v *vars.Variable) ParameterLoader {
 	if v == nil {
 		return nil
 	}
 
-	opLoader := func() (*vars.Variable, error) {
+	pLoader := func() (*vars.Variable, error) {
 		return v, nil
 	}
 
-	return OperandLoader(opLoader)
+	return ParameterLoader(pLoader)
 }

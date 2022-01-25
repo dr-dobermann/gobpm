@@ -26,10 +26,14 @@ func TestGEPAdd(t *testing.T) {
 	yVal := 5
 	y := vars.V("y", vars.Int, yVal)
 
+	// check eligibility of Add with y
+	addFunc := operations.Add(y, "x")
+	is.True(addFunc != nil)
+
 	err := g.AddOperation(
 		gep.Operation{
-			Func:     operations.Add(y, "x"),
-			OpLoader: gep.LoadVar(vars.V("x", vars.Int, xVal))})
+			Func:     addFunc,
+			ParamLdr: gep.LoadVar(vars.V("x", vars.Int, xVal))})
 	is.NoErr(err)
 
 	// adding empty operation should return non-nil error

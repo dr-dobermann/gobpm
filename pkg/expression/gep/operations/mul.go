@@ -1,98 +1,126 @@
 package operations
 
 import (
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/expression/gep"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 )
 
-type IntFunc func(x int64, vName string) *vars.Variable
+type OpFuncGenerator func(y *vars.Variable, resName string) (gep.OpFunc, error)
 
-type IntOpIntFunc func(y *vars.Variable) (IntFunc, error)
-
-type FloatFunc func(x float64, vName string) *vars.Variable
-
-type FloatOpFloatFunc func(y *vars.Variable) (FloatFunc, error)
+type OpParamChecker func(v *vars.Variable) error
 
 type OperationDescriptor struct {
-	paramY vars.Type
-	opFunc interface{}
+	OpFuncGen OpFuncGenerator
+	Checkers  []OpParamChecker
 }
 
 var mulOperation = "mul"
 
-func mulInt(y *vars.Variable) (IntFunc, error) {
-	if !y.CanConvertTo(vars.Int) {
-		return nil,
-			gep.NewOpErr(mulOperation, nil, "couldn't convert %q to int",
-				y.Name())
+func mulInt(y *vars.Variable, resName string) (gep.OpFunc, error) {
+	mul := func(x *vars.Variable) (*vars.Variable, error) {
+		return vars.V(resName, vars.Int, x.I*y.Int()), nil
 	}
 
-	mul := func(x int64, vName string) *vars.Variable {
-		return vars.V(vName, vars.Int, x*y)
-	}
-
-	return IntFunc(mul), nil
+	return gep.OpFunc(mul), nil
 }
 
-func mulFloat(float64) (FloatFunc, error) {
-	mul := func(x float64, vName string) *vars.Variable {
-		return vars.V(vName, vars.Float, x*y)
-	}
-
-	return FloatFunc(mul)
+var mulIntDesr = OperationDescriptor{
+	OpFuncGen: mulInt,
+	Checkers: []OpParamChecker{
+		ParamTypeChecker(vars.Int, mulOperation)},
 }
 
-var operationMatrix = map[string]map[vars.Type][]OperationDescriptor{
-	"mul": {
-		vars.Int:   {{vars.Int, IntOpIntFunc(mulInt)}},
-		vars.Float: {{vars.Float, FloatFuncGenFloat}},
+func mulFloat(y *vars.Variable, resName string) (gep.OpFunc, error) {
+	mul := func(x *vars.Variable) (*vars.Variable, error) {
+		return vars.V(resName, vars.Float, x.F*y.Float64()), nil
+	}
+
+	return gep.OpFunc(mul), nil
+}
+
+var mulFloatDescr = OperationDescriptor{
+	OpFuncGen: mulFloat,
+	Checkers: []OpParamChecker{
+		ParamTypeChecker(vars.Float, mulOperation)},
+}
+
+func ParamTypeChecker(t vars.Type, mulOperation string) OpParamChecker {
+	pChecker := func(v *vars.Variable) error {
+		if !v.CanConvertTo(vars.Int) {
+			return gep.NewOpErr(mulOperation, nil, "couldn't convert %q to %v",
+				v.Name(), t)
+		}
+
+		return nil
+	}
+
+	return OpParamChecker(pChecker)
+}
+
+var funcMatrix = map[string]map[vars.Type]OperationDescriptor{
+	mulOperation: {
+		vars.Int:   mulIntDesr,
+		vars.Float: mulFloatDescr,
 	},
 }
 
 func Mul(av *vars.Variable, resName string) gep.OpFunc {
-
-	om, ok := operationMatrix[opName]
-	if !ok { // operation not implemented
-		return nil
-	}
-
 	if len(strings.Trim(resName, " ")) == 0 {
 		resName = av.Name()
 	}
 
-	mul := func(v *vars.Variable) (vars.Variable, error) {
-		var res *vars.Variable
+	of, err := getOpFunc(mulOperation, av, resName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, err.Error())
 
-		odl, ok := om[v.Type()]
-		if !ok {
-			return *vars.V(invalidResVar, vars.Bool, false),
-				gep.NewOpErr(opName, nil,
-					"operation %q is not supported for type %v(%s)",
-					opName, v.Type(), v.Name())
-		}
-
-		for _, od := range odl {
-			switch {
-			case v.Type() == vars.Int && od.paramY == av.Type():
-				opF, ok := od.opFunc.(IntFunc)
-				if !ok {
-					return *vars.V(invalidResVar, vars.Bool, false),
-						gep.NewOpErr(opName, nil,
-							"operation %q is not found for variables %q and %q",
-							opName, v.Name(), av.Name())
-				}
-
-				mul := opF(av.I, resName)
-				res = mul(v.Int())
-
-			}
-
-		}
-
-		return *res, nil
+		return nil
 	}
 
-	return gep.OpFunc(mul)
+	return of
+}
+
+func getOpFunc(
+	funcName string,
+	y *vars.Variable,
+	resName string) (gep.OpFunc, error) {
+
+	fd, ok := funcMatrix[funcName]
+	if !ok {
+		return nil,
+			gep.NewOpErr(funcName, nil,
+				"function isn't existed in function matrix")
+	}
+
+	opFunc := func(x *vars.Variable) (*vars.Variable, error) {
+		od, ok := fd[x.Type()]
+		if !ok {
+			return nil,
+				gep.NewOpErr(
+					funcName, nil,
+					"operation isn't supported for %v type (%s)",
+					x.Type(), x.Name())
+		}
+
+		for _, chk := range od.Checkers {
+			if err := chk(y); err != nil {
+				return nil,
+					gep.NewOpErr(funcName, err,
+						"parameter %q check failed", y.Name())
+			}
+		}
+
+		f, err := od.OpFuncGen(y, resName)
+		if err != nil {
+			return nil, gep.NewOpErr(funcName, err,
+				"couldn't get functor")
+		}
+
+		return f(x)
+	}
+
+	return opFunc, nil
 }

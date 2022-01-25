@@ -29,13 +29,13 @@ func Add(av *vars.Variable, resName string) gep.OpFunc {
 		resName = av.Name()
 	}
 
-	add := func(v *vars.Variable) (vars.Variable, error) {
+	add := func(v *vars.Variable) (*vars.Variable, error) {
 		var res *vars.Variable
 
 		switch v.Type() {
 		case vars.Int:
 			if !av.CanConvertTo(vars.Int) {
-				return *vars.V(invalidResVar, vars.Bool, false),
+				return nil,
 					gep.NewOpErr(opName, nil,
 						"cannot convert %q to int", av.Name())
 			}
@@ -43,7 +43,7 @@ func Add(av *vars.Variable, resName string) gep.OpFunc {
 			res = vars.V(resName, vars.Int, v.I+av.Int())
 
 		case vars.Bool:
-			return *vars.V(invalidResVar, vars.Bool, false),
+			return nil,
 				gep.NewOpErr(opName, nil,
 					"cannot add anything to bool variable %q", av.Name())
 
@@ -52,7 +52,7 @@ func Add(av *vars.Variable, resName string) gep.OpFunc {
 
 		case vars.Float:
 			if !av.CanConvertTo(vars.Float) {
-				return *vars.V(invalidResVar, vars.Bool, false),
+				return nil,
 					gep.NewOpErr(opName, nil,
 						"cannot convert %q to float64", av.Name())
 			}
@@ -62,7 +62,7 @@ func Add(av *vars.Variable, resName string) gep.OpFunc {
 		case vars.Time:
 			if av.Type() != vars.Int ||
 				!av.CanConvertTo(vars.Int) {
-				return *vars.V(invalidResVar, vars.Bool, false),
+				return nil,
 					gep.NewOpErr(opName, nil,
 						"couldn't add to time.Time() anything but "+
 							"time.Duration(Int) values to %q", v.Name())
@@ -71,7 +71,7 @@ func Add(av *vars.Variable, resName string) gep.OpFunc {
 			res = vars.V(resName, vars.Time, v.T.Add(time.Duration(av.Int())))
 		}
 
-		return *res, nil
+		return res, nil
 	}
 
 	return gep.OpFunc(add)

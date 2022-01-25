@@ -195,7 +195,7 @@ func TestAddOperations(t *testing.T) {
 							testName)
 					}
 
-					if !checkRes(tc.dst.tt, c.res, res) {
+					if !checkRes(tc.dst.tt, c.res, *res) {
 						t.Fatalf("invalid results: want %v, got %v",
 							c.res, res.RawValues())
 					}
