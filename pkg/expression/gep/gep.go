@@ -177,10 +177,10 @@ func GetOpFunc(
 	return opFunc, nil
 }
 
-func ParamTypeChecker(t vars.Type, mulOperation string) FuncParamChecker {
+func ParamTypeChecker(t vars.Type, funcName string) FuncParamChecker {
 	pChecker := func(v *vars.Variable) error {
 		if !v.CanConvertTo(t) {
-			return NewOpErr(mulOperation, nil, "couldn't convert %q to %v",
+			return NewOpErr(funcName, nil, "couldn't convert %q to %v",
 				v.Name(), t)
 		}
 

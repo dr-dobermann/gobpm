@@ -10,6 +10,7 @@ var (
 		mulFunction: mulFunctions,
 		subFunction: subFunctions,
 		addFunction: addFunctions,
+		divFunction: divFunctions,
 	}
 )
 

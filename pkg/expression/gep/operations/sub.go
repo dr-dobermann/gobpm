@@ -53,14 +53,14 @@ var (
 		OpFuncGen:         subInt,
 		EmptyParamAllowed: false,
 		Checkers: []gep.FuncParamChecker{
-			gep.ParamTypeChecker(vars.Int, mulFunction)},
+			gep.ParamTypeChecker(vars.Int, subFunction)},
 	}
 
 	subFloatDef = gep.FunctionDefinition{
 		OpFuncGen:         subFloat,
 		EmptyParamAllowed: false,
 		Checkers: []gep.FuncParamChecker{
-			gep.ParamTypeChecker(vars.Float, mulFunction)},
+			gep.ParamTypeChecker(vars.Float, subFunction)},
 	}
 
 	subFunctions = map[vars.Type]gep.FunctionDefinition{
