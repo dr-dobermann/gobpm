@@ -2,6 +2,7 @@ package operations
 
 import (
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -13,7 +14,7 @@ type typeVal struct {
 	tv interface{}
 }
 
-type testCase struct {
+type tCase struct {
 	src     typeVal
 	mustErr bool
 	res     vars.VariableValues
@@ -21,7 +22,7 @@ type testCase struct {
 
 type testDesrc struct {
 	dst   typeVal
-	cases []testCase
+	cases []tCase
 }
 
 func TestAddOperations(t *testing.T) {
@@ -31,7 +32,7 @@ func TestAddOperations(t *testing.T) {
 	)
 	resName := "add_res"
 
-	intCases := []testCase{
+	intCases := []tCase{
 		{
 			src:     typeVal{tt: vars.Int, tv: 5}, // int + int
 			mustErr: testShouldPass,
@@ -58,7 +59,7 @@ func TestAddOperations(t *testing.T) {
 			res:     vars.VariableValues{B: false}},
 	}
 
-	boolCases := []testCase{
+	boolCases := []tCase{
 		{
 			src:     typeVal{tt: vars.Int, tv: 10}, // bool + int
 			mustErr: testShouldFail,
@@ -88,7 +89,7 @@ func TestAddOperations(t *testing.T) {
 		t.Fatal("couldn't convert time:", err)
 	}
 
-	strCases := []testCase{
+	strCases := []tCase{
 		{
 			src:     typeVal{tt: vars.Int, tv: 5}, // string + int
 			mustErr: testShouldPass,
@@ -110,7 +111,7 @@ func TestAddOperations(t *testing.T) {
 			mustErr: testShouldPass,
 			res:     vars.VariableValues{S: strTest + strTime}}}
 
-	floatCases := []testCase{
+	floatCases := []tCase{
 		{
 			src:     typeVal{tt: vars.Int, tv: 5}, // float + int
 			mustErr: testShouldPass,
@@ -133,7 +134,7 @@ func TestAddOperations(t *testing.T) {
 			res:     vars.VariableValues{F: 16.7}},
 	}
 
-	timeCases := []testCase{
+	timeCases := []tCase{
 		{
 			src:     typeVal{tt: vars.Int, tv: int64(5 * time.Minute)}, // time + int
 			mustErr: testShouldPass,
@@ -147,9 +148,9 @@ func TestAddOperations(t *testing.T) {
 			mustErr: testShouldFail,
 			res:     vars.VariableValues{B: false}},
 		{
-			src:     typeVal{tt: vars.Float, tv: 13.5}, // time + float
-			mustErr: testShouldFail,
-			res:     vars.VariableValues{B: false}},
+			src:     typeVal{tt: vars.Float, tv: 13.0 * float64(time.Minute)}, // time + float
+			mustErr: testShouldPass,
+			res:     vars.VariableValues{T: timeTest.Add(13 * time.Minute)}},
 		{
 			src:     typeVal{tt: vars.Time, tv: time.Now()}, // time + time
 			mustErr: testShouldFail,
@@ -175,15 +176,19 @@ func TestAddOperations(t *testing.T) {
 			t.Run(
 				testName,
 				func(t *testing.T) {
-					opF := Add(
+					opF, err := Add(
 						vars.V(c.src.tt.String(), c.src.tt, c.src.tv),
 						resName)
+					if err != nil {
+						t.Fatal("couldn't get add OpFunc", err)
+					}
 
 					res, err := opF(
 						vars.V(tc.dst.tt.String(), tc.dst.tt, tc.dst.tv))
 					if err != nil {
 						if !c.mustErr {
-							t.Fatalf("operation should not return an error")
+							t.Fatalf("operation should not "+
+								"return an error: %v", err)
 						}
 
 						return
@@ -220,7 +225,9 @@ func checkRes(
 		return res.S == vv.S
 
 	case vars.Float:
-		return res.F == vv.F
+		precMult := math.Pow10(res.Precision())
+
+		return math.Round(res.F*precMult) == math.Round(vv.F*precMult)
 
 	case vars.Time:
 		return res.T.Equal(vv.T)

@@ -8,9 +8,43 @@ import (
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 )
 
-const (
-	invalidResVar = "INVALID_OPERATION_RESULT"
-)
+var addFunction = "add"
+
+func addInt(y *vars.Variable, resName string) (gep.OpFunc, error) {
+
+	return func(x *vars.Variable) (*vars.Variable, error) {
+			return vars.V(resName, vars.Int, x.I+y.Int()), nil
+		},
+		nil
+}
+
+func addString(y *vars.Variable, resName string) (gep.OpFunc, error) {
+
+	return func(x *vars.Variable) (*vars.Variable, error) {
+			return vars.V(resName, vars.String, x.S+y.StrVal()), nil
+		},
+		nil
+}
+
+func addFloat(y *vars.Variable, resName string) (gep.OpFunc, error) {
+
+	return func(x *vars.Variable) (*vars.Variable, error) {
+			return vars.V(resName, vars.Float, x.F+y.Float64()), nil
+		},
+		nil
+}
+
+func addTime(y *vars.Variable, resName string) (gep.OpFunc, error) {
+
+	return func(x *vars.Variable) (*vars.Variable, error) {
+			return vars.V(
+					resName,
+					vars.Time,
+					x.T.Add(time.Duration(y.Int()))),
+				nil
+		},
+		nil
+}
 
 // create an OpFunc which adds av to the opFunc parameter.
 // new function returns a Variable with result of sum of av and
@@ -22,57 +56,54 @@ const (
 //
 // if resName is not empty returned Variable takes this name. If it's empty,
 // then returned Variable takes OpFunc param v's name.
-func Add(av *vars.Variable, resName string) gep.OpFunc {
-	opName := "Add"
-
+func Add(av *vars.Variable, resName string) (gep.OpFunc, error) {
 	if len(strings.Trim(resName, " ")) == 0 {
 		resName = av.Name()
 	}
 
-	add := func(v *vars.Variable) (*vars.Variable, error) {
-		var res *vars.Variable
-
-		switch v.Type() {
-		case vars.Int:
-			if !av.CanConvertTo(vars.Int) {
-				return nil,
-					gep.NewOpErr(opName, nil,
-						"cannot convert %q to int", av.Name())
-			}
-
-			res = vars.V(resName, vars.Int, v.I+av.Int())
-
-		case vars.Bool:
-			return nil,
-				gep.NewOpErr(opName, nil,
-					"cannot add anything to bool variable %q", av.Name())
-
-		case vars.String:
-			res = vars.V(resName, vars.String, v.S+av.StrVal())
-
-		case vars.Float:
-			if !av.CanConvertTo(vars.Float) {
-				return nil,
-					gep.NewOpErr(opName, nil,
-						"cannot convert %q to float64", av.Name())
-			}
-
-			res = vars.V(resName, vars.Float, v.F+av.Float64())
-
-		case vars.Time:
-			if av.Type() != vars.Int ||
-				!av.CanConvertTo(vars.Int) {
-				return nil,
-					gep.NewOpErr(opName, nil,
-						"couldn't add to time.Time() anything but "+
-							"time.Duration(Int) values to %q", v.Name())
-			}
-
-			res = vars.V(resName, vars.Time, v.T.Add(time.Duration(av.Int())))
-		}
-
-		return res, nil
+	of, err := gep.GetOpFunc(addFunction, av, resName)
+	if err != nil {
+		return nil, err
 	}
 
-	return gep.OpFunc(add)
+	return of, nil
 }
+
+// -----------------------------------------------------------------------------
+// registration info
+var (
+	addIntDef = gep.FunctionDefinition{
+		OpFuncGen:         addInt,
+		EmptyParamAllowed: false,
+		Checkers: []gep.FuncParamChecker{
+			gep.ParamTypeChecker(vars.Int, addFunction)},
+	}
+
+	addStrDef = gep.FunctionDefinition{
+		OpFuncGen:         addString,
+		EmptyParamAllowed: false,
+		Checkers: []gep.FuncParamChecker{
+			gep.ParamTypeChecker(vars.String, addFunction)},
+	}
+
+	addFloatDef = gep.FunctionDefinition{
+		OpFuncGen:         addFloat,
+		EmptyParamAllowed: false,
+		Checkers: []gep.FuncParamChecker{
+			gep.ParamTypeChecker(vars.Float, addFunction)},
+	}
+
+	addTimeDef = gep.FunctionDefinition{
+		OpFuncGen:         addTime,
+		EmptyParamAllowed: false,
+		Checkers: []gep.FuncParamChecker{
+			gep.ParamTypeChecker(vars.Int, addFunction)},
+	}
+
+	addFunctions = map[vars.Type]gep.FunctionDefinition{
+		vars.Int:    addIntDef,
+		vars.String: addStrDef,
+		vars.Float:  addFloatDef,
+		vars.Time:   addTimeDef,
+	}
+)

@@ -1,10 +1,12 @@
-package operations
+package operations_test
 
 import (
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
+	"github.com/dr-dobermann/gobpm/pkg/expression/gep/operations"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 	"github.com/matryer/is"
 )
@@ -24,12 +26,12 @@ type testCase struct {
 	testType bool
 }
 
-var subTests = []testCase{
-	{vars.Int, 5, vars.Int, 7, "x", vars.VariableValues{I: -2}, shouldPass},
+var tests = []testCase{
+	{vars.Int, 5, vars.Int, 7, "x", vars.VariableValues{I: 35}, shouldPass},
 	{vars.Int, 5, vars.Bool, false, "x", vars.VariableValues{I: -1}, shouldFail},
-	{vars.Int, 5, vars.String, "10", "x", vars.VariableValues{I: -5}, shouldPass},
+	{vars.Int, 5, vars.String, "10", "x", vars.VariableValues{I: 50}, shouldPass},
 	{vars.Int, 5, vars.String, "trash", "x", vars.VariableValues{I: -1}, shouldFail},
-	{vars.Int, 5, vars.Float, -7.9, "x", vars.VariableValues{I: 13}, shouldPass},
+	{vars.Int, 5, vars.Float, -7.9, "x", vars.VariableValues{I: -40}, shouldPass},
 	{vars.Int, 5, vars.Time, time.Now(), "x", vars.VariableValues{I: -1}, shouldFail},
 
 	{vars.Bool, false, vars.Int, 7, "x", vars.VariableValues{B: false}, shouldFail},
@@ -44,11 +46,11 @@ var subTests = []testCase{
 	{vars.String, "trash", vars.Float, 7.3, "x", vars.VariableValues{S: "trash"}, shouldFail},
 	{vars.String, "trash", vars.Time, time.Now(), "x", vars.VariableValues{S: "trash"}, shouldFail},
 
-	{vars.Float, 7.7, vars.Int, 7, "x", vars.VariableValues{F: 7.7 - 7.0}, shouldPass},
+	{vars.Float, 7.7, vars.Int, 7, "x", vars.VariableValues{F: 7.7 * 7.0}, shouldPass},
 	{vars.Float, 7.7, vars.Bool, false, "x", vars.VariableValues{F: -1}, shouldFail},
-	{vars.Float, 7.7, vars.String, "10", "x", vars.VariableValues{F: 7.7 - 10.0}, shouldPass},
+	{vars.Float, 7.7, vars.String, "10", "x", vars.VariableValues{F: 7.7 * 10.0}, shouldPass},
 	{vars.Float, 7.7, vars.String, "trash", "x", vars.VariableValues{F: -1}, shouldFail},
-	{vars.Float, 7.9, vars.Float, 7.3, "x", vars.VariableValues{F: 7.9 - 7.3}, shouldPass},
+	{vars.Float, 7.7, vars.Float, 7.9, "x", vars.VariableValues{F: 7.9 * 7.7}, shouldPass},
 	{vars.Float, 7.7, vars.Time, time.Now(), "x", vars.VariableValues{F: -1}, shouldFail},
 
 	{vars.Time, time.Now(), vars.Int, 7, "x", vars.VariableValues{T: time.Time{}}, shouldFail},
@@ -58,21 +60,21 @@ var subTests = []testCase{
 	{vars.Time, time.Now(), vars.Time, time.Now(), "x", vars.VariableValues{T: time.Time{}}, shouldFail},
 }
 
-func TestSub(t *testing.T) {
+func TestMul(t *testing.T) {
 	is := is.New(t)
 
-	for _, tc := range subTests {
-		testName := fmt.Sprintf("%v(%v) - %v(%v)", tc.xt, tc.xv, tc.yt, tc.yv)
+	for _, tc := range tests {
+		testName := fmt.Sprintf("%v(%v) * %v(%v)", tc.xt, tc.xv, tc.yt, tc.yv)
 
 		t.Run(testName, func(t *testing.T) {
 			x := vars.V(tc.xt.String(), tc.xt, tc.xv)
 			y := vars.V(tc.yt.String(), tc.yt, tc.yv)
 
-			subOp, err := Sub(y, "x")
+			mulOp, err := operations.Mul(y, "x")
 			is.NoErr(err)
-			is.True(subOp != nil)
+			is.True(mulOp != nil)
 
-			res, err := subOp(x)
+			res, err := mulOp(x)
 			if err != nil {
 				if tc.testType == shouldFail {
 					return
@@ -87,12 +89,34 @@ func TestSub(t *testing.T) {
 
 			is.True(res != nil)
 
-			if !checkRes(tc.xt, tc.resValue, *res) {
-				t.Fatalf(
-					"operation result [%v] doesn't meet the expectation [%v]",
-					tc.resValue,
-					res.VariableValues)
-			}
+			is.True(checkRes(tc.xt, tc.resValue, res))
 		})
 	}
+}
+
+func checkRes(
+	t vars.Type,
+	vv vars.VariableValues,
+	res *vars.Variable) bool {
+
+	switch t {
+	case vars.Int:
+		return res.I == vv.I
+
+	case vars.Bool:
+		return res.B == vv.B
+
+	case vars.String:
+		return res.S == vv.S
+
+	case vars.Float:
+		precMult := math.Pow10(res.Precision())
+
+		return math.Round(res.F*precMult) == math.Round(vv.F*precMult)
+
+	case vars.Time:
+		return res.T.Equal(vv.T)
+	}
+
+	return true
 }

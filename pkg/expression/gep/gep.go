@@ -8,74 +8,20 @@
 package gep
 
 import (
+	"strings"
+
 	expr "github.com/dr-dobermann/gobpm/pkg/expression"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 )
 
 const (
-	gepLanguage = "GEP"
-
-	resNotEvaluated = "NOT_CALCULATED_YET"
+	InvalidFuncName = "INVALID_FUNCTION_NAME"
 )
 
-// OpFunc is a functor used as an Operation executor in expression
-// conveyer.
-//
-// OpFunc uses single Variable and returns a result in a new Variable.
-// If it's needed to create a binary operation, the functor creation
-// function shoul be used.
-//
-// For example, if you need to create operation res = x + y operation,
-// you should call gep.Add(y, res) to get add(x), which adds y to x and
-// returns Variable named res on success.
-type OpFunc func(v *vars.Variable) (*vars.Variable, error)
-
-// ParameterLoader is a function which returns an Variable which is used
-// as OpFunc operand.
-type ParameterLoader func() (*vars.Variable, error)
-
-// Operation describes a single step execution of GEP expression.
-//
-// To implement x = x + y expression next Operation shoulb be created:
-//
-//      AddOp := Operation{
-//	                Func: Add(variables.V("y", variables.Int, yVal), "x")
-//                  ParamLdr: func() (*variables.Variable, error) {
-//							      // load x from somewhere
-//                                // and create variable with
-//                                // it's value -- xVar
-//
-//                                return &xVar, nil
-//                            }
-//               }
-//
-// Result of sucessefully executed operation will be stored
-// as intermediate or final GEP's result in GEP structure.
-type Operation struct {
-	Func OpFunc
-
-	// if ParamLdr is nil, then the current result of GEP is used.
-	ParamLdr ParameterLoader
-}
-
-// GEP keeps state of a single GEP instance.
-//
-// Result of GEP Expression calculated as sequential execution of operations.
-type GEP struct {
-	expr.FormalExpression
-
-	// operations conveyer
-	operations []Operation
-
-	// result keeps current GEP and final result of expression
-	// conveyer
-	result vars.Variable
-}
-
-func New(id mid.Id, rt vars.Type) *GEP {
+func New(id mid.Id, returnType vars.Type) *GEP {
 	gep := GEP{
-		FormalExpression: *expr.New(id, gepLanguage, rt),
+		FormalExpression: *expr.New(id, gepLanguage, returnType),
 		operations:       []Operation{},
 		result:           *vars.V(resNotEvaluated, vars.Bool, false)}
 
@@ -121,7 +67,7 @@ func (g *GEP) Evaluate() error {
 			if err != nil {
 				return g.NewExprErr(
 					err,
-					"couldn't load an operand for operation #%d",
+					"couldn't load an left param for operation #%d",
 					i)
 			}
 		}
@@ -173,4 +119,122 @@ func LoadVar(v *vars.Variable) ParameterLoader {
 	}
 
 	return ParameterLoader(pLoader)
+}
+
+// -----------------------------------------------------------------------------
+// Operation Function Generations
+// -----------------------------------------------------------------------------
+
+// creates and returns function from its O
+func GetOpFunc(
+	funcName string,
+	y *vars.Variable,
+	resName string) (OpFunc, error) {
+
+	fd, ok := funcMatrix[funcName]
+	if !ok {
+		return nil,
+			NewOpErr(funcName, nil,
+				"function isn't existed in function matrix")
+	}
+
+	opFunc := func(x *vars.Variable) (*vars.Variable, error) {
+		od, ok := fd[x.Type()]
+		if !ok {
+			return nil,
+				NewOpErr(
+					funcName, nil,
+					"operation isn't supported for %v type (%s)",
+					x.Type(), x.Name())
+		}
+
+		if y == nil {
+			if !od.EmptyParamAllowed {
+				return nil,
+					NewOpErr(funcName, nil,
+						"function %q doesn't allow right parameter empty",
+						funcName)
+			}
+		} else {
+			for _, chk := range od.Checkers {
+				if err := chk(y); err != nil {
+					return nil,
+						NewOpErr(funcName, err,
+							"parameter %q check failed", y.Name())
+				}
+			}
+		}
+
+		f, err := od.OpFuncGen(y, resName)
+		if err != nil {
+			return nil, NewOpErr(funcName, err,
+				"couldn't get functor")
+		}
+
+		return f(x)
+	}
+
+	return opFunc, nil
+}
+
+func ParamTypeChecker(t vars.Type, mulOperation string) FuncParamChecker {
+	pChecker := func(v *vars.Variable) error {
+		if !v.CanConvertTo(t) {
+			return NewOpErr(mulOperation, nil, "couldn't convert %q to %v",
+				v.Name(), t)
+		}
+
+		return nil
+	}
+
+	return pChecker
+}
+
+func AddOpFuncDefinition(
+	funcName string,
+	t vars.Type,
+	fd FunctionDefinition) error {
+
+	if len(strings.Trim(funcName, " ")) == 0 {
+		return NewOpErr(InvalidFuncName, nil,
+			"no function name")
+	}
+
+	f, ok := funcMatrix[funcName]
+	if !ok {
+		f = make(map[vars.Type]FunctionDefinition)
+		funcMatrix[funcName] = f
+	}
+
+	if _, ok := f[t]; ok {
+		return NewOpErr(funcName, nil,
+			"functuin already defined for type %v", t)
+	}
+
+	f[t] = fd
+
+	return nil
+}
+
+func GetOpFuncDefinition(
+	funcName string,
+	t vars.Type) (*FunctionDefinition, error) {
+
+	if len(strings.Trim(funcName, " ")) == 0 {
+		return nil, NewOpErr(InvalidFuncName, nil,
+			"no function name")
+	}
+
+	f, ok := funcMatrix[funcName]
+	if !ok {
+		return nil, NewOpErr(funcName, nil, "function isn't found")
+	}
+
+	fd, ok := f[t]
+	if !ok {
+		return nil, NewOpErr(funcName, nil,
+			"functuin isn't defined for type %v", t)
+	}
+
+	return &fd, nil
 }
