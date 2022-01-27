@@ -1,8 +1,6 @@
 package operations
 
 import (
-	"strings"
-
 	"github.com/dr-dobermann/gobpm/pkg/expression/gep"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 )
@@ -33,10 +31,6 @@ func subFloat(y *vars.Variable, resName string) (gep.OpFunc, error) {
 // opFunc return result named resName and nil error.
 // if resName is empty, then v name set to result variable.
 func Sub(av *vars.Variable, resName string) (gep.OpFunc, error) {
-	if len(strings.Trim(resName, " ")) == 0 {
-		resName = av.Name()
-	}
-
 	of, err := gep.GetOpFunc(subFunction, av, resName)
 	if err != nil {
 		return nil, err

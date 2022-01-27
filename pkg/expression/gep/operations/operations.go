@@ -11,6 +11,8 @@ var (
 		subFunction: subFunctions,
 		addFunction: addFunctions,
 		divFunction: divFunctions,
+
+		equalFunction: equalFunctions,
 	}
 )
 

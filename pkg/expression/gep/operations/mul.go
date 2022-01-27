@@ -1,8 +1,6 @@
 package operations
 
 import (
-	"strings"
-
 	"github.com/dr-dobermann/gobpm/pkg/expression/gep"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 )
@@ -26,10 +24,6 @@ func mulFloat(y *vars.Variable, resName string) (gep.OpFunc, error) {
 }
 
 func Mul(av *vars.Variable, resName string) (gep.OpFunc, error) {
-	if len(strings.Trim(resName, " ")) == 0 {
-		resName = av.Name()
-	}
-
 	of, err := gep.GetOpFunc(mulFunction, av, resName)
 	if err != nil {
 		return nil, err

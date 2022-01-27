@@ -139,6 +139,18 @@ func GetOpFunc(
 	}
 
 	opFunc := func(x *vars.Variable) (*vars.Variable, error) {
+		if strings.Trim(x.Name(), " ") == "" {
+			return nil,
+				NewOpErr(
+					funcName, nil,
+					"left variable should have non-empty name",
+					x.Type(), x.Name())
+		}
+
+		if strings.Trim(resName, " ") == "" {
+			resName = x.Name()
+		}
+
 		od, ok := fd[x.Type()]
 		if !ok {
 			return nil,

@@ -1,7 +1,6 @@
 package operations
 
 import (
-	"strings"
 	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/expression/gep"
@@ -51,16 +50,11 @@ func addTime(y *vars.Variable, resName string) (gep.OpFunc, error) {
 // OpFunc parameter v if there is no err and addition is allowed
 // for the variables.
 //
-// if error occured, error returned with Variable named INVALID_OPERATION_RESULT
-// of bool type with false value.
+// if error occured, error returned with nil result Variable.
 //
 // if resName is not empty returned Variable takes this name. If it's empty,
 // then returned Variable takes OpFunc param v's name.
 func Add(av *vars.Variable, resName string) (gep.OpFunc, error) {
-	if len(strings.Trim(resName, " ")) == 0 {
-		resName = av.Name()
-	}
-
 	of, err := gep.GetOpFunc(addFunction, av, resName)
 	if err != nil {
 		return nil, err
