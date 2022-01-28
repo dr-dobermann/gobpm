@@ -12,10 +12,16 @@ var (
 		addFunction: addFunctions,
 		divFunction: divFunctions,
 
-		equalFunction: equalFunctions,
+		equalFunction:    equalFunctions,
+		notEqualFunction: notEqualFunctions,
+		lessFunction:     lessFunctions,
+		grtrFunction:     grtrFunctions,
+		geFunction:       geFunctions,
+		leFunction:       leFunctions,
 	}
 )
 
+//nolint: gochecknoinits
 func init() {
 	// register function definitions
 	for fName, fdm := range functions {

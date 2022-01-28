@@ -8,7 +8,6 @@ import (
 var subFunction = "sub"
 
 func subInt(y *vars.Variable, resName string) (gep.OpFunc, error) {
-
 	return func(x *vars.Variable) (*vars.Variable, error) {
 			return vars.V(resName, vars.Int, x.I-y.Int()), nil
 		},
@@ -16,15 +15,13 @@ func subInt(y *vars.Variable, resName string) (gep.OpFunc, error) {
 }
 
 func subFloat(y *vars.Variable, resName string) (gep.OpFunc, error) {
-
 	return func(x *vars.Variable) (*vars.Variable, error) {
-
 			return vars.V(resName, vars.Float, x.F-y.Float64()), nil
 		},
 		nil
 }
 
-// implements substraction operation which substracts av from
+// implements subtraction operation which subtracts av from
 // opFunc parameter v.
 //
 // if there is no error and sunstraction is illegible for v and av,
@@ -33,11 +30,11 @@ func subFloat(y *vars.Variable, resName string) (gep.OpFunc, error) {
 func Sub(av *vars.Variable, resName string) (gep.OpFunc, error) {
 	of, err := gep.GetOpFunc(subFunction, av, resName)
 	if err != nil {
-		return nil, err
+		return nil, gep.NewOpErr(equalFunction, err,
+			"couldn't get OpFunc")
 	}
 
 	return of, nil
-
 }
 
 // -----------------------------------------------------------------------------
@@ -47,6 +44,7 @@ var (
 		OpFuncGen:         subInt,
 		EmptyParamAllowed: false,
 		Checkers: []gep.FuncParamChecker{
+			gep.ParamExactTypeChecker(subFunction, vars.Int, vars.Float, vars.String),
 			gep.ParamTypeChecker(vars.Int, subFunction)},
 	}
 
@@ -54,6 +52,7 @@ var (
 		OpFuncGen:         subFloat,
 		EmptyParamAllowed: false,
 		Checkers: []gep.FuncParamChecker{
+			gep.ParamExactTypeChecker(subFunction, vars.Int, vars.Float, vars.String),
 			gep.ParamTypeChecker(vars.Float, subFunction)},
 	}
 

@@ -71,7 +71,7 @@ type GEP struct {
 // OpFuncGenerator returns a generated OpFunc which could
 // implement function looks like res = x op y.
 //
-// If there is necessity to have more complicated or simplier operation
+// If there is necessity to have more complicated or simpler operation
 // the user just creates its-own function which returns special OpFunc
 type OpFuncGenerator func(y *vars.Variable, resName string) (OpFunc, error)
 
@@ -97,4 +97,6 @@ type FunctionDefinition struct {
 //
 // funcMatrix = map[functionName]map[leftParamType]FunctionDefininition
 // Defined function works only with defined Variable types.
+//
+//nolint: gochecknoglobals
 var funcMatrix = map[string]map[vars.Type]FunctionDefinition{}

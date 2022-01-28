@@ -125,12 +125,13 @@ func LoadVar(v *vars.Variable) ParameterLoader {
 // Operation Function Generations
 // -----------------------------------------------------------------------------
 
-// creates and returns function from its O
+// creates and returns function from its FunctionDefinition.
+//
+//nolint: cyclop
 func GetOpFunc(
 	funcName string,
 	y *vars.Variable,
 	resName string) (OpFunc, error) {
-
 	fd, ok := funcMatrix[funcName]
 	if !ok {
 		return nil,
@@ -143,8 +144,7 @@ func GetOpFunc(
 			return nil,
 				NewOpErr(
 					funcName, nil,
-					"left variable should have non-empty name",
-					x.Type(), x.Name())
+					"left variable should have non-empty name")
 		}
 
 		if strings.Trim(resName, " ") == "" {
@@ -189,24 +189,10 @@ func GetOpFunc(
 	return opFunc, nil
 }
 
-func ParamTypeChecker(t vars.Type, funcName string) FuncParamChecker {
-	pChecker := func(v *vars.Variable) error {
-		if !v.CanConvertTo(t) {
-			return NewOpErr(funcName, nil, "couldn't convert %q to %v",
-				v.Name(), t)
-		}
-
-		return nil
-	}
-
-	return pChecker
-}
-
 func AddOpFuncDefinition(
 	funcName string,
 	t vars.Type,
 	fd FunctionDefinition) error {
-
 	if len(strings.Trim(funcName, " ")) == 0 {
 		return NewOpErr(InvalidFuncName, nil,
 			"no function name")
@@ -231,7 +217,6 @@ func AddOpFuncDefinition(
 func GetOpFuncDefinition(
 	funcName string,
 	t vars.Type) (*FunctionDefinition, error) {
-
 	if len(strings.Trim(funcName, " ")) == 0 {
 		return nil, NewOpErr(InvalidFuncName, nil,
 			"no function name")

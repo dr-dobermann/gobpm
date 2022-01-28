@@ -30,7 +30,7 @@ var subTests = []testCase{
 	{vars.Int, 5, vars.String, "10", "x", vars.VariableValues{I: -5}, shouldPass},
 	{vars.Int, 5, vars.String, "trash", "x", vars.VariableValues{I: -1}, shouldFail},
 	{vars.Int, 5, vars.Float, -7.9, "x", vars.VariableValues{I: 13}, shouldPass},
-	{vars.Int, 5, vars.Time, time.Now(), "x", vars.VariableValues{I: -1}, shouldFail},
+	{vars.Int, 5, vars.Time, time.Time{}, "x", vars.VariableValues{I: 5}, shouldFail},
 
 	{vars.Bool, false, vars.Int, 7, "x", vars.VariableValues{B: false}, shouldFail},
 	{vars.Bool, false, vars.Bool, true, "x", vars.VariableValues{B: false}, shouldFail},

@@ -74,12 +74,8 @@ func TestExprCopy(t *testing.T) {
 	is.NoErr(err)
 	is.True(fe.State() == Parameterized)
 
-	cfe := fe.Copy()
-	_, ok := cfe.(Expression)
-	is.True(ok)
+	sfeStr := fe.Copy()
 
-	sfeStr, ok := cfe.(*FormalExpression)
-	is.True(ok)
 	is.True(sfeStr != nil)
 	is.True(sfeStr.language == fe.language)
 	is.True(sfeStr.ID() != fe.ID())

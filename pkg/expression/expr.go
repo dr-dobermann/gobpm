@@ -45,6 +45,7 @@ type Expression interface {
 	ReturnType() vars.Type
 }
 
+//nolint: revive
 type ExpressionState uint8
 
 const (
@@ -54,7 +55,7 @@ const (
 	// Parameters set by SetParams call
 	Parameterized
 
-	// Expression was successfuly evaluated
+	// Expression was successfully evaluated
 	Evaluated
 
 	// Evaluation failed
@@ -76,7 +77,6 @@ func New(
 	id identity.Id,
 	lang string,
 	rt vars.Type) *FormalExpression {
-
 	return &FormalExpression{
 		BaseElement: *base.New(id),
 		language:    strings.Trim(lang, " "),
@@ -150,6 +150,7 @@ func (e *FormalExpression) SetParams(pp ...vars.Variable) error {
 		if _, ok := params[v.Name()]; ok {
 			return e.NewExprErr(nil, "duplicate parameter '%s'", v.Name())
 		}
+
 		if _, ok := e.parameters[v.Name()]; ok {
 			return e.NewExprErr(nil, "duplicate parameter '%s'", v.Name())
 		}
@@ -186,7 +187,7 @@ func (e *FormalExpression) GetResult() (vars.Variable, error) {
 		errs.ErrDummyFuncImplementation
 }
 
-func (e *FormalExpression) Copy() Expression {
+func (e *FormalExpression) Copy() *FormalExpression {
 	ec := FormalExpression{
 		BaseElement: e.BaseElement,
 		state:       Created,
@@ -209,7 +210,6 @@ func (e *FormalExpression) NewExprErr(
 	err error,
 	format string,
 	values ...interface{}) ExpressionError {
-
 	return ExpressionError{
 		exprID: e.ID(),
 		msg:    fmt.Sprintf(format, values...),

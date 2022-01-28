@@ -31,6 +31,8 @@ linters:
         - maligned # The linter 'maligned' is deprecated
         - scopelint # The linter 'scopelint' is deprecated Replaced by exportloopref.
         - golint # The linter 'golint' is deprecated (since v1.41.0)  Replaced by revive.
+        - dupl # dumb duplication linter
+        - gochecknoglobals
         # - gci
         # - nlreturn
         # - gomnd

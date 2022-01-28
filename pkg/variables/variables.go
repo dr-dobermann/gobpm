@@ -18,6 +18,11 @@ import (
 	"time"
 )
 
+const (
+	floatBitSize     = 64
+	defaultPrecision = 2
+)
+
 type Type uint8
 
 const (
@@ -60,13 +65,14 @@ type Variable struct {
 }
 
 // V creates a new variable
+//nolint:errcheck
 func V(n string, t Type, v interface{}) *Variable {
 	n = strings.Trim(n, " ")
 
 	vv := &Variable{
 		name:  n,
 		vType: t,
-		prec:  2}
+		prec:  defaultPrecision}
 
 	vv.update(v)
 
@@ -89,6 +95,7 @@ func (v *Variable) SetPrecision(p int) {
 	if p < 0 {
 		p = 2
 	}
+
 	v.prec = p
 }
 
@@ -116,7 +123,6 @@ func (v Variable) NewVErr(
 	err error,
 	format string,
 	values ...interface{}) VariableError {
-
 	return VariableError{vName: v.name, vType: v.vType,
 		msg: fmt.Sprintf(format, values...), Err: err}
 }
@@ -124,13 +130,16 @@ func (v Variable) NewVErr(
 // update updates a value of the Variable v.
 //
 // it expected to receive the value of internal type of v.
+//
+//nolint: cyclop, revive
 func (v *Variable) update(newVal interface{}) error {
 	switch v.vType {
 	case Int:
 		if newVal == nil {
 			v.value = int64(0)
 			v.I = 0
-			break
+
+			return nil
 		}
 
 		if i, ok := newVal.(int64); !ok {
@@ -149,7 +158,8 @@ func (v *Variable) update(newVal interface{}) error {
 		if newVal == nil {
 			v.value = false
 			v.B = false
-			break
+
+			return nil
 		}
 
 		if b, ok := newVal.(bool); !ok {
@@ -163,7 +173,8 @@ func (v *Variable) update(newVal interface{}) error {
 		if newVal == nil {
 			v.value = ""
 			v.S = ""
-			break
+
+			return nil
 		}
 
 		if s, ok := newVal.(string); !ok {
@@ -177,7 +188,8 @@ func (v *Variable) update(newVal interface{}) error {
 		if newVal == nil {
 			v.value = float64(0.0)
 			v.F = 0.0
-			break
+
+			return nil
 		}
 
 		if f, ok := newVal.(float64); !ok {
@@ -191,12 +203,12 @@ func (v *Variable) update(newVal interface{}) error {
 		if newVal == nil {
 			v.T = time.Now()
 			v.value = v.T
-			break
+
+			return nil
 		}
 
 		if t, ok := newVal.(time.Time); !ok {
 			return v.NewVErr(nil, "couldn't convert %v to Time", newVal)
-
 		} else {
 			v.value = t
 			v.T = t
@@ -207,7 +219,7 @@ func (v *Variable) update(newVal interface{}) error {
 }
 
 // Int returns a integer representation of variable v.
-// if v is the String and converstion errror from string to float64 happened
+// if v is the String and conversion errror from string to float64 happened
 // then panic fired
 func (v *Variable) Int() int64 {
 	var i int64
@@ -224,7 +236,7 @@ func (v *Variable) Int() int64 {
 		}
 
 	case String:
-		if f, err := strconv.ParseFloat(v.S, 64); err != nil {
+		if f, err := strconv.ParseFloat(v.S, floatBitSize); err != nil {
 			panic("cannot convert string var " + v.name +
 				"[" + v.S + "] to float64" + err.Error())
 		} else {
@@ -257,7 +269,7 @@ func (v *Variable) StrVal() string {
 		}
 
 	case Float:
-		s = strconv.FormatFloat(v.F, 'f', v.prec, 64)
+		s = strconv.FormatFloat(v.F, 'f', v.prec, floatBitSize)
 
 	case String:
 		s = v.S
@@ -270,6 +282,8 @@ func (v *Variable) StrVal() string {
 }
 
 // Bool returns a boolean representation of variable v.
+//
+//nolint: cyclop
 func (v *Variable) Bool() bool {
 	var b bool
 
@@ -290,8 +304,6 @@ func (v *Variable) Bool() bool {
 	case String:
 		if strings.ToUpper(v.S) == "TRUE" {
 			b = true
-		} else {
-			b = false
 		}
 
 	case Time:
@@ -302,7 +314,7 @@ func (v *Variable) Bool() bool {
 }
 
 // Float64 returns a float64 representation of variable v.
-// if v is the String and converstion errror from string to float64 happened
+// if v is the String and conversion errror from string to float64 happened
 // then panic fired
 func (v *Variable) Float64() float64 {
 	var (
@@ -323,7 +335,7 @@ func (v *Variable) Float64() float64 {
 		f = v.F
 
 	case String:
-		f, err = strconv.ParseFloat(v.S, 64)
+		f, err = strconv.ParseFloat(v.S, floatBitSize)
 		if err != nil {
 			panic("couldn't transform string " +
 				v.S + " into float64 : " + err.Error())
@@ -358,7 +370,7 @@ func (v *Variable) Time() time.Time {
 		}
 
 	case Float:
-		t = time.UnixMilli(int64(v.F))
+		t = time.UnixMilli(int64(math.Round(v.F)))
 
 	case Time:
 		t = v.T
@@ -390,39 +402,32 @@ func (v *Variable) IsEqual(ov *Variable) bool {
 
 // check if it's possible to convert variable v to a new type nt
 // without panic of invalid conversion.
+//
+//nolint: cyclop
 func (v *Variable) CanConvertTo(nt Type) bool {
 	// check only dangerous or impossible conversion
 	// all safe conversion could be made with no check
 	switch {
-	case v.vType == String && nt == Int:
-		_, err := strconv.ParseFloat(v.S, 64)
+	case v.vType == Bool && (nt == Int || nt == Float || nt == Time):
+		return false
+
+	case v.vType == String && (nt == Int || nt == Float):
+		_, err := strconv.ParseFloat(v.S, floatBitSize)
+
 		return err == nil
-
-	case v.vType == Bool && nt == Int:
-		return false
-
-	case v.vType == Time && nt == Int:
-		return false
-
-	case v.vType == String && nt == Float:
-		if _, err := strconv.ParseFloat(v.S, 64); err != nil {
-			return false
-		}
-
-	case v.vType == Bool && nt == Float:
-		return false
-
-	case v.vType == Time && nt == Float:
-		return false
 
 	case v.vType == String && nt == Bool:
 		vs := strings.ToUpper(v.S)
+
 		return vs == "TRUE" || vs == "FALSE"
 
 	case v.vType == String && nt == Time:
 		if _, err := time.Parse(time.RFC3339, v.S); err != nil {
 			return false
 		}
+
+	case v.vType == Time && (nt == Bool || nt == Float):
+		return false
 	}
 
 	return true

@@ -18,7 +18,6 @@ func NewOpErr(
 	err error,
 	format string,
 	values ...interface{}) OperationError {
-
 	return OperationError{
 		opName: opName,
 		msg:    fmt.Sprintf(format, values...),

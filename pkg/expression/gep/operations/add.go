@@ -10,7 +10,6 @@ import (
 var addFunction = "add"
 
 func addInt(y *vars.Variable, resName string) (gep.OpFunc, error) {
-
 	return func(x *vars.Variable) (*vars.Variable, error) {
 			return vars.V(resName, vars.Int, x.I+y.Int()), nil
 		},
@@ -18,7 +17,6 @@ func addInt(y *vars.Variable, resName string) (gep.OpFunc, error) {
 }
 
 func addString(y *vars.Variable, resName string) (gep.OpFunc, error) {
-
 	return func(x *vars.Variable) (*vars.Variable, error) {
 			return vars.V(resName, vars.String, x.S+y.StrVal()), nil
 		},
@@ -26,7 +24,6 @@ func addString(y *vars.Variable, resName string) (gep.OpFunc, error) {
 }
 
 func addFloat(y *vars.Variable, resName string) (gep.OpFunc, error) {
-
 	return func(x *vars.Variable) (*vars.Variable, error) {
 			return vars.V(resName, vars.Float, x.F+y.Float64()), nil
 		},
@@ -34,7 +31,6 @@ func addFloat(y *vars.Variable, resName string) (gep.OpFunc, error) {
 }
 
 func addTime(y *vars.Variable, resName string) (gep.OpFunc, error) {
-
 	return func(x *vars.Variable) (*vars.Variable, error) {
 			return vars.V(
 					resName,
@@ -50,14 +46,15 @@ func addTime(y *vars.Variable, resName string) (gep.OpFunc, error) {
 // OpFunc parameter v if there is no err and addition is allowed
 // for the variables.
 //
-// if error occured, error returned with nil result Variable.
+// if error occurred, error returned with nil result Variable.
 //
 // if resName is not empty returned Variable takes this name. If it's empty,
 // then returned Variable takes OpFunc param v's name.
 func Add(av *vars.Variable, resName string) (gep.OpFunc, error) {
 	of, err := gep.GetOpFunc(addFunction, av, resName)
 	if err != nil {
-		return nil, err
+		return nil, gep.NewOpErr(addFunction, err,
+			"couldn't get OpFunc")
 	}
 
 	return of, nil
@@ -91,7 +88,7 @@ var (
 		OpFuncGen:         addTime,
 		EmptyParamAllowed: false,
 		Checkers: []gep.FuncParamChecker{
-			gep.ParamTypeChecker(vars.Int, addFunction)},
+			gep.ParamExactTypeChecker(addFunction, vars.Int, vars.Float)},
 	}
 
 	addFunctions = map[vars.Type]gep.FunctionDefinition{

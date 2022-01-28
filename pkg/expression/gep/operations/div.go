@@ -8,7 +8,6 @@ import (
 var divFunction = "div"
 
 func divInt(y *vars.Variable, resName string) (gep.OpFunc, error) {
-
 	return func(x *vars.Variable) (*vars.Variable, error) {
 			return vars.V(resName, vars.Int, x.I/y.Int()), nil
 		},
@@ -16,7 +15,6 @@ func divInt(y *vars.Variable, resName string) (gep.OpFunc, error) {
 }
 
 func divFloat(y *vars.Variable, resName string) (gep.OpFunc, error) {
-
 	return func(x *vars.Variable) (*vars.Variable, error) {
 			return vars.V(resName, vars.Float, x.F/y.Float64()), nil
 		},
@@ -26,7 +24,8 @@ func divFloat(y *vars.Variable, resName string) (gep.OpFunc, error) {
 func Div(av *vars.Variable, resName string) (gep.OpFunc, error) {
 	of, err := gep.GetOpFunc(divFunction, av, resName)
 	if err != nil {
-		return nil, err
+		return nil, gep.NewOpErr(equalFunction, err,
+			"couldn't get OpFunc")
 	}
 
 	return of, nil
@@ -54,6 +53,7 @@ var (
 		OpFuncGen:         divInt,
 		EmptyParamAllowed: false,
 		Checkers: []gep.FuncParamChecker{
+			gep.ParamExactTypeChecker(divFunction, vars.Int, vars.Float, vars.String),
 			gep.ParamTypeChecker(vars.Int, divFunction),
 			paramZeroChecker(divFunction)},
 	}
@@ -62,6 +62,7 @@ var (
 		OpFuncGen:         divFloat,
 		EmptyParamAllowed: false,
 		Checkers: []gep.FuncParamChecker{
+			gep.ParamExactTypeChecker(divFunction, vars.Int, vars.Float, vars.String),
 			gep.ParamTypeChecker(vars.Float, divFunction),
 			paramZeroChecker(divFunction)},
 	}

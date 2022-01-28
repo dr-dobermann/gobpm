@@ -6,6 +6,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/identity"
 )
 
+//nolint: revive
 type ExpressionError struct {
 	exprID identity.Id
 	msg    string

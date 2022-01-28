@@ -8,7 +8,6 @@ import (
 var mulFunction = "mul"
 
 func mulInt(y *vars.Variable, resName string) (gep.OpFunc, error) {
-
 	return func(x *vars.Variable) (*vars.Variable, error) {
 			return vars.V(resName, vars.Int, x.I*y.Int()), nil
 		},
@@ -16,7 +15,6 @@ func mulInt(y *vars.Variable, resName string) (gep.OpFunc, error) {
 }
 
 func mulFloat(y *vars.Variable, resName string) (gep.OpFunc, error) {
-
 	return func(x *vars.Variable) (*vars.Variable, error) {
 			return vars.V(resName, vars.Float, x.F*y.Float64()), nil
 		},
@@ -26,7 +24,8 @@ func mulFloat(y *vars.Variable, resName string) (gep.OpFunc, error) {
 func Mul(av *vars.Variable, resName string) (gep.OpFunc, error) {
 	of, err := gep.GetOpFunc(mulFunction, av, resName)
 	if err != nil {
-		return nil, err
+		return nil, gep.NewOpErr(equalFunction, err,
+			"couldn't get OpFunc")
 	}
 
 	return of, nil
@@ -39,6 +38,7 @@ var (
 		OpFuncGen:         mulInt,
 		EmptyParamAllowed: false,
 		Checkers: []gep.FuncParamChecker{
+			gep.ParamExactTypeChecker(mulFunction, vars.Int, vars.Float, vars.String),
 			gep.ParamTypeChecker(vars.Int, mulFunction)},
 	}
 
@@ -46,6 +46,7 @@ var (
 		OpFuncGen:         mulFloat,
 		EmptyParamAllowed: false,
 		Checkers: []gep.FuncParamChecker{
+			gep.ParamExactTypeChecker(mulFunction, vars.Int, vars.Float, vars.String),
 			gep.ParamTypeChecker(vars.Float, mulFunction)},
 	}
 

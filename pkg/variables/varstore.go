@@ -40,7 +40,7 @@ func (vs *VarStore) getVar(vn string, vt Type, returnEmpty bool) *Variable {
 		v = &Variable{
 			name:  vn,
 			vType: vt,
-			prec:  2}
+			prec:  defaultPrecision}
 
 		vs.vars[vn] = v
 	}
@@ -66,8 +66,10 @@ func (vs *VarStore) DelVar(vn string) error {
 	if !vs.checkVar(vn) {
 		return vs.NewVSErr(nil, "couldn't find variable "+vn)
 	}
+
 	vs.Lock()
 	defer vs.Unlock()
+
 	delete(vs.vars, vn)
 
 	return nil
@@ -97,7 +99,9 @@ func (vs *VarStore) NewInt(vn string, val int64) (*Variable, error) {
 
 	v := vs.getVar(vn, Int, true)
 
-	v.update(val)
+	if err := v.update(val); err != nil {
+		return nil, err
+	}
 
 	return v, nil
 }
@@ -111,7 +115,9 @@ func (vs *VarStore) NewBool(vn string, val bool) (*Variable, error) {
 
 	v := vs.getVar(vn, Bool, true)
 
-	v.update(val)
+	if err := v.update(val); err != nil {
+		return nil, err
+	}
 
 	return v, nil
 }
@@ -125,7 +131,9 @@ func (vs *VarStore) NewString(vn string, val string) (*Variable, error) {
 
 	v := vs.getVar(vn, String, true)
 
-	v.update(val)
+	if err := v.update(val); err != nil {
+		return nil, err
+	}
 
 	return v, nil
 }
@@ -138,7 +146,10 @@ func (vs *VarStore) NewFloat(vn string, val float64) (*Variable, error) {
 	}
 
 	v := vs.getVar(vn, Float, true)
-	v.update(val)
+
+	if err := v.update(val); err != nil {
+		return nil, err
+	}
 
 	return v, nil
 }
@@ -149,7 +160,10 @@ func (vs *VarStore) NewTime(vn string, val time.Time) (*Variable, error) {
 	}
 
 	v := vs.getVar(vn, Time, true)
-	v.update(val)
+
+	if err := v.update(val); err != nil {
+		return nil, err
+	}
 
 	return v, nil
 }
@@ -160,7 +174,10 @@ func (vs *VarStore) NewVar(v Variable) (*Variable, error) {
 	}
 
 	vr := vs.getVar(v.name, v.vType, true)
-	vr.update(v.value)
+
+	if err := v.update(v.value); err != nil {
+		return nil, err
+	}
 
 	return vr, nil
 }
@@ -169,7 +186,6 @@ func (vs *VarStore) NewVSErr(
 	err error,
 	format string,
 	values ...interface{}) VStoreError {
-
 	return VStoreError{
 		msg: fmt.Sprintf(format, values...),
 		Err: err}

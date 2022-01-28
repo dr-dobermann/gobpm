@@ -32,6 +32,14 @@ func TestAddOperations(t *testing.T) {
 	)
 	resName := "add_res"
 
+	strTest := "dober "
+	strTime := "1973-02-23T05:15:00+06:00"
+
+	timeTest, err := time.Parse(time.RFC3339, strTime)
+	if err != nil {
+		t.Fatal("couldn't convert time:", err)
+	}
+
 	intCases := []tCase{
 		{
 			src:     typeVal{tt: vars.Int, tv: 5}, // int + int
@@ -54,9 +62,9 @@ func TestAddOperations(t *testing.T) {
 			mustErr: testShouldPass,
 			res:     vars.VariableValues{I: 12}},
 		{
-			src:     typeVal{tt: vars.Time, tv: time.Now()}, // int + time.Time
-			mustErr: testShouldFail,
-			res:     vars.VariableValues{B: false}},
+			src:     typeVal{tt: vars.Time, tv: timeTest}, // int + time.Time
+			mustErr: testShouldPass,
+			res:     vars.VariableValues{I: timeTest.UnixMilli() + 5}},
 	}
 
 	boolCases := []tCase{
@@ -77,17 +85,9 @@ func TestAddOperations(t *testing.T) {
 			mustErr: testShouldFail,
 			res:     vars.VariableValues{B: true}},
 		{
-			src:     typeVal{tt: vars.Time, tv: time.Now()}, // bool + time
+			src:     typeVal{tt: vars.Time, tv: timeTest}, // bool + time
 			mustErr: testShouldFail,
 			res:     vars.VariableValues{B: true}}}
-
-	strTest := "dober "
-	strTime := "1973-02-23T05:15:00+06:00"
-
-	timeTest, err := time.Parse(time.RFC3339, strTime)
-	if err != nil {
-		t.Fatal("couldn't convert time:", err)
-	}
 
 	strCases := []tCase{
 		{
