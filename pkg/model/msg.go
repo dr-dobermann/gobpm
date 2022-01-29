@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/msgmarsh"
-	"github.com/dr-dobermann/gobpm/model/base"
 	"github.com/dr-dobermann/gobpm/pkg/identity"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
+	"github.com/dr-dobermann/gobpm/pkg/model/base"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 	"github.com/google/uuid"
 )

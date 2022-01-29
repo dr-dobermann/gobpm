@@ -79,7 +79,7 @@ type OpFuncGenerator func(y *vars.Variable, resName string) (OpFunc, error)
 // res = x op y expression.
 // The obvious realization of this checker is parameter type checker
 // like ParamTypeChecker
-type FuncParamChecker func(y *vars.Variable) error
+type FuncParamChecker func(v *vars.Variable) error
 
 // Single function definition
 type FunctionDefinition struct {

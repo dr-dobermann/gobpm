@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/dr-dobermann/gobpm/internal/gateways"
-	"github.com/dr-dobermann/gobpm/model"
+	"github.com/dr-dobermann/gobpm/pkg/model"
 )
 
 type GatewayExecutor interface {

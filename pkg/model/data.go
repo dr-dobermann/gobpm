@@ -1,6 +1,6 @@
 package model
 
-import "github.com/dr-dobermann/gobpm/model/base"
+import "github.com/dr-dobermann/gobpm/pkg/model/base"
 
 // type Import struct {
 // 	impType   string

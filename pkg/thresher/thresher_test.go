@@ -11,7 +11,7 @@ import (
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 
 	"github.com/dr-dobermann/gobpm/internal/instance"
-	"github.com/dr-dobermann/gobpm/model"
+	"github.com/dr-dobermann/gobpm/pkg/model"
 	"github.com/dr-dobermann/srvbus"
 	"github.com/dr-dobermann/srvbus/es"
 	"github.com/google/uuid"

@@ -15,7 +15,7 @@ linters-settings:
   errcheck:
     check-type-assertions: true
   gci:
-    local-prefixes: poe
+    local-prefixes: goBpm
 
 output:
     format: colored-line-number

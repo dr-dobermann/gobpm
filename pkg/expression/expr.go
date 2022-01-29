@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/internal/errs"
-	"github.com/dr-dobermann/gobpm/model/base"
 	"github.com/dr-dobermann/gobpm/pkg/identity"
+	"github.com/dr-dobermann/gobpm/pkg/model/base"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 )
 

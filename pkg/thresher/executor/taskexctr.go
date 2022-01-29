@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/dr-dobermann/gobpm/internal/tasks"
-	"github.com/dr-dobermann/gobpm/model"
+	"github.com/dr-dobermann/gobpm/pkg/model"
 )
 
 // ----------------------------------------------------------------------------

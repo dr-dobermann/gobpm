@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"github.com/dr-dobermann/gobpm/internal/errs"
-	"github.com/dr-dobermann/gobpm/model"
-	"github.com/dr-dobermann/gobpm/thresher/excenv"
+	"github.com/dr-dobermann/gobpm/pkg/model"
+	"github.com/dr-dobermann/gobpm/pkg/thresher/excenv"
 )
 
 type ExclusiveGatewayExecutor struct {

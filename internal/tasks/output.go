@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dr-dobermann/gobpm/model"
+	"github.com/dr-dobermann/gobpm/pkg/model"
+	"github.com/dr-dobermann/gobpm/pkg/thresher/excenv"
 	"github.com/dr-dobermann/gobpm/pkg/variables"
-	"github.com/dr-dobermann/gobpm/thresher/excenv"
 	"go.uber.org/zap"
 )
 

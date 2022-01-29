@@ -132,6 +132,7 @@ func GetOpFunc(
 	funcName string,
 	y *vars.Variable,
 	resName string) (OpFunc, error) {
+
 	fd, ok := funcMatrix[funcName]
 	if !ok {
 		return nil,
@@ -193,6 +194,7 @@ func AddOpFuncDefinition(
 	funcName string,
 	t vars.Type,
 	fd FunctionDefinition) error {
+
 	if len(strings.Trim(funcName, " ")) == 0 {
 		return NewOpErr(InvalidFuncName, nil,
 			"no function name")

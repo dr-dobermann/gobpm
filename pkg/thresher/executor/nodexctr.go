@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dr-dobermann/gobpm/model"
-	"github.com/dr-dobermann/gobpm/thresher/excenv"
+	"github.com/dr-dobermann/gobpm/pkg/model"
+	"github.com/dr-dobermann/gobpm/pkg/thresher/excenv"
 )
 
 // NodeExecutor should be implemented by every Node to make it

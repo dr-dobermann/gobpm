@@ -51,6 +51,7 @@ var (
 		{vars.Float, 15.0, vars.Int, 7, "res", vars.VariableValues{B: false}, shouldPass},
 		{vars.Float, 3, vars.Bool, true, "res", vars.VariableValues{B: true}, shouldFail},
 		{vars.Float, 12.53, vars.String, "12.53", "res", vars.VariableValues{B: true}, shouldPass},
+		{vars.Float, 12.06, vars.String, "12.53", "res", vars.VariableValues{B: false}, shouldPass},
 		{vars.Float, 7, vars.String, "trash", "res", vars.VariableValues{B: false}, shouldFail},
 		{vars.Float, -7.90, vars.Float, -7.9, "res", vars.VariableValues{B: true}, shouldPass},
 		{vars.Float, 12, vars.Float, 0.0, "res", vars.VariableValues{B: false}, shouldPass},

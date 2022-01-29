@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/dr-dobermann/gobpm/model"
+	"github.com/dr-dobermann/gobpm/pkg/model"
+	"github.com/dr-dobermann/gobpm/pkg/thresher/excenv"
 	"github.com/dr-dobermann/gobpm/pkg/variables"
-	"github.com/dr-dobermann/gobpm/thresher/excenv"
 	"github.com/dr-dobermann/srvbus/ms"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
