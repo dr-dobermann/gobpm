@@ -1,3 +1,9 @@
+// GoBPM is BPMN v.2 compliant business process engine written on Golang.
+//
+// (c) 2021, 2022 Ruslan Gabitov a.k.a. dr-dobermann.
+// Use of this source is governed by LGPL license that
+// can be found in the LICENSE file.
+
 // variables provides Variable and VarStore objects for the GoBPM project.
 //
 // It could be used separately if needed.
@@ -426,7 +432,7 @@ func (v *Variable) CanConvertTo(nt Type) bool {
 			return false
 		}
 
-	case v.vType == Time && (nt == Bool || nt == Float):
+	case v.vType == Time && nt == Bool:
 		return false
 	}
 

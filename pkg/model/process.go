@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dr-dobermann/gobpm/pkg/base"
 	expr "github.com/dr-dobermann/gobpm/pkg/expression"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
-	"github.com/dr-dobermann/gobpm/pkg/model/base"
 	"github.com/google/uuid"
 )
 

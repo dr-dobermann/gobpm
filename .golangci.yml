@@ -33,6 +33,8 @@ linters:
         - golint # The linter 'golint' is deprecated (since v1.41.0)  Replaced by revive.
         - dupl # dumb duplication linter
         - gochecknoglobals
+        - gofmt
+        - goimports
         # - gci
         # - nlreturn
         # - gomnd

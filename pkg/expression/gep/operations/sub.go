@@ -21,14 +21,14 @@ func subFloat(y *vars.Variable, resName string) (gep.OpFunc, error) {
 		nil
 }
 
-// implements subtraction operation which subtracts av from
-// opFunc parameter v.
+// implements subtraction operation which subtracts y from
+// opFunc parameter x.
 //
-// if there is no error and sunstraction is illegible for v and av,
+// if there is no error and sunstraction is illegible for v and y,
 // opFunc return result named resName and nil error.
 // if resName is empty, then v name set to result variable.
-func Sub(av *vars.Variable, resName string) (gep.OpFunc, error) {
-	of, err := gep.GetOpFunc(subFunction, av, resName)
+func Sub(y *vars.Variable, resName string) (gep.OpFunc, error) {
+	of, err := gep.GetOpFunc(subFunction, y, resName)
 	if err != nil {
 		return nil, gep.NewOpErr(equalFunction, err,
 			"couldn't get OpFunc")

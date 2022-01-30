@@ -285,7 +285,7 @@ func notEqualAny(y *vars.Variable, resName string) (gep.OpFunc, error) {
 	return getCondFunc(CondNotEqual, y, resName)
 }
 
-// create an OpFunc which checks if x is equal to y parameter.
+// create an OpFunc which checks if x is not equal to y parameter.
 // new function returns a Bool Variable with result of comparison.
 //
 // if error occurred, error returned with nil result Variable.
@@ -353,17 +353,17 @@ func lessAny(y *vars.Variable, resName string) (gep.OpFunc, error) {
 	return getCondFunc(CondLess, y, resName)
 }
 
-// create an OpFunc which checks if x is equal to y parameter.
+// create an OpFunc which checks if x is greater to y parameter.
 // new function returns a Bool Variable with result of comparison.
 //
 // if error occurred, error returned with nil result Variable.
 //
 // if resName is not empty returned Variable takes this name. If it's empty,
 // then returned Variable takes OpFunc param v's name.
-func GreaterEqual(av *vars.Variable, resName string) (gep.OpFunc, error) {
+func Less(av *vars.Variable, resName string) (gep.OpFunc, error) {
 	of, err := gep.GetOpFunc(lessFunction, av, resName)
 	if err != nil {
-		return nil, gep.NewOpErr(equalFunction, err,
+		return nil, gep.NewOpErr(lessFunction, err,
 			"couldn't get OpFunc")
 	}
 
@@ -431,7 +431,7 @@ func grtrAny(y *vars.Variable, resName string) (gep.OpFunc, error) {
 func LessEqual(av *vars.Variable, resName string) (gep.OpFunc, error) {
 	of, err := gep.GetOpFunc(grtrFunction, av, resName)
 	if err != nil {
-		return nil, gep.NewOpErr(equalFunction, err,
+		return nil, gep.NewOpErr(grtrFunction, err,
 			"couldn't get OpFunc")
 	}
 
@@ -499,7 +499,7 @@ func geAny(y *vars.Variable, resName string) (gep.OpFunc, error) {
 func GE(av *vars.Variable, resName string) (gep.OpFunc, error) {
 	of, err := gep.GetOpFunc(geFunction, av, resName)
 	if err != nil {
-		return nil, gep.NewOpErr(equalFunction, err,
+		return nil, gep.NewOpErr(geFunction, err,
 			"couldn't get OpFunc")
 	}
 
@@ -567,7 +567,7 @@ func leAny(y *vars.Variable, resName string) (gep.OpFunc, error) {
 func LE(av *vars.Variable, resName string) (gep.OpFunc, error) {
 	of, err := gep.GetOpFunc(leFunction, av, resName)
 	if err != nil {
-		return nil, gep.NewOpErr(equalFunction, err,
+		return nil, gep.NewOpErr(leFunction, err,
 			"couldn't get OpFunc")
 	}
 

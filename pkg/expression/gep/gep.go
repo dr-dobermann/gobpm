@@ -1,3 +1,9 @@
+// GoBPM is BPMN v.2 compliant business process engine
+//
+// (c) 2021, Ruslan Gabitov a.k.a. dr-dobermann.
+// Use of this source is governed by LGPL license that
+// can be found in the LICENSE file.
+
 // GEP -- GoBPM Expresiion Processor.
 //
 // GEP is an internal, API-oriented extensible expression processor
@@ -32,6 +38,7 @@ func (g *GEP) SetParams(pp ...vars.Variable) error {
 	return g.NewExprErr(nil, "GEP doesn't provide SetParams")
 }
 
+// adds a single Operation inte the expression conveyer.
 func (g *GEP) AddOperation(op Operation) error {
 	if op.Func == nil {
 		return g.NewExprErr(nil, "operation function couldn't be nil")
@@ -45,6 +52,19 @@ func (g *GEP) AddOperation(op Operation) error {
 }
 
 func (g *GEP) Evaluate() error {
+	var err error
+
+	// set expression state on return
+	defer func() {
+		if err != nil {
+			g.UpdateState(expr.Error)
+
+			return
+		}
+
+		g.UpdateState(expr.Evaluated)
+	}()
+
 	if g.State() != expr.Parameterized {
 		return g.NewExprErr(nil, "operation list is empty")
 	}
@@ -55,10 +75,7 @@ func (g *GEP) Evaluate() error {
 				"OpFunc is empty for operation #%d", i)
 		}
 
-		var (
-			opParam *vars.Variable
-			err     error
-		)
+		var opParam *vars.Variable
 
 		if op.ParamLdr == nil {
 			opParam = &g.result
@@ -109,16 +126,17 @@ func (g *GEP) GetResult() (vars.Variable, error) {
 // -----------------------------------------------------------------------------
 //    Utility functions
 // -----------------------------------------------------------------------------
+
+// LoadVar implements a ParameterLoader type which takes any variable and
+// returns it as an OpFunc parameter
 func LoadVar(v *vars.Variable) ParameterLoader {
 	if v == nil {
 		return nil
 	}
 
-	pLoader := func() (*vars.Variable, error) {
+	return func() (*vars.Variable, error) {
 		return v, nil
 	}
-
-	return ParameterLoader(pLoader)
 }
 
 // -----------------------------------------------------------------------------
@@ -127,7 +145,7 @@ func LoadVar(v *vars.Variable) ParameterLoader {
 
 // creates and returns function from its FunctionDefinition.
 //
-//nolint: cyclop
+//nolint: cyclop, whitespace, wsl
 func GetOpFunc(
 	funcName string,
 	y *vars.Variable,
@@ -190,6 +208,7 @@ func GetOpFunc(
 	return opFunc, nil
 }
 
+//nolint: whitespace, wsl
 func AddOpFuncDefinition(
 	funcName string,
 	t vars.Type,

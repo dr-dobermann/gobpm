@@ -3,8 +3,8 @@ package model
 import (
 	"context"
 
+	"github.com/dr-dobermann/gobpm/pkg/base"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
-	"github.com/dr-dobermann/gobpm/pkg/model/base"
 )
 
 type Executor interface {

@@ -1,3 +1,16 @@
+// GoBPM is BPMN v.2 compliant business process engine
+//
+// (c) 2021, Ruslan Gabitov a.k.a. dr-dobermann.
+// Use of this source is governed by LGPL license that
+// can be found in the LICENSE file.
+
+/*
+Package expression as a part of gobpm package provides a faciltity to
+create and evaluate expressions needed for GoBPM tasks and gateways.
+
+Expressions could be used as a separate packages since it has no hard links
+to GoBPM's model and run-time.
+*/
 package expression
 
 import (
@@ -7,8 +20,8 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/internal/errs"
+	"github.com/dr-dobermann/gobpm/pkg/base"
 	"github.com/dr-dobermann/gobpm/pkg/identity"
-	"github.com/dr-dobermann/gobpm/pkg/model/base"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 )
 
@@ -62,13 +75,22 @@ const (
 	Error
 )
 
+// base stucture for every expression used in the GoBPM expressions.
 type FormalExpression struct {
 	base.BaseElement
 
 	language string // could be Formal Expression language (FEEL) in URI format
-	body     []byte
 
-	state      ExpressionState
+	// if expression is a script-based, body holds the original script of the
+	// Expression. Human-readable expression description available in
+	// BaseElement.Documentation.
+	body []byte
+
+	// usually the expression state is sequental. It passes from Created toward Error or
+	// Evaluated.
+	// When expression copied or created it takes Created state.
+	state ExpressionState
+
 	parameters map[string]vars.Variable
 	retType    vars.Type
 }
