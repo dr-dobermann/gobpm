@@ -37,8 +37,8 @@ be used.
 
 Conversion table:
 
-| From/To     | int        | bool            | string                       | float64              | time.Time |
----
+| From/To     | int | bool | string | float64 | time.Time |
+| ---         |---         |---              |----                          |---                   | --- |
 | Int         | ok         | ok              | if ParseFloat() w/o error ok | ok                   | ok |
 --
 | Bool        | 0 = false<br/>!0 = true | ok | (ToUpper(s) == "TRUE") = true<br/>(ToUpper(s) != "TRUE") = false | 0.0 =  false<br/>!0.0 = true |error |
