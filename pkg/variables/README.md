@@ -40,15 +40,10 @@ Conversion table:
 | From/To     | int | bool | string | float64 | time.Time |
 | ---         |---         |---              |----                          |---                   | --- |
 | Int         | ok         | ok              | if ParseFloat() w/o error ok | ok                   | ok |
---
 | Bool        | 0 = false<br/>!0 = true | ok | (ToUpper(s) == "TRUE") = true<br/>(ToUpper(s) != "TRUE") = false | 0.0 =  false<br/>!0.0 = true |error |
----                                              
 | StrVal     | ok          | true = "true"<br/>false = "false" | ok | ok | converted to RFC3339 |
----
 | Float64    | ok          | false = 0.0<br/>true  = 1.0 | if ParseFloat() w/o error ok | ok |  float64(UnixMilli())
----
 | Time       | UnixMilli() | error  |if time.Parse(RFC3339) w/o error ok | UnixMilli(int64()) | ok |
----
 
 Variable could be created by fuction `V(name string, type Type, value interface{})`. This function creates a single variable named
 `name` of type `type` and with value `value`. 
