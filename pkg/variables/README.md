@@ -37,7 +37,6 @@ be used.
 
 Conversion table:
 
----
 | From/To     | int        | bool            | string                       | float64              | time.Time |
 ---
 | Int         | ok         | ok              | if ParseFloat() w/o error ok | ok                   | ok |
