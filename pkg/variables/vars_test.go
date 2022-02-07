@@ -265,7 +265,7 @@ func TestVariableUpdate(t *testing.T) {
 func TestVar(t *testing.T) {
 	now := time.Now()
 
-	testValues := map[Type]VariableValues{
+	testValues := map[Type]Values{
 		Int:    {42, true, "42", 42.0, time.Time{}},
 		Bool:   {1, true, "true", 1.0, time.Time{}},
 		String: {0, true, "Hello dober!", 0.0, time.Time{}},
@@ -312,21 +312,21 @@ func TestVarConversion(t *testing.T) {
 
 	type testCase struct {
 		sType Type
-		val   VariableValues
+		val   Values
 	}
 
 	badCases := map[Type]testCase{
-		Int:   {sType: String, val: VariableValues{S: "trash"}},
-		Bool:  {sType: String, val: VariableValues{S: "trash"}},
-		Float: {sType: String, val: VariableValues{S: "trash"}},
-		Time:  {sType: String, val: VariableValues{S: "trash"}},
+		Int:   {sType: String, val: Values{S: "trash"}},
+		Bool:  {sType: String, val: Values{S: "trash"}},
+		Float: {sType: String, val: Values{S: "trash"}},
+		Time:  {sType: String, val: Values{S: "trash"}},
 	}
 
 	goodCases := map[Type]testCase{
-		Int:   {sType: String, val: VariableValues{S: "10"}},
-		Float: {sType: String, val: VariableValues{S: "10.2"}},
-		Time:  {sType: String, val: VariableValues{S: "2022-01-20T12:30:25+06:00"}},
-		Bool:  {sType: String, val: VariableValues{S: "true"}},
+		Int:   {sType: String, val: Values{S: "10"}},
+		Float: {sType: String, val: Values{S: "10.2"}},
+		Time:  {sType: String, val: Values{S: "2022-01-20T12:30:25+06:00"}},
+		Bool:  {sType: String, val: Values{S: "true"}},
 	}
 
 	for nt, bc := range badCases {
@@ -341,7 +341,7 @@ func TestVarConversion(t *testing.T) {
 
 }
 
-func getVarValue(t Type, vv VariableValues) interface{} {
+func getVarValue(t Type, vv Values) interface{} {
 	var val interface{}
 
 	switch t {

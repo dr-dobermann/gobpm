@@ -43,7 +43,7 @@ func (vt Type) String() string {
 	return []string{"Int", "Bool", "String", "Float", "Time"}[vt]
 }
 
-type VariableValues struct {
+type Values struct {
 	I int64
 	B bool
 	S string
@@ -61,7 +61,7 @@ type VariableValues struct {
 type Variable struct {
 	// pre-casted values for eliminating casting on-the-fly.
 	// For every type there is only one casted value.
-	VariableValues
+	Values
 
 	name  string
 	vType Type
@@ -71,7 +71,6 @@ type Variable struct {
 }
 
 // V creates a new variable
-//nolint:errcheck
 func V(n string, t Type, v interface{}) *Variable {
 	n = strings.Trim(n, " ")
 
@@ -80,7 +79,7 @@ func V(n string, t Type, v interface{}) *Variable {
 		vType: t,
 		prec:  defaultPrecision}
 
-	vv.update(v)
+	_ = vv.update(v)
 
 	return vv
 }
@@ -111,17 +110,13 @@ func (v *Variable) Value() interface{} {
 	return vv
 }
 
-func (v *Variable) RawValues() VariableValues {
-	return v.VariableValues
-}
-
 func (v *Variable) Copy() Variable {
 	return Variable{
-		VariableValues: v.VariableValues,
-		name:           v.name,
-		vType:          v.vType,
-		value:          v.value,
-		prec:           v.prec,
+		Values: v.Values,
+		name:   v.name,
+		vType:  v.vType,
+		value:  v.value,
+		prec:   v.prec,
 	}
 }
 

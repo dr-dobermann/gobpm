@@ -107,7 +107,7 @@ func (m Message) MarshalJSON() (bdata []byte, e error) {
 		Direction: uint8(m.direction)}
 
 	for _, v := range m.vList {
-		rv := v.RawValues()
+		rv := v.Values
 
 		mm.Variables = append(mm.Variables, struct {
 			Optional bool              `json:"optional"`

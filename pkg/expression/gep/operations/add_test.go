@@ -17,7 +17,7 @@ type typeVal struct {
 type tCase struct {
 	src     typeVal
 	mustErr bool
-	res     vars.VariableValues
+	res     vars.Values
 }
 
 type testDesrc struct {
@@ -44,117 +44,117 @@ func TestAddOperations(t *testing.T) {
 		{
 			src:     typeVal{tt: vars.Int, tv: 5}, // int + int
 			mustErr: testShouldPass,
-			res:     vars.VariableValues{I: 10}},
+			res:     vars.Values{I: 10}},
 		{
 			src:     typeVal{tt: vars.Bool, tv: false}, // int + bool
 			mustErr: testShouldFail,
-			res:     vars.VariableValues{B: false}},
+			res:     vars.Values{B: false}},
 		{
 			src:     typeVal{tt: vars.String, tv: "10"}, // int + "10"
 			mustErr: testShouldPass,
-			res:     vars.VariableValues{I: 15}},
+			res:     vars.Values{I: 15}},
 		{
 			src:     typeVal{tt: vars.String, tv: "trash"}, // int + "trash"
 			mustErr: testShouldFail,
-			res:     vars.VariableValues{B: false}},
+			res:     vars.Values{B: false}},
 		{
 			src:     typeVal{tt: vars.Float, tv: 6.7}, // int + float64
 			mustErr: testShouldPass,
-			res:     vars.VariableValues{I: 12}},
+			res:     vars.Values{I: 12}},
 		{
 			src:     typeVal{tt: vars.Time, tv: timeTest}, // int + time.Time
 			mustErr: testShouldPass,
-			res:     vars.VariableValues{I: timeTest.UnixMilli() + 5}},
+			res:     vars.Values{I: timeTest.UnixMilli() + 5}},
 	}
 
 	boolCases := []tCase{
 		{
 			src:     typeVal{tt: vars.Int, tv: 10}, // bool + int
 			mustErr: testShouldFail,
-			res:     vars.VariableValues{B: true}},
+			res:     vars.Values{B: true}},
 		{
 			src:     typeVal{tt: vars.Bool, tv: false}, // bool + int
 			mustErr: testShouldFail,
-			res:     vars.VariableValues{B: true}},
+			res:     vars.Values{B: true}},
 		{
 			src:     typeVal{tt: vars.String, tv: "true"}, // bool + string
 			mustErr: testShouldFail,
-			res:     vars.VariableValues{B: true}},
+			res:     vars.Values{B: true}},
 		{
 			src:     typeVal{tt: vars.Float, tv: 5.7}, // bool + float
 			mustErr: testShouldFail,
-			res:     vars.VariableValues{B: true}},
+			res:     vars.Values{B: true}},
 		{
 			src:     typeVal{tt: vars.Time, tv: timeTest}, // bool + time
 			mustErr: testShouldFail,
-			res:     vars.VariableValues{B: true}}}
+			res:     vars.Values{B: true}}}
 
 	strCases := []tCase{
 		{
 			src:     typeVal{tt: vars.Int, tv: 5}, // string + int
 			mustErr: testShouldPass,
-			res:     vars.VariableValues{S: strTest + "5"}},
+			res:     vars.Values{S: strTest + "5"}},
 		{
 			src:     typeVal{tt: vars.Bool, tv: false}, // string + bool
 			mustErr: testShouldPass,
-			res:     vars.VariableValues{S: strTest + "false"}},
+			res:     vars.Values{S: strTest + "false"}},
 		{
 			src:     typeVal{tt: vars.String, tv: " cool"}, // string + string
 			mustErr: testShouldPass,
-			res:     vars.VariableValues{S: strTest + " cool"}},
+			res:     vars.Values{S: strTest + " cool"}},
 		{
 			src:     typeVal{tt: vars.Float, tv: 7.3}, // string + float
 			mustErr: testShouldPass,
-			res:     vars.VariableValues{S: strTest + "7.30"}},
+			res:     vars.Values{S: strTest + "7.30"}},
 		{
 			src:     typeVal{tt: vars.Time, tv: timeTest}, // string + time
 			mustErr: testShouldPass,
-			res:     vars.VariableValues{S: strTest + strTime}}}
+			res:     vars.Values{S: strTest + strTime}}}
 
 	floatCases := []tCase{
 		{
 			src:     typeVal{tt: vars.Int, tv: 5}, // float + int
 			mustErr: testShouldPass,
-			res:     vars.VariableValues{F: 16.7}},
+			res:     vars.Values{F: 16.7}},
 		{
 			src:     typeVal{tt: vars.Bool, tv: true}, // float + bool
 			mustErr: testShouldFail,
-			res:     vars.VariableValues{B: false}},
+			res:     vars.Values{B: false}},
 		{
 			src:     typeVal{tt: vars.String, tv: "7"}, // float + string
 			mustErr: testShouldPass,
-			res:     vars.VariableValues{F: 18.7}},
+			res:     vars.Values{F: 18.7}},
 		{
 			src:     typeVal{tt: vars.String, tv: "trash"}, // float + invalid string
 			mustErr: testShouldFail,
-			res:     vars.VariableValues{B: false}},
+			res:     vars.Values{B: false}},
 		{
 			src:     typeVal{tt: vars.Time, tv: timeTest}, // float + time
 			mustErr: testShouldFail,
-			res:     vars.VariableValues{F: 16.7}},
+			res:     vars.Values{F: 16.7}},
 	}
 
 	timeCases := []tCase{
 		{
 			src:     typeVal{tt: vars.Int, tv: int64(5 * time.Minute)}, // time + int
 			mustErr: testShouldPass,
-			res:     vars.VariableValues{T: timeTest.Add(5 * time.Minute)}},
+			res:     vars.Values{T: timeTest.Add(5 * time.Minute)}},
 		{
 			src:     typeVal{tt: vars.Bool, tv: false}, // time + bool
 			mustErr: testShouldFail,
-			res:     vars.VariableValues{B: false}},
+			res:     vars.Values{B: false}},
 		{
 			src:     typeVal{tt: vars.String, tv: "test"}, // time + string
 			mustErr: testShouldFail,
-			res:     vars.VariableValues{B: false}},
+			res:     vars.Values{B: false}},
 		{
 			src:     typeVal{tt: vars.Float, tv: 13.0 * float64(time.Minute)}, // time + float
 			mustErr: testShouldPass,
-			res:     vars.VariableValues{T: timeTest.Add(13 * time.Minute)}},
+			res:     vars.Values{T: timeTest.Add(13 * time.Minute)}},
 		{
 			src:     typeVal{tt: vars.Time, tv: time.Now()}, // time + time
 			mustErr: testShouldFail,
-			res:     vars.VariableValues{B: false}}}
+			res:     vars.Values{B: false}}}
 
 	testCases := []testDesrc{
 		{dst: typeVal{vars.Int, 5}, cases: intCases},
@@ -202,7 +202,7 @@ func TestAddOperations(t *testing.T) {
 
 					if !checkRes(tc.dst.tt, c.res, *res) {
 						t.Fatalf("invalid results: want %v, got %v",
-							c.res, res.RawValues())
+							c.res, res.Values)
 					}
 				})
 		}
@@ -211,7 +211,7 @@ func TestAddOperations(t *testing.T) {
 
 func checkRes(
 	t vars.Type,
-	vv vars.VariableValues,
+	vv vars.Values,
 	res vars.Variable) bool {
 
 	switch t {

@@ -20,42 +20,42 @@ type testCase struct {
 	yt       vars.Type
 	yv       interface{}
 	resName  string
-	resValue vars.VariableValues
+	resValue vars.Values
 	testType bool
 }
 
 var subTests = []testCase{
-	{vars.Int, 5, vars.Int, 7, "x", vars.VariableValues{I: -2}, shouldPass},
-	{vars.Int, 5, vars.Bool, false, "x", vars.VariableValues{I: -1}, shouldFail},
-	{vars.Int, 5, vars.String, "10", "x", vars.VariableValues{I: -5}, shouldPass},
-	{vars.Int, 5, vars.String, "trash", "x", vars.VariableValues{I: -1}, shouldFail},
-	{vars.Int, 5, vars.Float, -7.9, "x", vars.VariableValues{I: 13}, shouldPass},
-	{vars.Int, 5, vars.Time, time.Time{}, "x", vars.VariableValues{I: 5}, shouldFail},
+	{vars.Int, 5, vars.Int, 7, "x", vars.Values{I: -2}, shouldPass},
+	{vars.Int, 5, vars.Bool, false, "x", vars.Values{I: -1}, shouldFail},
+	{vars.Int, 5, vars.String, "10", "x", vars.Values{I: -5}, shouldPass},
+	{vars.Int, 5, vars.String, "trash", "x", vars.Values{I: -1}, shouldFail},
+	{vars.Int, 5, vars.Float, -7.9, "x", vars.Values{I: 13}, shouldPass},
+	{vars.Int, 5, vars.Time, time.Time{}, "x", vars.Values{I: 5}, shouldFail},
 
-	{vars.Bool, false, vars.Int, 7, "x", vars.VariableValues{B: false}, shouldFail},
-	{vars.Bool, false, vars.Bool, true, "x", vars.VariableValues{B: false}, shouldFail},
-	{vars.Bool, false, vars.String, "trash", "x", vars.VariableValues{B: false}, shouldFail},
-	{vars.Bool, false, vars.Float, 7.3, "x", vars.VariableValues{B: false}, shouldFail},
-	{vars.Bool, false, vars.Time, time.Now(), "x", vars.VariableValues{B: false}, shouldFail},
+	{vars.Bool, false, vars.Int, 7, "x", vars.Values{B: false}, shouldFail},
+	{vars.Bool, false, vars.Bool, true, "x", vars.Values{B: false}, shouldFail},
+	{vars.Bool, false, vars.String, "trash", "x", vars.Values{B: false}, shouldFail},
+	{vars.Bool, false, vars.Float, 7.3, "x", vars.Values{B: false}, shouldFail},
+	{vars.Bool, false, vars.Time, time.Now(), "x", vars.Values{B: false}, shouldFail},
 
-	{vars.String, "trash", vars.Int, 7, "x", vars.VariableValues{S: "trash"}, shouldFail},
-	{vars.String, "trash", vars.Bool, true, "x", vars.VariableValues{S: "trash"}, shouldFail},
-	{vars.String, "trash", vars.String, "trash", "x", vars.VariableValues{S: "trash"}, shouldFail},
-	{vars.String, "trash", vars.Float, 7.3, "x", vars.VariableValues{S: "trash"}, shouldFail},
-	{vars.String, "trash", vars.Time, time.Now(), "x", vars.VariableValues{S: "trash"}, shouldFail},
+	{vars.String, "trash", vars.Int, 7, "x", vars.Values{S: "trash"}, shouldFail},
+	{vars.String, "trash", vars.Bool, true, "x", vars.Values{S: "trash"}, shouldFail},
+	{vars.String, "trash", vars.String, "trash", "x", vars.Values{S: "trash"}, shouldFail},
+	{vars.String, "trash", vars.Float, 7.3, "x", vars.Values{S: "trash"}, shouldFail},
+	{vars.String, "trash", vars.Time, time.Now(), "x", vars.Values{S: "trash"}, shouldFail},
 
-	{vars.Float, 7.7, vars.Int, 7, "x", vars.VariableValues{F: 7.7 - 7.0}, shouldPass},
-	{vars.Float, 7.7, vars.Bool, false, "x", vars.VariableValues{F: -1}, shouldFail},
-	{vars.Float, 7.7, vars.String, "10", "x", vars.VariableValues{F: 7.7 - 10.0}, shouldPass},
-	{vars.Float, 7.7, vars.String, "trash", "x", vars.VariableValues{F: -1}, shouldFail},
-	{vars.Float, 7.9, vars.Float, 7.3, "x", vars.VariableValues{F: 7.9 - 7.3}, shouldPass},
-	{vars.Float, 7.7, vars.Time, time.Now(), "x", vars.VariableValues{F: -1}, shouldFail},
+	{vars.Float, 7.7, vars.Int, 7, "x", vars.Values{F: 7.7 - 7.0}, shouldPass},
+	{vars.Float, 7.7, vars.Bool, false, "x", vars.Values{F: -1}, shouldFail},
+	{vars.Float, 7.7, vars.String, "10", "x", vars.Values{F: 7.7 - 10.0}, shouldPass},
+	{vars.Float, 7.7, vars.String, "trash", "x", vars.Values{F: -1}, shouldFail},
+	{vars.Float, 7.9, vars.Float, 7.3, "x", vars.Values{F: 7.9 - 7.3}, shouldPass},
+	{vars.Float, 7.7, vars.Time, time.Now(), "x", vars.Values{F: -1}, shouldFail},
 
-	{vars.Time, time.Now(), vars.Int, 7, "x", vars.VariableValues{T: time.Time{}}, shouldFail},
-	{vars.Time, time.Now(), vars.Bool, true, "x", vars.VariableValues{T: time.Time{}}, shouldFail},
-	{vars.Time, time.Now(), vars.String, "trash", "x", vars.VariableValues{T: time.Time{}}, shouldFail},
-	{vars.Time, time.Now(), vars.Float, 7.3, "x", vars.VariableValues{T: time.Time{}}, shouldFail},
-	{vars.Time, time.Now(), vars.Time, time.Now(), "x", vars.VariableValues{T: time.Time{}}, shouldFail},
+	{vars.Time, time.Now(), vars.Int, 7, "x", vars.Values{T: time.Time{}}, shouldFail},
+	{vars.Time, time.Now(), vars.Bool, true, "x", vars.Values{T: time.Time{}}, shouldFail},
+	{vars.Time, time.Now(), vars.String, "trash", "x", vars.Values{T: time.Time{}}, shouldFail},
+	{vars.Time, time.Now(), vars.Float, 7.3, "x", vars.Values{T: time.Time{}}, shouldFail},
+	{vars.Time, time.Now(), vars.Time, time.Now(), "x", vars.Values{T: time.Time{}}, shouldFail},
 }
 
 func TestSub(t *testing.T) {
@@ -91,7 +91,7 @@ func TestSub(t *testing.T) {
 				t.Fatalf(
 					"operation result [%v] doesn't meet the expectation [%v]",
 					tc.resValue,
-					res.VariableValues)
+					res.Values)
 			}
 		})
 	}
