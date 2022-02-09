@@ -53,7 +53,7 @@ func (vs *VarStore) getVar(vn string, vt Type, returnEmpty bool) *Variable {
 func (vs *VarStore) GetVar(vn string) (*Variable, error) {
 	v := vs.getVar(vn, Int, false)
 	if v == nil {
-		return nil, vs.NewVSErr(nil, "variable "+vn+
+		return nil, vs.newVSErr(nil, "variable "+vn+
 			" isn't found")
 	}
 
@@ -64,7 +64,7 @@ func (vs *VarStore) GetVar(vn string) (*Variable, error) {
 // if there is no such variable, then error returned
 func (vs *VarStore) DelVar(vn string) error {
 	if !vs.checkVar(vn) {
-		return vs.NewVSErr(nil, "couldn't find variable "+vn)
+		return vs.newVSErr(nil, "couldn't find variable "+vn)
 	}
 
 	vs.Lock()
@@ -79,7 +79,7 @@ func (vs *VarStore) DelVar(vn string) error {
 func (vs *VarStore) Update(vn string, newVal interface{}) error {
 	v := vs.getVar(vn, Int, false)
 	if v == nil {
-		return vs.NewVSErr(nil, "couldn't find variable "+vn)
+		return vs.newVSErr(nil, "couldn't find variable "+vn)
 	}
 
 	vs.Lock()
@@ -94,7 +94,7 @@ func (vs *VarStore) Update(vn string, newVal interface{}) error {
 // if the variable with the same name and the same type exists, the error returned
 func (vs *VarStore) NewInt(vn string, val int64) (*Variable, error) {
 	if vs.checkVar(vn) {
-		return nil, vs.NewVSErr(nil, "variable "+vn+" already exists")
+		return nil, vs.newVSErr(nil, "variable "+vn+" already exists")
 	}
 
 	v := vs.getVar(vn, Int, true)
@@ -110,7 +110,7 @@ func (vs *VarStore) NewInt(vn string, val int64) (*Variable, error) {
 // if the variable with the same name and the same type exists, the error returned
 func (vs *VarStore) NewBool(vn string, val bool) (*Variable, error) {
 	if vs.checkVar(vn) {
-		return nil, vs.NewVSErr(nil, "variable "+vn+" already exists")
+		return nil, vs.newVSErr(nil, "variable "+vn+" already exists")
 	}
 
 	v := vs.getVar(vn, Bool, true)
@@ -126,7 +126,7 @@ func (vs *VarStore) NewBool(vn string, val bool) (*Variable, error) {
 // if the variable with the same name and the same type exists, the error returned
 func (vs *VarStore) NewString(vn string, val string) (*Variable, error) {
 	if vs.checkVar(vn) {
-		return nil, vs.NewVSErr(nil, "variable "+vn+" already exists")
+		return nil, vs.newVSErr(nil, "variable "+vn+" already exists")
 	}
 
 	v := vs.getVar(vn, String, true)
@@ -142,7 +142,7 @@ func (vs *VarStore) NewString(vn string, val string) (*Variable, error) {
 // if the variable with the same name and the same type exists, the error returned
 func (vs *VarStore) NewFloat(vn string, val float64) (*Variable, error) {
 	if vs.checkVar(vn) {
-		return nil, vs.NewVSErr(nil, "variable "+vn+" already exists")
+		return nil, vs.newVSErr(nil, "variable "+vn+" already exists")
 	}
 
 	v := vs.getVar(vn, Float, true)
@@ -156,7 +156,7 @@ func (vs *VarStore) NewFloat(vn string, val float64) (*Variable, error) {
 
 func (vs *VarStore) NewTime(vn string, val time.Time) (*Variable, error) {
 	if vs.checkVar(vn) {
-		return nil, vs.NewVSErr(nil, "variable "+vn+" already exists")
+		return nil, vs.newVSErr(nil, "variable "+vn+" already exists")
 	}
 
 	v := vs.getVar(vn, Time, true)
@@ -170,7 +170,7 @@ func (vs *VarStore) NewTime(vn string, val time.Time) (*Variable, error) {
 
 func (vs *VarStore) NewVar(v Variable) (*Variable, error) {
 	if vs.checkVar(v.name) {
-		return nil, vs.NewVSErr(nil, "variable "+v.name+" already exists")
+		return nil, vs.newVSErr(nil, "variable "+v.name+" already exists")
 	}
 
 	vr := vs.getVar(v.name, v.vType, true)
@@ -182,7 +182,7 @@ func (vs *VarStore) NewVar(v Variable) (*Variable, error) {
 	return vr, nil
 }
 
-func (vs *VarStore) NewVSErr(
+func (vs *VarStore) newVSErr(
 	err error,
 	format string,
 	values ...interface{}) VStoreError {
