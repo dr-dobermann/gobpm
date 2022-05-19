@@ -175,7 +175,7 @@ func (vs *VarStore) NewVar(v Variable) (*Variable, error) {
 
 	vr := vs.getVar(v.name, v.vType, true)
 
-	if err := v.update(v.value); err != nil {
+	if err := vr.update(v.value); err != nil {
 		return nil, err
 	}
 

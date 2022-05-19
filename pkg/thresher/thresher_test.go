@@ -130,7 +130,8 @@ func getTestProcess(t *testing.T, buf *model.OutputDescr) *model.Process {
 	t1 := model.NewStoreTask(p, "Store Task", *vars.V("x", vars.Int, 2))
 
 	t2 := model.NewOutputTask(p, "Output Task",
-		model.OutputDescr{nil, os.Stdout}, *vars.V("x", vars.Int, 0))
+		model.OutputDescr{Locker: nil, To: os.Stdout},
+		*vars.V("x", vars.Int, 0))
 
 	if t1 == nil || t2 == nil {
 		t.Fatal("Couldn't create tasks for test process")

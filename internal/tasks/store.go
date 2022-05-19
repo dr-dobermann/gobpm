@@ -36,7 +36,10 @@ func (ste *StoreTaskExecutor) Exec(_ context.Context,
 		zap.Error(err))
 
 	for _, v := range ste.Vars {
-		log.Debugw("storing variable", zap.String("var_name", v.Name()))
+		log.Debugw("storing variable",
+			zap.String("var_name", v.Name()),
+			zap.String("var_value", v.StrVal())) // TODO: Remove variable value
+		// publication on production
 
 		if _, err := exEnv.VStore().NewVar(v); err != nil {
 			return nil,

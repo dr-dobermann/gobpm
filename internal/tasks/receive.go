@@ -73,7 +73,7 @@ func (rte *ReceiveTaskExecutor) Prologue(
 			Depth:     0,
 			StartPos:  0,
 			Filters: []es.Filter{
-				es.WithName("NEW_MSG_EVT"),
+				es.WithName(ms.NewMsgEvt),
 				es.WithSubstr(fmt.Sprintf("{queue: \"%s\",",
 					exEnv.MSQueue(rte.QueueName()))),
 				es.WithSubstr(fmt.Sprintf("msg_name: \"%s\",",
@@ -168,6 +168,7 @@ func (rte *ReceiveTaskExecutor) getMsgDescr() (*model.Message, error) {
 	if msgDescr.State() != model.Created {
 		return nil, errors.New("invalidd message state: should be Created")
 	}
+
 	return msgDescr, nil
 }
 
@@ -255,7 +256,9 @@ func (rte *ReceiveTaskExecutor) saveMsgVars(
 
 	for _, v := range msgDescr.GetVariables(model.AllVariables) {
 		rte.log.Debugw("loading variable",
-			zap.String("name", v.Name()))
+			zap.String("name", v.Name()),
+			zap.String("value", v.StrVal())) // TODO: Remove variable value publication
+		// on production!!!
 
 		mv, ok := msg.GetVar(v.Name())
 		if !ok && !v.IsOptional() {

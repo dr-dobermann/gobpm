@@ -74,6 +74,7 @@ func TestSendReceiveProcesses(t *testing.T) {
 
 	out.Locker.Lock()
 	defer out.Locker.Unlock()
+	t.Log(buf.String())
 	is.True(bytes.Contains(buf.Bytes(), []byte("x = 42")))
 }
 
