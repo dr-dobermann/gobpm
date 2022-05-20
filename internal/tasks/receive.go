@@ -256,9 +256,7 @@ func (rte *ReceiveTaskExecutor) saveMsgVars(
 
 	for _, v := range msgDescr.GetVariables(model.AllVariables) {
 		rte.log.Debugw("loading variable",
-			zap.String("name", v.Name()),
-			zap.String("value", v.StrVal())) // TODO: Remove variable value publication
-		// on production!!!
+			zap.String("name", v.Name()))
 
 		mv, ok := msg.GetVar(v.Name())
 		if !ok && !v.IsOptional() {

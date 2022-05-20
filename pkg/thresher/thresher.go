@@ -1,6 +1,6 @@
 // GoBPM is BPMN v.2 compliant business process engine
 //
-// (c) 2021, Ruslan Gabitov a.k.a. dr-dobermann.
+// (c) 2021, 2022 Ruslan Gabitov a.k.a. dr-dobermann.
 // Use of this source is governed by LGPL license that
 // can be found in the LICENSE file.
 
