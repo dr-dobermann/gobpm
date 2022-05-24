@@ -164,6 +164,12 @@ func (pi *Instance) prepare() error {
 
 			// and add them to the tracks list
 			pi.tracks[t.id] = t
+
+			pi.log.Debugw("new track registered",
+				zap.String("instance", pi.id.String()),
+				zap.Stringer("id", t.id),
+				zap.Stringer("node_type", t.currentStep().node.Type()),
+				zap.String("node_name", t.currentStep().node.Name()))
 		}
 	}
 
@@ -190,6 +196,7 @@ func (pi *Instance) addTrack(tr *track) error {
 	pi.tracks[tr.id] = tr
 
 	pi.log.Debugw("new track added",
+		zap.String("instance", pi.id.String()),
 		zap.Stringer("id", tr.id),
 		zap.Stringer("node_type", tr.currentStep().node.Type()),
 		zap.String("node_name", tr.currentStep().node.Name()))

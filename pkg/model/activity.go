@@ -159,8 +159,8 @@ type TaskModel interface {
 
 // type UserTask struct {
 // 	Activity
-// 	renderings map[string]string
-// 	owner      string
+// 	render Render // renderer of the UI
+// 	actualOwner      string
 // 	priority   int
 // }
 
