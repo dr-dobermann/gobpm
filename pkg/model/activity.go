@@ -87,7 +87,7 @@ type Activity struct {
 
 	//boundaryEvents []*Event
 
-	//data           InputOutputSpecification
+	ioSpec InputOutputSpecification
 
 	// not empty in case the Activity used as CallActivity
 

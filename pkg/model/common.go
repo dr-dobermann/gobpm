@@ -11,13 +11,6 @@ func (ne NamedElement) Name() string {
 	return ne.name
 }
 
-type ItemKind uint8
-
-const (
-	Information ItemKind = iota
-	Physical
-)
-
 type CallableElement struct {
 	NamedElement
 	// interfaces []*Interface
