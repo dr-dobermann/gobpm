@@ -8,7 +8,7 @@ import (
 )
 
 type Executor interface {
-	Execute(ctx context.Context) Error
+	Execute(ctx context.Context) error
 }
 
 type Operation struct {

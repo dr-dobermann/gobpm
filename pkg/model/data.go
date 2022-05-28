@@ -30,6 +30,7 @@ type DataAccessor interface {
 
 	// Retruns a slice of elements if DataAccessor is a collection.
 	// First element has 0 index.
+	// If DataAccessor is not a collection, then panic fired
 	GetSome(from, to int) []vars.Variable
 
 	// Updates value of the DataAccessor.
@@ -37,35 +38,34 @@ type DataAccessor interface {
 	UpdateOne(newValue *vars.Variable) error
 
 	// Updates single or range elements of collection.
+	// If DataAccessor is not a collection,
+	// the errs.ErrIsNotACollection returned.
 	UpdateSome(from, to int, newValues []*vars.Variable) error
 }
 
 // ItemDefinition defines an Item to store a single value or
 // a collection of values
 type ItemDefinition struct {
-	itemType     vars.Type
-	isCollection bool
-	accessor     DataAccessor
+	ItemType     vars.Type
+	IsCollection bool
+	Accessor     DataAccessor
 }
 
-// ItemAwareElement creates a link to a single value or a collection of the values
+// ItemAwareElement creates a link to a single value or a
+// collection of the values
 type ItemAwareElement struct {
 	base.BaseElement
-	name string
-	item ItemDefinition
-}
-
-func (iae ItemAwareElement) Name() string {
-	return iae.name
+	Name string
+	IDef ItemDefinition
 }
 
 type DataSet struct {
-	name  string
-	items []*ItemAwareElement
+	Name  string
+	Items []*ItemAwareElement
 }
 
 type InputOutputSpecification struct {
 	base.BaseElement
-	inputSets  []*DataSet
-	outputSets []*DataSet
+	InputSets  []*DataSet
+	OutputSets []*DataSet
 }

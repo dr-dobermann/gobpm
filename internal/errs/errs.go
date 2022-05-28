@@ -16,5 +16,7 @@ var (
 	ErrNotCalculated = errors.New("expression is not calculated")
 	ErrNoVariable    = errors.New("no variable or empty variable given")
 
+	ErrIsNotACollection = errors.New("DataAccessor is not a collection")
+
 	ErrNotImplementedYet = errors.New("not implemented yet")
 )
