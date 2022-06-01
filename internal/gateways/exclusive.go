@@ -5,7 +5,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/internal/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model"
-	"github.com/dr-dobermann/gobpm/pkg/thresher/excenv"
+	"github.com/dr-dobermann/gobpm/pkg/thresher/executor"
 )
 
 type ExclusiveGatewayExecutor struct {
@@ -24,7 +24,7 @@ func GetExclusiveGExecutor(
 
 func (ege *ExclusiveGatewayExecutor) Exec(
 	_ context.Context,
-	exEnv excenv.ExecutionEnvironment) ([]*model.SequenceFlow, error) {
+	exEnv executor.ExecutionEnvironment) ([]*model.SequenceFlow, error) {
 
 	return nil, errs.ErrNotImplementedYet
 }

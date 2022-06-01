@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	"github.com/dr-dobermann/gobpm/pkg/model"
-	"github.com/dr-dobermann/gobpm/pkg/thresher/excenv"
+	"github.com/dr-dobermann/gobpm/pkg/thresher/executor"
 	"github.com/dr-dobermann/gobpm/pkg/variables"
 	"github.com/dr-dobermann/srvbus/es"
 	"github.com/dr-dobermann/srvbus/ms"
@@ -21,7 +21,7 @@ import (
 type ReceiveTaskExecutor struct {
 	model.ReceiveTask
 
-	exEnv excenv.ExecutionEnvironment
+	exEnv executor.ExecutionEnvironment
 	log   *zap.SugaredLogger
 
 	mSrv *ms.MessageServer
@@ -39,7 +39,7 @@ func NewReceiveTaskExecutor(rt *model.ReceiveTask) *ReceiveTaskExecutor {
 // registered on the MessageServer
 func (rte *ReceiveTaskExecutor) Prologue(
 	ctx context.Context,
-	exEnv excenv.ExecutionEnvironment) error {
+	exEnv executor.ExecutionEnvironment) error {
 
 	rte.exEnv = exEnv
 
@@ -105,7 +105,7 @@ func (rte *ReceiveTaskExecutor) Prologue(
 
 func (rte *ReceiveTaskExecutor) Exec(
 	ctx context.Context,
-	exEnv excenv.ExecutionEnvironment) ([]*model.SequenceFlow, error) {
+	exEnv executor.ExecutionEnvironment) ([]*model.SequenceFlow, error) {
 
 	rte.exEnv = exEnv
 

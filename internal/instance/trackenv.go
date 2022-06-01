@@ -3,15 +3,15 @@ package instance
 import (
 	"strings"
 
+	"github.com/dr-dobermann/gobpm/internal/gateways"
 	"github.com/dr-dobermann/gobpm/pkg/identity"
 	"github.com/dr-dobermann/gobpm/pkg/model"
-	"github.com/dr-dobermann/gobpm/pkg/thresher/executor"
 	"github.com/dr-dobermann/gobpm/pkg/variables"
 	"github.com/dr-dobermann/srvbus"
 	"go.uber.org/zap"
 )
 
-// implementation of the excenv interface for track
+// implementation of the executror.ExecutionEnvironment interface for track
 
 func (tr *track) InstanceID() identity.Id {
 	return tr.instance.id
@@ -43,7 +43,7 @@ func (tr *track) MSQueue(queue string) string {
 
 // implements GateKeeper interface
 func (tr *track) GetGExecutorInstance(
-	ge executor.GatewayExecutor) executor.GatewayExecutor {
+	ge gateways.GatewayExecutor) gateways.GatewayExecutor {
 
 	return tr.instance.getGExInstance(ge)
 }

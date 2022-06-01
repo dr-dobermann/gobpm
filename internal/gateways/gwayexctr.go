@@ -1,16 +1,16 @@
-package executor
+package gateways
 
 import (
 	"fmt"
 
-	"github.com/dr-dobermann/gobpm/internal/gateways"
 	"github.com/dr-dobermann/gobpm/pkg/model"
+	"github.com/dr-dobermann/gobpm/pkg/thresher/executor"
 )
 
 type GatewayExecutor interface {
 	model.GatewayModel
 
-	NodeExecutor
+	executor.NodeExecutor
 }
 
 // GateKeeper is an interface which provides keeping converging
@@ -35,7 +35,7 @@ func GetGatewayExecutor(
 
 	switch gs := g.(type) {
 	case *model.ExclusiveGateway:
-		ge = gateways.GetExclusiveGExecutor(gs)
+		ge = GetExclusiveGExecutor(gs)
 
 	default:
 		return nil, fmt.Errorf("no executor for '%s' gateway type",

@@ -1,6 +1,6 @@
-// Package provide interface to access from executed
-// node to the run-time environment.
-package excenv
+// Package provide interface to access to the run-time environment
+// from executed node.
+package executor
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/identity"

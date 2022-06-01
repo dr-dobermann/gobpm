@@ -3,7 +3,6 @@ package thresher
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -12,7 +11,6 @@ import (
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 
 	"github.com/dr-dobermann/gobpm/pkg/model"
-	"github.com/dr-dobermann/gobpm/pkg/thresher/executor"
 	"github.com/dr-dobermann/srvbus"
 	"github.com/google/uuid"
 	"github.com/matryer/is"
@@ -23,35 +21,35 @@ var (
 	test_queue = "xchQ"
 )
 
-func TestSelectorExecutor(t *testing.T) {
-	t.Run("SendTaskExecutor", func(t *testing.T) {
-		p := model.NewProcess(mid.NewID(), "SendTask process test", "0.1.0")
-		std := model.NewSendTask(p, "Send X", "letter_X", test_queue)
+// func TestSelectorExecutor(t *testing.T) {
+// 	t.Run("SendTaskExecutor", func(t *testing.T) {
+// 		p := model.NewProcess(mid.NewID(), "SendTask process test", "0.1.0")
+// 		std := model.NewSendTask(p, "Send X", "letter_X", test_queue)
 
-		ste, err := executor.GetTaskExecutor(std)
-		if err != nil {
-			t.Error("couldn't get SendTaskExecutor", err)
-		}
+// 		ste, err := instance.GetTaskExecutor(std)
+// 		if err != nil {
+// 			t.Error("couldn't get SendTaskExecutor", err)
+// 		}
 
-		if ste != nil {
-			fmt.Println(ste.Name())
-		}
-	})
+// 		if ste != nil {
+// 			fmt.Println(ste.Name())
+// 		}
+// 	})
 
-	t.Run("ReceiveTaskExecutor", func(t *testing.T) {
-		p := model.NewProcess(mid.NewID(), "ReceiveTask process test", "0.1.0")
-		rtd := model.NewReceiveTask(p, "Receive X", "letter_X", test_queue)
+// 	t.Run("ReceiveTaskExecutor", func(t *testing.T) {
+// 		p := model.NewProcess(mid.NewID(), "ReceiveTask process test", "0.1.0")
+// 		rtd := model.NewReceiveTask(p, "Receive X", "letter_X", test_queue)
 
-		rte, err := executor.GetTaskExecutor(rtd)
-		if err != nil {
-			t.Error("couldn't get ReceiveTaskExecutor", err)
-		}
+// 		rte, err := instance.GetTaskExecutor(rtd)
+// 		if err != nil {
+// 			t.Error("couldn't get ReceiveTaskExecutor", err)
+// 		}
 
-		if rte != nil {
-			fmt.Println(rte.Name())
-		}
-	})
-}
+// 		if rte != nil {
+// 			fmt.Println(rte.Name())
+// 		}
+// 	})
+// }
 
 func TestSendReceiveProcesses(t *testing.T) {
 	is := is.New(t)

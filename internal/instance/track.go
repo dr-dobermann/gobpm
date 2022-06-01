@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/dr-dobermann/gobpm/internal/tasks"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 	"github.com/dr-dobermann/gobpm/pkg/model"
 	"github.com/dr-dobermann/gobpm/pkg/thresher/executor"
@@ -181,7 +182,7 @@ func (tr *track) run(ctx context.Context) {
 		}
 
 		// take a step
-		ne, err := executor.GetNodeExecutor(step.node)
+		ne, err := GetNodeExecutor(step.node)
 		if err != nil {
 			err = NewPEErr(tr, err, "couldn't get node executor for node '%s'",
 				step.node.Name())
@@ -298,6 +299,13 @@ func (tr *track) execNode(
 		}
 	}
 
+	dl, ok := ne.(executor.DataLinker)
+	if ok {
+		if err := dl.CheckInData(); err != nil {
+			return nil, nil, NewPEErr(tr, err, "node linked data check error")
+		}
+	}
+
 	// check node Prologue
 	if err := tr.runNodePrologue(ctx, ne); err != nil {
 		return nil, nil, NewPEErr(tr, err, "node prologue failed")
@@ -312,6 +320,13 @@ func (tr *track) execNode(
 	err = tr.runNodeEpilogue(ctx, ne)
 	if err != nil {
 		return nil, nil, NewPEErr(tr, err, "node epilogue failed")
+	}
+
+	if dl != nil {
+		if err := dl.CheckOutData(); err != nil {
+			return nil, nil,
+				NewPEErr(tr, err, "couldn't update data linked to node")
+		}
 	}
 
 	// update outgoing tokens
@@ -368,4 +383,17 @@ func (tr *track) runNodeEpilogue(
 	}
 
 	return nil
+}
+
+func GetNodeExecutor(n model.Node) (executor.NodeExecutor, error) {
+	switch cn := n.(type) {
+	case model.TaskModel:
+		return tasks.GetTaskExecutor(cn)
+
+	// case model.GatewayModel:
+	// case model.EtEvent:
+
+	default:
+		return nil, fmt.Errorf("invalid node type: %T", cn)
+	}
 }

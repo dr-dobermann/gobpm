@@ -7,9 +7,9 @@ import (
 	"sync"
 
 	"github.com/dr-dobermann/gobpm/internal/errs"
+	"github.com/dr-dobermann/gobpm/internal/gateways"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 	"github.com/dr-dobermann/gobpm/pkg/model"
-	"github.com/dr-dobermann/gobpm/pkg/thresher/executor"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 	"github.com/dr-dobermann/srvbus"
 	"github.com/dr-dobermann/srvbus/es"
@@ -73,7 +73,7 @@ type Instance struct {
 
 	Emitter es.EventEmitter
 
-	gates map[mid.Id]executor.GatewayExecutor
+	gates map[mid.Id]gateways.GatewayExecutor
 }
 
 func (pi *Instance) ID() mid.Id {
@@ -117,7 +117,7 @@ func New(
 		log:      log.Named("INS:" + iID.GetLast(4)),
 		mQueue:   fmt.Sprintf("MQ%v", p.ID()),
 		Emitter:  ee,
-		gates:    make(map[mid.Id]executor.GatewayExecutor)}
+		gates:    make(map[mid.Id]gateways.GatewayExecutor)}
 
 	return &pi, nil
 }
@@ -289,7 +289,7 @@ func (pi *Instance) Run(ctx context.Context) error {
 // saved. If there is no Gateway with Id from ge, the new instance
 // will be saved into the storage and returned.
 func (pi *Instance) getGExInstance(
-	ge executor.GatewayExecutor) executor.GatewayExecutor {
+	ge gateways.GatewayExecutor) gateways.GatewayExecutor {
 
 	pi.Lock()
 	defer pi.Unlock()

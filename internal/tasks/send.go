@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	"github.com/dr-dobermann/gobpm/pkg/model"
-	"github.com/dr-dobermann/gobpm/pkg/thresher/excenv"
+	"github.com/dr-dobermann/gobpm/pkg/thresher/executor"
 	"github.com/dr-dobermann/gobpm/pkg/variables"
 	"github.com/dr-dobermann/srvbus/ms"
 	"github.com/google/uuid"
@@ -19,7 +19,7 @@ import (
 type SendTaskExecutor struct {
 	model.SendTask
 
-	exEnv excenv.ExecutionEnvironment
+	exEnv executor.ExecutionEnvironment
 }
 
 func NewSendTaskExecutor(st *model.SendTask) *SendTaskExecutor {
@@ -31,7 +31,7 @@ func NewSendTaskExecutor(st *model.SendTask) *SendTaskExecutor {
 }
 
 func (ste *SendTaskExecutor) Exec(ctx context.Context,
-	exEnv excenv.ExecutionEnvironment) ([]*model.SequenceFlow, error) {
+	exEnv executor.ExecutionEnvironment) ([]*model.SequenceFlow, error) {
 
 	ste.exEnv = exEnv
 

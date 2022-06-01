@@ -2,10 +2,8 @@ package executor
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/dr-dobermann/gobpm/pkg/model"
-	"github.com/dr-dobermann/gobpm/pkg/thresher/excenv"
 )
 
 // NodeExecutor should be implemented by every Node to make it
@@ -15,7 +13,7 @@ type NodeExecutor interface {
 	// output sequence flows on success or error on an issue
 	Exec(
 		ctx context.Context,
-		eEnv excenv.ExecutionEnvironment) ([]*model.SequenceFlow, error)
+		eEnv ExecutionEnvironment) ([]*model.SequenceFlow, error)
 }
 
 // Prologue checks the right condition to start node execution
@@ -25,7 +23,7 @@ type NodeExecutor interface {
 type NodePrologue interface {
 	Prologue(
 		ctx context.Context,
-		eEvn excenv.ExecutionEnvironment) error
+		eEvn ExecutionEnvironment) error
 }
 
 // if the node provides NodeEpilogue, then Epilogue should be
@@ -33,18 +31,5 @@ type NodePrologue interface {
 type NodeEpliogue interface {
 	Epilogue(
 		ctx context.Context,
-		eEnv excenv.ExecutionEnvironment) error
-}
-
-func GetNodeExecutor(n model.Node) (NodeExecutor, error) {
-	switch cn := n.(type) {
-	case model.TaskModel:
-		return GetTaskExecutor(cn)
-
-	// case model.GatewayModel:
-	// case model.EtEvent:
-
-	default:
-		return nil, fmt.Errorf("invalid node type: %T", cn)
-	}
+		eEnv ExecutionEnvironment) error
 }

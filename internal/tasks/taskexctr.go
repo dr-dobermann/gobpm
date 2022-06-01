@@ -1,10 +1,10 @@
-package executor
+package tasks
 
 import (
 	"fmt"
 
-	"github.com/dr-dobermann/gobpm/internal/tasks"
 	"github.com/dr-dobermann/gobpm/pkg/model"
+	"github.com/dr-dobermann/gobpm/pkg/thresher/executor"
 )
 
 // ----------------------------------------------------------------------------
@@ -12,7 +12,7 @@ import (
 type TaskExecutor interface {
 	model.TaskModel
 
-	NodeExecutor
+	executor.NodeExecutor
 }
 
 // ----------------------------------------------------------------------------
@@ -25,16 +25,16 @@ func GetTaskExecutor(t model.TaskModel) (TaskExecutor, error) {
 
 	switch ts := t.(type) {
 	case *model.StoreTask:
-		te = tasks.NewStoreTaskExecutor(ts)
+		te = NewStoreTaskExecutor(ts)
 
 	case *model.SendTask:
-		te = tasks.NewSendTaskExecutor(ts)
+		te = NewSendTaskExecutor(ts)
 
 	case *model.OutputTask:
-		te = tasks.NewOutputTaskExecutor(ts)
+		te = NewOutputTaskExecutor(ts)
 
 	case *model.ReceiveTask:
-		te = tasks.NewReceiveTaskExecutor(ts)
+		te = NewReceiveTaskExecutor(ts)
 
 	default:
 		return nil, fmt.Errorf("invalid task type: %s", t.TaskType().String())

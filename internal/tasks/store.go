@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/dr-dobermann/gobpm/pkg/model"
-	"github.com/dr-dobermann/gobpm/pkg/thresher/excenv"
+	"github.com/dr-dobermann/gobpm/pkg/thresher/executor"
 	"go.uber.org/zap"
 )
 
@@ -24,7 +24,7 @@ func NewStoreTaskExecutor(st *model.StoreTask) *StoreTaskExecutor {
 }
 
 func (ste *StoreTaskExecutor) Exec(_ context.Context,
-	exEnv excenv.ExecutionEnvironment) ([]*model.SequenceFlow, error) {
+	exEnv executor.ExecutionEnvironment) ([]*model.SequenceFlow, error) {
 
 	var err error
 
