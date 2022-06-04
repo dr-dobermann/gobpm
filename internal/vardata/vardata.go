@@ -1,47 +1,51 @@
-package executor
+package vardata
 
 import (
 	"github.com/dr-dobermann/gobpm/internal/errs"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 )
 
-// Shell-class for variables.Variable for implementation
-// run-time DataAccessor interface from model:data.go
-type VarDataAccessor struct {
+type VariableDataItem struct {
 	vars.Variable
 }
 
-func (va *VarDataAccessor) Name() string {
-	return va.Variable.Name()
+func NewVDI(v *vars.Variable) *VariableDataItem {
+	nv := new(VariableDataItem)
+
+	nv.Variable = *v
+
+	return nv
 }
 
-func (va *VarDataAccessor) IsCollection() bool {
+func (va *VariableDataItem) IsCollection() bool {
 	return false
 }
 
-func (va *VarDataAccessor) Len() int {
+func (va *VariableDataItem) Len() int {
 	return 1
 }
 
-func (va *VarDataAccessor) GetOne() vars.Variable {
-	return *vars.V(va.Name(), va.Type(), va.Value())
+func (va *VariableDataItem) GetOne() vars.Variable {
+	return va.Copy()
 }
 
-func (va *VarDataAccessor) GetSome(from, to int) []vars.Variable {
-	panic("GetSome could not be implemented for a single vars.Variable")
+func (va *VariableDataItem) GetSome(from, to int) []vars.Variable {
+	panic("GetSome could not be implemented for a single VariableDataItem")
 }
 
-func (va *VarDataAccessor) UpdateOne(newValue *vars.Variable) error {
+func (va *VariableDataItem) UpdateOne(newValue *vars.Variable) error {
 	if newValue == nil {
 		return errs.ErrNoVariable
 	}
 
-	va.Variable = newValue.Copy()
+	nv := newValue.Copy()
+
+	va.Variable = nv
 
 	return nil
 }
 
-func (va *VarDataAccessor) UpdateSome(from, to int,
+func (va *VariableDataItem) UpdateSome(from, to int,
 	newValues []*vars.Variable) error {
 
 	return errs.ErrIsNotACollection

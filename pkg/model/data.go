@@ -16,39 +16,20 @@ import (
 // 	errorCode string
 // }
 
-type DataAccessor interface {
-	Name() string
-	IsCollection() bool
+type DataStorageType uint8
 
-	// returns length of the DataAccessor if it's a collection
-	// if DataAccessor is not a collection, Len returns 1.
-	Len() int
-
-	// if DataAccessor is a collection, then GetOne fires panic
-	// use GetSome instead
-	GetOne() vars.Variable
-
-	// Retruns a slice of elements if DataAccessor is a collection.
-	// First element has 0 index.
-	// If DataAccessor is not a collection, then panic fired
-	GetSome(from, to int) []vars.Variable
-
-	// Updates value of the DataAccessor.
-	// if it's a collection, the panic fired.
-	UpdateOne(newValue *vars.Variable) error
-
-	// Updates single or range elements of collection.
-	// If DataAccessor is not a collection,
-	// the errs.ErrIsNotACollection returned.
-	UpdateSome(from, to int, newValues []*vars.Variable) error
-}
+const (
+	Embedded DataStorageType = iota
+	DataBase
+)
 
 // ItemDefinition defines an Item to store a single value or
 // a collection of values
 type ItemDefinition struct {
-	ItemType     vars.Type
-	IsCollection bool
-	Accessor     DataAccessor
+	ItemType       vars.Type
+	IsCollection   bool
+	StorageType    DataStorageType
+	StorageDetails string
 }
 
 // ItemAwareElement creates a link to a single value or a
