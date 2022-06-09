@@ -3,6 +3,7 @@ package vardata
 import "github.com/dr-dobermann/gobpm/pkg/variables"
 
 type DataProvider interface {
+	AddDataItem(nv DataItem) error
 	GetDataItem(vname string) (DataItem, error)
 	DelDataItem(vname string) error
 	UpdateDataItem(vn string, newVal DataItem) error

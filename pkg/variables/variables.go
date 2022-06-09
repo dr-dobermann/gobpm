@@ -143,16 +143,28 @@ func (v *Variable) update(newVal interface{}) error {
 			return nil
 		}
 
-		if i, ok := newVal.(int64); !ok {
-			if i, ok := newVal.(int); !ok {
-				return v.NewVErr(nil, "couldn't convert %v to int", newVal)
-			} else {
-				v.value = int64(i)
-				v.I = int64(i)
+		switch newVal.(type) {
+		case string:
+			f, err := strconv.ParseFloat(newVal.(string), 64)
+			if err != nil {
+				return v.NewVErr(err, "couldn't convert %q into float/int", newVal)
 			}
-		} else {
-			v.value = i
-			v.I = i
+
+			v.I = int64(f)
+			v.value = v.I
+
+		default:
+			if i, ok := newVal.(int64); !ok {
+				if i, ok := newVal.(int); !ok {
+					return v.NewVErr(nil, "couldn't convert %v to int", newVal)
+				} else {
+					v.value = int64(i)
+					v.I = int64(i)
+				}
+			} else {
+				v.value = i
+				v.I = i
+			}
 		}
 
 	case Bool:
@@ -193,11 +205,22 @@ func (v *Variable) update(newVal interface{}) error {
 			return nil
 		}
 
-		if f, ok := newVal.(float64); !ok {
-			return v.NewVErr(nil, "couldn't convert %v to float64", newVal)
-		} else {
+		switch newVal.(type) {
+		case string:
+			f, err := strconv.ParseFloat(newVal.(string), 64)
+			if err != nil {
+				return v.NewVErr(err, "couldn't convert %q to float", newVal)
+			}
 			v.value = f
 			v.F = f
+
+		default:
+			if f, ok := newVal.(float64); !ok {
+				return v.NewVErr(nil, "couldn't convert %v to float64", newVal)
+			} else {
+				v.value = f
+				v.F = f
+			}
 		}
 
 	case Time:
@@ -208,11 +231,22 @@ func (v *Variable) update(newVal interface{}) error {
 			return nil
 		}
 
-		if t, ok := newVal.(time.Time); !ok {
-			return v.NewVErr(nil, "couldn't convert %v to Time", newVal)
-		} else {
-			v.value = t
+		switch newVal.(type) {
+		case string:
+			t, err := time.Parse(time.RFC3339, v.S)
+			if err != nil {
+				return v.NewVErr(err, "couldn't convert %q into Time", newVal)
+			}
 			v.T = t
+			v.value = t
+
+		default:
+			if t, ok := newVal.(time.Time); !ok {
+				return v.NewVErr(nil, "couldn't convert %v to Time", newVal)
+			} else {
+				v.value = t
+				v.T = t
+			}
 		}
 	}
 
@@ -432,4 +466,8 @@ func (v *Variable) CanConvertTo(nt Type) bool {
 	}
 
 	return true
+}
+
+func (v *Variable) Update(newVal interface{}) error {
+	return v.update(newVal)
 }
