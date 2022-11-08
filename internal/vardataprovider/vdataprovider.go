@@ -1,7 +1,9 @@
-package vardata
+package vardataprovider
 
 import (
 	"fmt"
+
+	dp "github.com/dr-dobermann/gobpm/pkg/dataprovider"
 
 	"github.com/dr-dobermann/gobpm/internal/errs"
 	"github.com/dr-dobermann/gobpm/pkg/variables"
@@ -11,7 +13,7 @@ type varStoreDataProvider struct {
 	variables.VarStore
 }
 
-func (dp *varStoreDataProvider) AddDataItem(nv DataItem) error {
+func (dp *varStoreDataProvider) AddDataItem(nv dp.DataItem) error {
 	_, err := dp.NewVar(nv.GetOne())
 	if err != nil {
 		return fmt.Errorf("couldn't add new DataItem %q: %v", nv.Name(), err)
@@ -20,7 +22,7 @@ func (dp *varStoreDataProvider) AddDataItem(nv DataItem) error {
 	return nil
 }
 
-func (dp *varStoreDataProvider) GetDataItem(vname string) (DataItem, error) {
+func (dp *varStoreDataProvider) GetDataItem(vname string) (dp.DataItem, error) {
 	v, err := dp.GetVar(vname)
 	if err != nil {
 		return nil, err
@@ -33,7 +35,8 @@ func (dp *varStoreDataProvider) DelDataItem(vname string) error {
 	return dp.DelVar(vname)
 }
 
-func (dp *varStoreDataProvider) UpdateDataItem(vname string, newVal DataItem) error {
+func (dp *varStoreDataProvider) UpdateDataItem(vname string, newVal dp.DataItem) error {
+
 	if newVal == nil {
 		return errs.ErrNoVariable
 	}
@@ -47,7 +50,7 @@ func (dp *varStoreDataProvider) UpdateDataItem(vname string, newVal DataItem) er
 	return dp.Update(vname, v.Value())
 }
 
-func New() DataProvider {
+func New() dp.DataProvider {
 	dp := new(varStoreDataProvider)
 	dp.VarStore = *variables.NewVarStore()
 

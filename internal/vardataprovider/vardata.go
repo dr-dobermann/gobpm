@@ -8,10 +8,12 @@
 Package vardata implements DataProvider and DataItem interfaces for
 variables' VarStore and Variable.
 */
-package vardata
+package vardataprovider
 
 import (
 	"github.com/dr-dobermann/gobpm/internal/errs"
+	dp "github.com/dr-dobermann/gobpm/pkg/dataprovider"
+
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 )
 
@@ -19,7 +21,7 @@ type variableDataItem struct {
 	vars.Variable
 }
 
-func NewDI(v vars.Variable) DataItem {
+func NewDI(v vars.Variable) dp.DataItem {
 	nv := new(variableDataItem)
 
 	nv.Variable = v
@@ -39,8 +41,8 @@ func (va *variableDataItem) GetOne() vars.Variable {
 	return va.Copy()
 }
 
-func (va *variableDataItem) GetSome(from, to int) []vars.Variable {
-	panic("GetSome could not be implemented for a single variableDataItem")
+func (va *variableDataItem) GetSome(from, to int) ([]vars.Variable, error) {
+	return nil, errs.ErrIsNotACollection
 }
 
 func (va *variableDataItem) UpdateOne(newValue *vars.Variable) error {

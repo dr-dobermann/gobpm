@@ -1,4 +1,4 @@
-package vardata
+package dataprovider
 
 import "github.com/dr-dobermann/gobpm/pkg/variables"
 
@@ -26,7 +26,7 @@ type DataItem interface {
 	// Retruns a slice of elements if DataItem is a collection.
 	// First element has 0 index.
 	// If DataItem is not a collection, then panic fired
-	GetSome(from, to int) []variables.Variable
+	GetSome(from, to int) ([]variables.Variable, error)
 
 	// Updates value of the DataItem.
 	// if it's a collection, the panic fired.
