@@ -190,14 +190,14 @@ func TestVariableUpdate(t *testing.T) {
 		case Int:
 			err = testVs.Update(vn, td[i+4].i)
 
-			// update non-existent (by type) variable
-			if errr := testVs.Update(vn, "200"); errr == nil {
-				t.Error("updating non-existent variable ", vn, ":String")
+			// update with allowed value
+			if errr := testVs.Update(vn, "100"); errr != nil {
+				t.Error("couldn't update int with allowed value \"200\"", errr)
 			}
 
-			// update by wrong type
-			if errr := testVs.Update(vn, "200"); errr == nil {
-				t.Error("updating variable ", vn, " type Int with string(\"200\")")
+			// update with disallowed value
+			if errr := testVs.Update(vn, "str"); errr == nil {
+				t.Error("couldn't update int with invalid value \"str\":", errr)
 			}
 
 		case Bool:
@@ -220,8 +220,13 @@ func TestVariableUpdate(t *testing.T) {
 			err = testVs.Update(vn, td[i+4].f)
 
 			// update by wrong type
-			if errr := testVs.Update(vn, "200"); errr == nil {
-				t.Error("updating variable ", vn, " type Float with string(\"200\")")
+			if errr := testVs.Update(vn, "3.1415928"); errr != nil {
+				t.Error("updating variable with allowed type \"200\"", errr)
+			}
+
+			// update by wrong type
+			if errr := testVs.Update(vn, "str"); errr == nil {
+				t.Error("updating variable ", vn, " type Float with string(\"str\")")
 			}
 		}
 

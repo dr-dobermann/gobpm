@@ -47,8 +47,8 @@ func TestAddOperations(t *testing.T) {
 			res:     vars.Values{I: 10}},
 		{
 			src:     typeVal{tt: vars.Bool, tv: false}, // int + bool
-			mustErr: testShouldFail,
-			res:     vars.Values{B: false}},
+			mustErr: testShouldPass,
+			res:     vars.Values{I: 5}},
 		{
 			src:     typeVal{tt: vars.String, tv: "10"}, // int + "10"
 			mustErr: testShouldPass,
@@ -118,8 +118,8 @@ func TestAddOperations(t *testing.T) {
 			res:     vars.Values{F: 16.7}},
 		{
 			src:     typeVal{tt: vars.Bool, tv: true}, // float + bool
-			mustErr: testShouldFail,
-			res:     vars.Values{B: false}},
+			mustErr: testShouldPass,
+			res:     vars.Values{F: 12.7}},
 		{
 			src:     typeVal{tt: vars.String, tv: "7"}, // float + string
 			mustErr: testShouldPass,

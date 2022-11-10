@@ -11,7 +11,7 @@ import (
 )
 
 func TestConditions(t *testing.T) {
-	for _, tn := range []string{"equal", "notEqual", "less", "greater", "le", "ge"} {
+	for _, tn := range []string{"equal", "notEqual"} {
 		testCondition(t, tn)
 	}
 }
@@ -20,7 +20,10 @@ func testCondition(t *testing.T, condName string) {
 	is := is.New(t)
 
 	testDescr, ok := tests[condName]
-	is.True(ok)
+	if !ok {
+		t.Log("invalid condition name [", condName, "]")
+		is.True(ok)
+	}
 
 	for _, tc := range testDescr.testCases {
 		testName := fmt.Sprintf("%s: %v(%v) %s %v(%v)",
@@ -64,7 +67,8 @@ var (
 	equalTests = []testCase{
 		{vars.Int, 5, vars.Int, 5, "res", vars.Values{B: true}, shouldPass},
 		{vars.Int, 5, vars.Int, 7, "res", vars.Values{B: false}, shouldPass},
-		{vars.Int, 5, vars.Bool, false, "res", vars.Values{I: -1}, shouldFail},
+		{vars.Int, 5, vars.Bool, false, "res", vars.Values{B: false}, shouldPass},
+		{vars.Int, 1, vars.Bool, true, "res", vars.Values{B: true}, shouldPass},
 		{vars.Int, 5, vars.String, "5", "res", vars.Values{B: true}, shouldPass},
 		{vars.Int, 5, vars.String, "7", "res", vars.Values{B: false}, shouldPass},
 		{vars.Int, 5, vars.String, "trash", "res", vars.Values{I: -1}, shouldFail},
@@ -96,7 +100,8 @@ var (
 
 		{vars.Float, 10.0, vars.Int, 10, "res", vars.Values{B: true}, shouldPass},
 		{vars.Float, 15.0, vars.Int, 7, "res", vars.Values{B: false}, shouldPass},
-		{vars.Float, 3, vars.Bool, true, "res", vars.Values{B: true}, shouldFail},
+		{vars.Float, 3, vars.Bool, true, "res", vars.Values{B: true}, shouldPass},
+		{vars.Float, 0.0, vars.Bool, true, "res", vars.Values{B: false}, shouldPass},
 		{vars.Float, 12.53, vars.String, "12.53", "res", vars.Values{B: true}, shouldPass},
 		{vars.Float, 12.06, vars.String, "12.53", "res", vars.Values{B: false}, shouldPass},
 		{vars.Float, 7, vars.String, "trash", "res", vars.Values{B: false}, shouldFail},
@@ -119,7 +124,7 @@ var (
 	notEqualTests = []testCase{
 		{vars.Int, 5, vars.Int, 5, "res", vars.Values{B: false}, shouldPass},
 		{vars.Int, 5, vars.Int, 7, "res", vars.Values{B: true}, shouldPass},
-		{vars.Int, 5, vars.Bool, false, "res", vars.Values{I: -1}, shouldFail},
+		{vars.Int, 5, vars.Bool, false, "res", vars.Values{B: true}, shouldPass},
 		{vars.Int, 5, vars.String, "5", "res", vars.Values{B: false}, shouldPass},
 		{vars.Int, 5, vars.String, "7", "res", vars.Values{B: true}, shouldPass},
 		{vars.Int, 5, vars.String, "trash", "res", vars.Values{I: -1}, shouldFail},
@@ -154,7 +159,9 @@ var (
 
 		{vars.Float, 5, vars.Int, 5, "res", vars.Values{B: false}, shouldPass},
 		{vars.Float, 5, vars.Int, 7, "res", vars.Values{B: true}, shouldPass},
-		{vars.Float, 5, vars.Bool, false, "res", vars.Values{I: -1}, shouldFail},
+		{vars.Float, 5, vars.Bool, false, "res", vars.Values{B: false}, shouldPass},
+		{vars.Float, 0, vars.Bool, false, "res", vars.Values{B: false}, shouldPass},
+		{vars.Float, 5, vars.Bool, false, "res", vars.Values{B: true}, shouldPass},
 		{vars.Float, 5, vars.String, "5", "res", vars.Values{B: false}, shouldPass},
 		{vars.Float, 5, vars.String, "7", "res", vars.Values{B: true}, shouldPass},
 		{vars.Float, 5, vars.String, "trash", "res", vars.Values{I: -1}, shouldFail},

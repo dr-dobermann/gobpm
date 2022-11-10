@@ -11,7 +11,7 @@
 // Variable is a named storage of a single variant value.
 // Variable could keep int64, bool, string, float64 and time.Time value.
 //
-// Variable creation
+// # Variable creation
 //
 // Variable conversion
 package variables
@@ -132,7 +132,7 @@ func (v Variable) NewVErr(
 //
 // it expected to receive the value of internal type of v.
 //
-//nolint: cyclop, revive
+// nolint: cyclop, revive
 func (v *Variable) update(newVal interface{}) error {
 	switch v.vType {
 	case Int:
@@ -318,7 +318,7 @@ func (v *Variable) StrVal() string {
 
 // Bool returns a boolean representation of variable v.
 //
-//nolint: cyclop
+// nolint: cyclop
 func (v *Variable) Bool() bool {
 	var b bool
 
@@ -438,12 +438,12 @@ func (v *Variable) IsEqual(ov *Variable) bool {
 // check if it's possible to convert variable v to a new type nt
 // without panic of invalid conversion.
 //
-//nolint: cyclop
+// nolint: cyclop
 func (v *Variable) CanConvertTo(nt Type) bool {
 	// check only dangerous or impossible conversion
 	// all safe conversion could be made with no check
 	switch {
-	case v.vType == Bool && (nt == Int || nt == Float || nt == Time):
+	case v.vType == Bool && nt == Time:
 		return false
 
 	case v.vType == String && (nt == Int || nt == Float):

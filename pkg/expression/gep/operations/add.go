@@ -81,7 +81,7 @@ var (
 		OpFuncGen:         addFloat,
 		EmptyParamAllowed: false,
 		Checkers: []gep.FuncParamChecker{
-			gep.ParamExactTypeChecker(addFunction, vars.Int, vars.Float, vars.String),
+			gep.ParamExactTypeChecker(addFunction, vars.Int, vars.Float, vars.String, vars.Bool),
 			gep.ParamTypeChecker(vars.Float, addFunction)},
 	}
 
