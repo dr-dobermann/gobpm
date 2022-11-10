@@ -48,7 +48,12 @@ func TestVarDataProvider(t *testing.T) {
 	is.True(di.Type() == variables.Int)
 	is.True(di.GetOne().I == 5)
 
+	// look for a non-existing variable
 	_, err = dp.GetDataItem("y")
+	is.True(err != nil)
+
+	// update non-existing variable
+	err = dp.UpdateDataItem("Y", vdp.NewDI(*variables.V("_", variables.Int, 3)))
 	is.True(err != nil)
 
 	err = dp.UpdateDataItem("X", vdp.NewDI(*variables.V("_", variables.Int, 3)))

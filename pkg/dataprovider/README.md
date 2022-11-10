@@ -21,8 +21,7 @@ The DataItem interface is as followed:
         // if DataItem is not a collection, Len returns 1.
         Len() int
 
-        // if DataItem is a collection, then GetOne fires panic
-        // use GetSome instead
+        // if DataItem is a collection GetOne returns first array's variable
         GetOne() variables.Variable
 
         // Retruns a slice of elements if DataItem is a collection.
