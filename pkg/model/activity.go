@@ -1,7 +1,7 @@
 package model
 
 import (
-	"github.com/dr-dobermann/gobpm/pkg/base"
+	"github.com/dr-dobermann/gobpm/pkg/foundation"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 )
 
@@ -22,13 +22,13 @@ const (
 // }
 
 type ParameterBinding struct {
-	base.BaseElement
+	foundation.BaseElement
 	//parRef Id
 	//expr   *Expression
 }
 
 type ResourceRole struct {
-	base.BaseElement
+	foundation.BaseElement
 	//assignExpr *Expression // should return Users or Groups resources
 	//bindings   []*ParameterBinding
 }

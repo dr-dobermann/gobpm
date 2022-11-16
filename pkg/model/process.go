@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dr-dobermann/gobpm/pkg/base"
+	"github.com/dr-dobermann/gobpm/pkg/foundation"
 	expr "github.com/dr-dobermann/gobpm/pkg/expression"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 	"github.com/google/uuid"
@@ -70,7 +70,7 @@ func NewProcess(pid mid.Id, nm string, ver string) *Process {
 
 	return &Process{FlowElement: FlowElement{
 		NamedElement: NamedElement{
-			BaseElement: *base.New(pid),
+			BaseElement: *foundation.New(pid),
 			name:        nm},
 		elementType: EtProcess},
 		version:  ver,

@@ -20,7 +20,7 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/internal/errs"
-	"github.com/dr-dobermann/gobpm/pkg/base"
+	"github.com/dr-dobermann/gobpm/pkg/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/identity"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 )
@@ -77,7 +77,7 @@ const (
 
 // base stucture for every expression used in the GoBPM expressions.
 type FormalExpression struct {
-	base.BaseElement
+	foundation.BaseElement
 
 	language string // could be Formal Expression language (FEEL) in URI format
 
@@ -100,7 +100,7 @@ func New(
 	lang string,
 	rt vars.Type) *FormalExpression {
 	return &FormalExpression{
-		BaseElement: *base.New(id),
+		BaseElement: *foundation.New(id),
 		language:    strings.Trim(lang, " "),
 		body:        []byte{},
 		retType:     rt}

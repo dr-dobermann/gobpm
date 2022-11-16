@@ -1,9 +1,9 @@
 package model
 
-import "github.com/dr-dobermann/gobpm/pkg/base"
+import "github.com/dr-dobermann/gobpm/pkg/foundation"
 
 type NamedElement struct {
-	base.BaseElement
+	foundation.BaseElement
 	name string
 }
 

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/msgmarsh"
-	"github.com/dr-dobermann/gobpm/pkg/base"
+	"github.com/dr-dobermann/gobpm/pkg/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/identity"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
@@ -233,7 +233,7 @@ func NewMessage(
 	return &Message{
 		FlowElement: FlowElement{
 			NamedElement: NamedElement{
-				BaseElement: *base.New(identity.NewID()),
+				BaseElement: *foundation.New(identity.NewID()),
 				name:        mn},
 			elementType: EtMessage},
 		direction: dir,

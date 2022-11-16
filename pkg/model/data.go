@@ -1,7 +1,7 @@
 package model
 
 import (
-	"github.com/dr-dobermann/gobpm/pkg/base"
+	"github.com/dr-dobermann/gobpm/pkg/foundation"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 )
 
@@ -35,9 +35,9 @@ type ItemDefinition struct {
 // ItemAwareElement creates a link to a single value or a
 // collection of the values
 type ItemAwareElement struct {
-	base.BaseElement
+	foundation.BaseElement
 	Name string
-	IDef ItemDefinition
+	IDef ItemDefinition 
 }
 
 type DataSet struct {
@@ -46,7 +46,7 @@ type DataSet struct {
 }
 
 type InputOutputSpecification struct {
-	base.BaseElement
+	foundation.BaseElement
 	InputSets  []*DataSet
 	OutputSets []*DataSet
 }

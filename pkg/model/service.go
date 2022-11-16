@@ -3,7 +3,7 @@ package model
 import (
 	"context"
 
-	"github.com/dr-dobermann/gobpm/pkg/base"
+	"github.com/dr-dobermann/gobpm/pkg/foundation"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 )
 
@@ -12,7 +12,7 @@ type Executor interface {
 }
 
 type Operation struct {
-	base.BaseElement
+	foundation.BaseElement
 	inMessageRef  mid.Id
 	outMessageRef mid.Id
 	errors        []mid.Id
@@ -20,7 +20,7 @@ type Operation struct {
 }
 
 type Interface struct {
-	base.BaseElement
+	foundation.BaseElement
 	name              string
 	operations        []*Operation
 	callabeElements   []*CallableElement

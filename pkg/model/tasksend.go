@@ -3,7 +3,7 @@ package model
 import (
 	"strings"
 
-	"github.com/dr-dobermann/gobpm/pkg/base"
+	"github.com/dr-dobermann/gobpm/pkg/foundation"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 )
 
@@ -56,7 +56,7 @@ func NewSendTask(p *Process, name, msgName, qName string) *SendTask {
 			FlowNode: FlowNode{
 				FlowElement: FlowElement{
 					NamedElement: NamedElement{
-						BaseElement: *base.New(mid.NewID()),
+						BaseElement: *foundation.New(mid.NewID()),
 						name:        name},
 					elementType: EtActivity},
 				process: p},

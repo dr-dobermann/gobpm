@@ -1,4 +1,4 @@
-package base
+package foundation
 
 import mid "github.com/dr-dobermann/gobpm/pkg/identity"
 
