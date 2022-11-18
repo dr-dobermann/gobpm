@@ -11,8 +11,8 @@ const (
 
 type Relationship struct {
 	BaseElement
-	relType string
+	relType   string
 	direction RelationshipDirection
-	sources []string // element IDs
-	targets []string // element IDs
+	sources   []string // element IDs
+	targets   []string // element IDs
 }

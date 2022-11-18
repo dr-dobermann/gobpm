@@ -157,8 +157,8 @@ func TestNodes(t *testing.T) {
 		t.Error("Nil task added")
 	}
 
-	if t1.lane.name != p.lanes[ln].name {
-		t.Error("Task ", t1.name, " washn't linked to lane ", ln)
+	if t1.lane.Name() != p.lanes[ln].Name() {
+		t.Error("Task ", t1.Name(), " washn't linked to lane ", ln)
 	}
 
 	// trying to add a duplicate

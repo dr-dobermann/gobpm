@@ -1,7 +1,9 @@
 package model
 
+import "github.com/dr-dobermann/gobpm/pkg/common"
+
 type Lane struct {
-	FlowElement
+	common.FlowElement
 	process *Process
 	nodes   []Node
 }
@@ -11,7 +13,7 @@ func (l *Lane) addNode(n Node) error {
 		if ln.ID() == n.ID() {
 			return NewPMErr(l.process.ID(), nil,
 				"Node %s already exists on lane %s",
-				n.Name(), l.name)
+				n.Name(), l.Name())
 		}
 	}
 

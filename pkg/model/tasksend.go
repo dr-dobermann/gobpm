@@ -3,7 +3,7 @@ package model
 import (
 	"strings"
 
-	"github.com/dr-dobermann/gobpm/pkg/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/common"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 )
 
@@ -26,14 +26,14 @@ func (st *SendTask) QueueName() string {
 func (st *SendTask) Check() error {
 
 	for _, m := range st.process.messages {
-		if m.name == st.msgName && m.direction&Outgoing != 0 {
+		if m.Name() == st.msgName && m.direction&Outgoing != 0 {
 			return nil
 		}
 	}
 
 	return NewPMErr(st.ProcessID(), nil,
 		"couldn't find outgoing message %s nedeed for task %s",
-		st.msgName, st.name)
+		st.msgName, st.Name())
 }
 
 func NewSendTask(p *Process, name, msgName, qName string) *SendTask {
@@ -54,12 +54,8 @@ func NewSendTask(p *Process, name, msgName, qName string) *SendTask {
 	return &SendTask{
 		Activity: Activity{
 			FlowNode: FlowNode{
-				FlowElement: FlowElement{
-					NamedElement: NamedElement{
-						BaseElement: *foundation.New(mid.NewID()),
-						name:        name},
-					elementType: EtActivity},
-				process: p},
+				FlowElement: *common.NewFlowElement(mid.NewID(), name, common.EtActivity),
+				process:     p},
 			aType: AtSendTask,
 			class: AcAbstract},
 		msgName: msgName,

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dr-dobermann/gobpm/pkg/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/common"
 	expr "github.com/dr-dobermann/gobpm/pkg/expression"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 	"github.com/google/uuid"
@@ -21,7 +21,7 @@ const (
 )
 
 type Process struct {
-	FlowElement
+	common.FlowElement
 	version string
 
 	// supportedBy []string // processes supported this one
@@ -68,17 +68,14 @@ func NewProcess(pid mid.Id, nm string, ver string) *Process {
 		ver = "0.1.0"
 	}
 
-	return &Process{FlowElement: FlowElement{
-		NamedElement: NamedElement{
-			BaseElement: *foundation.New(pid),
-			name:        nm},
-		elementType: EtProcess},
-		version:  ver,
-		tasks:    []TaskModel{},
-		gateways: []GatewayModel{},
-		flows:    []*SequenceFlow{},
-		messages: make([]*Message, 0),
-		lanes:    make(map[string]*Lane)}
+	return &Process{
+		FlowElement: *common.NewFlowElement(pid, nm, common.EtProcess),
+		version:     ver,
+		tasks:       []TaskModel{},
+		gateways:    []GatewayModel{},
+		flows:       []*SequenceFlow{},
+		messages:    make([]*Message, 0),
+		lanes:       make(map[string]*Lane)}
 }
 
 // returns a version of the process.
@@ -96,20 +93,20 @@ func (p *Process) HasMessages() bool {
 // will be returned in the same list.
 // If et is differs from EtAcitvity, EtGateway, EtEvent,
 // the panic will be fired
-func (p *Process) GetNodes(et FlowElementType) ([]Node, error) {
+func (p *Process) GetNodes(et common.FlowElementType) ([]Node, error) {
 
 	nn := []Node{}
 
 	switch et {
 	// return all nodes
-	case EtUnspecified:
+	case common.EtUnspecified:
 		nn = append(nn, p.getTasks()...)
 		nn = append(nn, p.getGateways()...)
 
-	case EtActivity:
+	case common.EtActivity:
 		nn = p.getTasks()
 
-	case EtGateway:
+	case common.EtGateway:
 		nn = p.getGateways()
 
 	//case EtEvent:
@@ -161,7 +158,7 @@ func (p *Process) GetTask(tid mid.Id) TaskModel {
 // If there is no Message with name mn, the error will be returned
 func (p *Process) GetMessage(mn string) (*Message, error) {
 	for _, m := range p.messages {
-		if m.name == mn {
+		if m.Name() == mn {
 			return m, nil
 		}
 	}
@@ -194,7 +191,7 @@ func (p Process) Copy() (*Process, error) {
 
 	// copy messages
 	for _, m := range p.messages {
-		pc.AddMessage(m.name, m.direction, m.GetVariables(AllVariables)...)
+		pc.AddMessage(m.Name(), m.direction, m.GetVariables(AllVariables)...)
 	}
 
 	// nm used as a mapper from source process node id to
@@ -309,16 +306,16 @@ func (p *Process) NewLane(nm string) error {
 
 	l := new(Lane)
 	l.SetNewID(mid.NewID())
-	l.name = nm
-	l.elementType = EtLane
+	l.SetName(nm)
+	l.SetType(common.EtLane)
 	l.process = p
 	l.nodes = make([]Node, 0)
 
 	if len(nm) == 0 {
-		l.name = "Lane " + l.ID().String()
+		l.SetName("Lane " + l.ID().String())
 	}
 
-	p.lanes[l.name] = l
+	p.lanes[l.Name()] = l
 
 	return nil
 }
@@ -373,7 +370,7 @@ func (p *Process) AddMessage(msgName string,
 	}
 
 	for _, m := range p.messages {
-		if m.name == msgName {
+		if m.Name() == msgName {
 			return nil, NewPMErr(p.ID(), nil,
 				"message '%s' already exists", msgName)
 		}

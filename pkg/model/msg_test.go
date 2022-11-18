@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dr-dobermann/gobpm/pkg/common"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 	"github.com/matryer/is"
@@ -99,8 +100,8 @@ func TestMsgMarshalling(t *testing.T) {
 		"tVal": vars.V("tVal", vars.Time, bd)}
 
 	msg := new(Message)
-	msg.name = "TestVar"
-	msg.elementType = EtMessage
+	msg.SetName("TestVar")
+	msg.SetType(common.EtMessage)
 	msg.SetNewID(mid.NewID())
 	msg.direction = Outgoing
 	msg.vList = make(map[string]MessageVariable)
@@ -121,9 +122,9 @@ func TestMsgMarshalling(t *testing.T) {
 	err = json.Unmarshal(buf, &uMsg)
 	is.NoErr(err)
 
-	if msg.name != uMsg.name ||
+	if msg.Name() != uMsg.Name() ||
 		msg.direction != uMsg.direction ||
-		msg.elementType != uMsg.elementType {
+		msg.Type() != uMsg.Type() {
 
 		t.Fatalf("message header is not the same:\n%v\n%v\n",
 			msg, uMsg)

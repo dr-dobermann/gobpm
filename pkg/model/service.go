@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 
+	"github.com/dr-dobermann/gobpm/pkg/common"
 	"github.com/dr-dobermann/gobpm/pkg/foundation"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 )
@@ -23,7 +24,7 @@ type Interface struct {
 	foundation.BaseElement
 	name              string
 	operations        []*Operation
-	callabeElements   []*CallableElement
+	callabeElements   []*common.CallableElement
 	implementationRef *interface{} // TODO: need to decide how to use this field
 	// or just abandon it for Operation Executor
 }

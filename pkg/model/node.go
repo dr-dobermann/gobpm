@@ -3,55 +3,15 @@ package model
 import (
 	"fmt"
 
+	"github.com/dr-dobermann/gobpm/pkg/common"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 	"github.com/google/uuid"
 )
 
-type FlowElementType uint8
-
-const (
-	EtUnspecified FlowElementType = iota
-	EtActivity
-	EtEvent
-	EtGateway
-	EtDataObject
-	EtDataAssociation
-	EtProcess
-	EtMessage
-	EtLane
-)
-
-func (fet FlowElementType) String() string {
-	return []string{
-		"Unspecified",
-		"Activity",
-		"Event",
-		"Gateway",
-		"DataObject",
-		"DataAssociation",
-		"Process",
-		"Message",
-		"Lane",
-	}[fet]
-}
-
-// base for FlowNode(Activities, Events, Gates), Data Objects, Data Associations
-// and SequenceFlow
-type FlowElement struct {
-	NamedElement
-	// audit       *ctr.Audit
-	// monitor     *ctr.Monitor
-	elementType FlowElementType
-}
-
-func (fe FlowElement) Type() FlowElementType {
-	return fe.elementType
-}
-
 type Node interface {
 	ID() mid.Id
 	Name() string
-	Type() FlowElementType
+	Type() common.FlowElementType
 	LaneName() string
 	ProcessID() mid.Id
 	PutOnLane(lane *Lane) error
@@ -73,7 +33,7 @@ type Node interface {
 
 // base for Activities, Gates and Events
 type FlowNode struct {
-	FlowElement
+	common.FlowElement
 	process   *Process
 	lane      *Lane
 	incoming  []*SequenceFlow
@@ -86,7 +46,7 @@ type FlowNode struct {
 }
 
 func (fn *FlowNode) LaneName() string {
-	return fn.lane.name
+	return fn.lane.Name()
 }
 
 func (fn *FlowNode) ProcessID() mid.Id {
@@ -105,7 +65,7 @@ func (fn *FlowNode) GetOutputFlows() []*SequenceFlow {
 
 func (fn *FlowNode) PutOnLane(lane *Lane) error {
 	if lane == nil {
-		return NewModelError(nil, "lane name shouldn't be empty for task "+fn.name)
+		return NewModelError(nil, "lane name shouldn't be empty for task "+fn.Name())
 	}
 
 	fn.process = lane.process
@@ -145,7 +105,7 @@ func (fn *FlowNode) SetDefaultFlow(id mid.Id) error {
 func (fn *FlowNode) ConnectFlow(sf *SequenceFlow, se SequenceEnd) error {
 	if sf == nil {
 		return NewPMErr(fn.process.ID(), nil,
-			"couldn't bind nil flow to no node '%s'", fn.name)
+			"couldn't bind nil flow to no node '%s'", fn.Name())
 	}
 
 	// create incoming and outcoming flows it they aren't existed yet

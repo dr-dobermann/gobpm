@@ -3,6 +3,7 @@ package model
 import (
 	"strings"
 
+	"github.com/dr-dobermann/gobpm/pkg/common"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 )
 
@@ -24,14 +25,14 @@ func (rt *ReceiveTask) QueueName() string {
 
 func (rt *ReceiveTask) Check() error {
 	for _, m := range rt.process.messages {
-		if m.name == rt.msgName && m.direction&Incoming != 0 {
+		if m.Name() == rt.msgName && m.direction&Incoming != 0 {
 			return nil
 		}
 	}
 
 	return NewPMErr(rt.ProcessID(), nil,
 		"couldn't find incoming message %s nedeed for task %s",
-		rt.msgName, rt.name)
+		rt.msgName, rt.Name())
 }
 
 func NewReceiveTask(p *Process, name, msgName, qName string) *ReceiveTask {
@@ -44,9 +45,9 @@ func NewReceiveTask(p *Process, name, msgName, qName string) *ReceiveTask {
 
 	rt := new(ReceiveTask)
 	rt.SetNewID(id)
-	rt.name = name
+	rt.SetName(name)
 	rt.process = p
-	rt.elementType = EtActivity
+	rt.SetType(common.EtActivity)
 	rt.aType = AtReceiveTask
 	rt.msgName = msgName
 	rt.qName = qName

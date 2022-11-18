@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/dr-dobermann/gobpm/pkg/common"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 )
@@ -37,8 +38,8 @@ func NewOutputTask(
 	ot := new(OutputTask)
 
 	ot.SetNewID(id)
-	ot.name = name
-	ot.elementType = EtActivity
+	ot.SetName(name)
+	ot.SetType(common.EtActivity)
 	ot.process = p
 	ot.class = AcAbstract
 	ot.aType = AtOutputTask

@@ -3,6 +3,7 @@ package model
 import (
 	"testing"
 
+	"github.com/dr-dobermann/gobpm/pkg/common"
 	"github.com/dr-dobermann/gobpm/pkg/identity"
 	"github.com/matryer/is"
 )
@@ -55,7 +56,7 @@ func TestGatewayModel(t *testing.T) {
 		// Test correctness of the created model
 		is.True(td.dir == td.gm.Direction())
 		is.True(td.name == td.gm.Name())
-		is.True(td.gm.Type() == EtGateway)
+		is.True(td.gm.Type() == common.EtGateway)
 		is.True(td.gt == td.gm.GwayType())
 
 		// check copying of empty gateway

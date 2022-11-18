@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/msgmarsh"
-	"github.com/dr-dobermann/gobpm/pkg/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/common"
 	"github.com/dr-dobermann/gobpm/pkg/identity"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
@@ -60,7 +60,7 @@ func NewMVar(v *vars.Variable, optional bool) *MessageVariable {
 }
 
 type Message struct {
-	FlowElement
+	common.FlowElement
 	//flow  Id
 	//event Id // Message event processor
 
@@ -103,7 +103,7 @@ func (m Message) MarshalJSON() (bdata []byte, e error) {
 
 	mm := msgmarsh.MsgMarsh{
 		ID:        m.ID().String(),
-		Name:      m.name,
+		Name:      m.Name(),
 		Direction: uint8(m.direction)}
 
 	for _, v := range m.vList {
@@ -137,10 +137,10 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 		return fmt.Errorf("couldn't unmarshal transported msg: %v", err)
 	}
 
-	m.name = mm.Name
+	m.SetName(mm.Name)
 	m.SetNewID(mid.Id(uuid.MustParse(mm.ID)))
 	m.mstate = Created
-	m.elementType = EtMessage
+	m.SetType(common.EtMessage)
 	m.direction = MessageFlowDirection(mm.Direction)
 	if m.vList == nil {
 		m.vList = make(map[string]MessageVariable)
@@ -231,11 +231,7 @@ func NewMessage(
 	}
 
 	return &Message{
-		FlowElement: FlowElement{
-			NamedElement: NamedElement{
-				BaseElement: *foundation.New(identity.NewID()),
-				name:        mn},
-			elementType: EtMessage},
-		direction: dir,
-		vList:     vl}, nil
+		FlowElement: *common.NewFlowElement(identity.NewID(), mn, common.EtMessage),
+		direction:   dir,
+		vList:       vl}, nil
 }

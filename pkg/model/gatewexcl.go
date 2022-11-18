@@ -3,6 +3,7 @@ package model
 import (
 	"strings"
 
+	"github.com/dr-dobermann/gobpm/pkg/common"
 	"github.com/dr-dobermann/gobpm/pkg/expression"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 )
@@ -30,9 +31,9 @@ func NewExclusiveGateway(
 	eg := new(ExclusiveGateway)
 
 	eg.SetNewID(id)
-	eg.name = name
+	eg.SetName(name)
 	eg.expr = expr
-	eg.elementType = EtGateway
+	eg.SetType(common.EtGateway)
 	eg.process = p
 	eg.direction = dir
 	eg.gType = Exclusive

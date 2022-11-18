@@ -1,6 +1,9 @@
 package model
 
-import "github.com/dr-dobermann/gobpm/pkg/expression"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/common"
+	"github.com/dr-dobermann/gobpm/pkg/expression"
+)
 
 type SequenceEnd uint8
 
@@ -14,7 +17,7 @@ func (se SequenceEnd) String() string {
 }
 
 type SequenceFlow struct {
-	FlowElement
+	common.FlowElement
 	process *Process
 	// Expression determines the possibility of
 	// using path over this SequenceFlow.

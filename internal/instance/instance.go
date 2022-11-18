@@ -8,6 +8,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/internal/errs"
 	"github.com/dr-dobermann/gobpm/internal/gateways"
+	"github.com/dr-dobermann/gobpm/pkg/common"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 	"github.com/dr-dobermann/gobpm/pkg/model"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
@@ -143,7 +144,7 @@ func (pi *Instance) NewErr(
 func (pi *Instance) prepare() error {
 
 	// get through all nodes except the gateways
-	nn, err := pi.snapshot.GetNodes(model.EtUnspecified)
+	nn, err := pi.snapshot.GetNodes(common.EtUnspecified)
 	if err != nil {
 		return pi.NewErr(err, "couldn't get nodes list from snapshot")
 	}
@@ -154,7 +155,7 @@ func (pi *Instance) prepare() error {
 	for _, n := range nn {
 		// find tasks and events that
 		// don't have incoming flows
-		if n.Type() != model.EtGateway && !n.HasIncoming() {
+		if n.Type() != common.EtGateway && !n.HasIncoming() {
 			// create tracks from them
 			t, err := newTrack(n, pi, nil, nil)
 			if err != nil {

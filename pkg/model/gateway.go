@@ -88,7 +88,7 @@ func (g *Gateway) ConnectFlow(sf *SequenceFlow, se SequenceEnd) error {
 		se == SeSource {
 
 		return fmt.Errorf("only one ougoing flow is allowed for "+
-			"converging gateway '%s'", g.name)
+			"converging gateway '%s'", g.Name())
 	}
 
 	// if g is a diverging gateway there MUST be ONLY ONE incoming flow
@@ -96,7 +96,7 @@ func (g *Gateway) ConnectFlow(sf *SequenceFlow, se SequenceEnd) error {
 		se == SeTarget {
 
 		return fmt.Errorf("only one incoming flow is allowed for "+
-			"diverging gateway '%s'", g.name)
+			"diverging gateway '%s'", g.Name())
 	}
 
 	return g.FlowNode.ConnectFlow(sf, se)
@@ -109,12 +109,12 @@ func (g *Gateway) checkGatewayFlows() error {
 	case g.direction == Converging && len(g.outcoming) > 0:
 		return fmt.Errorf(
 			"only one outcoming flow is allowed for converging gateway '%s'",
-			g.name)
+			g.Name())
 
 	case g.direction == Diverging && len(g.incoming) > 0:
 		return fmt.Errorf(
 			"only one incoming flow allowed for diverging gateway '%s'",
-			g.name)
+			g.Name())
 
 	case g.direction == Mixed &&
 		(len(g.incoming) == 1 || len(g.outcoming) == 1):
@@ -122,7 +122,7 @@ func (g *Gateway) checkGatewayFlows() error {
 		return fmt.Errorf(
 			"mixed gateway '%s' should have multiple incoming "+
 				"and outcoming flows",
-			g.name)
+			g.Name())
 	}
 
 	return nil

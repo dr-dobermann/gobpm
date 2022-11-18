@@ -3,6 +3,7 @@ package model
 import (
 	"strings"
 
+	"github.com/dr-dobermann/gobpm/pkg/common"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 )
@@ -24,8 +25,8 @@ func NewStoreTask(p *Process, name string, vl ...vars.Variable) *StoreTask {
 
 	st := new(StoreTask)
 	st.SetNewID(id)
-	st.name = name
-	st.elementType = EtActivity
+	st.SetName(name)
+	st.SetType(common.EtActivity)
 	st.process = p
 	st.class = AcAbstract
 	st.aType = AtStoreTask
