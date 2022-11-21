@@ -1,10 +1,10 @@
 # GEP is GoBPM Expression Processor
 
-GEP is an internal, extensible, API-aimed expression processor. GEP implements the 
+GEP is an internal, extensible, API-oriented expression processor. GEP implements the 
 Expression interface. GEP expression is conveyer of operations. Every operation 
 could use results of previous operation or take its-own parameters.
 
-The result of GEP is a single Variable. GEP doesn't provide access to 
+The result of GEP is a single Variable. Natively GEP doesn't provide access to 
 intermediate operations results, but it could be easily implemented in case 
 of necessity.
 
@@ -28,23 +28,36 @@ workhorse of GEP. Any function which comply OpFunc signature
 `func(x *variables.Variable) (*variables.Variabale, error)` could be used as an operation.
 
 OpFunc returns a calculated result as a *variables.Variable. If there is any error, nil 
-pointer to variable.Variables returned.
+pointer to variable.Variables paired with an explanation error returned.
 
 The result of successfully called OpFunc saves as GEP result.
 
 If ParameterLoader of Operation is nil, then the current GEP result is used as 
 an OpFunc parameter. 
 
-## x = x op y function framework
+## x = x OP y function framework
 
-GEP provides framwork for adding extension operation as x = x op y, where op is an any
+GEP provides framwork for adding extension operation as x = x OP y, where the OP is an any
 binary function.
 
-To use the framework the `FunctionDefinition` object should be created. It takes one 
-`OpFuncGenerator` which generates a bunch of OpFunc for every supported x type. 
+To use the framework the `FunctionDefinition` object should be created. 
+
+    // Single function definition
+    type FunctionDefinition struct {
+        OpFuncGen OpFuncGenerator
+
+        // if function doesn't demand parameter,
+        // EmptyParamAllowed is set to true and all Checkers are ignored
+        EmptyParamAllowed bool
+
+        // the queue of parameter checkers which executed one by one
+        Checkers []FuncParamChecker
+    }
+
+GEP uses one `OpFuncGenerator` to generate an OpFunc for every supported x type. 
 
 If `EmptyParamAllowed` flag of `FunctionDefinition` is set to true, then y parameter could
-be ommitted.
+be ommitted. So we have unary operation.
 
 To check eligibility of y parameter one or more checking function could be added to 
 `Function Definition` in `Checkers` field. If the Checker list is empty, then no test

@@ -24,11 +24,11 @@ type DataItem interface {
 
 	// Retruns a slice of elements if DataItem is a collection.
 	// First element has 0 index.
-	// If DataItem is not a collection, then panic fired
+	// If DataItem is not a collection, errs.ErrIsNotACollection error returned
 	GetSome(from, to int) ([]variables.Variable, error)
 
 	// Updates value of the DataItem.
-	// if it's a collection, the panic fired.
+	// if it's a collection, errs.ErrIsNotACollection error returned.
 	UpdateOne(newValue *variables.Variable) error
 
 	// Updates single or range elements of collection.

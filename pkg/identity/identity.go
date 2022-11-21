@@ -16,6 +16,7 @@ func (id Id) String() string {
 	return uuid.UUID(id).String()
 }
 
+// GetLast returns n last symbols of the given id.
 func (id Id) GetLast(n int) string {
 	s := id.String()
 	if n > len(s) {
