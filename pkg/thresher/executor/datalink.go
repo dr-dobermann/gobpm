@@ -3,7 +3,7 @@ package executor
 import (
 	"fmt"
 
-	"github.com/dr-dobermann/gobpm/pkg/model"
+	"github.com/dr-dobermann/gobpm/pkg/data"
 )
 
 type DataLinker interface {
@@ -11,18 +11,22 @@ type DataLinker interface {
 	CheckOutData() error
 }
 
-func CheckLinkedData(ds model.DataSet,
+func CheckLinkedData(ds data.DataSet,
 	eEnv ExecutionEnvironment) error {
 
 	for _, di := range ds.Items {
-		v, err := eEnv.VStore().GetVar(di.Name)
+		v, err := eEnv.VStore().GetVar(di.ItemSubjectRef.StructureRef.Name())
 		if err != nil {
 			return err
 		}
 
-		if v.Type() != di.IDef.ItemType || !v.CanConvertTo(di.IDef.ItemType) {
+		if v.Type() != di.ItemSubjectRef.StructureRef.Type() ||
+			!v.CanConvertTo(di.ItemSubjectRef.StructureRef.Type()) {
+
 			return fmt.Errorf("incompatible types for variable %q (has %s, expected %s)",
-				di.Name, v.Type().String(), di.IDef.ItemType.String())
+				di.ItemSubjectRef.StructureRef.Name(),
+				v.Type().String(),
+				di.ItemSubjectRef.StructureRef.Type().String())
 		}
 	}
 

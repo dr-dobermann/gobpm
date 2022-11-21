@@ -1,6 +1,7 @@
 package model
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/data"
 	"github.com/dr-dobermann/gobpm/pkg/foundation"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 )
@@ -87,7 +88,7 @@ type Activity struct {
 
 	//boundaryEvents []*Event
 
-	IOSpec InputOutputSpecification
+	IOSpec data.InputOutputSpecification
 
 	// not empty in case the Activity used as CallActivity
 
