@@ -163,7 +163,7 @@ func (e *FormalExpression) SetParams(pp ...vars.Variable) error {
 	e.state = Created
 
 	for _, v := range pp {
-		// check for correctnes
+		// check for non-empy name correctnes
 		if len(strings.Trim(v.Name(), " ")) == 0 {
 			return e.NewExprErr(nil, "parameter should have a non-empty name")
 		}

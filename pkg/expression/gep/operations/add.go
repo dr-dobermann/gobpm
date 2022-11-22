@@ -41,8 +41,8 @@ func addTime(y *vars.Variable, resName string) (gep.OpFunc, error) {
 		nil
 }
 
-// create an OpFunc which adds av to the opFunc parameter.
-// new function returns a Variable with result of sum of av and
+// create an OpFunc which adds y to the opFunc parameter.
+// new function returns a Variable with result of sum of y and
 // OpFunc parameter v if there is no err and addition is allowed
 // for the variables.
 //
@@ -50,8 +50,8 @@ func addTime(y *vars.Variable, resName string) (gep.OpFunc, error) {
 //
 // if resName is not empty returned Variable takes this name. If it's empty,
 // then returned Variable takes OpFunc param v's name.
-func Add(av *vars.Variable, resName string) (gep.OpFunc, error) {
-	of, err := gep.GetOpFunc(addFunction, av, resName)
+func Add(y *vars.Variable, resName string) (gep.OpFunc, error) {
+	of, err := gep.GetOpFunc(addFunction, y, resName)
 	if err != nil {
 		return nil, gep.NewOpErr(addFunction, err,
 			"couldn't get OpFunc")

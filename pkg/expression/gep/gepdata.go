@@ -15,11 +15,10 @@ const (
 // conveyer.
 //
 // OpFunc uses single Variable and returns a result in a new Variable.
-// If it's needed to create a binary operation, the functor creation
-// function shoul be used.
+// For a binary operation, the functor generator should be used.
 //
-// For example, if you need to create operation res = x + y operation,
-// you should call gep.Add(y, res) to get add(x), which adds y to x and
+// For example, if you need to create an operation like res = x + y,
+// you should call gep.Add(y, res) to generate add(x), which adds y to x and
 // returns Variable named res on success.
 type OpFunc func(x *vars.Variable) (*vars.Variable, error)
 
@@ -34,16 +33,16 @@ type ParameterLoader func() (*vars.Variable, error)
 //
 // To implement x = x + y expression next Operation shoulb be created:
 //
-//      AddOp := Operation{
-//	                Func: Add(variables.V("y", variables.Int, yVal), "x")
-//                  ParamLdr: func() (*variables.Variable, error) {
-//							      // load x from somewhere
-//                                // and create variable with
-//                                // it's value -- xVar
+//	     AddOp := Operation{
+//		                Func: Add(variables.V("y", variables.Int, yVal), "x")
+//	                 ParamLdr: func() (*variables.Variable, error) {
+//								      // load x from somewhere
+//	                               // and create variable with
+//	                               // it's value -- xVar
 //
-//                                return &xVar, nil
-//                            }
-//               }
+//	                               return &xVar, nil
+//	                           }
+//	              }
 //
 // Result of sucessefully executed operation will be stored
 // as intermediate or final GEP's result in GEP structure.
@@ -72,16 +71,16 @@ type GEP struct {
 // implement function looks like res = x op y.
 //
 // If there is necessity to have more complicated or simpler operation
-// the user just creates its-own function which returns special OpFunc
+// the user just creates its-own generator which returns special OpFunc
 type OpFuncGenerator func(y *vars.Variable, resName string) (OpFunc, error)
 
 // FuncParamChecker is a function which checks right parameter of
 // res = x op y expression.
-// The obvious realization of this checker is parameter type checker
+// The simpliest realization of this checker is parameter type checker
 // like ParamTypeChecker
-type FuncParamChecker func(v *vars.Variable) error
+type FuncParamChecker func(y *vars.Variable) error
 
-// Single function definition
+// Single OpFunc generator definition
 type FunctionDefinition struct {
 	OpFuncGen OpFuncGenerator
 
@@ -93,10 +92,10 @@ type FunctionDefinition struct {
 	Checkers []FuncParamChecker
 }
 
-// funcMatrix is a registration of standard functions.
+// funcMatrix is a map of registered OpFunc functions.
 //
 // funcMatrix = map[functionName]map[leftParamType]FunctionDefininition
-// Defined function works only with defined Variable types.
+// Defined function works only with declared Variable types.
 //
-//nolint: gochecknoglobals
+// nolint: gochecknoglobals
 var funcMatrix = map[string]map[vars.Type]FunctionDefinition{}

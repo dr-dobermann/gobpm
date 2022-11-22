@@ -52,6 +52,10 @@ func (g *GEP) AddOperation(op Operation) error {
 }
 
 func (g *GEP) Evaluate() error {
+	if g.State() != expr.Parameterized {
+		return g.NewExprErr(nil, "operation list is empty")
+	}
+
 	var err error
 
 	// set expression state on return
@@ -65,14 +69,11 @@ func (g *GEP) Evaluate() error {
 		g.UpdateState(expr.Evaluated)
 	}()
 
-	if g.State() != expr.Parameterized {
-		return g.NewExprErr(nil, "operation list is empty")
-	}
-
 	for i, op := range g.operations {
 		if op.Func == nil {
-			return g.NewExprErr(nil,
+			err = g.NewExprErr(nil,
 				"OpFunc is empty for operation #%d", i)
+			return err
 		}
 
 		var opParam *vars.Variable
@@ -145,7 +146,7 @@ func LoadVar(v *vars.Variable) ParameterLoader {
 
 // creates and returns function from its FunctionDefinition.
 //
-//nolint: cyclop, whitespace, wsl
+// nolint: cyclop, whitespace, wsl
 func GetOpFunc(
 	funcName string,
 	y *vars.Variable,
@@ -208,7 +209,7 @@ func GetOpFunc(
 	return opFunc, nil
 }
 
-//nolint: whitespace, wsl
+// nolint: whitespace, wsl
 func AddOpFuncDefinition(
 	funcName string,
 	t vars.Type,
