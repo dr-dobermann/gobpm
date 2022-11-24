@@ -4,8 +4,11 @@ import "github.com/dr-dobermann/gobpm/pkg/common"
 
 type Lane struct {
 	common.FlowElement
+
 	process *Process
 	nodes   []Node
+
+	performerRole string
 }
 
 func (l *Lane) addNode(n Node) error {
@@ -20,4 +23,9 @@ func (l *Lane) addNode(n Node) error {
 	l.nodes = append(l.nodes, n)
 
 	return n.PutOnLane(l)
+}
+
+func (l Lane) PerformerRole() string {
+
+	return l.performerRole
 }

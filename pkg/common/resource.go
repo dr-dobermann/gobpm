@@ -8,7 +8,7 @@ import (
 type ResourceParameter struct {
 	foundation.BaseElement
 
-	Description  variables.Variable
+	Value  variables.Variable
 	IsCollection bool
 	IsRequired   bool
 }

@@ -51,14 +51,14 @@ type Expression interface {
 	// errors and expression states set to Evaluated
 	GetResult() (vars.Variable, error)
 
-	// copies expression and gives copy a new Id
+	// returns an expression copy with a new Id
 	Copy() Expression
 
 	// returns an expression return type
 	ReturnType() vars.Type
 }
 
-//nolint: revive
+// nolint: revive
 type ExpressionState uint8
 
 const (

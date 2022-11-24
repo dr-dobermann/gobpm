@@ -9,6 +9,6 @@ type DataSet struct {
 
 type InputOutputSpecification struct {
 	foundation.BaseElement
-	InputSets  []*DataSet
-	OutputSets []*DataSet
+	InputSets  *DataSet
+	OutputSets *DataSet
 }

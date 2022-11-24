@@ -1,7 +1,9 @@
 package model
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/common"
 	"github.com/dr-dobermann/gobpm/pkg/data"
+	"github.com/dr-dobermann/gobpm/pkg/expression"
 	"github.com/dr-dobermann/gobpm/pkg/foundation"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 )
@@ -22,14 +24,10 @@ const (
 // 	iteration *Expression
 // }
 
-type ParameterBinding struct {
-	foundation.BaseElement
-	//parRef Id
-	//expr   *Expression
-}
-
 type ResourceRole struct {
 	foundation.BaseElement
+
+	resurceRef *common.Resource
 	//assignExpr *Expression // should return Users or Groups resources
 	//bindings   []*ParameterBinding
 }
@@ -69,6 +67,7 @@ func (at ActivityType) String() string {
 		"BusinessRuleTask",
 		"ScriptTask",
 		"CustomTask",
+
 		"StoreTask",
 		"CalculateTask",
 		"OutputTask",
@@ -79,20 +78,23 @@ type Activity struct {
 	FlowNode
 	//loop        *LoopDef
 
-	// conditionExpressions on other outgoing Sequence Flows evaluate
-	// to true. The default Sequence Flow should not have a
-	// conditionExpression. Any such Expression SHALL be ignored
-
 	class ActivityClass
 	aType ActivityType
 
 	//boundaryEvents []*Event
 
-	IOSpec data.InputOutputSpecification
+	ioSpec *data.InputOutputSpecification
 
-	// not empty in case the Activity used as CallActivity
+	// Expression could be used to add or manipulate
+	// processes variables
+	// All expressions are evaluated BEFORE the Activity ends.
+	expressions []expression.Expression
 
-	//calledElement *CallableElement
+	// Actitvity performer role name
+	// should be a Group name
+	// If the Activity belongs to Line, then
+	// Line's performerRole is used
+	performerRole string
 
 	//transaction   *Transaction
 }
@@ -112,6 +114,21 @@ func (a Activity) DefaultFlowId() mid.Id {
 func (a Activity) Check() error {
 
 	return nil
+}
+
+func (a *Activity) GetIOSpec() data.InputOutputSpecification {
+
+	ioSpec := new(data.InputOutputSpecification)
+
+	if a.ioSpec != nil {
+		*ioSpec = *a.ioSpec
+	}
+
+	return *ioSpec
+}
+
+func (a Activity) PerformerRole() string {
+	return a.performerRole
 }
 
 // ------------ TaskModel interfaces --------------------------------------
@@ -189,33 +206,4 @@ type TaskModel interface {
 // type GlobalTask struct {
 // 	CallableElement
 // 	//resources []ResourceRole
-// }
-
-// ----------------------------------------------------------------------------
-//                                Special tasks
-//
-// Those tasks are introduced until DMN-engine be built
-// As soon as DMN will be realized those task will become unneccessary and might
-// be deleted
-// -----------------------------------------------------------------------------
-
-// ----------------------------------------------------------------------------
-
-// Calc function provides generic interface to custom fuctions which
-// could be expressed out as equation
-//               out = F(in)
-// where in and out variables mapped to the variables from the Process
-// Instance local VarStorage. For a success mapping the variables
-// should have identical names and types.
-// In case user needs a constant in equation such as x**2,
-// variable doesn't have a name, only type and value
-// If output variable doesn't have correlated variable in the
-// local VarStore, a new variable would be created in VarStore
-// type CalcFunc func(
-// 	in []Variable,
-// 	out []Variable) error
-
-// type CalculateTask struct {
-// 	Activity
-// 	//	funcs []CalcFunc
 // }
