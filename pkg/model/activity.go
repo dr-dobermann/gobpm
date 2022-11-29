@@ -88,7 +88,7 @@ type Activity struct {
 	// Expression could be used to add or manipulate
 	// processes variables
 	// All expressions are evaluated BEFORE the Activity ends.
-	expressions []expression.Expression
+	expressions []*expression.Expression
 
 	// Actitvity performer role name
 	// should be a Group name
@@ -116,15 +116,34 @@ func (a Activity) Check() error {
 	return nil
 }
 
-func (a *Activity) GetIOSpec() data.InputOutputSpecification {
+func (a Activity) GetIOSpec() data.InputOutputSpecification {
 
 	ioSpec := new(data.InputOutputSpecification)
 
 	if a.ioSpec != nil {
-		*ioSpec = *a.ioSpec
+		if a.ioSpec.InputSets != nil {
+			ioSpec.InputSets = new(data.DataSet)
+			*ioSpec.InputSets = *a.ioSpec.InputSets
+		}
+
+		if a.ioSpec.OutputSets != nil {
+			ioSpec.OutputSets = new(data.DataSet)
+			*ioSpec.OutputSets = *a.ioSpec.OutputSets
+		}
 	}
 
 	return *ioSpec
+}
+
+func (a Activity) GetExpressions() []*expression.Expression {
+
+	el := []*expression.Expression{}
+
+	if a.expressions != nil {
+		copy(el, a.expressions)
+	}
+
+	return el
 }
 
 func (a Activity) PerformerRole() string {
