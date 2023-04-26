@@ -1,19 +1,18 @@
 package common
 
-import (
-	"github.com/dr-dobermann/gobpm/pkg/foundation"
-	"github.com/dr-dobermann/gobpm/pkg/variables"
-)
+import "github.com/dr-dobermann/gobpm/pkg/foundation"
 
 type ResourceParameter struct {
-	foundation.BaseElement
+	NamedElement
 
-	Value  variables.Variable
-	IsCollection bool
-	IsRequired   bool
+	Name       string
+	Item       ItemDefinition
+	IsRequired bool
 }
 
 type Resource struct {
+	foundation.BaseElement
+
 	Name       string
 	Parameters []ResourceParameter
 }

@@ -1,8 +1,8 @@
 package common
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/dataprovider"
 	"github.com/dr-dobermann/gobpm/pkg/infrastructure"
-	"github.com/dr-dobermann/gobpm/pkg/variables"
 )
 
 type ItemKind byte
@@ -13,8 +13,11 @@ const (
 )
 
 type ItemDefinition struct {
-	Kind         ItemKind
-	StructureRef variables.Variable
-	IsCollection bool
-	ImportDef    *infrastructure.Import
+	Kind ItemKind
+	// DataItem already has collection flag in it,
+	// so original BPMN IsCollection flag is ommited
+	Structure dataprovider.DataItem
+	// DataProvider of the DataItem set in
+	// Import structure
+	Import *infrastructure.Import
 }

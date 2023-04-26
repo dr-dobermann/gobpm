@@ -16,6 +16,6 @@ type DataState struct {
 type ItemAwareElement struct {
 	foundation.BaseElement
 
-	ItemSubjectRef common.ItemDefinition
-	State          *DataState
+	ItemSubject common.ItemDefinition
+	State       *DataState
 }

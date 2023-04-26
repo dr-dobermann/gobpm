@@ -14,7 +14,7 @@ type varStoreDataProvider struct {
 }
 
 func (dp *varStoreDataProvider) AddDataItem(nv dp.DataItem) error {
-	_, err := dp.NewVar(nv.GetOne())
+	_, err := dp.NewVar(nv.Get())
 	if err != nil {
 		return fmt.Errorf("couldn't add new DataItem %q: %v", nv.Name(), err)
 	}
@@ -45,7 +45,7 @@ func (dp *varStoreDataProvider) UpdateDataItem(vname string, newVal dp.DataItem)
 		return errs.ErrIsNotACollection
 	}
 
-	v := newVal.GetOne()
+	v := newVal.Get()
 
 	return dp.Update(vname, v.Value())
 }

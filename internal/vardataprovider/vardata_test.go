@@ -15,7 +15,7 @@ func TestVarDataItem(t *testing.T) {
 	// creation
 	di := vdp.NewDI(*variables.V("x", variables.Int, 2))
 	is.True(di != nil)
-	is.True(di.GetOne().I == 2)
+	is.True(di.Get().I == 2)
 	is.True(di.Name() == "x")
 	is.True(di.Type() == variables.Int)
 	is.True(!di.IsCollection())
@@ -28,7 +28,7 @@ func TestVarDataItem(t *testing.T) {
 	is.NoErr(err)
 	is.True(di.Name() == "x")
 	is.True(di.Type() == variables.Int)
-	is.True(di.GetOne().I == 4)
+	is.True(di.Get().I == 4)
 	// should panic
 	// is.NoErr(di.UpdateSome(0, 1,
 	// 	[]*variables.Variable{variables.V("_", variables.String, "test")}))
@@ -46,7 +46,7 @@ func TestVarDataProvider(t *testing.T) {
 	is.NoErr(err)
 	is.True(di != nil)
 	is.True(di.Type() == variables.Int)
-	is.True(di.GetOne().I == 5)
+	is.True(di.Get().I == 5)
 
 	// look for a non-existing variable
 	_, err = dp.GetDataItem("y")
@@ -60,7 +60,7 @@ func TestVarDataProvider(t *testing.T) {
 	is.NoErr(err)
 	di, err = dp.GetDataItem("X")
 	is.NoErr(err)
-	is.True(di.GetOne().I == 3)
+	is.True(di.Get().I == 3)
 
 	_, err = di.GetSome(0, 3)
 	is.True(err == errs.ErrIsNotACollection)

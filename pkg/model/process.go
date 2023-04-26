@@ -69,7 +69,7 @@ func NewProcess(pid mid.Id, nm string, ver string) *Process {
 	}
 
 	return &Process{
-		FlowElement: *common.NewFlowElement(pid, nm, common.EtProcess),
+		FlowElement: *common.NewElement(pid, nm, common.EtProcess),
 		version:     ver,
 		tasks:       []TaskModel{},
 		gateways:    []GatewayModel{},

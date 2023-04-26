@@ -231,7 +231,7 @@ func NewMessage(
 	}
 
 	return &Message{
-		FlowElement: *common.NewFlowElement(identity.NewID(), mn, common.EtMessage),
+		FlowElement: *common.NewElement(identity.NewID(), mn, common.EtMessage),
 		direction:   dir,
 		vList:       vl}, nil
 }

@@ -37,7 +37,7 @@ func (va *variableDataItem) Len() int {
 	return 1
 }
 
-func (va *variableDataItem) GetOne() vars.Variable {
+func (va *variableDataItem) Get() vars.Variable {
 	return va.Copy()
 }
 

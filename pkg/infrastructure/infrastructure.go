@@ -1,11 +1,15 @@
 package infrastructure
 
-import "github.com/dr-dobermann/gobpm/pkg/foundation"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/dataprovider"
+	"github.com/dr-dobermann/gobpm/pkg/foundation"
+)
 
 type Import struct {
 	Type      string
-	location  string
-	namespace string
+	Location  string
+	Namespace string
+	Source    dataprovider.DataProvider
 }
 
 type Definition struct {

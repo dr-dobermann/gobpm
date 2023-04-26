@@ -20,7 +20,7 @@ type DataItem interface {
 	Len() int
 
 	// if DataItem is a collection GetOne returns first variable of array
-	GetOne() variables.Variable
+	Get() variables.Variable
 
 	// Retruns a slice of elements if DataItem is a collection.
 	// First element has 0 index.

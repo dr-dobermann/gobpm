@@ -15,18 +15,18 @@ func CheckLinkedData(ds data.DataSet,
 	eEnv ExecutionEnvironment) error {
 
 	for _, di := range ds.Items {
-		v, err := eEnv.VStore().GetVar(di.ItemSubjectRef.StructureRef.Name())
+		v, err := eEnv.VStore().GetVar(di.ItemSubject.Structure.Name())
 		if err != nil {
 			return err
 		}
 
-		if v.Type() != di.ItemSubjectRef.StructureRef.Type() ||
-			!v.CanConvertTo(di.ItemSubjectRef.StructureRef.Type()) {
+		if v.Type() != di.ItemSubject.Structure.Type() ||
+			!v.CanConvertTo(di.ItemSubject.Structure.Type()) {
 
 			return fmt.Errorf("incompatible types for variable %q (has %s, expected %s)",
-				di.ItemSubjectRef.StructureRef.Name(),
+				di.ItemSubject.Structure.Name(),
 				v.Type().String(),
-				di.ItemSubjectRef.StructureRef.Type().String())
+				di.ItemSubject.Structure.Type().String())
 		}
 	}
 

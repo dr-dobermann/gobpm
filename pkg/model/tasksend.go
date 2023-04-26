@@ -54,7 +54,7 @@ func NewSendTask(p *Process, name, msgName, qName string) *SendTask {
 	return &SendTask{
 		Activity: Activity{
 			FlowNode: FlowNode{
-				FlowElement: *common.NewFlowElement(mid.NewID(), name, common.EtActivity),
+				FlowElement: *common.NewElement(mid.NewID(), name, common.EtActivity),
 				process:     p},
 			aType: AtSendTask,
 			class: AcAbstract},
