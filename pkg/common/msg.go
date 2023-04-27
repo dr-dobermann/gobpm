@@ -1,4 +1,4 @@
-package model
+package common
 
 import (
 	"encoding/json"
@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/msgmarsh"
-	"github.com/dr-dobermann/gobpm/pkg/common"
 	"github.com/dr-dobermann/gobpm/pkg/identity"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
@@ -60,7 +59,7 @@ func NewMVar(v *vars.Variable, optional bool) *MessageVariable {
 }
 
 type Message struct {
-	common.FlowElement
+	FlowElement
 	//flow  Id
 	//event Id // Message event processor
 
@@ -140,7 +139,7 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 	m.SetName(mm.Name)
 	m.SetNewID(mid.Id(uuid.MustParse(mm.ID)))
 	m.mstate = Created
-	m.SetType(common.EtMessage)
+	m.SetType(EtMessage)
 	m.direction = MessageFlowDirection(mm.Direction)
 	if m.vList == nil {
 		m.vList = make(map[string]MessageVariable)
@@ -231,7 +230,7 @@ func NewMessage(
 	}
 
 	return &Message{
-		FlowElement: *common.NewElement(identity.NewID(), mn, common.EtMessage),
+		FlowElement: *NewElement(identity.NewID(), mn, EtMessage),
 		direction:   dir,
 		vList:       vl}, nil
 }

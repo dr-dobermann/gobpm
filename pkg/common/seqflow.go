@@ -6,6 +6,9 @@ import (
 
 type SequenceFlow struct {
 	FlowElement
+
+	// isImmediate bool
+
 	// Expression determines the possibility of
 	// using path over this SequenceFlow.
 	// Could be empty. If not, the path

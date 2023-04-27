@@ -1,12 +1,12 @@
-package model
+package activities
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/common"
 	"github.com/dr-dobermann/gobpm/pkg/data"
 	"github.com/dr-dobermann/gobpm/pkg/expression"
-	"github.com/dr-dobermann/gobpm/pkg/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/identity"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
+	"github.com/dr-dobermann/gobpm/pkg/process"
 )
 
 type ActivityClass uint8
@@ -19,18 +19,10 @@ const (
 	AcCall
 )
 
-// type LoopDef struct {
-// 	loopVar   Variable
-// 	condition *Expression
-// 	iteration *Expression
-// }
-
-type ResourceRole struct {
-	foundation.BaseElement
-
-	resurceRef *common.Resource
-	//assignExpr *Expression // should return Users or Groups resources
-	//bindings   []*ParameterBinding
+type LoopDef struct {
+	// loopVar   Variable
+	// condition *Expression
+	// iteration *Expression
 }
 
 type Transaction struct {
@@ -77,10 +69,21 @@ func (at ActivityType) String() string {
 
 type Activity struct {
 	common.FlowNode
-	//loop        *LoopDef
+	loop *LoopDef
 
 	class ActivityClass
 	aType ActivityType
+
+	isForCompensation bool
+
+	resources []common.ResourceRole
+
+	// number of tokens to start the Acitivity
+	startQuantity int
+
+	// number of tokens the Activity should generate
+	// on completion
+	completionQuantity int
 
 	//boundaryEvents []*Event
 
@@ -155,7 +158,7 @@ func (a Activity) PerformerRole() string {
 
 // ------------ TaskModel interfaces --------------------------------------
 type TaskModel interface {
-	Node
+	common.Node
 
 	// returns task type
 	TaskType() ActivityType
@@ -165,7 +168,7 @@ type TaskModel interface {
 	// Copy returns a copy of the Task with a new Id
 	// To prevent errors of duplication flows
 	// 'THE COPIED NODE SHOULD HAVE _EMPTY_ INCOMING AND OUTCOMING FLOWS
-	Copy(snapshot *Process) (TaskModel, error)
+	Copy(snapshot *process.Process) (TaskModel, error)
 
 	// Check makes a test if it possible to use the Task in the process.
 	// It called in process.AddTask

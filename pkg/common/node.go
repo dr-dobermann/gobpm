@@ -6,6 +6,26 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/identity"
 )
 
+type Node interface {
+	ID() identity.Id
+	Name() string
+	Type() FlowElementType
+	LaneName() string
+	ProcessID() identity.Id
+	//PutOnLane(lane *Lane) error
+	Connect(fn Node, sName string) (SequenceFlow, error)
+
+	HasIncoming() bool
+
+	// deletes all incoming and outcoming flows when copying the node
+	// only calls from proccess.Copy method to avoid duplication flows
+	// on copied node.
+	//
+	// DO NOT CALL directly!
+	//
+	ClearFlows()
+}
+
 // base for Activities, Gates and Events
 type FlowNode struct {
 	FlowElement

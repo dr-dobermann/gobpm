@@ -144,9 +144,9 @@ func (fe *FlowElement) SetCategory(c string) {
 type FlowElementContainer struct {
 	NamedElement
 
+	laneSets []LaneSet
+
 	elements map[identity.Id]*FlowElement
-	// TODO: Add lanes from process package in the future
-	// laneSet []Lane
 }
 
 func NewContainer(id identity.Id, name string) *FlowElementContainer {

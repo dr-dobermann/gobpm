@@ -1,6 +1,8 @@
 package common
 
-type BPMError interface {
-	Name() string
-	Code() string
+type Error struct {
+	name string
+	code string
+
+	structure ItemDefinition
 }
