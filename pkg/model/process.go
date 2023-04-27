@@ -36,7 +36,7 @@ type Process struct {
 	// processes events
 	// events []Events
 
-	flows []*SequenceFlow
+	flows []*common.SequenceFlow
 
 	// the type of process data.
 	// could be a real Model or Snapshot of the model.
@@ -73,7 +73,7 @@ func NewProcess(pid mid.Id, nm string, ver string) *Process {
 		version:     ver,
 		tasks:       []TaskModel{},
 		gateways:    []GatewayModel{},
-		flows:       []*SequenceFlow{},
+		flows:       []*common.SequenceFlow{},
 		messages:    make([]*Message, 0),
 		lanes:       make(map[string]*Lane)}
 }
@@ -181,7 +181,7 @@ func (p Process) Copy() (*Process, error) {
 		FlowElement: p.FlowElement,
 		lanes:       make(map[string]*Lane),
 		tasks:       make([]TaskModel, 0),
-		flows:       make([]*SequenceFlow, 0),
+		flows:       make([]*common.SequenceFlow, 0),
 		messages:    make([]*Message, 0)}
 
 	// copy lanes
@@ -275,13 +275,13 @@ func (p *Process) copyFlows(pc *Process, nodeMapper map[mid.Id]Node) error {
 	for _, of := range p.flows {
 		var e expr.Expression
 
-		if of.expr != nil {
-			e = of.expr.Copy()
+		if of.GetExpression() != nil {
+			e = of.GetExpression().Copy()
 		}
 
 		if err := pc.LinkNodes(
-			nodeMapper[of.sourceRef.ID()],
-			nodeMapper[of.targetRef.ID()], e); err != nil {
+			nodeMapper[of.GetSource().ID()],
+			nodeMapper[of.GetTarget().ID()], e); err != nil {
 
 			return NewPMErr(p.ID(), err, "couldn't link nodes in snapshot")
 		}
@@ -450,6 +450,7 @@ func (p *Process) AddGateway(g GatewayModel, lane string) error {
 // links two Nodes by one SequenceFlow.
 //
 // expr added as Expression on SequenceFlow
+// TODO: Add SequenceFlow name
 func (p *Process) LinkNodes(
 	src Node,
 	trg Node,
@@ -471,26 +472,14 @@ func (p *Process) LinkNodes(
 			src.ProcessID(), trg.ProcessID())
 	}
 
-	sf := new(SequenceFlow)
-	sf.SetNewID(mid.NewID())
-	sf.process = p
-	sf.expr = expr
-	sf.sourceRef = src
-	sf.targetRef = trg
-
-	if err := src.ConnectFlow(sf, SeSource); err != nil {
+	sf, err := src.Connect(trg, "")
+	if err != nil {
 		return NewPMErr(p.ID(), err,
 			"couldn't connect sequence flow [%v] to node '%s' as source",
 			sf.ID(), src.Name())
 	}
 
-	if err := trg.ConnectFlow(sf, SeTarget); err != nil {
-		return NewPMErr(p.ID(), err,
-			"couldn't connect sequence flow [%v] to node '%s' as target",
-			sf.ID(), trg.Name())
-	}
-
-	p.flows = append(p.flows, sf)
+	p.flows = append(p.flows, &sf)
 
 	return nil
 }

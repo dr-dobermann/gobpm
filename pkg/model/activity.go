@@ -5,6 +5,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/data"
 	"github.com/dr-dobermann/gobpm/pkg/expression"
 	"github.com/dr-dobermann/gobpm/pkg/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/identity"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 )
 
@@ -75,7 +76,7 @@ func (at ActivityType) String() string {
 }
 
 type Activity struct {
-	FlowNode
+	common.FlowNode
 	//loop        *LoopDef
 
 	class ActivityClass
@@ -95,6 +96,8 @@ type Activity struct {
 	// If the Activity belongs to Line, then
 	// Line's performerRole is used
 	performerRole string
+
+	defaultFlowID identity.Id
 
 	//transaction   *Transaction
 }

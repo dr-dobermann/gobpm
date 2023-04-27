@@ -48,6 +48,7 @@ const (
 	EtProcess
 	EtMessage
 	EtLane
+	EtSequenceFlow
 )
 
 func (fet FlowElementType) String() string {
@@ -61,6 +62,7 @@ func (fet FlowElementType) String() string {
 		"Process",
 		"Message",
 		"Lane",
+		"SequenceFlow",
 	}[fet]
 }
 

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/common"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 )
 
@@ -30,7 +31,7 @@ const (
 )
 
 type Event struct {
-	FlowNode
+	common.FlowNode
 
 	attachedTo   mid.Id // 0 if not bounded (intermediate event)
 	interrupting bool
