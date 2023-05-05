@@ -16,7 +16,8 @@ type ItemDefinition struct {
 	Kind ItemKind
 	// DataItem already has collection flag in it,
 	// so original BPMN IsCollection flag is ommited
-	Structure dataprovider.DataItem
+	Item dataprovider.DataItem
+
 	// DataProvider of the DataItem set in
 	// Import structure
 	Import *infrastructure.Import

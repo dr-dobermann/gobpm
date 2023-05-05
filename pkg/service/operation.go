@@ -2,13 +2,17 @@ package service
 
 import "github.com/dr-dobermann/gobpm/pkg/common"
 
-type Operation struct {
+type Operation[inMsgT, outMsgT any] struct {
 	common.NamedElement
 
-	inMessage  *common.Message
-	outMessage *common.Message
+	inMessage  *common.Message[inMsgT]
+	outMessage *common.Message[outMsgT]
 
 	errors []common.Error
 
 	implementation common.ItemDefinition
+}
+
+type OperationExecutor interface {
+	ExecOperation() error
 }

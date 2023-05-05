@@ -5,7 +5,7 @@ import "github.com/dr-dobermann/gobpm/pkg/common"
 type Interface struct {
 	common.NamedElement
 
-	operations []Operation
+	operations []OperationExecutor
 	callables  []common.CallableElement
 
 	implementation common.ItemDefinition
