@@ -20,32 +20,17 @@ const (
 type Process struct {
 	common.FlowElementContainer
 
-	// supportedBy []string // processes supported this one
-	laneSet *LaneSet
+	laneSet *common.LaneSet
 
 	properties []data.Property
 
 	subscriptions []common.CorrelationSubscription
-
-	// processes tasks
-	// tasks []TaskModel
-
-	// processes gateways
-	// gateways []GatewayModel
-
-	// processes events
-	// events []Events
-
-	// flows []*common.SequenceFlow
 
 	// the type of process data.
 	// could be a real Model or Snapshot of the model.
 	// Snapshot is used as a real-time model for process
 	// execution
 	dataType ProcessDataType
-
-	// process messages
-	// messages []*Message
 
 	// consist an ID of original process
 	// in case of its copying as snapshot

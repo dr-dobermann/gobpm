@@ -1,6 +1,6 @@
 module github.com/dr-dobermann/gobpm
 
-go 1.17
+go 1.20
 
 require (
 	github.com/dr-dobermann/srvbus v0.5.0-prerelease
