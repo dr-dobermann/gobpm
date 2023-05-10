@@ -23,7 +23,7 @@ type Process struct {
 
 	laneSet *common.LaneSet
 
-	nodes []common.Node
+	nodes map[identity.Id]common.Node
 
 	properties []data.Property
 
@@ -151,52 +151,45 @@ func (p Process) Copy() (*Process, error) {
 			NamedElement: *common.NewNamedElement(identity.EmptyID(), p.Name()),
 		},
 		laneSet:       nil,
-		nodes:         []common.Node{},
+		nodes:         map[identity.Id]common.Node{},
 		properties:    []data.Property{},
 		subscriptions: nil,
 		dataType:      PdtSnapshot,
 		OriginID:      p.ID(),
 	}
 
-	if p.laneSet != nil {
+	// copy nodes
+	// nodeMap is used as a mapper from source process nodes id to
+	// a copy process nodes used in copying of sequenceFlow in the new
+	// process
+	nodeMap := map[identity.Id]identity.Id{}
 
-		pc.laneSet = common.NewLaneSet(p.laneSet.Name())
-		for _, l := range p.laneSet.GetAllLanes() {
-			pc.laneSet.AddLanes(common.NewLane(l.Name()))
+	for _, n := range p.nodes {
+		nn := n.Copy()
+		nodeMap[n.ID()] = nn.ID()
+		pc.nodes[nn.ID()] = nn
+	}
+
+	// copy lanes
+	if p.laneSet != nil {
+		pc.laneSet = p.laneSet.Copy()
+
+		// create map of copied lanes on source lanes' IDs
+		lm := map[identity.Id]*common.Lane{}
+		for _, l := range pc.laneSet.GetAllLanes(true) {
+			lm[l.SourceID()] = l
+		}
+
+		for _, l := range p.laneSet.GetAllLanes(true) {
+			for _, n := range l.GetAllNodes() {
+				lm[l.ID()].AddNode()
+			}
 		}
 	}
 
 	// copy messages
-	for _, m := range p.messages {
-		pc.AddMessage(m.Name(), m.direction, m.GetVariables(AllVariables)...)
-	}
 
-	// nm used as a mapper from source process node id to
-	// a copy process node used in copying of sequenceFlow in the new
-	// process
-	nm, err := p.copyTasks(&pc)
-	if err != nil {
-		return nil, NewPMErr(p.ID(), err, "couldn't copy process tasks")
-	}
-
-	// get mapper for gateways
-	gm, err := p.copyGateways(&pc)
-	if err != nil {
-		return nil, NewPMErr(p.ID(), err, "couldn't copy process gateways")
-	}
-
-	// combine task's and gateway's mappers
-	for oldGID, n := range gm {
-		nm[oldGID] = n
-	}
-
-	err = p.copyFlows(&pc, nm)
-	if err != nil {
-		return nil, NewPMErr(p.ID(), err, "snapshot node linking error")
-	}
-
-	pc.dataType = PdtSnapshot
-	pc.OriginID = p.ID()
+	// copy flows
 
 	return &pc, nil
 }

@@ -13,13 +13,9 @@ type Node interface {
 
 	HasIncoming() bool
 
-	// deletes all incoming and outcoming flows when copying the node
-	// only calls from proccess.Copy method to avoid duplication flows
-	// on copied node.
-	//
-	// DO NOT CALL directly!
-	//
-	ClearFlows()
+	// Copy creates a copy of node with
+	// new ID, same name and with no incoming and outcoming flows
+	Copy() Node
 }
 
 // base for Activities, Gates and Events
@@ -84,11 +80,4 @@ func (fn *FlowNode) Connect(target *FlowNode, flowName string) (*SequenceFlow, e
 func (fn *FlowNode) HasIncoming() bool {
 
 	return len(fn.incoming) != 0
-}
-
-// ClearFlows clears incoming and outcoming flows for the FlowNode
-func (fn *FlowNode) ClearFlows() {
-
-	fn.incoming = []*SequenceFlow{}
-	fn.outcoming = []*SequenceFlow{}
 }

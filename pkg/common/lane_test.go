@@ -13,6 +13,9 @@ func TestLane(t *testing.T) {
 
 	l := NewLane(identity.EmptyID(), "test-lane")
 	is.True(l != nil)
+	is.Equal(l.SourceID(), identity.EmptyID())
+
+	is.Equal(l.ID(), l.copy().SourceID())
 
 	n := FlowNode{
 		FlowElement: *NewElement(identity.EmptyID(), "test_node", EtActivity),
@@ -62,7 +65,7 @@ func TestLaneSet(t *testing.T) {
 	}
 
 	is.Equal(len(ls.lanes), 2)
-	for _, l := range ls.GetAllLanes() {
+	for _, l := range ls.GetAllLanes(false) {
 		is.Equal(l.ID(), lanes[l.ID()].ID())
 	}
 
@@ -77,4 +80,8 @@ func TestLaneSet(t *testing.T) {
 	is.True(lanes[lids[2]].AddLaneSet(ls) != nil)
 
 	is.True(lanes[lids[1]].AddLaneSet(ls) != nil)
+
+	lsc := ls.Copy()
+	is.Equal(len(ls.lanes), len(lsc.lanes))
+
 }
