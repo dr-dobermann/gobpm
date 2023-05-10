@@ -11,11 +11,11 @@ func TestLane(t *testing.T) {
 
 	is := is.New(t)
 
-	l := NewLane("test-lane")
+	l := NewLane(identity.EmptyID(), "test-lane")
 	is.True(l != nil)
 
 	n := FlowNode{
-		FlowElement: *NewElement(identity.NewID(), "test_node", EtActivity),
+		FlowElement: *NewElement(identity.EmptyID(), "test_node", EtActivity),
 		incoming:    []*SequenceFlow{},
 		outcoming:   []*SequenceFlow{},
 	}
@@ -46,23 +46,35 @@ func TestLaneSet(t *testing.T) {
 	is.True(ls != nil)
 
 	lNames := []string{"Lane1", "Lane2", "Lane3"}
-	lanes := []*Lane{}
+	lanes := map[identity.Id]*Lane{}
 	for _, ln := range lNames {
-		l := NewLane(ln)
+		l := NewLane(identity.EmptyID(), ln)
 		is.True(l != nil)
-		lanes = append(lanes, l)
+		lanes[l.ID()] = l
 	}
 
-	ls.AddLanes(lanes[:2]...)
-	is.Equal(len(ls.lanes), 2)
+	lids := []identity.Id{}
+	for k, l := range lanes {
+		lids = append(lids, k)
+		if len(lids) < 3 {
+			ls.AddLanes(l)
+		}
+	}
 
-	is.NoErr(ls.RemoveLane(lanes[0].ID()))
-	is.True(ls.RemoveLane(lanes[0].ID()) != nil)
-	_, err := ls.GetLane(lanes[1].ID())
+	is.Equal(len(ls.lanes), 2)
+	for _, l := range ls.GetAllLanes() {
+		is.Equal(l.ID(), lanes[l.ID()].ID())
+	}
+
+	is.NoErr(ls.RemoveLane(lids[0]))
+	is.True(ls.RemoveLane(lids[0]) != nil)
+	_, err := ls.GetLane(lids[1])
 	is.NoErr(err)
-	_, err = ls.GetLane(lanes[0].ID())
+	_, err = ls.GetLane(lids[0])
 	is.True(err != nil)
 
-	is.NoErr(lanes[2].AddLaneSet(ls))
-	is.True(lanes[2].AddLaneSet(ls) != nil)
+	is.NoErr(lanes[lids[2]].AddLaneSet(ls))
+	is.True(lanes[lids[2]].AddLaneSet(ls) != nil)
+
+	is.True(lanes[lids[1]].AddLaneSet(ls) != nil)
 }

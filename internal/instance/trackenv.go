@@ -3,9 +3,9 @@ package instance
 import (
 	"strings"
 
-	"github.com/dr-dobermann/gobpm/internal/gateways"
+	"github.com/dr-dobermann/gobpm/internal/gatewexecs"
 	"github.com/dr-dobermann/gobpm/pkg/identity"
-	"github.com/dr-dobermann/gobpm/pkg/model"
+	"github.com/dr-dobermann/gobpm/pkg/process"
 	"github.com/dr-dobermann/gobpm/pkg/variables"
 	"github.com/dr-dobermann/srvbus"
 	"go.uber.org/zap"
@@ -21,7 +21,7 @@ func (tr *track) Logger() *zap.SugaredLogger {
 	return tr.log
 }
 
-func (tr *track) Snapshot() *model.Process {
+func (tr *track) Snapshot() *process.Process {
 	return tr.instance.snapshot
 }
 
@@ -43,7 +43,7 @@ func (tr *track) MSQueue(queue string) string {
 
 // implements GateKeeper interface
 func (tr *track) GetGExecutorInstance(
-	ge gateways.GatewayExecutor) gateways.GatewayExecutor {
+	ge gatewexecs.GatewayExecutor) gatewexecs.GatewayExecutor {
 
 	return tr.instance.getGExInstance(ge)
 }

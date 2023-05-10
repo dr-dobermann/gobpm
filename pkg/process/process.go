@@ -5,6 +5,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/common"
 	"github.com/dr-dobermann/gobpm/pkg/data"
+	"github.com/dr-dobermann/gobpm/pkg/identity"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
 )
 
@@ -21,6 +22,8 @@ type Process struct {
 	common.FlowElementContainer
 
 	laneSet *common.LaneSet
+
+	nodes []common.Node
 
 	properties []data.Property
 
@@ -63,68 +66,49 @@ type Process struct {
 // 		lanes:       make(map[string]*Lane)}
 // }
 
-// // returns a version of the process.
-// func (p *Process) Version() string {
-// 	return p.version
-// }
-
 // func (p *Process) HasMessages() bool {
 // 	return len(p.messages) > 0
 // }
 
-// // GetNodes returns a list of Nodes in the Process p.
-// // Only Task, Gateway or Event could be returned.
-// // If et is EtUnspecified then all three types of Nodes
-// // will be returned in the same list.
-// // If et is differs from EtAcitvity, EtGateway, EtEvent,
-// // the panic will be fired
-// func (p *Process) GetNodes(et common.FlowElementType) ([]Node, error) {
+// GetNodes returns a list of Nodes in the Process p.
+// Only Task, Gateway or Event could be returned.
+// If et is EtUnspecified then all three types of Nodes
+// will be returned in the same list.
+// If et is differs from EtAcitvity, EtGateway, EtEvent,
+// the error will be returned
+func (p *Process) GetNodes(et common.FlowElementType) ([]common.Node, error) {
 
-// 	nn := []Node{}
+	if et != common.EtActivity &&
+		et != common.EtGateway &&
+		et != common.EtEvent &&
+		et != common.EtUnspecified {
 
-// 	switch et {
-// 	// return all nodes
-// 	case common.EtUnspecified:
-// 		nn = append(nn, p.getTasks()...)
-// 		nn = append(nn, p.getGateways()...)
+		return nil,
+			common.NewModelError(p.Name(), p.ID(), nil,
+				"invalid element type %v (wants EtActivity, EtGateway, EtEvent, EtUnspecified)", et)
+	}
 
-// 	case common.EtActivity:
-// 		nn = p.getTasks()
+	nn := []common.Node{}
 
-// 	case common.EtGateway:
-// 		nn = p.getGateways()
+	for _, n := range p.nodes {
+		if et == common.EtUnspecified {
+			if et == common.EtActivity ||
+				et == common.EtEvent ||
+				et == common.EtGateway {
 
-// 	//case EtEvent:
+				nn = append(nn, n)
+			}
 
-// 	default:
-// 		return nil,
-// 			NewPMErr(p.ID(), nil, "wrong element type for node [%s]",
-// 				et.String())
-// 	}
+			continue
+		}
 
-// 	return nn, nil
+		if et == n.Type() {
+			nn = append(nn, n)
+		}
+	}
 
-// }
-
-// func (p *Process) getTasks() []Node {
-// 	nn := []Node{}
-
-// 	for _, t := range p.tasks {
-// 		nn = append(nn, t)
-// 	}
-
-// 	return nn
-// }
-
-// func (p *Process) getGateways() []Node {
-// 	nn := []Node{}
-
-// 	for _, g := range p.gateways {
-// 		nn = append(nn, g)
-// 	}
-
-// 	return nn
-// }
+	return nn, nil
+}
 
 // // returns a task by its ID.
 // //
@@ -155,59 +139,67 @@ type Process struct {
 // 			mn)
 // }
 
-// // creates a copy from a model process.
-// // copy could not be made from a copy (snapshot) of the process.
-// func (p Process) Copy() (*Process, error) {
-// 	if p.dataType == PdtSnapshot {
-// 		return nil, NewPMErr(p.ID(), nil, "couldn't make a copy of snapshot")
-// 	}
+// creates a copy from a model process.
+// copy could not be made from a copy (snapshot) of the process.
+func (p Process) Copy() (*Process, error) {
+	if p.dataType == PdtSnapshot {
+		return nil, common.NewModelError(p.Name(), p.ID(), nil, "couldn't make a copy of snapshot")
+	}
 
-// 	pc := Process{
-// 		FlowElement: p.FlowElement,
-// 		lanes:       make(map[string]*Lane),
-// 		tasks:       make([]TaskModel, 0),
-// 		flows:       make([]*common.SequenceFlow, 0),
-// 		messages:    make([]*Message, 0)}
+	pc := Process{
+		FlowElementContainer: common.FlowElementContainer{
+			NamedElement: *common.NewNamedElement(identity.EmptyID(), p.Name()),
+		},
+		laneSet:       nil,
+		nodes:         []common.Node{},
+		properties:    []data.Property{},
+		subscriptions: nil,
+		dataType:      PdtSnapshot,
+		OriginID:      p.ID(),
+	}
 
-// 	// copy lanes
-// 	for l := range p.lanes {
-// 		pc.NewLane(l)
-// 	}
+	if p.laneSet != nil {
 
-// 	// copy messages
-// 	for _, m := range p.messages {
-// 		pc.AddMessage(m.Name(), m.direction, m.GetVariables(AllVariables)...)
-// 	}
+		pc.laneSet = common.NewLaneSet(p.laneSet.Name())
+		for _, l := range p.laneSet.GetAllLanes() {
+			pc.laneSet.AddLanes(common.NewLane(l.Name()))
+		}
+	}
 
-// 	// nm used as a mapper from source process node id to
-// 	// a copy process node used in copying of sequenceFlow in the new
-// 	// process
-// 	nm, err := p.copyTasks(&pc)
-// 	if err != nil {
-// 		return nil, NewPMErr(p.ID(), err, "couldn't copy process tasks")
-// 	}
+	// copy messages
+	for _, m := range p.messages {
+		pc.AddMessage(m.Name(), m.direction, m.GetVariables(AllVariables)...)
+	}
 
-// 	// get mapper for gateways
-// 	gm, err := p.copyGateways(&pc)
-// 	if err != nil {
-// 		return nil, NewPMErr(p.ID(), err, "couldn't copy process gateways")
-// 	}
+	// nm used as a mapper from source process node id to
+	// a copy process node used in copying of sequenceFlow in the new
+	// process
+	nm, err := p.copyTasks(&pc)
+	if err != nil {
+		return nil, NewPMErr(p.ID(), err, "couldn't copy process tasks")
+	}
 
-// 	// combine task's and gateway's mappers
-// 	for oldGID, n := range gm {
-// 		nm[oldGID] = n
-// 	}
+	// get mapper for gateways
+	gm, err := p.copyGateways(&pc)
+	if err != nil {
+		return nil, NewPMErr(p.ID(), err, "couldn't copy process gateways")
+	}
 
-// 	err = p.copyFlows(&pc, nm)
-// 	if err != nil {
-// 		return nil, NewPMErr(p.ID(), err, "snapshot node linking error")
-// 	}
+	// combine task's and gateway's mappers
+	for oldGID, n := range gm {
+		nm[oldGID] = n
+	}
 
-// 	pc.dataType = PdtSnapshot
-// 	pc.OriginID = p.ID()
+	err = p.copyFlows(&pc, nm)
+	if err != nil {
+		return nil, NewPMErr(p.ID(), err, "snapshot node linking error")
+	}
 
-// 	return &pc, nil
-// }
+	pc.dataType = PdtSnapshot
+	pc.OriginID = p.ID()
+
+	return &pc, nil
+}
 
 // // copy tasks from p to pc and creates mapping of p.tasks ot a pc.tasks for
 // // future linking througt sequenceFlow

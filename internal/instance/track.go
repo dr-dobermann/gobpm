@@ -5,8 +5,9 @@ import (
 	"fmt"
 
 	"github.com/dr-dobermann/gobpm/internal/tasks"
+	"github.com/dr-dobermann/gobpm/pkg/activities"
+	"github.com/dr-dobermann/gobpm/pkg/common"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
-	"github.com/dr-dobermann/gobpm/pkg/model"
 	"github.com/dr-dobermann/gobpm/pkg/thresher/executor"
 	"go.uber.org/zap"
 )
@@ -67,7 +68,7 @@ func (ss stepState) String() string {
 }
 
 type stepInfo struct {
-	node  model.Node
+	node  common.Node
 	state stepState
 	tk    *Token
 }
@@ -93,7 +94,7 @@ func (tr *track) currentStep() *stepInfo {
 
 // newtrack creates a new track started from a Node n.
 func newTrack(
-	n model.Node,
+	n common.Node,
 	inst *Instance,
 	prevTrack *track,
 	tk *Token) (*track, error) {
@@ -225,7 +226,7 @@ func (tr *track) run(ctx context.Context) {
 // updateFlows creates a next step on the track and forked track if
 // there are more than one output flows
 func (tr *track) updateFlows(
-	nextFlows []*model.SequenceFlow,
+	nextFlows []*common.SequenceFlow,
 	nextTokens []*Token) error {
 
 	for i, sf := range nextFlows {
@@ -285,7 +286,7 @@ func (tr *track) updateState(ts trackState, ss stepState, err error) {
 // back from the node
 func (tr *track) execNode(
 	ctx context.Context,
-	ne executor.NodeExecutor) ([]*model.SequenceFlow, []*Token, error) {
+	ne executor.NodeExecutor) ([]*common.SequenceFlow, []*Token, error) {
 
 	step := tr.currentStep()
 
@@ -385,9 +386,9 @@ func (tr *track) runNodeEpilogue(
 	return nil
 }
 
-func GetNodeExecutor(n model.Node) (executor.NodeExecutor, error) {
+func GetNodeExecutor(n common.Node) (executor.NodeExecutor, error) {
 	switch cn := n.(type) {
-	case model.TaskModel:
+	case activities.TaskModel:
 		return tasks.GetTaskExecutor(cn)
 
 	// case model.GatewayModel:

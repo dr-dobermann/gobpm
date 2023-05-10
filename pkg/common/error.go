@@ -1,5 +1,11 @@
 package common
 
+import (
+	"fmt"
+
+	"github.com/dr-dobermann/gobpm/pkg/identity"
+)
+
 type Error struct {
 	name string
 	code string
@@ -7,20 +13,27 @@ type Error struct {
 	structure ItemDefinition
 }
 
-// func (me ModelError) Error() string {
-// 	return fmt.Sprintf("ME: %s : %s",
-// 		me.msg, me.Err.Error())
-// }
+type ModelError struct {
+	eID   identity.Id
+	eName string
+	msg   string
+	Err   error
+}
 
-// func NewModelError(err error, format string, params ...interface{}) error {
-// 	return ModelError{fmt.Sprintf(format, params...), err}
-// }
+func (me ModelError) Error() string {
+	return fmt.Sprintf("error on element %s[%v]: %s : %s",
+		me.eName, me.eID, me.msg, me.Err.Error())
+}
+
+func NewModelError(eName string, eID identity.Id, err error, format string, params ...interface{}) error {
+	return ModelError{eID, eName, fmt.Sprintf(format, params...), err}
+}
 
 // process model error to keep context of the
 // error occured.
 // type ProcessModelError struct {
 // 	processID identity.Id
-// 	msg       string
+// 	msg       striId
 // 	Err       error
 // }
 

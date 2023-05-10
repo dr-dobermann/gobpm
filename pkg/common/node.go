@@ -10,10 +10,6 @@ type Node interface {
 	ID() identity.Id
 	Name() string
 	Type() FlowElementType
-	LaneName() string
-	ProcessID() identity.Id
-	//PutOnLane(lane *Lane) error
-	Connect(fn Node, sName string) (SequenceFlow, error)
 
 	HasIncoming() bool
 

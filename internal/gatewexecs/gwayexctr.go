@@ -1,14 +1,12 @@
-package gateways
+package gatewexecs
 
 import (
-	"fmt"
-
-	"github.com/dr-dobermann/gobpm/pkg/model"
+	"github.com/dr-dobermann/gobpm/pkg/gateways"
 	"github.com/dr-dobermann/gobpm/pkg/thresher/executor"
 )
 
 type GatewayExecutor interface {
-	model.GatewayModel
+	gateways.GatewayModel
 
 	executor.NodeExecutor
 }
@@ -28,19 +26,19 @@ type GateKeeper interface {
 }
 
 func GetGatewayExecutor(
-	g model.GatewayModel,
+	g gateways.GatewayModel,
 	gk GateKeeper) (GatewayExecutor, error) {
 
 	var ge GatewayExecutor
 
-	switch gs := g.(type) {
-	case *model.ExclusiveGateway:
-		ge = GetExclusiveGExecutor(gs)
+	// switch gs := g.(type) {
+	// case *gateways.ExclusiveGateway:
+	// 	ge = GetExclusiveGExecutor(gs)
 
-	default:
-		return nil, fmt.Errorf("no executor for '%s' gateway type",
-			g.Type().String())
-	}
+	// default:
+	// 	return nil, fmt.Errorf("no executor for '%s' gateway type",
+	// 		g.Type().String())
+	// }
 
 	return ge, nil
 }
