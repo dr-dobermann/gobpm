@@ -19,7 +19,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/errs"
 	"github.com/dr-dobermann/gobpm/internal/instance"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
-	"github.com/dr-dobermann/gobpm/pkg/model"
+	"github.com/dr-dobermann/gobpm/pkg/process"
 	"github.com/dr-dobermann/srvbus"
 	"github.com/dr-dobermann/srvbus/es"
 	"github.com/google/uuid"
@@ -132,7 +132,7 @@ func New(sb *srvbus.ServiceBus, log *zap.SugaredLogger) (*Thresher, error) {
 
 // create a new instance of the process and register it in the thresher.
 func (thr *Thresher) NewInstance(
-	p *model.Process) (mid.Id, error) {
+	p *process.Process) (mid.Id, error) {
 
 	if !thr.IsRunned() {
 		return mid.EmptyID(), errs.ErrNotRunned

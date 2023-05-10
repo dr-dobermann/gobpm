@@ -1,18 +1,19 @@
-package model
+package gateways
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/common"
 	"github.com/dr-dobermann/gobpm/pkg/expression"
+	"github.com/dr-dobermann/gobpm/pkg/process"
 )
 
 type GatewayModel interface {
-	Node
+	common.Node
 
 	GwayType() GatewayType
 
 	Direction() GatewayDirection
 
-	Copy(snapshot *Process) (GatewayModel, error)
+	Copy(snapshot *process.Process) (GatewayModel, error)
 }
 
 // ----------------------------------------------------------------------------

@@ -10,7 +10,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/gateways"
 	"github.com/dr-dobermann/gobpm/pkg/common"
 	mid "github.com/dr-dobermann/gobpm/pkg/identity"
-	"github.com/dr-dobermann/gobpm/pkg/model"
+	"github.com/dr-dobermann/gobpm/pkg/process"
 	vars "github.com/dr-dobermann/gobpm/pkg/variables"
 	"github.com/dr-dobermann/srvbus"
 	"github.com/dr-dobermann/srvbus/es"
@@ -53,7 +53,7 @@ type Instance struct {
 	state InstanceState
 
 	// the copy of the process model the instance is based on
-	snapshot *model.Process
+	snapshot *process.Process
 	vs       *vars.VarStore
 
 	// track holds the state for every single token path
@@ -95,7 +95,7 @@ func (pi *Instance) setState(newState InstanceState) {
 }
 
 func New(
-	p *model.Process,
+	p *process.Process,
 	sb *srvbus.ServiceBus,
 	log *zap.SugaredLogger,
 	ee es.EventEmitter) (*Instance, error) {

@@ -4,7 +4,7 @@ package executor
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/identity"
-	"github.com/dr-dobermann/gobpm/pkg/model"
+	"github.com/dr-dobermann/gobpm/pkg/process"
 	"github.com/dr-dobermann/gobpm/pkg/variables"
 	"github.com/dr-dobermann/srvbus"
 	"go.uber.org/zap"
@@ -15,7 +15,7 @@ type ExecutionEnvironment interface {
 
 	// returns track logger
 	Logger() *zap.SugaredLogger
-	Snapshot() *model.Process
+	Snapshot() *process.Process
 	VStore() *variables.VarStore
 	SrvBus() *srvbus.ServiceBus
 

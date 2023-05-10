@@ -3,7 +3,7 @@ package executor
 import (
 	"context"
 
-	"github.com/dr-dobermann/gobpm/pkg/model"
+	"github.com/dr-dobermann/gobpm/pkg/common"
 )
 
 // NodeExecutor should be implemented by every Node to make it
@@ -13,7 +13,7 @@ type NodeExecutor interface {
 	// output sequence flows on success or error on an issue
 	Exec(
 		ctx context.Context,
-		eEnv ExecutionEnvironment) ([]*model.SequenceFlow, error)
+		eEnv ExecutionEnvironment) ([]*common.SequenceFlow, error)
 }
 
 // Prologue checks the right condition to start node execution

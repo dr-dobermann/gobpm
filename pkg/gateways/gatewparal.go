@@ -1,4 +1,4 @@
-package model
+package gateways
 
 type ParallelGateway struct {
 	Gateway
