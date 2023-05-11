@@ -20,7 +20,7 @@ func New(id mid.Id) *BaseElement {
 	return &BaseElement{id: id}
 }
 
-func (be *BaseElement) ID() mid.Id {
+func (be BaseElement) ID() mid.Id {
 	return be.id
 }
 

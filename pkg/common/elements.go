@@ -14,7 +14,7 @@ type NamedElement struct {
 	name string
 }
 
-func (ne *NamedElement) Name() string {
+func (ne NamedElement) Name() string {
 	return ne.name
 }
 
@@ -77,7 +77,7 @@ type FlowElement struct {
 	container   *FlowElementContainer
 }
 
-func (fe *FlowElement) Type() FlowElementType {
+func (fe FlowElement) Type() FlowElementType {
 	return fe.elementType
 }
 

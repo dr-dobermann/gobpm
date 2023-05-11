@@ -160,13 +160,12 @@ func (p Process) Copy() (*Process, error) {
 
 	// copy nodes
 	// nodeMap is used as a mapper from source process nodes id to
-	// a copy process nodes used in copying of sequenceFlow in the new
-	// process
-	nodeMap := map[identity.Id]identity.Id{}
+	// a copied process nodes.
+	nodeMap := map[identity.Id]common.Node{}
 
 	for _, n := range p.nodes {
 		nn := n.Copy()
-		nodeMap[n.ID()] = nn.ID()
+		nodeMap[n.ID()] = nn
 		pc.nodes[nn.ID()] = nn
 	}
 
@@ -182,7 +181,7 @@ func (p Process) Copy() (*Process, error) {
 
 		for _, l := range p.laneSet.GetAllLanes(true) {
 			for _, n := range l.GetAllNodes() {
-				lm[l.ID()].AddNode()
+				lm[l.ID()].AddNode(nodeMap[n.ID()].GetFlowNode())
 			}
 		}
 	}

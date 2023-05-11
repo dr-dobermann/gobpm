@@ -10,6 +10,7 @@ type Node interface {
 	ID() identity.Id
 	Name() string
 	Type() FlowElementType
+	GetFlowNode() *FlowNode
 
 	HasIncoming() bool
 
@@ -24,6 +25,10 @@ type FlowNode struct {
 
 	incoming  []*SequenceFlow
 	outcoming []*SequenceFlow
+}
+
+func (fn FlowNode) GetFlowNode() *FlowNode {
+	return &fn
 }
 
 // GetOutputFlows returns node's output flows
@@ -77,7 +82,19 @@ func (fn *FlowNode) Connect(target *FlowNode, flowName string) (*SequenceFlow, e
 }
 
 // HasIncoming checks if the FlowNode has incoming flows.
-func (fn *FlowNode) HasIncoming() bool {
+func (fn FlowNode) HasIncoming() bool {
 
 	return len(fn.incoming) != 0
+}
+
+// Copy creates a copy of a FlowNode with no
+// incoming or outcoming flows
+func (fn FlowNode) Copy() Node {
+	cfn := FlowNode{
+		FlowElement: *NewElement(identity.EmptyID(), fn.name, fn.elementType),
+		incoming:    []*SequenceFlow{},
+		outcoming:   []*SequenceFlow{},
+	}
+
+	return cfn
 }
