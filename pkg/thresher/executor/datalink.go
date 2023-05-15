@@ -1,34 +1,28 @@
 package executor
 
-import (
-	"fmt"
+// type DataLinker interface {
+// 	CheckInData() error
+// 	CheckOutData() error
+// }
 
-	"github.com/dr-dobermann/gobpm/pkg/data"
-)
+// func CheckLinkedData(ds data.DataSet,
+// 	eEnv ExecutionEnvironment) error {
 
-type DataLinker interface {
-	CheckInData() error
-	CheckOutData() error
-}
+// 	for _, di := range ds.Items {
+// 		v, err := eEnv.VStore().GetVar(di.ItemSubject.Item.Name())
+// 		if err != nil {
+// 			return err
+// 		}
 
-func CheckLinkedData(ds data.DataSet,
-	eEnv ExecutionEnvironment) error {
+// 		if v.Type() != di.ItemSubject.Item.Type() ||
+// 			!v.CanConvertTo(di.ItemSubject.Item.Type()) {
 
-	for _, di := range ds.Items {
-		v, err := eEnv.VStore().GetVar(di.ItemSubject.Item.Name())
-		if err != nil {
-			return err
-		}
+// 			return fmt.Errorf("incompatible types for variable %q (has %s, expected %s)",
+// 				di.ItemSubject.Item.Name(),
+// 				v.Type().String(),
+// 				di.ItemSubject.Item.Type().String())
+// 		}
+// 	}
 
-		if v.Type() != di.ItemSubject.Item.Type() ||
-			!v.CanConvertTo(di.ItemSubject.Item.Type()) {
-
-			return fmt.Errorf("incompatible types for variable %q (has %s, expected %s)",
-				di.ItemSubject.Item.Name(),
-				v.Type().String(),
-				di.ItemSubject.Item.Type().String())
-		}
-	}
-
-	return nil
-}
+// 	return nil
+// }

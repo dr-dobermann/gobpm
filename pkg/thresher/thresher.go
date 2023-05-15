@@ -17,9 +17,9 @@ import (
 	"sync"
 
 	"github.com/dr-dobermann/gobpm/internal/errs"
-	"github.com/dr-dobermann/gobpm/internal/instance"
-	mid "github.com/dr-dobermann/gobpm/pkg/identity"
-	"github.com/dr-dobermann/gobpm/pkg/process"
+	"github.com/dr-dobermann/gobpm/pkg/identity"
+	"github.com/dr-dobermann/gobpm/pkg/model/process"
+	"github.com/dr-dobermann/gobpm/pkg/thresher/runtime/instance"
 	"github.com/dr-dobermann/srvbus"
 	"github.com/dr-dobermann/srvbus/es"
 	"github.com/google/uuid"
@@ -41,8 +41,8 @@ const (
 type Thresher struct {
 	sync.Mutex
 
-	id        mid.Id
-	instances map[mid.Id]*instance.Instance
+	id        identity.Id
+	instances map[identity.Id]*instance.Instance
 	ctx       context.Context
 
 	log *zap.SugaredLogger
@@ -119,10 +119,10 @@ func New(sb *srvbus.ServiceBus, log *zap.SugaredLogger) (*Thresher, error) {
 		}
 	}
 
-	id := mid.NewID()
+	id := identity.NewID()
 	thresher := &Thresher{
 		id:        id,
-		instances: make(map[mid.Id]*instance.Instance),
+		instances: make(map[identity.Id]*instance.Instance),
 		log:       log.Named("THR [" + id.String() + "]"),
 		sBus:      sb,
 	}
@@ -132,15 +132,15 @@ func New(sb *srvbus.ServiceBus, log *zap.SugaredLogger) (*Thresher, error) {
 
 // create a new instance of the process and register it in the thresher.
 func (thr *Thresher) NewInstance(
-	p *process.Process) (mid.Id, error) {
+	p *process.Process) (identity.Id, error) {
 
 	if !thr.IsRunned() {
-		return mid.EmptyID(), errs.ErrNotRunned
+		return identity.EmptyID(), errs.ErrNotRunned
 	}
 
 	pi, err := instance.New(p, thr.sBus, thr.log, thr)
 	if err != nil {
-		return mid.EmptyID(),
+		return identity.EmptyID(),
 			fmt.Errorf("couldn't create instance for process '%s'[%v]: %v",
 				p.Name(), p.ID(), err)
 	}

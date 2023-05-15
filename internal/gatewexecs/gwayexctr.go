@@ -1,7 +1,7 @@
 package gatewexecs
 
 import (
-	"github.com/dr-dobermann/gobpm/pkg/gateways"
+	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
 	"github.com/dr-dobermann/gobpm/pkg/thresher/executor"
 )
 

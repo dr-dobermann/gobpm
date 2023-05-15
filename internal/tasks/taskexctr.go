@@ -1,7 +1,7 @@
 package tasks
 
 import (
-	"github.com/dr-dobermann/gobpm/pkg/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/thresher/executor"
 )
 

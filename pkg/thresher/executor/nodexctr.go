@@ -3,7 +3,7 @@ package executor
 import (
 	"context"
 
-	"github.com/dr-dobermann/gobpm/pkg/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/common"
 )
 
 // NodeExecutor should be implemented by every Node to make it
