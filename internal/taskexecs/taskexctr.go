@@ -1,4 +1,4 @@
-package tasks
+package taskexecs
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"

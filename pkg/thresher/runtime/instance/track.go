@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/dr-dobermann/gobpm/internal/tasks"
+	"github.com/dr-dobermann/gobpm/internal/taskexecs"
 	"github.com/dr-dobermann/gobpm/pkg/identity"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
@@ -389,7 +389,7 @@ func (tr *track) runNodeEpilogue(
 func GetNodeExecutor(n common.Node) (executor.NodeExecutor, error) {
 	switch cn := n.(type) {
 	case activities.TaskModel:
-		return tasks.GetTaskExecutor(cn)
+		return taskexecs.GetTaskExecutor(cn)
 
 	// case model.GatewayModel:
 	// case model.EtEvent:

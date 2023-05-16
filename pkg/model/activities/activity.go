@@ -4,7 +4,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/identity"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
-	"github.com/dr-dobermann/gobpm/pkg/model/expression"
 )
 
 type ActivityClass uint8
@@ -40,12 +39,6 @@ const (
 	AtServiceTask
 	AtBusinessRuleTask
 	AtScriptTask
-	AtCustomTask // the task with user-defined function
-
-	// temporary tasks until DMN realization
-	AtStoreTask
-	AtCalculateTask
-	AtOutputTask
 )
 
 func (at ActivityType) String() string {
@@ -57,11 +50,6 @@ func (at ActivityType) String() string {
 		"ServiceTask",
 		"BusinessRuleTask",
 		"ScriptTask",
-		"CustomTask",
-
-		"StoreTask",
-		"CalculateTask",
-		"OutputTask",
 	}[at]
 }
 
@@ -85,12 +73,7 @@ type Activity struct {
 
 	//boundaryEvents []*Event
 
-	ioSpec *data.InputOutputSpecification
-
-	// Expression could be used to add or manipulate
-	// processes variables
-	// All expressions are evaluated BEFORE the Activity ends.
-	expressions []*expression.Expression
+	ioSpec data.InputOutputSpecification
 
 	// Actitvity performer role name
 	// should be a Group name
@@ -122,35 +105,11 @@ func (a Activity) Check() error {
 
 func (a Activity) GetIOSpec() data.InputOutputSpecification {
 
-	ioSpec := new(data.InputOutputSpecification)
-
-	if a.ioSpec != nil {
-		if a.ioSpec.InputSets != nil {
-			ioSpec.InputSets = new(data.DataSet)
-			*ioSpec.InputSets = *a.ioSpec.InputSets
-		}
-
-		if a.ioSpec.OutputSets != nil {
-			ioSpec.OutputSets = new(data.DataSet)
-			*ioSpec.OutputSets = *a.ioSpec.OutputSets
-		}
-	}
-
-	return *ioSpec
-}
-
-func (a Activity) GetExpressions() []*expression.Expression {
-
-	el := []*expression.Expression{}
-
-	if a.expressions != nil {
-		copy(el, a.expressions)
-	}
-
-	return el
+	return a.ioSpec
 }
 
 func (a Activity) PerformerRole() string {
+
 	return a.performerRole
 }
 
