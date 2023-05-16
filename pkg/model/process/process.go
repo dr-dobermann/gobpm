@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/dr-dobermann/gobpm/pkg/identity"
+	"github.com/dr-dobermann/gobpm/pkg/model"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 )
@@ -83,7 +84,7 @@ func (p *Process) GetNodes(et common.FlowElementType) ([]common.Node, error) {
 		et != common.EtUnspecified {
 
 		return nil,
-			common.NewModelError(p.Name(), p.ID(), nil,
+			model.NewModelError(p.Name(), p.ID(), nil,
 				"invalid element type %v (wants EtActivity, EtGateway, EtEvent, EtUnspecified)", et)
 	}
 
@@ -142,7 +143,7 @@ func (p *Process) GetNodes(et common.FlowElementType) ([]common.Node, error) {
 // copy could not be made from a copy (snapshot) of the process.
 func (p Process) Copy() (*Process, error) {
 	if p.dataType == PdtSnapshot {
-		return nil, common.NewModelError(p.Name(), p.ID(), nil,
+		return nil, model.NewModelError(p.Name(), p.ID(), nil,
 			"couldn't make a copy of snapshot")
 	}
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/dr-dobermann/gobpm/pkg/identity"
+	"github.com/dr-dobermann/gobpm/pkg/model"
 )
 
 type Lane struct {
@@ -64,7 +65,7 @@ func (l *Lane) GetAllNodes() []*FlowNode {
 
 func (l *Lane) RemoveNode(id identity.Id) error {
 	if _, ok := l.nodes[id]; !ok {
-		return NewModelError(l.name, l.ID(),
+		return model.NewModelError(l.name, l.ID(),
 			nil, "there is no node %v on lane", id)
 	}
 
@@ -78,18 +79,18 @@ func (l *Lane) RemoveNode(id identity.Id) error {
 // or nodes.
 func (l *Lane) AddLaneSet(ls *LaneSet) error {
 	if l.childLaneSet != nil {
-		return NewModelError(l.name, l.ID(),
+		return model.NewModelError(l.name, l.ID(),
 			nil, "there is already child LaneSet on lane")
 	}
 
 	if len(l.nodes) > 0 {
-		return NewModelError(l.name, l.ID(),
+		return model.NewModelError(l.name, l.ID(),
 			nil, "there are %d nodes on lane", len(l.nodes))
 	}
 
 	// check for recursion
 	if ls.hasLane(l.ID()) {
-		return NewModelError(l.name, l.ID(), nil,
+		return model.NewModelError(l.name, l.ID(), nil,
 			"cyclic line -> lineSet %s[%v]", ls.name, ls.ID())
 	}
 
