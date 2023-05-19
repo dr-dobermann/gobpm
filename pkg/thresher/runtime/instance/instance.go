@@ -54,6 +54,9 @@ type Instance struct {
 	// the copy of the process model the instance is based on
 	snapshot *process.Process
 
+	// message subscriptions of the process instance
+	//subscriptions []common.CorrelationSubscription
+
 	// track holds the state for every single token path
 	tracks map[identity.Id]*track
 	wg     sync.WaitGroup

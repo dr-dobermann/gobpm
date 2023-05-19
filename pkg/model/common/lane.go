@@ -164,6 +164,23 @@ func (ls *LaneSet) GetLane(id identity.Id) (*Lane, error) {
 	return l, nil
 }
 
+func (ls *LaneSet) GetLaneByName(name string, recursive bool) (*Lane, error) {
+
+	for _, l := range ls.lanes {
+		if l.childLaneSet != nil && recursive {
+			return l.childLaneSet.GetLaneByName(name, recursive)
+		}
+
+		if l.name == name {
+			return l, nil
+		}
+	}
+
+	return nil,
+		model.NewModelError(ls.name, ls.ID(), nil,
+			"couldn't find Lane named %q", name)
+}
+
 func (ls *LaneSet) GetAllLanes(recursive bool) []*Lane {
 	ll := []*Lane{}
 

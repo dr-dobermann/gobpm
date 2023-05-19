@@ -15,6 +15,11 @@ type ModelError struct {
 
 func (me ModelError) Error() string {
 
+	if me.Err == nil {
+		return fmt.Sprintf("error on element %s[%v]: %s",
+			me.eName, me.eID, me.msg)
+	}
+
 	return fmt.Sprintf("error on element %s[%v]: %s : %s",
 		me.eName, me.eID, me.msg, me.Err.Error())
 }

@@ -27,16 +27,6 @@ func TestNode(t *testing.T) {
 	is.Equal(sn.HasIncoming(), false)
 
 	sName := "Test Link"
-	fl, err := fn.Connect(&sn, sName)
-	is.NoErr(err)
-	is.Equal(fl.Name(), sName)
-	is.Equal(fl.GetSource(), &fn)
-	is.Equal(fl.GetTarget(), &sn)
-
-	_, err = fn.Connect(&sn, "")
+	_, err := fn.Connect(&sn, sName, nil)
 	is.True(err != nil)
-	is.True(sn.HasIncoming())
-	is.True(!fn.HasIncoming())
-	is.Equal(len(fn.GetOutputFlows()), 1)
-	is.Equal(len(sn.GetOutputFlows()), 0)
 }

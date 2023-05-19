@@ -1,55 +1,79 @@
 package process_test
 
-// func TestProcessCreation(t *testing.T) {
-// 	id := mid.NewID()
-// 	nm := "Testing process"
-// 	ver := "0.1.0"
-// 	p := NewProcess(id, nm, ver)
+import (
+	"testing"
 
-// 	if p.ID() != id {
-// 		t.Errorf("Invalid process id: got %v, expected %v", p.ID(), id)
-// 	}
+	"github.com/dr-dobermann/gobpm/pkg/identity"
+	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/process"
+	"github.com/matryer/is"
+)
 
-// 	if p.Name() != nm {
-// 		t.Errorf("Invalid process name: got %v, expected %v", p.Name(), nm)
-// 	}
+func TestProcessCreation(t *testing.T) {
+	is := is.New(t)
 
-// 	if p.Version() != ver {
-// 		t.Errorf("Invalid process version: got %v, expected %v", p.Version(), ver)
-// 	}
+	id := identity.NewID()
+	nm := "Testing process"
 
-// 	p = NewProcess(mid.EmptyID(), "", "")
+	p := process.New(id, nm)
+	is.True(p != nil)
+	is.Equal(p.ID(), id)
+	is.Equal(p.Name(), nm)
 
-// 	if p.ID() == mid.EmptyID() {
-// 		t.Error("Invalid process id autogeneration")
-// 	}
+	p = process.New(identity.EmptyID(), "")
+	is.True(p.ID() != identity.EmptyID())
+	is.Equal(p.Name(), "Process #"+p.ID().String())
+}
 
-// 	if p.Name() != "Process #"+p.ID().String() {
-// 		t.Error("Invalid process name autogeneration ", p.Name())
-// 	}
+func TestAddNodes(t *testing.T) {
+	is := is.New(t)
 
-// 	if p.Version() != ver {
-// 		t.Error("Invalid process version autogeneration ", p.Version())
-// 	}
-// }
+	p := process.New(identity.EmptyID(), "test-process")
+	is.True(p != nil)
 
-// func TestProcessModelError(t *testing.T) {
-// 	err := NewPMErr(mid.EmptyID(), nil, "test %s", "error")
-// 	_, ok := err.(ProcessModelError)
-// 	if !ok {
-// 		t.Errorf("NewPMErr doesnt't create and ProcessModelError. Got %T", err)
-// 	}
+	na := common.FlowNode{
+		FlowElement: *common.NewElement(identity.EmptyID(), "test-node-activity", common.EtActivity),
+	}
+	is.True(p.AddNode(&na, "__default") != nil)
+	err := p.AddNode(&na, "")
+	is.NoErr(err)
 
-// 	id := mid.NewID()
-// 	err = NewPMErr(id, fmt.Errorf("test"), "test")
+	ne := common.FlowNode{
+		FlowElement: *common.NewElement(identity.EmptyID(), "test-node-event", common.EtEvent),
+	}
 
-// 	want := "ERR: PRC[" + id.String() + "] test: test"
-// 	if err.Error() != want {
-// 		t.Error("Invalid ProcessModelError got [",
-// 			err.Error(), "] want [", want, "]")
-// 	}
+	_, err = p.GetNodes(common.EtDataAssociation)
+	is.True(err != nil)
 
-// }
+	is.True(p.AddNode(&common.FlowNode{
+		FlowElement: *common.NewElement(identity.EmptyID(), "wrong-element", common.EtLane),
+	}, "") != nil)
+
+	nn, err := p.GetNodes(common.EtActivity)
+	is.NoErr(err)
+	is.True(nn != nil)
+	is.Equal(len(nn), 1)
+	is.Equal(nn[0].ID(), na.ID())
+
+	p.AddNode(&ne, "")
+	nn1, err := p.GetNodes(common.EtUnspecified)
+	is.NoErr(err)
+	is.True(nn1 != nil)
+	is.Equal(len(nn1), 2)
+
+	// check for ne presence
+	nodeFound := false
+	for _, fn := range nn1 {
+		if fn.ID() == ne.ID() {
+			nodeFound = true
+			break
+		}
+	}
+	is.True(nodeFound)
+
+	//ll := p.GetLanes()
+
+}
 
 // func TestProcessLanes(t *testing.T) {
 // 	p := NewProcess(mid.NewID(), "Testing process", "0.1.0")

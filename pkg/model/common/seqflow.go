@@ -9,24 +9,28 @@ type SequenceFlow struct {
 
 	// isImmediate bool
 
-	// Expression determines the possibility of
+	// Condition determines the possibility of
 	// using path over this SequenceFlow.
 	// Could be empty. If not, the path
 	// couldn't start from Parallel Gate or
 	// Event FloatNode
-	expr      expression.Expression
+	condition expression.Condition
+
 	sourceRef *FlowNode
 	targetRef *FlowNode
 }
 
 func (sf *SequenceFlow) GetTarget() *FlowNode {
+
 	return sf.targetRef
 }
 
 func (sf *SequenceFlow) GetSource() *FlowNode {
+
 	return sf.sourceRef
 }
 
-func (sf *SequenceFlow) GetExpression() expression.Expression {
-	return sf.expr
+func (sf *SequenceFlow) GetCondiiton() expression.Condition {
+
+	return sf.condition
 }

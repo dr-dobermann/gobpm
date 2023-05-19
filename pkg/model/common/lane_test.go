@@ -84,4 +84,7 @@ func TestLaneSet(t *testing.T) {
 	lsc := ls.Copy()
 	is.Equal(len(ls.lanes), len(lsc.lanes))
 
+	l, err := ls.GetLaneByName(lNames[1], true)
+	is.NoErr(err)
+	is.Equal(l.Name(), lNames[1])
 }

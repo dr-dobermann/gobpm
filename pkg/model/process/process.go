@@ -2,6 +2,7 @@ package process
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/identity"
 	"github.com/dr-dobermann/gobpm/pkg/model"
@@ -18,6 +19,10 @@ const (
 	PdtSnapshot
 )
 
+const (
+	defaultLaneName string = "__default"
+)
+
 type Process struct {
 	common.FlowElementContainer
 
@@ -25,14 +30,15 @@ type Process struct {
 
 	nodes map[identity.Id]common.Node
 
+	flows map[identity.Id]common.SequenceFlow
+
 	properties []data.Property
 
-	subscriptions []common.CorrelationSubscription
-
 	// the type of process data.
-	// could be a real Model or Snapshot of the model.
+	// could be a process Model or process model Snapshot.
 	// Snapshot is used as a real-time model for process
-	// execution
+	// execution.
+	// Snapshot could not be changed
 	dataType ProcessDataType
 
 	// consist an ID of original process
@@ -41,34 +47,79 @@ type Process struct {
 	OriginID identity.Id
 }
 
-// // creates a new process
-// func NewProcess(pid mid.Id, nm string, ver string) *Process {
-// 	if pid == mid.Id(uuid.Nil) {
-// 		pid = mid.NewID()
-// 	}
+// New creates a new process
+func New(pid identity.Id, name string) *Process {
 
-// 	nm = strings.Trim(nm, " ")
-// 	if len(nm) == 0 {
-// 		nm = "Process #" + pid.String()
-// 	}
+	if pid == identity.EmptyID() {
+		pid = identity.NewID()
+	}
 
-// 	if len(ver) == 0 {
-// 		ver = "0.1.0"
-// 	}
+	name = strings.Trim(name, " ")
+	if len(name) == 0 {
+		name = "Process #" + pid.String()
+	}
 
-// 	return &Process{
-// 		FlowElement: *common.NewElement(pid, nm, common.EtProcess),
-// 		version:     ver,
-// 		tasks:       []TaskModel{},
-// 		gateways:    []GatewayModel{},
-// 		flows:       []*common.SequenceFlow{},
-// 		messages:    make([]*Message, 0),
-// 		lanes:       make(map[string]*Lane)}
-// }
+	return &Process{
+		FlowElementContainer: *common.NewContainer(pid, name),
+		laneSet:              common.NewLaneSet("LSP#" + pid.String()),
+		nodes:                map[identity.Id]common.Node{},
+		flows:                map[identity.Id]common.SequenceFlow{},
+		properties:           []data.Property{},
+		dataType:             PdtModel,
+		OriginID:             identity.EmptyID(),
+	}
+}
 
-// func (p *Process) HasMessages() bool {
-// 	return len(p.messages) > 0
-// }
+// AddNode adds the Node n into process p on lane with name laneName.
+// If n already binded to another process then error returns.
+// if there is no lane with name laneName then new Lane created and
+// n placed onto it.
+// if the laneName is empty, then node is placed on default Lane.
+func (p *Process) AddNode(n common.Node, laneName string) error {
+
+	if n.GetProcessID() != identity.EmptyID() {
+		return model.NewModelError(p.Name(), p.ID(), nil,
+			"node %s[%v] already binded to process %v",
+			n.Name(), n.ID(), n.GetProcessID())
+	}
+
+	laneName = strings.Trim(laneName, " ")
+	if laneName == defaultLaneName {
+		return model.NewModelError(p.Name(), p.ID(), nil,
+			"invalid lane name. To put node on default lane just set laneName empty")
+	}
+
+	if n.Type() != common.EtActivity &&
+		n.Type() != common.EtEvent &&
+		n.Type() != common.EtGateway {
+		return model.NewModelError(p.Name(), p.ID(), nil,
+			"invalid node type. Want EtActivity, EtEvent or EtGateway, has %v",
+			n.Type())
+	}
+
+	var (
+		l   *common.Lane
+		err error
+	)
+
+	if laneName != "" {
+		l, err = p.laneSet.GetLaneByName(laneName, true)
+		if err != nil {
+			return err
+		}
+	} else {
+		l, err = p.laneSet.GetLaneByName(defaultLaneName, false)
+		if err != nil {
+			l = common.NewLane(identity.EmptyID(), defaultLaneName)
+			p.laneSet.AddLanes(l)
+		}
+	}
+
+	l.AddNode(n.GetFlowNode())
+	p.nodes[n.ID()] = n
+
+	return nil
+}
 
 // GetNodes returns a list of Nodes in the Process p.
 // Only Task, Gateway or Event could be returned.
@@ -78,23 +129,23 @@ type Process struct {
 // the error will be returned
 func (p *Process) GetNodes(et common.FlowElementType) ([]common.Node, error) {
 
-	if et != common.EtActivity &&
+	if et != common.EtUnspecified &&
+		et != common.EtActivity &&
 		et != common.EtGateway &&
-		et != common.EtEvent &&
-		et != common.EtUnspecified {
+		et != common.EtEvent {
 
 		return nil,
 			model.NewModelError(p.Name(), p.ID(), nil,
-				"invalid element type %v (wants EtActivity, EtGateway, EtEvent, EtUnspecified)", et)
+				"invalid element type. Wants EtActivity, EtGateway, EtEvent, EtUnspecified), has %v", et)
 	}
 
 	nn := []common.Node{}
 
 	for _, n := range p.nodes {
 		if et == common.EtUnspecified {
-			if et == common.EtActivity ||
-				et == common.EtEvent ||
-				et == common.EtGateway {
+			if n.Type() == common.EtActivity ||
+				n.Type() == common.EtEvent ||
+				n.Type() == common.EtGateway {
 
 				nn = append(nn, n)
 			}
@@ -110,35 +161,6 @@ func (p *Process) GetNodes(et common.FlowElementType) ([]common.Node, error) {
 	return nn, nil
 }
 
-// // returns a task by its ID.
-// //
-// // if there is no such task, nil will be returned.
-// func (p *Process) GetTask(tid mid.Id) TaskModel {
-// 	for _, t := range p.tasks {
-// 		if t.ID() == tid {
-// 			return t
-// 		}
-// 	}
-
-// 	return nil
-// }
-
-// // GetMessage returns a *Message from the Process p.
-// // If there is no Message with name mn, the error will be returned
-// func (p *Process) GetMessage(mn string) (*Message, error) {
-// 	for _, m := range p.messages {
-// 		if m.Name() == mn {
-// 			return m, nil
-// 		}
-// 	}
-
-// 	return nil,
-// 		NewPMErr(
-// 			p.ID(),
-// 			nil, "couldn't find message '%s' in process",
-// 			mn)
-// }
-
 // Copy creates a copy from a model process.
 // copy could not be made from a copy (snapshot) of the process.
 func (p Process) Copy() (*Process, error) {
@@ -148,15 +170,13 @@ func (p Process) Copy() (*Process, error) {
 	}
 
 	pc := Process{
-		FlowElementContainer: common.FlowElementContainer{
-			NamedElement: *common.NewNamedElement(identity.EmptyID(), p.Name()),
-		},
-		laneSet:       nil,
-		nodes:         map[identity.Id]common.Node{},
-		properties:    []data.Property{},
-		subscriptions: nil,
-		dataType:      PdtSnapshot,
-		OriginID:      p.ID(),
+		FlowElementContainer: *common.NewContainer(identity.NewID(), p.Name()),
+		laneSet:              nil,
+		nodes:                map[identity.Id]common.Node{},
+		properties:           []data.Property{},
+		flows:                map[identity.Id]common.SequenceFlow{},
+		dataType:             PdtSnapshot,
+		OriginID:             p.ID(),
 	}
 
 	// copy nodes
@@ -196,8 +216,8 @@ func (p Process) Copy() (*Process, error) {
 
 // // copy tasks from p to pc and creates mapping of p.tasks ot a pc.tasks for
 // // future linking througt sequenceFlow
-// func (p *Process) copyTasks(pc *Process) (map[mid.Id]Node, error) {
-// 	tm := make(map[mid.Id]Node)
+// func (p *Process) copyTasks(pc *Process) (map[identity.Id]Node, error) {
+// 	tm := make(map[identity.Id]Node)
 
 // 	// copy tasks and place them on lanes
 // 	for _, ot := range p.tasks {
@@ -219,8 +239,8 @@ func (p Process) Copy() (*Process, error) {
 
 // // copies gateway to a new process and return gateway mapper of
 // // old gateway id to a copied Node
-// func (p *Process) copyGateways(pc *Process) (map[mid.Id]Node, error) {
-// 	gm := make(map[mid.Id]Node)
+// func (p *Process) copyGateways(pc *Process) (map[identity.Id]Node, error) {
+// 	gm := make(map[identity.Id]Node)
 
 // 	// copy gateway and place them on lanes
 // 	for _, og := range p.gateways {
@@ -241,7 +261,7 @@ func (p Process) Copy() (*Process, error) {
 // }
 
 // // copies flows in copied process based on old process flows and node mappers
-// func (p *Process) copyFlows(pc *Process, nodeMapper map[mid.Id]Node) error {
+// func (p *Process) copyFlows(pc *Process, nodeMapper map[identity.Id]Node) error {
 // 	for _, of := range p.flows {
 // 		var e expr.Expression
 
@@ -261,27 +281,27 @@ func (p Process) Copy() (*Process, error) {
 // }
 
 // // adds new lane to the process
-// func (p *Process) NewLane(nm string) error {
+// func (p *Process) NewLane(name string) error {
 // 	if p.dataType == PdtSnapshot {
 // 		return ErrSnapshotChange
 // 	}
 
-// 	nm = strings.Trim(nm, " ")
-// 	if len(nm) > 0 {
-// 		if _, ok := p.lanes[nm]; ok {
+// 	name = strings.Trim(name, " ")
+// 	if len(name) > 0 {
+// 		if _, ok := p.lanes[name]; ok {
 // 			return NewPMErr(p.ID(), nil,
-// 				"Lane '%s' already exists", nm)
+// 				"Lane '%s' already exists", name)
 // 		}
 // 	}
 
 // 	l := new(Lane)
-// 	l.SetNewID(mid.NewID())
-// 	l.SetName(nm)
+// 	l.SetNewID(identity.NewID())
+// 	l.SetName(name)
 // 	l.SetType(common.EtLane)
 // 	l.process = p
 // 	l.nodes = make([]Node, 0)
 
-// 	if len(nm) == 0 {
+// 	if len(name) == 0 {
 // 		l.SetName("Lane " + l.ID().String())
 // 	}
 
