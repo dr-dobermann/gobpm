@@ -71,7 +71,28 @@ func TestAddNodes(t *testing.T) {
 	}
 	is.True(nodeFound)
 
-	//ll := p.GetLanes()
+}
+
+func TestConnectNodes(t *testing.T) {
+
+	is := is.New(t)
+
+	nnames := []string{"node1", "node2"}
+	fnn := []common.Node{}
+	p := process.New(identity.EmptyID(), "test-process")
+
+	for _, name := range nnames {
+		n := &common.FlowNode{
+			FlowElement: *common.NewElement(identity.EmptyID(), name,
+				common.EtActivity),
+		}
+		fnn = append(fnn, n)
+		is.NoErr(p.AddNode(n, "My Lane"))
+	}
+
+	is.NoErr(p.ConnectNodes(fnn[0], fnn[1], "test-flow", nil))
+	is.True(p.ConnectNodes(fnn[0], fnn[1], "test-flow1", nil) != nil)
+	is.NoErr(p.ConnectNodes(fnn[1], fnn[0], "reverse-test-flow", nil))
 
 }
 

@@ -29,4 +29,5 @@ func TestNode(t *testing.T) {
 	sName := "Test Link"
 	_, err := fn.Connect(&sn, sName, nil)
 	is.True(err != nil)
+
 }

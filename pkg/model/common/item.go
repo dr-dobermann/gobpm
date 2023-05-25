@@ -20,6 +20,8 @@ type ItemDefinition struct {
 	Item dataprovider.DataItem
 
 	// DataProvider of the DataItem set in
-	// Import structure
+	// Import structure.
+	// Import's dataprovider Source might be empty. That's mean
+	// the varible placed in memory out of any storage.
 	Import *infrastructure.Import
 }

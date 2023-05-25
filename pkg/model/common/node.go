@@ -35,12 +35,15 @@ type FlowNode struct {
 	outcoming []*SequenceFlow
 }
 
-func (fn FlowNode) GetFlowNode() *FlowNode {
-	return &fn
+// GetFlowNode returns laying underneath FlowNode object.
+func (fn *FlowNode) GetFlowNode() *FlowNode {
+
+	return fn
 }
 
 // GetOutputFlows returns node's output flows
 func (fn *FlowNode) GetOutputFlows() []*SequenceFlow {
+
 	res := make([]*SequenceFlow, 0)
 	if fn.outcoming != nil {
 		res = append(res, fn.outcoming...)
@@ -49,13 +52,16 @@ func (fn *FlowNode) GetOutputFlows() []*SequenceFlow {
 	return res
 }
 
+// BindToProcess binds FlowNode to the given process ID
+// if it's still unbinded to any process.
 func (fn *FlowNode) BindToProcess(pid identity.Id) error {
+
 	if fn.processID != identity.EmptyID() {
 		return model.NewModelError(fn.name, fn.ID(), nil,
 			"node already binded to process %v", fn.processID)
 	}
 
-	if pid != identity.EmptyID() {
+	if pid == identity.EmptyID() {
 		return model.NewModelError(fn.name, fn.ID(), nil,
 			"couldn bind to an empty process id")
 	}
@@ -129,7 +135,7 @@ func (fn FlowNode) HasIncoming() bool {
 
 // Copy creates a copy of a FlowNode with no
 // incoming or outcoming flows
-func (fn FlowNode) Copy() Node {
+func (fn *FlowNode) Copy() Node {
 	cfn := FlowNode{
 		FlowElement: *NewElement(identity.EmptyID(), fn.name, fn.elementType),
 		incoming:    []*SequenceFlow{},

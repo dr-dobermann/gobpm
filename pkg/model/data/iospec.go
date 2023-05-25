@@ -2,13 +2,21 @@ package data
 
 import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
 
-type DataSet struct {
-	Name  string
-	Items []*ItemAwareElement
+type DataInput struct {
+	Name string
+
+	ItemAwareElement
+}
+
+type DataOutput struct {
+	Name string
+
+	ItemAwareElement
 }
 
 type InputOutputSpecification struct {
 	foundation.BaseElement
-	InputSets  *DataSet
-	OutputSets *DataSet
+
+	DataIntputs []*DataInput
+	DataOutputs []*DataOutput
 }

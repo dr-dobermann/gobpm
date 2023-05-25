@@ -8,6 +8,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/expression"
 )
 
 var ErrSnapshotChange = errors.New("couldn't change process snapshot data")
@@ -30,7 +31,7 @@ type Process struct {
 
 	nodes map[identity.Id]common.Node
 
-	flows map[identity.Id]common.SequenceFlow
+	flows map[identity.Id]*common.SequenceFlow
 
 	properties []data.Property
 
@@ -63,7 +64,7 @@ func New(pid identity.Id, name string) *Process {
 		FlowElementContainer: *common.NewContainer(pid, name),
 		laneSet:              common.NewLaneSet("LSP#" + pid.String()),
 		nodes:                map[identity.Id]common.Node{},
-		flows:                map[identity.Id]common.SequenceFlow{},
+		flows:                map[identity.Id]*common.SequenceFlow{},
 		properties:           []data.Property{},
 		dataType:             PdtModel,
 		OriginID:             identity.EmptyID(),
@@ -105,7 +106,8 @@ func (p *Process) AddNode(n common.Node, laneName string) error {
 	if laneName != "" {
 		l, err = p.laneSet.GetLaneByName(laneName, true)
 		if err != nil {
-			return err
+			l = common.NewLane(identity.EmptyID(), laneName)
+			p.laneSet.AddLanes(l)
 		}
 	} else {
 		l, err = p.laneSet.GetLaneByName(defaultLaneName, false)
@@ -117,6 +119,32 @@ func (p *Process) AddNode(n common.Node, laneName string) error {
 
 	l.AddNode(n.GetFlowNode())
 	p.nodes[n.ID()] = n
+
+	return n.BindToProcess(p.ID())
+}
+
+func (p *Process) ConnectNodes(from, to common.Node,
+	flowName string, cond expression.Condition) error {
+
+	// check nodes registration on process
+	for _, n := range []common.Node{from, to} {
+		if _, ok := p.nodes[n.ID()]; !ok {
+			return model.NewModelError(p.Name(), p.ID(), nil,
+				"node %s[%v] isn't registered on process", n.Name(), n.ID())
+		}
+	}
+
+	// connect them
+	flow, err := from.GetFlowNode().Connect(to.GetFlowNode(),
+		flowName, cond)
+	if err != nil {
+		return model.NewModelError(p.Name(), p.ID(), err,
+			"couldn't connect node %s[%v] with %s[%v]",
+			from.Name(), from.ID(), to.Name(), to.ID())
+	}
+
+	// if everything is ok, add new flow on process
+	p.flows[flow.ID()] = flow
 
 	return nil
 }
@@ -174,7 +202,7 @@ func (p Process) Copy() (*Process, error) {
 		laneSet:              nil,
 		nodes:                map[identity.Id]common.Node{},
 		properties:           []data.Property{},
-		flows:                map[identity.Id]common.SequenceFlow{},
+		flows:                map[identity.Id]*common.SequenceFlow{},
 		dataType:             PdtSnapshot,
 		OriginID:             p.ID(),
 	}
