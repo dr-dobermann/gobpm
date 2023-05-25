@@ -5,8 +5,8 @@ import "github.com/dr-dobermann/gobpm/pkg/model/common"
 type Operation[inMsgT, outMsgT any] struct {
 	common.NamedElement
 
-	inMessage  *common.Message[inMsgT]
-	outMessage *common.Message[outMsgT]
+	inMessage  *common.Message
+	outMessage *common.Message
 
 	errors []common.Error
 
