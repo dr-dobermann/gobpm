@@ -2,7 +2,7 @@ package service
 
 import "github.com/dr-dobermann/gobpm/pkg/model/common"
 
-type Operation[inMsgT, outMsgT any] struct {
+type Operation struct {
 	common.NamedElement
 
 	inMessage  *common.Message
