@@ -144,8 +144,6 @@ func (fe *FlowElement) SetCategory(c string) {
 type FlowElementContainer struct {
 	NamedElement
 
-	laneSets []LaneSet
-
 	elements map[identity.Id]*FlowElement
 }
 
