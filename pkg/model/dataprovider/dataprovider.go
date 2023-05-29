@@ -26,4 +26,17 @@ type DataItem interface {
 	// It it's imposible error returned.
 	// This method is used on json unmarshalling of Message content.
 	UpdateValue(nv map[string]interface{}) error
+
+	GetGuts() interface{}
 }
+
+// func Retrieve[T any](di DataItem) (*T, error) {
+
+// 	guts := di.GetGuts()
+// 	v, ok := guts.(T)
+// 	if !ok {
+// 		return nil, fmt.Errorf("Retrieval assertion error")
+// 	}
+
+// 	return &v, nil
+// }

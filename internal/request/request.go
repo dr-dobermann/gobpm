@@ -98,3 +98,7 @@ func (r *Request) UpdateValue(nv map[string]interface{}) error {
 
 	return nil
 }
+
+func (r *Request) GetGuts() interface{} {
+	return r
+}
