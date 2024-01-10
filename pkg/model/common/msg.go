@@ -20,6 +20,19 @@ type Message struct {
 	item dataprovider.DataItem
 }
 
+func NewMessage(mn string, item dataprovider.DataItem) (*Message, error) {
+
+	mn = strings.Trim(mn, " ")
+	if mn == "" {
+		return nil, errors.New("couldn't create message with no name")
+	}
+
+	return &Message{
+		FlowElement: *NewElement(identity.NewID(), mn, EtMessage),
+		item:        item.Copy(),
+	}, nil
+}
+
 // GetItem returns a copy of message internal item.
 func (m Message) GetItem() dataprovider.DataItem {
 
@@ -70,17 +83,4 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 	m.SetType(EtMessage)
 
 	return nil
-}
-
-func NewMessage(mn string, item dataprovider.DataItem) (*Message, error) {
-
-	mn = strings.Trim(mn, " ")
-	if mn == "" {
-		return nil, errors.New("couldn't create message with no name")
-	}
-
-	return &Message{
-		FlowElement: *NewElement(identity.NewID(), mn, EtMessage),
-		item:        item.Copy(),
-	}, nil
 }

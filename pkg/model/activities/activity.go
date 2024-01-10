@@ -53,7 +53,7 @@ func (at ActivityType) String() string {
 	}[at]
 }
 
-type Activity struct {
+type activity struct {
 	common.FlowNode
 	loop *LoopDef
 
@@ -86,29 +86,29 @@ type Activity struct {
 	//transaction   *Transaction
 }
 
-func (a Activity) Class() ActivityClass {
+func (a activity) Class() ActivityClass {
 	return a.class
 }
 
-func (a Activity) TaskType() ActivityType {
+func (a activity) TaskType() ActivityType {
 	return a.aType
 }
 
-func (a Activity) DefaultFlowId() identity.Id {
+func (a activity) DefaultFlowId() identity.Id {
 	return a.defaultFlowID
 }
 
-func (a Activity) Check() error {
+func (a activity) Check() error {
 
 	return nil
 }
 
-func (a Activity) GetIOSpec() data.InputOutputSpecification {
+func (a activity) GetIOSpec() data.InputOutputSpecification {
 
 	return a.ioSpec
 }
 
-func (a Activity) PerformerRole() string {
+func (a activity) PerformerRole() string {
 
 	return a.performerRole
 }
@@ -132,14 +132,6 @@ type TaskModel interface {
 // ----------------------------------------------------------------------------
 // type GenericTask struct {
 // 	Activity
-// }
-
-// type ServiceTask struct {
-// 	Activity
-// 	// could be "##unspecified", "##WebService" or
-// 	// URI or coordination protocl
-// 	Implementation string
-// 	Operation      *Operation // invoked operation
 // }
 
 // type BusinessRuleTask struct {
