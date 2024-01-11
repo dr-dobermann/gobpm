@@ -3,5 +3,5 @@ package main
 import "fmt"
 
 func main() {
-	fmt.Println("BPM server started...")
+	fmt.Print("BPM server started...\n")
 }
