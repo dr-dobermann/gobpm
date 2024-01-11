@@ -1,6 +1,6 @@
 // GoBPM is BPMN v.2 compliant business process engine
 //
-// (c) 2021, Ruslan Gabitov a.k.a. dr-dobermann.
+// (c) 2021, 2024, Ruslan Gabitov a.k.a. dr-dobermann.
 // Use of this source is governed by LGPL license that
 // can be found in the LICENSE file.
 
@@ -14,7 +14,7 @@ Package consists two sub-pacages:
 - model -- for loading, creating from scratch and saving business
 process models.
 
-- threser -- for running business processes, monitoring
+- thresher -- for running business processes, monitoring
 and controlling them.
 */
 package gobpm
