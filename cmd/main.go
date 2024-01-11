@@ -1,7 +1,7 @@
 package main
 
-import "fmt"
+import "log"
 
 func main() {
-	fmt.Print("BPM server started...\n")
+	log.Println("BPM server started...")
 }
