@@ -48,11 +48,11 @@ type (
 		foundation.BaseElement
 
 		// The CorrelationKey this CorrelationSubscription refers to.
-		correlationKey *CorrelationKey
+		Key *CorrelationKey
 
 		// The bindings to specific CorrelationProperties and FormalExpressions
 		// (extraction rules atop the Process context).
-		correlationPropertyBindings []CorrelationPropertyBinding
+		PropertyBindings []CorrelationPropertyBinding
 	}
 
 	// A CorrelationKey represents a composite key out of one or many
@@ -68,26 +68,26 @@ type (
 		foundation.BaseElement
 
 		// Specifies the name of the CorrelationKey.
-		name string
+		Name string
 
 		// The CorrelationProperties, representing the partial keys of this
 		// CorrelationKey.
-		correlationProperties []CorrelationProperty
+		Properties []CorrelationProperty
 	}
 
 	CorrelationProperty struct {
 		foundation.BaseElement
 
 		// Specifies the name of the CorrelationProperty.
-		name string
+		Name string
 
 		// Specifies the type of the CorrelationProperty.
-		ptype string
+		Type string
 
 		// The retrievalExpressions for this CorrelationProperty, representing
 		// the associations of FormalExpressions (extraction paths) to specific
 		// Messages occurring in this Conversation.
-		retrievalExpressions []CorrelationPropertyRetrievalExpression
+		Expressions []CorrelationPropertyRetrievalExpression
 	}
 
 	// CorrelationPropertyBindings represent the partial keys of a
@@ -101,11 +101,11 @@ type (
 
 		// The FormalExpression that defines the extraction rule atop the
 		// Process context.
-		dataPath FormalExpression
+		DataPath FormalExpression
 
 		// The specific CorrelationProperty, this CorrelationPropertyBinding
 		// refers to.
-		correlationProperty *CorrelationProperty
+		Property *CorrelationProperty
 	}
 
 	CorrelationPropertyRetrievalExpression struct {
@@ -113,10 +113,10 @@ type (
 
 		// The FormalExpression that defines how to extract a
 		// CorrelationProperty from the Message payload.
-		messagePath FormalExpression
+		MessagePath FormalExpression
 
 		// The specific Message the FormalExpression extracts the
 		// CorrelationProperty from.
-		message *Message
+		MessageRef *Message
 	}
 )

@@ -19,12 +19,12 @@ type Documentation struct {
 
 // NewDoc creates new Documentation item. If no format is given,
 // then text/plain is used.
-func NewDoc(text, format string) Documentation {
+func NewDoc(text, format string) *Documentation {
 	if format == "" {
 		format = "text/plain"
 	}
 
-	return Documentation{
+	return &Documentation{
 		text:   text,
 		format: format,
 	}
@@ -59,15 +59,21 @@ type BaseElement struct {
 
 // NewBaseElement creates a new BaseElement with given id
 // if id is empty, then new UUID is generated.
-func NewBaseElement(id string, docs ...Documentation) BaseElement {
+func NewBaseElement(id string, docs ...*Documentation) *BaseElement {
 	if id == "" {
 		id = uuid.Must(uuid.NewRandom()).String()
 	}
 
-	return BaseElement{
+	be := BaseElement{
 		id:   id,
-		docs: append([]Documentation{}, docs...),
+		docs: make([]Documentation, len(docs)),
 	}
+
+	for i, d := range docs {
+		be.docs[i] = *d
+	}
+
+	return &be
 }
 
 // Id returns the BaseElement Id.
@@ -75,7 +81,7 @@ func (be BaseElement) Id() string {
 	return be.id
 }
 
-// Docs returns the BaseElement documentation.
+// Docs returns the copy of BaseElement documentation.
 func (be BaseElement) Docs() []Documentation {
 	return append([]Documentation{}, be.docs...)
 }

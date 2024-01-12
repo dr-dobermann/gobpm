@@ -1,6 +1,9 @@
 package common
 
-import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+)
 
 // An Error represents the content of an Error Event or the Fault of a failed
 // Operation. An ItemDefinition is used to specify the structure of the Error.
@@ -28,16 +31,16 @@ type Error struct {
 	errorCode string
 
 	// An ItemDefinition is used to define the “payload” of the Error.
-	structure *ItemDefinition
+	structure *data.ItemDefinition
 }
 
 // NewError creates a new error object.
 func NewError(id, name, code string,
-	str ItemDefinition,
-	docs ...foundation.Documentation,
-) Error {
-	return Error{
-		BaseElement: foundation.NewBaseElement(id, docs...),
+	str data.ItemDefinition,
+	docs ...*foundation.Documentation,
+) *Error {
+	return &Error{
+		BaseElement: *foundation.NewBaseElement(id, docs...),
 		name:        name,
 		errorCode:   code,
 		structure:   &str,
@@ -54,8 +57,8 @@ func (e Error) ErrorCode() string {
 	return e.errorCode
 }
 
-// Structure returns the Error payload
-func (e Error) Structure() *ItemDefinition {
+// Structure returns the copy of Error payload.
+func (e Error) Structure() *data.ItemDefinition {
 	str := *e.structure
 
 	return &str
