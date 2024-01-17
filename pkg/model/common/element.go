@@ -1,8 +1,7 @@
 package common
 
 import (
-	"fmt"
-
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/artifacts"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
@@ -79,7 +78,7 @@ func NewContainer() *FlowElementsContainer {
 // no error returned.
 func (fec *FlowElementsContainer) Add(fe *FlowElement) error {
 	if fe == nil {
-		return fmt.Errorf("no element to add")
+		return errs.ErrEmptyObject
 	}
 
 	// if container already consists of the FlowElement
@@ -89,7 +88,7 @@ func (fec *FlowElementsContainer) Add(fe *FlowElement) error {
 	}
 
 	if _, ok := fec.flowElements[fe.name]; ok {
-		return fmt.Errorf("duplicate element id %q", fe.name)
+		return errs.OperationFailed(errs.ErrNotFound, fe.name)
 	}
 
 	fec.flowElements[fe.name] = fe
@@ -102,7 +101,7 @@ func (fec *FlowElementsContainer) Add(fe *FlowElement) error {
 func (fec *FlowElementsContainer) Remove(id string) error {
 	fe, ok := fec.flowElements[id]
 	if !ok {
-		return fmt.Errorf("no element %q found", id)
+		return errs.OperationFailed(errs.ErrNotFound, id)
 	}
 
 	fe.container = nil

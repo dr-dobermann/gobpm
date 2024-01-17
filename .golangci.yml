@@ -1,59 +1,95 @@
 run:
-    concurrency: 12
-    deadline: 3m
-    issues-exit-code: -1
-    tests: false
-    skip-dirs:
-      - test
-      - vendor
-    skip-files:
-      - ".sol.go"
+  concurrency: 4
+  allow-parallel-runners: true
+  timeout: 10m
+  deadline: 19m
+  tests: false
+  skip-dirs:
+    - ent
+  skip-files:
+    - mock_*.go
+    - .*.pb.go
 
-linters-settings:
-  cyclop:
-    max-complexity: 8
+issues:
+  exclude-use-default: false
   errcheck:
     check-type-assertions: true
-  gci:
-    local-prefixes: goBpm
+    check-blank: true
+  exclude-rules:    
+    - linters:
+        - lll
+      source: "^//go:generate "
 
-output:
-    format: colored-line-number
-    print-issued-lines: true
-    print-linter-name: true
+linters-settings:
+  enable-all: true
+  gocritic:
+    enabled-tags:      
+     - diagnostic    
+     - performance   
+     - experimental  
+     - opinionated
+    disabled-checks:  
+      - ruleguard
+      - unnamedResult
+      - whyNoLint
+      - commentedOutCode
+  gosimple:
+    go: "1.20"
+    checks: ["all"]
+  staticcheck:
+    go: "1.20"
+    checks: ["all"]
 
 linters:
-    fast: false
-    enable-all: true
-    disable:
-        - varnamelen
-        - interfacer # The linter 'interfacer' is deprecated
-        - maligned # The linter 'maligned' is deprecated
-        - scopelint # The linter 'scopelint' is deprecated Replaced by exportloopref.
-        - golint # The linter 'golint' is deprecated (since v1.41.0)  Replaced by revive.
-        - dupl # dumb duplication linter
-        - gochecknoglobals
-        - gofmt
-        - goimports
-        # - gci
-        # - nlreturn
-        # - gomnd
-        # - wsl
-        - exhaustivestruct # ... are missing in ...
-        - funlen
-        # - nolintlint
-        # - revive
-        # - wrapcheck
-        # - nakedret
-        # - gochecknoglobals
-        # - gomoddirectives
-        - lll
-        # - whitespace
-        - gofumpt
-        - godot
-        - godox
-        # - unused
-        # - ifshort
-        # - goerr113
-        # - cyclop
-        # - deadcode
+  # please, do not use `enable-all`: it's deprecated and will be removed soon.
+  # inverted configuration with `enable-all` and `disable` is not scalable during updates of golangci-lint
+  disable-all: true
+  enable:
+    - asciicheck    
+    - dogsled
+    - dupl
+    - errcheck
+    - funlen
+    - gochecknoinits
+    - gocognit
+    - goconst
+    - exportloopref
+    - gocritic
+    - gocyclo
+    # - goerr113
+    - goprintffuncname
+    - gosec
+    - gosimple
+    - ineffassign    
+    - misspell
+    - nakedret
+    - nestif
+    - prealloc
+    - staticcheck
+    - testpackage
+    - typecheck
+    - unconvert
+    - unused
+    - whitespace
+    - nolintlint
+    # - wsl
+    - govet
+    # - depguard
+    # - revive
+    # - godot
+    # - godox
+    # - stylecheck
+    - goimports
+    # - gofmt
+    # - lll
+    # - gomnd
+    # - deadcode deprecated
+    # - varcheck deprecated    
+    # - rowserrcheck is disabled because of generics
+    # - structcheck deprecated
+    # - scopelint deprecated
+    # - maligned deprecated
+    # - unparam # "ломает" ent.go
+    # - interfacer # deprecated "ломает" ent.go
+    # - bodyclose "ломает" ent.go
+    

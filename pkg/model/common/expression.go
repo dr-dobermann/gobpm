@@ -2,9 +2,9 @@ package common
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
@@ -80,7 +80,7 @@ func NewFormalExpression(id, lang string,
 		buf := bytes.NewBuffer([]byte{})
 		_, err := buf.ReadFrom(body)
 		if err != nil {
-			return nil, fmt.Errorf("couldn't read body: %w", err)
+			return nil, errs.OperationError("couldn't read body", err)
 		}
 
 		if buf.Len() > 0 {
