@@ -1,4 +1,4 @@
-package common
+package flowers
 
 // The FlowNode element is used to provide a single element as the source and
 // target Sequence Flow associations instead of the individual associations of

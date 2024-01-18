@@ -2,6 +2,8 @@ package data
 
 import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
 
+//******************************************************************************
+
 type ItemKind string
 
 const (
@@ -62,5 +64,44 @@ func NewItemDefinition(
 		Import:       imprt,
 		Structure:    str,
 		IsCollection: collection,
+	}
+}
+
+//******************************************************************************
+
+// Several elements in BPMN are subject to store or convey items during process
+// execution. These elements are referenced generally as “item-aware elements.”
+// This is similar to the variable construct common to many languages. As with
+// variables, these elements have an ItemDefinition.
+//
+// The data structure these elements hold is specified using an associated
+// ItemDefinition. An ItemAwareElement MAY be underspecified, meaning that the
+// structure attribute of its ItemDefinition is optional if the modeler does not
+// wish to define the structure of the associated data.
+//
+// The elements in the specification defined as item-aware elements are:
+// Data Objects, Data Object References, Data Stores, Properties, DataInputs
+// and DataOutputs.
+type ItemAwareElement struct {
+	foundation.BaseElement
+
+	// Specification of the items that are stored or conveyed by the
+	// ItemAwareElement.
+	ItemSubject *ItemDefinition
+
+	DataState DataState
+}
+
+// NewItemAwareElement creates a new DataAwareItem and returns its pointer.
+func NewItemAwareElement(
+	id string,
+	subj *ItemDefinition,
+	state *DataState,
+	docs ...*foundation.Documentation,
+) *ItemAwareElement {
+	return &ItemAwareElement{
+		BaseElement: *foundation.NewBaseElement(id, docs...),
+		ItemSubject: subj,
+		DataState:   *state,
 	}
 }

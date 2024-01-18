@@ -1,4 +1,6 @@
-package common
+package flowers
+
+import "github.com/dr-dobermann/gobpm/pkg/model/data"
 
 // A Sequence Flow is used to show the order of Flow Elements in a Process or
 // a Choreography. Each Sequence Flow has only one source and only one target.
@@ -28,7 +30,7 @@ type SequenceFlow struct {
 	// An optional boolean Expression that acts as a gating condition. A
 	// token will only be placed on this Sequence Flow if this
 	// conditionExpression evaluates to true.
-	ConditionExpression *Expression
+	ConditionExpression *.Expression
 
 	// An optional boolean value specifying whether Activities or Choreography
 	// Activities not in the model containing the Sequence Flow can occur

@@ -1,11 +1,10 @@
-package common
+package data
 
 import (
 	"bytes"
 	"io"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
@@ -60,14 +59,14 @@ type FormalExpression struct {
 
 	// The type of object that this Expression returns when evaluated.
 	// For example, conditional Expressions evaluate to a boolean.
-	evaluatesToType *data.ItemDefinition
+	evaluatesToType *ItemDefinition
 }
 
 // NewFormalExpression creates a new FormalExpression object and
 // returns its pointer or error in case of body loading error.
 func NewFormalExpression(id, lang string,
 	body io.Reader,
-	evalType *data.ItemDefinition,
+	evalType *ItemDefinition,
 	docs ...*foundation.Documentation,
 ) (*FormalExpression, error) {
 	fe := FormalExpression{
@@ -98,6 +97,6 @@ func (fe FormalExpression) Language() string {
 }
 
 // EvalType returns the FormalExpression evaluation type if set.
-func (fe FormalExpression) EvalType() *data.ItemDefinition {
+func (fe FormalExpression) EvalType() *ItemDefinition {
 	return fe.evaluatesToType
 }

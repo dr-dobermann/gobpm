@@ -1,4 +1,4 @@
-package common
+package flowers
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
