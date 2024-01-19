@@ -29,13 +29,13 @@ type InputOutputSpecification struct {
 	// An optional reference to the Data Inputs of the InputOutputSpecification.
 	// If the InputOutputSpecification defines no Data Input, it means no data
 	// is REQUIRED to start the Activity. This is an ordered set.
-	DataInputs []DataInput
+	DataInputs []Input
 
 	// An optional reference to the Data Outputs of the
 	// InputOutputSpecification. If the InputOutputSpecification defines no Data
 	// Output, it means no data is REQUIRED to finish the Activity. This is an
 	// ordered set.
-	DataOutputs []DataOutput
+	DataOutputs []Output
 }
 
 // A Data Input is a declaration that a particular kind of data will be used as
@@ -46,7 +46,7 @@ type InputOutputSpecification struct {
 // the inputs of a called Process (i.e., one that is referenced by a Call
 // Activity, where the Call Activity has been expanded to show the called
 // Process within the context of a calling Process).
-type DataInput struct {
+type Input struct {
 	ItemAwareElement
 
 	// A descriptive name for the element.
@@ -82,7 +82,7 @@ type DataInput struct {
 // (i.e., one that is referenced by a Call Activity, where the Call Activity has
 // been expanded to show the called Process within the context of a calling
 // Process).
-type DataOutput struct {
+type Output struct {
 	ItemAwareElement
 
 	// A descriptive name for the element.
@@ -129,18 +129,18 @@ type InputSet struct {
 	Name string
 
 	// The DataInput elements that collectively make up this data requirement.
-	DataInputs []*DataInput
+	DataInputs []*Input
 
 	// The DataInput elements that are a part of the InputSet that can be in
 	// the state of “unavailable” when the Activity starts executing. This
 	// association MUST NOT reference a DataInput that is not listed in the
 	// dataInputRefs.
-	OptionalInputs []*DataInput
+	OptionalInputs []*Input
 
 	// The DataInput elements that are a part of the InputSet that can be
 	// evaluated while the Activity is executing. This association MUST NOT
 	// reference a DataInput that is not listed in the dataInputRefs.
-	WhileExecutionInputs []*DataInput
+	WhileExecutionInputs []Input
 
 	// Specifies an Input/Output rule that defines which OutputSet is expected
 	// to be created by the Activity when this InputSet became valid.
@@ -164,16 +164,16 @@ type OutputSet struct {
 	Name string
 
 	// The DataOutput elements that MAY collectively be outputted.
-	DataOutputs []*DataOutput
+	DataOutputs []Output
 
 	// The DataOutput elements that are a part of the OutputSet that do not
 	// have to be produced when the Activity completes executing. This
 	// association MUST NOT reference a DataOutput that is not listed in the
 	// dataOutputRefs.
-	OptionalOutputs []*DataOutput
+	OptionalOutputs []Output
 
 	// The DataOutput elements that are a part of the OutputSet that can be
 	// produced while the Activity is executing. This association MUST NOT
 	// reference a DataOutput that is not listed in the dataOutputRefs.
-	WhileExecutionOutputs []*DataOutput
+	WhileExecutionOutputs []Output
 }

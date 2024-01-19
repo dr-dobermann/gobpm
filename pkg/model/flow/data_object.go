@@ -1,4 +1,4 @@
-package flowers
+package flow
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -16,7 +16,7 @@ import (
 // brackets as follows: <Data Object Name> [ <Data Object Reference State> ].
 type DataObject struct {
 	data.ItemAwareElement
-	FlowElement
+	Element
 
 	// Defines if the Data Object represents a collection of elements. It is
 	// needed when no itemDefinition is referenced. If an itemDefinition is
@@ -37,7 +37,7 @@ func NewDataOpject(
 		ItemAwareElement: *data.NewItemAwareElement(id, idef, state, docs...),
 	}
 
-	do.FlowElement = *NewFlowElement(do.ItemAwareElement.Id(), name, docs...)
+	do.Element = *NewElement(do.ItemAwareElement.Id(), name, docs...)
 
 	return &do
 }

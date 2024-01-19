@@ -1,4 +1,4 @@
-package flowers
+package flow
 
 // The FlowNode element is used to provide a single element as the source and
 // target Sequence Flow associations instead of the individual associations of
@@ -6,8 +6,8 @@ package flowers
 // Only the Gateway, Activity, Choreography Activity, and Event elements can
 // connect to Sequence Flows and thus, these elements are the only ones that
 // are sub-classes of FlowNode.
-type FlowNode struct {
-	FlowElement
+type Node struct {
+	Element
 
 	// This attribute identifies the incoming Sequence Flow of the FlowNode.
 	Incoming []*SequenceFlow

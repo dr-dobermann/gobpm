@@ -1,4 +1,4 @@
-package flowers
+package flow
 
 import "github.com/dr-dobermann/gobpm/pkg/model/data"
 
@@ -9,7 +9,7 @@ import "github.com/dr-dobermann/gobpm/pkg/model/data"
 // for Processes), Choreography Activities (Choreography Task and
 // Sub-Choreography; for Choreographies), and Gateways.
 type SequenceFlow struct {
-	FlowElement
+	Element
 
 	// The FlowNode that the Sequence Flow is connecting from.
 	// For a Process: Of the types of FlowNode, only Activities,
@@ -17,7 +17,7 @@ type SequenceFlow struct {
 	// Event Sub-Processes are not allowed to be a source.
 	// For a Choreography: Of the types of FlowNode, only Choreography
 	// Activities, Gateways, and Events can be the source.
-	Source *FlowNode
+	Source *Node
 
 	// The FlowNode that the Sequence Flow is connecting to.
 	// For a Process: Of the types of FlowNode, only Activities, Gateways,
@@ -25,7 +25,7 @@ type SequenceFlow struct {
 	// Sub-Processes are not allowed to be a target.
 	// For a Choreography: Of the types of FlowNode, only Choreography
 	// Activities, Gateways, and Events can be the target.
-	Target *FlowNode
+	Target *Node
 
 	// An optional boolean Expression that acts as a gating condition. A
 	// token will only be placed on this Sequence Flow if this

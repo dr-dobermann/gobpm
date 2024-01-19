@@ -1,4 +1,4 @@
-package flowers
+package flow
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -8,11 +8,11 @@ import (
 
 // *****************************************************************************
 
-// FlowElement is the abstract super class for all elements that can appear in
+// Element is the abstract super class for all elements that can appear in
 // a Process flow, which are FlowNodes, which consist of Activities,
 // Choreography Activities, Gateways, and Events, Data Objects, Data
 // Associations, and Sequence Flows.
-type FlowElement struct {
+type Element struct {
 	foundation.BaseElement
 
 	// The descriptive name of the element.
@@ -23,106 +23,106 @@ type FlowElement struct {
 	Categories []*artifacts.CategoryValue
 
 	// Container consisted the element.
-	container *FlowElementsContainer
+	container *ElementsContainer
 }
 
-// NewFlowElement creates a new FlowElement and returns its pointer.
-func NewFlowElement(id, name string,
+// NewElement creates a new FlowElement and returns its pointer.
+func NewElement(id, name string,
 	docs ...*foundation.Documentation,
-) *FlowElement {
-	return &FlowElement{
+) *Element {
+	return &Element{
 		BaseElement: *foundation.NewBaseElement(id, docs...),
 		name:        name,
 	}
 }
 
-// Name returns the FlowElement name.
-func (fe FlowElement) Name() string {
+// Name returns the Element name.
+func (fe Element) Name() string {
 	return fe.name
 }
 
 // Container returns the element hosted container if presented.
-func (fe FlowElement) Container() *FlowElementsContainer {
+func (fe Element) Container() *ElementsContainer {
 	return fe.container
 }
 
 // *****************************************************************************
 
-// FlowElementsContainer is an abstract super class for BPMN diagrams (or
+// ElementsContainer is an abstract super class for BPMN diagrams (or
 // views) and defines the superset of elements that are contained in those
-// diagrams. Basically, a FlowElementsContainer contains FlowElements, which
+// diagrams. Basically, a ElementsContainer contains FlowElements, which
 // are Events, Gateways, Sequence Flows, Activities, and Choreography
 // Activities.
 //
-// There are four (4) types of FlowElementsContainers: Process, Sub-Process,
+// There are four (4) types of ElementsContainers: Process, Sub-Process,
 // Choreography, and Sub-Choreography.
-type FlowElementsContainer struct {
-	// Despite the standard stands for FlowElementContainer is based on
+type ElementsContainer struct {
+	// Despite the standard stands for ElementContainer is based on
 	// BaseElement gobpm removes this to avoid conflicts on Process creation
-	// which inherits both CallableElement and FlowElementContainer
+	// which inherits both CallableElement and ElementContainer
 	// foundation.BaseElement
 
-	flowElements map[string]*FlowElement
+	elements map[string]*Element
 }
 
 // NewContainer creates an empty container and returns its pointer.
-func NewContainer() *FlowElementsContainer {
-	return &FlowElementsContainer{
-		flowElements: map[string]*FlowElement{},
+func NewContainer() *ElementsContainer {
+	return &ElementsContainer{
+		elements: map[string]*Element{},
 	}
 }
 
 // Add adds the new element to the container if there is no
 // duplication in id.
-// If the container already consists of the FlowElement,
+// If the container already consists of the Element,
 // no error returned.
-func (fec *FlowElementsContainer) Add(fe *FlowElement) error {
+func (fec *ElementsContainer) Add(fe *FlowElement) error {
 	if fe == nil {
 		return errs.ErrEmptyObject
 	}
 
-	// if container already consists of the FlowElement
+	// if container already consists of the Element
 	// return OK.
 	if fe.container == fec {
 		return nil
 	}
 
-	if _, ok := fec.flowElements[fe.name]; ok {
+	if _, ok := fec.elements[fe.name]; ok {
 		return errs.OperationFailed(errs.ErrNotFound, fe.name)
 	}
 
-	fec.flowElements[fe.name] = fe
+	fec.elements[fe.name] = fe
 	fe.container = fec
 
 	return nil
 }
 
 // Remove removes element from contanier if found.
-func (fec *FlowElementsContainer) Remove(id string) error {
-	fe, ok := fec.flowElements[id]
+func (fec *ElementsContainer) Remove(id string) error {
+	fe, ok := fec.elements[id]
 	if !ok {
 		return errs.OperationFailed(errs.ErrNotFound, id)
 	}
 
 	fe.container = nil
-	delete(fec.flowElements, id)
+	delete(fec.elements, id)
 
 	return nil
 }
 
 // Contains checks if container contains element with elementId.
-func (fec *FlowElementsContainer) Contains(elementId string) bool {
-	_, ok := fec.flowElements[elementId]
+func (fec *ElementsContainer) Contains(elementId string) bool {
+	_, ok := fec.elements[elementId]
 
 	return ok
 }
 
 // Elements returns a list of container elements.
-func (fec *FlowElementsContainer) Elements() []*FlowElement {
-	ee := make([]*FlowElement, len(fec.flowElements))
+func (fec *ElementsContainer) Elements() []*FlowElement {
+	ee := make([]*Element, len(fec.elements))
 
 	i := 0
-	for _, v := range fec.flowElements {
+	for _, v := range fec.elements {
 		ee[i] = v
 		i++
 	}
