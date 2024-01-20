@@ -30,7 +30,7 @@ type SequenceFlow struct {
 	// An optional boolean Expression that acts as a gating condition. A
 	// token will only be placed on this Sequence Flow if this
 	// conditionExpression evaluates to true.
-	ConditionExpression *.Expression
+	ConditionExpression *data.Expression
 
 	// An optional boolean value specifying whether Activities or Choreography
 	// Activities not in the model containing the Sequence Flow can occur

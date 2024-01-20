@@ -1,14 +1,14 @@
 package acivities
 
 import (
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
 // The Activity class is the abstract super class for all concrete Activity
 // types.
 type Activity struct {
-	common.FlowElement
+	flow.Element
 
 	// A flag that identifies whether this Activity is intended for the
 	// purposes of compensation.
@@ -33,7 +33,7 @@ type Activity struct {
 	// conditionExpressions on other outgoing Sequence Flows evaluate to true.
 	// The default Sequence Flow should not have a conditionExpression. Any
 	// such Expression SHALL be ignored.
-	Default *common.SequenceFlow
+	Default *flow.SequenceFlow
 
 	// Modeler-defined properties MAY be added to an Activity. These
 	// properties are contained within the Activity.

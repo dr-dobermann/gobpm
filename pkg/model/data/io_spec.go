@@ -71,7 +71,7 @@ type Input struct {
 	// referenced, then this attribute MUST have the same value as the
 	// isCollection attribute of the referenced itemDefinition. The default
 	// value for this attribute is false.
-	isCollection bool
+	IsCollection bool
 }
 
 // A Data Output is a declaration that a particular kind of data can be
@@ -107,7 +107,7 @@ type Output struct {
 	// referenced, then this attribute MUST have the same value as the
 	// isCollection attribute of the referenced itemDefinition. The default
 	// value for this attribute is false.
-	isCollection bool
+	IsCollection bool
 }
 
 // An InputSet is a collection of DataInput elements that together define a

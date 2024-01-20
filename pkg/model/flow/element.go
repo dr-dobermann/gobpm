@@ -76,7 +76,7 @@ func NewContainer() *ElementsContainer {
 // duplication in id.
 // If the container already consists of the Element,
 // no error returned.
-func (fec *ElementsContainer) Add(fe *FlowElement) error {
+func (fec *ElementsContainer) Add(fe *Element) error {
 	if fe == nil {
 		return errs.ErrEmptyObject
 	}
@@ -118,7 +118,7 @@ func (fec *ElementsContainer) Contains(elementId string) bool {
 }
 
 // Elements returns a list of container elements.
-func (fec *ElementsContainer) Elements() []*FlowElement {
+func (fec *ElementsContainer) Elements() []*Element {
 	ee := make([]*Element, len(fec.elements))
 
 	i := 0

@@ -3,12 +3,13 @@ package process
 import (
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
 type Process struct {
 	common.CallableElement
-	common.FlowElementsContainer
+	flow.ElementsContainer
 
 	// Modeler-defined properties MAY be added to a Process. These properties
 	// are contained within the Process. All Tasks and Sub-Processes SHALL have
@@ -29,7 +30,7 @@ func NewProcess(
 ) *Process {
 	return &Process{
 		CallableElement:          *common.NewCallableElement(id, name, docs...),
-		FlowElementsContainer:    *common.NewContainer(),
+		ElementsContainer:        *flow.NewContainer(),
 		Properties:               []*data.Property{},
 		CorrelationSubscriptions: []*common.CorrelationSubscription{},
 	}

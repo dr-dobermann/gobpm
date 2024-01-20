@@ -2,6 +2,7 @@ package acivities
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
@@ -33,7 +34,7 @@ type ResourceAssignmentExpression struct {
 
 	// The element ResourceAssignmentExpression MUST contain an Expression
 	// which is used at runtime to assign resource(s) to a ResourceRole element.
-	Expression common.Expression
+	Expression data.Expression
 }
 
 // Resources support query parameters that are passed to the Resource query at
@@ -55,7 +56,7 @@ type ResourceParameterBinding struct {
 
 	// The Expression that evaluates the value used to bind the
 	// ResourceParameter.
-	Expression common.Expression
+	Expression data.Expression
 }
 
 type Performer struct {

@@ -1,6 +1,9 @@
 package common
 
-import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+)
 
 // 1. Key-based correlation.
 //
@@ -101,7 +104,7 @@ type (
 
 		// The FormalExpression that defines the extraction rule atop the
 		// Process context.
-		DataPath FormalExpression
+		DataPath data.FormalExpression
 
 		// The specific CorrelationProperty, this CorrelationPropertyBinding
 		// refers to.
@@ -113,7 +116,7 @@ type (
 
 		// The FormalExpression that defines how to extract a
 		// CorrelationProperty from the Message payload.
-		MessagePath FormalExpression
+		MessagePath data.FormalExpression
 
 		// The specific Message the FormalExpression extracts the
 		// CorrelationProperty from.

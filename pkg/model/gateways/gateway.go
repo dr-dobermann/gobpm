@@ -1,6 +1,6 @@
 package gateways
 
-import "github.com/dr-dobermann/gobpm/pkg/model/common"
+import "github.com/dr-dobermann/gobpm/pkg/model/flow"
 
 type Direction string
 
@@ -20,7 +20,7 @@ const (
 
 // *****************************************************************************
 type Gateway struct {
-	common.FlowNode
+	flow.Node
 
 	Direction Direction
 }
