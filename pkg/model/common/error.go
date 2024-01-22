@@ -36,29 +36,29 @@ type Error struct {
 
 // NewError creates a new error object.
 func NewError(id, name, code string,
-	str data.ItemDefinition,
+	str *data.ItemDefinition,
 	docs ...*foundation.Documentation,
 ) *Error {
 	return &Error{
 		BaseElement: *foundation.NewBaseElement(id, docs...),
 		name:        name,
 		errorCode:   code,
-		structure:   &str,
+		structure:   str,
 	}
 }
 
 // Name returns Error's name.
-func (e Error) Name() string {
+func (e *Error) Name() string {
 	return e.name
 }
 
 // ErrorCode returns error code.
-func (e Error) ErrorCode() string {
+func (e *Error) ErrorCode() string {
 	return e.errorCode
 }
 
 // Structure returns the copy of Error payload.
-func (e Error) Structure() *data.ItemDefinition {
+func (e *Error) Structure() *data.ItemDefinition {
 	str := *e.structure
 
 	return &str

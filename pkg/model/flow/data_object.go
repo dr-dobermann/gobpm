@@ -23,7 +23,7 @@ type DataObject struct {
 	// referenced, then this attribute MUST have the same value as the
 	// isCollection attribute of the referenced itemDefinition. The default
 	// value for this attribute is false.
-	isCollection bool
+	IsCollection bool
 }
 
 // NewDataOpject creates and returns a new DataObject and returns its pointer.

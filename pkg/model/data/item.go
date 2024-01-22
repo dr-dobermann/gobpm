@@ -2,7 +2,7 @@ package data
 
 import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
 
-//******************************************************************************
+// ******************************************************************************
 
 type ItemKind string
 
@@ -67,7 +67,7 @@ func NewItemDefinition(
 	}
 }
 
-//******************************************************************************
+// ******************************************************************************
 
 // Several elements in BPMN are subject to store or convey items during process
 // execution. These elements are referenced generally as “item-aware elements.”
