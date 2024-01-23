@@ -12,7 +12,7 @@ DC = docker compose
 build:
 	${GO} build -o ./bin/ "./..." 
 
-.PHONY: update_modules lint lint_win tag clear
+.PHONY: update_modules lint wlint tag clear
 
 update_modules:
 	@go get -u ./...
@@ -21,7 +21,7 @@ update_modules:
 lint:
 	golangci-lint run ./...
 
-lint_win:
+wlint:
  	docker run --rm -v //c/wrk/development/go/src/gobpm://cmd -w //cmd golangci/golangci-lint golangci-lint run -v
 
 # rundb:
