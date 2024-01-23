@@ -92,11 +92,11 @@ func NewFormalExpression(id, lang string,
 }
 
 // Language returns FormalExpression language settings.
-func (fe FormalExpression) Language() string {
+func (fe *FormalExpression) Language() string {
 	return fe.language
 }
 
 // EvalType returns the FormalExpression evaluation type if set.
-func (fe FormalExpression) EvalType() *ItemDefinition {
+func (fe *FormalExpression) EvalType() *ItemDefinition {
 	return fe.evaluatesToType
 }

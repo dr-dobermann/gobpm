@@ -37,12 +37,12 @@ func NewElement(id, name string,
 }
 
 // Name returns the Element name.
-func (fe Element) Name() string {
+func (fe *Element) Name() string {
 	return fe.name
 }
 
 // Container returns the element hosted container if presented.
-func (fe Element) Container() *ElementsContainer {
+func (fe *Element) Container() *ElementsContainer {
 	return fe.container
 }
 

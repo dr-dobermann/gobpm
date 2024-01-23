@@ -12,5 +12,5 @@ type BusinessRuleTask struct {
 	// implementation technology open, "##WebService" for the Web service
 	// technology or a URI identifying any other technology or coordination protocol.
 	// The default technology for this task is unspecified.
-	Implementaion string
+	Implementation string
 }
