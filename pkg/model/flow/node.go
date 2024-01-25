@@ -1,5 +1,7 @@
 package flow
 
+import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
+
 // The FlowNode element is used to provide a single element as the source and
 // target Sequence Flow associations instead of the individual associations of
 // the elements that can connect to Sequence Flows.
@@ -15,4 +17,13 @@ type Node struct {
 	// This attribute identifies the outgoing Sequence Flow of the FlowNode.
 	// This is an ordered collection.
 	Outcoming []*SequenceFlow
+}
+
+// NewNode creates a new node and returns its pointer.
+func NewNode(id, name string, docs ...*foundation.Documentation) *Node {
+	return &Node{
+		Element:   *NewElement(id, name, docs...),
+		Incoming:  []*SequenceFlow{},
+		Outcoming: []*SequenceFlow{},
+	}
 }

@@ -3,6 +3,7 @@ package events
 import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
 // Depending on the type of the Event there are different strategies to forward
@@ -47,6 +48,41 @@ import (
 // Cancellation will terminate all running Activities and compensate all
 // successfully completed Activities in the Sub-Process it is applied to. If the
 // Sub-Process is a Transaction, the Transaction is rolled back.
+//
+// Data Modeling and Events
+//
+// Some Events (like the Message, Escalation, Error, Signal, and Multiple Event)
+// have the capability to carry data.
+// Data Association is used to push data from a Catch Event to a data element.
+// For such Events, the following constraints apply:
+//   - If the Event is associated with multiple EventDefinitions, there MUST be
+//     one Data Input (in the case of throw Events) or one Data Output (in the
+//     case of catch Events) for each EventDefinition. The order of the
+//     EventDefinitions and the order of the Data Inputs/Outputs determine which
+//     Data Input/Output corresponds with which EventDefinition.
+//   - For each EventDefinition and Data Input/Output pair, if the Data
+//     Input/Output is present, it MUST have an ItemDefinition equivalent to the
+//     one defined by the Message, Escalation, Error, or Signal on the associated
+//     EventDefinition. In the case of a throw Event, if the Data Input is not
+//     present, the Message, Escalation, Error, or Signal will not be populated
+//     with data. In the case of a catch Event, if the Data Output is not
+//     present, the payload within the Message, Escalation, Error, or Signal
+//     will not flow out of the Event and into the Process.
+//
+// The execution behavior is then as follows:
+//
+//   - For throw Events: When the Event is activated, the data in the Data Input
+//     is assigned automatically to the Message, Escalation, Error, or Signal
+//     referenced by the corresponding EventDefinition.
+//   - For catch Events: When the trigger of the Event occurs (for example, the
+//     Message is received), the data is assigned automatically to the Data
+//     Output that corresponds to the EventDefinition that described that
+//     trigger.
+
+// *****************************************************************************
+//
+// Events that catch a trigger. All Start Events and some Intermediate Events
+// are catching Events.
 type Event struct {
 	flow.Node
 
@@ -55,6 +91,22 @@ type Event struct {
 	Properties []data.Property
 }
 
+// NewEvent creates a new Event and returns its pointer.
+func NewEvent(id, name string, docs ...*foundation.Documentation) *Event {
+	return &Event{
+		Node:       *flow.NewNode(id, name, docs...),
+		Properties: []data.Property{},
+	}
+}
+
+// *****************************************************************************
+//
+// vents that throw a Result. All End Events and some Intermediate Events are
+// throwing Events that MAY eventually be caught by another Event. Typically the
+// trigger carries information out of the scope where the throw Event occurred
+// into the scope of the catching Events. The throwing of a trigger MAY be
+// either implicit as defined by this standard or an extension to it or explicit
+// by a throw Event.
 type CatchEvent struct {
 	Event
 
@@ -67,7 +119,7 @@ type CatchEvent struct {
 	//     considered a Catch Multiple Event and the Event will have the pentagon
 	//     internal marker (see Figure 10.90).
 	// This is an ordered set.
-	EventDefitionsRefs []*EventDefition
+	DefitionsRefs []*Defition
 
 	// Defines the event EventDefinitions that are triggers expected for a catch
 	// Event. These EventDefinitions are only valid inside the current Event.
@@ -77,7 +129,7 @@ type CatchEvent struct {
 	//     considered a catch Multiple Event and the Event will have the
 	//     pentagon internal marker.
 	// This is an ordered set.
-	EventDefitions []*EventDefition
+	Defitions []*Defition
 
 	// The Data Associations of the catch Event. The dataOutputAssociation of a
 	// catch Event is used to assign data from the Event to a data element that
@@ -99,6 +151,7 @@ type CatchEvent struct {
 	ParallelMultiple bool
 }
 
+// *****************************************************************************
 type ThrowEvent struct {
 	Event
 
@@ -111,7 +164,7 @@ type ThrowEvent struct {
 	//     considered a Catch Multiple Event and the Event will have the pentagon
 	//     internal marker (see Figure 10.90).
 	// This is an ordered set.
-	EventDefitionsRefs []*EventDefition
+	DefitionsRefs []*Defition
 
 	// Defines the event EventDefinitions that are triggers expected for a catch
 	// Event. These EventDefinitions are only valid inside the current Event.
@@ -121,7 +174,7 @@ type ThrowEvent struct {
 	//     considered a catch Multiple Event and the Event will have the
 	//     pentagon internal marker.
 	// This is an ordered set.
-	EventDefitions []*EventDefition
+	Defitions []*Defition
 
 	// The Data Associations of the throw Event. The dataInputAssociation of a
 	// throw Event is responsible for the assignment of a data element that is
@@ -136,5 +189,3 @@ type ThrowEvent struct {
 	// The InputSet for the throw Event.
 	OutputSets []*data.OutputSet
 }
-
-type EventDefition struct{}
