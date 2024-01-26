@@ -1,15 +1,16 @@
 package artifacts
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
 // *****************************************************************************
 
+// :nolint gosec
 const (
-	unspecifiedCategory = "UNSPECIFIED_CATEGORY"
-
+	unspecifiedCategory    = "UNSPECIFIED_CATEGORY"
 	undefinedCategoryValue = "UNDEFINED_CATEGORY_VALUE"
 )
 
@@ -46,19 +47,26 @@ func NewCategory(id, name string, docs ...*foundation.Documentation) *Category {
 // binds the added CategoryValue to the Category.
 // Doesn't fire any error or panic in case of duplication.
 // It panics if is not properly created.
-func (c *Category) AddCategoryValues(cvv ...*CategoryValue) {
+func (c *Category) AddCategoryValues(cvv ...*CategoryValue) (error, int) {
 	if c.categoryValues == nil {
-		panic("Category should be created with artifacts.NewCategory call")
+		return &errs.ApplicationError{
+			Err:     nil,
+			Message: "Category should be created with artifacts.NewCategory call",
+			Class:   errs.ClassInvalidObject,
+		}, 0
+
+		// errs.OperationFailed(nil, "Category should be created with artifacts.NewCategory call", details string)
 	}
 
+	n := 0
 	for _, cv := range cvv {
-		if cv == nil {
-			panic("couldn't add nil CategoryValue to category " + c.Name)
-		}
-
 		c.categoryValues[cv.Value] = cv
 		cv.category = c
+
+		n++
 	}
+
+	return nil, n
 }
 
 // RemoveCategoryValues removes given CategoryValues from the Category

@@ -19,10 +19,13 @@ update_modules:
 	@go mod tidy
 
 lint:
-	golangci-lint run ./...
+	golangci-lint run -v ./...
 
 wlint:
 	docker run --rm -v //c/wrk/development/go/src/gobpm://cmd -w //cmd golangci/golangci-lint golangci-lint run -v
+
+dlint:
+	docker run --rm -v /Users/dober/wrk/development/go/src/gobpm://cmd -w //cmd golangci/golangci-lint golangci-lint run -v
 
 # rundb:
 # 	${DC} -f ./stand/db/docker-compose.yaml build
