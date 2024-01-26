@@ -2,7 +2,6 @@ package flow
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/artifacts"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
@@ -20,7 +19,11 @@ type Element struct {
 
 	// A reference to the Category Values that are associated with this Flow
 	// Element.
-	Categories []*artifacts.CategoryValue
+	// NOTE: Since the CategoryValues is used only for visually grouping
+	//       Elements visually in Group and to eleminate ciclyc imports
+	//       bidirectional link between FlowElement and CategoryValue
+	//       updated to uni-directional link from CategoryValue to FlowElement.
+	// Categories []*artifacts.CategoryValue
 
 	// Container consisted the element.
 	container *ElementsContainer

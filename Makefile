@@ -22,7 +22,7 @@ lint:
 	golangci-lint run ./...
 
 wlint:
- 	docker run --rm -v //c/wrk/development/go/src/gobpm://cmd -w //cmd golangci/golangci-lint golangci-lint run -v
+	docker run --rm -v //c/wrk/development/go/src/gobpm://cmd -w //cmd golangci/golangci-lint golangci-lint run -v
 
 # rundb:
 # 	${DC} -f ./stand/db/docker-compose.yaml build

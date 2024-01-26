@@ -2,6 +2,10 @@ package foundation
 
 import "github.com/google/uuid"
 
+const (
+	defaultDocFormat = "text/plain"
+)
+
 // *****************************************************************************
 
 // All BPMN elements that inherit from the BaseElement will have the capability,
@@ -21,7 +25,7 @@ type Documentation struct {
 // then text/plain is used.
 func NewDoc(text, format string) *Documentation {
 	if format == "" {
-		format = "text/plain"
+		format = defaultDocFormat
 	}
 
 	return &Documentation{
