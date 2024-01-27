@@ -1,7 +1,6 @@
 package flow
 
 import (
-	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
@@ -60,61 +59,77 @@ func (fe *Element) Container() *ElementsContainer {
 // There are four (4) types of ElementsContainers: Process, Sub-Process,
 // Choreography, and Sub-Choreography.
 type ElementsContainer struct {
-	// Despite the standard stands for ElementContainer is based on
-	// BaseElement gobpm removes this to avoid conflicts on Process creation
-	// which inherits both CallableElement and ElementContainer
-	// foundation.BaseElement
+	foundation.BaseElement
 
 	elements map[string]*Element
 }
 
 // NewContainer creates an empty container and returns its pointer.
-func NewContainer() *ElementsContainer {
+func NewContainer(id string, docs ...*foundation.Documentation) *ElementsContainer {
 	return &ElementsContainer{
-		elements: map[string]*Element{},
+		BaseElement: *foundation.NewBaseElement(id, docs...),
+		elements:    map[string]*Element{},
 	}
 }
 
-// Add adds the new element to the container if there is no
-// duplication in id.
-// If the container already consists of the Element,
-// no error returned.
-func (fec *ElementsContainer) Add(fe *Element) error {
-	if fe == nil {
-		return errs.ErrEmptyObject
+// Add adds the new element to the container.
+// It adds only non-nil elements and returns the counter of added elements.
+func (fec *ElementsContainer) Add(fee ...*Element) int {
+	if fec.elements == nil {
+		fec.elements = map[string]*Element{}
 	}
 
-	// if container already consists of the Element
-	// return OK.
-	if fe.container == fec {
-		return nil
+	n := 0
+
+	for _, fe := range fee {
+		if fe == nil {
+			continue
+		}
+
+		fec.elements[fe.name] = fe
+		fe.container = fec
+
+		n++
 	}
 
-	if _, ok := fec.elements[fe.name]; ok {
-		return errs.OperationFailed(errs.ErrNotFound, fe.name)
-	}
-
-	fec.elements[fe.name] = fe
-	fe.container = fec
-
-	return nil
+	return n
 }
 
-// Remove removes element from contanier if found.
-func (fec *ElementsContainer) Remove(id string) error {
-	fe, ok := fec.elements[id]
-	if !ok {
-		return errs.OperationFailed(errs.ErrNotFound, id)
+// Remove removes elements from contanier if found and returns the number of
+// removed elements.
+func (fec *ElementsContainer) Remove(idd ...string) int {
+	if fec.elements == nil {
+		fec.elements = map[string]*Element{}
+
+		return 0
 	}
 
-	fe.container = nil
-	delete(fec.elements, id)
+	n := 0
+	for _, id := range idd {
+		fe, ok := fec.elements[id]
+		if !ok {
+			continue
+		}
 
-	return nil
+		if _, ok := fec.elements[fe.Id()]; ok {
+			fe.container = nil
+			delete(fec.elements, id)
+
+			n++
+		}
+	}
+
+	return n
 }
 
 // Contains checks if container contains element with elementId.
 func (fec *ElementsContainer) Contains(elementId string) bool {
+	if fec.elements == nil {
+		fec.elements = map[string]*Element{}
+
+		return false
+	}
+
 	_, ok := fec.elements[elementId]
 
 	return ok
@@ -122,6 +137,12 @@ func (fec *ElementsContainer) Contains(elementId string) bool {
 
 // Elements returns a list of container elements.
 func (fec *ElementsContainer) Elements() []*Element {
+	if fec.elements == nil {
+		fec.elements = map[string]*Element{}
+
+		return []*Element{}
+	}
+
 	ee := make([]*Element, len(fec.elements))
 
 	i := 0

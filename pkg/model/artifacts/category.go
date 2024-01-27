@@ -1,16 +1,15 @@
 package artifacts
 
 import (
-	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
 // *****************************************************************************
 
-// :nolint gosec
 const (
-	unspecifiedCategory    = "UNSPECIFIED_CATEGORY"
+	unspecifiedCategory = "UNSPECIFIED_CATEGORY"
+	//nolint: gosec
 	undefinedCategoryValue = "UNDEFINED_CATEGORY_VALUE"
 )
 
@@ -45,60 +44,61 @@ func NewCategory(id, name string, docs ...*foundation.Documentation) *Category {
 
 // AddCategoryValues adds CategoryValues from the list into the Category and
 // binds the added CategoryValue to the Category.
-// Doesn't fire any error or panic in case of duplication.
-// It panics if is not properly created.
-func (c *Category) AddCategoryValues(cvv ...*CategoryValue) (error, int) {
+// It returns a number of added CategoryValues.
+func (c *Category) AddCategoryValues(cvv ...*CategoryValue) int {
 	if c.categoryValues == nil {
-		return &errs.ApplicationError{
-			Err:     nil,
-			Message: "Category should be created with artifacts.NewCategory call",
-			Class:   errs.ClassInvalidObject,
-		}, 0
-
-		// errs.OperationFailed(nil, "Category should be created with artifacts.NewCategory call", details string)
+		c.categoryValues = map[string]*CategoryValue{}
 	}
 
 	n := 0
 	for _, cv := range cvv {
+		if cvv == nil {
+			continue
+		}
+
 		c.categoryValues[cv.Value] = cv
 		cv.category = c
 
 		n++
 	}
 
-	return nil, n
+	return n
 }
 
 // RemoveCategoryValues removes given CategoryValues from the Category
 // and for removed ones clears its binding to Category.
-// It doesn't fire any error or panic in case there is no CategoryValue in
-// Category.
-// It panics if is not properly created.
-func (c *Category) RemoveCategoryValues(cvv ...*CategoryValue) {
+// It returns a number of removed elements.
+func (c *Category) RemoveCategoryValues(cvv ...*CategoryValue) int {
 	if c.categoryValues == nil {
-		panic("Category should be created with artifacts.NewCategory call")
+		c.categoryValues = map[string]*CategoryValue{}
+		return 0
 	}
 
+	n := 0
 	for _, cv := range cvv {
 		if cv == nil {
-			panic("couldn't remove nil CategoryValue from category " + c.Name)
+			continue
 		}
 
 		if _, ok := c.categoryValues[cv.Value]; ok {
 			cv.category = nil
 			delete(c.categoryValues, cv.Value)
+
+			n++
 		}
 	}
+
+	return n
 }
 
 // CategoryValues returns list of copies of CategoryValues binded to Category.
-// It panics if is not properly created.
 func (c *Category) CategoryValues() []CategoryValue {
-	if c.categoryValues == nil {
-		panic("Category should be created with artifacts.NewCategory call")
-	}
-
 	cvv := []CategoryValue{}
+
+	if c.categoryValues == nil {
+		c.categoryValues = map[string]*CategoryValue{}
+		return cvv
+	}
 
 	for _, cv := range c.categoryValues {
 		cvv = append(cvv, *cv)
@@ -142,43 +142,57 @@ func NewCategoryValue(
 }
 
 // AddFlowElement adds FlowElements to the CategoryValue.
-// Function don't check duplication.
-// It panics in case of not properly created CategoryValue or empty
-// FlowElement pointer given.
-func (cv *CategoryValue) AddFlowElement(fee ...*flow.Element) {
+// It returns a number of added FlowElements
+func (cv *CategoryValue) AddFlowElement(fee ...*flow.Element) int {
 	if cv.categorizedElements == nil {
-		panic("CategoryValue should be created by artifacts.NewCategoryValue")
+		cv.categorizedElements = map[string]*flow.Element{}
 	}
 
+	n := 0
 	for _, fe := range fee {
 		if fe == nil {
-			panic("couldn't add nil FlowElement to CategoryValue " + cv.Value)
+			continue
 		}
 
 		cv.categorizedElements[fe.Id()] = fe
+		n++
 	}
+
+	return n
 }
 
 // RemoveFlowElement removes FlowElements from the CategoryValue.
-// It panics if isn't properly created or nil FlowElement pointer given.
-func (cv *CategoryValue) RemoveFlowElement(fee ...*flow.Element) {
+func (cv *CategoryValue) RemoveFlowElement(fee ...*flow.Element) int {
 	if cv.categorizedElements == nil {
-		panic("CategoryValue should be created by artifacts.NewCategoryValue")
+		cv.categorizedElements = map[string]*flow.Element{}
+
+		return 0
 	}
+
+	n := 0
 
 	for _, fe := range fee {
 		if fe == nil {
-			panic("couldn't remove nil FlowElement to CategoryValue " +
-				cv.Value)
+			continue
 		}
 
-		delete(cv.categorizedElements, fe.Id())
+		if _, ok := cv.categorizedElements[fe.Id()]; ok {
+			delete(cv.categorizedElements, fe.Id())
+			n++
+		}
 	}
+
+	return n
 }
 
 // FlowElements returns a list of categorized FlowElements from CategoryValue.
 func (cv *CategoryValue) FlowElements() []*flow.Element {
 	fee := []*flow.Element{}
+
+	if cv.categorizedElements == nil {
+		cv.categorizedElements = map[string]*flow.Element{}
+		return fee
+	}
 
 	for _, fe := range cv.categorizedElements {
 		fee = append(fee, fe)
@@ -186,3 +200,8 @@ func (cv *CategoryValue) FlowElements() []*flow.Element {
 
 	return fee
 }
+
+// var testCategoryValues = map[string]*CategoryValue{
+// 	"one": NewCategoryValue("one", "first"),
+// 	"two": NewCategoryValue("one", "second"),
+// }

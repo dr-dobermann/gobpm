@@ -79,7 +79,11 @@ func NewFormalExpression(id, lang string,
 		buf := bytes.NewBuffer([]byte{})
 		_, err := buf.ReadFrom(body)
 		if err != nil {
-			return nil, errs.OperationError("couldn't read body", err)
+			return nil, &errs.ApplicationError{
+				Err:     err,
+				Message: "couldn't read body",
+				Class:   errs.InvalidObjectError,
+			}
 		}
 
 		if buf.Len() > 0 {

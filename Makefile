@@ -12,7 +12,7 @@ DC = docker compose
 build:
 	${GO} build -o ./bin/ "./..." 
 
-.PHONY: update_modules lint wlint tag clear
+.PHONY: update_modules lint wlint tag clear test
 
 update_modules:
 	@go get -u ./...
@@ -30,6 +30,9 @@ dlint:
 # rundb:
 # 	${DC} -f ./stand/db/docker-compose.yaml build
 # 	${DC} -f ./stand/db/docker-compose.yaml up --detach --wait --remove-orphans
+
+test:
+	go test -v -cover ./...
 
 tag: 
 	@git tag -a ${VERSION} -m "version ${VERSION}"

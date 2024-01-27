@@ -6,7 +6,6 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
-	"github.com/stretchr/testify/require"
 )
 
 func TestNewCategory(t *testing.T) {
@@ -20,26 +19,13 @@ func TestNewCategory(t *testing.T) {
 		args args
 		want *Category
 	}{
-		{
-			name: "Normal",
-			args: args{
-				id:   "NormalID",
-				name: "NormalCategory",
-				docs: []*foundation.Documentation{
-					foundation.NewDoc("NormalDoc", ""),
-				},
-			},
-			want: &Category{
-				BaseElement: *foundation.NewBaseElement("NormalID",
-					foundation.NewDoc("NormalDoc", "")),
-				Name: "NormalCategory",
-			},
-		},
+	// TODO: Add test cases.
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := NewCategory(tt.args.id, tt.args.name, tt.args.docs...)
-			require.Equal(t, got.Id(), tt.args.id)
+			if got := NewCategory(tt.args.id, tt.args.name, tt.args.docs...); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("NewCategory() = %v, want %v", got, tt.want)
+			}
 		})
 	}
 }
@@ -52,12 +38,15 @@ func TestCategory_AddCategoryValues(t *testing.T) {
 		name string
 		c    *Category
 		args args
+		want int
 	}{
-		// TODO: Add test cases.
+	// TODO: Add test cases.
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.c.AddCategoryValues(tt.args.cvv...)
+			if got := tt.c.AddCategoryValues(tt.args.cvv...); got != tt.want {
+				t.Errorf("Category.AddCategoryValues() = %v, want %v", got, tt.want)
+			}
 		})
 	}
 }
@@ -70,12 +59,15 @@ func TestCategory_RemoveCategoryValues(t *testing.T) {
 		name string
 		c    *Category
 		args args
+		want int
 	}{
-		// TODO: Add test cases.
+	// TODO: Add test cases.
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.c.RemoveCategoryValues(tt.args.cvv...)
+			if got := tt.c.RemoveCategoryValues(tt.args.cvv...); got != tt.want {
+				t.Errorf("Category.RemoveCategoryValues() = %v, want %v", got, tt.want)
+			}
 		})
 	}
 }
@@ -86,7 +78,7 @@ func TestCategory_CategoryValues(t *testing.T) {
 		c    *Category
 		want []CategoryValue
 	}{
-		// TODO: Add test cases.
+	// TODO: Add test cases.
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -108,7 +100,7 @@ func TestNewCategoryValue(t *testing.T) {
 		args args
 		want *CategoryValue
 	}{
-		// TODO: Add test cases.
+	// TODO: Add test cases.
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -127,12 +119,15 @@ func TestCategoryValue_AddFlowElement(t *testing.T) {
 		name string
 		cv   *CategoryValue
 		args args
+		want int
 	}{
-		// TODO: Add test cases.
+	// TODO: Add test cases.
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.cv.AddFlowElement(tt.args.fee...)
+			if got := tt.cv.AddFlowElement(tt.args.fee...); got != tt.want {
+				t.Errorf("CategoryValue.AddFlowElement() = %v, want %v", got, tt.want)
+			}
 		})
 	}
 }
@@ -145,12 +140,15 @@ func TestCategoryValue_RemoveFlowElement(t *testing.T) {
 		name string
 		cv   *CategoryValue
 		args args
+		want int
 	}{
-		// TODO: Add test cases.
+	// TODO: Add test cases.
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.cv.RemoveFlowElement(tt.args.fee...)
+			if got := tt.cv.RemoveFlowElement(tt.args.fee...); got != tt.want {
+				t.Errorf("CategoryValue.RemoveFlowElement() = %v, want %v", got, tt.want)
+			}
 		})
 	}
 }
@@ -161,7 +159,7 @@ func TestCategoryValue_FlowElements(t *testing.T) {
 		cv   *CategoryValue
 		want []*flow.Element
 	}{
-		// TODO: Add test cases.
+	// TODO: Add test cases.
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -30,7 +30,7 @@ func NewProcess(
 ) *Process {
 	return &Process{
 		CallableElement:          *common.NewCallableElement(id, name, docs...),
-		ElementsContainer:        *flow.NewContainer(),
+		ElementsContainer:        *flow.NewContainer(id, docs...),
 		Properties:               []*data.Property{},
 		CorrelationSubscriptions: []*common.CorrelationSubscription{},
 	}

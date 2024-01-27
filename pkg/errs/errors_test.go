@@ -1,6 +1,9 @@
 package errs
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestApplicationError_Error(t *testing.T) {
 	type fields struct {
@@ -25,9 +28,15 @@ func TestApplicationError_Error(t *testing.T) {
 					"detail2": "detail_info2",
 				},
 			},
-			want: "TEST: Normal",
+			want: fmt.Sprintf(
+				"%s: %s[%s]: %v",
+				"TEST", "Normal", map[string]string{
+					"detail1": "detail_info1",
+					"detail2": "detail_info2",
+				}, nil),
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ap := &ApplicationError{
