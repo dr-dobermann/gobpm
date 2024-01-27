@@ -140,6 +140,11 @@ func NewCategoryValue(
 	}
 }
 
+// Category returns category the CategoryValue binded to.
+func (cv *CategoryValue) Category() *Category {
+	return cv.category
+}
+
 // AddFlowElement adds FlowElements to the CategoryValue.
 // It returns a number of added FlowElements
 func (cv *CategoryValue) AddFlowElement(fee ...*flow.Element) int {
@@ -148,12 +153,14 @@ func (cv *CategoryValue) AddFlowElement(fee ...*flow.Element) int {
 	}
 
 	n := 0
+
 	for _, fe := range fee {
 		if fe == nil {
 			continue
 		}
 
 		cv.categorizedElements[fe.Id()] = fe
+
 		n++
 	}
 
@@ -199,8 +206,3 @@ func (cv *CategoryValue) FlowElements() []*flow.Element {
 
 	return fee
 }
-
-// var testCategoryValues = map[string]*CategoryValue{
-// 	"one": NewCategoryValue("one", "first"),
-// 	"two": NewCategoryValue("one", "second"),
-// }

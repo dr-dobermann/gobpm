@@ -1,7 +1,6 @@
 package flow
 
 import (
-	"fmt"
 	"reflect"
 	"testing"
 
@@ -285,8 +284,8 @@ func TestElementsContainer_Elements(t *testing.T) {
 				elements: testElements,
 			},
 			want: []*Element{
-				testElements["two"],
 				testElements["one"],
+				testElements["two"],
 			},
 		},
 		{
@@ -295,8 +294,6 @@ func TestElementsContainer_Elements(t *testing.T) {
 			want: []*Element{},
 		},
 	}
-
-	fmt.Println(testElements)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

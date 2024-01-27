@@ -232,6 +232,37 @@ func TestNewCategoryValue(t *testing.T) {
 	}
 }
 
+func TestCategoryValue_Category(t *testing.T) {
+	testCategory := NewCategory("CetegoryId", "NormalCategory")
+
+	tests := []struct {
+		name string
+		cv   *CategoryValue
+		want *Category
+	}{
+		{
+			name: "Normal",
+			cv:   NewCategoryValue("NormalId", "NormalTest"),
+			want: testCategory,
+		},
+		{
+			name: "Not binded to Category",
+			cv:   NewCategoryValue("NoBindId", "NoBindTest"),
+			want: nil,
+		},
+	}
+
+	testCategory.AddCategoryValues(tests[0].cv)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cv.Category(); got != tt.want {
+				t.Errorf("CategoryValue.Category() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCategoryValue_AddFlowElement(t *testing.T) {
 	testElements := map[string]*flow.Element{
 		"one": flow.NewElement("one", "first"),
@@ -250,14 +281,26 @@ func TestCategoryValue_AddFlowElement(t *testing.T) {
 	}{
 		{
 			name: "Normal",
+			cv:   NewCategoryValue("NormalId", "NormalTest"),
 			args: args{
 				fee: []*flow.Element{
 					nil,
 					testElements["one"],
 					nil,
 					testElements["two"],
-				},
-			},
+				}},
+			want: 2,
+		},
+		{
+			name: "Invalid Storage",
+			cv:   NewCategoryValue("InvStorId", "InvStorTest"),
+			args: args{
+				fee: []*flow.Element{
+					nil,
+					testElements["one"],
+					nil,
+					testElements["two"],
+				}},
 			want: 2,
 		},
 	}
@@ -272,6 +315,11 @@ func TestCategoryValue_AddFlowElement(t *testing.T) {
 }
 
 func TestCategoryValue_RemoveFlowElement(t *testing.T) {
+	testElements := map[string]*flow.Element{
+		"one": flow.NewElement("one", "first"),
+		"two": flow.NewElement("two", "second"),
+	}
+
 	type args struct {
 		fee []*flow.Element
 	}
@@ -281,8 +329,37 @@ func TestCategoryValue_RemoveFlowElement(t *testing.T) {
 		args args
 		want int
 	}{
-		// TODO: Add test cases.
+		{
+			name: "Normal",
+			cv:   NewCategoryValue("NormalId", "NormalTest"),
+			args: args{
+				fee: []*flow.Element{
+					nil,
+					testElements["one"],
+					testElements["two"],
+				},
+			},
+			want: 1,
+		},
+		{
+			name: "InvalidStorage",
+			cv: &CategoryValue{
+				BaseElement: *foundation.NewBaseElement("InvStorId"),
+				Value:       "",
+			},
+			args: args{
+				fee: []*flow.Element{
+					nil,
+					testElements["one"],
+					testElements["two"],
+				},
+			},
+			want: 0,
+		},
 	}
+
+	tests[0].cv.AddFlowElement(testElements["one"])
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := tt.cv.RemoveFlowElement(tt.args.fee...); got != tt.want {
@@ -293,13 +370,36 @@ func TestCategoryValue_RemoveFlowElement(t *testing.T) {
 }
 
 func TestCategoryValue_FlowElements(t *testing.T) {
+	testElements := map[string]*flow.Element{
+		"one": flow.NewElement("one", "first"),
+		"two": flow.NewElement("two", "second"),
+	}
+
 	tests := []struct {
 		name string
 		cv   *CategoryValue
 		want []*flow.Element
 	}{
-		// TODO: Add test cases.
+		{
+			name: "Normal",
+			cv:   NewCategoryValue("NormalId", "NormalTest"),
+			want: []*flow.Element{
+				testElements["one"],
+				testElements["two"],
+			},
+		},
+		{
+			name: "Invalid Storage",
+			cv: &CategoryValue{
+				BaseElement: *foundation.NewBaseElement("InvStorId"),
+				Value:       "InvStorTest",
+			},
+			want: []*flow.Element{},
+		},
 	}
+
+	tests[0].cv.AddFlowElement(testElements["one"], testElements["two"])
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := tt.cv.FlowElements(); !reflect.DeepEqual(got, tt.want) {
