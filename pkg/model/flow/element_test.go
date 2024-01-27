@@ -145,7 +145,7 @@ func TestElementsContainer_Add(t *testing.T) {
 	}{
 		{
 			name: "Normal",
-			fec:  NewContainer("tst"),
+			fec:  NewContainer("tstId"),
 			args: args{
 				fee: []*Element{
 					testElements["one"], nil, testElements["two"],
@@ -285,8 +285,8 @@ func TestElementsContainer_Elements(t *testing.T) {
 				elements: testElements,
 			},
 			want: []*Element{
-				testElements["one"],
 				testElements["two"],
+				testElements["one"],
 			},
 		},
 		{

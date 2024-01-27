@@ -52,7 +52,7 @@ func (c *Category) AddCategoryValues(cvv ...*CategoryValue) int {
 
 	n := 0
 	for _, cv := range cvv {
-		if cvv == nil {
+		if cv == nil {
 			continue
 		}
 
@@ -68,21 +68,19 @@ func (c *Category) AddCategoryValues(cvv ...*CategoryValue) int {
 // RemoveCategoryValues removes given CategoryValues from the Category
 // and for removed ones clears its binding to Category.
 // It returns a number of removed elements.
-func (c *Category) RemoveCategoryValues(cvv ...*CategoryValue) int {
+func (c *Category) RemoveCategoryValues(cvVals ...string) int {
 	if c.categoryValues == nil {
 		c.categoryValues = map[string]*CategoryValue{}
+
 		return 0
 	}
 
 	n := 0
-	for _, cv := range cvv {
-		if cv == nil {
-			continue
-		}
 
-		if _, ok := c.categoryValues[cv.Value]; ok {
+	for _, cvVal := range cvVals {
+		if cv, ok := c.categoryValues[cvVal]; ok {
 			cv.category = nil
-			delete(c.categoryValues, cv.Value)
+			delete(c.categoryValues, cvVal)
 
 			n++
 		}
@@ -122,6 +120,7 @@ type CategoryValue struct {
 	// The FlowElements attribute identifies all of the elements (e.g., Events,
 	// Activities, Gateways, and Artifacts) that are within the boundaries of
 	// the Group.
+	// Map uses FlowElement Id as a key.
 	categorizedElements map[string]*flow.Element
 }
 
