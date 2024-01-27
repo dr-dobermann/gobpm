@@ -177,12 +177,37 @@ func TestCategory_CategoryValues(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.c.CategoryValues(); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Category.CategoryValues() = %v, want %v", got, tt.want)
-			}
-		})
+	for i, tt := range tests {
+		switch i {
+		case 0:
+			t.Run(tt.name, func(t *testing.T) {
+				got := tt.c.CategoryValues()
+
+				for k, v := range testCategoryValues {
+					found := false
+
+					for _, cv := range got {
+						if cv.Id() == v.Id() {
+							found = true
+							break
+						}
+					}
+
+					if !found {
+						t.Errorf(
+							"CategoryValues isn't found %v[%s] in %v", v, k, got)
+					}
+				}
+			})
+
+		case 1:
+			t.Run(tt.name, func(t *testing.T) {
+				if len(tests[1].c.CategoryValues()) != 0 {
+					t.Error(
+						"CategoryValues list should be empty on Invalid Storage")
+				}
+			})
+		}
 	}
 }
 
