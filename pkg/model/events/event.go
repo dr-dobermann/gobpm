@@ -10,16 +10,16 @@ import (
 // the trigger to catching Events: publication, direct resolution, propagation,
 // cancellations, and compensations.
 //
-// With publication a trigger MAY be received by any catching Events in any scope
-// of the system where the trigger is published. Events for which publication is
-// used are grouped to Conversations. Published Events MAY participate in several
-// Conversations. Messages are triggers, which are generated outside of the Pool
-// they are published in. They typically describe B2B communication between
-// different Processes in different Pools. When Messages need to reach a specific
-// Process instance, correlation is used to identify the particular instance.
-// Signals are triggers generated in the Pool they are published. They are
-// typically used for broadcast communication within and across Processes, across
-// Pools, and between Process diagrams.
+// With publication a trigger MAY be received by any catching Events in any
+// scope of the system where the trigger is published. Events for which
+// publication is used are grouped to Conversations. Published Events MAY
+// participate in several Conversations. Messages are triggers, which are
+// generated outside of the Pool they are published in. They typically describe
+// B2B communication between different Processes in different Pools. When
+// Messages need to reach a specific Process instance, correlation is used to
+// identify the particular instance.  Signals are triggers generated in the
+// Pool they are published. They are typically used for broadcast communication
+// within and across Processes, across Pools, and between Process diagrams.
 // Timer and Conditional triggers are implicitly thrown. When they are activated
 // they wait for a time based or status based condition respectively to trigger
 // the catch Event.
@@ -79,8 +79,33 @@ import (
 //     Output that corresponds to the EventDefinition that described that
 //     trigger.
 
+type Trigger string
+
+const (
+	// Common Start and End events triggers
+	None     Trigger = "None"
+	Message  Trigger = "Message"
+	Signal   Trigger = "Signal"
+	Multiple Trigger = "Multiple"
+
+	// Only Start events triggers
+	Timer            Trigger = "Timer"
+	Conditional      Trigger = "Conditional"
+	ParallelMultiple Trigger = "ParallelMultiple"
+
+	// Only End events triggers
+	Error        Trigger = "Error"
+	Escalation   Trigger = "Escalation"
+	Cancel       Trigger = "Cancel"
+	Compensation Trigger = "Compensation"
+	Terminate    Trigger = "Terminate"
+
+	// Only Intermediate events triggers
+	Link Trigger = "Link"
+)
+
 // *****************************************************************************
-//
+
 // Events that catch a trigger. All Start Events and some Intermediate Events
 // are catching Events.
 type Event struct {
@@ -100,7 +125,7 @@ func NewEvent(id, name string, docs ...*foundation.Documentation) *Event {
 }
 
 // *****************************************************************************
-//
+
 // vents that throw a Result. All End Events and some Intermediate Events are
 // throwing Events that MAY eventually be caught by another Event. Typically the
 // trigger carries information out of the scope where the throw Event occurred
@@ -151,6 +176,22 @@ type CatchEvent struct {
 	ParallelMultiple bool
 }
 
+// NewCatchEvent creates a new CatchEvent and returns its pointer.
+func NewCatchEvent(
+	id, name string,
+	docs ...*foundation.Documentation,
+) *CatchEvent {
+	return &CatchEvent{
+		Event:              *NewEvent(id, name, docs...),
+		DefitionsRefs:      []*Defition{},
+		Defitions:          []*Defition{},
+		OutputAssociations: []*data.Association{},
+		DataOutputs:        []*data.Output{},
+		OutputSet:          &data.OutputSet{},
+		ParallelMultiple:   false,
+	}
+}
+
 // *****************************************************************************
 type ThrowEvent struct {
 	Event
@@ -189,3 +230,20 @@ type ThrowEvent struct {
 	// The InputSet for the throw Event.
 	OutputSets []*data.OutputSet
 }
+
+// NewThrowEvent creates a new ThrowEvent and returns its pointer.
+func NewThrowEvent(
+	id, name string,
+	docs ...*foundation.Documentation,
+) *ThrowEvent {
+	return &ThrowEvent{
+		Event:             *NewEvent(id, name, docs...),
+		DefitionsRefs:     []*Defition{},
+		Defitions:         []*Defition{},
+		InputAssociations: []*data.Association{},
+		DataInputs:        []*data.Input{},
+		OutputSets:        []*data.OutputSet{},
+	}
+}
+
+// *****************************************************************************

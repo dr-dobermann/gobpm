@@ -36,7 +36,7 @@ func NewArtifact(id string, docs ...*foundation.Documentation) *Artifact {
 type Group struct {
 	foundation.BaseElement
 
-	CategoryValue CategoryValue
+	CategoryValue *CategoryValue
 }
 
 // NewGroup creates a new Group and returns its pointer
@@ -48,7 +48,7 @@ func NewGroup(
 		BaseElement: *foundation.NewBaseElement(id, docs...),
 	}
 
-	g.CategoryValue = *NewCategoryValue(g.Id(), categoryValue)
+	g.CategoryValue = NewCategoryValue(g.Id(), categoryValue)
 
 	return &g
 }
