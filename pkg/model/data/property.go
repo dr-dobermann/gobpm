@@ -13,14 +13,20 @@ type Property struct {
 	name string
 }
 
+// NewProperty creates a new Property object and returns its pointer.
 func NewProperty(
 	id, name string,
-	subj *ItemDefinition,
+	item *ItemDefinition,
 	state *DataState,
 	docs ...*foundation.Documentation,
 ) *Property {
 	return &Property{
-		ItemAwareElement: *NewItemAwareElement(id, subj, state, docs...),
+		ItemAwareElement: *NewItemAwareElement(id, item, state, docs...),
 		name:             name,
 	}
+}
+
+// Name returns the Property name.
+func (p *Property) Name() string {
+	return p.name
 }

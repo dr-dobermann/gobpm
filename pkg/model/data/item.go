@@ -41,11 +41,11 @@ type ItemDefinition struct {
 	Import *foundation.Import
 
 	// The concrete data structure to be used.
-	Structure any
+	Structure Value
 
 	// Setting this flag to true indicates that the actual data type is a
 	// collection.
-	IsCollection bool
+	isCollection bool
 }
 
 // NewItemDefinition creates a new ItemDefinition object and returns
@@ -53,18 +53,26 @@ type ItemDefinition struct {
 func NewItemDefinition(
 	id string,
 	kind ItemKind,
-	str any,
-	collection bool,
+	str Value,
 	imprt *foundation.Import,
 	docs ...*foundation.Documentation,
 ) *ItemDefinition {
-	return &ItemDefinition{
-		BaseElement:  *foundation.NewBaseElement(id, docs...),
-		Kind:         kind,
-		Import:       imprt,
-		Structure:    str,
-		IsCollection: collection,
+	it := ItemDefinition{
+		BaseElement: *foundation.NewBaseElement(id, docs...),
+		Kind:        kind,
+		Import:      imprt,
+		Structure:   str,
 	}
+
+	_, ok := str.(Collection)
+	it.isCollection = ok
+
+	return &it
+}
+
+// IsCollection returns if the ItemDefinition object is collection.
+func (idef *ItemDefinition) IsCollection() bool {
+	return idef.isCollection
 }
 
 // ******************************************************************************
@@ -95,13 +103,13 @@ type ItemAwareElement struct {
 // NewItemAwareElement creates a new DataAwareItem and returns its pointer.
 func NewItemAwareElement(
 	id string,
-	subj *ItemDefinition,
+	item *ItemDefinition,
 	state *DataState,
 	docs ...*foundation.Documentation,
 ) *ItemAwareElement {
 	return &ItemAwareElement{
 		BaseElement: *foundation.NewBaseElement(id, docs...),
-		ItemSubject: subj,
+		ItemSubject: item,
 		DataState:   *state,
 	}
 }
