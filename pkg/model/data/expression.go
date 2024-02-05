@@ -82,7 +82,7 @@ func NewFormalExpression(id, lang string,
 			return nil, &errs.ApplicationError{
 				Err:     err,
 				Message: "couldn't read body",
-				Class:   errs.InvalidObjectError,
+				Classes: []string{errs.InvalidObject},
 			}
 		}
 

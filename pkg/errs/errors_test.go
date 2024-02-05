@@ -9,7 +9,7 @@ func TestApplicationError_Error(t *testing.T) {
 	type fields struct {
 		Err     error
 		Message string
-		Class   string
+		Classes []string
 		Details map[string]string
 	}
 	tests := []struct {
@@ -22,7 +22,7 @@ func TestApplicationError_Error(t *testing.T) {
 			fields: fields{
 				Err:     nil,
 				Message: "Normal",
-				Class:   "TEST",
+				Classes: []string{"TEST"},
 				Details: map[string]string{
 					"detail1": "detail_info1",
 					"detail2": "detail_info2",
@@ -30,7 +30,7 @@ func TestApplicationError_Error(t *testing.T) {
 			},
 			want: fmt.Sprintf(
 				"%s: %s[%s]: %v",
-				"TEST", "Normal", map[string]string{
+				"[TEST]", "Normal", map[string]string{
 					"detail1": "detail_info1",
 					"detail2": "detail_info2",
 				}, nil),
@@ -42,7 +42,7 @@ func TestApplicationError_Error(t *testing.T) {
 			ap := &ApplicationError{
 				Err:     tt.fields.Err,
 				Message: tt.fields.Message,
-				Class:   tt.fields.Class,
+				Classes: tt.fields.Classes,
 				Details: tt.fields.Details,
 			}
 			if got := ap.Error(); got != tt.want {
