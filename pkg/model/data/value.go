@@ -11,4 +11,5 @@ type Collection interface {
 	GoTo(int) error
 	Next() error
 	GetAll() []any
+	Index() int
 }

@@ -83,25 +83,33 @@ type Trigger string
 
 const (
 	// Common Start and End events triggers
-	None     Trigger = "None"
-	Message  Trigger = "Message"
-	Signal   Trigger = "Signal"
-	Multiple Trigger = "Multiple"
+	TriggerNone     Trigger = "None"
+	TriggerMessage  Trigger = "Message"
+	TriggerSignal   Trigger = "Signal"
+	TriggerMultiple Trigger = "Multiple"
 
 	// Only Start events triggers
-	Timer            Trigger = "Timer"
-	Conditional      Trigger = "Conditional"
-	ParallelMultiple Trigger = "ParallelMultiple"
+	TriggerTimer            Trigger = "Timer"
+	TriggerConditional      Trigger = "Conditional"
+	TriggerParallelMultiple Trigger = "ParallelMultiple"
 
 	// Only End events triggers
-	Error        Trigger = "Error"
-	Escalation   Trigger = "Escalation"
-	Cancel       Trigger = "Cancel"
-	Compensation Trigger = "Compensation"
-	Terminate    Trigger = "Terminate"
+	TriggerError        Trigger = "Error"
+	TriggerEscalation   Trigger = "Escalation"
+	TriggerCancel       Trigger = "Cancel"
+	TriggerCompensation Trigger = "Compensation"
+	TriggerTerminate    Trigger = "Terminate"
 
 	// Only Intermediate events triggers
-	Link Trigger = "Link"
+	TriggerLink Trigger = "Link"
+)
+
+type Type string
+
+const (
+	Start        Type = "Start"
+	End          Type = "End"
+	Intermediate Type = "Intermediate"
 )
 
 // *****************************************************************************
@@ -114,6 +122,30 @@ type Event struct {
 	// Modeler-defined properties MAY be added to an Event. These properties are
 	// contained within the Event.
 	Properties []data.Property
+
+	// References the reusable EventDefinitions that are triggers expected.
+	// Reusable EventDefinitions are defined as top-level elements.
+	// These EventDefinitions can be shared by different catch and throw Events.
+	//   • If there is no EventDefinition defined, then this is considered a
+	//     catch None Event and the Event will not have an internal marker.
+	//   • If there is more than one EventDefinition defined, this is
+	//     considered a Catch Multiple Event.
+	// This is an ordered set.
+	defitionsRefs []*Definition
+
+	// Defines the event EventDefinitions that are triggers expected.
+	// These EventDefinitions are only valid inside the current Event.
+	//   • If there is no EventDefinition defined, then this is considered a
+	//     catch None Event and the Event will not have an internal marker.
+	//   • If there is more than one EventDefinition defined, this is
+	//     considered a catch Multiple Event and the Event will have the
+	//     pentagon internal marker.
+	// This is an ordered set.
+	defitions []*Definition
+
+	trigger Trigger
+
+	eventType Type
 }
 
 // NewEvent creates a new Event and returns its pointer.
@@ -122,6 +154,57 @@ func NewEvent(id, name string, docs ...*foundation.Documentation) *Event {
 		Node:       *flow.NewNode(id, name, docs...),
 		Properties: []data.Property{},
 	}
+}
+
+// Definiitons returns a copy list of event definitions either referenced or
+// internal
+func (e *Event) Definitons(references bool) []*Definition {
+	if e.defitions == nil {
+		e.defitions = []*Definition{}
+	}
+
+	if e.defitionsRefs == nil {
+		e.defitionsRefs = []*Definition{}
+	}
+
+	defs := []*Definition{}
+	if references {
+		for _, d := range e.defitionsRefs {
+			defs = append(defs, d)
+		}
+	} else {
+		for _, d := range e.defitions {
+			defs = append(defs, d)
+		}
+	}
+
+	return defs
+}
+
+// Check tests if the Event definition is equal to cd.
+func (e *Event) Check(cd Checker) bool {
+	for _, d := range e.defitionsRefs {
+		if cd.Check(d) {
+			return true
+		}
+	}
+
+	for _, d := range e.defitions {
+		if cd.Check(d) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// Trigger returns the Event trigger type.
+func (e *Event) Trigger() Trigger {
+	return e.trigger
+}
+
+func (e *Event) Type() Type {
+	return e.eventType
 }
 
 // *****************************************************************************
@@ -134,27 +217,6 @@ func NewEvent(id, name string, docs ...*foundation.Documentation) *Event {
 // by a throw Event.
 type CatchEvent struct {
 	Event
-
-	// References the reusable EventDefinitions that are triggers expected for a
-	// catch Event. Reusable EventDefinitions are defined as top-level elements.
-	// These EventDefinitions can be shared by different catch and throw Events.
-	//   • If there is no EventDefinition defined, then this is considered a
-	//     catch None Event and the Event will not have an internal marker.
-	//   • If there is more than one EventDefinition defined, this is
-	//     considered a Catch Multiple Event and the Event will have the pentagon
-	//     internal marker (see Figure 10.90).
-	// This is an ordered set.
-	DefitionsRefs []*Defition
-
-	// Defines the event EventDefinitions that are triggers expected for a catch
-	// Event. These EventDefinitions are only valid inside the current Event.
-	//   • If there is no EventDefinition defined, then this is considered a
-	//     catch None Event and the Event will not have an internal marker.
-	//   • If there is more than one EventDefinition defined, this is
-	//     considered a catch Multiple Event and the Event will have the
-	//     pentagon internal marker.
-	// This is an ordered set.
-	Defitions []*Defition
 
 	// The Data Associations of the catch Event. The dataOutputAssociation of a
 	// catch Event is used to assign data from the Event to a data element that
@@ -183,8 +245,6 @@ func NewCatchEvent(
 ) *CatchEvent {
 	return &CatchEvent{
 		Event:              *NewEvent(id, name, docs...),
-		DefitionsRefs:      []*Defition{},
-		Defitions:          []*Defition{},
 		OutputAssociations: []*data.Association{},
 		DataOutputs:        []*data.Output{},
 		OutputSet:          &data.OutputSet{},
@@ -195,27 +255,6 @@ func NewCatchEvent(
 // *****************************************************************************
 type ThrowEvent struct {
 	Event
-
-	// References the reusable EventDefinitions that are triggers expected for a
-	// catch Event. Reusable EventDefinitions are defined as top-level elements.
-	// These EventDefinitions can be shared by different catch and throw Events.
-	//   • If there is no EventDefinition defined, then this is considered a
-	//     catch None Event and the Event will not have an internal marker.
-	//   • If there is more than one EventDefinition defined, this is
-	//     considered a Catch Multiple Event and the Event will have the pentagon
-	//     internal marker (see Figure 10.90).
-	// This is an ordered set.
-	DefitionsRefs []*Defition
-
-	// Defines the event EventDefinitions that are triggers expected for a catch
-	// Event. These EventDefinitions are only valid inside the current Event.
-	//   • If there is no EventDefinition defined, then this is considered a
-	//     catch None Event and the Event will not have an internal marker.
-	//   • If there is more than one EventDefinition defined, this is
-	//     considered a catch Multiple Event and the Event will have the
-	//     pentagon internal marker.
-	// This is an ordered set.
-	Defitions []*Defition
 
 	// The Data Associations of the throw Event. The dataInputAssociation of a
 	// throw Event is responsible for the assignment of a data element that is
@@ -238,8 +277,6 @@ func NewThrowEvent(
 ) *ThrowEvent {
 	return &ThrowEvent{
 		Event:             *NewEvent(id, name, docs...),
-		DefitionsRefs:     []*Defition{},
-		Defitions:         []*Defition{},
 		InputAssociations: []*data.Association{},
 		DataInputs:        []*data.Input{},
 		OutputSets:        []*data.OutputSet{},
