@@ -118,3 +118,63 @@ func TestRemove(t *testing.T) {
 			})
 	}
 }
+
+func TestCount(t *testing.T) {
+	cases := []struct {
+		name   string
+		params []int
+		result int
+	}{
+		{
+			name:   "empty",
+			params: []int{},
+			result: 0,
+		},
+		{
+			name:   "non-empty",
+			params: []int{1, 2, 3},
+			result: 3,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(
+			c.name,
+			func(t *testing.T) {
+				s := set.New[int](c.params...)
+
+				require.Equal(t, c.result, s.Count())
+			})
+	}
+}
+
+func TestClear(t *testing.T) {
+	cases := []struct {
+		name   string
+		params []int
+		result int
+	}{
+		{
+			name:   "empty",
+			params: []int{},
+			result: 0,
+		},
+		{
+			name:   "non-empty",
+			params: []int{1, 2, 3},
+			result: 0,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(
+			c.name,
+			func(t *testing.T) {
+				s := set.New[int](c.params...)
+
+				s.Clear()
+
+				require.Equal(t, c.result, s.Count())
+			})
+	}
+}

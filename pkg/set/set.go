@@ -20,6 +20,17 @@ func New[T comparable](values ...T) *Set[T] {
 	return &s
 }
 
+// Count returns number of Set elements.
+func (s *Set[T]) Count() int {
+
+	return len(s.elements)
+}
+
+// Clear removes all elements from the Set.
+func (s *Set[T]) Clear() {
+	s.elements = []T{}
+}
+
 // Has checks if Set has the value.
 func (s *Set[T]) Has(value T) bool {
 	for _, e := range s.elements {
