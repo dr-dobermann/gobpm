@@ -9,10 +9,10 @@ import (
 type Escalation struct {
 	foundation.BaseElement
 
-	Name string
-	Code string
+	name string
+	code string
 
-	Structure *data.ItemDefinition
+	structure *data.ItemDefinition
 }
 
 // NewEscalation creates a new Escalation object and returns its pointer.
@@ -23,17 +23,36 @@ func NewEscalation(
 ) *Escalation {
 	return &Escalation{
 		BaseElement: *foundation.NewBaseElement(id, docs...),
-		Name:        name,
-		Code:        code,
-		Structure:   item,
+		name:        name,
+		code:        code,
+		structure:   item,
 	}
 }
 
 // *****************************************************************************
 type EscalationEventDefinition struct {
-	Definition
+	definition
 
 	// If the trigger is an Escalation, then an Escalation payload MAY be
 	// provided.
-	EscalationRef *Escalation
+	escalation *Escalation
+}
+
+// Type implememnts Definition interface for EscalationEventDefinition.
+func (e *EscalationEventDefinition) Type() Trigger {
+	return TriggerEscalation
+}
+
+// NewEscalationEventDefintion creates a new EscalationEventDefintion and
+// returns its pointer.
+func NewEscalationEventDefintion(
+	id string,
+	escalation *Escalation,
+	docs ...*foundation.Documentation,
+) *EscalationEventDefinition {
+
+	return &EscalationEventDefinition{
+		definition: *newDefinition(id, docs...),
+		escalation: escalation,
+	}
 }

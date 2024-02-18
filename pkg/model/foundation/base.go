@@ -6,6 +6,16 @@ const (
 	defaultDocFormat = "text/plain"
 )
 
+type (
+	Identifyer interface {
+		Id() string
+	}
+
+	Documentator interface {
+		Docs() []Documentation
+	}
+)
+
 // *****************************************************************************
 
 // All BPMN elements that inherit from the BaseElement will have the capability,
@@ -82,10 +92,12 @@ func NewBaseElement(id string, docs ...*Documentation) *BaseElement {
 
 // Id returns the BaseElement Id.
 func (be BaseElement) Id() string {
+
 	return be.id
 }
 
 // Docs returns the copy of BaseElement documentation.
 func (be BaseElement) Docs() []Documentation {
+
 	return append([]Documentation{}, be.docs...)
 }

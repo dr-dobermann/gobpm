@@ -1,6 +1,9 @@
 package events
 
-import "github.com/dr-dobermann/gobpm/pkg/model/acivities"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/model/acivities"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+)
 
 // Compensation Events are used in the context of triggering or handling
 // compensation (see page 301 for more details on compensation). There are four
@@ -13,7 +16,7 @@ import "github.com/dr-dobermann/gobpm/pkg/model/acivities"
 //   - The throw Compensation Intermediate Event MAY be used in normal flow.
 //   - The Compensation End Event MAY be used within any Sub-Process or Process.
 type CompensationEventDefinition struct {
-	Definition
+	definition
 
 	// For a Start Event:
 	//   This Event “catches” the compensation for an Event Sub-Process. No
@@ -39,8 +42,30 @@ type CompensationEventDefinition struct {
 	acitivityRef *acivities.Activity
 
 	// For a throw Compensation Event, this flag determines whether the throw
-	// Intermediate Event waits for the triggered compensation to complete 
-	// (the default), or just triggers the compensation and immediately 
+	// Intermediate Event waits for the triggered compensation to complete
+	// (the default), or just triggers the compensation and immediately
 	// continues.
 	waitForCompensation bool
+}
+
+// Type implements the Definition interface.
+func (*CompensationEventDefinition) Type() Trigger {
+
+	return TriggerError
+}
+
+// NewCompensationEventDefinition creates a new CompensationEventDefinition
+// and reterns its pointer.
+func NewCompensationEventDefinition(
+	id string,
+	activity *acivities.Activity,
+	wait4compensation bool,
+	docs ...*foundation.Documentation,
+) *CompensationEventDefinition {
+
+	return &CompensationEventDefinition{
+		definition:          *newDefinition(id, docs...),
+		acitivityRef:        activity,
+		waitForCompensation: wait4compensation,
+	}
 }
