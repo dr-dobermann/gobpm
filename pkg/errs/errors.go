@@ -5,9 +5,10 @@ import (
 )
 
 const (
-	InvalidObject  = "INVALID_OBJECT"
-	NilDereference = "NIL_DEREF"
-	ObjectBuliding = "OBJ_BUILDING"
+	InvalidObject    = "INVALID_OBJECT"
+	NilDereference   = "NIL_DEREFERENCE"
+	BulidingFailed   = "BUILDING_FAILED"
+	InvalidParameter = "INVALID_PARAMETER"
 )
 
 type ApplicationError struct {
@@ -18,6 +19,6 @@ type ApplicationError struct {
 }
 
 func (ap *ApplicationError) Error() string {
-	return fmt.Sprintf("%v: %s[%s]: %v",
+	return fmt.Sprintf("%v: %s[%v]: %v",
 		ap.Classes, ap.Message, ap.Details, ap.Err)
 }

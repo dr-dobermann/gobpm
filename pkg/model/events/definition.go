@@ -2,27 +2,28 @@ package events
 
 import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
 
-type Checker interface {
-	// Check tests if the def is equal to the object implemented the
-	// function.
-	Check(def *Definition) bool
+type Definition interface {
+	foundation.Identifyer
+	foundation.Documentator
+
+	Type() Trigger
 }
 
-// Definition is the base class for define an Event.
-type Definition struct {
+// definition is the base class for define an Event.
+type definition struct {
 	foundation.BaseElement
 }
 
-// NewDefinition creates a new Event Definition and returns its pointer.
-func NewDefinition(id string, docs ...*foundation.Documentation) *Definition {
+// newDefinition creates a new Event Definition and returns its pointer.
+func newDefinition(id string, docs ...*foundation.Documentation) *definition {
 
-	return &Definition{
+	return &definition{
 		BaseElement: *foundation.NewBaseElement(id, docs...),
 	}
 }
 
 // Check implements Checker interface for Definition
-func (d *Definition) Check(def *Definition) bool {
+func (d *definition) Check(def *definition) bool {
 
 	return d.Id() == def.Id()
 }
