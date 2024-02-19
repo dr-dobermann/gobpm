@@ -33,15 +33,15 @@ type ItemDefinition struct {
 
 	// This defines the nature of the Item. Possible values are physical or
 	// information. The default value is information.
-	Kind ItemKind
+	kind ItemKind
 
 	// Identifies the location of the data structure and its format. If the
 	// importType attribute is left unspecified, the typeLanguage specified
 	// in the Definitions that contains this ItemDefinition is assumed
-	Import *foundation.Import
+	importRef *foundation.Import
 
 	// The concrete data structure to be used.
-	Structure Value
+	structure Value
 
 	// Setting this flag to true indicates that the actual data type is a
 	// collection.
@@ -86,6 +86,21 @@ func MustItemDefinition(value Value, opts ...ItemOption) *ItemDefinition {
 	}
 
 	return iDef
+}
+
+// Kind returns kind of the ItemDefinition.
+func (idef *ItemDefinition) Kind() ItemKind {
+	return idef.kind
+}
+
+// Import returns import definition for the ItemDefinition.
+func (idef *ItemDefinition) Import() *foundation.Import {
+	return idef.importRef
+}
+
+// Value returns the ItemDefinition value.
+func (idef *ItemDefinition) Structure() Value {
+	return idef.structure
 }
 
 // IsCollection returns if the ItemDefinition object is collection.

@@ -1,6 +1,9 @@
 package data
 
-import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+)
 
 type (
 	// ItemOption interface used to declare ItemDefinition object option.
@@ -24,18 +27,16 @@ type (
 
 // apply implements ItemOption interface for itemOption functor.
 func (o itemOption) apply(cfg *itemConfig) error {
-
 	return o(cfg)
 }
 
 // itemDefBuild builds ItemDefinition object from the itemConfig.
 func (ic *itemConfig) itemDef() *ItemDefinition {
-
 	return &ItemDefinition{
 		BaseElement:  *foundation.NewBaseElement(ic.id, ic.docs...),
-		Kind:         ic.kind,
-		Import:       ic.imp,
-		Structure:    ic.str,
+		kind:         ic.kind,
+		importRef:    ic.imp,
+		structure:    ic.str,
 		isCollection: ic.collection,
 	}
 }
@@ -65,6 +66,18 @@ func SetDocumentation(docs ...*foundation.Documentation) ItemOption {
 // SetKind sets kind of an ItemDefintion.
 func SetKind(kind ItemKind) ItemOption {
 	f := func(cfg *itemConfig) error {
+		if kind != Information && kind != Physical {
+			return &errs.ApplicationError{
+				Message: "kind could be ony Information or Physical",
+				Classes: []string{
+					errorClass,
+					errs.InvalidParameter,
+				},
+				Details: map[string]string{
+					"kind": string(kind),
+				},
+			}
+		}
 		cfg.kind = kind
 
 		return nil

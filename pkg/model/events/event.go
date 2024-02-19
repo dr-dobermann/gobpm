@@ -83,7 +83,7 @@ import (
 //     Output that corresponds to the EventDefinition that described that
 //     trigger.
 
-const eventErrorClass = "EVENTS"
+const eventErrorClass = "EVENTS_ERRORS"
 
 type Trigger string
 
@@ -175,7 +175,8 @@ func newEvent(
 			Message: "event properties copying failed",
 			Classes: []string{
 				eventErrorClass,
-				errs.BulidingFailed},
+				errs.BulidingFailed,
+			},
 			Details: map[string]string{
 				"want": strconv.Itoa(len(props)),
 				"got":  strconv.Itoa(n),
@@ -189,7 +190,8 @@ func newEvent(
 			Message: "event definiiton references copying failed",
 			Classes: []string{
 				eventErrorClass,
-				errs.BulidingFailed},
+				errs.BulidingFailed,
+			},
 			Details: map[string]string{
 				"want": strconv.Itoa(len(defRef)),
 				"got":  strconv.Itoa(n),
@@ -203,7 +205,8 @@ func newEvent(
 			Message: "event definiitons copying failed",
 			Classes: []string{
 				eventErrorClass,
-				errs.BulidingFailed},
+				errs.BulidingFailed,
+			},
 			Details: map[string]string{
 				"want": strconv.Itoa(len(defs)),
 				"got":  strconv.Itoa(n),
@@ -225,7 +228,6 @@ func newEvent(
 
 // Properties returns a copy of the Event properties.
 func (e *Event) Properties() []data.Property {
-
 	return append([]data.Property{}, e.properties...)
 }
 
@@ -241,7 +243,6 @@ func (e *Event) Definitions(references bool) []Definition {
 
 // Triggers returns the Event triggers.
 func (e *Event) Triggers() []Trigger {
-
 	return e.triggers.All()
 }
 
