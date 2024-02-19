@@ -107,6 +107,10 @@ func NewItemAwareElement(
 	state *DataState,
 	docs ...*foundation.Documentation,
 ) *ItemAwareElement {
+	if state == nil {
+		state = &defaultDataState
+	}
+
 	return &ItemAwareElement{
 		BaseElement: *foundation.NewBaseElement(id, docs...),
 		ItemSubject: item,

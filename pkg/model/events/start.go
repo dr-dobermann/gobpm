@@ -15,7 +15,7 @@ var startTriggers = set.New[Trigger](
 )
 
 type StartEvent struct {
-	CatchEvent
+	catchEvent
 
 	// This attribute only applies to Start Events of Event Sub-Processes; it is
 	// ignored for other Start Events. This attribute denotes whether the
@@ -79,7 +79,7 @@ func NewStartEvent(
 	}
 
 	se := StartEvent{
-		CatchEvent:    *ce,
+		catchEvent:    *ce,
 		interrrupting: interrupting,
 	}
 

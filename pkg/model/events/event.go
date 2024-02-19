@@ -114,6 +114,11 @@ const (
 	TriggerLink Trigger = "Link"
 )
 
+const (
+	ShowDefinitionReferences = true
+	ShowDefinitions          = false
+)
+
 // *****************************************************************************
 
 // Events that catch a trigger. All Start Events and some Intermediate Events
@@ -220,38 +225,18 @@ func newEvent(
 
 // Properties returns a copy of the Event properties.
 func (e *Event) Properties() []data.Property {
-	props := make([]data.Property, len(e.properties))
 
-	for i, p := range e.properties {
-		props[i] = p
-	}
-
-	return props
+	return append([]data.Property{}, e.properties...)
 }
 
 // Definiitons returns a copy list of event definitions either referenced or
 // internal.
 func (e *Event) Definitions(references bool) []Definition {
-	if e.defitions == nil {
-		e.defitions = []Definition{}
-	}
-
-	if e.defitionsRefs == nil {
-		e.defitionsRefs = []Definition{}
-	}
-
-	defs := []Definition{}
 	if references {
-		for _, d := range e.defitionsRefs {
-			defs = append(defs, d)
-		}
-	} else {
-		for _, d := range e.defitions {
-			defs = append(defs, d)
-		}
+		return append([]Definition{}, e.defitionsRefs...)
 	}
 
-	return defs
+	return append([]Definition{}, e.defitions...)
 }
 
 // Triggers returns the Event triggers.
@@ -268,7 +253,7 @@ func (e *Event) Triggers() []Trigger {
 // into the scope of the catching Events. The throwing of a trigger MAY be
 // either implicit as defined by this standard or an extension to it or explicit
 // by a throw Event.
-type CatchEvent struct {
+type catchEvent struct {
 	Event
 
 	// The Data Associations of the catch Event. The dataOutputAssociation of a
@@ -291,20 +276,20 @@ type CatchEvent struct {
 	parallelMultiple bool
 }
 
-// NewCatchEvent creates a new CatchEvent and returns its pointer.
+// NewCatchEvent creates a new catchEvent and returns its pointer.
 func newCatchEvent(
 	id, name string,
 	props []data.Property,
 	defRef []Definition,
 	defs []Definition,
 	docs ...*foundation.Documentation,
-) (*CatchEvent, error) {
+) (*catchEvent, error) {
 	e, err := newEvent(id, name, props, defRef, defs, docs...)
 	if err != nil {
 		return nil, err
 	}
 
-	return &CatchEvent{
+	return &catchEvent{
 		Event:              *e,
 		OutputAssociations: []*data.Association{},
 		dataOutputs:        []*data.Output{},
@@ -313,7 +298,7 @@ func newCatchEvent(
 }
 
 // *****************************************************************************
-type ThrowEvent struct {
+type throwEvent struct {
 	Event
 
 	// The Data Associations of the throw Event. The dataInputAssociation of a
@@ -330,20 +315,20 @@ type ThrowEvent struct {
 	outputSets []*data.OutputSet
 }
 
-// NewThrowEvent creates a new ThrowEvent and returns its pointer.
+// NewThrowEvent creates a new throwEvent and returns its pointer.
 func newThrowEvent(
 	id, name string,
 	props []data.Property,
 	defRef []Definition,
 	defs []Definition,
 	docs ...*foundation.Documentation,
-) (*ThrowEvent, error) {
+) (*throwEvent, error) {
 	e, err := newEvent(id, name, props, defRef, defs, docs...)
 	if err != nil {
 		return nil, err
 	}
 
-	return &ThrowEvent{
+	return &throwEvent{
 		Event:             *e,
 		InputAssociations: []*data.Association{},
 		dataInputs:        []*data.Input{},

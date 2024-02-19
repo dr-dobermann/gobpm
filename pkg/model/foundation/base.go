@@ -14,6 +14,10 @@ type (
 	Documentator interface {
 		Docs() []Documentation
 	}
+
+	Namer interface {
+		Name() string
+	}
 )
 
 // *****************************************************************************
