@@ -31,8 +31,7 @@ func TestNewStartEvent(t *testing.T) {
 			se, err := events.NewStartEvent("",
 				"NoneTrigger", []data.Property{
 					*data.NewProperty("", "none_event_value",
-						data.NewItemDefinition("", data.Information,
-							nil, nil),
+						data.MustItemDefinition(nil),
 						nil),
 				}, nil, nil, true, true)
 

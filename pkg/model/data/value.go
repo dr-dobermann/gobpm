@@ -12,4 +12,5 @@ type Collection interface {
 	Next() error
 	GetAll() []any
 	Index() int
+	Clear() error
 }

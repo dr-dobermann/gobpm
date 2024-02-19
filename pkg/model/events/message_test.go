@@ -18,10 +18,7 @@ func TestNewMessageEventDefintion(t *testing.T) {
 				common.NewMessage(
 					"",
 					"test_messag",
-					data.NewItemDefinition(
-						"",
-						data.Information,
-						nil, nil)),
+					data.MustItemDefinition(nil)),
 				nil)
 			require.NotNil(t, med, "message shouldn't be empty")
 			require.NoError(t, err)

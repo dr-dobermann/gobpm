@@ -51,23 +51,41 @@ type ItemDefinition struct {
 // NewItemDefinition creates a new ItemDefinition object and returns
 // its pointer.
 func NewItemDefinition(
-	id string,
-	kind ItemKind,
-	str Value,
-	imprt *foundation.Import,
-	docs ...*foundation.Documentation,
-) *ItemDefinition {
-	it := ItemDefinition{
-		BaseElement: *foundation.NewBaseElement(id, docs...),
-		Kind:        kind,
-		Import:      imprt,
-		Structure:   str,
+	value Value,
+	opts ...ItemOption,
+) (*ItemDefinition, error) {
+	cfg := itemConfig{
+		id:         "",
+		docs:       []*foundation.Documentation{},
+		kind:       Information,
+		str:        value,
+		collection: false,
 	}
 
-	_, ok := str.(Collection)
-	it.isCollection = ok
+	// check if value is a collection
+	if value != nil {
+		_, ok := value.(Collection)
+		cfg.collection = ok
+	}
 
-	return &it
+	for _, opt := range opts {
+		if err := opt.apply(&cfg); err != nil {
+			return nil, err
+		}
+	}
+
+	return cfg.itemDef(), nil
+}
+
+// MustItemDefinition tries to create a new ItemDefinition and returns its
+// pointer on success or fires panic on error.
+func MustItemDefinition(value Value, opts ...ItemOption) *ItemDefinition {
+	iDef, err := NewItemDefinition(value, opts...)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	return iDef
 }
 
 // IsCollection returns if the ItemDefinition object is collection.
