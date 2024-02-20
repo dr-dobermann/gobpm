@@ -51,7 +51,7 @@ type CompensationEventDefinition struct {
 // Type implements the Definition interface.
 func (*CompensationEventDefinition) Type() Trigger {
 
-	return TriggerError
+	return TriggerCompensation
 }
 
 // NewCompensationEventDefinition creates a new CompensationEventDefinition

@@ -11,13 +11,13 @@ import (
 func TestItemDefinition(t *testing.T) {
 	t.Run("new_with_defaults",
 		func(t *testing.T) {
-			id, err := data.NewItemDefinition(nil, data.SetId("test_id"))
+			id, err := data.NewItemDefinition(nil)
 
 			require.NoError(t, err)
 			require.Equal(t, data.Information, id.Kind())
 			require.Equal(t, false, id.IsCollection())
 			require.Equal(t, nil, id.Structure())
-			require.Equal(t, "test_id", id.Id())
+			require.NotEqual(t, "", id.Id())
 		})
 
 	t.Run("new_with_all_settings",

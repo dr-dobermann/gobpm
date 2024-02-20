@@ -1,6 +1,8 @@
 package common
 
 import (
+	"strings"
+
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
@@ -21,6 +23,11 @@ func NewMessage(
 	item *data.ItemDefinition,
 	docs ...*foundation.Documentation,
 ) *Message {
+	name = strings.Trim(name, " ")
+
+	if id == "" && name != "" {
+		id = "msg_" + name
+	}
 	return &Message{
 		BaseElement: *foundation.NewBaseElement(id, docs...),
 		name:        name,

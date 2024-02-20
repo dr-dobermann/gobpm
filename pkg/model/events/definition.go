@@ -21,9 +21,3 @@ func newDefinition(id string, docs ...*foundation.Documentation) *definition {
 		BaseElement: *foundation.NewBaseElement(id, docs...),
 	}
 }
-
-// Check implements Checker interface for Definition
-func (d *definition) Check(def *definition) bool {
-
-	return d.Id() == def.Id()
-}

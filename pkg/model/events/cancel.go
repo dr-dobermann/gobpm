@@ -17,7 +17,7 @@ type CancelEventDefinition struct {
 // Type implements the Definition interface.
 func (*CancelEventDefinition) Type() Trigger {
 
-	return TriggerError
+	return TriggerCancel
 }
 
 // NewCancelEventDefinition creates a new CancelEventDefinition and returns
