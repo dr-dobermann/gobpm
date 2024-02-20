@@ -30,13 +30,13 @@ type Category struct {
 }
 
 // NewCategory creates a new Category and returns its pointer
-func NewCategory(id, name string, docs ...*foundation.Documentation) *Category {
+func NewCategory(name string, baseOpts ...foundation.BaseOption) *Category {
 	if name == "" {
 		name = unspecifiedCategory
 	}
 
 	return &Category{
-		BaseElement:    *foundation.NewBaseElement(id, docs...),
+		BaseElement:    *foundation.MustBaseElement(baseOpts...),
 		Name:           name,
 		categoryValues: map[string]*CategoryValue{},
 	}
@@ -126,15 +126,15 @@ type CategoryValue struct {
 
 // NewCategoryValue creates a new CategoryValue and returns its pointer.
 func NewCategoryValue(
-	id, value string,
-	docs ...*foundation.Documentation,
+	value string,
+	baseOpts ...foundation.BaseOption,
 ) *CategoryValue {
 	if value == "" {
 		value = undefinedCategoryValue
 	}
 
 	return &CategoryValue{
-		BaseElement:         *foundation.NewBaseElement(id, docs...),
+		BaseElement:         *foundation.MustBaseElement(baseOpts...),
 		Value:               value,
 		categorizedElements: map[string]*flow.Element{},
 	}

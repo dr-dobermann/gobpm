@@ -26,10 +26,9 @@ func (*MessageEventDefinition) Type() Trigger {
 // NewMessageEventDefinition creates a new MessageEventDefinition and
 // returns its pointer. If nil message was given then error returned.
 func NewMessageEventDefintion(
-	id string,
 	msg *common.Message,
 	operation *service.Operation,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) (*MessageEventDefinition, error) {
 	if msg == nil {
 		return nil,
@@ -43,7 +42,7 @@ func NewMessageEventDefintion(
 	}
 
 	return &MessageEventDefinition{
-		definition: *newDefinition(id, docs...),
+		definition: *newDefinition(baseOpts...),
 		message:    msg,
 		operation:  operation,
 	}, nil
@@ -52,12 +51,11 @@ func NewMessageEventDefintion(
 // MustMessageEventDefinition returns new MessageEventDefinition. If there is
 // error occured, then panic fired.
 func MustMessageEventDefinition(
-	id string,
 	msg *common.Message,
 	operation *service.Operation,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) *MessageEventDefinition {
-	med, err := NewMessageEventDefintion(id, msg, operation, docs...)
+	med, err := NewMessageEventDefintion(msg, operation, baseOpts...)
 	if err != nil {
 		panic(err.Error())
 	}

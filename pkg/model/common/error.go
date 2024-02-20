@@ -35,12 +35,12 @@ type Error struct {
 }
 
 // NewError creates a new error object.
-func NewError(id, name, code string,
+func NewError(name, code string,
 	str *data.ItemDefinition,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) *Error {
 	return &Error{
-		BaseElement: *foundation.NewBaseElement(id, docs...),
+		BaseElement: *foundation.MustBaseElement(baseOpts...),
 		name:        name,
 		errorCode:   code,
 		structure:   str,

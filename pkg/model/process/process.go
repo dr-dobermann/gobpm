@@ -25,12 +25,12 @@ type Process struct {
 
 // NewProcess creates a new Process and returns its pointer.
 func NewProcess(
-	id, name string,
-	docs ...*foundation.Documentation,
+	name string,
+	baseOpts ...foundation.BaseOption,
 ) *Process {
 	return &Process{
-		CallableElement:          *common.NewCallableElement(id, name, docs...),
-		ElementsContainer:        *flow.NewContainer(id, docs...),
+		CallableElement:          *common.NewCallableElement(name, baseOpts...),
+		ElementsContainer:        *flow.NewContainer(baseOpts...),
 		Properties:               []*data.Property{},
 		CorrelationSubscriptions: []*common.CorrelationSubscription{},
 	}

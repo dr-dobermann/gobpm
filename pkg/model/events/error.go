@@ -21,13 +21,12 @@ func (*ErrorEventDefinition) Type() Trigger {
 // NewErrorEventDefinition creates a new ErrorEventDefinition and returns
 // its pointer.
 func NewErrorEventDefinition(
-	id string,
 	err *common.Error,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) *ErrorEventDefinition {
 
 	return &ErrorEventDefinition{
-		definition: *newDefinition(id, docs...),
+		definition: *newDefinition(baseOpts...),
 		err:        err,
 	}
 }

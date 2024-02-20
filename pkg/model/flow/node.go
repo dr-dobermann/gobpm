@@ -20,9 +20,12 @@ type Node struct {
 }
 
 // NewNode creates a new node and returns its pointer.
-func NewNode(id, name string, docs ...*foundation.Documentation) *Node {
+func NewNode(
+	name string,
+	baseOpts ...foundation.BaseOption,
+) *Node {
 	return &Node{
-		Element:   *NewElement(id, name, docs...),
+		Element:   *NewElement(name, baseOpts...),
 		Incoming:  []*SequenceFlow{},
 		Outcoming: []*SequenceFlow{},
 	}

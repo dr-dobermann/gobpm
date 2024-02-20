@@ -57,14 +57,13 @@ func (*CompensationEventDefinition) Type() Trigger {
 // NewCompensationEventDefinition creates a new CompensationEventDefinition
 // and reterns its pointer.
 func NewCompensationEventDefinition(
-	id string,
 	activity *acivities.Activity,
 	wait4compensation bool,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) *CompensationEventDefinition {
 
 	return &CompensationEventDefinition{
-		definition:          *newDefinition(id, docs...),
+		definition:          *newDefinition(baseOpts...),
 		acitivityRef:        activity,
 		waitForCompensation: wait4compensation,
 	}

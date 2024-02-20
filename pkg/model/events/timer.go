@@ -45,9 +45,8 @@ func (*TimerEventDefinition) Type() Trigger {
 // pointer if there are no questions to timer parameters.
 // If parameters arent' consistent then error returned.
 func NewTimerEventDefinition(
-	id string,
 	tDate, tCycle, tDuration *data.Expression,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) (*TimerEventDefinition, error) {
 	if (tDate != nil && (tCycle != nil || tDuration != nil)) ||
 		(tCycle != nil && tDuration != nil) {
@@ -59,14 +58,11 @@ func NewTimerEventDefinition(
 					eventErrorClass,
 					errs.InvalidParameter,
 				},
-				Details: map[string]string{
-					"timer_event_definition_id": id,
-				},
 			}
 	}
 
 	return &TimerEventDefinition{
-		definition:   *newDefinition(id, docs...),
+		definition:   *newDefinition(baseOpts...),
 		timeDate:     tDate,
 		timeCycle:    tCycle,
 		timeDuration: tDuration,
@@ -76,11 +72,10 @@ func NewTimerEventDefinition(
 // MustTimerEventDefinition tries to create a new TimerEventDefinition.
 // If error occurs, then panic fired.
 func MustTimerEventDefinition(
-	id string,
 	tDate, tCycle, tDuration *data.Expression,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) *TimerEventDefinition {
-	ted, err := NewTimerEventDefinition(id, tDate, tCycle, tDuration, docs...)
+	ted, err := NewTimerEventDefinition(tDate, tCycle, tDuration, baseOpts...)
 	if err != nil {
 		panic(err.Error())
 	}

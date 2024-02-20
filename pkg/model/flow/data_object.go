@@ -28,16 +28,16 @@ type DataObject struct {
 
 // NewDataOpject creates and returns a new DataObject and returns its pointer.
 func NewDataOpject(
-	id, name string,
+	name string,
 	idef *data.ItemDefinition,
 	state *data.DataState,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) *DataObject {
 	do := DataObject{
-		ItemAwareElement: *data.NewItemAwareElement(id, idef, state, docs...),
+		ItemAwareElement: *data.NewItemAwareElement(idef, state, baseOpts...),
 	}
 
-	do.Element = *NewElement(do.ItemAwareElement.Id(), name, docs...)
+	do.Element = *NewElement(name, foundation.WithId(do.ItemAwareElement.Id()))
 
 	return &do
 }

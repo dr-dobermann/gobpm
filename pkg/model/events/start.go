@@ -30,13 +30,13 @@ type StartEvent struct {
 // NewStartEvent creates a new StartEvent and returns its pointer on success
 // or error if any.
 func NewStartEvent(
-	id, name string,
+	name string,
 	props []data.Property,
 	defRef []Definition,
 	defs []Definition,
 	parallel bool,
 	interrupting bool,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) (*StartEvent, error) {
 	// check event definitions to comply with StartEvent triggers.
 	for _, d := range defRef {
@@ -73,7 +73,7 @@ func NewStartEvent(
 		}
 	}
 
-	ce, err := newCatchEvent(id, name, props, defRef, defs, docs...)
+	ce, err := newCatchEvent(name, props, defRef, defs, baseOpts...)
 	if err != nil {
 		return nil, err
 	}

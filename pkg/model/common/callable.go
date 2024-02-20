@@ -10,11 +10,11 @@ type CallableElement struct {
 
 // NewCallableElement creates a new element and return its pointer.
 func NewCallableElement(
-	id, name string,
-	docs ...*foundation.Documentation,
+	name string,
+	baseOpts ...foundation.BaseOption,
 ) *CallableElement {
 	return &CallableElement{
-		BaseElement: *foundation.NewBaseElement(id, docs...),
+		BaseElement: *foundation.MustBaseElement(baseOpts...),
 		Name:        name,
 	}
 }

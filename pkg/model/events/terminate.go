@@ -15,11 +15,10 @@ func (*TerminateEventDefinition) Type() Trigger {
 // NewTerminateEventDefinition creates a new TerminateEventDefinition
 // and returns its pointer.
 func NewTerminateEventDefinition(
-	id string,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) *TerminateEventDefinition {
 
 	return &TerminateEventDefinition{
-		definition: *newDefinition(id, docs...),
+		definition: *newDefinition(baseOpts...),
 	}
 }

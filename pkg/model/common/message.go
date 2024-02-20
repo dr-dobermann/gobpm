@@ -19,17 +19,14 @@ type Message struct {
 
 // NewMessage creates a new Message object and returns its pointer.
 func NewMessage(
-	id, name string,
+	name string,
 	item *data.ItemDefinition,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) *Message {
 	name = strings.Trim(name, " ")
 
-	if id == "" && name != "" {
-		id = "msg_" + name
-	}
 	return &Message{
-		BaseElement: *foundation.NewBaseElement(id, docs...),
+		BaseElement: *foundation.MustBaseElement(baseOpts...),
 		name:        name,
 		Item:        item,
 	}

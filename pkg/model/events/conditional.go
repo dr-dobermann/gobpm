@@ -24,9 +24,8 @@ func (*ConditionalEventDefinition) Type() Trigger {
 // NewConditionalEventDefinition creates a new ConditionalEventDefinition
 // if condition isn't nil. Otherwise it returns error.
 func NewConditionalEventDefinition(
-	id string,
 	condition *data.Expression,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) (*ConditionalEventDefinition, error) {
 	if condition == nil {
 		return nil,
@@ -40,7 +39,7 @@ func NewConditionalEventDefinition(
 	}
 
 	return &ConditionalEventDefinition{
-		definition: *newDefinition(id, docs...),
+		definition: *newDefinition(baseOpts...),
 		condition:  condition,
 	}, nil
 }
@@ -48,11 +47,10 @@ func NewConditionalEventDefinition(
 // MustConditionalEventDefinition tries to create a new
 // ConditionalEventDefinition. If error occured, it fires panic.
 func MustConditionalEventDefinition(
-	id string,
 	condition *data.Expression,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) *ConditionalEventDefinition {
-	ced, err := NewConditionalEventDefinition(id, condition, docs...)
+	ced, err := NewConditionalEventDefinition(condition, baseOpts...)
 	if err != nil {
 		panic(err.Error())
 	}

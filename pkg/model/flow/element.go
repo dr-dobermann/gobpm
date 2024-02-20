@@ -29,11 +29,12 @@ type Element struct {
 }
 
 // NewElement creates a new FlowElement and returns its pointer.
-func NewElement(id, name string,
-	docs ...*foundation.Documentation,
+func NewElement(
+	name string,
+	baseOpts ...foundation.BaseOption,
 ) *Element {
 	return &Element{
-		BaseElement: *foundation.NewBaseElement(id, docs...),
+		BaseElement: *foundation.MustBaseElement(baseOpts...),
 		name:        name,
 	}
 }
@@ -65,9 +66,11 @@ type ElementsContainer struct {
 }
 
 // NewContainer creates an empty container and returns its pointer.
-func NewContainer(id string, docs ...*foundation.Documentation) *ElementsContainer {
+func NewContainer(
+	baseOpts ...foundation.BaseOption,
+) *ElementsContainer {
 	return &ElementsContainer{
-		BaseElement: *foundation.NewBaseElement(id, docs...),
+		BaseElement: *foundation.MustBaseElement(baseOpts...),
 		elements:    map[string]*Element{},
 	}
 }

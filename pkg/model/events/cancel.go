@@ -24,10 +24,10 @@ func (*CancelEventDefinition) Type() Trigger {
 // its pointer.
 func NewCancelEventDefinition(
 	id string,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) *CancelEventDefinition {
 
 	return &CancelEventDefinition{
-		definition: *newDefinition(id, docs...),
+		definition: *newDefinition(baseOpts...),
 	}
 }

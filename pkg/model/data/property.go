@@ -15,17 +15,16 @@ type Property struct {
 
 // NewProperty creates a new Property object and returns its pointer.
 func NewProperty(
-	id, name string,
+	name string,
 	item *ItemDefinition,
 	state *DataState,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) *Property {
 	return &Property{
 		ItemAwareElement: *NewItemAwareElement(
 			item,
 			state,
-			foundation.WithId(id),
-			foundation.WithDocs(docs...)),
+			baseOpts...),
 		name: name,
 	}
 }

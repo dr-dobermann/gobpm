@@ -20,9 +20,9 @@ type Artifact struct {
 }
 
 // NewArtifact creates a new Artifact and returns its pointer.
-func NewArtifact(id string, docs ...*foundation.Documentation) *Artifact {
+func NewArtifact(baseOpts ...foundation.BaseOption) *Artifact {
 	return &Artifact{
-		BaseElement: *foundation.NewBaseElement(id, docs...),
+		BaseElement: *foundation.MustBaseElement(baseOpts...),
 	}
 }
 
@@ -41,14 +41,16 @@ type Group struct {
 
 // NewGroup creates a new Group and returns its pointer
 func NewGroup(
-	id, categoryValue string,
-	docs ...*foundation.Documentation,
+	categoryValue string,
+	baseOpts ...foundation.BaseOption,
 ) *Group {
 	g := Group{
-		BaseElement: *foundation.NewBaseElement(id, docs...),
+		BaseElement: *foundation.MustBaseElement(baseOpts...),
 	}
 
-	g.CategoryValue = NewCategoryValue(g.Id(), categoryValue)
+	g.CategoryValue = NewCategoryValue(
+		categoryValue,
+		foundation.WithId(g.Id()))
 
 	return &g
 }

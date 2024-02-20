@@ -15,9 +15,9 @@ type definition struct {
 }
 
 // newDefinition creates a new Event Definition and returns its pointer.
-func newDefinition(id string, docs ...*foundation.Documentation) *definition {
+func newDefinition(baseOpts ...foundation.BaseOption) *definition {
 
 	return &definition{
-		BaseElement: *foundation.NewBaseElement(id, docs...),
+		BaseElement: *foundation.MustBaseElement(baseOpts...),
 	}
 }

@@ -11,7 +11,7 @@ import (
 func TestNewStartEvent(t *testing.T) {
 	t.Run("empty definitions list",
 		func(t *testing.T) {
-			se, err := events.NewStartEvent("",
+			se, err := events.NewStartEvent(
 				"NoneTrigger", nil, nil, nil, true, true)
 
 			require.NoError(t, err)
@@ -28,9 +28,9 @@ func TestNewStartEvent(t *testing.T) {
 
 	t.Run("empty definitions list with properties",
 		func(t *testing.T) {
-			se, err := events.NewStartEvent("",
+			se, err := events.NewStartEvent(
 				"NoneTrigger", []data.Property{
-					*data.NewProperty("", "none_event_value",
+					*data.NewProperty("none_event_value",
 						data.MustItemDefinition(nil),
 						nil),
 				}, nil, nil, true, true)

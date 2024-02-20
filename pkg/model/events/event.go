@@ -155,14 +155,14 @@ type Event struct {
 
 // NewEvent creates a new Event and returns its pointer.
 func newEvent(
-	id, name string,
+	name string,
 	props []data.Property,
 	defRef []Definition,
 	defs []Definition,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) (*Event, error) {
 	e := Event{
-		Node:          *flow.NewNode(id, name, docs...),
+		Node:          *flow.NewNode(name, baseOpts...),
 		properties:    make([]data.Property, len(props)),
 		defitionsRefs: make([]Definition, len(defRef)),
 		defitions:     make([]Definition, len(defs)),
@@ -279,13 +279,13 @@ type catchEvent struct {
 
 // NewCatchEvent creates a new catchEvent and returns its pointer.
 func newCatchEvent(
-	id, name string,
+	name string,
 	props []data.Property,
 	defRef []Definition,
 	defs []Definition,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) (*catchEvent, error) {
-	e, err := newEvent(id, name, props, defRef, defs, docs...)
+	e, err := newEvent(name, props, defRef, defs, baseOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -318,13 +318,13 @@ type throwEvent struct {
 
 // NewThrowEvent creates a new throwEvent and returns its pointer.
 func newThrowEvent(
-	id, name string,
+	name string,
 	props []data.Property,
 	defRef []Definition,
 	defs []Definition,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) (*throwEvent, error) {
-	e, err := newEvent(id, name, props, defRef, defs, docs...)
+	e, err := newEvent(name, props, defRef, defs, baseOpts...)
 	if err != nil {
 		return nil, err
 	}

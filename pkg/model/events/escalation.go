@@ -17,12 +17,12 @@ type Escalation struct {
 
 // NewEscalation creates a new Escalation object and returns its pointer.
 func NewEscalation(
-	id, name, code string,
+	name, code string,
 	item *data.ItemDefinition,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) *Escalation {
 	return &Escalation{
-		BaseElement: *foundation.NewBaseElement(id, docs...),
+		BaseElement: *foundation.MustBaseElement(baseOpts...),
 		name:        name,
 		code:        code,
 		structure:   item,
@@ -48,11 +48,11 @@ func (e *EscalationEventDefinition) Type() Trigger {
 func NewEscalationEventDefintion(
 	id string,
 	escalation *Escalation,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) *EscalationEventDefinition {
 
 	return &EscalationEventDefinition{
-		definition: *newDefinition(id, docs...),
+		definition: *newDefinition(baseOpts...),
 		escalation: escalation,
 	}
 }

@@ -17,13 +17,13 @@ type Signal struct {
 
 // NewSignal creates a new signal and returns its pointer.
 func NewSignal(
-	id, name string,
+	name string,
 	str *data.ItemDefinition,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) *Signal {
 
 	return &Signal{
-		BaseElement: *foundation.NewBaseElement(id, docs...),
+		BaseElement: *foundation.MustBaseElement(baseOpts...),
 		name:        name,
 		structure:   str,
 	}
@@ -46,9 +46,8 @@ func (*SignalEventDefinition) Type() Trigger {
 // NewSignalEventDefinition creates a new SignalEventDefinition with given
 // signal. If signal is empty, then error returned.
 func NewSignalEventDefinition(
-	id string,
 	signal *Signal,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) (*SignalEventDefinition, error) {
 	if signal == nil {
 		return nil,
@@ -57,14 +56,11 @@ func NewSignalEventDefinition(
 				Classes: []string{
 					eventErrorClass,
 					errs.InvalidParameter},
-				Details: map[string]string{
-					"definition_id": id,
-				},
 			}
 	}
 
 	return &SignalEventDefinition{
-		definition: *newDefinition(id, docs...),
+		definition: *newDefinition(baseOpts...),
 		signal:     signal,
 	}, nil
 }
@@ -72,11 +68,10 @@ func NewSignalEventDefinition(
 // MustSignalEventDefinition tries to create a new SignalEventDefinition.
 // If there is an error occured, then panic fired.
 func MustSignalEventDefinition(
-	id string,
 	signal *Signal,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) *SignalEventDefinition {
-	sed, err := NewSignalEventDefinition(id, signal, docs...)
+	sed, err := NewSignalEventDefinition(signal, baseOpts...)
 	if err != nil {
 		panic(err.Error())
 	}
