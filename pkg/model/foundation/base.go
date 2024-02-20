@@ -1,6 +1,8 @@
 package foundation
 
-import "github.com/google/uuid"
+import (
+	"github.com/google/uuid"
+)
 
 const (
 	defaultDocFormat = "text/plain"
@@ -77,31 +79,38 @@ type BaseElement struct {
 
 // NewBaseElement creates a new BaseElement with given id
 // if id is empty, then new UUID is generated.
-func NewBaseElement(id string, docs ...*Documentation) *BaseElement {
-	if id == "" {
-		id = uuid.Must(uuid.NewRandom()).String()
+func NewBaseElement(opts ...BaseOption) (*BaseElement, error) {
+	bc := BaseConfig{
+		id:   uuid.Must(uuid.NewRandom()).String(),
+		docs: []Documentation{},
 	}
 
-	be := BaseElement{
-		id:   id,
-		docs: make([]Documentation, len(docs)),
+	for _, opt := range opts {
+		if err := opt.Apply(&bc); err != nil {
+			return nil, err
+		}
 	}
 
-	for i, d := range docs {
-		be.docs[i] = *d
+	return bc.baseElement(), nil
+}
+
+// MustBaseElement tries to create a new BaseElement and returns its pointer
+// on success or error on failure.
+func MustBaseElement(opts ...BaseOption) *BaseElement {
+	be, err := NewBaseElement(opts...)
+	if err != nil {
+		panic(err.Error())
 	}
 
-	return &be
+	return be
 }
 
 // Id returns the BaseElement Id.
 func (be BaseElement) Id() string {
-
 	return be.id
 }
 
 // Docs returns the copy of BaseElement documentation.
 func (be BaseElement) Docs() []Documentation {
-
 	return append([]Documentation{}, be.docs...)
 }

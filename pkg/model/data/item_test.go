@@ -23,13 +23,13 @@ func TestItemDefinition(t *testing.T) {
 	t.Run("new_with_all_settings",
 		func(t *testing.T) {
 			id, err := data.NewItemDefinition(nil,
-				data.SetId("test_id"),
-				data.SetKind(data.Physical),
-				data.SetDocumentation(
+				foundation.WithId("test_id"),
+				data.WithKind(data.Physical),
+				foundation.WithDocs(
 					foundation.NewDoc("doc1", ""),
 					foundation.NewDoc("doc2", ""),
 				),
-				data.SetImport(&foundation.Import{
+				data.WithImport(&foundation.Import{
 					Type:      "test",
 					Location:  "test/url",
 					Namespace: "gobpm",

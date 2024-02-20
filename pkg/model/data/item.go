@@ -1,6 +1,9 @@
 package data
 
-import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
+)
 
 // ******************************************************************************
 
@@ -52,14 +55,13 @@ type ItemDefinition struct {
 // its pointer.
 func NewItemDefinition(
 	value Value,
-	opts ...ItemOption,
+	opts ...options.Option,
 ) (*ItemDefinition, error) {
 	cfg := itemConfig{
-		id:         "",
-		docs:       []*foundation.Documentation{},
-		kind:       Information,
-		str:        value,
-		collection: false,
+		baseOptions: []foundation.BaseOption{},
+		kind:        Information,
+		str:         value,
+		collection:  false,
 	}
 
 	// check if value is a collection
@@ -69,17 +71,23 @@ func NewItemDefinition(
 	}
 
 	for _, opt := range opts {
-		if err := opt.apply(&cfg); err != nil {
-			return nil, err
+		switch o := opt.(type) {
+		case foundation.BaseOption:
+			cfg.baseOptions = append(cfg.baseOptions, o)
+
+		case itemOption:
+			if err := opt.Apply(&cfg); err != nil {
+				return nil, err
+			}
 		}
 	}
 
-	return cfg.itemDef(), nil
+	return cfg.itemDef()
 }
 
 // MustItemDefinition tries to create a new ItemDefinition and returns its
 // pointer on success or fires panic on error.
-func MustItemDefinition(value Value, opts ...ItemOption) *ItemDefinition {
+func MustItemDefinition(value Value, opts ...options.Option) *ItemDefinition {
 	iDef, err := NewItemDefinition(value, opts...)
 	if err != nil {
 		panic(err.Error())
@@ -135,17 +143,16 @@ type ItemAwareElement struct {
 
 // NewItemAwareElement creates a new DataAwareItem and returns its pointer.
 func NewItemAwareElement(
-	id string,
 	item *ItemDefinition,
 	state *DataState,
-	docs ...*foundation.Documentation,
+	baseOpts ...foundation.BaseOption,
 ) *ItemAwareElement {
 	if state == nil {
 		state = &defaultDataState
 	}
 
 	return &ItemAwareElement{
-		BaseElement: *foundation.NewBaseElement(id, docs...),
+		BaseElement: *foundation.MustBaseElement(baseOpts...),
 		ItemSubject: item,
 		DataState:   *state,
 	}

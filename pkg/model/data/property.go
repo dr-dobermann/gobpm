@@ -21,8 +21,12 @@ func NewProperty(
 	docs ...*foundation.Documentation,
 ) *Property {
 	return &Property{
-		ItemAwareElement: *NewItemAwareElement(id, item, state, docs...),
-		name:             name,
+		ItemAwareElement: *NewItemAwareElement(
+			item,
+			state,
+			foundation.WithId(id),
+			foundation.WithDocs(docs...)),
+		name: name,
 	}
 }
 

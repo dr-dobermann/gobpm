@@ -9,6 +9,8 @@ const (
 	NilDereference   = "NIL_DEREFERENCE"
 	BulidingFailed   = "BUILDING_FAILED"
 	InvalidParameter = "INVALID_PARAMETER"
+
+	TypeCastingError = "InvalidTypeCasting"
 )
 
 type ApplicationError struct {
@@ -19,6 +21,6 @@ type ApplicationError struct {
 }
 
 func (ap *ApplicationError) Error() string {
-	return fmt.Sprintf("%v: %s[%v]: %v",
+	return fmt.Sprintf("%v: %q (%s): %v",
 		ap.Classes, ap.Message, ap.Details, ap.Err)
 }

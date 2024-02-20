@@ -25,7 +25,9 @@ type Expression struct {
 
 func NewExpression(id string, docs ...*foundation.Documentation) *Expression {
 	return &Expression{
-		BaseElement: *foundation.NewBaseElement(id, docs...),
+		BaseElement: *foundation.MustBaseElement(
+			foundation.WithId(id),
+			foundation.WithDocs(docs...)),
 	}
 }
 

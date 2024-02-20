@@ -3,7 +3,7 @@ package data
 import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
 
 var defaultDataState = DataState{
-	BaseElement: *foundation.NewBaseElement("UNDEFINED_DATA_STATE"),
+	BaseElement: *foundation.MustBaseElement(foundation.WithId("UNDEFINED_DATA_STATE")),
 	name:        "UNDEFINED",
 }
 
@@ -18,7 +18,7 @@ type DataState struct {
 	name string
 }
 
+// Name returns the DataState name.
 func (ds *DataState) Name() string {
-
 	return ds.name
 }

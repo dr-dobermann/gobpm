@@ -1,70 +1,63 @@
 package data
 
 import (
+	"reflect"
+
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 type (
-	// ItemOption interface used to declare ItemDefinition object option.
-	ItemOption interface {
-		apply(*itemConfig) error
-	}
-
 	// used as functor interface for ItemDefinition option definition.
 	itemOption func(*itemConfig) error
 
 	// itemConfig consist optional parameters for ItemDefinition build.
 	itemConfig struct {
-		id         string
-		docs       []*foundation.Documentation
-		kind       ItemKind
-		imp        *foundation.Import
-		str        Value
-		collection bool
+		baseOptions []foundation.BaseOption
+		kind        ItemKind
+		imp         *foundation.Import
+		str         Value
+		collection  bool
 	}
 )
 
 // apply implements ItemOption interface for itemOption functor.
-func (o itemOption) apply(cfg *itemConfig) error {
-	return o(cfg)
+func (o itemOption) Apply(cfg any) error {
+	if ic, ok := cfg.(*itemConfig); ok {
+		return o(ic)
+	}
+
+	return &errs.ApplicationError{
+		Message: "not itemConfig",
+		Classes: []string{
+			errorClass,
+			errs.TypeCastingError,
+		},
+		Details: map[string]string{
+			"cast_from": reflect.TypeOf(cfg).String(),
+		},
+	}
 }
 
 // itemDefBuild builds ItemDefinition object from the itemConfig.
-func (ic *itemConfig) itemDef() *ItemDefinition {
+func (ic *itemConfig) itemDef() (*ItemDefinition, error) {
+	be, err := foundation.NewBaseElement(ic.baseOptions...)
+	if err != nil {
+		return nil, err
+	}
+
 	return &ItemDefinition{
-		BaseElement:  *foundation.NewBaseElement(ic.id, ic.docs...),
+		BaseElement:  *be,
 		kind:         ic.kind,
 		importRef:    ic.imp,
 		structure:    ic.str,
 		isCollection: ic.collection,
-	}
-}
-
-// SetId sets an ItemDefintion Id.
-func SetId(id string) ItemOption {
-	f := func(cfg *itemConfig) error {
-		cfg.id = id
-
-		return nil
-	}
-
-	return itemOption(f)
-}
-
-// SetDocumentation adds documentation to an ItemDefintion.
-func SetDocumentation(docs ...*foundation.Documentation) ItemOption {
-	f := func(cfg *itemConfig) error {
-		cfg.docs = append(cfg.docs, docs...)
-
-		return nil
-	}
-
-	return itemOption(f)
+	}, nil
 }
 
 // SetKind sets kind of an ItemDefintion.
-func SetKind(kind ItemKind) ItemOption {
+func WithKind(kind ItemKind) options.Option {
 	f := func(cfg *itemConfig) error {
 		if kind != Information && kind != Physical {
 			return &errs.ApplicationError{
@@ -87,7 +80,7 @@ func SetKind(kind ItemKind) ItemOption {
 }
 
 // SetImport sets import of an ItemDefintion.
-func SetImport(imp *foundation.Import) ItemOption {
+func WithImport(imp *foundation.Import) options.Option {
 	f := func(cfg *itemConfig) error {
 		cfg.imp = imp
 
