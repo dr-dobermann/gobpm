@@ -1,6 +1,11 @@
 package artifacts
 
-import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+)
+
+const errorClass = "ARTIFACT_ERROR"
 
 // BPMN provides modelers with the capability of showing additional information
 // about a Process that is not directly related to the Sequence Flows or Message
@@ -20,10 +25,33 @@ type Artifact struct {
 }
 
 // NewArtifact creates a new Artifact and returns its pointer.
-func NewArtifact(baseOpts ...foundation.BaseOption) *Artifact {
-	return &Artifact{
-		BaseElement: *foundation.MustBaseElement(baseOpts...),
+func NewArtifact(baseOpts ...foundation.BaseOption) (*Artifact, error) {
+	be, err := foundation.NewBaseElement(baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "couldn't create an artifact",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed,
+				},
+			}
 	}
+	return &Artifact{
+		BaseElement: *be,
+	}, nil
+}
+
+// MustArtifact tries to create a new Artifact and returns its pointer on success.
+// If error occured then panic fired.
+func MustArtifact(baseOpts ...foundation.BaseOption) *Artifact {
+	ar, err := NewArtifact(baseOpts...)
+	if err != nil {
+		panic(err)
+	}
+
+	return ar
 }
 
 // *****************************************************************************
@@ -41,16 +69,46 @@ type Group struct {
 
 // NewGroup creates a new Group and returns its pointer
 func NewGroup(
-	categoryValue string,
+	categoryName string,
 	baseOpts ...foundation.BaseOption,
-) *Group {
+) (*Group, error) {
+	be, err := foundation.NewBaseElement(baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "couldn't create group",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed,
+				},
+				Details: map[string]string{
+					"category_name": categoryName,
+				},
+			}
+	}
+
 	g := Group{
-		BaseElement: *foundation.MustBaseElement(baseOpts...),
+		BaseElement: *be,
 	}
 
 	g.CategoryValue = NewCategoryValue(
-		categoryValue,
+		categoryName,
 		foundation.WithId(g.Id()))
 
-	return &g
+	return &g, nil
+}
+
+// MustGroup tries to create a new Group and returns its pointer on success or
+// fires panic on error.
+func MustGroup(
+	categoryName string,
+	baseOpts ...foundation.BaseOption,
+) *Group {
+	g, err := NewGroup(categoryName, baseOpts...)
+	if err != nil {
+		panic(err)
+	}
+
+	return g
 }

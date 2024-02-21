@@ -283,6 +283,7 @@ func newCatchEvent(
 	props []data.Property,
 	defRef []Definition,
 	defs []Definition,
+	parallel bool,
 	baseOpts ...foundation.BaseOption,
 ) (*catchEvent, error) {
 	e, err := newEvent(name, props, defRef, defs, baseOpts...)
@@ -295,6 +296,7 @@ func newCatchEvent(
 		OutputAssociations: []*data.Association{},
 		dataOutputs:        []*data.Output{},
 		outputSet:          &data.OutputSet{},
+		parallelMultiple:   e.triggers.Count() > 1 && parallel,
 	}, nil
 }
 

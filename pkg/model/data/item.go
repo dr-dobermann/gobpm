@@ -1,6 +1,9 @@
 package data
 
 import (
+	"reflect"
+
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -79,6 +82,19 @@ func NewItemDefinition(
 			if err := opt.Apply(&cfg); err != nil {
 				return nil, err
 			}
+
+		default:
+			return nil,
+				&errs.ApplicationError{
+					Message: "invalid option type (only BaseOption and itemOption expected)",
+					Classes: []string{
+						errorClass,
+						errs.InvalidObject,
+					},
+					Details: map[string]string{
+						"wrong_type": reflect.TypeOf(o).String(),
+					},
+				}
 		}
 	}
 

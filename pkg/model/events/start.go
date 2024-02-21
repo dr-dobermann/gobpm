@@ -1,9 +1,12 @@
 package events
 
 import (
+	"errors"
+
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/set"
 )
 
@@ -31,61 +34,46 @@ type StartEvent struct {
 // or error if any.
 func NewStartEvent(
 	name string,
-	props []data.Property,
-	defRef []Definition,
-	defs []Definition,
-	parallel bool,
-	interrupting bool,
-	baseOpts ...foundation.BaseOption,
+	startEventOptions ...options.Option,
 ) (*StartEvent, error) {
-	// check event definitions to comply with StartEvent triggers.
-	for _, d := range defRef {
-		if !startTriggers.Has(d.Type()) {
-			return nil,
-				&errs.ApplicationError{
-					Err:     nil,
-					Message: "invalid StartEvent trigger in definition_refs",
-					Classes: []string{
-						eventErrorClass,
-						errs.InvalidParameter},
-					Details: map[string]string{
-						"definition_id": d.Id(),
-						"trigger":       string(d.Type()),
-					},
-				}
+	sc := startConfig{
+		name:          name,
+		props:         []data.Property{},
+		parallel:      false,
+		interrurpting: false,
+		baseOpts:      []foundation.BaseOption{},
+		defs:          []Definition{},
+		defRefs:       []Definition{},
+	}
+
+	ee := []error{}
+
+	for _, opt := range startEventOptions {
+		switch so := opt.(type) {
+		case foundation.BaseOption:
+			sc.baseOpts = append(sc.baseOpts, so)
+
+		case startOption:
+			if err := so.Apply(&sc); err != nil {
+				ee = append(ee, err)
+			}
 		}
 	}
 
-	for _, d := range defs {
-		if !startTriggers.Has(d.Type()) {
-			return nil,
-				&errs.ApplicationError{
-					Err:     nil,
-					Message: "invalid StartEvent trigger in defintions",
-					Classes: []string{
-						eventErrorClass,
-						errs.InvalidParameter},
-					Details: map[string]string{
-						"definition_id": d.Id(),
-						"trigger":       string(d.Type()),
-					},
-				}
-		}
+	if err := sc.validate(); err != nil {
+		ee = append(ee, err)
 	}
 
-	ce, err := newCatchEvent(name, props, defRef, defs, baseOpts...)
-	if err != nil {
-		return nil, err
+	if len(ee) > 0 {
+		return nil,
+			&errs.ApplicationError{
+				Err:     errors.Join(ee...),
+				Message: "start event configuration errors",
+				Classes: []string{
+					eventErrorClass,
+				},
+			}
 	}
 
-	se := StartEvent{
-		catchEvent:    *ce,
-		interrrupting: interrupting,
-	}
-
-	if se.triggers.Count() > 1 && parallel {
-		se.parallelMultiple = true
-	}
-
-	return &se, nil
+	return sc.startEvent()
 }

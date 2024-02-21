@@ -71,6 +71,7 @@ func WithKind(kind ItemKind) options.Option {
 				},
 			}
 		}
+
 		cfg.kind = kind
 
 		return nil
