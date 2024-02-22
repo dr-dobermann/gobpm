@@ -2,7 +2,7 @@ package events
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 type ErrorEventDefinition struct {
@@ -22,7 +22,7 @@ func (*ErrorEventDefinition) Type() Trigger {
 // its pointer.
 func NewErrorEventDefinition(
 	err *common.Error,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) *ErrorEventDefinition {
 
 	return &ErrorEventDefinition{

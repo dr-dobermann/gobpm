@@ -14,7 +14,7 @@ type (
 
 	// itemConfig consist optional parameters for ItemDefinition build.
 	itemConfig struct {
-		baseOptions []foundation.BaseOption
+		baseOptions []options.Option
 		kind        ItemKind
 		imp         *foundation.Import
 		str         Value

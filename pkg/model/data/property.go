@@ -1,6 +1,6 @@
 package data
 
-import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
+import "github.com/dr-dobermann/gobpm/pkg/model/options"
 
 // Properties, like Data Objects, are item-aware elements. But, unlike Data
 // Objects, they are not visually displayed on a Process diagram. Certain flow
@@ -18,7 +18,7 @@ func NewProperty(
 	name string,
 	item *ItemDefinition,
 	state *DataState,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) *Property {
 	return &Property{
 		ItemAwareElement: *NewItemAwareElement(

@@ -6,7 +6,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/set"
 )
 
@@ -159,7 +159,7 @@ func newEvent(
 	props []data.Property,
 	defRef []Definition,
 	defs []Definition,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) (*Event, error) {
 	e := Event{
 		Node:          *flow.NewNode(name, baseOpts...),
@@ -246,6 +246,11 @@ func (e *Event) Triggers() []Trigger {
 	return e.triggers.All()
 }
 
+// HasTrigger checks if event has Trigger t in it.
+func (e *Event) HasTrigger(t Trigger) bool {
+	return e.triggers.Has(t)
+}
+
 // *****************************************************************************
 
 // vents that throw a Result. All End Events and some Intermediate Events are
@@ -284,7 +289,7 @@ func newCatchEvent(
 	defRef []Definition,
 	defs []Definition,
 	parallel bool,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) (*catchEvent, error) {
 	e, err := newEvent(name, props, defRef, defs, baseOpts...)
 	if err != nil {
@@ -298,6 +303,11 @@ func newCatchEvent(
 		outputSet:          &data.OutputSet{},
 		parallelMultiple:   e.triggers.Count() > 1 && parallel,
 	}, nil
+}
+
+// IsParallelMultiple returns parallelMultiple settings of the catchEvent.
+func (ce *catchEvent) IsParallelMultiple() bool {
+	return ce.parallelMultiple
 }
 
 // *****************************************************************************
@@ -324,7 +334,7 @@ func newThrowEvent(
 	props []data.Property,
 	defRef []Definition,
 	defs []Definition,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) (*throwEvent, error) {
 	e, err := newEvent(name, props, defRef, defs, baseOpts...)
 	if err != nil {

@@ -5,23 +5,24 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/google/uuid"
 )
 
 type (
-	// BaseConfig holds configuration for BaseElement building
-	BaseConfig struct {
+	// baseConfig holds configuration for BaseElement building
+	baseConfig struct {
 		id   string
 		docs []Documentation
 	}
 
 	// BaseOptions sets one BaseConfig fields
-	BaseOption func(*BaseConfig) error
+	BaseOption func(*baseConfig) error
 )
 
 // Apply implements options.Option interface for BaseOption
 func (bo BaseOption) Apply(cfg any) error {
-	if bc, ok := cfg.(*BaseConfig); ok {
+	if bc, ok := cfg.(*baseConfig); ok {
 		return bo(bc)
 	}
 
@@ -38,10 +39,10 @@ func (bo BaseOption) Apply(cfg any) error {
 }
 
 // WithId updates id field in BaseConfig.
-func WithId(id string) BaseOption {
+func WithId(id string) options.Option {
 	id = strings.Trim(id, " ")
 
-	f := func(bc *BaseConfig) error {
+	f := func(bc *baseConfig) error {
 		if id == "" {
 			return &errs.ApplicationError{
 				Message: "empty id isn't allowed",
@@ -61,8 +62,8 @@ func WithId(id string) BaseOption {
 }
 
 // WithDocs updates docs element of BaseConfig.
-func WithDocs(docs ...*Documentation) BaseOption {
-	f := func(bc *BaseConfig) error {
+func WithDocs(docs ...*Documentation) options.Option {
+	f := func(bc *baseConfig) error {
 		if bc.docs == nil {
 			bc.docs = []Documentation{}
 		}
@@ -78,7 +79,7 @@ func WithDocs(docs ...*Documentation) BaseOption {
 }
 
 // baseElement creates a new BaseElement from BaseConfig.
-func (bc *BaseConfig) baseElement() *BaseElement {
+func (bc *baseConfig) baseElement() *BaseElement {
 	if bc.id == "" {
 		bc.id = uuid.Must(uuid.NewRandom()).String()
 	}

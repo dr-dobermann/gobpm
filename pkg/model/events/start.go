@@ -41,7 +41,7 @@ func NewStartEvent(
 		props:         []data.Property{},
 		parallel:      false,
 		interrurpting: false,
-		baseOpts:      []foundation.BaseOption{},
+		baseOpts:      []options.Option{},
 		defs:          []Definition{},
 		defRefs:       []Definition{},
 	}
@@ -51,7 +51,7 @@ func NewStartEvent(
 	for _, opt := range startEventOptions {
 		switch so := opt.(type) {
 		case foundation.BaseOption:
-			sc.baseOpts = append(sc.baseOpts, so)
+			sc.baseOpts = append(sc.baseOpts, opt)
 
 		case startOption:
 			if err := so.Apply(&sc); err != nil {
@@ -76,4 +76,9 @@ func NewStartEvent(
 	}
 
 	return sc.startEvent()
+}
+
+// IsInterrupting returns interrupting setting of the StartEvent.
+func (se *StartEvent) IsInterrupting() bool {
+	return se.interrrupting
 }

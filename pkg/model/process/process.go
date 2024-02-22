@@ -5,6 +5,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 type Process struct {
@@ -26,11 +27,19 @@ type Process struct {
 // NewProcess creates a new Process and returns its pointer.
 func NewProcess(
 	name string,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) *Process {
+	ec := flow.NewContainer(baseOpts...)
+
+	// CallableElement should have same Id as ElementsContainer Id if
+	// id isn't provided.
+	if len(baseOpts) == 0 {
+		baseOpts = append(baseOpts, foundation.WithId(ec.Id()))
+	}
+
 	return &Process{
 		CallableElement:          *common.NewCallableElement(name, baseOpts...),
-		ElementsContainer:        *flow.NewContainer(baseOpts...),
+		ElementsContainer:        *ec,
 		Properties:               []*data.Property{},
 		CorrelationSubscriptions: []*common.CorrelationSubscription{},
 	}

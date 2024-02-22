@@ -4,6 +4,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // *****************************************************************************
@@ -19,7 +20,7 @@ type Signal struct {
 func NewSignal(
 	name string,
 	str *data.ItemDefinition,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) *Signal {
 
 	return &Signal{
@@ -47,7 +48,7 @@ func (*SignalEventDefinition) Type() Trigger {
 // signal. If signal is empty, then error returned.
 func NewSignalEventDefinition(
 	signal *Signal,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) (*SignalEventDefinition, error) {
 	if signal == nil {
 		return nil,
@@ -69,7 +70,7 @@ func NewSignalEventDefinition(
 // If there is an error occured, then panic fired.
 func MustSignalEventDefinition(
 	signal *Signal,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) *SignalEventDefinition {
 	sed, err := NewSignalEventDefinition(signal, baseOpts...)
 	if err != nil {

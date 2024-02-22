@@ -1,6 +1,9 @@
 package events
 
-import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
+)
 
 type Definition interface {
 	foundation.Identifyer
@@ -15,7 +18,7 @@ type definition struct {
 }
 
 // newDefinition creates a new Event Definition and returns its pointer.
-func newDefinition(baseOpts ...foundation.BaseOption) *definition {
+func newDefinition(baseOpts ...options.Option) *definition {
 
 	return &definition{
 		BaseElement: *foundation.MustBaseElement(baseOpts...),

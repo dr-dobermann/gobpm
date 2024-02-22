@@ -7,7 +7,6 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -19,7 +18,7 @@ type (
 		props         []data.Property
 		parallel      bool
 		interrurpting bool
-		baseOpts      []foundation.BaseOption
+		baseOpts      []options.Option
 		defs          []Definition
 		defRefs       []Definition
 	}
@@ -92,9 +91,9 @@ func WithProperty(prop data.Property) options.Option {
 }
 
 // WithParallel sets parallel flag in startConfig.
-func WithParallel(para bool) options.Option {
+func WithParallel() options.Option {
 	f := func(cfg *startConfig) error {
-		cfg.parallel = para
+		cfg.parallel = true
 
 		return nil
 	}
@@ -103,9 +102,9 @@ func WithParallel(para bool) options.Option {
 }
 
 // WithInterrupting sets interrurpting flag in startConfig.
-func WithInterrupting(inter bool) options.Option {
+func WithInterrupting() options.Option {
 	f := func(cfg *startConfig) error {
-		cfg.interrurpting = inter
+		cfg.interrurpting = true
 
 		return nil
 	}
@@ -113,20 +112,21 @@ func WithInterrupting(inter bool) options.Option {
 	return startOption(f)
 }
 
-// WithEventDefinition adds a Definition into startConfig.
-func WithEventDefinition(d Definition) options.Option {
+// WithMessageTrigger adds a MessageEventDefinition into startConfig.
+// If reference is true, then Definition will be added to defintionRef list or
+// to definition otherwise.
+func WithMessageTrigger(
+	med MessageEventDefinition,
+	reference bool,
+) options.Option {
 	f := func(cfg *startConfig) error {
-		if d == nil {
-			return &errs.ApplicationError{
-				Message: "empty definition isn't allowed",
-				Classes: []string{
-					eventErrorClass,
-					errs.InvalidParameter,
-				},
-			}
+		if reference {
+			cfg.defRefs = append(cfg.defRefs, &med)
+
+			return nil
 		}
 
-		cfg.defs = append(cfg.defs, d)
+		cfg.defs = append(cfg.defs, &med)
 
 		return nil
 	}
@@ -134,20 +134,56 @@ func WithEventDefinition(d Definition) options.Option {
 	return startOption(f)
 }
 
-// WithEventDefinitionRef adds a Defintion referenct to startConfig.
-func WithEventDefinitionRef(d Definition) options.Option {
+// WithTimerTrigger adds a TimerEventDefinition into startConfig.
+// If reference is true, then Definition will be added to defintionRef list or
+// to definition otherwise.
+func WithTimerTrigger(ted TimerEventDefinition, reference bool) options.Option {
 	f := func(cfg *startConfig) error {
-		if d == nil {
-			return &errs.ApplicationError{
-				Message: "empty definition reference isn't allowed",
-				Classes: []string{
-					eventErrorClass,
-					errs.InvalidParameter,
-				},
-			}
+		if reference {
+			cfg.defRefs = append(cfg.defRefs, &ted)
+
+			return nil
 		}
 
-		cfg.defRefs = append(cfg.defRefs, d)
+		cfg.defs = append(cfg.defs, &ted)
+
+		return nil
+	}
+
+	return startOption(f)
+}
+
+// WithConditionalTrigger adds a ConditionalEventDefinition into startConfig.
+// If reference is true, then Definition will be added to defintionRef list or
+// to definition otherwise.
+func WithConditionalTrigger(ced ConditionalEventDefinition, reference bool) options.Option {
+	f := func(cfg *startConfig) error {
+		if reference {
+			cfg.defRefs = append(cfg.defRefs, &ced)
+
+			return nil
+		}
+
+		cfg.defs = append(cfg.defs, &ced)
+
+		return nil
+	}
+
+	return startOption(f)
+}
+
+// WithSignalTrigger adds a SignalEventDefinition into startConfig.
+// If reference is true, then Definition will be added to defintionRef list or
+// to definition otherwise.
+func WithSignalTrigger(sed SignalEventDefinition, reference bool) options.Option {
+	f := func(cfg *startConfig) error {
+		if reference {
+			cfg.defRefs = append(cfg.defRefs, &sed)
+
+			return nil
+		}
+
+		cfg.defs = append(cfg.defs, &sed)
 
 		return nil
 	}

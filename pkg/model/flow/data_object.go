@@ -3,6 +3,7 @@ package flow
 import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // The Data Object class is an item-aware element. Data Object elements MUST be
@@ -31,7 +32,7 @@ func NewDataOpject(
 	name string,
 	idef *data.ItemDefinition,
 	state *data.DataState,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) *DataObject {
 	do := DataObject{
 		ItemAwareElement: *data.NewItemAwareElement(idef, state, baseOpts...),

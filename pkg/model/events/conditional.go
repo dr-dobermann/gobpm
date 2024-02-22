@@ -3,7 +3,7 @@ package events
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 type ConditionalEventDefinition struct {
@@ -25,7 +25,7 @@ func (*ConditionalEventDefinition) Type() Trigger {
 // if condition isn't nil. Otherwise it returns error.
 func NewConditionalEventDefinition(
 	condition *data.Expression,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) (*ConditionalEventDefinition, error) {
 	if condition == nil {
 		return nil,
@@ -48,7 +48,7 @@ func NewConditionalEventDefinition(
 // ConditionalEventDefinition. If error occured, it fires panic.
 func MustConditionalEventDefinition(
 	condition *data.Expression,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) *ConditionalEventDefinition {
 	ced, err := NewConditionalEventDefinition(condition, baseOpts...)
 	if err != nil {

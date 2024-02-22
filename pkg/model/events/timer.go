@@ -3,7 +3,7 @@ package events
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // *****************************************************************************
@@ -46,7 +46,7 @@ func (*TimerEventDefinition) Type() Trigger {
 // If parameters arent' consistent then error returned.
 func NewTimerEventDefinition(
 	tDate, tCycle, tDuration *data.Expression,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) (*TimerEventDefinition, error) {
 	if (tDate != nil && (tCycle != nil || tDuration != nil)) ||
 		(tCycle != nil && tDuration != nil) {
@@ -73,7 +73,7 @@ func NewTimerEventDefinition(
 // If error occurs, then panic fired.
 func MustTimerEventDefinition(
 	tDate, tCycle, tDuration *data.Expression,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) *TimerEventDefinition {
 	ted, err := NewTimerEventDefinition(tDate, tCycle, tDuration, baseOpts...)
 	if err != nil {

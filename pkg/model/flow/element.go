@@ -2,6 +2,7 @@ package flow
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // *****************************************************************************
@@ -31,7 +32,7 @@ type Element struct {
 // NewElement creates a new FlowElement and returns its pointer.
 func NewElement(
 	name string,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) *Element {
 	return &Element{
 		BaseElement: *foundation.MustBaseElement(baseOpts...),
@@ -67,7 +68,7 @@ type ElementsContainer struct {
 
 // NewContainer creates an empty container and returns its pointer.
 func NewContainer(
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) *ElementsContainer {
 	return &ElementsContainer{
 		BaseElement: *foundation.MustBaseElement(baseOpts...),

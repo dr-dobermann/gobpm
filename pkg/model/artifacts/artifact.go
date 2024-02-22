@@ -3,6 +3,7 @@ package artifacts
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 const errorClass = "ARTIFACT_ERROR"
@@ -25,7 +26,7 @@ type Artifact struct {
 }
 
 // NewArtifact creates a new Artifact and returns its pointer.
-func NewArtifact(baseOpts ...foundation.BaseOption) (*Artifact, error) {
+func NewArtifact(baseOpts ...options.Option) (*Artifact, error) {
 	be, err := foundation.NewBaseElement(baseOpts...)
 	if err != nil {
 		return nil,
@@ -45,7 +46,7 @@ func NewArtifact(baseOpts ...foundation.BaseOption) (*Artifact, error) {
 
 // MustArtifact tries to create a new Artifact and returns its pointer on success.
 // If error occured then panic fired.
-func MustArtifact(baseOpts ...foundation.BaseOption) *Artifact {
+func MustArtifact(baseOpts ...options.Option) *Artifact {
 	ar, err := NewArtifact(baseOpts...)
 	if err != nil {
 		panic(err)
@@ -70,7 +71,7 @@ type Group struct {
 // NewGroup creates a new Group and returns its pointer
 func NewGroup(
 	categoryName string,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) (*Group, error) {
 	be, err := foundation.NewBaseElement(baseOpts...)
 	if err != nil {
@@ -103,7 +104,7 @@ func NewGroup(
 // fires panic on error.
 func MustGroup(
 	categoryName string,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) *Group {
 	g, err := NewGroup(categoryName, baseOpts...)
 	if err != nil {

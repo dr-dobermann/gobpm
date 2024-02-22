@@ -1,6 +1,6 @@
 package events
 
-import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
+import "github.com/dr-dobermann/gobpm/pkg/model/options"
 
 type TerminateEventDefinition struct {
 	definition
@@ -15,7 +15,7 @@ func (*TerminateEventDefinition) Type() Trigger {
 // NewTerminateEventDefinition creates a new TerminateEventDefinition
 // and returns its pointer.
 func NewTerminateEventDefinition(
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) *TerminateEventDefinition {
 
 	return &TerminateEventDefinition{

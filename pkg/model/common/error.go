@@ -3,6 +3,7 @@ package common
 import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // An Error represents the content of an Error Event or the Fault of a failed
@@ -37,7 +38,7 @@ type Error struct {
 // NewError creates a new error object.
 func NewError(name, code string,
 	str *data.ItemDefinition,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) *Error {
 	return &Error{
 		BaseElement: *foundation.MustBaseElement(baseOpts...),

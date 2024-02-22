@@ -1,6 +1,8 @@
 package flow
 
-import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
+)
 
 // The FlowNode element is used to provide a single element as the source and
 // target Sequence Flow associations instead of the individual associations of
@@ -22,7 +24,7 @@ type Node struct {
 // NewNode creates a new node and returns its pointer.
 func NewNode(
 	name string,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) *Node {
 	return &Node{
 		Element:   *NewElement(name, baseOpts...),

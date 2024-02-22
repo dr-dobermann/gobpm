@@ -61,7 +61,7 @@ func NewItemDefinition(
 	opts ...options.Option,
 ) (*ItemDefinition, error) {
 	cfg := itemConfig{
-		baseOptions: []foundation.BaseOption{},
+		baseOptions: []options.Option{},
 		kind:        Information,
 		str:         value,
 		collection:  false,
@@ -76,7 +76,7 @@ func NewItemDefinition(
 	for _, opt := range opts {
 		switch o := opt.(type) {
 		case foundation.BaseOption:
-			cfg.baseOptions = append(cfg.baseOptions, o)
+			cfg.baseOptions = append(cfg.baseOptions, opt)
 
 		case itemOption:
 			if err := opt.Apply(&cfg); err != nil {
@@ -161,7 +161,7 @@ type ItemAwareElement struct {
 func NewItemAwareElement(
 	item *ItemDefinition,
 	state *DataState,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) *ItemAwareElement {
 	if state == nil {
 		state = &defaultDataState

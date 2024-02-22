@@ -3,7 +3,7 @@ package events
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
 
@@ -28,7 +28,7 @@ func (*MessageEventDefinition) Type() Trigger {
 func NewMessageEventDefintion(
 	msg *common.Message,
 	operation *service.Operation,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) (*MessageEventDefinition, error) {
 	if msg == nil {
 		return nil,
@@ -53,7 +53,7 @@ func NewMessageEventDefintion(
 func MustMessageEventDefinition(
 	msg *common.Message,
 	operation *service.Operation,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) *MessageEventDefinition {
 	med, err := NewMessageEventDefintion(msg, operation, baseOpts...)
 	if err != nil {
@@ -61,4 +61,14 @@ func MustMessageEventDefinition(
 	}
 
 	return med
+}
+
+// Message returns a message of the MessageEventDefinition.
+func (med *MessageEventDefinition) Message() *common.Message {
+	return med.message
+}
+
+// Operation returns an operation of the MessageEventDefinition.
+func (med *MessageEventDefinition) Operation() *service.Operation {
+	return med.operation
 }

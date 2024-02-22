@@ -5,6 +5,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 type Message struct {
@@ -21,7 +22,7 @@ type Message struct {
 func NewMessage(
 	name string,
 	item *data.ItemDefinition,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) *Message {
 	name = strings.Trim(name, " ")
 

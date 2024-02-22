@@ -2,7 +2,7 @@ package events
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/model/acivities"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // Compensation Events are used in the context of triggering or handling
@@ -59,7 +59,7 @@ func (*CompensationEventDefinition) Type() Trigger {
 func NewCompensationEventDefinition(
 	activity *acivities.Activity,
 	wait4compensation bool,
-	baseOpts ...foundation.BaseOption,
+	baseOpts ...options.Option,
 ) *CompensationEventDefinition {
 
 	return &CompensationEventDefinition{

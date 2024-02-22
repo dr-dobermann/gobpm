@@ -1,6 +1,7 @@
 package foundation
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/google/uuid"
 )
 
@@ -79,8 +80,8 @@ type BaseElement struct {
 
 // NewBaseElement creates a new BaseElement with given id
 // if id is empty, then new UUID is generated.
-func NewBaseElement(opts ...BaseOption) (*BaseElement, error) {
-	bc := BaseConfig{
+func NewBaseElement(opts ...options.Option) (*BaseElement, error) {
+	bc := baseConfig{
 		id:   uuid.Must(uuid.NewRandom()).String(),
 		docs: []Documentation{},
 	}
@@ -96,7 +97,7 @@ func NewBaseElement(opts ...BaseOption) (*BaseElement, error) {
 
 // MustBaseElement tries to create a new BaseElement and returns its pointer
 // on success or error on failure.
-func MustBaseElement(opts ...BaseOption) *BaseElement {
+func MustBaseElement(opts ...options.Option) *BaseElement {
 	be, err := NewBaseElement(opts...)
 	if err != nil {
 		panic(err.Error())
