@@ -1,7 +1,7 @@
 package data
 
 type Value interface {
-	Get() (any, error)
+	Get() any
 	Update(any) error
 }
 
