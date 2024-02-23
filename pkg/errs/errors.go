@@ -11,6 +11,9 @@ const (
 	InvalidParameter = "INVALID_PARAMETER"
 
 	TypeCastingError = "InvalidTypeCasting"
+
+	OutOfRangeError      = "OutOfRange"
+	EmptyCollectionError = "CollectionIsEmpty"
 )
 
 type ApplicationError struct {
