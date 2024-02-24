@@ -3,6 +3,7 @@ package values_test
 import (
 	"testing"
 
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/stretchr/testify/require"
 )
@@ -36,13 +37,13 @@ func TestArray(t *testing.T) {
 
 			require.Equal(t, "int", a.Type())
 			require.Equal(t, -1, a.Index())
-			require.Equal(t, 0, a.Len())
+			require.Equal(t, 0, a.Count())
 
 			require.Error(t, a.Delete(0))
 			require.Error(t, a.GoTo(0))
 			require.Error(t, a.Update(5))
 			require.Error(t, a.Insert(2, 0))
-			require.Error(t, a.Next(1))
+			require.Error(t, a.Next(data.StepForward))
 		})
 
 	t.Run("normal array",
@@ -51,7 +52,7 @@ func TestArray(t *testing.T) {
 
 			require.NotEmpty(t, a)
 
-			require.Equal(t, 5, a.Len())
+			require.Equal(t, 5, a.Count())
 			require.Equal(t, 0, a.Index())
 			require.Equal(t, 1, a.Get())
 
@@ -65,14 +66,16 @@ func TestArray(t *testing.T) {
 			require.Error(t, err)
 
 			// add value
-			a.Add(6)
-			require.Equal(t, 6, a.Len())
+			require.NoError(t, a.Add(6))
+			require.Equal(t, 6, a.Count())
 			require.NoError(t, a.GoTo(5))
 			require.Equal(t, 6, a.Get())
 
+			require.Error(t, a.Add("six"))
+
 			// delete value
 			require.NoError(t, a.Delete(4))
-			require.Equal(t, 5, a.Len())
+			require.Equal(t, 5, a.Count())
 			require.Equal(t, 4, a.Index())
 			require.Error(t, a.Delete(7))
 			require.Equal(t, 6, a.Get())

@@ -15,41 +15,52 @@ type Value interface {
 	Type() string
 }
 
-type Collection interface {
-	// Len returns legth of the collection.
-	Len() int
+type Direction bool
 
-	// Rewind sets current index in collection to 0.
+const (
+	StepForward  Direction = true
+	StepBackward Direction = false
+)
+
+type Collection interface {
+	// Count returns legth of the collection.
+	Count() int
+
+	// Rewind sets current index in collection to start position
 	Rewind()
 
 	// GoTo sets collection current index to desired position.
 	// first element has 0 index.
-	GoTo(position int) error
+	GoTo(position any) error
 
 	// Next shifts current index of the collection for given distance.
 	// if distance is negative then index shifted backwards.
-	Next(distance int) error
+	Next(dir Direction) error
 
 	// GetAll returns all values of the collection.
 	GetAll() []any
 
+	// GetKeys returns a list of keys
+	GetKeys() []any
+
 	// Index returns current index in the collection.
-	Index() int
+	Index() any
 
 	// Clear removes all elements in the collection and
 	// sets index to 0.
 	Clear()
 
 	// Add adds new value into the end of the collection.
-	Add(value any)
+	// If there is any problem occured, then error returned.
+	Add(value any) error
 
 	// GetAt tries to retrieve a values at index and returns it on success
 	// or returns error on failure.
-	GetAt(index int) (any, error)
+	GetAt(index any) (any, error)
 
-	// Insert adds new value after index.
-	Insert(value any, index int) error
+	// Insert adds new value at index.
+	Insert(value any, index any) error
 
-	// Delete removes collection element on index position.
-	Delete(index int) error
+	// Delete removes collection element at index position.
+	Delete(index any) error
 }

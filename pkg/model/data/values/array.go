@@ -5,15 +5,16 @@ import (
 	"io"
 	"reflect"
 	"strconv"
+	"sync"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 )
 
 // Array is a implementation of the data.Collection and data.Value interfaces.
-// Array isn't thread safe and created only for testing and demonstrating
-// purposes.
-// Thread safety should be added when needed.
 type Array[T any] struct {
+	lock sync.Mutex
+
 	elements []T
 	index    int
 }
@@ -39,6 +40,9 @@ func NewArray[T any](values ...T) *Array[T] {
 // For collection Get retrieves element with current index
 // if collection is empty then panic will be fired.
 func (a *Array[T]) Get() any {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
 	if a.index < 0 {
 		panic("collection is empty")
 	}
@@ -49,7 +53,10 @@ func (a *Array[T]) Get() any {
 // Update sets new value of the Value.
 // For collection Update changes element with current index
 // if collection is empty then panic will be fired.
-func (a *Array[T]) Update(value T) error {
+func (a *Array[T]) Update(value any) error {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
 	if a.index < 0 {
 		return &errs.ApplicationError{
 			Message: "collection is empty",
@@ -60,7 +67,12 @@ func (a *Array[T]) Update(value T) error {
 		}
 	}
 
-	a.elements[a.index] = value
+	v, err := checkValue[T](value)
+	if err != nil {
+		return err
+	}
+
+	a.elements[a.index] = v
 
 	return nil
 }
@@ -74,13 +86,19 @@ func (a *Array[T]) Type() string {
 
 // ********************* Collection interface **********************************
 
-// Len returns legth of the collection.
-func (a *Array[T]) Len() int {
+// Count returns legth of the collection.
+func (a *Array[T]) Count() int {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
 	return len(a.elements)
 }
 
 // Rewind sets current index in collection to 0.
 func (a *Array[T]) Rewind() {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
 	if a.index < 0 {
 		return
 	}
@@ -90,24 +108,41 @@ func (a *Array[T]) Rewind() {
 
 // GoTo sets collection current index to desired position.
 // first element has 0 index.
-func (a *Array[T]) GoTo(index int) error {
-	if index < 0 {
-		index = len(a.elements) + index
-	}
+func (a *Array[T]) GoTo(index any) error {
+	a.lock.Lock()
+	defer a.lock.Unlock()
 
-	if err := checkIndex[T](index, a); err != nil {
+	idx, err := checkValue[int](index)
+	if err != nil {
 		return err
 	}
 
-	a.index = index
+	if idx < 0 {
+		idx = len(a.elements) + idx
+	}
+
+	if err := checkIndex[T](idx, a); err != nil {
+		return err
+	}
+
+	a.index = idx
 
 	return nil
 }
 
 // Next shifts current index of the collection for given distance.
 // if distance is negative then index shifted backwards.
-func (a *Array[T]) Next(distance int) error {
-	idx := a.index + distance
+func (a *Array[T]) Next(dir data.Direction) error {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
+	idx := a.index
+
+	if dir == data.StepForward {
+		idx++
+	} else {
+		idx--
+	}
 
 	if err := checkIndex[T](idx, a); err != nil {
 		return err
@@ -123,62 +158,132 @@ func (a *Array[T]) Next(distance int) error {
 }
 
 // GetAll returns all values of the collection.
-func (a *Array[T]) GetAll() []T {
-	return append([]T{}, a.elements...)
+func (a *Array[T]) GetAll() []any {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
+	res := make([]any, len(a.elements))
+	for i, e := range a.elements {
+		res[i] = e
+	}
+
+	return res
+}
+
+// GetKeys returns a list of keys
+func (a *Array[T]) GetKeys() []any {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
+	res := make([]any, len(a.elements))
+	for i := 0; i < len(a.elements); i++ {
+		res = append(res, i)
+	}
+
+	return res
 }
 
 // Index returns current index in the collection.
 // Index is -1 on empty collection.
-func (a *Array[T]) Index() int {
+func (a *Array[T]) Index() any {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
 	return a.index
 }
 
 // Clear removes all elements in the collection and
 // sets index to -1.
 func (a *Array[T]) Clear() {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
 	a.elements = []T{}
 	a.index = -1
 }
 
 // Add adds new value into the end of the collection.
-func (a *Array[T]) Add(value T) {
-	a.elements = append(a.elements, value)
+// If there is any problem occured, then error returned.
+func (a *Array[T]) Add(value any) error {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
+	v, err := checkValue[T](value)
+	if err != nil {
+		return err
+	}
+
+	a.elements = append(a.elements, v)
 
 	if a.index < 0 {
 		a.index = 0
 	}
+
+	return nil
 }
 
 // GetAt tries to retrieve a values at index and returns it on success
 // or returns error on failure.
-func (a *Array[T]) GetAt(index int) (T, error) {
-	if err := checkIndex[T](index, a); err != nil {
+func (a *Array[T]) GetAt(index any) (any, error) {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
+	idx, err := checkValue[int](index)
+	if err != nil {
+		var v T
+
+		return v, err
+	}
+
+	if err := checkIndex[T](idx, a); err != nil {
 		var emptyValue T
 
 		return emptyValue, err
 	}
 
-	return a.elements[index], nil
+	return a.elements[idx], nil
 }
 
-// Insert adds new value after index.
-func (a *Array[T]) Insert(value T, index int) error {
-	if err := checkIndex[T](index, a); err != nil {
+// Insert adds new value at index.
+func (a *Array[T]) Insert(value any, index any) error {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
+	v, err := checkValue[T](value)
+	if err != nil {
 		return err
 	}
 
-	a.elements = append(a.elements[:index], append([]T{value}, a.elements[index:]...)...)
+	idx, err := checkValue[int](index)
+	if err != nil {
+		return err
+	}
+
+	if err := checkIndex[T](idx, a); err != nil {
+		return err
+	}
+
+	a.elements = append(a.elements[:idx],
+		append([]T{v}, a.elements[idx:]...)...)
 
 	return nil
 }
 
 // Delete removes collection element on index position.
-func (a *Array[T]) Delete(index int) error {
-	if err := checkIndex[T](index, a); err != nil {
+func (a *Array[T]) Delete(index any) error {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
+	idx, err := checkValue[int](index)
+	if err != nil {
 		return err
 	}
 
-	a.elements = append(a.elements[:index], a.elements[index+1:]...)
+	if err := checkIndex[T](idx, a); err != nil {
+		return err
+	}
+
+	a.elements = append(a.elements[:idx], a.elements[idx+1:]...)
 
 	if len(a.elements) == 0 {
 		a.index = -1
@@ -222,3 +327,27 @@ func checkIndex[T any](index int, a *Array[T]) error {
 
 	return nil
 }
+
+// checkValue tries to cast value from any to T and returns casted value
+// on success or error on failure.
+func checkValue[T any](value any) (T, error) {
+	v, ok := value.(T)
+	if !ok {
+		var v T
+		return v,
+			&errs.ApplicationError{
+				Message: fmt.Sprintf(
+					"value ( %v ) isn't a value of type %q", value,
+					reflect.TypeOf(v).Name()),
+				Classes: []string{
+					errorClass,
+					errs.TypeCastingError,
+				},
+			}
+	}
+
+	return v, nil
+}
+
+var array *Array[int]
+var _ data.Collection = array
