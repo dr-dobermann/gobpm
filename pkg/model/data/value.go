@@ -1,7 +1,7 @@
 package data
 
 type Value interface {
-	// Get returns value of the Value.
+	// Get returns copy of the Value's value.
 	// For collection Get retrieves element with current index
 	// if collection is empty then panic will be fired.
 	Get() any
@@ -10,6 +10,13 @@ type Value interface {
 	// For collection Update changes element with current index
 	// if collection is empty then panic will be fired.
 	Update(any) error
+
+	// Lock locks Value's internal mutex in case user need to update internal
+	// Value throug its pointer.
+	Lock()
+
+	// Unlock unlocks internal Value's mutex.
+	Unlock()
 
 	// Type returns string representation of the Value's type.
 	Type() string

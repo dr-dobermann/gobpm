@@ -8,26 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestInt(t *testing.T) {
-	i := values.Int(10)
-
-	require.Equal(t, 10, i.Get())
-
-	require.NoError(t, i.Update(15))
-
-	require.Equal(t, 15, i.Get())
-}
-
-func TestStrings(t *testing.T) {
-	s := values.String("this is a test")
-
-	require.Equal(t, "this is a test", s.Get())
-
-	require.NoError(t, s.Update("another test"))
-
-	require.Equal(t, "another test", s.Get())
-}
-
 func TestArray(t *testing.T) {
 	t.Run("empty array",
 		func(t *testing.T) {
@@ -79,5 +59,46 @@ func TestArray(t *testing.T) {
 			require.Equal(t, 4, a.Index())
 			require.Error(t, a.Delete(7))
 			require.Equal(t, 6, a.Get())
+		})
+}
+
+func TestVariable(t *testing.T) {
+	t.Run("int",
+		func(t *testing.T) {
+			v := values.NewVariable[int](42)
+
+			// check value
+			require.Equal(t, 42, v.Get())
+			require.Equal(t, 42, v.GetT())
+
+			// update value
+			require.NoError(t, v.Update(10))
+			require.Equal(t, 10, v.Get())
+			require.Equal(t, 10, v.GetT())
+
+			require.NoError(t, v.UpdateT(15))
+			require.Equal(t, 15, v.Get())
+			require.Equal(t, 15, v.GetT())
+		})
+
+	t.Run("struct with pointer",
+		func(t *testing.T) {
+			type test_struct struct {
+				int_v    int
+				string_v string
+			}
+
+			v := values.NewVariable[test_struct](
+				test_struct{42, "meaning of life"})
+
+			t.Log(v.Type())
+
+			vp := v.GetP()
+			v.Lock()
+			vp.int_v = 10
+			v.Unlock()
+
+			require.Equal(t, 10, v.GetT().int_v)
+
 		})
 }

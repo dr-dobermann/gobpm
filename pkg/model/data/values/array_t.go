@@ -18,6 +18,21 @@ func (a *Array[T]) GetT() T {
 	return a.elements[a.index]
 }
 
+// GetP returns the pointer of the Value's value.
+// It could be used for direct update of the value.
+// To guarantee of the thread safety use Lock/Unlock of the
+// Value.
+func (a *Array[T]) GetP() *T {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
+	if a.index < 0 {
+		panic("collection is empty")
+	}
+
+	return &a.elements[a.index]
+}
+
 // UpdateT is a typed version of Update.
 func (a *Array[T]) UpdateT(value T) error {
 	a.lock.Lock()

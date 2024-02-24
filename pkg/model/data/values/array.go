@@ -50,6 +50,17 @@ func (a *Array[T]) Get() any {
 	return a.elements[a.index]
 }
 
+// Lock locks Value's internal mutex in case user need to update internal
+// Value throug its pointer.
+func (a *Array[T]) Lock() {
+	a.lock.Lock()
+}
+
+// Unlock unlocks internal Value's mutex.
+func (a *Array[T]) Unlock() {
+	a.lock.Unlock()
+}
+
 // Update sets new value of the Value.
 // For collection Update changes element with current index
 // if collection is empty then panic will be fired.
@@ -351,3 +362,4 @@ func checkValue[T any](value any) (T, error) {
 
 var array *Array[int]
 var _ data.Collection = array
+var _ data.Value = array
