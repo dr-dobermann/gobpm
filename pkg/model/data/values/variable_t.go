@@ -39,5 +39,7 @@ func (v *Variable[T]) UpdateT(value T) error {
 
 	v.value = value
 
+	v.notify()
+
 	return nil
 }

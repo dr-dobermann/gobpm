@@ -5,7 +5,9 @@ import (
 	"io"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -17,6 +19,9 @@ type Array[T any] struct {
 
 	elements []T
 	index    int
+
+	// for data.Updater
+	evtUpdaters map[string]data.UpdateCallback
 }
 
 // NewArray creates a new Array of T type, fill it with values and
@@ -84,6 +89,8 @@ func (a *Array[T]) Update(value any) error {
 	}
 
 	a.elements[a.index] = v
+
+	a.notify(data.ValueUpdated, a.index)
 
 	return nil
 }
@@ -230,6 +237,8 @@ func (a *Array[T]) Add(value any) error {
 		a.index = 0
 	}
 
+	a.notify(data.ValueAdded, len(a.elements)-1)
+
 	return nil
 }
 
@@ -277,6 +286,8 @@ func (a *Array[T]) Insert(value any, index any) error {
 	a.elements = append(a.elements[:idx],
 		append([]T{v}, a.elements[idx:]...)...)
 
+	a.notify(data.ValueAdded, idx)
+
 	return nil
 }
 
@@ -305,6 +316,8 @@ func (a *Array[T]) Delete(index any) error {
 	if a.index >= len(a.elements) {
 		a.index = len(a.elements) - 1
 	}
+
+	a.notify(data.ValueDeleted, index)
 
 	return nil
 }
@@ -360,6 +373,90 @@ func checkValue[T any](value any) (T, error) {
 	return v, nil
 }
 
+// *****************************************************************************
+// data.Updater interface
+
+// Register registers single Value's updating event callback funciton.
+// It doesn't check for duplication and just changed the previously made
+// registration.
+func (a *Array[T]) Register(regName string, updFn data.UpdateCallback) error {
+	if updFn == nil {
+		return &errs.ApplicationError{
+			Message: "empty updater function",
+			Classes: []string{
+				errorClass,
+				errs.InvalidParameter,
+			},
+		}
+	}
+
+	regName = strings.Trim(regName, " ")
+	if regName == "" {
+		return &errs.ApplicationError{
+			Message: "registration name couldn't be empty",
+			Classes: []string{
+				errorClass,
+				errs.InvalidParameter,
+			},
+			Details: map[string]string{},
+		}
+	}
+
+	v.lock.Lock()
+	defer v.lock.Unlock()
+
+	if _, ok := v.evtUpdaters[regName]; ok {
+		return &errs.ApplicationError{
+			Message: "registration " + regName + " alreday exists",
+			Classes: []string{
+				errorClass,
+				errs.InvalidParameter,
+			},
+		}
+	}
+
+	v.evtUpdaters[regName] = updFn
+
+	return nil
+}
+
+// Unregister deletes previously made registration.
+func (a *Array[T]) Unregister(regName string) {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
+	delete(a.evtUpdaters, regName)
+}
+
+// notify prepares a list of updaters to call them after
+// Value has changed.
+func (a *Array[T]) notify(chgType data.ChangeType, idx any) {
+	upff := []data.UpdateCallback{}
+
+	for _, f := range a.evtUpdaters {
+		upff = append(upff, f)
+	}
+
+	if len(upff) > 0 {
+		go sendArrayUpdates(time.Now(), chgType, idx, upff)
+	}
+}
+
+// calls all the registered at the moment callbacks
+// to inform that value changed.
+// Due to there is no restriction for the time of processing every
+// notification, sendUpdates runs as goroutine.
+func sendArrayUpdates(when time.Time,
+	chgType data.ChangeType,
+	idx any,
+	funcs []data.UpdateCallback) {
+	for _, f := range funcs {
+		f(when, chgType, idx)
+	}
+}
+
+// *****************************************************************************
 var array *Array[int]
 var _ data.Collection = array
 var _ data.Value = array
+var _ data.Updater = array

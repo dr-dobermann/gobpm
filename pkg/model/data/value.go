@@ -1,5 +1,7 @@
 package data
 
+import "time"
+
 type Value interface {
 	// Get returns copy of the Value's value.
 	// For collection Get retrieves element with current index
@@ -71,3 +73,32 @@ type Collection interface {
 	// Delete removes collection element at index position.
 	Delete(index any) error
 }
+
+// Updater is an interface for Values, which allows track its-own update events.
+// It doesn't provide ability to read updated/new value due to security issues.
+// Everyone who has access to value could read it in appropriate way.
+type Updater interface {
+	// Register registers single Value's updating event callback funciton.
+	// If registration failed error returned.
+	Register(regName string, updFunc UpdateCallback) error
+
+	// Unregister deletes previously made registration.
+	Unregister(regName string)
+}
+
+// Registered function wich will be called as soon ad Value changed.
+// Due to there is no any warranty about right order of the
+// Value updates notification, time of update is provided.
+// if you got any notification after the one you're already process, just
+// ignore them.
+// If data was changed in the collection, then index will be filled.
+type UpdateCallback func(when time.Time, changeType ChangeType, index any)
+
+// ChangeType indicates the type of Value's change.
+type ChangeType string
+
+const (
+	ValueUpdated ChangeType = "Value Updated"
+	ValueAdded   ChangeType = "New Value Added"
+	ValueDeleted ChangeType = "Value Deleted"
+)
