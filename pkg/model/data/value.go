@@ -43,7 +43,6 @@ type Collection interface {
 	GoTo(position any) error
 
 	// Next shifts current index of the collection for given distance.
-	// if distance is negative then index shifted backwards.
 	Next(dir Direction) error
 
 	// GetAll returns all values of the collection.
@@ -98,7 +97,7 @@ type UpdateCallback func(when time.Time, changeType ChangeType, index any)
 type ChangeType string
 
 const (
-	ValueUpdated ChangeType = "Value Updated"
-	ValueAdded   ChangeType = "New Value Added"
-	ValueDeleted ChangeType = "Value Deleted"
+	ValueUpdated ChangeType = "Value_Updated"
+	ValueAdded   ChangeType = "Value_Added"
+	ValueDeleted ChangeType = "Value_Deleted"
 )

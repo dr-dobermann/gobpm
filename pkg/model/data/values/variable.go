@@ -22,7 +22,8 @@ type Variable[T any] struct {
 // NewVariable creates a new variable of type T.
 func NewVariable[T any](value T) *Variable[T] {
 	return &Variable[T]{
-		value: value,
+		value:       value,
+		evtUpdaters: make(map[string]data.UpdateCallback),
 	}
 }
 
@@ -150,6 +151,6 @@ func sendVariableUpdates(when time.Time, funcs []data.UpdateCallback) {
 
 // *****************************************************************************
 // check implementation of data.Value and data.Updater interface
-var v *Variable[bool]
-var _ data.Value = v
-var _ data.Updater = v
+var varInterfaceChecker *Variable[bool]
+var _ data.Value = varInterfaceChecker
+var _ data.Updater = varInterfaceChecker

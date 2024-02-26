@@ -28,8 +28,9 @@ type Array[T any] struct {
 // returns its pointer
 func NewArray[T any](values ...T) *Array[T] {
 	a := Array[T]{
-		elements: make([]T, len(values)),
-		index:    -1,
+		elements:    make([]T, len(values)),
+		index:       -1,
+		evtUpdaters: make(map[string]data.UpdateCallback),
 	}
 
 	if len(values) > 0 {
@@ -162,12 +163,12 @@ func (a *Array[T]) Next(dir data.Direction) error {
 		idx--
 	}
 
-	if err := checkIndex[T](idx, a); err != nil {
-		return err
-	}
-
 	if idx == len(a.elements) {
 		return io.EOF
+	}
+
+	if err := checkIndex[T](idx, a); err != nil {
+		return err
 	}
 
 	a.index = idx
@@ -215,6 +216,10 @@ func (a *Array[T]) Index() any {
 func (a *Array[T]) Clear() {
 	a.lock.Lock()
 	defer a.lock.Unlock()
+
+	for i := range a.elements {
+		a.notify(data.ValueDeleted, i)
+	}
 
 	a.elements = []T{}
 	a.index = -1
@@ -325,15 +330,8 @@ func (a *Array[T]) Delete(index any) error {
 // checkIndex tests if collection is empty and is index is in elements range.
 // on failure it returns error of EmptyCollectionError or OutOfRangeError class.
 func checkIndex[T any](index int, a *Array[T]) error {
-	// check if collection is empty
-	if a.index < 0 {
-		return &errs.ApplicationError{
-			Message: "collection is empty",
-			Classes: []string{
-				errorClass,
-				errs.EmptyCollectionError,
-			},
-		}
+	if err := checkForEmpty[T](a); err != nil {
+		return err
 	}
 
 	if index < 0 || index > len(a.elements)-1 {
@@ -345,6 +343,21 @@ func checkIndex[T any](index int, a *Array[T]) error {
 			},
 			Details: map[string]string{
 				"max_index": strconv.Itoa(len(a.elements) - 1),
+			},
+		}
+	}
+
+	return nil
+}
+
+func checkForEmpty[T any](a *Array[T]) error {
+	// check if collection is empty
+	if a.index < 0 {
+		return &errs.ApplicationError{
+			Message: "collection is empty",
+			Classes: []string{
+				errorClass,
+				errs.EmptyCollectionError,
 			},
 		}
 	}
@@ -402,10 +415,10 @@ func (a *Array[T]) Register(regName string, updFn data.UpdateCallback) error {
 		}
 	}
 
-	v.lock.Lock()
-	defer v.lock.Unlock()
+	a.lock.Lock()
+	defer a.lock.Unlock()
 
-	if _, ok := v.evtUpdaters[regName]; ok {
+	if _, ok := a.evtUpdaters[regName]; ok {
 		return &errs.ApplicationError{
 			Message: "registration " + regName + " alreday exists",
 			Classes: []string{
@@ -415,7 +428,7 @@ func (a *Array[T]) Register(regName string, updFn data.UpdateCallback) error {
 		}
 	}
 
-	v.evtUpdaters[regName] = updFn
+	a.evtUpdaters[regName] = updFn
 
 	return nil
 }
@@ -456,7 +469,9 @@ func sendArrayUpdates(when time.Time,
 }
 
 // *****************************************************************************
-var array *Array[int]
-var _ data.Collection = array
-var _ data.Value = array
-var _ data.Updater = array
+// check implementation of data.Value, data.Collection and data.Updater
+// interfaces.
+var arrayInterfaceChecker *Array[int]
+var _ data.Collection = arrayInterfaceChecker
+var _ data.Value = arrayInterfaceChecker
+var _ data.Updater = arrayInterfaceChecker
