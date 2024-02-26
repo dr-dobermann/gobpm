@@ -34,9 +34,25 @@ func TestArray(t *testing.T) {
 
 			require.NotEmpty(t, a)
 
+			// check invalid indexes
+			require.Error(t, a.GoTo("invalid index"))
+			require.Error(t, a.GoTo(-19))
+			_, err := a.GetAt("somewhere")
+			require.Error(t, err)
+
 			require.Equal(t, 5, a.Count())
+			require.NoError(t, a.Next(data.StepForward))
+			require.Equal(t, 1, a.Index())
+			require.Equal(t, 2, a.Get())
+			require.NoError(t, a.Next(data.StepBackward))
 			require.Equal(t, 0, a.Index())
 			require.Equal(t, 1, a.Get())
+
+			// check keys
+			kk := a.GetKeys()
+			for i := range []int{1, 2, 3, 4, 5} {
+				require.Contains(t, kk, i)
+			}
 
 			// get at normal index
 			v, err := a.GetAt(1)
@@ -54,8 +70,11 @@ func TestArray(t *testing.T) {
 			require.Equal(t, 6, a.Get())
 
 			require.Error(t, a.Add("six"))
+			require.Error(t, a.Update("none"))
 
 			// delete value
+			require.Error(t, a.Delete("invalid index"))
+
 			require.NoError(t, a.Delete(4))
 			require.Equal(t, 5, a.Count())
 			require.Equal(t, 4, a.Index())
@@ -63,6 +82,9 @@ func TestArray(t *testing.T) {
 			require.Equal(t, 6, a.Get())
 
 			// insert value and rewind
+			require.Error(t, a.Insert(10, "invalid index"))
+			require.Error(t, a.Insert("invalid value", 0))
+
 			require.Error(t, a.Insert(7, 7))
 			require.NoError(t, a.Insert(5, 4))
 			require.Equal(t, 6, a.Count())
@@ -82,6 +104,7 @@ func TestArray(t *testing.T) {
 
 			// clear values
 			a.Clear()
+			a.Rewind()
 			require.Equal(t, 0, a.Count())
 			require.Equal(t, -1, a.Index())
 			require.NoError(t, a.Add(42))
@@ -92,6 +115,11 @@ func TestArray(t *testing.T) {
 			require.Equal(t, io.EOF, a.Next(data.StepForward))
 			require.Error(t, a.Next(data.StepBackward))
 			require.Equal(t, 0, a.Index())
+
+			// delete last element
+			require.NoError(t, a.Delete(0))
+			require.Equal(t, 0, a.Count())
+			require.Equal(t, -1, a.Index())
 		})
 
 	t.Run("typed array",
@@ -100,10 +128,24 @@ func TestArray(t *testing.T) {
 
 			require.NotEmpty(t, a)
 
+			// invalid indexes
+			require.Error(t, a.GoToT(-10))
+
 			require.Equal(t, 5, a.Count())
 			require.Equal(t, 0, a.Index())
 			require.Equal(t, 1, a.GetT())
 
+			// check keys
+			kk := a.GetKeysT()
+			for i := range []int{1, 2, 3, 4, 5} {
+				require.Contains(t, kk, i)
+			}
+			// getall
+
+			vv := a.GetAllT()
+			for _, i := range []int{1, 2, 3, 4, 5} {
+				require.Contains(t, vv, i)
+			}
 			// get at normal index
 			v, err := a.GetAtT(1)
 			require.NoError(t, err)
@@ -120,10 +162,10 @@ func TestArray(t *testing.T) {
 			require.Equal(t, 6, a.GetT())
 
 			// delete value
-			require.NoError(t, a.Delete(4))
+			require.NoError(t, a.DeleteT(4))
 			require.Equal(t, 5, a.Count())
-			require.Equal(t, 4, a.Index())
-			require.Error(t, a.Delete(7))
+			require.Equal(t, 4, a.IndexT())
+			require.Error(t, a.DeleteT(7))
 			require.Equal(t, 6, a.GetT())
 
 			// insert value and rewind
@@ -140,11 +182,20 @@ func TestArray(t *testing.T) {
 
 			// clear values
 			a.Clear()
+			require.Error(t, a.UpdateT(-1))
+
 			require.Equal(t, 0, a.Count())
 			require.Equal(t, -1, a.Index())
 			require.NoError(t, a.AddT(42))
 			require.Equal(t, 0, a.Index())
 			require.Equal(t, 1, a.Count())
+
+			// direct pointer access
+			vp := a.GetP()
+			a.Lock()
+			*vp = 100
+			a.Unlock()
+			require.Equal(t, 100, a.Get())
 		})
 
 	t.Run("update_check",
@@ -164,6 +215,8 @@ func TestArray(t *testing.T) {
 			a := values.NewArray[int]()
 			require.NoError(t, a.Register("a_tracker", updateCounter(&chCount)))
 			require.Error(t, a.Register("a_tracker", updateCounter(&chCount)))
+			require.Error(t, a.Register("some", nil))
+			require.Error(t, a.Register("    ", updateCounter(&chCount)))
 
 			require.NoError(t, a.Add(10))
 			require.NoError(t, a.UpdateT(42))
@@ -194,6 +247,8 @@ func TestVariable(t *testing.T) {
 			require.Equal(t, 42, v.GetT())
 
 			// update value
+			require.Error(t, v.Update("invalid value"))
+
 			require.NoError(t, v.Update(10))
 			require.Equal(t, 10, v.Get())
 			require.Equal(t, 10, v.GetT())
@@ -241,6 +296,8 @@ func TestVariable(t *testing.T) {
 			v := values.NewVariable[int](42)
 			require.NoError(t, v.Register("a_tracker", updateCounter(&chCount)))
 			require.Error(t, v.Register("a_tracker", updateCounter(&chCount)))
+			require.Error(t, v.Register("tracker", nil))
+			require.Error(t, v.Register("  ", updateCounter(&chCount)))
 
 			require.NoError(t, v.Update(10))
 			require.NoError(t, v.UpdateT(15))
