@@ -2,10 +2,24 @@ package data
 
 import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
 
-var defaultDataState = DataState{
-	BaseElement: *foundation.MustBaseElement(foundation.WithId("UNDEFINED_DATA_STATE")),
-	name:        "UNDEFINED",
-}
+const (
+	DataStateUndefined   = "UNDEFINED_DATA_STATE"
+	DataStateUnavailable = "UNAVAILABLE_DATA_STATE"
+)
+
+var (
+	UndefinedDataState = DataState{
+		BaseElement: *foundation.MustBaseElement(
+			foundation.WithId(DataStateUndefined)),
+		name: "undefined",
+	}
+
+	UnavailableDataState = DataState{
+		BaseElement: *foundation.MustBaseElement(
+			foundation.WithId(DataStateUnavailable)),
+		name: "unavailable",
+	}
+)
 
 // Data Object elements can optionally reference a DataState element, which is
 // the state of the data contained in the Data Object. The definition of these

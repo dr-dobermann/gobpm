@@ -154,7 +154,7 @@ type ItemAwareElement struct {
 	// ItemAwareElement.
 	ItemSubject *ItemDefinition
 
-	DataState DataState
+	dataState *DataState
 }
 
 // NewItemAwareElement creates a new DataAwareItem and returns its pointer.
@@ -164,12 +164,17 @@ func NewItemAwareElement(
 	baseOpts ...options.Option,
 ) *ItemAwareElement {
 	if state == nil {
-		state = &defaultDataState
+		state = &UndefinedDataState
 	}
 
 	return &ItemAwareElement{
 		BaseElement: *foundation.MustBaseElement(baseOpts...),
 		ItemSubject: item,
-		DataState:   *state,
+		dataState:   state,
 	}
+}
+
+// DataState returns a copy of the ItemAwareElement DataState.
+func (iae *ItemAwareElement) DataState() DataState {
+	return *iae.dataState
 }
