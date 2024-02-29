@@ -15,7 +15,7 @@ type Message struct {
 	name string
 
 	// An ItemDefinition is used to define the “payload” of the Message.
-	Item *data.ItemDefinition
+	item *data.ItemDefinition
 }
 
 // NewMessage creates a new Message object and returns its pointer.
@@ -29,11 +29,15 @@ func NewMessage(
 	return &Message{
 		BaseElement: *foundation.MustBaseElement(baseOpts...),
 		name:        name,
-		Item:        item,
+		item:        item,
 	}
 }
 
 // Name returns Mesaage name.
 func (m Message) Name() string {
 	return m.name
+}
+
+func (m *Message) Item() *data.ItemDefinition {
+	return m.item
 }

@@ -152,7 +152,7 @@ type ItemAwareElement struct {
 
 	// Specification of the items that are stored or conveyed by the
 	// ItemAwareElement.
-	ItemSubject *ItemDefinition
+	itemSubject *ItemDefinition
 
 	dataState *DataState
 }
@@ -167,14 +167,22 @@ func NewItemAwareElement(
 		state = &UndefinedDataState
 	}
 
+	if item == nil {
+		state = &UnavailableDataState
+	}
+
 	return &ItemAwareElement{
 		BaseElement: *foundation.MustBaseElement(baseOpts...),
-		ItemSubject: item,
+		itemSubject: item,
 		dataState:   state,
 	}
 }
 
-// DataState returns a copy of the ItemAwareElement DataState.
-func (iae *ItemAwareElement) DataState() DataState {
+// State returns a copy of the ItemAwareElement DataState.
+func (iae *ItemAwareElement) State() DataState {
 	return *iae.dataState
+}
+
+func (iae *ItemAwareElement) Subject() *ItemDefinition {
+	return iae.itemSubject
 }

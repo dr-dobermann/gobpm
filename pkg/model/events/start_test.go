@@ -62,7 +62,7 @@ func TestNewStartEvent(t *testing.T) {
 		func(t *testing.T) {
 			se, err := events.NewStartEvent("message_interrupting_event",
 				events.WithMessageTrigger(
-					*events.MustMessageEventDefinition(msg, nil),
+					events.MustMessageEventDefinition(msg, nil),
 					false),
 				events.WithInterrupting(),
 			)
@@ -84,7 +84,7 @@ func TestNewStartEvent(t *testing.T) {
 		func(t *testing.T) {
 			se, err := events.NewStartEvent("message_and_signal_event",
 				events.WithMessageTrigger(
-					*events.MustMessageEventDefinition(msg, nil),
+					events.MustMessageEventDefinition(msg, nil),
 					false),
 				events.WithSignalTrigger(
 					*events.MustSignalEventDefinition(sig),
@@ -109,7 +109,7 @@ func TestNewStartEvent(t *testing.T) {
 		func(t *testing.T) {
 			se, err := events.NewStartEvent("message_and_signal_parallel_event",
 				events.WithMessageTrigger(
-					*events.MustMessageEventDefinition(msg, nil),
+					events.MustMessageEventDefinition(msg, nil),
 					false),
 				events.WithSignalTrigger(
 					*events.MustSignalEventDefinition(sig),
@@ -140,7 +140,7 @@ func TestNewStartEvent(t *testing.T) {
 		func(t *testing.T) {
 			se, err := events.NewStartEvent("message_and_signal_parallel_event",
 				events.WithMessageTrigger(
-					*events.MustMessageEventDefinition(msg, nil),
+					events.MustMessageEventDefinition(msg, nil),
 					false),
 				events.WithSignalTrigger(
 					*events.MustSignalEventDefinition(sig),

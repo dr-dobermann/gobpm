@@ -116,17 +116,21 @@ func WithInterrupting() options.Option {
 // If reference is true, then Definition will be added to defintionRef list or
 // to definition otherwise.
 func WithMessageTrigger(
-	med MessageEventDefinition,
+	med *MessageEventDefinition,
 	reference bool,
 ) options.Option {
 	f := func(cfg *startConfig) error {
 		if reference {
-			cfg.defRefs = append(cfg.defRefs, &med)
+			cfg.defRefs = append(cfg.defRefs, med)
 
 			return nil
 		}
 
-		cfg.defs = append(cfg.defs, &med)
+		cfg.defs = append(cfg.defs, med)
+
+		if med.Message().Item() != nil {
+
+		}
 
 		return nil
 	}
