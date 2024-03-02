@@ -20,7 +20,8 @@ type (
 		interrurpting bool
 		baseOpts      []options.Option
 		defs          []Definition
-		defRefs       []Definition
+		dataOutputs   map[string]*data.Output
+		outputSet     *data.OutputSet
 	}
 )
 
@@ -65,7 +66,7 @@ func (sc *startConfig) validate() error {
 	ers := []error{}
 
 	// check event definitions to comply with StartEvent triggers.
-	for _, d := range append(sc.defRefs, sc.defs...) {
+	for _, d := range append(sc.defs, sc.defs...) {
 		if !startTriggers.Has(d.Type()) {
 			ers = append(ers, fmt.Errorf("%q trigger isn't allowed for StartEvent", d.Type()))
 		}
@@ -120,8 +121,29 @@ func WithMessageTrigger(
 	f := func(cfg *startConfig) error {
 		cfg.defs = append(cfg.defs, med)
 
-		if med.Message().Item() != nil {
+		if id := med.Message().Item(); id != nil {
+			ds := data.ReadyDataState
+			if id.Structure() == nil {
+				ds = data.UndefinedDataState
+			}
 
+			do, err := data.NewOutput(
+				data.NewItemAwareElement(id, &ds),
+				fmt.Sprintf("message %q(%s) output",
+					med.Message().Name(),
+					med.Message().Id()))
+			if err != nil {
+				return &errs.ApplicationError{
+					Err:     err,
+					Message: "couldn't create DataOutput",
+					Classes: []string{
+						eventErrorClass,
+						errs.BulidingFailed,
+					},
+				}
+			}
+
+			cfg.dataOutputs[id.Id()] = do
 		}
 
 		return nil

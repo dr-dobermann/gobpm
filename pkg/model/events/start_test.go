@@ -12,7 +12,7 @@ import (
 
 func TestNewStartEvent(t *testing.T) {
 
-	msg := common.NewMessage(
+	msg := common.MustMessage(
 		"message",
 		data.MustItemDefinition(nil))
 

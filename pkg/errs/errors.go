@@ -29,10 +29,12 @@ const (
 	BulidingFailed   = "BUILDING_FAILED"
 	InvalidParameter = "INVALID_PARAMETER"
 
-	TypeCastingError = "InvalidTypeCasting"
+	TypeCastingError = "INVALID_TYPECASTING"
 
-	OutOfRangeError      = "OutOfRange"
-	EmptyCollectionError = "CollectionIsEmpty"
+	OutOfRangeError      = "OUT_OF_RANGE"
+	EmptyCollectionError = "COLLECTION_IS_EMPTY"
+
+	EmptyNotAllowed = "EMPTY_OBJ_IS_NOT_ALLOWED"
 )
 
 type ApplicationError struct {

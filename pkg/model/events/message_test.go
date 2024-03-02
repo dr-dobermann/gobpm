@@ -13,7 +13,7 @@ func TestNewMessageEventDefintion(t *testing.T) {
 		"normal",
 		func(t *testing.T) {
 			med, err := events.NewMessageEventDefintion(
-				common.NewMessage("test_messag", nil), nil)
+				common.MustMessage("test_message", nil), nil)
 			require.NotNil(t, med, "message shouldn't be empty")
 			require.NoError(t, err)
 		})

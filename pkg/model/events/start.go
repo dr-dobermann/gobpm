@@ -45,7 +45,7 @@ func NewStartEvent(
 		interrurpting: false,
 		baseOpts:      []options.Option{},
 		defs:          []Definition{},
-		defRefs:       []Definition{},
+		dataOutputs:   make(map[string]*data.Output),
 	}
 
 	ee := []error{}
@@ -59,6 +59,7 @@ func NewStartEvent(
 			if err := so.Apply(&sc); err != nil {
 				ee = append(ee, err)
 			}
+
 		default:
 			ee = append(ee, fmt.Errorf("innapropriate option type: %s",
 				reflect.TypeOf(so).Name()))
