@@ -47,7 +47,6 @@ func (sc *startConfig) startEvent() (*StartEvent, error) {
 	ce, err := newCatchEvent(
 		sc.name,
 		sc.props,
-		sc.defRefs,
 		sc.defs,
 		sc.parallel,
 		sc.baseOpts...)
@@ -117,15 +116,8 @@ func WithInterrupting() options.Option {
 // to definition otherwise.
 func WithMessageTrigger(
 	med *MessageEventDefinition,
-	reference bool,
 ) options.Option {
 	f := func(cfg *startConfig) error {
-		if reference {
-			cfg.defRefs = append(cfg.defRefs, med)
-
-			return nil
-		}
-
 		cfg.defs = append(cfg.defs, med)
 
 		if med.Message().Item() != nil {
@@ -141,14 +133,8 @@ func WithMessageTrigger(
 // WithTimerTrigger adds a TimerEventDefinition into startConfig.
 // If reference is true, then Definition will be added to defintionRef list or
 // to definition otherwise.
-func WithTimerTrigger(ted TimerEventDefinition, reference bool) options.Option {
+func WithTimerTrigger(ted TimerEventDefinition) options.Option {
 	f := func(cfg *startConfig) error {
-		if reference {
-			cfg.defRefs = append(cfg.defRefs, &ted)
-
-			return nil
-		}
-
 		cfg.defs = append(cfg.defs, &ted)
 
 		return nil
@@ -160,14 +146,8 @@ func WithTimerTrigger(ted TimerEventDefinition, reference bool) options.Option {
 // WithConditionalTrigger adds a ConditionalEventDefinition into startConfig.
 // If reference is true, then Definition will be added to defintionRef list or
 // to definition otherwise.
-func WithConditionalTrigger(ced ConditionalEventDefinition, reference bool) options.Option {
+func WithConditionalTrigger(ced ConditionalEventDefinition) options.Option {
 	f := func(cfg *startConfig) error {
-		if reference {
-			cfg.defRefs = append(cfg.defRefs, &ced)
-
-			return nil
-		}
-
 		cfg.defs = append(cfg.defs, &ced)
 
 		return nil
@@ -179,14 +159,8 @@ func WithConditionalTrigger(ced ConditionalEventDefinition, reference bool) opti
 // WithSignalTrigger adds a SignalEventDefinition into startConfig.
 // If reference is true, then Definition will be added to defintionRef list or
 // to definition otherwise.
-func WithSignalTrigger(sed SignalEventDefinition, reference bool) options.Option {
+func WithSignalTrigger(sed SignalEventDefinition) options.Option {
 	f := func(cfg *startConfig) error {
-		if reference {
-			cfg.defRefs = append(cfg.defRefs, &sed)
-
-			return nil
-		}
-
 		cfg.defs = append(cfg.defs, &sed)
 
 		return nil

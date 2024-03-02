@@ -114,11 +114,6 @@ const (
 	TriggerLink Trigger = "Link"
 )
 
-const (
-	ShowDefinitionReferences = true
-	ShowDefinitions          = false
-)
-
 // *****************************************************************************
 
 // Events that catch a trigger. All Start Events and some Intermediate Events
@@ -130,6 +125,11 @@ type Event struct {
 	// contained within the Event.
 	properties []data.Property
 
+	// DEV_NOTE: There is no difference for the developer where this definition
+	// are helded since either type of definition are external for the event.
+	// Moreover, it is impossible to keep order of definition between two
+	// similar slices.
+	//
 	// References the reusable EventDefinitions that are triggers expected.
 	// Reusable EventDefinitions are defined as top-level elements.
 	// These EventDefinitions can be shared by different catch and throw Events.
@@ -138,7 +138,7 @@ type Event struct {
 	//   • If there is more than one EventDefinition defined, this is
 	//     considered a Catch Multiple Event.
 	// This is an ordered set.
-	defitionsRefs []Definition
+	// defitionsRefs []Definition
 
 	// Defines the event EventDefinitions that are triggers expected.
 	// These EventDefinitions are only valid inside the current Event.
@@ -148,7 +148,7 @@ type Event struct {
 	//     considered a catch Multiple Event and the Event will have the
 	//     pentagon internal marker.
 	// This is an ordered set.
-	defitions []Definition
+	definitions []Definition
 
 	triggers set.Set[Trigger]
 }
@@ -157,16 +157,14 @@ type Event struct {
 func newEvent(
 	name string,
 	props []data.Property,
-	defRef []Definition,
 	defs []Definition,
 	baseOpts ...options.Option,
 ) (*Event, error) {
 	e := Event{
-		Node:          *flow.NewNode(name, baseOpts...),
-		properties:    make([]data.Property, len(props)),
-		defitionsRefs: make([]Definition, len(defRef)),
-		defitions:     make([]Definition, len(defs)),
-		triggers:      *set.New[Trigger](),
+		Node:        *flow.NewNode(name, baseOpts...),
+		properties:  make([]data.Property, len(props)),
+		definitions: make([]Definition, len(defs)),
+		triggers:    *set.New[Trigger](),
 	}
 
 	if n := copy(e.properties, props); n != len(props) {
@@ -184,22 +182,7 @@ func newEvent(
 		}
 	}
 
-	if n := copy(e.defitionsRefs, defRef); n != len(defRef) {
-		return nil, &errs.ApplicationError{
-			Err:     nil,
-			Message: "event definiiton references copying failed",
-			Classes: []string{
-				eventErrorClass,
-				errs.BulidingFailed,
-			},
-			Details: map[string]string{
-				"want": strconv.Itoa(len(defRef)),
-				"got":  strconv.Itoa(n),
-			},
-		}
-	}
-
-	if n := copy(e.defitions, defs); n != len(defs) {
+	if n := copy(e.definitions, defs); n != len(defs) {
 		return nil, &errs.ApplicationError{
 			Err:     nil,
 			Message: "event definiitons copying failed",
@@ -214,12 +197,7 @@ func newEvent(
 		}
 	}
 
-	// set triggers
-	for _, d := range e.defitionsRefs {
-		e.triggers.Add(d.Type())
-	}
-
-	for _, d := range e.defitions {
+	for _, d := range e.definitions {
 		e.triggers.Add(d.Type())
 	}
 
@@ -231,14 +209,10 @@ func (e *Event) Properties() []data.Property {
 	return append([]data.Property{}, e.properties...)
 }
 
-// Definiitons returns a copy list of event definitions either referenced or
-// internal.
-func (e *Event) Definitions(references bool) []Definition {
-	if references {
-		return append([]Definition{}, e.defitionsRefs...)
-	}
+// Definiitons returns a list of event definitions.
+func (e *Event) Definitions() []Definition {
 
-	return append([]Definition{}, e.defitions...)
+	return append([]Definition{}, e.definitions...)
 }
 
 // Triggers returns the Event triggers.
@@ -286,12 +260,11 @@ type catchEvent struct {
 func newCatchEvent(
 	name string,
 	props []data.Property,
-	defRef []Definition,
 	defs []Definition,
 	parallel bool,
 	baseOpts ...options.Option,
 ) (*catchEvent, error) {
-	e, err := newEvent(name, props, defRef, defs, baseOpts...)
+	e, err := newEvent(name, props, defs, baseOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -332,11 +305,10 @@ type throwEvent struct {
 func newThrowEvent(
 	name string,
 	props []data.Property,
-	defRef []Definition,
 	defs []Definition,
 	baseOpts ...options.Option,
 ) (*throwEvent, error) {
-	e, err := newEvent(name, props, defRef, defs, baseOpts...)
+	e, err := newEvent(name, props, defs, baseOpts...)
 	if err != nil {
 		return nil, err
 	}

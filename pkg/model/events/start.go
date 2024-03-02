@@ -2,6 +2,8 @@ package events
 
 import (
 	"errors"
+	"fmt"
+	"reflect"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -57,7 +59,11 @@ func NewStartEvent(
 			if err := so.Apply(&sc); err != nil {
 				ee = append(ee, err)
 			}
+		default:
+			ee = append(ee, fmt.Errorf("innapropriate option type: %s",
+				reflect.TypeOf(so).Name()))
 		}
+
 	}
 
 	if err := sc.validate(); err != nil {

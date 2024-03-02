@@ -35,8 +35,7 @@ func TestNewStartEvent(t *testing.T) {
 			require.False(t, se.IsInterrupting())
 			require.False(t, se.IsParallelMultiple())
 
-			require.Equal(t, 0, len(se.Definitions(events.ShowDefinitionReferences)))
-			require.Equal(t, 0, len(se.Definitions(events.ShowDefinitions)))
+			require.Equal(t, 0, len(se.Definitions()))
 		})
 
 	t.Run("empty definitions list with properties",
@@ -62,8 +61,7 @@ func TestNewStartEvent(t *testing.T) {
 		func(t *testing.T) {
 			se, err := events.NewStartEvent("message_interrupting_event",
 				events.WithMessageTrigger(
-					events.MustMessageEventDefinition(msg, nil),
-					false),
+					events.MustMessageEventDefinition(msg, nil)),
 				events.WithInterrupting(),
 			)
 
@@ -76,19 +74,16 @@ func TestNewStartEvent(t *testing.T) {
 			require.Equal(t, 1, len(triggers))
 			require.True(t, se.IsInterrupting())
 			require.Equal(t, events.TriggerMessage, triggers[0])
-			require.Equal(t, 1, len(se.Definitions(events.ShowDefinitions)))
-			require.Equal(t, 0, len(se.Definitions(events.ShowDefinitionReferences)))
+			require.Equal(t, 1, len(se.Definitions()))
 		})
 
 	t.Run("message and signal event",
 		func(t *testing.T) {
 			se, err := events.NewStartEvent("message_and_signal_event",
 				events.WithMessageTrigger(
-					events.MustMessageEventDefinition(msg, nil),
-					false),
+					events.MustMessageEventDefinition(msg, nil)),
 				events.WithSignalTrigger(
-					*events.MustSignalEventDefinition(sig),
-					true),
+					*events.MustSignalEventDefinition(sig)),
 			)
 
 			require.NoError(t, err)
@@ -101,19 +96,16 @@ func TestNewStartEvent(t *testing.T) {
 			require.True(t, se.HasTrigger(events.TriggerMessage))
 
 			require.Equal(t, 2, len(triggers))
-			require.Equal(t, 1, len(se.Definitions(events.ShowDefinitions)))
-			require.Equal(t, 1, len(se.Definitions(events.ShowDefinitionReferences)))
+			require.Equal(t, 2, len(se.Definitions()))
 		})
 
 	t.Run("multiple parallel with id event",
 		func(t *testing.T) {
 			se, err := events.NewStartEvent("message_and_signal_parallel_event",
 				events.WithMessageTrigger(
-					events.MustMessageEventDefinition(msg, nil),
-					false),
+					events.MustMessageEventDefinition(msg, nil)),
 				events.WithSignalTrigger(
-					*events.MustSignalEventDefinition(sig),
-					true),
+					*events.MustSignalEventDefinition(sig)),
 				events.WithParallel(),
 				foundation.WithId("start_event_id"),
 			)
@@ -132,26 +124,21 @@ func TestNewStartEvent(t *testing.T) {
 			require.Equal(t, "start_event_id", se.Id())
 
 			require.Equal(t, 2, len(triggers))
-			require.Equal(t, 1, len(se.Definitions(events.ShowDefinitions)))
-			require.Equal(t, 1, len(se.Definitions(events.ShowDefinitionReferences)))
+			require.Equal(t, 2, len(se.Definitions()))
 		})
 
 	t.Run("start event with all triggers",
 		func(t *testing.T) {
 			se, err := events.NewStartEvent("message_and_signal_parallel_event",
 				events.WithMessageTrigger(
-					events.MustMessageEventDefinition(msg, nil),
-					false),
+					events.MustMessageEventDefinition(msg, nil)),
 				events.WithSignalTrigger(
-					*events.MustSignalEventDefinition(sig),
-					true),
+					*events.MustSignalEventDefinition(sig)),
 				events.WithConditionalTrigger(
 					*events.MustConditionalEventDefinition(
-						data.NewExpression("this is a dummy expression")),
-					false),
+						data.NewExpression("this is a dummy expression"))),
 				events.WithTimerTrigger(
-					*events.MustTimerEventDefinition(nil, nil, nil),
-					true),
+					*events.MustTimerEventDefinition(nil, nil, nil)),
 			)
 
 			require.NoError(t, err)
@@ -168,7 +155,6 @@ func TestNewStartEvent(t *testing.T) {
 			require.False(t, se.IsParallelMultiple())
 
 			require.Equal(t, 4, len(triggers))
-			require.Equal(t, 2, len(se.Definitions(events.ShowDefinitions)))
-			require.Equal(t, 2, len(se.Definitions(events.ShowDefinitionReferences)))
+			require.Equal(t, 4, len(se.Definitions()))
 		})
 }
