@@ -25,8 +25,13 @@ type (
 	}
 )
 
+// eventType implements eventConfig interface
+func (sc *startConfig) eventType() eventConfigType {
+	return catchEventConfig
+}
+
 // Apply implements options.Option interface for startOption.
-func (so startOption) Apply(cfg any) error {
+func (so startOption) Apply(cfg options.Configurator) error {
 	if sc, ok := cfg.(*startConfig); ok {
 		return so(sc)
 	}
@@ -41,6 +46,11 @@ func (so startOption) Apply(cfg any) error {
 			"cast_from": reflect.TypeOf(cfg).String(),
 		},
 	}
+}
+
+// addProperty implements propertyAdder interface for the startConfig.
+func (sc *startConfig) addProperty(prop *data.Property) {
+	sc.props = append(sc.props, *prop)
 }
 
 // startEvent creates a new StartEvent from startConfig.
@@ -86,11 +96,11 @@ func (sc *startConfig) startEvent() (*StartEvent, error) {
 }
 
 // validate checks if startConfig is consistent.
-func (sc *startConfig) validate() error {
+func (sc *startConfig) Validate() error {
 	ers := []error{}
 
 	// check event definitions to comply with StartEvent triggers.
-	for _, d := range append(sc.defs, sc.defs...) {
+	for _, d := range sc.defs {
 		if !startTriggers.Has(d.Type()) {
 			ers = append(ers, fmt.Errorf("%q trigger isn't allowed for StartEvent", d.Type()))
 		}
@@ -101,17 +111,6 @@ func (sc *startConfig) validate() error {
 	}
 
 	return nil
-}
-
-// WithProperty add one property to startConfig.
-func WithProperty(prop data.Property) options.Option {
-	f := func(cfg *startConfig) error {
-		cfg.props = append(cfg.props, prop)
-
-		return nil
-	}
-
-	return startOption(f)
 }
 
 // WithParallel sets parallel flag in startConfig.
@@ -136,122 +135,55 @@ func WithInterrupting() options.Option {
 	return startOption(f)
 }
 
-// WithMessageTrigger adds a MessageEventDefinition into startConfig.
-// If reference is true, then Definition will be added to defintionRef list or
-// to definition otherwise.
-func WithMessageTrigger(
-	med *MessageEventDefinition,
-) options.Option {
-	f := func(cfg *startConfig) error {
-		if med == nil {
+// setMessage implements messageAdder interface.
+func (cfg *startConfig) setMessage(med *MessageEventDefinition) error {
+	cfg.defs = append(cfg.defs, med)
+
+	if id := med.Message().Item(); id != nil {
+		ds := data.ReadyDataState
+		if id.Structure() == nil {
+			ds = data.UndefinedDataState
+		}
+
+		do, err := data.NewOutput(
+			data.NewItemAwareElement(id, &ds),
+			fmt.Sprintf("message %q(%s) output",
+				med.Message().Name(),
+				med.Message().Id()))
+		if err != nil {
 			return &errs.ApplicationError{
-				Message: "empty message definition isn't allowed",
+				Err:     err,
+				Message: "couldn't create DataOutput",
 				Classes: []string{
 					errorClass,
-					errs.InvalidParameter,
+					errs.BulidingFailed,
 				},
 			}
 		}
 
-		cfg.defs = append(cfg.defs, med)
-
-		if id := med.Message().Item(); id != nil {
-			ds := data.ReadyDataState
-			if id.Structure() == nil {
-				ds = data.UndefinedDataState
-			}
-
-			do, err := data.NewOutput(
-				data.NewItemAwareElement(id, &ds),
-				fmt.Sprintf("message %q(%s) output",
-					med.Message().Name(),
-					med.Message().Id()))
-			if err != nil {
-				return &errs.ApplicationError{
-					Err:     err,
-					Message: "couldn't create DataOutput",
-					Classes: []string{
-						errorClass,
-						errs.BulidingFailed,
-					},
-				}
-			}
-
-			cfg.dataOutputs[id.Id()] = do
-		}
-
-		return nil
+		cfg.dataOutputs[id.Id()] = do
 	}
 
-	return startOption(f)
+	return nil
 }
 
-// WithTimerTrigger adds a TimerEventDefinition into startConfig.
-// If reference is true, then Definition will be added to defintionRef list or
-// to definition otherwise.
-func WithTimerTrigger(ted *TimerEventDefinition) options.Option {
-	f := func(cfg *startConfig) error {
-		if ted == nil {
-			return &errs.ApplicationError{
-				Message: "empty timer definition isn't allowed",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter,
-				},
-			}
-		}
+// setTimer implements timerAdder interface.
+func (cfg *startConfig) setTimer(ted *TimerEventDefinition) error {
+	cfg.defs = append(cfg.defs, ted)
 
-		cfg.defs = append(cfg.defs, ted)
-
-		return nil
-	}
-
-	return startOption(f)
+	return nil
 }
 
-// WithConditionalTrigger adds a ConditionalEventDefinition into startConfig.
-// If reference is true, then Definition will be added to defintionRef list or
-// to definition otherwise.
-func WithConditionalTrigger(ced *ConditionalEventDefinition) options.Option {
+// setCondition implements conditionAdder interface.
+func (cfg *startConfig) setCondiiton(ced *ConditionalEventDefinition) error {
+	cfg.defs = append(cfg.defs, ced)
 
-	f := func(cfg *startConfig) error {
-		if ced == nil {
-			return &errs.ApplicationError{
-				Message: "empty conditional definition isn't allowed",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter,
-				},
-			}
-		}
-
-		cfg.defs = append(cfg.defs, ced)
-
-		return nil
-	}
-
-	return startOption(f)
+	return nil
 }
 
-// WithSignalTrigger adds a SignalEventDefinition into startConfig.
-// If reference is true, then Definition will be added to defintionRef list or
-// to definition otherwise.
-func WithSignalTrigger(sed *SignalEventDefinition) options.Option {
-	f := func(cfg *startConfig) error {
-		if sed == nil {
-			return &errs.ApplicationError{
-				Message: "empty signal definition isn't allowed",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter,
-				},
-			}
-		}
+// setSignal implements signalAdder interface.
+func (cfg *startConfig) setSignal(sed *SignalEventDefinition) error {
+	cfg.defs = append(cfg.defs, sed)
 
-		cfg.defs = append(cfg.defs, sed)
-
-		return nil
-	}
-
-	return startOption(f)
+	return nil
 }

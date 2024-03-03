@@ -22,8 +22,12 @@ type (
 	}
 )
 
+func (ic *itemConfig) Validate() error {
+	return nil
+}
+
 // apply implements ItemOption interface for itemOption functor.
-func (o itemOption) Apply(cfg any) error {
+func (o itemOption) Apply(cfg options.Configurator) error {
 	if ic, ok := cfg.(*itemConfig); ok {
 		return o(ic)
 	}

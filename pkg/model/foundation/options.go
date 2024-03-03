@@ -20,8 +20,13 @@ type (
 	BaseOption func(*baseConfig) error
 )
 
+// Validate implements options.Configurator interface.
+func (bc *baseConfig) Validate() error {
+	return nil
+}
+
 // Apply implements options.Option interface for BaseOption
-func (bo BaseOption) Apply(cfg any) error {
+func (bo BaseOption) Apply(cfg options.Configurator) error {
 	if bc, ok := cfg.(*baseConfig); ok {
 		return bo(bc)
 	}

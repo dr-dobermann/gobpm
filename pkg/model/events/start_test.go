@@ -43,7 +43,7 @@ func TestNewStartEvent(t *testing.T) {
 		func(t *testing.T) {
 			se, err := events.NewStartEvent(
 				"NoneTrigger",
-				events.WithProperty(*data.NewProperty(
+				events.WithProperty(data.NewProperty(
 					"event_property", nil, nil)),
 				foundation.WithId("none_trigger_start_event"))
 

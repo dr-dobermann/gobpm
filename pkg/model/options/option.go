@@ -1,5 +1,8 @@
 package options
 
+type Configurator interface {
+	Validate() error
+}
 type Option interface {
-	Apply(cfg any) error
+	Apply(cfg Configurator) error
 }

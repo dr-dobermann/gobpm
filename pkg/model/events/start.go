@@ -60,6 +60,11 @@ func NewStartEvent(
 				ee = append(ee, err)
 			}
 
+		case eventOption:
+			if err := so.Apply(&sc); err != nil {
+				ee = append(ee, err)
+			}
+
 		default:
 			ee = append(ee, fmt.Errorf("innapropriate option type: %s",
 				reflect.TypeOf(so).Name()))
@@ -67,7 +72,7 @@ func NewStartEvent(
 
 	}
 
-	if err := sc.validate(); err != nil {
+	if err := sc.Validate(); err != nil {
 		ee = append(ee, err)
 	}
 
