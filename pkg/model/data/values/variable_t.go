@@ -18,7 +18,7 @@ func (v *Variable[T]) GetT() T {
 //    v.Lock()
 //    v.GetP().inner_value = new_value
 //    v.Unlock()
-// BECOUSE IT LEADS to DEADLOCK
+// BECAUSE IT LEADS to DEADLOCK
 //
 // Use followed pattern:
 //    pv := v.GetP()

@@ -59,7 +59,7 @@ type Collection interface {
 	Clear()
 
 	// Add adds new value into the end of the collection.
-	// If there is any problem occured, then error returned.
+	// If there is any problem occurred, then error returned.
 	Add(value any) error
 
 	// GetAt tries to retrieve a values at index and returns it on success
@@ -77,7 +77,7 @@ type Collection interface {
 // It doesn't provide ability to read updated/new value due to security issues.
 // Everyone who has access to value could read it in appropriate way.
 type Updater interface {
-	// Register registers single Value's updating event callback funciton.
+	// Register registers single Value's updating event callback function.
 	// If registration failed error returned.
 	Register(regName string, updFunc UpdateCallback) error
 
@@ -85,7 +85,7 @@ type Updater interface {
 	Unregister(regName string)
 }
 
-// Registered function wich will be called as soon ad Value changed.
+// Registered function which will be called as soon ad Value changed.
 // Due to there is no any warranty about right order of the
 // Value updates notification, time of update is provided.
 // if you got any notification after the one you're already process, just

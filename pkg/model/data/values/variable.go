@@ -73,7 +73,7 @@ func (v *Variable[T]) Type() string {
 // *****************************************************************************
 // data.Updater interface
 
-// Register registers single Value's updating event callback funciton.
+// Register registers single Value's updating event callback function.
 // It doesn't check for duplication and just changed the previously made
 // registration.
 func (v *Variable[T]) Register(regName string, updFn data.UpdateCallback) error {

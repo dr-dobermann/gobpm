@@ -226,7 +226,7 @@ func (a *Array[T]) Clear() {
 }
 
 // Add adds new value into the end of the collection.
-// If there is any problem occured, then error returned.
+// If there is any problem occurred, then error returned.
 func (a *Array[T]) Add(value any) error {
 	a.lock.Lock()
 	defer a.lock.Unlock()
@@ -270,7 +270,7 @@ func (a *Array[T]) GetAt(index any) (any, error) {
 }
 
 // Insert adds new value at index.
-func (a *Array[T]) Insert(value any, index any) error {
+func (a *Array[T]) Insert(value, index any) error {
 	a.lock.Lock()
 	defer a.lock.Unlock()
 
@@ -389,7 +389,7 @@ func checkValue[T any](value any) (T, error) {
 // *****************************************************************************
 // data.Updater interface
 
-// Register registers single Value's updating event callback funciton.
+// Register registers single Value's updating event callback function.
 // It doesn't check for duplication and just changed the previously made
 // registration.
 func (a *Array[T]) Register(regName string, updFn data.UpdateCallback) error {

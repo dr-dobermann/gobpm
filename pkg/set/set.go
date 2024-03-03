@@ -22,7 +22,6 @@ func New[T comparable](values ...T) *Set[T] {
 
 // Count returns number of Set elements.
 func (s *Set[T]) Count() int {
-
 	return len(s.elements)
 }
 
@@ -66,6 +65,5 @@ func (s *Set[T]) Remove(values ...T) {
 
 // All returns all elements of the Set.
 func (s Set[T]) All() []T {
-
 	return append([]T{}, s.elements...)
 }

@@ -24,16 +24,14 @@ import (
 )
 
 const (
-	InvalidObject    = "INVALID_OBJECT"
-	NilDereference   = "NIL_DEREFERENCE"
-	BulidingFailed   = "BUILDING_FAILED"
-	InvalidParameter = "INVALID_PARAMETER"
-
-	TypeCastingError = "INVALID_TYPECASTING"
-
+	InvalidObject        = "INVALID_OBJECT"
+	NilDereference       = "NIL_DEREFERENCE"
+	BulidingFailed       = "BUILDING_FAILED"
+	InvalidParameter     = "INVALID_PARAMETER"
+	TypeCastingError     = "INVALID_TYPECASTING"
 	OutOfRangeError      = "OUT_OF_RANGE"
 	EmptyCollectionError = "COLLECTION_IS_EMPTY"
-
+	//nolint: gosec
 	EmptyNotAllowed = "EMPTY_OBJ_IS_NOT_ALLOWED"
 )
 

@@ -230,25 +230,30 @@ type InputSet struct {
 	name string
 
 	// The DataInput elements that collectively make up this data requirement.
-	dataInputs []*Input
+	DataInputs []*Input
 
 	// The DataInput elements that are a part of the InputSet that can be in
 	// the state of “unavailable” when the Activity starts executing. This
 	// association MUST NOT reference a DataInput that is not listed in the
 	// dataInputRefs.
-	optionalInputs []*Input
+	OptionalInputs []*Input
 
 	// The DataInput elements that are a part of the InputSet that can be
 	// evaluated while the Activity is executing. This association MUST NOT
 	// reference a DataInput that is not listed in the dataInputRefs.
-	whileExecutionInputs []*Input
+	WhileExecutionInputs []*Input
 
 	// Specifies an Input/Output rule that defines which OutputSet is expected
 	// to be created by the Activity when this InputSet became valid.
 	// This attribute is paired with the inputSetRefs attribute of OutputSets.
 	// This combination replaces the IORules attribute for Activities in
 	// BPMN 1.2.
-	outputSets []*OutputSet
+	OutputSets []*OutputSet
+}
+
+// Name returns the name of the InptutSet.
+func (is *InputSet) Name() string {
+	return is.name
 }
 
 // An OutputSet is a collection of DataOutputs elements that together can be

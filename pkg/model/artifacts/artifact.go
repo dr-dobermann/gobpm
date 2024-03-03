@@ -45,7 +45,7 @@ func NewArtifact(baseOpts ...options.Option) (*Artifact, error) {
 }
 
 // MustArtifact tries to create a new Artifact and returns its pointer on success.
-// If error occured then panic fired.
+// If error occurred then panic fired.
 func MustArtifact(baseOpts ...options.Option) *Artifact {
 	ar, err := NewArtifact(baseOpts...)
 	if err != nil {
