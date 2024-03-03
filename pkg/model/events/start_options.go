@@ -45,6 +45,7 @@ func (so startOption) Apply(cfg any) error {
 
 // startEvent creates a new StartEvent from startConfig.
 func (sc *startConfig) startEvent() (*StartEvent, error) {
+	const outputSetName = "startEventOutput"
 	ce, err := newCatchEvent(
 		sc.name,
 		sc.props,
@@ -53,6 +54,28 @@ func (sc *startConfig) startEvent() (*StartEvent, error) {
 		sc.baseOpts...)
 	if err != nil {
 		return nil, err
+	}
+
+	// create and fill output set
+	if len(sc.dataOutputs) > 0 {
+		ce.outputSet, err = data.NewOutputSet(outputSetName)
+		if err != nil {
+			return nil,
+				&errs.ApplicationError{
+					Err:     err,
+					Message: "output set creation failed for start event",
+					Classes: []string{
+						errorClass,
+						errs.BulidingFailed,
+					},
+				}
+		}
+
+		ce.dataOutputs = sc.dataOutputs
+
+		for _, do := range ce.dataOutputs {
+			ce.outputSet.AddOutput(do, data.DefaultSet)
+		}
 	}
 
 	return &StartEvent{
@@ -119,6 +142,16 @@ func WithMessageTrigger(
 	med *MessageEventDefinition,
 ) options.Option {
 	f := func(cfg *startConfig) error {
+		if med == nil {
+			return &errs.ApplicationError{
+				Message: "empty message definition isn't allowed",
+				Classes: []string{
+					errorClass,
+					errs.InvalidParameter,
+				},
+			}
+		}
+
 		cfg.defs = append(cfg.defs, med)
 
 		if id := med.Message().Item(); id != nil {
@@ -155,9 +188,19 @@ func WithMessageTrigger(
 // WithTimerTrigger adds a TimerEventDefinition into startConfig.
 // If reference is true, then Definition will be added to defintionRef list or
 // to definition otherwise.
-func WithTimerTrigger(ted TimerEventDefinition) options.Option {
+func WithTimerTrigger(ted *TimerEventDefinition) options.Option {
 	f := func(cfg *startConfig) error {
-		cfg.defs = append(cfg.defs, &ted)
+		if ted == nil {
+			return &errs.ApplicationError{
+				Message: "empty timer definition isn't allowed",
+				Classes: []string{
+					errorClass,
+					errs.InvalidParameter,
+				},
+			}
+		}
+
+		cfg.defs = append(cfg.defs, ted)
 
 		return nil
 	}
@@ -168,9 +211,20 @@ func WithTimerTrigger(ted TimerEventDefinition) options.Option {
 // WithConditionalTrigger adds a ConditionalEventDefinition into startConfig.
 // If reference is true, then Definition will be added to defintionRef list or
 // to definition otherwise.
-func WithConditionalTrigger(ced ConditionalEventDefinition) options.Option {
+func WithConditionalTrigger(ced *ConditionalEventDefinition) options.Option {
+
 	f := func(cfg *startConfig) error {
-		cfg.defs = append(cfg.defs, &ced)
+		if ced == nil {
+			return &errs.ApplicationError{
+				Message: "empty conditional definition isn't allowed",
+				Classes: []string{
+					errorClass,
+					errs.InvalidParameter,
+				},
+			}
+		}
+
+		cfg.defs = append(cfg.defs, ced)
 
 		return nil
 	}
@@ -181,9 +235,19 @@ func WithConditionalTrigger(ced ConditionalEventDefinition) options.Option {
 // WithSignalTrigger adds a SignalEventDefinition into startConfig.
 // If reference is true, then Definition will be added to defintionRef list or
 // to definition otherwise.
-func WithSignalTrigger(sed SignalEventDefinition) options.Option {
+func WithSignalTrigger(sed *SignalEventDefinition) options.Option {
 	f := func(cfg *startConfig) error {
-		cfg.defs = append(cfg.defs, &sed)
+		if sed == nil {
+			return &errs.ApplicationError{
+				Message: "empty signal definition isn't allowed",
+				Classes: []string{
+					errorClass,
+					errs.InvalidParameter,
+				},
+			}
+		}
+
+		cfg.defs = append(cfg.defs, sed)
 
 		return nil
 	}

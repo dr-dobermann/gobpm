@@ -84,7 +84,7 @@ func TestNewStartEvent(t *testing.T) {
 				events.WithMessageTrigger(
 					events.MustMessageEventDefinition(msg, nil)),
 				events.WithSignalTrigger(
-					*events.MustSignalEventDefinition(sig)),
+					events.MustSignalEventDefinition(sig)),
 			)
 
 			require.NoError(t, err)
@@ -106,7 +106,7 @@ func TestNewStartEvent(t *testing.T) {
 				events.WithMessageTrigger(
 					events.MustMessageEventDefinition(msg, nil)),
 				events.WithSignalTrigger(
-					*events.MustSignalEventDefinition(sig)),
+					events.MustSignalEventDefinition(sig)),
 				events.WithParallel(),
 				foundation.WithId("start_event_id"),
 			)
@@ -134,12 +134,12 @@ func TestNewStartEvent(t *testing.T) {
 				events.WithMessageTrigger(
 					events.MustMessageEventDefinition(msg, nil)),
 				events.WithSignalTrigger(
-					*events.MustSignalEventDefinition(sig)),
+					events.MustSignalEventDefinition(sig)),
 				events.WithConditionalTrigger(
-					*events.MustConditionalEventDefinition(
+					events.MustConditionalEventDefinition(
 						data.NewExpression("this is a dummy expression"))),
 				events.WithTimerTrigger(
-					*events.MustTimerEventDefinition(nil, nil, nil)),
+					events.MustTimerEventDefinition(nil, nil, nil)),
 			)
 
 			require.NoError(t, err)
