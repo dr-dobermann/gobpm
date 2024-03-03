@@ -46,6 +46,7 @@ func (so startOption) Apply(cfg any) error {
 // startEvent creates a new StartEvent from startConfig.
 func (sc *startConfig) startEvent() (*StartEvent, error) {
 	const outputSetName = "startEventOutput"
+
 	ce, err := newCatchEvent(
 		sc.name,
 		sc.props,
