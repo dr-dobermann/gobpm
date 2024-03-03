@@ -83,8 +83,6 @@ import (
 //     Output that corresponds to the EventDefinition that described that
 //     trigger.
 
-const eventErrorClass = "EVENTS_ERRORS"
-
 type Trigger string
 
 // Multiple and ParallelMultiple have not direct trigger since they are
@@ -172,7 +170,7 @@ func newEvent(
 			Err:     nil,
 			Message: "event properties copying failed",
 			Classes: []string{
-				eventErrorClass,
+				errorClass,
 				errs.BulidingFailed,
 			},
 			Details: map[string]string{
@@ -187,7 +185,7 @@ func newEvent(
 			Err:     nil,
 			Message: "event definiitons copying failed",
 			Classes: []string{
-				eventErrorClass,
+				errorClass,
 				errs.BulidingFailed,
 			},
 			Details: map[string]string{

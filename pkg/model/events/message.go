@@ -35,14 +35,27 @@ func NewMessageEventDefintion(
 			&errs.ApplicationError{
 				Message: "empty message isn't allowed",
 				Classes: []string{
-					eventErrorClass,
+					errorClass,
 					errs.InvalidParameter,
 				},
 			}
 	}
 
+	d, err := newDefinition(baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "message event definition building error",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed,
+				},
+			}
+	}
+
 	return &MessageEventDefinition{
-		definition: *newDefinition(baseOpts...),
+		definition: *d,
 		message:    msg,
 		operation:  operation,
 	}, nil

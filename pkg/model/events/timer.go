@@ -55,14 +55,27 @@ func NewTimerEventDefinition(
 			&errs.ApplicationError{
 				Message: "doesn't allow to define Timer Data or Cycle or Duration simultaneously",
 				Classes: []string{
-					eventErrorClass,
+					errorClass,
 					errs.InvalidParameter,
 				},
 			}
 	}
 
+	d, err := newDefinition(baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "message event definition building error",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed,
+				},
+			}
+	}
+
 	return &TimerEventDefinition{
-		definition:   *newDefinition(baseOpts...),
+		definition:   *d,
 		timeDate:     tDate,
 		timeCycle:    tCycle,
 		timeDuration: tDuration,

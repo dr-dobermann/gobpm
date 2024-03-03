@@ -77,7 +77,7 @@ func NewStartEvent(
 				Err:     errors.Join(ee...),
 				Message: "start event configuration errors",
 				Classes: []string{
-					eventErrorClass,
+					errorClass,
 				},
 			}
 	}

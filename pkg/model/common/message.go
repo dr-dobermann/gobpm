@@ -39,6 +39,7 @@ func NewMessage(
 				Details: map[string]string{},
 			}
 	}
+
 	be, err := foundation.NewBaseElement(baseOpts...)
 	if err != nil {
 		return nil,

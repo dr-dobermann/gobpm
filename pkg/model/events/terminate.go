@@ -1,6 +1,9 @@
 package events
 
-import "github.com/dr-dobermann/gobpm/pkg/model/options"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
+)
 
 type TerminateEventDefinition struct {
 	definition
@@ -16,9 +19,21 @@ func (*TerminateEventDefinition) Type() Trigger {
 // and returns its pointer.
 func NewTerminateEventDefinition(
 	baseOpts ...options.Option,
-) *TerminateEventDefinition {
+) (*TerminateEventDefinition, error) {
+	d, err := newDefinition(baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "message event definition building error",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed,
+				},
+			}
+	}
 
 	return &TerminateEventDefinition{
-		definition: *newDefinition(baseOpts...),
-	}
+		definition: *d,
+	}, nil
 }

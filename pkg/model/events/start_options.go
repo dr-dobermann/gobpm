@@ -34,7 +34,7 @@ func (so startOption) Apply(cfg any) error {
 	return &errs.ApplicationError{
 		Message: "not an startConfig",
 		Classes: []string{
-			eventErrorClass,
+			errorClass,
 			errs.TypeCastingError,
 		},
 		Details: map[string]string{
@@ -137,7 +137,7 @@ func WithMessageTrigger(
 					Err:     err,
 					Message: "couldn't create DataOutput",
 					Classes: []string{
-						eventErrorClass,
+						errorClass,
 						errs.BulidingFailed,
 					},
 				}

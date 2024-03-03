@@ -32,14 +32,27 @@ func NewConditionalEventDefinition(
 			&errs.ApplicationError{
 				Message: "condition couldn't be empty",
 				Classes: []string{
-					eventErrorClass,
+					errorClass,
 					errs.InvalidParameter,
 				},
 			}
 	}
 
+	d, err := newDefinition(baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "conditional event definition building error",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed,
+				},
+			}
+	}
+
 	return &ConditionalEventDefinition{
-		definition: *newDefinition(baseOpts...),
+		definition: *d,
 		condition:  condition,
 	}, nil
 }

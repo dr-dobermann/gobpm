@@ -16,9 +16,10 @@ func TestNewStartEvent(t *testing.T) {
 		"message",
 		data.MustItemDefinition(nil))
 
-	sig := events.NewSignal(
+	sig, err := events.NewSignal(
 		"signal",
 		data.MustItemDefinition(nil))
+	require.NoError(t, err)
 
 	t.Run("empty definitions list",
 		func(t *testing.T) {

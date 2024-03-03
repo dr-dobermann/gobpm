@@ -1,6 +1,7 @@
 package events
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -18,9 +19,21 @@ type definition struct {
 }
 
 // newDefinition creates a new Event Definition and returns its pointer.
-func newDefinition(baseOpts ...options.Option) *definition {
+func newDefinition(baseOpts ...options.Option) (*definition, error) {
+	be, err := foundation.NewBaseElement(baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "definition build failed",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed,
+				},
+			}
+	}
 
 	return &definition{
-		BaseElement: *foundation.MustBaseElement(baseOpts...),
-	}
+		BaseElement: *be,
+	}, nil
 }

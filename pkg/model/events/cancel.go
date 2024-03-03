@@ -1,6 +1,9 @@
 package events
 
-import "github.com/dr-dobermann/gobpm/pkg/model/options"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
+)
 
 // Cancel Events are only used in the context of modeling Transaction
 // Sub-Processes. There are two variations: a catch Intermediate Event and an
@@ -25,9 +28,21 @@ func (*CancelEventDefinition) Type() Trigger {
 func NewCancelEventDefinition(
 	id string,
 	baseOpts ...options.Option,
-) *CancelEventDefinition {
+) (*CancelEventDefinition, error) {
+	d, err := newDefinition(baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "message event definition building error",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed,
+				},
+			}
+	}
 
 	return &CancelEventDefinition{
-		definition: *newDefinition(baseOpts...),
-	}
+		definition: *d,
+	}, nil
 }

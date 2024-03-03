@@ -1,6 +1,7 @@
 package events
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/acivities"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -60,11 +61,23 @@ func NewCompensationEventDefinition(
 	activity *acivities.Activity,
 	wait4compensation bool,
 	baseOpts ...options.Option,
-) *CompensationEventDefinition {
+) (*CompensationEventDefinition, error) {
+	d, err := newDefinition(baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "compensation event definition building error",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed,
+				},
+			}
+	}
 
 	return &CompensationEventDefinition{
-		definition:          *newDefinition(baseOpts...),
+		definition:          *d,
 		acitivityRef:        activity,
 		waitForCompensation: wait4compensation,
-	}
+	}, nil
 }

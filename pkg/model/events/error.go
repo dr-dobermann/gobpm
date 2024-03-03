@@ -1,6 +1,7 @@
 package events
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -21,12 +22,35 @@ func (*ErrorEventDefinition) Type() Trigger {
 // NewErrorEventDefinition creates a new ErrorEventDefinition and returns
 // its pointer.
 func NewErrorEventDefinition(
-	err *common.Error,
+	cErr *common.Error,
 	baseOpts ...options.Option,
-) *ErrorEventDefinition {
+) (*ErrorEventDefinition, error) {
+	if cErr == nil {
+		return nil,
+			&errs.ApplicationError{
+				Message: "empty error object isn't allowed",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed,
+				},
+			}
+	}
+
+	d, err := newDefinition(baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "error event definition building failed",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed,
+				},
+			}
+	}
 
 	return &ErrorEventDefinition{
-		definition: *newDefinition(baseOpts...),
-		err:        err,
-	}
+		definition: *d,
+		err:        cErr,
+	}, nil
 }

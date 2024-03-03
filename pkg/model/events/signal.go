@@ -21,13 +21,31 @@ func NewSignal(
 	name string,
 	str *data.ItemDefinition,
 	baseOpts ...options.Option,
-) *Signal {
+) (*Signal, error) {
+	name = trim(name)
+
+	if err := checkStr(name, "name should be provided fro Signal"); err != nil {
+		return nil, err
+	}
+
+	be, err := foundation.NewBaseElement(baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "signal building error",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed,
+				},
+			}
+	}
 
 	return &Signal{
-		BaseElement: *foundation.MustBaseElement(baseOpts...),
+		BaseElement: *be,
 		name:        name,
 		structure:   str,
-	}
+	}, nil
 }
 
 // *****************************************************************************
@@ -55,13 +73,26 @@ func NewSignalEventDefinition(
 			&errs.ApplicationError{
 				Message: "signal isn't provided",
 				Classes: []string{
-					eventErrorClass,
+					errorClass,
 					errs.InvalidParameter},
 			}
 	}
 
+	d, err := newDefinition(baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "signal event definition building error",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed,
+				},
+			}
+	}
+
 	return &SignalEventDefinition{
-		definition: *newDefinition(baseOpts...),
+		definition: *d,
 		signal:     signal,
 	}, nil
 }
