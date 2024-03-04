@@ -13,10 +13,13 @@ import (
 )
 
 var startTriggers = set.New[Trigger](
-	TriggerMessage,
-	TriggerTimer,
+	TriggerCompensation, // only for in-line Sub-Processes
 	TriggerConditional,
+	TriggerError,      // only for in-line Sub-Processes
+	TriggerEscalation, // only for in-line Sub-Processes
+	TriggerMessage,
 	TriggerSignal,
+	TriggerTimer,
 )
 
 type StartEvent struct {
@@ -33,7 +36,7 @@ type StartEvent struct {
 }
 
 // NewStartEvent creates a new StartEvent and returns its pointer on success
-// or error if any.
+// or error on failure.
 func NewStartEvent(
 	name string,
 	startEventOptions ...options.Option,

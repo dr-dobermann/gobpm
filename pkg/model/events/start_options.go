@@ -135,6 +135,40 @@ func WithInterrupting() options.Option {
 	return startOption(f)
 }
 
+// setCompensation implements compensationAdder interface.
+func (cfg *startConfig) setCompensation(
+	ced *CompensationEventDefinition,
+) error {
+	cfg.defs = append(cfg.defs, ced)
+
+	return nil
+}
+
+// setCondition implements conditionAdder interface.
+func (cfg *startConfig) setCondiiton(ced *ConditionalEventDefinition) error {
+	cfg.defs = append(cfg.defs, ced)
+
+	return nil
+}
+
+// setError implements errorAdder interface.
+func (cfg *startConfig) setError(
+	eed *ErrorEventDefinition,
+) error {
+	cfg.defs = append(cfg.defs, eed)
+
+	return nil
+}
+
+// setEscalation implements escalationAdder interface.
+func (cfg *startConfig) setEscalation(
+	eed *EscalationEventDefinition,
+) error {
+	cfg.defs = append(cfg.defs, eed)
+
+	return nil
+}
+
 // setMessage implements messageAdder interface.
 func (cfg *startConfig) setMessage(med *MessageEventDefinition) error {
 	cfg.defs = append(cfg.defs, med)
@@ -153,11 +187,12 @@ func (cfg *startConfig) setMessage(med *MessageEventDefinition) error {
 		if err != nil {
 			return &errs.ApplicationError{
 				Err:     err,
-				Message: "couldn't create DataOutput",
+				Message: "couldn't create DataOutput for Message",
 				Classes: []string{
 					errorClass,
-					errs.BulidingFailed,
-				},
+					errs.BulidingFailed},
+				Details: map[string]string{
+					"msg_name": med.Message().Name()},
 			}
 		}
 
@@ -167,23 +202,16 @@ func (cfg *startConfig) setMessage(med *MessageEventDefinition) error {
 	return nil
 }
 
-// setTimer implements timerAdder interface.
-func (cfg *startConfig) setTimer(ted *TimerEventDefinition) error {
-	cfg.defs = append(cfg.defs, ted)
-
-	return nil
-}
-
-// setCondition implements conditionAdder interface.
-func (cfg *startConfig) setCondiiton(ced *ConditionalEventDefinition) error {
-	cfg.defs = append(cfg.defs, ced)
-
-	return nil
-}
-
 // setSignal implements signalAdder interface.
 func (cfg *startConfig) setSignal(sed *SignalEventDefinition) error {
 	cfg.defs = append(cfg.defs, sed)
+
+	return nil
+}
+
+// setTimer implements timerAdder interface.
+func (cfg *startConfig) setTimer(ted *TimerEventDefinition) error {
+	cfg.defs = append(cfg.defs, ted)
 
 	return nil
 }

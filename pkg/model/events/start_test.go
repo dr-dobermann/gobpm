@@ -5,13 +5,13 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewStartEvent(t *testing.T) {
-
 	msg := common.MustMessage(
 		"message",
 		data.MustItemDefinition(nil))
@@ -19,6 +19,28 @@ func TestNewStartEvent(t *testing.T) {
 	sig, err := events.NewSignal(
 		"signal",
 		data.MustItemDefinition(nil))
+	require.NoError(t, err)
+
+	er, err := common.NewError(
+		"test_error",
+		"test_error_code",
+		data.MustItemDefinition(values.NewVariable[int](42)))
+	require.NoError(t, err)
+
+	eed, err := events.NewErrorEventDefinition(er)
+	require.NoError(t, err)
+
+	compEd, err := events.NewCompensationEventDefinition(nil, true)
+	require.NoError(t, err)
+
+	esc, err := events.NewEscalation(
+		"test_escalaltion",
+		"test_escalation_code",
+		data.MustItemDefinition(
+			values.NewVariable[int](100)))
+	require.NoError(t, err)
+
+	escEd, err := events.NewEscalationEventDefintion(esc)
 	require.NoError(t, err)
 
 	t.Run("empty definitions list",
@@ -130,14 +152,17 @@ func TestNewStartEvent(t *testing.T) {
 
 	t.Run("start event with all triggers",
 		func(t *testing.T) {
-			se, err := events.NewStartEvent("message_and_signal_parallel_event",
+			se, err := events.NewStartEvent("start_event_with_all_triggers",
+				events.WithCompensationTrigger(compEd),
+				events.WithConditionalTrigger(
+					events.MustConditionalEventDefinition(
+						data.NewExpression("this is a dummy expression"))),
+				events.WithErrorTrigger(eed),
+				events.WithEscalationTrigger(escEd),
 				events.WithMessageTrigger(
 					events.MustMessageEventDefinition(msg, nil)),
 				events.WithSignalTrigger(
 					events.MustSignalEventDefinition(sig)),
-				events.WithConditionalTrigger(
-					events.MustConditionalEventDefinition(
-						data.NewExpression("this is a dummy expression"))),
 				events.WithTimerTrigger(
 					events.MustTimerEventDefinition(nil, nil, nil)),
 			)
@@ -148,14 +173,17 @@ func TestNewStartEvent(t *testing.T) {
 			t.Log(se.Id())
 			triggers := se.Triggers()
 
-			require.True(t, se.HasTrigger(events.TriggerSignal))
-			require.True(t, se.HasTrigger(events.TriggerMessage))
+			require.True(t, se.HasTrigger(events.TriggerCompensation))
 			require.True(t, se.HasTrigger(events.TriggerConditional))
+			require.True(t, se.HasTrigger(events.TriggerError))
+			require.True(t, se.HasTrigger(events.TriggerEscalation))
+			require.True(t, se.HasTrigger(events.TriggerMessage))
+			require.True(t, se.HasTrigger(events.TriggerSignal))
 			require.True(t, se.HasTrigger(events.TriggerTimer))
 
 			require.False(t, se.IsParallelMultiple())
 
-			require.Equal(t, 4, len(triggers))
-			require.Equal(t, 4, len(se.Definitions()))
+			require.Equal(t, 7, len(triggers))
+			require.Equal(t, 7, len(se.Definitions()))
 		})
 }
