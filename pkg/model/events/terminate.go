@@ -12,7 +12,7 @@ type TerminateEventDefinition struct {
 // Type implements the Definition interface.
 func (*TerminateEventDefinition) Type() Trigger {
 
-	return TriggerError
+	return TriggerTerminate
 }
 
 // NewTerminateEventDefinition creates a new TerminateEventDefinition
