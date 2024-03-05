@@ -55,4 +55,18 @@ func TestBaseElement(t *testing.T) {
 			require.Equal(t, "test_doc1", be.Docs()[0].Text())
 			require.Equal(t, "test_doc2", be.Docs()[1].Text())
 		})
+
+	t.Run("clone",
+		func(t *testing.T) {
+			be := foundation.MustBaseElement(
+				foundation.WithId("test_id"),
+				foundation.WithDocs(
+					foundation.NewDoc("doc1", ""),
+					foundation.NewDoc("doc2", "text/rtf")))
+
+			cbe := be.Clone()
+
+			require.Equal(t, be.Id(), cbe.Id())
+			require.Equal(t, be.Docs(), cbe.Docs())
+		})
 }

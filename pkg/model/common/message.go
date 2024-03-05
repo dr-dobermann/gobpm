@@ -80,6 +80,7 @@ func (m Message) Name() string {
 	return m.name
 }
 
-func (m *Message) Item() *data.ItemDefinition {
+// Item returns ItemDefinition of the Message.
+func (m Message) Item() *data.ItemDefinition {
 	return m.item
 }

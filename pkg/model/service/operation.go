@@ -12,22 +12,42 @@ type Operation struct {
 	foundation.BaseElement
 
 	// The descriptive name of the element.
-	Name string
+	name string
 
 	// This attribute specifies the input Message of the Operation. An Operation
 	// has exactly one input Message.
-	InMessage *common.Message
+	inMessage *common.Message
 
 	// This attribute specifies the output Message of the Operation. An Operation
 	// has at most one input Message.
-	OutMessage *common.Message
+	outMessage *common.Message
 
 	// This attribute specifies errors that the Operation may return. An
 	// Operation MAY refer to zero or more Error elements.
-	Errors []*common.Error
+	errors []common.Error
 
-	//  This attribute allows to reference a concrete artifact in the underlying
+	// This attribute allows to reference a concrete artifact in the underlying
 	// implementation technology representing that operation, such as a WSDL
 	// operation.
-	Implementation any
+	implementation any
+}
+
+// Name returns the name of the Operation.
+func (o Operation) Name() string {
+	return o.name
+}
+
+// IncomingMessage returns incoming Message of the Operation.
+func (o Operation) IncomingMessage() *common.Message {
+	return o.inMessage
+}
+
+// OutcomingMessage returns outcoming Message of the Operation.
+func (o Operation) OutcomingMessage() *common.Message {
+	return o.outMessage
+}
+
+// Errors returns a list of Errors which the Operation could return.
+func (o Operation) Errors() []common.Error {
+	return append([]common.Error{}, o.errors...)
 }

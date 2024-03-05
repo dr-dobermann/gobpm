@@ -115,3 +115,17 @@ func (be BaseElement) Id() string {
 func (be BaseElement) Docs() []Documentation {
 	return append([]Documentation{}, be.docs...)
 }
+
+// Clone creates a clone of the BaseElement.
+func (be BaseElement) Clone() *BaseElement {
+	cbe := BaseElement{
+		id:   be.id,
+		docs: make([]Documentation, len(be.docs)),
+	}
+
+	if n := copy(cbe.docs, be.docs); n != len(be.docs) {
+		panic("couldn't clone documents for base element: " + be.id)
+	}
+
+	return &cbe
+}
