@@ -239,7 +239,7 @@ func (is *InputSet) AddInput(in *Input, where SetType) {
 	if where&OptionalSet != 0 {
 		ind := index[*Input](in, is.optionalInputs)
 		if ind == -1 {
-			is.dataInputs = append(is.optionalInputs, in)
+			is.optionalInputs = append(is.optionalInputs, in)
 
 			in.addInputSet(is, OptionalSet)
 		}
