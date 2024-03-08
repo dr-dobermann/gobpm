@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -24,9 +25,18 @@ func (e *exctr) Type() string {
 	return "successful executor"
 }
 
-func (e *exctr) Execute(op *service.Operation) (any, *common.Error) {
+func (e *exctr) ErrorClasses() []string {
+	return []string{errs.OperationFailed}
+}
+
+func (e *exctr) Execute(op *service.Operation) (any, error) {
 	if e.fail {
-		return nil, op.Errors()[0]
+		return nil,
+			&errs.ApplicationError{
+				Message: "Operation failed by default",
+				Classes: []string{
+					errs.OperationFailed},
+			}
 	}
 
 	return "operation " + op.Name() + " executed sucessfully", nil
@@ -36,7 +46,7 @@ func TestNewOperation(t *testing.T) {
 	type args struct {
 		name          string
 		inMsg, outMsg *common.Message
-		errList       []*common.Error
+		errList       []string
 		executor      service.Executor
 		baseOpts      []options.Option
 	}
@@ -44,7 +54,7 @@ func TestNewOperation(t *testing.T) {
 	type expectations struct {
 		name, id      string
 		inMsg, outMsg *common.Message
-		errList       []*common.Error
+		errList       []string
 		executor      service.Executor
 	}
 
@@ -53,24 +63,7 @@ func TestNewOperation(t *testing.T) {
 	in := common.MustMessage("test_input_msg", nil)
 	out := common.MustMessage("test_out_msg", nil)
 
-	// test errors building
-	errInvParam, err := common.NewError(
-		"Invalid parameter for operation",
-		"INVALID_PARAMETER",
-		nil)
-	require.NoError(t, err,
-		"Test initialization failed %q: %v",
-		"couldn't create an invParam error", err)
-
-	errOpFailed, err := common.NewError(
-		"Operation execution failed",
-		"OP_FAILED",
-		nil)
-	require.NoError(t, err,
-		"Test initialization failed %q: %v",
-		"couldn't create an opFailed error", err)
-
-	errList := []*common.Error{errOpFailed, errInvParam}
+	errList := []string{errs.OperationFailed}
 
 	tstExctr := &exctr{}
 
@@ -85,21 +78,21 @@ func TestNewOperation(t *testing.T) {
 			name: "empty operation name",
 			args: args{
 				name:     "",
-				errList:  []*common.Error{},
+				errList:  []string{},
 				baseOpts: []options.Option{}},
 			want: expectations{
 				name:    "empty_operation",
-				errList: []*common.Error{}},
+				errList: []string{}},
 		},
 		{
 			name: "empty operation",
 			args: args{
 				name:     "empty_operation",
-				errList:  []*common.Error{},
+				errList:  []string{},
 				baseOpts: []options.Option{}},
 			want: expectations{
 				name:    "empty_operation",
-				errList: []*common.Error{}},
+				errList: []string{}},
 		},
 		{
 			name: "full_operation",
@@ -127,7 +120,6 @@ func TestNewOperation(t *testing.T) {
 					tst.args.name,
 					tst.args.inMsg,
 					tst.args.outMsg,
-					tst.args.errList,
 					tst.args.executor,
 					tst.args.baseOpts...,
 				)

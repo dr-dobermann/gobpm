@@ -7,12 +7,21 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
+	"github.com/dr-dobermann/gobpm/pkg/set"
 )
 
 // Executor interface runs an Operation and returns its result
 type Executor interface {
+	// Type returns type of the executore.
 	Type() string
-	Execute(op *Operation) (any, *common.Error)
+
+	// ErrorClasses returns errors classes listh which may be
+	// returned by the Execute call.
+	ErrorClasses() []string
+
+	// Execute runs an operation with all parameters provided by
+	// Operation entity.
+	Execute(op *Operation) (any, error)
 }
 
 // An Operation defines Messages that are consumed and, optionally, produced
@@ -34,7 +43,12 @@ type Operation struct {
 
 	// This attribute specifies errors that the Operation may return. An
 	// Operation MAY refer to zero or more Error elements.
-	errors []*common.Error
+	//
+	// >>>>>  DEVNOTE: original BPMN2 errors functionatity fully covered by
+	// gobpm errs package. So errors will consists a list of error classes.
+	// Whick
+	// errors []*common.Error
+	errors *set.Set[string]
 
 	// This attribute allows to reference a concrete artifact in the underlying
 	// implementation technology representing that operation, such as a WSDL
@@ -47,7 +61,6 @@ type Operation struct {
 func NewOperation(
 	name string,
 	inMsg, outMsg *common.Message,
-	errorsList []*common.Error,
 	executor Executor,
 	baseOpts ...options.Option,
 ) (*Operation, error) {
@@ -74,12 +87,17 @@ func NewOperation(
 			}
 	}
 
+	el := []string{}
+	if executor != nil {
+		el = append(el, executor.ErrorClasses()...)
+	}
+
 	return &Operation{
 		BaseElement:    *be,
 		name:           name,
 		inMessage:      inMsg,
 		outMessage:     outMsg,
-		errors:         append([]*common.Error{}, errorsList...),
+		errors:         set.New[string](el...),
 		implementation: executor}, nil
 }
 
@@ -99,8 +117,8 @@ func (o Operation) OutgoingMessage() *common.Message {
 }
 
 // Errors returns a list of Errors which the Operation could return.
-func (o Operation) Errors() []*common.Error {
-	return append([]*common.Error{}, o.errors...)
+func (o Operation) Errors() []string {
+	return o.errors.All()
 }
 
 // Implementation returns the Operation implementation.

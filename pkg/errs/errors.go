@@ -33,6 +33,8 @@ const (
 	EmptyCollectionError = "COLLECTION_IS_EMPTY"
 	//nolint: gosec
 	EmptyNotAllowed = "EMPTY_OBJ_IS_NOT_ALLOWED"
+
+	OperationFailed = "OPERATION_FAILED"
 )
 
 type ApplicationError struct {
@@ -43,6 +45,11 @@ type ApplicationError struct {
 }
 
 func (ap *ApplicationError) Error() string {
-	return fmt.Sprintf("%v: %q (%s): %v",
-		ap.Classes, ap.Message, ap.Details, ap.Err)
+	if ap.Err != nil {
+		return fmt.Errorf("%v: %q (%s): %w",
+			ap.Classes, ap.Message, ap.Details, ap.Err).Error()
+	}
+
+	return fmt.Sprintf("%v: %q (%s)",
+		ap.Classes, ap.Message, ap.Details)
 }
