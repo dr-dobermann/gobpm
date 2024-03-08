@@ -12,7 +12,7 @@ import (
 // Executor interface runs an Operation and returns its result
 type Executor interface {
 	Type() string
-	Execute(op *Operation) (any, error)
+	Execute(op *Operation) (any, *common.Error)
 }
 
 // An Operation defines Messages that are consumed and, optionally, produced
@@ -34,7 +34,7 @@ type Operation struct {
 
 	// This attribute specifies errors that the Operation may return. An
 	// Operation MAY refer to zero or more Error elements.
-	errors []common.Error
+	errors []*common.Error
 
 	// This attribute allows to reference a concrete artifact in the underlying
 	// implementation technology representing that operation, such as a WSDL
@@ -47,7 +47,7 @@ type Operation struct {
 func NewOperation(
 	name string,
 	inMsg, outMsg *common.Message,
-	errorsList []common.Error,
+	errorsList []*common.Error,
 	executor Executor,
 	baseOpts ...options.Option,
 ) (*Operation, error) {
@@ -79,7 +79,7 @@ func NewOperation(
 		name:           name,
 		inMessage:      inMsg,
 		outMessage:     outMsg,
-		errors:         append([]common.Error{}, errorsList...),
+		errors:         append([]*common.Error{}, errorsList...),
 		implementation: executor}, nil
 }
 
@@ -93,14 +93,14 @@ func (o Operation) IncomingMessage() *common.Message {
 	return o.inMessage
 }
 
-// OutcomingMessage returns outcoming Message of the Operation.
-func (o Operation) OutcomingMessage() *common.Message {
+// OutgoingMessage returns outgoing Message of the Operation.
+func (o Operation) OutgoingMessage() *common.Message {
 	return o.outMessage
 }
 
 // Errors returns a list of Errors which the Operation could return.
-func (o Operation) Errors() []common.Error {
-	return append([]common.Error{}, o.errors...)
+func (o Operation) Errors() []*common.Error {
+	return append([]*common.Error{}, o.errors...)
 }
 
 // Implementation returns the Operation implementation.
