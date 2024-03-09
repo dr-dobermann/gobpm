@@ -179,8 +179,13 @@ func (cfg *startConfig) setMessage(med *MessageEventDefinition) error {
 			ds = data.UndefinedDataState
 		}
 
+		iae, err := data.NewItemAwareElement(id, ds)
+		if err != nil {
+			return err
+		}
+
 		do, err := data.NewOutput(
-			data.NewItemAwareElement(id, &ds),
+			iae,
 			fmt.Sprintf("message %q(%s) output",
 				med.Message().Name(),
 				med.Message().Id()))

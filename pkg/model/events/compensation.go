@@ -2,7 +2,7 @@ package events
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/acivities"
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -40,7 +40,7 @@ type CompensationEventDefinition struct {
 	//   REQUIRED. The Activity the Event is attached to will provide the Id
 	//   necessary to match the Compensation Event with the Event that threw
 	//   the compensation, or the compensation will have been a broadcast.
-	acitivityRef *acivities.Activity
+	acitivityRef *activities.Activity
 
 	// For a throw Compensation Event, this flag determines whether the throw
 	// Intermediate Event waits for the triggered compensation to complete
@@ -58,7 +58,7 @@ func (*CompensationEventDefinition) Type() Trigger {
 // NewCompensationEventDefinition creates a new CompensationEventDefinition
 // and reterns its pointer.
 func NewCompensationEventDefinition(
-	activity *acivities.Activity,
+	activity *activities.Activity,
 	wait4compensation bool,
 	baseOpts ...options.Option,
 ) (*CompensationEventDefinition, error) {

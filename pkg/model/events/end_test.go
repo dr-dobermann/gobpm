@@ -11,6 +11,10 @@ import (
 )
 
 func TestNewEndEvent(t *testing.T) {
+
+	// create default DataSet
+	require.NoError(t, data.CreateDefaultStates())
+
 	cancEd, err := events.NewCancelEventDefinition("test_cancel_id")
 	require.NoError(t, err)
 

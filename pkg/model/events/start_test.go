@@ -16,6 +16,12 @@ func TestNewStartEvent(t *testing.T) {
 		"message",
 		data.MustItemDefinition(nil))
 
+	iDef, err := data.NewItemDefinition(values.NewVariable(42))
+	require.NoError(t, err)
+
+	prop, err := data.NewProperty("event_property", iDef, data.ReadyDataState)
+	require.NoError(t, err)
+
 	sig, err := events.NewSignal(
 		"signal",
 		data.MustItemDefinition(nil))
@@ -65,8 +71,7 @@ func TestNewStartEvent(t *testing.T) {
 		func(t *testing.T) {
 			se, err := events.NewStartEvent(
 				"NoneTrigger",
-				events.WithProperty(data.NewProperty(
-					"event_property", nil, nil)),
+				events.WithProperty(prop),
 				foundation.WithId("none_trigger_start_event"))
 
 			require.NoError(t, err)

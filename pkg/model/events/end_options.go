@@ -173,8 +173,17 @@ func (ec *endConfig) setMessage(med *MessageEventDefinition) error {
 			ds = data.UndefinedDataState
 		}
 
-		di, err := data.NewInput(
-			data.NewItemAwareElement(id, &ds),
+		iae, err := data.NewItemAwareElement(id, ds)
+		if err != nil {
+			return &errs.ApplicationError{
+				Err:     err,
+				Message: "couldn't create ItemAwareElement",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed}}
+		}
+
+		di, err := data.NewInput(iae,
 			fmt.Sprintf("message %q(%s) input",
 				med.Message().Name(),
 				med.Message().Id()))

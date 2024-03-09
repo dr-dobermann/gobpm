@@ -158,8 +158,19 @@ func newEvent(
 	defs []Definition,
 	baseOpts ...options.Option,
 ) (*Event, error) {
+	n, err := flow.NewNode(name, baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "couldn't create flowNode",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed}}
+	}
+
 	e := Event{
-		Node:        *flow.NewNode(name, baseOpts...),
+		Node:        *n,
 		properties:  make([]data.Property, len(props)),
 		definitions: make([]Definition, len(defs)),
 		triggers:    *set.New[Trigger](),
