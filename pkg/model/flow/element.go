@@ -29,15 +29,21 @@ type Element struct {
 	container *ElementsContainer
 }
 
-// NewElement creates a new FlowElement and returns its pointer.
+// NewElement creates a new FlowElement and returns its pointer on success or
+// error on faailure.
 func NewElement(
 	name string,
 	baseOpts ...options.Option,
-) *Element {
-	return &Element{
-		BaseElement: *foundation.MustBaseElement(baseOpts...),
-		name:        name,
+) (*Element, error) {
+	be, err := foundation.NewBaseElement(baseOpts...)
+	if err != nil {
+		return nil, err
 	}
+
+	return &Element{
+			BaseElement: *be,
+			name:        name},
+		nil
 }
 
 // Name returns the Element name.

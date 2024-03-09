@@ -58,6 +58,20 @@ func NewDataState(
 	}, nil
 }
 
+// MustDataState tries to create DataState and returns its pointer on success or
+// panics on failure.
+func MustDataState(
+	name string,
+	baseOpts ...options.Option,
+) *DataState {
+	ds, err := NewDataState(name, baseOpts...)
+	if err != nil {
+		panic("DataState creation failed: " + err.Error())
+	}
+
+	return ds
+}
+
 // Name returns the DataState name.
 func (ds DataState) Name() string {
 	return ds.name

@@ -1,8 +1,10 @@
 package flow
 
 import (
+	"strings"
+
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -33,12 +35,37 @@ func NewDataOpject(
 	idef *data.ItemDefinition,
 	state *data.DataState,
 	baseOpts ...options.Option,
-) *DataObject {
-	do := DataObject{
-		ItemAwareElement: *data.NewItemAwareElement(idef, state, baseOpts...),
+) (*DataObject, error) {
+	name = strings.Trim(name, " ")
+	if name == "" {
+		return nil,
+			&errs.ApplicationError{
+				Message: "DataObject should have non-empty name",
+				Classes: []string{
+					errorClass,
+					errs.InvalidParameter}}
 	}
 
-	do.Element = *NewElement(name, foundation.WithId(do.ItemAwareElement.Id()))
+	iae, err := data.NewItemAwareElement(idef, state, baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "couldn't build ItemAwareElement",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed}}
+	}
 
-	return &do
+	do := DataObject{
+		ItemAwareElement: *iae}
+
+	e, err := NewElement(name, baseOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	do.Element = *e
+
+	return &do, nil
 }

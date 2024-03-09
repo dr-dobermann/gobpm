@@ -76,3 +76,8 @@ func NewServiceTask(
 			operation:      operation},
 		nil
 }
+
+// Implementation returns the ServiceTask implementation description.
+func (st *ServiceTask) Implementation() string {
+	return st.implementation
+}

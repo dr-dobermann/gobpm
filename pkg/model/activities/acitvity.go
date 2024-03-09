@@ -1,10 +1,12 @@
 package activities
 
 import (
-	"fmt"
+	"errors"
 
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -79,5 +81,50 @@ func NewActivity(
 	name string,
 	actOpts ...options.Option,
 ) (*Activity, error) {
-	return nil, fmt.Errorf("not implemented yet")
+	cfg := activityConfig{
+		name:      name,
+		resources: []*ResourceRole{},
+		props:     []*data.Property{},
+		startQ:    1,
+		complQ:    1,
+		baseOpts:  []options.Option{},
+	}
+
+	ee := []error{}
+
+	for _, opt := range actOpts {
+		switch o := opt.(type) {
+		case activityOption:
+			if err := o.Apply(&cfg); err != nil {
+				ee = append(ee, err)
+			}
+
+		case foundation.BaseOption:
+			cfg.baseOpts = append(cfg.baseOpts, opt)
+
+		default:
+		}
+	}
+
+	if len(ee) > 0 {
+		return nil,
+			&errs.ApplicationError{
+				Err:     errors.Join(ee...),
+				Message: "activity configuring failed",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed}}
+	}
+
+	return cfg.newActivity()
+}
+
+func loadPSlice[T any](src []*T) []T {
+	dest := make([]T, 0, len(src))
+
+	for _, e := range src {
+		dest = append(dest, *e)
+	}
+
+	return dest
 }

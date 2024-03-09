@@ -25,10 +25,15 @@ type Node struct {
 func NewNode(
 	name string,
 	baseOpts ...options.Option,
-) *Node {
-	return &Node{
-		Element:   *NewElement(name, baseOpts...),
-		Incoming:  []*SequenceFlow{},
-		Outcoming: []*SequenceFlow{},
+) (*Node, error) {
+	e, err := NewElement(name, baseOpts...)
+	if err != nil {
+		return nil, err
 	}
+
+	return &Node{
+			Element:   *e,
+			Incoming:  []*SequenceFlow{},
+			Outcoming: []*SequenceFlow{}},
+		nil
 }

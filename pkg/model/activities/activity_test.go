@@ -1,0 +1,48 @@
+package activities_test
+
+import (
+	"testing"
+
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/stretchr/testify/require"
+)
+
+func TestActivity(t *testing.T) {
+	t.Run("empty params",
+		func(t *testing.T) {
+			a, err := activities.NewActivity("")
+
+			require.Error(t, err)
+			require.Empty(t, a)
+		})
+
+	prop, err := data.NewProperty(
+		"test property",
+		data.MustItemDefinition(values.NewVariable(42)),
+		data.MustDataState("ready"))
+	require.NoError(t, err)
+
+	rRole, err := activities.NewResourceRole("specialist", nil, nil, nil)
+	require.NoError(t, err)
+
+	t.Run("full options",
+		func(t *testing.T) {
+			a, err := activities.NewActivity("test activity",
+				activities.WithCompensation(),
+				activities.WithCompletionQuantity(5),
+				activities.WithStartQuantity(2),
+				activities.WithLoop(&activities.LoopCharacteristics{}),
+				activities.WithProperties(prop),
+				activities.WithResources(rRole),
+				foundation.WithId("test id"))
+
+			require.NoError(t, err)
+			require.NotEmpty(t, a)
+
+			require.Equal(t, "test activity", a.Name())
+			require.Equal(t, "test id", a.Id())
+		})
+}

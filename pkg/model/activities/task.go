@@ -76,6 +76,7 @@ func NewTask(
 		err
 }
 
+// WithMultyInstance sets multyinstance flag of the Task.
 func WithMultyInstance() options.Option {
 	f := func(cfg *multyInstance) error {
 		*cfg = multyInstance(true)
@@ -84,4 +85,9 @@ func WithMultyInstance() options.Option {
 	}
 
 	return taskOption(f)
+}
+
+// IsMultyinstance returns Task multyinstance settings.
+func (t *Task) IsMultyinstance() bool {
+	return t.multyInstance
 }

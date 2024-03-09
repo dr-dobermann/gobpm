@@ -1,28 +1,74 @@
 package activities
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
+// *****************************************************************************
 type ResourceRole struct {
 	foundation.BaseElement
 
-	Name string
+	name string
 
 	// The Resource that is associated with Activity. Should not be specified
 	// when resourceAssignmentExpression is provided.
-	Resource *common.Resource
+	resource *common.Resource
 
 	// This defines the Expression used for the Resource assignment. Should
 	// not be specified when a resourceRef is provided.
-	AssignmentExpression *ResourceAssignmentExpression
+	assignmentExpression *ResourceAssignmentExpression
 
 	// This defines the Parameter bindings used for the Resource assignment.
 	// Is only applicable if a resourceRef is specified.
-	ParameterBindings []ResourceParameterBinding
+	parameterBindings []ResourceParameterBinding
 }
+
+// NewResourceRole creates a new ResourceRole and returns its pointer on
+// success or error on failure.
+func NewResourceRole(
+	name string,
+	res *common.Resource,
+	assignExpr *ResourceAssignmentExpression,
+	pBinding []ResourceParameterBinding,
+	baseOpts ...options.Option) (*ResourceRole, error) {
+	name = trim(name)
+	if err := checkStr(
+		name,
+		"name should be provided for ResourceRole"); err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "ResourceRole creation failed",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed}}
+	}
+
+	be, err := foundation.NewBaseElement(baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "couldn't create BaseElement for ResourceRole",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed}}
+	}
+
+	return &ResourceRole{
+			BaseElement:          *be,
+			name:                 name,
+			resource:             res,
+			assignmentExpression: assignExpr,
+			parameterBindings:    pBinding},
+		nil
+}
+
+// *****************************************************************************
 
 // Resources can be assigned to an Activity using Expressions. These
 // Expressions MUST return Resource entity related data types, like Users or
@@ -36,6 +82,8 @@ type ResourceAssignmentExpression struct {
 	// which is used at runtime to assign resource(s) to a ResourceRole element.
 	Expression data.Expression
 }
+
+// *****************************************************************************
 
 // Resources support query parameters that are passed to the Resource query at
 // runtime. Parameters MAY refer to Task instance data using Expressions.
@@ -59,6 +107,7 @@ type ResourceParameterBinding struct {
 	Expression data.Expression
 }
 
+// *****************************************************************************
 type Performer struct {
 	ResourceRole
 }
