@@ -13,8 +13,8 @@ import (
 type ItemKind string
 
 const (
-	Physical    ItemKind = "Physical"
-	Information ItemKind = "Information"
+	PhysicalKind    ItemKind = "Physical"
+	InformationKind ItemKind = "Information"
 )
 
 // BPMN elements, such as DataObjects and Messages, represent items that are
@@ -62,7 +62,7 @@ func NewItemDefinition(
 ) (*ItemDefinition, error) {
 	cfg := itemConfig{
 		baseOptions: []options.Option{},
-		kind:        Information,
+		kind:        InformationKind,
 		str:         value,
 		collection:  false,
 	}
@@ -154,7 +154,7 @@ type ItemAwareElement struct {
 	// ItemAwareElement.
 	itemSubject *ItemDefinition
 
-	dataState *DataState
+	dataState DataState
 }
 
 // NewItemAwareElement creates a new DataAwareItem and returns its pointer.
@@ -162,25 +162,45 @@ func NewItemAwareElement(
 	item *ItemDefinition,
 	state *DataState,
 	baseOpts ...options.Option,
-) *ItemAwareElement {
-	if state == nil {
-		state = &UndefinedDataState
+) (*ItemAwareElement, error) {
+	if item == nil {
+		return nil,
+			&errs.ApplicationError{
+				Message: "item should be provided for ItemAwareElement",
+				Classes: []string{
+					errorClass,
+					errs.InvalidParameter}}
 	}
 
-	if item == nil {
-		state = &UnavailableDataState
+	if state == nil {
+		if UnavailableDataState == nil {
+			return nil,
+				&errs.ApplicationError{
+					Message: "default DataSet is not set.\n" +
+						"if you need use default DataSet, run data.CreateDefaultStates",
+					Classes: []string{
+						errorClass,
+						errs.BulidingFailed}}
+		}
+
+		state = UnavailableDataState
+	}
+
+	be, err := foundation.NewBaseElement(baseOpts...)
+	if err != nil {
+		return nil, err
 	}
 
 	return &ItemAwareElement{
-		BaseElement: *foundation.MustBaseElement(baseOpts...),
-		itemSubject: item,
-		dataState:   state,
-	}
+			BaseElement: *be,
+			itemSubject: item,
+			dataState:   *state},
+		nil
 }
 
 // State returns a copy of the ItemAwareElement DataState.
 func (iae *ItemAwareElement) State() DataState {
-	return *iae.dataState
+	return iae.dataState
 }
 
 func (iae *ItemAwareElement) Subject() *ItemDefinition {

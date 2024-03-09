@@ -9,29 +9,14 @@ import (
 )
 
 const (
-	DSUndefined   = "UNDEFINED_DATA_STATE"
-	DSUnavailable = "UNAVAILABLE_DATA_STATE"
-	DSReady       = "READY_DATA_STATE"
+	StateUndefined   = "UNDEFINED_DATA"
+	StateUnavailable = "UNAVAILABLE_DATA"
+	StateReady       = "READY_DATA_STATE"
 )
 
 var (
-	UndefinedDataState = DataState{
-		BaseElement: *foundation.MustBaseElement(
-			foundation.WithId(DSUndefined)),
-		name: "undefined",
-	}
-
-	UnavailableDataState = DataState{
-		BaseElement: *foundation.MustBaseElement(
-			foundation.WithId(DSUnavailable)),
-		name: "unavailable",
-	}
-
-	ReadyDataState = DataState{
-		BaseElement: *foundation.MustBaseElement(
-			foundation.WithId("DSReady")),
-		name: "ready",
-	}
+	// Default DataStates. Initialized by calling CreateDefaultStates.
+	UndefinedDataState, UnavailableDataState, ReadyDataState *DataState
 )
 
 // Data Object elements can optionally reference a DataState element, which is
@@ -73,18 +58,42 @@ func NewDataState(
 	}, nil
 }
 
-// MustDataState tries to create a DataState and returns it. In case of
-// error it panics.
-func MustDataState(name string, baseOpts ...options.Option) *DataState {
-	ds, err := NewDataState(name, baseOpts...)
-	if err != nil {
-		panic(err)
-	}
-
-	return ds
+// Name returns the DataState name.
+func (ds DataState) Name() string {
+	return ds.name
 }
 
-// Name returns the DataState name.
-func (ds *DataState) Name() string {
-	return ds.name
+// CreateDefaultStates creates default DataStates if need be.
+func CreateDefaultStates() error {
+	// do nothing if values already set
+	if UndefinedDataState != nil {
+		return nil
+	}
+
+	dss := map[string]*DataState{
+		StateUndefined:   nil,
+		StateUnavailable: nil,
+		StateReady:       nil}
+
+	for sn := range dss {
+		ds, err := NewDataState(sn)
+		if err != nil {
+			return &errs.ApplicationError{
+				Err:     err,
+				Message: "couldn't create the default DataState",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed},
+				Details: map[string]string{
+					"data_state_name": sn}}
+		}
+
+		dss[sn] = ds
+	}
+
+	UndefinedDataState = dss[StateUndefined]
+	UnavailableDataState = dss[StateUnavailable]
+	ReadyDataState = dss[StateReady]
+
+	return nil
 }

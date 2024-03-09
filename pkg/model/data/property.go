@@ -19,14 +19,21 @@ func NewProperty(
 	item *ItemDefinition,
 	state *DataState,
 	baseOpts ...options.Option,
-) *Property {
-	return &Property{
-		ItemAwareElement: *NewItemAwareElement(
-			item,
-			state,
-			baseOpts...),
-		name: name,
+) (*Property, error) {
+	name = trim(name)
+	if err := checkStr(name, "property should has non-empty name"); err != nil {
+		return nil, err
 	}
+
+	iae, err := NewItemAwareElement(item, state, baseOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Property{
+			ItemAwareElement: *iae,
+			name:             name},
+		nil
 }
 
 // Name returns the Property name.

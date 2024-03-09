@@ -63,7 +63,7 @@ func (ic *itemConfig) itemDef() (*ItemDefinition, error) {
 // SetKind sets kind of an ItemDefintion.
 func WithKind(kind ItemKind) options.Option {
 	f := func(cfg *itemConfig) error {
-		if kind != Information && kind != Physical {
+		if kind != InformationKind && kind != PhysicalKind {
 			return &errs.ApplicationError{
 				Message: "kind could be ony Information or Physical",
 				Classes: []string{
