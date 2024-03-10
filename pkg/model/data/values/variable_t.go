@@ -1,3 +1,4 @@
+//:nolint goimport
 package values
 
 // This file consists of typed function for Variable.
