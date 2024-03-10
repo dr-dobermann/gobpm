@@ -1,6 +1,8 @@
 package foundation
 
 import (
+	"strings"
+
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/google/uuid"
 )
@@ -38,11 +40,24 @@ type Documentation struct {
 	format string
 }
 
-// NewDoc creates new Documentation item. If no format is given,
-// then text/plain is used.
-func NewDoc(text, format string) *Documentation {
-	if format == "" {
-		format = defaultDocFormat
+// NewDoc creates new Documentation item.
+// First param is a Documentation text and the second is the format.
+// If no format is given then text/plain is used.
+func NewDoc(docs ...string) *Documentation {
+	text, format := "", defaultDocFormat
+
+	// set format
+	if len(docs) > 1 {
+		f := strings.Trim(docs[1], " ")
+
+		if f != "" {
+			format = f
+		}
+	}
+
+	// set text
+	if len(docs) > 0 {
+		text = docs[0]
 	}
 
 	return &Documentation{

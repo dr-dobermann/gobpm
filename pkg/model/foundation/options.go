@@ -6,7 +6,6 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
-	"github.com/google/uuid"
 )
 
 type (
@@ -74,7 +73,9 @@ func WithDocs(docs ...*Documentation) options.Option {
 		}
 
 		for _, d := range docs {
-			bc.docs = append(bc.docs, *d)
+			if d != nil {
+				bc.docs = append(bc.docs, *d)
+			}
 		}
 
 		return nil
@@ -86,7 +87,7 @@ func WithDocs(docs ...*Documentation) options.Option {
 // baseElement creates a new BaseElement from BaseConfig.
 func (bc *baseConfig) baseElement() *BaseElement {
 	if bc.id == "" {
-		bc.id = uuid.Must(uuid.NewRandom()).String()
+		bc.id = GenerateId()
 	}
 
 	if bc.docs == nil {
