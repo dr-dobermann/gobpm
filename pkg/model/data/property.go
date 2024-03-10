@@ -42,6 +42,6 @@ func NewProperty(
 }
 
 // Name returns the Property name.
-func (p Property) Name() string {
+func (p *Property) Name() string {
 	return p.name
 }

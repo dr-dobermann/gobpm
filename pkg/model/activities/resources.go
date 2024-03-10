@@ -69,7 +69,7 @@ func NewResourceRole(
 }
 
 // Name returns the ResourceRole name.
-func (r ResourceRole) Name() string {
+func (r *ResourceRole) Name() string {
 	return r.name
 }
 
