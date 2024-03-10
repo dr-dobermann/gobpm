@@ -1,5 +1,7 @@
 package flow
 
-type EventNode interface {
-	Type() string
+type Event interface {
+	FlowNode
+
+	EventType() string
 }

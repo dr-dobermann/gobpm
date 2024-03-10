@@ -1,6 +1,25 @@
 package flow
 
-import "github.com/dr-dobermann/gobpm/pkg/model/data"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
+)
+
+type (
+	// Sourcer implemented by the Nodes which could be a source of the sequence
+	// flow.
+	Sourcer interface {
+		AddOutgoing(sf *SequenceFlow) error
+		DropOutgoing(sf *SequenceFlow)
+	}
+
+	// Targeter impmemented by the Nodes which accepts incomng sequence flows.
+	Targeter interface {
+		AddIncoming(sf *SequenceFlow) error
+		DropIncoming(sf *SequenceFlow)
+	}
+)
 
 // A Sequence Flow is used to show the order of Flow Elements in a Process or
 // a Choreography. Each Sequence Flow has only one source and only one target.
@@ -17,7 +36,7 @@ type SequenceFlow struct {
 	// Event Sub-Processes are not allowed to be a source.
 	// For a Choreography: Of the types of FlowNode, only Choreography
 	// Activities, Gateways, and Events can be the source.
-	Source *Node
+	source Sourcer
 
 	// The FlowNode that the Sequence Flow is connecting to.
 	// For a Process: Of the types of FlowNode, only Activities, Gateways,
@@ -25,12 +44,12 @@ type SequenceFlow struct {
 	// Sub-Processes are not allowed to be a target.
 	// For a Choreography: Of the types of FlowNode, only Choreography
 	// Activities, Gateways, and Events can be the target.
-	Target *Node
+	target Targeter
 
 	// An optional boolean Expression that acts as a gating condition. A
 	// token will only be placed on this Sequence Flow if this
 	// conditionExpression evaluates to true.
-	ConditionExpression *data.Expression
+	conditionExpression *data.Expression
 
 	// An optional boolean value specifying whether Activities or Choreography
 	// Activities not in the model containing the Sequence Flow can occur
@@ -45,5 +64,89 @@ type SequenceFlow struct {
 	//   • For an executable Processes no value has the same semantics as if
 	//     the value were true.
 	//   • For executable Processes, the attribute MUST NOT be false.
-	IsImmediate bool
+	isImmediate bool
+}
+
+// NewSequenceFlow creates a new SequenceFlow which connects src and trg
+// FlowNodes. On success it returns the new SequenceFlow pointer.
+// In case of failrue it returns error.
+func NewSequenceFlow(
+	name string,
+	src Sourcer,
+	trg Targeter,
+	condition *data.Expression,
+	immediate bool,
+	baseOpts ...options.Option,
+) (*SequenceFlow, error) {
+	if src == nil || trg == nil {
+		return nil,
+			&errs.ApplicationError{
+				Message: "sourca and target FlowNodes couldn't be empty",
+				Classes: []string{
+					errorClass,
+					errs.InvalidParameter}}
+	}
+
+	e, err := NewElement(name, baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "couldn't create FlowElement for SequenceFlow",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed}}
+	}
+
+	sf := SequenceFlow{
+		Element:             *e,
+		source:              src,
+		target:              trg,
+		conditionExpression: condition,
+		isImmediate:         immediate,
+	}
+
+	if err := src.AddOutgoing(&sf); err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "couldn't connect SequenceFlow to source",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed}}
+	}
+
+	if err := trg.AddIncoming(&sf); err != nil {
+		src.DropOutgoing(&sf)
+
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "couldn't connect SequenceFlow to target",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed}}
+	}
+
+	return &sf, nil
+}
+
+// Source returns the Source of the SequenceFlow.
+func (sf SequenceFlow) Source() Sourcer {
+	return sf.source
+}
+
+// Target returns the Target of the SequenceFlow.
+func (sf SequenceFlow) Target() Targeter {
+	return sf.target
+}
+
+// Condition returns the condition expression  of the SequenceFlow.
+func (sf SequenceFlow) Condition() *data.Expression {
+	return sf.conditionExpression
+}
+
+// IsImmediate returns the SequenceFlow's immediate setting.
+func (sf SequenceFlow) IsImmediate() bool {
+	return sf.isImmediate
 }

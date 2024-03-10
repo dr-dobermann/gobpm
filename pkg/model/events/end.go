@@ -82,3 +82,8 @@ func NewEndEvent(
 
 	return ec.endEvent()
 }
+
+// EventType impments flow.Event interface for the EndEvent.
+func (ee EndEvent) EventType() string {
+	return "EndEvent"
+}

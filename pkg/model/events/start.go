@@ -94,6 +94,11 @@ func NewStartEvent(
 }
 
 // IsInterrupting returns interrupting setting of the StartEvent.
-func (se *StartEvent) IsInterrupting() bool {
+func (se StartEvent) IsInterrupting() bool {
 	return se.interrrupting
+}
+
+// EventType impments flow.Event interface for the StartEvent.
+func (se StartEvent) EventType() string {
+	return "StartEvent"
 }

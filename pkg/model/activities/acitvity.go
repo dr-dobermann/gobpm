@@ -67,7 +67,7 @@ type Activity struct {
 
 	// This references the Intermediate Events that are attached to the
 	// boundary of the Activity.
-	boundaryEvents []flow.EventNode
+	boundaryEvents []flow.Event
 
 	// An optional reference to the DataInputAssociations.
 	// A DataInputAssociation defines how the DataInput of the Activity’s
@@ -124,6 +124,11 @@ func NewActivity(
 	}
 
 	return cfg.newActivity()
+}
+
+// NodeType implements flow.FlowNode interface for the Activity.
+func (a Activity) NodeType() flow.NodeType {
+	return flow.ActivityNode
 }
 
 // ResourceRoles returns list of ResourceRoles of the Activity.

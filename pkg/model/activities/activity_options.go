@@ -75,7 +75,7 @@ func (ac *activityConfig) newActivity() (*Activity, error) {
 		properties:             loadPSlice(ac.props),
 		startQuantity:          ac.startQ,
 		completionQuantity:     ac.complQ,
-		boundaryEvents:         []flow.EventNode{},
+		boundaryEvents:         []flow.Event{},
 		dataInputAssociations:  []*data.Association{},
 		dataOutputAssociations: []*data.Association{},
 	}

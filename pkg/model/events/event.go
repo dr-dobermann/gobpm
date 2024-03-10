@@ -234,6 +234,16 @@ func (e Event) HasTrigger(t Trigger) bool {
 	return e.triggers.Has(t)
 }
 
+// NodeType implements flow.FlowNode interface for the Event.
+func (e Event) NodeType() flow.NodeType {
+	return flow.EventNode
+}
+
+// GetNode implemented flow.FlowNode interface for the Event.
+func (e *Event) GetNode() *flow.Node {
+	return &e.Node
+}
+
 // *****************************************************************************
 
 // vents that throw a Result. All End Events and some Intermediate Events are
