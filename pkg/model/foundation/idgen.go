@@ -1,7 +1,7 @@
 package foundation
 
 import (
-	"math/rand/v2"
+	rand "math/rand/v2"
 	"strconv"
 	"time"
 
@@ -42,7 +42,9 @@ func SetGenerator(newGen IdGenerator) error {
 // default Genereator will be used.
 func GenerateId() string {
 	if generator == nil {
-		SetGenerator(newDefaultGenerator())
+		if err := SetGenerator(newDefaultGenerator()); err != nil {
+			panic("default generator setup failed: " + err.Error())
+		}
 	}
 
 	return generator.Generate()
