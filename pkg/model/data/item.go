@@ -199,10 +199,10 @@ func NewItemAwareElement(
 }
 
 // State returns a copy of the ItemAwareElement DataState.
-func (iae *ItemAwareElement) State() DataState {
+func (iae ItemAwareElement) State() DataState {
 	return iae.dataState
 }
 
-func (iae *ItemAwareElement) Subject() *ItemDefinition {
+func (iae ItemAwareElement) Subject() *ItemDefinition {
 	return iae.itemSubject
 }

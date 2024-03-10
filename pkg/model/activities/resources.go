@@ -68,6 +68,11 @@ func NewResourceRole(
 		nil
 }
 
+// Name returns the ResourceRole name.
+func (r ResourceRole) Name() string {
+	return r.name
+}
+
 // *****************************************************************************
 
 // Resources can be assigned to an Activity using Expressions. These

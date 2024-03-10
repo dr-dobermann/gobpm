@@ -2,6 +2,7 @@ package activities
 
 import (
 	"errors"
+	"reflect"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -77,6 +78,8 @@ type Activity struct {
 	dataOutputAssociations []*data.Association
 }
 
+// NewActivity creates a new Activity with options and returns its pointer on
+// success or errors on failure.
 func NewActivity(
 	name string,
 	actOpts ...options.Option,
@@ -103,28 +106,39 @@ func NewActivity(
 			cfg.baseOpts = append(cfg.baseOpts, opt)
 
 		default:
+			ee = append(ee,
+				&errs.ApplicationError{
+					Message: "invalid option type for Activity",
+					Classes: []string{
+						errorClass,
+						errs.BulidingFailed,
+						errs.TypeCastingError},
+					Details: map[string]string{
+						"option_type": reflect.TypeOf(o).String()},
+				})
 		}
 	}
 
 	if len(ee) > 0 {
-		return nil,
-			&errs.ApplicationError{
-				Err:     errors.Join(ee...),
-				Message: "activity configuring failed",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed}}
+		return nil, errors.Join(ee...)
 	}
 
 	return cfg.newActivity()
 }
 
-func loadPSlice[T any](src []*T) []T {
-	dest := make([]T, 0, len(src))
+// ResourceRoles returns list of ResourceRoles of the Activity.
+func (a Activity) ResourceRoles() []ResourceRole {
+	rr := make([]ResourceRole, len(a.resources))
 
-	for _, e := range src {
-		dest = append(dest, *e)
-	}
+	copy(rr, a.resources)
 
-	return dest
+	return rr
+}
+
+// Properties implements an data.PropertyOwner interface and returns
+// copy of the Activity properties.
+func (a Activity) Properties() []data.Property {
+	pp := make([]data.Property, 0, len(a.properties))
+
+	return append(pp, a.properties...)
 }

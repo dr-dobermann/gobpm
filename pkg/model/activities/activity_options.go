@@ -87,6 +87,19 @@ func (ac *activityConfig) newActivity() (*Activity, error) {
 	return &a, nil
 }
 
+// loadPSlice creates a slice of objects from slice of object pointers.
+func loadPSlice[T any](src []*T) []T {
+	dest := make([]T, 0, len(src))
+
+	for _, e := range src {
+		if e != nil {
+			dest = append(dest, *e)
+		}
+	}
+
+	return dest
+}
+
 // WithCompensation sets isForCompensation Activity flag to true.
 func WithCompensation() activityOption {
 	f := func(cfg *activityConfig) error {

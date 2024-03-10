@@ -46,10 +46,10 @@ type ApplicationError struct {
 
 func (ap *ApplicationError) Error() string {
 	if ap.Err != nil {
-		return fmt.Errorf("%v: %q (%s): %w",
+		return fmt.Errorf("%v: %q (details: %v): %w",
 			ap.Classes, ap.Message, ap.Details, ap.Err).Error()
 	}
 
-	return fmt.Sprintf("%v: %q (%s)",
+	return fmt.Sprintf("%v: %q (details: %v)",
 		ap.Classes, ap.Message, ap.Details)
 }

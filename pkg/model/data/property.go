@@ -2,6 +2,11 @@ package data
 
 import "github.com/dr-dobermann/gobpm/pkg/model/options"
 
+// PropertyOwner is an interface of objects which could have Properties.
+type PropertyOwner interface {
+	Properties() []Property
+}
+
 // Properties, like Data Objects, are item-aware elements. But, unlike Data
 // Objects, they are not visually displayed on a Process diagram. Certain flow
 // elements MAY contain properties, in particular only Processes, Activities,
@@ -37,6 +42,6 @@ func NewProperty(
 }
 
 // Name returns the Property name.
-func (p *Property) Name() string {
+func (p Property) Name() string {
 	return p.name
 }

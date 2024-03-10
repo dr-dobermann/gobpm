@@ -7,20 +7,25 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
+// Task is common parent of all Tasks.
 type Task struct {
 	Activity
 
 	multyInstance bool
 }
 
+// multyInstance is a configurator for multyInsatance flag of the Task.
 type multyInstance bool
 
+// Validate implements options.Configurator interface for multyInstance.
 func (mi *multyInstance) Validate() error {
 	return nil
 }
 
+// taskOption is task Task option configurator.
 type taskOption func(cfg *multyInstance) error
 
+// Apply implements options.Option interface for the taskOption.
 func (to taskOption) Apply(cfg options.Configurator) error {
 	if mi, ok := cfg.(*multyInstance); ok {
 		return to(mi)

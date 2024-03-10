@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/stretchr/testify/require"
 )
@@ -33,5 +34,16 @@ func TestServiceTask(t *testing.T) {
 			require.Equal(t, "test", st.Name())
 			require.Equal(t, true, st.IsMultyinstance())
 			require.Equal(t, "##unspecified", st.Implementation())
+		})
+
+	t.Run("invalid options check",
+		func(t *testing.T) {
+			_, err := activities.NewServiceTask(
+				"test",
+				op,
+				events.WithParallel(),
+			)
+			require.Error(t, err)
+			t.Log(err.Error())
 		})
 }

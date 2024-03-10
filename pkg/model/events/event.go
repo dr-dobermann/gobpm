@@ -214,23 +214,23 @@ func newEvent(
 }
 
 // Properties returns a copy of the Event properties.
-func (e *Event) Properties() []data.Property {
+func (e Event) Properties() []data.Property {
 	return append([]data.Property{}, e.properties...)
 }
 
 // Definiitons returns a list of event definitions.
-func (e *Event) Definitions() []Definition {
+func (e Event) Definitions() []Definition {
 
 	return append([]Definition{}, e.definitions...)
 }
 
 // Triggers returns the Event triggers.
-func (e *Event) Triggers() []Trigger {
+func (e Event) Triggers() []Trigger {
 	return e.triggers.All()
 }
 
 // HasTrigger checks if event has Trigger t in it.
-func (e *Event) HasTrigger(t Trigger) bool {
+func (e Event) HasTrigger(t Trigger) bool {
 	return e.triggers.Has(t)
 }
 
@@ -289,7 +289,7 @@ func newCatchEvent(
 }
 
 // IsParallelMultiple returns parallelMultiple settings of the catchEvent.
-func (ce *catchEvent) IsParallelMultiple() bool {
+func (ce catchEvent) IsParallelMultiple() bool {
 	return ce.parallelMultiple
 }
 
