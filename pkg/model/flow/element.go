@@ -2,6 +2,7 @@ package flow
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // *****************************************************************************
@@ -28,14 +29,21 @@ type Element struct {
 	container *ElementsContainer
 }
 
-// NewElement creates a new FlowElement and returns its pointer.
-func NewElement(id, name string,
-	docs ...*foundation.Documentation,
-) *Element {
-	return &Element{
-		BaseElement: *foundation.NewBaseElement(id, docs...),
-		name:        name,
+// NewElement creates a new FlowElement and returns its pointer on success or
+// error on faailure.
+func NewElement(
+	name string,
+	baseOpts ...options.Option,
+) (*Element, error) {
+	be, err := foundation.NewBaseElement(baseOpts...)
+	if err != nil {
+		return nil, err
 	}
+
+	return &Element{
+			BaseElement: *be,
+			name:        name},
+		nil
 }
 
 // Name returns the Element name.
@@ -65,9 +73,11 @@ type ElementsContainer struct {
 }
 
 // NewContainer creates an empty container and returns its pointer.
-func NewContainer(id string, docs ...*foundation.Documentation) *ElementsContainer {
+func NewContainer(
+	baseOpts ...options.Option,
+) *ElementsContainer {
 	return &ElementsContainer{
-		BaseElement: *foundation.NewBaseElement(id, docs...),
+		BaseElement: *foundation.MustBaseElement(baseOpts...),
 		elements:    map[string]*Element{},
 	}
 }

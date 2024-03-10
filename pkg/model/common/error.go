@@ -1,8 +1,10 @@
 package common
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // An Error represents the content of an Error Event or the Fault of a failed
@@ -35,16 +37,34 @@ type Error struct {
 }
 
 // NewError creates a new error object.
-func NewError(id, name, code string,
+func NewError(name, code string,
 	str *data.ItemDefinition,
-	docs ...*foundation.Documentation,
-) *Error {
+	baseOpts ...options.Option,
+) (*Error, error) {
+	name = trim(name)
+	if err := checkStr(name, "name should be non-empty"); err != nil {
+		return nil, err
+	}
+
+	be, err := foundation.NewBaseElement(baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "couldn't build Error",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed,
+				},
+			}
+	}
+
 	return &Error{
-		BaseElement: *foundation.NewBaseElement(id, docs...),
+		BaseElement: *be,
 		name:        name,
 		errorCode:   code,
 		structure:   str,
-	}
+	}, nil
 }
 
 // Name returns Error's name.

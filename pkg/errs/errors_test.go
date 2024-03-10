@@ -29,7 +29,7 @@ func TestApplicationError_Error(t *testing.T) {
 				},
 			},
 			want: fmt.Sprintf(
-				"%s: %s[%s]: %v",
+				"%s: %q (%s): %v",
 				"[TEST]", "Normal", map[string]string{
 					"detail1": "detail_info1",
 					"detail2": "detail_info2",

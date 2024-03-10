@@ -1,4 +1,4 @@
-package acivities
+package activities
 
 type LoopCharacteristics struct {
 }

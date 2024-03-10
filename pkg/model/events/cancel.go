@@ -1,5 +1,10 @@
 package events
 
+import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
+)
+
 // Cancel Events are only used in the context of modeling Transaction
 // Sub-Processes. There are two variations: a catch Intermediate Event and an
 // End Event.
@@ -9,5 +14,35 @@ package events
 //   - The Cancel End Event MUST only be used within a Transaction Sub-Process
 //     and, thus, MAY NOT be used in any other type of Sub-Process or Process.
 type CancelEventDefinition struct {
-	Definition
+	definition
+}
+
+// Type implements the Definition interface.
+func (*CancelEventDefinition) Type() Trigger {
+
+	return TriggerCancel
+}
+
+// NewCancelEventDefinition creates a new CancelEventDefinition and returns
+// its pointer.
+func NewCancelEventDefinition(
+	id string,
+	baseOpts ...options.Option,
+) (*CancelEventDefinition, error) {
+	d, err := newDefinition(baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "message event definition building error",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed,
+				},
+			}
+	}
+
+	return &CancelEventDefinition{
+		definition: *d,
+	}, nil
 }

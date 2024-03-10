@@ -1,4 +1,4 @@
-package acivities
+package activities
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/model/common"

@@ -1,28 +1,39 @@
 package events
 
-import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
+)
 
-type Checker interface {
-	// Check tests if the def is equal to the object implemented the
-	// function.
-	Check(def *Definition) bool
+type Definition interface {
+	foundation.Identifyer
+	foundation.Documentator
+
+	Type() Trigger
 }
 
-// Definition is the base class for define an Event.
-type Definition struct {
+// definition is the base class for define an Event.
+type definition struct {
 	foundation.BaseElement
 }
 
-// NewDefinition creates a new Event Definition and returns its pointer.
-func NewDefinition(id string, docs ...*foundation.Documentation) *Definition {
-
-	return &Definition{
-		BaseElement: *foundation.NewBaseElement(id, docs...),
+// newDefinition creates a new Event Definition and returns its pointer.
+func newDefinition(baseOpts ...options.Option) (*definition, error) {
+	be, err := foundation.NewBaseElement(baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "definition build failed",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed,
+				},
+			}
 	}
-}
 
-// Check implements Checker interface for Definition
-func (d *Definition) Check(def *Definition) bool {
-
-	return d.Id() == def.Id()
+	return &definition{
+		BaseElement: *be,
+	}, nil
 }

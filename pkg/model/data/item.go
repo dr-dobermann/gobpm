@@ -1,14 +1,20 @@
 package data
 
-import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
+import (
+	"reflect"
+
+	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
+)
 
 // ******************************************************************************
 
 type ItemKind string
 
 const (
-	Physical    ItemKind = "Physical"
-	Information ItemKind = "Information"
+	PhysicalKind    ItemKind = "Physical"
+	InformationKind ItemKind = "Information"
 )
 
 // BPMN elements, such as DataObjects and Messages, represent items that are
@@ -33,15 +39,15 @@ type ItemDefinition struct {
 
 	// This defines the nature of the Item. Possible values are physical or
 	// information. The default value is information.
-	Kind ItemKind
+	kind ItemKind
 
 	// Identifies the location of the data structure and its format. If the
 	// importType attribute is left unspecified, the typeLanguage specified
 	// in the Definitions that contains this ItemDefinition is assumed
-	Import *foundation.Import
+	importRef *foundation.Import
 
 	// The concrete data structure to be used.
-	Structure Value
+	structure Value
 
 	// Setting this flag to true indicates that the actual data type is a
 	// collection.
@@ -51,23 +57,74 @@ type ItemDefinition struct {
 // NewItemDefinition creates a new ItemDefinition object and returns
 // its pointer.
 func NewItemDefinition(
-	id string,
-	kind ItemKind,
-	str Value,
-	imprt *foundation.Import,
-	docs ...*foundation.Documentation,
-) *ItemDefinition {
-	it := ItemDefinition{
-		BaseElement: *foundation.NewBaseElement(id, docs...),
-		Kind:        kind,
-		Import:      imprt,
-		Structure:   str,
+	value Value,
+	opts ...options.Option,
+) (*ItemDefinition, error) {
+	cfg := itemConfig{
+		baseOptions: []options.Option{},
+		kind:        InformationKind,
+		str:         value,
+		collection:  false,
 	}
 
-	_, ok := str.(Collection)
-	it.isCollection = ok
+	// check if value is a collection
+	if value != nil {
+		_, ok := value.(Collection)
+		cfg.collection = ok
+	}
 
-	return &it
+	for _, opt := range opts {
+		switch o := opt.(type) {
+		case foundation.BaseOption:
+			cfg.baseOptions = append(cfg.baseOptions, opt)
+
+		case itemOption:
+			if err := opt.Apply(&cfg); err != nil {
+				return nil, err
+			}
+
+		default:
+			return nil,
+				&errs.ApplicationError{
+					Message: "invalid option type (only BaseOption and itemOption expected)",
+					Classes: []string{
+						errorClass,
+						errs.InvalidObject,
+					},
+					Details: map[string]string{
+						"wrong_type": reflect.TypeOf(o).String(),
+					},
+				}
+		}
+	}
+
+	return cfg.itemDef()
+}
+
+// MustItemDefinition tries to create a new ItemDefinition and returns its
+// pointer on success or fires panic on error.
+func MustItemDefinition(value Value, opts ...options.Option) *ItemDefinition {
+	iDef, err := NewItemDefinition(value, opts...)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	return iDef
+}
+
+// Kind returns kind of the ItemDefinition.
+func (idef *ItemDefinition) Kind() ItemKind {
+	return idef.kind
+}
+
+// Import returns import definition for the ItemDefinition.
+func (idef *ItemDefinition) Import() *foundation.Import {
+	return idef.importRef
+}
+
+// Value returns the ItemDefinition value.
+func (idef *ItemDefinition) Structure() Value {
+	return idef.structure
 }
 
 // IsCollection returns if the ItemDefinition object is collection.
@@ -95,21 +152,57 @@ type ItemAwareElement struct {
 
 	// Specification of the items that are stored or conveyed by the
 	// ItemAwareElement.
-	ItemSubject *ItemDefinition
+	itemSubject *ItemDefinition
 
-	DataState DataState
+	dataState DataState
 }
 
 // NewItemAwareElement creates a new DataAwareItem and returns its pointer.
 func NewItemAwareElement(
-	id string,
 	item *ItemDefinition,
 	state *DataState,
-	docs ...*foundation.Documentation,
-) *ItemAwareElement {
-	return &ItemAwareElement{
-		BaseElement: *foundation.NewBaseElement(id, docs...),
-		ItemSubject: item,
-		DataState:   *state,
+	baseOpts ...options.Option,
+) (*ItemAwareElement, error) {
+	if item == nil {
+		return nil,
+			&errs.ApplicationError{
+				Message: "item should be provided for ItemAwareElement",
+				Classes: []string{
+					errorClass,
+					errs.InvalidParameter}}
 	}
+
+	if state == nil {
+		if UnavailableDataState == nil {
+			return nil,
+				&errs.ApplicationError{
+					Message: "default DataSet is not set.\n" +
+						"if you need use default DataSet, run data.CreateDefaultStates",
+					Classes: []string{
+						errorClass,
+						errs.BulidingFailed}}
+		}
+
+		state = UnavailableDataState
+	}
+
+	be, err := foundation.NewBaseElement(baseOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ItemAwareElement{
+			BaseElement: *be,
+			itemSubject: item,
+			dataState:   *state},
+		nil
+}
+
+// State returns a copy of the ItemAwareElement DataState.
+func (iae ItemAwareElement) State() DataState {
+	return iae.dataState
+}
+
+func (iae ItemAwareElement) Subject() *ItemDefinition {
+	return iae.itemSubject
 }

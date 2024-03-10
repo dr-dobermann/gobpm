@@ -12,7 +12,7 @@ package events
 // source Link, the Event marker will be unfilled. When used to “throw” to the
 // target Link, the Event marker will be filled.
 type LinkEventDefinition struct {
-	Definition
+	definition
 
 	// If the trigger is a Link, then the name MUST be entered.
 	Name string

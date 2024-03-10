@@ -1,4 +1,4 @@
-package acivities
+package activities
 
 // A Business Rule Task provides a mechanism for the Process to provide input to a
 // Business Rules Engine and to get the output of calculations that the Business

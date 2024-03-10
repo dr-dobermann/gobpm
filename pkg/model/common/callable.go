@@ -1,6 +1,9 @@
 package common
 
-import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
+)
 
 type CallableElement struct {
 	foundation.BaseElement
@@ -10,11 +13,11 @@ type CallableElement struct {
 
 // NewCallableElement creates a new element and return its pointer.
 func NewCallableElement(
-	id, name string,
-	docs ...*foundation.Documentation,
+	name string,
+	baseOpts ...options.Option,
 ) *CallableElement {
 	return &CallableElement{
-		BaseElement: *foundation.NewBaseElement(id, docs...),
+		BaseElement: *foundation.MustBaseElement(baseOpts...),
 		Name:        name,
 	}
 }

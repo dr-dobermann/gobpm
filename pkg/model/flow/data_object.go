@@ -1,8 +1,11 @@
 package flow
 
 import (
+	"strings"
+
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // The Data Object class is an item-aware element. Data Object elements MUST be
@@ -28,16 +31,41 @@ type DataObject struct {
 
 // NewDataOpject creates and returns a new DataObject and returns its pointer.
 func NewDataOpject(
-	id, name string,
+	name string,
 	idef *data.ItemDefinition,
 	state *data.DataState,
-	docs ...*foundation.Documentation,
-) *DataObject {
-	do := DataObject{
-		ItemAwareElement: *data.NewItemAwareElement(id, idef, state, docs...),
+	baseOpts ...options.Option,
+) (*DataObject, error) {
+	name = strings.Trim(name, " ")
+	if name == "" {
+		return nil,
+			&errs.ApplicationError{
+				Message: "DataObject should have non-empty name",
+				Classes: []string{
+					errorClass,
+					errs.InvalidParameter}}
 	}
 
-	do.Element = *NewElement(do.ItemAwareElement.Id(), name, docs...)
+	iae, err := data.NewItemAwareElement(idef, state, baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "couldn't build ItemAwareElement",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed}}
+	}
 
-	return &do
+	do := DataObject{
+		ItemAwareElement: *iae}
+
+	e, err := NewElement(name, baseOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	do.Element = *e
+
+	return &do, nil
 }

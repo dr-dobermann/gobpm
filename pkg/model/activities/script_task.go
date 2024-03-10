@@ -1,4 +1,4 @@
-package acivities
+package activities
 
 // A Script Task is executed by a business process engine. The modeler or
 // implementer defines a script in a language that the engine can interpret.

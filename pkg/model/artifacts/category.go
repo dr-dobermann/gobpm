@@ -3,6 +3,7 @@ package artifacts
 import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // *****************************************************************************
@@ -21,7 +22,7 @@ type Category struct {
 	foundation.BaseElement
 
 	// The descriptive name of the element.
-	Name string
+	name string
 
 	// The categoryValue attribute specifies one or more values of the Category.
 	// For example, the Category is “Region” then this Category could specify
@@ -30,16 +31,21 @@ type Category struct {
 }
 
 // NewCategory creates a new Category and returns its pointer
-func NewCategory(id, name string, docs ...*foundation.Documentation) *Category {
+func NewCategory(name string, baseOpts ...options.Option) *Category {
 	if name == "" {
 		name = unspecifiedCategory
 	}
 
 	return &Category{
-		BaseElement:    *foundation.NewBaseElement(id, docs...),
-		Name:           name,
+		BaseElement:    *foundation.MustBaseElement(baseOpts...),
+		name:           name,
 		categoryValues: map[string]*CategoryValue{},
 	}
+}
+
+// Name returns the Category name.
+func (c *Category) Name() string {
+	return c.name
 }
 
 // AddCategoryValues adds CategoryValues from the list into the Category and
@@ -126,15 +132,15 @@ type CategoryValue struct {
 
 // NewCategoryValue creates a new CategoryValue and returns its pointer.
 func NewCategoryValue(
-	id, value string,
-	docs ...*foundation.Documentation,
+	value string,
+	baseOpts ...options.Option,
 ) *CategoryValue {
 	if value == "" {
 		value = undefinedCategoryValue
 	}
 
 	return &CategoryValue{
-		BaseElement:         *foundation.NewBaseElement(id, docs...),
+		BaseElement:         *foundation.MustBaseElement(baseOpts...),
 		Value:               value,
 		categorizedElements: map[string]*flow.Element{},
 	}

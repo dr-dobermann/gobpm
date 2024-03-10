@@ -1,9 +1,26 @@
 package foundation
 
-import "github.com/google/uuid"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
+	"github.com/google/uuid"
+)
 
 const (
 	defaultDocFormat = "text/plain"
+)
+
+type (
+	Identifyer interface {
+		Id() string
+	}
+
+	Documentator interface {
+		Docs() []Documentation
+	}
+
+	Namer interface {
+		Name() string
+	}
 )
 
 // *****************************************************************************
@@ -63,21 +80,30 @@ type BaseElement struct {
 
 // NewBaseElement creates a new BaseElement with given id
 // if id is empty, then new UUID is generated.
-func NewBaseElement(id string, docs ...*Documentation) *BaseElement {
-	if id == "" {
-		id = uuid.Must(uuid.NewRandom()).String()
+func NewBaseElement(opts ...options.Option) (*BaseElement, error) {
+	bc := baseConfig{
+		id:   uuid.Must(uuid.NewRandom()).String(),
+		docs: []Documentation{},
 	}
 
-	be := BaseElement{
-		id:   id,
-		docs: make([]Documentation, len(docs)),
+	for _, opt := range opts {
+		if err := opt.Apply(&bc); err != nil {
+			return nil, err
+		}
 	}
 
-	for i, d := range docs {
-		be.docs[i] = *d
+	return bc.baseElement(), nil
+}
+
+// MustBaseElement tries to create a new BaseElement and returns its pointer
+// on success or error on failure.
+func MustBaseElement(opts ...options.Option) *BaseElement {
+	be, err := NewBaseElement(opts...)
+	if err != nil {
+		panic(err.Error())
 	}
 
-	return &be
+	return be
 }
 
 // Id returns the BaseElement Id.
@@ -88,4 +114,18 @@ func (be BaseElement) Id() string {
 // Docs returns the copy of BaseElement documentation.
 func (be BaseElement) Docs() []Documentation {
 	return append([]Documentation{}, be.docs...)
+}
+
+// Clone creates a clone of the BaseElement.
+func (be BaseElement) Clone() *BaseElement {
+	cbe := BaseElement{
+		id:   be.id,
+		docs: make([]Documentation, len(be.docs)),
+	}
+
+	if n := copy(cbe.docs, be.docs); n != len(be.docs) {
+		panic("couldn't clone documents for base element: " + be.id)
+	}
+
+	return &cbe
 }

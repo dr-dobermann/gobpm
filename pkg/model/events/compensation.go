@@ -1,6 +1,10 @@
 package events
 
-import "github.com/dr-dobermann/gobpm/pkg/model/acivities"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
+)
 
 // Compensation Events are used in the context of triggering or handling
 // compensation (see page 301 for more details on compensation). There are four
@@ -13,7 +17,7 @@ import "github.com/dr-dobermann/gobpm/pkg/model/acivities"
 //   - The throw Compensation Intermediate Event MAY be used in normal flow.
 //   - The Compensation End Event MAY be used within any Sub-Process or Process.
 type CompensationEventDefinition struct {
-	Definition
+	definition
 
 	// For a Start Event:
 	//   This Event “catches” the compensation for an Event Sub-Process. No
@@ -36,11 +40,44 @@ type CompensationEventDefinition struct {
 	//   REQUIRED. The Activity the Event is attached to will provide the Id
 	//   necessary to match the Compensation Event with the Event that threw
 	//   the compensation, or the compensation will have been a broadcast.
-	acitivityRef *acivities.Activity
+	acitivityRef *activities.Activity
 
 	// For a throw Compensation Event, this flag determines whether the throw
-	// Intermediate Event waits for the triggered compensation to complete 
-	// (the default), or just triggers the compensation and immediately 
+	// Intermediate Event waits for the triggered compensation to complete
+	// (the default), or just triggers the compensation and immediately
 	// continues.
 	waitForCompensation bool
+}
+
+// Type implements the Definition interface.
+func (*CompensationEventDefinition) Type() Trigger {
+
+	return TriggerCompensation
+}
+
+// NewCompensationEventDefinition creates a new CompensationEventDefinition
+// and reterns its pointer.
+func NewCompensationEventDefinition(
+	activity *activities.Activity,
+	wait4compensation bool,
+	baseOpts ...options.Option,
+) (*CompensationEventDefinition, error) {
+	d, err := newDefinition(baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "compensation event definition building error",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed,
+				},
+			}
+	}
+
+	return &CompensationEventDefinition{
+		definition:          *d,
+		acitivityRef:        activity,
+		waitForCompensation: wait4compensation,
+	}, nil
 }

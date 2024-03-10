@@ -1,9 +1,13 @@
 package events
 
 import (
+	"strconv"
+
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
+	"github.com/dr-dobermann/gobpm/pkg/set"
 )
 
 // Depending on the type of the Event there are different strategies to forward
@@ -81,17 +85,21 @@ import (
 
 type Trigger string
 
+// Multiple and ParallelMultiple have not direct trigger since they are
+// calculated based on event definitions.
+// As well None trigger also isn't existed since it appears on empty
+// Definitions list.
 const (
 	// Common Start and End events triggers
-	TriggerNone     Trigger = "None"
-	TriggerMessage  Trigger = "Message"
-	TriggerSignal   Trigger = "Signal"
-	TriggerMultiple Trigger = "Multiple"
+	// TriggerNone    Trigger = "None"
+	TriggerMessage Trigger = "Message"
+	TriggerSignal  Trigger = "Signal"
+	// TriggerMultiple Trigger = "Multiple"
 
 	// Only Start events triggers
-	TriggerTimer            Trigger = "Timer"
-	TriggerConditional      Trigger = "Conditional"
-	TriggerParallelMultiple Trigger = "ParallelMultiple"
+	TriggerTimer       Trigger = "Timer"
+	TriggerConditional Trigger = "Conditional"
+	// TriggerParallelMultiple Trigger = "ParallelMultiple"
 
 	// Only End events triggers
 	TriggerError        Trigger = "Error"
@@ -104,14 +112,6 @@ const (
 	TriggerLink Trigger = "Link"
 )
 
-type Type string
-
-const (
-	Start        Type = "Start"
-	End          Type = "End"
-	Intermediate Type = "Intermediate"
-)
-
 // *****************************************************************************
 
 // Events that catch a trigger. All Start Events and some Intermediate Events
@@ -121,8 +121,13 @@ type Event struct {
 
 	// Modeler-defined properties MAY be added to an Event. These properties are
 	// contained within the Event.
-	Properties []data.Property
+	properties []data.Property
 
+	// DEV_NOTE: There is no difference for the developer where this definition
+	// are helded since either type of definition are external for the event.
+	// Moreover, it is impossible to keep order of definition between two
+	// similar slices.
+	//
 	// References the reusable EventDefinitions that are triggers expected.
 	// Reusable EventDefinitions are defined as top-level elements.
 	// These EventDefinitions can be shared by different catch and throw Events.
@@ -131,7 +136,7 @@ type Event struct {
 	//   • If there is more than one EventDefinition defined, this is
 	//     considered a Catch Multiple Event.
 	// This is an ordered set.
-	defitionsRefs []*Definition
+	// defitionsRefs []Definition
 
 	// Defines the event EventDefinitions that are triggers expected.
 	// These EventDefinitions are only valid inside the current Event.
@@ -141,70 +146,102 @@ type Event struct {
 	//     considered a catch Multiple Event and the Event will have the
 	//     pentagon internal marker.
 	// This is an ordered set.
-	defitions []*Definition
+	definitions []Definition
 
-	trigger Trigger
-
-	eventType Type
+	triggers set.Set[Trigger]
 }
 
 // NewEvent creates a new Event and returns its pointer.
-func NewEvent(id, name string, docs ...*foundation.Documentation) *Event {
-	return &Event{
-		Node:       *flow.NewNode(id, name, docs...),
-		Properties: []data.Property{},
-	}
-}
-
-// Definiitons returns a copy list of event definitions either referenced or
-// internal
-func (e *Event) Definitons(references bool) []*Definition {
-	if e.defitions == nil {
-		e.defitions = []*Definition{}
-	}
-
-	if e.defitionsRefs == nil {
-		e.defitionsRefs = []*Definition{}
-	}
-
-	defs := []*Definition{}
-	if references {
-		for _, d := range e.defitionsRefs {
-			defs = append(defs, d)
-		}
-	} else {
-		for _, d := range e.defitions {
-			defs = append(defs, d)
-		}
+func newEvent(
+	name string,
+	props []data.Property,
+	defs []Definition,
+	baseOpts ...options.Option,
+) (*Event, error) {
+	n, err := flow.NewNode(name, baseOpts...)
+	if err != nil {
+		return nil,
+			&errs.ApplicationError{
+				Err:     err,
+				Message: "couldn't create flowNode",
+				Classes: []string{
+					errorClass,
+					errs.BulidingFailed}}
 	}
 
-	return defs
-}
-
-// Check tests if the Event definition is equal to cd.
-func (e *Event) Check(cd Checker) bool {
-	for _, d := range e.defitionsRefs {
-		if cd.Check(d) {
-			return true
-		}
+	e := Event{
+		Node:        *n,
+		properties:  make([]data.Property, len(props)),
+		definitions: make([]Definition, len(defs)),
+		triggers:    *set.New[Trigger](),
 	}
 
-	for _, d := range e.defitions {
-		if cd.Check(d) {
-			return true
+	if n := copy(e.properties, props); n != len(props) {
+		return nil, &errs.ApplicationError{
+			Err:     nil,
+			Message: "event properties copying failed",
+			Classes: []string{
+				errorClass,
+				errs.BulidingFailed,
+			},
+			Details: map[string]string{
+				"want": strconv.Itoa(len(props)),
+				"got":  strconv.Itoa(n),
+			},
 		}
 	}
 
-	return false
+	if n := copy(e.definitions, defs); n != len(defs) {
+		return nil, &errs.ApplicationError{
+			Err:     nil,
+			Message: "event definiitons copying failed",
+			Classes: []string{
+				errorClass,
+				errs.BulidingFailed,
+			},
+			Details: map[string]string{
+				"want": strconv.Itoa(len(defs)),
+				"got":  strconv.Itoa(n),
+			},
+		}
+	}
+
+	for _, d := range e.definitions {
+		e.triggers.Add(d.Type())
+	}
+
+	return &e, nil
 }
 
-// Trigger returns the Event trigger type.
-func (e *Event) Trigger() Trigger {
-	return e.trigger
+// Properties returns a copy of the Event properties.
+func (e Event) Properties() []data.Property {
+	return append([]data.Property{}, e.properties...)
 }
 
-func (e *Event) Type() Type {
-	return e.eventType
+// Definiitons returns a list of event definitions.
+func (e Event) Definitions() []Definition {
+
+	return append([]Definition{}, e.definitions...)
+}
+
+// Triggers returns the Event triggers.
+func (e Event) Triggers() []Trigger {
+	return e.triggers.All()
+}
+
+// HasTrigger checks if event has Trigger t in it.
+func (e Event) HasTrigger(t Trigger) bool {
+	return e.triggers.Has(t)
+}
+
+// NodeType implements flow.FlowNode interface for the Event.
+func (e Event) NodeType() flow.NodeType {
+	return flow.EventNode
+}
+
+// GetNode implemented flow.FlowNode interface for the Event.
+func (e *Event) GetNode() *flow.Node {
+	return &e.Node
 }
 
 // *****************************************************************************
@@ -215,7 +252,7 @@ func (e *Event) Type() Type {
 // into the scope of the catching Events. The throwing of a trigger MAY be
 // either implicit as defined by this standard or an extension to it or explicit
 // by a throw Event.
-type CatchEvent struct {
+type catchEvent struct {
 	Event
 
 	// The Data Associations of the catch Event. The dataOutputAssociation of a
@@ -226,34 +263,48 @@ type CatchEvent struct {
 	OutputAssociations []*data.Association
 
 	// The Data Outputs for the catch Event. This is an ordered set.
-	DataOutputs []*data.Output
+	// dataOutputs are indexed by Ids of ItemDefinitions from eventDefinition
+	// bodies.
+	dataOutputs map[string]*data.Output
 
-	// The OutputSet for the catch Event.
-	OutputSet *data.OutputSet
+	// The outputSet for the catch Event.
+	outputSet *data.OutputSet
 
-	// This attribute is only relevant when the catch Event has more than
+	// This attribute is only relevant when the catch Event has more than one
 	// EventDefinition (Multiple). If this value is true, then all of the types
 	// of triggers that are listed in the catch Event MUST be triggered before
 	// the Process is instantiated.
-	ParallelMultiple bool
+	parallelMultiple bool
 }
 
-// NewCatchEvent creates a new CatchEvent and returns its pointer.
-func NewCatchEvent(
-	id, name string,
-	docs ...*foundation.Documentation,
-) *CatchEvent {
-	return &CatchEvent{
-		Event:              *NewEvent(id, name, docs...),
-		OutputAssociations: []*data.Association{},
-		DataOutputs:        []*data.Output{},
-		OutputSet:          &data.OutputSet{},
-		ParallelMultiple:   false,
+// NewCatchEvent creates a new catchEvent and returns its pointer.
+func newCatchEvent(
+	name string,
+	props []data.Property,
+	defs []Definition,
+	parallel bool,
+	baseOpts ...options.Option,
+) (*catchEvent, error) {
+	e, err := newEvent(name, props, defs, baseOpts...)
+	if err != nil {
+		return nil, err
 	}
+
+	return &catchEvent{
+		Event:              *e,
+		OutputAssociations: []*data.Association{},
+		dataOutputs:        map[string]*data.Output{},
+		parallelMultiple:   e.triggers.Count() > 1 && parallel,
+	}, nil
+}
+
+// IsParallelMultiple returns parallelMultiple settings of the catchEvent.
+func (ce catchEvent) IsParallelMultiple() bool {
+	return ce.parallelMultiple
 }
 
 // *****************************************************************************
-type ThrowEvent struct {
+type throwEvent struct {
 	Event
 
 	// The Data Associations of the throw Event. The dataInputAssociation of a
@@ -264,23 +315,29 @@ type ThrowEvent struct {
 	InputAssociations []*data.Association
 
 	// The Data Inputs for the throw Event. This is an ordered set.
-	DataInputs []*data.Input
+	// dataInputs are indexed by Ids of ItemDefinitions from eventDefinitions
+	// bodies.
+	dataInputs map[string]*data.Input
 
 	// The InputSet for the throw Event.
-	OutputSets []*data.OutputSet
+	inputSet *data.InputSet
 }
 
-// NewThrowEvent creates a new ThrowEvent and returns its pointer.
-func NewThrowEvent(
-	id, name string,
-	docs ...*foundation.Documentation,
-) *ThrowEvent {
-	return &ThrowEvent{
-		Event:             *NewEvent(id, name, docs...),
-		InputAssociations: []*data.Association{},
-		DataInputs:        []*data.Input{},
-		OutputSets:        []*data.OutputSet{},
+// NewThrowEvent creates a new throwEvent and returns its pointer.
+func newThrowEvent(
+	name string,
+	props []data.Property,
+	defs []Definition,
+	baseOpts ...options.Option,
+) (*throwEvent, error) {
+	e, err := newEvent(name, props, defs, baseOpts...)
+	if err != nil {
+		return nil, err
 	}
-}
 
-// *****************************************************************************
+	return &throwEvent{
+		Event:             *e,
+		InputAssociations: []*data.Association{},
+		dataInputs:        map[string]*data.Input{},
+	}, nil
+}

@@ -1,6 +1,11 @@
 package data
 
-import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
+import "github.com/dr-dobermann/gobpm/pkg/model/options"
+
+// PropertyOwner is an interface of objects which could have Properties.
+type PropertyOwner interface {
+	Properties() []Property
+}
 
 // Properties, like Data Objects, are item-aware elements. But, unlike Data
 // Objects, they are not visually displayed on a Process diagram. Certain flow
@@ -15,18 +20,28 @@ type Property struct {
 
 // NewProperty creates a new Property object and returns its pointer.
 func NewProperty(
-	id, name string,
+	name string,
 	item *ItemDefinition,
 	state *DataState,
-	docs ...*foundation.Documentation,
-) *Property {
-	return &Property{
-		ItemAwareElement: *NewItemAwareElement(id, item, state, docs...),
-		name:             name,
+	baseOpts ...options.Option,
+) (*Property, error) {
+	name = trim(name)
+	if err := checkStr(name, "property should has non-empty name"); err != nil {
+		return nil, err
 	}
+
+	iae, err := NewItemAwareElement(item, state, baseOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Property{
+			ItemAwareElement: *iae,
+			name:             name},
+		nil
 }
 
 // Name returns the Property name.
-func (p *Property) Name() string {
+func (p Property) Name() string {
 	return p.name
 }
