@@ -12,12 +12,6 @@ const (
 	GatewayNode  NodeType = "Gateway"
 )
 
-type FlowNode interface {
-	GetNode() *Node
-
-	NodeType() NodeType
-}
-
 // The FlowNode element is used to provide a single element as the source and
 // target Sequence Flow associations instead of the individual associations of
 // the elements that can connect to Sequence Flows.
@@ -28,11 +22,11 @@ type Node struct {
 	Element
 
 	// This attribute identifies the incoming Sequence Flow of the FlowNode.
-	incoming []*SequenceFlow
+	incoming map[string]*SequenceFlow
 
 	// This attribute identifies the outgoing Sequence Flow of the FlowNode.
 	// This is an ordered collection.
-	outgoing []*SequenceFlow
+	outgoing map[string]*SequenceFlow
 }
 
 // NewNode creates a new node and returns its pointer.
@@ -47,17 +41,61 @@ func NewNode(
 
 	return &Node{
 			Element:  *e,
-			incoming: []*SequenceFlow{},
-			outgoing: []*SequenceFlow{}},
+			incoming: map[string]*SequenceFlow{},
+			outgoing: map[string]*SequenceFlow{}},
 		nil
 }
 
 // Incoming returns a list of the Node's incoming sequence flows.
 func (n Node) Incoming() []*SequenceFlow {
-	return append(make([]*SequenceFlow, 0, len(n.incoming)), n.incoming...)
+	ii := make([]*SequenceFlow, 0, len(n.incoming))
+	for _, in := range n.incoming {
+		ii = append(ii, in)
+	}
+	return ii
 }
 
 // Outgoing returns a list of the Node's outgoing sequence flows.
 func (n Node) Outgoing() []*SequenceFlow {
-	return append(make([]*SequenceFlow, 0, len(n.outgoing)), n.outgoing...)
+	oo := make([]*SequenceFlow, 0, len(n.outgoing))
+	for _, o := range n.outgoing {
+		oo = append(oo, o)
+	}
+
+	return oo
+}
+
+// GetNode implements FlowNode for all its chields.
+func (n *Node) GetNode() *Node {
+	return n
+}
+
+// addIncoming add singe non-empty sequence flow into the Node's incoming flows.
+func (n *Node) addIncoming(sf *SequenceFlow) {
+	if sf != nil {
+		n.incoming[sf.Id()] = sf
+	}
+}
+
+// delIncoming deletes non-empyt SequenceFlow from the Node's incoming flows.
+func (n *Node) delIncoming(sf *SequenceFlow) {
+	if sf != nil {
+		delete(n.incoming, sf.Id())
+	}
+}
+
+// addOutgoing adds singe non-empty sequence flow into the Node's
+// outgoing flows.
+func (n *Node) addOutgoing(sf *SequenceFlow) {
+	if sf != nil {
+		n.outgoing[sf.Id()] = sf
+	}
+}
+
+// delOutgoing removes singe non-empty sequence flow from the Node's
+// outgoing flows.
+func (n *Node) delOutgoing(sf *SequenceFlow) {
+	if sf != nil {
+		delete(n.outgoing, sf.Id())
+	}
 }

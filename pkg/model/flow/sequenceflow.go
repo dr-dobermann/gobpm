@@ -10,14 +10,16 @@ type (
 	// Sourcer implemented by the Nodes which could be a source of the sequence
 	// flow.
 	Sourcer interface {
+		FlowNode
+
 		AddOutgoing(sf *SequenceFlow) error
-		DropOutgoing(sf *SequenceFlow)
 	}
 
 	// Targeter impmemented by the Nodes which accepts incomng sequence flows.
 	Targeter interface {
+		FlowNode
+
 		AddIncoming(sf *SequenceFlow) error
-		DropIncoming(sf *SequenceFlow)
 	}
 )
 
@@ -117,8 +119,6 @@ func NewSequenceFlow(
 	}
 
 	if err := trg.AddIncoming(&sf); err != nil {
-		src.DropOutgoing(&sf)
-
 		return nil,
 			&errs.ApplicationError{
 				Err:     err,
@@ -127,6 +127,9 @@ func NewSequenceFlow(
 					errorClass,
 					errs.BulidingFailed}}
 	}
+
+	src.GetNode().addOutgoing(&sf)
+	trg.GetNode().addIncoming(&sf)
 
 	return &sf, nil
 }

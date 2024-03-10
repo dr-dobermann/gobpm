@@ -7,6 +7,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/set"
@@ -91,6 +92,21 @@ func NewStartEvent(
 	}
 
 	return sc.startEvent()
+}
+
+// ------------------ flow.Sourcer interface ----------------------------------
+//
+// AddOutgouing adds a new flow.Sequence flow as outgoing flow.
+func (se *StartEvent) AddOutgoing(sf *flow.SequenceFlow) error {
+	if sf == nil {
+		return &errs.ApplicationError{
+			Message: "empty SequenceFlow isn't allowed",
+			Classes: []string{
+				errorClass,
+				errs.InvalidParameter}}
+	}
+
+	return nil
 }
 
 // IsInterrupting returns interrupting setting of the StartEvent.

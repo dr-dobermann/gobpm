@@ -81,6 +81,11 @@ func NewTask(
 		err
 }
 
+// ActivityType implements flow.Activity interface and returns Activty type.
+func (t Task) ActivityType() string {
+	return string(TaskActivity)
+}
+
 // WithMultyInstance sets multyinstance flag of the Task.
 func WithMultyInstance() options.Option {
 	f := func(cfg *multyInstance) error {

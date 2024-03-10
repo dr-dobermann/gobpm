@@ -57,19 +57,19 @@ func (ac *activityConfig) newActivity() (*Activity, error) {
 		return nil, err
 	}
 
-	fe, err := flow.NewElement(ac.name, ac.baseOpts...)
+	n, err := flow.NewNode(ac.name, ac.baseOpts...)
 	if err != nil {
 		return nil,
 			&errs.ApplicationError{
 				Err:     err,
-				Message: "couldn't create a flowElement for the Activity",
+				Message: "couldn't create a FlowNode for the Activity",
 				Classes: []string{
 					errorClass,
 					errs.BulidingFailed}}
 	}
 
 	a := Activity{
-		Element:                *fe,
+		Node:                   *n,
 		isForCompensation:      ac.compensation,
 		resources:              loadPSlice(ac.resources),
 		properties:             loadPSlice(ac.props),

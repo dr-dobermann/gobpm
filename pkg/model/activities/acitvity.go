@@ -11,10 +11,18 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
+type ActivityType string
+
+const (
+	TaskActivity       ActivityType = "Task"
+	CallActivity       ActivityType = "CallActivity"
+	SubProcessActivity ActivityType = "SubProcess"
+)
+
 // The Activity class is the abstract super class for all concrete Activity
 // types.
 type Activity struct {
-	flow.Element
+	flow.Node
 
 	// A flag that identifies whether this Activity is intended for the
 	// purposes of compensation.
@@ -126,9 +134,41 @@ func NewActivity(
 	return cfg.newActivity()
 }
 
-// NodeType implements flow.FlowNode interface for the Activity.
+// ------------------ flow.FlowNode interface ----------------------------------
+//
+// NodeType returns Node type of the Activity.
 func (a Activity) NodeType() flow.NodeType {
 	return flow.ActivityNode
+}
+
+// ------------------ flow.Targeter interface ----------------------------------
+//
+// AddIncoming appends new flow.SequenceFlow as incoming flow.
+func (a *Activity) AddIncoming(sf *flow.SequenceFlow) error {
+	if sf == nil {
+		return &errs.ApplicationError{
+			Message: "empty SequenceFlow isn't allowed",
+			Classes: []string{
+				errorClass,
+				errs.InvalidParameter}}
+	}
+
+	return nil
+}
+
+// ------------------ flow.Sourcer interface ----------------------------------
+//
+// AddOutgouing adds a new flow.Sequence flow as outgoing flow.
+func (a *Activity) AddOutgoing(sf *flow.SequenceFlow) error {
+	if sf == nil {
+		return &errs.ApplicationError{
+			Message: "empty SequenceFlow isn't allowed",
+			Classes: []string{
+				errorClass,
+				errs.InvalidParameter}}
+	}
+
+	return nil
 }
 
 // ResourceRoles returns list of ResourceRoles of the Activity.
@@ -146,4 +186,33 @@ func (a Activity) Properties() []data.Property {
 	pp := make([]data.Property, 0, len(a.properties))
 
 	return append(pp, a.properties...)
+}
+
+// SetDefaultFlow sets default flow from the Activity.
+// If the flowId is empty, then default flow clears on Activity.
+func (a *Activity) SetDefaultFlow(flowId string) error {
+	flowId = trim(flowId)
+
+	if flowId == "" {
+		a.defaultFlow = nil
+
+		return nil
+	}
+
+	for _, o := range a.Outgoing() {
+		if o.Id() == flowId {
+			a.defaultFlow = o
+
+			return nil
+		}
+	}
+
+	return &errs.ApplicationError{
+		Message: "no requested outgoing flow in Activity",
+		Classes: []string{
+			errorClass,
+			errs.InvalidParameter},
+		Details: map[string]string{
+			"activity_id": a.Id(),
+			"flow_id":     flowId}}
 }

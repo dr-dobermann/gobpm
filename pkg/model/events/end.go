@@ -7,6 +7,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/set"
@@ -81,6 +82,21 @@ func NewEndEvent(
 	}
 
 	return ec.endEvent()
+}
+
+// ------------------ flow.Targeter interface ----------------------------------
+//
+// AddIncoming appends new flow.SequenceFlow as incoming flow.
+func (ee *EndEvent) AddIncoming(sf *flow.SequenceFlow) error {
+	if sf == nil {
+		return &errs.ApplicationError{
+			Message: "empty SequenceFlow isn't allowed",
+			Classes: []string{
+				errorClass,
+				errs.InvalidParameter}}
+	}
+
+	return nil
 }
 
 // EventType impments flow.Event interface for the EndEvent.

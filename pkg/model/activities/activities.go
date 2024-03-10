@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
 const errorClass = "ACTIVITIES_ERRORS"
@@ -27,3 +28,11 @@ func checkStr(str, msg string) error {
 
 	return nil
 }
+
+// interfaces check
+var (
+	_ flow.FlowNode = (*Activity)(nil)
+
+	_ flow.Sourcer  = (*Activity)(nil)
+	_ flow.Targeter = (*Activity)(nil)
+)

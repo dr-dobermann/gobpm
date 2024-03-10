@@ -3,7 +3,7 @@
 //
 //	    type ApplicationError struct {
 //	        Err     error
-//		       Message string
+//		    Message string
 //	        Classes []string
 //	        Details map[string]string
 //	    }
@@ -20,7 +20,7 @@
 package errs
 
 import (
-	"fmt"
+	"strings"
 )
 
 const (
@@ -44,12 +44,26 @@ type ApplicationError struct {
 	Details map[string]string
 }
 
-func (ap *ApplicationError) Error() string {
-	if ap.Err != nil {
-		return fmt.Errorf("%v: %q (details: %v): %w",
-			ap.Classes, ap.Message, ap.Details, ap.Err).Error()
+func (ap ApplicationError) Error() string {
+	str := ""
+	if len(ap.Classes) > 0 {
+		str += "Classes: [" + strings.Join(ap.Classes, ", ") + "]\n"
 	}
 
-	return fmt.Sprintf("%v: %q (details: %v)",
-		ap.Classes, ap.Message, ap.Details)
+	if ap.Message != "" {
+		str += "Message: " + strings.Trim(ap.Message, "\n")
+	}
+
+	if len(ap.Details) > 0 {
+		str += "Details:\n"
+		for k, v := range ap.Details {
+			str += "  " + k + ": " + v + "\n"
+		}
+	}
+
+	if ap.Err != nil {
+		str += "Error: " + ap.Err.Error() + "\n"
+	}
+
+	return str
 }
