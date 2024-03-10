@@ -41,7 +41,6 @@ func NewServiceTask(
 	name = trim(name)
 	if err := checkStr(
 		name, "empty name isn't allowed for the ServiceTask"); err != nil {
-
 		return nil, err
 	}
 
@@ -56,13 +55,7 @@ func NewServiceTask(
 
 	t, err := NewTask(name, taskOpts...)
 	if err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "couldn't create a ServiceTask",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed}}
+		return nil, err
 	}
 
 	impl := "##unspecified"

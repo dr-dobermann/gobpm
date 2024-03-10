@@ -135,21 +135,21 @@ func NewSequenceFlow(
 }
 
 // Source returns the Source of the SequenceFlow.
-func (sf SequenceFlow) Source() Sourcer {
+func (sf *SequenceFlow) Source() Sourcer {
 	return sf.source
 }
 
 // Target returns the Target of the SequenceFlow.
-func (sf SequenceFlow) Target() Targeter {
+func (sf *SequenceFlow) Target() Targeter {
 	return sf.target
 }
 
 // Condition returns the condition expression  of the SequenceFlow.
-func (sf SequenceFlow) Condition() *data.Expression {
+func (sf *SequenceFlow) Condition() *data.Expression {
 	return sf.conditionExpression
 }
 
 // IsImmediate returns the SequenceFlow's immediate setting.
-func (sf SequenceFlow) IsImmediate() bool {
+func (sf *SequenceFlow) IsImmediate() bool {
 	return sf.isImmediate
 }

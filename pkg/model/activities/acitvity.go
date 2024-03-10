@@ -71,7 +71,7 @@ type Activity struct {
 	// The InputOutputSpecification defines the inputs and outputs and the
 	// InputSets and OutputSets for the Activity. See page 210 for more
 	// information on the InputOutputSpecification.
-	ioSpec data.InputOutputSpecification
+	IoSpec data.InputOutputSpecification
 
 	// This references the Intermediate Events that are attached to the
 	// boundary of the Activity.
@@ -137,7 +137,7 @@ func NewActivity(
 // ------------------ flow.FlowNode interface ----------------------------------
 //
 // NodeType returns Node type of the Activity.
-func (a Activity) NodeType() flow.NodeType {
+func (a *Activity) NodeType() flow.NodeType {
 	return flow.ActivityNode
 }
 
@@ -172,7 +172,7 @@ func (a *Activity) AddOutgoing(sf *flow.SequenceFlow) error {
 }
 
 // ResourceRoles returns list of ResourceRoles of the Activity.
-func (a Activity) ResourceRoles() []ResourceRole {
+func (a *Activity) ResourceRoles() []ResourceRole {
 	rr := make([]ResourceRole, len(a.resources))
 
 	copy(rr, a.resources)
@@ -182,7 +182,7 @@ func (a Activity) ResourceRoles() []ResourceRole {
 
 // Properties implements an data.PropertyOwner interface and returns
 // copy of the Activity properties.
-func (a Activity) Properties() []data.Property {
+func (a *Activity) Properties() []data.Property {
 	pp := make([]data.Property, 0, len(a.properties))
 
 	return append(pp, a.properties...)

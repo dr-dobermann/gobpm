@@ -51,7 +51,7 @@ func (ap ApplicationError) Error() string {
 	}
 
 	if ap.Message != "" {
-		str += "Message: " + strings.Trim(ap.Message, "\n")
+		str += "Message: " + strings.Trim(ap.Message, " ") + "\n"
 	}
 
 	if len(ap.Details) > 0 {

@@ -82,7 +82,7 @@ func NewTask(
 }
 
 // ActivityType implements flow.Activity interface and returns Activty type.
-func (t Task) ActivityType() string {
+func (t *Task) ActivityType() string {
 	return string(TaskActivity)
 }
 

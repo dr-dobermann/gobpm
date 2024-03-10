@@ -47,7 +47,7 @@ func NewNode(
 }
 
 // Incoming returns a list of the Node's incoming sequence flows.
-func (n Node) Incoming() []*SequenceFlow {
+func (n *Node) Incoming() []*SequenceFlow {
 	ii := make([]*SequenceFlow, 0, len(n.incoming))
 	for _, in := range n.incoming {
 		ii = append(ii, in)
@@ -56,7 +56,7 @@ func (n Node) Incoming() []*SequenceFlow {
 }
 
 // Outgoing returns a list of the Node's outgoing sequence flows.
-func (n Node) Outgoing() []*SequenceFlow {
+func (n *Node) Outgoing() []*SequenceFlow {
 	oo := make([]*SequenceFlow, 0, len(n.outgoing))
 	for _, o := range n.outgoing {
 		oo = append(oo, o)
@@ -78,11 +78,11 @@ func (n *Node) addIncoming(sf *SequenceFlow) {
 }
 
 // delIncoming deletes non-empyt SequenceFlow from the Node's incoming flows.
-func (n *Node) delIncoming(sf *SequenceFlow) {
-	if sf != nil {
-		delete(n.incoming, sf.Id())
-	}
-}
+// func (n *Node) delIncoming(sf *SequenceFlow) {
+// 	if sf != nil {
+// 		delete(n.incoming, sf.Id())
+// 	}
+// }
 
 // addOutgoing adds singe non-empty sequence flow into the Node's
 // outgoing flows.
@@ -94,8 +94,8 @@ func (n *Node) addOutgoing(sf *SequenceFlow) {
 
 // delOutgoing removes singe non-empty sequence flow from the Node's
 // outgoing flows.
-func (n *Node) delOutgoing(sf *SequenceFlow) {
-	if sf != nil {
-		delete(n.outgoing, sf.Id())
-	}
-}
+// func (n *Node) delOutgoing(sf *SequenceFlow) {
+// 	if sf != nil {
+// 		delete(n.outgoing, sf.Id())
+// 	}
+// }

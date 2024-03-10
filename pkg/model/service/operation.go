@@ -102,26 +102,26 @@ func NewOperation(
 }
 
 // Name returns the name of the Operation.
-func (o Operation) Name() string {
+func (o *Operation) Name() string {
 	return o.name
 }
 
 // IncomingMessage returns incoming Message of the Operation.
-func (o Operation) IncomingMessage() *common.Message {
+func (o *Operation) IncomingMessage() *common.Message {
 	return o.inMessage
 }
 
 // OutgoingMessage returns outgoing Message of the Operation.
-func (o Operation) OutgoingMessage() *common.Message {
+func (o *Operation) OutgoingMessage() *common.Message {
 	return o.outMessage
 }
 
 // Errors returns a list of Errors which the Operation could return.
-func (o Operation) Errors() []string {
+func (o *Operation) Errors() []string {
 	return o.errors.All()
 }
 
 // Implementation returns the Operation implementation.
-func (o Operation) Implementation() Executor {
+func (o *Operation) Implementation() Executor {
 	return o.implementation
 }
