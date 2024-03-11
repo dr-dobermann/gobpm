@@ -48,6 +48,15 @@ func NewTimerEventDefinition(
 	tDate, tCycle, tDuration *data.Expression,
 	baseOpts ...options.Option,
 ) (*TimerEventDefinition, error) {
+	if tDate == nil && tCycle == nil && tDuration == nil {
+		return nil,
+			&errs.ApplicationError{
+				Message: "all timer expression couldn't be empty",
+				Classes: []string{
+					errorClass,
+					errs.InvalidParameter}}
+	}
+
 	if (tDate != nil && (tCycle != nil || tDuration != nil)) ||
 		(tCycle != nil && tDuration != nil) {
 
@@ -94,4 +103,19 @@ func MustTimerEventDefinition(
 	}
 
 	return ted
+}
+
+// Date return the Timer's date.
+func (ted *TimerEventDefinition) Date() *data.Expression {
+	return ted.timeDate
+}
+
+// Cycle return the Timer's cycle.
+func (ted *TimerEventDefinition) Cycle() *data.Expression {
+	return ted.timeCycle
+}
+
+// Duration return the Timer's duration.
+func (ted *TimerEventDefinition) Duration() *data.Expression {
+	return ted.timeDuration
 }

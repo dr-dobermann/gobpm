@@ -15,7 +15,7 @@ func TestNewEndEvent(t *testing.T) {
 	// create default DataSet
 	require.NoError(t, data.CreateDefaultStates())
 
-	cancEd, err := events.NewCancelEventDefinition("test_cancel_id")
+	cancEd, err := events.NewCancelEventDefinition()
 	require.NoError(t, err)
 
 	msg := common.MustMessage(

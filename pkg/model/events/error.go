@@ -54,3 +54,8 @@ func NewErrorEventDefinition(
 		err:        cErr,
 	}, nil
 }
+
+// Error returns the ErrorEventDefinition error structure.
+func (eed *ErrorEventDefinition) Error() *common.Error {
+	return eed.err
+}

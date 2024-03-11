@@ -1,11 +1,8 @@
 package data
 
 import (
-	"bytes"
-	"io"
-
-	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // *****************************************************************************
@@ -23,12 +20,27 @@ type Expression struct {
 	foundation.BaseElement
 }
 
-func NewExpression(id string, docs ...*foundation.Documentation) *Expression {
-	return &Expression{
-		BaseElement: *foundation.MustBaseElement(
-			foundation.WithId(id),
-			foundation.WithDocs(docs...)),
+// NewExpression creates a new Expression and returns its pointer on success or
+// error on failure.
+func NewExpression(baseOpts ...options.Option) (*Expression, error) {
+	be, err := foundation.NewBaseElement(baseOpts...)
+	if err != nil {
+		return nil, err
 	}
+
+	return &Expression{
+		BaseElement: *be}, nil
+}
+
+// MustExperssion tires to create a new Expression and returns its pointer.
+// If there is any error it panics.
+func MustExpression(baseOpts ...options.Option) *Expression {
+	e, err := NewExpression(baseOpts...)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	return e
 }
 
 // *****************************************************************************
@@ -66,36 +78,36 @@ type FormalExpression struct {
 
 // NewFormalExpression creates a new FormalExpression object and
 // returns its pointer or error in case of body loading error.
-func NewFormalExpression(id, lang string,
-	body io.Reader,
-	evalType *ItemDefinition,
-	docs ...*foundation.Documentation,
-) (*FormalExpression, error) {
-	fe := FormalExpression{
-		Expression:      *NewExpression(id, docs...),
-		language:        lang,
-		evaluatesToType: evalType,
-	}
+// func NewFormalExpression(id, lang string,
+// 	body io.Reader,
+// 	evalType *ItemDefinition,
+// 	docs ...*foundation.Documentation,
+// ) (*FormalExpression, error) {
+// 	fe := FormalExpression{
+// 		Expression:      *NewExpression(id, docs...),
+// 		language:        lang,
+// 		evaluatesToType: evalType,
+// 	}
 
-	if body != nil {
-		buf := bytes.NewBuffer([]byte{})
-		_, err := buf.ReadFrom(body)
-		if err != nil {
-			return nil, &errs.ApplicationError{
-				Err:     err,
-				Message: "couldn't read body",
-				Classes: []string{errs.InvalidObject},
-			}
-		}
+// 	if body != nil {
+// 		buf := bytes.NewBuffer([]byte{})
+// 		_, err := buf.ReadFrom(body)
+// 		if err != nil {
+// 			return nil, &errs.ApplicationError{
+// 				Err:     err,
+// 				Message: "couldn't read body",
+// 				Classes: []string{errs.InvalidObject},
+// 			}
+// 		}
 
-		if buf.Len() > 0 {
-			fe.body = make([]byte, buf.Len())
-			copy(fe.body, buf.Bytes())
-		}
-	}
+// 		if buf.Len() > 0 {
+// 			fe.body = make([]byte, buf.Len())
+// 			copy(fe.body, buf.Bytes())
+// 		}
+// 	}
 
-	return &fe, nil
-}
+// 	return &fe, nil
+// }
 
 // Language returns FormalExpression language settings.
 func (fe *FormalExpression) Language() string {
