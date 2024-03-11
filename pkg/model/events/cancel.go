@@ -26,7 +26,6 @@ func (*CancelEventDefinition) Type() Trigger {
 // NewCancelEventDefinition creates a new CancelEventDefinition and returns
 // its pointer.
 func NewCancelEventDefinition(
-	id string,
 	baseOpts ...options.Option,
 ) (*CancelEventDefinition, error) {
 	d, err := newDefinition(baseOpts...)

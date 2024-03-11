@@ -48,6 +48,16 @@ func NewSignal(
 	}, nil
 }
 
+// Name returns the Signal's name.
+func (s *Signal) Name() string {
+	return s.name
+}
+
+// Item returns the Signal's internal structure.
+func (s *Signal) Item() *data.ItemDefinition {
+	return s.structure
+}
+
 // *****************************************************************************
 type SignalEventDefinition struct {
 	definition
@@ -58,7 +68,6 @@ type SignalEventDefinition struct {
 
 // Type implements the Definition interface.
 func (*SignalEventDefinition) Type() Trigger {
-
 	return TriggerSignal
 }
 
@@ -109,4 +118,9 @@ func MustSignalEventDefinition(
 	}
 
 	return sed
+}
+
+// Signal returns the base signal of the SignalEventDefinition.
+func (sed *SignalEventDefinition) Signal() *Signal {
+	return sed.signal
 }

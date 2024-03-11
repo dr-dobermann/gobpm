@@ -161,7 +161,7 @@ func TestNewStartEvent(t *testing.T) {
 				events.WithCompensationTrigger(compEd),
 				events.WithConditionalTrigger(
 					events.MustConditionalEventDefinition(
-						data.NewExpression("this is a dummy expression"))),
+						data.MustExpression(foundation.WithId("this is a dummy expression")))),
 				events.WithErrorTrigger(eed),
 				events.WithEscalationTrigger(escEd),
 				events.WithMessageTrigger(
@@ -169,7 +169,7 @@ func TestNewStartEvent(t *testing.T) {
 				events.WithSignalTrigger(
 					events.MustSignalEventDefinition(sig)),
 				events.WithTimerTrigger(
-					events.MustTimerEventDefinition(nil, nil, nil)),
+					events.MustTimerEventDefinition(data.MustExpression(), nil, nil)),
 			)
 
 			require.NoError(t, err)

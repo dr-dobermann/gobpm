@@ -70,3 +70,7 @@ func MustConditionalEventDefinition(
 
 	return ced
 }
+
+func (ced *ConditionalEventDefinition) Condition() *data.Expression {
+	return ced.condition
+}

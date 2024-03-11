@@ -8,6 +8,8 @@ import (
 )
 
 // *****************************************************************************
+//
+// Escalation represents payload of EscalationEventDefinition.
 type Escalation struct {
 	foundation.BaseElement
 
@@ -33,6 +35,15 @@ func NewEscalation(
 
 	code = trim(code)
 
+	if item == nil {
+		return nil,
+			&errs.ApplicationError{
+				Message: "empty itemDefiniiton isn' allowed",
+				Classes: []string{
+					errorClass,
+					errs.InvalidParameter}}
+	}
+
 	be, err := foundation.NewBaseElement(baseOpts...)
 	if err != nil {
 		return nil,
@@ -52,6 +63,21 @@ func NewEscalation(
 		code:        code,
 		structure:   item,
 	}, nil
+}
+
+// Name returns the Escalation's name.
+func (e *Escalation) Name() string {
+	return e.name
+}
+
+// Code returns the Escalation's code.
+func (e *Escalation) Code() string {
+	return e.code
+}
+
+// Item returns the Escaltion's data structure.
+func (e *Escalation) Item() *data.ItemDefinition {
+	return e.structure
 }
 
 // *****************************************************************************
@@ -74,6 +100,15 @@ func NewEscalationEventDefintion(
 	escalation *Escalation,
 	baseOpts ...options.Option,
 ) (*EscalationEventDefinition, error) {
+	if escalation == nil {
+		return nil,
+			&errs.ApplicationError{
+				Message: "empty escalation isn't allowed",
+				Classes: []string{
+					errorClass,
+					errs.InvalidParameter}}
+	}
+
 	d, err := newDefinition(baseOpts...)
 	if err != nil {
 		return nil,
@@ -82,13 +117,17 @@ func NewEscalationEventDefintion(
 				Message: "escalation event definition building error",
 				Classes: []string{
 					errorClass,
-					errs.BulidingFailed,
-				},
-			}
+					errs.BulidingFailed}}
 	}
 
 	return &EscalationEventDefinition{
 		definition: *d,
 		escalation: escalation,
 	}, nil
+}
+
+// Escalation returns the EscalationEventDefinition's internal escalation
+// structure.
+func (eed *EscalationEventDefinition) Escalation() *Escalation {
+	return eed.escalation
 }
