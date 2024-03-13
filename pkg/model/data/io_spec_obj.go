@@ -9,6 +9,13 @@ import (
 // *****************************************************************************
 //
 // Parameter implements both Input and Output classes of BPMNv2.
+type ParameterType string
+
+const (
+	InputParameter  ParameterType = "INPUT"
+	OutputParameter ParameterType = "OUTPUT"
+)
+
 type Parameter struct {
 	ItemAwareElement
 
@@ -47,6 +54,17 @@ func NewParameter(name string, iae *ItemAwareElement) (*Parameter, error) {
 			name:             name,
 			sets:             map[SetType][]*DataSet{}},
 		nil
+}
+
+// MustParameter creates a new Parameter and returns its pointer or panics on
+// failure.
+func MustParameter(name string, iae *ItemAwareElement) *Parameter {
+	p, err := NewParameter(name, iae)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	return p
 }
 
 // Name returns the Parameter's name.
