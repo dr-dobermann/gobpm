@@ -49,7 +49,7 @@ func NewStartEvent(
 		interrurpting: false,
 		baseOpts:      []options.Option{},
 		defs:          []Definition{},
-		dataOutputs:   make(map[string]*data.Output),
+		dataOutputs:   make(map[string]*data.Parameter),
 	}
 
 	ee := []error{}

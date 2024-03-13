@@ -34,6 +34,8 @@ const (
 	//nolint: gosec
 	EmptyNotAllowed = "EMPTY_OBJ_IS_NOT_ALLOWED"
 
+	DuplicateObject = "DUPLICATE_OBJECT_ERROR"
+
 	OperationFailed = "OPERATION_FAILED"
 )
 

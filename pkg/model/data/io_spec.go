@@ -1,6 +1,8 @@
 package data
 
 import (
+	"fmt"
+
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
@@ -22,30 +24,85 @@ type InputOutputSpecification struct {
 
 	// A reference to the InputSets defined by the InputOutputSpecification.
 	// Every InputOutputSpecification MUST define at least one InputSet.
-	InputSets []InputSet
+	InputSets []*DataSet
 
 	// A reference to the OutputSets defined by the InputOutputSpecification.
 	// Every Data Interface MUST define at least one OutputSet.
-	OutputSets []OutputSet
+	OutputSets []*DataSet
 
 	// An optional reference to the Data Inputs of the InputOutputSpecification.
 	// If the InputOutputSpecification defines no Data Input, it means no data
 	// is REQUIRED to start the Activity. This is an ordered set.
-	DataInputs []Input
+	DataInputs []*Parameter
 
 	// An optional reference to the Data Outputs of the
 	// InputOutputSpecification. If the InputOutputSpecification defines no Data
 	// Output, it means no data is REQUIRED to finish the Activity. This is an
 	// ordered set.
-	DataOutputs []Output
+	DataOutputs []*Parameter
 }
 
 type SetType uint8
 
 const (
-	DefaultSet        SetType = 1 << (iota + 1)
-	OptionalSet       SetType = 1 << (iota + 1)
-	WhileExecutionSet SetType = 1 << (iota + 1)
+	InvalidSet        SetType = iota
+	DefaultSet        SetType = 1 << iota
+	OptionalSet       SetType = 1 << iota
+	WhileExecutionSet SetType = 1 << iota
 
 	AllSets SetType = DefaultSet | OptionalSet | WhileExecutionSet
 )
+
+func (st SetType) String() string {
+	return []string{
+		"InvalidSet",
+		"DefaultSet",
+		"OptionalSet",
+		"WhileExecutionSet",
+	}[st]
+}
+
+// checkSetType tests if the st is a proper SetType.
+func checkSetType(st SetType) error {
+	if st&AllSets != st {
+		return fmt.Errorf("invalid DataSet type: %d", st)
+	}
+
+	return nil
+}
+
+// A Data Input is a declaration that a particular kind of data will be used as
+// input of the InputOutputSpecification. There may be multiple Data Inputs
+// associated with an InputOutputSpecification.
+// The Data Input is an item-aware element. Data Inputs are visually displayed
+// on a Process diagram to show the inputs to the top-level Process or to show
+// the inputs of a called Process (i.e., one that is referenced by a Call
+// Activity, where the Call Activity has been expanded to show the called
+// Process within the context of a calling Process).
+// type Input struct {
+// ItemAwareElement
+
+// A descriptive name for the element.
+// name string
+
+// A DataInput is used in one or more InputSets. This attribute is derived
+// from the InputSets.
+// inputSets []*InputSet
+
+// Each InputSet that uses this DataInput can determine if the Activity can
+// start executing with this DataInput state in “unavailable.” This
+// attribute lists those InputSets.
+// inputSetWithOptional []*InputSet
+
+// Each InputSet that uses this DataInput can determine if the Activity can
+// evaluate this DataInput while executing. This attribute lists those
+// InputSets.
+// inputSetWithWhileExecution []*InputSet
+
+// Defines if the DataInput represents a collection of elements. It is
+// needed when no itemDefinition is referenced. If an itemDefinition is
+// referenced, then this attribute MUST have the same value as the
+// isCollection attribute of the referenced itemDefinition. The default
+// value for this attribute is false.
+// isCollection bool
+// }

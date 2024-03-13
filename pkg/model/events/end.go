@@ -38,8 +38,8 @@ func NewEndEvent(
 		props:      []data.Property{},
 		baseOpts:   []options.Option{},
 		defs:       []Definition{},
-		dataInputs: map[string]*data.Input{},
-		inputSet:   &data.InputSet{},
+		dataInputs: map[string]*data.Parameter{},
+		inputSet:   &data.DataSet{},
 	}
 
 	ee := []error{}
