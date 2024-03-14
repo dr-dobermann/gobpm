@@ -305,3 +305,11 @@ func (s *DataSet) RemoveParameter(p *Parameter, from SetType) error {
 
 	return nil
 }
+
+func (s *DataSet) Link(ds *DataSet) error {
+	if ds == nil {
+		return nil
+	}
+
+	return nil
+}
