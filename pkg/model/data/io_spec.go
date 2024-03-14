@@ -91,7 +91,8 @@ func NewIOSpec(baseOpts ...options.Option) (*InputOutputSpecification, error) {
 			inputSets:   []*DataSet{},
 			outputSets:  []*DataSet{},
 			dataInputs:  []*Parameter{},
-			dataOutputs: []*Parameter{}},
+			dataOutputs: []*Parameter{},
+		},
 		nil
 }
 
@@ -104,11 +105,9 @@ func (ios *InputOutputSpecification) AddParameter(
 	where SetType,
 ) error {
 	if p == nil {
-		return &errs.ApplicationError{
-			Message: "no parameter",
-			Classes: []string{
-				errorClass,
-				errs.EmptyNotAllowed}}
+		return errs.New(
+			errs.M("no parameter"),
+			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
 	}
 
 	return nil

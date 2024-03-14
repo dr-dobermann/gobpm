@@ -31,28 +31,23 @@ func NewParameter(name string, iae *ItemAwareElement) (*Parameter, error) {
 
 	if name == "" {
 		return nil,
-			&errs.ApplicationError{
-				Message: "name shouldn't be empty",
-				Classes: []string{
-					errorClass,
-					errs.EmptyNotAllowed,
-					errs.InvalidParameter}}
+			errs.New(
+				errs.M("name shouldn't be empty"),
+				errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
 	}
 
 	if iae == nil {
 		return nil,
-			&errs.ApplicationError{
-				Message: "ItemAvareElement should be provided for data input",
-				Classes: []string{
-					errorClass,
-					errs.EmptyNotAllowed,
-					errs.InvalidParameter}}
+			errs.New(
+				errs.M("ItemAwareElement should be provided"),
+				errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
 	}
 
 	return &Parameter{
 			ItemAwareElement: *iae,
 			name:             name,
-			sets:             map[SetType][]*DataSet{}},
+			sets:             map[SetType][]*DataSet{},
+		},
 		nil
 }
 
@@ -61,7 +56,7 @@ func NewParameter(name string, iae *ItemAwareElement) (*Parameter, error) {
 func MustParameter(name string, iae *ItemAwareElement) *Parameter {
 	p, err := NewParameter(name, iae)
 	if err != nil {
-		panic(err.Error())
+		errs.Panic(err.Error())
 	}
 
 	return p
@@ -75,27 +70,20 @@ func (p *Parameter) Name() string {
 // addSet adds new DataSet which references onto the Parameter.
 func (p *Parameter) addSet(s *DataSet, where SetType) error {
 	if err := checkSetType(where); err != nil {
-		return &errs.ApplicationError{
-			Err:     err,
-			Message: "Invalid DataSet type",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter}}
+		return errs.New(
+			errs.M("invalid data set type (%d)", where),
+			errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	if s == nil {
-		return &errs.ApplicationError{
-			Message: "dataSet should be provided",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter,
-				errs.EmptyNotAllowed}}
+		return errs.New(
+			errs.M("data set should be provided"),
+			errs.C(errorClass, errs.InvalidParameter, errs.EmptyNotAllowed))
 	}
 
 	ss, ok := p.sets[where]
-	if !ok {
-		ss = []*DataSet{s}
-		p.sets[where] = ss
+	if !ok || ss == nil {
+		p.sets[where] = []*DataSet{s}
 
 		return nil
 	}
@@ -110,34 +98,25 @@ func (p *Parameter) addSet(s *DataSet, where SetType) error {
 // removeSet removes the DataSet references on the Parameter.
 func (p *Parameter) removeSet(s *DataSet, from SetType) error {
 	if err := checkSetType(from); err != nil {
-		return &errs.ApplicationError{
-			Err:     err,
-			Message: "Invalid DataSet type",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter}}
+		return errs.New(
+			errs.M("invalid data set type (%d)", from),
+			errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	if s == nil {
-		return &errs.ApplicationError{
-			Message: "dataSet should be provided",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter,
-				errs.EmptyNotAllowed}}
+		return errs.New(
+			errs.M("data set should be provided"),
+			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
 	}
 
 	ss, ok := p.sets[from]
-	if !ok {
-		return &errs.ApplicationError{
-			Message: "parameter does't referenced by dataSet",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter},
-			Details: map[string]string{
-				"parameter_name": p.name,
-				"set_type":       from.String(),
-				"set_name":       s.name}}
+	if !ok || ss == nil {
+		return errs.New(
+			errs.M("parameter doesn't belong to data set"),
+			errs.C(errorClass, errs.InvalidParameter),
+			errs.D("parameter_name", p.name),
+			errs.D("set_type", from.String()),
+			errs.D("set_name", s.name))
 	}
 
 	if ind := index[*DataSet](s, ss); ind != -1 {
@@ -182,12 +161,9 @@ func NewDataSet(name string, baseOpts ...options.Option) (*DataSet, error) {
 
 	if name == "" {
 		return nil,
-			&errs.ApplicationError{
-				Message: "name shouldn't be empty",
-				Classes: []string{
-					errorClass,
-					errs.EmptyNotAllowed,
-					errs.InvalidParameter}}
+			errs.New(
+				errs.M("name shouldn't be empty"),
+				errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
 	}
 
 	be, err := foundation.NewBaseElement(baseOpts...)
@@ -199,7 +175,8 @@ func NewDataSet(name string, baseOpts ...options.Option) (*DataSet, error) {
 			BaseElement: *be,
 			name:        name,
 			values:      map[SetType][]*Parameter{},
-			linkedSets:  []*DataSet{}},
+			linkedSets:  []*DataSet{},
+		},
 		nil
 }
 
@@ -208,20 +185,15 @@ func NewDataSet(name string, baseOpts ...options.Option) (*DataSet, error) {
 // id.
 func (s *DataSet) AddParameter(p *Parameter, where SetType) error {
 	if err := checkSetType(where); err != nil {
-		return &errs.ApplicationError{
-			Message: "Invalid DataSet type",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter}}
+		return errs.New(
+			errs.M("invalid data set type (%d)", where),
+			errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	if p == nil {
-		return &errs.ApplicationError{
-			Message: "parameter couldn't be nil",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter,
-				errs.EmptyNotAllowed}}
+		return errs.New(
+			errs.M("parameter should be provided"),
+			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
 	}
 
 	if s.values[where] == nil {
@@ -229,12 +201,12 @@ func (s *DataSet) AddParameter(p *Parameter, where SetType) error {
 	}
 
 	vv, ok := s.values[where]
-	if !ok {
+	if !ok || vv == nil {
 		if err := p.addSet(s, where); err != nil {
 			return err
 		}
-		vv = []*Parameter{p}
-		s.values[where] = vv
+
+		s.values[where] = []*Parameter{p}
 
 		return nil
 	}
@@ -242,14 +214,9 @@ func (s *DataSet) AddParameter(p *Parameter, where SetType) error {
 	for _, v := range vv {
 		if v.name == p.name {
 			if v.Id() != p.Id() {
-				return &errs.ApplicationError{
-					Message: "data set already has parameter with the name",
-					Classes: []string{
-						errorClass,
-						errs.InvalidParameter,
-						errs.DuplicateObject},
-					Details: map[string]string{
-						"name": v.name}}
+				return errs.New(
+					errs.M("data set already has parameter with the name %q", v.name),
+					errs.C(errorClass, errs.InvalidParameter, errs.DuplicateObject))
 			}
 
 			return nil
@@ -259,6 +226,7 @@ func (s *DataSet) AddParameter(p *Parameter, where SetType) error {
 	if err := p.addSet(s, where); err != nil {
 		return err
 	}
+
 	s.values[where] = append(vv, p)
 
 	return nil
@@ -268,20 +236,15 @@ func (s *DataSet) AddParameter(p *Parameter, where SetType) error {
 // removes the reference on the DataSet from the Parameter.
 func (s *DataSet) RemoveParameter(p *Parameter, from SetType) error {
 	if err := checkSetType(from); err != nil {
-		return &errs.ApplicationError{
-			Message: "Invalid DataSet type",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter}}
+		return errs.New(
+			errs.M("invalid data set type (%d)", from),
+			errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	if p == nil {
-		return &errs.ApplicationError{
-			Message: "parameter couldn't be nil",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter,
-				errs.EmptyNotAllowed}}
+		return errs.New(
+			errs.M("parameter should be provided"),
+			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
 	}
 
 	if s.values[from] == nil {
@@ -292,14 +255,11 @@ func (s *DataSet) RemoveParameter(p *Parameter, from SetType) error {
 	}
 
 	vv, ok := s.values[from]
-	if !ok {
-		return &errs.ApplicationError{
-			Message: "couldn't find selected set type",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter},
-			Details: map[string]string{
-				"set_type": from.String()}}
+	if !ok || vv == nil {
+		return errs.New(
+			errs.M("data set is empty"),
+			errs.C(errorClass, errs.InvalidParameter),
+			errs.D("data_set_type", from.String()))
 	}
 
 	index := index(p, vv)
@@ -314,6 +274,7 @@ func (s *DataSet) RemoveParameter(p *Parameter, from SetType) error {
 	if err := p.removeSet(s, from); err != nil {
 		return err
 	}
+
 	s.values[from] = append(vv[:index], vv[index+1:]...)
 
 	return nil
@@ -355,7 +316,8 @@ func (s *DataSet) IsValid() bool {
 // If the desired SetType parameter set is empty, check is successful.
 func (s *DataSet) Validate(
 	readyState *DataState,
-	executionFinished bool) error {
+	executionFinished bool,
+) error {
 	rs := readyState
 
 	s.valid = false
