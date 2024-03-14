@@ -203,6 +203,16 @@ func (iae *ItemAwareElement) State() DataState {
 	return iae.dataState
 }
 
+// Subject returns internal representeation of the ItemAwareElement.
 func (iae *ItemAwareElement) Subject() *ItemDefinition {
 	return iae.itemSubject
+}
+
+// IsCollection returns flag is the ItemAwareElement collection or not.
+func (iae *ItemAwareElement) IsCollection() bool {
+	if iae.itemSubject == nil {
+		return false
+	}
+
+	return iae.itemSubject.isCollection
 }
