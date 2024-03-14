@@ -40,6 +40,8 @@ const (
 	DuplicateObject = "DUPLICATE_OBJECT_ERROR"
 
 	OperationFailed = "OPERATION_FAILED"
+
+	ConditionFailed = "CONDITION_FAILED"
 )
 
 type ApplicationError struct {

@@ -157,6 +157,11 @@ type DataSet struct {
 
 	values map[SetType][]*Parameter
 
+	// valid keeps validity flag of the DataSet. It could be changed
+	// by Validate call.
+	// To check validity call IsValid.
+	valid bool
+
 	// linkedSets holds Input/Output rule that defines which OutputSet is
 	// expected to be created by the Activity when this InputSet became valid.
 	// This attribute is paired with the inputSetRefs attribute of OutputSets.
@@ -219,6 +224,10 @@ func (s *DataSet) AddParameter(p *Parameter, where SetType) error {
 				errs.EmptyNotAllowed}}
 	}
 
+	if s.values[where] == nil {
+		s.values[where] = []*Parameter{}
+	}
+
 	vv, ok := s.values[where]
 	if !ok {
 		if err := p.addSet(s, where); err != nil {
@@ -275,6 +284,13 @@ func (s *DataSet) RemoveParameter(p *Parameter, from SetType) error {
 				errs.EmptyNotAllowed}}
 	}
 
+	if s.values[from] == nil {
+		return errs.New(
+			errs.M("data set is empty"),
+			errs.C(errorClass, errs.InvalidParameter),
+			errs.D("data_set_type", from.String()))
+	}
+
 	vv, ok := s.values[from]
 	if !ok {
 		return &errs.ApplicationError{
@@ -288,14 +304,11 @@ func (s *DataSet) RemoveParameter(p *Parameter, from SetType) error {
 
 	index := index(p, vv)
 	if index == -1 {
-		return &errs.ApplicationError{
-			Message: "no parameter in selected data set",
-			Classes: []string{
-				errorClass,
-				errs.InvalidObject},
-			Details: map[string]string{
-				"param_name":    p.name,
-				"data_set_type": from.String()}}
+		return errs.New(
+			errs.M("parameter isn't exists in selected data set"),
+			errs.C(errorClass, errs.InvalidObject),
+			errs.D("param_name", p.name),
+			errs.D("data_set_type", from.String()))
 	}
 
 	if err := p.removeSet(s, from); err != nil {
@@ -306,9 +319,93 @@ func (s *DataSet) RemoveParameter(p *Parameter, from SetType) error {
 	return nil
 }
 
+// Link links the ds DataSet to the s DataSet.
 func (s *DataSet) Link(ds *DataSet) error {
 	if ds == nil {
-		return nil
+		return errs.New(
+			errs.M("couldn't link empty dataset"),
+			errs.C(errorClass, errs.InvalidParameter, errs.EmptyNotAllowed))
+	}
+
+	if ds == s {
+		return errs.New(
+			errs.M("couldn't link to itself"),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	if idx := index(ds, s.linkedSets); idx == -1 {
+		s.linkedSets = append(s.linkedSets, ds)
+	}
+
+	return nil
+}
+
+// IsValid returns the DataSet's validity flag.
+func (s *DataSet) IsValid() bool {
+	return s.valid
+}
+
+// Validate checks DataSet for validness.
+// It uses given readyState DataState to compare with every Parameter state.
+// If readyState is nil, then data.ReadyDataState is used (if set).
+//
+// By default Validate checks only DefaultSet dataSet.
+// if executionFinished flag is true, then WhileExecutionSet is also checked.
+//
+// If the desired SetType parameter set is empty, check is successful.
+func (s *DataSet) Validate(
+	readyState *DataState,
+	executionFinished bool) error {
+	rs := readyState
+
+	s.valid = false
+
+	if readyState == nil {
+		rs = ReadyDataState
+		if rs == nil {
+			return errs.New(
+				errs.M("default ready state isn't initialized "+
+					"(use data.CreateDefaultStates to initialize)"),
+				errs.C(errorClass, errs.InvalidParameter))
+		}
+	}
+
+	if s.values[DefaultSet] != nil {
+		if err := checkParamsState(
+			rs,
+			s.values[DefaultSet],
+			DefaultSet); err != nil {
+			return err
+		}
+	}
+
+	if executionFinished == true {
+		if s.values[WhileExecutionSet] != nil {
+			return checkParamsState(
+				rs,
+				s.values[WhileExecutionSet],
+				WhileExecutionSet)
+		}
+	}
+
+	s.valid = true
+
+	return nil
+}
+
+// checkParamState checks set of parameter on rs DataState equality.
+// If any parameter DataSate is differs from rs, then error returned.
+func checkParamsState(rs *DataState, pp []*Parameter, sType SetType) error {
+	for _, p := range pp {
+		if p.dataState.Id() != rs.Id() {
+			return errs.New(
+				errs.M("parameter has not desired state"),
+				errs.C(errorClass, errs.ConditionFailed),
+				errs.D("parameter_name", p.name),
+				errs.D("data_set", sType.String()),
+				errs.D("requested_state", rs.name),
+				errs.D("parameter_state", p.State().name))
+		}
 	}
 
 	return nil
