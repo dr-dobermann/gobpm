@@ -22,9 +22,12 @@ func TestPanic(t *testing.T) {
 	t.Run("errors",
 		func(t *testing.T) {
 
-			detalils := map[string]string{
-				"hello": "world",
-				"test":  "detail"}
+			detalils := []struct {
+				k, v string
+			}{
+				{"hello", "world"},
+				{"test", "detail"},
+			}
 
 			classes := []string{
 				"test",
@@ -35,14 +38,46 @@ func TestPanic(t *testing.T) {
 				errs.E(fmt.Errorf("test err")),
 				errs.M("hello %s!", "world"),
 				errs.C(classes...),
-				errs.D(detalils))
+				errs.D(detalils[0].k, detalils[0].v),
+				errs.D(detalils[1].k, detalils[1].v),
+			)
 
 			require.NotEmpty(t, e)
 			require.Equal(t, "hello world!", e.Message)
-			require.Equal(t, detalils, e.Details)
 			require.Equal(t, classes[:2], e.Classes)
 			require.Error(t, e.Err)
 
+			require.Equal(t, len(detalils), len(e.Details))
+			for _, d := range detalils {
+				found := false
+				ed, ok := e.Details[d.k]
+				if ok {
+					if d.v == ed {
+						found = true
+					}
+				}
+
+				require.True(t,
+					found,
+					"value for key %q differs from %s (has %s)",
+					d.k, d.v, ed)
+			}
+
 			t.Log(e.Error())
+		})
+
+	t.Run("invalid error options",
+		func(t *testing.T) {
+			const defaultMessage = "unspecified error"
+
+			e := errs.New(
+				nil,
+				errs.E(nil),
+				errs.M(""),
+			)
+
+			require.NotEmpty(t, e)
+			require.NotNil(t, e.Err)
+			require.Equal(t, defaultMessage, e.Message)
 		})
 }

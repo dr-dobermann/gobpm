@@ -78,15 +78,17 @@ func (ap *ApplicationError) Error() string {
 func New(errOpts ...errOption) *ApplicationError {
 	eCfg := errConfig{
 		err:     nil,
-		msg:     "",
+		msg:     defaultMessage,
 		classes: []string{},
 		details: map[string]string{},
 	}
 
 	ee := make([]error, 0, len(errOpts)+1)
 	for _, o := range errOpts {
-		if err := o.apply(&eCfg); err != nil {
-			ee = append(ee, err)
+		if o != nil {
+			if err := o.apply(&eCfg); err != nil {
+				ee = append(ee, err)
+			}
 		}
 	}
 

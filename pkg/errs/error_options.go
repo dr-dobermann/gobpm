@@ -5,6 +5,10 @@ import (
 	"strings"
 )
 
+const (
+	defaultMessage = "unspecified error"
+)
+
 type (
 	errConfig struct {
 		err     error
@@ -87,15 +91,13 @@ func C(classes ...string) errOption {
 	return errFunc(f)
 }
 
-// D fills the errConfig details.
-func D(dd map[string]string) errOption {
+// D adds the errConfig details.
+func D(k, v string) errOption {
 	f := func(cfg *errConfig) error {
-		for k, v := range dd {
-			k = strings.Trim(k, " ")
-			v = strings.Trim(v, " ")
-			if k != "" && v != "" {
-				cfg.details[k] = v
-			}
+		k := strings.Trim(k, " ")
+		v := strings.Trim(v, " ")
+		if k != "" && v != "" {
+			cfg.details[k] = v
 		}
 
 		return nil
