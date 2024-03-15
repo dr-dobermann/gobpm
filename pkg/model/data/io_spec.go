@@ -20,6 +20,9 @@ const (
 	WhileExecutionSet SetType = 1 << iota
 
 	AllSets SetType = DefaultSet | OptionalSet | WhileExecutionSet
+
+	SingleType    = true
+	CombinedTypes = false
 )
 
 func (st SetType) String() string {
@@ -32,9 +35,18 @@ func (st SetType) String() string {
 }
 
 // checkSetType tests if the st is a proper SetType.
-func checkSetType(st SetType) error {
+// If single is true, then checkSetType test st against single
+// SetType and fails on combined states.
+func checkSetType(st SetType, single bool) error {
 	if st&AllSets != st {
-		return fmt.Errorf("invalid DataSet type: %d", st)
+		return fmt.Errorf("invalid data set type or types combination: %d", st)
+	}
+
+	if single &&
+		st != DefaultSet &&
+		st != OptionalSet &&
+		st != WhileExecutionSet {
+		return fmt.Errorf("invalid single data set type %d", st)
 	}
 
 	return nil
@@ -102,7 +114,6 @@ func NewIOSpec(baseOpts ...options.Option) (*InputOutputSpecification, error) {
 func (ios *InputOutputSpecification) AddParameter(
 	p *Parameter,
 	pt ParameterType,
-	where SetType,
 ) error {
 	if p == nil {
 		return errs.New(
@@ -110,5 +121,103 @@ func (ios *InputOutputSpecification) AddParameter(
 			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
 	}
 
+	dd := ios.dataInputs
+	if pt == OutputParameter {
+		dd = ios.dataOutputs
+	}
+
+	if idx := index(p, dd); idx != -1 {
+		return nil
+	}
+
+	switch pt {
+	case InputParameter:
+		ios.dataInputs = append(dd, p)
+
+	case OutputParameter:
+		ios.dataOutputs = append(dd, p)
+	}
+
 	return nil
+}
+
+// AddDataSet adds single data set into InputOutputSpecification and check
+// if it is already exist in selected by pt list of data sets.
+// DataSet could be set only as input or output.
+func (ios *InputOutputSpecification) AddDataSet(
+	s *DataSet,
+	pt ParameterType,
+) error {
+	if s == nil {
+		return errs.New(
+			errs.M("no data set"),
+			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
+	}
+
+	ss := ios.inputSets
+	if pt == OutputParameter {
+		ss = ios.outputSets
+	}
+
+	if idx := index(s, ss); idx != -1 {
+		return nil
+	}
+
+	switch pt {
+	case InputParameter:
+		if idx := index(s, ios.outputSets); idx != -1 {
+			return errs.New(
+				errs.M("data set is already used as output data set"),
+				errs.C(errorClass, errs.InvalidParameter, errs.DuplicateObject))
+		}
+
+		ios.inputSets = append(ss, s)
+
+	case OutputParameter:
+		if idx := index(s, ios.inputSets); idx != -1 {
+			return errs.New(
+				errs.M("data set is already used as input data set"),
+				errs.C(errorClass, errs.InvalidParameter, errs.DuplicateObject))
+		}
+
+		ios.outputSets = append(ss, s)
+	}
+
+	return nil
+}
+
+// RemoveDataSet removes non-empty data set and clears all references on it
+// from parameters.
+func (ios *InputOutputSpecification) RemoveDataSet(
+	s *DataSet,
+	pt ParameterType,
+) error {
+	if s == nil {
+		return errs.New(
+			errs.M("no data set"),
+			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
+	}
+
+	ss := ios.inputSets
+
+	if pt == OutputParameter {
+		ss = ios.outputSets
+	}
+
+	if idx := index(s, ss); idx == -1 {
+		return errs.New(
+			errs.M("data set %q isn't found", s.name),
+			errs.C(errorClass, errs.InvalidParameter, errs.ObjectNotFound))
+	}
+
+	return nil
+}
+
+// GetDataSets returns data sets of selected type.
+func (ios *InputOutputSpecification) GetDataSets(pt ParameterType) []*DataSet {
+	if pt == InputParameter {
+		return append([]*DataSet{}, ios.inputSets...)
+	}
+
+	return append([]*DataSet{}, ios.outputSets...)
 }

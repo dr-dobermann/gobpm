@@ -38,10 +38,9 @@ const (
 	EmptyNotAllowed = "EMPTY_OBJ_IS_NOT_ALLOWED"
 
 	DuplicateObject = "DUPLICATE_OBJECT_ERROR"
-
 	OperationFailed = "OPERATION_FAILED"
-
 	ConditionFailed = "CONDITION_FAILED"
+	ObjectNotFound  = "OBJECT_NOT_FOUND"
 )
 
 type ApplicationError struct {

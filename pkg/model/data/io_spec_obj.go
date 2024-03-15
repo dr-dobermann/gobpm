@@ -69,7 +69,7 @@ func (p *Parameter) Name() string {
 
 // addSet adds new DataSet which references onto the Parameter.
 func (p *Parameter) addSet(s *DataSet, where SetType) error {
-	if err := checkSetType(where); err != nil {
+	if err := checkSetType(where, SingleType); err != nil {
 		return errs.New(
 			errs.M("invalid data set type (%d)", where),
 			errs.C(errorClass, errs.InvalidParameter))
@@ -97,7 +97,7 @@ func (p *Parameter) addSet(s *DataSet, where SetType) error {
 
 // removeSet removes the DataSet references on the Parameter.
 func (p *Parameter) removeSet(s *DataSet, from SetType) error {
-	if err := checkSetType(from); err != nil {
+	if err := checkSetType(from, SingleType); err != nil {
 		return errs.New(
 			errs.M("invalid data set type (%d)", from),
 			errs.C(errorClass, errs.InvalidParameter))
@@ -180,11 +180,48 @@ func NewDataSet(name string, baseOpts ...options.Option) (*DataSet, error) {
 		nil
 }
 
+// Name returns the DataSet name.
+func (s *DataSet) Name() string {
+	return s.name
+}
+
+// Values returns values of one or a few set types.
+// If there is no values of such type it returns error.
+func (s *DataSet) Values(from SetType) ([]*Parameter, error) {
+	if err := checkSetType(from, CombinedTypes); err != nil {
+		return nil,
+			errs.New(
+				errs.M("invalid data set type (%d)", from),
+				errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	res := []*Parameter{}
+
+	for _, st := range []SetType{DefaultSet, OptionalSet, WhileExecutionSet} {
+		if st&from == st {
+			ds, ok := s.values[from]
+			if !ok || ds == nil {
+				return nil,
+					errs.New(
+						errs.M("data set has no values of selected type"),
+						errs.C(errorClass, errs.InvalidParameter),
+						errs.D("set_type", st.String()))
+			}
+
+			res = append(res, ds...)
+		}
+	}
+
+	return res, nil
+}
+
 // AddParameter add non-empyt parameter into the selected DataSet.
 // It checks if there is already parameter with equal name but different
-// id.
+// id. In this case error returned.
+// If Id and Name of p Parameter equela to a saved one, then no error
+// returned.
 func (s *DataSet) AddParameter(p *Parameter, where SetType) error {
-	if err := checkSetType(where); err != nil {
+	if err := checkSetType(where, SingleType); err != nil {
 		return errs.New(
 			errs.M("invalid data set type (%d)", where),
 			errs.C(errorClass, errs.InvalidParameter))
@@ -194,10 +231,6 @@ func (s *DataSet) AddParameter(p *Parameter, where SetType) error {
 		return errs.New(
 			errs.M("parameter should be provided"),
 			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
-	}
-
-	if s.values[where] == nil {
-		s.values[where] = []*Parameter{}
 	}
 
 	vv, ok := s.values[where]
@@ -215,8 +248,10 @@ func (s *DataSet) AddParameter(p *Parameter, where SetType) error {
 		if v.name == p.name {
 			if v.Id() != p.Id() {
 				return errs.New(
-					errs.M("data set already has parameter with the name %q", v.name),
-					errs.C(errorClass, errs.InvalidParameter, errs.DuplicateObject))
+					errs.M("data set already has parameter with the name %q",
+						v.name),
+					errs.C(errorClass, errs.InvalidParameter,
+						errs.DuplicateObject))
 			}
 
 			return nil
@@ -234,8 +269,9 @@ func (s *DataSet) AddParameter(p *Parameter, where SetType) error {
 
 // RemoveParameter removes non-empty parameter from the DataSet and
 // removes the reference on the DataSet from the Parameter.
+// If values of that type isn't existed error returned.
 func (s *DataSet) RemoveParameter(p *Parameter, from SetType) error {
-	if err := checkSetType(from); err != nil {
+	if err := checkSetType(from, SingleType); err != nil {
 		return errs.New(
 			errs.M("invalid data set type (%d)", from),
 			errs.C(errorClass, errs.InvalidParameter))
@@ -247,15 +283,8 @@ func (s *DataSet) RemoveParameter(p *Parameter, from SetType) error {
 			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
 	}
 
-	if s.values[from] == nil {
-		return errs.New(
-			errs.M("data set is empty"),
-			errs.C(errorClass, errs.InvalidParameter),
-			errs.D("data_set_type", from.String()))
-	}
-
 	vv, ok := s.values[from]
-	if !ok || vv == nil {
+	if !ok || vv == nil || len(vv) == 0 {
 		return errs.New(
 			errs.M("data set is empty"),
 			errs.C(errorClass, errs.InvalidParameter),
