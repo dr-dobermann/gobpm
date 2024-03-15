@@ -72,22 +72,26 @@ type InputOutputSpecification struct {
 
 	// A reference to the InputSets defined by the InputOutputSpecification.
 	// Every InputOutputSpecification MUST define at least one InputSet.
-	inputSets []*DataSet
+	// inputSets []*DataSet
 
 	// A reference to the OutputSets defined by the InputOutputSpecification.
 	// Every Data Interface MUST define at least one OutputSet.
-	outputSets []*DataSet
+	// outputSets []*DataSet
+
+	sets map[ParameterType][]*DataSet
 
 	// An optional reference to the Data Inputs of the InputOutputSpecification.
 	// If the InputOutputSpecification defines no Data Input, it means no data
 	// is REQUIRED to start the Activity. This is an ordered set.
-	dataInputs []*Parameter
+	// dataInputs []*Parameter
 
 	// An optional reference to the Data Outputs of the
 	// InputOutputSpecification. If the InputOutputSpecification defines no Data
 	// Output, it means no data is REQUIRED to finish the Activity. This is an
 	// ordered set.
-	dataOutputs []*Parameter
+	// dataOutputs []*Parameter
+
+	params map[ParameterType][]*Parameter
 }
 
 // NewIOSpec creates a new InputOutputSpecification and returns its pointer on
@@ -100,10 +104,8 @@ func NewIOSpec(baseOpts ...options.Option) (*InputOutputSpecification, error) {
 
 	return &InputOutputSpecification{
 			BaseElement: *be,
-			inputSets:   []*DataSet{},
-			outputSets:  []*DataSet{},
-			dataInputs:  []*Parameter{},
-			dataOutputs: []*Parameter{},
+			sets:        map[ParameterType][]*DataSet{},
+			params:      map[ParameterType][]*Parameter{},
 		},
 		nil
 }
@@ -121,21 +123,19 @@ func (ios *InputOutputSpecification) AddParameter(
 			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
 	}
 
-	dd := ios.dataInputs
-	if pt == OutputParameter {
-		dd = ios.dataOutputs
+	if err := checkParamType(pt); err != nil {
+		return err
 	}
 
-	if idx := index(p, dd); idx != -1 {
+	pp, ok := ios.params[pt]
+	if !ok {
+		ios.params[pt] = []*Parameter{p}
+
 		return nil
 	}
 
-	switch pt {
-	case InputParameter:
-		ios.dataInputs = append(dd, p)
-
-	case OutputParameter:
-		ios.dataOutputs = append(dd, p)
+	if idx := index(p, pp); idx == -1 {
+		ios.params[pt] = append(pp, p)
 	}
 
 	return nil
@@ -154,33 +154,29 @@ func (ios *InputOutputSpecification) AddDataSet(
 			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
 	}
 
-	ss := ios.inputSets
-	if pt == OutputParameter {
-		ss = ios.outputSets
+	// check param type
+	if err := checkParamType(pt); err != nil {
+		return err
 	}
 
-	if idx := index(s, ss); idx != -1 {
+	// check if required set is existed
+	ss, ok := ios.sets[pt]
+	if !ok {
+		ios.sets[pt] = []*DataSet{s}
+
 		return nil
 	}
 
-	switch pt {
-	case InputParameter:
-		if idx := index(s, ios.outputSets); idx != -1 {
-			return errs.New(
-				errs.M("data set is already used as output data set"),
-				errs.C(errorClass, errs.InvalidParameter, errs.DuplicateObject))
-		}
+	// check if s isn't used as opposite sets
+	if idx := index(s, ios.sets[not(pt)]); idx != -1 {
+		return errs.New(
+			errs.M("data set is already used as %s set", not(pt)),
+			errs.C(errorClass, errs.InvalidParameter, errs.DuplicateObject))
+	}
 
-		ios.inputSets = append(ss, s)
-
-	case OutputParameter:
-		if idx := index(s, ios.inputSets); idx != -1 {
-			return errs.New(
-				errs.M("data set is already used as input data set"),
-				errs.C(errorClass, errs.InvalidParameter, errs.DuplicateObject))
-		}
-
-		ios.outputSets = append(ss, s)
+	// check if s isn't registered yet
+	if idx := index(s, ss); idx == -1 {
+		ios.sets[pt] = append(ss, s)
 	}
 
 	return nil
@@ -198,18 +194,28 @@ func (ios *InputOutputSpecification) RemoveDataSet(
 			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
 	}
 
-	ss := ios.inputSets
-
-	if pt == OutputParameter {
-		ss = ios.outputSets
+	// check param type
+	if err := checkParamType(pt); err != nil {
+		return err
 	}
 
-	if idx := index(s, ss); idx == -1 {
+	// check if required set is existed
+	ss, ok := ios.sets[pt]
+	if !ok || len(ss) == 0 {
 		return errs.New(
-			errs.M("data set %q isn't found", s.name),
-			errs.C(errorClass, errs.InvalidParameter, errs.ObjectNotFound))
+			errs.M("sets list %q is empty", pt),
+			errs.C(errorClass, errs.InvalidParameter))
 	}
 
+	idx := index(s, ss)
+	if idx == -1 {
+		return errs.New(
+			errs.M("set isn't existed in %q lists", pt),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+    // clear all existed references on params
+    for _, p := range ss[idx].
 	return nil
 }
 

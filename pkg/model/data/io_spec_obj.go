@@ -16,6 +16,30 @@ const (
 	OutputParameter ParameterType = "OUTPUT"
 )
 
+// checkParamType test pt on validity and return error on failure.
+func checkParamType(pt ParameterType) error {
+	if pt != InputParameter && pt != OutputParameter {
+		return errs.New(
+			errs.M("invalid parameter type: %q", pt),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	return nil
+}
+
+// not reverses ParameterType.
+func not(pt ParameterType) ParameterType {
+	if pt == InputParameter {
+		return OutputParameter
+	}
+
+	return InputParameter
+}
+
+// *****************************************************************************
+//
+// Parameter is type which is used as substitue for DataInput and DataOutput
+// BPMN types.
 type Parameter struct {
 	ItemAwareElement
 
@@ -185,9 +209,9 @@ func (s *DataSet) Name() string {
 	return s.name
 }
 
-// Values returns values of one or a few set types.
+// Parameters returns parameters of one or a few set types.
 // If there is no values of such type it returns error.
-func (s *DataSet) Values(from SetType) ([]*Parameter, error) {
+func (s *DataSet) Parameters(from SetType) ([]*Parameter, error) {
 	if err := checkSetType(from, CombinedTypes); err != nil {
 		return nil,
 			errs.New(
@@ -305,6 +329,21 @@ func (s *DataSet) RemoveParameter(p *Parameter, from SetType) error {
 	}
 
 	s.values[from] = append(vv[:index], vv[index+1:]...)
+
+	return nil
+}
+
+// Clear removes all parameters from the DataSet.
+func (s *DataSet) Clear() error {
+	for st, paramList := range s.values {
+		pp := append([]*Parameter{}, paramList...)
+		for _, p := range pp {
+			if err := p.removeSet(s, st); err != nil {
+				s.values[st] = pp
+				return err
+			}
+		}
+	}
 
 	return nil
 }
