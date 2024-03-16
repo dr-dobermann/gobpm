@@ -110,6 +110,23 @@ func NewIOSpec(baseOpts ...options.Option) (*InputOutputSpecification, error) {
 		nil
 }
 
+// Parameters returns all IOSpec parameters of pt type.
+func (ios *InputOutputSpecification) Parameters(
+	pt ParameterType,
+) ([]*Parameter, error) {
+	if err := checkParamType(pt); err != nil {
+		return nil, err
+	}
+
+	pp, ok := ios.params[pt]
+	if !ok {
+		return []*Parameter{}, nil
+	}
+
+	return append([]*Parameter{}, pp...),
+		nil
+}
+
 // AddParameter add input or output non-empty parameter ot the
 // InptutOutputSpecification.
 // It returns error on failure
@@ -137,6 +154,53 @@ func (ios *InputOutputSpecification) AddParameter(
 	if idx := index(p, pp); idx == -1 {
 		ios.params[pt] = append(pp, p)
 	}
+
+	return nil
+}
+
+// RemoveParameter removes Parameter p of pt type from all sets
+// referenced on it and from IOSpec itself.
+func (ios InputOutputSpecification) RemoveParameter(
+	p *Parameter,
+	pt ParameterType,
+) error {
+	if p == nil {
+		return errs.New(
+			errs.M("no parameter"),
+			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
+	}
+
+	if err := checkParamType(pt); err != nil {
+		return err
+	}
+
+	pp, ok := ios.params[pt]
+	if !ok || len(pp) == 0 {
+		return errs.New(
+			errs.M("data set %q is empty", pt),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	idx := index(p, pp)
+	if idx == -1 {
+		return errs.New(
+			errs.M("no parameter %q in data set %q", p.name, pt),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	// get all data sets, referenced on the parameter and delete that
+	// reference.
+	sets := p.Sets(AllSets)
+	for st, ss := range sets {
+		for _, s := range ss {
+			if err := s.RemoveParameter(p, st); err != nil {
+				return err
+			}
+		}
+	}
+
+	// remove parameter
+	ios.params[pt] = append(pp[:idx], pp[idx+1:]...)
 
 	return nil
 }
@@ -214,16 +278,31 @@ func (ios *InputOutputSpecification) RemoveDataSet(
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
-    // clear all existed references on params
-    for _, p := range ss[idx].
+	// clear all existed references on params
+	if err := ss[idx].Clear(); err != nil {
+		return err
+	}
+
+	// remove set
+	ios.params[pt] = append(ios.params[pt][:idx], ios.params[pt][idx+1:]...)
+
 	return nil
 }
 
-// GetDataSets returns data sets of selected type.
-func (ios *InputOutputSpecification) GetDataSets(pt ParameterType) []*DataSet {
-	if pt == InputParameter {
-		return append([]*DataSet{}, ios.inputSets...)
+// DataSets returns data sets of pt type.
+func (ios *InputOutputSpecification) DataSets(
+	pt ParameterType,
+) ([]*DataSet, error) {
+	// check param type
+	if err := checkParamType(pt); err != nil {
+		return nil, err
 	}
 
-	return append([]*DataSet{}, ios.outputSets...)
+	ss, ok := ios.sets[pt]
+	if !ok {
+		return []*DataSet{}, nil
+	}
+
+	return append([]*DataSet{}, ss...),
+		nil
 }

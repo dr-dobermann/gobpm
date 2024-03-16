@@ -91,6 +91,18 @@ func (p *Parameter) Name() string {
 	return p.name
 }
 
+func (p *Parameter) Sets(st SetType) map[SetType][]*DataSet {
+	res := map[SetType][]*DataSet{}
+
+	for t, ss := range p.sets {
+		if t&st == t {
+			res[t] = append([]*DataSet{}, ss...)
+		}
+	}
+
+	return res
+}
+
 // addSet adds new DataSet which references onto the Parameter.
 func (p *Parameter) addSet(s *DataSet, where SetType) error {
 	if err := checkSetType(where, SingleType); err != nil {
@@ -106,7 +118,7 @@ func (p *Parameter) addSet(s *DataSet, where SetType) error {
 	}
 
 	ss, ok := p.sets[where]
-	if !ok || ss == nil {
+	if !ok {
 		p.sets[where] = []*DataSet{s}
 
 		return nil
@@ -258,7 +270,7 @@ func (s *DataSet) AddParameter(p *Parameter, where SetType) error {
 	}
 
 	vv, ok := s.values[where]
-	if !ok || vv == nil {
+	if !ok {
 		if err := p.addSet(s, where); err != nil {
 			return err
 		}
@@ -308,7 +320,7 @@ func (s *DataSet) RemoveParameter(p *Parameter, from SetType) error {
 	}
 
 	vv, ok := s.values[from]
-	if !ok || vv == nil || len(vv) == 0 {
+	if !ok || len(vv) == 0 {
 		return errs.New(
 			errs.M("data set is empty"),
 			errs.C(errorClass, errs.InvalidParameter),
@@ -336,10 +348,10 @@ func (s *DataSet) RemoveParameter(p *Parameter, from SetType) error {
 // Clear removes all parameters from the DataSet.
 func (s *DataSet) Clear() error {
 	for st, paramList := range s.values {
+		// make a copy of parameters and delete them all
 		pp := append([]*Parameter{}, paramList...)
 		for _, p := range pp {
-			if err := p.removeSet(s, st); err != nil {
-				s.values[st] = pp
+			if err := s.RemoveParameter(p, st); err != nil {
 				return err
 			}
 		}
