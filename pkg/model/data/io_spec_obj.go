@@ -366,6 +366,31 @@ func (s *DataSet) Link(ds *DataSet) error {
 	return nil
 }
 
+// Unlink removes ds from s linked data sets.
+func (s *DataSet) Unlink(ds *DataSet) error {
+	if ds == nil {
+		return errs.New(
+			errs.M("couldn't unlink empty dataset"),
+			errs.C(errorClass, errs.InvalidParameter, errs.EmptyNotAllowed))
+	}
+
+	idx := index(ds, s.linkedSets)
+	if idx == -1 {
+		return errs.New(
+			errs.M("data set isn't linked"),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	s.linkedSets = append(s.linkedSets[:idx], s.linkedSets[idx+1:]...)
+
+	return nil
+}
+
+// LinkedSets returns linked to the s data sets.
+func (s *DataSet) LinkedSets() []*DataSet {
+	return append([]*DataSet{}, s.linkedSets...)
+}
+
 // IsValid returns the DataSet's validity flag.
 func (s *DataSet) IsValid() bool {
 	return s.valid

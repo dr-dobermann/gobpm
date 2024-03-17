@@ -294,7 +294,7 @@ func (ios *InputOutputSpecification) RemoveDataSet(
 	}
 
 	// remove set
-	ios.params[pt] = append(ios.params[pt][:idx], ios.params[pt][idx+1:]...)
+	ios.sets[pt] = append(ios.sets[pt][:idx], ios.sets[pt][idx+1:]...)
 
 	return nil
 }
