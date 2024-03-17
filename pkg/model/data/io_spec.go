@@ -2,6 +2,7 @@ package data
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -26,12 +27,21 @@ const (
 )
 
 func (st SetType) String() string {
-	return []string{
-		"InvalidSet",
-		"DefaultSet",
-		"OptionalSet",
-		"WhileExecutionSet",
+	if err := checkSetType(st, SingleType); err != nil {
+		errs.Panic("ivalid set type: " + strconv.Itoa(int(st)))
+	}
+
+	return map[SetType]string{
+		InvalidSet:        "InvalidSet",
+		DefaultSet:        "DefaultSet",
+		OptionalSet:       "OptionalSet",
+		WhileExecutionSet: "WhileExecutionSet",
 	}[st]
+}
+
+// allTypes returns all valid set types list.
+func allTypes() []SetType {
+	return []SetType{DefaultSet, OptionalSet, WhileExecutionSet}
 }
 
 // checkSetType tests if the st is a proper SetType.

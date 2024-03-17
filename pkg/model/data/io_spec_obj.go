@@ -223,7 +223,7 @@ func (s *DataSet) Name() string {
 
 // Parameters returns parameters of one or a few set types.
 // If there is no values of such type it returns error.
-func (s *DataSet) Parameters(from SetType) ([]*Parameter, error) {
+func (s *DataSet) Parameters(from SetType) (map[SetType][]*Parameter, error) {
 	if err := checkSetType(from, CombinedTypes); err != nil {
 		return nil,
 			errs.New(
@@ -231,21 +231,14 @@ func (s *DataSet) Parameters(from SetType) ([]*Parameter, error) {
 				errs.C(errorClass, errs.InvalidParameter))
 	}
 
-	res := []*Parameter{}
+	res := map[SetType][]*Parameter{}
 
 	for _, st := range allTypes() {
 		if st&from == st {
-			ds, ok := s.values[from]
-			if !ok || ds == nil {
-				return nil,
-					errs.New(
-						errs.M("data set has no values of selected type"),
-						errs.C(errorClass, errs.InvalidParameter,
-							errs.EmptyCollectionError),
-						errs.D("set_type", st.String()))
+			ds, ok := s.values[st]
+			if ok {
+				res[st] = append([]*Parameter{}, ds...)
 			}
-
-			res = append(res, ds...)
 		}
 	}
 
@@ -271,16 +264,10 @@ func (s *DataSet) AddParameter(p *Parameter, where SetType) error {
 	}
 
 	for _, st := range allTypes() {
-		if where&st == where {
-			vv, ok := s.values[where]
+		if where&st == st {
+			vv, ok := s.values[st]
 			if !ok {
-				if err := p.addSet(s, where); err != nil {
-					return err
-				}
-
-				s.values[where] = []*Parameter{p}
-
-				return nil
+				vv = []*Parameter{}
 			}
 
 			for _, v := range vv {
@@ -297,14 +284,14 @@ func (s *DataSet) AddParameter(p *Parameter, where SetType) error {
 				}
 			}
 
-			if err := p.addSet(s, where); err != nil {
+			if err := p.addSet(s, st); err != nil {
 				return err
 			}
 
-			s.values[where] = append(vv, p)
-
+			s.values[st] = append(vv, p)
 		}
 	}
+
 	return nil
 }
 
@@ -312,7 +299,7 @@ func (s *DataSet) AddParameter(p *Parameter, where SetType) error {
 // removes the reference on the DataSet from the Parameter.
 // If values of that type isn't existed error returned.
 func (s *DataSet) RemoveParameter(p *Parameter, from SetType) error {
-	if err := checkSetType(from, SingleType); err != nil {
+	if err := checkSetType(from, CombinedTypes); err != nil {
 		return errs.New(
 			errs.M("invalid data set type (%d)", from),
 			errs.C(errorClass, errs.InvalidParameter))
@@ -324,28 +311,21 @@ func (s *DataSet) RemoveParameter(p *Parameter, from SetType) error {
 			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
 	}
 
-	vv, ok := s.values[from]
-	if !ok || len(vv) == 0 {
-		return errs.New(
-			errs.M("data set is empty"),
-			errs.C(errorClass, errs.InvalidParameter),
-			errs.D("data_set_type", from.String()))
-	}
+	for _, st := range allTypes() {
+		vv, ok := s.values[st]
+		if !ok || len(vv) == 0 {
+			continue
+		}
 
-	index := index(p, vv)
-	if index == -1 {
-		return errs.New(
-			errs.M("parameter isn't exists in selected data set"),
-			errs.C(errorClass, errs.InvalidObject),
-			errs.D("param_name", p.name),
-			errs.D("data_set_type", from.String()))
-	}
+		index := index(p, vv)
+		if index != -1 {
+			if err := p.removeSet(s, st); err != nil {
+				return err
+			}
 
-	if err := p.removeSet(s, from); err != nil {
-		return err
+			s.values[st] = append(vv[:index], vv[index+1:]...)
+		}
 	}
-
-	s.values[from] = append(vv[:index], vv[index+1:]...)
 
 	return nil
 }
@@ -417,7 +397,7 @@ func (s *DataSet) Validate(
 		}
 	}
 
-	if s.values[DefaultSet] != nil {
+	if _, ok := s.values[DefaultSet]; ok {
 		if err := checkParamsState(
 			rs,
 			s.values[DefaultSet],
@@ -427,11 +407,13 @@ func (s *DataSet) Validate(
 	}
 
 	if executionFinished == true {
-		if s.values[WhileExecutionSet] != nil {
-			return checkParamsState(
+		if _, ok := s.values[WhileExecutionSet]; ok {
+			if err := checkParamsState(
 				rs,
 				s.values[WhileExecutionSet],
-				WhileExecutionSet)
+				WhileExecutionSet); err != nil {
+				return err
+			}
 		}
 	}
 
