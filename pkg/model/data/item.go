@@ -169,7 +169,9 @@ func NewItemAwareElement(
 				Message: "item should be provided for ItemAwareElement",
 				Classes: []string{
 					errorClass,
-					errs.InvalidParameter}}
+					errs.InvalidParameter,
+				},
+			}
 	}
 
 	if state == nil {
@@ -180,7 +182,9 @@ func NewItemAwareElement(
 						"if you need use default DataSet, run data.CreateDefaultStates",
 					Classes: []string{
 						errorClass,
-						errs.BulidingFailed}}
+						errs.BulidingFailed,
+					},
+				}
 		}
 
 		state = UnavailableDataState
@@ -194,8 +198,24 @@ func NewItemAwareElement(
 	return &ItemAwareElement{
 			BaseElement: *be,
 			itemSubject: item,
-			dataState:   *state},
+			dataState:   *state,
+		},
 		nil
+}
+
+// MustItemAwareElement creates a new ItemAwareElement and returns its pointer
+// or panics on failure.
+func MustItemAwareElement(
+	item *ItemDefinition,
+	state *DataState,
+	baseOpts ...options.Option,
+) *ItemAwareElement {
+	iae, err := NewItemAwareElement(item, state, baseOpts...)
+	if err != nil {
+		errs.Panic(err.Error())
+	}
+
+	return iae
 }
 
 // State returns a copy of the ItemAwareElement DataState.

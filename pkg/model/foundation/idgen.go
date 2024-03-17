@@ -1,16 +1,14 @@
 package foundation
 
 import (
-	rand "math/rand/v2"
+	rand "math/rand"
 	"strconv"
 	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 )
 
-var (
-	generator IdGenerator
-)
+var generator IdGenerator
 
 // IdGenerator creates a new Id every time Generate called.
 type IdGenerator interface {
@@ -30,7 +28,9 @@ func SetGenerator(newGen IdGenerator) error {
 			Message: "generator couldn't be empty",
 			Classes: []string{
 				errorClass,
-				errs.InvalidParameter}}
+				errs.InvalidParameter,
+			},
+		}
 	}
 
 	generator = newGen
@@ -58,10 +58,10 @@ type defaultIdGenerator struct {
 
 func newDefaultGenerator() *defaultIdGenerator {
 	return &defaultIdGenerator{
-		r: rand.New(rand.NewPCG(uint64(time.Now().UnixMilli()), 42)),
+		r: rand.New(rand.NewSource(time.Now().UnixMilli())),
 	}
 }
 
 func (g *defaultIdGenerator) Generate() string {
-	return strconv.Itoa(int(g.r.Int64()))
+	return strconv.Itoa(int(g.r.Int63()))
 }

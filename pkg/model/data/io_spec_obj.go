@@ -233,14 +233,15 @@ func (s *DataSet) Parameters(from SetType) ([]*Parameter, error) {
 
 	res := []*Parameter{}
 
-	for _, st := range []SetType{DefaultSet, OptionalSet, WhileExecutionSet} {
+	for _, st := range allTypes() {
 		if st&from == st {
 			ds, ok := s.values[from]
 			if !ok || ds == nil {
 				return nil,
 					errs.New(
 						errs.M("data set has no values of selected type"),
-						errs.C(errorClass, errs.InvalidParameter),
+						errs.C(errorClass, errs.InvalidParameter,
+							errs.EmptyCollectionError),
 						errs.D("set_type", st.String()))
 			}
 
@@ -257,9 +258,9 @@ func (s *DataSet) Parameters(from SetType) ([]*Parameter, error) {
 // If Id and Name of p Parameter equela to a saved one, then no error
 // returned.
 func (s *DataSet) AddParameter(p *Parameter, where SetType) error {
-	if err := checkSetType(where, SingleType); err != nil {
+	if err := checkSetType(where, CombinedTypes); err != nil {
 		return errs.New(
-			errs.M("invalid data set type (%d)", where),
+			errs.M("invalid data set type/types combination (%d)", where),
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
@@ -269,37 +270,41 @@ func (s *DataSet) AddParameter(p *Parameter, where SetType) error {
 			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
 	}
 
-	vv, ok := s.values[where]
-	if !ok {
-		if err := p.addSet(s, where); err != nil {
-			return err
-		}
+	for _, st := range allTypes() {
+		if where&st == where {
+			vv, ok := s.values[where]
+			if !ok {
+				if err := p.addSet(s, where); err != nil {
+					return err
+				}
 
-		s.values[where] = []*Parameter{p}
+				s.values[where] = []*Parameter{p}
 
-		return nil
-	}
-
-	for _, v := range vv {
-		if v.name == p.name {
-			if v.Id() != p.Id() {
-				return errs.New(
-					errs.M("data set already has parameter with the name %q",
-						v.name),
-					errs.C(errorClass, errs.InvalidParameter,
-						errs.DuplicateObject))
+				return nil
 			}
 
-			return nil
+			for _, v := range vv {
+				if v.name == p.name {
+					if v.Id() != p.Id() {
+						return errs.New(
+							errs.M("data set already has parameter with the name %q",
+								v.name),
+							errs.C(errorClass, errs.InvalidParameter,
+								errs.DuplicateObject))
+					}
+
+					return nil
+				}
+			}
+
+			if err := p.addSet(s, where); err != nil {
+				return err
+			}
+
+			s.values[where] = append(vv, p)
+
 		}
 	}
-
-	if err := p.addSet(s, where); err != nil {
-		return err
-	}
-
-	s.values[where] = append(vv, p)
-
 	return nil
 }
 
