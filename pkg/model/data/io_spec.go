@@ -1,6 +1,7 @@
 package data
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -135,6 +136,88 @@ func (ios *InputOutputSpecification) Parameters(
 
 	return append([]*Parameter{}, pp...),
 		nil
+}
+
+// Validate checks all conditions the InputOutputSpecification should
+// comply. If all the  condiitons met, no error returned.
+//
+// An InputSet is a collection of DataInput elements that together define
+// a valid set of data inputs for an InputOutputSpecification. An
+// InputOutputSpecification MUST have at least one InputSet element.  An
+// InputSet MAY reference zero or more DataInput elements. A single
+// DataInput MAY be associated with multiple InputSet elements, but it MUST
+// always be referenced by at least one InputSet.
+//
+// An “empty” InputSet, one that references no DataInput elements, signifies
+// that the Activity requires no data to start executing (this implies that
+// either there are no data inputs or they are referenced by another input
+// set).
+//
+// InputSet elements are contained by InputOutputSpecification elements;
+// the order in which these elements are included defines the order in which
+// they will be evaluated.
+//
+// An OutputSet is a collection of DataOutputs elements that together can be
+// produced as output from an Activity or Event. An InputOutputSpecification
+// element MUST define at least OutputSet element. An OutputSet MAY reference
+// zero or more DataOutput elements. A single DataOutput MAY be associated with
+// multiple OutputSet elements, but it MUST always be referenced by at least
+// one OutputSet.
+//
+// An “empty” OutputSet, one that is associated with no DataOutput elements,
+// signifies that the ACTIVITY produces no data.
+func (ios *InputOutputSpecification) Validate() error {
+	ee := []error{}
+
+	names := map[ParameterType]struct {
+		setName, dataName string
+	}{
+		InputParameter: {
+			setName:  "InputSet",
+			dataName: "DataInput",
+		},
+		OutputParameter: {
+			setName:  "OutputSet",
+			dataName: "DataOutput",
+		}}
+
+	for _, tp := range []ParameterType{InputParameter, OutputParameter} {
+		iss, ok := ios.sets[tp]
+		if !ok || len(iss) == 0 {
+			ee = append(ee,
+				fmt.Errorf(
+					"the InputOutputSpecification should have at least one &s",
+					names[tp].setName))
+		} else {
+			ipp, ok := ios.params[tp]
+			if ok {
+				links := 0
+
+				for _, p := range ipp {
+					for _, ss := range p.Sets(AllSets) {
+						for _, s := range ss {
+							if idx := index(s, ios.sets[tp]); idx != -1 {
+								links++
+							}
+						}
+					}
+				}
+
+				if links == 0 {
+					ee = append(ee,
+						fmt.Errorf(
+							"the %s should be assigned to %s",
+							names[tp].dataName, names[tp].setName))
+				}
+			}
+		}
+	}
+
+	if len(ee) > 0 {
+		return errors.Join(ee...)
+	}
+
+	return nil
 }
 
 // AddParameter add input or output non-empty parameter ot the
