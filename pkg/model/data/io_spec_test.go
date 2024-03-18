@@ -247,4 +247,6 @@ func TestIOSpec(t *testing.T) {
 	require.Error(t, ios.RemoveDataSet(ss[0], data.InputParameter))
 	require.Error(t, ios.RemoveDataSet(nil, data.OutputParameter))
 	require.Error(t, ios.RemoveDataSet(ss[0], data.OutputParameter))
+
+	t.Log(ios.Validate())
 }
