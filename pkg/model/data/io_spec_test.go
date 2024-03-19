@@ -37,6 +37,10 @@ func TestDataSet(t *testing.T) {
 			s, err := data.NewDataSet("")
 			require.Error(t, err)
 			require.Empty(t, s)
+			require.Panics(t, func() {
+				s := data.MustDataSet("")
+				t.Log(s)
+			})
 		})
 
 	t.Run("named set",
@@ -57,7 +61,19 @@ func TestDataSet(t *testing.T) {
 			pp, err = s.Parameters(42)
 			require.Error(t, err)
 
+			// ------------- parameter -------------------------------
+			// invalid params
+			require.Panics(t, func() {
+				p := data.MustParameter("", nil)
+				t.Log(p)
+			})
+			require.Panics(t, func() {
+				p := data.MustParameter("test", nil)
+				t.Log(p)
+			})
+
 			// ----------------- set's parameters --------------------
+
 			// invalid parameters
 			require.Error(t, s.AddParameter(nil, data.DefaultSet))
 			require.Error(t, s.AddParameter(params[0], 42))
@@ -248,5 +264,35 @@ func TestIOSpec(t *testing.T) {
 	require.Error(t, ios.RemoveDataSet(nil, data.OutputParameter))
 	require.Error(t, ios.RemoveDataSet(ss[0], data.OutputParameter))
 
+	// ------------------ IOSpecs validation ---------------------------
+	require.Error(t, ios.Validate())
 	t.Log(ios.Validate())
+
+	ios2, err := data.NewIOSpec()
+	require.NoError(t, err)
+	require.NotEmpty(t, ios2)
+
+	inpS := data.MustDataSet("input set")
+	require.NoError(t, ios2.AddDataSet(
+		inpS, data.InputParameter))
+	outS := data.MustDataSet("output set")
+	require.NoError(t, ios2.AddDataSet(
+		outS, data.OutputParameter))
+	require.NoError(t, ios2.Validate())
+
+	inpP := data.MustParameter("input",
+		data.MustItemAwareElement(
+			data.MustItemDefinition(
+				values.NewVariable(42)), rs))
+	require.NoError(t, ios2.AddParameter(inpP, data.InputParameter))
+	require.Error(t, ios2.Validate())
+	// parameter in invalid set direction
+	require.NoError(t, outS.AddParameter(inpP, data.DefaultSet))
+	require.Error(t, ios2.Validate())
+
+	require.NoError(t, outS.RemoveParameter(inpP, data.DefaultSet))
+
+	// right parameter in right set
+	require.NoError(t, inpS.AddParameter(inpP, data.DefaultSet))
+	require.NoError(t, ios2.Validate())
 }

@@ -124,8 +124,8 @@ func (p *Parameter) addSet(s *DataSet, where SetType) error {
 		return nil
 	}
 
-	if ind := index[*DataSet](s, ss); ind == -1 {
-		ss = append(ss, s)
+	if ind := index(s, ss); ind == -1 {
+		p.sets[where] = append(ss, s)
 	}
 
 	return nil
@@ -155,9 +155,15 @@ func (p *Parameter) removeSet(s *DataSet, from SetType) error {
 			errs.D("set_name", s.name))
 	}
 
-	if ind := index[*DataSet](s, ss); ind != -1 {
-		ss = append(ss[:ind], ss[ind+1:]...)
+	ind := index(s, ss)
+	if ind == -1 {
+		return errs.New(
+			errs.M("parameter %q doesn't belong to data set %q",
+				p.name, s.name),
+			errs.C(errorClass, errs.ConditionFailed))
 	}
+
+	p.sets[from] = append(ss[:ind], ss[ind+1:]...)
 
 	return nil
 }
@@ -214,6 +220,17 @@ func NewDataSet(name string, baseOpts ...options.Option) (*DataSet, error) {
 			linkedSets:  []*DataSet{},
 		},
 		nil
+}
+
+// MustDataSet creates a new DataSet and returns its pointer. On error it
+// panics.
+func MustDataSet(name string, baseOpts ...options.Option) *DataSet {
+	s, err := NewDataSet(name, baseOpts...)
+	if err != nil {
+		errs.Panic(err)
+	}
+
+	return s
 }
 
 // Name returns the DataSet name.
