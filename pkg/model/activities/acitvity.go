@@ -80,10 +80,13 @@ type Activity struct {
 	// An optional reference to the DataInputAssociations.
 	// A DataInputAssociation defines how the DataInput of the Activity’s
 	// InputOutputSpecification will be populated.
-	dataInputAssociations []*data.Association
+	// dataInputAssociations []*data.Association
 
 	// An optional reference to the DataOutputAssociations.
-	dataOutputAssociations []*data.Association
+	// dataOutputAssociations []*data.Association
+
+	// dataAssociations holds input and output DataAssociation of the Activity.
+	dataAssociations map[data.ParameterType][]*data.Association
 }
 
 // NewActivity creates a new Activity with options and returns its pointer on
@@ -93,12 +96,13 @@ func NewActivity(
 	actOpts ...options.Option,
 ) (*Activity, error) {
 	cfg := activityConfig{
-		name:      name,
-		resources: []*ResourceRole{},
-		props:     []*data.Property{},
-		startQ:    1,
-		complQ:    1,
-		baseOpts:  []options.Option{},
+		name:             name,
+		resources:        []*ResourceRole{},
+		props:            []*data.Property{},
+		startQ:           1,
+		complQ:           1,
+		baseOpts:         []options.Option{},
+		dataAssociations: map[data.ParameterType][]*data.Association{},
 	}
 
 	ee := []error{}
@@ -120,9 +124,11 @@ func NewActivity(
 					Classes: []string{
 						errorClass,
 						errs.BulidingFailed,
-						errs.TypeCastingError},
+						errs.TypeCastingError,
+					},
 					Details: map[string]string{
-						"option_type": reflect.TypeOf(o).String()},
+						"option_type": reflect.TypeOf(o).String(),
+					},
 				})
 		}
 	}
@@ -146,11 +152,9 @@ func (a *Activity) NodeType() flow.NodeType {
 // AddIncoming appends new flow.SequenceFlow as incoming flow.
 func (a *Activity) AddIncoming(sf *flow.SequenceFlow) error {
 	if sf == nil {
-		return &errs.ApplicationError{
-			Message: "empty SequenceFlow isn't allowed",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter}}
+		return errs.New(
+			errs.M("empty SequenceFlow isn't allowed"),
+			errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	return nil
@@ -161,11 +165,9 @@ func (a *Activity) AddIncoming(sf *flow.SequenceFlow) error {
 // AddOutgouing adds a new flow.Sequence flow as outgoing flow.
 func (a *Activity) AddOutgoing(sf *flow.SequenceFlow) error {
 	if sf == nil {
-		return &errs.ApplicationError{
-			Message: "empty SequenceFlow isn't allowed",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter}}
+		return errs.New(
+			errs.M("empty SequenceFlow isn't allowed"),
+			errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	return nil
@@ -207,12 +209,7 @@ func (a *Activity) SetDefaultFlow(flowId string) error {
 		}
 	}
 
-	return &errs.ApplicationError{
-		Message: "no requested outgoing flow in Activity",
-		Classes: []string{
-			errorClass,
-			errs.InvalidParameter},
-		Details: map[string]string{
-			"activity_id": a.Id(),
-			"flow_id":     flowId}}
+	return errs.New(
+		errs.M("flow %q dosn't existed in acitivity %q", flowId, a.Name()),
+		errs.C(errorClass, errs.InvalidParameter))
 }

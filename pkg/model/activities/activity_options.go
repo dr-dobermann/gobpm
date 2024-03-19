@@ -11,13 +11,14 @@ import (
 
 type (
 	activityConfig struct {
-		name           string
-		compensation   bool
-		loop           *LoopCharacteristics
-		resources      []*ResourceRole
-		props          []*data.Property
-		startQ, complQ int
-		baseOpts       []options.Option
+		name             string
+		compensation     bool
+		loop             *LoopCharacteristics
+		resources        []*ResourceRole
+		props            []*data.Property
+		startQ, complQ   int
+		baseOpts         []options.Option
+		dataAssociations map[data.ParameterType][]*data.Association
 	}
 
 	activityOption func(cfg *activityConfig) error
@@ -33,9 +34,11 @@ func (ao activityOption) Apply(cfg options.Configurator) error {
 		Message: "cfg isn't an activityConfig",
 		Classes: []string{
 			errorClass,
-			errs.InvalidParameter},
+			errs.InvalidParameter,
+		},
 		Details: map[string]string{
-			"cfg_type": reflect.TypeOf(cfg).Name()},
+			"cfg_type": reflect.TypeOf(cfg).Name(),
+		},
 	}
 }
 
@@ -65,19 +68,20 @@ func (ac *activityConfig) newActivity() (*Activity, error) {
 				Message: "couldn't create a FlowNode for the Activity",
 				Classes: []string{
 					errorClass,
-					errs.BulidingFailed}}
+					errs.BulidingFailed,
+				},
+			}
 	}
 
 	a := Activity{
-		Node:                   *n,
-		isForCompensation:      ac.compensation,
-		resources:              loadPSlice(ac.resources),
-		properties:             loadPSlice(ac.props),
-		startQuantity:          ac.startQ,
-		completionQuantity:     ac.complQ,
-		boundaryEvents:         []flow.Event{},
-		dataInputAssociations:  []*data.Association{},
-		dataOutputAssociations: []*data.Association{},
+		Node:               *n,
+		isForCompensation:  ac.compensation,
+		resources:          loadPSlice(ac.resources),
+		properties:         loadPSlice(ac.props),
+		startQuantity:      ac.startQ,
+		completionQuantity: ac.complQ,
+		boundaryEvents:     []flow.Event{},
+		dataAssociations:   ac.dataAssociations,
 	}
 
 	if ac.loop != nil {
