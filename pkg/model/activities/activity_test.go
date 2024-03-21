@@ -46,7 +46,7 @@ func TestActivity(t *testing.T) {
 			require.Equal(t, "test activity", a.Name())
 			require.Equal(t, "test id", a.Id())
 
-			rr := a.ResourceRoles()
+			rr := a.Roles()
 			require.Equal(t, 1, len(rr))
 			require.Equal(t, rRole.Name(), rr[0].Name())
 

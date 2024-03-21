@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -22,11 +23,14 @@ type Node struct {
 	Element
 
 	// This attribute identifies the incoming Sequence Flow of the FlowNode.
-	incoming map[string]*SequenceFlow
+	// incoming map[string]*SequenceFlow
 
 	// This attribute identifies the outgoing Sequence Flow of the FlowNode.
 	// This is an ordered collection.
-	outgoing map[string]*SequenceFlow
+	// outgoing map[string]*SequenceFlow
+
+	// flows holds both incoming and outgoing flows of the Node.
+	flows map[data.Direction]map[string]*SequenceFlow
 }
 
 // NewNode creates a new node and returns its pointer.
@@ -40,29 +44,40 @@ func NewNode(
 	}
 
 	return &Node{
-			Element:  *e,
-			incoming: map[string]*SequenceFlow{},
-			outgoing: map[string]*SequenceFlow{}},
+			Element: *e,
+			flows:   map[data.Direction]map[string]*SequenceFlow{},
+		},
 		nil
 }
 
 // Incoming returns a list of the Node's incoming sequence flows.
 func (n *Node) Incoming() []*SequenceFlow {
-	ii := make([]*SequenceFlow, 0, len(n.incoming))
-	for _, in := range n.incoming {
-		ii = append(ii, in)
+	ii, ok := n.flows[data.Input]
+	if !ok || len(ii) == 0 {
+		return []*SequenceFlow{}
 	}
-	return ii
+
+	res := make([]*SequenceFlow, 0, len(ii))
+	for _, in := range ii {
+		res = append(res, in)
+	}
+
+	return res
 }
 
 // Outgoing returns a list of the Node's outgoing sequence flows.
 func (n *Node) Outgoing() []*SequenceFlow {
-	oo := make([]*SequenceFlow, 0, len(n.outgoing))
-	for _, o := range n.outgoing {
-		oo = append(oo, o)
+	ii, ok := n.flows[data.Output]
+	if !ok || len(ii) == 0 {
+		return []*SequenceFlow{}
 	}
 
-	return oo
+	res := make([]*SequenceFlow, 0, len(ii))
+	for _, in := range ii {
+		res = append(res, in)
+	}
+
+	return res
 }
 
 // GetNode implements FlowNode for all its chields.
@@ -71,31 +86,18 @@ func (n *Node) GetNode() *Node {
 }
 
 // addIncoming add singe non-empty sequence flow into the Node's incoming flows.
-func (n *Node) addIncoming(sf *SequenceFlow) {
-	if sf != nil {
-		n.incoming[sf.Id()] = sf
+func (n *Node) addFlow(sf *SequenceFlow, dir data.Direction) error {
+	if err := dir.Validate(); err != nil {
+		return err
 	}
-}
 
-// delIncoming deletes non-empyt SequenceFlow from the Node's incoming flows.
-// func (n *Node) delIncoming(sf *SequenceFlow) {
-// 	if sf != nil {
-// 		delete(n.incoming, sf.Id())
-// 	}
-// }
-
-// addOutgoing adds singe non-empty sequence flow into the Node's
-// outgoing flows.
-func (n *Node) addOutgoing(sf *SequenceFlow) {
-	if sf != nil {
-		n.outgoing[sf.Id()] = sf
+	if _, ok := n.flows[dir]; !ok {
+		n.flows[dir] = map[string]*SequenceFlow{}
 	}
-}
 
-// delOutgoing removes singe non-empty sequence flow from the Node's
-// outgoing flows.
-// func (n *Node) delOutgoing(sf *SequenceFlow) {
-// 	if sf != nil {
-// 		delete(n.outgoing, sf.Id())
-// 	}
-// }
+	if sf != nil {
+		n.flows[dir][sf.Id()] = sf
+	}
+
+	return nil
+}

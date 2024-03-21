@@ -63,7 +63,6 @@ func NewEndEvent(
 			ee = append(ee, fmt.Errorf("innapropriate option type: %s",
 				reflect.TypeOf(so).Name()))
 		}
-
 	}
 
 	if err := ec.Validate(); err != nil {
@@ -84,18 +83,11 @@ func NewEndEvent(
 	return ec.endEvent()
 }
 
-// ------------------ flow.Targeter interface ----------------------------------
+// ------------------ flowTarget interface ----------------------------------
 //
-// AddIncoming appends new flow.SequenceFlow as incoming flow.
-func (ee *EndEvent) AddIncoming(sf *flow.SequenceFlow) error {
-	if sf == nil {
-		return &errs.ApplicationError{
-			Message: "empty SequenceFlow isn't allowed",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter}}
-	}
-
+// AcceptIncomingFlow checks if the EndEvent accepts incoming sequence flow sf.
+func (ee *EndEvent) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
+	// EndEvent has no restrictions on incoming sequence flows
 	return nil
 }
 

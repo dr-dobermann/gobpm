@@ -156,7 +156,6 @@ func TestDataSet(t *testing.T) {
 			require.NoError(t, s.Unlink(ls))
 			require.Equal(t, 0, len(s.LinkedSets()))
 			require.Error(t, s.Unlink(ls))
-
 		})
 }
 
@@ -189,7 +188,7 @@ func TestIOSpec(t *testing.T) {
 	require.NotEmpty(t, ios)
 
 	// empty parameters list
-	pp, err := ios.Parameters(data.InputParameter)
+	pp, err := ios.Parameters(data.Input)
 	require.NoError(t, err)
 	require.Empty(t, pp)
 
@@ -200,56 +199,56 @@ func TestIOSpec(t *testing.T) {
 
 	// -------------------- parameters ---------------------------------
 	// invalid params
-	require.Error(t, ios.AddParameter(nil, data.InputParameter))
+	require.Error(t, ios.AddParameter(nil, data.Input))
 	require.Error(t, ios.AddParameter(params[0], "wrong param type"))
 
 	// one type param
-	require.NoError(t, ios.AddParameter(params[0], data.InputParameter))
-	pp, err = ios.Parameters(data.InputParameter)
+	require.NoError(t, ios.AddParameter(params[0], data.Input))
+	pp, err = ios.Parameters(data.Input)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(pp))
 	require.Equal(t, "Parameter_1", pp[0].Name())
 
 	// two type param
-	require.NoError(t, ios.AddParameter(params[1], data.InputParameter))
-	require.NoError(t, ios.AddParameter(params[1], data.OutputParameter))
+	require.NoError(t, ios.AddParameter(params[1], data.Input))
+	require.NoError(t, ios.AddParameter(params[1], data.Output))
 
 	// duplicate param
-	require.NoError(t, ios.AddParameter(params[0], data.InputParameter))
-	pp, err = ios.Parameters(data.InputParameter)
+	require.NoError(t, ios.AddParameter(params[0], data.Input))
+	pp, err = ios.Parameters(data.Input)
 	require.NoError(t, err)
 	require.Equal(t, 2, len(pp))
 	require.Equal(t, "Parameter_1", pp[0].Name())
 	require.Equal(t, "Parameter_2", pp[1].Name())
 
 	// remove param
-	require.NoError(t, ios.RemoveParameter(params[0], data.InputParameter))
+	require.NoError(t, ios.RemoveParameter(params[0], data.Input))
 
 	// remove non-existing param
-	require.Error(t, ios.RemoveParameter(nil, data.InputParameter))
-	require.Error(t, ios.RemoveParameter(params[0], data.InputParameter))
-	require.Error(t, ios.RemoveParameter(params[0], data.OutputParameter))
-	pp, err = ios.Parameters(data.InputParameter)
+	require.Error(t, ios.RemoveParameter(nil, data.Input))
+	require.Error(t, ios.RemoveParameter(params[0], data.Input))
+	require.Error(t, ios.RemoveParameter(params[0], data.Output))
+	pp, err = ios.Parameters(data.Input)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(pp))
 	require.Equal(t, "Parameter_2", pp[0].Name())
 
 	// --------------- data sets ---------------------------------------
 	// invalid sets
-	require.Error(t, ios.AddDataSet(nil, data.InputParameter))
+	require.Error(t, ios.AddDataSet(nil, data.Input))
 	require.Error(t, ios.AddDataSet(sets[0], "ErrorType"))
 
 	// normal sets
-	require.NoError(t, ios.AddDataSet(sets[0], data.InputParameter))
-	require.NoError(t, ios.AddDataSet(sets[1], data.OutputParameter))
+	require.NoError(t, ios.AddDataSet(sets[0], data.Input))
+	require.NoError(t, ios.AddDataSet(sets[1], data.Output))
 
 	// duplicate set
-	require.NoError(t, ios.AddDataSet(sets[0], data.InputParameter))
+	require.NoError(t, ios.AddDataSet(sets[0], data.Input))
 
 	// set in opposite type
-	require.Error(t, ios.AddDataSet(sets[0], data.OutputParameter))
+	require.Error(t, ios.AddDataSet(sets[0], data.Output))
 
-	ss, err := ios.DataSets(data.InputParameter)
+	ss, err := ios.DataSets(data.Input)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(ss))
 	require.Equal(t, "data_set_1", ss[0].Name())
@@ -257,12 +256,12 @@ func TestIOSpec(t *testing.T) {
 	require.NoError(t, ss[0].AddParameter(params[1], data.DefaultSet))
 
 	// remove data set
-	require.NoError(t, ios.RemoveDataSet(ss[0], data.InputParameter))
+	require.NoError(t, ios.RemoveDataSet(ss[0], data.Input))
 
 	// remove non-existed data set
-	require.Error(t, ios.RemoveDataSet(ss[0], data.InputParameter))
-	require.Error(t, ios.RemoveDataSet(nil, data.OutputParameter))
-	require.Error(t, ios.RemoveDataSet(ss[0], data.OutputParameter))
+	require.Error(t, ios.RemoveDataSet(ss[0], data.Input))
+	require.Error(t, ios.RemoveDataSet(nil, data.Output))
+	require.Error(t, ios.RemoveDataSet(ss[0], data.Output))
 
 	// ------------------ IOSpecs validation ---------------------------
 	require.Error(t, ios.Validate())
@@ -274,17 +273,17 @@ func TestIOSpec(t *testing.T) {
 
 	inpS := data.MustDataSet("input set")
 	require.NoError(t, ios2.AddDataSet(
-		inpS, data.InputParameter))
+		inpS, data.Input))
 	outS := data.MustDataSet("output set")
 	require.NoError(t, ios2.AddDataSet(
-		outS, data.OutputParameter))
+		outS, data.Output))
 	require.NoError(t, ios2.Validate())
 
 	inpP := data.MustParameter("input",
 		data.MustItemAwareElement(
 			data.MustItemDefinition(
 				values.NewVariable(42)), rs))
-	require.NoError(t, ios2.AddParameter(inpP, data.InputParameter))
+	require.NoError(t, ios2.AddParameter(inpP, data.Input))
 	require.Error(t, ios2.Validate())
 	// parameter in invalid set direction
 	require.NoError(t, outS.AddParameter(inpP, data.DefaultSet))

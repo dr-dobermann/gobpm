@@ -151,7 +151,7 @@ func (a *Array[T]) GoTo(index any) error {
 
 // Next shifts current index of the collection for given distance.
 // if distance is negative then index shifted backwards.
-func (a *Array[T]) Next(dir data.Direction) error {
+func (a *Array[T]) Next(dir data.StepDirection) error {
 	a.lock.Lock()
 	defer a.lock.Unlock()
 
@@ -462,7 +462,8 @@ func (a *Array[T]) notify(chgType data.ChangeType, idx any) {
 func sendArrayUpdates(when time.Time,
 	chgType data.ChangeType,
 	idx any,
-	funcs []data.UpdateCallback) {
+	funcs []data.UpdateCallback,
+) {
 	for _, f := range funcs {
 		f(when, chgType, idx)
 	}
@@ -471,7 +472,9 @@ func sendArrayUpdates(when time.Time,
 // *****************************************************************************
 // check implementation of data.Value, data.Collection and data.Updater
 // interfaces.
-var arrayInterfaceChecker *Array[int]
-var _ data.Collection = arrayInterfaceChecker
-var _ data.Value = arrayInterfaceChecker
-var _ data.Updater = arrayInterfaceChecker
+var (
+	arrayInterfaceChecker *Array[int]
+	_                     data.Collection = arrayInterfaceChecker
+	_                     data.Value      = arrayInterfaceChecker
+	_                     data.Updater    = arrayInterfaceChecker
+)

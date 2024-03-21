@@ -71,7 +71,7 @@ type Activity struct {
 	// The InputOutputSpecification defines the inputs and outputs and the
 	// InputSets and OutputSets for the Activity. See page 210 for more
 	// information on the InputOutputSpecification.
-	IoSpec data.InputOutputSpecification
+	IoSpec *data.InputOutputSpecification
 
 	// This references the Intermediate Events that are attached to the
 	// boundary of the Activity.
@@ -86,7 +86,7 @@ type Activity struct {
 	// dataOutputAssociations []*data.Association
 
 	// dataAssociations holds input and output DataAssociation of the Activity.
-	dataAssociations map[data.ParameterType][]*data.Association
+	dataAssociations map[data.Direction][]*data.Association
 }
 
 // NewActivity creates a new Activity with options and returns its pointer on
@@ -102,7 +102,7 @@ func NewActivity(
 		startQ:           1,
 		complQ:           1,
 		baseOpts:         []options.Option{},
-		dataAssociations: map[data.ParameterType][]*data.Association{},
+		dataAssociations: map[data.Direction][]*data.Association{},
 	}
 
 	ee := []error{}
@@ -119,17 +119,10 @@ func NewActivity(
 
 		default:
 			ee = append(ee,
-				&errs.ApplicationError{
-					Message: "invalid option type for Activity",
-					Classes: []string{
-						errorClass,
-						errs.BulidingFailed,
-						errs.TypeCastingError,
-					},
-					Details: map[string]string{
-						"option_type": reflect.TypeOf(o).String(),
-					},
-				})
+				errs.New(
+					errs.M("invalid option type for Activity"),
+					errs.C(errorClass, errs.BulidingFailed, errs.TypeCastingError),
+					errs.D("option_type", reflect.TypeOf(o).String())))
 		}
 	}
 
@@ -147,34 +140,26 @@ func (a *Activity) NodeType() flow.NodeType {
 	return flow.ActivityNode
 }
 
-// ------------------ flow.Targeter interface ----------------------------------
+// ------------------ FlowTarget interface ----------------------------------
 //
-// AddIncoming appends new flow.SequenceFlow as incoming flow.
-func (a *Activity) AddIncoming(sf *flow.SequenceFlow) error {
-	if sf == nil {
-		return errs.New(
-			errs.M("empty SequenceFlow isn't allowed"),
-			errs.C(errorClass, errs.InvalidParameter))
-	}
-
+// AcceptIncomingFlow checks if it possible to use sf as IncomingFlow for the
+// Activity.
+func (a *Activity) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
+	// Activity has no restrictions on incoming floes
 	return nil
 }
 
-// ------------------ flow.Sourcer interface ----------------------------------
+// ------------------ flowSource interface ----------------------------------
 //
-// AddOutgouing adds a new flow.Sequence flow as outgoing flow.
-func (a *Activity) AddOutgoing(sf *flow.SequenceFlow) error {
-	if sf == nil {
-		return errs.New(
-			errs.M("empty SequenceFlow isn't allowed"),
-			errs.C(errorClass, errs.InvalidParameter))
-	}
-
+// ProvideOutgoingFlow checks if it possible to source sf SequenceFlow from
+// the Activity.
+func (a *Activity) ProvideOutgoingFlow(sf *flow.SequenceFlow) error {
+	// Activity has no restrictions on outgoing flows
 	return nil
 }
 
-// ResourceRoles returns list of ResourceRoles of the Activity.
-func (a *Activity) ResourceRoles() []ResourceRole {
+// Roles returns list of ResourceRoles of the Activity.
+func (a *Activity) Roles() []ResourceRole {
 	rr := make([]ResourceRole, len(a.resources))
 
 	copy(rr, a.resources)
@@ -191,7 +176,7 @@ func (a *Activity) Properties() []data.Property {
 }
 
 // SetDefaultFlow sets default flow from the Activity.
-// If the flowId is empty, then default flow clears on Activity.
+// If the flowId is empty, then default flow cleared for Activity.
 func (a *Activity) SetDefaultFlow(flowId string) error {
 	flowId = trim(flowId)
 

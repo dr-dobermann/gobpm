@@ -24,11 +24,11 @@ type Value interface {
 	Type() string
 }
 
-type Direction bool
+type StepDirection bool
 
 const (
-	StepForward  Direction = true
-	StepBackward Direction = false
+	StepForward  StepDirection = true
+	StepBackward StepDirection = false
 )
 
 type Collection interface {
@@ -43,7 +43,7 @@ type Collection interface {
 	GoTo(position any) error
 
 	// Next shifts current index of the collection for given distance.
-	Next(dir Direction) error
+	Next(dir StepDirection) error
 
 	// GetAll returns all values of the collection.
 	GetAll() []any

@@ -7,19 +7,19 @@ import (
 )
 
 type (
-	// Sourcer implemented by the Nodes which could be a source of the sequence
+	// SequenceSource implemented by the Nodes which could be a source of the sequence
 	// flow.
-	Sourcer interface {
+	SequenceSource interface {
 		FlowNode
 
-		AddOutgoing(sf *SequenceFlow) error
+		ProvideOutgoingFlow(sf *SequenceFlow) error
 	}
 
-	// Targeter impmemented by the Nodes which accepts incomng sequence flows.
-	Targeter interface {
+	// SequenceTarget impmemented by the Nodes which accepts incomng sequence flows.
+	SequenceTarget interface {
 		FlowNode
 
-		AddIncoming(sf *SequenceFlow) error
+		AcceptIncomingFlow(sf *SequenceFlow) error
 	}
 )
 
@@ -38,7 +38,7 @@ type SequenceFlow struct {
 	// Event Sub-Processes are not allowed to be a source.
 	// For a Choreography: Of the types of FlowNode, only Choreography
 	// Activities, Gateways, and Events can be the source.
-	source Sourcer
+	source SequenceSource
 
 	// The FlowNode that the Sequence Flow is connecting to.
 	// For a Process: Of the types of FlowNode, only Activities, Gateways,
@@ -46,7 +46,7 @@ type SequenceFlow struct {
 	// Sub-Processes are not allowed to be a target.
 	// For a Choreography: Of the types of FlowNode, only Choreography
 	// Activities, Gateways, and Events can be the target.
-	target Targeter
+	target SequenceTarget
 
 	// An optional boolean Expression that acts as a gating condition. A
 	// token will only be placed on this Sequence Flow if this
@@ -74,19 +74,17 @@ type SequenceFlow struct {
 // In case of failrue it returns error.
 func NewSequenceFlow(
 	name string,
-	src Sourcer,
-	trg Targeter,
+	src SequenceSource,
+	trg SequenceTarget,
 	condition *data.Expression,
 	immediate bool,
 	baseOpts ...options.Option,
 ) (*SequenceFlow, error) {
 	if src == nil || trg == nil {
 		return nil,
-			&errs.ApplicationError{
-				Message: "sourca and target FlowNodes couldn't be empty",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter}}
+			errs.New(
+				errs.M("sourca and target FlowNodes couldn't be empty"),
+				errs.C(errorClass, errs.InvalidParameter, errs.EmptyNotAllowed))
 	}
 
 	e, err := NewElement(name, baseOpts...)
@@ -97,7 +95,9 @@ func NewSequenceFlow(
 				Message: "couldn't create FlowElement for SequenceFlow",
 				Classes: []string{
 					errorClass,
-					errs.BulidingFailed}}
+					errs.BulidingFailed,
+				},
+			}
 	}
 
 	sf := SequenceFlow{
@@ -108,39 +108,34 @@ func NewSequenceFlow(
 		isImmediate:         immediate,
 	}
 
-	if err := src.AddOutgoing(&sf); err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "couldn't connect SequenceFlow to source",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed}}
+	// check possibility to use sf on source and target ends of the flow
+	if err := src.ProvideOutgoingFlow(&sf); err != nil {
+		return nil, err
 	}
 
-	if err := trg.AddIncoming(&sf); err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "couldn't connect SequenceFlow to target",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed}}
+	if err := trg.AcceptIncomingFlow(&sf); err != nil {
+		return nil, err
 	}
 
-	src.GetNode().addOutgoing(&sf)
-	trg.GetNode().addIncoming(&sf)
+	// join source and targed with flow
+	if err := src.GetNode().addFlow(&sf, data.Output); err != nil {
+		return nil, err
+	}
+
+	if err := trg.GetNode().addFlow(&sf, data.Input); err != nil {
+		return nil, err
+	}
 
 	return &sf, nil
 }
 
 // Source returns the Source of the SequenceFlow.
-func (sf *SequenceFlow) Source() Sourcer {
+func (sf *SequenceFlow) Source() SequenceSource {
 	return sf.source
 }
 
 // Target returns the Target of the SequenceFlow.
-func (sf *SequenceFlow) Target() Targeter {
+func (sf *SequenceFlow) Target() SequenceTarget {
 	return sf.target
 }
 
