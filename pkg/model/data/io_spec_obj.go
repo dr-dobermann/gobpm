@@ -105,7 +105,7 @@ func (p *Parameter) Sets(st SetType) map[SetType][]*Set {
 
 // addSet adds new Set which references onto the Parameter.
 func (p *Parameter) addSet(s *Set, where SetType) error {
-	if err := checkSetType(where, SingleType); err != nil {
+	if err := where.Validate(SingleType); err != nil {
 		return errs.New(
 			errs.M("invalid data set type (%d)", where),
 			errs.C(errorClass, errs.InvalidParameter))
@@ -133,7 +133,7 @@ func (p *Parameter) addSet(s *Set, where SetType) error {
 
 // removeSet removes the Set references on the Parameter.
 func (p *Parameter) removeSet(s *Set, from SetType) error {
-	if err := checkSetType(from, SingleType); err != nil {
+	if err := from.Validate(SingleType); err != nil {
 		return errs.New(
 			errs.M("invalid data set type (%d)", from),
 			errs.C(errorClass, errs.InvalidParameter))
@@ -241,7 +241,7 @@ func (s *Set) Name() string {
 // Parameters returns parameters of one or a few set types.
 // If there is no values of such type it returns error.
 func (s *Set) Parameters(from SetType) (map[SetType][]*Parameter, error) {
-	if err := checkSetType(from, CombinedTypes); err != nil {
+	if err := from.Validate(CombinedTypes); err != nil {
 		return nil,
 			errs.New(
 				errs.M("invalid data set type (%d)", from),
@@ -268,7 +268,7 @@ func (s *Set) Parameters(from SetType) (map[SetType][]*Parameter, error) {
 // If Id and Name of p Parameter equela to a saved one, then no error
 // returned.
 func (s *Set) AddParameter(p *Parameter, where SetType) error {
-	if err := checkSetType(where, CombinedTypes); err != nil {
+	if err := where.Validate(CombinedTypes); err != nil {
 		return errs.New(
 			errs.M("invalid data set type/types combination (%d)", where),
 			errs.C(errorClass, errs.InvalidParameter))
@@ -316,7 +316,7 @@ func (s *Set) AddParameter(p *Parameter, where SetType) error {
 // removes the reference on the Set from the Parameter.
 // If values of that type isn't existed error returned.
 func (s *Set) RemoveParameter(p *Parameter, from SetType) error {
-	if err := checkSetType(from, CombinedTypes); err != nil {
+	if err := from.Validate(CombinedTypes); err != nil {
 		return errs.New(
 			errs.M("invalid data set type (%d)", from),
 			errs.C(errorClass, errs.InvalidParameter))

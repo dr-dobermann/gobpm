@@ -28,7 +28,7 @@ const (
 )
 
 func (st SetType) String() string {
-	if err := checkSetType(st, SingleType); err != nil {
+	if err := st.Validate(SingleType); err != nil {
 		errs.Panic("ivalid set type: " + strconv.Itoa(int(st)))
 	}
 
@@ -48,7 +48,7 @@ func allTypes() []SetType {
 // checkSetType tests if the st is a proper SetType.
 // If single is true, then checkSetType test st against single
 // SetType and fails on combined states.
-func checkSetType(st SetType, single bool) error {
+func (st SetType) Validate(single bool) error {
 	if st&AllSets != st {
 		return fmt.Errorf("invalid data set type or types combination: %d", st)
 	}
