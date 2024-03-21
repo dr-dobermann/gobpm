@@ -72,6 +72,7 @@ type Activity struct {
 	// InputSets and OutputSets for the Activity. See page 210 for more
 	// information on the InputOutputSpecification.
 	IoSpec *data.InputOutputSpecification
+	IoSpec *data.InputOutputSpecification
 
 	// This references the Intermediate Events that are attached to the
 	// boundary of the Activity.
