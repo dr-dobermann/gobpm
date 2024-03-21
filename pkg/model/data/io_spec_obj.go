@@ -38,7 +38,7 @@ func Opposite(dir Direction) Direction {
 
 // *****************************************************************************
 //
-// Parameter is type which is used as substitue for DataInput and DataOutput
+// Parameter is type which is used as substitute for DataInput and DataOutput
 // BPMN types.
 type Parameter struct {
 	ItemAwareElement
@@ -281,32 +281,35 @@ func (s *Set) AddParameter(p *Parameter, where SetType) error {
 	}
 
 	for _, st := range allTypes() {
-		if where&st == st {
-			vv, ok := s.values[st]
-			if !ok {
-				vv = []*Parameter{}
-			}
-
-			for _, v := range vv {
-				if v.name == p.name {
-					if v.Id() != p.Id() {
-						return errs.New(
-							errs.M("data set already has parameter with the name %q",
-								v.name),
-							errs.C(errorClass, errs.InvalidParameter,
-								errs.DuplicateObject))
-					}
-
-					return nil
-				}
-			}
-
-			if err := p.addSet(s, st); err != nil {
-				return err
-			}
-
-			s.values[st] = append(vv, p)
+		if where&st != st {
+			continue
 		}
+
+		vv, ok := s.values[st]
+		if !ok {
+			vv = []*Parameter{}
+		}
+
+		for _, v := range vv {
+			if v.name == p.name {
+				if v.Id() != p.Id() {
+					return errs.New(
+						errs.M("data set already has parameter with the name %q",
+							v.name),
+						errs.C(errorClass, errs.InvalidParameter,
+							errs.DuplicateObject))
+				}
+
+				return nil
+			}
+		}
+
+		if err := p.addSet(s, st); err != nil {
+			return err
+		}
+
+		s.values[st] = append(vv, p)
+
 	}
 
 	return nil
@@ -448,7 +451,7 @@ func (s *Set) Validate(
 		}
 	}
 
-	if executionFinished == true {
+	if executionFinished {
 		if _, ok := s.values[WhileExecutionSet]; ok {
 			if err := checkParamsState(
 				rs,

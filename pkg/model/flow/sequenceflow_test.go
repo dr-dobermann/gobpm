@@ -20,10 +20,12 @@ func TestSequenceFlow(t *testing.T) {
 	op, err := service.NewOperation("hello world!", nil, nil, nil)
 	require.NoError(t, err)
 
-	st1, err := activities.NewServiceTask("ServiceTask1", op)
+	st1, err := activities.NewServiceTask("ServiceTask1",
+		op, activities.WithoutParams())
 	require.NoError(t, err)
 
-	st2, err := activities.NewServiceTask("ServiceTask2", op)
+	st2, err := activities.NewServiceTask("ServiceTask2",
+		op, activities.WithoutParams())
 	require.NoError(t, err)
 
 	t.Run("invalid params",

@@ -58,6 +58,7 @@ type defaultIdGenerator struct {
 
 func newDefaultGenerator() *defaultIdGenerator {
 	return &defaultIdGenerator{
+		//nolint: gosec
 		r: rand.New(rand.NewSource(time.Now().UnixMilli())),
 	}
 }

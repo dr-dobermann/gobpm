@@ -69,7 +69,7 @@ type FormalExpression struct {
 	// 		count(../dataObject[id="CustomerRecord_1"]/emailAddress) > 0
 	// 		<evaluatesToType id="ID_3" typeRef=“xsd:boolean"/>
 	// 	</formalExpression>
-	body []byte
+	// body []byte
 
 	// The type of object that this Expression returns when evaluated.
 	// For example, conditional Expressions evaluate to a boolean.
