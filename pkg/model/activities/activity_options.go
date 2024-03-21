@@ -1,7 +1,6 @@
 package activities
 
 import (
-	"fmt"
 	"reflect"
 	"strings"
 
@@ -106,6 +105,8 @@ func (ac *activityConfig) newActivity() (*Activity, error) {
 // if activityConfig has withoutParams flag set, then all Parameters and
 // Sets are ignored and IOSpec creates with defalu_input and default_output
 // empty sets.
+//
+//nolint:gocognit
 func createIOSpecs(ac *activityConfig) (*data.InputOutputSpecification, error) {
 	ioSpecs, err := data.NewIOSpec()
 	if err != nil {
@@ -114,8 +115,7 @@ func createIOSpecs(ac *activityConfig) (*data.InputOutputSpecification, error) {
 
 	if ac.withoutParms {
 		for _, d := range []data.Direction{data.Input, data.Output} {
-			s, err := data.NewSet(
-				fmt.Sprint("default_" + strings.ToLower(string(d))))
+			s, err := data.NewSet("default_" + strings.ToLower(string(d)))
 			if err != nil {
 				return nil, err
 			}
@@ -140,20 +140,13 @@ func createIOSpecs(ac *activityConfig) (*data.InputOutputSpecification, error) {
 	// through all sets
 	for d, ss := range ac.sets {
 		for _, s := range ss {
-			// bind params to set
-			if s.Params == nil {
-				s.Params = []*data.Parameter{}
-			}
-
 			for _, p := range s.Params {
-				if p != nil {
-					if !ioSpecs.HasParameter(p, d) {
-						return nil,
-							errs.New(
-								errs.M("there is no %s parameter %q",
-									d, p.Name()),
-								errs.C(errorClass, errs.InvalidParameter))
-					}
+				if !ioSpecs.HasParameter(p, d) {
+					return nil,
+						errs.New(
+							errs.M("there is no %s parameter %q",
+								d, p.Name()),
+							errs.C(errorClass, errs.InvalidParameter))
 				}
 
 				if err := s.Set.AddParameter(p, s.Type); err != nil {
@@ -165,7 +158,6 @@ func createIOSpecs(ac *activityConfig) (*data.InputOutputSpecification, error) {
 			if err := ioSpecs.AddSet(s.Set, d); err != nil {
 				return nil, err
 			}
-
 		}
 	}
 
@@ -364,33 +356,29 @@ func WithSet(
 		tss, ok := cfg.sets[d]
 		if !ok {
 			cfg.sets[d] = []*Set{
-				&Set{
+				{
 					Set:    s,
 					Dir:    d,
 					Type:   st,
-					Params: params,
+					Params: convertNilSlice(params),
 				}}
 
 			return nil
 		}
 
-		found := false
 		for _, ts := range tss {
 			if ts.Set.Id() == s.Id() {
-				found = true
-				break
+				return nil
 			}
 		}
 
-		if !found {
-			cfg.sets[d] = append(tss,
-				&Set{
-					Set:    s,
-					Dir:    d,
-					Type:   st,
-					Params: params,
-				})
-		}
+		cfg.sets[d] = append(tss,
+			&Set{
+				Set:    s,
+				Dir:    d,
+				Type:   st,
+				Params: convertNilSlice(params),
+			})
 
 		return nil
 	}

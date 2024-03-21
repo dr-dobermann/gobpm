@@ -309,7 +309,6 @@ func (s *Set) AddParameter(p *Parameter, where SetType) error {
 		}
 
 		s.values[st] = append(vv, p)
-
 	}
 
 	return nil

@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
-	"github.com/google/uuid"
 )
 
 const (
@@ -17,7 +16,7 @@ type (
 	}
 
 	Documentator interface {
-		Docs() []Documentation
+		Docs() []*Documentation
 	}
 
 	Namer interface {
@@ -40,24 +39,14 @@ type Documentation struct {
 	format string
 }
 
-// NewDoc creates new Documentation item.
+// newDoc creates new Documentation item.
 // First param is a Documentation text and the second is the format.
 // If no format is given then text/plain is used.
-func NewDoc(docs ...string) *Documentation {
-	text, format := "", defaultDocFormat
-
+func newDoc(text, format string) *Documentation {
 	// set format
-	if len(docs) > 1 {
-		f := strings.Trim(docs[1], " ")
-
-		if f != "" {
-			format = f
-		}
-	}
-
-	// set text
-	if len(docs) > 0 {
-		text = docs[0]
+	format = strings.Trim(format, " ")
+	if format == "" {
+		format = defaultDocFormat
 	}
 
 	return &Documentation{
@@ -90,15 +79,15 @@ type BaseElement struct {
 
 	// This attribute is used to annotate the BPMN element, such as descriptions
 	// and other documentation.
-	docs []Documentation
+	docs []*Documentation
 }
 
 // NewBaseElement creates a new BaseElement with given id
 // if id is empty, then new UUID is generated.
 func NewBaseElement(opts ...options.Option) (*BaseElement, error) {
 	bc := baseConfig{
-		id:   uuid.Must(uuid.NewRandom()).String(),
-		docs: []Documentation{},
+		id:   GenerateId(),
+		docs: []*Documentation{},
 	}
 
 	for _, opt := range opts {
@@ -127,20 +116,6 @@ func (be BaseElement) Id() string {
 }
 
 // Docs returns the copy of BaseElement documentation.
-func (be BaseElement) Docs() []Documentation {
-	return append([]Documentation{}, be.docs...)
-}
-
-// Clone creates a clone of the BaseElement.
-func (be BaseElement) Clone() *BaseElement {
-	cbe := BaseElement{
-		id:   be.id,
-		docs: make([]Documentation, len(be.docs)),
-	}
-
-	if n := copy(cbe.docs, be.docs); n != len(be.docs) {
-		panic("couldn't clone documents for base element: " + be.id)
-	}
-
-	return &cbe
+func (be BaseElement) Docs() []*Documentation {
+	return append([]*Documentation{}, be.docs...)
 }

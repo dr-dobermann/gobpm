@@ -26,10 +26,8 @@ func TestItemDefinition(t *testing.T) {
 			id, err := data.NewItemDefinition(nil,
 				foundation.WithId("test_id"),
 				data.WithKind(data.PhysicalKind),
-				foundation.WithDocs(
-					foundation.NewDoc("doc1", ""),
-					foundation.NewDoc("doc2", ""),
-				),
+				foundation.WithDoc("doc1", ""),
+				foundation.WithDoc("doc2", ""),
 				data.WithImport(&foundation.Import{
 					Type:      "test",
 					Location:  "test/url",

@@ -29,6 +29,16 @@ func checkStr(str, msg string) error {
 	return nil
 }
 
+// convertNilSlice returns empty slice if it gets nil slice and
+// returns slice itself it it not nil.
+func convertNilSlice[T any](slice []T) []T {
+	if slice == nil {
+		return []T{}
+	}
+
+	return slice
+}
+
 // interfaces check
 var (
 	_ flow.FlowNode = (*Activity)(nil)

@@ -189,32 +189,33 @@ func (ios *InputOutputSpecification) Validate() error {
 				fmt.Errorf(
 					"the InputOutputSpecification should have at least one %s",
 					names[tp].setName))
-		} else {
-			// take all params
-			ipp, ok := ios.params[tp]
-			if ok {
-				// for every param
-				for _, p := range ipp {
-					links := 0
 
-					// take all its set
-					for _, ss := range p.Sets(AllSets) {
-						// for every set
-						for _, s := range ss {
-							// check if it belongs to the same
-							// type as the parameter
-							if idx := index(s, ios.sets[tp]); idx != -1 {
-								links++
-							}
+			continue
+		}
+		// take all params
+		ipp, ok := ios.params[tp]
+		if ok {
+			// for every param
+			for _, p := range ipp {
+				links := 0
+
+				// take all its set
+				for _, ss := range p.Sets(AllSets) {
+					// for every set
+					for _, s := range ss {
+						// check if it belongs to the same
+						// type as the parameter
+						if idx := index(s, ios.sets[tp]); idx != -1 {
+							links++
 						}
 					}
+				}
 
-					if links == 0 {
-						ee = append(ee,
-							fmt.Errorf(
-								"the %s %q should be assigned to %s",
-								names[tp].dataName, p.name, names[tp].setName))
-					}
+				if links == 0 {
+					ee = append(ee,
+						fmt.Errorf(
+							"the %s %q should be assigned to %s",
+							names[tp].dataName, p.name, names[tp].setName))
 				}
 			}
 		}
