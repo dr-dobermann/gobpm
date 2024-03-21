@@ -201,9 +201,13 @@ func TestIOSpec(t *testing.T) {
 	// invalid params
 	require.Error(t, ios.AddParameter(nil, data.Input))
 	require.Error(t, ios.AddParameter(params[0], "wrong param type"))
+	require.False(t, ios.HasParameter(nil, data.Input))
+	require.False(t, ios.HasParameter(params[0], "invalid_direction"))
 
 	// one type param
 	require.NoError(t, ios.AddParameter(params[0], data.Input))
+	require.True(t, ios.HasParameter(params[0], data.Input))
+	require.False(t, ios.HasParameter(params[0], data.Output))
 	pp, err = ios.Parameters(data.Input)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(pp))

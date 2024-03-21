@@ -305,6 +305,27 @@ func (ios InputOutputSpecification) RemoveParameter(
 	return nil
 }
 
+// HasParameter checks if the IOSpec has selected parameter.
+func (ios *InputOutputSpecification) HasParameter(
+	p *Parameter, d Direction,
+) bool {
+	if p == nil {
+		return false
+	}
+
+	if err := d.Validate(); err != nil {
+		return false
+	}
+
+	for _, iosP := range ios.params[d] {
+		if iosP.Id() == p.Id() {
+			return true
+		}
+	}
+
+	return false
+}
+
 // AddSet adds single data set into InputOutputSpecification and check
 // if it is already exist in selected by dir list of data sets.
 // Set could be set only as input or output.
