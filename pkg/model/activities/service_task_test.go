@@ -16,12 +16,14 @@ func TestServiceTask(t *testing.T) {
 
 	t.Run("empty args",
 		func(t *testing.T) {
-			st, err := activities.NewServiceTask("", nil)
+			st, err := activities.NewServiceTask("", nil,
+				activities.WithoutParams())
 
 			require.Error(t, err)
 			require.Empty(t, st)
 
-			st, err = activities.NewServiceTask("test", nil)
+			st, err = activities.NewServiceTask("test", nil,
+				activities.WithoutParams())
 
 			require.Error(t, err)
 			require.Empty(t, st)
@@ -29,7 +31,9 @@ func TestServiceTask(t *testing.T) {
 
 	t.Run("multyinsatance",
 		func(t *testing.T) {
-			st, err := activities.NewServiceTask("test", op, activities.WithMultyInstance())
+			st, err := activities.NewServiceTask("test", op,
+				activities.WithMultyInstance(),
+				activities.WithoutParams())
 			require.NoError(t, err)
 			require.Equal(t, "test", st.Name())
 			require.Equal(t, true, st.IsMultyinstance())
@@ -44,6 +48,5 @@ func TestServiceTask(t *testing.T) {
 				events.WithParallel(),
 			)
 			require.Error(t, err)
-			t.Log(err.Error())
 		})
 }

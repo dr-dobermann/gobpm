@@ -1,13 +1,24 @@
 package activities
 
 import (
+	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
+
+type Set struct {
+	Set *data.Set
+	Dir data.Direction
+
+	// Type allows combination of SetType
+	Type   data.SetType
+	Params []*data.Parameter
+}
 
 type (
 	activityConfig struct {
@@ -19,6 +30,9 @@ type (
 		startQ, complQ   int
 		baseOpts         []options.Option
 		dataAssociations map[data.Direction][]*data.Association
+		parameters       map[data.Direction][]*data.Parameter
+		sets             map[data.Direction][]*Set
+		withoutParms     bool
 	}
 
 	activityOption func(cfg *activityConfig) error
@@ -59,8 +73,12 @@ func (ac *activityConfig) newActivity() (*Activity, error) {
 		return nil, err
 	}
 
-	ioSpecs, err := data.NewIOSpec()
+	ioSpecs, err := createIOSpecs(ac)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := ioSpecs.Validate(); err != nil {
 		return nil, err
 	}
 
@@ -81,6 +99,77 @@ func (ac *activityConfig) newActivity() (*Activity, error) {
 	}
 
 	return &a, nil
+}
+
+// createIOSpecs creates a new InputOutputSpecification and returns its
+// pointer on success or error on failure.
+// if activityConfig has withoutParams flag set, then all Parameters and
+// Sets are ignored and IOSpec creates with defalu_input and default_output
+// empty sets.
+func createIOSpecs(ac *activityConfig) (*data.InputOutputSpecification, error) {
+	ioSpecs, err := data.NewIOSpec()
+	if err != nil {
+		return nil, err
+	}
+
+	if ac.withoutParms {
+		for _, d := range []data.Direction{data.Input, data.Output} {
+			s, err := data.NewSet(
+				fmt.Sprint("default_" + strings.ToLower(string(d))))
+			if err != nil {
+				return nil, err
+			}
+
+			if err := ioSpecs.AddSet(s, d); err != nil {
+				return nil, err
+			}
+		}
+
+		return ioSpecs, nil
+	}
+
+	// add parameters
+	for d, pp := range ac.parameters {
+		for _, p := range pp {
+			if err := ioSpecs.AddParameter(p, d); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	// through all sets
+	for d, ss := range ac.sets {
+		for _, s := range ss {
+			// bind params to set
+			if s.Params == nil {
+				s.Params = []*data.Parameter{}
+			}
+
+			for _, p := range s.Params {
+				if p != nil {
+					if !ioSpecs.HasParameter(p, d) {
+						return nil,
+							errs.New(
+								errs.M("there is no %s parameter %q",
+									d, p.Name()),
+								errs.C(errorClass, errs.InvalidParameter))
+					}
+				}
+
+				if err := s.Set.AddParameter(p, s.Type); err != nil {
+					return nil, err
+				}
+			}
+
+			// add set to IOSpecs
+			if err := ioSpecs.AddSet(s.Set, d); err != nil {
+				return nil, err
+			}
+
+		}
+	}
+
+	return ioSpecs, nil
 }
 
 // loadPSlice creates a slice of objects from slice of object pointers.
@@ -125,6 +214,7 @@ func WithLoop(lc *LoopCharacteristics) activityOption {
 }
 
 // WithProperties adds properties to the activityConfig.
+// Duplicat properties (by Id) are ignored.
 func WithProperties(props ...*data.Property) activityOption {
 	f := func(cfg *activityConfig) error {
 		for _, p := range props {
@@ -151,7 +241,7 @@ func WithProperties(props ...*data.Property) activityOption {
 }
 
 // WithResources adds unique non-nil resources into the activityConfig.
-func WithResources(ress ...*ResourceRole) activityOption {
+func WithRoles(ress ...*ResourceRole) activityOption {
 	f := func(cfg *activityConfig) error {
 		for _, r := range ress {
 			if r != nil {
@@ -194,6 +284,127 @@ func WithCompletionQuantity(qty int) activityOption {
 		if qty > 0 {
 			cfg.complQ = qty
 		}
+
+		return nil
+	}
+
+	return activityOption(f)
+}
+
+// WithParameters adds non-nil unique parameters to the Activity.
+func WithParameter(p *data.Parameter, d data.Direction) activityOption {
+	f := func(cfg *activityConfig) error {
+		if p == nil {
+			return nil
+		}
+
+		if err := d.Validate(); err != nil {
+			return errs.New(
+				errs.E(err),
+				errs.M("parameter %q has invalid type (%q)",
+					p.Name(), d),
+				errs.C(errorClass))
+		}
+
+		params, ok := cfg.parameters[d]
+		if !ok {
+			cfg.parameters[d] = []*data.Parameter{p}
+
+			return nil
+		}
+
+		// check for duplication
+		found := false
+		for _, cp := range params {
+			if cp.Id() == p.Id() {
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			cfg.parameters[d] = append(params, p)
+		}
+
+		return nil
+	}
+
+	return activityOption(f)
+}
+
+// WithSets adds non-empty unique Set into the Activity config.
+func WithSet(
+	s *data.Set,
+	d data.Direction,
+	st data.SetType,
+	params []*data.Parameter,
+) activityOption {
+	f := func(cfg *activityConfig) error {
+		if s == nil {
+			return nil
+		}
+
+		if err := d.Validate(); err != nil {
+			return errs.New(
+				errs.M("invalid direction %q for data.Set %q",
+					d, s.Name()),
+				errs.C(errorClass, errs.InvalidParameter),
+				errs.E(err))
+		}
+
+		if err := st.Validate(data.CombinedTypes); err != nil {
+			return errs.New(
+				errs.M("invalid set type %d for data.Set",
+					st, s.Name()),
+				errs.C(errorClass, errs.InvalidParameter),
+				errs.E(err))
+		}
+
+		// check for duplication
+		tss, ok := cfg.sets[d]
+		if !ok {
+			cfg.sets[d] = []*Set{
+				&Set{
+					Set:    s,
+					Dir:    d,
+					Type:   st,
+					Params: params,
+				}}
+
+			return nil
+		}
+
+		found := false
+		for _, ts := range tss {
+			if ts.Set.Id() == s.Id() {
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			cfg.sets[d] = append(tss,
+				&Set{
+					Set:    s,
+					Dir:    d,
+					Type:   st,
+					Params: params,
+				})
+		}
+
+		return nil
+	}
+
+	return activityOption(f)
+}
+
+// WithoutParams indicates that the Activity has no parameters and
+// ignores all Parameters and Sets options.
+// It creates an empty input and output data.Sets in IOSpec with no
+// parameters.
+func WithoutParams() activityOption {
+	f := func(cfg *activityConfig) error {
+		cfg.withoutParms = true
 
 		return nil
 	}
