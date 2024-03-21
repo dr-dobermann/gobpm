@@ -6,6 +6,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/stretchr/testify/require"
 )
@@ -36,8 +37,8 @@ func TestActivity(t *testing.T) {
 				activities.WithCompletionQuantity(5),
 				activities.WithStartQuantity(2),
 				activities.WithLoop(&activities.LoopCharacteristics{}),
-				activities.WithProperties(prop),
-				activities.WithResources(rRole),
+				activities.WithProperties(prop, prop),
+				activities.WithResources(rRole, rRole),
 				foundation.WithId("test id"))
 
 			require.NoError(t, err)
@@ -56,5 +57,13 @@ func TestActivity(t *testing.T) {
 			require.Equal(t, prop.Subject().Id(), pp[0].Subject().Id())
 			require.Equal(t, 42, pp[0].Subject().Structure().Get())
 			require.Equal(t, "ready", pp[0].State().Name())
+
+			require.Equal(t, flow.ActivityNode, a.NodeType())
+
+			require.NoError(t, a.AcceptIncomingFlow(nil))
+			require.NoError(t, a.ProvideOutgoingFlow(nil))
+
+			require.NoError(t, a.SetDefaultFlow(""))
+			require.Error(t, a.SetDefaultFlow("wrong_flow"))
 		})
 }

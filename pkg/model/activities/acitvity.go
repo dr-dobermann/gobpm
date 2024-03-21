@@ -121,7 +121,8 @@ func NewActivity(
 			ee = append(ee,
 				errs.New(
 					errs.M("invalid option type for Activity"),
-					errs.C(errorClass, errs.BulidingFailed, errs.TypeCastingError),
+					errs.C(errorClass, errs.BulidingFailed,
+						errs.TypeCastingError),
 					errs.D("option_type", reflect.TypeOf(o).String())))
 		}
 	}
@@ -140,7 +141,7 @@ func (a *Activity) NodeType() flow.NodeType {
 	return flow.ActivityNode
 }
 
-// ------------------ FlowTarget interface ----------------------------------
+// ------------------ flow.SequenceTarget interface ----------------------------
 //
 // AcceptIncomingFlow checks if it possible to use sf as IncomingFlow for the
 // Activity.
@@ -149,7 +150,7 @@ func (a *Activity) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
 	return nil
 }
 
-// ------------------ flowSource interface ----------------------------------
+// ------------------ flow.SequenceSource interface ----------------------------
 //
 // ProvideOutgoingFlow checks if it possible to source sf SequenceFlow from
 // the Activity.
