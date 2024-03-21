@@ -19,7 +19,7 @@ type (
 		baseOpts   []options.Option
 		defs       []Definition
 		dataInputs map[string]*data.Parameter
-		inputSet   *data.DataSet
+		inputSet   *data.Set
 	}
 )
 
@@ -56,7 +56,7 @@ func (ec *endConfig) endEvent() (*EndEvent, error) {
 
 	// create and fill input set
 	if len(ec.dataInputs) > 0 {
-		te.inputSet, err = data.NewDataSet(inputSetName)
+		te.inputSet, err = data.NewSet(inputSetName)
 		if err != nil {
 			return nil, err
 		}

@@ -21,7 +21,7 @@ type (
 		baseOpts      []options.Option
 		defs          []Definition
 		dataOutputs   map[string]*data.Parameter
-		outputSet     *data.DataSet
+		outputSet     *data.Set
 	}
 )
 
@@ -69,7 +69,7 @@ func (sc *startConfig) startEvent() (*StartEvent, error) {
 
 	// create and fill output set
 	if len(sc.dataOutputs) > 0 {
-		ce.outputSet, err = data.NewDataSet(outputSetName)
+		ce.outputSet, err = data.NewSet(outputSetName)
 		if err != nil {
 			return nil,
 				&errs.ApplicationError{

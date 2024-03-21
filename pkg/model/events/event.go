@@ -268,7 +268,7 @@ type catchEvent struct {
 	dataOutputs map[string]*data.Parameter
 
 	// The outputSet for the catch Event.
-	outputSet *data.DataSet
+	outputSet *data.Set
 
 	// This attribute is only relevant when the catch Event has more than one
 	// EventDefinition (Multiple). If this value is true, then all of the types
@@ -320,7 +320,7 @@ type throwEvent struct {
 	dataInputs map[string]*data.Parameter
 
 	// The InputSet for the throw Event.
-	inputSet *data.DataSet
+	inputSet *data.Set
 }
 
 // NewThrowEvent creates a new throwEvent and returns its pointer.

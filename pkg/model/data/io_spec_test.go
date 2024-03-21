@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDataSet(t *testing.T) {
+func TestSet(t *testing.T) {
 	rs, err := data.NewDataState("my ready state")
 	require.NoError(t, err)
 
@@ -34,18 +34,18 @@ func TestDataSet(t *testing.T) {
 
 	t.Run("empty set",
 		func(t *testing.T) {
-			s, err := data.NewDataSet("")
+			s, err := data.NewSet("")
 			require.Error(t, err)
 			require.Empty(t, s)
 			require.Panics(t, func() {
-				s := data.MustDataSet("")
+				s := data.MustSet("")
 				t.Log(s)
 			})
 		})
 
 	t.Run("named set",
 		func(t *testing.T) {
-			s, err := data.NewDataSet("test_set", foundation.WithId("set_id"))
+			s, err := data.NewSet("test_set", foundation.WithId("set_id"))
 			require.NoError(t, err)
 			require.Equal(t, "test_set", s.Name())
 			require.Equal(t, "set_id", s.Id())
@@ -146,7 +146,7 @@ func TestDataSet(t *testing.T) {
 			require.Error(t, s.Link(nil))
 			require.Equal(t, 0, len(s.LinkedSets()))
 
-			ls, err := data.NewDataSet("linked_set")
+			ls, err := data.NewSet("linked_set")
 			require.NoError(t, err)
 			require.NoError(t, s.Link(ls))
 			require.Equal(t, 1, len(s.LinkedSets()))
@@ -160,9 +160,9 @@ func TestDataSet(t *testing.T) {
 }
 
 func TestIOSpec(t *testing.T) {
-	sets := []*data.DataSet{}
+	sets := []*data.Set{}
 	for i := 0; i < 2; i++ {
-		s, err := data.NewDataSet(
+		s, err := data.NewSet(
 			"data_set_" + strconv.Itoa(i+1))
 		require.NoError(t, err)
 		sets = append(sets, s)
@@ -235,20 +235,20 @@ func TestIOSpec(t *testing.T) {
 
 	// --------------- data sets ---------------------------------------
 	// invalid sets
-	require.Error(t, ios.AddDataSet(nil, data.Input))
-	require.Error(t, ios.AddDataSet(sets[0], "ErrorType"))
+	require.Error(t, ios.AddSet(nil, data.Input))
+	require.Error(t, ios.AddSet(sets[0], "ErrorType"))
 
 	// normal sets
-	require.NoError(t, ios.AddDataSet(sets[0], data.Input))
-	require.NoError(t, ios.AddDataSet(sets[1], data.Output))
+	require.NoError(t, ios.AddSet(sets[0], data.Input))
+	require.NoError(t, ios.AddSet(sets[1], data.Output))
 
 	// duplicate set
-	require.NoError(t, ios.AddDataSet(sets[0], data.Input))
+	require.NoError(t, ios.AddSet(sets[0], data.Input))
 
 	// set in opposite type
-	require.Error(t, ios.AddDataSet(sets[0], data.Output))
+	require.Error(t, ios.AddSet(sets[0], data.Output))
 
-	ss, err := ios.DataSets(data.Input)
+	ss, err := ios.Sets(data.Input)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(ss))
 	require.Equal(t, "data_set_1", ss[0].Name())
@@ -256,12 +256,12 @@ func TestIOSpec(t *testing.T) {
 	require.NoError(t, ss[0].AddParameter(params[1], data.DefaultSet))
 
 	// remove data set
-	require.NoError(t, ios.RemoveDataSet(ss[0], data.Input))
+	require.NoError(t, ios.RemoveSet(ss[0], data.Input))
 
 	// remove non-existed data set
-	require.Error(t, ios.RemoveDataSet(ss[0], data.Input))
-	require.Error(t, ios.RemoveDataSet(nil, data.Output))
-	require.Error(t, ios.RemoveDataSet(ss[0], data.Output))
+	require.Error(t, ios.RemoveSet(ss[0], data.Input))
+	require.Error(t, ios.RemoveSet(nil, data.Output))
+	require.Error(t, ios.RemoveSet(ss[0], data.Output))
 
 	// ------------------ IOSpecs validation ---------------------------
 	require.Error(t, ios.Validate())
@@ -271,11 +271,11 @@ func TestIOSpec(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, ios2)
 
-	inpS := data.MustDataSet("input set")
-	require.NoError(t, ios2.AddDataSet(
+	inpS := data.MustSet("input set")
+	require.NoError(t, ios2.AddSet(
 		inpS, data.Input))
-	outS := data.MustDataSet("output set")
-	require.NoError(t, ios2.AddDataSet(
+	outS := data.MustSet("output set")
+	require.NoError(t, ios2.AddSet(
 		outS, data.Output))
 	require.NoError(t, ios2.Validate())
 

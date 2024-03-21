@@ -12,7 +12,7 @@ import (
 
 // *****************************************************************************
 //
-// SetType uses to set DataSet
+// SetType uses to set Set
 type SetType uint8
 
 const (
@@ -83,13 +83,13 @@ type InputOutputSpecification struct {
 
 	// A reference to the InputSets defined by the InputOutputSpecification.
 	// Every InputOutputSpecification MUST define at least one InputSet.
-	// inputSets []*DataSet
+	// inputSets []*Set
 
 	// A reference to the OutputSets defined by the InputOutputSpecification.
 	// Every Data Interface MUST define at least one OutputSet.
-	// outputSets []*DataSet
+	// outputSets []*Set
 
-	sets map[Direction][]*DataSet
+	sets map[Direction][]*Set
 
 	// An optional reference to the Data Inputs of the InputOutputSpecification.
 	// If the InputOutputSpecification defines no Data Input, it means no data
@@ -115,7 +115,7 @@ func NewIOSpec(baseOpts ...options.Option) (*InputOutputSpecification, error) {
 
 	return &InputOutputSpecification{
 			BaseElement: *be,
-			sets:        map[Direction][]*DataSet{},
+			sets:        map[Direction][]*Set{},
 			params:      map[Direction][]*Parameter{},
 		},
 		nil
@@ -305,11 +305,11 @@ func (ios InputOutputSpecification) RemoveParameter(
 	return nil
 }
 
-// AddDataSet adds single data set into InputOutputSpecification and check
+// AddSet adds single data set into InputOutputSpecification and check
 // if it is already exist in selected by dir list of data sets.
-// DataSet could be set only as input or output.
-func (ios *InputOutputSpecification) AddDataSet(
-	s *DataSet,
+// Set could be set only as input or output.
+func (ios *InputOutputSpecification) AddSet(
+	s *Set,
 	dir Direction,
 ) error {
 	if s == nil {
@@ -326,7 +326,7 @@ func (ios *InputOutputSpecification) AddDataSet(
 	// check if required set is existed
 	ss, ok := ios.sets[dir]
 	if !ok {
-		ios.sets[dir] = []*DataSet{s}
+		ios.sets[dir] = []*Set{s}
 
 		return nil
 	}
@@ -346,10 +346,10 @@ func (ios *InputOutputSpecification) AddDataSet(
 	return nil
 }
 
-// RemoveDataSet removes non-empty data set and clears all references on it
+// RemoveSet removes non-empty data set and clears all references on it
 // from parameters.
-func (ios *InputOutputSpecification) RemoveDataSet(
-	s *DataSet,
+func (ios *InputOutputSpecification) RemoveSet(
+	s *Set,
 	dir Direction,
 ) error {
 	if s == nil {
@@ -389,10 +389,10 @@ func (ios *InputOutputSpecification) RemoveDataSet(
 	return nil
 }
 
-// DataSets returns data sets of dir type.
-func (ios *InputOutputSpecification) DataSets(
+// Sets returns data sets of dir type.
+func (ios *InputOutputSpecification) Sets(
 	dir Direction,
-) ([]*DataSet, error) {
+) ([]*Set, error) {
 	// check param type
 	if err := dir.Validate(); err != nil {
 		return nil, err
@@ -400,9 +400,9 @@ func (ios *InputOutputSpecification) DataSets(
 
 	ss, ok := ios.sets[dir]
 	if !ok {
-		return []*DataSet{}, nil
+		return []*Set{}, nil
 	}
 
-	return append([]*DataSet{}, ss...),
+	return append([]*Set{}, ss...),
 		nil
 }

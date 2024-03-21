@@ -45,7 +45,7 @@ type Parameter struct {
 
 	name string
 
-	sets map[SetType][]*DataSet
+	sets map[SetType][]*Set
 }
 
 // NewParameter creates a new Parameter and returns its pointer on success or
@@ -70,7 +70,7 @@ func NewParameter(name string, iae *ItemAwareElement) (*Parameter, error) {
 	return &Parameter{
 			ItemAwareElement: *iae,
 			name:             name,
-			sets:             map[SetType][]*DataSet{},
+			sets:             map[SetType][]*Set{},
 		},
 		nil
 }
@@ -91,20 +91,20 @@ func (p *Parameter) Name() string {
 	return p.name
 }
 
-func (p *Parameter) Sets(st SetType) map[SetType][]*DataSet {
-	res := map[SetType][]*DataSet{}
+func (p *Parameter) Sets(st SetType) map[SetType][]*Set {
+	res := map[SetType][]*Set{}
 
 	for t, ss := range p.sets {
 		if t&st == t {
-			res[t] = append([]*DataSet{}, ss...)
+			res[t] = append([]*Set{}, ss...)
 		}
 	}
 
 	return res
 }
 
-// addSet adds new DataSet which references onto the Parameter.
-func (p *Parameter) addSet(s *DataSet, where SetType) error {
+// addSet adds new Set which references onto the Parameter.
+func (p *Parameter) addSet(s *Set, where SetType) error {
 	if err := checkSetType(where, SingleType); err != nil {
 		return errs.New(
 			errs.M("invalid data set type (%d)", where),
@@ -119,7 +119,7 @@ func (p *Parameter) addSet(s *DataSet, where SetType) error {
 
 	ss, ok := p.sets[where]
 	if !ok {
-		p.sets[where] = []*DataSet{s}
+		p.sets[where] = []*Set{s}
 
 		return nil
 	}
@@ -131,8 +131,8 @@ func (p *Parameter) addSet(s *DataSet, where SetType) error {
 	return nil
 }
 
-// removeSet removes the DataSet references on the Parameter.
-func (p *Parameter) removeSet(s *DataSet, from SetType) error {
+// removeSet removes the Set references on the Parameter.
+func (p *Parameter) removeSet(s *Set, from SetType) error {
 	if err := checkSetType(from, SingleType); err != nil {
 		return errs.New(
 			errs.M("invalid data set type (%d)", from),
@@ -170,15 +170,15 @@ func (p *Parameter) removeSet(s *DataSet, from SetType) error {
 
 // *****************************************************************************
 //
-// DataSet implements both InputSet and OutputSet of BPMNv2
-type DataSet struct {
+// Set implements both InputSet and OutputSet of BPMNv2
+type Set struct {
 	foundation.BaseElement
 
 	name string
 
 	values map[SetType][]*Parameter
 
-	// valid keeps validity flag of the DataSet. It could be changed
+	// valid keeps validity flag of the Set. It could be changed
 	// by Validate call.
 	// To check validity call IsValid.
 	valid bool
@@ -193,12 +193,12 @@ type DataSet struct {
 	//
 	// This combination replaces the IORules attribute for Activities in
 	// BPMN 1.2.
-	linkedSets []*DataSet
+	linkedSets []*Set
 }
 
-// NewDataSet creates a new DataSet and returns its pointer on succes or
+// NewSet creates a new Set and returns its pointer on succes or
 // error on failure
-func NewDataSet(name string, baseOpts ...options.Option) (*DataSet, error) {
+func NewSet(name string, baseOpts ...options.Option) (*Set, error) {
 	name = trim(name)
 
 	if name == "" {
@@ -213,19 +213,19 @@ func NewDataSet(name string, baseOpts ...options.Option) (*DataSet, error) {
 		return nil, err
 	}
 
-	return &DataSet{
+	return &Set{
 			BaseElement: *be,
 			name:        name,
 			values:      map[SetType][]*Parameter{},
-			linkedSets:  []*DataSet{},
+			linkedSets:  []*Set{},
 		},
 		nil
 }
 
-// MustDataSet creates a new DataSet and returns its pointer. On error it
+// MustSet creates a new Set and returns its pointer. On error it
 // panics.
-func MustDataSet(name string, baseOpts ...options.Option) *DataSet {
-	s, err := NewDataSet(name, baseOpts...)
+func MustSet(name string, baseOpts ...options.Option) *Set {
+	s, err := NewSet(name, baseOpts...)
 	if err != nil {
 		errs.Panic(err)
 	}
@@ -233,14 +233,14 @@ func MustDataSet(name string, baseOpts ...options.Option) *DataSet {
 	return s
 }
 
-// Name returns the DataSet name.
-func (s *DataSet) Name() string {
+// Name returns the Set name.
+func (s *Set) Name() string {
 	return s.name
 }
 
 // Parameters returns parameters of one or a few set types.
 // If there is no values of such type it returns error.
-func (s *DataSet) Parameters(from SetType) (map[SetType][]*Parameter, error) {
+func (s *Set) Parameters(from SetType) (map[SetType][]*Parameter, error) {
 	if err := checkSetType(from, CombinedTypes); err != nil {
 		return nil,
 			errs.New(
@@ -262,12 +262,12 @@ func (s *DataSet) Parameters(from SetType) (map[SetType][]*Parameter, error) {
 	return res, nil
 }
 
-// AddParameter add non-empyt parameter into the selected DataSet.
+// AddParameter add non-empyt parameter into the selected Set.
 // It checks if there is already parameter with equal name but different
 // id. In this case error returned.
 // If Id and Name of p Parameter equela to a saved one, then no error
 // returned.
-func (s *DataSet) AddParameter(p *Parameter, where SetType) error {
+func (s *Set) AddParameter(p *Parameter, where SetType) error {
 	if err := checkSetType(where, CombinedTypes); err != nil {
 		return errs.New(
 			errs.M("invalid data set type/types combination (%d)", where),
@@ -312,10 +312,10 @@ func (s *DataSet) AddParameter(p *Parameter, where SetType) error {
 	return nil
 }
 
-// RemoveParameter removes non-empty parameter from the DataSet and
-// removes the reference on the DataSet from the Parameter.
+// RemoveParameter removes non-empty parameter from the Set and
+// removes the reference on the Set from the Parameter.
 // If values of that type isn't existed error returned.
-func (s *DataSet) RemoveParameter(p *Parameter, from SetType) error {
+func (s *Set) RemoveParameter(p *Parameter, from SetType) error {
 	if err := checkSetType(from, CombinedTypes); err != nil {
 		return errs.New(
 			errs.M("invalid data set type (%d)", from),
@@ -347,8 +347,8 @@ func (s *DataSet) RemoveParameter(p *Parameter, from SetType) error {
 	return nil
 }
 
-// Clear removes all parameters from the DataSet.
-func (s *DataSet) Clear() error {
+// Clear removes all parameters from the Set.
+func (s *Set) Clear() error {
 	for st, paramList := range s.values {
 		// make a copy of parameters and delete them all
 		pp := append([]*Parameter{}, paramList...)
@@ -362,8 +362,8 @@ func (s *DataSet) Clear() error {
 	return nil
 }
 
-// Link links the ds DataSet to the s DataSet.
-func (s *DataSet) Link(ds *DataSet) error {
+// Link links the ds Set to the s Set.
+func (s *Set) Link(ds *Set) error {
 	if ds == nil {
 		return errs.New(
 			errs.M("couldn't link empty dataset"),
@@ -384,7 +384,7 @@ func (s *DataSet) Link(ds *DataSet) error {
 }
 
 // Unlink removes ds from s linked data sets.
-func (s *DataSet) Unlink(ds *DataSet) error {
+func (s *Set) Unlink(ds *Set) error {
 	if ds == nil {
 		return errs.New(
 			errs.M("couldn't unlink empty dataset"),
@@ -404,16 +404,16 @@ func (s *DataSet) Unlink(ds *DataSet) error {
 }
 
 // LinkedSets returns linked to the s data sets.
-func (s *DataSet) LinkedSets() []*DataSet {
-	return append([]*DataSet{}, s.linkedSets...)
+func (s *Set) LinkedSets() []*Set {
+	return append([]*Set{}, s.linkedSets...)
 }
 
-// IsValid returns the DataSet's validity flag.
-func (s *DataSet) IsValid() bool {
+// IsValid returns the Set's validity flag.
+func (s *Set) IsValid() bool {
 	return s.valid
 }
 
-// Validate checks DataSet for validness.
+// Validate checks Set for validness.
 // It uses given readyState DataState to compare with every Parameter state.
 // If readyState is nil, then data.ReadyDataState is used (if set).
 //
@@ -421,7 +421,7 @@ func (s *DataSet) IsValid() bool {
 // if executionFinished flag is true, then WhileExecutionSet is also checked.
 //
 // If the desired SetType parameter set is empty, check is successful.
-func (s *DataSet) Validate(
+func (s *Set) Validate(
 	readyState *DataState,
 	executionFinished bool,
 ) error {

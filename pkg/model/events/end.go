@@ -39,7 +39,7 @@ func NewEndEvent(
 		baseOpts:   []options.Option{},
 		defs:       []Definition{},
 		dataInputs: map[string]*data.Parameter{},
-		inputSet:   &data.DataSet{},
+		inputSet:   &data.Set{},
 	}
 
 	ee := []error{}
