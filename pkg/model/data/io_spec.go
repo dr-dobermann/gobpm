@@ -183,8 +183,8 @@ func (ios *InputOutputSpecification) Validate() error {
 	}
 
 	for _, tp := range []Direction{Input, Output} {
-		iss, ok := ios.sets[tp]
-		if !ok || len(iss) == 0 {
+		_, ok := ios.sets[tp]
+		if !ok {
 			ee = append(ee,
 				fmt.Errorf(
 					"the InputOutputSpecification should have at least one %s",
