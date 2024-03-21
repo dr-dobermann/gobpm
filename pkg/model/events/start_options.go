@@ -20,8 +20,8 @@ type (
 		interrurpting bool
 		baseOpts      []options.Option
 		defs          []Definition
-		dataOutputs   map[string]*data.Output
-		outputSet     *data.OutputSet
+		dataOutputs   map[string]*data.Parameter
+		outputSet     *data.Set
 	}
 )
 
@@ -69,7 +69,7 @@ func (sc *startConfig) startEvent() (*StartEvent, error) {
 
 	// create and fill output set
 	if len(sc.dataOutputs) > 0 {
-		ce.outputSet, err = data.NewOutputSet(outputSetName)
+		ce.outputSet, err = data.NewSet(outputSetName)
 		if err != nil {
 			return nil,
 				&errs.ApplicationError{
@@ -85,7 +85,10 @@ func (sc *startConfig) startEvent() (*StartEvent, error) {
 		ce.dataOutputs = sc.dataOutputs
 
 		for _, do := range ce.dataOutputs {
-			ce.outputSet.AddOutput(do, data.DefaultSet)
+			if err := ce.outputSet.AddParameter(
+				do, data.DefaultSet); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -184,11 +187,11 @@ func (cfg *startConfig) setMessage(med *MessageEventDefinition) error {
 			return err
 		}
 
-		do, err := data.NewOutput(
-			iae,
+		do, err := data.NewParameter(
 			fmt.Sprintf("message %q(%s) output",
 				med.Message().Name(),
-				med.Message().Id()))
+				med.Message().Id()),
+			iae)
 		if err != nil {
 			return &errs.ApplicationError{
 				Err:     err,

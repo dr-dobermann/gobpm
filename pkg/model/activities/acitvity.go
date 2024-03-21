@@ -71,7 +71,8 @@ type Activity struct {
 	// The InputOutputSpecification defines the inputs and outputs and the
 	// InputSets and OutputSets for the Activity. See page 210 for more
 	// information on the InputOutputSpecification.
-	IoSpec data.InputOutputSpecification
+	IoSpec *data.InputOutputSpecification
+	IoSpec *data.InputOutputSpecification
 
 	// This references the Intermediate Events that are attached to the
 	// boundary of the Activity.
@@ -80,10 +81,13 @@ type Activity struct {
 	// An optional reference to the DataInputAssociations.
 	// A DataInputAssociation defines how the DataInput of the Activity’s
 	// InputOutputSpecification will be populated.
-	dataInputAssociations []*data.Association
+	// dataInputAssociations []*data.Association
 
 	// An optional reference to the DataOutputAssociations.
-	dataOutputAssociations []*data.Association
+	// dataOutputAssociations []*data.Association
+
+	// dataAssociations holds input and output DataAssociation of the Activity.
+	dataAssociations map[data.Direction][]*data.Association
 }
 
 // NewActivity creates a new Activity with options and returns its pointer on
@@ -93,12 +97,15 @@ func NewActivity(
 	actOpts ...options.Option,
 ) (*Activity, error) {
 	cfg := activityConfig{
-		name:      name,
-		resources: []*ResourceRole{},
-		props:     []*data.Property{},
-		startQ:    1,
-		complQ:    1,
-		baseOpts:  []options.Option{},
+		name:             name,
+		resources:        []*ResourceRole{},
+		props:            []*data.Property{},
+		startQ:           1,
+		complQ:           1,
+		baseOpts:         []options.Option{},
+		dataAssociations: map[data.Direction][]*data.Association{},
+		parameters:       map[data.Direction][]*data.Parameter{},
+		sets:             map[data.Direction][]*Set{},
 	}
 
 	ee := []error{}
@@ -115,15 +122,11 @@ func NewActivity(
 
 		default:
 			ee = append(ee,
-				&errs.ApplicationError{
-					Message: "invalid option type for Activity",
-					Classes: []string{
-						errorClass,
-						errs.BulidingFailed,
-						errs.TypeCastingError},
-					Details: map[string]string{
-						"option_type": reflect.TypeOf(o).String()},
-				})
+				errs.New(
+					errs.M("invalid option type for Activity"),
+					errs.C(errorClass, errs.BulidingFailed,
+						errs.TypeCastingError),
+					errs.D("option_type", reflect.TypeOf(o).String())))
 		}
 	}
 
@@ -141,38 +144,26 @@ func (a *Activity) NodeType() flow.NodeType {
 	return flow.ActivityNode
 }
 
-// ------------------ flow.Targeter interface ----------------------------------
+// ------------------ flow.SequenceTarget interface ----------------------------
 //
-// AddIncoming appends new flow.SequenceFlow as incoming flow.
-func (a *Activity) AddIncoming(sf *flow.SequenceFlow) error {
-	if sf == nil {
-		return &errs.ApplicationError{
-			Message: "empty SequenceFlow isn't allowed",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter}}
-	}
-
+// AcceptIncomingFlow checks if it possible to use sf as IncomingFlow for the
+// Activity.
+func (a *Activity) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
+	// Activity has no restrictions on incoming floes
 	return nil
 }
 
-// ------------------ flow.Sourcer interface ----------------------------------
+// ------------------ flow.SequenceSource interface ----------------------------
 //
-// AddOutgouing adds a new flow.Sequence flow as outgoing flow.
-func (a *Activity) AddOutgoing(sf *flow.SequenceFlow) error {
-	if sf == nil {
-		return &errs.ApplicationError{
-			Message: "empty SequenceFlow isn't allowed",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter}}
-	}
-
+// ProvideOutgoingFlow checks if it possible to source sf SequenceFlow from
+// the Activity.
+func (a *Activity) ProvideOutgoingFlow(sf *flow.SequenceFlow) error {
+	// Activity has no restrictions on outgoing flows
 	return nil
 }
 
-// ResourceRoles returns list of ResourceRoles of the Activity.
-func (a *Activity) ResourceRoles() []ResourceRole {
+// Roles returns list of ResourceRoles of the Activity.
+func (a *Activity) Roles() []ResourceRole {
 	rr := make([]ResourceRole, len(a.resources))
 
 	copy(rr, a.resources)
@@ -189,7 +180,7 @@ func (a *Activity) Properties() []data.Property {
 }
 
 // SetDefaultFlow sets default flow from the Activity.
-// If the flowId is empty, then default flow clears on Activity.
+// If the flowId is empty, then default flow cleared for Activity.
 func (a *Activity) SetDefaultFlow(flowId string) error {
 	flowId = trim(flowId)
 
@@ -207,12 +198,7 @@ func (a *Activity) SetDefaultFlow(flowId string) error {
 		}
 	}
 
-	return &errs.ApplicationError{
-		Message: "no requested outgoing flow in Activity",
-		Classes: []string{
-			errorClass,
-			errs.InvalidParameter},
-		Details: map[string]string{
-			"activity_id": a.Id(),
-			"flow_id":     flowId}}
+	return errs.New(
+		errs.M("flow %q dosn't existed in acitivity %q", flowId, a.Name()),
+		errs.C(errorClass, errs.InvalidParameter))
 }

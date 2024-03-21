@@ -20,6 +20,9 @@
 package errs
 
 import (
+	"errors"
+	"fmt"
+	"os"
 	"strings"
 )
 
@@ -34,7 +37,10 @@ const (
 	//nolint: gosec
 	EmptyNotAllowed = "EMPTY_OBJ_IS_NOT_ALLOWED"
 
+	DuplicateObject = "DUPLICATE_OBJECT_ERROR"
 	OperationFailed = "OPERATION_FAILED"
+	ConditionFailed = "CONDITION_FAILED"
+	ObjectNotFound  = "OBJECT_NOT_FOUND"
 )
 
 type ApplicationError struct {
@@ -44,7 +50,8 @@ type ApplicationError struct {
 	Details map[string]string
 }
 
-func (ap ApplicationError) Error() string {
+// --------------------- error interface ---------------------------------------
+func (ap *ApplicationError) Error() string {
 	str := ""
 	if len(ap.Classes) > 0 {
 		str += "Classes: [" + strings.Join(ap.Classes, ", ") + "]\n"
@@ -66,4 +73,57 @@ func (ap ApplicationError) Error() string {
 	}
 
 	return str
+}
+
+// New returns pointer on created with errOptions ApplicationError.
+func New(errOpts ...errOption) *ApplicationError {
+	eCfg := errConfig{
+		err:     nil,
+		msg:     defaultMessage,
+		classes: []string{},
+		details: map[string]string{},
+	}
+
+	ee := make([]error, 0, len(errOpts)+1)
+	for _, o := range errOpts {
+		if o != nil {
+			if err := o.apply(&eCfg); err != nil {
+				ee = append(ee, err)
+			}
+		}
+	}
+
+	if len(ee) > 0 {
+		eCfg.err = errors.Join(append(ee, eCfg.err)...)
+	}
+
+	return eCfg.newError()
+}
+
+var (
+	// flag which prevents panic on unhandled errors.
+	// if set to true then error just printed to stderr.
+	dontPanic bool
+)
+
+// SetDontPanic sets current behavior of panic.
+func SetDontPanic(dp bool) {
+	dontPanic = dp
+}
+
+// DontPanic return current setup of panic behavior
+func DontPanic() bool {
+	return dontPanic
+}
+
+// Panic write unhandled error into the Stderr or panic dending of the
+// dontPanic settings.
+func Panic(v any) {
+	if dontPanic {
+		fmt.Fprintln(os.Stderr, v)
+
+		return
+	}
+
+	panic(v)
 }

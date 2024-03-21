@@ -18,8 +18,8 @@ type (
 		props      []data.Property
 		baseOpts   []options.Option
 		defs       []Definition
-		dataInputs map[string]*data.Input
-		inputSet   *data.InputSet
+		dataInputs map[string]*data.Parameter
+		inputSet   *data.Set
 	}
 )
 
@@ -56,23 +56,17 @@ func (ec *endConfig) endEvent() (*EndEvent, error) {
 
 	// create and fill input set
 	if len(ec.dataInputs) > 0 {
-		te.inputSet, err = data.NewInputSet(inputSetName)
+		te.inputSet, err = data.NewSet(inputSetName)
 		if err != nil {
-			return nil,
-				&errs.ApplicationError{
-					Err:     err,
-					Message: "input set creation failed for end event",
-					Classes: []string{
-						errorClass,
-						errs.BulidingFailed,
-					},
-				}
+			return nil, err
 		}
 
 		te.dataInputs = ec.dataInputs
 
 		for _, di := range te.dataInputs {
-			te.inputSet.AddInput(di, data.DefaultSet)
+			if err := te.inputSet.AddParameter(di, data.DefaultSet); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -183,10 +177,11 @@ func (ec *endConfig) setMessage(med *MessageEventDefinition) error {
 					errs.BulidingFailed}}
 		}
 
-		di, err := data.NewInput(iae,
+		di, err := data.NewParameter(
 			fmt.Sprintf("message %q(%s) input",
 				med.Message().Name(),
-				med.Message().Id()))
+				med.Message().Id()),
+			iae)
 		if err != nil {
 			return &errs.ApplicationError{
 				Err:     err,

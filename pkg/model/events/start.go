@@ -49,7 +49,7 @@ func NewStartEvent(
 		interrurpting: false,
 		baseOpts:      []options.Option{},
 		defs:          []Definition{},
-		dataOutputs:   make(map[string]*data.Output),
+		dataOutputs:   make(map[string]*data.Parameter),
 	}
 
 	ee := []error{}
@@ -73,7 +73,6 @@ func NewStartEvent(
 			ee = append(ee, fmt.Errorf("innapropriate option type: %s",
 				reflect.TypeOf(so).Name()))
 		}
-
 	}
 
 	if err := sc.Validate(); err != nil {
@@ -94,18 +93,11 @@ func NewStartEvent(
 	return sc.startEvent()
 }
 
-// ------------------ flow.Sourcer interface ----------------------------------
+// ------------------ flow.Source interface ----------------------------------
 //
-// AddOutgouing adds a new flow.Sequence flow as outgoing flow.
-func (se *StartEvent) AddOutgoing(sf *flow.SequenceFlow) error {
-	if sf == nil {
-		return &errs.ApplicationError{
-			Message: "empty SequenceFlow isn't allowed",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter}}
-	}
-
+// ProvideOutgoingFlow checks if it allowed to source sf from the StartEvent
+func (se *StartEvent) ProvideOutgoingFlow(sf *flow.SequenceFlow) error {
+	// StartEvent don't restricted any source sequence flow from it
 	return nil
 }
 

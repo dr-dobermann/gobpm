@@ -265,10 +265,10 @@ type catchEvent struct {
 	// The Data Outputs for the catch Event. This is an ordered set.
 	// dataOutputs are indexed by Ids of ItemDefinitions from eventDefinition
 	// bodies.
-	dataOutputs map[string]*data.Output
+	dataOutputs map[string]*data.Parameter
 
 	// The outputSet for the catch Event.
-	outputSet *data.OutputSet
+	outputSet *data.Set
 
 	// This attribute is only relevant when the catch Event has more than one
 	// EventDefinition (Multiple). If this value is true, then all of the types
@@ -293,7 +293,7 @@ func newCatchEvent(
 	return &catchEvent{
 		Event:              *e,
 		OutputAssociations: []*data.Association{},
-		dataOutputs:        map[string]*data.Output{},
+		dataOutputs:        map[string]*data.Parameter{},
 		parallelMultiple:   e.triggers.Count() > 1 && parallel,
 	}, nil
 }
@@ -317,10 +317,10 @@ type throwEvent struct {
 	// The Data Inputs for the throw Event. This is an ordered set.
 	// dataInputs are indexed by Ids of ItemDefinitions from eventDefinitions
 	// bodies.
-	dataInputs map[string]*data.Input
+	dataInputs map[string]*data.Parameter
 
 	// The InputSet for the throw Event.
-	inputSet *data.InputSet
+	inputSet *data.Set
 }
 
 // NewThrowEvent creates a new throwEvent and returns its pointer.
@@ -338,6 +338,6 @@ func newThrowEvent(
 	return &throwEvent{
 		Event:             *e,
 		InputAssociations: []*data.Association{},
-		dataInputs:        map[string]*data.Input{},
+		dataInputs:        map[string]*data.Parameter{},
 	}, nil
 }
