@@ -9,31 +9,31 @@ import (
 // *****************************************************************************
 //
 // Parameter implements both Input and Output classes of BPMNv2.
-type ParameterType string
+type Direction string
 
 const (
-	InputParameter  ParameterType = "INPUT"
-	OutputParameter ParameterType = "OUTPUT"
+	Input  Direction = "INPUT"
+	Output Direction = "OUTPUT"
 )
 
 // checkParamType test pt on validity and return error on failure.
-func checkParamType(pt ParameterType) error {
-	if pt != InputParameter && pt != OutputParameter {
+func (dir Direction) Validate() error {
+	if dir != Input && dir != Output {
 		return errs.New(
-			errs.M("invalid parameter type: %q", pt),
+			errs.M("invalid direction: %q", dir),
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	return nil
 }
 
-// not reverses ParameterType.
-func not(pt ParameterType) ParameterType {
-	if pt == InputParameter {
-		return OutputParameter
+// not reverses Direction.
+func Opposite(dir Direction) Direction {
+	if dir == Input {
+		return Output
 	}
 
-	return InputParameter
+	return Input
 }
 
 // *****************************************************************************

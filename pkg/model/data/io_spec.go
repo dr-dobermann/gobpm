@@ -89,7 +89,7 @@ type InputOutputSpecification struct {
 	// Every Data Interface MUST define at least one OutputSet.
 	// outputSets []*DataSet
 
-	sets map[ParameterType][]*DataSet
+	sets map[Direction][]*DataSet
 
 	// An optional reference to the Data Inputs of the InputOutputSpecification.
 	// If the InputOutputSpecification defines no Data Input, it means no data
@@ -102,7 +102,7 @@ type InputOutputSpecification struct {
 	// ordered set.
 	// dataOutputs []*Parameter
 
-	params map[ParameterType][]*Parameter
+	params map[Direction][]*Parameter
 }
 
 // NewIOSpec creates a new InputOutputSpecification and returns its pointer on
@@ -115,21 +115,21 @@ func NewIOSpec(baseOpts ...options.Option) (*InputOutputSpecification, error) {
 
 	return &InputOutputSpecification{
 			BaseElement: *be,
-			sets:        map[ParameterType][]*DataSet{},
-			params:      map[ParameterType][]*Parameter{},
+			sets:        map[Direction][]*DataSet{},
+			params:      map[Direction][]*Parameter{},
 		},
 		nil
 }
 
-// Parameters returns all IOSpec parameters of pt type.
+// Parameters returns all IOSpec parameters of dir type.
 func (ios *InputOutputSpecification) Parameters(
-	pt ParameterType,
+	dir Direction,
 ) ([]*Parameter, error) {
-	if err := checkParamType(pt); err != nil {
+	if err := dir.Validate(); err != nil {
 		return nil, err
 	}
 
-	pp, ok := ios.params[pt]
+	pp, ok := ios.params[dir]
 	if !ok {
 		return []*Parameter{}, nil
 	}
@@ -169,19 +169,20 @@ func (ios *InputOutputSpecification) Parameters(
 func (ios *InputOutputSpecification) Validate() error {
 	ee := []error{}
 
-	names := map[ParameterType]struct {
+	names := map[Direction]struct {
 		setName, dataName string
 	}{
-		InputParameter: {
+		Input: {
 			setName:  "InputSet",
 			dataName: "DataInput",
 		},
-		OutputParameter: {
+		Output: {
 			setName:  "OutputSet",
 			dataName: "DataOutput",
-		}}
+		},
+	}
 
-	for _, tp := range []ParameterType{InputParameter, OutputParameter} {
+	for _, tp := range []Direction{Input, Output} {
 		iss, ok := ios.sets[tp]
 		if !ok || len(iss) == 0 {
 			ee = append(ee,
@@ -215,7 +216,6 @@ func (ios *InputOutputSpecification) Validate() error {
 								names[tp].dataName, p.name, names[tp].setName))
 					}
 				}
-
 			}
 		}
 	}
@@ -232,7 +232,7 @@ func (ios *InputOutputSpecification) Validate() error {
 // It returns error on failure
 func (ios *InputOutputSpecification) AddParameter(
 	p *Parameter,
-	pt ParameterType,
+	dir Direction,
 ) error {
 	if p == nil {
 		return errs.New(
@@ -240,29 +240,29 @@ func (ios *InputOutputSpecification) AddParameter(
 			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
 	}
 
-	if err := checkParamType(pt); err != nil {
+	if err := dir.Validate(); err != nil {
 		return err
 	}
 
-	pp, ok := ios.params[pt]
+	pp, ok := ios.params[dir]
 	if !ok {
-		ios.params[pt] = []*Parameter{p}
+		ios.params[dir] = []*Parameter{p}
 
 		return nil
 	}
 
 	if idx := index(p, pp); idx == -1 {
-		ios.params[pt] = append(pp, p)
+		ios.params[dir] = append(pp, p)
 	}
 
 	return nil
 }
 
-// RemoveParameter removes Parameter p of pt type from all sets
+// RemoveParameter removes Parameter p of dir type from all sets
 // referenced on it and from IOSpec itself.
 func (ios InputOutputSpecification) RemoveParameter(
 	p *Parameter,
-	pt ParameterType,
+	dir Direction,
 ) error {
 	if p == nil {
 		return errs.New(
@@ -270,21 +270,21 @@ func (ios InputOutputSpecification) RemoveParameter(
 			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
 	}
 
-	if err := checkParamType(pt); err != nil {
+	if err := dir.Validate(); err != nil {
 		return err
 	}
 
-	pp, ok := ios.params[pt]
+	pp, ok := ios.params[dir]
 	if !ok || len(pp) == 0 {
 		return errs.New(
-			errs.M("data set %q is empty", pt),
+			errs.M("data set %q is empty", dir),
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	idx := index(p, pp)
 	if idx == -1 {
 		return errs.New(
-			errs.M("no parameter %q in data set %q", p.name, pt),
+			errs.M("no parameter %q in data set %q", p.name, dir),
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
@@ -300,17 +300,17 @@ func (ios InputOutputSpecification) RemoveParameter(
 	}
 
 	// remove parameter
-	ios.params[pt] = append(pp[:idx], pp[idx+1:]...)
+	ios.params[dir] = append(pp[:idx], pp[idx+1:]...)
 
 	return nil
 }
 
 // AddDataSet adds single data set into InputOutputSpecification and check
-// if it is already exist in selected by pt list of data sets.
+// if it is already exist in selected by dir list of data sets.
 // DataSet could be set only as input or output.
 func (ios *InputOutputSpecification) AddDataSet(
 	s *DataSet,
-	pt ParameterType,
+	dir Direction,
 ) error {
 	if s == nil {
 		return errs.New(
@@ -319,28 +319,28 @@ func (ios *InputOutputSpecification) AddDataSet(
 	}
 
 	// check param type
-	if err := checkParamType(pt); err != nil {
+	if err := dir.Validate(); err != nil {
 		return err
 	}
 
 	// check if required set is existed
-	ss, ok := ios.sets[pt]
+	ss, ok := ios.sets[dir]
 	if !ok {
-		ios.sets[pt] = []*DataSet{s}
+		ios.sets[dir] = []*DataSet{s}
 
 		return nil
 	}
 
 	// check if s isn't used as opposite sets
-	if idx := index(s, ios.sets[not(pt)]); idx != -1 {
+	if idx := index(s, ios.sets[Opposite(dir)]); idx != -1 {
 		return errs.New(
-			errs.M("data set is already used as %s set", not(pt)),
+			errs.M("data set is already used as %s set", Opposite(dir)),
 			errs.C(errorClass, errs.InvalidParameter, errs.DuplicateObject))
 	}
 
 	// check if s isn't registered yet
 	if idx := index(s, ss); idx == -1 {
-		ios.sets[pt] = append(ss, s)
+		ios.sets[dir] = append(ss, s)
 	}
 
 	return nil
@@ -350,7 +350,7 @@ func (ios *InputOutputSpecification) AddDataSet(
 // from parameters.
 func (ios *InputOutputSpecification) RemoveDataSet(
 	s *DataSet,
-	pt ParameterType,
+	dir Direction,
 ) error {
 	if s == nil {
 		return errs.New(
@@ -359,22 +359,22 @@ func (ios *InputOutputSpecification) RemoveDataSet(
 	}
 
 	// check param type
-	if err := checkParamType(pt); err != nil {
+	if err := dir.Validate(); err != nil {
 		return err
 	}
 
 	// check if required set is existed
-	ss, ok := ios.sets[pt]
+	ss, ok := ios.sets[dir]
 	if !ok || len(ss) == 0 {
 		return errs.New(
-			errs.M("sets list %q is empty", pt),
+			errs.M("sets list %q is empty", dir),
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	idx := index(s, ss)
 	if idx == -1 {
 		return errs.New(
-			errs.M("set isn't existed in %q lists", pt),
+			errs.M("set isn't existed in %q lists", dir),
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
@@ -384,21 +384,21 @@ func (ios *InputOutputSpecification) RemoveDataSet(
 	}
 
 	// remove set
-	ios.sets[pt] = append(ios.sets[pt][:idx], ios.sets[pt][idx+1:]...)
+	ios.sets[dir] = append(ios.sets[dir][:idx], ios.sets[dir][idx+1:]...)
 
 	return nil
 }
 
-// DataSets returns data sets of pt type.
+// DataSets returns data sets of dir type.
 func (ios *InputOutputSpecification) DataSets(
-	pt ParameterType,
+	dir Direction,
 ) ([]*DataSet, error) {
 	// check param type
-	if err := checkParamType(pt); err != nil {
+	if err := dir.Validate(); err != nil {
 		return nil, err
 	}
 
-	ss, ok := ios.sets[pt]
+	ss, ok := ios.sets[dir]
 	if !ok {
 		return []*DataSet{}, nil
 	}

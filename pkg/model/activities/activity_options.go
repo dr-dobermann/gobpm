@@ -18,7 +18,7 @@ type (
 		props            []*data.Property
 		startQ, complQ   int
 		baseOpts         []options.Option
-		dataAssociations map[data.ParameterType][]*data.Association
+		dataAssociations map[data.Direction][]*data.Association
 	}
 
 	activityOption func(cfg *activityConfig) error
@@ -30,16 +30,10 @@ func (ao activityOption) Apply(cfg options.Configurator) error {
 		return ao(ac)
 	}
 
-	return &errs.ApplicationError{
-		Message: "cfg isn't an activityConfig",
-		Classes: []string{
-			errorClass,
-			errs.InvalidParameter,
-		},
-		Details: map[string]string{
-			"cfg_type": reflect.TypeOf(cfg).Name(),
-		},
-	}
+	return errs.New(
+		errs.M("cfg isn't an activityConfig"),
+		errs.C(errorClass, errs.InvalidParameter, errs.TypeCastingError),
+		errs.D("cfg_type", reflect.TypeOf(cfg).String()))
 }
 
 // Validate implements options.Configurator interface for the activityConfig.
@@ -62,15 +56,12 @@ func (ac *activityConfig) newActivity() (*Activity, error) {
 
 	n, err := flow.NewNode(ac.name, ac.baseOpts...)
 	if err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "couldn't create a FlowNode for the Activity",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed,
-				},
-			}
+		return nil, err
+	}
+
+	ioSpecs, err := data.NewIOSpec()
+	if err != nil {
+		return nil, err
 	}
 
 	a := Activity{
@@ -82,6 +73,7 @@ func (ac *activityConfig) newActivity() (*Activity, error) {
 		completionQuantity: ac.complQ,
 		boundaryEvents:     []flow.Event{},
 		dataAssociations:   ac.dataAssociations,
+		IoSpec:             ioSpecs,
 	}
 
 	if ac.loop != nil {
@@ -118,9 +110,13 @@ func WithCompensation() activityOption {
 // WithLoop adds loop characteristics to the Activity.
 func WithLoop(lc *LoopCharacteristics) activityOption {
 	f := func(cfg *activityConfig) error {
-		if lc != nil {
-			cfg.loop = lc
+		if lc == nil {
+			return errs.New(
+				errs.M("loop definition couldn't be empty"),
+				errs.C(errorClass, errs.InvalidParameter, errs.EmptyNotAllowed))
 		}
+
+		cfg.loop = lc
 
 		return nil
 	}

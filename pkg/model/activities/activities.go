@@ -33,6 +33,6 @@ func checkStr(str, msg string) error {
 var (
 	_ flow.FlowNode = (*Activity)(nil)
 
-	_ flow.Sourcer  = (*Activity)(nil)
-	_ flow.Targeter = (*Activity)(nil)
+	_ flow.SequenceSource = (*Activity)(nil)
+	_ flow.SequenceTarget = (*Activity)(nil)
 )
