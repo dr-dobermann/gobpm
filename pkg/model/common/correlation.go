@@ -55,7 +55,7 @@ type (
 
 		// The bindings to specific CorrelationProperties and FormalExpressions
 		// (extraction rules atop the Process context).
-		PropertyBindings []CorrelationPropertyBinding
+		PropertyBindings []*CorrelationPropertyBinding
 	}
 
 	// A CorrelationKey represents a composite key out of one or many

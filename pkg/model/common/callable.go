@@ -5,6 +5,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
+// Callable
 type CallableElement struct {
 	foundation.BaseElement
 
