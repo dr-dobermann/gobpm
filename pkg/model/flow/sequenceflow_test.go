@@ -30,7 +30,7 @@ func TestSequenceFlow(t *testing.T) {
 
 	t.Run("invalid params",
 		func(t *testing.T) {
-			sf, err := flow.NewSequenceFlow("test sFlow", nil, nil, nil, false)
+			sf, err := flow.NewSequenceFlow("test sFlow", nil, nil, nil)
 			require.Error(t, err)
 			require.Empty(t, sf)
 		})
@@ -39,7 +39,7 @@ func TestSequenceFlow(t *testing.T) {
 		func(t *testing.T) {
 			sfStart, err := flow.NewSequenceFlow(
 				"start flow",
-				se, st1, nil, false)
+				se, st1, nil)
 			require.NoError(t, err)
 			require.Equal(t, se.Id(), sfStart.Source().GetNode().Id())
 			require.Equal(t, 0, len(sfStart.Source().GetNode().Incoming()))
@@ -50,7 +50,7 @@ func TestSequenceFlow(t *testing.T) {
 				"service task1",
 				st1,
 				st2,
-				nil, false)
+				nil)
 			require.NoError(t, err)
 			require.NotEmpty(t, sfST1)
 
@@ -58,8 +58,13 @@ func TestSequenceFlow(t *testing.T) {
 				"end flow",
 				st2,
 				ee,
-				nil, false)
+				nil)
 			require.NoError(t, err)
 			require.NotEmpty(t, sfST2)
+
+			require.Equal(t, 0, len(se.Incoming()))
+			so := se.Outgoing()
+			require.Equal(t, 1, len(so))
+			require.Equal(t, "start flow", so[0].Name())
 		})
 }

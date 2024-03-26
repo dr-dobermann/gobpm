@@ -1,6 +1,8 @@
 package flow
 
 import (
+	"fmt"
+
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -12,7 +14,7 @@ type (
 	SequenceSource interface {
 		FlowNode
 
-		ProvideOutgoingFlow(sf *SequenceFlow) error
+		SuportOutgoingFlow(sf *SequenceFlow) error
 	}
 
 	// SequenceTarget impmemented by the Nodes which accepts incomng sequence flows.
@@ -66,7 +68,10 @@ type SequenceFlow struct {
 	//   • For an executable Processes no value has the same semantics as if
 	//     the value were true.
 	//   • For executable Processes, the attribute MUST NOT be false.
-	isImmediate bool
+	//
+	// DEV_NOTE: Since goBpm implements only EXECUTABLE processes, this
+	// attribute always SHOULD be true.
+	// isImmediate bool
 }
 
 // NewSequenceFlow creates a new SequenceFlow which connects src and trg
@@ -77,7 +82,6 @@ func NewSequenceFlow(
 	src SequenceSource,
 	trg SequenceTarget,
 	condition *data.Expression,
-	immediate bool,
 	baseOpts ...options.Option,
 ) (*SequenceFlow, error) {
 	if src == nil || trg == nil {
@@ -105,11 +109,28 @@ func NewSequenceFlow(
 		source:              src,
 		target:              trg,
 		conditionExpression: condition,
-		isImmediate:         immediate,
+	}
+
+	// sequence, source and target should belong to the same container
+	// or has no container for all of them.
+	if (sf.container != nil &&
+		(src.GetNode().container != sf.container ||
+			trg.GetNode().container != sf.container)) ||
+		(sf.container == nil &&
+			(src.GetNode().container != nil ||
+				trg.GetNode().container != nil)) {
+		return nil,
+			errs.New(
+				errs.M("sequence flow, source and target should belong to the "+
+					"same or nil container"),
+				errs.C(errorClass, errs.BulidingFailed),
+				errs.D("flow_container", fmt.Sprint(sf.container)),
+				errs.D("source_container", fmt.Sprint(src.GetNode().container)),
+				errs.D("target_container", fmt.Sprint(trg.GetNode().container)))
 	}
 
 	// check possibility to use sf on source and target ends of the flow
-	if err := src.ProvideOutgoingFlow(&sf); err != nil {
+	if err := src.SuportOutgoingFlow(&sf); err != nil {
 		return nil, err
 	}
 
@@ -142,9 +163,4 @@ func (sf *SequenceFlow) Target() SequenceTarget {
 // Condition returns the condition expression  of the SequenceFlow.
 func (sf *SequenceFlow) Condition() *data.Expression {
 	return sf.conditionExpression
-}
-
-// IsImmediate returns the SequenceFlow's immediate setting.
-func (sf *SequenceFlow) IsImmediate() bool {
-	return sf.isImmediate
 }

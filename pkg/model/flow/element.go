@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -19,10 +20,11 @@ type Element struct {
 
 	// A reference to the Category Values that are associated with this Flow
 	// Element.
-	// NOTE: Since the CategoryValues is used only for visually grouping
-	//       Elements visually in Group and to eleminate ciclyc imports
-	//       bidirectional link between FlowElement and CategoryValue
-	//       updated to uni-directional link from CategoryValue to FlowElement.
+	// DEV_NOTE: Since the CategoryValues is used only for visually grouping
+	//       	 Elements visually in Group and to eleminate ciclyc imports
+	//           bidirectional link between FlowElement and CategoryValue
+	//           updated to uni-directional link from CategoryValue to
+	//           FlowElement.
 	// Categories []*artifacts.CategoryValue
 
 	// Container consisted the element.
@@ -44,6 +46,16 @@ func NewElement(
 			BaseElement: *be,
 			name:        name},
 		nil
+}
+
+// MustElement returns pointer to a new Element or panics on error.
+func MustElement(name string, baseOpts ...options.Option) *Element {
+	e, err := NewElement(name, baseOpts...)
+	if err != nil {
+		errs.Panic(err)
+	}
+
+	return e
 }
 
 // Name returns the Element name.
@@ -69,24 +81,32 @@ func (fe *Element) Container() *ElementsContainer {
 type ElementsContainer struct {
 	foundation.BaseElement
 
+	// elements are indexed by its Ids.
 	elements map[string]*Element
 }
 
-// NewContainer creates an empty container and returns its pointer.
+// NewContainer creates an empty container and returns its pointer on success or
+// error on failure.
 func NewContainer(
 	baseOpts ...options.Option,
-) *ElementsContainer {
-	return &ElementsContainer{
-		BaseElement: *foundation.MustBaseElement(baseOpts...),
-		elements:    map[string]*Element{},
+) (*ElementsContainer, error) {
+	be, err := foundation.NewBaseElement(baseOpts...)
+	if err != nil {
+		return nil, err
 	}
+
+	return &ElementsContainer{
+			BaseElement: *be,
+			elements:    map[string]*Element{},
+		},
+		nil
 }
 
 // Add adds the new element to the container.
 // It adds only non-nil elements and returns the counter of added elements.
 func (fec *ElementsContainer) Add(fee ...*Element) int {
 	if fec.elements == nil {
-		fec.elements = map[string]*Element{}
+		errs.Panic("containter doesn't created properly (use NewContainer)")
 	}
 
 	n := 0
@@ -96,7 +116,7 @@ func (fec *ElementsContainer) Add(fee ...*Element) int {
 			continue
 		}
 
-		fec.elements[fe.name] = fe
+		fec.elements[fe.Id()] = fe
 		fe.container = fec
 
 		n++
@@ -109,7 +129,7 @@ func (fec *ElementsContainer) Add(fee ...*Element) int {
 // removed elements.
 func (fec *ElementsContainer) Remove(idd ...string) int {
 	if fec.elements == nil {
-		fec.elements = map[string]*Element{}
+		errs.Panic("containter doesn't created properly (use NewContainer)")
 
 		return 0
 	}
@@ -117,11 +137,7 @@ func (fec *ElementsContainer) Remove(idd ...string) int {
 	n := 0
 	for _, id := range idd {
 		fe, ok := fec.elements[id]
-		if !ok {
-			continue
-		}
-
-		if _, ok := fec.elements[fe.Id()]; ok {
+		if ok {
 			fe.container = nil
 			delete(fec.elements, id)
 
@@ -135,7 +151,7 @@ func (fec *ElementsContainer) Remove(idd ...string) int {
 // Contains checks if container contains element with elementId.
 func (fec *ElementsContainer) Contains(elementId string) bool {
 	if fec.elements == nil {
-		fec.elements = map[string]*Element{}
+		errs.Panic("containter doesn't created properly (use NewContainer)")
 
 		return false
 	}
@@ -148,7 +164,7 @@ func (fec *ElementsContainer) Contains(elementId string) bool {
 // Elements returns a list of container elements.
 func (fec *ElementsContainer) Elements() []*Element {
 	if fec.elements == nil {
-		fec.elements = map[string]*Element{}
+		errs.Panic("containter doesn't created properly (use NewContainer)")
 
 		return []*Element{}
 	}
