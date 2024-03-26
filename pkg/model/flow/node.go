@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -98,6 +99,29 @@ func (n *Node) addFlow(sf *SequenceFlow, dir data.Direction) error {
 	if sf != nil {
 		n.flows[dir][sf.Id()] = sf
 	}
+
+	return nil
+}
+
+// removeFlow deletes single sequence flow from the node.
+func (n *Node) removeFlow(sf *SequenceFlow, dir data.Direction) error {
+	if err := dir.Validate(); err != nil {
+		return err
+	}
+
+	if _, ok := n.flows[dir]; !ok {
+		return errs.New(
+			errs.M("node %q has no %s flows", n.name, dir),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	if sf == nil {
+		return errs.New(
+			errs.M("sequence flow couldn't be empty"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	delete(n.flows[dir], sf.Id())
 
 	return nil
 }

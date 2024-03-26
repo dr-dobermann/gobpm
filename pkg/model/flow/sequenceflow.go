@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -93,15 +94,7 @@ func NewSequenceFlow(
 
 	e, err := NewElement(name, baseOpts...)
 	if err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "couldn't create FlowElement for SequenceFlow",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed,
-				},
-			}
+		return nil, err
 	}
 
 	sf := SequenceFlow{
@@ -111,30 +104,7 @@ func NewSequenceFlow(
 		conditionExpression: condition,
 	}
 
-	// sequence, source and target should belong to the same container
-	// or has no container for all of them.
-	if (sf.container != nil &&
-		(src.GetNode().container != sf.container ||
-			trg.GetNode().container != sf.container)) ||
-		(sf.container == nil &&
-			(src.GetNode().container != nil ||
-				trg.GetNode().container != nil)) {
-		return nil,
-			errs.New(
-				errs.M("sequence flow, source and target should belong to the "+
-					"same or nil container"),
-				errs.C(errorClass, errs.BulidingFailed),
-				errs.D("flow_container", fmt.Sprint(sf.container)),
-				errs.D("source_container", fmt.Sprint(src.GetNode().container)),
-				errs.D("target_container", fmt.Sprint(trg.GetNode().container)))
-	}
-
-	// check possibility to use sf on source and target ends of the flow
-	if err := src.SuportOutgoingFlow(&sf); err != nil {
-		return nil, err
-	}
-
-	if err := trg.AcceptIncomingFlow(&sf); err != nil {
+	if err := checkConnections(&sf, src, trg); err != nil {
 		return nil, err
 	}
 
@@ -144,10 +114,46 @@ func NewSequenceFlow(
 	}
 
 	if err := trg.GetNode().addFlow(&sf, data.Input); err != nil {
+		if errd := src.GetNode().removeFlow(&sf, data.Output); errd != nil {
+			return nil, errors.Join(errd, err)
+		}
+
 		return nil, err
 	}
 
 	return &sf, nil
+}
+
+// checkConnections tests if it possible to connect src with trg via sf.
+// If any error found, then error returned.
+func checkConnections(sf *SequenceFlow, src SequenceSource, trg SequenceTarget) error {
+	// sequence, source and target should belong to the same container
+	// or has no container for all of them.
+	if (sf.container != nil &&
+		(src.GetNode().container != sf.container ||
+			trg.GetNode().container != sf.container)) ||
+		(sf.container == nil &&
+			(src.GetNode().container != nil ||
+				trg.GetNode().container != nil)) {
+		return errs.New(
+			errs.M("sequence flow, source and target should belong to the "+
+				"same or nil container"),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.D("flow_container", fmt.Sprint(sf.container)),
+			errs.D("source_container", fmt.Sprint(src.GetNode().container)),
+			errs.D("target_container", fmt.Sprint(trg.GetNode().container)))
+	}
+
+	// check possibility to use sf on source and target ends of the flow
+	if err := src.SuportOutgoingFlow(sf); err != nil {
+		return err
+	}
+
+	if err := trg.AcceptIncomingFlow(sf); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // Source returns the Source of the SequenceFlow.

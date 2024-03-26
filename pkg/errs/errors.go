@@ -34,13 +34,11 @@ const (
 	TypeCastingError     = "INVALID_TYPECASTING"
 	OutOfRangeError      = "OUT_OF_RANGE"
 	EmptyCollectionError = "COLLECTION_IS_EMPTY"
-	//nolint: gosec
-	EmptyNotAllowed = "EMPTY_OBJ_IS_NOT_ALLOWED"
-
-	DuplicateObject = "DUPLICATE_OBJECT_ERROR"
-	OperationFailed = "OPERATION_FAILED"
-	ConditionFailed = "CONDITION_FAILED"
-	ObjectNotFound  = "OBJECT_NOT_FOUND"
+	EmptyNotAllowed      = "EMPTY_OBJ_IS_NOT_ALLOWED"
+	DuplicateObject      = "DUPLICATE_OBJECT_ERROR"
+	OperationFailed      = "OPERATION_FAILED"
+	ConditionFailed      = "CONDITION_FAILED"
+	ObjectNotFound       = "OBJECT_NOT_FOUND"
 )
 
 type ApplicationError struct {
@@ -100,11 +98,9 @@ func New(errOpts ...errOption) *ApplicationError {
 	return eCfg.newError()
 }
 
-var (
-	// flag which prevents panic on unhandled errors.
-	// if set to true then error just printed to stderr.
-	dontPanic bool
-)
+// flag which prevents panic on unhandled errors.
+// if set to true then error just printed to stderr.
+var dontPanic bool
 
 // SetDontPanic sets current behavior of panic.
 func SetDontPanic(dp bool) {

@@ -54,7 +54,8 @@ func NewElement(
 
 	return &Element{
 			BaseElement: *be,
-			name:        name},
+			name:        name,
+		},
 		nil
 }
 
@@ -98,7 +99,7 @@ type ElementsContainer struct {
 // --------------------- Container interface -----------------------------------
 // Add adds non-empty unique Element e to the ElementContainer c.
 // if e is empty, c already has e, c doesn't properly created or e belongs to
-// other container, error occured.
+// other container, error occurred.
 func (c *ElementsContainer) Add(e *Element) error {
 	if c.elements == nil {
 		return errs.New(
