@@ -41,7 +41,9 @@ type Activity struct {
 	// Activity. The resource, e.g., a performer, can be specified in the form
 	// of a specific individual, a group, an organization role or position, or
 	// an organization.
-	resources []ResourceRole
+	//
+	// DEV_NOTE: roles indexed by role name.
+	roles map[string]*ResourceRole
 
 	// The Sequence Flow that will receive a token when none of the
 	// conditionExpressions on other outgoing Sequence Flows evaluate to true.
@@ -51,7 +53,9 @@ type Activity struct {
 
 	// Modeler-defined properties MAY be added to an Activity. These
 	// properties are contained within the Activity.
-	properties []data.Property
+	//
+	// DEV_NOTE: properties indexed by property name.
+	properties map[string]*data.Property
 
 	// The default value is 1. The value MUST NOT be less than 1. This attribute
 	// defines the number of tokens that MUST arrive before the Activity can
@@ -96,9 +100,9 @@ func NewActivity(
 	actOpts ...options.Option,
 ) (*Activity, error) {
 	cfg := activityConfig{
-		name:             name,
-		resources:        []*ResourceRole{},
-		props:            []*data.Property{},
+		name:             trim(name),
+		roles:            map[string]*ResourceRole{},
+		props:            map[string]*data.Property{},
 		startQ:           1,
 		complQ:           1,
 		baseOpts:         []options.Option{},
@@ -111,7 +115,7 @@ func NewActivity(
 
 	for _, opt := range actOpts {
 		switch o := opt.(type) {
-		case activityOption:
+		case activityOption, RoleOption, data.PropertyOption:
 			if err := o.Apply(&cfg); err != nil {
 				ee = append(ee, err)
 			}
@@ -154,28 +158,40 @@ func (a *Activity) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
 
 // ------------------ flow.SequenceSource interface ----------------------------
 //
-// ProvideOutgoingFlow checks if it possible to source sf SequenceFlow from
+// SuportOutgoingFlow checks if it possible to source sf SequenceFlow from
 // the Activity.
-func (a *Activity) ProvideOutgoingFlow(sf *flow.SequenceFlow) error {
+func (a *Activity) SuportOutgoingFlow(sf *flow.SequenceFlow) error {
 	// Activity has no restrictions on outgoing flows
 	return nil
 }
 
 // Roles returns list of ResourceRoles of the Activity.
-func (a *Activity) Roles() []ResourceRole {
-	rr := make([]ResourceRole, len(a.resources))
+func (a *Activity) Roles() []*ResourceRole {
+	rr := make([]*ResourceRole, len(a.roles))
 
-	copy(rr, a.resources)
+	i := 0
+	for _, r := range a.roles {
+		rr[i] = r
+
+		i++
+	}
 
 	return rr
 }
 
 // Properties implements an data.PropertyOwner interface and returns
 // copy of the Activity properties.
-func (a *Activity) Properties() []data.Property {
-	pp := make([]data.Property, 0, len(a.properties))
+func (a *Activity) Properties() []*data.Property {
+	pp := make([]*data.Property, len(a.properties))
 
-	return append(pp, a.properties...)
+	i := 0
+	for _, p := range a.properties {
+		pp[i] = p
+
+		i++
+	}
+
+	return pp
 }
 
 // SetDefaultFlow sets default flow from the Activity.

@@ -24,20 +24,22 @@ type (
 		name             string
 		compensation     bool
 		loop             *LoopCharacteristics
-		resources        []*ResourceRole
-		props            []*data.Property
+		roles            map[string]*ResourceRole
+		props            map[string]*data.Property
 		startQ, complQ   int
 		baseOpts         []options.Option
 		dataAssociations map[data.Direction][]*data.Association
 		parameters       map[data.Direction][]*data.Parameter
 		sets             map[data.Direction][]*Set
-		withoutParms     bool
+		withoutParams    bool
 	}
 
 	activityOption func(cfg *activityConfig) error
 )
 
-// Apply implements options.Option interface for the activityOption.
+// --------------------- options.Option interface ------------------------------
+//
+// Apply converts activityOption into options.Option.
 func (ao activityOption) Apply(cfg options.Configurator) error {
 	if ac, ok := cfg.(*activityConfig); ok {
 		return ao(ac)
@@ -49,14 +51,49 @@ func (ao activityOption) Apply(cfg options.Configurator) error {
 		errs.D("cfg_type", reflect.TypeOf(cfg).String()))
 }
 
-// Validate implements options.Configurator interface for the activityConfig.
+// ------------------ options.Configurator interface ---------------------------
+//
+// Validate validates activityConfig fields.
 func (ac *activityConfig) Validate() error {
-	ac.name = trim(ac.name)
 	if err := checkStr(
 		ac.name,
 		"Activity name couldn't be empty"); err != nil {
 		return err
 	}
+
+	return nil
+}
+
+// ------------------- RoleConfigurator interface ------------------------------
+//
+// AddRole adds single non-empty unique ResourceRole into activityConfig.
+// if activityConfig already has the ResourceRole with the same name,
+// it will be overwritten.
+func (ac *activityConfig) AddRole(r *ResourceRole) error {
+	if r == nil {
+		return errs.New(
+			errs.M("role couldn't be empty"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	ac.roles[r.name] = r
+
+	return nil
+}
+
+// --------------- data.PropertyConfigurator interface -------------------------
+//
+// AddProperty adds non-empyt property into the activityConfig.
+// if the activityConfig already has the property with the same name it
+// will be overwritten.
+func (ac *activityConfig) AddProperty(p *data.Property) error {
+	if p == nil {
+		return errs.New(
+			errs.M("property couldn't be empty"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	ac.props[p.Name()] = p
 
 	return nil
 }
@@ -84,8 +121,8 @@ func (ac *activityConfig) newActivity() (*Activity, error) {
 	a := Activity{
 		Node:               *n,
 		isForCompensation:  ac.compensation,
-		resources:          loadPSlice(ac.resources),
-		properties:         loadPSlice(ac.props),
+		roles:              ac.roles,
+		properties:         ac.props,
 		startQuantity:      ac.startQ,
 		completionQuantity: ac.complQ,
 		boundaryEvents:     []flow.Event{},
@@ -113,7 +150,7 @@ func createIOSpecs(ac *activityConfig) (*data.InputOutputSpecification, error) {
 		return nil, err
 	}
 
-	if ac.withoutParms {
+	if ac.withoutParams {
 		for _, d := range []data.Direction{data.Input, data.Output} {
 			s, err := data.NewSet("default_" + strings.ToLower(string(d)))
 			if err != nil {
@@ -198,58 +235,6 @@ func WithLoop(lc *LoopCharacteristics) activityOption {
 		}
 
 		cfg.loop = lc
-
-		return nil
-	}
-
-	return activityOption(f)
-}
-
-// WithProperties adds properties to the activityConfig.
-// Duplicat properties (by Id) are ignored.
-func WithProperties(props ...*data.Property) activityOption {
-	f := func(cfg *activityConfig) error {
-		for _, p := range props {
-			if p != nil {
-				found := false
-				for _, cp := range cfg.props {
-					if cp.Id() == p.Id() {
-						found = true
-
-						break
-					}
-				}
-
-				if !found {
-					cfg.props = append(cfg.props, p)
-				}
-			}
-		}
-
-		return nil
-	}
-
-	return activityOption(f)
-}
-
-// WithResources adds unique non-nil resources into the activityConfig.
-func WithRoles(ress ...*ResourceRole) activityOption {
-	f := func(cfg *activityConfig) error {
-		for _, r := range ress {
-			if r != nil {
-				found := false
-				for _, cr := range cfg.resources {
-					if cr.Id() == r.Id() {
-						found = true
-						break
-					}
-				}
-
-				if !found {
-					cfg.resources = append(cfg.resources, r)
-				}
-			}
-		}
 
 		return nil
 	}
@@ -392,7 +377,7 @@ func WithSet(
 // parameters.
 func WithoutParams() activityOption {
 	f := func(cfg *activityConfig) error {
-		cfg.withoutParms = true
+		cfg.withoutParams = true
 
 		return nil
 	}

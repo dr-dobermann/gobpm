@@ -37,7 +37,7 @@ func TestActivity(t *testing.T) {
 				activities.WithCompletionQuantity(5),
 				activities.WithStartQuantity(2),
 				activities.WithLoop(&activities.LoopCharacteristics{}),
-				activities.WithProperties(prop, prop),
+				data.WithProperties(prop, prop),
 				activities.WithRoles(rRole, rRole),
 				foundation.WithId("test id"),
 				activities.WithoutParams())
@@ -62,7 +62,7 @@ func TestActivity(t *testing.T) {
 			require.Equal(t, flow.ActivityNode, a.NodeType())
 
 			require.NoError(t, a.AcceptIncomingFlow(nil))
-			require.NoError(t, a.ProvideOutgoingFlow(nil))
+			require.NoError(t, a.SuportOutgoingFlow(nil))
 
 			require.NoError(t, a.SetDefaultFlow(""))
 			require.Error(t, a.SetDefaultFlow("wrong_flow"))
