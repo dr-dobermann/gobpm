@@ -15,7 +15,7 @@ type (
 
 	endConfig struct {
 		name       string
-		props      []data.Property
+		props      map[string]*data.Property
 		baseOpts   []options.Option
 		defs       []Definition
 		dataInputs map[string]*data.Parameter
@@ -23,23 +23,66 @@ type (
 	}
 )
 
+// -------------- eventConfig interface ----------------------------------------
+
+// eventType implements eventConfig interface.
+func (ec *endConfig) eventType() eventConfigType {
+	return throwEventConfig
+}
+
+// -------------------- options.Option interface -------------------------------
+
 // Apply implements options.Option interface for endOption.
 func (eo endOption) Apply(cfg options.Configurator) error {
 	if ec, ok := cfg.(*endConfig); ok {
 		return eo(ec)
 	}
 
-	return &errs.ApplicationError{
-		Message: "not an endConfig",
-		Classes: []string{
-			errorClass,
-			errs.TypeCastingError,
-		},
-		Details: map[string]string{
-			"cast_from": reflect.TypeOf(cfg).Name(),
-		},
-	}
+	return errs.New(
+		errs.M("not an endConfig: %s", reflect.TypeOf(cfg).String()),
+		errs.C(errorClass, errs.TypeCastingError))
 }
+
+// ------------------------ options.Configurator interface ---------------------
+
+// Validate checks if endConfig is consistent and implements
+// options.Confugurator interface.
+func (ec *endConfig) Validate() error {
+	ers := []error{}
+
+	// check event definitions to comply with StartEvent triggers.
+	for _, d := range ec.defs {
+		if !endTriggers.Has(d.Type()) {
+			ers = append(ers,
+				fmt.Errorf("%q trigger isn't allowed for EndEvent",
+					d.Type()))
+		}
+	}
+
+	if len(ers) > 0 {
+		return errors.Join(ers...)
+	}
+
+	return nil
+}
+
+// ---------------- data.PropertyConfigurator interface ------------------------
+
+// AddProperty adds non-empty property in startConfig.
+// if there aleready exists the property with same id it will be overwritten.
+func (ec *endConfig) AddProperty(prop *data.Property) error {
+	if prop == nil {
+		return errs.New(
+			errs.M("property couldn't be empty"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	ec.props[prop.Id()] = prop
+
+	return nil
+}
+
+// -----------------------------------------------------------------------------
 
 // endEvent builds an EndEvent from the endConfig.
 func (ec *endConfig) endEvent() (*EndEvent, error) {
@@ -47,7 +90,7 @@ func (ec *endConfig) endEvent() (*EndEvent, error) {
 
 	te, err := newThrowEvent(
 		ec.name,
-		ec.props,
+		map2slice(ec.props),
 		ec.defs,
 		ec.baseOpts...)
 	if err != nil {
@@ -75,50 +118,15 @@ func (ec *endConfig) endEvent() (*EndEvent, error) {
 	}, nil
 }
 
-// eventType implements eventConfig interface.
-func (ec *endConfig) eventType() eventConfigType {
-	return throwEventConfig
-}
-
-// addProperty implements properyAdder for the endConfig.
-func (ec *endConfig) addProperty(prop *data.Property) {
-	ec.props = append(ec.props, *prop)
-}
-
-// Validate checks if endConfig is consistent and implements
-// options.Confugurator interface.
-func (ec *endConfig) Validate() error {
-	ers := []error{}
-
-	// check event definitions to comply with StartEvent triggers.
-	for _, d := range ec.defs {
-		if !endTriggers.Has(d.Type()) {
-			ers = append(ers,
-				fmt.Errorf("%q trigger isn't allowed for EndEvent",
-					d.Type()))
-		}
-	}
-
-	if len(ers) > 0 {
-		return errors.Join(ers...)
-	}
-
-	return nil
-}
-
 // WithTerminateTrigger adds TerminateEventDefinition into the endConfig.
 func WithTerminateTrigger(
 	ted *TerminateEventDefinition,
 ) options.Option {
 	f := func(cfg *endConfig) error {
 		if ted == nil {
-			return &errs.ApplicationError{
-				Message: "empty terminate definition isn't allowed",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter,
-				},
-			}
+			return errs.New(
+				errs.M("empty terminate definition isn't allowed"),
+				errs.C(errorClass, errs.InvalidParameter))
 		}
 
 		cfg.defs = append(cfg.defs, ted)
@@ -128,6 +136,8 @@ func WithTerminateTrigger(
 
 	return endOption(f)
 }
+
+// --------------------- eventOptions ------------------------------------------
 
 // setCancel implements cancelAdder interface.
 func (ec *endConfig) setCancel(ced *CancelEventDefinition) error {
@@ -169,12 +179,7 @@ func (ec *endConfig) setMessage(med *MessageEventDefinition) error {
 
 		iae, err := data.NewItemAwareElement(id, ds)
 		if err != nil {
-			return &errs.ApplicationError{
-				Err:     err,
-				Message: "couldn't create ItemAwareElement",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed}}
+			return err
 		}
 
 		di, err := data.NewParameter(
@@ -183,15 +188,7 @@ func (ec *endConfig) setMessage(med *MessageEventDefinition) error {
 				med.Message().Id()),
 			iae)
 		if err != nil {
-			return &errs.ApplicationError{
-				Err:     err,
-				Message: "couldn't create DataInput from Message",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed},
-				Details: map[string]string{
-					"msg_name": med.Message().Name()},
-			}
+			return err
 		}
 
 		ec.dataInputs[id.Id()] = di

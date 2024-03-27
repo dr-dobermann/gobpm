@@ -1,9 +1,6 @@
 package events
 
 import (
-	"strconv"
-
-	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -121,7 +118,7 @@ type Event struct {
 
 	// Modeler-defined properties MAY be added to an Event. These properties are
 	// contained within the Event.
-	properties []data.Property
+	properties []*data.Property
 
 	// DEV_NOTE: There is no difference for the developer where this definition
 	// are helded since either type of definition are external for the event.
@@ -154,56 +151,20 @@ type Event struct {
 // NewEvent creates a new Event and returns its pointer.
 func newEvent(
 	name string,
-	props []data.Property,
+	props []*data.Property,
 	defs []Definition,
 	baseOpts ...options.Option,
 ) (*Event, error) {
 	n, err := flow.NewNode(name, baseOpts...)
 	if err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "couldn't create flowNode",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed}}
+		return nil, err
 	}
 
 	e := Event{
 		Node:        *n,
-		properties:  make([]data.Property, len(props)),
-		definitions: make([]Definition, len(defs)),
+		properties:  append([]*data.Property{}, props...),
+		definitions: append([]Definition{}, defs...),
 		triggers:    *set.New[Trigger](),
-	}
-
-	if n := copy(e.properties, props); n != len(props) {
-		return nil, &errs.ApplicationError{
-			Err:     nil,
-			Message: "event properties copying failed",
-			Classes: []string{
-				errorClass,
-				errs.BulidingFailed,
-			},
-			Details: map[string]string{
-				"want": strconv.Itoa(len(props)),
-				"got":  strconv.Itoa(n),
-			},
-		}
-	}
-
-	if n := copy(e.definitions, defs); n != len(defs) {
-		return nil, &errs.ApplicationError{
-			Err:     nil,
-			Message: "event definiitons copying failed",
-			Classes: []string{
-				errorClass,
-				errs.BulidingFailed,
-			},
-			Details: map[string]string{
-				"want": strconv.Itoa(len(defs)),
-				"got":  strconv.Itoa(n),
-			},
-		}
 	}
 
 	for _, d := range e.definitions {
@@ -214,8 +175,8 @@ func newEvent(
 }
 
 // Properties returns a copy of the Event properties.
-func (e Event) Properties() []data.Property {
-	return append([]data.Property{}, e.properties...)
+func (e Event) Properties() []*data.Property {
+	return append([]*data.Property{}, e.properties...)
 }
 
 // Definiitons returns a list of event definitions.
@@ -280,7 +241,7 @@ type catchEvent struct {
 // NewCatchEvent creates a new catchEvent and returns its pointer.
 func newCatchEvent(
 	name string,
-	props []data.Property,
+	props []*data.Property,
 	defs []Definition,
 	parallel bool,
 	baseOpts ...options.Option,
@@ -326,7 +287,7 @@ type throwEvent struct {
 // NewThrowEvent creates a new throwEvent and returns its pointer.
 func newThrowEvent(
 	name string,
-	props []data.Property,
+	props []*data.Property,
 	defs []Definition,
 	baseOpts ...options.Option,
 ) (*throwEvent, error) {

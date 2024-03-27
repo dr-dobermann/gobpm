@@ -24,13 +24,9 @@ func (gf GenFunc) Generate() string {
 // SetGenerator sets user-defined Id generator.
 func SetGenerator(newGen IdGenerator) error {
 	if newGen == nil {
-		return &errs.ApplicationError{
-			Message: "generator couldn't be empty",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter,
-			},
-		}
+		return errs.New(
+			errs.M("generator couldn't be empty"),
+			errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	generator = newGen
@@ -43,7 +39,7 @@ func SetGenerator(newGen IdGenerator) error {
 func GenerateId() string {
 	if generator == nil {
 		if err := SetGenerator(newDefaultGenerator()); err != nil {
-			panic("default generator setup failed: " + err.Error())
+			errs.Panic("default generator setup failed: " + err.Error())
 		}
 	}
 

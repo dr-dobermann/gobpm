@@ -32,26 +32,14 @@ func NewMessageEventDefintion(
 ) (*MessageEventDefinition, error) {
 	if msg == nil {
 		return nil,
-			&errs.ApplicationError{
-				Message: "empty message isn't allowed",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter,
-				},
-			}
+			errs.New(
+				errs.M("empty message isn't allowed"),
+				errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	d, err := newDefinition(baseOpts...)
 	if err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "message event definition building error",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed,
-				},
-			}
+		return nil, err
 	}
 
 	return &MessageEventDefinition{
@@ -70,7 +58,7 @@ func MustMessageEventDefinition(
 ) *MessageEventDefinition {
 	med, err := NewMessageEventDefintion(msg, operation, baseOpts...)
 	if err != nil {
-		panic(err.Error())
+		errs.Panic(err)
 	}
 
 	return med

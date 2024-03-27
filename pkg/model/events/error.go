@@ -27,26 +27,14 @@ func NewErrorEventDefinition(
 ) (*ErrorEventDefinition, error) {
 	if cErr == nil {
 		return nil,
-			&errs.ApplicationError{
-				Message: "empty error object isn't allowed",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed,
-				},
-			}
+			errs.New(
+				errs.M("empty error object isn't allowed"),
+				errs.C(errorClass, errs.BulidingFailed))
 	}
 
 	d, err := newDefinition(baseOpts...)
 	if err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "error event definition building failed",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed,
-				},
-			}
+		return nil, err
 	}
 
 	return &ErrorEventDefinition{

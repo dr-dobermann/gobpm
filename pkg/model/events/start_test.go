@@ -71,7 +71,7 @@ func TestNewStartEvent(t *testing.T) {
 		func(t *testing.T) {
 			se, err := events.NewStartEvent(
 				"NoneTrigger",
-				events.WithProperty(prop),
+				data.WithProperties(prop),
 				foundation.WithId("none_trigger_start_event"))
 
 			require.NoError(t, err)

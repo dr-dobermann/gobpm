@@ -37,24 +37,14 @@ func NewEscalation(
 
 	if item == nil {
 		return nil,
-			&errs.ApplicationError{
-				Message: "empty itemDefiniiton isn' allowed",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter}}
+			errs.New(
+				errs.M("empty itemDefiniiton isn' allowed"),
+				errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	be, err := foundation.NewBaseElement(baseOpts...)
 	if err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "escalation creation error",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed,
-				},
-			}
+		return nil, err
 	}
 
 	return &Escalation{
@@ -102,22 +92,14 @@ func NewEscalationEventDefintion(
 ) (*EscalationEventDefinition, error) {
 	if escalation == nil {
 		return nil,
-			&errs.ApplicationError{
-				Message: "empty escalation isn't allowed",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter}}
+			errs.New(
+				errs.M("empty escalation isn't allowed"),
+				errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	d, err := newDefinition(baseOpts...)
 	if err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "escalation event definition building error",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed}}
+		return nil, err
 	}
 
 	return &EscalationEventDefinition{

@@ -6,7 +6,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
-const errorClass = "ARTIFACT_ERROR"
+// const errorClass = "ARTIFACT_ERROR"
 
 // BPMN provides modelers with the capability of showing additional information
 // about a Process that is not directly related to the Sequence Flows or Message
@@ -29,16 +29,9 @@ type Artifact struct {
 func NewArtifact(baseOpts ...options.Option) (*Artifact, error) {
 	be, err := foundation.NewBaseElement(baseOpts...)
 	if err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "couldn't create an artifact",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed,
-				},
-			}
+		return nil, err
 	}
+
 	return &Artifact{
 		BaseElement: *be,
 	}, nil
@@ -49,7 +42,7 @@ func NewArtifact(baseOpts ...options.Option) (*Artifact, error) {
 func MustArtifact(baseOpts ...options.Option) *Artifact {
 	ar, err := NewArtifact(baseOpts...)
 	if err != nil {
-		panic(err)
+		errs.Panic(err)
 	}
 
 	return ar
@@ -75,18 +68,7 @@ func NewGroup(
 ) (*Group, error) {
 	be, err := foundation.NewBaseElement(baseOpts...)
 	if err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "couldn't create group",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed,
-				},
-				Details: map[string]string{
-					"category_name": categoryName,
-				},
-			}
+		return nil, err
 	}
 
 	g := Group{
@@ -108,7 +90,7 @@ func MustGroup(
 ) *Group {
 	g, err := NewGroup(categoryName, baseOpts...)
 	if err != nil {
-		panic(err)
+		errs.Panic(err)
 	}
 
 	return g

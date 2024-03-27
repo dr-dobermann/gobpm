@@ -29,26 +29,14 @@ func NewConditionalEventDefinition(
 ) (*ConditionalEventDefinition, error) {
 	if condition == nil {
 		return nil,
-			&errs.ApplicationError{
-				Message: "condition couldn't be empty",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter,
-				},
-			}
+			errs.New(
+				errs.M("condition couldn't be empty"),
+				errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	d, err := newDefinition(baseOpts...)
 	if err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "conditional event definition building error",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed,
-				},
-			}
+		return nil, err
 	}
 
 	return &ConditionalEventDefinition{
@@ -65,7 +53,7 @@ func MustConditionalEventDefinition(
 ) *ConditionalEventDefinition {
 	ced, err := NewConditionalEventDefinition(condition, baseOpts...)
 	if err != nil {
-		panic(err.Error())
+		errs.Panic(err.Error())
 	}
 
 	return ced

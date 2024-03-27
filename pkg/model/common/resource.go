@@ -72,37 +72,19 @@ func NewResourceParameter(
 	if err := checkStr(
 		name,
 		"ResourceParameter should have a name"); err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "ResourceParameter creation failed",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed}}
+		return nil, err
 	}
 
 	pType = trim(pType)
 	if err := checkStr(
 		pType,
 		"Type should be set for ResourceParameter"); err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "ResourceParameter creation failed",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed}}
+		return nil, err
 	}
 
 	be, err := foundation.NewBaseElement(baseOpts...)
 	if err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "ResourceParameter creation failed",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed}}
+		return nil, err
 	}
 
 	return &ResourceParameter{
@@ -122,7 +104,7 @@ func MustResourcParameter(
 ) *ResourceParameter {
 	rp, err := NewResourceParameter(name, pType, required, baseOpts...)
 	if err != nil {
-		panic(err)
+		errs.Panic(err)
 	}
 
 	return rp

@@ -38,13 +38,10 @@ func NewDataState(
 ) (*DataState, error) {
 	name = strings.Trim(name, " ")
 	if name == "" {
-		return nil, &errs.ApplicationError{
-			Message: "data state shouldn't be empty",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter,
-			},
-		}
+		return nil,
+			errs.New(
+				errs.M("data state should have non-empty name"),
+				errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	be, err := foundation.NewBaseElement(baseOpts...)
@@ -66,7 +63,7 @@ func MustDataState(
 ) *DataState {
 	ds, err := NewDataState(name, baseOpts...)
 	if err != nil {
-		panic("DataState creation failed: " + err.Error())
+		errs.Panic("DataState creation failed: " + err.Error())
 	}
 
 	return ds
@@ -92,14 +89,7 @@ func CreateDefaultStates() error {
 	for sn := range dss {
 		ds, err := NewDataState(sn)
 		if err != nil {
-			return &errs.ApplicationError{
-				Err:     err,
-				Message: "couldn't create the default DataState",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed},
-				Details: map[string]string{
-					"data_state_name": sn}}
+			return err
 		}
 
 		dss[sn] = ds

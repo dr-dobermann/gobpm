@@ -1,10 +1,8 @@
 package values
 
 import (
-	"fmt"
 	"io"
 	"reflect"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -50,7 +48,7 @@ func (a *Array[T]) Get() any {
 	defer a.lock.Unlock()
 
 	if a.index < 0 {
-		panic("collection is empty")
+		errs.Panic("collection is empty")
 	}
 
 	return a.elements[a.index]
@@ -75,13 +73,9 @@ func (a *Array[T]) Update(value any) error {
 	defer a.lock.Unlock()
 
 	if a.index < 0 {
-		return &errs.ApplicationError{
-			Message: "collection is empty",
-			Classes: []string{
-				errorClass,
-				errs.EmptyCollectionError,
-			},
-		}
+		return errs.New(
+			errs.M("collection is empty"),
+			errs.C(errorClass, errs.EmptyCollectionError))
 	}
 
 	v, err := checkValue[T](value)
@@ -335,16 +329,10 @@ func checkIndex[T any](index int, a *Array[T]) error {
 	}
 
 	if index < 0 || index > len(a.elements)-1 {
-		return &errs.ApplicationError{
-			Message: fmt.Sprintf("index %d is out of range", index),
-			Classes: []string{
-				errorClass,
-				errs.OutOfRangeError,
-			},
-			Details: map[string]string{
-				"max_index": strconv.Itoa(len(a.elements) - 1),
-			},
-		}
+		return errs.New(
+			errs.M("index %d is out of range (max index: %d)",
+				index, len(a.elements)-1),
+			errs.C(errorClass, errs.OutOfRangeError))
 	}
 
 	return nil
@@ -353,13 +341,9 @@ func checkIndex[T any](index int, a *Array[T]) error {
 func checkForEmpty[T any](a *Array[T]) error {
 	// check if collection is empty
 	if a.index < 0 {
-		return &errs.ApplicationError{
-			Message: "collection is empty",
-			Classes: []string{
-				errorClass,
-				errs.EmptyCollectionError,
-			},
-		}
+		return errs.New(
+			errs.M("collection is empty"),
+			errs.C(errorClass, errs.EmptyCollectionError))
 	}
 
 	return nil
@@ -372,15 +356,10 @@ func checkValue[T any](value any) (T, error) {
 	if !ok {
 		var v T
 		return v,
-			&errs.ApplicationError{
-				Message: fmt.Sprintf(
-					"value ( %v ) isn't a value of type %q", value,
-					reflect.TypeOf(v).Name()),
-				Classes: []string{
-					errorClass,
-					errs.TypeCastingError,
-				},
-			}
+			errs.New(
+				errs.M("value (%v) isn't a value of type %q", value,
+					reflect.TypeOf(v).String()),
+				errs.C(errorClass, errs.TypeCastingError))
 	}
 
 	return v, nil
@@ -390,42 +369,27 @@ func checkValue[T any](value any) (T, error) {
 // data.Updater interface
 
 // Register registers single Value's updating event callback function.
-// It doesn't check for duplication and just changed the previously made
-// registration.
 func (a *Array[T]) Register(regName string, updFn data.UpdateCallback) error {
 	if updFn == nil {
-		return &errs.ApplicationError{
-			Message: "empty updater function",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter,
-			},
-		}
+		return errs.New(
+			errs.M("empty update function"),
+			errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	regName = strings.Trim(regName, " ")
 	if regName == "" {
-		return &errs.ApplicationError{
-			Message: "registration name couldn't be empty",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter,
-			},
-			Details: map[string]string{},
-		}
+		return errs.New(
+			errs.M("registration name couldn't be empty"),
+			errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	a.lock.Lock()
 	defer a.lock.Unlock()
 
 	if _, ok := a.evtUpdaters[regName]; ok {
-		return &errs.ApplicationError{
-			Message: "registration " + regName + " alreday exists",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter,
-			},
-		}
+		return errs.New(
+			errs.M("registration "+regName+" alreday exists"),
+			errs.C(errorClass, errs.DuplicateObject))
 	}
 
 	a.evtUpdaters[regName] = updFn

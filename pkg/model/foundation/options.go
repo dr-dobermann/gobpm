@@ -30,16 +30,9 @@ func (bo BaseOption) Apply(cfg options.Configurator) error {
 		return bo(bc)
 	}
 
-	return &errs.ApplicationError{
-		Message: "not BaseConfig",
-		Classes: []string{
-			errorClass,
-			errs.TypeCastingError,
-		},
-		Details: map[string]string{
-			"cast_from": reflect.TypeOf(cfg).String(),
-		},
-	}
+	return errs.New(
+		errs.M("not BaseConfig: %s", reflect.TypeOf(cfg).String()),
+		errs.C(errorClass, errs.TypeCastingError))
 }
 
 // WithId updates id field in BaseConfig.

@@ -17,6 +17,17 @@ const (
 	InformationKind ItemKind = "Information"
 )
 
+// Validate checks ic value to comply with ItemKind restriction.
+func (ic ItemKind) Validate() error {
+	if ic != PhysicalKind && ic != InformationKind {
+		return errs.New(
+			errs.M("invalid ItemKind: %s", ic),
+			errs.C(errorClass, errs.TypeCastingError))
+	}
+
+	return nil
+}
+
 // BPMN elements, such as DataObjects and Messages, represent items that are
 // manipulated, transferred, transformed, or stored during Process flows.
 // These items can be either physical items, such as the mechanical part of a
@@ -85,16 +96,9 @@ func NewItemDefinition(
 
 		default:
 			return nil,
-				&errs.ApplicationError{
-					Message: "invalid option type (only BaseOption and itemOption expected)",
-					Classes: []string{
-						errorClass,
-						errs.InvalidObject,
-					},
-					Details: map[string]string{
-						"wrong_type": reflect.TypeOf(o).String(),
-					},
-				}
+				errs.New(
+					errs.M("invalid option type: %s", reflect.TypeOf(o).String()),
+					errs.C(errorClass, errs.InvalidObject))
 		}
 	}
 
@@ -106,7 +110,7 @@ func NewItemDefinition(
 func MustItemDefinition(value Value, opts ...options.Option) *ItemDefinition {
 	iDef, err := NewItemDefinition(value, opts...)
 	if err != nil {
-		panic(err.Error())
+		errs.Panic(err)
 	}
 
 	return iDef
@@ -165,26 +169,19 @@ func NewItemAwareElement(
 ) (*ItemAwareElement, error) {
 	if item == nil {
 		return nil,
-			&errs.ApplicationError{
-				Message: "item should be provided for ItemAwareElement",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter,
-				},
-			}
+			errs.New(
+				errs.M("empty item isn't allowed"),
+				errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	if state == nil {
 		if UnavailableDataState == nil {
 			return nil,
-				&errs.ApplicationError{
-					Message: "default DataSet is not set.\n" +
-						"if you need use default DataSet, run data.CreateDefaultStates",
-					Classes: []string{
-						errorClass,
-						errs.BulidingFailed,
-					},
-				}
+				errs.New(
+					errs.M("default DataStates are not set.\n"+
+						"if you need use default DataStates, "+
+						"run data.CreateDefaultStates"),
+					errs.C(errorClass, errs.BulidingFailed))
 		}
 
 		state = UnavailableDataState

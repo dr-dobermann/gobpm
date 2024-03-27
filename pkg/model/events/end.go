@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -35,7 +34,7 @@ func NewEndEvent(
 ) (*EndEvent, error) {
 	ec := endConfig{
 		name:       name,
-		props:      []data.Property{},
+		props:      map[string]*data.Property{},
 		baseOpts:   []options.Option{},
 		defs:       []Definition{},
 		dataInputs: map[string]*data.Parameter{},
@@ -49,12 +48,7 @@ func NewEndEvent(
 		case foundation.BaseOption:
 			ec.baseOpts = append(ec.baseOpts, opt)
 
-		case endOption:
-			if err := so.Apply(&ec); err != nil {
-				ee = append(ee, err)
-			}
-
-		case eventOption:
+		case endOption, eventOption, data.PropertyOption:
 			if err := so.Apply(&ec); err != nil {
 				ee = append(ee, err)
 			}
@@ -70,14 +64,7 @@ func NewEndEvent(
 	}
 
 	if len(ee) > 0 {
-		return nil,
-			&errs.ApplicationError{
-				Err:     errors.Join(ee...),
-				Message: "start event configuration errors",
-				Classes: []string{
-					errorClass,
-				},
-			}
+		return nil, errors.Join(ee...)
 	}
 
 	return ec.endEvent()

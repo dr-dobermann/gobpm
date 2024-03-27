@@ -30,27 +30,14 @@ func NewMessage(
 
 	if name == "" {
 		return nil,
-			&errs.ApplicationError{
-				Message: "message should have non-empty name",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter,
-				},
-				Details: map[string]string{},
-			}
+			errs.New(
+				errs.M("message should have non-empty name"),
+				errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	be, err := foundation.NewBaseElement(baseOpts...)
 	if err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "message creation error",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed,
-				},
-			}
+		return nil, err
 	}
 
 	return &Message{
@@ -69,7 +56,7 @@ func MustMessage(
 ) *Message {
 	m, err := NewMessage(name, item, baseOpts...)
 	if err != nil {
-		panic(err.Error())
+		errs.Panic(err)
 	}
 
 	return m

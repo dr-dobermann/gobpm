@@ -46,11 +46,9 @@ func NewServiceTask(
 
 	if operation == nil {
 		return nil,
-			&errs.ApplicationError{
-				Message: "operation should be provided for ServiceTask",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed}}
+			errs.New(
+				errs.M("operation should be provided for ServiceTask"),
+				errs.C(errorClass, errs.BulidingFailed))
 	}
 
 	t, err := NewTask(name, taskOpts...)

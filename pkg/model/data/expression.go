@@ -1,6 +1,7 @@
 package data
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -37,7 +38,7 @@ func NewExpression(baseOpts ...options.Option) (*Expression, error) {
 func MustExpression(baseOpts ...options.Option) *Expression {
 	e, err := NewExpression(baseOpts...)
 	if err != nil {
-		panic(err.Error())
+		errs.Panic(err)
 	}
 
 	return e

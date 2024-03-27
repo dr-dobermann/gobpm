@@ -50,37 +50,23 @@ func NewTimerEventDefinition(
 ) (*TimerEventDefinition, error) {
 	if tDate == nil && tCycle == nil && tDuration == nil {
 		return nil,
-			&errs.ApplicationError{
-				Message: "all timer expression couldn't be empty",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter}}
+			errs.New(
+				errs.M("all timer expression couldn't be empty"),
+				errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	if (tDate != nil && (tCycle != nil || tDuration != nil)) ||
 		(tCycle != nil && tDuration != nil) {
 
 		return nil,
-			&errs.ApplicationError{
-				Message: "doesn't allow to define Timer Data or Cycle or Duration simultaneously",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter,
-				},
-			}
+			errs.New(
+				errs.M("doesn't allow to define Timer Data or Cycle or Duration simultaneously"),
+				errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	d, err := newDefinition(baseOpts...)
 	if err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "message event definition building error",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed,
-				},
-			}
+		return nil, err
 	}
 
 	return &TimerEventDefinition{
@@ -99,7 +85,7 @@ func MustTimerEventDefinition(
 ) *TimerEventDefinition {
 	ted, err := NewTimerEventDefinition(tDate, tCycle, tDuration, baseOpts...)
 	if err != nil {
-		panic(err.Error())
+		errs.Panic(err.Error())
 	}
 
 	return ted

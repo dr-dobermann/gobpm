@@ -67,24 +67,14 @@ func NewOperation(
 	name = strings.Trim(name, " ")
 	if name == "" {
 		return nil,
-			&errs.ApplicationError{
-				Message: "empty name isn't allowed for Operation",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter},
-			}
+			errs.New(
+				errs.M("operation should have non-empty name"),
+				errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	be, err := foundation.NewBaseElement(baseOpts...)
 	if err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "operation building failed",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed},
-			}
+		return nil, err
 	}
 
 	el := []string{}
