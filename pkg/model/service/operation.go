@@ -101,6 +101,22 @@ func NewOperation(
 		implementation: executor}, nil
 }
 
+// MustOperation creates a new Operation and returns its pointer on succes or
+// panics on failure.
+func MustOperation(
+	name string,
+	inMsg, outMsg *common.Message,
+	executor Executor,
+	baseOpts ...options.Option,
+) *Operation {
+	o, err := NewOperation(name, inMsg, outMsg, executor)
+	if err != nil {
+		errs.Panic(err)
+	}
+
+	return o
+}
+
 // Name returns the name of the Operation.
 func (o *Operation) Name() string {
 	return o.name

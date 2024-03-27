@@ -31,6 +31,8 @@ func (po PropertyOption) Apply(cfg options.Configurator) error {
 		errs.D("config_type", reflect.TypeOf(cfg).String()))
 }
 
+// -----------------------------------------------------------------------------
+
 // WithProperties adds properties to the activityConfig.
 // Duplicat properties (by Id) are ignored.
 func WithProperties(props ...*Property) PropertyOption {

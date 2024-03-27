@@ -9,11 +9,38 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
+type ElementType string
+
+const (
+	NodeElement         ElementType = "Node"
+	SequenceFlowElement ElementType = "SequenceFlow"
+)
+
+// Validate checks if t belongs to ElementType.
+func (t ElementType) Validate() error {
+	if t != NodeElement && t != SequenceFlowElement {
+		return errs.New(
+			errs.M("invalid ElementType: %q", t),
+			errs.C(errorClass, errs.TypeCastingError))
+	}
+
+	return nil
+}
+
+// FlowElement is a common interface for all Element's childs.
+type FlowElement interface {
+	// ElementType returns type of the element.
+	ElementType() ElementType
+
+	// GetElement returns underlaying Element.
+	GetElement() *Element
+}
+
 // Container interface provide ability for container to
 // add a new element into itself.
 type Container interface {
 	// Add adds the e Element into itself or returns error on failure.
-	Add(e *Element) error
+	Add(ElementType) error
 }
 
 // *****************************************************************************
@@ -59,16 +86,6 @@ func NewElement(
 		nil
 }
 
-// MustElement returns pointer to a new Element or panics on error.
-func MustElement(name string, baseOpts ...options.Option) *Element {
-	e, err := NewElement(name, baseOpts...)
-	if err != nil {
-		errs.Panic(err)
-	}
-
-	return e
-}
-
 // Name returns the Element name.
 func (fe *Element) Name() string {
 	return fe.name
@@ -97,21 +114,24 @@ type ElementsContainer struct {
 }
 
 // --------------------- Container interface -----------------------------------
+
 // Add adds non-empty unique Element e to the ElementContainer c.
 // if e is empty, c already has e, c doesn't properly created or e belongs to
 // other container, error occurred.
-func (c *ElementsContainer) Add(e *Element) error {
+func (c *ElementsContainer) Add(fe FlowElement) error {
 	if c.elements == nil {
 		return errs.New(
 			errs.M("containter doesn't created properly (use NewContainer)"),
 			errs.C(errorClass, errs.InvalidObject))
 	}
 
-	if e == nil {
+	if fe == nil {
 		return errs.New(
 			errs.M("element couldn't be empty"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
+
+	e := fe.GetElement()
 
 	if e.container != nil {
 		if e.container == c {
@@ -151,7 +171,7 @@ func NewContainer(
 
 // AddElements adds the new element to the container.
 // It adds only non-nil elements and returns the counter of added elements.
-func (fec *ElementsContainer) AddElements(fee ...*Element) (int, error) {
+func (fec *ElementsContainer) AddElements(fee ...FlowElement) (int, error) {
 	if fec.elements == nil {
 		return 0, errs.New(
 			errs.M("containter doesn't created properly (use NewContainer)"),

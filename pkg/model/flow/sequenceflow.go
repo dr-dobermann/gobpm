@@ -2,10 +2,11 @@ package flow
 
 import (
 	"errors"
-	"fmt"
+	"reflect"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -16,6 +17,11 @@ type (
 		FlowNode
 
 		SuportOutgoingFlow(sf *SequenceFlow) error
+
+		Link(
+			trg SequenceTarget,
+			flowOptions ...options.Option,
+		) (*SequenceFlow, error)
 	}
 
 	// SequenceTarget impmemented by the Nodes which accepts incomng sequence flows.
@@ -75,73 +81,81 @@ type SequenceFlow struct {
 	// isImmediate bool
 }
 
-// NewSequenceFlow creates a new SequenceFlow which connects src and trg
+// ------------------------- FlowElement interface -----------------------------
+
+// ElementType returns element type of the SequenceFlow.
+func (f *SequenceFlow) ElementType() ElementType {
+	return SequenceFlowElement
+}
+
+// GetElement returns underlaying Element.
+func (f *SequenceFlow) GetElement() *Element {
+	return &f.Element
+}
+
+// -----------------------------------------------------------------------------
+
+// newSequenceFlow creates a new SequenceFlow which connects src and trg
 // FlowNodes. On success it returns the new SequenceFlow pointer.
-// In case of failrue it returns error.
+// In case of failrue it returns an error.
 func NewSequenceFlow(
-	name string,
 	src SequenceSource,
 	trg SequenceTarget,
-	condition *data.Expression,
-	baseOpts ...options.Option,
+	opts ...options.Option,
 ) (*SequenceFlow, error) {
-	if src == nil || trg == nil {
-		return nil,
-			errs.New(
-				errs.M("sourca and target FlowNodes couldn't be empty"),
-				errs.C(errorClass, errs.InvalidParameter, errs.EmptyNotAllowed))
+	fc := sflowConfig{
+		name:     "",
+		src:      src,
+		trg:      trg,
+		baseOpts: []options.Option{},
 	}
 
-	e, err := NewElement(name, baseOpts...)
+	ee := []error{}
+
+	for _, opt := range opts {
+		switch o := opt.(type) {
+		case options.NameOption, sflowOption:
+			if err := o.Apply(&fc); err != nil {
+				ee = append(ee, err)
+			}
+
+		case foundation.BaseOption:
+			fc.baseOpts = append(fc.baseOpts, o)
+
+		default:
+			ee = append(ee,
+				errs.New(
+					errs.M("invalid option for SequenceFlow: %s",
+						reflect.TypeOf(o).String()),
+					errs.C(errorClass, errs.TypeCastingError)))
+		}
+	}
+
+	if len(ee) != 0 {
+		return nil, errors.Join(ee...)
+	}
+
+	sf, err := fc.newSequenceFlow()
 	if err != nil {
 		return nil, err
 	}
 
-	sf := SequenceFlow{
-		Element:             *e,
-		source:              src,
-		target:              trg,
-		conditionExpression: condition,
-	}
-
-	if err := checkConnections(&sf, src, trg); err != nil {
+	if err := connect(sf, src, trg); err != nil {
 		return nil, err
 	}
 
-	// join source and targed with flow
-	if err := src.GetNode().addFlow(&sf, data.Output); err != nil {
-		return nil, err
-	}
-
-	if err := trg.GetNode().addFlow(&sf, data.Input); err != nil {
-		if errd := src.GetNode().removeFlow(&sf, data.Output); errd != nil {
-			return nil, errors.Join(errd, err)
-		}
-
-		return nil, err
-	}
-
-	return &sf, nil
+	return sf, nil
 }
 
 // checkConnections tests if it possible to connect src with trg via sf.
 // If any error found, then error returned.
-func checkConnections(sf *SequenceFlow, src SequenceSource, trg SequenceTarget) error {
-	// sequence, source and target should belong to the same container
-	// or has no container for all of them.
-	if (sf.container != nil &&
-		(src.GetNode().container != sf.container ||
-			trg.GetNode().container != sf.container)) ||
-		(sf.container == nil &&
-			(src.GetNode().container != nil ||
-				trg.GetNode().container != nil)) {
-		return errs.New(
-			errs.M("sequence flow, source and target should belong to the "+
-				"same or nil container"),
-			errs.C(errorClass, errs.BulidingFailed),
-			errs.D("flow_container", fmt.Sprint(sf.container)),
-			errs.D("source_container", fmt.Sprint(src.GetNode().container)),
-			errs.D("target_container", fmt.Sprint(trg.GetNode().container)))
+func checkConnections(
+	sf *SequenceFlow,
+	src SequenceSource,
+	trg SequenceTarget,
+) error {
+	if err := sf.Validate(); err != nil {
+		return err
 	}
 
 	// check possibility to use sf on source and target ends of the flow
@@ -154,6 +168,69 @@ func checkConnections(sf *SequenceFlow, src SequenceSource, trg SequenceTarget) 
 	}
 
 	return nil
+}
+
+// connect check connection and, on succes, connects src with trg through sf.
+func connect(sf *SequenceFlow, src SequenceSource, trg SequenceTarget) error {
+	if err := checkConnections(sf, src, trg); err != nil {
+		return err
+	}
+
+	// join source and targed with flow
+	if err := src.GetNode().addFlow(sf, data.Output); err != nil {
+		return err
+	}
+
+	if err := trg.GetNode().addFlow(sf, data.Input); err != nil {
+		if errd := src.GetNode().removeFlow(sf, data.Output); errd != nil {
+			return errors.Join(errd, err)
+		}
+
+		return err
+	}
+
+	return nil
+}
+
+// Validate checks if the sequence flow and its ends belongs to the same
+// container.
+func (f *SequenceFlow) Validate() error {
+	// sequence, source and target should belong to the same container
+	// or has no container for all of them.
+	cntr := f.container
+
+	// ignore empty flow container if its not set yet.
+	if cntr == nil {
+		cntr = f.source.GetNode().container
+	}
+
+	if (cntr != nil &&
+		(f.source.GetNode().container != cntr ||
+			f.target.GetNode().container != cntr)) ||
+		(cntr == nil &&
+			(f.source.GetNode().container != nil ||
+				f.target.GetNode().container != nil)) {
+		return errs.New(
+			errs.M("sequence flow, source and target should belong to the "+
+				"same or nil container"),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.D("flow_container", getContainerId(cntr)),
+			errs.D("source_container",
+				getContainerId(f.source.GetNode().container)),
+			errs.D("target_container",
+				getContainerId(f.target.GetNode().container)))
+	}
+
+	return nil
+}
+
+// getContainerId returns the container id if its not nil.
+func getContainerId(c *ElementsContainer) string {
+	if c == nil {
+		return "<nil>"
+	}
+
+	return c.Id()
 }
 
 // Source returns the Source of the SequenceFlow.
