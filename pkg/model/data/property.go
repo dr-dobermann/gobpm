@@ -1,6 +1,9 @@
 package data
 
-import "github.com/dr-dobermann/gobpm/pkg/model/options"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
+)
 
 // PropertyOwner is an interface of objects which could have Properties.
 type PropertyOwner interface {
@@ -39,6 +42,22 @@ func NewProperty(
 			ItemAwareElement: *iae,
 			name:             name},
 		nil
+}
+
+// MustProperty creates a new Property and returns its pointer on success or
+// panics on failure.
+func MustProperty(
+	name string,
+	item *ItemDefinition,
+	state *DataState,
+	baseOpts ...options.Option,
+) *Property {
+	p, err := NewProperty(name, item, state)
+	if err != nil {
+		errs.Panic(err)
+	}
+
+	return p
 }
 
 // Name returns the Property name.
