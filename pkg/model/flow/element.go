@@ -1,10 +1,47 @@
 package flow
 
 import (
+	"errors"
+	"strings"
+
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
+
+type ElementType string
+
+const (
+	NodeElement         ElementType = "Node"
+	SequenceFlowElement ElementType = "SequenceFlow"
+)
+
+// Validate checks if t belongs to ElementType.
+func (t ElementType) Validate() error {
+	if t != NodeElement && t != SequenceFlowElement {
+		return errs.New(
+			errs.M("invalid ElementType: %q", t),
+			errs.C(errorClass, errs.TypeCastingError))
+	}
+
+	return nil
+}
+
+// FlowElement is a common interface for all Element's childs.
+type FlowElement interface {
+	// ElementType returns type of the element.
+	ElementType() ElementType
+
+	// GetElement returns underlaying Element.
+	GetElement() *Element
+}
+
+// Container interface provide ability for container to
+// add a new element into itself.
+type Container interface {
+	// Add adds the e Element into itself or returns error on failure.
+	Add(ElementType) error
+}
 
 // *****************************************************************************
 
@@ -44,18 +81,9 @@ func NewElement(
 
 	return &Element{
 			BaseElement: *be,
-			name:        name},
+			name:        name,
+		},
 		nil
-}
-
-// MustElement returns pointer to a new Element or panics on error.
-func MustElement(name string, baseOpts ...options.Option) *Element {
-	e, err := NewElement(name, baseOpts...)
-	if err != nil {
-		errs.Panic(err)
-	}
-
-	return e
 }
 
 // Name returns the Element name.
@@ -85,6 +113,45 @@ type ElementsContainer struct {
 	elements map[string]*Element
 }
 
+// --------------------- Container interface -----------------------------------
+
+// Add adds non-empty unique Element e to the ElementContainer c.
+// if e is empty, c already has e, c doesn't properly created or e belongs to
+// other container, error occurred.
+func (c *ElementsContainer) Add(fe FlowElement) error {
+	if c.elements == nil {
+		return errs.New(
+			errs.M("containter doesn't created properly (use NewContainer)"),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	if fe == nil {
+		return errs.New(
+			errs.M("element couldn't be empty"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	e := fe.GetElement()
+
+	if e.container != nil {
+		if e.container == c {
+			return errs.New(
+				errs.M("container already has element %q(%s)", e.name, e.Id()),
+				errs.C(errorClass, errs.DuplicateObject))
+		}
+
+		return errs.New(
+			errs.M("element %q(%s) belongs to another container %s",
+				e.name, e.Id(), e.container.Id()),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	c.elements[e.Id()] = e
+	e.container = c
+
+	return nil
+}
+
 // NewContainer creates an empty container and returns its pointer on success or
 // error on failure.
 func NewContainer(
@@ -102,50 +169,60 @@ func NewContainer(
 		nil
 }
 
-// Add adds the new element to the container.
+// AddElements adds the new element to the container.
 // It adds only non-nil elements and returns the counter of added elements.
-func (fec *ElementsContainer) Add(fee ...*Element) int {
+func (fec *ElementsContainer) AddElements(fee ...FlowElement) (int, error) {
 	if fec.elements == nil {
-		errs.Panic("containter doesn't created properly (use NewContainer)")
+		return 0, errs.New(
+			errs.M("containter doesn't created properly (use NewContainer)"),
+			errs.C(errorClass, errs.InvalidObject))
 	}
 
 	n := 0
-
+	ee := []error{}
 	for _, fe := range fee {
-		if fe == nil {
+		if err := fec.Add(fe); err != nil {
+			ee = append(ee, err)
 			continue
 		}
-
-		fec.elements[fe.Id()] = fe
-		fe.container = fec
 
 		n++
 	}
 
-	return n
+	if len(ee) != 0 {
+		return n, errors.Join(ee...)
+	}
+
+	return n, nil
 }
 
 // Remove removes elements from contanier if found and returns the number of
 // removed elements.
-func (fec *ElementsContainer) Remove(idd ...string) int {
+func (fec *ElementsContainer) RemoveById(id string) error {
 	if fec.elements == nil {
-		errs.Panic("containter doesn't created properly (use NewContainer)")
-
-		return 0
+		return errs.New(
+			errs.M("containter doesn't created properly (use NewContainer)"),
+			errs.C(errorClass, errs.InvalidObject))
 	}
 
-	n := 0
-	for _, id := range idd {
-		fe, ok := fec.elements[id]
-		if ok {
-			fe.container = nil
-			delete(fec.elements, id)
-
-			n++
-		}
+	id = strings.Trim(id, " ")
+	if id == "" {
+		return errs.New(
+			errs.M("empty id isn't allowed"),
+			errs.C(errorClass, errs.InvalidParameter))
 	}
 
-	return n
+	fe, ok := fec.elements[id]
+	if !ok {
+		return errs.New(
+			errs.M("element %s doesn't exists in the container", id),
+			errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	fe.container = nil
+	delete(fec.elements, id)
+
+	return nil
 }
 
 // Contains checks if container contains element with elementId.

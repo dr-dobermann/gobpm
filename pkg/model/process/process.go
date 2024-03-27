@@ -63,9 +63,21 @@ type Process struct {
 	// data in the Process context. A Process MAY contain several
 	// correlationSubscriptions.
 	CorrelationSubscriptions []*common.CorrelationSubscription
+
+	// nodes keeps all flow.FlowNodes of the Process.
+	// it indexed by FlowNode id.
+	nodes map[string]flow.FlowNode
+
+	flows map[string]*flow.SequenceFlow
 }
 
 // NewProcess creates a new Process and returns its pointer.
+// Available options:
+//
+//	activities.WithRoles
+//	data.WithProperties
+//	foundation.WithId
+//	foundation.WithDoc
 func NewProcess(
 	name string,
 	procOpts ...options.Option,
@@ -104,4 +116,93 @@ func NewProcess(
 	}
 
 	return pc.newProcess()
+}
+
+// Id retruns the processes Id.
+func (p *Process) Id() string {
+	return p.ElementsContainer.Id()
+}
+
+// AddNode adds non-empty unique FlowNode n to the process p.
+func (p *Process) AddNode(n flow.FlowNode) error {
+	if n == nil {
+		return errs.New(
+			errs.M("node couldn't be empty"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	_, ok := p.nodes[n.GetNode().Id()]
+	if ok {
+		return errs.New(
+			errs.M("node %q(%s) already registered in process.",
+				n.GetNode().Name(), n.GetNode().Id()),
+			errs.C(errorClass, errs.DuplicateObject))
+	}
+
+	if err := p.ElementsContainer.Add(n.GetNode()); err != nil {
+		return err
+	}
+
+	p.nodes[n.GetNode().Id()] = n
+
+	return nil
+}
+
+// Nodes returns a slice of Process flow.FlowNodes of one of types.
+// if types aren't specified then all nodes returned.
+func (p *Process) Nodes(types ...flow.NodeType) []flow.FlowNode {
+	if err := flow.ValidateNodeTypes(types...); err != nil {
+		return []flow.FlowNode{}
+	}
+
+	fnn := make([]flow.FlowNode, 0, len(p.nodes))
+	for _, n := range p.nodes {
+		if len(types) == 0 || has(types, n.NodeType()) {
+			fnn = append(fnn, n)
+		}
+	}
+
+	return fnn
+}
+
+// has checks if slice has item.
+func has[T comparable](slice []T, item T) bool {
+	for _, i := range slice {
+		if i == item {
+			return true
+		}
+	}
+
+	return false
+}
+
+// AddFlow add non-empty unique SequenceFlow into the Process.
+func (p *Process) AddFlow(f *flow.SequenceFlow) error {
+	if f == nil {
+		return errs.New(
+			errs.M("flow couldn't be empty"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if _, ok := p.flows[f.Id()]; ok {
+		return errs.New(
+			errs.M("flow %q already exists in the process %q",
+				f.Id(), p.Id()),
+			errs.C(errorClass, errs.DuplicateObject))
+	}
+
+	p.flows[f.Id()] = f
+
+	return nil
+}
+
+// Flows returns all processes flows.
+func (p *Process) Flows() []*flow.SequenceFlow {
+	ff := make([]*flow.SequenceFlow, 0, len(p.flows))
+
+	for _, f := range p.flows {
+		ff = append(ff, f)
+	}
+
+	return ff
 }

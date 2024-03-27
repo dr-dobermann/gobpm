@@ -141,14 +141,14 @@ func NewActivity(
 }
 
 // ------------------ flow.FlowNode interface ----------------------------------
-//
+
 // NodeType returns Node type of the Activity.
 func (a *Activity) NodeType() flow.NodeType {
 	return flow.ActivityNode
 }
 
 // ------------------ flow.SequenceTarget interface ----------------------------
-//
+
 // AcceptIncomingFlow checks if it possible to use sf as IncomingFlow for the
 // Activity.
 func (a *Activity) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
@@ -157,13 +157,23 @@ func (a *Activity) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
 }
 
 // ------------------ flow.SequenceSource interface ----------------------------
-//
+
 // SuportOutgoingFlow checks if it possible to source sf SequenceFlow from
 // the Activity.
 func (a *Activity) SuportOutgoingFlow(sf *flow.SequenceFlow) error {
 	// Activity has no restrictions on outgoing flows
 	return nil
 }
+
+// Link creates a new SequenceFlow between the Activity a and trg.
+func (a *Activity) Link(
+	trg flow.SequenceTarget,
+	opts ...options.Option,
+) (*flow.SequenceFlow, error) {
+	return flow.NewSequenceFlow(a, trg, opts...)
+}
+
+// -----------------------------------------------------------------------------
 
 // Roles returns list of ResourceRoles of the Activity.
 func (a *Activity) Roles() []*ResourceRole {

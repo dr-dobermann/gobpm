@@ -34,7 +34,8 @@ func NewResourceRole(
 	res *common.Resource,
 	assignExpr *ResourceAssignmentExpression,
 	pBinding []ResourceParameterBinding,
-	baseOpts ...options.Option) (*ResourceRole, error) {
+	baseOpts ...options.Option,
+) (*ResourceRole, error) {
 	name = trim(name)
 	if err := checkStr(
 		name,
@@ -66,6 +67,23 @@ func NewResourceRole(
 			assignmentExpression: assignExpr,
 			parameterBindings:    pBinding},
 		nil
+}
+
+// MustResourceRole creates a ResourceRole and returns its pointer on success or
+// panics on failure.
+func MustResourceRole(
+	name string,
+	res *common.Resource,
+	assignExpr *ResourceAssignmentExpression,
+	pBinding []ResourceParameterBinding,
+	baseOpts ...options.Option,
+) *ResourceRole {
+	r, err := NewResourceRole(name, res, assignExpr, pBinding, baseOpts...)
+	if err != nil {
+		errs.Panic(err)
+	}
+
+	return r
 }
 
 // Name returns the ResourceRole name.

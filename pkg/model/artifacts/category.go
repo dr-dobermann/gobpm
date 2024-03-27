@@ -10,7 +10,7 @@ import (
 
 const (
 	unspecifiedCategory = "UNSPECIFIED_CATEGORY"
-	//nolint: gosec
+	//nolint:gosec
 	undefinedCategoryValue = "UNDEFINED_CATEGORY_VALUE"
 )
 

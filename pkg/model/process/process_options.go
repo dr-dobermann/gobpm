@@ -87,6 +87,8 @@ func (pc *processConfig) newProcess() (*Process, error) {
 		properties:               pc.props,
 		roles:                    pc.roles,
 		CorrelationSubscriptions: []*common.CorrelationSubscription{},
+		nodes:                    map[string]flow.FlowNode{},
+		flows:                    map[string]*flow.SequenceFlow{},
 	}
 
 	return &p, nil
