@@ -168,9 +168,9 @@ func (a *Activity) SuportOutgoingFlow(sf *flow.SequenceFlow) error {
 // Link creates a new SequenceFlow between the Activity a and trg.
 func (a *Activity) Link(
 	trg flow.SequenceTarget,
-	options ...options.Option,
+	opts ...options.Option,
 ) (*flow.SequenceFlow, error) {
-	return flow.NewSequenceFlow(a, trg, options...)
+	return flow.NewSequenceFlow(a, trg, opts...)
 }
 
 // -----------------------------------------------------------------------------
