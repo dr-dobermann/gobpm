@@ -101,15 +101,7 @@ func (sc *startConfig) startEvent() (*StartEvent, error) {
 	if len(sc.dataOutputs) > 0 {
 		ce.outputSet, err = data.NewSet(outputSetName)
 		if err != nil {
-			return nil,
-				&errs.ApplicationError{
-					Err:     err,
-					Message: "output set creation failed for start event",
-					Classes: []string{
-						errorClass,
-						errs.BulidingFailed,
-					},
-				}
+			return nil, err
 		}
 
 		ce.dataOutputs = sc.dataOutputs
@@ -207,15 +199,7 @@ func (cfg *startConfig) setMessage(med *MessageEventDefinition) error {
 				med.Message().Id()),
 			iae)
 		if err != nil {
-			return &errs.ApplicationError{
-				Err:     err,
-				Message: "couldn't create DataOutput for Message",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed},
-				Details: map[string]string{
-					"msg_name": med.Message().Name()},
-			}
+			return err
 		}
 
 		cfg.dataOutputs[id.Id()] = do

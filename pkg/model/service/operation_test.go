@@ -32,11 +32,9 @@ func (e *exctr) ErrorClasses() []string {
 func (e *exctr) Execute(op *service.Operation) (any, error) {
 	if e.fail {
 		return nil,
-			&errs.ApplicationError{
-				Message: "Operation failed by default",
-				Classes: []string{
-					errs.OperationFailed},
-			}
+			errs.New(
+				errs.M("operation failed by default"),
+				errs.C(errs.OperationFailed))
 	}
 
 	return "operation " + op.Name() + " executed sucessfully", nil

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -75,14 +74,7 @@ func NewStartEvent(
 	}
 
 	if len(ee) > 0 {
-		return nil,
-			&errs.ApplicationError{
-				Err:     errors.Join(ee...),
-				Message: "start event configuration errors",
-				Classes: []string{
-					errorClass,
-				},
-			}
+		return nil, errors.Join(ee...)
 	}
 
 	return sc.startEvent()

@@ -13,7 +13,7 @@ func (a *Array[T]) GetT() T {
 	defer a.lock.Unlock()
 
 	if a.index < 0 {
-		panic("collection is empty")
+		errs.Panic("collection is empty")
 	}
 
 	return a.elements[a.index]
@@ -28,7 +28,7 @@ func (a *Array[T]) GetP() *T {
 	defer a.lock.Unlock()
 
 	if a.index < 0 {
-		panic("collection is empty")
+		errs.Panic("collection is empty")
 	}
 
 	return &a.elements[a.index]

@@ -110,7 +110,7 @@ func NewItemDefinition(
 func MustItemDefinition(value Value, opts ...options.Option) *ItemDefinition {
 	iDef, err := NewItemDefinition(value, opts...)
 	if err != nil {
-		panic(err.Error())
+		errs.Panic(err)
 	}
 
 	return iDef

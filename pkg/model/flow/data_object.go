@@ -39,22 +39,14 @@ func NewDataOpject(
 	name = strings.Trim(name, " ")
 	if name == "" {
 		return nil,
-			&errs.ApplicationError{
-				Message: "DataObject should have non-empty name",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter}}
+			errs.New(
+				errs.M("DataObject should have non-empty name"),
+				errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	iae, err := data.NewItemAwareElement(idef, state, baseOpts...)
 	if err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "couldn't build ItemAwareElement",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed}}
+		return nil, err
 	}
 
 	do := DataObject{

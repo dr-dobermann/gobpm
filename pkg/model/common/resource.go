@@ -1,6 +1,7 @@
 package common
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -103,7 +104,7 @@ func MustResourcParameter(
 ) *ResourceParameter {
 	rp, err := NewResourceParameter(name, pType, required, baseOpts...)
 	if err != nil {
-		panic(err)
+		errs.Panic(err)
 	}
 
 	return rp

@@ -3,6 +3,7 @@ package foundation
 import (
 	"strings"
 
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -104,7 +105,7 @@ func NewBaseElement(opts ...options.Option) (*BaseElement, error) {
 func MustBaseElement(opts ...options.Option) *BaseElement {
 	be, err := NewBaseElement(opts...)
 	if err != nil {
-		panic(err.Error())
+		errs.Panic(err)
 	}
 
 	return be

@@ -1,11 +1,12 @@
 package artifacts
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
-const errorClass = "ARTIFACT_ERROR"
+// const errorClass = "ARTIFACT_ERROR"
 
 // BPMN provides modelers with the capability of showing additional information
 // about a Process that is not directly related to the Sequence Flows or Message
@@ -41,7 +42,7 @@ func NewArtifact(baseOpts ...options.Option) (*Artifact, error) {
 func MustArtifact(baseOpts ...options.Option) *Artifact {
 	ar, err := NewArtifact(baseOpts...)
 	if err != nil {
-		panic(err)
+		errs.Panic(err)
 	}
 
 	return ar
@@ -89,7 +90,7 @@ func MustGroup(
 ) *Group {
 	g, err := NewGroup(categoryName, baseOpts...)
 	if err != nil {
-		panic(err)
+		errs.Panic(err)
 	}
 
 	return g

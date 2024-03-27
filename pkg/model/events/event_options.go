@@ -112,30 +112,19 @@ func (eo eventOption) Apply(cfg options.Configurator) error {
 // WithCancelTrigger adds a CancelEventDefinition into eventConfig.
 func WithCancelTrigger(ced *CancelEventDefinition) eventOption {
 	f := func(cfg eventConfig) error {
-		if ced == nil {
-			return &errs.ApplicationError{
-				Message: "empty cancel event definition isn't allowed",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter,
-				},
-			}
+		if err := checkNil(ced,
+			"empty cancel event definition isn't allowed"); err != nil {
+			return err
 		}
 
 		if ca, ok := cfg.(cancelAdder); ok {
 			return ca.setCancel(ced)
 		}
 
-		return &errs.ApplicationError{
-			Message: "cfg doens't implement cancelAdder interface",
-			Classes: []string{
-				errorClass,
-				errs.TypeCastingError,
-			},
-			Details: map[string]string{
-				"cfg_type": reflect.TypeOf(cfg).Name(),
-			},
-		}
+		return errs.New(
+			errs.M("cfg doens't implement cancelAdder interface: %s",
+				reflect.TypeOf(cfg).String()),
+			errs.C(errorClass, errs.TypeCastingError))
 	}
 
 	return eventOption(f)
@@ -144,30 +133,19 @@ func WithCancelTrigger(ced *CancelEventDefinition) eventOption {
 // WithCompensationTrigger adds a CompensationEventDefinition into eventConfig.
 func WithCompensationTrigger(ced *CompensationEventDefinition) eventOption {
 	f := func(cfg eventConfig) error {
-		if ced == nil {
-			return &errs.ApplicationError{
-				Message: "empty compensation event definition isn't allowed",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter,
-				},
-			}
+		if err := checkNil(ced,
+			"empty compensation event definition isn't allowed"); err != nil {
+			return err
 		}
 
 		if ca, ok := cfg.(compensationAdder); ok {
 			return ca.setCompensation(ced)
 		}
 
-		return &errs.ApplicationError{
-			Message: "cfg doens't implement compensationAdder interface",
-			Classes: []string{
-				errorClass,
-				errs.TypeCastingError,
-			},
-			Details: map[string]string{
-				"cfg_type": reflect.TypeOf(cfg).Name(),
-			},
-		}
+		return errs.New(
+			errs.M("cfg doens't implement compensationAdder interface: %s",
+				reflect.TypeOf(cfg).String()),
+			errs.C(errorClass, errs.TypeCastingError))
 	}
 
 	return eventOption(f)
@@ -176,30 +154,19 @@ func WithCompensationTrigger(ced *CompensationEventDefinition) eventOption {
 // WithConditionalTrigger adds a ConditionalEventDefinition into eventConfig.
 func WithConditionalTrigger(ced *ConditionalEventDefinition) eventOption {
 	f := func(cfg eventConfig) error {
-		if ced == nil {
-			return &errs.ApplicationError{
-				Message: "empty conditional event definition isn't allowed",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter,
-				},
-			}
+		if err := checkNil(ced,
+			"empty conditional event definition isn't allowed"); err != nil {
+			return err
 		}
 
 		if ca, ok := cfg.(conditionAdder); ok {
 			return ca.setCondiiton(ced)
 		}
 
-		return &errs.ApplicationError{
-			Message: "cfg doens't implement conditionAdder interface",
-			Classes: []string{
-				errorClass,
-				errs.TypeCastingError,
-			},
-			Details: map[string]string{
-				"cfg_type": reflect.TypeOf(cfg).Name(),
-			},
-		}
+		return errs.New(
+			errs.M("cfg doens't implement conditionAdder interface: %s",
+				reflect.TypeOf(cfg).String()),
+			errs.C(errorClass, errs.TypeCastingError))
 	}
 
 	return eventOption(f)
@@ -208,30 +175,19 @@ func WithConditionalTrigger(ced *ConditionalEventDefinition) eventOption {
 // WithErrorTrigger adds ErrorEventDefinition into the eventConfig.
 func WithErrorTrigger(eed *ErrorEventDefinition) eventOption {
 	f := func(cfg eventConfig) error {
-		if eed == nil {
-			return &errs.ApplicationError{
-				Message: "empty error definition isn't allowed",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter,
-				},
-			}
+		if err := checkNil(eed,
+			"empty error definition isn't allowed"); err != nil {
+			return err
 		}
 
 		if ea, ok := cfg.(errorAdder); ok {
 			return ea.setError(eed)
 		}
 
-		return &errs.ApplicationError{
-			Message: "cfg doens't implement errorAdder interface",
-			Classes: []string{
-				errorClass,
-				errs.TypeCastingError,
-			},
-			Details: map[string]string{
-				"cfg_type": reflect.TypeOf(cfg).Name(),
-			},
-		}
+		return errs.New(
+			errs.M("cfg doens't implement errorAdder interface: %s",
+				reflect.TypeOf(cfg).String()),
+			errs.C(errorClass, errs.TypeCastingError))
 	}
 
 	return eventOption(f)
@@ -240,30 +196,19 @@ func WithErrorTrigger(eed *ErrorEventDefinition) eventOption {
 // WithEscalationTrigger adds EscalationEventDefinition into the eventConfig.
 func WithEscalationTrigger(eed *EscalationEventDefinition) eventOption {
 	f := func(cfg eventConfig) error {
-		if eed == nil {
-			return &errs.ApplicationError{
-				Message: "empty escalation definition isn't allowed",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter,
-				},
-			}
+		if err := checkNil(eed,
+			"empty escalation definition isn't allowed"); err != nil {
+			return err
 		}
 
 		if ea, ok := cfg.(escalationAdder); ok {
 			return ea.setEscalation(eed)
 		}
 
-		return &errs.ApplicationError{
-			Message: "cfg doens't implement escalationAdder interface",
-			Classes: []string{
-				errorClass,
-				errs.TypeCastingError,
-			},
-			Details: map[string]string{
-				"cfg_type": reflect.TypeOf(cfg).Name(),
-			},
-		}
+		return errs.New(
+			errs.M("cfg doens't implement escalationAdder interface: %s",
+				reflect.TypeOf(cfg).String()),
+			errs.C(errorClass, errs.TypeCastingError))
 	}
 
 	return eventOption(f)
@@ -274,30 +219,19 @@ func WithMessageTrigger(
 	med *MessageEventDefinition,
 ) eventOption {
 	f := func(cfg eventConfig) error {
-		if med == nil {
-			return &errs.ApplicationError{
-				Message: "empty message definition isn't allowed",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter,
-				},
-			}
+		if err := checkNil(med,
+			"empty message definition isn't allowed"); err != nil {
+			return err
 		}
 
 		if ma, ok := cfg.(messageAdder); ok {
 			return ma.setMessage(med)
 		}
 
-		return &errs.ApplicationError{
-			Message: "cfg doens't implement messageAdder interface",
-			Classes: []string{
-				errorClass,
-				errs.TypeCastingError,
-			},
-			Details: map[string]string{
-				"cfg_type": reflect.TypeOf(cfg).String(),
-			},
-		}
+		return errs.New(
+			errs.M("cfg doens't implement messageAdder interface: %s",
+				reflect.TypeOf(cfg).String()),
+			errs.C(errorClass, errs.TypeCastingError))
 	}
 
 	return eventOption(f)
@@ -306,30 +240,19 @@ func WithMessageTrigger(
 // WithSignalTrigger adds a SignalEventDefinition into eventConfig.
 func WithSignalTrigger(sed *SignalEventDefinition) eventOption {
 	f := func(cfg eventConfig) error {
-		if sed == nil {
-			return &errs.ApplicationError{
-				Message: "empty signal event definition isn't allowed",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter,
-				},
-			}
+		if err := checkNil(sed,
+			"empty signal event definition isn't allowed"); err != nil {
+			return err
 		}
 
 		if sa, ok := cfg.(signalAdder); ok {
 			return sa.setSignal(sed)
 		}
 
-		return &errs.ApplicationError{
-			Message: "cfg doens't implement signalAdder interface",
-			Classes: []string{
-				errorClass,
-				errs.TypeCastingError,
-			},
-			Details: map[string]string{
-				"cfg_type": reflect.TypeOf(cfg).String(),
-			},
-		}
+		return errs.New(
+			errs.M("cfg doens't implement signalAdder interface: %s",
+				reflect.TypeOf(cfg).String()),
+			errs.C(errorClass, errs.TypeCastingError))
 	}
 
 	return eventOption(f)
@@ -338,31 +261,31 @@ func WithSignalTrigger(sed *SignalEventDefinition) eventOption {
 // WithTimerTrigger adds a TimerEventDefinition into eventConfig.
 func WithTimerTrigger(ted *TimerEventDefinition) eventOption {
 	f := func(cfg eventConfig) error {
-		if ted == nil {
-			return &errs.ApplicationError{
-				Message: "empty timer event definition isn't allowed",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter,
-				},
-			}
+		if err := checkNil(ted,
+			"empty timer event definition isn't allowed"); err != nil {
+			return err
 		}
 
 		if ta, ok := cfg.(timerAdder); ok {
 			return ta.setTimer(ted)
 		}
 
-		return &errs.ApplicationError{
-			Message: "cfg doens't implement timerAdder interface",
-			Classes: []string{
-				errorClass,
-				errs.TypeCastingError,
-			},
-			Details: map[string]string{
-				"cfg_type": reflect.TypeOf(cfg).String(),
-			},
-		}
+		return errs.New(
+			errs.M("cfg doens't implement timerAdder interface: %s",
+				reflect.TypeOf(cfg).String()),
+			errs.C(errorClass, errs.TypeCastingError))
 	}
 
 	return eventOption(f)
+}
+
+// checkNil checks if v is a nil, and if so, returns error with errMsg.
+func checkNil[T any](v *T, errMsg string) error {
+	if v == nil {
+		return errs.New(
+			errs.M(errMsg),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	return nil
 }

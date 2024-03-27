@@ -30,15 +30,7 @@ func NewSignal(
 
 	be, err := foundation.NewBaseElement(baseOpts...)
 	if err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "signal building error",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed,
-				},
-			}
+		return nil, err
 	}
 
 	return &Signal{
@@ -79,25 +71,14 @@ func NewSignalEventDefinition(
 ) (*SignalEventDefinition, error) {
 	if signal == nil {
 		return nil,
-			&errs.ApplicationError{
-				Message: "signal isn't provided",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter},
-			}
+			errs.New(
+				errs.M("signal isn't provided"),
+				errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	d, err := newDefinition(baseOpts...)
 	if err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "signal event definition building error",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed,
-				},
-			}
+		return nil, err
 	}
 
 	return &SignalEventDefinition{
@@ -114,7 +95,7 @@ func MustSignalEventDefinition(
 ) *SignalEventDefinition {
 	sed, err := NewSignalEventDefinition(signal, baseOpts...)
 	if err != nil {
-		panic(err.Error())
+		errs.Panic(err)
 	}
 
 	return sed

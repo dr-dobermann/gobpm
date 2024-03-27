@@ -63,7 +63,7 @@ func MustDataState(
 ) *DataState {
 	ds, err := NewDataState(name, baseOpts...)
 	if err != nil {
-		panic("DataState creation failed: " + err.Error())
+		errs.Panic("DataState creation failed: " + err.Error())
 	}
 
 	return ds

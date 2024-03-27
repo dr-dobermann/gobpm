@@ -1,9 +1,6 @@
 package events
 
 import (
-	"strconv"
-
-	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -160,50 +157,14 @@ func newEvent(
 ) (*Event, error) {
 	n, err := flow.NewNode(name, baseOpts...)
 	if err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "couldn't create flowNode",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed}}
+		return nil, err
 	}
 
 	e := Event{
 		Node:        *n,
-		properties:  make([]*data.Property, len(props)),
-		definitions: make([]Definition, len(defs)),
+		properties:  append([]*data.Property{}, props...),
+		definitions: append([]Definition{}, defs...),
 		triggers:    *set.New[Trigger](),
-	}
-
-	if n := copy(e.properties, props); n != len(props) {
-		return nil, &errs.ApplicationError{
-			Err:     nil,
-			Message: "event properties copying failed",
-			Classes: []string{
-				errorClass,
-				errs.BulidingFailed,
-			},
-			Details: map[string]string{
-				"want": strconv.Itoa(len(props)),
-				"got":  strconv.Itoa(n),
-			},
-		}
-	}
-
-	if n := copy(e.definitions, defs); n != len(defs) {
-		return nil, &errs.ApplicationError{
-			Err:     nil,
-			Message: "event definiitons copying failed",
-			Classes: []string{
-				errorClass,
-				errs.BulidingFailed,
-			},
-			Details: map[string]string{
-				"want": strconv.Itoa(len(defs)),
-				"got":  strconv.Itoa(n),
-			},
-		}
 	}
 
 	for _, d := range e.definitions {

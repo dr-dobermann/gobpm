@@ -48,7 +48,7 @@ func (a *Array[T]) Get() any {
 	defer a.lock.Unlock()
 
 	if a.index < 0 {
-		panic("collection is empty")
+		errs.Panic("collection is empty")
 	}
 
 	return a.elements[a.index]
