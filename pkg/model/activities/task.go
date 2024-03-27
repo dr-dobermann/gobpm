@@ -31,14 +31,10 @@ func (to taskOption) Apply(cfg options.Configurator) error {
 		return to(mi)
 	}
 
-	return &errs.ApplicationError{
-		Message: "not a multyInstance task config",
-		Classes: []string{
-			errorClass,
-			errs.TypeCastingError},
-		Details: map[string]string{
-			"cfg_type": reflect.TypeOf(cfg).Name()},
-	}
+	return errs.New(
+		errs.M("not a multyInstance task config: %s",
+			reflect.TypeOf(cfg).String()),
+		errs.C(errorClass, errs.TypeCastingError))
 }
 
 // NewTask creates a new Task and returns its pointer on success or
@@ -57,13 +53,7 @@ func NewTask(
 		case taskOption:
 			err := o.Apply(&mInst)
 			if err != nil {
-				return nil,
-					&errs.ApplicationError{
-						Err:     err,
-						Message: "couldn't create a Task",
-						Classes: []string{
-							errorClass,
-							errs.BulidingFailed}}
+				return nil, err
 			}
 		default:
 			actOpts = append(actOpts, to)

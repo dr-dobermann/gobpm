@@ -1,7 +1,6 @@
 package common
 
 import (
-	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -72,37 +71,19 @@ func NewResourceParameter(
 	if err := checkStr(
 		name,
 		"ResourceParameter should have a name"); err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "ResourceParameter creation failed",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed}}
+		return nil, err
 	}
 
 	pType = trim(pType)
 	if err := checkStr(
 		pType,
 		"Type should be set for ResourceParameter"); err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "ResourceParameter creation failed",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed}}
+		return nil, err
 	}
 
 	be, err := foundation.NewBaseElement(baseOpts...)
 	if err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "ResourceParameter creation failed",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed}}
+		return nil, err
 	}
 
 	return &ResourceParameter{

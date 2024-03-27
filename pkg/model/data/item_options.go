@@ -32,16 +32,9 @@ func (o itemOption) Apply(cfg options.Configurator) error {
 		return o(ic)
 	}
 
-	return &errs.ApplicationError{
-		Message: "not itemConfig",
-		Classes: []string{
-			errorClass,
-			errs.TypeCastingError,
-		},
-		Details: map[string]string{
-			"cast_from": reflect.TypeOf(cfg).String(),
-		},
-	}
+	return errs.New(
+		errs.M("not itemConfig: %s", reflect.TypeOf(cfg).String()),
+		errs.C(errorClass, errs.TypeCastingError))
 }
 
 // itemDefBuild builds ItemDefinition object from the itemConfig.
@@ -63,17 +56,8 @@ func (ic *itemConfig) itemDef() (*ItemDefinition, error) {
 // SetKind sets kind of an ItemDefintion.
 func WithKind(kind ItemKind) options.Option {
 	f := func(cfg *itemConfig) error {
-		if kind != InformationKind && kind != PhysicalKind {
-			return &errs.ApplicationError{
-				Message: "kind could be ony Information or Physical",
-				Classes: []string{
-					errorClass,
-					errs.InvalidParameter,
-				},
-				Details: map[string]string{
-					"kind": string(kind),
-				},
-			}
+		if err := kind.Validate(); err != nil {
+			return err
 		}
 
 		cfg.kind = kind

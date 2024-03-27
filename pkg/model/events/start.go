@@ -44,7 +44,7 @@ func NewStartEvent(
 ) (*StartEvent, error) {
 	sc := startConfig{
 		name:          name,
-		props:         []data.Property{},
+		props:         map[string]*data.Property{},
 		parallel:      false,
 		interrurpting: false,
 		baseOpts:      []options.Option{},
@@ -59,12 +59,7 @@ func NewStartEvent(
 		case foundation.BaseOption:
 			sc.baseOpts = append(sc.baseOpts, opt)
 
-		case startOption:
-			if err := so.Apply(&sc); err != nil {
-				ee = append(ee, err)
-			}
-
-		case eventOption:
+		case startOption, eventOption, data.PropertyOption:
 			if err := so.Apply(&sc); err != nil {
 				ee = append(ee, err)
 			}

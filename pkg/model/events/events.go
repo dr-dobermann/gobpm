@@ -29,6 +29,17 @@ func checkStr(str, msg string) error {
 	return nil
 }
 
+// map2slice returns slice of map items.
+func map2slice[T any, I comparable](m map[I]T) []T {
+	res := make([]T, 0, len(m))
+
+	for _, v := range m {
+		res = append(res, v)
+	}
+
+	return res
+}
+
 // interfaces check
 var (
 	_ flow.FlowNode = (*Event)(nil)

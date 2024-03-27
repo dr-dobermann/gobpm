@@ -40,13 +40,9 @@ func (a *Array[T]) UpdateT(value T) error {
 	defer a.lock.Unlock()
 
 	if a.index < 0 {
-		return &errs.ApplicationError{
-			Message: "collection is empty",
-			Classes: []string{
-				errorClass,
-				errs.EmptyCollectionError,
-			},
-		}
+		return errs.New(
+			errs.M("collection is empty"),
+			errs.C(errorClass, errs.EmptyCollectionError))
 	}
 
 	a.elements[a.index] = value

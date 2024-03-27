@@ -4,9 +4,10 @@ import (
 	"reflect"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
+
+type eventConfigType string
 
 const (
 	catchEventConfig eventConfigType = "catchEvent"
@@ -15,8 +16,6 @@ const (
 
 // Common event configuration interface and function.
 type (
-	eventConfigType string
-
 	// Specialized interface for event configuration
 	eventConfig interface {
 		options.Configurator
@@ -26,15 +25,6 @@ type (
 
 	// option for event configuring.
 	eventOption func(cfg eventConfig) error
-
-	// propertyAdder is an configuration interface which
-	// adds single property to the event configureation.
-	// Used by all Events.
-	propertyAdder interface {
-		eventConfig
-
-		addProperty(prop *data.Property)
-	}
 
 	// condigionAdder adds ConditionalEventDefinition into the event
 	// configuration.
@@ -114,41 +104,9 @@ func (eo eventOption) Apply(cfg options.Configurator) error {
 		return eo(ec)
 	}
 
-	return &errs.ApplicationError{
-		Message: "cfg doens't implement eventConfig interface",
-		Classes: []string{
-			errorClass,
-			errs.TypeCastingError,
-		},
-		Details: map[string]string{
-			"cfg_type": reflect.TypeOf(cfg).String(),
-		},
-	}
-
-}
-
-// WithProperty add one property to startConfig.
-func WithProperty(prop *data.Property) eventOption {
-	f := func(cfg eventConfig) error {
-		if pa, ok := cfg.(propertyAdder); ok {
-			pa.addProperty(prop)
-
-			return nil
-		}
-
-		return &errs.ApplicationError{
-			Message: "cfg doens't implement propertyAdder interface",
-			Classes: []string{
-				errorClass,
-				errs.TypeCastingError,
-			},
-			Details: map[string]string{
-				"cfg_type": reflect.TypeOf(cfg).String(),
-			},
-		}
-	}
-
-	return eventOption(f)
+	return errs.New(
+		errs.M("cfg isn't eventConfig: %s", reflect.TypeOf(cfg).String()),
+		errs.C(errorClass, errs.TypeCastingError))
 }
 
 // WithCancelTrigger adds a CancelEventDefinition into eventConfig.

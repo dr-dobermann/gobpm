@@ -15,7 +15,7 @@ type (
 
 	startConfig struct {
 		name          string
-		props         []data.Property
+		props         map[string]*data.Property
 		parallel      bool
 		interrurpting bool
 		baseOpts      []options.Option
@@ -30,28 +30,58 @@ func (sc *startConfig) eventType() eventConfigType {
 	return catchEventConfig
 }
 
+// ------------------- options.Option interface --------------------------------
+
 // Apply implements options.Option interface for startOption.
 func (so startOption) Apply(cfg options.Configurator) error {
 	if sc, ok := cfg.(*startConfig); ok {
 		return so(sc)
 	}
 
-	return &errs.ApplicationError{
-		Message: "not an startConfig",
-		Classes: []string{
-			errorClass,
-			errs.TypeCastingError,
-		},
-		Details: map[string]string{
-			"cast_from": reflect.TypeOf(cfg).String(),
-		},
-	}
+	return errs.New(
+		errs.M("not an startConfig: %s", reflect.TypeOf(cfg).String()),
+		errs.C(errorClass, errs.TypeCastingError))
 }
 
-// addProperty implements propertyAdder interface for the startConfig.
-func (sc *startConfig) addProperty(prop *data.Property) {
-	sc.props = append(sc.props, *prop)
+// ------------------ data.PropertyConfigurator interface ----------------------
+
+// AddProperty adds non-empty property in startConfig.
+// if there aleready exists the property with same id it will be overwritten.
+func (sc *startConfig) AddProperty(prop *data.Property) error {
+	if prop == nil {
+		return errs.New(
+			errs.M("property couldn't be empty"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	sc.props[prop.Id()] = prop
+
+	return nil
 }
+
+// ------------------------ options.Configurator interface ---------------------
+
+// validate checks if startConfig is consistent.
+func (sc *startConfig) Validate() error {
+	ers := []error{}
+
+	// check event definitions to comply with StartEvent triggers.
+	for _, d := range sc.defs {
+		if !startTriggers.Has(d.Type()) {
+			ers = append(ers,
+				fmt.Errorf("%q trigger isn't allowed for StartEvent",
+					d.Type()))
+		}
+	}
+
+	if len(ers) > 0 {
+		return errors.Join(ers...)
+	}
+
+	return nil
+}
+
+// -----------------------------------------------------------------------------
 
 // startEvent creates a new StartEvent from startConfig.
 func (sc *startConfig) startEvent() (*StartEvent, error) {
@@ -59,7 +89,7 @@ func (sc *startConfig) startEvent() (*StartEvent, error) {
 
 	ce, err := newCatchEvent(
 		sc.name,
-		sc.props,
+		map2slice(sc.props),
 		sc.defs,
 		sc.parallel,
 		sc.baseOpts...)
@@ -98,24 +128,6 @@ func (sc *startConfig) startEvent() (*StartEvent, error) {
 	}, nil
 }
 
-// validate checks if startConfig is consistent.
-func (sc *startConfig) Validate() error {
-	ers := []error{}
-
-	// check event definitions to comply with StartEvent triggers.
-	for _, d := range sc.defs {
-		if !startTriggers.Has(d.Type()) {
-			ers = append(ers, fmt.Errorf("%q trigger isn't allowed for StartEvent", d.Type()))
-		}
-	}
-
-	if len(ers) > 0 {
-		return errors.Join(ers...)
-	}
-
-	return nil
-}
-
 // WithParallel sets parallel flag in startConfig.
 func WithParallel() options.Option {
 	f := func(cfg *startConfig) error {
@@ -137,6 +149,8 @@ func WithInterrupting() options.Option {
 
 	return startOption(f)
 }
+
+// ----------------- eventOptions ----------------------------------------------
 
 // setCompensation implements compensationAdder interface.
 func (cfg *startConfig) setCompensation(

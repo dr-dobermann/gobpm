@@ -78,38 +78,25 @@ func (v *Variable[T]) Type() string {
 // registration.
 func (v *Variable[T]) Register(regName string, updFn data.UpdateCallback) error {
 	if updFn == nil {
-		return &errs.ApplicationError{
-			Message: "empty updater function",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter,
-			},
-		}
+		return errs.New(
+			errs.M("empty update function"),
+			errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	regName = strings.Trim(regName, " ")
 	if regName == "" {
-		return &errs.ApplicationError{
-			Message: "registration name couldn't be empty",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter,
-			},
-			Details: map[string]string{},
-		}
+		return errs.New(
+			errs.M("registration name couldn't be empty"),
+			errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	v.lock.Lock()
 	defer v.lock.Unlock()
 
 	if _, ok := v.evtUpdaters[regName]; ok {
-		return &errs.ApplicationError{
-			Message: "registration " + regName + " alreday exists",
-			Classes: []string{
-				errorClass,
-				errs.InvalidParameter,
-			},
-		}
+		return errs.New(
+			errs.M("registration "+regName+" alreday exists"),
+			errs.C(errorClass, errs.DuplicateObject))
 	}
 
 	v.evtUpdaters[regName] = updFn

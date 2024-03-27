@@ -41,23 +41,14 @@ func NewResourceRole(
 		name,
 		"name should be provided for ResourceRole"); err != nil {
 		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "ResourceRole creation failed",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed}}
+			errs.New(
+				errs.M("ResourceRole creation failed"),
+				errs.C(errorClass, errs.BulidingFailed))
 	}
 
 	be, err := foundation.NewBaseElement(baseOpts...)
 	if err != nil {
-		return nil,
-			&errs.ApplicationError{
-				Err:     err,
-				Message: "couldn't create BaseElement for ResourceRole",
-				Classes: []string{
-					errorClass,
-					errs.BulidingFailed}}
+		return nil, err
 	}
 
 	return &ResourceRole{
