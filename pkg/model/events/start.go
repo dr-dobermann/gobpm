@@ -93,7 +93,7 @@ func NewStartEvent(
 	return sc.startEvent()
 }
 
-// ------------------ flow.Source interface ----------------------------------
+// ------------------ flow.Source interface ------------------------------------
 //
 // SuportOutgoingFlow checks if it allowed to source sf from the StartEvent
 func (se *StartEvent) SuportOutgoingFlow(sf *flow.SequenceFlow) error {
@@ -101,6 +101,15 @@ func (se *StartEvent) SuportOutgoingFlow(sf *flow.SequenceFlow) error {
 	return nil
 }
 
+// Link creates a new SequenceFlow between se and trg.
+func (se *StartEvent) Link(
+	trg flow.SequenceTarget,
+	options ...options.Option,
+) (*flow.SequenceFlow, error) {
+	return flow.NewSequenceFlow(se, trg, options...)
+}
+
+// -----------------------------------------------------------------------------
 // IsInterrupting returns interrupting setting of the StartEvent.
 func (se StartEvent) IsInterrupting() bool {
 	return se.interrrupting

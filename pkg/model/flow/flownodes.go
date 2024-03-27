@@ -19,3 +19,9 @@ type Activity interface {
 
 	ActivityType() string
 }
+
+type Gateway interface {
+	FlowNode
+
+	GatewayType() string
+}

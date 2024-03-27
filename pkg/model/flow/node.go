@@ -1,6 +1,8 @@
 package flow
 
 import (
+	"errors"
+
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -13,6 +15,36 @@ const (
 	EventNode    NodeType = "Event"
 	GatewayNode  NodeType = "Gateway"
 )
+
+// Validate checks if nt has NodeType value.
+func (nt NodeType) Validate() error {
+	if nt != ActivityNode &&
+		nt != EventNode &&
+		nt != GatewayNode {
+		return errs.New(
+			errs.M("invalid NodeType: %q", nt),
+			errs.C(errorClass, errs.TypeCastingError))
+	}
+
+	return nil
+}
+
+// ValidateNodeTypes checks list of NodeTypes on validity.
+func ValidateNodeTypes(types ...NodeType) error {
+	ee := []error{}
+
+	for _, t := range types {
+		if err := t.Validate(); err != nil {
+			ee = append(ee, err)
+		}
+	}
+
+	if len(ee) != 0 {
+		return errors.Join(ee...)
+	}
+
+	return nil
+}
 
 // The FlowNode element is used to provide a single element as the source and
 // target Sequence Flow associations instead of the individual associations of
@@ -34,6 +66,20 @@ type Node struct {
 	flows map[data.Direction]map[string]*SequenceFlow
 }
 
+// ------------------- FlowElement interface -----------------------------------
+
+// ElementType returns the Node's element type.
+func (n *Node) ElementType() ElementType {
+	return NodeElement
+}
+
+// GetElement returns underlaying Element.
+func (f *Node) GetElement() *Element {
+	return &f.Element
+}
+
+// -----------------------------------------------------------------------------
+
 // NewNode creates a new node and returns its pointer.
 func NewNode(
 	name string,
@@ -49,6 +95,20 @@ func NewNode(
 			flows:   map[data.Direction]map[string]*SequenceFlow{},
 		},
 		nil
+}
+
+// MustNode creates a new Node and returns its pointer on succes or panics on
+// failure.
+func MustNode(
+	name string,
+	baseOpts ...options.Option,
+) *Node {
+	n, err := NewNode(name, baseOpts...)
+	if err != nil {
+		errs.Panic(err)
+	}
+
+	return n
 }
 
 // Incoming returns a list of the Node's incoming sequence flows.
@@ -122,6 +182,15 @@ func (n *Node) removeFlow(sf *SequenceFlow, dir data.Direction) error {
 	}
 
 	delete(n.flows[dir], sf.Id())
+
+	// invalidate the SequenceFlow
+	switch dir {
+	case data.Input:
+		sf.target = nil
+
+	case data.Output:
+		sf.source = nil
+	}
 
 	return nil
 }

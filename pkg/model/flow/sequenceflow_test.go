@@ -6,6 +6,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/stretchr/testify/require"
 )
@@ -30,41 +31,33 @@ func TestSequenceFlow(t *testing.T) {
 
 	t.Run("invalid params",
 		func(t *testing.T) {
-			sf, err := flow.NewSequenceFlow("test sFlow", nil, nil, nil)
+			sf, err := flow.NewSequenceFlow(nil, nil,
+				options.WithName(""),
+				flow.WithCondition(nil))
 			require.Error(t, err)
 			require.Empty(t, sf)
 		})
 
 	t.Run("linked process",
 		func(t *testing.T) {
-			sfStart, err := flow.NewSequenceFlow(
-				"start flow",
-				se, st1, nil)
+			sfStart, err := se.Link(st1, options.WithName("start"))
 			require.NoError(t, err)
 			require.Equal(t, se.Id(), sfStart.Source().GetNode().Id())
 			require.Equal(t, 0, len(sfStart.Source().GetNode().Incoming()))
 			require.Equal(t, 1, len(sfStart.Source().GetNode().Outgoing()))
 			require.Equal(t, st1.Id(), sfStart.Target().GetNode().Id())
 
-			sfST1, err := flow.NewSequenceFlow(
-				"service task1",
-				st1,
-				st2,
-				nil)
+			sfST1, err := st1.Link(st2, options.WithName("service task1"))
 			require.NoError(t, err)
 			require.NotEmpty(t, sfST1)
 
-			sfST2, err := flow.NewSequenceFlow(
-				"end flow",
-				st2,
-				ee,
-				nil)
+			sfST2, err := st2.Link(ee, options.WithName("end flow"))
 			require.NoError(t, err)
 			require.NotEmpty(t, sfST2)
 
 			require.Equal(t, 0, len(se.Incoming()))
 			so := se.Outgoing()
 			require.Equal(t, 1, len(so))
-			require.Equal(t, "start flow", so[0].Name())
+			require.Equal(t, "start", so[0].Name())
 		})
 }

@@ -9,21 +9,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestElementTypes(t *testing.T) {
+	require.Error(t, flow.NodeType("invalid_node_type").Validate())
+	require.Error(t, flow.ElementType("unknown_type").Validate())
+	require.NoError(t, flow.NodeElement.Validate())
+	require.Error(t, flow.ValidateNodeTypes(flow.ActivityNode, flow.EventNode, "unknown_typw"))
+}
+
 func TestElementsContainer(t *testing.T) {
 	c, err := flow.NewContainer(foundation.WithId("test container"))
 	require.NoError(t, err)
 	require.NotEmpty(t, c)
 
 	// create test elements
-	elements := make([]*flow.Element, 2)
+	elements := make([]flow.FlowElement, 2)
 	for i := 0; i < 2; i++ {
-		elements[i] = flow.MustElement("element_"+strconv.Itoa(i+1),
+		elements[i] = flow.MustNode("element_"+strconv.Itoa(i+1),
 			foundation.WithId("element#"+strconv.Itoa(i+1)))
 	}
 
 	// add elements
 	n, err := c.AddElements(
-		elements...)
+		elements[0], elements[1])
 	require.Equal(t, 2, n)
 	require.NoError(t, err)
 
@@ -43,7 +50,7 @@ func TestElementsContainer(t *testing.T) {
 	// remove element
 	require.NoError(t, c.RemoveById("element#1"))
 	require.False(t, c.Contains("element#1"))
-	require.Empty(t, elements[0].Container())
+	require.Empty(t, elements[0].GetElement().Container())
 
 	// remove element with invalid id
 	require.Error(t, c.RemoveById("    "))
@@ -55,8 +62,8 @@ func TestElementsContainer(t *testing.T) {
 	n, err = ic.AddElements(elements...)
 	require.Equal(t, 0, n)
 	require.Error(t, err)
-	require.Error(t, ic.RemoveById(elements[0].Id()))
-	require.Panics(t, func() { ic.Contains(elements[0].Id()) })
+	require.Error(t, ic.RemoveById(elements[0].GetElement().Id()))
+	require.Panics(t, func() { ic.Contains(elements[0].GetElement().Id()) })
 	require.Panics(t, func() { ic.Elements() })
 
 	// conflict container
