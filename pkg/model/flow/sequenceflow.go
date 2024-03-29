@@ -158,6 +158,14 @@ func newSequenceFlow(
 		return nil, err
 	}
 
+	if fc.putInSrcContainer {
+		if fc.src.Container() != nil {
+			if err := fc.src.Container().Add(sf); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	return sf, nil
 }
 

@@ -69,12 +69,6 @@ func (fc *sflowConfig) newSequenceFlow() (*SequenceFlow, error) {
 		conditionExpression: fc.cond,
 	}
 
-	if fc.putInSrcContainer && fc.src.Container() != nil {
-		if err := fc.src.Container().Add(&f); err != nil {
-			return nil, err
-		}
-	}
-
 	return &f, nil
 }
 

@@ -70,24 +70,17 @@ func (pc *processConfig) newProcess() (*Process, error) {
 		return nil, err
 	}
 
-	ec, err := flow.NewContainer(pc.baseOpts...)
+	be, err := foundation.NewBaseElement(pc.baseOpts...)
 	if err != nil {
 		return nil, err
 	}
 
-	// CallableElement should have same Id as ElementsContainer Id if
-	// id isn't provided.
-	if len(pc.baseOpts) == 0 {
-		pc.baseOpts = append(pc.baseOpts, foundation.WithId(ec.Id()))
-	}
-
 	p := Process{
-		CallableElement:          *common.NewCallableElement(pc.name, pc.baseOpts...),
-		ElementsContainer:        *ec,
+		BaseElement:              *be,
 		properties:               pc.props,
 		roles:                    pc.roles,
 		CorrelationSubscriptions: []*common.CorrelationSubscription{},
-		nodes:                    map[string]flow.FlowNode{},
+		nodes:                    map[string]flow.Node{},
 		flows:                    map[string]*flow.SequenceFlow{},
 	}
 
