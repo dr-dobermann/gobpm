@@ -59,7 +59,7 @@ func TestActivity(t *testing.T) {
 			require.Equal(t, 42, pp[0].Subject().Structure().Get())
 			require.Equal(t, "ready", pp[0].State().Name())
 
-			require.Equal(t, flow.ActivityNode, a.NodeType())
+			require.Equal(t, flow.ActivityNodeType, a.NodeType())
 
 			require.NoError(t, a.AcceptIncomingFlow(nil))
 			require.NoError(t, a.SuportOutgoingFlow(nil))

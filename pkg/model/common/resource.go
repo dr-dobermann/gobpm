@@ -68,17 +68,17 @@ func NewResourceParameter(
 	required bool,
 	baseOpts ...options.Option,
 ) (*ResourceParameter, error) {
-	name = trim(name)
-	if err := checkStr(
+	name = Strim(name)
+	if err := CheckStr(
 		name,
-		"ResourceParameter should have a name"); err != nil {
+		"ResourceParameter should have a name", errorClass); err != nil {
 		return nil, err
 	}
 
-	pType = trim(pType)
-	if err := checkStr(
+	pType = Strim(pType)
+	if err := CheckStr(
 		pType,
-		"Type should be set for ResourceParameter"); err != nil {
+		"Type should be set for ResourceParameter", errorClass); err != nil {
 		return nil, err
 	}
 

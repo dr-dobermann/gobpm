@@ -5,6 +5,7 @@ import (
 	"reflect"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -22,7 +23,11 @@ const (
 // The Activity class is the abstract super class for all concrete Activity
 // types.
 type Activity struct {
-	flow.Node
+	foundation.BaseElement
+
+	flow.FlowNode
+
+	flow.FlowElement
 
 	// A flag that identifies whether this Activity is intended for the
 	// purposes of compensation.
@@ -79,7 +84,7 @@ type Activity struct {
 
 	// This references the Intermediate Events that are attached to the
 	// boundary of the Activity.
-	boundaryEvents []flow.Event
+	boundaryEvents []flow.EventNode
 
 	// An optional reference to the DataInputAssociations.
 	// A DataInputAssociation defines how the DataInput of the Activity’s
@@ -100,7 +105,7 @@ func NewActivity(
 	actOpts ...options.Option,
 ) (*Activity, error) {
 	cfg := activityConfig{
-		name:             trim(name),
+		name:             common.Strim(name),
 		roles:            map[string]*ResourceRole{},
 		props:            map[string]*data.Property{},
 		startQ:           1,
@@ -140,11 +145,11 @@ func NewActivity(
 	return cfg.newActivity()
 }
 
-// ------------------ flow.FlowNode interface ----------------------------------
+// ------------------ flow.Node interface --------------------------------------
 
-// NodeType returns Node type of the Activity.
+// NodeType returns Activity's node type.
 func (a *Activity) NodeType() flow.NodeType {
-	return flow.ActivityNode
+	return flow.ActivityNodeType
 }
 
 // ------------------ flow.SequenceTarget interface ----------------------------
@@ -163,14 +168,6 @@ func (a *Activity) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
 func (a *Activity) SuportOutgoingFlow(sf *flow.SequenceFlow) error {
 	// Activity has no restrictions on outgoing flows
 	return nil
-}
-
-// Link creates a new SequenceFlow between the Activity a and trg.
-func (a *Activity) Link(
-	trg flow.SequenceTarget,
-	opts ...options.Option,
-) (*flow.SequenceFlow, error) {
-	return flow.NewSequenceFlow(a, trg, opts...)
 }
 
 // -----------------------------------------------------------------------------
@@ -207,7 +204,7 @@ func (a *Activity) Properties() []*data.Property {
 // SetDefaultFlow sets default flow from the Activity.
 // If the flowId is empty, then default flow cleared for Activity.
 func (a *Activity) SetDefaultFlow(flowId string) error {
-	flowId = trim(flowId)
+	flowId = common.Strim(flowId)
 
 	if flowId == "" {
 		a.defaultFlow = nil

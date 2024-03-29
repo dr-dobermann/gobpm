@@ -40,8 +40,9 @@ func NewError(name, code string,
 	str *data.ItemDefinition,
 	baseOpts ...options.Option,
 ) (*Error, error) {
-	name = trim(name)
-	if err := checkStr(name, "name should be non-empty"); err != nil {
+	name = Strim(name)
+	if err := CheckStr(name,
+		"name should be non-empty", errorClass); err != nil {
 		return nil, err
 	}
 

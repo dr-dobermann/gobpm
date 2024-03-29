@@ -3,6 +3,7 @@ package events
 import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/set"
 )
@@ -114,7 +115,9 @@ const (
 // Events that catch a trigger. All Start Events and some Intermediate Events
 // are catching Events.
 type Event struct {
-	flow.Node
+	foundation.BaseElement
+	flow.FlowNode
+	flow.FlowElement
 
 	// Modeler-defined properties MAY be added to an Event. These properties are
 	// contained within the Event.
@@ -155,13 +158,15 @@ func newEvent(
 	defs []Definition,
 	baseOpts ...options.Option,
 ) (*Event, error) {
-	n, err := flow.NewNode(name, baseOpts...)
+	be, err := foundation.NewBaseElement(baseOpts...)
 	if err != nil {
 		return nil, err
 	}
 
 	e := Event{
-		Node:        *n,
+		BaseElement: *be,
+		FlowNode:    *flow.NewFlowNode(),
+		FlowElement: *flow.NewFlowElement(name),
 		properties:  append([]*data.Property{}, props...),
 		definitions: append([]Definition{}, defs...),
 		triggers:    *set.New[Trigger](),
@@ -197,12 +202,7 @@ func (e Event) HasTrigger(t Trigger) bool {
 
 // NodeType implements flow.FlowNode interface for the Event.
 func (e Event) NodeType() flow.NodeType {
-	return flow.EventNode
-}
-
-// GetNode implemented flow.FlowNode interface for the Event.
-func (e *Event) GetNode() *flow.Node {
-	return &e.Node
+	return flow.EventNodeType
 }
 
 // *****************************************************************************

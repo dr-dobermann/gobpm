@@ -36,10 +36,12 @@ func NewResourceRole(
 	pBinding []ResourceParameterBinding,
 	baseOpts ...options.Option,
 ) (*ResourceRole, error) {
-	name = trim(name)
-	if err := checkStr(
+	name = common.Strim(name)
+	if err := common.CheckStr(
 		name,
-		"name should be provided for ResourceRole"); err != nil {
+		"name should be provided for ResourceRole",
+		errorClass,
+	); err != nil {
 		return nil,
 			errs.New(
 				errs.M("ResourceRole creation failed"),

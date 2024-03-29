@@ -5,6 +5,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -13,6 +14,9 @@ type sflowConfig struct {
 	cond *data.Expression
 	src  SequenceSource
 	trg  SequenceTarget
+
+	// if set then flows added into the same container where src is.
+	putInSrcContainer bool
 
 	baseOpts []options.Option
 }
@@ -52,16 +56,23 @@ func (fc *sflowConfig) SetName(name string) error {
 
 // newSequenceFlow creates a new SequenceFlow from the configuration.
 func (fc *sflowConfig) newSequenceFlow() (*SequenceFlow, error) {
-	e, err := NewElement(fc.name, fc.baseOpts...)
+	be, err := foundation.NewBaseElement(fc.baseOpts...)
 	if err != nil {
 		return nil, err
 	}
 
 	f := SequenceFlow{
-		Element:             *e,
+		BaseElement:         *be,
+		FlowElement:         *NewFlowElement(fc.name),
 		source:              fc.src,
 		target:              fc.trg,
 		conditionExpression: fc.cond,
+	}
+
+	if fc.putInSrcContainer && fc.src.Container() != nil {
+		if err := fc.src.Container().Add(&f); err != nil {
+			return nil, err
+		}
 	}
 
 	return &f, nil
@@ -77,6 +88,18 @@ func WithCondition(cond *data.Expression) options.Option {
 		}
 
 		fc.cond = cond
+
+		return nil
+	}
+
+	return sflowOption(f)
+}
+
+// WithoutContainer select mode of SequenceFlow creation when it
+// wouldn't add to the same container as sequence source.
+func WithoutContainer() options.Option {
+	f := func(fc *sflowConfig) error {
+		fc.putInSrcContainer = false
 
 		return nil
 	}
