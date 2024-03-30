@@ -486,3 +486,6 @@ func checkParamsState(rs *DataState, pp []*Parameter, sType SetType) error {
 
 	return nil
 }
+
+// Interfaces check for Parameter
+var _ Data = (*Parameter)(nil)

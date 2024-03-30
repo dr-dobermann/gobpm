@@ -68,4 +68,8 @@ func NewDataOpject(
 	return &do, nil
 }
 
-var _ Element = (*DataObject)(nil)
+// interfaces test for DataObject.
+var (
+	_ Element   = (*DataObject)(nil)
+	_ data.Data = (*DataObject)(nil)
+)

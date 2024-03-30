@@ -69,3 +69,6 @@ func MustProperty(
 func (p *Property) Name() string {
 	return p.name
 }
+
+// Test interfaces for Property.
+var _ Data = (*Property)(nil)
