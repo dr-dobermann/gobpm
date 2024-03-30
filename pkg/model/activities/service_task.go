@@ -2,7 +2,7 @@ package activities
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
@@ -39,8 +39,8 @@ func NewServiceTask(
 	operation *service.Operation,
 	taskOpts ...options.Option,
 ) (*ServiceTask, error) {
-	name = common.Strim(name)
-	if err := common.CheckStr(
+	name = helpers.Strim(name)
+	if err := helpers.CheckStr(
 		name, "empty name isn't allowed for the ServiceTask",
 		errorClass,
 	); err != nil {

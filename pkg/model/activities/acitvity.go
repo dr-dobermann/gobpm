@@ -5,7 +5,7 @@ import (
 	"reflect"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -105,7 +105,7 @@ func NewActivity(
 	actOpts ...options.Option,
 ) (*Activity, error) {
 	cfg := activityConfig{
-		name:             common.Strim(name),
+		name:             helpers.Strim(name),
 		roles:            map[string]*ResourceRole{},
 		props:            map[string]*data.Property{},
 		startQ:           1,
@@ -204,7 +204,7 @@ func (a *Activity) Properties() []*data.Property {
 // SetDefaultFlow sets default flow from the Activity.
 // If the flowId is empty, then default flow cleared for Activity.
 func (a *Activity) SetDefaultFlow(flowId string) error {
-	flowId = common.Strim(flowId)
+	flowId = helpers.Strim(flowId)
 
 	if flowId == "" {
 		a.defaultFlow = nil

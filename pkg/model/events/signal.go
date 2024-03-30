@@ -2,7 +2,7 @@ package events
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -23,9 +23,9 @@ func NewSignal(
 	str *data.ItemDefinition,
 	baseOpts ...options.Option,
 ) (*Signal, error) {
-	name = common.Strim(name)
+	name = helpers.Strim(name)
 
-	if err := common.CheckStr(
+	if err := helpers.CheckStr(
 		name,
 		"name should be provided fro Signal",
 		errorClass,

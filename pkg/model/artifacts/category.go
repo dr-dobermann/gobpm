@@ -1,7 +1,7 @@
 package artifacts
 
 import (
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -185,7 +185,7 @@ func (cv *CategoryValue) RemoveFlowElement(feeID ...string) int {
 	n := 0
 
 	for _, fe := range feeID {
-		fe = common.Strim(fe)
+		fe = helpers.Strim(fe)
 		if fe == "" {
 			continue
 		}

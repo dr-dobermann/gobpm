@@ -4,7 +4,7 @@ import (
 	"errors"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 )
 
@@ -104,12 +104,12 @@ func NewFlowNode() *FlowNode {
 
 // Incoming returns all the FlowNode's incoming flows.
 func (fn *FlowNode) Incoming() []*SequenceFlow {
-	return common.Map2List(fn.flows[data.Input])
+	return helpers.Map2List(fn.flows[data.Input])
 }
 
 // Outgoing returns all the FlowNodes outgoing flows.
 func (fn *FlowNode) Outgoing() []*SequenceFlow {
-	return common.Map2List(fn.flows[data.Output])
+	return helpers.Map2List(fn.flows[data.Output])
 }
 
 // AddFlow adds new SequenceFlow to the FlowNode n.

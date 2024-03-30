@@ -2,7 +2,7 @@ package events
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -26,8 +26,8 @@ func NewEscalation(
 	item *data.ItemDefinition,
 	baseOpts ...options.Option,
 ) (*Escalation, error) {
-	name = common.Strim(name)
-	if err := common.CheckStr(
+	name = helpers.Strim(name)
+	if err := helpers.CheckStr(
 		name,
 		"name should be provided for escalation",
 		errorClass,
@@ -36,7 +36,7 @@ func NewEscalation(
 		return nil, err
 	}
 
-	code = common.Strim(code)
+	code = helpers.Strim(code)
 
 	if item == nil {
 		return nil,
