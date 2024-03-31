@@ -6,6 +6,8 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 )
 
@@ -14,12 +16,14 @@ import (
 // Process Initator also holds a process Initiation Events List and receive
 // all event definition from list to start a new process Instance.
 type Initiator struct {
+	foundation.BaseElement
+
 	Sshot *Snapshot
 
 	// InitEvents indexed by Definition's Id.
 	InitEvents  map[string]flow.EventNode
 	EvtProducer EventProducer
-	Runner      Runner
+	Runner      ProcessRunner
 }
 
 // NewInitiator creates a new Initiator and returns its pointer on success
@@ -27,7 +31,8 @@ type Initiator struct {
 func NewInitiator(
 	p *process.Process,
 	ep EventProducer,
-	r Runner,
+	r ProcessRunner,
+	baseOpts ...options.Option,
 ) (*Initiator, error) {
 	if ep == nil {
 		return nil,
@@ -43,12 +48,18 @@ func NewInitiator(
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
+	be, err := foundation.NewBaseElement(baseOpts...)
+	if err != nil {
+		return nil, err
+	}
+
 	s, err := NewSnapshot(p)
 	if err != nil {
 		return nil, err
 	}
 
 	ini := Initiator{
+		BaseElement: *be,
 		Sshot:       s,
 		InitEvents:  map[string]flow.EventNode{},
 		EvtProducer: ep,
@@ -113,7 +124,7 @@ func (ini *Initiator) ProcessEvent(
 				errs.C(errorClass, errs.EmptyNotAllowed))
 		}
 
-		return ini.Runner.Run(ini.Sshot, nil, nil)
+		return ini.Runner.RunProcess(ini.Sshot, nil, nil)
 	}
 
 	e, ok := ini.InitEvents[eDef.Id()]
@@ -124,7 +135,7 @@ func (ini *Initiator) ProcessEvent(
 			errs.C(errorClass, errs.ObjectNotFound))
 	}
 
-	return ini.Runner.Run(ini.Sshot, e, eDef)
+	return ini.Runner.RunProcess(ini.Sshot, e, eDef)
 }
 
 // -----------------------------------------------------------------------------

@@ -31,3 +31,76 @@
 // insance Messages.
 
 package thresher
+
+import (
+	"github.com/dr-dobermann/gobpm/internal/exec"
+	"github.com/dr-dobermann/gobpm/internal/instance"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+)
+
+const errorClass = "THRESHER_ERRORS"
+
+type eventsRegister struct {
+	proc  exec.EventProcessor
+	eDefs map[string]flow.EventDefinition
+}
+
+type Thresher struct {
+	// registrations is indexed by processId.
+	registrations map[string]eventsRegister
+
+	instances map[string][]*instance.Instance
+}
+
+// ------------------ EventProducer interface ----------------------------------
+
+// RegisterEvents registered eventDefinition and its processor in the Thresher.
+func (t Thresher) RegisterEvents(
+	ep exec.EventProcessor,
+	eDefs ...flow.EventDefinition,
+) error {
+	if ep == nil {
+		return errs.New(
+			errs.M("empty event processor"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if len(eDefs) == 0 {
+		return errs.New(
+			errs.M("empty event definitions list"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	_, ok := t.registrations[ep.Id()]
+	if !ok {
+		t.registrations[ep.Id()] = eventsRegister{
+			proc:  ep,
+			eDefs: map[string]flow.EventDefinition{},
+		}
+	}
+
+	for _, d := range eDefs {
+		t.registrations[ep.Id()].eDefs[d.Id()] = d
+	}
+
+	return nil
+}
+
+// --------------- exec.Runner interface ---------------------------------------
+
+func (t *Thresher) RunProcess(
+	s *exec.Snapshot,
+	start flow.Node,
+	event flow.EventDefinition,
+) error {
+	if s == nil {
+		return errs.New(
+			errs.M("empty snapshot"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	return nil
+}
+
+// -----------------------------------------------------------------------------
