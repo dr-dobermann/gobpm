@@ -4,11 +4,19 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
+type EventClass string
+
+const (
+	StartEventClass        EventClass = "Start"
+	IntermediateEventClass EventClass = "Intermediate"
+	EndEventClass          EventClass = "End"
+)
+
 type EventTrigger string
 
-// Multiple and ParallelMultiple have not direct trigger since they are
+// Multiple and ParallelMultiple have no direct trigger since they are
 // calculated based on event definitions.
-// As well None trigger also isn't existed since it appears on empty
+// As well, None trigger also isn't existed since it appears with empty
 // Definitions list.
 const (
 	// Common Start and End events triggers
@@ -43,6 +51,7 @@ type EventDefinition interface {
 type EventNode interface {
 	Node
 
-	GetDefinitions() []EventDefinition
+	Definitions() []EventDefinition
 	EventType() string
+	EventClass() EventClass
 }

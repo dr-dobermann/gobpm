@@ -3,13 +3,13 @@ package exec
 import (
 	"context"
 
-	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
 type EventProcessor interface {
-	ProcessEvent(context.Context, events.Definition) error
+	ProcessEvent(context.Context, flow.EventDefinition) error
 }
 
 type EventProducer interface {
-	RegisterEvents(EventProcessor, ...events.Definition) error
+	RegisterEvents(EventProcessor, ...flow.EventDefinition) error
 }

@@ -70,8 +70,14 @@ func NewEndEvent(
 	return ec.endEvent()
 }
 
-// ------------------ flowTarget interface ----------------------------------
-//
+// ------------------ flow.EventNode interface ---------------------------------
+
+func (ee *EndEvent) EventClass() flow.EventClass {
+	return flow.EndEventClass
+}
+
+// ------------------ flow.SequenceTarget interface ----------------------------
+
 // AcceptIncomingFlow checks if the EndEvent accepts incoming sequence flow sf.
 func (ee *EndEvent) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
 	// EndEvent has no restrictions on incoming sequence flows
