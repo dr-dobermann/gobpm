@@ -12,14 +12,14 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/set"
 )
 
-var startTriggers = set.New[Trigger](
-	TriggerCompensation, // only for in-line Sub-Processes
-	TriggerConditional,
-	TriggerError,      // only for in-line Sub-Processes
-	TriggerEscalation, // only for in-line Sub-Processes
-	TriggerMessage,
-	TriggerSignal,
-	TriggerTimer,
+var startTriggers = set.New[flow.EventTrigger](
+	flow.TriggerCompensation, // only for in-line Sub-Processes
+	flow.TriggerConditional,
+	flow.TriggerError,      // only for in-line Sub-Processes
+	flow.TriggerEscalation, // only for in-line Sub-Processes
+	flow.TriggerMessage,
+	flow.TriggerSignal,
+	flow.TriggerTimer,
 )
 
 type StartEvent struct {
@@ -47,7 +47,7 @@ func NewStartEvent(
 		parallel:      false,
 		interrurpting: false,
 		baseOpts:      []options.Option{},
-		defs:          []Definition{},
+		defs:          []flow.EventDefinition{},
 		dataOutputs:   make(map[string]*data.Parameter),
 	}
 

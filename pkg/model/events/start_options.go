@@ -7,6 +7,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -19,7 +20,7 @@ type (
 		parallel      bool
 		interrurpting bool
 		baseOpts      []options.Option
-		defs          []Definition
+		defs          []flow.EventDefinition
 		dataOutputs   map[string]*data.Parameter
 		outputSet     *data.Set
 	}

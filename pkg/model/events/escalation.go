@@ -4,6 +4,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -83,8 +84,8 @@ type EscalationEventDefinition struct {
 }
 
 // Type implememnts Definition interface for EscalationEventDefinition.
-func (e *EscalationEventDefinition) Type() Trigger {
-	return TriggerEscalation
+func (e *EscalationEventDefinition) Type() flow.EventTrigger {
+	return flow.TriggerEscalation
 }
 
 // NewEscalationEventDefintion creates a new EscalationEventDefintion and

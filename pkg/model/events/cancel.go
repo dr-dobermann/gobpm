@@ -1,6 +1,7 @@
 package events
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -17,9 +18,9 @@ type CancelEventDefinition struct {
 }
 
 // Type implements the Definition interface.
-func (*CancelEventDefinition) Type() Trigger {
+func (*CancelEventDefinition) Type() flow.EventTrigger {
 
-	return TriggerCancel
+	return flow.TriggerCancel
 }
 
 // NewCancelEventDefinition creates a new CancelEventDefinition and returns

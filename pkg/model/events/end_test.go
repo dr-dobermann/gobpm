@@ -7,6 +7,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/stretchr/testify/require"
 )
 
@@ -90,13 +91,13 @@ func TestNewEndEvent(t *testing.T) {
 			triggers := ee.Triggers()
 			t.Log(triggers)
 
-			require.True(t, ee.HasTrigger(events.TriggerCancel))
-			require.True(t, ee.HasTrigger(events.TriggerCompensation))
-			require.True(t, ee.HasTrigger(events.TriggerError))
-			require.True(t, ee.HasTrigger(events.TriggerEscalation))
-			require.True(t, ee.HasTrigger(events.TriggerMessage))
-			require.True(t, ee.HasTrigger(events.TriggerSignal))
-			require.True(t, ee.HasTrigger(events.TriggerTerminate))
+			require.True(t, ee.HasTrigger(flow.TriggerCancel))
+			require.True(t, ee.HasTrigger(flow.TriggerCompensation))
+			require.True(t, ee.HasTrigger(flow.TriggerError))
+			require.True(t, ee.HasTrigger(flow.TriggerEscalation))
+			require.True(t, ee.HasTrigger(flow.TriggerMessage))
+			require.True(t, ee.HasTrigger(flow.TriggerSignal))
+			require.True(t, ee.HasTrigger(flow.TriggerTerminate))
 
 			require.Equal(t, 7, len(triggers))
 			require.Equal(t, 7, len(ee.Definitions()))

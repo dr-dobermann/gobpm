@@ -16,12 +16,6 @@ const (
 	GatewayNodeType  NodeType = "Gateway"
 )
 
-type EventNode interface {
-	Node
-
-	EventType() string
-}
-
 type ActivityNode interface {
 	Node
 

@@ -145,6 +145,12 @@ func NewActivity(
 	return cfg.newActivity()
 }
 
+// ------------------ flow.Element interface -----------------------------------
+
+func (a *Activity) Name() string {
+	return a.Name()
+}
+
 // ------------------ flow.Node interface --------------------------------------
 
 // NodeType returns Activity's node type.

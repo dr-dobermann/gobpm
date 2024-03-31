@@ -12,14 +12,14 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/set"
 )
 
-var endTriggers = set.New[Trigger](
-	TriggerCancel,
-	TriggerCompensation,
-	TriggerError,
-	TriggerEscalation,
-	TriggerMessage,
-	TriggerSignal,
-	TriggerTerminate,
+var endTriggers = set.New[flow.EventTrigger](
+	flow.TriggerCancel,
+	flow.TriggerCompensation,
+	flow.TriggerError,
+	flow.TriggerEscalation,
+	flow.TriggerMessage,
+	flow.TriggerSignal,
+	flow.TriggerTerminate,
 )
 
 type EndEvent struct {
@@ -36,7 +36,7 @@ func NewEndEvent(
 		name:       name,
 		props:      map[string]*data.Property{},
 		baseOpts:   []options.Option{},
-		defs:       []Definition{},
+		defs:       []flow.EventDefinition{},
 		dataInputs: map[string]*data.Parameter{},
 		inputSet:   &data.Set{},
 	}

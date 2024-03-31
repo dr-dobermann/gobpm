@@ -3,6 +3,7 @@ package events
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -36,9 +37,9 @@ type TimerEventDefinition struct {
 }
 
 // Type implements Definition interface for TimerEventDefinition.
-func (*TimerEventDefinition) Type() Trigger {
+func (*TimerEventDefinition) Type() flow.EventTrigger {
 
-	return TriggerTimer
+	return flow.TriggerTimer
 }
 
 // NewTimerEventDefinition creates a new TimerEventDefinition and returns its

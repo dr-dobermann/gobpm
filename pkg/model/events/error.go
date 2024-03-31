@@ -3,6 +3,7 @@ package events
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -14,9 +15,9 @@ type ErrorEventDefinition struct {
 }
 
 // Type implements the Definition interface.
-func (*ErrorEventDefinition) Type() Trigger {
+func (*ErrorEventDefinition) Type() flow.EventTrigger {
 
-	return TriggerError
+	return flow.TriggerError
 }
 
 // NewErrorEventDefinition creates a new ErrorEventDefinition and returns

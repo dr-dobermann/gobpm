@@ -1,6 +1,7 @@
 package events
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -9,9 +10,9 @@ type TerminateEventDefinition struct {
 }
 
 // Type implements the Definition interface.
-func (*TerminateEventDefinition) Type() Trigger {
+func (*TerminateEventDefinition) Type() flow.EventTrigger {
 
-	return TriggerTerminate
+	return flow.TriggerTerminate
 }
 
 // NewTerminateEventDefinition creates a new TerminateEventDefinition

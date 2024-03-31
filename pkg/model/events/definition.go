@@ -5,13 +5,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
-type Definition interface {
-	foundation.Identifyer
-	foundation.Documentator
-
-	Type() Trigger
-}
-
 // definition is the base class for define an Event.
 type definition struct {
 	foundation.BaseElement

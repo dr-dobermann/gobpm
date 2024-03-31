@@ -3,6 +3,7 @@ package events
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -16,9 +17,9 @@ type ConditionalEventDefinition struct {
 }
 
 // Type implements the Definition interface.
-func (*ConditionalEventDefinition) Type() Trigger {
+func (*ConditionalEventDefinition) Type() flow.EventTrigger {
 
-	return TriggerConditional
+	return flow.TriggerConditional
 }
 
 // NewConditionalEventDefinition creates a new ConditionalEventDefinition

@@ -7,6 +7,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/stretchr/testify/require"
 )
@@ -101,7 +102,7 @@ func TestNewStartEvent(t *testing.T) {
 
 			require.Equal(t, 1, len(triggers))
 			require.True(t, se.IsInterrupting())
-			require.Equal(t, events.TriggerMessage, triggers[0])
+			require.Equal(t, flow.TriggerMessage, triggers[0])
 			require.Equal(t, 1, len(se.Definitions()))
 		})
 
@@ -120,8 +121,8 @@ func TestNewStartEvent(t *testing.T) {
 			t.Log(se.Id())
 			triggers := se.Triggers()
 
-			require.True(t, se.HasTrigger(events.TriggerSignal))
-			require.True(t, se.HasTrigger(events.TriggerMessage))
+			require.True(t, se.HasTrigger(flow.TriggerSignal))
+			require.True(t, se.HasTrigger(flow.TriggerMessage))
 
 			require.Equal(t, 2, len(triggers))
 			require.Equal(t, 2, len(se.Definitions()))
@@ -144,8 +145,8 @@ func TestNewStartEvent(t *testing.T) {
 			t.Log(se.Id())
 			triggers := se.Triggers()
 
-			require.True(t, se.HasTrigger(events.TriggerSignal))
-			require.True(t, se.HasTrigger(events.TriggerMessage))
+			require.True(t, se.HasTrigger(flow.TriggerSignal))
+			require.True(t, se.HasTrigger(flow.TriggerMessage))
 
 			require.True(t, se.IsParallelMultiple())
 
@@ -178,13 +179,13 @@ func TestNewStartEvent(t *testing.T) {
 			t.Log(se.Id())
 			triggers := se.Triggers()
 
-			require.True(t, se.HasTrigger(events.TriggerCompensation))
-			require.True(t, se.HasTrigger(events.TriggerConditional))
-			require.True(t, se.HasTrigger(events.TriggerError))
-			require.True(t, se.HasTrigger(events.TriggerEscalation))
-			require.True(t, se.HasTrigger(events.TriggerMessage))
-			require.True(t, se.HasTrigger(events.TriggerSignal))
-			require.True(t, se.HasTrigger(events.TriggerTimer))
+			require.True(t, se.HasTrigger(flow.TriggerCompensation))
+			require.True(t, se.HasTrigger(flow.TriggerConditional))
+			require.True(t, se.HasTrigger(flow.TriggerError))
+			require.True(t, se.HasTrigger(flow.TriggerEscalation))
+			require.True(t, se.HasTrigger(flow.TriggerMessage))
+			require.True(t, se.HasTrigger(flow.TriggerSignal))
+			require.True(t, se.HasTrigger(flow.TriggerTimer))
 
 			require.False(t, se.IsParallelMultiple())
 
