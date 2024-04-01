@@ -113,6 +113,9 @@ func (ini *Initiator) registerEvents(s *Snapshot, ep EventProducer) error {
 
 // Process processes event definition and on success creates a new process
 // instance and add send it to run queue.
+//
+// Initiator registers only initating events, so every event processed by
+// it should initiate (run) a new process instance.
 func (ini *Initiator) ProcessEvent(
 	ctx context.Context,
 	eDef flow.EventDefinition,

@@ -33,6 +33,9 @@
 package thresher
 
 import (
+	"context"
+	"sync"
+
 	"github.com/dr-dobermann/gobpm/internal/exec"
 	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -41,22 +44,28 @@ import (
 
 const errorClass = "THRESHER_ERRORS"
 
-type eventsRegister struct {
+type eventReg struct {
 	proc  exec.EventProcessor
 	eDefs map[string]flow.EventDefinition
 }
 
-type Thresher struct {
-	// registrations is indexed by processId.
-	registrations map[string]eventsRegister
+type instanceReg struct {
+	stop context.CancelFunc
+	inst *instance.Instance
+}
 
-	instances map[string][]*instance.Instance
+type Thresher struct {
+	m sync.Mutex
+	// registrations is indexed by processId.
+	registrations map[string]eventReg
+
+	instances map[string][]instanceReg
 }
 
 // ------------------ EventProducer interface ----------------------------------
 
 // RegisterEvents registered eventDefinition and its processor in the Thresher.
-func (t Thresher) RegisterEvents(
+func (t *Thresher) RegisterEvents(
 	ep exec.EventProcessor,
 	eDefs ...flow.EventDefinition,
 ) error {
@@ -74,7 +83,7 @@ func (t Thresher) RegisterEvents(
 
 	_, ok := t.registrations[ep.Id()]
 	if !ok {
-		t.registrations[ep.Id()] = eventsRegister{
+		t.registrations[ep.Id()] = eventReg{
 			proc:  ep,
 			eDefs: map[string]flow.EventDefinition{},
 		}
@@ -91,7 +100,7 @@ func (t Thresher) RegisterEvents(
 
 func (t *Thresher) RunProcess(
 	s *exec.Snapshot,
-	start flow.Node,
+	start flow.EventNode,
 	event flow.EventDefinition,
 ) error {
 	if s == nil {
@@ -99,6 +108,31 @@ func (t *Thresher) RunProcess(
 			errs.M("empty snapshot"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
+
+	inst, err := instance.New(s, start, event)
+	if err != nil {
+		return err
+	}
+
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	ii, ok := t.instances[s.ProcessId]
+	if !ok {
+		ii = []instanceReg{}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	err = inst.Run(ctx, cancel, t)
+	if err != nil {
+		return err
+	}
+
+	t.instances[s.ProcessId] = append(ii,
+		instanceReg{
+			stop: cancel,
+			inst: inst,
+		})
 
 	return nil
 }

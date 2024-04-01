@@ -1,6 +1,8 @@
 package instance
 
 import (
+	"context"
+
 	"github.com/dr-dobermann/gobpm/internal/exec"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -18,6 +20,9 @@ type Instance struct {
 	// Scopes holds accessible in the moment Data.
 	// first map indexed by data path, the second map indexed by Data name.
 	scopes map[exec.DataPath]map[string]data.Data
+
+	// Event registrator and emitter
+	eProd exec.EventProducer
 }
 
 func New(
@@ -59,4 +64,18 @@ func (inst *Instance) GetData(
 	}
 
 	return d.Value(), nil
+}
+
+// -----------------------------------------------------------------------------
+
+func (inst *Instance) Run(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	ep exec.EventProducer,
+) error {
+	inst.eProd = ep
+
+	defer cancel()
+
+	return nil
 }
