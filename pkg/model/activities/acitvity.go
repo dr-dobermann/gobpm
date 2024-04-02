@@ -12,14 +12,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
-type ActivityType string
-
-const (
-	TaskActivity       ActivityType = "Task"
-	CallActivity       ActivityType = "CallActivity"
-	SubProcessActivity ActivityType = "SubProcess"
-)
-
 // The Activity class is the abstract super class for all concrete Activity
 // types.
 type Activity struct {
@@ -145,12 +137,6 @@ func NewActivity(
 	return cfg.newActivity()
 }
 
-// ------------------ flow.Element interface -----------------------------------
-
-func (a *Activity) Name() string {
-	return a.Name()
-}
-
 // ------------------ flow.Node interface --------------------------------------
 
 // NodeType returns Activity's node type.
@@ -229,4 +215,8 @@ func (a *Activity) SetDefaultFlow(flowId string) error {
 	return errs.New(
 		errs.M("flow %q dosn't existed in acitivity %q", flowId, a.Name()),
 		errs.C(errorClass, errs.InvalidParameter))
+}
+
+func (a *Activity) BoundaryEvents() []flow.EventNode {
+	return append([]flow.EventNode{}, a.boundaryEvents...)
 }

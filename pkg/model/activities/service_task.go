@@ -3,6 +3,7 @@ package activities
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/helpers"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
@@ -70,6 +71,14 @@ func NewServiceTask(
 			operation:      operation},
 		nil
 }
+
+// ------------------ flow.Task interface --------------------------------------
+
+func (st *ServiceTask) TaskType() flow.TaskType {
+	return flow.ServiceTask
+}
+
+// -----------------------------------------------------------------------------
 
 // Implementation returns the ServiceTask implementation description.
 func (st *ServiceTask) Implementation() string {
