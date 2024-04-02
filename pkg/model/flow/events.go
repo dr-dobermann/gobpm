@@ -48,6 +48,12 @@ type EventDefinition interface {
 	Type() EventTrigger
 }
 
+// BoundaryEvents is an interface for bouding events.
+type BoudaryEvent interface {
+	EventNode
+
+	BoundTo(ActivityNode) error
+}
 type EventNode interface {
 	Node
 
