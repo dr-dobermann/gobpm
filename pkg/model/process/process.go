@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -187,6 +188,10 @@ func (p *Process) Remove(e flow.Element) error {
 }
 
 //------------------------------------------------------------------------------
+
+func (p *Process) Properties() []*data.Property {
+	return helpers.Map2List(p.properties)
+}
 
 // addNode adds non-empty unique FlowNode n to the process p.
 func (p *Process) addNode(n flow.Node) error {

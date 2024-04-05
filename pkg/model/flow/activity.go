@@ -18,8 +18,10 @@ type TaskType string
 
 const (
 	RecieveTask TaskType = "RecieveTask"
+	ScriptTask  TaskType = "ScriptTask"
 	SendTask    TaskType = "SendTask"
 	ServiceTask TaskType = "ServiceTask"
+	UserTask    TaskType = "UserTask"
 )
 
 type Task interface {

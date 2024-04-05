@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -12,11 +13,12 @@ import (
 
 // Snapshot holds process'es snapshot ready to run.
 type Snapshot struct {
-	foundation.BaseElement
+	foundation.ID
 
-	ProcessId string
-	Nodes     map[string]flow.Node
-	Flows     map[string]*flow.SequenceFlow
+	ProcessId  string
+	Nodes      map[string]flow.Node
+	Flows      map[string]*flow.SequenceFlow
+	Properties []*data.Property
 }
 
 // NewSnapshot creates a new snapshot from the Process p and returns its
@@ -32,16 +34,12 @@ func NewSnapshot(
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	be, err := foundation.NewBaseElement(snapOpts...)
-	if err != nil {
-		return nil, err
-	}
-
 	s := Snapshot{
-		BaseElement: *be,
-		ProcessId:   p.Id(),
-		Nodes:       map[string]flow.Node{},
-		Flows:       map[string]*flow.SequenceFlow{},
+		ID:         *foundation.NewID(),
+		ProcessId:  p.Id(),
+		Nodes:      map[string]flow.Node{},
+		Flows:      map[string]*flow.SequenceFlow{},
+		Properties: p.Properties(),
 	}
 
 	return createSnapshot(&s, p)
