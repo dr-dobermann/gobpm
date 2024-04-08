@@ -15,10 +15,11 @@ import (
 type Snapshot struct {
 	foundation.ID
 
-	ProcessId  string
-	Nodes      map[string]flow.Node
-	Flows      map[string]*flow.SequenceFlow
-	Properties []*data.Property
+	ProcessId   string
+	ProcessName string
+	Nodes       map[string]flow.Node
+	Flows       map[string]*flow.SequenceFlow
+	Properties  []*data.Property
 }
 
 // NewSnapshot creates a new snapshot from the Process p and returns its
@@ -35,11 +36,12 @@ func NewSnapshot(
 	}
 
 	s := Snapshot{
-		ID:         *foundation.NewID(),
-		ProcessId:  p.Id(),
-		Nodes:      map[string]flow.Node{},
-		Flows:      map[string]*flow.SequenceFlow{},
-		Properties: p.Properties(),
+		ID:          *foundation.NewID(),
+		ProcessId:   p.Id(),
+		ProcessName: p.Name(),
+		Nodes:       map[string]flow.Node{},
+		Flows:       map[string]*flow.SequenceFlow{},
+		Properties:  p.Properties(),
 	}
 
 	return createSnapshot(&s, p)

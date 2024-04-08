@@ -27,6 +27,8 @@ const errorClass = "PROCESS_ERRORS"
 type Process struct {
 	foundation.BaseElement
 
+	name string
+
 	// DEV_NOTE: CallableElement should be implemented as interface so it
 	// it shouldn't be used as a field or embedded struct.
 	// common.CallableElement
@@ -54,7 +56,7 @@ type Process struct {
 	// are contained within the Process. All Tasks and Sub-Processes SHALL have
 	// access to these properties.
 	//
-	// DEV_NOTE: properties are indexed by the property names.
+	// properties are indexed by the property names.
 	properties map[string]*data.Property
 
 	// Defines the resource roles that will perform or will be responsible for
@@ -63,6 +65,8 @@ type Process struct {
 	// or an organization.
 	// Note that the assigned resources of the Process does not determine the
 	// assigned resources of the Activities that are contained by the Process.
+	//
+	// roles indexed by role.Name
 	roles map[string]*activities.ResourceRole
 
 	// correlationSubscriptions are a feature of context-based correlation.
@@ -189,6 +193,11 @@ func (p *Process) Remove(e flow.Element) error {
 
 //------------------------------------------------------------------------------
 
+func (p *Process) Name() string {
+	return p.name
+}
+
+// Properties returns the Process properties.
 func (p *Process) Properties() []*data.Property {
 	return helpers.Map2List(p.properties)
 }

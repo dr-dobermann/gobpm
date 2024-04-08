@@ -100,8 +100,7 @@ func (t *Thresher) RegisterEvents(
 
 func (t *Thresher) RunProcess(
 	s *exec.Snapshot,
-	start flow.EventNode,
-	event flow.EventDefinition,
+	event ...flow.EventDefinition,
 ) error {
 	if s == nil {
 		return errs.New(
@@ -109,7 +108,7 @@ func (t *Thresher) RunProcess(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	inst, err := instance.New(s, start, event)
+	inst, err := instance.New(s, event...)
 	if err != nil {
 		return err
 	}

@@ -6,6 +6,5 @@ import "github.com/dr-dobermann/gobpm/pkg/model/flow"
 type ProcessRunner interface {
 	// Run starts Instance with list(probalby empty) of values of initial event
 	// definition.
-	// If process has no dedicated start event, then flow.Node will be empty.
-	RunProcess(*Snapshot, flow.EventNode, ...flow.EventDefinition) error
+	RunProcess(*Snapshot, ...flow.EventDefinition) error
 }

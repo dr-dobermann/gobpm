@@ -4,7 +4,6 @@ import (
 	"context"
 	"reflect"
 	"sync"
-	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/exec"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -29,8 +28,6 @@ const (
 )
 
 const (
-	defaultTimeout = 100 * time.Millisecond
-
 	rootScope exec.DataPath = "/"
 )
 
@@ -50,16 +47,16 @@ func (s State) String() string {
 type Instance struct {
 	foundation.ID
 
-	m  sync.Mutex
+	m sync.Mutex
+
+	// wg is used to hold track's go-routines tracing.
 	wg sync.WaitGroup
 
 	state State
 	s     *exec.Snapshot
 
-	sleepTimeout time.Duration
-
-	startEventNode flow.EventNode
-	eventDef       flow.EventDefinition
+	// initEvents holds instance's initial event definitions
+	initEvents []flow.EventDefinition
 
 	// Scopes holds accessible in the moment Data.
 	// first map indexed by data path, the second map indexed by Data name.
@@ -72,6 +69,7 @@ type Instance struct {
 	// traks indexed by track Ids
 	tracks map[string]*track
 
+	// events keeps list of tracks that awaits for evnent.
 	// events are indexed by event definition id
 	events map[string]*track
 }
@@ -79,22 +77,20 @@ type Instance struct {
 // New creates a new Instance from the Snapshot s and sets state to Ready.
 func New(
 	s *exec.Snapshot,
-	start flow.EventNode,
-	eDef flow.EventDefinition,
+	eDef ...flow.EventDefinition,
 ) (*Instance, error) {
 
 	inst := Instance{
-		ID:             *foundation.NewID(),
-		state:          Ready,
-		s:              s,
-		sleepTimeout:   defaultTimeout,
-		startEventNode: start,
-		eventDef:       eDef,
-		scopes:         map[exec.DataPath]map[string]data.Data{},
-		tracks:         map[string]*track{},
-		events:         map[string]*track{},
+		ID:         *foundation.NewID(),
+		state:      Ready,
+		s:          s,
+		initEvents: eDef,
+		scopes:     map[exec.DataPath]map[string]data.Data{},
+		tracks:     map[string]*track{},
+		events:     map[string]*track{},
 	}
 
+	// adds all processes properties into defalut scope
 	dd := []data.Data{}
 	for _, p := range s.Properties {
 		dd = append(dd, p)
@@ -111,8 +107,41 @@ func New(
 	return &inst, nil
 }
 
+// -------------------- exec.EventProcessor interface --------------------------
+
+func (inst *Instance) ProcessEvent(eDef flow.EventDefinition) error {
+	if eDef == nil {
+		return errs.New(
+			errs.M("empty event definition"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	inst.m.Lock()
+	t, ok := inst.events[eDef.Id()]
+	inst.m.Unlock()
+
+	if !ok {
+		return errs.New(
+			errs.M("event definition %q isn't registered for instance %q of process %q(%s)",
+				eDef.Id(), inst.Id(), inst.s.ProcessName, inst.s.ProcessId),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	if err := t.ProcessEvent(eDef); err != nil {
+		return err
+	}
+
+	inst.m.Lock()
+	delete(inst.events, eDef.Id())
+	inst.m.Unlock()
+
+	return nil
+}
+
 // -------------------- exec.EventProducer interface ---------------------------
 
+// RegisterEvents register tracks awaited for the event.
+// Once event is fired, then track's EventProcessor called.
 func (inst *Instance) RegisterEvents(
 	proc exec.EventProcessor,
 	eDefs ...flow.EventDefinition,
@@ -145,7 +174,9 @@ func (inst *Instance) RegisterEvents(
 				errs.C(errorClass, errs.TypeCastingError))
 		}
 
+		inst.m.Lock()
 		inst.events[ed.Id()] = t
+		inst.m.Unlock()
 	}
 
 	return nil
@@ -212,26 +243,14 @@ func (inst *Instance) Run(
 	cancel context.CancelFunc,
 	ep exec.EventProducer,
 ) error {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
-	if inst.state != Ready {
-		return errs.New(
-			errs.M("invalid instance state to run (want: Ready, has: %s)",
-				inst.state),
-			errs.C(errorClass, errs.InvalidState))
-	}
-
 	inst.eProd = ep
 
-	for _, t := range inst.tracks {
-		inst.wg.Add(1)
+	if err := inst.runInitialEvents(); err != nil {
+		return err
+	}
 
-		go func(t *track) {
-			defer inst.wg.Done()
-
-			t.run(ctx, inst.eventDef)
-		}(t)
+	if err := inst.runTracks(ctx); err != nil {
+		return err
 	}
 
 	// run track ended watcher
@@ -260,6 +279,53 @@ func (inst *Instance) Run(
 		// run cancel on the end to free resources.
 		cancel()
 	}()
+
+	return nil
+}
+
+// runTracks runs all tracks of the instance.
+func (inst *Instance) runTracks(ctx context.Context) error {
+	inst.m.Lock()
+	defer inst.m.Unlock()
+
+	if inst.state != Ready {
+		return errs.New(
+			errs.M("invalid instance state to run (want: Ready, has: %s)",
+				inst.state),
+			errs.C(errorClass, errs.InvalidState))
+	}
+
+	for _, t := range inst.tracks {
+		inst.wg.Add(1)
+
+		go func(t *track) {
+			defer inst.wg.Done()
+
+			t.run(ctx)
+		}(t)
+	}
+
+	return nil
+}
+
+func (inst *Instance) runInitialEvents() error {
+	for _, d := range inst.initEvents {
+		t, ok := inst.events[d.Id()]
+		if !ok {
+			return errs.New(
+				errs.M("event definition %q isn't registered in instance %q of process %q(%s)",
+					d.Id(), inst.Id(), inst.s.ProcessName, inst.s.ProcessId),
+				errs.C(errorClass, errs.InvalidObject))
+		}
+
+		if err := t.ProcessEvent(d); err != nil {
+			return err
+		}
+
+		inst.m.Lock()
+		delete(inst.events, d.Id())
+		inst.m.Unlock()
+	}
 
 	return nil
 }

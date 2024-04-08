@@ -1,7 +1,6 @@
 package exec
 
 import (
-	"context"
 	"errors"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -117,7 +116,6 @@ func (ini *Initiator) registerEvents(s *Snapshot, ep EventProducer) error {
 // Initiator registers only initating events, so every event processed by
 // it should initiate (run) a new process instance.
 func (ini *Initiator) ProcessEvent(
-	ctx context.Context,
 	eDef flow.EventDefinition,
 ) error {
 	if eDef == nil {
@@ -130,7 +128,7 @@ func (ini *Initiator) ProcessEvent(
 		return ini.Runner.RunProcess(ini.Sshot, nil, nil)
 	}
 
-	e, ok := ini.InitEvents[eDef.Id()]
+	_, ok := ini.InitEvents[eDef.Id()]
 	if !ok {
 		return errs.New(
 			errs.M("event definition %s isn't registered as initial event",
@@ -138,7 +136,7 @@ func (ini *Initiator) ProcessEvent(
 			errs.C(errorClass, errs.ObjectNotFound))
 	}
 
-	return ini.Runner.RunProcess(ini.Sshot, e, eDef)
+	return ini.Runner.RunProcess(ini.Sshot, eDef)
 }
 
 // -----------------------------------------------------------------------------

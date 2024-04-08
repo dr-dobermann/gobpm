@@ -76,6 +76,7 @@ func (pc *processConfig) newProcess() (*Process, error) {
 	}
 
 	p := Process{
+		name:                     pc.name,
 		BaseElement:              *be,
 		properties:               pc.props,
 		roles:                    pc.roles,
