@@ -64,6 +64,8 @@ type Instance struct {
 
 	// root event producer for the instance. usually it will be thresher
 	// created the instance.
+	// root event producer for the instance. usually it will be thresher
+	// created the instance.
 	eProd exec.EventProducer
 
 	// traks indexed by track Ids
@@ -218,6 +220,13 @@ func (inst *Instance) InstanceId() string {
 	return inst.Id()
 }
 
+// ------------------ exec.RuntimeEnvironment interface ------------------------
+
+// InstanceId retruns id of the Instance.
+func (inst *Instance) InstanceId() string {
+	return inst.Id()
+}
+
 // -----------------------------------------------------------------------------
 
 // State returns current state of the Instance.
@@ -243,6 +252,16 @@ func (inst *Instance) Run(
 	cancel context.CancelFunc,
 	ep exec.EventProducer,
 ) error {
+	inst.m.Lock()
+	defer inst.m.Unlock()
+
+	if inst.state != Ready {
+		return errs.New(
+			errs.M("invalid instance state to run (want: Ready, has: %s)",
+				inst.state),
+			errs.C(errorClass, errs.InvalidState))
+	}
+
 	inst.eProd = ep
 
 	if err := inst.runInitialEvents(); err != nil {
