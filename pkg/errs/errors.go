@@ -40,6 +40,7 @@ const (
 	OperationFailed = "OPERATION_FAILED"
 	ConditionFailed = "CONDITION_FAILED"
 	ObjectNotFound  = "OBJECT_NOT_FOUND"
+	InvalidState    = "INVALID_OBJECT_STATE"
 )
 
 type ApplicationError struct {

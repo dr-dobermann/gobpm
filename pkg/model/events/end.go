@@ -83,8 +83,3 @@ func (ee *EndEvent) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
 	// EndEvent has no restrictions on incoming sequence flows
 	return nil
 }
-
-// EventType impments flow.Event interface for the EndEvent.
-func (ee EndEvent) EventType() string {
-	return "EndEvent"
-}

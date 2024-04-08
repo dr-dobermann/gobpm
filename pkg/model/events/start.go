@@ -80,7 +80,7 @@ func NewStartEvent(
 	return sc.startEvent()
 }
 
-// ------------------ flow.Source interface ------------------------------------
+// ------------------ flow.SequenceSource interface ----------------------------
 //
 // SuportOutgoingFlow checks if it allowed to source sf from the StartEvent
 func (se *StartEvent) SuportOutgoingFlow(sf *flow.SequenceFlow) error {
@@ -88,13 +88,14 @@ func (se *StartEvent) SuportOutgoingFlow(sf *flow.SequenceFlow) error {
 	return nil
 }
 
-// -----------------------------------------------------------------------------
-// IsInterrupting returns interrupting setting of the StartEvent.
-func (se StartEvent) IsInterrupting() bool {
-	return se.interrrupting
+// ----------------- flow.EventNode interface ----------------------------------
+func (se *StartEvent) EventClass() flow.EventClass {
+	return flow.StartEventClass
 }
 
-// EventType impments flow.Event interface for the StartEvent.
-func (se StartEvent) EventType() string {
-	return "StartEvent"
+// -----------------------------------------------------------------------------
+
+// IsInterrupting returns interrupting setting of the StartEvent.
+func (se *StartEvent) IsInterrupting() bool {
+	return se.interrrupting
 }

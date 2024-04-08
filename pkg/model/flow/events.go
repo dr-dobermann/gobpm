@@ -45,6 +45,7 @@ type EventDefinition interface {
 	foundation.Identifyer
 	foundation.Documentator
 
+	// Type returns the trigger of the event definition.
 	Type() EventTrigger
 }
 
@@ -52,12 +53,16 @@ type EventDefinition interface {
 type BoudaryEvent interface {
 	EventNode
 
+	// BoundTo returns the ActivityNode the event is bounded to.
 	BoundTo(ActivityNode) error
 }
+
 type EventNode interface {
 	Node
 
+	// Definitions returns a list of the EventNode's event definitions.
 	Definitions() []EventDefinition
-	EventType() string
+
+	// EventClass returns the class of the Event (Start, Intermediate or End).
 	EventClass() EventClass
 }

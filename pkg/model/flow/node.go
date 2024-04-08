@@ -16,12 +16,6 @@ const (
 	GatewayNodeType  NodeType = "Gateway"
 )
 
-type GatewayNode interface {
-	Node
-
-	GatewayType() string
-}
-
 // Validate checks if nt has NodeType value.
 func (nt NodeType) Validate() error {
 	if nt != ActivityNodeType &&
