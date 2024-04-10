@@ -220,13 +220,6 @@ func (inst *Instance) InstanceId() string {
 	return inst.Id()
 }
 
-// ------------------ exec.RuntimeEnvironment interface ------------------------
-
-// InstanceId retruns id of the Instance.
-func (inst *Instance) InstanceId() string {
-	return inst.Id()
-}
-
 // -----------------------------------------------------------------------------
 
 // State returns current state of the Instance.
@@ -327,6 +320,8 @@ func (inst *Instance) runTracks(ctx context.Context) error {
 	return nil
 }
 
+// runIntialEvents feeds event's definitions on Instance creating into tracks
+// await the events to continue.
 func (inst *Instance) runInitialEvents() error {
 	for _, d := range inst.initEvents {
 		t, ok := inst.events[d.Id()]

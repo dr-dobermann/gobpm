@@ -199,7 +199,36 @@ func (t *track) currentStep() *stepInfo {
 // run start execution loop of the track which ends by ctx's cancel or
 // when there is no outgoing flows from the processing nodes.
 //
-// eDef keeps an event definition which caused the instance start.
+// Track starts execution from a start node.
+//
+//   - If node awaits an evenet to continue, then it event definition
+//     registered in instance and track state becomes to TrackAwaitEvent.
+//     Once event sent to track via ProcessEvent, then track continues.
+//
+//   - Node execution goes in three steps:
+//
+//     1. It starts from Prologue, if Node supports this interface.
+//
+//     2. If Prologue doesn't return any error, then started node Execute.
+//     If node Execution finished sucessfully, it returns a list of
+//     outgoing flows.
+//     3. If node supports Epilogue, then Epilogue started.
+//
+// If number of outgouing flows is not zero, then they processed as followed:
+//
+//   - first flow becomes the next step of the track.
+//     If there is a cyclic flow to node itself, then the first of them would
+//     be the next step of the track. If there is more than on cyclic flow,
+//     goBpm has no mechanism to set priority between them.
+//
+//   - for the rest of the outgoing flows new tracks would be created and
+//     added to the instance.
+//
+//   - token in the track would split on number of flows and first one will
+//     assign to the track itself in next step, and the rest of them will
+//     give to the other child tracks.
+//
+// if there is no outgouing flows, then track ends and token died.
 func (t *track) run(
 	ctx context.Context,
 ) {

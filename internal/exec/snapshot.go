@@ -14,7 +14,6 @@ import (
 // Snapshot holds process'es snapshot ready to run.
 type Snapshot struct {
 	foundation.ID
-	foundation.ID
 
 	ProcessId   string
 	ProcessName string
