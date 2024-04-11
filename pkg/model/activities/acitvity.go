@@ -139,6 +139,10 @@ func NewActivity(
 
 // ------------------ flow.Node interface --------------------------------------
 
+func (a *Activity) Node() flow.Node {
+	return a
+}
+
 // NodeType returns Activity's node type.
 func (a *Activity) NodeType() flow.NodeType {
 	return flow.ActivityNodeType

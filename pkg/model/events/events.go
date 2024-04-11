@@ -19,7 +19,8 @@ func map2slice[T any, I comparable](m map[I]T) []T {
 
 // interfaces check
 var (
-	_ flow.Node = (*Event)(nil)
+	_ flow.Node = (*StartEvent)(nil)
+	_ flow.Node = (*EndEvent)(nil)
 
 	_ flow.SequenceSource = (*StartEvent)(nil)
 	_ flow.SequenceTarget = (*EndEvent)(nil)

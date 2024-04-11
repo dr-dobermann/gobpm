@@ -70,6 +70,12 @@ func NewEndEvent(
 	return ec.endEvent()
 }
 
+// ------------------ flow.Node interface --------------------------------------
+
+func (ee *EndEvent) Node() flow.Node {
+	return ee
+}
+
 // ------------------ flow.EventNode interface ---------------------------------
 
 func (ee *EndEvent) EventClass() flow.EventClass {

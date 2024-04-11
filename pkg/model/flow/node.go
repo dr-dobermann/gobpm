@@ -69,6 +69,8 @@ type Node interface {
 	AddFlow(*SequenceFlow, data.Direction) error
 
 	NodeType() NodeType
+
+	Node() Node
 }
 
 // *****************************************************************************

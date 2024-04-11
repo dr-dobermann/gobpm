@@ -72,6 +72,12 @@ func NewServiceTask(
 		nil
 }
 
+// ------------------ flow.Node interface --------------------------------------
+
+func (st *ServiceTask) Node() flow.Node {
+	return st
+}
+
 // ------------------ flow.Task interface --------------------------------------
 
 func (st *ServiceTask) TaskType() flow.TaskType {

@@ -81,11 +81,16 @@ func NewStartEvent(
 }
 
 // ------------------ flow.SequenceSource interface ----------------------------
-//
+
 // SuportOutgoingFlow checks if it allowed to source sf from the StartEvent
 func (se *StartEvent) SuportOutgoingFlow(sf *flow.SequenceFlow) error {
 	// StartEvent don't restricted any source sequence flow from it
 	return nil
+}
+
+// ----------------- flow.Node interface ---------------------------------------
+func (se *StartEvent) Node() flow.Node {
+	return se
 }
 
 // ----------------- flow.EventNode interface ----------------------------------
