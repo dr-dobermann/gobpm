@@ -12,6 +12,10 @@ const (
 )
 
 type (
+	BaseObject interface {
+		Identifyer
+		Documentator
+	}
 	Identifyer interface {
 		Id() string
 	}
@@ -112,11 +116,11 @@ func MustBaseElement(opts ...options.Option) *BaseElement {
 }
 
 // Id returns the BaseElement Id.
-func (be BaseElement) Id() string {
+func (be *BaseElement) Id() string {
 	return be.id
 }
 
 // Docs returns the copy of BaseElement documentation.
-func (be BaseElement) Docs() []*Documentation {
+func (be *BaseElement) Docs() []*Documentation {
 	return append([]*Documentation{}, be.docs...)
 }

@@ -5,8 +5,10 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -55,9 +57,11 @@ func (ao activityOption) Apply(cfg options.Configurator) error {
 //
 // Validate validates activityConfig fields.
 func (ac *activityConfig) Validate() error {
-	if err := checkStr(
+	if err := helpers.CheckStr(
 		ac.name,
-		"Activity name couldn't be empty"); err != nil {
+		"Activity name couldn't be empty",
+		errorClass,
+	); err != nil {
 		return err
 	}
 
@@ -104,7 +108,7 @@ func (ac *activityConfig) newActivity() (*Activity, error) {
 		return nil, err
 	}
 
-	n, err := flow.NewNode(ac.name, ac.baseOpts...)
+	be, err := foundation.NewBaseElement(ac.baseOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -119,15 +123,18 @@ func (ac *activityConfig) newActivity() (*Activity, error) {
 	}
 
 	a := Activity{
-		Node:               *n,
-		isForCompensation:  ac.compensation,
-		roles:              ac.roles,
-		properties:         ac.props,
-		startQuantity:      ac.startQ,
-		completionQuantity: ac.complQ,
-		boundaryEvents:     []flow.Event{},
-		dataAssociations:   ac.dataAssociations,
-		IoSpec:             ioSpecs,
+		BaseElement:         *be,
+		FlowNode:            *flow.NewFlowNode(),
+		FlowElement:         *flow.NewFlowElement(ac.name),
+		isForCompensation:   ac.compensation,
+		loopCharacteristics: LoopCharacteristics{},
+		roles:               ac.roles,
+		defaultFlow:         &flow.SequenceFlow{},
+		properties:          ac.props,
+		startQuantity:       ac.startQ,
+		completionQuantity:  ac.complQ,
+		IoSpec:              ioSpecs,
+		dataAssociations:    ac.dataAssociations,
 	}
 
 	if ac.loop != nil {

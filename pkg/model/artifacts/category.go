@@ -1,6 +1,7 @@
 package artifacts
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -127,7 +128,7 @@ type CategoryValue struct {
 	// Activities, Gateways, and Artifacts) that are within the boundaries of
 	// the Group.
 	// Map uses FlowElement Id as a key.
-	categorizedElements map[string]*flow.Element
+	categorizedElements map[string]flow.Element
 }
 
 // NewCategoryValue creates a new CategoryValue and returns its pointer.
@@ -142,7 +143,7 @@ func NewCategoryValue(
 	return &CategoryValue{
 		BaseElement:         *foundation.MustBaseElement(baseOpts...),
 		Value:               value,
-		categorizedElements: map[string]*flow.Element{},
+		categorizedElements: map[string]flow.Element{},
 	}
 }
 
@@ -153,9 +154,9 @@ func (cv *CategoryValue) Category() *Category {
 
 // AddFlowElement adds FlowElements to the CategoryValue.
 // It returns a number of added FlowElements
-func (cv *CategoryValue) AddFlowElement(fee ...*flow.Element) int {
+func (cv *CategoryValue) AddFlowElement(fee ...flow.Element) int {
 	if cv.categorizedElements == nil {
-		cv.categorizedElements = map[string]*flow.Element{}
+		cv.categorizedElements = map[string]flow.Element{}
 	}
 
 	n := 0
@@ -174,22 +175,23 @@ func (cv *CategoryValue) AddFlowElement(fee ...*flow.Element) int {
 }
 
 // RemoveFlowElement removes FlowElements from the CategoryValue.
-func (cv *CategoryValue) RemoveFlowElement(fee ...*flow.Element) int {
+func (cv *CategoryValue) RemoveFlowElement(feeID ...string) int {
 	if cv.categorizedElements == nil {
-		cv.categorizedElements = map[string]*flow.Element{}
+		cv.categorizedElements = map[string]flow.Element{}
 
 		return 0
 	}
 
 	n := 0
 
-	for _, fe := range fee {
-		if fe == nil {
+	for _, fe := range feeID {
+		fe = helpers.Strim(fe)
+		if fe == "" {
 			continue
 		}
 
-		if _, ok := cv.categorizedElements[fe.Id()]; ok {
-			delete(cv.categorizedElements, fe.Id())
+		if _, ok := cv.categorizedElements[fe]; ok {
+			delete(cv.categorizedElements, fe)
 			n++
 		}
 	}
@@ -198,11 +200,10 @@ func (cv *CategoryValue) RemoveFlowElement(fee ...*flow.Element) int {
 }
 
 // FlowElements returns a list of categorized FlowElements from CategoryValue.
-func (cv *CategoryValue) FlowElements() []*flow.Element {
-	fee := []*flow.Element{}
+func (cv *CategoryValue) FlowElements() []flow.Element {
+	fee := []flow.Element{}
 
 	if cv.categorizedElements == nil {
-		cv.categorizedElements = map[string]*flow.Element{}
 		return fee
 	}
 

@@ -3,6 +3,7 @@ package events
 import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/set"
 )
@@ -80,41 +81,14 @@ import (
 //     Output that corresponds to the EventDefinition that described that
 //     trigger.
 
-type Trigger string
-
-// Multiple and ParallelMultiple have not direct trigger since they are
-// calculated based on event definitions.
-// As well None trigger also isn't existed since it appears on empty
-// Definitions list.
-const (
-	// Common Start and End events triggers
-	// TriggerNone    Trigger = "None"
-	TriggerMessage Trigger = "Message"
-	TriggerSignal  Trigger = "Signal"
-	// TriggerMultiple Trigger = "Multiple"
-
-	// Only Start events triggers
-	TriggerTimer       Trigger = "Timer"
-	TriggerConditional Trigger = "Conditional"
-	// TriggerParallelMultiple Trigger = "ParallelMultiple"
-
-	// Only End events triggers
-	TriggerError        Trigger = "Error"
-	TriggerEscalation   Trigger = "Escalation"
-	TriggerCancel       Trigger = "Cancel"
-	TriggerCompensation Trigger = "Compensation"
-	TriggerTerminate    Trigger = "Terminate"
-
-	// Only Intermediate events triggers
-	TriggerLink Trigger = "Link"
-)
-
 // *****************************************************************************
 
 // Events that catch a trigger. All Start Events and some Intermediate Events
 // are catching Events.
 type Event struct {
-	flow.Node
+	foundation.BaseElement
+	flow.FlowNode
+	flow.FlowElement
 
 	// Modeler-defined properties MAY be added to an Event. These properties are
 	// contained within the Event.
@@ -133,7 +107,7 @@ type Event struct {
 	//   • If there is more than one EventDefinition defined, this is
 	//     considered a Catch Multiple Event.
 	// This is an ordered set.
-	// defitionsRefs []Definition
+	// defitionsRefs []flow.EventDefiniion
 
 	// Defines the event EventDefinitions that are triggers expected.
 	// These EventDefinitions are only valid inside the current Event.
@@ -143,28 +117,30 @@ type Event struct {
 	//     considered a catch Multiple Event and the Event will have the
 	//     pentagon internal marker.
 	// This is an ordered set.
-	definitions []Definition
+	definitions []flow.EventDefinition
 
-	triggers set.Set[Trigger]
+	triggers set.Set[flow.EventTrigger]
 }
 
 // NewEvent creates a new Event and returns its pointer.
 func newEvent(
 	name string,
 	props []*data.Property,
-	defs []Definition,
+	defs []flow.EventDefinition,
 	baseOpts ...options.Option,
 ) (*Event, error) {
-	n, err := flow.NewNode(name, baseOpts...)
+	be, err := foundation.NewBaseElement(baseOpts...)
 	if err != nil {
 		return nil, err
 	}
 
 	e := Event{
-		Node:        *n,
+		BaseElement: *be,
+		FlowNode:    *flow.NewFlowNode(),
+		FlowElement: *flow.NewFlowElement(name),
 		properties:  append([]*data.Property{}, props...),
-		definitions: append([]Definition{}, defs...),
-		triggers:    *set.New[Trigger](),
+		definitions: append([]flow.EventDefinition{}, defs...),
+		triggers:    *set.New[flow.EventTrigger](),
 	}
 
 	for _, d := range e.definitions {
@@ -180,29 +156,24 @@ func (e Event) Properties() []*data.Property {
 }
 
 // Definiitons returns a list of event definitions.
-func (e Event) Definitions() []Definition {
+func (e Event) Definitions() []flow.EventDefinition {
 
-	return append([]Definition{}, e.definitions...)
+	return append([]flow.EventDefinition{}, e.definitions...)
 }
 
 // Triggers returns the Event triggers.
-func (e Event) Triggers() []Trigger {
+func (e Event) Triggers() []flow.EventTrigger {
 	return e.triggers.All()
 }
 
 // HasTrigger checks if event has Trigger t in it.
-func (e Event) HasTrigger(t Trigger) bool {
+func (e Event) HasTrigger(t flow.EventTrigger) bool {
 	return e.triggers.Has(t)
 }
 
 // NodeType implements flow.FlowNode interface for the Event.
 func (e Event) NodeType() flow.NodeType {
-	return flow.EventNode
-}
-
-// GetNode implemented flow.FlowNode interface for the Event.
-func (e *Event) GetNode() *flow.Node {
-	return &e.Node
+	return flow.EventNodeType
 }
 
 // *****************************************************************************
@@ -242,7 +213,7 @@ type catchEvent struct {
 func newCatchEvent(
 	name string,
 	props []*data.Property,
-	defs []Definition,
+	defs []flow.EventDefinition,
 	parallel bool,
 	baseOpts ...options.Option,
 ) (*catchEvent, error) {
@@ -288,7 +259,7 @@ type throwEvent struct {
 func newThrowEvent(
 	name string,
 	props []*data.Property,
-	defs []Definition,
+	defs []flow.EventDefinition,
 	baseOpts ...options.Option,
 ) (*throwEvent, error) {
 	e, err := newEvent(name, props, defs, baseOpts...)

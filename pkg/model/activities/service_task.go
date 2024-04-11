@@ -2,6 +2,8 @@ package activities
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/helpers"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
@@ -38,9 +40,11 @@ func NewServiceTask(
 	operation *service.Operation,
 	taskOpts ...options.Option,
 ) (*ServiceTask, error) {
-	name = trim(name)
-	if err := checkStr(
-		name, "empty name isn't allowed for the ServiceTask"); err != nil {
+	name = helpers.Strim(name)
+	if err := helpers.CheckStr(
+		name, "empty name isn't allowed for the ServiceTask",
+		errorClass,
+	); err != nil {
 		return nil, err
 	}
 
@@ -67,6 +71,20 @@ func NewServiceTask(
 			operation:      operation},
 		nil
 }
+
+// ------------------ flow.Node interface --------------------------------------
+
+func (st *ServiceTask) Node() flow.Node {
+	return st
+}
+
+// ------------------ flow.Task interface --------------------------------------
+
+func (st *ServiceTask) TaskType() flow.TaskType {
+	return flow.ServiceTask
+}
+
+// -----------------------------------------------------------------------------
 
 // Implementation returns the ServiceTask implementation description.
 func (st *ServiceTask) Implementation() string {

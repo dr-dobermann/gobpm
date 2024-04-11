@@ -7,6 +7,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -17,7 +18,7 @@ type (
 		name       string
 		props      map[string]*data.Property
 		baseOpts   []options.Option
-		defs       []Definition
+		defs       []flow.EventDefinition
 		dataInputs map[string]*data.Parameter
 		inputSet   *data.Set
 	}

@@ -2,6 +2,7 @@ package common
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -68,17 +69,17 @@ func NewResourceParameter(
 	required bool,
 	baseOpts ...options.Option,
 ) (*ResourceParameter, error) {
-	name = trim(name)
-	if err := checkStr(
+	name = helpers.Strim(name)
+	if err := helpers.CheckStr(
 		name,
-		"ResourceParameter should have a name"); err != nil {
+		"ResourceParameter should have a name", errorClass); err != nil {
 		return nil, err
 	}
 
-	pType = trim(pType)
-	if err := checkStr(
+	pType = helpers.Strim(pType)
+	if err := helpers.CheckStr(
 		pType,
-		"Type should be set for ResourceParameter"); err != nil {
+		"Type should be set for ResourceParameter", errorClass); err != nil {
 		return nil, err
 	}
 

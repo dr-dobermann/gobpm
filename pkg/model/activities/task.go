@@ -4,6 +4,7 @@ import (
 	"reflect"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -71,10 +72,13 @@ func NewTask(
 		err
 }
 
-// ActivityType implements flow.Activity interface and returns Activty type.
-func (t *Task) ActivityType() string {
-	return string(TaskActivity)
+// --------------------- flow.ActivityNode interface ---------------------------
+
+func (t *Task) ActivityType() flow.ActivityType {
+	return flow.TaskActivity
 }
+
+// -----------------------------------------------------------------------------
 
 // WithMultyInstance sets multyinstance flag of the Task.
 func WithMultyInstance() options.Option {

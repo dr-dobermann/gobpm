@@ -2,6 +2,7 @@ package events
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -49,9 +50,9 @@ type CompensationEventDefinition struct {
 }
 
 // Type implements the Definition interface.
-func (*CompensationEventDefinition) Type() Trigger {
+func (*CompensationEventDefinition) Type() flow.EventTrigger {
 
-	return TriggerCompensation
+	return flow.TriggerCompensation
 }
 
 // NewCompensationEventDefinition creates a new CompensationEventDefinition

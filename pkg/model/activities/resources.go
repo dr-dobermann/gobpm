@@ -2,6 +2,7 @@ package activities
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -36,10 +37,12 @@ func NewResourceRole(
 	pBinding []ResourceParameterBinding,
 	baseOpts ...options.Option,
 ) (*ResourceRole, error) {
-	name = trim(name)
-	if err := checkStr(
+	name = helpers.Strim(name)
+	if err := helpers.CheckStr(
 		name,
-		"name should be provided for ResourceRole"); err != nil {
+		"name should be provided for ResourceRole",
+		errorClass,
+	); err != nil {
 		return nil,
 			errs.New(
 				errs.M("ResourceRole creation failed"),

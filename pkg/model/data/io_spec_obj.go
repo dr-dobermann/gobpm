@@ -2,13 +2,14 @@ package data
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // *****************************************************************************
 //
-// Parameter implements both Input and Output classes of BPMNv2.
+// Parameter implements bothelpers.Input and Output classes of BPMNv2.
 type Direction string
 
 const (
@@ -51,13 +52,14 @@ type Parameter struct {
 // NewParameter creates a new Parameter and returns its pointer on success or
 // error on failure.
 func NewParameter(name string, iae *ItemAwareElement) (*Parameter, error) {
-	name = trim(name)
+	name = helpers.Strim(name)
 
-	if name == "" {
-		return nil,
-			errs.New(
-				errs.M("name shouldn't be empty"),
-				errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
+	if err := helpers.CheckStr(
+		name,
+		"name shouldn't be empty",
+		errorClass,
+	); err != nil {
+		return nil, err
 	}
 
 	if iae == nil {
@@ -124,7 +126,7 @@ func (p *Parameter) addSet(s *Set, where SetType) error {
 		return nil
 	}
 
-	if ind := index(s, ss); ind == -1 {
+	if ind := helpers.Index(s, ss); ind == -1 {
 		p.sets[where] = append(ss, s)
 	}
 
@@ -155,7 +157,7 @@ func (p *Parameter) removeSet(s *Set, from SetType) error {
 			errs.D("set_name", s.name))
 	}
 
-	ind := index(s, ss)
+	ind := helpers.Index(s, ss)
 	if ind == -1 {
 		return errs.New(
 			errs.M("parameter %q doesn't belong to data set %q",
@@ -170,7 +172,7 @@ func (p *Parameter) removeSet(s *Set, from SetType) error {
 
 // *****************************************************************************
 //
-// Set implements both InputSet and OutputSet of BPMNv2
+// Set implements bothelpers.InputSet and OutputSet of BPMNv2
 type Set struct {
 	foundation.BaseElement
 
@@ -187,7 +189,7 @@ type Set struct {
 	// expected to be created by the Activity when this InputSet became valid.
 	// This attribute is paired with the inputSetRefs attribute of OutputSets.
 	//
-	// Specifies an Input/Output rule that defines which InputSet has to
+	// Specifies an Input/Output rule that defines whichelpers.InputSet has to
 	// become valid to expect the creation of this OutputSet. This attribute is
 	// paired with the outputSetRefs attribute of InputSets.
 	//
@@ -199,13 +201,14 @@ type Set struct {
 // NewSet creates a new Set and returns its pointer on succes or
 // error on failure
 func NewSet(name string, baseOpts ...options.Option) (*Set, error) {
-	name = trim(name)
+	name = helpers.Strim(name)
 
-	if name == "" {
-		return nil,
-			errs.New(
-				errs.M("name shouldn't be empty"),
-				errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
+	if err := helpers.CheckStr(
+		name,
+		"name shouldn't be empty",
+		errorClass,
+	); err != nil {
+		return nil, err
 	}
 
 	be, err := foundation.NewBaseElement(baseOpts...)
@@ -336,7 +339,7 @@ func (s *Set) RemoveParameter(p *Parameter, from SetType) error {
 			continue
 		}
 
-		index := index(p, vv)
+		index := helpers.Index(p, vv)
 		if index != -1 {
 			if err := p.removeSet(s, st); err != nil {
 				return err
@@ -378,7 +381,7 @@ func (s *Set) Link(ds *Set) error {
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
-	if idx := index(ds, s.linkedSets); idx == -1 {
+	if idx := helpers.Index(ds, s.linkedSets); idx == -1 {
 		s.linkedSets = append(s.linkedSets, ds)
 	}
 
@@ -393,7 +396,7 @@ func (s *Set) Unlink(ds *Set) error {
 			errs.C(errorClass, errs.InvalidParameter, errs.EmptyNotAllowed))
 	}
 
-	idx := index(ds, s.linkedSets)
+	idx := helpers.Index(ds, s.linkedSets)
 	if idx == -1 {
 		return errs.New(
 			errs.M("data set isn't linked"),
@@ -483,3 +486,6 @@ func checkParamsState(rs *DataState, pp []*Parameter, sType SetType) error {
 
 	return nil
 }
+
+// Interfaces check for Parameter
+var _ Data = (*Parameter)(nil)

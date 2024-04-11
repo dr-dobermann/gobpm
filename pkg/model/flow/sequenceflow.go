@@ -14,19 +14,14 @@ type (
 	// SequenceSource implemented by the Nodes which could be a source of the sequence
 	// flow.
 	SequenceSource interface {
-		FlowNode
+		Node
 
 		SuportOutgoingFlow(sf *SequenceFlow) error
-
-		Link(
-			trg SequenceTarget,
-			flowOptions ...options.Option,
-		) (*SequenceFlow, error)
 	}
 
 	// SequenceTarget impmemented by the Nodes which accepts incomng sequence flows.
 	SequenceTarget interface {
-		FlowNode
+		Node
 
 		AcceptIncomingFlow(sf *SequenceFlow) error
 	}
@@ -39,7 +34,9 @@ type (
 // for Processes), Choreography Activities (Choreography Task and
 // Sub-Choreography; for Choreographies), and Gateways.
 type SequenceFlow struct {
-	Element
+	foundation.BaseElement
+
+	FlowElement
 
 	// The FlowNode that the Sequence Flow is connecting from.
 	// For a Process: Of the types of FlowNode, only Activities,
@@ -81,33 +78,50 @@ type SequenceFlow struct {
 	// isImmediate bool
 }
 
-// ------------------------- FlowElement interface -----------------------------
+// ------------------------- Element interface ---------------------------------
 
-// ElementType returns element type of the SequenceFlow.
-func (f *SequenceFlow) ElementType() ElementType {
+// Type returns element type of the SequenceFlow.
+func (f *SequenceFlow) Type() ElementType {
 	return SequenceFlowElement
-}
-
-// GetElement returns underlaying Element.
-func (f *SequenceFlow) GetElement() *Element {
-	return &f.Element
 }
 
 // -----------------------------------------------------------------------------
 
+func Link(
+	src SequenceSource,
+	trg SequenceTarget,
+	flowOptions ...options.Option,
+) (*SequenceFlow, error) {
+	if src == nil {
+		return nil,
+			errs.New(
+				errs.M("flow source couldn't be empty"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if trg == nil {
+		return nil,
+			errs.New(
+				errs.M("flow target shouldn't be empty"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	return newSequenceFlow(src, trg, flowOptions...)
+}
+
 // newSequenceFlow creates a new SequenceFlow which connects src and trg
 // FlowNodes. On success it returns the new SequenceFlow pointer.
 // In case of failrue it returns an error.
-func NewSequenceFlow(
+func newSequenceFlow(
 	src SequenceSource,
 	trg SequenceTarget,
 	opts ...options.Option,
 ) (*SequenceFlow, error) {
 	fc := sflowConfig{
-		name:     "",
-		src:      src,
-		trg:      trg,
-		baseOpts: []options.Option{},
+		src:               src,
+		trg:               trg,
+		putInSrcContainer: true,
+		baseOpts:          []options.Option{},
 	}
 
 	ee := []error{}
@@ -144,11 +158,18 @@ func NewSequenceFlow(
 		return nil, err
 	}
 
+	if fc.putInSrcContainer {
+		if fc.src.Container() != nil {
+			if err := fc.src.Container().Add(sf); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	return sf, nil
 }
 
 // checkConnections tests if it possible to connect src with trg via sf.
-// If any error found, then error returned.
 func checkConnections(
 	sf *SequenceFlow,
 	src SequenceSource,
@@ -158,11 +179,12 @@ func checkConnections(
 		return err
 	}
 
-	// check possibility to use sf on source and target ends of the flow
+	// check possibility to use sf as source of the flow
 	if err := src.SuportOutgoingFlow(sf); err != nil {
 		return err
 	}
 
+	// check possibility to use trg as target of the sf flow.
 	if err := trg.AcceptIncomingFlow(sf); err != nil {
 		return err
 	}
@@ -177,15 +199,11 @@ func connect(sf *SequenceFlow, src SequenceSource, trg SequenceTarget) error {
 	}
 
 	// join source and targed with flow
-	if err := src.GetNode().addFlow(sf, data.Output); err != nil {
+	if err := src.AddFlow(sf, data.Output); err != nil {
 		return err
 	}
 
-	if err := trg.GetNode().addFlow(sf, data.Input); err != nil {
-		if errd := src.GetNode().removeFlow(sf, data.Output); errd != nil {
-			return errors.Join(errd, err)
-		}
-
+	if err := trg.AddFlow(sf, data.Input); err != nil {
 		return err
 	}
 
@@ -201,31 +219,31 @@ func (f *SequenceFlow) Validate() error {
 
 	// ignore empty flow container if its not set yet.
 	if cntr == nil {
-		cntr = f.source.GetNode().container
+		cntr = f.source.Container()
 	}
 
 	if (cntr != nil &&
-		(f.source.GetNode().container != cntr ||
-			f.target.GetNode().container != cntr)) ||
+		(f.source.Container() != cntr ||
+			f.target.Container() != cntr)) ||
 		(cntr == nil &&
-			(f.source.GetNode().container != nil ||
-				f.target.GetNode().container != nil)) {
+			(f.source.Container() != nil ||
+				f.target.Container() != nil)) {
 		return errs.New(
 			errs.M("sequence flow, source and target should belong to the "+
 				"same or nil container"),
 			errs.C(errorClass, errs.BulidingFailed),
 			errs.D("flow_container", getContainerId(cntr)),
 			errs.D("source_container",
-				getContainerId(f.source.GetNode().container)),
+				getContainerId(f.source.Container())),
 			errs.D("target_container",
-				getContainerId(f.target.GetNode().container)))
+				getContainerId(f.target.Container())))
 	}
 
 	return nil
 }
 
 // getContainerId returns the container id if its not nil.
-func getContainerId(c *ElementsContainer) string {
+func getContainerId(c Container) string {
 	if c == nil {
 		return "<nil>"
 	}

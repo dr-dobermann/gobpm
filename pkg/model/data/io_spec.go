@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -205,7 +206,7 @@ func (ios *InputOutputSpecification) Validate() error {
 					for _, s := range ss {
 						// check if it belongs to the same
 						// type as the parameter
-						if idx := index(s, ios.sets[tp]); idx != -1 {
+						if idx := helpers.Index(s, ios.sets[tp]); idx != -1 {
 							links++
 						}
 					}
@@ -252,7 +253,7 @@ func (ios *InputOutputSpecification) AddParameter(
 		return nil
 	}
 
-	if idx := index(p, pp); idx == -1 {
+	if idx := helpers.Index(p, pp); idx == -1 {
 		ios.params[dir] = append(pp, p)
 	}
 
@@ -282,7 +283,7 @@ func (ios InputOutputSpecification) RemoveParameter(
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
-	idx := index(p, pp)
+	idx := helpers.Index(p, pp)
 	if idx == -1 {
 		return errs.New(
 			errs.M("no parameter %q in data set %q", p.name, dir),
@@ -354,14 +355,14 @@ func (ios *InputOutputSpecification) AddSet(
 	}
 
 	// check if s isn't used as opposite sets
-	if idx := index(s, ios.sets[Opposite(dir)]); idx != -1 {
+	if idx := helpers.Index(s, ios.sets[Opposite(dir)]); idx != -1 {
 		return errs.New(
 			errs.M("data set is already used as %s set", Opposite(dir)),
 			errs.C(errorClass, errs.InvalidParameter, errs.DuplicateObject))
 	}
 
 	// check if s isn't registered yet
-	if idx := index(s, ss); idx == -1 {
+	if idx := helpers.Index(s, ss); idx == -1 {
 		ios.sets[dir] = append(ss, s)
 	}
 
@@ -393,7 +394,7 @@ func (ios *InputOutputSpecification) RemoveSet(
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
-	idx := index(s, ss)
+	idx := helpers.Index(s, ss)
 	if idx == -1 {
 		return errs.New(
 			errs.M("set isn't existed in %q lists", dir),

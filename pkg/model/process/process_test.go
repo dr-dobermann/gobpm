@@ -76,14 +76,15 @@ func TestProcess(t *testing.T) {
 	extra, err := activities.NewServiceTask("external task",
 		service.MustOperation("fiction", nil, nil, nil),
 		activities.WithoutParams())
-
-	f1, err := start.Link(task1)
 	require.NoError(t, err)
 
-	f2, err := task1.Link(task2, options.WithName("print results"))
+	f1, err := flow.Link(start, task1)
 	require.NoError(t, err)
 
-	f3, err := task2.Link(end)
+	f2, err := flow.Link(task1, task2, options.WithName("print results"))
+	require.NoError(t, err)
+
+	f3, err := flow.Link(task2, end)
 	require.NoError(t, err)
 
 	t.Run("new process",
@@ -95,29 +96,32 @@ func TestProcess(t *testing.T) {
 			require.NoError(t, err)
 			require.NotEmpty(t, p)
 
-			for _, n := range []flow.FlowNode{start, task1, task2, end} {
-				require.NoError(t, p.AddNode(n))
+			for _, n := range []flow.Node{start, task1, task2, end} {
+				require.NoError(t, p.Add(n))
 			}
 
 			for _, f := range []*flow.SequenceFlow{f1, f2, f3} {
-				require.NoError(t, p.AddFlow(f))
+				require.NoError(t, p.Add(f))
 			}
 
 			nn := p.Nodes()
 			require.Equal(t, 4, len(nn))
 			for _, n := range nn {
-				t.Log(n.GetNode().Name())
+				t.Log(n.Name())
 			}
 
+			_, err = flow.Link(start, task2)
+			require.NoError(t, err)
+
 			ff := p.Flows()
-			require.Equal(t, 3, len(ff))
+			require.Equal(t, 4, len(ff))
 			for _, f := range ff {
 				require.NoError(t, f.Validate())
 
 				t.Log(f.Id(), " ", f.Name())
 			}
 
-			_, err = extra.Link(task1)
+			_, err = flow.Link(extra, task2)
 			require.Error(t, err)
 			t.Log(err)
 		})

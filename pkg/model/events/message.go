@@ -3,6 +3,7 @@ package events
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
@@ -18,9 +19,9 @@ type MessageEventDefinition struct {
 }
 
 // Type implements Definition interface.
-func (*MessageEventDefinition) Type() Trigger {
+func (*MessageEventDefinition) Type() flow.EventTrigger {
 
-	return TriggerMessage
+	return flow.TriggerMessage
 }
 
 // NewMessageEventDefinition creates a new MessageEventDefinition and

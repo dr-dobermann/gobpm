@@ -12,14 +12,14 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/set"
 )
 
-var startTriggers = set.New[Trigger](
-	TriggerCompensation, // only for in-line Sub-Processes
-	TriggerConditional,
-	TriggerError,      // only for in-line Sub-Processes
-	TriggerEscalation, // only for in-line Sub-Processes
-	TriggerMessage,
-	TriggerSignal,
-	TriggerTimer,
+var startTriggers = set.New[flow.EventTrigger](
+	flow.TriggerCompensation, // only for in-line Sub-Processes
+	flow.TriggerConditional,
+	flow.TriggerError,      // only for in-line Sub-Processes
+	flow.TriggerEscalation, // only for in-line Sub-Processes
+	flow.TriggerMessage,
+	flow.TriggerSignal,
+	flow.TriggerTimer,
 )
 
 type StartEvent struct {
@@ -47,7 +47,7 @@ func NewStartEvent(
 		parallel:      false,
 		interrurpting: false,
 		baseOpts:      []options.Option{},
-		defs:          []Definition{},
+		defs:          []flow.EventDefinition{},
 		dataOutputs:   make(map[string]*data.Parameter),
 	}
 
@@ -80,29 +80,27 @@ func NewStartEvent(
 	return sc.startEvent()
 }
 
-// ------------------ flow.Source interface ------------------------------------
-//
+// ------------------ flow.SequenceSource interface ----------------------------
+
 // SuportOutgoingFlow checks if it allowed to source sf from the StartEvent
 func (se *StartEvent) SuportOutgoingFlow(sf *flow.SequenceFlow) error {
 	// StartEvent don't restricted any source sequence flow from it
 	return nil
 }
 
-// Link creates a new SequenceFlow between se and trg.
-func (se *StartEvent) Link(
-	trg flow.SequenceTarget,
-	options ...options.Option,
-) (*flow.SequenceFlow, error) {
-	return flow.NewSequenceFlow(se, trg, options...)
+// ----------------- flow.Node interface ---------------------------------------
+func (se *StartEvent) Node() flow.Node {
+	return se
+}
+
+// ----------------- flow.EventNode interface ----------------------------------
+func (se *StartEvent) EventClass() flow.EventClass {
+	return flow.StartEventClass
 }
 
 // -----------------------------------------------------------------------------
-// IsInterrupting returns interrupting setting of the StartEvent.
-func (se StartEvent) IsInterrupting() bool {
-	return se.interrrupting
-}
 
-// EventType impments flow.Event interface for the StartEvent.
-func (se StartEvent) EventType() string {
-	return "StartEvent"
+// IsInterrupting returns interrupting setting of the StartEvent.
+func (se *StartEvent) IsInterrupting() bool {
+	return se.interrrupting
 }

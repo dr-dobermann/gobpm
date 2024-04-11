@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -24,8 +25,16 @@ const errorClass = "PROCESS_ERRORS"
 // by a single person. Low-level Processes can be grouped together to achieve a
 // common business goal.
 type Process struct {
-	common.CallableElement
-	flow.ElementsContainer
+	foundation.BaseElement
+
+	name string
+
+	// DEV_NOTE: CallableElement should be implemented as interface so it
+	// it shouldn't be used as a field or embedded struct.
+	// common.CallableElement
+
+	// DEV_NOTE: Container replaced by interface flow.Container
+	// flow.ElementsContainer
 
 	// An optional Boolean value specifying whether the Process is executable.
 	// An executable Process is a private Process that has been modeled for the
@@ -47,7 +56,7 @@ type Process struct {
 	// are contained within the Process. All Tasks and Sub-Processes SHALL have
 	// access to these properties.
 	//
-	// DEV_NOTE: properties are indexed by the property names.
+	// properties are indexed by the property names.
 	properties map[string]*data.Property
 
 	// Defines the resource roles that will perform or will be responsible for
@@ -56,6 +65,8 @@ type Process struct {
 	// or an organization.
 	// Note that the assigned resources of the Process does not determine the
 	// assigned resources of the Activities that are contained by the Process.
+	//
+	// roles indexed by role.Name
 	roles map[string]*activities.ResourceRole
 
 	// correlationSubscriptions are a feature of context-based correlation.
@@ -66,7 +77,7 @@ type Process struct {
 
 	// nodes keeps all flow.FlowNodes of the Process.
 	// it indexed by FlowNode id.
-	nodes map[string]flow.FlowNode
+	nodes map[string]flow.Node
 
 	flows map[string]*flow.SequenceFlow
 }
@@ -118,44 +129,107 @@ func NewProcess(
 	return pc.newProcess()
 }
 
-// Id retruns the processes Id.
-func (p *Process) Id() string {
-	return p.ElementsContainer.Id()
+// ---------------------- flow.Container interface -----------------------------
+func (p *Process) Add(e flow.Element) error {
+	if e == nil {
+		return errs.New(
+			errs.M("flow element couldn't be empty"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	switch e.Type() {
+	case flow.NodeElement:
+		return p.addNode(e.(flow.Node))
+
+	case flow.SequenceFlowElement:
+		return p.addFlow(e.(*flow.SequenceFlow))
+
+	}
+
+	return errs.New(
+		errs.M("invalid flow element type: %s", reflect.TypeOf(e).String()),
+		errs.C(errorClass, errs.InvalidParameter))
 }
 
-// AddNode adds non-empty unique FlowNode n to the process p.
-func (p *Process) AddNode(n flow.FlowNode) error {
+// Elements returns all processes elements.
+func (p *Process) Elements() []flow.Element {
+	fee := make([]flow.Element, 0, len(p.nodes)+len(p.flows))
+
+	for _, n := range p.nodes {
+		fee = append(fee, n.(flow.Element))
+	}
+
+	for _, f := range p.flows {
+		fee = append(fee, f)
+	}
+
+	return fee
+}
+
+// Remove deletes single flow or node for the Process p.
+func (p *Process) Remove(e flow.Element) error {
+	if e == nil {
+		return errs.New(
+			errs.M("element couldn't be empty"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if _, ok := p.nodes[e.Id()]; ok {
+		delete(p.nodes, e.Id())
+
+		return e.Unbind()
+	}
+
+	if _, ok := p.flows[e.Id()]; ok {
+		delete(p.flows, e.Id())
+
+		return e.Unbind()
+	}
+
+	return errs.New(
+		errs.M("element %q(%s) not found in process", e.Name(), e.Id()),
+		errs.C(errorClass, errs.ObjectNotFound))
+}
+
+//------------------------------------------------------------------------------
+
+func (p *Process) Name() string {
+	return p.name
+}
+
+// Properties returns the Process properties.
+func (p *Process) Properties() []*data.Property {
+	return helpers.Map2List(p.properties)
+}
+
+// addNode adds non-empty unique FlowNode n to the process p.
+func (p *Process) addNode(n flow.Node) error {
 	if n == nil {
 		return errs.New(
 			errs.M("node couldn't be empty"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	_, ok := p.nodes[n.GetNode().Id()]
-	if ok {
+	if _, ok := p.nodes[n.Id()]; ok {
 		return errs.New(
 			errs.M("node %q(%s) already registered in process.",
-				n.GetNode().Name(), n.GetNode().Id()),
+				n.Name(), n.Id()),
 			errs.C(errorClass, errs.DuplicateObject))
 	}
 
-	if err := p.ElementsContainer.Add(n.GetNode()); err != nil {
-		return err
-	}
+	p.nodes[n.Id()] = n
 
-	p.nodes[n.GetNode().Id()] = n
-
-	return nil
+	return n.BindTo(p)
 }
 
 // Nodes returns a slice of Process flow.FlowNodes of one of types.
 // if types aren't specified then all nodes returned.
-func (p *Process) Nodes(types ...flow.NodeType) []flow.FlowNode {
+func (p *Process) Nodes(types ...flow.NodeType) []flow.Node {
 	if err := flow.ValidateNodeTypes(types...); err != nil {
-		return []flow.FlowNode{}
+		return []flow.Node{}
 	}
 
-	fnn := make([]flow.FlowNode, 0, len(p.nodes))
+	fnn := make([]flow.Node, 0, len(p.nodes))
 	for _, n := range p.nodes {
 		if len(types) == 0 || has(types, n.NodeType()) {
 			fnn = append(fnn, n)
@@ -176,8 +250,8 @@ func has[T comparable](slice []T, item T) bool {
 	return false
 }
 
-// AddFlow add non-empty unique SequenceFlow into the Process.
-func (p *Process) AddFlow(f *flow.SequenceFlow) error {
+// addFlow add non-empty unique SequenceFlow into the Process.
+func (p *Process) addFlow(f *flow.SequenceFlow) error {
 	if f == nil {
 		return errs.New(
 			errs.M("flow couldn't be empty"),
@@ -193,7 +267,7 @@ func (p *Process) AddFlow(f *flow.SequenceFlow) error {
 
 	p.flows[f.Id()] = f
 
-	return nil
+	return f.BindTo(p)
 }
 
 // Flows returns all processes flows.
@@ -206,3 +280,5 @@ func (p *Process) Flows() []*flow.SequenceFlow {
 
 	return ff
 }
+
+var _ flow.Container = (*Process)(nil)

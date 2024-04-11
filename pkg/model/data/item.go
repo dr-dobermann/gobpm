@@ -215,6 +215,19 @@ func MustItemAwareElement(
 	return iae
 }
 
+// ----------------- data.Data interface ---------------------------------------
+
+// Value returns underlaying structure value of the ItemAvareElement.
+func (iae *ItemAwareElement) Value() Value {
+	if iae.itemSubject == nil {
+		return nil
+	}
+
+	return iae.itemSubject.structure
+}
+
+// -----------------------------------------------------------------------------
+
 // State returns a copy of the ItemAwareElement DataState.
 func (iae *ItemAwareElement) State() DataState {
 	return iae.dataState

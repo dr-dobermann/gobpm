@@ -1,9 +1,7 @@
 package flow
 
 import (
-	"strings"
-
-	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -19,15 +17,28 @@ import (
 // brackets as follows: <Data Object Name> [ <Data Object Reference State> ].
 type DataObject struct {
 	data.ItemAwareElement
-	Element
+
+	FlowElement
 
 	// Defines if the Data Object represents a collection of elements. It is
 	// needed when no itemDefinition is referenced. If an itemDefinition is
 	// referenced, then this attribute MUST have the same value as the
 	// isCollection attribute of the referenced itemDefinition. The default
 	// value for this attribute is false.
-	IsCollection bool
+	//
+	// DEV_NOTE: Since flag IsCollection depends on internal ItemAwareElement
+	// state, the dedicated value isn't necessary.
+	// IsCollection bool
 }
+
+// ------------------ Element interface ----------------------------------------
+
+// Type returns the element type of the DataObject.
+func (do *DataObject) Type() ElementType {
+	return DataObjectElement
+}
+
+// -----------------------------------------------------------------------------
 
 // NewDataOpject creates and returns a new DataObject and returns its pointer.
 func NewDataOpject(
@@ -36,12 +47,13 @@ func NewDataOpject(
 	state *data.DataState,
 	baseOpts ...options.Option,
 ) (*DataObject, error) {
-	name = strings.Trim(name, " ")
-	if name == "" {
-		return nil,
-			errs.New(
-				errs.M("DataObject should have non-empty name"),
-				errs.C(errorClass, errs.InvalidParameter))
+	name = helpers.Strim(name)
+	if err := helpers.CheckStr(
+		name,
+		"DataObject should have non-empty name",
+		errorClass,
+	); err != nil {
+		return nil, err
 	}
 
 	iae, err := data.NewItemAwareElement(idef, state, baseOpts...)
@@ -50,14 +62,14 @@ func NewDataOpject(
 	}
 
 	do := DataObject{
-		ItemAwareElement: *iae}
-
-	e, err := NewElement(name, baseOpts...)
-	if err != nil {
-		return nil, err
+		ItemAwareElement: *iae,
 	}
-
-	do.Element = *e
 
 	return &do, nil
 }
+
+// interfaces test for DataObject.
+var (
+	_ Element   = (*DataObject)(nil)
+	_ data.Data = (*DataObject)(nil)
+)

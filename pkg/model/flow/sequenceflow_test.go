@@ -6,6 +6,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/stretchr/testify/require"
@@ -31,27 +32,41 @@ func TestSequenceFlow(t *testing.T) {
 
 	t.Run("invalid params",
 		func(t *testing.T) {
-			sf, err := flow.NewSequenceFlow(nil, nil,
+			sf, err := flow.Link(nil, nil,
 				options.WithName(""),
 				flow.WithCondition(nil))
 			require.Error(t, err)
 			require.Empty(t, sf)
+
+			_, err = flow.Link(se, nil)
+			require.Error(t, err)
+
+			_, err = flow.Link(se, st1,
+				options.WithName(""),
+				flow.WithCondition(nil))
+			require.Error(t, err)
+
+			_, err = flow.Link(se, st1, activities.WithStartQuantity(1))
+			require.Error(t, err)
 		})
 
 	t.Run("linked process",
 		func(t *testing.T) {
-			sfStart, err := se.Link(st1, options.WithName("start"))
+			sfStart, err := flow.Link(se, st1,
+				options.WithName("start"),
+				foundation.WithId("start_link_id"),
+				foundation.WithDoc("test", ""))
 			require.NoError(t, err)
-			require.Equal(t, se.Id(), sfStart.Source().GetNode().Id())
-			require.Equal(t, 0, len(sfStart.Source().GetNode().Incoming()))
-			require.Equal(t, 1, len(sfStart.Source().GetNode().Outgoing()))
-			require.Equal(t, st1.Id(), sfStart.Target().GetNode().Id())
+			require.Equal(t, se.Id(), sfStart.Source().Id())
+			require.Equal(t, 0, len(sfStart.Source().Incoming()))
+			require.Equal(t, 1, len(sfStart.Source().Outgoing()))
+			require.Equal(t, st1.Id(), sfStart.Target().Id())
 
-			sfST1, err := st1.Link(st2, options.WithName("service task1"))
+			sfST1, err := flow.Link(st1, st2, options.WithName("service task1"))
 			require.NoError(t, err)
 			require.NotEmpty(t, sfST1)
 
-			sfST2, err := st2.Link(ee, options.WithName("end flow"))
+			sfST2, err := flow.Link(st2, ee, options.WithName("end flow"))
 			require.NoError(t, err)
 			require.NotEmpty(t, sfST2)
 

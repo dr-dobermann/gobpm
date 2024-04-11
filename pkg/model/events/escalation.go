@@ -2,7 +2,9 @@ package events
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -25,15 +27,17 @@ func NewEscalation(
 	item *data.ItemDefinition,
 	baseOpts ...options.Option,
 ) (*Escalation, error) {
-	name = trim(name)
-	if err := checkStr(
+	name = helpers.Strim(name)
+	if err := helpers.CheckStr(
 		name,
-		"name should be provided for escalation"); err != nil {
+		"name should be provided for escalation",
+		errorClass,
+	); err != nil {
 
 		return nil, err
 	}
 
-	code = trim(code)
+	code = helpers.Strim(code)
 
 	if item == nil {
 		return nil,
@@ -80,8 +84,8 @@ type EscalationEventDefinition struct {
 }
 
 // Type implememnts Definition interface for EscalationEventDefinition.
-func (e *EscalationEventDefinition) Type() Trigger {
-	return TriggerEscalation
+func (e *EscalationEventDefinition) Type() flow.EventTrigger {
+	return flow.TriggerEscalation
 }
 
 // NewEscalationEventDefintion creates a new EscalationEventDefintion and

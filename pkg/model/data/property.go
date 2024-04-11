@@ -2,6 +2,7 @@ package data
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -28,8 +29,12 @@ func NewProperty(
 	state *DataState,
 	baseOpts ...options.Option,
 ) (*Property, error) {
-	name = trim(name)
-	if err := checkStr(name, "property should has non-empty name"); err != nil {
+	name = helpers.Strim(name)
+	if err := helpers.CheckStr(
+		name,
+		"property should has non-empty name",
+		errorClass,
+	); err != nil {
 		return nil, err
 	}
 
@@ -64,3 +69,6 @@ func MustProperty(
 func (p *Property) Name() string {
 	return p.name
 }
+
+// Test interfaces for Property.
+var _ Data = (*Property)(nil)
