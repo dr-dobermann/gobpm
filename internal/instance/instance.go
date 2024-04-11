@@ -186,6 +186,11 @@ func (inst *Instance) RegisterEvents(
 
 // -------------------- exec.Scope interface -----------------------------------
 
+// Name returns the Instance root Scope name.
+func (inst *Instance) Name() string {
+	return string(rootScope)
+}
+
 // GetData returns data value name from scope path.
 func (inst *Instance) GetData(
 	path exec.DataPath,
@@ -320,6 +325,41 @@ func (inst *Instance) runTracks(ctx context.Context) error {
 	return nil
 }
 
+// addTrack adds a new track into the track pool.
+// If instance is running, added track also runs.
+func (inst *Instance) addTrack(ctx context.Context, nt *track) error {
+	if nt == nil {
+		return errs.New(
+			errs.M("couldn't add empty track to instance %q", inst.Id()),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	inst.m.Lock()
+	defer inst.m.Unlock()
+
+	if _, ok := inst.tracks[nt.Id()]; ok {
+		return errs.New(
+			errs.M("track from node %q(%s) already registerd in instance %q",
+				inst.tracks[nt.Id()].steps[0].node.Name(),
+				inst.tracks[nt.Id()].steps[0].node.Id(),
+				inst.Id()),
+			errs.C(errorClass, errs.DuplicateObject))
+	}
+
+	inst.tracks[nt.Id()] = nt
+
+	if inst.state == Runned {
+		inst.wg.Add(1)
+
+		go func() {
+			defer inst.wg.Done()
+			nt.run(ctx)
+		}()
+	}
+
+	return nil
+}
+
 // runIntialEvents feeds event's definitions on Instance creating into tracks
 // await the events to continue.
 func (inst *Instance) runInitialEvents() error {
@@ -354,13 +394,7 @@ func (inst *Instance) createTracks() error {
 			continue
 		}
 
-		t, err := newTrack(n, inst, &token{
-			ID:    *foundation.NewID(),
-			inst:  inst,
-			state: TokenAlive,
-			prevs: []*token{},
-			nexts: []*token{},
-		})
+		t, err := newTrack(n, inst, newToken(inst))
 
 		if err != nil {
 			return err

@@ -8,7 +8,8 @@ import (
 type TokenState uint8
 
 const (
-	TokenAlive TokenState = iota
+	TokenInvalid TokenState = iota
+	TokenAlive
 	TokenWaitForEvent
 	TokenDead
 )
@@ -32,11 +33,42 @@ type token struct {
 	nexts []*token
 }
 
+func newToken(inst *Instance) *token {
+	if inst == nil {
+		errs.Panic("empty instance on token creation")
+
+		return nil
+	}
+
+	return &token{
+		ID:    *foundation.NewID(),
+		inst:  inst,
+		state: TokenAlive,
+		prevs: []*token{},
+		nexts: []*token{},
+	}
+}
+
 // updateState sets new valid state of the token
 func (t *token) updateState(newState TokenState) {
 	if err := newState.Validate(); err != nil {
 		errs.Panic(err)
+
+		return
 	}
 
 	t.state = newState
+}
+
+// split creates a new splitCount tokens from the t token.
+func (t *token) split(splitCount int) []*token {
+	tt := make([]*token, 0, splitCount)
+
+	for i := 0; i < splitCount; i++ {
+		tt[i] = newToken(t.inst)
+		tt[i].prevs = append(t.prevs, t)
+		t.nexts = append(t.nexts, tt[i])
+	}
+
+	return tt
 }

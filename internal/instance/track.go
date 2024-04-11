@@ -1,8 +1,38 @@
+// Track starts execution from a start node.
+//
+//   - If node awaits an evenet to continue, then it event definition
+//     registered in instance and track state becomes to TrackAwaitEvent.
+//     Once event sent to track via ProcessEvent, then track continues.
+//
+//   - Node execution goes in three steps:
+//
+//     1. It starts from Prologue, if Node supports this interface.
+//
+//     2. If Prologue doesn't return any error, then started node Execute.
+//     If node Execution finished sucessfully, it returns a list of
+//     outgoing flows.
+//     3. If node supports Epilogue, then Epilogue started.
+//
+// If number of outgouing flows is not zero, then they processed as followed:
+//
+//   - first flow becomes the next step of the track.
+//     If there is a cyclic flow to node itself, then the first of them would
+//     be the next step of the track. If there is more than on cyclic flow,
+//     goBpm has no mechanism to set priority between them.
+//
+//   - for the rest of the outgoing flows new tracks would be created and
+//     added to the instance.
+//
+//   - token in the track would split on number of flows and first one will
+//     assign to the track itself in next step, and the rest of them will
+//     give to the other child tracks.
+//
+// if there is no outgouing flows, then track ends and token died.
+
 package instance
 
 import (
 	"context"
-	"errors"
 	"sync"
 
 	"github.com/dr-dobermann/gobpm/internal/exec"
@@ -198,37 +228,6 @@ func (t *track) currentStep() *stepInfo {
 
 // run start execution loop of the track which ends by ctx's cancel or
 // when there is no outgoing flows from the processing nodes.
-//
-// Track starts execution from a start node.
-//
-//   - If node awaits an evenet to continue, then it event definition
-//     registered in instance and track state becomes to TrackAwaitEvent.
-//     Once event sent to track via ProcessEvent, then track continues.
-//
-//   - Node execution goes in three steps:
-//
-//     1. It starts from Prologue, if Node supports this interface.
-//
-//     2. If Prologue doesn't return any error, then started node Execute.
-//     If node Execution finished sucessfully, it returns a list of
-//     outgoing flows.
-//     3. If node supports Epilogue, then Epilogue started.
-//
-// If number of outgouing flows is not zero, then they processed as followed:
-//
-//   - first flow becomes the next step of the track.
-//     If there is a cyclic flow to node itself, then the first of them would
-//     be the next step of the track. If there is more than on cyclic flow,
-//     goBpm has no mechanism to set priority between them.
-//
-//   - for the rest of the outgoing flows new tracks would be created and
-//     added to the instance.
-//
-//   - token in the track would split on number of flows and first one will
-//     assign to the track itself in next step, and the rest of them will
-//     give to the other child tracks.
-//
-// if there is no outgouing flows, then track ends and token died.
 func (t *track) run(
 	ctx context.Context,
 ) {
@@ -263,7 +262,7 @@ func (t *track) run(
 			return
 		}
 
-		nextFlows, err := t.executeNode(step.node)
+		nextFlows, err := t.executeNode(ctx, step.node)
 		if err != nil {
 			t.lastErr = err
 			t.updateState(TrackFailed)
@@ -279,7 +278,7 @@ func (t *track) run(
 			return
 		}
 
-		err = t.checkFlows(nextFlows)
+		err = t.checkFlows(ctx, nextFlows)
 		if err != nil {
 			t.lastErr = err
 			t.updateState(TrackFailed)
@@ -292,11 +291,103 @@ func (t *track) run(
 // executeNode tries to execute flow.Node n.
 // On succes it returns a list (probably empty) of outgoing sequence flows.
 // On failure it returns error.
-func (t *track) executeNode(n flow.Node) ([]*flow.SequenceFlow, error) {
+func (t *track) executeNode(
+	ctx context.Context,
+	n flow.Node,
+) ([]*flow.SequenceFlow, error) {
+	ne, ok := n.(exec.NodeExecutor)
+	if !ok {
+		return nil,
+			errs.New(
+				errs.M("node doesn't provide exec.NodeExecutor interface"),
+				errs.C(errorClass, errs.TypeCastingError))
+	}
 
-	return nil, errors.New("not implemented")
+	if err := t.runNodePrologue(ctx, n); err != nil {
+		return nil, err
+	}
+
+	nexts, err := ne.Exec(ctx, t.instance)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = t.runNodeEpilogue(ctx, n); err != nil {
+		return nil, err
+	}
+
+	return nexts, nil
 }
 
-func (t *track) checkFlows(flows []*flow.SequenceFlow) error {
-	return errors.New("not implemented")
+// checkFlows processes node outgoing flows.
+// If number of flows is greater than 1 then new tracks with splited token
+// created.
+func (t *track) checkFlows(ctx context.Context, flows []*flow.SequenceFlow) error {
+	// if outgoing flows has any cyclic on current node then first of them
+	// should be next step of the track
+	nextNode := -1
+	for i, f := range flows {
+		if f.Target().Id() == t.currentStep().node.Id() {
+			nextNode = i
+			break
+		}
+	}
+
+	if nextNode == -1 {
+		nextNode = 0
+	}
+
+	tokens := t.currentStep().tk.split(len(flows))
+
+	t.steps = append(t.steps, &stepInfo{
+		node:  flows[nextNode].Target().Node(),
+		state: StepCreated,
+		tk:    tokens[0],
+	})
+
+	for i, f := range append(flows[:nextNode], flows[nextNode+1:]...) {
+		nt, err := newTrack(f.Target().Node(), t.instance, tokens[i+1])
+		if err != nil {
+			return errs.New(
+				errs.M("couldn't creaete a new track for flow %q", f.Id()),
+				errs.C(errorClass, errs.BulidingFailed),
+				errs.E(err))
+		}
+
+		if err := t.instance.addTrack(ctx, nt); err != nil {
+			return errs.New(
+				errs.M("couldn't add new track for flow %q", f.Id()),
+				errs.C(errorClass, errs.BulidingFailed),
+				errs.E(err))
+		}
+	}
+	return nil
+}
+
+// runNodePrologue runs node Prologue if it supported.
+func (t *track) runNodePrologue(ctx context.Context, n flow.Node) error {
+	np, ok := n.(exec.NodePrologue)
+	if !ok {
+		return nil
+	}
+
+	if err := np.Prologue(ctx, t.instance); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// runNodeEpilogue runs node Epilogue if node supports it.
+func (t *track) runNodeEpilogue(ctx context.Context, n flow.Node) error {
+	ne, ok := n.(exec.NodeEpliogue)
+	if !ok {
+		return nil
+	}
+
+	if err := ne.Epilogue(ctx, t.instance); err != nil {
+		return err
+	}
+
+	return nil
 }
