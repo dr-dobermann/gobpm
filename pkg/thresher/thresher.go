@@ -4,7 +4,7 @@
 // Process Initiator takes Ready state and awaits for initial events to run an
 // Process Instance.
 //
-// After recieving initial event, Process Initiator creates a new Process
+// After receiving initial event, Process Initiator creates a new Process
 // Instance with data from initial event.
 //
 // Instance consists of nodes and flows and runtime environment.

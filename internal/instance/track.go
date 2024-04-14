@@ -9,7 +9,7 @@
 //     1. It starts from Prologue, if Node supports this interface.
 //
 //     2. If Prologue doesn't return any error, then started node Execute.
-//     If node Execution finished sucessfully, it returns a list of
+//     If node Execution finished successfully, it returns a list of
 //     outgoing flows.
 //     3. If node supports Epilogue, then Epilogue started.
 //
@@ -127,7 +127,8 @@ func newTrack(
 				node:  start,
 				state: StepCreated,
 				tk:    tk,
-			}},
+			},
+		},
 		instance: inst,
 		lastErr:  nil,
 	}
@@ -145,7 +146,6 @@ func newTrack(
 		if len(e.Definitions()) != 0 {
 			t.updateState(TrackWaitForEvent)
 		}
-
 	}
 
 	return &t, nil
@@ -312,7 +312,7 @@ func (t *track) executeNode(
 		return nil, err
 	}
 
-	if err = t.runNodeEpilogue(ctx, n); err != nil {
+	if err := t.runNodeEpilogue(ctx, n); err != nil {
 		return nil, err
 	}
 

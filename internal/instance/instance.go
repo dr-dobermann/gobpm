@@ -81,7 +81,6 @@ func New(
 	s *exec.Snapshot,
 	eDef ...flow.EventDefinition,
 ) (*Instance, error) {
-
 	inst := Instance{
 		ID:         *foundation.NewID(),
 		state:      Ready,
@@ -339,7 +338,7 @@ func (inst *Instance) addTrack(ctx context.Context, nt *track) error {
 
 	if _, ok := inst.tracks[nt.Id()]; ok {
 		return errs.New(
-			errs.M("track from node %q(%s) already registerd in instance %q",
+			errs.M("track from node %q(%s) already registered in instance %q",
 				inst.tracks[nt.Id()].steps[0].node.Name(),
 				inst.tracks[nt.Id()].steps[0].node.Id(),
 				inst.Id()),
@@ -395,7 +394,6 @@ func (inst *Instance) createTracks() error {
 		}
 
 		t, err := newTrack(n, inst, newToken(inst))
-
 		if err != nil {
 			return err
 		}

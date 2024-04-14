@@ -66,7 +66,8 @@ func (t *token) split(splitCount int) []*token {
 
 	for i := 0; i < splitCount; i++ {
 		tt[i] = newToken(t.inst)
-		tt[i].prevs = append(t.prevs, t)
+		tt[i].prevs = t.prevs
+		tt[i].prevs = append(tt[i].prevs, t)
 		t.nexts = append(t.nexts, tt[i])
 	}
 

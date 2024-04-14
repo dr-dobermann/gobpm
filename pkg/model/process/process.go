@@ -143,7 +143,6 @@ func (p *Process) Add(e flow.Element) error {
 
 	case flow.SequenceFlowElement:
 		return p.addFlow(e.(*flow.SequenceFlow))
-
 	}
 
 	return errs.New(

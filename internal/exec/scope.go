@@ -28,13 +28,13 @@ func (p DataPath) Validate() error {
 	}
 
 	// first element is empty if path starts from '/'
-	if len(fields[0]) != 0 {
+	if fields[0] != "" {
 		return invPath
 	}
 
 	// fields doesn't have empty or untrimmed values
 	for i := 1; i < len(fields); i++ {
-		if len(helpers.Strim(fields[i])) == 0 {
+		if helpers.Strim(fields[i]) == "" {
 			return invPath
 		}
 	}
@@ -48,5 +48,5 @@ type Scope interface {
 
 	// GetData tries to return value of data.Data object with name Name
 	// which should be at path.
-	GetData(path DataPath, nmae string) (data.Value, error)
+	GetData(path DataPath, name string) (data.Value, error)
 }

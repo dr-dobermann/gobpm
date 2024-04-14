@@ -65,7 +65,7 @@ func NewInitiator(
 		Runner:      r,
 	}
 
-	if err = ini.registerEvents(s, ep); err != nil {
+	if err := ini.registerEvents(s, ep); err != nil {
 		return nil, err
 	}
 
@@ -83,7 +83,7 @@ func (ini *Initiator) registerEvents(s *Snapshot, ep EventProducer) error {
 			continue
 		}
 
-		//TODO: add RecieveTask Message as initial EventDefinition
+		// TODO: add RecieveTask Message as initial EventDefinition
 
 		// initiate event should be throw event and has no incoming flows
 		// or any bounded tasks

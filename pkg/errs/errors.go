@@ -34,13 +34,12 @@ const (
 	TypeCastingError     = "INVALID_TYPECASTING"
 	OutOfRangeError      = "OUT_OF_RANGE"
 	EmptyCollectionError = "COLLECTION_IS_EMPTY"
-	//nolint:gosec
-	EmptyNotAllowed = "EMPTY_OBJ_IS_NOT_ALLOWED"
-	DuplicateObject = "DUPLICATE_OBJECT_ERROR"
-	OperationFailed = "OPERATION_FAILED"
-	ConditionFailed = "CONDITION_FAILED"
-	ObjectNotFound  = "OBJECT_NOT_FOUND"
-	InvalidState    = "INVALID_OBJECT_STATE"
+	EmptyNotAllowed      = "EMPTY_OBJ_IS_NOT_ALLOWED"
+	DuplicateObject      = "DUPLICATE_OBJECT_ERROR"
+	OperationFailed      = "OPERATION_FAILED"
+	ConditionFailed      = "CONDITION_FAILED"
+	ObjectNotFound       = "OBJECT_NOT_FOUND"
+	InvalidState         = "INVALID_OBJECT_STATE"
 )
 
 type ApplicationError struct {

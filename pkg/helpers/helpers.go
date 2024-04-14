@@ -13,7 +13,7 @@ func Strim(str string) string {
 
 // CheckStr local helper function which checks if the str is empty string.
 // If string is empty, then error returns with errMsg.
-func CheckStr(str, errMsg string, errorClass string) error {
+func CheckStr(str, errMsg, errorClass string) error {
 	if str == "" {
 		return errs.New(
 			errs.M(errMsg),
