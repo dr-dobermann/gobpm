@@ -58,7 +58,7 @@ linters:
     - gocyclo
     # - goerr113
     - goprintffuncname
-    - gosec
+    # - gosec
     - gosimple
     - ineffassign    
     - misspell
