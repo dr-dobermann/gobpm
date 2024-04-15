@@ -42,6 +42,7 @@ func (p DataPath) Validate() error {
 	return nil
 }
 
+// Scope keeps all variables of the scope and returns its values.
 type Scope interface {
 	// Scope Name consists of
 	foundation.Namer
@@ -49,4 +50,10 @@ type Scope interface {
 	// GetData tries to return value of data.Data object with name Name
 	// which should be at path.
 	GetData(path DataPath, name string) (data.Value, error)
+}
+
+// DataProvider is implemented by those nodes, which creates its own scope.
+type DataProvider interface {
+	RegisterData(RuntimeEnvironment) error
+	LeaveScope(sopeName string) error
 }

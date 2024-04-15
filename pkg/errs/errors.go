@@ -27,6 +27,7 @@ import (
 )
 
 const (
+	//nolint:gosec
 	InvalidObject        = "INVALID_OBJECT"
 	NilDereference       = "NIL_DEREFERENCE"
 	BulidingFailed       = "BUILDING_FAILED"

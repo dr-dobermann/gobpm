@@ -70,10 +70,13 @@ type Node interface {
 
 	NodeType() NodeType
 
+	// Node returns underlying node object.
 	Node() Node
 }
 
 // *****************************************************************************
+
+// FlowNode provides base functionality of all Nodes as sequence flows holder.
 type FlowNode struct {
 	flows map[data.Direction]map[string]*SequenceFlow
 }
@@ -121,35 +124,3 @@ func (n *FlowNode) Type() ElementType {
 }
 
 // -----------------------------------------------------------------------------
-
-// removeFlow deletes single sequence flow from the node.
-// func (n *FlowNode) removeFlow(sf *SequenceFlow, dir data.Direction) error {
-// 	if err := dir.Validate(); err != nil {
-// 		return err
-// 	}
-
-// 	if sf == nil {
-// 		return errs.New(
-// 			errs.M("sequence flow couldn't be empty"),
-// 			errs.C(errorClass, errs.EmptyNotAllowed))
-// 	}
-
-// 	if _, ok := n.flows[dir]; !ok {
-// 		return errs.New(
-// 			errs.M("node has no %s flows", dir),
-// 			errs.C(errorClass, errs.InvalidObject))
-// 	}
-
-// 	delete(n.flows[dir], sf.Id())
-
-// 	// invalidate the SequenceFlow
-// 	switch dir {
-// 	case data.Input:
-// 		sf.target = nil
-
-// 	case data.Output:
-// 		sf.source = nil
-// 	}
-
-// 	return nil
-// }
