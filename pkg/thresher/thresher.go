@@ -62,6 +62,17 @@ type Thresher struct {
 	instances map[string][]instanceReg
 }
 
+func New() *Thresher {
+	return &Thresher{
+		// registration holds all event registrations for
+		// registered processeses.
+		registrations: map[string]eventReg{},
+
+		// instances is processes' instancess running or finished.
+		instances: map[string][]instanceReg{},
+	}
+}
+
 // ------------------ EventProducer interface ----------------------------------
 
 // RegisterEvents registered eventDefinition and its processor in the Thresher.
@@ -100,7 +111,7 @@ func (t *Thresher) RegisterEvents(
 
 func (t *Thresher) RunProcess(
 	s *exec.Snapshot,
-	event ...flow.EventDefinition,
+	events ...flow.EventDefinition,
 ) error {
 	if s == nil {
 		return errs.New(
@@ -108,7 +119,7 @@ func (t *Thresher) RunProcess(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	inst, err := instance.New(s, event...)
+	inst, err := instance.New(s, events...)
 	if err != nil {
 		return err
 	}

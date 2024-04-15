@@ -52,7 +52,8 @@ type Scope interface {
 	GetData(path DataPath, name string) (data.Value, error)
 }
 
-// DataProvider is implemented by those nodes, which creates its own scope.
+// DataProvider is implemented by those nodes, which stores data while
+// its execution.
 type DataProvider interface {
 	RegisterData(RuntimeEnvironment) error
 	LeaveScope(sopeName string) error
