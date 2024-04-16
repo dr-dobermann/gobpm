@@ -1,3 +1,18 @@
+// Scope is the storage of available Data objects.
+//
+// Inititial scope created by Instance of the process. It fills with
+// process Poperties, Input data.Parameters and DataObjects.
+//
+// When Node starts execution:
+
+//   - it creates a new child Scope and fills it with its Properties.
+//   - it checks all input data.Parameters and if there is no any, it fails with
+//     outlined process.
+//   - after successfull finish:
+//     - it stores output data.Parameters in outer Scope.
+//     - fills all outgoing data.Associations.
+//   - closes created child Scope.
+
 package exec
 
 import (
@@ -11,9 +26,9 @@ import (
 
 // DataPath is path to data in the scope.
 // root path '/' holds process'es Properties and DataObjects.
-// executing subprocess and tasks add to the path as subprocces/id/tasks/id on
+// executing subprocess and tasks add to the path as next layer on
 // their start and removes them on their finish.
-// full data path could be as '/subprocesses/subp1/tasks/task1'
+// full data path could be as '/subprocess_name/task_name'
 type DataPath string
 
 func (p DataPath) Validate() error {
@@ -47,8 +62,7 @@ type Scope interface {
 	// Scope Name consists of
 	foundation.Namer
 
-	// GetData tries to return value of data.Data object with name Name
-	// which should be at path.
+	// GetData tries to return value of data.Data object with name Name.
 	GetData(path DataPath, name string) (data.Value, error)
 }
 
