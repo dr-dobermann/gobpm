@@ -23,6 +23,15 @@ func CheckStr(str, errMsg, errorClass string) error {
 	return nil
 }
 
+func Bracketed(str string) string {
+	return BoundStr(str, "[", "]")
+}
+
+// BoundStr bounds str by left and right.
+func BoundStr(str, left, right string) string {
+	return left + str + right
+}
+
 // Map2List returns
 func Map2List[T any, I comparable](m map[I]T) []T {
 	if m == nil {

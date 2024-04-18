@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"reflect"
+	"strings"
 	"sync"
 
 	"github.com/dr-dobermann/gobpm/internal/exec"
@@ -25,10 +26,6 @@ const (
 	FinishingTracks
 	Finished
 	Canceled
-)
-
-const (
-	rootScope exec.DataPath = "/"
 )
 
 func (s State) String() string {
@@ -62,6 +59,13 @@ type Instance struct {
 	// first map indexed by data path, the second map indexed by Data name.
 	scopes map[exec.DataPath]map[string]data.Data
 
+	// rootScope holds the root dataPath of the scope
+	rootScope exec.DataPath
+
+	// parentScope hold reference on the parent scope which set up on Instance
+	// creation.
+	parentScope exec.Scope
+
 	// root event producer for the instance. usually it will be thresher
 	// created the instance.
 	// root event producer for the instance. usually it will be thresher
@@ -79,16 +83,20 @@ type Instance struct {
 // New creates a new Instance from the Snapshot s and sets state to Ready.
 func New(
 	s *exec.Snapshot,
+	parentScope exec.Scope,
 	eDef ...flow.EventDefinition,
 ) (*Instance, error) {
+	var err error
+
 	inst := Instance{
-		ID:         *foundation.NewID(),
-		state:      Ready,
-		s:          s,
-		initEvents: eDef,
-		scopes:     map[exec.DataPath]map[string]data.Data{},
-		tracks:     map[string]*track{},
-		events:     map[string]*track{},
+		ID:          *foundation.NewID(),
+		state:       Ready,
+		s:           s,
+		initEvents:  eDef,
+		scopes:      map[exec.DataPath]map[string]data.Data{},
+		tracks:      map[string]*track{},
+		events:      map[string]*track{},
+		parentScope: parentScope,
 	}
 
 	// adds all processes properties into defalut scope
@@ -97,7 +105,19 @@ func New(
 		dd = append(dd, p)
 	}
 
-	if err := inst.addData(rootScope, dd...); err != nil {
+	inst.rootScope = exec.RootDataPath
+
+	if parentScope != nil {
+		inst.rootScope, err = parentScope.Root().Append(s.ProcessName)
+		if err != nil {
+			return nil,
+				errs.New(
+					errs.M("couldn't create Instance Scope data path"),
+					errs.E(err))
+		}
+	}
+
+	if err := inst.addData(inst.rootScope, dd...); err != nil {
 		return nil, err
 	}
 
@@ -185,36 +205,115 @@ func (inst *Instance) RegisterEvents(
 
 // -------------------- exec.Scope interface -----------------------------------
 
-// Name returns the Instance root Scope name.
-func (inst *Instance) Name() string {
-	return string(rootScope)
+// Root returns the root dataPath of the Scope.
+func (inst *Instance) Root() exec.DataPath {
+	return inst.rootScope
 }
 
-// GetData returns data value name from scope path.
+// Scopes returns list of scopes controlled by Scope.
+func (inst *Instance) Scopes() []exec.DataPath {
+	ss := make([]exec.DataPath, 0, len(inst.scopes))
+
+	for k := range inst.scopes {
+		ss = append(ss, k)
+	}
+
+	return ss
+}
+
+// GetData tries to return value of data.Data object with name Name.
+// dataPath selects the initial scope to look for the name.
+// If current Scope doesn't find the name, then it looks in upper
+// Scope until find or failed to find.
 func (inst *Instance) GetData(
 	path exec.DataPath,
 	name string,
 ) (data.Value, error) {
+	var err error
+
+	if err = path.Validate(); err != nil {
+		return nil, err
+	}
+
 	inst.m.Lock()
 	defer inst.m.Unlock()
 
-	s, ok := inst.scopes[path]
-	if !ok {
-		return nil,
-			errs.New(
-				errs.M("couldn't find scope %q", path),
-				errs.C(errorClass, errs.ObjectNotFound))
+	for p := path; ; p, err = p.DropTail() {
+		if err != nil {
+			return nil,
+				errs.New(
+					errs.M("couldn't get upper level for Scope %s:", p.String()),
+					errs.E(err))
+		}
+
+		s, ok := inst.scopes[p]
+		if !ok {
+			continue
+		}
+
+		if d, ok := s[name]; ok {
+			return d.Value(), nil
+		}
+
+		if p == exec.RootDataPath {
+			break
+		}
 	}
 
-	d, ok := s[name]
-	if !ok {
-		return nil,
-			errs.New(
-				errs.M("data %q isn't found on scope %q", name, path),
-				errs.C(errorClass, errs.ObjectNotFound))
+	return nil,
+		errs.New(
+			errs.M("data %q isn't found on scope %q", name, path),
+			errs.C(errorClass, errs.ObjectNotFound))
+}
+
+// LoadData loads a data data.Data into the Scope into
+// the dataPath.
+func (inst *Instance) LoadData(
+	ndl exec.NodeDataLoader,
+	values ...data.Data,
+) error {
+	dp, err := inst.rootScope.Append(ndl.Name())
+	if err != nil {
+		errs.New(
+			errs.M("couldn't get data path for node %q", ndl.Name()),
+			errs.E(err))
 	}
 
-	return d.Value(), nil
+	if _, ok := inst.scopes[dp]; !ok {
+		errs.New(
+			errs.M("couldn't find scope for node %q (run ExtendScope first)",
+				ndl.Name()))
+	}
+
+	return inst.addData(dp, values...)
+}
+
+// ExtendScope adds a new child Scope to the Scope and returns
+// its full path.
+func (inst *Instance) ExtendScope(
+	ndl exec.NodeDataLoader,
+) error {
+	dp, err := inst.rootScope.Append(ndl.Name())
+	if err != nil {
+		return errs.New(
+			errs.M("couldn't add scope for %q"),
+			errs.E(err))
+	}
+
+	if _, ok := inst.scopes[dp]; ok {
+		return errs.New(
+			errs.M("scope %q already existed", dp.String()))
+	}
+
+	inst.scopes[dp] = make(map[string]data.Data)
+
+	if err := ndl.RegisterData(dp, inst); err != nil {
+		return errs.New(
+			errs.M("data loading for noed %q failed"),
+			errs.E(err))
+	}
+
+	return nil
 }
 
 // ------------------ exec.RuntimeEnvironment interface ------------------------
@@ -406,10 +505,6 @@ func (inst *Instance) createTracks() error {
 
 // addData adds data to scope named path
 func (inst *Instance) addData(path exec.DataPath, dd ...data.Data) error {
-	if err := path.Validate(); err != nil {
-		return err
-	}
-
 	vv, ok := inst.scopes[path]
 	if !ok {
 		vv = map[string]data.Data{}
@@ -418,11 +513,16 @@ func (inst *Instance) addData(path exec.DataPath, dd ...data.Data) error {
 	for _, d := range dd {
 		if d == nil {
 			return errs.New(
-				errs.M("data is empty"),
-				errs.C(errorClass, errs.EmptyNotAllowed))
+				errs.M("data is empty"))
 		}
 
-		vv[d.Name()] = d
+		dn := strings.TrimSpace(d.Name())
+		if dn == "" {
+			return errs.New(
+				errs.M("couldn't add data with no name"))
+		}
+
+		vv[dn] = d
 	}
 
 	inst.scopes[path] = vv

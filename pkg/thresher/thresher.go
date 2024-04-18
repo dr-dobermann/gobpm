@@ -119,7 +119,7 @@ func (t *Thresher) RunProcess(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	inst, err := instance.New(s, events...)
+	inst, err := instance.New(s, nil, events...)
 	if err != nil {
 		return err
 	}
