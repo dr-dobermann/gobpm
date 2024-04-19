@@ -303,6 +303,18 @@ func (t *track) executeNode(
 				errs.C(errorClass, errs.TypeCastingError))
 	}
 
+	ndl, ok := n.(exec.NodeDataLoader)
+	if ok {
+		err := t.instance.ExtendScope(ndl)
+		if err != nil {
+			return nil, err
+		}
+
+		defer func() {
+			_ = t.instance.LeaveScope(ndl)
+		}()
+	}
+
 	if err := t.runNodePrologue(ctx, n); err != nil {
 		return nil, err
 	}

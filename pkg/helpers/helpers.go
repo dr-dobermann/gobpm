@@ -23,6 +23,15 @@ func CheckStr(str, errMsg, errorClass string) error {
 	return nil
 }
 
+func Bracketed(str string) string {
+	return BoundStr(str, "[", "]")
+}
+
+// BoundStr bounds str by left and right.
+func BoundStr(str, left, right string) string {
+	return left + str + right
+}
+
 // Map2List returns
 func Map2List[T any, I comparable](m map[I]T) []T {
 	if m == nil {
@@ -36,6 +45,20 @@ func Map2List[T any, I comparable](m map[I]T) []T {
 		res[i] = v
 
 		i++
+	}
+
+	return res
+}
+
+// MapKeys returns a slice of map m key.
+func MapKeys[T any, I comparable](m map[I]T) []I {
+	if len(m) == 0 {
+		return []I{}
+	}
+
+	res := make([]I, 0, len(m))
+	for k := range m {
+		res = append(res, k)
 	}
 
 	return res
