@@ -310,7 +310,9 @@ func (t *track) executeNode(
 			return nil, err
 		}
 
-		defer ndl.LeaveScope()
+		defer func() {
+			_ = t.instance.LeaveScope(ndl)
+		}()
 	}
 
 	if err := t.runNodePrologue(ctx, n); err != nil {

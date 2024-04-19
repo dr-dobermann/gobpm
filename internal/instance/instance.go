@@ -8,6 +8,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/internal/exec"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -212,13 +213,50 @@ func (inst *Instance) Root() exec.DataPath {
 
 // Scopes returns list of scopes controlled by Scope.
 func (inst *Instance) Scopes() []exec.DataPath {
-	ss := make([]exec.DataPath, 0, len(inst.scopes))
+	inst.m.Lock()
+	defer inst.m.Unlock()
 
-	for k := range inst.scopes {
-		ss = append(ss, k)
+	return helpers.MapKeys(inst.scopes)
+}
+
+// AddData adds data.Data to the NodeDataLoader scope or to rootScope
+// if NodeDataLoader is nil.
+func (inst *Instance) AddData(
+	ndl exec.NodeDataLoader,
+	values ...data.Data,
+) error {
+	var (
+		dp  = inst.rootScope
+		err error
+	)
+
+	if ndl != nil {
+		dp, err = dp.Append(ndl.Name())
+		if err != nil {
+			return errs.New(
+				errs.M("couldn't form data path for node %q", ndl.Name()),
+				errs.E(err))
+		}
 	}
 
-	return ss
+	vv, ok := inst.scopes[dp]
+	if !ok {
+		return errs.New(
+			errs.M("couldn't find scope %q", dp.String()),
+			errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	for _, v := range values {
+		if v == nil {
+			return errs.New(
+				errs.M("empty value for AddData"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		vv[helpers.Strim(v.Name())] = v
+	}
+
+	return nil
 }
 
 // GetData tries to return value of data.Data object with name Name.
@@ -229,14 +267,14 @@ func (inst *Instance) GetData(
 	path exec.DataPath,
 	name string,
 ) (data.Value, error) {
-	var err error
+	inst.m.Lock()
+	defer inst.m.Unlock()
 
-	if err = path.Validate(); err != nil {
+	if err := path.Validate(); err != nil {
 		return nil, err
 	}
 
-	inst.m.Lock()
-	defer inst.m.Unlock()
+	var err error
 
 	for p := path; ; p, err = p.DropTail() {
 		if err != nil {
@@ -272,15 +310,18 @@ func (inst *Instance) LoadData(
 	ndl exec.NodeDataLoader,
 	values ...data.Data,
 ) error {
+	inst.m.Lock()
+	defer inst.m.Unlock()
+
 	dp, err := inst.rootScope.Append(ndl.Name())
 	if err != nil {
-		errs.New(
+		return errs.New(
 			errs.M("couldn't get data path for node %q", ndl.Name()),
 			errs.E(err))
 	}
 
 	if _, ok := inst.scopes[dp]; !ok {
-		errs.New(
+		return errs.New(
 			errs.M("couldn't find scope for node %q (run ExtendScope first)",
 				ndl.Name()))
 	}
@@ -293,6 +334,9 @@ func (inst *Instance) LoadData(
 func (inst *Instance) ExtendScope(
 	ndl exec.NodeDataLoader,
 ) error {
+	inst.m.Lock()
+	defer inst.m.Unlock()
+
 	dp, err := inst.rootScope.Append(ndl.Name())
 	if err != nil {
 		return errs.New(
@@ -311,6 +355,36 @@ func (inst *Instance) ExtendScope(
 		return errs.New(
 			errs.M("data loading for noed %q failed"),
 			errs.E(err))
+	}
+
+	return nil
+}
+
+// LeaveScope calls the Scope to clear all data saved by NodeDataLoader.
+func (inst *Instance) LeaveScope(ndl exec.NodeDataLoader) error {
+	inst.m.Lock()
+	defer inst.m.Unlock()
+
+	if ndl == nil {
+		return errs.New(
+			errs.M("no NodeDataLoader"))
+	}
+
+	dp, err := inst.rootScope.Append(ndl.Name())
+	if err != nil {
+		return errs.New(
+			errs.M("couldn't compose data path for Node %q", ndl.Name()),
+			errs.E(err))
+	}
+
+	vv, ok := inst.scopes[dp]
+	if !ok {
+		return nil
+	}
+
+	vnn := helpers.MapKeys(vv)
+	for _, v := range vnn {
+		delete(inst.scopes[dp], v)
 	}
 
 	return nil

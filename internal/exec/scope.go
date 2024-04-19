@@ -21,6 +21,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
 // DataPath is path to data in the scope.
@@ -123,20 +124,24 @@ type Scope interface {
 	// Scope until find or failed to find.
 	GetData(dataPath DataPath, name string) (data.Value, error)
 
+	// AddData adds data.Data to the NodeDataLoader scope or to rootScope
+	// if NodeDataLoader is nil.
+	AddData(NodeDataLoader, ...data.Data) error
+
 	// ExtendScope adds a new child Scope to the Scope and returns
 	// its full path.
 	ExtendScope(NodeDataLoader) error
+
+	// LeaveScope calls the Scope to clear all data saved by NodeDataLoader.
+	LeaveScope(NodeDataLoader) error
 }
 
 // NodeDataLoader is implemented by those nodes, which stores data while
 // its execution.
 type NodeDataLoader interface {
 	// Name returns NodeDataLoader name to create a scope name.
-	Name() string
+	flow.Node
 
 	// RegisterData sends all Node Data to the scope
 	RegisterData(DataPath, Scope) error
-
-	// LeaveScope calls the Scope to clear all data saved by NodeDataLoader.
-	LeaveScope() error
 }

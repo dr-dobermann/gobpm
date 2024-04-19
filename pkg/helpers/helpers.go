@@ -50,6 +50,20 @@ func Map2List[T any, I comparable](m map[I]T) []T {
 	return res
 }
 
+// MapKeys returns a slice of map m key.
+func MapKeys[T any, I comparable](m map[I]T) []I {
+	if len(m) == 0 {
+		return []I{}
+	}
+
+	res := make([]I, 0, len(m))
+	for k := range m {
+		res = append(res, k)
+	}
+
+	return res
+}
+
 // Indes is helper function which returns index of item in items slice
 // or -1 if slice doesn't found the item.
 func Index[T comparable](item T, slice []T) int {
