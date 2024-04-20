@@ -118,6 +118,7 @@ func New(
 		}
 	}
 
+	inst.scopes[inst.rootScope] = map[string]data.Data{}
 	if err := inst.addData(inst.rootScope, dd...); err != nil {
 		return nil, err
 	}
@@ -239,24 +240,10 @@ func (inst *Instance) AddData(
 		}
 	}
 
-	vv, ok := inst.scopes[dp]
-	if !ok {
-		return errs.New(
-			errs.M("couldn't find scope %q", dp.String()),
-			errs.C(errorClass, errs.ObjectNotFound))
-	}
+	inst.m.Lock()
+	defer inst.m.Unlock()
 
-	for _, v := range values {
-		if v == nil {
-			return errs.New(
-				errs.M("empty value for AddData"),
-				errs.C(errorClass, errs.EmptyNotAllowed))
-		}
-
-		vv[helpers.Strim(v.Name())] = v
-	}
-
-	return nil
+	return inst.addData(dp, values...)
 }
 
 // GetData tries to return value of data.Data object with name Name.
@@ -296,6 +283,12 @@ func (inst *Instance) GetData(
 		if p == exec.RootDataPath {
 			break
 		}
+	}
+
+	if inst.parentScope != nil {
+		return inst.parentScope.GetData(
+			inst.parentScope.Root(),
+			name)
 	}
 
 	return nil,
@@ -581,7 +574,8 @@ func (inst *Instance) createTracks() error {
 func (inst *Instance) addData(path exec.DataPath, dd ...data.Data) error {
 	vv, ok := inst.scopes[path]
 	if !ok {
-		vv = map[string]data.Data{}
+		return errs.New(
+			errs.M("couldn't find scope %q to add data", path.String()))
 	}
 
 	for _, d := range dd {
