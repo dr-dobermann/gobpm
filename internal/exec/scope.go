@@ -1,17 +1,29 @@
-// Scope is the storage of available Data objects.
-//
-// Inititial scope created by Instance of the process. It fills with
-// process Poperties, Input data.Parameters and DataObjects.
-//
-// When Node starts execution:
+/*
+Scope is the storage of available Data objects.
 
-//   - it creates a new child Scope and fills it with its Properties.
-//   - it checks all input data.Parameters and if there is no any, it fails with
-//     outlined process.
-//   - after successful finish:
-//     - it stores output data.Parameters in outer Scope.
-//     - fills all outgoing data.Associations.
-//   - closes created child Scope.
+Inititial Scope created by Instance of the process. It fills with
+process Poperties, Input data.Parameters and DataObjects.
+
+Scopes could be organized in tree, the root of the tree is started Instance
+and next nodes are sub-processes and tasks.
+
+Data flow on Instance runtime follows the next steps:
+  - When Node starts execution:
+    - if Node support NodeDataLoader interface, Scope creates a new data path
+      from its root and asks Node to fill its data into it:
+	    - Node loads its Parameters and Properties.
+  - After the Node Execution finished:
+    - it stores output data.Parameters in the root of the Scope.
+    - fills all outgoing data.Associations.
+    - Scope deletes all node's data and deletes the data path.
+
+When Node tries to retrieve value from the Scope it could take followed steps:
+  - the Scope looks for the Name in the Node's data path.
+  - if the Data name isn't in the data path, the Scope tries to look for the
+    name in upper data path until it reach the root data path.
+  - if the Scope has a parent Scope, Scope tries to get the data from the root
+    of parent Scope.
+*/
 
 package exec
 
