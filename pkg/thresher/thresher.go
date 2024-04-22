@@ -53,10 +53,10 @@ type eventProc struct {
 	// if proc isn't empty it just processed its copy of eventDefinition.
 	proc exec.EventProcessor
 
-	// processId holds the Id of the process. It used when proc is empty
+	// ProcessId holds the Id of the process. It used when proc is empty
 	// and Thresher should find the appropriate Snapshot to start an
 	// Instance of the Process.
-	processId string
+	ProcessId string
 }
 
 type instanceReg struct {
@@ -147,9 +147,7 @@ func (t *Thresher) RegisterProcess(
 
 	events := make([]flow.EventDefinition, 0, len(s.InitEvents))
 	for _, e := range s.InitEvents {
-		for _, ed := range e.Definitions() {
-			events = append(events, ed)
-		}
+		events = append(events, e.Definitions()...)
 	}
 
 	inst, err := instance.New(s, nil, events...)
@@ -159,6 +157,12 @@ func (t *Thresher) RegisterProcess(
 
 	t.m.Lock()
 	defer t.m.Unlock()
+
+	if _, ok := t.snapshots[s.ProcessId]; !ok {
+		t.snapshots[s.ProcessId] = s
+
+		t.addInitialEvent(s.ProcessId, events...)
+	}
 
 	ii, ok := t.instances[s.ProcessId]
 	if !ok {
@@ -193,21 +197,21 @@ func (t *Thresher) addInitialEvent(
 			t.events[ed.Id()] = []eventProc{
 				{
 					proc:      nil,
-					processId: processId,
+					ProcessId: processId,
 				}}
 
 			continue
 		}
 
 		for _, ep := range pp {
-			if ep.processId == processId {
+			if ep.ProcessId == processId {
 				continue
 			}
 		}
 
 		pp = append(pp, eventProc{
 			proc:      nil,
-			processId: processId,
+			ProcessId: processId,
 		})
 
 		t.events[ed.Id()] = pp

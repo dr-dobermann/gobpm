@@ -27,12 +27,12 @@ lint:
 # 	${DC} -f ./stand/db/docker-compose.yaml up --detach --wait --remove-orphans
 
 test:
-	go test -v -cover -race ./...
+	go test -v -cover ./...
 
 cover:
-	go test -v -cover -race ./...
-	go tool cover -html=coverage.out
-	rm coverage.out
+	go test -v -coverprofile=c.out ./...
+	go tool cover -html=c.out
+	rm c.out
 
 tag: 
 	@git tag -a ${VERSION} -m "version ${VERSION}"
