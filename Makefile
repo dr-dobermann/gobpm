@@ -10,7 +10,7 @@ DC = docker compose
 build:
 	${GO} build -o ./bin/ "./..." 
 
-.PHONY: update_modules lint tag clear test
+.PHONY: update_modules lint tag clear test cover
 
 update_modules:
 	@go get -u ./...
@@ -27,7 +27,12 @@ lint:
 # 	${DC} -f ./stand/db/docker-compose.yaml up --detach --wait --remove-orphans
 
 test:
-	go test -v -cover ./...
+	go test -v -cover -race ./...
+
+cover:
+	go test -v -cover -race ./...
+	go tool cover -html=coverage.out
+	rm coverage.out
 
 tag: 
 	@git tag -a ${VERSION} -m "version ${VERSION}"
