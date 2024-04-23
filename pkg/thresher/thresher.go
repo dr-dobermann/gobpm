@@ -75,16 +75,15 @@ type Thresher struct {
 	// snapshots is indexed by the ProcessID
 	snapshots map[string]*exec.Snapshot
 
+	// instances holds process instances in any state.
+	// instances is indexed by instance ID.
 	instances map[string][]instanceReg
 }
 
 func New() *Thresher {
 	return &Thresher{
-		// registration holds all event registrations for
-		// registered processeses.
-		events: map[string][]eventProc{},
-
-		// instances is processes' instancess running or finished.
+		events:    map[string][]eventProc{},
+		snapshots: map[string]*exec.Snapshot{},
 		instances: map[string][]instanceReg{},
 	}
 }
@@ -102,12 +101,6 @@ func (t *Thresher) RegisterEvents(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	if len(eDefs) == 0 {
-		return errs.New(
-			errs.M("empty event definitions list"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
 	t.m.Lock()
 	defer t.m.Unlock()
 
@@ -122,7 +115,7 @@ func (t *Thresher) RegisterEvents(
 			continue
 		}
 
-		if !hasEventProc(pp, ep) {
+		if indexEventProc(pp, ep) != -1 {
 			pp = append(pp, eventProc{
 				proc: ep,
 			})
@@ -134,8 +127,47 @@ func (t *Thresher) RegisterEvents(
 	return nil
 }
 
+// UnregisterEvents removes event definition to EventProcessor link from
+// EventProducer.
+func (t *Thresher) UnregisterEvents(
+	ep exec.EventProcessor,
+	eDefs ...flow.EventDefinition,
+) error {
+	if ep == nil {
+		return errs.New(
+			errs.M("empty event processor"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	for _, ed := range eDefs {
+		pp, ok := t.events[ed.Id()]
+		if !ok {
+			return nil
+		}
+
+		if idx := indexEventProc(pp, ep); idx != -1 {
+			pp = append(pp[:idx], pp[idx+1:]...)
+		}
+
+		if len(pp) == 0 {
+			delete(t.events, ed.Id())
+
+			continue
+		}
+
+		t.events[ed.Id()] = pp
+	}
+
+	return nil
+}
+
 // --------------- exec.Runner interface ---------------------------------------
 
+// RegisterProcess registers a process snapshot to start Instances on
+// initial event firing
 func (t *Thresher) RegisterProcess(
 	s *exec.Snapshot,
 ) error {
@@ -150,11 +182,6 @@ func (t *Thresher) RegisterProcess(
 		events = append(events, e.Definitions()...)
 	}
 
-	inst, err := instance.New(s, nil, events...)
-	if err != nil {
-		return err
-	}
-
 	t.m.Lock()
 	defer t.m.Unlock()
 
@@ -164,23 +191,31 @@ func (t *Thresher) RegisterProcess(
 		t.addInitialEvent(s.ProcessId, events...)
 	}
 
-	ii, ok := t.instances[s.ProcessId]
+	return nil
+}
+
+// StartProcess runs process with processId without any event even if
+// process awaits them.
+func (t *Thresher) StartProcess(processId string) error {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	s, ok := t.snapshots[processId]
 	if !ok {
-		ii = []instanceReg{}
+		return errs.New(
+			errs.M("couldn't find snapshot for process ID %q", processId),
+			errs.C(errorClass, errs.ObjectNotFound))
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	err = inst.Run(ctx, cancel, t)
-	if err != nil {
-		return err
-	}
+	inst, err := instance.New(s, nil, t)
 
-	t.instances[s.ProcessId] = append(ii,
-		instanceReg{
-			stop: cancel,
-			inst: inst,
-		})
+	return nil
+}
 
+// ProcessEvent processes single eventDefinition and if there is any
+// registration of event definition with eDef ID, it starts a new Instance
+// or send the event to runned Instance.
+func (t *Thresher) ProcessEvent(eDef flow.EventDefinition) error {
 	return nil
 }
 
@@ -218,13 +253,22 @@ func (t *Thresher) addInitialEvent(
 	}
 }
 
-// hasEventProc checks if eventProcessor exists in eventProc slince pp.
-func hasEventProc(pp []eventProc, ep exec.EventProcessor) bool {
-	for _, p := range pp {
+// indexEventProc looks for the eventProcessor ep in eventProc slice pp and
+// return its index. If there is no ep in pp, -1 returned.
+func indexEventProc(pp []eventProc, ep exec.EventProcessor) int {
+	for i, p := range pp {
 		if p.proc == ep {
-			return true
+			return i
 		}
 	}
 
-	return false
+	return -1
 }
+
+// =============================================================================
+// Interface implementation check
+
+var (
+	_ exec.EventProducer = (*Thresher)(nil)
+	_ exec.ProcessRunner = (*Thresher)(nil)
+)

@@ -53,9 +53,6 @@ type Instance struct {
 	state State
 	s     *exec.Snapshot
 
-	// initEvents holds instance's initial event definitions
-	initEvents []flow.EventDefinition
-
 	// Scopes holds accessible in the moment Data.
 	// first map indexed by data path, the second map indexed by Data name.
 	scopes map[exec.DataPath]map[string]data.Data
@@ -66,6 +63,10 @@ type Instance struct {
 	// parentScope hold reference on the parent scope which set up on Instance
 	// creation.
 	parentScope exec.Scope
+
+	// parentEventProducer is used to register the Instance in events producers
+	// chain.
+	parentEventProducer exec.EventProducer
 
 	// root event producer for the instance. usually it will be thresher
 	// created the instance.
@@ -85,19 +86,19 @@ type Instance struct {
 func New(
 	s *exec.Snapshot,
 	parentScope exec.Scope,
-	eDef ...flow.EventDefinition,
+	ep exec.EventProducer,
 ) (*Instance, error) {
 	var err error
 
 	inst := Instance{
-		ID:          *foundation.NewID(),
-		state:       Ready,
-		s:           s,
-		initEvents:  eDef,
-		scopes:      map[exec.DataPath]map[string]data.Data{},
-		tracks:      map[string]*track{},
-		events:      map[string]*track{},
-		parentScope: parentScope,
+		ID:                  *foundation.NewID(),
+		state:               Ready,
+		s:                   s,
+		scopes:              map[exec.DataPath]map[string]data.Data{},
+		tracks:              map[string]*track{},
+		events:              map[string]*track{},
+		parentScope:         parentScope,
+		parentEventProducer: ep,
 	}
 
 	// adds all processes properties into defalut scope
@@ -181,7 +182,7 @@ func (inst *Instance) RegisterEvents(
 
 	if proc == nil {
 		return errs.New(
-			errs.M("empyt track"),
+			errs.M("empty track isn't allowed as EventProcessor"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
@@ -197,11 +198,27 @@ func (inst *Instance) RegisterEvents(
 				errs.C(errorClass, errs.TypeCastingError))
 		}
 
+		if inst.parentEventProducer != nil {
+			if err := inst.parentEventProducer.RegisterEvents(
+				inst, ed); err != nil {
+				return errs.New(
+					errs.M(
+						"couldn't register event on parent EventProducer"),
+					errs.C(errorClass, errs.OperationFailed))
+			}
+		}
+
 		inst.m.Lock()
 		inst.events[ed.Id()] = t
 		inst.m.Unlock()
 	}
 
+	return nil
+}
+
+// UnregisterEvents removes event definition to EventProcessor link from
+// EventProducer.
+func (inst *Instance) UnregisterEvents(ep exec.EventProcessor, eDefs ...flow.EventDefinition) error {
 	return nil
 }
 
@@ -427,10 +444,6 @@ func (inst *Instance) Run(
 
 	inst.eProd = ep
 
-	if err := inst.runInitialEvents(); err != nil {
-		return err
-	}
-
 	if err := inst.runTracks(ctx); err != nil {
 		return err
 	}
@@ -525,30 +538,6 @@ func (inst *Instance) addTrack(ctx context.Context, nt *track) error {
 	return nil
 }
 
-// runIntialEvents feeds event's definitions on Instance creating into tracks
-// await the events to continue.
-func (inst *Instance) runInitialEvents() error {
-	for _, d := range inst.initEvents {
-		t, ok := inst.events[d.Id()]
-		if !ok {
-			return errs.New(
-				errs.M("event definition %q isn't registered in instance %q of process %q(%s)",
-					d.Id(), inst.Id(), inst.s.ProcessName, inst.s.ProcessId),
-				errs.C(errorClass, errs.InvalidObject))
-		}
-
-		if err := t.ProcessEvent(d); err != nil {
-			return err
-		}
-
-		inst.m.Lock()
-		delete(inst.events, d.Id())
-		inst.m.Unlock()
-	}
-
-	return nil
-}
-
 // createTrack creates all initial tracks of the Instance.
 func (inst *Instance) createTracks() error {
 	for _, n := range inst.s.Nodes {
@@ -597,3 +586,11 @@ func (inst *Instance) addData(path exec.DataPath, dd ...data.Data) error {
 
 	return nil
 }
+
+// =============================================================================
+// Interfaces check
+var (
+	_ exec.EventProducer      = (*Instance)(nil)
+	_ exec.EventProcessor     = (*Instance)(nil)
+	_ exec.RuntimeEnvironment = (*Instance)(nil)
+)
