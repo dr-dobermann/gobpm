@@ -1,6 +1,8 @@
 package exec
 
-import "github.com/dr-dobermann/gobpm/pkg/model/flow"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+)
 
 // RuntimeEnvironment keeps current runtime environment for the running Instance
 // and its tracks

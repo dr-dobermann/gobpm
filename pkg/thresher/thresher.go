@@ -34,6 +34,7 @@ package thresher
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/dr-dobermann/gobpm/internal/exec"
@@ -44,8 +45,48 @@ import (
 
 const errorClass = "THRESHER_ERRORS"
 
-// eventProc holds single link from to event
-type eventProc struct {
+// =============================================================================
+
+// State of the Thresher.
+type State uint8
+
+const (
+	Invalid State = iota
+	NotStarted
+	Started
+	Paused
+)
+
+// Validate checks State to be valid.
+func (s State) Validate() error {
+	if s > Paused {
+		return errs.New(
+			errs.M("invalid thresher state %d", uint8(s)))
+	}
+
+	return nil
+}
+
+// String implement Stringer interface for the State. If s is invalid, then
+// error message returned as State name.
+func (s State) String() string {
+	if err := s.Validate(); err != nil {
+		return err.Error()
+	}
+
+	return []string{
+		"Invalid",
+		"NotStarted ",
+		"Started",
+		"Paused",
+	}[s]
+}
+
+// =============================================================================
+
+// eventReg holds single link from to event definition to Snapshot or
+// EventProcessor.
+type eventReg struct {
 	// proc is empty for the initial events and new Instance should be created
 	// once Instance created, it registered itself as EventProcessor with all
 	// awaited events, including initial ones.
@@ -67,25 +108,60 @@ type instanceReg struct {
 type Thresher struct {
 	m sync.Mutex
 
+	state State
+
+	ctx context.Context
+
 	// events holds all registered events either initial or for running
 	// instances.
 	// events is indexed by event definition ID.
-	events map[string][]eventProc
+	events map[string][]eventReg
 
 	// snapshots is indexed by the ProcessID
 	snapshots map[string]*exec.Snapshot
 
 	// instances holds process instances in any state.
 	// instances is indexed by instance ID.
-	instances map[string][]instanceReg
+	instances map[string]instanceReg
 }
 
-func New() *Thresher {
-	return &Thresher{
-		events:    map[string][]eventProc{},
-		snapshots: map[string]*exec.Snapshot{},
-		instances: map[string][]instanceReg{},
+func New(ctx context.Context) *Thresher {
+	if ctx == nil {
+		ctx = context.Background()
 	}
+
+	return &Thresher{
+		state:     Started,
+		ctx:       ctx,
+		events:    map[string][]eventReg{},
+		snapshots: map[string]*exec.Snapshot{},
+		instances: map[string]instanceReg{},
+	}
+}
+
+// State returns current state of the Threasher.
+func (t *Thresher) State() State {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	return t.state
+}
+
+// UpdateState sets new State ns for the Threasher if there is no any error.
+func (t *Thresher) UpdateState(ns State) error {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	if err := ns.Validate(); err != nil {
+		return errs.New(
+			errs.M("couldn't set new state %q of the Thresher", ns.String()),
+			errs.C(errorClass, errs.InvalidState),
+			errs.E(err))
+	}
+
+	t.state = ns
+
+	return nil
 }
 
 // ------------------ EventProducer interface ----------------------------------
@@ -107,7 +183,7 @@ func (t *Thresher) RegisterEvents(
 	for _, ed := range eDefs {
 		pp, ok := t.events[ed.Id()]
 		if !ok {
-			t.events[ed.Id()] = []eventProc{
+			t.events[ed.Id()] = []eventReg{
 				{
 					proc: ep,
 				}}
@@ -116,7 +192,7 @@ func (t *Thresher) RegisterEvents(
 		}
 
 		if indexEventProc(pp, ep) != -1 {
-			pp = append(pp, eventProc{
+			pp = append(pp, eventReg{
 				proc: ep,
 			})
 		}
@@ -200,6 +276,13 @@ func (t *Thresher) StartProcess(processId string) error {
 	t.m.Lock()
 	defer t.m.Unlock()
 
+	if t.state != Started {
+		return errs.New(
+			errs.M("thresher isn't started"),
+			errs.C(errorClass, errs.InvalidState),
+			errs.D("current_state", t.state.String()))
+	}
+
 	s, ok := t.snapshots[processId]
 	if !ok {
 		return errs.New(
@@ -208,6 +291,26 @@ func (t *Thresher) StartProcess(processId string) error {
 	}
 
 	inst, err := instance.New(s, nil, t)
+	if err != nil {
+		return errs.New(
+			errs.M("couldn't create an Instance for process %q",
+				processId),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.E(err))
+	}
+
+	ctx, cancel := context.WithCancel(t.ctx)
+	if err := inst.Run(ctx, cancel, t); err != nil {
+		return errs.New(
+			errs.M("inctance %q running failed", inst.Id()),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
+	t.instances[inst.Id()] = instanceReg{
+		stop: cancel,
+		inst: inst,
+	}
 
 	return nil
 }
@@ -216,10 +319,47 @@ func (t *Thresher) StartProcess(processId string) error {
 // registration of event definition with eDef ID, it starts a new Instance
 // or send the event to runned Instance.
 func (t *Thresher) ProcessEvent(eDef flow.EventDefinition) error {
+	if eDef == nil {
+		return errs.New(
+			errs.M("no event definition"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	rr, ok := t.events[eDef.Id()]
+	if !ok {
+		return errs.New(
+			errs.M("event defintion %q isn't registered", eDef.Id()),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	var (
+		ee []error
+		wg sync.WaitGroup
+		m  sync.Mutex
+	)
+
+	for _, r := range rr {
+		go func(er eventReg) {
+			wg.Add(1)
+			defer wg.Done()
+
+			if r.proc == nil {
+				err := t.StartProcess(r.ProcessId)
+			}
+		}(r)
+	}
+
+	wg.Wait()
+
+	if len(ee) != 0 {
+		return errors.Join(ee...)
+	}
+
 	return nil
 }
-
-// -----------------------------------------------------------------------------
 
 // addInitialEvent links initial event edd with Process processId.
 func (t *Thresher) addInitialEvent(
@@ -229,7 +369,7 @@ func (t *Thresher) addInitialEvent(
 	for _, ed := range edd {
 		pp, ok := t.events[ed.Id()]
 		if !ok {
-			t.events[ed.Id()] = []eventProc{
+			t.events[ed.Id()] = []eventReg{
 				{
 					proc:      nil,
 					ProcessId: processId,
@@ -244,7 +384,7 @@ func (t *Thresher) addInitialEvent(
 			}
 		}
 
-		pp = append(pp, eventProc{
+		pp = append(pp, eventReg{
 			proc:      nil,
 			ProcessId: processId,
 		})
@@ -253,9 +393,11 @@ func (t *Thresher) addInitialEvent(
 	}
 }
 
+// -----------------------------------------------------------------------------
+
 // indexEventProc looks for the eventProcessor ep in eventProc slice pp and
 // return its index. If there is no ep in pp, -1 returned.
-func indexEventProc(pp []eventProc, ep exec.EventProcessor) int {
+func indexEventProc(pp []eventReg, ep exec.EventProcessor) int {
 	for i, p := range pp {
 		if p.proc == ep {
 			return i
