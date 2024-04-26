@@ -154,6 +154,7 @@ func newTrack(
 // --------------------- exec.EventProcessor interface -------------------------
 
 func (t *track) ProcessEvent(
+	ctx context.Context,
 	eDef flow.EventDefinition,
 ) error {
 	if !t.inState(TrackWaitForEvent) {
@@ -174,7 +175,7 @@ func (t *track) ProcessEvent(
 			errs.C(errorClass, errs.TypeCastingError))
 	}
 
-	if err := ep.ProcessEvent(eDef); err != nil {
+	if err := ep.ProcessEvent(ctx, eDef); err != nil {
 		return err
 	}
 

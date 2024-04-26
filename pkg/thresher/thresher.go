@@ -45,8 +45,6 @@ import (
 
 const errorClass = "THRESHER_ERRORS"
 
-// =============================================================================
-
 // State of the Thresher.
 type State uint8
 
@@ -82,11 +80,9 @@ func (s State) String() string {
 	}[s]
 }
 
-// =============================================================================
-
-// eventReg holds single link from to event definition to Snapshot or
+// eDefReg holds single link from to event definition to Snapshot or
 // EventProcessor.
-type eventReg struct {
+type eDefReg struct {
 	// proc is empty for the initial events and new Instance should be created
 	// once Instance created, it registered itself as EventProcessor with all
 	// awaited events, including initial ones.
@@ -100,9 +96,20 @@ type eventReg struct {
 	ProcessId string
 }
 
+// instanceReg holds single Instance registration.
 type instanceReg struct {
 	stop context.CancelFunc
 	inst *instance.Instance
+}
+
+// eventReg holds single active event information.
+// DEV_NOTE: I'm not sure is it necessary to send back the results of
+//
+//	event processing. If so, there should be some callback or
+//	channel to accept the results.
+//	For now I leave the struct with one field.
+type eventReg struct {
+	eDef flow.EventDefinition
 }
 
 type Thresher struct {
@@ -112,10 +119,13 @@ type Thresher struct {
 
 	ctx context.Context
 
-	// events holds all registered events either initial or for running
+	// eDefs holds all registered eDefs either initial or for running
 	// instances.
-	// events is indexed by event definition ID.
-	events map[string][]eventReg
+	// eDefs is indexed by event definition ID.
+	eDefs map[string][]eDefReg
+
+	// events holds an event queue.
+	events []eventReg
 
 	// snapshots is indexed by the ProcessID
 	snapshots map[string]*exec.Snapshot
@@ -125,15 +135,11 @@ type Thresher struct {
 	instances map[string]instanceReg
 }
 
-func New(ctx context.Context) *Thresher {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
+func New() *Thresher {
 	return &Thresher{
-		state:     Started,
-		ctx:       ctx,
-		events:    map[string][]eventReg{},
+		state:     NotStarted,
+		eDefs:     map[string][]eDefReg{},
+		events:    []eventReg{},
 		snapshots: map[string]*exec.Snapshot{},
 		instances: map[string]instanceReg{},
 	}
@@ -164,6 +170,69 @@ func (t *Thresher) UpdateState(ns State) error {
 	return nil
 }
 
+func (t *Thresher) Run(ctx context.Context) error {
+	st := t.State()
+	if st != NotStarted {
+		return errs.New(
+			errs.M("couldn't start thresher from state %q (should be in NotStarted)", st),
+			errs.C(errorClass, errs.InvalidState))
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	t.ctx = ctx
+
+	err := t.runEventQueue()
+	if err == nil {
+		t.UpdateState(Started)
+	}
+
+	return err
+}
+
+func (t *Thresher) runEventQueue() error {
+	go func(ctx context.Context) {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				if st := t.State(); st != Started && st != Paused {
+					return
+				}
+			}
+
+			t.m.Lock()
+			if len(t.events) == 0 {
+				t.m.Unlock()
+				continue
+			}
+
+			// take first event in the queue and get all registrations for
+			// its event definition.
+			eRegs, ok := t.eDefs[t.events[0].eDef.Id()]
+			if ok {
+				for _, er := range eRegs {
+					if er.proc != nil {
+						go func(eDef flow.EventDefinition) {
+							_ = er.proc.ProcessEvent(t.ctx, eDef)
+						}(t.events[0].eDef)
+					}
+				}
+			}
+
+			t.events = t.events[1:]
+
+			t.m.Unlock()
+		}
+
+	}(t.ctx)
+
+	return nil
+}
+
 // ------------------ EventProducer interface ----------------------------------
 
 // RegisterEvents registered eventDefinition and its processor in the Thresher.
@@ -181,9 +250,9 @@ func (t *Thresher) RegisterEvents(
 	defer t.m.Unlock()
 
 	for _, ed := range eDefs {
-		pp, ok := t.events[ed.Id()]
+		pp, ok := t.eDefs[ed.Id()]
 		if !ok {
-			t.events[ed.Id()] = []eventReg{
+			t.eDefs[ed.Id()] = []eDefReg{
 				{
 					proc: ep,
 				}}
@@ -197,7 +266,7 @@ func (t *Thresher) RegisterEvents(
 			})
 		}
 
-		t.events[ed.Id()] = pp
+		t.eDefs[ed.Id()] = pp
 	}
 
 	return nil
@@ -219,7 +288,7 @@ func (t *Thresher) UnregisterEvents(
 	defer t.m.Unlock()
 
 	for _, ed := range eDefs {
-		pp, ok := t.events[ed.Id()]
+		pp, ok := t.eDefs[ed.Id()]
 		if !ok {
 			return nil
 		}
@@ -229,12 +298,12 @@ func (t *Thresher) UnregisterEvents(
 		}
 
 		if len(pp) == 0 {
-			delete(t.events, ed.Id())
+			delete(t.eDefs, ed.Id())
 
 			continue
 		}
 
-		t.events[ed.Id()] = pp
+		t.eDefs[ed.Id()] = pp
 	}
 
 	return nil
@@ -273,8 +342,6 @@ func (t *Thresher) RegisterProcess(
 // StartProcess runs process with processId without any event even if
 // process awaits them.
 func (t *Thresher) StartProcess(processId string) error {
-	t.m.Lock()
-	defer t.m.Unlock()
 
 	if t.state != Started {
 		return errs.New(
@@ -283,6 +350,9 @@ func (t *Thresher) StartProcess(processId string) error {
 			errs.D("current_state", t.state.String()))
 	}
 
+	t.m.Lock()
+	defer t.m.Unlock()
+
 	s, ok := t.snapshots[processId]
 	if !ok {
 		return errs.New(
@@ -290,29 +360,7 @@ func (t *Thresher) StartProcess(processId string) error {
 			errs.C(errorClass, errs.ObjectNotFound))
 	}
 
-	inst, err := instance.New(s, nil, t)
-	if err != nil {
-		return errs.New(
-			errs.M("couldn't create an Instance for process %q",
-				processId),
-			errs.C(errorClass, errs.BulidingFailed),
-			errs.E(err))
-	}
-
-	ctx, cancel := context.WithCancel(t.ctx)
-	if err := inst.Run(ctx, cancel, t); err != nil {
-		return errs.New(
-			errs.M("inctance %q running failed", inst.Id()),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err))
-	}
-
-	t.instances[inst.Id()] = instanceReg{
-		stop: cancel,
-		inst: inst,
-	}
-
-	return nil
+	return t.launchInstance(s)
 }
 
 // ProcessEvent processes single eventDefinition and if there is any
@@ -326,36 +374,59 @@ func (t *Thresher) ProcessEvent(eDef flow.EventDefinition) error {
 	}
 
 	t.m.Lock()
-	defer t.m.Unlock()
+	rr, ok := t.eDefs[eDef.Id()]
+	t.m.Unlock()
 
-	rr, ok := t.events[eDef.Id()]
 	if !ok {
 		return errs.New(
 			errs.M("event defintion %q isn't registered", eDef.Id()),
 			errs.C(errorClass, errs.InvalidObject))
 	}
 
-	var (
-		ee []error
-		wg sync.WaitGroup
-		m  sync.Mutex
-	)
+	ee := []error{}
 
 	for _, r := range rr {
-		go func(er eventReg) {
-			wg.Add(1)
-			defer wg.Done()
-
-			if r.proc == nil {
-				err := t.StartProcess(r.ProcessId)
+		if r.proc == nil {
+			if err := t.StartProcess(r.ProcessId); err != nil {
+				ee = append(ee, err)
 			}
-		}(r)
+		}
 	}
-
-	wg.Wait()
 
 	if len(ee) != 0 {
 		return errors.Join(ee...)
+	}
+
+	return nil
+}
+
+// launchInstance creates a new Instance from the Snapshot s, runs it and
+// append it to runned insances of the Thresher.
+func (t *Thresher) launchInstance(s *exec.Snapshot) error {
+	inst, err := instance.New(s, nil, t)
+	if err != nil {
+		return errs.New(
+			errs.M("couldn't create an Instance for process %q",
+				s.ProcessId),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.E(err))
+	}
+
+	ctx, cancel := context.WithCancel(t.ctx)
+	if err := inst.Run(ctx, cancel, t); err != nil {
+		return errs.New(
+			errs.M("inctance %q of process %q failed to run",
+				inst.Id(), s.ProcessId),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	t.instances[inst.Id()] = instanceReg{
+		stop: cancel,
+		inst: inst,
 	}
 
 	return nil
@@ -367,9 +438,9 @@ func (t *Thresher) addInitialEvent(
 	edd ...flow.EventDefinition,
 ) {
 	for _, ed := range edd {
-		pp, ok := t.events[ed.Id()]
+		pp, ok := t.eDefs[ed.Id()]
 		if !ok {
-			t.events[ed.Id()] = []eventReg{
+			t.eDefs[ed.Id()] = []eventReg{
 				{
 					proc:      nil,
 					ProcessId: processId,
@@ -389,7 +460,7 @@ func (t *Thresher) addInitialEvent(
 			ProcessId: processId,
 		})
 
-		t.events[ed.Id()] = pp
+		t.eDefs[ed.Id()] = pp
 	}
 }
 

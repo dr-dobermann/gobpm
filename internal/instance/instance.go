@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"sync"
@@ -74,12 +75,13 @@ type Instance struct {
 	// created the instance.
 	eProd exec.EventProducer
 
-	// traks indexed by track Ids
+	// tracks indexed by track Ids
 	tracks map[string]*track
 
 	// events keeps list of tracks that awaits for evnent.
-	// events are indexed by event definition id
-	events map[string]*track
+	// events are indexed by event definition id.
+	// inner map indexed by track id.
+	events map[string]map[string]*track
 }
 
 // New creates a new Instance from the Snapshot s and sets state to Ready.
@@ -96,7 +98,7 @@ func New(
 		s:                   s,
 		scopes:              map[exec.DataPath]map[string]data.Data{},
 		tracks:              map[string]*track{},
-		events:              map[string]*track{},
+		events:              map[string]map[string]*track{},
 		parentScope:         parentScope,
 		parentEventProducer: ep,
 	}
@@ -131,9 +133,190 @@ func New(
 	return &inst, nil
 }
 
+// State returns current state of the Instance.
+func (inst *Instance) State() State {
+	inst.m.Lock()
+	defer inst.m.Unlock()
+
+	return inst.state
+}
+
+// updateState sets new state for the Instance.
+func (inst *Instance) updateState(newState State) {
+	inst.m.Lock()
+	defer inst.m.Unlock()
+
+	inst.state = newState
+}
+
+// Run starts the process instance execution. Execution could be stopped by
+// cancel function of the context.
+func (inst *Instance) Run(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	ep exec.EventProducer,
+) error {
+	inst.m.Lock()
+	defer inst.m.Unlock()
+
+	if inst.state != Ready {
+		return errs.New(
+			errs.M("invalid instance state to run (want: Ready, has: %s)",
+				inst.state),
+			errs.C(errorClass, errs.InvalidState))
+	}
+
+	inst.eProd = ep
+
+	if err := inst.runTracks(ctx); err != nil {
+		return err
+	}
+
+	// run track ended watcher
+	grChan := make(chan struct{})
+	go func() {
+		inst.wg.Wait()
+
+		close(grChan)
+	}()
+
+	go func() {
+		select {
+		// wait for context cancelation
+		case <-ctx.Done():
+			inst.updateState(FinishingTracks)
+
+			inst.wg.Done()
+
+			inst.updateState(Canceled)
+
+		// or all tracks finishing
+		case <-grChan:
+			inst.updateState(Finished)
+		}
+
+		// run cancel on the end to free resources.
+		cancel()
+	}()
+
+	return nil
+}
+
+// runTracks runs all tracks of the instance.
+func (inst *Instance) runTracks(ctx context.Context) error {
+	inst.m.Lock()
+	defer inst.m.Unlock()
+
+	if inst.state != Ready {
+		return errs.New(
+			errs.M("invalid instance state to run (want: Ready, has: %s)",
+				inst.state),
+			errs.C(errorClass, errs.InvalidState))
+	}
+
+	for _, t := range inst.tracks {
+		inst.wg.Add(1)
+
+		go func(t *track) {
+			defer inst.wg.Done()
+
+			t.run(ctx)
+		}(t)
+	}
+
+	return nil
+}
+
+// addTrack adds a new track into the track pool.
+// If instance is running, added track also runs.
+func (inst *Instance) addTrack(ctx context.Context, nt *track) error {
+	if nt == nil {
+		return errs.New(
+			errs.M("couldn't add empty track to instance %q", inst.Id()),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	inst.m.Lock()
+	defer inst.m.Unlock()
+
+	if _, ok := inst.tracks[nt.Id()]; ok {
+		return errs.New(
+			errs.M("track from node %q(%s) already registered in instance %q",
+				inst.tracks[nt.Id()].steps[0].node.Name(),
+				inst.tracks[nt.Id()].steps[0].node.Id(),
+				inst.Id()),
+			errs.C(errorClass, errs.DuplicateObject))
+	}
+
+	inst.tracks[nt.Id()] = nt
+
+	if inst.state == Runned {
+		inst.wg.Add(1)
+
+		go func() {
+			defer inst.wg.Done()
+			nt.run(ctx)
+		}()
+	}
+
+	return nil
+}
+
+// createTrack creates all initial tracks of the Instance.
+func (inst *Instance) createTracks() error {
+	for _, n := range inst.s.Nodes {
+		_, boundaryEvent := n.(flow.BoudaryEvent)
+		if len(n.Incoming()) != 0 ||
+			n.NodeType() == flow.GatewayNodeType ||
+			boundaryEvent {
+			continue
+		}
+
+		t, err := newTrack(n, inst, newToken(inst))
+		if err != nil {
+			return err
+		}
+
+		inst.tracks[t.Id()] = t
+	}
+
+	return nil
+}
+
+// addData adds data to scope named path
+func (inst *Instance) addData(path exec.DataPath, dd ...data.Data) error {
+	vv, ok := inst.scopes[path]
+	if !ok {
+		return errs.New(
+			errs.M("couldn't find scope %q to add data", path.String()))
+	}
+
+	for _, d := range dd {
+		if d == nil {
+			return errs.New(
+				errs.M("data is empty"))
+		}
+
+		dn := strings.TrimSpace(d.Name())
+		if dn == "" {
+			return errs.New(
+				errs.M("couldn't add data with no name"))
+		}
+
+		vv[dn] = d
+	}
+
+	inst.scopes[path] = vv
+
+	return nil
+}
+
 // -------------------- exec.EventProcessor interface --------------------------
 
-func (inst *Instance) ProcessEvent(eDef flow.EventDefinition) error {
+func (inst *Instance) ProcessEvent(
+	ctx context.Context,
+	eDef flow.EventDefinition,
+) error {
 	if eDef == nil {
 		return errs.New(
 			errs.M("empty event definition"),
@@ -141,7 +324,7 @@ func (inst *Instance) ProcessEvent(eDef flow.EventDefinition) error {
 	}
 
 	inst.m.Lock()
-	t, ok := inst.events[eDef.Id()]
+	tt, ok := inst.events[eDef.Id()]
 	inst.m.Unlock()
 
 	if !ok {
@@ -151,13 +334,24 @@ func (inst *Instance) ProcessEvent(eDef flow.EventDefinition) error {
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
-	if err := t.ProcessEvent(eDef); err != nil {
-		return err
+	ee := []error{}
+
+	for _, t := range tt {
+		if err := t.ProcessEvent(ctx, eDef); err != nil {
+			ee = append(ee, err)
+		}
+
+		inst.m.Lock()
+		delete(inst.events[eDef.Id()], t.Id())
+		if len(inst.events[eDef.Id()]) == 0 {
+			delete(inst.events, eDef.Id())
+		}
+		inst.m.Unlock()
 	}
 
-	inst.m.Lock()
-	delete(inst.events, eDef.Id())
-	inst.m.Unlock()
+	if len(ee) != 0 {
+		return errors.Join(ee...)
+	}
 
 	return nil
 }
@@ -173,8 +367,7 @@ func (inst *Instance) RegisterEvents(
 	is := inst.State()
 	if is != Runned {
 		return errs.New(
-			errs.M(
-				"instance should be Runned to register events(current state: %s)",
+			errs.M("instance should be Runned to register events(current state: %s)",
 				is),
 			errs.C(errorClass, errs.InvalidState),
 			errs.D("requester_id", proc.Id()))
@@ -182,7 +375,7 @@ func (inst *Instance) RegisterEvents(
 
 	if proc == nil {
 		return errs.New(
-			errs.M("empty track isn't allowed as EventProcessor"),
+			errs.M("empty EventProcessor"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
@@ -194,7 +387,7 @@ func (inst *Instance) RegisterEvents(
 		t, ok := proc.(*track)
 		if !ok {
 			return errs.New(
-				errs.M("not track (%q)", reflect.TypeOf(proc).String()),
+				errs.M("not a track (%q)", reflect.TypeOf(proc).String()),
 				errs.C(errorClass, errs.TypeCastingError))
 		}
 
@@ -203,13 +396,17 @@ func (inst *Instance) RegisterEvents(
 				inst, ed); err != nil {
 				return errs.New(
 					errs.M(
-						"couldn't register event on parent EventProducer"),
+						"couldn't register event in Thresher"),
 					errs.C(errorClass, errs.OperationFailed))
 			}
 		}
 
 		inst.m.Lock()
-		inst.events[ed.Id()] = t
+		if _, ok := inst.events[ed.Id()]; !ok {
+			inst.events[ed.Id()] = make(map[string]*track)
+		}
+
+		inst.events[ed.Id()][t.Id()] = t
 		inst.m.Unlock()
 	}
 
@@ -218,7 +415,8 @@ func (inst *Instance) RegisterEvents(
 
 // UnregisterEvents removes event definition to EventProcessor link from
 // EventProducer.
-func (inst *Instance) UnregisterEvents(ep exec.EventProcessor, eDefs ...flow.EventDefinition) error {
+func (inst *Instance) UnregisterEvents(ep exec.EventProcessor,
+	eDefs ...flow.EventDefinition) error {
 	return nil
 }
 
@@ -408,184 +606,6 @@ func (inst *Instance) InstanceId() string {
 }
 
 // -----------------------------------------------------------------------------
-
-// State returns current state of the Instance.
-func (inst *Instance) State() State {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
-	return inst.state
-}
-
-// updateState sets new state for the Instance.
-func (inst *Instance) updateState(newState State) {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
-	inst.state = newState
-}
-
-// Run starts the process instance execution. Execution could be stopped by
-// cancel function of the context.
-func (inst *Instance) Run(
-	ctx context.Context,
-	cancel context.CancelFunc,
-	ep exec.EventProducer,
-) error {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
-	if inst.state != Ready {
-		return errs.New(
-			errs.M("invalid instance state to run (want: Ready, has: %s)",
-				inst.state),
-			errs.C(errorClass, errs.InvalidState))
-	}
-
-	inst.eProd = ep
-
-	if err := inst.runTracks(ctx); err != nil {
-		return err
-	}
-
-	// run track ended watcher
-	grChan := make(chan struct{})
-	go func() {
-		inst.wg.Wait()
-
-		close(grChan)
-	}()
-
-	go func() {
-		select {
-		// wait for context cancelation
-		case <-ctx.Done():
-			inst.updateState(FinishingTracks)
-
-			inst.wg.Done()
-
-			inst.updateState(Canceled)
-
-		// or all tracks finishing
-		case <-grChan:
-			inst.updateState(Finished)
-		}
-
-		// run cancel on the end to free resources.
-		cancel()
-	}()
-
-	return nil
-}
-
-// runTracks runs all tracks of the instance.
-func (inst *Instance) runTracks(ctx context.Context) error {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
-	if inst.state != Ready {
-		return errs.New(
-			errs.M("invalid instance state to run (want: Ready, has: %s)",
-				inst.state),
-			errs.C(errorClass, errs.InvalidState))
-	}
-
-	for _, t := range inst.tracks {
-		inst.wg.Add(1)
-
-		go func(t *track) {
-			defer inst.wg.Done()
-
-			t.run(ctx)
-		}(t)
-	}
-
-	return nil
-}
-
-// addTrack adds a new track into the track pool.
-// If instance is running, added track also runs.
-func (inst *Instance) addTrack(ctx context.Context, nt *track) error {
-	if nt == nil {
-		return errs.New(
-			errs.M("couldn't add empty track to instance %q", inst.Id()),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
-	if _, ok := inst.tracks[nt.Id()]; ok {
-		return errs.New(
-			errs.M("track from node %q(%s) already registered in instance %q",
-				inst.tracks[nt.Id()].steps[0].node.Name(),
-				inst.tracks[nt.Id()].steps[0].node.Id(),
-				inst.Id()),
-			errs.C(errorClass, errs.DuplicateObject))
-	}
-
-	inst.tracks[nt.Id()] = nt
-
-	if inst.state == Runned {
-		inst.wg.Add(1)
-
-		go func() {
-			defer inst.wg.Done()
-			nt.run(ctx)
-		}()
-	}
-
-	return nil
-}
-
-// createTrack creates all initial tracks of the Instance.
-func (inst *Instance) createTracks() error {
-	for _, n := range inst.s.Nodes {
-		_, boundaryEvent := n.(flow.BoudaryEvent)
-		if len(n.Incoming()) != 0 ||
-			n.NodeType() == flow.GatewayNodeType ||
-			boundaryEvent {
-			continue
-		}
-
-		t, err := newTrack(n, inst, newToken(inst))
-		if err != nil {
-			return err
-		}
-
-		inst.tracks[t.Id()] = t
-	}
-
-	return nil
-}
-
-// addData adds data to scope named path
-func (inst *Instance) addData(path exec.DataPath, dd ...data.Data) error {
-	vv, ok := inst.scopes[path]
-	if !ok {
-		return errs.New(
-			errs.M("couldn't find scope %q to add data", path.String()))
-	}
-
-	for _, d := range dd {
-		if d == nil {
-			return errs.New(
-				errs.M("data is empty"))
-		}
-
-		dn := strings.TrimSpace(d.Name())
-		if dn == "" {
-			return errs.New(
-				errs.M("couldn't add data with no name"))
-		}
-
-		vv[dn] = d
-	}
-
-	inst.scopes[path] = vv
-
-	return nil
-}
 
 // =============================================================================
 // Interfaces check
