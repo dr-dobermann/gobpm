@@ -96,6 +96,8 @@ type track struct {
 
 	m sync.Mutex
 
+	ctx context.Context
+
 	state   trackState
 	prev    []*track
 	steps   []*stepInfo
@@ -151,41 +153,6 @@ func newTrack(
 	return &t, nil
 }
 
-// --------------------- exec.EventProcessor interface -------------------------
-
-func (t *track) ProcessEvent(
-	ctx context.Context,
-	eDef flow.EventDefinition,
-) error {
-	if !t.inState(TrackWaitForEvent) {
-		return errs.New(
-			errs.M("track doesn't expect any event"),
-			errs.C(errorClass, errs.InvalidState),
-			errs.D("event_trigger", string(eDef.Type())),
-			errs.D("eDef_id", eDef.Id()))
-	}
-
-	n := t.steps[len(t.steps)-1].node
-
-	ep, ok := n.(exec.EventProcessor)
-	if !ok {
-		return errs.New(
-			errs.M("node %q(%s) doesn't support event processing",
-				n.Name(), n.Id()),
-			errs.C(errorClass, errs.TypeCastingError))
-	}
-
-	if err := ep.ProcessEvent(ctx, eDef); err != nil {
-		return err
-	}
-
-	t.updateState(TrackReady)
-
-	return nil
-}
-
-// -----------------------------------------------------------------------------
-
 // inState checks if track state is equal to any track state from the ss.
 func (t *track) inState(ss ...trackState) bool {
 	t.m.Lock()
@@ -235,6 +202,14 @@ func (t *track) run(
 	if !t.inState(TrackReady, TrackWaitForEvent) {
 		return
 	}
+
+	if ctx == nil {
+		errs.Panic("empty context for track #" + t.Id() +
+			" of Instance #" + t.instance.Id())
+		return
+	}
+
+	t.ctx = ctx
 
 	for {
 		select {
@@ -404,3 +379,43 @@ func (t *track) runNodeEpilogue(ctx context.Context, n flow.Node) error {
 
 	return nil
 }
+
+// --------------------- exec.EventProcessor interface -------------------------
+
+func (t *track) ProcessEvent(
+	ctx context.Context,
+	eDef flow.EventDefinition,
+) error {
+	if !t.inState(TrackWaitForEvent) {
+		return errs.New(
+			errs.M("track #%s of instance #%s doesn't expect any event",
+				t.Id(), t.instance.Id()),
+			errs.C(errorClass, errs.InvalidState),
+			errs.D("event_trigger", string(eDef.Type())),
+			errs.D("event_defintion_id", eDef.Id()))
+	}
+
+	if ctx == nil {
+		ctx = t.ctx
+	}
+
+	n := t.steps[len(t.steps)-1].node
+
+	ep, ok := n.(exec.EventProcessor)
+	if !ok {
+		return errs.New(
+			errs.M("node %q(%s) doesn't support event processing",
+				n.Name(), n.Id()),
+			errs.C(errorClass, errs.TypeCastingError))
+	}
+
+	if err := ep.ProcessEvent(ctx, eDef); err != nil {
+		return err
+	}
+
+	t.updateState(TrackReady)
+
+	return nil
+}
+
+// -----------------------------------------------------------------------------

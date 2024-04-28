@@ -43,6 +43,7 @@ func (s State) String() string {
 	}[s]
 }
 
+// =============================================================================
 type Instance struct {
 	foundation.ID
 
@@ -51,8 +52,14 @@ type Instance struct {
 	// wg is used to hold track's go-routines tracing.
 	wg sync.WaitGroup
 
+	// state of the Instance.
 	state State
-	s     *exec.Snapshot
+
+	// the Snapshot, the Instance is based on.
+	s *exec.Snapshot
+
+	// Instance's runtime context.
+	ctx context.Context
 
 	// Scopes holds accessible in the moment Data.
 	// first map indexed by data path, the second map indexed by Data name.
@@ -156,6 +163,10 @@ func (inst *Instance) Run(
 	cancel context.CancelFunc,
 	ep exec.EventProducer,
 ) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	inst.m.Lock()
 	defer inst.m.Unlock()
 
@@ -167,6 +178,7 @@ func (inst *Instance) Run(
 	}
 
 	inst.eProd = ep
+	inst.ctx = ctx
 
 	if err := inst.runTracks(ctx); err != nil {
 		return err
@@ -313,6 +325,10 @@ func (inst *Instance) addData(path exec.DataPath, dd ...data.Data) error {
 
 // -------------------- exec.EventProcessor interface --------------------------
 
+// ProcessEvent processes single event definition, it registered in called
+// EventProducer (usually it would be Thresher).
+// If the caller doesn't provide the context (ctx == nil), then internal
+// Instance context would be used.
 func (inst *Instance) ProcessEvent(
 	ctx context.Context,
 	eDef flow.EventDefinition,
@@ -321,6 +337,10 @@ func (inst *Instance) ProcessEvent(
 		return errs.New(
 			errs.M("empty event definition"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if ctx == nil {
+		ctx = inst.ctx
 	}
 
 	inst.m.Lock()

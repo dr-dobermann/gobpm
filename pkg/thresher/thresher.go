@@ -83,14 +83,17 @@ func (s State) String() string {
 // eDefReg holds single link from to event definition to Snapshot or
 // EventProcessor.
 type eDefReg struct {
-	// proc is empty for the initial events and new Instance should be created
-	// once Instance created, it registered itself as EventProcessor with all
-	// awaited events, including initial ones.
+	// proc is empty for the initial events.
 	//
-	// if proc isn't empty it just processed its copy of eventDefinition.
+	// pros isn't emepty for Intermediate events. When Instance reach the
+	// EventNode, it let node to register the event defintions it awaits and
+	// put this Instance track in waiting state.
+	//
+	// Intermediate event is also registered for boundary events or in-process
+	// subprocesses.
 	proc exec.EventProcessor
 
-	// ProcessId holds the Id of the process. It used when proc is empty
+	// ProcessId holds the Id of the process. It's used when proc is empty
 	// and Thresher should find the appropriate Snapshot to start an
 	// Instance of the Process.
 	ProcessId string
@@ -261,7 +264,7 @@ func (t *Thresher) RegisterEvents(
 		}
 
 		if indexEventProc(pp, ep) != -1 {
-			pp = append(pp, eventReg{
+			pp = append(pp, eDefReg{
 				proc: ep,
 			})
 		}
@@ -363,10 +366,10 @@ func (t *Thresher) StartProcess(processId string) error {
 	return t.launchInstance(s)
 }
 
-// ProcessEvent processes single eventDefinition and if there is any
+// PerformEvent processes a single eventDefinition and if there is any
 // registration of event definition with eDef ID, it starts a new Instance
 // or send the event to runned Instance.
-func (t *Thresher) ProcessEvent(eDef flow.EventDefinition) error {
+func (t *Thresher) PerformEvent(eDef flow.EventDefinition) error {
 	if eDef == nil {
 		return errs.New(
 			errs.M("no event definition"),
@@ -386,10 +389,20 @@ func (t *Thresher) ProcessEvent(eDef flow.EventDefinition) error {
 	ee := []error{}
 
 	for _, r := range rr {
+		// if there is starting event registered, run
+		// new Instance of the registered Snapshot.
 		if r.proc == nil {
 			if err := t.StartProcess(r.ProcessId); err != nil {
 				ee = append(ee, err)
 			}
+
+			continue
+		}
+
+		// in case of intermmediate event, call its
+		// ProcessEvent function.
+		if err := r.proc.ProcessEvent(nil, eDef); err != nil {
+
 		}
 	}
 
@@ -440,9 +453,8 @@ func (t *Thresher) addInitialEvent(
 	for _, ed := range edd {
 		pp, ok := t.eDefs[ed.Id()]
 		if !ok {
-			t.eDefs[ed.Id()] = []eventReg{
+			t.eDefs[ed.Id()] = []eDefReg{
 				{
-					proc:      nil,
 					ProcessId: processId,
 				}}
 
@@ -455,8 +467,7 @@ func (t *Thresher) addInitialEvent(
 			}
 		}
 
-		pp = append(pp, eventReg{
-			proc:      nil,
+		pp = append(pp, eDefReg{
 			ProcessId: processId,
 		})
 
@@ -468,7 +479,7 @@ func (t *Thresher) addInitialEvent(
 
 // indexEventProc looks for the eventProcessor ep in eventProc slice pp and
 // return its index. If there is no ep in pp, -1 returned.
-func indexEventProc(pp []eventReg, ep exec.EventProcessor) int {
+func indexEventProc(pp []eDefReg, ep exec.EventProcessor) int {
 	for i, p := range pp {
 		if p.proc == ep {
 			return i

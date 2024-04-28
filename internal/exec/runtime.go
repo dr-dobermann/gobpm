@@ -23,8 +23,8 @@ type ProcessRunner interface {
 	// process awaits them.
 	StartProcess(processId string) error
 
-	// AddEvent processes single eventDefinition and if there is any
+	// PerformEvent processes single eventDefinition and if there is any
 	// registration of event definition with eDef ID, it starts a new Instance
 	// or send the event to runned Instance.
-	AddEvent(eDef flow.EventDefinition) error
+	PerformEvent(eDef flow.EventDefinition) error
 }

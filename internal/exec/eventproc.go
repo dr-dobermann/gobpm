@@ -10,6 +10,8 @@ import (
 type EventProcessor interface {
 	foundation.Identifyer
 
+	// ProcessEvent processes single event definition by node, it registered
+	// in EventProducer.
 	ProcessEvent(context.Context, flow.EventDefinition) error
 }
 
