@@ -10,12 +10,39 @@ few steps should be taken:
      SequenceFlows, Properties, and starting event definitions.
   2. The Snapshot should be registered in the object implementing the
      ProcessRunner interface.
-  3. On Snapshot registration ProcessRunner loads all its initial events to
-     watch for. Once ProcessRunner recieve the event with event definition ID
+  3. On Snapshot registration ProcessRunner loads all its initial events.
+     Once ProcessRunner recieve the event with event definition ID
 	 matched with registered initial process, it creates the Instance from the
-	 appropriate Snapshot and runs it with this event.
+	 appropriate Snapshot and runs it.
 
 #Events
+
+Envets processed with two interfaces:
+  1. EventProducer
+  2. EventProcessor
+
+##EventProcessor
+
+EventProcessor implemented by every Node which awaits event. When event
+arrives, ProcessEvent of the Node is called and event is sent into Node to
+process it.
+
+EventProcessor registers itself in **EventProducer** with event difinition
+it waits for.
+
+Despite that Node is the real event processe, Node doesn't registered in
+EventProcessor. Track is registered on behalf of the Node it runs on current
+step. Thus track is called to process the event and track calls the node's
+ProcessEvent function and sets track state depending on result of this call.
+
+##EventProducer
+
+EventProducer is the hub which coordinates event gathering and routing. It is
+responsible for:
+  - EventProcessors registration
+  - recieving events and sending them to the registered EventProcessors.
+
+##Event flow
 
 Upon creating a Snapshot from the Process model, the list of initial Events
 is built. An initial Event has no incoming flows and isn't bound to any
@@ -24,8 +51,8 @@ Activity.
 When the Snapshot is sent to the ProcessRunner, it registers event definitions
 of initial events and links this list to the snapshot.
 
-Once an Event arrives at the ProcessRunner, the Event is processed in the
-following steps:
+Once an Event arrives at the ProcessRunner (which implements EventProducer
+interface), the Event is processed in the following steps:
   - ProcessRunner checks the registered event definitions of the snapshot.
     If an event definition is found in this list, a new instance is created
 	and run with this Event.
