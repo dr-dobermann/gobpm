@@ -52,9 +52,12 @@ When the Snapshot is sent to the ProcessRunner, it registers event definitions
 of initial events and links this list to the snapshot.
 
 Once an Event arrives at the ProcessRunner (which implements EventProducer
-interface), the Event is processed in the following steps:
-  - ProcessRunner checks the registered event definitions of the snapshot.
-    If an event definition is found in this list, a new instance is created
+interface), the Event is placed into events queue for processing.
+  - ProcessRunner checks the registered event definitions list and determines
+    if it is runtime event or start event. Runtime event has not-nil EventProcessor
+    registered for the event definition.
+    If registration hasn't registered EventProcessor, it starts a new Instance for
+    registered Snapshot and runs it.
 	and run with this Event.
   - ProcessRunner checks the registered runtime events list. If an event
     definition is found in this list, the Event is sent to the running instance

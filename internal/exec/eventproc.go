@@ -1,6 +1,8 @@
 package exec
 
 import (
+	"context"
+
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
@@ -8,7 +10,9 @@ import (
 type EventProcessor interface {
 	foundation.Identifyer
 
-	ProcessEvent(flow.EventDefinition) error
+	// ProcessEvent processes single event definition by node, it registered
+	// in EventProducer.
+	ProcessEvent(context.Context, flow.EventDefinition) error
 }
 
 type EventProducer interface {

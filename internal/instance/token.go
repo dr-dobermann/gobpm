@@ -11,11 +11,11 @@ const (
 	TokenInvalid TokenState = iota
 	TokenAlive
 	TokenWaitForEvent
-	TokenDead
+	TokenConsumed
 )
 
 func (ts TokenState) Validate() error {
-	if ts < TokenAlive || ts > TokenDead {
+	if ts < TokenAlive || ts > TokenConsumed {
 		return errs.New(
 			errs.M("invalid token state: %d", ts),
 			errs.C(errorClass, errs.InvalidParameter))
