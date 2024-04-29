@@ -11,7 +11,7 @@ few steps should be taken:
   2. The Snapshot should be registered in the object implementing the
      ProcessRunner interface.
   3. On Snapshot registration ProcessRunner loads all its initial events to
-     watch for. Once ProcessRunner recieve the event with event definition ID
+     watch for. Once ProcessRunner receive the event with event definition ID
 	 matched with registered initial process, it creates the Instance from the
 	 appropriate Snapshot and runs it with this event.
 

@@ -138,6 +138,9 @@ type Thresher struct {
 	instances map[string]instanceReg
 }
 
+// New creates a new empty Thresher in NotStarted state.
+// Function only initializes inner structures. To run Thresher, Run method
+// should be called.
 func New() *Thresher {
 	return &Thresher{
 		state:     NotStarted,
@@ -173,6 +176,7 @@ func (t *Thresher) UpdateState(ns State) error {
 	return nil
 }
 
+// Run starts Thresher event queue processing.
 func (t *Thresher) Run(ctx context.Context) error {
 	st := t.State()
 	if st != NotStarted {
@@ -182,19 +186,27 @@ func (t *Thresher) Run(ctx context.Context) error {
 	}
 
 	if ctx == nil {
-		ctx = context.Background()
+		return errs.New(
+			errs.M("empty context"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
 	t.ctx = ctx
 
 	err := t.runEventQueue()
 	if err == nil {
-		t.UpdateState(Started)
+		if err := t.UpdateState(Started); err != nil {
+			return errs.New(
+				errs.M("couldnt update Thresher state"),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err))
+		}
 	}
 
 	return err
 }
 
+// runEventQueue starts the Thresher events queue processing.
 func (t *Thresher) runEventQueue() error {
 	go func(ctx context.Context) {
 		for {
@@ -213,15 +225,19 @@ func (t *Thresher) runEventQueue() error {
 				continue
 			}
 
-			// take first event in the queue and get all registrations for
+			// take first event in the queue and process all registrations for
 			// its event definition.
 			eRegs, ok := t.eDefs[t.events[0].eDef.Id()]
 			if ok {
 				for _, er := range eRegs {
+					// if it's intermediate event, send eDef to its processor.
 					if er.proc != nil {
-						go func(eDef flow.EventDefinition) {
-							_ = er.proc.ProcessEvent(t.ctx, eDef)
-						}(t.events[0].eDef)
+						go func(
+							proc exec.EventProcessor,
+							eDef flow.EventDefinition,
+						) {
+							_ = proc.ProcessEvent(t.ctx, eDef)
+						}(er.proc, t.events[0].eDef)
 					}
 				}
 			}
@@ -230,7 +246,6 @@ func (t *Thresher) runEventQueue() error {
 
 			t.m.Unlock()
 		}
-
 	}(t.ctx)
 
 	return nil
@@ -345,7 +360,6 @@ func (t *Thresher) RegisterProcess(
 // StartProcess runs process with processId without any event even if
 // process awaits them.
 func (t *Thresher) StartProcess(processId string) error {
-
 	if t.state != Started {
 		return errs.New(
 			errs.M("thresher isn't started"),
@@ -366,49 +380,57 @@ func (t *Thresher) StartProcess(processId string) error {
 	return t.launchInstance(s)
 }
 
-// PerformEvent processes a single eventDefinition and if there is any
-// registration of event definition with eDef ID, it starts a new Instance
-// or send the event to runned Instance.
-func (t *Thresher) PerformEvent(eDef flow.EventDefinition) error {
+// AddEvent adds singe event definition into the Thresher event queue.
+// if eDef is registered as initial event for the process,
+// new process instance would be started to add its as a instance avaits
+// of this event definition.
+func (t *Thresher) AddEvent(eDef flow.EventDefinition) error {
 	if eDef == nil {
 		return errs.New(
 			errs.M("no event definition"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	t.m.Lock()
-	rr, ok := t.eDefs[eDef.Id()]
-	t.m.Unlock()
-
-	if !ok {
+	if st := t.State(); st != Started && st != Paused {
 		return errs.New(
-			errs.M("event defintion %q isn't registered", eDef.Id()),
-			errs.C(errorClass, errs.InvalidObject))
+			errs.M("thresher isn't started or paused"),
+			errs.C(errorClass, errs.InvalidState))
 	}
+
+	t.m.Lock()
+	ree := t.eDefs[eDef.Id()]
+	t.m.Unlock()
 
 	ee := []error{}
 
-	for _, r := range rr {
-		// if there is starting event registered, run
-		// new Instance of the registered Snapshot.
-		if r.proc == nil {
-			if err := t.StartProcess(r.ProcessId); err != nil {
-				ee = append(ee, err)
-			}
-
+	for _, re := range ree {
+		if re.proc != nil {
 			continue
 		}
 
-		// in case of intermmediate event, call its
-		// ProcessEvent function.
-		if err := r.proc.ProcessEvent(nil, eDef); err != nil {
+		t.m.Lock()
+		s, ok := t.snapshots[re.ProcessId]
+		t.m.Unlock()
+		if !ok {
+			ee = append(ee, errs.New(
+				errs.M("no registration for process #%s", re.ProcessId),
+				errs.C(errorClass, errs.ObjectNotFound)))
+		}
 
+		if err := t.launchInstance(s); err != nil {
+			ee = append(ee, err)
 		}
 	}
 
 	if len(ee) != 0 {
 		return errors.Join(ee...)
 	}
+
+	t.m.Lock()
+	t.events = append(t.events, eventReg{
+		eDef: eDef,
+	})
+	t.m.Unlock()
 
 	return nil
 }

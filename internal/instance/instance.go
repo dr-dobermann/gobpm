@@ -85,6 +85,8 @@ type Instance struct {
 	// tracks indexed by track Ids
 	tracks map[string]*track
 
+	tokens []*token
+
 	// events keeps list of tracks that awaits for evnent.
 	// events are indexed by event definition id.
 	// inner map indexed by track id.
@@ -105,6 +107,7 @@ func New(
 		s:                   s,
 		scopes:              map[exec.DataPath]map[string]data.Data{},
 		tracks:              map[string]*track{},
+		tokens:              []*token{},
 		events:              map[string]map[string]*track{},
 		parentScope:         parentScope,
 		parentEventProducer: ep,
@@ -164,7 +167,9 @@ func (inst *Instance) Run(
 	ep exec.EventProducer,
 ) error {
 	if ctx == nil {
-		ctx = context.Background()
+		return errs.New(
+			errs.M("empty context for instance"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
 	inst.m.Lock()
@@ -208,7 +213,9 @@ func (inst *Instance) Run(
 		}
 
 		// run cancel on the end to free resources.
-		cancel()
+		if cancel != nil {
+			cancel()
+		}
 	}()
 
 	return nil
@@ -284,7 +291,7 @@ func (inst *Instance) createTracks() error {
 			continue
 		}
 
-		t, err := newTrack(n, inst, newToken(inst))
+		t, err := newTrack(n, inst, nil, nil)
 		if err != nil {
 			return err
 		}
@@ -321,6 +328,25 @@ func (inst *Instance) addData(path exec.DataPath, dd ...data.Data) error {
 	inst.scopes[path] = vv
 
 	return nil
+}
+
+// createToken creates a new token and registers it in the Instance.
+// if there is failure occurs, error returned.
+func (inst *Instance) createToken() (*token, error) {
+	if inst.State() != Runned {
+		return nil, errs.New(
+			errs.M("couldn't create token on non-runned instance"),
+			errs.C(errorClass, errs.InvalidState))
+	}
+
+	t := newToken(inst)
+
+	inst.m.Lock()
+	defer inst.m.Unlock()
+
+	inst.tokens = append(inst.tokens, t)
+
+	return t, nil
 }
 
 // -------------------- exec.EventProcessor interface --------------------------
@@ -387,7 +413,7 @@ func (inst *Instance) RegisterEvents(
 	is := inst.State()
 	if is != Runned {
 		return errs.New(
-			errs.M("instance should be Runned to register events(current state: %s)",
+			errs.M("instance should be Runned to register events (current state: %s)",
 				is),
 			errs.C(errorClass, errs.InvalidState),
 			errs.D("requester_id", proc.Id()))
