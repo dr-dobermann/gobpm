@@ -122,7 +122,6 @@ func newTrack(
 	start flow.Node,
 	inst *Instance,
 	prevTrack *track,
-	tk *token,
 ) (*track, error) {
 	_, ok := start.(exec.NodeExecutor)
 	if !ok {
@@ -145,18 +144,24 @@ func newTrack(
 			{
 				node:  start,
 				state: StepCreated,
-				tk:    tk,
 			},
 		},
+		state:    TrackReady,
 		instance: inst,
 		lastErr:  nil,
 	}
 
 	if prevTrack != nil {
 		t.prev = append(t.prev, append(prevTrack.prev, prevTrack)...)
-	}
+		t.steps[0].tk = prevTrack.currentStep().tk
 
-	t.updateState(TrackReady)
+		if err := t.steps[0].tk.updateState(TokenAlive); err != nil {
+			return nil,
+				errs.New(
+					errs.M("couldn't initialize track token"),
+					errs.E(err))
+		}
+	}
 
 	// check if Node is event and it awaits for events
 	if e, ok := start.(flow.EventNode); ok {
@@ -169,12 +174,10 @@ func newTrack(
 						errs.C(errorClass, errs.BulidingFailed))
 			}
 		}
-
 		if len(e.Definitions()) != 0 {
 			t.updateState(TrackWaitForEvent)
 		}
 	}
-
 	return &t, nil
 }
 
@@ -215,7 +218,11 @@ func (t *track) updateState(newState trackState) {
 	}
 
 	if t.currentStep().tk != nil {
-		t.currentStep().tk.updateState(ts)
+		if err := t.currentStep().tk.updateState(ts); err != nil {
+			errs.Panic(err)
+
+			return
+		}
 	}
 
 	t.state = newState
@@ -238,11 +245,6 @@ func (t *track) run(
 		return
 	}
 
-	if ctx == nil {
-		errs.Panic("empty context for track #" + t.Id() +
-			" of Instance #" + t.instance.Id())
-		return
-	}
 	t.ctx = ctx
 
 	for {
@@ -309,7 +311,7 @@ func (t *track) executeNode(
 		if err != nil {
 			return nil,
 				errs.New(
-					errs.M("couldn't get token for Node %s[%s]",
+					errs.M("couldn't create token for Node %s[%s]",
 						step.node.Id(), step.node.Name()),
 					errs.C(errorClass, errs.BulidingFailed),
 					errs.E(err))
@@ -363,7 +365,7 @@ func (t *track) checkFlows(ctx context.Context, flows []*flow.SequenceFlow) erro
 
 	// if outgoing flows has any cyclic on current node then first of them
 	// should be next step of the track
-	nextNode := -1
+	nextNode := 0
 	for i, f := range flows {
 		if f.Target().Id() == t.currentStep().node.Id() {
 			nextNode = i
@@ -371,26 +373,35 @@ func (t *track) checkFlows(ctx context.Context, flows []*flow.SequenceFlow) erro
 		}
 	}
 
-	if nextNode == -1 {
-		nextNode = 0
-	}
-
 	tokens := t.currentStep().tk.split(len(flows))
 
-	t.steps = append(t.steps, &stepInfo{
+	nextStep := stepInfo{
 		node:  flows[nextNode].Target().Node(),
 		state: StepCreated,
 		tk:    tokens[0],
-	})
+	}
+
+	if err := nextStep.tk.updateState(TokenAlive); err != nil {
+		return errs.New(
+			errs.M("couldn't update token state of the main flow"),
+			errs.D("node_name", nextStep.node.Name()),
+			errs.D("node_id", nextStep.node.Id()),
+			errs.D("instance_id", t.instance.Id()),
+			errs.E(err))
+	}
+
+	t.steps = append(t.steps, &nextStep)
 
 	for i, f := range append(flows[:nextNode], flows[nextNode+1:]...) {
-		nt, err := newTrack(f.Target().Node(), t.instance, t, tokens[i+1])
+		nt, err := newTrack(f.Target().Node(), t.instance, t)
 		if err != nil {
 			return errs.New(
 				errs.M("couldn't creaete a new track for flow %q", f.Id()),
 				errs.C(errorClass, errs.BulidingFailed),
 				errs.E(err))
 		}
+
+		nt.steps[0].tk = tokens[i+1]
 
 		if err := t.instance.addTrack(ctx, nt); err != nil {
 			return errs.New(
@@ -399,6 +410,7 @@ func (t *track) checkFlows(ctx context.Context, flows []*flow.SequenceFlow) erro
 				errs.E(err))
 		}
 	}
+
 	return nil
 }
 

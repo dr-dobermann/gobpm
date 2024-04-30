@@ -291,7 +291,7 @@ func (inst *Instance) createTracks() error {
 			continue
 		}
 
-		t, err := newTrack(n, inst, nil, nil)
+		t, err := newTrack(n, inst, nil)
 		if err != nil {
 			return err
 		}

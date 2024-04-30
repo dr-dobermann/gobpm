@@ -11,7 +11,7 @@ few steps should be taken:
   2. The Snapshot should be registered in the object implementing the
      ProcessRunner interface.
   3. On Snapshot registration ProcessRunner loads all its initial events.
-     Once ProcessRunner recieve the event with event definition ID
+     Once ProcessRunner receive the event with event definition ID
 	 matched with registered initial process, it creates the Instance from the
 	 appropriate Snapshot and runs it.
 
@@ -40,7 +40,7 @@ ProcessEvent function and sets track state depending on result of this call.
 EventProducer is the hub which coordinates event gathering and routing. It is
 responsible for:
   - EventProcessors registration
-  - recieving events and sending them to the registered EventProcessors.
+  - receiving events and sending them to the registered EventProcessors.
 
 ##Event flow
 
