@@ -10,7 +10,7 @@ DC = docker compose
 build:
 	${GO} build -o ./bin/ "./..." 
 
-.PHONY: update_modules lint tag clear test
+.PHONY: update_modules lint tag clear test cover
 
 update_modules:
 	@go get -u ./...
@@ -28,6 +28,11 @@ lint:
 
 test:
 	go test -v -cover ./...
+
+cover:
+	go test -v -coverprofile=c.out ./...
+	go tool cover -html=c.out
+	rm c.out
 
 tag: 
 	@git tag -a ${VERSION} -m "version ${VERSION}"

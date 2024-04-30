@@ -67,6 +67,9 @@ type stepState uint8
 const (
 	StepCreated stepState = iota
 	StepStarted
+	StepPrologued
+	StepExecuting
+	StepEpilogued
 	StepAwaitsResults
 	StepEnded
 	StepFailed
@@ -76,6 +79,9 @@ func (ss stepState) String() string {
 	return []string{
 		"Created",
 		"Started",
+		"StepPrologued",
+		"StepExecuting",
+		"StepEpilogued",
 		"AwaitsResults",
 		"Ended",
 		"Failed",
@@ -96,6 +102,8 @@ type track struct {
 
 	m sync.Mutex
 
+	ctx context.Context
+
 	state   trackState
 	prev    []*track
 	steps   []*stepInfo
@@ -107,16 +115,26 @@ type track struct {
 // newTrack creates the new track from the start flow.Node and sets it
 // in TrackReady state.
 // newTrack retruns created track's pointer on success or error on failure.
+//
+// For processes initial nodes, token is empty. It creates only if node
+// gets control over event or direct execution.
 func newTrack(
 	start flow.Node,
 	inst *Instance,
-	tk *token,
+	prevTrack *track,
 ) (*track, error) {
 	_, ok := start.(exec.NodeExecutor)
 	if !ok {
 		return nil, errs.New(
 			errs.M("%q node hasn't NodeExecutor interface", start.Name()),
 			errs.C(errorClass, errs.TypeCastingError))
+	}
+
+	if inst == nil {
+		return nil,
+			errs.New(
+				errs.M("empty instance"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
 	t := track{
@@ -126,64 +144,42 @@ func newTrack(
 			{
 				node:  start,
 				state: StepCreated,
-				tk:    tk,
 			},
 		},
+		state:    TrackReady,
 		instance: inst,
 		lastErr:  nil,
 	}
 
-	t.updateState(TrackReady)
+	if prevTrack != nil {
+		t.prev = append(t.prev, append(prevTrack.prev, prevTrack)...)
+		t.steps[0].tk = prevTrack.currentStep().tk
+
+		if err := t.steps[0].tk.updateState(TokenAlive); err != nil {
+			return nil,
+				errs.New(
+					errs.M("couldn't initialize track token"),
+					errs.E(err))
+		}
+	}
 
 	// check if Node is event and it awaits for events
 	if e, ok := start.(flow.EventNode); ok {
 		for _, d := range e.Definitions() {
 			if err := t.instance.RegisterEvents(&t, d); err != nil {
-				return nil, err
+				return nil,
+					errs.New(
+						errs.M("couldn't register event definitions for event %s[%s]",
+							start.Name(), start.Id()),
+						errs.C(errorClass, errs.BulidingFailed))
 			}
 		}
-
 		if len(e.Definitions()) != 0 {
 			t.updateState(TrackWaitForEvent)
 		}
 	}
-
 	return &t, nil
 }
-
-// --------------------- exec.EventProcessor interface -------------------------
-
-func (t *track) ProcessEvent(
-	eDef flow.EventDefinition,
-) error {
-	if !t.inState(TrackWaitForEvent) {
-		return errs.New(
-			errs.M("track doesn't expect any event"),
-			errs.C(errorClass, errs.InvalidState),
-			errs.D("event_trigger", string(eDef.Type())),
-			errs.D("eDef_id", eDef.Id()))
-	}
-
-	n := t.steps[len(t.steps)-1].node
-
-	ep, ok := n.(exec.EventProcessor)
-	if !ok {
-		return errs.New(
-			errs.M("node %q(%s) doesn't support event processing",
-				n.Name(), n.Id()),
-			errs.C(errorClass, errs.TypeCastingError))
-	}
-
-	if err := ep.ProcessEvent(eDef); err != nil {
-		return err
-	}
-
-	t.updateState(TrackReady)
-
-	return nil
-}
-
-// -----------------------------------------------------------------------------
 
 // inState checks if track state is equal to any track state from the ss.
 func (t *track) inState(ss ...trackState) bool {
@@ -200,19 +196,33 @@ func (t *track) inState(ss ...trackState) bool {
 }
 
 // updateState sets new state for the track.
+// If track has a token, its state will be updated accordingly.
 func (t *track) updateState(newState trackState) {
 	t.m.Lock()
 	defer t.m.Unlock()
 
+	ts := TokenInvalid
+
 	switch {
-	case newState == TrackReady && t.state == TrackWaitForEvent:
-		t.currentStep().tk.updateState(TokenAlive)
+	case newState == TrackReady ||
+		newState == TrackExecutingStep:
+		ts = TokenAlive
 
 	case newState == TrackWaitForEvent:
-		t.currentStep().tk.updateState(TokenWaitForEvent)
+		ts = TokenWaitForEvent
 
-	case newState == TrackFailed:
-		t.currentStep().tk.updateState(TokenDead)
+	case newState == TrackFailed ||
+		newState == TrackEnded ||
+		newState == TrackCanceled:
+		ts = TokenConsumed
+	}
+
+	if t.currentStep().tk != nil {
+		if err := t.currentStep().tk.updateState(ts); err != nil {
+			errs.Panic(err)
+
+			return
+		}
 	}
 
 	t.state = newState
@@ -235,6 +245,8 @@ func (t *track) run(
 		return
 	}
 
+	t.ctx = ctx
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -251,29 +263,18 @@ func (t *track) run(
 
 		// while there is a step to take
 		step := t.currentStep()
-
 		if step.state != StepCreated {
 			// if the last step is finished
 			// stop track running, inactivate token and return
 			t.updateState(TrackEnded)
 
-			step.tk.updateState(TokenDead)
-
 			return
 		}
 
-		nextFlows, err := t.executeNode(ctx, step.node)
+		nextFlows, err := t.executeNode(ctx, step)
 		if err != nil {
 			t.lastErr = err
 			t.updateState(TrackFailed)
-
-			return
-		}
-
-		step.state = StepEnded
-
-		if len(nextFlows) == 0 {
-			t.updateState(TrackEnded)
 
 			return
 		}
@@ -293,9 +294,9 @@ func (t *track) run(
 // On failure it returns error.
 func (t *track) executeNode(
 	ctx context.Context,
-	n flow.Node,
+	step *stepInfo,
 ) ([]*flow.SequenceFlow, error) {
-	ne, ok := n.(exec.NodeExecutor)
+	ne, ok := step.node.(exec.NodeExecutor)
 	if !ok {
 		return nil,
 			errs.New(
@@ -303,7 +304,25 @@ func (t *track) executeNode(
 				errs.C(errorClass, errs.TypeCastingError))
 	}
 
-	ndl, ok := n.(exec.NodeDataLoader)
+	if step.tk == nil {
+		var err error
+
+		step.tk, err = t.instance.createToken()
+		if err != nil {
+			return nil,
+				errs.New(
+					errs.M("couldn't create token for Node %s[%s]",
+						step.node.Id(), step.node.Name()),
+					errs.C(errorClass, errs.BulidingFailed),
+					errs.E(err))
+		}
+	}
+
+	t.updateState(TrackExecutingStep)
+
+	step.state = StepStarted
+
+	ndl, ok := step.node.(exec.NodeDataLoader)
 	if ok {
 		err := t.instance.ExtendScope(ndl)
 		if err != nil {
@@ -315,18 +334,22 @@ func (t *track) executeNode(
 		}()
 	}
 
-	if err := t.runNodePrologue(ctx, n); err != nil {
+	if err := t.runNodePrologue(ctx, step.node); err != nil {
 		return nil, err
 	}
+
+	step.state = StepExecuting
 
 	nexts, err := ne.Exec(ctx, t.instance)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := t.runNodeEpilogue(ctx, n); err != nil {
+	if err := t.runNodeEpilogue(ctx, step.node); err != nil {
 		return nil, err
 	}
+
+	step.state = StepEnded
 
 	return nexts, nil
 }
@@ -335,9 +358,14 @@ func (t *track) executeNode(
 // If number of flows is greater than 1 then new tracks with splited token
 // created.
 func (t *track) checkFlows(ctx context.Context, flows []*flow.SequenceFlow) error {
+	if len(flows) == 0 {
+		t.updateState(TrackEnded)
+		return nil
+	}
+
 	// if outgoing flows has any cyclic on current node then first of them
 	// should be next step of the track
-	nextNode := -1
+	nextNode := 0
 	for i, f := range flows {
 		if f.Target().Id() == t.currentStep().node.Id() {
 			nextNode = i
@@ -345,26 +373,35 @@ func (t *track) checkFlows(ctx context.Context, flows []*flow.SequenceFlow) erro
 		}
 	}
 
-	if nextNode == -1 {
-		nextNode = 0
-	}
-
 	tokens := t.currentStep().tk.split(len(flows))
 
-	t.steps = append(t.steps, &stepInfo{
+	nextStep := stepInfo{
 		node:  flows[nextNode].Target().Node(),
 		state: StepCreated,
 		tk:    tokens[0],
-	})
+	}
+
+	if err := nextStep.tk.updateState(TokenAlive); err != nil {
+		return errs.New(
+			errs.M("couldn't update token state of the main flow"),
+			errs.D("node_name", nextStep.node.Name()),
+			errs.D("node_id", nextStep.node.Id()),
+			errs.D("instance_id", t.instance.Id()),
+			errs.E(err))
+	}
+
+	t.steps = append(t.steps, &nextStep)
 
 	for i, f := range append(flows[:nextNode], flows[nextNode+1:]...) {
-		nt, err := newTrack(f.Target().Node(), t.instance, tokens[i+1])
+		nt, err := newTrack(f.Target().Node(), t.instance, t)
 		if err != nil {
 			return errs.New(
 				errs.M("couldn't creaete a new track for flow %q", f.Id()),
 				errs.C(errorClass, errs.BulidingFailed),
 				errs.E(err))
 		}
+
+		nt.steps[0].tk = tokens[i+1]
 
 		if err := t.instance.addTrack(ctx, nt); err != nil {
 			return errs.New(
@@ -373,6 +410,7 @@ func (t *track) checkFlows(ctx context.Context, flows []*flow.SequenceFlow) erro
 				errs.E(err))
 		}
 	}
+
 	return nil
 }
 
@@ -382,6 +420,8 @@ func (t *track) runNodePrologue(ctx context.Context, n flow.Node) error {
 	if !ok {
 		return nil
 	}
+
+	t.currentStep().state = StepPrologued
 
 	if err := np.Prologue(ctx, t.instance); err != nil {
 		return err
@@ -397,9 +437,51 @@ func (t *track) runNodeEpilogue(ctx context.Context, n flow.Node) error {
 		return nil
 	}
 
+	t.currentStep().state = StepEpilogued
+
 	if err := ne.Epilogue(ctx, t.instance); err != nil {
 		return err
 	}
 
 	return nil
 }
+
+// --------------------- exec.EventProcessor interface -------------------------
+
+func (t *track) ProcessEvent(
+	ctx context.Context,
+	eDef flow.EventDefinition,
+) error {
+	if !t.inState(TrackWaitForEvent) {
+		return errs.New(
+			errs.M("track #%s of instance #%s doesn't expect any event",
+				t.Id(), t.instance.Id()),
+			errs.C(errorClass, errs.InvalidState),
+			errs.D("event_trigger", string(eDef.Type())),
+			errs.D("event_definition_id", eDef.Id()))
+	}
+
+	if ctx == nil {
+		ctx = t.ctx
+	}
+
+	n := t.steps[len(t.steps)-1].node
+
+	ep, ok := n.(exec.EventProcessor)
+	if !ok {
+		return errs.New(
+			errs.M("node %q(%s) doesn't support event processing",
+				n.Name(), n.Id()),
+			errs.C(errorClass, errs.TypeCastingError))
+	}
+
+	if err := ep.ProcessEvent(ctx, eDef); err != nil {
+		return err
+	}
+
+	t.updateState(TrackReady)
+
+	return nil
+}
+
+// -----------------------------------------------------------------------------

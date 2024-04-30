@@ -20,6 +20,7 @@ type Snapshot struct {
 	Nodes       map[string]flow.Node
 	Flows       map[string]*flow.SequenceFlow
 	Properties  []*data.Property
+	InitEvents  []flow.EventNode
 }
 
 // NewSnapshot creates a new snapshot from the Process p and returns its
@@ -42,6 +43,7 @@ func NewSnapshot(
 		Nodes:       map[string]flow.Node{},
 		Flows:       map[string]*flow.SequenceFlow{},
 		Properties:  p.Properties(),
+		InitEvents:  []flow.EventNode{},
 	}
 
 	return createSnapshot(&s, p)
@@ -65,6 +67,14 @@ func createSnapshot(s *Snapshot, p *process.Process) (*Snapshot, error) {
 		}
 
 		s.Nodes[n.Id()] = n
+
+		// find initial events
+		if en, ok := n.(flow.EventNode); ok {
+			_, bounded := en.(flow.BoudaryEvent)
+			if len(en.Incoming()) == 0 && !bounded {
+				s.InitEvents = append(s.InitEvents, en)
+			}
+		}
 	}
 
 	for _, f := range p.Flows() {
