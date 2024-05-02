@@ -82,14 +82,14 @@ type Process struct {
 	flows map[string]*flow.SequenceFlow
 }
 
-// NewProcess creates a new Process and returns its pointer.
+// New creates a new Process and returns its pointer.
 // Available options:
 //
 //	activities.WithRoles
 //	data.WithProperties
 //	foundation.WithId
 //	foundation.WithDoc
-func NewProcess(
+func New(
 	name string,
 	procOpts ...options.Option,
 ) (*Process, error) {
@@ -128,69 +128,6 @@ func NewProcess(
 
 	return pc.newProcess()
 }
-
-// ---------------------- flow.Container interface -----------------------------
-func (p *Process) Add(e flow.Element) error {
-	if e == nil {
-		return errs.New(
-			errs.M("flow element couldn't be empty"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
-	switch e.Type() {
-	case flow.NodeElement:
-		return p.addNode(e.(flow.Node))
-
-	case flow.SequenceFlowElement:
-		return p.addFlow(e.(*flow.SequenceFlow))
-	}
-
-	return errs.New(
-		errs.M("invalid flow element type: %s", reflect.TypeOf(e).String()),
-		errs.C(errorClass, errs.InvalidParameter))
-}
-
-// Elements returns all processes elements.
-func (p *Process) Elements() []flow.Element {
-	fee := make([]flow.Element, 0, len(p.nodes)+len(p.flows))
-
-	for _, n := range p.nodes {
-		fee = append(fee, n.(flow.Element))
-	}
-
-	for _, f := range p.flows {
-		fee = append(fee, f)
-	}
-
-	return fee
-}
-
-// Remove deletes single flow or node for the Process p.
-func (p *Process) Remove(e flow.Element) error {
-	if e == nil {
-		return errs.New(
-			errs.M("element couldn't be empty"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
-	if _, ok := p.nodes[e.Id()]; ok {
-		delete(p.nodes, e.Id())
-
-		return e.Unbind()
-	}
-
-	if _, ok := p.flows[e.Id()]; ok {
-		delete(p.flows, e.Id())
-
-		return e.Unbind()
-	}
-
-	return errs.New(
-		errs.M("element %q(%s) not found in process", e.Name(), e.Id()),
-		errs.C(errorClass, errs.ObjectNotFound))
-}
-
-//------------------------------------------------------------------------------
 
 func (p *Process) Name() string {
 	return p.name
@@ -280,4 +217,69 @@ func (p *Process) Flows() []*flow.SequenceFlow {
 	return ff
 }
 
+// ---------------------- flow.Container interface -----------------------------
+
+// Add adds new Element into the Process p.
+// On failure it returns an error.
+func (p *Process) Add(e flow.Element) error {
+	if e == nil {
+		return errs.New(
+			errs.M("flow element couldn't be empty"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	switch e.Type() {
+	case flow.NodeElement:
+		return p.addNode(e.(flow.Node))
+
+	case flow.SequenceFlowElement:
+		return p.addFlow(e.(*flow.SequenceFlow))
+	}
+
+	return errs.New(
+		errs.M("invalid flow element type: %s", reflect.TypeOf(e).String()),
+		errs.C(errorClass, errs.InvalidParameter))
+}
+
+// Elements returns all processes elements.
+func (p *Process) Elements() []flow.Element {
+	fee := make([]flow.Element, 0, len(p.nodes)+len(p.flows))
+
+	for _, n := range p.nodes {
+		fee = append(fee, n.(flow.Element))
+	}
+
+	for _, f := range p.flows {
+		fee = append(fee, f)
+	}
+
+	return fee
+}
+
+// Remove deletes single flow or node for the Process p.
+func (p *Process) Remove(e flow.Element) error {
+	if e == nil {
+		return errs.New(
+			errs.M("element couldn't be empty"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if _, ok := p.nodes[e.Id()]; ok {
+		delete(p.nodes, e.Id())
+
+		return e.Unbind()
+	}
+
+	if _, ok := p.flows[e.Id()]; ok {
+		delete(p.flows, e.Id())
+
+		return e.Unbind()
+	}
+
+	return errs.New(
+		errs.M("element %q(%s) not found in process", e.Name(), e.Id()),
+		errs.C(errorClass, errs.ObjectNotFound))
+}
+
+// ------------------------------------------------------------------------------
 var _ flow.Container = (*Process)(nil)

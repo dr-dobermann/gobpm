@@ -40,15 +40,19 @@ func (p DataPath) Validate() error {
 		errs.M("invalid data path (should start from /): %q", p),
 		errs.C(errorClass, errs.InvalidParameter))
 
-	fields := strings.Split(helpers.Strim(string(p)), "/")
-
-	if len(fields) == 0 {
+	s := helpers.Strim(string(p))
+	if s == "" {
 		return invPath
 	}
 
+	fields := strings.Split(s, "/")
 	// first element is empty if path starts from '/'
 	if fields[0] != "" {
 		return invPath
+	}
+
+	if len(fields) == 2 && fields[1] == "" {
+		return nil
 	}
 
 	// fields doesn't have empty or untrimmed values
@@ -70,16 +74,20 @@ func (p DataPath) String() string {
 func (p DataPath) DropTail() (DataPath, error) {
 	pRef := p.String()
 	pp := strings.Split(pRef, PathSeparator)
-	if len(pp) < 2 {
+	if len(pp) == 1 {
 		return EmptyDataPath, errs.New(
-			errs.M("path is too short to drop its tail: " + p.String()))
+			errs.M("invalid path to drop its tail: " + pRef))
+	}
+
+	if len(pp) == 2 && pp[0] == "" {
+		return NewDataPath("/")
 	}
 
 	return NewDataPath(strings.Join(pp[:len(pp)-1], PathSeparator))
 }
 
-// Append adds non-empyt tail to the DataPath p and retruns new DataPath on success
-// or error on failure
+// Append adds non-empyt tail to the DataPath p and retruns new DataPath on
+// success or error on failure
 func (p DataPath) Append(tail string) (DataPath, error) {
 	tail = strings.TrimSpace(tail)
 	if tail == "" {
@@ -88,8 +96,18 @@ func (p DataPath) Append(tail string) (DataPath, error) {
 				errs.M("couldn't add empty string to tail"))
 	}
 
+	if err := p.Validate(); err != nil {
+		return EmptyDataPath, err
+	}
+
+	if p == RootDataPath {
+		return NewDataPath(p.String() + tail)
+	}
+
 	return NewDataPath(string(p) + PathSeparator + tail)
 }
+
+// =============================================================================
 
 // Scope keeps all variables of the scope and returns its values.
 type Scope interface {
@@ -100,7 +118,7 @@ type Scope interface {
 	Scopes() []DataPath
 
 	// LoadData loads a data data.Data into the Scope into
-	// the DataPath.
+	// the NodeDataLoader's DataPath.
 	LoadData(NodeDataLoader, ...data.Data) error
 
 	// GetData tries to return value of data.Data object with name Name.
@@ -127,6 +145,10 @@ type NodeDataLoader interface {
 	// Name returns NodeDataLoader name to create a scope name.
 	flow.Node
 
-	// RegisterData sends all Node Data to the scope
+	// RegisterData sends all Node Data to the scope.
+	//
+	// DataRegistration is made by Scope.LaodData call.
+	// DataPath is the path of the NodeDataLoader in the Scope. It could
+	// be saved for further use (getting data from it)
 	RegisterData(DataPath, Scope) error
 }

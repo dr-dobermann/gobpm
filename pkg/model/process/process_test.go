@@ -32,12 +32,12 @@ func TestProcess(t *testing.T) {
 
 	t.Run("new with invalid parameters and options",
 		func(t *testing.T) {
-			p, err := process.NewProcess("")
+			p, err := process.New("")
 			require.Error(t, err)
 			require.Empty(t, p)
 
 			// nil roles and properties
-			_, err = process.NewProcess("invalid roles & props",
+			_, err = process.New("invalid roles & props",
 				activities.WithRoles(nil,
 					roles[0]),
 				data.WithProperties(
@@ -46,7 +46,7 @@ func TestProcess(t *testing.T) {
 			require.NoError(t, err)
 
 			// invalid option
-			_, err = process.NewProcess("invalid options",
+			_, err = process.New("invalid options",
 				activities.WithCompensation())
 			require.Error(t, err)
 		})
@@ -90,7 +90,7 @@ func TestProcess(t *testing.T) {
 	t.Run("new process",
 		func(t *testing.T) {
 
-			p, err := process.NewProcess("simple process",
+			p, err := process.New("simple process",
 				activities.WithRoles(roles[0]),
 				data.WithProperties(xProp))
 			require.NoError(t, err)

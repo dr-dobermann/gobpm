@@ -1,6 +1,10 @@
 package events
 
 import (
+	"errors"
+
+	"github.com/dr-dobermann/gobpm/internal/exec"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -119,6 +123,10 @@ type Event struct {
 	// This is an ordered set.
 	definitions []flow.EventDefinition
 
+	// dataPaht holds Event's data path in runtime's Scope.
+	dataPath exec.DataPath
+
+	// triggers holds information about TriggerTypes of the Event.
 	triggers set.Set[flow.EventTrigger]
 }
 
@@ -174,6 +182,22 @@ func (e Event) HasTrigger(t flow.EventTrigger) bool {
 // NodeType implements flow.FlowNode interface for the Event.
 func (e Event) NodeType() flow.NodeType {
 	return flow.EventNodeType
+}
+
+// DataPath returns the Event's data path in runtime Scope.
+func (e *Event) DataPath() exec.DataPath {
+	return e.dataPath
+}
+
+// getEventData returns a list of its Properties as list of data.Data.
+func (e *Event) getEventData() []data.Data {
+	pcnt := len(e.properties)
+	dd := make([]data.Data, pcnt)
+	for i, p := range e.properties {
+		dd[i] = p
+	}
+
+	return dd
 }
 
 // *****************************************************************************
@@ -233,6 +257,37 @@ func newCatchEvent(
 // IsParallelMultiple returns parallelMultiple settings of the catchEvent.
 func (ce catchEvent) IsParallelMultiple() bool {
 	return ce.parallelMultiple
+}
+
+// fillOutput puts all data from EventDefinitions into dataOutputs according to
+// their registration.
+func (ce catchEvent) fillOutput() error {
+	ee := []error{}
+
+	for _, d := range ce.definitions {
+		o, ok := ce.dataOutputs[d.Id()]
+		if !ok {
+			ee = append(
+				ee,
+				errs.New(
+					errs.M(
+						"couldn't find output parameter for event definition %q",
+						d.Id())))
+
+			continue
+		}
+
+		o.Value().Update(o.Value().Get())
+	}
+
+	if len(ee) != 0 {
+		return errs.New(
+			errs.M("Ouptut filling failed for event %q[%s]",
+				ce.Name(), ce.Id()),
+			errs.E(errors.Join(ee...)))
+	}
+
+	return nil
 }
 
 // *****************************************************************************

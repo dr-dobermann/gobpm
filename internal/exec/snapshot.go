@@ -59,7 +59,7 @@ func createSnapshot(s *Snapshot, p *process.Process) (*Snapshot, error) {
 			ee = append(ee,
 				errs.New(
 					errs.M(
-						"node %q(%s) does not implement Nodetor interface",
+						"node %q(%s) does not implement NodeExecutor interface",
 						n.Name(), n.Id()),
 					errs.C(errorClass, errs.TypeCastingError)))
 
@@ -82,7 +82,10 @@ func createSnapshot(s *Snapshot, p *process.Process) (*Snapshot, error) {
 	}
 
 	if len(ee) != 0 {
-		return nil, errors.Join(ee...)
+		return nil, errs.New(
+			errs.M("process snapshot creation failed"),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.E(errors.Join(ee...)))
 	}
 
 	return s, nil

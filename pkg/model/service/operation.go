@@ -102,6 +102,8 @@ func MustOperation(
 	o, err := NewOperation(name, inMsg, outMsg, executor)
 	if err != nil {
 		errs.Panic(err)
+
+		return nil
 	}
 
 	return o

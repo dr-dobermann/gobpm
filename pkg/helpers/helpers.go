@@ -23,6 +23,7 @@ func CheckStr(str, errMsg, errorClass string) error {
 	return nil
 }
 
+// Bracketed returns the string bounded with "[]".
 func Bracketed(str string) string {
 	return BoundStr(str, "[", "]")
 }

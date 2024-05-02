@@ -624,6 +624,7 @@ func (inst *Instance) LeaveScope(ndl exec.NodeDataLoader) error {
 			errs.M("no NodeDataLoader"))
 	}
 
+	// get scope name for the NodeDataLoader
 	dp, err := inst.rootScope.Append(ndl.Name())
 	if err != nil {
 		return errs.New(

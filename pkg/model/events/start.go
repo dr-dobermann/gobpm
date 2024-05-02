@@ -1,10 +1,13 @@
 package events
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
 
+	"github.com/dr-dobermann/gobpm/internal/exec"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -80,6 +83,11 @@ func NewStartEvent(
 	return sc.startEvent()
 }
 
+// IsInterrupting returns interrupting setting of the StartEvent.
+func (se *StartEvent) IsInterrupting() bool {
+	return se.interrrupting
+}
+
 // ------------------ flow.SequenceSource interface ----------------------------
 
 // SuportOutgoingFlow checks if it allowed to source sf from the StartEvent
@@ -98,9 +106,54 @@ func (se *StartEvent) EventClass() flow.EventClass {
 	return flow.StartEventClass
 }
 
+// ----------------- exec.NodeExecutor interface -------------------------------
+
+// Exec runs the StartNode and saves all its Output into runtime exec.Scope.
+func (se *StartEvent) Exec(
+	ctx context.Context,
+	re exec.RuntimeEnvironment,
+) ([]*flow.SequenceFlow, error) {
+	if err := se.fillOutput(); err != nil {
+		return nil,
+			errs.New(
+				errs.M("couldn't fill StartEvent %q[%s] output data",
+					se.Name(), se.Id()),
+				errs.E(err))
+	}
+
+	oo := make([]data.Data, 0, len(se.dataOutputs))
+	for _, o := range se.dataOutputs {
+		oo = append(oo, o)
+	}
+
+	if err := re.AddData(nil, oo...); err != nil {
+		return nil,
+			errs.New(
+				errs.M("couldn't upload StartEvent %q[%s] output into runtime Scope",
+					se.Name(), se.Id()),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err))
+	}
+
+	return append([]*flow.SequenceFlow{}, se.Outgoing()...), nil
+}
+
+// ------------------- exec.NodeDataLoader interface ---------------------------
+
+// RegisterData sends all StartEvent data.Data to the exec.Scope.
+func (se *StartEvent) RegisterData(dp exec.DataPath, s exec.Scope) error {
+	se.dataPath = dp
+
+	return s.LoadData(se, se.catchEvent.getEventData()...)
+}
+
 // -----------------------------------------------------------------------------
 
-// IsInterrupting returns interrupting setting of the StartEvent.
-func (se *StartEvent) IsInterrupting() bool {
-	return se.interrrupting
-}
+// interfaces checks
+var (
+	_ flow.SequenceSource = (*StartEvent)(nil)
+	_ flow.Node           = (*StartEvent)(nil)
+	_ flow.EventNode      = (*StartEvent)(nil)
+	_ exec.NodeExecutor   = (*StartEvent)(nil)
+	_ exec.NodeDataLoader = (*StartEvent)(nil)
+)

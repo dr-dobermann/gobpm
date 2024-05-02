@@ -233,6 +233,19 @@ func (iae *ItemAwareElement) State() DataState {
 	return iae.dataState
 }
 
+// Update
+func (iae *ItemAwareElement) UpdateState(newState *DataState) error {
+	if newState == nil {
+		return errs.New(
+			errs.M("empty data state"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	iae.dataState = *newState
+
+	return nil
+}
+
 // Subject returns internal representeation of the ItemAwareElement.
 func (iae *ItemAwareElement) Subject() *ItemDefinition {
 	return iae.itemSubject
