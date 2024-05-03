@@ -47,6 +47,10 @@ type EventDefinition interface {
 
 	// Type returns the trigger of the event definition.
 	Type() EventTrigger
+
+	// CheckItemDefinition check if definition is related with
+	// data.ItemDefinition with iDefId Id.
+	CheckItemDefinition(iDefId string) bool
 }
 
 // BoundaryEvents is an interface for bouding events.

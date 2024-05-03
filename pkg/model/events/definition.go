@@ -21,3 +21,11 @@ func newDefinition(baseOpts ...options.Option) (*definition, error) {
 		BaseElement: *be,
 	}, nil
 }
+
+// CheckItemDefinition check if definition is related with
+// data.ItemDefinition with iDefId Id.
+// By default it returns false. It should be rewritten for all
+// definition retlated to ItemDefinition.
+func (d *definition) CheckItemDefinition(iDefId string) bool {
+	return false
+}

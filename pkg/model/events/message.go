@@ -18,12 +18,6 @@ type MessageEventDefinition struct {
 	operation *service.Operation
 }
 
-// Type implements Definition interface.
-func (*MessageEventDefinition) Type() flow.EventTrigger {
-
-	return flow.TriggerMessage
-}
-
 // NewMessageEventDefinition creates a new MessageEventDefinition and
 // returns its pointer. If nil message was given then error returned.
 func NewMessageEventDefintion(
@@ -74,3 +68,20 @@ func (med *MessageEventDefinition) Message() *common.Message {
 func (med *MessageEventDefinition) Operation() *service.Operation {
 	return med.operation
 }
+
+// ---------------- flow.EventDefinition interface -----------------------------
+
+// Type returns the MessageEventDefition's flow.EventTrigger.
+func (*MessageEventDefinition) Type() flow.EventTrigger {
+
+	return flow.TriggerMessage
+}
+
+// CheckItemDefinition check if definition is related with
+// data.ItemDefinition with iDefId Id.
+func (med *MessageEventDefinition) CheckItemDefinition(iDefId string) bool {
+
+	return med.message.Item().Id() == iDefId
+}
+
+// -----------------------------------------------------------------------------

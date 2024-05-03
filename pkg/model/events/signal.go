@@ -64,11 +64,6 @@ type SignalEventDefinition struct {
 	signal *Signal
 }
 
-// Type implements the Definition interface.
-func (*SignalEventDefinition) Type() flow.EventTrigger {
-	return flow.TriggerSignal
-}
-
 // NewSignalEventDefinition creates a new SignalEventDefinition with given
 // signal. If signal is empty, then error returned.
 func NewSignalEventDefinition(
@@ -111,3 +106,19 @@ func MustSignalEventDefinition(
 func (sed *SignalEventDefinition) Signal() *Signal {
 	return sed.signal
 }
+
+// ---------------- flow.EventDefinition interface -----------------------------
+
+// Type returns the SignalEventDefinition's flow.EventTrigger.
+func (*SignalEventDefinition) Type() flow.EventTrigger {
+	return flow.TriggerSignal
+}
+
+// CheckItemDefinition check if definition is related with
+// data.ItemDefinition with iDefId Id.
+func (sed *SignalEventDefinition) CheckItemDefinition(iDefId string) bool {
+
+	return sed.signal.Item().Id() == iDefId
+}
+
+// -----------------------------------------------------------------------------
