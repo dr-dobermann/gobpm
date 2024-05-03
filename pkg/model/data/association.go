@@ -76,3 +76,11 @@ type Assignment struct {
 	// target data element.
 	To *Expression
 }
+
+// Update updates the Target of the Association a with new value from
+// ItemDefintion iDef.
+func (a *Association) Update(iDef *ItemDefinition) error {
+	panic("not implemented yet")
+
+	// return nil
+}
