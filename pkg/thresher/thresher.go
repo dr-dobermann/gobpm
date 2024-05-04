@@ -251,6 +251,49 @@ func (t *Thresher) runEventQueue() error {
 	return nil
 }
 
+// addEvent adds singe event definition into the Thresher event queue.
+// if eDef is registered as initial event for the process,
+// new process instance would be started to add its as a instance avaits
+// of this event definition.
+func (t *Thresher) addEvent(eDef flow.EventDefinition) error {
+	t.m.Lock()
+	ree := t.eDefs[eDef.Id()]
+	t.m.Unlock()
+
+	ee := []error{}
+
+	for _, re := range ree {
+		if re.proc != nil {
+			continue
+		}
+
+		t.m.Lock()
+		s, ok := t.snapshots[re.ProcessId]
+		t.m.Unlock()
+		if !ok {
+			ee = append(ee, errs.New(
+				errs.M("no registration for process #%s", re.ProcessId),
+				errs.C(errorClass, errs.ObjectNotFound)))
+		}
+
+		if err := t.launchInstance(s); err != nil {
+			ee = append(ee, err)
+		}
+	}
+
+	if len(ee) != 0 {
+		return errors.Join(ee...)
+	}
+
+	t.m.Lock()
+	t.events = append(t.events, eventReg{
+		eDef: eDef,
+	})
+	t.m.Unlock()
+
+	return nil
+}
+
 // ------------------ EventProducer interface ----------------------------------
 
 // RegisterEvents registered eventDefinition and its processor in the Thresher.
@@ -312,6 +355,10 @@ func (t *Thresher) UnregisterEvents(
 		}
 
 		if idx := indexEventProc(pp, ep); idx != -1 {
+			if pp[idx].proc == nil {
+				delete(t.snapshots, pp[idx].ProcessId)
+			}
+
 			pp = append(pp[:idx], pp[idx+1:]...)
 		}
 
@@ -322,6 +369,38 @@ func (t *Thresher) UnregisterEvents(
 		}
 
 		t.eDefs[ed.Id()] = pp
+	}
+
+	return nil
+}
+
+// EmitEvents gets a list of eventDefinitions and sends them to all
+// EventProcessors registered for this type of EventDefinition.
+func (t *Thresher) EmitEvents(events ...flow.EventDefinition) error {
+	if st := t.State(); st != Started {
+		return errs.New(
+			errs.M("thresher isn't started"),
+			errs.C(errorClass, errs.InvalidState))
+	}
+
+	ee := []error{}
+
+	for _, ed := range events {
+		if ed == nil {
+			ee = append(ee,
+				errs.New(
+					errs.M("empty event definition"),
+					errs.C(errorClass, errs.EmptyNotAllowed)))
+			continue
+		}
+
+		if err := t.addEvent(ed); err != nil {
+			ee = append(ee,
+				errs.New(
+					errs.M("failed to add event %q[%s]", ed.Id(), ed.Type()),
+					errs.C(errorClass, errs.OperationFailed),
+					errs.E(err)))
+		}
 	}
 
 	return nil
@@ -378,61 +457,6 @@ func (t *Thresher) StartProcess(processId string) error {
 	}
 
 	return t.launchInstance(s)
-}
-
-// AddEvent adds singe event definition into the Thresher event queue.
-// if eDef is registered as initial event for the process,
-// new process instance would be started to add its as a instance avaits
-// of this event definition.
-func (t *Thresher) AddEvent(eDef flow.EventDefinition) error {
-	if eDef == nil {
-		return errs.New(
-			errs.M("no event definition"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
-	if st := t.State(); st != Started && st != Paused {
-		return errs.New(
-			errs.M("thresher isn't started or paused"),
-			errs.C(errorClass, errs.InvalidState))
-	}
-
-	t.m.Lock()
-	ree := t.eDefs[eDef.Id()]
-	t.m.Unlock()
-
-	ee := []error{}
-
-	for _, re := range ree {
-		if re.proc != nil {
-			continue
-		}
-
-		t.m.Lock()
-		s, ok := t.snapshots[re.ProcessId]
-		t.m.Unlock()
-		if !ok {
-			ee = append(ee, errs.New(
-				errs.M("no registration for process #%s", re.ProcessId),
-				errs.C(errorClass, errs.ObjectNotFound)))
-		}
-
-		if err := t.launchInstance(s); err != nil {
-			ee = append(ee, err)
-		}
-	}
-
-	if len(ee) != 0 {
-		return errors.Join(ee...)
-	}
-
-	t.m.Lock()
-	t.events = append(t.events, eventReg{
-		eDef: eDef,
-	})
-	t.m.Unlock()
-
-	return nil
 }
 
 // launchInstance creates a new Instance from the Snapshot s, runs it and

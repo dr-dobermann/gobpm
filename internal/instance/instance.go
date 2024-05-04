@@ -461,8 +461,49 @@ func (inst *Instance) RegisterEvents(
 
 // UnregisterEvents removes event definition to EventProcessor link from
 // EventProducer.
-func (inst *Instance) UnregisterEvents(ep exec.EventProcessor,
-	eDefs ...flow.EventDefinition) error {
+func (inst *Instance) UnregisterEvents(
+	ep exec.EventProcessor,
+	eDefs ...flow.EventDefinition,
+) error {
+	inst.m.Lock()
+	defer inst.m.Unlock()
+
+	for _, ed := range eDefs {
+		if _, ok := inst.events[ed.Id()]; ok {
+			delete(inst.events, ed.Id())
+		}
+	}
+
+	if inst.eProd != nil {
+		if err := inst.eProd.UnregisterEvents(ep, eDefs...); err != nil {
+			return errs.New(
+				errs.M("couldn't unregister an event from instance's event producer"),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err))
+		}
+	}
+
+	return nil
+}
+
+// EmitEvents gets a list of eventDefinitions and sends them to all
+// EventProcessors registered for this type of EventDefinition.
+func (inst *Instance) EmitEvents(events ...flow.EventDefinition) error {
+	if inst.eProd == nil {
+		return errs.New(
+			errs.M("event producer isn't presented for Instance %q[%s]",
+				inst.s.ProcessName, inst.Id()),
+			errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	if err := inst.eProd.EmitEvents(events...); err != nil {
+		return errs.New(
+			errs.M("event emiting failed for Instance %q[%s]",
+				inst.s.ProcessName, inst.Id()),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
 	return nil
 }
 
