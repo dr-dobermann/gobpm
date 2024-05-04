@@ -49,31 +49,6 @@ type ApplicationError struct {
 	Details map[string]string
 }
 
-// --------------------- error interface ---------------------------------------
-func (ap *ApplicationError) Error() string {
-	str := ""
-	if len(ap.Classes) > 0 {
-		str += "Classes: [" + strings.Join(ap.Classes, ", ") + "]\n"
-	}
-
-	if ap.Message != "" {
-		str += "Message: " + strings.Trim(ap.Message, " ") + "\n"
-	}
-
-	if len(ap.Details) > 0 {
-		str += "Details:\n"
-		for k, v := range ap.Details {
-			str += "  " + k + ": " + v + "\n"
-		}
-	}
-
-	if ap.Err != nil {
-		str += "Error: " + ap.Err.Error() + "\n"
-	}
-
-	return str
-}
-
 // New returns pointer on created with errOptions ApplicationError.
 func New(errOpts ...errOption) *ApplicationError {
 	eCfg := errConfig{
@@ -97,6 +72,42 @@ func New(errOpts ...errOption) *ApplicationError {
 	}
 
 	return eCfg.newError()
+}
+
+// HasClass checks if the ApplicationError has class errorClass.
+func (ae *ApplicationError) HasClass(class string) bool {
+	for _, c := range ae.Classes {
+		if c == class {
+			return true
+		}
+	}
+
+	return false
+}
+
+// --------------------- error interface ---------------------------------------
+func (ap *ApplicationError) Error() string {
+	str := ""
+	if len(ap.Classes) > 0 {
+		str += "Classes: [" + strings.Join(ap.Classes, ", ") + "]\n"
+	}
+
+	if ap.Message != "" {
+		str += "Message: " + strings.Trim(ap.Message, " ") + "\n"
+	}
+
+	if len(ap.Details) > 0 {
+		str += "Details:\n"
+		for k, v := range ap.Details {
+			str += "  " + k + ": " + v + "\n"
+		}
+	}
+
+	if ap.Err != nil {
+		str += fmt.Errorf("Error: %w", ap.Err).Error() + "\n"
+	}
+
+	return str
 }
 
 // flag which prevents panic on unhandled errors.
