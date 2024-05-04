@@ -8,8 +8,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
-// ******************************************************************************
-
 type ItemKind string
 
 const (

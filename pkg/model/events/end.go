@@ -1,10 +1,13 @@
 package events
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
 
+	"github.com/dr-dobermann/gobpm/internal/exec"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -70,6 +73,17 @@ func NewEndEvent(
 	return ec.endEvent()
 }
 
+// emitEvent tries to evmit single event based on flow.EventDefinition ed.
+// On failure it returns error.
+func (ee *EndEvent) emitEvent(ed *flow.EventDefinition) error {
+	// get all dataItems the ed depends on
+	// for every dataitem check it presence in inputs of the event
+	// if dataitem is ready, compose new eventDefinition with new dataItem value
+	// and emit newly created event to EventProducer.
+
+	return nil
+}
+
 // ------------------ flow.Node interface --------------------------------------
 
 func (ee *EndEvent) Node() flow.Node {
@@ -88,4 +102,53 @@ func (ee *EndEvent) EventClass() flow.EventClass {
 func (ee *EndEvent) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
 	// EndEvent has no restrictions on incoming sequence flows
 	return nil
+}
+
+// ----------------- exec.NodeExecutor interface -------------------------------
+
+// Exec runs the EndEvent.
+//
+// It tries to load its input data.Parameter from the input data associations
+// and fill its event definitions by their data.Data.
+// All events are thrown out.
+func (ee *EndEvent) Exec(
+	ctx context.Context,
+	re exec.RuntimeEnvironment,
+) ([]*flow.SequenceFlow, error) {
+	if err := ee.throwEvent.fillInputs(); err != nil {
+		return nil,
+			errs.New(
+				errs.M("input parameters loading failed for EndEvent %q[%s]",
+					ee.Name(), ee.Id()),
+				errs.C(errorClass, errs.BulidingFailed),
+				errs.E(err))
+	}
+
+	ers := []error{}
+
+	for _, ed := range ee.definitions {
+		if err := ee.emitEvent(&ed); err != nil {
+			ers = append(ers, err)
+		}
+	}
+
+	if len(ers) != 0 {
+		return nil,
+			errs.New(
+				errs.M("event emitting failed for EndEvent %q[%s]",
+					ee.Name(), ee.Id()),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(errors.Join(ers...)))
+	}
+
+	return []*flow.SequenceFlow{}, nil
+}
+
+// ------------------- exec.NodeDataLoader interface ---------------------------
+
+// RegisterData sends all StartEvent data.Data to the exec.Scope.
+func (ee *EndEvent) RegisterData(dp exec.DataPath, s exec.Scope) error {
+	ee.dataPath = dp
+
+	return s.LoadData(ee, ee.throwEvent.getEventData()...)
 }

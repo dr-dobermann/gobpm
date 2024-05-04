@@ -31,20 +31,21 @@ import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
 // sets of data associations, while Events define only one.
 // For Events, there is only one set, but they are used differently for catch or
 // throw Events. For a catch Event, data associations are used to push data from
-// the Message received into Data Objects and properties. For a throw Event, data
-// associations are used to fill the Message that is being thrown.
+// the Message received into Data Objects and properties. For a throw Event,
+// data associations are used to fill the Message that is being thrown.
 // As DataAssociations are used in different stages of the Process and Activity
-// lifecycle, the possible sources and targets vary according to that stage. This
-// defines the scope of possible elements that can be referenced as source and
-// target. For example: when an Activity starts executing, the scope of valid
+// lifecycle, the possible sources and targets vary according to that stage.
+// This defines the scope of possible elements that can be referenced as
+// source and target.
+// For example: when an Activity starts executing, the scope of valid
 // targets include the Activity data inputs, while at the end of the Activity
 // execution, the scope of valid sources include Activity data outputs.
 type Association struct {
 	foundation.BaseElement
 
 	// Specifies an optional transformation Expression. The actual scope of
-	// accessible data for that Expression is defined by the source and target of
-	// the specific Data Association types.
+	// accessible data for that Expression is defined by the source and target
+	// of the specific Data Association types.
 	Transformation *Expression
 
 	// Specifies one or more data elements Assignments. By using an Assignment,
@@ -54,7 +55,7 @@ type Association struct {
 
 	// Identifies the source of the Data Association. The source MUST be an
 	// ItemAwareElement.
-	Source []*ItemAwareElement
+	Sources []*ItemAwareElement
 
 	// Identifies the target of the Data Association. The target MUST be an
 	// ItemAwareElement.
@@ -83,4 +84,15 @@ func (a *Association) Update(iDef *ItemDefinition) error {
 	panic("not implemented yet")
 
 	// return nil
+}
+
+// HasSourceWith
+func (a *Association) HasSourceWith(iDefId string) bool {
+	for _, s := range a.Sources {
+		if s.itemSubject.Id() == iDefId {
+			return true
+		}
+	}
+
+	return false
 }

@@ -116,10 +116,9 @@ type Event struct {
 	// Defines the event EventDefinitions that are triggers expected.
 	// These EventDefinitions are only valid inside the current Event.
 	//   • If there is no EventDefinition defined, then this is considered a
-	//     catch None Event and the Event will not have an internal marker.
+	//     catch None Event.
 	//   • If there is more than one EventDefinition defined, this is
-	//     considered a catch Multiple Event and the Event will have the
-	//     pentagon internal marker.
+	//     considered a catch Multiple Event.
 	// This is an ordered set.
 	definitions []flow.EventDefinition
 
@@ -202,12 +201,6 @@ func (e *Event) getEventData() []data.Data {
 
 // *****************************************************************************
 
-// vents that throw a Result. All End Events and some Intermediate Events are
-// throwing Events that MAY eventually be caught by another Event. Typically the
-// trigger carries information out of the scope where the throw Event occurred
-// into the scope of the catching Events. The throwing of a trigger MAY be
-// either implicit as defined by this standard or an extension to it or explicit
-// by a throw Event.
 type catchEvent struct {
 	Event
 
@@ -216,7 +209,7 @@ type catchEvent struct {
 	// is in the scope of the Event.
 	// For a catch Multiple Event, multiple Data Associations might be REQUIRED,
 	// depending on the individual triggers of the Event.
-	OutputAssociations []*data.Association
+	outputAssociations []*data.Association
 
 	// The Data Outputs for the catch Event. This is an ordered set.
 	// dataOutputs are indexed by Ids of ItemDefinitions from eventDefinition
@@ -248,7 +241,7 @@ func newCatchEvent(
 
 	return &catchEvent{
 		Event:              *e,
-		OutputAssociations: []*data.Association{},
+		outputAssociations: []*data.Association{},
 		dataOutputs:        map[string]*data.Parameter{},
 		parallelMultiple:   e.triggers.Count() > 1 && parallel,
 	}, nil
@@ -259,31 +252,30 @@ func (ce catchEvent) IsParallelMultiple() bool {
 	return ce.parallelMultiple
 }
 
-// fillOutput puts all data from EventDefinitions into dataOutputs according to
-// their registration.
+// fillOutput puts all data in ReadyState (those that were fillied with
+// incoming flow.EventDefinition) to outgoing data.Association.
 func (ce catchEvent) fillOutput() error {
 	ee := []error{}
 
-	for _, d := range ce.definitions {
-		o, ok := ce.dataOutputs[d.Id()]
-		if !ok {
-			ee = append(
-				ee,
-				errs.New(
-					errs.M(
-						"couldn't find output parameter for event definition %q",
-						d.Id())))
-
+	for _, o := range ce.dataOutputs {
+		if o.State().Name() != data.ReadyDataState.Name() {
 			continue
 		}
 
-		o.Value().Update(o.Value().Get())
+		for _, a := range ce.outputAssociations {
+			if !a.HasSourceWith(o.Subject().Id()) {
+				continue
+			}
+
+			if err := a.Update(o.Subject()); err != nil {
+				ee = append(ee, err)
+			}
+		}
 	}
 
 	if len(ee) != 0 {
 		return errs.New(
-			errs.M("Ouptut filling failed for event %q[%s]",
-				ce.Name(), ce.Id()),
+			errs.M("errors on sneding evnet's %q[%s] data associations"),
 			errs.E(errors.Join(ee...)))
 	}
 
@@ -291,6 +283,13 @@ func (ce catchEvent) fillOutput() error {
 }
 
 // *****************************************************************************
+
+// ThrowEvents are the events that throws a Result. All End Events and some
+// Intermediate Events are throwing Events that MAY eventually be caught by
+// another Event. Typically the trigger carries information out of the scope
+// where the throw Event occurred into the scope of the catching Events. The
+// throwing of a trigger MAY be either implicit as defined by this standard or
+// an extension to it or explicit by a throw Event.
 type throwEvent struct {
 	Event
 
@@ -299,7 +298,7 @@ type throwEvent struct {
 	// in scope of the Event to the Event data.
 	// For a throw Multiple Event, multiple Data Associations might be REQUIRED,
 	// depending on the individual results of the Event.
-	InputAssociations []*data.Association
+	inputAssociations []*data.Association
 
 	// The Data Inputs for the throw Event. This is an ordered set.
 	// dataInputs are indexed by Ids of ItemDefinitions from eventDefinitions
@@ -324,7 +323,27 @@ func newThrowEvent(
 
 	return &throwEvent{
 		Event:             *e,
-		InputAssociations: []*data.Association{},
+		inputAssociations: []*data.Association{},
 		dataInputs:        map[string]*data.Parameter{},
 	}, nil
+}
+
+// fillInputs loads all its inputs data.Parameter from active data.Associations.
+func (te *throwEvent) fillInputs() error {
+	if te.dataPath == exec.EmptyDataPath {
+		return errs.New(
+			errs.M("data path isn't set for throwEvent %q[%s]",
+				te.Name(), te.Id()))
+	}
+
+	ee := []error{}
+
+	for _, ia := range te.inputAssociations {
+		if in, ok := te.dataInputs[ia.Target.Subject().Id()]; ok {
+			if err := in.Value().Update(ia.Target.Value().Get()); err != nil {
+				ee = append(ee, err)
+			}
+		}
+	}
+	return nil
 }

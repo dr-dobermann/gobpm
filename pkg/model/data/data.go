@@ -28,3 +28,10 @@ type DataSource interface {
 	// GetData returns all Data objects of the DataSource.
 	GetData(ctx context.Context) ([]Data, error)
 }
+
+// DataHolder is implemented by object, which depends or control some
+// Data (eg. some EventDefinitions, ...)
+type DataHolder interface {
+	// GetData returns a list of Data the objects controls.
+	GetData() []Data
+}
