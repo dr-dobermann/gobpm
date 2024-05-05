@@ -20,6 +20,9 @@ type Data interface {
 
 	// State returns current DataState of the object.
 	State() DataState
+
+	// ItemDefinition returns the Data's underlaying ItemDefinition.
+	ItemDefinition() *ItemDefinition
 }
 
 // DataSource is implemented by objects which keeps any number of Data:
