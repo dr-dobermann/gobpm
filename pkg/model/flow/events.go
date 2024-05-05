@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
@@ -51,6 +52,22 @@ type EventDefinition interface {
 	// CheckItemDefinition check if definition is related with
 	// data.ItemDefinition with iDefId Id.
 	CheckItemDefinition(iDefId string) bool
+
+	// GetItemList returns a list of data.ItemDefinition the EventDefinition
+	// is based on.
+	// If EventDefiniton isn't based on any data.ItemDefiniton, empty list
+	// wil be returned.
+	GetItemsList() []*data.ItemDefinition
+}
+
+// EvnentCloner implemented by EventDefinitions, related to data.ItemDefinition
+// for cloning EventDefinition with concrete ItemDefinition
+type EventCloner interface {
+	EventDefinition
+
+	// CloneEvent clones EventDefinition with dedicated data.ItemDefinition
+	// list.
+	CloneEvent(data []data.Data) (EventDefinition, error)
 }
 
 // BoundaryEvents is an interface for bouding events.

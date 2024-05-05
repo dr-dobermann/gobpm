@@ -301,8 +301,7 @@ type throwEvent struct {
 	inputAssociations []*data.Association
 
 	// The Data Inputs for the throw Event. This is an ordered set.
-	// dataInputs are indexed by Ids of ItemDefinitions from eventDefinitions
-	// bodies.
+	// dataInputs are indexed by Ids of ItemDefinitions.
 	dataInputs map[string]*data.Parameter
 
 	// The InputSet for the throw Event.
@@ -346,4 +345,53 @@ func (te *throwEvent) fillInputs() error {
 		}
 	}
 	return nil
+}
+
+// emitEvent tries to evmit single event based on flow.EventDefinition ed.
+// On failure it returns error.
+func (te *throwEvent) emitEvent(
+	s exec.Scope,
+	eProd exec.EventProducer,
+	ed flow.EventDefinition,
+) error {
+	// get all dataItems the ed depends on
+	idd := []data.Data{}
+	for _, it := range ed.GetItemsList() {
+		// for every dataitem check its presence in inputs of the event
+		if inp, ok := te.dataInputs[it.Id()]; ok {
+			idd = append(idd, inp)
+
+			continue
+		}
+
+		// or in the runtime Scope
+		d, err := s.GetDataById(te.dataPath, it.Id())
+		if err != nil {
+			return errs.New(
+				errs.M("couldn't find ItemDefinition #%s", it.Id()),
+				errs.E(err))
+		}
+
+		if d.State().Name() != data.ReadyDataState.Name() {
+			return errs.New(
+				errs.M("data %q isn't ready in Scope", d.Name()))
+		}
+
+		idd = append(idd, d)
+	}
+
+	// if dataitem is ready, compose new eventDefinition with new dataItem value
+	// and emit newly created event to EventProducer.
+	ced := ed
+	if c, ok := ed.(flow.EventCloner); ok {
+		var err error
+		if ced, err = c.CloneEvent(idd); err != nil {
+			return errs.New(
+				errs.M("couldn't clone EventDefinition %q[%s]",
+					ed.Type(), ed.Id()),
+				errs.E(err))
+		}
+	}
+
+	return eProd.EmitEvents(ced)
 }

@@ -118,7 +118,25 @@ func (*SignalEventDefinition) Type() flow.EventTrigger {
 // data.ItemDefinition with iDefId Id.
 func (sed *SignalEventDefinition) CheckItemDefinition(iDefId string) bool {
 
-	return sed.signal.Item().Id() == iDefId
+	if sed.signal.structure == nil {
+		return false
+	}
+
+	return sed.signal.structure.Id() == iDefId
+}
+
+// GetItemList returns a list of data.ItemDefinition the EventDefinition
+// is based on.
+// If EventDefiniton isn't based on any data.ItemDefiniton, empty list
+// wil be returned.
+func (sed *SignalEventDefinition) GetItemList() []*data.ItemDefinition {
+	idd := []*data.ItemDefinition{}
+
+	if sed.signal.structure == nil {
+		return idd
+	}
+
+	return append(idd, sed.signal.structure)
 }
 
 // -----------------------------------------------------------------------------

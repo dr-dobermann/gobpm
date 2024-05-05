@@ -73,17 +73,6 @@ func NewEndEvent(
 	return ec.endEvent()
 }
 
-// emitEvent tries to evmit single event based on flow.EventDefinition ed.
-// On failure it returns error.
-func (ee *EndEvent) emitEvent(ed *flow.EventDefinition) error {
-	// get all dataItems the ed depends on
-	// for every dataitem check it presence in inputs of the event
-	// if dataitem is ready, compose new eventDefinition with new dataItem value
-	// and emit newly created event to EventProducer.
-
-	return nil
-}
-
 // ------------------ flow.Node interface --------------------------------------
 
 func (ee *EndEvent) Node() flow.Node {
@@ -110,7 +99,8 @@ func (ee *EndEvent) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
 //
 // It tries to load its input data.Parameter from the input data associations
 // and fill its event definitions by their data.Data.
-// All events are thrown out.
+// All events defined for the EndEvent should be thrown out or EndEvent
+// execution failed.
 func (ee *EndEvent) Exec(
 	ctx context.Context,
 	re exec.RuntimeEnvironment,
@@ -127,7 +117,7 @@ func (ee *EndEvent) Exec(
 	ers := []error{}
 
 	for _, ed := range ee.definitions {
-		if err := ee.emitEvent(&ed); err != nil {
+		if err := ee.emitEvent(re.Scope(), re.EventProducer(), ed); err != nil {
 			ers = append(ers, err)
 		}
 	}
@@ -146,9 +136,11 @@ func (ee *EndEvent) Exec(
 
 // ------------------- exec.NodeDataLoader interface ---------------------------
 
-// RegisterData sends all StartEvent data.Data to the exec.Scope.
+// RegisterData sends all EndEvent data.Data to the exec.Scope.
 func (ee *EndEvent) RegisterData(dp exec.DataPath, s exec.Scope) error {
 	ee.dataPath = dp
 
 	return s.LoadData(ee, ee.throwEvent.getEventData()...)
 }
+
+// -----------------------------------------------------------------------------

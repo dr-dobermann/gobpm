@@ -403,6 +403,13 @@ func (t *Thresher) EmitEvents(events ...flow.EventDefinition) error {
 		}
 	}
 
+	if len(ee) != 0 {
+		return errs.New(
+			errs.M("event emitting failed"),
+			errs.C(errorClass),
+			errs.E(errors.Join(ee...)))
+	}
+
 	return nil
 }
 

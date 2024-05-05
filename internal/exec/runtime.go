@@ -6,6 +6,10 @@ type RuntimeEnvironment interface {
 	Scope
 
 	InstanceId() string
+
+	EventProducer() EventProducer
+
+	Scope() Scope
 }
 
 // ProcessRunner registers process snapshot for latter run on initial event

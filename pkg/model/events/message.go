@@ -3,6 +3,7 @@ package events
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
@@ -80,8 +81,26 @@ func (*MessageEventDefinition) Type() flow.EventTrigger {
 // CheckItemDefinition check if definition is related with
 // data.ItemDefinition with iDefId Id.
 func (med *MessageEventDefinition) CheckItemDefinition(iDefId string) bool {
+	if med.message.Item() == nil {
+		return false
+	}
 
 	return med.message.Item().Id() == iDefId
+}
+
+// GetItemList returns a list of data.ItemDefinition the EventDefinition
+// is based on.
+// If EventDefiniton isn't based on any data.ItemDefiniton, empty list
+// wil be returned.
+func (med *MessageEventDefinition) GetItemList() []*data.ItemDefinition {
+	idd := []*data.ItemDefinition{}
+
+	if med.message.Item() == nil {
+		return idd
+	}
+
+	return append(idd, med.message.Item())
+
 }
 
 // -----------------------------------------------------------------------------

@@ -43,6 +43,9 @@ func (s State) String() string {
 	}[s]
 }
 
+// dataFinder is used to find Data in Scope by Name or by Id.
+type dataFinder func(data.Data) bool
+
 // =============================================================================
 type Instance struct {
 	foundation.ID
@@ -349,6 +352,50 @@ func (inst *Instance) createToken() (*token, error) {
 	return t, nil
 }
 
+// getData is looking for data.Data in exec.Scope (Instance).
+func (inst *Instance) getData(
+	path exec.DataPath,
+	finder dataFinder,
+) (data.Data, error) {
+	inst.m.Lock()
+	defer inst.m.Unlock()
+
+	if err := path.Validate(); err != nil {
+		return nil, err
+	}
+
+	var err error
+
+	for p := path; ; p, err = p.DropTail() {
+		if err != nil {
+			return nil,
+				errs.New(
+					errs.M("couldn't get upper level for Scope %s:", p.String()),
+					errs.E(err))
+		}
+
+		s, ok := inst.scopes[p]
+		if !ok {
+			continue
+		}
+
+		for _, d := range s {
+			if finder(d) {
+				return d, nil
+			}
+		}
+
+		if p == exec.RootDataPath {
+			break
+		}
+	}
+
+	return nil,
+		errs.New(
+			errs.M("not found"),
+			errs.C(errs.ObjectNotFound))
+}
+
 // -------------------- exec.EventProcessor interface --------------------------
 
 // ProcessEvent processes single event definition, it registered in called
@@ -469,9 +516,7 @@ func (inst *Instance) UnregisterEvents(
 	defer inst.m.Unlock()
 
 	for _, ed := range eDefs {
-		if _, ok := inst.events[ed.Id()]; ok {
-			delete(inst.events, ed.Id())
-		}
+		delete(inst.events, ed.Id())
 	}
 
 	if inst.eProd != nil {
@@ -498,7 +543,7 @@ func (inst *Instance) EmitEvents(events ...flow.EventDefinition) error {
 
 	if err := inst.eProd.EmitEvents(events...); err != nil {
 		return errs.New(
-			errs.M("event emiting failed for Instance %q[%s]",
+			errs.M("event emitting failed for Instance %q[%s]",
 				inst.s.ProcessName, inst.Id()),
 			errs.C(errorClass, errs.OperationFailed),
 			errs.E(err))
@@ -555,36 +600,22 @@ func (inst *Instance) AddData(
 func (inst *Instance) GetData(
 	path exec.DataPath,
 	name string,
-) (data.Value, error) {
-	inst.m.Lock()
-	defer inst.m.Unlock()
+) (data.Data, error) {
+	d, err := inst.getData(path,
+		func(d data.Data) bool {
+			return d.Name() == name
+		})
 
-	if err := path.Validate(); err != nil {
-		return nil, err
+	if err == nil {
+		return d, nil
 	}
 
-	var err error
-
-	for p := path; ; p, err = p.DropTail() {
-		if err != nil {
-			return nil,
-				errs.New(
-					errs.M("couldn't get upper level for Scope %s:", p.String()),
-					errs.E(err))
-		}
-
-		s, ok := inst.scopes[p]
-		if !ok {
-			continue
-		}
-
-		if d, ok := s[name]; ok {
-			return d.Value(), nil
-		}
-
-		if p == exec.RootDataPath {
-			break
-		}
+	if ae, ok := err.(*errs.ApplicationError); !ok || !ae.HasClass(errs.ObjectNotFound) {
+		return nil,
+			errs.New(
+				errs.M("couldn't get Data %q from scoppe %s",
+					name, inst.Id()),
+				errs.E(err))
 	}
 
 	if inst.parentScope != nil {
@@ -596,6 +627,43 @@ func (inst *Instance) GetData(
 	return nil,
 		errs.New(
 			errs.M("data %q isn't found on scope %q", name, path),
+			errs.C(errorClass, errs.ObjectNotFound))
+}
+
+// GetDataById tries to find data.Data in the Scope by its ItemDefinition
+// id.
+// It starts looking for the data from dataPath and continues to locate
+// it until Scope root.
+func (inst *Instance) GetDataById(
+	path exec.DataPath,
+	id string,
+) (data.Data, error) {
+	d, err := inst.getData(path,
+		func(d data.Data) bool {
+			return d.Id() == id
+		})
+
+	if err == nil {
+		return d, nil
+	}
+
+	if ae, ok := err.(*errs.ApplicationError); !ok || !ae.HasClass(errs.ObjectNotFound) {
+		return nil,
+			errs.New(
+				errs.M("couldn't get Data #%s from scoppe %s",
+					id, inst.Id()),
+				errs.E(err))
+	}
+
+	if inst.parentScope != nil {
+		return inst.parentScope.GetData(
+			inst.parentScope.Root(),
+			id)
+	}
+
+	return nil,
+		errs.New(
+			errs.M("data #%s isn't found on scope %q", id, path),
 			errs.C(errorClass, errs.ObjectNotFound))
 }
 
@@ -691,6 +759,16 @@ func (inst *Instance) LeaveScope(ndl exec.NodeDataLoader) error {
 // InstanceId retruns id of the Instance.
 func (inst *Instance) InstanceId() string {
 	return inst.Id()
+}
+
+// EventProducer returns the EventProducer of the runtime.
+func (inst *Instance) EventProducer() exec.EventProducer {
+	return inst
+}
+
+// Scope returns the Scope of the runtime.
+func (inst *Instance) Scope() exec.Scope {
+	return inst
 }
 
 // -----------------------------------------------------------------------------
