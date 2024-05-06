@@ -76,8 +76,9 @@ func TestNewMessageEventDefintion(t *testing.T) {
 			require.NoError(t, data.CreateDefaultStates())
 
 			msg := common.MustMessage("test_message",
-				data.MustItemDefinition(values.NewVariable(42)),
-				foundation.WithId("42"))
+				data.MustItemDefinition(
+					values.NewVariable(42),
+					foundation.WithId("42")))
 
 			med := events.MustMessageEventDefinition(msg, nil)
 
@@ -85,13 +86,14 @@ func TestNewMessageEventDefintion(t *testing.T) {
 				data.MustParameter(
 					"test_param",
 					data.MustItemAwareElement(
-						data.MustItemDefinition(values.NewVariable(100),
+						data.MustItemDefinition(
+							values.NewVariable(100),
 							foundation.WithId("42")),
 						data.ReadyDataState)),
 			})
 			require.NoError(t, err)
 
 			require.Equal(t, nmed.GetItemsList()[0].Id(), "42")
-			require.Equal(t, 100, nmed, nmed.GetItemsList()[0].Structure().Get())
+			require.Equal(t, 100, nmed.GetItemsList()[0].Structure().Get())
 		})
 }
