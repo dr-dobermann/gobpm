@@ -5,10 +5,13 @@ package exec
 type RuntimeEnvironment interface {
 	Scope
 
+	// InstanceId returns the process instance Id.
 	InstanceId() string
 
+	// EventProducer returns the EventProducer of the runtime.
 	EventProducer() EventProducer
 
+	// Scope returns the Scope of the runtime.
 	Scope() Scope
 }
 
