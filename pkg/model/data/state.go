@@ -77,7 +77,9 @@ func (ds DataState) Name() string {
 // CreateDefaultStates creates default DataStates if need be.
 func CreateDefaultStates() error {
 	// do nothing if values already set
-	if UndefinedDataState != nil {
+	if UndefinedDataState != nil &&
+		UnavailableDataState != nil &&
+		ReadyDataState != nil {
 		return nil
 	}
 
