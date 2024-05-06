@@ -5,6 +5,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
@@ -31,6 +32,12 @@ func NewMessageEventDefintion(
 			errs.New(
 				errs.M("empty message isn't allowed"),
 				errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	if msg.Item() == nil {
+		return nil,
+			errs.New(
+				errs.M("couldn't create a MessageEventDefinition with message with no ItemDefinition"))
 	}
 
 	d, err := newDefinition(baseOpts...)
@@ -92,7 +99,7 @@ func (med *MessageEventDefinition) CheckItemDefinition(iDefId string) bool {
 // is based on.
 // If EventDefiniton isn't based on any data.ItemDefiniton, empty list
 // wil be returned.
-func (med *MessageEventDefinition) GetItemList() []*data.ItemDefinition {
+func (med *MessageEventDefinition) GetItemsList() []*data.ItemDefinition {
 	idd := []*data.ItemDefinition{}
 
 	if med.message.Item() == nil {
@@ -101,6 +108,51 @@ func (med *MessageEventDefinition) GetItemList() []*data.ItemDefinition {
 
 	return append(idd, med.message.Item())
 
+}
+
+// CloneEvent clones EventDefinition with dedicated data.ItemDefinition
+// list.
+func (med *MessageEventDefinition) CloneEvent(
+	data []data.Data,
+) (flow.EventDefinition, error) {
+	if len(data) == 0 {
+		return nil,
+			errs.New(
+				errs.M("no data to clone MessageEventDefinition #%s", med.Id()))
+	}
+
+	d := data[0]
+
+	if d.ItemDefinition().Id() != med.message.Item().Id() {
+		return nil,
+			errs.New(
+				errs.M("message itemDefinition and data itemDefinition have different ids"))
+	}
+
+	msg, err := common.NewMessage(
+		med.message.Name(),
+		d.ItemDefinition(),
+		foundation.WithId(med.message.Id()))
+	if err != nil {
+		return nil,
+			errs.New(
+				errs.M("couldn't clone Message %q[%s]",
+					med.message.Name(), med.message.Id()),
+				errs.C(errorClass, errs.BulidingFailed),
+				errs.E(err))
+	}
+
+	nmed, err := NewMessageEventDefintion(
+		msg, med.operation, foundation.WithId(med.Id()))
+	if err != nil {
+		return nil,
+			errs.New(
+				errs.M("cloning failed for MessageEventDefinition #%s", med.Id()),
+				errs.C(errorClass, errs.BulidingFailed),
+				errs.E(err))
+	}
+
+	return nmed, nil
 }
 
 // -----------------------------------------------------------------------------
