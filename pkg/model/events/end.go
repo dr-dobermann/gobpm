@@ -97,20 +97,18 @@ func (ee *EndEvent) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
 
 // Exec runs the EndEvent.
 //
-// It tries to load its input data.Parameter from the input data associations
-// and fill its event definitions by their data.Data.
 // All events defined for the EndEvent should be thrown out or EndEvent
 // execution failed.
 func (ee *EndEvent) Exec(
 	ctx context.Context,
 	re exec.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
-	if err := ee.throwEvent.fillInputs(); err != nil {
+	if err := ee.fillInputs(); err != nil {
 		return nil,
 			errs.New(
-				errs.M("input parameters loading failed for EndEvent %q[%s]",
+				errs.M("EndEvent %q[%s] execution failed",
 					ee.Name(), ee.Id()),
-				errs.C(errorClass, errs.BulidingFailed),
+				errs.C(errorClass, errs.OperationFailed),
 				errs.E(err))
 	}
 

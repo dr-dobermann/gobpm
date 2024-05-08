@@ -252,8 +252,9 @@ func (ce catchEvent) IsParallelMultiple() bool {
 	return ce.parallelMultiple
 }
 
-// fillOutput puts all data in ReadyState (those that were fillied with
-// incoming flow.EventDefinition) to outgoing data.Association.
+// fillOutput puts all data in ReadyState (those that were filled with
+// incoming flow.EventDefinition or data.Association) to outgoing
+// data.Association.
 func (ce catchEvent) fillOutput() error {
 	ee := []error{}
 
@@ -331,7 +332,7 @@ func newThrowEvent(
 func (te *throwEvent) fillInputs() error {
 	if te.dataPath == exec.EmptyDataPath {
 		return errs.New(
-			errs.M("data path isn't set for throwEvent %q[%s]",
+			errs.M("data path isn't set for throwEvent",
 				te.Name(), te.Id()))
 	}
 
@@ -344,6 +345,14 @@ func (te *throwEvent) fillInputs() error {
 			}
 		}
 	}
+
+	if len(ee) != 0 {
+		return errs.New(
+			errs.M("data.Associations load failed"),
+			errs.C(errorClass, errs.ObjectNotFound),
+			errs.E(errors.Join(ee...)))
+	}
+
 	return nil
 }
 

@@ -178,26 +178,26 @@ func (eed *EscalationEventDefinition) GetItemsList() []*data.ItemDefinition {
 // CloneEvent clones EventDefinition with dedicated data.ItemDefinition
 // list.
 func (eed *EscalationEventDefinition) CloneEvent(
-	data []data.Data,
+	evtData []data.Data,
 ) (flow.EventDefinition, error) {
-	if data == nil || data[0] == nil {
-		return nil,
-			errs.New(
-				errs.M("empty data.Data"),
-				errs.C(errorClass, errs.EmptyNotAllowed))
+	var iDef *data.ItemDefinition
+
+	if len(evtData) != 0 {
+		d := evtData[0]
+
+		if d.ItemDefinition().Id() != eed.escalation.structure.Id() {
+			return nil,
+				errs.New(
+					errs.M("escalation itemDefinition and data itemDefinition have different ids"))
+		}
+
+		iDef = d.ItemDefinition()
 	}
 
-	d := data[0]
-
-	if d.ItemDefinition().Id() != eed.escalation.structure.Id() {
-		return nil,
-			errs.New(
-				errs.M("escalation itemDefinition and data itemDefinition have different ids"))
-	}
 	ne, err := NewEscalation(
-		d.Name(),
+		eed.escalation.name,
 		eed.escalation.code,
-		d.ItemDefinition(),
+		iDef,
 		foundation.WithId(eed.escalation.Id()))
 	if err != nil {
 		return nil,

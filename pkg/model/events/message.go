@@ -34,12 +34,6 @@ func NewMessageEventDefintion(
 				errs.C(errorClass, errs.InvalidParameter))
 	}
 
-	if msg.Item() == nil {
-		return nil,
-			errs.New(
-				errs.M("couldn't create a MessageEventDefinition with message with no ItemDefinition"))
-	}
-
 	d, err := newDefinition(baseOpts...)
 	if err != nil {
 		return nil, err
@@ -113,25 +107,26 @@ func (med *MessageEventDefinition) GetItemsList() []*data.ItemDefinition {
 // CloneEvent clones EventDefinition with dedicated data.ItemDefinition
 // list.
 func (med *MessageEventDefinition) CloneEvent(
-	data []data.Data,
+	evtData []data.Data,
 ) (flow.EventDefinition, error) {
-	if len(data) == 0 {
-		return nil,
-			errs.New(
-				errs.M("no data to clone MessageEventDefinition #%s", med.Id()))
-	}
+	var iDef *data.ItemDefinition
 
-	d := data[0]
+	if len(evtData) != 0 {
 
-	if d.ItemDefinition().Id() != med.message.Item().Id() {
-		return nil,
-			errs.New(
-				errs.M("message itemDefinition and data itemDefinition have different ids"))
+		d := evtData[0]
+
+		if d.ItemDefinition().Id() != med.message.Item().Id() {
+			return nil,
+				errs.New(
+					errs.M("message itemDefinition and data itemDefinition have different ids"))
+		}
+
+		iDef = d.ItemDefinition()
 	}
 
 	msg, err := common.NewMessage(
 		med.message.Name(),
-		d.ItemDefinition(),
+		iDef,
 		foundation.WithId(med.message.Id()))
 	if err != nil {
 		return nil,
@@ -147,7 +142,8 @@ func (med *MessageEventDefinition) CloneEvent(
 	if err != nil {
 		return nil,
 			errs.New(
-				errs.M("cloning failed for MessageEventDefinition #%s", med.Id()),
+				errs.M("cloning failed for MessageEventDefinition #%s",
+					med.Id()),
 				errs.C(errorClass, errs.BulidingFailed),
 				errs.E(err))
 	}

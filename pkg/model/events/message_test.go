@@ -21,14 +21,6 @@ func TestNewMessageEventDefintion(t *testing.T) {
 		})
 
 	t.Run(
-		"normal with empty ItemDefinition in message",
-		func(t *testing.T) {
-			_, err := events.NewMessageEventDefintion(
-				common.MustMessage("test_message", nil), nil)
-			require.Error(t, err)
-		})
-
-	t.Run(
 		"normal",
 		func(t *testing.T) {
 			msg := common.MustMessage("test_message",

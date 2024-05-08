@@ -18,13 +18,9 @@ type Error struct {
 	name string
 
 	// For an End Event:
-	//   If the result is an Error, then the errorCode MUST be supplied (if
-	//   the processType attribute of the Process is set to executable) This
-	//   “throws” the Error.
+	//   If the result is an Error, then the errorCode MUST be supplied.
 	// For an Intermediate Event within normal flow:
-	//   If the trigger is an Error, then the errorCode MUST be entered (if
-	//   the processType attribute of the Process is set to executable). This
-	//   “throws” the Error.
+	//   If the trigger is an Error, then the errorCode MUST be entered.
 	// For an Intermediate Event attached to the boundary of an Activity:
 	//   If the trigger is an Error, then the errorCode MAY be entered. This
 	//   Event “catches” the Error. If there is no errorCode, then any error

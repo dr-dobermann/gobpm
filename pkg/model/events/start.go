@@ -108,7 +108,7 @@ func (se *StartEvent) EventClass() flow.EventClass {
 
 // ----------------- exec.NodeExecutor interface -------------------------------
 
-// Exec runs the StartNode and saves all its Output into runtime exec.Scope.
+// Exec runs the StartNode and saves all its Output data.Associations.
 func (se *StartEvent) Exec(
 	ctx context.Context,
 	re exec.RuntimeEnvironment,
@@ -118,20 +118,6 @@ func (se *StartEvent) Exec(
 			errs.New(
 				errs.M("couldn't fill StartEvent %q[%s] output data",
 					se.Name(), se.Id()),
-				errs.E(err))
-	}
-
-	oo := make([]data.Data, 0, len(se.dataOutputs))
-	for _, o := range se.dataOutputs {
-		oo = append(oo, o)
-	}
-
-	if err := re.AddData(nil, oo...); err != nil {
-		return nil,
-			errs.New(
-				errs.M("couldn't upload StartEvent %q[%s] output into runtime Scope",
-					se.Name(), se.Id()),
-				errs.C(errorClass, errs.OperationFailed),
 				errs.E(err))
 	}
 
