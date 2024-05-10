@@ -24,7 +24,11 @@ type EventProducer interface {
 
 	// UnregisterEvents removes event definition to EventProcessor link from
 	// EventProducer.
-	UnregisterEvents(EventProcessor, ...flow.EventDefinition) error
+	UnregisterEvents(EventProcessor, ...string) error
+
+	// UnregisterProcessor unregister all event definitions registered by
+	// the EventProcessor.
+	UnregisterProcessor(EventProcessor)
 
 	// EmitEvents gets a list of eventDefinitions and sends them to all
 	// EventProcessors registered for this type of EventDefinition.

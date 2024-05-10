@@ -62,12 +62,12 @@ type EventDefinition interface {
 
 // EvnentCloner implemented by EventDefinitions, related to data.ItemDefinition
 // for cloning EventDefinition with concrete ItemDefinition
-type EventCloner interface {
+type EventDefCloner interface {
 	EventDefinition
 
-	// CloneEvent clones EventDefinition with dedicated data.ItemDefinition
+	// CloneEventDefinition clones EventDefinition with dedicated data.ItemDefinition
 	// list.
-	CloneEvent(data []data.Data) (EventDefinition, error)
+	CloneEventDefinition(data []data.Data) (EventDefinition, error)
 }
 
 // BoundaryEvents is an interface for bouding events.

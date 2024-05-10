@@ -392,9 +392,9 @@ func (te *throwEvent) emitEvent(
 	// if dataitem is ready, compose new eventDefinition with new dataItem value
 	// and emit newly created event to EventProducer.
 	ced := ed
-	if c, ok := ed.(flow.EventCloner); ok {
+	if c, ok := ed.(flow.EventDefCloner); ok {
 		var err error
-		if ced, err = c.CloneEvent(idd); err != nil {
+		if ced, err = c.CloneEventDefinition(idd); err != nil {
 			return errs.New(
 				errs.M("couldn't clone EventDefinition %q[%s]",
 					ed.Type(), ed.Id()),

@@ -33,25 +33,32 @@ type token struct {
 	m sync.Mutex
 
 	inst  *Instance
+	trk   *track
 	state TokenState
 	prevs []*token
 	nexts []*token
 }
 
-func newToken(inst *Instance) *token {
+// newToken creates a new token and adds it to the Instance.
+func newToken(inst *Instance, trk *track) *token {
 	if inst == nil {
 		errs.Panic("empty instance on token creation")
 
 		return nil
 	}
 
-	return &token{
+	t := token{
 		ID:    *foundation.NewID(),
 		inst:  inst,
+		trk:   trk,
 		state: TokenAlive,
 		prevs: []*token{},
 		nexts: []*token{},
 	}
+
+	inst.addToken(&t)
+
+	return &t
 }
 
 // updateState sets new valid state of the token
@@ -65,15 +72,21 @@ func (t *token) updateState(newState TokenState) error {
 
 	t.state = newState
 
+	if t.state == TokenConsumed {
+		t.inst.tokenConsumed()
+	}
+
 	return nil
 }
 
 // split creates a new splitCount tokens from the t token.
 // the first token is the token t
 func (t *token) split(splitCount int) []*token {
-	if splitCount < 1 {
+	if splitCount < 2 {
 		errs.Panic("invalid number of split tokens [" +
 			strconv.Itoa(splitCount) + "]")
+
+		return nil
 	}
 
 	tt := make([]*token, 0, splitCount)
@@ -81,7 +94,7 @@ func (t *token) split(splitCount int) []*token {
 	tt = append(tt, t)
 
 	for i := 1; i < splitCount; i++ {
-		tt[i] = newToken(t.inst)
+		tt[i] = newToken(t.inst, t.trk)
 		tt[i].prevs = t.prevs
 		tt[i].prevs = append(tt[i].prevs, t)
 		t.nexts = append(t.nexts, tt[i])

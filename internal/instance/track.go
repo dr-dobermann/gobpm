@@ -110,6 +110,8 @@ type track struct {
 	lastErr error
 
 	instance *Instance
+
+	stopIt bool
 }
 
 // newTrack creates the new track from the start flow.Node and sets it
@@ -148,7 +150,6 @@ func newTrack(
 		},
 		state:    TrackReady,
 		instance: inst,
-		lastErr:  nil,
 	}
 
 	if prevTrack != nil {
@@ -178,6 +179,7 @@ func newTrack(
 			t.updateState(TrackWaitForEvent)
 		}
 	}
+
 	return &t, nil
 }
 
@@ -195,7 +197,7 @@ func (t *track) inState(ss ...trackState) bool {
 	return false
 }
 
-// updateState sets new state for the track.
+// updateState sets new state for the track if its not in final state.
 // If track has a token, its state will be updated accordingly.
 func (t *track) updateState(newState trackState) {
 	t.m.Lock()
@@ -236,12 +238,20 @@ func (t *track) currentStep() *stepInfo {
 	return t.steps[len(t.steps)-1]
 }
 
+// stop terminates track execution.
+func (t *track) stop() {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	t.stopIt = true
+}
+
 // run start execution loop of the track which ends by ctx's cancel or
 // when there is no outgoing flows from the processing nodes.
 func (t *track) run(
 	ctx context.Context,
 ) {
-	if !t.inState(TrackReady, TrackWaitForEvent) {
+	if t.stopIt || !t.inState(TrackReady, TrackWaitForEvent) {
 		return
 	}
 
@@ -304,18 +314,9 @@ func (t *track) executeNode(
 				errs.C(errorClass, errs.TypeCastingError))
 	}
 
+	// create a new token if track doesn't have
 	if step.tk == nil {
-		var err error
-
-		step.tk, err = t.instance.createToken()
-		if err != nil {
-			return nil,
-				errs.New(
-					errs.M("couldn't create token for Node %s[%s]",
-						step.node.Id(), step.node.Name()),
-					errs.C(errorClass, errs.BulidingFailed),
-					errs.E(err))
-		}
+		step.tk = newToken(t.instance, t)
 	}
 
 	t.updateState(TrackExecutingStep)
@@ -446,6 +447,22 @@ func (t *track) runNodeEpilogue(ctx context.Context, n flow.Node) error {
 	return nil
 }
 
+// unregisterEvent unregisters all EventNode events on instance.
+func (t *track) unregisterEvent(n flow.Node) error {
+	en, ok := n.(flow.EventNode)
+	if !ok {
+		return errs.New(
+			errs.M("node %q[%s] doesn't implement flow.EventNode interface"))
+	}
+
+	eDefIds := make([]string, len(en.Definitions()))
+	for i, edId := range en.Definitions() {
+		eDefIds[i] = edId.Id()
+	}
+
+	return t.instance.UnregisterEvents(t, eDefIds...)
+}
+
 // --------------------- exec.EventProcessor interface -------------------------
 
 func (t *track) ProcessEvent(
@@ -477,6 +494,12 @@ func (t *track) ProcessEvent(
 
 	if err := ep.ProcessEvent(ctx, eDef); err != nil {
 		return err
+	}
+
+	if err := t.unregisterEvent(n); err != nil {
+		return errs.New(
+			errs.M("node %q[%s] unregister events failed", n.Name(), n.Id()),
+			errs.E(err))
 	}
 
 	t.updateState(TrackReady)

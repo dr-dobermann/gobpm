@@ -175,24 +175,23 @@ func (inst *Instance) Run(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
-	if inst.state != Ready {
+	if inst.State() != Ready {
 		return errs.New(
 			errs.M("invalid instance state to run (want: Ready, has: %s)",
 				inst.state),
 			errs.C(errorClass, errs.InvalidState))
 	}
 
+	inst.m.Lock()
 	inst.eProd = ep
 	inst.ctx = ctx
+	inst.m.Unlock()
 
 	if err := inst.runTracks(ctx); err != nil {
 		return err
 	}
 
-	// run track ended watcher
+	// run tracks ending watcher
 	grChan := make(chan struct{})
 	go func() {
 		inst.wg.Wait()
@@ -219,6 +218,8 @@ func (inst *Instance) Run(
 		if cancel != nil {
 			cancel()
 		}
+
+		inst.unregisterEvents()
 	}()
 
 	return nil
@@ -235,6 +236,8 @@ func (inst *Instance) runTracks(ctx context.Context) error {
 				inst.state),
 			errs.C(errorClass, errs.InvalidState))
 	}
+
+	inst.state = Runned
 
 	for _, t := range inst.tracks {
 		inst.wg.Add(1)
@@ -277,6 +280,7 @@ func (inst *Instance) addTrack(ctx context.Context, nt *track) error {
 
 		go func() {
 			defer inst.wg.Done()
+
 			nt.run(ctx)
 		}()
 	}
@@ -333,25 +337,6 @@ func (inst *Instance) addData(path exec.DataPath, dd ...data.Data) error {
 	return nil
 }
 
-// createToken creates a new token and registers it in the Instance.
-// if there is failure occurs, error returned.
-func (inst *Instance) createToken() (*token, error) {
-	if inst.State() != Runned {
-		return nil, errs.New(
-			errs.M("couldn't create token on non-runned instance"),
-			errs.C(errorClass, errs.InvalidState))
-	}
-
-	t := newToken(inst)
-
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
-	inst.tokens = append(inst.tokens, t)
-
-	return t, nil
-}
-
 // getData is looking for data.Data in exec.Scope (Instance).
 func (inst *Instance) getData(
 	path exec.DataPath,
@@ -394,6 +379,48 @@ func (inst *Instance) getData(
 		errs.New(
 			errs.M("not found"),
 			errs.C(errs.ObjectNotFound))
+}
+
+// addToken adds a new token into Instance.
+func (inst *Instance) addToken(t *token) {
+	if st := inst.State(); st != Runned {
+		return
+	}
+
+	inst.m.Lock()
+	defer inst.m.Unlock()
+
+	inst.tokens = append(inst.tokens, t)
+}
+
+// tokenConsumed checks all tokens of the Instance and if there is
+// no alive token, all runned tracks stopped, and Instance execution finished.
+func (inst *Instance) tokenConsumed() {
+	inst.m.Lock()
+	defer inst.m.Unlock()
+
+	if inst.state != Runned {
+		return
+	}
+
+	n := 0
+
+	for _, t := range inst.tokens {
+		if t.state == TokenAlive {
+			n++
+		}
+	}
+
+	if n != 0 {
+		return
+	}
+
+	for _, t := range inst.tracks {
+		t.stop()
+	}
+}
+
+func (inst *Instance) unregisterEvents() {
 }
 
 // -------------------- exec.EventProcessor interface --------------------------
@@ -510,17 +537,17 @@ func (inst *Instance) RegisterEvents(
 // EventProducer.
 func (inst *Instance) UnregisterEvents(
 	ep exec.EventProcessor,
-	eDefs ...flow.EventDefinition,
+	eDefIds ...string,
 ) error {
 	inst.m.Lock()
 	defer inst.m.Unlock()
 
-	for _, ed := range eDefs {
-		delete(inst.events, ed.Id())
+	for _, ed := range eDefIds {
+		delete(inst.events, ed)
 	}
 
 	if inst.eProd != nil {
-		if err := inst.eProd.UnregisterEvents(ep, eDefs...); err != nil {
+		if err := inst.eProd.UnregisterEvents(ep, eDefIds...); err != nil {
 			return errs.New(
 				errs.M("couldn't unregister an event from instance's event producer"),
 				errs.C(errorClass, errs.OperationFailed),
@@ -529,6 +556,21 @@ func (inst *Instance) UnregisterEvents(
 	}
 
 	return nil
+}
+
+// UnregisterProcessor unregister all event definitions registered by
+// the EventProcessor.
+func (inst *Instance) UnregisterProcessor(ep exec.EventProcessor) {
+	inst.m.Lock()
+	defer inst.m.Unlock()
+
+	for eDifId, edd := range inst.events {
+		delete(edd, ep.Id())
+
+		if len(edd) == 0 && inst.eProd != nil {
+			_ = inst.eProd.UnregisterEvents(inst, eDifId)
+		}
+	}
 }
 
 // EmitEvents gets a list of eventDefinitions and sends them to all

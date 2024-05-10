@@ -337,7 +337,7 @@ func (t *Thresher) RegisterEvents(
 // EventProducer.
 func (t *Thresher) UnregisterEvents(
 	ep exec.EventProcessor,
-	eDefs ...flow.EventDefinition,
+	eDefIds ...string,
 ) error {
 	if ep == nil {
 		return errs.New(
@@ -348,30 +348,57 @@ func (t *Thresher) UnregisterEvents(
 	t.m.Lock()
 	defer t.m.Unlock()
 
-	for _, ed := range eDefs {
-		pp, ok := t.eDefs[ed.Id()]
+	for _, ed := range eDefIds {
+		pp, ok := t.eDefs[ed]
 		if !ok {
 			return nil
 		}
 
-		if idx := indexEventProc(pp, ep); idx != -1 {
-			if pp[idx].proc == nil {
-				delete(t.snapshots, pp[idx].ProcessId)
+		for i := 0; i < len(pp); {
+			if pp[i].proc.Id() == ep.Id() {
+				pp = append(pp[:i], pp[i+1:]...)
+
+				continue
 			}
 
-			pp = append(pp[:idx], pp[idx+1:]...)
+			i++
 		}
 
 		if len(pp) == 0 {
-			delete(t.eDefs, ed.Id())
+			delete(t.eDefs, ed)
 
 			continue
 		}
 
-		t.eDefs[ed.Id()] = pp
+		t.eDefs[ed] = pp
 	}
 
 	return nil
+}
+
+// UnregisterProcessor unregister all event definitions registered by
+// the EventProcessor.
+func (t *Thresher) UnregisterProcessor(ep exec.EventProcessor) {
+	if ep == nil {
+		return
+	}
+
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	for edId, pp := range t.eDefs {
+		for i := 0; i < len(pp); {
+			if pp[i].proc.Id() == ep.Id() {
+				pp = append(pp[:i], pp[i+1:]...)
+
+				continue
+			}
+
+			i++
+		}
+
+		t.eDefs[edId] = pp
+	}
 }
 
 // EmitEvents gets a list of eventDefinitions and sends them to all
