@@ -17,7 +17,7 @@ type ActivityNode interface {
 type TaskType string
 
 const (
-	RecieveTask TaskType = "RecieveTask"
+	ReceiveTask TaskType = "ReceiveTask"
 	ScriptTask  TaskType = "ScriptTask"
 	SendTask    TaskType = "SendTask"
 	ServiceTask TaskType = "ServiceTask"
