@@ -1,6 +1,9 @@
 package data
 
-import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+)
 
 // Data Associations are used to move data between Data Objects, Properties, and
 // inputs and outputs of Activities, Processes, and GlobalTasks. Tokens do not
@@ -55,11 +58,11 @@ type Association struct {
 
 	// Identifies the source of the Data Association. The source MUST be an
 	// ItemAwareElement.
-	Sources []*ItemAwareElement
+	sources map[string]*ItemAwareElement
 
 	// Identifies the target of the Data Association. The target MUST be an
 	// ItemAwareElement.
-	Target *ItemAwareElement
+	target *ItemAwareElement
 }
 
 // The Assignment class is used to specify a simple mapping of data elements
@@ -78,21 +81,68 @@ type Assignment struct {
 	To *Expression
 }
 
-// Update updates the Target of the Association a with new value from
-// ItemDefintion iDef.
-func (a *Association) Update(iDef *ItemDefinition) error {
-	panic("not implemented yet")
-
-	// return nil
-}
-
-// HasSourceWith
-func (a *Association) HasSourceWith(iDefId string) bool {
-	for _, s := range a.Sources {
-		if s.itemSubject.Id() == iDefId {
-			return true
-		}
+func (a *Association) UpdateSource(iDef *ItemDefinition) error {
+	if iDef == nil {
+		return errs.New(
+			errs.M("empty itemDefinition"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	return false
+	iae, ok := a.sources[iDef.Id()]
+	if !ok {
+		return errs.New(
+			errs.M("association #%s doesn't have source #%s",
+				a.Id(), iDef.Id()),
+			errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	return iae.Value().Update(iDef.structure.Get())
+}
+
+// IsReady checks if the Association's target is ready.
+func (a *Association) IsReady() bool {
+	if a.target == nil {
+		return false
+	}
+
+	return a.target.State().Name() == ReadyDataState.Name()
+}
+
+// Update updates the Target of the Association a with new value from
+// ItemDefintion iDef.
+func (a *Association) Value() (*ItemDefinition, error) {
+	if a.target != nil {
+		return nil,
+			errs.New(
+				errs.M("association #%s target isn't defined", a.Id()))
+	}
+
+	if a.target.dataState.Name() != ReadyDataState.Name() {
+		return nil,
+			errs.New(
+				errs.M("target isn't in Ready state"),
+				errs.C(errorClass, errs.InvalidState))
+	}
+
+	return a.target.Subject(), nil
+}
+
+// TargetItemDefId returns id of the Association's target ItemDefiniiton.
+func (a *Association) TargetItemDefId() string {
+	if a.target == nil {
+		return ""
+	}
+
+	return a.target.ItemDefinition().Id()
+}
+
+// HasSourceWith if the Association a has source itemDifinition with id equels
+// to iDefId.
+func (a *Association) SourcesIds() []string {
+	src := []string{}
+	for _, s := range a.sources {
+		src = append(src, s.Subject().Id())
+	}
+
+	return src
 }

@@ -259,33 +259,33 @@ func (ce catchEvent) IsParallelMultiple() bool {
 func (ce *catchEvent) UploadData(_ context.Context) error {
 	ee := []error{}
 
-	for _, a := range ce.outputAssociations {
-		for _, s := range a.Sources {
-			o, ok := ce.dataOutputs[s.Subject().Id()]
+	for _, oa := range ce.outputAssociations {
+		for _, sid := range oa.SourcesIds() {
+			out, ok := ce.dataOutputs[sid]
 			if !ok {
 				ee = append(ee,
 					errs.New(
-						errs.M("couldn't find data output #%s",
-							s.Subject().Id())))
+						errs.M("no output for association #%s source #%s",
+							oa.Id(), sid),
+						errs.C(errorClass, errs.ObjectNotFound)))
 
 				continue
 			}
 
-			if o.State().Name() != data.ReadyDataState.Name() {
+			if out.State().Name() != data.ReadyDataState.Name() {
 				ee = append(ee,
 					errs.New(
-						errs.M("node's %q[%s] output #%s isn't in Ready state",
-							ce.Name(), ce.Id(), o.State()),
-					))
+						errs.M("output #%s isn't ready"),
+						errs.C(errorClass, errs.InvalidState)))
 
 				continue
 			}
 
-			if err := s.Value().Update(o.Value().Get()); err != nil {
+			if err := oa.UpdateSource(out.ItemDefinition()); err != nil {
 				ee = append(ee,
 					errs.New(
-						errs.M("couldn't update association's #%s value %s",
-							a.Id(), s.Subject().Id()),
+						errs.M("couldn't update association #%s source #%s",
+							oa.Id(), sid),
 						errs.E(err)))
 			}
 		}
@@ -293,7 +293,8 @@ func (ce *catchEvent) UploadData(_ context.Context) error {
 
 	if len(ee) != 0 {
 		return errs.New(
-			errs.M("event's %q[%s] data uploading failed"),
+			errs.M("data.Associations upload failed"),
+			errs.C(errorClass, errs.ObjectNotFound),
 			errs.E(errors.Join(ee...)))
 	}
 
@@ -354,37 +355,56 @@ func newThrowEvent(
 }
 
 // ---------------- exec.NodeDataProducer interface ----------------------------
-func (te *throwEvent) UploadData(_ context.Context) error {
+
+func (te *throwEvent) LoadData(_ context.Context) error {
 	ee := []error{}
 
 	for _, ia := range te.inputAssociations {
-		in, ok := te.dataInputs[ia.Target.Subject().Id()]
-		if !ok {
+		if !ia.IsReady() {
 			ee = append(ee,
 				errs.New(
-					errs.M("no input for #%s data association", ia.Id())))
+					errs.M("association #%s data isn't ready", ia.Id()),
+					errs.C(errorClass, errs.InvalidState)))
 
 			continue
 		}
 
-		if ia.Target.State().Name() != data.ReadyDataState.Name() {
+		in, ok := te.dataInputs[ia.TargetItemDefId()]
+		if !ok {
 			ee = append(ee,
 				errs.New(
-					errs.M("data association #%s isn't ready for node %q[%s]",
-						ia.Id(), te.Name(), te.Id()),
-					errs.D("association_item_state", ia.Target.State().Name())))
+					errs.M("node %q[%s] has no input for association #%s",
+						te.Name(), te.Id(), ia.Id()),
+					errs.C(errorClass, errs.ObjectNotFound)))
+
+			continue
 		}
 
-		if err := in.Value().Update(ia.Target.Value().Get()); err != nil {
-			ee = append(ee, err)
+		val, err := ia.Value()
+		if err != nil {
+			ee = append(ee,
+				errs.New(
+					errs.M("couldn't get association #%s value", ia.Id()),
+					errs.C(errorClass, errs.OperationFailed),
+					errs.E(err)))
+
+			continue
 		}
 
+		if err := in.Value().Update(val.Structure().Get()); err != nil {
+			ee = append(ee,
+				errs.New(
+					errs.M("node %q[%s] input #%s update failed",
+						te.Name(), te.Id(), in.ItemDefinition().Id()),
+					errs.C(errorClass, errs.OperationFailed),
+					errs.E(err)))
+		}
 	}
 
 	if len(ee) != 0 {
 		return errs.New(
-			errs.M("data.Associations load failed"),
-			errs.C(errorClass, errs.ObjectNotFound),
+			errs.M("node %q[%s] associations data load failed", te.Name(), te.Id()),
+			errs.C(errorClass, errs.OperationFailed),
 			errs.E(errors.Join(ee...)))
 	}
 
