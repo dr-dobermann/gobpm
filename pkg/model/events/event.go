@@ -1,6 +1,7 @@
 package events
 
 import (
+	"context"
 	"errors"
 
 	"github.com/dr-dobermann/gobpm/internal/exec"
@@ -252,36 +253,60 @@ func (ce catchEvent) IsParallelMultiple() bool {
 	return ce.parallelMultiple
 }
 
-// fillOutput puts all data in ReadyState (those that were filled with
-// incoming flow.EventDefinition or data.Association) to outgoing
-// data.Association.
-func (ce catchEvent) fillOutput() error {
+// ------------------ exec.NodeDataProducer interface --------------------------
+
+// UploadData fills all catchEvent outputAssociations with its output values.
+func (ce *catchEvent) UploadData(_ context.Context) error {
 	ee := []error{}
 
-	for _, o := range ce.dataOutputs {
-		if o.State().Name() != data.ReadyDataState.Name() {
-			continue
-		}
+	for _, a := range ce.outputAssociations {
+		for _, s := range a.Sources {
+			o, ok := ce.dataOutputs[s.Subject().Id()]
+			if !ok {
+				ee = append(ee,
+					errs.New(
+						errs.M("couldn't find data output #%s",
+							s.Subject().Id())))
 
-		for _, a := range ce.outputAssociations {
-			if !a.HasSourceWith(o.Subject().Id()) {
 				continue
 			}
 
-			if err := a.Update(o.Subject()); err != nil {
-				ee = append(ee, err)
+			if o.State().Name() != data.ReadyDataState.Name() {
+				ee = append(ee,
+					errs.New(
+						errs.M("node's %q[%s] output #%s isn't in Ready state",
+							ce.Name(), ce.Id(), o.State()),
+					))
+
+				continue
+			}
+
+			if err := s.Value().Update(o.Value().Get()); err != nil {
+				ee = append(ee,
+					errs.New(
+						errs.M("couldn't update association's #%s value %s",
+							a.Id(), s.Subject().Id()),
+						errs.E(err)))
 			}
 		}
 	}
 
 	if len(ee) != 0 {
 		return errs.New(
-			errs.M("errors on sneding evnet's %q[%s] data associations"),
+			errs.M("event's %q[%s] data uploading failed"),
 			errs.E(errors.Join(ee...)))
 	}
 
 	return nil
 }
+
+// ------------------- flow.Node interface -------------------------------------
+
+func (ce *catchEvent) Node() flow.Node {
+	return ce
+}
+
+// -----------------------------------------------------------------------------
 
 // *****************************************************************************
 
@@ -328,22 +353,32 @@ func newThrowEvent(
 	}, nil
 }
 
-// fillInputs loads all its inputs data.Parameter from active data.Associations.
-func (te *throwEvent) fillInputs() error {
-	if te.dataPath == exec.EmptyDataPath {
-		return errs.New(
-			errs.M("data path isn't set for throwEvent",
-				te.Name(), te.Id()))
-	}
-
+// ---------------- exec.NodeDataProducer interface ----------------------------
+func (te *throwEvent) UploadData(_ context.Context) error {
 	ee := []error{}
 
 	for _, ia := range te.inputAssociations {
-		if in, ok := te.dataInputs[ia.Target.Subject().Id()]; ok {
-			if err := in.Value().Update(ia.Target.Value().Get()); err != nil {
-				ee = append(ee, err)
-			}
+		in, ok := te.dataInputs[ia.Target.Subject().Id()]
+		if !ok {
+			ee = append(ee,
+				errs.New(
+					errs.M("no input for #%s data association", ia.Id())))
+
+			continue
 		}
+
+		if ia.Target.State().Name() != data.ReadyDataState.Name() {
+			ee = append(ee,
+				errs.New(
+					errs.M("data association #%s isn't ready for node %q[%s]",
+						ia.Id(), te.Name(), te.Id()),
+					errs.D("association_item_state", ia.Target.State().Name())))
+		}
+
+		if err := in.Value().Update(ia.Target.Value().Get()); err != nil {
+			ee = append(ee, err)
+		}
+
 	}
 
 	if len(ee) != 0 {
@@ -404,3 +439,17 @@ func (te *throwEvent) emitEvent(
 
 	return eProd.EmitEvents(ced)
 }
+
+// ------------------- flow.Node interface -------------------------------------
+
+func (te *throwEvent) Node() flow.Node {
+	return te
+}
+
+// ------------------- exec.NodeDataProducer
+// -----------------------------------------------------------------------------
+// interfaces checks
+var (
+	_ flow.Node = (*throwEvent)(nil)
+	_ flow.Node = (*catchEvent)(nil)
+)

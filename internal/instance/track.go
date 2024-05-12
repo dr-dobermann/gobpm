@@ -323,6 +323,10 @@ func (t *track) executeNode(
 
 	step.state = StepStarted
 
+	if err := t.loadData(ctx, step.node); err != nil {
+		return nil, err
+	}
+
 	ndl, ok := step.node.(exec.NodeDataLoader)
 	if ok {
 		err := t.instance.ExtendScope(ndl)
@@ -351,6 +355,10 @@ func (t *track) executeNode(
 	}
 
 	step.state = StepEnded
+
+	if err := t.uploadData(ctx, step.node); err != nil {
+		return nil, err
+	}
 
 	return nexts, nil
 }
@@ -461,6 +469,28 @@ func (t *track) unregisterEvent(n flow.Node) error {
 	}
 
 	return t.instance.UnregisterEvents(t, eDefIds...)
+}
+
+// loadData checks if the flow.Node n implements flow.NodeDataConsumer and
+// if so, calls the LoadData of the Node.
+func (t *track) loadData(ctx context.Context, n flow.Node) error {
+	dc, ok := n.(flow.NodeDataConsumer)
+	if !ok {
+		return nil
+	}
+
+	return dc.LoadData(ctx)
+}
+
+// uploadData checks if the flow.Node n impmements flow.NoadDataProducer and
+// if so, calls the UploadData of the Node.
+func (t *track) uploadData(ctx context.Context, n flow.Node) error {
+	dp, ok := n.(flow.NodeDataProducer)
+	if !ok {
+		return nil
+	}
+
+	return dp.UploadData(ctx)
 }
 
 // --------------------- exec.EventProcessor interface -------------------------
