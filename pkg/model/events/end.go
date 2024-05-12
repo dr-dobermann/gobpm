@@ -103,15 +103,6 @@ func (ee *EndEvent) Exec(
 	ctx context.Context,
 	re exec.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
-	if err := ee.fillInputs(); err != nil {
-		return nil,
-			errs.New(
-				errs.M("EndEvent %q[%s] execution failed",
-					ee.Name(), ee.Id()),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.E(err))
-	}
-
 	ers := []error{}
 
 	for _, ed := range ee.definitions {

@@ -7,7 +7,6 @@ import (
 	"reflect"
 
 	"github.com/dr-dobermann/gobpm/internal/exec"
-	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -113,13 +112,6 @@ func (se *StartEvent) Exec(
 	ctx context.Context,
 	re exec.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
-	if err := se.fillOutput(); err != nil {
-		return nil,
-			errs.New(
-				errs.M("couldn't fill StartEvent %q[%s] output data",
-					se.Name(), se.Id()),
-				errs.E(err))
-	}
 
 	return append([]*flow.SequenceFlow{}, se.Outgoing()...), nil
 }
