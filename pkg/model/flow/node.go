@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"context"
 	"errors"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -72,6 +73,26 @@ type Node interface {
 
 	// Node returns underlying node object.
 	Node() Node
+}
+
+// NodeDataProducer implemented by Nodes which needs to load data from
+// flow.DataObject over its incoming data.Associations.
+// This interface is used before Node execution.
+type NodeDataProducer interface {
+	Node
+
+	// UploadData uploads Node's data onto its outgoing data.Association.
+	UploadData(context.Context) error
+}
+
+// NodeDataConsumer implemented by Nodes which upload data to flow.DataObjects
+// over its outgoing data.Associations.
+// This interface is used after Node execution.
+type NodeDataConsumer interface {
+	Node
+
+	// LoadData loads Node's data from its incoming data.Associations.
+	LoadData(context.Context) error
 }
 
 // *****************************************************************************
