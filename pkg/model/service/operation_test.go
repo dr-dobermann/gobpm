@@ -45,7 +45,7 @@ func TestNewOperation(t *testing.T) {
 		name          string
 		inMsg, outMsg *common.Message
 		errList       []string
-		executor      service.Executor
+		executor      service.Implementor
 		baseOpts      []options.Option
 	}
 
@@ -53,7 +53,7 @@ func TestNewOperation(t *testing.T) {
 		name, id      string
 		inMsg, outMsg *common.Message
 		errList       []string
-		executor      service.Executor
+		executor      service.Implementor
 	}
 
 	// -------------------- Initialization -------------------------------------
@@ -77,20 +77,24 @@ func TestNewOperation(t *testing.T) {
 			args: args{
 				name:     "",
 				errList:  []string{},
-				baseOpts: []options.Option{}},
+				baseOpts: []options.Option{},
+			},
 			want: expectations{
 				name:    "empty_operation",
-				errList: []string{}},
+				errList: []string{},
+			},
 		},
 		{
 			name: "empty operation",
 			args: args{
 				name:     "empty_operation",
 				errList:  []string{},
-				baseOpts: []options.Option{}},
+				baseOpts: []options.Option{},
+			},
 			want: expectations{
 				name:    "empty_operation",
-				errList: []string{}},
+				errList: []string{},
+			},
 		},
 		{
 			name: "full_operation",
@@ -100,14 +104,16 @@ func TestNewOperation(t *testing.T) {
 				outMsg:   out,
 				errList:  errList,
 				executor: tstExctr,
-				baseOpts: []options.Option{foundation.WithId("test_op")}},
+				baseOpts: []options.Option{foundation.WithId("test_op")},
+			},
 			want: expectations{
 				name:     "empty_operation",
 				id:       "test_op",
 				inMsg:    in,
 				outMsg:   out,
 				errList:  errList,
-				executor: tstExctr},
+				executor: tstExctr,
+			},
 		},
 	}
 

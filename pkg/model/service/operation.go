@@ -10,18 +10,18 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/set"
 )
 
-// Executor interface runs an Operation and returns its result
-type Executor interface {
-	// Type returns type of the executore.
+// Implementor interface runs an Operation and returns its result
+type Implementor interface {
+	// Type returns type of the executor.
 	Type() string
 
-	// ErrorClasses returns errors classes listh which may be
+	// ErrorClasses returns errors classes list which may be
 	// returned by the Execute call.
 	ErrorClasses() []string
 
 	// Execute runs an operation with all parameters provided by
 	// Operation entity.
-	Execute(op *Operation) (any, error)
+	Execute(op *Operation) error
 }
 
 // An Operation defines Messages that are consumed and, optionally, produced
@@ -53,7 +53,7 @@ type Operation struct {
 	// This attribute allows to reference a concrete artifact in the underlying
 	// implementation technology representing that operation, such as a WSDL
 	// operation.
-	implementation Executor
+	implementation Implementor
 }
 
 // NewOperation creates a new Operation and returns its pointer on success or
@@ -61,7 +61,7 @@ type Operation struct {
 func NewOperation(
 	name string,
 	inMsg, outMsg *common.Message,
-	executor Executor,
+	implementor Implementor,
 	baseOpts ...options.Option,
 ) (*Operation, error) {
 	name = strings.Trim(name, " ")
@@ -78,8 +78,8 @@ func NewOperation(
 	}
 
 	el := []string{}
-	if executor != nil {
-		el = append(el, executor.ErrorClasses()...)
+	if implementor != nil {
+		el = append(el, implementor.ErrorClasses()...)
 	}
 
 	return &Operation{
@@ -88,7 +88,8 @@ func NewOperation(
 		inMessage:      inMsg,
 		outMessage:     outMsg,
 		errors:         set.New[string](el...),
-		implementation: executor}, nil
+		implementation: implementor,
+	}, nil
 }
 
 // MustOperation creates a new Operation and returns its pointer on succes or
@@ -96,10 +97,10 @@ func NewOperation(
 func MustOperation(
 	name string,
 	inMsg, outMsg *common.Message,
-	executor Executor,
+	implementor Implementor,
 	baseOpts ...options.Option,
 ) *Operation {
-	o, err := NewOperation(name, inMsg, outMsg, executor)
+	o, err := NewOperation(name, inMsg, outMsg, implementor, baseOpts...)
 	if err != nil {
 		errs.Panic(err)
 
@@ -130,6 +131,6 @@ func (o *Operation) Errors() []string {
 }
 
 // Implementation returns the Operation implementation.
-func (o *Operation) Implementation() Executor {
+func (o *Operation) Implementation() Implementor {
 	return o.implementation
 }
