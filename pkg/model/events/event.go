@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/dr-dobermann/gobpm/internal/exec"
+	"github.com/dr-dobermann/gobpm/internal/eventproc"
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -124,7 +125,7 @@ type Event struct {
 	definitions []flow.EventDefinition
 
 	// dataPaht holds Event's data path in runtime's Scope.
-	dataPath exec.DataPath
+	dataPath scope.DataPath
 
 	// triggers holds information about TriggerTypes of the Event.
 	triggers set.Set[flow.EventTrigger]
@@ -185,7 +186,7 @@ func (e Event) NodeType() flow.NodeType {
 }
 
 // DataPath returns the Event's data path in runtime Scope.
-func (e *Event) DataPath() exec.DataPath {
+func (e *Event) DataPath() scope.DataPath {
 	return e.dataPath
 }
 
@@ -414,8 +415,8 @@ func (te *throwEvent) LoadData(_ context.Context) error {
 // emitEvent tries to evmit single event based on flow.EventDefinition ed.
 // On failure it returns error.
 func (te *throwEvent) emitEvent(
-	s exec.Scope,
-	eProd exec.EventProducer,
+	s scope.Scope,
+	eProd eventproc.EventProducer,
 	ed flow.EventDefinition,
 ) error {
 	// get all dataItems the ed depends on

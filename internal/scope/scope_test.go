@@ -1,9 +1,9 @@
-package exec_test
+package scope_test
 
 import (
 	"testing"
 
-	"github.com/dr-dobermann/gobpm/internal/exec"
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,7 +20,7 @@ func TestDataPath(t *testing.T) {
 				"/root/   /subpath",
 			} {
 				t.Log("[", inv, "]")
-				_, err := exec.NewDataPath(inv)
+				_, err := scope.NewDataPath(inv)
 				require.Error(t, err, inv)
 			}
 		})
@@ -35,7 +35,7 @@ func TestDataPath(t *testing.T) {
 			} {
 				t.Log(dp, ":", dt)
 
-				d, err := exec.NewDataPath(dp)
+				d, err := scope.NewDataPath(dp)
 				require.NoError(t, err)
 
 				d, err = d.DropTail()
@@ -43,7 +43,7 @@ func TestDataPath(t *testing.T) {
 				require.Equal(t, d.String(), dt)
 			}
 
-			_, err := exec.DataPath("").DropTail()
+			_, err := scope.DataPath("").DropTail()
 			require.Error(t, err)
 		})
 
@@ -84,7 +84,7 @@ func TestDataPath(t *testing.T) {
 			}
 
 			for _, tst := range tests {
-				dp, err := exec.NewDataPath(tst.dataPath)
+				dp, err := scope.NewDataPath(tst.dataPath)
 				require.NoError(t, err)
 
 				dp, err = dp.Append(tst.appendPath)
@@ -95,7 +95,7 @@ func TestDataPath(t *testing.T) {
 				}
 			}
 
-			_, err := exec.DataPath("").Append("sub")
+			_, err := scope.DataPath("").Append("sub")
 			require.Error(t, err)
 		})
 }

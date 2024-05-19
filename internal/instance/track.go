@@ -35,7 +35,9 @@ import (
 	"context"
 	"sync"
 
+	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/exec"
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -327,7 +329,7 @@ func (t *track) executeNode(
 		return nil, err
 	}
 
-	ndl, ok := step.node.(exec.NodeDataLoader)
+	ndl, ok := step.node.(scope.NodeDataLoader)
 	if ok {
 		err := t.instance.ExtendScope(ndl)
 		if err != nil {
@@ -514,7 +516,7 @@ func (t *track) ProcessEvent(
 
 	n := t.steps[len(t.steps)-1].node
 
-	ep, ok := n.(exec.EventProcessor)
+	ep, ok := n.(eventproc.EventProcessor)
 	if !ok {
 		return errs.New(
 			errs.M("node %q(%s) doesn't support event processing",

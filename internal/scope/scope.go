@@ -1,4 +1,4 @@
-package exec
+package scope
 
 import (
 	"strings"
@@ -17,6 +17,8 @@ import (
 type DataPath string
 
 const (
+	errorClass = "SCOPE_ERRORS"
+
 	EmptyDataPath DataPath = ""
 	RootDataPath  DataPath = "/"
 

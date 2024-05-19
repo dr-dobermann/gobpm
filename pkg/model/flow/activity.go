@@ -27,5 +27,6 @@ const (
 type Task interface {
 	ActivityNode
 
+	// TaskType returns a type of the Task.
 	TaskType() TaskType
 }

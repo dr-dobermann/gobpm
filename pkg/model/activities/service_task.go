@@ -1,6 +1,9 @@
 package activities
 
 import (
+	"context"
+
+	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -52,7 +55,7 @@ func NewServiceTask(
 		return nil,
 			errs.New(
 				errs.M("operation should be provided for ServiceTask"),
-				errs.C(errorClass, errs.BulidingFailed))
+				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
 	t, err := NewTask(name, taskOpts...)
@@ -67,21 +70,34 @@ func NewServiceTask(
 		nil
 }
 
+// Implementation returns the ServiceTask implementation description.
+func (st *ServiceTask) Implementation() string {
+	return st.implementation
+}
+
 // ------------------ flow.Node interface --------------------------------------
 
+// Node returns underlying node object.
 func (st *ServiceTask) Node() flow.Node {
 	return st
 }
 
 // ------------------ flow.Task interface --------------------------------------
 
+// TaskType returns a type of the Task.
 func (st *ServiceTask) TaskType() flow.TaskType {
 	return flow.ServiceTask
 }
 
-// -----------------------------------------------------------------------------
+// ------------------ exec.NodeExecutor interface ------------------------------
 
-// Implementation returns the ServiceTask implementation description.
-func (st *ServiceTask) Implementation() string {
-	return st.implementation
+// Exec runs single node and returns its valid
+// output sequence flows on success or error on failure.
+func (st *ServiceTask) Exec(
+	ctx context.Context,
+	re renv.RuntimeEnvironment,
+) ([]*flow.SequenceFlow, error) {
+	return nil, nil
 }
+
+// -----------------------------------------------------------------------------

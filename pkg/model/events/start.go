@@ -7,6 +7,8 @@ import (
 	"reflect"
 
 	"github.com/dr-dobermann/gobpm/internal/exec"
+	"github.com/dr-dobermann/gobpm/internal/renv"
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -110,7 +112,7 @@ func (se *StartEvent) EventClass() flow.EventClass {
 // Exec runs the StartNode and saves all its Output data.Associations.
 func (se *StartEvent) Exec(
 	ctx context.Context,
-	re exec.RuntimeEnvironment,
+	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
 
 	return append([]*flow.SequenceFlow{}, se.Outgoing()...), nil
@@ -119,7 +121,7 @@ func (se *StartEvent) Exec(
 // ------------------- exec.NodeDataLoader interface ---------------------------
 
 // RegisterData sends all StartEvent data.Data to the exec.Scope.
-func (se *StartEvent) RegisterData(dp exec.DataPath, s exec.Scope) error {
+func (se *StartEvent) RegisterData(dp scope.DataPath, s scope.Scope) error {
 	se.dataPath = dp
 
 	return s.LoadData(se, se.catchEvent.getEventData()...)
@@ -129,9 +131,9 @@ func (se *StartEvent) RegisterData(dp exec.DataPath, s exec.Scope) error {
 
 // interfaces checks
 var (
-	_ flow.SequenceSource = (*StartEvent)(nil)
-	_ flow.Node           = (*StartEvent)(nil)
-	_ flow.EventNode      = (*StartEvent)(nil)
-	_ exec.NodeExecutor   = (*StartEvent)(nil)
-	_ exec.NodeDataLoader = (*StartEvent)(nil)
+	_ flow.SequenceSource  = (*StartEvent)(nil)
+	_ flow.Node            = (*StartEvent)(nil)
+	_ flow.EventNode       = (*StartEvent)(nil)
+	_ exec.NodeExecutor    = (*StartEvent)(nil)
+	_ scope.NodeDataLoader = (*StartEvent)(nil)
 )

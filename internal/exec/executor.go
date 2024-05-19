@@ -3,6 +3,7 @@ package exec
 import (
 	"context"
 
+	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
@@ -11,7 +12,7 @@ type NodeExecutor interface {
 	// output sequence flows on success or error on failure.
 	Exec(
 		ctx context.Context,
-		re RuntimeEnvironment,
+		re renv.RuntimeEnvironment,
 	) ([]*flow.SequenceFlow, error)
 }
 
@@ -22,7 +23,7 @@ type NodeExecutor interface {
 type NodePrologue interface {
 	Prologue(
 		ctx context.Context,
-		re RuntimeEnvironment) error
+		re renv.RuntimeEnvironment) error
 }
 
 // if the node provides NodeEpilogue, then Epilogue should be
@@ -30,5 +31,5 @@ type NodePrologue interface {
 type NodeEpliogue interface {
 	Epilogue(
 		ctx context.Context,
-		re RuntimeEnvironment) error
+		re renv.RuntimeEnvironment) error
 }

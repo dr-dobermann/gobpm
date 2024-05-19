@@ -37,8 +37,10 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/dr-dobermann/gobpm/internal/exec"
+	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/instance"
+	"github.com/dr-dobermann/gobpm/internal/runner"
+	"github.com/dr-dobermann/gobpm/internal/snapshot"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
@@ -91,7 +93,7 @@ type eDefReg struct {
 	//
 	// Intermediate event is also registered for boundary events or in-process
 	// subprocesses.
-	proc exec.EventProcessor
+	proc eventproc.EventProcessor
 
 	// ProcessId holds the Id of the process. It's used when proc is empty
 	// and Thresher should find the appropriate Snapshot to start an
@@ -131,7 +133,7 @@ type Thresher struct {
 	events []eventReg
 
 	// snapshots is indexed by the ProcessID
-	snapshots map[string]*exec.Snapshot
+	snapshots map[string]*snapshot.Snapshot
 
 	// instances holds process instances in any state.
 	// instances is indexed by instance ID.
@@ -146,7 +148,7 @@ func New() *Thresher {
 		state:     NotStarted,
 		eDefs:     map[string][]eDefReg{},
 		events:    []eventReg{},
-		snapshots: map[string]*exec.Snapshot{},
+		snapshots: map[string]*snapshot.Snapshot{},
 		instances: map[string]instanceReg{},
 	}
 }
@@ -233,7 +235,7 @@ func (t *Thresher) runEventQueue() error {
 					// if it's intermediate event, send eDef to its processor.
 					if er.proc != nil {
 						go func(
-							proc exec.EventProcessor,
+							proc eventproc.EventProcessor,
 							eDef flow.EventDefinition,
 						) {
 							_ = proc.ProcessEvent(t.ctx, eDef)
@@ -298,7 +300,7 @@ func (t *Thresher) addEvent(eDef flow.EventDefinition) error {
 
 // RegisterEvents registered eventDefinition and its processor in the Thresher.
 func (t *Thresher) RegisterEvents(
-	ep exec.EventProcessor,
+	ep eventproc.EventProcessor,
 	eDefs ...flow.EventDefinition,
 ) error {
 	if ep == nil {
@@ -336,7 +338,7 @@ func (t *Thresher) RegisterEvents(
 // UnregisterEvents removes event definition to EventProcessor link from
 // EventProducer.
 func (t *Thresher) UnregisterEvents(
-	ep exec.EventProcessor,
+	ep eventproc.EventProcessor,
 	eDefIds ...string,
 ) error {
 	if ep == nil {
@@ -378,7 +380,7 @@ func (t *Thresher) UnregisterEvents(
 
 // UnregisterProcessor unregister all event definitions registered by
 // the EventProcessor.
-func (t *Thresher) UnregisterProcessor(ep exec.EventProcessor) {
+func (t *Thresher) UnregisterProcessor(ep eventproc.EventProcessor) {
 	if ep == nil {
 		return
 	}
@@ -445,7 +447,7 @@ func (t *Thresher) EmitEvents(events ...flow.EventDefinition) error {
 // RegisterProcess registers a process snapshot to start Instances on
 // initial event firing
 func (t *Thresher) RegisterProcess(
-	s *exec.Snapshot,
+	s *snapshot.Snapshot,
 ) error {
 	if s == nil {
 		return errs.New(
@@ -495,7 +497,7 @@ func (t *Thresher) StartProcess(processId string) error {
 
 // launchInstance creates a new Instance from the Snapshot s, runs it and
 // append it to runned insances of the Thresher.
-func (t *Thresher) launchInstance(s *exec.Snapshot) error {
+func (t *Thresher) launchInstance(s *snapshot.Snapshot) error {
 	inst, err := instance.New(s, nil, t)
 	if err != nil {
 		return errs.New(
@@ -559,7 +561,7 @@ func (t *Thresher) addInitialEvent(
 
 // indexEventProc looks for the eventProcessor ep in eventProc slice pp and
 // return its index. If there is no ep in pp, -1 returned.
-func indexEventProc(pp []eDefReg, ep exec.EventProcessor) int {
+func indexEventProc(pp []eDefReg, ep eventproc.EventProcessor) int {
 	for i, p := range pp {
 		if p.proc == ep {
 			return i
@@ -573,6 +575,6 @@ func indexEventProc(pp []eDefReg, ep exec.EventProcessor) int {
 // Interface implementation check
 
 var (
-	_ exec.EventProducer = (*Thresher)(nil)
-	_ exec.ProcessRunner = (*Thresher)(nil)
+	_ eventproc.EventProducer = (*Thresher)(nil)
+	_ runner.ProcessRunner    = (*Thresher)(nil)
 )

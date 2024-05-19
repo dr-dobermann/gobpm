@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/dr-dobermann/gobpm/internal/exec"
+	"github.com/dr-dobermann/gobpm/internal/renv"
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -101,7 +102,7 @@ func (ee *EndEvent) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
 // execution failed.
 func (ee *EndEvent) Exec(
 	ctx context.Context,
-	re exec.RuntimeEnvironment,
+	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
 	ers := []error{}
 
@@ -126,7 +127,7 @@ func (ee *EndEvent) Exec(
 // ------------------- exec.NodeDataLoader interface ---------------------------
 
 // RegisterData sends all EndEvent data.Data to the exec.Scope.
-func (ee *EndEvent) RegisterData(dp exec.DataPath, s exec.Scope) error {
+func (ee *EndEvent) RegisterData(dp scope.DataPath, s scope.Scope) error {
 	ee.dataPath = dp
 
 	return s.LoadData(ee, ee.throwEvent.getEventData()...)

@@ -72,12 +72,6 @@ func NewTask(
 		err
 }
 
-// --------------------- flow.ActivityNode interface ---------------------------
-
-func (t *Task) ActivityType() flow.ActivityType {
-	return flow.TaskActivity
-}
-
 // -----------------------------------------------------------------------------
 
 // WithMultyInstance sets multyinstance flag of the Task.
@@ -94,4 +88,10 @@ func WithMultyInstance() options.Option {
 // IsMultyinstance returns Task multyinstance settings.
 func (t *Task) IsMultyinstance() bool {
 	return t.multyInstance
+}
+
+// --------------------- flow.ActivityNode interface ---------------------------
+
+func (t *Task) ActivityType() flow.ActivityType {
+	return flow.TaskActivity
 }

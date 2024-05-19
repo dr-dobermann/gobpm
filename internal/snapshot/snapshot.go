@@ -1,4 +1,4 @@
-package exec
+package snapshot
 
 import (
 	"errors"
@@ -10,6 +10,8 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 )
+
+const errorClass = "SNAPSHOT_ERRORS"
 
 // Snapshot holds process'es snapshot ready to run.
 type Snapshot struct {
@@ -23,9 +25,9 @@ type Snapshot struct {
 	InitEvents  []flow.EventNode
 }
 
-// NewSnapshot creates a new snapshot from the Process p and returns its
+// New creates a new snapshot from the Process p and returns its
 // pointer on success or error on failure.
-func NewSnapshot(
+func New(
 	p *process.Process,
 	snapOpts ...options.Option,
 ) (*Snapshot, error) {
@@ -55,17 +57,6 @@ func createSnapshot(s *Snapshot, p *process.Process) (*Snapshot, error) {
 	ee := []error{}
 
 	for _, n := range p.Nodes() {
-		if _, ok := n.(NodeExecutor); !ok {
-			ee = append(ee,
-				errs.New(
-					errs.M(
-						"node %q(%s) does not implement NodeExecutor interface",
-						n.Name(), n.Id()),
-					errs.C(errorClass, errs.TypeCastingError)))
-
-			continue
-		}
-
 		s.Nodes[n.Id()] = n
 
 		// find initial events
