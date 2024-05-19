@@ -13,7 +13,11 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
 
-const errorClass = "GOOPER"
+const (
+	errorClass = "GOOPER"
+
+	GoOperType = "##GoOper"
+)
 
 // OpFunctior is an Operation Implementor which
 type OpFunctor func(*data.ItemDefinition) (*data.ItemDefinition, error)
@@ -23,9 +27,12 @@ type GoFunc struct {
 	f   OpFunctor
 }
 
+// New creates a new GoFunc based on OpFunctor f and list of error classes,
+// the OpFunctor could return.
+// It returns a pointer on a new GoFunc or error on failure.
 func New(
-	ers []string,
 	f OpFunctor,
+	ers ...string,
 ) (service.Implementor, error) {
 	if f == nil {
 		return nil,
@@ -44,7 +51,7 @@ func New(
 
 // Type returns type of the executor.
 func (gf GoFunc) Type() string {
-	return "##GoOper"
+	return GoOperType
 }
 
 // ErrorClasses returns errors classes list which may be
@@ -53,42 +60,23 @@ func (gf GoFunc) ErrorClasses() []string {
 	return append([]string{}, gf.ers...)
 }
 
-// Execute runs an operation with all parameters provided by
-// Operation entity.
-func (gf GoFunc) Execute(op *service.Operation) error {
-	var in *data.ItemDefinition
-
-	im := op.IncomingMessage()
-	if im != nil {
-		in = im.Item()
-	}
-
+// Execute runs an operation implementator with in parameter and
+// returns the output result (couldn be nil) and error status.
+func (gf GoFunc) Execute(
+	in *data.ItemDefinition,
+) (*data.ItemDefinition, error) {
 	out, err := gf.f(in)
 	if err != nil {
-		return errs.New(
-			errs.M("operation #%s execution failed", op.Id()),
+		return nil, errs.New(
+			errs.M("goOper failed"),
 			errs.C(errorClass, errs.OperationFailed),
 			errs.E(err))
 	}
 
-	om := op.OutgoingMessage()
-
-	switch {
-	case out != nil && om == nil:
-		return errs.New(
-			errs.M("no out message for not empty GoFunc"),
-			errs.C(errorClass, errs.OperationFailed))
-
-	case out == nil && om != nil:
-		return errs.New(
-			errs.M("empty GoFunc result with not empty outMessage"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-
-	case out != nil && om != nil:
-		return om.Item().Structure().Update(out.Structure().Get())
-	}
-
-	return nil
+	return out, nil
 }
 
 //------------------------------------------------------------------------------
+
+// interface check
+var _ service.Implementor = (*GoFunc)(nil)
