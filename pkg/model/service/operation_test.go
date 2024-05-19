@@ -1,12 +1,12 @@
 package service_test
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/stretchr/testify/require"
@@ -29,152 +29,102 @@ func (e *exctr) ErrorClasses() []string {
 	return []string{errs.OperationFailed}
 }
 
-func (e *exctr) Execute(op *service.Operation) (any, error) {
+func (e *exctr) Execute(in *data.ItemDefinition) (*data.ItemDefinition, error) {
 	if e.fail {
-		return nil,
-			errs.New(
-				errs.M("operation failed by default"),
-				errs.C(errs.OperationFailed))
+		return nil, errs.New(
+			errs.M("operation failed by default"),
+			errs.C(errs.OperationFailed))
 	}
 
-	return "operation " + op.Name() + " executed sucessfully", nil
+	return in, nil
 }
 
-func TestNewOperation(t *testing.T) {
-	type args struct {
-		name          string
-		inMsg, outMsg *common.Message
-		errList       []string
-		executor      service.Implementor
-		baseOpts      []options.Option
-	}
-
-	type expectations struct {
-		name, id      string
-		inMsg, outMsg *common.Message
-		errList       []string
-		executor      service.Implementor
-	}
-
+func TestOperation(t *testing.T) {
 	// -------------------- Initialization -------------------------------------
 	// test messages building
-	in := common.MustMessage("test_input_msg", nil)
-	out := common.MustMessage("test_out_msg", nil)
+	in := common.MustMessage("test_input_msg",
+		data.MustItemDefinition(values.NewVariable(42)))
+	out := common.MustMessage("test_out_msg",
+		data.MustItemDefinition(values.NewVariable(100)))
 
-	errList := []string{errs.OperationFailed}
-
-	tstExctr := &exctr{}
+	errList := []string{
+		errs.ObjectNotFound,
+		errs.OperationFailed,
+		errs.EmptyNotAllowed,
+	}
 
 	// --------------------- Testing -------------------------------------------
-	// test cases
-	tests := []struct {
-		name string
-		args args
-		want expectations
-	}{
-		{
-			name: "empty operation name",
-			args: args{
-				name:     "",
-				errList:  []string{},
-				baseOpts: []options.Option{},
-			},
-			want: expectations{
-				name:    "empty_operation",
-				errList: []string{},
-			},
-		},
-		{
-			name: "empty operation",
-			args: args{
-				name:     "empty_operation",
-				errList:  []string{},
-				baseOpts: []options.Option{},
-			},
-			want: expectations{
-				name:    "empty_operation",
-				errList: []string{},
-			},
-		},
-		{
-			name: "full_operation",
-			args: args{
-				name:     "empty_operation",
-				inMsg:    in,
-				outMsg:   out,
-				errList:  errList,
-				executor: tstExctr,
-				baseOpts: []options.Option{foundation.WithId("test_op")},
-			},
-			want: expectations{
-				name:     "empty_operation",
-				id:       "test_op",
-				inMsg:    in,
-				outMsg:   out,
-				errList:  errList,
-				executor: tstExctr,
-			},
-		},
-	}
+	t.Run("empty op name",
+		func(t *testing.T) {
+			_, err := service.NewOperation("", nil, nil, nil)
+			require.Error(t, err)
+		})
 
-	for _, tst := range tests {
-		t.Run(tst.name,
-			func(t *testing.T) {
-				o, err := service.NewOperation(
-					tst.args.name,
-					tst.args.inMsg,
-					tst.args.outMsg,
-					tst.args.executor,
-					tst.args.baseOpts...,
-				)
+	t.Run("invalid option",
+		func(t *testing.T) {
+			require.Panics(t,
+				func() {
+					_ = service.MustOperation("panic", nil, nil, nil,
+						options.WithName("invalid name"))
+				})
+		})
 
-				// check empty name
-				if tst.args.name == "" {
-					require.Error(t, err)
-					require.Empty(t, o)
+	t.Run("empty implementor call",
+		func(t *testing.T) {
+			o := service.MustOperation("empty implementor call", nil, nil, nil)
+			require.Equal(t, "empty implementor call", o.Name())
+			require.Equal(t, service.UnspecifiedImplementation, o.Type())
 
-					return
-				}
+			require.Error(t, o.Run())
+		})
 
-				// check name
-				require.NoError(t, err)
-				require.NotEmpty(t, o)
-				require.Equal(t, tst.want.name, o.Name())
+	t.Run("no implementation ouptut",
+		func(t *testing.T) {
+			o := service.MustOperation("no ouput", nil, out, &exctr{})
 
-				// check incoming message
-				if tst.want.inMsg != nil {
-					in := o.IncomingMessage()
-					require.NotEmpty(t, in)
-					require.Equal(t, tst.want.inMsg.Id(), in.Id())
-				}
+			err := o.Run()
+			t.Log(err.Error())
+			require.Error(t, err)
+		})
 
-				// check outgoing message
-				if tst.want.outMsg != nil {
-					out := o.OutgoingMessage()
-					require.NotEmpty(t, out)
-					require.Equal(t, tst.want.outMsg.Id(), out.Id())
-				}
+	t.Run("no outgoing message",
+		func(t *testing.T) {
+			o := service.MustOperation("no outgoing message", in, nil, &exctr{})
 
-				// check id
-				if tst.want.id != "" {
-					require.Equal(t, tst.want.id, o.Id())
-				}
+			err := o.Run()
+			t.Log(err.Error())
+			require.Error(t, err)
+		})
 
-				// check errors
-				errsList := o.Errors()
-				require.Equal(t, len(tst.want.errList), len(errsList))
-				if len(tst.want.errList) > 0 {
-					require.True(t,
-						reflect.DeepEqual(errsList, tst.want.errList))
-				}
+	t.Run("normal",
+		func(t *testing.T) {
+			o := service.MustOperation("normal", in, out, &exctr{})
+			require.Equal(t, 42, o.IncomingMessage().Item().Structure().Get())
+			require.Equal(t, 100, o.OutgoingMessage().Item().Structure().Get())
+			require.Equal(t, "successful executor", o.Type())
+			for _, e := range errList {
+				require.Contains(t, o.Errors(), e)
+			}
 
-				// check implementation
-				impl := o.Implementation()
-				if tst.args.executor != nil {
-					res, err := impl.Execute(o)
-					t.Log(impl.Type())
-					t.Logf("operation executed with %v: %v", res, err)
-				}
-			})
-	}
+			err := o.Run()
+			require.NoError(t, err)
+			require.Equal(t, 42, o.OutgoingMessage().Item().Structure().Get())
+		})
+
+	t.Run("normal fail",
+		func(t *testing.T) {
+			o := service.MustOperation("normal", in, out,
+				&exctr{
+					fail: true,
+				})
+
+			require.Error(t, o.Run())
+		})
+
+	t.Run("normal with empty in and out messages",
+		func(t *testing.T) {
+			o := service.MustOperation("empty in/out", nil, nil, &exctr{})
+
+			require.NoError(t, o.Run())
+		})
 }

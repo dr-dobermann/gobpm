@@ -5,10 +5,13 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/set"
 )
+
+const UnspecifiedImplementation = "##unspecified"
 
 // Implementor interface runs an Operation and returns its result
 type Implementor interface {
@@ -17,11 +20,14 @@ type Implementor interface {
 
 	// ErrorClasses returns errors classes list which may be
 	// returned by the Execute call.
+	//
+	// Operation already has ObjectNotFound, EmptyNotAllowed and
+	// OperationFailed error classes.
 	ErrorClasses() []string
 
-	// Execute runs an operation with all parameters provided by
-	// Operation entity.
-	Execute(op *Operation) error
+	// Execute runs an operation implementator with in parameter and
+	// returns the output result (couldn be nil) and error status.
+	Execute(in *data.ItemDefinition) (*data.ItemDefinition, error)
 }
 
 // An Operation defines Messages that are consumed and, optionally, produced
@@ -46,7 +52,7 @@ type Operation struct {
 	//
 	// >>>>>  DEVNOTE: original BPMN2 errors functionatity fully covered by
 	// gobpm errs package. So errors will consists a list of error classes.
-	// Whick
+	//
 	// errors []*common.Error
 	errors *set.Set[string]
 
@@ -77,7 +83,12 @@ func NewOperation(
 		return nil, err
 	}
 
-	el := []string{}
+	el := []string{
+		errs.ObjectNotFound,
+		errs.OperationFailed,
+		errs.EmptyNotAllowed,
+	}
+
 	if implementor != nil {
 		el = append(el, implementor.ErrorClasses()...)
 	}
@@ -130,7 +141,53 @@ func (o *Operation) Errors() []string {
 	return o.errors.All()
 }
 
-// Implementation returns the Operation implementation.
-func (o *Operation) Implementation() Implementor {
-	return o.implementation
+// Type returns the Operation's implementation type or
+// unspecified on empyt implementation.
+func (o *Operation) Type() string {
+	if o.implementation != nil {
+		return o.implementation.Type()
+	}
+
+	return UnspecifiedImplementation
+}
+
+// Run tries to call implentation.Execute with inMessage as input and
+// put it results int outMessage.
+func (o *Operation) Run() error {
+	if o.implementation == nil {
+		return errs.New(
+			errs.M("no implementation"),
+			errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	var in *data.ItemDefinition
+
+	if o.inMessage != nil && o.inMessage.Item() != nil {
+		in = o.inMessage.Item()
+	}
+
+	out, err := o.implementation.Execute(in)
+	if err != nil {
+		return errs.New(
+			errs.M("operation %q[%s] execution failed", o.name, o.Id()),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
+	switch {
+	case out != nil && (o.outMessage == nil || o.outMessage.Item() == nil):
+		return errs.New(
+			errs.M("no output for operation result"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+
+	case out == nil && o.outMessage != nil && o.outMessage.Item() != nil:
+		return errs.New(
+			errs.M("unexpected empty operation return"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+
+	case out != nil && o.outMessage != nil && o.outMessage.Item() != nil:
+		return o.outMessage.Item().Structure().Update(out.Structure().Get())
+	}
+
+	return nil
 }

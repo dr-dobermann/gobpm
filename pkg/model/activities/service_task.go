@@ -60,14 +60,9 @@ func NewServiceTask(
 		return nil, err
 	}
 
-	impl := "##unspecified"
-	if operation.Implementation() != nil {
-		impl = operation.Implementation().Type()
-	}
-
 	return &ServiceTask{
 			Task:           *t,
-			implementation: impl,
+			implementation: operation.Type(),
 			operation:      operation},
 		nil
 }
