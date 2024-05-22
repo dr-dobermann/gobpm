@@ -476,7 +476,7 @@ func (t *track) unregisterEvent(n flow.Node) error {
 // loadData checks if the flow.Node n implements flow.NodeDataConsumer and
 // if so, calls the LoadData of the Node.
 func (t *track) loadData(ctx context.Context, n flow.Node) error {
-	dc, ok := n.(flow.NodeDataConsumer)
+	dc, ok := n.(scope.NodeDataConsumer)
 	if !ok {
 		return nil
 	}
@@ -487,7 +487,7 @@ func (t *track) loadData(ctx context.Context, n flow.Node) error {
 // uploadData checks if the flow.Node n impmements flow.NoadDataProducer and
 // if so, calls the UploadData of the Node.
 func (t *track) uploadData(ctx context.Context, n flow.Node) error {
-	dp, ok := n.(flow.NodeDataProducer)
+	dp, ok := n.(scope.NodeDataProducer)
 	if !ok {
 		return nil
 	}

@@ -3,7 +3,7 @@ package snapshot_test
 import (
 	"testing"
 
-	"github.com/dr-dobermann/gobpm/internal/snapshot"
+	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"

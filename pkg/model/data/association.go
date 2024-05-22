@@ -145,3 +145,14 @@ func (a *Association) SourcesIds() []string {
 
 	return src
 }
+
+// HasSourceId checks if the Association has source with Id id.
+func (a *Association) HasSourceId(id string) bool {
+	for _, s := range a.sources {
+		if s.Subject().Id() == id {
+			return true
+		}
+	}
+
+	return false
+}

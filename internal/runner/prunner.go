@@ -1,6 +1,6 @@
 package runner
 
-import "github.com/dr-dobermann/gobpm/internal/snapshot"
+import "github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 
 // ProcessRunner registers process snapshot for latter run on initial event
 // firing.

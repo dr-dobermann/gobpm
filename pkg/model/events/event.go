@@ -467,7 +467,6 @@ func (te *throwEvent) Node() flow.Node {
 	return te
 }
 
-// ------------------- exec.NodeDataProducer
 // -----------------------------------------------------------------------------
 // interfaces checks
 var (

@@ -6,6 +6,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/helpers"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
@@ -22,6 +23,14 @@ import (
 //     Data Output that has an ItemDefinition equivalent to the one defined by
 //     the Message referenced by the outMessageRef attribute of the associated
 //     Operation.
+//
+// If the Service Task is associated with an Operation, there MUST be a Message
+// Data Input on the Service Task and it MUST have an itemDefinition equivalent
+// to the one defined by the Message referred to by the inMessageRef attribute
+// of the operation. If the operation defines output Messages, there MUST be a
+// single Data Output and it MUST have an itemDefinition equivalent to the one
+// defined by Message referred to by the outMessageRef attribute of the
+// Operation.
 type ServiceTask struct {
 	Task
 
@@ -93,11 +102,109 @@ func (st *ServiceTask) TaskType() flow.TaskType {
 
 // Exec runs single node and returns its valid
 // output sequence flows on success or error on failure.
+//
+// Exec fills operation input message with data from the scope and
+// runs the operation.
+// After this it updates tasks output values with output message of the
+// operation.
 func (st *ServiceTask) Exec(
 	ctx context.Context,
 	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
-	return nil, nil
+	if err := st.loadInputMessage(re); err != nil {
+		return nil,
+			errs.New(
+				errs.M("couldn't set operation's incoming message"),
+				errs.C(errorClass),
+				errs.E(err),
+				errs.D("service_task_name", st.Name()),
+				errs.D("service_task_id", st.Id()),
+				errs.D("item_id", st.operation.IncomingMessage().Item().Id()),
+				errs.D("operation_id", st.operation.Id()),
+				errs.D("message_name", st.operation.IncomingMessage().Name()),
+				errs.D("message_id", st.operation.IncomingMessage().Id()))
+
+	}
+
+	if err := st.operation.Run(ctx); err != nil {
+		return nil,
+			errs.New(
+				errs.M("operation run failed"),
+				errs.E(err),
+				errs.D("service_task_name", st.Name()),
+				errs.D("service_task_id", st.Id()),
+				errs.D("operation_id", st.operation.Id()),
+				errs.D("operation_name", st.operation.Name()))
+	}
+
+	if err := st.uploadOutputMessage(); err != nil {
+		return nil,
+			errs.New(
+				errs.M("couldn't get operation's incoming message"),
+				errs.C(errorClass),
+				errs.E(err),
+				errs.D("service_task_name", st.Name()),
+				errs.D("service_task_id", st.Id()),
+				errs.D("item_id", st.operation.IncomingMessage().Item().Id()),
+				errs.D("operation_id", st.operation.Id()),
+				errs.D("message_name", st.operation.IncomingMessage().Name()),
+				errs.D("message_id", st.operation.IncomingMessage().Id()))
+
+	}
+
+	return st.Outgoing(), nil
+}
+
+// loadInputMessage tries to set value of the operation's incoming message
+// from scope data.
+func (st *ServiceTask) loadInputMessage(re renv.RuntimeEnvironment) error {
+	if st.operation.IncomingMessage() == nil ||
+		st.operation.IncomingMessage().Item() == nil {
+		return nil
+	}
+
+	d, err := re.GetDataById(
+		st.dataPath,
+		st.operation.IncomingMessage().Item().Id())
+	if err != nil {
+		return errs.New(
+			errs.M("couldn't find item definition"),
+			errs.E(err))
+	}
+
+	if err := st.operation.IncomingMessage().Item().
+		Structure().Update(d.Value().Get()); err != nil {
+		return errs.New(
+			errs.M("couldn't update operation's incoming message"),
+			errs.E(err))
+	}
+
+	return nil
+}
+
+// uploadOutputMessage uploads operation's output message into task's
+// output.
+func (st *ServiceTask) uploadOutputMessage() error {
+	if st.operation.OutgoingMessage() == nil ||
+		st.operation.OutgoingMessage().Item() == nil {
+		return nil
+	}
+
+	outs, err := st.IoSpec.Parameters(data.Output)
+	if err != nil {
+		return errs.New(
+			errs.M("couldn't get task output parameters"))
+	}
+
+	for _, o := range outs {
+		if o.ItemDefinition().Id() == st.operation.OutgoingMessage().Item().Id() {
+			return st.operation.OutgoingMessage().Item().Structure().
+				Update(o.ItemDefinition().Structure().Get())
+		}
+	}
+
+	return errs.New(
+		errs.M("couldn't find task output for operation output message"))
 }
 
 // -----------------------------------------------------------------------------

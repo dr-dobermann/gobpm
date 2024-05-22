@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/dr-dobermann/gobpm/internal/exec"
 	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -124,7 +125,7 @@ func (ee *EndEvent) Exec(
 	return []*flow.SequenceFlow{}, nil
 }
 
-// ------------------- exec.NodeDataLoader interface ---------------------------
+// ------------------- scope.NodeDataLoader interface ---------------------------
 
 // RegisterData sends all EndEvent data.Data to the exec.Scope.
 func (ee *EndEvent) RegisterData(dp scope.DataPath, s scope.Scope) error {
@@ -134,3 +135,9 @@ func (ee *EndEvent) RegisterData(dp scope.DataPath, s scope.Scope) error {
 }
 
 // -----------------------------------------------------------------------------
+
+// interfaces check
+var (
+	_ exec.NodeExecutor    = (*EndEvent)(nil)
+	_ scope.NodeDataLoader = (*EndEvent)(nil)
+)
