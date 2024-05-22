@@ -1,6 +1,7 @@
 package gooper_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -55,7 +56,7 @@ func TestGofunc(t *testing.T) {
 			require.Equal(t, gooper.GoOperType, gf.Type())
 			require.Contains(t, gf.ErrorClasses(), errs.TypeCastingError)
 
-			out, err := gf.Execute(in)
+			out, err := gf.Execute(in, context.Background())
 			require.NoError(t, err)
 			require.NotEmpty(t, out)
 			require.Equal(t, 200, out.Structure().Get())
@@ -67,7 +68,8 @@ func TestGofunc(t *testing.T) {
 			require.NoError(t, err)
 
 			_, err = gf.Execute(
-				data.MustItemDefinition(values.NewVariable("invalid int")))
+				data.MustItemDefinition(values.NewVariable("invalid int")),
+				context.Background())
 			require.Error(t, err)
 		})
 }

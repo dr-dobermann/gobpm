@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -27,7 +28,10 @@ type Implementor interface {
 
 	// Execute runs an operation implementator with in parameter and
 	// returns the output result (couldn be nil) and error status.
-	Execute(in *data.ItemDefinition) (*data.ItemDefinition, error)
+	Execute(
+		in *data.ItemDefinition,
+		ctx context.Context,
+	) (*data.ItemDefinition, error)
 }
 
 // An Operation defines Messages that are consumed and, optionally, produced
@@ -153,7 +157,7 @@ func (o *Operation) Type() string {
 
 // Run tries to call implentation.Execute with inMessage as input and
 // put it results int outMessage.
-func (o *Operation) Run() error {
+func (o *Operation) Run(ctx context.Context) error {
 	if o.implementation == nil {
 		return errs.New(
 			errs.M("no implementation"),
@@ -166,7 +170,7 @@ func (o *Operation) Run() error {
 		in = o.inMessage.Item()
 	}
 
-	out, err := o.implementation.Execute(in)
+	out, err := o.implementation.Execute(in, ctx)
 	if err != nil {
 		return errs.New(
 			errs.M("operation %q[%s] execution failed", o.name, o.Id()),

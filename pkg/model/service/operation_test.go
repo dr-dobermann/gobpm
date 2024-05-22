@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -29,7 +30,10 @@ func (e *exctr) ErrorClasses() []string {
 	return []string{errs.OperationFailed}
 }
 
-func (e *exctr) Execute(in *data.ItemDefinition) (*data.ItemDefinition, error) {
+func (e *exctr) Execute(
+	in *data.ItemDefinition,
+	_ context.Context,
+) (*data.ItemDefinition, error) {
 	if e.fail {
 		return nil, errs.New(
 			errs.M("operation failed by default"),
@@ -75,14 +79,14 @@ func TestOperation(t *testing.T) {
 			require.Equal(t, "empty implementor call", o.Name())
 			require.Equal(t, service.UnspecifiedImplementation, o.Type())
 
-			require.Error(t, o.Run())
+			require.Error(t, o.Run(context.Background()))
 		})
 
 	t.Run("no implementation ouptut",
 		func(t *testing.T) {
 			o := service.MustOperation("no ouput", nil, out, &exctr{})
 
-			err := o.Run()
+			err := o.Run(context.Background())
 			t.Log(err.Error())
 			require.Error(t, err)
 		})
@@ -91,7 +95,7 @@ func TestOperation(t *testing.T) {
 		func(t *testing.T) {
 			o := service.MustOperation("no outgoing message", in, nil, &exctr{})
 
-			err := o.Run()
+			err := o.Run(context.Background())
 			t.Log(err.Error())
 			require.Error(t, err)
 		})
@@ -106,7 +110,7 @@ func TestOperation(t *testing.T) {
 				require.Contains(t, o.Errors(), e)
 			}
 
-			err := o.Run()
+			err := o.Run(context.Background())
 			require.NoError(t, err)
 			require.Equal(t, 42, o.OutgoingMessage().Item().Structure().Get())
 		})
@@ -118,13 +122,13 @@ func TestOperation(t *testing.T) {
 					fail: true,
 				})
 
-			require.Error(t, o.Run())
+			require.Error(t, o.Run(context.Background()))
 		})
 
 	t.Run("normal with empty in and out messages",
 		func(t *testing.T) {
 			o := service.MustOperation("empty in/out", nil, nil, &exctr{})
 
-			require.NoError(t, o.Run())
+			require.NoError(t, o.Run(context.Background()))
 		})
 }

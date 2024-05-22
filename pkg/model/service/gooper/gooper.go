@@ -8,6 +8,8 @@ as Operation execution mechanism.
 package gooper
 
 import (
+	"context"
+
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
@@ -64,6 +66,7 @@ func (gf GoFunc) ErrorClasses() []string {
 // returns the output result (couldn be nil) and error status.
 func (gf GoFunc) Execute(
 	in *data.ItemDefinition,
+	ctx context.Context,
 ) (*data.ItemDefinition, error) {
 	out, err := gf.f(in)
 	if err != nil {
