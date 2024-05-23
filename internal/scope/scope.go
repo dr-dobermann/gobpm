@@ -8,6 +8,8 @@ import (
 )
 
 // Scope keeps all variables of the scope and returns its values.
+//
+//go:generate mockery --name Scope
 type Scope interface {
 	// Root returns the root dataPath of the Scope.
 	Root() DataPath

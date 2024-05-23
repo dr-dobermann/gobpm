@@ -2,7 +2,6 @@ package activities
 
 import (
 	"context"
-	"reflect"
 	"slices"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
@@ -17,29 +16,6 @@ type Task struct {
 	Activity
 
 	multyInstance bool
-}
-
-// multyInstance is a configurator for multyInsatance flag of the Task.
-type multyInstance bool
-
-// Validate implements options.Configurator interface for multyInstance.
-func (mi *multyInstance) Validate() error {
-	return nil
-}
-
-// taskOption is task Task option configurator.
-type taskOption func(cfg *multyInstance) error
-
-// Apply implements options.Option interface for the taskOption.
-func (to taskOption) Apply(cfg options.Configurator) error {
-	if mi, ok := cfg.(*multyInstance); ok {
-		return to(mi)
-	}
-
-	return errs.New(
-		errs.M("not a multyInstance task config: %s",
-			reflect.TypeOf(cfg).String()),
-		errs.C(errorClass, errs.TypeCastingError))
 }
 
 // NewTask creates a new Task and returns its pointer on success or
@@ -74,17 +50,6 @@ func NewTask(
 			Activity:      *a,
 			multyInstance: bool(mInst)},
 		err
-}
-
-// WithMultyInstance sets multyinstance flag of the Task.
-func WithMultyInstance() options.Option {
-	f := func(cfg *multyInstance) error {
-		*cfg = multyInstance(true)
-
-		return nil
-	}
-
-	return taskOption(f)
 }
 
 // IsMultyinstance returns Task multyinstance settings.
@@ -126,7 +91,7 @@ func (t *Task) RegisterData(dp scope.DataPath, s scope.Scope) error {
 	return s.LoadData(t, dd...)
 }
 
-// ------------------ exec.NodeDataConsumer interface --------------------------
+// ------------------ scope.NodeDataConsumer interface --------------------------
 
 func (t *Task) LoadData(_ context.Context) error {
 	dii, err := t.IoSpec.Parameters(data.Input)
@@ -169,7 +134,7 @@ func (t *Task) LoadData(_ context.Context) error {
 	return nil
 }
 
-// ------------------ exec.NodeDataProducer interface --------------------------
+// ------------------ scope.NodeDataProducer interface --------------------------
 
 func (t *Task) UploadData(_ context.Context) error {
 	doo, err := t.IoSpec.Parameters(data.Output)
@@ -212,4 +177,6 @@ func (t *Task) UploadData(_ context.Context) error {
 var (
 	_ flow.ActivityNode    = (*Task)(nil)
 	_ scope.NodeDataLoader = (*Task)(nil)
+	_ scope.NodeDataConsumer = (*Task)(nil)
+	_ scope.NodeDataProducer = (*Task)(nil)
 )
