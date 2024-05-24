@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/generated/mockscope"
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
@@ -46,7 +47,6 @@ func TestOptions(t *testing.T) {
 }
 
 func TestTaskData(t *testing.T) {
-
 	require.NoError(t, data.CreateDefaultStates())
 
 	t.Run("TaskDataRegistration",
@@ -65,7 +65,7 @@ func TestTaskData(t *testing.T) {
 				data.MustProperty(
 					"user",
 					data.MustItemDefinition(
-						values.NewVariable[User](User{
+						values.NewVariable(User{
 							Name: "Jon Doe",
 							Age:  27,
 						})),
@@ -74,13 +74,19 @@ func TestTaskData(t *testing.T) {
 
 			task, err := activities.NewTask(
 				"test",
-				data.WithProperties(props...))
+				data.WithProperties(props...),
+                activities.WithoutParams())
 			require.NoError(t, err)
 
-			scope := mockscope.NewMockScope(t)
-			scope.EXPECT().
+			s := mockscope.NewMockScope(t)
+			s.EXPECT().
 				LoadData(task, props[0], props[1]).
 				Return(nil).Once()
 
+            dp, err := scope.NewDataPath("/task")
+            require.NoError(t, err)
+
+            err = task.RegisterData(dp, s)
+            require.NoError(t, err)
 		})
 }

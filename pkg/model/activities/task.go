@@ -175,8 +175,8 @@ func (t *Task) UploadData(_ context.Context) error {
 
 // interface check
 var (
-	_ flow.ActivityNode    = (*Task)(nil)
-	_ scope.NodeDataLoader = (*Task)(nil)
+	_ flow.ActivityNode      = (*Task)(nil)
+	_ scope.NodeDataLoader   = (*Task)(nil)
 	_ scope.NodeDataConsumer = (*Task)(nil)
 	_ scope.NodeDataProducer = (*Task)(nil)
 )
