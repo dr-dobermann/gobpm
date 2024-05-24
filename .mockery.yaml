@@ -1,0 +1,15 @@
+with-expecter: True
+
+dir: "generated/mock{{.PackageName}}"
+
+filename: "mock_{{.InterfaceName}}.go"
+outpkg: "mock{{.PackageName}}"
+inpackage: false
+
+packages:
+  github.com/dr-dobermann/gobpm/internal/scope:
+    interfaces:
+      Scope:
+      NodeDataLoader:
+      NodeDataConsumer:
+      NodeDataProducer:
