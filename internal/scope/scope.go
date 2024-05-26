@@ -61,7 +61,22 @@ type NodeDataLoader interface {
 
 // NodeDataProducer implemented by Nodes which needs to load data from
 // flow.DataObject over its incoming data.Associations.
-// This interface is used before Node execution.
+// This interface is used beffore Node execution and Node's RegisterData call.
+//
+// So Node's data is used as followed:
+//
+//  1. LoadData loads data from incoming data associations and fills its inputs.
+//
+//  2. Registers all data in the execution Scope (properties, inputs).
+//
+//     ... Execute the Node and fill Node's output parameters with results of
+//     the execution.
+//
+//  3. On success execution all Node's output with not-Ready state are updated
+//     from the Scope and then Node's UploadData is called to fill all outgoing
+//     data associations from Node's outputs.
+//
+//  4. Clears scope from Node's data.
 type NodeDataConsumer interface {
 	flow.Node
 
@@ -76,5 +91,5 @@ type NodeDataProducer interface {
 	flow.Node
 
 	// UploadData uploads Node's data onto its outgoing data.Association.
-	UploadData(context.Context) error
+	UploadData(ctx context.Context, s Scope) error
 }

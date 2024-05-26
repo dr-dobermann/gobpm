@@ -63,36 +63,10 @@ func (t *Task) ActivityType() flow.ActivityType {
 	return flow.TaskActivity
 }
 
-// ----------------- scope.NodeDataLoader interface ----------------------------
-
-// RegisterData adds all Task's properties and inputs to the Scope s.
-func (t *Task) RegisterData(dp scope.DataPath, s scope.Scope) error {
-	t.dataPath = dp
-
-	inputs, err := t.IoSpec.Parameters(data.Input)
-	if err != nil {
-		return errs.New(
-			errs.M("couldn't get task inputs"),
-			errs.D("task_name", t.Name()),
-			errs.D("task_id", t.Id()),
-			errs.E(err))
-	}
-
-	dd := make([]data.Data, 0, len(t.properties)+len(inputs))
-
-	for _, p := range t.properties {
-		dd = append(dd, p)
-	}
-
-	for _, in := range inputs {
-		dd = append(dd, in)
-	}
-
-	return s.LoadData(t, dd...)
-}
-
 // ------------------ scope.NodeDataConsumer interface --------------------------
 
+// LoadData loads data from Task's incoming data associations into its
+// inputs.
 func (t *Task) LoadData(_ context.Context) error {
 	dii, err := t.IoSpec.Parameters(data.Input)
 	if err != nil {
@@ -134,13 +108,44 @@ func (t *Task) LoadData(_ context.Context) error {
 	return nil
 }
 
-// ------------------ scope.NodeDataProducer interface --------------------------
+// ----------------- scope.NodeDataLoader interface ----------------------------
 
-func (t *Task) UploadData(_ context.Context) error {
-	doo, err := t.IoSpec.Parameters(data.Output)
+// RegisterData adds all Task's properties and inputs to the Scope s.
+func (t *Task) RegisterData(dp scope.DataPath, s scope.Scope) error {
+	t.dataPath = dp
+
+	inputs, err := t.IoSpec.Parameters(data.Input)
 	if err != nil {
 		return errs.New(
-			errs.M("couldn't get output parameters for task %q[%s]", t.Name(), t.Id()),
+			errs.M("couldn't get task inputs"),
+			errs.D("task_name", t.Name()),
+			errs.D("task_id", t.Id()),
+			errs.E(err))
+	}
+
+	dd := make([]data.Data, 0, len(t.properties)+len(inputs))
+
+	for _, p := range t.properties {
+		dd = append(dd, p)
+	}
+
+	for _, in := range inputs {
+		dd = append(dd, in)
+	}
+
+	return s.LoadData(t, dd...)
+}
+
+// ------------------ scope.NodeDataProducer interface --------------------------
+
+// UploadData fills all Task's outputs with not-Ready state from the Scope and
+// loads all Task's outgoing data associations from Task's outputs.
+func (t *Task) UploadData(_ context.Context, s scope.Scope) error {
+	doo, err := t.updateOutputs(s)
+
+	if err != nil {
+		return errs.New(
+			errs.M("couldn't tt output parameters for task", t.Name(), t.Id()),
 			errs.C(errorClass, errs.ObjectNotFound),
 			errs.E(err))
 	}
@@ -169,6 +174,61 @@ func (t *Task) UploadData(_ context.Context) error {
 	}
 
 	return nil
+}
+
+// updateOutputs checks all Task's output parameters and if it's not in Ready
+// state it tries to fill it from the Scope.
+func (t *Task) updateOutputs(s scope.Scope) ([]*data.Parameter, error) {
+	oo, err := t.IoSpec.Parameters(data.Output)
+	if err != nil {
+		return nil, errs.New(
+			errs.M("couldn't get task's output parameters"),
+			errs.E(err))
+	}
+
+	for _, o := range oo {
+		if o.State().Name() == data.ReadyDataState.Name() {
+			continue
+		}
+
+		d, err := s.GetDataById(t.dataPath, o.ItemDefinition().Id())
+		if err != nil {
+			return nil,
+				errs.New(
+					errs.M("couldn't get data from Scope"),
+					errs.E(err),
+					errs.D("item_definitio_id", o.ItemDefinition().Id()))
+		}
+
+		if d.State().Name() != data.ReadyDataState.Name() {
+			return nil,
+				errs.New(
+					errs.M("data isn't Ready for update task's output"),
+					errs.D("data_name", d.Name()),
+					errs.D("item_definition_id", o.ItemDefinition().Id()),
+					errs.D("output_name", o.Name()))
+		}
+
+		if err := o.Value().Update(d.Value().Get()); err != nil {
+			return nil,
+				errs.New(
+					errs.M("couldn't update task output"),
+					errs.E(err),
+					errs.D("output_name", o.Name()),
+					errs.D("data_name", d.Name()),
+					errs.D("item_definition_id", o.ItemDefinition().Id()))
+		}
+
+		if err := o.UpdateState(data.ReadyDataState); err != nil {
+			return nil,
+				errs.New(
+					errs.M("couldn't set task output state to Ready"),
+					errs.E(err),
+					errs.D("output_name", o.Name()))
+		}
+	}
+
+	return oo, nil
 }
 
 // -----------------------------------------------------------------------------

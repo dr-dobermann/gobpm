@@ -71,8 +71,7 @@ type Activity struct {
 	completionQuantity int
 
 	// The InputOutputSpecification defines the inputs and outputs and the
-	// InputSets and OutputSets for the Activity. See page 210 for more
-	// information on the InputOutputSpecification.
+	// InputSets and OutputSets for the Activity.
 	IoSpec *data.InputOutputSpecification
 
 	// This references the Intermediate Events that are attached to the

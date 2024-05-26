@@ -1,6 +1,7 @@
 package activities_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/generated/mockscope"
@@ -49,44 +50,45 @@ func TestOptions(t *testing.T) {
 func TestTaskData(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
-	t.Run("TaskDataRegistration",
-		func(t *testing.T) {
-			type User struct {
-				Name string
-				Age  uint
-			}
+	type User struct {
+		Name string
+		Age  uint
+	}
 
-			props := []*data.Property{
-				data.MustProperty(
-					"x",
-					data.MustItemDefinition(
-						values.NewVariable(42)),
-					data.ReadyDataState),
-				data.MustProperty(
-					"user",
-					data.MustItemDefinition(
-						values.NewVariable(User{
-							Name: "Jon Doe",
-							Age:  27,
-						})),
-					data.ReadyDataState),
-			}
+	props := []*data.Property{
+		data.MustProperty(
+			"x",
+			data.MustItemDefinition(
+				values.NewVariable(42)),
+			data.ReadyDataState),
+		data.MustProperty(
+			"user",
+			data.MustItemDefinition(
+				values.NewVariable(User{
+					Name: "Jon Doe",
+					Age:  27,
+				})),
+			data.ReadyDataState),
+	}
 
-			task, err := activities.NewTask(
-				"test",
-				data.WithProperties(props...),
-                activities.WithoutParams())
-			require.NoError(t, err)
+	task, err := activities.NewTask(
+		"test",
+		data.WithProperties(props...),
+		activities.WithoutParams())
+	require.NoError(t, err)
 
-			s := mockscope.NewMockScope(t)
-			s.EXPECT().
-				LoadData(task, props[0], props[1]).
-				Return(nil).Once()
+	s := mockscope.NewMockScope(t)
+	s.EXPECT().
+		LoadData(task, props[0], props[1]).
+		Return(nil)
 
-            dp, err := scope.NewDataPath("/task")
-            require.NoError(t, err)
+	dp, err := scope.NewDataPath("/task")
+	require.NoError(t, err)
 
-            err = task.RegisterData(dp, s)
-            require.NoError(t, err)
-		})
+	err = task.RegisterData(dp, s)
+	require.NoError(t, err)
+
+	// TODO: add associations to test
+	require.NoError(t, task.LoadData(context.Background()))
+	require.NoError(t, task.UploadData(context.Background(), s))
 }

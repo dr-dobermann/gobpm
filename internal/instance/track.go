@@ -492,7 +492,7 @@ func (t *track) uploadData(ctx context.Context, n flow.Node) error {
 		return nil
 	}
 
-	return dp.UploadData(ctx)
+	return dp.UploadData(ctx, t.instance)
 }
 
 // --------------------- exec.EventProcessor interface -------------------------

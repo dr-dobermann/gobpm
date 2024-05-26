@@ -111,6 +111,13 @@ func (st *ServiceTask) Exec(
 	ctx context.Context,
 	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
+	if re == nil {
+		return nil,
+			errs.New(
+				errs.M("no runtime environment"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
 	if err := st.loadInputMessage(re); err != nil {
 		return nil,
 			errs.New(
@@ -123,7 +130,6 @@ func (st *ServiceTask) Exec(
 				errs.D("operation_id", st.operation.Id()),
 				errs.D("message_name", st.operation.IncomingMessage().Name()),
 				errs.D("message_id", st.operation.IncomingMessage().Id()))
-
 	}
 
 	if err := st.operation.Run(ctx); err != nil {
@@ -140,7 +146,7 @@ func (st *ServiceTask) Exec(
 	if err := st.uploadOutputMessage(); err != nil {
 		return nil,
 			errs.New(
-				errs.M("couldn't get operation's incoming message"),
+				errs.M("couldn't save operation's outgoing message"),
 				errs.C(errorClass),
 				errs.E(err),
 				errs.D("service_task_name", st.Name()),
@@ -149,14 +155,13 @@ func (st *ServiceTask) Exec(
 				errs.D("operation_id", st.operation.Id()),
 				errs.D("message_name", st.operation.IncomingMessage().Name()),
 				errs.D("message_id", st.operation.IncomingMessage().Id()))
-
 	}
 
 	return st.Outgoing(), nil
 }
 
 // loadInputMessage tries to set value of the operation's incoming message
-// from scope data.
+// from scope data if them are Ready..
 func (st *ServiceTask) loadInputMessage(re renv.RuntimeEnvironment) error {
 	if st.operation.IncomingMessage() == nil ||
 		st.operation.IncomingMessage().Item() == nil {
@@ -172,6 +177,12 @@ func (st *ServiceTask) loadInputMessage(re renv.RuntimeEnvironment) error {
 			errs.E(err))
 	}
 
+	if d.State().Name() != data.ReadyDataState.Name() {
+		return errs.New(
+			errs.M("data state isn't ready"),
+		)
+	}
+
 	if err := st.operation.IncomingMessage().Item().
 		Structure().Update(d.Value().Get()); err != nil {
 		return errs.New(
@@ -183,7 +194,7 @@ func (st *ServiceTask) loadInputMessage(re renv.RuntimeEnvironment) error {
 }
 
 // uploadOutputMessage uploads operation's output message into task's
-// output.
+// output and set their state to Ready.
 func (st *ServiceTask) uploadOutputMessage() error {
 	if st.operation.OutgoingMessage() == nil ||
 		st.operation.OutgoingMessage().Item() == nil {
@@ -198,8 +209,21 @@ func (st *ServiceTask) uploadOutputMessage() error {
 
 	for _, o := range outs {
 		if o.ItemDefinition().Id() == st.operation.OutgoingMessage().Item().Id() {
-			return st.operation.OutgoingMessage().Item().Structure().
+			err = st.operation.OutgoingMessage().
+				Item().Structure().
 				Update(o.ItemDefinition().Structure().Get())
+			if err == nil {
+				if err := o.UpdateState(data.ReadyDataState); err != nil {
+					return errs.New(
+						errs.M("couldn't update task's output state to Ready"),
+						errs.C(err.Error(), errs.OperationFailed),
+						errs.E(err),
+						errs.D("task_name", st.Name()),
+						errs.D("output_name", o.Name()))
+				}
+			}
+
+			return err
 		}
 	}
 

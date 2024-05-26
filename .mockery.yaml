@@ -13,3 +13,6 @@ packages:
       NodeDataLoader:
       NodeDataConsumer:
       NodeDataProducer:
+  github.com/dr-dobermann/gobpm/internal/renv:
+    interfaces:
+      RuntimeEnvironment:
