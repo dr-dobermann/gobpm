@@ -1,27 +1,37 @@
 package service
 
 import (
+	"context"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/set"
 )
 
-// Executor interface runs an Operation and returns its result
-type Executor interface {
-	// Type returns type of the executore.
+const UnspecifiedImplementation = "##unspecified"
+
+// Implementor interface runs an Operation and returns its result
+type Implementor interface {
+	// Type returns type of the executor.
 	Type() string
 
-	// ErrorClasses returns errors classes listh which may be
+	// ErrorClasses returns errors classes list which may be
 	// returned by the Execute call.
+	//
+	// Operation already has ObjectNotFound, EmptyNotAllowed and
+	// OperationFailed error classes.
 	ErrorClasses() []string
 
-	// Execute runs an operation with all parameters provided by
-	// Operation entity.
-	Execute(op *Operation) (any, error)
+	// Execute runs an operation implementator with in parameter and
+	// returns the output result (couldn be nil) and error status.
+	Execute(
+		in *data.ItemDefinition,
+		ctx context.Context,
+	) (*data.ItemDefinition, error)
 }
 
 // An Operation defines Messages that are consumed and, optionally, produced
@@ -46,14 +56,14 @@ type Operation struct {
 	//
 	// >>>>>  DEVNOTE: original BPMN2 errors functionatity fully covered by
 	// gobpm errs package. So errors will consists a list of error classes.
-	// Whick
+	//
 	// errors []*common.Error
 	errors *set.Set[string]
 
 	// This attribute allows to reference a concrete artifact in the underlying
 	// implementation technology representing that operation, such as a WSDL
 	// operation.
-	implementation Executor
+	implementation Implementor
 }
 
 // NewOperation creates a new Operation and returns its pointer on success or
@@ -61,7 +71,7 @@ type Operation struct {
 func NewOperation(
 	name string,
 	inMsg, outMsg *common.Message,
-	executor Executor,
+	implementor Implementor,
 	baseOpts ...options.Option,
 ) (*Operation, error) {
 	name = strings.Trim(name, " ")
@@ -77,9 +87,14 @@ func NewOperation(
 		return nil, err
 	}
 
-	el := []string{}
-	if executor != nil {
-		el = append(el, executor.ErrorClasses()...)
+	el := []string{
+		errs.ObjectNotFound,
+		errs.OperationFailed,
+		errs.EmptyNotAllowed,
+	}
+
+	if implementor != nil {
+		el = append(el, implementor.ErrorClasses()...)
 	}
 
 	return &Operation{
@@ -88,7 +103,8 @@ func NewOperation(
 		inMessage:      inMsg,
 		outMessage:     outMsg,
 		errors:         set.New[string](el...),
-		implementation: executor}, nil
+		implementation: implementor,
+	}, nil
 }
 
 // MustOperation creates a new Operation and returns its pointer on succes or
@@ -96,10 +112,10 @@ func NewOperation(
 func MustOperation(
 	name string,
 	inMsg, outMsg *common.Message,
-	executor Executor,
+	implementor Implementor,
 	baseOpts ...options.Option,
 ) *Operation {
-	o, err := NewOperation(name, inMsg, outMsg, executor)
+	o, err := NewOperation(name, inMsg, outMsg, implementor, baseOpts...)
 	if err != nil {
 		errs.Panic(err)
 
@@ -129,7 +145,53 @@ func (o *Operation) Errors() []string {
 	return o.errors.All()
 }
 
-// Implementation returns the Operation implementation.
-func (o *Operation) Implementation() Executor {
-	return o.implementation
+// Type returns the Operation's implementation type or
+// unspecified on empyt implementation.
+func (o *Operation) Type() string {
+	if o.implementation != nil {
+		return o.implementation.Type()
+	}
+
+	return UnspecifiedImplementation
+}
+
+// Run tries to call implentation.Execute with inMessage as input and
+// put it results int outMessage.
+func (o *Operation) Run(ctx context.Context) error {
+	if o.implementation == nil {
+		return errs.New(
+			errs.M("no implementation"),
+			errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	var in *data.ItemDefinition
+
+	if o.inMessage != nil && o.inMessage.Item() != nil {
+		in = o.inMessage.Item()
+	}
+
+	out, err := o.implementation.Execute(in, ctx)
+	if err != nil {
+		return errs.New(
+			errs.M("operation %q[%s] execution failed", o.name, o.Id()),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
+	switch {
+	case out != nil && (o.outMessage == nil || o.outMessage.Item() == nil):
+		return errs.New(
+			errs.M("no output for operation result"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+
+	case out == nil && o.outMessage != nil && o.outMessage.Item() != nil:
+		return errs.New(
+			errs.M("unexpected empty operation return"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+
+	case out != nil && o.outMessage != nil && o.outMessage.Item() != nil:
+		return o.outMessage.Item().Structure().Update(out.Structure().Get())
+	}
+
+	return nil
 }

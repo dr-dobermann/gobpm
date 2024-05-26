@@ -4,6 +4,7 @@ import (
 	"errors"
 	"reflect"
 
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -70,8 +71,7 @@ type Activity struct {
 	completionQuantity int
 
 	// The InputOutputSpecification defines the inputs and outputs and the
-	// InputSets and OutputSets for the Activity. See page 210 for more
-	// information on the InputOutputSpecification.
+	// InputSets and OutputSets for the Activity.
 	IoSpec *data.InputOutputSpecification
 
 	// This references the Intermediate Events that are attached to the
@@ -88,6 +88,9 @@ type Activity struct {
 
 	// dataAssociations holds input and output DataAssociation of the Activity.
 	dataAssociations map[data.Direction][]*data.Association
+
+	// dataPath of the Activitiy.
+	dataPath scope.DataPath
 }
 
 // NewActivity creates a new Activity with options and returns its pointer on
@@ -136,37 +139,6 @@ func NewActivity(
 
 	return cfg.newActivity()
 }
-
-// ------------------ flow.Node interface --------------------------------------
-
-func (a *Activity) Node() flow.Node {
-	return a
-}
-
-// NodeType returns Activity's node type.
-func (a *Activity) NodeType() flow.NodeType {
-	return flow.ActivityNodeType
-}
-
-// ------------------ flow.SequenceTarget interface ----------------------------
-
-// AcceptIncomingFlow checks if it possible to use sf as IncomingFlow for the
-// Activity.
-func (a *Activity) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
-	// Activity has no restrictions on incoming floes
-	return nil
-}
-
-// ------------------ flow.SequenceSource interface ----------------------------
-
-// SuportOutgoingFlow checks if it possible to source sf SequenceFlow from
-// the Activity.
-func (a *Activity) SuportOutgoingFlow(sf *flow.SequenceFlow) error {
-	// Activity has no restrictions on outgoing flows
-	return nil
-}
-
-// -----------------------------------------------------------------------------
 
 // Roles returns list of ResourceRoles of the Activity.
 func (a *Activity) Roles() []*ResourceRole {
@@ -224,3 +196,34 @@ func (a *Activity) SetDefaultFlow(flowId string) error {
 func (a *Activity) BoundaryEvents() []flow.EventNode {
 	return append([]flow.EventNode{}, a.boundaryEvents...)
 }
+
+// ------------------ flow.Node interface --------------------------------------
+
+func (a *Activity) Node() flow.Node {
+	return a
+}
+
+// NodeType returns Activity's node type.
+func (a *Activity) NodeType() flow.NodeType {
+	return flow.ActivityNodeType
+}
+
+// ------------------ flow.SequenceTarget interface ----------------------------
+
+// AcceptIncomingFlow checks if it possible to use sf as IncomingFlow for the
+// Activity.
+func (a *Activity) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
+	// Activity has no restrictions on incoming floes
+	return nil
+}
+
+// ------------------ flow.SequenceSource interface ----------------------------
+
+// SuportOutgoingFlow checks if it possible to source sf SequenceFlow from
+// the Activity.
+func (a *Activity) SuportOutgoingFlow(sf *flow.SequenceFlow) error {
+	// Activity has no restrictions on outgoing flows
+	return nil
+}
+
+// -----------------------------------------------------------------------------

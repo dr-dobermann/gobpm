@@ -136,8 +136,7 @@ func (a *Association) TargetItemDefId() string {
 	return a.target.ItemDefinition().Id()
 }
 
-// HasSourceWith if the Association a has source itemDifinition with id equels
-// to iDefId.
+// SourcesIds returns list of the Association's sources ItemDefinitions Ids.
 func (a *Association) SourcesIds() []string {
 	src := []string{}
 	for _, s := range a.sources {
@@ -145,4 +144,15 @@ func (a *Association) SourcesIds() []string {
 	}
 
 	return src
+}
+
+// HasSourceId checks if the Association has source with Id id.
+func (a *Association) HasSourceId(id string) bool {
+	for _, s := range a.sources {
+		if s.Subject().Id() == id {
+			return true
+		}
+	}
+
+	return false
 }

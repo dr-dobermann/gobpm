@@ -1,9 +1,9 @@
-package exec_test
+package snapshot_test
 
 import (
 	"testing"
 
-	"github.com/dr-dobermann/gobpm/internal/exec"
+	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -37,6 +37,6 @@ func TestSnapshot(t *testing.T) {
 	_, err = flow.Link(task, end)
 	require.NoError(t, err)
 
-	_, err = exec.NewSnapshot(p)
+	_, err = snapshot.New(p)
 	require.NoError(t, err)
 }

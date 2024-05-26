@@ -7,7 +7,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/dr-dobermann/gobpm/internal/exec"
+	"github.com/dr-dobermann/gobpm/internal/eventproc"
+	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
+	"github.com/dr-dobermann/gobpm/internal/renv"
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -59,31 +62,31 @@ type Instance struct {
 	state State
 
 	// the Snapshot, the Instance is based on.
-	s *exec.Snapshot
+	s *snapshot.Snapshot
 
 	// Instance's runtime context.
 	ctx context.Context
 
 	// Scopes holds accessible in the moment Data.
 	// first map indexed by data path, the second map indexed by Data name.
-	scopes map[exec.DataPath]map[string]data.Data
+	scopes map[scope.DataPath]map[string]data.Data
 
 	// rootScope holds the root dataPath of the scope
-	rootScope exec.DataPath
+	rootScope scope.DataPath
 
 	// parentScope hold reference on the parent scope which set up on Instance
 	// creation.
-	parentScope exec.Scope
+	parentScope scope.Scope
 
 	// parentEventProducer is used to register the Instance in events producers
 	// chain.
-	parentEventProducer exec.EventProducer
+	parentEventProducer eventproc.EventProducer
 
 	// root event producer for the instance. usually it will be thresher
 	// created the instance.
 	// root event producer for the instance. usually it will be thresher
 	// created the instance.
-	eProd exec.EventProducer
+	eProd eventproc.EventProducer
 
 	// tracks indexed by track Ids
 	tracks map[string]*track
@@ -98,9 +101,9 @@ type Instance struct {
 
 // New creates a new Instance from the Snapshot s and sets state to Ready.
 func New(
-	s *exec.Snapshot,
-	parentScope exec.Scope,
-	ep exec.EventProducer,
+	s *snapshot.Snapshot,
+	parentScope scope.Scope,
+	ep eventproc.EventProducer,
 ) (*Instance, error) {
 	var err error
 
@@ -108,7 +111,7 @@ func New(
 		ID:                  *foundation.NewID(),
 		state:               Ready,
 		s:                   s,
-		scopes:              map[exec.DataPath]map[string]data.Data{},
+		scopes:              map[scope.DataPath]map[string]data.Data{},
 		tracks:              map[string]*track{},
 		tokens:              []*token{},
 		events:              map[string]map[string]*track{},
@@ -122,7 +125,7 @@ func New(
 		dd = append(dd, p)
 	}
 
-	inst.rootScope = exec.RootDataPath
+	inst.rootScope = scope.RootDataPath
 
 	if parentScope != nil {
 		inst.rootScope, err = parentScope.Root().Append(s.ProcessName)
@@ -167,7 +170,7 @@ func (inst *Instance) updateState(newState State) {
 func (inst *Instance) Run(
 	ctx context.Context,
 	cancel context.CancelFunc,
-	ep exec.EventProducer,
+	ep eventproc.EventProducer,
 ) error {
 	if ctx == nil {
 		return errs.New(
@@ -310,7 +313,7 @@ func (inst *Instance) createTracks() error {
 }
 
 // addData adds data to scope named path
-func (inst *Instance) addData(path exec.DataPath, dd ...data.Data) error {
+func (inst *Instance) addData(path scope.DataPath, dd ...data.Data) error {
 	vv, ok := inst.scopes[path]
 	if !ok {
 		return errs.New(
@@ -339,7 +342,7 @@ func (inst *Instance) addData(path exec.DataPath, dd ...data.Data) error {
 
 // getData is looking for data.Data in exec.Scope (Instance).
 func (inst *Instance) getData(
-	path exec.DataPath,
+	path scope.DataPath,
 	finder dataFinder,
 ) (data.Data, error) {
 	inst.m.Lock()
@@ -370,7 +373,7 @@ func (inst *Instance) getData(
 			}
 		}
 
-		if p == exec.RootDataPath {
+		if p == scope.RootDataPath {
 			break
 		}
 	}
@@ -481,7 +484,7 @@ func (inst *Instance) ProcessEvent(
 // RegisterEvents register tracks awaited for the event.
 // Once event is fired, then track's EventProcessor called.
 func (inst *Instance) RegisterEvents(
-	proc exec.EventProcessor,
+	proc eventproc.EventProcessor,
 	eDefs ...flow.EventDefinition,
 ) error {
 	is := inst.State()
@@ -536,7 +539,7 @@ func (inst *Instance) RegisterEvents(
 // UnregisterEvents removes event definition to EventProcessor link from
 // EventProducer.
 func (inst *Instance) UnregisterEvents(
-	ep exec.EventProcessor,
+	ep eventproc.EventProcessor,
 	eDefIds ...string,
 ) error {
 	inst.m.Lock()
@@ -560,7 +563,7 @@ func (inst *Instance) UnregisterEvents(
 
 // UnregisterProcessor unregister all event definitions registered by
 // the EventProcessor.
-func (inst *Instance) UnregisterProcessor(ep exec.EventProcessor) {
+func (inst *Instance) UnregisterProcessor(ep eventproc.EventProcessor) {
 	inst.m.Lock()
 	defer inst.m.Unlock()
 
@@ -597,12 +600,12 @@ func (inst *Instance) EmitEvents(events ...flow.EventDefinition) error {
 // -------------------- exec.Scope interface -----------------------------------
 
 // Root returns the root dataPath of the Scope.
-func (inst *Instance) Root() exec.DataPath {
+func (inst *Instance) Root() scope.DataPath {
 	return inst.rootScope
 }
 
 // Scopes returns list of scopes controlled by Scope.
-func (inst *Instance) Scopes() []exec.DataPath {
+func (inst *Instance) Scopes() []scope.DataPath {
 	inst.m.Lock()
 	defer inst.m.Unlock()
 
@@ -612,7 +615,7 @@ func (inst *Instance) Scopes() []exec.DataPath {
 // AddData adds data.Data to the NodeDataLoader scope or to rootScope
 // if NodeDataLoader is nil.
 func (inst *Instance) AddData(
-	ndl exec.NodeDataLoader,
+	ndl scope.NodeDataLoader,
 	values ...data.Data,
 ) error {
 	var (
@@ -640,7 +643,7 @@ func (inst *Instance) AddData(
 // If current Scope doesn't find the name, then it looks in upper
 // Scope until find or failed to find.
 func (inst *Instance) GetData(
-	path exec.DataPath,
+	path scope.DataPath,
 	name string,
 ) (data.Data, error) {
 	d, err := inst.getData(path,
@@ -677,7 +680,7 @@ func (inst *Instance) GetData(
 // It starts looking for the data from dataPath and continues to locate
 // it until Scope root.
 func (inst *Instance) GetDataById(
-	path exec.DataPath,
+	path scope.DataPath,
 	id string,
 ) (data.Data, error) {
 	d, err := inst.getData(path,
@@ -712,7 +715,7 @@ func (inst *Instance) GetDataById(
 // LoadData loads a data data.Data into the Scope into
 // the dataPath.
 func (inst *Instance) LoadData(
-	ndl exec.NodeDataLoader,
+	ndl scope.NodeDataLoader,
 	values ...data.Data,
 ) error {
 	inst.m.Lock()
@@ -737,7 +740,7 @@ func (inst *Instance) LoadData(
 // ExtendScope adds a new child Scope to the Scope and returns
 // its full path.
 func (inst *Instance) ExtendScope(
-	ndl exec.NodeDataLoader,
+	ndl scope.NodeDataLoader,
 ) error {
 	inst.m.Lock()
 	defer inst.m.Unlock()
@@ -766,7 +769,7 @@ func (inst *Instance) ExtendScope(
 }
 
 // LeaveScope calls the Scope to clear all data saved by NodeDataLoader.
-func (inst *Instance) LeaveScope(ndl exec.NodeDataLoader) error {
+func (inst *Instance) LeaveScope(ndl scope.NodeDataLoader) error {
 	inst.m.Lock()
 	defer inst.m.Unlock()
 
@@ -804,12 +807,12 @@ func (inst *Instance) InstanceId() string {
 }
 
 // EventProducer returns the EventProducer of the runtime.
-func (inst *Instance) EventProducer() exec.EventProducer {
+func (inst *Instance) EventProducer() eventproc.EventProducer {
 	return inst
 }
 
 // Scope returns the Scope of the runtime.
-func (inst *Instance) Scope() exec.Scope {
+func (inst *Instance) Scope() scope.Scope {
 	return inst
 }
 
@@ -818,7 +821,7 @@ func (inst *Instance) Scope() exec.Scope {
 // =============================================================================
 // Interfaces check
 var (
-	_ exec.EventProducer      = (*Instance)(nil)
-	_ exec.EventProcessor     = (*Instance)(nil)
-	_ exec.RuntimeEnvironment = (*Instance)(nil)
+	_ eventproc.EventProducer  = (*Instance)(nil)
+	_ eventproc.EventProcessor = (*Instance)(nil)
+	_ renv.RuntimeEnvironment  = (*Instance)(nil)
 )

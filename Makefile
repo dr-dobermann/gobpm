@@ -40,3 +40,8 @@ tag:
 
 clear:
 	rm ./bin/*
+
+.PHONY: gen_mock_files
+gen_mock_files:
+	mockery
+	go mod tidy

@@ -66,6 +66,7 @@ func TestActivity(t *testing.T) {
 
 			require.NoError(t, a.SetDefaultFlow(""))
 			require.Error(t, a.SetDefaultFlow("wrong_flow"))
+			require.Empty(t, a.BoundaryEvents())
 		})
 
 	t.Run("IOSpec test",

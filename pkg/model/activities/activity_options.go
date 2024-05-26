@@ -39,69 +39,6 @@ type (
 	activityOption func(cfg *activityConfig) error
 )
 
-// --------------------- options.Option interface ------------------------------
-//
-// Apply converts activityOption into options.Option.
-func (ao activityOption) Apply(cfg options.Configurator) error {
-	if ac, ok := cfg.(*activityConfig); ok {
-		return ao(ac)
-	}
-
-	return errs.New(
-		errs.M("cfg isn't an activityConfig"),
-		errs.C(errorClass, errs.InvalidParameter, errs.TypeCastingError),
-		errs.D("cfg_type", reflect.TypeOf(cfg).String()))
-}
-
-// ------------------ options.Configurator interface ---------------------------
-//
-// Validate validates activityConfig fields.
-func (ac *activityConfig) Validate() error {
-	if err := helpers.CheckStr(
-		ac.name,
-		"Activity name couldn't be empty",
-		errorClass,
-	); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// ------------------- RoleConfigurator interface ------------------------------
-//
-// AddRole adds single non-empty unique ResourceRole into activityConfig.
-// if activityConfig already has the ResourceRole with the same name,
-// it will be overwritten.
-func (ac *activityConfig) AddRole(r *ResourceRole) error {
-	if r == nil {
-		return errs.New(
-			errs.M("role couldn't be empty"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
-	ac.roles[r.name] = r
-
-	return nil
-}
-
-// --------------- data.PropertyConfigurator interface -------------------------
-//
-// AddProperty adds non-empyt property into the activityConfig.
-// if the activityConfig already has the property with the same name it
-// will be overwritten.
-func (ac *activityConfig) AddProperty(p *data.Property) error {
-	if p == nil {
-		return errs.New(
-			errs.M("property couldn't be empty"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
-	ac.props[p.Name()] = p
-
-	return nil
-}
-
 // newActivity creates a new Activity from the activityConfig.
 func (ac *activityConfig) newActivity() (*Activity, error) {
 	if err := ac.Validate(); err != nil {
@@ -378,4 +315,67 @@ func WithoutParams() activityOption {
 	}
 
 	return activityOption(f)
+}
+
+// --------------------- options.Option interface ------------------------------
+
+// Apply converts activityOption into options.Option.
+func (ao activityOption) Apply(cfg options.Configurator) error {
+	if ac, ok := cfg.(*activityConfig); ok {
+		return ao(ac)
+	}
+
+	return errs.New(
+		errs.M("cfg isn't an activityConfig"),
+		errs.C(errorClass, errs.InvalidParameter, errs.TypeCastingError),
+		errs.D("cfg_type", reflect.TypeOf(cfg).String()))
+}
+
+// ------------------ options.Configurator interface ---------------------------
+
+// Validate validates activityConfig fields.
+func (ac *activityConfig) Validate() error {
+	if err := helpers.CheckStr(
+		ac.name,
+		"Activity name couldn't be empty",
+		errorClass,
+	); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ------------------- RoleConfigurator interface ------------------------------
+
+// AddRole adds single non-empty unique ResourceRole into activityConfig.
+// if activityConfig already has the ResourceRole with the same name,
+// it will be overwritten.
+func (ac *activityConfig) AddRole(r *ResourceRole) error {
+	if r == nil {
+		return errs.New(
+			errs.M("role couldn't be empty"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	ac.roles[r.name] = r
+
+	return nil
+}
+
+// --------------- data.PropertyConfigurator interface -------------------------
+
+// AddProperty adds non-empyt property into the activityConfig.
+// if the activityConfig already has the property with the same name it
+// will be overwritten.
+func (ac *activityConfig) AddProperty(p *data.Property) error {
+	if p == nil {
+		return errs.New(
+			errs.M("property couldn't be empty"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	ac.props[p.Name()] = p
+
+	return nil
 }

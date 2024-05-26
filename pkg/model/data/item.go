@@ -1,6 +1,7 @@
 package data
 
 import (
+	"fmt"
 	"reflect"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -134,6 +135,17 @@ func (idef *ItemDefinition) IsCollection() bool {
 	return idef.isCollection
 }
 
+func (idef *ItemDefinition) String() string {
+	val := "<nil>"
+
+	if idef.structure != nil {
+		val = fmt.Sprint(idef.structure.Get())
+	}
+
+	return fmt.Sprintf("Id: %s\nValue: %s\nIsCollection: %t\nKind: %s\n",
+		idef.Id(), val, idef.isCollection, idef.kind)
+}
+
 // ******************************************************************************
 
 // Several elements in BPMN are subject to store or convey items during process
@@ -243,6 +255,11 @@ func (iae *ItemAwareElement) IsCollection() bool {
 	}
 
 	return iae.itemSubject.isCollection
+}
+
+func (iae *ItemAwareElement) String() string {
+	return fmt.Sprintf("Id: %s\nState: %s\nValue: %s\n",
+		iae.Id(), iae.dataState.name, iae.itemSubject.String())
 }
 
 // ----------------- data.Data interface ---------------------------------------

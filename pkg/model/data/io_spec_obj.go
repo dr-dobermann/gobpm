@@ -265,10 +265,10 @@ func (s *Set) Parameters(from SetType) (map[SetType][]*Parameter, error) {
 	return res, nil
 }
 
-// AddParameter add non-empyt parameter into the selected Set.
+// AddParameter add non-empty parameter into the selected Set.
 // It checks if there is already parameter with equal name but different
 // id. In this case error returned.
-// If Id and Name of p Parameter equela to a saved one, then no error
+// If Id and Name of p Parameter equeal to the saved one, then no error
 // returned.
 func (s *Set) AddParameter(p *Parameter, where SetType) error {
 	if err := where.Validate(CombinedTypes); err != nil {
