@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -45,7 +44,7 @@ func NewEscalation(
 	baseOpts ...options.Option,
 ) (*Escalation, error) {
 	name = strings.TrimSpace(name)
-	if err := helpers.CheckStr(
+	if err := errs.CheckStr(
 		name,
 		"name should be provided for escalation",
 		errorClass,

@@ -3,7 +3,7 @@ package flow
 import (
 	"strings"
 
-	"github.com/dr-dobermann/gobpm/pkg/helpers"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -50,7 +50,7 @@ func NewDataOpject(
 	baseOpts ...options.Option,
 ) (*DataObject, error) {
 	name = strings.TrimSpace(name)
-	if err := helpers.CheckStr(
+	if err := errs.CheckStr(
 		name,
 		"DataObject should have non-empty name",
 		errorClass,

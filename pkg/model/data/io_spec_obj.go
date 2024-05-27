@@ -56,7 +56,7 @@ type Parameter struct {
 func NewParameter(name string, iae *ItemAwareElement) (*Parameter, error) {
 	name = strings.TrimSpace(name)
 
-	if err := helpers.CheckStr(
+	if err := errs.CheckStr(
 		name,
 		"name shouldn't be empty",
 		errorClass,
@@ -205,7 +205,7 @@ type Set struct {
 func NewSet(name string, baseOpts ...options.Option) (*Set, error) {
 	name = strings.TrimSpace(name)
 
-	if err := helpers.CheckStr(
+	if err := errs.CheckStr(
 		name,
 		"name shouldn't be empty",
 		errorClass,

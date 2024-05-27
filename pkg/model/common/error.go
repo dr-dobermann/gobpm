@@ -3,7 +3,7 @@ package common
 import (
 	"strings"
 
-	"github.com/dr-dobermann/gobpm/pkg/helpers"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -40,7 +40,7 @@ func NewError(name, code string,
 	baseOpts ...options.Option,
 ) (*Error, error) {
 	name = strings.TrimSpace(name)
-	if err := helpers.CheckStr(name,
+	if err := errs.CheckStr(name,
 		"name should be non-empty", errorClass); err != nil {
 		return nil, err
 	}

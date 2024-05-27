@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -72,14 +71,14 @@ func NewResourceParameter(
 	baseOpts ...options.Option,
 ) (*ResourceParameter, error) {
 	name = strings.TrimSpace(name)
-	if err := helpers.CheckStr(
+	if err := errs.CheckStr(
 		name,
 		"ResourceParameter should have a name", errorClass); err != nil {
 		return nil, err
 	}
 
 	pType = strings.TrimSpace(pType)
-	if err := helpers.CheckStr(
+	if err := errs.CheckStr(
 		pType,
 		"Type should be set for ResourceParameter", errorClass); err != nil {
 		return nil, err
