@@ -1,6 +1,8 @@
 package events
 
 import (
+	"strings"
+
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -24,7 +26,7 @@ func NewSignal(
 	str *data.ItemDefinition,
 	baseOpts ...options.Option,
 ) (*Signal, error) {
-	name = helpers.Strim(name)
+	name = strings.TrimSpace(name)
 
 	if err := helpers.CheckStr(
 		name,

@@ -1,6 +1,6 @@
 package foundation
 
-import "github.com/dr-dobermann/gobpm/pkg/helpers"
+import "strings"
 
 type ID struct {
 	id string
@@ -17,7 +17,7 @@ func NewID() *ID {
 }
 
 func NewIdentifyer(id string) *ID {
-	id = helpers.Strim(id)
+	id = strings.TrimSpace(id)
 	if id == "" {
 		return newID(GenerateId())
 	}

@@ -1,6 +1,8 @@
 package data
 
 import (
+	"strings"
+
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -52,7 +54,7 @@ type Parameter struct {
 // NewParameter creates a new Parameter and returns its pointer on success or
 // error on failure.
 func NewParameter(name string, iae *ItemAwareElement) (*Parameter, error) {
-	name = helpers.Strim(name)
+	name = strings.TrimSpace(name)
 
 	if err := helpers.CheckStr(
 		name,
@@ -201,7 +203,7 @@ type Set struct {
 // NewSet creates a new Set and returns its pointer on succes or
 // error on failure
 func NewSet(name string, baseOpts ...options.Option) (*Set, error) {
-	name = helpers.Strim(name)
+	name = strings.TrimSpace(name)
 
 	if err := helpers.CheckStr(
 		name,

@@ -1,15 +1,13 @@
 package helpers
 
 import (
-	"strings"
-
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 )
 
 // Strim is a local helper function to Strim spaces.
-func Strim(str string) string {
-	return strings.Trim(str, " ")
-}
+// func Strim(str string) string {
+// 	return strings.Trim(str, " ")
+// }
 
 // CheckStr local helper function which checks if the str is empty string.
 // If string is empty, then error returns with errMsg.

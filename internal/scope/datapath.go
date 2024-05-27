@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/helpers"
 )
 
 // DataPath is path to data in the scope.
@@ -40,7 +39,7 @@ func (p DataPath) Validate() error {
 		errs.M("invalid data path (should start from /): %q", p),
 		errs.C(errorClass, errs.InvalidParameter))
 
-	s := helpers.Strim(string(p))
+	s := strings.TrimSpace(string(p))
 	if s == "" {
 		return invPath
 	}
@@ -57,7 +56,7 @@ func (p DataPath) Validate() error {
 
 	// fields doesn't have empty or untrimmed values
 	for i := 1; i < len(fields); i++ {
-		if helpers.Strim(fields[i]) == "" {
+		if strings.TrimSpace(fields[i]) == "" {
 			return invPath
 		}
 	}

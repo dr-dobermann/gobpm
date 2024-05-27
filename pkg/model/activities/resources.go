@@ -1,6 +1,8 @@
 package activities
 
 import (
+	"strings"
+
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
@@ -37,7 +39,7 @@ func NewResourceRole(
 	pBinding []ResourceParameterBinding,
 	baseOpts ...options.Option,
 ) (*ResourceRole, error) {
-	name = helpers.Strim(name)
+	name = strings.TrimSpace(name)
 	if err := helpers.CheckStr(
 		name,
 		"name should be provided for ResourceRole",
