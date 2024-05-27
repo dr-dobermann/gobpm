@@ -49,16 +49,16 @@ func BoundStr(str, left, right string) string {
 
 // Indes is helper function which returns index of item in items slice
 // or -1 if slice doesn't found the item.
-func Index[T comparable](item T, slice []T) int {
-	if slice == nil {
-		return -1
-	}
+// func Index[T comparable](item T, slice []T) int {
+// 	if slice == nil {
+// 		return -1
+// 	}
 
-	for i, it := range slice {
-		if it == item {
-			return i
-		}
-	}
+// 	for i, it := range slice {
+// 		if it == item {
+// 			return i
+// 		}
+// 	}
 
-	return -1
-}
+// 	return -1
+// }

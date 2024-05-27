@@ -3,10 +3,10 @@ package data
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -205,8 +205,8 @@ func (ios *InputOutputSpecification) Validate() error {
 					// for every set
 					for _, s := range ss {
 						// check if it belongs to the same
-						// type as the parameter
-						if idx := helpers.Index(s, ios.sets[tp]); idx != -1 {
+						// type as the parameter helpers.Index(s, ios.sets[tp])
+						if idx := slices.Index(ios.sets[tp], s); idx != -1 {
 							links++
 						}
 					}
@@ -253,7 +253,7 @@ func (ios *InputOutputSpecification) AddParameter(
 		return nil
 	}
 
-	if idx := helpers.Index(p, pp); idx == -1 {
+	if idx := slices.Index(pp, p); idx == -1 {
 		ios.params[dir] = append(pp, p)
 	}
 
@@ -283,7 +283,7 @@ func (ios InputOutputSpecification) RemoveParameter(
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
-	idx := helpers.Index(p, pp)
+	idx := slices.Index(pp, p)
 	if idx == -1 {
 		return errs.New(
 			errs.M("no parameter %q in data set %q", p.name, dir),
@@ -355,14 +355,14 @@ func (ios *InputOutputSpecification) AddSet(
 	}
 
 	// check if s isn't used as opposite sets
-	if idx := helpers.Index(s, ios.sets[Opposite(dir)]); idx != -1 {
+	if idx := slices.Index(ios.sets[Opposite(dir)], s); idx != -1 {
 		return errs.New(
 			errs.M("data set is already used as %s set", Opposite(dir)),
 			errs.C(errorClass, errs.InvalidParameter, errs.DuplicateObject))
 	}
 
 	// check if s isn't registered yet
-	if idx := helpers.Index(s, ss); idx == -1 {
+	if idx := slices.Index(ss, s); idx == -1 {
 		ios.sets[dir] = append(ss, s)
 	}
 
@@ -394,7 +394,7 @@ func (ios *InputOutputSpecification) RemoveSet(
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
-	idx := helpers.Index(s, ss)
+	idx := slices.Index(ss, s)
 	if idx == -1 {
 		return errs.New(
 			errs.M("set isn't existed in %q lists", dir),

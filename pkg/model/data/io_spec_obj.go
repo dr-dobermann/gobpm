@@ -1,10 +1,10 @@
 package data
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -128,7 +128,7 @@ func (p *Parameter) addSet(s *Set, where SetType) error {
 		return nil
 	}
 
-	if ind := helpers.Index(s, ss); ind == -1 {
+	if ind := slices.Index(ss, s); ind == -1 {
 		p.sets[where] = append(ss, s)
 	}
 
@@ -159,7 +159,7 @@ func (p *Parameter) removeSet(s *Set, from SetType) error {
 			errs.D("set_name", s.name))
 	}
 
-	ind := helpers.Index(s, ss)
+	ind := slices.Index(ss, s)
 	if ind == -1 {
 		return errs.New(
 			errs.M("parameter %q doesn't belong to data set %q",
@@ -341,7 +341,7 @@ func (s *Set) RemoveParameter(p *Parameter, from SetType) error {
 			continue
 		}
 
-		index := helpers.Index(p, vv)
+		index := slices.Index(vv, p)
 		if index != -1 {
 			if err := p.removeSet(s, st); err != nil {
 				return err
@@ -383,7 +383,7 @@ func (s *Set) Link(ds *Set) error {
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
-	if idx := helpers.Index(ds, s.linkedSets); idx == -1 {
+	if idx := slices.Index(s.linkedSets, ds); idx == -1 {
 		s.linkedSets = append(s.linkedSets, ds)
 	}
 
@@ -398,7 +398,7 @@ func (s *Set) Unlink(ds *Set) error {
 			errs.C(errorClass, errs.InvalidParameter, errs.EmptyNotAllowed))
 	}
 
-	idx := helpers.Index(ds, s.linkedSets)
+	idx := slices.Index(s.linkedSets, ds)
 	if idx == -1 {
 		return errs.New(
 			errs.M("data set isn't linked"),
