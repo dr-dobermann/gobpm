@@ -12,10 +12,10 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"golang.org/x/exp/maps"
 )
 
 const errorClass = "INSTANCE_ERROR"
@@ -609,7 +609,7 @@ func (inst *Instance) Scopes() []scope.DataPath {
 	inst.m.Lock()
 	defer inst.m.Unlock()
 
-	return helpers.MapKeys(inst.scopes)
+	return maps.Keys(inst.scopes)
 }
 
 // AddData adds data.Data to the NodeDataLoader scope or to rootScope
@@ -791,7 +791,7 @@ func (inst *Instance) LeaveScope(ndl scope.NodeDataLoader) error {
 		return nil
 	}
 
-	vnn := helpers.MapKeys(vv)
+	vnn := maps.Keys(vv)
 	for _, v := range vnn {
 		delete(inst.scopes[dp], v)
 	}

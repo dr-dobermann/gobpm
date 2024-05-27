@@ -34,18 +34,18 @@ func BoundStr(str, left, right string) string {
 // }
 
 // MapKeys returns a slice of map m key.
-func MapKeys[T any, I comparable](m map[I]T) []I {
-	if len(m) == 0 {
-		return []I{}
-	}
+// func MapKeys[T any, I comparable](m map[I]T) []I {
+// 	if len(m) == 0 {
+// 		return []I{}
+// 	}
 
-	res := make([]I, 0, len(m))
-	for k := range m {
-		res = append(res, k)
-	}
+// 	res := make([]I, 0, len(m))
+// 	for k := range m {
+// 		res = append(res, k)
+// 	}
 
-	return res
-}
+// 	return res
+// }
 
 // Indes is helper function which returns index of item in items slice
 // or -1 if slice doesn't found the item.
