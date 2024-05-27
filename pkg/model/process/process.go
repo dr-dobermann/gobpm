@@ -6,13 +6,13 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
+	"golang.org/x/exp/maps"
 )
 
 const errorClass = "PROCESS_ERRORS"
@@ -135,7 +135,7 @@ func (p *Process) Name() string {
 
 // Properties returns the Process properties.
 func (p *Process) Properties() []*data.Property {
-	return helpers.Map2List(p.properties)
+	return maps.Values(p.properties)
 }
 
 // addNode adds non-empty unique FlowNode n to the process p.

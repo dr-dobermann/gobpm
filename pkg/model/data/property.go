@@ -1,8 +1,9 @@
 package data
 
 import (
+	"strings"
+
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -29,8 +30,8 @@ func NewProperty(
 	state *DataState,
 	baseOpts ...options.Option,
 ) (*Property, error) {
-	name = helpers.Strim(name)
-	if err := helpers.CheckStr(
+	name = strings.TrimSpace(name)
+	if err := errs.CheckStr(
 		name,
 		"property should has non-empty name",
 		errorClass,

@@ -1,8 +1,9 @@
 package events
 
 import (
+	"strings"
+
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -42,8 +43,8 @@ func NewEscalation(
 	item *data.ItemDefinition,
 	baseOpts ...options.Option,
 ) (*Escalation, error) {
-	name = helpers.Strim(name)
-	if err := helpers.CheckStr(
+	name = strings.TrimSpace(name)
+	if err := errs.CheckStr(
 		name,
 		"name should be provided for escalation",
 		errorClass,
@@ -52,7 +53,7 @@ func NewEscalation(
 		return nil, err
 	}
 
-	code = helpers.Strim(code)
+	code = strings.TrimSpace(code)
 
 	if item == nil {
 		return nil,

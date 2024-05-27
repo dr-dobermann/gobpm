@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -335,7 +334,7 @@ func (ao activityOption) Apply(cfg options.Configurator) error {
 
 // Validate validates activityConfig fields.
 func (ac *activityConfig) Validate() error {
-	if err := helpers.CheckStr(
+	if err := errs.CheckStr(
 		ac.name,
 		"Activity name couldn't be empty",
 		errorClass,

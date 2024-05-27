@@ -2,10 +2,10 @@ package activities
 
 import (
 	"context"
+	"strings"
 
 	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -52,8 +52,8 @@ func NewServiceTask(
 	operation *service.Operation,
 	taskOpts ...options.Option,
 ) (*ServiceTask, error) {
-	name = helpers.Strim(name)
-	if err := helpers.CheckStr(
+	name = strings.TrimSpace(name)
+	if err := errs.CheckStr(
 		name, "empty name isn't allowed for the ServiceTask",
 		errorClass,
 	); err != nil {

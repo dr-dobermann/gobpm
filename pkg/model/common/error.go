@@ -1,7 +1,9 @@
 package common
 
 import (
-	"github.com/dr-dobermann/gobpm/pkg/helpers"
+	"strings"
+
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -37,8 +39,8 @@ func NewError(name, code string,
 	str *data.ItemDefinition,
 	baseOpts ...options.Option,
 ) (*Error, error) {
-	name = helpers.Strim(name)
-	if err := helpers.CheckStr(name,
+	name = strings.TrimSpace(name)
+	if err := errs.CheckStr(name,
 		"name should be non-empty", errorClass); err != nil {
 		return nil, err
 	}

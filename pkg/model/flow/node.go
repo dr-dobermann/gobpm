@@ -4,8 +4,8 @@ import (
 	"errors"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/helpers"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"golang.org/x/exp/maps"
 )
 
 type NodeType string
@@ -91,12 +91,12 @@ func NewFlowNode() *FlowNode {
 
 // Incoming returns all the FlowNode's incoming flows.
 func (fn *FlowNode) Incoming() []*SequenceFlow {
-	return helpers.Map2List(fn.flows[data.Input])
+	return maps.Values(fn.flows[data.Input])
 }
 
 // Outgoing returns all the FlowNodes outgoing flows.
 func (fn *FlowNode) Outgoing() []*SequenceFlow {
-	return helpers.Map2List(fn.flows[data.Output])
+	return maps.Values(fn.flows[data.Output])
 }
 
 // AddFlow adds new SequenceFlow to the FlowNode n.
