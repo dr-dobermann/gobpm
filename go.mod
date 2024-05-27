@@ -1,10 +1,11 @@
 module github.com/dr-dobermann/gobpm
 
-go 1.20
+go 1.22
 
 require (
 	github.com/google/uuid v1.3.0
 	github.com/stretchr/testify v1.8.4
+	golang.org/x/exp v0.0.0-20240525044651-4c93da0ed11d
 )
 
 require (

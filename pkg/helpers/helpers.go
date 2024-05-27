@@ -16,22 +16,22 @@ func BoundStr(str, left, right string) string {
 }
 
 // Map2List returns
-func Map2List[T any, I comparable](m map[I]T) []T {
-	if m == nil {
-		return []T{}
-	}
+// func Map2List[T any, I comparable](m map[I]T) []T {
+// 	if m == nil {
+// 		return []T{}
+// 	}
 
-	res := make([]T, len(m))
+// 	res := make([]T, len(m))
 
-	i := 0
-	for _, v := range m {
-		res[i] = v
+// 	i := 0
+// 	for _, v := range m {
+// 		res[i] = v
 
-		i++
-	}
+// 		i++
+// 	}
 
-	return res
-}
+// 	return res
+// }
 
 // MapKeys returns a slice of map m key.
 func MapKeys[T any, I comparable](m map[I]T) []I {
