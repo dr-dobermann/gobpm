@@ -21,6 +21,8 @@ type setDef struct {
 	params  []*data.Parameter
 }
 
+// newSetDef tries to create sn IoSpec set definition and return its pointer or
+// error on failure.
 func newSetDef(name, id string,
 	d data.Direction,
 	st data.SetType,
@@ -118,8 +120,6 @@ func (ac *activityConfig) newActivity() (*Activity, error) {
 // if activityConfig has withoutParams flag set, then all Parameters and
 // Sets are ignored and IOSpec creates with default_input and default_output
 // empty sets.
-//
-//nolint:gocognit
 func createIOSpecs(ac *activityConfig) (*data.InputOutputSpecification, error) {
 	ioSpecs, err := data.NewIOSpec()
 	if err != nil {
@@ -157,6 +157,8 @@ func createIOSpecs(ac *activityConfig) (*data.InputOutputSpecification, error) {
 	return ioSpecs, nil
 }
 
+// addSetParams adds params to the data.Set if paramters aren't existed in
+// ioSpecs, it add them to the ioSpecs too.
 func addSetParams(
 	ioSpecs *data.InputOutputSpecification,
 	d data.Direction,
