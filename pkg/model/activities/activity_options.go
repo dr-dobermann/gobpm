@@ -157,7 +157,7 @@ func createIOSpecs(ac *activityConfig) (*data.InputOutputSpecification, error) {
 	return ioSpecs, nil
 }
 
-// addSetParams adds params to the data.Set if paramters aren't existed in
+// addSetParams adds params to the data.Set if parameters aren't existed in
 // ioSpecs, it add them to the ioSpecs too.
 func addSetParams(
 	ioSpecs *data.InputOutputSpecification,
