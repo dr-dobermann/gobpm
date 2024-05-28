@@ -107,8 +107,7 @@ func NewActivity(
 		complQ:           1,
 		baseOpts:         []options.Option{},
 		dataAssociations: map[data.Direction][]*data.Association{},
-		parameters:       map[data.Direction][]*data.Parameter{},
-		sets:             map[data.Direction][]*Set{},
+		sets:             map[data.Direction][]*setDef{},
 	}
 
 	ee := []error{}
