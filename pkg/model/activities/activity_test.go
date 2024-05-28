@@ -86,69 +86,39 @@ func TestActivity(t *testing.T) {
 				data.MustItemAwareElement(paramItem, is))
 			require.NoError(t, err)
 
-			si, err := data.NewSet("input set")
-			require.NoError(t, err)
-
-			so, err := data.NewSet("output set")
-			require.NoError(t, err)
-
-			// invalid params
-			_, err = activities.NewActivity(
-				"bad iospec",
-				activities.WithParameter(nil, data.Input),
-				activities.WithParameter(pi, "wrong direction"),
-			)
-			require.Error(t, err)
-
 			// invlaid sets
 			_, err = activities.NewActivity(
 				"bad iospec",
-				activities.WithSet(nil, data.Input, data.AllSets, []*data.Parameter{}),
-				activities.WithSet(si, "wrong direction", data.AllSets, []*data.Parameter{}),
-				activities.WithSet(si, data.Input, 42, []*data.Parameter{}),
+				activities.WithSet("", "", data.Input, data.AllSets, []*data.Parameter{}),
+				activities.WithSet("wrong dir set", "", "wrong direction", data.AllSets, []*data.Parameter{}),
+				activities.WithSet("input set", "", data.Input, 42, []*data.Parameter{}),
 			)
 			require.Error(t, err)
 
 			// invalid IOSpecs with no Sets
 			a, err := activities.NewActivity(
-				"iospec with no sets",
-				activities.WithParameter(pi, data.Input),
-				// duplicate param
-				activities.WithParameter(pi, data.Input),
-				activities.WithParameter(po, data.Output))
+				"iospec with no sets")
 			require.Empty(t, a)
 			require.Error(t, err)
 
 			// normal IOSpecs with no parameters
 			a, err = activities.NewActivity(
 				"iospec without params",
-				activities.WithSet(si, data.Input, data.DefaultSet, nil),
+				activities.WithSet("input set", "",
+					data.Input, data.DefaultSet, nil),
 				// duplicate set
-				activities.WithSet(si, data.Input, data.DefaultSet, nil),
-				activities.WithSet(so, data.Output, data.DefaultSet, nil))
+				activities.WithSet("input set", "", data.Input, data.DefaultSet, nil),
+				activities.WithSet("output_set", "", data.Output, data.DefaultSet, nil))
 			require.NoError(t, err)
 			require.NotEmpty(t, a)
 
 			// full IOSpecs
 			a, err = activities.NewActivity(
 				"full iospec",
-				activities.WithParameter(pi, data.Input),
-				activities.WithParameter(po, data.Output),
-				activities.WithSet(si, data.Input, data.DefaultSet, []*data.Parameter{pi}),
-				activities.WithSet(so, data.Output, data.DefaultSet, []*data.Parameter{po}),
+				activities.WithSet("input set", "", data.Input, data.DefaultSet, []*data.Parameter{pi}),
+				activities.WithSet("output set", "", data.Output, data.DefaultSet, []*data.Parameter{po}),
 			)
 			require.NoError(t, err)
 			require.NotEmpty(t, a)
-
-			// invalid IOSpecs with non-existed params
-			a, err = activities.NewActivity(
-				"full iospec",
-				activities.WithParameter(pi, data.Input),
-				activities.WithParameter(po, data.Output),
-				activities.WithSet(si, data.Input, data.DefaultSet, []*data.Parameter{po}),
-				activities.WithSet(so, data.Output, data.DefaultSet, []*data.Parameter{pi}),
-			)
-			require.Error(t, err)
-			require.Empty(t, a)
 		})
 }

@@ -11,13 +11,47 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
-type Set struct {
-	Set *data.Set
-	Dir data.Direction
+// setDef defines single set for activity InputOutputSpecifictation.
+type setDef struct {
+	set *data.Set
+	dir data.Direction
 
-	// Type allows combination of SetType
-	Type   data.SetType
-	Params []*data.Parameter
+	// setType allows combination of SetType
+	setType data.SetType
+	params  []*data.Parameter
+}
+
+func newSetDef(name, id string,
+	d data.Direction,
+	st data.SetType,
+	params []*data.Parameter,
+) (*setDef, error) {
+	name = strings.TrimSpace(name)
+	id = strings.TrimSpace(id)
+	var (
+		s   *data.Set
+		err error
+	)
+
+	if id == "" {
+		s, err = data.NewSet(name)
+	} else {
+		s, err = data.NewSet(name, foundation.WithId(id))
+	}
+	if err != nil {
+		return nil, errs.New(
+			errs.M("couldn't create new set"),
+			errs.E(err),
+			errs.D("set_name", name),
+			errs.D("set_id", id))
+	}
+
+	return &setDef{
+		set:     s,
+		dir:     d,
+		setType: st,
+		params:  append([]*data.Parameter{}, params...),
+	}, nil
 }
 
 type (
@@ -30,8 +64,7 @@ type (
 		startQ, complQ   int
 		baseOpts         []options.Option
 		dataAssociations map[data.Direction][]*data.Association
-		parameters       map[data.Direction][]*data.Parameter
-		sets             map[data.Direction][]*Set
+		sets             map[data.Direction][]*setDef
 		withoutParams    bool
 	}
 
@@ -83,7 +116,7 @@ func (ac *activityConfig) newActivity() (*Activity, error) {
 // createIOSpecs creates a new InputOutputSpecification and returns its
 // pointer on success or error on failure.
 // if activityConfig has withoutParams flag set, then all Parameters and
-// Sets are ignored and IOSpec creates with defalu_input and default_output
+// Sets are ignored and IOSpec creates with default_input and default_output
 // empty sets.
 //
 //nolint:gocognit
@@ -108,40 +141,50 @@ func createIOSpecs(ac *activityConfig) (*data.InputOutputSpecification, error) {
 		return ioSpecs, nil
 	}
 
-	// add parameters
-	for d, pp := range ac.parameters {
-		for _, p := range pp {
-			if err := ioSpecs.AddParameter(p, d); err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	// through all sets
 	for d, ss := range ac.sets {
 		for _, s := range ss {
-			for _, p := range s.Params {
-				if !ioSpecs.HasParameter(p, d) {
-					return nil,
-						errs.New(
-							errs.M("there is no %s parameter %q",
-								d, p.Name()),
-							errs.C(errorClass, errs.InvalidParameter))
-				}
-
-				if err := s.Set.AddParameter(p, s.Type); err != nil {
-					return nil, err
-				}
+			if err := addSetParams(ioSpecs, d, s); err != nil {
+				return nil, err
 			}
 
 			// add set to IOSpecs
-			if err := ioSpecs.AddSet(s.Set, d); err != nil {
+			if err := ioSpecs.AddSet(s.set, d); err != nil {
 				return nil, err
 			}
 		}
 	}
 
 	return ioSpecs, nil
+}
+
+func addSetParams(
+	ioSpecs *data.InputOutputSpecification,
+	d data.Direction,
+	s *setDef,
+) error {
+	for _, p := range s.params {
+		if !ioSpecs.HasParameter(p, d) {
+			if err := ioSpecs.AddParameter(p, d); err != nil {
+				return errs.New(
+					errs.M("couldn't add set's parameter"),
+					errs.E(err),
+					errs.D("set_name", s.set.Name()),
+					errs.D("param_name", p.Name()),
+					errs.D("param_direction", string(d)))
+			}
+		}
+
+		if err := s.set.AddParameter(p, s.setType); err != nil {
+			return errs.New(
+				errs.M("couldn't add parameter to set"),
+				errs.E(err),
+				errs.D("set_name", s.set.Name()),
+				errs.D("param_name", p.Name()),
+				errs.D("param_direction", string(d)))
+		}
+	}
+
+	return nil
 }
 
 // WithCompensation sets isForCompensation Activity flag to true.
@@ -198,63 +241,18 @@ func WithCompletionQuantity(qty int) activityOption {
 	return activityOption(f)
 }
 
-// WithParameters adds non-nil unique parameters to the Activity.
-func WithParameter(p *data.Parameter, d data.Direction) activityOption {
-	f := func(cfg *activityConfig) error {
-		if p == nil {
-			return nil
-		}
-
-		if err := d.Validate(); err != nil {
-			return errs.New(
-				errs.E(err),
-				errs.M("parameter %q has invalid type (%q)",
-					p.Name(), d),
-				errs.C(errorClass))
-		}
-
-		params, ok := cfg.parameters[d]
-		if !ok {
-			cfg.parameters[d] = []*data.Parameter{p}
-
-			return nil
-		}
-
-		// check for duplication
-		found := false
-		for _, cp := range params {
-			if cp.Id() == p.Id() {
-				found = true
-				break
-			}
-		}
-
-		if !found {
-			cfg.parameters[d] = append(params, p)
-		}
-
-		return nil
-	}
-
-	return activityOption(f)
-}
-
 // WithSets adds non-empty unique Set into the Activity config.
 func WithSet(
-	s *data.Set,
+	name, id string,
 	d data.Direction,
 	st data.SetType,
 	params []*data.Parameter,
 ) activityOption {
 	f := func(cfg *activityConfig) error {
-		if s == nil {
-			return nil
-		}
-
 		if err := d.Validate(); err != nil {
 			return errs.New(
 				errs.M("invalid direction %q for data.Set %q",
-					d, s.Name()),
+					d, name),
 				errs.C(errorClass, errs.InvalidParameter),
 				errs.E(err))
 		}
@@ -262,39 +260,31 @@ func WithSet(
 		if err := st.Validate(data.CombinedTypes); err != nil {
 			return errs.New(
 				errs.M("invalid set type %d for data.Set",
-					st, s.Name()),
+					st, name),
 				errs.C(errorClass, errs.InvalidParameter),
 				errs.E(err))
+		}
+
+		sd, err := newSetDef(name, id, d, st, params)
+		if err != nil {
+			return err
 		}
 
 		// check for duplication
 		tss, ok := cfg.sets[d]
 		if !ok {
-			cfg.sets[d] = []*Set{
-				{
-					Set:    s,
-					Dir:    d,
-					Type:   st,
-					Params: convertNilSlice(params),
-				},
-			}
+			cfg.sets[d] = []*setDef{sd}
 
 			return nil
 		}
 
 		for _, ts := range tss {
-			if ts.Set.Id() == s.Id() {
+			if ts.set.Id() == sd.set.Id() {
 				return nil
 			}
 		}
 
-		cfg.sets[d] = append(tss,
-			&Set{
-				Set:    s,
-				Dir:    d,
-				Type:   st,
-				Params: convertNilSlice(params),
-			})
+		cfg.sets[d] = append(tss, sd)
 
 		return nil
 	}
