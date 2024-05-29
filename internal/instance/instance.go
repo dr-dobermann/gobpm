@@ -105,6 +105,20 @@ func New(
 	parentScope scope.Scope,
 	ep eventproc.EventProducer,
 ) (*Instance, error) {
+	if s == nil {
+		return nil,
+			errs.New(
+				errs.M("nil snapshot"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if ep == nil {
+		return nil,
+			errs.New(
+				errs.M("empty parent event producer"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
 	var err error
 
 	inst := Instance{
@@ -126,15 +140,16 @@ func New(
 	}
 
 	inst.rootScope = scope.RootDataPath
-
 	if parentScope != nil {
-		inst.rootScope, err = parentScope.Root().Append(s.ProcessName)
-		if err != nil {
-			return nil,
-				errs.New(
-					errs.M("couldn't create Instance Scope data path"),
-					errs.E(err))
-		}
+		inst.rootScope = parentScope.Root()
+	}
+
+	inst.rootScope, err = inst.rootScope.Append(s.ProcessName)
+	if err != nil {
+		return nil,
+			errs.New(
+				errs.M("couldn't create Instance Scope data path"),
+				errs.E(err))
 	}
 
 	inst.scopes[inst.rootScope] = map[string]data.Data{}
@@ -170,7 +185,6 @@ func (inst *Instance) updateState(newState State) {
 func (inst *Instance) Run(
 	ctx context.Context,
 	cancel context.CancelFunc,
-	ep eventproc.EventProducer,
 ) error {
 	if ctx == nil {
 		return errs.New(
@@ -186,7 +200,6 @@ func (inst *Instance) Run(
 	}
 
 	inst.m.Lock()
-	inst.eProd = ep
 	inst.ctx = ctx
 	inst.m.Unlock()
 
@@ -519,7 +532,7 @@ func (inst *Instance) RegisterEvents(
 				inst, ed); err != nil {
 				return errs.New(
 					errs.M(
-						"couldn't register event in Thresher"),
+						"couldn't register event in parent EventProducer"),
 					errs.C(errorClass, errs.OperationFailed))
 			}
 		}
@@ -824,4 +837,5 @@ var (
 	_ eventproc.EventProducer  = (*Instance)(nil)
 	_ eventproc.EventProcessor = (*Instance)(nil)
 	_ renv.RuntimeEnvironment  = (*Instance)(nil)
+	_ scope.Scope              = (*Instance)(nil)
 )
