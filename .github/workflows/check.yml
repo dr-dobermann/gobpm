@@ -30,7 +30,7 @@ jobs:
         run: go install github.com/vektra/mockery/v2@v2.43.2
 
       - name: Generate mockery
-        run mockery
+        run: mockery
 
       - name: Test
         run: go test -v -cover ./...
