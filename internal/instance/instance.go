@@ -119,8 +119,6 @@ func New(
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	var err error
-
 	inst := Instance{
 		ID:                  *foundation.NewID(),
 		state:               Ready,
@@ -133,9 +131,27 @@ func New(
 		parentEventProducer: ep,
 	}
 
-	// adds all processes properties into defalut scope
+    if err := inst.loadProperties(parentScope); err != nil {
+        return nil, errs.New(
+            errs.M("couldn't load process'es properties into Instance scope"),
+            errs.E(err),
+            errs.C(errorClass, errs.BulidingFailed),
+            errs.D("process_name", s.ProcessName),
+            errs.D("process_id", s.ProcessId))
+    }
+
+	if err := inst.createTracks(); err != nil {
+		return nil, err
+	}
+
+	return &inst, nil
+}
+
+// loadProperties sets the Instance rootScope name and load process'es 
+// properties into the instance's root Scope.
+func (inst *Instance) loadProperties(parentScope scope.Scope) error {
 	dd := []data.Data{}
-	for _, p := range s.Properties {
+	for _, p := range inst.s.Properties {
 		dd = append(dd, p)
 	}
 
@@ -144,24 +160,22 @@ func New(
 		inst.rootScope = parentScope.Root()
 	}
 
-	inst.rootScope, err = inst.rootScope.Append(s.ProcessName)
+    var err error
+
+	inst.rootScope, err = inst.rootScope.Append(inst.s.ProcessName)
 	if err != nil {
-		return nil,
-			errs.New(
+		return errs.New(
 				errs.M("couldn't create Instance Scope data path"),
 				errs.E(err))
 	}
 
 	inst.scopes[inst.rootScope] = map[string]data.Data{}
 	if err := inst.addData(inst.rootScope, dd...); err != nil {
-		return nil, err
+		return err
 	}
 
-	if err := inst.createTracks(); err != nil {
-		return nil, err
-	}
-
-	return &inst, nil
+    
+    return nil
 }
 
 // State returns current state of the Instance.

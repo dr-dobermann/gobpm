@@ -43,6 +43,7 @@ func TestInstance(t *testing.T) {
 
 	ep := mockeventproc.NewMockEventProducer(t)
 	inst, err := instance.New(s, nil, ep)
+    require.NoError(t, err)
 
 	st := inst.State()
 	require.Equal(t, instance.Ready, st)
