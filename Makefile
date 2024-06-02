@@ -43,5 +43,6 @@ clear:
 
 .PHONY: gen_mock_files
 gen_mock_files:
+	rm -rf .generated/
 	mockery
 	go mod tidy

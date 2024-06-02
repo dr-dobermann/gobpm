@@ -177,6 +177,7 @@ func newTrack(
 						errs.C(errorClass, errs.BulidingFailed))
 			}
 		}
+
 		if len(e.Definitions()) != 0 {
 			t.updateState(TrackWaitForEvent)
 		}
@@ -268,6 +269,10 @@ func (t *track) run(
 			return
 
 		default:
+			if t.stopIt {
+				return
+			}
+
 			if t.inState(TrackWaitForEvent) {
 				continue
 			}

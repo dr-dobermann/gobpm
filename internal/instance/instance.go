@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
@@ -16,6 +18,8 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"golang.org/x/exp/maps"
+
+	"github.com/dr-dobermann/gobpm/pkg/monitor"
 )
 
 const errorClass = "INSTANCE_ERROR"
@@ -97,6 +101,8 @@ type Instance struct {
 	// events are indexed by event definition id.
 	// inner map indexed by track id.
 	events map[string]map[string]*track
+
+	Monitors []monitor.Writer
 }
 
 // New creates a new Instance from the Snapshot s and sets state to Ready.
@@ -131,14 +137,14 @@ func New(
 		parentEventProducer: ep,
 	}
 
-    if err := inst.loadProperties(parentScope); err != nil {
-        return nil, errs.New(
-            errs.M("couldn't load process'es properties into Instance scope"),
-            errs.E(err),
-            errs.C(errorClass, errs.BulidingFailed),
-            errs.D("process_name", s.ProcessName),
-            errs.D("process_id", s.ProcessId))
-    }
+	if err := inst.loadProperties(parentScope); err != nil {
+		return nil, errs.New(
+			errs.M("couldn't load process'es properties into Instance scope"),
+			errs.E(err),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.D("process_name", s.ProcessName),
+			errs.D("process_id", s.ProcessId))
+	}
 
 	if err := inst.createTracks(); err != nil {
 		return nil, err
@@ -147,7 +153,7 @@ func New(
 	return &inst, nil
 }
 
-// loadProperties sets the Instance rootScope name and load process'es 
+// loadProperties sets the Instance rootScope name and load process'es
 // properties into the instance's root Scope.
 func (inst *Instance) loadProperties(parentScope scope.Scope) error {
 	dd := []data.Data{}
@@ -160,13 +166,13 @@ func (inst *Instance) loadProperties(parentScope scope.Scope) error {
 		inst.rootScope = parentScope.Root()
 	}
 
-    var err error
+	var err error
 
 	inst.rootScope, err = inst.rootScope.Append(inst.s.ProcessName)
 	if err != nil {
 		return errs.New(
-				errs.M("couldn't create Instance Scope data path"),
-				errs.E(err))
+			errs.M("couldn't create Instance Scope data path"),
+			errs.E(err))
 	}
 
 	inst.scopes[inst.rootScope] = map[string]data.Data{}
@@ -174,8 +180,7 @@ func (inst *Instance) loadProperties(parentScope scope.Scope) error {
 		return err
 	}
 
-    
-    return nil
+	return nil
 }
 
 // State returns current state of the Instance.
@@ -216,6 +221,16 @@ func (inst *Instance) Run(
 	inst.m.Lock()
 	inst.ctx = ctx
 	inst.m.Unlock()
+
+	inst.show(
+		&monitor.Event{
+			Source: "instance.Run",
+			Type:   "starting",
+			At:     time.Now(),
+			Details: map[string]any{
+				"number_of_tracks": len(inst.tracks),
+			},
+		})
 
 	if err := inst.runTracks(ctx); err != nil {
 		return err
@@ -385,7 +400,8 @@ func (inst *Instance) getData(
 		if err != nil {
 			return nil,
 				errs.New(
-					errs.M("couldn't get upper level for Scope %s:", p.String()),
+					errs.M("couldn't get upper level for Scope %s:",
+						p.String()),
 					errs.E(err))
 		}
 
@@ -450,6 +466,22 @@ func (inst *Instance) tokenConsumed() {
 	}
 }
 
+// show sends an Event ev to all registered monitors.
+func (inst *Instance) show(ev *monitor.Event) {
+	if ev == nil {
+		return
+	}
+
+	ev.Details["instance_id"] = inst.Id()
+
+	for _, m := range inst.Monitors {
+		go func(w monitor.Writer) {
+			w.Write(ev)
+		}(m)
+	}
+}
+
+// TODO: fill the func or remove it's call.
 func (inst *Instance) unregisterEvents() {
 }
 
@@ -479,8 +511,11 @@ func (inst *Instance) ProcessEvent(
 
 	if !ok {
 		return errs.New(
-			errs.M("event definition %q isn't registered for instance %q of process %q(%s)",
-				eDef.Id(), inst.Id(), inst.s.ProcessName, inst.s.ProcessId),
+			errs.M("event definition not registered for instance  of process"),
+			errs.D("event_def_id", eDef.Id()),
+			errs.D("instance_id", inst.Id()),
+			errs.D("process_name", inst.s.ProcessName),
+			errs.D("process_id", inst.s.ProcessId),
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
@@ -517,7 +552,7 @@ func (inst *Instance) RegisterEvents(
 	is := inst.State()
 	if is != Runned {
 		return errs.New(
-			errs.M("instance should be Runned to register events (current state: %s)",
+			errs.M("instance isn't runned (current state: %s)",
 				is),
 			errs.C(errorClass, errs.InvalidState),
 			errs.D("requester_id", proc.Id()))
@@ -579,7 +614,7 @@ func (inst *Instance) UnregisterEvents(
 	if inst.eProd != nil {
 		if err := inst.eProd.UnregisterEvents(ep, eDefIds...); err != nil {
 			return errs.New(
-				errs.M("couldn't unregister an event from instance's event producer"),
+				errs.M("event unregister failed"),
 				errs.C(errorClass, errs.OperationFailed),
 				errs.E(err))
 		}
@@ -682,7 +717,8 @@ func (inst *Instance) GetData(
 		return d, nil
 	}
 
-	if ae, ok := err.(*errs.ApplicationError); !ok || !ae.HasClass(errs.ObjectNotFound) {
+	if ae, ok := err.(*errs.ApplicationError); !ok ||
+		!ae.HasClass(errs.ObjectNotFound) {
 		return nil,
 			errs.New(
 				errs.M("couldn't get Data %q from scoppe %s",
@@ -719,7 +755,8 @@ func (inst *Instance) GetDataById(
 		return d, nil
 	}
 
-	if ae, ok := err.(*errs.ApplicationError); !ok || !ae.HasClass(errs.ObjectNotFound) {
+	if ae, ok := err.(*errs.ApplicationError); !ok ||
+		!ae.HasClass(errs.ObjectNotFound) {
 		return nil,
 			errs.New(
 				errs.M("couldn't get Data #%s from scoppe %s",
@@ -843,13 +880,31 @@ func (inst *Instance) Scope() scope.Scope {
 	return inst
 }
 
+// ------------------- monitor.WriterRegistrator -------------------------------
+
+// RegisterWriter registers single non-nil unique monitoring event writer on the
+// Instance.
+func (inst *Instance) RegisterWriter(m monitor.Writer) {
+	if m == nil {
+		return
+	}
+
+	inst.m.Lock()
+	defer inst.m.Unlock()
+
+	if idx := slices.Index(inst.Monitors, m); idx == -1 {
+		inst.Monitors = append(inst.Monitors, m)
+	}
+}
+
 // -----------------------------------------------------------------------------
 
 // =============================================================================
 // Interfaces check
 var (
-	_ eventproc.EventProducer  = (*Instance)(nil)
-	_ eventproc.EventProcessor = (*Instance)(nil)
-	_ renv.RuntimeEnvironment  = (*Instance)(nil)
-	_ scope.Scope              = (*Instance)(nil)
+	_ eventproc.EventProducer   = (*Instance)(nil)
+	_ eventproc.EventProcessor  = (*Instance)(nil)
+	_ renv.RuntimeEnvironment   = (*Instance)(nil)
+	_ scope.Scope               = (*Instance)(nil)
+	_ monitor.WriterRegistrator = (*Instance)(nil)
 )
