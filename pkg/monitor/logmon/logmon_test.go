@@ -2,6 +2,7 @@ package logmon_test
 
 import (
 	"bytes"
+	"io"
 	"log/slog"
 	"testing"
 	"time"
@@ -27,57 +28,58 @@ func TestLogMon(t *testing.T) {
 			require.Error(t, err)
 		})
 
-	t.Run("text logger",
-		func(t *testing.T) {
-			testBuf := bytes.NewBuffer([]byte{})
-			testLogger := slog.New(
-				slog.NewTextHandler(
-					testBuf,
-					&slog.HandlerOptions{
-						Level: slog.LevelDebug,
-					}))
+	logTests := []struct {
+		name           string
+		handlerBuilder func(io.Writer, *slog.HandlerOptions) slog.Handler
+	}{
+		{
+			name: "text logger",
+			handlerBuilder: func(
+				w io.Writer,
+				opts *slog.HandlerOptions,
+			) slog.Handler {
+				return slog.NewTextHandler(w, opts)
+			},
+		},
+		{
 
-			logBuf := bytes.NewBuffer([]byte{})
-			logger := slog.New(
-				slog.NewTextHandler(logBuf, &slog.HandlerOptions{
-					Level: slog.LevelDebug,
-				}))
+			name: "JSON logger",
+			handlerBuilder: func(
+				w io.Writer, opts *slog.HandlerOptions) slog.Handler {
+				return slog.NewJSONHandler(w, opts)
+			},
+		},
+	}
 
-			lm, err := logmon.New(logger)
-			require.NoError(t, err)
+	for _, tst := range logTests {
+		t.Run(tst.name,
+			func(t *testing.T) {
+				testBuf := bytes.NewBuffer([]byte{})
+				testLogger := slog.New(
+					tst.handlerBuilder(
+						testBuf,
+						&slog.HandlerOptions{
+							Level: slog.LevelDebug}))
 
-			testLogger.Info("MONITORING", "event", &event)
-			lm.Write(&event)
+				logBuf := bytes.NewBuffer([]byte{})
+				logger := slog.New(
+					tst.handlerBuilder(
+						testBuf,
+						&slog.HandlerOptions{
+							Level: slog.LevelDebug}))
 
-			t.Log(string(testBuf.Bytes()))
+				lm, err := logmon.New(logger)
+				require.NoError(t, err)
 
-			require.Equal(t, string(testBuf.Bytes()), string(logBuf.Bytes()))
-		})
+				testLogger.Info("MONITORING", "event", &event)
+				lm.Write(&event)
 
-	t.Run("JSON logger",
-		func(t *testing.T) {
-			testBuf := bytes.NewBuffer([]byte{})
-			testLogger := slog.New(
-				slog.NewJSONHandler(
-					testBuf,
-					&slog.HandlerOptions{
-						Level: slog.LevelDebug,
-					}))
+				t.Log(string(testBuf.Bytes()))
 
-			logBuf := bytes.NewBuffer([]byte{})
-			logger := slog.New(
-				slog.NewJSONHandler(logBuf, &slog.HandlerOptions{
-					Level: slog.LevelDebug,
-				}))
+				require.Equal(t,
+					string(testBuf.Bytes()),
+					string(logBuf.Bytes()))
 
-			lm, err := logmon.New(logger)
-			require.NoError(t, err)
-
-			testLogger.Info("MONITORING", "event", &event)
-			lm.Write(&event)
-
-			t.Log(string(testBuf.Bytes()))
-
-			require.Equal(t, string(testBuf.Bytes()), string(logBuf.Bytes()))
-		})
+			})
+	}
 }

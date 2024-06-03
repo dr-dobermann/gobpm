@@ -137,7 +137,7 @@ func newTrack(
 	if inst == nil {
 		return nil,
 			errs.New(
-				errs.M("empty instance"),
+				errs.M("no instance"),
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
@@ -168,6 +168,8 @@ func newTrack(
 
 	// check if Node is event and it awaits for events
 	if e, ok := start.(flow.EventNode); ok {
+		edCnt := 0
+
 		for _, d := range e.Definitions() {
 			if err := t.instance.RegisterEvents(&t, d); err != nil {
 				return nil,
@@ -176,9 +178,11 @@ func newTrack(
 							start.Name(), start.Id()),
 						errs.C(errorClass, errs.BulidingFailed))
 			}
+
+			edCnt++
 		}
 
-		if len(e.Definitions()) != 0 {
+		if edCnt != 0 {
 			t.updateState(TrackWaitForEvent)
 		}
 	}
@@ -230,6 +234,13 @@ func (t *track) updateState(newState trackState) {
 		}
 	}
 
+	t.instance.show("track.updateState", "",
+		map[string]any{
+			"track_id":  t.Id(),
+			"old_state": t.state,
+			"new_state": newState,
+		})
+
 	t.state = newState
 }
 
@@ -255,6 +266,13 @@ func (t *track) run(
 	ctx context.Context,
 ) {
 	if t.stopIt || !t.inState(TrackReady, TrackWaitForEvent) {
+		t.instance.show("track.run", "finishing",
+			map[string]any{
+				"track_id":    t.Id(),
+				"stop_flag":   t.stopIt,
+				"track_state": t.state,
+			})
+
 		return
 	}
 
@@ -266,10 +284,22 @@ func (t *track) run(
 			t.updateState(TrackCanceled)
 			t.lastErr = ctx.Err()
 
+			t.instance.show("track.run", "cancelled",
+				map[string]any{
+					"track_id":    t.Id(),
+					"stop_flag":   t.stopIt,
+					"track_state": t.state,
+				})
+
 			return
 
 		default:
 			if t.stopIt {
+				t.instance.show("track.run", "stopping",
+					map[string]any{
+						"track_id": t.Id(),
+					})
+
 				return
 			}
 

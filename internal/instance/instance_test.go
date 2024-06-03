@@ -3,8 +3,11 @@ package instance_test
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"os"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
 	"github.com/dr-dobermann/gobpm/internal/instance"
@@ -20,19 +23,20 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
+	"github.com/dr-dobermann/gobpm/pkg/monitor/logmon"
 	"github.com/stretchr/testify/require"
 )
 
 func TestInstIvalidParams(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
-	_, err := instance.New(nil, nil, nil)
+	_, err := instance.New(nil, nil, nil, nil)
 	require.Error(t, err)
 
 	s, err := getSnapshot("invalid_params_test")
 	require.NoError(t, err)
 
-	_, err = instance.New(s, nil, nil)
+	_, err = instance.New(s, nil, nil, nil)
 	require.Error(t, err)
 
 }
@@ -42,8 +46,8 @@ func TestInstance(t *testing.T) {
 	require.NoError(t, err)
 
 	ep := mockeventproc.NewMockEventProducer(t)
-	inst, err := instance.New(s, nil, ep)
-    require.NoError(t, err)
+	inst, err := instance.New(s, nil, ep, nil)
+	require.NoError(t, err)
 
 	st := inst.State()
 	require.Equal(t, instance.Ready, st)
@@ -52,6 +56,32 @@ func TestInstance(t *testing.T) {
 	defer cancel()
 
 	require.NoError(t, inst.Run(ctx, cancel))
+}
+
+func TestMonitoring(t *testing.T) {
+	s, err := getSnapshot("monitoring")
+	require.NoError(t, err)
+
+	ep := mockeventproc.NewMockEventProducer(t)
+
+	logger := slog.New(
+		slog.NewTextHandler(
+			os.Stdout,
+			&slog.HandlerOptions{
+				Level: slog.LevelDebug}))
+	m, err := logmon.New(logger)
+	require.NoError(t, err)
+
+	inst, err := instance.New(s, nil, ep, m)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err = inst.Run(ctx, cancel)
+	require.NoError(t, err)
+
+	time.Sleep(5 * time.Second)
 }
 
 // getSnapshot creates a simple process with user_name property

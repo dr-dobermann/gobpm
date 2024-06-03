@@ -110,6 +110,7 @@ func New(
 	s *snapshot.Snapshot,
 	parentScope scope.Scope,
 	ep eventproc.EventProducer,
+	mon monitor.Writer,
 ) (*Instance, error) {
 	if s == nil {
 		return nil,
@@ -135,6 +136,11 @@ func New(
 		events:              map[string]map[string]*track{},
 		parentScope:         parentScope,
 		parentEventProducer: ep,
+		Monitors:            []monitor.Writer{},
+	}
+
+	if mon != nil {
+		inst.RegisterWriter(mon)
 	}
 
 	if err := inst.loadProperties(parentScope); err != nil {
@@ -180,6 +186,11 @@ func (inst *Instance) loadProperties(parentScope scope.Scope) error {
 		return err
 	}
 
+	inst.show("instance.loadProperties", "loaded",
+		map[string]any{
+			"properties_count": len(dd),
+		})
+
 	return nil
 }
 
@@ -195,6 +206,12 @@ func (inst *Instance) State() State {
 func (inst *Instance) updateState(newState State) {
 	inst.m.Lock()
 	defer inst.m.Unlock()
+
+	inst.show("instance.updateState", "",
+		map[string]any{
+			"old_state": inst.state,
+			"new_state": newState,
+		})
 
 	inst.state = newState
 }
@@ -222,15 +239,9 @@ func (inst *Instance) Run(
 	inst.ctx = ctx
 	inst.m.Unlock()
 
-	inst.show(
-		&monitor.Event{
-			Source: "instance.Run",
-			Type:   "starting",
-			At:     time.Now(),
-			Details: map[string]any{
-				"number_of_tracks": len(inst.tracks),
-			},
-		})
+	inst.show("instance.Run", "starting",
+		map[string]any{
+			"number_of_tracks": len(inst.tracks)})
 
 	if err := inst.runTracks(ctx); err != nil {
 		return err
@@ -467,16 +478,26 @@ func (inst *Instance) tokenConsumed() {
 }
 
 // show sends an Event ev to all registered monitors.
-func (inst *Instance) show(ev *monitor.Event) {
-	if ev == nil {
-		return
+func (inst *Instance) show(
+	src, typ string,
+	details map[string]any,
+) {
+	ev := monitor.Event{
+		Source:  src,
+		Type:    typ,
+		At:      time.Now(),
+		Details: details,
+	}
+
+	if ev.Details == nil {
+		ev.Details = make(map[string]any)
 	}
 
 	ev.Details["instance_id"] = inst.Id()
 
 	for _, m := range inst.Monitors {
 		go func(w monitor.Writer) {
-			w.Write(ev)
+			w.Write(&ev)
 		}(m)
 	}
 }
