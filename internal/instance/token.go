@@ -73,7 +73,7 @@ func (t *token) updateState(newState TokenState) error {
 	t.state = newState
 
 	if t.state == TokenConsumed {
-		t.inst.tokenConsumed()
+		t.inst.tokenConsumed(t)
 	}
 
 	return nil

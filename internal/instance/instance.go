@@ -31,6 +31,7 @@ const (
 	Ready
 	StartingTracks
 	Runned
+	Stopping
 	Paused
 	FinishingTracks
 	Finished
@@ -43,6 +44,7 @@ func (s State) String() string {
 		"Ready",
 		"StartingTracks",
 		"Runned",
+		"Stopping",
 		"Paused",
 		"FinishingTracks",
 		"FInished",
@@ -459,7 +461,7 @@ func (inst *Instance) addToken(t *token) {
 
 // tokenConsumed checks all tokens of the Instance and if there is
 // no alive token, all runned tracks stopped, and Instance execution finished.
-func (inst *Instance) tokenConsumed() {
+func (inst *Instance) tokenConsumed(t *token) {
 	inst.m.Lock()
 	defer inst.m.Unlock()
 
@@ -467,21 +469,31 @@ func (inst *Instance) tokenConsumed() {
 		return
 	}
 
-	n := 0
+	inst.show("INSTANCE.TOKEN", "token consumed",
+		map[string]any{
+			"instance_id": inst.Id(),
+			"track_id":    t.trk.Id(),
+			"token_id":    t.Id(),
+		})
 
-	for _, t := range inst.tokens {
-		if t.state == TokenAlive {
-			n++
-		}
-	}
-
-	if n != 0 {
+	if slices.ContainsFunc(inst.tokens, func(t *token) bool {
+		return t.state == TokenAlive
+	}) {
 		return
 	}
 
-	for _, t := range inst.tracks {
-		t.stop()
-	}
+	inst.show("INSTANCE.TOKEN", "all tokens consumed. stopping tracks...",
+		map[string]any{
+			"instance_id": inst.Id(),
+		})
+
+	inst.state = Stopping
+
+	go func() {
+		for _, t := range inst.tracks {
+			t.stop()
+		}
+	}()
 }
 
 // show sends an Event ev to all registered monitors.
