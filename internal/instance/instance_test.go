@@ -52,10 +52,10 @@ func TestInstance(t *testing.T) {
 	st := inst.State()
 	require.Equal(t, instance.Ready, st)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	require.NoError(t, inst.Run(ctx, cancel))
+	require.NoError(t, inst.Run(ctx))
 }
 
 func TestMonitoring(t *testing.T) {
@@ -77,12 +77,11 @@ func TestMonitoring(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 
-	err = inst.Run(ctx, cancel)
+	err = inst.Run(ctx)
 	require.NoError(t, err)
 
 	time.Sleep(10 * time.Second)
 
-	t.Log("cancelling...")
 	cancel()
 }
 
@@ -165,12 +164,14 @@ func getSnapshot(pname string) (*snapshot.Snapshot, error) {
 		return nil, err
 	}
 
+	// register nodes
 	for _, fe := range []flow.Element{start, task, end} {
 		if err := p.Add(fe); err != nil {
 			return nil, err
 		}
 	}
 
+	// link nodes between each others
 	for _, l := range []struct {
 		src flow.SequenceSource
 		trg flow.SequenceTarget

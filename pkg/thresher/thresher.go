@@ -508,7 +508,7 @@ func (t *Thresher) launchInstance(s *snapshot.Snapshot) error {
 	}
 
 	ctx, cancel := context.WithCancel(t.ctx)
-	if err := inst.Run(ctx, cancel); err != nil {
+	if err := inst.Run(ctx); err != nil {
 		return errs.New(
 			errs.M("inctance %q of process %q failed to run",
 				inst.Id(), s.ProcessId),

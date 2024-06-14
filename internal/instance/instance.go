@@ -222,7 +222,6 @@ func (inst *Instance) updateState(newState State) {
 // cancel function of the context.
 func (inst *Instance) Run(
 	ctx context.Context,
-	cancel context.CancelFunc,
 ) error {
 	if ctx == nil {
 		return errs.New(
@@ -257,38 +256,31 @@ func (inst *Instance) Run(
 		close(grChan)
 	}()
 
-	go func() {
-		select {
-		// wait for context cancelation
-		case <-ctx.Done():
-			inst.show("INSTANCE.RUN", "canceled by context",
-				map[string]any{
-					"instance_id": inst.Id(),
-				})
+	select {
+	// wait for context cancelation
+	case <-ctx.Done():
+		inst.show("INSTANCE.RUN", "canceled by context",
+			map[string]any{
+				"instance_id": inst.Id(),
+			})
 
-			inst.updateState(FinishingTracks)
+		inst.updateState(FinishingTracks)
 
-			inst.wg.Done()
+		inst.wg.Done()
 
-			inst.updateState(Canceled)
+		inst.updateState(Canceled)
 
-		// or all tracks finishing
-		case <-grChan:
-			inst.show("INSTANCE.RUN", "all tracks finished",
-				map[string]any{
-					"instance_id": inst.Id(),
-				})
+	// or all tracks finishing
+	case <-grChan:
+		inst.show("INSTANCE.RUN", "all tracks finished",
+			map[string]any{
+				"instance_id": inst.Id(),
+			})
 
-			inst.updateState(Finished)
-		}
+		inst.updateState(Finished)
+	}
 
-		// run cancel on the end to free resources.
-		// if cancel != nil {
-		// 	cancel()
-		// }
-
-		inst.unregisterEvents()
-	}()
+	inst.unregisterEvents()
 
 	return nil
 }
