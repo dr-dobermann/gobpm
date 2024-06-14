@@ -261,6 +261,11 @@ func (inst *Instance) Run(
 		select {
 		// wait for context cancelation
 		case <-ctx.Done():
+			inst.show("INSTANCE.RUN", "canceled by context",
+				map[string]any{
+					"instance_id": inst.Id(),
+				})
+
 			inst.updateState(FinishingTracks)
 
 			inst.wg.Done()
@@ -269,6 +274,11 @@ func (inst *Instance) Run(
 
 		// or all tracks finishing
 		case <-grChan:
+			inst.show("INSTANCE.RUN", "all tracks finished",
+				map[string]any{
+					"instance_id": inst.Id(),
+				})
+
 			inst.updateState(Finished)
 		}
 
