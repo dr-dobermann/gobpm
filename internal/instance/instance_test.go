@@ -75,13 +75,15 @@ func TestMonitoring(t *testing.T) {
 	inst, err := instance.New(s, nil, ep, m)
 	require.NoError(t, err)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 
 	err = inst.Run(ctx, cancel)
 	require.NoError(t, err)
 
-	time.Sleep(5 * time.Second)
+	time.Sleep(10 * time.Second)
+
+	t.Log("cancelling...")
+	cancel()
 }
 
 // getSnapshot creates a simple process with user_name property

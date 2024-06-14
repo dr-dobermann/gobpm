@@ -186,7 +186,7 @@ func (inst *Instance) loadProperties(parentScope scope.Scope) error {
 		return err
 	}
 
-	inst.show("instance.loadProperties", "loaded",
+	inst.show("INSTANCE.INIT", "instance.loadProperties",
 		map[string]any{
 			"properties_count": len(dd),
 		})
@@ -207,7 +207,7 @@ func (inst *Instance) updateState(newState State) {
 	inst.m.Lock()
 	defer inst.m.Unlock()
 
-	inst.show("instance.updateState", "",
+	inst.show("INSTANCE.UPDATE", "state updated",
 		map[string]any{
 			"old_state": inst.state,
 			"new_state": newState,
@@ -239,7 +239,7 @@ func (inst *Instance) Run(
 	inst.ctx = ctx
 	inst.m.Unlock()
 
-	inst.show("instance.Run", "starting",
+	inst.show("INSTANCE.RUN", "running tracks",
 		map[string]any{
 			"number_of_tracks": len(inst.tracks)})
 
@@ -271,9 +271,9 @@ func (inst *Instance) Run(
 		}
 
 		// run cancel on the end to free resources.
-		if cancel != nil {
-			cancel()
-		}
+		// if cancel != nil {
+		// 	cancel()
+		// }
 
 		inst.unregisterEvents()
 	}()
@@ -448,6 +448,13 @@ func (inst *Instance) addToken(t *token) {
 	defer inst.m.Unlock()
 
 	inst.tokens = append(inst.tokens, t)
+
+	inst.show("INSTANCE.TOKEN", "token registered",
+		map[string]any{
+			"track_id":    t.trk.Id(),
+			"instance_id": inst.Id(),
+			"token_state": t.state,
+		})
 }
 
 // tokenConsumed checks all tokens of the Instance and if there is

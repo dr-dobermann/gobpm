@@ -234,7 +234,7 @@ func (t *track) updateState(newState trackState) {
 		}
 	}
 
-	t.instance.show("track.updateState", "",
+	t.instance.show("TRACK.STATE", "state updated",
 		map[string]any{
 			"track_id":  t.Id(),
 			"old_state": t.state,
@@ -266,7 +266,7 @@ func (t *track) run(
 	ctx context.Context,
 ) {
 	if t.stopIt || !t.inState(TrackReady, TrackWaitForEvent) {
-		t.instance.show("track.run", "finishing",
+		t.instance.show("TRACK.RUN", "finished",
 			map[string]any{
 				"track_id":    t.Id(),
 				"stop_flag":   t.stopIt,
@@ -279,12 +279,20 @@ func (t *track) run(
 	t.ctx = ctx
 
 	for {
+		t.instance.show("TRACK.RUN", "running",
+			map[string]any{
+				"track_id":    t.Id(),
+				"stop_flag":   t.stopIt,
+				"track_state": t.state,
+				"step_state":  t.currentStep().state,
+			})
+
 		select {
 		case <-ctx.Done():
 			t.updateState(TrackCanceled)
 			t.lastErr = ctx.Err()
 
-			t.instance.show("track.run", "cancelled",
+			t.instance.show("TRACK.RUN", "cancelled",
 				map[string]any{
 					"track_id":    t.Id(),
 					"stop_flag":   t.stopIt,
@@ -295,7 +303,7 @@ func (t *track) run(
 
 		default:
 			if t.stopIt {
-				t.instance.show("track.run", "stopping",
+				t.instance.show("TRACK.RUN", "stopped",
 					map[string]any{
 						"track_id": t.Id(),
 					})
@@ -384,8 +392,20 @@ func (t *track) executeNode(
 
 	nexts, err := ne.Exec(ctx, t.instance)
 	if err != nil {
+		t.instance.show("TRACK.RUN", "node execution failed",
+			map[string]any{
+				"track_id": t.Id(),
+				"error":    err.Error(),
+			})
+
 		return nil, err
 	}
+
+	t.instance.show("TRACK.RUN", "node execution succes",
+		map[string]any{
+			"track_id":       t.Id(),
+			"outgoing_flows": len(nexts),
+		})
 
 	if err := t.runNodeEpilogue(ctx, step.node); err != nil {
 		return nil, err
@@ -464,14 +484,24 @@ func (t *track) checkFlows(ctx context.Context, flows []*flow.SequenceFlow) erro
 func (t *track) runNodePrologue(ctx context.Context, n flow.Node) error {
 	np, ok := n.(exec.NodePrologue)
 	if !ok {
+		t.instance.show("TRACK.RUN", "no prologue",
+			map[string]any{"track_id": t.Id()})
+
 		return nil
 	}
 
 	t.currentStep().state = StepPrologued
 
 	if err := np.Prologue(ctx, t.instance); err != nil {
+		t.instance.show("TRACK.RUN", "prologue failed",
+			map[string]any{"track_id": t.Id(),
+				"error": err.Error()})
+
 		return err
 	}
+
+	t.instance.show("TRACK.RUN", "prologue finished",
+		map[string]any{"track_id": t.Id()})
 
 	return nil
 }
@@ -480,14 +510,24 @@ func (t *track) runNodePrologue(ctx context.Context, n flow.Node) error {
 func (t *track) runNodeEpilogue(ctx context.Context, n flow.Node) error {
 	ne, ok := n.(exec.NodeEpliogue)
 	if !ok {
+		t.instance.show("TRACK.RUN", "no epilogue",
+			map[string]any{"track_id": t.Id()})
+
 		return nil
 	}
 
 	t.currentStep().state = StepEpilogued
 
 	if err := ne.Epilogue(ctx, t.instance); err != nil {
+		t.instance.show("TRACK.RUN", "epilogue failed",
+			map[string]any{"track_id": t.Id(),
+				"error": err.Error()})
+
 		return err
 	}
+
+	t.instance.show("TRACK.RUN", "epilogue finished",
+		map[string]any{"track_id": t.Id()})
 
 	return nil
 }
