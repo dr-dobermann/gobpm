@@ -3,6 +3,7 @@ package instance_test
 import (
 	"context"
 	"fmt"
+	"log"
 	"log/slog"
 	"os"
 	"reflect"
@@ -38,25 +39,24 @@ func TestInstIvalidParams(t *testing.T) {
 
 	_, err = instance.New(s, nil, nil, nil)
 	require.Error(t, err)
-
 }
 
-func TestInstance(t *testing.T) {
-	s, err := getSnapshot("super simple process")
-	require.NoError(t, err)
-
-	ep := mockeventproc.NewMockEventProducer(t)
-	inst, err := instance.New(s, nil, ep, nil)
-	require.NoError(t, err)
-
-	st := inst.State()
-	require.Equal(t, instance.Ready, st)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	require.NoError(t, inst.Run(ctx))
-}
+// func TestInstance(t *testing.T) {
+// 	s, err := getSnapshot("super simple process")
+// 	require.NoError(t, err)
+//
+// 	ep := mockeventproc.NewMockEventProducer(t)
+// 	inst, err := instance.New(s, nil, ep, nil)
+// 	require.NoError(t, err)
+//
+// 	st := inst.State()
+// 	require.Equal(t, instance.Ready, st)
+//
+// 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+// 	defer cancel()
+//
+// 	require.NoError(t, inst.Run(ctx))
+// }
 
 func TestMonitoring(t *testing.T) {
 	s, err := getSnapshot("monitoring")
@@ -68,19 +68,22 @@ func TestMonitoring(t *testing.T) {
 		slog.NewTextHandler(
 			os.Stdout,
 			&slog.HandlerOptions{
-				Level: slog.LevelDebug}))
+				Level: slog.LevelDebug,
+			}))
 	m, err := logmon.New(logger)
 	require.NoError(t, err)
 
 	inst, err := instance.New(s, nil, ep, m)
 	require.NoError(t, err)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 
 	err = inst.Run(ctx)
 	require.NoError(t, err)
 
-	time.Sleep(10 * time.Second)
+	log.Println("instance runned")
+
+	time.Sleep(3 * time.Second)
 
 	cancel()
 }

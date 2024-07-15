@@ -33,6 +33,7 @@ package instance
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
@@ -61,6 +62,20 @@ const (
 	TrackCanceled
 	TrackFailed
 )
+
+func (t trackState) String() string {
+	return []string{
+		"TrackCreated",
+		"TrackReady",
+		"TrackExecutingStep",
+		"TrackProcessStepResults",
+		"TrackWaitForEvent",
+		"TrackMerged",
+		"TrackEnded",
+		"TrackCanceled",
+		"TrackFailed",
+	}[t]
+}
 
 // stepState describes the state of the single tack step currently executing
 // or previously executed.
@@ -193,10 +208,11 @@ func newTrack(
 // inState checks if track state is equal to any track state from the ss.
 func (t *track) inState(ss ...trackState) bool {
 	t.m.Lock()
-	defer t.m.Unlock()
+	state := t.state
+	t.m.Unlock()
 
 	for _, s := range ss {
-		if t.state == s {
+		if state == s {
 			return true
 		}
 	}
@@ -208,40 +224,53 @@ func (t *track) inState(ss ...trackState) bool {
 // If track has a token, its state will be updated accordingly.
 func (t *track) updateState(newState trackState) {
 	t.m.Lock()
-	defer t.m.Unlock()
+	state := t.state
+	step := t.steps[len(t.steps)-1]
+	t.m.Unlock()
+
+	if state == newState {
+		return
+	}
 
 	ts := TokenInvalid
 
-	switch {
-	case newState == TrackReady ||
-		newState == TrackExecutingStep:
+	switch newState {
+	case TrackReady, TrackExecutingStep:
 		ts = TokenAlive
 
-	case newState == TrackWaitForEvent:
+	case TrackWaitForEvent:
 		ts = TokenWaitForEvent
 
-	case newState == TrackFailed ||
-		newState == TrackEnded ||
-		newState == TrackCanceled:
+	case TrackFailed, TrackEnded, TrackCanceled:
 		ts = TokenConsumed
 	}
 
-	if t.currentStep().tk != nil {
-		if err := t.currentStep().tk.updateState(ts); err != nil {
+	if step.tk != nil {
+		if err := step.tk.updateState(ts); err != nil {
 			errs.Panic(err)
 
 			return
 		}
 	}
 
-	t.instance.show("TRACK.STATE", "state updated",
+	errMsg := "<no error>"
+	if t.lastErr != nil {
+		errMsg = t.lastErr.Error()
+	}
+
+	t.instance.show("TRACK.UPDATE", "state updated",
 		map[string]any{
-			"track_id":  t.Id(),
-			"old_state": t.state,
-			"new_state": newState,
+			"track_id":   t.Id(),
+			"old_state":  state.String(),
+			"new_state":  newState.String(),
+			"step_state": step.state.String(),
+			"node":       step.node.Name(),
+			"error":      errMsg,
 		})
 
+	t.m.Lock()
 	t.state = newState
+	t.m.Unlock()
 }
 
 // currentStep returns current step of the track.
@@ -266,11 +295,11 @@ func (t *track) run(
 	ctx context.Context,
 ) {
 	if t.stopIt || !t.inState(TrackReady, TrackWaitForEvent) {
-		t.instance.show("TRACK.RUN", "finished",
+		t.instance.show("TRACK.FAILED", "not in runnable state",
 			map[string]any{
 				"track_id":    t.Id(),
 				"stop_flag":   t.stopIt,
-				"track_state": t.state,
+				"track_state": t.state.String(),
 			})
 
 		return
@@ -279,34 +308,18 @@ func (t *track) run(
 	t.ctx = ctx
 
 	for {
-		t.instance.show("TRACK.RUN", "running",
-			map[string]any{
-				"track_id":    t.Id(),
-				"stop_flag":   t.stopIt,
-				"track_state": t.state,
-				"step_state":  t.currentStep().state,
-			})
+		step := t.currentStep()
 
 		select {
 		case <-ctx.Done():
 			t.updateState(TrackCanceled)
 			t.lastErr = ctx.Err()
 
-			t.instance.show("TRACK.RUN", "cancelled",
-				map[string]any{
-					"track_id":    t.Id(),
-					"stop_flag":   t.stopIt,
-					"track_state": t.state,
-				})
-
 			return
 
 		default:
 			if t.stopIt {
-				t.instance.show("TRACK.RUN", "stopped",
-					map[string]any{
-						"track_id": t.Id(),
-					})
+				t.updateState(TrackCanceled)
 
 				return
 			}
@@ -317,7 +330,6 @@ func (t *track) run(
 		}
 
 		// while there is a step to take
-		step := t.currentStep()
 		if step.state != StepCreated {
 			// if the last step is finished
 			// stop track running, inactivate token and return
@@ -333,6 +345,8 @@ func (t *track) run(
 
 			return
 		}
+
+		fmt.Println("node executed: ", step.node.Name(), "\noutgoing flows: ", len(nextFlows))
 
 		err = t.checkFlows(ctx, nextFlows)
 		if err != nil {
@@ -359,10 +373,12 @@ func (t *track) executeNode(
 				errs.C(errorClass, errs.TypeCastingError))
 	}
 
-	// create a new token if track doesn't have
+	// create a new token if track doesn't have yet
 	if step.tk == nil {
 		step.tk = newToken(t.instance, t)
 	}
+
+	fmt.Println("node executing: ", step.node.Name())
 
 	t.updateState(TrackExecutingStep)
 
@@ -371,6 +387,8 @@ func (t *track) executeNode(
 	if err := t.loadData(ctx, step.node); err != nil {
 		return nil, err
 	}
+
+	fmt.Println("node data loaded")
 
 	ndl, ok := step.node.(scope.NodeDataLoader)
 	if ok {
@@ -384,22 +402,22 @@ func (t *track) executeNode(
 		}()
 	}
 
+	fmt.Println("data scope extended")
+
 	if err := t.runNodePrologue(ctx, step.node); err != nil {
 		return nil, err
 	}
+
+	fmt.Println("prologue passed")
 
 	step.state = StepExecuting
 
 	nexts, err := ne.Exec(ctx, t.instance)
 	if err != nil {
-		t.instance.show("TRACK.RUN", "node execution failed",
-			map[string]any{
-				"track_id": t.Id(),
-				"error":    err.Error(),
-			})
-
 		return nil, err
 	}
+
+	fmt.Println("execution passed")
 
 	t.instance.show("TRACK.RUN", "node execution succes",
 		map[string]any{
@@ -411,11 +429,15 @@ func (t *track) executeNode(
 		return nil, err
 	}
 
+	fmt.Println("epilogue passed")
+
 	step.state = StepEnded
 
 	if err := t.uploadData(ctx, step.node); err != nil {
 		return nil, err
 	}
+
+	fmt.Println("node data uploaded")
 
 	return nexts, nil
 }
@@ -494,8 +516,10 @@ func (t *track) runNodePrologue(ctx context.Context, n flow.Node) error {
 
 	if err := np.Prologue(ctx, t.instance); err != nil {
 		t.instance.show("TRACK.RUN", "prologue failed",
-			map[string]any{"track_id": t.Id(),
-				"error": err.Error()})
+			map[string]any{
+				"track_id": t.Id(),
+				"error":    err.Error(),
+			})
 
 		return err
 	}
@@ -520,8 +544,10 @@ func (t *track) runNodeEpilogue(ctx context.Context, n flow.Node) error {
 
 	if err := ne.Epilogue(ctx, t.instance); err != nil {
 		t.instance.show("TRACK.RUN", "epilogue failed",
-			map[string]any{"track_id": t.Id(),
-				"error": err.Error()})
+			map[string]any{
+				"track_id": t.Id(),
+				"error":    err.Error(),
+			})
 
 		return err
 	}

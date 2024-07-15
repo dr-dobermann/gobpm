@@ -242,7 +242,8 @@ func (inst *Instance) Run(
 
 	inst.show("INSTANCE.RUN", "running tracks",
 		map[string]any{
-			"number_of_tracks": len(inst.tracks)})
+			"number_of_tracks": len(inst.tracks),
+		})
 
 	if err := inst.runTracks(ctx); err != nil {
 		return err
@@ -254,33 +255,35 @@ func (inst *Instance) Run(
 		inst.wg.Wait()
 
 		close(grChan)
-	}()
 
-	select {
-	// wait for context cancelation
-	case <-ctx.Done():
-		inst.show("INSTANCE.RUN", "canceled by context",
-			map[string]any{
-				"instance_id": inst.Id(),
-			})
-
-		inst.updateState(FinishingTracks)
-
-		inst.wg.Done()
-
-		inst.updateState(Canceled)
-
-	// or all tracks finishing
-	case <-grChan:
-		inst.show("INSTANCE.RUN", "all tracks finished",
-			map[string]any{
-				"instance_id": inst.Id(),
-			})
+		inst.unregisterEvents()
 
 		inst.updateState(Finished)
-	}
+	}()
 
-	inst.unregisterEvents()
+	// select {
+	// // wait for context cancelation
+	// case <-ctx.Done():
+	// 	inst.show("INSTANCE.RUN", "canceled by context",
+	// 		map[string]any{
+	// 			"instance_id": inst.Id(),
+	// 		})
+	//
+	// 	inst.updateState(FinishingTracks)
+	//
+	// 	inst.wg.Done()
+	//
+	// 	inst.updateState(Canceled)
+	//
+	// // or all tracks finishing
+	// case <-grChan:
+	// 	inst.show("INSTANCE.RUN", "all tracks finished",
+	// 		map[string]any{
+	// 			"instance_id": inst.Id(),
+	// 		})
+	//
+	// 	inst.updateState(Finished)
+	// }
 
 	return nil
 }
@@ -306,6 +309,14 @@ func (inst *Instance) runTracks(ctx context.Context) error {
 			defer inst.wg.Done()
 
 			t.run(ctx)
+
+			inst.show(
+				"INSTANCE.RUN",
+				"track run finished",
+				map[string]any{
+					"track_id":    t.Id(),
+					"track_state": t.state,
+				})
 		}(t)
 	}
 
