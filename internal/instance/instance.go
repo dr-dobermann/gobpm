@@ -59,7 +59,7 @@ type dataFinder func(data.Data) bool
 type Instance struct {
 	foundation.ID
 
-	m sync.Mutex
+	m sync.RWMutex
 
 	// wg is used to hold track's go-routines tracing.
 	wg sync.WaitGroup
@@ -206,14 +206,14 @@ func (inst *Instance) State() State {
 
 // updateState sets new state for the Instance.
 func (inst *Instance) updateState(newState State) {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
 	inst.show("INSTANCE.UPDATE", "state updated",
 		map[string]any{
 			"old_state": inst.state,
 			"new_state": newState,
 		})
+
+	inst.m.Lock()
+	defer inst.m.Unlock()
 
 	inst.state = newState
 }
@@ -290,10 +290,7 @@ func (inst *Instance) Run(
 
 // runTracks runs all tracks of the instance.
 func (inst *Instance) runTracks(ctx context.Context) error {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
-	if inst.state != Ready {
+	if inst.State() != Ready {
 		return errs.New(
 			errs.M("invalid instance state to run (want: Ready, has: %s)",
 				inst.state),
@@ -302,23 +299,24 @@ func (inst *Instance) runTracks(ctx context.Context) error {
 
 	inst.state = Runned
 
-	for _, t := range inst.tracks {
+	// run only registered tracks, not created by runned tracks forks.
+	tracks := append([]*track{}, maps.Values(inst.tracks)...)
+	for _, t := range tracks {
 		inst.wg.Add(1)
 
 		go func(t *track) {
 			defer inst.wg.Done()
 
 			t.run(ctx)
-
-			inst.show(
-				"INSTANCE.RUN",
-				"track run finished",
-				map[string]any{
-					"track_id":    t.Id(),
-					"track_state": t.state,
-				})
 		}(t)
 	}
+
+	inst.show(
+		"INSTANCE.RUN",
+		"all tracks runned",
+		map[string]any{
+			"tracks": len(tracks),
+		})
 
 	return nil
 }
@@ -382,11 +380,7 @@ func (inst *Instance) createTracks() error {
 
 // addData adds data to scope named path
 func (inst *Instance) addData(path scope.DataPath, dd ...data.Data) error {
-	vv, ok := inst.scopes[path]
-	if !ok {
-		return errs.New(
-			errs.M("couldn't find scope %q to add data", path.String()))
-	}
+	vv := make(map[string]data.Data)
 
 	for _, d := range dd {
 		if d == nil {
@@ -403,7 +397,9 @@ func (inst *Instance) addData(path scope.DataPath, dd ...data.Data) error {
 		vv[dn] = d
 	}
 
+	inst.m.Lock()
 	inst.scopes[path] = vv
+	inst.m.Unlock()
 
 	return nil
 }
@@ -413,9 +409,6 @@ func (inst *Instance) getData(
 	path scope.DataPath,
 	finder dataFinder,
 ) (data.Data, error) {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
 	if err := path.Validate(); err != nil {
 		return nil, err
 	}
@@ -426,12 +419,14 @@ func (inst *Instance) getData(
 		if err != nil {
 			return nil,
 				errs.New(
-					errs.M("couldn't get upper level for Scope %s:",
+					errs.M("couldn't get upper level for Scope %q:",
 						p.String()),
 					errs.E(err))
 		}
 
+		inst.m.Lock()
 		s, ok := inst.scopes[p]
+		inst.m.Unlock()
 		if !ok {
 			continue
 		}
@@ -460,9 +455,8 @@ func (inst *Instance) addToken(t *token) {
 	}
 
 	inst.m.Lock()
-	defer inst.m.Unlock()
-
 	inst.tokens = append(inst.tokens, t)
+	inst.m.Unlock()
 
 	inst.show("INSTANCE.TOKEN", "token registered",
 		map[string]any{
@@ -489,17 +483,22 @@ func (inst *Instance) tokenConsumed(t *token) {
 			"token_id":    t.Id(),
 		})
 
-	if slices.ContainsFunc(inst.tokens, func(t *token) bool {
-		return t.state == TokenAlive
-	}) {
+	// check if there is any alive token. If any, then return.
+	if slices.ContainsFunc(
+		inst.tokens,
+		func(t *token) bool {
+			return t.state == TokenAlive
+		},
+	) {
 		return
 	}
 
-	inst.show("INSTANCE.TOKEN", "all tokens consumed. stopping tracks...",
+	inst.show("INSTANCE.STOP", "all tokens consumed. stopping tracks...",
 		map[string]any{
 			"instance_id": inst.Id(),
 		})
 
+	// if there is no alive token, stop the instance.
 	inst.state = Stopping
 
 	go func() {
@@ -835,20 +834,11 @@ func (inst *Instance) LoadData(
 	ndl scope.NodeDataLoader,
 	values ...data.Data,
 ) error {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
 	dp, err := inst.rootScope.Append(ndl.Name())
 	if err != nil {
 		return errs.New(
-			errs.M("couldn't get data path for node %q", ndl.Name()),
+			errs.M("couldn't create data path for node %q", ndl.Name()),
 			errs.E(err))
-	}
-
-	if _, ok := inst.scopes[dp]; !ok {
-		return errs.New(
-			errs.M("couldn't find scope for node %q (run ExtendScope first)",
-				ndl.Name()))
 	}
 
 	return inst.addData(dp, values...)
@@ -859,9 +849,6 @@ func (inst *Instance) LoadData(
 func (inst *Instance) ExtendScope(
 	ndl scope.NodeDataLoader,
 ) error {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
 	dp, err := inst.rootScope.Append(ndl.Name())
 	if err != nil {
 		return errs.New(
@@ -869,12 +856,18 @@ func (inst *Instance) ExtendScope(
 			errs.E(err))
 	}
 
-	if _, ok := inst.scopes[dp]; ok {
+	inst.m.RLock()
+	_, found := inst.scopes[dp]
+	inst.m.RUnlock()
+
+	if found {
 		return errs.New(
 			errs.M("scope %q already existed", dp.String()))
 	}
 
+	inst.m.Lock()
 	inst.scopes[dp] = make(map[string]data.Data)
+	inst.m.Unlock()
 
 	if err := ndl.RegisterData(dp, inst); err != nil {
 		return errs.New(

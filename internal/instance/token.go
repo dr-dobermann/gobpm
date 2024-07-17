@@ -1,9 +1,6 @@
 package instance
 
 import (
-	"strconv"
-	"sync"
-
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
@@ -29,8 +26,6 @@ func (ts TokenState) Validate() error {
 
 type token struct {
 	foundation.ID
-
-	m sync.Mutex
 
 	inst  *Instance
 	trk   *track
@@ -67,9 +62,6 @@ func (t *token) updateState(newState TokenState) error {
 		return err
 	}
 
-	t.m.Lock()
-	defer t.m.Unlock()
-
 	t.state = newState
 
 	if t.state == TokenConsumed {
@@ -82,13 +74,6 @@ func (t *token) updateState(newState TokenState) error {
 // split creates a new splitCount tokens from the t token.
 // the first token is the token t
 func (t *token) split(splitCount int) []*token {
-	if splitCount < 2 {
-		errs.Panic("invalid number of split tokens [" +
-			strconv.Itoa(splitCount) + "]")
-
-		return nil
-	}
-
 	tt := make([]*token, 0, splitCount)
 
 	tt = append(tt, t)
