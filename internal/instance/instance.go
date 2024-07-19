@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -198,15 +199,15 @@ func (inst *Instance) loadProperties(parentScope scope.Scope) error {
 
 // State returns current state of the Instance.
 func (inst *Instance) State() State {
-	inst.m.Lock()
-	defer inst.m.Unlock()
+	inst.m.RLock()
+	defer inst.m.RUnlock()
 
 	return inst.state
 }
 
 // updateState sets new state for the Instance.
 func (inst *Instance) updateState(newState State) {
-	inst.show("INSTANCE.UPDATE", "state updated",
+	inst.show("INSTANCE.STATE", "state updated",
 		map[string]any{
 			"old_state": inst.state,
 			"new_state": newState,
@@ -290,16 +291,16 @@ func (inst *Instance) Run(
 
 // runTracks runs all tracks of the instance.
 func (inst *Instance) runTracks(ctx context.Context) error {
-	if inst.State() != Ready {
+	if inst.state != Ready {
 		return errs.New(
-			errs.M("invalid instance state to run (want: Ready, has: %s)",
+			errs.M("invalid instance state to run (want: Ready, have: %s)",
 				inst.state),
 			errs.C(errorClass, errs.InvalidState))
 	}
 
 	inst.state = Runned
 
-	// run only registered tracks, not created by runned tracks forks.
+	// run only registered tracks, not created by runned track's forks.
 	tracks := append([]*track{}, maps.Values(inst.tracks)...)
 	for _, t := range tracks {
 		inst.wg.Add(1)
@@ -405,6 +406,8 @@ func (inst *Instance) addData(path scope.DataPath, dd ...data.Data) error {
 }
 
 // getData is looking for data.Data in exec.Scope (Instance).
+// if there is no data in path, then getData looks upper path
+// until it checks instance root path.
 func (inst *Instance) getData(
 	path scope.DataPath,
 	finder dataFinder,
@@ -415,36 +418,37 @@ func (inst *Instance) getData(
 
 	var err error
 
-	for p := path; ; p, err = p.DropTail() {
+	for {
+		// inst.m.Lock()
+		s, ok := inst.scopes[path]
+		// inst.m.Unlock()
+		if ok {
+			for _, d := range s {
+				if finder(d) {
+					return d, nil
+				}
+			}
+		}
+
+		if path == scope.RootDataPath {
+			break
+		}
+
+		fmt.Println("      --- data not found in ", path)
+
+		path, err = path.DropTail()
 		if err != nil {
 			return nil,
 				errs.New(
 					errs.M("couldn't get upper level for Scope %q:",
-						p.String()),
+						path.String()),
 					errs.E(err))
-		}
-
-		inst.m.Lock()
-		s, ok := inst.scopes[p]
-		inst.m.Unlock()
-		if !ok {
-			continue
-		}
-
-		for _, d := range s {
-			if finder(d) {
-				return d, nil
-			}
-		}
-
-		if p == scope.RootDataPath {
-			break
 		}
 	}
 
 	return nil,
 		errs.New(
-			errs.M("not found"),
+			errs.M("data not found"),
 			errs.C(errs.ObjectNotFound))
 }
 
@@ -760,17 +764,14 @@ func (inst *Instance) GetData(
 	path scope.DataPath,
 	name string,
 ) (data.Data, error) {
-	d, err := inst.getData(path,
-		func(d data.Data) bool {
-			return d.Name() == name
-		})
+	fmt.Println("     ??? looking for data \"", name, "\" in ", path)
 
-	if err == nil {
-		return d, nil
+	finder := func(d data.Data) bool {
+		return d.Name() == name
 	}
 
-	if ae, ok := err.(*errs.ApplicationError); !ok ||
-		!ae.HasClass(errs.ObjectNotFound) {
+	d, err := inst.getData(path, finder)
+	if err != nil {
 		return nil,
 			errs.New(
 				errs.M("couldn't get Data %q from scoppe %s",
@@ -778,16 +779,9 @@ func (inst *Instance) GetData(
 				errs.E(err))
 	}
 
-	if inst.parentScope != nil {
-		return inst.parentScope.GetData(
-			inst.parentScope.Root(),
-			name)
-	}
+	fmt.Println("     !!!! found:", d.Value().Get())
 
-	return nil,
-		errs.New(
-			errs.M("data %q isn't found on scope %q", name, path),
-			errs.C(errorClass, errs.ObjectNotFound))
+	return d, nil
 }
 
 // GetDataById tries to find data.Data in the Scope by its ItemDefinition
@@ -798,34 +792,26 @@ func (inst *Instance) GetDataById(
 	path scope.DataPath,
 	id string,
 ) (data.Data, error) {
-	d, err := inst.getData(path,
-		func(d data.Data) bool {
-			return d.Id() == id
-		})
+	fmt.Println("     ??? looking for data #", id, " in ", path)
 
-	if err == nil {
-		return d, nil
+	finder := func(d data.Data) bool {
+		return d.Id() == id
 	}
 
-	if ae, ok := err.(*errs.ApplicationError); !ok ||
-		!ae.HasClass(errs.ObjectNotFound) {
+	d, err := inst.getData(path, finder)
+	if err != nil {
+		fmt.Println("       xxxx not found")
+
 		return nil,
 			errs.New(
-				errs.M("couldn't get Data #%s from scoppe %s",
+				errs.M("couldn't get Data #%s from scope %s",
 					id, inst.Id()),
 				errs.E(err))
 	}
 
-	if inst.parentScope != nil {
-		return inst.parentScope.GetData(
-			inst.parentScope.Root(),
-			id)
-	}
+	fmt.Println("     !!!! found:", d.Value().Get())
 
-	return nil,
-		errs.New(
-			errs.M("data #%s isn't found on scope %q", id, path),
-			errs.C(errorClass, errs.ObjectNotFound))
+	return d, nil
 }
 
 // LoadData loads a data data.Data into the Scope into

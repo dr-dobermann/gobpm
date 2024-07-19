@@ -83,7 +83,7 @@ func TestMonitoring(t *testing.T) {
 
 	log.Println("instance runned")
 
-	time.Sleep(3 * time.Second)
+	time.Sleep(10 * time.Second)
 
 	cancel()
 }

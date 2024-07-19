@@ -1,3 +1,8 @@
+// Track represents a single flow of process.
+// Every process has one or a few entry points (event, nodes with no
+// incoming sequence flow). Those entry points becomes a begin of
+// track.
+//
 // Track starts execution from a start node.
 //
 //   - If node awaits an evenet to continue, then it event definition
@@ -11,6 +16,7 @@
 //     2. If Prologue doesn't return any error, then started node Execute.
 //     If node Execution finished successfully, it returns a list of
 //     outgoing flows.
+//
 //     3. If node supports Epilogue, then Epilogue started.
 //
 // If number of outgouing flows is not zero, then they processed as followed:
@@ -117,7 +123,7 @@ type stepInfo struct {
 type track struct {
 	foundation.ID
 
-	m sync.Mutex
+	m sync.RWMutex
 
 	ctx context.Context
 
@@ -171,14 +177,6 @@ func newTrack(
 
 	if prevTrack != nil {
 		t.prev = append(t.prev, append(prevTrack.prev, prevTrack)...)
-		t.steps[0].tk = prevTrack.currentStep().tk
-
-		if err := t.steps[0].tk.updateState(TokenAlive); err != nil {
-			return nil,
-				errs.New(
-					errs.M("couldn't initialize track token"),
-					errs.E(err))
-		}
 	}
 
 	// check if Node is event and it awaits for events
@@ -207,9 +205,9 @@ func newTrack(
 
 // inState checks if track state is equal to any track state from the ss.
 func (t *track) inState(ss ...trackState) bool {
-	t.m.Lock()
+	t.m.RLock()
 	state := t.state
-	t.m.Unlock()
+	t.m.RUnlock()
 
 	for _, s := range ss {
 		if state == s {
@@ -223,10 +221,10 @@ func (t *track) inState(ss ...trackState) bool {
 // updateState sets new state for the track if its not in final state.
 // If track has a token, its state will be updated accordingly.
 func (t *track) updateState(newState trackState) {
-	t.m.Lock()
+	t.m.RLock()
 	state := t.state
 	step := t.steps[len(t.steps)-1]
-	t.m.Unlock()
+	t.m.RUnlock()
 
 	if state == newState {
 		return
@@ -275,8 +273,8 @@ func (t *track) updateState(newState trackState) {
 
 // currentStep returns current step of the track.
 func (t *track) currentStep() *stepInfo {
-	t.m.Lock()
-	defer t.m.Unlock()
+	t.m.RLock()
+	defer t.m.RUnlock()
 
 	return t.steps[len(t.steps)-1]
 }
@@ -419,9 +417,10 @@ func (t *track) executeNode(
 
 	fmt.Println("execution passed")
 
-	t.instance.show("TRACK.RUN", "node execution succes",
+	t.instance.show("TRACK.RUN", "node executed successfully",
 		map[string]any{
 			"track_id":       t.Id(),
+			"node":           step.node.Name(),
 			"outgoing_flows": len(nexts),
 		})
 
@@ -463,6 +462,8 @@ func (t *track) checkFlows(ctx context.Context, flows []*flow.SequenceFlow) erro
 
 	tokens := t.currentStep().tk.split(len(flows))
 
+	// create a new step for main track and put token from current step
+	// into it.
 	nextStep := stepInfo{
 		node:  flows[nextNode].Target().Node(),
 		state: StepCreated,
@@ -480,6 +481,7 @@ func (t *track) checkFlows(ctx context.Context, flows []*flow.SequenceFlow) erro
 
 	t.steps = append(t.steps, &nextStep)
 
+	// for every new flow create a new track with new tokens.
 	for i, f := range append(flows[:nextNode], flows[nextNode+1:]...) {
 		nt, err := newTrack(f.Target().Node(), t.instance, t)
 		if err != nil {
