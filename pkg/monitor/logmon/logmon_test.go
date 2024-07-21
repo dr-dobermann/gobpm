@@ -16,7 +16,7 @@ func TestLogMon(t *testing.T) {
 	event := monitor.Event{
 		Source: "calendar",
 		Type:   "birth_date",
-		At:     time.Date(1973, 02, 23, 05, 15, 0, 0, time.Local),
+		At:     time.Date(1973, 0o2, 23, 0o5, 15, 0, 0, time.Local),
 		Details: map[string]any{
 			"name": "dr-dobermann",
 		},
@@ -42,10 +42,10 @@ func TestLogMon(t *testing.T) {
 			},
 		},
 		{
-
 			name: "JSON logger",
 			handlerBuilder: func(
-				w io.Writer, opts *slog.HandlerOptions) slog.Handler {
+				w io.Writer, opts *slog.HandlerOptions,
+			) slog.Handler {
 				return slog.NewJSONHandler(w, opts)
 			},
 		},
@@ -59,14 +59,16 @@ func TestLogMon(t *testing.T) {
 					tst.handlerBuilder(
 						testBuf,
 						&slog.HandlerOptions{
-							Level: slog.LevelDebug}))
+							Level: slog.LevelDebug,
+						}))
 
 				logBuf := bytes.NewBuffer([]byte{})
 				logger := slog.New(
 					tst.handlerBuilder(
-						testBuf,
+						logBuf,
 						&slog.HandlerOptions{
-							Level: slog.LevelDebug}))
+							Level: slog.LevelDebug,
+						}))
 
 				lm, err := logmon.New(logger)
 				require.NoError(t, err)
@@ -74,12 +76,12 @@ func TestLogMon(t *testing.T) {
 				testLogger.Info("MONITORING", "event", &event)
 				lm.Write(&event)
 
-				t.Log(string(testBuf.Bytes()))
+				t.Log(testBuf.String())
+				t.Log(logBuf.String())
 
 				require.Equal(t,
-					string(testBuf.Bytes()),
-					string(logBuf.Bytes()))
-
+					testBuf.String(),
+					logBuf.String())
 			})
 	}
 }
