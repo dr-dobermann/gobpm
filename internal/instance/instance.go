@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
@@ -16,6 +19,8 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"golang.org/x/exp/maps"
+
+	"github.com/dr-dobermann/gobpm/pkg/monitor"
 )
 
 const errorClass = "INSTANCE_ERROR"
@@ -27,6 +32,7 @@ const (
 	Ready
 	StartingTracks
 	Runned
+	Stopping
 	Paused
 	FinishingTracks
 	Finished
@@ -39,6 +45,7 @@ func (s State) String() string {
 		"Ready",
 		"StartingTracks",
 		"Runned",
+		"Stopping",
 		"Paused",
 		"FinishingTracks",
 		"FInished",
@@ -53,7 +60,7 @@ type dataFinder func(data.Data) bool
 type Instance struct {
 	foundation.ID
 
-	m sync.Mutex
+	m sync.RWMutex
 
 	// wg is used to hold track's go-routines tracing.
 	wg sync.WaitGroup
@@ -66,6 +73,9 @@ type Instance struct {
 
 	// Instance's runtime context.
 	ctx context.Context
+
+	// monId keeps last monitoring event id.
+	monId atomic.Int64
 
 	// Scopes holds accessible in the moment Data.
 	// first map indexed by data path, the second map indexed by Data name.
@@ -97,6 +107,8 @@ type Instance struct {
 	// events are indexed by event definition id.
 	// inner map indexed by track id.
 	events map[string]map[string]*track
+
+	Monitors []monitor.Writer
 }
 
 // New creates a new Instance from the Snapshot s and sets state to Ready.
@@ -104,8 +116,21 @@ func New(
 	s *snapshot.Snapshot,
 	parentScope scope.Scope,
 	ep eventproc.EventProducer,
+	mon monitor.Writer,
 ) (*Instance, error) {
-	var err error
+	if s == nil {
+		return nil,
+			errs.New(
+				errs.M("nil snapshot"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if ep == nil {
+		return nil,
+			errs.New(
+				errs.M("empty parent event producer"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
 
 	inst := Instance{
 		ID:                  *foundation.NewID(),
@@ -117,29 +142,20 @@ func New(
 		events:              map[string]map[string]*track{},
 		parentScope:         parentScope,
 		parentEventProducer: ep,
+		Monitors:            []monitor.Writer{},
 	}
 
-	// adds all processes properties into defalut scope
-	dd := []data.Data{}
-	for _, p := range s.Properties {
-		dd = append(dd, p)
+	if mon != nil {
+		inst.RegisterWriter(mon)
 	}
 
-	inst.rootScope = scope.RootDataPath
-
-	if parentScope != nil {
-		inst.rootScope, err = parentScope.Root().Append(s.ProcessName)
-		if err != nil {
-			return nil,
-				errs.New(
-					errs.M("couldn't create Instance Scope data path"),
-					errs.E(err))
-		}
-	}
-
-	inst.scopes[inst.rootScope] = map[string]data.Data{}
-	if err := inst.addData(inst.rootScope, dd...); err != nil {
-		return nil, err
+	if err := inst.loadProperties(parentScope); err != nil {
+		return nil, errs.New(
+			errs.M("couldn't load process'es properties into Instance scope"),
+			errs.E(err),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.D("process_name", s.ProcessName),
+			errs.D("process_id", s.ProcessId))
 	}
 
 	if err := inst.createTracks(); err != nil {
@@ -149,16 +165,57 @@ func New(
 	return &inst, nil
 }
 
+// loadProperties sets the Instance rootScope name and load process'es
+// properties into the instance's root Scope.
+func (inst *Instance) loadProperties(parentScope scope.Scope) error {
+	dd := []data.Data{}
+	for _, p := range inst.s.Properties {
+		dd = append(dd, p)
+	}
+
+	inst.rootScope = scope.RootDataPath
+	if parentScope != nil {
+		inst.rootScope = parentScope.Root()
+	}
+
+	var err error
+
+	inst.rootScope, err = inst.rootScope.Append(inst.s.ProcessName)
+	if err != nil {
+		return errs.New(
+			errs.M("couldn't create Instance Scope data path"),
+			errs.E(err))
+	}
+
+	inst.scopes[inst.rootScope] = map[string]data.Data{}
+	if err := inst.addData(inst.rootScope, dd...); err != nil {
+		return err
+	}
+
+	inst.show("INSTANCE.INIT", "instance.loadProperties",
+		map[string]any{
+			"properties_count": len(dd),
+		})
+
+	return nil
+}
+
 // State returns current state of the Instance.
 func (inst *Instance) State() State {
-	inst.m.Lock()
-	defer inst.m.Unlock()
+	inst.m.RLock()
+	defer inst.m.RUnlock()
 
 	return inst.state
 }
 
 // updateState sets new state for the Instance.
 func (inst *Instance) updateState(newState State) {
+	inst.show("INSTANCE.STATE", "state updated",
+		map[string]any{
+			"old_state": inst.state,
+			"new_state": newState,
+		})
+
 	inst.m.Lock()
 	defer inst.m.Unlock()
 
@@ -169,8 +226,6 @@ func (inst *Instance) updateState(newState State) {
 // cancel function of the context.
 func (inst *Instance) Run(
 	ctx context.Context,
-	cancel context.CancelFunc,
-	ep eventproc.EventProducer,
 ) error {
 	if ctx == nil {
 		return errs.New(
@@ -186,9 +241,13 @@ func (inst *Instance) Run(
 	}
 
 	inst.m.Lock()
-	inst.eProd = ep
 	inst.ctx = ctx
 	inst.m.Unlock()
+
+	inst.show("INSTANCE.RUN", "running tracks",
+		map[string]any{
+			"number_of_tracks": len(inst.tracks),
+		})
 
 	if err := inst.runTracks(ctx); err != nil {
 		return err
@@ -200,29 +259,10 @@ func (inst *Instance) Run(
 		inst.wg.Wait()
 
 		close(grChan)
-	}()
-
-	go func() {
-		select {
-		// wait for context cancelation
-		case <-ctx.Done():
-			inst.updateState(FinishingTracks)
-
-			inst.wg.Done()
-
-			inst.updateState(Canceled)
-
-		// or all tracks finishing
-		case <-grChan:
-			inst.updateState(Finished)
-		}
-
-		// run cancel on the end to free resources.
-		if cancel != nil {
-			cancel()
-		}
 
 		inst.unregisterEvents()
+
+		inst.updateState(Finished)
 	}()
 
 	return nil
@@ -230,19 +270,18 @@ func (inst *Instance) Run(
 
 // runTracks runs all tracks of the instance.
 func (inst *Instance) runTracks(ctx context.Context) error {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
 	if inst.state != Ready {
 		return errs.New(
-			errs.M("invalid instance state to run (want: Ready, has: %s)",
+			errs.M("invalid instance state to run (want: Ready, have: %s)",
 				inst.state),
 			errs.C(errorClass, errs.InvalidState))
 	}
 
 	inst.state = Runned
 
-	for _, t := range inst.tracks {
+	// run only registered tracks, not created by runned track's forks.
+	tracks := append([]*track{}, maps.Values(inst.tracks)...)
+	for _, t := range tracks {
 		inst.wg.Add(1)
 
 		go func(t *track) {
@@ -251,6 +290,13 @@ func (inst *Instance) runTracks(ctx context.Context) error {
 			t.run(ctx)
 		}(t)
 	}
+
+	inst.show(
+		"INSTANCE.RUN",
+		"all tracks runned",
+		map[string]any{
+			"tracks": len(tracks),
+		})
 
 	return nil
 }
@@ -314,11 +360,7 @@ func (inst *Instance) createTracks() error {
 
 // addData adds data to scope named path
 func (inst *Instance) addData(path scope.DataPath, dd ...data.Data) error {
-	vv, ok := inst.scopes[path]
-	if !ok {
-		return errs.New(
-			errs.M("couldn't find scope %q to add data", path.String()))
-	}
+	vv := make(map[string]data.Data)
 
 	for _, d := range dd {
 		if d == nil {
@@ -335,52 +377,55 @@ func (inst *Instance) addData(path scope.DataPath, dd ...data.Data) error {
 		vv[dn] = d
 	}
 
+	inst.m.Lock()
 	inst.scopes[path] = vv
+	inst.m.Unlock()
 
 	return nil
 }
 
 // getData is looking for data.Data in exec.Scope (Instance).
+// if there is no data in path, then getData looks upper path
+// until it checks instance root path.
 func (inst *Instance) getData(
 	path scope.DataPath,
 	finder dataFinder,
 ) (data.Data, error) {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
 	if err := path.Validate(); err != nil {
 		return nil, err
 	}
 
 	var err error
 
-	for p := path; ; p, err = p.DropTail() {
-		if err != nil {
-			return nil,
-				errs.New(
-					errs.M("couldn't get upper level for Scope %s:", p.String()),
-					errs.E(err))
-		}
-
-		s, ok := inst.scopes[p]
-		if !ok {
-			continue
-		}
-
-		for _, d := range s {
-			if finder(d) {
-				return d, nil
+	for {
+		// inst.m.Lock()
+		s, ok := inst.scopes[path]
+		// inst.m.Unlock()
+		if ok {
+			for _, d := range s {
+				if finder(d) {
+					return d, nil
+				}
 			}
 		}
 
-		if p == scope.RootDataPath {
+		if path == scope.RootDataPath {
 			break
+		}
+
+		path, err = path.DropTail()
+		if err != nil {
+			return nil,
+				errs.New(
+					errs.M("couldn't get upper level for Scope %q:",
+						path.String()),
+					errs.E(err))
 		}
 	}
 
 	return nil,
 		errs.New(
-			errs.M("not found"),
+			errs.M("data not found"),
 			errs.C(errs.ObjectNotFound))
 }
 
@@ -391,14 +436,20 @@ func (inst *Instance) addToken(t *token) {
 	}
 
 	inst.m.Lock()
-	defer inst.m.Unlock()
-
 	inst.tokens = append(inst.tokens, t)
+	inst.m.Unlock()
+
+	inst.show("INSTANCE.TOKEN", "token registered",
+		map[string]any{
+			"track_id":    t.trk.Id(),
+			"instance_id": inst.Id(),
+			"token_state": t.state,
+		})
 }
 
 // tokenConsumed checks all tokens of the Instance and if there is
 // no alive token, all runned tracks stopped, and Instance execution finished.
-func (inst *Instance) tokenConsumed() {
+func (inst *Instance) tokenConsumed(t *token) {
 	inst.m.Lock()
 	defer inst.m.Unlock()
 
@@ -406,23 +457,67 @@ func (inst *Instance) tokenConsumed() {
 		return
 	}
 
-	n := 0
+	inst.show("INSTANCE.TOKEN", "token consumed",
+		map[string]any{
+			"instance_id": inst.Id(),
+			"track_id":    t.trk.Id(),
+			"token_id":    t.Id(),
+		})
 
-	for _, t := range inst.tokens {
-		if t.state == TokenAlive {
-			n++
-		}
-	}
-
-	if n != 0 {
+	// check if there is any alive token. If any, then return.
+	if slices.ContainsFunc(
+		inst.tokens,
+		func(t *token) bool {
+			return t.state == TokenAlive
+		},
+	) {
 		return
 	}
 
-	for _, t := range inst.tracks {
-		t.stop()
+	inst.show("INSTANCE.STOP", "all tokens consumed. stopping tracks...",
+		map[string]any{
+			"instance_id": inst.Id(),
+		})
+
+	// if there is no alive token, stop the instance.
+	inst.state = Stopping
+
+	go func() {
+		for _, t := range inst.tracks {
+			t.stop()
+		}
+	}()
+}
+
+// show sends an Event ev to all registered monitors.
+func (inst *Instance) show(
+	src, typ string,
+	details map[string]any,
+) {
+	ev := monitor.Event{
+		Source:  src,
+		Type:    typ,
+		At:      time.Now(),
+		Details: details,
+	}
+
+	if ev.Details == nil {
+		ev.Details = make(map[string]any)
+	}
+
+	ev.Details["instance_id"] = inst.Id()
+	ev.Details["counter"] = inst.monId.Load()
+
+	inst.monId.Add(1)
+
+	for _, m := range inst.Monitors {
+		go func(w monitor.Writer) {
+			w.Write(&ev)
+		}(m)
 	}
 }
 
+// TODO: fill the func or remove it's call.
 func (inst *Instance) unregisterEvents() {
 }
 
@@ -452,8 +547,11 @@ func (inst *Instance) ProcessEvent(
 
 	if !ok {
 		return errs.New(
-			errs.M("event definition %q isn't registered for instance %q of process %q(%s)",
-				eDef.Id(), inst.Id(), inst.s.ProcessName, inst.s.ProcessId),
+			errs.M("event definition not registered for instance  of process"),
+			errs.D("event_def_id", eDef.Id()),
+			errs.D("instance_id", inst.Id()),
+			errs.D("process_name", inst.s.ProcessName),
+			errs.D("process_id", inst.s.ProcessId),
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
@@ -490,7 +588,7 @@ func (inst *Instance) RegisterEvents(
 	is := inst.State()
 	if is != Runned {
 		return errs.New(
-			errs.M("instance should be Runned to register events (current state: %s)",
+			errs.M("instance isn't runned (current state: %s)",
 				is),
 			errs.C(errorClass, errs.InvalidState),
 			errs.D("requester_id", proc.Id()))
@@ -519,7 +617,7 @@ func (inst *Instance) RegisterEvents(
 				inst, ed); err != nil {
 				return errs.New(
 					errs.M(
-						"couldn't register event in Thresher"),
+						"couldn't register event in parent EventProducer"),
 					errs.C(errorClass, errs.OperationFailed))
 			}
 		}
@@ -552,7 +650,7 @@ func (inst *Instance) UnregisterEvents(
 	if inst.eProd != nil {
 		if err := inst.eProd.UnregisterEvents(ep, eDefIds...); err != nil {
 			return errs.New(
-				errs.M("couldn't unregister an event from instance's event producer"),
+				errs.M("event unregister failed"),
 				errs.C(errorClass, errs.OperationFailed),
 				errs.E(err))
 		}
@@ -646,16 +744,12 @@ func (inst *Instance) GetData(
 	path scope.DataPath,
 	name string,
 ) (data.Data, error) {
-	d, err := inst.getData(path,
-		func(d data.Data) bool {
-			return d.Name() == name
-		})
-
-	if err == nil {
-		return d, nil
+	finder := func(d data.Data) bool {
+		return d.Name() == name
 	}
 
-	if ae, ok := err.(*errs.ApplicationError); !ok || !ae.HasClass(errs.ObjectNotFound) {
+	d, err := inst.getData(path, finder)
+	if err != nil {
 		return nil,
 			errs.New(
 				errs.M("couldn't get Data %q from scoppe %s",
@@ -663,16 +757,7 @@ func (inst *Instance) GetData(
 				errs.E(err))
 	}
 
-	if inst.parentScope != nil {
-		return inst.parentScope.GetData(
-			inst.parentScope.Root(),
-			name)
-	}
-
-	return nil,
-		errs.New(
-			errs.M("data %q isn't found on scope %q", name, path),
-			errs.C(errorClass, errs.ObjectNotFound))
+	return d, nil
 }
 
 // GetDataById tries to find data.Data in the Scope by its ItemDefinition
@@ -683,33 +768,20 @@ func (inst *Instance) GetDataById(
 	path scope.DataPath,
 	id string,
 ) (data.Data, error) {
-	d, err := inst.getData(path,
-		func(d data.Data) bool {
-			return d.Id() == id
-		})
-
-	if err == nil {
-		return d, nil
+	finder := func(d data.Data) bool {
+		return d.ItemDefinition().Id() == id
 	}
 
-	if ae, ok := err.(*errs.ApplicationError); !ok || !ae.HasClass(errs.ObjectNotFound) {
+	d, err := inst.getData(path, finder)
+	if err != nil {
 		return nil,
 			errs.New(
-				errs.M("couldn't get Data #%s from scoppe %s",
+				errs.M("couldn't get Data #%s from scope %s",
 					id, inst.Id()),
 				errs.E(err))
 	}
 
-	if inst.parentScope != nil {
-		return inst.parentScope.GetData(
-			inst.parentScope.Root(),
-			id)
-	}
-
-	return nil,
-		errs.New(
-			errs.M("data #%s isn't found on scope %q", id, path),
-			errs.C(errorClass, errs.ObjectNotFound))
+	return d, nil
 }
 
 // LoadData loads a data data.Data into the Scope into
@@ -718,20 +790,11 @@ func (inst *Instance) LoadData(
 	ndl scope.NodeDataLoader,
 	values ...data.Data,
 ) error {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
 	dp, err := inst.rootScope.Append(ndl.Name())
 	if err != nil {
 		return errs.New(
-			errs.M("couldn't get data path for node %q", ndl.Name()),
+			errs.M("couldn't create data path for node %q", ndl.Name()),
 			errs.E(err))
-	}
-
-	if _, ok := inst.scopes[dp]; !ok {
-		return errs.New(
-			errs.M("couldn't find scope for node %q (run ExtendScope first)",
-				ndl.Name()))
 	}
 
 	return inst.addData(dp, values...)
@@ -742,9 +805,6 @@ func (inst *Instance) LoadData(
 func (inst *Instance) ExtendScope(
 	ndl scope.NodeDataLoader,
 ) error {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
 	dp, err := inst.rootScope.Append(ndl.Name())
 	if err != nil {
 		return errs.New(
@@ -752,12 +812,18 @@ func (inst *Instance) ExtendScope(
 			errs.E(err))
 	}
 
-	if _, ok := inst.scopes[dp]; ok {
+	inst.m.RLock()
+	_, found := inst.scopes[dp]
+	inst.m.RUnlock()
+
+	if found {
 		return errs.New(
 			errs.M("scope %q already existed", dp.String()))
 	}
 
+	inst.m.Lock()
 	inst.scopes[dp] = make(map[string]data.Data)
+	inst.m.Unlock()
 
 	if err := ndl.RegisterData(dp, inst); err != nil {
 		return errs.New(
@@ -770,9 +836,6 @@ func (inst *Instance) ExtendScope(
 
 // LeaveScope calls the Scope to clear all data saved by NodeDataLoader.
 func (inst *Instance) LeaveScope(ndl scope.NodeDataLoader) error {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
 	if ndl == nil {
 		return errs.New(
 			errs.M("no NodeDataLoader"))
@@ -786,6 +849,8 @@ func (inst *Instance) LeaveScope(ndl scope.NodeDataLoader) error {
 			errs.E(err))
 	}
 
+	inst.m.Lock()
+	defer inst.m.Unlock()
 	vv, ok := inst.scopes[dp]
 	if !ok {
 		return nil
@@ -795,6 +860,8 @@ func (inst *Instance) LeaveScope(ndl scope.NodeDataLoader) error {
 	for _, v := range vnn {
 		delete(inst.scopes[dp], v)
 	}
+
+	delete(inst.scopes, dp)
 
 	return nil
 }
@@ -816,12 +883,31 @@ func (inst *Instance) Scope() scope.Scope {
 	return inst
 }
 
+// ------------------- monitor.WriterRegistrator -------------------------------
+
+// RegisterWriter registers single non-nil unique monitoring event writer on the
+// Instance.
+func (inst *Instance) RegisterWriter(m monitor.Writer) {
+	if m == nil {
+		return
+	}
+
+	inst.m.Lock()
+	defer inst.m.Unlock()
+
+	if idx := slices.Index(inst.Monitors, m); idx == -1 {
+		inst.Monitors = append(inst.Monitors, m)
+	}
+}
+
 // -----------------------------------------------------------------------------
 
 // =============================================================================
 // Interfaces check
 var (
-	_ eventproc.EventProducer  = (*Instance)(nil)
-	_ eventproc.EventProcessor = (*Instance)(nil)
-	_ renv.RuntimeEnvironment  = (*Instance)(nil)
+	_ eventproc.EventProducer   = (*Instance)(nil)
+	_ eventproc.EventProcessor  = (*Instance)(nil)
+	_ renv.RuntimeEnvironment   = (*Instance)(nil)
+	_ scope.Scope               = (*Instance)(nil)
+	_ monitor.WriterRegistrator = (*Instance)(nil)
 )

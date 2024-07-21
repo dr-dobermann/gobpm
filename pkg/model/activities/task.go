@@ -48,7 +48,8 @@ func NewTask(
 
 	return &Task{
 			Activity:      *a,
-			multyInstance: bool(mInst)},
+			multyInstance: bool(mInst),
+		},
 		err
 }
 
@@ -73,6 +74,7 @@ func (t *Task) LoadData(_ context.Context) error {
 		return errs.New(
 			errs.M("couldn't get task inputs"),
 			errs.C(errorClass, errs.ObjectNotFound),
+			errs.D("task_name", t.Name()),
 			errs.E(err))
 	}
 
@@ -86,7 +88,8 @@ func (t *Task) LoadData(_ context.Context) error {
 			return errs.New(
 				errs.M("couldn't find task input for association's %q target %q",
 					ia.Id(), ia.TargetItemDefId()),
-				errs.C(errorClass))
+				errs.C(errorClass),
+				errs.D("task_name", t.Name()))
 		}
 
 		v, err := ia.Value()
@@ -142,7 +145,6 @@ func (t *Task) RegisterData(dp scope.DataPath, s scope.Scope) error {
 // loads all Task's outgoing data associations from Task's outputs.
 func (t *Task) UploadData(_ context.Context, s scope.Scope) error {
 	doo, err := t.updateOutputs(s)
-
 	if err != nil {
 		return errs.New(
 			errs.M("couldn't tt output parameters for task", t.Name(), t.Id()),

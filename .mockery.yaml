@@ -16,3 +16,9 @@ packages:
   github.com/dr-dobermann/gobpm/internal/renv:
     interfaces:
       RuntimeEnvironment:
+  github.com/dr-dobermann/gobpm/internal/eventproc:
+    interfaces:
+      EventProducer:    
+  github.com/dr-dobermann/gobpm/pkg/monitor:
+    interfaces:
+      Writer:

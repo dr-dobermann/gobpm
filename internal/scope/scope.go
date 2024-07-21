@@ -7,9 +7,27 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
-// Scope keeps all variables of the scope and returns its values.
+// All Nodes supports the Node's Data Model.
 //
-//go:generate mockery --name Scope
+// Node's data is used as followed:
+//
+//  1. LoadData loads data from incoming data associations and fills its inputs.
+//
+//  2. Node's data(properties, inputs) are registered in the execution Scope by
+//     Register Data.
+//     The path to the stored data created by external Scope and sends it to
+//     NodeDataLoader for further access to stored data.
+//
+//     ... Execute the Node and fill Node's output parameters with results of
+//     the execution.
+//
+//  3. On success execution all Node's output with not-Ready state are updated
+//     from the Scope and then Node's UploadData is called to fill all outgoing
+//     data associations from Node's outputs.
+//
+//  4. Clears scope from Node's data by LeaveScope call.
+
+// Scope keeps all variables of the scope and returns its values.
 type Scope interface {
 	// Root returns the root dataPath of the Scope.
 	Root() DataPath
@@ -17,7 +35,7 @@ type Scope interface {
 	// Scopes returns list of scopes controlled by Scope.
 	Scopes() []DataPath
 
-	// LoadData loads a data data.Data into the Scope into
+	// LoadData loads data.Data into the Scope on
 	// the NodeDataLoader's DataPath.
 	LoadData(NodeDataLoader, ...data.Data) error
 
@@ -45,38 +63,25 @@ type Scope interface {
 	LeaveScope(NodeDataLoader) error
 }
 
-// NodeDataLoader is implemented by those nodes, which stores data while
-// its execution.
+// NodeDataLoader is implemented by Nodes, which stores data in
+// external Scope before Node execution to make them accessible in Node
+// execution or condiitons checks.
 type NodeDataLoader interface {
-	// Name returns NodeDataLoader name to create a scope name.
+	// NodeDataLoader name is used to create the Node's scope name.
 	flow.Node
 
-	// RegisterData sends all Node Data to the scope.
+	// RegisterData sends all Node Data (properties, inputs) to the Node's
+	// scope.
 	//
-	// DataRegistration is made by Scope.LaodData call.
-	// DataPath is the path of the NodeDataLoader in the Scope. It could
-	// be saved for further use (getting data from it)
+	// DataRegistration is called by Scope.LaodData.
+	// DataPath is the path of the NodeDataLoader data in the Scope.
+	// It should be saved for further getting data from it.
 	RegisterData(DataPath, Scope) error
 }
 
-// NodeDataProducer implemented by Nodes which needs to load data from
-// flow.DataObject over its incoming data.Associations.
-// This interface is used beffore Node execution and Node's RegisterData call.
-//
-// So Node's data is used as followed:
-//
-//  1. LoadData loads data from incoming data associations and fills its inputs.
-//
-//  2. Registers all data in the execution Scope (properties, inputs).
-//
-//     ... Execute the Node and fill Node's output parameters with results of
-//     the execution.
-//
-//  3. On success execution all Node's output with not-Ready state are updated
-//     from the Scope and then Node's UploadData is called to fill all outgoing
-//     data associations from Node's outputs.
-//
-//  4. Clears scope from Node's data.
+// NodeDataConsumer implemented by Nodes which load data from flow.DataObjects
+// binded to Node over incoming data.Associations.
+// This interface is called before Node execution and Node's RegisterData call.
 type NodeDataConsumer interface {
 	flow.Node
 
@@ -84,12 +89,13 @@ type NodeDataConsumer interface {
 	LoadData(context.Context) error
 }
 
-// NodeDataConsumer implemented by Nodes which upload data to flow.DataObjects
-// over its outgoing data.Associations.
-// This interface is used after Node execution.
+// NodeDataProducer implemented by Nodes which needs to upload data to
+// flow.DataObject binded to Node over outgoing data.Associations.
+// This interface is called after the Node execution.
 type NodeDataProducer interface {
 	flow.Node
 
-	// UploadData uploads Node's data onto its outgoing data.Association.
+	// UploadData uploads Node's data into flow.DataObjects binded to Node over
+	// its outgoing data.Association.
 	UploadData(ctx context.Context, s Scope) error
 }

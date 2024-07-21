@@ -75,7 +75,8 @@ func NewServiceTask(
 	return &ServiceTask{
 			Task:           *t,
 			implementation: operation.Type(),
-			operation:      operation},
+			operation:      operation,
+		},
 		nil
 }
 

@@ -13,6 +13,10 @@ import (
 )
 
 func TestSnapshot(t *testing.T) {
+	// nil process
+	_, err := snapshot.New(nil)
+	require.Error(t, err)
+
 	p, err := process.New("test")
 	require.NoError(t, err)
 

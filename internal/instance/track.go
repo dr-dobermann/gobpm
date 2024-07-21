@@ -1,3 +1,8 @@
+// Track represents a single flow of process.
+// Every process has one or a few entry points (event, nodes with no
+// incoming sequence flow). Those entry points becomes a begin of
+// track.
+//
 // Track starts execution from a start node.
 //
 //   - If node awaits an evenet to continue, then it event definition
@@ -11,6 +16,7 @@
 //     2. If Prologue doesn't return any error, then started node Execute.
 //     If node Execution finished successfully, it returns a list of
 //     outgoing flows.
+//
 //     3. If node supports Epilogue, then Epilogue started.
 //
 // If number of outgouing flows is not zero, then they processed as followed:
@@ -62,6 +68,20 @@ const (
 	TrackFailed
 )
 
+func (t trackState) String() string {
+	return []string{
+		"TrackCreated",
+		"TrackReady",
+		"TrackExecutingStep",
+		"TrackProcessStepResults",
+		"TrackWaitForEvent",
+		"TrackMerged",
+		"TrackEnded",
+		"TrackCanceled",
+		"TrackFailed",
+	}[t]
+}
+
 // stepState describes the state of the single tack step currently executing
 // or previously executed.
 type stepState uint8
@@ -102,7 +122,7 @@ type stepInfo struct {
 type track struct {
 	foundation.ID
 
-	m sync.Mutex
+	m sync.RWMutex
 
 	ctx context.Context
 
@@ -137,7 +157,7 @@ func newTrack(
 	if inst == nil {
 		return nil,
 			errs.New(
-				errs.M("empty instance"),
+				errs.M("no instance"),
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
@@ -156,18 +176,12 @@ func newTrack(
 
 	if prevTrack != nil {
 		t.prev = append(t.prev, append(prevTrack.prev, prevTrack)...)
-		t.steps[0].tk = prevTrack.currentStep().tk
-
-		if err := t.steps[0].tk.updateState(TokenAlive); err != nil {
-			return nil,
-				errs.New(
-					errs.M("couldn't initialize track token"),
-					errs.E(err))
-		}
 	}
 
 	// check if Node is event and it awaits for events
 	if e, ok := start.(flow.EventNode); ok {
+		edCnt := 0
+
 		for _, d := range e.Definitions() {
 			if err := t.instance.RegisterEvents(&t, d); err != nil {
 				return nil,
@@ -176,8 +190,11 @@ func newTrack(
 							start.Name(), start.Id()),
 						errs.C(errorClass, errs.BulidingFailed))
 			}
+
+			edCnt++
 		}
-		if len(e.Definitions()) != 0 {
+
+		if edCnt != 0 {
 			t.updateState(TrackWaitForEvent)
 		}
 	}
@@ -187,11 +204,12 @@ func newTrack(
 
 // inState checks if track state is equal to any track state from the ss.
 func (t *track) inState(ss ...trackState) bool {
-	t.m.Lock()
-	defer t.m.Unlock()
+	t.m.RLock()
+	state := t.state
+	t.m.RUnlock()
 
 	for _, s := range ss {
-		if t.state == s {
+		if state == s {
 			return true
 		}
 	}
@@ -202,40 +220,60 @@ func (t *track) inState(ss ...trackState) bool {
 // updateState sets new state for the track if its not in final state.
 // If track has a token, its state will be updated accordingly.
 func (t *track) updateState(newState trackState) {
-	t.m.Lock()
-	defer t.m.Unlock()
+	t.m.RLock()
+	state := t.state
+	step := t.steps[len(t.steps)-1]
+	t.m.RUnlock()
+
+	if state == newState {
+		return
+	}
 
 	ts := TokenInvalid
 
-	switch {
-	case newState == TrackReady ||
-		newState == TrackExecutingStep:
+	switch newState {
+	case TrackReady, TrackExecutingStep:
 		ts = TokenAlive
 
-	case newState == TrackWaitForEvent:
+	case TrackWaitForEvent:
 		ts = TokenWaitForEvent
 
-	case newState == TrackFailed ||
-		newState == TrackEnded ||
-		newState == TrackCanceled:
+	case TrackFailed, TrackEnded, TrackCanceled:
 		ts = TokenConsumed
 	}
 
-	if t.currentStep().tk != nil {
-		if err := t.currentStep().tk.updateState(ts); err != nil {
+	if step.tk != nil {
+		if err := step.tk.updateState(ts); err != nil {
 			errs.Panic(err)
 
 			return
 		}
 	}
 
+	errMsg := "<no error>"
+	if t.lastErr != nil {
+		errMsg = t.lastErr.Error()
+	}
+
+	t.instance.show("TRACK.UPDATE", "state updated",
+		map[string]any{
+			"track_id":   t.Id(),
+			"old_state":  state.String(),
+			"new_state":  newState.String(),
+			"step_state": step.state.String(),
+			"node":       step.node.Name(),
+			"error":      errMsg,
+		})
+
+	t.m.Lock()
 	t.state = newState
+	t.m.Unlock()
 }
 
 // currentStep returns current step of the track.
 func (t *track) currentStep() *stepInfo {
-	t.m.Lock()
-	defer t.m.Unlock()
+	t.m.RLock()
+	defer t.m.RUnlock()
 
 	return t.steps[len(t.steps)-1]
 }
@@ -250,16 +288,27 @@ func (t *track) stop() {
 
 // run start execution loop of the track which ends by ctx's cancel or
 // when there is no outgoing flows from the processing nodes.
+//
+//nolint:funlen
 func (t *track) run(
 	ctx context.Context,
 ) {
 	if t.stopIt || !t.inState(TrackReady, TrackWaitForEvent) {
+		t.instance.show("TRACK.FAILED", "not in runnable state",
+			map[string]any{
+				"track_id":    t.Id(),
+				"stop_flag":   t.stopIt,
+				"track_state": t.state.String(),
+			})
+
 		return
 	}
 
 	t.ctx = ctx
 
 	for {
+		step := t.currentStep()
+
 		select {
 		case <-ctx.Done():
 			t.updateState(TrackCanceled)
@@ -268,13 +317,18 @@ func (t *track) run(
 			return
 
 		default:
+			if t.stopIt {
+				t.updateState(TrackCanceled)
+
+				return
+			}
+
 			if t.inState(TrackWaitForEvent) {
 				continue
 			}
 		}
 
 		// while there is a step to take
-		step := t.currentStep()
 		if step.state != StepCreated {
 			// if the last step is finished
 			// stop track running, inactivate token and return
@@ -304,6 +358,8 @@ func (t *track) run(
 // executeNode tries to execute flow.Node n.
 // On succes it returns a list (probably empty) of outgoing sequence flows.
 // On failure it returns error.
+//
+//nolint:funlen
 func (t *track) executeNode(
 	ctx context.Context,
 	step *stepInfo,
@@ -316,7 +372,7 @@ func (t *track) executeNode(
 				errs.C(errorClass, errs.TypeCastingError))
 	}
 
-	// create a new token if track doesn't have
+	// create a new token if track doesn't have yet
 	if step.tk == nil {
 		step.tk = newToken(t.instance, t)
 	}
@@ -352,6 +408,13 @@ func (t *track) executeNode(
 		return nil, err
 	}
 
+	t.instance.show("TRACK.RUN", "node executed successfully",
+		map[string]any{
+			"track_id":       t.Id(),
+			"node":           step.node.Name(),
+			"outgoing_flows": len(nexts),
+		})
+
 	if err := t.runNodeEpilogue(ctx, step.node); err != nil {
 		return nil, err
 	}
@@ -386,6 +449,8 @@ func (t *track) checkFlows(ctx context.Context, flows []*flow.SequenceFlow) erro
 
 	tokens := t.currentStep().tk.split(len(flows))
 
+	// create a new step for main track and put token from current step
+	// into it.
 	nextStep := stepInfo{
 		node:  flows[nextNode].Target().Node(),
 		state: StepCreated,
@@ -403,6 +468,7 @@ func (t *track) checkFlows(ctx context.Context, flows []*flow.SequenceFlow) erro
 
 	t.steps = append(t.steps, &nextStep)
 
+	// for every new flow create a new track with new tokens.
 	for i, f := range append(flows[:nextNode], flows[nextNode+1:]...) {
 		nt, err := newTrack(f.Target().Node(), t.instance, t)
 		if err != nil {
@@ -429,14 +495,30 @@ func (t *track) checkFlows(ctx context.Context, flows []*flow.SequenceFlow) erro
 func (t *track) runNodePrologue(ctx context.Context, n flow.Node) error {
 	np, ok := n.(exec.NodePrologue)
 	if !ok {
+		t.instance.show("TRACK.RUN", "no prologue",
+			map[string]any{
+				"track_id":  t.Id(),
+				"node_name": n.Name(),
+			})
+
 		return nil
 	}
 
 	t.currentStep().state = StepPrologued
 
 	if err := np.Prologue(ctx, t.instance); err != nil {
+		t.instance.show("TRACK.RUN", "prologue failed",
+			map[string]any{
+				"track_id":  t.Id(),
+				"node_name": n.Name(),
+				"error":     err.Error(),
+			})
+
 		return err
 	}
+
+	t.instance.show("TRACK.RUN", "prologue finished",
+		map[string]any{"track_id": t.Id()})
 
 	return nil
 }
@@ -445,14 +527,33 @@ func (t *track) runNodePrologue(ctx context.Context, n flow.Node) error {
 func (t *track) runNodeEpilogue(ctx context.Context, n flow.Node) error {
 	ne, ok := n.(exec.NodeEpliogue)
 	if !ok {
+		t.instance.show("TRACK.RUN", "no epilogue",
+			map[string]any{
+				"track_id":  t.Id(),
+				"node_name": n.Name(),
+			})
+
 		return nil
 	}
 
 	t.currentStep().state = StepEpilogued
 
 	if err := ne.Epilogue(ctx, t.instance); err != nil {
+		t.instance.show("TRACK.RUN", "epilogue failed",
+			map[string]any{
+				"track_id":  t.Id(),
+				"node_name": n.Name(),
+				"error":     err.Error(),
+			})
+
 		return err
 	}
+
+	t.instance.show("TRACK.RUN", "epilogue finished",
+		map[string]any{
+			"track_id":  t.Id(),
+			"node_name": n.Name(),
+		})
 
 	return nil
 }
@@ -474,7 +575,7 @@ func (t *track) unregisterEvent(n flow.Node) error {
 }
 
 // loadData checks if the flow.Node n implements flow.NodeDataConsumer and
-// if so, calls the LoadData of the Node.
+// if so, calls the LoadData of the Node from input DataObjects.
 func (t *track) loadData(ctx context.Context, n flow.Node) error {
 	dc, ok := n.(scope.NodeDataConsumer)
 	if !ok {

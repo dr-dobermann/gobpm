@@ -318,7 +318,8 @@ func (t *Thresher) RegisterEvents(
 			t.eDefs[ed.Id()] = []eDefReg{
 				{
 					proc: ep,
-				}}
+				},
+			}
 
 			continue
 		}
@@ -498,7 +499,7 @@ func (t *Thresher) StartProcess(processId string) error {
 // launchInstance creates a new Instance from the Snapshot s, runs it and
 // append it to runned insances of the Thresher.
 func (t *Thresher) launchInstance(s *snapshot.Snapshot) error {
-	inst, err := instance.New(s, nil, t)
+	inst, err := instance.New(s, nil, t, nil)
 	if err != nil {
 		return errs.New(
 			errs.M("couldn't create an Instance for process %q",
@@ -508,7 +509,8 @@ func (t *Thresher) launchInstance(s *snapshot.Snapshot) error {
 	}
 
 	ctx, cancel := context.WithCancel(t.ctx)
-	if err := inst.Run(ctx, cancel, t); err != nil {
+	defer cancel()
+	if err := inst.Run(ctx); err != nil {
 		return errs.New(
 			errs.M("inctance %q of process %q failed to run",
 				inst.Id(), s.ProcessId),
@@ -538,7 +540,8 @@ func (t *Thresher) addInitialEvent(
 			t.eDefs[ed.Id()] = []eDefReg{
 				{
 					ProcessId: processId,
-				}}
+				},
+			}
 
 			continue
 		}
