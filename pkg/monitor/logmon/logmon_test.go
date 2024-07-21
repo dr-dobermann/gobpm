@@ -81,8 +81,8 @@ func TestLogMon(t *testing.T) {
 
 				require.Equal(t,
 					// omit event time in comparison
-					testBuf.String()[32:],
-					logBuf.String()[32:])
+					testBuf.String()[42:],
+					logBuf.String()[42:])
 			})
 	}
 }
