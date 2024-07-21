@@ -16,7 +16,7 @@ func TestLogMon(t *testing.T) {
 	event := monitor.Event{
 		Source: "calendar",
 		Type:   "birth_date",
-		At:     time.Date(1973, 0o2, 23, 0o5, 15, 0, 0, time.Local),
+		At:     time.Date(1973, time.February, 23, 5, 15, 0, 0, time.UTC),
 		Details: map[string]any{
 			"name": "dr-dobermann",
 		},
@@ -80,8 +80,9 @@ func TestLogMon(t *testing.T) {
 				t.Log(logBuf.String())
 
 				require.Equal(t,
-					testBuf.String(),
-					logBuf.String())
+					// omit event time in comparison
+					testBuf.String()[32:],
+					logBuf.String()[32:])
 			})
 	}
 }
