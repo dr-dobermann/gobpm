@@ -166,7 +166,6 @@ func (st *ServiceTask) Exec(
 func (st *ServiceTask) loadInputMessage(re renv.RuntimeEnvironment) error {
 	if st.operation.IncomingMessage() == nil ||
 		st.operation.IncomingMessage().Item() == nil {
-
 		return nil
 	}
 
