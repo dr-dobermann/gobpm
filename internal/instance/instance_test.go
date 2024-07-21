@@ -83,7 +83,7 @@ func TestMonitoring(t *testing.T) {
 
 	log.Println("instance runned")
 
-	time.Sleep(10 * time.Second)
+	time.Sleep(3 * time.Second)
 
 	cancel()
 }
@@ -95,12 +95,11 @@ func getSnapshot(pname string) (*snapshot.Snapshot, error) {
 	p, err := process.New(pname,
 		data.WithProperties(
 			data.MustProperty(
-				"UserName",
+				"user_name",
 				data.MustItemDefinition(
-					values.NewVariable("dr.Dobermann"),
+					values.NewVariable("Dr. Dobermann"),
 					foundation.WithId("user_name")),
-				data.ReadyDataState),
-		))
+				data.ReadyDataState)))
 	if err != nil {
 		return nil, err
 	}

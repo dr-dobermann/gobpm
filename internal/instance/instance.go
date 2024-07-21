@@ -3,11 +3,11 @@ package instance
 import (
 	"context"
 	"errors"
-	"fmt"
 	"reflect"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
@@ -73,6 +73,9 @@ type Instance struct {
 
 	// Instance's runtime context.
 	ctx context.Context
+
+	// monId keeps last monitoring event id.
+	monId atomic.Int64
 
 	// Scopes holds accessible in the moment Data.
 	// first map indexed by data path, the second map indexed by Data name.
@@ -434,8 +437,6 @@ func (inst *Instance) getData(
 			break
 		}
 
-		fmt.Println("      --- data not found in ", path)
-
 		path, err = path.DropTail()
 		if err != nil {
 			return nil,
@@ -529,6 +530,9 @@ func (inst *Instance) show(
 	}
 
 	ev.Details["instance_id"] = inst.Id()
+	ev.Details["counter"] = inst.monId.Load()
+
+	inst.monId.Add(1)
 
 	for _, m := range inst.Monitors {
 		go func(w monitor.Writer) {
@@ -764,8 +768,6 @@ func (inst *Instance) GetData(
 	path scope.DataPath,
 	name string,
 ) (data.Data, error) {
-	fmt.Println("     ??? looking for data \"", name, "\" in ", path)
-
 	finder := func(d data.Data) bool {
 		return d.Name() == name
 	}
@@ -779,8 +781,6 @@ func (inst *Instance) GetData(
 				errs.E(err))
 	}
 
-	fmt.Println("     !!!! found:", d.Value().Get())
-
 	return d, nil
 }
 
@@ -792,24 +792,18 @@ func (inst *Instance) GetDataById(
 	path scope.DataPath,
 	id string,
 ) (data.Data, error) {
-	fmt.Println("     ??? looking for data #", id, " in ", path)
-
 	finder := func(d data.Data) bool {
-		return d.Id() == id
+		return d.ItemDefinition().Id() == id
 	}
 
 	d, err := inst.getData(path, finder)
 	if err != nil {
-		fmt.Println("       xxxx not found")
-
 		return nil,
 			errs.New(
 				errs.M("couldn't get Data #%s from scope %s",
 					id, inst.Id()),
 				errs.E(err))
 	}
-
-	fmt.Println("     !!!! found:", d.Value().Get())
 
 	return d, nil
 }
@@ -866,9 +860,6 @@ func (inst *Instance) ExtendScope(
 
 // LeaveScope calls the Scope to clear all data saved by NodeDataLoader.
 func (inst *Instance) LeaveScope(ndl scope.NodeDataLoader) error {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
 	if ndl == nil {
 		return errs.New(
 			errs.M("no NodeDataLoader"))
@@ -882,6 +873,8 @@ func (inst *Instance) LeaveScope(ndl scope.NodeDataLoader) error {
 			errs.E(err))
 	}
 
+	inst.m.Lock()
+	defer inst.m.Unlock()
 	vv, ok := inst.scopes[dp]
 	if !ok {
 		return nil
@@ -891,6 +884,8 @@ func (inst *Instance) LeaveScope(ndl scope.NodeDataLoader) error {
 	for _, v := range vnn {
 		delete(inst.scopes[dp], v)
 	}
+
+	delete(inst.scopes, dp)
 
 	return nil
 }

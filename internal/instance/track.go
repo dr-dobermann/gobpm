@@ -39,7 +39,6 @@ package instance
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
@@ -344,8 +343,6 @@ func (t *track) run(
 			return
 		}
 
-		fmt.Println("node executed: ", step.node.Name(), "\noutgoing flows: ", len(nextFlows))
-
 		err = t.checkFlows(ctx, nextFlows)
 		if err != nil {
 			t.lastErr = err
@@ -376,8 +373,6 @@ func (t *track) executeNode(
 		step.tk = newToken(t.instance, t)
 	}
 
-	fmt.Println("node executing: ", step.node.Name())
-
 	t.updateState(TrackExecutingStep)
 
 	step.state = StepStarted
@@ -385,8 +380,6 @@ func (t *track) executeNode(
 	if err := t.loadData(ctx, step.node); err != nil {
 		return nil, err
 	}
-
-	fmt.Println("node data loaded")
 
 	ndl, ok := step.node.(scope.NodeDataLoader)
 	if ok {
@@ -400,13 +393,9 @@ func (t *track) executeNode(
 		}()
 	}
 
-	fmt.Println("data scope extended")
-
 	if err := t.runNodePrologue(ctx, step.node); err != nil {
 		return nil, err
 	}
-
-	fmt.Println("prologue passed")
 
 	step.state = StepExecuting
 
@@ -414,8 +403,6 @@ func (t *track) executeNode(
 	if err != nil {
 		return nil, err
 	}
-
-	fmt.Println("execution passed")
 
 	t.instance.show("TRACK.RUN", "node executed successfully",
 		map[string]any{
@@ -428,15 +415,11 @@ func (t *track) executeNode(
 		return nil, err
 	}
 
-	fmt.Println("epilogue passed")
-
 	step.state = StepEnded
 
 	if err := t.uploadData(ctx, step.node); err != nil {
 		return nil, err
 	}
-
-	fmt.Println("node data uploaded")
 
 	return nexts, nil
 }
@@ -509,7 +492,10 @@ func (t *track) runNodePrologue(ctx context.Context, n flow.Node) error {
 	np, ok := n.(exec.NodePrologue)
 	if !ok {
 		t.instance.show("TRACK.RUN", "no prologue",
-			map[string]any{"track_id": t.Id()})
+			map[string]any{
+				"track_id":  t.Id(),
+				"node_name": n.Name(),
+			})
 
 		return nil
 	}
@@ -519,8 +505,9 @@ func (t *track) runNodePrologue(ctx context.Context, n flow.Node) error {
 	if err := np.Prologue(ctx, t.instance); err != nil {
 		t.instance.show("TRACK.RUN", "prologue failed",
 			map[string]any{
-				"track_id": t.Id(),
-				"error":    err.Error(),
+				"track_id":  t.Id(),
+				"node_name": n.Name(),
+				"error":     err.Error(),
 			})
 
 		return err
@@ -537,7 +524,10 @@ func (t *track) runNodeEpilogue(ctx context.Context, n flow.Node) error {
 	ne, ok := n.(exec.NodeEpliogue)
 	if !ok {
 		t.instance.show("TRACK.RUN", "no epilogue",
-			map[string]any{"track_id": t.Id()})
+			map[string]any{
+				"track_id":  t.Id(),
+				"node_name": n.Name(),
+			})
 
 		return nil
 	}
@@ -547,15 +537,19 @@ func (t *track) runNodeEpilogue(ctx context.Context, n flow.Node) error {
 	if err := ne.Epilogue(ctx, t.instance); err != nil {
 		t.instance.show("TRACK.RUN", "epilogue failed",
 			map[string]any{
-				"track_id": t.Id(),
-				"error":    err.Error(),
+				"track_id":  t.Id(),
+				"node_name": n.Name(),
+				"error":     err.Error(),
 			})
 
 		return err
 	}
 
 	t.instance.show("TRACK.RUN", "epilogue finished",
-		map[string]any{"track_id": t.Id()})
+		map[string]any{
+			"track_id":  t.Id(),
+			"node_name": n.Name(),
+		})
 
 	return nil
 }
@@ -577,7 +571,7 @@ func (t *track) unregisterEvent(n flow.Node) error {
 }
 
 // loadData checks if the flow.Node n implements flow.NodeDataConsumer and
-// if so, calls the LoadData of the Node.
+// if so, calls the LoadData of the Node from input DataObjects.
 func (t *track) loadData(ctx context.Context, n flow.Node) error {
 	dc, ok := n.(scope.NodeDataConsumer)
 	if !ok {

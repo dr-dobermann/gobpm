@@ -2,7 +2,6 @@ package activities
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/internal/renv"
@@ -113,8 +112,6 @@ func (st *ServiceTask) Exec(
 	ctx context.Context,
 	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
-	fmt.Println("  >>> service task started")
-
 	if re == nil {
 		return nil,
 			errs.New(
@@ -136,8 +133,6 @@ func (st *ServiceTask) Exec(
 				errs.D("message_id", st.operation.IncomingMessage().Id()))
 	}
 
-	fmt.Println("  >>> input messages loaded")
-
 	if err := st.operation.Run(ctx); err != nil {
 		return nil,
 			errs.New(
@@ -148,8 +143,6 @@ func (st *ServiceTask) Exec(
 				errs.D("operation_id", st.operation.Id()),
 				errs.D("operation_name", st.operation.Name()))
 	}
-
-	fmt.Println("  >>> operation runned")
 
 	if err := st.uploadOutputMessage(); err != nil {
 		return nil,
@@ -165,25 +158,17 @@ func (st *ServiceTask) Exec(
 				errs.D("message_id", st.operation.IncomingMessage().Id()))
 	}
 
-	fmt.Println("  >>> output messages uploaded")
-
 	return st.Outgoing(), nil
 }
 
 // loadInputMessage tries to set value of the operation's incoming message
 // from scope data if them are Ready..
 func (st *ServiceTask) loadInputMessage(re renv.RuntimeEnvironment) error {
-	fmt.Println("    >>> loading input messages")
-
 	if st.operation.IncomingMessage() == nil ||
 		st.operation.IncomingMessage().Item() == nil {
 
-		fmt.Println("no incoming message for operation of ", st.Name())
-
 		return nil
 	}
-
-	fmt.Println("    >>> getting ", st.operation.IncomingMessage().Item().Id(), " from ", st.dataPath)
 
 	d, err := re.GetDataById(
 		st.dataPath,
@@ -193,8 +178,6 @@ func (st *ServiceTask) loadInputMessage(re renv.RuntimeEnvironment) error {
 			errs.M("couldn't find item definition"),
 			errs.E(err))
 	}
-
-	fmt.Println("    >>> data loaded")
 
 	if d.State().Name() != data.ReadyDataState.Name() {
 		return errs.New(
