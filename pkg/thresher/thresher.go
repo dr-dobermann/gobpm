@@ -318,7 +318,8 @@ func (t *Thresher) RegisterEvents(
 			t.eDefs[ed.Id()] = []eDefReg{
 				{
 					proc: ep,
-				}}
+				},
+			}
 
 			continue
 		}
@@ -508,6 +509,7 @@ func (t *Thresher) launchInstance(s *snapshot.Snapshot) error {
 	}
 
 	ctx, cancel := context.WithCancel(t.ctx)
+	defer cancel()
 	if err := inst.Run(ctx); err != nil {
 		return errs.New(
 			errs.M("inctance %q of process %q failed to run",
@@ -538,7 +540,8 @@ func (t *Thresher) addInitialEvent(
 			t.eDefs[ed.Id()] = []eDefReg{
 				{
 					ProcessId: processId,
-				}}
+				},
+			}
 
 			continue
 		}
