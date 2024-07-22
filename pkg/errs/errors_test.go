@@ -9,19 +9,38 @@ import (
 )
 
 func TestPanic(t *testing.T) {
-	t.Run("settings",
-		func(t *testing.T) {
-			require.False(t, errs.DontPanic())
-			require.Panics(t, func() { errs.Panic("should panic") })
+	require.Error(t, errs.RegisterPanicHandler(nil))
 
-			errs.SetDontPanic(true)
-			require.True(t, errs.DontPanic())
-			require.NotPanics(t, func() { errs.Panic("don't panic") })
-		})
+	handlerCreator := func(unhandled bool) errs.PanicHandler {
+		return func(v any) bool {
+			fmt.Println("panic handled: ", v)
+			return unhandled
+		}
+	}
 
+	require.NoError(t, errs.RegisterPanicHandler(handlerCreator(true)))
+	require.Panics(t, func() { errs.Panic("panic unhandled") })
+
+	errs.DropPanicHandler()
+
+	require.NoError(t, errs.RegisterPanicHandler(handlerCreator(false)))
+	require.NotPanics(t, func() { errs.Panic("panic handled") })
+}
+
+func TestDontPanic(t *testing.T) {
+	errs.DropPanicHandler()
+
+	require.False(t, errs.DontPanic())
+	require.Panics(t, func() { errs.Panic("should panic") })
+
+	errs.SetDontPanic(true)
+	require.True(t, errs.DontPanic())
+	require.NotPanics(t, func() { errs.Panic("don't panic") })
+}
+
+func TestErrors(t *testing.T) {
 	t.Run("errors",
 		func(t *testing.T) {
-
 			detalils := []struct {
 				k, v string
 			}{
@@ -32,7 +51,8 @@ func TestPanic(t *testing.T) {
 			classes := []string{
 				"test",
 				"classes",
-				"   "}
+				"   ",
+			}
 
 			e := errs.New(
 				errs.E(fmt.Errorf("test err")),
