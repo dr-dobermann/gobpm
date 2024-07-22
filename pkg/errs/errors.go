@@ -110,9 +110,21 @@ func (ap *ApplicationError) Error() string {
 	return str
 }
 
-// flag which prevents panic on unhandled errors.
-// if set to true then error just printed to stderr.
-var dontPanic bool
+// PanicHandler registered for handling panic situation of goBpm.
+// If registered handler returns true, then panic is fired according
+// to dontPanic settings.
+// if return is false, panic ignored as it already handled by
+// PanicHandler.
+type PanicHandler func(v any) bool
+
+var (
+	// flag which prevents panic on unhandled errors.
+	// if set to true then error just printed to stderr.
+	dontPanic bool
+
+	// panicHandler to handle panic situation.
+	panicHook PanicHandler
+)
 
 // SetDontPanic sets current behavior of panic.
 func SetDontPanic(dp bool) {
@@ -127,6 +139,11 @@ func DontPanic() bool {
 // Panic write unhandled error into the Stderr or panic dending of the
 // dontPanic settings.
 func Panic(v any) {
+	if panicHook != nil {
+		if unhandled := panicHook(v); !unhandled {
+			return
+		}
+	}
 	if dontPanic {
 		fmt.Fprintln(os.Stderr, v)
 
@@ -134,4 +151,27 @@ func Panic(v any) {
 	}
 
 	panic(v)
+}
+
+// RegisterPanicHandler registers new PanicHandler.
+func RegisterPanicHandler(newHandler PanicHandler) error {
+	if newHandler == nil {
+		return New(
+			M("empty handler"),
+			C(EmptyNotAllowed))
+	}
+
+	panicHook = newHandler
+
+	return nil
+}
+
+// DropPanicHandler unregisters panic handler.
+func DropPanicHandler() {
+	panicHook = nil
+}
+
+// HasPanicHandler checks if panicHandler is set.
+func HasPanicHandler() bool {
+	return panicHook != nil
 }
