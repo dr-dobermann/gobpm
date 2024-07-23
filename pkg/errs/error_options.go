@@ -14,7 +14,7 @@ type (
 		err     error
 		msg     string
 		classes []string
-		details map[string]string
+		details map[string]any
 	}
 
 	errOption interface {
@@ -41,7 +41,8 @@ func (cfg *errConfig) newError() *ApplicationError {
 		Err:     cfg.err,
 		Message: cfg.msg,
 		Classes: cfg.classes,
-		Details: cfg.details}
+		Details: cfg.details,
+	}
 }
 
 // E adds error into errConfig.
@@ -92,10 +93,9 @@ func C(classes ...string) errOption {
 }
 
 // D adds the errConfig details.
-func D(k, v string) errOption {
+func D(k string, v any) errOption {
 	f := func(cfg *errConfig) error {
 		k := strings.Trim(k, " ")
-		v := strings.Trim(v, " ")
 		if k != "" && v != "" {
 			cfg.details[k] = v
 		}

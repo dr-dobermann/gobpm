@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -81,8 +82,8 @@ func TestLogMon(t *testing.T) {
 
 				require.Equal(t,
 					// omit event time in comparison
-					testBuf.String()[42:],
-					logBuf.String()[42:])
+					testBuf.String()[strings.Index(testBuf.String(), "level"):],
+					logBuf.String()[strings.Index(logBuf.String(), "level"):])
 			})
 	}
 }
