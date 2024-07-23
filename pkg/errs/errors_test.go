@@ -27,6 +27,19 @@ func TestPanic(t *testing.T) {
 	require.NotPanics(t, func() { errs.Panic("panic handled") })
 }
 
+func TestJson(t *testing.T) {
+	testJson := `{"error":"test error","message":"test message","classes":["INVALID_OBJECT","BUILDING_FAILED"],"details":{"name":"value"}}`
+
+	ae := errs.New(
+		errs.M("test message"),
+		errs.C(errs.InvalidObject, errs.BulidingFailed),
+		errs.E(fmt.Errorf("test error")),
+		errs.D("name", "value"))
+
+	js := string(ae.JSON())
+	require.Equal(t, testJson, js)
+}
+
 func TestDontPanic(t *testing.T) {
 	errs.DropPanicHandler()
 

@@ -20,6 +20,7 @@
 package errs
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -43,10 +44,10 @@ const (
 )
 
 type ApplicationError struct {
-	Err     error
-	Message string
-	Classes []string
-	Details map[string]string
+	Err     error          `json:"error"`
+	Message string         `json:"message"`
+	Classes []string       `json:"classes"`
+	Details map[string]any `json:"details"`
 }
 
 // New returns pointer on created with errOptions ApplicationError.
@@ -55,7 +56,7 @@ func New(errOpts ...errOption) *ApplicationError {
 		err:     nil,
 		msg:     defaultMessage,
 		classes: []string{},
-		details: map[string]string{},
+		details: map[string]any{},
 	}
 
 	ee := make([]error, 0, len(errOpts)+1)
@@ -85,6 +86,18 @@ func (ae *ApplicationError) HasClass(class string) bool {
 	return false
 }
 
+// JSON returns the json representation of the ApplicationError ae.
+// On failure it panics.
+func (ae *ApplicationError) JSON() []byte {
+	js, err := json.Marshal(ae)
+	if err != nil {
+		Panic("couldn't convert application error to json: " + err.Error())
+		return nil
+	}
+
+	return js
+}
+
 // --------------------- error interface ---------------------------------------
 func (ap *ApplicationError) Error() string {
 	str := ""
@@ -99,7 +112,7 @@ func (ap *ApplicationError) Error() string {
 	if len(ap.Details) > 0 {
 		str += "Details:\n"
 		for k, v := range ap.Details {
-			str += "  " + k + ": " + v + "\n"
+			str += fmt.Sprintf(" %s: %v\n", k, v)
 		}
 	}
 
@@ -109,6 +122,29 @@ func (ap *ApplicationError) Error() string {
 
 	return str
 }
+
+// --------------------- json.Marshaller interface -----------------------------
+func (ae ApplicationError) MarshalJSON() ([]byte, error) {
+	errS := "<nil>"
+	if ae.Err != nil {
+		errS = ae.Err.Error()
+	}
+
+	return json.Marshal(
+		struct {
+			Err     string         `json:"error"`
+			Message string         `json:"message"`
+			Classes []string       `json:"classes"`
+			Details map[string]any `json:"details"`
+		}{
+			Err:     errS,
+			Message: ae.Message,
+			Classes: ae.Classes,
+			Details: ae.Details,
+		})
+}
+
+// -----------------------------------------------------------------------------
 
 // PanicHandler registered for handling panic situation of goBpm.
 // If registered handler returns true, then panic is fired according
