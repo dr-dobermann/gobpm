@@ -1,6 +1,7 @@
 package errs_test
 
 import (
+	"errors"
 	"fmt"
 	"testing"
 
@@ -113,4 +114,16 @@ func TestErrors(t *testing.T) {
 			require.NotNil(t, e.Err)
 			require.Equal(t, defaultMessage, e.Message)
 		})
+}
+
+func TestErrWrapping(t *testing.T) {
+	testErr := errors.New("test error")
+
+	myErr := errs.New(
+		errs.M("application error wrap testing"),
+		errs.C(errs.OperationFailed),
+		errs.D("name", "value"),
+		errs.E(testErr))
+
+	require.True(t, errors.Is(myErr, testErr))
 }

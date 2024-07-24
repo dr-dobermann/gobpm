@@ -123,6 +123,14 @@ func (ap *ApplicationError) Error() string {
 	return str
 }
 
+func (ap *ApplicationError) Unwrap() error {
+	if ap.Err != nil {
+		return ap.Err
+	}
+
+	return nil
+}
+
 // --------------------- json.Marshaller interface -----------------------------
 func (ae ApplicationError) MarshalJSON() ([]byte, error) {
 	errS := "<nil>"
