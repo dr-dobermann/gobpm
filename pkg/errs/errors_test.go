@@ -125,5 +125,7 @@ func TestErrWrapping(t *testing.T) {
 		errs.D("name", "value"),
 		errs.E(testErr))
 
+	var asTestErr *errs.ApplicationError
 	require.True(t, errors.Is(myErr, testErr))
+	require.True(t, errors.As(myErr, &asTestErr))
 }
