@@ -68,6 +68,7 @@ type (
 		dataAssociations map[data.Direction][]*data.Association
 		sets             map[data.Direction][]*setDef
 		withoutParams    bool
+		defaultFlow      *flow.SequenceFlow
 	}
 
 	activityOption func(cfg *activityConfig) error
@@ -98,18 +99,14 @@ func (ac *activityConfig) newActivity() (*Activity, error) {
 		FlowNode:            *flow.NewFlowNode(),
 		FlowElement:         *flow.NewFlowElement(ac.name),
 		isForCompensation:   ac.compensation,
-		loopCharacteristics: LoopCharacteristics{},
 		roles:               ac.roles,
-		defaultFlow:         &flow.SequenceFlow{},
 		properties:          ac.props,
 		startQuantity:       ac.startQ,
 		completionQuantity:  ac.complQ,
 		IoSpec:              ioSpecs,
 		dataAssociations:    ac.dataAssociations,
-	}
-
-	if ac.loop != nil {
-		a.loopCharacteristics = *ac.loop
+		defaultFlow:         ac.defaultFlow,
+		loopCharacteristics: ac.loop,
 	}
 
 	return &a, nil

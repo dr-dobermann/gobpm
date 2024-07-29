@@ -62,7 +62,7 @@ func TestActivity(t *testing.T) {
 			require.Equal(t, flow.ActivityNodeType, a.NodeType())
 
 			require.NoError(t, a.AcceptIncomingFlow(nil))
-			require.NoError(t, a.SuportOutgoingFlow(nil))
+			require.NoError(t, a.SupportOutgoingFlow(nil))
 
 			require.NoError(t, a.SetDefaultFlow(""))
 			require.Error(t, a.SetDefaultFlow("wrong_flow"))

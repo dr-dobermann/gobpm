@@ -22,7 +22,7 @@ func (no NameOption) Apply(cfg Configurator) error {
 	}
 
 	return errs.New(
-		errs.M("config doesn't suppurt NameConfigurator"),
+		errs.M("config doesn't implement NameConfigurator"),
 		errs.C(errorClass, errs.TypeCastingError),
 		errs.D("config_type", reflect.TypeOf(cfg).String()))
 }
@@ -34,11 +34,6 @@ func (no NameOption) Apply(cfg Configurator) error {
 func WithName(name string) NameOption {
 	f := func(cfg NameConfigurator) error {
 		name = strings.Trim(name, " ")
-		if name == "" {
-			return errs.New(
-				errs.M("empty name is not allowed"),
-				errs.C(errorClass, errs.EmptyNotAllowed))
-		}
 
 		return cfg.SetName(name)
 	}
