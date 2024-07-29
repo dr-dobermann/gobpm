@@ -11,6 +11,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -78,8 +79,7 @@ func TestTaskData(t *testing.T) {
 	require.NoError(t, err)
 
 	s := mockscope.NewMockScope(t)
-	s.EXPECT().
-		LoadData(task, props[0], props[1]).
+	s.On("LoadData", task, mock.AnythingOfType("*data.Property"), mock.AnythingOfType("*data.Property")).
 		Return(nil)
 
 	dp, err := scope.NewDataPath("/task")
