@@ -2,6 +2,8 @@ package activities_test
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/generated/mockscope"
@@ -80,7 +82,27 @@ func TestTaskData(t *testing.T) {
 
 	s := mockscope.NewMockScope(t)
 	s.On("LoadData", task, mock.AnythingOfType("*data.Property"), mock.AnythingOfType("*data.Property")).
-		Return(nil)
+		Return(
+			func(ndl scope.NodeDataLoader, dd ...data.Data) error {
+				for _, d := range dd {
+					t.Log("   >> got data: ", d.Name())
+
+					p, ok := d.(*data.Property)
+					if !ok {
+						return fmt.Errorf("couldn't convert data %q to Property", d.Name())
+					}
+
+					if idx := slices.IndexFunc(
+						props,
+						func(prop *data.Property) bool {
+							return p.Id() == prop.Id()
+						}); idx == -1 {
+						return fmt.Errorf("couldn't find property %q", d.Name())
+					}
+				}
+
+				return nil
+			})
 
 	dp, err := scope.NewDataPath("/task")
 	require.NoError(t, err)
