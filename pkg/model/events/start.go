@@ -92,7 +92,7 @@ func (se *StartEvent) IsInterrupting() bool {
 // ------------------ flow.SequenceSource interface ----------------------------
 
 // SuportOutgoingFlow checks if it allowed to source sf from the StartEvent
-func (se *StartEvent) SuportOutgoingFlow(sf *flow.SequenceFlow) error {
+func (se *StartEvent) SupportOutgoingFlow(sf *flow.SequenceFlow) error {
 	// StartEvent don't restricted any source sequence flow from it
 	return nil
 }
@@ -114,7 +114,6 @@ func (se *StartEvent) Exec(
 	ctx context.Context,
 	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
-
 	return append([]*flow.SequenceFlow{}, se.Outgoing()...), nil
 }
 

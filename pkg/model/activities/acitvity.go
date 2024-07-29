@@ -33,7 +33,7 @@ type Activity struct {
 	// An Activity MAY be performed once or MAY be repeated. If repeated,
 	// the Activity MUST have loopCharacteristics that define the repetition
 	// criteria (if the isExecutable attribute of the Process is set to true).
-	loopCharacteristics LoopCharacteristics
+	loopCharacteristics *LoopCharacteristics
 
 	// Defines the resource that will perform or will be responsible for the
 	// Activity. The resource, e.g., a performer, can be specified in the form
@@ -220,7 +220,7 @@ func (a *Activity) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
 
 // SuportOutgoingFlow checks if it possible to source sf SequenceFlow from
 // the Activity.
-func (a *Activity) SuportOutgoingFlow(sf *flow.SequenceFlow) error {
+func (a *Activity) SupportOutgoingFlow(sf *flow.SequenceFlow) error {
 	// Activity has no restrictions on outgoing flows
 	return nil
 }

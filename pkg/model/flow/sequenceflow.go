@@ -16,7 +16,7 @@ type (
 	SequenceSource interface {
 		Node
 
-		SuportOutgoingFlow(sf *SequenceFlow) error
+		SupportOutgoingFlow(sf *SequenceFlow) error
 	}
 
 	// SequenceTarget impmemented by the Nodes which accepts incomng sequence flows.
@@ -183,7 +183,7 @@ func checkConnections(
 	}
 
 	// check possibility to use sf as source of the flow
-	if err := src.SuportOutgoingFlow(sf); err != nil {
+	if err := src.SupportOutgoingFlow(sf); err != nil {
 		return err
 	}
 
