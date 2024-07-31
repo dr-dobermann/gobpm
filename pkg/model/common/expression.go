@@ -69,23 +69,23 @@ func NewExpression(opts ...options.Option) (*Expression, error) {
 // The FormalExpression element inherits the attributes and model associations
 // of BaseElement, through the Expression element.
 type FormalExpression interface {
-	// Id returns the formal expression Id.
-	Id() string
+	foundation.Identifyer
 
-	// Docs returns the FormalExpression documentation as it was loaded on
-	// creation.
-	Docs() []foundation.Documentation
+	foundation.Documentator
 
 	// Language returns the FormalExpression language in URI format.
 	Language() string
 
 	// Evaluate evaluate the expression and returns its result.
-	Evaluate() (*data.ItemDefinition, error)
+	Evaluate() (data.Value, error)
 
 	// Result returns evaluated result of the formal expression.
 	// If there is no evaluation was made, an error returned.
-	Result() (*data.ItemDefinition, error)
+	Result() (data.Value, error)
 
 	// ResultType returns name of the FormalExpression result type.
 	ResultType() string
+
+	// IsEvaluated returns true if result is ready.
+	IsEvaluated() bool
 }
