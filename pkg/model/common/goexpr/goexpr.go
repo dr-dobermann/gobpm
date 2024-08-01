@@ -10,12 +10,11 @@ import (
 const (
 	errorClass = "GOBPM_EXPRESSION_ERRORS"
 
-	// TODO: finalize URI declaration for GoBpmExpression.
-	language = "gobpm:/expr"
+	language = "gobpm:gexpr"
 )
 
 // GExpFunc incapsulated the functional logic of the GoBpmExpression.
-type GExpFunc func(ds data.Source) (*data.ItemDefinition, error)
+type GExpFunc func(ds data.Source) (data.Value, error)
 
 // GExpression implements the common.FormalInterface.
 // It based on simple go function.
@@ -93,7 +92,7 @@ func (ge *GExpression) Evaluate() (data.Value, error) {
 				errs.E(err))
 	}
 
-	if err := ge.result.Structure().Update(res.Structure().Get()); err != nil {
+	if err := ge.result.Structure().Update(res.Get()); err != nil {
 		return nil,
 			errs.New(
 				errs.M("result value updating failed"),
