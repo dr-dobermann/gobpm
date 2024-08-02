@@ -10,7 +10,7 @@ import (
 const (
 	errorClass = "GOBPM_EXPRESSION_ERRORS"
 
-	language = "gobpm:gexpr"
+	language = "gobpm:goexpr"
 )
 
 // GExpFunc incapsulated the functional logic of the GoBpmExpression.
