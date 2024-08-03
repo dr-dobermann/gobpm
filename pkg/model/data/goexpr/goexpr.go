@@ -70,6 +70,23 @@ func New(
 		nil
 }
 
+// Must tries to create a GExpression variabla and panics on failure.
+func Must(
+	ds data.Source,
+	res *data.ItemDefinition,
+	gfunc GExpFunc,
+	opts ...options.Option,
+) *GExpression {
+	ge, err := New(ds, res, gfunc, opts...)
+	if err != nil {
+		errs.Panic("couldn't create a GExpression: " + err.Error())
+
+		return nil
+	}
+
+	return ge
+}
+
 // --------------- common.FormalExpression interface --------------------------
 
 // Language returns the FormalExpression language in URI format.

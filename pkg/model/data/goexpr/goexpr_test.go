@@ -49,13 +49,12 @@ func TestGoBpmExpression(t *testing.T) {
 			),
 			nil).Once()
 
-	ge, err := goexpr.New(
+	ge := goexpr.Must(
 		dsm,
 		data.MustItemDefinition(values.NewVariable(false)),
 		CheckPositive,
 		foundation.WithId("my first expression"),
 		foundation.WithDoc("x >= 0", foundation.PlainText))
-	require.NoError(t, err)
 
 	require.Equal(t, "gobpm:goexpr", ge.Language())
 
@@ -64,7 +63,7 @@ func TestGoBpmExpression(t *testing.T) {
 
 	require.False(t, ge.IsEvaluated())
 	require.Equal(t, "bool", ge.ResultType())
-	_, err = ge.Result()
+	_, err := ge.Result()
 	require.Error(t, err)
 
 	res, err := ge.Evaluate()

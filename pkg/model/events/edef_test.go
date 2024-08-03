@@ -1,10 +1,13 @@
 package events_test
 
 import (
+	"context"
 	"testing"
 
+	"github.com/dr-dobermann/gobpm/generated/mockdata"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -14,7 +17,7 @@ import (
 func TestErrorDefinitions(t *testing.T) {
 	t.Run("conditional",
 		func(t *testing.T) {
-			expr := data.MustExpression(foundation.WithId("cond_expr"))
+			expr := getDummyCondition(t)
 			require.NotEmpty(t, expr)
 
 			// invalid params
@@ -118,7 +121,20 @@ func TestErrorDefinitions(t *testing.T) {
 
 	t.Run("timer",
 		func(t *testing.T) {
-			tmr := data.MustExpression()
+			ctx := context.Background()
+
+			mds := mockdata.NewMockSource(t)
+			mds.EXPECT().Find(ctx, "x").Return(nil, nil).Maybe()
+
+			invExprType := goexpr.Must(
+				mds,
+				data.MustItemDefinition(
+					values.NewVariable("wrong_res_value")),
+				func(ds data.Source) (data.Value, error) {
+					return values.NewVariable("wrong_res_type"), nil
+				})
+
+			tmr := getTimerExpression(t)
 
 			// invalid params
 			_, err := events.NewTimerEventDefinition(nil, nil, nil)
@@ -131,6 +147,16 @@ func TestErrorDefinitions(t *testing.T) {
 			require.Error(t, err)
 
 			_, err = events.NewTimerEventDefinition(tmr, tmr, nil)
+			require.Error(t, err)
+
+			// invalid expression type
+			_, err = events.NewTimerEventDefinition(invExprType, nil, nil)
+			require.Error(t, err)
+
+			_, err = events.NewTimerEventDefinition(nil, invExprType, nil)
+			require.Error(t, err)
+
+			_, err = events.NewTimerEventDefinition(nil, nil, invExprType)
 			require.Error(t, err)
 
 			// normal params

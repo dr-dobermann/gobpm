@@ -57,7 +57,7 @@ type SequenceFlow struct {
 	// An optional boolean Expression that acts as a gating condition. A
 	// token will only be placed on this Sequence Flow if this
 	// conditionExpression evaluates to true.
-	conditionExpression *data.Expression
+	conditionExpression data.FormalExpression
 
 	// An optional boolean value specifying whether Activities or Choreography
 	// Activities not in the model containing the Sequence Flow can occur
@@ -265,6 +265,6 @@ func (sf *SequenceFlow) Target() SequenceTarget {
 }
 
 // Condition returns the condition expression  of the SequenceFlow.
-func (sf *SequenceFlow) Condition() *data.Expression {
+func (sf *SequenceFlow) Condition() data.FormalExpression {
 	return sf.conditionExpression
 }
