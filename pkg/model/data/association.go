@@ -49,7 +49,7 @@ type Association struct {
 	// Specifies an optional transformation Expression. The actual scope of
 	// accessible data for that Expression is defined by the source and target
 	// of the specific Data Association types.
-	Transformation *Expression
+	Transformation FormalExpression
 
 	// Specifies one or more data elements Assignments. By using an Assignment,
 	// single data structure elements can be assigned from the source structure
@@ -74,11 +74,11 @@ type Assignment struct {
 	foundation.BaseElement
 
 	// The Expression that evaluates the source of the Assignment.
-	From *Expression
+	From FormalExpression
 
 	// The Expression that defines the actual Assignment operation and the
 	// target data element.
-	To *Expression
+	To FormalExpression
 }
 
 func (a *Association) UpdateSource(iDef *ItemDefinition) error {

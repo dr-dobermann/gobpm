@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/generated/mockdata"
-	"github.com/dr-dobermann/gobpm/pkg/model/common/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"

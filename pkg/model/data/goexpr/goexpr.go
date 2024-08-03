@@ -1,8 +1,13 @@
+/*
+GoExpression package is a reference implementation of
+common.FormalExpression interface to support go function
+as FormalExpression evaluation core.
+*/
+
 package goexpr
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -19,7 +24,7 @@ type GExpFunc func(ds data.Source) (data.Value, error)
 // GExpression implements the common.FormalInterface.
 // It based on simple go function.
 type GExpression struct {
-	common.Expression
+	data.Expression
 
 	src data.Source
 
@@ -47,7 +52,7 @@ func New(
 				errs.D("gex_func", gfunc))
 	}
 
-	exp, err := common.NewExpression(opts...)
+	exp, err := data.NewExpression(opts...)
 	if err != nil {
 		return nil,
 			errs.New(
@@ -132,4 +137,4 @@ func (ge *GExpression) IsEvaluated() bool {
 
 // ----------------------------------------------------------------------------
 // interface check
-var _ common.FormalExpression = (*GExpression)(nil)
+var _ data.FormalExpression = (*GExpression)(nil)
