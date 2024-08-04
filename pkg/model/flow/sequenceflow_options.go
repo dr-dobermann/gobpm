@@ -91,12 +91,12 @@ func WithCondition(cond data.FormalExpression) options.Option {
 
 // WithoutContainer select mode of SequenceFlow creation when it
 // wouldn't add to the same container as sequence source.
-func WithoutContainer() options.Option {
-	f := func(fc *sflowConfig) error {
-		fc.putInSrcContainer = false
-
-		return nil
-	}
-
-	return sflowOption(f)
-}
+// func WithoutContainer() options.Option {
+// 	f := func(fc *sflowConfig) error {
+// 		fc.putInSrcContainer = false
+//
+// 		return nil
+// 	}
+//
+// 	return sflowOption(f)
+// }
