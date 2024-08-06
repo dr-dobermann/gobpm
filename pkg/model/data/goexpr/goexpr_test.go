@@ -66,7 +66,7 @@ func TestGoBpmExpression(t *testing.T) {
 	_, err := ge.Result()
 	require.Error(t, err)
 
-	res, err := ge.Evaluate()
+	res, err := ge.Evaluate(dsm)
 	require.NoError(t, err)
 	require.True(t, res.Get().(bool))
 
@@ -79,7 +79,7 @@ func TestGoBpmExprErrors(t *testing.T) {
 	// not created properly Ge
 	invalidGe := goexpr.GExpression{}
 
-	_, err := invalidGe.Evaluate()
+	_, err := invalidGe.Evaluate(nil)
 	require.Error(t, err)
 
 	ctx := context.Background()
@@ -138,7 +138,7 @@ func TestGoBpmExprErrors(t *testing.T) {
 		foundation.WithId("invalid ds"),
 		foundation.WithDoc("x >= 0", foundation.PlainText))
 	require.NoError(t, err)
-	_, err = invDs.Evaluate()
+	_, err = invDs.Evaluate(iDsm)
 	require.Error(t, err)
 
 	// data.Source mock
@@ -164,6 +164,6 @@ func TestGoBpmExprErrors(t *testing.T) {
 		foundation.WithDoc("x >= 0", foundation.PlainText))
 	require.NoError(t, err)
 
-	_, err = wrongResTypeGe.Evaluate()
+	_, err = wrongResTypeGe.Evaluate(nil)
 	require.Error(t, err)
 }

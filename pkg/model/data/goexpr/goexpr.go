@@ -36,13 +36,14 @@ type GExpression struct {
 }
 
 // New creates a new GoBpmExpression.
+// ds could be nil, but on evaluation it should be set.
 func New(
 	ds data.Source,
 	res *data.ItemDefinition,
 	gfunc GExpFunc,
 	opts ...options.Option,
 ) (*GExpression, error) {
-	if ds == nil || res == nil || gfunc == nil {
+	if res == nil || gfunc == nil {
 		return nil,
 			errs.New(
 				errs.M("data source, result, gfunc shouldn't be empty"),
@@ -95,17 +96,30 @@ func (ge *GExpression) Language() string {
 }
 
 // Evaluate evaluate the expression and returns its result.
-func (ge *GExpression) Evaluate() (data.Value, error) {
+func (ge *GExpression) Evaluate(source data.Source) (data.Value, error) {
+	ge.evaluated = false
+
 	if ge.gexFunc == nil {
 		return nil,
 			errs.New(
 				errs.M("gex_func is empty. GExpression wasn't created properly"),
-				errs.C(errorClass, errs.InvalidObject))
+				errs.C(errorClass, errs.InvalidState))
 	}
 
-	ge.evaluated = false
+	src := ge.src
 
-	res, err := ge.gexFunc(ge.src)
+	if source != nil {
+		src = source
+	}
+
+	if src == nil {
+		return nil,
+			errs.New(
+				errs.M("no source"),
+				errs.C(errorClass, errs.InvalidState))
+	}
+
+	res, err := ge.gexFunc(src)
 	if err != nil {
 		return nil,
 			errs.New(
@@ -154,4 +168,6 @@ func (ge *GExpression) IsEvaluated() bool {
 
 // ----------------------------------------------------------------------------
 // interface check
-var _ data.FormalExpression = (*GExpression)(nil)
+var (
+	_ data.FormalExpression = (*GExpression)(nil)
+)

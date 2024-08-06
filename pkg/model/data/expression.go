@@ -76,7 +76,7 @@ type FormalExpression interface {
 	Language() string
 
 	// Evaluate evaluate the expression and returns its result.
-	Evaluate() (Value, error)
+	Evaluate(source Source) (Value, error)
 
 	// Result returns evaluated result of the formal expression.
 	// If there is no evaluation was made, an error returned.

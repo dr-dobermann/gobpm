@@ -162,6 +162,39 @@ func (g *Gateway) Direction() GDirection {
 	return g.direction
 }
 
+// TestFlows check if flows is comply gateway's direction rules.
+// If everything is ok it returns error.
+func (g *Gateway) TestFlows() error {
+	errM := ""
+
+	if g.direction == Mixed && (len(g.Outgoing()) < 2 ||
+		len(g.Incoming()) < 2) {
+		errM = "mixed gateway MUST have multiple incoming and outgouing flows"
+	}
+
+	if g.direction == Converging && (len(g.Outgoing()) > 1 ||
+		len(g.Incoming()) < 2) {
+		errM = "converging gateway MUST have multiple incoming and not have " +
+			"multiple outgouing flows"
+	}
+
+	if g.direction == Diverging && (len(g.Outgoing()) < 2 ||
+		len(g.Incoming()) > 1) {
+		errM = "converging gateway MUST have multiple outgoing and not have " +
+			"multiple incoming flows"
+	}
+
+	if errM != "" {
+		return errs.New(
+			errs.M(errM),
+			errs.C(errorClass, errs.InvalidObject),
+			errs.D("incoming_count", len(g.Incoming())),
+			errs.D("outgoing_count", len(g.Outgoing())))
+	}
+
+	return nil
+}
+
 // ------------------ flow.Node interface --------------------------------------
 
 func (g *Gateway) Node() flow.Node {
@@ -178,7 +211,12 @@ func (g *Gateway) NodeType() flow.NodeType {
 // AcceptIncomingFlow checks if it possible to use sf as IncomingFlow for the
 // Activity.
 func (g *Gateway) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
-	// Gateway has no restrictions on incoming floes
+	if g.direction == Diverging && len(g.Incoming()) > 1 {
+		return errs.New(
+			errs.M("diverging gateway MUST NOT have multiple incoming flows"),
+			errs.C(errorClass, errs.BulidingFailed))
+	}
+
 	return nil
 }
 
@@ -187,8 +225,21 @@ func (g *Gateway) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
 // SuportOutgoingFlow checks if it possible to source sf SequenceFlow from
 // the Gateway.
 func (g *Gateway) SupportOutgoingFlow(sf *flow.SequenceFlow) error {
-	// Gateway has no restrictions on outgoing flows
+	if g.direction == Converging && len(g.Outgoing()) > 1 {
+		return errs.New(
+			errs.M("converging gateway MUST NOT have multiple outgoing flows"),
+			errs.C(errorClass, errs.BulidingFailed))
+	}
+
 	return nil
 }
 
 // -----------------------------------------------------------------------------
+
+// interfaces check
+var (
+	_ flow.Node = (*Gateway)(nil)
+
+	_ flow.SequenceSource = (*Gateway)(nil)
+	_ flow.SequenceTarget = (*Gateway)(nil)
+)
