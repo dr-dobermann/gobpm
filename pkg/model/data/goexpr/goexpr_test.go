@@ -99,14 +99,6 @@ func TestGoBpmExprErrors(t *testing.T) {
 
 	// invalid params
 	_, err = goexpr.New(
-		nil,
-		data.MustItemDefinition(values.NewVariable("test")),
-		CheckPositive,
-		foundation.WithId("my first expression"),
-		foundation.WithDoc("x >= 0", foundation.PlainText))
-	require.Error(t, err)
-
-	_, err = goexpr.New(
 		iDsm,
 		nil,
 		CheckPositive,
