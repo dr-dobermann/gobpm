@@ -90,6 +90,11 @@ func (f *SequenceFlow) Type() ElementType {
 // Link creates a new sequence flow between two Nodes.
 // if source node is in a Container, Link also adds created sequence flow
 // inte the same Containier.
+// Possible options are:
+//   - foundation.WithId
+//   - foundation.WithDoc
+//   - options.WithName
+//   - flow.WithCondition
 func Link(
 	src SequenceSource,
 	trg SequenceTarget,

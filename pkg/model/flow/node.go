@@ -101,6 +101,12 @@ func (fn *FlowNode) Outgoing() []*SequenceFlow {
 
 // AddFlow adds new SequenceFlow to the FlowNode n.
 func (n *FlowNode) AddFlow(sf *SequenceFlow, dir data.Direction) error {
+	if sf == nil {
+		return errs.New(
+			errs.M("couldn't add empty sequence flow"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
 	if err := dir.Validate(); err != nil {
 		return err
 	}
@@ -109,9 +115,7 @@ func (n *FlowNode) AddFlow(sf *SequenceFlow, dir data.Direction) error {
 		n.flows[dir] = map[string]*SequenceFlow{}
 	}
 
-	if sf != nil {
-		n.flows[dir][sf.Id()] = sf
-	}
+	n.flows[dir][sf.Id()] = sf
 
 	return nil
 }

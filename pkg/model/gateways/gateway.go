@@ -180,7 +180,7 @@ func (g *Gateway) TestFlows() error {
 
 	if g.direction == Diverging && (len(g.Outgoing()) < 2 ||
 		len(g.Incoming()) > 1) {
-		errM = "converging gateway MUST have multiple outgoing and not have " +
+		errM = "diverging gateway MUST have multiple outgoing and not have " +
 			"multiple incoming flows"
 	}
 
@@ -211,7 +211,7 @@ func (g *Gateway) NodeType() flow.NodeType {
 // AcceptIncomingFlow checks if it possible to use sf as IncomingFlow for the
 // Activity.
 func (g *Gateway) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
-	if g.direction == Diverging && len(g.Incoming()) > 1 {
+	if g.direction == Diverging && len(g.Incoming()) > 0 {
 		return errs.New(
 			errs.M("diverging gateway MUST NOT have multiple incoming flows"),
 			errs.C(errorClass, errs.BulidingFailed))
@@ -225,7 +225,7 @@ func (g *Gateway) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
 // SuportOutgoingFlow checks if it possible to source sf SequenceFlow from
 // the Gateway.
 func (g *Gateway) SupportOutgoingFlow(sf *flow.SequenceFlow) error {
-	if g.direction == Converging && len(g.Outgoing()) > 1 {
+	if g.direction == Converging && len(g.Outgoing()) > 0 {
 		return errs.New(
 			errs.M("converging gateway MUST NOT have multiple outgoing flows"),
 			errs.C(errorClass, errs.BulidingFailed))

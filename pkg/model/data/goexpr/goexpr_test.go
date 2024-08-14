@@ -97,7 +97,16 @@ func TestGoBpmExprErrors(t *testing.T) {
 			fmt.Errorf("couldn't find x"),
 		).Maybe()
 
-	// invalid params
+	// invalid option
+	_, err = goexpr.New(
+		iDsm,
+		data.MustItemDefinition(values.NewVariable("test")),
+		CheckPositive,
+		options.WithName("my expression"),
+		foundation.WithDoc("x >= 0", foundation.PlainText))
+	require.Error(t, err)
+
+	// nil params
 	_, err = goexpr.New(
 		iDsm,
 		nil,
@@ -114,15 +123,12 @@ func TestGoBpmExprErrors(t *testing.T) {
 		foundation.WithDoc("x >= 0", foundation.PlainText))
 	require.Error(t, err)
 
-	_, err = goexpr.New(
-		iDsm,
-		data.MustItemDefinition(values.NewVariable("test")),
-		CheckPositive,
-		options.WithName("test"),
-		foundation.WithDoc("x >= 0", foundation.PlainText))
-	require.Error(t, err)
+	require.Panics(t,
+		func() {
+			_ = goexpr.Must(iDsm, nil, CheckPositive)
+		})
 
-	// invalid data source
+	// invalid data source value type
 	invDs, err := goexpr.New(
 		iDsm,
 		data.MustItemDefinition(values.NewVariable("test")),
@@ -131,6 +137,17 @@ func TestGoBpmExprErrors(t *testing.T) {
 		foundation.WithDoc("x >= 0", foundation.PlainText))
 	require.NoError(t, err)
 	_, err = invDs.Evaluate(iDsm)
+	require.Error(t, err)
+
+	// empty data source on evaluation
+	emptyDs, err := goexpr.New(
+		nil,
+		data.MustItemDefinition(values.NewVariable("test")),
+		CheckPositive,
+		foundation.WithId("invalid ds"),
+		foundation.WithDoc("x >= 0", foundation.PlainText))
+	require.NoError(t, err)
+	_, err = emptyDs.Evaluate(nil)
 	require.Error(t, err)
 
 	// data.Source mock

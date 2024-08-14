@@ -37,6 +37,11 @@ func NewExclusiveGateway(opts ...options.Option) (*ExclusiveGateway, error) {
 
 // Exec runs single node and returns its valid
 // output sequence flows on success or error on failure.
+//
+// NOTE: Now fails during evaluation stops process execution.
+// It's possible to consider evaluation fails as condition failure and
+// continue process execution which is not passing the flow with failed
+// condition.
 func (eg *ExclusiveGateway) Exec(
 	ctx context.Context,
 	re renv.RuntimeEnvironment,
@@ -83,6 +88,20 @@ func (eg *ExclusiveGateway) Exec(
 		if res.Get() == true {
 			flows = append(flows, of)
 		}
+	}
+
+	// if there is no path with successful condition, default flow should be
+	// used. If there is no available outgoing flows the error returned.
+	if len(flows) == 0 {
+		if eg.defaultFlow == nil {
+			return nil,
+				errs.New(
+					errs.M("no available outgoing flows"),
+					errs.C(errorClass, errs.InvalidState),
+					errs.D("exclusive_gateway_id", eg.Id()))
+		}
+
+		flows = append(flows, eg.defaultFlow)
 	}
 
 	return flows, nil
