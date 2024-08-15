@@ -38,7 +38,8 @@ func NewExclusiveGateway(opts ...options.Option) (*ExclusiveGateway, error) {
 // Exec runs single node and returns its valid
 // output sequence flows on success or error on failure.
 //
-// NOTE: Now fails during evaluation stops process execution.
+// NOTE: Current implementation stops execution with error on condition
+// evaluation failure.
 // It's possible to consider evaluation fails as condition failure and
 // continue process execution which is not passing the flow with failed
 // condition.
@@ -61,31 +62,19 @@ func (eg *ExclusiveGateway) Exec(
 
 	for _, of := range eg.Outgoing() {
 		cond := of.Condition()
-		if cond == nil && of.Id() == eg.defaultFlow.Id() {
+		// nil condition means the condition is meet.
+		if cond == nil {
+			flows = append(flows, of)
+
 			continue
 		}
 
-		if cond.ResultType() != "bool" {
-			return nil,
-				errs.New(
-					errs.M("invalid condition expression type"),
-					errs.C(errorClass, errs.TypeCastingError),
-					errs.D("outgoing_flow_id", of.Id()),
-					errs.D("exclusive_gateway_id", eg.Id()))
-		}
-
-		res, err := cond.Evaluate(eg)
+		res, err := eg.checkCondition(cond, of)
 		if err != nil {
-			return nil,
-				errs.New(
-					errs.M("flow condition evaluation failed"),
-					errs.C(errorClass, errs.OperationFailed),
-					errs.D("outgoing_flow_id", of.Id()),
-					errs.D("exclusive_gateway_id", eg.Id()),
-					errs.E(err))
+			return nil, err
 		}
 
-		if res.Get() == true {
+		if res {
 			flows = append(flows, of)
 		}
 	}
@@ -105,6 +94,34 @@ func (eg *ExclusiveGateway) Exec(
 	}
 
 	return flows, nil
+}
+
+// checkCondition check condition result and return it or error on failure.
+func (eg *ExclusiveGateway) checkCondition(
+	cond data.FormalExpression,
+	of *flow.SequenceFlow,
+) (bool, error) {
+	if cond.ResultType() != "bool" {
+		return false,
+			errs.New(
+				errs.M("invalid condition expression type"),
+				errs.C(errorClass, errs.TypeCastingError),
+				errs.D("outgoing_flow_id", of.Id()),
+				errs.D("exclusive_gateway_id", eg.Id()))
+	}
+
+	res, err := cond.Evaluate(eg)
+	if err != nil {
+		return false,
+			errs.New(
+				errs.M("flow condition evaluation failed"),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.D("outgoing_flow_id", of.Id()),
+				errs.D("exclusive_gateway_id", eg.Id()),
+				errs.E(err))
+	}
+
+	return res.Get().(bool), nil
 }
 
 // ----------------------- data.Source interface ------------------------------

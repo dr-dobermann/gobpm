@@ -155,8 +155,8 @@ func (o *Operation) Type() string {
 	return UnspecifiedImplementation
 }
 
-// Run tries to call implentation.Execute with inMessage as input and
-// put it results int outMessage.
+// Run tries to call implementation.Execute with inMessage as input and
+// put it results into outMessage.
 func (o *Operation) Run(ctx context.Context) error {
 	if o.implementation == nil {
 		return errs.New(
