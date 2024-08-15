@@ -107,6 +107,9 @@ func TestGatewayFlows(t *testing.T) {
 			require.NoError(t, err)
 
 			// incoming flows
+			// empty number of incomng flows should faile
+			require.Error(t, g.TestFlows())
+
 			// first node should link without problem
 			_, err = flow.Link(nodes[0], g)
 			require.NoError(t, err)
@@ -126,6 +129,67 @@ func TestGatewayFlows(t *testing.T) {
 			// multiple outgoing flow is ok
 			_, err = flow.Link(g, nodes[2])
 			require.NoError(t, err)
+
+			require.NoError(t, g.TestFlows())
+		})
+
+	t.Run(
+		"converging gateway",
+		func(t *testing.T) {
+			nodes := getDummyNodes(4)
+			require.Len(t, nodes, 4)
+
+			g, err := gateways.New(gateways.WithDirection(gateways.Converging))
+			require.NoError(t, err)
+
+			// incoming flows
+			// all incoming flows should link without errors
+			for _, dn := range nodes[:2] {
+				_, err := flow.Link(dn, g)
+				require.NoError(t, err)
+			}
+
+			// outgoing flows
+			// should fail without outgoing flows
+			require.Error(t, g.TestFlows())
+
+			// first flow should be added flowlessly
+			_, err = flow.Link(g, nodes[2])
+			require.NoError(t, err)
+
+			// adding more outging flows should fail
+			_, err = flow.Link(g, nodes[3])
+			require.Error(t, err)
+		})
+
+	t.Run(
+		"mixed gateway",
+		func(t *testing.T) {
+			nodes := getDummyNodes(4)
+			require.Len(t, nodes, 4)
+
+			g, err := gateways.New(gateways.WithDirection(gateways.Mixed))
+			require.NoError(t, err)
+
+			// incoming flows
+			// should fail without incoming flows
+			require.Error(t, g.TestFlows())
+
+			// all incoming flows should be added without errors
+			for _, dn := range nodes[:2] {
+				_, err := flow.Link(dn, g)
+				require.NoError(t, err)
+			}
+
+			// outgoing flows
+			// should fail without outgoing flows
+			require.Error(t, g.TestFlows())
+
+			// all outgoing flows should be added without errors
+			for _, dn := range nodes[2:] {
+				_, err := flow.Link(g, dn)
+				require.NoError(t, err)
+			}
 
 			require.NoError(t, g.TestFlows())
 		})

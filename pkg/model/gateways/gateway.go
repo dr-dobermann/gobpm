@@ -172,14 +172,16 @@ func (g *Gateway) TestFlows() error {
 		errM = "mixed gateway MUST have multiple incoming and outgouing flows"
 	}
 
-	if g.direction == Converging && (len(g.Outgoing()) > 1 ||
-		len(g.Incoming()) < 2) {
+	if g.direction == Converging &&
+		((len(g.Outgoing()) > 1 || len(g.Outgoing()) == 0) ||
+			len(g.Incoming()) < 2) {
 		errM = "converging gateway MUST have multiple incoming and not have " +
 			"multiple outgouing flows"
 	}
 
-	if g.direction == Diverging && (len(g.Outgoing()) < 2 ||
-		len(g.Incoming()) > 1) {
+	if g.direction == Diverging &&
+		(len(g.Outgoing()) < 2 ||
+			(len(g.Incoming()) > 1 || len(g.Incoming()) == 0)) {
 		errM = "diverging gateway MUST have multiple outgoing and not have " +
 			"multiple incoming flows"
 	}
