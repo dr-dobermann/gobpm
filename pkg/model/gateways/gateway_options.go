@@ -36,7 +36,6 @@ func (gc *gatewayConfig) newGateway() (*Gateway, error) {
 		FlowNode:    *flow.NewFlowNode(),
 		FlowElement: *flow.NewFlowElement(gc.name),
 		direction:   gc.direction,
-		defaultFlow: &flow.SequenceFlow{},
 	}
 
 	return &g, nil

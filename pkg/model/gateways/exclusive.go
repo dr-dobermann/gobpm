@@ -40,9 +40,9 @@ func NewExclusiveGateway(opts ...options.Option) (*ExclusiveGateway, error) {
 //
 // NOTE: Current implementation stops execution with error on condition
 // evaluation failure.
-// It's possible to consider evaluation fails as condition failure and
-// continue process execution which is not passing the flow with failed
-// condition.
+// It's possible to consider condition evaluation fail as a condition false
+// result and continue process execution and don't return the flow with
+// failed condition.
 func (eg *ExclusiveGateway) Exec(
 	ctx context.Context,
 	re renv.RuntimeEnvironment,

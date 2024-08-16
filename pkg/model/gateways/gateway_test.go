@@ -94,6 +94,10 @@ func TestNewGateway(t *testing.T) {
 	g, err = gateways.New(gateways.WithDirection(gateways.Mixed))
 	require.NoError(t, err)
 	require.Equal(t, gateways.Mixed, g.Direction())
+
+	// with invalid option
+	_, err = gateways.New(gateways.WithDirection(gateways.GDirection("invalid_direction")))
+	require.Error(t, err)
 }
 
 func TestGatewayFlows(t *testing.T) {
@@ -111,7 +115,7 @@ func TestGatewayFlows(t *testing.T) {
 			require.Error(t, g.TestFlows())
 
 			// first node should link without problem
-			_, err = flow.Link(nodes[0], g)
+			inflow, err := flow.Link(nodes[0], g)
 			require.NoError(t, err)
 
 			// second node shouldn't be linked
@@ -123,7 +127,7 @@ func TestGatewayFlows(t *testing.T) {
 			require.Error(t, g.TestFlows())
 
 			// single outgoing flow is ok
-			_, err = flow.Link(g, nodes[1])
+			outflow, err := flow.Link(g, nodes[1])
 			require.NoError(t, err)
 
 			// multiple outgoing flow is ok
@@ -131,6 +135,20 @@ func TestGatewayFlows(t *testing.T) {
 			require.NoError(t, err)
 
 			require.NoError(t, g.TestFlows())
+
+			// test default flows
+			require.Nil(t, g.DefaultFlow())
+
+			// invalid flow set as default
+			require.Error(t, g.UpdateDefaultFlow(inflow))
+
+			// valid flow set as default
+			require.NoError(t, g.UpdateDefaultFlow(outflow))
+			require.Equal(t, outflow, g.DefaultFlow())
+
+			// clear default flow
+			require.NoError(t, g.UpdateDefaultFlow(nil))
+			require.Nil(t, g.DefaultFlow())
 		})
 
 	t.Run(
@@ -176,6 +194,38 @@ func TestGatewayFlows(t *testing.T) {
 			require.Error(t, g.TestFlows())
 
 			// all incoming flows should be added without errors
+			for _, dn := range nodes[:2] {
+				_, err := flow.Link(dn, g)
+				require.NoError(t, err)
+			}
+
+			// outgoing flows
+			// should fail without outgoing flows
+			require.Error(t, g.TestFlows())
+
+			// all outgoing flows should be added without errors
+			for _, dn := range nodes[2:] {
+				_, err := flow.Link(g, dn)
+				require.NoError(t, err)
+			}
+
+			require.NoError(t, g.TestFlows())
+		})
+
+	t.Run(
+		"unspecified direction gateway",
+		func(t *testing.T) {
+			nodes := getDummyNodes(4)
+			require.Len(t, nodes, 4)
+
+			g, err := gateways.New(gateways.WithDirection(gateways.Unspecified))
+			require.NoError(t, err)
+
+			// incoming flows
+			// should fail with no incoming flows
+			require.Error(t, g.TestFlows())
+
+			// any incoming flows should be added without errors
 			for _, dn := range nodes[:2] {
 				_, err := flow.Link(dn, g)
 				require.NoError(t, err)

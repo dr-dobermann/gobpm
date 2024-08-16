@@ -135,6 +135,11 @@ func New(opts ...options.Option) (*Gateway, error) {
 	return gc.newGateway()
 }
 
+// DefaultFlow return default flow of the gateway.
+func (g *Gateway) DefaultFlow() *flow.SequenceFlow {
+	return g.defaultFlow
+}
+
 // UpdateDefaultFlow updates the Gateway's default flow.
 // if f is nil, then defaultFlow also sets to nil.
 func (g *Gateway) UpdateDefaultFlow(f *flow.SequenceFlow) error {
@@ -167,23 +172,31 @@ func (g *Gateway) Direction() GDirection {
 func (g *Gateway) TestFlows() error {
 	errM := ""
 
-	if g.direction == Mixed && (len(g.Outgoing()) < 2 ||
-		len(g.Incoming()) < 2) {
-		errM = "mixed gateway MUST have multiple incoming and outgouing flows"
-	}
+	switch g.direction {
+	case Unspecified:
+		if len(g.Incoming()) < 1 || len(g.Outgoing()) < 1 {
+			errM = "unspecified gateway should have at least one incoming and one outgoing flows"
+		}
 
-	if g.direction == Converging &&
-		((len(g.Outgoing()) > 1 || len(g.Outgoing()) == 0) ||
-			len(g.Incoming()) < 2) {
-		errM = "converging gateway MUST have multiple incoming and not have " +
-			"multiple outgouing flows"
-	}
+	case Mixed:
+		if len(g.Outgoing()) < 2 ||
+			len(g.Incoming()) < 2 {
+			errM = "mixed gateway MUST have multiple incoming and outgouing flows"
+		}
 
-	if g.direction == Diverging &&
-		(len(g.Outgoing()) < 2 ||
-			(len(g.Incoming()) > 1 || len(g.Incoming()) == 0)) {
-		errM = "diverging gateway MUST have multiple outgoing and not have " +
-			"multiple incoming flows"
+	case Converging:
+		if (len(g.Outgoing()) > 1 || len(g.Outgoing()) == 0) ||
+			len(g.Incoming()) < 2 {
+			errM = "converging gateway MUST have multiple incoming and not have " +
+				"multiple outgouing flows"
+		}
+
+	case Diverging:
+		if len(g.Outgoing()) < 2 ||
+			(len(g.Incoming()) > 1 || len(g.Incoming()) == 0) {
+			errM = "diverging gateway MUST have multiple outgoing and not have " +
+				"multiple incoming flows"
+		}
 	}
 
 	if errM != "" {
