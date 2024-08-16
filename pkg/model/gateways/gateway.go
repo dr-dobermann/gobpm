@@ -97,6 +97,12 @@ type Gateway struct {
 }
 
 // New creates a new Gateway with options opts.
+//
+// Available options are:
+//   - foundation.WithId
+//   - foundation.WithDoc
+//   - options.WithName
+//   - gateways.WithDirection
 func New(opts ...options.Option) (*Gateway, error) {
 	gc := gatewayConfig{
 		direction: Unspecified,
@@ -142,6 +148,8 @@ func (g *Gateway) DefaultFlow() *flow.SequenceFlow {
 
 // UpdateDefaultFlow updates the Gateway's default flow.
 // if f is nil, then defaultFlow also sets to nil.
+// According to standard, default flow SHOULD NOT have
+// condiiion.
 func (g *Gateway) UpdateDefaultFlow(f *flow.SequenceFlow) error {
 	if f == nil {
 		g.defaultFlow = nil
@@ -151,6 +159,12 @@ func (g *Gateway) UpdateDefaultFlow(f *flow.SequenceFlow) error {
 
 	for _, sf := range g.Outgoing() {
 		if f.Id() == sf.Id() {
+			if sf.Condition() != nil {
+				return errs.New(
+					errs.M("default flow shouldn't have a condition expression"),
+					errs.C(errorClass, errs.InvalidObject))
+			}
+
 			g.defaultFlow = f
 
 			return nil

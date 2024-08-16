@@ -19,6 +19,12 @@ type ExclusiveGateway struct {
 }
 
 // NewExclusiveGateway creates a new ExclusiveGateway.
+//
+// Available options are:
+//   - foundation.WithId
+//   - foundation.WithDoc
+//   - options.WithName
+//   - gateways.WithDirection
 func NewExclusiveGateway(opts ...options.Option) (*ExclusiveGateway, error) {
 	g, err := New(opts...)
 	if err != nil {
@@ -91,6 +97,16 @@ func (eg *ExclusiveGateway) Exec(
 		}
 
 		flows = append(flows, eg.defaultFlow)
+	}
+
+	if len(flows) > 1 {
+		return nil,
+			errs.New(
+				errs.M("exclusive gateway couldn't have more than 1 outgoing flows"),
+				errs.C(errorClass, errs.InvalidObject),
+				errs.D("exclusive_gateway_id", eg.Id()),
+				errs.D("outgoing_flows_count", len(flows)),
+				errs.D("outgoing_flows", flows))
 	}
 
 	return flows, nil
