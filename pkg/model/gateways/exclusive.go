@@ -126,7 +126,7 @@ func (eg *ExclusiveGateway) checkCondition(
 				errs.D("exclusive_gateway_id", eg.Id()))
 	}
 
-	res, err := cond.Evaluate(eg)
+	res, err := cond.Evaluate(context.Background(), eg)
 	if err != nil {
 		return false,
 			errs.New(

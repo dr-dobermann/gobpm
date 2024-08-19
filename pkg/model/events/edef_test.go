@@ -130,7 +130,7 @@ func TestErrorDefinitions(t *testing.T) {
 				mds,
 				data.MustItemDefinition(
 					values.NewVariable("wrong_res_value")),
-				func(ds data.Source) (data.Value, error) {
+				func(ctx context.Context, ds data.Source) (data.Value, error) {
 					return values.NewVariable("wrong_res_type"), nil
 				})
 

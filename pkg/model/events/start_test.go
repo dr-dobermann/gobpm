@@ -209,6 +209,7 @@ func getDummyCondition(t *testing.T) data.FormalExpression {
 		data.MustItemDefinition(
 			values.NewVariable(true)),
 		func(
+			_ context.Context,
 			ds data.Source,
 		) (data.Value, error) {
 			return values.NewVariable(true), nil
@@ -225,7 +226,7 @@ func getTimerExpression(t *testing.T) data.FormalExpression {
 		mds,
 		data.MustItemDefinition(
 			values.NewVariable(time.Now())),
-		func(ds data.Source) (data.Value, error) {
+		func(_ context.Context, ds data.Source) (data.Value, error) {
 			return values.NewVariable(time.Now()), nil
 		})
 }
