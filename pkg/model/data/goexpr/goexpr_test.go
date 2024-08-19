@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func CheckPositive(ds data.Source) (data.Value, error) {
-	xv, err := ds.Find(context.Background(), "x")
+func CheckPositive(ctx context.Context, ds data.Source) (data.Value, error) {
+	xv, err := ds.Find(ctx, "x")
 	if err != nil {
 		return nil, fmt.Errorf("couldn't find x value: %w", err)
 	}
@@ -66,7 +66,7 @@ func TestGoBpmExpression(t *testing.T) {
 	_, err := ge.Result()
 	require.Error(t, err)
 
-	res, err := ge.Evaluate(dsm)
+	res, err := ge.Evaluate(ctx, dsm)
 	require.NoError(t, err)
 	require.True(t, res.Get().(bool))
 
@@ -79,7 +79,7 @@ func TestGoBpmExprErrors(t *testing.T) {
 	// not created properly Ge
 	invalidGe := goexpr.GExpression{}
 
-	_, err := invalidGe.Evaluate(nil)
+	_, err := invalidGe.Evaluate(context.Background(), nil)
 	require.Error(t, err)
 
 	ctx := context.Background()
@@ -136,7 +136,7 @@ func TestGoBpmExprErrors(t *testing.T) {
 		foundation.WithId("invalid ds"),
 		foundation.WithDoc("x >= 0", foundation.PlainText))
 	require.NoError(t, err)
-	_, err = invDs.Evaluate(iDsm)
+	_, err = invDs.Evaluate(ctx, iDsm)
 	require.Error(t, err)
 
 	// empty data source on evaluation
@@ -147,7 +147,7 @@ func TestGoBpmExprErrors(t *testing.T) {
 		foundation.WithId("invalid ds"),
 		foundation.WithDoc("x >= 0", foundation.PlainText))
 	require.NoError(t, err)
-	_, err = emptyDs.Evaluate(nil)
+	_, err = emptyDs.Evaluate(ctx, nil)
 	require.Error(t, err)
 
 	// data.Source mock
@@ -173,6 +173,6 @@ func TestGoBpmExprErrors(t *testing.T) {
 		foundation.WithDoc("x >= 0", foundation.PlainText))
 	require.NoError(t, err)
 
-	_, err = wrongResTypeGe.Evaluate(nil)
+	_, err = wrongResTypeGe.Evaluate(ctx, nil)
 	require.Error(t, err)
 }

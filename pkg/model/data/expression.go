@@ -1,6 +1,8 @@
 package data
 
 import (
+	"context"
+
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -76,7 +78,7 @@ type FormalExpression interface {
 	Language() string
 
 	// Evaluate evaluate the expression and returns its result.
-	Evaluate(source Source) (Value, error)
+	Evaluate(ctx context.Context, source Source) (Value, error)
 
 	// Result returns evaluated result of the formal expression.
 	// If there is no evaluation was made, an error returned.

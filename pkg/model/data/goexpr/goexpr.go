@@ -7,6 +7,8 @@ as FormalExpression evaluation core.
 package goexpr
 
 import (
+	"context"
+
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -19,7 +21,7 @@ const (
 )
 
 // GExpFunc incapsulated the functional logic of the GoBpmExpression.
-type GExpFunc func(ds data.Source) (data.Value, error)
+type GExpFunc func(ctx context.Context, ds data.Source) (data.Value, error)
 
 // GExpression implements the common.FormalInterface.
 // It based on simple go function.
@@ -96,7 +98,10 @@ func (ge *GExpression) Language() string {
 }
 
 // Evaluate evaluate the expression and returns its result.
-func (ge *GExpression) Evaluate(source data.Source) (data.Value, error) {
+func (ge *GExpression) Evaluate(
+	ctx context.Context,
+	source data.Source,
+) (data.Value, error) {
 	ge.evaluated = false
 
 	if ge.gexFunc == nil {
@@ -119,7 +124,7 @@ func (ge *GExpression) Evaluate(source data.Source) (data.Value, error) {
 				errs.C(errorClass, errs.InvalidState))
 	}
 
-	res, err := ge.gexFunc(src)
+	res, err := ge.gexFunc(ctx, src)
 	if err != nil {
 		return nil,
 			errs.New(
