@@ -57,7 +57,7 @@ type SequenceFlow struct {
 	// An optional boolean Expression that acts as a gating condition. A
 	// token will only be placed on this Sequence Flow if this
 	// conditionExpression evaluates to true.
-	conditionExpression *data.Expression
+	conditionExpression data.FormalExpression
 
 	// An optional boolean value specifying whether Activities or Choreography
 	// Activities not in the model containing the Sequence Flow can occur
@@ -90,6 +90,11 @@ func (f *SequenceFlow) Type() ElementType {
 // Link creates a new sequence flow between two Nodes.
 // if source node is in a Container, Link also adds created sequence flow
 // inte the same Containier.
+// Possible options are:
+//   - foundation.WithId
+//   - foundation.WithDoc
+//   - options.WithName
+//   - flow.WithCondition
 func Link(
 	src SequenceSource,
 	trg SequenceTarget,
@@ -265,6 +270,6 @@ func (sf *SequenceFlow) Target() SequenceTarget {
 }
 
 // Condition returns the condition expression  of the SequenceFlow.
-func (sf *SequenceFlow) Condition() *data.Expression {
+func (sf *SequenceFlow) Condition() data.FormalExpression {
 	return sf.conditionExpression
 }

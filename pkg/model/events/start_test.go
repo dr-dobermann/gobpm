@@ -1,10 +1,14 @@
 package events_test
 
 import (
+	"context"
 	"testing"
+	"time"
 
+	"github.com/dr-dobermann/gobpm/generated/mockdata"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -162,7 +166,7 @@ func TestNewStartEvent(t *testing.T) {
 				events.WithCompensationTrigger(compEd),
 				events.WithConditionalTrigger(
 					events.MustConditionalEventDefinition(
-						data.MustExpression(foundation.WithId("this is a dummy expression")))),
+						getDummyCondition(t))),
 				events.WithErrorTrigger(eed),
 				events.WithEscalationTrigger(escEd),
 				events.WithMessageTrigger(
@@ -170,7 +174,7 @@ func TestNewStartEvent(t *testing.T) {
 				events.WithSignalTrigger(
 					events.MustSignalEventDefinition(sig)),
 				events.WithTimerTrigger(
-					events.MustTimerEventDefinition(data.MustExpression(), nil, nil)),
+					events.MustTimerEventDefinition(getTimerExpression(t), nil, nil)),
 			)
 
 			require.NoError(t, err)
@@ -191,5 +195,38 @@ func TestNewStartEvent(t *testing.T) {
 
 			require.Equal(t, 7, len(triggers))
 			require.Equal(t, 7, len(se.Definitions()))
+		})
+}
+
+func getDummyCondition(t *testing.T) data.FormalExpression {
+	ctx := context.Background()
+
+	mds := mockdata.NewMockSource(t)
+	mds.EXPECT().Find(ctx, "x").Return(nil, nil).Maybe()
+
+	return goexpr.Must(
+		mds,
+		data.MustItemDefinition(
+			values.NewVariable(true)),
+		func(
+			_ context.Context,
+			ds data.Source,
+		) (data.Value, error) {
+			return values.NewVariable(true), nil
+		})
+}
+
+func getTimerExpression(t *testing.T) data.FormalExpression {
+	ctx := context.Background()
+
+	mds := mockdata.NewMockSource(t)
+	mds.EXPECT().Find(ctx, "x").Return(nil, nil).Maybe()
+
+	return goexpr.Must(
+		mds,
+		data.MustItemDefinition(
+			values.NewVariable(time.Now())),
+		func(_ context.Context, ds data.Source) (data.Value, error) {
+			return values.NewVariable(time.Now()), nil
 		})
 }

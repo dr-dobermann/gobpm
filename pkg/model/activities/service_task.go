@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/dr-dobermann/gobpm/internal/exec"
 	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -233,3 +234,8 @@ func (st *ServiceTask) uploadOutputMessage() error {
 }
 
 // -----------------------------------------------------------------------------
+
+// interface check
+var (
+	_ exec.NodeExecutor = (*ServiceTask)(nil)
+)

@@ -1,121 +1,92 @@
 package data
 
 import (
+	"context"
+
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
-// *****************************************************************************
-
-// Expressions are used in many places within BPMN to extract information from
-// the different elements, normally data elements. The most common usage is
-// when modeling decisions, where conditional Expressions are used to direct
-// the flow along specific paths based on some criteria.
+// The Expression class is used to specify an Expression using natural-language
+// text. These Expressions are not executable. The natural language text is
+// captured using the documentation attribute, inherited from BaseElement.
+// Expression inherits the attributes and model associations of BaseElement
+// but adds no additional attributes or model associations.
+//
+// Business Process Model and Notation (BPMN), v2.0.2 83 Expressions are used
+// in many places within BPMN to extract information from the different
+// elements, normally data elements. The most common usage is when modeling
+// decisions, where conditional Expressions are used to direct the flow along
+// specific paths based on some criteria.
 //
 // BPMN supports underspecified Expressions, where the logic is captured as
 // natural-language descriptive text. It also supports formal Expressions,
 // where the logic is captured in an executable form using a specified
 // Expression language.
+
+// Expression
+//
+// The Expression class is used to specify an Expression using natural-language
+// text. These Expressions are not executable and are considered underspecified.
+// The definition of an Expression can be done in two ways: it can be contained
+// where it is used, or it can be defined at the Process level and then
+// referenced where it is used.
+// The Expression element inherits the attributes and model associations of
+// BaseElement (see Table 8.5), but does not have any additional attributes or
+// model associations.
 type Expression struct {
 	foundation.BaseElement
 }
 
-// NewExpression creates a new Expression and returns its pointer on success or
-// error on failure.
-func NewExpression(baseOpts ...options.Option) (*Expression, error) {
-	be, err := foundation.NewBaseElement(baseOpts...)
+// NewExpression creates an Expression with optional Id and Docs from foundation.
+func NewExpression(opts ...options.Option) (*Expression, error) {
+	be, err := foundation.NewBaseElement(opts...)
 	if err != nil {
-		return nil, err
+		return nil,
+			errs.New(
+				errs.M("expression building failed"),
+				errs.C(errorClass, errs.BulidingFailed),
+				errs.E(err))
 	}
 
 	return &Expression{
-		BaseElement: *be}, nil
+			BaseElement: *be,
+		},
+		nil
 }
 
-// MustExperssion tires to create a new Expression and returns its pointer.
-// If there is any error it panics.
-func MustExpression(baseOpts ...options.Option) *Expression {
-	e, err := NewExpression(baseOpts...)
-	if err != nil {
-		errs.Panic(err)
-	}
+// ============================================================================
 
-	return e
-}
-
-// *****************************************************************************
-
-// The FormalExpression class is used to specify an executable Expression
-// using a specified Expression language. A natural-language description of
-// the Expression can also be specified, in addition to the formal
+// Formal Expression
+//
+// The FormalExpression class is used to specify an executable Expression using
+// a specified Expression language. A natural-language description of the
+// Expression can also be specified, in addition to the formal
 // specification.
 // The default Expression language for all Expressions is specified in the
 // Definitions element, using the expressionLanguage attribute. It can also be
 // overridden on each individual FormalExpression using the same attribute.
-type FormalExpression struct {
-	Expression
+// The FormalExpression element inherits the attributes and model associations
+// of BaseElement, through the Expression element.
+type FormalExpression interface {
+	foundation.Identifyer
 
-	// Overrides the Expression language specified in the Definitions.
-	// The language MUST be specified in a URI format.
-	language string
+	foundation.Documentator
 
-	// The body of the Expression.
-	// Note that this attribute is not relevant when the XML Schema is used for
-	// interchange. Instead, the FormalExpression complex type supports mixed
-	// content. The body of the Expression would be specified as element
-	// content.
-	// For example:
-	// 	<formalExpression id=“ID_2">
-	// 		count(../dataObject[id="CustomerRecord_1"]/emailAddress) > 0
-	// 		<evaluatesToType id="ID_3" typeRef=“xsd:boolean"/>
-	// 	</formalExpression>
-	// body []byte
+	// Language returns the FormalExpression language in URI format.
+	Language() string
 
-	// The type of object that this Expression returns when evaluated.
-	// For example, conditional Expressions evaluate to a boolean.
-	evaluatesToType *ItemDefinition
-}
+	// Evaluate evaluate the expression and returns its result.
+	Evaluate(ctx context.Context, source Source) (Value, error)
 
-// NewFormalExpression creates a new FormalExpression object and
-// returns its pointer or error in case of body loading error.
-// func NewFormalExpression(id, lang string,
-// 	body io.Reader,
-// 	evalType *ItemDefinition,
-// 	docs ...*foundation.Documentation,
-// ) (*FormalExpression, error) {
-// 	fe := FormalExpression{
-// 		Expression:      *NewExpression(id, docs...),
-// 		language:        lang,
-// 		evaluatesToType: evalType,
-// 	}
+	// Result returns evaluated result of the formal expression.
+	// If there is no evaluation was made, an error returned.
+	Result() (Value, error)
 
-// 	if body != nil {
-// 		buf := bytes.NewBuffer([]byte{})
-// 		_, err := buf.ReadFrom(body)
-// 		if err != nil {
-// 			return nil, &errs.ApplicationError{
-// 				Err:     err,
-// 				Message: "couldn't read body",
-// 				Classes: []string{errs.InvalidObject},
-// 			}
-// 		}
+	// ResultType returns name of the FormalExpression result type.
+	ResultType() string
 
-// 		if buf.Len() > 0 {
-// 			fe.body = make([]byte, buf.Len())
-// 			copy(fe.body, buf.Bytes())
-// 		}
-// 	}
-
-// 	return &fe, nil
-// }
-
-// Language returns FormalExpression language settings.
-func (fe *FormalExpression) Language() string {
-	return fe.language
-}
-
-// EvalType returns the FormalExpression evaluation type if set.
-func (fe *FormalExpression) EvalType() *ItemDefinition {
-	return fe.evaluatesToType
+	// IsEvaluated returns true if result is ready.
+	IsEvaluated() bool
 }

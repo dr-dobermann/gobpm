@@ -8,6 +8,10 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
+const (
+	PlainText = "text/plain"
+)
+
 type (
 	// baseConfig holds configuration for BaseElement building
 	baseConfig struct {
@@ -68,5 +72,6 @@ func WithDoc(text, format string) options.Option {
 func (bc *baseConfig) baseElement() *BaseElement {
 	return &BaseElement{
 		id:   bc.id,
-		docs: bc.docs}
+		docs: bc.docs,
+	}
 }

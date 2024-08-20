@@ -189,7 +189,7 @@ func NewItemAwareElement(
 			return nil,
 				errs.New(
 					errs.M("default DataStates are not set.\n"+
-						"if you need use default DataStates, "+
+						"if you need to use default DataStates, "+
 						"run data.CreateDefaultStates"),
 					errs.C(errorClass, errs.BulidingFailed))
 		}

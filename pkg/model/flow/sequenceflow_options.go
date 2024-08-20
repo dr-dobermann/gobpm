@@ -11,7 +11,7 @@ import (
 
 type sflowConfig struct {
 	name string
-	cond *data.Expression
+	cond data.FormalExpression
 	src  SequenceSource
 	trg  SequenceTarget
 
@@ -73,7 +73,7 @@ func (fc *sflowConfig) newSequenceFlow() (*SequenceFlow, error) {
 }
 
 // WithCondition sets SequenceFlow condition.
-func WithCondition(cond *data.Expression) options.Option {
+func WithCondition(cond data.FormalExpression) options.Option {
 	f := func(fc *sflowConfig) error {
 		if cond == nil {
 			return errs.New(
@@ -91,12 +91,12 @@ func WithCondition(cond *data.Expression) options.Option {
 
 // WithoutContainer select mode of SequenceFlow creation when it
 // wouldn't add to the same container as sequence source.
-func WithoutContainer() options.Option {
-	f := func(fc *sflowConfig) error {
-		fc.putInSrcContainer = false
-
-		return nil
-	}
-
-	return sflowOption(f)
-}
+// func WithoutContainer() options.Option {
+// 	f := func(fc *sflowConfig) error {
+// 		fc.putInSrcContainer = false
+//
+// 		return nil
+// 	}
+//
+// 	return sflowOption(f)
+// }
