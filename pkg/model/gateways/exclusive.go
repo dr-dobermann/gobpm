@@ -68,10 +68,8 @@ func (eg *ExclusiveGateway) Exec(
 
 	for _, of := range eg.Outgoing() {
 		cond := of.Condition()
-		// nil condition means the condition is meet.
+		// nil condition means the condition is failed.
 		if cond == nil {
-			flows = append(flows, of)
-
 			continue
 		}
 

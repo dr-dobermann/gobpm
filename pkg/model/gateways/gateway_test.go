@@ -44,9 +44,9 @@ func (n *dummyNode) AcceptIncomingFlow(_ *flow.SequenceFlow) error {
 	return nil
 }
 
-func getDummyNodes(n int) []*dummyNode {
+func getDummyNodes(count int) []*dummyNode {
 	nodes := []*dummyNode{}
-	for i := 0; i < n; i++ {
+	for i := 0; i < count; i++ {
 		nodes = append(nodes, newDummyNode(fmt.Sprintf("dummy_node #%d", i)))
 	}
 
