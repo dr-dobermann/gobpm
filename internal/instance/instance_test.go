@@ -13,6 +13,7 @@ import (
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
 	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
@@ -76,8 +77,28 @@ func TestMonitoring(t *testing.T) {
 	inst, err := instance.New(s, nil, ep, m)
 	require.NoError(t, err)
 
+	// test runtime variables
+	rvs, err := scope.NewDataPath("/monitoring/RUNTIME")
+	require.NoError(t, err)
+
+	_, err = inst.GetData(rvs, "INVALID_NAME")
+	require.Error(t, err)
+
+	tc, err := inst.GetData(rvs, instance.TracksCount)
+	require.NoError(t, err)
+	require.Equal(t, 1, tc.Value().Get().(int))
+
+	st, err := inst.GetData(rvs, instance.CurrState)
+	require.NoError(t, err)
+	require.Equal(t, instance.Ready, st.Value().Get().(instance.State))
+
+	start, err := inst.GetData(rvs, instance.StartedAt)
+	require.NoError(t, err)
+	require.True(t, start.Value().Get().(time.Time).IsZero())
+
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// test instance run
 	err = inst.Run(ctx)
 	require.NoError(t, err)
 

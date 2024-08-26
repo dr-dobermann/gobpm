@@ -16,6 +16,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"golang.org/x/exp/maps"
@@ -23,7 +24,16 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/monitor"
 )
 
-const errorClass = "INSTANCE_ERROR"
+const (
+	errorClass = "INSTANCE_ERROR"
+
+	runtimeVars = "RUNTIME"
+
+	// Runtime variables names
+	StartedAt   = "STARTED_AT"
+	CurrState   = "STATE"
+	TracksCount = "TRACKS_CNT"
+)
 
 type State uint8
 
@@ -84,6 +94,9 @@ type Instance struct {
 	// rootScope holds the root dataPath of the scope
 	rootScope scope.DataPath
 
+	// instance runtime variables scope
+	runtimeScope scope.DataPath
+
 	// parentScope hold reference on the parent scope which set up on Instance
 	// creation.
 	parentScope scope.Scope
@@ -107,6 +120,9 @@ type Instance struct {
 	// events are indexed by event definition id.
 	// inner map indexed by track id.
 	events map[string]map[string]*track
+
+	// Instance's run starting time.
+	startTime time.Time
 
 	Monitors []monitor.Writer
 }
@@ -186,6 +202,12 @@ func (inst *Instance) loadProperties(parentScope scope.Scope) error {
 			errs.M("couldn't create Instance Scope data path"),
 			errs.E(err))
 	}
+	inst.runtimeScope, err = inst.rootScope.Append(runtimeVars)
+	if err != nil {
+		return errs.New(
+			errs.M("couldn't create Instance Scope runtime variables data path"),
+			errs.E(err))
+	}
 
 	inst.scopes[inst.rootScope] = map[string]data.Data{}
 	if err := inst.addData(inst.rootScope, dd...); err != nil {
@@ -242,6 +264,7 @@ func (inst *Instance) Run(
 
 	inst.m.Lock()
 	inst.ctx = ctx
+	inst.startTime = time.Now()
 	inst.m.Unlock()
 
 	inst.show("INSTANCE.RUN", "running tracks",
@@ -360,7 +383,13 @@ func (inst *Instance) createTracks() error {
 
 // addData adds data to scope named path
 func (inst *Instance) addData(path scope.DataPath, dd ...data.Data) error {
-	vv := make(map[string]data.Data)
+	inst.m.RLock()
+	vv, ok := inst.scopes[path]
+	inst.m.RUnlock()
+
+	if !ok {
+		vv = make(map[string]data.Data)
+	}
 
 	for _, d := range dd {
 		if d == nil {
@@ -398,9 +427,7 @@ func (inst *Instance) getData(
 	var err error
 
 	for {
-		// inst.m.Lock()
 		s, ok := inst.scopes[path]
-		// inst.m.Unlock()
 		if ok {
 			for _, d := range s {
 				if finder(d) {
@@ -427,6 +454,62 @@ func (inst *Instance) getData(
 		errs.New(
 			errs.M("data not found"),
 			errs.C(errs.ObjectNotFound))
+}
+
+// getRuntimeVar tries to find the Instance's runtime variable by its name.
+func (inst *Instance) getRuntimeVar(name string) (data.Data, error) {
+	var d data.Value
+
+	switch name {
+	case StartedAt:
+		d = values.NewVariable(inst.startTime)
+
+	case CurrState:
+		d = values.NewVariable(inst.state)
+
+	case TracksCount:
+		tc := len(inst.tracks)
+		d = values.NewVariable(tc)
+
+	default:
+		return nil,
+			errs.New(
+				errs.M("invalid runtime variable name"),
+				errs.C(errorClass, errs.InvalidParameter),
+				errs.D("name", name))
+	}
+
+	id, err := data.NewItemDefinition(d)
+	if err != nil {
+		return nil,
+			errs.New(
+				errs.M("couldn't create an ItemDefinition for runtime variable",
+					errs.C(errorClass, errs.BulidingFailed)),
+				errs.E(err),
+				errs.D("name", name))
+	}
+
+	iae, err := data.NewItemAwareElement(id, data.ReadyDataState)
+	if err != nil {
+		return nil,
+			errs.New(
+				errs.M("couldn't create an ItemAwareElement for runtime variable",
+					errs.C(errorClass, errs.BulidingFailed)),
+				errs.E(err),
+				errs.D("name", name))
+	}
+
+	p, err := data.NewParameter(name, iae)
+	if err != nil {
+		return nil,
+			errs.New(
+				errs.M("couldn't create an ItemDefinition for runtime variable",
+					errs.C(errorClass, errs.BulidingFailed)),
+				errs.E(err),
+				errs.D("name", name))
+	}
+
+	return p, nil
 }
 
 // addToken adds a new token into Instance.
@@ -740,15 +823,22 @@ func (inst *Instance) AddData(
 // dataPath selects the initial scope to look for the name.
 // If current Scope doesn't find the name, then it looks in upper
 // Scope until find or failed to find.
+//
+// To get the Instance's runtime variables only GetData could be used,
+// since runtime variables doesn't have Id.
 func (inst *Instance) GetData(
 	path scope.DataPath,
 	name string,
 ) (data.Data, error) {
-	finder := func(d data.Data) bool {
+	if path == inst.runtimeScope {
+		return inst.getRuntimeVar(name)
+	}
+
+	byName := func(d data.Data) bool {
 		return d.Name() == name
 	}
 
-	d, err := inst.getData(path, finder)
+	d, err := inst.getData(path, byName)
 	if err != nil {
 		return nil,
 			errs.New(
@@ -768,11 +858,11 @@ func (inst *Instance) GetDataById(
 	path scope.DataPath,
 	id string,
 ) (data.Data, error) {
-	finder := func(d data.Data) bool {
+	byId := func(d data.Data) bool {
 		return d.ItemDefinition().Id() == id
 	}
 
-	d, err := inst.getData(path, finder)
+	d, err := inst.getData(path, byId)
 	if err != nil {
 		return nil,
 			errs.New(
