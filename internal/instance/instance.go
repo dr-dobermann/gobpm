@@ -797,7 +797,7 @@ func (inst *Instance) Scopes() []scope.DataPath {
 // if NodeDataLoader is nil.
 func (inst *Instance) AddData(
 	ndl scope.NodeDataLoader,
-	values ...data.Data,
+	vv ...data.Data,
 ) error {
 	var (
 		dp  = inst.rootScope
@@ -816,7 +816,7 @@ func (inst *Instance) AddData(
 	inst.m.Lock()
 	defer inst.m.Unlock()
 
-	return inst.addData(dp, values...)
+	return inst.addData(dp, vv...)
 }
 
 // GetData tries to return value of data.Data object with name Name.
@@ -878,7 +878,7 @@ func (inst *Instance) GetDataById(
 // the dataPath.
 func (inst *Instance) LoadData(
 	ndl scope.NodeDataLoader,
-	values ...data.Data,
+	vv ...data.Data,
 ) error {
 	dp, err := inst.rootScope.Append(ndl.Name())
 	if err != nil {
@@ -887,7 +887,7 @@ func (inst *Instance) LoadData(
 			errs.E(err))
 	}
 
-	return inst.addData(dp, values...)
+	return inst.addData(dp, vv...)
 }
 
 // ExtendScope adds a new child Scope to the Scope and returns
