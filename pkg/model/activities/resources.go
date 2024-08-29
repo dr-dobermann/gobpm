@@ -50,6 +50,13 @@ func NewResourceRole(
 				errs.C(errorClass, errs.BulidingFailed))
 	}
 
+	if res != nil && assignExpr != nil {
+		return nil,
+			errs.New(
+				errs.M("Resource and Assignment expression shouldn't be set simultaniously"),
+				errs.C(errorClass, errs.InvalidParameter))
+	}
+
 	be, err := foundation.NewBaseElement(baseOpts...)
 	if err != nil {
 		return nil, err
@@ -60,7 +67,8 @@ func NewResourceRole(
 			name:                 name,
 			resource:             res,
 			assignmentExpression: assignExpr,
-			parameterBindings:    pBinding},
+			parameterBindings:    pBinding,
+		},
 		nil
 }
 
