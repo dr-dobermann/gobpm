@@ -53,7 +53,7 @@ func NewResourceRole(
 	if res != nil && assignExpr != nil {
 		return nil,
 			errs.New(
-				errs.M("Resource and Assignment expression shouldn't be set simultaniously"),
+				errs.M("Resource and Assignment expression shouldn't be set simultaneously"),
 				errs.C(errorClass, errs.InvalidParameter))
 	}
 

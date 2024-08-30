@@ -64,7 +64,13 @@ func NewUserTask(
 			utc.taskOpts = append(utc.taskOpts, opt)
 
 		case usrTaskOption:
-			opt.Apply(&utc)
+			if err := opt.Apply(&utc); err != nil {
+				return nil,
+					errs.New(
+						errs.M("UserTask option applying failed"),
+						errs.C(errorClass, errs.BulidingFailed),
+						errs.E(err))
+			}
 
 		default:
 			return nil,
