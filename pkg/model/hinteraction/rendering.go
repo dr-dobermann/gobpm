@@ -1,5 +1,7 @@
 package human_interaction
 
+import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
+
 // BPMN User Tasks need to be rendered on user interfaces like forms clients,
 // portlets, etc. The Rendering element provides an extensible mechanism for
 // specifying UI renderings for User Tasks (Task UI). The element is optional.
@@ -13,4 +15,9 @@ package human_interaction
 // the rendering type in order to provide language information for a given
 // rendering. The content of the rendering element is not defined by this
 // International Standard.
-type Rendering struct{}
+type Renderer interface {
+	foundation.Identifyer
+	foundation.Namer
+
+	Render()
+}

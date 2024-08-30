@@ -328,7 +328,7 @@ func (t *track) run(
 			}
 		}
 
-		// while there is a step to take
+		// run while there is a step to take
 		if step.state != StepCreated {
 			// if the last step is finished
 			// stop track running, inactivate token and return
