@@ -12,10 +12,10 @@ import (
 
 type (
 	usrTaskConfig struct {
-		impl     string
-		name     string
-		renders  []hi.Renderer
-		taskOpts []options.Option
+		impl      string
+		name      string
+		renderers []hi.Renderer
+		taskOpts  []options.Option
 	}
 
 	usrTaskOption func(cfg *usrTaskConfig) error
@@ -37,9 +37,9 @@ func (utc *usrTaskConfig) newUsrTask() (*UserTask, error) {
 	}
 
 	ut := UserTask{
-		Task:    *t,
-		impl:    utc.impl,
-		renders: append([]hi.Renderer{}, utc.renders...),
+		Task:      *t,
+		impl:      utc.impl,
+		renderers: append([]hi.Renderer{}, utc.renderers...),
 	}
 
 	return &ut, nil
@@ -60,15 +60,15 @@ func WithImplementation(impl string) usrTaskOption {
 	return usrTaskOption(f)
 }
 
-// WithRender adds new unique Render to user task config.
-func WithRender(r hi.Renderer) usrTaskOption {
+// WithRenderer adds new unique Render to user task config.
+func WithRenderer(r hi.Renderer) usrTaskOption {
 	f := func(cfg *usrTaskConfig) error {
 		if slices.ContainsFunc(
-			cfg.renders,
+			cfg.renderers,
 			func(r2c hi.Renderer) bool {
 				return r2c.Id() == r.Id()
 			}) {
-			cfg.renders = append(cfg.renders, r)
+			cfg.renderers = append(cfg.renderers, r)
 		}
 
 		return nil

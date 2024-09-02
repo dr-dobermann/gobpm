@@ -44,18 +44,37 @@ type UserTask struct {
 
 	// This attributes acts as a hook which allows BPMN adopters to specify
 	// task rendering attributes by using the BPMN Extension mechanism.
-	renders []hi.Renderer
+	renderers []hi.Renderer
 }
 
+// NewUserTask tries to create a new UserTask with name and options.
+//
+// Available options:
+//   - User Task options:
+//   - WithImplementatioon
+//   - WithRenderer
+//   - foundation options:
+//   - WithId
+//   - WithDoc
+//   - activitiy options:
+//   - WithCompensation
+//   - WithLoop
+//   - WithStartQuantity
+//   - WithCompleteQuantity
+//   - WithSet
+//   - WithoutParams (recommended to use only for testing purposes)
+//   - WithRoles
+//   - data options:
+//   - WithProperties
 func NewUserTask(
 	name string,
 	userTaskOpts ...options.Option,
 ) (*UserTask, error) {
 	utc := usrTaskConfig{
-		impl:     unspecifiedImpl,
-		name:     strings.TrimSpace(name),
-		renders:  []hi.Renderer{},
-		taskOpts: []options.Option{},
+		impl:      unspecifiedImpl,
+		name:      strings.TrimSpace(name),
+		renderers: []hi.Renderer{},
+		taskOpts:  []options.Option{},
 	}
 
 	for _, o := range userTaskOpts {
@@ -89,7 +108,7 @@ func (ut *UserTask) Implementation() string {
 	return ut.impl
 }
 
-// Renders returns all renders registered for the UserTask.
-func (ut *UserTask) Renders() []hi.Renderer {
-	return append([]hi.Renderer{}, ut.renders...)
+// Renderers returns all renders registered for the UserTask.
+func (ut *UserTask) Renderers() []hi.Renderer {
+	return append([]hi.Renderer{}, ut.renderers...)
 }
