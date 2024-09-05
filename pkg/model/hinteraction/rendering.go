@@ -1,6 +1,9 @@
 package human_interaction
 
-import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+)
 
 // BPMN User Tasks need to be rendered on user interfaces like forms clients,
 // portlets, etc. The Rendering element provides an extensible mechanism for
@@ -19,5 +22,5 @@ type Renderer interface {
 	foundation.Identifyer
 	foundation.Namer
 
-	Render()
+	Render(data.Source) ([]data.Data, error)
 }
