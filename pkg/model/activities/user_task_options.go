@@ -1,6 +1,7 @@
 package activities
 
 import (
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -68,8 +69,10 @@ func WithRenderer(r hi.Renderer) usrTaskOption {
 			func(r2c hi.Renderer) bool {
 				return r2c.Id() == r.Id()
 			}) {
-			cfg.renderers = append(cfg.renderers, r)
+			return fmt.Errorf("duplicate renderer: #%s", r.Id())
 		}
+
+		cfg.renderers = append(cfg.renderers, r)
 
 		return nil
 	}

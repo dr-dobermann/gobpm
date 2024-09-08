@@ -20,7 +20,11 @@ import (
 // International Standard.
 type Renderer interface {
 	foundation.Identifyer
-	foundation.Namer
+	foundation.Documentator
 
-	Render(data.Source) ([]data.Data, error)
+	// Render present something to user and gather his/her inputs.
+	// all inputs it returns as data.Data slice.
+	// it returns error on failrue.
+	// ds provides values needed for rendering
+	Render(ds data.Source) ([]data.Data, error)
 }
