@@ -64,6 +64,10 @@ func TestCRender(t *testing.T) {
 			dd, err := r.Render(nil)
 			require.NoError(t, err)
 			require.Len(t, dd, 2)
+			require.Equal(t, "name", dd[0].Name())
+			require.Equal(t, "dr.Dobermann", dd[0].Value().Get().(string))
+			require.Equal(t, "age", dd[1].Name())
+			require.Equal(t, 52, dd[1].Value().Get().(int))
 
 			rr, err := consinp.NewRenderer(
 				consinp.WithIntInput("couldn't read", ""))
