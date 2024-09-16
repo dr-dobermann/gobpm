@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
-	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
@@ -13,7 +12,6 @@ import (
 
 type (
 	usrTaskConfig struct {
-		impl      string
 		name      string
 		renderers []hi.Renderer
 		taskOpts  []options.Option
@@ -39,35 +37,24 @@ func (utc *usrTaskConfig) newUsrTask() (*UserTask, error) {
 
 	ut := UserTask{
 		Task:      *t,
-		impl:      utc.impl,
 		renderers: append([]hi.Renderer{}, utc.renderers...),
 	}
 
 	return &ut, nil
 }
 
-// WithImplementation changes implementation of UserTask in
-// user task config.
-func WithImplementation(impl string) usrTaskOption {
-	f := func(cfg *usrTaskConfig) error {
-		impl = strings.TrimSpace(impl)
-		if impl != "" {
-			cfg.impl = impl
-		}
-
-		return nil
-	}
-
-	return usrTaskOption(f)
-}
-
 // WithRenderer adds new unique Render to user task config.
 func WithRenderer(r hi.Renderer) usrTaskOption {
 	f := func(cfg *usrTaskConfig) error {
+		if r == nil {
+			return fmt.Errorf("no render")
+		}
+
 		if slices.ContainsFunc(
 			cfg.renderers,
 			func(r2c hi.Renderer) bool {
-				return r2c.Id() == r.Id()
+				return r2c.Id() == r.Id() ||
+					r2c.Implementation() == r.Implementation()
 			}) {
 			return fmt.Errorf("duplicate renderer: #%s", r.Id())
 		}

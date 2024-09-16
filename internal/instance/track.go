@@ -31,9 +31,14 @@
 //
 //   - token in the track would split on number of flows and first one will
 //     assign to the track itself in next step, and the rest of them will
-//     give to the other child tracks.
+//     be set to the others child tracks.
 //
 // if there is no outgouing flows, then track ends and token died.
+//
+// ## Human interaction
+//
+// If node nedds to interacto with the human, then it should support
+//
 
 package instance
 

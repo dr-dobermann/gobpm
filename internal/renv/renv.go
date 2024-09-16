@@ -15,7 +15,4 @@ type RuntimeEnvironment interface {
 
 	// EventProducer returns the EventProducer of the runtime.
 	EventProducer() eventproc.EventProducer
-
-	// Scope returns the Scope of the runtime.
-	Scope() scope.Scope
 }

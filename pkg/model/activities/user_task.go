@@ -1,10 +1,15 @@
 package activities
 
 import (
+	"context"
+	"fmt"
 	"reflect"
 	"strings"
 
+	"github.com/dr-dobermann/gobpm/internal/exec"
+	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -40,7 +45,10 @@ type UserTask struct {
 	// implementation technology open, "##WebService" for the Web service
 	// technology or a URI identifying any other technology or coordination
 	// protocol. The default technology for this task is unspecified.
-	impl string
+	// impl string
+	// DEV_NOTE: since there could be more than one renderer, more than one
+	// implementation could be returned. "##unspecified" is returned only
+	// if there is no renderers.
 
 	// This attributes acts as a hook which allows BPMN adopters to specify
 	// task rendering attributes by using the BPMN Extension mechanism.
@@ -50,28 +58,30 @@ type UserTask struct {
 // NewUserTask tries to create a new UserTask with name and options.
 //
 // Available options:
-//   - User Task options:
-//   - WithImplementatioon
-//   - WithRenderer
-//   - foundation options:
-//   - WithId
-//   - WithDoc
-//   - activitiy options:
-//   - WithCompensation
-//   - WithLoop
-//   - WithStartQuantity
-//   - WithCompleteQuantity
-//   - WithSet
-//   - WithoutParams (recommended to use only for testing purposes)
-//   - WithRoles
-//   - data options:
-//   - WithProperties
+//
+//	User Task options:
+//	- WithRenderer
+//
+//	foundation options:
+//	- WithId
+//	- WithDoc
+//
+//	activitiy options:
+//	- WithCompensation
+//	- WithLoop
+//	- WithStartQuantity
+//	- WithCompleteQuantity
+//	- WithSet
+//	- WithoutParams
+//	- WithRoles
+//
+//	data options:
+//	- WithProperties
 func NewUserTask(
 	name string,
 	userTaskOpts ...options.Option,
 ) (*UserTask, error) {
 	utc := usrTaskConfig{
-		impl:      unspecifiedImpl,
 		name:      strings.TrimSpace(name),
 		renderers: []hi.Renderer{},
 		taskOpts:  []options.Option{},
@@ -103,12 +113,52 @@ func NewUserTask(
 	return utc.newUsrTask()
 }
 
-// Implementation returns the UserTask implementation.
-func (ut *UserTask) Implementation() string {
-	return ut.impl
+// Implementation returns the UserTask implementations.
+func (ut *UserTask) Implementation() []string {
+	if len(ut.renderers) == 0 {
+		return []string{unspecifiedImpl}
+	}
+
+	imps := make([]string, len(ut.renderers))
+	for i, r := range ut.renderers {
+		imps[i] = r.Implementation()
+	}
+
+	return imps
 }
 
 // Renderers returns all renders registered for the UserTask.
 func (ut *UserTask) Renderers() []hi.Renderer {
 	return append([]hi.Renderer{}, ut.renderers...)
 }
+
+// ----------------------- flow.Node interface --------------------------------
+
+func (ut *UserTask) Node() flow.Node {
+	return ut
+}
+
+// ------------------------ flow.Task interface -------------------------------
+
+func (ut *UserTask) TaskType() flow.TaskType {
+	return flow.UserTask
+}
+
+// ----------------------exec.NodeExecutor interface --------------------------
+
+func (ut *UserTask) Exec(
+	ctx context.Context,
+	re renv.RuntimeEnvironment,
+) ([]*flow.SequenceFlow, error) {
+	return nil, fmt.Errorf("not implemented yet")
+}
+
+// ----------------------------------------------------------------------------
+
+// interfaces check
+var (
+	_ flow.Node         = (*UserTask)(nil)
+	_ flow.Task         = (*UserTask)(nil)
+	_ exec.NodeExecutor = (*UserTask)(nil)
+	_ hi.Interactor     = (*UserTask)(nil)
+)

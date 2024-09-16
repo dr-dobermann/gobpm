@@ -55,16 +55,7 @@ func (eg *ExclusiveGateway) Exec(
 ) ([]*flow.SequenceFlow, error) {
 	flows := []*flow.SequenceFlow{}
 
-	if re.Scope() == nil {
-		return nil,
-			errs.New(
-				errs.M("runtime environment has no Scope"),
-				errs.C(errorClass, errs.InvalidObject),
-				errs.D("runtime_id", re.InstanceId()),
-				errs.D("exclusive_gateway_id", eg.Id()))
-	}
-
-	eg.scope = re.Scope()
+	eg.scope = re
 
 	for _, of := range eg.Outgoing() {
 		cond := of.Condition()

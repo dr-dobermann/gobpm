@@ -16,9 +16,15 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
+
+	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 )
 
-const errorClass = "CONSOLE_RENDERER_ERRORS"
+const (
+	errorClass = "CONSOLE_RENDERER_ERRORS"
+
+	ConsInpRender = "##consInputRender"
+)
 
 type (
 	input interface {
@@ -105,6 +111,10 @@ func NewRenderer(
 	return cfg.newCRenderer(be)
 }
 
+func (cr *CRenderer) Implementation() string {
+	return ConsInpRender
+}
+
 // ------------------- human_interaction.Renderer interface -------------------
 
 // Render presents the CRenderer's prompts and gather user inputs.
@@ -137,3 +147,9 @@ func (cr *CRenderer) Render(_ data.Source) ([]data.Data, error) {
 
 	return results, nil
 }
+
+// ----------------------------------------------------------------------------
+
+// interface check
+
+var _ hi.Renderer = (*CRenderer)(nil)

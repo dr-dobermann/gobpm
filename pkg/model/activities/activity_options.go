@@ -291,8 +291,8 @@ func WithSet(
 	return activityOption(f)
 }
 
-// WithoutParams indicates that the Activity has no parameters and
-// ignores all Parameters and Sets options.
+// WithoutParams indicates that the Activity has neither incoming
+// nor outgoing parameters and ignores all Parameters and Sets options.
 // It creates an empty input and output data.Sets in IOSpec with no
 // parameters.
 func WithoutParams() activityOption {

@@ -22,9 +22,19 @@ type Renderer interface {
 	foundation.Identifyer
 	foundation.Documentator
 
+	// Implementation returns the type of implementation it provide.
+	Implementation() string
+
 	// Render present something to user and gather his/her inputs.
 	// all inputs it returns as data.Data slice.
 	// it returns error on failrue.
 	// ds provides values needed for rendering
 	Render(ds data.Source) ([]data.Data, error)
+}
+
+// Interactor is an interface which implemented by Nodes, which has ability
+// to interact with RenderProviders -- WEB, console or other services which
+// could call Render method of the Renderer.
+type Interactor interface {
+	Renderers() []Renderer
 }

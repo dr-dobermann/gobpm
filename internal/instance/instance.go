@@ -968,11 +968,6 @@ func (inst *Instance) EventProducer() eventproc.EventProducer {
 	return inst
 }
 
-// Scope returns the Scope of the runtime.
-func (inst *Instance) Scope() scope.Scope {
-	return inst
-}
-
 // ------------------- monitor.WriterRegistrator -------------------------------
 
 // RegisterWriter registers single non-nil unique monitoring event writer on the
