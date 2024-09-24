@@ -18,4 +18,6 @@ type (
 	Interactor interface {
 		Renderers() []hi.Renderer
 	}
+
+	RenderProvider interface{}
 )

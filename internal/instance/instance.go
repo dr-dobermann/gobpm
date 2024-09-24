@@ -113,7 +113,7 @@ type Instance struct {
 	eProd eventproc.EventProducer
 
 	// render provider controls human interaction through renders.
-	rp interactors.RenderProvider
+	rp interactors.RenderProcessor
 
 	// tracks indexed by track Ids
 	tracks map[string]*track
@@ -136,7 +136,7 @@ func New(
 	s *snapshot.Snapshot,
 	parentScope scope.Scope,
 	ep eventproc.EventProducer,
-	rp interactors.RenderProvider,
+	rp interactors.RenderProcessor,
 	mon monitor.Writer,
 ) (*Instance, error) {
 	if s == nil {
