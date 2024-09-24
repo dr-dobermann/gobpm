@@ -493,53 +493,6 @@ func (_c *MockRuntimeEnvironment_Root_Call) RunAndReturn(run func() scope.DataPa
 	return _c
 }
 
-// Scope provides a mock function with given fields:
-func (_m *MockRuntimeEnvironment) Scope() scope.Scope {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for Scope")
-	}
-
-	var r0 scope.Scope
-	if rf, ok := ret.Get(0).(func() scope.Scope); ok {
-		r0 = rf()
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(scope.Scope)
-		}
-	}
-
-	return r0
-}
-
-// MockRuntimeEnvironment_Scope_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Scope'
-type MockRuntimeEnvironment_Scope_Call struct {
-	*mock.Call
-}
-
-// Scope is a helper method to define mock.On call
-func (_e *MockRuntimeEnvironment_Expecter) Scope() *MockRuntimeEnvironment_Scope_Call {
-	return &MockRuntimeEnvironment_Scope_Call{Call: _e.mock.On("Scope")}
-}
-
-func (_c *MockRuntimeEnvironment_Scope_Call) Run(run func()) *MockRuntimeEnvironment_Scope_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockRuntimeEnvironment_Scope_Call) Return(_a0 scope.Scope) *MockRuntimeEnvironment_Scope_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockRuntimeEnvironment_Scope_Call) RunAndReturn(run func() scope.Scope) *MockRuntimeEnvironment_Scope_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // Scopes provides a mock function with given fields:
 func (_m *MockRuntimeEnvironment) Scopes() []scope.DataPath {
 	ret := _m.Called()

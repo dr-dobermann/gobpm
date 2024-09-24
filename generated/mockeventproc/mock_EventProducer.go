@@ -22,8 +22,8 @@ func (_m *MockEventProducer) EXPECT() *MockEventProducer_Expecter {
 	return &MockEventProducer_Expecter{mock: &_m.Mock}
 }
 
-// EmitEvents provides a mock function with given fields: events
-func (_m *MockEventProducer) EmitEvents(events ...flow.EventDefinition) error {
+// PropogateEvents provides a mock function with given fields: events
+func (_m *MockEventProducer) PropogateEvents(events ...flow.EventDefinition) error {
 	_va := make([]interface{}, len(events))
 	for _i := range events {
 		_va[_i] = events[_i]
@@ -33,7 +33,7 @@ func (_m *MockEventProducer) EmitEvents(events ...flow.EventDefinition) error {
 	ret := _m.Called(_ca...)
 
 	if len(ret) == 0 {
-		panic("no return value specified for EmitEvents")
+		panic("no return value specified for PropogateEvents")
 	}
 
 	var r0 error
@@ -46,19 +46,19 @@ func (_m *MockEventProducer) EmitEvents(events ...flow.EventDefinition) error {
 	return r0
 }
 
-// MockEventProducer_EmitEvents_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'EmitEvents'
-type MockEventProducer_EmitEvents_Call struct {
+// MockEventProducer_PropogateEvents_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'PropogateEvents'
+type MockEventProducer_PropogateEvents_Call struct {
 	*mock.Call
 }
 
-// EmitEvents is a helper method to define mock.On call
+// PropogateEvents is a helper method to define mock.On call
 //   - events ...flow.EventDefinition
-func (_e *MockEventProducer_Expecter) EmitEvents(events ...interface{}) *MockEventProducer_EmitEvents_Call {
-	return &MockEventProducer_EmitEvents_Call{Call: _e.mock.On("EmitEvents",
+func (_e *MockEventProducer_Expecter) PropogateEvents(events ...interface{}) *MockEventProducer_PropogateEvents_Call {
+	return &MockEventProducer_PropogateEvents_Call{Call: _e.mock.On("PropogateEvents",
 		append([]interface{}{}, events...)...)}
 }
 
-func (_c *MockEventProducer_EmitEvents_Call) Run(run func(events ...flow.EventDefinition)) *MockEventProducer_EmitEvents_Call {
+func (_c *MockEventProducer_PropogateEvents_Call) Run(run func(events ...flow.EventDefinition)) *MockEventProducer_PropogateEvents_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		variadicArgs := make([]flow.EventDefinition, len(args)-0)
 		for i, a := range args[0:] {
@@ -71,12 +71,12 @@ func (_c *MockEventProducer_EmitEvents_Call) Run(run func(events ...flow.EventDe
 	return _c
 }
 
-func (_c *MockEventProducer_EmitEvents_Call) Return(_a0 error) *MockEventProducer_EmitEvents_Call {
+func (_c *MockEventProducer_PropogateEvents_Call) Return(_a0 error) *MockEventProducer_PropogateEvents_Call {
 	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *MockEventProducer_EmitEvents_Call) RunAndReturn(run func(...flow.EventDefinition) error) *MockEventProducer_EmitEvents_Call {
+func (_c *MockEventProducer_PropogateEvents_Call) RunAndReturn(run func(...flow.EventDefinition) error) *MockEventProducer_PropogateEvents_Call {
 	_c.Call.Return(run)
 	return _c
 }

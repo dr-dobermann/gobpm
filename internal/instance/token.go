@@ -11,6 +11,7 @@ const (
 	TokenInvalid TokenState = iota
 	TokenAlive
 	TokenWaitForEvent
+	TokenWaitForInteraction
 	TokenConsumed
 )
 

@@ -404,9 +404,9 @@ func (t *Thresher) UnregisterProcessor(ep eventproc.EventProcessor) {
 	}
 }
 
-// EmitEvents gets a list of eventDefinitions and sends them to all
+// PropogateEvents gets a list of eventDefinitions and sends them to all
 // EventProcessors registered for this type of EventDefinition.
-func (t *Thresher) EmitEvents(events ...flow.EventDefinition) error {
+func (t *Thresher) PropogateEvents(events ...flow.EventDefinition) error {
 	if st := t.State(); st != Started {
 		return errs.New(
 			errs.M("thresher isn't started"),

@@ -30,7 +30,7 @@ type EventProducer interface {
 	// the EventProcessor.
 	UnregisterProcessor(EventProcessor)
 
-	// EmitEvents gets a list of eventDefinitions and sends them to all
+	// PropogateEvents gets a list of eventDefinitions and sends them to all
 	// EventProcessors registered for this type of EventDefinition.
-	EmitEvents(events ...flow.EventDefinition) error
+	PropogateEvents(events ...flow.EventDefinition) error
 }

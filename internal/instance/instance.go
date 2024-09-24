@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
+	"github.com/dr-dobermann/gobpm/internal/eventproc/interactors"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/internal/scope"
@@ -111,6 +112,9 @@ type Instance struct {
 	// created the instance.
 	eProd eventproc.EventProducer
 
+	// render provider controls human interaction through renders.
+	rp interactors.RenderProvider
+
 	// tracks indexed by track Ids
 	tracks map[string]*track
 
@@ -132,6 +136,7 @@ func New(
 	s *snapshot.Snapshot,
 	parentScope scope.Scope,
 	ep eventproc.EventProducer,
+	rp interactors.RenderProvider,
 	mon monitor.Writer,
 ) (*Instance, error) {
 	if s == nil {
@@ -158,6 +163,7 @@ func New(
 		events:              map[string]map[string]*track{},
 		parentScope:         parentScope,
 		parentEventProducer: ep,
+		rp:                  rp,
 		Monitors:            []monitor.Writer{},
 	}
 
@@ -630,7 +636,7 @@ func (inst *Instance) ProcessEvent(
 
 	if !ok {
 		return errs.New(
-			errs.M("event definition not registered for instance  of process"),
+			errs.M("event definition not registered for instance"),
 			errs.D("event_def_id", eDef.Id()),
 			errs.D("instance_id", inst.Id()),
 			errs.D("process_name", inst.s.ProcessName),
@@ -757,9 +763,9 @@ func (inst *Instance) UnregisterProcessor(ep eventproc.EventProcessor) {
 	}
 }
 
-// EmitEvents gets a list of eventDefinitions and sends them to all
+// PropogateEvents gets a list of eventDefinitions and sends them to all
 // EventProcessors registered for this type of EventDefinition.
-func (inst *Instance) EmitEvents(events ...flow.EventDefinition) error {
+func (inst *Instance) PropogateEvents(events ...flow.EventDefinition) error {
 	if inst.eProd == nil {
 		return errs.New(
 			errs.M("event producer isn't presented for Instance %q[%s]",
@@ -767,7 +773,7 @@ func (inst *Instance) EmitEvents(events ...flow.EventDefinition) error {
 			errs.C(errorClass, errs.ObjectNotFound))
 	}
 
-	if err := inst.eProd.EmitEvents(events...); err != nil {
+	if err := inst.eProd.PropogateEvents(events...); err != nil {
 		return errs.New(
 			errs.M("event emitting failed for Instance %q[%s]",
 				inst.s.ProcessName, inst.Id()),
@@ -983,6 +989,17 @@ func (inst *Instance) RegisterWriter(m monitor.Writer) {
 	if idx := slices.Index(inst.Monitors, m); idx == -1 {
 		inst.Monitors = append(inst.Monitors, m)
 	}
+}
+
+// -------------------- interactors.RegisterInteractor interface ---------------
+func (inst *Instance) RegisterInteractor(iror interactors.Interactor) error {
+	if inst.rp == nil {
+		return errs.New(
+			errs.M("no render provider"),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	return inst.rp.RegisterInteractor(iror)
 }
 
 // -----------------------------------------------------------------------------
