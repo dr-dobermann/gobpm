@@ -47,7 +47,6 @@ import (
 	"sync"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
-	"github.com/dr-dobermann/gobpm/internal/eventproc/interactors"
 	"github.com/dr-dobermann/gobpm/internal/exec"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -66,7 +65,6 @@ const (
 	TrackExecutingStep
 	TrackProcessStepResults
 	TrackWaitForEvent
-	TrackWaitForInteraction
 
 	// Final statuses
 	TrackMerged
@@ -196,18 +194,16 @@ func newTrack(
 // checkNodeType determines if node awaits for event or human interaction
 // and updates track state on positive comparison.
 func (t *track) checkNodeType(node flow.Node) error {
-	switch n := node.(type) {
-	// check if Node is event and it awaits for events
-	case flow.EventNode:
+	if en, ok := node.(flow.EventNode); ok {
 		edCnt := 0
 
-		for _, d := range n.Definitions() {
+		for _, d := range en.Definitions() {
 			if err := t.instance.RegisterEvents(t, d); err != nil {
 				return errs.New(
 					errs.M("couldn't register event definitions"),
 					errs.C(errorClass, errs.BulidingFailed),
-					errs.D("node_id", n.Id()),
-					errs.D("node_name", n.Name()),
+					errs.D("node_id", en.Id()),
+					errs.D("node_name", en.Name()),
 					errs.D("event_definition_id", d.Id()),
 					errs.E(err))
 			}
@@ -218,30 +214,6 @@ func (t *track) checkNodeType(node flow.Node) error {
 		if edCnt != 0 {
 			t.updateState(TrackWaitForEvent)
 		}
-
-	case flow.Task:
-		// check if task need human interaction
-		if n.TaskType() == flow.UserTask {
-			iror, ok := n.(interactors.Interactor)
-			if !ok {
-				return errs.New(
-					errs.M("UserTask doesn't provide any renderer"),
-					errs.C(errorClass, errs.InvalidObject),
-					errs.D("node_name", n.Name()),
-					errs.D("node_id", n.Id()))
-			}
-
-			if err := t.instance.RegisterInteractor(iror); err != nil {
-				return errs.New(
-					errs.M("couldn't register human interaciton"),
-					errs.C(errorClass, errs.BulidingFailed),
-					errs.D("node_name", n.Name()),
-					errs.D("node_id", n.Id()),
-					errs.E(err))
-			}
-		}
-
-		t.updateState(TrackWaitForInteraction)
 	}
 
 	return nil
@@ -282,9 +254,6 @@ func (t *track) updateState(newState trackState) {
 
 	case TrackWaitForEvent:
 		ts = TokenWaitForEvent
-
-	case TrackWaitForInteraction:
-		ts = TokenWaitForInteraction
 
 	case TrackFailed, TrackEnded, TrackCanceled:
 		ts = TokenConsumed
@@ -371,7 +340,7 @@ func (t *track) run(
 				return
 			}
 
-			if t.inState(TrackWaitForEvent, TrackWaitForInteraction) {
+			if t.inState(TrackWaitForEvent) {
 				continue
 			}
 		}

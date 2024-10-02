@@ -499,7 +499,7 @@ func (t *Thresher) StartProcess(processId string) error {
 // launchInstance creates a new Instance from the Snapshot s, runs it and
 // append it to runned insances of the Thresher.
 func (t *Thresher) launchInstance(s *snapshot.Snapshot) error {
-	inst, err := instance.New(s, nil, t, nil)
+	inst, err := instance.New(s, nil, t, nil, nil)
 	if err != nil {
 		return errs.New(
 			errs.M("couldn't create an Instance for process %q",

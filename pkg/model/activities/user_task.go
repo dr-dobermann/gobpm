@@ -10,6 +10,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/exec"
 	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
@@ -50,34 +51,43 @@ type UserTask struct {
 	// DEV_NOTE: since there could be more than one renderer, more than one
 	// implementation could be returned. "##unspecified" is returned only
 	// if there is no renderers.
+	// implementation string
+	//
+	// implementation type is moved to renderers. Every renderer has itsown
+	// implementation.
 
 	// This attributes acts as a hook which allows BPMN adopters to specify
 	// task rendering attributes by using the BPMN Extension mechanism.
 	renderers []hi.Renderer
+
+	// outputs describes the output parameters expected from renderers.
+	// every parameter is described by resource parameters.
+	outputs *common.Resource
 }
 
 // NewUserTask tries to create a new UserTask with name and options.
 //
 // Available options:
 //
-//	User Task options:
-//	- WithRenderer
+//		User Task options:
+//		- WithRenderer
+//	    - WithOutput
 //
-//	foundation options:
-//	- WithId
-//	- WithDoc
+//		foundation options:
+//		- WithId
+//		- WithDoc
 //
-//	activitiy options:
-//	- WithCompensation
-//	- WithLoop
-//	- WithStartQuantity
-//	- WithCompleteQuantity
-//	- WithSet
-//	- WithoutParams
-//	- WithRoles
+//		activitiy options:
+//		- WithCompensation
+//		- WithLoop
+//		- WithStartQuantity
+//		- WithCompleteQuantity
+//		- WithSet
+//		- WithoutParams
+//		- WithRoles
 //
-//	data options:
-//	- WithProperties
+//		data options:
+//		- WithProperties
 func NewUserTask(
 	name string,
 	userTaskOpts ...options.Option,

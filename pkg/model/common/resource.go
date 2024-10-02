@@ -1,11 +1,10 @@
 package common
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
-	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // The Resource class is used to specify resources that can be referenced by
@@ -31,7 +30,12 @@ type Resource struct {
 }
 
 // NewResource creates a new Resource and returns its pointer.
-func NewResource(name string, params ...*ResourceParameter) *Resource {
+func NewResource(name string, params ...*ResourceParameter) (*Resource, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("no name for resource")
+	}
+
 	pp := make([]ResourceParameter, 0, len(params))
 
 	for _, p := range params {
@@ -43,13 +47,11 @@ func NewResource(name string, params ...*ResourceParameter) *Resource {
 	return &Resource{
 		name:       name,
 		parameters: pp,
-	}
+	}, nil
 }
 
 // *****************************************************************************
 type ResourceParameter struct {
-	foundation.BaseElement
-
 	// Specifies the name of the query parameter.
 	name string
 
@@ -68,7 +70,7 @@ type ResourceParameter struct {
 func NewResourceParameter(
 	name, pType string,
 	required bool,
-	baseOpts ...options.Option,
+	// baseOpts ...options.Option,
 ) (*ResourceParameter, error) {
 	name = strings.TrimSpace(name)
 	if err := errs.CheckStr(
@@ -84,30 +86,16 @@ func NewResourceParameter(
 		return nil, err
 	}
 
-	be, err := foundation.NewBaseElement(baseOpts...)
-	if err != nil {
-		return nil, err
-	}
-
 	return &ResourceParameter{
-			BaseElement: *be,
+			//		BaseElement: *be,
 			name:        name,
 			paramType:   pType,
-			isRequiered: required},
+			isRequiered: required,
+		},
 		nil
 }
 
-// MustResourcParameter tries to create a new ResourceParameter on success or
-// panics on failure.
-func MustResourcParameter(
-	name, pType string,
-	required bool,
-	baseOpts ...options.Option,
-) *ResourceParameter {
-	rp, err := NewResourceParameter(name, pType, required, baseOpts...)
-	if err != nil {
-		errs.Panic(err)
-	}
-
-	return rp
+// Name returns the ResourceParameter name.
+func (rp *ResourceParameter) Name() string {
+	return rp.name
 }

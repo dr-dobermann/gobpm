@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -15,6 +16,7 @@ type (
 		name      string
 		renderers []hi.Renderer
 		taskOpts  []options.Option
+		outputs   []*common.ResourceParameter
 	}
 
 	usrTaskOption func(cfg *usrTaskConfig) error
@@ -35,9 +37,19 @@ func (utc *usrTaskConfig) newUsrTask() (*UserTask, error) {
 				errs.E(err))
 	}
 
+	r, err := common.NewResource(utc.name, utc.outputs...)
+	if err != nil {
+		return nil,
+			errs.New(
+				errs.M("resource creation failed"),
+				errs.C(errorClass, errs.BulidingFailed),
+				errs.E(err))
+	}
+
 	ut := UserTask{
 		Task:      *t,
 		renderers: append([]hi.Renderer{}, utc.renderers...),
+		outputs:   r,
 	}
 
 	return &ut, nil
@@ -60,6 +72,29 @@ func WithRenderer(r hi.Renderer) usrTaskOption {
 		}
 
 		cfg.renderers = append(cfg.renderers, r)
+
+		return nil
+	}
+
+	return usrTaskOption(f)
+}
+
+func WithOutput(name, pType string, required bool) usrTaskOption {
+	f := func(cfg *usrTaskConfig) error {
+		if slices.ContainsFunc(
+			cfg.outputs,
+			func(p *common.ResourceParameter) bool {
+				return p.Name() == name
+			}) {
+			return fmt.Errorf("duplicate parameter %q", name)
+		}
+
+		p, err := common.NewResourceParameter(name, pType, required)
+		if err != nil {
+			return fmt.Errorf("couldn't create a parameter: %w", err)
+		}
+
+		cfg.outputs = append(cfg.outputs, p)
 
 		return nil
 	}
