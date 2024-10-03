@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/dr-dobermann/gobpm/internal/eventproc/interactors"
 	"github.com/dr-dobermann/gobpm/internal/exec"
+	"github.com/dr-dobermann/gobpm/internal/interactor"
 	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
@@ -169,8 +169,8 @@ func (ut *UserTask) Exec(
 
 // interfaces check
 var (
-	_ flow.Node              = (*UserTask)(nil)
-	_ flow.Task              = (*UserTask)(nil)
-	_ exec.NodeExecutor      = (*UserTask)(nil)
-	_ interactors.Interactor = (*UserTask)(nil)
+	_ flow.Node             = (*UserTask)(nil)
+	_ flow.Task             = (*UserTask)(nil)
+	_ exec.NodeExecutor     = (*UserTask)(nil)
+	_ interactor.Interactor = (*UserTask)(nil)
 )

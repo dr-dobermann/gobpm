@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
-	"github.com/dr-dobermann/gobpm/internal/eventproc/interactors"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
+	"github.com/dr-dobermann/gobpm/internal/interactor"
 	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -113,7 +113,7 @@ type Instance struct {
 	eProd eventproc.EventProducer
 
 	// render provider controls human interaction through renders.
-	rp interactors.RenderProcessor
+	rp interactor.RenderProcessor
 
 	// tracks indexed by track Ids
 	tracks map[string]*track
@@ -136,7 +136,7 @@ func New(
 	s *snapshot.Snapshot,
 	parentScope scope.Scope,
 	ep eventproc.EventProducer,
-	rp interactors.RenderProcessor,
+	rp interactor.RenderProcessor,
 	mon monitor.Writer,
 ) (*Instance, error) {
 	if s == nil {
@@ -992,7 +992,7 @@ func (inst *Instance) RegisterWriter(m monitor.Writer) {
 }
 
 // -------------------- interactors.RegisterInteractor interface ---------------
-func (inst *Instance) RegisterInteractor(iror interactors.Interactor) error {
+func (inst *Instance) RegisterInteractor(iror interactor.Interactor) error {
 	if inst.rp == nil {
 		return errs.New(
 			errs.M("no render provider"),

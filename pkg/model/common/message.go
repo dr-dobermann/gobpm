@@ -21,6 +21,11 @@ type Message struct {
 
 // NewMessage creates a new Message object and returns its pointer on succes or
 // error on failure.
+//
+// Available options:
+//
+//   - foundation.WithId
+//   - foundation.WithDoc
 func NewMessage(
 	name string,
 	item *data.ItemDefinition,

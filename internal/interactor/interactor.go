@@ -1,4 +1,4 @@
-package interactors
+package interactor
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"

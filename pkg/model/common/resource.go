@@ -94,7 +94,6 @@ func (r *Resource) Parameters() []*ResourceParameter {
 func NewResourceParameter(
 	name, pType string,
 	required bool,
-	// baseOpts ...options.Option,
 ) (*ResourceParameter, error) {
 	name = strings.TrimSpace(name)
 	if err := errs.CheckStr(
