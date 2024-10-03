@@ -19,7 +19,6 @@ import (
 // Directory. Every Activity referencing a parameterized Resource can bind
 // values available in the scope of the Activity to these parameters.
 
-// *****************************************************************************
 type Resource struct {
 	// This attribute specifies the name of the Resource.
 	name string
@@ -29,28 +28,6 @@ type Resource struct {
 	parameters []ResourceParameter
 }
 
-// NewResource creates a new Resource and returns its pointer.
-func NewResource(name string, params ...*ResourceParameter) (*Resource, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return nil, fmt.Errorf("no name for resource")
-	}
-
-	pp := make([]ResourceParameter, 0, len(params))
-
-	for _, p := range params {
-		if p != nil {
-			pp = append(pp, *p)
-		}
-	}
-
-	return &Resource{
-		name:       name,
-		parameters: pp,
-	}, nil
-}
-
-// *****************************************************************************
 type ResourceParameter struct {
 	// Specifies the name of the query parameter.
 	name string
@@ -65,6 +42,53 @@ type ResourceParameter struct {
 	isRequiered bool
 }
 
+// ============================================================================
+// Resource
+// ============================================================================
+
+// NewResource creates a new Resource and returns its pointer.
+func NewResource(name string, params ...*ResourceParameter) (*Resource, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("no name for resource")
+	}
+
+	pp := []ResourceParameter{}
+
+	for _, p := range params {
+		if p != nil {
+			pp = append(pp, *p)
+		}
+	}
+
+	if len(pp) == 0 {
+		return nil, fmt.Errorf("no not empty parameters")
+	}
+
+	return &Resource{
+		name:       name,
+		parameters: pp,
+	}, nil
+}
+
+// Parameters returns list of parameters of the Resource.
+func (r *Resource) Parameters() []*ResourceParameter {
+	rr := make([]*ResourceParameter, len(r.parameters))
+
+	for i, rp := range r.parameters {
+		rr[i] = &ResourceParameter{
+			name:        rp.name,
+			paramType:   rp.paramType,
+			isRequiered: rp.isRequiered,
+		}
+	}
+
+	return rr
+}
+
+// ============================================================================
+// ResourceParameter
+// ============================================================================
 // NewResourceParameter creates a new ResourceParameter and returns its pointer
 // on success or error on failure.
 func NewResourceParameter(
@@ -95,7 +119,31 @@ func NewResourceParameter(
 		nil
 }
 
+// MustResourceParameter tries to create a new resource parameter.
+// it panics on error.
+func MustResourceParameter(
+	name, pType string,
+	required bool,
+) *ResourceParameter {
+	rp, err := NewResourceParameter(name, pType, required)
+	if err != nil {
+		panic("resource parameter building failed: " + err.Error())
+	}
+
+	return rp
+}
+
 // Name returns the ResourceParameter name.
 func (rp *ResourceParameter) Name() string {
 	return rp.name
+}
+
+// Type returns the ResourceParameter's type name.
+func (rp *ResourceParameter) Type() string {
+	return rp.paramType
+}
+
+// IsRequired returns the ResourceParameter's required flag.
+func (rp *ResourceParameter) IsRequired() bool {
+	return rp.isRequiered
 }
