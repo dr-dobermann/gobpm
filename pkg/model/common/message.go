@@ -35,6 +35,13 @@ func NewMessage(
 				errs.C(errorClass, errs.InvalidParameter))
 	}
 
+	if item == nil {
+		return nil,
+			errs.New(
+				errs.M("empty item definition isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
 	be, err := foundation.NewBaseElement(baseOpts...)
 	if err != nil {
 		return nil, err

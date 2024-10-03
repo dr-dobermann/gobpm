@@ -61,7 +61,8 @@ type UserTask struct {
 	renderers []hi.Renderer
 
 	// outputs describes the output parameters expected from renderers.
-	// every parameter is described by resource parameters.
+	// every parameter is described by single ResourceParameter of
+	// Resource.
 	outputs *common.Resource
 }
 
