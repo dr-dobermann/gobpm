@@ -113,7 +113,7 @@ type Instance struct {
 	eProd eventproc.EventProducer
 
 	// render provider controls human interaction through renders.
-	rp interactor.RenderProcessor
+	rp interactor.RenderProvider
 
 	// tracks indexed by track Ids
 	tracks map[string]*track
@@ -136,7 +136,7 @@ func New(
 	s *snapshot.Snapshot,
 	parentScope scope.Scope,
 	ep eventproc.EventProducer,
-	rp interactor.RenderProcessor,
+	rp interactor.RenderProvider,
 	mon monitor.Writer,
 ) (*Instance, error) {
 	if s == nil {
@@ -992,11 +992,12 @@ func (inst *Instance) RegisterWriter(m monitor.Writer) {
 }
 
 // -------------------- interactors.RegisterInteractor interface ---------------
-func (inst *Instance) RegisterInteractor(iror interactor.Interactor) error {
+func (inst *Instance) RegisterInteractor(iror interactor.Interactor) (chan data.Data, error) {
 	if inst.rp == nil {
-		return errs.New(
-			errs.M("no render provider"),
-			errs.C(errorClass, errs.InvalidObject))
+		return nil,
+			errs.New(
+				errs.M("no render provider"),
+				errs.C(errorClass, errs.InvalidObject))
 	}
 
 	return inst.rp.RegisterInteractor(iror)

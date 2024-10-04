@@ -2,7 +2,6 @@ package activities
 
 import (
 	"context"
-	"fmt"
 	"reflect"
 	"strings"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
@@ -64,6 +64,8 @@ type UserTask struct {
 	// every parameter is described by single ResourceParameter of
 	// Resource.
 	outputs *common.Resource
+
+	resChan chan data.Data
 }
 
 // NewUserTask tries to create a new UserTask with name and options.
@@ -139,9 +141,20 @@ func (ut *UserTask) Implementation() []string {
 	return imps
 }
 
+// ---------------------- interactor.Interactor interface
 // Renderers returns all renders registered for the UserTask.
 func (ut *UserTask) Renderers() []hi.Renderer {
 	return append([]hi.Renderer{}, ut.renderers...)
+}
+
+// Outputs returns outputs expected from renderers.
+func (ut *UserTask) Outputs() []*common.ResourceParameter {
+	if ut.outputs == nil {
+		errs.Panic("user task has no output defined")
+		return nil
+	}
+
+	return ut.outputs.Parameters()
 }
 
 // ----------------------- flow.Node interface --------------------------------
@@ -156,13 +169,66 @@ func (ut *UserTask) TaskType() flow.TaskType {
 	return flow.UserTask
 }
 
+// ---------------------- exec.NodePrologue interface -------------------------
+
+// Prologue registers UserTask as Interactor in runtime environment and gets
+// results' channel from RenderProvider.
+func (ut *UserTask) Prologue(
+	ctx context.Context,
+	re renv.RuntimeEnvironment,
+) error {
+	rp, ok := re.(interactor.RenderProvider)
+	if !ok {
+		return errs.New(
+			errs.M("no RenderProvider for UserTask"),
+			errs.C(errorClass, errs.InvalidObject),
+			errs.D("task_id", ut.Id()),
+			errs.D("task_name", ut.Name()),
+			errs.D("instance_id", re.InstanceId()))
+	}
+
+	rCh, err := rp.RegisterInteractor(ut)
+	if err != nil {
+		return errs.New(
+			errs.M("interactor registration failed"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
+	ut.resChan = rCh
+
+	return nil
+}
+
 // ----------------------exec.NodeExecutor interface --------------------------
 
+// Exec waits for results of user interaction.
 func (ut *UserTask) Exec(
 	ctx context.Context,
 	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
-	return nil, fmt.Errorf("not implemented yet")
+	if ut.resChan == nil {
+		return nil,
+			errs.New(
+				errs.M("no result channel from RenderProvider"),
+				errs.C(errorClass, errs.InvalidState))
+	}
+
+	dd := []data.Data{}
+
+	for d := range ut.resChan {
+		dd = append(dd, d)
+	}
+
+	if err := re.AddData(ut, dd...); err != nil {
+		return nil,
+			errs.New(
+				errs.M("interaction result adding error"),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err))
+	}
+
+	return ut.Outgoing(), nil
 }
 
 // ----------------------------------------------------------------------------
