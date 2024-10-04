@@ -50,7 +50,7 @@ func (pc *processConfig) AddRole(r *hi.ResourceRole) error {
 
 // --------------- data.PropertyConfigurator interface -------------------------
 //
-// AddProperty adds non-empyt property into the processConfig.
+// AddProperty adds non-empty property into the processConfig.
 // if the activityConfig already has the property with the same name it
 // will be overwritten.
 func (pc *processConfig) AddProperty(p *data.Property) error {
@@ -76,13 +76,13 @@ func (pc *processConfig) newProcess() (*Process, error) {
 	}
 
 	p := Process{
-		name:        pc.name,
-		BaseElement: *be,
-		properties:  pc.props,
-		roles:       pc.roles,
+		name:                     pc.name,
+		BaseElement:              *be,
+		properties:               pc.props,
+		roles:                    pc.roles,
 		CorrelationSubscriptions: []*common.CorrelationSubscription{},
-		nodes: map[string]flow.Node{},
-		flows: map[string]*flow.SequenceFlow{},
+		nodes:                    map[string]flow.Node{},
+		flows:                    map[string]*flow.SequenceFlow{},
 	}
 
 	return &p, nil
