@@ -112,8 +112,8 @@ type Instance struct {
 	// created the instance.
 	eProd eventproc.EventProducer
 
-	// render provider controls human interaction through renders.
-	rp interactor.RenderProvider
+	// render registrator registers nodes with renderers of human interaction.
+	rr interactor.Registrator
 
 	// tracks indexed by track Ids
 	tracks map[string]*track
@@ -136,7 +136,7 @@ func New(
 	s *snapshot.Snapshot,
 	parentScope scope.Scope,
 	ep eventproc.EventProducer,
-	rp interactor.RenderProvider,
+	rr interactor.Registrator,
 	mon monitor.Writer,
 ) (*Instance, error) {
 	if s == nil {
@@ -163,7 +163,7 @@ func New(
 		events:              map[string]map[string]*track{},
 		parentScope:         parentScope,
 		parentEventProducer: ep,
-		rp:                  rp,
+		rr:                  rr,
 		Monitors:            []monitor.Writer{},
 	}
 
@@ -992,15 +992,15 @@ func (inst *Instance) RegisterWriter(m monitor.Writer) {
 }
 
 // -------------------- interactors.RegisterInteractor interface ---------------
-func (inst *Instance) RegisterInteractor(iror interactor.Interactor) (chan data.Data, error) {
-	if inst.rp == nil {
+func (inst *Instance) Register(iror interactor.Interactor) (chan data.Data, error) {
+	if inst.rr == nil {
 		return nil,
 			errs.New(
 				errs.M("no render provider"),
 				errs.C(errorClass, errs.InvalidObject))
 	}
 
-	return inst.rp.RegisterInteractor(iror)
+	return inst.rr.Register(iror)
 }
 
 // -----------------------------------------------------------------------------
@@ -1013,4 +1013,5 @@ var (
 	_ renv.RuntimeEnvironment   = (*Instance)(nil)
 	_ scope.Scope               = (*Instance)(nil)
 	_ monitor.WriterRegistrator = (*Instance)(nil)
+	_ interactor.Registrator    = (*Instance)(nil)
 )

@@ -59,7 +59,7 @@ func (utc *usrTaskConfig) newUsrTask() (*UserTask, error) {
 func WithRenderer(r hi.Renderer) usrTaskOption {
 	f := func(cfg *usrTaskConfig) error {
 		if r == nil {
-			return fmt.Errorf("no render")
+			return fmt.Errorf("no renderer")
 		}
 
 		if slices.ContainsFunc(
@@ -79,6 +79,7 @@ func WithRenderer(r hi.Renderer) usrTaskOption {
 	return usrTaskOption(f)
 }
 
+// WithOutput register new output parameter from renderer.
 func WithOutput(name, pType string, required bool) usrTaskOption {
 	f := func(cfg *usrTaskConfig) error {
 		if slices.ContainsFunc(

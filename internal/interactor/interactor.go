@@ -21,12 +21,28 @@ type (
 		Outputs() []*common.ResourceParameter
 	}
 
-	// RenderProvider is an interface of objectsh which could control
-	// user interaction with Renderer objects and returs the results
-	// of the interaction.
-	RenderProvider interface {
+	// Registrator is an interface implemented by objects
+	// which could register interaction nodes on runtime.
+	Registrator interface {
 		foundation.Identifyer
 
-		RegisterInteractor(iror Interactor) (chan data.Data, error)
+		Register(iror Interactor) (chan data.Data, error)
+	}
+
+	// RenderProvider is an interface of objects which could control
+	// user interaction with Renderer objects and returns the results
+	// of the interaction.
+	RenderController interface {
+		Registrator
+
+		// AttachUser gets single user focus, checks its roles against
+		// registered renderers and returns list of renderers which are
+		// allowed to call by the user.
+		AttachUser(userRoles []string) ([]hi.Renderer, error)
+
+		Interact(
+			iror Interactor,
+			render hi.Renderer,
+			performer hi.HumanPerformer) error
 	}
 )
