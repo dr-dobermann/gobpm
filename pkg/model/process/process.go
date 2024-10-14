@@ -11,6 +11,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"golang.org/x/exp/maps"
 )
@@ -67,7 +68,7 @@ type Process struct {
 	// assigned resources of the Activities that are contained by the Process.
 	//
 	// roles indexed by role.Name
-	roles map[string]*activities.ResourceRole
+	roles map[string]*hi.ResourceRole
 
 	// correlationSubscriptions are a feature of context-based correlation.
 	// CorrelationSubscriptions are used to correlate incoming Messages against
@@ -96,7 +97,7 @@ func New(
 	pc := processConfig{
 		name:     strings.Trim(name, " "),
 		props:    map[string]*data.Property{},
-		roles:    map[string]*activities.ResourceRole{},
+		roles:    map[string]*hi.ResourceRole{},
 		baseOpts: []options.Option{},
 	}
 

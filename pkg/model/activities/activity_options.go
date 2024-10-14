@@ -8,6 +8,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -61,7 +62,7 @@ type (
 		name             string
 		compensation     bool
 		loop             *LoopCharacteristics
-		roles            map[string]*ResourceRole
+		roles            map[string]*hi.ResourceRole
 		props            map[string]*data.Property
 		startQ, complQ   int
 		baseOpts         []options.Option
@@ -291,8 +292,8 @@ func WithSet(
 	return activityOption(f)
 }
 
-// WithoutParams indicates that the Activity has no parameters and
-// ignores all Parameters and Sets options.
+// WithoutParams indicates that the Activity has neither incoming
+// nor outgoing parameters and ignores all Parameters and Sets options.
 // It creates an empty input and output data.Sets in IOSpec with no
 // parameters.
 func WithoutParams() activityOption {
@@ -339,14 +340,14 @@ func (ac *activityConfig) Validate() error {
 // AddRole adds single non-empty unique ResourceRole into activityConfig.
 // if activityConfig already has the ResourceRole with the same name,
 // it will be overwritten.
-func (ac *activityConfig) AddRole(r *ResourceRole) error {
+func (ac *activityConfig) AddRole(r *hi.ResourceRole) error {
 	if r == nil {
 		return errs.New(
 			errs.M("role couldn't be empty"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	ac.roles[r.name] = r
+	ac.roles[r.Name()] = r
 
 	return nil
 }

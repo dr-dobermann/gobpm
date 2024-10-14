@@ -5,6 +5,7 @@ import (
 	"reflect"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -12,7 +13,7 @@ import (
 type RoleConfigurator interface {
 	options.Configurator
 
-	AddRole(r *ResourceRole) error
+	AddRole(r *hi.ResourceRole) error
 }
 
 type RoleOption func(cfg RoleConfigurator) error
@@ -32,7 +33,7 @@ func (ro RoleOption) Apply(cfg options.Configurator) error {
 }
 
 // WithResources adds unique non-nil resources into the activityConfig.
-func WithRoles(ress ...*ResourceRole) RoleOption {
+func WithRoles(ress ...*hi.ResourceRole) RoleOption {
 	f := func(cfg RoleConfigurator) error {
 		ee := []error{}
 		for _, r := range ress {

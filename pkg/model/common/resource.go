@@ -1,11 +1,10 @@
 package common
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
-	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // The Resource class is used to specify resources that can be referenced by
@@ -20,7 +19,6 @@ import (
 // Directory. Every Activity referencing a parameterized Resource can bind
 // values available in the scope of the Activity to these parameters.
 
-// *****************************************************************************
 type Resource struct {
 	// This attribute specifies the name of the Resource.
 	name string
@@ -30,26 +28,7 @@ type Resource struct {
 	parameters []ResourceParameter
 }
 
-// NewResource creates a new Resource and returns its pointer.
-func NewResource(name string, params ...*ResourceParameter) *Resource {
-	pp := make([]ResourceParameter, 0, len(params))
-
-	for _, p := range params {
-		if p != nil {
-			pp = append(pp, *p)
-		}
-	}
-
-	return &Resource{
-		name:       name,
-		parameters: pp,
-	}
-}
-
-// *****************************************************************************
 type ResourceParameter struct {
-	foundation.BaseElement
-
 	// Specifies the name of the query parameter.
 	name string
 
@@ -63,12 +42,58 @@ type ResourceParameter struct {
 	isRequiered bool
 }
 
+// ============================================================================
+// Resource
+// ============================================================================
+
+// NewResource creates a new Resource and returns its pointer.
+func NewResource(name string, params ...*ResourceParameter) (*Resource, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("no name for resource")
+	}
+
+	pp := []ResourceParameter{}
+
+	for _, p := range params {
+		if p != nil {
+			pp = append(pp, *p)
+		}
+	}
+
+	if len(pp) == 0 {
+		return nil, fmt.Errorf("no not empty parameters")
+	}
+
+	return &Resource{
+		name:       name,
+		parameters: pp,
+	}, nil
+}
+
+// Parameters returns list of parameters of the Resource.
+func (r *Resource) Parameters() []*ResourceParameter {
+	rr := make([]*ResourceParameter, len(r.parameters))
+
+	for i, rp := range r.parameters {
+		rr[i] = &ResourceParameter{
+			name:        rp.name,
+			paramType:   rp.paramType,
+			isRequiered: rp.isRequiered,
+		}
+	}
+
+	return rr
+}
+
+// ============================================================================
+// ResourceParameter
+// ============================================================================
 // NewResourceParameter creates a new ResourceParameter and returns its pointer
 // on success or error on failure.
 func NewResourceParameter(
 	name, pType string,
 	required bool,
-	baseOpts ...options.Option,
 ) (*ResourceParameter, error) {
 	name = strings.TrimSpace(name)
 	if err := errs.CheckStr(
@@ -84,30 +109,40 @@ func NewResourceParameter(
 		return nil, err
 	}
 
-	be, err := foundation.NewBaseElement(baseOpts...)
-	if err != nil {
-		return nil, err
-	}
-
 	return &ResourceParameter{
-			BaseElement: *be,
+			//		BaseElement: *be,
 			name:        name,
 			paramType:   pType,
-			isRequiered: required},
+			isRequiered: required,
+		},
 		nil
 }
 
-// MustResourcParameter tries to create a new ResourceParameter on success or
-// panics on failure.
-func MustResourcParameter(
+// MustResourceParameter tries to create a new resource parameter.
+// it panics on error.
+func MustResourceParameter(
 	name, pType string,
 	required bool,
-	baseOpts ...options.Option,
 ) *ResourceParameter {
-	rp, err := NewResourceParameter(name, pType, required, baseOpts...)
+	rp, err := NewResourceParameter(name, pType, required)
 	if err != nil {
-		errs.Panic(err)
+		panic("resource parameter building failed: " + err.Error())
 	}
 
 	return rp
+}
+
+// Name returns the ResourceParameter name.
+func (rp *ResourceParameter) Name() string {
+	return rp.name
+}
+
+// Type returns the ResourceParameter's type name.
+func (rp *ResourceParameter) Type() string {
+	return rp.paramType
+}
+
+// IsRequired returns the ResourceParameter's required flag.
+func (rp *ResourceParameter) IsRequired() bool {
+	return rp.isRequiered
 }

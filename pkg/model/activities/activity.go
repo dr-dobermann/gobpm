@@ -10,7 +10,9 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
+	"golang.org/x/exp/maps"
 )
 
 // The Activity class is the abstract super class for all concrete Activity
@@ -40,8 +42,8 @@ type Activity struct {
 	// of a specific individual, a group, an organization role or position, or
 	// an organization.
 	//
-	// DEV_NOTE: roles indexed by role name.
-	roles map[string]*ResourceRole
+	// DEV_NOTE: roles indexed by role name not by the addition order.
+	roles map[string]*hi.ResourceRole
 
 	// The Sequence Flow that will receive a token when none of the
 	// conditionExpressions on other outgoing Sequence Flows evaluate to true.
@@ -101,7 +103,7 @@ func NewActivity(
 ) (*Activity, error) {
 	cfg := activityConfig{
 		name:             strings.TrimSpace(name),
-		roles:            map[string]*ResourceRole{},
+		roles:            map[string]*hi.ResourceRole{},
 		props:            map[string]*data.Property{},
 		startQ:           1,
 		complQ:           1,
@@ -140,32 +142,14 @@ func NewActivity(
 }
 
 // Roles returns list of ResourceRoles of the Activity.
-func (a *Activity) Roles() []*ResourceRole {
-	rr := make([]*ResourceRole, len(a.roles))
-
-	i := 0
-	for _, r := range a.roles {
-		rr[i] = r
-
-		i++
-	}
-
-	return rr
+func (a *Activity) Roles() []*hi.ResourceRole {
+	return maps.Values(a.roles)
 }
 
 // Properties implements an data.PropertyOwner interface and returns
 // copy of the Activity properties.
 func (a *Activity) Properties() []*data.Property {
-	pp := make([]*data.Property, len(a.properties))
-
-	i := 0
-	for _, p := range a.properties {
-		pp[i] = p
-
-		i++
-	}
-
-	return pp
+	return maps.Values(a.properties)
 }
 
 // SetDefaultFlow sets default flow from the Activity.
@@ -211,7 +195,7 @@ func (a *Activity) NodeType() flow.NodeType {
 
 // AcceptIncomingFlow checks if it possible to use sf as IncomingFlow for the
 // Activity.
-func (a *Activity) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
+func (a *Activity) AcceptIncomingFlow(_ *flow.SequenceFlow) error {
 	// Activity has no restrictions on incoming floes
 	return nil
 }
@@ -220,7 +204,7 @@ func (a *Activity) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
 
 // SuportOutgoingFlow checks if it possible to source sf SequenceFlow from
 // the Activity.
-func (a *Activity) SupportOutgoingFlow(sf *flow.SequenceFlow) error {
+func (a *Activity) SupportOutgoingFlow(_ *flow.SequenceFlow) error {
 	// Activity has no restrictions on outgoing flows
 	return nil
 }

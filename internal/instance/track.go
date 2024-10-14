@@ -31,9 +31,14 @@
 //
 //   - token in the track would split on number of flows and first one will
 //     assign to the track itself in next step, and the rest of them will
-//     give to the other child tracks.
+//     be set to the others child tracks.
 //
 // if there is no outgouing flows, then track ends and token died.
+//
+// ## Human interaction
+//
+// If node nedds to interacto with the human, then it should support
+//
 
 package instance
 
@@ -75,6 +80,7 @@ func (t trackState) String() string {
 		"TrackExecutingStep",
 		"TrackProcessStepResults",
 		"TrackWaitForEvent",
+		"TrackWaitForInteraction",
 		"TrackMerged",
 		"TrackEnded",
 		"TrackCanceled",
@@ -178,17 +184,28 @@ func newTrack(
 		t.prev = append(t.prev, append(prevTrack.prev, prevTrack)...)
 	}
 
-	// check if Node is event and it awaits for events
-	if e, ok := start.(flow.EventNode); ok {
+	if err := t.checkNodeType(start); err != nil {
+		return nil, err
+	}
+
+	return &t, nil
+}
+
+// checkNodeType determines if node awaits for event or human interaction
+// and updates track state on positive comparison.
+func (t *track) checkNodeType(node flow.Node) error {
+	if en, ok := node.(flow.EventNode); ok {
 		edCnt := 0
 
-		for _, d := range e.Definitions() {
-			if err := t.instance.RegisterEvents(&t, d); err != nil {
-				return nil,
-					errs.New(
-						errs.M("couldn't register event definitions for event %s[%s]",
-							start.Name(), start.Id()),
-						errs.C(errorClass, errs.BulidingFailed))
+		for _, d := range en.Definitions() {
+			if err := t.instance.RegisterEvents(t, d); err != nil {
+				return errs.New(
+					errs.M("couldn't register event definitions"),
+					errs.C(errorClass, errs.BulidingFailed),
+					errs.D("node_id", en.Id()),
+					errs.D("node_name", en.Name()),
+					errs.D("event_definition_id", d.Id()),
+					errs.E(err))
 			}
 
 			edCnt++
@@ -199,7 +216,7 @@ func newTrack(
 		}
 	}
 
-	return &t, nil
+	return nil
 }
 
 // inState checks if track state is equal to any track state from the ss.
@@ -328,7 +345,7 @@ func (t *track) run(
 			}
 		}
 
-		// while there is a step to take
+		// run while there is a step to take
 		if step.state != StepCreated {
 			// if the last step is finished
 			// stop track running, inactivate token and return
@@ -381,7 +398,7 @@ func (t *track) executeNode(
 
 	step.state = StepStarted
 
-	if err := t.loadData(ctx, step.node); err != nil {
+	if err := t.loadIncomingData(ctx, step.node); err != nil {
 		return nil, err
 	}
 
@@ -421,7 +438,7 @@ func (t *track) executeNode(
 
 	step.state = StepEnded
 
-	if err := t.uploadData(ctx, step.node); err != nil {
+	if err := t.uploadOutgoingData(ctx, step.node); err != nil {
 		return nil, err
 	}
 
@@ -574,9 +591,9 @@ func (t *track) unregisterEvent(n flow.Node) error {
 	return t.instance.UnregisterEvents(t, eDefIds...)
 }
 
-// loadData checks if the flow.Node n implements flow.NodeDataConsumer and
-// if so, calls the LoadData of the Node from input DataObjects.
-func (t *track) loadData(ctx context.Context, n flow.Node) error {
+// loadIncomingData checks if the flow.Node n implements flow.NodeDataConsumer
+// and if so, calls the LoadData of the Node from input DataObjects.
+func (t *track) loadIncomingData(ctx context.Context, n flow.Node) error {
 	dc, ok := n.(scope.NodeDataConsumer)
 	if !ok {
 		return nil
@@ -585,9 +602,9 @@ func (t *track) loadData(ctx context.Context, n flow.Node) error {
 	return dc.LoadData(ctx)
 }
 
-// uploadData checks if the flow.Node n impmements flow.NoadDataProducer and
-// if so, calls the UploadData of the Node.
-func (t *track) uploadData(ctx context.Context, n flow.Node) error {
+// uploadOutgoingData checks if the flow.Node n impmements flow.NoadDataProducer
+// and if so, calls the UploadData of the Node.
+func (t *track) uploadOutgoingData(ctx context.Context, n flow.Node) error {
 	dp, ok := n.(scope.NodeDataProducer)
 	if !ok {
 		return nil

@@ -8,6 +8,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,7 +27,7 @@ func TestActivity(t *testing.T) {
 		data.MustDataState("ready"))
 	require.NoError(t, err)
 
-	rRole, err := activities.NewResourceRole("specialist", nil, nil, nil)
+	rRole, err := hi.NewResourceRole("specialist", nil, nil, nil)
 	require.NoError(t, err)
 
 	t.Run("full options without parameters",

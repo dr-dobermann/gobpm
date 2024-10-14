@@ -32,13 +32,13 @@ import (
 func TestInstIvalidParams(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
-	_, err := instance.New(nil, nil, nil, nil)
+	_, err := instance.New(nil, nil, nil, nil, nil)
 	require.Error(t, err)
 
 	s, err := getSnapshot("invalid_params_test")
 	require.NoError(t, err)
 
-	_, err = instance.New(s, nil, nil, nil)
+	_, err = instance.New(s, nil, nil, nil, nil)
 	require.Error(t, err)
 }
 
@@ -74,7 +74,7 @@ func TestMonitoring(t *testing.T) {
 	m, err := logmon.New(logger)
 	require.NoError(t, err)
 
-	inst, err := instance.New(s, nil, ep, m)
+	inst, err := instance.New(s, nil, ep, nil, m)
 	require.NoError(t, err)
 
 	// test runtime variables

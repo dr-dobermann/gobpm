@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/generated/mockrenv"
-	"github.com/dr-dobermann/gobpm/generated/mockscope"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -37,13 +36,12 @@ func TestNewExclGateway(t *testing.T) {
 func TestExclusiveGatewayExec(t *testing.T) {
 	data.CreateDefaultStates()
 
-	ms := mockscope.NewMockScope(t)
-	ms.EXPECT().
+	re := mockrenv.NewMockRuntimeEnvironment(t)
+	re.EXPECT().
 		Root().
 		Return(scope.DataPath("/")).
 		Maybe()
-
-	ms.EXPECT().
+	re.EXPECT().
 		GetData(scope.DataPath("/"), "X").
 		Return(
 			data.MustParameter(
@@ -52,12 +50,6 @@ func TestExclusiveGatewayExec(t *testing.T) {
 					data.MustItemDefinition(values.NewVariable(10)),
 					data.ReadyDataState)),
 			nil).
-		Maybe()
-
-	re := mockrenv.NewMockRuntimeEnvironment(t)
-	re.EXPECT().
-		Scope().
-		Return(ms).
 		Maybe()
 
 	xless10, err := goexpr.New(

@@ -2,18 +2,18 @@ package process
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 type processConfig struct {
 	name  string
 	props map[string]*data.Property
-	roles map[string]*activities.ResourceRole
+	roles map[string]*hi.ResourceRole
 
 	baseOpts []options.Option
 }
@@ -36,7 +36,7 @@ func (pc *processConfig) Validate() error {
 // AddRole adds single non-empty unique ResourceRole into processConfig.
 // if activityConfig already has the ResourceRole with the same name,
 // it will be overwritten.
-func (pc *processConfig) AddRole(r *activities.ResourceRole) error {
+func (pc *processConfig) AddRole(r *hi.ResourceRole) error {
 	if r == nil {
 		return errs.New(
 			errs.M("role couldn't be empty"),
@@ -50,7 +50,7 @@ func (pc *processConfig) AddRole(r *activities.ResourceRole) error {
 
 // --------------- data.PropertyConfigurator interface -------------------------
 //
-// AddProperty adds non-empyt property into the processConfig.
+// AddProperty adds non-empty property into the processConfig.
 // if the activityConfig already has the property with the same name it
 // will be overwritten.
 func (pc *processConfig) AddProperty(p *data.Property) error {

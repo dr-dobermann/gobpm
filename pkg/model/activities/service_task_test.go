@@ -20,7 +20,6 @@ import (
 )
 
 func TestServiceTaskDefinition(t *testing.T) {
-
 	op, err := service.NewOperation("my op", nil, nil, nil)
 	require.NoError(t, err)
 
@@ -96,8 +95,8 @@ func TestServiceTaskDefinition(t *testing.T) {
 			require.NoError(t, err)
 			require.Empty(t, flows)
 		})
-
 }
+
 func TestSrvTaskExec(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
@@ -151,6 +150,7 @@ func TestSrvTaskExec(t *testing.T) {
 
 	_, err = est.Exec(context.Background(), re)
 	require.Error(t, err)
+	t.Log("service failed as expected with error:\n", err)
 
 	// service task with output parameter
 	st, err := activities.NewServiceTask("hello", op, activities.WithoutParams())
@@ -173,30 +173,3 @@ func TestSrvTaskExec(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, flows)
 }
-
-// func TestInvalidParameters(t *testing.T) {
-// 	stub, err := gooper.New(
-// 		func(_ *data.ItemDefinition) (*data.ItemDefinition, error) {
-// 			return nil, nil
-// 		})
-// 	require.NoError(t, err)
-
-// 	stubOut, err := gooper.New(
-// 		func(in *data.ItemDefinition) (*data.ItemDefinition, error) {
-// 			return in, nil
-// 		})
-// 	require.NoError(t, err)
-
-// 	opIn := service.MustOperation("dummy",
-// 		common.MustMessage("input",
-// 			data.MustItemDefinition(values.NewVariable(""))),
-// 		nil,
-// 		stub)
-
-// 	opOut := service.MustOperation("dummy",
-// 		nil,
-// 		common.MustMessage("output",
-// 			data.MustItemDefinition(values.NewVariable(""))),
-// 		stubOut)
-
-// }

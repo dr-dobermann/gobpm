@@ -166,7 +166,6 @@ func (e Event) Properties() []*data.Property {
 
 // Definiitons returns a list of event definitions.
 func (e Event) Definitions() []flow.EventDefinition {
-
 	return append([]flow.EventDefinition{}, e.definitions...)
 }
 
@@ -458,7 +457,7 @@ func (te *throwEvent) emitEvent(
 		}
 	}
 
-	return eProd.EmitEvents(ced)
+	return eProd.PropogateEvents(ced)
 }
 
 // ------------------- flow.Node interface -------------------------------------

@@ -87,7 +87,7 @@ func TestDataPath(t *testing.T) {
 				dp, err := scope.NewDataPath(tst.dataPath)
 				require.NoError(t, err)
 
-				dp, err = dp.Append(tst.appendPath)
+				_, err = dp.Append(tst.appendPath)
 				if tst.shouldFailed {
 					require.Error(t, err)
 				} else {

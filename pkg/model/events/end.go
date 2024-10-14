@@ -108,7 +108,7 @@ func (ee *EndEvent) Exec(
 	ers := []error{}
 
 	for _, ed := range ee.definitions {
-		if err := ee.emitEvent(re.Scope(), re.EventProducer(), ed); err != nil {
+		if err := ee.emitEvent(re, re.EventProducer(), ed); err != nil {
 			ers = append(ers, err)
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
@@ -15,11 +16,11 @@ import (
 )
 
 func TestProcess(t *testing.T) {
-	var roles []*activities.ResourceRole
+	var roles []*hi.ResourceRole
 	for _, rn := range []string{"process_owner",
 		"task1_executor", "task2_executor"} {
 		roles = append(roles,
-			activities.MustResourceRole(
+			hi.MustResourceRole(
 				rn, nil, nil, nil))
 	}
 

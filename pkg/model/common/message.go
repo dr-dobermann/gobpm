@@ -21,6 +21,11 @@ type Message struct {
 
 // NewMessage creates a new Message object and returns its pointer on succes or
 // error on failure.
+//
+// Available options:
+//
+//   - foundation.WithId
+//   - foundation.WithDoc
 func NewMessage(
 	name string,
 	item *data.ItemDefinition,
@@ -33,6 +38,13 @@ func NewMessage(
 			errs.New(
 				errs.M("message should have non-empty name"),
 				errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	if item == nil {
+		return nil,
+			errs.New(
+				errs.M("empty item definition isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
 	be, err := foundation.NewBaseElement(baseOpts...)
