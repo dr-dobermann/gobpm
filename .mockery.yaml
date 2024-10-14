@@ -25,3 +25,6 @@ packages:
   github.com/dr-dobermann/gobpm/pkg/model/data:
     interfaces:
       Source:
+  github.com/dr-dobermann/gobpm/internal/interactor:
+    interfaces:
+      Registrator:

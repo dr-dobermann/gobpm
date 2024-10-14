@@ -974,6 +974,10 @@ func (inst *Instance) EventProducer() eventproc.EventProducer {
 	return inst
 }
 
+func (inst *Instance) RenderRegistrator() interactor.Registrator {
+	return inst.rr
+}
+
 // ------------------- monitor.WriterRegistrator -------------------------------
 
 // RegisterWriter registers single non-nil unique monitoring event writer on the
@@ -991,20 +995,6 @@ func (inst *Instance) RegisterWriter(m monitor.Writer) {
 	}
 }
 
-// -------------------- interactors.RegisterInteractor interface ---------------
-func (inst *Instance) Register(iror interactor.Interactor) (chan data.Data, error) {
-	if inst.rr == nil {
-		return nil,
-			errs.New(
-				errs.M("no render provider"),
-				errs.C(errorClass, errs.InvalidObject))
-	}
-
-	return inst.rr.Register(iror)
-}
-
-// -----------------------------------------------------------------------------
-
 // =============================================================================
 // Interfaces check
 var (
@@ -1013,5 +1003,4 @@ var (
 	_ renv.RuntimeEnvironment   = (*Instance)(nil)
 	_ scope.Scope               = (*Instance)(nil)
 	_ monitor.WriterRegistrator = (*Instance)(nil)
-	_ interactor.Registrator    = (*Instance)(nil)
 )

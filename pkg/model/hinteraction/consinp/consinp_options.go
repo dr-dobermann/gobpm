@@ -39,6 +39,8 @@ func (ciCfg *consInpConfig) newCRenderer(
 }
 
 // WithSource sets non-empty console input source for CRenderer.
+// src is used as an input source for rendering form.
+// Values in src should be divided by '\n'
 func WithSource(src io.Reader) options.Option {
 	f := func(ciCfg *consInpConfig) error {
 		if src == nil {
@@ -54,6 +56,10 @@ func WithSource(src io.Reader) options.Option {
 }
 
 // WithIntInput adds input for integer value.
+//
+// Parameters:
+//   - name defines the name of the data output
+//   - prompt describes the input (could be empty)
 func WithIntInput(name, prompt string) options.Option {
 	f := func(ciCfg *consInpConfig) error {
 		prompt = strings.TrimSpace(prompt)
@@ -90,6 +96,10 @@ func WithIntInput(name, prompt string) options.Option {
 }
 
 // WithStringInput adds input for string value.
+//
+// Parameters:
+//   - name defines the name of output data of the render
+//   - prompt describes the input (could be empty)
 func WithStringInput(name, prompt string) options.Option {
 	f := func(ciCfg *consInpConfig) error {
 		prompt = strings.TrimSpace(prompt)
@@ -125,6 +135,12 @@ func WithStringInput(name, prompt string) options.Option {
 	return ciOption(f)
 }
 
+// WithMessager adds a new message to the render form.
+// This field doesn't provide any output data.
+//
+// Parameter:
+//   - name could be empty
+//   - prompt defines the message which will be shown on render form.
 func WithMessager(name, prompt string) options.Option {
 	f := func(ciCfg *consInpConfig) error {
 		prompt = strings.TrimSpace(prompt)

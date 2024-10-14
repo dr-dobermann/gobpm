@@ -2,6 +2,7 @@ package renv
 
 import (
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
+	"github.com/dr-dobermann/gobpm/internal/interactor"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 )
 
@@ -15,4 +16,6 @@ type RuntimeEnvironment interface {
 
 	// EventProducer returns the EventProducer of the runtime.
 	EventProducer() eventproc.EventProducer
+
+	RenderRegistrator() interactor.Registrator
 }

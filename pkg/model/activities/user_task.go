@@ -177,8 +177,8 @@ func (ut *UserTask) Prologue(
 	ctx context.Context,
 	re renv.RuntimeEnvironment,
 ) error {
-	rp, ok := re.(interactor.Registrator)
-	if !ok {
+	rr := re.RenderRegistrator()
+	if rr == nil {
 		return errs.New(
 			errs.M("no RenderProvider for UserTask"),
 			errs.C(errorClass, errs.InvalidObject),
@@ -187,7 +187,7 @@ func (ut *UserTask) Prologue(
 			errs.D("instance_id", re.InstanceId()))
 	}
 
-	rCh, err := rp.Register(ut)
+	rCh, err := rr.Register(ut)
 	if err != nil {
 		return errs.New(
 			errs.M("interactor registration failed"),
