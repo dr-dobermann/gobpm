@@ -56,7 +56,7 @@ func TestGofunc(t *testing.T) {
 			require.Equal(t, gooper.GoOperType, gf.Type())
 			require.Contains(t, gf.ErrorClasses(), errs.TypeCastingError)
 
-			out, err := gf.Execute(in, context.Background())
+			out, err := gf.Execute(context.Background(), in)
 			require.NoError(t, err)
 			require.NotEmpty(t, out)
 			require.Equal(t, 200, out.Structure().Get())
@@ -68,8 +68,8 @@ func TestGofunc(t *testing.T) {
 			require.NoError(t, err)
 
 			_, err = gf.Execute(
-				data.MustItemDefinition(values.NewVariable("invalid int")),
-				context.Background())
+				context.Background(),
+				data.MustItemDefinition(values.NewVariable("invalid int")))
 			require.Error(t, err)
 		})
 }

@@ -65,8 +65,8 @@ func (gf GoFunc) ErrorClasses() []string {
 // Execute runs an operation implementator with in parameter and
 // returns the output result (couldn be nil) and error status.
 func (gf GoFunc) Execute(
-	in *data.ItemDefinition,
 	ctx context.Context,
+	in *data.ItemDefinition,
 ) (*data.ItemDefinition, error) {
 	out, err := gf.f(in)
 	if err != nil {

@@ -29,8 +29,8 @@ type Implementor interface {
 	// Execute runs an operation implementator with in parameter and
 	// returns the output result (couldn be nil) and error status.
 	Execute(
-		in *data.ItemDefinition,
 		ctx context.Context,
+		in *data.ItemDefinition,
 	) (*data.ItemDefinition, error)
 }
 
@@ -170,7 +170,7 @@ func (o *Operation) Run(ctx context.Context) error {
 		in = o.inMessage.Item()
 	}
 
-	out, err := o.implementation.Execute(in, ctx)
+	out, err := o.implementation.Execute(ctx, in)
 	if err != nil {
 		return errs.New(
 			errs.M("operation %q[%s] execution failed", o.name, o.Id()),

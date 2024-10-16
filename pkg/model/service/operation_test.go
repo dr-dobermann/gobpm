@@ -31,8 +31,8 @@ func (e *exctr) ErrorClasses() []string {
 }
 
 func (e *exctr) Execute(
-	in *data.ItemDefinition,
 	_ context.Context,
+	in *data.ItemDefinition,
 ) (*data.ItemDefinition, error) {
 	if e.fail {
 		return nil, errs.New(
