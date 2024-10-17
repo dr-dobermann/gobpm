@@ -17,7 +17,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/set"
 )
 
-var endTriggers = set.New[flow.EventTrigger](
+var endTriggers = set.New(
 	flow.TriggerCancel,
 	flow.TriggerCompensation,
 	flow.TriggerError,
@@ -33,6 +33,20 @@ type EndEvent struct {
 
 // NewEndEvent creates a new EndEvent and returns its pointer on success
 // or error on failure.
+//
+// Available options are:
+//   - foundation.WithId
+//   - foundation.WithDocs
+//   - data.WithProperties
+//   - events.WithTerminateTrigger
+//   - events.WithCancelTrigger
+//   - events.WithCompensationTrigger
+//   - events.WithConditionalTrigger
+//   - events.WithErrorTrigger
+//   - events.WithEscalationTrigger
+//   - events.WithMessageTrigger
+//   - evnets.WithSignalTrigger
+//   - events.WithTimerTrigger
 func NewEndEvent(
 	name string,
 	endEventOptions ...options.Option,
@@ -131,13 +145,16 @@ func (ee *EndEvent) Exec(
 func (ee *EndEvent) RegisterData(dp scope.DataPath, s scope.Scope) error {
 	ee.dataPath = dp
 
-	return s.LoadData(ee, ee.throwEvent.getEventData()...)
+	return s.LoadData(ee, ee.getEventData()...)
 }
 
 // -----------------------------------------------------------------------------
 
 // interfaces check
 var (
+	_ flow.Node            = (*EndEvent)(nil)
+	_ flow.EventNode       = (*EndEvent)(nil)
+	_ flow.SequenceTarget  = (*EndEvent)(nil)
 	_ exec.NodeExecutor    = (*EndEvent)(nil)
 	_ scope.NodeDataLoader = (*EndEvent)(nil)
 )

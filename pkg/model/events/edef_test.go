@@ -11,10 +11,27 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/stretchr/testify/require"
 )
 
 func TestErrorDefinitions(t *testing.T) {
+	t.Run("cancel",
+		func(t *testing.T) {
+			// invalid params
+			_, err := events.NewCancelEventDefinition(
+				options.WithName("my great name"))
+			require.Error(t, err)
+		})
+
+	t.Run("compensation",
+		func(t *testing.T) {
+			// invalid params
+			_, err := events.NewCompensationEventDefinition(
+				nil, false, options.WithName("my great name"))
+			require.Error(t, err)
+		})
+
 	t.Run("conditional",
 		func(t *testing.T) {
 			expr := getDummyCondition(t)
@@ -24,12 +41,18 @@ func TestErrorDefinitions(t *testing.T) {
 			ced, err := events.NewConditionalEventDefinition(nil)
 			require.Error(t, err)
 			require.Empty(t, ced)
+			require.Panics(t, func() {
+				_ = events.MustConditionalEventDefinition(
+					expr,
+					options.WithName("my great name"))
+			})
 
 			// normal params
 			ced, err = events.NewConditionalEventDefinition(expr)
 			require.NoError(t, err)
 			require.NotEmpty(t, ced)
 			require.Equal(t, expr.Id(), ced.Condition().Id())
+			require.Len(t, ced.GetItemsList(), 0)
 		})
 
 	t.Run("error",

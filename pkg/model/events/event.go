@@ -301,14 +301,6 @@ func (ce *catchEvent) UploadData(_ context.Context) error {
 	return nil
 }
 
-// ------------------- flow.Node interface -------------------------------------
-
-func (ce *catchEvent) Node() flow.Node {
-	return ce
-}
-
-// -----------------------------------------------------------------------------
-
 // *****************************************************************************
 
 // ThrowEvents are the events that throws a Result. All End Events and some
@@ -457,18 +449,5 @@ func (te *throwEvent) emitEvent(
 		}
 	}
 
-	return eProd.PropogateEvents(ced)
+	return eProd.PropagateEvents(ced)
 }
-
-// ------------------- flow.Node interface -------------------------------------
-
-func (te *throwEvent) Node() flow.Node {
-	return te
-}
-
-// -----------------------------------------------------------------------------
-// interfaces checks
-var (
-	_ flow.Node = (*throwEvent)(nil)
-	_ flow.Node = (*catchEvent)(nil)
-)
