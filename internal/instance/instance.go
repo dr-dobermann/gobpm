@@ -763,9 +763,9 @@ func (inst *Instance) UnregisterProcessor(ep eventproc.EventProcessor) {
 	}
 }
 
-// PropogateEvents gets a list of eventDefinitions and sends them to all
+// PropagateEvents gets a list of eventDefinitions and sends them to all
 // EventProcessors registered for this type of EventDefinition.
-func (inst *Instance) PropogateEvents(events ...flow.EventDefinition) error {
+func (inst *Instance) PropagateEvents(events ...flow.EventDefinition) error {
 	if inst.eProd == nil {
 		return errs.New(
 			errs.M("event producer isn't presented for Instance %q[%s]",
@@ -773,7 +773,7 @@ func (inst *Instance) PropogateEvents(events ...flow.EventDefinition) error {
 			errs.C(errorClass, errs.ObjectNotFound))
 	}
 
-	if err := inst.eProd.PropogateEvents(events...); err != nil {
+	if err := inst.eProd.PropagateEvents(events...); err != nil {
 		return errs.New(
 			errs.M("event emitting failed for Instance %q[%s]",
 				inst.s.ProcessName, inst.Id()),
