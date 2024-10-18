@@ -108,8 +108,8 @@ func (a *Association) IsReady() bool {
 	return a.target.State().Name() == ReadyDataState.Name()
 }
 
-// Update updates the Target of the Association a with new value from
-// ItemDefintion iDef.
+// Value returns IDef's value of the association's target if
+// it's in Ready state.
 func (a *Association) Value() (*ItemDefinition, error) {
 	if a.target != nil {
 		return nil,

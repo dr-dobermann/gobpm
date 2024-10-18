@@ -8,6 +8,24 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
+type (
+	// AssociationSource is implemented by Nodes which could use
+	// associated DataObject as a data source.
+	AssociationSource interface {
+		// AssociateFrom binds do as a data source object and
+		// makes incoming data association to Node.
+		AssociateFrom(do *DataObject, iDefId string) error
+	}
+
+	// AssociationTarget is implemented by Nodes which could
+	// be data source for associated DataObject.
+	AssociationTarget interface {
+		// AssociateTo binds do as a target and creates
+		// outgoing data association from Node.
+		AssociateTo(do *DataObject, iDefId string) error
+	}
+)
+
 // The Data Object class is an item-aware element. Data Object elements MUST be
 // contained within Process or Sub-Process elements. Data Object elements are
 // visually displayed on a Process diagram. Data Object References are a way to
@@ -31,6 +49,10 @@ type DataObject struct {
 	// DEV_NOTE: Since flag IsCollection depends on internal ItemAwareElement
 	// state, the dedicated value isn't necessary.
 	// IsCollection bool
+
+	// bindedNodes consists of Nodes which is binded to the DataObject by
+	// incoming or outgoing association.
+	bindedNodes map[data.Direction][]Node
 }
 
 // ------------------ Element interface ----------------------------------------
