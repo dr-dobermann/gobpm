@@ -50,9 +50,8 @@ type DataObject struct {
 	// state, the dedicated value isn't necessary.
 	// IsCollection bool
 
-	// bindedNodes consists of Nodes which is binded to the DataObject by
-	// incoming or outgoing association.
-	bindedNodes map[data.Direction][]Node
+	// associations keeps all DataObject's association to Nodes.
+	associations map[data.Direction][]*data.Association
 }
 
 // ------------------ Element interface ----------------------------------------
