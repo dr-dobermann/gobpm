@@ -71,4 +71,9 @@ func TestItemAwareElement(t *testing.T) {
 			require.Equal(t, "test ds", iae.State().Name())
 			require.Equal(t, "test iae", iae.Id())
 		})
+
+	t.Run("options-like constructor",
+		func(t *testing.T) {
+			// invalid options
+		})
 }

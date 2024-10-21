@@ -17,22 +17,6 @@ type PropertyConfigurator interface {
 
 type PropertyOption func(cfg PropertyConfigurator) error
 
-// --------------------- options.Option interface ------------------------------
-//
-// Apply converts roleOption into options.Option.
-func (po PropertyOption) Apply(cfg options.Configurator) error {
-	if pc, ok := cfg.(PropertyConfigurator); ok {
-		return po(pc)
-	}
-
-	return errs.New(
-		errs.M("config doesn't suppurt PropertyConfigurator"),
-		errs.C(errorClass, errs.TypeCastingError),
-		errs.D("config_type", reflect.TypeOf(cfg).String()))
-}
-
-// -----------------------------------------------------------------------------
-
 // WithProperties adds properties to the activityConfig.
 // Duplicat properties (by Id) are ignored.
 func WithProperties(props ...*Property) PropertyOption {
@@ -56,3 +40,19 @@ func WithProperties(props ...*Property) PropertyOption {
 
 	return PropertyOption(f)
 }
+
+// --------------------- options.Option interface ------------------------------
+//
+// Apply converts roleOption into options.Option.
+func (po PropertyOption) Apply(cfg options.Configurator) error {
+	if pc, ok := cfg.(PropertyConfigurator); ok {
+		return po(pc)
+	}
+
+	return errs.New(
+		errs.M("config doesn't suppurt PropertyConfigurator"),
+		errs.C(errorClass, errs.TypeCastingError),
+		errs.D("config_type", reflect.TypeOf(cfg).String()))
+}
+
+// -----------------------------------------------------------------------------

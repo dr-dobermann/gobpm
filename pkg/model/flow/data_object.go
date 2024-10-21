@@ -51,7 +51,7 @@ type DataObject struct {
 	// IsCollection bool
 
 	// associations keeps all DataObject's association to Nodes.
-	associations map[data.Direction][]*data.Association
+	Associations map[data.Direction][]*data.Association
 }
 
 // ------------------ Element interface ----------------------------------------

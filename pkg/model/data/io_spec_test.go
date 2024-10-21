@@ -31,6 +31,7 @@ func TestSet(t *testing.T) {
 			data.MustItemDefinition(
 				values.NewVariable(100)),
 			rs))
+	require.NoError(t, err)
 
 	t.Run("empty set",
 		func(t *testing.T) {
