@@ -43,8 +43,6 @@ func TestDataState(t *testing.T) {
 
 	t.Run("default states creation",
 		func(t *testing.T) {
-			require.Nil(t, data.UnavailableDataState)
-
 			err := data.CreateDefaultStates()
 
 			require.NoError(t, err)

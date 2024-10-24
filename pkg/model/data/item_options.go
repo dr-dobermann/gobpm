@@ -131,12 +131,27 @@ func WithState(ds *DataState) iaeOption {
 	return iaeOption(f)
 }
 
-// WithIDef sets actual ItemDefinition of IAE.
-func WithIDef(value Value, opts ...options.Option) iaeOption {
+// WithIDefinition creqtes a new ItemDefinition for IAE.
+func WithIDefinition(value Value, opts ...options.Option) iaeOption {
 	f := func(cfg *iaeConfig) error {
 		iDef, err := NewItemDefinition(value, opts...)
 		if err != nil {
 			return fmt.Errorf("couldn't created ItemDefinition: %w", err)
+		}
+
+		cfg.iDef = iDef
+
+		return nil
+	}
+
+	return iaeOption(f)
+}
+
+// WithIDef sets actual ItemDefinition of IAE.
+func WithIDef(iDef *ItemDefinition) iaeOption {
+	f := func(cfg *iaeConfig) error {
+		if iDef == nil {
+			return fmt.Errorf("no ItemDefinition")
 		}
 
 		cfg.iDef = iDef
@@ -166,7 +181,7 @@ func (iaeC *iaeConfig) Validate() error {
 		return fmt.Errorf("no ItemDefinition")
 	}
 
-	if iaeC.iDef.Structure() == nil && iaeC.state != UndefinedDataState {
+	if iaeC.iDef.Structure() == nil && iaeC.state != UnavailableDataState {
 		return fmt.Errorf("invalid data state %q with empty ItemDefinition",
 			iaeC.state.name)
 	}
@@ -190,9 +205,16 @@ type (
 )
 
 // WithIAE adds ItemAwareElement to the cfg which implements IAEAdder interface
-func WithIAE(iDef *ItemDefinition, opts ...options.Option) IAEAdderOption {
+//
+// Available options:
+//   - data.IDef
+//   - data.IDefinition
+//   - data.WithState
+//   - foundation.WithId
+//   - foundation.WithDoc
+func WithIAE(opts ...options.Option) IAEAdderOption {
 	f := func(cfg IAEAdder) error {
-		iae, err := NewIAE(iDef, opts...)
+		iae, err := NewIAE(opts...)
 		if err == nil {
 			return fmt.Errorf("ItemAwareElement building failed: %w", err)
 		}

@@ -6,6 +6,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,20 +46,20 @@ func TestItemDefinition(t *testing.T) {
 }
 
 func TestItemAwareElement(t *testing.T) {
-	id, err := data.NewItemDefinition(values.NewVariable[int](42))
+	data.CreateDefaultStates()
+
+	id, err := data.NewItemDefinition(values.NewVariable(42))
 	require.NoError(t, err)
 
 	ds, err := data.NewDataState("test ds")
 	require.NoError(t, err)
 	t.Run("empty parameters",
 		func(t *testing.T) {
-			iae, err := data.NewItemAwareElement(nil, nil)
+			_, err := data.NewItemAwareElement(nil, nil)
 			require.Error(t, err)
-			require.Empty(t, iae)
 
-			iae, err = data.NewItemAwareElement(id, nil)
-			require.Error(t, err)
-			require.Empty(t, iae)
+			_, err = data.NewItemAwareElement(id, nil)
+			require.NoError(t, err)
 		})
 
 	t.Run("itemDefinition, State and Id",
@@ -74,6 +75,32 @@ func TestItemAwareElement(t *testing.T) {
 
 	t.Run("options-like constructor",
 		func(t *testing.T) {
+			// no parameters
+			_, err = data.NewIAE()
+			require.Error(t, err)
+
+			// empty parameters
+			_, err = data.NewIAE(nil)
+			require.Error(t, err)
+
 			// invalid options
+			_, err = data.NewIAE(options.WithName("invalid option"))
+			require.Error(t, err)
+
+			// invalid state
+			_, err = data.NewIAE(data.WithIDefinition(nil), data.WithState(data.ReadyDataState))
+			require.Error(t, err)
+
+			// normal with empty IDef
+			uIAE, err := data.NewIAE(data.WithIDefinition(nil))
+			require.NoError(t, err)
+			require.Equal(t, data.UnavailableDataState.Name(), uIAE.State().Name())
+
+			// normal with IDef and Ready state
+			rIAE, err := data.NewIAE(
+				data.WithIDef(id),
+				data.WithState(data.ReadyDataState))
+			require.NoError(t, err)
+			require.Equal(t, data.ReadyDataState.Name(), rIAE.State().Name())
 		})
 }

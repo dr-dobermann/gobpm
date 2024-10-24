@@ -235,26 +235,24 @@ func MustItemAwareElement(
 // NewIAE tries to create a new ItemAwareElement formed from options.
 //
 // Available options:
+//   - data.WithIDef
 //   - data.WithState
 //   - foundation.WithId
 //   - foundation.WithDoc
 func NewIAE(
-	iDef *ItemDefinition,
 	opts ...options.Option,
 ) (*ItemAwareElement, error) {
 	iaeC := iaeConfig{
 		state: UnavailableDataState,
 	}
 
-	if iDef == nil {
-		return nil, fmt.Errorf("empty ItemDefinition")
-	}
-
-	iaeC.iDef = iDef
-
 	ee := []error{}
 
 	for _, o := range opts {
+		if o == nil {
+			return nil, fmt.Errorf("nil option isn't allowed")
+		}
+
 		switch opt := o.(type) {
 		case foundation.BaseOption:
 			iaeC.baseOpts = append(iaeC.baseOpts, o)

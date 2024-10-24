@@ -59,7 +59,7 @@ func TestSet(t *testing.T) {
 			require.NoError(t, err)
 			require.Empty(t, pp)
 
-			pp, err = s.Parameters(42)
+			_, err = s.Parameters(42)
 			require.Error(t, err)
 
 			// ------------- parameter -------------------------------
@@ -94,7 +94,9 @@ func TestSet(t *testing.T) {
 			t.Log(s.Parameters(data.AllSets))
 
 			defaultParams, err := s.Parameters(data.DefaultSet)
+			require.NoError(t, err)
 			optionalParams, err := s.Parameters(data.OptionalSet)
+			require.NoError(t, err)
 			whileExcParams, err := s.Parameters(data.WhileExecutionSet)
 			require.NoError(t, err)
 			require.Equal(t, "Parameter_1", defaultParams[data.DefaultSet][0].Name())
