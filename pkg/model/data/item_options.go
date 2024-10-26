@@ -201,7 +201,7 @@ type (
 		AddIAE(iae *ItemAwareElement) error
 	}
 
-	IAEAdderOption func(cfg IAEAdder) error
+	iaeAdderOption func(cfg IAEAdder) error
 )
 
 // WithIAE adds ItemAwareElement to the cfg which implements IAEAdder interface
@@ -212,10 +212,10 @@ type (
 //   - data.WithState
 //   - foundation.WithId
 //   - foundation.WithDoc
-func WithIAE(opts ...options.Option) IAEAdderOption {
+func WithIAE(opts ...options.Option) iaeAdderOption {
 	f := func(cfg IAEAdder) error {
 		iae, err := NewIAE(opts...)
-		if err == nil {
+		if err != nil {
 			return fmt.Errorf("ItemAwareElement building failed: %w", err)
 		}
 
@@ -226,12 +226,12 @@ func WithIAE(opts ...options.Option) IAEAdderOption {
 		return nil
 	}
 
-	return IAEAdderOption(f)
+	return iaeAdderOption(f)
 }
 
 // ---------------------- options.Option interface ----------------------------
 
-func (iaeO IAEAdderOption) Apply(cfg options.Configurator) error {
+func (iaeO iaeAdderOption) Apply(cfg options.Configurator) error {
 	if iaeC, ok := cfg.(IAEAdder); ok {
 		return iaeO(iaeC)
 	}

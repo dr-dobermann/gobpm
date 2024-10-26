@@ -65,7 +65,7 @@ func MustProperty(
 
 // NewProp creates a new Property with a name and the ItemAwareElement.
 // IAE is set up by WithIAE option.
-func NewProp(name string, iaeOpt IAEAdderOption) (*Property, error) {
+func NewProp(name string, iaeOpt iaeAdderOption) (*Property, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, fmt.Errorf("property should have non-empty name")
@@ -87,21 +87,22 @@ func NewProp(name string, iaeOpt IAEAdderOption) (*Property, error) {
 	return cfg.newProperty()
 }
 
+// MustProp creates and returns property with name and iaeAdderOption.
+// If error occurs it panics.
+func MustProp(name string, iaeOpt iaeAdderOption) *Property {
+	p, err := NewProp(name, iaeOpt)
+	if err != nil {
+		errs.Panic(err)
+
+		return nil
+	}
+
+	return p
+}
+
 // Name returns the Property name.
 func (p *Property) Name() string {
 	return p.name
-}
-
-// --------------------- IAEAdder interface -----------------------------------
-
-func (cfg *propConfig) AddIAE(iae *ItemAwareElement) error {
-	if iae == nil {
-		return fmt.Errorf("no ItemAwareElement")
-	}
-
-	cfg.iae = iae
-
-	return nil
 }
 
 // ----------------------------------------------------------------------------

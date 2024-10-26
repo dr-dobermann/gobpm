@@ -44,7 +44,7 @@ func WithProperties(props ...*Property) PropertyOption {
 }
 
 // WithProperty builds and adds single property to the configuration.
-func WithProperty(name string, iaeOpt IAEAdderOption) PropertyOption {
+func WithProperty(name string, iaeOpt iaeAdderOption) PropertyOption {
 	name = strings.TrimSpace(name)
 
 	f := func(cfg PropertyAdder) error {
@@ -69,7 +69,7 @@ func WithProperty(name string, iaeOpt IAEAdderOption) PropertyOption {
 
 // --------------------- options.Option interface ------------------------------
 //
-// Apply converts roleOption into options.Option.
+// Apply applies propertyOption on to PropertyAdder configuration.
 func (po PropertyOption) Apply(cfg options.Configurator) error {
 	if pc, ok := cfg.(PropertyAdder); ok {
 		return po(pc)
