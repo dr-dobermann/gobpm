@@ -181,7 +181,7 @@ func (iaeC *iaeConfig) Validate() error {
 		return fmt.Errorf("no ItemDefinition")
 	}
 
-	if iaeC.iDef.Structure() == nil && iaeC.state != UnavailableDataState {
+	if iaeC.iDef.Structure() == nil && iaeC.state != UndefinedDataState {
 		return fmt.Errorf("invalid data state %q with empty ItemDefinition",
 			iaeC.state.name)
 	}

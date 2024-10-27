@@ -2,19 +2,19 @@ package data
 
 import (
 	"fmt"
-	"reflect"
-
-	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
+// ============================================================================
+//                              propConfig
+// ============================================================================
+
 type (
+	// propConfig is used to create a single Property
 	propConfig struct {
 		name string
 
 		iae *ItemAwareElement
 	}
-
-	propOption func(cfg *propConfig) error
 )
 
 // newProperty creates a new property from propertyConfiguration.
@@ -29,17 +29,6 @@ func (cfg *propConfig) newProperty() (*Property, error) {
 	}
 
 	return &p, nil
-}
-
-// --------------------- options.Option interface -----------------------------
-
-func (po propOption) Apply(cfg options.Configurator) error {
-	if pCfg, ok := cfg.(*propConfig); ok {
-		return po(pCfg)
-	}
-
-	return fmt.Errorf("not a property configuration %q",
-		reflect.TypeOf(cfg).String())
 }
 
 // --------------------- options.Configurator interface -----------------------

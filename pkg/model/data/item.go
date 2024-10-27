@@ -243,7 +243,7 @@ func NewIAE(
 	opts ...options.Option,
 ) (*ItemAwareElement, error) {
 	iaeC := iaeConfig{
-		state: UnavailableDataState,
+		state: UndefinedDataState,
 	}
 
 	ee := []error{}

@@ -11,9 +11,13 @@ import (
 func TestDataState(t *testing.T) {
 	t.Run("empty name",
 		func(t *testing.T) {
-			ds, err := data.NewDataState("   ")
+			_, err := data.NewDataState("   ")
 			require.Error(t, err)
-			require.Empty(t, ds)
+
+			require.Panics(t,
+				func() {
+					_ = data.MustDataState("")
+				})
 		})
 
 	t.Run("name and id",

@@ -11,8 +11,17 @@ import (
 )
 
 func TestItemDefinition(t *testing.T) {
+	t.Run("item_kind",
+		func(t *testing.T) {
+			invlaid_kind := data.ItemKind("invld_kind")
+			require.Error(t, invlaid_kind.Validate())
+		})
+
 	t.Run("new_with_defaults",
 		func(t *testing.T) {
+			_, err := data.NewItemDefinition(nil, options.WithName("invlaid iDef"))
+			require.Error(t, err)
+
 			id, err := data.NewItemDefinition(nil)
 
 			require.NoError(t, err)
@@ -53,7 +62,7 @@ func TestItemAwareElement(t *testing.T) {
 
 	ds, err := data.NewDataState("test ds")
 	require.NoError(t, err)
-	t.Run("empty parameters",
+	t.Run("invalid parameters",
 		func(t *testing.T) {
 			_, err := data.NewItemAwareElement(nil, nil)
 			require.Error(t, err)
@@ -92,9 +101,15 @@ func TestItemAwareElement(t *testing.T) {
 			require.Error(t, err)
 
 			// normal with empty IDef
-			uIAE, err := data.NewIAE(data.WithIDefinition(nil))
+			uIAE, err := data.NewIAE(data.WithIDefinition(nil),
+				foundation.WithId("empty_value_iae"))
 			require.NoError(t, err)
-			require.Equal(t, data.UnavailableDataState.Name(), uIAE.State().Name())
+			require.NotNil(t, uIAE.Subject())
+			require.NotNil(t, uIAE.ItemDefinition())
+			require.Nil(t, uIAE.Value())
+			require.False(t, uIAE.IsCollection())
+			require.Equal(t, data.UndefinedDataState.Name(), uIAE.State().Name())
+			require.Error(t, uIAE.UpdateState(data.ReadyDataState))
 
 			// normal with IDef and Ready state
 			rIAE, err := data.NewIAE(
@@ -102,5 +117,9 @@ func TestItemAwareElement(t *testing.T) {
 				data.WithState(data.ReadyDataState))
 			require.NoError(t, err)
 			require.Equal(t, data.ReadyDataState.Name(), rIAE.State().Name())
+			require.NoError(t, rIAE.UpdateState(data.UnavailableDataState))
+			require.False(t, rIAE.IsCollection())
+			require.NotNil(t, rIAE.ItemDefinition())
+			require.Equal(t, id.Structure().Get(), rIAE.Value().Get())
 		})
 }

@@ -11,6 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type invldPA struct{}
+
+func (ipa *invldPA) Validate() error {
+	return nil
+}
+
 func TestProperty(t *testing.T) {
 	t.Run("errors",
 		func(t *testing.T) {
@@ -39,6 +45,16 @@ func TestProperty(t *testing.T) {
 				data.UnavailableDataState,
 				options.WithName("extra name"))
 			require.Error(t, err)
+
+			// invalid params
+			mpac := mockdata.NewMockPropertyAdder(t)
+			po := data.WithProperty("", nil)
+			require.Error(t, po.Apply(mpac))
+			po = data.WithProperty("no iae", nil)
+			require.Error(t, po.Apply(mpac))
+
+			var ipac invldPA
+			require.Error(t, po.Apply(&ipac))
 		})
 
 	t.Run("normal",
@@ -49,7 +65,8 @@ func TestProperty(t *testing.T) {
 			mpac.EXPECT().AddProperty(mock.Anything).
 				RunAndReturn(
 					func(p *data.Property) error {
-						t.Log("  ->> mock PropertyAdder adds a new Property: ", p.Name())
+						t.Log("  ->> mock PropertyAdder adds a new Property: ",
+							p.Name())
 						pNames = append(pNames, p.Name())
 						return nil
 					})

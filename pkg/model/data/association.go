@@ -1,6 +1,8 @@
 package data
 
 import (
+	"fmt"
+
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
@@ -43,6 +45,11 @@ import (
 // For example: when an Activity starts executing, the scope of valid
 // targets include the Activity data inputs, while at the end of the Activity
 // execution, the scope of valid sources include Activity data outputs.
+
+// ============================================================================
+//                          Association
+// ============================================================================
+
 type Association struct {
 	foundation.BaseElement
 
@@ -65,22 +72,8 @@ type Association struct {
 	target *ItemAwareElement
 }
 
-// The Assignment class is used to specify a simple mapping of data elements
-// using a specified Expression language.
-// The default Expression language for all Expressions is specified in the
-// Definitions element, using the expressionLanguage attribute. It can also be
-// overridden on each individual Assignment using the same attribute.
-type Assignment struct {
-	foundation.BaseElement
-
-	// The Expression that evaluates the source of the Assignment.
-	From FormalExpression
-
-	// The Expression that defines the actual Assignment operation and the
-	// target data element.
-	To FormalExpression
-}
-
+// UpdateSource updates source with a new value and recalculate value of
+// the association target if it's possible.
 func (a *Association) UpdateSource(iDef *ItemDefinition) error {
 	if iDef == nil {
 		return errs.New(
@@ -91,12 +84,21 @@ func (a *Association) UpdateSource(iDef *ItemDefinition) error {
 	iae, ok := a.sources[iDef.Id()]
 	if !ok {
 		return errs.New(
-			errs.M("association #%s doesn't have source #%s",
-				a.Id(), iDef.Id()),
-			errs.C(errorClass, errs.ObjectNotFound))
+			errs.M("invalid source"),
+			errs.C(errorClass, errs.ObjectNotFound),
+			errs.D("association_id", a.Id()),
+			errs.D("source_id", iDef.Id()))
 	}
 
-	return iae.Value().Update(iDef.structure.Get())
+	if err := iae.Value().Update(iDef.structure.Get()); err != nil {
+		return errs.New(
+			errs.M("source updating failed"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err),
+			errs.D("association_id", a.Id()))
+	}
+
+	return a.calculate()
 }
 
 // IsReady checks if the Association's target is ready.
@@ -111,7 +113,7 @@ func (a *Association) IsReady() bool {
 // Value returns IDef's value of the association's target if
 // it's in Ready state.
 func (a *Association) Value() (*ItemDefinition, error) {
-	if a.target != nil {
+	if a.target == nil {
 		return nil,
 			errs.New(
 				errs.M("association #%s target isn't defined", a.Id()))
@@ -155,4 +157,33 @@ func (a *Association) HasSourceId(id string) bool {
 	}
 
 	return false
+}
+
+// calculate actualizes target based on current source value.
+// if there is no readness of source error isn't occured and
+// associateion target state becomes Unavailable.
+// calculate returns error only if transformation or assignment are
+// failed.
+func (a *Association) calculate() error {
+	return fmt.Errorf("not implemented yet")
+}
+
+// ============================================================================
+//                          Assignment
+// ============================================================================
+
+// The Assignment class is used to specify a simple mapping of data elements
+// using a specified Expression language.
+// The default Expression language for all Expressions is specified in the
+// Definitions element, using the expressionLanguage attribute. It can also be
+// overridden on each individual Assignment using the same attribute.
+type Assignment struct {
+	foundation.BaseElement
+
+	// The Expression that evaluates the source of the Assignment.
+	From FormalExpression
+
+	// The Expression that defines the actual Assignment operation and the
+	// target data element.
+	To FormalExpression
 }
