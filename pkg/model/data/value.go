@@ -14,7 +14,7 @@ type Value interface {
 	Update(any) error
 
 	// Lock locks Value's internal mutex in case user need to update internal
-	// Value throug its pointer.
+	// Value through its pointer.
 	Lock()
 
 	// Unlock unlocks internal Value's mutex.
@@ -22,6 +22,9 @@ type Value interface {
 
 	// Type returns string representation of the Value's type.
 	Type() string
+
+	// Clone creates a clone of the Value
+	Clone() Value
 }
 
 type StepDirection bool
@@ -32,6 +35,8 @@ const (
 )
 
 type Collection interface {
+	Value
+
 	// Count returns legth of the collection.
 	Count() int
 
