@@ -57,7 +57,9 @@ func TestItemDefinition(t *testing.T) {
 func TestItemAwareElement(t *testing.T) {
 	data.CreateDefaultStates()
 
-	id, err := data.NewItemDefinition(values.NewVariable(42))
+	id, err := data.NewItemDefinition(
+		values.NewVariable(42),
+		foundation.WithId("test IDef"))
 	require.NoError(t, err)
 
 	ds, err := data.NewDataState("test ds")
@@ -66,9 +68,6 @@ func TestItemAwareElement(t *testing.T) {
 		func(t *testing.T) {
 			_, err := data.NewItemAwareElement(nil, nil)
 			require.Error(t, err)
-
-			_, err = data.NewItemAwareElement(id, nil)
-			require.NoError(t, err)
 		})
 
 	t.Run("itemDefinition, State and Id",
@@ -77,6 +76,7 @@ func TestItemAwareElement(t *testing.T) {
 				id, ds, foundation.WithId("test iae"))
 			require.NoError(t, err)
 			require.NotEmpty(t, iae)
+			require.Equal(t, "test IDef", iae.Name())
 
 			require.Equal(t, "test ds", iae.State().Name())
 			require.Equal(t, "test iae", iae.Id())
@@ -121,5 +121,28 @@ func TestItemAwareElement(t *testing.T) {
 			require.False(t, rIAE.IsCollection())
 			require.NotNil(t, rIAE.ItemDefinition())
 			require.Equal(t, id.Structure().Get(), rIAE.Value().Get())
+		})
+
+	t.Run("iae clones",
+		func(t *testing.T) {
+			// empty ItemDefinition value in IAE should
+			// fire an error.
+			uIAE, err := data.NewIAE(data.WithIDefinition(nil),
+				foundation.WithId("empty_value_iae"))
+			require.NoError(t, err)
+			_, err = uIAE.Clone()
+			require.Error(t, err)
+
+			// IAE with defined ItemDefinition value should be cloned
+			// successfully.
+			rIAE, err := data.NewIAE(
+				data.WithIDef(id),
+				data.WithState(data.ReadyDataState))
+			require.NoError(t, err)
+			nIAE, err := rIAE.Clone()
+			require.NoError(t, err)
+			require.Equal(t, id.Id(), nIAE.ItemDefinition().Id())
+			require.Equal(t, data.ReadyDataState.Name(), nIAE.State().Name())
+			require.Equal(t, id.Structure().Get(), nIAE.Value().Get())
 		})
 }

@@ -45,6 +45,11 @@ func (ic ItemKind) Validate() error {
 // used to further identify the location of the data structure (if applicable).
 // For example, in the case of data structures contributed by an XML schema,
 // an Import would be used to specify the file location of that schema.
+
+// ============================================================================
+//                             ItemDefinition
+// ============================================================================
+
 type ItemDefinition struct {
 	foundation.BaseElement
 
@@ -153,6 +158,8 @@ func (idef *ItemDefinition) String() string {
 		idef.Id(), val, idef.isCollection, idef.kind)
 }
 
+// ============================================================================
+//                               ItemAwareElemnt
 // ============================================================================
 
 // Several elements in BPMN are subject to store or convey items during process
@@ -318,7 +325,26 @@ func (iae *ItemAwareElement) String() string {
 		iae.Id(), iae.dataState.name, iae.subject.String())
 }
 
-// ----------------- data.Data interface ---------------------------------------
+// clone creates an ItemAwareElement clone if it has non-empty
+// ItemDefinition value.
+// NOTE: Clone doesn't cloning documentation neither for ItemAwareElement
+// nor its ItemDefintion.
+func (iae *ItemAwareElement) Clone() (*ItemAwareElement, error) {
+	if iae.Value() == nil {
+		return nil,
+			fmt.Errorf(
+				"couldn't clone ItemAwareElement with nil ItemDefinition's value")
+	}
+
+	return NewIAE(
+		WithIDefinition(
+			iae.subject.structure.Clone(),
+			foundation.WithId(iae.subject.Id())),
+		WithState(&iae.dataState),
+		foundation.WithId(iae.Id()))
+}
+
+// ----------------- data.Data interface --------------------------------------
 
 // Value returns underlaying structure value of the ItemAvareElement.
 func (iae *ItemAwareElement) Value() Value {
@@ -334,4 +360,14 @@ func (iae *ItemAwareElement) ItemDefinition() *ItemDefinition {
 	return iae.subject
 }
 
-// -----------------------------------------------------------------------------
+// ------------------- foundation.Namer interface -----------------------------
+
+func (iae *ItemAwareElement) Name() string {
+	if iae.subject != nil {
+		return iae.subject.Id()
+	}
+
+	return iae.Id()
+}
+
+// ----------------------------------------------------------------------------

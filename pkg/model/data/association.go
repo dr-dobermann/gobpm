@@ -1,10 +1,14 @@
 package data
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"reflect"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // Data Associations are used to move data between Data Objects, Properties, and
@@ -56,15 +60,24 @@ type Association struct {
 	// Specifies an optional transformation Expression. The actual scope of
 	// accessible data for that Expression is defined by the source and target
 	// of the specific Data Association types.
-	Transformation FormalExpression
+	transformation FormalExpression
 
 	// Specifies one or more data elements Assignments. By using an Assignment,
 	// single data structure elements can be assigned from the source structure
 	// to the target structure.
-	Assignments []*Assignment
+	//
+	// DEV-NOTE: Standard doesn't tell if the assignment should be used in
+	// conjuction with transformation or in case when no transformation is
+	// defined.
+	// In my opinion any assignment could be easily made in transformation.
+	// That's why I delete assignment from the association.
+	//
+	// Assignments []*Assignment
 
 	// Identifies the source of the Data Association. The source MUST be an
 	// ItemAwareElement.
+	//
+	// Map is indexed by itemDefinition id of ItemAwareElement.
 	sources map[string]*ItemAwareElement
 
 	// Identifies the target of the Data Association. The target MUST be an
@@ -72,9 +85,58 @@ type Association struct {
 	target *ItemAwareElement
 }
 
-// UpdateSource updates source with a new value and recalculate value of
-// the association target if it's possible.
-func (a *Association) UpdateSource(iDef *ItemDefinition) error {
+func NewAssociation(
+	target *ItemAwareElement,
+	opts ...options.Option,
+) (*Association, error) {
+	if target == nil {
+		return nil, errs.New(
+			errs.M("no target"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	aCfg := asscConfig{
+		trg: target,
+	}
+
+	ee := []error{}
+
+	if err := aCfg.trg.UpdateState(UnavailableDataState); err != nil {
+		ee = append(ee, err)
+	}
+
+	for _, o := range opts {
+		switch opt := o.(type) {
+		case asscOption:
+			if err := opt.Apply(&aCfg); err != nil {
+				ee = append(ee, err)
+			}
+
+		case foundation.BaseOption:
+			aCfg.baseOptions = append(aCfg.baseOptions, o)
+
+		default:
+			ee = append(ee,
+				fmt.Errorf("invalid option type: %s", reflect.TypeOf(o).String()))
+		}
+	}
+
+	if len(ee) != 0 {
+		return nil,
+			errs.New(
+				errs.M("association building failed"),
+				errs.C(errorClass, errs.BulidingFailed),
+				errs.E(errors.Join(ee...)))
+	}
+
+	return aCfg.newAssociation()
+}
+
+// UpdateSource updates source with a new value.
+func (a *Association) UpdateSource(
+	ctx context.Context,
+	iDef *ItemDefinition,
+) error {
 	if iDef == nil {
 		return errs.New(
 			errs.M("empty itemDefinition"),
@@ -98,7 +160,22 @@ func (a *Association) UpdateSource(iDef *ItemDefinition) error {
 			errs.D("association_id", a.Id()))
 	}
 
-	return a.calculate()
+	if err := iae.UpdateState(ReadyDataState); err != nil {
+		return errs.New(
+			errs.M("association source state update failed"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.D("association_id", a.Id()),
+			errs.D("source_id", iae.ItemDefinition().Id()))
+	}
+
+	if err := a.target.UpdateState(UnavailableDataState); err != nil {
+		return errs.New(
+			errs.M("association target state update failed"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.D("association_id", a.Id()))
+	}
+
+	return nil
 }
 
 // IsReady checks if the Association's target is ready.
@@ -110,20 +187,21 @@ func (a *Association) IsReady() bool {
 	return a.target.State().Name() == ReadyDataState.Name()
 }
 
-// Value returns IDef's value of the association's target if
-// it's in Ready state.
-func (a *Association) Value() (*ItemDefinition, error) {
+// Value returns recalculated IDef's value of the association's target.
+func (a *Association) Value(ctx context.Context) (*ItemDefinition, error) {
 	if a.target == nil {
 		return nil,
 			errs.New(
 				errs.M("association #%s target isn't defined", a.Id()))
 	}
 
-	if a.target.dataState.Name() != ReadyDataState.Name() {
+	if err := a.calculate(ctx); err != nil {
 		return nil,
 			errs.New(
-				errs.M("target isn't in Ready state"),
-				errs.C(errorClass, errs.InvalidState))
+				errs.M("target calculation failed"),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.D("association_id", a.Id()),
+				errs.E(err))
 	}
 
 	return a.target.Subject(), nil
@@ -140,23 +218,18 @@ func (a *Association) TargetItemDefId() string {
 
 // SourcesIds returns list of the Association's sources ItemDefinitions Ids.
 func (a *Association) SourcesIds() []string {
-	src := []string{}
-	for _, s := range a.sources {
-		src = append(src, s.Subject().Id())
+	srcIds := []string{}
+	for k := range a.sources {
+		srcIds = append(srcIds, k)
 	}
 
-	return src
+	return srcIds
 }
 
 // HasSourceId checks if the Association has source with Id id.
 func (a *Association) HasSourceId(id string) bool {
-	for _, s := range a.sources {
-		if s.Subject().Id() == id {
-			return true
-		}
-	}
-
-	return false
+	_, ok := a.sources[id]
+	return ok
 }
 
 // calculate actualizes target based on current source value.
@@ -164,9 +237,58 @@ func (a *Association) HasSourceId(id string) bool {
 // associateion target state becomes Unavailable.
 // calculate returns error only if transformation or assignment are
 // failed.
-func (a *Association) calculate() error {
-	return fmt.Errorf("not implemented yet")
+func (a *Association) calculate(ctx context.Context) error {
+	var srcV Value
+
+	if a.transformation == nil {
+		if len(a.sources) == 0 {
+			return fmt.Errorf("no sources")
+		}
+
+		s := a.sources[a.SourcesIds()[0]]
+
+		if s.dataState.name != ReadyDataState.name {
+			return fmt.Errorf(
+				"source #%s isn't in Ready state (actual state: %s)",
+				s.ItemDefinition().Id(), s.dataState.name)
+		}
+
+		srcV = s.Value()
+	} else {
+		var err error
+
+		srcV, err = a.transformation.Evaluate(ctx, a)
+		if err != nil {
+			return fmt.Errorf("target evaluation failed: %w", err)
+		}
+	}
+
+	if err := a.target.ItemDefinition().structure.Update(
+		srcV.Get()); err != nil {
+		return fmt.Errorf("target #%s update failed: %w",
+			a.target.subject.Id(), err)
+	}
+
+	if err := a.target.UpdateState(ReadyDataState); err != nil {
+		return fmt.Errorf("target #%s state updating failed: %w",
+			a.target.subject.Id(), err)
+	}
+
+	return nil
 }
+
+// --------------------------- Source interface -------------------------------
+
+func (a *Association) Find(_ context.Context, name string) (Data, error) {
+	src, ok := a.sources[name]
+	if !ok {
+		return nil, fmt.Errorf("no source #%s", name)
+	}
+
+	return src, nil
+}
+
+// -----------------------------------------------------------------------------
 
 // ============================================================================
 //                          Assignment
@@ -177,13 +299,20 @@ func (a *Association) calculate() error {
 // The default Expression language for all Expressions is specified in the
 // Definitions element, using the expressionLanguage attribute. It can also be
 // overridden on each individual Assignment using the same attribute.
-type Assignment struct {
-	foundation.BaseElement
-
-	// The Expression that evaluates the source of the Assignment.
-	From FormalExpression
-
-	// The Expression that defines the actual Assignment operation and the
-	// target data element.
-	To FormalExpression
-}
+// type Assignment interface {
+// 	foundation.Identifyer
+// 	foundation.Documentator
+//
+// 	Assign(
+// 		ctx context.Context,
+// 		target *ItemAwareElement,
+// 		source Source,
+// 	) error
+//
+// 	// The Expression that evaluates the source of the Assignment.
+// 	From FormalExpression
+//
+// 	// The Expression that defines the actual Assignment operation and the
+// 	// target data element.
+// 	To FormalExpression
+// }

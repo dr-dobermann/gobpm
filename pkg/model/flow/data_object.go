@@ -91,6 +91,14 @@ func NewDataOpject(
 	return &do, nil
 }
 
+// ------------------------ foundation.Namer interface ------------------------
+
+func (do *DataObject) Name() string {
+	return do.name
+}
+
+// ----------------------------------------------------------------------------
+
 // interfaces test for DataObject.
 var (
 	_ Element   = (*DataObject)(nil)
