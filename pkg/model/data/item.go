@@ -1,6 +1,7 @@
 package data
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 
@@ -44,6 +45,11 @@ func (ic ItemKind) Validate() error {
 // used to further identify the location of the data structure (if applicable).
 // For example, in the case of data structures contributed by an XML schema,
 // an Import would be used to specify the file location of that schema.
+
+// ============================================================================
+//                             ItemDefinition
+// ============================================================================
+
 type ItemDefinition struct {
 	foundation.BaseElement
 
@@ -66,6 +72,12 @@ type ItemDefinition struct {
 
 // NewItemDefinition creates a new ItemDefinition object and returns
 // its pointer.
+//
+// Available options:
+//   - data.WithKind - sets ItemDefinition kind. If not set InformationKind is used.
+//   - data.WithImport
+//   - foundation.WithId
+//   - foundation.WithDoc
 func NewItemDefinition(
 	value Value,
 	opts ...options.Option,
@@ -146,7 +158,9 @@ func (idef *ItemDefinition) String() string {
 		idef.Id(), val, idef.isCollection, idef.kind)
 }
 
-// ******************************************************************************
+// ============================================================================
+//                               ItemAwareElemnt
+// ============================================================================
 
 // Several elements in BPMN are subject to store or convey items during process
 // execution. These elements are referenced generally as “item-aware elements.”
@@ -166,7 +180,7 @@ type ItemAwareElement struct {
 
 	// Specification of the items that are stored or conveyed by the
 	// ItemAwareElement.
-	itemSubject *ItemDefinition
+	subject *ItemDefinition
 
 	dataState DataState
 }
@@ -204,7 +218,7 @@ func NewItemAwareElement(
 
 	return &ItemAwareElement{
 			BaseElement: *be,
-			itemSubject: item,
+			subject:     item,
 			dataState:   *state,
 		},
 		nil
@@ -225,17 +239,66 @@ func MustItemAwareElement(
 	return iae
 }
 
+// NewIAE tries to create a new ItemAwareElement formed from options.
+//
+// Available options:
+//   - data.WithIDef
+//   - data.WithState
+//   - foundation.WithId
+//   - foundation.WithDoc
+func NewIAE(
+	opts ...options.Option,
+) (*ItemAwareElement, error) {
+	iaeC := iaeConfig{
+		state: UndefinedDataState,
+	}
+
+	ee := []error{}
+
+	for _, o := range opts {
+		if o == nil {
+			return nil, fmt.Errorf("nil option isn't allowed")
+		}
+
+		switch opt := o.(type) {
+		case foundation.BaseOption:
+			iaeC.baseOpts = append(iaeC.baseOpts, o)
+
+		case iaeOption:
+			if err := opt.Apply(&iaeC); err != nil {
+				ee = append(ee, fmt.Errorf("IAE option applying error: %w", err))
+			}
+
+		default:
+			return nil, fmt.Errorf("invalid option type: %q",
+				reflect.TypeOf(o).String())
+		}
+	}
+
+	if len(ee) != 0 {
+		return nil, errors.Join(ee...)
+	}
+
+	return iaeC.newIAE()
+}
+
 // State returns a copy of the ItemAwareElement DataState.
 func (iae *ItemAwareElement) State() DataState {
 	return iae.dataState
 }
 
-// Update
+// UpdateState sets new state for the ItemAwareElement.
 func (iae *ItemAwareElement) UpdateState(newState *DataState) error {
 	if newState == nil {
 		return errs.New(
 			errs.M("empty data state"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if iae.subject.structure == nil && newState == ReadyDataState {
+		return errs.New(
+			errs.M("couldn't set ready state for empty ItemDefitnion structure"),
+			errs.C(errorClass, errs.InvalidState))
 	}
 
 	iae.dataState = *newState
@@ -245,37 +308,66 @@ func (iae *ItemAwareElement) UpdateState(newState *DataState) error {
 
 // Subject returns internal representeation of the ItemAwareElement.
 func (iae *ItemAwareElement) Subject() *ItemDefinition {
-	return iae.itemSubject
+	return iae.subject
 }
 
 // IsCollection returns flag is the ItemAwareElement collection or not.
 func (iae *ItemAwareElement) IsCollection() bool {
-	if iae.itemSubject == nil {
+	if iae.subject == nil {
 		return false
 	}
 
-	return iae.itemSubject.isCollection
+	return iae.subject.isCollection
 }
 
 func (iae *ItemAwareElement) String() string {
 	return fmt.Sprintf("Id: %s\nState: %s\nValue: %s\n",
-		iae.Id(), iae.dataState.name, iae.itemSubject.String())
+		iae.Id(), iae.dataState.name, iae.subject.String())
 }
 
-// ----------------- data.Data interface ---------------------------------------
+// clone creates an ItemAwareElement clone if it has non-empty
+// ItemDefinition value.
+// NOTE: Clone doesn't cloning documentation neither for ItemAwareElement
+// nor its ItemDefintion.
+func (iae *ItemAwareElement) Clone() (*ItemAwareElement, error) {
+	if iae.Value() == nil {
+		return nil,
+			fmt.Errorf(
+				"couldn't clone ItemAwareElement with nil ItemDefinition's value")
+	}
+
+	return NewIAE(
+		WithIDefinition(
+			iae.subject.structure.Clone(),
+			foundation.WithId(iae.subject.Id())),
+		WithState(&iae.dataState),
+		foundation.WithId(iae.Id()))
+}
+
+// ----------------- data.Data interface --------------------------------------
 
 // Value returns underlaying structure value of the ItemAvareElement.
 func (iae *ItemAwareElement) Value() Value {
-	if iae.itemSubject == nil {
+	if iae.subject == nil {
 		return nil
 	}
 
-	return iae.itemSubject.structure
+	return iae.subject.structure
 }
 
 // ItemDefinition returns the Data's underlaying ItemDefinition.
 func (iae *ItemAwareElement) ItemDefinition() *ItemDefinition {
-	return iae.itemSubject
+	return iae.subject
 }
 
-// -----------------------------------------------------------------------------
+// ------------------- foundation.Namer interface -----------------------------
+
+func (iae *ItemAwareElement) Name() string {
+	if iae.subject != nil {
+		return iae.subject.Id()
+	}
+
+	return iae.Id()
+}
+
+// ----------------------------------------------------------------------------

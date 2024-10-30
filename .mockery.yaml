@@ -25,6 +25,8 @@ packages:
   github.com/dr-dobermann/gobpm/pkg/model/data:
     interfaces:
       Source:
+      PropertyAdder:
+      FormalExpression:
   github.com/dr-dobermann/gobpm/internal/interactor:
     interfaces:
       Registrator:

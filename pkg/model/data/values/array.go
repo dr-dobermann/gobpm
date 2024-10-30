@@ -97,6 +97,14 @@ func (a *Array[T]) Type() string {
 	return reflect.TypeOf(v).Name()
 }
 
+// Clone creates a clone of the Array with copies of the Array's elemnts.
+func (a *Array[T]) Clone() data.Value {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
+	return NewArray[T](a.elements...)
+}
+
 // ********************* Collection interface **********************************
 
 // Count returns legth of the collection.

@@ -6,12 +6,22 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/stretchr/testify/require"
 )
 
 func TestItemDefinition(t *testing.T) {
+	t.Run("item_kind",
+		func(t *testing.T) {
+			invlaid_kind := data.ItemKind("invld_kind")
+			require.Error(t, invlaid_kind.Validate())
+		})
+
 	t.Run("new_with_defaults",
 		func(t *testing.T) {
+			_, err := data.NewItemDefinition(nil, options.WithName("invlaid iDef"))
+			require.Error(t, err)
+
 			id, err := data.NewItemDefinition(nil)
 
 			require.NoError(t, err)
@@ -45,20 +55,19 @@ func TestItemDefinition(t *testing.T) {
 }
 
 func TestItemAwareElement(t *testing.T) {
-	id, err := data.NewItemDefinition(values.NewVariable[int](42))
+	data.CreateDefaultStates()
+
+	id, err := data.NewItemDefinition(
+		values.NewVariable(42),
+		foundation.WithId("test IDef"))
 	require.NoError(t, err)
 
 	ds, err := data.NewDataState("test ds")
 	require.NoError(t, err)
-	t.Run("empty parameters",
+	t.Run("invalid parameters",
 		func(t *testing.T) {
-			iae, err := data.NewItemAwareElement(nil, nil)
+			_, err := data.NewItemAwareElement(nil, nil)
 			require.Error(t, err)
-			require.Empty(t, iae)
-
-			iae, err = data.NewItemAwareElement(id, nil)
-			require.Error(t, err)
-			require.Empty(t, iae)
 		})
 
 	t.Run("itemDefinition, State and Id",
@@ -67,8 +76,73 @@ func TestItemAwareElement(t *testing.T) {
 				id, ds, foundation.WithId("test iae"))
 			require.NoError(t, err)
 			require.NotEmpty(t, iae)
+			require.Equal(t, "test IDef", iae.Name())
 
 			require.Equal(t, "test ds", iae.State().Name())
 			require.Equal(t, "test iae", iae.Id())
+		})
+
+	t.Run("options-like constructor",
+		func(t *testing.T) {
+			// no parameters
+			_, err = data.NewIAE()
+			require.Error(t, err)
+
+			// empty parameters
+			_, err = data.NewIAE(nil)
+			require.Error(t, err)
+
+			// invalid options
+			_, err = data.NewIAE(options.WithName("invalid option"))
+			require.Error(t, err)
+
+			// invalid state
+			_, err = data.NewIAE(data.WithIDefinition(nil), data.WithState(data.ReadyDataState))
+			require.Error(t, err)
+
+			// normal with empty IDef
+			uIAE, err := data.NewIAE(data.WithIDefinition(nil),
+				foundation.WithId("empty_value_iae"))
+			require.NoError(t, err)
+			require.NotNil(t, uIAE.Subject())
+			require.NotNil(t, uIAE.ItemDefinition())
+			require.Nil(t, uIAE.Value())
+			require.False(t, uIAE.IsCollection())
+			require.Equal(t, data.UndefinedDataState.Name(), uIAE.State().Name())
+			require.Error(t, uIAE.UpdateState(data.ReadyDataState))
+
+			// normal with IDef and Ready state
+			rIAE, err := data.NewIAE(
+				data.WithIDef(id),
+				data.WithState(data.ReadyDataState))
+			require.NoError(t, err)
+			require.Equal(t, data.ReadyDataState.Name(), rIAE.State().Name())
+			require.NoError(t, rIAE.UpdateState(data.UnavailableDataState))
+			require.False(t, rIAE.IsCollection())
+			require.NotNil(t, rIAE.ItemDefinition())
+			require.Equal(t, id.Structure().Get(), rIAE.Value().Get())
+		})
+
+	t.Run("iae clones",
+		func(t *testing.T) {
+			// empty ItemDefinition value in IAE should
+			// fire an error.
+			uIAE, err := data.NewIAE(data.WithIDefinition(nil),
+				foundation.WithId("empty_value_iae"))
+			require.NoError(t, err)
+			_, err = uIAE.Clone()
+			require.Error(t, err)
+
+			// IAE with defined ItemDefinition value should be cloned
+			// successfully.
+			rIAE, err := data.NewIAE(
+				data.WithIDef(id),
+				data.WithState(data.ReadyDataState))
+			require.NoError(t, err)
+			nIAE, err := rIAE.Clone()
+			require.NoError(t, err)
+			require.Equal(t, id.Id(), nIAE.ItemDefinition().Id())
+			require.Equal(t, data.ReadyDataState.Name(), nIAE.State().Name())
+			require.Equal(t, id.Structure().Get(), nIAE.Value().Get())
 		})
 }

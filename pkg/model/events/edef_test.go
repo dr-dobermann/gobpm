@@ -11,44 +11,95 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/stretchr/testify/require"
 )
 
 func TestErrorDefinitions(t *testing.T) {
+	data.CreateDefaultStates()
+
+	t.Run("cancel",
+		func(t *testing.T) {
+			// invalid params
+			_, err := events.NewCancelEventDefinition(
+				options.WithName("my great name"))
+			require.Error(t, err)
+		})
+
+	t.Run("compensation",
+		func(t *testing.T) {
+			// invalid params
+			_, err := events.NewCompensationEventDefinition(
+				nil, false, options.WithName("my great name"))
+			require.Error(t, err)
+		})
+
 	t.Run("conditional",
 		func(t *testing.T) {
 			expr := getDummyCondition(t)
 			require.NotEmpty(t, expr)
 
 			// invalid params
-			ced, err := events.NewConditionalEventDefinition(nil)
+			_, err := events.NewConditionalEventDefinition(nil)
 			require.Error(t, err)
-			require.Empty(t, ced)
+			require.Panics(t, func() {
+				_ = events.MustConditionalEventDefinition(
+					expr,
+					options.WithName("my great name"))
+			})
 
 			// normal params
-			ced, err = events.NewConditionalEventDefinition(expr)
+			ced, err := events.NewConditionalEventDefinition(expr)
 			require.NoError(t, err)
-			require.NotEmpty(t, ced)
 			require.Equal(t, expr.Id(), ced.Condition().Id())
+			require.Len(t, ced.GetItemsList(), 0)
 		})
 
 	t.Run("error",
 		func(t *testing.T) {
 			e, err := common.NewError("fsio propalo", "ZHOPA",
-				data.MustItemDefinition(values.NewVariable(-1)))
+				data.MustItemDefinition(values.NewVariable(-1),
+					foundation.WithId("error_item")))
 			require.NoError(t, err)
-			require.NotEmpty(t, e)
 
 			// empty error
-			eed, err := events.NewErrorEventDefinition(nil)
+			_, err = events.NewErrorEventDefinition(nil)
 			require.Error(t, err)
-			require.Empty(t, eed)
+
+			// invalid option
+			_, err = events.NewErrorEventDefinition(e, options.WithName("invalid option"))
+			require.Error(t, err)
 
 			// with error
-			eed, err = events.NewErrorEventDefinition(e)
+			eed, err := events.NewErrorEventDefinition(e)
 			require.NoError(t, err)
-			require.NotEmpty(t, eed)
 			require.Equal(t, e.Id(), eed.Error().Id())
+			require.True(t, eed.CheckItemDefinition("error_item"))
+
+			// cloning error
+			_, err = eed.CloneEvent(
+				[]data.Data{
+					data.MustParameter("invalid",
+						data.MustItemAwareElement(
+							data.MustItemDefinition(
+								values.NewVariable(200),
+								foundation.WithId("invalid")),
+							data.ReadyDataState)),
+				})
+			require.Error(t, err)
+
+			need, err := eed.CloneEvent(
+				[]data.Data{
+					data.MustParameter(
+						"new_error",
+						data.MustItemAwareElement(
+							data.MustItemDefinition(
+								values.NewVariable(1000),
+								foundation.WithId("error_item")),
+							data.ReadyDataState)),
+				})
+			require.NoError(t, err)
+			require.Equal(t, 1000, need.GetItemsList()[0].Structure().Get())
 		})
 
 	t.Run("escalation",

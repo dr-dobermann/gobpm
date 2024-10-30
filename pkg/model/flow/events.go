@@ -49,12 +49,6 @@ type EventDefinition interface {
 	// Type returns the trigger of the event definition.
 	Type() EventTrigger
 
-	// CheckItemDefinition check if definition is related with
-	// data.ItemDefinition with iDefId Id.
-	CheckItemDefinition(iDefId string) bool
-
-	// GetItemList returns a list of data.ItemDefinition the EventDefinition
-	// is based on.
 	// If EventDefiniton isn't based on any data.ItemDefiniton, empty list
 	// wil be returned.
 	GetItemsList() []*data.ItemDefinition

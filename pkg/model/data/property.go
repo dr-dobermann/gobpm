@@ -1,16 +1,12 @@
 package data
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
-
-// PropertyOwner is an interface of objects which could have Properties.
-type PropertyOwner interface {
-	Properties() []Property
-}
 
 // Properties, like Data Objects, are item-aware elements. But, unlike Data
 // Objects, they are not visually displayed on a Process diagram. Certain flow
@@ -46,7 +42,8 @@ func NewProperty(
 
 	return &Property{
 			ItemAwareElement: *iae,
-			name:             name},
+			name:             name,
+		},
 		nil
 }
 
@@ -66,10 +63,48 @@ func MustProperty(
 	return p
 }
 
+// NewProp creates a new Property with a name and the ItemAwareElement.
+// IAE is set up by WithIAE option.
+func NewProp(name string, iaeOpt iaeAdderOption) (*Property, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("property should have non-empty name")
+	}
+
+	if iaeOpt == nil {
+		return nil, fmt.Errorf("no IAEAdder")
+	}
+
+	cfg := propConfig{
+		name: name,
+	}
+
+	if err := iaeOpt.Apply(&cfg); err != nil {
+		return nil,
+			fmt.Errorf("property option applying error: %w", err)
+	}
+
+	return cfg.newProperty()
+}
+
+// MustProp creates and returns property with name and iaeAdderOption.
+// If error occurs it panics.
+func MustProp(name string, iaeOpt iaeAdderOption) *Property {
+	p, err := NewProp(name, iaeOpt)
+	if err != nil {
+		errs.Panic(err)
+
+		return nil
+	}
+
+	return p
+}
+
 // Name returns the Property name.
 func (p *Property) Name() string {
 	return p.name
 }
 
+// ----------------------------------------------------------------------------
 // Test interfaces for Property.
 var _ Data = (*Property)(nil)

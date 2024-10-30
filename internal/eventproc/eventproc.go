@@ -24,13 +24,13 @@ type EventProducer interface {
 
 	// UnregisterEvents removes event definition to EventProcessor link from
 	// EventProducer.
-	UnregisterEvents(EventProcessor, ...string) error
+	UnregisterEvents(ep EventProcessor, eDefIds ...string) error
 
-	// UnregisterProcessor unregister all event definitions registered by
-	// the EventProcessor.
+	// UnregisterProcessor unregisters all the event definitions registered by
+	// the EventProcessor and the EventProcessor itself.
 	UnregisterProcessor(EventProcessor)
 
-	// PropogateEvents gets a list of eventDefinitions and sends them to all
+	// PropagateEvents gets a list of eventDefinitions and sends them to all
 	// EventProcessors registered for this type of EventDefinition.
-	PropogateEvents(events ...flow.EventDefinition) error
+	PropagateEvents(events ...flow.EventDefinition) error
 }

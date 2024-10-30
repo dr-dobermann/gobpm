@@ -26,6 +26,13 @@ func TestArray(t *testing.T) {
 			require.Error(t, a.Update(5))
 			require.Error(t, a.Insert(2, 0))
 			require.Error(t, a.Next(data.StepForward))
+
+			nA := a.Clone()
+			require.Equal(t, "int", nA.Type())
+			nAa, ok := nA.(data.Collection)
+			require.True(t, ok)
+			require.Equal(t, -1, nAa.Index())
+			require.Equal(t, 0, nAa.Count())
 		})
 
 	t.Run("normal array",
@@ -63,6 +70,15 @@ func TestArray(t *testing.T) {
 			v, err = a.GetAt(6)
 			require.Error(t, err)
 
+			// cloning
+			na, ok := a.Clone().(data.Collection)
+			require.True(t, ok)
+			require.Equal(t, 5, na.Count())
+			vv := a.GetAll()
+			for _, v := range []int{1, 2, 3, 4, 5} {
+				require.Contains(t, vv, v)
+			}
+
 			// add value
 			require.NoError(t, a.Add(6))
 			require.Equal(t, 6, a.Count())
@@ -97,7 +113,7 @@ func TestArray(t *testing.T) {
 			require.Equal(t, 1, a.Get())
 
 			// getall
-			vv := a.GetAll()
+			vv = a.GetAll()
 			for _, i := range []int{1, 2, 3, 4, 5} {
 				require.Contains(t, vv, i)
 			}
@@ -233,7 +249,6 @@ func TestArray(t *testing.T) {
 			require.NoError(t, a.Update(20))
 
 			require.Equal(t, 4, chCount)
-
 		})
 }
 
@@ -256,6 +271,11 @@ func TestVariable(t *testing.T) {
 			require.NoError(t, v.UpdateT(15))
 			require.Equal(t, 15, v.Get())
 			require.Equal(t, 15, v.GetT())
+
+			// cloning
+			nv := v.Clone()
+			require.Equal(t, "int", nv.Type())
+			require.Equal(t, 15, nv.Get())
 		})
 
 	t.Run("struct with pointer",
@@ -267,8 +287,11 @@ func TestVariable(t *testing.T) {
 
 			v := values.NewVariable[test_struct](
 				test_struct{42, "meaning of life"})
+			require.Equal(t, "test_struct", v.Type())
 
-			t.Log(v.Type())
+			// cloning
+			nv := v.Clone()
+			require.Equal(t, "test_struct", nv.Type())
 
 			vp := v.GetP()
 			v.Lock()
@@ -277,6 +300,9 @@ func TestVariable(t *testing.T) {
 
 			require.Equal(t, 10, v.GetT().int_v)
 			require.Equal(t, "meaning of life", v.GetT().string_v)
+
+			require.Equal(t, 42, nv.Get().(test_struct).int_v)
+			require.Equal(t, "meaning of life", nv.Get().(test_struct).string_v)
 		})
 
 	t.Run("update check",
@@ -311,6 +337,5 @@ func TestVariable(t *testing.T) {
 			require.NoError(t, v.Update(20))
 
 			require.Equal(t, 2, chCount)
-
 		})
 }

@@ -19,7 +19,7 @@
 // Every node execution parameters and results are stored to Instance History.
 // Saved History could be used as an Input for new Instance run.
 //
-// Instance runtime environment (IRE) holds Data Scope object which is holds actual
+// Instance runtime environment (IRE) holds Data Scope objects which holds actual
 // accessible data objects: Properties, DataObjects, ...
 // Scope could dinamically expand and shring according to executing nodes.
 // Scope tracks data objects updates and generates appropriate notification events.
@@ -404,9 +404,9 @@ func (t *Thresher) UnregisterProcessor(ep eventproc.EventProcessor) {
 	}
 }
 
-// PropogateEvents gets a list of eventDefinitions and sends them to all
+// PropagateEvents gets a list of eventDefinitions and sends them to all
 // EventProcessors registered for this type of EventDefinition.
-func (t *Thresher) PropogateEvents(events ...flow.EventDefinition) error {
+func (t *Thresher) PropagateEvents(events ...flow.EventDefinition) error {
 	if st := t.State(); st != Started {
 		return errs.New(
 			errs.M("thresher isn't started"),

@@ -68,7 +68,7 @@ func (t *Task) ActivityType() flow.ActivityType {
 
 // LoadData loads data from Task's incoming data associations into its
 // inputs.
-func (t *Task) LoadData(_ context.Context) error {
+func (t *Task) LoadData(ctx context.Context) error {
 	dii, err := t.IoSpec.Parameters(data.Input)
 	if err != nil {
 		return errs.New(
@@ -92,7 +92,7 @@ func (t *Task) LoadData(_ context.Context) error {
 				errs.D("task_name", t.Name()))
 		}
 
-		v, err := ia.Value()
+		v, err := ia.Value(ctx)
 		if err != nil {
 			return errs.New(
 				errs.M("couldn't get value of the association %q", ia.Id()),
@@ -143,7 +143,7 @@ func (t *Task) RegisterData(dp scope.DataPath, s scope.Scope) error {
 
 // UploadData fills all Task's outputs with not-Ready state from the Scope and
 // loads all Task's outgoing data associations from Task's outputs.
-func (t *Task) UploadData(_ context.Context, s scope.Scope) error {
+func (t *Task) UploadData(ctx context.Context, s scope.Scope) error {
 	doo, err := t.updateOutputs(s)
 	if err != nil {
 		return errs.New(
@@ -165,7 +165,7 @@ func (t *Task) UploadData(_ context.Context, s scope.Scope) error {
 				errs.C(errorClass, errs.ObjectNotFound))
 		}
 
-		if err := oa.UpdateSource(doo[index].ItemDefinition()); err != nil {
+		if err := oa.UpdateSource(ctx, doo[index].ItemDefinition()); err != nil {
 			return errs.New(
 				errs.M("couldn't update association's %q source %q for "+
 					"task %q[%s]", oa.Id(), doo[index].ItemDefinition().Id(),

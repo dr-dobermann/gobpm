@@ -154,7 +154,7 @@ func getSnapshot(pname string) (*snapshot.Snapshot, error) {
 			if !ok {
 				return nil,
 					errs.New(
-						errs.M("couldn't get string from operation input",
+						errs.M("couldn't get user name as operation input",
 							errs.D("actual_type",
 								reflect.TypeOf(in.Structure()).String())))
 			}
@@ -163,7 +163,8 @@ func getSnapshot(pname string) (*snapshot.Snapshot, error) {
 
 			return nil, nil
 		},
-		errs.ObjectNotFound, errs.EmptyNotAllowed)
+		errs.ObjectNotFound,
+		errs.EmptyNotAllowed)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +175,9 @@ func getSnapshot(pname string) (*snapshot.Snapshot, error) {
 			"user_name",
 			data.MustItemDefinition(
 				values.NewVariable(""),
-				foundation.WithId("user_name"))), nil, helloFunc)
+				foundation.WithId("user_name"))),
+		nil,
+		helloFunc)
 
 	task, err := activities.NewServiceTask(
 		"Print User Name", op, activities.WithoutParams())

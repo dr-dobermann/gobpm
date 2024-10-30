@@ -70,12 +70,18 @@ func (v *Variable[T]) Type() string {
 	return reflect.TypeOf(v.value).Name()
 }
 
+// Clone creates a clone of the Variable with same value.
+func (v *Variable[T]) Clone() data.Value {
+	v.lock.Lock()
+	defer v.lock.Unlock()
+
+	return NewVariable[T](v.value)
+}
+
 // *****************************************************************************
 // data.Updater interface
 
 // Register registers single Value's updating event callback function.
-// It doesn't check for duplication and just changed the previously made
-// registration.
 func (v *Variable[T]) Register(regName string, updFn data.UpdateCallback) error {
 	if updFn == nil {
 		return errs.New(
@@ -138,6 +144,8 @@ func sendVariableUpdates(when time.Time, funcs []data.UpdateCallback) {
 
 // *****************************************************************************
 // check implementation of data.Value and data.Updater interface
-var varInterfaceChecker *Variable[bool]
-var _ data.Value = varInterfaceChecker
-var _ data.Updater = varInterfaceChecker
+var (
+	varInterfaceChecker *Variable[bool]
+	_                   data.Value   = varInterfaceChecker
+	_                   data.Updater = varInterfaceChecker
+)

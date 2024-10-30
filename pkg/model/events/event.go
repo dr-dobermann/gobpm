@@ -256,7 +256,7 @@ func (ce catchEvent) IsParallelMultiple() bool {
 // ------------------ exec.NodeDataProducer interface --------------------------
 
 // UploadData fills all catchEvent outputAssociations with its output values.
-func (ce *catchEvent) UploadData(_ context.Context) error {
+func (ce *catchEvent) UploadData(ctx context.Context) error {
 	ee := []error{}
 
 	for _, oa := range ce.outputAssociations {
@@ -281,7 +281,7 @@ func (ce *catchEvent) UploadData(_ context.Context) error {
 				continue
 			}
 
-			if err := oa.UpdateSource(out.ItemDefinition()); err != nil {
+			if err := oa.UpdateSource(ctx, out.ItemDefinition()); err != nil {
 				ee = append(ee,
 					errs.New(
 						errs.M("couldn't update association #%s source #%s",
@@ -300,14 +300,6 @@ func (ce *catchEvent) UploadData(_ context.Context) error {
 
 	return nil
 }
-
-// ------------------- flow.Node interface -------------------------------------
-
-func (ce *catchEvent) Node() flow.Node {
-	return ce
-}
-
-// -----------------------------------------------------------------------------
 
 // *****************************************************************************
 
@@ -356,7 +348,7 @@ func newThrowEvent(
 
 // ---------------- exec.NodeDataProducer interface ----------------------------
 
-func (te *throwEvent) LoadData(_ context.Context) error {
+func (te *throwEvent) LoadData(ctx context.Context) error {
 	ee := []error{}
 
 	for _, ia := range te.inputAssociations {
@@ -380,7 +372,7 @@ func (te *throwEvent) LoadData(_ context.Context) error {
 			continue
 		}
 
-		val, err := ia.Value()
+		val, err := ia.Value(ctx)
 		if err != nil {
 			ee = append(ee,
 				errs.New(
@@ -457,18 +449,5 @@ func (te *throwEvent) emitEvent(
 		}
 	}
 
-	return eProd.PropogateEvents(ced)
+	return eProd.PropagateEvents(ced)
 }
-
-// ------------------- flow.Node interface -------------------------------------
-
-func (te *throwEvent) Node() flow.Node {
-	return te
-}
-
-// -----------------------------------------------------------------------------
-// interfaces checks
-var (
-	_ flow.Node = (*throwEvent)(nil)
-	_ flow.Node = (*catchEvent)(nil)
-)

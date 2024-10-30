@@ -7,9 +7,8 @@ import (
 )
 
 // Compensation Events are used in the context of triggering or handling
-// compensation (see page 301 for more details on compensation). There are four
-// variations: a Start Event, both a catch and throw Intermediate Event, and an
-// End Event.
+// compensation. There are four variations: a Start Event, both a catch
+// and throw Intermediate Event, and an End Event.
 //   - The Compensation Start Event MAY NOT be used for a top-level Process.
 //   - The Compensation Start Event MAY be used for an Event Sub-Process.
 //   - The catch Compensation Intermediate Event MUST only be attached to the
@@ -51,7 +50,6 @@ type CompensationEventDefinition struct {
 
 // Type implements the Definition interface.
 func (*CompensationEventDefinition) Type() flow.EventTrigger {
-
 	return flow.TriggerCompensation
 }
 
