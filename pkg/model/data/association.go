@@ -67,7 +67,7 @@ type Association struct {
 	// to the target structure.
 	//
 	// DEV-NOTE: Standard doesn't tell if the assignment should be used in
-	// conjuction with transformation or in case when no transformation is
+	// conjunction with transformation or in case when no transformation is
 	// defined.
 	// In my opinion any assignment could be easily made in transformation.
 	// That's why I delete assignment from the association.
@@ -233,7 +233,7 @@ func (a *Association) HasSourceId(id string) bool {
 }
 
 // calculate actualizes target based on current source value.
-// if there is no readness of source error isn't occured and
+// if there is no readness of source error isn't occurred and
 // associateion target state becomes Unavailable.
 // calculate returns error only if transformation or assignment are
 // failed.
@@ -279,10 +279,18 @@ func (a *Association) calculate(ctx context.Context) error {
 
 // --------------------------- Source interface -------------------------------
 
+// Find looks for source with ItemDefinition's Id equal to name.
+// It returns only sources with Ready state.
 func (a *Association) Find(_ context.Context, name string) (Data, error) {
 	src, ok := a.sources[name]
 	if !ok {
 		return nil, fmt.Errorf("no source #%s", name)
+	}
+
+	if src.dataState.name != ReadyDataState.name {
+		return nil,
+			fmt.Errorf("source #%s isn't in Ready state (actual state is %s)",
+				src.subject.Id(), src.dataState.name)
 	}
 
 	return src, nil

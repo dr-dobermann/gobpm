@@ -2,11 +2,14 @@ package data_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
+	"github.com/dr-dobermann/gobpm/generated/mockdata"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,12 +50,11 @@ func TestAssociations(t *testing.T) {
 							values.NewVariable("one hundred")),
 						data.ReadyDataState,
 						foundation.WithId("src 2"))))
+			require.Error(t, err)
 		})
 
 	t.Run("normal",
 		func(t *testing.T) {
-			// mfe := mockdata.NewMockFormalExpression(t)
-
 			// no transformation
 			a, err := data.NewAssociation(
 				trgIAE,
@@ -102,5 +104,71 @@ func TestAssociations(t *testing.T) {
 
 			require.NoError(t, err)
 			require.Equal(t, 42, v.Structure().Get())
+
+			// with transformation
+			mfe := mockdata.NewMockFormalExpression(t)
+			mfe.EXPECT().Evaluate(mock.Anything, mock.Anything).
+				RunAndReturn(
+					func(ctx context.Context, src data.Source) (data.Value, error) {
+						v, err := src.Find(ctx, "value")
+						if err != nil {
+							return nil,
+								fmt.Errorf("couldn't get value: %w", err)
+						}
+
+						res, ok := v.Value().Get().(int)
+						if !ok {
+							return nil,
+								fmt.Errorf("value conversion to int failed")
+						}
+
+						m, err := src.Find(ctx, "multiplicator")
+						if err != nil {
+							return nil,
+								fmt.Errorf("couldn't get multiplicator: %w", err)
+						}
+
+						mul, ok := m.Value().Get().(int)
+						if !ok {
+							return nil,
+								fmt.Errorf("multiplicator conversion to int failed")
+						}
+
+						return values.NewVariable(res * mul), nil
+					})
+
+			a, err = data.NewAssociation(
+				trgIAE,
+				data.WithTransformation(mfe),
+				data.WithSource(
+					data.MustItemAwareElement(
+						data.MustItemDefinition(
+							values.NewVariable(100),
+							foundation.WithId("value")),
+						data.UndefinedDataState)),
+				data.WithSource(
+					data.MustItemAwareElement(
+						data.MustItemDefinition(
+							values.NewVariable(2),
+							foundation.WithId("multiplicator")),
+						data.ReadyDataState)),
+				foundation.WithId("association with transformation"))
+			require.NoError(t, err)
+
+			require.False(t, a.IsReady())
+			_, err = a.Value(context.Background())
+			require.Error(t, err)
+
+			// update association source
+			err = a.UpdateSource(
+				context.Background(),
+				data.MustItemDefinition(
+					values.NewVariable(42),
+					foundation.WithId("value")))
+			require.NoError(t, err)
+
+			trg, err := a.Value(context.Background())
+			require.NoError(t, err)
+			require.Equal(t, 84, trg.Structure().Get())
 		})
 }
