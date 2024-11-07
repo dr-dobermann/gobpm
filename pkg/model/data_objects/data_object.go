@@ -86,16 +86,23 @@ func NewDataOpject(
 // AssociateSource creates a new data association between the Node n as a
 // source and the DataObject as a target.
 func (do *DataObject) AssociateSource(
-	n flow.Node,
+	n flow.AssociationSource,
 	sourceIDs []string,
 	transformation data.FormalExpression,
 ) error {
+	if n == nil {
+		return fmt.Errorf("empty Node isn't allowed")
+	}
+
 	return fmt.Errorf("not implemented yet")
 }
 
 // AssociateTarget creates a new data association from the DataObject a as a
 // source and the Node n as a target.
-func (do *DataObject) AssociateTarget(n flow.Node) error {
+func (do *DataObject) AssociateTarget(
+	n flow.AssociationTarget,
+	transformation data.FormalExpression,
+) error {
 	return fmt.Errorf("not implemented yet")
 }
 
