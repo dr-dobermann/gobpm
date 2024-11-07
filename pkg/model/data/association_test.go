@@ -2,6 +2,7 @@ package data_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/generated/mockdata"
@@ -110,16 +111,28 @@ func TestAssociations(t *testing.T) {
 				RunAndReturn(
 					func(ctx context.Context, src data.Source) (data.Value, error) {
 						v, err := src.Find(ctx, "value")
-						require.NoError(t, err, "couldn't get value")
+						if err != nil {
+							return nil,
+								fmt.Errorf("couldn't get value")
+						}
 
 						res, ok := v.Value().Get().(int)
-						require.True(t, ok, "value conversion to int failed")
+						if !ok {
+							return nil,
+								fmt.Errorf("value conversion to int failed")
+						}
 
 						m, err := src.Find(ctx, "multiplicator")
-						require.NoError(t, err, "couldn't get multiplicator")
+						if err != nil {
+							return nil,
+								fmt.Errorf("couldn't get multiplicator")
+						}
 
 						mul, ok := m.Value().Get().(int)
-						require.True(t, ok, "multiplicator conversion to int failed")
+						if !ok {
+							return nil,
+								fmt.Errorf("multiplicator conversion to int failed")
+						}
 
 						return values.NewVariable(res * mul), nil
 					})
