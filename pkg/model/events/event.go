@@ -9,7 +9,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/set"
 )
@@ -92,7 +91,6 @@ import (
 // Events that catch a trigger. All Start Events and some Intermediate Events
 // are catching Events.
 type Event struct {
-	foundation.BaseElement
 	flow.FlowNode
 	flow.FlowElement
 
@@ -138,15 +136,14 @@ func newEvent(
 	defs []flow.EventDefinition,
 	baseOpts ...options.Option,
 ) (*Event, error) {
-	be, err := foundation.NewBaseElement(baseOpts...)
+    fe, err := flow.NewFlowElement(name, baseOpts...)
 	if err != nil {
 		return nil, err
 	}
 
 	e := Event{
-		BaseElement: *be,
 		FlowNode:    *flow.NewFlowNode(),
-		FlowElement: *flow.NewFlowElement(name),
+		FlowElement: *fe,
 		properties:  append([]*data.Property{}, props...),
 		definitions: append([]flow.EventDefinition{}, defs...),
 		triggers:    *set.New[flow.EventTrigger](),

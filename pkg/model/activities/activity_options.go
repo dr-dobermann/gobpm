@@ -81,7 +81,7 @@ func (ac *activityConfig) newActivity() (*Activity, error) {
 		return nil, err
 	}
 
-	be, err := foundation.NewBaseElement(ac.baseOpts...)
+	fe, err := flow.NewFlowElement(ac.name, ac.baseOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -96,9 +96,8 @@ func (ac *activityConfig) newActivity() (*Activity, error) {
 	}
 
 	a := Activity{
-		BaseElement:         *be,
 		FlowNode:            *flow.NewFlowNode(),
-		FlowElement:         *flow.NewFlowElement(ac.name),
+		FlowElement:         *fe,
 		isForCompensation:   ac.compensation,
 		roles:               ac.roles,
 		properties:          ac.props,

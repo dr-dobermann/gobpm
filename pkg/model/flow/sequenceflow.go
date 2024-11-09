@@ -34,8 +34,6 @@ type (
 // for Processes), Choreography Activities (Choreography Task and
 // Sub-Choreography; for Choreographies), and Gateways.
 type SequenceFlow struct {
-	foundation.BaseElement
-
 	FlowElement
 
 	// The FlowNode that the Sequence Flow is connecting from.

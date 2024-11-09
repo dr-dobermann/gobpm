@@ -1,13 +1,21 @@
 package flow
 
 import (
+	"fmt"
+
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
+
+// ============================================================================
+//                               Element
+// ============================================================================
 
 type ElementType string
 
 const (
+	InvalidElement      ElementType = "INVALID_ELEMENT_TYPE"
 	DataObjectElement   ElementType = "DataObject"
 	NodeElement         ElementType = "Node"
 	SequenceFlowElement ElementType = "SequenceFlow"
@@ -23,8 +31,6 @@ func (t ElementType) Validate() error {
 
 	return nil
 }
-
-// *****************************************************************************
 
 // Element is the abstract super class for all elements that can appear in
 // a Process flow, which are FlowNodes, which consist of Activities,
@@ -48,13 +54,15 @@ type Element interface {
 	// Container consisted the element.
 	Container() Container
 
-	Type() ElementType
+	EType() ElementType
 
 	BindTo(Container) error
 	Unbind() error
 }
 
-// *****************************************************************************
+// ============================================================================
+//                               Container
+// ============================================================================
 
 // ElementsContainer is an abstract super class for BPMN diagrams (or
 // views) and defines the superset of elements that are contained in those
@@ -73,18 +81,30 @@ type Container interface {
 	Elements() []Element
 }
 
-// *****************************************************************************
+// ============================================================================
+//                               FlowElement
+// ============================================================================
 
 // FlowElement is a base class for all flowing elements.
 type FlowElement struct {
+	foundation.BaseElement
+
 	name      string
 	container Container
 }
 
-func NewFlowElement(name string) *FlowElement {
-	return &FlowElement{
-		name: name,
+func NewFlowElement(name string, opts ...options.Option) (*FlowElement, error) {
+	be, err := foundation.NewBaseElement(opts...)
+	if err != nil {
+		return nil,
+			fmt.Errorf("BaseElement building failed: %w", err)
 	}
+
+	return &FlowElement{
+			BaseElement: *be,
+			name:        name,
+		},
+		nil
 }
 
 // -------------- Element interface --------------------------------------------
@@ -132,3 +152,18 @@ func (fe *FlowElement) Unbind() error {
 func (fe *FlowElement) Container() Container {
 	return fe.container
 }
+
+// EType returns invalid element type for generic FlowElement.
+// Every Element should implement itsown EType.
+func (fe *FlowElement) EType() ElementType {
+	errs.Panic("couldn't use Type for generic FlowElement")
+
+	return InvalidElement
+}
+
+// ----------------------------------------------------------------------------
+
+// check interfaces
+var (
+	_ Element = (*FlowElement)(nil)
+)

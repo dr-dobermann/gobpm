@@ -5,7 +5,6 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -56,14 +55,13 @@ func (fc *sflowConfig) SetName(name string) error {
 
 // newSequenceFlow creates a new SequenceFlow from the configuration.
 func (fc *sflowConfig) newSequenceFlow() (*SequenceFlow, error) {
-	be, err := foundation.NewBaseElement(fc.baseOpts...)
+	fe, err := NewFlowElement(fc.name, fc.baseOpts...)
 	if err != nil {
 		return nil, err
 	}
 
 	f := SequenceFlow{
-		BaseElement:         *be,
-		FlowElement:         *NewFlowElement(fc.name),
+		FlowElement:         *fe,
 		source:              fc.src,
 		target:              fc.trg,
 		conditionExpression: fc.cond,

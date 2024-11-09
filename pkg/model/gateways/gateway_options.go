@@ -6,7 +6,6 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -26,15 +25,14 @@ func (gc *gatewayConfig) newGateway() (*Gateway, error) {
 		return nil, err
 	}
 
-	be, err := foundation.NewBaseElement(gc.baseOpts...)
+	fe, err := flow.NewFlowElement(gc.name, gc.baseOpts...)
 	if err != nil {
 		return nil, err
 	}
 
 	g := Gateway{
-		BaseElement: *be,
 		FlowNode:    *flow.NewFlowNode(),
-		FlowElement: *flow.NewFlowElement(gc.name),
+		FlowElement: *fe,
 		direction:   gc.direction,
 	}
 
