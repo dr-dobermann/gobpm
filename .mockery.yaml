@@ -30,3 +30,8 @@ packages:
   github.com/dr-dobermann/gobpm/internal/interactor:
     interfaces:
       Registrator:
+  github.com/dr-dobermann/gobpm/pkg/model/flow:
+    interfaces:
+      AssociationSource:
+      AssociationTarget:
+    

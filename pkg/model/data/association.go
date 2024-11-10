@@ -95,8 +95,14 @@ func NewAssociation(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
+	trg, err := target.Clone()
+	if err != nil {
+		return nil,
+			fmt.Errorf("target ItemAwareElement cloning failed: %w", err)
+	}
+
 	aCfg := asscConfig{
-		trg: target,
+		trg: trg,
 	}
 
 	ee := []error{}

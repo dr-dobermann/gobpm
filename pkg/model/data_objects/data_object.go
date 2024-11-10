@@ -2,11 +2,13 @@ package dataobjects
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -36,32 +38,23 @@ type DataObject struct {
 	// ItemDefinition, this flag could be checked from there.
 	// IsCollection bool
 
-	// associations keeps all DataObject's association to Nodes.
-	associations map[data.Direction][]*data.Association
+	// DataObject could have no more than one incoming data association.
+	incoming *data.Association
+
+	// There could be more than one outgoing data association from DataObject.
+	// outgoing associations are indexed by associated Node Id.
+	outgoing map[string]*data.Association
 }
 
-// ------------------ Element interface ----------------------------------------
-
-// Name returns the DataObject name.
-func (do *DataObject) Name() string {
-	return do.FlowElement.Name()
-}
-
-// Type returns the element type of the DataObject.
-func (do *DataObject) Type() flow.ElementType {
-	return flow.DataObjectElement
-}
-
-// -----------------------------------------------------------------------------
-
-// NewDataOpject creates and returns a new DataObject and returns its pointer.
-func NewDataOpject(
+// New creates and returns a new DataObject and returns its pointer.
+func New(
 	name string,
 	idef *data.ItemDefinition,
 	state *data.DataState,
 	baseOpts ...options.Option,
 ) (*DataObject, error) {
 	name = strings.TrimSpace(name)
+
 	if err := errs.CheckStr(
 		name,
 		"DataObject should have non-empty name",
@@ -70,14 +63,27 @@ func NewDataOpject(
 		return nil, err
 	}
 
-	iae, err := data.NewItemAwareElement(idef, state, baseOpts...)
+	if idef == nil {
+		return nil,
+			fmt.Errorf("empty ItemDefinition isn't allowed")
+	}
+
+	iae, err := data.NewItemAwareElement(idef, state, foundation.WithId(idef.Id()))
 	if err != nil {
-		return nil, err
+		return nil,
+			fmt.Errorf("ItemAwareElement building failed: %w", err)
+	}
+
+	fe, err := flow.NewFlowElement(name, baseOpts...)
+	if err != nil {
+		return nil,
+			fmt.Errorf("FlowElement building failed: %w", err)
 	}
 
 	do := DataObject{
 		ItemAwareElement: *iae,
-		associations:     map[data.Direction][]*data.Association{},
+		FlowElement:      *fe,
+		outgoing:         map[string]*data.Association{},
 	}
 
 	return &do, nil
@@ -94,7 +100,42 @@ func (do *DataObject) AssociateSource(
 		return fmt.Errorf("empty Node isn't allowed")
 	}
 
-	return fmt.Errorf("not implemented yet")
+	outputs := n.Outputs()
+	opts := []options.Option{}
+
+	for _, sId := range sourceIDs {
+		sId = strings.TrimSpace(sId)
+
+		idx := slices.IndexFunc(outputs,
+			func(iae *data.ItemAwareElement) bool {
+				return iae.ItemDefinition().Id() == sId
+			})
+		if idx == -1 {
+			return fmt.Errorf("node %q doesn't have output with id %q",
+				do.Name(), sId)
+		}
+
+		opts = append(opts, data.WithSource(outputs[idx]))
+	}
+
+	if transformation != nil {
+		opts = append(opts, data.WithTransformation(transformation))
+	}
+
+	a, err := data.NewAssociation(&do.ItemAwareElement, opts...)
+	if err != nil {
+		return fmt.Errorf("association building failed: %w", err)
+	}
+
+	if err := n.BindOutgoing(a); err != nil {
+		return fmt.Errorf(
+			"couldn't bind outgoing data association to node %q: %w",
+			n.Name(), err)
+	}
+
+	do.incoming = a
+
+	return nil
 }
 
 // AssociateTarget creates a new data association from the DataObject a as a
@@ -103,7 +144,66 @@ func (do *DataObject) AssociateTarget(
 	n flow.AssociationTarget,
 	transformation data.FormalExpression,
 ) error {
-	return fmt.Errorf("not implemented yet")
+	if n == nil {
+		return fmt.Errorf("empty target")
+	}
+
+	if _, ok := do.outgoing[n.Id()]; ok {
+		return fmt.Errorf("duplicate association to node %q", n.Name())
+	}
+
+	if !slices.ContainsFunc(
+		n.Inputs(),
+		func(iae *data.ItemAwareElement) bool {
+			return iae.ItemDefinition().Id() == do.ItemDefinition().Id()
+		}) {
+		return fmt.Errorf("node %q has no input #%s",
+			n.Name(), do.ItemDefinition().Id())
+	}
+
+	opts := []options.Option{data.WithSource(&do.ItemAwareElement)}
+	if transformation != nil {
+		opts = append(opts, data.WithTransformation(transformation))
+	}
+
+	a, err := data.NewAssociation(&do.ItemAwareElement, opts...)
+	if err != nil {
+		return fmt.Errorf("association building failed: %w", err)
+	}
+
+	if err := n.BindIncoming(a); err != nil {
+		return fmt.Errorf(
+			"couldn't bind incoming data association to node %q: %w",
+			n.Name(), err)
+	}
+
+	do.outgoing[n.Id()] = a
+
+	return nil
+}
+
+// ------------------ Element interface ----------------------------------------
+
+// Name returns the DataObject name.
+func (do *DataObject) Name() string {
+	return do.FlowElement.Name()
+}
+
+// Type returns the element type of the DataObject.
+func (do *DataObject) Type() flow.ElementType {
+	return flow.DataObjectElement
+}
+
+// -------------------- foundation.Documentator -------------------------------
+
+func (do *DataObject) Docs() []*foundation.Documentation {
+	return do.FlowElement.Docs()
+}
+
+// -------------------- foundation.Identifyer ---------------------------------
+
+func (do *DataObject) Id() string {
+	return do.FlowElement.Id()
 }
 
 // ----------------------------------------------------------------------------
