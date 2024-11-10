@@ -92,7 +92,6 @@ import (
 // are catching Events.
 type Event struct {
 	flow.FlowNode
-	flow.FlowElement
 
 	// Modeler-defined properties MAY be added to an Event. These properties are
 	// contained within the Event.
@@ -136,14 +135,13 @@ func newEvent(
 	defs []flow.EventDefinition,
 	baseOpts ...options.Option,
 ) (*Event, error) {
-    fe, err := flow.NewFlowElement(name, baseOpts...)
+	fn, err := flow.NewFlowNode(name, baseOpts...)
 	if err != nil {
 		return nil, err
 	}
 
 	e := Event{
-		FlowNode:    *flow.NewFlowNode(),
-		FlowElement: *fe,
+		FlowNode:    *fn,
 		properties:  append([]*data.Property{}, props...),
 		definitions: append([]flow.EventDefinition{}, defs...),
 		triggers:    *set.New[flow.EventTrigger](),

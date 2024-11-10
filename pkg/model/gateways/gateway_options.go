@@ -25,15 +25,14 @@ func (gc *gatewayConfig) newGateway() (*Gateway, error) {
 		return nil, err
 	}
 
-	fe, err := flow.NewFlowElement(gc.name, gc.baseOpts...)
+	fn, err := flow.NewFlowNode(gc.name, gc.baseOpts...)
 	if err != nil {
 		return nil, err
 	}
 
 	g := Gateway{
-		FlowNode:    *flow.NewFlowNode(),
-		FlowElement: *fe,
-		direction:   gc.direction,
+		FlowNode:  *fn,
+		direction: gc.direction,
 	}
 
 	return &g, nil

@@ -20,8 +20,6 @@ import (
 type Activity struct {
 	flow.FlowNode
 
-	flow.FlowElement
-
 	// A flag that identifies whether this Activity is intended for the
 	// purposes of compensation.
 	// If false, then this Activity executes as a result of normal execution

@@ -87,8 +87,6 @@ func (d GDirection) Validate() error {
 type Gateway struct {
 	flow.FlowNode
 
-	flow.FlowElement
-
 	direction GDirection
 
 	defaultFlow *flow.SequenceFlow
