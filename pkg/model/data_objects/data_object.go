@@ -1,6 +1,7 @@
 package dataobjects
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -152,11 +153,14 @@ func (do *DataObject) AssociateTarget(
 		return fmt.Errorf("duplicate association to node %q", n.Name())
 	}
 
-	if !slices.ContainsFunc(
-		n.Inputs(),
+	inputs := n.Inputs()
+	idx := slices.IndexFunc(
+		inputs,
 		func(iae *data.ItemAwareElement) bool {
 			return iae.ItemDefinition().Id() == do.ItemDefinition().Id()
-		}) {
+		})
+
+	if idx == -1 {
 		return fmt.Errorf("node %q has no input #%s",
 			n.Name(), do.ItemDefinition().Id())
 	}
@@ -166,7 +170,7 @@ func (do *DataObject) AssociateTarget(
 		opts = append(opts, data.WithTransformation(transformation))
 	}
 
-	a, err := data.NewAssociation(&do.ItemAwareElement, opts...)
+	a, err := data.NewAssociation(inputs[idx], opts...)
 	if err != nil {
 		return fmt.Errorf("association building failed: %w", err)
 	}
@@ -206,10 +210,54 @@ func (do *DataObject) Id() string {
 	return do.FlowElement.Id()
 }
 
+// ------------------------ flow.DataNode -------------------------------------
+
+func (do *DataObject) Update(ctx context.Context) error {
+	if do.incoming != nil {
+		if err := do.UpdateState(data.UnavailableDataState); err != nil {
+			return fmt.Errorf("DataObject state updating failed: %w", err)
+		}
+
+		v, err := do.incoming.Value(ctx)
+		if err != nil {
+			return fmt.Errorf(
+				"couldn't get value of incoming data association: %w",
+				err)
+		}
+
+		if err := do.ItemDefinition().
+			Structure().
+			Update(v.Structure().Get()); err != nil {
+			return fmt.Errorf("DataObject value updating failed: %w", err)
+		}
+
+		if err := do.UpdateState(data.ReadyDataState); err != nil {
+			return fmt.Errorf("DataObject state updating failed: %w", err)
+		}
+	}
+
+	if do.State().Name() != data.ReadyDataState.Name() {
+		return fmt.Errorf(
+			"DataObject state isn't Ready (actual state: %s)",
+			do.State().Name())
+	}
+
+	for _, oa := range do.outgoing {
+		if err := oa.UpdateSource(ctx, do.ItemDefinition()); err != nil {
+			return fmt.Errorf(
+				"association #%s source #%q updating failed: %w",
+				oa.Id(), do.ItemDefinition().Id(), err)
+		}
+	}
+
+	return nil
+}
+
 // ----------------------------------------------------------------------------
 
 // interfaces test for DataObject.
 var (
-	_ flow.Element = (*DataObject)(nil)
-	_ data.Data    = (*DataObject)(nil)
+	_ flow.Element  = (*DataObject)(nil)
+	_ data.Data     = (*DataObject)(nil)
+	_ flow.DataNode = (*DataObject)(nil)
 )

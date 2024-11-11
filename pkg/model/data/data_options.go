@@ -145,12 +145,7 @@ func WithSource(iae *ItemAwareElement) options.Option {
 				iae.ItemDefinition().Id())
 		}
 
-		iaeC, err := iae.Clone()
-		if err != nil {
-			return fmt.Errorf("cloning ItemAwareElement #%s failed: %w", iae.Id(), err)
-		}
-
-		cfg.src = append(cfg.src, iaeC)
+		cfg.src = append(cfg.src, iae)
 
 		return nil
 	}

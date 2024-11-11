@@ -19,7 +19,7 @@ import (
 
 const name = "test DO"
 
-func TestNewDataObject(t *testing.T) {
+func TestNew(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
 	t.Run("errors",
@@ -122,7 +122,7 @@ func TestSourceAssociations(t *testing.T) {
 			require.Error(t, err)
 		})
 
-	t.Run("normal source",
+	t.Run("normal",
 		func(t *testing.T) {
 			do, err := dataobjects.New(
 				name,
@@ -329,5 +329,109 @@ func TestTargetAssociations(t *testing.T) {
 			// empty target node
 			err = do.AssociateTarget(nil, nil)
 			require.Error(t, err)
+		})
+}
+
+func TestUpdate(t *testing.T) {
+	t.Run("normal",
+		func(t *testing.T) {
+			do, err := dataobjects.New(
+				name,
+				data.MustItemDefinition(
+					values.NewVariable(100),
+					foundation.WithId("x")),
+				data.ReadyDataState)
+			require.NoError(t, err)
+
+			tran := mockdata.NewMockFormalExpression(t)
+			tran.EXPECT().
+				Evaluate(mock.Anything, mock.Anything).
+				RunAndReturn(
+					func(
+						ctx context.Context,
+						ds data.Source,
+					) (data.Value, error) {
+						inp, err := ds.Find(ctx, "input")
+						if err != nil {
+							return nil,
+								fmt.Errorf("couldn't get input value: %w", err)
+						}
+
+						x, ok := inp.ItemDefinition().Structure().Get().(int)
+						if !ok {
+							return nil,
+								fmt.Errorf("couldn't convert input to int")
+						}
+
+						return values.NewVariable(x * 2),
+							nil
+					})
+
+			aSrc := mockflow.NewMockAssociationSource(t)
+			aSrc.EXPECT().
+				Outputs().
+				Return([]*data.ItemAwareElement{
+					data.MustItemAwareElement(
+						data.MustItemDefinition(
+							values.NewVariable(42),
+							foundation.WithId("input")),
+						data.ReadyDataState),
+				})
+			aSrc.EXPECT().
+				BindOutgoing(mock.Anything).
+				RunAndReturn(
+					func(da *data.Association) error {
+						require.Equal(t, 1, len(da.SourcesIds()))
+						require.Contains(t, da.SourcesIds(), "input")
+						require.Equal(t, "x", da.TargetItemDefId())
+
+						val, err := da.Value(context.Background())
+						require.NoError(t, err)
+						require.Equal(t, 84, val.Structure().Get())
+
+						return nil
+					})
+
+			aTrg := mockflow.NewMockAssociationTarget(t)
+			aTrg.EXPECT().
+				Id().
+				Return("Task 1").
+				Maybe()
+			aTrg.EXPECT().
+				Name().
+				Return("Task 1").
+				Maybe()
+			aTrg.EXPECT().
+				Inputs().
+				Return([]*data.ItemAwareElement{
+					data.MustItemAwareElement(
+						data.MustItemDefinition(
+							values.NewVariable(42),
+							foundation.WithId("x")),
+						data.ReadyDataState),
+				}).
+				Maybe()
+			aTrg.EXPECT().
+				BindIncoming(mock.Anything).
+				RunAndReturn(
+					func(da *data.Association) error {
+						require.NotNil(t, da)
+						require.Equal(t, "x", da.TargetItemDefId())
+						require.Equal(t, 1, len(da.SourcesIds()))
+						require.Contains(t, da.SourcesIds(), "x")
+
+						val, err := da.Value(context.Background())
+						require.NoError(t, err)
+
+						require.Equal(t, 84, val.Structure().Get())
+						return nil
+					}).
+				Maybe()
+
+			err = do.AssociateSource(aSrc, []string{"input"}, tran)
+			require.NoError(t, err)
+
+			err = do.AssociateTarget(aTrg, nil)
+			require.NoError(t, err)
 		})
 }
