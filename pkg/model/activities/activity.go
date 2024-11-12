@@ -18,11 +18,7 @@ import (
 // The Activity class is the abstract super class for all concrete Activity
 // types.
 type Activity struct {
-	foundation.BaseElement
-
 	flow.FlowNode
-
-	flow.FlowElement
 
 	// A flag that identifies whether this Activity is intended for the
 	// purposes of compensation.
@@ -182,6 +178,7 @@ func (a *Activity) BoundaryEvents() []flow.EventNode {
 
 // ------------------ flow.Node interface --------------------------------------
 
+// Node returns Node itself.
 func (a *Activity) Node() flow.Node {
 	return a
 }
@@ -210,3 +207,11 @@ func (a *Activity) SupportOutgoingFlow(_ *flow.SequenceFlow) error {
 }
 
 // -----------------------------------------------------------------------------
+
+// interfaces check
+var (
+	_ flow.Node = (*Activity)(nil)
+
+	_ flow.SequenceSource = (*Activity)(nil)
+	_ flow.SequenceTarget = (*Activity)(nil)
+)

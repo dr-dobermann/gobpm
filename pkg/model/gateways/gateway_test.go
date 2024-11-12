@@ -17,14 +17,17 @@ import (
 type dummyNode struct {
 	foundation.BaseElement
 	flow.FlowNode
-	flow.FlowElement
 }
 
 func newDummyNode(name string) *dummyNode {
+	fn, err := flow.NewFlowNode(name)
+	if err != nil {
+		panic(err)
+	}
+
 	return &dummyNode{
 		BaseElement: *foundation.MustBaseElement(),
-		FlowNode:    *flow.NewFlowNode(),
-		FlowElement: *flow.NewFlowElement(name),
+		FlowNode:    *fn,
 	}
 }
 

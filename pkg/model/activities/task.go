@@ -233,12 +233,98 @@ func (t *Task) updateOutputs(s scope.Scope) ([]*data.Parameter, error) {
 	return oo, nil
 }
 
+// --------------------- flow.AssociationSource --------------------------------
+
+// Outputs returns a list of output parameters of the Task
+func (t *Task) Outputs() []*data.ItemAwareElement {
+	outputs := []*data.ItemAwareElement{}
+
+	opp, _ := t.IoSpec.Parameters(data.Output)
+	for _, op := range opp {
+		outputs = append(outputs, &op.ItemAwareElement)
+	}
+
+	return outputs
+}
+
+// BindOutgoing adds new outgoing data association.
+func (t *Task) BindOutgoing(oa *data.Association) error {
+	if oa == nil {
+		return errs.New(
+			errs.M("couldn't bind empty association"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if slices.ContainsFunc(
+		t.dataAssociations[data.Output],
+		func(a *data.Association) bool {
+			return a.Id() == oa.Id()
+		}) {
+		return errs.New(
+			errs.M("association already binded"),
+			errs.C(errorClass, errs.DuplicateObject),
+			errs.D("association_id", oa.Id()))
+	}
+
+	// TODO: Consider checking existence of output parameter equal to
+	// oa source.
+
+	t.dataAssociations[data.Output] = append(
+		t.dataAssociations[data.Output], oa)
+
+	return nil
+}
+
+// --------------------- flow.AssociationTarget --------------------------------
+
+// Inputs returns list of input parameters's ItemAwareElements.
+func (t *Task) Inputs() []*data.ItemAwareElement {
+	inputs := []*data.ItemAwareElement{}
+
+	ipp, _ := t.IoSpec.Parameters(data.Input)
+	for _, ip := range ipp {
+		inputs = append(inputs, &ip.ItemAwareElement)
+	}
+
+	return inputs
+}
+
+// BindIncoming adds new incoming data association to the Task.
+func (t *Task) BindIncoming(ia *data.Association) error {
+	if ia == nil {
+		return errs.New(
+			errs.M("couldn't bind empty association"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if slices.ContainsFunc(
+		t.dataAssociations[data.Input],
+		func(a *data.Association) bool {
+			return a.Id() == ia.Id()
+		}) {
+		return errs.New(
+			errs.M("association already binded"),
+			errs.C(errorClass, errs.DuplicateObject),
+			errs.D("association_id", ia.Id()))
+	}
+
+	// TODO: Consider checking existence of input parameter equal to
+	// oa source.
+
+	t.dataAssociations[data.Input] = append(
+		t.dataAssociations[data.Input], ia)
+
+	return nil
+}
+
 // -----------------------------------------------------------------------------
 
-// interface check
+// interfaces check
 var (
 	_ flow.ActivityNode      = (*Task)(nil)
 	_ scope.NodeDataLoader   = (*Task)(nil)
 	_ scope.NodeDataConsumer = (*Task)(nil)
 	_ scope.NodeDataProducer = (*Task)(nil)
+	_ flow.AssociationSource = (*Task)(nil)
+	_ flow.AssociationTarget = (*Task)(nil)
 )

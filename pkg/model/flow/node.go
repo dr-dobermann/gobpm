@@ -2,15 +2,18 @@ package flow
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"golang.org/x/exp/maps"
 )
 
 type NodeType string
 
 const (
+	InvalidNodeType  NodeType = "INVALID_NODE_TYPE"
 	ActivityNodeType NodeType = "Activity"
 	EventNodeType    NodeType = "Event"
 	GatewayNodeType  NodeType = "Gateway"
@@ -74,17 +77,34 @@ type Node interface {
 	Node() Node
 }
 
-// *****************************************************************************
+// ============================================================================
+//                             FlowNode
+// ============================================================================
 
 // FlowNode provides base functionality of all Nodes as sequence flows holder.
 type FlowNode struct {
+	FlowElement
+
 	flows map[data.Direction]map[string]*SequenceFlow
 }
 
-func NewFlowNode() *FlowNode {
-	return &FlowNode{
-		flows: map[data.Direction]map[string]*SequenceFlow{},
+// NewFlowNode creates a new FlowNode object.
+//
+// Available options:
+//   - foundation.WithId
+//   - foundation.WithDoc
+func NewFlowNode(name string, baseOpts ...options.Option) (*FlowNode, error) {
+	fe, err := NewFlowElement(name, baseOpts...)
+	if err != nil {
+		return nil,
+			fmt.Errorf("FlowElement building failed: %w", err)
 	}
+
+	return &FlowNode{
+			FlowElement: *fe,
+			flows:       map[data.Direction]map[string]*SequenceFlow{},
+		},
+		nil
 }
 
 // --------------------- Node interface ----------------------------------------
@@ -120,11 +140,31 @@ func (n *FlowNode) AddFlow(sf *SequenceFlow, dir data.Direction) error {
 	return nil
 }
 
+// Node returns underlaying node structure.
+func (fn *FlowNode) Node() Node {
+	errs.Panic("don't use Node from generic FlowNode")
+
+	return nil
+}
+
+// NodeType returns the Node's type.
+func (fn *FlowNode) NodeType() NodeType {
+	errs.Panic("don't use NodeType from generic FlowNode")
+
+	return InvalidNodeType
+}
+
 // ----------------- Element interface -----------------------------------------
 
 // Type returns ElementType of the FlowNode.
-func (n *FlowNode) Type() ElementType {
+func (n *FlowNode) EType() ElementType {
 	return NodeElement
 }
 
 // -----------------------------------------------------------------------------
+// interfaces check
+
+var (
+	_ Node    = (*FlowNode)(nil)
+	_ Element = (*FlowElement)(nil)
+)

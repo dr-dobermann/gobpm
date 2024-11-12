@@ -229,7 +229,7 @@ func (p *Process) Add(e flow.Element) error {
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	switch e.Type() {
+	switch e.EType() {
 	case flow.NodeElement:
 		return p.addNode(e.(flow.Node))
 

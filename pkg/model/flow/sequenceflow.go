@@ -34,8 +34,6 @@ type (
 // for Processes), Choreography Activities (Choreography Task and
 // Sub-Choreography; for Choreographies), and Gateways.
 type SequenceFlow struct {
-	foundation.BaseElement
-
 	FlowElement
 
 	// The FlowNode that the Sequence Flow is connecting from.
@@ -77,15 +75,6 @@ type SequenceFlow struct {
 	// attribute always SHOULD be true.
 	// isImmediate bool
 }
-
-// ------------------------- Element interface ---------------------------------
-
-// Type returns element type of the SequenceFlow.
-func (f *SequenceFlow) Type() ElementType {
-	return SequenceFlowElement
-}
-
-// -----------------------------------------------------------------------------
 
 // Link creates a new sequence flow between two Nodes.
 // if source node is in a Container, Link also adds created sequence flow
@@ -273,3 +262,17 @@ func (sf *SequenceFlow) Target() SequenceTarget {
 func (sf *SequenceFlow) Condition() data.FormalExpression {
 	return sf.conditionExpression
 }
+
+// ------------------------- Element interface ---------------------------------
+
+// Type returns element type of the SequenceFlow.
+func (f *SequenceFlow) EType() ElementType {
+	return SequenceFlowElement
+}
+
+// -----------------------------------------------------------------------------
+
+// interfaces check
+var (
+	_ Element = (*SequenceFlow)(nil)
+)
