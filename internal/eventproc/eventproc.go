@@ -34,3 +34,21 @@ type EventProducer interface {
 	// EventProcessors registered for this type of EventDefinition.
 	PropagateEvents(events ...flow.EventDefinition) error
 }
+
+// EventWaiter gets on startup an eventDefinition and EventProcessor
+// expected the event defined.
+// Then it controls single event defined by eventDefinition and
+// once event fired, send appropriata eventDefinition with actual data to
+// the EventProcessor.
+type EventWaiter interface {
+	// EventDefinition returns an event definition the eventWaiter is
+	// waiting for.
+	EventDefinition() *flow.EventDefinition
+
+	// EventProcessor returns the EventProcessor expecting the registered
+	// EventDefinition.
+	EventProcessor() EventProcessor
+
+	// Service runs the waiting/handling routine of registered event defined.
+	Service(ctx context.Context) error
+}
