@@ -82,8 +82,8 @@ func (s State) String() string {
 	}[s]
 }
 
-// eDefReg holds single link from to event definition to Snapshot or
-// EventProcessor.
+// eDefReg holds single link from to event definition to ProcessID and
+// Instance (EventProcessor).
 type eDefReg struct {
 	// proc is empty for the initial events.
 	//
@@ -381,9 +381,11 @@ func (t *Thresher) UnregisterEvents(
 
 // UnregisterProcessor unregister all event definitions registered by
 // the EventProcessor.
-func (t *Thresher) UnregisterProcessor(ep eventproc.EventProcessor) {
+func (t *Thresher) UnregisterProcessor(ep eventproc.EventProcessor) error {
 	if ep == nil {
-		return
+		return errs.New(
+			errs.M("empty EventProcessor isn't allowed"),
+			errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	t.m.Lock()
@@ -402,6 +404,8 @@ func (t *Thresher) UnregisterProcessor(ep eventproc.EventProcessor) {
 
 		t.eDefs[edId] = pp
 	}
+
+	return nil
 }
 
 // PropagateEvents gets a list of eventDefinitions and sends them to all

@@ -122,7 +122,7 @@ type Instance struct {
 
 	// events keeps list of tracks that awaits for evnent.
 	// events are indexed by event definition id.
-	// inner map indexed by track id.
+	// inner map indexed by track id (EventProcessor's Id).
 	events map[string]map[string]*track
 
 	// Instance's run starting time.
@@ -732,16 +732,27 @@ func (inst *Instance) UnregisterEvents(
 	inst.m.Lock()
 	defer inst.m.Unlock()
 
-	for _, ed := range eDefIds {
-		delete(inst.events, ed)
-	}
-
-	if inst.eProd != nil {
-		if err := inst.eProd.UnregisterEvents(ep, eDefIds...); err != nil {
+	for _, eDifId := range eDefIds {
+		if _, ok := inst.events[eDifId]; !ok {
 			return errs.New(
-				errs.M("event unregister failed"),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.E(err))
+				errs.M("event definition isn't registered"),
+				errs.C(errorClass, errs.InvalidParameter),
+				errs.D("event_defintion_id", eDifId))
+		}
+
+		if inst.eProd != nil {
+			if err := inst.eProd.UnregisterEvents(ep, eDifId); err != nil {
+				return errs.New(
+					errs.M("event unregistration failed"),
+					errs.C(errorClass, errs.OperationFailed),
+					errs.E(err))
+			}
+		}
+
+		delete(inst.events[eDifId], ep.Id())
+
+		if len(inst.events[eDifId]) == 0 {
+			delete(inst.events, eDifId)
 		}
 	}
 
@@ -750,17 +761,29 @@ func (inst *Instance) UnregisterEvents(
 
 // UnregisterProcessor unregister all event definitions registered by
 // the EventProcessor.
-func (inst *Instance) UnregisterProcessor(ep eventproc.EventProcessor) {
+func (inst *Instance) UnregisterProcessor(ep eventproc.EventProcessor) error {
 	inst.m.Lock()
 	defer inst.m.Unlock()
 
 	for eDifId, edd := range inst.events {
+		if inst.eProd != nil {
+			if err := inst.eProd.UnregisterEvents(inst, eDifId); err != nil {
+				return errs.New(
+					errs.M("event unregistration failed"),
+					errs.C(errorClass, errs.OperationFailed),
+					errs.D("event_definition_id", eDifId),
+					errs.E(err))
+			}
+		}
+
 		delete(edd, ep.Id())
 
-		if len(edd) == 0 && inst.eProd != nil {
-			_ = inst.eProd.UnregisterEvents(inst, eDifId)
+		if len(inst.events[eDifId]) == 0 {
+			delete(inst.events, eDifId)
 		}
 	}
+
+	return nil
 }
 
 // PropagateEvents gets a list of eventDefinitions and sends them to all

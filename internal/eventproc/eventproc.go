@@ -28,7 +28,7 @@ type EventProducer interface {
 
 	// UnregisterProcessor unregisters all the event definitions registered by
 	// the EventProcessor and the EventProcessor itself.
-	UnregisterProcessor(EventProcessor)
+	UnregisterProcessor(EventProcessor) error
 
 	// PropagateEvents gets a list of eventDefinitions and sends them to all
 	// EventProcessors registered for this type of EventDefinition.
@@ -51,4 +51,7 @@ type EventWaiter interface {
 
 	// Service runs the waiting/handling routine of registered event defined.
 	Service(ctx context.Context) error
+
+	// Stop terminates waiting cycle of the waiter.
+	Stop() error
 }
