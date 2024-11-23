@@ -149,12 +149,10 @@ func TestNewEndEvent(t *testing.T) {
 
 			mep := mockeventproc.NewMockEventProducer(t)
 			mep.EXPECT().
-				PropagateEvents(mock.Anything).
+				PropagateEvent(mock.Anything, mock.Anything).
 				RunAndReturn(
-					func(edd ...flow.EventDefinition) error {
-						for _, ed := range edd {
-							t.Log("    >>> propagating event: ", ed.Type())
-						}
+					func(_ context.Context, ed flow.EventDefinition) error {
+						t.Log("    >>> propagating event: ", ed.Type())
 						return nil
 					}).Maybe()
 

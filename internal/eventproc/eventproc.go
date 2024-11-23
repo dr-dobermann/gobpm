@@ -16,23 +16,19 @@ type EventProcessor interface {
 }
 
 type EventProducer interface {
-	// RegisterEvents register group of event definition the EventProcessor
+	// RegisterEvent registers the EventDefinition the EventProcessor
 	// is waiting for. Once the EventProducer got the event with event
 	// definition matched with registered event definition Id, it calls the
 	// registered EventProcessor with given event definition.
-	RegisterEvents(EventProcessor, ...flow.EventDefinition) error
+	RegisterEvent(EventProcessor, flow.EventDefinition) error
 
 	// UnregisterEvents removes event definition to EventProcessor link from
 	// EventProducer.
-	UnregisterEvents(ep EventProcessor, eDefIds ...string) error
+	UnregisterEvent(ep EventProcessor, eDefId string) error
 
-	// UnregisterProcessor unregisters all the event definitions registered by
-	// the EventProcessor and the EventProcessor itself.
-	UnregisterProcessor(EventProcessor) error
-
-	// PropagateEvents gets a list of eventDefinitions and sends them to all
+	// PropagateEvent gets a eventDefinitions and sends it to all
 	// EventProcessors registered for this type of EventDefinition.
-	PropagateEvents(events ...flow.EventDefinition) error
+	PropagateEvent(context.Context, flow.EventDefinition) error
 }
 
 // EventWaiter gets on startup an eventDefinition and EventProcessor
@@ -43,7 +39,7 @@ type EventProducer interface {
 type EventWaiter interface {
 	// EventDefinition returns an event definition the eventWaiter is
 	// waiting for.
-	EventDefinition() *flow.EventDefinition
+	EventDefinition() flow.EventDefinition
 
 	// EventProcessor returns the EventProcessor expecting the registered
 	// EventDefinition.
