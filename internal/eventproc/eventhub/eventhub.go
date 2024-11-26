@@ -9,7 +9,6 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub/waiters"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
-	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 const errorClass = "EVENT_HUB_ERRORS"
@@ -36,7 +35,7 @@ type (
 )
 
 // New creates a new eventHandler.
-func New(opts ...options.Option) (*eventHub, error) {
+func New() (*eventHub, error) {
 	return &eventHub{
 			processors: map[string]waitersList{},
 		},
