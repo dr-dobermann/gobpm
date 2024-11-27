@@ -2,11 +2,19 @@ package eventproc
 
 import (
 	"context"
+	"strconv"
 
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
+// ============================================================================
+//
+//	EventProcessor
+//
+// ============================================================================
+// EventProcessor handles single event.
 type EventProcessor interface {
 	foundation.Identifyer
 
@@ -15,6 +23,13 @@ type EventProcessor interface {
 	ProcessEvent(context.Context, flow.EventDefinition) error
 }
 
+// ============================================================================
+//
+//	EventProcessor
+//
+// ============================================================================
+// EventProducer registers events with event processors which expect those
+// events.
 type EventProducer interface {
 	// RegisterEvent registers the EventDefinition the EventProcessor
 	// is waiting for. Once the EventProducer got the event with event
@@ -31,6 +46,11 @@ type EventProducer interface {
 	PropagateEvent(context.Context, flow.EventDefinition) error
 }
 
+// ============================================================================
+//
+//	EventProcessor
+//
+// ============================================================================
 // EventWaiter gets on startup an eventDefinition and EventProcessor
 // expected the event defined.
 // Then it controls single event defined by eventDefinition and
@@ -50,4 +70,35 @@ type EventWaiter interface {
 
 	// Stop terminates waiting cycle of the waiter.
 	Stop() error
+
+	// State returns current state of the EventWaiter.
+	State() EventWaiterState
+}
+
+type EventWaiterState int
+
+const (
+	WSCreated EventWaiterState = iota
+	WSReady
+	WSRunned
+	WSEnded
+	WSFailed
+)
+
+// String implements Stringer interface for EventWaiterState.
+// If there is an invalid value of the state it panics.
+func (ws EventWaiterState) String() string {
+	if ws < WSCreated || ws > WSFailed {
+		errs.Panic("undefined EventWaiterState: " + strconv.Itoa(int(ws)))
+
+		return ""
+	}
+
+	return []string{
+		"WSCreated",
+		"WSReady",
+		"WSRunned",
+		"WSEnded",
+		"WSFailed",
+	}[ws]
 }
