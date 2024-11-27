@@ -70,7 +70,7 @@ func createWaiter(
 
 	switch eDef.Type() {
 	case flow.TriggerTimer:
-		w, err = waiters.NewTimerWaiter(ep, eDef)
+		w, err = waiters.NewTimeWaiter(ep, eDef)
 
 	default:
 		err = fmt.Errorf(

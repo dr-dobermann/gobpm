@@ -109,8 +109,8 @@ func MustTimerEventDefinition(
 	return ted
 }
 
-// Date return the Timer's date.
-func (ted *TimerEventDefinition) Date() data.FormalExpression {
+// Time return the Timer's time.
+func (ted *TimerEventDefinition) Time() data.FormalExpression {
 	return ted.timeDate
 }
 

@@ -64,16 +64,33 @@ func NewTimeWaiter(
 	}
 
 	tw := timeWaiter{
-		eDef:       eDef,
-		processor:  ep,
-		state:      eventproc.WSReady,
-		next:       time.Time{},
-		cyclesLeft: 0,
-		period:     0,
-		endTime:    time.Time{},
+		eDef:      eDef,
+		processor: ep,
+		state:     eventproc.WSReady,
+	}
+
+	err := parseEDef(eDef, &tw)
+	if err != nil {
+		errs.New(
+			errs.M("TimerEventDefinition parsing failed"),
+			errs.C(TimerWatierError, errs.OperationFailed),
+			errs.E(err))
 	}
 
 	return &tw, nil
+}
+
+// parseEDef parsing TimerEventDefinition and fills timeWaiter structure
+// with appropriate values.
+func parseEDef(
+	eDef *events.TimerEventDefinition,
+	tw *timeWaiter,
+) error {
+	if eDef.Time() != nil {
+		tw.next = time.Now()
+	}
+
+	return nil
 }
 
 // -------------------------- eventproc.EventWaiter interface -----------------
