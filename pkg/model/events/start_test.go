@@ -174,7 +174,7 @@ func TestNewStartEvent(t *testing.T) {
 				events.WithSignalTrigger(
 					events.MustSignalEventDefinition(sig)),
 				events.WithTimerTrigger(
-					events.MustTimerEventDefinition(getTimerExpression(t), nil, nil)),
+					events.MustTimerEventDefinition(getTimerExpression(t, "time"), nil, nil)),
 			)
 
 			require.NoError(t, err)
@@ -216,17 +216,40 @@ func getDummyCondition(t *testing.T) data.FormalExpression {
 		})
 }
 
-func getTimerExpression(t *testing.T) data.FormalExpression {
+func getTimerExpression(t *testing.T, fName string) data.FormalExpression {
 	ctx := context.Background()
 
 	mds := mockdata.NewMockSource(t)
 	mds.EXPECT().Find(ctx, "x").Return(nil, nil).Maybe()
 
-	return goexpr.Must(
-		mds,
-		data.MustItemDefinition(
-			values.NewVariable(time.Now())),
-		func(_ context.Context, ds data.Source) (data.Value, error) {
-			return values.NewVariable(time.Now()), nil
-		})
+	switch fName {
+	case "time":
+		return goexpr.Must(
+			mds,
+			data.MustItemDefinition(
+				values.NewVariable(time.Now())),
+			func(_ context.Context, ds data.Source) (data.Value, error) {
+				return values.NewVariable(time.Now()), nil
+			})
+
+	case "cycle":
+		return goexpr.Must(
+			mds,
+			data.MustItemDefinition(
+				values.NewVariable(10)),
+			func(_ context.Context, ds data.Source) (data.Value, error) {
+				return values.NewVariable(10), nil
+			})
+
+	case "duration":
+		return goexpr.Must(
+			mds,
+			data.MustItemDefinition(
+				values.NewVariable(time.Second*5)),
+			func(_ context.Context, ds data.Source) (data.Value, error) {
+				return values.NewVariable(time.Second * 5), nil
+			})
+	}
+
+	panic("invalid timer expression name: " + fName)
 }

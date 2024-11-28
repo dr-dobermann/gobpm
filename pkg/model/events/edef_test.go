@@ -185,19 +185,21 @@ func TestErrorDefinitions(t *testing.T) {
 					return values.NewVariable("wrong_res_type"), nil
 				})
 
-			tmr := getTimerExpression(t)
+			tmr := getTimerExpression(t, "time")
+			cycle := getTimerExpression(t, "cycle")
+			duration := getTimerExpression(t, "duration")
 
 			// invalid params
 			_, err := events.NewTimerEventDefinition(nil, nil, nil)
 			require.Error(t, err)
 
-			_, err = events.NewTimerEventDefinition(tmr, tmr, tmr)
+			_, err = events.NewTimerEventDefinition(tmr, cycle, duration)
 			require.Error(t, err)
 
-			_, err = events.NewTimerEventDefinition(tmr, nil, tmr)
+			_, err = events.NewTimerEventDefinition(tmr, nil, duration)
 			require.Error(t, err)
 
-			_, err = events.NewTimerEventDefinition(tmr, tmr, nil)
+			_, err = events.NewTimerEventDefinition(tmr, cycle, nil)
 			require.Error(t, err)
 
 			// invalid expression type
@@ -215,11 +217,11 @@ func TestErrorDefinitions(t *testing.T) {
 			require.NoError(t, err)
 			require.NotEmpty(t, sed)
 
-			sed, err = events.NewTimerEventDefinition(nil, tmr, nil)
+			sed, err = events.NewTimerEventDefinition(nil, cycle, nil)
 			require.NoError(t, err)
 			require.NotEmpty(t, sed)
 
-			sed, err = events.NewTimerEventDefinition(nil, nil, tmr)
+			sed, err = events.NewTimerEventDefinition(nil, nil, duration)
 			require.NoError(t, err)
 			require.NotEmpty(t, sed)
 		})
