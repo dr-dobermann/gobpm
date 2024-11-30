@@ -8,6 +8,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
@@ -35,11 +36,8 @@ type timeWaiter struct {
 	// endTime cyclesLeft sets as -1
 	cyclesLeft int
 
-	// period between events firirng
-	period time.Duration
-
-	// end time defines the deadline until the events are firing
-	endTime time.Time
+	// time duration between events firirng
+	duration time.Duration
 }
 
 // NewTimeWaiter creates a new timer event defined by eDef.
@@ -86,8 +84,46 @@ func parseEDef(
 	eDef *events.TimerEventDefinition,
 	tw *timeWaiter,
 ) error {
-	if eDef.Time() != nil {
-		tw.next = time.Now()
+	var ok bool
+
+	ds, ok := tw.processor.(data.Source)
+	if !ok {
+		return fmt.Errorf(
+			"EventProcessor #%s doesn't implement data.Source interface",
+			tw.processor.Id())
+	}
+
+	for name, fe := range map[string]data.FormalExpression{
+		"Time":     eDef.Time(),
+		"Cycle":    eDef.Cycle(),
+		"Duration": eDef.Duration(),
+	} {
+		if fe == nil {
+			continue
+		}
+
+		tm, err := fe.Evaluate(context.Background(), ds)
+		if err != nil {
+			return fmt.Errorf(
+				"couldn't evaluate TimerEventDefintion #%s %s value: %w",
+				eDef.Id(), name, err)
+		}
+
+		switch name {
+		case "Time":
+			tw.next, ok = tm.Get().(time.Time)
+
+		case "Cycle":
+			tw.cyclesLeft, ok = tm.Get().(int)
+
+		case "Duration":
+			tw.duration, ok = tm.Get().(time.Duration)
+		}
+		if !ok {
+			return fmt.Errorf(
+				"%s property of TimerEventDefintion #%s casting error",
+				name, eDef.Id())
+		}
 	}
 
 	return nil
