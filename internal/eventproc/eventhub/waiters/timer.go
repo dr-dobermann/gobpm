@@ -38,6 +38,10 @@ type timeWaiter struct {
 
 	// time duration between events firirng
 	duration time.Duration
+
+	// tckr holds time.Ticker object which fires every tm.duration and
+	// could be stopped by waiter.Stop()
+	tckr *time.Ticker
 }
 
 // NewTimeWaiter creates a new timer event defined by eDef.
@@ -115,9 +119,15 @@ func parseEDef(
 
 		case "Cycle":
 			tw.cyclesLeft, ok = tm.Get().(int)
+			if ok && tw.cyclesLeft == 0 {
+				return fmt.Errorf("cycle isn't defined")
+			}
 
 		case "Duration":
 			tw.duration, ok = tm.Get().(time.Duration)
+			if ok && tw.duration == 0 {
+				return fmt.Errorf("duration isn't defined")
+			}
 		}
 		if !ok {
 			return fmt.Errorf(
@@ -143,12 +153,33 @@ func (tw *timeWaiter) EventProcessor() eventproc.EventProcessor {
 
 // Service runs the waiting/handling routine of registered event defined.
 func (tw *timeWaiter) Service(ctx context.Context) error {
-	return fmt.Errorf("not implemented yet")
+	if tw.state != eventproc.WSReady {
+		return errs.New(
+			errs.M("waiter isn't ready to start"),
+			errs.C(TimerWatierError, errs.InvalidState),
+			errs.D("current_state", eventproc.WSReady))
+	}
+
+	tw.state = eventproc.WSRunned
+
+	if !tw.next.IsZero() {
+		tw.duration = time.Until(tw.next)
+		tw.cyclesLeft = 0
+	}
+
+	return nil
 }
 
 // Stop terminates waiting cycle of the waiter.
 func (tw *timeWaiter) Stop() error {
-	return fmt.Errorf("not implemented yet")
+	if tw.state != eventproc.WSRunned {
+		return errs.New(
+			errs.M("couldn't stop not runned waiter"),
+			errs.C(TimerWatierError, errs.InvalidState),
+			errs.D("current_state", tw.state))
+	}
+
+	return nil
 }
 
 // State returns current state of the EventWaiter.
