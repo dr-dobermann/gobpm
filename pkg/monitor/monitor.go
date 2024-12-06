@@ -5,6 +5,10 @@ import (
 	"time"
 )
 
+type CtxKey string
+
+const Key CtxKey = "monitor_key"
+
 // Event holds information about single monitoring Event.
 type Event struct {
 	Source  string

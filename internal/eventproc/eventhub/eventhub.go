@@ -57,30 +57,6 @@ func (eh *eventHub) Run(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// createWaiter creates a new eventWaiter with given EventDefinition and
-// EventProcessor.
-func createWaiter(
-	ep eventproc.EventProcessor,
-	eDef flow.EventDefinition,
-) (eventproc.EventWaiter, error) {
-	var (
-		w   eventproc.EventWaiter
-		err error
-	)
-
-	switch eDef.Type() {
-	case flow.TriggerTimer:
-		w, err = waiters.NewTimeWaiter(ep, eDef)
-
-	default:
-		err = fmt.Errorf(
-			"couldn't find builder for eventDefintion #%s of type %s",
-			eDef.Id(), eDef.Type())
-	}
-
-	return w, err
-}
-
 // --------------------------- eventproc.EventProducer ------------------------
 
 // RegisterEvent registers the EventDefinitions from the single EventProcessor.
@@ -115,7 +91,7 @@ func (eh *eventHub) RegisterEvent(
 			eDef.Type(), eDef.Id(), ep.Id())
 	}
 
-	w, err := createWaiter(ep, eDef)
+	w, err := waiters.CreateWaiter(ep, eDef)
 	if err != nil {
 		return errs.New(
 			errs.M("eventWaiter building failed"),

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
@@ -11,6 +12,8 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/monitor"
 )
 
 const TimerWatierError = "TIMER_WAITER_ERRROR"
@@ -18,6 +21,8 @@ const TimerWatierError = "TIMER_WAITER_ERRROR"
 // timeWaiter defines details of timer event described by
 // eDef.
 type timeWaiter struct {
+	id string
+
 	// base event definition
 	eDef flow.EventDefinition
 
@@ -48,6 +53,7 @@ type timeWaiter struct {
 func NewTimeWaiter(
 	ep eventproc.EventProcessor,
 	eDefI flow.EventDefinition,
+	id string,
 ) (eventproc.EventWaiter, error) {
 	if ep == nil || eDefI == nil {
 		return nil,
@@ -65,7 +71,13 @@ func NewTimeWaiter(
 				errs.D("event_defintion_type", reflect.TypeOf(eDefI)))
 	}
 
+	id = strings.TrimSpace(id)
+	if id == "" {
+		id = foundation.GenerateId()
+	}
+
 	tw := timeWaiter{
+		id:        id,
 		eDef:      eDef,
 		processor: ep,
 		state:     eventproc.WSReady,
@@ -139,6 +151,12 @@ func parseEDef(
 	return nil
 }
 
+// -------------------------- foundation.Identifyer interface -----------------
+
+func (tw *timeWaiter) Id() string {
+	return tw.id
+}
+
 // -------------------------- eventproc.EventWaiter interface -----------------
 // EventDefinition returns underlaying event definition.
 func (tw *timeWaiter) EventDefinition() flow.EventDefinition {
@@ -167,6 +185,40 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 		tw.cyclesLeft = 0
 	}
 
+	tw.tckr = time.NewTicker(tw.duration)
+
+	w := func() {
+		m := ctx.Value(monitor.Key).(monitor.Writer)
+
+		select {
+		case <-ctx.Done():
+			mWrite(m, "timeWaiter", "Waiter stopped by context",
+				d{"waiter_id", tw.id})
+
+			tw.tckr.Stop()
+
+			tw.state = eventproc.WSEnded
+
+		case t := <-tw.tckr.C:
+			mWrite(m, "timeWaiter", "Waiter catch an event",
+				d{"waiter_id", tw.id},
+				d{"event_time", t},
+				d{"cycles_left", tw.cyclesLeft})
+
+			if tw.cyclesLeft == 0 {
+				tw.tckr.Stop()
+
+				tw.state = eventproc.WSEnded
+
+				return
+			}
+
+			tw.cyclesLeft--
+		}
+	}
+
+	go w()
+
 	return nil
 }
 
@@ -178,6 +230,10 @@ func (tw *timeWaiter) Stop() error {
 			errs.C(TimerWatierError, errs.InvalidState),
 			errs.D("current_state", tw.state))
 	}
+
+	tw.tckr.Stop()
+
+	tw.state = eventproc.WSEnded
 
 	return nil
 }

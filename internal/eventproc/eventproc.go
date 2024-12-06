@@ -57,6 +57,8 @@ type EventProducer interface {
 // once event fired, send appropriata eventDefinition with actual data to
 // the EventProcessor.
 type EventWaiter interface {
+	foundation.Identifyer
+
 	// EventDefinition returns an event definition the eventWaiter is
 	// waiting for.
 	EventDefinition() flow.EventDefinition
