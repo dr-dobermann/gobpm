@@ -1,10 +1,8 @@
-package waiters
+package monitor
 
 import (
 	"strings"
 	"time"
-
-	"github.com/dr-dobermann/gobpm/pkg/monitor"
 )
 
 // d describes single event's detail.
@@ -13,8 +11,16 @@ type d struct {
 	value any
 }
 
+// D returns the new details object created from name and value.
+func D(name string, value any) d {
+	return d{
+		name:  name,
+		value: value,
+	}
+}
+
 // mWrite adds single event into non-empty monitoring.
-func mWrite(m monitor.Writer, src, eType string, details ...d) {
+func Save(m Writer, src, eType string, details ...d) {
 	if m == nil {
 		return
 	}
@@ -29,7 +35,7 @@ func mWrite(m monitor.Writer, src, eType string, details ...d) {
 		dd[d.name] = d.value
 	}
 
-	m.Write(&monitor.Event{
+	m.Write(&Event{
 		Source:  src,
 		Type:    eType,
 		At:      time.Now(),

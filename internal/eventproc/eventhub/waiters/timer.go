@@ -44,9 +44,7 @@ type timeWaiter struct {
 	// time duration between events firirng
 	duration time.Duration
 
-	// tckr holds time.Ticker object which fires every tm.duration and
-	// could be stopped by waiter.Stop()
-	tckr *time.Ticker
+	stopCh chan struct{}
 }
 
 // NewTimeWaiter creates a new timer event defined by eDef.
@@ -185,28 +183,49 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 		tw.cyclesLeft = 0
 	}
 
-	tw.tckr = time.NewTicker(tw.duration)
+	tw.stopCh = make(chan struct{})
 
 	w := func() {
 		m := ctx.Value(monitor.Key).(monitor.Writer)
+		tckr := time.NewTicker(tw.duration)
 
 		select {
 		case <-ctx.Done():
-			mWrite(m, "timeWaiter", "Waiter stopped by context",
-				d{"waiter_id", tw.id})
+			monitor.Save(m, "timeWaiter", "Waiter stopped by context",
+				monitor.D("waiter_id", tw.id))
 
-			tw.tckr.Stop()
+			close(tw.stopCh)
+
+			tckr.Stop()
 
 			tw.state = eventproc.WSEnded
 
-		case t := <-tw.tckr.C:
-			mWrite(m, "timeWaiter", "Waiter catch an event",
-				d{"waiter_id", tw.id},
-				d{"event_time", t},
-				d{"cycles_left", tw.cyclesLeft})
+		case <-tw.stopCh:
+			monitor.Save(m, "timeWaiter", "Waiter stopped",
+				monitor.D("waiter_id", tw.id))
+
+			tckr.Stop()
+
+			tw.state = eventproc.WSEnded
+
+		case t := <-tckr.C:
+			monitor.Save(m, "timeWaiter", "Waiter catch an event",
+				monitor.D("waiter_id", tw.id),
+				monitor.D("event_time", t),
+				monitor.D("cycles_left", tw.cyclesLeft))
+
+			if err := tw.processor.ProcessEvent(ctx, tw.eDef); err != nil {
+				monitor.Save(m, "timeWaiter", "Event processing failed",
+					monitor.D("waiter_id", tw.id),
+					monitor.D("error", err))
+
+				tw.state = eventproc.WSFailed
+
+				return
+			}
 
 			if tw.cyclesLeft == 0 {
-				tw.tckr.Stop()
+				tckr.Stop()
 
 				tw.state = eventproc.WSEnded
 
@@ -231,9 +250,7 @@ func (tw *timeWaiter) Stop() error {
 			errs.D("current_state", tw.state))
 	}
 
-	tw.tckr.Stop()
-
-	tw.state = eventproc.WSEnded
+	close(tw.stopCh)
 
 	return nil
 }
@@ -242,8 +259,3 @@ func (tw *timeWaiter) Stop() error {
 func (tw *timeWaiter) State() eventproc.EventWaiterState {
 	return tw.state
 }
-
-// ----------------------------------------------------------------------------
-// interfaces check
-
-var _ eventproc.EventWaiter = (*timeWaiter)(nil)
