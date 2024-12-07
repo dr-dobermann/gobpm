@@ -30,21 +30,32 @@ func TestLogMon(t *testing.T) {
 		})
 
 	logTests := []struct {
-		name           string
+		// test name
+		name string
+
+		// build log handler
 		handlerBuilder func(io.Writer, *slog.HandlerOptions) slog.Handler
+
+		// preparation of test values
+		testGen func(l *slog.Logger)
 	}{
-		// Text logger works incorrectly with monitor.Event not implemented slog.LogValuer
-		// interface. But adding this implementation for all monitor.Event brokes its
-		// generality.
-		// {
-		// 	name: "text logger",
-		// 	handlerBuilder: func(
-		// 		w io.Writer,
-		// 		opts *slog.HandlerOptions,
-		// 	) slog.Handler {
-		// 		return slog.NewTextHandler(w, opts)
-		// 	},
-		// },
+		{
+			name: "text logger",
+			handlerBuilder: func(
+				w io.Writer,
+				opts *slog.HandlerOptions,
+			) slog.Handler {
+				return slog.NewTextHandler(w, opts)
+			},
+
+			testGen: func(l *slog.Logger) {
+				l.Info("MONITORING",
+					"event.Source", event.Source,
+					"event.Type", event.Type,
+					"event.At", event.At,
+					"event.Details.name", event.Details["name"])
+			},
+		},
 		{
 			name: "JSON logger",
 			handlerBuilder: func(
@@ -52,6 +63,9 @@ func TestLogMon(t *testing.T) {
 				opts *slog.HandlerOptions,
 			) slog.Handler {
 				return slog.NewJSONHandler(w, opts)
+			},
+			testGen: func(l *slog.Logger) {
+				l.Info("MONITORING", "event", event)
 			},
 		},
 	}
@@ -78,11 +92,11 @@ func TestLogMon(t *testing.T) {
 				lm, err := logmon.New(logger)
 				require.NoError(t, err)
 
-				testLogger.Info("MONITORING", "event", event)
+				tst.testGen(testLogger)
 				lm.Write(&event)
 
-				t.Log(testBuf.String())
-				t.Log(logBuf.String())
+				// t.Log(testBuf.String())
+				// t.Log(logBuf.String())
 
 				require.Equal(t,
 					// omit event time in comparison
