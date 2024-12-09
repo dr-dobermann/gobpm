@@ -13,6 +13,14 @@ func CreateWaiter(
 	ep eventproc.EventProcessor,
 	eDef flow.EventDefinition,
 ) (eventproc.EventWaiter, error) {
+	if ep == nil {
+		return nil, fmt.Errorf("empty event processor")
+	}
+
+	if eDef == nil {
+		return nil, fmt.Errorf("empty event definition")
+	}
+
 	var (
 		w   eventproc.EventWaiter
 		err error
