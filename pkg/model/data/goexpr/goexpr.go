@@ -38,7 +38,19 @@ type GExpression struct {
 }
 
 // New creates a new GoBpmExpression.
-// ds could be nil, but on evaluation it should be set.
+//
+// Parameters:
+//   - ds - data.Source used for expression results calculations. Could be nil
+//     on construction and might be changed on Evaluation.
+//   - res - data.ItemDefinition which will be used as result of evaluation.
+//     It is used for set type of expression.
+//   - gFunc - func(ctx context.Context, ds data.Source) (data.Value, error) is
+//     an evaluation func.
+//   - options of the expression.
+//
+// Available options are:
+//   - foundation.WithId
+//   - foundation.WithDoc
 func New(
 	ds data.Source,
 	res *data.ItemDefinition,

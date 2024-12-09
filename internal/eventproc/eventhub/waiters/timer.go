@@ -98,14 +98,17 @@ func parseEDef(
 	eDef *events.TimerEventDefinition,
 	tw *timeWaiter,
 ) error {
-	var ok bool
+	var (
+		ok bool
+		ds data.Source
+	)
 
-	ds, ok := tw.processor.(data.Source)
-	if !ok {
-		return fmt.Errorf(
-			"EventProcessor #%s doesn't implement data.Source interface",
-			tw.processor.Id())
-	}
+	ds, ok = tw.processor.(data.Source)
+	// if !ok {
+	// 	return fmt.Errorf(
+	// 		"EventProcessor #%s doesn't implement data.Source interface",
+	// 		tw.processor.Id())
+	// }
 
 	for name, fe := range map[string]data.FormalExpression{
 		"Time":     eDef.Time(),

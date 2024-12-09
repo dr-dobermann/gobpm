@@ -19,6 +19,7 @@ packages:
   github.com/dr-dobermann/gobpm/internal/eventproc:
     interfaces:
       EventProducer:    
+      EventProcessor:
   github.com/dr-dobermann/gobpm/pkg/monitor:
     interfaces:
       Writer:
