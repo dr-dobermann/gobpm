@@ -2,6 +2,7 @@ package waiters_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ func TestNewWaiter(t *testing.T) {
 			data.MustItemDefinition(
 				values.NewVariable(time.Now())),
 			func(ctx context.Context, ds data.Source) (data.Value, error) {
+				fmt.Printf("calculating next event time...")
 				return values.NewVariable(time.Now().Add(10 * time.Second)), nil
 			}), nil, nil)
 
@@ -41,8 +43,17 @@ func TestNewWaiter(t *testing.T) {
 	_, err = waiters.CreateWaiter(ep, signalEDef)
 	require.Error(t, err)
 
-	w, err := waiters.CreateWaiter(ep, timeEDef)
-	require.NoError(t, err)
-	require.Equal(t, eventproc.WSReady, w.State())
-	require.NotEmpty(t, w.Id())
+	t.Run("time waiter",
+		func(t *testing.T) {
+			w, err := waiters.CreateWaiter(ep, timeEDef)
+			require.NoError(t, err)
+			require.Equal(t, eventproc.WSReady, w.State())
+			require.NotEmpty(t, w.Id())
+
+			err = w.Stop()
+			require.Error(t, err)
+
+			err = w.Service(context.Background())
+			require.NoError(t, err)
+		})
 }

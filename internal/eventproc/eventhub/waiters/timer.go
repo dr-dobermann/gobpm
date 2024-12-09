@@ -81,8 +81,7 @@ func NewTimeWaiter(
 		state:     eventproc.WSReady,
 	}
 
-	err := parseEDef(eDef, &tw)
-	if err != nil {
+	if err := parseEDef(eDef, &tw); err != nil {
 		errs.New(
 			errs.M("TimerEventDefinition parsing failed"),
 			errs.C(TimerWatierError, errs.OperationFailed),
@@ -115,7 +114,10 @@ func parseEDef(
 		"Cycle":    eDef.Cycle(),
 		"Duration": eDef.Duration(),
 	} {
+		fmt.Println(name, " processing...")
+
 		if fe == nil {
+			fmt.Println(name, " skipped")
 			continue
 		}
 
@@ -128,20 +130,31 @@ func parseEDef(
 
 		switch name {
 		case "Time":
+			fmt.Println("calculating next event time")
+
 			tw.next, ok = tm.Get().(time.Time)
+			fmt.Println("evaluated time:", tm, tw.next)
+			if ok && !tw.next.Before(time.Now()) {
+				return fmt.Errorf("couldn't use past time as a timer")
+			}
 
 		case "Cycle":
+			fmt.Println("calculating event cycles")
+
 			tw.cyclesLeft, ok = tm.Get().(int)
 			if ok && tw.cyclesLeft == 0 {
 				return fmt.Errorf("cycle isn't defined")
 			}
 
 		case "Duration":
+			fmt.Println("calculating event duration")
+
 			tw.duration, ok = tm.Get().(time.Duration)
 			if ok && tw.duration == 0 {
 				return fmt.Errorf("duration isn't defined")
 			}
 		}
+
 		if !ok {
 			return fmt.Errorf(
 				"%s property of TimerEventDefintion #%s casting error",
@@ -186,10 +199,25 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 		tw.cyclesLeft = 0
 	}
 
+	if tw.duration <= 0 {
+		return errs.New(
+			errs.M("waiter duration is not positive"),
+			errs.C(TimerWatierError, errs.InvalidState),
+			errs.D("waiter_id", tw.Id()),
+			errs.D("next_time", tw.next),
+			errs.D("duration", tw.duration),
+			errs.D("cycles", tw.cyclesLeft))
+	}
+
 	tw.stopCh = make(chan struct{})
 
 	w := func() {
-		m := ctx.Value(monitor.Key).(monitor.Writer)
+		var m monitor.Writer
+
+		if mv := ctx.Value(monitor.Key); mv != nil {
+			m = mv.(monitor.Writer)
+		}
+
 		tckr := time.NewTicker(tw.duration)
 
 		select {
