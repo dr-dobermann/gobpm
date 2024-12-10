@@ -217,11 +217,7 @@ func TestErrorDefinitions(t *testing.T) {
 			require.NoError(t, err)
 			require.NotEmpty(t, sed)
 
-			sed, err = events.NewTimerEventDefinition(nil, cycle, nil)
-			require.NoError(t, err)
-			require.NotEmpty(t, sed)
-
-			sed, err = events.NewTimerEventDefinition(nil, nil, duration)
+			sed, err = events.NewTimerEventDefinition(nil, cycle, duration)
 			require.NoError(t, err)
 			require.NotEmpty(t, sed)
 		})
