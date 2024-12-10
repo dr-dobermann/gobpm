@@ -60,7 +60,7 @@ func New(
 	if res == nil || gfunc == nil {
 		return nil,
 			errs.New(
-				errs.M("data source, result, gfunc shouldn't be empty"),
+				errs.M("result, gfunc shouldn't be empty"),
 				errs.C(errorClass, errs.InvalidParameter),
 				errs.D("data_source", ds),
 				errs.D("result", res),
@@ -110,6 +110,9 @@ func (ge *GExpression) Language() string {
 }
 
 // Evaluate evaluate the expression and returns its result.
+// If source isn't empty it substitues current ge source.
+// If expression demands external data is should check if
+// source is nil by itself.
 func (ge *GExpression) Evaluate(
 	ctx context.Context,
 	source data.Source,
@@ -123,20 +126,11 @@ func (ge *GExpression) Evaluate(
 				errs.C(errorClass, errs.InvalidState))
 	}
 
-	src := ge.src
-
 	if source != nil {
-		src = source
+		ge.src = source
 	}
 
-	if src == nil {
-		return nil,
-			errs.New(
-				errs.M("no source"),
-				errs.C(errorClass, errs.InvalidState))
-	}
-
-	res, err := ge.gexFunc(ctx, src)
+	res, err := ge.gexFunc(ctx, ge.src)
 	if err != nil {
 		return nil,
 			errs.New(
