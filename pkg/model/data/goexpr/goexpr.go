@@ -110,7 +110,7 @@ func (ge *GExpression) Language() string {
 }
 
 // Evaluate evaluate the expression and returns its result.
-// If source isn't empty it substitues current ge source.
+// If source isn't empty it substites current ge source.
 // If expression demands external data is should check if
 // source is nil by itself.
 func (ge *GExpression) Evaluate(
