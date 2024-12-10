@@ -102,22 +102,14 @@ func parseEDef(
 		ds data.Source
 	)
 
-	ds, ok = tw.processor.(data.Source)
-	// if !ok {
-	// 	return fmt.Errorf(
-	// 		"EventProcessor #%s doesn't implement data.Source interface",
-	// 		tw.processor.Id())
-	// }
+	ds, _ = tw.processor.(data.Source)
 
 	for name, fe := range map[string]data.FormalExpression{
 		"Time":     eDef.Time(),
 		"Cycle":    eDef.Cycle(),
 		"Duration": eDef.Duration(),
 	} {
-		fmt.Println(name, " processing...")
-
 		if fe == nil {
-			fmt.Println(name, " skipped")
 			continue
 		}
 
@@ -130,29 +122,25 @@ func parseEDef(
 
 		switch name {
 		case "Time":
-			fmt.Println("calculating next event time")
-
 			tw.next, ok = tm.Get().(time.Time)
-			fmt.Println("evaluated time:", tm, tw.next)
 			if ok && !tw.next.Before(time.Now()) {
 				return fmt.Errorf("couldn't use past time as a timer")
 			}
 
 		case "Cycle":
-			fmt.Println("calculating event cycles")
-
 			tw.cyclesLeft, ok = tm.Get().(int)
 			if ok && tw.cyclesLeft == 0 {
 				return fmt.Errorf("cycle isn't defined")
 			}
 
 		case "Duration":
-			fmt.Println("calculating event duration")
-
 			tw.duration, ok = tm.Get().(time.Duration)
 			if ok && tw.duration == 0 {
 				return fmt.Errorf("duration isn't defined")
 			}
+
+		default:
+			panic("invalid option name: " + name)
 		}
 
 		if !ok {
@@ -220,50 +208,52 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 
 		tckr := time.NewTicker(tw.duration)
 
-		select {
-		case <-ctx.Done():
-			monitor.Save(m, "timeWaiter", "Waiter stopped by context",
-				monitor.D("waiter_id", tw.id))
+		for {
+			select {
+			case <-ctx.Done():
+				monitor.Save(m, "timeWaiter", "Waiter stopped by context",
+					monitor.D("waiter_id", tw.id))
 
-			close(tw.stopCh)
+				close(tw.stopCh)
 
-			tckr.Stop()
-
-			tw.state = eventproc.WSEnded
-
-		case <-tw.stopCh:
-			monitor.Save(m, "timeWaiter", "Waiter stopped",
-				monitor.D("waiter_id", tw.id))
-
-			tckr.Stop()
-
-			tw.state = eventproc.WSEnded
-
-		case t := <-tckr.C:
-			monitor.Save(m, "timeWaiter", "Waiter catch an event",
-				monitor.D("waiter_id", tw.id),
-				monitor.D("event_time", t),
-				monitor.D("cycles_left", tw.cyclesLeft))
-
-			if err := tw.processor.ProcessEvent(ctx, tw.eDef); err != nil {
-				monitor.Save(m, "timeWaiter", "Event processing failed",
-					monitor.D("waiter_id", tw.id),
-					monitor.D("error", err))
-
-				tw.state = eventproc.WSFailed
-
-				return
-			}
-
-			if tw.cyclesLeft == 0 {
 				tckr.Stop()
 
 				tw.state = eventproc.WSEnded
 
-				return
-			}
+			case <-tw.stopCh:
+				monitor.Save(m, "timeWaiter", "Waiter stopped",
+					monitor.D("waiter_id", tw.id))
 
-			tw.cyclesLeft--
+				tckr.Stop()
+
+				tw.state = eventproc.WSEnded
+
+			case t := <-tckr.C:
+				monitor.Save(m, "timeWaiter", "Waiter catch an event",
+					monitor.D("waiter_id", tw.id),
+					monitor.D("event_time", t),
+					monitor.D("cycles_left", tw.cyclesLeft))
+
+				if err := tw.processor.ProcessEvent(ctx, tw.eDef); err != nil {
+					monitor.Save(m, "timeWaiter", "Event processing failed",
+						monitor.D("waiter_id", tw.id),
+						monitor.D("error", err))
+
+					tw.state = eventproc.WSFailed
+
+					return
+				}
+
+				if tw.cyclesLeft == 0 {
+					tckr.Stop()
+
+					tw.state = eventproc.WSEnded
+
+					return
+				}
+
+				tw.cyclesLeft--
+			}
 		}
 	}
 
