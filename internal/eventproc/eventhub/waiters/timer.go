@@ -82,10 +82,11 @@ func NewTimeWaiter(
 	}
 
 	if err := parseEDef(eDef, &tw); err != nil {
-		errs.New(
-			errs.M("TimerEventDefinition parsing failed"),
-			errs.C(TimerWatierError, errs.OperationFailed),
-			errs.E(err))
+		return nil,
+			errs.New(
+				errs.M("TimerEventDefinition parsing failed"),
+				errs.C(TimerWatierError, errs.OperationFailed),
+				errs.E(err))
 	}
 
 	return &tw, nil
@@ -123,7 +124,7 @@ func parseEDef(
 		switch name {
 		case "Time":
 			tw.next, ok = tm.Get().(time.Time)
-			if ok && !tw.next.Before(time.Now()) {
+			if ok && tw.next.Before(time.Now()) {
 				return fmt.Errorf("couldn't use past time as a timer")
 			}
 
@@ -138,9 +139,6 @@ func parseEDef(
 			if ok && tw.duration == 0 {
 				return fmt.Errorf("duration isn't defined")
 			}
-
-		default:
-			panic("invalid option name: " + name)
 		}
 
 		if !ok {
@@ -220,6 +218,8 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 
 				tw.state = eventproc.WSEnded
 
+				return
+
 			case <-tw.stopCh:
 				monitor.Save(m, "timeWaiter", "Waiter stopped",
 					monitor.D("waiter_id", tw.id))
@@ -227,6 +227,8 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 				tckr.Stop()
 
 				tw.state = eventproc.WSEnded
+
+				return
 
 			case t := <-tckr.C:
 				monitor.Save(m, "timeWaiter", "Waiter catch an event",
