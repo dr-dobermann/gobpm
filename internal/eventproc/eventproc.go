@@ -97,10 +97,10 @@ func (ws EventWaiterState) String() string {
 	}
 
 	return []string{
-		"WSCreated",
-		"WSReady",
-		"WSRunned",
-		"WSEnded",
-		"WSFailed",
+		"Created",
+		"Ready",
+		"Runned",
+		"Ended",
+		"Failed",
 	}[ws]
 }

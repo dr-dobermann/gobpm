@@ -125,6 +125,7 @@ func TestTimeWaiter(t *testing.T) {
 
 			cyclesEDef := events.MustTimerEventDefinition(
 				nil,
+				// number of event cycles
 				goexpr.Must(
 					nil,
 					data.MustItemDefinition(
@@ -132,6 +133,7 @@ func TestTimeWaiter(t *testing.T) {
 					func(ctx context.Context, ds data.Source) (data.Value, error) {
 						return values.NewVariable(cycles - 1), nil
 					}),
+				// cycle duration
 				goexpr.Must(
 					nil,
 					data.MustItemDefinition(
