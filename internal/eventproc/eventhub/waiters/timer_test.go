@@ -23,9 +23,16 @@ import (
 )
 
 func TestTimeWaiter(t *testing.T) {
-	t.Run("new and service functions",
+	t.Run("errors",
 		func(t *testing.T) {
 			ep := mockeventproc.NewMockEventProcessor(t)
+
+			ep.EXPECT().
+				ProcessEvent(mock.Anything, mock.Anything).
+				RunAndReturn(
+					func(context.Context, flow.EventDefinition) error {
+						return fmt.Errorf("event processing error")
+					}).Maybe()
 
 			// empty parameters
 			_, err := waiters.NewTimeWaiter(nil, nil, "")
@@ -64,6 +71,146 @@ func TestTimeWaiter(t *testing.T) {
 				nil, nil)
 
 			_, err = waiters.NewTimeWaiter(ep, pastEDef, "")
+			require.Error(t, err)
+
+			// negative cycles
+			negativeCyclesEDef := events.MustTimerEventDefinition(
+				nil,
+				goexpr.Must(
+					nil,
+					data.MustItemDefinition(
+						values.NewVariable(0)),
+					func(_ context.Context, ds data.Source) (data.Value, error) {
+						return values.NewVariable(-1),
+							nil
+					}),
+				goexpr.Must(
+					nil,
+					data.MustItemDefinition(
+						values.NewVariable(time.Second)),
+					func(_ context.Context, ds data.Source) (data.Value, error) {
+						return values.NewVariable(time.Second),
+							nil
+					}))
+
+			_, err = waiters.NewTimeWaiter(ep, negativeCyclesEDef, "")
+			require.Error(t, err)
+
+			// negative duration
+			negativeDurationEDef := events.MustTimerEventDefinition(
+				nil,
+				goexpr.Must(
+					nil,
+					data.MustItemDefinition(
+						values.NewVariable(0)),
+					func(_ context.Context, ds data.Source) (data.Value, error) {
+						return values.NewVariable(1),
+							nil
+					}),
+				goexpr.Must(
+					nil,
+					data.MustItemDefinition(
+						values.NewVariable(time.Second)),
+					func(_ context.Context, ds data.Source) (data.Value, error) {
+						return values.NewVariable((-1) * time.Second),
+							nil
+					}))
+
+			_, err = waiters.NewTimeWaiter(ep, negativeDurationEDef, "")
+			require.Error(t, err)
+
+			// invalid expression time type value
+			require.Panics(t, func() {
+				_ = events.MustTimerEventDefinition(
+					goexpr.Must(
+						nil,
+						data.MustItemDefinition(
+							values.NewVariable("")),
+						func(_ context.Context, ds data.Source) (data.Value, error) {
+							return values.NewVariable("invalid type"),
+								nil
+						}),
+					nil, nil)
+			})
+
+			// event procesor failure
+			oneSecondsEDef := events.MustTimerEventDefinition(
+				goexpr.Must(
+					nil,
+					data.MustItemDefinition(
+						values.NewVariable(time.Now())),
+					func(_ context.Context, ds data.Source) (data.Value, error) {
+						return values.NewVariable(time.Now().Add(time.Second)),
+							nil
+					}),
+				nil, nil)
+
+			w, err := waiters.NewTimeWaiter(ep, oneSecondsEDef, "one_seconds_timer")
+			require.NoError(t, err)
+
+			require.NoError(t, w.Service(context.Background()))
+			time.Sleep(2 * time.Second)
+			require.Equal(t, eventproc.WSFailed, w.State())
+		})
+
+	t.Run("stopping and cancellation",
+		func(t *testing.T) {
+			ep := mockeventproc.NewMockEventProcessor(t)
+
+			tenSecondsEDef := events.MustTimerEventDefinition(
+				goexpr.Must(
+					nil,
+					data.MustItemDefinition(
+						values.NewVariable(time.Now())),
+					func(_ context.Context, ds data.Source) (data.Value, error) {
+						return values.NewVariable(time.Now().Add(10 * time.Second)),
+							nil
+					}),
+				nil, nil)
+
+			// context cancellation
+			wcc, err := waiters.NewTimeWaiter(
+				ep, tenSecondsEDef, "cancelled by context timer")
+			require.NoError(t, err)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+
+			require.NoError(t, wcc.Service(ctx))
+			time.Sleep(4 * time.Second)
+			require.Equal(t, eventproc.WSCancelled, wcc.State())
+
+			// waiter stopping
+			ws, err := waiters.NewTimeWaiter(ep, tenSecondsEDef, "stopped timer")
+			require.NoError(t, err)
+			require.NoError(t, ws.Service(context.Background()))
+			time.Sleep(3 * time.Second)
+			require.NoError(t, ws.Stop())
+			require.Equal(t, eventproc.WSStopped, ws.State())
+		})
+
+	t.Run("normal",
+		func(t *testing.T) {
+			ep := mockeventproc.NewMockEventProcessor(t)
+
+			// time expression
+			timeEDef := events.MustTimerEventDefinition(
+				goexpr.Must(
+					nil,
+					data.MustItemDefinition(
+						values.NewVariable(time.Now())),
+					func(_ context.Context, ds data.Source) (data.Value, error) {
+						return values.NewVariable(time.Now().Add(2 * time.Second)), nil
+					}),
+				nil, nil)
+
+			w, err := waiters.CreateWaiter(ep, timeEDef)
+			require.NoError(t, err)
+			require.NotEmpty(t, w.Id())
+			require.Equal(t, ep, w.EventProcessor())
+			require.Equal(t, timeEDef, w.EventDefinition())
+
+			err = w.Stop()
 			require.Error(t, err)
 		})
 
@@ -116,8 +263,10 @@ func TestTimeWaiter(t *testing.T) {
 
 			time.Sleep(3 * time.Second)
 
-			// err = w.Stop()
-			// require.Error(t, err)
+			err = w.Stop()
+			require.Error(t, err)
+
+			require.Error(t, w.Service(context.Background()))
 		})
 
 	t.Run("cycle events",

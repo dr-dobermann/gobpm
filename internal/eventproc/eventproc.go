@@ -84,6 +84,8 @@ const (
 	WSReady
 	WSRunned
 	WSEnded
+	WSStopped
+	WSCancelled
 	WSFailed
 )
 
@@ -101,6 +103,8 @@ func (ws EventWaiterState) String() string {
 		"Ready",
 		"Runned",
 		"Ended",
+		"Stopped",
+		"Cancelled",
 		"Failed",
 	}[ws]
 }

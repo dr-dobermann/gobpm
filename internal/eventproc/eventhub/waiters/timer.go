@@ -78,7 +78,6 @@ func NewTimeWaiter(
 		id:        id,
 		eDef:      eDef,
 		processor: ep,
-		state:     eventproc.WSReady,
 	}
 
 	if err := parseEDef(eDef, &tw); err != nil {
@@ -88,6 +87,8 @@ func NewTimeWaiter(
 				errs.C(TimerWatierError, errs.OperationFailed),
 				errs.E(err))
 	}
+
+	tw.state = eventproc.WSReady
 
 	return &tw, nil
 }
@@ -130,13 +131,13 @@ func parseEDef(
 
 		case "Cycle":
 			tw.cyclesLeft, ok = tm.Get().(int)
-			if ok && tw.cyclesLeft == 0 {
+			if ok && tw.cyclesLeft <= 0 {
 				return fmt.Errorf("cycle isn't defined")
 			}
 
 		case "Duration":
 			tw.duration, ok = tm.Get().(time.Duration)
-			if ok && tw.duration == 0 {
+			if ok && tw.duration <= 0 {
 				return fmt.Errorf("duration isn't defined")
 			}
 		}
@@ -216,17 +217,16 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 
 				tckr.Stop()
 
-				tw.state = eventproc.WSEnded
+				tw.state = eventproc.WSCancelled
 
 				return
 
 			case <-tw.stopCh:
+				fmt.Println("stopping waiter ", tw.id, "...")
 				monitor.Save(m, "timeWaiter", "Waiter stopped",
 					monitor.D("waiter_id", tw.id))
 
 				tckr.Stop()
-
-				tw.state = eventproc.WSEnded
 
 				return
 
@@ -272,6 +272,8 @@ func (tw *timeWaiter) Stop() error {
 			errs.C(TimerWatierError, errs.InvalidState),
 			errs.D("current_state", tw.state))
 	}
+
+	tw.state = eventproc.WSStopped
 
 	close(tw.stopCh)
 
