@@ -122,7 +122,7 @@ type Instance struct {
 
 	// events keeps list of tracks that awaits for evnent.
 	// events are indexed by event definition id.
-	// inner map indexed by track id.
+	// inner map indexed by track id (EventProcessor's Id).
 	events map[string]map[string]*track
 
 	// Instance's run starting time.
@@ -668,11 +668,11 @@ func (inst *Instance) ProcessEvent(
 
 // -------------------- exec.EventProducer interface ---------------------------
 
-// RegisterEvents register tracks awaited for the event.
+// RegisterEvent register tracks awaited for the event.
 // Once event is fired, then track's EventProcessor called.
-func (inst *Instance) RegisterEvents(
+func (inst *Instance) RegisterEvent(
 	proc eventproc.EventProcessor,
-	eDefs ...flow.EventDefinition,
+	eDef flow.EventDefinition,
 ) error {
 	is := inst.State()
 	if is != Runned {
@@ -689,83 +689,80 @@ func (inst *Instance) RegisterEvents(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	for _, ed := range eDefs {
-		if ed == nil {
-			continue
-		}
-
-		t, ok := proc.(*track)
-		if !ok {
-			return errs.New(
-				errs.M("not a track (%q)", reflect.TypeOf(proc).String()),
-				errs.C(errorClass, errs.TypeCastingError))
-		}
-
-		if inst.parentEventProducer != nil {
-			if err := inst.parentEventProducer.RegisterEvents(
-				inst, ed); err != nil {
-				return errs.New(
-					errs.M(
-						"couldn't register event in parent EventProducer"),
-					errs.C(errorClass, errs.OperationFailed))
-			}
-		}
-
-		inst.m.Lock()
-		if _, ok := inst.events[ed.Id()]; !ok {
-			inst.events[ed.Id()] = make(map[string]*track)
-		}
-
-		inst.events[ed.Id()][t.Id()] = t
-		inst.m.Unlock()
+	if eDef == nil {
+		return errs.New(
+			errs.M("empty EventDefinition"),
+			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
 	}
+
+	t, ok := proc.(*track)
+	if !ok {
+		return errs.New(
+			errs.M("not a track (%q)", reflect.TypeOf(proc).String()),
+			errs.C(errorClass, errs.TypeCastingError))
+	}
+
+	if inst.parentEventProducer != nil {
+		if err := inst.parentEventProducer.RegisterEvent(
+			inst, eDef); err != nil {
+			return errs.New(
+				errs.M(
+					"couldn't register event in parent EventProducer"),
+				errs.C(errorClass, errs.OperationFailed))
+		}
+	}
+
+	inst.m.Lock()
+	if _, ok := inst.events[eDef.Id()]; !ok {
+		inst.events[eDef.Id()] = make(map[string]*track)
+	}
+
+	inst.events[eDef.Id()][t.Id()] = t
+	inst.m.Unlock()
 
 	return nil
 }
 
-// UnregisterEvents removes event definition to EventProcessor link from
+// UnregisterEvent removes event definition to EventProcessor link from
 // EventProducer.
-func (inst *Instance) UnregisterEvents(
+func (inst *Instance) UnregisterEvent(
 	ep eventproc.EventProcessor,
-	eDefIds ...string,
+	eDefId string,
 ) error {
 	inst.m.Lock()
 	defer inst.m.Unlock()
 
-	for _, ed := range eDefIds {
-		delete(inst.events, ed)
+	if _, ok := inst.events[eDefId]; !ok {
+		return errs.New(
+			errs.M("event definition isn't registered"),
+			errs.C(errorClass, errs.InvalidParameter),
+			errs.D("event_definition_id", eDefId))
 	}
 
 	if inst.eProd != nil {
-		if err := inst.eProd.UnregisterEvents(ep, eDefIds...); err != nil {
+		if err := inst.eProd.UnregisterEvent(ep, eDefId); err != nil {
 			return errs.New(
-				errs.M("event unregister failed"),
+				errs.M("event unregistration failed"),
 				errs.C(errorClass, errs.OperationFailed),
 				errs.E(err))
 		}
 	}
 
+	delete(inst.events[eDefId], ep.Id())
+
+	if len(inst.events[eDefId]) == 0 {
+		delete(inst.events, eDefId)
+	}
+
 	return nil
 }
 
-// UnregisterProcessor unregister all event definitions registered by
-// the EventProcessor.
-func (inst *Instance) UnregisterProcessor(ep eventproc.EventProcessor) {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
-	for eDifId, edd := range inst.events {
-		delete(edd, ep.Id())
-
-		if len(edd) == 0 && inst.eProd != nil {
-			_ = inst.eProd.UnregisterEvents(inst, eDifId)
-		}
-	}
-}
-
-// PropagateEvents gets a list of eventDefinitions and sends them to all
-// EventProcessors registered for this type of EventDefinition.
-func (inst *Instance) PropagateEvents(events ...flow.EventDefinition) error {
+// PropagateEvent gets a eventDefinition and sends it to all
+// EventProcessors registered for this id of EventDefinition.
+func (inst *Instance) PropagateEvent(
+	ctx context.Context,
+	eDefId flow.EventDefinition,
+) error {
 	if inst.eProd == nil {
 		return errs.New(
 			errs.M("event producer isn't presented for Instance %q[%s]",
@@ -773,7 +770,7 @@ func (inst *Instance) PropagateEvents(events ...flow.EventDefinition) error {
 			errs.C(errorClass, errs.ObjectNotFound))
 	}
 
-	if err := inst.eProd.PropagateEvents(events...); err != nil {
+	if err := inst.eProd.PropagateEvent(ctx, eDefId); err != nil {
 		return errs.New(
 			errs.M("event emitting failed for Instance %q[%s]",
 				inst.s.ProcessName, inst.Id()),

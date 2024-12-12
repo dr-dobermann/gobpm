@@ -16,6 +16,9 @@ import (
 )
 
 func CheckPositive(ctx context.Context, ds data.Source) (data.Value, error) {
+	if ds == nil {
+		return nil, fmt.Errorf("data source is empty")
+	}
 	xv, err := ds.Find(ctx, "x")
 	if err != nil {
 		return nil, fmt.Errorf("couldn't find x value: %w", err)

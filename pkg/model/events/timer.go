@@ -56,27 +56,28 @@ func NewTimerEventDefinition(
 	}
 
 	if (tDate != nil && (tCycle != nil || tDuration != nil)) ||
-		(tCycle != nil && tDuration != nil) {
+		(tDate == nil && (tCycle == nil || tDuration == nil)) {
 
 		return nil,
 			errs.New(
-				errs.M("doesn't allow to define Timer Data or Cycle or Duration simultaneously"),
+				errs.M("doesn't allow to define Timer Data or Cycle and Duration simultaneously"),
 				errs.C(errorClass, errs.InvalidParameter))
 	}
 
 	for _, t := range []struct {
-		fe   data.FormalExpression
-		name string
+		fe          data.FormalExpression
+		name, tName string
 	}{
-		{tDate, "date"},
-		{tCycle, "cycle"},
-		{tDuration, "duration"},
+		{tDate, "date", "Time"},
+		{tCycle, "cycle", "int"},
+		{tDuration, "duration", "Duration"},
 	} {
-		if t.fe != nil && !isTimeType(t.fe) {
+		if t.fe != nil && t.fe.ResultType() != t.tName {
 			return nil,
 				errs.New(
-					errs.M("expression result isn't time.Time type"),
+					errs.M("expression result isn't desired type"),
 					errs.C(errorClass, errs.InvalidObject),
+					errs.D("expected_type", t.tName),
 					errs.D("expr_type", t.fe.ResultType()),
 					errs.D("time_type", t.name))
 		}
@@ -109,8 +110,8 @@ func MustTimerEventDefinition(
 	return ted
 }
 
-// Date return the Timer's date.
-func (ted *TimerEventDefinition) Date() data.FormalExpression {
+// Time return the Timer's time.
+func (ted *TimerEventDefinition) Time() data.FormalExpression {
 	return ted.timeDate
 }
 
@@ -122,12 +123,4 @@ func (ted *TimerEventDefinition) Cycle() data.FormalExpression {
 // Duration return the Timer's duration.
 func (ted *TimerEventDefinition) Duration() data.FormalExpression {
 	return ted.timeDuration
-}
-
-func isTimeType(fe data.FormalExpression) bool {
-	if fe != nil && fe.ResultType() == "Time" {
-		return true
-	}
-
-	return false
 }

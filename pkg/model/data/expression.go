@@ -78,6 +78,8 @@ type FormalExpression interface {
 	Language() string
 
 	// Evaluate evaluate the expression and returns its result.
+	// Evaluate doesn't check if Source is nil. If the expresssion demands
+	// external data it should check source nillability by itself.
 	Evaluate(ctx context.Context, source Source) (Value, error)
 
 	// Result returns evaluated result of the formal expression.

@@ -444,5 +444,5 @@ func (te *throwEvent) emitEvent(
 		}
 	}
 
-	return eProd.PropagateEvents(ced)
+	return eProd.PropagateEvent(context.Background(), ced)
 }

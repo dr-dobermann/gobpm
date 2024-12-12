@@ -198,7 +198,7 @@ func (t *track) checkNodeType(node flow.Node) error {
 		edCnt := 0
 
 		for _, d := range en.Definitions() {
-			if err := t.instance.RegisterEvents(t, d); err != nil {
+			if err := t.instance.RegisterEvent(t, d); err != nil {
 				return errs.New(
 					errs.M("couldn't register event definitions"),
 					errs.C(errorClass, errs.BulidingFailed),
@@ -583,12 +583,19 @@ func (t *track) unregisterEvent(n flow.Node) error {
 			errs.M("node %q[%s] doesn't implement flow.EventNode interface"))
 	}
 
-	eDefIds := make([]string, len(en.Definitions()))
-	for i, edId := range en.Definitions() {
-		eDefIds[i] = edId.Id()
+	for _, eDef := range en.Definitions() {
+		if err := t.instance.UnregisterEvent(t, eDef.Id()); err != nil {
+			return errs.New(
+				errs.M("failed to unregister event"),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.D("track_id", t.Id()),
+				errs.D("event_definition_id", eDef.Id()),
+				errs.D("event_definition_type", eDef.Type()),
+				errs.E(err))
+		}
 	}
 
-	return t.instance.UnregisterEvents(t, eDefIds...)
+	return nil
 }
 
 // loadIncomingData checks if the flow.Node n implements flow.NodeDataConsumer

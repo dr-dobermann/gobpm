@@ -82,8 +82,8 @@ func (s State) String() string {
 	}[s]
 }
 
-// eDefReg holds single link from to event definition to Snapshot or
-// EventProcessor.
+// eDefReg holds single link from to event definition to ProcessID and
+// Instance (EventProcessor).
 type eDefReg struct {
 	// proc is empty for the initial events.
 	//
@@ -257,7 +257,10 @@ func (t *Thresher) runEventQueue() error {
 // if eDef is registered as initial event for the process,
 // new process instance would be started to add its as a instance avaits
 // of this event definition.
-func (t *Thresher) addEvent(eDef flow.EventDefinition) error {
+func (t *Thresher) addEvent(
+	_ context.Context,
+	eDef flow.EventDefinition,
+) error {
 	t.m.Lock()
 	ree := t.eDefs[eDef.Id()]
 	t.m.Unlock()
@@ -298,10 +301,10 @@ func (t *Thresher) addEvent(eDef flow.EventDefinition) error {
 
 // ------------------ EventProducer interface ----------------------------------
 
-// RegisterEvents registered eventDefinition and its processor in the Thresher.
-func (t *Thresher) RegisterEvents(
+// RegisterEvent registered eventDefinition and its processor in the Thresher.
+func (t *Thresher) RegisterEvent(
 	ep eventproc.EventProcessor,
-	eDefs ...flow.EventDefinition,
+	eDef flow.EventDefinition,
 ) error {
 	if ep == nil {
 		return errs.New(
@@ -312,35 +315,31 @@ func (t *Thresher) RegisterEvents(
 	t.m.Lock()
 	defer t.m.Unlock()
 
-	for _, ed := range eDefs {
-		pp, ok := t.eDefs[ed.Id()]
-		if !ok {
-			t.eDefs[ed.Id()] = []eDefReg{
-				{
-					proc: ep,
-				},
-			}
-
-			continue
-		}
-
-		if indexEventProc(pp, ep) != -1 {
-			pp = append(pp, eDefReg{
+	pp, ok := t.eDefs[eDef.Id()]
+	if !ok {
+		t.eDefs[eDef.Id()] = []eDefReg{
+			{
 				proc: ep,
-			})
+			},
 		}
-
-		t.eDefs[ed.Id()] = pp
 	}
+
+	if indexEventProc(pp, ep) != -1 {
+		pp = append(pp, eDefReg{
+			proc: ep,
+		})
+	}
+
+	t.eDefs[eDef.Id()] = pp
 
 	return nil
 }
 
-// UnregisterEvents removes event definition to EventProcessor link from
+// UnregisterEvent removes link EventDefinition to EventProcessor from
 // EventProducer.
-func (t *Thresher) UnregisterEvents(
+func (t *Thresher) UnregisterEvent(
 	ep eventproc.EventProcessor,
-	eDefIds ...string,
+	eDefId string,
 ) error {
 	if ep == nil {
 		return errs.New(
@@ -351,93 +350,55 @@ func (t *Thresher) UnregisterEvents(
 	t.m.Lock()
 	defer t.m.Unlock()
 
-	for _, ed := range eDefIds {
-		pp, ok := t.eDefs[ed]
-		if !ok {
-			return nil
-		}
+	pp, ok := t.eDefs[eDefId]
+	if !ok {
+		return nil
+	}
 
-		for i := 0; i < len(pp); {
-			if pp[i].proc.Id() == ep.Id() {
-				pp = append(pp[:i], pp[i+1:]...)
-
-				continue
-			}
-
-			i++
-		}
-
-		if len(pp) == 0 {
-			delete(t.eDefs, ed)
+	for i := 0; i < len(pp); {
+		if pp[i].proc.Id() == ep.Id() {
+			pp = append(pp[:i], pp[i+1:]...)
 
 			continue
 		}
 
-		t.eDefs[ed] = pp
+		i++
 	}
+
+	if len(pp) == 0 {
+		delete(t.eDefs, eDefId)
+	}
+
+	t.eDefs[eDefId] = pp
 
 	return nil
 }
 
-// UnregisterProcessor unregister all event definitions registered by
-// the EventProcessor.
-func (t *Thresher) UnregisterProcessor(ep eventproc.EventProcessor) {
-	if ep == nil {
-		return
-	}
-
-	t.m.Lock()
-	defer t.m.Unlock()
-
-	for edId, pp := range t.eDefs {
-		for i := 0; i < len(pp); {
-			if pp[i].proc.Id() == ep.Id() {
-				pp = append(pp[:i], pp[i+1:]...)
-
-				continue
-			}
-
-			i++
-		}
-
-		t.eDefs[edId] = pp
-	}
-}
-
-// PropagateEvents gets a list of eventDefinitions and sends them to all
+// PropagateEvent gets a eventDefinition and sends it to all
 // EventProcessors registered for this type of EventDefinition.
-func (t *Thresher) PropagateEvents(events ...flow.EventDefinition) error {
+func (t *Thresher) PropagateEvent(
+	ctx context.Context,
+	eDef flow.EventDefinition,
+) error {
 	if st := t.State(); st != Started {
 		return errs.New(
 			errs.M("thresher isn't started"),
 			errs.C(errorClass, errs.InvalidState))
 	}
 
-	ee := []error{}
-
-	for _, ed := range events {
-		if ed == nil {
-			ee = append(ee,
-				errs.New(
-					errs.M("empty event definition"),
-					errs.C(errorClass, errs.EmptyNotAllowed)))
-			continue
-		}
-
-		if err := t.addEvent(ed); err != nil {
-			ee = append(ee,
-				errs.New(
-					errs.M("failed to add event %q[%s]", ed.Id(), ed.Type()),
-					errs.C(errorClass, errs.OperationFailed),
-					errs.E(err)))
-		}
+	if eDef == nil {
+		return errs.New(
+			errs.M("empty event definition"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	if len(ee) != 0 {
+	if err := t.addEvent(ctx, eDef); err != nil {
 		return errs.New(
-			errs.M("event emitting failed"),
-			errs.C(errorClass),
-			errs.E(errors.Join(ee...)))
+			errs.M("failed to add event"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.D("event_definition_id", eDef.Id()),
+			errs.D("event_definition_type", eDef.Type()),
+			errs.E(err))
 	}
 
 	return nil
