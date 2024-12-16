@@ -113,7 +113,7 @@ func (do *DataObject) AssociateSource(
 			})
 		if idx == -1 {
 			return fmt.Errorf("node %q doesn't have output with id %q",
-				do.Name(), sId)
+				n.Name(), sId)
 		}
 
 		opts = append(opts, data.WithSource(outputs[idx]))
