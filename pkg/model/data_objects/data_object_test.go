@@ -436,5 +436,7 @@ func TestUpdate(t *testing.T) {
 
 			err = do.AssociateTarget(aTrg, nil)
 			require.NoError(t, err)
+
+			require.NoError(t, do.Update(context.Background()))
 		})
 }
