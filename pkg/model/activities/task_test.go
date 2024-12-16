@@ -3,6 +3,7 @@ package activities_test
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
+	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -80,41 +82,105 @@ func TestTaskData(t *testing.T) {
 			task, err := activities.NewTask(
 				"test",
 				data.WithProperties(props...),
-				activities.WithoutParams())
+				activities.WithSet("input set", "",
+					data.Input, data.DefaultSet,
+					[]*data.Parameter{
+						data.MustParameter("y param",
+							data.MustItemAwareElement(
+								data.MustItemDefinition(
+									values.NewVariable(100.500),
+									foundation.WithId("y")),
+								data.ReadyDataState)),
+					}),
+				activities.WithSet("output set", "",
+					data.Output, data.DefaultSet,
+					[]*data.Parameter{
+						data.MustParameter(
+							"y param",
+							data.MustItemAwareElement(
+								data.MustItemDefinition(
+									values.NewVariable(0.0),
+									foundation.WithId("y")),
+								nil)),
+					}))
+			require.NoError(t, err)
+
+			// set task data path
+			dp, err := scope.NewDataPath("/task")
 			require.NoError(t, err)
 
 			s := mockscope.NewMockScope(t)
-			s.On("LoadData", task, mock.AnythingOfType("*data.Property"), mock.AnythingOfType("*data.Property")).
+			s.On("LoadData", task,
+				mock.AnythingOfType("*data.Property"),
+				mock.AnythingOfType("*data.Property"),
+				mock.AnythingOfType("*data.Parameter")).
 				Return(
 					func(ndl scope.NodeDataLoader, dd ...data.Data) error {
 						for _, d := range dd {
-							t.Log("   >> got data: ", d.Name())
+							t.Log("   >> got data: ", d.Name(), " = ", d.Value().Get())
 
-							p, ok := d.(*data.Property)
-							if !ok {
-								return fmt.Errorf("couldn't convert data %q to Property", d.Name())
+							switch dv := d.(type) {
+							case *data.Property:
+								if idx := slices.IndexFunc(
+									props,
+									func(prop *data.Property) bool {
+										return dv.Id() == prop.Id()
+									}); idx == -1 {
+									return fmt.Errorf("couldn't find property %q", d.Name())
+								}
+							case *data.Parameter:
+								if dv.Name() != "y param" {
+									return fmt.Errorf("invalid parameter name")
+								}
+							default:
+								return fmt.Errorf("TEST: invalid type of data: %s",
+									reflect.TypeOf(d).String())
 							}
 
-							if idx := slices.IndexFunc(
-								props,
-								func(prop *data.Property) bool {
-									return p.Id() == prop.Id()
-								}); idx == -1 {
-								return fmt.Errorf("couldn't find property %q", d.Name())
-							}
 						}
 
 						return nil
 					})
-
-			dp, err := scope.NewDataPath("/task")
-			require.NoError(t, err)
+			s.EXPECT().
+				GetDataById(dp, "y").
+				Return(data.MustItemAwareElement(
+					data.MustItemDefinition(
+						values.NewVariable(23.02),
+						foundation.WithId("y")),
+					data.ReadyDataState), nil)
 
 			err = task.RegisterData(dp, s)
 			require.NoError(t, err)
 
+			// add association to DataObject
+			inpDO, err := dataobjects.New(
+				"input data object",
+				data.MustItemDefinition(
+					values.NewVariable(23.02),
+					foundation.WithId("y")),
+				data.ReadyDataState)
+			require.NoError(t, err)
+			require.NoError(t, inpDO.AssociateTarget(task, nil))
+
+			outDO, err := dataobjects.New(
+				"output data object",
+				data.MustItemDefinition(
+					values.NewVariable(11.09),
+					foundation.WithId("y")),
+				nil)
+			require.NoError(t, err)
+			require.NoError(t, outDO.AssociateSource(task, []string{"y"}, nil))
+
 			require.NoError(t, task.LoadData(context.Background()))
+
+			// check input parameters
+			inParams, err := task.IoSpec.Parameters(data.Input)
+			require.NoError(t, err)
+			require.Len(t, inParams, 1)
+			require.Equal(t, 23.02, inParams[0].Subject().Structure().Get())
+
 			require.NoError(t, task.UploadData(context.Background(), s))
+			require.Equal(t, 23.02, outDO.Subject().Structure().Get())
 		})
 
 	t.Run("data associations",

@@ -132,7 +132,7 @@ func NewAssociation(
 	return aCfg.newAssociation()
 }
 
-// UpdateSource updates source with a new value.
+// UpdateSource updates association source and target with a new value.
 func (a *Association) UpdateSource(
 	ctx context.Context,
 	iDef *ItemDefinition,
@@ -143,6 +143,7 @@ func (a *Association) UpdateSource(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
+	// find correlated source ItemAwareElement
 	iae, ok := a.sources[iDef.Id()]
 	if !ok {
 		return errs.New(
@@ -152,11 +153,13 @@ func (a *Association) UpdateSource(
 			errs.D("source_id", iDef.Id()))
 	}
 
+	// update source and its status
 	if err := iae.Value().Update(iDef.structure.Get()); err != nil {
 		return errs.New(
 			errs.M("source updating failed"),
 			errs.C(errorClass, errs.OperationFailed),
 			errs.E(err),
+			errs.D("source_id", iDef.Id()),
 			errs.D("association_id", a.Id()))
 	}
 
@@ -168,7 +171,17 @@ func (a *Association) UpdateSource(
 			errs.D("source_id", iae.ItemDefinition().Id()))
 	}
 
-	if err := a.target.UpdateState(UnavailableDataState); err != nil {
+	// update target and its status
+	if err := a.target.Value().Update(iDef.structure.Get()); err != nil {
+		return errs.New(
+			errs.M("target updating failed"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err),
+			errs.D("target_id", a.target.subject.Id()),
+			errs.D("association_id", a.Id()))
+	}
+
+	if err := a.target.UpdateState(ReadyDataState); err != nil {
 		return errs.New(
 			errs.M("association target state update failed"),
 			errs.C(errorClass, errs.OperationFailed),

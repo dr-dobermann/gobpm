@@ -100,7 +100,7 @@ func (t *Task) LoadData(ctx context.Context) error {
 				errs.E(err))
 		}
 
-		if err := dii[index].Subject().Structure().Update(v); err != nil {
+		if err := dii[index].Subject().Structure().Update(v.Structure().Get()); err != nil {
 			return errs.New(
 				errs.M("couldn't update input %q", dii[index].Name()),
 				errs.C(errorClass, errs.OperationFailed),
@@ -237,40 +237,52 @@ func (t *Task) updateOutputs(s scope.Scope) ([]*data.Parameter, error) {
 
 // Outputs returns a list of output parameters of the Task
 func (t *Task) Outputs() []*data.ItemAwareElement {
-	outputs := []*data.ItemAwareElement{}
-
-	opp, _ := t.IoSpec.Parameters(data.Output)
-	for _, op := range opp {
-		outputs = append(outputs, &op.ItemAwareElement)
-	}
-
-	return outputs
+	return t.getParams(data.Output)
 }
 
 // BindOutgoing adds new outgoing data association.
 func (t *Task) BindOutgoing(oa *data.Association) error {
-	if oa == nil {
+	return t.bindAssociation(oa, data.Output)
+}
+
+// getParams returns a list of the Task parameters input or output according to
+// direction dir.
+func (t *Task) getParams(dir data.Direction) []*data.ItemAwareElement {
+	pp := []*data.ItemAwareElement{}
+
+	params, _ := t.IoSpec.Parameters(dir)
+	for _, p := range params {
+		pp = append(pp, &p.ItemAwareElement)
+	}
+
+	return pp
+}
+
+// bindAssociation binds data association to the Task according to dir either
+// input or output.
+func (t *Task) bindAssociation(a *data.Association, dir data.Direction) error {
+	if a == nil {
 		return errs.New(
 			errs.M("couldn't bind empty association"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
 	if slices.ContainsFunc(
-		t.dataAssociations[data.Output],
-		func(a *data.Association) bool {
-			return a.Id() == oa.Id()
+		t.dataAssociations[dir],
+		func(da *data.Association) bool {
+			return da.Id() == a.Id()
 		}) {
 		return errs.New(
 			errs.M("association already binded"),
 			errs.C(errorClass, errs.DuplicateObject),
-			errs.D("association_id", oa.Id()))
+			errs.D("association_id", a.Id()))
 	}
 
-	// TODO: Consider checking existence of output parameter equal to
-	// oa source.
+	// TODO: Consider checking existence of parameter equal to
+	// a source or target.
 
-	t.dataAssociations[data.Output] = append(
-		t.dataAssociations[data.Output], oa)
+	t.dataAssociations[dir] = append(
+		t.dataAssociations[dir], a)
 
 	return nil
 }
@@ -279,42 +291,12 @@ func (t *Task) BindOutgoing(oa *data.Association) error {
 
 // Inputs returns list of input parameters's ItemAwareElements.
 func (t *Task) Inputs() []*data.ItemAwareElement {
-	inputs := []*data.ItemAwareElement{}
-
-	ipp, _ := t.IoSpec.Parameters(data.Input)
-	for _, ip := range ipp {
-		inputs = append(inputs, &ip.ItemAwareElement)
-	}
-
-	return inputs
+	return t.getParams(data.Input)
 }
 
 // BindIncoming adds new incoming data association to the Task.
 func (t *Task) BindIncoming(ia *data.Association) error {
-	if ia == nil {
-		return errs.New(
-			errs.M("couldn't bind empty association"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
-	if slices.ContainsFunc(
-		t.dataAssociations[data.Input],
-		func(a *data.Association) bool {
-			return a.Id() == ia.Id()
-		}) {
-		return errs.New(
-			errs.M("association already binded"),
-			errs.C(errorClass, errs.DuplicateObject),
-			errs.D("association_id", ia.Id()))
-	}
-
-	// TODO: Consider checking existence of input parameter equal to
-	// oa source.
-
-	t.dataAssociations[data.Input] = append(
-		t.dataAssociations[data.Input], ia)
-
-	return nil
+	return t.bindAssociation(ia, data.Input)
 }
 
 // -----------------------------------------------------------------------------

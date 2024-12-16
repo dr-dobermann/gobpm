@@ -98,7 +98,7 @@ func TestAssociations(t *testing.T) {
 					foundation.WithId("source")))
 			require.NoError(t, err)
 
-			require.False(t, a.IsReady())
+			require.True(t, a.IsReady())
 
 			v, err = a.Value(context.Background())
 
