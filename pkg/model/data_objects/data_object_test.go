@@ -85,6 +85,9 @@ func TestSourceAssociations(t *testing.T) {
 							foundation.WithId("wrong_input")),
 						data.ReadyDataState),
 				})
+			aSrc.EXPECT().
+				Name().
+				Return("source node")
 			err = do.AssociateSource(aSrc, []string{"input"}, nil)
 			require.Error(t, err)
 		})
