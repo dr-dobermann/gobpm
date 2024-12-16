@@ -239,12 +239,20 @@ func WithCompletionQuantity(qty int) activityOption {
 	return activityOption(f)
 }
 
-// WithSets adds non-empty unique Set into the Activity config.
-func WithSet(
+// WithEmptySets adds empty unique Set into the Activity config.
+// WithEmptySet called since BPMN standard demands non-empty input and
+// output set for the activity.
+//
+// It creates an default set on given direction. If there is already exists
+// any set for the direction, error returned.
+//
+// Parameters:
+//   - name -- data set name
+//   - id -- data set id. If empty, will be generated
+//   - d -- data set direction.
+func WithEmptySet(
 	name, id string,
 	d data.Direction,
-	st data.SetType,
-	params []*data.Parameter,
 ) activityOption {
 	f := func(cfg *activityConfig) error {
 		if err := d.Validate(); err != nil {
@@ -255,11 +263,59 @@ func WithSet(
 				errs.E(err))
 		}
 
+		sd, err := newSetDef(name, id, d, data.DefaultSet, []*data.Parameter{})
+		if err != nil {
+			return err
+		}
+
+		// check for duplication
+		tss, ok := cfg.sets[d]
+		if ok && len(tss) != 0 {
+			return errs.New(
+				errs.M("couldn't add empty set to non-empty ones"),
+				errs.C(errorClass, errs.InvalidParameter),
+				errs.D("set_name", name),
+				errs.D("set_direction", d),
+				errs.E(err))
+		}
+
+		cfg.sets[d] = []*setDef{sd}
+
+		return nil
+	}
+
+	return activityOption(f)
+}
+
+// WithSets adds non-empty unique Set into the Activity config.
+//
+// Parameters:
+//   - name -- data set name
+//   - id -- data set id. If empty, will be generated
+//   - st -- data set type from data.SetType
+//   - params -- list of data set parameters
+func WithSet(
+	name, id string,
+	d data.Direction,
+	st data.SetType,
+	params []*data.Parameter,
+) activityOption {
+	f := func(cfg *activityConfig) error {
+		if err := d.Validate(); err != nil {
+			return errs.New(
+				errs.M("invalid direction for data.Set"),
+				errs.C(errorClass, errs.InvalidParameter),
+				errs.D("set_name", name),
+				errs.D("set_direction", d),
+				errs.E(err))
+		}
+
 		if err := st.Validate(data.CombinedTypes); err != nil {
 			return errs.New(
-				errs.M("invalid set type %d for data.Set",
-					st, name),
+				errs.M("invalid set type for data.Set"),
 				errs.C(errorClass, errs.InvalidParameter),
+				errs.D("set_name", name),
+				errs.D("set_type", st),
 				errs.E(err))
 		}
 

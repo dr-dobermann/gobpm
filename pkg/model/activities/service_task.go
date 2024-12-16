@@ -48,6 +48,19 @@ type ServiceTask struct {
 	operation *service.Operation
 }
 
+// NewServiceTask creates a new service task named name and operation as
+// service engine with some options.
+//
+// Available options are:
+//   - activities.WithMultyInstance
+//   - activities.WithCompensation
+//   - activities.WithLoop
+//   - activities.WithStartQuantity
+//   - activities.WithCompletionQuantity
+//   - activities.WithSet
+//   - activities.WithoutParams
+//   - foundation.WithId
+//   - foundation.WithDoc
 func NewServiceTask(
 	name string,
 	operation *service.Operation,

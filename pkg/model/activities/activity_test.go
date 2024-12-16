@@ -102,14 +102,22 @@ func TestActivity(t *testing.T) {
 			require.Empty(t, a)
 			require.Error(t, err)
 
+			// invalid IOSpecs with duplicate empty sets
+			_, err = activities.NewActivity(
+				"iospec without params",
+				// duplicate set
+				activities.WithEmptySet("input set", "", data.Input),
+				activities.WithEmptySet("output set", "", data.Output),
+				activities.WithEmptySet("duplicate output set", "", data.Output),
+			)
+			require.Error(t, err)
+
 			// normal IOSpecs with no parameters
 			a, err = activities.NewActivity(
 				"iospec without params",
-				activities.WithSet("input set", "",
-					data.Input, data.DefaultSet, nil),
-				// duplicate set
-				activities.WithSet("input set", "", data.Input, data.DefaultSet, nil),
-				activities.WithSet("output_set", "", data.Output, data.DefaultSet, nil))
+				activities.WithEmptySet("input set", "", data.Input),
+				activities.WithEmptySet("output_set", "", data.Output),
+			)
 			require.NoError(t, err)
 			require.NotEmpty(t, a)
 
