@@ -1,6 +1,7 @@
 package values
 
 import (
+	"context"
 	"io"
 	"reflect"
 	"strings"
@@ -43,7 +44,7 @@ func NewArray[T any](values ...T) *Array[T] {
 // Get returns value of the Value.
 // For collection Get retrieves element with current index
 // if collection is empty then panic will be fired.
-func (a *Array[T]) Get() any {
+func (a *Array[T]) Get(_ context.Context) any {
 	a.lock.Lock()
 	defer a.lock.Unlock()
 
@@ -68,7 +69,7 @@ func (a *Array[T]) Unlock() {
 // Update sets new value of the Value.
 // For collection Update changes element with current index
 // if collection is empty then panic will be fired.
-func (a *Array[T]) Update(value any) error {
+func (a *Array[T]) Update(_ context.Context, value any) error {
 	a.lock.Lock()
 	defer a.lock.Unlock()
 
@@ -179,7 +180,7 @@ func (a *Array[T]) Next(dir data.StepDirection) error {
 }
 
 // GetAll returns all values of the collection.
-func (a *Array[T]) GetAll() []any {
+func (a *Array[T]) GetAll(_ context.Context) []any {
 	a.lock.Lock()
 	defer a.lock.Unlock()
 
@@ -229,7 +230,7 @@ func (a *Array[T]) Clear() {
 
 // Add adds new value into the end of the collection.
 // If there is any problem occurred, then error returned.
-func (a *Array[T]) Add(value any) error {
+func (a *Array[T]) Add(_ context.Context, value any) error {
 	a.lock.Lock()
 	defer a.lock.Unlock()
 
@@ -251,7 +252,7 @@ func (a *Array[T]) Add(value any) error {
 
 // GetAt tries to retrieve a values at index and returns it on success
 // or returns error on failure.
-func (a *Array[T]) GetAt(index any) (any, error) {
+func (a *Array[T]) GetAt(_ context.Context, index any) (any, error) {
 	a.lock.Lock()
 	defer a.lock.Unlock()
 
@@ -272,7 +273,7 @@ func (a *Array[T]) GetAt(index any) (any, error) {
 }
 
 // Insert adds new value at index.
-func (a *Array[T]) Insert(value, index any) error {
+func (a *Array[T]) Insert(_ context.Context, value, index any) error {
 	a.lock.Lock()
 	defer a.lock.Unlock()
 
@@ -299,7 +300,7 @@ func (a *Array[T]) Insert(value, index any) error {
 }
 
 // Delete removes collection element on index position.
-func (a *Array[T]) Delete(index any) error {
+func (a *Array[T]) Delete(_ context.Context, index any) error {
 	a.lock.Lock()
 	defer a.lock.Unlock()
 
