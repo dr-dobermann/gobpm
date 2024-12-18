@@ -133,7 +133,7 @@ func (st *ServiceTask) Exec(
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	if err := st.loadInputMessage(re); err != nil {
+	if err := st.loadInputMessage(ctx, re); err != nil {
 		return nil,
 			errs.New(
 				errs.M("couldn't set operation's incoming message"),
@@ -158,7 +158,7 @@ func (st *ServiceTask) Exec(
 				errs.D("operation_name", st.operation.Name()))
 	}
 
-	if err := st.uploadOutputMessage(); err != nil {
+	if err := st.uploadOutputMessage(ctx); err != nil {
 		return nil,
 			errs.New(
 				errs.M("couldn't save operation's outgoing message"),
@@ -177,7 +177,7 @@ func (st *ServiceTask) Exec(
 
 // loadInputMessage tries to set value of the operation's incoming message
 // from scope data if them are Ready..
-func (st *ServiceTask) loadInputMessage(re renv.RuntimeEnvironment) error {
+func (st *ServiceTask) loadInputMessage(ctx context.Context, re renv.RuntimeEnvironment) error {
 	if st.operation.IncomingMessage() == nil ||
 		st.operation.IncomingMessage().Item() == nil {
 		return nil
@@ -199,7 +199,7 @@ func (st *ServiceTask) loadInputMessage(re renv.RuntimeEnvironment) error {
 	}
 
 	if err := st.operation.IncomingMessage().Item().
-		Structure().Update(d.Value().Get()); err != nil {
+		Structure().Update(ctx, d.Value().Get(ctx)); err != nil {
 		return errs.New(
 			errs.M("couldn't update operation's incoming message"),
 			errs.E(err))
@@ -210,7 +210,7 @@ func (st *ServiceTask) loadInputMessage(re renv.RuntimeEnvironment) error {
 
 // uploadOutputMessage uploads operation's output message into task's
 // output and set their state to Ready.
-func (st *ServiceTask) uploadOutputMessage() error {
+func (st *ServiceTask) uploadOutputMessage(ctx context.Context) error {
 	if st.operation.OutgoingMessage() == nil ||
 		st.operation.OutgoingMessage().Item() == nil {
 		return nil
@@ -226,7 +226,7 @@ func (st *ServiceTask) uploadOutputMessage() error {
 		if o.ItemDefinition().Id() == st.operation.OutgoingMessage().Item().Id() {
 			err = st.operation.OutgoingMessage().
 				Item().Structure().
-				Update(o.ItemDefinition().Structure().Get())
+				Update(ctx, o.ItemDefinition().Structure().Get(ctx))
 			if err == nil {
 				if err := o.UpdateState(data.ReadyDataState); err != nil {
 					return errs.New(

@@ -1,6 +1,7 @@
 package activities_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
@@ -57,7 +58,7 @@ func TestActivity(t *testing.T) {
 			require.Equal(t, 1, len(pp))
 			require.Equal(t, prop.Name(), pp[0].Name())
 			require.Equal(t, prop.Subject().Id(), pp[0].Subject().Id())
-			require.Equal(t, 42, pp[0].Subject().Structure().Get())
+			require.Equal(t, 42, pp[0].Subject().Structure().Get(context.Background()))
 			require.Equal(t, "ready", pp[0].State().Name())
 
 			require.Equal(t, flow.ActivityNodeType, a.NodeType())

@@ -102,9 +102,11 @@ func TestOperation(t *testing.T) {
 
 	t.Run("normal",
 		func(t *testing.T) {
+			ctx := context.Background()
+
 			o := service.MustOperation("normal", in, out, &exctr{})
-			require.Equal(t, 42, o.IncomingMessage().Item().Structure().Get())
-			require.Equal(t, 100, o.OutgoingMessage().Item().Structure().Get())
+			require.Equal(t, 42, o.IncomingMessage().Item().Structure().Get(ctx))
+			require.Equal(t, 100, o.OutgoingMessage().Item().Structure().Get(ctx))
 			require.Equal(t, "successful executor", o.Type())
 			for _, e := range errList {
 				require.Contains(t, o.Errors(), e)
@@ -112,7 +114,7 @@ func TestOperation(t *testing.T) {
 
 			err := o.Run(context.Background())
 			require.NoError(t, err)
-			require.Equal(t, 42, o.OutgoingMessage().Item().Structure().Get())
+			require.Equal(t, 42, o.OutgoingMessage().Item().Structure().Get(ctx))
 		})
 
 	t.Run("normal fail",

@@ -13,7 +13,7 @@ import (
 
 func TestGofunc(t *testing.T) {
 	mult := func(multiplicator int) gooper.OpFunctor {
-		f := func(in *data.ItemDefinition) (*data.ItemDefinition, error) {
+		f := func(ctx context.Context, in *data.ItemDefinition) (*data.ItemDefinition, error) {
 			if in == nil {
 				return nil,
 					errs.New(
@@ -21,7 +21,7 @@ func TestGofunc(t *testing.T) {
 						errs.C(errs.EmptyNotAllowed))
 			}
 
-			v, ok := in.Structure().Get().(int)
+			v, ok := in.Structure().Get(ctx).(int)
 			if !ok {
 				return nil,
 					errs.New(
@@ -59,7 +59,7 @@ func TestGofunc(t *testing.T) {
 			out, err := gf.Execute(context.Background(), in)
 			require.NoError(t, err)
 			require.NotEmpty(t, out)
-			require.Equal(t, 200, out.Structure().Get())
+			require.Equal(t, 200, out.Structure().Get(context.Background()))
 		})
 
 	t.Run("failed func",

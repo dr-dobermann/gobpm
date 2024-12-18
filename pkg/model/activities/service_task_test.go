@@ -109,8 +109,8 @@ func TestSrvTaskExec(t *testing.T) {
 			foundation.WithId("hello_str")))
 
 	hello, err := gooper.New(
-		func(d *data.ItemDefinition) (*data.ItemDefinition, error) {
-			v := d.Structure().Get()
+		func(ctx context.Context, d *data.ItemDefinition) (*data.ItemDefinition, error) {
+			v := d.Structure().Get(context.Background())
 			name, ok := v.(string)
 			if !ok {
 				return nil,

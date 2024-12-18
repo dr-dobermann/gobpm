@@ -84,17 +84,19 @@ func TestMonitoring(t *testing.T) {
 	_, err = inst.GetData(rvs, "INVALID_NAME")
 	require.Error(t, err)
 
+	ctx := context.Background()
+
 	tc, err := inst.GetData(rvs, instance.TracksCount)
 	require.NoError(t, err)
-	require.Equal(t, 1, tc.Value().Get().(int))
+	require.Equal(t, 1, tc.Value().Get(ctx).(int))
 
 	st, err := inst.GetData(rvs, instance.CurrState)
 	require.NoError(t, err)
-	require.Equal(t, instance.Ready, st.Value().Get().(instance.State))
+	require.Equal(t, instance.Ready, st.Value().Get(ctx).(instance.State))
 
 	start, err := inst.GetData(rvs, instance.StartedAt)
 	require.NoError(t, err)
-	require.True(t, start.Value().Get().(time.Time).IsZero())
+	require.True(t, start.Value().Get(ctx).(time.Time).IsZero())
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -150,7 +152,7 @@ func getSnapshot(pname string) (*snapshot.Snapshot, error) {
 						errs.D("got_id", in.Id()))
 			}
 
-			userName, ok := in.Structure().Get().(string)
+			userName, ok := in.Structure().Get(context.Background()).(string)
 			if !ok {
 				return nil,
 					errs.New(

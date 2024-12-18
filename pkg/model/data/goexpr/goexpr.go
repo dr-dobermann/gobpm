@@ -139,7 +139,7 @@ func (ge *GExpression) Evaluate(
 				errs.E(err))
 	}
 
-	if err := ge.result.Structure().Update(res.Get()); err != nil {
+	if err := ge.result.Structure().Update(ctx, res.Get(ctx)); err != nil {
 		return nil,
 			errs.New(
 				errs.M("result value updating failed"),

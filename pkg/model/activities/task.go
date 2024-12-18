@@ -2,6 +2,7 @@ package activities
 
 import (
 	"context"
+	"fmt"
 	"slices"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
@@ -147,7 +148,7 @@ func (t *Task) UploadData(ctx context.Context, s scope.Scope) error {
 	doo, err := t.updateOutputs(s)
 	if err != nil {
 		return errs.New(
-			errs.M("couldn't tt output parameters for task", t.Name(), t.Id()),
+			errs.M("couldn't get output parameters for task", t.Name(), t.Id()),
 			errs.C(errorClass, errs.ObjectNotFound),
 			errs.E(err))
 	}
@@ -183,9 +184,7 @@ func (t *Task) UploadData(ctx context.Context, s scope.Scope) error {
 func (t *Task) updateOutputs(s scope.Scope) ([]*data.Parameter, error) {
 	oo, err := t.IoSpec.Parameters(data.Output)
 	if err != nil {
-		return nil, errs.New(
-			errs.M("couldn't get task's output parameters"),
-			errs.E(err))
+		return nil, fmt.Errorf("couldn't get task's output parameters")
 	}
 
 	for _, o := range oo {
@@ -196,37 +195,26 @@ func (t *Task) updateOutputs(s scope.Scope) ([]*data.Parameter, error) {
 		d, err := s.GetDataById(t.dataPath, o.ItemDefinition().Id())
 		if err != nil {
 			return nil,
-				errs.New(
-					errs.M("couldn't get data from Scope"),
-					errs.E(err),
-					errs.D("item_definitio_id", o.ItemDefinition().Id()))
+				fmt.Errorf("couldn't get data #%s from Scope: %w",
+					o.ItemDefinition().Id(), err)
 		}
 
 		if d.State().Name() != data.ReadyDataState.Name() {
 			return nil,
-				errs.New(
-					errs.M("data isn't Ready for update task's output"),
-					errs.D("data_name", d.Name()),
-					errs.D("item_definition_id", o.ItemDefinition().Id()),
-					errs.D("output_name", o.Name()))
+				fmt.Errorf("data isn't Ready for update task's output #%s",
+					d.ItemDefinition().Id())
 		}
 
 		if err := o.Value().Update(d.Value().Get()); err != nil {
 			return nil,
-				errs.New(
-					errs.M("couldn't update task output"),
-					errs.E(err),
-					errs.D("output_name", o.Name()),
-					errs.D("data_name", d.Name()),
-					errs.D("item_definition_id", o.ItemDefinition().Id()))
+				fmt.Errorf("couldn't update task output #%s: %w",
+					o.ItemDefinition().Id(), err)
 		}
 
 		if err := o.UpdateState(data.ReadyDataState); err != nil {
 			return nil,
-				errs.New(
-					errs.M("couldn't set task output state to Ready"),
-					errs.E(err),
-					errs.D("output_name", o.Name()))
+				fmt.Errorf("couldn't set task output #%s state to Ready: %w",
+					o.ItemDefinition().Id(), err)
 		}
 	}
 
@@ -262,9 +250,7 @@ func (t *Task) getParams(dir data.Direction) []*data.ItemAwareElement {
 // input or output.
 func (t *Task) bindAssociation(a *data.Association, dir data.Direction) error {
 	if a == nil {
-		return errs.New(
-			errs.M("couldn't bind empty association"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
+		return fmt.Errorf("couldn't bind empty association")
 	}
 
 	if slices.ContainsFunc(
@@ -272,10 +258,7 @@ func (t *Task) bindAssociation(a *data.Association, dir data.Direction) error {
 		func(da *data.Association) bool {
 			return da.Id() == a.Id()
 		}) {
-		return errs.New(
-			errs.M("association already binded"),
-			errs.C(errorClass, errs.DuplicateObject),
-			errs.D("association_id", a.Id()))
+		return fmt.Errorf("association #%s already binded", a.Id())
 	}
 
 	// TODO: Consider checking existence of parameter equal to

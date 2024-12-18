@@ -11,6 +11,15 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
+const (
+	Recalculate   bool = true
+	NoRecalculate      = false
+)
+
+// ============================================================================
+//                          Association
+// ============================================================================
+
 // Data Associations are used to move data between Data Objects, Properties, and
 // inputs and outputs of Activities, Processes, and GlobalTasks. Tokens do not
 // flow along a Data Association, and as a result they have no direct effect on
@@ -49,10 +58,6 @@ import (
 // For example: when an Activity starts executing, the scope of valid
 // targets include the Activity data inputs, while at the end of the Activity
 // execution, the scope of valid sources include Activity data outputs.
-
-// ============================================================================
-//                          Association
-// ============================================================================
 
 type Association struct {
 	foundation.BaseElement
@@ -136,6 +141,7 @@ func NewAssociation(
 func (a *Association) UpdateSource(
 	ctx context.Context,
 	iDef *ItemDefinition,
+	recalculate bool,
 ) error {
 	if iDef == nil {
 		return errs.New(
@@ -143,18 +149,8 @@ func (a *Association) UpdateSource(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	// find correlated source ItemAwareElement
-	iae, ok := a.sources[iDef.Id()]
-	if !ok {
-		return errs.New(
-			errs.M("invalid source"),
-			errs.C(errorClass, errs.ObjectNotFound),
-			errs.D("association_id", a.Id()),
-			errs.D("source_id", iDef.Id()))
-	}
-
-	// update source and its status
-	if err := iae.Value().Update(iDef.structure.Get()); err != nil {
+	var err error
+	if err = a.updateSrc(ctx, iDef); err != nil {
 		return errs.New(
 			errs.M("source updating failed"),
 			errs.C(errorClass, errs.OperationFailed),
@@ -163,29 +159,45 @@ func (a *Association) UpdateSource(
 			errs.D("association_id", a.Id()))
 	}
 
-	if err := iae.UpdateState(ReadyDataState); err != nil {
-		return errs.New(
-			errs.M("association source state update failed"),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.D("association_id", a.Id()),
-			errs.D("source_id", iae.ItemDefinition().Id()))
-	}
-
-	// update target and its status
-	if err := a.target.Value().Update(iDef.structure.Get()); err != nil {
-		return errs.New(
-			errs.M("target updating failed"),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err),
-			errs.D("target_id", a.target.subject.Id()),
-			errs.D("association_id", a.Id()))
-	}
-
-	if err := a.target.UpdateState(ReadyDataState); err != nil {
+	if err := a.target.UpdateState(UnavailableDataState); err != nil {
 		return errs.New(
 			errs.M("association target state update failed"),
 			errs.C(errorClass, errs.OperationFailed),
-			errs.D("association_id", a.Id()))
+			errs.D("association_id", a.Id()),
+			errs.E(err))
+	}
+
+	if recalculate {
+		if err := a.calculate(ctx); err != nil {
+			return errs.New(
+				errs.M("association target value recalculation failed"),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.D("association_id", a.Id()),
+				errs.E(err))
+		}
+	}
+
+	return nil
+}
+
+// updateSrc updates value and state of single source.
+func (a *Association) updateSrc(
+	_ context.Context,
+	iDef *ItemDefinition,
+) error {
+	// find correlated source ItemAwareElement
+	iae, ok := a.sources[iDef.Id()]
+	if !ok {
+		return fmt.Errorf("source isn't found in association")
+	}
+
+	// update source and its status
+	if err := iae.Value().Update(iDef.structure.Get()); err != nil {
+		return fmt.Errorf("source updating failed: %w", err)
+	}
+
+	if err := iae.UpdateState(ReadyDataState); err != nil {
+		return fmt.Errorf("source state update failed: %w", err)
 	}
 
 	return nil
