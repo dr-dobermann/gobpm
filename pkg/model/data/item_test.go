@@ -1,6 +1,7 @@
 package data_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -111,6 +112,8 @@ func TestItemAwareElement(t *testing.T) {
 			require.Equal(t, data.UndefinedDataState.Name(), uIAE.State().Name())
 			require.Error(t, uIAE.UpdateState(data.ReadyDataState))
 
+			ctx := context.Background()
+
 			// normal with IDef and Ready state
 			rIAE, err := data.NewIAE(
 				data.WithIDef(id),
@@ -120,7 +123,7 @@ func TestItemAwareElement(t *testing.T) {
 			require.NoError(t, rIAE.UpdateState(data.UnavailableDataState))
 			require.False(t, rIAE.IsCollection())
 			require.NotNil(t, rIAE.ItemDefinition())
-			require.Equal(t, id.Structure().Get(), rIAE.Value().Get())
+			require.Equal(t, id.Structure().Get(ctx), rIAE.Value().Get(ctx))
 		})
 
 	t.Run("iae clones",
@@ -133,6 +136,8 @@ func TestItemAwareElement(t *testing.T) {
 			_, err = uIAE.Clone()
 			require.Error(t, err)
 
+			ctx := context.Background()
+
 			// IAE with defined ItemDefinition value should be cloned
 			// successfully.
 			rIAE, err := data.NewIAE(
@@ -143,6 +148,6 @@ func TestItemAwareElement(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, id.Id(), nIAE.ItemDefinition().Id())
 			require.Equal(t, data.ReadyDataState.Name(), nIAE.State().Name())
-			require.Equal(t, id.Structure().Get(), nIAE.Value().Get())
+			require.Equal(t, id.Structure().Get(ctx), nIAE.Value().Get(ctx))
 		})
 }

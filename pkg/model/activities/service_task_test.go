@@ -74,7 +74,7 @@ func TestServiceTaskDefinition(t *testing.T) {
 	t.Run("simple no args operation",
 		func(t *testing.T) {
 			hello, err := gooper.New(
-				func(_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+				func(_ context.Context, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
 					fmt.Println("  >>>> Hello, world!")
 
 					return nil, nil

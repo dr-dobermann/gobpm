@@ -1,6 +1,7 @@
 package events_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -12,6 +13,8 @@ import (
 )
 
 func TestEscalation(t *testing.T) {
+	ctx := context.Background()
+
 	t.Run(
 		"empty name",
 		func(t *testing.T) {
@@ -45,11 +48,14 @@ func TestEscalation(t *testing.T) {
 			require.Equal(t, eName, e.Name())
 			require.Equal(t, eCode, e.Code())
 
-			require.Equal(t, "test", e.Item().Structure().Get())
+			require.Equal(t, "test", e.Item().Structure().Get(ctx))
 		})
 }
 
 func TestEscalationDefinition(t *testing.T) {
+
+	ctx := context.Background()
+
 	t.Run(
 		"empty escalation",
 		func(t *testing.T) {
@@ -120,7 +126,7 @@ func TestEscalationDefinition(t *testing.T) {
 
 			iDefs := ced.GetItemsList()
 			require.Equal(t, 1, len(iDefs))
-			require.Equal(t, 100, iDefs[0].Structure().Get())
+			require.Equal(t, 100, iDefs[0].Structure().Get(ctx))
 			require.Equal(t, iDef.Id(), iDefs[0].Id())
 		})
 }

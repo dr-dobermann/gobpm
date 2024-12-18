@@ -133,7 +133,7 @@ func getSnapshot(pname string) (*snapshot.Snapshot, error) {
 	}
 
 	helloFunc, err := gooper.New(
-		func(in *data.ItemDefinition) (*data.ItemDefinition, error) {
+		func(ctx context.Context, in *data.ItemDefinition) (*data.ItemDefinition, error) {
 			const inId = "user_name"
 
 			if in == nil {

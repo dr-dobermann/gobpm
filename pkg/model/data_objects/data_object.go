@@ -227,7 +227,7 @@ func (do *DataObject) Update(ctx context.Context) error {
 
 		if err := do.ItemDefinition().
 			Structure().
-			Update(v.Structure().Get()); err != nil {
+			Update(ctx, v.Structure().Get(ctx)); err != nil {
 			return fmt.Errorf("DataObject value updating failed: %w", err)
 		}
 
@@ -243,7 +243,7 @@ func (do *DataObject) Update(ctx context.Context) error {
 	}
 
 	for _, oa := range do.outgoing {
-		if err := oa.UpdateSource(ctx, do.ItemDefinition()); err != nil {
+		if err := oa.UpdateSource(ctx, do.ItemDefinition(), data.Recalculate); err != nil {
 			return fmt.Errorf(
 				"association #%s source #%q updating failed: %w",
 				oa.Id(), do.ItemDefinition().Id(), err)

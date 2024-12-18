@@ -149,7 +149,7 @@ func TestSourceAssociations(t *testing.T) {
 								fmt.Errorf("couldn't get input value: %w", err)
 						}
 
-						return values.NewVariable(x.ItemDefinition().Structure().Get().(int) * 2),
+						return values.NewVariable(x.ItemDefinition().Structure().Get(ctx).(int) * 2),
 							nil
 					})
 
@@ -173,7 +173,7 @@ func TestSourceAssociations(t *testing.T) {
 
 						val, err := da.Value(context.Background())
 						require.NoError(t, err)
-						require.Equal(t, 84, val.Structure().Get())
+						require.Equal(t, 84, val.Structure().Get(context.Background()))
 
 						return nil
 					})
@@ -282,7 +282,7 @@ func TestTargetAssociations(t *testing.T) {
 								fmt.Errorf("couldn't get x value: %w", err)
 						}
 
-						return values.NewVariable(x.ItemDefinition().Structure().Get().(int) * 2),
+						return values.NewVariable(x.ItemDefinition().Structure().Get(ctx).(int) * 2),
 							nil
 					})
 
@@ -317,7 +317,7 @@ func TestTargetAssociations(t *testing.T) {
 						val, err := da.Value(context.Background())
 						require.NoError(t, err)
 
-						require.Equal(t, 200, val.Structure().Get())
+						require.Equal(t, 200, val.Structure().Get(context.Background()))
 						return nil
 					}).
 				Maybe()
@@ -360,7 +360,7 @@ func TestUpdate(t *testing.T) {
 								fmt.Errorf("couldn't get input value: %w", err)
 						}
 
-						x, ok := inp.ItemDefinition().Structure().Get().(int)
+						x, ok := inp.ItemDefinition().Structure().Get(ctx).(int)
 						if !ok {
 							return nil,
 								fmt.Errorf("couldn't convert input to int")
@@ -390,7 +390,7 @@ func TestUpdate(t *testing.T) {
 
 						val, err := da.Value(context.Background())
 						require.NoError(t, err)
-						require.Equal(t, 84, val.Structure().Get())
+						require.Equal(t, 84, val.Structure().Get(context.Background()))
 
 						return nil
 					})
@@ -426,7 +426,7 @@ func TestUpdate(t *testing.T) {
 						val, err := da.Value(context.Background())
 						require.NoError(t, err)
 
-						require.Equal(t, 84, val.Structure().Get())
+						require.Equal(t, 84, val.Structure().Get(context.Background()))
 						return nil
 					}).
 				Maybe()

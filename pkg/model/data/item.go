@@ -1,6 +1,7 @@
 package data
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -151,7 +152,7 @@ func (idef *ItemDefinition) String() string {
 	val := "<nil>"
 
 	if idef.structure != nil {
-		val = fmt.Sprint(idef.structure.Get())
+		val = fmt.Sprint(idef.structure.Get(context.Background()))
 	}
 
 	return fmt.Sprintf("Id: %s\nValue: %s\nIsCollection: %t\nKind: %s\n",

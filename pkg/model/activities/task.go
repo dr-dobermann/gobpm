@@ -101,7 +101,7 @@ func (t *Task) LoadData(ctx context.Context) error {
 				errs.E(err))
 		}
 
-		if err := dii[index].Subject().Structure().Update(v.Structure().Get()); err != nil {
+		if err := dii[index].Subject().Structure().Update(ctx, v.Structure().Get(ctx)); err != nil {
 			return errs.New(
 				errs.M("couldn't update input %q", dii[index].Name()),
 				errs.C(errorClass, errs.OperationFailed),
@@ -145,7 +145,7 @@ func (t *Task) RegisterData(dp scope.DataPath, s scope.Scope) error {
 // UploadData fills all Task's outputs with not-Ready state from the Scope and
 // loads all Task's outgoing data associations from Task's outputs.
 func (t *Task) UploadData(ctx context.Context, s scope.Scope) error {
-	doo, err := t.updateOutputs(s)
+	doo, err := t.updateOutputs(ctx, s)
 	if err != nil {
 		return errs.New(
 			errs.M("couldn't get output parameters for task", t.Name(), t.Id()),
@@ -166,7 +166,9 @@ func (t *Task) UploadData(ctx context.Context, s scope.Scope) error {
 				errs.C(errorClass, errs.ObjectNotFound))
 		}
 
-		if err := oa.UpdateSource(ctx, doo[index].ItemDefinition()); err != nil {
+		if err := oa.UpdateSource(
+			ctx, doo[index].ItemDefinition(), data.Recalculate,
+		); err != nil {
 			return errs.New(
 				errs.M("couldn't update association's %q source %q for "+
 					"task %q[%s]", oa.Id(), doo[index].ItemDefinition().Id(),
@@ -181,7 +183,7 @@ func (t *Task) UploadData(ctx context.Context, s scope.Scope) error {
 
 // updateOutputs checks all Task's output parameters and if it's not in Ready
 // state it tries to fill it from the Scope.
-func (t *Task) updateOutputs(s scope.Scope) ([]*data.Parameter, error) {
+func (t *Task) updateOutputs(ctx context.Context, s scope.Scope) ([]*data.Parameter, error) {
 	oo, err := t.IoSpec.Parameters(data.Output)
 	if err != nil {
 		return nil, fmt.Errorf("couldn't get task's output parameters")
@@ -205,7 +207,7 @@ func (t *Task) updateOutputs(s scope.Scope) ([]*data.Parameter, error) {
 					d.ItemDefinition().Id())
 		}
 
-		if err := o.Value().Update(d.Value().Get()); err != nil {
+		if err := o.Value().Update(ctx, d.Value().Get(ctx)); err != nil {
 			return nil,
 				fmt.Errorf("couldn't update task output #%s: %w",
 					o.ItemDefinition().Id(), err)

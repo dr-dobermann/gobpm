@@ -276,7 +276,8 @@ func (ce *catchEvent) UploadData(ctx context.Context) error {
 				continue
 			}
 
-			if err := oa.UpdateSource(ctx, out.ItemDefinition()); err != nil {
+			if err := oa.UpdateSource(
+				ctx, out.ItemDefinition(), data.NoRecalculate); err != nil {
 				ee = append(ee,
 					errs.New(
 						errs.M("couldn't update association #%s source #%s",
@@ -378,7 +379,7 @@ func (te *throwEvent) LoadData(ctx context.Context) error {
 			continue
 		}
 
-		if err := in.Value().Update(val.Structure().Get()); err != nil {
+		if err := in.Value().Update(ctx, val.Structure().Get(ctx)); err != nil {
 			ee = append(ee,
 				errs.New(
 					errs.M("node %q[%s] input #%s update failed",

@@ -117,7 +117,8 @@ func TestTaskData(t *testing.T) {
 				Return(
 					func(ndl scope.NodeDataLoader, dd ...data.Data) error {
 						for _, d := range dd {
-							t.Log("   >> got data: ", d.Name(), " = ", d.Value().Get())
+							t.Log("   >> got data: ", d.Name(), " = ",
+								d.Value().Get(context.Background()))
 
 							switch dv := d.(type) {
 							case *data.Property:
@@ -173,14 +174,16 @@ func TestTaskData(t *testing.T) {
 
 			require.NoError(t, task.LoadData(context.Background()))
 
+			ctx := context.Background()
+
 			// check input parameters
 			inParams, err := task.IoSpec.Parameters(data.Input)
 			require.NoError(t, err)
 			require.Len(t, inParams, 1)
-			require.Equal(t, 23.02, inParams[0].Subject().Structure().Get())
+			require.Equal(t, 23.02, inParams[0].Subject().Structure().Get(ctx))
 
-			require.NoError(t, task.UploadData(context.Background(), s))
-			require.Equal(t, 23.02, outDO.Subject().Structure().Get())
+			require.NoError(t, task.UploadData(ctx, s))
+			require.Equal(t, 23.02, outDO.Subject().Structure().Get(ctx))
 		})
 
 	t.Run("data associations",
@@ -235,9 +238,11 @@ func TestTaskData(t *testing.T) {
 			err = task.BindIncoming(ia)
 			require.NoError(t, err)
 
+			ctx := context.Background()
+
 			v, err := ia.Value(context.Background())
 			require.NoError(t, err)
-			require.Equal(t, 100, v.Structure().Get())
+			require.Equal(t, 100, v.Structure().Get(ctx))
 
 			require.NoError(t, err)
 
@@ -251,7 +256,7 @@ func TestTaskData(t *testing.T) {
 						return iae.ItemDefinition().Id() == "x"
 					}))
 
-			require.Equal(t, 100, ipp[0].ItemDefinition().Structure().Get())
+			require.Equal(t, 100, ipp[0].ItemDefinition().Structure().Get(ctx))
 
 			// check output binding
 			outRes := data.MustItemAwareElement(
@@ -268,9 +273,9 @@ func TestTaskData(t *testing.T) {
 			err = task.BindOutgoing(oa)
 			require.NoError(t, err)
 
-			vo, err := oa.Value(context.Background())
+			vo, err := oa.Value(ctx)
 			require.NoError(t, err)
-			require.Equal(t, 84, vo.Structure().Get())
+			require.Equal(t, 84, vo.Structure().Get(ctx))
 
 			// check outputs
 			opp := task.Outputs()
@@ -283,6 +288,6 @@ func TestTaskData(t *testing.T) {
 						return iae.ItemDefinition().Id() == "x"
 					}))
 
-			require.Equal(t, 84, opp[0].ItemDefinition().Structure().Get())
+			require.Equal(t, 84, opp[0].ItemDefinition().Structure().Get(ctx))
 		})
 }

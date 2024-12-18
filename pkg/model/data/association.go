@@ -149,8 +149,7 @@ func (a *Association) UpdateSource(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	var err error
-	if err = a.updateSrc(ctx, iDef); err != nil {
+	if err := a.updateSrc(ctx, iDef); err != nil {
 		return errs.New(
 			errs.M("source updating failed"),
 			errs.C(errorClass, errs.OperationFailed),
@@ -182,7 +181,7 @@ func (a *Association) UpdateSource(
 
 // updateSrc updates value and state of single source.
 func (a *Association) updateSrc(
-	_ context.Context,
+	ctx context.Context,
 	iDef *ItemDefinition,
 ) error {
 	// find correlated source ItemAwareElement
@@ -192,7 +191,7 @@ func (a *Association) updateSrc(
 	}
 
 	// update source and its status
-	if err := iae.Value().Update(iDef.structure.Get()); err != nil {
+	if err := iae.Value().Update(ctx, iDef.structure.Get(ctx)); err != nil {
 		return fmt.Errorf("source updating failed: %w", err)
 	}
 
@@ -288,8 +287,8 @@ func (a *Association) calculate(ctx context.Context) error {
 		}
 	}
 
-	if err := a.target.ItemDefinition().structure.Update(
-		srcV.Get()); err != nil {
+	if err := a.target.ItemDefinition().structure.Update(ctx,
+		srcV.Get(ctx)); err != nil {
 		return fmt.Errorf("target #%s update failed: %w",
 			a.target.subject.Id(), err)
 	}
