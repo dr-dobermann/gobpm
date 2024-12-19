@@ -33,5 +33,10 @@ jobs:
       - name: Generate mockery
         run: mockery
 
-      - name: Test
-        run: go test -v -cover ./...
+      - name: CodeCov
+        run: go test -coverprofile=coverage.txt ./...
+        
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
