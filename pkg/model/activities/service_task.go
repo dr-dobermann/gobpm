@@ -33,7 +33,7 @@ import (
 // defined by Message referred to by the outMessageRef attribute of the
 // Operation.
 type ServiceTask struct {
-	Task
+	task
 
 	// This attribute specifies the technology that will be used to send
 	// and receive the Messages. Valid values are "##unspecified" for
@@ -81,13 +81,13 @@ func NewServiceTask(
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	t, err := NewTask(name, taskOpts...)
+	t, err := newTask(name, taskOpts...)
 	if err != nil {
 		return nil, err
 	}
 
 	return &ServiceTask{
-			Task:           *t,
+			task:           *t,
 			implementation: operation.Type(),
 			operation:      operation,
 		},
@@ -133,46 +133,26 @@ func (st *ServiceTask) Exec(
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	if err := st.loadInputMessage(ctx, re); err != nil {
-		return nil,
-			errs.New(
-				errs.M("couldn't set operation's incoming message"),
-				errs.C(errorClass),
-				errs.E(err),
-				errs.D("service_task_name", st.Name()),
-				errs.D("service_task_id", st.Id()),
-				errs.D("item_id", st.operation.IncomingMessage().Item().Id()),
-				errs.D("operation_id", st.operation.Id()),
-				errs.D("message_name", st.operation.IncomingMessage().Name()),
-				errs.D("message_id", st.operation.IncomingMessage().Id()))
+	err := st.loadInputMessage(ctx, re)
+	if err == nil {
+		err = st.operation.Run(ctx)
+		if err == nil {
+			err = st.uploadOutputMessage(ctx)
+			if err == nil {
+				return st.Outgoing(), nil
+			}
+
+		}
 	}
 
-	if err := st.operation.Run(ctx); err != nil {
-		return nil,
-			errs.New(
-				errs.M("operation run failed"),
-				errs.E(err),
-				errs.D("service_task_name", st.Name()),
-				errs.D("service_task_id", st.Id()),
-				errs.D("operation_id", st.operation.Id()),
-				errs.D("operation_name", st.operation.Name()))
-	}
-
-	if err := st.uploadOutputMessage(ctx); err != nil {
-		return nil,
-			errs.New(
-				errs.M("couldn't save operation's outgoing message"),
-				errs.C(errorClass),
-				errs.E(err),
-				errs.D("service_task_name", st.Name()),
-				errs.D("service_task_id", st.Id()),
-				errs.D("item_id", st.operation.IncomingMessage().Item().Id()),
-				errs.D("operation_id", st.operation.Id()),
-				errs.D("message_name", st.operation.IncomingMessage().Name()),
-				errs.D("message_id", st.operation.IncomingMessage().Id()))
-	}
-
-	return st.Outgoing(), nil
+	return nil,
+		errs.New(
+			errs.M("couldn't set operation's incoming message"),
+			errs.C(errorClass),
+			errs.E(err),
+			errs.D("service_task_name", st.Name()),
+			errs.D("service_task_id", st.Id()),
+			errs.D("operation_id", st.operation.Id()))
 }
 
 // loadInputMessage tries to set value of the operation's incoming message

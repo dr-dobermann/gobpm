@@ -5,7 +5,7 @@ package activities
 // Rules Engine might provide. The InputOutputSpecification of the Task will allow
 // the Process to send data to and receive data from the Business Rules Engine.
 type BusinessRuleTask struct {
-	Task
+	task
 
 	// This attribute specifies the technology that will be used to implement the
 	// Business Rule Task. Valid values are "##unspecified" for leaving the

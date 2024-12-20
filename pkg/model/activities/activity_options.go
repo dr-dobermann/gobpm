@@ -76,7 +76,7 @@ type (
 )
 
 // newActivity creates a new Activity from the activityConfig.
-func (ac *activityConfig) newActivity() (*Activity, error) {
+func (ac *activityConfig) newActivity() (*activity, error) {
 	if err := ac.Validate(); err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func (ac *activityConfig) newActivity() (*Activity, error) {
 		return nil, err
 	}
 
-	a := Activity{
+	a := activity{
 		FlowNode:            *fn,
 		isForCompensation:   ac.compensation,
 		roles:               ac.roles,

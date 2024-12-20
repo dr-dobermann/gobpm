@@ -5,7 +5,7 @@ package activities
 // When the Task is ready to start, the engine will execute the script. When
 // the script is completed, the Task will also be completed.
 type ScriptTask struct {
-	Task
+	task
 
 	// Defines the format of the script. This attribute value MUST be specified
 	// with a mime-type format. And it MUST be specified if a script is provided.

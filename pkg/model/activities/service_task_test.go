@@ -13,6 +13,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
@@ -94,6 +95,9 @@ func TestServiceTaskDefinition(t *testing.T) {
 			flows, err := st.Exec(context.Background(), re)
 			require.NoError(t, err)
 			require.Empty(t, flows)
+
+			require.Equal(t, flow.ServiceTask, st.TaskType())
+			require.Equal(t, st, st.Node())
 		})
 }
 

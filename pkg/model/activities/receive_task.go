@@ -16,7 +16,7 @@ import (
 // instantiate the Process its instantiate attribute MUST be set to true and it
 // MUST NOT have any incoming Sequence Flow.
 type ReceiveTask struct {
-	Task
+	task
 
 	// A Message for the messageRef attribute MAY be entered. This indicates that
 	// the Message will be received by the Task. The Message in this context is

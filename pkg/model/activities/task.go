@@ -12,19 +12,19 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
-// Task is common parent of all Tasks.
-type Task struct {
-	Activity
+// task is common parent of all Tasks.
+type task struct {
+	activity
 
 	multyInstance bool
 }
 
-// NewTask creates a new Task and returns its pointer on success or
+// newTask creates a new Task and returns its pointer on success or
 // error on failure.
-func NewTask(
+func newTask(
 	name string,
 	taskOpts ...options.Option,
-) (*Task, error) {
+) (*task, error) {
 	var (
 		actOpts = make([]options.Option, 0, len(taskOpts))
 		mInst   = multyInstance(false)
@@ -42,26 +42,26 @@ func NewTask(
 		}
 	}
 
-	a, err := NewActivity(name, actOpts...)
+	a, err := newActivity(name, actOpts...)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Task{
-			Activity:      *a,
+	return &task{
+			activity:      *a,
 			multyInstance: bool(mInst),
 		},
 		err
 }
 
 // IsMultyinstance returns Task multyinstance settings.
-func (t *Task) IsMultyinstance() bool {
+func (t *task) IsMultyinstance() bool {
 	return t.multyInstance
 }
 
 // --------------------- flow.ActivityNode interface ---------------------------
 
-func (t *Task) ActivityType() flow.ActivityType {
+func (t *task) ActivityType() flow.ActivityType {
 	return flow.TaskActivity
 }
 
@@ -69,7 +69,7 @@ func (t *Task) ActivityType() flow.ActivityType {
 
 // LoadData loads data from Task's incoming data associations into its
 // inputs.
-func (t *Task) LoadData(ctx context.Context) error {
+func (t *task) LoadData(ctx context.Context) error {
 	dii, err := t.IoSpec.Parameters(data.Input)
 	if err != nil {
 		return errs.New(
@@ -115,7 +115,7 @@ func (t *Task) LoadData(ctx context.Context) error {
 // ----------------- scope.NodeDataLoader interface ----------------------------
 
 // RegisterData adds all Task's properties and inputs to the Scope s.
-func (t *Task) RegisterData(dp scope.DataPath, s scope.Scope) error {
+func (t *task) RegisterData(dp scope.DataPath, s scope.Scope) error {
 	t.dataPath = dp
 
 	inputs, err := t.IoSpec.Parameters(data.Input)
@@ -144,7 +144,7 @@ func (t *Task) RegisterData(dp scope.DataPath, s scope.Scope) error {
 
 // UploadData fills all Task's outputs with not-Ready state from the Scope and
 // loads all Task's outgoing data associations from Task's outputs.
-func (t *Task) UploadData(ctx context.Context, s scope.Scope) error {
+func (t *task) UploadData(ctx context.Context, s scope.Scope) error {
 	doo, err := t.updateOutputs(ctx, s)
 	if err != nil {
 		return errs.New(
@@ -183,7 +183,7 @@ func (t *Task) UploadData(ctx context.Context, s scope.Scope) error {
 
 // updateOutputs checks all Task's output parameters and if it's not in Ready
 // state it tries to fill it from the Scope.
-func (t *Task) updateOutputs(ctx context.Context, s scope.Scope) ([]*data.Parameter, error) {
+func (t *task) updateOutputs(ctx context.Context, s scope.Scope) ([]*data.Parameter, error) {
 	oo, err := t.IoSpec.Parameters(data.Output)
 	if err != nil {
 		return nil, fmt.Errorf("couldn't get task's output parameters")
@@ -226,18 +226,18 @@ func (t *Task) updateOutputs(ctx context.Context, s scope.Scope) ([]*data.Parame
 // --------------------- flow.AssociationSource --------------------------------
 
 // Outputs returns a list of output parameters of the Task
-func (t *Task) Outputs() []*data.ItemAwareElement {
+func (t *task) Outputs() []*data.ItemAwareElement {
 	return t.getParams(data.Output)
 }
 
 // BindOutgoing adds new outgoing data association.
-func (t *Task) BindOutgoing(oa *data.Association) error {
+func (t *task) BindOutgoing(oa *data.Association) error {
 	return t.bindAssociation(oa, data.Output)
 }
 
 // getParams returns a list of the Task parameters input or output according to
 // direction dir.
-func (t *Task) getParams(dir data.Direction) []*data.ItemAwareElement {
+func (t *task) getParams(dir data.Direction) []*data.ItemAwareElement {
 	pp := []*data.ItemAwareElement{}
 
 	params, _ := t.IoSpec.Parameters(dir)
@@ -250,7 +250,7 @@ func (t *Task) getParams(dir data.Direction) []*data.ItemAwareElement {
 
 // bindAssociation binds data association to the Task according to dir either
 // input or output.
-func (t *Task) bindAssociation(a *data.Association, dir data.Direction) error {
+func (t *task) bindAssociation(a *data.Association, dir data.Direction) error {
 	if a == nil {
 		return fmt.Errorf("couldn't bind empty association")
 	}
@@ -275,12 +275,12 @@ func (t *Task) bindAssociation(a *data.Association, dir data.Direction) error {
 // --------------------- flow.AssociationTarget --------------------------------
 
 // Inputs returns list of input parameters's ItemAwareElements.
-func (t *Task) Inputs() []*data.ItemAwareElement {
+func (t *task) Inputs() []*data.ItemAwareElement {
 	return t.getParams(data.Input)
 }
 
 // BindIncoming adds new incoming data association to the Task.
-func (t *Task) BindIncoming(ia *data.Association) error {
+func (t *task) BindIncoming(ia *data.Association) error {
 	return t.bindAssociation(ia, data.Input)
 }
 
@@ -288,10 +288,10 @@ func (t *Task) BindIncoming(ia *data.Association) error {
 
 // interfaces check
 var (
-	_ flow.ActivityNode      = (*Task)(nil)
-	_ scope.NodeDataLoader   = (*Task)(nil)
-	_ scope.NodeDataConsumer = (*Task)(nil)
-	_ scope.NodeDataProducer = (*Task)(nil)
-	_ flow.AssociationSource = (*Task)(nil)
-	_ flow.AssociationTarget = (*Task)(nil)
+	_ flow.ActivityNode      = (*task)(nil)
+	_ scope.NodeDataLoader   = (*task)(nil)
+	_ scope.NodeDataConsumer = (*task)(nil)
+	_ scope.NodeDataProducer = (*task)(nil)
+	_ flow.AssociationSource = (*task)(nil)
+	_ flow.AssociationTarget = (*task)(nil)
 )

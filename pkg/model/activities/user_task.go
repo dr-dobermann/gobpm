@@ -40,7 +40,7 @@ const (
 // (e.g., to introduce subjects or descriptions with presentation parameters),
 // they SHOULD use attributes defined by the OASIS WSHumanTask specification.
 type UserTask struct {
-	Task
+	task
 
 	// This attribute specifies the technology that will be used to implement
 	// the User Task. Valid values are "##unspecified" for leaving the

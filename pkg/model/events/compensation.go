@@ -1,7 +1,6 @@
 package events
 
 import (
-	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -39,7 +38,7 @@ type CompensationEventDefinition struct {
 	//   REQUIRED. The Activity the Event is attached to will provide the Id
 	//   necessary to match the Compensation Event with the Event that threw
 	//   the compensation, or the compensation will have been a broadcast.
-	acitivityRef *activities.Activity
+	acitivity flow.ActivityNode
 
 	// For a throw Compensation Event, this flag determines whether the throw
 	// Intermediate Event waits for the triggered compensation to complete
@@ -56,7 +55,7 @@ func (*CompensationEventDefinition) Type() flow.EventTrigger {
 // NewCompensationEventDefinition creates a new CompensationEventDefinition
 // and reterns its pointer.
 func NewCompensationEventDefinition(
-	activity *activities.Activity,
+	activity flow.ActivityNode,
 	wait4compensation bool,
 	baseOpts ...options.Option,
 ) (*CompensationEventDefinition, error) {
@@ -67,7 +66,7 @@ func NewCompensationEventDefinition(
 
 	return &CompensationEventDefinition{
 		definition:          *d,
-		acitivityRef:        activity,
+		acitivity:           activity,
 		waitForCompensation: wait4compensation,
 	}, nil
 }

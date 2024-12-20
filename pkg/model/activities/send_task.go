@@ -9,7 +9,7 @@ import (
 // external Participant (relative to the Process). Once the Message has been
 // sent, the Task is completed.
 type SendTask struct {
-	Task
+	task
 
 	// This attribute specifies the technology that will be used to send and
 	// receive the Messages. Valid values are "##unspecified" for leaving the

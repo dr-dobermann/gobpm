@@ -1,4 +1,4 @@
-package activities_test
+package activities
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 
 	"github.com/dr-dobermann/gobpm/generated/mockscope"
 	"github.com/dr-dobermann/gobpm/internal/scope"
-	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
@@ -23,29 +22,29 @@ import (
 func TestOptions(t *testing.T) {
 	t.Run("no name",
 		func(t *testing.T) {
-			_, err := activities.NewTask("")
+			_, err := newTask("")
 			require.Error(t, err)
 		})
 
 	t.Run("invalid options",
 		func(t *testing.T) {
-			_, err := activities.NewTask("invalid_options",
+			_, err := newTask("invalid_options",
 				options.WithName("error"),
-				activities.WithoutParams())
+				WithoutParams())
 			require.Error(t, err)
 		})
 
 	t.Run("normal",
 		func(t *testing.T) {
-			task, err := activities.NewTask("no options",
-				activities.WithoutParams())
+			task, err := newTask("no options",
+				WithoutParams())
 			require.NoError(t, err)
 
 			require.False(t, task.IsMultyinstance())
 
-			mtask, err := activities.NewTask("multyinstance",
-				activities.WithMultyInstance(),
-				activities.WithoutParams())
+			mtask, err := newTask("multyinstance",
+				WithMultyInstance(),
+				WithoutParams())
 			require.NoError(t, err)
 
 			require.True(t, mtask.IsMultyinstance())
@@ -79,10 +78,10 @@ func TestTaskData(t *testing.T) {
 					data.ReadyDataState),
 			}
 
-			task, err := activities.NewTask(
+			task, err := newTask(
 				"test",
 				data.WithProperties(props...),
-				activities.WithSet("input set", "",
+				WithSet("input set", "",
 					data.Input, data.DefaultSet,
 					[]*data.Parameter{
 						data.MustParameter("y param",
@@ -92,7 +91,7 @@ func TestTaskData(t *testing.T) {
 									foundation.WithId("y")),
 								data.ReadyDataState)),
 					}),
-				activities.WithSet("output set", "",
+				WithSet("output set", "",
 					data.Output, data.DefaultSet,
 					[]*data.Parameter{
 						data.MustParameter(
@@ -200,9 +199,9 @@ func TestTaskData(t *testing.T) {
 					foundation.WithId("x")),
 				data.ReadyDataState)
 
-			task, err := activities.NewTask(
+			task, err := newTask(
 				"Task 1",
-				activities.WithSet(
+				WithSet(
 					"inputs",
 					"input_set_id",
 					data.Input,
@@ -212,7 +211,7 @@ func TestTaskData(t *testing.T) {
 							"x",
 							input),
 					}),
-				activities.WithSet(
+				WithSet(
 					"outputs",
 					"output_set_id",
 					data.Output,
