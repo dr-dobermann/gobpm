@@ -190,7 +190,7 @@ func (o *Operation) Run(ctx context.Context) error {
 			errs.C(errorClass, errs.EmptyNotAllowed))
 
 	case out != nil && o.outMessage != nil && o.outMessage.Item() != nil:
-		return o.outMessage.Item().Structure().Update(out.Structure().Get())
+		return o.outMessage.Item().Structure().Update(ctx, out.Structure().Get(ctx))
 	}
 
 	return nil

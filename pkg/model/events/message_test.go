@@ -1,6 +1,7 @@
 package events_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
@@ -12,6 +13,8 @@ import (
 )
 
 func TestNewMessageEventDefintion(t *testing.T) {
+	ctx := context.Background()
+
 	t.Run(
 		"empty message",
 		func(t *testing.T) {
@@ -86,6 +89,6 @@ func TestNewMessageEventDefintion(t *testing.T) {
 			require.NoError(t, err)
 
 			require.Equal(t, nmed.GetItemsList()[0].Id(), "42")
-			require.Equal(t, 100, nmed.GetItemsList()[0].Structure().Get())
+			require.Equal(t, 100, nmed.GetItemsList()[0].Structure().Get(ctx))
 		})
 }

@@ -2,6 +2,7 @@ package consinp_test
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -13,6 +14,8 @@ import (
 
 func TestCRender(t *testing.T) {
 	data.CreateDefaultStates()
+
+	ctx := context.Background()
 
 	t.Run("invalid parameters",
 		func(t *testing.T) {
@@ -65,9 +68,9 @@ func TestCRender(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, dd, 2)
 			require.Equal(t, "name", dd[0].Name())
-			require.Equal(t, "dr.Dobermann", dd[0].Value().Get().(string))
+			require.Equal(t, "dr.Dobermann", dd[0].Value().Get(ctx).(string))
 			require.Equal(t, "age", dd[1].Name())
-			require.Equal(t, 52, dd[1].Value().Get().(int))
+			require.Equal(t, 52, dd[1].Value().Get(ctx).(int))
 
 			rr, err := consinp.NewRenderer(
 				consinp.WithIntInput("couldn't read", ""))

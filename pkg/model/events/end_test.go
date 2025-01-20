@@ -108,7 +108,7 @@ func TestNewEndEvent(t *testing.T) {
 					func(ndl scope.NodeDataLoader, dd ...data.Data) error {
 						for _, d := range dd {
 							t.Log("Loading data to datapath [", ndl.Name(), "]: ",
-								d.Name(), " - ", d.Value().Get())
+								d.Name(), " - ", d.Value().Get(context.Background()))
 						}
 						return nil
 					})

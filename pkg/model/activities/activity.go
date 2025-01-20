@@ -15,9 +15,9 @@ import (
 	"golang.org/x/exp/maps"
 )
 
-// The Activity class is the abstract super class for all concrete Activity
+// The activity class is the abstract super class for all concrete Activity
 // types.
-type Activity struct {
+type activity struct {
 	flow.FlowNode
 
 	// A flag that identifies whether this Activity is intended for the
@@ -91,12 +91,12 @@ type Activity struct {
 	dataPath scope.DataPath
 }
 
-// NewActivity creates a new Activity with options and returns its pointer on
+// newActivity creates a new Activity with options and returns its pointer on
 // success or errors on failure.
-func NewActivity(
+func newActivity(
 	name string,
 	actOpts ...options.Option,
-) (*Activity, error) {
+) (*activity, error) {
 	cfg := activityConfig{
 		name:             strings.TrimSpace(name),
 		roles:            map[string]*hi.ResourceRole{},
@@ -123,7 +123,7 @@ func NewActivity(
 		default:
 			ee = append(ee,
 				errs.New(
-					errs.M("invalid option type for Activity"),
+					errs.M("invalid option type for activity"),
 					errs.C(errorClass, errs.BulidingFailed,
 						errs.TypeCastingError),
 					errs.D("option_type", reflect.TypeOf(o).String())))
@@ -137,20 +137,20 @@ func NewActivity(
 	return cfg.newActivity()
 }
 
-// Roles returns list of ResourceRoles of the Activity.
-func (a *Activity) Roles() []*hi.ResourceRole {
+// Roles returns list of ResourceRoles of the activity.
+func (a *activity) Roles() []*hi.ResourceRole {
 	return maps.Values(a.roles)
 }
 
 // Properties implements an data.PropertyOwner interface and returns
 // copy of the Activity properties.
-func (a *Activity) Properties() []*data.Property {
+func (a *activity) Properties() []*data.Property {
 	return maps.Values(a.properties)
 }
 
 // SetDefaultFlow sets default flow from the Activity.
 // If the flowId is empty, then default flow cleared for Activity.
-func (a *Activity) SetDefaultFlow(flowId string) error {
+func (a *activity) SetDefaultFlow(flowId string) error {
 	flowId = strings.TrimSpace(flowId)
 
 	if flowId == "" {
@@ -172,27 +172,28 @@ func (a *Activity) SetDefaultFlow(flowId string) error {
 		errs.C(errorClass, errs.InvalidParameter))
 }
 
-func (a *Activity) BoundaryEvents() []flow.EventNode {
+// BoundaryEvents returns list of events bounded to the acitvity.
+func (a *activity) BoundaryEvents() []flow.EventNode {
 	return append([]flow.EventNode{}, a.boundaryEvents...)
 }
 
 // ------------------ flow.Node interface --------------------------------------
 
 // Node returns Node itself.
-func (a *Activity) Node() flow.Node {
+func (a *activity) Node() flow.Node {
 	return a
 }
 
 // NodeType returns Activity's node type.
-func (a *Activity) NodeType() flow.NodeType {
+func (a *activity) NodeType() flow.NodeType {
 	return flow.ActivityNodeType
 }
 
 // ------------------ flow.SequenceTarget interface ----------------------------
 
 // AcceptIncomingFlow checks if it possible to use sf as IncomingFlow for the
-// Activity.
-func (a *Activity) AcceptIncomingFlow(_ *flow.SequenceFlow) error {
+// activity.
+func (a *activity) AcceptIncomingFlow(_ *flow.SequenceFlow) error {
 	// Activity has no restrictions on incoming floes
 	return nil
 }
@@ -200,9 +201,9 @@ func (a *Activity) AcceptIncomingFlow(_ *flow.SequenceFlow) error {
 // ------------------ flow.SequenceSource interface ----------------------------
 
 // SuportOutgoingFlow checks if it possible to source sf SequenceFlow from
-// the Activity.
-func (a *Activity) SupportOutgoingFlow(_ *flow.SequenceFlow) error {
-	// Activity has no restrictions on outgoing flows
+// the activity.
+func (a *activity) SupportOutgoingFlow(_ *flow.SequenceFlow) error {
+	// activity has no restrictions on outgoing flows
 	return nil
 }
 
@@ -210,8 +211,8 @@ func (a *Activity) SupportOutgoingFlow(_ *flow.SequenceFlow) error {
 
 // interfaces check
 var (
-	_ flow.Node = (*Activity)(nil)
+	_ flow.Node = (*activity)(nil)
 
-	_ flow.SequenceSource = (*Activity)(nil)
-	_ flow.SequenceTarget = (*Activity)(nil)
+	_ flow.SequenceSource = (*activity)(nil)
+	_ flow.SequenceTarget = (*activity)(nil)
 )

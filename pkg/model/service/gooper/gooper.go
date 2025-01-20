@@ -21,8 +21,9 @@ const (
 	GoOperType = "##GoOper"
 )
 
-// OpFunctior is an Operation Implementor which
-type OpFunctor func(*data.ItemDefinition) (*data.ItemDefinition, error)
+// OpFunctor is an Operation Implementor uses to run operation.
+type OpFunctor func(
+	context.Context, *data.ItemDefinition) (*data.ItemDefinition, error)
 
 type GoFunc struct {
 	ers []string
@@ -68,7 +69,7 @@ func (gf GoFunc) Execute(
 	ctx context.Context,
 	in *data.ItemDefinition,
 ) (*data.ItemDefinition, error) {
-	out, err := gf.f(in)
+	out, err := gf.f(ctx, in)
 	if err != nil {
 		return nil, errs.New(
 			errs.M("goOper failed"),

@@ -1,16 +1,17 @@
-package activities_test
+package activities
 
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"slices"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/generated/mockscope"
 	"github.com/dr-dobermann/gobpm/internal/scope"
-	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
+	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -21,29 +22,29 @@ import (
 func TestOptions(t *testing.T) {
 	t.Run("no name",
 		func(t *testing.T) {
-			_, err := activities.NewTask("")
+			_, err := newTask("")
 			require.Error(t, err)
 		})
 
 	t.Run("invalid options",
 		func(t *testing.T) {
-			_, err := activities.NewTask("invalid_options",
+			_, err := newTask("invalid_options",
 				options.WithName("error"),
-				activities.WithoutParams())
+				WithoutParams())
 			require.Error(t, err)
 		})
 
 	t.Run("normal",
 		func(t *testing.T) {
-			task, err := activities.NewTask("no options",
-				activities.WithoutParams())
+			task, err := newTask("no options",
+				WithoutParams())
 			require.NoError(t, err)
 
 			require.False(t, task.IsMultyinstance())
 
-			mtask, err := activities.NewTask("multyinstance",
-				activities.WithMultyInstance(),
-				activities.WithoutParams())
+			mtask, err := newTask("multyinstance",
+				WithMultyInstance(),
+				WithoutParams())
 			require.NoError(t, err)
 
 			require.True(t, mtask.IsMultyinstance())
@@ -77,44 +78,111 @@ func TestTaskData(t *testing.T) {
 					data.ReadyDataState),
 			}
 
-			task, err := activities.NewTask(
+			task, err := newTask(
 				"test",
 				data.WithProperties(props...),
-				activities.WithoutParams())
+				WithSet("input set", "",
+					data.Input, data.DefaultSet,
+					[]*data.Parameter{
+						data.MustParameter("y param",
+							data.MustItemAwareElement(
+								data.MustItemDefinition(
+									values.NewVariable(100.500),
+									foundation.WithId("y")),
+								data.ReadyDataState)),
+					}),
+				WithSet("output set", "",
+					data.Output, data.DefaultSet,
+					[]*data.Parameter{
+						data.MustParameter(
+							"y param",
+							data.MustItemAwareElement(
+								data.MustItemDefinition(
+									values.NewVariable(0.0),
+									foundation.WithId("y")),
+								nil)),
+					}))
+			require.NoError(t, err)
+
+			// set task data path
+			dp, err := scope.NewDataPath("/task")
 			require.NoError(t, err)
 
 			s := mockscope.NewMockScope(t)
-			s.On("LoadData", task, mock.AnythingOfType("*data.Property"), mock.AnythingOfType("*data.Property")).
+			s.On("LoadData", task,
+				mock.AnythingOfType("*data.Property"),
+				mock.AnythingOfType("*data.Property"),
+				mock.AnythingOfType("*data.Parameter")).
 				Return(
 					func(ndl scope.NodeDataLoader, dd ...data.Data) error {
 						for _, d := range dd {
-							t.Log("   >> got data: ", d.Name())
+							t.Log("   >> got data: ", d.Name(), " = ",
+								d.Value().Get(context.Background()))
 
-							p, ok := d.(*data.Property)
-							if !ok {
-								return fmt.Errorf("couldn't convert data %q to Property", d.Name())
+							switch dv := d.(type) {
+							case *data.Property:
+								if idx := slices.IndexFunc(
+									props,
+									func(prop *data.Property) bool {
+										return dv.Id() == prop.Id()
+									}); idx == -1 {
+									return fmt.Errorf("couldn't find property %q", d.Name())
+								}
+							case *data.Parameter:
+								if dv.Name() != "y param" {
+									return fmt.Errorf("invalid parameter name")
+								}
+							default:
+								return fmt.Errorf("TEST: invalid type of data: %s",
+									reflect.TypeOf(d).String())
 							}
 
-							if idx := slices.IndexFunc(
-								props,
-								func(prop *data.Property) bool {
-									return p.Id() == prop.Id()
-								}); idx == -1 {
-								return fmt.Errorf("couldn't find property %q", d.Name())
-							}
 						}
 
 						return nil
 					})
-
-			dp, err := scope.NewDataPath("/task")
-			require.NoError(t, err)
+			s.EXPECT().
+				GetDataById(dp, "y").
+				Return(data.MustItemAwareElement(
+					data.MustItemDefinition(
+						values.NewVariable(23.02),
+						foundation.WithId("y")),
+					data.ReadyDataState), nil)
 
 			err = task.RegisterData(dp, s)
 			require.NoError(t, err)
 
+			// add association to DataObject
+			inpDO, err := dataobjects.New(
+				"input data object",
+				data.MustItemDefinition(
+					values.NewVariable(23.02),
+					foundation.WithId("y")),
+				data.ReadyDataState)
+			require.NoError(t, err)
+			require.NoError(t, inpDO.AssociateTarget(task, nil))
+
+			outDO, err := dataobjects.New(
+				"output data object",
+				data.MustItemDefinition(
+					values.NewVariable(11.09),
+					foundation.WithId("y")),
+				nil)
+			require.NoError(t, err)
+			require.NoError(t, outDO.AssociateSource(task, []string{"y"}, nil))
+
 			require.NoError(t, task.LoadData(context.Background()))
-			require.NoError(t, task.UploadData(context.Background(), s))
+
+			ctx := context.Background()
+
+			// check input parameters
+			inParams, err := task.IoSpec.Parameters(data.Input)
+			require.NoError(t, err)
+			require.Len(t, inParams, 1)
+			require.Equal(t, 23.02, inParams[0].Subject().Structure().Get(ctx))
+
+			require.NoError(t, task.UploadData(ctx, s))
+			require.Equal(t, 23.02, outDO.Subject().Structure().Get(ctx))
 		})
 
 	t.Run("data associations",
@@ -131,9 +199,9 @@ func TestTaskData(t *testing.T) {
 					foundation.WithId("x")),
 				data.ReadyDataState)
 
-			task, err := activities.NewTask(
+			task, err := newTask(
 				"Task 1",
-				activities.WithSet(
+				WithSet(
 					"inputs",
 					"input_set_id",
 					data.Input,
@@ -143,7 +211,7 @@ func TestTaskData(t *testing.T) {
 							"x",
 							input),
 					}),
-				activities.WithSet(
+				WithSet(
 					"outputs",
 					"output_set_id",
 					data.Output,
@@ -169,9 +237,11 @@ func TestTaskData(t *testing.T) {
 			err = task.BindIncoming(ia)
 			require.NoError(t, err)
 
+			ctx := context.Background()
+
 			v, err := ia.Value(context.Background())
 			require.NoError(t, err)
-			require.Equal(t, 100, v.Structure().Get())
+			require.Equal(t, 100, v.Structure().Get(ctx))
 
 			require.NoError(t, err)
 
@@ -185,7 +255,7 @@ func TestTaskData(t *testing.T) {
 						return iae.ItemDefinition().Id() == "x"
 					}))
 
-			require.Equal(t, 100, ipp[0].ItemDefinition().Structure().Get())
+			require.Equal(t, 100, ipp[0].ItemDefinition().Structure().Get(ctx))
 
 			// check output binding
 			outRes := data.MustItemAwareElement(
@@ -202,9 +272,9 @@ func TestTaskData(t *testing.T) {
 			err = task.BindOutgoing(oa)
 			require.NoError(t, err)
 
-			vo, err := oa.Value(context.Background())
+			vo, err := oa.Value(ctx)
 			require.NoError(t, err)
-			require.Equal(t, 84, vo.Structure().Get())
+			require.Equal(t, 84, vo.Structure().Get(ctx))
 
 			// check outputs
 			opp := task.Outputs()
@@ -217,6 +287,6 @@ func TestTaskData(t *testing.T) {
 						return iae.ItemDefinition().Id() == "x"
 					}))
 
-			require.Equal(t, 84, opp[0].ItemDefinition().Structure().Get())
+			require.Equal(t, 84, opp[0].ItemDefinition().Structure().Get(ctx))
 		})
 }

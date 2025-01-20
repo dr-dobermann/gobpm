@@ -64,7 +64,7 @@ func (eg *ExclusiveGateway) Exec(
 			continue
 		}
 
-		res, err := eg.checkCondition(cond, of)
+		res, err := eg.checkCondition(ctx, cond, of)
 		if err != nil {
 			return nil, err
 		}
@@ -103,6 +103,7 @@ func (eg *ExclusiveGateway) Exec(
 
 // checkCondition check condition result and return it or error on failure.
 func (eg *ExclusiveGateway) checkCondition(
+	ctx context.Context,
 	cond data.FormalExpression,
 	of *flow.SequenceFlow,
 ) (bool, error) {
@@ -126,7 +127,7 @@ func (eg *ExclusiveGateway) checkCondition(
 				errs.E(err))
 	}
 
-	return res.Get().(bool), nil
+	return res.Get(ctx).(bool), nil
 }
 
 // ----------------------- data.Source interface ------------------------------

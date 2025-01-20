@@ -28,7 +28,7 @@ func (utc *usrTaskConfig) newUsrTask() (*UserTask, error) {
 		return nil, err
 	}
 
-	t, err := NewTask(utc.name, utc.taskOpts...)
+	t, err := newTask(utc.name, utc.taskOpts...)
 	if err != nil {
 		return nil,
 			errs.New(
@@ -47,7 +47,7 @@ func (utc *usrTaskConfig) newUsrTask() (*UserTask, error) {
 	}
 
 	ut := UserTask{
-		Task:      *t,
+		task:      *t,
 		renderers: append([]hi.Renderer{}, utc.renderers...),
 		outputs:   r,
 	}

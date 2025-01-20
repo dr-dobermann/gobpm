@@ -1,17 +1,20 @@
 package data
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 type Value interface {
 	// Get returns copy of the Value's value.
 	// For collection Get retrieves element with current index
 	// if collection is empty then panic will be fired.
-	Get() any
+	Get(ctx context.Context) any
 
 	// Update sets new value of the Value.
 	// For collection Update changes element with current index
 	// if collection is empty then panic will be fired.
-	Update(any) error
+	Update(context.Context, any) error
 
 	// Lock locks Value's internal mutex in case user need to update internal
 	// Value through its pointer.
@@ -51,7 +54,7 @@ type Collection interface {
 	Next(dir StepDirection) error
 
 	// GetAll returns all values of the collection.
-	GetAll() []any
+	GetAll(context.Context) []any
 
 	// GetKeys returns a list of keys
 	GetKeys() []any
@@ -65,17 +68,17 @@ type Collection interface {
 
 	// Add adds new value into the end of the collection.
 	// If there is any problem occurred, then error returned.
-	Add(value any) error
+	Add(ctx context.Context, value any) error
 
 	// GetAt tries to retrieve a values at index and returns it on success
 	// or returns error on failure.
-	GetAt(index any) (any, error)
+	GetAt(ctx context.Context, index any) (any, error)
 
 	// Insert adds new value at index.
-	Insert(value any, index any) error
+	Insert(ctx context.Context, value any, index any) error
 
 	// Delete removes collection element at index position.
-	Delete(index any) error
+	Delete(ctx context.Context, index any) error
 }
 
 // Updater is an interface for Values, which allows track its-own update events.

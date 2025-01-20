@@ -18,6 +18,8 @@ import (
 func TestErrorDefinitions(t *testing.T) {
 	data.CreateDefaultStates()
 
+	ctx := context.Background()
+
 	t.Run("cancel",
 		func(t *testing.T) {
 			// invalid params
@@ -99,7 +101,7 @@ func TestErrorDefinitions(t *testing.T) {
 							data.ReadyDataState)),
 				})
 			require.NoError(t, err)
-			require.Equal(t, 1000, need.GetItemsList()[0].Structure().Get())
+			require.Equal(t, 1000, need.GetItemsList()[0].Structure().Get(ctx))
 		})
 
 	t.Run("escalation",
@@ -119,7 +121,7 @@ func TestErrorDefinitions(t *testing.T) {
 				foundation.WithId("test escalation id"))
 			require.NoError(t, err)
 			require.NotEmpty(t, e)
-			require.Equal(t, 42, e.Item().Structure().Get())
+			require.Equal(t, 42, e.Item().Structure().Get(ctx))
 			require.Equal(t, "test", e.Name())
 			require.Empty(t, e.Code())
 
@@ -154,7 +156,7 @@ func TestErrorDefinitions(t *testing.T) {
 			require.NoError(t, err)
 			require.NotEmpty(t, s)
 			require.Equal(t, "test signal", s.Name())
-			require.Equal(t, "success!", s.Item().Structure().Get())
+			require.Equal(t, "success!", s.Item().Structure().Get(ctx))
 
 			// signal evnet definition test
 			//
@@ -166,7 +168,7 @@ func TestErrorDefinitions(t *testing.T) {
 			sed, err := events.NewSignalEventDefinition(s)
 			require.NoError(t, err)
 			require.NotEmpty(t, sed)
-			require.Equal(t, "success!", sed.Signal().Item().Structure().Get())
+			require.Equal(t, "success!", sed.Signal().Item().Structure().Get(ctx))
 			require.Equal(t, s.Id(), sed.Signal().Id())
 		})
 

@@ -2,6 +2,7 @@ package activities
 
 import (
 	"context"
+	"fmt"
 	"slices"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
@@ -11,19 +12,19 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
-// Task is common parent of all Tasks.
-type Task struct {
-	Activity
+// task is common parent of all Tasks.
+type task struct {
+	activity
 
 	multyInstance bool
 }
 
-// NewTask creates a new Task and returns its pointer on success or
+// newTask creates a new Task and returns its pointer on success or
 // error on failure.
-func NewTask(
+func newTask(
 	name string,
 	taskOpts ...options.Option,
-) (*Task, error) {
+) (*task, error) {
 	var (
 		actOpts = make([]options.Option, 0, len(taskOpts))
 		mInst   = multyInstance(false)
@@ -41,26 +42,26 @@ func NewTask(
 		}
 	}
 
-	a, err := NewActivity(name, actOpts...)
+	a, err := newActivity(name, actOpts...)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Task{
-			Activity:      *a,
+	return &task{
+			activity:      *a,
 			multyInstance: bool(mInst),
 		},
 		err
 }
 
 // IsMultyinstance returns Task multyinstance settings.
-func (t *Task) IsMultyinstance() bool {
+func (t *task) IsMultyinstance() bool {
 	return t.multyInstance
 }
 
 // --------------------- flow.ActivityNode interface ---------------------------
 
-func (t *Task) ActivityType() flow.ActivityType {
+func (t *task) ActivityType() flow.ActivityType {
 	return flow.TaskActivity
 }
 
@@ -68,7 +69,7 @@ func (t *Task) ActivityType() flow.ActivityType {
 
 // LoadData loads data from Task's incoming data associations into its
 // inputs.
-func (t *Task) LoadData(ctx context.Context) error {
+func (t *task) LoadData(ctx context.Context) error {
 	dii, err := t.IoSpec.Parameters(data.Input)
 	if err != nil {
 		return errs.New(
@@ -100,7 +101,7 @@ func (t *Task) LoadData(ctx context.Context) error {
 				errs.E(err))
 		}
 
-		if err := dii[index].Subject().Structure().Update(v); err != nil {
+		if err := dii[index].Subject().Structure().Update(ctx, v.Structure().Get(ctx)); err != nil {
 			return errs.New(
 				errs.M("couldn't update input %q", dii[index].Name()),
 				errs.C(errorClass, errs.OperationFailed),
@@ -114,7 +115,7 @@ func (t *Task) LoadData(ctx context.Context) error {
 // ----------------- scope.NodeDataLoader interface ----------------------------
 
 // RegisterData adds all Task's properties and inputs to the Scope s.
-func (t *Task) RegisterData(dp scope.DataPath, s scope.Scope) error {
+func (t *task) RegisterData(dp scope.DataPath, s scope.Scope) error {
 	t.dataPath = dp
 
 	inputs, err := t.IoSpec.Parameters(data.Input)
@@ -143,11 +144,11 @@ func (t *Task) RegisterData(dp scope.DataPath, s scope.Scope) error {
 
 // UploadData fills all Task's outputs with not-Ready state from the Scope and
 // loads all Task's outgoing data associations from Task's outputs.
-func (t *Task) UploadData(ctx context.Context, s scope.Scope) error {
-	doo, err := t.updateOutputs(s)
+func (t *task) UploadData(ctx context.Context, s scope.Scope) error {
+	doo, err := t.updateOutputs(ctx, s)
 	if err != nil {
 		return errs.New(
-			errs.M("couldn't tt output parameters for task", t.Name(), t.Id()),
+			errs.M("couldn't get output parameters for task", t.Name(), t.Id()),
 			errs.C(errorClass, errs.ObjectNotFound),
 			errs.E(err))
 	}
@@ -165,7 +166,9 @@ func (t *Task) UploadData(ctx context.Context, s scope.Scope) error {
 				errs.C(errorClass, errs.ObjectNotFound))
 		}
 
-		if err := oa.UpdateSource(ctx, doo[index].ItemDefinition()); err != nil {
+		if err := oa.UpdateSource(
+			ctx, doo[index].ItemDefinition(), data.Recalculate,
+		); err != nil {
 			return errs.New(
 				errs.M("couldn't update association's %q source %q for "+
 					"task %q[%s]", oa.Id(), doo[index].ItemDefinition().Id(),
@@ -180,12 +183,10 @@ func (t *Task) UploadData(ctx context.Context, s scope.Scope) error {
 
 // updateOutputs checks all Task's output parameters and if it's not in Ready
 // state it tries to fill it from the Scope.
-func (t *Task) updateOutputs(s scope.Scope) ([]*data.Parameter, error) {
+func (t *task) updateOutputs(ctx context.Context, s scope.Scope) ([]*data.Parameter, error) {
 	oo, err := t.IoSpec.Parameters(data.Output)
 	if err != nil {
-		return nil, errs.New(
-			errs.M("couldn't get task's output parameters"),
-			errs.E(err))
+		return nil, fmt.Errorf("couldn't get task's output parameters")
 	}
 
 	for _, o := range oo {
@@ -196,37 +197,26 @@ func (t *Task) updateOutputs(s scope.Scope) ([]*data.Parameter, error) {
 		d, err := s.GetDataById(t.dataPath, o.ItemDefinition().Id())
 		if err != nil {
 			return nil,
-				errs.New(
-					errs.M("couldn't get data from Scope"),
-					errs.E(err),
-					errs.D("item_definitio_id", o.ItemDefinition().Id()))
+				fmt.Errorf("couldn't get data #%s from Scope: %w",
+					o.ItemDefinition().Id(), err)
 		}
 
 		if d.State().Name() != data.ReadyDataState.Name() {
 			return nil,
-				errs.New(
-					errs.M("data isn't Ready for update task's output"),
-					errs.D("data_name", d.Name()),
-					errs.D("item_definition_id", o.ItemDefinition().Id()),
-					errs.D("output_name", o.Name()))
+				fmt.Errorf("data isn't Ready for update task's output #%s",
+					d.ItemDefinition().Id())
 		}
 
-		if err := o.Value().Update(d.Value().Get()); err != nil {
+		if err := o.Value().Update(ctx, d.Value().Get(ctx)); err != nil {
 			return nil,
-				errs.New(
-					errs.M("couldn't update task output"),
-					errs.E(err),
-					errs.D("output_name", o.Name()),
-					errs.D("data_name", d.Name()),
-					errs.D("item_definition_id", o.ItemDefinition().Id()))
+				fmt.Errorf("couldn't update task output #%s: %w",
+					o.ItemDefinition().Id(), err)
 		}
 
 		if err := o.UpdateState(data.ReadyDataState); err != nil {
 			return nil,
-				errs.New(
-					errs.M("couldn't set task output state to Ready"),
-					errs.E(err),
-					errs.D("output_name", o.Name()))
+				fmt.Errorf("couldn't set task output #%s state to Ready: %w",
+					o.ItemDefinition().Id(), err)
 		}
 	}
 
@@ -236,41 +226,48 @@ func (t *Task) updateOutputs(s scope.Scope) ([]*data.Parameter, error) {
 // --------------------- flow.AssociationSource --------------------------------
 
 // Outputs returns a list of output parameters of the Task
-func (t *Task) Outputs() []*data.ItemAwareElement {
-	outputs := []*data.ItemAwareElement{}
-
-	opp, _ := t.IoSpec.Parameters(data.Output)
-	for _, op := range opp {
-		outputs = append(outputs, &op.ItemAwareElement)
-	}
-
-	return outputs
+func (t *task) Outputs() []*data.ItemAwareElement {
+	return t.getParams(data.Output)
 }
 
 // BindOutgoing adds new outgoing data association.
-func (t *Task) BindOutgoing(oa *data.Association) error {
-	if oa == nil {
-		return errs.New(
-			errs.M("couldn't bind empty association"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
+func (t *task) BindOutgoing(oa *data.Association) error {
+	return t.bindAssociation(oa, data.Output)
+}
+
+// getParams returns a list of the Task parameters input or output according to
+// direction dir.
+func (t *task) getParams(dir data.Direction) []*data.ItemAwareElement {
+	pp := []*data.ItemAwareElement{}
+
+	params, _ := t.IoSpec.Parameters(dir)
+	for _, p := range params {
+		pp = append(pp, &p.ItemAwareElement)
+	}
+
+	return pp
+}
+
+// bindAssociation binds data association to the Task according to dir either
+// input or output.
+func (t *task) bindAssociation(a *data.Association, dir data.Direction) error {
+	if a == nil {
+		return fmt.Errorf("couldn't bind empty association")
 	}
 
 	if slices.ContainsFunc(
-		t.dataAssociations[data.Output],
-		func(a *data.Association) bool {
-			return a.Id() == oa.Id()
+		t.dataAssociations[dir],
+		func(da *data.Association) bool {
+			return da.Id() == a.Id()
 		}) {
-		return errs.New(
-			errs.M("association already binded"),
-			errs.C(errorClass, errs.DuplicateObject),
-			errs.D("association_id", oa.Id()))
+		return fmt.Errorf("association #%s already binded", a.Id())
 	}
 
-	// TODO: Consider checking existence of output parameter equal to
-	// oa source.
+	// TODO: Consider checking existence of parameter equal to
+	// a source or target.
 
-	t.dataAssociations[data.Output] = append(
-		t.dataAssociations[data.Output], oa)
+	t.dataAssociations[dir] = append(
+		t.dataAssociations[dir], a)
 
 	return nil
 }
@@ -278,53 +275,23 @@ func (t *Task) BindOutgoing(oa *data.Association) error {
 // --------------------- flow.AssociationTarget --------------------------------
 
 // Inputs returns list of input parameters's ItemAwareElements.
-func (t *Task) Inputs() []*data.ItemAwareElement {
-	inputs := []*data.ItemAwareElement{}
-
-	ipp, _ := t.IoSpec.Parameters(data.Input)
-	for _, ip := range ipp {
-		inputs = append(inputs, &ip.ItemAwareElement)
-	}
-
-	return inputs
+func (t *task) Inputs() []*data.ItemAwareElement {
+	return t.getParams(data.Input)
 }
 
 // BindIncoming adds new incoming data association to the Task.
-func (t *Task) BindIncoming(ia *data.Association) error {
-	if ia == nil {
-		return errs.New(
-			errs.M("couldn't bind empty association"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
-	if slices.ContainsFunc(
-		t.dataAssociations[data.Input],
-		func(a *data.Association) bool {
-			return a.Id() == ia.Id()
-		}) {
-		return errs.New(
-			errs.M("association already binded"),
-			errs.C(errorClass, errs.DuplicateObject),
-			errs.D("association_id", ia.Id()))
-	}
-
-	// TODO: Consider checking existence of input parameter equal to
-	// oa source.
-
-	t.dataAssociations[data.Input] = append(
-		t.dataAssociations[data.Input], ia)
-
-	return nil
+func (t *task) BindIncoming(ia *data.Association) error {
+	return t.bindAssociation(ia, data.Input)
 }
 
 // -----------------------------------------------------------------------------
 
 // interfaces check
 var (
-	_ flow.ActivityNode      = (*Task)(nil)
-	_ scope.NodeDataLoader   = (*Task)(nil)
-	_ scope.NodeDataConsumer = (*Task)(nil)
-	_ scope.NodeDataProducer = (*Task)(nil)
-	_ flow.AssociationSource = (*Task)(nil)
-	_ flow.AssociationTarget = (*Task)(nil)
+	_ flow.ActivityNode      = (*task)(nil)
+	_ scope.NodeDataLoader   = (*task)(nil)
+	_ scope.NodeDataConsumer = (*task)(nil)
+	_ scope.NodeDataProducer = (*task)(nil)
+	_ flow.AssociationSource = (*task)(nil)
+	_ flow.AssociationTarget = (*task)(nil)
 )

@@ -61,7 +61,7 @@ func TestExclusiveGatewayExec(t *testing.T) {
 				return nil, err
 			}
 
-			x, ok := xval.Value().Get().(int)
+			x, ok := xval.Value().Get(ctx).(int)
 			if !ok {
 				return nil,
 					errs.New(
@@ -83,7 +83,7 @@ func TestExclusiveGatewayExec(t *testing.T) {
 				return nil, err
 			}
 
-			x, ok := xval.Value().Get().(int)
+			x, ok := xval.Value().Get(ctx).(int)
 			if !ok {
 				return nil,
 					errs.New(

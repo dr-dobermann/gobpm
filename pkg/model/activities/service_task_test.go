@@ -13,6 +13,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
@@ -74,7 +75,7 @@ func TestServiceTaskDefinition(t *testing.T) {
 	t.Run("simple no args operation",
 		func(t *testing.T) {
 			hello, err := gooper.New(
-				func(_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+				func(_ context.Context, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
 					fmt.Println("  >>>> Hello, world!")
 
 					return nil, nil
@@ -94,6 +95,9 @@ func TestServiceTaskDefinition(t *testing.T) {
 			flows, err := st.Exec(context.Background(), re)
 			require.NoError(t, err)
 			require.Empty(t, flows)
+
+			require.Equal(t, flow.ServiceTask, st.TaskType())
+			require.Equal(t, st, st.Node())
 		})
 }
 
@@ -109,8 +113,8 @@ func TestSrvTaskExec(t *testing.T) {
 			foundation.WithId("hello_str")))
 
 	hello, err := gooper.New(
-		func(d *data.ItemDefinition) (*data.ItemDefinition, error) {
-			v := d.Structure().Get()
+		func(ctx context.Context, d *data.ItemDefinition) (*data.ItemDefinition, error) {
+			v := d.Structure().Get(context.Background())
 			name, ok := v.(string)
 			if !ok {
 				return nil,

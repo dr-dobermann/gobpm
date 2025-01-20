@@ -33,7 +33,7 @@ import (
 // defined by Message referred to by the outMessageRef attribute of the
 // Operation.
 type ServiceTask struct {
-	Task
+	task
 
 	// This attribute specifies the technology that will be used to send
 	// and receive the Messages. Valid values are "##unspecified" for
@@ -48,6 +48,19 @@ type ServiceTask struct {
 	operation *service.Operation
 }
 
+// NewServiceTask creates a new service task named name and operation as
+// service engine with some options.
+//
+// Available options are:
+//   - activities.WithMultyInstance
+//   - activities.WithCompensation
+//   - activities.WithLoop
+//   - activities.WithStartQuantity
+//   - activities.WithCompletionQuantity
+//   - activities.WithSet
+//   - activities.WithoutParams
+//   - foundation.WithId
+//   - foundation.WithDoc
 func NewServiceTask(
 	name string,
 	operation *service.Operation,
@@ -68,13 +81,13 @@ func NewServiceTask(
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	t, err := NewTask(name, taskOpts...)
+	t, err := newTask(name, taskOpts...)
 	if err != nil {
 		return nil, err
 	}
 
 	return &ServiceTask{
-			Task:           *t,
+			task:           *t,
 			implementation: operation.Type(),
 			operation:      operation,
 		},
@@ -120,51 +133,31 @@ func (st *ServiceTask) Exec(
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	if err := st.loadInputMessage(re); err != nil {
-		return nil,
-			errs.New(
-				errs.M("couldn't set operation's incoming message"),
-				errs.C(errorClass),
-				errs.E(err),
-				errs.D("service_task_name", st.Name()),
-				errs.D("service_task_id", st.Id()),
-				errs.D("item_id", st.operation.IncomingMessage().Item().Id()),
-				errs.D("operation_id", st.operation.Id()),
-				errs.D("message_name", st.operation.IncomingMessage().Name()),
-				errs.D("message_id", st.operation.IncomingMessage().Id()))
+	err := st.loadInputMessage(ctx, re)
+	if err == nil {
+		err = st.operation.Run(ctx)
+		if err == nil {
+			err = st.uploadOutputMessage(ctx)
+			if err == nil {
+				return st.Outgoing(), nil
+			}
+
+		}
 	}
 
-	if err := st.operation.Run(ctx); err != nil {
-		return nil,
-			errs.New(
-				errs.M("operation run failed"),
-				errs.E(err),
-				errs.D("service_task_name", st.Name()),
-				errs.D("service_task_id", st.Id()),
-				errs.D("operation_id", st.operation.Id()),
-				errs.D("operation_name", st.operation.Name()))
-	}
-
-	if err := st.uploadOutputMessage(); err != nil {
-		return nil,
-			errs.New(
-				errs.M("couldn't save operation's outgoing message"),
-				errs.C(errorClass),
-				errs.E(err),
-				errs.D("service_task_name", st.Name()),
-				errs.D("service_task_id", st.Id()),
-				errs.D("item_id", st.operation.IncomingMessage().Item().Id()),
-				errs.D("operation_id", st.operation.Id()),
-				errs.D("message_name", st.operation.IncomingMessage().Name()),
-				errs.D("message_id", st.operation.IncomingMessage().Id()))
-	}
-
-	return st.Outgoing(), nil
+	return nil,
+		errs.New(
+			errs.M("couldn't set operation's incoming message"),
+			errs.C(errorClass),
+			errs.E(err),
+			errs.D("service_task_name", st.Name()),
+			errs.D("service_task_id", st.Id()),
+			errs.D("operation_id", st.operation.Id()))
 }
 
 // loadInputMessage tries to set value of the operation's incoming message
 // from scope data if them are Ready..
-func (st *ServiceTask) loadInputMessage(re renv.RuntimeEnvironment) error {
+func (st *ServiceTask) loadInputMessage(ctx context.Context, re renv.RuntimeEnvironment) error {
 	if st.operation.IncomingMessage() == nil ||
 		st.operation.IncomingMessage().Item() == nil {
 		return nil
@@ -186,7 +179,7 @@ func (st *ServiceTask) loadInputMessage(re renv.RuntimeEnvironment) error {
 	}
 
 	if err := st.operation.IncomingMessage().Item().
-		Structure().Update(d.Value().Get()); err != nil {
+		Structure().Update(ctx, d.Value().Get(ctx)); err != nil {
 		return errs.New(
 			errs.M("couldn't update operation's incoming message"),
 			errs.E(err))
@@ -197,7 +190,7 @@ func (st *ServiceTask) loadInputMessage(re renv.RuntimeEnvironment) error {
 
 // uploadOutputMessage uploads operation's output message into task's
 // output and set their state to Ready.
-func (st *ServiceTask) uploadOutputMessage() error {
+func (st *ServiceTask) uploadOutputMessage(ctx context.Context) error {
 	if st.operation.OutgoingMessage() == nil ||
 		st.operation.OutgoingMessage().Item() == nil {
 		return nil
@@ -213,7 +206,7 @@ func (st *ServiceTask) uploadOutputMessage() error {
 		if o.ItemDefinition().Id() == st.operation.OutgoingMessage().Item().Id() {
 			err = st.operation.OutgoingMessage().
 				Item().Structure().
-				Update(o.ItemDefinition().Structure().Get())
+				Update(ctx, o.ItemDefinition().Structure().Get(ctx))
 			if err == nil {
 				if err := o.UpdateState(data.ReadyDataState); err != nil {
 					return errs.New(

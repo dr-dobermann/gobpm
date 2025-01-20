@@ -95,7 +95,7 @@ func TestNewUserTask(t *testing.T) {
 						for _, d := range dd {
 							t.Log("got data from ", ndl.Name(),
 								": name [", d.Name(),
-								"] value [", d.Value().Get(), "]")
+								"] value [", d.Value().Get(context.Background()), "]")
 						}
 
 						return nil

@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -128,7 +129,7 @@ type Instance struct {
 	// Instance's run starting time.
 	startTime time.Time
 
-	Monitors []monitor.Writer
+	monitors []monitor.Writer
 }
 
 // New creates a new Instance from the Snapshot s and sets state to Ready.
@@ -164,7 +165,7 @@ func New(
 		parentScope:         parentScope,
 		parentEventProducer: ep,
 		rr:                  rr,
-		Monitors:            []monitor.Writer{},
+		monitors:            []monitor.Writer{},
 	}
 
 	if mon != nil {
@@ -204,15 +205,12 @@ func (inst *Instance) loadProperties(parentScope scope.Scope) error {
 
 	inst.rootScope, err = inst.rootScope.Append(inst.s.ProcessName)
 	if err != nil {
-		return errs.New(
-			errs.M("couldn't create Instance Scope data path"),
-			errs.E(err))
+		return fmt.Errorf("couldn't create instance's scope data path: %w", err)
 	}
+
 	inst.runtimeScope, err = inst.rootScope.Append(runtimeVars)
 	if err != nil {
-		return errs.New(
-			errs.M("couldn't create Instance Scope runtime variables data path"),
-			errs.E(err))
+		return fmt.Errorf("couldn't create instance's scope runtime variables data path: %w", err)
 	}
 
 	inst.scopes[inst.rootScope] = map[string]data.Data{}
@@ -261,11 +259,12 @@ func (inst *Instance) Run(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	if inst.State() != Ready {
+	if inst.state != Ready {
 		return errs.New(
-			errs.M("invalid instance state to run (want: Ready, has: %s)",
+			errs.M("invalid instance state to run",
 				inst.state),
-			errs.C(errorClass, errs.InvalidState))
+			errs.C(errorClass, errs.InvalidState),
+			errs.D("current_state", inst.state))
 	}
 
 	inst.m.Lock()
@@ -299,18 +298,18 @@ func (inst *Instance) Run(
 
 // runTracks runs all tracks of the instance.
 func (inst *Instance) runTracks(ctx context.Context) error {
-	if inst.state != Ready {
-		return errs.New(
-			errs.M("invalid instance state to run (want: Ready, have: %s)",
-				inst.state),
-			errs.C(errorClass, errs.InvalidState))
-	}
-
 	inst.state = Runned
 
 	// run only registered tracks, not created by runned track's forks.
 	tracks := append([]*track{}, maps.Values(inst.tracks)...)
 	for _, t := range tracks {
+		inst.show(
+			"INSTANCE.RUN",
+			"track runned",
+			map[string]any{
+				"start_node": t.currentStep().node.Name(),
+			})
+
 		inst.wg.Add(1)
 
 		go func(t *track) {
@@ -320,13 +319,6 @@ func (inst *Instance) runTracks(ctx context.Context) error {
 		}(t)
 	}
 
-	inst.show(
-		"INSTANCE.RUN",
-		"all tracks runned",
-		map[string]any{
-			"tracks": len(tracks),
-		})
-
 	return nil
 }
 
@@ -334,26 +326,29 @@ func (inst *Instance) runTracks(ctx context.Context) error {
 // If instance is running, added track also runs.
 func (inst *Instance) addTrack(ctx context.Context, nt *track) error {
 	if nt == nil {
-		return errs.New(
-			errs.M("couldn't add empty track to instance %q", inst.Id()),
-			errs.C(errorClass, errs.EmptyNotAllowed))
+		return fmt.Errorf("couldn't add empty track to instance %q", inst.Id())
 	}
 
 	inst.m.Lock()
 	defer inst.m.Unlock()
 
 	if _, ok := inst.tracks[nt.Id()]; ok {
-		return errs.New(
-			errs.M("track from node %q(%s) already registered in instance %q",
-				inst.tracks[nt.Id()].steps[0].node.Name(),
-				inst.tracks[nt.Id()].steps[0].node.Id(),
-				inst.Id()),
-			errs.C(errorClass, errs.DuplicateObject))
+		return fmt.Errorf("track from node %q(%s) already registered in instance %q",
+			inst.tracks[nt.Id()].steps[0].node.Name(),
+			inst.tracks[nt.Id()].steps[0].node.Id(),
+			inst.Id())
 	}
 
 	inst.tracks[nt.Id()] = nt
 
 	if inst.state == Runned {
+		inst.show(
+			"INSTANCE.RUN",
+			"track runned",
+			map[string]any{
+				"start_node": nt.currentStep().node.Name(),
+			})
+
 		inst.wg.Add(1)
 
 		go func() {
@@ -399,14 +394,12 @@ func (inst *Instance) addData(path scope.DataPath, dd ...data.Data) error {
 
 	for _, d := range dd {
 		if d == nil {
-			return errs.New(
-				errs.M("data is empty"))
+			return fmt.Errorf("data is empty")
 		}
 
 		dn := strings.TrimSpace(d.Name())
 		if dn == "" {
-			return errs.New(
-				errs.M("couldn't add data with no name"))
+			return fmt.Errorf("couldn't add data with no name")
 		}
 
 		vv[dn] = d
@@ -449,17 +442,13 @@ func (inst *Instance) getData(
 		path, err = path.DropTail()
 		if err != nil {
 			return nil,
-				errs.New(
-					errs.M("couldn't get upper level for Scope %q:",
-						path.String()),
-					errs.E(err))
+				fmt.Errorf("couldn't get upper level for Scope %q: %w",
+					path.String(), err)
 		}
 	}
 
 	return nil,
-		errs.New(
-			errs.M("data not found"),
-			errs.C(errs.ObjectNotFound))
+		fmt.Errorf("data not found")
 }
 
 // getRuntimeVar tries to find the Instance's runtime variable by its name.
@@ -479,40 +468,31 @@ func (inst *Instance) getRuntimeVar(name string) (data.Data, error) {
 
 	default:
 		return nil,
-			errs.New(
-				errs.M("invalid runtime variable name"),
-				errs.C(errorClass, errs.InvalidParameter),
-				errs.D("name", name))
+			fmt.Errorf("invalid runtime variable name %q", name)
 	}
 
 	id, err := data.NewItemDefinition(d)
 	if err != nil {
 		return nil,
-			errs.New(
-				errs.M("couldn't create an ItemDefinition for runtime variable",
-					errs.C(errorClass, errs.BulidingFailed)),
-				errs.E(err),
-				errs.D("name", name))
+			fmt.Errorf(
+				"couldn't create an ItemDefinition for runtime variable %q: %w",
+				name, err)
 	}
 
 	iae, err := data.NewItemAwareElement(id, data.ReadyDataState)
 	if err != nil {
 		return nil,
-			errs.New(
-				errs.M("couldn't create an ItemAwareElement for runtime variable",
-					errs.C(errorClass, errs.BulidingFailed)),
-				errs.E(err),
-				errs.D("name", name))
+			fmt.Errorf(
+				"couldn't create an ItemAwareElement for runtime variable %q: %w",
+				name, err)
 	}
 
 	p, err := data.NewParameter(name, iae)
 	if err != nil {
 		return nil,
-			errs.New(
-				errs.M("couldn't create an ItemDefinition for runtime variable",
-					errs.C(errorClass, errs.BulidingFailed)),
-				errs.E(err),
-				errs.D("name", name))
+			fmt.Errorf(
+				"couldn't create an ItemDefinition for runtime variable %q: %w",
+				name, err)
 	}
 
 	return p, nil
@@ -599,7 +579,7 @@ func (inst *Instance) show(
 
 	inst.monId.Add(1)
 
-	for _, m := range inst.Monitors {
+	for _, m := range inst.monitors {
 		go func(w monitor.Writer) {
 			w.Write(&ev)
 		}(m)
@@ -987,8 +967,8 @@ func (inst *Instance) RegisterWriter(m monitor.Writer) {
 	inst.m.Lock()
 	defer inst.m.Unlock()
 
-	if idx := slices.Index(inst.Monitors, m); idx == -1 {
-		inst.Monitors = append(inst.Monitors, m)
+	if idx := slices.Index(inst.monitors, m); idx == -1 {
+		inst.monitors = append(inst.monitors, m)
 	}
 }
 

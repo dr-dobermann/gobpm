@@ -31,7 +31,7 @@ type Process struct {
 	name string
 
 	// DEV_NOTE: CallableElement should be implemented as interface so it
-	// it shouldn't be used as a field or embedded struct.
+	// shouldn't be used as a field or embedded struct.
 	// common.CallableElement
 
 	// DEV_NOTE: Container replaced by interface flow.Container
@@ -141,12 +141,6 @@ func (p *Process) Properties() []*data.Property {
 
 // addNode adds non-empty unique FlowNode n to the process p.
 func (p *Process) addNode(n flow.Node) error {
-	if n == nil {
-		return errs.New(
-			errs.M("node couldn't be empty"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
 	if _, ok := p.nodes[n.Id()]; ok {
 		return errs.New(
 			errs.M("node %q(%s) already registered in process.",
@@ -189,12 +183,6 @@ func has[T comparable](slice []T, item T) bool {
 
 // addFlow add non-empty unique SequenceFlow into the Process.
 func (p *Process) addFlow(f *flow.SequenceFlow) error {
-	if f == nil {
-		return errs.New(
-			errs.M("flow couldn't be empty"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
 	if _, ok := p.flows[f.Id()]; ok {
 		return errs.New(
 			errs.M("flow %q already exists in the process %q",

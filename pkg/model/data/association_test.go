@@ -78,32 +78,35 @@ func TestAssociations(t *testing.T) {
 
 			require.True(t, a.HasSourceId("source"))
 
-			v, err := a.Value(context.Background())
+			ctx := context.Background()
+			v, err := a.Value(ctx)
 			require.NoError(t, err)
-			require.Equal(t, 100, v.Structure().Get())
+			require.Equal(t, 100, v.Structure().Get(ctx))
 
 			// update non-existed association source
 			err = a.UpdateSource(
-				context.Background(),
+				ctx,
 				data.MustItemDefinition(
 					values.NewVariable(42),
-					foundation.WithId("invalid source")))
+					foundation.WithId("invalid source")),
+				data.Recalculate)
 			require.Error(t, err)
 
 			// update association source
 			err = a.UpdateSource(
-				context.Background(),
+				ctx,
 				data.MustItemDefinition(
 					values.NewVariable(42),
-					foundation.WithId("source")))
+					foundation.WithId("source")),
+				data.Recalculate)
 			require.NoError(t, err)
 
-			require.False(t, a.IsReady())
+			require.True(t, a.IsReady())
 
-			v, err = a.Value(context.Background())
+			v, err = a.Value(ctx)
 
 			require.NoError(t, err)
-			require.Equal(t, 42, v.Structure().Get())
+			require.Equal(t, 42, v.Structure().Get(ctx))
 
 			// with transformation
 			mfe := mockdata.NewMockFormalExpression(t)
@@ -116,7 +119,7 @@ func TestAssociations(t *testing.T) {
 								fmt.Errorf("couldn't get value")
 						}
 
-						res, ok := v.Value().Get().(int)
+						res, ok := v.Value().Get(ctx).(int)
 						if !ok {
 							return nil,
 								fmt.Errorf("value conversion to int failed")
@@ -128,7 +131,7 @@ func TestAssociations(t *testing.T) {
 								fmt.Errorf("couldn't get multiplicator")
 						}
 
-						mul, ok := m.Value().Get().(int)
+						mul, ok := m.Value().Get(ctx).(int)
 						if !ok {
 							return nil,
 								fmt.Errorf("multiplicator conversion to int failed")
@@ -156,19 +159,20 @@ func TestAssociations(t *testing.T) {
 			require.NoError(t, err)
 
 			require.False(t, a.IsReady())
-			_, err = a.Value(context.Background())
+			_, err = a.Value(ctx)
 			require.Error(t, err)
 
 			// update association source
 			err = a.UpdateSource(
-				context.Background(),
+				ctx,
 				data.MustItemDefinition(
 					values.NewVariable(42),
-					foundation.WithId("value")))
+					foundation.WithId("value")),
+				data.Recalculate)
 			require.NoError(t, err)
 
 			trg, err := a.Value(context.Background())
 			require.NoError(t, err)
-			require.Equal(t, 84, trg.Structure().Get())
+			require.Equal(t, 84, trg.Structure().Get(ctx))
 		})
 }

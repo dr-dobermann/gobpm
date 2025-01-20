@@ -24,7 +24,7 @@ func CheckPositive(ctx context.Context, ds data.Source) (data.Value, error) {
 		return nil, fmt.Errorf("couldn't find x value: %w", err)
 	}
 
-	bx, ok := xv.Value().Get().(int)
+	bx, ok := xv.Value().Get(ctx).(int)
 	if !ok {
 		return nil,
 			fmt.Errorf("x isn't a int type (have %q)",
@@ -71,11 +71,11 @@ func TestGoBpmExpression(t *testing.T) {
 
 	res, err := ge.Evaluate(ctx, dsm)
 	require.NoError(t, err)
-	require.True(t, res.Get().(bool))
+	require.True(t, res.Get(ctx).(bool))
 
 	rr, err := ge.Result()
 	require.NoError(t, err)
-	require.True(t, rr.Get().(bool))
+	require.True(t, rr.Get(ctx).(bool))
 }
 
 func TestGoBpmExprErrors(t *testing.T) {

@@ -122,21 +122,23 @@ func parseEDef(
 				eDef.Id(), name, err)
 		}
 
+		ctx := context.Background()
+
 		switch name {
 		case "Time":
-			tw.next, ok = tm.Get().(time.Time)
+			tw.next, ok = tm.Get(ctx).(time.Time)
 			if ok && tw.next.Before(time.Now()) {
 				return fmt.Errorf("couldn't use past time as a timer")
 			}
 
 		case "Cycle":
-			tw.cyclesLeft, ok = tm.Get().(int)
+			tw.cyclesLeft, ok = tm.Get(ctx).(int)
 			if ok && tw.cyclesLeft <= 0 {
 				return fmt.Errorf("cycle isn't defined")
 			}
 
 		case "Duration":
-			tw.duration, ok = tm.Get().(time.Duration)
+			tw.duration, ok = tm.Get(ctx).(time.Duration)
 			if ok && tw.duration <= 0 {
 				return fmt.Errorf("duration isn't defined")
 			}

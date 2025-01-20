@@ -1,6 +1,7 @@
 package common_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
@@ -35,7 +36,7 @@ func TestMessage(t *testing.T) {
 					values.NewVariable(100)))
 			require.NoError(t, err)
 			require.Equal(t, "message", m.Name())
-			require.Equal(t, 100, m.Item().Structure().Get())
+			require.Equal(t, 100, m.Item().Structure().Get(context.Background()))
 
 			require.NotPanics(t,
 				func() {

@@ -1,6 +1,7 @@
 package values
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"sync"
@@ -28,7 +29,7 @@ func NewVariable[T any](value T) *Variable[T] {
 }
 
 // Get returns value of the Value.
-func (v *Variable[T]) Get() any {
+func (v *Variable[T]) Get(_ context.Context) any {
 	v.lock.Lock()
 	defer v.lock.Unlock()
 
@@ -49,7 +50,7 @@ func (v *Variable[T]) Unlock() {
 // Update sets new value of the Value.
 // For collection Update changes element with current index
 // if collection is empty then panic will be fired.
-func (v *Variable[T]) Update(value any) error {
+func (v *Variable[T]) Update(_ context.Context, value any) error {
 	val, err := checkValue[T](value)
 	if err != nil {
 		return err
