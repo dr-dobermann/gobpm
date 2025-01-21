@@ -305,8 +305,6 @@ func (t *track) stop() {
 
 // run start execution loop of the track which ends by ctx's cancel or
 // when there is no outgoing flows from the processing nodes.
-//
-//nolint:funlen
 func (t *track) run(
 	ctx context.Context,
 ) {

@@ -141,7 +141,6 @@ func (st *ServiceTask) Exec(
 			if err == nil {
 				return st.Outgoing(), nil
 			}
-
 		}
 	}
 
