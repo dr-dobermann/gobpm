@@ -1,7 +1,6 @@
 package artifacts
 
 import (
-	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -42,7 +41,7 @@ func NewArtifact(baseOpts ...options.Option) (*Artifact, error) {
 func MustArtifact(baseOpts ...options.Option) *Artifact {
 	ar, err := NewArtifact(baseOpts...)
 	if err != nil {
-		errs.Panic(err)
+		panic(err)
 	}
 
 	return ar
@@ -90,7 +89,7 @@ func MustGroup(
 ) *Group {
 	g, err := NewGroup(categoryName, baseOpts...)
 	if err != nil {
-		errs.Panic(err)
+		panic(err)
 	}
 
 	return g

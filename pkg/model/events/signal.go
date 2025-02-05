@@ -97,7 +97,7 @@ func MustSignalEventDefinition(
 ) *SignalEventDefinition {
 	sed, err := NewSignalEventDefinition(signal, baseOpts...)
 	if err != nil {
-		errs.Panic(err)
+		panic(err)
 	}
 
 	return sed
@@ -118,7 +118,6 @@ func (*SignalEventDefinition) Type() flow.EventTrigger {
 // CheckItemDefinition check if definition is related with
 // data.ItemDefinition with iDefId Id.
 func (sed *SignalEventDefinition) CheckItemDefinition(iDefId string) bool {
-
 	if sed.signal.structure == nil {
 		return false
 	}

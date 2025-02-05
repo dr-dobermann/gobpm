@@ -39,7 +39,7 @@ func SetGenerator(newGen IdGenerator) error {
 func GenerateId() string {
 	if generator == nil {
 		if err := SetGenerator(newDefaultGenerator()); err != nil {
-			errs.Panic("default generator setup failed: " + err.Error())
+			panic("default generator setup failed: " + err.Error())
 		}
 	}
 

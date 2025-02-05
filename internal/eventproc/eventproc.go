@@ -4,7 +4,6 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
@@ -93,9 +92,7 @@ const (
 // If there is an invalid value of the state it panics.
 func (ws EventWaiterState) String() string {
 	if ws < WSCreated || ws > WSFailed {
-		errs.Panic("undefined EventWaiterState: " + strconv.Itoa(int(ws)))
-
-		return ""
+		panic("undefined EventWaiterState: " + strconv.Itoa(int(ws)))
 	}
 
 	return []string{

@@ -49,7 +49,7 @@ func (a *Array[T]) Get(_ context.Context) any {
 	defer a.lock.Unlock()
 
 	if a.index < 0 {
-		errs.Panic("collection is empty")
+		panic("collection is empty")
 	}
 
 	return a.elements[a.index]

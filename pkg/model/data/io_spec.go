@@ -30,7 +30,7 @@ const (
 
 func (st SetType) String() string {
 	if err := st.Validate(SingleType); err != nil {
-		errs.Panic("ivalid set type: " + strconv.Itoa(int(st)))
+		panic("ivalid set type: " + strconv.Itoa(int(st)))
 	}
 
 	return map[SetType]string{

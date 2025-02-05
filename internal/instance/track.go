@@ -261,9 +261,7 @@ func (t *track) updateState(newState trackState) {
 
 	if step.tk != nil {
 		if err := step.tk.updateState(ts); err != nil {
-			errs.Panic(err)
-
-			return
+			panic("token " + step.tk.Id() + " updating failed: " + err.Error())
 		}
 	}
 

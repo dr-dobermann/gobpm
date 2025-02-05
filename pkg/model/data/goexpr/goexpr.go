@@ -94,9 +94,7 @@ func Must(
 ) *GExpression {
 	ge, err := New(ds, res, gfunc, opts...)
 	if err != nil {
-		errs.Panic("couldn't create a GExpression: " + err.Error())
-
-		return nil
+		panic("couldn't create a GExpression: " + err.Error())
 	}
 
 	return ge

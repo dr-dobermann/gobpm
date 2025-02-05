@@ -156,9 +156,7 @@ func (fe *FlowElement) Container() Container {
 // EType returns invalid element type for generic FlowElement.
 // Every Element should implement itsown EType.
 func (fe *FlowElement) EType() ElementType {
-	errs.Panic("couldn't use Type for generic FlowElement")
-
-	return InvalidElement
+	panic("couldn't use Type for generic FlowElement")
 }
 
 // ----------------------------------------------------------------------------

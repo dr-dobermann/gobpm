@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -91,8 +90,7 @@ func (ae *ApplicationError) HasClass(class string) bool {
 func (ae *ApplicationError) JSON() []byte {
 	js, err := json.Marshal(ae)
 	if err != nil {
-		Panic("couldn't convert application error to json: " + err.Error())
-		return nil
+		panic("failed to marshal error into json: " + ae.Error())
 	}
 
 	return js
@@ -150,72 +148,4 @@ func (ae ApplicationError) MarshalJSON() ([]byte, error) {
 			Classes: ae.Classes,
 			Details: ae.Details,
 		})
-}
-
-// -----------------------------------------------------------------------------
-
-// PanicHandler registered for handling panic situation of goBpm.
-// If registered handler returns true, then panic is fired according
-// to dontPanic settings.
-// if return is false, panic ignored as it already handled by
-// PanicHandler.
-type PanicHandler func(v any) bool
-
-var (
-	// flag which prevents panic on unhandled errors.
-	// if set to true then error just printed to stderr.
-	dontPanic bool
-
-	// panicHandler to handle panic situation.
-	panicHook PanicHandler
-)
-
-// SetDontPanic sets current behavior of panic.
-func SetDontPanic(dp bool) {
-	dontPanic = dp
-}
-
-// DontPanic return current setup of panic behavior
-func DontPanic() bool {
-	return dontPanic
-}
-
-// Panic write unhandled error into the Stderr or panic dending of the
-// dontPanic settings.
-func Panic(v any) {
-	if panicHook != nil {
-		if unhandled := panicHook(v); !unhandled {
-			return
-		}
-	}
-	if dontPanic {
-		fmt.Fprintln(os.Stderr, v)
-
-		return
-	}
-
-	panic(v)
-}
-
-// RegisterPanicHandler registers new PanicHandler.
-func RegisterPanicHandler(newHandler PanicHandler) error {
-	if newHandler == nil {
-		return New(
-			M("empty handler"),
-			C(EmptyNotAllowed))
-	}
-
-	panicHook = newHandler
-
-	return nil
-}
-
-// DropPanicHandler unregisters panic handler.
-func DropPanicHandler() {
-	panicHook = nil
-}
-
-// HasPanicHandler checks if panicHandler is set.
-func HasPanicHandler() bool {
-	return panicHook != nil
 }

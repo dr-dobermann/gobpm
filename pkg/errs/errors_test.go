@@ -9,25 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPanic(t *testing.T) {
-	require.Error(t, errs.RegisterPanicHandler(nil))
-
-	handlerCreator := func(unhandled bool) errs.PanicHandler {
-		return func(v any) bool {
-			fmt.Println("panic handled: ", v)
-			return unhandled
-		}
-	}
-
-	require.NoError(t, errs.RegisterPanicHandler(handlerCreator(true)))
-	require.Panics(t, func() { errs.Panic("panic unhandled") })
-
-	errs.DropPanicHandler()
-
-	require.NoError(t, errs.RegisterPanicHandler(handlerCreator(false)))
-	require.NotPanics(t, func() { errs.Panic("panic handled") })
-}
-
 func TestJson(t *testing.T) {
 	testJson := `{"error":"test error","message":"test message","classes":["INVALID_OBJECT","BUILDING_FAILED"],"details":{"name":"value"}}`
 
@@ -39,17 +20,6 @@ func TestJson(t *testing.T) {
 
 	js := string(ae.JSON())
 	require.Equal(t, testJson, js)
-}
-
-func TestDontPanic(t *testing.T) {
-	errs.DropPanicHandler()
-
-	require.False(t, errs.DontPanic())
-	require.Panics(t, func() { errs.Panic("should panic") })
-
-	errs.SetDontPanic(true)
-	require.True(t, errs.DontPanic())
-	require.NotPanics(t, func() { errs.Panic("don't panic") })
 }
 
 func TestErrors(t *testing.T) {

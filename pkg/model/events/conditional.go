@@ -53,7 +53,7 @@ func MustConditionalEventDefinition(
 ) *ConditionalEventDefinition {
 	ced, err := NewConditionalEventDefinition(condition, baseOpts...)
 	if err != nil {
-		errs.Panic(err.Error())
+		panic(err.Error())
 	}
 
 	return ced

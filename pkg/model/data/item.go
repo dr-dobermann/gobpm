@@ -122,7 +122,7 @@ func NewItemDefinition(
 func MustItemDefinition(value Value, opts ...options.Option) *ItemDefinition {
 	iDef, err := NewItemDefinition(value, opts...)
 	if err != nil {
-		errs.Panic(err)
+		panic(err)
 	}
 
 	return iDef
@@ -234,7 +234,7 @@ func MustItemAwareElement(
 ) *ItemAwareElement {
 	iae, err := NewItemAwareElement(item, state, baseOpts...)
 	if err != nil {
-		errs.Panic(err.Error())
+		panic(err.Error())
 	}
 
 	return iae

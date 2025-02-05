@@ -14,10 +14,8 @@ const (
 	StateReady       = "READY_DATA_STATE"
 )
 
-var (
-	// Default DataStates. Initialized by calling CreateDefaultStates.
-	UndefinedDataState, UnavailableDataState, ReadyDataState *DataState
-)
+// Default DataStates. Initialized by calling CreateDefaultStates.
+var UndefinedDataState, UnavailableDataState, ReadyDataState *DataState
 
 // Data Object elements can optionally reference a DataState element, which is
 // the state of the data contained in the Data Object. The definition of these
@@ -63,7 +61,7 @@ func MustDataState(
 ) *DataState {
 	ds, err := NewDataState(name, baseOpts...)
 	if err != nil {
-		errs.Panic("DataState creation failed: " + err.Error())
+		panic("DataState creation failed: " + err.Error())
 	}
 
 	return ds
@@ -86,7 +84,8 @@ func CreateDefaultStates() error {
 	dss := map[string]*DataState{
 		StateUndefined:   nil,
 		StateUnavailable: nil,
-		StateReady:       nil}
+		StateReady:       nil,
+	}
 
 	for sn := range dss {
 		ds, err := NewDataState(sn)

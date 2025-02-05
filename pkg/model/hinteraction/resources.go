@@ -83,7 +83,7 @@ func MustResourceRole(
 ) *ResourceRole {
 	r, err := NewResourceRole(name, res, assignExpr, pBinding, baseOpts...)
 	if err != nil {
-		errs.Panic(err)
+		panic(err)
 	}
 
 	return r

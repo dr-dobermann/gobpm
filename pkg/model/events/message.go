@@ -55,7 +55,7 @@ func MustMessageEventDefinition(
 ) *MessageEventDefinition {
 	med, err := NewMessageEventDefintion(msg, operation, baseOpts...)
 	if err != nil {
-		errs.Panic(err)
+		panic(err)
 	}
 
 	return med
@@ -75,7 +75,6 @@ func (med *MessageEventDefinition) Operation() *service.Operation {
 
 // Type returns the MessageEventDefition's flow.EventTrigger.
 func (*MessageEventDefinition) Type() flow.EventTrigger {
-
 	return flow.TriggerMessage
 }
 
@@ -101,7 +100,6 @@ func (med *MessageEventDefinition) GetItemsList() []*data.ItemDefinition {
 	}
 
 	return append(idd, med.message.Item())
-
 }
 
 // CloneEvent clones EventDefinition with dedicated data.ItemDefinition

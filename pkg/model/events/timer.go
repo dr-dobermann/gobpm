@@ -104,7 +104,7 @@ func MustTimerEventDefinition(
 ) *TimerEventDefinition {
 	ted, err := NewTimerEventDefinition(tDate, tCycle, tDuration, baseOpts...)
 	if err != nil {
-		errs.Panic(err.Error())
+		panic(err.Error())
 	}
 
 	return ted

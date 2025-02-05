@@ -57,7 +57,7 @@ func MustProperty(
 ) *Property {
 	p, err := NewProperty(name, item, state)
 	if err != nil {
-		errs.Panic(err)
+		panic(err)
 	}
 
 	return p
@@ -92,9 +92,7 @@ func NewProp(name string, iaeOpt iaeAdderOption) (*Property, error) {
 func MustProp(name string, iaeOpt iaeAdderOption) *Property {
 	p, err := NewProp(name, iaeOpt)
 	if err != nil {
-		errs.Panic(err)
-
-		return nil
+		panic(err)
 	}
 
 	return p

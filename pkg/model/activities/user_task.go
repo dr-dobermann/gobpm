@@ -150,8 +150,7 @@ func (ut *UserTask) Renderers() []hi.Renderer {
 // Outputs returns outputs expected from renderers.
 func (ut *UserTask) Outputs() []*common.ResourceParameter {
 	if ut.outputs == nil {
-		errs.Panic("user task has no output defined")
-		return nil
+		panic("user task has no output defined")
 	}
 
 	return ut.outputs.Parameters()

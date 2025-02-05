@@ -68,7 +68,7 @@ func MustMessage(
 ) *Message {
 	m, err := NewMessage(name, item, baseOpts...)
 	if err != nil {
-		errs.Panic(err)
+		panic(err)
 	}
 
 	return m

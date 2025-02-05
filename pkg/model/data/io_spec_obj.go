@@ -84,7 +84,7 @@ func NewParameter(name string, iae *ItemAwareElement) (*Parameter, error) {
 func MustParameter(name string, iae *ItemAwareElement) *Parameter {
 	p, err := NewParameter(name, iae)
 	if err != nil {
-		errs.Panic(err.Error())
+		panic(err.Error())
 	}
 
 	return p
@@ -232,7 +232,7 @@ func NewSet(name string, baseOpts ...options.Option) (*Set, error) {
 func MustSet(name string, baseOpts ...options.Option) *Set {
 	s, err := NewSet(name, baseOpts...)
 	if err != nil {
-		errs.Panic(err)
+		panic(err)
 	}
 
 	return s

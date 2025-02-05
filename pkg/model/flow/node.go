@@ -142,16 +142,12 @@ func (n *FlowNode) AddFlow(sf *SequenceFlow, dir data.Direction) error {
 
 // Node returns underlaying node structure.
 func (fn *FlowNode) Node() Node {
-	errs.Panic("don't use Node from generic FlowNode")
-
-	return nil
+	panic("don't use Node from generic FlowNode")
 }
 
 // NodeType returns the Node's type.
 func (fn *FlowNode) NodeType() NodeType {
-	errs.Panic("don't use NodeType from generic FlowNode")
-
-	return InvalidNodeType
+	panic("don't use NodeType from generic FlowNode")
 }
 
 // ----------------- Element interface -----------------------------------------

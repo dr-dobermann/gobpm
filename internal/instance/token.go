@@ -37,9 +37,7 @@ type token struct {
 // newToken creates a new token and adds it to the Instance.
 func newToken(inst *Instance, trk *track) *token {
 	if inst == nil {
-		errs.Panic("empty instance on token creation")
-
-		return nil
+		panic("empty instance on token creation")
 	}
 
 	t := token{

@@ -49,7 +49,6 @@ func NewEscalation(
 		"name should be provided for escalation",
 		errorClass,
 	); err != nil {
-
 		return nil, err
 	}
 
@@ -83,8 +82,7 @@ func MustEscalation(
 ) *Escalation {
 	e, err := NewEscalation(name, code, item, baseOpts...)
 	if err != nil {
-		errs.Panic(err)
-		return nil
+		panic(err)
 	}
 
 	return e
@@ -173,7 +171,6 @@ func (eed *EscalationEventDefinition) GetItemsList() []*data.ItemDefinition {
 	}
 
 	return append(idd, eed.escalation.structure)
-
 }
 
 // CloneEvent clones EventDefinition with dedicated data.ItemDefinition
