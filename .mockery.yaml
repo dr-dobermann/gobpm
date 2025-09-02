@@ -20,6 +20,7 @@ packages:
     interfaces:
       EventProducer:    
       EventProcessor:
+      EventWaiter:
   github.com/dr-dobermann/gobpm/pkg/monitor:
     interfaces:
       Writer:
@@ -33,6 +34,8 @@ packages:
       Registrator:
   github.com/dr-dobermann/gobpm/pkg/model/flow:
     interfaces:
+      Element:
+      EventDefinition:
       AssociationSource:
       AssociationTarget:
     

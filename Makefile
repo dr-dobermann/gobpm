@@ -26,11 +26,11 @@ lint:
 # 	${DC} -f ./stand/db/docker-compose.yaml build
 # 	${DC} -f ./stand/db/docker-compose.yaml up --detach --wait --remove-orphans
 
-test:
+test: gen_mock_files
 	go test -v -cover ./...
 .PHONY: test
 
-test_coverage:
+test_coverage: gen_mock_files
 	go test -v -coverprofile=c.out ./...
 	go tool cover -html=c.out
 	rm c.out
@@ -46,7 +46,7 @@ clear:
 .PHONY: clear
 
 gen_mock_files:
-	rm -rf .generated/
+	rm -rf generated/
 	mockery
 	go mod tidy
 .PHONY: gen_mock_files
