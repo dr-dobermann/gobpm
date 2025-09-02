@@ -82,7 +82,7 @@ func (eh *eventHub) RegisterEvent(
 	p, ok := eh.processors[ep.Id()]
 	eh.m.RUnlock()
 	if !ok {
-		p = *new(waitersList)
+		p = make(waitersList)
 	}
 
 	if _, ok := p[eDef.Id()]; ok {
@@ -103,6 +103,7 @@ func (eh *eventHub) RegisterEvent(
 
 	eh.m.Lock()
 	p[eDef.Id()] = w
+	eh.processors[ep.Id()] = p
 	eh.m.Unlock()
 
 	return nil
