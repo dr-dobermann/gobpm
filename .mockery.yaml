@@ -33,6 +33,7 @@ packages:
       Registrator:
   github.com/dr-dobermann/gobpm/pkg/model/flow:
     interfaces:
+      Element:
       AssociationSource:
       AssociationTarget:
     
