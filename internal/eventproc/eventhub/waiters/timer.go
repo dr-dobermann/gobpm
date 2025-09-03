@@ -66,7 +66,7 @@ func NewTimeWaiter(
 			errs.New(
 				errs.M("not an TimerEventDefinition"),
 				errs.C(TimerWatierError, errs.TypeCastingError),
-				errs.D("event_defintion_type", reflect.TypeOf(eDefI)))
+				errs.D("event_definition_type", reflect.TypeOf(eDefI)))
 	}
 
 	id = strings.TrimSpace(id)

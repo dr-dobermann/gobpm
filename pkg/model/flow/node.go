@@ -4,10 +4,11 @@ import (
 	"errors"
 	"fmt"
 
+	"golang.org/x/exp/maps"
+
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
-	"golang.org/x/exp/maps"
 )
 
 type NodeType string

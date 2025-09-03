@@ -1,4 +1,4 @@
-//nolint: goimports
+//nolint:goimports
 package values
 
 // This file consists of typed function for Variable.
@@ -16,16 +16,19 @@ func (v *Variable[T]) GetT() T {
 // safety use Lock/Unlock of the Value.
 //
 // DO NOT TRY to update inner value on GetP call as followed:
-//    v.Lock()
-//    v.GetP().inner_value = new_value
-//    v.Unlock()
-// BECAUSE IT LEADS to DEADLOCK
+//
+//	v.Lock()
+//	v.GetP().inner_value = new_value
+//	v.Unlock()
+//
+// # BECAUSE IT LEADS to DEADLOCK
 //
 // Use followed pattern:
-//    pv := v.GetP()
-//    v.Lock()
-//    pv.inner_value = new_value
-//    v.Unlock()
+//
+//	pv := v.GetP()
+//	v.Lock()
+//	pv.inner_value = new_value
+//	v.Unlock()
 func (v *Variable[T]) GetP() *T {
 	v.lock.Lock()
 	defer v.lock.Unlock()

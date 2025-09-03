@@ -16,8 +16,16 @@ update_modules:
 .PHONY: update_modules
 
 lint:
-	golangci-lint run -v ./...
+	golangci-lint run --timeout=10m cmd/... internal/... pkg/...
 .PHONY: lint
+
+lint_fix:
+	golangci-lint run --timeout=10m --fix cmd/... internal/... pkg/...
+.PHONY: lint_fix
+
+lint_all:
+	golangci-lint run --timeout=10m ./...
+.PHONY: lint_all
 
 # wlint:
 # 	docker run --rm -v //c/wrk/development/go/src/gobpm://cmd -w //cmd golangci/golangci-lint golangci-lint run -v

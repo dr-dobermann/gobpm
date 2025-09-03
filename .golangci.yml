@@ -4,24 +4,42 @@ run:
   timeout: 10m
   deadline: 19m
   tests: false
-  skip-dirs:
-    - ent
-  skip-files:
-    - mock_*.go
-    - .*.pb.go
+  go: "1.21"
 
 issues:
   exclude-use-default: false
-  errcheck:
-    check-type-assertions: true
-    check-blank: true
+  exclude-dirs:
+    - generated
+    - .generated
+    - examples
+  exclude-files:
+    - "mock_.*\\.go$"
+    - ".*\\.pb\\.go$"
+    - ".*_mock\\.go$"
   exclude-rules:    
     - linters:
         - lll
       source: "^//go:generate "
+    - linters:
+        - revive
+      text: "package-comments"
+    - linters:
+        - stylecheck
+      text: "ST1000"
+    - linters:
+        - revive
+      text: "exported.*should have comment"
+    - linters:
+        - revive  
+      text: "receiver-naming"
+    - linters:
+        - revive
+      text: "unexported-return"
+    - linters:
+        - revive
+      text: "var-naming.*should be.*ID"
 
 linters-settings:
-  enable-all: true
   gocritic:
     enabled-tags:      
      - diagnostic    
@@ -33,63 +51,112 @@ linters-settings:
       - unnamedResult
       - whyNoLint
       - commentedOutCode
+      - hugeParam
   gosimple:
-    go: "1.20"
     checks: ["all"]
   staticcheck:
-    go: "1.20"
     checks: ["all"]
+  govet:
+    enable:
+      - shadow
+      - atomic
+      - bools
+      - buildtag
+      - cgocall
+      - composites
+      - copylocks
+      - deepequalerrors
+      - errorsas
+      - fieldalignment
+      - findcall
+      - framepointer
+      - httpresponse
+      - ifaceassert
+      - loopclosure
+      - lostcancel
+      - nilfunc
+      - nilness
+      - printf
+      - reflectvaluecompare
+      - shift
+      - sigchanyzer
+      - sortslice
+      - stdmethods
+      - stringintconv
+      - structtag
+      - testinggoroutine
+      - tests
+      - unmarshal
+      - unreachable
+      - unsafeptr
+      - unusedresult
+  gocyclo:
+    min-complexity: 15
+  funlen:
+    lines: 100
+    statements: 50
+  nestif:
+    min-complexity: 4
+  lll:
+    line-length: 120
+  goimports:
+    local-prefixes: github.com/dr-dobermann/gobpm
+  misspell:
+    locale: US
+  depguard:
+    rules:
+      main:
+        deny:
+          - pkg: "io/ioutil"
+            desc: "io/ioutil is deprecated, use io and os packages instead"
 
 linters:
-  # please, do not use `enable-all`: it's deprecated and will be removed soon.
-  # inverted configuration with `enable-all` and `disable` is not scalable during updates of golangci-lint
   disable-all: true
   enable:
-    - asciicheck    
-    - dogsled
-    - dupl
-    - errcheck
-    - funlen
-    - gochecknoinits
-    - gocognit
-    - goconst
-    - exportloopref
-    - gocritic
-    - gocyclo
-    # - goerr113
-    - goprintffuncname
-    # - gosec
-    - gosimple
-    - ineffassign    
-    - misspell
-    - nakedret
-    - nestif
-    - prealloc
-    - staticcheck
-    - testpackage
-    - typecheck
-    - unconvert
-    - unused
-    - whitespace
-    - nolintlint
-    # - wsl
-    - govet
-    # - depguard
-    # - revive
-    # - godot
-    # - godox
-    # - stylecheck
-    - goimports
-    # - gofmt
-    # - lll
-    # - gomnd
-    # - deadcode deprecated
-    # - varcheck deprecated    
-    # - rowserrcheck is disabled because of generics
-    # - structcheck deprecated
-    # - scopelint deprecated
-    # - maligned deprecated
-    # - unparam # "ломает" ent.go
-    # - interfacer # deprecated "ломает" ent.go
-    # - bodyclose "ломает" ent.go
+    # Essential linters
+    - errcheck          # Check for unchecked errors
+    - gosimple          # Simplify code
+    - govet             # Vet examines Go source code  
+    - ineffassign       # Detect ineffectual assignments
+    - staticcheck       # Static analysis
+    - typecheck         # Type checking
+    - unused            # Find unused code
+    
+    # Code quality
+    - gocritic          # Comprehensive Go linter
+    - gocyclo           # Cyclomatic complexity
+    - funlen            # Function length
+    - gocognit          # Cognitive complexity
+    - dupl              # Code duplication
+    - goconst           # Repeated strings that could be constants
+    
+    # Style and formatting
+    - goimports         # Imports formatting
+    - misspell          # Misspelled English words
+    - whitespace        # Whitespace issues
+    - asciicheck        # Non-ASCII characters
+    - nolintlint        # Ill-formed or misplaced nolint directives
+    
+    # Best practices  
+    - gochecknoinits    # Check for init functions
+    - goprintffuncname  # Printf-like function naming
+    - nakedret          # Naked returns in long functions
+    - prealloc          # Slice preallocation
+    - unconvert         # Unnecessary conversions
+    - testpackage       # Test package naming
+    
+    # Modern linters  
+    - revive            # Replacement for golint
+    - stylecheck        # Style checker
+    - gosec             # Security checker
+    - depguard          # Import restrictions
+    
+    # Optional but useful
+    # - lll             # Line length (configured to 120)
+    # - goerr113        # Error wrapping
+    # - godot           # Comment formatting  
+    # - godox           # TODO/FIXME comments
+    # - wsl             # Whitespace linter
+    # - fieldalignment  # Struct field alignment (performance optimization)
+    # - nestif          # Complex nested ifs
     

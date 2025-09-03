@@ -43,6 +43,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/runner"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/process"
 )
 
 const errorClass = "THRESHER_ERRORS"
@@ -406,9 +407,9 @@ func (t *Thresher) PropagateEvent(
 
 // --------------- exec.Runner interface ---------------------------------------
 
-// RegisterProcess registers a process snapshot to start Instances on
+// RegisterProcessFromSnapshot registers a process snapshot to start Instances on
 // initial event firing
-func (t *Thresher) RegisterProcess(
+func (t *Thresher) RegisterProcessFromSnapshot(
 	s *snapshot.Snapshot,
 ) error {
 	if s == nil {
@@ -432,6 +433,28 @@ func (t *Thresher) RegisterProcess(
 	}
 
 	return nil
+}
+
+// RegisterProcess registers a process directly, creating snapshot internally
+func (t *Thresher) RegisterProcess(
+	p *process.Process,
+) error {
+	if p == nil {
+		return errs.New(
+			errs.M("empty process"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	// Create snapshot from process
+	s, err := snapshot.New(p)
+	if err != nil {
+		return errs.New(
+			errs.M("failed to create snapshot from process"),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.E(err))
+	}
+
+	return t.RegisterProcessFromSnapshot(s)
 }
 
 // StartProcess runs process with processId without any event even if

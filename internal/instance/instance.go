@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/exp/maps"
+
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/interactor"
@@ -21,7 +23,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
-	"golang.org/x/exp/maps"
 
 	"github.com/dr-dobermann/gobpm/pkg/monitor"
 )

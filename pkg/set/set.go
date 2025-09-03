@@ -5,7 +5,7 @@ type Set[T comparable] struct {
 	elements []T
 }
 
-// NewSet returns a new Set from values.
+// New returns a new Set from values.
 func New[T comparable](values ...T) *Set[T] {
 	s := Set[T]{
 		elements: []T{},

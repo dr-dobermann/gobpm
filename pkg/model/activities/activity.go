@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 
+	"golang.org/x/exp/maps"
+
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -12,7 +14,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
-	"golang.org/x/exp/maps"
 )
 
 // The activity class is the abstract super class for all concrete Activity

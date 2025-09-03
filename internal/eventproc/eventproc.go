@@ -104,7 +104,7 @@ func (ws EventWaiterState) String() string {
 		"Runned",
 		"Ended",
 		"Stopped",
-		"Cancelled",
+		"Canceled",
 		"Failed",
 	}[ws]
 }

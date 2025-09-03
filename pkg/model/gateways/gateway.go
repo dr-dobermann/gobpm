@@ -179,6 +179,8 @@ func (g *Gateway) Direction() GDirection {
 
 // TestFlows check if flows is comply gateway's direction rules.
 // If everything is ok it returns error.
+//
+//nolint:gocyclo // Complex business logic for gateway flow validation
 func (g *Gateway) TestFlows() error {
 	errM := ""
 

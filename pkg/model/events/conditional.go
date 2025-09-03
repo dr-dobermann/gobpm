@@ -46,7 +46,7 @@ func NewConditionalEventDefinition(
 }
 
 // MustConditionalEventDefinition tries to create a new
-// ConditionalEventDefinition. If error occured, it fires panic.
+// ConditionalEventDefinition. If error occurred, it fires panic.
 func MustConditionalEventDefinition(
 	condition data.FormalExpression,
 	baseOpts ...options.Option,
