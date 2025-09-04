@@ -90,7 +90,7 @@ func NewSignalEventDefinition(
 }
 
 // MustSignalEventDefinition tries to create a new SignalEventDefinition.
-// If there is an error occured, then panic fired.
+// If there is an error occurred, then panic fired.
 func MustSignalEventDefinition(
 	signal *Signal,
 	baseOpts ...options.Option,

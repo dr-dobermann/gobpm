@@ -4,37 +4,27 @@ import (
 	"context"
 	"testing"
 
-	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
-	"github.com/dr-dobermann/gobpm/pkg/model/flow"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 	"github.com/stretchr/testify/require"
 )
 
 func TestThresher_ProcessManagement(t *testing.T) {
-	t.Run("register process with nil snapshot", func(t *testing.T) {
+	t.Run("register process with nil process", func(t *testing.T) {
 		th := thresher.New()
 
 		err := th.RegisterProcess(nil)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "empty snapshot")
+		require.Contains(t, err.Error(), "empty process")
 	})
 
 	t.Run("register process success", func(t *testing.T) {
 		th := thresher.New()
 
-		// Create a minimal snapshot for testing
-		snap := &snapshot.Snapshot{
-			ID:          *foundation.NewID(),
-			ProcessId:   "test-process-id",
-			ProcessName: "Test Process",
-			Nodes:       map[string]flow.Node{},
-			Flows:       map[string]*flow.SequenceFlow{},
-			Properties:  nil,
-			InitEvents:  []flow.EventNode{},
-		}
+		proc, err := process.New("dummy process")
+		require.NoError(t, err)
 
-		err := th.RegisterProcess(snap)
+		err = th.RegisterProcess(proc)
 		require.NoError(t, err)
 	})
 

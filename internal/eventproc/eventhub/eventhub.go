@@ -23,14 +23,14 @@ type (
 	// On every pair EventProcessor - eventDefinition eventHub creates
 	// personal eventWaiter and runs its Service in separate go-routine.
 	eventHub struct {
-		m sync.RWMutex
-
 		started bool
 
 		// processors holds list of waiters started for processing
 		// eventDefinitions for a single EventProcessor.
 		// processors indexed by eventProcessor id.
 		processors map[string]waitersList
+
+		m sync.RWMutex
 	}
 )
 

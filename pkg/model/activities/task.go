@@ -167,7 +167,9 @@ func (t *task) UploadData(ctx context.Context, s scope.Scope) error {
 		}
 
 		if err := oa.UpdateSource(
-			ctx, doo[index].ItemDefinition(), data.Recalculate,
+			ctx,
+			doo[index].ItemDefinition(),
+			data.Recalculate,
 		); err != nil {
 			return errs.New(
 				errs.M("couldn't update association's %q source %q for "+

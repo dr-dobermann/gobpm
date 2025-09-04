@@ -11,7 +11,7 @@ import (
 //
 // Node's data is used as followed:
 //
-//  1. LoadData loads data from incoming data associations and fills its inputs.
+//  1. LoadData loads data from incoming data associations and fills Node's inputs.
 //
 //  2. Node's data(properties, inputs) are registered in the execution Scope by
 //     Register Data.
@@ -91,7 +91,7 @@ type NodeDataConsumer interface {
 
 // NodeDataProducer implemented by Nodes which needs to upload data to
 // flow.DataObject binded to Node over outgoing data.Associations.
-// This interface is called after the Node execution.
+// This interface is called after success Node execution.
 type NodeDataProducer interface {
 	flow.Node
 

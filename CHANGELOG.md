@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README_INDEX.md for organized documentation navigation
 - CHANGELOG.md for tracking project changes
 - Professional main README with comprehensive project overview
+- Working code examples with proper API usage
+- Examples directory with comprehensive documentation
 
 ### Changed
 - Improved test coverage across multiple packages
@@ -24,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CRITICAL**: Fixed nil map assignment bug in EventHub event registration
 - **CRITICAL**: Fixed missing map update in EventHub processor management
 - Various test stability and reliability improvements
+- **DOCUMENTATION**: Fixed incorrect code examples in main README
+- **EXAMPLES**: Created working, tested code examples
 
 ### Testing Improvements
 - **pkg/model/artifacts**: 30% → 86.2% coverage (+56.2%)
@@ -39,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added feature highlights, use cases, and architecture overview
 - Included quick start guide with practical examples
 - Enhanced project status information and roadmap
+- **EXAMPLES**: Created examples/ directory with working code samples
+- **EXAMPLES**: Added comprehensive examples documentation
+- **EXAMPLES**: Fixed and tested all code examples in README
 
 ## [v0.1.0] - Initial Development Phase
 

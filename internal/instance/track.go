@@ -306,7 +306,7 @@ func (t *track) stop() {
 // run start execution loop of the track which ends by ctx's cancel or
 // when there is no outgoing flows from the processing nodes.
 //
-//nolint:funlen
+//nolint:gocyclo,funlen
 func (t *track) run(
 	ctx context.Context,
 ) {
@@ -376,7 +376,7 @@ func (t *track) run(
 // On succes it returns a list (probably empty) of outgoing sequence flows.
 // On failure it returns error.
 //
-//nolint:funlen
+//nolint:gocyclo,funlen
 func (t *track) executeNode(
 	ctx context.Context,
 	step *stepInfo,

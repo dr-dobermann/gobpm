@@ -110,9 +110,10 @@ func TestTaskData(t *testing.T) {
 
 			s := mockscope.NewMockScope(t)
 			s.On("LoadData", task,
-				mock.AnythingOfType("*data.Property"),
-				mock.AnythingOfType("*data.Property"),
-				mock.AnythingOfType("*data.Parameter")).
+				mock.Anything).
+				// mock.AnythingOfType("data.Data"),
+				// mock.AnythingOfType("data.Data"),
+				// mock.AnythingOfType("data.Data")).
 				Return(
 					func(ndl scope.NodeDataLoader, dd ...data.Data) error {
 						for _, d := range dd {

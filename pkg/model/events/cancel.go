@@ -19,7 +19,6 @@ type CancelEventDefinition struct {
 
 // Type implements the Definition interface.
 func (*CancelEventDefinition) Type() flow.EventTrigger {
-
 	return flow.TriggerCancel
 }
 

@@ -47,7 +47,7 @@ func NewMessageEventDefintion(
 }
 
 // MustMessageEventDefinition returns new MessageEventDefinition. If there is
-// error occured, then panic fired.
+// error occurred, then panic fired.
 func MustMessageEventDefinition(
 	msg *common.Message,
 	operation *service.Operation,

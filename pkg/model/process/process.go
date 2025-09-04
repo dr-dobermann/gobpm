@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 
+	"golang.org/x/exp/maps"
+
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/common"
@@ -13,7 +15,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
-	"golang.org/x/exp/maps"
 )
 
 const errorClass = "PROCESS_ERRORS"

@@ -43,6 +43,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/runner"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/process"
 )
 
 const errorClass = "THRESHER_ERRORS"
@@ -87,7 +88,7 @@ func (s State) String() string {
 type eDefReg struct {
 	// proc is empty for the initial events.
 	//
-	// pros isn't emepty for Intermediate events. When Instance reach the
+	// proc isn't emepty for Intermediate events. When Instance reach the
 	// EventNode, it let node to register the event defintions it awaits and
 	// put this Instance track in waiting state.
 	//
@@ -244,6 +245,7 @@ func (t *Thresher) runEventQueue() error {
 				}
 			}
 
+			// Remove processed event from events queue
 			t.events = t.events[1:]
 
 			t.m.Unlock()
@@ -406,15 +408,23 @@ func (t *Thresher) PropagateEvent(
 
 // --------------- exec.Runner interface ---------------------------------------
 
-// RegisterProcess registers a process snapshot to start Instances on
-// initial event firing
+// RegisterProcess registers a process directly, creating snapshot internally
 func (t *Thresher) RegisterProcess(
-	s *snapshot.Snapshot,
+	p *process.Process,
 ) error {
-	if s == nil {
+	if p == nil {
 		return errs.New(
-			errs.M("empty snapshot"),
+			errs.M("empty process"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	// Create snapshot from process
+	s, err := snapshot.New(p)
+	if err != nil {
+		return errs.New(
+			errs.M("failed to create snapshot from process"),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.E(err))
 	}
 
 	events := make([]flow.EventDefinition, 0, len(s.InitEvents))
