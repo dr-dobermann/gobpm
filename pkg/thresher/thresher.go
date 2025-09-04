@@ -407,34 +407,6 @@ func (t *Thresher) PropagateEvent(
 
 // --------------- exec.Runner interface ---------------------------------------
 
-// RegisterProcessFromSnapshot registers a process snapshot to start Instances on
-// initial event firing
-func (t *Thresher) RegisterProcessFromSnapshot(
-	s *snapshot.Snapshot,
-) error {
-	if s == nil {
-		return errs.New(
-			errs.M("empty snapshot"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
-	events := make([]flow.EventDefinition, 0, len(s.InitEvents))
-	for _, e := range s.InitEvents {
-		events = append(events, e.Definitions()...)
-	}
-
-	t.m.Lock()
-	defer t.m.Unlock()
-
-	if _, ok := t.snapshots[s.ProcessId]; !ok {
-		t.snapshots[s.ProcessId] = s
-
-		t.addInitialEvent(s.ProcessId, events...)
-	}
-
-	return nil
-}
-
 // RegisterProcess registers a process directly, creating snapshot internally
 func (t *Thresher) RegisterProcess(
 	p *process.Process,
@@ -454,7 +426,21 @@ func (t *Thresher) RegisterProcess(
 			errs.E(err))
 	}
 
-	return t.RegisterProcessFromSnapshot(s)
+	events := make([]flow.EventDefinition, 0, len(s.InitEvents))
+	for _, e := range s.InitEvents {
+		events = append(events, e.Definitions()...)
+	}
+
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	if _, ok := t.snapshots[s.ProcessId]; !ok {
+		t.snapshots[s.ProcessId] = s
+
+		t.addInitialEvent(s.ProcessId, events...)
+	}
+
+	return nil
 }
 
 // StartProcess runs process with processId without any event even if

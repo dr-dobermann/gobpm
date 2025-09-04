@@ -42,23 +42,6 @@ func TestInstIvalidParams(t *testing.T) {
 	require.Error(t, err)
 }
 
-// func TestInstance(t *testing.T) {
-// 	s, err := getSnapshot("super simple process")
-// 	require.NoError(t, err)
-//
-// 	ep := mockeventproc.NewMockEventProducer(t)
-// 	inst, err := instance.New(s, nil, ep, nil)
-// 	require.NoError(t, err)
-//
-// 	st := inst.State()
-// 	require.Equal(t, instance.Ready, st)
-//
-// 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-// 	defer cancel()
-//
-// 	require.NoError(t, inst.Run(ctx))
-// }
-
 func TestMonitoring(t *testing.T) {
 	s, err := getSnapshot("monitoring")
 	require.NoError(t, err)
