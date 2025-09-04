@@ -110,8 +110,6 @@ type Instance struct {
 
 	// root event producer for the instance. usually it will be thresher
 	// created the instance.
-	// root event producer for the instance. usually it will be thresher
-	// created the instance.
 	eProd eventproc.EventProducer
 
 	// render registrator registers nodes with renderers of human interaction.
@@ -144,7 +142,7 @@ func New(
 	if s == nil {
 		return nil,
 			errs.New(
-				errs.M("nil snapshot"),
+				errs.M("no snapshot is given"),
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
@@ -301,29 +299,17 @@ func (inst *Instance) Run(
 func (inst *Instance) runTracks(ctx context.Context) error {
 	inst.state = Runned
 
-	// run only registered tracks, not created by runned track's forks.
+	// run only registered tracks, not the ones created by runned track's forks.
 	tracks := append([]*track{}, maps.Values(inst.tracks)...)
 	for _, t := range tracks {
-		inst.show(
-			"INSTANCE.RUN",
-			"track runned",
-			map[string]any{
-				"start_node": t.currentStep().node.Name(),
-			})
-
-		inst.wg.Add(1)
-
-		go func(t *track) {
-			defer inst.wg.Done()
-
-			t.run(ctx)
-		}(t)
+		tt := t
+		inst.runSingleTrack(ctx, tt)
 	}
 
 	return nil
 }
 
-// addTrack adds a new track into the track pool.
+// addTrack adds a new track into the instance's track pool.
 // If instance is running, added track also runs.
 func (inst *Instance) addTrack(ctx context.Context, nt *track) error {
 	if nt == nil {
@@ -343,23 +329,28 @@ func (inst *Instance) addTrack(ctx context.Context, nt *track) error {
 	inst.tracks[nt.Id()] = nt
 
 	if inst.state == Runned {
-		inst.show(
-			"INSTANCE.RUN",
-			"track runned",
-			map[string]any{
-				"start_node": nt.currentStep().node.Name(),
-			})
-
-		inst.wg.Add(1)
-
-		go func() {
-			defer inst.wg.Done()
-
-			nt.run(ctx)
-		}()
+		inst.runSingleTrack(ctx, nt)
 	}
 
 	return nil
+}
+
+// runSingleTrack starts a new track and add it to instance's WaitGroup.
+func (inst *Instance) runSingleTrack(ctx context.Context, t *track) {
+	inst.show(
+		"INSTANCE.RUN",
+		"track runned",
+		map[string]any{
+			"start_node": t.currentStep().node.Name(),
+		})
+
+	inst.wg.Add(1)
+
+	go func(t *track) {
+		defer inst.wg.Done()
+
+		t.run(ctx)
+	}(t)
 }
 
 // createTrack creates all initial tracks of the Instance.

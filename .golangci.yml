@@ -1,162 +1,153 @@
+version: "2"
 run:
   concurrency: 4
-  allow-parallel-runners: true
-  timeout: 10m
-  deadline: 19m
-  tests: false
   go: "1.21"
-
-issues:
-  exclude-use-default: false
-  exclude-dirs:
-    - generated
-    - .generated
-    - examples
-  exclude-files:
-    - "mock_.*\\.go$"
-    - ".*\\.pb\\.go$"
-    - ".*_mock\\.go$"
-  exclude-rules:    
-    - linters:
-        - lll
-      source: "^//go:generate "
-    - linters:
-        - revive
-      text: "package-comments"
-    - linters:
-        - stylecheck
-      text: "ST1000"
-    - linters:
-        - revive
-      text: "exported.*should have comment"
-    - linters:
-        - revive  
-      text: "receiver-naming"
-    - linters:
-        - revive
-      text: "unexported-return"
-    - linters:
-        - revive
-      text: "var-naming.*should be.*ID"
-
-linters-settings:
-  gocritic:
-    enabled-tags:      
-     - diagnostic    
-     - performance   
-     - experimental  
-     - opinionated
-    disabled-checks:  
-      - ruleguard
-      - unnamedResult
-      - whyNoLint
-      - commentedOutCode
-      - hugeParam
-  gosimple:
-    checks: ["all"]
-  staticcheck:
-    checks: ["all"]
-  govet:
-    enable:
-      - shadow
-      - atomic
-      - bools
-      - buildtag
-      - cgocall
-      - composites
-      - copylocks
-      - deepequalerrors
-      - errorsas
-      - fieldalignment
-      - findcall
-      - framepointer
-      - httpresponse
-      - ifaceassert
-      - loopclosure
-      - lostcancel
-      - nilfunc
-      - nilness
-      - printf
-      - reflectvaluecompare
-      - shift
-      - sigchanyzer
-      - sortslice
-      - stdmethods
-      - stringintconv
-      - structtag
-      - testinggoroutine
-      - tests
-      - unmarshal
-      - unreachable
-      - unsafeptr
-      - unusedresult
-  gocyclo:
-    min-complexity: 15
-  funlen:
-    lines: 100
-    statements: 50
-  nestif:
-    min-complexity: 4
-  lll:
-    line-length: 120
-  goimports:
-    local-prefixes: github.com/dr-dobermann/gobpm
-  misspell:
-    locale: US
-  depguard:
-    rules:
-      main:
-        deny:
-          - pkg: "io/ioutil"
-            desc: "io/ioutil is deprecated, use io and os packages instead"
-
+  tests: false
+  allow-parallel-runners: true
 linters:
-  disable-all: true
+  default: none
   enable:
-    # Essential linters
-    - errcheck          # Check for unchecked errors
-    - gosimple          # Simplify code
-    - govet             # Vet examines Go source code  
-    - ineffassign       # Detect ineffectual assignments
-    - staticcheck       # Static analysis
-    - typecheck         # Type checking
-    - unused            # Find unused code
-    
-    # Code quality
-    - gocritic          # Comprehensive Go linter
-    - gocyclo           # Cyclomatic complexity
-    - funlen            # Function length
-    - gocognit          # Cognitive complexity
-    - dupl              # Code duplication
-    - goconst           # Repeated strings that could be constants
-    
-    # Style and formatting
-    - goimports         # Imports formatting
-    - misspell          # Misspelled English words
-    - whitespace        # Whitespace issues
-    - asciicheck        # Non-ASCII characters
-    - nolintlint        # Ill-formed or misplaced nolint directives
-    
-    # Best practices  
-    - gochecknoinits    # Check for init functions
-    - goprintffuncname  # Printf-like function naming
-    - nakedret          # Naked returns in long functions
-    - prealloc          # Slice preallocation
-    - unconvert         # Unnecessary conversions
-    - testpackage       # Test package naming
-    
-    # Modern linters  
-    - revive            # Replacement for golint
-    - stylecheck        # Style checker
-    - gosec             # Security checker
-    - depguard          # Import restrictions
-    
-    # Optional but useful
-    # - lll             # Line length (configured to 120)
-    # - goerr113        # Error wrapping
-    # - godot           # Comment formatting  
-    # - godox           # TODO/FIXME comments
-    # - wsl             # Whitespace linter
-    # - fieldalignment  # Struct field alignment (performance optimization)
-    # - nestif          # Complex nested ifs
-    
+    - asciicheck
+    - depguard
+    - dupl
+    - errcheck
+    - funlen
+    - gochecknoinits
+    - gocognit
+    - goconst
+    - gocritic
+    - gocyclo
+    - goprintffuncname
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - nakedret
+    - nolintlint
+    - prealloc
+    - revive
+    - staticcheck
+    - testpackage
+    - unconvert
+    - unused
+    - whitespace
+  settings:
+    depguard:
+      rules:
+        main:
+          deny:
+            - pkg: io/ioutil
+              desc: io/ioutil is deprecated, use io and os packages instead
+    funlen:
+      lines: 100
+      statements: 50
+    gocritic:
+      disabled-checks:
+        - ruleguard
+        - unnamedResult
+        - whyNoLint
+        - commentedOutCode
+        - hugeParam
+      enabled-tags:
+        - diagnostic
+        - performance
+        - experimental
+        - opinionated
+    gocyclo:
+      min-complexity: 15
+    govet:
+      enable:
+        - shadow
+        - atomic
+        - bools
+        - buildtag
+        - cgocall
+        - composites
+        - copylocks
+        - deepequalerrors
+        - errorsas
+        - fieldalignment
+        - findcall
+        - framepointer
+        - httpresponse
+        - ifaceassert
+        - loopclosure
+        - lostcancel
+        - nilfunc
+        - nilness
+        - printf
+        - reflectvaluecompare
+        - shift
+        - sigchanyzer
+        - sortslice
+        - stdmethods
+        - stringintconv
+        - structtag
+        - testinggoroutine
+        - tests
+        - unmarshal
+        - unreachable
+        - unsafeptr
+        - unusedresult
+    lll:
+      line-length: 120
+    misspell:
+      locale: US
+    nestif:
+      min-complexity: 4
+    staticcheck:
+      checks:
+        - all
+  exclusions:
+    generated: lax
+    rules:
+      - linters:
+          - lll
+        source: '^//go:generate '
+      - linters:
+          - revive
+        text: package-comments
+      - linters:
+          - staticcheck
+        text: ST1000
+      - linters:
+          - revive
+        text: exported.*should have comment
+      - linters:
+          - revive
+        text: receiver-naming
+      - linters:
+          - revive
+        text: unexported-return
+      - linters:
+          - revive
+        text: var-naming.*should be.*ID
+    paths:
+      - mock_.*\.go$
+      - .*\.pb\.go$
+      - .*_mock\.go$
+      - generated
+      - .generated
+      - examples
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/dr-dobermann/gobpm
+  exclusions:
+    generated: lax
+    paths:
+      - mock_.*\.go$
+      - .*\.pb\.go$
+      - .*_mock\.go$
+      - generated
+      - .generated
+      - examples
+      - third_party$
+      - builtin$
+      - examples$

@@ -88,7 +88,7 @@ func (s State) String() string {
 type eDefReg struct {
 	// proc is empty for the initial events.
 	//
-	// pros isn't emepty for Intermediate events. When Instance reach the
+	// proc isn't emepty for Intermediate events. When Instance reach the
 	// EventNode, it let node to register the event defintions it awaits and
 	// put this Instance track in waiting state.
 	//
@@ -245,6 +245,7 @@ func (t *Thresher) runEventQueue() error {
 				}
 			}
 
+			// Remove processed event from events queue
 			t.events = t.events[1:]
 
 			t.m.Unlock()
