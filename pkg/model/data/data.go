@@ -27,6 +27,6 @@ type Data interface {
 
 // Source is implemented by objects which store Data.
 type Source interface {
-	// Get returns Data object named name.
+	// Find returns Data object named name.
 	Find(ctx context.Context, name string) (Data, error)
 }

@@ -1,8 +1,10 @@
-all: false
-dir: "generated/mock{{.SrcPackageName}}"
-recursive: false
+with-expecter: True
+
+dir: "generated/mock{{.PackageName}}"
+
 filename: "mock_{{.InterfaceName}}.go"
-pkgname: "mock{{.SrcPackageName}}"
+outpkg: "mock{{.PackageName}}"
+inpackage: false
 
 packages:
   github.com/dr-dobermann/gobpm/internal/scope:
