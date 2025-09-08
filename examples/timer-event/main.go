@@ -16,11 +16,13 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
+	"github.com/stretchr/testify/require"
 )
 
 func main() {
 	// Create BPM engine
-	engine := thresher.New()
+	engine, err := thresher.New("")
+	require.NoError(t, err)
 
 	// Create a process with timer event
 	proc, err := process.New("timer-process")

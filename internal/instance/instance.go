@@ -2,9 +2,7 @@ package instance
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -120,11 +118,6 @@ type Instance struct {
 
 	tokens []*token
 
-	// events keeps list of tracks that awaits for evnent.
-	// events are indexed by event definition id.
-	// inner map indexed by track id (EventProcessor's Id).
-	events map[string]map[string]*track
-
 	// Instance's run starting time.
 	startTime time.Time
 
@@ -160,7 +153,6 @@ func New(
 		scopes:              map[scope.DataPath]map[string]data.Data{},
 		tracks:              map[string]*track{},
 		tokens:              []*token{},
-		events:              map[string]map[string]*track{},
 		parentScope:         parentScope,
 		parentEventProducer: ep,
 		rr:                  rr,
@@ -286,8 +278,6 @@ func (inst *Instance) Run(
 		inst.wg.Wait()
 
 		close(grChan)
-
-		inst.unregisterEvents()
 
 		inst.updateState(Finished)
 	}()
@@ -578,66 +568,6 @@ func (inst *Instance) show(
 	}
 }
 
-// TODO: fill the func or remove it's call.
-func (inst *Instance) unregisterEvents() {
-}
-
-// -------------------- exec.EventProcessor interface --------------------------
-
-// ProcessEvent processes single event definition, it registered in called
-// EventProducer (usually it would be Thresher).
-// If the caller doesn't provide the context (ctx == nil), then internal
-// Instance context would be used.
-func (inst *Instance) ProcessEvent(
-	ctx context.Context,
-	eDef flow.EventDefinition,
-) error {
-	if eDef == nil {
-		return errs.New(
-			errs.M("empty event definition"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
-	if ctx == nil {
-		ctx = inst.ctx
-	}
-
-	inst.m.Lock()
-	tt, ok := inst.events[eDef.Id()]
-	inst.m.Unlock()
-
-	if !ok {
-		return errs.New(
-			errs.M("event definition not registered for instance"),
-			errs.D("event_def_id", eDef.Id()),
-			errs.D("instance_id", inst.Id()),
-			errs.D("process_name", inst.s.ProcessName),
-			errs.D("process_id", inst.s.ProcessId),
-			errs.C(errorClass, errs.InvalidParameter))
-	}
-
-	ee := []error{}
-
-	for _, t := range tt {
-		if err := t.ProcessEvent(ctx, eDef); err != nil {
-			ee = append(ee, err)
-		}
-
-		inst.m.Lock()
-		delete(inst.events[eDef.Id()], t.Id())
-		if len(inst.events[eDef.Id()]) == 0 {
-			delete(inst.events, eDef.Id())
-		}
-		inst.m.Unlock()
-	}
-
-	if len(ee) != 0 {
-		return errors.Join(ee...)
-	}
-
-	return nil
-}
-
 // -------------------- exec.EventProducer interface ---------------------------
 
 // RegisterEvent register tracks awaited for the event.
@@ -667,32 +597,14 @@ func (inst *Instance) RegisterEvent(
 			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
 	}
 
-	t, ok := proc.(*track)
-	if !ok {
+	if inst.parentEventProducer == nil {
 		return errs.New(
-			errs.M("not a track (%q)", reflect.TypeOf(proc).String()),
-			errs.C(errorClass, errs.TypeCastingError))
+			errs.M("no registered EventProducer"),
+			errs.C(errorClass, errs.InvalidObject))
 	}
 
-	if inst.parentEventProducer != nil {
-		if err := inst.parentEventProducer.RegisterEvent(
-			inst, eDef); err != nil {
-			return errs.New(
-				errs.M(
-					"couldn't register event in parent EventProducer"),
-				errs.C(errorClass, errs.OperationFailed))
-		}
-	}
-
-	inst.m.Lock()
-	if _, ok := inst.events[eDef.Id()]; !ok {
-		inst.events[eDef.Id()] = make(map[string]*track)
-	}
-
-	inst.events[eDef.Id()][t.Id()] = t
-	inst.m.Unlock()
-
-	return nil
+	return inst.parentEventProducer.RegisterEvent(
+		proc, eDef)
 }
 
 // UnregisterEvent removes event definition to EventProcessor link from
@@ -701,52 +613,30 @@ func (inst *Instance) UnregisterEvent(
 	ep eventproc.EventProcessor,
 	eDefId string,
 ) error {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
-	if _, ok := inst.events[eDefId]; !ok {
-		return errs.New(
-			errs.M("event definition isn't registered"),
-			errs.C(errorClass, errs.InvalidParameter),
-			errs.D("event_definition_id", eDefId))
-	}
-
-	if inst.eProd != nil {
-		if err := inst.eProd.UnregisterEvent(ep, eDefId); err != nil {
-			return errs.New(
-				errs.M("event unregistration failed"),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.E(err))
-		}
-	}
-
-	delete(inst.events[eDefId], ep.Id())
-
-	if len(inst.events[eDefId]) == 0 {
-		delete(inst.events, eDefId)
-	}
-
 	return nil
 }
 
-// PropagateEvent gets a eventDefinition and sends it to all
-// EventProcessors registered for this id of EventDefinition.
+// PropagateEvent sends a fired throw event's eventDefinition
+// up to chain of EventProducers
 func (inst *Instance) PropagateEvent(
 	ctx context.Context,
-	eDefId flow.EventDefinition,
+	eDef flow.EventDefinition,
 ) error {
-	if inst.eProd == nil {
+	st := inst.State()
+	if st != Runned {
 		return errs.New(
-			errs.M("event producer isn't presented for Instance %q[%s]",
-				inst.s.ProcessName, inst.Id()),
-			errs.C(errorClass, errs.ObjectNotFound))
+			errs.M("instance isn't runned"),
+			errs.C(errorClass, errs.InvalidState),
+			errs.D("current_state", st),
+			errs.D("instance_id", inst.Id()))
 	}
 
-	if err := inst.eProd.PropagateEvent(ctx, eDefId); err != nil {
+	if err := inst.parentEventProducer.PropagateEvent(ctx, eDef); err != nil {
 		return errs.New(
-			errs.M("event emitting failed for Instance %q[%s]",
-				inst.s.ProcessName, inst.Id()),
+			errs.M("event propagation failed"),
 			errs.C(errorClass, errs.OperationFailed),
+			errs.D("event_definition_id", eDef.Id()),
+			errs.D("event_definition_type", eDef.Type()),
 			errs.E(err))
 	}
 
@@ -968,7 +858,6 @@ func (inst *Instance) RegisterWriter(m monitor.Writer) {
 // Interfaces check
 var (
 	_ eventproc.EventProducer   = (*Instance)(nil)
-	_ eventproc.EventProcessor  = (*Instance)(nil)
 	_ renv.RuntimeEnvironment   = (*Instance)(nil)
 	_ scope.Scope               = (*Instance)(nil)
 	_ monitor.WriterRegistrator = (*Instance)(nil)

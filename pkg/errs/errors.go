@@ -29,6 +29,7 @@ import (
 
 const (
 	InvalidObject        = "INVALID_OBJECT"
+	RunFailed            = "RUN_FAILED"
 	NilDereference       = "NIL_DEREFERENCE"
 	BulidingFailed       = "BUILDING_FAILED"
 	InvalidParameter     = "INVALID_PARAMETER"

@@ -25,7 +25,7 @@ type EventProcessor interface {
 
 // ============================================================================
 //
-//	EventProcessor
+//	EventProducer
 //
 // ============================================================================
 // EventProducer registers events with event processors which expect those
@@ -41,14 +41,30 @@ type EventProducer interface {
 	// EventProducer.
 	UnregisterEvent(ep EventProcessor, eDefId string) error
 
-	// PropagateEvent gets a eventDefinitions and sends it to all
-	// EventProcessors registered for this type of EventDefinition.
+	// PropagateEvent sends a fired throw event's eventDefinition
+	// up to chain of EventProducers
 	PropagateEvent(context.Context, flow.EventDefinition) error
 }
 
 // ============================================================================
 //
-//	EventProcessor
+//	EventHub
+//
+// ============================================================================
+// EventHub runs events processing engine and managing pack of EventWaiters.
+type EventHub interface {
+	EventProducer
+
+	// Run starts event processing.
+	Run(context.Context) error
+
+	// RemoveWaiter removes single waiter from the EventHub waiter's list.
+	RemoveWaiter(EventWaiter) error
+}
+
+// ============================================================================
+//
+//	EventWaiter
 //
 // ============================================================================
 // EventWaiter gets on startup an eventDefinition and EventProcessor
@@ -56,6 +72,9 @@ type EventProducer interface {
 // Then it controls single event defined by eventDefinition and
 // once event fired, send appropriata eventDefinition with actual data to
 // the EventProcessor.
+//
+// Once eventDefinition is processed by all registered EventProcessors, the
+// waiter unregister itself from eventHub and stop its working,
 type EventWaiter interface {
 	foundation.Identifyer
 
@@ -63,9 +82,22 @@ type EventWaiter interface {
 	// waiting for.
 	EventDefinition() flow.EventDefinition
 
-	// EventProcessor returns the EventProcessor expecting the registered
+	// AddEventProcessor adds single EventProcessor into waiter's list of
+	// EventProcessors, waiting for the EventDefinition.
+	// If the EventProcessor already exists in waiters queue, no errors returned.
+	AddEventProcessor(EventProcessor) error
+
+	// RemoveEventProcessor removes the ep EventProcessor from waiter's event
+	// processors list.
+	RemoveEventProcessor(EventProcessor) error
+
+	// EventProcessors returns the EventProcessor expecting the registered
 	// EventDefinition.
-	EventProcessor() EventProcessor
+	EventProcessors() []EventProcessor
+
+	// Process processed single event given by EventHub through EventPropagate
+	// call.
+	Process(flow.EventDefinition) error
 
 	// Service runs the waiting/handling routine of registered event defined.
 	Service(ctx context.Context) error
@@ -85,7 +117,6 @@ const (
 	WSRunned
 	WSEnded
 	WSStopped
-	WSCancelled
 	WSFailed
 )
 
@@ -104,7 +135,6 @@ func (ws EventWaiterState) String() string {
 		"Runned",
 		"Ended",
 		"Stopped",
-		"Canceled",
 		"Failed",
 	}[ws]
 }
