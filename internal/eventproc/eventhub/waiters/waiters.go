@@ -10,9 +10,14 @@ import (
 // CreateWaiter creates a new eventWaiter with given EventDefinition and
 // EventProcessor.
 func CreateWaiter(
+	eh eventproc.EventHub,
 	ep eventproc.EventProcessor,
 	eDef flow.EventDefinition,
 ) (eventproc.EventWaiter, error) {
+	if eh == nil {
+		return nil, fmt.Errorf("empty event hub")
+	}
+
 	if ep == nil {
 		return nil, fmt.Errorf("empty event processor")
 	}
@@ -28,7 +33,7 @@ func CreateWaiter(
 
 	switch eDef.Type() {
 	case flow.TriggerTimer:
-		w, err = NewTimeWaiter(ep, eDef, "")
+		w, err = NewTimeWaiter(eh, ep, eDef, "")
 
 	default:
 		err = fmt.Errorf(

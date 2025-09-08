@@ -17,6 +17,7 @@ import (
 
 func TestNewWaiter(t *testing.T) {
 	ep := mockeventproc.NewMockEventProcessor(t)
+	mockHub := mockeventproc.NewMockEventHub(t)
 
 	// time expression
 	timeEDef := events.MustTimerEventDefinition(
@@ -35,11 +36,13 @@ func TestNewWaiter(t *testing.T) {
 		})
 
 	// invalid parameeters
-	_, err := waiters.CreateWaiter(nil, timeEDef)
+	_, err := waiters.CreateWaiter(nil, ep, timeEDef)
 	require.Error(t, err)
-	_, err = waiters.CreateWaiter(ep, nil)
+	_, err = waiters.CreateWaiter(mockHub, nil, timeEDef)
+	require.Error(t, err)
+	_, err = waiters.CreateWaiter(mockHub, ep, nil)
 	require.Error(t, err)
 
-	_, err = waiters.CreateWaiter(ep, signalEDef)
+	_, err = waiters.CreateWaiter(mockHub, ep, signalEDef)
 	require.Error(t, err)
 }

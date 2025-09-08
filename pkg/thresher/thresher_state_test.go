@@ -34,15 +34,17 @@ func TestState(t *testing.T) {
 
 func TestThresher_StateManagement(t *testing.T) {
 	t.Run("new thresher starts in NotStarted state", func(t *testing.T) {
-		th := thresher.New()
+		th, err := thresher.New("test-thresher")
+		require.NoError(t, err)
 		require.NotNil(t, th)
 		require.Equal(t, thresher.NotStarted, th.State())
 	})
 
 	t.Run("update state success", func(t *testing.T) {
-		th := thresher.New()
+		th, err := thresher.New("test-thresher")
+		require.NoError(t, err)
 
-		err := th.UpdateState(thresher.Started)
+		err = th.UpdateState(thresher.Started)
 		require.NoError(t, err)
 		require.Equal(t, thresher.Started, th.State())
 
@@ -52,10 +54,11 @@ func TestThresher_StateManagement(t *testing.T) {
 	})
 
 	t.Run("update state with invalid state", func(t *testing.T) {
-		th := thresher.New()
+		th, err := thresher.New("test-thresher")
+		require.NoError(t, err)
 
 		invalidState := thresher.State(99)
-		err := th.UpdateState(invalidState)
+		err = th.UpdateState(invalidState)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "couldn't set new state")
 		require.Equal(t, thresher.NotStarted, th.State()) // Should remain unchanged
@@ -64,13 +67,14 @@ func TestThresher_StateManagement(t *testing.T) {
 
 func TestThresher_Run(t *testing.T) {
 	t.Run("successful run", func(t *testing.T) {
-		th := thresher.New()
+		th, err := thresher.New("test-thresher")
+		require.NoError(t, err)
 		require.Equal(t, thresher.NotStarted, th.State())
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		err := th.Run(ctx)
+		err = th.Run(ctx)
 		require.NoError(t, err)
 		require.Equal(t, thresher.Started, th.State())
 
@@ -83,13 +87,14 @@ func TestThresher_Run(t *testing.T) {
 	})
 
 	t.Run("run from invalid state", func(t *testing.T) {
-		th := thresher.New()
+		th, err := thresher.New("test-thresher")
+		require.NoError(t, err)
 
 		// First run should succeed
 		ctx1, cancel1 := context.WithCancel(context.Background())
 		defer cancel1()
 
-		err := th.Run(ctx1)
+		err = th.Run(ctx1)
 		require.NoError(t, err)
 		require.Equal(t, thresher.Started, th.State())
 
@@ -103,22 +108,24 @@ func TestThresher_Run(t *testing.T) {
 	})
 
 	t.Run("run with nil context", func(t *testing.T) {
-		th := thresher.New()
+		th, err := thresher.New("test-thresher")
+		require.NoError(t, err)
 
-		err := th.Run(nil)
+		err = th.Run(nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "empty context")
 		require.Equal(t, thresher.NotStarted, th.State()) // Should remain unchanged
 	})
 
 	t.Run("run and pause workflow", func(t *testing.T) {
-		th := thresher.New()
+		th, err := thresher.New("test-thresher")
+		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
 		// Start thresher
-		err := th.Run(ctx)
+		err = th.Run(ctx)
 		require.NoError(t, err)
 		require.Equal(t, thresher.Started, th.State())
 

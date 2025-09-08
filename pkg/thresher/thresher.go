@@ -36,6 +36,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub"
@@ -149,8 +150,8 @@ func (t *Thresher) State() State {
 	return t.state
 }
 
-// updateState sets new State ns for the Threasher if there is no any error.
-func (t *Thresher) updateState(ns State) error {
+// UpdateState sets new State ns for the Threasher if there is no any error.
+func (t *Thresher) UpdateState(ns State) error {
 	t.m.Lock()
 	defer t.m.Unlock()
 
@@ -181,14 +182,23 @@ func (t *Thresher) Run(ctx context.Context) error {
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	if err := t.eventHub.Run(ctx); err != nil {
+	t.ctx = ctx
+
+	// Run eventhub in background
+	go func() {
+		_ = t.eventHub.Run(ctx)
+	}()
+
+	// Give eventhub a moment to initialize
+	time.Sleep(1 * time.Millisecond)
+
+	err := t.UpdateState(Started)
+	if err != nil {
 		return errs.New(
-			errs.M("eventHub run failed"),
-			errs.C(errorClass, errs.RunFailed),
+			errs.M("couldn't update Thresher state"),
+			errs.C(errorClass, errs.OperationFailed),
 			errs.E(err))
 	}
-
-	t.ctx = ctx
 
 	return nil
 }
@@ -200,19 +210,19 @@ func (t *Thresher) RegisterEvent(
 	ep eventproc.EventProcessor,
 	eDef flow.EventDefinition,
 ) error {
-	if t.State() != Started {
-		return errs.New(
-			errs.M("thresher is not started"),
-			errs.C(errorClass, errs.InvalidState))
-	}
-
 	if ep == nil {
 		return errs.New(
 			errs.M("empty event processor"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	return t.eventHub.RegisterEvent(t, eDef)
+	if t.State() != Started {
+		return errs.New(
+			errs.M("thresher is not started"),
+			errs.C(errorClass, errs.InvalidState))
+	}
+
+	return t.eventHub.RegisterEvent(ep, eDef)
 }
 
 // UnregisterEvent removes link EventDefinition to EventProcessor from
@@ -221,7 +231,19 @@ func (t *Thresher) UnregisterEvent(
 	ep eventproc.EventProcessor,
 	eDefId string,
 ) error {
-	return nil
+	if ep == nil {
+		return errs.New(
+			errs.M("empty event processor"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if t.State() != Started {
+		return errs.New(
+			errs.M("thresher is not started"),
+			errs.C(errorClass, errs.InvalidState))
+	}
+
+	return t.eventHub.UnregisterEvent(ep, eDefId)
 }
 
 // PropagateEvent sends a fired throw event's eventDefinition
@@ -235,6 +257,12 @@ func (t *Thresher) PropagateEvent(
 		return errs.New(
 			errs.M("thresher is not started"),
 			errs.C(errorClass, errs.InvalidState))
+	}
+
+	if eDef == nil {
+		return errs.New(
+			errs.M("empty event definition"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
 	if err := t.eventHub.PropagateEvent(ctx, eDef); err != nil {

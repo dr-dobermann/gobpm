@@ -94,7 +94,7 @@ func (eh *eventHub) RegisterEvent(
 		return nil
 	}
 
-	w, err := waiters.CreateWaiter(ep, eDef)
+	w, err := waiters.CreateWaiter(eh, ep, eDef)
 	if err != nil {
 		return errs.New(
 			errs.M("eventWaiter building failed"),

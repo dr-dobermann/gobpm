@@ -18,7 +18,10 @@ import (
 
 func main() {
 	// Create BPM engine
-	engine := thresher.New()
+	engine, err := thresher.New("simple-timer-engine")
+	if err != nil {
+		log.Fatal("Failed to create BPM engine:", err)
+	}
 
 	// Create process
 	proc, err := process.New("simple-timer")

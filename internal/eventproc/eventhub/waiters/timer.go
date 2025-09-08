@@ -85,6 +85,7 @@ func NewTimeWaiter(
 	tw := timeWaiter{
 		id:         id,
 		eDef:       eDef,
+		hub:        eh,
 		processors: []eventproc.EventProcessor{ep},
 	}
 
