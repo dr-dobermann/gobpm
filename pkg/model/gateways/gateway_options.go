@@ -16,7 +16,8 @@ type (
 		baseOpts  []options.Option
 	}
 
-	gatewayOption func(cft *gatewayConfig) error
+	// GatewayOption is a function type for configuring gateways.
+	GatewayOption func(cft *gatewayConfig) error
 )
 
 // newGateway creates a new Gateway from the gatewayConfig.
@@ -39,7 +40,7 @@ func (gc *gatewayConfig) newGateway() (*Gateway, error) {
 }
 
 // WithDirection implement gateway direction updating option.
-func WithDirection(dir GDirection) gatewayOption {
+func WithDirection(dir GDirection) GatewayOption {
 	f := func(cfg *gatewayConfig) error {
 		if err := dir.Validate(); err != nil {
 			return err
@@ -50,13 +51,13 @@ func WithDirection(dir GDirection) gatewayOption {
 		return nil
 	}
 
-	return gatewayOption(f)
+	return GatewayOption(f)
 }
 
 // --------------------- option.Option interface ------------------------------
 
-// Apply updates the gateway configuration by gatewayOption.
-func (gOpt gatewayOption) Apply(cfg options.Configurator) error {
+// Apply updates the gateway configuration by GatewayOption.
+func (gOpt GatewayOption) Apply(cfg options.Configurator) error {
 	if gc, ok := cfg.(*gatewayConfig); ok {
 		return gOpt(gc)
 	}

@@ -16,13 +16,13 @@ type NodeType string
 
 const (
 	// InvalidNodeType represents an invalid node type.
-	InvalidNodeType  NodeType = "INVALID_NODE_TYPE"
+	InvalidNodeType NodeType = "INVALID_NODE_TYPE"
 	// ActivityNodeType represents an activity node type.
 	ActivityNodeType NodeType = "Activity"
 	// EventNodeType represents an event node type.
-	EventNodeType    NodeType = "Event"
+	EventNodeType NodeType = "Event"
 	// GatewayNodeType represents a gateway node type.
-	GatewayNodeType  NodeType = "Gateway"
+	GatewayNodeType NodeType = "Gateway"
 )
 
 // Validate checks if nt has NodeType value.

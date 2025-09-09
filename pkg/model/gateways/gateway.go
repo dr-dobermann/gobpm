@@ -114,7 +114,7 @@ func New(opts ...options.Option) (*Gateway, error) {
 		case foundation.BaseOption:
 			gc.baseOpts = append(gc.baseOpts, o)
 
-		case gatewayOption, options.NameOption:
+		case GatewayOption, options.NameOption:
 			if err := o.Apply(&gc); err != nil {
 				ee = append(ee,
 					errs.New(
@@ -181,7 +181,6 @@ func (g *Gateway) Direction() GDirection {
 
 // TestFlows check if flows is comply gateway's direction rules.
 // If everything is ok it returns error.
-//
 func (g *Gateway) TestFlows() error {
 	errM := ""
 

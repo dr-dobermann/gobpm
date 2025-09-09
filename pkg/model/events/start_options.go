@@ -145,42 +145,42 @@ func WithInterrupting() options.Option {
 // ----------------- eventOptions ----------------------------------------------
 
 // setCompensation implements compensationAdder interface.
-func (cfg *startConfig) setCompensation(
+func (sc *startConfig) setCompensation(
 	ced *CompensationEventDefinition,
 ) error {
-	cfg.defs = append(cfg.defs, ced)
+	sc.defs = append(sc.defs, ced)
 
 	return nil
 }
 
 // setCondition implements conditionAdder interface.
-func (cfg *startConfig) setCondiiton(ced *ConditionalEventDefinition) error {
-	cfg.defs = append(cfg.defs, ced)
+func (sc *startConfig) setCondiiton(ced *ConditionalEventDefinition) error {
+	sc.defs = append(sc.defs, ced)
 
 	return nil
 }
 
 // setError implements errorAdder interface.
-func (cfg *startConfig) setError(
+func (sc *startConfig) setError(
 	eed *ErrorEventDefinition,
 ) error {
-	cfg.defs = append(cfg.defs, eed)
+	sc.defs = append(sc.defs, eed)
 
 	return nil
 }
 
 // setEscalation implements escalationAdder interface.
-func (cfg *startConfig) setEscalation(
+func (sc *startConfig) setEscalation(
 	eed *EscalationEventDefinition,
 ) error {
-	cfg.defs = append(cfg.defs, eed)
+	sc.defs = append(sc.defs, eed)
 
 	return nil
 }
 
 // setMessage implements messageAdder interface.
-func (cfg *startConfig) setMessage(med *MessageEventDefinition) error {
-	cfg.defs = append(cfg.defs, med)
+func (sc *startConfig) setMessage(med *MessageEventDefinition) error {
+	sc.defs = append(sc.defs, med)
 
 	if id := med.Message().Item(); id != nil {
 		ds := data.ReadyDataState
@@ -202,22 +202,22 @@ func (cfg *startConfig) setMessage(med *MessageEventDefinition) error {
 			return err
 		}
 
-		cfg.dataOutputs[id.ID()] = do
+		sc.dataOutputs[id.ID()] = do
 	}
 
 	return nil
 }
 
 // setSignal implements signalAdder interface.
-func (cfg *startConfig) setSignal(sed *SignalEventDefinition) error {
-	cfg.defs = append(cfg.defs, sed)
+func (sc *startConfig) setSignal(sed *SignalEventDefinition) error {
+	sc.defs = append(sc.defs, sed)
 
 	return nil
 }
 
 // setTimer implements timerAdder interface.
-func (cfg *startConfig) setTimer(ted *TimerEventDefinition) error {
-	cfg.defs = append(cfg.defs, ted)
+func (sc *startConfig) setTimer(ted *TimerEventDefinition) error {
+	sc.defs = append(sc.defs, ted)
 
 	return nil
 }

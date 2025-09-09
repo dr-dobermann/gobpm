@@ -26,6 +26,7 @@ var startTriggers = set.New[flow.EventTrigger](
 	flow.TriggerTimer,
 )
 
+// StartEvent represents a start event in a process.
 type StartEvent struct {
 	catchEvent
 
@@ -62,7 +63,7 @@ func NewStartEvent(
 		case foundation.BaseOption:
 			sc.baseOpts = append(sc.baseOpts, opt)
 
-		case startOption, eventOption, data.PropertyOption:
+		case startOption, EventOption, data.PropertyOption:
 			if err := so.Apply(&sc); err != nil {
 				ee = append(ee, err)
 			}
@@ -91,18 +92,18 @@ func (se *StartEvent) IsInterrupting() bool {
 
 // ------------------ flow.SequenceSource interface ----------------------------
 
-// SuportOutgoingFlow checks if it allowed to source sf from the StartEvent
-func (se *StartEvent) SupportOutgoingFlow(sf *flow.SequenceFlow) error {
+// SupportOutgoingFlow checks if it allowed to source sf from the StartEvent
+func (se *StartEvent) SupportOutgoingFlow(_ *flow.SequenceFlow) error {
 	// StartEvent don't restricted any source sequence flow from it
 	return nil
 }
 
-// ----------------- flow.Node interface ---------------------------------------
+// Node returns the node interface.
 func (se *StartEvent) Node() flow.Node {
 	return se
 }
 
-// ----------------- flow.EventNode interface ----------------------------------
+// EventClass returns the event class.
 func (se *StartEvent) EventClass() flow.EventClass {
 	return flow.StartEventClass
 }
@@ -111,8 +112,8 @@ func (se *StartEvent) EventClass() flow.EventClass {
 
 // Exec runs the StartNode and saves all its Output data.Associations.
 func (se *StartEvent) Exec(
-	ctx context.Context,
-	re renv.RuntimeEnvironment,
+	_ context.Context,
+	_ renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
 	return append([]*flow.SequenceFlow{}, se.Outgoing()...), nil
 }

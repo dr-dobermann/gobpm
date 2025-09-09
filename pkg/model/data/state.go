@@ -10,11 +10,11 @@ import (
 
 const (
 	// StateUndefined represents undefined data state.
-	StateUndefined   = "UNDEFINED_DATA"
+	StateUndefined = "UNDEFINED_DATA"
 	// StateUnavailable represents unavailable data state.
 	StateUnavailable = "UNAVAILABLE_DATA"
 	// StateReady represents ready data state.
-	StateReady       = "READY_DATA_STATE"
+	StateReady = "READY_DATA_STATE"
 )
 
 var (

@@ -125,6 +125,25 @@ issues:
           - revive
         text: "method Id should be ID"
         path: internal/eventproc/eventhub/waiters/timer.go
+      # Suppress package naming warnings for BPMN standard compliance
+      - linters:
+          - revive
+        text: "avoid meaningless package names"
+      - linters:
+          - revive
+        text: "don't use an underscore in package name"
+      # Suppress stuttering names for established API types
+      - linters:
+          - revive
+        text: "stutters"
+      # Suppress meaningless package names for BPMN compliance
+      - linters:
+          - revive
+        text: "avoid meaningless package names"
+      # Suppress underscore package names for BPMN compliance  
+      - linters:
+          - revive
+        text: "don't use an underscore in package name"
   exclude-dirs:
       - generated
       - .generated

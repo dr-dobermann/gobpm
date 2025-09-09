@@ -16,7 +16,7 @@ type ItemKind string
 
 const (
 	// PhysicalKind represents a physical item kind.
-	PhysicalKind    ItemKind = "Physical"
+	PhysicalKind ItemKind = "Physical"
 	// InformationKind represents an information item kind.
 	InformationKind ItemKind = "Information"
 )
@@ -269,7 +269,7 @@ func NewIAE(
 		case foundation.BaseOption:
 			iaeC.baseOpts = append(iaeC.baseOpts, o)
 
-		case iaeOption:
+		case IAEOption:
 			if err := opt.Apply(&iaeC); err != nil {
 				ee = append(ee, fmt.Errorf("IAE option applying error: %w", err))
 			}

@@ -45,7 +45,7 @@ func WithProperties(props ...*Property) PropertyOption {
 }
 
 // WithProperty builds and adds single property to the configuration.
-func WithProperty(name string, iaeOpt iaeAdderOption) PropertyOption {
+func WithProperty(name string, iaeOpt IAEAdderOption) PropertyOption {
 	name = strings.TrimSpace(name)
 
 	f := func(cfg PropertyAdder) error {

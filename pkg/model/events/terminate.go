@@ -5,6 +5,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
+// TerminateEventDefinition represents a terminate event definition.
 type TerminateEventDefinition struct {
 	definition
 }

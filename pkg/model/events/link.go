@@ -1,6 +1,6 @@
 package events
 
-// A Link Event is a mechanism for connecting two sections of a Process. Link
+// LinkEventDefinition is a mechanism for connecting two sections of a Process. Link
 // Events can be used to create looping situations or to avoid long Sequence
 // Flow lines. The use of Link Events is limited to a single Process level
 // (i.e., they cannot link a parent Process with a Sub-Process).

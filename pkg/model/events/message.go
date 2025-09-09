@@ -10,6 +10,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
 
+// MessageEventDefinition represents a message event definition.
 type MessageEventDefinition struct {
 	definition
 
@@ -20,7 +21,7 @@ type MessageEventDefinition struct {
 	operation *service.Operation
 }
 
-// NewMessageEventDefinition creates a new MessageEventDefinition and
+// NewMessageEventDefintion creates a new MessageEventDefinition and
 // returns its pointer. If nil message was given then error returned.
 func NewMessageEventDefintion(
 	msg *common.Message,
@@ -79,16 +80,16 @@ func (*MessageEventDefinition) Type() flow.EventTrigger {
 }
 
 // CheckItemDefinition check if definition is related with
-// data.ItemDefinition with iDefId Id.
-func (med *MessageEventDefinition) CheckItemDefinition(iDefId string) bool {
+// data.ItemDefinition with iDefID Id.
+func (med *MessageEventDefinition) CheckItemDefinition(iDefID string) bool {
 	if med.message.Item() == nil {
 		return false
 	}
 
-	return med.message.Item().ID() == iDefId
+	return med.message.Item().ID() == iDefID
 }
 
-// GetItemList returns a list of data.ItemDefinition the EventDefinition
+// GetItemsList returns a list of data.ItemDefinition the EventDefinition
 // is based on.
 // If EventDefiniton isn't based on any data.ItemDefiniton, empty list
 // wil be returned.

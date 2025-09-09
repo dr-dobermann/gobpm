@@ -105,13 +105,21 @@ func (t trackState) String() string {
 type stepState uint8
 
 const (
+	// StepCreated represents a newly created step state.
 	StepCreated stepState = iota
+	// StepStarted represents a step that has been started.
 	StepStarted
+	// StepPrologued represents a step that has completed prologue.
 	StepPrologued
+	// StepExecuting represents a step that is currently executing.
 	StepExecuting
+	// StepEpilogued represents a step that has completed epilogue.
 	StepEpilogued
+	// StepAwaitsResults represents a step awaiting results.
 	StepAwaitsResults
+	// StepEnded represents a step that has ended.
 	StepEnded
+	// StepFailed represents a step that has failed.
 	StepFailed
 )
 
@@ -183,10 +191,10 @@ func newTrack(
 	if err != nil {
 		return nil, fmt.Errorf("failed to create base element for track: %w", err)
 	}
-	
+
 	t := track{
 		BaseElement: *be,
-		prev: []*track{},
+		prev:        []*track{},
 		steps: []*stepInfo{
 			{
 				node:  start,
@@ -322,7 +330,6 @@ func (t *track) stop() {
 
 // run start execution loop of the track which ends by ctx's cancel or
 // when there is no outgoing flows from the processing nodes.
-//
 func (t *track) run(
 	ctx context.Context,
 ) {
@@ -391,7 +398,6 @@ func (t *track) run(
 // executeNode tries to execute flow.Node n.
 // On succes it returns a list (probably empty) of outgoing sequence flows.
 // On failure it returns error.
-//
 func (t *track) executeNode(
 	ctx context.Context,
 	step *stepInfo,
@@ -466,7 +472,7 @@ func (t *track) executeNodeCore(ctx context.Context, step *stepInfo, ne exec.Nod
 	return nexts, nil
 }
 
-func (t *track) finalizeNodeExecution(ctx context.Context, step *stepInfo, nexts []*flow.SequenceFlow) error {
+func (t *track) finalizeNodeExecution(ctx context.Context, step *stepInfo, _ []*flow.SequenceFlow) error {
 	if err := t.runNodeEpilogue(ctx, step.node); err != nil {
 		return err
 	}

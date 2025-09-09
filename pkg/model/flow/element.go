@@ -17,11 +17,11 @@ type ElementType string
 
 const (
 	// InvalidElement represents an invalid element type.
-	InvalidElement      ElementType = "INVALID_ELEMENT_TYPE"
+	InvalidElement ElementType = "INVALID_ELEMENT_TYPE"
 	// DataObjectElement represents a data object element type.
-	DataObjectElement   ElementType = "DataObject"
+	DataObjectElement ElementType = "DataObject"
 	// NodeElement represents a node element type.
-	NodeElement         ElementType = "Node"
+	NodeElement ElementType = "Node"
 	// SequenceFlowElement represents a sequence flow element type.
 	SequenceFlowElement ElementType = "SequenceFlow"
 )

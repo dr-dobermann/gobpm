@@ -88,7 +88,7 @@ import (
 
 // *****************************************************************************
 
-// Events that catch a trigger. All Start Events and some Intermediate Events
+// Event catches a trigger. All Start Events and some Intermediate Events
 // are catching Events.
 type Event struct {
 	flow.FlowNode
@@ -159,7 +159,7 @@ func (e Event) Properties() []*data.Property {
 	return append([]*data.Property{}, e.properties...)
 }
 
-// Definiitons returns a list of event definitions.
+// Definitions returns a list of event definitions.
 func (e Event) Definitions() []flow.EventDefinition {
 	return append([]flow.EventDefinition{}, e.definitions...)
 }

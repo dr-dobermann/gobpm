@@ -106,6 +106,7 @@ func WithOutput(name, pType string, required bool) UsrTaskOption {
 
 // --------------------- options.Option interface ------------------------------
 
+// Apply applies the user task option to the provided configurator.
 func (uto UsrTaskOption) Apply(cfg options.Configurator) error {
 	if utc, ok := cfg.(*usrTaskConfig); ok {
 		return uto(utc)

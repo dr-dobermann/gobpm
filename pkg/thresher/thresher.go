@@ -61,8 +61,11 @@ type State uint8
 const (
 	// Invalid represents an invalid thresher state.
 	Invalid State = iota
+	// NotStarted represents a thresher that has not been started.
 	NotStarted
+	// Started represents a thresher that has been started.
 	Started
+	// Paused represents a thresher that has been paused.
 	Paused
 )
 
