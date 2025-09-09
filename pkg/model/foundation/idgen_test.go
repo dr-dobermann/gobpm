@@ -13,11 +13,11 @@ func GenerateUUID() string {
 }
 
 func TestGenerator(t *testing.T) {
-	id1 := foundation.GenerateId()
+	id1 := foundation.GenerateID()
 	require.NotEmpty(t, id1)
 	// t.Log(id1)
 
-	id2 := foundation.GenerateId()
+	id2 := foundation.GenerateID()
 	require.NotEmpty(t, id2)
 	// t.Log(id2)
 
@@ -30,11 +30,11 @@ func TestGenerator(t *testing.T) {
 	foundation.SetGenerator(
 		foundation.GenFunc(GenerateUUID))
 
-	id1 = foundation.GenerateId()
+	id1 = foundation.GenerateID()
 	require.NotEmpty(t, id1)
 	// t.Log(id1)
 
-	id2 = foundation.GenerateId()
+	id2 = foundation.GenerateID()
 	require.NotEmpty(t, id2)
 	// t.Log(id2)
 

@@ -113,7 +113,7 @@ func newActivity(
 
 	for _, opt := range actOpts {
 		switch o := opt.(type) {
-		case activityOption, RoleOption, data.PropertyOption:
+		case ActivityOption, RoleOption, data.PropertyOption:
 			if err := o.Apply(&cfg); err != nil {
 				ee = append(ee, err)
 			}
@@ -151,17 +151,17 @@ func (a *activity) Properties() []*data.Property {
 
 // SetDefaultFlow sets default flow from the Activity.
 // If the flowId is empty, then default flow cleared for Activity.
-func (a *activity) SetDefaultFlow(flowId string) error {
-	flowId = strings.TrimSpace(flowId)
+func (a *activity) SetDefaultFlow(flowID string) error {
+	flowID = strings.TrimSpace(flowID)
 
-	if flowId == "" {
+	if flowID == "" {
 		a.defaultFlow = nil
 
 		return nil
 	}
 
 	for _, o := range a.Outgoing() {
-		if o.Id() == flowId {
+		if o.ID() == flowID {
 			a.defaultFlow = o
 
 			return nil
@@ -169,7 +169,7 @@ func (a *activity) SetDefaultFlow(flowId string) error {
 	}
 
 	return errs.New(
-		errs.M("flow %q dosn't existed in acitivity %q", flowId, a.Name()),
+		errs.M("flow %q dosn't existed in acitivity %q", flowID, a.Name()),
 		errs.C(errorClass, errs.InvalidParameter))
 }
 

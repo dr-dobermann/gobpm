@@ -23,6 +23,13 @@ This file provides an organized index to all documentation throughout the GoBPM 
   - Event-driven communication patterns
   - Asynchronous processing architecture
 
+- **[Event Processing Guide](docs/EVENT_PROCESSING_GUIDE.md)**: Comprehensive event system guide
+  - **NEW**: Detailed architecture and implementation patterns
+  - Event propagation vs generation patterns
+  - Timer waiter behavior and limitations
+  - Testing strategies and common pitfalls
+  - Performance optimization techniques
+
 - **[EventHub](internal/eventproc/eventhub/README.md)**: Central event distribution system
   - Event registration and propagation
   - Event waiter management

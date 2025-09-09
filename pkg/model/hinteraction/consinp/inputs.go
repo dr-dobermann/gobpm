@@ -66,7 +66,7 @@ func (ii *stringInput) read(src io.Reader) (data.Data, error) {
 }
 
 // read implements input interface for messager prompt presentation.
-func (ii *messager) read(src io.Reader) (data.Data, error) {
+func (ii *messager) read(_ io.Reader) (data.Data, error) {
 	fmt.Println(ii.prompt)
 
 	return nil, nil

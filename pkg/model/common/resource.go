@@ -19,6 +19,7 @@ import (
 // Directory. Every Activity referencing a parameterized Resource can bind
 // values available in the scope of the Activity to these parameters.
 
+// Resource represents a BPMN resource element.
 type Resource struct {
 	// This attribute specifies the name of the Resource.
 	name string
@@ -28,6 +29,7 @@ type Resource struct {
 	parameters []ResourceParameter
 }
 
+// ResourceParameter represents a BPMN resource parameter.
 type ResourceParameter struct {
 	// Specifies the name of the query parameter.
 	name string
@@ -86,9 +88,6 @@ func (r *Resource) Parameters() []*ResourceParameter {
 	return rr
 }
 
-// ============================================================================
-// ResourceParameter
-// ============================================================================
 // NewResourceParameter creates a new ResourceParameter and returns its pointer
 // on success or error on failure.
 func NewResourceParameter(

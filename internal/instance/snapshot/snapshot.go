@@ -1,8 +1,7 @@
+// Package snapshot provides process instance snapshot functionality.
 package snapshot
 
 import (
-	"errors"
-
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -17,19 +16,18 @@ const errorClass = "SNAPSHOT_ERRORS"
 type Snapshot struct {
 	foundation.ID
 
-	ProcessId   string
+	ProcessID   string
 	ProcessName string
 	Nodes       map[string]flow.Node
 	Flows       map[string]*flow.SequenceFlow
 	Properties  []*data.Property
-	InitEvents  []flow.EventNode
 }
 
 // New creates a new snapshot from the Process p and returns its
 // pointer on success or error on failure.
 func New(
 	p *process.Process,
-	snapOpts ...options.Option,
+	_ ...options.Option,
 ) (*Snapshot, error) {
 	if p == nil {
 		return nil,
@@ -40,44 +38,55 @@ func New(
 
 	s := Snapshot{
 		ID:          *foundation.NewID(),
-		ProcessId:   p.Id(),
+		ProcessID:   p.ID(),
 		ProcessName: p.Name(),
 		Nodes:       map[string]flow.Node{},
 		Flows:       map[string]*flow.SequenceFlow{},
 		Properties:  p.Properties(),
-		InitEvents:  []flow.EventNode{},
 	}
 
-	return createSnapshot(&s, p)
-}
-
-// createSnapshot creates a snapshot of the process and retruns its pointer.
-// If any errors found, then error returned.
-func createSnapshot(s *Snapshot, p *process.Process) (*Snapshot, error) {
-	ee := []error{}
+	seExists := false
+	eeExists := false
 
 	for _, n := range p.Nodes() {
-		s.Nodes[n.Id()] = n
+		s.Nodes[n.ID()] = n
 
-		// find initial events
-		if en, ok := n.(flow.EventNode); ok {
-			_, bounded := en.(flow.BoudaryEvent)
-			if len(en.Incoming()) == 0 && !bounded {
-				s.InitEvents = append(s.InitEvents, en)
+		// check events
+		if n.NodeType() == flow.EventNodeType {
+			en, ok := n.(flow.EventNode)
+			if !ok {
+				return nil,
+					errs.New(
+						errs.M("failed to convert to EventNode"),
+						errs.C(errorClass, errs.TypeCastingError),
+						errs.D("node_id", n.ID()),
+						errs.D("node_name", n.Name()))
 			}
+
+			switch en.EventClass() {
+			case flow.StartEventClass:
+				seExists = true
+
+			case flow.IntermediateEventClass:
+				break
+
+			case flow.EndEventClass:
+				eeExists = true
+			}
+		}
+
+		// by BPMN demands that, if there is an EndEvent in the process, there should
+		// be at least one StartEvent
+		if eeExists && !seExists {
+			return nil,
+				errs.New(
+					errs.M("no StartEvent in process with an EndEvent"))
 		}
 	}
 
 	for _, f := range p.Flows() {
-		s.Flows[f.Id()] = f
+		s.Flows[f.ID()] = f
 	}
 
-	if len(ee) != 0 {
-		return nil, errs.New(
-			errs.M("process snapshot creation failed"),
-			errs.C(errorClass, errs.BulidingFailed),
-			errs.E(errors.Join(ee...)))
-	}
-
-	return s, nil
+	return &s, nil
 }

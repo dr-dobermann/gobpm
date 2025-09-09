@@ -72,7 +72,7 @@ func TestCategoryValue(t *testing.T) {
 		cv := artifacts.NewCategoryValue("test-value")
 		require.NotNil(t, cv)
 		require.Equal(t, "test-value", cv.Value)
-		require.NotEmpty(t, cv.Id())
+		require.NotEmpty(t, cv.ID())
 		require.Nil(t, cv.Category())
 		require.Empty(t, cv.FlowElements())
 	})
@@ -103,10 +103,10 @@ func TestCategoryValue(t *testing.T) {
 
 		// Create mock flow elements
 		fe1 := mockflow.NewMockElement(t)
-		fe1.EXPECT().Id().Return("fe1")
+		fe1.EXPECT().ID().Return("fe1")
 
 		fe2 := mockflow.NewMockElement(t)
-		fe2.EXPECT().Id().Return("fe2")
+		fe2.EXPECT().ID().Return("fe2")
 
 		// Add flow elements
 		added := cv.AddFlowElement(fe1, nil, fe2)
@@ -118,7 +118,7 @@ func TestCategoryValue(t *testing.T) {
 		// Check that elements are in the list
 		elementIds := make(map[string]bool)
 		for _, el := range elements {
-			elementIds[el.Id()] = true
+			elementIds[el.ID()] = true
 		}
 		require.True(t, elementIds["fe1"])
 		require.True(t, elementIds["fe2"])
@@ -144,7 +144,7 @@ func TestCategoryValue(t *testing.T) {
 
 		// Test adding to nil categorizedElements (should initialize)
 		fe1 := mockflow.NewMockElement(t)
-		fe1.EXPECT().Id().Return("fe1")
+		fe1.EXPECT().ID().Return("fe1")
 
 		added := cv.AddFlowElement(fe1)
 		require.Equal(t, 1, added)

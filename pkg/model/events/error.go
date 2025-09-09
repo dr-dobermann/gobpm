@@ -9,6 +9,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
+// ErrorEventDefinition represents an error event definition.
 type ErrorEventDefinition struct {
 	definition
 
@@ -49,21 +50,20 @@ func (eed *ErrorEventDefinition) Error() *common.Error {
 
 // Type implements the Definition interface.
 func (*ErrorEventDefinition) Type() flow.EventTrigger {
-
 	return flow.TriggerError
 }
 
 // CheckItemDefinition check if definition is related with
 // data.ItemDefinition with iDefId Id.
-func (eed *ErrorEventDefinition) CheckItemDefinition(iDefId string) bool {
+func (eed *ErrorEventDefinition) CheckItemDefinition(iDefID string) bool {
 	if eed.err.Structure() == nil {
 		return false
 	}
 
-	return eed.err.Structure().Id() == iDefId
+	return eed.err.Structure().ID() == iDefID
 }
 
-// GetItemList returns a list of data.ItemDefinition the EventDefinition
+// GetItemsList returns a list of data.ItemDefinition the EventDefinition
 // is based on.
 // If EventDefiniton isn't based on any data.ItemDefiniton, empty list
 // wil be returned.
@@ -83,17 +83,16 @@ func (eed *ErrorEventDefinition) CloneEvent(
 	var iDef *data.ItemDefinition
 
 	if len(evtData) != 0 {
-
 		d := evtData[0]
 
-		if d.ItemDefinition().Id() != eed.err.Structure().Id() {
+		if d.ItemDefinition().ID() != eed.err.Structure().ID() {
 			return nil,
 				errs.New(
 					errs.M(
 						"error itemDefinition and data itemDefinition "+
 							"have different ids(%s, %s)",
-						eed.err.Structure().Id(),
-						d.ItemDefinition().Id()))
+						eed.err.Structure().ID(),
+						d.ItemDefinition().ID()))
 		}
 
 		iDef = d.ItemDefinition()
@@ -103,23 +102,23 @@ func (eed *ErrorEventDefinition) CloneEvent(
 		eed.err.Name(),
 		eed.err.ErrorCode(),
 		iDef,
-		foundation.WithId(eed.err.Id()))
+		foundation.WithID(eed.err.ID()))
 	if err != nil {
 		return nil,
 			errs.New(
 				errs.M("couldn't clone Error %q[%s]",
-					eed.err.Name(), eed.err.Id()),
+					eed.err.Name(), eed.err.ID()),
 				errs.C(errorClass, errs.BulidingFailed),
 				errs.E(err))
 	}
 
 	need, err := NewErrorEventDefinition(
-		e, foundation.WithId(eed.Id()))
+		e, foundation.WithID(eed.ID()))
 	if err != nil {
 		return nil,
 			errs.New(
 				errs.M("cloning failed for ErrorEventDefinition #%s",
-					eed.Id()),
+					eed.ID()),
 				errs.C(errorClass, errs.BulidingFailed),
 				errs.E(err))
 	}

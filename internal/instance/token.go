@@ -5,15 +5,24 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
+// TokenState represents the current state of a token in the process
+// instance execution flow.
 type TokenState uint8
 
+// Token state constants define the possible states of a token during
+// process execution.
 const (
+	// TokenInvalid represents an invalid token state
 	TokenInvalid TokenState = iota
+	// TokenAlive represents an active token ready for processing
 	TokenAlive
+	// TokenWaitForEvent represents a token waiting for an event
 	TokenWaitForEvent
+	// TokenConsumed represents a token that has been consumed
 	TokenConsumed
 )
 
+// Validate checks if the TokenState is valid.
 func (ts TokenState) Validate() error {
 	if ts < TokenAlive || ts > TokenConsumed {
 		return errs.New(
@@ -25,7 +34,7 @@ func (ts TokenState) Validate() error {
 }
 
 type token struct {
-	foundation.ID
+	foundation.BaseElement
 
 	inst  *Instance
 	trk   *track
@@ -42,8 +51,13 @@ func newToken(inst *Instance, trk *track) *token {
 		return nil
 	}
 
+	be, err := foundation.NewBaseElement()
+	if err != nil {
+		errs.Panic("failed to create base element for token: " + err.Error())
+	}
+	
 	t := token{
-		ID:    *foundation.NewID(),
+		BaseElement: *be,
 		inst:  inst,
 		trk:   trk,
 		state: TokenAlive,

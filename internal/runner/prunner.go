@@ -1,3 +1,4 @@
+// Package runner provides process execution runtime functionality.
 package runner
 
 import (
@@ -13,5 +14,5 @@ type ProcessRunner interface {
 
 	// StartProcess runs process with processId without any event even if
 	// process awaits them.
-	StartProcess(processId string) error
+	StartProcess(processID string) error
 }

@@ -30,7 +30,7 @@ func TestMessageEvents_CurrentLimitations(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 
 		mockProcessor := mockeventproc.NewMockEventProcessor(t)
-		mockProcessor.EXPECT().Id().Return("message-processor-id")
+		mockProcessor.EXPECT().ID().Return("message-processor-id")
 
 		// Create a message event definition
 		message := common.MustMessage("test-message", data.MustItemDefinition(nil))

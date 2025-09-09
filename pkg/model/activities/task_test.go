@@ -88,7 +88,7 @@ func TestTaskData(t *testing.T) {
 							data.MustItemAwareElement(
 								data.MustItemDefinition(
 									values.NewVariable(100.500),
-									foundation.WithId("y")),
+									foundation.WithID("y")),
 								data.ReadyDataState)),
 					}),
 				WithSet("output set", "",
@@ -99,7 +99,7 @@ func TestTaskData(t *testing.T) {
 							data.MustItemAwareElement(
 								data.MustItemDefinition(
 									values.NewVariable(0.0),
-									foundation.WithId("y")),
+									foundation.WithID("y")),
 								nil)),
 					}))
 			require.NoError(t, err)
@@ -125,7 +125,7 @@ func TestTaskData(t *testing.T) {
 								if idx := slices.IndexFunc(
 									props,
 									func(prop *data.Property) bool {
-										return dv.Id() == prop.Id()
+										return dv.ID() == prop.ID()
 									}); idx == -1 {
 									return fmt.Errorf("couldn't find property %q", d.Name())
 								}
@@ -143,11 +143,11 @@ func TestTaskData(t *testing.T) {
 						return nil
 					})
 			s.EXPECT().
-				GetDataById(dp, "y").
+				GetDataByID(dp, "y").
 				Return(data.MustItemAwareElement(
 					data.MustItemDefinition(
 						values.NewVariable(23.02),
-						foundation.WithId("y")),
+						foundation.WithID("y")),
 					data.ReadyDataState), nil)
 
 			err = task.RegisterData(dp, s)
@@ -158,7 +158,7 @@ func TestTaskData(t *testing.T) {
 				"input data object",
 				data.MustItemDefinition(
 					values.NewVariable(23.02),
-					foundation.WithId("y")),
+					foundation.WithID("y")),
 				data.ReadyDataState)
 			require.NoError(t, err)
 			require.NoError(t, inpDO.AssociateTarget(task, nil))
@@ -167,7 +167,7 @@ func TestTaskData(t *testing.T) {
 				"output data object",
 				data.MustItemDefinition(
 					values.NewVariable(11.09),
-					foundation.WithId("y")),
+					foundation.WithID("y")),
 				nil)
 			require.NoError(t, err)
 			require.NoError(t, outDO.AssociateSource(task, []string{"y"}, nil))
@@ -191,13 +191,13 @@ func TestTaskData(t *testing.T) {
 			input := data.MustItemAwareElement(
 				data.MustItemDefinition(
 					values.NewVariable(42),
-					foundation.WithId("x")),
+					foundation.WithID("x")),
 				nil)
 
 			output := data.MustItemAwareElement(
 				data.MustItemDefinition(
 					values.NewVariable(84),
-					foundation.WithId("x")),
+					foundation.WithID("x")),
 				data.ReadyDataState)
 
 			task, err := newTask(
@@ -231,7 +231,7 @@ func TestTaskData(t *testing.T) {
 					data.MustItemAwareElement(
 						data.MustItemDefinition(
 							values.NewVariable(100),
-							foundation.WithId("x")),
+							foundation.WithID("x")),
 						data.ReadyDataState)))
 			require.NoError(t, err)
 
@@ -253,7 +253,7 @@ func TestTaskData(t *testing.T) {
 				slices.ContainsFunc(
 					ipp,
 					func(iae *data.ItemAwareElement) bool {
-						return iae.ItemDefinition().Id() == "x"
+						return iae.ItemDefinition().ID() == "x"
 					}))
 
 			require.Equal(t, 100, ipp[0].ItemDefinition().Structure().Get(ctx))
@@ -262,7 +262,7 @@ func TestTaskData(t *testing.T) {
 			outRes := data.MustItemAwareElement(
 				data.MustItemDefinition(
 					values.NewVariable(0),
-					foundation.WithId("x")),
+					foundation.WithID("x")),
 				nil)
 
 			oa, err := data.NewAssociation(
@@ -285,7 +285,7 @@ func TestTaskData(t *testing.T) {
 				slices.ContainsFunc(
 					opp,
 					func(iae *data.ItemAwareElement) bool {
-						return iae.ItemDefinition().Id() == "x"
+						return iae.ItemDefinition().ID() == "x"
 					}))
 
 			require.Equal(t, 84, opp[0].ItemDefinition().Structure().Get(ctx))

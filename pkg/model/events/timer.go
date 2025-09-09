@@ -57,7 +57,6 @@ func NewTimerEventDefinition(
 
 	if (tDate != nil && (tCycle != nil || tDuration != nil)) ||
 		(tDate == nil && (tCycle == nil || tDuration == nil)) {
-
 		return nil,
 			errs.New(
 				errs.M("doesn't allow to define Timer Data or Cycle and Duration simultaneously"),

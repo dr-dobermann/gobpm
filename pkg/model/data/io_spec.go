@@ -11,20 +11,25 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
-// *****************************************************************************
-//
-// SetType uses to set Set
+// SetType represents different set types for input/output specifications.
 type SetType uint8
 
 const (
+	// InvalidSet represents an invalid set type.
 	InvalidSet        SetType = iota
+	// DefaultSet represents the default set type.
 	DefaultSet        SetType = 1 << iota
+	// OptionalSet represents an optional set type.
 	OptionalSet       SetType = 1 << iota
+	// WhileExecutionSet represents a while-execution set type.
 	WhileExecutionSet SetType = 1 << iota
 
+	// AllSets represents all set types combined.
 	AllSets SetType = DefaultSet | OptionalSet | WhileExecutionSet
 
+	// SingleType represents single type validation mode.
 	SingleType    = true
+	// CombinedTypes represents combined types validation mode.
 	CombinedTypes = false
 )
 
@@ -46,7 +51,7 @@ func allTypes() []SetType {
 	return []SetType{DefaultSet, OptionalSet, WhileExecutionSet}
 }
 
-// checkSetType tests if the st is a proper SetType.
+// Validate tests if the st is a proper SetType.
 // If single is true, then checkSetType test st against single
 // SetType and fails on combined states.
 func (st SetType) Validate(single bool) error {
@@ -64,8 +69,7 @@ func (st SetType) Validate(single bool) error {
 	return nil
 }
 
-// *****************************************************************************
-//
+// InputOutputSpecification represents BPMN input/output specification for activities and processes.
 // Activities and Processes often need data in order to execute. In addition
 // they can produce data during or as a result of execution. Data requirements
 // are captured as Data Inputs and InputSets. Data that is produced is captured
@@ -320,7 +324,7 @@ func (ios *InputOutputSpecification) HasParameter(
 	}
 
 	for _, iosP := range ios.params[d] {
-		if iosP.Id() == p.Id() {
+		if iosP.ID() == p.ID() {
 			return true
 		}
 	}

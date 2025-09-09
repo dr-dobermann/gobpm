@@ -106,11 +106,11 @@ func TestSrvTaskExec(t *testing.T) {
 
 	in := common.MustMessage("user name",
 		data.MustItemDefinition(values.NewVariable(""),
-			foundation.WithId("user_name")))
+			foundation.WithID("user_name")))
 
 	out := common.MustMessage("hello string",
 		data.MustItemDefinition(values.NewVariable(""),
-			foundation.WithId("hello_str")))
+			foundation.WithID("hello_str")))
 
 	hello, err := gooper.New(
 		func(ctx context.Context, d *data.ItemDefinition) (*data.ItemDefinition, error) {
@@ -128,7 +128,7 @@ func TestSrvTaskExec(t *testing.T) {
 
 			return data.MustItemDefinition(
 					values.NewVariable(hello_str),
-					foundation.WithId("hello_str")),
+					foundation.WithID("hello_str")),
 				nil
 		})
 	require.NoError(t, err)
@@ -138,12 +138,12 @@ func TestSrvTaskExec(t *testing.T) {
 	re := mockrenv.NewMockRuntimeEnvironment(t)
 
 	re.EXPECT().
-		GetDataById(scope.EmptyDataPath, "user_name").
+		GetDataByID(scope.EmptyDataPath, "user_name").
 		Return(data.MustParameter("user_name",
 			data.MustItemAwareElement(
 				data.MustItemDefinition(
 					values.NewVariable("dr.Dobermann"),
-					foundation.WithId("user_name")),
+					foundation.WithID("user_name")),
 				data.ReadyDataState)),
 			nil)
 
@@ -167,7 +167,7 @@ func TestSrvTaskExec(t *testing.T) {
 		data.MustItemAwareElement(
 			data.MustItemDefinition(
 				values.NewVariable(""),
-				foundation.WithId("hello_str")),
+				foundation.WithID("hello_str")),
 			data.UnavailableDataState))
 
 	require.NoError(t, st.IoSpec.AddParameter(outp, data.Output))

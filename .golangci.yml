@@ -8,7 +8,6 @@ linters:
   default: none
   enable:
     - asciicheck
-    - depguard
     - dupl
     - errcheck
     - funlen
@@ -31,10 +30,10 @@ linters:
     - unconvert
     - unused
     - whitespace
-  settings:
+linters-settings:
     depguard:
       rules:
-        main:
+        deny_deprecated:
           deny:
             - pkg: io/ioutil
               desc: io/ioutil is deprecated, use io and os packages instead
@@ -98,9 +97,9 @@ linters:
     staticcheck:
       checks:
         - all
-  exclusions:
-    generated: lax
-    rules:
+issues:
+  exclude-use-default: false
+  exclude-rules:
       - linters:
           - lll
         source: '^//go:generate '
@@ -122,32 +121,21 @@ linters:
       - linters:
           - revive
         text: var-naming.*should be.*ID
-    paths:
-      - mock_.*\.go$
-      - .*\.pb\.go$
-      - .*_mock\.go$
+      - linters:
+          - revive
+        text: "method Id should be ID"
+        path: internal/eventproc/eventhub/waiters/timer.go
+  exclude-dirs:
       - generated
       - .generated
       - examples
-      - third_party$
-      - builtin$
-      - examples$
-formatters:
-  enable:
-    - goimports
-  settings:
-    goimports:
-      local-prefixes:
-        - github.com/dr-dobermann/gobpm
-  exclusions:
-    generated: lax
-    paths:
+      - third_party
+      - builtin
+  exclude-files:
       - mock_.*\.go$
       - .*\.pb\.go$
       - .*_mock\.go$
-      - generated
-      - .generated
-      - examples
-      - third_party$
-      - builtin$
-      - examples$
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true

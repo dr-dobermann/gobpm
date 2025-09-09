@@ -27,6 +27,7 @@ var endTriggers = set.New(
 	flow.TriggerTerminate,
 )
 
+// EndEvent represents a BPMN end event.
 type EndEvent struct {
 	throwEvent
 }
@@ -91,12 +92,14 @@ func NewEndEvent(
 
 // ------------------ flow.Node interface --------------------------------------
 
+// Node returns the EndEvent as a flow node.
 func (ee *EndEvent) Node() flow.Node {
 	return ee
 }
 
 // ------------------ flow.EventNode interface ---------------------------------
 
+// EventClass returns the event class for EndEvent.
 func (ee *EndEvent) EventClass() flow.EventClass {
 	return flow.EndEventClass
 }
@@ -104,7 +107,7 @@ func (ee *EndEvent) EventClass() flow.EventClass {
 // ------------------ flow.SequenceTarget interface ----------------------------
 
 // AcceptIncomingFlow checks if the EndEvent accepts incoming sequence flow sf.
-func (ee *EndEvent) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
+func (ee *EndEvent) AcceptIncomingFlow(_ *flow.SequenceFlow) error {
 	// EndEvent has no restrictions on incoming sequence flows
 	return nil
 }
@@ -116,7 +119,7 @@ func (ee *EndEvent) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
 // All events defined for the EndEvent should be thrown out or EndEvent
 // execution failed.
 func (ee *EndEvent) Exec(
-	ctx context.Context,
+	_ context.Context,
 	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
 	ers := []error{}
@@ -131,7 +134,7 @@ func (ee *EndEvent) Exec(
 		return nil,
 			errs.New(
 				errs.M("event emitting failed for EndEvent %q[%s]",
-					ee.Name(), ee.Id()),
+					ee.Name(), ee.ID()),
 				errs.C(errorClass, errs.OperationFailed),
 				errs.E(errors.Join(ers...)))
 	}

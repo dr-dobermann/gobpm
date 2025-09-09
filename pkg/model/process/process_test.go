@@ -81,7 +81,7 @@ func TestProcess(t *testing.T) {
 					data.MustItemAwareElement(
 						data.MustItemDefinition(
 							values.NewVariable(23.02),
-							foundation.WithId("y")),
+							foundation.WithID("y")),
 						data.ReadyDataState)),
 			}))
 	require.NoError(t, err)
@@ -102,7 +102,7 @@ func TestProcess(t *testing.T) {
 					data.MustItemAwareElement(
 						data.MustItemDefinition(
 							values.NewVariable(0.0),
-							foundation.WithId("y")),
+							foundation.WithID("y")),
 						nil)),
 			}),
 		activities.WithEmptySet(
@@ -130,7 +130,7 @@ func TestProcess(t *testing.T) {
 		"X",
 		data.MustItemDefinition(
 			values.NewVariable(100),
-			foundation.WithId("y")),
+			foundation.WithID("y")),
 		data.ReadyDataState)
 	require.NoError(t, err)
 
@@ -139,7 +139,7 @@ func TestProcess(t *testing.T) {
 			p, err := process.New("simple process",
 				activities.WithRoles(roles[0]),
 				data.WithProperties(xProp),
-				foundation.WithId("simple process"))
+				foundation.WithID("simple process"))
 			require.NoError(t, err)
 			require.NotEmpty(t, p)
 
@@ -192,7 +192,7 @@ func TestProcess(t *testing.T) {
 			for _, f := range ff {
 				require.NoError(t, f.Validate())
 
-				t.Log(f.Id(), " ", f.Name())
+				t.Log(f.ID(), " ", f.Name())
 			}
 
 			_, err = flow.Link(extra, task2)

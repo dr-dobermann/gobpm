@@ -84,9 +84,9 @@ func TestNewGateway(t *testing.T) {
 	require.Error(t, err)
 
 	// valid options
-	g, err := gateways.New(foundation.WithId("gate #1"), options.WithName("my gate"))
+	g, err := gateways.New(foundation.WithID("gate #1"), options.WithName("my gate"))
 	require.NoError(t, err)
-	require.Equal(t, "gate #1", g.Id())
+	require.Equal(t, "gate #1", g.ID())
 	require.Equal(t, "my gate", g.Name())
 	require.Equal(t, gateways.Unspecified, g.Direction())
 

@@ -19,7 +19,8 @@ type (
 		outputs   []*common.ResourceParameter
 	}
 
-	usrTaskOption func(cfg *usrTaskConfig) error
+	// UsrTaskOption represents a configuration option for UserTask
+	UsrTaskOption func(cfg *usrTaskConfig) error
 )
 
 // newUsrTask tries to create new UserTask from user task config.
@@ -56,7 +57,7 @@ func (utc *usrTaskConfig) newUsrTask() (*UserTask, error) {
 }
 
 // WithRenderer adds new unique Render to user task config.
-func WithRenderer(r hi.Renderer) usrTaskOption {
+func WithRenderer(r hi.Renderer) UsrTaskOption {
 	f := func(cfg *usrTaskConfig) error {
 		if r == nil {
 			return fmt.Errorf("no renderer")
@@ -65,10 +66,10 @@ func WithRenderer(r hi.Renderer) usrTaskOption {
 		if slices.ContainsFunc(
 			cfg.renderers,
 			func(r2c hi.Renderer) bool {
-				return r2c.Id() == r.Id() ||
+				return r2c.ID() == r.ID() ||
 					r2c.Implementation() == r.Implementation()
 			}) {
-			return fmt.Errorf("duplicate renderer: #%s", r.Id())
+			return fmt.Errorf("duplicate renderer: #%s", r.ID())
 		}
 
 		cfg.renderers = append(cfg.renderers, r)
@@ -76,11 +77,11 @@ func WithRenderer(r hi.Renderer) usrTaskOption {
 		return nil
 	}
 
-	return usrTaskOption(f)
+	return UsrTaskOption(f)
 }
 
 // WithOutput register new output parameter from renderer.
-func WithOutput(name, pType string, required bool) usrTaskOption {
+func WithOutput(name, pType string, required bool) UsrTaskOption {
 	f := func(cfg *usrTaskConfig) error {
 		if slices.ContainsFunc(
 			cfg.outputs,
@@ -100,12 +101,12 @@ func WithOutput(name, pType string, required bool) usrTaskOption {
 		return nil
 	}
 
-	return usrTaskOption(f)
+	return UsrTaskOption(f)
 }
 
 // --------------------- options.Option interface ------------------------------
 
-func (uto usrTaskOption) Apply(cfg options.Configurator) error {
+func (uto UsrTaskOption) Apply(cfg options.Configurator) error {
 	if utc, ok := cfg.(*usrTaskConfig); ok {
 		return uto(utc)
 	}

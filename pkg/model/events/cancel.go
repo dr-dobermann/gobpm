@@ -1,3 +1,4 @@
+// Package events provides BPMN event implementations.
 package events
 
 import (
@@ -5,7 +6,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
-// Cancel Events are only used in the context of modeling Transaction
+// CancelEventDefinition is only used in the context of modeling Transaction
 // Sub-Processes. There are two variations: a catch Intermediate Event and an
 // End Event.
 //   - The catch Cancel Intermediate Event MUST only be attached to the

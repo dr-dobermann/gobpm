@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **CRITICAL**: Fixed nil map assignment bug in EventHub event registration
 - **CRITICAL**: Fixed missing map update in EventHub processor management
+- **EVENT SYSTEM**: Fixed timer event test failures in thresher_events_test.go
+- **EVENT SYSTEM**: Corrected timer event propagation logic in tests
+- **EVENT SYSTEM**: Fixed mock EventDefinition usage with proper TimerEventDefinition
 - Various test stability and reliability improvements
 - **DOCUMENTATION**: Fixed incorrect code examples in main README
 - **EXAMPLES**: Created working, tested code examples
@@ -32,12 +35,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Testing Improvements
 - **pkg/model/artifacts**: 30% → 86.2% coverage (+56.2%)
 - **internal/eventproc/eventhub**: 0% → 77.6% coverage (+77.6%)
-- **pkg/thresher**: 0% → 68.8% coverage (+68.8%)
+- **pkg/thresher**: 0% → 74.4% coverage (+74.4%)
+- **EVENT SYSTEM**: Fixed timer event testing patterns and mock usage
+- **EVENT SYSTEM**: Corrected test logic for event propagation vs generation
+- **QUALITY**: All tests now pass with comprehensive coverage
 
 ### Documentation
 - Added comprehensive documentation for event processing interfaces
 - Added detailed EventHub implementation documentation
+- **NEW**: Created comprehensive Event Processing Guide (docs/EVENT_PROCESSING_GUIDE.md)
+  - Detailed architecture and implementation patterns
+  - Event propagation vs generation patterns explained
+  - Timer waiter behavior and architectural limitations
+  - Testing strategies and common pitfalls
+  - Performance optimization techniques
+  - Integration patterns and best practices
 - Created centralized documentation index
+- Updated README_INDEX.md with Event Processing Guide link
 - Improved code examples and usage patterns
 - Modernized main README with professional presentation
 - Added feature highlights, use cases, and architecture overview

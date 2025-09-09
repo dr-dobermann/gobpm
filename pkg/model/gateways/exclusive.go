@@ -1,3 +1,4 @@
+// Package gateways provides BPMN gateway implementations.
 package gateways
 
 import (
@@ -12,6 +13,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
+// ExclusiveGateway represents a BPMN exclusive gateway.
 type ExclusiveGateway struct {
 	Gateway
 
@@ -82,7 +84,7 @@ func (eg *ExclusiveGateway) Exec(
 				errs.New(
 					errs.M("no available outgoing flows"),
 					errs.C(errorClass, errs.InvalidState),
-					errs.D("exclusive_gateway_id", eg.Id()))
+					errs.D("exclusive_gateway_id", eg.ID()))
 		}
 
 		flows = append(flows, eg.defaultFlow)
@@ -93,7 +95,7 @@ func (eg *ExclusiveGateway) Exec(
 			errs.New(
 				errs.M("exclusive gateway couldn't have more than 1 outgoing flows"),
 				errs.C(errorClass, errs.InvalidObject),
-				errs.D("exclusive_gateway_id", eg.Id()),
+				errs.D("exclusive_gateway_id", eg.ID()),
 				errs.D("outgoing_flows_count", len(flows)),
 				errs.D("outgoing_flows", flows))
 	}
@@ -112,8 +114,8 @@ func (eg *ExclusiveGateway) checkCondition(
 			errs.New(
 				errs.M("invalid condition expression type"),
 				errs.C(errorClass, errs.TypeCastingError),
-				errs.D("outgoing_flow_id", of.Id()),
-				errs.D("exclusive_gateway_id", eg.Id()))
+				errs.D("outgoing_flow_id", of.ID()),
+				errs.D("exclusive_gateway_id", eg.ID()))
 	}
 
 	res, err := cond.Evaluate(context.Background(), eg)
@@ -122,8 +124,8 @@ func (eg *ExclusiveGateway) checkCondition(
 			errs.New(
 				errs.M("flow condition evaluation failed"),
 				errs.C(errorClass, errs.OperationFailed),
-				errs.D("outgoing_flow_id", of.Id()),
-				errs.D("exclusive_gateway_id", eg.Id()),
+				errs.D("outgoing_flow_id", of.ID()),
+				errs.D("exclusive_gateway_id", eg.ID()),
 				errs.E(err))
 	}
 
@@ -132,9 +134,9 @@ func (eg *ExclusiveGateway) checkCondition(
 
 // ----------------------- data.Source interface ------------------------------
 
-// Get returns Data object named name.
+// Find returns Data object named name.
 func (eg *ExclusiveGateway) Find(
-	ctx context.Context,
+	_ context.Context,
 	name string,
 ) (data.Data, error) {
 	if eg.scope == nil {
@@ -142,7 +144,7 @@ func (eg *ExclusiveGateway) Find(
 			errs.New(
 				errs.M("object Scope isn't set"),
 				errs.C(errorClass, errs.InvalidState),
-				errs.D("exclusive_gate_id", eg.Id()))
+				errs.D("exclusive_gate_id", eg.ID()))
 	}
 
 	d, err := eg.scope.GetData(eg.scope.Root(), name)

@@ -21,9 +21,7 @@ const (
 	unspecifiedImpl = "##unspecified"
 )
 
-// User Task
-//
-// A User Task is a typical “workflow” Task where a human performer performs
+// UserTask is a typical "workflow" Task where a human performer performs
 // the Task with the assistance of a software application. The lifecycle of
 // the Task is managed by a software component (called task manager) and is
 // typically executed in the context of a Process.
@@ -103,10 +101,10 @@ func NewUserTask(
 
 	for _, o := range userTaskOpts {
 		switch opt := o.(type) {
-		case foundation.BaseOption, activityOption, taskOption:
+		case foundation.BaseOption, ActivityOption, taskOption:
 			utc.taskOpts = append(utc.taskOpts, opt)
 
-		case usrTaskOption:
+		case UsrTaskOption:
 			if err := opt.Apply(&utc); err != nil {
 				return nil,
 					errs.New(
@@ -141,7 +139,6 @@ func (ut *UserTask) Implementation() []string {
 	return imps
 }
 
-// ---------------------- interactor.Interactor interface
 // Renderers returns all renders registered for the UserTask.
 func (ut *UserTask) Renderers() []hi.Renderer {
 	return append([]hi.Renderer{}, ut.renderers...)
@@ -159,12 +156,14 @@ func (ut *UserTask) Outputs() []*common.ResourceParameter {
 
 // ----------------------- flow.Node interface --------------------------------
 
+// Node returns the UserTask as a flow node.
 func (ut *UserTask) Node() flow.Node {
 	return ut
 }
 
 // ------------------------ flow.Task interface -------------------------------
 
+// TaskType returns the task type for UserTask.
 func (ut *UserTask) TaskType() flow.TaskType {
 	return flow.UserTask
 }
@@ -174,7 +173,7 @@ func (ut *UserTask) TaskType() flow.TaskType {
 // Prologue registers UserTask as Interactor in runtime environment and gets
 // results' channel from RenderProvider.
 func (ut *UserTask) Prologue(
-	ctx context.Context,
+	_ context.Context,
 	re renv.RuntimeEnvironment,
 ) error {
 	rr := re.RenderRegistrator()
@@ -182,9 +181,9 @@ func (ut *UserTask) Prologue(
 		return errs.New(
 			errs.M("no RenderProvider for UserTask"),
 			errs.C(errorClass, errs.InvalidObject),
-			errs.D("task_id", ut.Id()),
+			errs.D("task_id", ut.ID()),
 			errs.D("task_name", ut.Name()),
-			errs.D("instance_id", re.InstanceId()))
+			errs.D("instance_id", re.InstanceID()))
 	}
 
 	rCh, err := rr.Register(ut)
@@ -204,7 +203,7 @@ func (ut *UserTask) Prologue(
 
 // Exec waits for results of user interaction.
 func (ut *UserTask) Exec(
-	ctx context.Context,
+	_ context.Context,
 	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
 	if ut.resChan == nil {

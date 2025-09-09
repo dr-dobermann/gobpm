@@ -26,6 +26,7 @@ func TestTimeWaiter(t *testing.T) {
 	t.Run("errors",
 		func(t *testing.T) {
 			ep := mockeventproc.NewMockEventProcessor(t)
+			mockHub := mockeventproc.NewMockEventHub(t)
 
 			ep.EXPECT().
 				ProcessEvent(mock.Anything, mock.Anything).
@@ -35,11 +36,11 @@ func TestTimeWaiter(t *testing.T) {
 					}).Maybe()
 
 			// empty parameters
-			_, err := waiters.NewTimeWaiter(nil, nil, "")
+			_, err := waiters.NewTimeWaiter(nil, nil, nil, "")
 			require.Error(t, err)
 
 			// invalid event definition
-			_, err = waiters.NewTimeWaiter(ep,
+			_, err = waiters.NewTimeWaiter(mockHub, ep,
 				events.MustSignalEventDefinition(
 					&events.Signal{}), "")
 			require.Error(t, err)
@@ -55,7 +56,7 @@ func TestTimeWaiter(t *testing.T) {
 					}),
 				nil, nil)
 
-			_, err = waiters.NewTimeWaiter(ep, failiEDef, "")
+			_, err = waiters.NewTimeWaiter(mockHub, ep, failiEDef, "")
 			require.Error(t, err)
 
 			// past time
@@ -70,7 +71,7 @@ func TestTimeWaiter(t *testing.T) {
 					}),
 				nil, nil)
 
-			_, err = waiters.NewTimeWaiter(ep, pastEDef, "")
+			_, err = waiters.NewTimeWaiter(mockHub, ep, pastEDef, "")
 			require.Error(t, err)
 
 			// negative cycles
@@ -93,7 +94,7 @@ func TestTimeWaiter(t *testing.T) {
 							nil
 					}))
 
-			_, err = waiters.NewTimeWaiter(ep, negativeCyclesEDef, "")
+			_, err = waiters.NewTimeWaiter(mockHub, ep, negativeCyclesEDef, "")
 			require.Error(t, err)
 
 			// negative duration
@@ -116,7 +117,7 @@ func TestTimeWaiter(t *testing.T) {
 							nil
 					}))
 
-			_, err = waiters.NewTimeWaiter(ep, negativeDurationEDef, "")
+			_, err = waiters.NewTimeWaiter(mockHub, ep, negativeDurationEDef, "")
 			require.Error(t, err)
 
 			// invalid expression time type value
@@ -145,7 +146,7 @@ func TestTimeWaiter(t *testing.T) {
 					}),
 				nil, nil)
 
-			w, err := waiters.NewTimeWaiter(ep, oneSecondsEDef, "one_seconds_timer")
+			w, err := waiters.NewTimeWaiter(mockHub, ep, oneSecondsEDef, "one_seconds_timer")
 			require.NoError(t, err)
 
 			require.NoError(t, w.Service(context.Background()))
@@ -156,6 +157,7 @@ func TestTimeWaiter(t *testing.T) {
 	t.Run("stopping and cancellation",
 		func(t *testing.T) {
 			ep := mockeventproc.NewMockEventProcessor(t)
+			mockHub := mockeventproc.NewMockEventHub(t)
 
 			tenSecondsEDef := events.MustTimerEventDefinition(
 				goexpr.Must(
@@ -170,7 +172,7 @@ func TestTimeWaiter(t *testing.T) {
 
 			// context cancellation
 			wcc, err := waiters.NewTimeWaiter(
-				ep, tenSecondsEDef, "cancelled by context timer")
+				mockHub, ep, tenSecondsEDef, "cancelled by context timer")
 			require.NoError(t, err)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -178,10 +180,10 @@ func TestTimeWaiter(t *testing.T) {
 
 			require.NoError(t, wcc.Service(ctx))
 			time.Sleep(4 * time.Second)
-			require.Equal(t, eventproc.WSCancelled, wcc.State())
+			require.Equal(t, eventproc.WSStopped, wcc.State())
 
 			// waiter stopping
-			ws, err := waiters.NewTimeWaiter(ep, tenSecondsEDef, "stopped timer")
+			ws, err := waiters.NewTimeWaiter(mockHub, ep, tenSecondsEDef, "stopped timer")
 			require.NoError(t, err)
 			require.NoError(t, ws.Service(context.Background()))
 			time.Sleep(3 * time.Second)
@@ -192,6 +194,7 @@ func TestTimeWaiter(t *testing.T) {
 	t.Run("normal",
 		func(t *testing.T) {
 			ep := mockeventproc.NewMockEventProcessor(t)
+			mockHub := mockeventproc.NewMockEventHub(t)
 
 			// time expression
 			timeEDef := events.MustTimerEventDefinition(
@@ -204,10 +207,10 @@ func TestTimeWaiter(t *testing.T) {
 					}),
 				nil, nil)
 
-			w, err := waiters.CreateWaiter(ep, timeEDef)
+			w, err := waiters.CreateWaiter(mockHub, ep, timeEDef)
 			require.NoError(t, err)
-			require.NotEmpty(t, w.Id())
-			require.Equal(t, ep, w.EventProcessor())
+			require.NotEmpty(t, w.ID())
+			require.Contains(t, w.EventProcessors(), ep)
 			require.Equal(t, timeEDef, w.EventDefinition())
 
 			err = w.Stop()
@@ -217,13 +220,18 @@ func TestTimeWaiter(t *testing.T) {
 	t.Run("single time",
 		func(t *testing.T) {
 			ept := mockeventproc.NewMockEventProcessor(t)
+			mockHub := mockeventproc.NewMockEventHub(t)
+			mockHub.EXPECT().
+				RemoveWaiter(mock.Anything).
+				Return(nil).
+				Maybe()
 			ept.EXPECT().
 				ProcessEvent(
 					mock.Anything,
 					mock.Anything).
 				RunAndReturn(
 					func(_ context.Context, ed flow.EventDefinition) error {
-						t.Log("   >>>> got event: ", ed.Type(), " #", ed.Id())
+						t.Log("   >>>> got event: ", ed.Type(), " #", ed.ID())
 						return nil
 					})
 
@@ -248,10 +256,10 @@ func TestTimeWaiter(t *testing.T) {
 						})))
 			require.NoError(t, err)
 
-			w, err := waiters.CreateWaiter(ept, timeEDef)
+			w, err := waiters.CreateWaiter(mockHub, ept, timeEDef)
 			require.NoError(t, err)
 			require.Equal(t, eventproc.WSReady, w.State())
-			require.NotEmpty(t, w.Id())
+			require.NotEmpty(t, w.ID())
 
 			err = w.Stop()
 			require.Error(t, err)
@@ -273,13 +281,18 @@ func TestTimeWaiter(t *testing.T) {
 		func(t *testing.T) {
 			cycles := 3
 			epc := mockeventproc.NewMockEventProcessor(t)
+			mockHub := mockeventproc.NewMockEventHub(t)
+			mockHub.EXPECT().
+				RemoveWaiter(mock.Anything).
+				Return(nil).
+				Maybe()
 			epc.EXPECT().
 				ProcessEvent(
 					mock.AnythingOfType("backgroundCtx"),
 					mock.Anything).
 				RunAndReturn(
 					func(_ context.Context, ed flow.EventDefinition) error {
-						t.Log("   >>>> got cycle event: ", ed.Type(), " #", ed.Id())
+						t.Log("   >>>> got cycle event: ", ed.Type(), " #", ed.ID())
 
 						require.NotEqual(t, 0, cycles)
 						cycles--
@@ -304,7 +317,7 @@ func TestTimeWaiter(t *testing.T) {
 						return values.NewVariable(time.Second), nil
 					}))
 
-			w, err := waiters.CreateWaiter(epc, cyclesEDef)
+			w, err := waiters.CreateWaiter(mockHub, epc, cyclesEDef)
 			require.NoError(t, err)
 			require.Equal(t, eventproc.WSReady, w.State())
 

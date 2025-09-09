@@ -9,16 +9,24 @@ import (
 )
 
 const (
+	// StateUndefined represents undefined data state.
 	StateUndefined   = "UNDEFINED_DATA"
+	// StateUnavailable represents unavailable data state.
 	StateUnavailable = "UNAVAILABLE_DATA"
+	// StateReady represents ready data state.
 	StateReady       = "READY_DATA_STATE"
 )
 
 var (
-	// Default DataStates. Initialized by calling CreateDefaultStates.
-	UndefinedDataState, UnavailableDataState, ReadyDataState *DataState
+	// UndefinedDataState represents the undefined data state.
+	UndefinedDataState *DataState
+	// UnavailableDataState represents the unavailable data state.
+	UnavailableDataState *DataState
+	// ReadyDataState represents the ready data state.
+	ReadyDataState *DataState
 )
 
+// DataState represents a BPMN data state element.
 // Data Object elements can optionally reference a DataState element, which is
 // the state of the data contained in the Data Object. The definition of these
 // states, e.g., possible values and any specific semantic are out of scope of

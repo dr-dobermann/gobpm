@@ -255,13 +255,13 @@ func (ce *catchEvent) UploadData(ctx context.Context) error {
 	ee := []error{}
 
 	for _, oa := range ce.outputAssociations {
-		for _, sid := range oa.SourcesIds() {
+		for _, sid := range oa.SourcesIDs() {
 			out, ok := ce.dataOutputs[sid]
 			if !ok {
 				ee = append(ee,
 					errs.New(
 						errs.M("no output for association #%s source #%s",
-							oa.Id(), sid),
+							oa.ID(), sid),
 						errs.C(errorClass, errs.ObjectNotFound)))
 
 				continue
@@ -281,7 +281,7 @@ func (ce *catchEvent) UploadData(ctx context.Context) error {
 				ee = append(ee,
 					errs.New(
 						errs.M("couldn't update association #%s source #%s",
-							oa.Id(), sid),
+							oa.ID(), sid),
 						errs.E(err)))
 			}
 		}
@@ -351,18 +351,18 @@ func (te *throwEvent) LoadData(ctx context.Context) error {
 		if !ia.IsReady() {
 			ee = append(ee,
 				errs.New(
-					errs.M("association #%s data isn't ready", ia.Id()),
+					errs.M("association #%s data isn't ready", ia.ID()),
 					errs.C(errorClass, errs.InvalidState)))
 
 			continue
 		}
 
-		in, ok := te.dataInputs[ia.TargetItemDefId()]
+		in, ok := te.dataInputs[ia.TargetItemDefID()]
 		if !ok {
 			ee = append(ee,
 				errs.New(
 					errs.M("node %q[%s] has no input for association #%s",
-						te.Name(), te.Id(), ia.Id()),
+						te.Name(), te.ID(), ia.ID()),
 					errs.C(errorClass, errs.ObjectNotFound)))
 
 			continue
@@ -372,7 +372,7 @@ func (te *throwEvent) LoadData(ctx context.Context) error {
 		if err != nil {
 			ee = append(ee,
 				errs.New(
-					errs.M("couldn't get association #%s value", ia.Id()),
+					errs.M("couldn't get association #%s value", ia.ID()),
 					errs.C(errorClass, errs.OperationFailed),
 					errs.E(err)))
 
@@ -383,7 +383,7 @@ func (te *throwEvent) LoadData(ctx context.Context) error {
 			ee = append(ee,
 				errs.New(
 					errs.M("node %q[%s] input #%s update failed",
-						te.Name(), te.Id(), in.ItemDefinition().Id()),
+						te.Name(), te.ID(), in.ItemDefinition().ID()),
 					errs.C(errorClass, errs.OperationFailed),
 					errs.E(err)))
 		}
@@ -391,7 +391,7 @@ func (te *throwEvent) LoadData(ctx context.Context) error {
 
 	if len(ee) != 0 {
 		return errs.New(
-			errs.M("node %q[%s] associations data load failed", te.Name(), te.Id()),
+			errs.M("node %q[%s] associations data load failed", te.Name(), te.ID()),
 			errs.C(errorClass, errs.OperationFailed),
 			errs.E(errors.Join(ee...)))
 	}
@@ -410,17 +410,17 @@ func (te *throwEvent) emitEvent(
 	idd := []data.Data{}
 	for _, it := range ed.GetItemsList() {
 		// for every dataitem check its presence in inputs of the event
-		if inp, ok := te.dataInputs[it.Id()]; ok {
+		if inp, ok := te.dataInputs[it.ID()]; ok {
 			idd = append(idd, inp)
 
 			continue
 		}
 
 		// or in the runtime Scope
-		d, err := s.GetDataById(te.dataPath, it.Id())
+		d, err := s.GetDataByID(te.dataPath, it.ID())
 		if err != nil {
 			return errs.New(
-				errs.M("couldn't find ItemDefinition #%s", it.Id()),
+				errs.M("couldn't find ItemDefinition #%s", it.ID()),
 				errs.E(err))
 		}
 
@@ -440,7 +440,7 @@ func (te *throwEvent) emitEvent(
 		if ced, err = c.CloneEventDefinition(idd); err != nil {
 			return errs.New(
 				errs.M("couldn't clone EventDefinition %q[%s]",
-					ed.Type(), ed.Id()),
+					ed.Type(), ed.ID()),
 				errs.E(err))
 		}
 	}

@@ -1,3 +1,4 @@
+// Package eventproc provides event processing interfaces and implementations.
 package eventproc
 
 import (
@@ -9,10 +10,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
-// ============================================================================
-//
-//	EventProcessor
-//
+// EventProcessor represents an event processor interface.
 // ============================================================================
 // EventProcessor handles single event.
 type EventProcessor interface {
@@ -23,10 +21,7 @@ type EventProcessor interface {
 	ProcessEvent(context.Context, flow.EventDefinition) error
 }
 
-// ============================================================================
-//
-//	EventProcessor
-//
+// EventProducer represents an event producer interface.
 // ============================================================================
 // EventProducer registers events with event processors which expect those
 // events.
@@ -39,23 +34,36 @@ type EventProducer interface {
 
 	// UnregisterEvents removes event definition to EventProcessor link from
 	// EventProducer.
-	UnregisterEvent(ep EventProcessor, eDefId string) error
+	UnregisterEvent(ep EventProcessor, eDefID string) error
 
-	// PropagateEvent gets a eventDefinitions and sends it to all
-	// EventProcessors registered for this type of EventDefinition.
+	// PropagateEvent sends a fired throw event's eventDefinition
+	// up to chain of EventProducers
 	PropagateEvent(context.Context, flow.EventDefinition) error
 }
 
+// EventHub represents a central event distribution hub.
 // ============================================================================
-//
-//	EventProcessor
-//
+// EventHub runs events processing engine and managing pack of EventWaiters.
+type EventHub interface {
+	EventProducer
+
+	// Run starts event processing.
+	Run(context.Context) error
+
+	// RemoveWaiter removes single waiter from the EventHub waiter's list.
+	RemoveWaiter(EventWaiter) error
+}
+
+// EventWaiter represents an event waiter interface.
 // ============================================================================
 // EventWaiter gets on startup an eventDefinition and EventProcessor
 // expected the event defined.
 // Then it controls single event defined by eventDefinition and
 // once event fired, send appropriata eventDefinition with actual data to
 // the EventProcessor.
+//
+// Once eventDefinition is processed by all registered EventProcessors, the
+// waiter unregister itself from eventHub and stop its working,
 type EventWaiter interface {
 	foundation.Identifyer
 
@@ -63,9 +71,22 @@ type EventWaiter interface {
 	// waiting for.
 	EventDefinition() flow.EventDefinition
 
-	// EventProcessor returns the EventProcessor expecting the registered
+	// AddEventProcessor adds single EventProcessor into waiter's list of
+	// EventProcessors, waiting for the EventDefinition.
+	// If the EventProcessor already exists in waiters queue, no errors returned.
+	AddEventProcessor(EventProcessor) error
+
+	// RemoveEventProcessor removes the ep EventProcessor from waiter's event
+	// processors list.
+	RemoveEventProcessor(EventProcessor) error
+
+	// EventProcessors returns the EventProcessor expecting the registered
 	// EventDefinition.
-	EventProcessor() EventProcessor
+	EventProcessors() []EventProcessor
+
+	// Process processed single event given by EventHub through EventPropagate
+	// call.
+	Process(flow.EventDefinition) error
 
 	// Service runs the waiting/handling routine of registered event defined.
 	Service(ctx context.Context) error
@@ -77,15 +98,21 @@ type EventWaiter interface {
 	State() EventWaiterState
 }
 
+// EventWaiterState represents the state of an event waiter.
 type EventWaiterState int
 
 const (
+	// WSCreated represents a created event waiter state.
 	WSCreated EventWaiterState = iota
+	// WSReady represents a ready event waiter state.
 	WSReady
+	// WSRunned represents a running event waiter state.
 	WSRunned
+	// WSEnded represents an ended event waiter state.
 	WSEnded
+	// WSStopped represents a stopped event waiter state.
 	WSStopped
-	WSCancelled
+	// WSFailed represents a failed event waiter state.
 	WSFailed
 )
 
@@ -104,7 +131,6 @@ func (ws EventWaiterState) String() string {
 		"Runned",
 		"Ended",
 		"Stopped",
-		"Canceled",
 		"Failed",
 	}[ws]
 }

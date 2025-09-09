@@ -123,7 +123,7 @@ func (se *StartEvent) Exec(
 func (se *StartEvent) RegisterData(dp scope.DataPath, s scope.Scope) error {
 	se.dataPath = dp
 
-	return s.LoadData(se, se.catchEvent.getEventData()...)
+	return s.LoadData(se, se.getEventData()...)
 }
 
 // -----------------------------------------------------------------------------

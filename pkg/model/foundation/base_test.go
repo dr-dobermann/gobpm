@@ -13,15 +13,15 @@ func TestBaseElement(t *testing.T) {
 			be, err := foundation.NewBaseElement()
 
 			require.NoError(t, err)
-			require.NotEmpty(t, be.Id())
+			require.NotEmpty(t, be.ID())
 			require.Empty(t, be.Docs())
 		})
 
 	t.Run("with_id",
 		func(t *testing.T) {
-			be := foundation.MustBaseElement(foundation.WithId("test_id"))
+			be := foundation.MustBaseElement(foundation.WithID("test_id"))
 
-			require.Equal(t, "test_id", be.Id())
+			require.Equal(t, "test_id", be.ID())
 		})
 
 	t.Run("with_docs",
@@ -30,7 +30,7 @@ func TestBaseElement(t *testing.T) {
 				foundation.WithDoc("test_doc1", ""),
 				foundation.WithDoc("test_doc2", "text/rtf"))
 
-			require.NotEmpty(t, be.Id())
+			require.NotEmpty(t, be.ID())
 
 			docs := be.Docs()
 			require.Equal(t, 2, len(be.Docs()))

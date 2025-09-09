@@ -1,8 +1,16 @@
+/*
+Package eventhub provides event hub implementation for BPMN processes.
+
+This package is part of GoBPM - Business Process Management Engine for Go.
+See LICENSE file for license information.
+
+Author: dr-dobermann (rgabitov@gmail.com)
+Repository: https://github.com/dr-dobermann/gobpm
+*/
 package eventhub
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
@@ -14,36 +22,37 @@ import (
 const errorClass = "EVENT_HUB_ERRORS"
 
 type (
-	// waitersList holds list of eventWaiter indexed by
-	// ItemDefinition id.
-	waitersList map[string]eventproc.EventWaiter
-
-	// eventHub processes all registration requests from EventProcessors
+	// EventHub processes all registration requests from EventProcessors
 	// for specific eventDefinition.
-	// On every pair EventProcessor - eventDefinition eventHub creates
+	// On every pair EventProcessor - eventDefinition EventHub creates
 	// personal eventWaiter and runs its Service in separate go-routine.
-	eventHub struct {
+	EventHub struct {
 		started bool
 
-		// processors holds list of waiters started for processing
-		// eventDefinitions for a single EventProcessor.
-		// processors indexed by eventProcessor id.
-		processors map[string]waitersList
+		// waiters holds a list of waiters started for processing
+		// eventDefinitions for a list of EventProcessors.
+		// waiters indexed by event definition id.
+		waiters map[string]eventproc.EventWaiter
+
+		events []flow.EventDefinition
+
+		ctx context.Context
 
 		m sync.RWMutex
 	}
 )
 
 // New creates a new eventHandler.
-func New() (*eventHub, error) {
-	return &eventHub{
-			processors: map[string]waitersList{},
+func New() (*EventHub, error) {
+	return &EventHub{
+			waiters: map[string]eventproc.EventWaiter{},
+			events:  []flow.EventDefinition{},
 		},
 		nil
 }
 
 // Run starts main cycle of eventHub.
-func (eh *eventHub) Run(ctx context.Context) error {
+func (eh *EventHub) Run(ctx context.Context) error {
 	if eh.started {
 		return errs.New(
 			errs.M("eventHub is already started"),
@@ -51,6 +60,7 @@ func (eh *eventHub) Run(ctx context.Context) error {
 	}
 
 	eh.started = true
+	eh.ctx = ctx
 
 	<-ctx.Done()
 
@@ -60,7 +70,7 @@ func (eh *eventHub) Run(ctx context.Context) error {
 // --------------------------- eventproc.EventProducer ------------------------
 
 // RegisterEvent registers the EventDefinitions from the single EventProcessor.
-func (eh *eventHub) RegisterEvent(
+func (eh *EventHub) RegisterEvent(
 	ep eventproc.EventProcessor,
 	eDef flow.EventDefinition,
 ) error {
@@ -76,44 +86,53 @@ func (eh *eventHub) RegisterEvent(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	var p waitersList
-
 	eh.m.RLock()
-	p, ok := eh.processors[ep.Id()]
+	w, ok := eh.waiters[eDef.ID()]
 	eh.m.RUnlock()
-	if !ok {
-		p = make(waitersList)
+	if ok {
+		if err := w.AddEventProcessor(ep); err != nil {
+			return errs.New(
+				errs.M("couldn't add event processor to waiter"),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.D("waiter_id", w.ID()),
+				errs.D("event_definition_id", eDef.ID()),
+				errs.D("event_definition_type", eDef.Type()),
+				errs.D("event_processor_id", ep.ID()))
+		}
+
+		return nil
 	}
 
-	if _, ok := p[eDef.Id()]; ok {
-		return fmt.Errorf(
-			"eventDefintion %s #%s alredy registered for the EventProcessor #%s",
-			eDef.Type(), eDef.Id(), ep.Id())
-	}
-
-	w, err := waiters.CreateWaiter(ep, eDef)
+	w, err := waiters.CreateWaiter(eh, ep, eDef)
 	if err != nil {
 		return errs.New(
 			errs.M("eventWaiter building failed"),
 			errs.C(errorClass, errs.BulidingFailed),
-			errs.D("event_processor_id", ep.Id()),
-			errs.D("event_definition_id", eDef.Id()),
+			errs.D("event_processor_id", ep.ID()),
+			errs.D("event_definition_id", eDef.ID()),
 			errs.E(err))
 	}
 
 	eh.m.Lock()
-	p[eDef.Id()] = w
-	eh.processors[ep.Id()] = p
+	eh.waiters[eDef.ID()] = w
 	eh.m.Unlock()
+
+	if err := w.Service(eh.ctx); err != nil {
+		return errs.New(
+			errs.M("failed to start waiter service"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.D("waiter_id", w.ID()),
+			errs.E(err))
+	}
 
 	return nil
 }
 
 // UnregisterEvent removes the registered eventDefintions for single
 // EventProcessor.
-func (eh *eventHub) UnregisterEvent(
+func (eh *EventHub) UnregisterEvent(
 	ep eventproc.EventProcessor,
-	eDefId string,
+	eDefID string,
 ) error {
 	if !eh.started {
 		return errs.New(
@@ -127,48 +146,53 @@ func (eh *eventHub) UnregisterEvent(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	if _, ok := eh.processors[ep.Id()]; !ok {
-		return errs.New(
-			errs.M("couldn't find waiters for eventProcessor"),
-			errs.C(errorClass, errs.InvalidParameter),
-			errs.D("event_processor_id", ep.Id()))
-	}
-
 	eh.m.RLock()
-	w, ok := eh.processors[ep.Id()][eDefId]
+	w, ok := eh.waiters[eDefID]
 	eh.m.RUnlock()
 
 	if !ok {
 		return errs.New(
-			errs.M("no waiter registered for eventDefiniton"),
-			errs.C(errorClass, errs.ObjectNotFound),
-			errs.D("event_processor_id", ep.Id()),
-			errs.D("event_definition_id", eDefId))
+			errs.M("couldn't find waiter for the event definition"),
+			errs.C(errorClass, errs.InvalidParameter),
+			errs.D("event_definition_id", eDefID))
 	}
 
-	if err := w.Stop(); err != nil {
+	if err := w.RemoveEventProcessor(ep); err != nil {
 		return errs.New(
-			errs.M("waiter stopping error"),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.D("event_processor_id", ep.Id()),
-			errs.D("event_definition_id", eDefId))
+			errs.M("couldn't remove event processor from waiter"),
+			errs.C(errorClass, errs.ObjectNotFound),
+			errs.D("event_waiter_id", w.ID()),
+			errs.D("event_processor_id", ep.ID()),
+			errs.D("event_definition_id", eDefID),
+			errs.E(err))
 	}
 
-	eh.m.Lock()
-	defer eh.m.Unlock()
+	if len(w.EventProcessors()) == 0 {
+		if w.State() == eventproc.WSRunned {
+			if err := w.Stop(); err != nil {
+				return errs.New(
+					errs.M("waiter stop failed"),
+					errs.C(errorClass, errs.OperationFailed),
+					errs.D("waiter_id", w.ID()),
+					errs.D("event_definition_idf", w.EventDefinition().ID()),
+					errs.D("event_definition_type", w.EventDefinition().Type()))
+			}
+		}
 
-	delete(eh.processors[ep.Id()], eDefId)
-
-	if len(eh.processors[ep.Id()]) == 0 {
-		delete(eh.processors, ep.Id())
+		return eh.RemoveWaiter(w)
 	}
 
 	return nil
 }
 
-// PropagateEvent sends the event to EventProcessor, registered for this event.
-func (eh *eventHub) PropagateEvent(
-	ctx context.Context,
+// PropagateEvent sends a fired throw event's eventDefinition
+// up to chain of EventProducers.
+//
+// Since the eventHub is the last event producer in the chain
+// it puts the event into event queue for further processing by
+// the appropriate waiter.
+func (eh *EventHub) PropagateEvent(
+	_ context.Context,
 	eDef flow.EventDefinition,
 ) error {
 	if !eh.started {
@@ -177,28 +201,54 @@ func (eh *eventHub) PropagateEvent(
 			errs.C(errorClass, errs.InvalidState))
 	}
 
-	sentCnt := 0
-
 	eh.m.RLock()
-	defer eh.m.RUnlock()
+	w, ok := eh.waiters[eDef.ID()]
+	eh.m.RUnlock()
 
-	for _, wl := range eh.processors {
-		if w, ok := wl[eDef.Id()]; ok {
-			if err := w.EventProcessor().
-				ProcessEvent(ctx, eDef); err != nil {
-				return errs.New(
-					errs.M("waiter stopping error"),
-					errs.C(errorClass, errs.OperationFailed),
-					errs.D("event_processor_id", w.EventProcessor().Id()),
-					errs.D("event_definition_id", eDef.Id()))
-			}
-
-			sentCnt++
-		}
+	if !ok {
+		return errs.New(
+			errs.M("couldn't find waiter for EventDefinition"),
+			errs.C(errorClass, errs.ObjectNotFound),
+			errs.D("event_definition_id", eDef.ID()),
+			errs.D("event_definition_type", eDef.Type()))
 	}
 
-	if sentCnt == 0 {
-		return fmt.Errorf("waiter isn't found")
+	if err := w.Process(eDef); err != nil {
+		return errs.New(
+			errs.M("event definition processing failed"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.D("waiter_id", w.ID()),
+			errs.D("event_definition_id", eDef.ID()),
+			errs.D("event_definition_type", eDef.Type()),
+			errs.E(err))
+	}
+
+	if len(w.EventProcessors()) == 0 {
+		return eh.RemoveWaiter(w)
+	}
+
+	return nil
+}
+
+// RemoveWaiter removes single waiter from the EventHub waiter's list.
+func (eh *EventHub) RemoveWaiter(w eventproc.EventWaiter) error {
+	if w == nil {
+		return errs.New(
+			errs.M("event waiter is nil"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	eh.m.Lock()
+	defer eh.m.Unlock()
+
+	w, ok := eh.waiters[w.EventDefinition().ID()]
+	if !ok {
+		return errs.New(
+			errs.M("waiter isn't found"),
+			errs.C(errorClass, errs.ObjectNotFound),
+			errs.D("waiter_id", w.ID()),
+			errs.D("event_definition_id", w.EventDefinition().ID()),
+			errs.D("event_definition_type", w.EventDefinition().Type()))
 	}
 
 	return nil
@@ -207,4 +257,4 @@ func (eh *eventHub) PropagateEvent(
 // ----------------------------------------------------------------------------
 
 // interfaces check
-var _ eventproc.EventProducer = (*eventHub)(nil)
+var _ eventproc.EventProducer = (*EventHub)(nil)

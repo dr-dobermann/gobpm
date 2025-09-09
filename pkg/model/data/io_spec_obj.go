@@ -9,17 +9,17 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
-// *****************************************************************************
-//
-// Parameter implements bothelpers.Input and Output classes of BPMNv2.
+// Direction represents input/output direction for BPMN parameters.
 type Direction string
 
 const (
+	// Input represents input direction for parameters.
 	Input  Direction = "INPUT"
+	// Output represents output direction for parameters.
 	Output Direction = "OUTPUT"
 )
 
-// checkParamType test pt on validity and return error on failure.
+// Validate test pt on validity and return error on failure.
 func (dir Direction) Validate() error {
 	if dir != Input && dir != Output {
 		return errs.New(
@@ -30,7 +30,7 @@ func (dir Direction) Validate() error {
 	return nil
 }
 
-// not reverses Direction.
+// Opposite reverses Direction.
 func Opposite(dir Direction) Direction {
 	if dir == Input {
 		return Output
@@ -39,8 +39,6 @@ func Opposite(dir Direction) Direction {
 	return Input
 }
 
-// *****************************************************************************
-//
 // Parameter is type which is used as substitute for DataInput and DataOutput
 // BPMN types.
 type Parameter struct {
@@ -95,6 +93,7 @@ func (p *Parameter) Name() string {
 	return p.name
 }
 
+// Sets returns the parameter sets filtered by the given set type.
 func (p *Parameter) Sets(st SetType) map[SetType][]*Set {
 	res := map[SetType][]*Set{}
 
@@ -172,8 +171,6 @@ func (p *Parameter) removeSet(s *Set, from SetType) error {
 	return nil
 }
 
-// *****************************************************************************
-//
 // Set implements bothelpers.InputSet and OutputSet of BPMNv2
 type Set struct {
 	foundation.BaseElement
@@ -297,7 +294,7 @@ func (s *Set) AddParameter(p *Parameter, where SetType) error {
 
 		for _, v := range vv {
 			if v.name == p.name {
-				if v.Id() != p.Id() {
+				if v.ID() != p.ID() {
 					return errs.New(
 						errs.M("data set already has parameter with the name %q",
 							v.name),
@@ -475,7 +472,7 @@ func (s *Set) Validate(
 // If any parameter DataSate is differs from rs, then error returned.
 func checkParamsState(rs *DataState, pp []*Parameter, sType SetType) error {
 	for _, p := range pp {
-		if p.dataState.Id() != rs.Id() {
+		if p.dataState.ID() != rs.ID() {
 			return errs.New(
 				errs.M("parameter has not desired state"),
 				errs.C(errorClass, errs.ConditionFailed),

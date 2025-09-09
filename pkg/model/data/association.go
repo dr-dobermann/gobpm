@@ -1,3 +1,5 @@
+// Package data provides implementation of BPMN data elements including
+// item definitions, data associations, properties, and formal expressions.
 package data
 
 import (
@@ -12,7 +14,9 @@ import (
 )
 
 const (
+	// Recalculate indicates that data association should recalculate.
 	Recalculate   bool = true
+	// NoRecalculate indicates that data association should not recalculate.
 	NoRecalculate      = false
 )
 
@@ -59,6 +63,7 @@ const (
 // targets include the Activity data inputs, while at the end of the Activity
 // execution, the scope of valid sources include Activity data outputs.
 
+// Association represents a BPMN data association for moving data between elements.
 type Association struct {
 	foundation.BaseElement
 
@@ -90,6 +95,7 @@ type Association struct {
 	target *ItemAwareElement
 }
 
+// NewAssociation creates a new data Association with the specified target.
 func NewAssociation(
 	target *ItemAwareElement,
 	opts ...options.Option,
@@ -154,15 +160,15 @@ func (a *Association) UpdateSource(
 			errs.M("source updating failed"),
 			errs.C(errorClass, errs.OperationFailed),
 			errs.E(err),
-			errs.D("source_id", iDef.Id()),
-			errs.D("association_id", a.Id()))
+			errs.D("source_id", iDef.ID()),
+			errs.D("association_id", a.ID()))
 	}
 
 	if err := a.target.UpdateState(UnavailableDataState); err != nil {
 		return errs.New(
 			errs.M("association target state update failed"),
 			errs.C(errorClass, errs.OperationFailed),
-			errs.D("association_id", a.Id()),
+			errs.D("association_id", a.ID()),
 			errs.E(err))
 	}
 
@@ -171,7 +177,7 @@ func (a *Association) UpdateSource(
 			return errs.New(
 				errs.M("association target value recalculation failed"),
 				errs.C(errorClass, errs.OperationFailed),
-				errs.D("association_id", a.Id()),
+				errs.D("association_id", a.ID()),
 				errs.E(err))
 		}
 	}
@@ -185,7 +191,7 @@ func (a *Association) updateSrc(
 	iDef *ItemDefinition,
 ) error {
 	// find correlated source ItemAwareElement
-	iae, ok := a.sources[iDef.Id()]
+	iae, ok := a.sources[iDef.ID()]
 	if !ok {
 		return fmt.Errorf("source isn't found in association")
 	}
@@ -216,7 +222,7 @@ func (a *Association) Value(ctx context.Context) (*ItemDefinition, error) {
 	if a.target == nil {
 		return nil,
 			errs.New(
-				errs.M("association #%s target isn't defined", a.Id()))
+				errs.M("association #%s target isn't defined", a.ID()))
 	}
 
 	if err := a.calculate(ctx); err != nil {
@@ -224,34 +230,34 @@ func (a *Association) Value(ctx context.Context) (*ItemDefinition, error) {
 			errs.New(
 				errs.M("target calculation failed"),
 				errs.C(errorClass, errs.OperationFailed),
-				errs.D("association_id", a.Id()),
+				errs.D("association_id", a.ID()),
 				errs.E(err))
 	}
 
 	return a.target.Subject(), nil
 }
 
-// TargetItemDefId returns id of the Association's target ItemDefiniiton.
-func (a *Association) TargetItemDefId() string {
+// TargetItemDefID returns id of the Association's target ItemDefiniiton.
+func (a *Association) TargetItemDefID() string {
 	if a.target == nil {
 		return ""
 	}
 
-	return a.target.ItemDefinition().Id()
+	return a.target.ItemDefinition().ID()
 }
 
-// SourcesIds returns list of the Association's sources ItemDefinitions Ids.
-func (a *Association) SourcesIds() []string {
-	srcIds := []string{}
+// SourcesIDs returns list of the Association's sources ItemDefinitions Ids.
+func (a *Association) SourcesIDs() []string {
+	srcIDs := []string{}
 	for k := range a.sources {
-		srcIds = append(srcIds, k)
+		srcIDs = append(srcIDs, k)
 	}
 
-	return srcIds
+	return srcIDs
 }
 
-// HasSourceId checks if the Association has source with Id id.
-func (a *Association) HasSourceId(id string) bool {
+// HasSourceID checks if the Association has source with Id id.
+func (a *Association) HasSourceID(id string) bool {
 	_, ok := a.sources[id]
 	return ok
 }
@@ -269,12 +275,12 @@ func (a *Association) calculate(ctx context.Context) error {
 			return fmt.Errorf("no sources")
 		}
 
-		s := a.sources[a.SourcesIds()[0]]
+		s := a.sources[a.SourcesIDs()[0]]
 
 		if s.dataState.name != ReadyDataState.name {
 			return fmt.Errorf(
 				"source #%s isn't in Ready state (actual state: %s)",
-				s.ItemDefinition().Id(), s.dataState.name)
+				s.ItemDefinition().ID(), s.dataState.name)
 		}
 
 		srcV = s.Value()
@@ -290,12 +296,12 @@ func (a *Association) calculate(ctx context.Context) error {
 	if err := a.target.ItemDefinition().structure.Update(ctx,
 		srcV.Get(ctx)); err != nil {
 		return fmt.Errorf("target #%s update failed: %w",
-			a.target.subject.Id(), err)
+			a.target.subject.ID(), err)
 	}
 
 	if err := a.target.UpdateState(ReadyDataState); err != nil {
 		return fmt.Errorf("target #%s state updating failed: %w",
-			a.target.subject.Id(), err)
+			a.target.subject.ID(), err)
 	}
 
 	return nil
@@ -314,7 +320,7 @@ func (a *Association) Find(_ context.Context, name string) (Data, error) {
 	if src.dataState.name != ReadyDataState.name {
 		return nil,
 			fmt.Errorf("source #%s isn't in Ready state (actual state is %s)",
-				src.subject.Id(), src.dataState.name)
+				src.subject.ID(), src.dataState.name)
 	}
 
 	return src, nil

@@ -102,7 +102,7 @@ func (aCfg *asscConfig) newAssociation() (*Association, error) {
 	}
 
 	for _, iae := range aCfg.src {
-		a.sources[iae.ItemDefinition().Id()] = iae
+		a.sources[iae.ItemDefinition().ID()] = iae
 	}
 
 	return &a, nil
@@ -139,10 +139,10 @@ func WithSource(iae *ItemAwareElement) options.Option {
 		if slices.ContainsFunc(
 			cfg.src,
 			func(src *ItemAwareElement) bool {
-				return src.ItemDefinition().Id() == iae.ItemDefinition().Id()
+				return src.ItemDefinition().ID() == iae.ItemDefinition().ID()
 			}) {
 			return fmt.Errorf("duplicate source ItemDefinition id: %q",
-				iae.ItemDefinition().Id())
+				iae.ItemDefinition().ID())
 		}
 
 		cfg.src = append(cfg.src, iae)

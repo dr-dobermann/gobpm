@@ -1,10 +1,14 @@
+// Package waiters provides event waiter implementations for different event types.
+// Waiters monitor for specific conditions and notify processors when events should occur.
 package waiters
 
 import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
@@ -16,6 +20,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/monitor"
 )
 
+// TimerWatierError is the error class for timer waiter errors.
 const TimerWatierError = "TIMER_WAITER_ERRROR"
 
 // timeWaiter defines details of timer event described by
@@ -26,8 +31,11 @@ type timeWaiter struct {
 	// base event definition
 	eDef flow.EventDefinition
 
-	// event processor expecting defined events
-	processor eventproc.EventProcessor
+	// hub which owns the Waiter.
+	hub eventproc.EventHub
+
+	// event processors expecting defined events
+	processors []eventproc.EventProcessor
 
 	// state of the waiter
 	state eventproc.EventWaiterState
@@ -44,19 +52,22 @@ type timeWaiter struct {
 	// time duration between events firirng
 	duration time.Duration
 
+	m sync.Mutex
+
 	stopCh chan struct{}
 }
 
 // NewTimeWaiter creates a new timer event defined by eDef.
 func NewTimeWaiter(
+	eh eventproc.EventHub,
 	ep eventproc.EventProcessor,
 	eDefI flow.EventDefinition,
 	id string,
 ) (eventproc.EventWaiter, error) {
-	if ep == nil || eDefI == nil {
+	if ep == nil || eDefI == nil || eh == nil {
 		return nil,
 			errs.New(
-				errs.M("EventProcessor or EventDefinition is empty"),
+				errs.M("couldn't create a Waiter with empty EventProcessor, EventDefinition or EventHub"),
 				errs.C(TimerWatierError, errs.InvalidParameter, errs.EmptyNotAllowed))
 	}
 
@@ -71,16 +82,17 @@ func NewTimeWaiter(
 
 	id = strings.TrimSpace(id)
 	if id == "" {
-		id = foundation.GenerateId()
+		id = foundation.GenerateID()
 	}
 
 	tw := timeWaiter{
-		id:        id,
-		eDef:      eDef,
-		processor: ep,
+		id:         id,
+		eDef:       eDef,
+		hub:        eh,
+		processors: []eventproc.EventProcessor{ep},
 	}
 
-	if err := parseEDef(eDef, &tw); err != nil {
+	if err := tw.parseEDef(eDef, ep); err != nil {
 		return nil,
 			errs.New(
 				errs.M("TimerEventDefinition parsing failed"),
@@ -95,60 +107,73 @@ func NewTimeWaiter(
 
 // parseEDef parsing TimerEventDefinition and fills timeWaiter structure
 // with appropriate values.
-func parseEDef(
+func (tw *timeWaiter) parseEDef(
 	eDef *events.TimerEventDefinition,
-	tw *timeWaiter,
+	ep eventproc.EventProcessor,
 ) error {
-	var (
-		ok bool
-		ds data.Source
-	)
-
-	ds, _ = tw.processor.(data.Source)
-
-	for name, fe := range map[string]data.FormalExpression{
+	ds, _ := ep.(data.Source)
+	
+	expressions := map[string]data.FormalExpression{
 		"Time":     eDef.Time(),
 		"Cycle":    eDef.Cycle(),
 		"Duration": eDef.Duration(),
-	} {
+	}
+	
+	initialized := false
+	for name, fe := range expressions {
 		if fe == nil {
 			continue
 		}
+		
+		initialized = true
+		if err := tw.processExpression(name, fe, ds); err != nil {
+			return err
+		}
+	}
+	
+	if !initialized {
+		return errs.New(
+			errs.M("Timer should have Time, Cycle or Duration expresssion"))
+	}
+	
+	return nil
+}
 
-		tm, err := fe.Evaluate(context.Background(), ds)
-		if err != nil {
-			return fmt.Errorf(
-				"couldn't evaluate TimerEventDefintion #%s %s value: %w",
-				eDef.Id(), name, err)
+// processExpression processes a single formal expression for the timer
+func (tw *timeWaiter) processExpression(name string, fe data.FormalExpression, ds data.Source) error {
+	tm, err := fe.Evaluate(context.Background(), ds)
+	if err != nil {
+		return errs.New(
+			errs.M(fmt.Sprintf("couldn't evaluate TimerEventDefintion %s value", name)),
+			errs.E(err))
+	}
+
+	ctx := context.Background()
+	var ok bool
+
+	switch name {
+	case "Time":
+		tw.next, ok = tm.Get(ctx).(time.Time)
+		if ok && tw.next.Before(time.Now()) {
+			return errs.New(errs.M("couldn't use past time as a timer"))
 		}
 
-		ctx := context.Background()
-
-		switch name {
-		case "Time":
-			tw.next, ok = tm.Get(ctx).(time.Time)
-			if ok && tw.next.Before(time.Now()) {
-				return fmt.Errorf("couldn't use past time as a timer")
-			}
-
-		case "Cycle":
-			tw.cyclesLeft, ok = tm.Get(ctx).(int)
-			if ok && tw.cyclesLeft <= 0 {
-				return fmt.Errorf("cycle isn't defined")
-			}
-
-		case "Duration":
-			tw.duration, ok = tm.Get(ctx).(time.Duration)
-			if ok && tw.duration <= 0 {
-				return fmt.Errorf("duration isn't defined")
-			}
+	case "Cycle":
+		tw.cyclesLeft, ok = tm.Get(ctx).(int)
+		if ok && tw.cyclesLeft <= 0 {
+			return errs.New(errs.M("cycle isn't defined"))
 		}
 
-		if !ok {
-			return fmt.Errorf(
-				"%s property of TimerEventDefintion #%s casting error",
-				name, eDef.Id())
+	case "Duration":
+		tw.duration, ok = tm.Get(ctx).(time.Duration)
+		if ok && tw.duration <= 0 {
+			return errs.New(errs.M("duration isn't defined"))
 		}
+	}
+
+	if !ok {
+		return errs.New(
+			errs.M(fmt.Sprintf("%s property casting error", name)))
 	}
 
 	return nil
@@ -156,7 +181,7 @@ func parseEDef(
 
 // -------------------------- foundation.Identifyer interface -----------------
 
-func (tw *timeWaiter) Id() string {
+func (tw *timeWaiter) ID() string {
 	return tw.id
 }
 
@@ -166,10 +191,45 @@ func (tw *timeWaiter) EventDefinition() flow.EventDefinition {
 	return tw.eDef
 }
 
+// AddEventProcessor adds single EventProcessor into waiter's list of
+// EventProcessors, waiting for the EventDefinition.
+// If the EventProcessor already exists in waiters queue, no errors returned.
+func (tw *timeWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
+	if ep == nil {
+		return fmt.Errorf("empty EventProcessor")
+	}
+
+	tw.m.Lock()
+	defer tw.m.Unlock()
+
+	if idx := slices.Index(tw.processors, ep); idx == -1 {
+		tw.processors = append(tw.processors, ep)
+	}
+
+	return nil
+}
+
+// RemoveEventProcessor removes the ep EventProcessor from waiter's event
+// processors list.
+func (tw *timeWaiter) RemoveEventProcessor(_ eventproc.EventProcessor) error {
+	return nil
+}
+
 // EventProcessor returns the EventProcessor expecting the registered
 // EventDefinition.
-func (tw *timeWaiter) EventProcessor() eventproc.EventProcessor {
-	return tw.processor
+func (tw *timeWaiter) EventProcessors() []eventproc.EventProcessor {
+	tw.m.Lock()
+	defer tw.m.Unlock()
+
+	return tw.processors
+}
+
+// Process processed single event given by EventHub through EventPropagate
+// call.
+func (tw *timeWaiter) Process(eDef flow.EventDefinition) error {
+	return fmt.Errorf(
+		"timeWaiter doesn't process any EventDefinition (got EventDefinition #%s of type %s)",
+		eDef.ID(), eDef.Type())
 }
 
 // Service runs the waiting/handling routine of registered event defined.
@@ -192,7 +252,7 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 		return errs.New(
 			errs.M("waiter duration is not positive"),
 			errs.C(TimerWatierError, errs.InvalidState),
-			errs.D("waiter_id", tw.Id()),
+			errs.D("waiter_id", tw.ID()),
 			errs.D("next_time", tw.next),
 			errs.D("duration", tw.duration),
 			errs.D("cycles", tw.cyclesLeft))
@@ -200,7 +260,13 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 
 	tw.stopCh = make(chan struct{})
 
-	w := func() {
+	go tw.runTimerService(ctx)
+
+	return nil
+}
+
+// runTimerService runs the timer waiter service in a background goroutine
+func (tw *timeWaiter) runTimerService(ctx context.Context) {
 		var m monitor.Writer
 
 		if mv := ctx.Value(monitor.Key); mv != nil {
@@ -219,7 +285,9 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 
 				tckr.Stop()
 
-				tw.state = eventproc.WSCancelled
+				tw.m.Lock()
+				tw.state = eventproc.WSStopped
+				tw.m.Unlock()
 
 				return
 
@@ -238,31 +306,40 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 					monitor.D("event_time", t),
 					monitor.D("cycles_left", tw.cyclesLeft))
 
-				if err := tw.processor.ProcessEvent(ctx, tw.eDef); err != nil {
-					monitor.Save(m, "timeWaiter", "Event processing failed",
-						monitor.D("waiter_id", tw.id),
-						monitor.D("error", err))
-
-					tw.state = eventproc.WSFailed
-
+				if err := tw.processTimerEvent(ctx, m); err != nil {
 					return
 				}
-
-				if tw.cyclesLeft == 0 {
-					tckr.Stop()
-
-					tw.state = eventproc.WSEnded
-
-					return
-				}
-
-				tw.cyclesLeft--
 			}
+		}
+}
+
+// processTimerEvent handles timer event processing with proper locking
+func (tw *timeWaiter) processTimerEvent(ctx context.Context, m monitor.Writer) error {
+	tw.m.Lock()
+	defer tw.m.Unlock()
+
+	for _, ep := range tw.processors {
+		if err := ep.ProcessEvent(ctx, tw.eDef); err != nil {
+			monitor.Save(m, "timeWaiter", "Event processing failed",
+				monitor.D("waiter_id", tw.id),
+				monitor.D("error", err))
+
+			tw.state = eventproc.WSFailed
+			return err
 		}
 	}
 
-	go w()
+	if tw.cyclesLeft == 0 {
+		// clear processors list on exit
+		tw.processors = []eventproc.EventProcessor{}
+		tw.state = eventproc.WSEnded
+		_ = tw.hub.RemoveWaiter(tw) // ignore error during cleanup
+		
+		return errs.New(errs.M("timer completed")) // signal completion
+	}
 
+	tw.cyclesLeft--
+	
 	return nil
 }
 
@@ -275,6 +352,9 @@ func (tw *timeWaiter) Stop() error {
 			errs.D("current_state", tw.state))
 	}
 
+	tw.m.Lock()
+	defer tw.m.Unlock()
+
 	tw.state = eventproc.WSStopped
 
 	close(tw.stopCh)
@@ -286,3 +366,5 @@ func (tw *timeWaiter) Stop() error {
 func (tw *timeWaiter) State() eventproc.EventWaiterState {
 	return tw.state
 }
+
+var _ eventproc.EventWaiter = (*timeWaiter)(nil)

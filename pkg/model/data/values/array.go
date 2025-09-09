@@ -40,7 +40,6 @@ func NewArray[T any](values ...T) *Array[T] {
 	return &a
 }
 
-// *********************** Value interface *************************************
 // Get returns value of the Value.
 // For collection Get retrieves element with current index
 // if collection is empty then panic will be fired.

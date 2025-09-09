@@ -1,3 +1,4 @@
+// Package scope provides data scoping and path management for BPMN process execution.
 package scope
 
 import (
@@ -16,13 +17,16 @@ type DataPath string
 const (
 	errorClass = "SCOPE_ERRORS"
 
+	// EmptyDataPath represents an empty data path.
 	EmptyDataPath DataPath = ""
+	// RootDataPath represents the root data path.
 	RootDataPath  DataPath = "/"
 
+	// PathSeparator represents the data path separator character.
 	PathSeparator string = "/"
 )
 
-// New creates a new DataPath from correctly formed string.
+// NewDataPath creates a new DataPath from correctly formed string.
 // If there is errors in newPath, EmptyDataPath and error returned.
 func NewDataPath(newPath string) (DataPath, error) {
 	d := DataPath(newPath)

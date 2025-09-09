@@ -47,6 +47,7 @@ import (
 // underlying Data Objects or Properties change.
 
 type (
+	// CorrelationSubscription represents a BPMN correlation subscription.
 	CorrelationSubscription struct {
 		foundation.BaseElement
 
@@ -78,6 +79,7 @@ type (
 		Properties []CorrelationProperty
 	}
 
+	// CorrelationProperty represents a BPMN correlation property.
 	CorrelationProperty struct {
 		foundation.BaseElement
 
@@ -93,7 +95,7 @@ type (
 		Expressions []CorrelationPropertyRetrievalExpression
 	}
 
-	// CorrelationPropertyBindings represent the partial keys of a
+	// CorrelationPropertyBinding represents the partial keys of a
 	// CorrelationSubscription where each relates to a specific
 	// CorrelationProperty in the associated CorrelationKey. A FormalExpression
 	// defines how that CorrelationProperty instance is populated and updated
@@ -111,6 +113,7 @@ type (
 		Property *CorrelationProperty
 	}
 
+	// CorrelationPropertyRetrievalExpression represents a BPMN correlation property retrieval expression.
 	CorrelationPropertyRetrievalExpression struct {
 		foundation.BaseElement
 

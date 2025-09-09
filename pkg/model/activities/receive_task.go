@@ -5,7 +5,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
 
-// A Receive Task is a simple Task that is designed to wait for a Message to
+// ReceiveTask is a simple Task that is designed to wait for a Message to
 // arrive from an external Participant (relative to the Process). Once the
 // Message has been received, the Task is completed.
 // The actual Participant from which the Message is received can be identified

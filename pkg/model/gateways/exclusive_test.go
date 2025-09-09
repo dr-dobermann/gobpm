@@ -26,7 +26,7 @@ func TestNewExclGateway(t *testing.T) {
 
 	// valid options
 	_, err = gateways.NewExclusiveGateway(
-		foundation.WithId("exclusive gateway #1"),
+		foundation.WithID("exclusive gateway #1"),
 		foundation.WithDoc("this gateway does nothing", foundation.PlainText),
 		options.WithName("my first exclusive gateway"),
 		gateways.WithDirection(gateways.Mixed))

@@ -30,7 +30,7 @@ func TestNewEndEvent(t *testing.T) {
 		"message",
 		data.MustItemDefinition(
 			values.NewVariable(23),
-			foundation.WithId("message_item")))
+			foundation.WithID("message_item")))
 	msgEd, err := events.NewMessageEventDefintion(msg, nil)
 	require.NoError(t, err)
 
@@ -47,7 +47,7 @@ func TestNewEndEvent(t *testing.T) {
 		"test_error_code",
 		data.MustItemDefinition(
 			values.NewVariable(42),
-			foundation.WithId("error_item")))
+			foundation.WithID("error_item")))
 	require.NoError(t, err)
 
 	eed, err := events.NewErrorEventDefinition(er)
@@ -61,7 +61,7 @@ func TestNewEndEvent(t *testing.T) {
 		"test_escalation_code",
 		data.MustItemDefinition(
 			values.NewVariable(100),
-			foundation.WithId("escalation_item")))
+			foundation.WithID("escalation_item")))
 	require.NoError(t, err)
 
 	escEd, err := events.NewEscalationEventDefintion(esc)
@@ -88,12 +88,12 @@ func TestNewEndEvent(t *testing.T) {
 						data.MustItemDefinition(
 							values.NewVariable(true)),
 						data.ReadyDataState)),
-				foundation.WithId("my empty end event"))
+				foundation.WithID("my empty end event"))
 
 			require.NoError(t, err)
 			require.NotEmpty(t, ee)
 
-			require.NotEqual(t, "", ee.Id())
+			require.NotEqual(t, "", ee.ID())
 			require.Equal(t, "no triggers end_event", ee.Name())
 			require.Equal(t, ee, ee.Node())
 			require.Equal(t, flow.EndEventClass, ee.EventClass())
@@ -132,7 +132,7 @@ func TestNewEndEvent(t *testing.T) {
 			require.NoError(t, err)
 			require.NotEmpty(t, ee)
 
-			t.Log(ee.Id())
+			t.Log(ee.ID())
 			triggers := ee.Triggers()
 			t.Log(triggers)
 
@@ -158,7 +158,7 @@ func TestNewEndEvent(t *testing.T) {
 
 			mre := mockrenv.NewMockRuntimeEnvironment(t)
 			mre.EXPECT().EventProducer().Return(mep)
-			mre.EXPECT().GetDataById(mock.Anything, mock.Anything).
+			mre.EXPECT().GetDataByID(mock.Anything, mock.Anything).
 				RunAndReturn(
 					func(dp scope.DataPath, s string) (data.Data, error) {
 						dd := map[string]data.Data{

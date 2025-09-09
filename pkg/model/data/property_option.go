@@ -17,6 +17,7 @@ type PropertyAdder interface {
 	AddProperty(p *Property) error
 }
 
+// PropertyOption represents a function option for configuring properties.
 type PropertyOption func(cfg PropertyAdder) error
 
 // WithProperties adds properties to the activityConfig.
@@ -67,8 +68,6 @@ func WithProperty(name string, iaeOpt iaeAdderOption) PropertyOption {
 	return PropertyOption(f)
 }
 
-// --------------------- options.Option interface ------------------------------
-//
 // Apply applies propertyOption on to PropertyAdder configuration.
 func (po PropertyOption) Apply(cfg options.Configurator) error {
 	if pc, ok := cfg.(PropertyAdder); ok {

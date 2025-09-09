@@ -7,6 +7,7 @@ import (
 )
 
 type (
+	// DataNode represents a BPMN data node interface.
 	DataNode interface {
 		Element
 

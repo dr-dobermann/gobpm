@@ -13,7 +13,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
 
-// The Service Task inherits the attributes and model associations of Activity.
+// ServiceTask inherits the attributes and model associations of Activity.
 // In addition the following constraints are introduced when the Service Task
 // references an Operation:
 //   - The Service Task has exactly one inputSet and at most one outputSet.
@@ -141,7 +141,6 @@ func (st *ServiceTask) Exec(
 			if err == nil {
 				return st.Outgoing(), nil
 			}
-
 		}
 	}
 
@@ -151,8 +150,8 @@ func (st *ServiceTask) Exec(
 			errs.C(errorClass),
 			errs.E(err),
 			errs.D("service_task_name", st.Name()),
-			errs.D("service_task_id", st.Id()),
-			errs.D("operation_id", st.operation.Id()))
+			errs.D("service_task_id", st.ID()),
+			errs.D("operation_id", st.operation.ID()))
 }
 
 // loadInputMessage tries to set value of the operation's incoming message
@@ -163,9 +162,9 @@ func (st *ServiceTask) loadInputMessage(ctx context.Context, re renv.RuntimeEnvi
 		return nil
 	}
 
-	d, err := re.GetDataById(
+	d, err := re.GetDataByID(
 		st.dataPath,
-		st.operation.IncomingMessage().Item().Id())
+		st.operation.IncomingMessage().Item().ID())
 	if err != nil {
 		return errs.New(
 			errs.M("couldn't find item definition"),
@@ -203,7 +202,7 @@ func (st *ServiceTask) uploadOutputMessage(ctx context.Context) error {
 	}
 
 	for _, o := range outs {
-		if o.ItemDefinition().Id() == st.operation.OutgoingMessage().Item().Id() {
+		if o.ItemDefinition().ID() == st.operation.OutgoingMessage().Item().ID() {
 			err = st.operation.OutgoingMessage().
 				Item().Structure().
 				Update(ctx, o.ItemDefinition().Structure().Get(ctx))

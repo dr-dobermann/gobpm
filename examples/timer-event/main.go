@@ -20,7 +20,10 @@ import (
 
 func main() {
 	// Create BPM engine
-	engine := thresher.New()
+	engine, err := thresher.New("timer-event-engine")
+	if err != nil {
+		log.Fatal("Failed to create BPM engine:", err)
+	}
 
 	// Create a process with timer event
 	proc, err := process.New("timer-process")
@@ -35,7 +38,7 @@ func main() {
 		func(ctx context.Context, ds data.Source) (data.Value, error) {
 			return values.NewVariable(time.Now().Add(5 * time.Second)), nil
 		},
-		foundation.WithId("time-plus-5s"),
+		foundation.WithID("time-plus-5s"),
 	)
 
 	// Create timer event definition with time date
@@ -107,13 +110,13 @@ func main() {
 	}
 
 	// Start process execution
-	err = engine.StartProcess(proc.Id())
+	err = engine.StartProcess(proc.ID())
 	if err != nil {
 		log.Fatal("Failed to start process:", err)
 	}
 
 	fmt.Printf("Timer process '%s' started successfully with ID: %s\n",
-		proc.Name(), proc.Id())
+		proc.Name(), proc.ID())
 	fmt.Println("Timer will trigger after 5 seconds, repeating 3 times...")
 	fmt.Println("Press Ctrl+C to exit")
 

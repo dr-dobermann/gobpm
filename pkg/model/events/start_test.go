@@ -61,9 +61,9 @@ func TestNewStartEvent(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, se)
 
-			t.Log(se.Id())
+			t.Log(se.ID())
 
-			require.NotEqual(t, "", se.Id())
+			require.NotEqual(t, "", se.ID())
 			require.Equal(t, "NoneTrigger", se.Name())
 			require.Equal(t, 0, len(se.Triggers()))
 			require.False(t, se.IsInterrupting())
@@ -77,12 +77,12 @@ func TestNewStartEvent(t *testing.T) {
 			se, err := events.NewStartEvent(
 				"NoneTrigger",
 				data.WithProperties(prop),
-				foundation.WithId("none_trigger_start_event"))
+				foundation.WithID("none_trigger_start_event"))
 
 			require.NoError(t, err)
 			require.NotNil(t, se)
 
-			t.Log(se.Id())
+			t.Log(se.ID())
 
 			props := se.Properties()
 
@@ -101,7 +101,7 @@ func TestNewStartEvent(t *testing.T) {
 			require.NoError(t, err)
 			require.NotEmpty(t, se)
 
-			t.Log(se.Id())
+			t.Log(se.ID())
 			triggers := se.Triggers()
 
 			require.Equal(t, 1, len(triggers))
@@ -122,7 +122,7 @@ func TestNewStartEvent(t *testing.T) {
 			require.NoError(t, err)
 			require.NotEmpty(t, se)
 
-			t.Log(se.Id())
+			t.Log(se.ID())
 			triggers := se.Triggers()
 
 			require.True(t, se.HasTrigger(flow.TriggerSignal))
@@ -140,13 +140,13 @@ func TestNewStartEvent(t *testing.T) {
 				events.WithSignalTrigger(
 					events.MustSignalEventDefinition(sig)),
 				events.WithParallel(),
-				foundation.WithId("start_event_id"),
+				foundation.WithID("start_event_id"),
 			)
 
 			require.NoError(t, err)
 			require.NotEmpty(t, se)
 
-			t.Log(se.Id())
+			t.Log(se.ID())
 			triggers := se.Triggers()
 
 			require.True(t, se.HasTrigger(flow.TriggerSignal))
@@ -154,7 +154,7 @@ func TestNewStartEvent(t *testing.T) {
 
 			require.True(t, se.IsParallelMultiple())
 
-			require.Equal(t, "start_event_id", se.Id())
+			require.Equal(t, "start_event_id", se.ID())
 
 			require.Equal(t, 2, len(triggers))
 			require.Equal(t, 2, len(se.Definitions()))
@@ -180,7 +180,7 @@ func TestNewStartEvent(t *testing.T) {
 			require.NoError(t, err)
 			require.NotEmpty(t, se)
 
-			t.Log(se.Id())
+			t.Log(se.ID())
 			triggers := se.Triggers()
 
 			require.True(t, se.HasTrigger(flow.TriggerCompensation))

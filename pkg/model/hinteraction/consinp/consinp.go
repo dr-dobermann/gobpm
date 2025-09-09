@@ -1,8 +1,4 @@
-/*
-consinp is a package which implement Rendered interface for
-user input from console.
-*/
-
+// Package consinp implements Rendered interface for user input from console.
 package consinp
 
 import (
@@ -23,6 +19,7 @@ import (
 const (
 	errorClass = "CONSOLE_RENDERER_ERRORS"
 
+	// ConsInpRender represents console input renderer type.
 	ConsInpRender = "##consInputRender"
 )
 
@@ -32,6 +29,7 @@ type (
 		read(io.Reader) (data.Data, error)
 	}
 
+	// CRenderer represents a console renderer.
 	CRenderer struct {
 		foundation.BaseElement
 
@@ -111,6 +109,7 @@ func NewRenderer(
 	return cfg.newCRenderer(be)
 }
 
+// Implementation returns the implementation type of the console renderer.
 func (cr *CRenderer) Implementation() string {
 	return ConsInpRender
 }
@@ -124,7 +123,7 @@ func (cr *CRenderer) Render(_ data.Source) ([]data.Data, error) {
 			errs.New(
 				errs.M("no inputs defined"),
 				errs.C(errorClass, errs.InvalidObject),
-				errs.D("renderer_id", cr.Id()))
+				errs.D("renderer_id", cr.ID()))
 	}
 
 	results := []data.Data{}

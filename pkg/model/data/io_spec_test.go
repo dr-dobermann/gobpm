@@ -46,10 +46,10 @@ func TestSet(t *testing.T) {
 
 	t.Run("named set",
 		func(t *testing.T) {
-			s, err := data.NewSet("test_set", foundation.WithId("set_id"))
+			s, err := data.NewSet("test_set", foundation.WithID("set_id"))
 			require.NoError(t, err)
 			require.Equal(t, "test_set", s.Name())
-			require.Equal(t, "set_id", s.Id())
+			require.Equal(t, "set_id", s.ID())
 			require.False(t, s.IsValid())
 			require.NoError(t, s.Validate(rs, false))
 			require.True(t, s.IsValid())

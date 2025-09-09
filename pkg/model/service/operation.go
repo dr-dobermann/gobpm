@@ -12,6 +12,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/set"
 )
 
+// UnspecifiedImplementation represents an unspecified implementation type.
 const UnspecifiedImplementation = "##unspecified"
 
 // Implementor interface runs an Operation and returns its result
@@ -173,7 +174,7 @@ func (o *Operation) Run(ctx context.Context) error {
 	out, err := o.implementation.Execute(ctx, in)
 	if err != nil {
 		return errs.New(
-			errs.M("operation %q[%s] execution failed", o.name, o.Id()),
+			errs.M("operation %q[%s] execution failed", o.name, o.ID()),
 			errs.C(errorClass, errs.OperationFailed),
 			errs.E(err))
 	}

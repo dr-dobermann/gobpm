@@ -1,10 +1,6 @@
-/*
-#goOper implements service.Implementor interface.
-
-goOper creates an Operation Implementor which could use go functor
-as Operation execution mechanism.
-*/
-
+// Package gooper implements service.Implementor interface.
+// goOper creates an Operation Implementor which could use go functor
+// as Operation execution mechanism.
 package gooper
 
 import (
@@ -18,6 +14,7 @@ import (
 const (
 	errorClass = "GOOPER"
 
+	// GoOperType represents the GoOper operation type.
 	GoOperType = "##GoOper"
 )
 
@@ -25,6 +22,7 @@ const (
 type OpFunctor func(
 	context.Context, *data.ItemDefinition) (*data.ItemDefinition, error)
 
+// GoFunc represents a Go function operation implementor.
 type GoFunc struct {
 	ers []string
 	f   OpFunctor

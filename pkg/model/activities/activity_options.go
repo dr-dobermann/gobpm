@@ -39,7 +39,7 @@ func newSetDef(name, id string,
 	if id == "" {
 		s, err = data.NewSet(name)
 	} else {
-		s, err = data.NewSet(name, foundation.WithId(id))
+		s, err = data.NewSet(name, foundation.WithID(id))
 	}
 	if err != nil {
 		return nil, errs.New(
@@ -72,7 +72,8 @@ type (
 		defaultFlow      *flow.SequenceFlow
 	}
 
-	activityOption func(cfg *activityConfig) error
+	// ActivityOption represents an activity configuration option.
+	ActivityOption func(cfg *activityConfig) error
 )
 
 // newActivity creates a new Activity from the activityConfig.
@@ -186,18 +187,18 @@ func addSetParams(
 }
 
 // WithCompensation sets isForCompensation Activity flag to true.
-func WithCompensation() activityOption {
+func WithCompensation() ActivityOption {
 	f := func(cfg *activityConfig) error {
 		cfg.compensation = true
 
 		return nil
 	}
 
-	return activityOption(f)
+	return ActivityOption(f)
 }
 
 // WithLoop adds loop characteristics to the Activity.
-func WithLoop(lc *LoopCharacteristics) activityOption {
+func WithLoop(lc *LoopCharacteristics) ActivityOption {
 	f := func(cfg *activityConfig) error {
 		if lc == nil {
 			return errs.New(
@@ -210,11 +211,11 @@ func WithLoop(lc *LoopCharacteristics) activityOption {
 		return nil
 	}
 
-	return activityOption(f)
+	return ActivityOption(f)
 }
 
 // WithStartQuantity sets start quantity token number for the acitvity.
-func WithStartQuantity(qty int) activityOption {
+func WithStartQuantity(qty int) ActivityOption {
 	f := func(cfg *activityConfig) error {
 		if qty > 0 {
 			cfg.startQ = qty
@@ -223,11 +224,11 @@ func WithStartQuantity(qty int) activityOption {
 		return nil
 	}
 
-	return activityOption(f)
+	return ActivityOption(f)
 }
 
 // WithCompletionQuantity sets Activity completion token number quantity.
-func WithCompletionQuantity(qty int) activityOption {
+func WithCompletionQuantity(qty int) ActivityOption {
 	f := func(cfg *activityConfig) error {
 		if qty > 0 {
 			cfg.complQ = qty
@@ -236,10 +237,10 @@ func WithCompletionQuantity(qty int) activityOption {
 		return nil
 	}
 
-	return activityOption(f)
+	return ActivityOption(f)
 }
 
-// WithEmptySets adds empty unique Set into the Activity config.
+// WithEmptySet adds empty unique Set into the Activity config.
 // WithEmptySet called since BPMN standard demands non-empty input and
 // output set for the activity.
 //
@@ -253,7 +254,7 @@ func WithCompletionQuantity(qty int) activityOption {
 func WithEmptySet(
 	name, id string,
 	d data.Direction,
-) activityOption {
+) ActivityOption {
 	f := func(cfg *activityConfig) error {
 		if err := d.Validate(); err != nil {
 			return errs.New(
@@ -284,10 +285,10 @@ func WithEmptySet(
 		return nil
 	}
 
-	return activityOption(f)
+	return ActivityOption(f)
 }
 
-// WithSets adds non-empty unique Set into the Activity config.
+// WithSet adds non-empty unique Set into the Activity config.
 //
 // Parameters:
 //   - name -- data set name
@@ -299,7 +300,7 @@ func WithSet(
 	d data.Direction,
 	st data.SetType,
 	params []*data.Parameter,
-) activityOption {
+) ActivityOption {
 	f := func(cfg *activityConfig) error {
 		if err := d.Validate(); err != nil {
 			return errs.New(
@@ -333,7 +334,7 @@ func WithSet(
 		}
 
 		for _, ts := range tss {
-			if ts.set.Id() == sd.set.Id() {
+			if ts.set.ID() == sd.set.ID() {
 				return nil
 			}
 		}
@@ -343,27 +344,27 @@ func WithSet(
 		return nil
 	}
 
-	return activityOption(f)
+	return ActivityOption(f)
 }
 
 // WithoutParams indicates that the Activity has neither incoming
 // nor outgoing parameters and ignores all Parameters and Sets options.
 // It creates an empty input and output data.Sets in IOSpec with no
 // parameters.
-func WithoutParams() activityOption {
+func WithoutParams() ActivityOption {
 	f := func(cfg *activityConfig) error {
 		cfg.withoutParams = true
 
 		return nil
 	}
 
-	return activityOption(f)
+	return ActivityOption(f)
 }
 
 // --------------------- options.Option interface ------------------------------
 
 // Apply converts activityOption into options.Option.
-func (ao activityOption) Apply(cfg options.Configurator) error {
+func (ao ActivityOption) Apply(cfg options.Configurator) error {
 	if ac, ok := cfg.(*activityConfig); ok {
 		return ao(ac)
 	}

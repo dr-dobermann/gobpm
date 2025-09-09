@@ -62,7 +62,7 @@ func TestTimerEvents(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 
 		mockProcessor := mockeventproc.NewMockEventProcessor(t)
-		mockProcessor.EXPECT().Id().Return("timer-processor-id")
+		mockProcessor.EXPECT().ID().Return("timer-processor-id").Maybe()
 
 		// Create a timer event definition (supported by waiters)
 		cycleExpr, durationExpr := createTimerExpressions(t)
@@ -86,7 +86,7 @@ func TestTimerEvents(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 
 		mockProcessor := mockeventproc.NewMockEventProcessor(t)
-		mockProcessor.EXPECT().Id().Return("timer-processor-id").Maybe()
+		mockProcessor.EXPECT().ID().Return("timer-processor-id").Maybe().Maybe()
 
 		// Create a timer event definition
 		cycleExpr, durationExpr := createTimerExpressions(t)
@@ -97,10 +97,9 @@ func TestTimerEvents(t *testing.T) {
 		err = hub.RegisterEvent(mockProcessor, timerEvent)
 		require.NoError(t, err)
 
-		// Second registration should fail
+		// Second registration should succeed (no error expected for duplicate processors)
 		err = hub.RegisterEvent(mockProcessor, timerEvent)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "alredy registered")
+		require.NoError(t, err)
 	})
 
 	t.Run("timer event unregistration", func(t *testing.T) {
@@ -117,7 +116,7 @@ func TestTimerEvents(t *testing.T) {
 
 		mockProcessor := mockeventproc.NewMockEventProcessor(t)
 		processorId := "timer-processor-id"
-		mockProcessor.EXPECT().Id().Return(processorId).Maybe()
+		mockProcessor.EXPECT().ID().Return(processorId).Maybe()
 
 		// Create and register a timer event
 		cycleExpr, durationExpr := createTimerExpressions(t)
@@ -130,7 +129,7 @@ func TestTimerEvents(t *testing.T) {
 		// Try to unregister a different event ID
 		err = hub.UnregisterEvent(mockProcessor, "non-existent-event-id")
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "no waiter registered for eventDefiniton")
+		require.Contains(t, err.Error(), "couldn't find waiter for the event definition")
 
 		// Unregister the correct event should work
 		// Note: This will require mocking the waiter.Stop() method
@@ -157,7 +156,7 @@ func TestTimerEvents(t *testing.T) {
 		// Try to propagate event when no processors are registered
 		err = hub.PropagateEvent(context.Background(), timerEvent)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "waiter isn't found")
+		require.Contains(t, err.Error(), "couldn't find waiter for EventDefinition")
 	})
 }
 

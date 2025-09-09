@@ -22,7 +22,6 @@ type (
 		baseOpts      []options.Option
 		defs          []flow.EventDefinition
 		dataOutputs   map[string]*data.Parameter
-		outputSet     *data.Set
 	}
 )
 
@@ -55,7 +54,7 @@ func (sc *startConfig) AddProperty(prop *data.Property) error {
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	sc.props[prop.Id()] = prop
+	sc.props[prop.ID()] = prop
 
 	return nil
 }
@@ -197,13 +196,13 @@ func (cfg *startConfig) setMessage(med *MessageEventDefinition) error {
 		do, err := data.NewParameter(
 			fmt.Sprintf("message %q(%s) output",
 				med.Message().Name(),
-				med.Message().Id()),
+				med.Message().ID()),
 			iae)
 		if err != nil {
 			return err
 		}
 
-		cfg.dataOutputs[id.Id()] = do
+		cfg.dataOutputs[id.ID()] = do
 	}
 
 	return nil

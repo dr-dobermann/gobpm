@@ -1,3 +1,4 @@
+// Package dataobjects provides BPMN data object implementations.
 package dataobjects
 
 import (
@@ -15,7 +16,7 @@ import (
 
 const errorClass = "DATA_OBJECTS_ERROR"
 
-// The Data Object class is an item-aware element. Data Object elements MUST be
+// DataObject class is an item-aware element. Data Object elements MUST be
 // contained within Process or Sub-Process elements. Data Object elements are
 // visually displayed on a Process diagram. Data Object References are a way to
 // reuse Data Objects in the same diagram. They can specify different states of
@@ -69,7 +70,7 @@ func New(
 			fmt.Errorf("empty ItemDefinition isn't allowed")
 	}
 
-	iae, err := data.NewItemAwareElement(idef, state, foundation.WithId(idef.Id()))
+	iae, err := data.NewItemAwareElement(idef, state, foundation.WithID(idef.ID()))
 	if err != nil {
 		return nil,
 			fmt.Errorf("ItemAwareElement building failed: %w", err)
@@ -104,16 +105,16 @@ func (do *DataObject) AssociateSource(
 	outputs := n.Outputs()
 	opts := []options.Option{}
 
-	for _, sId := range sourceIDs {
-		sId = strings.TrimSpace(sId)
+	for _, sID := range sourceIDs {
+		sID = strings.TrimSpace(sID)
 
 		idx := slices.IndexFunc(outputs,
 			func(iae *data.ItemAwareElement) bool {
-				return iae.ItemDefinition().Id() == sId
+				return iae.ItemDefinition().ID() == sID
 			})
 		if idx == -1 {
 			return fmt.Errorf("node %q doesn't have output with id %q",
-				n.Name(), sId)
+				n.Name(), sID)
 		}
 
 		opts = append(opts, data.WithSource(outputs[idx]))
@@ -149,7 +150,7 @@ func (do *DataObject) AssociateTarget(
 		return fmt.Errorf("empty target")
 	}
 
-	if _, ok := do.outgoing[n.Id()]; ok {
+	if _, ok := do.outgoing[n.ID()]; ok {
 		return fmt.Errorf("duplicate association to node %q", n.Name())
 	}
 
@@ -157,12 +158,12 @@ func (do *DataObject) AssociateTarget(
 	idx := slices.IndexFunc(
 		inputs,
 		func(iae *data.ItemAwareElement) bool {
-			return iae.ItemDefinition().Id() == do.ItemDefinition().Id()
+			return iae.ItemDefinition().ID() == do.ItemDefinition().ID()
 		})
 
 	if idx == -1 {
 		return fmt.Errorf("node %q has no input #%s",
-			n.Name(), do.ItemDefinition().Id())
+			n.Name(), do.ItemDefinition().ID())
 	}
 
 	opts := []options.Option{data.WithSource(&do.ItemAwareElement)}
@@ -181,7 +182,7 @@ func (do *DataObject) AssociateTarget(
 			n.Name(), err)
 	}
 
-	do.outgoing[n.Id()] = a
+	do.outgoing[n.ID()] = a
 
 	return nil
 }
@@ -200,18 +201,21 @@ func (do *DataObject) Type() flow.ElementType {
 
 // -------------------- foundation.Documentator -------------------------------
 
+// Docs returns the documentation of the DataObject.
 func (do *DataObject) Docs() []*foundation.Documentation {
 	return do.FlowElement.Docs()
 }
 
 // -------------------- foundation.Identifyer ---------------------------------
 
-func (do *DataObject) Id() string {
-	return do.FlowElement.Id()
+// ID returns the identifier of the DataObject.
+func (do *DataObject) ID() string {
+	return do.FlowElement.ID()
 }
 
 // ------------------------ flow.DataNode -------------------------------------
 
+// Update updates the DataObject state.
 func (do *DataObject) Update(ctx context.Context) error {
 	if do.incoming != nil {
 		if err := do.UpdateState(data.UnavailableDataState); err != nil {
@@ -246,7 +250,7 @@ func (do *DataObject) Update(ctx context.Context) error {
 		if err := oa.UpdateSource(ctx, do.ItemDefinition(), data.Recalculate); err != nil {
 			return fmt.Errorf(
 				"association #%s source #%q updating failed: %w",
-				oa.Id(), do.ItemDefinition().Id(), err)
+				oa.ID(), do.ItemDefinition().ID(), err)
 		}
 	}
 

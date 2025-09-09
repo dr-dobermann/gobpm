@@ -73,10 +73,10 @@ func TestEscalationDefinition(t *testing.T) {
 			require.NotEmpty(t, ed)
 
 			require.Equal(t, flow.TriggerEscalation, ed.Type())
-			require.True(t, ed.CheckItemDefinition(iDef.Id()))
+			require.True(t, ed.CheckItemDefinition(iDef.ID()))
 			iDefs := ed.GetItemsList()
 			require.Equal(t, 1, len(iDefs))
-			require.Equal(t, iDef.Id(), iDefs[0].Id())
+			require.Equal(t, iDef.ID(), iDefs[0].ID())
 		})
 
 	t.Run(
@@ -86,7 +86,7 @@ func TestEscalationDefinition(t *testing.T) {
 
 			iDef := data.MustItemDefinition(
 				values.NewVariable(42),
-				foundation.WithId("42"))
+				foundation.WithID("42"))
 
 			ed, err := events.NewEscalationEventDefintion(
 				events.MustEscalation("test", "code", iDef))
@@ -98,7 +98,7 @@ func TestEscalationDefinition(t *testing.T) {
 					data.MustItemAwareElement(
 						data.MustItemDefinition(
 							values.NewVariable(100),
-							foundation.WithId("100")),
+							foundation.WithID("100")),
 						data.ReadyDataState))})
 			require.Error(t, err)
 		})
@@ -120,13 +120,13 @@ func TestEscalationDefinition(t *testing.T) {
 					data.MustItemAwareElement(
 						data.MustItemDefinition(
 							values.NewVariable(100),
-							foundation.WithId(iDef.Id())),
+							foundation.WithID(iDef.ID())),
 						data.ReadyDataState))})
 			require.NoError(t, err)
 
 			iDefs := ced.GetItemsList()
 			require.Equal(t, 1, len(iDefs))
 			require.Equal(t, 100, iDefs[0].Structure().Get(ctx))
-			require.Equal(t, iDef.Id(), iDefs[0].Id())
+			require.Equal(t, iDef.ID(), iDefs[0].ID())
 		})
 }

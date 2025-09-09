@@ -1,3 +1,4 @@
+// Package renv provides runtime environment interfaces and implementations.
 package renv
 
 import (
@@ -11,8 +12,8 @@ import (
 type RuntimeEnvironment interface {
 	scope.Scope
 
-	// InstanceId returns the process instance Id.
-	InstanceId() string
+	// InstanceID returns the process instance ID.
+	InstanceID() string
 
 	// EventProducer returns the EventProducer of the runtime.
 	EventProducer() eventproc.EventProducer

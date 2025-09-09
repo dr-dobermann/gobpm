@@ -56,12 +56,12 @@ func TestGoBpmExpression(t *testing.T) {
 		dsm,
 		data.MustItemDefinition(values.NewVariable(false)),
 		CheckPositive,
-		foundation.WithId("my first expression"),
+		foundation.WithID("my first expression"),
 		foundation.WithDoc("x >= 0", foundation.PlainText))
 
 	require.Equal(t, "gobpm:goexpr", ge.Language())
 
-	require.Equal(t, "my first expression", ge.Id())
+	require.Equal(t, "my first expression", ge.ID())
 	t.Log(" >> have an GoExpression: ", ge.Docs()[0])
 
 	require.False(t, ge.IsEvaluated())
@@ -114,7 +114,7 @@ func TestGoBpmExprErrors(t *testing.T) {
 		iDsm,
 		nil,
 		CheckPositive,
-		foundation.WithId("my first expression"),
+		foundation.WithID("my first expression"),
 		foundation.WithDoc("x >= 0", foundation.PlainText))
 	require.Error(t, err)
 
@@ -122,7 +122,7 @@ func TestGoBpmExprErrors(t *testing.T) {
 		iDsm,
 		data.MustItemDefinition(values.NewVariable("test")),
 		nil,
-		foundation.WithId("my first expression"),
+		foundation.WithID("my first expression"),
 		foundation.WithDoc("x >= 0", foundation.PlainText))
 	require.Error(t, err)
 
@@ -136,7 +136,7 @@ func TestGoBpmExprErrors(t *testing.T) {
 		iDsm,
 		data.MustItemDefinition(values.NewVariable("test")),
 		CheckPositive,
-		foundation.WithId("invalid ds"),
+		foundation.WithID("invalid ds"),
 		foundation.WithDoc("x >= 0", foundation.PlainText))
 	require.NoError(t, err)
 	_, err = invDs.Evaluate(ctx, iDsm)
@@ -147,7 +147,7 @@ func TestGoBpmExprErrors(t *testing.T) {
 		nil,
 		data.MustItemDefinition(values.NewVariable("test")),
 		CheckPositive,
-		foundation.WithId("invalid ds"),
+		foundation.WithID("invalid ds"),
 		foundation.WithDoc("x >= 0", foundation.PlainText))
 	require.NoError(t, err)
 	_, err = emptyDs.Evaluate(ctx, nil)
@@ -172,7 +172,7 @@ func TestGoBpmExprErrors(t *testing.T) {
 		dsm,
 		data.MustItemDefinition(values.NewVariable("test")),
 		CheckPositive,
-		foundation.WithId("my first expression"),
+		foundation.WithID("my first expression"),
 		foundation.WithDoc("x >= 0", foundation.PlainText))
 	require.NoError(t, err)
 

@@ -1,3 +1,4 @@
+// Package service provides BPMN service interfaces and implementations.
 package service
 
 import (

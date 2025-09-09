@@ -15,7 +15,7 @@ const (
 	undefinedCategoryValue = "UNDEFINED_CATEGORY_VALUE"
 )
 
-// Categories, which have user-defined semantics, can be used for documentation
+// Category can have user-defined semantics, and can be used for documentation
 // or analysis purposes. For example, FlowElements can be categorized as being
 // customer oriented vs. support oriented. Furthermore, the cost and time of
 // Activities per Category can be calculated.
@@ -114,6 +114,7 @@ func (c *Category) CategoryValues() []CategoryValue {
 
 // *****************************************************************************
 
+// CategoryValue represents a value within a category.
 type CategoryValue struct {
 	foundation.BaseElement
 
@@ -166,7 +167,7 @@ func (cv *CategoryValue) AddFlowElement(fee ...flow.Element) int {
 			continue
 		}
 
-		cv.categorizedElements[fe.Id()] = fe
+		cv.categorizedElements[fe.ID()] = fe
 
 		n++
 	}

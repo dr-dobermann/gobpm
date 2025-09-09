@@ -43,7 +43,7 @@ func (ic *itemConfig) itemDef() (*ItemDefinition, error) {
 	}, nil
 }
 
-// SetKind sets kind of an ItemDefintion.
+// WithKind sets kind of an ItemDefintion.
 func WithKind(kind ItemKind) options.Option {
 	f := func(cfg *itemConfig) error {
 		if err := kind.Validate(); err != nil {
@@ -58,7 +58,7 @@ func WithKind(kind ItemKind) options.Option {
 	return itemOption(f)
 }
 
-// SetImport sets import of an ItemDefintion.
+// WithImport sets import of an ItemDefintion.
 func WithImport(imp *foundation.Import) options.Option {
 	f := func(cfg *itemConfig) error {
 		cfg.imp = imp
@@ -195,6 +195,7 @@ func (iaeC *iaeConfig) Validate() error {
 // ============================================================================
 
 type (
+	// IAEAdder represents an interface for adding ItemAwareElements.
 	IAEAdder interface {
 		options.Configurator
 

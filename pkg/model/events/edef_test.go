@@ -53,7 +53,7 @@ func TestErrorDefinitions(t *testing.T) {
 			// normal params
 			ced, err := events.NewConditionalEventDefinition(expr)
 			require.NoError(t, err)
-			require.Equal(t, expr.Id(), ced.Condition().Id())
+			require.Equal(t, expr.ID(), ced.Condition().ID())
 			require.Len(t, ced.GetItemsList(), 0)
 		})
 
@@ -61,7 +61,7 @@ func TestErrorDefinitions(t *testing.T) {
 		func(t *testing.T) {
 			e, err := common.NewError("fsio propalo", "ZHOPA",
 				data.MustItemDefinition(values.NewVariable(-1),
-					foundation.WithId("error_item")))
+					foundation.WithID("error_item")))
 			require.NoError(t, err)
 
 			// empty error
@@ -75,7 +75,7 @@ func TestErrorDefinitions(t *testing.T) {
 			// with error
 			eed, err := events.NewErrorEventDefinition(e)
 			require.NoError(t, err)
-			require.Equal(t, e.Id(), eed.Error().Id())
+			require.Equal(t, e.ID(), eed.Error().ID())
 			require.True(t, eed.CheckItemDefinition("error_item"))
 
 			// cloning error
@@ -85,7 +85,7 @@ func TestErrorDefinitions(t *testing.T) {
 						data.MustItemAwareElement(
 							data.MustItemDefinition(
 								values.NewVariable(200),
-								foundation.WithId("invalid")),
+								foundation.WithID("invalid")),
 							data.ReadyDataState)),
 				})
 			require.Error(t, err)
@@ -97,7 +97,7 @@ func TestErrorDefinitions(t *testing.T) {
 						data.MustItemAwareElement(
 							data.MustItemDefinition(
 								values.NewVariable(1000),
-								foundation.WithId("error_item")),
+								foundation.WithID("error_item")),
 							data.ReadyDataState)),
 				})
 			require.NoError(t, err)
@@ -118,7 +118,7 @@ func TestErrorDefinitions(t *testing.T) {
 			// normal params
 			e, err := events.NewEscalation("test", "",
 				data.MustItemDefinition(values.NewVariable(42)),
-				foundation.WithId("test escalation id"))
+				foundation.WithID("test escalation id"))
 			require.NoError(t, err)
 			require.NotEmpty(t, e)
 			require.Equal(t, 42, e.Item().Structure().Get(ctx))
@@ -135,7 +135,7 @@ func TestErrorDefinitions(t *testing.T) {
 			eed, err := events.NewEscalationEventDefintion(e)
 			require.NoError(t, err)
 			require.NotEmpty(t, eed)
-			require.Equal(t, e.Id(), eed.Escalation().Id())
+			require.Equal(t, e.ID(), eed.Escalation().ID())
 		})
 
 	t.Run("signal",
@@ -169,7 +169,7 @@ func TestErrorDefinitions(t *testing.T) {
 			require.NoError(t, err)
 			require.NotEmpty(t, sed)
 			require.Equal(t, "success!", sed.Signal().Item().Structure().Get(ctx))
-			require.Equal(t, s.Id(), sed.Signal().Id())
+			require.Equal(t, s.ID(), sed.Signal().ID())
 		})
 
 	t.Run("timer",
