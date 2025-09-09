@@ -54,13 +54,13 @@ func TestSequenceFlow(t *testing.T) {
 		func(t *testing.T) {
 			sfStart, err := flow.Link(se, st1,
 				options.WithName("start"),
-				foundation.WithId("start_link_id"),
+				foundation.WithID("start_link_id"),
 				foundation.WithDoc("test", ""))
 			require.NoError(t, err)
-			require.Equal(t, se.Id(), sfStart.Source().Id())
+			require.Equal(t, se.ID(), sfStart.Source().ID())
 			require.Equal(t, 0, len(sfStart.Source().Incoming()))
 			require.Equal(t, 1, len(sfStart.Source().Outgoing()))
-			require.Equal(t, st1.Id(), sfStart.Target().Id())
+			require.Equal(t, st1.ID(), sfStart.Target().ID())
 
 			sfST1, err := flow.Link(st1, st2, options.WithName("service task1"))
 			require.NoError(t, err)

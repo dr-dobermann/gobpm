@@ -78,7 +78,7 @@ func (ec *endConfig) AddProperty(prop *data.Property) error {
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	ec.props[prop.Id()] = prop
+	ec.props[prop.ID()] = prop
 
 	return nil
 }
@@ -186,13 +186,13 @@ func (ec *endConfig) setMessage(med *MessageEventDefinition) error {
 		di, err := data.NewParameter(
 			fmt.Sprintf("message %q(%s) input",
 				med.Message().Name(),
-				med.Message().Id()),
+				med.Message().ID()),
 			iae)
 		if err != nil {
 			return err
 		}
 
-		ec.dataInputs[id.Id()] = di
+		ec.dataInputs[id.ID()] = di
 	}
 
 	return nil

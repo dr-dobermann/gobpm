@@ -1,3 +1,4 @@
+// Package common provides common BPMN model elements and utilities.
 package common
 
 import (
@@ -5,7 +6,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
-// Callable
+// CallableElement represents a callable BPMN element.
 type CallableElement struct {
 	foundation.BaseElement
 

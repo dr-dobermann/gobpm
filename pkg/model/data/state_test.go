@@ -24,13 +24,13 @@ func TestDataState(t *testing.T) {
 		func(t *testing.T) {
 			ds, err := data.NewDataState(
 				"test_ds",
-				foundation.WithId("test_ds_id"))
+				foundation.WithID("test_ds_id"))
 
 			require.NoError(t, err)
 			require.NotEmpty(t, ds)
 
 			require.Equal(t, "test_ds", ds.Name())
-			require.Equal(t, "test_ds_id", ds.Id())
+			require.Equal(t, "test_ds_id", ds.ID())
 		})
 
 	t.Run("name and invalid option",

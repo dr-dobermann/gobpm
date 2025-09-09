@@ -49,7 +49,6 @@ func NewEscalation(
 		"name should be provided for escalation",
 		errorClass,
 	); err != nil {
-
 		return nil, err
 	}
 
@@ -158,7 +157,7 @@ func (eed *EscalationEventDefinition) CheckItemDefinition(iDefId string) bool {
 		return false
 	}
 
-	return eed.escalation.structure.Id() == iDefId
+	return eed.escalation.structure.ID() == iDefId
 }
 
 // GetItemList returns a list of data.ItemDefinition the EventDefinition
@@ -173,7 +172,6 @@ func (eed *EscalationEventDefinition) GetItemsList() []*data.ItemDefinition {
 	}
 
 	return append(idd, eed.escalation.structure)
-
 }
 
 // CloneEvent clones EventDefinition with dedicated data.ItemDefinition
@@ -186,7 +184,7 @@ func (eed *EscalationEventDefinition) CloneEvent(
 	if len(evtData) != 0 {
 		d := evtData[0]
 
-		if d.ItemDefinition().Id() != eed.escalation.structure.Id() {
+		if d.ItemDefinition().ID() != eed.escalation.structure.ID() {
 			return nil,
 				errs.New(
 					errs.M("escalation itemDefinition and data itemDefinition have different ids"))
@@ -199,20 +197,20 @@ func (eed *EscalationEventDefinition) CloneEvent(
 		eed.escalation.name,
 		eed.escalation.code,
 		iDef,
-		foundation.WithId(eed.escalation.Id()))
+		foundation.WithID(eed.escalation.ID()))
 	if err != nil {
 		return nil,
 			errs.New(
 				errs.M("escalation %q[%s] creation failed",
-					eed.escalation.name, eed.escalation.Id()),
+					eed.escalation.name, eed.escalation.ID()),
 				errs.E(err))
 	}
 
-	ned, err := NewEscalationEventDefintion(ne, foundation.WithId(eed.Id()))
+	ned, err := NewEscalationEventDefintion(ne, foundation.WithID(eed.ID()))
 	if err != nil {
 		return nil,
 			errs.New(
-				errs.M("escalation definition #%s cloning failed", eed.Id()),
+				errs.M("escalation definition #%s cloning failed", eed.ID()),
 				errs.E(err))
 	}
 

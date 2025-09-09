@@ -1,3 +1,4 @@
+// Package artifacts provides BPMN artifact implementations.
 package artifacts
 
 import (
@@ -21,6 +22,7 @@ import (
 
 // *****************************************************************************
 
+// Artifact represents a BPMN artifact element.
 type Artifact struct {
 	foundation.BaseElement
 }
@@ -77,7 +79,7 @@ func NewGroup(
 
 	g.CategoryValue = NewCategoryValue(
 		categoryName,
-		foundation.WithId(g.Id()))
+		foundation.WithID(g.ID()))
 
 	return &g, nil
 }

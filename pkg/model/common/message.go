@@ -9,6 +9,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
+// Message represents a BPMN message element.
 type Message struct {
 	foundation.BaseElement
 

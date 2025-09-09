@@ -11,10 +11,13 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
+// ItemKind represents different kinds of BPMN items.
 type ItemKind string
 
 const (
+	// PhysicalKind represents a physical item kind.
 	PhysicalKind    ItemKind = "Physical"
+	// InformationKind represents an information item kind.
 	InformationKind ItemKind = "Information"
 )
 
@@ -51,6 +54,7 @@ func (ic ItemKind) Validate() error {
 //                             ItemDefinition
 // ============================================================================
 
+// ItemDefinition represents a BPMN item definition.
 type ItemDefinition struct {
 	foundation.BaseElement
 
@@ -138,7 +142,7 @@ func (idef *ItemDefinition) Import() *foundation.Import {
 	return idef.importRef
 }
 
-// Value returns the ItemDefinition value.
+// Structure returns the ItemDefinition value.
 func (idef *ItemDefinition) Structure() Value {
 	return idef.structure
 }
@@ -156,14 +160,14 @@ func (idef *ItemDefinition) String() string {
 	}
 
 	return fmt.Sprintf("Id: %s\nValue: %s\nIsCollection: %t\nKind: %s\n",
-		idef.Id(), val, idef.isCollection, idef.kind)
+		idef.ID(), val, idef.isCollection, idef.kind)
 }
 
 // ============================================================================
 //                               ItemAwareElemnt
 // ============================================================================
 
-// Several elements in BPMN are subject to store or convey items during process
+// ItemAwareElement is subject to store or convey items during process
 // execution. These elements are referenced generally as “item-aware elements.”
 // This is similar to the variable construct common to many languages. As with
 // variables, these elements have an ItemDefinition.
@@ -323,10 +327,10 @@ func (iae *ItemAwareElement) IsCollection() bool {
 
 func (iae *ItemAwareElement) String() string {
 	return fmt.Sprintf("Id: %s\nState: %s\nValue: %s\n",
-		iae.Id(), iae.dataState.name, iae.subject.String())
+		iae.ID(), iae.dataState.name, iae.subject.String())
 }
 
-// clone creates an ItemAwareElement clone if it has non-empty
+// Clone creates an ItemAwareElement clone if it has non-empty
 // ItemDefinition value.
 // NOTE: Clone doesn't cloning documentation neither for ItemAwareElement
 // nor its ItemDefintion.
@@ -340,9 +344,9 @@ func (iae *ItemAwareElement) Clone() (*ItemAwareElement, error) {
 	return NewIAE(
 		WithIDefinition(
 			iae.subject.structure.Clone(),
-			foundation.WithId(iae.subject.Id())),
+			foundation.WithID(iae.subject.ID())),
 		WithState(&iae.dataState),
-		foundation.WithId(iae.Id()))
+		foundation.WithID(iae.ID()))
 }
 
 // ----------------- data.Data interface --------------------------------------
@@ -363,12 +367,13 @@ func (iae *ItemAwareElement) ItemDefinition() *ItemDefinition {
 
 // ------------------- foundation.Namer interface -----------------------------
 
+// Name returns the name of the ItemAwareElement.
 func (iae *ItemAwareElement) Name() string {
 	if iae.subject != nil {
-		return iae.subject.Id()
+		return iae.subject.ID()
 	}
 
-	return iae.Id()
+	return iae.ID()
 }
 
 // ----------------------------------------------------------------------------

@@ -8,6 +8,7 @@ import (
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
 	"github.com/dr-dobermann/gobpm/generated/mockflow"
 	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/stretchr/testify/require"
 )
 
@@ -140,11 +141,10 @@ func TestUnregisterEvent_BaseErrors(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 
 		mockProcessor := mockeventproc.NewMockEventProcessor(t)
-		mockProcessor.EXPECT().Id().Return("non-existent-processor")
 
 		err = hub.UnregisterEvent(mockProcessor, "some-event-id")
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "couldn't find waiters for eventProcessor")
+		require.Contains(t, err.Error(), "couldn't find waiter for the event definition")
 	})
 }
 
@@ -172,10 +172,11 @@ func TestPropagateEvent_BaseErrors(t *testing.T) {
 
 		// Create a mock event definition with an ID
 		mockEventDef := mockflow.NewMockEventDefinition(t)
-		mockEventDef.EXPECT().Id().Return("test-event-id").Maybe()
+		mockEventDef.EXPECT().ID().Return("test-event-id").Maybe()
+		mockEventDef.EXPECT().Type().Return(flow.EventTrigger("TestType")).Maybe()
 
 		err = hub.PropagateEvent(context.Background(), mockEventDef)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "waiter isn't found")
+		require.Contains(t, err.Error(), "couldn't find waiter for EventDefinition")
 	})
 }

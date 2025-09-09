@@ -30,6 +30,7 @@
 // Event Processor supports Message Correlation for incoming and outgoing
 // insance Messages.
 
+// Package thresher provides the main BPMN process execution engine.
 package thresher
 
 import (
@@ -51,13 +52,14 @@ import (
 const (
 	errorClass = "THRESHER_ERRORS"
 
-	defaultThresherId = "MegaThresher"
+	defaultThresherID = "MegaThresher"
 )
 
 // State of the Thresher.
 type State uint8
 
 const (
+	// Invalid represents an invalid thresher state.
 	Invalid State = iota
 	NotStarted
 	Started
@@ -95,6 +97,7 @@ type instanceReg struct {
 	inst *instance.Instance
 }
 
+// Thresher represents the main BPMN process execution engine.
 type Thresher struct {
 	id string
 
@@ -129,7 +132,7 @@ func New(id string) (*Thresher, error) {
 
 	id = strings.TrimSpace(id)
 	if id == "" {
-		id = defaultThresherId
+		id = defaultThresherID
 	}
 
 	return &Thresher{
@@ -229,7 +232,7 @@ func (t *Thresher) RegisterEvent(
 // EventProducer.
 func (t *Thresher) UnregisterEvent(
 	ep eventproc.EventProcessor,
-	eDefId string,
+	eDefID string,
 ) error {
 	if ep == nil {
 		return errs.New(
@@ -243,7 +246,7 @@ func (t *Thresher) UnregisterEvent(
 			errs.C(errorClass, errs.InvalidState))
 	}
 
-	return t.eventHub.UnregisterEvent(ep, eDefId)
+	return t.eventHub.UnregisterEvent(ep, eDefID)
 }
 
 // PropagateEvent sends a fired throw event's eventDefinition
@@ -269,7 +272,7 @@ func (t *Thresher) PropagateEvent(
 		return errs.New(
 			errs.M("event propagation failed"),
 			errs.C(errorClass, errs.OperationFailed),
-			errs.D("event_definition_id", eDef.Id()),
+			errs.D("event_definition_id", eDef.ID()),
 			errs.D("event_definition_type", eDef.Type()),
 			errs.E(err))
 	}
@@ -301,8 +304,8 @@ func (t *Thresher) RegisterProcess(
 	t.m.Lock()
 	defer t.m.Unlock()
 
-	if _, ok := t.snapshots[s.ProcessId]; !ok {
-		t.snapshots[s.ProcessId] = s
+	if _, ok := t.snapshots[s.ProcessID]; !ok {
+		t.snapshots[s.ProcessID] = s
 	}
 
 	return nil
@@ -310,7 +313,7 @@ func (t *Thresher) RegisterProcess(
 
 // StartProcess runs process with processId without any event even if
 // process awaits them.
-func (t *Thresher) StartProcess(processId string) error {
+func (t *Thresher) StartProcess(processID string) error {
 	if t.state != Started {
 		return errs.New(
 			errs.M("thresher isn't started"),
@@ -321,10 +324,10 @@ func (t *Thresher) StartProcess(processId string) error {
 	t.m.Lock()
 	defer t.m.Unlock()
 
-	s, ok := t.snapshots[processId]
+	s, ok := t.snapshots[processID]
 	if !ok {
 		return errs.New(
-			errs.M("couldn't find snapshot for process ID %q", processId),
+			errs.M("couldn't find snapshot for process ID %q", processID),
 			errs.C(errorClass, errs.ObjectNotFound))
 	}
 
@@ -338,7 +341,7 @@ func (t *Thresher) launchInstance(s *snapshot.Snapshot) error {
 	if err != nil {
 		return errs.New(
 			errs.M("couldn't create an Instance for process %q",
-				s.ProcessId),
+				s.ProcessID),
 			errs.C(errorClass, errs.BulidingFailed),
 			errs.E(err))
 	}
@@ -348,7 +351,7 @@ func (t *Thresher) launchInstance(s *snapshot.Snapshot) error {
 	if err := inst.Run(ctx); err != nil {
 		return errs.New(
 			errs.M("inctance %q of process %q failed to run",
-				inst.Id(), s.ProcessId),
+				inst.ID(), s.ProcessID),
 			errs.C(errorClass, errs.OperationFailed),
 			errs.E(err))
 	}
@@ -356,7 +359,7 @@ func (t *Thresher) launchInstance(s *snapshot.Snapshot) error {
 	t.m.Lock()
 	defer t.m.Unlock()
 
-	t.instances[inst.Id()] = instanceReg{
+	t.instances[inst.ID()] = instanceReg{
 		stop: cancel,
 		inst: inst,
 	}

@@ -83,12 +83,12 @@ func (t *task) LoadData(ctx context.Context) error {
 		index := slices.IndexFunc(
 			dii,
 			func(i *data.Parameter) bool {
-				return ia.TargetItemDefId() == i.ItemDefinition().Id()
+				return ia.TargetItemDefID() == i.ItemDefinition().ID()
 			})
 		if index == -1 {
 			return errs.New(
 				errs.M("couldn't find task input for association's %q target %q",
-					ia.Id(), ia.TargetItemDefId()),
+					ia.ID(), ia.TargetItemDefID()),
 				errs.C(errorClass),
 				errs.D("task_name", t.Name()))
 		}
@@ -96,7 +96,7 @@ func (t *task) LoadData(ctx context.Context) error {
 		v, err := ia.Value(ctx)
 		if err != nil {
 			return errs.New(
-				errs.M("couldn't get value of the association %q", ia.Id()),
+				errs.M("couldn't get value of the association %q", ia.ID()),
 				errs.C(errorClass, errs.OperationFailed),
 				errs.E(err))
 		}
@@ -123,7 +123,7 @@ func (t *task) RegisterData(dp scope.DataPath, s scope.Scope) error {
 		return errs.New(
 			errs.M("couldn't get task inputs"),
 			errs.D("task_name", t.Name()),
-			errs.D("task_id", t.Id()),
+			errs.D("task_id", t.ID()),
 			errs.E(err))
 	}
 
@@ -148,7 +148,7 @@ func (t *task) UploadData(ctx context.Context, s scope.Scope) error {
 	doo, err := t.updateOutputs(ctx, s)
 	if err != nil {
 		return errs.New(
-			errs.M("couldn't get output parameters for task", t.Name(), t.Id()),
+			errs.M("couldn't get output parameters for task", t.Name(), t.ID()),
 			errs.C(errorClass, errs.ObjectNotFound),
 			errs.E(err))
 	}
@@ -156,13 +156,13 @@ func (t *task) UploadData(ctx context.Context, s scope.Scope) error {
 	for _, oa := range t.dataAssociations[data.Output] {
 		index := slices.IndexFunc(doo,
 			func(o *data.Parameter) bool {
-				return oa.HasSourceId(o.Subject().Id())
+				return oa.HasSourceID(o.Subject().ID())
 			})
 
 		if index == -1 {
 			return errs.New(
 				errs.M("couldn't find task's %q[%s] output for association %q",
-					t.Name(), t.Id(), oa.Id()),
+					t.Name(), t.ID(), oa.ID()),
 				errs.C(errorClass, errs.ObjectNotFound))
 		}
 
@@ -173,8 +173,8 @@ func (t *task) UploadData(ctx context.Context, s scope.Scope) error {
 		); err != nil {
 			return errs.New(
 				errs.M("couldn't update association's %q source %q for "+
-					"task %q[%s]", oa.Id(), doo[index].ItemDefinition().Id(),
-					t.Name(), t.Id()),
+					"task %q[%s]", oa.ID(), doo[index].ItemDefinition().ID(),
+					t.Name(), t.ID()),
 				errs.C(errorClass, errs.OperationFailed),
 				errs.E(err))
 		}
@@ -196,29 +196,29 @@ func (t *task) updateOutputs(ctx context.Context, s scope.Scope) ([]*data.Parame
 			continue
 		}
 
-		d, err := s.GetDataById(t.dataPath, o.ItemDefinition().Id())
+		d, err := s.GetDataByID(t.dataPath, o.ItemDefinition().ID())
 		if err != nil {
 			return nil,
 				fmt.Errorf("couldn't get data #%s from Scope: %w",
-					o.ItemDefinition().Id(), err)
+					o.ItemDefinition().ID(), err)
 		}
 
 		if d.State().Name() != data.ReadyDataState.Name() {
 			return nil,
 				fmt.Errorf("data isn't Ready for update task's output #%s",
-					d.ItemDefinition().Id())
+					d.ItemDefinition().ID())
 		}
 
 		if err := o.Value().Update(ctx, d.Value().Get(ctx)); err != nil {
 			return nil,
 				fmt.Errorf("couldn't update task output #%s: %w",
-					o.ItemDefinition().Id(), err)
+					o.ItemDefinition().ID(), err)
 		}
 
 		if err := o.UpdateState(data.ReadyDataState); err != nil {
 			return nil,
 				fmt.Errorf("couldn't set task output #%s state to Ready: %w",
-					o.ItemDefinition().Id(), err)
+					o.ItemDefinition().ID(), err)
 		}
 	}
 
@@ -260,9 +260,9 @@ func (t *task) bindAssociation(a *data.Association, dir data.Direction) error {
 	if slices.ContainsFunc(
 		t.dataAssociations[dir],
 		func(da *data.Association) bool {
-			return da.Id() == a.Id()
+			return da.ID() == a.ID()
 		}) {
-		return fmt.Errorf("association #%s already binded", a.Id())
+		return fmt.Errorf("association #%s already binded", a.ID())
 	}
 
 	// TODO: Consider checking existence of parameter equal to

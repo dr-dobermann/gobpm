@@ -7,6 +7,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
+// NodeExecutor is an interface for executing single flowNode.
 type NodeExecutor interface {
 	// Exec runs single node and returns its valid
 	// output sequence flows on success or error on failure.
@@ -16,8 +17,8 @@ type NodeExecutor interface {
 	) ([]*flow.SequenceFlow, error)
 }
 
-// Prologue checks the right condition to start node execution
-// if the node provides a NodePrologue, then Prologue should start
+// NodePrologue checks the right condition to start node execution.
+// If the node provides a NodePrologue, then Prologue should start
 // _before_ the node Exec.
 // Node Exec starts only if the Prologue returns no error.
 type NodePrologue interface {
@@ -26,8 +27,8 @@ type NodePrologue interface {
 		re renv.RuntimeEnvironment) error
 }
 
-// if the node provides NodeEpilogue, then Epilogue should be
-// called after _successful_ Exec call.
+// NodeEpliogue should be called after _successful_ Exec call
+// if the node provides NodeEpilogue.
 type NodeEpliogue interface {
 	Epilogue(
 		ctx context.Context,

@@ -16,10 +16,9 @@ type RoleConfigurator interface {
 	AddRole(r *hi.ResourceRole) error
 }
 
+// RoleOption is a function type for configuring role-based access control.
 type RoleOption func(cfg RoleConfigurator) error
 
-// --------------------- options.Option interface ------------------------------
-//
 // Apply converts roleOption into options.Option.
 func (ro RoleOption) Apply(cfg options.Configurator) error {
 	if rc, ok := cfg.(RoleConfigurator); ok {
@@ -32,7 +31,7 @@ func (ro RoleOption) Apply(cfg options.Configurator) error {
 		errs.D("config_type", reflect.TypeOf(cfg).String()))
 }
 
-// WithResources adds unique non-nil resources into the activityConfig.
+// WithRoles adds unique non-nil resources into the activityConfig.
 func WithRoles(ress ...*hi.ResourceRole) RoleOption {
 	f := func(cfg RoleConfigurator) error {
 		ee := []error{}

@@ -30,7 +30,7 @@ func TestThresher_EventManagement(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 
 		mockProcessor := mockeventproc.NewMockEventProcessor(t)
-		mockProcessor.EXPECT().Id().Return("test-processor").Maybe()
+		mockProcessor.EXPECT().ID().Return("test-processor").Maybe()
 
 		// Create a real TimerEventDefinition
 		timerEventDef := events.MustTimerEventDefinition(
@@ -80,7 +80,7 @@ func TestThresher_EventManagement(t *testing.T) {
 		require.Equal(t, thresher.Started, th.State())
 
 		mockProcessor := mockeventproc.NewMockEventProcessor(t)
-		mockProcessor.EXPECT().Id().Return("test-processor").Maybe()
+		mockProcessor.EXPECT().ID().Return("test-processor").Maybe()
 
 		// Create a real TimerEventDefinition
 		timerEventDef := events.MustTimerEventDefinition(
@@ -98,7 +98,7 @@ func TestThresher_EventManagement(t *testing.T) {
 		require.NoError(t, err)
 
 		// Then unregister it
-		err = th.UnregisterEvent(mockProcessor, timerEventDef.Id())
+		err = th.UnregisterEvent(mockProcessor, timerEventDef.ID())
 		require.NoError(t, err)
 	})
 
@@ -208,7 +208,7 @@ func TestThresher_EventQueueProcessing(t *testing.T) {
 		// Create mock processor and real timer event definition
 		mockProcessor := mockeventproc.NewMockEventProcessor(t)
 		processorId := "test-processor"
-		mockProcessor.EXPECT().Id().Return(processorId).Maybe()
+		mockProcessor.EXPECT().ID().Return(processorId).Maybe()
 
 		// Create a real TimerEventDefinition
 		timerEventDef := events.MustTimerEventDefinition(

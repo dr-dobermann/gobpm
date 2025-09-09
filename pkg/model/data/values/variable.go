@@ -11,6 +11,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 )
 
+// Variable represents a generic variable value.
 type Variable[T any] struct {
 	lock sync.Mutex
 

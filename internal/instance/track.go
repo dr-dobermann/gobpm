@@ -44,6 +44,7 @@ package instance
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
@@ -57,19 +58,30 @@ import (
 // trackState represent the state of the whole track
 type trackState uint8
 
+// Track state constants define the possible states of a track during
+// process execution.
 const (
+	// TrackCreated represents a newly created track
 	TrackCreated trackState = iota
+	// TrackReady represents a track ready for execution
 	TrackReady
 
 	// Intermediate
+	// TrackExecutingStep represents a track currently executing a step
 	TrackExecutingStep
+	// TrackProcessStepResults represents a track processing step results
 	TrackProcessStepResults
+	// TrackWaitForEvent represents a track waiting for an event
 	TrackWaitForEvent
 
 	// Final statuses
+	// TrackMerged represents a track that has been merged
 	TrackMerged
+	// TrackEnded represents a track that has ended normally
 	TrackEnded
+	// TrackCanceled represents a track that has been canceled
 	TrackCanceled
+	// TrackFailed represents a track that has failed
 	TrackFailed
 )
 
@@ -126,7 +138,7 @@ type stepInfo struct {
 // track processed single line of the process from start noed or
 // from fork of sequence flow.
 type track struct {
-	foundation.ID
+	foundation.BaseElement
 
 	m sync.RWMutex
 
@@ -167,8 +179,13 @@ func newTrack(
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
+	be, err := foundation.NewBaseElement()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create base element for track: %w", err)
+	}
+	
 	t := track{
-		ID:   *foundation.NewID(),
+		BaseElement: *be,
 		prev: []*track{},
 		steps: []*stepInfo{
 			{
@@ -202,9 +219,9 @@ func (t *track) checkNodeType(node flow.Node) error {
 				return errs.New(
 					errs.M("couldn't register event definitions"),
 					errs.C(errorClass, errs.BulidingFailed),
-					errs.D("node_id", en.Id()),
+					errs.D("node_id", en.ID()),
 					errs.D("node_name", en.Name()),
-					errs.D("event_definition_id", d.Id()),
+					errs.D("event_definition_id", d.ID()),
 					errs.E(err))
 			}
 
@@ -274,7 +291,7 @@ func (t *track) updateState(newState trackState) {
 
 	t.instance.show("TRACK.UPDATE", "state updated",
 		map[string]any{
-			"track_id":   t.Id(),
+			"track_id":   t.ID(),
 			"old_state":  state.String(),
 			"new_state":  newState.String(),
 			"step_state": step.state.String(),
@@ -306,14 +323,13 @@ func (t *track) stop() {
 // run start execution loop of the track which ends by ctx's cancel or
 // when there is no outgoing flows from the processing nodes.
 //
-//nolint:gocyclo,funlen
 func (t *track) run(
 	ctx context.Context,
 ) {
 	if t.stopIt || !t.inState(TrackReady, TrackWaitForEvent) {
 		t.instance.show("TRACK.FAILED", "not in runnable state",
 			map[string]any{
-				"track_id":    t.Id(),
+				"track_id":    t.ID(),
 				"stop_flag":   t.stopIt,
 				"track_state": t.state.String(),
 			})
@@ -376,7 +392,6 @@ func (t *track) run(
 // On succes it returns a list (probably empty) of outgoing sequence flows.
 // On failure it returns error.
 //
-//nolint:gocyclo,funlen
 func (t *track) executeNode(
 	ctx context.Context,
 	step *stepInfo,
@@ -389,24 +404,40 @@ func (t *track) executeNode(
 				errs.C(errorClass, errs.TypeCastingError))
 	}
 
+	if err := t.prepareNodeExecution(ctx, step); err != nil {
+		return nil, err
+	}
+
+	nexts, err := t.executeNodeCore(ctx, step, ne)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := t.finalizeNodeExecution(ctx, step, nexts); err != nil {
+		return nil, err
+	}
+
+	return nexts, nil
+}
+
+func (t *track) prepareNodeExecution(ctx context.Context, step *stepInfo) error {
 	// create a new token if track doesn't have yet
 	if step.tk == nil {
 		step.tk = newToken(t.instance, t)
 	}
 
 	t.updateState(TrackExecutingStep)
-
 	step.state = StepStarted
 
 	if err := t.loadIncomingData(ctx, step.node); err != nil {
-		return nil, err
+		return err
 	}
 
 	ndl, ok := step.node.(scope.NodeDataLoader)
 	if ok {
 		err := t.instance.ExtendScope(ndl)
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 		defer func() {
@@ -414,10 +445,10 @@ func (t *track) executeNode(
 		}()
 	}
 
-	if err := t.runNodePrologue(ctx, step.node); err != nil {
-		return nil, err
-	}
+	return t.runNodePrologue(ctx, step.node)
+}
 
+func (t *track) executeNodeCore(ctx context.Context, step *stepInfo, ne exec.NodeExecutor) ([]*flow.SequenceFlow, error) {
 	step.state = StepExecuting
 
 	nexts, err := ne.Exec(ctx, t.instance)
@@ -427,22 +458,22 @@ func (t *track) executeNode(
 
 	t.instance.show("TRACK.RUN", "node executed successfully",
 		map[string]any{
-			"track_id":       t.Id(),
+			"track_id":       t.ID(),
 			"node":           step.node.Name(),
 			"outgoing_flows": len(nexts),
 		})
 
+	return nexts, nil
+}
+
+func (t *track) finalizeNodeExecution(ctx context.Context, step *stepInfo, nexts []*flow.SequenceFlow) error {
 	if err := t.runNodeEpilogue(ctx, step.node); err != nil {
-		return nil, err
+		return err
 	}
 
 	step.state = StepEnded
 
-	if err := t.uploadOutgoingData(ctx, step.node); err != nil {
-		return nil, err
-	}
-
-	return nexts, nil
+	return t.uploadOutgoingData(ctx, step.node)
 }
 
 // checkFlows processes node outgoing flows.
@@ -458,7 +489,7 @@ func (t *track) checkFlows(ctx context.Context, flows []*flow.SequenceFlow) erro
 	// should be next step of the track
 	nextNode := 0
 	for i, f := range flows {
-		if f.Target().Id() == t.currentStep().node.Id() {
+		if f.Target().ID() == t.currentStep().node.ID() {
 			nextNode = i
 			break
 		}
@@ -478,8 +509,8 @@ func (t *track) checkFlows(ctx context.Context, flows []*flow.SequenceFlow) erro
 		return errs.New(
 			errs.M("couldn't update token state of the main flow"),
 			errs.D("node_name", nextStep.node.Name()),
-			errs.D("node_id", nextStep.node.Id()),
-			errs.D("instance_id", t.instance.Id()),
+			errs.D("node_id", nextStep.node.ID()),
+			errs.D("instance_id", t.instance.ID()),
 			errs.E(err))
 	}
 
@@ -490,7 +521,7 @@ func (t *track) checkFlows(ctx context.Context, flows []*flow.SequenceFlow) erro
 		nt, err := newTrack(f.Target().Node(), t.instance, t)
 		if err != nil {
 			return errs.New(
-				errs.M("couldn't creaete a new track for flow %q", f.Id()),
+				errs.M("couldn't creaete a new track for flow %q", f.ID()),
 				errs.C(errorClass, errs.BulidingFailed),
 				errs.E(err))
 		}
@@ -499,7 +530,7 @@ func (t *track) checkFlows(ctx context.Context, flows []*flow.SequenceFlow) erro
 
 		if err := t.instance.addTrack(ctx, nt); err != nil {
 			return errs.New(
-				errs.M("couldn't add new track for flow %q", f.Id()),
+				errs.M("couldn't add new track for flow %q", f.ID()),
 				errs.C(errorClass, errs.BulidingFailed),
 				errs.E(err))
 		}
@@ -514,7 +545,7 @@ func (t *track) runNodePrologue(ctx context.Context, n flow.Node) error {
 	if !ok {
 		t.instance.show("TRACK.RUN", "no prologue",
 			map[string]any{
-				"track_id":  t.Id(),
+				"track_id":  t.ID(),
 				"node_name": n.Name(),
 			})
 
@@ -526,7 +557,7 @@ func (t *track) runNodePrologue(ctx context.Context, n flow.Node) error {
 	if err := np.Prologue(ctx, t.instance); err != nil {
 		t.instance.show("TRACK.RUN", "prologue failed",
 			map[string]any{
-				"track_id":  t.Id(),
+				"track_id":  t.ID(),
 				"node_name": n.Name(),
 				"error":     err.Error(),
 			})
@@ -535,7 +566,7 @@ func (t *track) runNodePrologue(ctx context.Context, n flow.Node) error {
 	}
 
 	t.instance.show("TRACK.RUN", "prologue finished",
-		map[string]any{"track_id": t.Id()})
+		map[string]any{"track_id": t.ID()})
 
 	return nil
 }
@@ -546,7 +577,7 @@ func (t *track) runNodeEpilogue(ctx context.Context, n flow.Node) error {
 	if !ok {
 		t.instance.show("TRACK.RUN", "no epilogue",
 			map[string]any{
-				"track_id":  t.Id(),
+				"track_id":  t.ID(),
 				"node_name": n.Name(),
 			})
 
@@ -558,7 +589,7 @@ func (t *track) runNodeEpilogue(ctx context.Context, n flow.Node) error {
 	if err := ne.Epilogue(ctx, t.instance); err != nil {
 		t.instance.show("TRACK.RUN", "epilogue failed",
 			map[string]any{
-				"track_id":  t.Id(),
+				"track_id":  t.ID(),
 				"node_name": n.Name(),
 				"error":     err.Error(),
 			})
@@ -568,7 +599,7 @@ func (t *track) runNodeEpilogue(ctx context.Context, n flow.Node) error {
 
 	t.instance.show("TRACK.RUN", "epilogue finished",
 		map[string]any{
-			"track_id":  t.Id(),
+			"track_id":  t.ID(),
 			"node_name": n.Name(),
 		})
 
@@ -584,12 +615,12 @@ func (t *track) unregisterEvent(n flow.Node) error {
 	}
 
 	for _, eDef := range en.Definitions() {
-		if err := t.instance.UnregisterEvent(t, eDef.Id()); err != nil {
+		if err := t.instance.UnregisterEvent(t, eDef.ID()); err != nil {
 			return errs.New(
 				errs.M("failed to unregister event"),
 				errs.C(errorClass, errs.OperationFailed),
-				errs.D("track_id", t.Id()),
-				errs.D("event_definition_id", eDef.Id()),
+				errs.D("track_id", t.ID()),
+				errs.D("event_definition_id", eDef.ID()),
 				errs.D("event_definition_type", eDef.Type()),
 				errs.E(err))
 		}
@@ -629,10 +660,10 @@ func (t *track) ProcessEvent(
 	if !t.inState(TrackWaitForEvent) {
 		return errs.New(
 			errs.M("track #%s of instance #%s doesn't expect any event",
-				t.Id(), t.instance.Id()),
+				t.ID(), t.instance.ID()),
 			errs.C(errorClass, errs.InvalidState),
 			errs.D("event_trigger", string(eDef.Type())),
-			errs.D("event_definition_id", eDef.Id()))
+			errs.D("event_definition_id", eDef.ID()))
 	}
 
 	if ctx == nil {
@@ -645,7 +676,7 @@ func (t *track) ProcessEvent(
 	if !ok {
 		return errs.New(
 			errs.M("node %q(%s) doesn't support event processing",
-				n.Name(), n.Id()),
+				n.Name(), n.ID()),
 			errs.C(errorClass, errs.TypeCastingError))
 	}
 
@@ -655,7 +686,7 @@ func (t *track) ProcessEvent(
 
 	if err := t.unregisterEvent(n); err != nil {
 		return errs.New(
-			errs.M("node %q[%s] unregister events failed", n.Name(), n.Id()),
+			errs.M("node %q[%s] unregister events failed", n.Name(), n.ID()),
 			errs.E(err))
 	}
 

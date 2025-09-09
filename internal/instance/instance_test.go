@@ -104,7 +104,7 @@ func getSnapshot(pname string) (*snapshot.Snapshot, error) {
 				"user_name",
 				data.MustItemDefinition(
 					values.NewVariable("Dr. Dobermann"),
-					foundation.WithId("user_name")),
+					foundation.WithID("user_name")),
 				data.ReadyDataState)))
 	if err != nil {
 		return nil, err
@@ -126,13 +126,13 @@ func getSnapshot(pname string) (*snapshot.Snapshot, error) {
 						errs.C(errs.EmptyNotAllowed))
 			}
 
-			if in.Id() != inId {
+			if in.ID() != inId {
 				return nil,
 					errs.New(
 						errs.M("not expected operation parameter"),
 						errs.C(errs.ObjectNotFound),
 						errs.D("expected_id", inId),
-						errs.D("got_id", in.Id()))
+						errs.D("got_id", in.ID()))
 			}
 
 			userName, ok := in.Structure().Get(context.Background()).(string)
@@ -160,7 +160,7 @@ func getSnapshot(pname string) (*snapshot.Snapshot, error) {
 			"user_name",
 			data.MustItemDefinition(
 				values.NewVariable(""),
-				foundation.WithId("user_name"))),
+				foundation.WithID("user_name"))),
 		nil,
 		helloFunc)
 

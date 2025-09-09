@@ -10,6 +10,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
+// GDirection represents gateway direction.
 type GDirection string
 
 // Sequence Flow Considerations
@@ -47,6 +48,7 @@ const (
 	Mixed       GDirection = "Mixed"
 )
 
+// Validate checks if the gateway direction is valid.
 func (d GDirection) Validate() error {
 	if d == Unspecified || d == Converging ||
 		d == Diverging || d == Mixed {
@@ -59,7 +61,7 @@ func (d GDirection) Validate() error {
 		errs.D("direction", string(d)))
 }
 
-// Gateways are used to control how Sequence Flows interact as they converge
+// Gateway is used to control how Sequence Flows interact as they converge
 // and diverge within a Process. If the flow does not need to be controlled,
 // then a Gateway is not needed. The term “Gateway” implies that there is a
 // gating mechanism that either allows or disallows passage through the Gateway.
@@ -154,7 +156,7 @@ func (g *Gateway) UpdateDefaultFlow(f *flow.SequenceFlow) error {
 	}
 
 	for _, sf := range g.Outgoing() {
-		if f.Id() == sf.Id() {
+		if f.ID() == sf.ID() {
 			if sf.Condition() != nil {
 				return errs.New(
 					errs.M("default flow shouldn't have a condition expression"),
@@ -168,7 +170,7 @@ func (g *Gateway) UpdateDefaultFlow(f *flow.SequenceFlow) error {
 	}
 
 	return errs.New(
-		errs.M("there is no outgoing flow #%s", f.Id()),
+		errs.M("there is no outgoing flow #%s", f.ID()),
 		errs.C(errorClass, errs.ObjectNotFound))
 }
 
@@ -180,7 +182,6 @@ func (g *Gateway) Direction() GDirection {
 // TestFlows check if flows is comply gateway's direction rules.
 // If everything is ok it returns error.
 //
-//nolint:gocyclo // Complex business logic for gateway flow validation
 func (g *Gateway) TestFlows() error {
 	errM := ""
 
@@ -224,6 +225,7 @@ func (g *Gateway) TestFlows() error {
 
 // ------------------ flow.Node interface --------------------------------------
 
+// Node returns the gateway as a flow node.
 func (g *Gateway) Node() flow.Node {
 	return g
 }
@@ -237,7 +239,7 @@ func (g *Gateway) NodeType() flow.NodeType {
 
 // AcceptIncomingFlow checks if it possible to use sf as IncomingFlow for the
 // Activity.
-func (g *Gateway) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
+func (g *Gateway) AcceptIncomingFlow(_ *flow.SequenceFlow) error {
 	if g.direction == Diverging && len(g.Incoming()) > 0 {
 		return errs.New(
 			errs.M("diverging gateway MUST NOT have multiple incoming flows"),
@@ -249,9 +251,9 @@ func (g *Gateway) AcceptIncomingFlow(sf *flow.SequenceFlow) error {
 
 // ------------------ flow.SequenceSource interface ----------------------------
 
-// SuportOutgoingFlow checks if it possible to source sf SequenceFlow from
+// SupportOutgoingFlow checks if it possible to source sf SequenceFlow from
 // the Gateway.
-func (g *Gateway) SupportOutgoingFlow(sf *flow.SequenceFlow) error {
+func (g *Gateway) SupportOutgoingFlow(_ *flow.SequenceFlow) error {
 	if g.direction == Converging && len(g.Outgoing()) > 0 {
 		return errs.New(
 			errs.M("converging gateway MUST NOT have multiple outgoing flows"),

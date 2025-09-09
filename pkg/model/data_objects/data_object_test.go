@@ -48,15 +48,15 @@ func TestNew(t *testing.T) {
 				name,
 				data.MustItemDefinition(
 					values.NewVariable(100),
-					foundation.WithId("input")),
+					foundation.WithID("input")),
 				data.ReadyDataState,
-				foundation.WithId("normalDO"))
+				foundation.WithID("normalDO"))
 			require.NoError(t, err)
 
 			require.Equal(t, name, do.Name())
 			require.Equal(t, flow.DataObjectElement, do.Type())
 			require.Empty(t, do.Docs())
-			require.Equal(t, "normalDO", do.Id())
+			require.Equal(t, "normalDO", do.ID())
 
 			// empty source error
 			err = do.AssociateSource(nil, nil, nil)
@@ -71,7 +71,7 @@ func TestSourceAssociations(t *testing.T) {
 				name,
 				data.MustItemDefinition(
 					values.NewVariable(100),
-					foundation.WithId("targetIDef")),
+					foundation.WithID("targetIDef")),
 				data.ReadyDataState)
 			require.NoError(t, err)
 
@@ -82,7 +82,7 @@ func TestSourceAssociations(t *testing.T) {
 					data.MustItemAwareElement(
 						data.MustItemDefinition(
 							values.NewVariable(42),
-							foundation.WithId("wrong_input")),
+							foundation.WithID("wrong_input")),
 						data.ReadyDataState),
 				})
 			aSrc.EXPECT().
@@ -98,7 +98,7 @@ func TestSourceAssociations(t *testing.T) {
 				name,
 				data.MustItemDefinition(
 					values.NewVariable(100),
-					foundation.WithId("targetIDef")),
+					foundation.WithID("targetIDef")),
 				data.ReadyDataState)
 			require.NoError(t, err)
 
@@ -112,7 +112,7 @@ func TestSourceAssociations(t *testing.T) {
 					data.MustItemAwareElement(
 						data.MustItemDefinition(
 							values.NewVariable(42),
-							foundation.WithId("input")),
+							foundation.WithID("input")),
 						data.ReadyDataState),
 				})
 			aSrc.EXPECT().
@@ -131,7 +131,7 @@ func TestSourceAssociations(t *testing.T) {
 				name,
 				data.MustItemDefinition(
 					values.NewVariable(100),
-					foundation.WithId("targetIDef")),
+					foundation.WithID("targetIDef")),
 				data.ReadyDataState)
 			require.NoError(t, err)
 
@@ -160,16 +160,16 @@ func TestSourceAssociations(t *testing.T) {
 					data.MustItemAwareElement(
 						data.MustItemDefinition(
 							values.NewVariable(42),
-							foundation.WithId("input")),
+							foundation.WithID("input")),
 						data.ReadyDataState),
 				})
 			aSrc.EXPECT().
 				BindOutgoing(mock.Anything).
 				RunAndReturn(
 					func(da *data.Association) error {
-						require.Equal(t, 1, len(da.SourcesIds()))
-						require.Contains(t, da.SourcesIds(), "input")
-						require.Equal(t, "targetIDef", da.TargetItemDefId())
+						require.Equal(t, 1, len(da.SourcesIDs()))
+						require.Contains(t, da.SourcesIDs(), "input")
+						require.Equal(t, "targetIDef", da.TargetItemDefID())
 
 						val, err := da.Value(context.Background())
 						require.NoError(t, err)
@@ -189,13 +189,13 @@ func TestTargetAssociations(t *testing.T) {
 				name,
 				data.MustItemDefinition(
 					values.NewVariable(100),
-					foundation.WithId("x")),
+					foundation.WithID("x")),
 				data.ReadyDataState)
 			require.NoError(t, err)
 
 			aTrg := mockflow.NewMockAssociationTarget(t)
 			aTrg.EXPECT().
-				Id().
+				ID().
 				Return("Task 1").
 				Maybe()
 			aTrg.EXPECT().
@@ -208,7 +208,7 @@ func TestTargetAssociations(t *testing.T) {
 					data.MustItemAwareElement(
 						data.MustItemDefinition(
 							values.NewVariable(42),
-							foundation.WithId("y")),
+							foundation.WithID("y")),
 						data.ReadyDataState),
 				}).
 				Maybe()
@@ -223,13 +223,13 @@ func TestTargetAssociations(t *testing.T) {
 				name,
 				data.MustItemDefinition(
 					values.NewVariable(100),
-					foundation.WithId("x")),
+					foundation.WithID("x")),
 				data.ReadyDataState)
 			require.NoError(t, err)
 
 			aTrg := mockflow.NewMockAssociationTarget(t)
 			aTrg.EXPECT().
-				Id().
+				ID().
 				Return("Task 1").
 				Maybe()
 			aTrg.EXPECT().
@@ -242,7 +242,7 @@ func TestTargetAssociations(t *testing.T) {
 					data.MustItemAwareElement(
 						data.MustItemDefinition(
 							values.NewVariable(42),
-							foundation.WithId("x")),
+							foundation.WithID("x")),
 						data.ReadyDataState),
 				}).
 				Maybe()
@@ -264,7 +264,7 @@ func TestTargetAssociations(t *testing.T) {
 				name,
 				data.MustItemDefinition(
 					values.NewVariable(100),
-					foundation.WithId("x")),
+					foundation.WithID("x")),
 				data.ReadyDataState)
 			require.NoError(t, err)
 
@@ -288,7 +288,7 @@ func TestTargetAssociations(t *testing.T) {
 
 			aTrg := mockflow.NewMockAssociationTarget(t)
 			aTrg.EXPECT().
-				Id().
+				ID().
 				Return("Task 1").
 				Maybe()
 			aTrg.EXPECT().
@@ -301,7 +301,7 @@ func TestTargetAssociations(t *testing.T) {
 					data.MustItemAwareElement(
 						data.MustItemDefinition(
 							values.NewVariable(42),
-							foundation.WithId("x")),
+							foundation.WithID("x")),
 						data.ReadyDataState),
 				}).
 				Maybe()
@@ -310,9 +310,9 @@ func TestTargetAssociations(t *testing.T) {
 				RunAndReturn(
 					func(da *data.Association) error {
 						require.NotNil(t, da)
-						require.Equal(t, "x", da.TargetItemDefId())
-						require.Equal(t, 1, len(da.SourcesIds()))
-						require.Contains(t, da.SourcesIds(), "x")
+						require.Equal(t, "x", da.TargetItemDefID())
+						require.Equal(t, 1, len(da.SourcesIDs()))
+						require.Contains(t, da.SourcesIDs(), "x")
 
 						val, err := da.Value(context.Background())
 						require.NoError(t, err)
@@ -342,7 +342,7 @@ func TestUpdate(t *testing.T) {
 				name,
 				data.MustItemDefinition(
 					values.NewVariable(100),
-					foundation.WithId("x")),
+					foundation.WithID("x")),
 				data.ReadyDataState)
 			require.NoError(t, err)
 
@@ -377,16 +377,16 @@ func TestUpdate(t *testing.T) {
 					data.MustItemAwareElement(
 						data.MustItemDefinition(
 							values.NewVariable(42),
-							foundation.WithId("input")),
+							foundation.WithID("input")),
 						data.ReadyDataState),
 				})
 			aSrc.EXPECT().
 				BindOutgoing(mock.Anything).
 				RunAndReturn(
 					func(da *data.Association) error {
-						require.Equal(t, 1, len(da.SourcesIds()))
-						require.Contains(t, da.SourcesIds(), "input")
-						require.Equal(t, "x", da.TargetItemDefId())
+						require.Equal(t, 1, len(da.SourcesIDs()))
+						require.Contains(t, da.SourcesIDs(), "input")
+						require.Equal(t, "x", da.TargetItemDefID())
 
 						val, err := da.Value(context.Background())
 						require.NoError(t, err)
@@ -397,7 +397,7 @@ func TestUpdate(t *testing.T) {
 
 			aTrg := mockflow.NewMockAssociationTarget(t)
 			aTrg.EXPECT().
-				Id().
+				ID().
 				Return("Task 1").
 				Maybe()
 			aTrg.EXPECT().
@@ -410,7 +410,7 @@ func TestUpdate(t *testing.T) {
 					data.MustItemAwareElement(
 						data.MustItemDefinition(
 							values.NewVariable(42),
-							foundation.WithId("x")),
+							foundation.WithID("x")),
 						data.ReadyDataState),
 				}).
 				Maybe()
@@ -419,9 +419,9 @@ func TestUpdate(t *testing.T) {
 				RunAndReturn(
 					func(da *data.Association) error {
 						require.NotNil(t, da)
-						require.Equal(t, "x", da.TargetItemDefId())
-						require.Equal(t, 1, len(da.SourcesIds()))
-						require.Contains(t, da.SourcesIds(), "x")
+						require.Equal(t, "x", da.TargetItemDefID())
+						require.Equal(t, 1, len(da.SourcesIDs()))
+						require.Contains(t, da.SourcesIDs(), "x")
 
 						val, err := da.Value(context.Background())
 						require.NoError(t, err)

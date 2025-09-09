@@ -56,7 +56,7 @@ func TestCRender(t *testing.T) {
 	t.Run("normal",
 		func(t *testing.T) {
 			r, err := consinp.NewRenderer(
-				foundation.WithId("my console renderer"),
+				foundation.WithID("my console renderer"),
 				consinp.WithSource(
 					bytes.NewBufferString("dr.Dobermann\n52\n")),
 				consinp.WithMessager("wellcomer", "This is a wellcome message"),

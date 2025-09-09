@@ -19,18 +19,18 @@ func TestAssociationDirection(t *testing.T) {
 func TestAssociation(t *testing.T) {
 	t.Run("association struct", func(t *testing.T) {
 		// Create source and target elements
-		source := foundation.MustBaseElement(foundation.WithId("source-id"))
-		target := foundation.MustBaseElement(foundation.WithId("target-id"))
+		source := foundation.MustBaseElement(foundation.WithID("source-id"))
+		target := foundation.MustBaseElement(foundation.WithID("target-id"))
 
 		// Test Association struct creation
 		assoc := artifacts.Association{
-			BaseElement: *foundation.MustBaseElement(foundation.WithId("assoc-id")),
+			BaseElement: *foundation.MustBaseElement(foundation.WithID("assoc-id")),
 			Direction:   artifacts.One,
 			Source:      source,
 			Target:      target,
 		}
 
-		require.Equal(t, "assoc-id", assoc.Id())
+		require.Equal(t, "assoc-id", assoc.ID())
 		require.Equal(t, artifacts.One, assoc.Direction)
 		require.Equal(t, source, assoc.Source)
 		require.Equal(t, target, assoc.Target)

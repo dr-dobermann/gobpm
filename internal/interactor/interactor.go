@@ -1,3 +1,4 @@
+// Package interactor provides interfaces for human interaction with BPMN processes.
 package interactor
 
 import (
@@ -29,7 +30,7 @@ type (
 		Register(iror Interactor) (chan data.Data, error)
 	}
 
-	// RenderProvider is an interface of objects which could control
+	// RenderController is an interface of objects which could control
 	// user interaction with Renderer objects and returns the results
 	// of the interaction.
 	RenderController interface {

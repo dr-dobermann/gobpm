@@ -5,7 +5,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
-// Compensation Events are used in the context of triggering or handling
+// CompensationEventDefinition is used in the context of triggering or handling
 // compensation. There are four variations: a Start Event, both a catch
 // and throw Intermediate Event, and an End Event.
 //   - The Compensation Start Event MAY NOT be used for a top-level Process.

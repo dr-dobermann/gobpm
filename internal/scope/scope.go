@@ -45,11 +45,11 @@ type Scope interface {
 	// Scope until find or failed to find.
 	GetData(dataPath DataPath, name string) (data.Data, error)
 
-	// GetDataById tries to find data.Data in the Scope by its ItemDefinition
+	// GetDataByID tries to find data.Data in the Scope by its ItemDefinition
 	// id.
 	// It starts looking for the data from dataPath and continues to locate
 	// it until Scope root.
-	GetDataById(dataPath DataPath, id string) (data.Data, error)
+	GetDataByID(dataPath DataPath, id string) (data.Data, error)
 
 	// AddData adds data.Data to the NodeDataLoader scope or to rootScope
 	// if NodeDataLoader is nil.

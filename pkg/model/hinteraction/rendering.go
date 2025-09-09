@@ -5,7 +5,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
-// BPMN User Tasks need to be rendered on user interfaces like forms clients,
+// Renderer represents a BPMN renderer interface. BPMN User Tasks need to be rendered on user interfaces like forms clients,
 // portlets, etc. The Rendering element provides an extensible mechanism for
 // specifying UI renderings for User Tasks (Task UI). The element is optional.
 // One or more rendering methods can be provided in a Task definition. A User

@@ -9,6 +9,7 @@ import (
 )
 
 const (
+	// PlainText represents the plain text MIME type.
 	PlainText = "text/plain"
 )
 
@@ -19,7 +20,7 @@ type (
 		docs []*Documentation
 	}
 
-	// BaseOptions sets one BaseConfig fields
+	// BaseOption represents a function option for configuring BaseConfig.
 	BaseOption func(*baseConfig) error
 )
 
@@ -39,8 +40,8 @@ func (bo BaseOption) Apply(cfg options.Configurator) error {
 		errs.C(errorClass, errs.TypeCastingError))
 }
 
-// WithId updates id field in BaseConfig.
-func WithId(id string) options.Option {
+// WithID updates id field in BaseConfig.
+func WithID(id string) options.Option {
 	f := func(bc *baseConfig) error {
 		id = strings.Trim(id, " ")
 		if id == "" {
@@ -57,7 +58,7 @@ func WithId(id string) options.Option {
 	return BaseOption(f)
 }
 
-// WithDocs updates docs element of BaseConfig.
+// WithDoc updates docs element of BaseConfig.
 func WithDoc(text, format string) options.Option {
 	f := func(bc *baseConfig) error {
 		bc.docs = append(bc.docs, newDoc(text, format))

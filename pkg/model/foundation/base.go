@@ -1,3 +1,4 @@
+// Package foundation provides base BPMN element types and interfaces.
 package foundation
 
 import (
@@ -12,18 +13,22 @@ const (
 )
 
 type (
+	// BaseObject interface combines Identifyer and Documentator interfaces.
 	BaseObject interface {
 		Identifyer
 		Documentator
 	}
+	// Identifyer interface provides ID functionality for BPMN elements.
 	Identifyer interface {
-		Id() string
+		ID() string
 	}
 
+	// Documentator interface provides documentation functionality for BPMN elements.
 	Documentator interface {
 		Docs() []*Documentation
 	}
 
+	// Namer interface provides naming functionality for BPMN elements.
 	Namer interface {
 		Name() string
 	}
@@ -31,6 +36,7 @@ type (
 
 // *****************************************************************************
 
+// Documentation represents BPMN element documentation.
 // All BPMN elements that inherit from the BaseElement will have the capability,
 // through the Documentation element, to have one (1) or more text descriptions
 // of that element.
@@ -91,7 +97,7 @@ type BaseElement struct {
 // if id is empty, then new UUID is generated.
 func NewBaseElement(opts ...options.Option) (*BaseElement, error) {
 	bc := baseConfig{
-		id:   GenerateId(),
+		id:   GenerateID(),
 		docs: []*Documentation{},
 	}
 
@@ -115,8 +121,8 @@ func MustBaseElement(opts ...options.Option) *BaseElement {
 	return be
 }
 
-// Id returns the BaseElement Id.
-func (be *BaseElement) Id() string {
+// ID returns the BaseElement ID.
+func (be *BaseElement) ID() string {
 	return be.id
 }
 

@@ -1,3 +1,4 @@
+// Package eventproc provides event processing interfaces and implementations.
 package eventproc
 
 import (
@@ -9,10 +10,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
-// ============================================================================
-//
-//	EventProcessor
-//
+// EventProcessor represents an event processor interface.
 // ============================================================================
 // EventProcessor handles single event.
 type EventProcessor interface {
@@ -23,10 +21,7 @@ type EventProcessor interface {
 	ProcessEvent(context.Context, flow.EventDefinition) error
 }
 
-// ============================================================================
-//
-//	EventProducer
-//
+// EventProducer represents an event producer interface.
 // ============================================================================
 // EventProducer registers events with event processors which expect those
 // events.
@@ -39,17 +34,14 @@ type EventProducer interface {
 
 	// UnregisterEvents removes event definition to EventProcessor link from
 	// EventProducer.
-	UnregisterEvent(ep EventProcessor, eDefId string) error
+	UnregisterEvent(ep EventProcessor, eDefID string) error
 
 	// PropagateEvent sends a fired throw event's eventDefinition
 	// up to chain of EventProducers
 	PropagateEvent(context.Context, flow.EventDefinition) error
 }
 
-// ============================================================================
-//
-//	EventHub
-//
+// EventHub represents a central event distribution hub.
 // ============================================================================
 // EventHub runs events processing engine and managing pack of EventWaiters.
 type EventHub interface {
@@ -62,10 +54,7 @@ type EventHub interface {
 	RemoveWaiter(EventWaiter) error
 }
 
-// ============================================================================
-//
-//	EventWaiter
-//
+// EventWaiter represents an event waiter interface.
 // ============================================================================
 // EventWaiter gets on startup an eventDefinition and EventProcessor
 // expected the event defined.
@@ -109,14 +98,21 @@ type EventWaiter interface {
 	State() EventWaiterState
 }
 
+// EventWaiterState represents the state of an event waiter.
 type EventWaiterState int
 
 const (
+	// WSCreated represents a created event waiter state.
 	WSCreated EventWaiterState = iota
+	// WSReady represents a ready event waiter state.
 	WSReady
+	// WSRunned represents a running event waiter state.
 	WSRunned
+	// WSEnded represents an ended event waiter state.
 	WSEnded
+	// WSStopped represents a stopped event waiter state.
 	WSStopped
+	// WSFailed represents a failed event waiter state.
 	WSFailed
 )
 

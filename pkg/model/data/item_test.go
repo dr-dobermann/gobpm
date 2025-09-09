@@ -29,13 +29,13 @@ func TestItemDefinition(t *testing.T) {
 			require.Equal(t, data.InformationKind, id.Kind())
 			require.Equal(t, false, id.IsCollection())
 			require.Equal(t, nil, id.Structure())
-			require.NotEqual(t, "", id.Id())
+			require.NotEqual(t, "", id.ID())
 		})
 
 	t.Run("new_with_all_settings",
 		func(t *testing.T) {
 			id, err := data.NewItemDefinition(nil,
-				foundation.WithId("test_id"),
+				foundation.WithID("test_id"),
 				data.WithKind(data.PhysicalKind),
 				foundation.WithDoc("doc1", ""),
 				foundation.WithDoc("doc2", ""),
@@ -49,7 +49,7 @@ func TestItemDefinition(t *testing.T) {
 			require.Equal(t, data.PhysicalKind, id.Kind())
 			require.Equal(t, false, id.IsCollection())
 			require.Equal(t, nil, id.Structure())
-			require.Equal(t, "test_id", id.Id())
+			require.Equal(t, "test_id", id.ID())
 			require.Equal(t, 2, len(id.Docs()))
 			require.Equal(t, "test", id.Import().Type)
 		})
@@ -60,7 +60,7 @@ func TestItemAwareElement(t *testing.T) {
 
 	id, err := data.NewItemDefinition(
 		values.NewVariable(42),
-		foundation.WithId("test IDef"))
+		foundation.WithID("test IDef"))
 	require.NoError(t, err)
 
 	ds, err := data.NewDataState("test ds")
@@ -74,13 +74,13 @@ func TestItemAwareElement(t *testing.T) {
 	t.Run("itemDefinition, State and Id",
 		func(t *testing.T) {
 			iae, err := data.NewItemAwareElement(
-				id, ds, foundation.WithId("test iae"))
+				id, ds, foundation.WithID("test iae"))
 			require.NoError(t, err)
 			require.NotEmpty(t, iae)
 			require.Equal(t, "test IDef", iae.Name())
 
 			require.Equal(t, "test ds", iae.State().Name())
-			require.Equal(t, "test iae", iae.Id())
+			require.Equal(t, "test iae", iae.ID())
 		})
 
 	t.Run("options-like constructor",
@@ -103,7 +103,7 @@ func TestItemAwareElement(t *testing.T) {
 
 			// normal with empty IDef
 			uIAE, err := data.NewIAE(data.WithIDefinition(nil),
-				foundation.WithId("empty_value_iae"))
+				foundation.WithID("empty_value_iae"))
 			require.NoError(t, err)
 			require.NotNil(t, uIAE.Subject())
 			require.NotNil(t, uIAE.ItemDefinition())
@@ -131,7 +131,7 @@ func TestItemAwareElement(t *testing.T) {
 			// empty ItemDefinition value in IAE should
 			// fire an error.
 			uIAE, err := data.NewIAE(data.WithIDefinition(nil),
-				foundation.WithId("empty_value_iae"))
+				foundation.WithID("empty_value_iae"))
 			require.NoError(t, err)
 			_, err = uIAE.Clone()
 			require.Error(t, err)
@@ -146,7 +146,7 @@ func TestItemAwareElement(t *testing.T) {
 			require.NoError(t, err)
 			nIAE, err := rIAE.Clone()
 			require.NoError(t, err)
-			require.Equal(t, id.Id(), nIAE.ItemDefinition().Id())
+			require.Equal(t, id.ID(), nIAE.ItemDefinition().ID())
 			require.Equal(t, data.ReadyDataState.Name(), nIAE.State().Name())
 			require.Equal(t, id.Structure().Get(ctx), nIAE.Value().Get(ctx))
 		})

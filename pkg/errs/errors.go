@@ -1,4 +1,4 @@
-// errs package consists ApplicationError definition which is
+// Package errs provides ApplicationError definition which is
 // used as a standard error in the gobpm library.
 //
 //	    type ApplicationError struct {
@@ -28,22 +28,37 @@ import (
 )
 
 const (
+	// InvalidObject represents an invalid object error code.
 	InvalidObject        = "INVALID_OBJECT"
+	// RunFailed represents a run failure error code.
 	RunFailed            = "RUN_FAILED"
+	// NilDereference represents a nil dereference error code.
 	NilDereference       = "NIL_DEREFERENCE"
+	// BulidingFailed represents a building failure error code.
 	BulidingFailed       = "BUILDING_FAILED"
+	// InvalidParameter represents an invalid parameter error code.
 	InvalidParameter     = "INVALID_PARAMETER"
+	// TypeCastingError represents a type casting error code.
 	TypeCastingError     = "INVALID_TYPECASTING"
+	// OutOfRangeError represents an out of range error code.
 	OutOfRangeError      = "OUT_OF_RANGE"
+	// EmptyCollectionError represents an empty collection error code.
 	EmptyCollectionError = "COLLECTION_IS_EMPTY"
+	// EmptyNotAllowed represents an empty object not allowed error code.
 	EmptyNotAllowed      = "EMPTY_OBJ_IS_NOT_ALLOWED"
+	// DuplicateObject represents a duplicate object error code.
 	DuplicateObject      = "DUPLICATE_OBJECT_ERROR"
+	// OperationFailed represents an operation failure error code.
 	OperationFailed      = "OPERATION_FAILED"
+	// ConditionFailed represents a condition failure error code.
 	ConditionFailed      = "CONDITION_FAILED"
+	// ObjectNotFound represents an object not found error code.
 	ObjectNotFound       = "OBJECT_NOT_FOUND"
+	// InvalidState represents an invalid state error code.
 	InvalidState         = "INVALID_OBJECT_STATE"
 )
 
+// ApplicationError represents a structured application error with classes, message, and details.
 type ApplicationError struct {
 	Err     error          `json:"error"`
 	Message string         `json:"message"`
@@ -100,39 +115,39 @@ func (ae *ApplicationError) JSON() []byte {
 }
 
 // --------------------- error interface ---------------------------------------
-func (ap *ApplicationError) Error() string {
+func (ae *ApplicationError) Error() string {
 	str := ""
-	if len(ap.Classes) > 0 {
-		str += "Classes: [" + strings.Join(ap.Classes, ", ") + "]\n"
+	if len(ae.Classes) > 0 {
+		str += "Classes: [" + strings.Join(ae.Classes, ", ") + "]\n"
 	}
 
-	if ap.Message != "" {
-		str += "Message: " + strings.Trim(ap.Message, " ") + "\n"
+	if ae.Message != "" {
+		str += "Message: " + strings.Trim(ae.Message, " ") + "\n"
 	}
 
-	if len(ap.Details) > 0 {
+	if len(ae.Details) > 0 {
 		str += "Details:\n"
-		for k, v := range ap.Details {
+		for k, v := range ae.Details {
 			str += fmt.Sprintf(" %s: %v\n", k, v)
 		}
 	}
 
-	if ap.Err != nil {
-		str += fmt.Errorf("Error: %w", ap.Err).Error() + "\n"
+	if ae.Err != nil {
+		str += fmt.Errorf("Error: %w", ae.Err).Error() + "\n"
 	}
 
 	return str
 }
 
-func (ap *ApplicationError) Unwrap() error {
-	if ap.Err != nil {
-		return ap.Err
+func (ae *ApplicationError) Unwrap() error {
+	if ae.Err != nil {
+		return ae.Err
 	}
 
 	return nil
 }
 
-// --------------------- json.Marshaller interface -----------------------------
+// MarshalJSON implements the json.Marshaler interface for ApplicationError.
 func (ae ApplicationError) MarshalJSON() ([]byte, error) {
 	errS := "<nil>"
 	if ae.Err != nil {

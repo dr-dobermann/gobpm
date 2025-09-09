@@ -11,12 +11,17 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
+// NodeType represents different types of BPMN nodes.
 type NodeType string
 
 const (
+	// InvalidNodeType represents an invalid node type.
 	InvalidNodeType  NodeType = "INVALID_NODE_TYPE"
+	// ActivityNodeType represents an activity node type.
 	ActivityNodeType NodeType = "Activity"
+	// EventNodeType represents an event node type.
 	EventNodeType    NodeType = "Event"
+	// GatewayNodeType represents a gateway node type.
 	GatewayNodeType  NodeType = "Gateway"
 )
 
@@ -50,7 +55,7 @@ func ValidateNodeTypes(types ...NodeType) error {
 	return nil
 }
 
-// The FlowNode element is used to provide a single element as the source and
+// Node element is used to provide a single element as the source and
 // target Sequence Flow associations instead of the individual associations of
 // the elements that can connect to Sequence Flows.
 // Only the Gateway, Activity, Choreography Activity, and Event elements can
@@ -121,7 +126,7 @@ func (fn *FlowNode) Outgoing() []*SequenceFlow {
 }
 
 // AddFlow adds new SequenceFlow to the FlowNode n.
-func (n *FlowNode) AddFlow(sf *SequenceFlow, dir data.Direction) error {
+func (fn *FlowNode) AddFlow(sf *SequenceFlow, dir data.Direction) error {
 	if sf == nil {
 		return errs.New(
 			errs.M("couldn't add empty sequence flow"),
@@ -132,11 +137,11 @@ func (n *FlowNode) AddFlow(sf *SequenceFlow, dir data.Direction) error {
 		return err
 	}
 
-	if _, ok := n.flows[dir]; !ok {
-		n.flows[dir] = map[string]*SequenceFlow{}
+	if _, ok := fn.flows[dir]; !ok {
+		fn.flows[dir] = map[string]*SequenceFlow{}
 	}
 
-	n.flows[dir][sf.Id()] = sf
+	fn.flows[dir][sf.ID()] = sf
 
 	return nil
 }
@@ -157,8 +162,8 @@ func (fn *FlowNode) NodeType() NodeType {
 
 // ----------------- Element interface -----------------------------------------
 
-// Type returns ElementType of the FlowNode.
-func (n *FlowNode) EType() ElementType {
+// EType returns ElementType of the FlowNode.
+func (fn *FlowNode) EType() ElementType {
 	return NodeElement
 }
 

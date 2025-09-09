@@ -1,3 +1,4 @@
+// Package process provides implementation of BPMN Process elements and their execution.
 package process
 
 import (
@@ -131,6 +132,7 @@ func New(
 	return pc.newProcess()
 }
 
+// Name returns the process name.
 func (p *Process) Name() string {
 	return p.name
 }
@@ -142,14 +144,14 @@ func (p *Process) Properties() []*data.Property {
 
 // addNode adds non-empty unique FlowNode n to the process p.
 func (p *Process) addNode(n flow.Node) error {
-	if _, ok := p.nodes[n.Id()]; ok {
+	if _, ok := p.nodes[n.ID()]; ok {
 		return errs.New(
 			errs.M("node %q(%s) already registered in process.",
-				n.Name(), n.Id()),
+				n.Name(), n.ID()),
 			errs.C(errorClass, errs.DuplicateObject))
 	}
 
-	p.nodes[n.Id()] = n
+	p.nodes[n.ID()] = n
 
 	return n.BindTo(p)
 }
@@ -184,14 +186,14 @@ func has[T comparable](slice []T, item T) bool {
 
 // addFlow add non-empty unique SequenceFlow into the Process.
 func (p *Process) addFlow(f *flow.SequenceFlow) error {
-	if _, ok := p.flows[f.Id()]; ok {
+	if _, ok := p.flows[f.ID()]; ok {
 		return errs.New(
 			errs.M("flow %q already exists in the process %q",
-				f.Id(), p.Id()),
+				f.ID(), p.ID()),
 			errs.C(errorClass, errs.DuplicateObject))
 	}
 
-	p.flows[f.Id()] = f
+	p.flows[f.ID()] = f
 
 	return f.BindTo(p)
 }
@@ -254,20 +256,20 @@ func (p *Process) Remove(e flow.Element) error {
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	if _, ok := p.nodes[e.Id()]; ok {
-		delete(p.nodes, e.Id())
+	if _, ok := p.nodes[e.ID()]; ok {
+		delete(p.nodes, e.ID())
 
 		return e.Unbind()
 	}
 
-	if _, ok := p.flows[e.Id()]; ok {
-		delete(p.flows, e.Id())
+	if _, ok := p.flows[e.ID()]; ok {
+		delete(p.flows, e.ID())
 
 		return e.Unbind()
 	}
 
 	return errs.New(
-		errs.M("element %q(%s) not found in process", e.Name(), e.Id()),
+		errs.M("element %q(%s) not found in process", e.Name(), e.ID()),
 		errs.C(errorClass, errs.ObjectNotFound))
 }
 

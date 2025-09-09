@@ -87,11 +87,11 @@ func main() {
 	}
 
 	// Start process execution
-	err = engine.StartProcess(proc.Id())
+	err = engine.StartProcess(proc.ID())
 	if err != nil {
 		log.Fatal("Failed to start process:", err)
 	}
 
 	fmt.Printf("Process '%s' started successfully with ID: %s\n",
-		proc.Name(), proc.Id())
+		proc.Name(), proc.ID())
 }

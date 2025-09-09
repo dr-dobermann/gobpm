@@ -10,7 +10,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
-// *****************************************************************************
+// ResourceRole represents a BPMN resource role.
 type ResourceRole struct {
 	foundation.BaseElement
 
@@ -94,9 +94,7 @@ func (r *ResourceRole) Name() string {
 	return r.name
 }
 
-// *****************************************************************************
-
-// Resources can be assigned to an Activity using Expressions. These
+// ResourceAssignmentExpression represents a BPMN resource assignment expression. Resources can be assigned to an Activity using Expressions. These
 // Expressions MUST return Resource entity related data types, like Users or
 // Groups. Different Expressions can return multiple Resources. All of them
 // are assigned to the respective subclass of the ResourceRole element, for
@@ -109,9 +107,7 @@ type ResourceAssignmentExpression struct {
 	Expression data.Expression
 }
 
-// *****************************************************************************
-
-// Resources support query parameters that are passed to the Resource query at
+// ResourceParameterBinding represents a BPMN resource parameter binding. Resources support query parameters that are passed to the Resource query at
 // runtime. Parameters MAY refer to Task instance data using Expressions.
 // During Resource query execution, an infrastructure can decide which of the
 // Parameters defined by the Resource are used. It MAY use zero (0) or more
@@ -133,7 +129,7 @@ type ResourceParameterBinding struct {
 	Expression data.Expression
 }
 
-// *****************************************************************************
+// Performer represents a BPMN performer.
 type Performer struct {
 	ResourceRole
 }

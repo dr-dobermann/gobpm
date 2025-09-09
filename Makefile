@@ -27,13 +27,6 @@ lint_all:
 	golangci-lint run --timeout=10m ./...
 .PHONY: lint_all
 
-# wlint:
-# 	docker run --rm -v //c/wrk/development/go/src/gobpm://cmd -w //cmd golangci/golangci-lint golangci-lint run -v
-
-# rundb:
-# 	${DC} -f ./stand/db/docker-compose.yaml build
-# 	${DC} -f ./stand/db/docker-compose.yaml up --detach --wait --remove-orphans
-
 test: gen_mock_files
 	go test -v -cover ./...
 .PHONY: test
@@ -58,3 +51,4 @@ gen_mock_files:
 	mockery
 	go mod tidy
 .PHONY: gen_mock_files
+

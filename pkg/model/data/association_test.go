@@ -20,7 +20,7 @@ func TestAssociations(t *testing.T) {
 	trgIAE, err := data.NewIAE(
 		data.WithIDefinition(
 			values.NewVariable(42),
-			foundation.WithId("output")),
+			foundation.WithID("output")),
 		data.WithState(data.ReadyDataState))
 	require.NoError(t, err)
 
@@ -43,13 +43,13 @@ func TestAssociations(t *testing.T) {
 						data.MustItemDefinition(
 							values.NewVariable(100)),
 						data.ReadyDataState,
-						foundation.WithId("src 1"))),
+						foundation.WithID("src 1"))),
 				data.WithSource(
 					data.MustItemAwareElement(
 						data.MustItemDefinition(
 							values.NewVariable("one hundred")),
 						data.ReadyDataState,
-						foundation.WithId("src 2"))))
+						foundation.WithID("src 2"))))
 			require.Error(t, err)
 		})
 
@@ -62,21 +62,21 @@ func TestAssociations(t *testing.T) {
 					data.MustItemAwareElement(
 						data.MustItemDefinition(
 							values.NewVariable(100),
-							foundation.WithId("source")),
+							foundation.WithID("source")),
 						data.ReadyDataState)))
 			require.NoError(t, err)
 
 			require.False(t, a.IsReady())
 
-			require.Equal(t, "output", a.TargetItemDefId())
+			require.Equal(t, "output", a.TargetItemDefID())
 
-			srcL := a.SourcesIds()
+			srcL := a.SourcesIDs()
 			require.Equal(t, 1, len(srcL))
 			require.Contains(t, srcL, "source")
 
-			require.False(t, a.HasSourceId("invalid src id"))
+			require.False(t, a.HasSourceID("invalid src id"))
 
-			require.True(t, a.HasSourceId("source"))
+			require.True(t, a.HasSourceID("source"))
 
 			ctx := context.Background()
 			v, err := a.Value(ctx)
@@ -88,7 +88,7 @@ func TestAssociations(t *testing.T) {
 				ctx,
 				data.MustItemDefinition(
 					values.NewVariable(42),
-					foundation.WithId("invalid source")),
+					foundation.WithID("invalid source")),
 				data.Recalculate)
 			require.Error(t, err)
 
@@ -97,7 +97,7 @@ func TestAssociations(t *testing.T) {
 				ctx,
 				data.MustItemDefinition(
 					values.NewVariable(42),
-					foundation.WithId("source")),
+					foundation.WithID("source")),
 				data.Recalculate)
 			require.NoError(t, err)
 
@@ -147,15 +147,15 @@ func TestAssociations(t *testing.T) {
 					data.MustItemAwareElement(
 						data.MustItemDefinition(
 							values.NewVariable(100),
-							foundation.WithId("value")),
+							foundation.WithID("value")),
 						data.UndefinedDataState)),
 				data.WithSource(
 					data.MustItemAwareElement(
 						data.MustItemDefinition(
 							values.NewVariable(2),
-							foundation.WithId("multiplicator")),
+							foundation.WithID("multiplicator")),
 						data.ReadyDataState)),
-				foundation.WithId("association with transformation"))
+				foundation.WithID("association with transformation"))
 			require.NoError(t, err)
 
 			require.False(t, a.IsReady())
@@ -167,7 +167,7 @@ func TestAssociations(t *testing.T) {
 				ctx,
 				data.MustItemDefinition(
 					values.NewVariable(42),
-					foundation.WithId("value")),
+					foundation.WithID("value")),
 				data.Recalculate)
 			require.NoError(t, err)
 

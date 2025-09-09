@@ -87,7 +87,7 @@ func TestNewUserTask(t *testing.T) {
 				Once()
 
 			mrenv := mockrenv.NewMockRuntimeEnvironment(t)
-			mrenv.EXPECT().InstanceId().Return("mocked_instance").Maybe()
+			mrenv.EXPECT().InstanceID().Return("mocked_instance").Maybe()
 			mrenv.EXPECT().RenderRegistrator().Return(mrr).Once()
 			mrenv.EXPECT().AddData(mock.Anything, mock.Anything, mock.Anything).
 				RunAndReturn(

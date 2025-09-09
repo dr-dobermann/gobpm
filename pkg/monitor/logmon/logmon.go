@@ -1,3 +1,4 @@
+// Package logmon provides logging-based monitoring implementation.
 package logmon
 
 import (
@@ -19,6 +20,7 @@ type (
 	}
 )
 
+// New creates a new logging monitor writer with the provided logger.
 func New(l *slog.Logger) (monitor.Writer, error) {
 	if l == nil {
 		return nil,

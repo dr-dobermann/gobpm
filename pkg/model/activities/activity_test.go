@@ -49,7 +49,7 @@ func TestActivity(t *testing.T) {
 				WithLoop(&LoopCharacteristics{}),
 				data.WithProperties(prop, prop),
 				WithRoles(rRole, rRole),
-				foundation.WithId("test id"),
+				foundation.WithID("test id"),
 				WithoutParams())
 
 			require.NoError(t, err)
@@ -58,7 +58,7 @@ func TestActivity(t *testing.T) {
 			require.Equal(t, a, a.Node())
 
 			require.Equal(t, "test activity", a.Name())
-			require.Equal(t, "test id", a.Id())
+			require.Equal(t, "test id", a.ID())
 
 			rr := a.Roles()
 			require.Equal(t, 1, len(rr))
@@ -67,7 +67,7 @@ func TestActivity(t *testing.T) {
 			pp := a.Properties()
 			require.Equal(t, 1, len(pp))
 			require.Equal(t, prop.Name(), pp[0].Name())
-			require.Equal(t, prop.Subject().Id(), pp[0].Subject().Id())
+			require.Equal(t, prop.Subject().ID(), pp[0].Subject().ID())
 			require.Equal(t, 42, pp[0].Subject().Structure().Get(context.Background()))
 			require.Equal(t, "ready", pp[0].State().Name())
 
@@ -153,6 +153,6 @@ func TestActivity(t *testing.T) {
 			sf, err := flow.Link(a1, a2)
 			require.NoError(t, err)
 
-			require.NoError(t, a1.SetDefaultFlow(sf.Id()))
+			require.NoError(t, a1.SetDefaultFlow(sf.ID()))
 		})
 }

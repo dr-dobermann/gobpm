@@ -1,3 +1,12 @@
+/*
+Package instance provides process instance management for BPMN execution.
+
+This package is part of GoBPM - Business Process Management Engine for Go.
+See LICENSE file for license information.
+
+Author: dr-dobermann (rgabitov@gmail.com)
+Repository: https://github.com/dr-dobermann/gobpm
+*/
 package instance
 
 import (
@@ -30,23 +39,35 @@ const (
 
 	runtimeVars = "RUNTIME"
 
-	// Runtime variables names
+	// StartedAt represents the started time variable name.
 	StartedAt   = "STARTED_AT"
+	// CurrState represents the current state variable name.
 	CurrState   = "STATE"
+	// TracksCount represents the tracks count variable name.
 	TracksCount = "TRACKS_CNT"
 )
 
+// State represents the process instance state.
 type State uint8
 
 const (
+	// Created represents a created instance state.
 	Created State = iota
+	// Ready represents a ready instance state.
 	Ready
+	// StartingTracks represents a starting tracks state.
 	StartingTracks
+	// Runned represents a running instance state.
 	Runned
+	// Stopping represents a stopping instance state.
 	Stopping
+	// Paused represents a paused instance state.
 	Paused
+	// FinishingTracks represents a finishing tracks state.
 	FinishingTracks
+	// Finished represents a finished instance state.
 	Finished
+	// Canceled represents a canceled instance state.
 	Canceled
 )
 
@@ -67,9 +88,9 @@ func (s State) String() string {
 // dataFinder is used to find Data in Scope by Name or by Id.
 type dataFinder func(data.Data) bool
 
-// =============================================================================
+// Instance represents a process instance for execution.
 type Instance struct {
-	foundation.ID
+	foundation.BaseElement
 
 	m sync.RWMutex
 
@@ -85,8 +106,8 @@ type Instance struct {
 	// Instance's runtime context.
 	ctx context.Context
 
-	// monId keeps last monitoring event id.
-	monId atomic.Int64
+	// monID keeps last monitoring event id.
+	monID atomic.Int64
 
 	// Scopes holds accessible in the moment Data.
 	// first map indexed by data path, the second map indexed by Data name.
@@ -105,10 +126,6 @@ type Instance struct {
 	// parentEventProducer is used to register the Instance in events producers
 	// chain.
 	parentEventProducer eventproc.EventProducer
-
-	// root event producer for the instance. usually it will be thresher
-	// created the instance.
-	eProd eventproc.EventProducer
 
 	// render registrator registers nodes with renderers of human interaction.
 	rr interactor.Registrator
@@ -146,8 +163,13 @@ func New(
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
+	be, err := foundation.NewBaseElement()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create base element: %w", err)
+	}
+	
 	inst := Instance{
-		ID:                  *foundation.NewID(),
+		BaseElement:         *be,
 		state:               Ready,
 		s:                   s,
 		scopes:              map[scope.DataPath]map[string]data.Data{},
@@ -169,7 +191,7 @@ func New(
 			errs.E(err),
 			errs.C(errorClass, errs.BulidingFailed),
 			errs.D("process_name", s.ProcessName),
-			errs.D("process_id", s.ProcessId))
+			errs.D("process_id", s.ProcessID))
 	}
 
 	if err := inst.createTracks(); err != nil {
@@ -303,20 +325,20 @@ func (inst *Instance) runTracks(ctx context.Context) error {
 // If instance is running, added track also runs.
 func (inst *Instance) addTrack(ctx context.Context, nt *track) error {
 	if nt == nil {
-		return fmt.Errorf("couldn't add empty track to instance %q", inst.Id())
+		return fmt.Errorf("couldn't add empty track to instance %q", inst.ID())
 	}
 
 	inst.m.Lock()
 	defer inst.m.Unlock()
 
-	if _, ok := inst.tracks[nt.Id()]; ok {
+	if _, ok := inst.tracks[nt.ID()]; ok {
 		return fmt.Errorf("track from node %q(%s) already registered in instance %q",
-			inst.tracks[nt.Id()].steps[0].node.Name(),
-			inst.tracks[nt.Id()].steps[0].node.Id(),
-			inst.Id())
+			inst.tracks[nt.ID()].steps[0].node.Name(),
+			inst.tracks[nt.ID()].steps[0].node.ID(),
+			inst.ID())
 	}
 
-	inst.tracks[nt.Id()] = nt
+	inst.tracks[nt.ID()] = nt
 
 	if inst.state == Runned {
 		inst.runSingleTrack(ctx, nt)
@@ -358,7 +380,7 @@ func (inst *Instance) createTracks() error {
 			return err
 		}
 
-		inst.tracks[t.Id()] = t
+		inst.tracks[t.ID()] = t
 	}
 
 	return nil
@@ -492,8 +514,8 @@ func (inst *Instance) addToken(t *token) {
 
 	inst.show("INSTANCE.TOKEN", "token registered",
 		map[string]any{
-			"track_id":    t.trk.Id(),
-			"instance_id": inst.Id(),
+			"track_id":    t.trk.ID(),
+			"instance_id": inst.ID(),
 			"token_state": t.state,
 		})
 }
@@ -510,9 +532,9 @@ func (inst *Instance) tokenConsumed(t *token) {
 
 	inst.show("INSTANCE.TOKEN", "token consumed",
 		map[string]any{
-			"instance_id": inst.Id(),
-			"track_id":    t.trk.Id(),
-			"token_id":    t.Id(),
+			"instance_id": inst.ID(),
+			"track_id":    t.trk.ID(),
+			"token_id":    t.ID(),
 		})
 
 	// check if there is any alive token. If any, then return.
@@ -527,7 +549,7 @@ func (inst *Instance) tokenConsumed(t *token) {
 
 	inst.show("INSTANCE.STOP", "all tokens consumed. stopping tracks...",
 		map[string]any{
-			"instance_id": inst.Id(),
+			"instance_id": inst.ID(),
 		})
 
 	// if there is no alive token, stop the instance.
@@ -556,10 +578,10 @@ func (inst *Instance) show(
 		ev.Details = make(map[string]any)
 	}
 
-	ev.Details["instance_id"] = inst.Id()
-	ev.Details["counter"] = inst.monId.Load()
+	ev.Details["instance_id"] = inst.ID()
+	ev.Details["counter"] = inst.monID.Load()
 
-	inst.monId.Add(1)
+	inst.monID.Add(1)
 
 	for _, m := range inst.monitors {
 		go func(w monitor.Writer) {
@@ -582,7 +604,7 @@ func (inst *Instance) RegisterEvent(
 			errs.M("instance isn't runned (current state: %s)",
 				is),
 			errs.C(errorClass, errs.InvalidState),
-			errs.D("requester_id", proc.Id()))
+			errs.D("requester_id", proc.ID()))
 	}
 
 	if proc == nil {
@@ -610,8 +632,8 @@ func (inst *Instance) RegisterEvent(
 // UnregisterEvent removes event definition to EventProcessor link from
 // EventProducer.
 func (inst *Instance) UnregisterEvent(
-	ep eventproc.EventProcessor,
-	eDefId string,
+	_ eventproc.EventProcessor,
+	_ string,
 ) error {
 	return nil
 }
@@ -628,14 +650,14 @@ func (inst *Instance) PropagateEvent(
 			errs.M("instance isn't runned"),
 			errs.C(errorClass, errs.InvalidState),
 			errs.D("current_state", st),
-			errs.D("instance_id", inst.Id()))
+			errs.D("instance_id", inst.ID()))
 	}
 
 	if err := inst.parentEventProducer.PropagateEvent(ctx, eDef); err != nil {
 		return errs.New(
 			errs.M("event propagation failed"),
 			errs.C(errorClass, errs.OperationFailed),
-			errs.D("event_definition_id", eDef.Id()),
+			errs.D("event_definition_id", eDef.ID()),
 			errs.D("event_definition_type", eDef.Type()),
 			errs.E(err))
 	}
@@ -708,31 +730,30 @@ func (inst *Instance) GetData(
 		return nil,
 			errs.New(
 				errs.M("couldn't get Data %q from scoppe %s",
-					name, inst.Id()),
+					name, inst.ID()),
 				errs.E(err))
 	}
 
 	return d, nil
 }
 
-// GetDataById tries to find data.Data in the Scope by its ItemDefinition
-// id.
-// It starts looking for the data from dataPath and continues to locate
+// GetDataByID tries to find data.Data in the Scope by its ItemDefinition
+// ID. It starts looking for the data from dataPath and continues to locate
 // it until Scope root.
-func (inst *Instance) GetDataById(
+func (inst *Instance) GetDataByID(
 	path scope.DataPath,
 	id string,
 ) (data.Data, error) {
-	byId := func(d data.Data) bool {
-		return d.ItemDefinition().Id() == id
+	byID := func(d data.Data) bool {
+		return d.ItemDefinition().ID() == id
 	}
 
-	d, err := inst.getData(path, byId)
+	d, err := inst.getData(path, byID)
 	if err != nil {
 		return nil,
 			errs.New(
 				errs.M("couldn't get Data #%s from scope %s",
-					id, inst.Id()),
+					id, inst.ID()),
 				errs.E(err))
 	}
 
@@ -823,9 +844,9 @@ func (inst *Instance) LeaveScope(ndl scope.NodeDataLoader) error {
 
 // ------------------ exec.RuntimeEnvironment interface ------------------------
 
-// InstanceId retruns id of the Instance.
-func (inst *Instance) InstanceId() string {
-	return inst.Id()
+// InstanceID returns ID of the Instance.
+func (inst *Instance) InstanceID() string {
+	return inst.ID()
 }
 
 // EventProducer returns the EventProducer of the runtime.
@@ -833,6 +854,7 @@ func (inst *Instance) EventProducer() eventproc.EventProducer {
 	return inst
 }
 
+// RenderRegistrator returns the render registrator for the instance.
 func (inst *Instance) RenderRegistrator() interactor.Registrator {
 	return inst.rr
 }

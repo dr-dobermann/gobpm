@@ -1,9 +1,6 @@
-/*
-GoExpression package is a reference implementation of
-common.FormalExpression interface to support go function
-as FormalExpression evaluation core.
-*/
-
+// Package goexpr is a reference implementation of
+// common.FormalExpression interface to support go function
+// as FormalExpression evaluation core.
 package goexpr
 
 import (

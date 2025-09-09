@@ -12,12 +12,17 @@ import (
 //                               Element
 // ============================================================================
 
+// ElementType represents different types of BPMN flow elements.
 type ElementType string
 
 const (
+	// InvalidElement represents an invalid element type.
 	InvalidElement      ElementType = "INVALID_ELEMENT_TYPE"
+	// DataObjectElement represents a data object element type.
 	DataObjectElement   ElementType = "DataObject"
+	// NodeElement represents a node element type.
 	NodeElement         ElementType = "Node"
+	// SequenceFlowElement represents a sequence flow element type.
 	SequenceFlowElement ElementType = "SequenceFlow"
 )
 
@@ -64,7 +69,7 @@ type Element interface {
 //                               Container
 // ============================================================================
 
-// ElementsContainer is an abstract super class for BPMN diagrams (or
+// Container is an abstract super class for BPMN diagrams (or
 // views) and defines the superset of elements that are contained in those
 // diagrams. Basically, a ElementsContainer contains FlowElements, which
 // are Events, Gateways, Sequence Flows, Activities, and Choreography
@@ -93,6 +98,7 @@ type FlowElement struct {
 	container Container
 }
 
+// NewFlowElement creates a new FlowElement with the given name and options.
 func NewFlowElement(name string, opts ...options.Option) (*FlowElement, error) {
 	be, err := foundation.NewBaseElement(opts...)
 	if err != nil {
@@ -107,7 +113,6 @@ func NewFlowElement(name string, opts ...options.Option) (*FlowElement, error) {
 		nil
 }
 
-// -------------- Element interface --------------------------------------------
 // Name returns the name of the FlowElement.
 func (fe *FlowElement) Name() string {
 	return fe.name
@@ -124,7 +129,7 @@ func (fe *FlowElement) BindTo(c Container) error {
 	if fe.container != nil {
 		if fe.container != c {
 			return errs.New(
-				errs.M("flow already belongs to container %s", c.Id()),
+				errs.M("flow already belongs to container %s", c.ID()),
 				errs.C(errorClass, errs.InvalidParameter))
 		}
 	}

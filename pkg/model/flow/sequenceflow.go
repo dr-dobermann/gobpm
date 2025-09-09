@@ -27,7 +27,7 @@ type (
 	}
 )
 
-// A Sequence Flow is used to show the order of Flow Elements in a Process or
+// SequenceFlow is used to show the order of Flow Elements in a Process or
 // a Choreography. Each Sequence Flow has only one source and only one target.
 // The source and target MUST be from the set of the following Flow Elements:
 // Events (Start, Intermediate, and End), Activities (Task and Sub-Process;
@@ -229,43 +229,43 @@ func (f *SequenceFlow) Validate() error {
 			errs.M("sequence flow, source and target should belong to the "+
 				"same or nil container"),
 			errs.C(errorClass, errs.BulidingFailed),
-			errs.D("flow_container", getContainerId(cntr)),
+			errs.D("flow_container", getContainerID(cntr)),
 			errs.D("source_container",
-				getContainerId(f.source.Container())),
+				getContainerID(f.source.Container())),
 			errs.D("target_container",
-				getContainerId(f.target.Container())))
+				getContainerID(f.target.Container())))
 	}
 
 	return nil
 }
 
 // getContainerId returns the container id if its not nil.
-func getContainerId(c Container) string {
+func getContainerID(c Container) string {
 	if c == nil {
 		return "<nil>"
 	}
 
-	return c.Id()
+	return c.ID()
 }
 
 // Source returns the Source of the SequenceFlow.
-func (sf *SequenceFlow) Source() SequenceSource {
-	return sf.source
+func (f *SequenceFlow) Source() SequenceSource {
+	return f.source
 }
 
 // Target returns the Target of the SequenceFlow.
-func (sf *SequenceFlow) Target() SequenceTarget {
-	return sf.target
+func (f *SequenceFlow) Target() SequenceTarget {
+	return f.target
 }
 
 // Condition returns the condition expression  of the SequenceFlow.
-func (sf *SequenceFlow) Condition() data.FormalExpression {
-	return sf.conditionExpression
+func (f *SequenceFlow) Condition() data.FormalExpression {
+	return f.conditionExpression
 }
 
 // ------------------------- Element interface ---------------------------------
 
-// Type returns element type of the SequenceFlow.
+// EType returns element type of the SequenceFlow.
 func (f *SequenceFlow) EType() ElementType {
 	return SequenceFlowElement
 }

@@ -38,7 +38,7 @@ func CreateWaiter(
 	default:
 		err = fmt.Errorf(
 			"couldn't find builder for eventDefintion #%s of type %s",
-			eDef.Id(), eDef.Type())
+			eDef.ID(), eDef.Type())
 	}
 
 	return w, err

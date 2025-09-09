@@ -7,6 +7,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
+// ConditionalEventDefinition represents a conditional event definition.
 type ConditionalEventDefinition struct {
 	definition
 
@@ -59,6 +60,7 @@ func MustConditionalEventDefinition(
 	return ced
 }
 
+// Condition returns the formal expression condition.
 func (ced *ConditionalEventDefinition) Condition() data.FormalExpression {
 	return ced.condition
 }

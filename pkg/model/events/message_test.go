@@ -29,7 +29,7 @@ func TestNewMessageEventDefintion(t *testing.T) {
 			msg := common.MustMessage("test_message",
 				data.MustItemDefinition(
 					values.NewVariable(42),
-					foundation.WithId("42")))
+					foundation.WithID("42")))
 
 			med, err := events.NewMessageEventDefintion(
 				msg, nil)
@@ -40,7 +40,7 @@ func TestNewMessageEventDefintion(t *testing.T) {
 
 			iDefs := med.GetItemsList()
 			require.Equal(t, 1, len(iDefs))
-			require.Equal(t, "42", iDefs[0].Id())
+			require.Equal(t, "42", iDefs[0].ID())
 		})
 
 	t.Run(
@@ -50,7 +50,7 @@ func TestNewMessageEventDefintion(t *testing.T) {
 
 			msg := common.MustMessage("test_message",
 				data.MustItemDefinition(values.NewVariable(42)),
-				foundation.WithId("42"))
+				foundation.WithID("42"))
 
 			med := events.MustMessageEventDefinition(msg, nil)
 
@@ -59,7 +59,7 @@ func TestNewMessageEventDefintion(t *testing.T) {
 					"test_param",
 					data.MustItemAwareElement(
 						data.MustItemDefinition(values.NewVariable(100),
-							foundation.WithId("100")),
+							foundation.WithID("100")),
 						data.ReadyDataState)),
 			})
 			require.Error(t, err)
@@ -73,7 +73,7 @@ func TestNewMessageEventDefintion(t *testing.T) {
 			msg := common.MustMessage("test_message",
 				data.MustItemDefinition(
 					values.NewVariable(42),
-					foundation.WithId("42")))
+					foundation.WithID("42")))
 
 			med := events.MustMessageEventDefinition(msg, nil)
 
@@ -83,12 +83,12 @@ func TestNewMessageEventDefintion(t *testing.T) {
 					data.MustItemAwareElement(
 						data.MustItemDefinition(
 							values.NewVariable(100),
-							foundation.WithId("42")),
+							foundation.WithID("42")),
 						data.ReadyDataState)),
 			})
 			require.NoError(t, err)
 
-			require.Equal(t, nmed.GetItemsList()[0].Id(), "42")
+			require.Equal(t, nmed.GetItemsList()[0].ID(), "42")
 			require.Equal(t, 100, nmed.GetItemsList()[0].Structure().Get(ctx))
 		})
 }

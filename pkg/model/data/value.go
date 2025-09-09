@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// Value interface provides methods for data manipulation and locking.
 type Value interface {
 	// Get returns copy of the Value's value.
 	// For collection Get retrieves element with current index
@@ -30,13 +31,17 @@ type Value interface {
 	Clone() Value
 }
 
+// StepDirection defines the direction of stepping through collection elements.
 type StepDirection bool
 
 const (
+	// StepForward indicates forward stepping through collection elements.
 	StepForward  StepDirection = true
+	// StepBackward indicates backward stepping through collection elements.
 	StepBackward StepDirection = false
 )
 
+// Collection interface extends Value to provide collection-specific operations.
 type Collection interface {
 	Value
 
@@ -93,7 +98,7 @@ type Updater interface {
 	Unregister(regName string)
 }
 
-// Registered function which will be called as soon ad Value changed.
+// UpdateCallback represents a function that will be called as soon as Value changed.
 // Due to there is no any warranty about right order of the
 // Value updates notification, time of update is provided.
 // if you got any notification after the one you're already process, just
@@ -105,7 +110,10 @@ type UpdateCallback func(when time.Time, changeType ChangeType, index any)
 type ChangeType string
 
 const (
+	// ValueUpdated represents a value update change type.
 	ValueUpdated ChangeType = "Value_Updated"
+	// ValueAdded represents a value added change type.
 	ValueAdded   ChangeType = "Value_Added"
+	// ValueDeleted represents a value deleted change type.
 	ValueDeleted ChangeType = "Value_Deleted"
 )

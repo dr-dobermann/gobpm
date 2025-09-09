@@ -8,7 +8,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
-// Properties, like Data Objects, are item-aware elements. But, unlike Data
+// Property represents a BPMN property element. Properties, like Data Objects, are item-aware elements. But, unlike Data
 // Objects, they are not visually displayed on a Process diagram. Certain flow
 // elements MAY contain properties, in particular only Processes, Activities,
 // and Events MAY contain Properties.
@@ -53,7 +53,7 @@ func MustProperty(
 	name string,
 	item *ItemDefinition,
 	state *DataState,
-	baseOpts ...options.Option,
+	_ ...options.Option,
 ) *Property {
 	p, err := NewProperty(name, item, state)
 	if err != nil {

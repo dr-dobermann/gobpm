@@ -36,7 +36,7 @@ func main() {
 		func(ctx context.Context, ds data.Source) (data.Value, error) {
 			return values.NewVariable(time.Now().Add(3 * time.Second)), nil
 		},
-		foundation.WithId("timer-3s"),
+		foundation.WithID("timer-3s"),
 	)
 
 	// Create timer event definition

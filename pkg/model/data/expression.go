@@ -25,7 +25,7 @@ import (
 // where the logic is captured in an executable form using a specified
 // Expression language.
 
-// Expression
+// Expression represents a BPMN expression using natural-language text.
 //
 // The Expression class is used to specify an Expression using natural-language
 // text. These Expressions are not executable and are considered underspecified.
@@ -58,7 +58,7 @@ func NewExpression(opts ...options.Option) (*Expression, error) {
 
 // ============================================================================
 
-// Formal Expression
+// FormalExpression represents an executable BPMN expression.
 //
 // The FormalExpression class is used to specify an executable Expression using
 // a specified Expression language. A natural-language description of the

@@ -11,7 +11,6 @@ type TerminateEventDefinition struct {
 
 // Type implements the Definition interface.
 func (*TerminateEventDefinition) Type() flow.EventTrigger {
-
 	return flow.TriggerTerminate
 }
 

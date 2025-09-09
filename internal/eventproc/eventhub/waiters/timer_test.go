@@ -209,7 +209,7 @@ func TestTimeWaiter(t *testing.T) {
 
 			w, err := waiters.CreateWaiter(mockHub, ep, timeEDef)
 			require.NoError(t, err)
-			require.NotEmpty(t, w.Id())
+			require.NotEmpty(t, w.ID())
 			require.Contains(t, w.EventProcessors(), ep)
 			require.Equal(t, timeEDef, w.EventDefinition())
 
@@ -231,7 +231,7 @@ func TestTimeWaiter(t *testing.T) {
 					mock.Anything).
 				RunAndReturn(
 					func(_ context.Context, ed flow.EventDefinition) error {
-						t.Log("   >>>> got event: ", ed.Type(), " #", ed.Id())
+						t.Log("   >>>> got event: ", ed.Type(), " #", ed.ID())
 						return nil
 					})
 
@@ -259,7 +259,7 @@ func TestTimeWaiter(t *testing.T) {
 			w, err := waiters.CreateWaiter(mockHub, ept, timeEDef)
 			require.NoError(t, err)
 			require.Equal(t, eventproc.WSReady, w.State())
-			require.NotEmpty(t, w.Id())
+			require.NotEmpty(t, w.ID())
 
 			err = w.Stop()
 			require.Error(t, err)
@@ -292,7 +292,7 @@ func TestTimeWaiter(t *testing.T) {
 					mock.Anything).
 				RunAndReturn(
 					func(_ context.Context, ed flow.EventDefinition) error {
-						t.Log("   >>>> got cycle event: ", ed.Type(), " #", ed.Id())
+						t.Log("   >>>> got cycle event: ", ed.Type(), " #", ed.ID())
 
 						require.NotEqual(t, 0, cycles)
 						cycles--

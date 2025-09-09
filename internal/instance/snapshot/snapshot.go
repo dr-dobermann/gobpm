@@ -1,3 +1,4 @@
+// Package snapshot provides process instance snapshot functionality.
 package snapshot
 
 import (
@@ -15,7 +16,7 @@ const errorClass = "SNAPSHOT_ERRORS"
 type Snapshot struct {
 	foundation.ID
 
-	ProcessId   string
+	ProcessID   string
 	ProcessName string
 	Nodes       map[string]flow.Node
 	Flows       map[string]*flow.SequenceFlow
@@ -26,7 +27,7 @@ type Snapshot struct {
 // pointer on success or error on failure.
 func New(
 	p *process.Process,
-	snapOpts ...options.Option,
+	_ ...options.Option,
 ) (*Snapshot, error) {
 	if p == nil {
 		return nil,
@@ -37,7 +38,7 @@ func New(
 
 	s := Snapshot{
 		ID:          *foundation.NewID(),
-		ProcessId:   p.Id(),
+		ProcessID:   p.ID(),
 		ProcessName: p.Name(),
 		Nodes:       map[string]flow.Node{},
 		Flows:       map[string]*flow.SequenceFlow{},
@@ -48,7 +49,7 @@ func New(
 	eeExists := false
 
 	for _, n := range p.Nodes() {
-		s.Nodes[n.Id()] = n
+		s.Nodes[n.ID()] = n
 
 		// check events
 		if n.NodeType() == flow.EventNodeType {
@@ -58,7 +59,7 @@ func New(
 					errs.New(
 						errs.M("failed to convert to EventNode"),
 						errs.C(errorClass, errs.TypeCastingError),
-						errs.D("node_id", n.Id()),
+						errs.D("node_id", n.ID()),
 						errs.D("node_name", n.Name()))
 			}
 
@@ -84,7 +85,7 @@ func New(
 	}
 
 	for _, f := range p.Flows() {
-		s.Flows[f.Id()] = f
+		s.Flows[f.ID()] = f
 	}
 
 	return &s, nil
