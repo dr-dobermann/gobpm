@@ -1,10 +1,10 @@
-package common_test
+package bpmncommon_test
 
 import (
 	"context"
 	"testing"
 
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/stretchr/testify/require"
@@ -14,23 +14,23 @@ func TestMessage(t *testing.T) {
 	t.Run("invalid_params",
 		func(t *testing.T) {
 			// no name
-			_, err := common.NewMessage("", nil)
+			_, err := bpmncommon.NewMessage("", nil)
 			require.Error(t, err)
 
 			// no item definition
-			_, err = common.NewMessage("invalid_message", nil)
+			_, err = bpmncommon.NewMessage("invalid_message", nil)
 			require.Error(t, err)
 
 			// must with empty name
 			require.Panics(t,
 				func() {
-					_ = common.MustMessage("", nil)
+					_ = bpmncommon.MustMessage("", nil)
 				})
 		})
 
 	t.Run("normal",
 		func(t *testing.T) {
-			m, err := common.NewMessage(
+			m, err := bpmncommon.NewMessage(
 				"message",
 				data.MustItemDefinition(
 					values.NewVariable(100)))
@@ -40,7 +40,7 @@ func TestMessage(t *testing.T) {
 
 			require.NotPanics(t,
 				func() {
-					_ = common.MustMessage("message",
+					_ = bpmncommon.MustMessage("message",
 						data.MustItemDefinition(
 							values.NewVariable(42)))
 				})

@@ -94,7 +94,7 @@ func (ic *itemConfig) Validate() error {
 
 type (
 	iaeConfig struct {
-		state *DataState
+		state *SrcState
 		iDef  *ItemDefinition
 
 		baseOpts []options.Option
@@ -118,7 +118,7 @@ func (iaeC *iaeConfig) newIAE() (*ItemAwareElement, error) {
 }
 
 // WithState sets current state of the IAE.
-func WithState(ds *DataState) IAEOption {
+func WithState(ds *SrcState) IAEOption {
 	f := func(cfg *iaeConfig) error {
 		if ds == nil {
 			return fmt.Errorf("empty data state")
@@ -182,7 +182,7 @@ func (iaeC *iaeConfig) Validate() error {
 		return fmt.Errorf("no ItemDefinition")
 	}
 
-	if iaeC.iDef.Structure() == nil && iaeC.state != UndefinedDataState {
+	if iaeC.iDef.Structure() == nil && iaeC.state != UndefinedSrcState {
 		return fmt.Errorf("invalid data state %q with empty ItemDefinition",
 			iaeC.state.name)
 	}

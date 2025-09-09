@@ -2,7 +2,7 @@
 package service
 
 import (
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
@@ -18,7 +18,7 @@ type Interface struct {
 	Operations []Operation
 
 	// The CallableElements that use this Interface.
-	CallableElements []*common.CallableElement
+	CallableElements []*bpmncommon.CallableElement
 
 	// This attribute allows to reference a concrete artifact in the underlying
 	// implementation technology representing that interface, such as a WSDL

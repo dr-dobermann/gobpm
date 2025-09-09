@@ -33,7 +33,7 @@ func TestActivity(t *testing.T) {
 	prop, err := data.NewProperty(
 		"test property",
 		data.MustItemDefinition(values.NewVariable(42)),
-		data.MustDataState("ready"))
+		data.MustSrcState("ready"))
 	require.NoError(t, err)
 
 	rRole, err := hi.NewResourceRole("specialist", nil, nil, nil)
@@ -83,7 +83,7 @@ func TestActivity(t *testing.T) {
 
 	t.Run("IOSpec test",
 		func(t *testing.T) {
-			is, err := data.NewDataState("initial_state")
+			is, err := data.NewSrcState("initial_state")
 			require.NoError(t, err)
 
 			paramItem, err := data.NewItemDefinition(

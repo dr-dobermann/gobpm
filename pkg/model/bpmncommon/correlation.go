@@ -1,4 +1,4 @@
-package common
+package bpmncommon
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"

@@ -28,7 +28,7 @@ func TestProcess(t *testing.T) {
 				rn, nil, nil, nil))
 	}
 
-	rs, err := data.NewDataState("ready")
+	rs, err := data.NewSrcState("ready")
 	require.NoError(t, err)
 	require.NotEmpty(t, rs)
 

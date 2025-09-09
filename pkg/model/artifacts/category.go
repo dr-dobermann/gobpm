@@ -16,7 +16,7 @@ const (
 )
 
 // Category can have user-defined semantics, and can be used for documentation
-// or analysis purposes. For example, FlowElements can be categorized as being
+// or analysis purposes. For example, BaseElements can be categorized as being
 // customer oriented vs. support oriented. Furthermore, the cost and time of
 // Activities per Category can be calculated.
 type Category struct {
@@ -125,10 +125,10 @@ type CategoryValue struct {
 	// as such and contains the CategoryValue.
 	category *Category
 
-	// The FlowElements attribute identifies all of the elements (e.g., Events,
+	// The BaseElements attribute identifies all of the elements (e.g., Events,
 	// Activities, Gateways, and Artifacts) that are within the boundaries of
 	// the Group.
-	// Map uses FlowElement Id as a key.
+	// Map uses BaseElement Id as a key.
 	categorizedElements map[string]flow.Element
 }
 
@@ -153,9 +153,9 @@ func (cv *CategoryValue) Category() *Category {
 	return cv.category
 }
 
-// AddFlowElement adds FlowElements to the CategoryValue.
-// It returns a number of added FlowElements
-func (cv *CategoryValue) AddFlowElement(fee ...flow.Element) int {
+// AddBaseElement adds BaseElements to the CategoryValue.
+// It returns a number of added BaseElements
+func (cv *CategoryValue) AddBaseElement(fee ...flow.Element) int {
 	if cv.categorizedElements == nil {
 		cv.categorizedElements = map[string]flow.Element{}
 	}
@@ -175,8 +175,8 @@ func (cv *CategoryValue) AddFlowElement(fee ...flow.Element) int {
 	return n
 }
 
-// RemoveFlowElement removes FlowElements from the CategoryValue.
-func (cv *CategoryValue) RemoveFlowElement(feeID ...string) int {
+// RemoveBaseElement removes BaseElements from the CategoryValue.
+func (cv *CategoryValue) RemoveBaseElement(feeID ...string) int {
 	if cv.categorizedElements == nil {
 		cv.categorizedElements = map[string]flow.Element{}
 
@@ -200,8 +200,8 @@ func (cv *CategoryValue) RemoveFlowElement(feeID ...string) int {
 	return n
 }
 
-// FlowElements returns a list of categorized FlowElements from CategoryValue.
-func (cv *CategoryValue) FlowElements() []flow.Element {
+// BaseElements returns a list of categorized BaseElements from CategoryValue.
+func (cv *CategoryValue) BaseElements() []flow.Element {
 	fee := []flow.Element{}
 
 	if cv.categorizedElements == nil {

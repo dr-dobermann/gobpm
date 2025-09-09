@@ -23,7 +23,7 @@ type Property struct {
 func NewProperty(
 	name string,
 	item *ItemDefinition,
-	state *DataState,
+	state *SrcState,
 	baseOpts ...options.Option,
 ) (*Property, error) {
 	name = strings.TrimSpace(name)
@@ -52,7 +52,7 @@ func NewProperty(
 func MustProperty(
 	name string,
 	item *ItemDefinition,
-	state *DataState,
+	state *SrcState,
 	_ ...options.Option,
 ) *Property {
 	p, err := NewProperty(name, item, state)

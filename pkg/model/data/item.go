@@ -187,13 +187,13 @@ type ItemAwareElement struct {
 	// ItemAwareElement.
 	subject *ItemDefinition
 
-	dataState DataState
+	dataState SrcState
 }
 
 // NewItemAwareElement creates a new DataAwareItem and returns its pointer.
 func NewItemAwareElement(
 	item *ItemDefinition,
-	state *DataState,
+	state *SrcState,
 	baseOpts ...options.Option,
 ) (*ItemAwareElement, error) {
 	if item == nil {
@@ -207,8 +207,8 @@ func NewItemAwareElement(
 		if UnavailableDataState == nil {
 			return nil,
 				errs.New(
-					errs.M("default DataStates are not set.\n"+
-						"if you need to use default DataStates, "+
+					errs.M("default SrcStates are not set.\n"+
+						"if you need to use default SrcStates, "+
 						"run data.CreateDefaultStates"),
 					errs.C(errorClass, errs.BulidingFailed))
 		}
@@ -233,7 +233,7 @@ func NewItemAwareElement(
 // or panics on failure.
 func MustItemAwareElement(
 	item *ItemDefinition,
-	state *DataState,
+	state *SrcState,
 	baseOpts ...options.Option,
 ) *ItemAwareElement {
 	iae, err := NewItemAwareElement(item, state, baseOpts...)
@@ -255,7 +255,7 @@ func NewIAE(
 	opts ...options.Option,
 ) (*ItemAwareElement, error) {
 	iaeC := iaeConfig{
-		state: UndefinedDataState,
+		state: UndefinedSrcState,
 	}
 
 	ee := []error{}
@@ -287,13 +287,13 @@ func NewIAE(
 	return iaeC.newIAE()
 }
 
-// State returns a copy of the ItemAwareElement DataState.
-func (iae *ItemAwareElement) State() DataState {
+// State returns a copy of the ItemAwareElement SrcState.
+func (iae *ItemAwareElement) State() SrcState {
 	return iae.dataState
 }
 
 // UpdateState sets new state for the ItemAwareElement.
-func (iae *ItemAwareElement) UpdateState(newState *DataState) error {
+func (iae *ItemAwareElement) UpdateState(newState *SrcState) error {
 	if newState == nil {
 		return errs.New(
 			errs.M("empty data state"),

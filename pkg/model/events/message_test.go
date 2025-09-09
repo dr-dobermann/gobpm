@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
@@ -26,7 +26,7 @@ func TestNewMessageEventDefintion(t *testing.T) {
 	t.Run(
 		"normal",
 		func(t *testing.T) {
-			msg := common.MustMessage("test_message",
+			msg := bpmncommon.MustMessage("test_message",
 				data.MustItemDefinition(
 					values.NewVariable(42),
 					foundation.WithID("42")))
@@ -48,7 +48,7 @@ func TestNewMessageEventDefintion(t *testing.T) {
 		func(t *testing.T) {
 			require.NoError(t, data.CreateDefaultStates())
 
-			msg := common.MustMessage("test_message",
+			msg := bpmncommon.MustMessage("test_message",
 				data.MustItemDefinition(values.NewVariable(42)),
 				foundation.WithID("42"))
 
@@ -70,7 +70,7 @@ func TestNewMessageEventDefintion(t *testing.T) {
 		func(t *testing.T) {
 			require.NoError(t, data.CreateDefaultStates())
 
-			msg := common.MustMessage("test_message",
+			msg := bpmncommon.MustMessage("test_message",
 				data.MustItemDefinition(
 					values.NewVariable(42),
 					foundation.WithID("42")))

@@ -22,13 +22,13 @@ const (
 	DataObjectElement ElementType = "DataObject"
 	// NodeElement represents a node element type.
 	NodeElement ElementType = "Node"
-	// SequenceFlowElement represents a sequence flow element type.
-	SequenceFlowElement ElementType = "SequenceFlow"
+	// SequenceBaseElement represents a sequence flow element type.
+	SequenceBaseElement ElementType = "SequenceFlow"
 )
 
 // Validate checks if t belongs to ElementType.
 func (t ElementType) Validate() error {
-	if t != NodeElement && t != SequenceFlowElement {
+	if t != NodeElement && t != SequenceBaseElement {
 		return errs.New(
 			errs.M("invalid ElementType: %q", t),
 			errs.C(errorClass, errs.TypeCastingError))
@@ -38,7 +38,7 @@ func (t ElementType) Validate() error {
 }
 
 // Element is the abstract super class for all elements that can appear in
-// a Process flow, which are FlowNodes, which consist of Activities,
+// a Process flow, which are BaseNodes, which consist of Activities,
 // Choreography Activities, Gateways, and Events, Data Objects, Data
 // Associations, and Sequence Flows.
 type Element interface {
@@ -51,9 +51,9 @@ type Element interface {
 	// Element.
 	// DEV_NOTE: Since the CategoryValues is used only for visually grouping
 	//       	 Elements visually in Group and to eleminate ciclyc imports
-	//           bidirectional link between FlowElement and CategoryValue
+	//           bidirectional link between BaseElement and CategoryValue
 	//           updated to uni-directional link from CategoryValue to
-	//           FlowElement.
+	//           BaseElement.
 	// Categories []*artifacts.CategoryValue
 
 	// Container consisted the element.
@@ -71,7 +71,7 @@ type Element interface {
 
 // Container is an abstract super class for BPMN diagrams (or
 // views) and defines the superset of elements that are contained in those
-// diagrams. Basically, a ElementsContainer contains FlowElements, which
+// diagrams. Basically, a ElementsContainer contains BaseElements, which
 // are Events, Gateways, Sequence Flows, Activities, and Choreography
 // Activities.
 //
@@ -87,39 +87,39 @@ type Container interface {
 }
 
 // ============================================================================
-//                               FlowElement
+//                               BaseElement
 // ============================================================================
 
-// FlowElement is a base class for all flowing elements.
-type FlowElement struct {
+// BaseElement is a base class for all flowing elements.
+type BaseElement struct {
 	foundation.BaseElement
 
 	name      string
 	container Container
 }
 
-// NewFlowElement creates a new FlowElement with the given name and options.
-func NewFlowElement(name string, opts ...options.Option) (*FlowElement, error) {
+// NewBaseElement creates a new BaseElement with the given name and options.
+func NewBaseElement(name string, opts ...options.Option) (*BaseElement, error) {
 	be, err := foundation.NewBaseElement(opts...)
 	if err != nil {
 		return nil,
 			fmt.Errorf("BaseElement building failed: %w", err)
 	}
 
-	return &FlowElement{
+	return &BaseElement{
 			BaseElement: *be,
 			name:        name,
 		},
 		nil
 }
 
-// Name returns the name of the FlowElement.
-func (fe *FlowElement) Name() string {
+// Name returns the name of the BaseElement.
+func (fe *BaseElement) Name() string {
 	return fe.name
 }
 
 // BindTo adds SequenceFlow sf into Container c
-func (fe *FlowElement) BindTo(c Container) error {
+func (fe *BaseElement) BindTo(c Container) error {
 	if c == nil {
 		return errs.New(
 			errs.M("container couldn't be empty"),
@@ -141,7 +141,7 @@ func (fe *FlowElement) BindTo(c Container) error {
 
 // Unbind unbinds SequenceFlow from current container.
 // if sf isn't binded to any container, error will be returned.
-func (fe *FlowElement) Unbind() error {
+func (fe *BaseElement) Unbind() error {
 	if fe.container == nil {
 		return errs.New(
 			errs.M("flow doesn't belong to any container"),
@@ -154,14 +154,14 @@ func (fe *FlowElement) Unbind() error {
 }
 
 // Container returns pointer on container which consists of sf.
-func (fe *FlowElement) Container() Container {
+func (fe *BaseElement) Container() Container {
 	return fe.container
 }
 
-// EType returns invalid element type for generic FlowElement.
+// EType returns invalid element type for generic BaseElement.
 // Every Element should implement itsown EType.
-func (fe *FlowElement) EType() ElementType {
-	errs.Panic("couldn't use Type for generic FlowElement")
+func (fe *BaseElement) EType() ElementType {
+	errs.Panic("couldn't use Type for generic BaseElement")
 
 	return InvalidElement
 }
@@ -170,5 +170,5 @@ func (fe *FlowElement) EType() ElementType {
 
 // check interfaces
 var (
-	_ Element = (*FlowElement)(nil)
+	_ Element = (*BaseElement)(nil)
 )

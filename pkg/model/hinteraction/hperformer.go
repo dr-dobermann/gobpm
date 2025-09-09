@@ -1,4 +1,4 @@
-package human_interaction
+package hinteraction
 
 import "github.com/dr-dobermann/gobpm/pkg/model/foundation"
 

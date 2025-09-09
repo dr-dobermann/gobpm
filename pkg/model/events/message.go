@@ -2,7 +2,7 @@ package events
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -16,7 +16,7 @@ type MessageEventDefinition struct {
 
 	// The Message MUST be supplied (if the isExecutable attribute of the
 	// Process is set to true).
-	message *common.Message
+	message *bpmncommon.Message
 
 	operation *service.Operation
 }
@@ -24,7 +24,7 @@ type MessageEventDefinition struct {
 // NewMessageEventDefintion creates a new MessageEventDefinition and
 // returns its pointer. If nil message was given then error returned.
 func NewMessageEventDefintion(
-	msg *common.Message,
+	msg *bpmncommon.Message,
 	operation *service.Operation,
 	baseOpts ...options.Option,
 ) (*MessageEventDefinition, error) {
@@ -50,7 +50,7 @@ func NewMessageEventDefintion(
 // MustMessageEventDefinition returns new MessageEventDefinition. If there is
 // error occurred, then panic fired.
 func MustMessageEventDefinition(
-	msg *common.Message,
+	msg *bpmncommon.Message,
 	operation *service.Operation,
 	baseOpts ...options.Option,
 ) *MessageEventDefinition {
@@ -63,7 +63,7 @@ func MustMessageEventDefinition(
 }
 
 // Message returns a message of the MessageEventDefinition.
-func (med *MessageEventDefinition) Message() *common.Message {
+func (med *MessageEventDefinition) Message() *bpmncommon.Message {
 	return med.message
 }
 
@@ -122,7 +122,7 @@ func (med *MessageEventDefinition) CloneEvent(
 		iDef = d.ItemDefinition()
 	}
 
-	msg, err := common.NewMessage(
+	msg, err := bpmncommon.NewMessage(
 		med.message.Name(),
 		iDef,
 		foundation.WithID(med.message.ID()))

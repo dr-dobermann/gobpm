@@ -2,7 +2,7 @@
 package interactor
 
 import (
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
@@ -19,7 +19,7 @@ type (
 
 		Roles() []*hi.ResourceRole
 
-		Outputs() []*common.ResourceParameter
+		Outputs() []*bpmncommon.ResourceParameter
 	}
 
 	// Registrator is an interface implemented by objects

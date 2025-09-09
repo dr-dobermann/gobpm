@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/dr-dobermann/gobpm/generated/mockdata"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
@@ -17,7 +17,7 @@ import (
 )
 
 func TestNewStartEvent(t *testing.T) {
-	msg := common.MustMessage(
+	msg := bpmncommon.MustMessage(
 		"message",
 		data.MustItemDefinition(nil))
 
@@ -32,7 +32,7 @@ func TestNewStartEvent(t *testing.T) {
 		data.MustItemDefinition(nil))
 	require.NoError(t, err)
 
-	er, err := common.NewError(
+	er, err := bpmncommon.NewError(
 		"test_error",
 		"test_error_code",
 		data.MustItemDefinition(values.NewVariable[int](42)))

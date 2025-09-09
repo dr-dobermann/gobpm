@@ -2,7 +2,7 @@ package events
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -14,13 +14,13 @@ type ErrorEventDefinition struct {
 	definition
 
 	// If the trigger is an Error, then an Error payload MAY be provided.
-	err *common.Error
+	err *bpmncommon.Error
 }
 
 // NewErrorEventDefinition creates a new ErrorEventDefinition and returns
 // its pointer.
 func NewErrorEventDefinition(
-	cErr *common.Error,
+	cErr *bpmncommon.Error,
 	baseOpts ...options.Option,
 ) (*ErrorEventDefinition, error) {
 	if cErr == nil {
@@ -42,7 +42,7 @@ func NewErrorEventDefinition(
 }
 
 // Error returns the ErrorEventDefinition error structure.
-func (eed *ErrorEventDefinition) Error() *common.Error {
+func (eed *ErrorEventDefinition) Error() *bpmncommon.Error {
 	return eed.err
 }
 
@@ -98,7 +98,7 @@ func (eed *ErrorEventDefinition) CloneEvent(
 		iDef = d.ItemDefinition()
 	}
 
-	e, err := common.NewError(
+	e, err := bpmncommon.NewError(
 		eed.err.Name(),
 		eed.err.ErrorCode(),
 		iDef,

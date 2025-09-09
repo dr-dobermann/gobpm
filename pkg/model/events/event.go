@@ -91,7 +91,7 @@ import (
 // Event catches a trigger. All Start Events and some Intermediate Events
 // are catching Events.
 type Event struct {
-	flow.FlowNode
+	flow.BaseNode
 
 	// Modeler-defined properties MAY be added to an Event. These properties are
 	// contained within the Event.
@@ -135,13 +135,13 @@ func newEvent(
 	defs []flow.EventDefinition,
 	baseOpts ...options.Option,
 ) (*Event, error) {
-	fn, err := flow.NewFlowNode(name, baseOpts...)
+	fn, err := flow.NewBaseNode(name, baseOpts...)
 	if err != nil {
 		return nil, err
 	}
 
 	e := Event{
-		FlowNode:    *fn,
+		BaseNode:    *fn,
 		properties:  append([]*data.Property{}, props...),
 		definitions: append([]flow.EventDefinition{}, defs...),
 		triggers:    *set.New[flow.EventTrigger](),
@@ -174,7 +174,7 @@ func (e Event) HasTrigger(t flow.EventTrigger) bool {
 	return e.triggers.Has(t)
 }
 
-// NodeType implements flow.FlowNode interface for the Event.
+// NodeType implements flow.BaseNode interface for the Event.
 func (e Event) NodeType() flow.NodeType {
 	return flow.EventNodeType
 }

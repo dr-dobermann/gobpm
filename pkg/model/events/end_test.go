@@ -8,7 +8,7 @@ import (
 	"github.com/dr-dobermann/gobpm/generated/mockrenv"
 	"github.com/dr-dobermann/gobpm/generated/mockscope"
 	"github.com/dr-dobermann/gobpm/internal/scope"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
@@ -26,7 +26,7 @@ func TestNewEndEvent(t *testing.T) {
 	cancEd, err := events.NewCancelEventDefinition()
 	require.NoError(t, err)
 
-	msg := common.MustMessage(
+	msg := bpmncommon.MustMessage(
 		"message",
 		data.MustItemDefinition(
 			values.NewVariable(23),
@@ -42,7 +42,7 @@ func TestNewEndEvent(t *testing.T) {
 	sigEd, err := events.NewSignalEventDefinition(sig)
 	require.NoError(t, err)
 
-	er, err := common.NewError(
+	er, err := bpmncommon.NewError(
 		"test_error",
 		"test_error_code",
 		data.MustItemDefinition(

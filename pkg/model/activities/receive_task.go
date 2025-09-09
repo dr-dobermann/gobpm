@@ -1,7 +1,7 @@
 package activities
 
 import (
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
 
@@ -25,7 +25,7 @@ type ReceiveTask struct {
 	// However, the display of the Message Flows is NOT REQUIRED. The Message is
 	// applied to all incoming Message Flows, but can arrive for only one (1) of
 	// the incoming Message Flows for a single instance of the Task.
-	Message *common.Message
+	Message *bpmncommon.Message
 
 	// Receive Tasks can be defined as the instantiation mechanism for the
 	// Process with the instantiate attribute. This attribute MAY be set to true

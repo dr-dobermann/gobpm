@@ -185,7 +185,7 @@ func (sc *startConfig) setMessage(med *MessageEventDefinition) error {
 	if id := med.Message().Item(); id != nil {
 		ds := data.ReadyDataState
 		if id.Structure() == nil {
-			ds = data.UndefinedDataState
+			ds = data.UndefinedSrcState
 		}
 
 		iae, err := data.NewItemAwareElement(id, ds)

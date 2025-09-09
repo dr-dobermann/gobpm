@@ -8,21 +8,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDataState(t *testing.T) {
+func TestSrcState(t *testing.T) {
 	t.Run("empty name",
 		func(t *testing.T) {
-			_, err := data.NewDataState("   ")
+			_, err := data.NewSrcState("   ")
 			require.Error(t, err)
 
 			require.Panics(t,
 				func() {
-					_ = data.MustDataState("")
+					_ = data.MustSrcState("")
 				})
 		})
 
 	t.Run("name and id",
 		func(t *testing.T) {
-			ds, err := data.NewDataState(
+			ds, err := data.NewSrcState(
 				"test_ds",
 				foundation.WithID("test_ds_id"))
 
@@ -35,7 +35,7 @@ func TestDataState(t *testing.T) {
 
 	t.Run("name and invalid option",
 		func(t *testing.T) {
-			ds, err := data.NewDataState(
+			ds, err := data.NewSrcState(
 				"bad ds",
 				data.WithKind(data.PhysicalKind))
 
@@ -51,7 +51,7 @@ func TestDataState(t *testing.T) {
 
 			require.NoError(t, err)
 			require.NotNil(t, data.UnavailableDataState)
-			t.Log("defalut DataStates created",
+			t.Log("defalut SrcStates created",
 				data.UnavailableDataState.Name())
 		})
 }

@@ -9,7 +9,7 @@ import (
 	"github.com/dr-dobermann/gobpm/generated/mockrenv"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
@@ -104,11 +104,11 @@ func TestServiceTaskDefinition(t *testing.T) {
 func TestSrvTaskExec(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
-	in := common.MustMessage("user name",
+	in := bpmncommon.MustMessage("user name",
 		data.MustItemDefinition(values.NewVariable(""),
 			foundation.WithID("user_name")))
 
-	out := common.MustMessage("hello string",
+	out := bpmncommon.MustMessage("hello string",
 		data.MustItemDefinition(values.NewVariable(""),
 			foundation.WithID("hello_str")))
 

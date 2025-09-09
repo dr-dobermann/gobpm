@@ -28,7 +28,7 @@ const errorClass = "DATA_OBJECTS_ERROR"
 type DataObject struct {
 	data.ItemAwareElement
 
-	flow.FlowElement
+	flow.BaseElement
 
 	// Defines if the Data Object represents a collection of elements. It is
 	// needed when no itemDefinition is referenced. If an itemDefinition is
@@ -52,7 +52,7 @@ type DataObject struct {
 func New(
 	name string,
 	idef *data.ItemDefinition,
-	state *data.DataState,
+	state *data.SrcState,
 	baseOpts ...options.Option,
 ) (*DataObject, error) {
 	name = strings.TrimSpace(name)
@@ -76,15 +76,15 @@ func New(
 			fmt.Errorf("ItemAwareElement building failed: %w", err)
 	}
 
-	fe, err := flow.NewFlowElement(name, baseOpts...)
+	fe, err := flow.NewBaseElement(name, baseOpts...)
 	if err != nil {
 		return nil,
-			fmt.Errorf("FlowElement building failed: %w", err)
+			fmt.Errorf("BaseElement building failed: %w", err)
 	}
 
 	do := DataObject{
 		ItemAwareElement: *iae,
-		FlowElement:      *fe,
+		BaseElement:      *fe,
 		outgoing:         map[string]*data.Association{},
 	}
 
@@ -191,7 +191,7 @@ func (do *DataObject) AssociateTarget(
 
 // Name returns the DataObject name.
 func (do *DataObject) Name() string {
-	return do.FlowElement.Name()
+	return do.BaseElement.Name()
 }
 
 // Type returns the element type of the DataObject.
@@ -203,14 +203,14 @@ func (do *DataObject) Type() flow.ElementType {
 
 // Docs returns the documentation of the DataObject.
 func (do *DataObject) Docs() []*foundation.Documentation {
-	return do.FlowElement.Docs()
+	return do.BaseElement.Docs()
 }
 
 // -------------------- foundation.Identifyer ---------------------------------
 
 // ID returns the identifier of the DataObject.
 func (do *DataObject) ID() string {
-	return do.FlowElement.ID()
+	return do.BaseElement.ID()
 }
 
 // ------------------------ flow.DataNode -------------------------------------

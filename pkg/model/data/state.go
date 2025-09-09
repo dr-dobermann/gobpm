@@ -18,32 +18,32 @@ const (
 )
 
 var (
-	// UndefinedDataState represents the undefined data state.
-	UndefinedDataState *DataState
+	// UndefinedSrcState represents the undefined data state.
+	UndefinedSrcState *SrcState
 	// UnavailableDataState represents the unavailable data state.
-	UnavailableDataState *DataState
+	UnavailableDataState *SrcState
 	// ReadyDataState represents the ready data state.
-	ReadyDataState *DataState
+	ReadyDataState *SrcState
 )
 
-// DataState represents a BPMN data state element.
-// Data Object elements can optionally reference a DataState element, which is
+// SrcState represents a BPMN data state element.
+// Data Object elements can optionally reference a SrcState element, which is
 // the state of the data contained in the Data Object. The definition of these
 // states, e.g., possible values and any specific semantic are out of scope of
 // this International Standard. Therefore, BPMN adopters can use the State
 // element and the BPMN extensibility capabilities to define their states.
-type DataState struct {
+type SrcState struct {
 	foundation.BaseElement
 
 	name string
 }
 
-// NewDataState creates a new DataState and returns its pointer on success
+// NewSrcState creates a new SrcState and returns its pointer on success
 // or error on failure.
-func NewDataState(
+func NewSrcState(
 	name string,
 	baseOpts ...options.Option,
-) (*DataState, error) {
+) (*SrcState, error) {
 	name = strings.Trim(name, " ")
 	if name == "" {
 		return nil,
@@ -57,47 +57,47 @@ func NewDataState(
 		return nil, err
 	}
 
-	return &DataState{
+	return &SrcState{
 		BaseElement: *be,
 		name:        name,
 	}, nil
 }
 
-// MustDataState tries to create DataState and returns its pointer on success or
+// MustSrcState tries to create SrcState and returns its pointer on success or
 // panics on failure.
-func MustDataState(
+func MustSrcState(
 	name string,
 	baseOpts ...options.Option,
-) *DataState {
-	ds, err := NewDataState(name, baseOpts...)
+) *SrcState {
+	ds, err := NewSrcState(name, baseOpts...)
 	if err != nil {
-		errs.Panic("DataState creation failed: " + err.Error())
+		errs.Panic("SrcState creation failed: " + err.Error())
 	}
 
 	return ds
 }
 
-// Name returns the DataState name.
-func (ds DataState) Name() string {
+// Name returns the SrcState name.
+func (ds SrcState) Name() string {
 	return ds.name
 }
 
-// CreateDefaultStates creates default DataStates if need be.
+// CreateDefaultStates creates default SrcStates if need be.
 func CreateDefaultStates() error {
 	// do nothing if values already set
-	if UndefinedDataState != nil &&
+	if UndefinedSrcState != nil &&
 		UnavailableDataState != nil &&
 		ReadyDataState != nil {
 		return nil
 	}
 
-	dss := map[string]*DataState{
+	dss := map[string]*SrcState{
 		StateUndefined:   nil,
 		StateUnavailable: nil,
 		StateReady:       nil}
 
 	for sn := range dss {
-		ds, err := NewDataState(sn)
+		ds, err := NewSrcState(sn)
 		if err != nil {
 			return err
 		}
@@ -105,7 +105,7 @@ func CreateDefaultStates() error {
 		dss[sn] = ds
 	}
 
-	UndefinedDataState = dss[StateUndefined]
+	UndefinedSrcState = dss[StateUndefined]
 	UnavailableDataState = dss[StateUnavailable]
 	ReadyDataState = dss[StateReady]
 

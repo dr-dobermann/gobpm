@@ -148,7 +148,7 @@ func TestAssociations(t *testing.T) {
 						data.MustItemDefinition(
 							values.NewVariable(100),
 							foundation.WithID("value")),
-						data.UndefinedDataState)),
+						data.UndefinedSrcState)),
 				data.WithSource(
 					data.MustItemAwareElement(
 						data.MustItemDefinition(

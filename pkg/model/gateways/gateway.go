@@ -87,7 +87,7 @@ func (d GDirection) Validate() error {
 // take two sequential Gateways to first converge and then to diverge the
 // Sequence Flows.
 type Gateway struct {
-	flow.FlowNode
+	flow.BaseNode
 
 	direction GDirection
 

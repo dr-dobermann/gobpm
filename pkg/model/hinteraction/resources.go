@@ -1,10 +1,10 @@
-package human_interaction
+package hinteraction
 
 import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -18,7 +18,7 @@ type ResourceRole struct {
 
 	// The Resource that is associated with Activity. Should not be specified
 	// when resourceAssignmentExpression is provided.
-	resource *common.Resource
+	resource *bpmncommon.Resource
 
 	// This defines the Expression used for the Resource assignment. Should
 	// not be specified when a resourceRef is provided.
@@ -33,7 +33,7 @@ type ResourceRole struct {
 // success or error on failure.
 func NewResourceRole(
 	name string,
-	res *common.Resource,
+	res *bpmncommon.Resource,
 	assignExpr *ResourceAssignmentExpression,
 	pBinding []ResourceParameterBinding,
 	baseOpts ...options.Option,
@@ -76,7 +76,7 @@ func NewResourceRole(
 // panics on failure.
 func MustResourceRole(
 	name string,
-	res *common.Resource,
+	res *bpmncommon.Resource,
 	assignExpr *ResourceAssignmentExpression,
 	pBinding []ResourceParameterBinding,
 	baseOpts ...options.Option,
@@ -122,7 +122,7 @@ type ResourceParameterBinding struct {
 	foundation.BaseElement
 
 	// Reference to the parameter defined by the Resource.
-	Parameter *common.ResourceParameter
+	Parameter *bpmncommon.ResourceParameter
 
 	// The Expression that evaluates the value used to bind the
 	// ResourceParameter.

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -46,9 +46,9 @@ func (e *exctr) Execute(
 func TestOperation(t *testing.T) {
 	// -------------------- Initialization -------------------------------------
 	// test messages building
-	in := common.MustMessage("test_input_msg",
+	in := bpmncommon.MustMessage("test_input_msg",
 		data.MustItemDefinition(values.NewVariable(42)))
-	out := common.MustMessage("test_out_msg",
+	out := bpmncommon.MustMessage("test_out_msg",
 		data.MustItemDefinition(values.NewVariable(100)))
 
 	errList := []string{
