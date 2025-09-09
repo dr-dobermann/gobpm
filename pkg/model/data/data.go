@@ -18,8 +18,8 @@ type Data interface {
 	// Value returns the Value of the object.
 	Value() Value
 
-	// State returns current DataState of the object.
-	State() DataState
+	// State returns current SrcState of the object.
+	State() SrcState
 
 	// ItemDefinition returns the Data's underlaying ItemDefinition.
 	ItemDefinition() *ItemDefinition

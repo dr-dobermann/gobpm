@@ -10,7 +10,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
-// *****************************************************************************
+// Signal represents a signal event.
 type Signal struct {
 	foundation.BaseElement
 
@@ -57,7 +57,7 @@ func (s *Signal) Item() *data.ItemDefinition {
 	return s.structure
 }
 
-// *****************************************************************************
+// SignalEventDefinition represents a signal event definition.
 type SignalEventDefinition struct {
 	definition
 
@@ -116,13 +116,13 @@ func (*SignalEventDefinition) Type() flow.EventTrigger {
 }
 
 // CheckItemDefinition check if definition is related with
-// data.ItemDefinition with iDefId Id.
-func (sed *SignalEventDefinition) CheckItemDefinition(iDefId string) bool {
+// data.ItemDefinition with iDefID Id.
+func (sed *SignalEventDefinition) CheckItemDefinition(iDefID string) bool {
 	if sed.signal.structure == nil {
 		return false
 	}
 
-	return sed.signal.structure.ID() == iDefId
+	return sed.signal.structure.ID() == iDefID
 }
 
 // GetItemList returns a list of data.ItemDefinition the EventDefinition

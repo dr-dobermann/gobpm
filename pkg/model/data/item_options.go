@@ -94,13 +94,14 @@ func (ic *itemConfig) Validate() error {
 
 type (
 	iaeConfig struct {
-		state *DataState
+		state *SrcState
 		iDef  *ItemDefinition
 
 		baseOpts []options.Option
 	}
 
-	iaeOption func(cfg *iaeConfig) error
+	// IAEOption is a function type for configuring ItemAwareElement
+	IAEOption func(cfg *iaeConfig) error
 )
 
 // newIAE creates a new IAE from the iaeConfig.
@@ -117,7 +118,7 @@ func (iaeC *iaeConfig) newIAE() (*ItemAwareElement, error) {
 }
 
 // WithState sets current state of the IAE.
-func WithState(ds *DataState) iaeOption {
+func WithState(ds *SrcState) IAEOption {
 	f := func(cfg *iaeConfig) error {
 		if ds == nil {
 			return fmt.Errorf("empty data state")
@@ -128,11 +129,11 @@ func WithState(ds *DataState) iaeOption {
 		return nil
 	}
 
-	return iaeOption(f)
+	return IAEOption(f)
 }
 
 // WithIDefinition creqtes a new ItemDefinition for IAE.
-func WithIDefinition(value Value, opts ...options.Option) iaeOption {
+func WithIDefinition(value Value, opts ...options.Option) IAEOption {
 	f := func(cfg *iaeConfig) error {
 		iDef, err := NewItemDefinition(value, opts...)
 		if err != nil {
@@ -144,11 +145,11 @@ func WithIDefinition(value Value, opts ...options.Option) iaeOption {
 		return nil
 	}
 
-	return iaeOption(f)
+	return IAEOption(f)
 }
 
 // WithIDef sets actual ItemDefinition of IAE.
-func WithIDef(iDef *ItemDefinition) iaeOption {
+func WithIDef(iDef *ItemDefinition) IAEOption {
 	f := func(cfg *iaeConfig) error {
 		if iDef == nil {
 			return fmt.Errorf("no ItemDefinition")
@@ -159,13 +160,13 @@ func WithIDef(iDef *ItemDefinition) iaeOption {
 		return nil
 	}
 
-	return iaeOption(f)
+	return IAEOption(f)
 }
 
 // ------------------- options.Option interface -------------------------------
 
-// Apply runs iaeOption on given cfg if its cast to iaeConfig.
-func (iaeO iaeOption) Apply(cfg options.Configurator) error {
+// Apply runs IAEOption on given cfg if its cast to iaeConfig.
+func (iaeO IAEOption) Apply(cfg options.Configurator) error {
 	if iaeC, ok := cfg.(*iaeConfig); ok {
 		return iaeO(iaeC)
 	}
@@ -181,7 +182,7 @@ func (iaeC *iaeConfig) Validate() error {
 		return fmt.Errorf("no ItemDefinition")
 	}
 
-	if iaeC.iDef.Structure() == nil && iaeC.state != UndefinedDataState {
+	if iaeC.iDef.Structure() == nil && iaeC.state != UndefinedSrcState {
 		return fmt.Errorf("invalid data state %q with empty ItemDefinition",
 			iaeC.state.name)
 	}
@@ -202,7 +203,8 @@ type (
 		AddIAE(iae *ItemAwareElement) error
 	}
 
-	iaeAdderOption func(cfg IAEAdder) error
+	// IAEAdderOption is a function type for adding ItemAwareElement
+	IAEAdderOption func(cfg IAEAdder) error
 )
 
 // WithIAE adds ItemAwareElement to the cfg which implements IAEAdder interface
@@ -213,7 +215,7 @@ type (
 //   - data.WithState
 //   - foundation.WithId
 //   - foundation.WithDoc
-func WithIAE(opts ...options.Option) iaeAdderOption {
+func WithIAE(opts ...options.Option) IAEAdderOption {
 	f := func(cfg IAEAdder) error {
 		iae, err := NewIAE(opts...)
 		if err != nil {
@@ -227,12 +229,13 @@ func WithIAE(opts ...options.Option) iaeAdderOption {
 		return nil
 	}
 
-	return iaeAdderOption(f)
+	return IAEAdderOption(f)
 }
 
 // ---------------------- options.Option interface ----------------------------
 
-func (iaeO iaeAdderOption) Apply(cfg options.Configurator) error {
+// Apply applies the IAEAdderOption to the provided configurator.
+func (iaeO IAEAdderOption) Apply(cfg options.Configurator) error {
 	if iaeC, ok := cfg.(IAEAdder); ok {
 		return iaeO(iaeC)
 	}

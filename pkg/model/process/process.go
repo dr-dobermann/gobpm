@@ -10,7 +10,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -34,7 +34,7 @@ type Process struct {
 
 	// DEV_NOTE: CallableElement should be implemented as interface so it
 	// shouldn't be used as a field or embedded struct.
-	// common.CallableElement
+	// bpmncommon.CallableElement
 
 	// DEV_NOTE: Container replaced by interface flow.Container
 	// flow.ElementsContainer
@@ -76,10 +76,10 @@ type Process struct {
 	// CorrelationSubscriptions are used to correlate incoming Messages against
 	// data in the Process context. A Process MAY contain several
 	// correlationSubscriptions.
-	CorrelationSubscriptions []*common.CorrelationSubscription
+	CorrelationSubscriptions []*bpmncommon.CorrelationSubscription
 
-	// nodes keeps all flow.FlowNodes of the Process.
-	// it indexed by FlowNode id.
+	// nodes keeps all flow.BaseNodes of the Process.
+	// it indexed by BaseNode id.
 	nodes map[string]flow.Node
 
 	flows map[string]*flow.SequenceFlow
@@ -142,7 +142,7 @@ func (p *Process) Properties() []*data.Property {
 	return maps.Values(p.properties)
 }
 
-// addNode adds non-empty unique FlowNode n to the process p.
+// addNode adds non-empty unique BaseNode n to the process p.
 func (p *Process) addNode(n flow.Node) error {
 	if _, ok := p.nodes[n.ID()]; ok {
 		return errs.New(
@@ -156,7 +156,7 @@ func (p *Process) addNode(n flow.Node) error {
 	return n.BindTo(p)
 }
 
-// Nodes returns a slice of Process flow.FlowNodes of one of types.
+// Nodes returns a slice of Process flow.BaseNodes of one of types.
 // if types aren't specified then all nodes returned.
 func (p *Process) Nodes(types ...flow.NodeType) []flow.Node {
 	if err := flow.ValidateNodeTypes(types...); err != nil {
@@ -224,7 +224,7 @@ func (p *Process) Add(e flow.Element) error {
 	case flow.NodeElement:
 		return p.addNode(e.(flow.Node))
 
-	case flow.SequenceFlowElement:
+	case flow.SequenceBaseElement:
 		return p.addFlow(e.(*flow.SequenceFlow))
 	}
 

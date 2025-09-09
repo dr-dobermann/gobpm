@@ -2,7 +2,7 @@ package process
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -80,7 +80,7 @@ func (pc *processConfig) newProcess() (*Process, error) {
 		BaseElement:              *be,
 		properties:               pc.props,
 		roles:                    pc.roles,
-		CorrelationSubscriptions: []*common.CorrelationSubscription{},
+		CorrelationSubscriptions: []*bpmncommon.CorrelationSubscription{},
 		nodes:                    map[string]flow.Node{},
 		flows:                    map[string]*flow.SequenceFlow{},
 	}

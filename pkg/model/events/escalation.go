@@ -10,8 +10,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
-// *****************************************************************************
-//
 // Escalation represents payload of EscalationEventDefinition.
 type Escalation struct {
 	foundation.BaseElement
@@ -104,7 +102,7 @@ func (e *Escalation) Item() *data.ItemDefinition {
 	return e.structure
 }
 
-// *****************************************************************************
+// EscalationEventDefinition represents an escalation event definition.
 type EscalationEventDefinition struct {
 	definition
 
@@ -146,21 +144,21 @@ func (eed *EscalationEventDefinition) Escalation() *Escalation {
 // ---------------- flow.EventDefinition interface -----------------------------
 
 // Type implememnts Definition interface for EscalationEventDefinition.
-func (e *EscalationEventDefinition) Type() flow.EventTrigger {
+func (eed *EscalationEventDefinition) Type() flow.EventTrigger {
 	return flow.TriggerEscalation
 }
 
 // CheckItemDefinition check if definition is related with
 // data.ItemDefinition with iDefId Id.
-func (eed *EscalationEventDefinition) CheckItemDefinition(iDefId string) bool {
+func (eed *EscalationEventDefinition) CheckItemDefinition(iDefID string) bool {
 	if eed.escalation.structure == nil {
 		return false
 	}
 
-	return eed.escalation.structure.ID() == iDefId
+	return eed.escalation.structure.ID() == iDefID
 }
 
-// GetItemList returns a list of data.ItemDefinition the EventDefinition
+// GetItemsList returns a list of data.ItemDefinition the EventDefinition
 // is based on.
 // If EventDefiniton isn't based on any data.ItemDefiniton, empty list
 // wil be returned.

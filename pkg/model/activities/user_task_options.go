@@ -6,7 +6,7 @@ import (
 	"slices"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -16,7 +16,7 @@ type (
 		name      string
 		renderers []hi.Renderer
 		taskOpts  []options.Option
-		outputs   []*common.ResourceParameter
+		outputs   []*bpmncommon.ResourceParameter
 	}
 
 	// UsrTaskOption represents a configuration option for UserTask
@@ -38,7 +38,7 @@ func (utc *usrTaskConfig) newUsrTask() (*UserTask, error) {
 				errs.E(err))
 	}
 
-	r, err := common.NewResource(utc.name, utc.outputs...)
+	r, err := bpmncommon.NewResource(utc.name, utc.outputs...)
 	if err != nil {
 		return nil,
 			errs.New(
@@ -85,13 +85,13 @@ func WithOutput(name, pType string, required bool) UsrTaskOption {
 	f := func(cfg *usrTaskConfig) error {
 		if slices.ContainsFunc(
 			cfg.outputs,
-			func(p *common.ResourceParameter) bool {
+			func(p *bpmncommon.ResourceParameter) bool {
 				return p.Name() == name
 			}) {
 			return fmt.Errorf("duplicate parameter %q", name)
 		}
 
-		p, err := common.NewResourceParameter(name, pType, required)
+		p, err := bpmncommon.NewResourceParameter(name, pType, required)
 		if err != nil {
 			return fmt.Errorf("couldn't create a parameter: %w", err)
 		}
@@ -106,6 +106,7 @@ func WithOutput(name, pType string, required bool) UsrTaskOption {
 
 // --------------------- options.Option interface ------------------------------
 
+// Apply applies the user task option to the provided configurator.
 func (uto UsrTaskOption) Apply(cfg options.Configurator) error {
 	if utc, ok := cfg.(*usrTaskConfig); ok {
 		return uto(utc)

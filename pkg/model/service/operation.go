@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -46,11 +46,11 @@ type Operation struct {
 
 	// This attribute specifies the input Message of the Operation. An Operation
 	// has exactly one input Message.
-	inMessage *common.Message
+	inMessage *bpmncommon.Message
 
 	// This attribute specifies the output Message of the Operation.
 	// An Operation has at most one input Message.
-	outMessage *common.Message
+	outMessage *bpmncommon.Message
 
 	// This attribute specifies errors that the Operation may return. An
 	// Operation MAY refer to zero or more Error elements.
@@ -58,7 +58,7 @@ type Operation struct {
 	// >>>>>  DEVNOTE: original BPMN2 errors functionatity fully covered by
 	// gobpm errs package. So errors will consists a list of error classes.
 	//
-	// errors []*common.Error
+	// errors []*bpmncommon.Error
 	errors *set.Set[string]
 
 	// This attribute allows to reference a concrete artifact in the underlying
@@ -71,7 +71,7 @@ type Operation struct {
 // error on failure.
 func NewOperation(
 	name string,
-	inMsg, outMsg *common.Message,
+	inMsg, outMsg *bpmncommon.Message,
 	implementor Implementor,
 	baseOpts ...options.Option,
 ) (*Operation, error) {
@@ -112,7 +112,7 @@ func NewOperation(
 // panics on failure.
 func MustOperation(
 	name string,
-	inMsg, outMsg *common.Message,
+	inMsg, outMsg *bpmncommon.Message,
 	implementor Implementor,
 	baseOpts ...options.Option,
 ) *Operation {
@@ -132,12 +132,12 @@ func (o *Operation) Name() string {
 }
 
 // IncomingMessage returns incoming Message of the Operation.
-func (o *Operation) IncomingMessage() *common.Message {
+func (o *Operation) IncomingMessage() *bpmncommon.Message {
 	return o.inMessage
 }
 
 // OutgoingMessage returns outgoing Message of the Operation.
-func (o *Operation) OutgoingMessage() *common.Message {
+func (o *Operation) OutgoingMessage() *bpmncommon.Message {
 	return o.outMessage
 }
 

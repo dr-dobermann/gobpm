@@ -23,7 +23,7 @@ type Property struct {
 func NewProperty(
 	name string,
 	item *ItemDefinition,
-	state *DataState,
+	state *SrcState,
 	baseOpts ...options.Option,
 ) (*Property, error) {
 	name = strings.TrimSpace(name)
@@ -52,7 +52,7 @@ func NewProperty(
 func MustProperty(
 	name string,
 	item *ItemDefinition,
-	state *DataState,
+	state *SrcState,
 	_ ...options.Option,
 ) *Property {
 	p, err := NewProperty(name, item, state)
@@ -65,7 +65,7 @@ func MustProperty(
 
 // NewProp creates a new Property with a name and the ItemAwareElement.
 // IAE is set up by WithIAE option.
-func NewProp(name string, iaeOpt iaeAdderOption) (*Property, error) {
+func NewProp(name string, iaeOpt IAEAdderOption) (*Property, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, fmt.Errorf("property should have non-empty name")
@@ -87,9 +87,9 @@ func NewProp(name string, iaeOpt iaeAdderOption) (*Property, error) {
 	return cfg.newProperty()
 }
 
-// MustProp creates and returns property with name and iaeAdderOption.
+// MustProp creates and returns property with name and IAEAdderOption.
 // If error occurs it panics.
-func MustProp(name string, iaeOpt iaeAdderOption) *Property {
+func MustProp(name string, iaeOpt IAEAdderOption) *Property {
 	p, err := NewProp(name, iaeOpt)
 	if err != nil {
 		errs.Panic(err)

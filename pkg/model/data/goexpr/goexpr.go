@@ -1,5 +1,5 @@
 // Package goexpr is a reference implementation of
-// common.FormalExpression interface to support go function
+// bpmncommon.FormalExpression interface to support go function
 // as FormalExpression evaluation core.
 package goexpr
 
@@ -20,7 +20,7 @@ const (
 // GExpFunc incapsulated the functional logic of the GoBpmExpression.
 type GExpFunc func(ctx context.Context, ds data.Source) (data.Value, error)
 
-// GExpression implements the common.FormalInterface.
+// GExpression implements the bpmncommon.FormalInterface.
 // It based on simple go function.
 type GExpression struct {
 	data.Expression
@@ -99,7 +99,7 @@ func Must(
 	return ge
 }
 
-// --------------- common.FormalExpression interface --------------------------
+// --------------- bpmncommon.FormalExpression interface --------------------------
 
 // Language returns the FormalExpression language in URI format.
 func (ge *GExpression) Language() string {

@@ -23,8 +23,8 @@ type (
 		eventType() eventConfigType
 	}
 
-	// option for event configuring.
-	eventOption func(cfg eventConfig) error
+	// EventOption is a function type for configuring events.
+	EventOption func(cfg eventConfig) error
 
 	// condigionAdder adds ConditionalEventDefinition into the event
 	// configuration.
@@ -98,8 +98,8 @@ type (
 	}
 )
 
-// Apply implements options.Option interface for the eventOption.
-func (eo eventOption) Apply(cfg options.Configurator) error {
+// Apply implements options.Option interface for the EventOption.
+func (eo EventOption) Apply(cfg options.Configurator) error {
 	if ec, ok := cfg.(eventConfig); ok {
 		return eo(ec)
 	}
@@ -110,7 +110,7 @@ func (eo eventOption) Apply(cfg options.Configurator) error {
 }
 
 // WithCancelTrigger adds a CancelEventDefinition into eventConfig.
-func WithCancelTrigger(ced *CancelEventDefinition) eventOption {
+func WithCancelTrigger(ced *CancelEventDefinition) EventOption {
 	f := func(cfg eventConfig) error {
 		if err := checkNil(ced,
 			"empty cancel event definition isn't allowed"); err != nil {
@@ -127,11 +127,11 @@ func WithCancelTrigger(ced *CancelEventDefinition) eventOption {
 			errs.C(errorClass, errs.TypeCastingError))
 	}
 
-	return eventOption(f)
+	return EventOption(f)
 }
 
 // WithCompensationTrigger adds a CompensationEventDefinition into eventConfig.
-func WithCompensationTrigger(ced *CompensationEventDefinition) eventOption {
+func WithCompensationTrigger(ced *CompensationEventDefinition) EventOption {
 	f := func(cfg eventConfig) error {
 		if err := checkNil(ced,
 			"empty compensation event definition isn't allowed"); err != nil {
@@ -148,11 +148,11 @@ func WithCompensationTrigger(ced *CompensationEventDefinition) eventOption {
 			errs.C(errorClass, errs.TypeCastingError))
 	}
 
-	return eventOption(f)
+	return EventOption(f)
 }
 
 // WithConditionalTrigger adds a ConditionalEventDefinition into eventConfig.
-func WithConditionalTrigger(ced *ConditionalEventDefinition) eventOption {
+func WithConditionalTrigger(ced *ConditionalEventDefinition) EventOption {
 	f := func(cfg eventConfig) error {
 		if err := checkNil(ced,
 			"empty conditional event definition isn't allowed"); err != nil {
@@ -169,11 +169,11 @@ func WithConditionalTrigger(ced *ConditionalEventDefinition) eventOption {
 			errs.C(errorClass, errs.TypeCastingError))
 	}
 
-	return eventOption(f)
+	return EventOption(f)
 }
 
 // WithErrorTrigger adds ErrorEventDefinition into the eventConfig.
-func WithErrorTrigger(eed *ErrorEventDefinition) eventOption {
+func WithErrorTrigger(eed *ErrorEventDefinition) EventOption {
 	f := func(cfg eventConfig) error {
 		if err := checkNil(eed,
 			"empty error definition isn't allowed"); err != nil {
@@ -190,11 +190,11 @@ func WithErrorTrigger(eed *ErrorEventDefinition) eventOption {
 			errs.C(errorClass, errs.TypeCastingError))
 	}
 
-	return eventOption(f)
+	return EventOption(f)
 }
 
 // WithEscalationTrigger adds EscalationEventDefinition into the eventConfig.
-func WithEscalationTrigger(eed *EscalationEventDefinition) eventOption {
+func WithEscalationTrigger(eed *EscalationEventDefinition) EventOption {
 	f := func(cfg eventConfig) error {
 		if err := checkNil(eed,
 			"empty escalation definition isn't allowed"); err != nil {
@@ -211,13 +211,13 @@ func WithEscalationTrigger(eed *EscalationEventDefinition) eventOption {
 			errs.C(errorClass, errs.TypeCastingError))
 	}
 
-	return eventOption(f)
+	return EventOption(f)
 }
 
 // WithMessageTrigger adds a MessageEventDefinition into eventConfig.
 func WithMessageTrigger(
 	med *MessageEventDefinition,
-) eventOption {
+) EventOption {
 	f := func(cfg eventConfig) error {
 		if err := checkNil(med,
 			"empty message definition isn't allowed"); err != nil {
@@ -234,11 +234,11 @@ func WithMessageTrigger(
 			errs.C(errorClass, errs.TypeCastingError))
 	}
 
-	return eventOption(f)
+	return EventOption(f)
 }
 
 // WithSignalTrigger adds a SignalEventDefinition into eventConfig.
-func WithSignalTrigger(sed *SignalEventDefinition) eventOption {
+func WithSignalTrigger(sed *SignalEventDefinition) EventOption {
 	f := func(cfg eventConfig) error {
 		if err := checkNil(sed,
 			"empty signal event definition isn't allowed"); err != nil {
@@ -255,11 +255,11 @@ func WithSignalTrigger(sed *SignalEventDefinition) eventOption {
 			errs.C(errorClass, errs.TypeCastingError))
 	}
 
-	return eventOption(f)
+	return EventOption(f)
 }
 
 // WithTimerTrigger adds a TimerEventDefinition into eventConfig.
-func WithTimerTrigger(ted *TimerEventDefinition) eventOption {
+func WithTimerTrigger(ted *TimerEventDefinition) EventOption {
 	f := func(cfg eventConfig) error {
 		if err := checkNil(ted,
 			"empty timer event definition isn't allowed"); err != nil {
@@ -276,7 +276,7 @@ func WithTimerTrigger(ted *TimerEventDefinition) eventOption {
 			errs.C(errorClass, errs.TypeCastingError))
 	}
 
-	return eventOption(f)
+	return EventOption(f)
 }
 
 // checkNil checks if v is a nil, and if so, returns error with errMsg.

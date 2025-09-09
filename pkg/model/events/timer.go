@@ -7,7 +7,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
-// *****************************************************************************
+// TimerEventDefinition represents a timer event definition.
 type TimerEventDefinition struct {
 	definition
 

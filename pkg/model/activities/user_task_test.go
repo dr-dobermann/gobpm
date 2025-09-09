@@ -10,7 +10,7 @@ import (
 	"github.com/dr-dobermann/gobpm/generated/mockrenv"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/hinteraction/consinp"
@@ -118,7 +118,7 @@ func TestNewUserTask(t *testing.T) {
 				{"age", "int"},
 			} {
 				if !slices.ContainsFunc(oo,
-					func(rp *common.ResourceParameter) bool {
+					func(rp *bpmncommon.ResourceParameter) bool {
 						return rp.Name() == o.name && rp.Type() == o.oType
 					}) {
 					t.Fatal("no output with name [", o.name, "] of type [", o.oType, "]")

@@ -16,13 +16,13 @@ type NodeType string
 
 const (
 	// InvalidNodeType represents an invalid node type.
-	InvalidNodeType  NodeType = "INVALID_NODE_TYPE"
+	InvalidNodeType NodeType = "INVALID_NODE_TYPE"
 	// ActivityNodeType represents an activity node type.
 	ActivityNodeType NodeType = "Activity"
 	// EventNodeType represents an event node type.
-	EventNodeType    NodeType = "Event"
+	EventNodeType NodeType = "Event"
 	// GatewayNodeType represents a gateway node type.
-	GatewayNodeType  NodeType = "Gateway"
+	GatewayNodeType NodeType = "Gateway"
 )
 
 // Validate checks if nt has NodeType value.
@@ -60,14 +60,14 @@ func ValidateNodeTypes(types ...NodeType) error {
 // the elements that can connect to Sequence Flows.
 // Only the Gateway, Activity, Choreography Activity, and Event elements can
 // connect to Sequence Flows and thus, these elements are the only ones that
-// are sub-classes of FlowNode.
+// are sub-classes of BaseNode.
 type Node interface {
 	Element
 
-	// This attribute identifies the incoming Sequence Flow of the FlowNode.
+	// This attribute identifies the incoming Sequence Flow of the BaseNode.
 	// incoming map[string]*SequenceFlow
 
-	// This attribute identifies the outgoing Sequence Flow of the FlowNode.
+	// This attribute identifies the outgoing Sequence Flow of the BaseNode.
 	// This is an ordered collection.
 	// outgoing map[string]*SequenceFlow
 
@@ -84,30 +84,30 @@ type Node interface {
 }
 
 // ============================================================================
-//                             FlowNode
+//                             BaseNode
 // ============================================================================
 
-// FlowNode provides base functionality of all Nodes as sequence flows holder.
-type FlowNode struct {
-	FlowElement
+// BaseNode provides base functionality of all Nodes as sequence flows holder.
+type BaseNode struct {
+	BaseElement
 
 	flows map[data.Direction]map[string]*SequenceFlow
 }
 
-// NewFlowNode creates a new FlowNode object.
+// NewBaseNode creates a new BaseNode object.
 //
 // Available options:
 //   - foundation.WithId
 //   - foundation.WithDoc
-func NewFlowNode(name string, baseOpts ...options.Option) (*FlowNode, error) {
-	fe, err := NewFlowElement(name, baseOpts...)
+func NewBaseNode(name string, baseOpts ...options.Option) (*BaseNode, error) {
+	fe, err := NewBaseElement(name, baseOpts...)
 	if err != nil {
 		return nil,
-			fmt.Errorf("FlowElement building failed: %w", err)
+			fmt.Errorf("BaseElement building failed: %w", err)
 	}
 
-	return &FlowNode{
-			FlowElement: *fe,
+	return &BaseNode{
+			BaseElement: *fe,
 			flows:       map[data.Direction]map[string]*SequenceFlow{},
 		},
 		nil
@@ -115,18 +115,18 @@ func NewFlowNode(name string, baseOpts ...options.Option) (*FlowNode, error) {
 
 // --------------------- Node interface ----------------------------------------
 
-// Incoming returns all the FlowNode's incoming flows.
-func (fn *FlowNode) Incoming() []*SequenceFlow {
+// Incoming returns all the BaseNode's incoming flows.
+func (fn *BaseNode) Incoming() []*SequenceFlow {
 	return maps.Values(fn.flows[data.Input])
 }
 
-// Outgoing returns all the FlowNodes outgoing flows.
-func (fn *FlowNode) Outgoing() []*SequenceFlow {
+// Outgoing returns all the BaseNodes outgoing flows.
+func (fn *BaseNode) Outgoing() []*SequenceFlow {
 	return maps.Values(fn.flows[data.Output])
 }
 
-// AddFlow adds new SequenceFlow to the FlowNode n.
-func (fn *FlowNode) AddFlow(sf *SequenceFlow, dir data.Direction) error {
+// AddFlow adds new SequenceFlow to the BaseNode n.
+func (fn *BaseNode) AddFlow(sf *SequenceFlow, dir data.Direction) error {
 	if sf == nil {
 		return errs.New(
 			errs.M("couldn't add empty sequence flow"),
@@ -147,23 +147,23 @@ func (fn *FlowNode) AddFlow(sf *SequenceFlow, dir data.Direction) error {
 }
 
 // Node returns underlaying node structure.
-func (fn *FlowNode) Node() Node {
-	errs.Panic("don't use Node from generic FlowNode")
+func (fn *BaseNode) Node() Node {
+	errs.Panic("don't use Node from generic BaseNode")
 
 	return nil
 }
 
 // NodeType returns the Node's type.
-func (fn *FlowNode) NodeType() NodeType {
-	errs.Panic("don't use NodeType from generic FlowNode")
+func (fn *BaseNode) NodeType() NodeType {
+	errs.Panic("don't use NodeType from generic BaseNode")
 
 	return InvalidNodeType
 }
 
 // ----------------- Element interface -----------------------------------------
 
-// EType returns ElementType of the FlowNode.
-func (fn *FlowNode) EType() ElementType {
+// EType returns ElementType of the BaseNode.
+func (fn *BaseNode) EType() ElementType {
 	return NodeElement
 }
 
@@ -171,6 +171,6 @@ func (fn *FlowNode) EType() ElementType {
 // interfaces check
 
 var (
-	_ Node    = (*FlowNode)(nil)
-	_ Element = (*FlowElement)(nil)
+	_ Node    = (*BaseNode)(nil)
+	_ Element = (*BaseElement)(nil)
 )

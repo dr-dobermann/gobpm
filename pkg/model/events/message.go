@@ -2,7 +2,7 @@ package events
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -10,20 +10,21 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
 
+// MessageEventDefinition represents a message event definition.
 type MessageEventDefinition struct {
 	definition
 
 	// The Message MUST be supplied (if the isExecutable attribute of the
 	// Process is set to true).
-	message *common.Message
+	message *bpmncommon.Message
 
 	operation *service.Operation
 }
 
-// NewMessageEventDefinition creates a new MessageEventDefinition and
+// NewMessageEventDefintion creates a new MessageEventDefinition and
 // returns its pointer. If nil message was given then error returned.
 func NewMessageEventDefintion(
-	msg *common.Message,
+	msg *bpmncommon.Message,
 	operation *service.Operation,
 	baseOpts ...options.Option,
 ) (*MessageEventDefinition, error) {
@@ -49,7 +50,7 @@ func NewMessageEventDefintion(
 // MustMessageEventDefinition returns new MessageEventDefinition. If there is
 // error occurred, then panic fired.
 func MustMessageEventDefinition(
-	msg *common.Message,
+	msg *bpmncommon.Message,
 	operation *service.Operation,
 	baseOpts ...options.Option,
 ) *MessageEventDefinition {
@@ -62,7 +63,7 @@ func MustMessageEventDefinition(
 }
 
 // Message returns a message of the MessageEventDefinition.
-func (med *MessageEventDefinition) Message() *common.Message {
+func (med *MessageEventDefinition) Message() *bpmncommon.Message {
 	return med.message
 }
 
@@ -79,16 +80,16 @@ func (*MessageEventDefinition) Type() flow.EventTrigger {
 }
 
 // CheckItemDefinition check if definition is related with
-// data.ItemDefinition with iDefId Id.
-func (med *MessageEventDefinition) CheckItemDefinition(iDefId string) bool {
+// data.ItemDefinition with iDefID Id.
+func (med *MessageEventDefinition) CheckItemDefinition(iDefID string) bool {
 	if med.message.Item() == nil {
 		return false
 	}
 
-	return med.message.Item().ID() == iDefId
+	return med.message.Item().ID() == iDefID
 }
 
-// GetItemList returns a list of data.ItemDefinition the EventDefinition
+// GetItemsList returns a list of data.ItemDefinition the EventDefinition
 // is based on.
 // If EventDefiniton isn't based on any data.ItemDefiniton, empty list
 // wil be returned.
@@ -121,7 +122,7 @@ func (med *MessageEventDefinition) CloneEvent(
 		iDef = d.ItemDefinition()
 	}
 
-	msg, err := common.NewMessage(
+	msg, err := bpmncommon.NewMessage(
 		med.message.Name(),
 		iDef,
 		foundation.WithID(med.message.ID()))

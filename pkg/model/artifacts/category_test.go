@@ -74,7 +74,7 @@ func TestCategoryValue(t *testing.T) {
 		require.Equal(t, "test-value", cv.Value)
 		require.NotEmpty(t, cv.ID())
 		require.Nil(t, cv.Category())
-		require.Empty(t, cv.FlowElements())
+		require.Empty(t, cv.BaseElements())
 	})
 
 	t.Run("empty category value", func(t *testing.T) {
@@ -99,7 +99,7 @@ func TestCategoryValue(t *testing.T) {
 		cv := artifacts.NewCategoryValue("test-value")
 
 		// Initially empty
-		require.Empty(t, cv.FlowElements())
+		require.Empty(t, cv.BaseElements())
 
 		// Create mock flow elements
 		fe1 := mockflow.NewMockElement(t)
@@ -109,10 +109,10 @@ func TestCategoryValue(t *testing.T) {
 		fe2.EXPECT().ID().Return("fe2")
 
 		// Add flow elements
-		added := cv.AddFlowElement(fe1, nil, fe2)
+		added := cv.AddBaseElement(fe1, nil, fe2)
 		require.Equal(t, 2, added)
 
-		elements := cv.FlowElements()
+		elements := cv.BaseElements()
 		require.Len(t, elements, 2)
 
 		// Check that elements are in the list
@@ -124,19 +124,19 @@ func TestCategoryValue(t *testing.T) {
 		require.True(t, elementIds["fe2"])
 
 		// Remove one element
-		removed := cv.RemoveFlowElement("fe1")
+		removed := cv.RemoveBaseElement("fe1")
 		require.Equal(t, 1, removed)
-		require.Len(t, cv.FlowElements(), 1)
+		require.Len(t, cv.BaseElements(), 1)
 
 		// Try to remove non-existent element
-		removed = cv.RemoveFlowElement("non-existent", "")
+		removed = cv.RemoveBaseElement("non-existent", "")
 		require.Equal(t, 0, removed)
-		require.Len(t, cv.FlowElements(), 1)
+		require.Len(t, cv.BaseElements(), 1)
 
 		// Remove remaining element
-		removed = cv.RemoveFlowElement("fe2")
+		removed = cv.RemoveBaseElement("fe2")
 		require.Equal(t, 1, removed)
-		require.Empty(t, cv.FlowElements())
+		require.Empty(t, cv.BaseElements())
 	})
 
 	t.Run("flow elements edge cases", func(t *testing.T) {
@@ -146,15 +146,15 @@ func TestCategoryValue(t *testing.T) {
 		fe1 := mockflow.NewMockElement(t)
 		fe1.EXPECT().ID().Return("fe1")
 
-		added := cv.AddFlowElement(fe1)
+		added := cv.AddBaseElement(fe1)
 		require.Equal(t, 1, added)
 
 		// Test removing from empty map
 		cv2 := artifacts.NewCategoryValue("empty-value")
-		removed := cv2.RemoveFlowElement("nonexistent")
+		removed := cv2.RemoveBaseElement("nonexistent")
 		require.Equal(t, 0, removed)
 
-		// Test FlowElements() on nil map
-		require.Empty(t, cv2.FlowElements())
+		// Test BaseElements() on nil map
+		require.Empty(t, cv2.BaseElements())
 	})
 }

@@ -55,13 +55,13 @@ func (fc *sflowConfig) SetName(name string) error {
 
 // newSequenceFlow creates a new SequenceFlow from the configuration.
 func (fc *sflowConfig) newSequenceFlow() (*SequenceFlow, error) {
-	fe, err := NewFlowElement(fc.name, fc.baseOpts...)
+	fe, err := NewBaseElement(fc.name, fc.baseOpts...)
 	if err != nil {
 		return nil, err
 	}
 
 	f := SequenceFlow{
-		FlowElement:         *fe,
+		BaseElement:         *fe,
 		source:              fc.src,
 		target:              fc.trg,
 		conditionExpression: fc.cond,

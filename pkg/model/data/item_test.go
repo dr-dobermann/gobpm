@@ -63,7 +63,7 @@ func TestItemAwareElement(t *testing.T) {
 		foundation.WithID("test IDef"))
 	require.NoError(t, err)
 
-	ds, err := data.NewDataState("test ds")
+	ds, err := data.NewSrcState("test ds")
 	require.NoError(t, err)
 	t.Run("invalid parameters",
 		func(t *testing.T) {
@@ -109,7 +109,7 @@ func TestItemAwareElement(t *testing.T) {
 			require.NotNil(t, uIAE.ItemDefinition())
 			require.Nil(t, uIAE.Value())
 			require.False(t, uIAE.IsCollection())
-			require.Equal(t, data.UndefinedDataState.Name(), uIAE.State().Name())
+			require.Equal(t, data.UndefinedSrcState.Name(), uIAE.State().Name())
 			require.Error(t, uIAE.UpdateState(data.ReadyDataState))
 
 			ctx := context.Background()

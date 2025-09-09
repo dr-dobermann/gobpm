@@ -82,7 +82,7 @@ func (ac *activityConfig) newActivity() (*activity, error) {
 		return nil, err
 	}
 
-	fn, err := flow.NewFlowNode(ac.name, ac.baseOpts...)
+	fn, err := flow.NewBaseNode(ac.name, ac.baseOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +97,7 @@ func (ac *activityConfig) newActivity() (*activity, error) {
 	}
 
 	a := activity{
-		FlowNode:            *fn,
+		BaseNode:            *fn,
 		isForCompensation:   ac.compensation,
 		roles:               ac.roles,
 		properties:          ac.props,

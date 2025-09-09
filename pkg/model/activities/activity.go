@@ -19,7 +19,7 @@ import (
 // The activity class is the abstract super class for all concrete Activity
 // types.
 type activity struct {
-	flow.FlowNode
+	flow.BaseNode
 
 	// A flag that identifies whether this Activity is intended for the
 	// purposes of compensation.

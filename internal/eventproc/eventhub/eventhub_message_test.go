@@ -7,7 +7,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
 	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/stretchr/testify/require"
@@ -33,7 +33,7 @@ func TestMessageEvents_CurrentLimitations(t *testing.T) {
 		mockProcessor.EXPECT().ID().Return("message-processor-id")
 
 		// Create a message event definition
-		message := common.MustMessage("test-message", data.MustItemDefinition(nil))
+		message := bpmncommon.MustMessage("test-message", data.MustItemDefinition(nil))
 		messageEvent, err := events.NewMessageEventDefintion(message, nil)
 		require.NoError(t, err)
 

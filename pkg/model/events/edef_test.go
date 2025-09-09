@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/generated/mockdata"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
@@ -59,7 +59,7 @@ func TestErrorDefinitions(t *testing.T) {
 
 	t.Run("error",
 		func(t *testing.T) {
-			e, err := common.NewError("fsio propalo", "ZHOPA",
+			e, err := bpmncommon.NewError("fsio propalo", "ZHOPA",
 				data.MustItemDefinition(values.NewVariable(-1),
 					foundation.WithID("error_item")))
 			require.NoError(t, err)

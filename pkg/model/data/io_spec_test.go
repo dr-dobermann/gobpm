@@ -11,7 +11,7 @@ import (
 )
 
 func TestSet(t *testing.T) {
-	rs, err := data.NewDataState("my ready state")
+	rs, err := data.NewSrcState("my ready state")
 	require.NoError(t, err)
 
 	params := make([]*data.Parameter, 2)
@@ -106,7 +106,7 @@ func TestSet(t *testing.T) {
 			require.Equal(t, 1, len(whileExcParams))
 
 			// invalid state validation
-			ws, err := data.NewDataState("not ready data state")
+			ws, err := data.NewSrcState("not ready data state")
 			require.NoError(t, err)
 			require.Error(t, s.Validate(ws, true))
 
@@ -171,7 +171,7 @@ func TestIOSpec(t *testing.T) {
 		sets = append(sets, s)
 	}
 
-	rs, err := data.NewDataState("my ready state")
+	rs, err := data.NewSrcState("my ready state")
 	require.NoError(t, err)
 
 	params := make([]*data.Parameter, 2)

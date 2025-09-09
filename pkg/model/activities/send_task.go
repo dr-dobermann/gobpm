@@ -1,7 +1,7 @@
 package activities
 
 import (
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
 
@@ -26,7 +26,7 @@ type SendTask struct {
 	// is applied to all outgoing Message Flows and the Message will be sent down
 	// all outgoing Message Flows at the completion of a single instance of the
 	// Task.
-	Message *common.Message
+	Message *bpmncommon.Message
 
 	// This attribute specifies the operation that is invoked by the
 	// Send Task.

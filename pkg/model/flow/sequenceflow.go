@@ -34,21 +34,21 @@ type (
 // for Processes), Choreography Activities (Choreography Task and
 // Sub-Choreography; for Choreographies), and Gateways.
 type SequenceFlow struct {
-	FlowElement
+	BaseElement
 
-	// The FlowNode that the Sequence Flow is connecting from.
-	// For a Process: Of the types of FlowNode, only Activities,
+	// The BaseNode that the Sequence Flow is connecting from.
+	// For a Process: Of the types of BaseNode, only Activities,
 	// Gateways, and Events can be the source. However, Activities that are
 	// Event Sub-Processes are not allowed to be a source.
-	// For a Choreography: Of the types of FlowNode, only Choreography
+	// For a Choreography: Of the types of BaseNode, only Choreography
 	// Activities, Gateways, and Events can be the source.
 	source SequenceSource
 
-	// The FlowNode that the Sequence Flow is connecting to.
-	// For a Process: Of the types of FlowNode, only Activities, Gateways,
+	// The BaseNode that the Sequence Flow is connecting to.
+	// For a Process: Of the types of BaseNode, only Activities, Gateways,
 	// and Events can be the target. However, Activities that are Event
 	// Sub-Processes are not allowed to be a target.
-	// For a Choreography: Of the types of FlowNode, only Choreography
+	// For a Choreography: Of the types of BaseNode, only Choreography
 	// Activities, Gateways, and Events can be the target.
 	target SequenceTarget
 
@@ -107,7 +107,7 @@ func Link(
 }
 
 // newSequenceFlow creates a new SequenceFlow which connects src and trg
-// FlowNodes. On success it returns the new SequenceFlow pointer.
+// BaseNodes. On success it returns the new SequenceFlow pointer.
 // In case of failrue it returns an error.
 func newSequenceFlow(
 	src SequenceSource,
@@ -267,7 +267,7 @@ func (f *SequenceFlow) Condition() data.FormalExpression {
 
 // EType returns element type of the SequenceFlow.
 func (f *SequenceFlow) EType() ElementType {
-	return SequenceFlowElement
+	return SequenceBaseElement
 }
 
 // -----------------------------------------------------------------------------

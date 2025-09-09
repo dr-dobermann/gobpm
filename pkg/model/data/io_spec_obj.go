@@ -418,7 +418,7 @@ func (s *Set) IsValid() bool {
 }
 
 // Validate checks Set for validness.
-// It uses given readyState DataState to compare with every Parameter state.
+// It uses given readyState SrcState to compare with every Parameter state.
 // If readyState is nil, then data.ReadyDataState is used (if set).
 //
 // By default Validate checks only DefaultSet dataSet.
@@ -426,7 +426,7 @@ func (s *Set) IsValid() bool {
 //
 // If the desired SetType parameter set is empty, check is successful.
 func (s *Set) Validate(
-	readyState *DataState,
+	readyState *SrcState,
 	executionFinished bool,
 ) error {
 	rs := readyState
@@ -468,9 +468,9 @@ func (s *Set) Validate(
 	return nil
 }
 
-// checkParamState checks set of parameter on rs DataState equality.
+// checkParamState checks set of parameter on rs SrcState equality.
 // If any parameter DataSate is differs from rs, then error returned.
-func checkParamsState(rs *DataState, pp []*Parameter, sType SetType) error {
+func checkParamsState(rs *SrcState, pp []*Parameter, sType SetType) error {
 	for _, p := range pp {
 		if p.dataState.ID() != rs.ID() {
 			return errs.New(

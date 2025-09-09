@@ -16,7 +16,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
@@ -156,7 +156,7 @@ func getSnapshot(pname string) (*snapshot.Snapshot, error) {
 
 	op := service.MustOperation(
 		"print user_name",
-		common.MustMessage(
+		bpmncommon.MustMessage(
 			"user_name",
 			data.MustItemDefinition(
 				values.NewVariable(""),

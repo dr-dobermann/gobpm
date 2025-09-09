@@ -9,7 +9,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/interactor"
 	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/common"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -61,7 +61,7 @@ type UserTask struct {
 	// outputs describes the output parameters expected from renderers.
 	// every parameter is described by single ResourceParameter of
 	// Resource.
-	outputs *common.Resource
+	outputs *bpmncommon.Resource
 
 	resChan chan data.Data
 }
@@ -145,7 +145,7 @@ func (ut *UserTask) Renderers() []hi.Renderer {
 }
 
 // Outputs returns outputs expected from renderers.
-func (ut *UserTask) Outputs() []*common.ResourceParameter {
+func (ut *UserTask) Outputs() []*bpmncommon.ResourceParameter {
 	if ut.outputs == nil {
 		errs.Panic("user task has no output defined")
 		return nil
