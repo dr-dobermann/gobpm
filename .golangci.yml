@@ -30,7 +30,7 @@ linters:
     - unconvert
     - unused
     - whitespace
-linters-settings:
+  settings:
     depguard:
       rules:
         deny_deprecated:
@@ -97,23 +97,22 @@ linters-settings:
     staticcheck:
       checks:
         - all
-issues:
-  exclude-use-default: false
-  exclude-rules:
+  exclusions:
+    presets: []
+    rules:
       - linters:
           - lll
         source: '^//go:generate '
-  exclude-dirs:
+    paths:
       - generated
       - .generated
       - examples
       - third_party
       - builtin
-  exclude-files:
       - mock_.*\.go$
       - .*\.pb\.go$
       - .*_mock\.go$
 output:
-  format: colored-line-number
-  print-issued-lines: true
-  print-linter-name: true
+  formats:
+    text:
+      path: stdout
