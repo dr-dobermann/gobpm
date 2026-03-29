@@ -13,10 +13,8 @@ import (
 // elements MAY contain properties, in particular only Processes, Activities,
 // and Events MAY contain Properties.
 type Property struct {
-	ItemAwareElement
-
-	// Defines the name of the Property.
 	name string
+	ItemAwareElement
 }
 
 // NewProperty creates a new Property object and returns its pointer.

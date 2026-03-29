@@ -12,9 +12,9 @@ const (
 type (
 	errConfig struct {
 		err     error
+		details map[string]any
 		msg     string
 		classes []string
-		details map[string]any
 	}
 
 	errOption interface {
@@ -63,7 +63,7 @@ func E(err error) errOption {
 // M fills the message in errConfig.
 func M(format string, values ...any) errOption {
 	f := func(cfg *errConfig) error {
-		format := strings.Trim(format, " ")
+		format = strings.Trim(format, " ")
 		if format == "" {
 			return fmt.Errorf("empty error message format")
 		}
@@ -95,7 +95,7 @@ func C(classes ...string) errOption {
 // D adds the errConfig details.
 func D(k string, v any) errOption {
 	f := func(cfg *errConfig) error {
-		k := strings.Trim(k, " ")
+		k = strings.Trim(k, " ")
 		if k != "" && v != "" {
 			cfg.details[k] = v
 		}

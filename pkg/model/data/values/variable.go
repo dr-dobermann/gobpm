@@ -13,12 +13,9 @@ import (
 
 // Variable represents a generic variable value.
 type Variable[T any] struct {
-	lock sync.Mutex
-
-	value T
-
-	// for data.Updater
+	value       T
 	evtUpdaters map[string]data.UpdateCallback
+	lock        sync.Mutex
 }
 
 // NewVariable creates a new variable of type T.
@@ -123,7 +120,7 @@ func (v *Variable[T]) Unregister(regName string) {
 // notify prepares a list of updaters to call them after
 // Value has changed.
 func (v *Variable[T]) notify() {
-	upff := []data.UpdateCallback{}
+	upff := make([]data.UpdateCallback, 0, len(v.evtUpdaters))
 
 	for _, f := range v.evtUpdaters {
 		upff = append(upff, f)

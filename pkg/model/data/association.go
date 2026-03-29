@@ -15,9 +15,9 @@ import (
 
 const (
 	// Recalculate indicates that data association should recalculate.
-	Recalculate   bool = true
+	Recalculate bool = true
 	// NoRecalculate indicates that data association should not recalculate.
-	NoRecalculate      = false
+	NoRecalculate = false
 )
 
 // ============================================================================
@@ -65,34 +65,10 @@ const (
 
 // Association represents a BPMN data association for moving data between elements.
 type Association struct {
-	foundation.BaseElement
-
-	// Specifies an optional transformation Expression. The actual scope of
-	// accessible data for that Expression is defined by the source and target
-	// of the specific Data Association types.
 	transformation FormalExpression
-
-	// Specifies one or more data elements Assignments. By using an Assignment,
-	// single data structure elements can be assigned from the source structure
-	// to the target structure.
-	//
-	// DEV-NOTE: Standard doesn't tell if the assignment should be used in
-	// conjunction with transformation or in case when no transformation is
-	// defined.
-	// In my opinion any assignment could be easily made in transformation.
-	// That's why I delete assignment from the association.
-	//
-	// Assignments []*Assignment
-
-	// Identifies the source of the Data Association. The source MUST be an
-	// ItemAwareElement.
-	//
-	// Map is indexed by itemDefinition id of ItemAwareElement.
-	sources map[string]*ItemAwareElement
-
-	// Identifies the target of the Data Association. The target MUST be an
-	// ItemAwareElement.
-	target *ItemAwareElement
+	sources        map[string]*ItemAwareElement
+	target         *ItemAwareElement
+	foundation.BaseElement
 }
 
 // NewAssociation creates a new data Association with the specified target.
@@ -248,7 +224,7 @@ func (a *Association) TargetItemDefID() string {
 
 // SourcesIDs returns list of the Association's sources ItemDefinitions Ids.
 func (a *Association) SourcesIDs() []string {
-	srcIDs := []string{}
+	srcIDs := make([]string, 0, len(a.sources))
 	for k := range a.sources {
 		srcIDs = append(srcIDs, k)
 	}

@@ -198,28 +198,11 @@ func (e *Event) getEventData() []data.Data {
 // *****************************************************************************
 
 type catchEvent struct {
-	Event
-
-	// The Data Associations of the catch Event. The dataOutputAssociation of a
-	// catch Event is used to assign data from the Event to a data element that
-	// is in the scope of the Event.
-	// For a catch Multiple Event, multiple Data Associations might be REQUIRED,
-	// depending on the individual triggers of the Event.
-	outputAssociations []*data.Association
-
-	// The Data Outputs for the catch Event. This is an ordered set.
-	// dataOutputs are indexed by Ids of ItemDefinitions from eventDefinition
-	// bodies.
 	dataOutputs map[string]*data.Parameter
-
-	// The outputSet for the catch Event.
-	outputSet *data.Set
-
-	// This attribute is only relevant when the catch Event has more than one
-	// EventDefinition (Multiple). If this value is true, then all of the types
-	// of triggers that are listed in the catch Event MUST be triggered before
-	// the Process is instantiated.
-	parallelMultiple bool
+	outputSet   *data.Set
+	Event
+	outputAssociations []*data.Association
+	parallelMultiple   bool
 }
 
 // NewCatchEvent creates a new catchEvent and returns its pointer.
@@ -306,21 +289,10 @@ func (ce *catchEvent) UploadData(ctx context.Context) error {
 // throwing of a trigger MAY be either implicit as defined by this standard or
 // an extension to it or explicit by a throw Event.
 type throwEvent struct {
-	Event
-
-	// The Data Associations of the throw Event. The dataInputAssociation of a
-	// throw Event is responsible for the assignment of a data element that is
-	// in scope of the Event to the Event data.
-	// For a throw Multiple Event, multiple Data Associations might be REQUIRED,
-	// depending on the individual results of the Event.
-	inputAssociations []*data.Association
-
-	// The Data Inputs for the throw Event. This is an ordered set.
-	// dataInputs are indexed by Ids of ItemDefinitions.
 	dataInputs map[string]*data.Parameter
-
-	// The InputSet for the throw Event.
-	inputSet *data.Set
+	inputSet   *data.Set
+	Event
+	inputAssociations []*data.Association
 }
 
 // NewThrowEvent creates a new throwEvent and returns its pointer.

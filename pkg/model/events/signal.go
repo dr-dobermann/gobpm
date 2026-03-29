@@ -12,11 +12,9 @@ import (
 
 // Signal represents a signal event.
 type Signal struct {
-	foundation.BaseElement
-
-	name string
-
 	structure *data.ItemDefinition
+	name      string
+	foundation.BaseElement
 }
 
 // NewSignal creates a new signal and returns its pointer.
@@ -59,10 +57,8 @@ func (s *Signal) Item() *data.ItemDefinition {
 
 // SignalEventDefinition represents a signal event definition.
 type SignalEventDefinition struct {
-	definition
-
-	// If the trigger is a Signal, then a Signal is provided.
 	signal *Signal
+	definition
 }
 
 // NewSignalEventDefinition creates a new SignalEventDefinition with given
@@ -130,7 +126,7 @@ func (sed *SignalEventDefinition) CheckItemDefinition(iDefID string) bool {
 // If EventDefiniton isn't based on any data.ItemDefiniton, empty list
 // wil be returned.
 func (sed *SignalEventDefinition) GetItemList() []*data.ItemDefinition {
-	idd := []*data.ItemDefinition{}
+	idd := make([]*data.ItemDefinition, 0, 1)
 
 	if sed.signal.structure == nil {
 		return idd

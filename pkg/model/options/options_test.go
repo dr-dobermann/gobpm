@@ -14,9 +14,8 @@ type (
 
 	nameCfg struct {
 		cfg
-
-		emptyNameAllowed bool
 		name             string
+		emptyNameAllowed bool
 	}
 )
 

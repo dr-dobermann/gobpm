@@ -92,10 +92,9 @@ type Container interface {
 
 // BaseElement is a base class for all flowing elements.
 type BaseElement struct {
-	foundation.BaseElement
-
-	name      string
 	container Container
+	name      string
+	foundation.BaseElement
 }
 
 // NewBaseElement creates a new BaseElement with the given name and options.

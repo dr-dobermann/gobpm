@@ -102,22 +102,13 @@ type instanceReg struct {
 
 // Thresher represents the main BPMN process execution engine.
 type Thresher struct {
-	id string
-
-	m sync.Mutex
-
-	state State
-
-	ctx context.Context
-
-	// snapshots is indexed by the ProcessID
+	ctx       context.Context
+	eventHub  eventproc.EventHub
 	snapshots map[string]*snapshot.Snapshot
-
-	// instances holds process instances in any state.
-	// instances is indexed by instance ID.
 	instances map[string]instanceReg
-
-	eventHub eventproc.EventHub
+	id        string
+	m         sync.Mutex
+	state     State
 }
 
 // New creates a new empty Thresher in NotStarted state.
@@ -340,7 +331,7 @@ func (t *Thresher) StartProcess(processID string) error {
 // launchInstance creates a new Instance from the Snapshot s, runs it and
 // append it to runned insances of the Thresher.
 func (t *Thresher) launchInstance(s *snapshot.Snapshot) error {
-	inst, err := instance.New(s, nil, t, nil, nil)
+	inst, err := instance.New(s, nil, t, nil)
 	if err != nil {
 		return errs.New(
 			errs.M("couldn't create an Instance for process %q",

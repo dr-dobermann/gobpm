@@ -14,13 +14,10 @@ import (
 
 // Array is a implementation of the data.Collection and data.Value interfaces.
 type Array[T any] struct {
-	lock sync.Mutex
-
-	elements []T
-	index    int
-
-	// for data.Updater
 	evtUpdaters map[string]data.UpdateCallback
+	elements    []T
+	index       int
+	lock        sync.Mutex
 }
 
 // NewArray creates a new Array of T type, fill it with values and
@@ -362,8 +359,8 @@ func checkForEmpty[T any](a *Array[T]) error {
 func checkValue[T any](value any) (T, error) {
 	v, ok := value.(T)
 	if !ok {
-		var v T
-		return v,
+		var zero T
+		return zero,
 			errs.New(
 				errs.M("value (%v) isn't a value of type %q", value,
 					reflect.TypeOf(v).String()),
@@ -416,7 +413,7 @@ func (a *Array[T]) Unregister(regName string) {
 // notify prepares a list of updaters to call them after
 // Value has changed.
 func (a *Array[T]) notify(chgType data.ChangeType, idx any) {
-	upff := []data.UpdateCallback{}
+	upff := make([]data.UpdateCallback, 0, len(a.evtUpdaters))
 
 	for _, f := range a.evtUpdaters {
 		upff = append(upff, f)

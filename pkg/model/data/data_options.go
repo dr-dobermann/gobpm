@@ -16,9 +16,8 @@ import (
 type (
 	// propConfig is used to create a single Property
 	propConfig struct {
+		iae  *ItemAwareElement
 		name string
-
-		iae *ItemAwareElement
 	}
 )
 

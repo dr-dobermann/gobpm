@@ -23,14 +23,10 @@ type GExpFunc func(ctx context.Context, ds data.Source) (data.Value, error)
 // GExpression implements the bpmncommon.FormalInterface.
 // It based on simple go function.
 type GExpression struct {
-	data.Expression
-
-	src data.Source
-
-	result *data.ItemDefinition
-
+	src     data.Source
+	result  *data.ItemDefinition
 	gexFunc GExpFunc
-
+	data.Expression
 	evaluated bool
 }
 
