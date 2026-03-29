@@ -95,7 +95,6 @@ GoBPM is a BPMN v2 compliant Business Process Management engine with an event-dr
 - `internal/runner/` - Process execution runtime
 - `internal/interactor/` - External system interactions
 - `pkg/errs/` - Structured error handling
-- `pkg/monitor/` - Process observability and metrics
 - `pkg/set/` - Utility data structures
 
 ### Key Patterns

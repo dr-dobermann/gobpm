@@ -12,18 +12,8 @@ package events
 // source Link, the Event marker will be unfilled. When used to “throw” to the
 // target Link, the Event marker will be filled.
 type LinkEventDefinition struct {
-	definition
-
-	// If the trigger is a Link, then the name MUST be entered.
-	Name string
-
-	// Used to reference the corresponding 'catch' or 'target'
-	// LinkEventDefinition, when this LinkEventDefinition represents a 'throw'
-	// or 'source' LinkEventDefinition.
-	Sources []*LinkEventDefinition
-
-	// Used to reference the corresponding 'throw' or 'source'
-	// LinkEventDefinition, when this LinkEventDefinition represents a 'catch'
-	// or 'target' LinkEventDefinition.
 	Target *LinkEventDefinition
+	Name   string
+	definition
+	Sources []*LinkEventDefinition
 }

@@ -34,13 +34,12 @@ func (ts TokenState) Validate() error {
 }
 
 type token struct {
+	inst *Instance
+	trk  *track
 	foundation.BaseElement
-
-	inst  *Instance
-	trk   *track
-	state TokenState
 	prevs []*token
 	nexts []*token
+	state TokenState
 }
 
 // newToken creates a new token and adds it to the Instance.
@@ -55,14 +54,14 @@ func newToken(inst *Instance, trk *track) *token {
 	if err != nil {
 		errs.Panic("failed to create base element for token: " + err.Error())
 	}
-	
+
 	t := token{
 		BaseElement: *be,
-		inst:  inst,
-		trk:   trk,
-		state: TokenAlive,
-		prevs: []*token{},
-		nexts: []*token{},
+		inst:        inst,
+		trk:         trk,
+		state:       TokenAlive,
+		prevs:       []*token{},
+		nexts:       []*token{},
 	}
 
 	inst.addToken(&t)

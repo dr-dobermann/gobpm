@@ -26,26 +26,10 @@ const errorClass = "DATA_OBJECTS_ERROR"
 // referenced Data Data Object the state of the Data Object Reference in square
 // brackets as follows: <Data Object Name> [ <Data Object Reference State> ].
 type DataObject struct {
-	data.ItemAwareElement
-
 	flow.BaseElement
-
-	// Defines if the Data Object represents a collection of elements. It is
-	// needed when no itemDefinition is referenced. If an itemDefinition is
-	// referenced, then this attribute MUST have the same value as the
-	// isCollection attribute of the referenced itemDefinition. The default
-	// value for this attribute is false.
-	//
-	// DEV_NOTE: Since the flag IsCollection depends on internal ItemAwareElement
-	// ItemDefinition, this flag could be checked from there.
-	// IsCollection bool
-
-	// DataObject could have no more than one incoming data association.
 	incoming *data.Association
-
-	// There could be more than one outgoing data association from DataObject.
-	// outgoing associations are indexed by associated Node Id.
 	outgoing map[string]*data.Association
+	data.ItemAwareElement
 }
 
 // New creates and returns a new DataObject and returns its pointer.

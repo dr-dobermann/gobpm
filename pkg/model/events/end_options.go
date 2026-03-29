@@ -15,12 +15,12 @@ type (
 	endOption func(*endConfig) error
 
 	endConfig struct {
-		name       string
 		props      map[string]*data.Property
-		baseOpts   []options.Option
-		defs       []flow.EventDefinition
 		dataInputs map[string]*data.Parameter
 		inputSet   *data.Set
+		name       string
+		baseOpts   []options.Option
+		defs       []flow.EventDefinition
 	}
 )
 

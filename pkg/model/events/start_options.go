@@ -15,13 +15,13 @@ type (
 	startOption func(*startConfig) error
 
 	startConfig struct {
-		name          string
 		props         map[string]*data.Property
-		parallel      bool
-		interrurpting bool
+		dataOutputs   map[string]*data.Parameter
+		name          string
 		baseOpts      []options.Option
 		defs          []flow.EventDefinition
-		dataOutputs   map[string]*data.Parameter
+		parallel      bool
+		interrurpting bool
 	}
 )
 

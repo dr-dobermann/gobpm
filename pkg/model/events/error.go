@@ -11,10 +11,8 @@ import (
 
 // ErrorEventDefinition represents an error event definition.
 type ErrorEventDefinition struct {
-	definition
-
-	// If the trigger is an Error, then an Error payload MAY be provided.
 	err *bpmncommon.Error
+	definition
 }
 
 // NewErrorEventDefinition creates a new ErrorEventDefinition and returns

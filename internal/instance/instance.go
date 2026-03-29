@@ -15,7 +15,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"golang.org/x/exp/maps"
@@ -30,8 +29,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
-
-	"github.com/dr-dobermann/gobpm/pkg/monitor"
 )
 
 const (
@@ -40,9 +37,9 @@ const (
 	runtimeVars = "RUNTIME"
 
 	// StartedAt represents the started time variable name.
-	StartedAt   = "STARTED_AT"
+	StartedAt = "STARTED_AT"
 	// CurrState represents the current state variable name.
-	CurrState   = "STATE"
+	CurrState = "STATE"
 	// TracksCount represents the tracks count variable name.
 	TracksCount = "TRACKS_CNT"
 )
@@ -90,55 +87,21 @@ type dataFinder func(data.Data) bool
 
 // Instance represents a process instance for execution.
 type Instance struct {
-	foundation.BaseElement
-
-	m sync.RWMutex
-
-	// wg is used to hold track's go-routines tracing.
-	wg sync.WaitGroup
-
-	// state of the Instance.
-	state State
-
-	// the Snapshot, the Instance is based on.
-	s *snapshot.Snapshot
-
-	// Instance's runtime context.
-	ctx context.Context
-
-	// monID keeps last monitoring event id.
-	monID atomic.Int64
-
-	// Scopes holds accessible in the moment Data.
-	// first map indexed by data path, the second map indexed by Data name.
-	scopes map[scope.DataPath]map[string]data.Data
-
-	// rootScope holds the root dataPath of the scope
-	rootScope scope.DataPath
-
-	// instance runtime variables scope
-	runtimeScope scope.DataPath
-
-	// parentScope hold reference on the parent scope which set up on Instance
-	// creation.
-	parentScope scope.Scope
-
-	// parentEventProducer is used to register the Instance in events producers
-	// chain.
+	startTime           time.Time
+	ctx                 context.Context
+	rr                  interactor.Registrator
 	parentEventProducer eventproc.EventProducer
-
-	// render registrator registers nodes with renderers of human interaction.
-	rr interactor.Registrator
-
-	// tracks indexed by track Ids
-	tracks map[string]*track
-
+	parentScope         scope.Scope
+	s                   *snapshot.Snapshot
+	scopes              map[scope.DataPath]map[string]data.Data
+	tracks              map[string]*track
+	rootScope           scope.DataPath
+	runtimeScope        scope.DataPath
+	foundation.BaseElement
 	tokens []*token
-
-	// Instance's run starting time.
-	startTime time.Time
-
-	monitors []monitor.Writer
+	wg     sync.WaitGroup
+	m      sync.RWMutex
+	state  State
 }
 
 // New creates a new Instance from the Snapshot s and sets state to Ready.
@@ -147,7 +110,6 @@ func New(
 	parentScope scope.Scope,
 	ep eventproc.EventProducer,
 	rr interactor.Registrator,
-	mon monitor.Writer,
 ) (*Instance, error) {
 	if s == nil {
 		return nil,
@@ -167,7 +129,7 @@ func New(
 	if err != nil {
 		return nil, fmt.Errorf("failed to create base element: %w", err)
 	}
-	
+
 	inst := Instance{
 		BaseElement:         *be,
 		state:               Ready,
@@ -178,11 +140,6 @@ func New(
 		parentScope:         parentScope,
 		parentEventProducer: ep,
 		rr:                  rr,
-		monitors:            []monitor.Writer{},
-	}
-
-	if mon != nil {
-		inst.RegisterWriter(mon)
 	}
 
 	if err := inst.loadProperties(parentScope); err != nil {
@@ -204,7 +161,7 @@ func New(
 // loadProperties sets the Instance rootScope name and load process'es
 // properties into the instance's root Scope.
 func (inst *Instance) loadProperties(parentScope scope.Scope) error {
-	dd := []data.Data{}
+	dd := make([]data.Data, 0, len(inst.s.Properties))
 	for _, p := range inst.s.Properties {
 		dd = append(dd, p)
 	}
@@ -231,11 +188,6 @@ func (inst *Instance) loadProperties(parentScope scope.Scope) error {
 		return err
 	}
 
-	inst.show("INSTANCE.INIT", "instance.loadProperties",
-		map[string]any{
-			"properties_count": len(dd),
-		})
-
 	return nil
 }
 
@@ -249,12 +201,6 @@ func (inst *Instance) State() State {
 
 // updateState sets new state for the Instance.
 func (inst *Instance) updateState(newState State) {
-	inst.show("INSTANCE.STATE", "state updated",
-		map[string]any{
-			"old_state": inst.state,
-			"new_state": newState,
-		})
-
 	inst.m.Lock()
 	defer inst.m.Unlock()
 
@@ -284,11 +230,6 @@ func (inst *Instance) Run(
 	inst.ctx = ctx
 	inst.startTime = time.Now()
 	inst.m.Unlock()
-
-	inst.show("INSTANCE.RUN", "running tracks",
-		map[string]any{
-			"number_of_tracks": len(inst.tracks),
-		})
 
 	if err := inst.runTracks(ctx); err != nil {
 		return err
@@ -349,13 +290,6 @@ func (inst *Instance) addTrack(ctx context.Context, nt *track) error {
 
 // runSingleTrack starts a new track and add it to instance's WaitGroup.
 func (inst *Instance) runSingleTrack(ctx context.Context, t *track) {
-	inst.show(
-		"INSTANCE.RUN",
-		"track runned",
-		map[string]any{
-			"start_node": t.currentStep().node.Name(),
-		})
-
 	inst.wg.Add(1)
 
 	go func(t *track) {
@@ -511,31 +445,17 @@ func (inst *Instance) addToken(t *token) {
 	inst.m.Lock()
 	inst.tokens = append(inst.tokens, t)
 	inst.m.Unlock()
-
-	inst.show("INSTANCE.TOKEN", "token registered",
-		map[string]any{
-			"track_id":    t.trk.ID(),
-			"instance_id": inst.ID(),
-			"token_state": t.state,
-		})
 }
 
 // tokenConsumed checks all tokens of the Instance and if there is
 // no alive token, all runned tracks stopped, and Instance execution finished.
-func (inst *Instance) tokenConsumed(t *token) {
+func (inst *Instance) tokenConsumed(_ *token) {
 	inst.m.Lock()
 	defer inst.m.Unlock()
 
 	if inst.state != Runned {
 		return
 	}
-
-	inst.show("INSTANCE.TOKEN", "token consumed",
-		map[string]any{
-			"instance_id": inst.ID(),
-			"track_id":    t.trk.ID(),
-			"token_id":    t.ID(),
-		})
 
 	// check if there is any alive token. If any, then return.
 	if slices.ContainsFunc(
@@ -547,11 +467,6 @@ func (inst *Instance) tokenConsumed(t *token) {
 		return
 	}
 
-	inst.show("INSTANCE.STOP", "all tokens consumed. stopping tracks...",
-		map[string]any{
-			"instance_id": inst.ID(),
-		})
-
 	// if there is no alive token, stop the instance.
 	inst.state = Stopping
 
@@ -560,34 +475,6 @@ func (inst *Instance) tokenConsumed(t *token) {
 			t.stop()
 		}
 	}()
-}
-
-// show sends an Event ev to all registered monitors.
-func (inst *Instance) show(
-	src, typ string,
-	details map[string]any,
-) {
-	ev := monitor.Event{
-		Source:  src,
-		Type:    typ,
-		At:      time.Now(),
-		Details: details,
-	}
-
-	if ev.Details == nil {
-		ev.Details = make(map[string]any)
-	}
-
-	ev.Details["instance_id"] = inst.ID()
-	ev.Details["counter"] = inst.monID.Load()
-
-	inst.monID.Add(1)
-
-	for _, m := range inst.monitors {
-		go func(w monitor.Writer) {
-			w.Write(&ev)
-		}(m)
-	}
 }
 
 // -------------------- exec.EventProducer interface ---------------------------
@@ -859,28 +746,10 @@ func (inst *Instance) RenderRegistrator() interactor.Registrator {
 	return inst.rr
 }
 
-// ------------------- monitor.WriterRegistrator -------------------------------
-
-// RegisterWriter registers single non-nil unique monitoring event writer on the
-// Instance.
-func (inst *Instance) RegisterWriter(m monitor.Writer) {
-	if m == nil {
-		return
-	}
-
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
-	if idx := slices.Index(inst.monitors, m); idx == -1 {
-		inst.monitors = append(inst.monitors, m)
-	}
-}
-
 // =============================================================================
 // Interfaces check
 var (
-	_ eventproc.EventProducer   = (*Instance)(nil)
-	_ renv.RuntimeEnvironment   = (*Instance)(nil)
-	_ scope.Scope               = (*Instance)(nil)
-	_ monitor.WriterRegistrator = (*Instance)(nil)
+	_ eventproc.EventProducer = (*Instance)(nil)
+	_ renv.RuntimeEnvironment = (*Instance)(nil)
+	_ scope.Scope             = (*Instance)(nil)
 )

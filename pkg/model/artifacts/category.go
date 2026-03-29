@@ -20,15 +20,9 @@ const (
 // customer oriented vs. support oriented. Furthermore, the cost and time of
 // Activities per Category can be calculated.
 type Category struct {
-	foundation.BaseElement
-
-	// The descriptive name of the element.
-	name string
-
-	// The categoryValue attribute specifies one or more values of the Category.
-	// For example, the Category is “Region” then this Category could specify
-	// values like “North,” “South,” “West,” and “East.”
 	categoryValues map[string]*CategoryValue
+	name           string
+	foundation.BaseElement
 }
 
 // NewCategory creates a new Category and returns its pointer
@@ -116,20 +110,10 @@ func (c *Category) CategoryValues() []CategoryValue {
 
 // CategoryValue represents a value within a category.
 type CategoryValue struct {
-	foundation.BaseElement
-
-	// This attribute provides the value of the CategoryValue element.
-	Value string
-
-	// The category attribute specifies the Category representing the Category
-	// as such and contains the CategoryValue.
-	category *Category
-
-	// The BaseElements attribute identifies all of the elements (e.g., Events,
-	// Activities, Gateways, and Artifacts) that are within the boundaries of
-	// the Group.
-	// Map uses BaseElement Id as a key.
+	category            *Category
 	categorizedElements map[string]flow.Element
+	Value               string
+	foundation.BaseElement
 }
 
 // NewCategoryValue creates a new CategoryValue and returns its pointer.

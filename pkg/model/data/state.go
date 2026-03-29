@@ -33,9 +33,8 @@ var (
 // this International Standard. Therefore, BPMN adopters can use the State
 // element and the BPMN extensibility capabilities to define their states.
 type SrcState struct {
-	foundation.BaseElement
-
 	name string
+	foundation.BaseElement
 }
 
 // NewSrcState creates a new SrcState and returns its pointer on success

@@ -12,27 +12,10 @@ import (
 
 // Escalation represents payload of EscalationEventDefinition.
 type Escalation struct {
-	foundation.BaseElement
-
-	// The descriptive name of the Escalation.
-	name string
-
-	// For an End Event:
-	//   - If the Result is an Escalation, then the escalationCode
-	//     MUST be supplied.
-	//   - For an Intermediate Event within normal flow:
-	//     - If the trigger is an Escalation, then the escalationCode
-	//        MUST be entered.
-	//   - For an Intermediate Event attached to the boundary of an Activity:
-	//       - If the trigger is an Escalation, then the escalationCode MAY
-	//         be entered. This Event “catches” the Escalation. If there is no
-	//         escalationCode, then any Escalation SHALL trigger the
-	//         Event. If there is an escalationCode, then only an Escalation
-	//         that matches the escalationCode SHALL trigger the Event.
-	code string
-
-	// An ItemDefinition is used to define the “payload” of the Escalation.
 	structure *data.ItemDefinition
+	name      string
+	code      string
+	foundation.BaseElement
 }
 
 // NewEscalation creates a new Escalation object and returns its pointer.
@@ -104,11 +87,8 @@ func (e *Escalation) Item() *data.ItemDefinition {
 
 // EscalationEventDefinition represents an escalation event definition.
 type EscalationEventDefinition struct {
-	definition
-
-	// If the trigger is an Escalation, then an Escalation payload MAY be
-	// provided.
 	escalation *Escalation
+	definition
 }
 
 // NewEscalationEventDefintion creates a new EscalationEventDefintion and
@@ -163,7 +143,7 @@ func (eed *EscalationEventDefinition) CheckItemDefinition(iDefID string) bool {
 // If EventDefiniton isn't based on any data.ItemDefiniton, empty list
 // wil be returned.
 func (eed *EscalationEventDefinition) GetItemsList() []*data.ItemDefinition {
-	idd := []*data.ItemDefinition{}
+	idd := make([]*data.ItemDefinition, 0, 1)
 
 	if eed.escalation.structure == nil {
 		return idd
