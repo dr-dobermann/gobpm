@@ -102,27 +102,15 @@ type (
 	// at runtime from the Process context (i.e., its Data Objects and
 	// Properties).
 	CorrelationPropertyBinding struct {
-		foundation.BaseElement
-
-		// The FormalExpression that defines the extraction rule atop the
-		// Process context.
 		DataPath data.FormalExpression
-
-		// The specific CorrelationProperty, this CorrelationPropertyBinding
-		// refers to.
 		Property *CorrelationProperty
+		foundation.BaseElement
 	}
 
 	// CorrelationPropertyRetrievalExpression represents a BPMN correlation property retrieval expression.
 	CorrelationPropertyRetrievalExpression struct {
-		foundation.BaseElement
-
-		// The FormalExpression that defines how to extract a
-		// CorrelationProperty from the Message payload.
 		MessagePath data.FormalExpression
-
-		// The specific Message the FormalExpression extracts the
-		// CorrelationProperty from.
-		MessageRef *Message
+		MessageRef  *Message
+		foundation.BaseElement
 	}
 )

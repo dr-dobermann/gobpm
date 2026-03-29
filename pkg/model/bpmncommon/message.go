@@ -11,13 +11,9 @@ import (
 
 // Message represents a BPMN message element.
 type Message struct {
-	foundation.BaseElement
-
-	// Name is a text description of the Message.
-	name string
-
-	// An ItemDefinition is used to define the “payload” of the Message.
 	item *data.ItemDefinition
+	name string
+	foundation.BaseElement
 }
 
 // NewMessage creates a new Message object and returns its pointer on succes or

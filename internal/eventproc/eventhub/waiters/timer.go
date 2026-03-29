@@ -17,7 +17,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
-	"github.com/dr-dobermann/gobpm/pkg/monitor"
 )
 
 // TimerWatierError is the error class for timer waiter errors.
@@ -26,35 +25,16 @@ const TimerWatierError = "TIMER_WAITER_ERRROR"
 // timeWaiter defines details of timer event described by
 // eDef.
 type timeWaiter struct {
-	id string
-
-	// base event definition
-	eDef flow.EventDefinition
-
-	// hub which owns the Waiter.
-	hub eventproc.EventHub
-
-	// event processors expecting defined events
+	next       time.Time
+	eDef       flow.EventDefinition
+	hub        eventproc.EventHub
+	stopCh     chan struct{}
+	id         string
 	processors []eventproc.EventProcessor
-
-	// state of the waiter
-	state eventproc.EventWaiterState
-
-	// time of the next event fairing
-	next time.Time
-
-	// cycles left defined by eventDefinition and updated by every
-	// event fired.
-	// if the number of cycles isn't defined and timer should fire until the
-	// endTime cyclesLeft sets as -1
+	state      eventproc.EventWaiterState
 	cyclesLeft int
-
-	// time duration between events firirng
-	duration time.Duration
-
-	m sync.Mutex
-
-	stopCh chan struct{}
+	duration   time.Duration
+	m          sync.Mutex
 }
 
 // NewTimeWaiter creates a new timer event defined by eDef.
@@ -112,30 +92,30 @@ func (tw *timeWaiter) parseEDef(
 	ep eventproc.EventProcessor,
 ) error {
 	ds, _ := ep.(data.Source)
-	
+
 	expressions := map[string]data.FormalExpression{
 		"Time":     eDef.Time(),
 		"Cycle":    eDef.Cycle(),
 		"Duration": eDef.Duration(),
 	}
-	
+
 	initialized := false
 	for name, fe := range expressions {
 		if fe == nil {
 			continue
 		}
-		
+
 		initialized = true
 		if err := tw.processExpression(name, fe, ds); err != nil {
 			return err
 		}
 	}
-	
+
 	if !initialized {
 		return errs.New(
 			errs.M("Timer should have Time, Cycle or Duration expresssion"))
 	}
-	
+
 	return nil
 }
 
@@ -267,63 +247,43 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 
 // runTimerService runs the timer waiter service in a background goroutine
 func (tw *timeWaiter) runTimerService(ctx context.Context) {
-		var m monitor.Writer
+	tckr := time.NewTicker(tw.duration)
 
-		if mv := ctx.Value(monitor.Key); mv != nil {
-			m = mv.(monitor.Writer)
-		}
+	for {
+		select {
+		case <-ctx.Done():
+			close(tw.stopCh)
 
-		tckr := time.NewTicker(tw.duration)
+			tckr.Stop()
 
-		for {
-			select {
-			case <-ctx.Done():
-				monitor.Save(m, "timeWaiter", "Waiter stopped by context",
-					monitor.D("waiter_id", tw.id))
+			tw.m.Lock()
+			tw.state = eventproc.WSStopped
+			tw.m.Unlock()
 
-				close(tw.stopCh)
+			return
 
-				tckr.Stop()
+		case <-tw.stopCh:
+			fmt.Println("stopping waiter ", tw.id, "...")
 
-				tw.m.Lock()
-				tw.state = eventproc.WSStopped
-				tw.m.Unlock()
+			tckr.Stop()
 
+			return
+
+		case <-tckr.C:
+			if err := tw.processTimerEvent(ctx); err != nil {
 				return
-
-			case <-tw.stopCh:
-				fmt.Println("stopping waiter ", tw.id, "...")
-				monitor.Save(m, "timeWaiter", "Waiter stopped",
-					monitor.D("waiter_id", tw.id))
-
-				tckr.Stop()
-
-				return
-
-			case t := <-tckr.C:
-				monitor.Save(m, "timeWaiter", "Waiter catch an event",
-					monitor.D("waiter_id", tw.id),
-					monitor.D("event_time", t),
-					monitor.D("cycles_left", tw.cyclesLeft))
-
-				if err := tw.processTimerEvent(ctx, m); err != nil {
-					return
-				}
 			}
 		}
+	}
 }
 
 // processTimerEvent handles timer event processing with proper locking
-func (tw *timeWaiter) processTimerEvent(ctx context.Context, m monitor.Writer) error {
+func (tw *timeWaiter) processTimerEvent(ctx context.Context) error {
 	tw.m.Lock()
 	defer tw.m.Unlock()
 
 	for _, ep := range tw.processors {
 		if err := ep.ProcessEvent(ctx, tw.eDef); err != nil {
-			monitor.Save(m, "timeWaiter", "Event processing failed",
-				monitor.D("waiter_id", tw.id),
-				monitor.D("error", err))
-
 			tw.state = eventproc.WSFailed
 			return err
 		}
@@ -334,12 +294,12 @@ func (tw *timeWaiter) processTimerEvent(ctx context.Context, m monitor.Writer) e
 		tw.processors = []eventproc.EventProcessor{}
 		tw.state = eventproc.WSEnded
 		_ = tw.hub.RemoveWaiter(tw) // ignore error during cleanup
-		
+
 		return errs.New(errs.M("timer completed")) // signal completion
 	}
 
 	tw.cyclesLeft--
-	
+
 	return nil
 }
 

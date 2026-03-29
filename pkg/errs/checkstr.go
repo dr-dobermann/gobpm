@@ -11,7 +11,7 @@ func CheckStr(str, errMsg string, errorClasses ...string) error {
 			func(ecc []string) errOption {
 				res := []string{}
 				for _, ec := range ecc {
-					ec := strings.TrimSpace(ec)
+					ec = strings.TrimSpace(ec)
 					if ec != "" {
 						res = append(res, ec)
 					}

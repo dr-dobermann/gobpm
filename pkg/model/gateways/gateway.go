@@ -87,11 +87,9 @@ func (d GDirection) Validate() error {
 // take two sequential Gateways to first converge and then to diverge the
 // Sequence Flows.
 type Gateway struct {
-	flow.BaseNode
-
-	direction GDirection
-
 	defaultFlow *flow.SequenceFlow
+	direction   GDirection
+	flow.BaseNode
 }
 
 // New creates a new Gateway with options opts.
@@ -179,44 +177,49 @@ func (g *Gateway) Direction() GDirection {
 	return g.direction
 }
 
-// TestFlows check if flows is comply gateway's direction rules.
-// If everything is ok it returns error.
-func (g *Gateway) TestFlows() error {
-	errM := ""
-
-	switch g.direction {
+// testDirectionFlows checks whether the incoming and outgoing flow counts
+// comply with the given gateway direction rules. It returns an error message
+// describing the violation, or an empty string if the counts are valid.
+func testDirectionFlows(dir GDirection, inCount, outCount int) string {
+	switch dir {
 	case Unspecified:
-		if len(g.Incoming()) < 1 || len(g.Outgoing()) < 1 {
-			errM = "unspecified gateway should have at least one incoming and one outgoing flows"
+		if inCount < 1 || outCount < 1 {
+			return "unspecified gateway should have at least one incoming and one outgoing flows"
 		}
 
 	case Mixed:
-		if len(g.Outgoing()) < 2 ||
-			len(g.Incoming()) < 2 {
-			errM = "mixed gateway MUST have multiple incoming and outgouing flows"
+		if outCount < 2 || inCount < 2 {
+			return "mixed gateway MUST have multiple incoming and outgouing flows"
 		}
 
 	case Converging:
-		if (len(g.Outgoing()) > 1 || len(g.Outgoing()) == 0) ||
-			len(g.Incoming()) < 2 {
-			errM = "converging gateway MUST have multiple incoming and not have " +
+		if (outCount > 1 || outCount == 0) || inCount < 2 {
+			return "converging gateway MUST have multiple incoming and not have " +
 				"multiple outgouing flows"
 		}
 
 	case Diverging:
-		if len(g.Outgoing()) < 2 ||
-			(len(g.Incoming()) > 1 || len(g.Incoming()) == 0) {
-			errM = "diverging gateway MUST have multiple outgoing and not have " +
+		if outCount < 2 || (inCount > 1 || inCount == 0) {
+			return "diverging gateway MUST have multiple outgoing and not have " +
 				"multiple incoming flows"
 		}
 	}
 
-	if errM != "" {
+	return ""
+}
+
+// TestFlows check if flows is comply gateway's direction rules.
+// If everything is ok it returns error.
+func (g *Gateway) TestFlows() error {
+	inCount := len(g.Incoming())
+	outCount := len(g.Outgoing())
+
+	if errM := testDirectionFlows(g.direction, inCount, outCount); errM != "" {
 		return errs.New(
 			errs.M(errM),
 			errs.C(errorClass, errs.InvalidObject),
-			errs.D("incoming_count", len(g.Incoming())),
-			errs.D("outgoing_count", len(g.Outgoing())))
+			errs.D("incoming_count", inCount),
+			errs.D("outgoing_count", outCount))
 	}
 
 	return nil

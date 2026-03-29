@@ -74,14 +74,14 @@ func New(
 				eeExists = true
 			}
 		}
+	}
 
-		// by BPMN demands that, if there is an EndEvent in the process, there should
-		// be at least one StartEvent
-		if eeExists && !seExists {
-			return nil,
-				errs.New(
-					errs.M("no StartEvent in process with an EndEvent"))
-		}
+	// by BPMN demands that, if there is an EndEvent in the process, there should
+	// be at least one StartEvent
+	if eeExists && !seExists {
+		return nil,
+			errs.New(
+				errs.M("no StartEvent in process with an EndEvent"))
 	}
 
 	for _, f := range p.Flows() {

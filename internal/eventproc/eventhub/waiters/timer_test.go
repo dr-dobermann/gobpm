@@ -3,8 +3,6 @@ package waiters_test
 import (
 	"context"
 	"fmt"
-	"log/slog"
-	"os"
 	"testing"
 	"time"
 
@@ -16,8 +14,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
-	"github.com/dr-dobermann/gobpm/pkg/monitor"
-	"github.com/dr-dobermann/gobpm/pkg/monitor/logmon"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -246,16 +242,6 @@ func TestTimeWaiter(t *testing.T) {
 					}),
 				nil, nil)
 
-			// monitoring
-			m, err := logmon.New(
-				slog.New(
-					slog.NewJSONHandler(
-						os.Stderr,
-						&slog.HandlerOptions{
-							Level: slog.LevelDebug,
-						})))
-			require.NoError(t, err)
-
 			w, err := waiters.CreateWaiter(mockHub, ept, timeEDef)
 			require.NoError(t, err)
 			require.Equal(t, eventproc.WSReady, w.State())
@@ -264,9 +250,7 @@ func TestTimeWaiter(t *testing.T) {
 			err = w.Stop()
 			require.Error(t, err)
 
-			mCtx := context.WithValue(context.Background(), monitor.Key, m)
-
-			err = w.Service(mCtx)
+			err = w.Service(context.Background())
 			require.NoError(t, err)
 
 			time.Sleep(3 * time.Second)

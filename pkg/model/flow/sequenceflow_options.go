@@ -9,15 +9,12 @@ import (
 )
 
 type sflowConfig struct {
-	name string
-	cond data.FormalExpression
-	src  SequenceSource
-	trg  SequenceTarget
-
-	// if set then flows added into the same container where src is.
+	cond              data.FormalExpression
+	src               SequenceSource
+	trg               SequenceTarget
+	name              string
+	baseOpts          []options.Option
 	putInSrcContainer bool
-
-	baseOpts []options.Option
 }
 
 type sflowOption func(cfg *sflowConfig) error

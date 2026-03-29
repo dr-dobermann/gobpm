@@ -39,32 +39,12 @@ type Implementor interface {
 // when the Operation is called. It can also define zero or more errors that
 // are returned when operation fails.
 type Operation struct {
-	foundation.BaseElement
-
-	// The descriptive name of the element.
-	name string
-
-	// This attribute specifies the input Message of the Operation. An Operation
-	// has exactly one input Message.
-	inMessage *bpmncommon.Message
-
-	// This attribute specifies the output Message of the Operation.
-	// An Operation has at most one input Message.
-	outMessage *bpmncommon.Message
-
-	// This attribute specifies errors that the Operation may return. An
-	// Operation MAY refer to zero or more Error elements.
-	//
-	// >>>>>  DEVNOTE: original BPMN2 errors functionatity fully covered by
-	// gobpm errs package. So errors will consists a list of error classes.
-	//
-	// errors []*bpmncommon.Error
-	errors *set.Set[string]
-
-	// This attribute allows to reference a concrete artifact in the underlying
-	// implementation technology representing that operation, such as a WSDL
-	// operation.
 	implementation Implementor
+	inMessage      *bpmncommon.Message
+	outMessage     *bpmncommon.Message
+	errors         *set.Set[string]
+	name           string
+	foundation.BaseElement
 }
 
 // NewOperation creates a new Operation and returns its pointer on success or

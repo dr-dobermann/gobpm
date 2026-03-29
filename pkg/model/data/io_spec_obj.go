@@ -14,7 +14,7 @@ type Direction string
 
 const (
 	// Input represents input direction for parameters.
-	Input  Direction = "INPUT"
+	Input Direction = "INPUT"
 	// Output represents output direction for parameters.
 	Output Direction = "OUTPUT"
 )
@@ -42,11 +42,9 @@ func Opposite(dir Direction) Direction {
 // Parameter is type which is used as substitute for DataInput and DataOutput
 // BPMN types.
 type Parameter struct {
-	ItemAwareElement
-
-	name string
-
 	sets map[SetType][]*Set
+	name string
+	ItemAwareElement
 }
 
 // NewParameter creates a new Parameter and returns its pointer on success or
@@ -173,28 +171,11 @@ func (p *Parameter) removeSet(s *Set, from SetType) error {
 
 // Set implements bothelpers.InputSet and OutputSet of BPMNv2
 type Set struct {
-	foundation.BaseElement
-
-	name string
-
 	values map[SetType][]*Parameter
-
-	// valid keeps validity flag of the Set. It could be changed
-	// by Validate call.
-	// To check validity call IsValid.
-	valid bool
-
-	// linkedSets holds Input/Output rule that defines which OutputSet is
-	// expected to be created by the Activity when this InputSet became valid.
-	// This attribute is paired with the inputSetRefs attribute of OutputSets.
-	//
-	// Specifies an Input/Output rule that defines whichelpers.InputSet has to
-	// become valid to expect the creation of this OutputSet. This attribute is
-	// paired with the outputSetRefs attribute of InputSets.
-	//
-	// This combination replaces the IORules attribute for Activities in
-	// BPMN 1.2.
+	name   string
+	foundation.BaseElement
 	linkedSets []*Set
+	valid      bool
 }
 
 // NewSet creates a new Set and returns its pointer on succes or

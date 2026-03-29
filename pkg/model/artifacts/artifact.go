@@ -58,9 +58,8 @@ func MustArtifact(baseOpts ...options.Option) *Artifact {
 // CategoryValue. The graphical elements within the Group will be assigned the
 // CategoryValue of the Group.
 type Group struct {
-	foundation.BaseElement
-
 	CategoryValue *CategoryValue
+	foundation.BaseElement
 }
 
 // NewGroup creates a new Group and returns its pointer

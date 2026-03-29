@@ -14,12 +14,10 @@ import (
 
 // setDef defines single set for activity InputOutputSpecifictation.
 type setDef struct {
-	set *data.Set
-	dir data.Direction
-
-	// setType allows combination of SetType
-	setType data.SetType
+	set     *data.Set
+	dir     data.Direction
 	params  []*data.Parameter
+	setType data.SetType
 }
 
 // newSetDef tries to create sn IoSpec set definition and return its pointer or
@@ -59,17 +57,18 @@ func newSetDef(name, id string,
 
 type (
 	activityConfig struct {
-		name             string
-		compensation     bool
 		loop             *LoopCharacteristics
 		roles            map[string]*hi.ResourceRole
 		props            map[string]*data.Property
-		startQ, complQ   int
-		baseOpts         []options.Option
 		dataAssociations map[data.Direction][]*data.Association
 		sets             map[data.Direction][]*setDef
-		withoutParams    bool
 		defaultFlow      *flow.SequenceFlow
+		name             string
+		baseOpts         []options.Option
+		startQ           int
+		complQ           int
+		compensation     bool
+		withoutParams    bool
 	}
 
 	// ActivityOption represents an activity configuration option.

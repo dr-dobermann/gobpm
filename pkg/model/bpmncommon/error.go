@@ -14,24 +14,10 @@ import (
 // An Error is generated when there is a critical problem in the processing of
 // an Activity or when the execution of an Operation failed.
 type Error struct {
-	foundation.BaseElement
-
-	// The descriptive name of the Error.
-	name string
-
-	// For an End Event:
-	//   If the result is an Error, then the errorCode MUST be supplied.
-	// For an Intermediate Event within normal flow:
-	//   If the trigger is an Error, then the errorCode MUST be entered.
-	// For an Intermediate Event attached to the boundary of an Activity:
-	//   If the trigger is an Error, then the errorCode MAY be entered. This
-	//   Event “catches” the Error. If there is no errorCode, then any error
-	//   SHALL trigger the Event. If there is an errorCode, then only an Error
-	//   that matches the errorCode SHALL trigger the Event.
-	errorCode string
-
-	// An ItemDefinition is used to define the “payload” of the Error.
 	structure *data.ItemDefinition
+	name      string
+	errorCode string
+	foundation.BaseElement
 }
 
 // NewError creates a new error object.

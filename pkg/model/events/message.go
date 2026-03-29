@@ -12,13 +12,9 @@ import (
 
 // MessageEventDefinition represents a message event definition.
 type MessageEventDefinition struct {
-	definition
-
-	// The Message MUST be supplied (if the isExecutable attribute of the
-	// Process is set to true).
-	message *bpmncommon.Message
-
+	message   *bpmncommon.Message
 	operation *service.Operation
+	definition
 }
 
 // NewMessageEventDefintion creates a new MessageEventDefinition and
@@ -94,7 +90,7 @@ func (med *MessageEventDefinition) CheckItemDefinition(iDefID string) bool {
 // If EventDefiniton isn't based on any data.ItemDefiniton, empty list
 // wil be returned.
 func (med *MessageEventDefinition) GetItemsList() []*data.ItemDefinition {
-	idd := []*data.ItemDefinition{}
+	idd := make([]*data.ItemDefinition, 0, 1)
 
 	if med.message.Item() == nil {
 		return idd

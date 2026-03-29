@@ -1,7 +1,7 @@
 version: "2"
 run:
   concurrency: 4
-  go: "1.23"
+  go: "1.25"
   tests: false
   allow-parallel-runners: true
 linters:
@@ -26,11 +26,10 @@ linters:
     - prealloc
     - revive
     - staticcheck
-    - testpackage
     - unconvert
     - unused
     - whitespace
-linters-settings:
+  settings:
     depguard:
       rules:
         deny_deprecated:
@@ -97,23 +96,23 @@ linters-settings:
     staticcheck:
       checks:
         - all
-issues:
-  exclude-use-default: false
-  exclude-rules:
+  exclusions:
+    presets: []
+    rules:
       - linters:
           - lll
         source: '^//go:generate '
-  exclude-dirs:
+    paths:
       - generated
       - .generated
       - examples
       - third_party
       - builtin
-  exclude-files:
       - mock_.*\.go$
       - .*\.pb\.go$
       - .*_mock\.go$
+      - _test\.go
 output:
-  format: colored-line-number
-  print-issued-lines: true
-  print-linter-name: true
+  formats:
+    text:
+      path: stdout
