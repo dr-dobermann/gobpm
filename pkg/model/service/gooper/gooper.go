@@ -24,8 +24,8 @@ type OpFunctor func(
 
 // GoFunc represents a Go function operation implementor.
 type GoFunc struct {
-	ers []string
 	f   OpFunctor
+	ers []string
 }
 
 // New creates a new GoFunc based on OpFunctor f and list of error classes,

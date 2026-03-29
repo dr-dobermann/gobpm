@@ -49,7 +49,7 @@ func (e *evt) LogValue() slog.Value {
 
 	details = append(details, slog.Time("At", e.At))
 
-	dd := []slog.Attr{}
+	dd := make([]slog.Attr, 0, len(e.Details))
 	for n, v := range e.Details {
 		dd = append(dd, slog.Any(n, v))
 	}

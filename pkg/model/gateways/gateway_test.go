@@ -15,8 +15,8 @@ import (
 // ============================================================================
 
 type dummyNode struct {
-	foundation.BaseElement
 	flow.BaseNode
+	foundation.BaseElement
 }
 
 func newDummyNode(name string) *dummyNode {

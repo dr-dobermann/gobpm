@@ -28,61 +28,13 @@ const errorClass = "PROCESS_ERRORS"
 // by a single person. Low-level Processes can be grouped together to achieve a
 // common business goal.
 type Process struct {
-	foundation.BaseElement
-
-	name string
-
-	// DEV_NOTE: CallableElement should be implemented as interface so it
-	// shouldn't be used as a field or embedded struct.
-	// bpmncommon.CallableElement
-
-	// DEV_NOTE: Container replaced by interface flow.Container
-	// flow.ElementsContainer
-
-	// An optional Boolean value specifying whether the Process is executable.
-	// An executable Process is a private Process that has been modeled for the
-	// purpose of being executed according to the semantics of Clause 14. Of
-	// course, during the development cycle of the Process, there will be stages
-	// where the Process does not have enough detail to be “executable.”
-	// A non-executable Process is a private Process that has been modeled for
-	// the purpose of documenting Process behavior at a modeler-defined level of
-	// detail. Thus, information needed for execution, such as formal condition
-	// expressions are typically not included in a non-executable Process.
-	// For public Processes, no value has the same semantics as if the value
-	// were false. The value MAY not be true for public Processes.
-	//
-	// DEV_NOTE: goBpm should run only executable processes, so this attribute
-	// SHOULD be always true
-	// isExecutable bool
-
-	// Modeler-defined properties MAY be added to a Process. These properties
-	// are contained within the Process. All Tasks and Sub-Processes SHALL have
-	// access to these properties.
-	//
-	// properties are indexed by the property names.
 	properties map[string]*data.Property
-
-	// Defines the resource roles that will perform or will be responsible for
-	// the Process. The resource, e.g., a performer, can be specified in the
-	// form of a specific individual, a group, an organization role or position,
-	// or an organization.
-	// Note that the assigned resources of the Process does not determine the
-	// assigned resources of the Activities that are contained by the Process.
-	//
-	// roles indexed by role.Name
-	roles map[string]*hi.ResourceRole
-
-	// correlationSubscriptions are a feature of context-based correlation.
-	// CorrelationSubscriptions are used to correlate incoming Messages against
-	// data in the Process context. A Process MAY contain several
-	// correlationSubscriptions.
+	roles      map[string]*hi.ResourceRole
+	nodes      map[string]flow.Node
+	flows      map[string]*flow.SequenceFlow
+	name       string
+	foundation.BaseElement
 	CorrelationSubscriptions []*bpmncommon.CorrelationSubscription
-
-	// nodes keeps all flow.BaseNodes of the Process.
-	// it indexed by BaseNode id.
-	nodes map[string]flow.Node
-
-	flows map[string]*flow.SequenceFlow
 }
 
 // New creates a new Process and returns its pointer.

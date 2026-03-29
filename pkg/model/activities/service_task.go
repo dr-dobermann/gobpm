@@ -33,19 +33,9 @@ import (
 // defined by Message referred to by the outMessageRef attribute of the
 // Operation.
 type ServiceTask struct {
-	task
-
-	// This attribute specifies the technology that will be used to send
-	// and receive the Messages. Valid values are "##unspecified" for
-	// leaving the implementation technology open, "##WebService" for
-	// the Web service technology or a URI identifying any other
-	// technology or coordination protocol. A Web service is the default
-	// technology.
+	operation      *service.Operation
 	implementation string
-
-	// This attribute specifies the operation that is invoked by the
-	// Service Task.
-	operation *service.Operation
+	task
 }
 
 // NewServiceTask creates a new service task named name and operation as
@@ -207,7 +197,7 @@ func (st *ServiceTask) uploadOutputMessage(ctx context.Context) error {
 				Item().Structure().
 				Update(ctx, o.ItemDefinition().Structure().Get(ctx))
 			if err == nil {
-				if err := o.UpdateState(data.ReadyDataState); err != nil {
+				if err = o.UpdateState(data.ReadyDataState); err != nil {
 					return errs.New(
 						errs.M("couldn't update task's output state to Ready"),
 						errs.C(err.Error(), errs.OperationFailed),

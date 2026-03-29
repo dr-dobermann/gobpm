@@ -38,32 +38,10 @@ const (
 // (e.g., to introduce subjects or descriptions with presentation parameters),
 // they SHOULD use attributes defined by the OASIS WSHumanTask specification.
 type UserTask struct {
-	task
-
-	// This attribute specifies the technology that will be used to implement
-	// the User Task. Valid values are "##unspecified" for leaving the
-	// implementation technology open, "##WebService" for the Web service
-	// technology or a URI identifying any other technology or coordination
-	// protocol. The default technology for this task is unspecified.
-	// impl string
-	// DEV_NOTE: since there could be more than one renderer, more than one
-	// implementation could be returned. "##unspecified" is returned only
-	// if there is no renderers.
-	// implementation string
-	//
-	// implementation type is moved to renderers. Every renderer has itsown
-	// implementation.
-
-	// This attributes acts as a hook which allows BPMN adopters to specify
-	// task rendering attributes by using the BPMN Extension mechanism.
+	outputs   *bpmncommon.Resource
+	resChan   chan data.Data
 	renderers []hi.Renderer
-
-	// outputs describes the output parameters expected from renderers.
-	// every parameter is described by single ResourceParameter of
-	// Resource.
-	outputs *bpmncommon.Resource
-
-	resChan chan data.Data
+	task
 }
 
 // NewUserTask tries to create a new UserTask with name and options.

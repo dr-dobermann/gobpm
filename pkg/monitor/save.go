@@ -7,8 +7,8 @@ import (
 
 // Detail describes single event's detail.
 type Detail struct {
-	name  string
 	value any
+	name  string
 }
 
 // D returns the new details object created from name and value.

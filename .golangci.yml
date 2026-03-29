@@ -26,7 +26,6 @@ linters:
     - prealloc
     - revive
     - staticcheck
-    - testpackage
     - unconvert
     - unused
     - whitespace
@@ -112,6 +111,7 @@ linters:
       - mock_.*\.go$
       - .*\.pb\.go$
       - .*_mock\.go$
+      - _test\.go
 output:
   formats:
     text:

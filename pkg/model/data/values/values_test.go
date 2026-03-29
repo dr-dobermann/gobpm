@@ -290,14 +290,14 @@ func TestVariable(t *testing.T) {
 	t.Run("struct with pointer",
 		func(t *testing.T) {
 			type test_struct struct {
-				int_v    int
 				string_v string
+				int_v    int
 			}
 
 			ctx := context.Background()
 
 			v := values.NewVariable[test_struct](
-				test_struct{42, "meaning of life"})
+				test_struct{"meaning of life", 42})
 			require.Equal(t, "test_struct", v.Type())
 
 			// cloning

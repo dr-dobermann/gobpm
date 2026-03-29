@@ -56,22 +56,10 @@ func (ic ItemKind) Validate() error {
 
 // ItemDefinition represents a BPMN item definition.
 type ItemDefinition struct {
-	foundation.BaseElement
-
-	// This defines the nature of the Item. Possible values are physical or
-	// information. The default value is information.
-	kind ItemKind
-
-	// Identifies the location of the data structure and its format. If the
-	// importType attribute is left unspecified, the typeLanguage specified
-	// in the Definitions that contains this ItemDefinition is assumed
-	importRef *foundation.Import
-
-	// The concrete data structure to be used.
 	structure Value
-
-	// Setting this flag to true indicates that the actual data type is a
-	// collection.
+	importRef *foundation.Import
+	kind      ItemKind
+	foundation.BaseElement
 	isCollection bool
 }
 
@@ -181,13 +169,9 @@ func (idef *ItemDefinition) String() string {
 // Data Objects, Data Object References, Data Stores, Properties, DataInputs
 // and DataOutputs.
 type ItemAwareElement struct {
-	foundation.BaseElement
-
-	// Specification of the items that are stored or conveyed by the
-	// ItemAwareElement.
-	subject *ItemDefinition
-
+	subject   *ItemDefinition
 	dataState SrcState
+	foundation.BaseElement
 }
 
 // NewItemAwareElement creates a new DataAwareItem and returns its pointer.

@@ -15,9 +15,8 @@ import (
 
 // ExclusiveGateway represents a BPMN exclusive gateway.
 type ExclusiveGateway struct {
-	Gateway
-
 	scope scope.Scope
+	Gateway
 }
 
 // NewExclusiveGateway creates a new ExclusiveGateway.

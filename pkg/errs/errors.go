@@ -29,41 +29,41 @@ import (
 
 const (
 	// InvalidObject represents an invalid object error code.
-	InvalidObject        = "INVALID_OBJECT"
+	InvalidObject = "INVALID_OBJECT"
 	// RunFailed represents a run failure error code.
-	RunFailed            = "RUN_FAILED"
+	RunFailed = "RUN_FAILED"
 	// NilDereference represents a nil dereference error code.
-	NilDereference       = "NIL_DEREFERENCE"
+	NilDereference = "NIL_DEREFERENCE"
 	// BulidingFailed represents a building failure error code.
-	BulidingFailed       = "BUILDING_FAILED"
+	BulidingFailed = "BUILDING_FAILED"
 	// InvalidParameter represents an invalid parameter error code.
-	InvalidParameter     = "INVALID_PARAMETER"
+	InvalidParameter = "INVALID_PARAMETER"
 	// TypeCastingError represents a type casting error code.
-	TypeCastingError     = "INVALID_TYPECASTING"
+	TypeCastingError = "INVALID_TYPECASTING"
 	// OutOfRangeError represents an out of range error code.
-	OutOfRangeError      = "OUT_OF_RANGE"
+	OutOfRangeError = "OUT_OF_RANGE"
 	// EmptyCollectionError represents an empty collection error code.
 	EmptyCollectionError = "COLLECTION_IS_EMPTY"
 	// EmptyNotAllowed represents an empty object not allowed error code.
-	EmptyNotAllowed      = "EMPTY_OBJ_IS_NOT_ALLOWED"
+	EmptyNotAllowed = "EMPTY_OBJ_IS_NOT_ALLOWED"
 	// DuplicateObject represents a duplicate object error code.
-	DuplicateObject      = "DUPLICATE_OBJECT_ERROR"
+	DuplicateObject = "DUPLICATE_OBJECT_ERROR"
 	// OperationFailed represents an operation failure error code.
-	OperationFailed      = "OPERATION_FAILED"
+	OperationFailed = "OPERATION_FAILED"
 	// ConditionFailed represents a condition failure error code.
-	ConditionFailed      = "CONDITION_FAILED"
+	ConditionFailed = "CONDITION_FAILED"
 	// ObjectNotFound represents an object not found error code.
-	ObjectNotFound       = "OBJECT_NOT_FOUND"
+	ObjectNotFound = "OBJECT_NOT_FOUND"
 	// InvalidState represents an invalid state error code.
-	InvalidState         = "INVALID_OBJECT_STATE"
+	InvalidState = "INVALID_OBJECT_STATE"
 )
 
 // ApplicationError represents a structured application error with classes, message, and details.
 type ApplicationError struct {
 	Err     error          `json:"error"`
+	Details map[string]any `json:"details"`
 	Message string         `json:"message"`
 	Classes []string       `json:"classes"`
-	Details map[string]any `json:"details"`
 }
 
 // New returns pointer on created with errOptions ApplicationError.
@@ -114,7 +114,7 @@ func (ae *ApplicationError) JSON() []byte {
 	return js
 }
 
-// --------------------- error interface ---------------------------------------
+// Error returns a string representation of the ApplicationError.
 func (ae *ApplicationError) Error() string {
 	str := ""
 	if len(ae.Classes) > 0 {
@@ -156,10 +156,10 @@ func (ae ApplicationError) MarshalJSON() ([]byte, error) {
 
 	return json.Marshal(
 		struct {
+			Details map[string]any `json:"details"`
 			Err     string         `json:"error"`
 			Message string         `json:"message"`
 			Classes []string       `json:"classes"`
-			Details map[string]any `json:"details"`
 		}{
 			Err:     errS,
 			Message: ae.Message,

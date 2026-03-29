@@ -12,7 +12,7 @@ type CtxKey string
 const Key CtxKey = "monitor_key"
 
 // Event holds information about single monitoring Event.
-type Event struct {
+type Event struct { //nolint:govet // field order matters for slog serialization
 	Source  string
 	Type    string
 	At      time.Time

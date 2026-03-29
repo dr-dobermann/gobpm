@@ -139,26 +139,21 @@ func (ss stepState) String() string {
 // stepInfo keeps information about single track step
 type stepInfo struct {
 	node  flow.Node
-	state stepState
 	tk    *token
+	state stepState
 }
 
 // track processed single line of the process from start noed or
 // from fork of sequence flow.
 type track struct {
-	foundation.BaseElement
-
-	m sync.RWMutex
-
-	ctx context.Context
-
-	state   trackState
-	prev    []*track
-	steps   []*stepInfo
-	lastErr error
-
+	ctx      context.Context
+	lastErr  error
 	instance *Instance
-
+	foundation.BaseElement
+	prev   []*track
+	steps  []*stepInfo
+	m      sync.RWMutex
+	state  trackState
 	stopIt bool
 }
 

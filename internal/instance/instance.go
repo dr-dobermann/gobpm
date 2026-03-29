@@ -40,9 +40,9 @@ const (
 	runtimeVars = "RUNTIME"
 
 	// StartedAt represents the started time variable name.
-	StartedAt   = "STARTED_AT"
+	StartedAt = "STARTED_AT"
 	// CurrState represents the current state variable name.
-	CurrState   = "STATE"
+	CurrState = "STATE"
 	// TracksCount represents the tracks count variable name.
 	TracksCount = "TRACKS_CNT"
 )
@@ -90,55 +90,23 @@ type dataFinder func(data.Data) bool
 
 // Instance represents a process instance for execution.
 type Instance struct {
-	foundation.BaseElement
-
-	m sync.RWMutex
-
-	// wg is used to hold track's go-routines tracing.
-	wg sync.WaitGroup
-
-	// state of the Instance.
-	state State
-
-	// the Snapshot, the Instance is based on.
-	s *snapshot.Snapshot
-
-	// Instance's runtime context.
-	ctx context.Context
-
-	// monID keeps last monitoring event id.
-	monID atomic.Int64
-
-	// Scopes holds accessible in the moment Data.
-	// first map indexed by data path, the second map indexed by Data name.
-	scopes map[scope.DataPath]map[string]data.Data
-
-	// rootScope holds the root dataPath of the scope
-	rootScope scope.DataPath
-
-	// instance runtime variables scope
-	runtimeScope scope.DataPath
-
-	// parentScope hold reference on the parent scope which set up on Instance
-	// creation.
-	parentScope scope.Scope
-
-	// parentEventProducer is used to register the Instance in events producers
-	// chain.
+	startTime           time.Time
+	ctx                 context.Context
+	rr                  interactor.Registrator
 	parentEventProducer eventproc.EventProducer
-
-	// render registrator registers nodes with renderers of human interaction.
-	rr interactor.Registrator
-
-	// tracks indexed by track Ids
-	tracks map[string]*track
-
-	tokens []*token
-
-	// Instance's run starting time.
-	startTime time.Time
-
+	parentScope         scope.Scope
+	s                   *snapshot.Snapshot
+	scopes              map[scope.DataPath]map[string]data.Data
+	tracks              map[string]*track
+	rootScope           scope.DataPath
+	runtimeScope        scope.DataPath
+	foundation.BaseElement
+	tokens   []*token
 	monitors []monitor.Writer
+	wg       sync.WaitGroup
+	monID    atomic.Int64
+	m        sync.RWMutex
+	state    State
 }
 
 // New creates a new Instance from the Snapshot s and sets state to Ready.
@@ -167,7 +135,7 @@ func New(
 	if err != nil {
 		return nil, fmt.Errorf("failed to create base element: %w", err)
 	}
-	
+
 	inst := Instance{
 		BaseElement:         *be,
 		state:               Ready,
@@ -204,7 +172,7 @@ func New(
 // loadProperties sets the Instance rootScope name and load process'es
 // properties into the instance's root Scope.
 func (inst *Instance) loadProperties(parentScope scope.Scope) error {
-	dd := []data.Data{}
+	dd := make([]data.Data, 0, len(inst.s.Properties))
 	for _, p := range inst.s.Properties {
 		dd = append(dd, p)
 	}

@@ -30,14 +30,9 @@ func TestLogMon(t *testing.T) {
 		})
 
 	logTests := []struct {
-		// test name
-		name string
-
-		// build log handler
+		name           string
 		handlerBuilder func(io.Writer, *slog.HandlerOptions) slog.Handler
-
-		// preparation of test values
-		testGen func(l *slog.Logger)
+		testGen        func(l *slog.Logger)
 	}{
 		{
 			name: "text logger",

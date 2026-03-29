@@ -16,11 +16,11 @@ type SetType uint8
 
 const (
 	// InvalidSet represents an invalid set type.
-	InvalidSet        SetType = iota
+	InvalidSet SetType = iota
 	// DefaultSet represents the default set type.
-	DefaultSet        SetType = 1 << iota
+	DefaultSet SetType = 1 << iota
 	// OptionalSet represents an optional set type.
-	OptionalSet       SetType = 1 << iota
+	OptionalSet SetType = 1 << iota
 	// WhileExecutionSet represents a while-execution set type.
 	WhileExecutionSet SetType = 1 << iota
 
@@ -28,7 +28,7 @@ const (
 	AllSets SetType = DefaultSet | OptionalSet | WhileExecutionSet
 
 	// SingleType represents single type validation mode.
-	SingleType    = true
+	SingleType = true
 	// CombinedTypes represents combined types validation mode.
 	CombinedTypes = false
 )
@@ -84,30 +84,9 @@ func (st SetType) Validate(single bool) error {
 // Outputs directly, however they MAY define them indirectly via
 // MultiInstanceLoopCharacteristics.
 type InputOutputSpecification struct {
-	foundation.BaseElement
-
-	// A reference to the InputSets defined by the InputOutputSpecification.
-	// Every InputOutputSpecification MUST define at least one InputSet.
-	// inputSets []*Set
-
-	// A reference to the OutputSets defined by the InputOutputSpecification.
-	// Every Data Interface MUST define at least one OutputSet.
-	// outputSets []*Set
-
-	sets map[Direction][]*Set
-
-	// An optional reference to the Data Inputs of the InputOutputSpecification.
-	// If the InputOutputSpecification defines no Data Input, it means no data
-	// is REQUIRED to start the Activity. This is an ordered set.
-	// dataInputs []*Parameter
-
-	// An optional reference to the Data Outputs of the
-	// InputOutputSpecification. If the InputOutputSpecification defines no Data
-	// Output, it means no data is REQUIRED to finish the Activity. This is an
-	// ordered set.
-	// dataOutputs []*Parameter
-
+	sets   map[Direction][]*Set
 	params map[Direction][]*Parameter
+	foundation.BaseElement
 }
 
 // NewIOSpec creates a new InputOutputSpecification and returns its pointer on

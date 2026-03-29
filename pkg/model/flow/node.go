@@ -89,9 +89,8 @@ type Node interface {
 
 // BaseNode provides base functionality of all Nodes as sequence flows holder.
 type BaseNode struct {
-	BaseElement
-
 	flows map[data.Direction]map[string]*SequenceFlow
+	BaseElement
 }
 
 // NewBaseNode creates a new BaseNode object.

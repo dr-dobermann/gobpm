@@ -14,9 +14,8 @@ import (
 
 // CallableElement represents a callable BPMN element.
 type CallableElement struct {
-	foundation.BaseElement
-
 	Name string
+	foundation.BaseElement
 }
 
 // NewCallableElement creates a new element and return its pointer.

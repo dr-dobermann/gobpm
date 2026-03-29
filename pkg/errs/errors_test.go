@@ -29,7 +29,7 @@ func TestPanic(t *testing.T) {
 }
 
 func TestJson(t *testing.T) {
-	testJson := `{"error":"test error","message":"test message","classes":["INVALID_OBJECT","BUILDING_FAILED"],"details":{"name":"value"}}`
+	testJson := `{"details":{"name":"value"},"error":"test error","message":"test message","classes":["INVALID_OBJECT","BUILDING_FAILED"]}`
 
 	ae := errs.New(
 		errs.M("test message"),
