@@ -33,6 +33,9 @@ jobs:
       - name: Generate mockery
         run: mockery
 
+      - name: Tidy modules
+        run: go mod tidy
+
       - name: CodeCov
         run: go test -coverprofile=coverage.txt ./...
         
