@@ -17,7 +17,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
-	"github.com/dr-dobermann/gobpm/pkg/monitor"
 )
 
 // TimerWatierError is the error class for timer waiter errors.
@@ -248,20 +247,11 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 
 // runTimerService runs the timer waiter service in a background goroutine
 func (tw *timeWaiter) runTimerService(ctx context.Context) {
-	var m monitor.Writer
-
-	if mv := ctx.Value(monitor.Key); mv != nil {
-		m = mv.(monitor.Writer)
-	}
-
 	tckr := time.NewTicker(tw.duration)
 
 	for {
 		select {
 		case <-ctx.Done():
-			monitor.Save(m, "timeWaiter", "Waiter stopped by context",
-				monitor.D("waiter_id", tw.id))
-
 			close(tw.stopCh)
 
 			tckr.Stop()
@@ -274,20 +264,13 @@ func (tw *timeWaiter) runTimerService(ctx context.Context) {
 
 		case <-tw.stopCh:
 			fmt.Println("stopping waiter ", tw.id, "...")
-			monitor.Save(m, "timeWaiter", "Waiter stopped",
-				monitor.D("waiter_id", tw.id))
 
 			tckr.Stop()
 
 			return
 
-		case t := <-tckr.C:
-			monitor.Save(m, "timeWaiter", "Waiter catch an event",
-				monitor.D("waiter_id", tw.id),
-				monitor.D("event_time", t),
-				monitor.D("cycles_left", tw.cyclesLeft))
-
-			if err := tw.processTimerEvent(ctx, m); err != nil {
+		case <-tckr.C:
+			if err := tw.processTimerEvent(ctx); err != nil {
 				return
 			}
 		}
@@ -295,16 +278,12 @@ func (tw *timeWaiter) runTimerService(ctx context.Context) {
 }
 
 // processTimerEvent handles timer event processing with proper locking
-func (tw *timeWaiter) processTimerEvent(ctx context.Context, m monitor.Writer) error {
+func (tw *timeWaiter) processTimerEvent(ctx context.Context) error {
 	tw.m.Lock()
 	defer tw.m.Unlock()
 
 	for _, ep := range tw.processors {
 		if err := ep.ProcessEvent(ctx, tw.eDef); err != nil {
-			monitor.Save(m, "timeWaiter", "Event processing failed",
-				monitor.D("waiter_id", tw.id),
-				monitor.D("error", err))
-
 			tw.state = eventproc.WSFailed
 			return err
 		}

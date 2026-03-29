@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"log/slog"
-	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -25,20 +23,19 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
-	"github.com/dr-dobermann/gobpm/pkg/monitor/logmon"
 	"github.com/stretchr/testify/require"
 )
 
 func TestInstIvalidParams(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
-	_, err := instance.New(nil, nil, nil, nil, nil)
+	_, err := instance.New(nil, nil, nil, nil)
 	require.Error(t, err)
 
 	s, err := getSnapshot("invalid_params_test")
 	require.NoError(t, err)
 
-	_, err = instance.New(s, nil, nil, nil, nil)
+	_, err = instance.New(s, nil, nil, nil)
 	require.Error(t, err)
 }
 
@@ -48,16 +45,7 @@ func TestMonitoring(t *testing.T) {
 
 	ep := mockeventproc.NewMockEventProducer(t)
 
-	logger := slog.New(
-		slog.NewTextHandler(
-			os.Stdout,
-			&slog.HandlerOptions{
-				Level: slog.LevelDebug,
-			}))
-	m, err := logmon.New(logger)
-	require.NoError(t, err)
-
-	inst, err := instance.New(s, nil, ep, nil, m)
+	inst, err := instance.New(s, nil, ep, nil)
 	require.NoError(t, err)
 
 	// test runtime variables

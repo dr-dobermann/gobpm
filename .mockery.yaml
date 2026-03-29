@@ -20,9 +20,6 @@ packages:
       EventProcessor:
       EventWaiter:
       EventHub:
-  github.com/dr-dobermann/gobpm/pkg/monitor:
-    interfaces:
-      Writer:
   github.com/dr-dobermann/gobpm/pkg/model/data:
     interfaces:
       Source:
