@@ -3,7 +3,7 @@ module github.com/dr-dobermann/gobpm
 go 1.25
 
 require (
-	github.com/google/uuid v1.3.0
+	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/exp v0.0.0-20240525044651-4c93da0ed11d
 )
