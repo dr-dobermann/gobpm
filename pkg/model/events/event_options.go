@@ -32,7 +32,7 @@ type (
 	conditionAdder interface {
 		eventConfig
 
-		setCondiiton(ced *ConditionalEventDefinition) error
+		setCondition(ced *ConditionalEventDefinition) error
 	}
 
 	// cancelAdder adds CancelEventDefinition into the event
@@ -160,7 +160,7 @@ func WithConditionalTrigger(ced *ConditionalEventDefinition) EventOption {
 		}
 
 		if ca, ok := cfg.(conditionAdder); ok {
-			return ca.setCondiiton(ced)
+			return ca.setCondition(ced)
 		}
 
 		return errs.New(

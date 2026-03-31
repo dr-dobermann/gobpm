@@ -12,13 +12,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewMessageEventDefintion(t *testing.T) {
+func TestNewMessageEventDefinition(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run(
 		"empty message",
 		func(t *testing.T) {
-			med, err := events.NewMessageEventDefintion(nil, nil)
+			med, err := events.NewMessageEventDefinition(nil, nil)
 			require.Nil(t, med, "message should be nil with empty message")
 			require.Error(t, err)
 		})
@@ -31,7 +31,7 @@ func TestNewMessageEventDefintion(t *testing.T) {
 					values.NewVariable(42),
 					foundation.WithID("42")))
 
-			med, err := events.NewMessageEventDefintion(
+			med, err := events.NewMessageEventDefinition(
 				msg, nil)
 			require.NoError(t, err)
 

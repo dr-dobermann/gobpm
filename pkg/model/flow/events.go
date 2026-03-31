@@ -70,8 +70,8 @@ type EventDefCloner interface {
 	CloneEventDefinition(data []data.Data) (EventDefinition, error)
 }
 
-// BoudaryEvent is an interface for boundary events.
-type BoudaryEvent interface {
+// BoundaryEvent is an interface for boundary events.
+type BoundaryEvent interface {
 	EventNode
 
 	// BoundTo returns the ActivityNode the event is bounded to.

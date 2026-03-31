@@ -302,7 +302,7 @@ func (inst *Instance) runSingleTrack(ctx context.Context, t *track) {
 // createTrack creates all initial tracks of the Instance.
 func (inst *Instance) createTracks() error {
 	for _, n := range inst.s.Nodes {
-		_, boundaryEvent := n.(flow.BoudaryEvent)
+		_, boundaryEvent := n.(flow.BoundaryEvent)
 		if len(n.Incoming()) != 0 ||
 			n.NodeType() == flow.GatewayNodeType ||
 			boundaryEvent {

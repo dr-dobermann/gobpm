@@ -110,7 +110,7 @@ func (a *activity) SetDefaultFlow(flowID string) error {
 	}
 
 	return errs.New(
-		errs.M("flow %q dosn't existed in acitivity %q", flowID, a.Name()),
+		errs.M("flow %q dosn't existed in activity %q", flowID, a.Name()),
 		errs.C(errorClass, errs.InvalidParameter))
 }
 

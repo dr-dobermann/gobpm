@@ -17,9 +17,9 @@ type MessageEventDefinition struct {
 	definition
 }
 
-// NewMessageEventDefintion creates a new MessageEventDefinition and
+// NewMessageEventDefinition creates a new MessageEventDefinition and
 // returns its pointer. If nil message was given then error returned.
-func NewMessageEventDefintion(
+func NewMessageEventDefinition(
 	msg *bpmncommon.Message,
 	operation *service.Operation,
 	baseOpts ...options.Option,
@@ -50,7 +50,7 @@ func MustMessageEventDefinition(
 	operation *service.Operation,
 	baseOpts ...options.Option,
 ) *MessageEventDefinition {
-	med, err := NewMessageEventDefintion(msg, operation, baseOpts...)
+	med, err := NewMessageEventDefinition(msg, operation, baseOpts...)
 	if err != nil {
 		errs.Panic(err)
 	}
@@ -131,7 +131,7 @@ func (med *MessageEventDefinition) CloneEvent(
 				errs.E(err))
 	}
 
-	nmed, err := NewMessageEventDefintion(
+	nmed, err := NewMessageEventDefinition(
 		msg, med.operation, foundation.WithID(med.ID()))
 	if err != nil {
 		return nil,

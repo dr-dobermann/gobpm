@@ -37,7 +37,7 @@ type StartEvent struct {
 	// the Event Sub-Process can run concurrently. This attribute cannot be
 	// applied to Error Events (where it’s always true), or Compensation Events
 	// (where it doesn’t apply).
-	interrrupting bool
+	interrupting bool
 }
 
 // NewStartEvent creates a new StartEvent and returns its pointer on success
@@ -87,7 +87,7 @@ func NewStartEvent(
 
 // IsInterrupting returns interrupting setting of the StartEvent.
 func (se *StartEvent) IsInterrupting() bool {
-	return se.interrrupting
+	return se.interrupting
 }
 
 // ------------------ flow.SequenceSource interface ----------------------------

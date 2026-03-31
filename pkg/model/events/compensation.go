@@ -15,7 +15,7 @@ import (
 //   - The throw Compensation Intermediate Event MAY be used in normal flow.
 //   - The Compensation End Event MAY be used within any Sub-Process or Process.
 type CompensationEventDefinition struct {
-	acitivity flow.ActivityNode
+	activity flow.ActivityNode
 	definition
 	waitForCompensation bool
 }
@@ -39,7 +39,7 @@ func NewCompensationEventDefinition(
 
 	return &CompensationEventDefinition{
 		definition:          *d,
-		acitivity:           activity,
+		activity:           activity,
 		waitForCompensation: wait4compensation,
 	}, nil
 }

@@ -116,7 +116,7 @@ func (sc *startConfig) startEvent() (*StartEvent, error) {
 
 	return &StartEvent{
 		catchEvent:    *ce,
-		interrrupting: sc.interrurpting,
+		interrupting: sc.interrurpting,
 	}, nil
 }
 
@@ -154,7 +154,7 @@ func (sc *startConfig) setCompensation(
 }
 
 // setCondition implements conditionAdder interface.
-func (sc *startConfig) setCondiiton(ced *ConditionalEventDefinition) error {
+func (sc *startConfig) setCondition(ced *ConditionalEventDefinition) error {
 	sc.defs = append(sc.defs, ced)
 
 	return nil

@@ -31,7 +31,7 @@ func TestNewEndEvent(t *testing.T) {
 		data.MustItemDefinition(
 			values.NewVariable(23),
 			foundation.WithID("message_item")))
-	msgEd, err := events.NewMessageEventDefintion(msg, nil)
+	msgEd, err := events.NewMessageEventDefinition(msg, nil)
 	require.NoError(t, err)
 
 	sig, err := events.NewSignal(

@@ -34,7 +34,7 @@ func TestMessageEvents_CurrentLimitations(t *testing.T) {
 
 		// Create a message event definition
 		message := bpmncommon.MustMessage("test-message", data.MustItemDefinition(nil))
-		messageEvent, err := events.NewMessageEventDefintion(message, nil)
+		messageEvent, err := events.NewMessageEventDefinition(message, nil)
 		require.NoError(t, err)
 
 		// Registration should fail because waiters doesn't support Message events yet
