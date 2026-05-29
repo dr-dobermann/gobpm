@@ -1,19 +1,24 @@
 name: check
-on: 
+on:
   push:
     branches:
       - master
-      - 'dev/**'
   pull_request:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
@@ -24,21 +29,28 @@ jobs:
         with:
           version: v2.11.4
 
+      - name: Install mockery (pinned)
+        run: go install github.com/vektra/mockery/v3@v3.5.0
+
+      - name: Generate mocks
+        run: mockery
+
+      - name: Verify modules tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
       - name: Build
         run: go build -v ./...
 
-      - name: Load mockery
-        run: go install github.com/vektra/mockery/v3@latest
+      - name: Test (race detector enabled)
+        run: go test -race -coverprofile=coverage.txt ./...
 
-      - name: Generate mockery
-        run: mockery
+      - name: Vulnerability scan
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
-      - name: Tidy modules
-        run: go mod tidy
-
-      - name: CodeCov
-        run: go test -coverprofile=coverage.txt ./...
-        
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
         with:
