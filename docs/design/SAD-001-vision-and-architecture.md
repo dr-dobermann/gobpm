@@ -1,0 +1,433 @@
+# SAD-001 — goBpm Vision & Architecture
+
+| Field | Value |
+|---|---|
+| Status | Draft |
+| Version | v.1 |
+| Date | 2026-05-29 |
+| Owner | Ruslan Gabitov |
+| Supersedes | — |
+| Conformance scope | [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) |
+
+## 1. Purpose
+
+This document is the top-level architectural definition of **goBpm**. It establishes vision, scope, system boundaries, principles, module layout, and references to subordinate ADRs that crystallize specific decisions. Every ADR in this project refers up to this SAD; this SAD is the single coherent picture of "what we are building and why."
+
+It is **not** an implementation plan. Implementation specifics (per-feature requirements, migration steps, deployment topology) live in SRDs and FIXes that reference this document.
+
+### 1.1 Document classes used in this project
+
+| Class | Purpose | Lifecycle |
+|---|---|---|
+| **SAD** | Top-level architecture; vision + system boundaries + principles | Concept-level. Versioned. Evolves over time as the architecture matures. |
+| **ADR** | Architecture Decision Record — one concrete decision (execution model, module layout, ...) | Concept-level. Versioned. Each version is the current contract for that decision. |
+| **SRD** | Software Requirements Document — what a specific landing must deliver | Implementation-level. One document per landing. Not retroactively edited after the landing — it is the historical snapshot of intent. |
+| **FIX** | Fix design document — root cause + solution for a bug landing | Implementation-level. One document per fix landing. Same single-shot discipline as SRD. |
+
+SAD and ADR are the right places for the kind of content this document carries. SRDs and FIXes will accompany specific implementation landings and reference back to whichever SAD/ADRs they implement.
+
+## 2. Vision
+
+> **goBpm is a native Go BPMN 2.0 engine designed to embed directly into Go applications as a minimal, robust library — and to scale up to a standalone process server through additive runtime components, without forcing users to ship dependencies they do not need.**
+
+Two distinct user journeys are first-class:
+
+1. **Embedded library use.** A Go developer imports `github.com/dr-dobermann/gobpm`, constructs an engine with `gobpm.NewDefault()`, registers a process, runs it. No external services required. The engine lives in the same process as the host application.
+
+2. **Standalone runtime use.** An operator deploys a `gobpm-server` binary that exposes the engine over HTTP/gRPC, persists state to a real database, integrates with the organization's identity provider, and emits OpenTelemetry traces and Prometheus metrics. The runtime is built on the library — it is not a fork or a parallel implementation.
+
+Both journeys MUST work with high quality. The library MUST NOT carry runtime baggage; the runtime MUST NOT reimplement the engine.
+
+## 3. Goals
+
+| # | Goal | Rationale |
+|---|---|---|
+| G1 | **BPMN 2.0 Process Execution Conformance + ComplexGateway extension** | Standard compliance is the product's reason to exist. See [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md). |
+| G2 | **Minimal core library: zero non-stdlib runtime dependencies in the engine hot path** | Embeddability requires not forcing transitive deps onto host applications. |
+| G3 | **Out-of-the-box usability** | `gobpm.NewDefault()` produces a working engine with no wiring. New users get a working example in <20 lines. |
+| G4 | **Extensibility at every infrastructure concern** | Persistence, events, security, observability, expressions, human-task distribution, timers, message correlation backends — all behind interfaces. |
+| G5 | **Predictable execution model** | Single orchestrator goroutine per Process instance owns state; each active token runs in its own goroutine; `context.Context` is the cancellation contract. |
+| G6 | **Production runtime as additive overlay** | Multitenancy, AuthN/Z, diagnostics, profiling, HTTP/gRPC APIs live in a separate module. Library users pay no cost for them. |
+| G7 | **Solo-developer maintainability** | Code organized for incremental development. Multi-module monorepo over multi-repo split. Clear vertical slices over horizontal layers. |
+| G8 | **Observable by default, not by accident** | Every state transition emits structured events; default observability is no-op; production observability is plug-in. |
+
+## 4. Non-Goals
+
+| # | Non-Goal | Reason |
+|---|---|---|
+| N1 | BPMN modeler / diagram editor | Out of project scope. Users author BPMN externally (Camunda Modeler, bpmn.io). |
+| N2 | DMN engine (decision tables) | Distinct standard. May integrate via `BusinessRuleTask` calling an external DMN engine. |
+| N3 | Choreography execution | Separate conformance subclass; excluded per [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md). |
+| N4 | Collaboration metamodel execution | `Pool`, `Participant`, `MessageFlow` at the Collaboration level are out of execution conformance. Inter-process messaging covered by Message events. |
+| N5 | Diagram Interchange (DI/DC) | Visual layout metamodel. Not part of execution conformance. |
+| N6 | BPEL mapping | Separate conformance subclass; not pursued. |
+| N7 | BPMN XML parser, as a core library concern | The parser will exist (it has to, for adoption), but it is a separate module that constructs the in-memory model the engine consumes. Core library accepts pre-built models. |
+
+> **Note on distribution / clustering.** Distribution is NOT a non-goal — see §13 Distribution & Scale. Task-level remote execution (ServiceTask / GlobalTask on remote workers via direct runtime dispatch) and instance-level distribution (sticky routing per instance ID with persistence-based failover) are within the architectural envelope as additive overlays on the single-process foundation. Cluster-wide shared state (cross-node correlation, signal broadcast, shared variables) is an open question, addressable via DB-backed Repository + event broadcast — to be tackled when concrete demand materializes.
+
+## 5. Stakeholders & Use Cases
+
+| Stakeholder | Primary use case | Critical needs |
+|---|---|---|
+| **Embedded library user** (Go application developer) | Embed a BPMN engine in a Go application that already has its own HTTP, persistence, observability | Minimal deps; clean API; works without external services in tests; sensible defaults |
+| **Runtime operator** | Deploy `gobpm-server` as a standalone BPMN service for the organization | Production persistence, multitenancy, AuthN/Z, observability, diagnostics, HA-readiness |
+| **Extension developer** | Write a custom Repository / Authorization / Tracer / Expression adapter | Small, stable, well-documented interfaces; conformance contracts for each |
+| **BPMN modeler** | Author BPMN 2.0 XML to be executed by goBpm | Strict spec conformance; clear feedback on unsupported elements; predictable runtime semantics |
+| **Process owner / business user** | Observe, diagnose, intervene on running instances | Diagnostic API; history; instance state inspection; manual intervention (move token, retry, terminate) |
+
+## 6. Quality Attributes
+
+Priority levels: **P0** = mandatory for v.1.0; **P1** = required before public release; **P2** = nice-to-have, tracked.
+
+| Attribute | Priority | Tactic |
+|---|---|---|
+| BPMN conformance | P0 | Conformance test suite (MIWG fixtures + project-internal); KB at [docs/bpmn-spec/](../bpmn-spec/) as normative reference; each implemented element cross-checked against KB |
+| Robustness | P0 | Goroutine-leak-free architecture; `context.Context` cancellation cascade; no token spawned for long-wait states (rehydration model); deadlock detection for ComplexGateway |
+| Minimal core deps | P0 | `core` go.mod limited to stdlib + `github.com/google/uuid` (already in use). All other deps live in adapter or runtime modules. |
+| Out-of-the-box usability | P0 | `gobpm.NewDefault()` constructor + working example under 20 lines |
+| Extensibility | P1 | Interface for: `Repository`, `EventHub`, `ExpressionEngine`, `TaskDistributor`, `MessageBroker`, `Clock`, `Logger`, `Tracer`, `MetricsRecorder`, `AuthorizationProvider` |
+| Testability | P1 | All extension interfaces mockable (mockery); execution tests don't require external services; deterministic clock injection |
+| Observability | P1 | Every state transition (per BPMN lifecycle) emits a typed event. **Default policy: visible-by-default, silenceable on opt-out.** `Logger` defaults to `slog.Default()` so production deployments don't accidentally lose telemetry. `Tracer` and `MetricsRecorder` default to no-op only because Go stdlib has no sensible default for them (OpenTelemetry adapter ships separately). Users who want less noise opt out explicitly (e.g., `gobpm.WithSilentLogger()`). |
+| Documentation | P1 | This SAD + ADRs + bpmn-spec KB + per-element reference + examples + runtime operator guide |
+| Security | P2 | Authz hook points in core (sensitive operations defined); AuthN provider model; no built-in policy engine (delegated to runtime / adapter) |
+| Performance | P2 | Goroutine-per-token gives natural parallelism; benchmarks track per-element latency; no early optimization beyond avoiding obvious sinks (no map-allocation in hot paths) |
+| Distribution | P2 | Quickstart Docker image bundles runtime with sane defaults; single static binary for embedded `gobpm-server` use |
+
+## 7. System Context
+
+```
+                                    ┌──────────────────────────┐
+                                    │     BPMN 2.0 model       │
+                                    │  (in-memory Go objects   │
+                                    │   or parsed BPMN XML)    │
+                                    └────────────┬─────────────┘
+                                                 │ registers
+                                                 v
+   ┌──────────────────────────────────────────────────────────────────┐
+   │                       goBpm core library                         │
+   │                                                                  │
+   │   Engine ─── Snapshot ─── Orchestrator ─── Tokens                │
+   │      │                                                           │
+   │      ├── Extension interfaces (Repository, EventHub, Logger,     │
+   │      │    Tracer, MetricsRecorder, ExpressionEngine, ...)        │
+   │      │                                                           │
+   │      └── Default in-memory / no-op implementations               │
+   └────────────┬──────────────────────────────────┬──────────────────┘
+                │ imported by                      │ imported by
+                v                                  v
+   ┌─────────────────────────────┐    ┌─────────────────────────────┐
+   │     Host Go application      │    │       gobpm-runtime         │
+   │     (embedded library use)   │    │   ┌────────────────────┐    │
+   │                              │    │   │  HTTP / gRPC API   │    │
+   │   import gobpm               │    │   │  Tenancy           │    │
+   │   engine := gobpm.New(...)   │    │   │  AuthN / AuthZ     │    │
+   │   engine.Run(ctx)            │    │   │  Diagnostics       │    │
+   │                              │    │   │  Profiling         │    │
+   └─────────────────────────────┘    │   │  Observability     │    │
+                                       │   └────────────────────┘    │
+                                       └────────────┬────────────────┘
+                                                    │ imports
+                                                    v
+                                       ┌─────────────────────────────┐
+                                       │   Adapter modules           │
+                                       │   (postgres, otel, oidc,    │
+                                       │    casbin, redis-broker,    │
+                                       │    ...)                     │
+                                       └─────────────────────────────┘
+```
+
+Dependency direction is **always from outside in**: runtime imports core; adapters provide implementations of core interfaces; host applications import core directly. Core depends on nothing outside its own module.
+
+## 8. Architecture Overview
+
+### 8.1 Layer model (within `core`)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Public API           gobpm.Engine, gobpm.NewDefault(),         │
+│  pkg/                 pkg/model/* (BPMN element constructors),  │
+│                       extension interfaces                       │
+├─────────────────────────────────────────────────────────────────┤
+│  Instance lifecycle   internal/instance/, internal/runner/,      │
+│                       internal/exec/  — Orchestrator + Token     │
+├─────────────────────────────────────────────────────────────────┤
+│  Event processing     internal/eventproc/  — EventHub, waiters   │
+├─────────────────────────────────────────────────────────────────┤
+│  Scope                internal/scope/  — hierarchical data       │
+├─────────────────────────────────────────────────────────────────┤
+│  Snapshot             internal/instance/snapshot/  — immutable   │
+│                       process definitions, the execution input   │
+├─────────────────────────────────────────────────────────────────┤
+│  Model                pkg/model/  — BPMN element types           │
+│                       (Activity, Event, Gateway, Flow, Data, ...) │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+Dependencies flow **downward only**. Higher layers depend on lower; lower layers know nothing of higher.
+
+### 8.2 Key responsibilities
+
+| Component | Responsibility |
+|---|---|
+| **Engine (`thresher`)** | Top-level façade. Holds extension implementations. Manages Process registry and Process Instance lifecycle. The name `thresher` (current `pkg/thresher`) is retained — it is the project's identity for "the BPM engine." |
+| **Snapshot** | Immutable, validated representation of a Process definition. Engine accepts a Snapshot, not a mutable model. |
+| **Orchestrator** | One goroutine per Process Instance. Owns instance state. Receives `TokenEvent`s from tokens, applies state transitions, spawns new tokens, persists checkpoints. |
+| **Token** | One goroutine per active token. Executes the element under the token (Task, Gateway evaluation, Event wait). Communicates back to Orchestrator via channel. |
+| **EventHub** | Internal event distribution. Routes Message / Signal / Timer / Conditional triggers to subscribed waiters across instances. |
+| **Scope** | Hierarchical data context. Resolves DataObject visibility, Property scoping, correlation key scope. |
+| **Repository** (interface) | Persists Process Instance state, history, message inbox. Default: in-memory. |
+| **All other extension interfaces** | Allow injection of `Logger`, `Tracer`, `MetricsRecorder`, `ExpressionEngine`, `TaskDistributor`, `MessageBroker`, `Clock`, `AuthorizationProvider`. |
+
+Detailed execution semantics: **ADR-001 Execution Model** (to be authored). Detailed extension model: **ADR-002 Extension Architecture** (to be authored).
+
+## 9. Module Layout
+
+Multi-module monorepo. Each subdirectory listed with its own `go.mod` versions independently and isolates its dependency tree from sibling modules.
+
+```
+github.com/dr-dobermann/gobpm/                           ← repo root
+├── go.mod                                                ← core library (current state)
+├── cmd/                                                  ← thin CLI entry points (current)
+├── pkg/                                                  ← public API of core (current)
+│   ├── model/                                            ← BPMN element types
+│   ├── thresher/                                         ← engine façade (keep name `thresher`)
+│   ├── errs/, set/                                       ← utilities
+│   └── (future: extension interfaces — repository, observer, ...)
+├── internal/                                             ← core internals (current)
+│   ├── instance/, runner/, exec/, eventproc/,
+│   │   scope/, interactor/, renv/
+├── examples/                                             ← multi-module already
+│   ├── basic-process/   (own go.mod)
+│   ├── simple-timer/    (own go.mod)
+│   └── timer-event/     (own go.mod)
+├── runtime/                                              ← FUTURE — gobpm-server (own go.mod)
+│   ├── server/            HTTP / gRPC API
+│   ├── tenancy/           multi-tenant context propagation
+│   ├── auth/              AuthN + AuthZ glue
+│   ├── obs/               observability wiring
+│   ├── diag/              diagnostic endpoints
+│   └── cmd/gobpm-server/  the runnable binary
+├── adapters/                                             ← FUTURE — each own go.mod
+│   ├── postgres/          Repository implementation
+│   ├── otel/              Tracer + MetricsRecorder via OpenTelemetry
+│   ├── oidc/              AuthN provider
+│   ├── casbin/            AuthZ policy engine
+│   └── redis-broker/      MessageBroker implementation
+├── doc-source/                                           ← FUTURE — BPMN XML parser (own go.mod)
+└── docs/                                                 ← shared documentation
+    ├── design/            ← this directory
+    ├── adr/, srd/
+    ├── analytics/
+    └── bpmn-spec/         ← normative BPMN 2.0 reference KB
+```
+
+### 9.1 Import direction rules
+
+- **`core` (root module)** depends only on Go stdlib + `github.com/google/uuid`. Nothing else. No imports from `runtime/`, `adapters/`, `examples/`.
+- **`runtime/`** imports `core` and selected `adapters/*` chosen by the operator. No imports from `examples/`.
+- **`adapters/*`** each import `core` (to satisfy its interfaces) and the relevant third-party SDK (e.g., `lib/pq` for postgres adapter). No imports across adapters.
+- **`examples/*`** each import `core` directly. They demonstrate library usage; they do NOT depend on `runtime/`.
+
+### 9.2 Evolution — scaffold upfront
+
+Today: only `core` and `examples/` exist as modules.
+
+**Scaffold all target modules upfront**, even if they are initially empty placeholders. Rationale: establishing import-direction discipline (§9.1) on day 1 is much cheaper than retrofitting it later. An empty `runtime/go.mod` + a single `doc.go` documents the intent and reserves the boundary; the first real code lands without restructuring.
+
+Concretely, the first pass establishes:
+
+- `runtime/` with `go.mod` + `doc.go` + `cmd/gobpm-server/main.go` (stub: prints "not yet implemented")
+- `adapters/` directory with at least one placeholder module (e.g., `adapters/memory/` for the default in-memory Repository extracted from core's reference impl)
+- Cleanup of obsolete or misplaced files in `docs/` (excalidraw scratch files, stale README index, etc. — to be triaged before this SAD is accepted)
+- Import-direction rules (§9.1) enforced in CI from day 1 (`go vet` + a `make lint-modules` target that fails on disallowed import edges)
+
+Subsequent modules (`adapters/postgres/`, `adapters/otel/`, ...) are added when their first concrete consumer materializes — but always into the established structure, never via reorg.
+
+### 9.3 Future option: split to separate repositories
+
+If the monorepo becomes unwieldy (unlikely while solo-developed, possible at scale), the multi-module structure makes the split a directory-move operation:
+- `runtime/` → `github.com/dr-dobermann/gobpm-runtime`
+- `adapters/postgres/` → `github.com/dr-dobermann/gobpm-postgres`
+- etc.
+
+Detailed module layout decision and import rules: **ADR-003 Module Layout** (to be authored).
+
+## 10. Execution Model (overview)
+
+Detailed in **ADR-001 Execution Model**. Key points captured here for vision-level coherence:
+
+- **One Orchestrator goroutine per Process Instance.** Owns the instance state. Single-threaded mutation — no locks on instance state.
+- **One Token goroutine per active token.** Executes the element under the token. Communicates back to the Orchestrator via a typed event channel.
+- **`context.Context` is the cancellation contract.** Orchestrator owns root context. Each token gets a derived context. Terminate End Event → cancel root context → all tokens see `ctx.Done()` → graceful exit.
+- **Save / restore instance context is a P0 capability.** The engine MUST be able to checkpoint a Process Instance's full execution context to the `Repository` and reconstitute it later — into either the same runtime process (after a restart) or a different one (for migration / failover / distribution). Goroutines are the **execution medium**, persistence is the **state of record**.
+- **Long waits do NOT hold goroutines.** A UserTask waiting 3 days externalizes state to `Repository`. The token goroutine exits. When the trigger arrives (human submits form, timer fires, message arrives), the Orchestrator rehydrates from persistence and spawns a fresh token. Combined or alternative mechanisms (event-driven wake-up, polling, push from external system) are all valid — the persistence + rehydration contract is invariant.
+- **Persistence checkpoints align with lifecycle transitions.** State persisted at every observable BPMN state transition (per `docs/bpmn-spec/state-machines/activity-lifecycle.md`).
+- **On runtime start / restart**, the runtime queries `Repository` for in-flight instances and rehydrates them. Recovery should be straightforward and bounded — not a fragile dance.
+
+## 11. Extension Model (overview)
+
+Detailed in **ADR-002 Extension Architecture**. Key points:
+
+- Go-idiomatic: interfaces + functional options.
+- Every infrastructure concern has a default implementation in core (no-op or in-memory) so `gobpm.NewDefault()` works.
+- Production implementations live in `adapters/*` modules.
+- Assembly: `gobpm.New(gobpm.WithRepository(r), gobpm.WithLogger(l), gobpm.WithTracer(t), ...)`.
+
+Initial extension interface set (subject to refinement in ADR-002):
+
+| Interface | Purpose | Default impl |
+|---|---|---|
+| `Repository` | Instance + history + inbox persistence | in-memory |
+| `EventHub` | Event distribution (already in repo) | in-memory |
+| `ExpressionEngine` | FormalExpression evaluation | Go-native expr eval |
+| `TaskDistributor` | UserTask routing to humans | no-op pass-through |
+| `WorkerDispatcher` | Remote-worker dispatch for ServiceTask / GlobalTask (cluster-distribution extension, §13.2) | in-process (local execution — no dispatch) |
+| `MessageBroker` | Message correlation inbox | in-memory |
+| `Clock` | Timer source (testability) | `time.Now` wrapper |
+| `Logger` | Structured logging | `slog.Default()` — visible by default; explicit `gobpm.WithSilentLogger()` for low-noise environments |
+| `Tracer` | Distributed tracing | no-op |
+| `MetricsRecorder` | Counter / gauge / histogram emission | no-op |
+| `AuthorizationProvider` | Authorization decision at sensitive ops | "allow all" |
+
+## 12. Runtime Environment (overview)
+
+Detailed in **ADR-004 Runtime Environment Contract**. Lives in `runtime/` submodule.
+
+| Concern | Ownership | Notes |
+|---|---|---|
+| Multitenancy | Runtime, propagated to core via `context.Context` | Core accepts tenant-aware context, uses as scoping key for `Repository` lookups. Runtime enforces isolation policy. |
+| AuthN | Runtime | Pluggable identity providers: OIDC, JWT, mTLS. Core does not authenticate. |
+| AuthZ | Hook points in core; policy engine in runtime / adapter | Core defines sensitive operations (start process, claim user task, cancel instance, ...) and calls `AuthorizationProvider.Authorize(...)`. Default impl allows all. Production impl wired via adapter. |
+| Observability | Hooks in core; wiring in runtime / adapter | Core emits via `Logger`, `Tracer`, `MetricsRecorder`. Runtime wires OpenTelemetry. |
+| Diagnostics | Runtime | REST API: instance state dump, token positions, history query, manual intervention (move token, retry, terminate). |
+| Profiling | Runtime + core hooks | Built-in `pprof` endpoint; per-element latency metrics; BPMN-specific stuck-token / deadlock alerts. |
+| HTTP / gRPC API | Runtime | Public surface for non-Go clients. Maps engine operations to wire protocol. |
+
+## 13. Distribution & Scale
+
+> _**Status: preliminary, subject to refinement.** This section was sketched in the first review round but explicitly deferred for deeper discussion before SAD acceptance. The headline framing (additive overlay; direct worker dispatch over queues; persistence as the foundation) is the working direction, but specifics — protocol choice, dispatcher semantics, cluster-wide state design — will be refined here or relocated to a dedicated ADR (likely ADR-005) before this SAD flips to Accepted._
+
+Single-process execution is the foundation. Distribution is achieved as an **additive overlay** through extension points and runtime-level dispatching — never by rewriting the core orchestration model.
+
+### 13.1 Levels of distribution
+
+| Level | Mechanism | Status |
+|---|---|---|
+| **Single-instance, single-node** | Orchestrator + Token goroutines, all in one process (the foundation, §10) | Always supported |
+| **Task-level remote execution** | Selected tasks (ServiceTask, GlobalTask) execute on remote workers registered with the runtime; runtime dispatches direct (not via queue) | Planned extension point; see §13.2 and `WorkerDispatcher` in §11 |
+| **Instance-level distribution** | Each Process Instance pinned to one runtime node via sticky routing (consistent hash on instance ID); failover via persistence rehydration (§10) | Feasible by design; deferred until multi-node deployment demand materializes |
+| **Cluster-wide shared state** | Cross-node visibility of Signals / Message correlation / shared variables | Open question; solvable via DB-backed `Repository` + event broadcast + correlation-backend extension. To be addressed when concrete demand materializes. |
+
+### 13.2 Task-level remote execution model
+
+The runtime exposes a worker-registration interface (concrete protocol — HTTP long-poll, gRPC stream, or similar — to be decided in ADR-004). A worker process:
+
+1. **Registers** with the runtime, declaring capabilities (which Task types or task names it can execute).
+2. Receives task-execution dispatches **directly** from the runtime (not via a shared message queue).
+3. **Executes** the task locally — the dispatch carries the full inputs the task needs (works because ServiceTask / GlobalTask inputs are bounded by the activity's DataInputs, not by the full instance context).
+4. **Returns** the result; the runtime forwards it back to the owning Orchestrator, which advances the instance.
+
+**Why direct dispatch, not a queue:** queue-based task brokers introduce a third-party dependency, a separate failure domain, ordering ambiguity, and an additional consistency surface. Direct runtime-to-worker dispatch keeps the topology two-tier (runtime + worker), aligns failure handling with the Orchestrator that already owns the instance, and avoids paying for queue infrastructure most deployments don't need.
+
+This is **just another extension** implementing the `WorkerDispatcher` interface (§11) — no architectural change to core required. Library users who don't need it pay nothing for it (default impl is in-process local execution).
+
+### 13.3 Persistence and recovery as the foundation
+
+All distribution modes — single-process restart, instance failover, multi-node deployment — rest on the engine's ability to **save and restore instance context** cleanly:
+
+- Instance state checkpointed at every observable BPMN lifecycle transition (per [docs/bpmn-spec/state-machines/activity-lifecycle.md](../bpmn-spec/state-machines/activity-lifecycle.md)).
+- On runtime start / restart, the runtime queries the `Repository` for in-flight instances and rehydrates them — re-spawning Orchestrator + Token goroutines as needed.
+- Long-wait states (UserTask, multi-day timers, awaiting external Message) do NOT hold goroutines — they release them and rely on rehydration when the trigger arrives. See §10.
+
+Robust save/restore is a P0 quality (§6). Without it, neither restart recovery nor instance-level distribution is achievable.
+
+### 13.4 Open question: cross-cluster shared state
+
+When goBpm runs multi-node, certain BPMN constructs require cluster-wide visibility:
+
+- **Signals** — a thrown Signal MUST reach all catching handlers across all instances, regardless of which node owns each instance.
+- **Message correlation** — an arriving Message MUST find its target instance even if owned by a different node than the one receiving the Message.
+- **Shared correlation keys** across long-lived Conversations spanning multiple instances.
+
+These are solvable through the extension model:
+- `MessageBroker` backed by Redis Streams / Kafka / etc. for inter-node message routing.
+- Event broadcast layer (an extension of `EventHub`) for Signal distribution.
+- DB-backed `Repository` providing cluster-shared visibility into in-flight instances.
+
+The detailed design is **out of v.1 scope** — to be addressed in a future ADR (likely ADR-005 or similar) when concrete multi-node demand materializes.
+
+## 14. Conformance & Compliance Scope
+
+`goBpm` targets **BPMN 2.0 Process Execution Conformance** (OMG spec §2.1.2) — the Common Executable Subclass (§2.1.3) plus the **ComplexGateway extension** above it.
+
+Full normative reference lives at [docs/bpmn-spec/](../bpmn-spec/). The [conformance.md](../bpmn-spec/conformance.md) document is the authoritative in/out element list.
+
+Conformance verification:
+- Per-element implementation reviewed against [docs/bpmn-spec/elements/](../bpmn-spec/elements/) (structural attributes) and [docs/bpmn-spec/state-machines/](../bpmn-spec/state-machines/) + [docs/bpmn-spec/semantics/](../bpmn-spec/semantics/) (behavior).
+- Conformance test suite (to be established): combination of MIWG public fixtures + project-internal element-coverage tests.
+- Each released version pinned to a BPMN-spec snapshot SHA so conformance claims are reproducible.
+
+## 15. Repository & Release Strategy
+
+### 15.1 Repository
+
+**Multi-module monorepo.** Single git repo at `github.com/dr-dobermann/gobpm`. Multiple `go.mod` files at module roots inside the repo.
+
+Justification:
+- **Solo-developer cognitive load:** one repo, one issue tracker, one CI config, single PR per cross-cutting change.
+- **Clean dependency isolation:** users importing `github.com/dr-dobermann/gobpm` (core) do not get `runtime/` or any `adapters/*` deps.
+- **Independent versioning:** modules can release at their own pace (`core v0.5`, `runtime v0.2`, `adapters/postgres v0.1`).
+- **Easy split-out later:** if monorepo becomes unwieldy, any submodule moves to its own repo in a single directory-move operation.
+
+Justification details: **ADR-003 Module Layout** (to be authored).
+
+### 15.2 Release artifacts
+
+| Audience | Artifact | Source |
+|---|---|---|
+| Library users | Go module `github.com/dr-dobermann/gobpm` | `go get` |
+| Runtime operators (quickstart) | Single static binary `gobpm-server` with bundled in-memory defaults | `go install github.com/dr-dobermann/gobpm/runtime/cmd/gobpm-server` |
+| Runtime operators (production) | Docker image with configurable adapters | Container registry (TBD: GHCR vs Docker Hub) |
+| Modelers | (eventually) BPMN XML samples + working examples | `examples/` in repo |
+
+Versioning follows semver per module. The core library is the version-of-record for "the BPMN engine"; runtime tracks its own version.
+
+## 16. References
+
+### Subordinate ADRs (to be authored)
+
+| ID | Title | Scope |
+|---|---|---|
+| ADR-001 | Execution Model | Single-orchestrator + per-token goroutines; ctx cancellation; rehydration model; persistence checkpoint policy |
+| ADR-002 | Extension Architecture | Interface catalog; functional-options assembly; default implementations; adapter module conventions |
+| ADR-003 | Module Layout | Multi-module monorepo; import directions; module evolution; future split-out path |
+| ADR-004 | Runtime Environment Contract | Tenancy, AuthN, AuthZ, observability, diagnostics, profiling — ownership and interfaces |
+
+### Reference material
+
+- [docs/bpmn-spec/](../bpmn-spec/) — BPMN 2.0 Process Execution Conformance KB
+- [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) — in-scope / out-of-scope element list
+- [docs/analytics/Analysis of the gobpm project.md](../analytics/Analysis%20of%20the%20gobpm%20project.md) — prior analysis
+- [docs/analytics/gobpm Development Roadmap.md](../analytics/gobpm%20Development%20Roadmap.md) — phased roadmap
+- BPMN 2.0 specification PDF: `docs/BPMN formal-13-12-09.pdf` (OMG formal/2013-12-09, v2.0.2)
+
+## Appendix A — Glossary
+
+| Term | Meaning |
+|---|---|
+| **Engine** | The top-level façade exposed by the core library. Holds extension implementations and the Process registry. |
+| **Process** | A BPMN 2.0 Process definition (model). |
+| **Snapshot** | An immutable, validated representation of a Process. The Engine accepts a Snapshot, not a mutable model. |
+| **Process Instance** | A running execution of a Process. Owned by one Orchestrator goroutine. |
+| **Orchestrator** | The goroutine owning a single Process Instance's state. Receives token events, applies state transitions. |
+| **Token** | The BPMN-theoretical concept of "execution presence" at a flow node. In goBpm, an active token corresponds to one goroutine that executes the node's behavior and reports back to the Orchestrator. |
+| **Rehydration** | Reconstruction of an in-memory Process Instance from its persisted state, when a long-wait trigger fires. |
+| **Extension interface** | A Go interface defining an extension point (Repository, Logger, Tracer, ...). Default impl ships in core; production impls in adapter modules. |
+| **Adapter module** | A module under `adapters/*` providing a concrete implementation of one or more extension interfaces. |
+| **Runtime** | The `runtime/` submodule. The standalone server hosting the engine, providing HTTP/gRPC API, multitenancy, AuthN/Z, observability. |
+
+## Document History
+
+| Version | Date | Author | Change |
+|---|---|---|---|
+| v.1 | 2026-05-29 | Ruslan Gabitov | Initial draft, incorporating first review round: §1.1 document-class taxonomy; observability default = **visible** (`slog.Default()`) with explicit opt-out for low-noise environments; §9.2 scaffold modules upfront, not incrementally; §10 emphasize save/restore + recovery as P0; §11 add `WorkerDispatcher` extension; §13 new "Distribution & Scale" section flagged **preliminary, subject to refinement** (deferred for deeper discussion before SAD acceptance); N8 clustering reframed from non-goal to additive overlay; `thresher` name retained for the engine façade. |
