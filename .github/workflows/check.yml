@@ -18,8 +18,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
-
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
           cache: true
@@ -52,6 +51,6 @@ jobs:
           govulncheck ./...
 
       - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}

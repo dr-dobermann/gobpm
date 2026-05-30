@@ -16,3 +16,10 @@
 # vendor/
 bin/
 generated/*
+
+# Editor / app artifacts
+**/.obsidian/
+
+# Stale config backups
+*.bck.yml
+*.bkp
