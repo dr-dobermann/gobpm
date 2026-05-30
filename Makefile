@@ -37,9 +37,9 @@ test_coverage: gen_mock_files
 	rm c.out
 .PHONY: test_coverage
 
-tag: 
+tag:
 	@git tag -a ${VERSION} -m "version ${VERSION}"
-	@git push origin --tags
+	@echo "Tag ${VERSION} created locally. Push manually: git push origin ${VERSION}"
 .PHONY: tag
 
 clear:
