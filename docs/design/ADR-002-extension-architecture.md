@@ -530,12 +530,24 @@ type Stopper interface {
 type HealthChecker interface {
     HealthCheck(ctx context.Context) error
 }
+
+// Optional — adapters that declare their cluster-mode compatibility
+type ClusterAware interface {
+    // ClusterCompatibility returns whether this adapter is safe to use when
+    // the runtime is configured in cluster mode. On false, reason explains
+    // why (e.g., "in-memory; state not shared across nodes"). The runtime
+    // refuses to start in cluster mode if any wired adapter declares (false, _).
+    // Adapters that don't implement this interface get a startup warning in
+    // cluster mode (compatibility undeclared); they're not blocked.
+    ClusterCompatibility() (compatible bool, reason string)
+}
 ```
 
 When Thresher constructs and runs, it detects whether each registered extension implements one of these and integrates accordingly:
 - `Start` is called during `Run` setup before instances are accepted.
 - `Stop` is called during engine shutdown after all instances are drained or terminated.
 - `HealthCheck` is exposed by the runtime layer (per ADR-004) for liveness/readiness endpoints.
+- `ClusterCompatibility` is queried by the runtime layer at startup when cluster mode is active; any `(false, reason)` return is a hard startup failure. (Substantive cluster design lives in future ADR-005; per [SAD-001 §13.5](SAD-001-vision-and-architecture.md).)
 
 Adapters that don't implement them just work. This is progressive enhancement — small adapters stay simple; large adapters get lifecycle hooks when they need them.
 

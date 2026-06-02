@@ -356,6 +356,10 @@ These are solvable through the extension model:
 
 The detailed design is **out of v.1 scope** — to be addressed in a future ADR (likely ADR-005 or similar) when concrete multi-node demand materializes.
 
+### 13.5 Cluster-configuration validation (forward-looking note)
+
+When goBpm runs in cluster mode, certain extension configurations are fundamentally incompatible — in-memory `Repository`, in-memory `MessageBroker`, in-memory `EventHub`, fake `Clock`, and so on cannot honor cluster semantics. Each adapter SHOULD declare its cluster compatibility via the `ClusterAware` optional interface (per [ADR-002 §8.3](ADR-002-extension-architecture.md)); the runtime layer validates declared compatibility at startup when `cluster_mode` is enabled, and refuses to start with incompatible adapters wired. The substantive treatment — routing strategies, signal-broadcast backplane requirements, the full hard-block / warn / forces-explicit-choice matrix — lives in the future ADR-005.
+
 ## 14. Conformance & Compliance Scope
 
 `goBpm` targets **BPMN 2.0 Process Execution Conformance** (OMG spec §2.1.2) — the Common Executable Subclass (§2.1.3) plus the **ComplexGateway extension** above it.
