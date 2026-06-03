@@ -69,8 +69,17 @@ type EventHub interface {
 	//	go func() { _ = hub.Run(ctx) }()
 	Run(context.Context) error
 
-	// RemoveWaiter removes single waiter from the EventHub waiter's list.
-	RemoveWaiter(EventWaiter) error
+	// RemoveWaiter removes the waiter registered for the given event
+	// definition ID from the EventHub waiter's list.
+	//
+	// The method takes the eventDefinition ID rather than the waiter
+	// itself so callers (including a waiter calling cleanup on itself)
+	// do not pass their own receiver across the interface boundary.
+	// Passing a mutex-bearing receiver to a mock implementation whose
+	// argument-matcher uses reflect.DeepEqual / fmt-via-reflect races
+	// with concurrent calls that acquire that mutex — the race
+	// detector flags the reflect read against the lock CAS.
+	RemoveWaiter(eDefID string) error
 }
 
 // EventWaiter represents an event waiter interface.
