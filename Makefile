@@ -94,7 +94,7 @@ lint-all-modules:
 	done
 .PHONY: lint-all-modules
 
-tidy-check-all:
+tidy-check-all: gen_mock_files
 	@set -e; for dir in $(MODULES); do \
 		echo "::group::tidy $$dir"; \
 		(cd $$dir && $(GO) mod tidy) || exit 1; \
