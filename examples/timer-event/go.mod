@@ -1,8 +1,6 @@
 module timer-event
 
-go 1.22
-
-toolchain go1.23.2
+go 1.25
 
 replace github.com/dr-dobermann/gobpm => ../..
 
