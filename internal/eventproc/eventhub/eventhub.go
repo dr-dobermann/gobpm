@@ -11,6 +11,7 @@ package eventhub
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
@@ -195,7 +196,7 @@ func (eh *EventHub) UnregisterEvent(
 			}
 		}
 
-		return eh.RemoveWaiter(w)
+		return eh.RemoveWaiter(w.EventDefinition().ID())
 	}
 
 	return nil
@@ -240,32 +241,33 @@ func (eh *EventHub) PropagateEvent(
 	}
 
 	if len(w.EventProcessors()) == 0 {
-		return eh.RemoveWaiter(w)
+		return eh.RemoveWaiter(eDef.ID())
 	}
 
 	return nil
 }
 
-// RemoveWaiter removes single waiter from the EventHub waiter's list.
-func (eh *EventHub) RemoveWaiter(w eventproc.EventWaiter) error {
-	if w == nil {
+// RemoveWaiter removes the waiter registered for eDefID from the
+// EventHub waiter's list.
+func (eh *EventHub) RemoveWaiter(eDefID string) error {
+	eDefID = strings.TrimSpace(eDefID)
+	if eDefID == "" {
 		return errs.New(
-			errs.M("event waiter is nil"),
+			errs.M("event definition id is empty"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
 	eh.m.Lock()
 	defer eh.m.Unlock()
 
-	w, ok := eh.waiters[w.EventDefinition().ID()]
-	if !ok {
+	if _, ok := eh.waiters[eDefID]; !ok {
 		return errs.New(
 			errs.M("waiter isn't found"),
 			errs.C(errorClass, errs.ObjectNotFound),
-			errs.D("waiter_id", w.ID()),
-			errs.D("event_definition_id", w.EventDefinition().ID()),
-			errs.D("event_definition_type", w.EventDefinition().Type()))
+			errs.D("event_definition_id", eDefID))
 	}
+
+	delete(eh.waiters, eDefID)
 
 	return nil
 }

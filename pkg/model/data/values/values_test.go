@@ -3,6 +3,7 @@ package values_test
 import (
 	"context"
 	"io"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -221,15 +222,21 @@ func TestArray(t *testing.T) {
 
 	t.Run("update_check",
 		func(t *testing.T) {
-			chCount := 0
-			updateCounter := func(counter *int) data.UpdateCallback {
+			// Array.notify spawns a goroutine per callback invocation, so
+			// concurrent mutations (Add / UpdateT / Insert / DeleteT) lead
+			// to concurrent callbacks. The counter must be race-safe; a
+			// plain int races between the callback goroutines and between
+			// each callback goroutine and this test goroutine reading the
+			// final tally.
+			var chCount atomic.Int64
+			updateCounter := func(counter *atomic.Int64) data.UpdateCallback {
 				return func(
 					when time.Time,
 					chType data.ChangeType,
 					index any,
 				) {
 					t.Log("value updated[", index, "]: ", chType, " at: ", when)
-					*counter++
+					counter.Add(1)
 				}
 			}
 
@@ -249,13 +256,13 @@ func TestArray(t *testing.T) {
 
 			time.Sleep(1 * time.Second)
 
-			require.Equal(t, 4, chCount)
+			require.Equal(t, int64(4), chCount.Load())
 
 			a.Unregister("a_tracker")
 
 			require.NoError(t, a.Update(ctx, 20))
 
-			require.Equal(t, 4, chCount)
+			require.Equal(t, int64(4), chCount.Load())
 		})
 }
 
@@ -318,15 +325,18 @@ func TestVariable(t *testing.T) {
 
 	t.Run("update check",
 		func(t *testing.T) {
-			chCount := 0
-			updateCounter := func(counter *int) data.UpdateCallback {
+			// Variable.notify spawns a goroutine per callback invocation
+			// (see Array test for the same rationale); use atomic.Int64
+			// to keep the test counter race-safe.
+			var chCount atomic.Int64
+			updateCounter := func(counter *atomic.Int64) data.UpdateCallback {
 				return func(
 					when time.Time,
 					chType data.ChangeType,
 					index any,
 				) {
 					t.Log("value updated: ", chType, " at: ", when)
-					*counter++
+					counter.Add(1)
 				}
 			}
 
@@ -343,12 +353,12 @@ func TestVariable(t *testing.T) {
 
 			time.Sleep(1 * time.Second)
 
-			require.Equal(t, 2, chCount)
+			require.Equal(t, int64(2), chCount.Load())
 
 			v.Unregister("a_tracker")
 
 			require.NoError(t, v.Update(ctx, 20))
 
-			require.Equal(t, 2, chCount)
+			require.Equal(t, int64(2), chCount.Load())
 		})
 }

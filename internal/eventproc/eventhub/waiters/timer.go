@@ -277,43 +277,68 @@ func (tw *timeWaiter) runTimerService(ctx context.Context) {
 	}
 }
 
-// processTimerEvent handles timer event processing with proper locking
+// processTimerEvent handles timer event processing.
+//
+// External interface calls (ep.ProcessEvent, tw.hub.RemoveWaiter) are
+// made WITHOUT holding tw.m. Holding a mutex across an interface call
+// risks a callback re-entering the waiter and deadlocking, and makes
+// the receiver's mutex memory observable to third-party reflect-based
+// inspection (e.g. testify/mock's Arguments.Diff) racing with
+// concurrent acquirers.
+//
+// The shape used here: snapshot tw.processors / tw.eDef under the
+// lock; release; call external interfaces with the snapshot;
+// re-acquire only to mutate state.
 func (tw *timeWaiter) processTimerEvent(ctx context.Context) error {
 	tw.m.Lock()
-	defer tw.m.Unlock()
+	processors := append([]eventproc.EventProcessor(nil), tw.processors...)
+	eDef := tw.eDef
+	tw.m.Unlock()
 
-	for _, ep := range tw.processors {
-		if err := ep.ProcessEvent(ctx, tw.eDef); err != nil {
+	for _, ep := range processors {
+		if err := ep.ProcessEvent(ctx, eDef); err != nil {
+			tw.m.Lock()
 			tw.state = eventproc.WSFailed
+			tw.m.Unlock()
+
 			return err
 		}
 	}
 
+	tw.m.Lock()
 	if tw.cyclesLeft == 0 {
-		// clear processors list on exit
 		tw.processors = []eventproc.EventProcessor{}
 		tw.state = eventproc.WSEnded
-		_ = tw.hub.RemoveWaiter(tw) // ignore error during cleanup
+		tw.m.Unlock()
+
+		_ = tw.hub.RemoveWaiter(eDef.ID()) // ignore error during cleanup
 
 		return errs.New(errs.M("timer completed")) // signal completion
 	}
 
 	tw.cyclesLeft--
+	tw.m.Unlock()
 
 	return nil
 }
 
 // Stop terminates waiting cycle of the waiter.
+//
+// The state check is performed under the mutex together with the write,
+// so the read-then-write sequence is atomic with respect to concurrent
+// writers (runTimerService / processTimerEvent). Previously the check
+// ran outside the lock, which both raced with those writers and made
+// the check-then-write a TOCTOU window.
 func (tw *timeWaiter) Stop() error {
+	tw.m.Lock()
+	defer tw.m.Unlock()
+
 	if tw.state != eventproc.WSRunned {
 		return errs.New(
 			errs.M("couldn't stop not runned waiter"),
 			errs.C(TimerWatierError, errs.InvalidState),
 			errs.D("current_state", tw.state))
 	}
-
-	tw.m.Lock()
-	defer tw.m.Unlock()
 
 	tw.state = eventproc.WSStopped
 
@@ -323,7 +348,15 @@ func (tw *timeWaiter) Stop() error {
 }
 
 // State returns current state of the EventWaiter.
+//
+// The read takes the mutex because writers (runTimerService,
+// processTimerEvent, Stop) all mutate tw.state under it. Without the
+// lock here, concurrent reads race with those writes — the race
+// detector flags it under stress.
 func (tw *timeWaiter) State() eventproc.EventWaiterState {
+	tw.m.Lock()
+	defer tw.m.Unlock()
+
 	return tw.state
 }
 
