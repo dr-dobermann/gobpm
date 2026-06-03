@@ -20,7 +20,45 @@ func TestNew(t *testing.T) {
 	})
 }
 
+func TestStart(t *testing.T) {
+	t.Run("successful start", func(t *testing.T) {
+		hub, err := eventhub.New()
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		require.NoError(t, hub.Start(ctx))
+	})
+
+	t.Run("double start error", func(t *testing.T) {
+		hub, err := eventhub.New()
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		require.NoError(t, hub.Start(ctx))
+
+		err = hub.Start(ctx)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "eventHub is already started")
+	})
+}
+
 func TestRun(t *testing.T) {
+	t.Run("run before start error", func(t *testing.T) {
+		hub, err := eventhub.New()
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		err = hub.Run(ctx)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "eventHub isn't started")
+	})
+
 	t.Run("successful run with timeout", func(t *testing.T) {
 		hub, err := eventhub.New()
 		require.NoError(t, err)
@@ -29,8 +67,10 @@ func TestRun(t *testing.T) {
 			100*time.Millisecond)
 		defer cancel()
 
+		require.NoError(t, hub.Start(ctx))
+
 		err = hub.Run(ctx)
-		require.Error(t, err) // Should return context.DeadlineExceeded
+		require.Error(t, err)
 		require.Equal(t, context.DeadlineExceeded, err)
 	})
 
@@ -39,32 +79,13 @@ func TestRun(t *testing.T) {
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())
-		cancel() // Cancel immediately
+		cancel()
+
+		require.NoError(t, hub.Start(ctx))
 
 		err = hub.Run(ctx)
 		require.Error(t, err)
 		require.Equal(t, context.Canceled, err)
-	})
-
-	t.Run("double run error", func(t *testing.T) {
-		hub, err := eventhub.New()
-		require.NoError(t, err)
-
-		ctx1, cancel1 := context.WithCancel(context.Background())
-		cancel1() // Cancel immediately
-
-		// First run
-		err = hub.Run(ctx1)
-		require.Error(t, err)
-		require.Equal(t, context.Canceled, err)
-
-		// Second run should fail
-		ctx2, cancel2 := context.WithCancel(context.Background())
-		defer cancel2()
-
-		err = hub.Run(ctx2)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "eventHub is already started")
 	})
 }
 
@@ -75,7 +96,6 @@ func TestRegisterEvent_BaseErrors(t *testing.T) {
 
 		mockProcessor := mockeventproc.NewMockEventProcessor(t)
 
-		// Use nil event definition to test basic validation
 		err = hub.RegisterEvent(mockProcessor, nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "eventHub isn't started")
@@ -85,13 +105,9 @@ func TestRegisterEvent_BaseErrors(t *testing.T) {
 		hub, err := eventhub.New()
 		require.NoError(t, err)
 
-		// Start the hub
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go func() {
-			_ = hub.Run(ctx)
-		}()
-		time.Sleep(10 * time.Millisecond) // Give it time to start
+		require.NoError(t, hub.Start(ctx))
 
 		err = hub.RegisterEvent(nil, nil)
 		require.Error(t, err)
@@ -115,13 +131,9 @@ func TestUnregisterEvent_BaseErrors(t *testing.T) {
 		hub, err := eventhub.New()
 		require.NoError(t, err)
 
-		// Start the hub
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go func() {
-			_ = hub.Run(ctx)
-		}()
-		time.Sleep(10 * time.Millisecond)
+		require.NoError(t, hub.Start(ctx))
 
 		err = hub.UnregisterEvent(nil, "some-event-id")
 		require.Error(t, err)
@@ -132,13 +144,9 @@ func TestUnregisterEvent_BaseErrors(t *testing.T) {
 		hub, err := eventhub.New()
 		require.NoError(t, err)
 
-		// Start the hub
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go func() {
-			_ = hub.Run(ctx)
-		}()
-		time.Sleep(10 * time.Millisecond)
+		require.NoError(t, hub.Start(ctx))
 
 		mockProcessor := mockeventproc.NewMockEventProcessor(t)
 
@@ -162,15 +170,10 @@ func TestPropagateEvent_BaseErrors(t *testing.T) {
 		hub, err := eventhub.New()
 		require.NoError(t, err)
 
-		// Start the hub
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go func() {
-			_ = hub.Run(ctx)
-		}()
-		time.Sleep(10 * time.Millisecond)
+		require.NoError(t, hub.Start(ctx))
 
-		// Create a mock event definition with an ID
 		mockEventDef := mockflow.NewMockEventDefinition(t)
 		mockEventDef.EXPECT().ID().Return("test-event-id").Maybe()
 		mockEventDef.EXPECT().Type().Return(flow.EventTrigger("TestType")).Maybe()

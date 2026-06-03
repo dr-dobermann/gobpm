@@ -3,7 +3,6 @@ package eventhub_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
 	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub"
@@ -21,13 +20,9 @@ func TestMessageEvents_CurrentLimitations(t *testing.T) {
 		hub, err := eventhub.New()
 		require.NoError(t, err)
 
-		// Start the hub
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go func() {
-			_ = hub.Run(ctx)
-		}()
-		time.Sleep(10 * time.Millisecond)
+		require.NoError(t, hub.Start(ctx))
 
 		mockProcessor := mockeventproc.NewMockEventProcessor(t)
 		mockProcessor.EXPECT().ID().Return("message-processor-id")

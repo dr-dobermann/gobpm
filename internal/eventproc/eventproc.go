@@ -47,7 +47,26 @@ type EventProducer interface {
 type EventHub interface {
 	EventProducer
 
-	// Run starts event processing.
+	// Start performs synchronous initialization of the EventHub: stores the
+	// context that the hub will run under, marks the hub as started, and
+	// returns. Start MUST be called exactly once before Run; calling Start
+	// twice returns an "already started" error.
+	//
+	// The synchronous nature of Start is load-bearing: it ensures that
+	// EventHub state (started flag, ctx) is visible to any subsequent caller
+	// of RegisterEvent / UnregisterEvent / PropagateEvent without requiring
+	// callers to synchronize via timing hacks or atomic primitives. See
+	// FIX-001 for the race that motivated splitting Start from Run.
+	Start(context.Context) error
+
+	// Run is the blocking event-processing loop. It MUST be called only
+	// after Start. Run returns when its context is canceled.
+	//
+	// Typical usage is to call Start synchronously, then invoke Run from a
+	// background goroutine:
+	//
+	//	if err := hub.Start(ctx); err != nil { return err }
+	//	go func() { _ = hub.Run(ctx) }()
 	Run(context.Context) error
 
 	// RemoveWaiter removes single waiter from the EventHub waiter's list.

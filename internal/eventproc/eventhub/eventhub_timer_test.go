@@ -53,13 +53,9 @@ func TestTimerEvents(t *testing.T) {
 		hub, err := eventhub.New()
 		require.NoError(t, err)
 
-		// Start the hub
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go func() {
-			_ = hub.Run(ctx)
-		}()
-		time.Sleep(10 * time.Millisecond)
+		require.NoError(t, hub.Start(ctx))
 
 		mockProcessor := mockeventproc.NewMockEventProcessor(t)
 		mockProcessor.EXPECT().ID().Return("timer-processor-id").Maybe()
@@ -77,13 +73,9 @@ func TestTimerEvents(t *testing.T) {
 		hub, err := eventhub.New()
 		require.NoError(t, err)
 
-		// Start the hub
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go func() {
-			_ = hub.Run(ctx)
-		}()
-		time.Sleep(10 * time.Millisecond)
+		require.NoError(t, hub.Start(ctx))
 
 		mockProcessor := mockeventproc.NewMockEventProcessor(t)
 		mockProcessor.EXPECT().ID().Return("timer-processor-id").Maybe().Maybe()
@@ -106,13 +98,9 @@ func TestTimerEvents(t *testing.T) {
 		hub, err := eventhub.New()
 		require.NoError(t, err)
 
-		// Start the hub
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go func() {
-			_ = hub.Run(ctx)
-		}()
-		time.Sleep(10 * time.Millisecond)
+		require.NoError(t, hub.Start(ctx))
 
 		mockProcessor := mockeventproc.NewMockEventProcessor(t)
 		processorId := "timer-processor-id"
@@ -140,13 +128,9 @@ func TestTimerEvents(t *testing.T) {
 		hub, err := eventhub.New()
 		require.NoError(t, err)
 
-		// Start the hub
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go func() {
-			_ = hub.Run(ctx)
-		}()
-		time.Sleep(10 * time.Millisecond)
+		require.NoError(t, hub.Start(ctx))
 
 		// Create a timer event definition
 		cycleExpr, durationExpr := createTimerExpressions(t)

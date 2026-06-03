@@ -237,18 +237,65 @@ The change is `EventHub` adding a `Start` method and `Thresher.Run` calling it s
 
 ## 8. Implementation summary
 
-(To be populated after landing — per project convention, FIX §8 is the post-landing record of what actually changed, with commit hashes and any deviations from §3.)
+Solution A (per §3.1) was implemented as a single change-set on branch
+`fix/eventhub-startup-race`. No deviations from §3 — `Start` was added to the
+internal `EventHub` interface and implemented on the default `*EventHub`;
+`Run` was reduced to the blocking event-loop body; `Thresher.Run` calls
+`Start` synchronously before spawning the background goroutine; the
+`time.Sleep(1 * time.Millisecond)` is gone.
 
-Pending:
+Files touched:
 
-- [ ] Add `Start(ctx context.Context) error` to the `EventHub` interface in `internal/eventproc/eventproc.go`.
-- [ ] Implement `Start` on the `*EventHub` default implementation in `internal/eventproc/eventhub/eventhub.go`; reduce `Run` to the blocking-loop body.
-- [ ] Remove the `time.Sleep(1 * time.Millisecond)` from `Thresher.Run` in `pkg/thresher/thresher.go`; call `t.eventHub.Start(ctx)` synchronously before the `go func() { eh.Run(ctx) }()` spawn.
-- [ ] Regenerate mocks (`make gen_mock_files`).
-- [ ] Update affected test expectations (mock `Start` calls; flipped error messages if any).
-- [ ] Add the `-count=100` race-stress assertion as a separate test (or document the command in CI).
-- [ ] Verify `make ci` passes locally; push; verify CI passes on the branch.
-- [ ] Flip this FIX to Accepted after CI is green on master.
+- `internal/eventproc/eventproc.go` — added `Start(ctx context.Context) error`
+  to the `EventHub` interface with doc-comments referencing FIX-001 for the
+  rationale.
+- `internal/eventproc/eventhub/eventhub.go` — implemented `Start`; `Run` now
+  guards on `!eh.started` (was: guarded on `eh.started`); the started-flag
+  and ctx writes moved from `Run` into `Start`. Error messages flipped
+  accordingly (`Run` returns `"eventHub isn't started"` when called pre-Start,
+  consistent with the existing `RegisterEvent`/`UnregisterEvent`/`PropagateEvent`
+  wording).
+- `pkg/thresher/thresher.go` — replaced the goroutine-spawn-then-sleep block
+  with a synchronous `t.eventHub.Start(ctx)` call before `go func() { eh.Run(ctx) }()`.
+  The `time` import was dropped — no other usage in this file.
+- `internal/eventproc/eventhub/eventhub_base_test.go` — split former `TestRun`
+  into `TestStart` (successful start, double-start error) and `TestRun` (run
+  before start error, run with timeout, run with cancellation). The
+  `Register/Unregister/PropagateEvent` base-error tests stopped spawning
+  `Run` in a goroutine + `time.Sleep` and call `hub.Start(ctx)` synchronously.
+- `internal/eventproc/eventhub/eventhub_timer_test.go` and
+  `eventhub_message_test.go` — same goroutine+sleep → synchronous `Start`
+  swap.
+- `generated/mockeventproc/mock_EventHub.go` — regenerated via
+  `make gen_mock_files` to expose the new `Start` mock surface.
+
+Verification evidence (run on the branch HEAD before commit):
+
+| Command | Result |
+|---|---|
+| `go test -race -count=100 -run TestThresher_EventQueueProcessing ./pkg/thresher/...` | 300/300 pass (3 subtests × 100 iterations) — pre-fix this loop produced ~40 race-detector failures |
+| `go test -race ./pkg/thresher/...` | 30 tests pass |
+| `go test -race ./internal/eventproc/...` | 34 tests pass across 3 packages |
+| `make ci` | green (tidy-check-all, lint-all-modules, build-all, test-all, vuln) |
+
+The `-count=100` race-stress is documented above as the acceptance gate
+rather than committed as a permanent test (running it on every CI invocation
+would multiply core test time by ~100× for one specific regression). The
+command is in this document and in the §4 verification table; reviewers
+exercising the fix should run it once.
+
+Branch and commit:
+
+- Branch: `fix/eventhub-startup-race`
+- Commits: this FIX doc (`c601683`) + implementation commit (to be inserted
+  here after commit; see Document History row when v.1 flips Accepted).
+
+Status flip plan:
+
+- [x] Implementation committed on `fix/eventhub-startup-race`.
+- [ ] PR opened against `master`; CI green on the merge candidate.
+- [ ] PR merged; flip this FIX from Draft → Accepted with the merge commit
+      SHA recorded in the Document History row for v.1.
 
 ## Document History
 
