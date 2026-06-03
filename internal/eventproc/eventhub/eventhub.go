@@ -44,8 +44,16 @@ func New() (*EventHub, error) {
 		nil
 }
 
-// Run starts main cycle of eventHub.
-func (eh *EventHub) Run(ctx context.Context) error {
+// Start performs synchronous initialization of the EventHub: records the
+// context that subsequent Run / RegisterEvent / UnregisterEvent /
+// PropagateEvent calls will observe, and flips the started flag.
+//
+// Start MUST be called exactly once before Run. Returning from Start
+// establishes a happens-before edge — any caller that observes the
+// successful return is guaranteed to see eh.started == true and the
+// stored ctx, without needing additional synchronization. This is the
+// motivation for splitting Start from Run; see FIX-001.
+func (eh *EventHub) Start(ctx context.Context) error {
 	if eh.started {
 		return errs.New(
 			errs.M("eventHub is already started"),
@@ -54,6 +62,21 @@ func (eh *EventHub) Run(ctx context.Context) error {
 
 	eh.started = true
 	eh.ctx = ctx
+
+	return nil
+}
+
+// Run is the blocking event-processing loop. It MUST be invoked after
+// Start has returned successfully; calling Run on a non-started hub
+// returns an error.
+//
+// Run blocks until its context is canceled and then returns ctx.Err().
+func (eh *EventHub) Run(ctx context.Context) error {
+	if !eh.started {
+		return errs.New(
+			errs.M("eventHub isn't started"),
+			errs.C(errorClass, errs.InvalidState))
+	}
 
 	<-ctx.Done()
 

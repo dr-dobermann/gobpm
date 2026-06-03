@@ -37,7 +37,6 @@ import (
 	"context"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub"
@@ -181,13 +180,23 @@ func (t *Thresher) Run(ctx context.Context) error {
 
 	t.ctx = ctx
 
-	// Run eventhub in background
+	// Synchronously initialize the EventHub so that any subsequent
+	// RegisterEvent / UnregisterEvent / PropagateEvent call sees a fully
+	// constructed hub. The return of Start establishes a happens-before
+	// edge for all writes the hub performs during initialization. See
+	// FIX-001 for the race this replaces (previously the hub was spun up
+	// in a goroutine guarded only by a 1ms sleep, which is not a memory
+	// barrier under the Go memory model).
+	if err := t.eventHub.Start(ctx); err != nil {
+		return errs.New(
+			errs.M("couldn't start eventHub"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
 	go func() {
 		_ = t.eventHub.Run(ctx)
 	}()
-
-	// Give eventhub a moment to initialize
-	time.Sleep(1 * time.Millisecond)
 
 	err := t.UpdateState(Started)
 	if err != nil {
