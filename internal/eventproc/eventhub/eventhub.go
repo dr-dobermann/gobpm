@@ -257,8 +257,7 @@ func (eh *EventHub) RemoveWaiter(w eventproc.EventWaiter) error {
 	eh.m.Lock()
 	defer eh.m.Unlock()
 
-	w, ok := eh.waiters[w.EventDefinition().ID()]
-	if !ok {
+	if _, ok := eh.waiters[w.EventDefinition().ID()]; !ok {
 		return errs.New(
 			errs.M("waiter isn't found"),
 			errs.C(errorClass, errs.ObjectNotFound),
@@ -266,6 +265,8 @@ func (eh *EventHub) RemoveWaiter(w eventproc.EventWaiter) error {
 			errs.D("event_definition_id", w.EventDefinition().ID()),
 			errs.D("event_definition_type", w.EventDefinition().Type()))
 	}
+
+	delete(eh.waiters, w.EventDefinition().ID())
 
 	return nil
 }
