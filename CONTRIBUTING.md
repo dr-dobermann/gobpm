@@ -14,6 +14,39 @@ Here are some important resources:
     - Expected behavior
     - Actual behavior
 
+## Cross-module development
+
+`gobpm` is a multi-module monorepo (per [ADR-003](doc/design/ADR-003-module-layout.md)):
+the core library at the repo root, the `runtime/` submodule, each `adapters/*`
+its own module, and each example its own module.
+
+For editing across modules (e.g., core + `runtime/` + `adapters/sqlite/`), use Go
+workspace mode:
+
+    go work init . ./runtime ./adapters/sqlite ./examples/basic-process ./examples/simple-timer ./examples/timer-event
+
+This creates a `go.work` file that lets Go resolve cross-module imports to local
+working-tree copies. The file is gitignored — it is developer-machine state, not
+committed.
+
+Without workspace mode, cross-module edits require `replace` directives in `go.mod`
+files, which are easy to forget to revert. Workspace mode is the recommended path.
+
+## Local CI parity
+
+Before pushing, run `make ci` locally. It runs the same checks GitHub Actions runs:
+
+  * `make tidy-check-all` — verifies every module's `go.mod` and `go.sum` are tidy
+  * `make lint-all-modules` — runs `golangci-lint` (with the depguard
+    import-direction rules from ADR-003 §4.4) on every module
+  * `make build-all` — builds every module
+  * `make test-all` — runs `go test -race` on every module; core also generates
+    `coverage.txt` for Codecov
+  * `make vuln` — runs `govulncheck` against the core module
+
+The CI workflow (`.github/workflows/check.yml`) calls these same Makefile targets
+so there is no drift between local and CI behavior.
+
 ## Submitting changes
 
 Please send a [GitHub Pull Request to opengovernment](https://github.com/dr-dobermann/gobpm/compare) with a clear list of what you've done (read more about [pull requests](http://help.github.com/pull-requests/)). We can always use more test coverage. Please follow our coding conventions (below) and make sure all of your commits are atomic (one feature per commit).

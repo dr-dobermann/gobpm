@@ -18,37 +18,39 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
+
       - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
           cache: true
 
-      - name: Lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.11.4
-
-      - name: Install mockery (pinned)
-        run: go install github.com/vektra/mockery/v3@v3.5.0
-
-      - name: Generate mocks
-        run: mockery
-
-      - name: Verify modules tidy
+      # Tool installation — pinned versions, CI-specific (not in Makefile to keep
+      # Makefile local-friendly without forcing version installs).
+      - name: Install tools
         run: |
-          go mod tidy
-          git diff --exit-code go.mod go.sum
-
-      - name: Build
-        run: go build -v ./...
-
-      - name: Test (race detector enabled)
-        run: go test -race -coverprofile=coverage.txt ./...
-
-      - name: Vulnerability scan
-        run: |
+          go install github.com/vektra/mockery/v3@v3.5.0
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin" v2.11.4
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+
+      # All subsequent checks call into Makefile targets so that running
+      # `make ci` locally matches what CI runs. This is the project's
+      # "no local/CI drift" rule (see Makefile ci umbrella target).
+
+      - name: Verify all modules tidy
+        run: make tidy-check-all
+
+      - name: Lint all modules (ADR-003 import-direction rules enforced)
+        run: make lint-all-modules
+
+      - name: Build all modules
+        run: make build-all
+
+      - name: Test all modules with race detector
+        run: make test-all
+
+      - name: Vulnerability scan (core)
+        run: make vuln
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v6

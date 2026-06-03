@@ -36,6 +36,29 @@ linters:
           deny:
             - pkg: io/ioutil
               desc: io/ioutil is deprecated, use io and os packages instead
+        core-no-runtime-no-adapters:
+          list-mode: lax
+          files:
+            - "**/pkg/**/*.go"
+            - "**/internal/**/*.go"
+            - "**/cmd/**/*.go"
+          deny:
+            - pkg: "github.com/dr-dobermann/gobpm/runtime"
+              desc: "core MUST NOT import runtime (ADR-003 §4.4)"
+            - pkg: "github.com/dr-dobermann/gobpm/adapters"
+              desc: "core MUST NOT import adapters (ADR-003 §4.4)"
+        examples-no-internal:
+          files:
+            - "**/examples/**/*.go"
+          deny:
+            - pkg: "github.com/dr-dobermann/gobpm/internal"
+              desc: "examples demonstrate public API only (ADR-003 §4.4)"
+        adapters-no-cross-adapter:
+          files:
+            - "**/adapters/**/*.go"
+          deny:
+            - pkg: "github.com/dr-dobermann/gobpm/adapters"
+              desc: "adapters MUST NOT import other adapters (ADR-003 §4.4); user composes shared resources at construction time"
     funlen:
       lines: 100
       statements: 50
