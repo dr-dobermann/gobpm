@@ -12,6 +12,32 @@ DC = docker compose
 MODULES := $(shell /usr/bin/find . -name go.mod -not -path './.git/*' -exec dirname {} \;)
 
 # ---------------------------------------------------------------------------
+# Tooling — versions are the single source of truth, mirrored by the
+# "Install tools" step in .github/workflows/check.yml. `make tools` installs
+# them locally so a developer's environment matches CI exactly.
+#
+# require-tool guards every target that shells out to one of these binaries:
+# without it a missing tool makes the step a silent no-op (e.g. `vuln`
+# "passing" locally because govulncheck was never installed, while CI fails).
+# A missing tool must fail loudly, not be skipped.
+# ---------------------------------------------------------------------------
+
+MOCKERY_VERSION     := v3.5.0
+GOLANGCI_VERSION    := v2.11.4
+GOVULNCHECK_VERSION := latest
+
+define require-tool
+@command -v $(1) >/dev/null 2>&1 || { echo "ERROR: '$(1)' not found in PATH. Run 'make tools' (installs CI-pinned versions) or: $(2)"; exit 1; }
+endef
+
+tools:
+	$(GO) install github.com/vektra/mockery/v3@$(MOCKERY_VERSION)
+	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
+		| sh -s -- -b "$$($(GO) env GOPATH)/bin" $(GOLANGCI_VERSION)
+	$(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+.PHONY: tools
+
+# ---------------------------------------------------------------------------
 # Single-module targets (operate on the core module at repo root)
 # ---------------------------------------------------------------------------
 
@@ -55,6 +81,7 @@ clear:
 .PHONY: clear
 
 gen_mock_files:
+	$(call require-tool,mockery,$(GO) install github.com/vektra/mockery/v3@$(MOCKERY_VERSION))
 	rm -rf generated/
 	mockery
 	go mod tidy
@@ -87,6 +114,7 @@ test-all: gen_mock_files
 .PHONY: test-all
 
 lint-all-modules:
+	$(call require-tool,golangci-lint,see https://golangci-lint.run/welcome/install/ or run 'make tools')
 	@set -e; for dir in $(MODULES); do \
 		echo "::group::lint $$dir"; \
 		(cd $$dir && golangci-lint run --timeout=10m --config=$(CURDIR)/.golangci.yml) || exit 1; \
@@ -106,6 +134,7 @@ tidy-check-all: gen_mock_files
 .PHONY: tidy-check-all
 
 vuln:
+	$(call require-tool,govulncheck,$(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION))
 	govulncheck ./...
 .PHONY: vuln
 
