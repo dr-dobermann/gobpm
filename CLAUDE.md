@@ -61,6 +61,37 @@ make clear
 make tag
 ```
 
+### CI Parity (run before pushing)
+
+`make ci` runs the exact local-equivalent of GitHub CI (`.github/workflows/check.yml`):
+tidy-check → lint → build → race tests → govulncheck, across all modules.
+Run it before pushing — if it's green, CI is green.
+
+```bash
+# One-time per machine: install the dev tools at the versions CI pins
+# (mockery, golangci-lint, govulncheck). Versions live in the Makefile.
+make tools
+
+# Full pre-push gate (mirrors GitHub)
+make ci
+```
+
+**Parity rules (do not break these — they exist because a silent local
+no-op once let broken code reach CI):**
+
+- **Tools fail loudly, never skip.** Every Make target that shells out to
+  a dev tool is wrapped in the `require-tool` guard, so a missing binary
+  aborts with an install hint instead of passing as a no-op. When adding a
+  CI step that calls a new binary, add a matching `require-tool` guard and
+  add the tool to the `tools` target — otherwise an absent tool silently
+  "passes" locally while failing on GitHub.
+- **The Go toolchain is pinned.** Every `go.mod` carries `toolchain
+  go1.25.11` and the workflow sets `go-version: '1.25.11'`, so local and CI
+  scan the identical stdlib (govulncheck reports stdlib vulnerabilities per
+  toolchain patch — a bare `1.25` drifts between runs). To clear new stdlib
+  vulns, bump the toolchain line in every module plus the workflow together,
+  then re-run `make ci`.
+
 ## Architecture Overview
 
 GoBPM is a BPMN v2 compliant Business Process Management engine with an event-driven architecture:
