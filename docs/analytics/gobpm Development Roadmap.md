@@ -1,138 +1,165 @@
-# **gobpm Development Plan and Roadmap**
+# gobpm Development Roadmap
 
 | Property | Value |
 | :---- | :---- |
 | **Author** | dr-dobermann |
 | **Status** | Living |
-| **Version** | 2.0 |
-| **Date** | 2026-05-29 |
+| **Version** | 3.0 |
+| **Date** | 2026-06-06 |
+| **Subordinate to** | [SAD-001 v.1 Vision & Architecture](../design/SAD-001-vision-and-architecture.md) |
+| **Conformance scope** | [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) |
 
-This document describes the development strategy, current architectural challenges, and a phased implementation plan (Roadmap) for the gobpm BPMN 2.0 engine, adapted for Enterprise-grade requirements.
+This roadmap sequences the work that delivers the architecture described in [SAD-001 v.1](../design/SAD-001-vision-and-architecture.md) and its subordinate ADRs ([ADR-001 v.2](../design/ADR-001-execution-model.md), [ADR-002 v.1](../design/ADR-002-extension-architecture.md), [ADR-003 v.1](../design/ADR-003-module-layout.md), [ADR-004 v.1](../design/ADR-004-runtime-environment-contract.md)). It is **subordinate** to those documents: where they establish *what* and *why*, this roadmap orders the *when*. It does not introduce architecture — anything that looks like a new decision belongs in an ADR, not here.
 
-This Roadmap is **subordinate** to [SAD-001 Vision & Architecture](../design/SAD-001-vision-and-architecture.md). Where SAD-001 establishes architectural principles (multi-module monorepo; library vs runtime split; extension model; execution model), this Roadmap sequences the BPMN element implementation work that delivers on those principles. Conformance scope is defined in [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md): BPMN 2.0 Process Execution Conformance (Common Executable Subclass §2.1.3) plus the ComplexGateway extension.
+It replaces the v2.0 roadmap, which was organised purely as BPMN-element phases and predated the SAD/ADR conception. The element ordering from v2.0 survives (it is sound), but it is now framed inside the dependency chain the SAD/ADRs imply: conception → structural foundation → element completion → runtime overlay.
 
-## **1\. Development Strategy (Extensibility Architecture)**
+## 1. How this roadmap works
 
-To ensure the successful evolution of the project and provide maximum Developer Experience (DX), the following key vectors are defined, considering Triple Crown and Cloud-Native concepts:
+gobpm is built **specification-first**. Every non-trivial landing follows the project's SDD flow:
 
-### **1.1. Maximum Extensibility via Interfaces**
+1. A spec exists first — an **SRD** (one landing's requirements) or **FIX** (a bug landing), referencing the governing **ADR** up the hierarchy.
+2. Spec is agreed before implementation.
+3. Implementation lands with tests; verification is demonstrable (`make ci` green, acceptance gate met).
+4. Status flips and the change merges via PR.
 
-The library provides strict interfaces (Ports) for any platform-dependent components. The full catalogue is elaborated in SAD-001 §11 Extension Model.
+Supporting discipline already in force:
 
-* **Infrastructure:** Event queues, databases (Persistence), and distributed lock mechanisms are injected strictly through interfaces. The Persistence layer supports the **Event Sourcing** pattern, providing a reliable Audit Trail.  
-* **Expressions:** Support for the **Formal Expression** specification is implemented via an abstract interface, allowing the connection of any calculation engine (GEP, FEEL, JUEL) without changing the runtime logic.
-* **Security (AuthN / AuthZ):** Per SAD-001 §12, AuthN is a pure runtime concern. AuthZ has hook points in core (the `AuthorizationProvider` interface) with policy implementation in runtime / adapters.
-* **Observability:** `Logger`, `Tracer`, `MetricsRecorder` interfaces. Default policy is **visible-by-default, silenceable on opt-out** — `Logger` defaults to `slog.Default()` so production deployments don't silently lose telemetry.
+- **CI parity** — `make ci` mirrors the GitHub `check` workflow exactly (tidy → lint → build → race tests → govulncheck). Green locally ⇒ green on CI. Tooling is pinned (`make tools`, Go toolchain pinned in `go.mod`).
+- **Branch protection** — `master` takes changes only through a PR with a green `check`; no direct or force pushes, no admin bypass.
+- **Document hierarchy** — references go up or sideways only, version-pinned. SAD ← ADR ← SRD/FIX. This roadmap (a planning artifact subordinate to SAD-001) references up into SAD/ADR/conformance.
+- **Bilingual twins** — SAD/ADR/SRD/FIX get a Russian `.ru.md` twin once they reach Accepted (EN canonical). This roadmap is a Living analytics artifact, not in that set — it stays EN.
 
-### **1.2. "Batteries Included" Strategy**
+This is a **Living** document: workstreams below are updated as they advance, unlike one-shot SRDs.
 
-The library is shipped with ready-to-use lightweight implementations: in-memory storage, SQLite for persistence, and local Go channels for queues. This ensures a low entry barrier and rapid prototyping.
+## 2. Current state (baseline as of 2026-06-06)
 
-### **1.3. Runtime Decoupling (Thresher)**
+Grounded in the code, not aspiration.
 
-The thresher runtime is designed based on the Interface Segregation principle. Decoupling the interface and implementation allows users to build custom execution environments (e.g., Serverless runtime) by overriding goroutine and memory management methods.
+### 2.1 Implemented (real logic + tests)
 
-### **1.4. Observability and Audit (CQRS)**
+- **Execution core (ADR-001 model).** `Instance` / `track` / `token` are fully implemented with their state machines; one goroutine per track; token lineage and `split()`. Token states `Alive / WaitForEvent / Consumed` (+ `Invalid`). Single-owner instance mutation.
+- **Event processing.** `EventHub` with the synchronous `Start` / blocking `Run` split (FIX-001, Accepted); event registration / propagation / waiter management. **Timer** waiter implemented. Race-clean under `-race` stress.
+- **Scope.** Hierarchical scope tree with path-based lookup and shadowing (`internal/scope`).
+- **Model elements.** Start/End events; **Exclusive** gateway (conditions, default flow); **Service** and **User** tasks; sequence flow (conditions, default); data objects, item definitions, properties, I/O specification, data associations, `FormalExpression` + Go-native evaluator; service/operation; correlation *structures*; message/resource.
+- **Module skeleton.** Multi-module monorepo: core (root), `runtime/` (stub binary), `adapters/sqlite/` (doc-only scaffold), `examples/*` (working).
 
-The architecture inherently separates audit data streams (immutable history for compliance) and monitoring (aggregated performance metrics). This optimizes storage and ensures 100% reliable instance context recovery.
+### 2.2 Stubbed or missing
 
-### **1.5. Process Evolution (Ad-hoc)**
+- **Extension architecture (ADR-002):** none of the 11 interfaces are promoted to `pkg/` yet; `thresher.New` has no functional-options assembly; `RuntimeEnvironment` lives in `internal/renv`. Repository, Logger, Tracer, MetricsRecorder, Clock, MessageBroker, AuthorizationProvider, WorkerDispatcher, ExpressionEngine (as an interface) do not exist as Go types yet.
+- **Module layout (ADR-003):** the `pkg/` subpackage catalogue and the 12 migration steps are not started; `runtime/` and `adapters/sqlite/` are scaffolds with no real code.
+- **Persistence & rehydration (P0 per SAD §10/§13):** no `Repository`, no checkpointing, no long-wait token release, no restart recovery. Execution is in-memory and ephemeral.
+- **BPMN elements:** Parallel / Inclusive / Complex / Event-Based gateways; Manual / Script / Send / Receive / Business-Rule tasks; Call Activity, (Embedded/Transaction/Event/Ad-hoc) Sub-Process; Message/Signal/Error/Escalation/Conditional/Compensation/Link/Terminate event behavior; multi-instance & loop execution — all absent or skeleton.
+- **Messaging runtime:** correlation *structures* exist; no correlation engine, no Message Start/Catch/Throw routing.
+- **Fault tolerance:** no Incident / Retry / DLQ.
+- **Runtime overlay (ADR-004):** no server, API, tenancy, AuthN/Z wiring, diagnostics, health checks.
 
-The importance of Ad-hoc processes is recognized as an "incubator" for rigid regulations. The engine architecture must allow for the gradual "crystallization" of free steps into formalized BPMN schemas.
+### 2.3 Document status & integrity
 
-## **2\. Current Architectural Challenges**
+- **Statuses:** SAD-001 v.1 Draft; ADR-001 v.2 Draft; ADR-002 / ADR-003 / ADR-004 v.1 Draft; FIX-001 v.1 **Accepted**.
+- **Integrity gaps to clear** (small, tracked in WS-A): FIX-001 references `docs/srd/SRD-001-multi-module-scaffold.md`, which does not exist (no `docs/srd/` yet); the v2.0 roadmap / SAD referenced an IAM ADR at `docs/adr/iam/` that is not present.
 
-The selected roadmap aims to address critical challenges hindering industrial adoption:
+## 3. Sequencing principles
 
-* **Hierarchical Data Isolation:** The internal/scope package must ensure correct variable shadowing in sub-processes and upward propagation during business context updates.  
-* **Time Persistence:** Transitioning from ephemeral in-memory timers to a persistent schedule with hydration support during instance loading.  
-* **System Operation Fault Tolerance:** Implementing Retries and DLQ (Incidents) mechanisms to prevent token loss during external worker or DB technical failures.  
-* **Platform-Agnostic UI:** Creating a registry of abstract form schemas to decouple process logic from rendering specifics (Web/Mobile).
+1. **Conception before the features it governs.** An ADR should be Accepted (its acceptance gate closed) before the bulk of the work it specifies lands — per the SDD discipline. Stabilising ADR-002→003→004 unblocks everything structural.
+2. **Foundation before features.** Extension architecture (ADR-002) and module layout (ADR-003) are enablers the element work and the runtime both stand on. They come first.
+3. **Persistence/rehydration is P0.** SAD §10/§13 make save/restore the foundation for long-waits, restart recovery, and all distribution. It is sequenced early, not deferred to "day-2".
+4. **Embedded-library journey reaches MVP before the runtime overlay.** The runtime (ADR-004) is an additive overlay on a working library; the library must be usable first (SAD's two journeys).
+5. **Each element lands against the spec.** Every BPMN element is implemented + tested and cross-checked against the `docs/bpmn-spec/` KB and `conformance.md`'s in-scope list.
 
-## **3\. BPMN Element Implementation Phases**
+## 4. Workstreams
 
-The plan is divided into 6 interdependent stages, from the infrastructure core to Day-2 operation tools.
+Workstreams are dependency-ordered tracks. They overlap in calendar time but have the ordering constraints noted. The chain **WS-A → WS-B → (WS-C, WS-D)** is firm; WS-E and WS-F attach where noted.
 
-### **Phase 0: Infrastructure Foundation**
+### WS-A — Conception stabilization
 
-*Focus: Context isolation, extension interfaces, and basic data contracts in core. Per SAD-001, IAM enforcement and multitenancy policy live in the runtime layer; this phase establishes the core-side interfaces those runtime concerns plug into.*
+Close each ADR's test-based acceptance gate (§7 in each) and flip Draft → Accepted, then pin outgoing references and add the Russian twin.
 
-* **State Management (Scope):** Implementing the scope tree in internal/scope. Support for name resolution rules (Shadowing) and thread-safe access via sync.RWMutex.  
-* **IAM and Multi-tenancy interfaces (core-side):** TenantID, IdentityService, and AuthorizationService interfaces (see IAM ADR — currently in docs/adr/iam/, to be relocated to runtime/ when that submodule scaffolds per SAD-001 §9.2). Core accepts tenant-aware context; runtime enforces isolation policy.  
-* **Expression Layer:** Finalizing the **Formal Expression** interface and its integration with the Scope hierarchy.  
-* **Form Registry:** Mechanism for storing and serving abstract JSON metadata schemas via formKey.  
-* **Event Core (Observability):** Implementing EventHub and basic listeners for Audit (Event Sourcing) and Monitoring (Metrics). Logger/Tracer/MetricsRecorder extension interfaces wired with visible-by-default defaults (SAD-001 §11).
-* **Module scaffolding:** Establish the multi-module monorepo layout (`runtime/`, `adapters/`) per SAD-001 §9.2 — even as empty placeholders, so import-direction discipline is enforceable from day 1.
+- Accept **ADR-001** (execution model): its gate requires the §7 verification tests (race-freedom, goroutine-leak-free, fork/join, withdrawn semantics, restart recovery, long-wait release, termination cascade, boundary isolation, token-event completeness) to exist and pass. At the flip, note the race-freedom gate is now exercised in the engine (no downward FIX reference — see the deferred follow-up).
+- Accept **ADR-002 → ADR-003 → ADR-004** in that order (linear dependency: interfaces defined → placed → wired).
+- Accept **SAD-001**: requires §13 Distribution & Scale to be refined or relocated to a dedicated ADR-005 first (it is explicitly flagged preliminary).
+- **Clear doc-integrity gaps:** write or correctly reference the missing SRD-001 scaffold record (or fix FIX-001's link), and resolve the missing IAM-ADR reference.
 
-### **Phase 1: Core Flow and Fault Tolerance**
+*Output:* a stable, Accepted conception layer with version-pinned cross-references and twins.
 
-*Focus: Executing basic algorithms and handling failures.*
+### WS-B — Core structural foundation
 
-* **Events:** None Start/End, Terminate End.  
-* **Tasks:** Service Task (hybrid model: goroutines \+ external workers), User Task (routing via IAM), Manual Task.  
-* **Error Management:** BpmnError contract implementation. Hierarchical resolution mechanism for Boundary Error Events.  
-* **Fault Tolerance:** Basic Incident support. Automatic Retry policies and DLQ mechanisms.  
-* **Gateways:** Exclusive Gateway (XOR), Parallel Gateway (AND) with local token synchronization.  
-* **Data Objects:** Data Object and Data Store Reference implementation.
+The enablers everything downstream needs. Governed by ADR-002 and ADR-003; each step is its own SRD.
 
-### **Phase 2: Asynchrony and Reusability**
+- **B1 Extension architecture (ADR-002).** Functional-options assembly on `thresher.New` (zero-option `New` produces a working engine); promote and extend `RuntimeEnvironment`; define the 11-interface catalogue with in-core default implementations (slog logger, no-op tracer/metrics, in-memory repository/message-broker/event-hub, wall-clock, allow-all authz, local task distributor/dispatcher, Go-native expression engine); startup configuration logging.
+- **B2 Module layout migration (ADR-003, 12 steps).** Scaffold `runtime/` and `adapters/` (partly done); promote `EventHub` → `pkg/messaging/`, `RuntimeEnvironment` → `pkg/renv/`, `Registrator` → `pkg/tasks/TaskDistributor`; create the seven net-new `pkg/` subpackages with their default-impl siblings; add depguard import-direction enforcement to CI; add conformance test-helper packages; clean up emptied `internal/` dirs. Each migration step lands independently with CI green.
+- **B3 Persistence & rehydration (P0).** `Repository` interface + in-memory default (`pkg/repository/memrepo/`); checkpoint at every observable BPMN lifecycle transition (ADR-001 policy); long-wait token release + rehydration on trigger; restart recovery (query in-flight instances, re-spawn). Likely needs its own SRD set and possibly an ADR refinement of the checkpoint format.
 
-*Focus: Inter-process communications and time management.*
+*Constraint:* B1 precedes B2 (interfaces must exist before they're placed); B3 builds on B1's `Repository` interface.
 
-* **Messaging:** Message Correlation Service implementation. Persistent subscriptions and signal routing via business keys. Message Start/Catch/Throw.  
-* **Timers:** Persistence requirements implementation. Hydration logic for active timers. Support for Interrupting and Non-interrupting events.  
-* **Structure:** Embedded Sub-Process (new Scope level), Call Activity (variable mapping between processes).  
-* **Gateways:** Event-Based Gateway.
+### WS-C — BPMN element completion
 
-### **Phase 3: Business Logic and Mass Processing**
+Fill the Common Executable Subclass + ComplexGateway per `conformance.md`, in dependency order. Each element: implement + tests + cross-check against `docs/bpmn-spec/`. Builds on WS-B (assembly, scope, and — for durable elements — persistence).
 
-*Focus: Rules integration and iterative execution.*
+- **C1 Core flow.** None Start/End, Terminate End; **Parallel** gateway (AND, token synchronisation); Manual Task. (Exclusive gateway, Service/User tasks, sequence-flow conditions already done.)
+- **C2 Errors & fault tolerance.** `BpmnError` contract; Boundary Error events with hierarchical resolution; Incident / Retry / DLQ (depends on WS-B3 persistence).
+- **C3 Messaging & timers.** Message correlation engine (structures exist); Message Start/Catch/Throw; Signal events; timer **persistence + hydration** (waiter exists; hydration depends on WS-B3); **Event-Based** gateway.
+- **C4 Structure & reuse.** Embedded Sub-Process (new scope level); Call Activity (variable mapping); Receive / Send tasks.
+- **C5 Business logic & iteration.** Script Task (internal engine); Business Rule Task (DMN via external engine, per non-goal N2); Standard Loop and Multi-Instance (sequential/parallel) with per-branch scope isolation; Conditional events (reactive on scope-data change).
+- **C6 Full conformance.** **Inclusive** (OR) and **Complex** gateway (extension; two-phase activation/reset, deadlock detection); Compensation, Escalation, Link events; Transaction and Event Sub-Process; Ad-Hoc Sub-Process.
 
-* **Tasks:** Business Rule Task (DMN), **Script Task** (internal engine execution).  
-* **Iterations:** Standard Loop, Multi-Instance (Sequential/Parallel). Scope isolation for parallel branches.  
-* **Conditions:** Conditional Event (Start/Catch/Boundary). Reactive triggering on Scope data changes.
+*Output:* full BPMN 2.0 Process Execution Conformance (Common Executable + ComplexGateway), validated by the conformance suite.
 
-### **Phase 4: Full Conformance and Flexibility**
+### WS-D — Runtime overlay (ADR-004)
 
-*Focus: Complex events and adaptive scenarios.*
+The standalone `gobpm-server`, built additively on WS-B interfaces and WS-C engine features. Each API service group is its own SRD.
 
-* **Events:** Signal, Compensation (transaction rollbacks), Escalation, Link.  
-* **Sub-processes:** Transaction Sub-Process, Event Sub-Process (interrupting and non-interrupting).  
-* **Ad-hoc:** Ad-Hoc Sub-Process support. Dynamic task activation within a defined area.  
-* **Gateways:** Inclusive Gateway (OR), Complex Gateway (in scope as explicit extension above Common Executable per SAD-001 §13.4 — two-phase activation/reset semantics per BPMN spec §13.4.5).
+- 7-phase startup + reverse-order graceful shutdown with drain.
+- API service groups: process registry; instance lifecycle; user task; diagnostics (state/token-positions/history/manual intervention); event streaming; worker dispatch; health & ops.
+- Tenancy via `context.Context` (Repository enforces per-tenant filtering); AuthN provider chain (OIDC/JWT/mTLS, per service group); observability wiring (OTel); health checks (liveness/readiness); hierarchical YAML config.
 
-### **Phase 5: Day-2 Operations**
+### WS-E — Adapters
 
-*Focus: Industrial lifecycle management.*
+Production implementations of the extension interfaces, each in its own `adapters/*` module, scheduled when its first consumer materialises. Each: implement the public interface, pass the conformance helper suite, declare cluster compatibility (`ClusterAware`).
 
-* **Versioning:** Instance binding strategies for definitions.  
-* **Migration:** Migration API. Programmatic token transfer between versions (V1 \-\> V2) while maintaining Scope hierarchy.  
-* **Administration:** Tools for manual instance state modification (Move Token API) and incident resolution via API.
+- `adapters/postgres/` (Repository), `adapters/otel/` (Tracer/MetricsRecorder), `adapters/oidc|jwt|mtls/` (AuthN), `adapters/casbin/` (AuthorizationProvider), `adapters/feel/` (ExpressionEngine), `adapters/redis|nats-broker/` (MessageBroker). The existing `adapters/sqlite/` scaffold becomes a Repository adapter.
 
-# **References**
+### WS-F — Distribution & scale (future)
 
-* [SAD-001 Vision & Architecture](../design/SAD-001-vision-and-architecture.md) — top-level architectural vision. This Roadmap implements SAD-001.
-* [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) — BPMN 2.0 Process Execution Conformance scope definition (the authoritative in/out element list).
-* [docs/bpmn-spec/](../bpmn-spec/) — BPMN 2.0 normative reference KB.
-* IAM ADR — currently at `docs/adr/iam/ADR-001_ IAM Architecture.md`; will relocate to `runtime/docs/adr/` when the runtime submodule scaffolds (per SAD-001 §9.2).
+Deferred until multi-node demand materialises; gated on WS-B3 persistence. Specified in a future **ADR-005** (the home for SAD §13's preliminary content):
 
-# **Changes**
+- Task-level remote execution via `WorkerDispatcher` (direct dispatch, not a queue).
+- Instance-level distribution: sticky routing per instance ID + failover via persistence rehydration.
+- Cluster-wide shared state: signal broadcast backplane, cross-node message correlation, cluster-config validation.
 
-### **2026-05-29**
+## 5. Milestones
 
-* Roadmap refreshed (v2.0): aligned with SAD-001 Vision & Architecture.
-* §1.1 expanded with Security and Observability extension categories; observability default policy documented.
-* Phase 0 reframed: IAM/multitenancy enforcement is runtime concern per SAD-001 §12; core-side scope establishes interfaces only. Module scaffolding added as Phase 0 item per SAD-001 §9.2.
-* Phase 3 — Russian section headers translated to English (Задачи → Tasks, Итерации → Iterations).
-* Phase 4 — ComplexGateway explicitly noted as in-scope extension above Common Executable Subclass.
-* References section added.
+Milestones are demonstrable capability checkpoints cutting across the workstreams.
 
-### **2026-03-29**
+| # | Milestone | Contains | Demonstrates |
+|---|---|---|---|
+| **M0** | Conception accepted | WS-A | SAD-001 + ADR-001..004 Accepted; conception stable, refs pinned, twins in place |
+| **M1** | Embedded-library MVP | WS-B1, WS-B2, WS-C1 | `gobpm.New(opts...)` clean assembly; Parallel+Exclusive gateways; Service/User/Manual tasks; None/Terminate events; working example under 20 lines (SAD G3) |
+| **M2** | Durable execution | WS-B3, WS-C2 | Checkpoint + restart recovery; long-wait token release/rehydration; Incidents/Retry/DLQ |
+| **M3** | Messaging, time & reuse | WS-C3, WS-C4 | Message correlation; Message/Signal/Timer events; Event-Based gateway; Sub-Process & Call Activity |
+| **M4** | Full conformance | WS-C5, WS-C6 | Script/Business-Rule tasks; loops & multi-instance; Inclusive/Complex gateways; Compensation/Escalation/Link; Transaction/Event/Ad-Hoc sub-processes; conformance suite green |
+| **M5** | Standalone runtime | WS-D, WS-E (core adapters) | `gobpm-server` over HTTP/gRPC with postgres + otel + an AuthN provider |
+| **M6** | Distribution | WS-F | Multi-node operation — when demand materialises |
 
-* Roadmap updated (v1.05): Translated to English.  
-* Stages synchronized with the latest architectural GAP analysis.
+## 6. References
 
-### **2026-03-29**
+- [SAD-001 v.1 Vision & Architecture](../design/SAD-001-vision-and-architecture.md) — the architecture this roadmap delivers.
+- [ADR-001 v.2 Execution Model](../design/ADR-001-execution-model.md) — Instance/Tracks/Tokens; ctx cancellation; rehydration; checkpoint policy.
+- [ADR-002 v.1 Extension Architecture](../design/ADR-002-extension-architecture.md) — 11-interface catalogue; functional-options assembly; defaults.
+- [ADR-003 v.1 Module Layout](../design/ADR-003-module-layout.md) — `pkg/` subpackage catalogue; 12 migration steps; import-direction rules.
+- [ADR-004 v.1 Runtime Environment Contract](../design/ADR-004-runtime-environment-contract.md) — runtime overlay; startup/shutdown; API service groups; tenancy; AuthN/Z.
+- [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) — authoritative in/out-of-scope element list.
+- [docs/bpmn-spec/](../bpmn-spec/) — BPMN 2.0 normative reference KB.
 
-* Added Script Task, Event Sub-Process, and Complex Gateway.  
-* Refined Timer Events with Non-interrupting support.
+## Changes
+
+### 2026-06-06
+
+- **v3.0 — full rework.** Re-framed from BPMN-element phases to dependency-ordered workstreams (A conception → B structural foundation → C element completion → D runtime overlay → E adapters → F distribution) crossed with capability milestones (M0–M6). Added a grounded "current state" baseline (§2) and explicit sequencing principles (§3). Aligned to SAD-001 v.1 and ADR-001..004 v.1, and to the project's SDD / CI-parity / branch-protection / doc-hierarchy method. The v2.0 element ordering is preserved inside WS-C.
+
+### 2026-05-29
+
+- Roadmap refreshed (v2.0): aligned with SAD-001 Vision & Architecture; §1.1 expanded with Security/Observability extension categories; Phase 0 reframed (IAM/multitenancy as runtime concern); ComplexGateway noted as in-scope extension; References added.
+
+### 2026-03-29
+
+- v1.05: translated to English; stages synchronised with architectural GAP analysis. Added Script Task, Event Sub-Process, Complex Gateway; refined Timer Events with Non-interrupting support.
