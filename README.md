@@ -1,4 +1,4 @@
-# GoBPM - BPMN v2 Compliant Business Process Management Engine
+# GoBPM — BPMN 2.0 Process Engine for Go
 
 ![GitHub License](https://img.shields.io/github/license/dr-dobermann/gobpm)
 ![GitHub Tag](https://img.shields.io/github/v/tag/dr-dobermann/gobpm)
@@ -6,112 +6,111 @@
 [![codecov](https://codecov.io/github/dr-dobermann/gobpm/graph/badge.svg?token=ENKOTEL4VN)](https://codecov.io/github/dr-dobermann/gobpm)
 [![Go Report Card](https://goreportcard.com/badge/github.com/dr-dobermann/gobpm)](https://goreportcard.com/report/github.com/dr-dobermann/gobpm)
 
-**GoBPM** is a native BPMN 2.0 engine written in Go. It is designed as a library (not a framework) that embeds directly into your application binary, providing lightweight process orchestration without external runtime dependencies.
+**GoBPM** is a native Go BPMN 2.0 engine. It is designed to embed directly into a Go application as a minimal, dependency-light **library** — and to scale up to a standalone process **server** through additive runtime components, without forcing library users to ship what they don't need.
 
 > **Status:** v0.1.1 — active development, not yet production-ready.
 
-## Key Characteristics
+The vision, scope, and architecture are defined in [SAD-001](docs/design/SAD-001-vision-and-architecture.md) and its ADRs; the delivery plan is the [Development Roadmap](docs/analytics/gobpm%20Development%20Roadmap.md).
 
-- **Library, not framework** — embeds into your Go binary with no JVM, containers, or external services required. You control the application architecture.
-- **BPMN v2 Process Execution Conformance** — strict adherence to the OMG BPMN 2.0 specification, allowing gobpm to serve as a drop-in replacement for enterprise BPM engines.
-- **Event-driven execution** — internal EventHub with concurrent node processing via goroutines, providing high reactivity and efficient CPU/RAM utilization.
-- **Programmatic model construction** — process models are built in Go code. XML parsing is intentionally decoupled from the model layer, isolating business logic from serialization.
-- **Interface-driven extensibility** — infrastructure components (persistence, queues, expression engines) are injected through interfaces, not hardcoded implementations.
+## Two journeys
+
+1. **Embedded library.** `import github.com/dr-dobermann/gobpm`, build an engine, register a process, run it. No external services required.
+2. **Standalone runtime.** A `gobpm-server` (planned, `runtime/` module) exposes the engine over HTTP/gRPC with real persistence, identity, and observability — built *on* the library, never a fork of it.
+
+The library carries no runtime baggage; the runtime never reimplements the engine.
+
+## Key characteristics
+
+- **Library, not framework** — embeds into your Go binary; no JVM, containers, or external services. Core depends only on the Go stdlib + `github.com/google/uuid`.
+- **BPMN 2.0 Process Execution Conformance** — the Common Executable Subclass plus the ComplexGateway extension. Authoritative scope: [docs/bpmn-spec/conformance.md](docs/bpmn-spec/conformance.md).
+- **Predictable execution model** — one orchestrator goroutine per process instance owns state; each active token runs in its own goroutine; `context.Context` is the cancellation contract. See [ADR-001](docs/design/ADR-001-execution-model.md).
+- **Interface-driven extensibility** — persistence, expressions, messaging, observability, authorization, task distribution, and clock are all behind interfaces with in-core defaults. See [ADR-002](docs/design/ADR-002-extension-architecture.md).
+- **Observable by default** — `Logger` defaults to `slog.Default()`; you opt *out* of telemetry, you don't opt in. Tracer/metrics default to no-op (OpenTelemetry adapter ships separately).
+- **Programmatic model construction** — processes are built in Go. XML parsing is intentionally decoupled from the model layer.
 
 ## Architecture
 
 ```
-Process Definition ──> Event Processing ──> Execution Engine (Thresher)
-        |                     |                       |
-        v                     v                       v
-  BPMN Model            EventHub &              Instance
-  Components             Waiters              Management
+Process model ──> Snapshot ──> Engine (Thresher) ──> Instance (orchestrator)
+   pkg/model        immutable      pkg/thresher          1 goroutine / instance
+                    definition                            ├── Tokens (1 goroutine each)
+                                                          ├── EventHub + waiters
+                                                          └── Scope (hierarchical data)
 ```
 
-### Core Packages
+Dependencies flow downward only; lower layers know nothing of higher ones.
+
+### Core packages
 
 | Package | Description |
 |---------|-------------|
-| `pkg/thresher/` | Main BPM engine — process registration and execution |
-| `pkg/model/` | BPMN element implementations (activities, events, gateways, flows, data) |
-| `internal/eventproc/eventhub/` | Central event distribution and waiter management |
-| `internal/instance/` | Process instance lifecycle and state tracking |
-| `internal/scope/` | Hierarchical data scoping and variable management |
-| `pkg/model/data/` | Variable handling, expressions, and data associations |
-| `pkg/errs/` | Structured error handling with classification |
+| `pkg/thresher/` | Engine façade — process registry and instance lifecycle |
+| `pkg/model/` | BPMN element types (activities, events, gateways, flow, data, …) |
+| `pkg/errs/`, `pkg/set/` | Structured errors; utility data structures |
+| `internal/instance/` | Instance / track / token execution (+ `snapshot/`) |
+| `internal/eventproc/` | EventHub + event waiters (timer, …) |
+| `internal/scope/` | Hierarchical data scoping and variable shadowing |
 
-## Quick Start
+## Quick start
 
 ```bash
 go get github.com/dr-dobermann/gobpm
 ```
 
 ```go
-// Create a simple process: Start -> ServiceTask -> End
-proc, _ := process.New("my-process")
+// Start -> ServiceTask -> End  (errors elided for brevity)
+engine, _ := thresher.New("demo-engine")
 
+proc, _ := process.New("demo-process")
 start, _ := events.NewStartEvent("start")
-task, _ := activities.NewServiceTask("do-work", op, activities.WithoutParams())
+op, _ := service.NewOperation("hello", nil, nil, nil)
+task, _ := activities.NewServiceTask("work", op, activities.WithoutParams())
 end, _ := events.NewEndEvent("end")
 
-proc.Add(start)
-proc.Add(task)
-proc.Add(end)
+_ = proc.Add(start)
+_ = proc.Add(task)
+_ = proc.Add(end)
+_, _ = flow.Link(start, task)
+_, _ = flow.Link(task, end)
 
-flow.Link(start, task)
-flow.Link(task, end)
-
-// Create snapshot and run via Thresher
-snap, _ := snapshot.New(proc)
-engine := thresher.New()
-engine.RegisterProcess(snap)
-engine.Run(ctx)
+_ = engine.RegisterProcess(proc)
+_ = engine.Run(context.Background())
+_ = engine.StartProcess(proc.ID())
 ```
 
-## Development Roadmap
-
-The project follows a 6-phase development plan, from infrastructure foundation to Day-2 operations tooling. Full details are in [docs/analytics/gobpm Development Roadmap.md](docs/analytics/gobpm%20Development%20Roadmap.md).
-
-| Phase | Focus | Key Deliverables |
-|-------|-------|-----------------|
-| **0. Infrastructure Foundation** | Context isolation, multi-tenancy, data contracts | Scope tree, IAM interfaces, Formal Expression, Form Registry, EventHub observability |
-| **1. Core Flow and Fault Tolerance** | Basic execution and failure handling | None/Terminate events, Service/User/Manual tasks, BpmnError, Incidents/Retry/DLQ, XOR/AND gateways |
-| **2. Asynchrony and Reusability** | Inter-process communication, time management | Message Correlation, persistent Timers, Sub-Process, Call Activity, Event-Based Gateway |
-| **3. Business Logic and Mass Processing** | Rules integration, iterative execution | Business Rule Task (DMN), Script Task, Loop/Multi-Instance, Conditional Events |
-| **4. Full Conformance and Flexibility** | Complex events, adaptive scenarios | Signal/Compensation/Escalation/Link events, Transaction/Event Sub-Process, Ad-Hoc, Inclusive/Complex Gateways |
-| **5. Day-2 Operations** | Industrial lifecycle management | Instance versioning, Migration API, Administration tools (Move Token, incident resolution) |
-
-## Documentation
-
-- [Project Analysis](docs/analytics/Analysis%20of%20the%20gobpm%20project.md) — architectural analysis, design rationale, and enterprise requirements
-- [Development Roadmap](docs/analytics/gobpm%20Development%20Roadmap.md) — phased implementation plan with detailed deliverables
-- [Documentation Index](README_INDEX.md) — component documentation navigation
-- [API Reference](https://pkg.go.dev/github.com/dr-dobermann/gobpm) — generated Go documentation
-- [Contributing Guide](CONTRIBUTING.md) — how to contribute
-- [Changelog](CHANGELOG.md) — version history
+A complete, runnable version (with full error handling) lives in [`examples/basic-process/`](examples/basic-process/); see also [`examples/simple-timer/`](examples/simple-timer/) and [`examples/timer-event/`](examples/timer-event/).
 
 ## Development
 
 ```bash
-# Build
-make build
+make tools     # one-time: install pinned dev tools (mockery, golangci-lint, govulncheck)
+make ci        # full pre-push gate — mirrors GitHub CI exactly (tidy, lint, build, race tests, vuln scan)
 
-# Run tests (generates mocks first)
-make test
-
-# Run tests with coverage
-make test_coverage
-
-# Lint
-make lint
+make test      # tests (generates mocks first)
+make lint      # lint core module
+make build     # build to ./bin/
 ```
+
+`make ci` is the contract: green locally ⇒ green on CI. The Go toolchain is pinned (`go.mod` → `go1.25.11`) so local and CI scan the identical standard library.
+
+### How we work
+
+- **Specification-first** — non-trivial changes start from a spec (SRD/FIX) referencing the governing ADR; the spec lands in the same change-set as its implementation.
+- **`master` is protected** — changes land only through a PR with a green `check`; no direct, force, or admin-bypass pushes.
+- **Design docs** under `docs/design/` ([SAD-001](docs/design/SAD-001-vision-and-architecture.md), [ADR-001…004](docs/design/)) are the source of truth; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Requirements
 
-- Go 1.25+
-- [mockery v3](https://github.com/vektra/mockery) (for mock generation)
-- [golangci-lint v2](https://golangci-lint.run/) (for linting)
+- Go (toolchain pinned to `go1.25.11` via `go.mod`; `GOTOOLCHAIN=auto` fetches it automatically)
+- Dev tools via `make tools`: [mockery v3](https://github.com/vektra/mockery), [golangci-lint v2](https://golangci-lint.run/), [govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck)
+
+## Documentation
+
+- [Vision & Architecture (SAD-001)](docs/design/SAD-001-vision-and-architecture.md) and [ADRs](docs/design/) — the conception
+- [Development Roadmap](docs/analytics/gobpm%20Development%20Roadmap.md) — workstreams + milestones
+- [Conformance scope](docs/bpmn-spec/conformance.md) and [BPMN 2.0 reference KB](docs/bpmn-spec/)
+- [Documentation Index](README_INDEX.md) · [API Reference](https://pkg.go.dev/github.com/dr-dobermann/gobpm) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
 
 ## License
 
-LGPL-3.0 — see [LICENSE](LICENSE) for details.
+LGPL-3.0 — see [LICENSE](LICENSE).

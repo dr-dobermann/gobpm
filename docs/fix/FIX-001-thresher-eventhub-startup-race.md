@@ -6,7 +6,7 @@
 | Version | v.1 |
 | Date | 2026-06-03 |
 | Owner | Ruslan Gabitov |
-| Surfaces from | [SRD-001](../srd/SRD-001-multi-module-scaffold.md) — `-race` now gates CI; pre-existing race becomes visible |
+| Surfaces from | The `-race` CI gate (`chore/ci-audit`, `d731895`) running over the multi-module / `make ci` scaffold ([SAD-001 v.1 §9](../design/SAD-001-vision-and-architecture.md), [ADR-003 v.1](../design/ADR-003-module-layout.md)) — `-race` now gates CI; pre-existing race becomes visible |
 | Related conception | [ADR-001 v.2 Execution Model](../design/ADR-001-execution-model.md) — race-freedom is a P0 verification gate per §7 |
 
 ## 1. Symptoms
@@ -22,7 +22,7 @@ go test -race -count=5 -run TestThresher_EventQueueProcessing ./pkg/thresher/
 
 The race fires non-deterministically — sometimes the test passes, sometimes the race detector flags it. The test logic itself is reasonable (start the Thresher, then register an event); the race is in the engine's startup sequence and was masked by timing on faster runs and by the previous absence of `-race` in CI before commit `d731895` (`chore/ci-audit`).
 
-`-race` is now gating CI per [SRD-001 §3 / §5](../srd/SRD-001-multi-module-scaffold.md). Without addressing this race, master CI fails intermittently.
+`-race` is now gating CI (added in `chore/ci-audit` `d731895`, wired into `make ci`'s `test-all` by the multi-module scaffold — see [ADR-003 v.1](../design/ADR-003-module-layout.md)). Without addressing this race, master CI fails intermittently.
 
 ## 2. Root cause analysis
 
@@ -94,9 +94,9 @@ Both racing fields are simple scalars touched across goroutines with no `sync.Mu
 
 - `-race` was added to CI in `d731895` (chore/ci-audit, merged before this work).
 - The race is timing-dependent. CI runs since then likely got lucky on the timing.
-- SRD-001 added `make ci` with race-gated `test-all`, plus the depguard rules. Running `make ci` locally and on CI more reliably exercises the timing where the race fires.
+- The multi-module scaffold landing added `make ci` with race-gated `test-all`, plus the depguard rules. Running `make ci` locally and on CI more reliably exercises the timing where the race fires.
 
-The fragility was always there; SRD-001 just stopped letting it slip through.
+The fragility was always there; the race-gated `make ci` just stopped letting it slip through.
 
 ## 3. Solution
 
@@ -231,7 +231,7 @@ The change is `EventHub` adding a `Start` method and `Thresher.Run` calling it s
 ## 7. Related
 
 - [ADR-001 v.2 Execution Model §7](../design/ADR-001-execution-model.md) — race-freedom is verification gate #1; this FIX is the first concrete payment on that gate.
-- [SRD-001 v.1 §5 Tests / Verification](../srd/SRD-001-multi-module-scaffold.md) — `-race` is the CI gate that surfaces this and similar bugs.
+- [SAD-001 v.1 §9 Module Layout](../design/SAD-001-vision-and-architecture.md) + the `chore/ci-audit` `-race` gate (`d731895`) — the multi-module `make ci` scaffold and its `-race` gate are what surface this and similar bugs.
 - [ADR-003 v.1 §4.6 step 3](../design/ADR-003-module-layout.md) — when `EventHub` interface moves from `internal/eventproc/` to `pkg/messaging/` (per the migration plan), the `Start` method moves with it. This FIX is upstream of that promotion; the change must happen here first to land the race-free design before the public-interface freeze.
 - (Potential follow-up) Audit other engine startup sequences for similar racy "Run-in-a-goroutine then sleep" patterns. Likely none elsewhere, but worth a one-time pass.
 
