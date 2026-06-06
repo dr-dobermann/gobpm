@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-03 |
 | Owner | Ruslan Gabitov |
@@ -287,18 +287,22 @@ exercising the fix should run it once.
 Branch and commit:
 
 - Branch: `fix/eventhub-startup-race`
-- Commits: this FIX doc (`c601683`) + implementation commit (to be inserted
-  here after commit; see Document History row when v.1 flips Accepted).
+- Commits: this FIX doc (`c601683`) + implementation commit `70fa5f5`
+  (`fix(eventhub): split Start/Run to remove Thresher startup race (FIX-001)`).
 
 Status flip plan:
 
 - [x] Implementation committed on `fix/eventhub-startup-race`.
-- [ ] PR opened against `master`; CI green on the merge candidate.
-- [ ] PR merged; flip this FIX from Draft → Accepted with the merge commit
-      SHA recorded in the Document History row for v.1.
+- [x] PR #108 merged into `master` (merge commit `28aa6b9`). The `check`
+      workflow on that merge was red on an unrelated pre-existing
+      govulncheck finding (stdlib vulns), remediated immediately after by
+      the go1.25.11 toolchain pin in PR #109; `check` is green on `master`
+      as of `3705717`.
+- [x] Flipped Draft → Accepted. Acceptance gate re-run on `master` HEAD
+      `3705717`: `-race -count=100` clean. SHAs recorded in Document History.
 
 ## Document History
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-03 | Ruslan Gabitov | Initial Draft. Pre-acceptance iteration ongoing; amendments folded into this Draft without per-round history rows. When v.1 flips to Accepted (after merge and `-count=100` race-stress demonstration), this row records the Accepted state. |
+| v.1 | 2026-06-06 | Ruslan Gabitov | Accepted. Implementation merged to `master` via PR #108 (impl commit `70fa5f5`, merge `28aa6b9`). Acceptance gate re-verified on `master` `3705717`: `go test -race -count=100 -run TestThresher_EventQueueProcessing ./pkg/thresher/...` clean (100/100); `check` workflow green on `master` at `3705717` (the PR #108 merge build was red on an unrelated stdlib govulncheck finding, remediated by the go1.25.11 toolchain pin in PR #109). Prior Draft iteration folded into this version without per-round rows. |
