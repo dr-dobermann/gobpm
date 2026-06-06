@@ -56,7 +56,7 @@ Grounded in the code, not aspiration.
 ### 2.3 Document status & integrity
 
 - **Statuses:** SAD-001 v.1 Draft; ADR-001 v.2 Draft; ADR-002 / ADR-003 / ADR-004 v.1 Draft; FIX-001 v.1 **Accepted**.
-- **Integrity gaps to clear** (small, tracked in WS-A): FIX-001 references `docs/srd/SRD-001-multi-module-scaffold.md`, which does not exist (no `docs/srd/` yet); the v2.0 roadmap / SAD referenced an IAM ADR at `docs/adr/iam/` that is not present.
+- **Document integrity:** the earlier dead references are resolved — FIX-001 now points to the real sources (the `chore/ci-audit` `-race` gate + SAD-001 §9 / ADR-003 for the multi-module scaffold) instead of a never-written `SRD-001`; ADR-004's legacy IAM-ADR reference is folded into the AuthN/Z model (§4.7 + `AuthorizationProvider`). No standalone `SRD-001` or IAM ADR will be recreated — that content lives in the SAD/ADRs.
 
 ## 3. Sequencing principles
 
@@ -77,7 +77,7 @@ Close each ADR's test-based acceptance gate (§7 in each) and flip Draft → Acc
 - Accept **ADR-001** (execution model): its gate requires the §7 verification tests (race-freedom, goroutine-leak-free, fork/join, withdrawn semantics, restart recovery, long-wait release, termination cascade, boundary isolation, token-event completeness) to exist and pass. At the flip, note the race-freedom gate is now exercised in the engine (no downward FIX reference — see the deferred follow-up).
 - Accept **ADR-002 → ADR-003 → ADR-004** in that order (linear dependency: interfaces defined → placed → wired).
 - Accept **SAD-001**: requires §13 Distribution & Scale to be refined or relocated to a dedicated ADR-005 first (it is explicitly flagged preliminary).
-- **Clear doc-integrity gaps:** write or correctly reference the missing SRD-001 scaffold record (or fix FIX-001's link), and resolve the missing IAM-ADR reference.
+- **Doc-integrity gaps cleared** (done): FIX-001's dead `SRD-001` references repointed to the real sources; ADR-004's dead IAM-ADR reference folded into the AuthN/Z model. No standalone SRD-001 / IAM ADR is recreated (spec content lives in the SAD/ADRs; per project rule, SRD/FIX docs henceforth land in the same change-set as their implementation).
 
 *Output:* a stable, Accepted conception layer with version-pinned cross-references and twins.
 

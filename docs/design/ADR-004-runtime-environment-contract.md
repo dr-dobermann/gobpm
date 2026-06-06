@@ -483,7 +483,7 @@ Skipping this for "simple" endpoints in early development creates the painful "w
 - [ADR-002 Extension Architecture](ADR-002-extension-architecture.md) — extension interfaces this ADR wires; §8.3 `Starter` / `Stopper` / `HealthChecker` first-class consumers; §8.1 observability attribute conventions
 - [ADR-003 Module Layout](ADR-003-module-layout.md) — `runtime/` submodule placement, adapter module conventions, import-direction rules
 - [docs/bpmn-spec/semantics/correlation.md](../bpmn-spec/semantics/correlation.md) — message correlation; tenancy-bounded
-- IAM ADR (`docs/adr/iam/`) — IAM "Ports and Adapters" pattern; aligns with §4.7 AuthN model. Will relocate to `runtime/docs/adr/` per SAD-001 §9.2 when the relocation happens.
+- AuthN/Z model — the IAM concern is covered by §4.7 (AuthN provider model) here plus the `AuthorizationProvider` extension in [ADR-002 v.1](ADR-002-extension-architecture.md); a dedicated AuthN/Z ADR will be authored as part of that work. (Supersedes the earlier standalone IAM ADR, removed in `8855f1d` with its content absorbed into the design docs.)
 
 ## Document History
 
