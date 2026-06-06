@@ -93,6 +93,7 @@ type Instance struct {
 	parentEventProducer eventproc.EventProducer
 	parentScope         scope.Scope
 	s                   *snapshot.Snapshot
+	now                 func() time.Time
 	scopes              map[scope.DataPath]map[string]data.Data
 	tracks              map[string]*track
 	rootScope           scope.DataPath
@@ -134,6 +135,7 @@ func New(
 		BaseElement:         *be,
 		state:               Ready,
 		s:                   s,
+		now:                 time.Now,
 		scopes:              map[scope.DataPath]map[string]data.Data{},
 		tracks:              map[string]*track{},
 		tokens:              []*token{},
@@ -228,7 +230,7 @@ func (inst *Instance) Run(
 
 	inst.m.Lock()
 	inst.ctx = ctx
-	inst.startTime = time.Now()
+	inst.startTime = inst.now()
 	inst.m.Unlock()
 
 	if err := inst.runTracks(ctx); err != nil {
