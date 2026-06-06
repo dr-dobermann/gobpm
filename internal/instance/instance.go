@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/exp/maps"
@@ -45,7 +46,9 @@ const (
 )
 
 // State represents the process instance state.
-type State uint8
+// uint32-backed so it can live in an atomic.Uint32 without a narrowing
+// conversion (the instance's run state is read lock-free via State()).
+type State uint32
 
 const (
 	// Created represents a created instance state.
@@ -95,14 +98,16 @@ type Instance struct {
 	s                   *snapshot.Snapshot
 	now                 func() time.Time
 	scopes              map[scope.DataPath]map[string]data.Data
-	tracks              map[string]*track
+	tracks              map[string]*track // owned by loop(); not guarded by m
+	events              chan trackEvent   // tracks -> loop()
+	loopDone            chan struct{}     // closed when loop() exits
 	rootScope           scope.DataPath
 	runtimeScope        scope.DataPath
 	foundation.BaseElement
-	tokens []*token
-	wg     sync.WaitGroup
-	m      sync.RWMutex
-	state  State
+	tokens     []*token // guarded by m (removed in M5)
+	trackCount atomic.Int64
+	state      atomic.Uint32 // State; written only by loop(), read via State()
+	m          sync.RWMutex  // guards scopes + tokens (NOT lifecycle state/tracks)
 }
 
 // New creates a new Instance from the Snapshot s and sets state to Ready.
@@ -133,16 +138,18 @@ func New(
 
 	inst := Instance{
 		BaseElement:         *be,
-		state:               Ready,
 		s:                   s,
 		now:                 time.Now,
 		scopes:              map[scope.DataPath]map[string]data.Data{},
 		tracks:              map[string]*track{},
+		events:              make(chan trackEvent),
+		loopDone:            make(chan struct{}),
 		tokens:              []*token{},
 		parentScope:         parentScope,
 		parentEventProducer: ep,
 		rr:                  rr,
 	}
+	inst.state.Store(uint32(Ready))
 
 	if err := inst.loadProperties(parentScope); err != nil {
 		return nil, errs.New(
@@ -156,6 +163,10 @@ func New(
 	if err := inst.createTracks(); err != nil {
 		return nil, err
 	}
+
+	// TracksCount reflects all tracks created (initial + forks); seed it with
+	// the initial tracks. The loop adds forks; ended tracks are retained.
+	inst.trackCount.Store(int64(len(inst.tracks)))
 
 	return &inst, nil
 }
@@ -195,18 +206,14 @@ func (inst *Instance) loadProperties(parentScope scope.Scope) error {
 
 // State returns current state of the Instance.
 func (inst *Instance) State() State {
-	inst.m.RLock()
-	defer inst.m.RUnlock()
-
-	return inst.state
+	return State(inst.state.Load())
 }
 
-// updateState sets new state for the Instance.
-func (inst *Instance) updateState(newState State) {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
-	inst.state = newState
+// setState sets a new instance state. Written only from loop() (the single
+// owner of lifecycle state) and from Run(); State() readers see it via the
+// atomic, so no lock is needed.
+func (inst *Instance) setState(newState State) {
+	inst.state.Store(uint32(newState))
 }
 
 // Run starts the process instance execution. Execution could be stopped by
@@ -220,85 +227,117 @@ func (inst *Instance) Run(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	if inst.state != Ready {
+	if inst.State() != Ready {
 		return errs.New(
-			errs.M("invalid instance state to run",
-				inst.state),
+			errs.M("invalid instance state to run"),
 			errs.C(errorClass, errs.InvalidState),
-			errs.D("current_state", inst.state))
+			errs.D("current_state", inst.State()))
 	}
 
-	inst.m.Lock()
 	inst.ctx = ctx
 	inst.startTime = inst.now()
-	inst.m.Unlock()
+	inst.setState(Runned)
 
-	if err := inst.runTracks(ctx); err != nil {
-		return err
-	}
+	// initial tracks were built by createTracks() during New; hand them to the
+	// loop, which becomes the sole owner of lifecycle state from here on.
+	initial := maps.Values(inst.tracks)
 
-	// run tracks ending watcher
-	grChan := make(chan struct{})
-	go func() {
-		inst.wg.Wait()
-
-		close(grChan)
-
-		inst.updateState(Finished)
-	}()
+	go inst.loop(ctx, initial)
 
 	return nil
 }
 
-// runTracks runs all tracks of the instance.
-func (inst *Instance) runTracks(ctx context.Context) error {
-	inst.state = Runned
-
-	// run only registered tracks, not the ones created by runned track's forks.
-	tracks := append([]*track{}, maps.Values(inst.tracks)...)
-	for _, t := range tracks {
-		tt := t
-		inst.runSingleTrack(ctx, tt)
-	}
-
-	return nil
+// trackEvent is a message from a track to the Instance event loop. M2 carries
+// the coarse lifecycle set; M4 refines the fork into an active-flows event.
+type trackEvent struct {
+	track *track
+	kind  trackEventKind
 }
 
-// addTrack adds a new track into the instance's track pool.
-// If instance is running, added track also runs.
-func (inst *Instance) addTrack(ctx context.Context, nt *track) error {
-	if nt == nil {
-		return fmt.Errorf("couldn't add empty track to instance %q", inst.ID())
+type trackEventKind uint8
+
+const (
+	evSpawn trackEventKind = iota // register + run a new track (from a fork)
+	evEnded                       // a track's run() returned
+	evStop                        // request to stop the instance (no live token)
+)
+
+// emit delivers a track event to the loop. It never blocks forever: if the
+// loop has exited or the context is canceled it drops the event.
+func (inst *Instance) emit(ev trackEvent) {
+	select {
+	case inst.events <- ev:
+	case <-inst.loopDone:
+	case <-inst.ctx.Done():
 	}
-
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
-	if _, ok := inst.tracks[nt.ID()]; ok {
-		return fmt.Errorf("track from node %q(%s) already registered in instance %q",
-			inst.tracks[nt.ID()].steps[0].node.Name(),
-			inst.tracks[nt.ID()].steps[0].node.ID(),
-			inst.ID())
-	}
-
-	inst.tracks[nt.ID()] = nt
-
-	if inst.state == Runned {
-		inst.runSingleTrack(ctx, nt)
-	}
-
-	return nil
 }
 
-// runSingleTrack starts a new track and add it to instance's WaitGroup.
-func (inst *Instance) runSingleTrack(ctx context.Context, t *track) {
-	inst.wg.Add(1)
+// loop is the single owner of the Instance's lifecycle state (the tracks
+// registry and the run state). Tracks never mutate that state directly — they
+// emit events here, applied in order in this one goroutine, so no lock guards
+// lifecycle state. The instance finishes when all tracks have ended.
+func (inst *Instance) loop(ctx context.Context, initial []*track) {
+	defer close(inst.loopDone)
 
-	go func(t *track) {
-		defer inst.wg.Done()
+	active := 0
+	stopping := false
 
-		t.run(ctx)
-	}(t)
+	spawn := func(t *track) {
+		inst.tracks[t.ID()] = t
+		active++
+
+		go func(t *track) {
+			t.run(ctx)
+			inst.emit(trackEvent{kind: evEnded, track: t})
+		}(t)
+	}
+
+	stopAll := func() {
+		if stopping {
+			return
+		}
+		stopping = true
+		inst.setState(Stopping)
+		for _, t := range inst.tracks {
+			t.stop()
+		}
+	}
+
+	for _, t := range initial {
+		spawn(t)
+	}
+
+	if active == 0 {
+		inst.setState(Finished)
+		return
+	}
+
+	done := ctx.Done()
+	for active > 0 {
+		select {
+		case <-done:
+			done = nil
+			stopAll()
+
+		case ev := <-inst.events:
+			switch ev.kind {
+			case evSpawn:
+				inst.trackCount.Add(1)
+				spawn(ev.track)
+				if stopping {
+					ev.track.stop()
+				}
+
+			case evEnded:
+				active--
+
+			case evStop:
+				stopAll()
+			}
+		}
+	}
+
+	inst.setState(Finished)
 }
 
 // createTrack creates all initial tracks of the Instance.
@@ -400,10 +439,10 @@ func (inst *Instance) getRuntimeVar(name string) (data.Data, error) {
 		d = values.NewVariable(inst.startTime)
 
 	case CurrState:
-		d = values.NewVariable(inst.state)
+		d = values.NewVariable(inst.State())
 
 	case TracksCount:
-		tc := len(inst.tracks)
+		tc := int(inst.trackCount.Load())
 		d = values.NewVariable(tc)
 
 	default:
@@ -452,31 +491,26 @@ func (inst *Instance) addToken(t *token) {
 // tokenConsumed checks all tokens of the Instance and if there is
 // no alive token, all runned tracks stopped, and Instance execution finished.
 func (inst *Instance) tokenConsumed(_ *token) {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
-	if inst.state != Runned {
+	if inst.State() != Runned {
 		return
 	}
 
-	// check if there is any alive token. If any, then return.
-	if slices.ContainsFunc(
+	// check if there is any alive token (tokens are guarded by m until M5).
+	inst.m.Lock()
+	anyAlive := slices.ContainsFunc(
 		inst.tokens,
 		func(t *token) bool {
 			return t.state == TokenAlive
 		},
-	) {
+	)
+	inst.m.Unlock()
+
+	if anyAlive {
 		return
 	}
 
-	// if there is no alive token, stop the instance.
-	inst.state = Stopping
-
-	go func() {
-		for _, t := range inst.tracks {
-			t.stop()
-		}
-	}()
+	// no live token — ask the loop (the sole state owner) to stop the instance.
+	inst.emit(trackEvent{kind: evStop})
 }
 
 // -------------------- exec.EventProducer interface ---------------------------

@@ -358,7 +358,7 @@ func (t *track) run(
 			return
 		}
 
-		err = t.checkFlows(ctx, nextFlows)
+		err = t.checkFlows(nextFlows)
 		if err != nil {
 			t.lastErr = err
 			t.updateState(TrackFailed)
@@ -451,7 +451,7 @@ func (t *track) finalizeNodeExecution(ctx context.Context, step *stepInfo, _ []*
 // checkFlows processes node outgoing flows.
 // If number of flows is greater than 1 then new tracks with splited token
 // created.
-func (t *track) checkFlows(ctx context.Context, flows []*flow.SequenceFlow) error {
+func (t *track) checkFlows(flows []*flow.SequenceFlow) error {
 	if len(flows) == 0 {
 		t.updateState(TrackEnded)
 		return nil
@@ -500,12 +500,9 @@ func (t *track) checkFlows(ctx context.Context, flows []*flow.SequenceFlow) erro
 
 		nt.steps[0].tk = tokens[i+1]
 
-		if err := t.instance.addTrack(ctx, nt); err != nil {
-			return errs.New(
-				errs.M("couldn't add new track for flow %q", f.ID()),
-				errs.C(errorClass, errs.BulidingFailed),
-				errs.E(err))
-		}
+		// hand the new track to the instance loop — it owns the registry and
+		// spawns the goroutine (track never mutates instance state directly).
+		t.instance.emit(trackEvent{kind: evSpawn, track: nt})
 	}
 
 	return nil
