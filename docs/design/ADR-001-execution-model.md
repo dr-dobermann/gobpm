@@ -25,7 +25,7 @@ The execution model is the load-bearing decision that all of the above hinge on.
 
 ## 2. Decision
 
-**Three-layer ownership: an Instance owns one or more tracks; a track owns one or more tokens. The track is the unit of goroutine binding; the token is the BPMN-spec control position. Mutation of instance-scoped state happens through the Instance's serialized channel-input loop. Forks promote new tokens into new tracks registered with the Instance. `context.Context` is the cancellation contract. Long-wait states release their goroutines and rehydrate from `Repository` when their trigger arrives.**
+**Three-layer ownership: an Instance owns one or more tracks; a track owns exactly one token (track:token is 1:1 for the track's lifetime). The track is the unit of goroutine binding; the token is the BPMN-spec control position. Mutation of instance-scoped state happens through the Instance's serialized channel-input loop. A fork does not add tokens to a track — it creates a new track per branch, each with its own token, registered with the Instance; the parent track ends. The Instance holds the track registry only, not a token registry. `context.Context` is the cancellation contract. Long-wait states release their goroutines and rehydrate from `Repository` when their trigger arrives.**
 
 In summary form:
 
@@ -88,7 +88,7 @@ The Process Instance is the ownership boundary. One goroutine per Instance runs 
 
 Responsibilities:
 - Hold the registry of live tracks (the map of all active execution threads).
-- Hold the registry of live tokens (with lineage — `prevs` / `nexts`).
+- Hold **no** token registry — tokens are reached only through their tracks (`track.Token()`, per §4.2). Token lineage (`prevs` / `nexts`) is carried by the tokens themselves and persisted to `Repository`.
 - Receive `TokenEvent`s from tracks; apply state transitions.
 - Receive `ExternalSignal`s from `EventHub` (Message arrived, Timer fired, Signal received); route to the appropriate track or spawn a new one.
 - Spawn new tracks at fork points (`Instance.Fork(parent, n)`).
