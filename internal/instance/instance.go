@@ -12,9 +12,9 @@ package instance
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/exp/maps"
@@ -45,7 +45,9 @@ const (
 )
 
 // State represents the process instance state.
-type State uint8
+// uint32-backed so it can live in an atomic.Uint32 without a narrowing
+// conversion (the instance's run state is read lock-free via State()).
+type State uint32
 
 const (
 	// Created represents a created instance state.
@@ -68,6 +70,7 @@ const (
 	Canceled
 )
 
+// String returns the human-readable name of the instance state.
 func (s State) String() string {
 	return []string{
 		"Created",
@@ -92,16 +95,24 @@ type Instance struct {
 	rr                  interactor.Registrator
 	parentEventProducer eventproc.EventProducer
 	parentScope         scope.Scope
-	s                   *snapshot.Snapshot
-	scopes              map[scope.DataPath]map[string]data.Data
-	tracks              map[string]*track
-	rootScope           scope.DataPath
-	runtimeScope        scope.DataPath
+	// tracks is the live track registry, owned by loop() (not guarded by m).
+	tracks map[string]*track
+	// tracksSnap is a copy-on-write snapshot for lock-free GetTokens /
+	// TokenHistory reads.
+	tracksSnap atomic.Pointer[[]*track]
+	// lastErr is a fatal fork-construct error, if any.
+	lastErr      atomic.Pointer[error]
+	scopes       map[scope.DataPath]map[string]data.Data
+	s            *snapshot.Snapshot
+	events       chan trackEvent // tracks -> loop()
+	loopDone     chan struct{}   // closed when loop() exits
+	now          func() time.Time
+	runtimeScope scope.DataPath
+	rootScope    scope.DataPath
 	foundation.BaseElement
-	tokens []*token
-	wg     sync.WaitGroup
-	m      sync.RWMutex
-	state  State
+	trackCount atomic.Int64
+	m          sync.RWMutex  // guards scopes + tokens (NOT lifecycle state/tracks)
+	state      atomic.Uint32 // written only by loop(), read via State()
 }
 
 // New creates a new Instance from the Snapshot s and sets state to Ready.
@@ -132,15 +143,17 @@ func New(
 
 	inst := Instance{
 		BaseElement:         *be,
-		state:               Ready,
 		s:                   s,
+		now:                 time.Now,
 		scopes:              map[scope.DataPath]map[string]data.Data{},
 		tracks:              map[string]*track{},
-		tokens:              []*token{},
+		events:              make(chan trackEvent),
+		loopDone:            make(chan struct{}),
 		parentScope:         parentScope,
 		parentEventProducer: ep,
 		rr:                  rr,
 	}
+	inst.state.Store(uint32(Ready))
 
 	if err := inst.loadProperties(parentScope); err != nil {
 		return nil, errs.New(
@@ -154,6 +167,10 @@ func New(
 	if err := inst.createTracks(); err != nil {
 		return nil, err
 	}
+
+	// TracksCount reflects all tracks created (initial + forks); seed it with
+	// the initial tracks. The loop adds forks; ended tracks are retained.
+	inst.trackCount.Store(int64(len(inst.tracks)))
 
 	return &inst, nil
 }
@@ -180,7 +197,9 @@ func (inst *Instance) loadProperties(parentScope scope.Scope) error {
 
 	inst.runtimeScope, err = inst.rootScope.Append(runtimeVars)
 	if err != nil {
-		return fmt.Errorf("couldn't create instance's scope runtime variables data path: %w", err)
+		return fmt.Errorf(
+			"couldn't create instance's scope runtime variables data path: %w",
+			err)
 	}
 
 	inst.scopes[inst.rootScope] = map[string]data.Data{}
@@ -193,18 +212,24 @@ func (inst *Instance) loadProperties(parentScope scope.Scope) error {
 
 // State returns current state of the Instance.
 func (inst *Instance) State() State {
-	inst.m.RLock()
-	defer inst.m.RUnlock()
-
-	return inst.state
+	return State(inst.state.Load())
 }
 
-// updateState sets new state for the Instance.
-func (inst *Instance) updateState(newState State) {
-	inst.m.Lock()
-	defer inst.m.Unlock()
+// setState sets a new instance state. Written only from loop() (the single
+// owner of lifecycle state) and from Run(); State() readers see it via the
+// atomic, so no lock is needed.
+func (inst *Instance) setState(newState State) {
+	inst.state.Store(uint32(newState))
+}
 
-	inst.state = newState
+// LastErr returns the fatal error that stopped the instance (e.g. a fork
+// whose target node could not be constructed), or nil. Set only by loop().
+func (inst *Instance) LastErr() error {
+	if e := inst.lastErr.Load(); e != nil {
+		return *e
+	}
+
+	return nil
 }
 
 // Run starts the process instance execution. Execution could be stopped by
@@ -218,85 +243,172 @@ func (inst *Instance) Run(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	if inst.state != Ready {
+	if inst.State() != Ready {
 		return errs.New(
-			errs.M("invalid instance state to run",
-				inst.state),
+			errs.M("invalid instance state to run"),
 			errs.C(errorClass, errs.InvalidState),
-			errs.D("current_state", inst.state))
+			errs.D("current_state", inst.State()))
 	}
 
-	inst.m.Lock()
 	inst.ctx = ctx
-	inst.startTime = time.Now()
-	inst.m.Unlock()
+	inst.startTime = inst.now()
+	inst.setState(Runned)
 
-	if err := inst.runTracks(ctx); err != nil {
-		return err
-	}
+	// initial tracks were built by createTracks() during New; hand them to the
+	// loop, which becomes the sole owner of lifecycle state from here on.
+	initial := maps.Values(inst.tracks)
 
-	// run tracks ending watcher
-	grChan := make(chan struct{})
-	go func() {
-		inst.wg.Wait()
-
-		close(grChan)
-
-		inst.updateState(Finished)
-	}()
+	go inst.loop(ctx, initial)
 
 	return nil
 }
 
-// runTracks runs all tracks of the instance.
-func (inst *Instance) runTracks(ctx context.Context) error {
-	inst.state = Runned
-
-	// run only registered tracks, not the ones created by runned track's forks.
-	tracks := append([]*track{}, maps.Values(inst.tracks)...)
-	for _, t := range tracks {
-		tt := t
-		inst.runSingleTrack(ctx, tt)
+// emit delivers a track event to the loop. It never blocks forever: if the
+// loop has exited or the context is canceled it drops the event.
+func (inst *Instance) emit(ev trackEvent) {
+	select {
+	case inst.events <- ev:
+	case <-inst.loopDone:
+	case <-inst.ctx.Done():
 	}
-
-	return nil
 }
 
-// addTrack adds a new track into the instance's track pool.
-// If instance is running, added track also runs.
-func (inst *Instance) addTrack(ctx context.Context, nt *track) error {
-	if nt == nil {
-		return fmt.Errorf("couldn't add empty track to instance %q", inst.ID())
+// loop is the single owner of the Instance's lifecycle state (the tracks
+// registry and the run state). Tracks never mutate that state directly — they
+// emit events here, applied in order in this one goroutine, so no lock guards
+// lifecycle state. The instance finishes when all tracks have ended.
+func (inst *Instance) loop(ctx context.Context, initial []*track) {
+	defer close(inst.loopDone)
+
+	active := 0
+	stopping := false
+
+	// spawn registers a track, adds it to the read snapshot, counts it
+	// active, and runs it in its own goroutine.
+	spawn := func(t *track) {
+		inst.tracks[t.ID()] = t
+		inst.addToSnap(t)
+		active++
+
+		// run the track and report its end back to the loop.
+		go func(t *track) {
+			t.run(ctx)
+			inst.emit(trackEvent{kind: evEnded, track: t})
+		}(t)
 	}
 
-	inst.m.Lock()
-	defer inst.m.Unlock()
+	// stopAll moves the instance to Stopping (once) and signals every
+	// live track to stop.
+	stopAll := func() {
+		if stopping {
+			return
+		}
 
-	if _, ok := inst.tracks[nt.ID()]; ok {
-		return fmt.Errorf("track from node %q(%s) already registered in instance %q",
-			inst.tracks[nt.ID()].steps[0].node.Name(),
-			inst.tracks[nt.ID()].steps[0].node.ID(),
-			inst.ID())
+		stopping = true
+		inst.setState(Stopping)
+
+		for _, t := range inst.tracks {
+			t.stop()
+		}
 	}
 
-	inst.tracks[nt.ID()] = nt
-
-	if inst.state == Runned {
-		inst.runSingleTrack(ctx, nt)
+	for _, t := range initial {
+		spawn(t)
 	}
 
-	return nil
+	if active == 0 {
+		inst.setState(Finished)
+		return
+	}
+
+	done := ctx.Done()
+	for active > 0 {
+		select {
+		case <-done:
+			done = nil
+			stopAll()
+
+		case ev := <-inst.events:
+			switch ev.kind {
+			case evFork:
+				for _, f := range ev.flows {
+					nt, err := newTrack(f.Target().Node(), inst, ev.track)
+					if err != nil {
+						inst.lastErr.Store(&err)
+						stopAll()
+
+						break
+					}
+
+					inst.trackCount.Add(1)
+					spawn(nt)
+
+					if stopping {
+						nt.stop()
+					}
+				}
+
+			case evEnded:
+				active--
+			}
+		}
+	}
+
+	inst.setState(Finished)
 }
 
-// runSingleTrack starts a new track and add it to instance's WaitGroup.
-func (inst *Instance) runSingleTrack(ctx context.Context, t *track) {
-	inst.wg.Add(1)
+// addToSnap appends a track to the lock-free tracks snapshot (copy-on-write).
+// Called only from loop() (the single writer); readers Load the snapshot.
+func (inst *Instance) addToSnap(t *track) {
+	old := inst.tracksSnap.Load()
 
-	go func(t *track) {
-		defer inst.wg.Done()
+	var base []*track
+	if old != nil {
+		base = *old
+	}
 
-		t.run(ctx)
-	}(t)
+	next := make([]*track, len(base), len(base)+1)
+	copy(next, base)
+	next = append(next, t)
+
+	inst.tracksSnap.Store(&next)
+}
+
+// GetTokens returns the projected tokens of the instance's ACTIVE tracks
+// (those whose token is Alive or WaitForEvent), derived lock-free from the
+// tracks snapshot.
+func (inst *Instance) GetTokens() []Token {
+	snap := inst.tracksSnap.Load()
+	if snap == nil {
+		return nil
+	}
+
+	out := make([]Token, 0, len(*snap))
+	for _, t := range *snap {
+		tok := t.Token()
+		if tok.State == TokenAlive || tok.State == TokenWaitForEvent {
+			out = append(out, tok)
+		}
+	}
+
+	return out
+}
+
+// TokenHistory returns the token-flow path history of the instance — one path
+// per track (live and ended), stitched by track lineage — derived lock-free
+// from the tracks snapshot and each track's recorded transitions.
+func (inst *Instance) TokenHistory() []TokenPath {
+	snap := inst.tracksSnap.Load()
+	if snap == nil {
+		return nil
+	}
+
+	out := make([]TokenPath, 0, len(*snap))
+	for _, t := range *snap {
+		out = append(out, t.path())
+	}
+
+	return out
 }
 
 // createTrack creates all initial tracks of the Instance.
@@ -398,10 +510,10 @@ func (inst *Instance) getRuntimeVar(name string) (data.Data, error) {
 		d = values.NewVariable(inst.startTime)
 
 	case CurrState:
-		d = values.NewVariable(inst.state)
+		d = values.NewVariable(inst.State())
 
 	case TracksCount:
-		tc := len(inst.tracks)
+		tc := int(inst.trackCount.Load())
 		d = values.NewVariable(tc)
 
 	default:
@@ -434,47 +546,6 @@ func (inst *Instance) getRuntimeVar(name string) (data.Data, error) {
 	}
 
 	return p, nil
-}
-
-// addToken adds a new token into Instance.
-func (inst *Instance) addToken(t *token) {
-	if st := inst.State(); st != Runned {
-		return
-	}
-
-	inst.m.Lock()
-	inst.tokens = append(inst.tokens, t)
-	inst.m.Unlock()
-}
-
-// tokenConsumed checks all tokens of the Instance and if there is
-// no alive token, all runned tracks stopped, and Instance execution finished.
-func (inst *Instance) tokenConsumed(_ *token) {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
-	if inst.state != Runned {
-		return
-	}
-
-	// check if there is any alive token. If any, then return.
-	if slices.ContainsFunc(
-		inst.tokens,
-		func(t *token) bool {
-			return t.state == TokenAlive
-		},
-	) {
-		return
-	}
-
-	// if there is no alive token, stop the instance.
-	inst.state = Stopping
-
-	go func() {
-		for _, t := range inst.tracks {
-			t.stop()
-		}
-	}()
 }
 
 // -------------------- exec.EventProducer interface ---------------------------

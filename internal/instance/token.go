@@ -1,8 +1,10 @@
 package instance
 
 import (
+	"time"
+
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
 // TokenState represents the current state of a token in the process
@@ -20,11 +22,15 @@ const (
 	TokenWaitForEvent
 	// TokenConsumed represents a token that has been consumed
 	TokenConsumed
+	// TokenWithdrawn represents a token withdrawn at an Event-Based Gateway
+	// race loss. The value exists for the projection; its producer arrives
+	// with the Event-Based Gateway (gateway SRD).
+	TokenWithdrawn
 )
 
 // Validate checks if the TokenState is valid.
 func (ts TokenState) Validate() error {
-	if ts < TokenAlive || ts > TokenConsumed {
+	if ts < TokenAlive || ts > TokenWithdrawn {
 		return errs.New(
 			errs.M("invalid token state: %d", ts),
 			errs.C(errorClass, errs.InvalidParameter))
@@ -33,70 +39,57 @@ func (ts TokenState) Validate() error {
 	return nil
 }
 
-type token struct {
-	inst *Instance
-	trk  *track
-	foundation.BaseElement
-	prevs []*token
-	nexts []*token
-	state TokenState
+// The token is no longer a stored object — it exists only as the derived
+// projection types below, produced by track.Token() / Instance.GetTokens() /
+// Instance.TokenHistory(). TokenState above is the projected value's type.
+
+// Token is the logical, derived view of a track's current control-flow
+// position — the BPMN "token" as a projection, not a stored object.
+type Token struct {
+	Node  flow.Node
+	State TokenState
 }
 
-// newToken creates a new token and adds it to the Instance.
-func newToken(inst *Instance, trk *track) *token {
-	if inst == nil {
-		errs.Panic("empty instance on token creation")
-
-		return nil
-	}
-
-	be, err := foundation.NewBaseElement()
-	if err != nil {
-		errs.Panic("failed to create base element for token: " + err.Error())
-	}
-
-	t := token{
-		BaseElement: *be,
-		inst:        inst,
-		trk:         trk,
-		state:       TokenAlive,
-		prevs:       []*token{},
-		nexts:       []*token{},
-	}
-
-	inst.addToken(&t)
-
-	return &t
+// StepVisit is one entry of a token's path history with its timing.
+type StepVisit struct {
+	Node  flow.Node
+	At    time.Time
+	State TokenState
 }
 
-// updateState sets new valid state of the token
-func (t *token) updateState(newState TokenState) error {
-	if err := newState.Validate(); err != nil {
-		return err
-	}
-
-	t.state = newState
-
-	if t.state == TokenConsumed {
-		t.inst.tokenConsumed(t)
-	}
-
-	return nil
+// TokenPath is the recorded path of one token (one track), with lineage.
+type TokenPath struct {
+	TrackID  string
+	ParentID string // immediate parent track (fork origin); "" if root
+	Steps    []StepVisit
+	Terminal TokenState
 }
 
-// split creates a new splitCount tokens from the t token.
-// the first token is the token t
-func (t *token) split(splitCount int) []*token {
-	tt := make([]*token, 0, splitCount)
+// stepUpdate is one recorded track-state transition: the node the track was
+// at, the track state it entered, and when. The token state is projected
+// from it; the node + time give the path and its timing.
+type stepUpdate struct {
+	node  flow.Node
+	at    time.Time
+	state trackState
+}
 
-	tt = append(tt, t)
+// tokenStateFor projects a track state onto the BPMN token state.
+func tokenStateFor(ts trackState) TokenState {
+	switch ts {
+	case TrackReady, TrackExecutingStep, TrackProcessStepResults:
+		return TokenAlive
 
-	for i := 1; i < splitCount; i++ {
-		tt[i] = newToken(t.inst, t.trk)
-		tt[i].prevs = t.prevs
-		tt[i].prevs = append(tt[i].prevs, t)
-		t.nexts = append(t.nexts, tt[i])
+	case TrackWaitForEvent:
+		return TokenWaitForEvent
+
+	case TrackEnded, TrackMerged, TrackCanceled, TrackFailed:
+		// Canceled maps to Consumed here; the Withdrawn case
+		// (Event-Based Gateway race loss) is wired with that gateway
+		// (gateway SRD).
+		return TokenConsumed
+
+	default:
+		return TokenInvalid
 	}
-
-	return tt
 }

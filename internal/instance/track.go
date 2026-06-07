@@ -45,7 +45,9 @@ package instance
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
+	"sync/atomic"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/exec"
@@ -85,6 +87,7 @@ const (
 	TrackFailed
 )
 
+// String returns the human-readable name of the track state.
 func (t trackState) String() string {
 	return []string{
 		"TrackCreated",
@@ -123,6 +126,7 @@ const (
 	StepFailed
 )
 
+// String returns the human-readable name of the step state.
 func (ss stepState) String() string {
 	return []string{
 		"Created",
@@ -139,7 +143,6 @@ func (ss stepState) String() string {
 // stepInfo keeps information about single track step
 type stepInfo struct {
 	node  flow.Node
-	tk    *token
 	state stepState
 }
 
@@ -150,11 +153,68 @@ type track struct {
 	lastErr  error
 	instance *Instance
 	foundation.BaseElement
-	prev   []*track
+	prev []*track
+	// hist is the append-only list of track-state transitions (SRD-001 M3).
+	// It is written only by this track's goroutine via record() and published
+	// copy-on-write, so token projection / path history / timing are derived
+	// from it lock-free by any reader.
+	hist   atomic.Pointer[[]stepUpdate]
 	steps  []*stepInfo
 	m      sync.RWMutex
 	state  trackState
 	stopIt bool
+}
+
+// record appends a track-state transition to the history, copy-on-write, and
+// publishes it atomically. Called only from this track's goroutine.
+func (t *track) record(state trackState) {
+	node := t.steps[len(t.steps)-1].node
+
+	old := t.hist.Load()
+
+	var base []stepUpdate
+	if old != nil {
+		base = *old
+	}
+
+	next := make([]stepUpdate, len(base), len(base)+1)
+	copy(next, base)
+	next = append(next, stepUpdate{node: node, state: state, at: t.instance.now()})
+
+	t.hist.Store(&next)
+}
+
+// Token returns the track's current token projection (lock-free).
+func (t *track) Token() Token {
+	h := t.hist.Load()
+	if h == nil || len(*h) == 0 {
+		return Token{}
+	}
+
+	last := (*h)[len(*h)-1]
+
+	return Token{Node: last.node, State: tokenStateFor(last.state)}
+}
+
+// path returns the recorded token path of this track (lock-free).
+func (t *track) path() TokenPath {
+	parent := ""
+	if n := len(t.prev); n != 0 {
+		parent = t.prev[n-1].ID()
+	}
+
+	tp := TokenPath{TrackID: t.ID(), ParentID: parent}
+
+	h := t.hist.Load()
+	if h != nil {
+		for _, u := range *h {
+			ts := tokenStateFor(u.state)
+			tp.Steps = append(tp.Steps, StepVisit{Node: u.node, At: u.at, State: ts})
+			tp.Terminal = ts
+		}
+	}
+
+	return tp
 }
 
 // newTrack creates the new track from the start flow.Node and sets it
@@ -204,6 +264,10 @@ func newTrack(
 		t.prev = append(t.prev, append(prevTrack.prev, prevTrack)...)
 	}
 
+	// History is recorded once the track runs (per-node visits + state
+	// transitions), so it uses the running clock; before Run, Token() returns
+	// the zero projection. checkNodeType below may add a WaitForEvent entry
+	// for event-start nodes.
 	if err := t.checkNodeType(start); err != nil {
 		return nil, err
 	}
@@ -240,18 +304,13 @@ func (t *track) checkNodeType(node flow.Node) error {
 }
 
 // inState checks if track state is equal to any track state from the ss.
+// inState reports whether the track's current state is any of ss.
 func (t *track) inState(ss ...trackState) bool {
 	t.m.RLock()
 	state := t.state
 	t.m.RUnlock()
 
-	for _, s := range ss {
-		if state == s {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(ss, state)
 }
 
 // updateState sets new state for the track if its not in final state.
@@ -259,37 +318,22 @@ func (t *track) inState(ss ...trackState) bool {
 func (t *track) updateState(newState trackState) {
 	t.m.RLock()
 	state := t.state
-	step := t.steps[len(t.steps)-1]
 	t.m.RUnlock()
 
 	if state == newState {
 		return
 	}
 
-	ts := TokenInvalid
-
-	switch newState {
-	case TrackReady, TrackExecutingStep:
-		ts = TokenAlive
-
-	case TrackWaitForEvent:
-		ts = TokenWaitForEvent
-
-	case TrackFailed, TrackEnded, TrackCanceled:
-		ts = TokenConsumed
-	}
-
-	if step.tk != nil {
-		if err := step.tk.updateState(ts); err != nil {
-			errs.Panic(err)
-
-			return
-		}
-	}
-
 	t.m.Lock()
 	t.state = newState
 	t.m.Unlock()
+
+	// Per-node Executing entries are recorded in prepareNodeExecution so each
+	// visited node appears even when the track stays in ExecutingStep across
+	// consecutive nodes; here we record the other (wait / terminal) states.
+	if newState != TrackExecutingStep {
+		t.record(newState)
+	}
 }
 
 // currentStep returns current step of the track.
@@ -358,7 +402,7 @@ func (t *track) run(
 			return
 		}
 
-		err = t.checkFlows(ctx, nextFlows)
+		err = t.checkFlows(nextFlows)
 		if err != nil {
 			t.lastErr = err
 			t.updateState(TrackFailed)
@@ -399,14 +443,15 @@ func (t *track) executeNode(
 	return nexts, nil
 }
 
-func (t *track) prepareNodeExecution(ctx context.Context, step *stepInfo) error {
-	// create a new token if track doesn't have yet
-	if step.tk == nil {
-		step.tk = newToken(t.instance, t)
-	}
-
+// prepareNodeExecution marks the step executing, loads incoming data, extends
+// scope for data-loader nodes, and runs the node prologue.
+func (t *track) prepareNodeExecution(
+	ctx context.Context,
+	step *stepInfo,
+) error {
 	t.updateState(TrackExecutingStep)
 	step.state = StepStarted
+	t.record(TrackExecutingStep) // record this node visit (path + timing)
 
 	if err := t.loadIncomingData(ctx, step.node); err != nil {
 		return err
@@ -427,7 +472,12 @@ func (t *track) prepareNodeExecution(ctx context.Context, step *stepInfo) error 
 	return t.runNodePrologue(ctx, step.node)
 }
 
-func (t *track) executeNodeCore(ctx context.Context, step *stepInfo, ne exec.NodeExecutor) ([]*flow.SequenceFlow, error) {
+// executeNodeCore runs the node's executor and returns its outgoing flows.
+func (t *track) executeNodeCore(
+	ctx context.Context,
+	step *stepInfo,
+	ne exec.NodeExecutor,
+) ([]*flow.SequenceFlow, error) {
 	step.state = StepExecuting
 
 	nexts, err := ne.Exec(ctx, t.instance)
@@ -438,7 +488,12 @@ func (t *track) executeNodeCore(ctx context.Context, step *stepInfo, ne exec.Nod
 	return nexts, nil
 }
 
-func (t *track) finalizeNodeExecution(ctx context.Context, step *stepInfo, _ []*flow.SequenceFlow) error {
+// finalizeNodeExecution runs the node epilogue and uploads its outgoing data.
+func (t *track) finalizeNodeExecution(
+	ctx context.Context,
+	step *stepInfo,
+	_ []*flow.SequenceFlow,
+) error {
 	if err := t.runNodeEpilogue(ctx, step.node); err != nil {
 		return err
 	}
@@ -448,17 +503,19 @@ func (t *track) finalizeNodeExecution(ctx context.Context, step *stepInfo, _ []*
 	return t.uploadOutgoingData(ctx, step.node)
 }
 
-// checkFlows processes node outgoing flows.
-// If number of flows is greater than 1 then new tracks with splited token
-// created.
-func (t *track) checkFlows(ctx context.Context, flows []*flow.SequenceFlow) error {
+// checkFlows processes a node's outgoing flows. The track continues on the
+// first (cyclic-preferred) flow carrying its current token; any remaining
+// flows are a fork — handed to the loop, which builds one new track per extra
+// flow (each new track self-creates its own token on execution). 1:1
+// track:token holds: the parent keeps its single token, no split.
+func (t *track) checkFlows(flows []*flow.SequenceFlow) error {
 	if len(flows) == 0 {
 		t.updateState(TrackEnded)
 		return nil
 	}
 
-	// if outgoing flows has any cyclic on current node then first of them
-	// should be next step of the track
+	// if any outgoing flow is cyclic on the current node, it becomes the
+	// track's next step.
 	nextNode := 0
 	for i, f := range flows {
 		if f.Target().ID() == t.currentStep().node.ID() {
@@ -467,45 +524,26 @@ func (t *track) checkFlows(ctx context.Context, flows []*flow.SequenceFlow) erro
 		}
 	}
 
-	tokens := t.currentStep().tk.split(len(flows))
-
-	// create a new step for main track and put token from current step
-	// into it.
+	// the track continues on the chosen flow (it carries its single position;
+	// no token object).
 	nextStep := stepInfo{
 		node:  flows[nextNode].Target().Node(),
 		state: StepCreated,
-		tk:    tokens[0],
 	}
-
-	if err := nextStep.tk.updateState(TokenAlive); err != nil {
-		return errs.New(
-			errs.M("couldn't update token state of the main flow"),
-			errs.D("node_name", nextStep.node.Name()),
-			errs.D("node_id", nextStep.node.ID()),
-			errs.D("instance_id", t.instance.ID()),
-			errs.E(err))
-	}
-
 	t.steps = append(t.steps, &nextStep)
 
-	// for every new flow create a new track with new tokens.
-	for i, f := range append(flows[:nextNode], flows[nextNode+1:]...) {
-		nt, err := newTrack(f.Target().Node(), t.instance, t)
-		if err != nil {
-			return errs.New(
-				errs.M("couldn't creaete a new track for flow %q", f.ID()),
-				errs.C(errorClass, errs.BulidingFailed),
-				errs.E(err))
+	// the remaining flows fork: build a fresh slice (don't mutate the caller's)
+	// and hand it to the loop, which constructs the new tracks. The track never
+	// mutates instance state itself.
+	extras := make([]*flow.SequenceFlow, 0, len(flows)-1)
+	for i, f := range flows {
+		if i != nextNode {
+			extras = append(extras, f)
 		}
+	}
 
-		nt.steps[0].tk = tokens[i+1]
-
-		if err := t.instance.addTrack(ctx, nt); err != nil {
-			return errs.New(
-				errs.M("couldn't add new track for flow %q", f.ID()),
-				errs.C(errorClass, errs.BulidingFailed),
-				errs.E(err))
-		}
+	if len(extras) != 0 {
+		t.instance.emit(trackEvent{kind: evFork, track: t, flows: extras})
 	}
 
 	return nil
@@ -582,6 +620,9 @@ func (t *track) uploadOutgoingData(ctx context.Context, n flow.Node) error {
 
 // --------------------- exec.EventProcessor interface -------------------------
 
+// ProcessEvent delivers a fired event to the waiting node, unregisters the
+// node's event definitions, and returns the track to the Ready state so run()
+// resumes it. Implements eventproc.EventProcessor.
 func (t *track) ProcessEvent(
 	ctx context.Context,
 	eDef flow.EventDefinition,
