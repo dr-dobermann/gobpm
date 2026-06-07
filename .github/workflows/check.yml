@@ -18,6 +18,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Full history so the diff-coverage gate can resolve the merge-base
+          # with the base branch (base...HEAD).
+          fetch-depth: 0
 
       - uses: actions/setup-go@v6
         with:
@@ -53,6 +57,14 @@ jobs:
 
       - name: Test all modules with race detector
         run: make test-all
+
+      # Diff-coverage gate (SRD-002): reuses the coverage.txt that test-all just
+      # wrote (no second test run); same `make cover-check` / COVER_MIN the
+      # local `make ci` uses, so the verdict is identical local and on CI.
+      - name: Diff-coverage gate (changed lines >= COVER_MIN)
+        run: |
+          git fetch --no-tags origin master
+          make cover-check COVER_BASE=origin/master
 
       - name: Vulnerability scan (core)
         run: make vuln

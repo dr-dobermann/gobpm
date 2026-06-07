@@ -83,10 +83,12 @@ func gitDiff(base string) (string, error) {
 	return string(out), nil
 }
 
-// readProfiles parses and merges the given coverage profiles, skipping any that
-// do not exist (a module may have produced none).
+// readProfiles parses and merges the given coverage profiles. It errors if none
+// of the paths exist — that means the gate ran without a coverage profile (run
+// `make test-all` first), and silently passing would defeat the gate.
 func readProfiles(paths []string) (map[string][]covercheck.Block, error) {
 	merged := map[string][]covercheck.Block{}
+	found := false
 
 	for _, p := range paths {
 		// #nosec G304 -- p is a trusted CLI flag (a coverage-profile path).
@@ -99,6 +101,8 @@ func readProfiles(paths []string) (map[string][]covercheck.Block, error) {
 			return nil, err
 		}
 
+		found = true
+
 		blocks, err := covercheck.ParseProfiles(f)
 		_ = f.Close()
 
@@ -109,6 +113,12 @@ func readProfiles(paths []string) (map[string][]covercheck.Block, error) {
 		for k, v := range blocks {
 			merged[k] = append(merged[k], v...)
 		}
+	}
+
+	if !found {
+		return nil, fmt.Errorf(
+			"no coverage profile found among %v — run `make test-all` first",
+			paths)
 	}
 
 	return merged, nil

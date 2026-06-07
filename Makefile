@@ -145,14 +145,16 @@ vuln:
 .PHONY: vuln
 
 # Diff-coverage gate: fail when the lines this change adds/modifies are covered
-# below COVER_MIN. Reuses the coverage.txt that test-all produces (root module);
-# judges only changed lines, so the untouched-code backlog never blocks it.
-cover-check: test-all
+# below COVER_MIN. Consumes the coverage.txt that test-all produces (root
+# module) — run `make test-all` first, or use `make ci` which orders them.
+# Judges only changed lines, so the untouched-code backlog never blocks it.
+cover-check:
 	$(GO) run ./cmd/covercheck -min $(COVER_MIN) -base $(COVER_BASE) -profiles coverage.txt
 .PHONY: cover-check
 
 # Umbrella target that runs the full local-equivalent of CI.
 # Use this before pushing to catch regressions before GitHub runs them.
+# test-all writes coverage.txt; cover-check consumes it (single test run).
 ci: tidy-check-all lint-all-modules build-all test-all cover-check vuln
 .PHONY: ci
 
