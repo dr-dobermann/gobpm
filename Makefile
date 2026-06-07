@@ -7,6 +7,12 @@ GO = go
 # DC = docker-compose.exe
 DC = docker compose
 
+# Diff-coverage gate (SRD-002): minimum patch coverage on the lines a change
+# adds/modifies. Start at 70; raise toward 80 -> 100 as the coverage backlog is
+# paid down. COVER_BASE is the ref the diff is taken against.
+COVER_MIN ?= 70
+COVER_BASE ?= origin/master
+
 # All Go modules in the monorepo (each with its own go.mod).
 # Discovered dynamically so adding a new module needs no Makefile edit.
 MODULES := $(shell /usr/bin/find . -name go.mod -not -path './.git/*' -exec dirname {} \;)
@@ -138,8 +144,15 @@ vuln:
 	govulncheck ./...
 .PHONY: vuln
 
+# Diff-coverage gate: fail when the lines this change adds/modifies are covered
+# below COVER_MIN. Reuses the coverage.txt that test-all produces (root module);
+# judges only changed lines, so the untouched-code backlog never blocks it.
+cover-check: test-all
+	$(GO) run ./cmd/covercheck -min $(COVER_MIN) -base $(COVER_BASE) -profiles coverage.txt
+.PHONY: cover-check
+
 # Umbrella target that runs the full local-equivalent of CI.
 # Use this before pushing to catch regressions before GitHub runs them.
-ci: tidy-check-all lint-all-modules build-all test-all vuln
+ci: tidy-check-all lint-all-modules build-all test-all cover-check vuln
 .PHONY: ci
 
