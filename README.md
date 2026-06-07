@@ -84,11 +84,12 @@ A complete, runnable version (with full error handling) lives in [`examples/basi
 
 ```bash
 make tools     # one-time: install pinned dev tools (mockery, golangci-lint, govulncheck)
-make ci        # full pre-push gate — mirrors GitHub CI exactly (tidy, lint, build, race tests, vuln scan)
+make ci        # full pre-push gate — mirrors GitHub CI exactly (tidy, lint, build, race tests, diff-coverage, vuln scan)
 
-make test      # tests (generates mocks first)
-make lint      # lint core module
-make build     # build to ./bin/
+make test         # tests (generates mocks first)
+make lint         # lint core module
+make build        # build to ./bin/
+make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (run after `make test-all`)
 ```
 
 `make ci` is the contract: green locally ⇒ green on CI. The Go toolchain is pinned (`go.mod` → `go1.25.11`) so local and CI scan the identical standard library.
@@ -97,6 +98,7 @@ make build     # build to ./bin/
 
 - **Specification-first** — non-trivial changes start from a spec (SRD/FIX) referencing the governing ADR; the spec lands in the same change-set as its implementation.
 - **`master` is protected** — changes land only through a PR with a green `check`; no direct, force, or admin-bypass pushes.
+- **Diff-coverage gate** — CI fails when the lines a change *adds or modifies* are covered below `COVER_MIN` (70% now, rising over time). It judges only changed lines, so the untouched-code backlog never blocks a PR. See [SRD-002](docs/srd/SRD-002-ci-diff-coverage-gate.md).
 - **Design docs** under `docs/design/` ([SAD-001](docs/design/SAD-001-vision-and-architecture.md), [ADR-001…007](docs/design/)) are the source of truth; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Requirements

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-07 |
 | Owner | Ruslan Gabitov |
@@ -114,11 +114,14 @@ a git diff. Candidates, decided at the milestone-plan stage against the criteria
   --unified=0 <base>...HEAD`, intersect changed lines with covered lines, compute
   the ratio. Zero external dependency; more code to own.
 
-Lean: a maintained tool (gocovdiff/octocov) for changed-line patch coverage;
-fall back to the DIY helper if none cleanly supports the multi-module + excludes
-shape. (Dev-tool dependencies are fine — the minimal-deps rule, SAD G2, governs
-the engine hot path, not the dev toolchain, which already carries mockery /
-golangci-lint / govulncheck.)
+**Decided (at implementation): the DIY pure-Go helper.** A small stdlib-only
+program (`internal/covercheck` for the tested logic + `cmd/covercheck` for the
+thin CLI) won over the external tools: it adds **no** dependency at all (not even
+a `go install`-ed binary, and certainly not Python/diff-cover), it runs
+identically locally and in CI (parity), and it gives exact control over the
+multi-module + excludes shape. The minimal-deps rule (SAD G2) governs the engine
+hot path, but keeping the *dev* toolchain lean too — and avoiding a server-only
+or language-foreign gate — made the ~250-line in-repo helper the cleanest fit.
 
 ### 4.3 Phasing the floor
 
@@ -165,8 +168,36 @@ README + CLAUDE.md updated.
 
 ## 7. Implementation summary
 
-> ⚠️ TODO: filled after landing (M1–M3) — chosen tool, `COVER_MIN` location,
-> commit SHAs, demonstration-PR link, and any deviations.
+Landed on branch `refactor/adr-001-finalize` (alongside the ADR-001/SRD-001
+finalization, at the owner's request to keep it one branch):
+
+| Milestone | Commit | Delivers |
+|---|---|---|
+| Doc | `d401ec1` | this SRD (draft) |
+| M1 | `9b0e8bc` | `internal/covercheck` (ParseProfiles / ParseDiff / Evaluate / DefaultExcluded, 89.5% covered) + thin `cmd/covercheck` CLI + `make cover-check` (`COVER_MIN=70`, `COVER_BASE=origin/master`) |
+| M2 | `0ee8933` | `cover-check` decoupled from `test-all` (reuses its `coverage.txt`, single test run); CLI errors loudly with no profile; `check.yml` `fetch-depth: 0` + a "Diff-coverage gate" step |
+| M3 | _(this commit)_ | README + CLAUDE.md notes; this summary; status → Accepted; RU twin |
+
+**Chosen approach:** the DIY pure-Go helper (§4.2) — stdlib-only, zero new
+dependency, identical local/CI verdict via the same `cmd/covercheck` binary.
+
+**Result:** `make ci` runs `test-all → cover-check` (one test run); CI runs the
+same `make cover-check COVER_BASE=origin/master` after the test step. The gate
+**dogfoods itself** — on this branch it reports `internal/covercheck.go` 85.7%,
+`instance.go` 72.2%, `track.go` 100% → **84.7% of 203 changed coverable lines,
+min 70% — PASS**. `cmd/` (the CLI), `*_test.go`, `generated/`, and `examples/`
+are excluded.
+
+**Deviations from the draft:**
+
+- **Tool pinned to DIY pure-Go** (the draft left it open between gocovdiff /
+  octocov / go-test-coverage / DIY). DIY chosen for zero-dependency + parity.
+- **`cover-check` does not depend on `test-all`** (the draft milestone M1 had it
+  depend): decoupling avoids a second `-race` run in CI, where the test step
+  already wrote `coverage.txt`. The CLI errors if no profile exists, so the gate
+  cannot pass vacuously.
+- **Floor confirmed at `COVER_MIN=70`** (Makefile var, single source); the CI
+  step passes `COVER_BASE=origin/master`.
 
 ## 8. References
 
@@ -178,4 +209,5 @@ README + CLAUDE.md updated.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-07 | Ruslan Gabitov | Initial Draft. Proposes a local-first diff-coverage gate (`make cover-check`) wired into `make ci` + CI, floor 70% (phased up), diff-scoped to changed lines, excluding generated/tests/examples; Codecov patch-status rejected as sole gate (breaks local parity). Not yet implemented. |
+| v.1 | 2026-06-07 | Ruslan Gabitov | Initial Draft. Proposes a local-first diff-coverage gate (`make cover-check`) wired into `make ci` + CI, floor 70% (phased up), diff-scoped to changed lines, excluding generated/tests/examples; Codecov patch-status rejected as sole gate (breaks local parity). |
+| v.1 | 2026-06-07 | Ruslan Gabitov | **Accepted** and implemented (M1–M3, §7): DIY pure-Go helper (`internal/covercheck` + `cmd/covercheck`), `make cover-check` (`COVER_MIN=70`) in `make ci` + `check.yml`. Gate dogfoods at 84.7% PASS. `make ci` green. RU twin added (bilingual-on-Accepted). |
