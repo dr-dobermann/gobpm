@@ -95,19 +95,20 @@ type Instance struct {
 	rr                  interactor.Registrator
 	parentEventProducer eventproc.EventProducer
 	parentScope         scope.Scope
-	s                   *snapshot.Snapshot
-	now                 func() time.Time
+	tracks              map[string]*track        // owned by loop(); not guarded by m
+	tracksSnap          atomic.Pointer[[]*track] // copy-on-write; lock-free GetTokens/TokenHistory
 	scopes              map[scope.DataPath]map[string]data.Data
-	tracks              map[string]*track // owned by loop(); not guarded by m
-	events              chan trackEvent   // tracks -> loop()
-	loopDone            chan struct{}     // closed when loop() exits
-	rootScope           scope.DataPath
+	s                   *snapshot.Snapshot
+	events              chan trackEvent // tracks -> loop()
+	loopDone            chan struct{}   // closed when loop() exits
+	now                 func() time.Time
 	runtimeScope        scope.DataPath
+	rootScope           scope.DataPath
 	foundation.BaseElement
 	tokens     []*token // guarded by m (removed in M5)
 	trackCount atomic.Int64
-	state      atomic.Uint32 // State; written only by loop(), read via State()
 	m          sync.RWMutex  // guards scopes + tokens (NOT lifecycle state/tracks)
+	state      atomic.Uint32 // written only by loop(), read via State()
 }
 
 // New creates a new Instance from the Snapshot s and sets state to Ready.
@@ -284,6 +285,7 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 
 	spawn := func(t *track) {
 		inst.tracks[t.ID()] = t
+		inst.addToSnap(t)
 		active++
 
 		go func(t *track) {
@@ -338,6 +340,60 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	}
 
 	inst.setState(Finished)
+}
+
+// addToSnap appends a track to the lock-free tracks snapshot (copy-on-write).
+// Called only from loop() (the single writer); readers Load the snapshot.
+func (inst *Instance) addToSnap(t *track) {
+	old := inst.tracksSnap.Load()
+
+	var base []*track
+	if old != nil {
+		base = *old
+	}
+
+	next := make([]*track, len(base), len(base)+1)
+	copy(next, base)
+	next = append(next, t)
+
+	inst.tracksSnap.Store(&next)
+}
+
+// GetTokens returns the projected tokens of the instance's ACTIVE tracks
+// (those whose token is Alive or WaitForEvent), derived lock-free from the
+// tracks snapshot.
+func (inst *Instance) GetTokens() []Token {
+	snap := inst.tracksSnap.Load()
+	if snap == nil {
+		return nil
+	}
+
+	out := make([]Token, 0, len(*snap))
+	for _, t := range *snap {
+		tok := t.Token()
+		if tok.State == TokenAlive || tok.State == TokenWaitForEvent {
+			out = append(out, tok)
+		}
+	}
+
+	return out
+}
+
+// TokenHistory returns the token-flow path history of the instance — one path
+// per track (live and ended), stitched by track lineage — derived lock-free
+// from the tracks snapshot and each track's recorded transitions.
+func (inst *Instance) TokenHistory() []TokenPath {
+	snap := inst.tracksSnap.Load()
+	if snap == nil {
+		return nil
+	}
+
+	out := make([]TokenPath, 0, len(*snap))
+	for _, t := range *snap {
+		out = append(out, t.path())
+	}
+
+	return out
 }
 
 // createTrack creates all initial tracks of the Instance.

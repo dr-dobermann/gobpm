@@ -46,6 +46,8 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/exec"
@@ -150,11 +152,118 @@ type track struct {
 	lastErr  error
 	instance *Instance
 	foundation.BaseElement
-	prev   []*track
+	prev []*track
+	// hist is the append-only list of track-state transitions (SRD-001 M3).
+	// It is written only by this track's goroutine via record() and published
+	// copy-on-write, so token projection / path history / timing are derived
+	// from it lock-free by any reader.
+	hist   atomic.Pointer[[]stepUpdate]
 	steps  []*stepInfo
 	m      sync.RWMutex
 	state  trackState
 	stopIt bool
+}
+
+// stepUpdate is one recorded track-state transition: which node the track was
+// at, the track state it entered, and when. The token state is projected from
+// it; the node + time give the path and its timing.
+type stepUpdate struct {
+	node  flow.Node
+	at    time.Time
+	state trackState
+}
+
+// Token is the logical, derived view of a track's current control-flow
+// position — the BPMN "token" as a projection, not a stored object.
+type Token struct {
+	Node  flow.Node
+	State TokenState
+}
+
+// StepVisit is one entry of a token's path history with its timing.
+type StepVisit struct {
+	Node  flow.Node
+	At    time.Time
+	State TokenState
+}
+
+// TokenPath is the recorded path of one token (one track), with lineage.
+type TokenPath struct {
+	TrackID  string
+	ParentID string // immediate parent track (fork origin); "" for a root track
+	Steps    []StepVisit
+	Terminal TokenState
+}
+
+// tokenStateFor projects a track state onto the BPMN token state.
+func tokenStateFor(ts trackState) TokenState {
+	switch ts {
+	case TrackReady, TrackExecutingStep, TrackProcessStepResults:
+		return TokenAlive
+
+	case TrackWaitForEvent:
+		return TokenWaitForEvent
+
+	case TrackEnded, TrackMerged, TrackCanceled, TrackFailed:
+		// Canceled maps to Consumed here; the Withdrawn case (Event-Based
+		// Gateway race loss) is wired with that gateway (gateway SRD).
+		return TokenConsumed
+
+	default:
+		return TokenInvalid
+	}
+}
+
+// record appends a track-state transition to the history, copy-on-write, and
+// publishes it atomically. Called only from this track's goroutine.
+func (t *track) record(state trackState) {
+	node := t.steps[len(t.steps)-1].node
+
+	old := t.hist.Load()
+
+	var base []stepUpdate
+	if old != nil {
+		base = *old
+	}
+
+	next := make([]stepUpdate, len(base), len(base)+1)
+	copy(next, base)
+	next = append(next, stepUpdate{node: node, state: state, at: t.instance.now()})
+
+	t.hist.Store(&next)
+}
+
+// Token returns the track's current token projection (lock-free).
+func (t *track) Token() Token {
+	h := t.hist.Load()
+	if h == nil || len(*h) == 0 {
+		return Token{}
+	}
+
+	last := (*h)[len(*h)-1]
+
+	return Token{Node: last.node, State: tokenStateFor(last.state)}
+}
+
+// path returns the recorded token path of this track (lock-free).
+func (t *track) path() TokenPath {
+	parent := ""
+	if n := len(t.prev); n != 0 {
+		parent = t.prev[n-1].ID()
+	}
+
+	tp := TokenPath{TrackID: t.ID(), ParentID: parent}
+
+	h := t.hist.Load()
+	if h != nil {
+		for _, u := range *h {
+			ts := tokenStateFor(u.state)
+			tp.Steps = append(tp.Steps, StepVisit{Node: u.node, At: u.at, State: ts})
+			tp.Terminal = ts
+		}
+	}
+
+	return tp
 }
 
 // newTrack creates the new track from the start flow.Node and sets it
@@ -204,6 +313,10 @@ func newTrack(
 		t.prev = append(t.prev, append(prevTrack.prev, prevTrack)...)
 	}
 
+	// History is recorded once the track runs (per-node visits + state
+	// transitions), so it uses the running clock; before Run, Token() returns
+	// the zero projection. checkNodeType below may add a WaitForEvent entry
+	// for event-start nodes.
 	if err := t.checkNodeType(start); err != nil {
 		return nil, err
 	}
@@ -290,6 +403,13 @@ func (t *track) updateState(newState trackState) {
 	t.m.Lock()
 	t.state = newState
 	t.m.Unlock()
+
+	// Per-node Executing entries are recorded in prepareNodeExecution so each
+	// visited node appears even when the track stays in ExecutingStep across
+	// consecutive nodes; here we record the other (wait / terminal) states.
+	if newState != TrackExecutingStep {
+		t.record(newState)
+	}
 }
 
 // currentStep returns current step of the track.
@@ -407,6 +527,7 @@ func (t *track) prepareNodeExecution(ctx context.Context, step *stepInfo) error 
 
 	t.updateState(TrackExecutingStep)
 	step.state = StepStarted
+	t.record(TrackExecutingStep) // record this node visit (path + timing)
 
 	if err := t.loadIncomingData(ctx, step.node); err != nil {
 		return err
