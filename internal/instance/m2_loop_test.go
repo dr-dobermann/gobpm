@@ -43,7 +43,7 @@ func buildLinearSnapshot(t *testing.T) *snapshot.Snapshot {
 
 // TestM2LinearCompletes verifies the event loop drives a single track to
 // completion: the loop spawns the initial track, the track ends, the instance
-// reaches Finished via the active-track count, and no goroutine leaks. Under
+// reaches Completed via the active-track count, and no goroutine leaks. Under
 // -race it also exercises that instance lifecycle state (state, registry) is
 // mutated only in the loop goroutine while State()/trackCount are read
 // concurrently. (The fork / evSpawn path is exercised in M4, once token.split
@@ -64,9 +64,9 @@ func TestM2LinearCompletes(t *testing.T) {
 	require.NoError(t, inst.Run(ctx))
 
 	require.Eventually(t,
-		func() bool { return inst.State() == Finished },
+		func() bool { return inst.State() == Completed },
 		2*time.Second, 5*time.Millisecond,
-		"instance should reach Finished once its single track ends")
+		"instance should reach Completed once its single track ends")
 
 	require.EqualValues(t, 1, inst.trackCount.Load())
 

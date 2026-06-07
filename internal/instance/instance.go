@@ -49,39 +49,30 @@ const (
 // conversion (the instance's run state is read lock-free via State()).
 type State uint32
 
+// Instance lifecycle states — the in-memory runtime lifecycle the instance
+// actually exercises (mirrors ADR-001 §4.2). The error branch and suspend are
+// owned by their future ADRs, not this runtime, and are absent here.
 const (
-	// Created represents a created instance state.
+	// Created is a created instance, not yet running.
 	Created State = iota
-	// Ready represents a ready instance state.
-	Ready
-	// StartingTracks represents a starting tracks state.
-	StartingTracks
-	// Runned represents a running instance state.
-	Runned
-	// Stopping represents a stopping instance state.
-	Stopping
-	// Paused represents a paused instance state.
-	Paused
-	// FinishingTracks represents a finishing tracks state.
-	FinishingTracks
-	// Finished represents a finished instance state.
-	Finished
-	// Canceled represents a canceled instance state.
-	Canceled
+	// Active is a running instance executing its tracks.
+	Active
+	// Completed is an instance that finished when all tracks ended normally.
+	Completed
+	// Terminating is an instance canceling its tracks after ctx cancel.
+	Terminating
+	// Terminated is an instance that finished via cancellation.
+	Terminated
 )
 
 // String returns the human-readable name of the instance state.
 func (s State) String() string {
 	return []string{
 		"Created",
-		"Ready",
-		"StartingTracks",
-		"Runned",
-		"Stopping",
-		"Paused",
-		"FinishingTracks",
-		"FInished",
-		"Canceled",
+		"Active",
+		"Completed",
+		"Terminating",
+		"Terminated",
 	}[s]
 }
 
@@ -115,7 +106,7 @@ type Instance struct {
 	state      atomic.Uint32 // written only by loop(), read via State()
 }
 
-// New creates a new Instance from the Snapshot s and sets state to Ready.
+// New creates a new Instance from the Snapshot s and sets state to Created.
 func New(
 	s *snapshot.Snapshot,
 	parentScope scope.Scope,
@@ -153,7 +144,7 @@ func New(
 		parentEventProducer: ep,
 		rr:                  rr,
 	}
-	inst.state.Store(uint32(Ready))
+	inst.state.Store(uint32(Created))
 
 	if err := inst.loadProperties(parentScope); err != nil {
 		return nil, errs.New(
@@ -243,7 +234,7 @@ func (inst *Instance) Run(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	if inst.State() != Ready {
+	if inst.State() != Created {
 		return errs.New(
 			errs.M("invalid instance state to run"),
 			errs.C(errorClass, errs.InvalidState),
@@ -252,7 +243,7 @@ func (inst *Instance) Run(
 
 	inst.ctx = ctx
 	inst.startTime = inst.now()
-	inst.setState(Runned)
+	inst.setState(Active)
 
 	// initial tracks were built by createTracks() during New; hand them to the
 	// loop, which becomes the sole owner of lifecycle state from here on.
@@ -263,13 +254,15 @@ func (inst *Instance) Run(
 	return nil
 }
 
-// emit delivers a track event to the loop. It never blocks forever: if the
-// loop has exited or the context is canceled it drops the event.
+// emit delivers a track event to the loop. It never blocks forever: once the
+// loop has exited (loopDone closed) it drops the event. It must NOT drop on
+// ctx cancellation — the loop keeps draining events until every track has
+// ended, so a canceled instance still accounts each track's terminal event and
+// reaches Terminated instead of hanging.
 func (inst *Instance) emit(ev trackEvent) {
 	select {
 	case inst.events <- ev:
 	case <-inst.loopDone:
-	case <-inst.ctx.Done():
 	}
 }
 
@@ -297,7 +290,7 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 		}(t)
 	}
 
-	// stopAll moves the instance to Stopping (once) and signals every
+	// stopAll moves the instance to Terminating (once) and signals every
 	// live track to stop.
 	stopAll := func() {
 		if stopping {
@@ -305,7 +298,7 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 		}
 
 		stopping = true
-		inst.setState(Stopping)
+		inst.setState(Terminating)
 
 		for _, t := range inst.tracks {
 			t.stop()
@@ -317,7 +310,7 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	}
 
 	if active == 0 {
-		inst.setState(Finished)
+		inst.setState(Completed)
 		return
 	}
 
@@ -354,7 +347,11 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 		}
 	}
 
-	inst.setState(Finished)
+	if stopping {
+		inst.setState(Terminated)
+	} else {
+		inst.setState(Completed)
+	}
 }
 
 // addToSnap appends a track to the lock-free tracks snapshot (copy-on-write).
@@ -557,9 +554,9 @@ func (inst *Instance) RegisterEvent(
 	eDef flow.EventDefinition,
 ) error {
 	is := inst.State()
-	if is != Runned {
+	if is != Active {
 		return errs.New(
-			errs.M("instance isn't runned (current state: %s)",
+			errs.M("instance isn't active (current state: %s)",
 				is),
 			errs.C(errorClass, errs.InvalidState),
 			errs.D("requester_id", proc.ID()))
@@ -603,9 +600,9 @@ func (inst *Instance) PropagateEvent(
 	eDef flow.EventDefinition,
 ) error {
 	st := inst.State()
-	if st != Runned {
+	if st != Active {
 		return errs.New(
-			errs.M("instance isn't runned"),
+			errs.M("instance isn't active"),
 			errs.C(errorClass, errs.InvalidState),
 			errs.D("current_state", st),
 			errs.D("instance_id", inst.ID()))

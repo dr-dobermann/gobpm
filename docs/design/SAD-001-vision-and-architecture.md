@@ -46,7 +46,7 @@ Both journeys MUST work with high quality. The library MUST NOT carry runtime ba
 | G2 | **Minimal core library: zero non-stdlib runtime dependencies in the engine hot path** | Embeddability requires not forcing transitive deps onto host applications. |
 | G3 | **Out-of-the-box usability** | `gobpm.NewDefault()` produces a working engine with no wiring. New users get a working example in <20 lines. |
 | G4 | **Extensibility at every infrastructure concern** | Persistence, events, security, observability, expressions, human-task distribution, timers, message correlation backends — all behind interfaces. |
-| G5 | **Predictable execution model** | Single orchestrator goroutine per Process instance owns state; each active token runs in its own goroutine; `context.Context` is the cancellation contract. |
+| G5 | **Predictable execution model** | Single event-loop goroutine per Process instance owns state; each track (thread of execution) runs in its own goroutine; the token is a projection of a track's position; `context.Context` is the cancellation contract. |
 | G6 | **Production runtime as additive overlay** | Multitenancy, AuthN/Z, diagnostics, profiling, HTTP/gRPC APIs live in a separate module. Library users pay no cost for them. |
 | G7 | **Solo-developer maintainability** | Code organized for incremental development. Multi-module monorepo over multi-repo split. Clear vertical slices over horizontal layers. |
 | G8 | **Observable by default, not by accident** | Every state transition emits structured events; default observability is no-op; production observability is plug-in. |
@@ -178,7 +178,7 @@ Dependencies flow **downward only**. Higher layers depend on lower; lower layers
 | **Repository** (interface) | Persists Process Instance state, history, message inbox. Default: in-memory. |
 | **All other extension interfaces** | Allow injection of `Logger`, `Tracer`, `MetricsRecorder`, `ExpressionEngine`, `TaskDistributor`, `MessageBroker`, `Clock`, `AuthorizationProvider`. |
 
-Detailed execution semantics: **ADR-001 Execution Model** (to be authored). Detailed extension model: **ADR-002 Extension Architecture** (to be authored).
+Detailed execution semantics: **ADR-001 Execution Model**. Detailed extension model: **ADR-002 Extension Architecture**.
 
 ## 9. Module Layout
 
@@ -250,17 +250,17 @@ If the monorepo becomes unwieldy (unlikely while solo-developed, possible at sca
 - `adapters/postgres/` → `github.com/dr-dobermann/gobpm-postgres`
 - etc.
 
-Detailed module layout decision and import rules: **ADR-003 Module Layout** (to be authored).
+Detailed module layout decision and import rules: **ADR-003 Module Layout**.
 
 ## 10. Execution Model (overview)
 
-Detailed in **ADR-001 Execution Model**. Key points captured here for vision-level coherence:
+Detailed in **ADR-001 v.3 Execution Model** (Accepted). Key points captured here for vision-level coherence:
 
-- **One Orchestrator goroutine per Process Instance.** Owns the instance state. Single-threaded mutation — no locks on instance state.
-- **One Token goroutine per active token.** Executes the element under the token. Communicates back to the Orchestrator via a typed event channel.
-- **`context.Context` is the cancellation contract.** Orchestrator owns root context. Each token gets a derived context. Terminate End Event → cancel root context → all tokens see `ctx.Done()` → graceful exit.
+- **One event-loop goroutine per Process Instance.** Owns the instance state. Single-threaded mutation — no locks on instance state.
+- **One track goroutine per thread of execution.** A `track` carries its current flow position and executes the element there, reporting back via a typed event channel. The **token** is a *projection* of a track's current step (the BPMN control position), not a stored object or a goroutine of its own.
+- **`context.Context` is the cancellation contract.** The instance owns the root context. Each track gets a derived context. Terminate End Event → cancel root context → all tracks see `ctx.Done()` → graceful exit.
 - **Save / restore instance context is a P0 capability.** The engine MUST be able to checkpoint a Process Instance's full execution context to the `Repository` and reconstitute it later — into either the same runtime process (after a restart) or a different one (for migration / failover / distribution). Goroutines are the **execution medium**, persistence is the **state of record**.
-- **Long waits do NOT hold goroutines.** A UserTask waiting 3 days externalizes state to `Repository`. The token goroutine exits. When the trigger arrives (human submits form, timer fires, message arrives), the Orchestrator rehydrates from persistence and spawns a fresh token. Combined or alternative mechanisms (event-driven wake-up, polling, push from external system) are all valid — the persistence + rehydration contract is invariant.
+- **Long waits do NOT hold goroutines.** A UserTask waiting 3 days externalizes state to `Repository`. The track goroutine exits. When the trigger arrives (human submits form, timer fires, message arrives), the instance rehydrates from persistence and spawns a fresh track. Combined or alternative mechanisms (event-driven wake-up, polling, push from external system) are all valid — the persistence + rehydration contract is invariant.
 - **Persistence checkpoints align with lifecycle transitions.** State persisted at every observable BPMN state transition (per `docs/bpmn-spec/state-machines/activity-lifecycle.md`).
 - **On runtime start / restart**, the runtime queries `Repository` for in-flight instances and rehydrates them. Recovery should be straightforward and bounded — not a fragile dance.
 
@@ -305,7 +305,7 @@ Detailed in **ADR-004 Runtime Environment Contract**. Lives in `runtime/` submod
 
 ## 13. Distribution & Scale
 
-> _**Status: preliminary, subject to refinement.** This section was sketched in the first review round but explicitly deferred for deeper discussion before SAD acceptance. The headline framing (additive overlay; direct worker dispatch over queues; persistence as the foundation) is the working direction, but specifics — protocol choice, dispatcher semantics, cluster-wide state design — will be refined here or relocated to a dedicated ADR (likely ADR-005) before this SAD flips to Accepted._
+> _**Status: preliminary, subject to refinement.** This section was sketched in the first review round but explicitly deferred for deeper discussion before SAD acceptance. The headline framing (additive overlay; direct worker dispatch over queues; persistence as the foundation) is the working direction, but specifics — protocol choice, dispatcher semantics, cluster-wide state design — will be refined here or relocated to a dedicated ADR (ADR-008) before this SAD flips to Accepted._
 
 Single-process execution is the foundation. Distribution is achieved as an **additive overlay** through extension points and runtime-level dispatching — never by rewriting the core orchestration model.
 
@@ -313,7 +313,7 @@ Single-process execution is the foundation. Distribution is achieved as an **add
 
 | Level | Mechanism | Status |
 |---|---|---|
-| **Single-instance, single-node** | Orchestrator + Token goroutines, all in one process (the foundation, §10) | Always supported |
+| **Single-instance, single-node** | Event-loop + track goroutines, all in one process (the foundation, §10) | Always supported |
 | **Task-level remote execution** | Selected tasks (ServiceTask, GlobalTask) execute on remote workers registered with the runtime; runtime dispatches direct (not via queue) | Planned extension point; see §13.2 and `WorkerDispatcher` in §11 |
 | **Instance-level distribution** | Each Process Instance pinned to one runtime node via sticky routing (consistent hash on instance ID); failover via persistence rehydration (§10) | Feasible by design; deferred until multi-node deployment demand materializes |
 | **Cluster-wide shared state** | Cross-node visibility of Signals / Message correlation / shared variables | Open question; solvable via DB-backed `Repository` + event broadcast + correlation-backend extension. To be addressed when concrete demand materializes. |
@@ -336,7 +336,7 @@ This is **just another extension** implementing the `WorkerDispatcher` interface
 All distribution modes — single-process restart, instance failover, multi-node deployment — rest on the engine's ability to **save and restore instance context** cleanly:
 
 - Instance state checkpointed at every observable BPMN lifecycle transition (per [docs/bpmn-spec/state-machines/activity-lifecycle.md](../bpmn-spec/state-machines/activity-lifecycle.md)).
-- On runtime start / restart, the runtime queries the `Repository` for in-flight instances and rehydrates them — re-spawning Orchestrator + Token goroutines as needed.
+- On runtime start / restart, the runtime queries the `Repository` for in-flight instances and rehydrates them — re-spawning the event loop + track goroutines as needed.
 - Long-wait states (UserTask, multi-day timers, awaiting external Message) do NOT hold goroutines — they release them and rely on rehydration when the trigger arrives. See §10.
 
 Robust save/restore is a P0 quality (§6). Without it, neither restart recovery nor instance-level distribution is achievable.
@@ -354,11 +354,11 @@ These are solvable through the extension model:
 - Event broadcast layer (an extension of `EventHub`) for Signal distribution.
 - DB-backed `Repository` providing cluster-shared visibility into in-flight instances.
 
-The detailed design is **out of v.1 scope** — to be addressed in a future ADR (likely ADR-005 or similar) when concrete multi-node demand materializes.
+The detailed design is **out of v.1 scope** — to be addressed in a future ADR (ADR-008) when concrete multi-node demand materializes.
 
 ### 13.5 Cluster-configuration validation (forward-looking note)
 
-When goBpm runs in cluster mode, certain extension configurations are fundamentally incompatible — in-memory `Repository`, in-memory `MessageBroker`, in-memory `EventHub`, fake `Clock`, and so on cannot honor cluster semantics. Each adapter SHOULD declare its cluster compatibility via the `ClusterAware` optional interface (per [ADR-002 §8.3](ADR-002-extension-architecture.md)); the runtime layer validates declared compatibility at startup when `cluster_mode` is enabled, and refuses to start with incompatible adapters wired. The substantive treatment — routing strategies, signal-broadcast backplane requirements, the full hard-block / warn / forces-explicit-choice matrix — lives in the future ADR-005.
+When goBpm runs in cluster mode, certain extension configurations are fundamentally incompatible — in-memory `Repository`, in-memory `MessageBroker`, in-memory `EventHub`, fake `Clock`, and so on cannot honor cluster semantics. Each adapter SHOULD declare its cluster compatibility via the `ClusterAware` optional interface (per [ADR-002 §8.3](ADR-002-extension-architecture.md)); the runtime layer validates declared compatibility at startup when `cluster_mode` is enabled, and refuses to start with incompatible adapters wired. The substantive treatment — routing strategies, signal-broadcast backplane requirements, the full hard-block / warn / forces-explicit-choice matrix — lives in the future ADR-008.
 
 ## 14. Conformance & Compliance Scope
 
@@ -383,7 +383,7 @@ Justification:
 - **Independent versioning:** modules can release at their own pace (`core v0.5`, `runtime v0.2`, `adapters/postgres v0.1`).
 - **Easy split-out later:** if monorepo becomes unwieldy, any submodule moves to its own repo in a single directory-move operation.
 
-Justification details: **ADR-003 Module Layout** (to be authored).
+Justification details: **ADR-003 Module Layout**.
 
 ### 15.2 Release artifacts
 
@@ -398,14 +398,18 @@ Versioning follows semver per module. The core library is the version-of-record 
 
 ## 16. References
 
-### Subordinate ADRs (to be authored)
+### Subordinate ADRs
 
-| ID | Title | Scope |
-|---|---|---|
-| ADR-001 | Execution Model | Single-orchestrator + per-token goroutines; ctx cancellation; rehydration model; persistence checkpoint policy |
-| ADR-002 | Extension Architecture | Interface catalog; functional-options assembly; default implementations; adapter module conventions |
-| ADR-003 | Module Layout | Multi-module monorepo; import directions; module evolution; future split-out path |
-| ADR-004 | Runtime Environment Contract | Tenancy, AuthN, AuthZ, observability, diagnostics, profiling — ownership and interfaces |
+| ID | Title | Status | Scope |
+|---|---|---|---|
+| ADR-001 | Execution Model | **Accepted v.3** | Two-layer Instance + track; one event-loop goroutine per instance; token as a projection; ctx cancellation cascade. (Joins/events/long-waits/persistence relocated to the ADRs below + the Persistence ADR.) |
+| ADR-002 | Extension Architecture | Draft | Interface catalog; functional-options assembly; default implementations; adapter module conventions |
+| ADR-003 | Module Layout | Draft | Multi-module monorepo; import directions; module evolution; future split-out path |
+| ADR-004 | Runtime Environment Contract | Draft | Tenancy, AuthN, AuthZ, observability, diagnostics, profiling — ownership and interfaces |
+| ADR-005 | Gateways & Joins | Draft | Synchronizing join, non-synchronizing merge, OR-join, Event-Based Gateway + `Withdrawn`; fork-flow activation by gateway type |
+| ADR-006 | Events & Subscriptions | Draft | EventHub delivery, Terminate End Event, interrupting boundary events, wait nodes |
+| ADR-007 | In-Memory Long Waits | Draft | Subscription → goroutine ends → re-spawn (durable version → Persistence ADR) |
+| ADR-008 | Distribution & Scale | planned | The §13 preliminary content, when multi-node demand materializes |
 
 ### Reference material
 
@@ -424,7 +428,7 @@ Versioning follows semver per module. The core library is the version-of-record 
 | **Snapshot** | An immutable, validated representation of a Process. The Engine accepts a Snapshot, not a mutable model. |
 | **Process Instance** | A running execution of a Process. Owned by one Orchestrator goroutine. |
 | **Orchestrator** | The goroutine owning a single Process Instance's state. Receives token events, applies state transitions. |
-| **Token** | The BPMN-theoretical concept of "execution presence" at a flow node. In goBpm, an active token corresponds to one goroutine that executes the node's behavior and reports back to the Orchestrator. |
+| **Token** | The BPMN-theoretical concept of "execution presence" at a flow node. In goBpm it is a *projection* of a track's current step (computed on demand), not a stored object; the **track** is the goroutine that executes the node's behavior and reports back to the instance (per ADR-001 v.3). |
 | **Rehydration** | Reconstruction of an in-memory Process Instance from its persisted state, when a long-wait trigger fires. |
 | **Extension interface** | A Go interface defining an extension point (Repository, Logger, Tracer, ...). Default impl ships in core; production impls in adapter modules. |
 | **Adapter module** | A module under `adapters/*` providing a concrete implementation of one or more extension interfaces. |

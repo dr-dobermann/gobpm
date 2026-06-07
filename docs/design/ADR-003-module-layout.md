@@ -23,7 +23,7 @@ Current code state (relevant to module layout):
 
 - **One module today**: `github.com/dr-dobermann/gobpm` at the repo root (`go.mod`).
 - **`pkg/`** contains: `errs/`, `model/`, `set/`, `thresher/`. Only `pkg/model/data/` exposes any extension-relevant types today (`FormalExpression`, `Source`, `PropertyAdder`).
-- **`internal/`** contains: `eventproc/` (EventHub interface lives here), `exec/`, `instance/` (Instance + track + token per ADR-001), `interactor/` (TaskDistributor-equivalent), `renv/` (RuntimeEnvironment lives here), `runner/`, `scope/`.
+- **`internal/`** contains: `eventproc/` (EventHub interface lives here), `exec/`, `instance/` (Instance + track; token is a projection — per ADR-001 v.3), `interactor/` (TaskDistributor-equivalent), `renv/` (RuntimeEnvironment lives here), `runner/`, `scope/`.
 - **`examples/`** already follows the multi-module pattern — three subdirectories, each with its own `go.mod`.
 - **No `runtime/`, no `adapters/`** yet.
 
@@ -133,7 +133,7 @@ github.com/dr-dobermann/gobpm/                       ← repo root
 │   │   └── localdispatcher/                          In-process WorkerDispatcher default
 │   └── extension/                                    Optional capabilities (Starter, Stopper, HealthChecker)
 ├── internal/                                         ← PRIVATE IMPLEMENTATION (post-migration target)
-│   ├── instance/                                     Instance, track, token, stepInfo (per ADR-001)
+│   ├── instance/                                     Instance, track, stepInfo; Token projection (per ADR-001 v.3)
 │   ├── scope/                                        Scope tree implementation
 │   ├── runner/                                       Process runner
 │   └── exec/                                         Execution machinery
@@ -215,7 +215,7 @@ What stays in `internal/` is purely-internal supporting machinery the public int
 
 | `internal/` package | Role | Why internal |
 |---|---|---|
-| `internal/instance/` | `Instance`, `track`, `token`, `stepInfo` types per ADR-001 | The execution machinery is implementation; users interact with it via the `pkg/thresher/` façade and the `pkg/renv.RuntimeEnvironment` interface that `Instance` implements. |
+| `internal/instance/` | `Instance`, `track`, `stepInfo` types + the `Token` projection per ADR-001 v.3 | The execution machinery is implementation; users interact with it via the `pkg/thresher/` façade and the `pkg/renv.RuntimeEnvironment` interface that `Instance` implements. (A future split of `track` into its own package behind a host interface is noted as deferred follow-up work.) |
 | `internal/scope/` | Scope tree implementation backing `pkg/renv.RuntimeEnvironment.Scope()` | Implementation detail of how data scoping works; the `Scope` interface is exposed via the RuntimeEnvironment embedding. |
 | `internal/runner/`, `internal/exec/` | Execution machinery (the orchestration loop, node-execution dispatch) | Implementation detail; no extension points here. |
 | `internal/eventproc/eventproc.go` (residual after the EventHub promotion) | If anything remains — e.g., supporting helper types used by the default `pkg/messaging` impl that aren't worth exposing | Implementation detail. If nothing remains after the promotion, the package goes away entirely. |
