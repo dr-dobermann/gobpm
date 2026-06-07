@@ -2,9 +2,9 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
-| Date | 2026-06-06 |
+| Date | 2026-06-07 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-001 v.3 Execution Model](../design/ADR-001-execution-model.md) |
 | Refines | [SAD-001 v.1 §10 Execution Model](../design/SAD-001-vision-and-architecture.md) |
@@ -48,7 +48,7 @@ G10. Steps carry **timestamps**, so the path history (G9) is a timeline (per-nod
 ### 2.2 Non-goals (explicitly deferred)
 
 N1. **Persistence / rehydration** — Scope/timer/compensation/error/activity state, the per-node state contract, checkpoints, restart recovery → dedicated Persistence & State ADR (see ADR-001 v.3 §4.7).
-N2. **Synchronizing joins and the join seam** (Parallel / Inclusive / Complex policies, the `JoinController` / `JoinerContext` seam, OR-join semantics) → the gateway SRD, **built together with the first synchronizing consumer**. *In scope here:* only the **non-synchronizing pass-through** merge (FR-8) — a node with multiple incoming flows is handled by per-track execution; each arriving track continues independently. *Deferred (revised at landing):* the join seam itself (originally FR-12) — building a seam with only a fake consumer was dropped in favour of building it with its real consumer in the gateway SRD. The §4.2 policy/mechanism design is retained as forward conception. See §7 Implementation Summary.
+N2. **All join/merge semantics** → the gateway SRD ([ADR-005](../design/ADR-005-gateways-and-joins.md)). This includes synchronizing joins (Parallel / Inclusive / Complex policies, the `JoinController` / `JoinerContext` seam, OR-join semantics) **and** the **non-synchronizing merge** itself. *Revised at landing:* the join seam (originally FR-12) was deferred to build with its first real consumer rather than a fake one; the non-synchronizing merge (originally FR-8, in scope) was **also deferred** once it proved not race-safe — a node crossed by two tracks (reachable via an uncontrolled split converging) races on `NodeDataLoader.RegisterData` mutating the shared node (a §4.7 node-immutability violation, fixed by the per-node state contract in the Persistence ADR). Group A therefore delivers **fork** (FR-5) but not race-safe merge. The §4.2 policy/mechanism design is retained as forward conception. See §7 Implementation Summary and [ADR-001 v.3 §9](../design/ADR-001-execution-model.md).
 N3. **Event-Based Gateway** and a `Withdrawn` **producer** → gateway SRD. The token-state projection (G7) defines `Withdrawn`, but nothing produces it in this landing.
 N4. **New BPMN elements** (Parallel/Inclusive/Complex gateways, sub-processes, message correlation, etc.).
 N5. **Public API promotion** — `Token` / `GetTokens` stay in `internal/instance/`; moving execution types to `pkg/` is ADR-003 module-layout work.
@@ -62,13 +62,13 @@ N5. **Public API promotion** — `Token` / `GetTokens` stay in `internal/instanc
 | FR-3 | `Instance` holds only a track registry and exposes `Instance.GetTokens() []Token` projected from active tracks. No `tokens []*token`, `addToken`, or `tokenConsumed`. | Those identifiers are gone; `GetTokens()` returns one projection per active track. |
 | FR-4 | Instance state (track registry, lifecycle) is mutated only inside `Instance.loop()`; tracks communicate via a channel; no `sync.RWMutex` guards instance state. | Code review + `-race`: instance-state fields written only in `loop()`. |
 | FR-5 | A fork at a node with N>1 active outgoing flows: the executing track continues on the first flow; one new track is constructed per remaining flow with `track.prev` lineage; `token.split` is removed. | Fork test (FR mapped to §5): N independent tracks, each its own position; parent did not end at the fork. |
-| FR-6 | The instance completes (`InstanceCompleted`) exactly when **no active track remains** — decided in the event loop from the track registry. Ended tracks are retained as history (FR-10), so completion keys off *active* tracks, not record deletion. | Completion test passes; no token-alive scan exists. |
-| FR-7 | Token state is a pure projection: `Alive` ← track ready/executing; `WaitForEvent` ← `TrackWaitForEvent`; `Consumed` ← `TrackEnded`/`TrackMerged`; `Withdrawn` ← `TrackCanceled` + end-reason=withdrawn. | Projection unit test over each track/step state. |
-| FR-8 | Non-synchronizing merge preserved: a node with N>1 incoming flows lets each arriving track continue independently (no wait, no consumption at the node). | Merge test: 3 tokens through an Exclusive/uncontrolled merge → 3 continuations. |
+| FR-6 | The instance completes (`Completed`) exactly when **no active track remains** — decided in the event loop from the track registry. Ended tracks are retained as history (FR-10), so completion keys off *active* tracks, not record deletion. | Completion test passes; no token-alive scan exists. |
+| FR-7 | Token state is a pure projection: `Alive` ← track ready/executing; `WaitForEvent` ← `TrackWaitForEvent`; `Consumed` ← `TrackEnded`/`TrackMerged`/`TrackCanceled`/`TrackFailed`; `Withdrawn` ← reserved (Event-Based Gateway, no producer here — N3). | Projection unit test over each track/step state. |
+| ~~FR-8~~ | **DEFERRED to the gateway SRD** ([ADR-005](../design/ADR-005-gateways-and-joins.md) + the per-node state contract in the Persistence ADR — N2 / §7). Non-synchronizing merge is not race-safe in this landing: a node crossed by two tracks races on the shared node's `RegisterData`. Group A delivers fork (FR-5), not merge. | n/a — superseded; no merge test in Group A. |
 | FR-9 | No regression for implemented elements (G8). | Full existing test suite + `examples/*` build and pass; `make ci` green. |
 | FR-10 | Each track records its step-state transitions in an **append-only list** (record, don't overwrite). `Instance` exposes a **token-flow path history** (e.g. `TokenHistory()`) **derived** from those lists across all tracks (live and ended), stitched by `track.prev` lineage — path, current position, and terminal state are all read from the entries. | For a forked process, the history shows the shared pre-fork path and one path per branch, each with correct parentage and terminal state. |
 | FR-11 | Each step-state-update entry carries a **timestamp**, so timing (per-node entered/duration) is derived from the same list. The time source is an **injectable seam** (deterministic in tests), forward-compatible with the ADR-002 `Clock` extension (not built here). | History timestamps are monotonic non-decreasing; under an injected fixed/fake clock the values are deterministic. |
-| ~~FR-12~~ | **DEFERRED to the gateway SRD** (revised at landing — N2 / §7). The `JoinController`/`JoinerContext` seam is built with its first synchronizing consumer rather than with a fake one. Group A delivers only the non-synchronizing merge (FR-8). | n/a — superseded. |
+| ~~FR-12~~ | **DEFERRED to the gateway SRD** (revised at landing — N2 / §7). The `JoinController`/`JoinerContext` seam is built with its first synchronizing consumer rather than with a fake one. (Non-sync merge FR-8 is deferred too — see above.) | n/a — superseded. |
 
 **Non-functional**
 
@@ -169,7 +169,7 @@ Both fork and join are reactions of `Instance.loop()` to events emitted by track
 
 **Policy vs mechanism — who decides the join.** The Instance owns the *mechanism*: it holds the cross-track arrival accounting and performs the action (continue one track, merge/end the others). The *policy* — "is the awaited set complete, and which arrivals are consumed?" — belongs to the join **node** (its gateway type/config), because only the node knows the join semantics and only the process graph defines the expected incoming set. The arriving track cannot decide (it knows only itself; it just reports). So on each join-arrival, `loop()` **consults the node through a pure, read-only `JoinController.EvaluateJoin`**, handing it a `JoinerContext` the Instance implements — **facts only**: the arrived incoming flows now, plus live-track positions / history for the Inclusive rule later. The policy computes a verdict — *wait*, or *fire* with the consumed flows — and the loop acts on it. Facts, not decisions: the ambiguous Inclusive reachability is computed inside the policy from those facts, never by the loop. The node stores nothing; it is a pure policy evaluated against state the Instance supplies (node immutability preserved). Consequently the expected count is **not** hardcoded in the Instance: for a Parallel join it is the node's static incoming flows; for an Inclusive join the node's policy derives it from the live execution.
 
-**Deferred at landing (§7):** the join seam — the `JoinController` interface, the consult-or-default mechanism, and per-join accounting — is **not** built in Group A. With no synchronizing consumer yet (Parallel/Inclusive are gateway-SRD), it is built there, with its first real consumer, rather than with only a fake test now. Group A's non-synchronizing merges work via per-track execution (FR-8). The generic design (`arrivals + context → wait | fire(consumed)`) above stands as the forward conception; building it later does not pull in the deferred OR-join semantics — those live inside a future policy implementation.
+**Deferred at landing (§7):** the join seam — the `JoinController` interface, the consult-or-default mechanism, and per-join accounting — is **not** built in Group A. With no synchronizing consumer yet (Parallel/Inclusive are gateway-SRD), it is built there, with its first real consumer, rather than with only a fake test now. The non-synchronizing merge (FR-8) is **also deferred** — it is not race-safe in this landing (shared-node `RegisterData` mutation; see §7). The generic design (`arrivals + context → wait | fire(consumed)`) above stands as the forward conception; building it later does not pull in the deferred OR-join semantics — those live inside a future policy implementation.
 
 ### 4.3 Per-area changes
 
@@ -185,7 +185,7 @@ Both fork and join are reactions of `Instance.loop()` to events emitted by track
 3. **M3 — step-state list + projections.** Append-only step-state-update list with timestamps; `track.Token()` / `Instance.GetTokens()` / `TokenHistory()` derivations + token-state projection, coexisting with the current token type. (FR-2, 7, 10, 11)
 4. **M4 — fork rework.** The fork-event handler in `loop()` constructs one new track per extra active flow (parent continues on F1, `track.prev` lineage); remove `token.split`; new tracks self-create their token on execution (token type still present). (FR-5)
 5. **M5 — token-type removal.** Remove the stored `token` type + `Instance.tokens` / `addToken` / `tokenConsumed` / `token.inst` / `trk`; token state purely via the M3 projection; completion decided from active tracks. (FR-1, 3, 6)
-6. **M6 — acceptance verification.** Full ADR-001 v.3 §7 suite + non-synchronizing merge pass-through (FR-8) + race-stress (`-count=N`) + examples + coverage; `make ci` green. (FR-9, NFR-1..3)
+6. **M6 — acceptance verification.** Full ADR-001 v.3 §7 suite + race-stress (`-count=N`) + examples + coverage; `make ci` green. (FR-9, NFR-1..3) *(Non-sync merge FR-8 was deferred at the Accepted flip — not race-safe; see §7.)*
 
 Sequencing rationale: stand up the event loop first (M1/M2) so the ownership changes (M4/M5) land on the serialized-mutation foundation rather than racing the old lock-based paths; projections (M3) precede token-type removal (M5) so the projection is the source of token state before the type is deleted.
 
@@ -197,12 +197,12 @@ Maps to [ADR-001 v.3 §7](../design/ADR-001-execution-model.md):
 |---|---|
 | Race-freedom | `-race` CI-gated; instance state mutated only in `loop()`; `-race -count=N` stress on fork/instance clean. |
 | Goroutine-leak-free | `runtime.NumGoroutine()` returns to baseline after completion. |
-| 1:1 fork | 3-way split → 3 independent tracks, each own position; parent continued on the first flow. |
+| 1:1 fork | split → independent tracks, each own position; parent continued on the first flow (`TestM4ForkCompletes`). |
 | No token registry | Instance exposes tokens only via `GetTokens()`; no `tokens` field; `track.Token()` reflects the current step. |
-| Instance completion | `InstanceCompleted` iff all tracks ended (no token-alive scan). |
-| Non-synchronizing merge | 3 tokens through Exclusive/uncontrolled merge → 3 continuations; none consumed/merged at the node. |
-| Token-state projection | each track/step state maps to the expected `Token.State`. |
-| Termination cascade | Terminate End Event → all track goroutines exit via `ctx.Done()`. |
+| Instance completion | `Completed` iff all tracks ended (no token-alive scan). |
+| ~~Non-synchronizing merge~~ | **DEFERRED** — FR-8 → gateway SRD ([ADR-005](../design/ADR-005-gateways-and-joins.md)); not race-safe here (§7). No merge test in Group A. |
+| Token-state projection | each track/step state maps to the expected `Token.State` (`TestTokenStateProjection`). |
+| Termination cascade | ctx cancellation → all track goroutines exit; instance reaches a terminal state (`TestTerminationCascade`). The Terminate End Event *trigger* is [ADR-006](../design/ADR-006-events-and-subscriptions.md). |
 | Token path history | After a forked run completes, `TokenHistory()` returns the shared pre-fork path and one path per branch, each with correct lineage and terminal state. |
 | Step timing | History timestamps are monotonic non-decreasing; under an injected fake clock the per-node entered/left values are deterministic. |
 | No regression | existing `internal/instance` + engine tests and `examples/*` pass unchanged. |
@@ -229,7 +229,7 @@ four implementation commits:
 | M1 | `414a0ce` | injectable time seam + test helpers (fakeClock, leak assert) |
 | M2 | `dbd1c43` | `Instance.loop()` sole-owner event loop; no locks on lifecycle state; state/track-count via atomics; completion via active-track count (FR-4, FR-6) |
 | M3 | `c25e7a6` | append-only step-state list; `track.Token()` / `GetTokens()` / `TokenHistory()` projections + timestamps, lock-free (FR-2, 7, 10, 11) |
-| M4+M5 | `f86d592` | fork rework (no `split`); removal of the `token` type, `Instance.tokens`, `addToken`, `tokenConsumed`, `stepInfo.tk` (FR-1, 3, 5, 8) |
+| M4+M5 | `f86d592` | fork rework (no `split`); removal of the `token` type, `Instance.tokens`, `addToken`, `tokenConsumed`, `stepInfo.tk` (FR-1, 3, 5) |
 
 **Result:** two-layer runtime (Instance + track); "token" is purely a derived
 projection. Files: `internal/instance/{instance,track,token}.go` + tests
@@ -242,9 +242,18 @@ projection. Files: `internal/instance/{instance,track,token}.go` + tests
   deleting the whole token type — so the two milestones are one change-set.
 - **FR-12 (join seam) deferred** to the gateway SRD (N2): a `JoinController`
   seam with only a fake consumer was dropped in favour of building it with its
-  first synchronizing gateway. The in-scope non-synchronizing merge (FR-8)
-  works via per-track execution. §4.1/§4.2 retain the design as forward
+  first synchronizing gateway. §4.1/§4.2 retain the design as forward
   conception.
+- **FR-8 (non-synchronizing merge) also deferred** (revised at the Accepted
+  flip, surfaced by `/check-srd`): it was never covered by a test, and writing
+  one showed it is **not race-safe** — a node crossed by two tracks (reachable
+  via an uncontrolled split converging) races on `EndEvent.RegisterData`
+  mutating the **shared node** (a §4.7 immutability violation). The fix is the
+  per-node state contract owned by the Persistence ADR; the merge semantics
+  themselves move to the gateway SRD ([ADR-005](../design/ADR-005-gateways-and-joins.md)).
+  Group A delivers fork (FR-5), not race-safe merge. This keeps SRD-001
+  consistent with [ADR-001 v.3 §7/§9](../design/ADR-001-execution-model.md),
+  whose acceptance gate likewise does not claim non-sync merge.
 - **`stepUpdate` records `trackState`** (the token-state projection source),
   not `stepState` as the §4.1 sketch first showed.
 - **Events built: `evFork` + `evEnded`** only; `JoinArrival` (synchronizing
@@ -260,9 +269,12 @@ projection. Files: `internal/instance/{instance,track,token}.go` + tests
 build-all, race tests (all modules), govulncheck clean; fork/projection tests
 race-stressed at `-count=20`; no regression (existing suite + `examples/*`).
 
-**Status:** kept **Draft** on the branch. Per the project pattern (cf. FIX-001)
-and the bilingual rule (translation on Accepted), flip Draft → Accepted and add
-the Russian twin as a **post-merge** step.
+**Status:** **Accepted** (2026-06-07). The implementation landed (M1–M6) and was
+re-audited against the code with `/check-srd` before the flip — PASS once FR-8
+(non-sync merge) was deferred (above), all other FR/NFR green, `make ci` green,
+cross-doc pins to ADR-001 v.3 consistent. The Russian twin
+([SRD-001-…ru.md](SRD-001-instance-track-token-refactor.ru.md)) is added per the
+bilingual-on-Accepted rule.
 
 ## 8. References
 
@@ -277,3 +289,4 @@ the Russian twin as a **post-merge** step.
 |---|---|---|---|
 | v.1 | 2026-06-06 | Ruslan Gabitov | Initial Draft. Specifies the Group-A two-layer runtime refactor against ADR-001 v.3; persistence, synchronizing joins / OR-join, Event-Based Gateway, and new elements explicitly out of scope. |
 | v.1 | 2026-06-07 | Ruslan Gabitov | Landed (M1–M6) and reconciled against the code: §7 Implementation Summary added; M4+M5 merged; FR-12 join seam deferred to the gateway SRD; `stepUpdate` records `trackState`; events `evFork`/`evEnded` (JoinArrival/Wait deferred); `LastErr` added. `make ci` green. Status remains Draft pending merge (Accepted + RU twin post-merge). |
+| v.1 | 2026-06-07 | Ruslan Gabitov | **Accepted.** `/check-srd` pre-flip audit: FR-8 (non-synchronizing merge) deferred to the gateway SRD ([ADR-005](../design/ADR-005-gateways-and-joins.md)) + the Persistence per-node-state fix — it had no test and is not race-safe (shared-node `RegisterData` mutation); `Completed` state name synced with the reconciled ADR-001 §4.2. All other FR/NFR green, `make ci` green, ADR-001 v.3 pins consistent. RU twin added (bilingual-on-Accepted). |
