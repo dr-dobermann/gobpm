@@ -141,7 +141,6 @@ func (ss stepState) String() string {
 // stepInfo keeps information about single track step
 type stepInfo struct {
 	node  flow.Node
-	tk    *token
 	state stepState
 }
 
@@ -372,32 +371,10 @@ func (t *track) inState(ss ...trackState) bool {
 func (t *track) updateState(newState trackState) {
 	t.m.RLock()
 	state := t.state
-	step := t.steps[len(t.steps)-1]
 	t.m.RUnlock()
 
 	if state == newState {
 		return
-	}
-
-	ts := TokenInvalid
-
-	switch newState {
-	case TrackReady, TrackExecutingStep:
-		ts = TokenAlive
-
-	case TrackWaitForEvent:
-		ts = TokenWaitForEvent
-
-	case TrackFailed, TrackEnded, TrackCanceled:
-		ts = TokenConsumed
-	}
-
-	if step.tk != nil {
-		if err := step.tk.updateState(ts); err != nil {
-			errs.Panic(err)
-
-			return
-		}
 	}
 
 	t.m.Lock()
@@ -520,11 +497,6 @@ func (t *track) executeNode(
 }
 
 func (t *track) prepareNodeExecution(ctx context.Context, step *stepInfo) error {
-	// create a new token if track doesn't have yet
-	if step.tk == nil {
-		step.tk = newToken(t.instance, t)
-	}
-
 	t.updateState(TrackExecutingStep)
 	step.state = StepStarted
 	t.record(TrackExecutingStep) // record this node visit (path + timing)
@@ -569,17 +541,19 @@ func (t *track) finalizeNodeExecution(ctx context.Context, step *stepInfo, _ []*
 	return t.uploadOutgoingData(ctx, step.node)
 }
 
-// checkFlows processes node outgoing flows.
-// If number of flows is greater than 1 then new tracks with splited token
-// created.
+// checkFlows processes a node's outgoing flows. The track continues on the
+// first (cyclic-preferred) flow carrying its current token; any remaining
+// flows are a fork — handed to the loop, which builds one new track per extra
+// flow (each new track self-creates its own token on execution). 1:1
+// track:token holds: the parent keeps its single token, no split.
 func (t *track) checkFlows(flows []*flow.SequenceFlow) error {
 	if len(flows) == 0 {
 		t.updateState(TrackEnded)
 		return nil
 	}
 
-	// if outgoing flows has any cyclic on current node then first of them
-	// should be next step of the track
+	// if any outgoing flow is cyclic on the current node, it becomes the
+	// track's next step.
 	nextNode := 0
 	for i, f := range flows {
 		if f.Target().ID() == t.currentStep().node.ID() {
@@ -588,42 +562,26 @@ func (t *track) checkFlows(flows []*flow.SequenceFlow) error {
 		}
 	}
 
-	tokens := t.currentStep().tk.split(len(flows))
-
-	// create a new step for main track and put token from current step
-	// into it.
+	// the track continues on the chosen flow (it carries its single position;
+	// no token object).
 	nextStep := stepInfo{
 		node:  flows[nextNode].Target().Node(),
 		state: StepCreated,
-		tk:    tokens[0],
 	}
-
-	if err := nextStep.tk.updateState(TokenAlive); err != nil {
-		return errs.New(
-			errs.M("couldn't update token state of the main flow"),
-			errs.D("node_name", nextStep.node.Name()),
-			errs.D("node_id", nextStep.node.ID()),
-			errs.D("instance_id", t.instance.ID()),
-			errs.E(err))
-	}
-
 	t.steps = append(t.steps, &nextStep)
 
-	// for every new flow create a new track with new tokens.
-	for i, f := range append(flows[:nextNode], flows[nextNode+1:]...) {
-		nt, err := newTrack(f.Target().Node(), t.instance, t)
-		if err != nil {
-			return errs.New(
-				errs.M("couldn't creaete a new track for flow %q", f.ID()),
-				errs.C(errorClass, errs.BulidingFailed),
-				errs.E(err))
+	// the remaining flows fork: build a fresh slice (don't mutate the caller's)
+	// and hand it to the loop, which constructs the new tracks. The track never
+	// mutates instance state itself.
+	extras := make([]*flow.SequenceFlow, 0, len(flows)-1)
+	for i, f := range flows {
+		if i != nextNode {
+			extras = append(extras, f)
 		}
+	}
 
-		nt.steps[0].tk = tokens[i+1]
-
-		// hand the new track to the instance loop — it owns the registry and
-		// spawns the goroutine (track never mutates instance state directly).
-		t.instance.emit(trackEvent{kind: evSpawn, track: nt})
+	if len(extras) != 0 {
+		t.instance.emit(trackEvent{kind: evFork, track: t, flows: extras})
 	}
 
 	return nil

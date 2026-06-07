@@ -12,7 +12,6 @@ package instance
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -97,6 +96,7 @@ type Instance struct {
 	parentScope         scope.Scope
 	tracks              map[string]*track        // owned by loop(); not guarded by m
 	tracksSnap          atomic.Pointer[[]*track] // copy-on-write; lock-free GetTokens/TokenHistory
+	lastErr             atomic.Pointer[error]    // fatal fork-construct error, if any
 	scopes              map[scope.DataPath]map[string]data.Data
 	s                   *snapshot.Snapshot
 	events              chan trackEvent // tracks -> loop()
@@ -105,7 +105,6 @@ type Instance struct {
 	runtimeScope        scope.DataPath
 	rootScope           scope.DataPath
 	foundation.BaseElement
-	tokens     []*token // guarded by m (removed in M5)
 	trackCount atomic.Int64
 	m          sync.RWMutex  // guards scopes + tokens (NOT lifecycle state/tracks)
 	state      atomic.Uint32 // written only by loop(), read via State()
@@ -145,7 +144,6 @@ func New(
 		tracks:              map[string]*track{},
 		events:              make(chan trackEvent),
 		loopDone:            make(chan struct{}),
-		tokens:              []*token{},
 		parentScope:         parentScope,
 		parentEventProducer: ep,
 		rr:                  rr,
@@ -217,6 +215,16 @@ func (inst *Instance) setState(newState State) {
 	inst.state.Store(uint32(newState))
 }
 
+// LastErr returns the fatal error that stopped the instance (e.g. a fork
+// whose target node could not be constructed), or nil. Set only by loop().
+func (inst *Instance) LastErr() error {
+	if e := inst.lastErr.Load(); e != nil {
+		return *e
+	}
+
+	return nil
+}
+
 // Run starts the process instance execution. Execution could be stopped by
 // cancel function of the context.
 func (inst *Instance) Run(
@@ -251,16 +259,16 @@ func (inst *Instance) Run(
 // trackEvent is a message from a track to the Instance event loop. M2 carries
 // the coarse lifecycle set; M4 refines the fork into an active-flows event.
 type trackEvent struct {
-	track *track
+	track *track               // evEnded: the ended track; evFork: the forking parent
+	flows []*flow.SequenceFlow // evFork: the extra flows to build a track for each
 	kind  trackEventKind
 }
 
 type trackEventKind uint8
 
 const (
-	evSpawn trackEventKind = iota // register + run a new track (from a fork)
+	evFork  trackEventKind = iota // fork: build one new track per extra flow
 	evEnded                       // a track's run() returned
-	evStop                        // request to stop the instance (no live token)
 )
 
 // emit delivers a track event to the loop. It never blocks forever: if the
@@ -323,18 +331,26 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 
 		case ev := <-inst.events:
 			switch ev.kind {
-			case evSpawn:
-				inst.trackCount.Add(1)
-				spawn(ev.track)
-				if stopping {
-					ev.track.stop()
+			case evFork:
+				for _, f := range ev.flows {
+					nt, err := newTrack(f.Target().Node(), inst, ev.track)
+					if err != nil {
+						inst.lastErr.Store(&err)
+						stopAll()
+
+						break
+					}
+
+					inst.trackCount.Add(1)
+					spawn(nt)
+
+					if stopping {
+						nt.stop()
+					}
 				}
 
 			case evEnded:
 				active--
-
-			case evStop:
-				stopAll()
 			}
 		}
 	}
@@ -531,42 +547,6 @@ func (inst *Instance) getRuntimeVar(name string) (data.Data, error) {
 	}
 
 	return p, nil
-}
-
-// addToken adds a new token into Instance.
-func (inst *Instance) addToken(t *token) {
-	if st := inst.State(); st != Runned {
-		return
-	}
-
-	inst.m.Lock()
-	inst.tokens = append(inst.tokens, t)
-	inst.m.Unlock()
-}
-
-// tokenConsumed checks all tokens of the Instance and if there is
-// no alive token, all runned tracks stopped, and Instance execution finished.
-func (inst *Instance) tokenConsumed(_ *token) {
-	if inst.State() != Runned {
-		return
-	}
-
-	// check if there is any alive token (tokens are guarded by m until M5).
-	inst.m.Lock()
-	anyAlive := slices.ContainsFunc(
-		inst.tokens,
-		func(t *token) bool {
-			return t.state == TokenAlive
-		},
-	)
-	inst.m.Unlock()
-
-	if anyAlive {
-		return
-	}
-
-	// no live token — ask the loop (the sole state owner) to stop the instance.
-	inst.emit(trackEvent{kind: evStop})
 }
 
 // -------------------- exec.EventProducer interface ---------------------------
