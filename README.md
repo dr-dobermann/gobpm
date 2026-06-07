@@ -23,7 +23,7 @@ The library carries no runtime baggage; the runtime never reimplements the engin
 
 - **Library, not framework** — embeds into your Go binary; no JVM, containers, or external services. Core depends only on the Go stdlib + `github.com/google/uuid`.
 - **BPMN 2.0 Process Execution Conformance** — the Common Executable Subclass plus the ComplexGateway extension. Authoritative scope: [docs/bpmn-spec/conformance.md](docs/bpmn-spec/conformance.md).
-- **Predictable execution model** — one orchestrator goroutine per process instance owns state; each active token runs in its own goroutine; `context.Context` is the cancellation contract. See [ADR-001](docs/design/ADR-001-execution-model.md).
+- **Predictable execution model** — one event-loop goroutine per process instance owns state; each *track* (thread of execution) runs in its own goroutine, and a token is a projection of a track's position, not a stored object; `context.Context` is the cancellation contract. See [ADR-001](docs/design/ADR-001-execution-model.md).
 - **Interface-driven extensibility** — persistence, expressions, messaging, observability, authorization, task distribution, and clock are all behind interfaces with in-core defaults. See [ADR-002](docs/design/ADR-002-extension-architecture.md).
 - **Observable by default** — `Logger` defaults to `slog.Default()`; you opt *out* of telemetry, you don't opt in. Tracer/metrics default to no-op (OpenTelemetry adapter ships separately).
 - **Programmatic model construction** — processes are built in Go. XML parsing is intentionally decoupled from the model layer.
@@ -97,7 +97,7 @@ make build     # build to ./bin/
 
 - **Specification-first** — non-trivial changes start from a spec (SRD/FIX) referencing the governing ADR; the spec lands in the same change-set as its implementation.
 - **`master` is protected** — changes land only through a PR with a green `check`; no direct, force, or admin-bypass pushes.
-- **Design docs** under `docs/design/` ([SAD-001](docs/design/SAD-001-vision-and-architecture.md), [ADR-001…004](docs/design/)) are the source of truth; see [CONTRIBUTING.md](CONTRIBUTING.md).
+- **Design docs** under `docs/design/` ([SAD-001](docs/design/SAD-001-vision-and-architecture.md), [ADR-001…007](docs/design/)) are the source of truth; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Requirements
 

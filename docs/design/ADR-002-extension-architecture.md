@@ -547,7 +547,7 @@ When Thresher constructs and runs, it detects whether each registered extension 
 - `Start` is called during `Run` setup before instances are accepted.
 - `Stop` is called during engine shutdown after all instances are drained or terminated.
 - `HealthCheck` is exposed by the runtime layer (per ADR-004) for liveness/readiness endpoints.
-- `ClusterCompatibility` is queried by the runtime layer at startup when cluster mode is active; any `(false, reason)` return is a hard startup failure. (Substantive cluster design lives in future ADR-005; per [SAD-001 §13.5](SAD-001-vision-and-architecture.md).)
+- `ClusterCompatibility` is queried by the runtime layer at startup when cluster mode is active; any `(false, reason)` return is a hard startup failure. (Substantive cluster design lives in future ADR-008; per [SAD-001 §13.5](SAD-001-vision-and-architecture.md).)
 
 Adapters that don't implement them just work. This is progressive enhancement — small adapters stay simple; large adapters get lifecycle hooks when they need them.
 

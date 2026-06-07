@@ -25,7 +25,7 @@ The `runtime/` submodule (scaffolded per [SAD-001 §9.2](SAD-001-vision-and-arch
 - Health-check endpoints and the [ADR-002 §8.3](ADR-002-extension-architecture.md) `Starter` / `Stopper` / `HealthChecker` integration.
 - Configuration model.
 
-Out of scope for v.1 of this ADR: multi-node distribution (deferred to a future ADR-005, per [SAD-001 §13](SAD-001-vision-and-architecture.md) preliminary section).
+Out of scope for v.1 of this ADR: multi-node distribution (deferred to a future ADR-008, per [SAD-001 §13](SAD-001-vision-and-architecture.md) preliminary section).
 
 Current code state: `runtime/` does not exist yet. Per ADR-003, it is scaffolded as the first migration step (empty `go.mod` + `doc.go` + stub `cmd/gobpm-server/main.go`). This ADR defines what fills the scaffold.
 
@@ -209,13 +209,13 @@ On SIGTERM / SIGINT:
 2. Stop accepting new HTTP / gRPC connections (graceful close)
 3. Wait for in-flight requests to drain (configurable timeout, default 30s)
 4. Call thresher.Thresher's Stop / cancel — engine drains in-flight Instances
-   per ADR-001 §4.8 context cancellation cascade
+   per ADR-001 v.3 §4.6 context cancellation cascade
 5. Run adapter.Stop() for each Stopper adapter in REVERSE startup order
 6. Close Logger / Tracer / MetricsRecorder (final flush)
 7. Exit 0
 ```
 
-If the drain timeout exceeds, runtime force-cancels remaining work (cascade through ctx). Outstanding state is in `Repository`; on restart, rehydration per ADR-001 §4.11 picks up where things left off.
+If the drain timeout exceeds, runtime force-cancels remaining work (cascade through ctx). Outstanding state is in `Repository`; on restart, rehydration (the Persistence & State ADR; runtime invariants in ADR-001 v.3 §4.7) picks up where things left off.
 
 ### 4.5 API surface — service groups
 
@@ -333,7 +333,7 @@ The Diagnostic service group exposes operations for post-incident diagnosis and 
 |---|---|---|
 | **Read-only inspection** | Instance state snapshot; token positions; history queries; stuck-token / deadlock detection; in-flight stats | `instance:read` / `engine:read` |
 | **Admin intervention** | Manual token move; activity retry; force-terminate instance; cancel running tracks | `instance:admin` |
-| **Cluster ops** | (future, per ADR-005) instance migration between nodes; force-failover; cluster-wide drain | `engine:admin` |
+| **Cluster ops** | (future, per ADR-008) instance migration between nodes; force-failover; cluster-wide drain | `engine:admin` |
 
 These operations route through `pkg/thresher` methods (where they exist) or via engine façade methods that mediate access to `internal/instance/` per ADR-001. Specific endpoint paths, methods, and request/response shapes are SRD-level per the Diagnostic-group implementation SRD.
 
@@ -394,7 +394,7 @@ Each row is its own SRD-class implementation. The runtime is substantial — lik
 - **ADR-001 Execution Model**: Runtime invokes engine operations via `pkg/thresher`; engine's `context.Context` cancellation cascade is the underlying shutdown mechanism.
 - **ADR-002 Extension Architecture**: Runtime wires adapter implementations of every core extension interface; the `Starter` / `Stopper` / `HealthChecker` optional interfaces from §8.3 are first-class consumed here.
 - **ADR-003 Module Layout**: Runtime is the `runtime/` submodule; adapter authn implementations are under `adapters/` per the module-layout rules.
-- **Future ADR-005 Distribution & Scale**: Will extend §4.5's `WorkerDispatchService` to a full clustered dispatch model. Multi-node coordination, cluster-wide signal broadcast, and instance pinning live there.
+- **Future ADR-008 Distribution & Scale**: Will extend §4.5's `WorkerDispatchService` to a full clustered dispatch model. Multi-node coordination, cluster-wide signal broadcast, and instance pinning live there.
 
 ## 7. Verification
 
@@ -478,7 +478,7 @@ Skipping this for "simple" endpoints in early development creates the painful "w
 
 ## 9. References
 
-- [SAD-001 Vision & Architecture](SAD-001-vision-and-architecture.md) — §12 Runtime Environment (this ADR refines); §13 Distribution & Scale (preliminary — future ADR-005 will extend §4.5 worker-dispatch); §9 Module Layout (defines `runtime/` submodule)
+- [SAD-001 Vision & Architecture](SAD-001-vision-and-architecture.md) — §12 Runtime Environment (this ADR refines); §13 Distribution & Scale (preliminary — future ADR-008 will extend §4.5 worker-dispatch); §9 Module Layout (defines `runtime/` submodule)
 - [ADR-001 Execution Model](ADR-001-execution-model.md) — `context.Context` cancellation cascade that this ADR's §4.4 graceful shutdown uses
 - [ADR-002 Extension Architecture](ADR-002-extension-architecture.md) — extension interfaces this ADR wires; §8.3 `Starter` / `Stopper` / `HealthChecker` first-class consumers; §8.1 observability attribute conventions
 - [ADR-003 Module Layout](ADR-003-module-layout.md) — `runtime/` submodule placement, adapter module conventions, import-direction rules

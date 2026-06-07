@@ -9,7 +9,7 @@
 | **Subordinate to** | [SAD-001 v.1 Vision & Architecture](../design/SAD-001-vision-and-architecture.md) |
 | **Conformance scope** | [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) |
 
-This roadmap sequences the work that delivers the architecture described in [SAD-001 v.1](../design/SAD-001-vision-and-architecture.md) and its subordinate ADRs ([ADR-001 v.2](../design/ADR-001-execution-model.md), [ADR-002 v.1](../design/ADR-002-extension-architecture.md), [ADR-003 v.1](../design/ADR-003-module-layout.md), [ADR-004 v.1](../design/ADR-004-runtime-environment-contract.md)). It is **subordinate** to those documents: where they establish *what* and *why*, this roadmap orders the *when*. It does not introduce architecture — anything that looks like a new decision belongs in an ADR, not here.
+This roadmap sequences the work that delivers the architecture described in [SAD-001 v.1](../design/SAD-001-vision-and-architecture.md) and its subordinate ADRs ([ADR-001 v.3](../design/ADR-001-execution-model.md), [ADR-002 v.1](../design/ADR-002-extension-architecture.md), [ADR-003 v.1](../design/ADR-003-module-layout.md), [ADR-004 v.1](../design/ADR-004-runtime-environment-contract.md), [ADR-005](../design/ADR-005-gateways-and-joins.md)/[006](../design/ADR-006-events-and-subscriptions.md)/[007](../design/ADR-007-in-memory-long-waits.md)). It is **subordinate** to those documents: where they establish *what* and *why*, this roadmap orders the *when*. It does not introduce architecture — anything that looks like a new decision belongs in an ADR, not here.
 
 It replaces the v2.0 roadmap, which was organised purely as BPMN-element phases and predated the SAD/ADR conception. The element ordering from v2.0 survives (it is sound), but it is now framed inside the dependency chain the SAD/ADRs imply: conception → structural foundation → element completion → runtime overlay.
 
@@ -37,7 +37,7 @@ Grounded in the code, not aspiration.
 
 ### 2.1 Implemented (real logic + tests)
 
-- **Execution core (ADR-001 model).** `Instance` / `track` / `token` are fully implemented with their state machines; one goroutine per track; token lineage and `split()`. Token states `Alive / WaitForEvent / Consumed` (+ `Invalid`). Single-owner instance mutation.
+- **Execution core (ADR-001 v.3 two-layer model).** `Instance` + `track` implemented (SRD-001, Accepted): one event-loop goroutine per instance is the sole state mutator; one goroutine per track; the **token is a projection** of a track's step (no stored type, no `split()`); lineage on `track.prev`. Instance lifecycle `Created → Active → Completed` (+ `Terminating → Terminated`). Token-state projection `Alive / WaitForEvent / Consumed` (`Withdrawn` reserved → ADR-005). Joins/events/long-waits are out of this core (ADR-005/006/007).
 - **Event processing.** `EventHub` with the synchronous `Start` / blocking `Run` split (FIX-001, Accepted); event registration / propagation / waiter management. **Timer** waiter implemented. Race-clean under `-race` stress.
 - **Scope.** Hierarchical scope tree with path-based lookup and shadowing (`internal/scope`).
 - **Model elements.** Start/End events; **Exclusive** gateway (conditions, default flow); **Service** and **User** tasks; sequence flow (conditions, default); data objects, item definitions, properties, I/O specification, data associations, `FormalExpression` + Go-native evaluator; service/operation; correlation *structures*; message/resource.
@@ -55,8 +55,8 @@ Grounded in the code, not aspiration.
 
 ### 2.3 Document status & integrity
 
-- **Statuses:** SAD-001 v.1 Draft; ADR-001 v.2 Draft; ADR-002 / ADR-003 / ADR-004 v.1 Draft; FIX-001 v.1 **Accepted**.
-- **Document integrity:** the earlier dead references are resolved — FIX-001 now points to the real sources (the `chore/ci-audit` `-race` gate + SAD-001 §9 / ADR-003 for the multi-module scaffold) instead of a never-written `SRD-001`; ADR-004's legacy IAM-ADR reference is folded into the AuthN/Z model (§4.7 + `AuthorizationProvider`). No standalone `SRD-001` or IAM ADR will be recreated — that content lives in the SAD/ADRs.
+- **Statuses:** SAD-001 v.1 Draft; **ADR-001 v.3 Accepted**; ADR-002 / ADR-003 / ADR-004 v.1 Draft; **ADR-005 / ADR-006 / ADR-007 v.1 Draft** (gateways/events/long-waits, relocated from ADR-001); **SRD-001 v.1 Accepted** (instance/track/token refactor); FIX-001 v.1 **Accepted**. (ADR-008 Distribution & Scale — planned, the home for SAD §13.)
+- **Document integrity:** FIX-001's earlier dead `SRD-001` reference (a *never-written* doc at the time) was repointed to the real sources (the `chore/ci-audit` `-race` gate + SAD-001 §9 / ADR-003 for the multi-module scaffold); ADR-004's legacy IAM-ADR reference is folded into the AuthN/Z model (§4.7 + `AuthorizationProvider`). A real **SRD-001** was later authored for the two-layer runtime refactor and is Accepted with its implementation (per the rule that SRD/FIX land in the same change-set as their code).
 
 ## 3. Sequencing principles
 
@@ -74,10 +74,11 @@ Workstreams are dependency-ordered tracks. They overlap in calendar time but hav
 
 Close each ADR's test-based acceptance gate (§7 in each) and flip Draft → Accepted, then pin outgoing references and add the Russian twin.
 
-- Accept **ADR-001** (execution model): its gate requires the §7 verification tests (race-freedom, goroutine-leak-free, fork/join, withdrawn semantics, restart recovery, long-wait release, termination cascade, boundary isolation, token-event completeness) to exist and pass. At the flip, note the race-freedom gate is now exercised in the engine (no downward FIX reference — see the deferred follow-up).
+- Accept **ADR-001** (execution model) — **done (v.3 Accepted)**: scoped to the runtime core; §7 gate exercised and green (race-freedom, leak-free, fork, projection, completion, termination cascade); the gate's former rows for joins/withdrawn/long-wait/boundary/restart were **relocated** to ADR-005/006/007 + the Persistence ADR. Landed with SRD-001 (Accepted). Race-freedom noted as exercised in the engine (no downward FIX reference).
 - Accept **ADR-002 → ADR-003 → ADR-004** in that order (linear dependency: interfaces defined → placed → wired).
-- Accept **SAD-001**: requires §13 Distribution & Scale to be refined or relocated to a dedicated ADR-005 first (it is explicitly flagged preliminary).
-- **Doc-integrity gaps cleared** (done): FIX-001's dead `SRD-001` references repointed to the real sources; ADR-004's dead IAM-ADR reference folded into the AuthN/Z model. No standalone SRD-001 / IAM ADR is recreated (spec content lives in the SAD/ADRs; per project rule, SRD/FIX docs henceforth land in the same change-set as their implementation).
+- Author & accept **ADR-005 (Gateways & Joins) → ADR-006 (Events) → ADR-007 (Long Waits)** alongside their first implementations (currently Draft seeds relocated from ADR-001).
+- Accept **SAD-001**: requires §13 Distribution & Scale to be refined or relocated to a dedicated **ADR-008** first (it is explicitly flagged preliminary).
+- **Doc-integrity gaps cleared** (done): FIX-001's dead `SRD-001` reference (never-written at the time) repointed to the real sources; ADR-004's dead IAM-ADR reference folded into the AuthN/Z model. A real SRD-001 was later authored for the two-layer refactor and is Accepted with its code (per the rule that SRD/FIX docs land in the same change-set as their implementation).
 
 *Output:* a stable, Accepted conception layer with version-pinned cross-references and twins.
 
@@ -120,7 +121,7 @@ Production implementations of the extension interfaces, each in its own `adapter
 
 ### WS-F — Distribution & scale (future)
 
-Deferred until multi-node demand materialises; gated on WS-B3 persistence. Specified in a future **ADR-005** (the home for SAD §13's preliminary content):
+Deferred until multi-node demand materialises; gated on WS-B3 persistence. Specified in a future **ADR-008** (the home for SAD §13's preliminary content):
 
 - Task-level remote execution via `WorkerDispatcher` (direct dispatch, not a queue).
 - Instance-level distribution: sticky routing per instance ID + failover via persistence rehydration.
@@ -132,7 +133,7 @@ Milestones are demonstrable capability checkpoints cutting across the workstream
 
 | # | Milestone | Contains | Demonstrates |
 |---|---|---|---|
-| **M0** | Conception accepted | WS-A | SAD-001 + ADR-001..004 Accepted; conception stable, refs pinned, twins in place |
+| **M0** | Conception accepted | WS-A | SAD-001 + ADR-001..007 Accepted; conception stable, refs pinned, twins in place. (ADR-001 + SRD-001 already Accepted with twins.) |
 | **M1** | Embedded-library MVP | WS-B1, WS-B2, WS-C1 | `gobpm.New(opts...)` clean assembly; Parallel+Exclusive gateways; Service/User/Manual tasks; None/Terminate events; working example under 20 lines (SAD G3) |
 | **M2** | Durable execution | WS-B3, WS-C2 | Checkpoint + restart recovery; long-wait token release/rehydration; Incidents/Retry/DLQ |
 | **M3** | Messaging, time & reuse | WS-C3, WS-C4 | Message correlation; Message/Signal/Timer events; Event-Based gateway; Sub-Process & Call Activity |
@@ -143,7 +144,7 @@ Milestones are demonstrable capability checkpoints cutting across the workstream
 ## 6. References
 
 - [SAD-001 v.1 Vision & Architecture](../design/SAD-001-vision-and-architecture.md) — the architecture this roadmap delivers.
-- [ADR-001 v.2 Execution Model](../design/ADR-001-execution-model.md) — Instance/Tracks/Tokens; ctx cancellation; rehydration; checkpoint policy.
+- [ADR-001 v.3 Execution Model](../design/ADR-001-execution-model.md) — two-layer Instance + track; token as projection; ctx cancellation cascade (joins/events/long-waits/persistence relocated).
 - [ADR-002 v.1 Extension Architecture](../design/ADR-002-extension-architecture.md) — 11-interface catalogue; functional-options assembly; defaults.
 - [ADR-003 v.1 Module Layout](../design/ADR-003-module-layout.md) — `pkg/` subpackage catalogue; 12 migration steps; import-direction rules.
 - [ADR-004 v.1 Runtime Environment Contract](../design/ADR-004-runtime-environment-contract.md) — runtime overlay; startup/shutdown; API service groups; tenancy; AuthN/Z.
