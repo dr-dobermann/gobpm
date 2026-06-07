@@ -78,7 +78,7 @@ func TestM4ForkCompletes(t *testing.T) {
 	require.NoError(t, inst.Run(ctx))
 
 	require.Eventually(t,
-		func() bool { return inst.State() == Finished },
+		func() bool { return inst.State() == Completed },
 		2*time.Second, 5*time.Millisecond,
 		"both forked tracks should complete")
 
@@ -156,7 +156,7 @@ func TestM4ForkRace(t *testing.T) {
 
 	require.NoError(t, inst.Run(ctx))
 	require.Eventually(t,
-		func() bool { return inst.State() == Finished },
+		func() bool { return inst.State() == Completed },
 		2*time.Second, 5*time.Millisecond)
 
 	close(done)

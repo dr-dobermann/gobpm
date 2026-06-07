@@ -162,7 +162,7 @@ type track struct {
 	steps  []*stepInfo
 	m      sync.RWMutex
 	state  trackState
-	stopIt bool
+	stopIt atomic.Bool
 }
 
 // record appends a track-state transition to the history, copy-on-write, and
@@ -346,10 +346,7 @@ func (t *track) currentStep() *stepInfo {
 
 // stop terminates track execution.
 func (t *track) stop() {
-	t.m.Lock()
-	defer t.m.Unlock()
-
-	t.stopIt = true
+	t.stopIt.Store(true)
 }
 
 // run start execution loop of the track which ends by ctx's cancel or
@@ -357,7 +354,7 @@ func (t *track) stop() {
 func (t *track) run(
 	ctx context.Context,
 ) {
-	if t.stopIt || !t.inState(TrackReady, TrackWaitForEvent) {
+	if t.stopIt.Load() || !t.inState(TrackReady, TrackWaitForEvent) {
 		return
 	}
 
@@ -374,7 +371,7 @@ func (t *track) run(
 			return
 
 		default:
-			if t.stopIt {
+			if t.stopIt.Load() {
 				t.updateState(TrackCanceled)
 
 				return

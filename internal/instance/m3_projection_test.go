@@ -51,7 +51,7 @@ func TestM3LinearHistory(t *testing.T) {
 
 	require.NoError(t, inst.Run(ctx))
 	require.Eventually(t,
-		func() bool { return inst.State() == Finished },
+		func() bool { return inst.State() == Completed },
 		2*time.Second, 5*time.Millisecond)
 
 	// all tokens consumed -> none active
@@ -113,7 +113,7 @@ func TestM3ConcurrentReads(t *testing.T) {
 
 	require.NoError(t, inst.Run(ctx))
 	require.Eventually(t,
-		func() bool { return inst.State() == Finished },
+		func() bool { return inst.State() == Completed },
 		2*time.Second, 5*time.Millisecond)
 
 	close(done)

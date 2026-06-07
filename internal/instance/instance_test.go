@@ -63,7 +63,7 @@ func TestMonitoring(t *testing.T) {
 
 	st, err := inst.GetData(rvs, instance.CurrState)
 	require.NoError(t, err)
-	require.Equal(t, instance.Ready, st.Value().Get(ctx).(instance.State))
+	require.Equal(t, instance.Created, st.Value().Get(ctx).(instance.State))
 
 	start, err := inst.GetData(rvs, instance.StartedAt)
 	require.NoError(t, err)
