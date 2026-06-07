@@ -70,6 +70,7 @@ const (
 	Canceled
 )
 
+// String returns the human-readable name of the instance state.
 func (s State) String() string {
 	return []string{
 		"Created",
@@ -94,16 +95,20 @@ type Instance struct {
 	rr                  interactor.Registrator
 	parentEventProducer eventproc.EventProducer
 	parentScope         scope.Scope
-	tracks              map[string]*track        // owned by loop(); not guarded by m
-	tracksSnap          atomic.Pointer[[]*track] // copy-on-write; lock-free GetTokens/TokenHistory
-	lastErr             atomic.Pointer[error]    // fatal fork-construct error, if any
-	scopes              map[scope.DataPath]map[string]data.Data
-	s                   *snapshot.Snapshot
-	events              chan trackEvent // tracks -> loop()
-	loopDone            chan struct{}   // closed when loop() exits
-	now                 func() time.Time
-	runtimeScope        scope.DataPath
-	rootScope           scope.DataPath
+	// tracks is the live track registry, owned by loop() (not guarded by m).
+	tracks map[string]*track
+	// tracksSnap is a copy-on-write snapshot for lock-free GetTokens /
+	// TokenHistory reads.
+	tracksSnap atomic.Pointer[[]*track]
+	// lastErr is a fatal fork-construct error, if any.
+	lastErr      atomic.Pointer[error]
+	scopes       map[scope.DataPath]map[string]data.Data
+	s            *snapshot.Snapshot
+	events       chan trackEvent // tracks -> loop()
+	loopDone     chan struct{}   // closed when loop() exits
+	now          func() time.Time
+	runtimeScope scope.DataPath
+	rootScope    scope.DataPath
 	foundation.BaseElement
 	trackCount atomic.Int64
 	m          sync.RWMutex  // guards scopes + tokens (NOT lifecycle state/tracks)
@@ -192,7 +197,9 @@ func (inst *Instance) loadProperties(parentScope scope.Scope) error {
 
 	inst.runtimeScope, err = inst.rootScope.Append(runtimeVars)
 	if err != nil {
-		return fmt.Errorf("couldn't create instance's scope runtime variables data path: %w", err)
+		return fmt.Errorf(
+			"couldn't create instance's scope runtime variables data path: %w",
+			err)
 	}
 
 	inst.scopes[inst.rootScope] = map[string]data.Data{}
@@ -256,21 +263,6 @@ func (inst *Instance) Run(
 	return nil
 }
 
-// trackEvent is a message from a track to the Instance event loop. M2 carries
-// the coarse lifecycle set; M4 refines the fork into an active-flows event.
-type trackEvent struct {
-	track *track               // evEnded: the ended track; evFork: the forking parent
-	flows []*flow.SequenceFlow // evFork: the extra flows to build a track for each
-	kind  trackEventKind
-}
-
-type trackEventKind uint8
-
-const (
-	evFork  trackEventKind = iota // fork: build one new track per extra flow
-	evEnded                       // a track's run() returned
-)
-
 // emit delivers a track event to the loop. It never blocks forever: if the
 // loop has exited or the context is canceled it drops the event.
 func (inst *Instance) emit(ev trackEvent) {
@@ -291,23 +283,30 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	active := 0
 	stopping := false
 
+	// spawn registers a track, adds it to the read snapshot, counts it
+	// active, and runs it in its own goroutine.
 	spawn := func(t *track) {
 		inst.tracks[t.ID()] = t
 		inst.addToSnap(t)
 		active++
 
+		// run the track and report its end back to the loop.
 		go func(t *track) {
 			t.run(ctx)
 			inst.emit(trackEvent{kind: evEnded, track: t})
 		}(t)
 	}
 
+	// stopAll moves the instance to Stopping (once) and signals every
+	// live track to stop.
 	stopAll := func() {
 		if stopping {
 			return
 		}
+
 		stopping = true
 		inst.setState(Stopping)
+
 		for _, t := range inst.tracks {
 			t.stop()
 		}

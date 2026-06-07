@@ -45,9 +45,9 @@ package instance
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/exec"
@@ -87,6 +87,7 @@ const (
 	TrackFailed
 )
 
+// String returns the human-readable name of the track state.
 func (t trackState) String() string {
 	return []string{
 		"TrackCreated",
@@ -125,6 +126,7 @@ const (
 	StepFailed
 )
 
+// String returns the human-readable name of the step state.
 func (ss stepState) String() string {
 	return []string{
 		"Created",
@@ -161,56 +163,6 @@ type track struct {
 	m      sync.RWMutex
 	state  trackState
 	stopIt bool
-}
-
-// stepUpdate is one recorded track-state transition: which node the track was
-// at, the track state it entered, and when. The token state is projected from
-// it; the node + time give the path and its timing.
-type stepUpdate struct {
-	node  flow.Node
-	at    time.Time
-	state trackState
-}
-
-// Token is the logical, derived view of a track's current control-flow
-// position — the BPMN "token" as a projection, not a stored object.
-type Token struct {
-	Node  flow.Node
-	State TokenState
-}
-
-// StepVisit is one entry of a token's path history with its timing.
-type StepVisit struct {
-	Node  flow.Node
-	At    time.Time
-	State TokenState
-}
-
-// TokenPath is the recorded path of one token (one track), with lineage.
-type TokenPath struct {
-	TrackID  string
-	ParentID string // immediate parent track (fork origin); "" for a root track
-	Steps    []StepVisit
-	Terminal TokenState
-}
-
-// tokenStateFor projects a track state onto the BPMN token state.
-func tokenStateFor(ts trackState) TokenState {
-	switch ts {
-	case TrackReady, TrackExecutingStep, TrackProcessStepResults:
-		return TokenAlive
-
-	case TrackWaitForEvent:
-		return TokenWaitForEvent
-
-	case TrackEnded, TrackMerged, TrackCanceled, TrackFailed:
-		// Canceled maps to Consumed here; the Withdrawn case (Event-Based
-		// Gateway race loss) is wired with that gateway (gateway SRD).
-		return TokenConsumed
-
-	default:
-		return TokenInvalid
-	}
 }
 
 // record appends a track-state transition to the history, copy-on-write, and
@@ -352,18 +304,13 @@ func (t *track) checkNodeType(node flow.Node) error {
 }
 
 // inState checks if track state is equal to any track state from the ss.
+// inState reports whether the track's current state is any of ss.
 func (t *track) inState(ss ...trackState) bool {
 	t.m.RLock()
 	state := t.state
 	t.m.RUnlock()
 
-	for _, s := range ss {
-		if state == s {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(ss, state)
 }
 
 // updateState sets new state for the track if its not in final state.
@@ -496,7 +443,12 @@ func (t *track) executeNode(
 	return nexts, nil
 }
 
-func (t *track) prepareNodeExecution(ctx context.Context, step *stepInfo) error {
+// prepareNodeExecution marks the step executing, loads incoming data, extends
+// scope for data-loader nodes, and runs the node prologue.
+func (t *track) prepareNodeExecution(
+	ctx context.Context,
+	step *stepInfo,
+) error {
 	t.updateState(TrackExecutingStep)
 	step.state = StepStarted
 	t.record(TrackExecutingStep) // record this node visit (path + timing)
@@ -520,7 +472,12 @@ func (t *track) prepareNodeExecution(ctx context.Context, step *stepInfo) error 
 	return t.runNodePrologue(ctx, step.node)
 }
 
-func (t *track) executeNodeCore(ctx context.Context, step *stepInfo, ne exec.NodeExecutor) ([]*flow.SequenceFlow, error) {
+// executeNodeCore runs the node's executor and returns its outgoing flows.
+func (t *track) executeNodeCore(
+	ctx context.Context,
+	step *stepInfo,
+	ne exec.NodeExecutor,
+) ([]*flow.SequenceFlow, error) {
 	step.state = StepExecuting
 
 	nexts, err := ne.Exec(ctx, t.instance)
@@ -531,7 +488,12 @@ func (t *track) executeNodeCore(ctx context.Context, step *stepInfo, ne exec.Nod
 	return nexts, nil
 }
 
-func (t *track) finalizeNodeExecution(ctx context.Context, step *stepInfo, _ []*flow.SequenceFlow) error {
+// finalizeNodeExecution runs the node epilogue and uploads its outgoing data.
+func (t *track) finalizeNodeExecution(
+	ctx context.Context,
+	step *stepInfo,
+	_ []*flow.SequenceFlow,
+) error {
 	if err := t.runNodeEpilogue(ctx, step.node); err != nil {
 		return err
 	}
@@ -658,6 +620,9 @@ func (t *track) uploadOutgoingData(ctx context.Context, n flow.Node) error {
 
 // --------------------- exec.EventProcessor interface -------------------------
 
+// ProcessEvent delivers a fired event to the waiting node, unregisters the
+// node's event definitions, and returns the track to the Ready state so run()
+// resumes it. Implements eventproc.EventProcessor.
 func (t *track) ProcessEvent(
 	ctx context.Context,
 	eDef flow.EventDefinition,
