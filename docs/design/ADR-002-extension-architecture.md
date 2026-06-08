@@ -206,7 +206,7 @@ type EngineRuntime interface {
     MetricsRecorder() MetricsRecorder
     Clock() Clock
     Repository() Repository
-    ExpressionEngine() ExpressionEngine
+    ExpressionEngine() expression.Engine         // type is expression.Engine (avoids stutter)
     MessageBroker() MessageBroker
     AuthorizationProvider() AuthorizationProvider
     WorkerDispatcher() WorkerDispatcher

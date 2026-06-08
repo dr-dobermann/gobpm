@@ -91,7 +91,7 @@ type thresherConfig struct {
     clock       Clock
     repository  Repository
     msgBroker   MessageBroker
-    exprEngine  ExpressionEngine
+    exprEngine  expression.Engine
     authz       AuthorizationProvider
     dispatcher  WorkerDispatcher
     // EventHub is NOT here — it stays internal (ADR-002 §4.2); the Thresher
