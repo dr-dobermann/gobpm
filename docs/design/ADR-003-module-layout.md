@@ -27,7 +27,7 @@ Current code state (relevant to module layout):
 - **`examples/`** already follows the multi-module pattern — three subdirectories, each with its own `go.mod`.
 - **No `runtime/`, no `adapters/`** yet.
 
-Per ADR-002 §5, several existing internal interfaces are promoted to `pkg/`: `RuntimeEnvironment`, `EventHub`, and the renamed `TaskDistributor` (formerly `Registrator`). Seven new extension interfaces are introduced (Repository, Logger, Tracer, MetricsRecorder, Clock, MessageBroker, AuthorizationProvider, WorkerDispatcher, plus ExpressionEngine which wraps existing `FormalExpression`). This ADR places them.
+Per ADR-002 §5, the engine-level extension accessors are factored into a public **`EngineRuntime`** interface promoted to `pkg/`. Three things an earlier draft planned to promote **stay internal** instead: `EventHub` (execution plumbing, not an extension point — ADR-002 §4.2); `RuntimeEnvironment` (it embeds internal types and now embeds the public `EngineRuntime`); and the human-interaction cluster `Registrator`/`Interactor` (its promotion + the `TaskDistributor` rename are deferred to a dedicated human-interaction ADR — ADR-001 v.4 §9). Eight new extension interfaces are introduced (Repository, Logger, Tracer, MetricsRecorder, Clock, MessageBroker, AuthorizationProvider, WorkerDispatcher) plus `ExpressionEngine` (which wraps existing `FormalExpression`). This ADR places them.
 
 ## 2. Decision
 
@@ -123,8 +123,7 @@ github.com/dr-dobermann/gobpm/                       ← repo root
 │   │   └── noop/                                     No-op Tracer + MetricsRecorder defaults
 │   ├── clock/                                        Clock interface (interface-only)
 │   │   └── syscl/                                    System-clock default
-│   ├── messaging/                                    EventHub + MessageBroker interfaces (interface-only)
-│   │   ├── memhub/                                   In-memory EventHub default
+│   ├── messaging/                                    MessageBroker interface (interface-only; EventHub stays internal)
 │   │   └── membroker/                                In-memory MessageBroker default
 │   ├── auth/                                         AuthorizationProvider interface (interface-only)
 │   │   └── allowall/                                 Allow-all default
@@ -176,9 +175,9 @@ All interface packages are **interface-only**. Defaults always live in sibling s
 | `pkg/repository/` | `Repository` | `pkg/repository/memrepo/` (in-memory, non-durable) | The persistence concern stands alone. |
 | `pkg/observability/` | `Logger`, `Tracer`, `MetricsRecorder` | `pkg/observability/slog/` (slog-default Logger); `pkg/observability/noop/` (no-op Tracer + MetricsRecorder) | All three are observability sinks consumed together (a span typically logs + records metrics + adds attributes); separating their interfaces forces awkward multi-import wiring. Defaults split because slog is a real default; tracer/metrics defaults are no-ops. |
 | `pkg/clock/` | `Clock` | `pkg/clock/syscl/` (system clock — `time.Now` wrapper) | Distinct from observability — used by Timer events, not by sinks; deserves its own package for testability injection. |
-| `pkg/messaging/` | `EventHub`, `MessageBroker` | `pkg/messaging/memhub/` (in-memory EventHub); `pkg/messaging/membroker/` (in-memory MessageBroker) | Both are message-distribution concerns; users wiring one often wire the other (correlation flows from broker into hub). |
+| `pkg/messaging/` | `MessageBroker` | `pkg/messaging/membroker/` (in-memory MessageBroker) | External message ingress / correlation. `EventHub` is **not** here — it stays internal (execution plumbing, ADR-002 §4.2). |
 | `pkg/auth/` | `AuthorizationProvider` | `pkg/auth/allowall/` (allow-all default) | Standalone concern; identity-providers and tenancy belong in `runtime/`, not core. |
-| `pkg/tasks/` | `TaskDistributor` (renamed from current `Registrator`), `WorkerDispatcher` | `pkg/tasks/localdistributor/` + `pkg/tasks/localdispatcher/` (in-process defaults) | Both are task-dispatch concerns; cleanly separated from messaging since their semantics differ (TaskDistributor is human-routed, WorkerDispatcher is remote-execution). |
+| `pkg/tasks/` | `WorkerDispatcher` | `pkg/tasks/localdispatcher/` (in-process default) | Remote-execution task dispatch. (`TaskDistributor` / human-interaction is **deferred** — ADR-001 v.4 §9 — so it is not in this package yet.) |
 | `pkg/extension/` | `Starter`, `Stopper`, `HealthChecker` (optional side-capability interfaces per ADR-002 §8.3) | n/a — these are pure marker interfaces | The cross-cutting "lifecycle hook" trait set; lives alone so adapters can implement them without importing concern-specific packages. |
 
 #### Conformance test helpers
@@ -188,7 +187,7 @@ Each interface package SHOULD ship its conformance helper as an exported functio
 | Test helper location | Helps test |
 |---|---|
 | `pkg/repository/repositorytest/` | Any `Repository` implementation |
-| `pkg/messaging/messagingtest/` | Any `EventHub` / `MessageBroker` implementation |
+| `pkg/messaging/messagingtest/` | Any `MessageBroker` implementation |
 | `pkg/clock/clocktest/` | Any `Clock` implementation (incl. fake clocks for time-dependent tests) |
 | `pkg/model/expression/expressiontest/` | Any `ExpressionEngine` implementation |
 | `pkg/tasks/taskstest/` | Any `TaskDistributor` / `WorkerDispatcher` implementation |
@@ -206,9 +205,9 @@ What stays in `internal/` is purely-internal supporting machinery the public int
 
 | Current location | Promoted to | What goes with it |
 |---|---|---|
-| `internal/eventproc/EventHub` interface + `internal/eventproc/eventhub/` default impl | `pkg/messaging/` (interface + default `NewHub()` constructor in same package) | Both interface and impl move together. External adapters import `pkg/messaging`; they get the interface to implement AND the default to use as a reference. |
-| `internal/renv/RuntimeEnvironment` interface | `pkg/renv/` (interface only — there is no separate default impl; `internal/instance/Instance` IS the implementation) | Just the interface moves. `internal/instance/Instance` continues to implement it (now importing from `pkg/renv/`). |
-| `internal/interactor/Registrator` interface + default impl | `pkg/tasks/` (renamed to `TaskDistributor` + `NewDistributor()` constructor) | Both interface and impl move together. |
+| `internal/eventproc/EventHub` (+ `eventhub/` impl) | **stays internal** | Execution plumbing, not an extension point (ADR-002 §4.2). No move. |
+| `internal/renv` engine-level accessors → **`EngineRuntime`** | `pkg/renv/` (the public `EngineRuntime` interface only) | Only the engine-level accessors go public as `EngineRuntime` (implemented by `Thresher`). `RuntimeEnvironment` **stays in `internal/renv`** — it embeds internal `scope.Scope`/`EventProducer`/`RenderRegistrator` plus the public `EngineRuntime`; `Instance` implements it. |
+| `internal/interactor/Registrator` cluster | **stays internal (deferred)** | Promotion + the `Registrator → TaskDistributor` rename are owned by a dedicated human-interaction ADR (ADR-001 v.4 §9). No move. |
 | `pkg/model/data/FormalExpression` interface (already in `pkg/`) | `pkg/model/expression/ExpressionEngine` (new interface that wraps FormalExpression evaluation) | FormalExpression stays in `pkg/model/data/` — it IS a BPMN model element. ExpressionEngine is a new extension point that evaluates FormalExpressions; it lives under `pkg/model/expression/` because it directly evaluates a BPMN spec concept, and everything BPMN-adjacent stays in the `pkg/model/` tree. Default impl in `pkg/model/expression/goexpr/`. |
 
 #### What stays in `internal/`
@@ -218,9 +217,9 @@ What stays in `internal/` is purely-internal supporting machinery the public int
 | `internal/instance/` | `Instance`, `track`, `stepInfo` types + the `Token` projection per ADR-001 v.3 | The execution machinery is implementation; users interact with it via the `pkg/thresher/` façade and the `pkg/renv.RuntimeEnvironment` interface that `Instance` implements. (A future split of `track` into its own package behind a host interface is noted as deferred follow-up work.) |
 | `internal/scope/` | Scope tree implementation backing `pkg/renv.RuntimeEnvironment.Scope()` | Implementation detail of how data scoping works; the `Scope` interface is exposed via the RuntimeEnvironment embedding. |
 | `internal/runner/`, `internal/exec/` | Execution machinery (the orchestration loop, node-execution dispatch) | Implementation detail; no extension points here. |
-| `internal/eventproc/eventproc.go` (residual after the EventHub promotion) | If anything remains — e.g., supporting helper types used by the default `pkg/messaging` impl that aren't worth exposing | Implementation detail. If nothing remains after the promotion, the package goes away entirely. |
-| `internal/interactor/` (residual) | Same — internal helpers if any remain after the TaskDistributor promotion | Implementation detail; package may go away. |
-| `internal/renv/` (residual) | Composition glue between `Instance` fields and the `RuntimeEnvironment` interface methods | Implementation detail. May go away after the interface migrates and `Instance` implements directly. |
+| `internal/eventproc/` | The full event-distribution mechanism — `EventHub`, `EventProducer`, `EventProcessor`, `EventWaiter`, and the `eventhub/` impl | Execution plumbing; stays internal in full (ADR-002 §4.2). |
+| `internal/interactor/` | The human-interaction cluster (`Registrator`/`Interactor`/`RenderController`) + impl | Stays internal; promotion deferred to the human-interaction ADR (ADR-001 v.4 §9). |
+| `internal/renv/` | `RuntimeEnvironment` (embeds the public `EngineRuntime`) + composition glue | Stays internal; only `EngineRuntime` is promoted to `pkg/`. |
 
 **The boundary discipline**: `pkg/` contains complete, self-contained extension contracts (interface + working default impl). External adapters and users import `pkg/` and get everything they need. `internal/` contains the engine machinery that consumes those `pkg/` interfaces but doesn't publish anything externally.
 
@@ -316,16 +315,16 @@ Incremental, no big-bang reorg. Each step is a small focused change.
 
 1. **Scaffold `runtime/` submodule.** Create `runtime/go.mod`, `runtime/doc.go`, `runtime/cmd/gobpm-server/main.go` (stub). Adds the boundary; no code yet.
 2. **Scaffold `adapters/` directory.** Create at least one placeholder (e.g., `adapters/memrepo-tests/` with the conformance helper that the in-memory Repository default passes — establishes the adapter testing pattern).
-3. **Move `EventHub` interface AND its default implementation** from `internal/eventproc/` to `pkg/messaging/` (the interface and the in-memory default ship together as a self-contained extension contract). Any truly-internal helper machinery that doesn't belong in the public API stays in `internal/eventproc/` (or is deleted if nothing remains). Update all imports.
-4. **Promote `RuntimeEnvironment` interface** from `internal/renv/` to `pkg/renv/`. `internal/instance/Instance` is updated to import from `pkg/renv/`.
-5. **Move `Registrator` interface and rename to `TaskDistributor`** along with its default implementation, from `internal/interactor/` to `pkg/tasks/`. Same self-contained-contract principle as step 3.
+3. **`EventHub` stays internal** — no move (execution plumbing, not an extension point; ADR-002 §4.2). `internal/eventproc/` keeps the full mechanism.
+4. **Factor `EngineRuntime`** (the engine-level extension accessors) into `pkg/renv/` (public), implemented by `Thresher`. `RuntimeEnvironment` **stays in `internal/renv/`**, embedding the public `EngineRuntime`; `internal/instance/Instance` implements it.
+5. **Human interaction is deferred** — the `internal/interactor/` cluster stays internal; the `Registrator → TaskDistributor` rename + promotion ride a dedicated human-interaction ADR (ADR-001 v.4 §9).
 6. **Create new `pkg/` subpackages** for the seven net-new interfaces (Repository, Logger, Tracer, MetricsRecorder, Clock, MessageBroker, AuthorizationProvider, WorkerDispatcher, ExpressionEngine) with their default implementations.
 7. **Add functional options** in `pkg/thresher/` (`WithRepository`, `WithLogger`, etc., per ADR-002 §4.4).
 8. **Refactor `Thresher.New`** to accept options and wire defaults internally.
 9. **Add `pkg/extension/`** with `Starter`, `Stopper`, `HealthChecker`.
 10. **Add CI rule for import-direction enforcement** (golangci-lint depguard) to `.github/workflows/check.yml`.
 11. **Add conformance test helper packages** (`pkg/repository/repositorytest/`, etc.) for the extension types where they apply.
-12. **Remove empty `internal/` directories** that result from the migrations in steps 3–5 (e.g., `internal/eventproc/`, `internal/interactor/`, `internal/renv/` may have no remaining content after their interfaces and default impls are migrated to `pkg/`). Delete the directories; do NOT leave them as empty markers. Remove any other obsolete docs that surface during the migration audit.
+12. **Remove only genuinely-empty `internal/` directories.** Note that `internal/eventproc/`, `internal/interactor/`, and `internal/renv/` **remain** (EventHub internal; human-interaction deferred; `RuntimeEnvironment` internal). Delete a directory only if it genuinely ends up empty; do NOT leave empty markers. Remove any other obsolete docs that surface during the migration audit.
 
 Each step is its own SRD-class change (per project SDD discipline) after this ADR is Accepted.
 
@@ -334,7 +333,7 @@ Each step is its own SRD-class change (per project SDD discipline) after this AD
 | Topic | Current state | This ADR | Required change |
 |---|---|---|---|
 | Number of modules | One (`go.mod` at root) | Three categories: core (1), runtime (1), adapters (N) — scaffolded incrementally | Add `runtime/go.mod`, `runtime/doc.go`, `runtime/cmd/gobpm-server/main.go` stub. Add `adapters/` directory with at least one placeholder per ADR-002 §4.6. |
-| Extension interface location | `internal/eventproc/`, `internal/renv/`, `internal/interactor/`, `pkg/model/data/` (scattered; mostly internal) | Eleven cohesive `pkg/*` subpackages (see §4.2) | Per the §4.6 migration list — 11 file moves / new packages. |
+| Extension interface location | `internal/eventproc/`, `internal/renv/`, `internal/interactor/`, `pkg/model/data/` (scattered; mostly internal) | The cohesive `pkg/*` subpackages of §4.2 (9 public extension contracts + `EngineRuntime`); `EventHub`/human-interaction/`RuntimeEnvironment` stay internal | Per the §4.6 migration list. |
 | Default implementation location | Existing defaults are in `internal/*` packages (e.g., `internal/eventproc/eventhub/`) | **Always in a sibling subpackage** of the interface, never bundled in the interface package (§3.3). E.g., `pkg/repository/` has only the interface; `pkg/repository/memrepo/` has the in-memory default. Adapter authors and users who configure different impls pay nothing for unused defaults. | Move existing internal defaults to `pkg/<concern>/<default>/` subpackages. Empty resulting `internal/` directories are deleted (§4.6 step 12). |
 | Thresher constructor | `Thresher.New(id string)` — no options | `Thresher.New(id, opts ...Option)` (per ADR-002 §4.4) | Implementation lives in `pkg/thresher/`; `Option` type defined there; per-extension `WithXxx` functions defined there. |
 | Conformance test helpers | Not present | One `<pkg>test/` sibling subpackage per applicable interface | Add `pkg/repository/repositorytest/`, `pkg/messaging/messagingtest/`, etc. |
