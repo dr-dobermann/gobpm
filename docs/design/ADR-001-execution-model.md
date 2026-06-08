@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.3 |
-| Date | 2026-06-07 |
+| Version | v.4 |
+| Date | 2026-06-08 |
 | Owner | Ruslan Gabitov |
 | Supersedes | v.2 (three-layer Instance / track / token). v.3 collapses to **two layers** — `token` becomes a logical *projection* of a track, not a stored entity — and **defers persistence / rehydration** to a dedicated ADR. |
 | Refines | [SAD-001 v.1 §10 Execution Model](SAD-001-vision-and-architecture.md) |
@@ -298,9 +298,12 @@ acceptance gate and lands with its own SRD + code:
 | Durable persistence & restart recovery; per-node state contract (fixes the shared-node `RegisterData` mutation, §6) | Persistence & State ADR (to be authored) | — |
 | Instance error states (`Failing/Failed`) and suspend (`Paused`) | future Error-Handling / Persistence ADRs | — |
 
+**Per-adapter ADR policy.** Each *substantial* extension adapter — persistence (`Repository`), observability (OpenTelemetry), messaging, authorization, worker dispatch — is specified by its **own** ADR, not fully inside [ADR-002](ADR-002-extension-architecture.md) or the skeleton SRD (trivial defaults such as no-op or slog need none). The extension skeleton ([SRD-004](../srd/SRD-004-extension-skeleton.md)) lands only the **minimal, in-memory default contracts** needed to run today's BPMN on this two-layer model; the `Repository` interface as defined in ADR-002 v.1 is **sufficient for that migration goal** (in-memory only). Each adapter's production-grade contract — for `Repository`: durable serialization, versioning/CAS, transactions, history/inbox/subscriptions, pagination — is owned by its dedicated ADR (the Persistence & State ADR above).
+
 ## Document History
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.4 | 2026-06-08 | Ruslan Gabitov | Recorded the **per-adapter ADR policy** (§9): each substantial extension adapter gets its own ADR; the SRD-004 skeleton ships only minimal in-memory default contracts to run current BPMN on the two-layer model, with production-grade contracts (notably durable `Repository` — serialization, versioning, transactions, history/inbox/subscriptions, pagination) deferred to per-adapter ADRs. The minimal `Repository` of ADR-002 v.1 is sufficient for the in-memory migration goal. No execution-model change. RU twin sync deferred (batched until the current edit run settles). |
 | v.3 | 2026-06-07 | Ruslan Gabitov | **Accepted.** Collapsed the three-layer model to **two layers** (Instance + track); `token` becomes a logical projection of a track's current step, not a stored type (removes `token.inst`/`trk`, `Instance.tokens[]`, duplicate lineage). Adopted the single event-loop goroutine for instance-state mutation (no locks). Scoped this ADR to the runtime **core** — relocated join/merge (ADR-005), event delivery & triggers (ADR-006), and the in-memory long-wait release model (ADR-007) to dedicated ADRs (§9), so doc equals code. Reconciled the instance lifecycle to `Created → Active → Completed` (+ `Terminating → Terminated`). §7 gate exercised and green (race-freedom, leak-free, fork, projection, completion, termination cascade) — including two bugs the gate surfaced (`track.stopIt` race; `emit` dropping `evEnded` on cancel). Persistence/rehydration deferred to the Persistence & State ADR. Pre-acceptance Draft iteration folded in without per-round rows. |
 | v.2 | 2026-05-29 | Ruslan Gabitov | Three-layer Instance/track/token model (superseded by v.3). |
