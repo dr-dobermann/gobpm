@@ -141,13 +141,13 @@ The Postgres adapter doesn't know about casbin; casbin doesn't know about Postgr
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-The instance-level `RuntimeEnvironment` is what nodes see during execution. Per ADR-001's three-layer model, it's passed to tracks; tracks read it for scope lookups, event production, etc.
+The instance-level `RuntimeEnvironment` is what nodes see during execution. Per [ADR-001 v.3](ADR-001-execution-model.md)'s two-layer model (Instance + track; token is a projection of a track's step), it's passed to tracks; tracks read it for scope lookups, event production, etc.
 
 ### 4.2 Engine-level extension catalogue
 
 | Interface | Purpose | Default impl | Status vs current code |
 |---|---|---|---|
-| `Repository` | Persist Process Instance state, history, message inbox, wait subscriptions. The save/restore foundation per ADR-001 §4.9/§4.10. | in-memory (non-durable) | NEW — does not exist |
+| `Repository` | Persist Process Instance state, history, message inbox, wait subscriptions. The save/restore foundation per ADR-001 v.3 §4.7 (runtime invariants) + the Persistence & State ADR. | in-memory (non-durable) | NEW — does not exist |
 | `Logger` (`*slog.Logger`) | Structured logging | `slog.Default()` — visible by default per [project memory](../../) | NEW |
 | `Tracer` (OpenTelemetry `trace.Tracer` or local equivalent) | Distributed tracing spans | no-op | NEW |
 | `MetricsRecorder` | Counter / gauge / histogram emission | no-op | NEW |
@@ -199,7 +199,7 @@ type Instance struct {
     scope       scope.Scope
     eventProd   EventProducer
     engineCfg   *thresherConfig          // engine-level extensions reached through this
-    // ... per ADR-001
+    // ... per ADR-001 v.3
 }
 
 // Instance-local — direct field access
@@ -219,7 +219,7 @@ Track call sites are uniform: one reference, one call style for everything.
 ```go
 type track struct {
     inst *Instance                       // the ONLY external object track gets at construction
-    // ... per ADR-001 §4.3
+    // ... per ADR-001 v.3
 }
 
 // Uniform call style — track doesn't need to know which call is "instance" vs "engine":
@@ -234,7 +234,7 @@ t.inst.Repository()                      // engine service — Instance delegate
 
 - The track already needs an Instance reference (for instance-scoped concerns like `Scope` and `ID`). Adding a SECOND reference for engine services duplicates plumbing for no gain.
 - Instance is the natural composition point — it knows the instance AND holds a reference to the engine config.
-- Track only ever has one external dependency: its owning Instance. Simpler for new contributors, simpler for testing, simpler in the goroutine plumbing per ADR-001.
+- Track only ever has one external dependency: its owning Instance. Simpler for new contributors, simpler for testing, simpler in the goroutine plumbing per ADR-001 v.3.
 - "Instance is for execution, not for holding runtime values" is satisfied by composition: Instance holds a *reference* to engine config (which holds the values); engine-level methods on Instance are mechanical one-line delegates. The runtime values are owned by the Engine; Instance just exposes them through its interface.
 
 The existing pattern (Instance implements RuntimeEnvironment) is preserved; this ADR's contribution to it is just the extended interface (the additional engine-level method set).
@@ -370,7 +370,7 @@ Pre-1.0 (where we are): interface evolution is freer per Go's semver convention.
 | RuntimeEnvironment interface scope | Current four methods: `scope.Scope` embed, `InstanceID()`, `EventProducer()`, `RenderRegistrator()` | **Extended** with engine-level service methods (`Logger`, `Tracer`, `Clock`, `Repository`, `ExpressionEngine`, `MessageBroker`, `AuthorizationProvider`, `WorkerDispatcher`, `EventHub`). `RenderRegistrator()` renamed to `TaskDistributor()`. | Add the engine-level methods to the RE interface. Move from `internal/renv` to `pkg/renv` (final path per ADR-003). |
 | Instance-as-RE-implementation | Already done in current code | Preserved; track sees only `*Instance` and calls uniform method set | No relationship change — Instance continues to implement the (extended) RuntimeEnvironment interface. Add the new engine-level delegate methods to Instance, each forwarding to the engine config. |
 | Thresher startup logging | No startup logging | Thresher emits one INFO-level structured log line summarizing the resolved extension wiring on every successful `New` call (§4.4.1) | Add `logStartupConfig` method to Thresher. Required behavior; cannot be opted out (user silences via their Logger config if desired). |
-| Repository interface | Does not exist | Define `Repository` in `pkg/` with checkpoint / load / list-in-flight methods per ADR-001 §4.9 | Implement in-memory default. Add to `Thresher` config. |
+| Repository interface | Does not exist | Define `Repository` in `pkg/` with checkpoint / load / list-in-flight methods per ADR-001 v.3 §4.7 + the Persistence & State ADR | Implement in-memory default. Add to `Thresher` config. |
 | Logger / Tracer / MetricsRecorder | Do not exist | Define interfaces in `pkg/` | Implement defaults (slog default; no-op for tracer/metrics). |
 | Clock | Does not exist | Define `Clock` interface in `pkg/` | Implement wall-clock default. Inject into Timer event handling. |
 | MessageBroker | Does not exist | Define in `pkg/` per [bpmn-spec/semantics/correlation.md](../bpmn-spec/semantics/correlation.md) | Implement in-memory inbox default. |
@@ -382,13 +382,13 @@ Pre-1.0 (where we are): interface evolution is freer per Go's semver convention.
 | RuntimeEnvironment location | `internal/renv` | Move to `pkg/` (likely `pkg/renv`) | Move. Update Instance + track to import from new location. |
 | Extension docs | Scattered through code comments | Single canonical extension catalogue in this ADR | Maintain this ADR as the catalogue source of truth. |
 
-Each departure becomes a targeted SRD-class change after this ADR flips to Accepted. The exact package paths (where in `pkg/` each interface lives) are deferred to ADR-003 Module Layout.
+**How these land (resolves the ordering with §7).** The departures are implemented together — at **minimal / default behavior only** — in a **single foundational SRD** (the "extension skeleton"): every interface defined in `pkg/`, each with its bundled default impl, the functional-options assembly, the extended `RuntimeEnvironment`, and the startup log line, wired so the engine runs end-to-end on today's BPMN support. **This ADR flips Draft → Accepted when that one SRD lands and its §7 tests pass** (not before — see §7). Production adapters and per-interface depth (durable Repository, real MessageBroker, FEEL ExpressionEngine, remote WorkerDispatcher, …) follow as later, separately-gated SRDs. The exact package paths (where in `pkg/` each interface lives) are deferred to ADR-003 Module Layout.
 
 ## 6. Consequences
 
 ### 6.1 Pros
 
-- **Out-of-the-box usability preserved.** `NewDefault()` gives a working engine in one call.
+- **Out-of-the-box usability preserved.** Zero-option `thresher.New(id)` gives a working engine in one call (defaults are the default; no separate `NewDefault`).
 - **Extension matrix is documented.** Future contributors and adapter authors have a single source of truth for what's pluggable.
 - **Go-idiomatic.** No frameworks, no DI containers, no plugin loaders — just interfaces + functional options.
 - **Stable public surface.** Public interfaces in `pkg/` carry semver contract; internal implementation can evolve freely.
@@ -406,7 +406,7 @@ Each departure becomes a targeted SRD-class change after this ADR flips to Accep
 
 - **ADR-003 Module Layout**: defines where exactly each interface lives in the `pkg/` subdirectory tree. Likely candidates: `pkg/extension/` (single subpackage), or one subpackage per concern (`pkg/persistence`, `pkg/observability`, `pkg/auth`, `pkg/expression`, etc.).
 - **ADR-004 Runtime Environment Contract**: runtime layer wires production-grade adapters (postgres + otel + oidc + casbin + …) into the Engine via these extension options.
-- **ADR-001 Execution Model**: `Repository` is the persistence interface ADR-001's §4.9 checkpoint policy targets. `Logger` / `Tracer` / `MetricsRecorder` consume the TrackEvent stream per ADR-001 §4.5.
+- **ADR-001 Execution Model (v.3)**: `Repository` is the persistence interface the runtime invariants in ADR-001 v.3 §4.7 (and the Persistence & State ADR) target. `Logger` / `Tracer` / `MetricsRecorder` consume the instance's runtime event stream — the single `trackEvent` stream and the token-worded view derived from it (ADR-001 v.3 §4.3).
 
 ## 7. Verification
 
@@ -423,11 +423,11 @@ How we'll know the extension architecture works:
 | **Instance implements RuntimeEnvironment** | Type assertion test: `var _ RuntimeEnvironment = (*Instance)(nil)`. Compile-time check that Instance satisfies the extended interface. |
 | **Instance engine-service delegates** | Per-method test: construct engine with custom Logger (or Clock, or Repository, …); spawn an Instance; assert `instance.Logger()` (etc.) returns the same value as the engine config holds. Verifies one-line delegate correctness. |
 | **Default impls match the public interface contract** | Conformance test: in-memory Repository default passes the same conformance suite that a hypothetical postgres Repository would. Same for MessageBroker, etc. |
-| **Engine without optional extension still works** | Smoke test: omit every optional `WithXxx`; verify `NewDefault`-equivalent behavior. |
+| **Engine without optional extension still works** | Smoke test: omit every optional `WithXxx`; verify the zero-option `New(id)` engine runs. |
 | **Adapter module isolation** | When adapter modules exist: importing only `core` does NOT transitively pull `adapters/*` deps. Verified via `go mod graph`. |
 | **RuntimeEnvironment composition correct** | Test: spawn an Instance; assert its `RuntimeEnvironment.Logger()` is the engine's Logger; assert `Scope` is instance-rooted; assert `EventProducer` is instance-scoped. |
 
-**Acceptance gate** (Draft → Accepted): the tests above MUST exist and pass against the implementation. Until then the ADR remains Draft.
+**Acceptance gate** (Draft → Accepted): these tests MUST exist and pass against the **foundational extension-skeleton SRD** (§5) — the defaults-only implementation. The two **adapter-dependent** rows (*cross-adapter composition*, *adapter module isolation*) can only run once a real adapter module exists; they are deferred to the first adapter's SRD and are **not** required for this ADR's acceptance. Until the skeleton SRD lands and its applicable tests pass, the ADR remains Draft.
 
 ## 8. Enterprise-Readiness Recommendations
 
@@ -460,7 +460,7 @@ These keys appear in production logs from day one. Skipping them during research
 ```
 thresher.engine.run
   └─ thresher.instance.run        (per Process Instance)
-       └─ thresher.track.execute  (per Track per ADR-001)
+       └─ thresher.track.execute  (per track per ADR-001 v.3)
             └─ thresher.step      (per node visited)
                  └─ child spans   (HTTP / DB / etc. — user code)
 ```
@@ -581,18 +581,18 @@ Each major extension type SHOULD have a published conformance helper: `Repositor
 
 ### 8.5 Audit vs ops event separation
 
-Two distinct concerns flow through different paths:
+Two distinct concerns are derived from the **single** in-memory runtime event stream (ADR-001 v.3 §4.3 — `trackEvent`, track → loop; there is no second live channel). They are two *views* of that stream, not two channels:
 
-| Concern | Channel | Durability | Examples |
+| Concern | View / source | Durability | Examples |
 |---|---|---|---|
-| **Audit events** — compliance, must-not-lose | TokenEvent stream (per ADR-001 §4.4) | Durable; persistent subscriber required | "User X claimed UserTask Y", "Process started by Z", "Authorization denied: user=A action=cancel resource=instance/123" |
-| **Ops events** — diagnostics, may-lose-acceptable | TrackEvent stream (per ADR-001 §4.5) | Best-effort; Logger/Tracer/MetricsRecorder subscribers | "Track entered Active state", "StepPrologued completed", "Goroutine N spawned" |
+| **Audit events** — compliance, must-not-lose | the **BPMN-observable, token-worded view** derived from the stream (split / merged / waiting / consumed / withdrawn — ADR-001 v.3 §4.3) | Durable; persistent subscriber required | "User X claimed UserTask Y", "Process started by Z", "Authorization denied: user=A action=cancel resource=instance/123" |
+| **Ops events** — diagnostics, may-lose-acceptable | the **raw track/step transitions** (`trackEvent` + track state machine — ADR-001 v.3 §4.2/§4.3) | Best-effort; Logger/Tracer/MetricsRecorder subscribers | "track entered TrackExecutingStep", "StepPrologued completed", "fork spawned a new track" |
 
-Adapters subscribing to TokenEvents for audit purposes SHOULD use durable transport (DB write per event, Kafka with ack, etc.). Adapters subscribing to TrackEvents for ops MAY use best-effort transport (in-memory channels, UDP, fire-and-forget).
+Audit subscribers SHOULD use durable transport (DB write per event, Kafka with ack, etc.). Ops subscribers MAY use best-effort transport (in-memory channels, UDP, fire-and-forget).
 
 Mixing the two (audit fields included in ops logs; ops noise included in audit trail) creates compliance friction (auditors don't want ops noise) and ops friction (audit channel becomes too quiet to diagnose with).
 
-**Note on provisional separation.** The mapping "TokenEvent = audit / TrackEvent = ops" follows from ADR-001's current three-layer model (Instance + track + token). ADR-001 §3.1 flagged the three-layer choice as tentative — if implementation experience justifies collapsing to two layers, the audit-vs-ops split may need re-grounding. Additionally, **token states MAY be extended for richer audit semantics** (e.g., introducing intermediate states that capture compliance-relevant transitions like "claimed", "delegated", "escalated") once the architecture is finalized. The boundary is provisional, not locked.
+**Note (re-grounded on the two-layer model).** ADR-002's earlier draft mapped "TokenEvent = audit / TrackEvent = ops" onto ADR-001's then-tentative three-layer model; ADR-001 v.3 collapsed to two layers (token is a projection, not a stored object / separate event channel). So the split is re-stated above as **two derived views of the one `trackEvent` stream** — audit = the token-worded projection, ops = the raw track/step transitions. The withdrawn/merged distinctions and any future compliance-relevant token states (e.g. "claimed", "delegated", "escalated") are produced by the gateway/events ADRs ([ADR-005](ADR-005-gateways-and-joins.md)/[ADR-006](ADR-006-events-and-subscriptions.md)); the audit view extends as those land. The boundary is provisional, not locked.
 
 ### 8.6 Backwards compatibility, deprecation, and sensitive data
 
@@ -612,14 +612,14 @@ BPMN Process variables can carry PII / regulated data. The engine itself doesn't
 - `Logger` adapters SHOULD support field-level redaction policy (e.g., `gobpm.process_variable.customer_email` redacted at INFO; full at DEBUG with caller-required permission).
 - `Repository` adapters SHOULD support encryption-at-rest for the variables column / equivalent storage.
 - Audit subscribers SHOULD support immutable append-only mode for compliance contexts (SOC2, GDPR, HIPAA).
-- The TokenEvent stream is the natural audit feed; the engine does not need to know which fields are sensitive — the audit adapter applies its own classification per organizational policy.
+- The token-worded audit view (derived from the `trackEvent` stream — §8.5) is the natural audit feed; the engine does not need to know which fields are sensitive — the audit adapter applies its own classification per organizational policy.
 
 This separation lets one runtime serve both "no classification needed" (internal automation) and "strict classification required" (regulated customer-facing apps) deployments without engine-level changes.
 
 ## 9. References
 
 - [SAD-001 Vision & Architecture](SAD-001-vision-and-architecture.md) — §11 Extension Model (this ADR refines); §6 Quality Attributes; §13 Distribution & Scale (preliminary)
-- [ADR-001 Execution Model](ADR-001-execution-model.md) — Repository contract (§4.9 persistence checkpoints, §4.10 long-wait release-and-rehydrate); event streams (§4.4 TokenEvent, §4.5 TrackEvent) that Logger / Tracer / MetricsRecorder consume
+- [ADR-001 v.3 Execution Model](ADR-001-execution-model.md) — the runtime this extends: §4.7 runtime invariants the Repository persists (+ the Persistence & State ADR for durable checkpoint/rehydrate); §4.3 the single `trackEvent` stream + derived token-worded view that Logger / Tracer / MetricsRecorder / audit subscribers consume
 - [docs/bpmn-spec/semantics/correlation.md](../bpmn-spec/semantics/correlation.md) — MessageBroker contract for Message correlation
 - [docs/bpmn-spec/semantics/data.md](../bpmn-spec/semantics/data.md) — ExpressionEngine integration (FormalExpression evaluation)
 - Existing code:
