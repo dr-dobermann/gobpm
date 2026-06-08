@@ -140,7 +140,7 @@ The adapter imports only core's `EngineRuntime` + `Repository` interfaces — ne
 │  Scope (instance-rooted)                                          │
 │  InstanceID                                                       │
 │  EventProducer (instance-scoped projection of EventHub)           │
-│  RenderRegistrator (instance-scoped projection of TaskDistributor)│
+│  RenderRegistrator (instance-scoped human-interaction registrator)│
 │  (+ engine-level extensions accessible by reference)              │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -161,7 +161,7 @@ The instance-level `RuntimeEnvironment` is what nodes see during execution. Per 
 | `AuthorizationProvider` | Authorize sensitive ops (start Process, claim UserTask, cancel Instance, …) | "allow all" | NEW |
 | `WorkerDispatcher` | Dispatch eligible Tasks (ServiceTask / GlobalTask) to remote workers per [SAD-001 §13.2](SAD-001-vision-and-architecture.md) | in-process local execution | NEW |
 | `EventHub` | Central event distribution (existing rich interface) | in-memory hub (the current implementation, promoted to public default) | EXPOSE — currently `internal/eventproc.EventHub`; move interface to `pkg/`; implementation stays in `internal/` |
-| `TaskDistributor` | UserTask routing to humans (composite of `Renderer` + `Registrator` concerns) | in-process registrator (the current `internal/interactor` impl) | EXPOSE — currently `internal/interactor`; promote interfaces |
+| `TaskDistributor` | UserTask routing to humans (composite of `Renderer` + `Registrator` concerns) | the current `internal/interactor` impl | **DEFERRED** — the `Interactor`/`Registrator` cluster is interlocked and forces a model→tasks layering choice; promotion (and the `Registrator → TaskDistributor` rename) is owned by a dedicated **human-interaction ADR** (ADR-001 v.4 §9). Not in the skeleton's contract set; the internal cluster stays as-is. |
 
 **Interface-design principle.** Stick as tightly as possible to the established industry interface; only generalise further when there is no single obvious candidate.
 
@@ -178,7 +178,6 @@ The instance-level `RuntimeEnvironment` is what nodes see during execution. Per 
 
 - `Repository` (in-mem) — evicts terminal Instances and their history past a retention bound.
 - `MessageBroker` (in-mem inbox) — bounds the inbox / expires uncorrelated messages (TTL).
-- `TaskDistributor` (in-mem) — bounds pending (unclaimed) UserTasks.
 - `EventHub` (in-mem) — bounded buffers with backpressure, not unbounded queues.
 - `WorkerDispatcher` (in-process) — a bounded worker pool, not an unbounded goroutine-per-task.
 
@@ -211,7 +210,10 @@ type EngineRuntime interface {
     AuthorizationProvider() AuthorizationProvider
     WorkerDispatcher() WorkerDispatcher
     EventHub() EventHub
-    TaskDistributor() TaskDistributor            // was RenderRegistrator() in current code
+    // NOTE: human-task interaction (today's instance-level RenderRegistrator,
+    // the would-be engine-level TaskDistributor) is deferred to a dedicated
+    // human-interaction ADR (ADR-001 v.4 §9). It is NOT an EngineRuntime method
+    // in the skeleton; the existing internal interactor cluster stays as-is.
 }
 
 // RuntimeEnvironment — instance-level execution context: engine services
@@ -331,7 +333,6 @@ INFO thresher.starting
      authorizationProvider=*allowall.Provider
      workerDispatcher=*inproc.Dispatcher
      eventHub=*eventhub.Hub
-     taskDistributor=*interactor.Distributor
 ```
 
 Each value is the Go type of the wired implementation. The log line is structured (slog attributes), not free-form prose — downstream log processors can pivot on individual extension types.
@@ -352,8 +353,8 @@ Every Engine-level interface has a default that:
 - **Clock**: wall clock. Tests inject a fake clock for time-dependent BPMN behavior (Timer events).
 - **WorkerDispatcher**: in-process local execution. The "distribution is opt-in" stance from SAD-001 §13.
 - **ExpressionEngine**: minimal Go-native evaluator supporting simple expressions; users plug in JUEL / FEEL / etc. via adapter.
-- **EventHub**: the current `internal/eventproc/eventhub` implementation, promoted as the default. The interface is public (`pkg/eventproc`); the implementation stays in `internal/`.
-- **TaskDistributor**: the current `internal/interactor` implementation as default.
+- **EventHub**: the current `internal/eventproc/eventhub` implementation, promoted as the default. The interface is public (`pkg/messaging`); the implementation stays in `internal/`.
+- **TaskDistributor**: deferred — the `internal/interactor` cluster stays internal until the human-interaction ADR (see §4.2).
 
 Defaults are bundled in core. Adapter modules (`adapters/*`) provide production implementations.
 
@@ -398,7 +399,7 @@ Pre-1.0 (where we are): interface evolution is freer per Go's semver convention.
 | Topic | Current code | This ADR | Required change |
 |---|---|---|---|
 | Engine constructor | `Thresher.New(id string)` — no options | `Thresher.New(id, opts ...Option)` — single constructor; zero options applies all defaults; each option overrides one default. No `NewDefault`. | Add `Option` type. Add functional-option implementations for each Engine-level extension. Refactor `New` to initialize defaults internally, then apply options. |
-| RuntimeEnvironment interface scope | Current four methods: `scope.Scope` embed, `InstanceID()`, `EventProducer()`, `RenderRegistrator()` | **Extended** with engine-level service methods (`Logger`, `Tracer`, `Clock`, `Repository`, `ExpressionEngine`, `MessageBroker`, `AuthorizationProvider`, `WorkerDispatcher`, `EventHub`). `RenderRegistrator()` renamed to `TaskDistributor()`. | Add the engine-level methods to the RE interface. Move from `internal/renv` to `pkg/renv` (final path per ADR-003). |
+| RuntimeEnvironment interface scope | Current four methods: `scope.Scope` embed, `InstanceID()`, `EventProducer()`, `RenderRegistrator()` | **Extended** with the engine-level service methods via embedding `EngineRuntime` (`Logger`, `Tracer`, `Clock`, `Repository`, `ExpressionEngine`, `MessageBroker`, `AuthorizationProvider`, `WorkerDispatcher`, `EventHub`). `RenderRegistrator()` is **retained as-is** (instance-level, internal `interactor.Registrator`) — its promotion to an engine-level `TaskDistributor` is deferred (human-interaction ADR). | Add the engine-level methods. Move from `internal/renv` to `pkg/renv` (final path per ADR-003); how the retained internal `RenderRegistrator()` surfaces under the move is settled at the renv-move milestone. |
 | Instance-as-RE-implementation | Already done in current code | Preserved; track sees only `*Instance` and calls uniform method set | No relationship change — Instance continues to implement the (extended) RuntimeEnvironment interface. Add the new engine-level delegate methods to Instance, each forwarding to the engine config. |
 | Thresher startup logging | No startup logging | Thresher emits one INFO-level structured log line summarizing the resolved extension wiring on every successful `New` call (§4.4.1) | Add `logStartupConfig` method to Thresher. Required behavior; cannot be opted out (user silences via their Logger config if desired). |
 | Repository interface | Does not exist | Define `Repository` in `pkg/` with checkpoint / load / list-in-flight methods per ADR-001 v.3 §4.7 + the Persistence & State ADR | Implement in-memory default. Add to `Thresher` config. |
@@ -409,7 +410,7 @@ Pre-1.0 (where we are): interface evolution is freer per Go's semver convention.
 | WorkerDispatcher | Does not exist | Define in `pkg/` per [SAD-001 §13.2](SAD-001-vision-and-architecture.md) | Implement in-process dispatch default. |
 | ExpressionEngine | Partial: `data.FormalExpression` in `pkg/model/data/` | Wrap `FormalExpression` evaluation in `ExpressionEngine` interface at `pkg/` level | Promote / add ExpressionEngine. Default uses existing Go evaluator. |
 | EventHub interface location | `internal/eventproc.EventHub` (not externally implementable) | Move interface to `pkg/` (`pkg/eventproc` per ADR-003); keep implementation in `internal/` | Split interface from implementation; redirect imports. |
-| TaskDistributor / RenderRegistrator | `internal/interactor.Registrator` + `Renderer` ecosystem | Promote to `pkg/`; rename `Registrator` → `TaskDistributor` for clarity; preserve `Renderer` abstraction | Move + rename. Update `RuntimeEnvironment.RenderRegistrator()` → `TaskDistributor()`. |
+| TaskDistributor / RenderRegistrator | `internal/interactor.Registrator` + `Renderer` ecosystem | **Deferred** to a dedicated human-interaction ADR (ADR-001 v.4 §9) — the cluster is interlocked and forces a model→tasks layering choice | No change in the skeleton; the internal cluster and `RenderRegistrator()` stay as-is. |
 | RuntimeEnvironment location | `internal/renv` | Move to `pkg/` (likely `pkg/renv`) | Move. Update Instance + track to import from new location. |
 | Extension docs | Scattered through code comments | Single canonical extension catalogue in this ADR | Maintain this ADR as the catalogue source of truth. |
 
@@ -450,7 +451,7 @@ How we'll know the extension architecture works:
 | **Each option overrides the default** | Per-option test: construct with `WithLogger(custom)`; assert engine's Logger is `custom`, not `slog.Default()`. Repeat for each interface. |
 | **Last-write semantics** | Test: pass `WithLogger(A), WithLogger(B)`; assert engine uses B. |
 | **Cross-adapter composition** | Test (with a real/fake `RuntimeAware` adapter): given no storage option, the AuthZ adapter uses the engine's `Repository` via the injected `EngineRuntime` (default share); given `WithStorage(otherRepo)` it uses that instead (split). Verifies §3.5 Pattern C / §8.3. |
-| **Startup config log line** | Test: construct engine with a Logger that captures records. Assert: exactly one INFO-level record with key `thresher.starting` is emitted, containing attributes for every Engine-level extension (`repository`, `logger`, `tracer`, `metricsRecorder`, `clock`, `messageBroker`, `expressionEngine`, `authorizationProvider`, `workerDispatcher`, `eventHub`, `taskDistributor`) with values matching the wired implementation type names. Verifies §4.4.1. |
+| **Startup config log line** | Test: construct engine with a Logger that captures records. Assert: exactly one INFO-level record with key `thresher.starting` is emitted, containing attributes for every Engine-level extension (`repository`, `logger`, `tracer`, `metricsRecorder`, `clock`, `messageBroker`, `expressionEngine`, `authorizationProvider`, `workerDispatcher`, `eventHub`) with values matching the wired implementation type names. Verifies §4.4.1. |
 | **Instance implements RuntimeEnvironment** | Type assertion test: `var _ RuntimeEnvironment = (*Instance)(nil)`. Compile-time check that Instance satisfies the extended interface. |
 | **Instance engine-service delegates** | Per-method test: construct engine with custom Logger (or Clock, or Repository, …); spawn an Instance; assert `instance.Logger()` (etc.) returns the same value as the engine config holds. Verifies one-line delegate correctness. |
 | **Default impls match the public interface contract** | Conformance test: in-memory Repository default passes the same conformance suite that a hypothetical postgres Repository would. Same for MessageBroker, etc. |

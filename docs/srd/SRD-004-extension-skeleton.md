@@ -31,11 +31,11 @@ ADR-002 (reconciled to ADR-001 v.3) is the agreed extension architecture, but no
 
 ### 2.1 Goals (in scope)
 
-- **G1.** Define all 11 extension contracts in `pkg/` (per ADR-002 §4.2): `Logger` (slog-satisfiable core interface — `*slog.Logger` implements it directly), OTel-shaped `Tracer`/`MetricsRecorder` (modeled on the OTel API but **core does not import OTel** — SAD-001 G2), `Clock`, `Repository`, `MessageBroker`, `ExpressionEngine`, `AuthorizationProvider`, `WorkerDispatcher` interfaces; `EventHub` interface relocated to `pkg/` (impl stays `internal/`); `TaskDistributor` promoted from `internal/interactor.Registrator` (renamed).
+- **G1.** Define all 10 extension contracts in `pkg/` (per ADR-002 §4.2): `Logger` (slog-satisfiable core interface — `*slog.Logger` implements it directly), OTel-shaped `Tracer`/`MetricsRecorder` (modeled on the OTel API but **core does not import OTel** — SAD-001 G2), `Clock`, `Repository`, `MessageBroker`, `ExpressionEngine`, `AuthorizationProvider`, `WorkerDispatcher` interfaces; `EventHub` interface relocated to `pkg/messaging` (impl stays `internal/`). **`TaskDistributor` is deferred** — the `internal/interactor` human-interaction cluster is interlocked and forces a model→tasks layering choice, so its promotion (and the `Registrator → TaskDistributor` rename) rides a dedicated human-interaction ADR (ADR-001 v.4 §9), not this skeleton.
 - **G2.** Ship a **bundled default** in core for each: `slog.Default()` Logger · **no-op `Tracer`** (with an in-memory recent-spans ring available as an opt-in) · **in-memory queryable, series-capped `MetricsRecorder`** (`Snapshot()` for tests/diagnostics) · wall-clock `Clock` · in-memory non-durable `Repository` · in-memory inbox `MessageBroker` · Go-native `ExpressionEngine` (wrapping the existing evaluator) · allow-all `AuthorizationProvider` · in-process `WorkerDispatcher` · current EventHub impl · current interactor impl.
 - **G3.** **Functional-options assembly** — `thresher.New(id string, opts ...Option) (*Thresher, error)`; `defaultConfig()` wires all defaults; each `WithXxx` overrides one; last-write semantics; **no `NewDefault`**. Zero-option `New(id)` produces a working engine.
 - **G4.** **Startup log line** — one INFO `thresher.starting` record listing the resolved wiring (per ADR-002 §4.4.1).
-- **G5.** **Factor `EngineRuntime` + extend `RuntimeEnvironment`** (ADR-002 §4.3): define the engine/server-level `EngineRuntime` interface (the resolved services) implemented by `Thresher`; move `internal/renv` → `pkg/renv`; `RuntimeEnvironment` **embeds `EngineRuntime`** + instance-local; rename `RenderRegistrator()` → `TaskDistributor()`; `Instance` **embeds** the Thresher's `EngineRuntime` (engine methods promoted — no per-method delegates) and adds its instance-local methods; track call sites stay uniform (`t.inst.X()`).
+- **G5.** **Factor `EngineRuntime` + extend `RuntimeEnvironment`** (ADR-002 §4.3): define the engine/server-level `EngineRuntime` interface (the resolved services) implemented by `Thresher`; move `internal/renv` → `pkg/renv`; `RuntimeEnvironment` **embeds `EngineRuntime`** + instance-local; `RenderRegistrator()` is **retained as-is** (human-interaction promotion deferred — ADR-001 v.4 §9); `Instance` **embeds** the Thresher's `EngineRuntime` (engine methods promoted — no per-method delegates) and adds its instance-local methods; track call sites stay uniform (`t.inst.X()`).
 - **G6.** **Wire into current execution** the extensions today's BPMN actually exercises: route `FormalExpression` evaluation through `ExpressionEngine`; source time from `Clock` (timer handling) instead of `time.Now`; use the configured `EventHub`/`Logger`. Engine runs the current element set unchanged.
 - **G7.** **No external behaviour change** for implemented elements (None Start/End, Service/User tasks, Exclusive gateway, sequence flows incl. conditions/default, timer events): existing tests + `examples/*` pass unchanged; `make ci` green.
 
@@ -51,6 +51,7 @@ ADR-002 (reconciled to ADR-001 v.3) is the agreed extension architecture, but no
 - **N3.** **Final `pkg/` package paths** — ADR-003 owns the exact layout. This SRD places interfaces per ADR-003's proposed per-concern layout; paths are **provisional** until ADR-003 lands (a later move is a mechanical rename).
 - **N4.** **The `RuntimeAware` adapter-injection hook** (ADR-002 §3.5 Pattern C / §8.3) — the skeleton **defines** `EngineRuntime` and `RuntimeEnvironment`, but has no adapters to inject into, so the `UseRuntime(EngineRuntime)` hook and its assembly-time wiring land with the first real adapter.
 - **N5.** **Adapter contract-test helpers, optional side-capability interfaces (`Starter`/`Stopper`/…), cluster awareness** (ADR-002 §8.3/§8.4) — land with the first real adapter.
+- **N6.** **Human-task interaction promotion.** The `internal/interactor` cluster (`Registrator`/`Interactor`/`RenderController`) stays internal; the `Registrator → TaskDistributor` rename and any engine-level exposure ride a dedicated **human-interaction ADR** (ADR-001 v.4 §9). The skeleton ships **10** contracts, and the existing instance-level `RenderRegistrator()` is untouched.
 
 ## 3. Requirements
 
@@ -58,11 +59,11 @@ ADR-002 (reconciled to ADR-001 v.3) is the agreed extension architecture, but no
 
 | # | Requirement | Acceptance |
 |---|---|---|
-| FR-1 | The 11 contracts exist in `pkg/` (G1). `EventHub` interface relocated (impl stays internal); `TaskDistributor` = renamed promoted `Registrator`. | `grep` finds each interface under `pkg/`; build passes; `internal/` impls import the `pkg/` interfaces. |
+| FR-1 | The 10 contracts exist in `pkg/` (G1). `EventHub` interface relocated to `pkg/messaging` (impl stays internal). `TaskDistributor` deferred (human-interaction ADR). | `grep` finds each interface under `pkg/`; build passes; `internal/` impls import the `pkg/` interfaces. |
 | FR-2 | Each contract has a bundled core default (G2). | A default value exists and satisfies its interface; constructed by `defaultConfig()`. |
 | FR-3 | `thresher.New(id, opts ...Option)`; zero-option works; `WithXxx` overrides; last-write; no `NewDefault`. | `New("x")` runs; `WithLogger(a),WithLogger(b)` ⇒ b; no `NewDefault` symbol. |
 | FR-4 | One INFO `thresher.starting` log line lists every resolved engine extension by impl type. | Capture-logger test: exactly one record, key `thresher.starting`, attrs per ADR-002 §4.4.1. |
-| FR-5 | `EngineRuntime` (engine services) defined in `pkg/renv`, implemented by `Thresher`; `RuntimeEnvironment` **embeds** it + instance-local; `RenderRegistrator()`→`TaskDistributor()`; `Instance` **embeds** the Thresher's `EngineRuntime`. | `var _ renv.EngineRuntime = (*Thresher)(nil)` and `var _ renv.RuntimeEnvironment = (*Instance)(nil)`. |
+| FR-5 | `EngineRuntime` (engine services) defined in `pkg/renv`, implemented by `Thresher`; `RuntimeEnvironment` **embeds** it + instance-local (incl. the retained `RenderRegistrator()`); `Instance` **embeds** the Thresher's `EngineRuntime`. | `var _ renv.EngineRuntime = (*Thresher)(nil)` and `var _ renv.RuntimeEnvironment = (*Instance)(nil)`. |
 | FR-6 | `Instance` embeds the Thresher's `EngineRuntime` (engine methods promoted, no per-method delegates); track reaches services via its one `*Instance`. | Per-method test: `instance.Logger()` (etc.) == the engine's configured value. |
 | FR-7 | `ExpressionEngine`, `Clock`, `EventHub`, `Logger` are wired into current execution (G6): `FormalExpression` evaluated via `ExpressionEngine`; timer time via `Clock`. | Override-and-observe tests: a custom `ExpressionEngine`/`Clock` is the one used during execution. |
 | FR-8 | `Repository`/`MessageBroker`/`AuthorizationProvider`/`WorkerDispatcher` are defined, defaulted, and reachable via the engine/RE, but **not** invoked by execution (N2). | They're constructable and accessible (`instance.Repository()` etc.); no execution call-site references them yet. |
@@ -93,8 +94,7 @@ type thresherConfig struct {
     exprEngine  ExpressionEngine
     authz       AuthorizationProvider
     dispatcher  WorkerDispatcher
-    eventHub    eventproc.EventHub
-    taskDist    TaskDistributor
+    eventHub    messaging.EventHub
 }
 
 type Option func(*thresherConfig)
@@ -118,9 +118,9 @@ Per ADR-002 §4.3 the engine services are factored into an **`EngineRuntime`** i
 
 1. **M1 — Observability + Clock.** `Logger` (slog-satisfiable interface), OTel-shaped `Tracer`/`MetricsRecorder` (no OTel import), `Clock` interfaces + defaults: `slog.Default()` Logger, **no-op Tracer**, **in-memory queryable series-capped Metrics registry**, wall-clock Clock — plus an opt-in in-memory recent-spans ring Tracer for dev/tests. Pure leaf packages; no engine wiring yet. Default/conformance tests (incl. the registry `Snapshot()` + series-cap behaviour).
 2. **M2 — Stateful leaves.** `Repository`, `MessageBroker`, `AuthorizationProvider`, `WorkerDispatcher` interfaces + defaults (in-mem / in-mem inbox / allow-all / in-proc). Defined + tested; not yet invoked (N2).
-3. **M3 — Promotions.** `ExpressionEngine` (interface wrapping the `FormalExpression` evaluator) + default; `EventHub` interface → `pkg/eventproc` (impl stays internal, imports redirected); `TaskDistributor` (promote `interactor.Registrator`, rename).
+3. **M3 — Promotions.** `ExpressionEngine` (`pkg/model/expression` interface wrapping the `FormalExpression` evaluator) + Go-native default; `EventHub` (+ `EventProducer`) interface → `pkg/messaging` (impl stays internal, importers redirected). `TaskDistributor` is **deferred** to the human-interaction ADR (ADR-001 v.4 §9).
 4. **M4 — Assembly.** `thresherConfig` + `Option` + `WithXxx` (one per extension) + `New(id, opts...)` refactor + `defaultConfig()` + `logStartupConfig()` (§4.4.1). No `NewDefault`.
-5. **M5 — EngineRuntime + RuntimeEnvironment.** Move `internal/renv` → `pkg/renv`; define `EngineRuntime` (engine services) implemented by `Thresher`; `RuntimeEnvironment` embeds it; rename `RenderRegistrator()`→`TaskDistributor()`; `Instance` embeds the Thresher's `EngineRuntime`; redirect imports; **wire ExpressionEngine + Clock into execution** (G6).
+5. **M5 — EngineRuntime + RuntimeEnvironment.** Move `internal/renv` → `pkg/renv`; define `EngineRuntime` (engine services) implemented by `Thresher`; `RuntimeEnvironment` embeds it and **retains `RenderRegistrator()` as-is** (settling how the internal human-interaction type surfaces under the move); `Instance` embeds the Thresher's `EngineRuntime`; redirect imports; **wire ExpressionEngine + Clock into execution** (G6).
 6. **M6 — Acceptance.** ADR-002 §7 applicable suite (zero-option New e2e, options compose/override/last-write, startup log, Instance-implements-RE, delegates, default conformance, RE composition) + examples pass + `make ci` green + `cover-check` PASS. Flip **ADR-002 + SRD-004 → Accepted** + RU twins.
 
 Sequencing: leaves (M1/M2) and promotions (M3) define the contracts+defaults with no engine coupling; assembly (M4) wires them into `New`; RE extension (M5) exposes them through `Instance` and wires the executed ones; M6 verifies + accepts.
@@ -174,4 +174,4 @@ Maps to [ADR-002 §7](../design/ADR-002-extension-architecture.md) (defaults-onl
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-08 | Ruslan Gabitov | Initial Draft. Foundational extension skeleton for ADR-002 — 11 contracts in `pkg/` + bundled defaults, functional-options assembly, `EngineRuntime`/`RuntimeEnvironment` split (Thresher implements `EngineRuntime`; `RuntimeEnvironment` embeds it; `Instance` embeds it), startup log; executed extensions (ExpressionEngine/Clock/EventHub/Logger) wired, the rest define-and-default only (N2); `RuntimeAware` adapter-injection deferred (N4). Closes ADR-002 §7 defaults-only rows on landing. |
+| v.1 | 2026-06-08 | Ruslan Gabitov | Initial Draft. Foundational extension skeleton for ADR-002 — 10 contracts in `pkg/` + bundled defaults, functional-options assembly, `EngineRuntime`/`RuntimeEnvironment` split (Thresher implements `EngineRuntime`; `RuntimeEnvironment` embeds it; `Instance` embeds it), startup log; executed extensions (ExpressionEngine/Clock/EventHub/Logger) wired, the rest define-and-default only (N2); `RuntimeAware` adapter-injection deferred (N4); human-interaction/`TaskDistributor` deferred to its own ADR (N6). Closes ADR-002 §7 defaults-only rows on landing. |
