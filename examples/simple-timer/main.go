@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
+	"os"
 	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -17,8 +19,19 @@ import (
 )
 
 func main() {
-	// Create BPM engine
-	engine, err := thresher.New("simple-timer-engine")
+	// Create the BPM engine. Engine-level extensions (logger, repository,
+	// clock, metrics, message broker, expression engine, authorization,
+	// worker dispatcher) are configurable via functional options; any option
+	// you omit falls back to a sensible bundled default (e.g. slog.Default(),
+	// an in-memory repository, the system clock). Here we override just the
+	// logger — the rest stay on their defaults.
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+
+	engine, err := thresher.New("simple-timer-engine",
+		thresher.WithLogger(logger),
+	)
 	if err != nil {
 		log.Fatal("Failed to create BPM engine:", err)
 	}
