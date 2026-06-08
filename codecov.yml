@@ -1,0 +1,11 @@
+# Codecov configuration.
+#
+# Keep Codecov's measured scope aligned with the in-repo diff-coverage gate
+# (internal/covercheck.DefaultExcluded, SRD-002): CLI entry points, generated
+# mocks, and runnable examples are not unit-tested by design — their logic lives
+# in (and is covered through) internal/ packages — so Codecov ignores them too.
+ignore:
+  - "cmd/**/*"          # CLI entry points: thin flag-parsing shells
+  - "generated/**/*"    # mockery-generated mocks
+  - "**/generated/**/*" # ...wherever they are emitted
+  - "examples/**/*"     # runnable examples, not coverage targets
