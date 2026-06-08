@@ -152,9 +152,9 @@ The instance-level `RuntimeEnvironment` is what nodes see during execution. Per 
 | Interface | Purpose | Default impl | Status vs current code |
 |---|---|---|---|
 | `Repository` | Persist Process Instance state, history, message inbox, wait subscriptions. The save/restore foundation per ADR-001 v.3 §4.7 (runtime invariants) + the Persistence & State ADR. | in-memory (non-durable) | NEW — does not exist |
-| `Logger` (`*slog.Logger`) | Structured logging | `slog.Default()` — visible by default per [project memory](../../) | NEW |
-| `Tracer` (OpenTelemetry `trace.Tracer` or local equivalent) | Distributed tracing spans | no-op | NEW |
-| `MetricsRecorder` | Counter / gauge / histogram emission | no-op | NEW |
+| `Logger` (core interface; `*slog.Logger` satisfies it directly) | Structured logging | `slog.Default()` — visible by default per [project memory](../../) | NEW |
+| `Tracer` (OTel-shaped, core-defined — **no OTel import**) | Distributed tracing spans | **no-op** (spans cost a per-event allocation, inert without a backend); opt in to an in-memory recent-spans ring or `adapters/otel/` | NEW |
+| `MetricsRecorder` (OTel-shaped, core-defined — **no OTel import**) | Counter / histogram / gauge instruments | **in-memory queryable registry** — visible by default, cheap, series-capped, `Snapshot()` for tests/diagnostics; swap to no-op or `adapters/otel/` | NEW |
 | `Clock` | Current time + sleep (testability for timers) | wall clock (`time.Now`) | NEW |
 | `MessageBroker` | Incoming-Message inbox; correlation routing per [docs/bpmn-spec/semantics/correlation.md](../bpmn-spec/semantics/correlation.md) | in-memory inbox | NEW |
 | `ExpressionEngine` | Evaluate `FormalExpression` (BPMN conditionExpression, gateway conditions, MI cardinality, etc.) | Go-native simple evaluator | EXTENDS — `data.FormalExpression` exists; engine wraps |
@@ -162,6 +162,17 @@ The instance-level `RuntimeEnvironment` is what nodes see during execution. Per 
 | `WorkerDispatcher` | Dispatch eligible Tasks (ServiceTask / GlobalTask) to remote workers per [SAD-001 §13.2](SAD-001-vision-and-architecture.md) | in-process local execution | NEW |
 | `EventHub` | Central event distribution (existing rich interface) | in-memory hub (the current implementation, promoted to public default) | EXPOSE — currently `internal/eventproc.EventHub`; move interface to `pkg/`; implementation stays in `internal/` |
 | `TaskDistributor` | UserTask routing to humans (composite of `Renderer` + `Registrator` concerns) | in-process registrator (the current `internal/interactor` impl) | EXPOSE — currently `internal/interactor`; promote interfaces |
+
+**Interface-design principle.** Stick as tightly as possible to the established industry interface; only generalise further when there is no single obvious candidate.
+
+- **`Logger`** — there is one obvious Go standard (`log/slog`). The core `Logger` is therefore a small leveled interface (`Debug`/`Info`/`Warn`/`Error(msg string, args ...any)`) that **`*slog.Logger` satisfies directly**, so the default is `slog.Default()` with no wrapper, while non-slog loggers can still be plugged.
+- **`Tracer` / `MetricsRecorder`** — OpenTelemetry is the de-facto standard, so the core interfaces are **modeled on the OTel API shape** (span start/end/attributes/record-error; counter/histogram/gauge instruments). To preserve the stdlib-+-`uuid`-only core (SAD-001 G2), core does **not import** the OTel modules — it defines OTel-shaped interfaces, and the real OTel types live only in `adapters/otel/` as a thin pass-through.
+
+**Default telemetry — chosen by signal cost (not a blanket no-op).** A blanket no-op leaves a zero-config engine blind (against the observability policy); a logging-backed default turns metrics into log text that must be parsed back out (garbage in the log stream). So defaults differ per signal:
+
+- **Metrics → in-memory queryable registry, on by default.** Atomic counters + current-value gauges + fixed-bucket histograms, readable via `Snapshot()`. Increments are nanoseconds and the footprint is bounded — but it **caps total series** (counter-name × label-set), dropping-and-warning-once past the cap, so high-cardinality labels (`process_id`, `instance_id`) can't make it grow unbounded. Visible by default, structured (not log-scraped), and trivially assertable in tests. Swap to no-op to silence, or to `adapters/otel/` for production.
+- **Tracing → no-op by default.** A span costs a per-event allocation and is inert without a consuming backend, so always-on tracing is exactly the "garbage configured by default" to avoid. A bounded in-memory **recent-spans ring** (last N, queryable) ships as a one-line opt-in for dev/debug, alongside the real `adapters/otel/`.
+- **Persistent (DB) telemetry** is a production adapter (`adapters/sqlstore`), **never a core default** — it would add a driver dependency and grow unbounded; an embedder opts into that storage knowingly.
 
 ### 4.3 RuntimeEnvironment interface — extended; Instance is the implementation
 
@@ -180,7 +191,7 @@ There are **two tiers**: the engine/server-level resolved configuration
 // (the wired services). Thresher owns/implements it. Adapters receive it (§3.5);
 // RuntimeEnvironment embeds it so tracks keep one uniform call style.
 type EngineRuntime interface {
-    Logger() *slog.Logger
+    Logger() Logger                              // core interface; *slog.Logger satisfies it
     Tracer() Tracer
     MetricsRecorder() MetricsRecorder
     Clock() Clock
@@ -381,7 +392,7 @@ Pre-1.0 (where we are): interface evolution is freer per Go's semver convention.
 | Instance-as-RE-implementation | Already done in current code | Preserved; track sees only `*Instance` and calls uniform method set | No relationship change — Instance continues to implement the (extended) RuntimeEnvironment interface. Add the new engine-level delegate methods to Instance, each forwarding to the engine config. |
 | Thresher startup logging | No startup logging | Thresher emits one INFO-level structured log line summarizing the resolved extension wiring on every successful `New` call (§4.4.1) | Add `logStartupConfig` method to Thresher. Required behavior; cannot be opted out (user silences via their Logger config if desired). |
 | Repository interface | Does not exist | Define `Repository` in `pkg/` with checkpoint / load / list-in-flight methods per ADR-001 v.3 §4.7 + the Persistence & State ADR | Implement in-memory default. Add to `Thresher` config. |
-| Logger / Tracer / MetricsRecorder | Do not exist | Define interfaces in `pkg/` | Implement defaults (slog default; no-op for tracer/metrics). |
+| Logger / Tracer / MetricsRecorder | Do not exist | `Logger` = slog-satisfiable core interface; `Tracer`/`MetricsRecorder` = OTel-shaped core interfaces (no OTel import — SAD-001 G2) | Defaults: `slog.Default()` Logger; **in-memory queryable registry** Metrics (series-capped, `Snapshot()`); **no-op** Tracer (in-mem span-ring + OTel are opt-in). Real OTel in `adapters/otel/`. |
 | Clock | Does not exist | Define `Clock` interface in `pkg/` | Implement wall-clock default. Inject into Timer event handling. |
 | MessageBroker | Does not exist | Define in `pkg/` per [bpmn-spec/semantics/correlation.md](../bpmn-spec/semantics/correlation.md) | Implement in-memory inbox default. |
 | AuthorizationProvider | Does not exist | Define in `pkg/`; hook points at sensitive ops | Implement allow-all default. Identify hook-point call sites. |

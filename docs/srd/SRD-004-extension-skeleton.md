@@ -31,8 +31,8 @@ ADR-002 (reconciled to ADR-001 v.3) is the agreed extension architecture, but no
 
 ### 2.1 Goals (in scope)
 
-- **G1.** Define all 11 extension contracts in `pkg/` (per ADR-002 §4.2): `Logger` (= `*slog.Logger`), `Tracer`, `MetricsRecorder`, `Clock`, `Repository`, `MessageBroker`, `ExpressionEngine`, `AuthorizationProvider`, `WorkerDispatcher` interfaces; `EventHub` interface relocated to `pkg/` (impl stays `internal/`); `TaskDistributor` promoted from `internal/interactor.Registrator` (renamed).
-- **G2.** Ship a **bundled default** in core for each: `slog.Default()` · no-op `Tracer` · no-op `MetricsRecorder` · wall-clock `Clock` · in-memory non-durable `Repository` · in-memory inbox `MessageBroker` · Go-native `ExpressionEngine` (wrapping the existing evaluator) · allow-all `AuthorizationProvider` · in-process `WorkerDispatcher` · current EventHub impl · current interactor impl.
+- **G1.** Define all 11 extension contracts in `pkg/` (per ADR-002 §4.2): `Logger` (slog-satisfiable core interface — `*slog.Logger` implements it directly), OTel-shaped `Tracer`/`MetricsRecorder` (modeled on the OTel API but **core does not import OTel** — SAD-001 G2), `Clock`, `Repository`, `MessageBroker`, `ExpressionEngine`, `AuthorizationProvider`, `WorkerDispatcher` interfaces; `EventHub` interface relocated to `pkg/` (impl stays `internal/`); `TaskDistributor` promoted from `internal/interactor.Registrator` (renamed).
+- **G2.** Ship a **bundled default** in core for each: `slog.Default()` Logger · **no-op `Tracer`** (with an in-memory recent-spans ring available as an opt-in) · **in-memory queryable, series-capped `MetricsRecorder`** (`Snapshot()` for tests/diagnostics) · wall-clock `Clock` · in-memory non-durable `Repository` · in-memory inbox `MessageBroker` · Go-native `ExpressionEngine` (wrapping the existing evaluator) · allow-all `AuthorizationProvider` · in-process `WorkerDispatcher` · current EventHub impl · current interactor impl.
 - **G3.** **Functional-options assembly** — `thresher.New(id string, opts ...Option) (*Thresher, error)`; `defaultConfig()` wires all defaults; each `WithXxx` overrides one; last-write semantics; **no `NewDefault`**. Zero-option `New(id)` produces a working engine.
 - **G4.** **Startup log line** — one INFO `thresher.starting` record listing the resolved wiring (per ADR-002 §4.4.1).
 - **G5.** **Factor `EngineRuntime` + extend `RuntimeEnvironment`** (ADR-002 §4.3): define the engine/server-level `EngineRuntime` interface (the resolved services) implemented by `Thresher`; move `internal/renv` → `pkg/renv`; `RuntimeEnvironment` **embeds `EngineRuntime`** + instance-local; rename `RenderRegistrator()` → `TaskDistributor()`; `Instance` **embeds** the Thresher's `EngineRuntime` (engine methods promoted — no per-method delegates) and adds its instance-local methods; track call sites stay uniform (`t.inst.X()`).
@@ -74,7 +74,7 @@ ADR-002 (reconciled to ADR-001 v.3) is the agreed extension architecture, but no
 |---|---|---|
 | NFR-1 | Race-free under the detector. | `make ci` (race-gated) green. |
 | NFR-2 | Touched/created files meet the coverage standard (≥80%, aim 100%; gated by `covercheck`). | `make cover-check` PASS on the diff. |
-| NFR-3 | `core` gains no non-stdlib runtime dependency (SAD-001 G2). | `go mod graph` shows no new external core dep (defaults are stdlib-only; `slog` is stdlib). |
+| NFR-3 | `core` gains no non-stdlib runtime dependency (SAD-001 G2). Upheld even for telemetry: `Tracer`/`MetricsRecorder` are OTel-*shaped* but core does **not** import OTel (ADR-002 §4.2); the real OTel types live in `adapters/otel/`. | `go mod graph` shows no new external core dep (defaults are stdlib-only; `slog` is stdlib; no `go.opentelemetry.io/*` in core). |
 | NFR-4 | Visible-by-default observability preserved (Logger default `slog.Default()`). | Zero-option engine logs to the default handler. |
 
 ## 4. Design & implementation plan
@@ -84,9 +84,9 @@ ADR-002 (reconciled to ADR-001 v.3) is the agreed extension architecture, but no
 ```go
 // Engine-level config holds the resolved extensions (one per interface).
 type thresherConfig struct {
-    logger      *slog.Logger
-    tracer      Tracer
-    metrics     MetricsRecorder
+    logger      Logger          // slog-satisfiable interface; default slog.Default()
+    tracer      Tracer          // OTel-shaped, core-defined (no OTel import); default no-op
+    metrics     MetricsRecorder // default = in-memory queryable, series-capped registry
     clock       Clock
     repository  Repository
     msgBroker   MessageBroker
@@ -99,7 +99,7 @@ type thresherConfig struct {
 
 type Option func(*thresherConfig)
 
-func WithLogger(l *slog.Logger) Option { return func(c *thresherConfig) { c.logger = l } }
+func WithLogger(l Logger) Option { return func(c *thresherConfig) { c.logger = l } }  // *slog.Logger satisfies Logger
 // … one per extension …
 
 func New(id string, opts ...Option) (*Thresher, error) {
@@ -116,7 +116,7 @@ Per ADR-002 §4.3 the engine services are factored into an **`EngineRuntime`** i
 
 ### 4.2 Milestones (each independently buildable + CI-green)
 
-1. **M1 — Observability + Clock.** `Logger` (= `*slog.Logger`), `Tracer`, `MetricsRecorder`, `Clock` interfaces + defaults (slog.Default / no-op / no-op / wall-clock). Pure leaf packages; no engine wiring yet. Conformance/default tests.
+1. **M1 — Observability + Clock.** `Logger` (slog-satisfiable interface), OTel-shaped `Tracer`/`MetricsRecorder` (no OTel import), `Clock` interfaces + defaults: `slog.Default()` Logger, **no-op Tracer**, **in-memory queryable series-capped Metrics registry**, wall-clock Clock — plus an opt-in in-memory recent-spans ring Tracer for dev/tests. Pure leaf packages; no engine wiring yet. Default/conformance tests (incl. the registry `Snapshot()` + series-cap behaviour).
 2. **M2 — Stateful leaves.** `Repository`, `MessageBroker`, `AuthorizationProvider`, `WorkerDispatcher` interfaces + defaults (in-mem / in-mem inbox / allow-all / in-proc). Defined + tested; not yet invoked (N2).
 3. **M3 — Promotions.** `ExpressionEngine` (interface wrapping the `FormalExpression` evaluator) + default; `EventHub` interface → `pkg/eventproc` (impl stays internal, imports redirected); `TaskDistributor` (promote `interactor.Registrator`, rename).
 4. **M4 — Assembly.** `thresherConfig` + `Option` + `WithXxx` (one per extension) + `New(id, opts...)` refactor + `defaultConfig()` + `logStartupConfig()` (§4.4.1). No `NewDefault`.
@@ -168,6 +168,7 @@ Maps to [ADR-002 §7](../design/ADR-002-extension-architecture.md) (defaults-onl
 1. **Observability package grouping** — one `pkg/observability` (Logger/Tracer/MetricsRecorder) vs separate `pkg/logger`,`pkg/tracer`,`pkg/metrics`? ADR-003 §3.2 prefers "one subpackage per cohesive concern". **Resolved provisionally:** group as `pkg/observability` for the cohesive sinks; final call rides ADR-003. Confirm at M1.
 2. **`MetricsRecorder` placement?** **Resolved:** `MetricsRecorder()` is a method on `EngineRuntime` (ADR-002 §4.3); since `RuntimeEnvironment` embeds `EngineRuntime`, it is reachable both engine-side (`Thresher`) and instance-side (`Instance`) with no special-casing.
 3. **`ExpressionEngine` interface shape** — minimal `Evaluate(expr data.FormalExpression, scope scope.Scope) (any, error)`? **Resolved provisionally:** mirror the current evaluator's call signature so the default is a thin wrapper; pin exact signature at M3 from the call-sites.
+4. **Default telemetry implementation** — no-op vs visible vs log-backed? **Resolved (design discussion):** defaults differ by signal cost (ADR-002 §4.2). **Metrics** default to an in-memory, series-capped, queryable registry (visible by default per the observability policy; `Snapshot()` makes tests trivial — no logtel needed). **Tracing** defaults to no-op (a span is a per-event allocation, inert without a backend) with an in-memory recent-spans ring as a one-line opt-in. A persistent SQL telemetry sink is a future production adapter (`adapters/sqlstore`), never a core default. The earlier logging-backed telemetry idea is **dropped** (it turns metrics into log text that must be parsed back).
 
 ## Document History
 
