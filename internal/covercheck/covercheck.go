@@ -7,7 +7,11 @@ package covercheck
 
 import (
 	"bufio"
+	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -326,4 +330,151 @@ func DefaultExcluded(path string) bool {
 	default:
 		return false
 	}
+}
+
+// --- gate orchestration (the logic behind cmd/covercheck) ---
+
+// RunGate fetches the committed diff (base...HEAD) and the coverage profiles,
+// then delegates to Gate. It writes the report to w and returns the process exit
+// code: 1 if below minPct, 0 otherwise.
+func RunGate(w io.Writer, minPct float64, base, profilesCSV string) (int, error) {
+	diff, err := GitDiff(base)
+	if err != nil {
+		return 0, err
+	}
+
+	profiles, err := ReadProfiles(splitList(profilesCSV))
+	if err != nil {
+		return 0, err
+	}
+
+	return Gate(w, minPct, diff, profiles)
+}
+
+// Gate computes patch coverage from an already-fetched unified=0 diff and
+// coverage profiles, writes the report to w, and returns the exit code (1 if
+// below minPct). Separated from the git/file I/O so it is unit-testable.
+func Gate(
+	w io.Writer,
+	minPct float64,
+	diff string,
+	profiles map[string][]Block,
+) (int, error) {
+	changed, err := ParseDiff(strings.NewReader(diff))
+	if err != nil {
+		return 0, err
+	}
+
+	res := Evaluate(profiles, changed, DefaultExcluded)
+	Report(w, res, minPct)
+
+	if res.Ratio()*100 < minPct {
+		return 1, nil
+	}
+
+	return 0, nil
+}
+
+// GitDiff returns the unified=0 Go-file diff from merge-base(base, HEAD) to HEAD
+// — the committed changes the branch introduces. Committed state (not the
+// working tree) keeps local `make cover-check` and CI in lockstep. The
+// `base...HEAD` form resolves the merge-base itself.
+func GitDiff(base string) (string, error) {
+	spec := base + "...HEAD"
+
+	// #nosec G204 -- base is a trusted CLI flag (a git ref), not external input.
+	out, err := exec.Command("git", "diff", "--unified=0", spec, "--", "*.go").
+		Output()
+	if err != nil {
+		return "", fmt.Errorf("git diff %s: %w", spec, err)
+	}
+
+	return string(out), nil
+}
+
+// ReadProfiles parses and merges the coverage profiles at the given paths. It
+// errors if none exist — running the gate with no profile must fail loudly
+// (run `make test-all` first), not pass vacuously.
+func ReadProfiles(paths []string) (map[string][]Block, error) {
+	merged := map[string][]Block{}
+	found := false
+
+	for _, p := range paths {
+		// #nosec G304 -- p is a trusted CLI flag (a coverage-profile path).
+		f, err := os.Open(p)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+
+			return nil, err
+		}
+
+		found = true
+
+		blocks, err := ParseProfiles(f)
+		_ = f.Close()
+
+		if err != nil {
+			return nil, err
+		}
+
+		for k, v := range blocks {
+			merged[k] = append(merged[k], v...)
+		}
+	}
+
+	if !found {
+		return nil, fmt.Errorf(
+			"no coverage profile found among %v — run `make test-all` first",
+			paths)
+	}
+
+	return merged, nil
+}
+
+// Report writes the per-file and total patch coverage to w.
+func Report(w io.Writer, res Result, minPct float64) {
+	files := make([]string, 0, len(res.PerFile))
+	for f := range res.PerFile {
+		files = append(files, f)
+	}
+
+	sort.Strings(files)
+
+	for _, f := range files {
+		fr := res.PerFile[f]
+		_, _ = fmt.Fprintf(w, "  %6.1f%%  %s (%d/%d changed lines)\n",
+			pct(fr.Covered, fr.Coverable), f, fr.Covered, fr.Coverable)
+	}
+
+	verdict := "PASS"
+	if res.Ratio()*100 < minPct {
+		verdict = "FAIL"
+	}
+
+	_, _ = fmt.Fprintf(w, "diff-coverage: %.1f%% of %d changed coverable lines "+
+		"(min %.0f%%) — %s\n", res.Ratio()*100, res.Coverable, minPct, verdict)
+}
+
+// pct is the percentage covered/coverable (100 when nothing is coverable).
+func pct(covered, coverable int) float64 {
+	if coverable == 0 {
+		return 100
+	}
+
+	return float64(covered) / float64(coverable) * 100
+}
+
+// splitList splits a comma-separated list, dropping empties and whitespace.
+func splitList(s string) []string {
+	var out []string
+
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+
+	return out
 }
