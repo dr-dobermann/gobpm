@@ -35,6 +35,7 @@ package thresher
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -102,6 +103,7 @@ type instanceReg struct {
 // Thresher represents the main BPMN process execution engine.
 type Thresher struct {
 	ctx       context.Context
+	cfg       thresherConfig
 	eventHub  eventproc.EventHub
 	snapshots map[string]*snapshot.Snapshot
 	instances map[string]instanceReg
@@ -110,10 +112,17 @@ type Thresher struct {
 	state     State
 }
 
-// New creates a new empty Thresher in NotStarted state.
+// New creates a new empty Thresher in NotStarted state. Engine-level extensions
+// default to their bundled core implementations; each WithXxx option overrides
+// one (a zero-option New produces a fully working engine — no NewDefault).
 // Function only initializes inner structures. To run Thresher, Run method
 // should be called.
-func New(id string) (*Thresher, error) {
+func New(id string, opts ...Option) (*Thresher, error) {
+	cfg := defaultConfig()
+	for _, o := range opts {
+		o(&cfg)
+	}
+
 	eh, err := eventhub.New()
 	if err != nil {
 		return nil,
@@ -128,14 +137,36 @@ func New(id string) (*Thresher, error) {
 		id = defaultThresherID
 	}
 
-	return &Thresher{
-			id:        id,
-			state:     NotStarted,
-			snapshots: map[string]*snapshot.Snapshot{},
-			instances: map[string]instanceReg{},
-			eventHub:  eh,
-		},
-		nil
+	t := &Thresher{
+		id:        id,
+		cfg:       cfg,
+		state:     NotStarted,
+		snapshots: map[string]*snapshot.Snapshot{},
+		instances: map[string]instanceReg{},
+		eventHub:  eh,
+	}
+
+	t.logStartupConfig()
+
+	return t, nil
+}
+
+// logStartupConfig emits one INFO record naming every resolved engine-level
+// extension by its implementation type, so the wiring is visible at startup
+// (ADR-002 §4.4.1).
+func (t *Thresher) logStartupConfig() {
+	t.cfg.logger.Info("thresher.starting",
+		"id", t.id,
+		"repository", fmt.Sprintf("%T", t.cfg.repository),
+		"logger", fmt.Sprintf("%T", t.cfg.logger),
+		"tracer", fmt.Sprintf("%T", t.cfg.tracer),
+		"metricsRecorder", fmt.Sprintf("%T", t.cfg.metrics),
+		"clock", fmt.Sprintf("%T", t.cfg.clock),
+		"messageBroker", fmt.Sprintf("%T", t.cfg.msgBroker),
+		"expressionEngine", fmt.Sprintf("%T", t.cfg.exprEngine),
+		"authorizationProvider", fmt.Sprintf("%T", t.cfg.authz),
+		"workerDispatcher", fmt.Sprintf("%T", t.cfg.dispatcher),
+	)
 }
 
 // State returns current state of the Threasher.
