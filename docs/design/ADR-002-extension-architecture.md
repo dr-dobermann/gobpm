@@ -174,6 +174,16 @@ The instance-level `RuntimeEnvironment` is what nodes see during execution. Per 
 - **Tracing → no-op by default.** A span costs a per-event allocation and is inert without a consuming backend, so always-on tracing is exactly the "garbage configured by default" to avoid. A bounded in-memory **recent-spans ring** (last N, queryable) ships as a one-line opt-in for dev/debug, alongside the real `adapters/otel/`.
 - **Persistent (DB) telemetry** is a production adapter (`adapters/sqlstore`), **never a core default** — it would add a driver dependency and grow unbounded; an embedder opts into that storage knowingly.
 
+**In-memory defaults are bounded (cross-cutting principle).** The metrics series cap is one instance of a rule that governs *every* in-memory default: it bounds its own growth and **drops/evicts and warns once** past the cap, rather than growing without limit or failing silently. Visible-and-bounded beats both silent and unbounded; production swaps to a durable/external adapter that owns retention. Concretely:
+
+- `Repository` (in-mem) — evicts terminal Instances and their history past a retention bound.
+- `MessageBroker` (in-mem inbox) — bounds the inbox / expires uncorrelated messages (TTL).
+- `TaskDistributor` (in-mem) — bounds pending (unclaimed) UserTasks.
+- `EventHub` (in-mem) — bounded buffers with backpressure, not unbounded queues.
+- `WorkerDispatcher` (in-process) — a bounded worker pool, not an unbounded goroutine-per-task.
+
+The exact bound and eviction policy for each is settled at that extension's landing SRD (the skeleton SRD-004 ships the metrics series cap; the rest land with their execution wiring). **`AuthorizationProvider` is the exception** — its default question is not growth but *security posture*: the allow-all default delegates authorization to the host application, with deny-all the opt-in for a closed system. That is settled when authorization enforcement lands, not here.
+
 ### 4.3 RuntimeEnvironment interface — extended; Instance is the implementation
 
 The existing `RuntimeEnvironment` in `internal/renv/renv.go` is already structured the right way: it's an interface, and `Instance` is the type that implements it. A track gets exactly one external reference at construction — its owning `*Instance` — and reaches everything it needs through that.
