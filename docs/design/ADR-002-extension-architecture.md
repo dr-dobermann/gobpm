@@ -45,7 +45,7 @@ Summary table:
 | Internal-only surface       | Implementation glue (e.g., `EventWaiter`, `NodeDataLoader`) stays in `internal/`.                                                                                        |
 | Assembly                    | `thresher.New(id string, opts ...thresher.Option) (*Thresher, error)` + functional options. Zero-option call `thresher.New("id")` produces a working engine — every option simply overrides a default. **No separate `NewDefault` constructor**; defaults are the default. |
 | Per-instance composition    | The existing `RuntimeEnvironment` interface — which Instance already implements — is **extended** with the new engine-level service methods. Track gets one external reference at construction: its owning `*Instance`. Track call sites are uniform: `t.inst.Scope().GetData(...)` for instance-local state and `t.inst.Logger().Info(...)` for engine services. Instance-local fields are owned directly by Instance; engine-level methods on Instance are one-line delegates to engine config. The runtime values are owned by Engine, exposed via Instance through composition. |
-| Cross-adapter composition   | Adapters do NOT depend on each other's packages, but the **user MAY share extension values across adapter constructors** (e.g., a Postgres `Repository` value passed both to `thresher.WithRepository(repo)` AND to an AuthZ adapter's own constructor that accepts a storage backend). Adapters expose their dependencies via their own constructor options — see §4.6 / §3.5. |
+| Cross-adapter composition   | Adapters do NOT depend on each other's packages. By default an adapter **shares the engine's resources via the injected `EngineRuntime`** (the optional `RuntimeAware` hook — §3.5 Pattern C / §8.3): e.g. AuthZ uses `rt.Repository()` unless explicitly given its own. The user MAY **split** by passing a per-adapter option. See §3.5 / §4.6. |
 | Default-impl policy         | Engine-level defaults ship in core, visible-by-default (Logger = `slog.Default()` per project policy); production swaps via `WithXxx` options pulling from `adapters/*`. |
 | Stability contract          | Each public extension interface is a semver-stable contract once Accepted. Breaking changes → new ADR + version bump.                                                    |
 
@@ -86,31 +86,35 @@ Summary table:
 
 ### 3.5 Adapter dependency composition
 
-When an adapter needs services that another adapter provides (e.g., an AuthZ adapter wants to persist its policy in the same database the engine uses), there are two patterns:
+When an adapter needs a service the engine already holds (e.g., an AuthZ adapter that wants to persist its policy in the same store the engine uses), the common case should be **zero-ceremony sharing**, with an explicit **split** when wanted. Options:
 
 | Option | Description | Verdict |
 |---|---|---|
-| **A. Service-locator via runtime object** | Adapter at runtime calls `engine.Repository()` / `runtime.Logger()` to fetch sibling dependencies | Rejected. Implicit coupling; adapter imports core's runtime API; "where does this come from?" magic; hard to test in isolation; breaks the "adapter declares its own dependencies" principle. |
-| **B. Explicit composition by the user at construction time** — chosen | Each adapter exposes its own constructor with its own options. The user constructs the shared resource ONCE, then passes the resulting value into multiple adapter constructors AND into the engine. | Selected. Dependencies are explicit at the wiring site; adapters import only core's interfaces, not each other; adapter is testable in isolation. |
+| **A. Runtime service-locator on the concrete engine** | Adapter holds a reference to the concrete `*Thresher` and calls `engine.Repository()` at runtime. | Rejected. Couples the adapter to the concrete engine type; "where does this come from?" magic; hard to fake in isolation. |
+| **B. Explicit user composition** | The user constructs the shared resource once and threads it into both the adapter and the engine. | Valid — kept as the full-isolation option. Most explicit; but it is ceremony for the common "just share the engine's default" case. |
+| **C. Injected `EngineRuntime` interface** — chosen | The engine injects its resolved `EngineRuntime` (a core *interface* — §4.3) into adapters that opt in via the optional `RuntimeAware` hook (§8.3), at `thresher.New` assembly. An adapter pulls any dependency it wasn't explicitly given from the runtime (`rt.Repository()`); an explicit per-adapter option overrides it (the split). | Selected. Default = the adapter shares the engine's resources with no wiring; split = the adapter's own option. The handle is a core interface injected at assembly (not a concrete engine pulled at runtime), so the adapter stays unit-testable — fake the `EngineRuntime`. This keeps Option A's convenience while dissolving its coupling/testability objection. |
 
-Example of Pattern B (chosen):
+Example (Pattern C):
 
 ```go
-// User constructs the shared Postgres-backed repository once
-repo, _ := postgres.NewRepository(connStr)
+// Default — AuthZ shares the engine's repository, zero ceremony.
+// casbin.Authorizer implements RuntimeAware; the engine injects its
+// EngineRuntime at New, and the adapter uses rt.Repository() for its storage.
+authz, _ := casbin.NewAuthorizer()
+engine, _ := thresher.New("my-engine",
+    thresher.WithRepository(repo),                 // the app's default repo
+    thresher.WithAuthorizationProvider(authz),     // engine injects EngineRuntime -> authz uses repo
+)
 
-// AuthZ adapter accepts a storage backend via its own option;
-// the Repository value satisfies the storage backend interface
-authz, _ := casbin.NewAuthorizer(casbin.WithStorage(repo))
-
-// Engine receives both, independently
+// Split — give AuthZ its own store explicitly; the engine skips the injection.
+authz, _ := casbin.NewAuthorizer(casbin.WithStorage(otherRepo))
 engine, _ := thresher.New("my-engine",
     thresher.WithRepository(repo),
-    thresher.WithAuthorizationProvider(authz),
+    thresher.WithAuthorizationProvider(authz),     // authz uses otherRepo, not repo
 )
 ```
 
-The Postgres adapter doesn't know about casbin; casbin doesn't know about Postgres. Both know about the `Repository` (or storage backend) interface from core. The user wires them.
+The adapter imports only core's `EngineRuntime` + `Repository` interfaces — never a concrete engine, never another adapter. The user keeps full control to split via the adapter's own option.
 
 ## 4. Decision Detail
 
@@ -165,21 +169,20 @@ The existing `RuntimeEnvironment` in `internal/renv/renv.go` is already structur
 
 **This ADR just extends the existing RuntimeEnvironment interface with the new engine-level services.** No structural refactor of the Instance/track relationship; no second reference for the track; no forwarding accessor.
 
+There are **two tiers**: the engine/server-level resolved configuration
+(`EngineRuntime`) and the instance-level execution context
+(`RuntimeEnvironment`), which embeds the former.
+
 ```go
 // pkg/renv (moved from internal/renv, then extended)
-// EXISTING four methods preserved; NEW engine-level service methods added.
-type RuntimeEnvironment interface {
-    // === EXISTING — instance-local state (kept as-is) ===
-    scope.Scope                                  // embedded; data scoping rooted at this instance
-    InstanceID() string                          // instance identity
-    EventProducer() EventProducer                // instance-scoped event production
 
-    // === EXISTING — renamed for clarity (per §5 departure) ===
-    TaskDistributor() TaskDistributor            // was RenderRegistrator() in current code
-
-    // === NEW — engine-level services, accessed uniformly via Instance ===
+// EngineRuntime — engine/server-level: the Thresher's RESOLVED extension set
+// (the wired services). Thresher owns/implements it. Adapters receive it (§3.5);
+// RuntimeEnvironment embeds it so tracks keep one uniform call style.
+type EngineRuntime interface {
     Logger() *slog.Logger
     Tracer() Tracer
+    MetricsRecorder() MetricsRecorder
     Clock() Clock
     Repository() Repository
     ExpressionEngine() ExpressionEngine
@@ -187,31 +190,38 @@ type RuntimeEnvironment interface {
     AuthorizationProvider() AuthorizationProvider
     WorkerDispatcher() WorkerDispatcher
     EventHub() EventHub
+    TaskDistributor() TaskDistributor            // was RenderRegistrator() in current code
+}
+
+// RuntimeEnvironment — instance-level execution context: engine services
+// (embedded) + instance-local state. Instance implements it.
+type RuntimeEnvironment interface {
+    EngineRuntime                                // engine/server services (embedded)
+    scope.Scope                                  // data scoping rooted at this instance
+    InstanceID() string                          // instance identity
+    EventProducer() EventProducer                // instance-scoped event production
 }
 ```
 
-Instance composes with the engine's configuration to satisfy all of it. Instance-local fields (`id`, `scope`, instance-scoped `EventProducer` wrapper) are owned directly; engine-level methods delegate one-liners to the engine config.
+Instance gets the engine-service methods **for free** by embedding the Thresher's
+`EngineRuntime` value; it only adds its instance-local methods. No per-method
+delegates.
 
 ```go
 // internal/instance/instance.go (existing struct, extended)
 type Instance struct {
+    renv.EngineRuntime           // embedded: the Thresher's resolved EngineRuntime
     id          string
     scope       scope.Scope
     eventProd   EventProducer
-    engineCfg   *thresherConfig          // engine-level extensions reached through this
     // ... per ADR-001 v.3
 }
 
-// Instance-local — direct field access
-func (i *Instance) ID() string                   { return i.id }
+// Instance-local — direct (engine-level methods are promoted from the embedded
+// EngineRuntime, so Logger()/Repository()/Clock()/... need no code here).
+func (i *Instance) InstanceID() string           { return i.id }
 func (i *Instance) Scope() scope.Scope           { return i.scope }
 func (i *Instance) EventProducer() EventProducer { return i.eventProd }
-
-// Engine-level — delegate to engine config (one-line forwarders)
-func (i *Instance) Logger() *slog.Logger                 { return i.engineCfg.logger }
-func (i *Instance) Repository() Repository               { return i.engineCfg.repository }
-func (i *Instance) Clock() Clock                         { return i.engineCfg.clock }
-// ... etc, uniform pattern for all engine-level methods
 ```
 
 Track call sites are uniform: one reference, one call style for everything.
@@ -225,9 +235,9 @@ type track struct {
 // Uniform call style — track doesn't need to know which call is "instance" vs "engine":
 t.inst.Scope().GetData(...)              // instance-local — Instance returns its own field
 t.inst.ID()                              // instance-local
-t.inst.Logger().Info(...)                // engine service — Instance delegates to cfg
-t.inst.Clock().Now()                     // engine service — Instance delegates to cfg
-t.inst.Repository()                      // engine service — Instance delegates to cfg
+t.inst.Logger().Info(...)                // engine service — promoted from embedded EngineRuntime
+t.inst.Clock().Now()                     // engine service — promoted from embedded EngineRuntime
+t.inst.Repository()                      // engine service — promoted from embedded EngineRuntime
 ```
 
 **Rationale for one-reference / Instance-as-RE model** (per user direction):
@@ -235,7 +245,7 @@ t.inst.Repository()                      // engine service — Instance delegate
 - The track already needs an Instance reference (for instance-scoped concerns like `Scope` and `ID`). Adding a SECOND reference for engine services duplicates plumbing for no gain.
 - Instance is the natural composition point — it knows the instance AND holds a reference to the engine config.
 - Track only ever has one external dependency: its owning Instance. Simpler for new contributors, simpler for testing, simpler in the goroutine plumbing per ADR-001 v.3.
-- "Instance is for execution, not for holding runtime values" is satisfied by composition: Instance holds a *reference* to engine config (which holds the values); engine-level methods on Instance are mechanical one-line delegates. The runtime values are owned by the Engine; Instance just exposes them through its interface.
+- "Instance is for execution, not for holding runtime values" is satisfied by composition: Instance **embeds the Thresher's `EngineRuntime`** (the holder of the resolved values); the engine-level methods are promoted from it, not reimplemented. The runtime values are owned by the engine (`EngineRuntime`); Instance exposes them through embedding.
 
 The existing pattern (Instance implements RuntimeEnvironment) is preserved; this ADR's contribution to it is just the extended interface (the additional engine-level method set).
 
@@ -333,7 +343,7 @@ Per SAD-001 §9.2 multi-module monorepo:
 - Each adapter is its own Go module: `github.com/dr-dobermann/gobpm/adapters/<name>` with its own `go.mod`.
 - An adapter MUST implement one or more public extension interfaces from core (`pkg/`).
 - An adapter MUST NOT import any other adapter's package. This is the **no-cross-adapter-imports** rule.
-- An adapter MAY accept shared resources via its own constructor options — passed by the USER at wiring time, satisfying core's interfaces. This is the composition pattern from §3.5; it does NOT violate the no-cross-imports rule because the shared resource is passed AS an interface (defined in core), not as an adapter's concrete type.
+- An adapter MAY default its dependencies from the injected `EngineRuntime` (§3.5 Pattern C / §8.3 `RuntimeAware`) and/or take explicit per-adapter options to override them (the split). Either way it depends only on core interfaces (`EngineRuntime`, `Repository`, …), never on another adapter or a concrete engine — the no-cross-imports rule holds.
 - An adapter SHOULD declare its minimum compatible core version via `replace`-free pinning in its `go.mod`.
 - An adapter's tests SHOULD verify against the contract published in this ADR (e.g., `Repository` impl must pass the same conformance test suite the in-memory default passes).
 - Adapters MUST prefer **pure-Go embedded** implementations over service-dependent ones, to preserve the embeddable-library value proposition of core. Service-dependent adapters (gRPC sidecars, external HTTP services) are allowed but SHOULD be clearly labeled as such.
@@ -399,7 +409,7 @@ Pre-1.0 (where we are): interface evolution is freer per Go's semver convention.
 
 - **More public surface area to maintain.** 10+ extension interfaces become stability contracts at v1.0. Each interface change requires care.
 - **Default implementations bundled in core inflate the core module's surface.** Mitigated by keeping defaults small and well-isolated (one file per default).
-- **Interface naming bikeshedding.** Some names (TaskDistributor vs Registrator, WorkerDispatcher vs ServiceTaskExecutor) carry historical baggage; renames during the implementation phase are expected.
+- **Interface naming will track industry conventions.** Some names carry historical baggage (`Registrator`, and the SAD's `WorkerDispatcher` / `TaskDistributor` vs alternatives like `ServiceTaskExecutor`). Renaming the extension interfaces toward established industry vocabulary during the implementation phase is **accepted and expected** — they are not contract-frozen until this ADR is Accepted. **Exception — the concrete engine type stays `Thresher`:** it is deliberately distinctive; `Server` and `Engine` are too generic to name the type and are reserved as *role* words (e.g., the engine-level `EngineRuntime` interface — "the runtime contract of the engine"), never the type's own name.
 - **Some current internal helpers move to `pkg/`** — once public, they can't be refactored without ADR amendment.
 
 ### 6.3 Implications for adjacent decisions
@@ -418,7 +428,7 @@ How we'll know the extension architecture works:
 | **Functional options compose without ordering issues** | Test: construct an Engine with all 10 `WithXxx` options in random orders; assert resulting Engine state is identical. |
 | **Each option overrides the default** | Per-option test: construct with `WithLogger(custom)`; assert engine's Logger is `custom`, not `slog.Default()`. Repeat for each interface. |
 | **Last-write semantics** | Test: pass `WithLogger(A), WithLogger(B)`; assert engine uses B. |
-| **Cross-adapter composition** | Test: construct a Repository value; pass it both to `thresher.WithRepository(repo)` and to a fake AuthZ adapter accepting `WithStorage(repo)`. Assert: engine uses repo for instance persistence; AuthZ adapter uses repo for policy storage. Verifies the Pattern B composition from §3.5 / §4.6. |
+| **Cross-adapter composition** | Test (with a real/fake `RuntimeAware` adapter): given no storage option, the AuthZ adapter uses the engine's `Repository` via the injected `EngineRuntime` (default share); given `WithStorage(otherRepo)` it uses that instead (split). Verifies §3.5 Pattern C / §8.3. |
 | **Startup config log line** | Test: construct engine with a Logger that captures records. Assert: exactly one INFO-level record with key `thresher.starting` is emitted, containing attributes for every Engine-level extension (`repository`, `logger`, `tracer`, `metricsRecorder`, `clock`, `messageBroker`, `expressionEngine`, `authorizationProvider`, `workerDispatcher`, `eventHub`, `taskDistributor`) with values matching the wired implementation type names. Verifies §4.4.1. |
 | **Instance implements RuntimeEnvironment** | Type assertion test: `var _ RuntimeEnvironment = (*Instance)(nil)`. Compile-time check that Instance satisfies the extended interface. |
 | **Instance engine-service delegates** | Per-method test: construct engine with custom Logger (or Clock, or Repository, …); spawn an Instance; assert `instance.Logger()` (etc.) returns the same value as the engine config holds. Verifies one-line delegate correctness. |
@@ -531,6 +541,14 @@ type HealthChecker interface {
     HealthCheck(ctx context.Context) error
 }
 
+// Optional — adapters that want the engine's resolved services. The engine
+// injects its EngineRuntime (§4.3) at New; the adapter uses it to default any
+// dependency it wasn't explicitly configured with (e.g. rt.Repository()).
+// See §3.5 Pattern C.
+type RuntimeAware interface {
+    UseRuntime(rt EngineRuntime)
+}
+
 // Optional — adapters that declare their cluster-mode compatibility
 type ClusterAware interface {
     // ClusterCompatibility returns whether this adapter is safe to use when
@@ -544,6 +562,7 @@ type ClusterAware interface {
 ```
 
 When Thresher constructs and runs, it detects whether each registered extension implements one of these and integrates accordingly:
+- `UseRuntime` is called during `New`, after the engine resolves its config, on each wired adapter that implements it — passing the engine's `EngineRuntime` so the adapter can default its dependencies from the engine (§3.5 Pattern C).
 - `Start` is called during `Run` setup before instances are accepted.
 - `Stop` is called during engine shutdown after all instances are drained or terminated.
 - `HealthCheck` is exposed by the runtime layer (per ADR-004) for liveness/readiness endpoints.
