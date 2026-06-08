@@ -32,6 +32,7 @@ MODULES := $(shell /usr/bin/find . -name go.mod -not -path './.git/*' -exec dirn
 MOCKERY_VERSION     := v3.5.0
 GOLANGCI_VERSION    := v2.11.4
 GOVULNCHECK_VERSION := latest
+COVERCHECK_VERSION  := v0.1.1
 
 define require-tool
 @command -v $(1) >/dev/null 2>&1 || { echo "ERROR: '$(1)' not found in PATH. Run 'make tools' (installs CI-pinned versions) or: $(2)"; exit 1; }
@@ -42,6 +43,7 @@ tools:
 	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
 		| sh -s -- -b "$$($(GO) env GOPATH)/bin" $(GOLANGCI_VERSION)
 	$(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+	$(GO) install github.com/dr-dobermann/covercheck/cmd/covercheck@$(COVERCHECK_VERSION)
 .PHONY: tools
 
 # ---------------------------------------------------------------------------
@@ -150,7 +152,8 @@ vuln:
 # module) — run `make test-all` first, or use `make ci` which orders them.
 # Judges only changed lines, so the untouched-code backlog never blocks it.
 cover-check:
-	$(GO) run ./cmd/covercheck -min $(COVER_MIN) -base $(COVER_BASE) -profiles coverage.txt
+	$(call require-tool,covercheck,$(GO) install github.com/dr-dobermann/covercheck/cmd/covercheck@$(COVERCHECK_VERSION))
+	covercheck -min $(COVER_MIN) -base $(COVER_BASE) -profiles coverage.txt
 .PHONY: cover-check
 
 # Umbrella target that runs the full local-equivalent of CI.
