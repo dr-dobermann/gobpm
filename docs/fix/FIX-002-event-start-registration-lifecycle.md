@@ -13,24 +13,25 @@
 Every `StartProcess` call **deadlocks** (`fatal error: all goroutines are asleep - deadlock!`). Two examples surface it — both call `engine.StartProcess`:
 
 - **`examples/basic-process`** (plain Start → ServiceTask → End): deadlocks, no useful output.
-- **`examples/timer-event`** (timer **on the start event**): first fails to *construct* —
+- **`examples/timer-event`** (timer **on the start event**): peels back in three layers.
+  1. First fails to *construct* (RC1) —
 
-  ```
-  Failed to start process: couldn't create an Instance for process "…"
-    Error: couldn't register event definitions
-      node_name: timer-start
-      Error: instance isn't active (current state: Created)
-  ```
+     ```
+     Failed to start process: couldn't create an Instance for process "…"
+       Error: couldn't register event definitions
+         node_name: timer-start
+         Error: instance isn't active (current state: Created)
+     ```
+  2. Once that construction-time guard is relaxed, it deadlocks in `StartProcess` exactly like basic-process (RC2).
+  3. With RC1+RC2 fixed, `StartProcess` succeeds, the timer **fires correctly at 5 s**, the service task runs and the instance completes — then the *example* deadlocks (RC3): the deadlock panic lands at **5.01 s** (measured), the moment the timer fires and the engine's last worker goroutine exits, leaving only the example's `main` and `eventHub.Run` blocked on `context.Background().Done()` (a nil channel).
 
-  and once that construction-time guard is relaxed, it then **deadlocks** like basic-process.
-
-`examples/simple-timer` does **not** call `StartProcess` (only `RegisterProcess` + `Run`), so it hits neither path and exits cleanly — which is why it looked "fine".
+`examples/simple-timer` does **not** call `StartProcess` (only `RegisterProcess` + `Run`), so it hits neither engine path and exits cleanly — which is why it looked "fine".
 
 Masked from CI because CI only **builds** the example modules, never **runs** them (`make build-all` has no run step) — see §5.
 
 ## 2. Root-cause analysis
 
-There are **two** defects on the `StartProcess` path. A plain process hits RC2; an event-start process hits RC1 first, then RC2.
+There are **three** independent defects. Two are in the engine on the `StartProcess` path (RC1, RC2); the third is in an example (RC3) and only surfaced once RC1+RC2 were fixed. A plain process hits RC2; an event-start process hits RC1 first, then RC2, then (for `timer-event`) RC3.
 
 ### RC1 — `RegisterEvent` rejects construction-time registration (`Created`)
 
@@ -53,9 +54,26 @@ The `Active`-only guard (added with the ADR-001 v.4 `Created→Active` reconcili
 
 Observed deadlock stack (RC1 relaxed): `main → StartProcess(:378, holds t.m) → launchInstance → instance.New → createTracks → newTrack → checkNodeType → Instance.RegisterEvent(:597) → Thresher.RegisterEvent(:266) → Thresher.State(:184) → sync.Mutex.Lock [blocked forever]`. `sync.Mutex` is not reentrant; the second acquire on the same goroutine blocks. `simple-timer` avoids it only because it never calls `StartProcess`.
 
+### RC3 — `examples/timer-event` waits on a nil channel (example bug, not the engine)
+
+With RC1+RC2 fixed the engine runs the process correctly, but the *example* can never terminate:
+
+- `examples/timer-event/main.go:106` — `ctx := context.Background()` is handed to `engine.Run(ctx)`.
+- `examples/timer-event/main.go:123-127` — `main` then blocks on `select { case <-ctx.Done(): … }`. `context.Background().Done()` returns `nil`, so this waits on a nil channel forever (the "Press Ctrl+C to exit" banner implies a signal handler that the example never installs).
+- `eventhub.go:93` — `EventHub.Run` likewise blocks on `<-ctx.Done()` (same `Background` ctx, nil channel) for the hub's lifetime — normal, it is just the shutdown wait.
+
+So once the timer has fired and the instance has completed, the only two live goroutines are `main` and `eventHub.Run`, both parked on a nil channel; Go's runtime detects "all goroutines are asleep" and panics.
+
+**The engine is proven sound — there is no engine-side timer-delivery defect.** Evidence:
+
+- The deadlock panic lands at **5.01 s** (`time` measured on the built binary) — exactly the timer's `timeDate` (`time.Now().Add(5*time.Second)`, `main.go:37/39`). The timer fired, the one-shot waiter ran `processTimerEvent` and exited (`timer.go:248` `go runTimerService` → fire → `RemoveWaiter`), which is why the goroutine dump shows it gone — not because it never started.
+- Replacing the example's wait with a cancelable `context.WithTimeout(…, 8s)` makes the program print `Process completed` and exit 0, with no engine change.
+
+`examples/basic-process` does not have RC3 — it returns from `main` after `StartProcess` rather than parking on `ctx.Done()`, which is why it already runs to completion once RC2 is fixed.
+
 ## 3. Solution
 
-Both RCs must be fixed; either alone leaves a broken example.
+RC1 and RC2 are engine fixes; RC3 is an example fix. All three are needed for both broken examples to run.
 
 ### 3.1 — RC1: permit registration in non-terminal states
 
@@ -94,7 +112,23 @@ func (t *Thresher) StartProcess(processID string) error {
 
 This removes **both** re-entrancy paths: the direct `launchInstance:403` re-lock (basic-process) and the `State()` re-lock during event-start registration (timer-event). Also replace the unguarded `t.state` read at `thresher.go:361` with `t.State()`.
 
-### 3.3 Alternatives considered
+### 3.3 — RC3: give `examples/timer-event` a terminating wait
+
+Hand `engine.Run` a cancelable context and wait on it (so the program exits cleanly after the timer fires), instead of parking `main` on `context.Background().Done()`:
+
+```go
+// examples/timer-event/main.go
+ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+defer cancel()
+err = engine.Run(ctx)
+// …
+<-ctx.Done() // bounded; the 5 s timer fires well within the window
+fmt.Println("Process completed")
+```
+
+The 8 s budget gives the 5 s `timeDate` timer room to fire and the instance to complete before the context cancels. Using a plain `<-ctx.Done()` (not a one-case `select`) also clears a `gosimple S1000` lint. Engine code is untouched.
+
+### 3.4 Alternatives considered
 
 - **Make `Thresher.State()` lock-free (atomic state), like `Instance`.** Removes the `State()` re-entry (timer-event) but NOT the direct `launchInstance:403` re-lock (basic-process) — insufficient alone. A reasonable *complementary* hardening; optional, can follow.
 - **Recursive mutex.** Rejected — not idiomatic in Go; re-entrant locking masks design problems.
@@ -107,8 +141,9 @@ This removes **both** re-entrancy paths: the direct `launchInstance:403` re-lock
 | V1 | Unit: a `Created` instance registers an event-start definition without error (RC1). | succeeds on `Created`. |
 | V2 | Unit: `RegisterEvent` on a terminal (`Completed`/`Terminated`) instance still errors (RC1). | guard preserved. |
 | V3 | Unit/integration: `StartProcess` of a plain process **and** of an event-start process returns without deadlock (RC2). | no re-entrant lock; `t.m` not held across `launchInstance`. |
-| V4 | `examples/basic-process` **and** `examples/timer-event` run to completion. | exit 0; no deadlock, no "instance isn't active". |
-| V5 | No regression: `make ci` green (race tests + diff-coverage + vuln); `examples/simple-timer` still runs. | all existing tests pass. |
+| V4 | `examples/basic-process` runs to completion (RC2). | exit 0; no deadlock, no "instance isn't active". |
+| V5 | `examples/timer-event` runs to completion (RC1+RC2 engine, RC3 example): the timer fires at ~5 s, the instance completes, and the program exits. | exit 0; prints `Process completed`; no deadlock panic. |
+| V6 | No regression: `make ci` green (race tests + diff-coverage + vuln); `examples/simple-timer` still runs. | all existing tests pass. |
 
 ## 5. Prevention
 
@@ -116,9 +151,11 @@ This removes **both** re-entrancy paths: the direct `launchInstance:403` re-lock
 
 ## 6. Regressions / scope notes
 
-- **`examples/basic-process` is in scope** — it is the same RC2 re-entrancy (earlier mis-attributed to a no-op `ServiceTask`). Both broken examples are fixed by §3.1 + §3.2.
+- **`examples/basic-process` is in scope** — it is the same RC2 re-entrancy (earlier mis-attributed to a no-op `ServiceTask`); fixed by §3.1 + §3.2.
+- **`examples/timer-event` needs all three** — the engine fixes (§3.1 + §3.2) plus the example fix (§3.3). An RC4 "engine never schedules the timer" hypothesis was **investigated and disproven**: the timer fires at exactly 5.01 s, so the only remaining defect is the example's nil-channel wait.
 - The guard change (§3.1) must not weaken terminal-state protection (V2).
 - Narrowing the `StartProcess` lock (§3.2) must keep the snapshot read and the registry write each mutex-guarded — just not held across `launchInstance`. Concurrent `StartProcess` calls remain safe.
+- RC3 (§3.3) is an example-only change; no engine behavior changes.
 
 ## 7. Related
 
@@ -138,4 +175,4 @@ This removes **both** re-entrancy paths: the direct `launchInstance:403` re-lock
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-09 | Ruslan Gabitov | Draft. `StartProcess` deadlocks via two defects: **RC1** — `RegisterEvent` requires `Active` but event-start nodes register during `New` (`Created`); **RC2** — `StartProcess` holds `t.m` across `launchInstance`, which re-locks it (re-entrant `sync.Mutex` deadlock — hits `basic-process` directly via `launchInstance:403`, and `timer-event` via `Thresher.State()`). Fix: permit non-terminal states for registration (RC1) + narrow `StartProcess` to release `t.m` before `launchInstance` (RC2). Both broken examples in scope. (RCA expanded from the initial guard-only draft after reproducing the deadlock — Draft amendment, no separate row.) |
+| v.1 | 2026-06-09 | Ruslan Gabitov | Draft. `StartProcess` deadlocks via three defects: **RC1** — `RegisterEvent` requires `Active` but event-start nodes register during `New` (`Created`); **RC2** — `StartProcess` holds `t.m` across `launchInstance`, which re-locks it (re-entrant `sync.Mutex` deadlock — hits `basic-process` directly via `launchInstance:403`, and `timer-event` via `Thresher.State()`); **RC3** — `examples/timer-event` waits on `context.Background().Done()` (nil channel), so it deadlocks after the timer correctly fires. Fix: permit non-terminal states for registration (RC1) + narrow `StartProcess` to release `t.m` before `launchInstance` (RC2) + give the example a cancelable context (RC3). Both broken examples in scope. (RCA expanded across Draft amendments while reproducing the deadlock: first guard-only → RC1+RC2; then, after measuring the panic at 5.01 s, an RC4 "engine doesn't schedule the timer" hypothesis was disproven and the remaining failure attributed to RC3, the example. Draft amendments, no separate rows.) |
