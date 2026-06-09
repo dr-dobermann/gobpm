@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-09 |
 | Owner | Ruslan Gabitov |
@@ -165,7 +165,37 @@ The 8 s budget gives the 5 s `timeDate` timer room to fire and the instance to c
 
 ## 8. Implementation summary
 
-> ⚠️ TODO: filled at landing — files/lines, V-results, commit SHA.
+Landed on branch `fix/event-start-registration` (off `master`). RC1 + RC2 are engine fixes; RC3 is the example fix.
+
+**Changes**
+
+- **RC1** — `internal/instance/instance.go:574-580` (`RegisterEvent`): the `Active`-only guard became `is := inst.State(); if is != Created && is != Active { … "instance is terminal…" }`, permitting construction-time (`Created`) and runtime (`Active`) registration and refusing only terminal instances.
+- **RC2** — `pkg/thresher/thresher.go` (`StartProcess`, ~:358-380): the engine mutex now wraps only the `t.snapshots[processID]` lookup (`:373-374`) and is released before `t.launchInstance(s)`; the started-check uses `t.State()` instead of an unguarded `t.state` read.
+- **RC3** — `examples/timer-event/main.go:106` (`context.WithTimeout(…, 8s)` + `defer cancel()`) and `:126` (plain `<-ctx.Done()` → `Process completed`).
+
+**Tests added**
+
+- `internal/instance/register_event_test.go` — `TestRegisterEventAllowsCreated` (V1), `TestRegisterEventRejectsTerminal` (V2).
+- `pkg/thresher/thresher_process_test.go` — `TestStartProcess_NoReentrantDeadlock` (V3, timeout-guarded).
+
+**Verification results**
+
+| # | Result |
+|---|---|
+| V1 | 🟢 a `Created` instance registers an event-start definition — passes. |
+| V2 | 🟢 a terminal instance is still refused — passes. |
+| V3 | 🟢 `StartProcess` returns without a re-entrant deadlock — passes. |
+| V4 | 🟢 `examples/basic-process` exit 0. |
+| V5 | 🟢 `examples/timer-event` exit 0; timer fires ~5 s; prints `Process completed`. |
+| V6 | 🟢 `make ci` green (lint 0 issues, race tests, diff-coverage 100 % of 10 touched lines, govulncheck); `examples/simple-timer` exit 0. |
+
+**Milestone commits**
+
+- `b7af364` — M1 (RC1): `RegisterEvent` permits non-terminal states + V1/V2 tests.
+- `0ffa77a` — M2 (RC2): `StartProcess` releases `t.m` before `launchInstance` + V3 test.
+- `adddea3` — doc: add RC3, disprove RC4.
+- `004319e` — M3 (RC3): `examples/timer-event` cancelable context.
+- (`9d3e947` — original RCA-completion doc commit on the branch.)
 
 ## 9. Open questions
 
@@ -175,4 +205,4 @@ The 8 s budget gives the 5 s `timeDate` timer room to fire and the instance to c
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-09 | Ruslan Gabitov | Draft. `StartProcess` deadlocks via three defects: **RC1** — `RegisterEvent` requires `Active` but event-start nodes register during `New` (`Created`); **RC2** — `StartProcess` holds `t.m` across `launchInstance`, which re-locks it (re-entrant `sync.Mutex` deadlock — hits `basic-process` directly via `launchInstance:403`, and `timer-event` via `Thresher.State()`); **RC3** — `examples/timer-event` waits on `context.Background().Done()` (nil channel), so it deadlocks after the timer correctly fires. Fix: permit non-terminal states for registration (RC1) + narrow `StartProcess` to release `t.m` before `launchInstance` (RC2) + give the example a cancelable context (RC3). Both broken examples in scope. (RCA expanded across Draft amendments while reproducing the deadlock: first guard-only → RC1+RC2; then, after measuring the panic at 5.01 s, an RC4 "engine doesn't schedule the timer" hypothesis was disproven and the remaining failure attributed to RC3, the example. Draft amendments, no separate rows.) |
+| v.1 | 2026-06-09 | Ruslan Gabitov | Accepted (landed). `StartProcess` deadlocks via three defects: **RC1** — `RegisterEvent` requires `Active` but event-start nodes register during `New` (`Created`); **RC2** — `StartProcess` holds `t.m` across `launchInstance`, which re-locks it (re-entrant `sync.Mutex` deadlock — hits `basic-process` directly via `launchInstance:403`, and `timer-event` via `Thresher.State()`); **RC3** — `examples/timer-event` waits on `context.Background().Done()` (nil channel), so it deadlocks after the timer correctly fires. Fix: permit non-terminal states for registration (RC1) + narrow `StartProcess` to release `t.m` before `launchInstance` (RC2) + give the example a cancelable context (RC3). Both broken examples in scope. (RCA expanded across Draft amendments while reproducing the deadlock: first guard-only → RC1+RC2; then, after measuring the panic at 5.01 s, an RC4 "engine doesn't schedule the timer" hypothesis was disproven and the remaining failure attributed to RC3, the example. Draft amendments, no separate rows.) |
