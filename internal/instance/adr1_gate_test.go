@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"testing"
 	"time"
 
@@ -36,7 +37,7 @@ func TestTerminatedOnPreCanceledContext(t *testing.T) {
 	s := buildForkSnapshot(t)
 	ep := mockeventproc.NewMockEventProducer(t)
 
-	inst, err := New(s, nil, ep, nil)
+	inst, err := New(s, nil, enginert.Default(), ep, nil)
 	require.NoError(t, err)
 
 	leak := assertNoGoroutineLeak(t)
@@ -65,7 +66,7 @@ func TestTerminationCascade(t *testing.T) {
 	s := buildForkSnapshot(t)
 	ep := mockeventproc.NewMockEventProducer(t)
 
-	inst, err := New(s, nil, ep, nil)
+	inst, err := New(s, nil, enginert.Default(), ep, nil)
 	require.NoError(t, err)
 
 	leak := assertNoGoroutineLeak(t)

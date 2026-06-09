@@ -12,6 +12,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	exprengine "github.com/dr-dobermann/gobpm/pkg/model/expression/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
@@ -50,6 +51,10 @@ func TestExclusiveGatewayExec(t *testing.T) {
 					data.MustItemDefinition(values.NewVariable(10)),
 					data.ReadyDataState)),
 			nil).
+		Maybe()
+	re.EXPECT().
+		ExpressionEngine().
+		Return(exprengine.New()).
 		Maybe()
 
 	xless10, err := goexpr.New(

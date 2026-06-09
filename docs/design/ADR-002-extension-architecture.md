@@ -2,9 +2,9 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
-| Date | 2026-05-30 |
+| Date | 2026-06-09 |
 | Owner | Ruslan Gabitov |
 | Supersedes | — |
 | Refines | [SAD-001 v.1 §11 Extension Model](SAD-001-vision-and-architecture.md) |
@@ -45,7 +45,7 @@ Summary table:
 | Internal-only surface       | Implementation glue (e.g., `EventWaiter`, `NodeDataLoader`) stays in `internal/`.                                                                                        |
 | Assembly                    | `thresher.New(id string, opts ...thresher.Option) (*Thresher, error)` + functional options. Zero-option call `thresher.New("id")` produces a working engine — every option simply overrides a default. **No separate `NewDefault` constructor**; defaults are the default. |
 | Per-instance composition    | The existing `RuntimeEnvironment` interface — which Instance already implements — is **extended** with the new engine-level service methods. Track gets one external reference at construction: its owning `*Instance`. Track call sites are uniform: `t.inst.Scope().GetData(...)` for instance-local state and `t.inst.Logger().Info(...)` for engine services. Instance-local fields are owned directly by Instance; engine-level methods on Instance are one-line delegates to engine config. The runtime values are owned by Engine, exposed via Instance through composition. |
-| Cross-adapter composition   | Adapters do NOT depend on each other's packages, but the **user MAY share extension values across adapter constructors** (e.g., a Postgres `Repository` value passed both to `thresher.WithRepository(repo)` AND to an AuthZ adapter's own constructor that accepts a storage backend). Adapters expose their dependencies via their own constructor options — see §4.6 / §3.5. |
+| Cross-adapter composition   | Adapters do NOT depend on each other's packages. By default an adapter **shares the engine's resources via the injected `EngineRuntime`** (the optional `RuntimeAware` hook — §3.5 Pattern C / §8.3): e.g. AuthZ uses `rt.Repository()` unless explicitly given its own. The user MAY **split** by passing a per-adapter option. See §3.5 / §4.6. |
 | Default-impl policy         | Engine-level defaults ship in core, visible-by-default (Logger = `slog.Default()` per project policy); production swaps via `WithXxx` options pulling from `adapters/*`. |
 | Stability contract          | Each public extension interface is a semver-stable contract once Accepted. Breaking changes → new ADR + version bump.                                                    |
 
@@ -86,31 +86,35 @@ Summary table:
 
 ### 3.5 Adapter dependency composition
 
-When an adapter needs services that another adapter provides (e.g., an AuthZ adapter wants to persist its policy in the same database the engine uses), there are two patterns:
+When an adapter needs a service the engine already holds (e.g., an AuthZ adapter that wants to persist its policy in the same store the engine uses), the common case should be **zero-ceremony sharing**, with an explicit **split** when wanted. Options:
 
 | Option | Description | Verdict |
 |---|---|---|
-| **A. Service-locator via runtime object** | Adapter at runtime calls `engine.Repository()` / `runtime.Logger()` to fetch sibling dependencies | Rejected. Implicit coupling; adapter imports core's runtime API; "where does this come from?" magic; hard to test in isolation; breaks the "adapter declares its own dependencies" principle. |
-| **B. Explicit composition by the user at construction time** — chosen | Each adapter exposes its own constructor with its own options. The user constructs the shared resource ONCE, then passes the resulting value into multiple adapter constructors AND into the engine. | Selected. Dependencies are explicit at the wiring site; adapters import only core's interfaces, not each other; adapter is testable in isolation. |
+| **A. Runtime service-locator on the concrete engine** | Adapter holds a reference to the concrete `*Thresher` and calls `engine.Repository()` at runtime. | Rejected. Couples the adapter to the concrete engine type; "where does this come from?" magic; hard to fake in isolation. |
+| **B. Explicit user composition** | The user constructs the shared resource once and threads it into both the adapter and the engine. | Valid — kept as the full-isolation option. Most explicit; but it is ceremony for the common "just share the engine's default" case. |
+| **C. Injected `EngineRuntime` interface** — chosen | The engine injects its resolved `EngineRuntime` (a core *interface* — §4.3) into adapters that opt in via the optional `RuntimeAware` hook (§8.3), at `thresher.New` assembly. An adapter pulls any dependency it wasn't explicitly given from the runtime (`rt.Repository()`); an explicit per-adapter option overrides it (the split). | Selected. Default = the adapter shares the engine's resources with no wiring; split = the adapter's own option. The handle is a core interface injected at assembly (not a concrete engine pulled at runtime), so the adapter stays unit-testable — fake the `EngineRuntime`. This keeps Option A's convenience while dissolving its coupling/testability objection. |
 
-Example of Pattern B (chosen):
+Example (Pattern C):
 
 ```go
-// User constructs the shared Postgres-backed repository once
-repo, _ := postgres.NewRepository(connStr)
+// Default — AuthZ shares the engine's repository, zero ceremony.
+// casbin.Authorizer implements RuntimeAware; the engine injects its
+// EngineRuntime at New, and the adapter uses rt.Repository() for its storage.
+authz, _ := casbin.NewAuthorizer()
+engine, _ := thresher.New("my-engine",
+    thresher.WithRepository(repo),                 // the app's default repo
+    thresher.WithAuthorizationProvider(authz),     // engine injects EngineRuntime -> authz uses repo
+)
 
-// AuthZ adapter accepts a storage backend via its own option;
-// the Repository value satisfies the storage backend interface
-authz, _ := casbin.NewAuthorizer(casbin.WithStorage(repo))
-
-// Engine receives both, independently
+// Split — give AuthZ its own store explicitly; the engine skips the injection.
+authz, _ := casbin.NewAuthorizer(casbin.WithStorage(otherRepo))
 engine, _ := thresher.New("my-engine",
     thresher.WithRepository(repo),
-    thresher.WithAuthorizationProvider(authz),
+    thresher.WithAuthorizationProvider(authz),     // authz uses otherRepo, not repo
 )
 ```
 
-The Postgres adapter doesn't know about casbin; casbin doesn't know about Postgres. Both know about the `Repository` (or storage backend) interface from core. The user wires them.
+The adapter imports only core's `EngineRuntime` + `Repository` interfaces — never a concrete engine, never another adapter. The user keeps full control to split via the adapter's own option.
 
 ## 4. Decision Detail
 
@@ -124,7 +128,7 @@ The Postgres adapter doesn't know about casbin; casbin doesn't know about Postgr
 │                                                                   │
 │  Repository, Logger, Tracer, MetricsRecorder, Clock,              │
 │  MessageBroker, ExpressionEngine, AuthorizationProvider,          │
-│  WorkerDispatcher, EventHub                                       │
+│  WorkerDispatcher                                                 │
 └────────────────────────────┬─────────────────────────────────────┘
                              │ flows down into per-instance context
                              v
@@ -136,28 +140,47 @@ The Postgres adapter doesn't know about casbin; casbin doesn't know about Postgr
 │  Scope (instance-rooted)                                          │
 │  InstanceID                                                       │
 │  EventProducer (instance-scoped projection of EventHub)           │
-│  RenderRegistrator (instance-scoped projection of TaskDistributor)│
+│  RenderRegistrator (instance-scoped human-interaction registrator)│
 │  (+ engine-level extensions accessible by reference)              │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-The instance-level `RuntimeEnvironment` is what nodes see during execution. Per ADR-001's three-layer model, it's passed to tracks; tracks read it for scope lookups, event production, etc.
+The instance-level `RuntimeEnvironment` is what nodes see during execution. Per [ADR-001 v.4](ADR-001-execution-model.md)'s two-layer model (Instance + track; token is a projection of a track's step), it's passed to tracks; tracks read it for scope lookups, event production, etc.
 
 ### 4.2 Engine-level extension catalogue
 
 | Interface | Purpose | Default impl | Status vs current code |
 |---|---|---|---|
-| `Repository` | Persist Process Instance state, history, message inbox, wait subscriptions. The save/restore foundation per ADR-001 §4.9/§4.10. | in-memory (non-durable) | NEW — does not exist |
-| `Logger` (`*slog.Logger`) | Structured logging | `slog.Default()` — visible by default per [project memory](../../) | NEW |
-| `Tracer` (OpenTelemetry `trace.Tracer` or local equivalent) | Distributed tracing spans | no-op | NEW |
-| `MetricsRecorder` | Counter / gauge / histogram emission | no-op | NEW |
+| `Repository` | Persist Process Instance state, history, message inbox, wait subscriptions. The save/restore foundation per ADR-001 v.4 §4.7 (runtime invariants) + the Persistence & State ADR. | in-memory (non-durable) | NEW — does not exist |
+| `Logger` (core interface; `*slog.Logger` satisfies it directly) | Structured logging | `slog.Default()` — visible by default per [project memory](../../) | NEW |
+| `Tracer` (OTel-shaped, core-defined — **no OTel import**) | Distributed tracing spans | **no-op** (spans cost a per-event allocation, inert without a backend); opt in to an in-memory recent-spans ring or `adapters/otel/` | NEW |
+| `MetricsRecorder` (OTel-shaped, core-defined — **no OTel import**) | Counter / histogram / gauge instruments | **in-memory queryable registry** — visible by default, cheap, series-capped, `Snapshot()` for tests/diagnostics; swap to no-op or `adapters/otel/` | NEW |
 | `Clock` | Current time + sleep (testability for timers) | wall clock (`time.Now`) | NEW |
 | `MessageBroker` | Incoming-Message inbox; correlation routing per [docs/bpmn-spec/semantics/correlation.md](../bpmn-spec/semantics/correlation.md) | in-memory inbox | NEW |
 | `ExpressionEngine` | Evaluate `FormalExpression` (BPMN conditionExpression, gateway conditions, MI cardinality, etc.) | Go-native simple evaluator | EXTENDS — `data.FormalExpression` exists; engine wraps |
 | `AuthorizationProvider` | Authorize sensitive ops (start Process, claim UserTask, cancel Instance, …) | "allow all" | NEW |
 | `WorkerDispatcher` | Dispatch eligible Tasks (ServiceTask / GlobalTask) to remote workers per [SAD-001 §13.2](SAD-001-vision-and-architecture.md) | in-process local execution | NEW |
-| `EventHub` | Central event distribution (existing rich interface) | in-memory hub (the current implementation, promoted to public default) | EXPOSE — currently `internal/eventproc.EventHub`; move interface to `pkg/`; implementation stays in `internal/` |
-| `TaskDistributor` | UserTask routing to humans (composite of `Renderer` + `Registrator` concerns) | in-process registrator (the current `internal/interactor` impl) | EXPOSE — currently `internal/interactor`; promote interfaces |
+| `EventHub` | Central event distribution (existing rich interface) | in-memory hub (current implementation) | **INTERNAL** — execution plumbing, not an extension point: no substitution use-case (distribution lives at the boundaries — `MessageBroker`/`Repository`/`WorkerDispatcher`), and its contract carries FIX-001 internal-correctness subtleties. Stays in `internal/eventproc`; a future ADR can promote it if a pluggable hub is ever needed (internal→public is non-breaking; the reverse is not). |
+| `TaskDistributor` | UserTask routing to humans (composite of `Renderer` + `Registrator` concerns) | the current `internal/interactor` impl | **DEFERRED** — the `Interactor`/`Registrator` cluster is interlocked and forces a model→tasks layering choice; promotion (and the `Registrator → TaskDistributor` rename) is owned by a dedicated **human-interaction ADR** (ADR-001 v.4 §9). Not in the skeleton's contract set; the internal cluster stays as-is. |
+
+**Interface-design principle.** Stick as tightly as possible to the established industry interface; only generalise further when there is no single obvious candidate.
+
+- **`Logger`** — there is one obvious Go standard (`log/slog`). The core `Logger` is therefore a small leveled interface (`Debug`/`Info`/`Warn`/`Error(msg string, args ...any)`) that **`*slog.Logger` satisfies directly**, so the default is `slog.Default()` with no wrapper, while non-slog loggers can still be plugged.
+- **`Tracer` / `MetricsRecorder`** — OpenTelemetry is the de-facto standard, so the core interfaces are **modeled on the OTel API shape** (span start/end/attributes/record-error; counter/histogram/gauge instruments). To preserve the stdlib-+-`uuid`-only core (SAD-001 G2), core does **not import** the OTel modules — it defines OTel-shaped interfaces, and the real OTel types live only in `adapters/otel/` as a thin pass-through.
+
+**Default telemetry — chosen by signal cost (not a blanket no-op).** A blanket no-op leaves a zero-config engine blind (against the observability policy); a logging-backed default turns metrics into log text that must be parsed back out (garbage in the log stream). So defaults differ per signal:
+
+- **Metrics → in-memory queryable registry, on by default.** Atomic counters + current-value gauges + fixed-bucket histograms, readable via `Snapshot()`. Increments are nanoseconds and the footprint is bounded — but it **caps total series** (counter-name × label-set), dropping-and-warning-once past the cap, so high-cardinality labels (`process_id`, `instance_id`) can't make it grow unbounded. Visible by default, structured (not log-scraped), and trivially assertable in tests. Swap to no-op to silence, or to `adapters/otel/` for production.
+- **Tracing → no-op by default.** A span costs a per-event allocation and is inert without a consuming backend, so always-on tracing is exactly the "garbage configured by default" to avoid. A bounded in-memory **recent-spans ring** (last N, queryable) ships as a one-line opt-in for dev/debug, alongside the real `adapters/otel/`.
+- **Persistent (DB) telemetry** is a production adapter (`adapters/sqlstore`), **never a core default** — it would add a driver dependency and grow unbounded; an embedder opts into that storage knowingly.
+
+**In-memory defaults are bounded (cross-cutting principle).** The metrics series cap is one instance of a rule that governs *every* in-memory default: it bounds its own growth and **drops/evicts and warns once** past the cap, rather than growing without limit or failing silently. Visible-and-bounded beats both silent and unbounded; production swaps to a durable/external adapter that owns retention. Concretely:
+
+- `Repository` (in-mem) — evicts terminal Instances and their history past a retention bound.
+- `MessageBroker` (in-mem inbox) — bounds the inbox / expires uncorrelated messages (TTL).
+- `WorkerDispatcher` (in-process) — a bounded worker pool, not an unbounded goroutine-per-task.
+
+The exact bound and eviction policy for each is settled at that extension's landing SRD (the skeleton SRD-004 ships the metrics series cap; the rest land with their execution wiring). **`AuthorizationProvider` is the exception** — its default question is not growth but *security posture*: the allow-all default delegates authorization to the host application, with deny-all the opt-in for a closed system. That is settled when authorization enforcement lands, not here.
 
 ### 4.3 RuntimeEnvironment interface — extended; Instance is the implementation
 
@@ -165,53 +188,71 @@ The existing `RuntimeEnvironment` in `internal/renv/renv.go` is already structur
 
 **This ADR just extends the existing RuntimeEnvironment interface with the new engine-level services.** No structural refactor of the Instance/track relationship; no second reference for the track; no forwarding accessor.
 
+There are **two tiers**: the engine/server-level resolved configuration
+(`EngineRuntime`) and the instance-level execution context
+(`RuntimeEnvironment`), which embeds the former.
+
 ```go
-// pkg/renv (moved from internal/renv, then extended)
-// EXISTING four methods preserved; NEW engine-level service methods added.
-type RuntimeEnvironment interface {
-    // === EXISTING — instance-local state (kept as-is) ===
-    scope.Scope                                  // embedded; data scoping rooted at this instance
-    InstanceID() string                          // instance identity
-    EventProducer() EventProducer                // instance-scoped event production
+// EngineRuntime is the PUBLIC piece, promoted to pkg/ (path per ADR-003). The
+// instance-level RuntimeEnvironment below STAYS in internal/renv — it embeds
+// internal types — and embeds the public EngineRuntime.
 
-    // === EXISTING — renamed for clarity (per §5 departure) ===
-    TaskDistributor() TaskDistributor            // was RenderRegistrator() in current code
-
-    // === NEW — engine-level services, accessed uniformly via Instance ===
-    Logger() *slog.Logger
+// EngineRuntime — engine/server-level: the Thresher's RESOLVED extension set
+// (the wired services). Thresher owns/implements it. Adapters receive it (§3.5);
+// RuntimeEnvironment embeds it so tracks keep one uniform call style.
+type EngineRuntime interface {
+    Logger() Logger                              // core interface; *slog.Logger satisfies it
     Tracer() Tracer
+    MetricsRecorder() MetricsRecorder
     Clock() Clock
     Repository() Repository
-    ExpressionEngine() ExpressionEngine
+    ExpressionEngine() expression.Engine         // type is expression.Engine (avoids stutter)
     MessageBroker() MessageBroker
     AuthorizationProvider() AuthorizationProvider
     WorkerDispatcher() WorkerDispatcher
-    EventHub() EventHub
+    // NOTE: EventHub is NOT here — it is internal execution plumbing, not an
+    // extension point (no substitution use-case; distribution lives at the
+    // boundaries: MessageBroker/Repository/WorkerDispatcher). The engine builds
+    // its internal hub itself. Likewise human-task interaction (today's
+    // instance-level RenderRegistrator, the would-be engine-level
+    // TaskDistributor) is deferred to a dedicated human-interaction ADR
+    // (ADR-001 v.4 §9); the internal interactor cluster stays as-is.
+}
+
+// RuntimeEnvironment — instance-level execution context: engine services
+// (embedded) + instance-local state. Instance implements it. It STAYS internal
+// (it embeds internal scope.Scope and exposes internal EventProducer /
+// RenderRegistrator); only the embedded EngineRuntime is public.
+type RuntimeEnvironment interface {
+    EngineRuntime                                // engine/server services (embedded, public)
+    scope.Scope                                  // data scoping rooted at this instance (internal)
+    InstanceID() string                          // instance identity
+    EventProducer() EventProducer                // instance-scoped event production (internal)
+    RenderRegistrator() interactor.Registrator   // human interaction (internal; promotion deferred)
 }
 ```
 
-Instance composes with the engine's configuration to satisfy all of it. Instance-local fields (`id`, `scope`, instance-scoped `EventProducer` wrapper) are owned directly; engine-level methods delegate one-liners to the engine config.
+Instance gets the engine-service methods **for free** by embedding the Thresher's
+`EngineRuntime` value; it only adds its instance-local methods. No per-method
+delegates.
 
 ```go
 // internal/instance/instance.go (existing struct, extended)
 type Instance struct {
+    renv.EngineRuntime           // embedded: the Thresher's resolved EngineRuntime (public)
     id          string
     scope       scope.Scope
     eventProd   EventProducer
-    engineCfg   *thresherConfig          // engine-level extensions reached through this
-    // ... per ADR-001
+    rr          interactor.Registrator   // human interaction (internal; promotion deferred)
+    // ... per ADR-001 v.4
 }
 
-// Instance-local — direct field access
-func (i *Instance) ID() string                   { return i.id }
-func (i *Instance) Scope() scope.Scope           { return i.scope }
-func (i *Instance) EventProducer() EventProducer { return i.eventProd }
-
-// Engine-level — delegate to engine config (one-line forwarders)
-func (i *Instance) Logger() *slog.Logger                 { return i.engineCfg.logger }
-func (i *Instance) Repository() Repository               { return i.engineCfg.repository }
-func (i *Instance) Clock() Clock                         { return i.engineCfg.clock }
-// ... etc, uniform pattern for all engine-level methods
+// Instance-local — direct (engine-level methods are promoted from the embedded
+// EngineRuntime, so Logger()/Repository()/Clock()/... need no code here).
+func (i *Instance) InstanceID() string                      { return i.id }
+func (i *Instance) Scope() scope.Scope                      { return i.scope }
+func (i *Instance) EventProducer() EventProducer            { return i.eventProd }
+func (i *Instance) RenderRegistrator() interactor.Registrator { return i.rr }
 ```
 
 Track call sites are uniform: one reference, one call style for everything.
@@ -219,23 +260,23 @@ Track call sites are uniform: one reference, one call style for everything.
 ```go
 type track struct {
     inst *Instance                       // the ONLY external object track gets at construction
-    // ... per ADR-001 §4.3
+    // ... per ADR-001 v.4
 }
 
 // Uniform call style — track doesn't need to know which call is "instance" vs "engine":
 t.inst.Scope().GetData(...)              // instance-local — Instance returns its own field
 t.inst.ID()                              // instance-local
-t.inst.Logger().Info(...)                // engine service — Instance delegates to cfg
-t.inst.Clock().Now()                     // engine service — Instance delegates to cfg
-t.inst.Repository()                      // engine service — Instance delegates to cfg
+t.inst.Logger().Info(...)                // engine service — promoted from embedded EngineRuntime
+t.inst.Clock().Now()                     // engine service — promoted from embedded EngineRuntime
+t.inst.Repository()                      // engine service — promoted from embedded EngineRuntime
 ```
 
 **Rationale for one-reference / Instance-as-RE model** (per user direction):
 
 - The track already needs an Instance reference (for instance-scoped concerns like `Scope` and `ID`). Adding a SECOND reference for engine services duplicates plumbing for no gain.
 - Instance is the natural composition point — it knows the instance AND holds a reference to the engine config.
-- Track only ever has one external dependency: its owning Instance. Simpler for new contributors, simpler for testing, simpler in the goroutine plumbing per ADR-001.
-- "Instance is for execution, not for holding runtime values" is satisfied by composition: Instance holds a *reference* to engine config (which holds the values); engine-level methods on Instance are mechanical one-line delegates. The runtime values are owned by the Engine; Instance just exposes them through its interface.
+- Track only ever has one external dependency: its owning Instance. Simpler for new contributors, simpler for testing, simpler in the goroutine plumbing per ADR-001 v.4.
+- "Instance is for execution, not for holding runtime values" is satisfied by composition: Instance **embeds the Thresher's `EngineRuntime`** (the holder of the resolved values); the engine-level methods are promoted from it, not reimplemented. The runtime values are owned by the engine (`EngineRuntime`); Instance exposes them through embedding.
 
 The existing pattern (Instance implements RuntimeEnvironment) is preserved; this ADR's contribution to it is just the extended interface (the additional engine-level method set).
 
@@ -299,8 +340,6 @@ INFO thresher.starting
      expressionEngine=*goexpr.Engine
      authorizationProvider=*allowall.Provider
      workerDispatcher=*inproc.Dispatcher
-     eventHub=*eventhub.Hub
-     taskDistributor=*interactor.Distributor
 ```
 
 Each value is the Go type of the wired implementation. The log line is structured (slog attributes), not free-form prose — downstream log processors can pivot on individual extension types.
@@ -321,8 +360,8 @@ Every Engine-level interface has a default that:
 - **Clock**: wall clock. Tests inject a fake clock for time-dependent BPMN behavior (Timer events).
 - **WorkerDispatcher**: in-process local execution. The "distribution is opt-in" stance from SAD-001 §13.
 - **ExpressionEngine**: minimal Go-native evaluator supporting simple expressions; users plug in JUEL / FEEL / etc. via adapter.
-- **EventHub**: the current `internal/eventproc/eventhub` implementation, promoted as the default. The interface is public (`pkg/eventproc`); the implementation stays in `internal/`.
-- **TaskDistributor**: the current `internal/interactor` implementation as default.
+- **EventHub**: stays internal (`internal/eventproc/eventhub`) — execution plumbing, not a public extension (see §4.2).
+- **TaskDistributor**: deferred — the `internal/interactor` cluster stays internal until the human-interaction ADR (see §4.2).
 
 Defaults are bundled in core. Adapter modules (`adapters/*`) provide production implementations.
 
@@ -333,7 +372,7 @@ Per SAD-001 §9.2 multi-module monorepo:
 - Each adapter is its own Go module: `github.com/dr-dobermann/gobpm/adapters/<name>` with its own `go.mod`.
 - An adapter MUST implement one or more public extension interfaces from core (`pkg/`).
 - An adapter MUST NOT import any other adapter's package. This is the **no-cross-adapter-imports** rule.
-- An adapter MAY accept shared resources via its own constructor options — passed by the USER at wiring time, satisfying core's interfaces. This is the composition pattern from §3.5; it does NOT violate the no-cross-imports rule because the shared resource is passed AS an interface (defined in core), not as an adapter's concrete type.
+- An adapter MAY default its dependencies from the injected `EngineRuntime` (§3.5 Pattern C / §8.3 `RuntimeAware`) and/or take explicit per-adapter options to override them (the split). Either way it depends only on core interfaces (`EngineRuntime`, `Repository`, …), never on another adapter or a concrete engine — the no-cross-imports rule holds.
 - An adapter SHOULD declare its minimum compatible core version via `replace`-free pinning in its `go.mod`.
 - An adapter's tests SHOULD verify against the contract published in this ADR (e.g., `Repository` impl must pass the same conformance test suite the in-memory default passes).
 - Adapters MUST prefer **pure-Go embedded** implementations over service-dependent ones, to preserve the embeddable-library value proposition of core. Service-dependent adapters (gRPC sidecars, external HTTP services) are allowed but SHOULD be clearly labeled as such.
@@ -367,28 +406,28 @@ Pre-1.0 (where we are): interface evolution is freer per Go's semver convention.
 | Topic | Current code | This ADR | Required change |
 |---|---|---|---|
 | Engine constructor | `Thresher.New(id string)` — no options | `Thresher.New(id, opts ...Option)` — single constructor; zero options applies all defaults; each option overrides one default. No `NewDefault`. | Add `Option` type. Add functional-option implementations for each Engine-level extension. Refactor `New` to initialize defaults internally, then apply options. |
-| RuntimeEnvironment interface scope | Current four methods: `scope.Scope` embed, `InstanceID()`, `EventProducer()`, `RenderRegistrator()` | **Extended** with engine-level service methods (`Logger`, `Tracer`, `Clock`, `Repository`, `ExpressionEngine`, `MessageBroker`, `AuthorizationProvider`, `WorkerDispatcher`, `EventHub`). `RenderRegistrator()` renamed to `TaskDistributor()`. | Add the engine-level methods to the RE interface. Move from `internal/renv` to `pkg/renv` (final path per ADR-003). |
+| EngineRuntime / RuntimeEnvironment split | `RuntimeEnvironment` (internal) with `scope.Scope` embed, `InstanceID()`, `EventProducer()`, `RenderRegistrator()` | **Factor `EngineRuntime`** (the engine-level extension accessors: `Logger`, `Tracer`, `MetricsRecorder`, `Clock`, `Repository`, `ExpressionEngine`, `MessageBroker`, `AuthorizationProvider`, `WorkerDispatcher`) → **public** (`pkg/`, path per ADR-003), implemented by `Thresher`. `RuntimeEnvironment` **stays internal**, embeds the public `EngineRuntime`, and keeps `scope.Scope`/`InstanceID()`/`EventProducer()`/`RenderRegistrator()` (all internal-typed). `EventHub`/`EventProducer` and human interaction stay internal. | Promote only `EngineRuntime` to `pkg/`; leave `RuntimeEnvironment` in `internal/renv`. |
 | Instance-as-RE-implementation | Already done in current code | Preserved; track sees only `*Instance` and calls uniform method set | No relationship change — Instance continues to implement the (extended) RuntimeEnvironment interface. Add the new engine-level delegate methods to Instance, each forwarding to the engine config. |
 | Thresher startup logging | No startup logging | Thresher emits one INFO-level structured log line summarizing the resolved extension wiring on every successful `New` call (§4.4.1) | Add `logStartupConfig` method to Thresher. Required behavior; cannot be opted out (user silences via their Logger config if desired). |
-| Repository interface | Does not exist | Define `Repository` in `pkg/` with checkpoint / load / list-in-flight methods per ADR-001 §4.9 | Implement in-memory default. Add to `Thresher` config. |
-| Logger / Tracer / MetricsRecorder | Do not exist | Define interfaces in `pkg/` | Implement defaults (slog default; no-op for tracer/metrics). |
+| Repository interface | Does not exist | Define `Repository` in `pkg/` with checkpoint / load / list-in-flight methods per ADR-001 v.4 §4.7 + the Persistence & State ADR | Implement in-memory default. Add to `Thresher` config. |
+| Logger / Tracer / MetricsRecorder | Do not exist | `Logger` = slog-satisfiable core interface; `Tracer`/`MetricsRecorder` = OTel-shaped core interfaces (no OTel import — SAD-001 G2) | Defaults: `slog.Default()` Logger; **in-memory queryable registry** Metrics (series-capped, `Snapshot()`); **no-op** Tracer (in-mem span-ring + OTel are opt-in). Real OTel in `adapters/otel/`. |
 | Clock | Does not exist | Define `Clock` interface in `pkg/` | Implement wall-clock default. Inject into Timer event handling. |
 | MessageBroker | Does not exist | Define in `pkg/` per [bpmn-spec/semantics/correlation.md](../bpmn-spec/semantics/correlation.md) | Implement in-memory inbox default. |
 | AuthorizationProvider | Does not exist | Define in `pkg/`; hook points at sensitive ops | Implement allow-all default. Identify hook-point call sites. |
 | WorkerDispatcher | Does not exist | Define in `pkg/` per [SAD-001 §13.2](SAD-001-vision-and-architecture.md) | Implement in-process dispatch default. |
 | ExpressionEngine | Partial: `data.FormalExpression` in `pkg/model/data/` | Wrap `FormalExpression` evaluation in `ExpressionEngine` interface at `pkg/` level | Promote / add ExpressionEngine. Default uses existing Go evaluator. |
-| EventHub interface location | `internal/eventproc.EventHub` (not externally implementable) | Move interface to `pkg/` (`pkg/eventproc` per ADR-003); keep implementation in `internal/` | Split interface from implementation; redirect imports. |
-| TaskDistributor / RenderRegistrator | `internal/interactor.Registrator` + `Renderer` ecosystem | Promote to `pkg/`; rename `Registrator` → `TaskDistributor` for clarity; preserve `Renderer` abstraction | Move + rename. Update `RuntimeEnvironment.RenderRegistrator()` → `TaskDistributor()`. |
+| EventHub | `internal/eventproc.EventHub` (not externally implementable) | **Stays internal** — execution plumbing, not an extension point (§4.2) | No change. |
+| TaskDistributor / RenderRegistrator | `internal/interactor.Registrator` + `Renderer` ecosystem | **Deferred** to a dedicated human-interaction ADR (ADR-001 v.4 §9) — the cluster is interlocked and forces a model→tasks layering choice | No change in the skeleton; the internal cluster and `RenderRegistrator()` stay as-is. |
 | RuntimeEnvironment location | `internal/renv` | Move to `pkg/` (likely `pkg/renv`) | Move. Update Instance + track to import from new location. |
 | Extension docs | Scattered through code comments | Single canonical extension catalogue in this ADR | Maintain this ADR as the catalogue source of truth. |
 
-Each departure becomes a targeted SRD-class change after this ADR flips to Accepted. The exact package paths (where in `pkg/` each interface lives) are deferred to ADR-003 Module Layout.
+**How these land (resolves the ordering with §7).** The departures are implemented together — at **minimal / default behavior only** — in a **single foundational SRD** (the "extension skeleton"): every interface defined in `pkg/`, each with its bundled default impl, the functional-options assembly, the extended `RuntimeEnvironment`, and the startup log line, wired so the engine runs end-to-end on today's BPMN support. **This ADR flips Draft → Accepted when that one SRD lands and its §7 tests pass** (not before — see §7). Production adapters and per-interface depth (durable Repository, real MessageBroker, FEEL ExpressionEngine, remote WorkerDispatcher, …) follow as later, separately-gated SRDs. The exact package paths (where in `pkg/` each interface lives) are deferred to ADR-003 Module Layout.
 
 ## 6. Consequences
 
 ### 6.1 Pros
 
-- **Out-of-the-box usability preserved.** `NewDefault()` gives a working engine in one call.
+- **Out-of-the-box usability preserved.** Zero-option `thresher.New(id)` gives a working engine in one call (defaults are the default; no separate `NewDefault`).
 - **Extension matrix is documented.** Future contributors and adapter authors have a single source of truth for what's pluggable.
 - **Go-idiomatic.** No frameworks, no DI containers, no plugin loaders — just interfaces + functional options.
 - **Stable public surface.** Public interfaces in `pkg/` carry semver contract; internal implementation can evolve freely.
@@ -399,14 +438,14 @@ Each departure becomes a targeted SRD-class change after this ADR flips to Accep
 
 - **More public surface area to maintain.** 10+ extension interfaces become stability contracts at v1.0. Each interface change requires care.
 - **Default implementations bundled in core inflate the core module's surface.** Mitigated by keeping defaults small and well-isolated (one file per default).
-- **Interface naming bikeshedding.** Some names (TaskDistributor vs Registrator, WorkerDispatcher vs ServiceTaskExecutor) carry historical baggage; renames during the implementation phase are expected.
+- **Interface naming will track industry conventions.** Some names carry historical baggage (`Registrator`, and the SAD's `WorkerDispatcher` / `TaskDistributor` vs alternatives like `ServiceTaskExecutor`). Renaming the extension interfaces toward established industry vocabulary during the implementation phase is **accepted and expected** — they are not contract-frozen until this ADR is Accepted. **Exception — the concrete engine type stays `Thresher`:** it is deliberately distinctive; `Server` and `Engine` are too generic to name the type and are reserved as *role* words (e.g., the engine-level `EngineRuntime` interface — "the runtime contract of the engine"), never the type's own name.
 - **Some current internal helpers move to `pkg/`** — once public, they can't be refactored without ADR amendment.
 
 ### 6.3 Implications for adjacent decisions
 
 - **ADR-003 Module Layout**: defines where exactly each interface lives in the `pkg/` subdirectory tree. Likely candidates: `pkg/extension/` (single subpackage), or one subpackage per concern (`pkg/persistence`, `pkg/observability`, `pkg/auth`, `pkg/expression`, etc.).
 - **ADR-004 Runtime Environment Contract**: runtime layer wires production-grade adapters (postgres + otel + oidc + casbin + …) into the Engine via these extension options.
-- **ADR-001 Execution Model**: `Repository` is the persistence interface ADR-001's §4.9 checkpoint policy targets. `Logger` / `Tracer` / `MetricsRecorder` consume the TrackEvent stream per ADR-001 §4.5.
+- **ADR-001 Execution Model (v.3)**: `Repository` is the persistence interface the runtime invariants in ADR-001 v.4 §4.7 (and the Persistence & State ADR) target. `Logger` / `Tracer` / `MetricsRecorder` consume the instance's runtime event stream — the single `trackEvent` stream and the token-worded view derived from it (ADR-001 v.4 §4.3).
 
 ## 7. Verification
 
@@ -418,16 +457,16 @@ How we'll know the extension architecture works:
 | **Functional options compose without ordering issues** | Test: construct an Engine with all 10 `WithXxx` options in random orders; assert resulting Engine state is identical. |
 | **Each option overrides the default** | Per-option test: construct with `WithLogger(custom)`; assert engine's Logger is `custom`, not `slog.Default()`. Repeat for each interface. |
 | **Last-write semantics** | Test: pass `WithLogger(A), WithLogger(B)`; assert engine uses B. |
-| **Cross-adapter composition** | Test: construct a Repository value; pass it both to `thresher.WithRepository(repo)` and to a fake AuthZ adapter accepting `WithStorage(repo)`. Assert: engine uses repo for instance persistence; AuthZ adapter uses repo for policy storage. Verifies the Pattern B composition from §3.5 / §4.6. |
-| **Startup config log line** | Test: construct engine with a Logger that captures records. Assert: exactly one INFO-level record with key `thresher.starting` is emitted, containing attributes for every Engine-level extension (`repository`, `logger`, `tracer`, `metricsRecorder`, `clock`, `messageBroker`, `expressionEngine`, `authorizationProvider`, `workerDispatcher`, `eventHub`, `taskDistributor`) with values matching the wired implementation type names. Verifies §4.4.1. |
+| **Cross-adapter composition** | Test (with a real/fake `RuntimeAware` adapter): given no storage option, the AuthZ adapter uses the engine's `Repository` via the injected `EngineRuntime` (default share); given `WithStorage(otherRepo)` it uses that instead (split). Verifies §3.5 Pattern C / §8.3. |
+| **Startup config log line** | Test: construct engine with a Logger that captures records. Assert: exactly one INFO-level record with key `thresher.starting` is emitted, containing attributes for every Engine-level extension (`repository`, `logger`, `tracer`, `metricsRecorder`, `clock`, `messageBroker`, `expressionEngine`, `authorizationProvider`, `workerDispatcher`) with values matching the wired implementation type names. Verifies §4.4.1. |
 | **Instance implements RuntimeEnvironment** | Type assertion test: `var _ RuntimeEnvironment = (*Instance)(nil)`. Compile-time check that Instance satisfies the extended interface. |
 | **Instance engine-service delegates** | Per-method test: construct engine with custom Logger (or Clock, or Repository, …); spawn an Instance; assert `instance.Logger()` (etc.) returns the same value as the engine config holds. Verifies one-line delegate correctness. |
 | **Default impls match the public interface contract** | Conformance test: in-memory Repository default passes the same conformance suite that a hypothetical postgres Repository would. Same for MessageBroker, etc. |
-| **Engine without optional extension still works** | Smoke test: omit every optional `WithXxx`; verify `NewDefault`-equivalent behavior. |
+| **Engine without optional extension still works** | Smoke test: omit every optional `WithXxx`; verify the zero-option `New(id)` engine runs. |
 | **Adapter module isolation** | When adapter modules exist: importing only `core` does NOT transitively pull `adapters/*` deps. Verified via `go mod graph`. |
 | **RuntimeEnvironment composition correct** | Test: spawn an Instance; assert its `RuntimeEnvironment.Logger()` is the engine's Logger; assert `Scope` is instance-rooted; assert `EventProducer` is instance-scoped. |
 
-**Acceptance gate** (Draft → Accepted): the tests above MUST exist and pass against the implementation. Until then the ADR remains Draft.
+**Acceptance gate** (Draft → Accepted): these tests MUST exist and pass against the **foundational extension-skeleton SRD** (§5) — the defaults-only implementation. The two **adapter-dependent** rows (*cross-adapter composition*, *adapter module isolation*) can only run once a real adapter module exists; they are deferred to the first adapter's SRD and are **not** required for this ADR's acceptance. Until the skeleton SRD lands and its applicable tests pass, the ADR remains Draft.
 
 ## 8. Enterprise-Readiness Recommendations
 
@@ -460,7 +499,7 @@ These keys appear in production logs from day one. Skipping them during research
 ```
 thresher.engine.run
   └─ thresher.instance.run        (per Process Instance)
-       └─ thresher.track.execute  (per Track per ADR-001)
+       └─ thresher.track.execute  (per track per ADR-001 v.4)
             └─ thresher.step      (per node visited)
                  └─ child spans   (HTTP / DB / etc. — user code)
 ```
@@ -531,6 +570,14 @@ type HealthChecker interface {
     HealthCheck(ctx context.Context) error
 }
 
+// Optional — adapters that want the engine's resolved services. The engine
+// injects its EngineRuntime (§4.3) at New; the adapter uses it to default any
+// dependency it wasn't explicitly configured with (e.g. rt.Repository()).
+// See §3.5 Pattern C.
+type RuntimeAware interface {
+    UseRuntime(rt EngineRuntime)
+}
+
 // Optional — adapters that declare their cluster-mode compatibility
 type ClusterAware interface {
     // ClusterCompatibility returns whether this adapter is safe to use when
@@ -544,6 +591,7 @@ type ClusterAware interface {
 ```
 
 When Thresher constructs and runs, it detects whether each registered extension implements one of these and integrates accordingly:
+- `UseRuntime` is called during `New`, after the engine resolves its config, on each wired adapter that implements it — passing the engine's `EngineRuntime` so the adapter can default its dependencies from the engine (§3.5 Pattern C).
 - `Start` is called during `Run` setup before instances are accepted.
 - `Stop` is called during engine shutdown after all instances are drained or terminated.
 - `HealthCheck` is exposed by the runtime layer (per ADR-004) for liveness/readiness endpoints.
@@ -581,18 +629,18 @@ Each major extension type SHOULD have a published conformance helper: `Repositor
 
 ### 8.5 Audit vs ops event separation
 
-Two distinct concerns flow through different paths:
+Two distinct concerns are derived from the **single** in-memory runtime event stream (ADR-001 v.4 §4.3 — `trackEvent`, track → loop; there is no second live channel). They are two *views* of that stream, not two channels:
 
-| Concern | Channel | Durability | Examples |
+| Concern | View / source | Durability | Examples |
 |---|---|---|---|
-| **Audit events** — compliance, must-not-lose | TokenEvent stream (per ADR-001 §4.4) | Durable; persistent subscriber required | "User X claimed UserTask Y", "Process started by Z", "Authorization denied: user=A action=cancel resource=instance/123" |
-| **Ops events** — diagnostics, may-lose-acceptable | TrackEvent stream (per ADR-001 §4.5) | Best-effort; Logger/Tracer/MetricsRecorder subscribers | "Track entered Active state", "StepPrologued completed", "Goroutine N spawned" |
+| **Audit events** — compliance, must-not-lose | the **BPMN-observable, token-worded view** derived from the stream (split / merged / waiting / consumed / withdrawn — ADR-001 v.4 §4.3) | Durable; persistent subscriber required | "User X claimed UserTask Y", "Process started by Z", "Authorization denied: user=A action=cancel resource=instance/123" |
+| **Ops events** — diagnostics, may-lose-acceptable | the **raw track/step transitions** (`trackEvent` + track state machine — ADR-001 v.4 §4.2/§4.3) | Best-effort; Logger/Tracer/MetricsRecorder subscribers | "track entered TrackExecutingStep", "StepPrologued completed", "fork spawned a new track" |
 
-Adapters subscribing to TokenEvents for audit purposes SHOULD use durable transport (DB write per event, Kafka with ack, etc.). Adapters subscribing to TrackEvents for ops MAY use best-effort transport (in-memory channels, UDP, fire-and-forget).
+Audit subscribers SHOULD use durable transport (DB write per event, Kafka with ack, etc.). Ops subscribers MAY use best-effort transport (in-memory channels, UDP, fire-and-forget).
 
 Mixing the two (audit fields included in ops logs; ops noise included in audit trail) creates compliance friction (auditors don't want ops noise) and ops friction (audit channel becomes too quiet to diagnose with).
 
-**Note on provisional separation.** The mapping "TokenEvent = audit / TrackEvent = ops" follows from ADR-001's current three-layer model (Instance + track + token). ADR-001 §3.1 flagged the three-layer choice as tentative — if implementation experience justifies collapsing to two layers, the audit-vs-ops split may need re-grounding. Additionally, **token states MAY be extended for richer audit semantics** (e.g., introducing intermediate states that capture compliance-relevant transitions like "claimed", "delegated", "escalated") once the architecture is finalized. The boundary is provisional, not locked.
+**Note (re-grounded on the two-layer model).** ADR-002's earlier draft mapped "TokenEvent = audit / TrackEvent = ops" onto ADR-001's then-tentative three-layer model; ADR-001 v.4 collapsed to two layers (token is a projection, not a stored object / separate event channel). So the split is re-stated above as **two derived views of the one `trackEvent` stream** — audit = the token-worded projection, ops = the raw track/step transitions. The withdrawn/merged distinctions and any future compliance-relevant token states (e.g. "claimed", "delegated", "escalated") are produced by the gateway/events ADRs ([ADR-005](ADR-005-gateways-and-joins.md)/[ADR-006](ADR-006-events-and-subscriptions.md)); the audit view extends as those land. The boundary is provisional, not locked.
 
 ### 8.6 Backwards compatibility, deprecation, and sensitive data
 
@@ -612,14 +660,14 @@ BPMN Process variables can carry PII / regulated data. The engine itself doesn't
 - `Logger` adapters SHOULD support field-level redaction policy (e.g., `gobpm.process_variable.customer_email` redacted at INFO; full at DEBUG with caller-required permission).
 - `Repository` adapters SHOULD support encryption-at-rest for the variables column / equivalent storage.
 - Audit subscribers SHOULD support immutable append-only mode for compliance contexts (SOC2, GDPR, HIPAA).
-- The TokenEvent stream is the natural audit feed; the engine does not need to know which fields are sensitive — the audit adapter applies its own classification per organizational policy.
+- The token-worded audit view (derived from the `trackEvent` stream — §8.5) is the natural audit feed; the engine does not need to know which fields are sensitive — the audit adapter applies its own classification per organizational policy.
 
 This separation lets one runtime serve both "no classification needed" (internal automation) and "strict classification required" (regulated customer-facing apps) deployments without engine-level changes.
 
 ## 9. References
 
 - [SAD-001 Vision & Architecture](SAD-001-vision-and-architecture.md) — §11 Extension Model (this ADR refines); §6 Quality Attributes; §13 Distribution & Scale (preliminary)
-- [ADR-001 Execution Model](ADR-001-execution-model.md) — Repository contract (§4.9 persistence checkpoints, §4.10 long-wait release-and-rehydrate); event streams (§4.4 TokenEvent, §4.5 TrackEvent) that Logger / Tracer / MetricsRecorder consume
+- [ADR-001 v.4 Execution Model](ADR-001-execution-model.md) — the runtime this extends: §4.7 runtime invariants the Repository persists (+ the Persistence & State ADR for durable checkpoint/rehydrate); §4.3 the single `trackEvent` stream + derived token-worded view that Logger / Tracer / MetricsRecorder / audit subscribers consume
 - [docs/bpmn-spec/semantics/correlation.md](../bpmn-spec/semantics/correlation.md) — MessageBroker contract for Message correlation
 - [docs/bpmn-spec/semantics/data.md](../bpmn-spec/semantics/data.md) — ExpressionEngine integration (FormalExpression evaluation)
 - Existing code:
@@ -634,4 +682,4 @@ This separation lets one runtime serve both "no classification needed" (internal
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-05-30 | Ruslan Gabitov | Initial Draft. Pre-acceptance iteration ongoing; pre-version amendments are folded into this Draft without per-round history rows (per project discipline: history captures version snapshots, not brainstorming). When v.1 flips to Accepted, this row records the Accepted state. |
+| v.1 | 2026-06-09 | Ruslan Gabitov | **Accepted.** Extension architecture landed via [SRD-004](../srd/SRD-004-extension-skeleton.md) (the one foundational skeleton SRD): nine engine-level extension contracts in `pkg/` with bundled defaults, functional-options assembly, the public `EngineRuntime` / internal `RuntimeEnvironment` split, and `ExpressionEngine`/`Clock` wired into execution. Key decisions folded into this Draft before acceptance (no per-round rows): `EventHub` kept internal (not an extension point); human-interaction `TaskDistributor` deferred to its own ADR; cost-tiered telemetry defaults; bounded-in-memory-defaults principle (§4.2); cross-adapter composition via injected `EngineRuntime` (§3.5 Pattern C). §7 defaults-only acceptance suite green (`make ci`). ADR-001 pins bumped v.3 → v.4. RU twin deferred (batched). |

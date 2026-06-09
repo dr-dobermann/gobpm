@@ -2,6 +2,7 @@ package eventhub_test
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"testing"
 	"time"
 
@@ -50,7 +51,7 @@ func createTimerExpressions(t *testing.T) (cycle, duration data.FormalExpression
 
 func TestTimerEvents(t *testing.T) {
 	t.Run("successful timer event registration", func(t *testing.T) {
-		hub, err := eventhub.New()
+		hub, err := eventhub.New(enginert.Default())
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -70,7 +71,7 @@ func TestTimerEvents(t *testing.T) {
 	})
 
 	t.Run("duplicate timer event registration", func(t *testing.T) {
-		hub, err := eventhub.New()
+		hub, err := eventhub.New(enginert.Default())
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -95,7 +96,7 @@ func TestTimerEvents(t *testing.T) {
 	})
 
 	t.Run("timer event unregistration", func(t *testing.T) {
-		hub, err := eventhub.New()
+		hub, err := eventhub.New(enginert.Default())
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -125,7 +126,7 @@ func TestTimerEvents(t *testing.T) {
 	})
 
 	t.Run("timer event propagation to empty hub", func(t *testing.T) {
-		hub, err := eventhub.New()
+		hub, err := eventhub.New(enginert.Default())
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())

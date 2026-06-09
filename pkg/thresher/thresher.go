@@ -35,6 +35,7 @@ package thresher
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -102,6 +103,7 @@ type instanceReg struct {
 // Thresher represents the main BPMN process execution engine.
 type Thresher struct {
 	ctx       context.Context
+	cfg       thresherConfig
 	eventHub  eventproc.EventHub
 	snapshots map[string]*snapshot.Snapshot
 	instances map[string]instanceReg
@@ -110,11 +112,40 @@ type Thresher struct {
 	state     State
 }
 
-// New creates a new empty Thresher in NotStarted state.
+// New creates a new empty Thresher in NotStarted state. Engine-level extensions
+// default to their bundled core implementations; each WithXxx option overrides
+// one (a zero-option New produces a fully working engine — no NewDefault).
 // Function only initializes inner structures. To run Thresher, Run method
 // should be called.
-func New(id string) (*Thresher, error) {
-	eh, err := eventhub.New()
+func New(id string, opts ...Option) (*Thresher, error) {
+	cfg := defaultConfig()
+	for _, o := range opts {
+		if err := o(&cfg); err != nil {
+			return nil,
+				errs.New(
+					errs.M("invalid thresher option"),
+					errs.C(errorClass, errs.InvalidParameter),
+					errs.E(err))
+		}
+	}
+
+	id = strings.TrimSpace(id)
+	if id == "" {
+		id = defaultThresherID
+	}
+
+	t := &Thresher{
+		id:        id,
+		cfg:       cfg,
+		state:     NotStarted,
+		snapshots: map[string]*snapshot.Snapshot{},
+		instances: map[string]instanceReg{},
+	}
+
+	// The EventHub receives the engine's resolved runtime (&t.cfg implements
+	// renv.EngineRuntime) so the waiters it builds reach Clock / ExpressionEngine
+	// (ADR-002 §4.3, Solution B). Built after t so it shares t's cfg pointer.
+	eh, err := eventhub.New(&t.cfg)
 	if err != nil {
 		return nil,
 			errs.New(
@@ -123,19 +154,29 @@ func New(id string) (*Thresher, error) {
 				errs.E(err))
 	}
 
-	id = strings.TrimSpace(id)
-	if id == "" {
-		id = defaultThresherID
-	}
+	t.eventHub = eh
 
-	return &Thresher{
-			id:        id,
-			state:     NotStarted,
-			snapshots: map[string]*snapshot.Snapshot{},
-			instances: map[string]instanceReg{},
-			eventHub:  eh,
-		},
-		nil
+	t.logStartupConfig()
+
+	return t, nil
+}
+
+// logStartupConfig emits one INFO record naming every resolved engine-level
+// extension by its implementation type, so the wiring is visible at startup
+// (ADR-002 §4.4.1).
+func (t *Thresher) logStartupConfig() {
+	t.cfg.logger.Info("thresher.starting",
+		"id", t.id,
+		"repository", fmt.Sprintf("%T", t.cfg.repository),
+		"logger", fmt.Sprintf("%T", t.cfg.logger),
+		"tracer", fmt.Sprintf("%T", t.cfg.tracer),
+		"metricsRecorder", fmt.Sprintf("%T", t.cfg.metrics),
+		"clock", fmt.Sprintf("%T", t.cfg.clock),
+		"messageBroker", fmt.Sprintf("%T", t.cfg.msgBroker),
+		"expressionEngine", fmt.Sprintf("%T", t.cfg.exprEngine),
+		"authorizationProvider", fmt.Sprintf("%T", t.cfg.authz),
+		"workerDispatcher", fmt.Sprintf("%T", t.cfg.dispatcher),
+	)
 }
 
 // State returns current state of the Threasher.
@@ -340,7 +381,7 @@ func (t *Thresher) StartProcess(processID string) error {
 // launchInstance creates a new Instance from the Snapshot s, runs it and
 // append it to runned insances of the Thresher.
 func (t *Thresher) launchInstance(s *snapshot.Snapshot) error {
-	inst, err := instance.New(s, nil, t, nil)
+	inst, err := instance.New(s, nil, &t.cfg, t, nil)
 	if err != nil {
 		return errs.New(
 			errs.M("couldn't create an Instance for process %q",

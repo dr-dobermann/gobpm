@@ -2,6 +2,7 @@ package waiters_test
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"testing"
 	"time"
 
@@ -36,13 +37,13 @@ func TestNewWaiter(t *testing.T) {
 		})
 
 	// invalid parameeters
-	_, err := waiters.CreateWaiter(nil, ep, timeEDef)
+	_, err := waiters.CreateWaiter(nil, ep, timeEDef, enginert.Default())
 	require.Error(t, err)
-	_, err = waiters.CreateWaiter(mockHub, nil, timeEDef)
+	_, err = waiters.CreateWaiter(mockHub, nil, timeEDef, enginert.Default())
 	require.Error(t, err)
-	_, err = waiters.CreateWaiter(mockHub, ep, nil)
+	_, err = waiters.CreateWaiter(mockHub, ep, nil, enginert.Default())
 	require.Error(t, err)
 
-	_, err = waiters.CreateWaiter(mockHub, ep, signalEDef)
+	_, err = waiters.CreateWaiter(mockHub, ep, signalEDef, enginert.Default())
 	require.Error(t, err)
 }

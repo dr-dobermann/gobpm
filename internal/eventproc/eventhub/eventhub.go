@@ -18,6 +18,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub/waiters"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
 
 const errorClass = "EVENT_HUB_ERRORS"
@@ -29,6 +30,7 @@ type (
 	// personal eventWaiter and runs its Service in separate go-routine.
 	EventHub struct {
 		ctx     context.Context
+		rt      renv.EngineRuntime
 		waiters map[string]eventproc.EventWaiter
 		events  []flow.EventDefinition
 		m       sync.RWMutex
@@ -36,9 +38,18 @@ type (
 	}
 )
 
-// New creates a new eventHandler.
-func New() (*EventHub, error) {
+// New creates a new EventHub. rt is the engine's resolved runtime, passed to
+// every waiter the hub builds so timer/expression waiters reach Clock /
+// ExpressionEngine (ADR-002 §4.3).
+func New(rt renv.EngineRuntime) (*EventHub, error) {
+	if rt == nil {
+		return nil, errs.New(
+			errs.M("empty engine runtime"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
 	return &EventHub{
+			rt:      rt,
 			waiters: map[string]eventproc.EventWaiter{},
 			events:  []flow.EventDefinition{},
 		},
@@ -120,7 +131,7 @@ func (eh *EventHub) RegisterEvent(
 		return nil
 	}
 
-	w, err := waiters.CreateWaiter(eh, ep, eDef)
+	w, err := waiters.CreateWaiter(eh, ep, eDef, eh.rt)
 	if err != nil {
 		return errs.New(
 			errs.M("eventWaiter building failed"),

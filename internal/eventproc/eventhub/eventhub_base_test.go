@@ -2,6 +2,7 @@ package eventhub_test
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"testing"
 	"time"
 
@@ -14,15 +15,20 @@ import (
 
 func TestNew(t *testing.T) {
 	t.Run("successful creation", func(t *testing.T) {
-		hub, err := eventhub.New()
+		hub, err := eventhub.New(enginert.Default())
 		require.NoError(t, err)
 		require.NotNil(t, hub)
+	})
+
+	t.Run("nil runtime rejected", func(t *testing.T) {
+		_, err := eventhub.New(nil)
+		require.Error(t, err)
 	})
 }
 
 func TestStart(t *testing.T) {
 	t.Run("successful start", func(t *testing.T) {
-		hub, err := eventhub.New()
+		hub, err := eventhub.New(enginert.Default())
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -32,7 +38,7 @@ func TestStart(t *testing.T) {
 	})
 
 	t.Run("double start error", func(t *testing.T) {
-		hub, err := eventhub.New()
+		hub, err := eventhub.New(enginert.Default())
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -48,7 +54,7 @@ func TestStart(t *testing.T) {
 
 func TestRun(t *testing.T) {
 	t.Run("run before start error", func(t *testing.T) {
-		hub, err := eventhub.New()
+		hub, err := eventhub.New(enginert.Default())
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -60,7 +66,7 @@ func TestRun(t *testing.T) {
 	})
 
 	t.Run("successful run with timeout", func(t *testing.T) {
-		hub, err := eventhub.New()
+		hub, err := eventhub.New(enginert.Default())
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithTimeout(context.Background(),
@@ -75,7 +81,7 @@ func TestRun(t *testing.T) {
 	})
 
 	t.Run("successful run with cancellation", func(t *testing.T) {
-		hub, err := eventhub.New()
+		hub, err := eventhub.New(enginert.Default())
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -91,7 +97,7 @@ func TestRun(t *testing.T) {
 
 func TestRegisterEvent_BaseErrors(t *testing.T) {
 	t.Run("hub not started error", func(t *testing.T) {
-		hub, err := eventhub.New()
+		hub, err := eventhub.New(enginert.Default())
 		require.NoError(t, err)
 
 		mockProcessor := mockeventproc.NewMockEventProcessor(t)
@@ -102,7 +108,7 @@ func TestRegisterEvent_BaseErrors(t *testing.T) {
 	})
 
 	t.Run("nil event processor error", func(t *testing.T) {
-		hub, err := eventhub.New()
+		hub, err := eventhub.New(enginert.Default())
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -117,7 +123,7 @@ func TestRegisterEvent_BaseErrors(t *testing.T) {
 
 func TestUnregisterEvent_BaseErrors(t *testing.T) {
 	t.Run("hub not started error", func(t *testing.T) {
-		hub, err := eventhub.New()
+		hub, err := eventhub.New(enginert.Default())
 		require.NoError(t, err)
 
 		mockProcessor := mockeventproc.NewMockEventProcessor(t)
@@ -128,7 +134,7 @@ func TestUnregisterEvent_BaseErrors(t *testing.T) {
 	})
 
 	t.Run("nil event processor error", func(t *testing.T) {
-		hub, err := eventhub.New()
+		hub, err := eventhub.New(enginert.Default())
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -141,7 +147,7 @@ func TestUnregisterEvent_BaseErrors(t *testing.T) {
 	})
 
 	t.Run("processor not found error", func(t *testing.T) {
-		hub, err := eventhub.New()
+		hub, err := eventhub.New(enginert.Default())
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -158,7 +164,7 @@ func TestUnregisterEvent_BaseErrors(t *testing.T) {
 
 func TestPropagateEvent_BaseErrors(t *testing.T) {
 	t.Run("hub not started error", func(t *testing.T) {
-		hub, err := eventhub.New()
+		hub, err := eventhub.New(enginert.Default())
 		require.NoError(t, err)
 
 		err = hub.PropagateEvent(context.Background(), nil)
@@ -167,7 +173,7 @@ func TestPropagateEvent_BaseErrors(t *testing.T) {
 	})
 
 	t.Run("no waiters found error", func(t *testing.T) {
-		hub, err := eventhub.New()
+		hub, err := eventhub.New(enginert.Default())
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())

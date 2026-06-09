@@ -3,6 +3,7 @@ package instance_test
 import (
 	"context"
 	"fmt"
+	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"log"
 	"reflect"
 	"testing"
@@ -29,13 +30,17 @@ import (
 func TestInstIvalidParams(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
-	_, err := instance.New(nil, nil, nil, nil)
+	_, err := instance.New(nil, nil, enginert.Default(), nil, nil)
 	require.Error(t, err)
 
 	s, err := getSnapshot("invalid_params_test")
 	require.NoError(t, err)
 
-	_, err = instance.New(s, nil, nil, nil)
+	_, err = instance.New(s, nil, enginert.Default(), nil, nil)
+	require.Error(t, err)
+
+	// nil engine runtime
+	_, err = instance.New(s, nil, nil, nil, nil)
 	require.Error(t, err)
 }
 
@@ -45,7 +50,7 @@ func TestMonitoring(t *testing.T) {
 
 	ep := mockeventproc.NewMockEventProducer(t)
 
-	inst, err := instance.New(s, nil, ep, nil)
+	inst, err := instance.New(s, nil, enginert.Default(), ep, nil)
 	require.NoError(t, err)
 
 	// test runtime variables
