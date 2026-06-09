@@ -567,10 +567,14 @@ func (inst *Instance) RegisterEvent(
 	proc eventproc.EventProcessor,
 	eDef flow.EventDefinition,
 ) error {
+	// Event registration is legitimate while the instance is being built
+	// (Created — start-event nodes register here) or running (Active — boundary
+	// / intermediate catch events); it is refused only on a terminal instance
+	// that can no longer act on a fired event (FIX-002 RC1).
 	is := inst.State()
-	if is != Active {
+	if is != Created && is != Active {
 		return errs.New(
-			errs.M("instance isn't active (current state: %s)",
+			errs.M("instance is terminal, can't register events (state: %s)",
 				is),
 			errs.C(errorClass, errs.InvalidState),
 			errs.D("requester_id", proc.ID()))
