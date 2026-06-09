@@ -55,8 +55,8 @@ type EventDefinition interface {
 	// Type returns the trigger of the event definition.
 	Type() EventTrigger
 
-	// If EventDefiniton isn't based on any data.ItemDefiniton, empty list
-	// wil be returned.
+	// If EventDefinition isn't based on any data.ItemDefinition, empty list
+	// will be returned.
 	GetItemsList() []*data.ItemDefinition
 }
 

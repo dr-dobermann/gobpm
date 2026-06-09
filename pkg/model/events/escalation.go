@@ -140,8 +140,8 @@ func (eed *EscalationEventDefinition) CheckItemDefinition(iDefID string) bool {
 
 // GetItemsList returns a list of data.ItemDefinition the EventDefinition
 // is based on.
-// If EventDefiniton isn't based on any data.ItemDefiniton, empty list
-// wil be returned.
+// If EventDefinition isn't based on any data.ItemDefinition, empty list
+// will be returned.
 func (eed *EscalationEventDefinition) GetItemsList() []*data.ItemDefinition {
 	idd := make([]*data.ItemDefinition, 0, 1)
 
