@@ -123,15 +123,6 @@ func New(id string, opts ...Option) (*Thresher, error) {
 		o(&cfg)
 	}
 
-	eh, err := eventhub.New()
-	if err != nil {
-		return nil,
-			errs.New(
-				errs.M("eventHub building failed"),
-				errs.C(errorClass, errs.BulidingFailed),
-				errs.E(err))
-	}
-
 	id = strings.TrimSpace(id)
 	if id == "" {
 		id = defaultThresherID
@@ -143,8 +134,21 @@ func New(id string, opts ...Option) (*Thresher, error) {
 		state:     NotStarted,
 		snapshots: map[string]*snapshot.Snapshot{},
 		instances: map[string]instanceReg{},
-		eventHub:  eh,
 	}
+
+	// The EventHub receives the engine's resolved runtime (&t.cfg implements
+	// renv.EngineRuntime) so the waiters it builds reach Clock / ExpressionEngine
+	// (ADR-002 §4.3, Solution B). Built after t so it shares t's cfg pointer.
+	eh, err := eventhub.New(&t.cfg)
+	if err != nil {
+		return nil,
+			errs.New(
+				errs.M("eventHub building failed"),
+				errs.C(errorClass, errs.BulidingFailed),
+				errs.E(err))
+	}
+
+	t.eventHub = eh
 
 	t.logStartupConfig()
 
@@ -371,7 +375,7 @@ func (t *Thresher) StartProcess(processID string) error {
 // launchInstance creates a new Instance from the Snapshot s, runs it and
 // append it to runned insances of the Thresher.
 func (t *Thresher) launchInstance(s *snapshot.Snapshot) error {
-	inst, err := instance.New(s, nil, t, nil)
+	inst, err := instance.New(s, nil, &t.cfg, t, nil)
 	if err != nil {
 		return errs.New(
 			errs.M("couldn't create an Instance for process %q",

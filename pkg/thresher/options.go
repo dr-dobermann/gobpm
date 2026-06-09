@@ -14,6 +14,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/observability/memmetrics"
 	"github.com/dr-dobermann/gobpm/pkg/observability/noop"
+	"github.com/dr-dobermann/gobpm/pkg/renv"
 	"github.com/dr-dobermann/gobpm/pkg/repository"
 	"github.com/dr-dobermann/gobpm/pkg/repository/memrepo"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
@@ -81,6 +82,26 @@ func WithAuthorizationProvider(a auth.AuthorizationProvider) Option {
 func WithWorkerDispatcher(d tasks.WorkerDispatcher) Option {
 	return func(c *thresherConfig) { c.dispatcher = d }
 }
+
+// thresherConfig is the engine's resolved EngineRuntime (renv.EngineRuntime):
+// the Thresher shares it with instances and the EventHub so node executors and
+// event waiters reach the wired extensions.
+
+func (c *thresherConfig) Logger() observability.Logger          { return c.logger }
+func (c *thresherConfig) Tracer() observability.Tracer          { return c.tracer }
+func (c *thresherConfig) MetricsRecorder() observability.MetricsRecorder { return c.metrics }
+func (c *thresherConfig) Clock() clock.Clock                    { return c.clock }
+func (c *thresherConfig) Repository() repository.Repository     { return c.repository }
+func (c *thresherConfig) MessageBroker() messaging.MessageBroker { return c.msgBroker }
+func (c *thresherConfig) ExpressionEngine() expression.Engine   { return c.exprEngine }
+
+func (c *thresherConfig) AuthorizationProvider() auth.AuthorizationProvider {
+	return c.authz
+}
+
+func (c *thresherConfig) WorkerDispatcher() tasks.WorkerDispatcher { return c.dispatcher }
+
+var _ renv.EngineRuntime = (*thresherConfig)(nil)
 
 // defaultConfig wires every extension to its bundled core default. A zero-option
 // thresher.New produces a fully working engine from this (no NewDefault).

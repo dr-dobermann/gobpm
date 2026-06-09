@@ -3,6 +3,7 @@ package waiters_test
 import (
 	"context"
 	"fmt"
+	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"testing"
 	"time"
 
@@ -32,13 +33,13 @@ func TestTimeWaiter(t *testing.T) {
 					}).Maybe()
 
 			// empty parameters
-			_, err := waiters.NewTimeWaiter(nil, nil, nil, "")
+			_, err := waiters.NewTimeWaiter(nil, nil, nil, "", enginert.Default())
 			require.Error(t, err)
 
 			// invalid event definition
 			_, err = waiters.NewTimeWaiter(mockHub, ep,
 				events.MustSignalEventDefinition(
-					&events.Signal{}), "")
+					&events.Signal{}), "", enginert.Default())
 			require.Error(t, err)
 
 			// failing evaluation
@@ -52,7 +53,7 @@ func TestTimeWaiter(t *testing.T) {
 					}),
 				nil, nil)
 
-			_, err = waiters.NewTimeWaiter(mockHub, ep, failiEDef, "")
+			_, err = waiters.NewTimeWaiter(mockHub, ep, failiEDef, "", enginert.Default())
 			require.Error(t, err)
 
 			// past time
@@ -67,7 +68,7 @@ func TestTimeWaiter(t *testing.T) {
 					}),
 				nil, nil)
 
-			_, err = waiters.NewTimeWaiter(mockHub, ep, pastEDef, "")
+			_, err = waiters.NewTimeWaiter(mockHub, ep, pastEDef, "", enginert.Default())
 			require.Error(t, err)
 
 			// negative cycles
@@ -90,7 +91,7 @@ func TestTimeWaiter(t *testing.T) {
 							nil
 					}))
 
-			_, err = waiters.NewTimeWaiter(mockHub, ep, negativeCyclesEDef, "")
+			_, err = waiters.NewTimeWaiter(mockHub, ep, negativeCyclesEDef, "", enginert.Default())
 			require.Error(t, err)
 
 			// negative duration
@@ -113,7 +114,7 @@ func TestTimeWaiter(t *testing.T) {
 							nil
 					}))
 
-			_, err = waiters.NewTimeWaiter(mockHub, ep, negativeDurationEDef, "")
+			_, err = waiters.NewTimeWaiter(mockHub, ep, negativeDurationEDef, "", enginert.Default())
 			require.Error(t, err)
 
 			// invalid expression time type value
@@ -142,7 +143,7 @@ func TestTimeWaiter(t *testing.T) {
 					}),
 				nil, nil)
 
-			w, err := waiters.NewTimeWaiter(mockHub, ep, oneSecondsEDef, "one_seconds_timer")
+			w, err := waiters.NewTimeWaiter(mockHub, ep, oneSecondsEDef, "one_seconds_timer", enginert.Default())
 			require.NoError(t, err)
 
 			require.NoError(t, w.Service(context.Background()))
@@ -168,7 +169,8 @@ func TestTimeWaiter(t *testing.T) {
 
 			// context cancellation
 			wcc, err := waiters.NewTimeWaiter(
-				mockHub, ep, tenSecondsEDef, "cancelled by context timer")
+				mockHub, ep, tenSecondsEDef, "cancelled by context timer",
+				enginert.Default())
 			require.NoError(t, err)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -179,7 +181,7 @@ func TestTimeWaiter(t *testing.T) {
 			require.Equal(t, eventproc.WSStopped, wcc.State())
 
 			// waiter stopping
-			ws, err := waiters.NewTimeWaiter(mockHub, ep, tenSecondsEDef, "stopped timer")
+			ws, err := waiters.NewTimeWaiter(mockHub, ep, tenSecondsEDef, "stopped timer", enginert.Default())
 			require.NoError(t, err)
 			require.NoError(t, ws.Service(context.Background()))
 			time.Sleep(3 * time.Second)
@@ -203,7 +205,7 @@ func TestTimeWaiter(t *testing.T) {
 					}),
 				nil, nil)
 
-			w, err := waiters.CreateWaiter(mockHub, ep, timeEDef)
+			w, err := waiters.CreateWaiter(mockHub, ep, timeEDef, enginert.Default())
 			require.NoError(t, err)
 			require.NotEmpty(t, w.ID())
 			require.Contains(t, w.EventProcessors(), ep)
@@ -242,7 +244,7 @@ func TestTimeWaiter(t *testing.T) {
 					}),
 				nil, nil)
 
-			w, err := waiters.CreateWaiter(mockHub, ept, timeEDef)
+			w, err := waiters.CreateWaiter(mockHub, ept, timeEDef, enginert.Default())
 			require.NoError(t, err)
 			require.Equal(t, eventproc.WSReady, w.State())
 			require.NotEmpty(t, w.ID())
@@ -301,7 +303,7 @@ func TestTimeWaiter(t *testing.T) {
 						return values.NewVariable(time.Second), nil
 					}))
 
-			w, err := waiters.CreateWaiter(mockHub, epc, cyclesEDef)
+			w, err := waiters.CreateWaiter(mockHub, epc, cyclesEDef, enginert.Default())
 			require.NoError(t, err)
 			require.Equal(t, eventproc.WSReady, w.State())
 

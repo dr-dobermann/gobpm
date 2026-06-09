@@ -24,6 +24,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/interactor"
 	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/internal/scope"
+	engrenv "github.com/dr-dobermann/gobpm/pkg/renv"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
@@ -81,8 +82,12 @@ type dataFinder func(data.Data) bool
 
 // Instance represents a process instance for execution.
 type Instance struct {
-	startTime           time.Time
-	ctx                 context.Context
+	startTime time.Time
+	ctx       context.Context
+	// EngineRuntime is the Thresher's resolved engine-level extension set,
+	// embedded so node executors reach Logger()/Clock()/Repository()/... via
+	// the RuntimeEnvironment without per-method delegates.
+	engrenv.EngineRuntime
 	rr                  interactor.Registrator
 	parentEventProducer eventproc.EventProducer
 	parentScope         scope.Scope
@@ -110,6 +115,7 @@ type Instance struct {
 func New(
 	s *snapshot.Snapshot,
 	parentScope scope.Scope,
+	er engrenv.EngineRuntime,
 	ep eventproc.EventProducer,
 	rr interactor.Registrator,
 ) (*Instance, error) {
@@ -117,6 +123,13 @@ func New(
 		return nil,
 			errs.New(
 				errs.M("no snapshot is given"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if er == nil {
+		return nil,
+			errs.New(
+				errs.M("empty engine runtime"),
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
@@ -134,8 +147,9 @@ func New(
 
 	inst := Instance{
 		BaseElement:         *be,
+		EngineRuntime:       er,
 		s:                   s,
-		now:                 time.Now,
+		now:                 er.Clock().Now,
 		scopes:              map[scope.DataPath]map[string]data.Data{},
 		tracks:              map[string]*track{},
 		events:              make(chan trackEvent),

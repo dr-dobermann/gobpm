@@ -11,9 +11,23 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/expression/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/observability/memmetrics"
 	"github.com/dr-dobermann/gobpm/pkg/observability/noop"
+	"github.com/dr-dobermann/gobpm/pkg/renv"
 	"github.com/dr-dobermann/gobpm/pkg/repository/memrepo"
 	"github.com/dr-dobermann/gobpm/pkg/tasks/localdispatcher"
 )
+
+func TestConfigSatisfiesEngineRuntime(t *testing.T) {
+	c := defaultConfig()
+
+	var er renv.EngineRuntime = &c
+
+	if er.Logger() == nil || er.Tracer() == nil || er.MetricsRecorder() == nil ||
+		er.Clock() == nil || er.Repository() == nil || er.MessageBroker() == nil ||
+		er.ExpressionEngine() == nil || er.AuthorizationProvider() == nil ||
+		er.WorkerDispatcher() == nil {
+		t.Fatal("thresherConfig does not expose every extension as EngineRuntime")
+	}
+}
 
 func TestDefaultConfigWiresEveryExtension(t *testing.T) {
 	c := defaultConfig()

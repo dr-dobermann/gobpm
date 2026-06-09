@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"testing"
 	"time"
 
@@ -40,7 +41,7 @@ func TestM3LinearHistory(t *testing.T) {
 	s := buildLinearSnapshot(t)
 	ep := mockeventproc.NewMockEventProducer(t)
 
-	inst, err := New(s, nil, ep, nil)
+	inst, err := New(s, nil, enginert.Default(), ep, nil)
 	require.NoError(t, err)
 
 	base := time.Date(2026, 6, 7, 10, 0, 0, 0, time.UTC)
@@ -91,7 +92,7 @@ func TestM3ConcurrentReads(t *testing.T) {
 	s := buildLinearSnapshot(t)
 	ep := mockeventproc.NewMockEventProducer(t)
 
-	inst, err := New(s, nil, ep, nil)
+	inst, err := New(s, nil, enginert.Default(), ep, nil)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())

@@ -17,6 +17,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
 
 // TimerWatierError is the error class for timer waiter errors.
@@ -28,6 +29,7 @@ type timeWaiter struct {
 	next       time.Time
 	eDef       flow.EventDefinition
 	hub        eventproc.EventHub
+	rt         renv.EngineRuntime
 	stopCh     chan struct{}
 	id         string
 	processors []eventproc.EventProcessor
@@ -37,17 +39,19 @@ type timeWaiter struct {
 	m          sync.Mutex
 }
 
-// NewTimeWaiter creates a new timer event defined by eDef.
+// NewTimeWaiter creates a new timer event defined by eDef. rt is the engine
+// runtime the waiter evaluates timer expressions and sources time through.
 func NewTimeWaiter(
 	eh eventproc.EventHub,
 	ep eventproc.EventProcessor,
 	eDefI flow.EventDefinition,
 	id string,
+	rt renv.EngineRuntime,
 ) (eventproc.EventWaiter, error) {
-	if ep == nil || eDefI == nil || eh == nil {
+	if ep == nil || eDefI == nil || eh == nil || rt == nil {
 		return nil,
 			errs.New(
-				errs.M("couldn't create a Waiter with empty EventProcessor, EventDefinition or EventHub"),
+				errs.M("couldn't create a Waiter with empty EventProcessor, EventDefinition, EventHub or EngineRuntime"),
 				errs.C(TimerWatierError, errs.InvalidParameter, errs.EmptyNotAllowed))
 	}
 
@@ -69,6 +73,7 @@ func NewTimeWaiter(
 		id:         id,
 		eDef:       eDef,
 		hub:        eh,
+		rt:         rt,
 		processors: []eventproc.EventProcessor{ep},
 	}
 
@@ -121,7 +126,7 @@ func (tw *timeWaiter) parseEDef(
 
 // processExpression processes a single formal expression for the timer
 func (tw *timeWaiter) processExpression(name string, fe data.FormalExpression, ds data.Source) error {
-	tm, err := fe.Evaluate(context.Background(), ds)
+	tm, err := tw.rt.ExpressionEngine().Evaluate(context.Background(), fe, ds)
 	if err != nil {
 		return errs.New(
 			errs.M(fmt.Sprintf("couldn't evaluate TimerEventDefintion %s value", name)),
@@ -134,7 +139,7 @@ func (tw *timeWaiter) processExpression(name string, fe data.FormalExpression, d
 	switch name {
 	case "Time":
 		tw.next, ok = tm.Get(ctx).(time.Time)
-		if ok && tw.next.Before(time.Now()) {
+		if ok && tw.next.Before(tw.rt.Clock().Now()) {
 			return errs.New(errs.M("couldn't use past time as a timer"))
 		}
 

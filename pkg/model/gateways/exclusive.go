@@ -65,7 +65,7 @@ func (eg *ExclusiveGateway) Exec(
 			continue
 		}
 
-		res, err := eg.checkCondition(ctx, cond, of)
+		res, err := eg.checkCondition(ctx, re, cond, of)
 		if err != nil {
 			return nil, err
 		}
@@ -103,8 +103,12 @@ func (eg *ExclusiveGateway) Exec(
 }
 
 // checkCondition check condition result and return it or error on failure.
+// The condition is evaluated through the engine's ExpressionEngine (reached via
+// the RuntimeEnvironment), so the strategy is swappable; the default delegates
+// to the expression itself.
 func (eg *ExclusiveGateway) checkCondition(
 	ctx context.Context,
+	re renv.RuntimeEnvironment,
 	cond data.FormalExpression,
 	of *flow.SequenceFlow,
 ) (bool, error) {
@@ -117,7 +121,7 @@ func (eg *ExclusiveGateway) checkCondition(
 				errs.D("exclusive_gateway_id", eg.ID()))
 	}
 
-	res, err := cond.Evaluate(context.Background(), eg)
+	res, err := re.ExpressionEngine().Evaluate(ctx, cond, eg)
 	if err != nil {
 		return false,
 			errs.New(

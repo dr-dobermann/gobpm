@@ -5,14 +5,17 @@ import (
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
 
 // CreateWaiter creates a new eventWaiter with given EventDefinition and
-// EventProcessor.
+// EventProcessor. rt is the engine runtime the waiter uses to reach Clock /
+// ExpressionEngine.
 func CreateWaiter(
 	eh eventproc.EventHub,
 	ep eventproc.EventProcessor,
 	eDef flow.EventDefinition,
+	rt renv.EngineRuntime,
 ) (eventproc.EventWaiter, error) {
 	if eh == nil {
 		return nil, fmt.Errorf("empty event hub")
@@ -33,7 +36,7 @@ func CreateWaiter(
 
 	switch eDef.Type() {
 	case flow.TriggerTimer:
-		w, err = NewTimeWaiter(eh, ep, eDef, "")
+		w, err = NewTimeWaiter(eh, ep, eDef, "", rt)
 
 	default:
 		err = fmt.Errorf(

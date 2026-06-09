@@ -2,6 +2,7 @@ package eventhub_test
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
@@ -17,7 +18,7 @@ import (
 // поэтому эти тесты демонстрируют текущие ограничения
 func TestMessageEvents_CurrentLimitations(t *testing.T) {
 	t.Run("message event registration fails - waiter not implemented", func(t *testing.T) {
-		hub, err := eventhub.New()
+		hub, err := eventhub.New(enginert.Default())
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())

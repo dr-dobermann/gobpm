@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"testing"
 	"time"
 
@@ -54,7 +55,7 @@ func TestM2LinearCompletes(t *testing.T) {
 	s := buildLinearSnapshot(t)
 	ep := mockeventproc.NewMockEventProducer(t)
 
-	inst, err := New(s, nil, ep, nil)
+	inst, err := New(s, nil, enginert.Default(), ep, nil)
 	require.NoError(t, err)
 
 	leak := assertNoGoroutineLeak(t)
