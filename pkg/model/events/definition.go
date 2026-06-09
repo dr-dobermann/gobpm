@@ -27,8 +27,8 @@ func newDefinition(baseOpts ...options.Option) (*definition, error) {
 
 // GetItemList returns a list of data.ItemDefinition the EventDefinition
 // is based on.
-// If EventDefiniton isn't based on any data.ItemDefiniton, empty list
-// wil be returned.
+// If EventDefinition isn't based on any data.ItemDefinition, empty list
+// will be returned.
 func (d *definition) GetItemsList() []*data.ItemDefinition {
 	// by default an empty list of items returned
 	return []*data.ItemDefinition{}
