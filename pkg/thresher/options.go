@@ -7,6 +7,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/auth/allowall"
 	"github.com/dr-dobermann/gobpm/pkg/clock"
 	"github.com/dr-dobermann/gobpm/pkg/clock/syscl"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/messaging"
 	"github.com/dr-dobermann/gobpm/pkg/messaging/membroker"
 	"github.com/dr-dobermann/gobpm/pkg/model/expression"
@@ -35,52 +36,144 @@ type thresherConfig struct {
 	dispatcher tasks.WorkerDispatcher
 }
 
-// Option overrides one engine-level extension at thresher.New.
-type Option func(*thresherConfig)
+// Option overrides one engine-level extension at thresher.New. An Option may
+// fail — a nil value is rejected (it would silently erase the default) with an
+// error that names the offending extension; New returns the first such error.
+type Option func(*thresherConfig) error
 
 // WithLogger sets the structured logger (default: slog.Default()).
 func WithLogger(l observability.Logger) Option {
-	return func(c *thresherConfig) { c.logger = l }
+	return func(c *thresherConfig) error {
+		if l == nil {
+			return errs.New(
+				errs.M("WithLogger: a nil Logger isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		c.logger = l
+
+		return nil
+	}
 }
 
 // WithTracer sets the tracer (default: no-op).
 func WithTracer(t observability.Tracer) Option {
-	return func(c *thresherConfig) { c.tracer = t }
+	return func(c *thresherConfig) error {
+		if t == nil {
+			return errs.New(
+				errs.M("WithTracer: a nil Tracer isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		c.tracer = t
+
+		return nil
+	}
 }
 
 // WithMetricsRecorder sets the metrics recorder (default: in-memory registry).
 func WithMetricsRecorder(m observability.MetricsRecorder) Option {
-	return func(c *thresherConfig) { c.metrics = m }
+	return func(c *thresherConfig) error {
+		if m == nil {
+			return errs.New(
+				errs.M("WithMetricsRecorder: a nil MetricsRecorder isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		c.metrics = m
+
+		return nil
+	}
 }
 
 // WithClock sets the clock (default: system wall clock).
 func WithClock(ck clock.Clock) Option {
-	return func(c *thresherConfig) { c.clock = ck }
+	return func(c *thresherConfig) error {
+		if ck == nil {
+			return errs.New(
+				errs.M("WithClock: a nil Clock isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		c.clock = ck
+
+		return nil
+	}
 }
 
 // WithRepository sets the repository (default: in-memory, non-durable).
 func WithRepository(r repository.Repository) Option {
-	return func(c *thresherConfig) { c.repository = r }
+	return func(c *thresherConfig) error {
+		if r == nil {
+			return errs.New(
+				errs.M("WithRepository: a nil Repository isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		c.repository = r
+
+		return nil
+	}
 }
 
 // WithMessageBroker sets the message broker (default: in-memory inbox).
 func WithMessageBroker(b messaging.MessageBroker) Option {
-	return func(c *thresherConfig) { c.msgBroker = b }
+	return func(c *thresherConfig) error {
+		if b == nil {
+			return errs.New(
+				errs.M("WithMessageBroker: a nil MessageBroker isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		c.msgBroker = b
+
+		return nil
+	}
 }
 
 // WithExpressionEngine sets the expression engine (default: Go-native).
 func WithExpressionEngine(e expression.Engine) Option {
-	return func(c *thresherConfig) { c.exprEngine = e }
+	return func(c *thresherConfig) error {
+		if e == nil {
+			return errs.New(
+				errs.M("WithExpressionEngine: a nil expression.Engine isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		c.exprEngine = e
+
+		return nil
+	}
 }
 
 // WithAuthorizationProvider sets the authorization provider (default: allow-all).
 func WithAuthorizationProvider(a auth.AuthorizationProvider) Option {
-	return func(c *thresherConfig) { c.authz = a }
+	return func(c *thresherConfig) error {
+		if a == nil {
+			return errs.New(
+				errs.M("WithAuthorizationProvider: a nil AuthorizationProvider isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		c.authz = a
+
+		return nil
+	}
 }
 
 // WithWorkerDispatcher sets the worker dispatcher (default: in-process).
 func WithWorkerDispatcher(d tasks.WorkerDispatcher) Option {
-	return func(c *thresherConfig) { c.dispatcher = d }
+	return func(c *thresherConfig) error {
+		if d == nil {
+			return errs.New(
+				errs.M("WithWorkerDispatcher: a nil WorkerDispatcher isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		c.dispatcher = d
+
+		return nil
+	}
 }
 
 // thresherConfig is the engine's resolved EngineRuntime (renv.EngineRuntime):

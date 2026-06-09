@@ -120,7 +120,13 @@ type Thresher struct {
 func New(id string, opts ...Option) (*Thresher, error) {
 	cfg := defaultConfig()
 	for _, o := range opts {
-		o(&cfg)
+		if err := o(&cfg); err != nil {
+			return nil,
+				errs.New(
+					errs.M("invalid thresher option"),
+					errs.C(errorClass, errs.InvalidParameter),
+					errs.E(err))
+		}
 	}
 
 	id = strings.TrimSpace(id)

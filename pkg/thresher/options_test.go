@@ -57,7 +57,9 @@ func TestEveryOptionOverridesItsDefault(t *testing.T) {
 		WithRepository(rp), WithMessageBroker(mb), WithExpressionEngine(ee),
 		WithAuthorizationProvider(az), WithWorkerDispatcher(wd),
 	} {
-		o(&c)
+		if err := o(&c); err != nil {
+			t.Fatalf("option returned an error: %v", err)
+		}
 	}
 
 	if c.logger != lg || c.tracer != tr || c.metrics != mr || c.clock != ck ||
@@ -72,11 +74,30 @@ func TestLastWriteWins(t *testing.T) {
 	first := memrepo.New()
 	last := memrepo.New()
 
-	WithRepository(first)(&c)
-	WithRepository(last)(&c)
+	_ = WithRepository(first)(&c)
+	_ = WithRepository(last)(&c)
 
 	if c.repository != last {
 		t.Fatal("last WithRepository should win")
+	}
+}
+
+func TestNilOptionValueRejected(t *testing.T) {
+	c := defaultConfig()
+	defaultLogger := c.logger
+
+	// A nil value must be rejected, not silently erase the default.
+	if err := WithLogger(nil)(&c); err == nil {
+		t.Fatal("WithLogger(nil) should return an error")
+	}
+
+	if c.logger != defaultLogger {
+		t.Fatal("WithLogger(nil) erased the default instead of rejecting")
+	}
+
+	// And New surfaces it.
+	if _, err := New("x", WithRepository(nil)); err == nil {
+		t.Fatal("New with WithRepository(nil) should return an error")
 	}
 }
 
