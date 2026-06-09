@@ -103,7 +103,8 @@ func main() {
 	}
 
 	// Start engine
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
 	err = engine.Run(ctx)
 	if err != nil {
 		log.Fatal("Failed to start engine:", err)
@@ -117,12 +118,11 @@ func main() {
 
 	fmt.Printf("Timer process '%s' started successfully with ID: %s\n",
 		proc.Name(), proc.ID())
-	fmt.Println("Timer will trigger after 5 seconds, repeating 3 times...")
-	fmt.Println("Press Ctrl+C to exit")
+	fmt.Println("Timer will trigger after 5 seconds...")
+	fmt.Println("Waiting up to 8s for the timer event...")
 
-	// Keep the program running to see timer events
-	select {
-	case <-ctx.Done():
-		fmt.Println("Process completed")
-	}
+	// Block until the engine context is canceled (timeout above); the 5s
+	// timer fires and the instance completes well within the window.
+	<-ctx.Done()
+	fmt.Println("Process completed")
 }
