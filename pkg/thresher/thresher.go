@@ -358,17 +358,22 @@ func (t *Thresher) RegisterProcess(
 // StartProcess runs process with processId without any event even if
 // process awaits them.
 func (t *Thresher) StartProcess(processID string) error {
-	if t.state != Started {
+	if st := t.State(); st != Started {
 		return errs.New(
 			errs.M("thresher isn't started"),
 			errs.C(errorClass, errs.InvalidState),
-			errs.D("current_state", t.state.String()))
+			errs.D("current_state", st.String()))
 	}
 
+	// Hold the engine lock only for the snapshot lookup; release it BEFORE
+	// launchInstance. launchInstance (and, for event-start nodes, the
+	// construction-time RegisterEvent -> Thresher.State()) re-acquire t.m, which
+	// would self-deadlock a non-reentrant mutex if held across them (FIX-002
+	// RC2).
 	t.m.Lock()
-	defer t.m.Unlock()
-
 	s, ok := t.snapshots[processID]
+	t.m.Unlock()
+
 	if !ok {
 		return errs.New(
 			errs.M("couldn't find snapshot for process ID %q", processID),

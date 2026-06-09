@@ -3,7 +3,10 @@ package thresher_test
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 	"github.com/stretchr/testify/require"
@@ -60,4 +63,44 @@ func TestThresher_ProcessManagement(t *testing.T) {
 	// Note: Testing actual process start would require complex setup with
 	// proper Process, Nodes, Flows, etc. We'll focus on error paths and
 	// basic validation for now.
+}
+
+// TestStartProcess_NoReentrantDeadlock guards FIX-002 RC2: StartProcess must
+// not hold t.m across launchInstance (which re-acquires it), or it self-
+// deadlocks on the non-reentrant mutex.
+func TestStartProcess_NoReentrantDeadlock(t *testing.T) {
+	th, err := thresher.New("deadlock-test")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, th.Run(ctx))
+
+	// Minimal runnable process: Start -> End.
+	proc, err := process.New("p")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	require.NoError(t, proc.Add(start))
+	require.NoError(t, proc.Add(end))
+
+	_, err = flow.Link(start, end)
+	require.NoError(t, err)
+
+	require.NoError(t, th.RegisterProcess(proc))
+
+	done := make(chan error, 1)
+	go func() { done <- th.StartProcess(proc.ID()) }()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("StartProcess deadlocked (FIX-002 RC2: re-entrant t.m)")
+	}
 }
