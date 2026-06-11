@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-09 |
 | Owner | Ruslan Gabitov |
@@ -13,9 +13,9 @@ This SRD lands the **Parallel (AND) gateway** of [ADR-005](../design/ADR-005-gat
 
 ## 1. Background & motivation
 
-### 1.1 Current state (verified against the code)
+### 1.1 Current state (pre-landing baseline)
 
-> **Re-verify at M1.** This grounding was captured before the ADR-009 / SRD-006 per-instance-node-graph landing merged to master. The facts below still hold conceptually, but file:line references may have shifted and node types now carry `Clone()` (SRD-006) — re-confirm each line at implementation start.
+> This is the **starting-point** snapshot that motivated the work (captured against master before this SRD landed); file:line refs describe the *before* state. Re-confirmed at M1 against the ADR-009/SRD-006 per-instance-node-graph baseline. What it describes — the crash on a Parallel node, the absent join accounting, the producerless `TrackMerged`, the off-by-one `String()`, the prologue/epilogue residue — is exactly what this SRD removes; see §7 for the landed result.
 
 - Only the **Exclusive** gateway executes (`pkg/model/gateways/exclusive.go:53` `Exec`). Dispatch is by concrete-type `Exec` via `exec.NodeExecutor` (`internal/exec/exec.go:10-18`); a node lacking it aborts track creation (`internal/instance/track.go:231-236`, `:419-425`). **A Parallel gateway in a model crashes there today.**
 - The fork mechanic exists: a node's `Exec` returns activated outgoing flows; the track continues on the first, emits `evFork` for the rest, one new track each (`track.go:508-547` `checkFlows`, `instance.go:340-356` `case evFork`, `event.go:8-26`).
@@ -182,7 +182,46 @@ The track records the incoming flow it traversed to the join (`stepInfo.inFlow`,
 
 ## 7. Implementation summary
 
-> ⚠️ TODO: filled at landing — files/lines, V-results, milestone SHAs.
+Landed on `feat/parallel-gateway` in five commits (doc + four milestones; one
+prerequisite engine fix surfaced by M4).
+
+**Milestone commits**
+
+| Commit | Milestone | What landed |
+|---|---|---|
+| `4389f29` | Docs | ADR-005 + this SRD. |
+| `0fa2a30` | M1 — node-execution contract | Removed `exec.NodePrologue`/`NodeEpilogue` and the `track.go` hook calls; folded `UserTask` registration into `Exec` (register-then-await). (FR-9 / V8) |
+| `2201aa9` | M2 — split | `ParallelGateway` + `Exec` (all outgoing) + constructor/options; `Node()` dispatch fix (also applied to `ExclusiveGateway`). (FR-1/2 / V1) |
+| `e47fdca` | M3 — synchronizing join | `exec.SynchronizingJoin.Arrive(incomingFlowID, arrivingTrackID) (complete, merged []string)`; per-instance `arrived map[string]string` + mutex + `Clone`; `track.synchronize`; `TrackAwaitingMerge` + `evAwaiting`/`evMerged`; loop `applyMerged`; `stepInfo.inFlow`; `prev []string` (creation lineage, **not** folded with absorbed ids — FR-5b); `trackState.String()` off-by-one fix. (FR-3/4/5/5a/5b/6 / V2/V3/V3a/V5) |
+| `e5748f2` | M4 — example | `examples/parallel-gateway/` (Start → split → 2 ServiceTasks → join → End), runs to completion, exit 0. (FR-8 / V6) |
+
+**Prerequisite fix** (`3e10385`): `Thresher.launchInstance` cancelled the
+instance context via `defer` immediately after the non-blocking `Instance.Run`,
+killing every plain process before it executed. Surfaced by the M4 example;
+fixed (cancel retained for teardown, not deferred) with a regression test
+(`TestStartProcess_RunsToCompletion`). Outside SRD-005 scope but blocking V6.
+
+**Key files**: `internal/exec/exec.go` (interface); `pkg/model/gateways/parallel.go` (node + Arrive + Clone); `pkg/model/gateways/exclusive.go` (Node() fix); `internal/instance/track.go` (synchronize, prev, String); `internal/instance/instance.go` (spawnForks, applyMerged, spawn wrapper); `internal/instance/event.go` (evAwaiting/evMerged, mergedIDs); `internal/instance/token.go` (AwaitingMerge → Alive).
+
+**Verification results**
+
+| Check | Result |
+|---|---|
+| V1 `TestParallelGatewayExec` | 🟢 |
+| V2 `TestParallelGatewayArrive` / `…Concurrent` (-race) | 🟢 |
+| V3 `TestParallelJoinSynchronizes` | 🟢 |
+| V3a `TestParallelJoinLineageAcyclic` | 🟢 |
+| V4 non-synchronizing merge pass-through (`synchronize` `!ok`/≤1-incoming path, exercised by every non-join flow) | 🟢 |
+| V5 `TestParallelJoinMixed` | 🟢 |
+| V6 `examples/parallel-gateway` `go run .` → both workers, "parallel-demo completed", exit 0 | 🟢 |
+| V7 `make ci` — `-race`, diff-coverage **100 %** of touched lines (≥95 % gate), govulncheck | 🟢 |
+| V8 `TestNewUserTask` / `TestUserTaskExecErrors`; no prologue/epilogue residue | 🟢 |
+
+Design refinements made during landing (vs. the as-authored §3/§4 sketches),
+reconciled back into this SRD and ADR-005: (a) `Arrive` is **id-based** (track
+ids, `[]string`) so the model-layer gateway never references the runtime track
+type — no opaque `any`; (b) the merge does **not** fold absorbed ids into the
+survivor's `prev` (FR-5b) — that produced a cyclic `TokenPath.ParentID`.
 
 ## 8. References
 
@@ -200,3 +239,4 @@ The track records the incoming flow it traversed to the join (`stepInfo.inFlow`,
 | Version | Date | Author | Change |
 |---|---|---|---|
 | v.1 | 2026-06-09 | Ruslan Gabitov | Draft. Lands the Parallel (AND) gateway per ADR-005 v.1: split (all outgoing) + **node-owned synchronizing join** — the `ParallelGateway` holds its per-instance arrival set (ADR-009 v.1) + a per-node mutex; the track calls atomic `Arrive`; a non-completing arrival enters the new `TrackAwaitingMerge` state and its goroutine returns (track retained as a record, `evAwaiting`), the completing arrival first completes the join (emits `evMerged`; the loop flips awaiting tracks → `TrackMerged`) **before** executing the node, then executes and forks, leaving its creation lineage intact (FR-5b); `trackState.String()` fix. Also lands ADR-005 §2.5's node-execution-contract simplification (remove `NodePrologue`/`NodeEpilogue`, fold `UserTask` registration into `Exec`) as M1. Four milestones (contract → split → join → example+acceptance). Scope acyclic/single-pass; OR/Complex/Event-Based and loops/excess tokens deferred. (Reconciled on resume with the landed ADR-009/SRD-006 + ADR-001 v.5, then with the design discussion: synchronization moved fully onto the node — no loop-held map, no verdict channel, no mechanism/policy split; §1.1 grounding flagged for re-verification at M1.) |
+| v.1 | 2026-06-11 | Ruslan Gabitov | **Accepted.** Landed across M1–M4 (`0fa2a30` / `2201aa9` / `e47fdca` / `e5748f2`) + a prerequisite engine fix (`3e10385`, `Thresher.launchInstance` premature context cancel). Two refinements during landing, reconciled into §1.1/§3/§7/§FR and ADR-005 v.1: (a) `Arrive` is id-based (`[]string` track ids) so the model-layer gateway needs no `*track`/`any`; (b) the merge does **not** fold absorbed ids into the survivor's `prev` (new FR-5b/V3a — folding produced a cyclic `TokenPath.ParentID`). `make ci` green; diff-coverage 100 % on touched lines; §1.1 re-verify note resolved. |
