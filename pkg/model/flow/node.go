@@ -81,6 +81,12 @@ type Node interface {
 
 	// Node returns underlying node object.
 	Node() Node
+
+	// Clone returns a per-instance copy of the Node: immutable configuration is
+	// shared by reference, per-instance runtime state is fresh, the flow
+	// collections are empty (rewired between clones afterwards) and the clone
+	// carries no container back-reference.
+	Clone() Node
 }
 
 // ============================================================================
@@ -110,6 +116,18 @@ func NewBaseNode(name string, baseOpts ...options.Option) (*BaseNode, error) {
 			flows:       map[data.Direction]map[string]*SequenceFlow{},
 		},
 		nil
+}
+
+// CloneShell returns a new BaseNode that copies the identity (id/name/docs) of
+// fn through the embedded BaseElement but starts with a fresh empty flow map and
+// no container back-reference. It is the per-instance shell every concrete node
+// type builds its clone on top of. flows is unexported, so this helper lives in
+// package flow.
+func (fn *BaseNode) CloneShell() BaseNode {
+	return BaseNode{
+		BaseElement: fn.cloneIdentity(),
+		flows:       map[data.Direction]map[string]*SequenceFlow{},
+	}
 }
 
 // --------------------- Node interface ----------------------------------------
@@ -157,6 +175,14 @@ func (fn *BaseNode) NodeType() NodeType {
 	errs.Panic("don't use NodeType from generic BaseNode")
 
 	return InvalidNodeType
+}
+
+// Clone panics for the generic BaseNode: each concrete node type implements its
+// own Clone. The shell-clone helper CloneShell is used by those implementations.
+func (fn *BaseNode) Clone() Node {
+	errs.Panic("don't use Clone from generic BaseNode")
+
+	return nil
 }
 
 // ----------------- Element interface -----------------------------------------

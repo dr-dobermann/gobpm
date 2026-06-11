@@ -137,6 +137,17 @@ func New(opts ...options.Option) (*Gateway, error) {
 	return gc.newGateway()
 }
 
+// clone returns a per-instance copy of the Gateway: the direction and the
+// default flow are shared by reference as immutable configuration, and the
+// BaseNode shell is fresh (empty flows, no container).
+func (g *Gateway) clone() Gateway {
+	return Gateway{
+		defaultFlow: g.defaultFlow,
+		direction:   g.direction,
+		BaseNode:    g.CloneShell(),
+	}
+}
+
 // DefaultFlow return default flow of the gateway.
 func (g *Gateway) DefaultFlow() *flow.SequenceFlow {
 	return g.defaultFlow

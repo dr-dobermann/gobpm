@@ -2,6 +2,7 @@ package flow
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -128,6 +129,55 @@ func newSequenceFlow(
 	}
 
 	return sf, nil
+}
+
+// CloneFlow rebuilds an edge between two cloned nodes for a per-instance node
+// graph. It creates a SequenceFlow that preserves orig's id and condition, sets
+// its source/target to the passed clones and wires it into both nodes' flow maps
+// via AddFlow. Unlike newSequenceFlow it performs no container insertion: clones
+// carry no shared container, so a Container().Add must not fire.
+func CloneFlow(
+	orig *SequenceFlow,
+	src SequenceSource,
+	trg SequenceTarget,
+) (*SequenceFlow, error) {
+	if orig == nil {
+		return nil,
+			errs.New(
+				errs.M("CloneFlow: a nil original SequenceFlow isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if src == nil {
+		return nil,
+			errs.New(
+				errs.M("CloneFlow: a nil flow source isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if trg == nil {
+		return nil,
+			errs.New(
+				errs.M("CloneFlow: a nil flow target isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	sf := SequenceFlow{
+		BaseElement:         orig.cloneIdentity(),
+		source:              src,
+		target:              trg,
+		conditionExpression: orig.conditionExpression,
+	}
+
+	if err := src.AddFlow(&sf, data.Output); err != nil {
+		return nil, fmt.Errorf("clone flow source wiring failed: %w", err)
+	}
+
+	if err := trg.AddFlow(&sf, data.Input); err != nil {
+		return nil, fmt.Errorf("clone flow target wiring failed: %w", err)
+	}
+
+	return &sf, nil
 }
 
 // checkConnections tests if it possible to connect src with trg via sf.

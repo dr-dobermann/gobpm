@@ -46,3 +46,39 @@ func TestMessage(t *testing.T) {
 				})
 		})
 }
+
+func TestMessageClone(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("item with structure is isolated per clone",
+		func(t *testing.T) {
+			m := bpmncommon.MustMessage("msg",
+				data.MustItemDefinition(values.NewVariable(7)))
+
+			clone := m.Clone()
+
+			// identity preserved, independent objects.
+			require.NotSame(t, m, clone)
+			require.Equal(t, m.ID(), clone.ID())
+			require.Equal(t, m.Name(), clone.Name())
+			require.Equal(t, m.Item().ID(), clone.Item().ID())
+			require.NotSame(t, m.Item(), clone.Item())
+
+			// mutating the clone's value leaves the original untouched.
+			require.NoError(t, clone.Item().Structure().Update(ctx, 99))
+			require.Equal(t, 99, clone.Item().Structure().Get(ctx))
+			require.Equal(t, 7, m.Item().Structure().Get(ctx))
+		})
+
+	t.Run("item with nil structure clones to a fresh empty item",
+		func(t *testing.T) {
+			m := bpmncommon.MustMessage("msg",
+				data.MustItemDefinition(nil))
+
+			clone := m.Clone()
+
+			require.Equal(t, m.Item().ID(), clone.Item().ID())
+			require.NotSame(t, m.Item(), clone.Item())
+			require.Nil(t, clone.Item().Structure())
+		})
+}
