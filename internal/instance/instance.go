@@ -308,10 +308,19 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 		inst.addToSnap(t)
 		active++
 
-		// run the track and report its end back to the loop.
+		// run the track and report back to the loop. A track that reached a
+		// synchronizing join without completing it ends its goroutine in
+		// AwaitingMerge — reported as evAwaiting, not evEnded, so the loop keeps
+		// it as awaiting (its run() will not resume).
 		go func(t *track) {
 			t.run(ctx)
-			inst.emit(trackEvent{kind: evEnded, track: t})
+
+			kind := evEnded
+			if t.inState(TrackAwaitingMerge) {
+				kind = evAwaiting
+			}
+
+			inst.emit(trackEvent{kind: kind, track: t})
 		}(t)
 	}
 
@@ -349,25 +358,19 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 		case ev := <-inst.events:
 			switch ev.kind {
 			case evFork:
-				for _, f := range ev.flows {
-					nt, err := newTrack(f.Target().Node(), inst, ev.track)
-					if err != nil {
-						inst.lastErr.Store(&err)
-						stopAll()
-
-						break
-					}
-
-					inst.trackCount.Add(1)
-					spawn(nt)
-
-					if stopping {
-						nt.stop()
-					}
-				}
+				inst.spawnForks(ev, spawn, stopAll, stopping)
 
 			case evEnded:
 				active--
+
+			case evAwaiting:
+				// the track reached a synchronizing join, did not complete it,
+				// and its goroutine returned — no longer active, but retained as
+				// awaiting until the join fires (ADR-005 §2.4).
+				active--
+
+			case evMerged:
+				inst.applyMerged(ev)
 			}
 		}
 	}
@@ -376,6 +379,50 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 		inst.setState(Terminated)
 	} else {
 		inst.setState(Completed)
+	}
+}
+
+// spawnForks builds and spawns one track per extra forked outgoing flow, runs
+// each via spawn, and stops it immediately if the instance is already stopping.
+// A build error is recorded and triggers stopAll. Called only from loop().
+func (inst *Instance) spawnForks(
+	ev trackEvent,
+	spawn func(*track),
+	stopAll func(),
+	stopping bool,
+) {
+	for _, f := range ev.flows {
+		nt, err := newTrack(f.Target().Node(), inst, ev.track)
+		if err != nil {
+			inst.lastErr.Store(&err)
+			stopAll()
+
+			return
+		}
+
+		// the new track reached its node via flow f; record it so a
+		// synchronizing-join target knows the arriving incoming flow.
+		nt.steps[0].inFlow = f
+
+		inst.trackCount.Add(1)
+		spawn(nt)
+
+		if stopping {
+			nt.stop()
+		}
+	}
+}
+
+// applyMerged flips the tracks the surviving track absorbed at a synchronizing
+// join to Merged (their token projects Consumed). It resolves the absorbed ids
+// against the loop-owned tracks map; the awaiting goroutines have already
+// returned, so the loop is the sole writer of their state. Called only from
+// loop().
+func (inst *Instance) applyMerged(ev trackEvent) {
+	for _, id := range ev.mergedIDs {
+		if m := inst.tracks[id]; m != nil {
+			m.updateState(TrackMerged)
+		}
 	}
 }
 

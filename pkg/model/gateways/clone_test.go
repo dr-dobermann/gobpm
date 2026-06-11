@@ -61,6 +61,11 @@ func TestExclusiveGatewayClone(t *testing.T) {
 		gateways.WithDirection(gateways.Diverging))
 	require.NoError(t, err)
 
+	// Node() returns the concrete gateway (so flow-dispatch finds the executor).
+	concrete, ok := eg.Node().(*gateways.ExclusiveGateway)
+	require.True(t, ok)
+	require.Same(t, eg, concrete)
+
 	// wire an incoming flow and two outgoing flows; mark one as default.
 	nodes := getDummyNodes(3)
 	_, err = flow.Link(nodes[0], eg)

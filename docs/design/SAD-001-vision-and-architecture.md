@@ -32,7 +32,7 @@ SAD and ADR are the right places for the kind of content this document carries. 
 
 Two distinct user journeys are first-class:
 
-1. **Embedded library use.** A Go developer imports `github.com/dr-dobermann/gobpm`, constructs an engine with `gobpm.NewDefault()`, registers a process, runs it. No external services required. The engine lives in the same process as the host application.
+1. **Embedded library use.** A Go developer imports `github.com/dr-dobermann/gobpm`, constructs an engine with `thresher.New(id)` (zero options applies all defaults), registers a process, runs it. No external services required. The engine lives in the same process as the host application.
 
 2. **Standalone runtime use.** An operator deploys a `gobpm-server` binary that exposes the engine over HTTP/gRPC, persists state to a real database, integrates with the organization's identity provider, and emits OpenTelemetry traces and Prometheus metrics. The runtime is built on the library — it is not a fork or a parallel implementation.
 
@@ -44,7 +44,7 @@ Both journeys MUST work with high quality. The library MUST NOT carry runtime ba
 |---|---|---|
 | G1 | **BPMN 2.0 Process Execution Conformance + ComplexGateway extension** | Standard compliance is the product's reason to exist. See [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md). |
 | G2 | **Minimal core library: zero non-stdlib runtime dependencies in the engine hot path** | Embeddability requires not forcing transitive deps onto host applications. |
-| G3 | **Out-of-the-box usability** | `gobpm.NewDefault()` produces a working engine with no wiring. New users get a working example in <20 lines. |
+| G3 | **Out-of-the-box usability** | Zero-option `thresher.New(id)` produces a working engine with no wiring (defaults are the default). New users get a working example in <20 lines. |
 | G4 | **Extensibility at every infrastructure concern** | Persistence, events, security, observability, expressions, human-task distribution, timers, message correlation backends — all behind interfaces. |
 | G5 | **Predictable execution model** | Single event-loop goroutine per Process instance owns state; each track (thread of execution) runs in its own goroutine; the token is a projection of a track's position; `context.Context` is the cancellation contract. |
 | G6 | **Production runtime as additive overlay** | Multitenancy, AuthN/Z, diagnostics, profiling, HTTP/gRPC APIs live in a separate module. Library users pay no cost for them. |
@@ -84,10 +84,10 @@ Priority levels: **P0** = mandatory for v.1.0; **P1** = required before public r
 | BPMN conformance | P0 | Conformance test suite (MIWG fixtures + project-internal); KB at [docs/bpmn-spec/](../bpmn-spec/) as normative reference; each implemented element cross-checked against KB |
 | Robustness | P0 | Goroutine-leak-free architecture; `context.Context` cancellation cascade; no token spawned for long-wait states (rehydration model); deadlock detection for ComplexGateway |
 | Minimal core deps | P0 | `core` go.mod limited to stdlib + `github.com/google/uuid` (already in use). All other deps live in adapter or runtime modules. |
-| Out-of-the-box usability | P0 | `gobpm.NewDefault()` constructor + working example under 20 lines |
-| Extensibility | P1 | Interface for: `Repository`, `EventHub`, `ExpressionEngine`, `TaskDistributor`, `MessageBroker`, `Clock`, `Logger`, `Tracer`, `MetricsRecorder`, `AuthorizationProvider` |
+| Out-of-the-box usability | P0 | Zero-option `thresher.New(id)` constructor (applies all defaults) + working example under 20 lines |
+| Extensibility | P1 | Functional option per extension: `Repository`, `ExpressionEngine`, `WorkerDispatcher`, `MessageBroker`, `Clock`, `Logger`, `Tracer`, `MetricsRecorder`, `AuthorizationProvider` (the `TaskDistributor` human-routing interface is deferred to a dedicated human-interaction ADR) |
 | Testability | P1 | All extension interfaces mockable (mockery); execution tests don't require external services; deterministic clock injection |
-| Observability | P1 | Every state transition (per BPMN lifecycle) emits a typed event. **Default policy: visible-by-default, silenceable on opt-out.** `Logger` defaults to `slog.Default()` so production deployments don't accidentally lose telemetry. `Tracer` and `MetricsRecorder` default to no-op only because Go stdlib has no sensible default for them (OpenTelemetry adapter ships separately). Users who want less noise opt out explicitly (e.g., `gobpm.WithSilentLogger()`). |
+| Observability | P1 | Every state transition (per BPMN lifecycle) emits a typed event. **Default policy: visible-by-default, silenceable on opt-out.** `Logger` defaults to `slog.Default()` so production deployments don't accidentally lose telemetry. `Tracer` and `MetricsRecorder` default to no-op only because Go stdlib has no sensible default for them (OpenTelemetry adapter ships separately). Users who want less noise opt out explicitly by passing a discarding logger (`thresher.WithLogger(...)`). |
 | Documentation | P1 | This SAD + ADRs + bpmn-spec KB + per-element reference + examples + runtime operator guide |
 | Security | P2 | Authz hook points in core (sensitive operations defined); AuthN provider model; no built-in policy engine (delegated to runtime / adapter) |
 | Performance | P2 | Goroutine-per-token gives natural parallelism; benchmarks track per-element latency; no early optimization beyond avoiding obvious sinks (no map-allocation in hot paths) |
@@ -120,7 +120,7 @@ Priority levels: **P0** = mandatory for v.1.0; **P1** = required before public r
    │     (embedded library use)   │    │   ┌────────────────────┐    │
    │                              │    │   │  HTTP / gRPC API   │    │
    │   import gobpm               │    │   │  Tenancy           │    │
-   │   engine := gobpm.New(...)   │    │   │  AuthN / AuthZ     │    │
+   │   engine := thresher.New(id) │    │   │  AuthN / AuthZ     │    │
    │   engine.Run(ctx)            │    │   │  Diagnostics       │    │
    │                              │    │   │  Profiling         │    │
    └─────────────────────────────┘    │   │  Observability     │    │
@@ -144,7 +144,7 @@ Dependency direction is **always from outside in**: runtime imports core; adapte
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Public API           gobpm.Engine, gobpm.NewDefault(),         │
+│  Public API           thresher.Thresher, thresher.New(...),     │
 │  pkg/                 pkg/model/* (BPMN element constructors),  │
 │                       extension interfaces                       │
 ├─────────────────────────────────────────────────────────────────┤
@@ -176,7 +176,7 @@ Dependencies flow **downward only**. Higher layers depend on lower; lower layers
 | **EventHub** | Internal event distribution. Routes Message / Signal / Timer / Conditional triggers to subscribed waiters across instances. |
 | **Scope** | Hierarchical data context. Resolves DataObject visibility, Property scoping, correlation key scope. |
 | **Repository** (interface) | Persists Process Instance state, history, message inbox. Default: in-memory. |
-| **All other extension interfaces** | Allow injection of `Logger`, `Tracer`, `MetricsRecorder`, `ExpressionEngine`, `TaskDistributor`, `MessageBroker`, `Clock`, `AuthorizationProvider`. |
+| **All other extension interfaces** | Allow injection of `Logger`, `Tracer`, `MetricsRecorder`, `ExpressionEngine`, `WorkerDispatcher`, `MessageBroker`, `Clock`, `AuthorizationProvider`. |
 
 Detailed execution semantics: **ADR-001 Execution Model**. Detailed extension model: **ADR-002 Extension Architecture**.
 
@@ -269,9 +269,9 @@ Detailed in **ADR-001 v.3 Execution Model** (Accepted). Key points captured here
 Detailed in **ADR-002 Extension Architecture**. Key points:
 
 - Go-idiomatic: interfaces + functional options.
-- Every infrastructure concern has a default implementation in core (no-op or in-memory) so `gobpm.NewDefault()` works.
+- Every infrastructure concern has a default implementation in core (no-op or in-memory) so a zero-option `thresher.New(id)` works.
 - Production implementations live in `adapters/*` modules.
-- Assembly: `gobpm.New(gobpm.WithRepository(r), gobpm.WithLogger(l), gobpm.WithTracer(t), ...)`.
+- Assembly: `thresher.New(id, thresher.WithRepository(r), thresher.WithLogger(l), thresher.WithTracer(t), ...)`.
 
 Initial extension interface set (subject to refinement in ADR-002):
 
@@ -280,11 +280,11 @@ Initial extension interface set (subject to refinement in ADR-002):
 | `Repository` | Instance + history + inbox persistence | in-memory |
 | `EventHub` | Event distribution (already in repo) | in-memory |
 | `ExpressionEngine` | FormalExpression evaluation | Go-native expr eval |
-| `TaskDistributor` | UserTask routing to humans | no-op pass-through |
+| `TaskDistributor` | UserTask routing to humans | deferred — human-interaction ADR (current code ships `WorkerDispatcher` below, not this) |
 | `WorkerDispatcher` | Remote-worker dispatch for ServiceTask / GlobalTask (cluster-distribution extension, §13.2) | in-process (local execution — no dispatch) |
 | `MessageBroker` | Message correlation inbox | in-memory |
 | `Clock` | Timer source (testability) | `time.Now` wrapper |
-| `Logger` | Structured logging | `slog.Default()` — visible by default; explicit `gobpm.WithSilentLogger()` for low-noise environments |
+| `Logger` | Structured logging | `slog.Default()` — visible by default; pass a discarding logger via `thresher.WithLogger(...)` for low-noise environments |
 | `Tracer` | Distributed tracing | no-op |
 | `MetricsRecorder` | Counter / gauge / histogram emission | no-op |
 | `AuthorizationProvider` | Authorization decision at sensitive ops | "allow all" |

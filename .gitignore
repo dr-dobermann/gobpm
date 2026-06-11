@@ -32,5 +32,6 @@ go.work.sum
 # Built example binaries (created by `go build` / `make build-all` inside each
 # example module). Examples are source-only; binaries do not belong in git.
 examples/basic-process/basic-process
+examples/parallel-gateway/parallel-gateway
 examples/simple-timer/simple-timer
 examples/timer-event/timer-event

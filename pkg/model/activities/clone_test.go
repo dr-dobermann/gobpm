@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/dr-dobermann/gobpm/generated/mockrenv"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -100,8 +101,13 @@ func TestUserTaskClone(t *testing.T) {
 	require.Empty(t, clone.Incoming())
 	require.Nil(t, clone.Container())
 
-	// fresh result channel: Exec without a Prologue (no channel registered)
-	// reports the missing channel, proving the clone did not inherit one.
-	_, err = clone.Exec(context.Background(), nil)
+	// the clone is a working, independent node: Exec runs on it and reaches
+	// interactor registration (it errors here only because the runtime provides
+	// no RenderRegistrator), proving the clone carries no inherited exec state.
+	mrenv := mockrenv.NewMockRuntimeEnvironment(t)
+	mrenv.EXPECT().RenderRegistrator().Return(nil).Once()
+	mrenv.EXPECT().InstanceID().Return("clone-test").Maybe()
+
+	_, err = clone.Exec(context.Background(), mrenv)
 	require.Error(t, err)
 }

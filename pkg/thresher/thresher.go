@@ -13,8 +13,8 @@
 // go-routine.
 // Entry node is the node which has no incoming sequence flow.
 // Every node has an Executor which configures by node model data.
-// Node could implement Prologue and Epilogue interfaces for right node execution
-// setup and finish.
+// Node execution is a single Execute step (the track loads incoming data, runs
+// the node's Exec, and uploads outgoing data).
 //
 // Every node execution parameters and results are stored to Instance History.
 // Saved History could be used as an Input for new Instance run.
@@ -395,9 +395,14 @@ func (t *Thresher) launchInstance(s *snapshot.Snapshot) error {
 			errs.E(err))
 	}
 
+	// The instance owns this context for its whole lifetime; cancel is retained
+	// in instanceReg.stop for later teardown (engine stop / instance cleanup).
+	// It must NOT be deferred here — inst.Run is non-blocking, so a deferred
+	// cancel would terminate the instance the moment launchInstance returns.
 	ctx, cancel := context.WithCancel(t.ctx)
-	defer cancel()
 	if err := inst.Run(ctx); err != nil {
+		cancel()
+
 		return errs.New(
 			errs.M("inctance %q of process %q failed to run",
 				inst.ID(), s.ProcessID),

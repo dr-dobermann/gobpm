@@ -6,13 +6,18 @@ import "github.com/dr-dobermann/gobpm/pkg/model/flow"
 // the sole owner of instance lifecycle state. Tracks never mutate that state
 // directly — they emit these and loop() applies them in order.
 type trackEvent struct {
-	// track is the subject: the forking parent for evFork, the ended
-	// track for evEnded.
+	// track is the subject: the forking parent for evFork, the ended track for
+	// evEnded, the awaiting track for evAwaiting, the surviving (completing)
+	// track for evMerged.
 	track *track
 	// flows, for evFork, are the extra outgoing flows (beyond the one the
 	// parent continues on) that the loop builds a new track for.
 	flows []*flow.SequenceFlow
-	kind  trackEventKind
+	// mergedIDs, for evMerged, are the ids of the previously-awaiting tracks the
+	// surviving track absorbed at a synchronizing join. Ids, not pointers: the
+	// loop resolves them against inst.tracks (which it owns) to flip their state.
+	mergedIDs []string
+	kind      trackEventKind
 }
 
 // trackEventKind enumerates the track→loop event kinds.
@@ -23,4 +28,10 @@ const (
 	evFork trackEventKind = iota
 	// evEnded: a track's run() has returned.
 	evEnded
+	// evAwaiting: a track reached a synchronizing join, did not complete it,
+	// and its goroutine returned — it is retained as a record (AwaitingMerge).
+	evAwaiting
+	// evMerged: the surviving track absorbed the listed awaiting tracks at a
+	// synchronizing join (flip them to Merged, fold their lineage in).
+	evMerged
 )

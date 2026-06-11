@@ -142,7 +142,7 @@ func (ut *UserTask) Node() flow.Node {
 // Clone returns a per-instance copy of the UserTask. The embedded task is cloned
 // (config shared by reference, fresh activity shell, zero dataPath); the outputs
 // resource and renderers are shared by reference as immutable configuration; the
-// resChan runtime field starts nil (set per instance by Prologue).
+// resChan runtime field starts nil (set per instance by Exec).
 func (ut *UserTask) Clone() flow.Node {
 	return &UserTask{
 		task:      ut.clone(),
@@ -159,17 +159,23 @@ func (ut *UserTask) TaskType() flow.TaskType {
 	return flow.UserTask
 }
 
-// ---------------------- exec.NodePrologue interface -------------------------
+// ----------------------exec.NodeExecutor interface --------------------------
 
-// Prologue registers UserTask as Interactor in runtime environment and gets
-// results' channel from RenderProvider.
-func (ut *UserTask) Prologue(
+// Exec registers the UserTask as an Interactor in the runtime environment, then
+// waits on the result channel for the user interaction to complete. Registration
+// happens first so the channel exists before Exec blocks on it.
+//
+// NOTE: the UserTask interaction model (registration + result channel held on the
+// node) is provisional and slated for a dedicated review — the per-execution
+// channel state belongs in the execution context per ADR-010 (process data
+// model), and event/subscription concerns relate to ADR-006.
+func (ut *UserTask) Exec(
 	_ context.Context,
 	re renv.RuntimeEnvironment,
-) error {
+) ([]*flow.SequenceFlow, error) {
 	rr := re.RenderRegistrator()
 	if rr == nil {
-		return errs.New(
+		return nil, errs.New(
 			errs.M("no RenderProvider for UserTask"),
 			errs.C(errorClass, errs.InvalidObject),
 			errs.D("task_id", ut.ID()),
@@ -179,30 +185,13 @@ func (ut *UserTask) Prologue(
 
 	rCh, err := rr.Register(ut)
 	if err != nil {
-		return errs.New(
+		return nil, errs.New(
 			errs.M("interactor registration failed"),
 			errs.C(errorClass, errs.OperationFailed),
 			errs.E(err))
 	}
 
 	ut.resChan = rCh
-
-	return nil
-}
-
-// ----------------------exec.NodeExecutor interface --------------------------
-
-// Exec waits for results of user interaction.
-func (ut *UserTask) Exec(
-	_ context.Context,
-	re renv.RuntimeEnvironment,
-) ([]*flow.SequenceFlow, error) {
-	if ut.resChan == nil {
-		return nil,
-			errs.New(
-				errs.M("no result channel from RenderProvider"),
-				errs.C(errorClass, errs.InvalidState))
-	}
 
 	dd := []data.Data{}
 
