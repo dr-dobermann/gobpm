@@ -16,21 +16,3 @@ type NodeExecutor interface {
 		re renv.RuntimeEnvironment,
 	) ([]*flow.SequenceFlow, error)
 }
-
-// NodePrologue checks the right condition to start node execution.
-// If the node provides a NodePrologue, then Prologue should start
-// _before_ the node Exec.
-// Node Exec starts only if the Prologue returns no error.
-type NodePrologue interface {
-	Prologue(
-		ctx context.Context,
-		re renv.RuntimeEnvironment) error
-}
-
-// NodeEpliogue should be called after _successful_ Exec call
-// if the node provides NodeEpilogue.
-type NodeEpliogue interface {
-	Epilogue(
-		ctx context.Context,
-		re renv.RuntimeEnvironment) error
-}

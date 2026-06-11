@@ -9,15 +9,9 @@
 //     registered in instance and track state becomes to TrackAwaitEvent.
 //     Once event sent to track via ProcessEvent, then track continues.
 //
-//   - Node execution goes in three steps:
-//
-//     1. It starts from Prologue, if Node supports this interface.
-//
-//     2. If Prologue doesn't return any error, then started node Execute.
-//     If node Execution finished successfully, it returns a list of
-//     outgoing flows.
-//
-//     3. If node supports Epilogue, then Epilogue started.
+//   - Node execution is a single Execute step: the track loads the node's
+//     incoming data, runs the node's Exec, and uploads its outgoing data. On
+//     success Exec returns a list of outgoing flows.
 //
 // If number of outgouing flows is not zero, then they processed as followed:
 //
@@ -112,12 +106,8 @@ const (
 	StepCreated stepState = iota
 	// StepStarted represents a step that has been started.
 	StepStarted
-	// StepPrologued represents a step that has completed prologue.
-	StepPrologued
 	// StepExecuting represents a step that is currently executing.
 	StepExecuting
-	// StepEpilogued represents a step that has completed epilogue.
-	StepEpilogued
 	// StepAwaitsResults represents a step awaiting results.
 	StepAwaitsResults
 	// StepEnded represents a step that has ended.
@@ -131,9 +121,7 @@ func (ss stepState) String() string {
 	return []string{
 		"Created",
 		"Started",
-		"StepPrologued",
-		"StepExecuting",
-		"StepEpilogued",
+		"Executing",
 		"AwaitsResults",
 		"Ended",
 		"Failed",
@@ -440,8 +428,8 @@ func (t *track) executeNode(
 	return nexts, nil
 }
 
-// prepareNodeExecution marks the step executing, loads incoming data, extends
-// scope for data-loader nodes, and runs the node prologue.
+// prepareNodeExecution marks the step started, loads incoming data, and extends
+// scope for data-loader nodes.
 func (t *track) prepareNodeExecution(
 	ctx context.Context,
 	step *stepInfo,
@@ -466,7 +454,7 @@ func (t *track) prepareNodeExecution(
 		}()
 	}
 
-	return t.runNodePrologue(ctx, step.node)
+	return nil
 }
 
 // executeNodeCore runs the node's executor and returns its outgoing flows.
@@ -485,16 +473,12 @@ func (t *track) executeNodeCore(
 	return nexts, nil
 }
 
-// finalizeNodeExecution runs the node epilogue and uploads its outgoing data.
+// finalizeNodeExecution marks the step ended and uploads its outgoing data.
 func (t *track) finalizeNodeExecution(
 	ctx context.Context,
 	step *stepInfo,
 	_ []*flow.SequenceFlow,
 ) error {
-	if err := t.runNodeEpilogue(ctx, step.node); err != nil {
-		return err
-	}
-
 	step.state = StepEnded
 
 	return t.uploadOutgoingData(ctx, step.node)
@@ -544,30 +528,6 @@ func (t *track) checkFlows(flows []*flow.SequenceFlow) error {
 	}
 
 	return nil
-}
-
-// runNodePrologue runs node Prologue if it supported.
-func (t *track) runNodePrologue(ctx context.Context, n flow.Node) error {
-	np, ok := n.(exec.NodePrologue)
-	if !ok {
-		return nil
-	}
-
-	t.currentStep().state = StepPrologued
-
-	return np.Prologue(ctx, t.instance)
-}
-
-// runNodeEpilogue runs node Epilogue if node supports it.
-func (t *track) runNodeEpilogue(ctx context.Context, n flow.Node) error {
-	ne, ok := n.(exec.NodeEpliogue)
-	if !ok {
-		return nil
-	}
-
-	t.currentStep().state = StepEpilogued
-
-	return ne.Epilogue(ctx, t.instance)
 }
 
 // unregisterEvent unregisters all EventNode events on instance.

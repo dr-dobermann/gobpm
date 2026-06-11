@@ -3,6 +3,7 @@ package activities_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"slices"
 	"testing"
 
@@ -128,11 +129,80 @@ func TestNewUserTask(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			err = ut.Prologue(ctx, mrenv)
-			require.NoError(t, err)
-
+			// Exec now registers the interactor itself (the former Prologue),
+			// then awaits the result channel.
 			flows, err := ut.Exec(ctx, mrenv)
 			require.NoError(t, err)
 			require.Len(t, flows, 0)
+		})
+}
+
+func TestUserTaskExecErrors(t *testing.T) {
+	data.CreateDefaultStates()
+
+	newUT := func(t *testing.T) *activities.UserTask {
+		t.Helper()
+
+		r, err := consinp.NewRenderer(consinp.WithMessager("hello", "hello"))
+		require.NoError(t, err)
+
+		ut, err := activities.NewUserTask("ut",
+			activities.WithRenderer(r),
+			activities.WithOutput("name", "string", true),
+			activities.WithoutParams())
+		require.NoError(t, err)
+
+		return ut
+	}
+
+	t.Run("no RenderRegistrator",
+		func(t *testing.T) {
+			ut := newUT(t)
+
+			mrenv := mockrenv.NewMockRuntimeEnvironment(t)
+			mrenv.EXPECT().RenderRegistrator().Return(nil).Once()
+			mrenv.EXPECT().InstanceID().Return("ut-err").Maybe()
+
+			_, err := ut.Exec(context.Background(), mrenv)
+			require.Error(t, err)
+		})
+
+	t.Run("interactor registration failure",
+		func(t *testing.T) {
+			ut := newUT(t)
+
+			mrr := mockinteractor.NewMockRegistrator(t)
+			mrr.EXPECT().Register(ut).Return(nil, errors.New("boom")).Once()
+
+			mrenv := mockrenv.NewMockRuntimeEnvironment(t)
+			mrenv.EXPECT().RenderRegistrator().Return(mrr).Once()
+
+			_, err := ut.Exec(context.Background(), mrenv)
+			require.Error(t, err)
+		})
+
+	t.Run("result data adding failure",
+		func(t *testing.T) {
+			ut := newUT(t)
+
+			dCh := make(chan data.Data)
+			go func() {
+				dCh <- data.MustParameter("name",
+					data.MustItemAwareElement(
+						data.MustItemDefinition(values.NewVariable("John")),
+						data.ReadyDataState))
+				close(dCh)
+			}()
+
+			mrr := mockinteractor.NewMockRegistrator(t)
+			mrr.EXPECT().Register(ut).Return(dCh, nil).Once()
+
+			mrenv := mockrenv.NewMockRuntimeEnvironment(t)
+			mrenv.EXPECT().RenderRegistrator().Return(mrr).Once()
+			mrenv.EXPECT().AddData(mock.Anything, mock.Anything).
+				Return(errors.New("boom")).Once()
+
+			_, err := ut.Exec(context.Background(), mrenv)
+			require.Error(t, err)
 		})
 }

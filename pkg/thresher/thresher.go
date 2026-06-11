@@ -13,8 +13,8 @@
 // go-routine.
 // Entry node is the node which has no incoming sequence flow.
 // Every node has an Executor which configures by node model data.
-// Node could implement Prologue and Epilogue interfaces for right node execution
-// setup and finish.
+// Node execution is a single Execute step (the track loads incoming data, runs
+// the node's Exec, and uploads outgoing data).
 //
 // Every node execution parameters and results are stored to Instance History.
 // Saved History could be used as an Input for new Instance run.
