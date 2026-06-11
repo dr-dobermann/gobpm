@@ -31,13 +31,16 @@ Supporting discipline already in force:
 
 This is a **Living** document: workstreams below are updated as they advance, unlike one-shot SRDs.
 
-## 2. Current state (baseline as of 2026-06-06)
+## 2. Current state (baseline as of 2026-06-11)
 
 Grounded in the code, not aspiration.
 
 ### 2.1 Implemented (real logic + tests)
 
-- **Execution core (ADR-001 v.3 two-layer model).** `Instance` + `track` implemented (SRD-001, Accepted): one event-loop goroutine per instance is the sole state mutator; one goroutine per track; the **token is a projection** of a track's step (no stored type, no `split()`); lineage on `track.prev`. Instance lifecycle `Created → Active → Completed` (+ `Terminating → Terminated`). Token-state projection `Alive / WaitForEvent / Consumed` (`Withdrawn` reserved → ADR-005). Joins/events/long-waits are out of this core (ADR-005/006/007).
+- **Execution core (ADR-001 v.5 two-layer model).** `Instance` + `track` implemented (SRD-001, Accepted): one event-loop goroutine per instance is the sole state mutator; one goroutine per track; the **token is a projection** of a track's step (no stored type, no `split()`); lineage on `track.prev`. Instance lifecycle `Created → Active → Completed` (+ `Terminating → Terminated`). Token-state projection `Alive / WaitForEvent / Consumed` (`Withdrawn` reserved → ADR-005). Joins/events/long-waits are out of this core (ADR-005/006/007).
+- **Per-instance node graph (ADR-009 / SRD-006, Accepted).** Each instance clones the process template into its own private node graph (`Snapshot.Clone`); per-node runtime state (`dataPath`, `scope`, operation messages) is per-instance, eliminating the shared-node data race (proven under `-race`). Decides the ADR-001 §4.7 runtime-state-ownership deferral; durable persistence stays the future Persistence ADR.
+- **Extension skeleton (ADR-002 Accepted / SRD-004, Accepted).** The 9 extension contracts (Logger, Tracer, MetricsRecorder, Clock, Repository, MessageBroker, ExpressionEngine, AuthorizationProvider, WorkerDispatcher) live in `pkg/` each with a **bundled in-memory default**; `thresher.New(id, opts...)` functional-options assembly; the public `pkg/renv.EngineRuntime` / internal `RuntimeEnvironment` split. A zero-option engine runs today's BPMN end-to-end.
+- **CI gates (SRD-002 / SRD-003, Accepted).** Diff-coverage gate (`covercheck`, COVER_MIN now 95) judging only changed lines; `covercheck` extracted to its own module; `make ci` mirrors GitHub CI (tidy, lint, build, `-race`, diff-coverage, govulncheck).
 - **Event processing.** `EventHub` with the synchronous `Start` / blocking `Run` split (FIX-001, Accepted); event registration / propagation / waiter management. **Timer** waiter implemented. Race-clean under `-race` stress.
 - **Scope.** Hierarchical scope tree with path-based lookup and shadowing (`internal/scope`).
 - **Model elements.** Start/End events; **Exclusive** gateway (conditions, default flow); **Service** and **User** tasks; sequence flow (conditions, default); data objects, item definitions, properties, I/O specification, data associations, `FormalExpression` + Go-native evaluator; service/operation; correlation *structures*; message/resource.
@@ -45,9 +48,9 @@ Grounded in the code, not aspiration.
 
 ### 2.2 Stubbed or missing
 
-- **Extension architecture (ADR-002):** none of the 11 interfaces are promoted to `pkg/` yet; `thresher.New` has no functional-options assembly; `RuntimeEnvironment` lives in `internal/renv`. Repository, Logger, Tracer, MetricsRecorder, Clock, MessageBroker, AuthorizationProvider, WorkerDispatcher, ExpressionEngine (as an interface) do not exist as Go types yet.
+- **Production extension adapters (per-adapter ADRs, ADR-002 §9):** only the bundled in-memory defaults exist (SRD-004). No production adapters yet — postgres `Repository`, OTel `Tracer`/`MetricsRecorder`, OIDC/Casbin `AuthorizationProvider`, FEEL `ExpressionEngine`, real message brokers — each deferred to its own ADR.
 - **Module layout (ADR-003):** the `pkg/` subpackage catalogue and the 12 migration steps are not started; `runtime/` and `adapters/sqlite/` are scaffolds with no real code.
-- **Persistence & rehydration (P0 per SAD §10/§13):** no `Repository`, no checkpointing, no long-wait token release, no restart recovery. Execution is in-memory and ephemeral.
+- **Persistence & rehydration (P0 per SAD §10/§13):** runtime-state *ownership* is now decided (per-instance node graph, ADR-009), but **durable** persistence is missing — no `Repository`, no checkpointing, no long-wait token release, no restart recovery. Execution is in-memory and ephemeral.
 - **BPMN elements:** Parallel / Inclusive / Complex / Event-Based gateways; Manual / Script / Send / Receive / Business-Rule tasks; Call Activity, (Embedded/Transaction/Event/Ad-hoc) Sub-Process; Message/Signal/Error/Escalation/Conditional/Compensation/Link/Terminate event behavior; multi-instance & loop execution — all absent or skeleton.
 - **Messaging runtime:** correlation *structures* exist; no correlation engine, no Message Start/Catch/Throw routing.
 - **Fault tolerance:** no Incident / Retry / DLQ.
@@ -55,7 +58,7 @@ Grounded in the code, not aspiration.
 
 ### 2.3 Document status & integrity
 
-- **Statuses:** SAD-001 v.1 Draft; **ADR-001 v.5 Accepted**; ADR-002 / ADR-003 / ADR-004 v.1 Draft; **ADR-005 / ADR-006 / ADR-007 v.1 Draft** (gateways/events/long-waits, relocated from ADR-001); **ADR-009 v.1 Accepted** (per-instance node graph — node-owned runtime state; decides the ADR-001 §4.7 deferral and eliminates the shared-node data race); **SRD-001 v.1 Accepted** (instance/track/token refactor); **SRD-006 v.1 Accepted** (per-instance cloning, lands ADR-009); FIX-001 v.1 **Accepted**. (ADR-008 Distribution & Scale — planned, the home for SAD §13.) *Note: the §2.2 implemented/stubbed inventory predates SRD-004's extension-skeleton landing and is partially stale — a roadmap refresh is a pending follow-up.*
+- **Statuses:** SAD-001 v.1 Draft; **ADR-001 v.5 Accepted**; **ADR-002 v.1 Accepted**; ADR-003 / ADR-004 v.1 Draft; **ADR-005 / ADR-006 / ADR-007 v.1 Draft** (gateways/events/long-waits, relocated from ADR-001); **ADR-009 v.1 Accepted** (per-instance node graph — node-owned runtime state; decides the ADR-001 §4.7 deferral and eliminates the shared-node data race); **SRD-001 v.1 Accepted** (instance/track/token refactor); **SRD-006 v.1 Accepted** (per-instance cloning, lands ADR-009); FIX-001 v.1 **Accepted**; **SRD-002 / SRD-003 / SRD-004 Accepted** (CI gates, covercheck, extension skeleton). (ADR-008 Distribution & Scale — planned, the home for SAD §13.)
 - **Document integrity:** FIX-001's earlier dead `SRD-001` reference (a *never-written* doc at the time) was repointed to the real sources (the `chore/ci-audit` `-race` gate + SAD-001 §9 / ADR-003 for the multi-module scaffold); ADR-004's legacy IAM-ADR reference is folded into the AuthN/Z model (§4.7 + `AuthorizationProvider`). A real **SRD-001** was later authored for the two-layer runtime refactor and is Accepted with its implementation (per the rule that SRD/FIX land in the same change-set as their code).
 
 ## 3. Sequencing principles
