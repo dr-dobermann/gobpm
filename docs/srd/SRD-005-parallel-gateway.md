@@ -35,7 +35,7 @@ Parallel split/join is core BPMN and the roadmap M1 "embedded-library MVP" targe
 
 - **G1.** A `ParallelGateway` node type that executes: split activates **all** outgoing flows; the gateway implements `exec.NodeExecutor`.
 - **G2.** A **synchronizing-join interface** in `internal/exec`, implemented by `ParallelGateway`, distinguishing synchronizing joins from Exclusive/activity pass-through merges.
-- **G3.** **Node-owned synchronizing join** (ADR-005 §2.4): the `ParallelGateway` holds its per-instance arrival state + a **per-node mutex**; the track calls `Arrive` (atomic) and acts on the answer — a non-completing arrival enters the new **`AwaitingMerge`** state and its goroutine returns (the track is retained as a record, `evAwaiting` emitted); the completing arrival first completes the join — flips the awaiting tracks to `TrackMerged` (`next` = survivor), absorbs their lineage into its `previous`, emits `evMerged` — **before** executing the node, then executes and forks. The loop keeps only awaiting/ended bookkeeping (no decision, no verdict channel).
+- **G3.** **Node-owned synchronizing join** (ADR-005 §2.4): the `ParallelGateway` holds its per-instance arrival state + a **per-node mutex**; the track calls `Arrive` (atomic) and acts on the answer — a non-completing arrival enters the new **`AwaitingMerge`** state and its goroutine returns (the track is retained as a record, `evAwaiting` emitted); the completing arrival first completes the join — emits `evMerged` so the loop flips the awaiting tracks to `TrackMerged` — **before** executing the node, then executes and forks. The survivor's creation lineage is left intact (convergence is recorded by the absorbed tracks' own `Consumed` entries, not by re-parenting — FR-5b). The loop keeps only awaiting/ended bookkeeping (no decision, no verdict channel).
 - **G4.** The `TrackMerged` producer; the `trackState.String()` off-by-one fix.
 - **G5.** A runnable `examples/parallel-gateway/` demonstrating split→join end-to-end (exit 0).
 - **G6.** Collapse the node-execution contract to a single `Execute` (ADR-005 §2.5): remove the `NodePrologue`/`NodeEpilogue` hooks and fold `UserTask`'s interaction registration into its `Exec`.
@@ -55,9 +55,10 @@ Parallel split/join is core BPMN and the roadmap M1 "embedded-library MVP" targe
 |---|---|
 | FR-1 | `gateways.NewParallelGateway(opts...)` builds a `ParallelGateway` (embeds base `Gateway`, same options as Exclusive — `WithDirection`, base id/name/doc). It implements `exec.NodeExecutor`. |
 | FR-2 | `ParallelGateway.Exec(ctx, re)` returns **all** `Outgoing()` flows verbatim — no condition evaluation, no default flow, never errors (spec §13.4.1). Drives split (1→N) and the join continuation (the survivor's outgoing) identically. |
-| FR-3 | `exec.SynchronizingJoin` interface (embeds `NodeExecutor`) with an **atomic** `Arrive(incomingFlowID string) (complete bool)` guarded by the node's own mutex. `ParallelGateway` implements it: it records the incoming flow in its per-instance `arrived` set and returns `complete ⇔ len(arrived) == len(Incoming())`, clearing the set when it fires. Exclusive gateways / activities do **not** implement it. |
-| FR-4 | In the track run loop, before executing the current node, if the node implements `exec.SynchronizingJoin` **and** `len(Incoming()) > 1`, the track calls `node.Arrive(incomingFlowID)`. **Not complete →** the track enters `AwaitingMerge`, emits `evAwaiting`, and its goroutine **returns** (it does **not** execute the node). **Complete →** the track executes the node and continues (FR-5). |
-| FR-5 | On the completing arrival the surviving track **first completes the join** — collects the retained `AwaitingMerge` tracks for this join (instance-side, under the same per-node serialization), flips each to `TrackMerged` with `next` = itself, absorbs their lineage into its own `previous`, and emits one `evMerged{ merged, into }` — **before** it executes the node (ADR-005 §2.5). It **then** executes the join node and continues/forks via `checkFlows`. The loop applies `evAwaiting`/`evMerged` to its registry only — it makes **no** synchronization decision. |
+| FR-3 | `exec.SynchronizingJoin` interface (embeds `NodeExecutor`) with an **atomic** `Arrive(incomingFlowID, arrivingTrackID string) (complete bool, merged []string)` guarded by the node's own mutex. `ParallelGateway` implements it: it records `arrived[incomingFlowID] = arrivingTrackID` and returns `complete ⇔ len(arrived) == len(Incoming())`; on completion `merged` = the ids of every absorbed track (all prior arrivals; the completing arrival is the survivor and is omitted) and the set clears. Ids — not `*track` — keep the contract in the model layer. Exclusive gateways / activities do **not** implement it. |
+| FR-4 | In the track run loop, before executing the current node, if the node implements `exec.SynchronizingJoin` **and** `len(Incoming()) > 1`, the track calls `node.Arrive(incomingFlowID, t.ID())`. **Not complete →** the track enters `AwaitingMerge`, emits `evAwaiting`, and its goroutine **returns** (it does **not** execute the node). **Complete →** the track executes the node and continues (FR-5). |
+| FR-5 | On the completing arrival the surviving track **first declares the merge** — `Arrive` returns the absorbed track ids and the survivor emits one `evMerged{ track, mergedIDs }` **before** it executes the node (ADR-005 §2.5). The loop resolves those ids against its own `tracks` map (it is the sole writer of merged tracks' state) and flips each to `TrackMerged` (token `Consumed`); the awaiting goroutines have already returned. The survivor **then** executes the join node and continues/forks via `checkFlows`. The loop applies `evAwaiting`/`evMerged` to its registry only — it makes **no** synchronization decision. |
+| FR-5b | The merge does **not** alter the survivor's lineage: a token at a join has many parents but `TokenPath.ParentID` holds one, so the absorbed ids are **not** folded into the survivor's `prev` (creation lineage). Convergence is represented by each absorbed track's own path entry terminating at the join with `Consumed`. Consequently `Instance.TokenHistory()` ParentIDs form an acyclic creation tree — no track is its own ancestor. (`prev` is `[]string` of track ids; the loop owns id→track resolution.) |
 | FR-5a | `ParallelGateway` implements `Clone() flow.Node` (ADR-009 / SRD-006): config shared by reference, the `arrived` set + mutex fresh, flows empty. The per-instance node graph guarantees one arrival set per instance. |
 | FR-6 | New intermediate track state **`TrackAwaitingMerge`** (token projection: `Alive` — the token still sits at the join); a merged track ends in `TrackMerged` (token `Consumed`, already mapped `token.go:86-90`). `trackState.String()` is corrected to align with the enum (incl. the new state). |
 | FR-7 | A non-synchronizing merge (Exclusive / activity, N>1 incoming) keeps today's pass-through (each arrival continues independently) — unchanged. |
@@ -82,8 +83,11 @@ Parallel split/join is core BPMN and the roadmap M1 "embedded-library MVP" targe
 // by the node's own mutex so concurrent track arrivals are atomic (ADR-005 §2.4).
 type ParallelGateway struct {
     Gateway
+    // each incoming flow id seen this round -> the id of the track that arrived
+    // on it; the single source of truth for the count and the merge set. Fresh
+    // on Clone. (mu last for fieldalignment.)
+    arrived map[string]string
     mu      sync.Mutex
-    arrived map[string]bool // incoming flow ids seen this round; fresh on Clone
 }
 
 func NewParallelGateway(opts ...options.Option) (*ParallelGateway, error) { /* mirror NewExclusiveGateway */ }
@@ -96,17 +100,24 @@ func (pg *ParallelGateway) Exec(ctx context.Context, re renv.RuntimeEnvironment)
     return pg.Outgoing(), nil // all outgoing, unconditional
 }
 
-// Arrive records an incoming flow and reports completion — atomic; safe for
-// concurrent track callers. Clears the set when it fires.
-func (pg *ParallelGateway) Arrive(incomingFlowID string) (complete bool) {
+// Arrive records that arrivingTrackID reached the join on incomingFlowID and
+// reports completion — atomic; safe for concurrent track callers. On the
+// completing arrival it returns the ids of the absorbed tracks (every prior
+// arrival; the completing one is the survivor) and clears the set.
+func (pg *ParallelGateway) Arrive(incomingFlowID, arrivingTrackID string) (complete bool, merged []string) {
     pg.mu.Lock()
     defer pg.mu.Unlock()
-    pg.arrived[incomingFlowID] = true
-    if len(pg.arrived) == len(pg.Incoming()) {
-        clear(pg.arrived)
-        return true
+    pg.arrived[incomingFlowID] = arrivingTrackID
+    if len(pg.arrived) < len(pg.Incoming()) {
+        return false, nil
     }
-    return false
+    for _, id := range pg.arrived {
+        if id != arrivingTrackID {
+            merged = append(merged, id)
+        }
+    }
+    clear(pg.arrived)
+    return true, merged
 }
 
 var _ exec.SynchronizingJoin = (*ParallelGateway)(nil)
@@ -115,30 +126,36 @@ var _ exec.SynchronizingJoin = (*ParallelGateway)(nil)
 ```go
 // internal/exec/exec.go — the synchronizing-join seam: the node owns its arrival
 // state + serialization; the track calls Arrive directly (no loop round-trip).
+// Ids (not *track) keep the contract in the model layer — the node never
+// references the runtime track type.
 type SynchronizingJoin interface {
     NodeExecutor
-    Arrive(incomingFlowID string) (complete bool) // atomic under the node's mutex
+    Arrive(incomingFlowID, arrivingTrackID string) (complete bool, merged []string) // atomic
 }
 ```
 
 ```go
 // internal/instance — two new lifecycle events (notifications, no reply):
-//   evAwaiting{track, join}            — a track reached a join, goroutine returned (AwaitingMerge)
-//   evMerged{into *track, merged []*track} — survivor declares the merge
-// trackEvent gains: node flow.Node; incoming *flow.SequenceFlow.
+//   evAwaiting{track}              — a track reached a join, goroutine returned (AwaitingMerge)
+//   evMerged{track, mergedIDs []string} — survivor declares the merge; the loop
+//                                   resolves the ids against its own tracks map
+//                                   and flips each to Merged (-> Consumed).
+// trackEvent gains: mergedIDs []string. stepInfo gains: inFlow *flow.SequenceFlow.
 // New track state TrackAwaitingMerge (token projection -> Alive).
-// The instance holds the awaiting *track objects per join node (internal types the
-// model package can't reference); their collection + ParallelGateway.Arrive sit
-// under the one per-node mutex so record/retain/collect is atomic.
+// The join node owns the arrival set (flow id -> arriving track id); the loop is
+// the sole writer of merged tracks' state. The survivor's prev (creation lineage)
+// is NOT folded with the absorbed ids — a token at a join has many parents but
+// TokenPath.ParentID holds one; convergence is carried by the absorbed tracks'
+// own Consumed path entries (see FR-5b).
 ```
 
-The track records the incoming flow it traversed to the join (a field on `stepInfo`, set in `checkFlows`) so it can pass it to `Arrive`. The arrival *state* (flow ids) lives on the per-instance join node (ADR-009 v.1); the awaiting *track objects* are held instance-side and serialized under the same per-node mutex.
+The track records the incoming flow it traversed to the join (`stepInfo.inFlow`, set in `checkFlows`) and passes its own id to `Arrive`. The arrival *state* (flow id → track id) lives on the per-instance join node (ADR-009 v.1), serialized under the node's own mutex; the absorbed-track ids ride back to the survivor in the `Arrive` return and to the loop in `evMerged`.
 
 ### 4.2 Milestones (each independently buildable + CI-green)
 
 - **M1 — Node-execution contract.** Remove `NodePrologue`/`NodeEpilogue` (interfaces + `track.go` `runNodePrologue`/`runNodeEpilogue` calls); fold `UserTask`'s registration into `Exec` (register, then await); update `user_task_test.go`. Simplifies the executeNode path M3 modifies. (ADR-005 §2.5.)
 - **M2 — Parallel split.** `ParallelGateway` type + `Exec` (all outgoing) + constructor/options + unit tests; dispatch via the existing `NodeExecutor`. Demonstrable: split into independent branches that each reach their own End.
-- **M3 — Synchronizing join.** `exec.SynchronizingJoin` interface (node-owned atomic `Arrive` + per-node mutex); `ParallelGateway` arrival set + `Clone` (FR-5a); `stepInfo` arriving-flow plumbing; the new `TrackAwaitingMerge` state + `evAwaiting`/`evMerged` events; instance-side awaiting-track collection; `TrackMerged` producer (survivor flips awaiting → merged, sets `next`, absorbs lineage); `trackState.String()` fix; unit/integration tests (join fires once all arrive; non-survivors enter `TrackAwaitingMerge` (goroutine returns) then `TrackMerged`→`Consumed`; survivor continues with merged lineage; mixed N→M; `-race`).
+- **M3 — Synchronizing join.** `exec.SynchronizingJoin` interface (node-owned atomic `Arrive` returning absorbed ids + per-node mutex); `ParallelGateway` arrival set (`flow id → track id`) + `Clone` (FR-5a); `stepInfo.inFlow` plumbing; the new `TrackAwaitingMerge` state + `evAwaiting`/`evMerged` events; `evMerged` carries `mergedIDs []string` which the loop resolves to flip each absorbed track to `TrackMerged`; `prev []string` (creation lineage, not folded with absorbed ids — FR-5b); `trackState.String()` fix; unit/integration tests (join fires once all arrive; non-survivors enter `TrackAwaitingMerge` (goroutine returns) then `TrackMerged`→`Consumed`; survivor continues; lineage stays acyclic; mixed N→M; `-race`).
 - **M4 — Example + acceptance.** `examples/parallel-gateway/`; run it e2e (step-13a smoke); `make ci` green; fill §7; flip SRD-005 and ADR-005 → Accepted.
 
 ## 5. Verification (Definition of Done)
@@ -147,7 +164,8 @@ The track records the incoming flow it traversed to the join (a field on `stepIn
 |---|---|---|
 | V1 | Unit: `ParallelGateway.Exec` returns all outgoing flows, never errors (FR-2). | all `Outgoing()` returned. |
 | V2 | Unit: `Arrive` returns `complete=true` only on the last distinct incoming flow, is atomic under the node mutex, and clears the set on fire (FR-3). | false on partial, true on full. |
-| V3 | Integration: a split→join process completes; the join fires exactly once after all branches arrive; non-survivors enter `TrackAwaitingMerge` (goroutine returns) then become `TrackMerged` (token `Consumed`, `next` = survivor); the surviving track continues with the merged lineage in `previous` (FR-4/5/6). | join synchronizes; one continuation. |
+| V3 | Integration: a split→join process completes; the join fires exactly once after all branches arrive; non-survivors enter `TrackAwaitingMerge` (goroutine returns) then become `TrackMerged` (token `Consumed`); the surviving track continues (FR-4/5/6). | join synchronizes; one continuation. |
+| V3a | Integration: across a join `Instance.TokenHistory()` ParentIDs form an acyclic creation tree — no track is its own ancestor; the absorbed track keeps its creation parent and terminates `Consumed` (FR-5b). | lineage acyclic. |
 | V4 | Integration: a non-synchronizing merge (Exclusive/activity, N>1 incoming) still passes each arrival through independently (FR-7). | unchanged behaviour. |
 | V5 | Mixed gateway (N incoming, M outgoing): survivor executes and forks on M (FR-2 + fork). | M branches continue. |
 | V6 | `examples/parallel-gateway/` runs to completion, exit 0 (FR-8; step-13a smoke). | exit 0; expected output. |
@@ -181,4 +199,4 @@ The track records the incoming flow it traversed to the join (a field on `stepIn
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-09 | Ruslan Gabitov | Draft. Lands the Parallel (AND) gateway per ADR-005 v.1: split (all outgoing) + **node-owned synchronizing join** — the `ParallelGateway` holds its per-instance arrival set (ADR-009 v.1) + a per-node mutex; the track calls atomic `Arrive`; a non-completing arrival enters the new `TrackAwaitingMerge` state and its goroutine returns (track retained as a record, `evAwaiting`), the completing arrival first completes the join (flips awaiting tracks → `TrackMerged` (`next`=survivor) absorbing their lineage, emits `evMerged`) **before** executing the node, then executes and forks; `trackState.String()` fix. Also lands ADR-005 §2.5's node-execution-contract simplification (remove `NodePrologue`/`NodeEpilogue`, fold `UserTask` registration into `Exec`) as M1. Four milestones (contract → split → join → example+acceptance). Scope acyclic/single-pass; OR/Complex/Event-Based and loops/excess tokens deferred. (Reconciled on resume with the landed ADR-009/SRD-006 + ADR-001 v.5, then with the design discussion: synchronization moved fully onto the node — no loop-held map, no verdict channel, no mechanism/policy split; §1.1 grounding flagged for re-verification at M1.) |
+| v.1 | 2026-06-09 | Ruslan Gabitov | Draft. Lands the Parallel (AND) gateway per ADR-005 v.1: split (all outgoing) + **node-owned synchronizing join** — the `ParallelGateway` holds its per-instance arrival set (ADR-009 v.1) + a per-node mutex; the track calls atomic `Arrive`; a non-completing arrival enters the new `TrackAwaitingMerge` state and its goroutine returns (track retained as a record, `evAwaiting`), the completing arrival first completes the join (emits `evMerged`; the loop flips awaiting tracks → `TrackMerged`) **before** executing the node, then executes and forks, leaving its creation lineage intact (FR-5b); `trackState.String()` fix. Also lands ADR-005 §2.5's node-execution-contract simplification (remove `NodePrologue`/`NodeEpilogue`, fold `UserTask` registration into `Exec`) as M1. Four milestones (contract → split → join → example+acceptance). Scope acyclic/single-pass; OR/Complex/Event-Based and loops/excess tokens deferred. (Reconciled on resume with the landed ADR-009/SRD-006 + ADR-001 v.5, then with the design discussion: synchronization moved fully onto the node — no loop-held map, no verdict channel, no mechanism/policy split; §1.1 grounding flagged for re-verification at M1.) |

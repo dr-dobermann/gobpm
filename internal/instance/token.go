@@ -77,7 +77,8 @@ type stepUpdate struct {
 // tokenStateFor projects a track state onto the BPMN token state.
 func tokenStateFor(ts trackState) TokenState {
 	switch ts {
-	case TrackReady, TrackExecutingStep, TrackProcessStepResults:
+	case TrackReady, TrackExecutingStep, TrackProcessStepResults, TrackAwaitingMerge:
+		// AwaitingMerge: the token still sits at the join, not yet consumed.
 		return TokenAlive
 
 	case TrackWaitForEvent:

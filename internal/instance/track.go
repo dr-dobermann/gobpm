@@ -69,6 +69,10 @@ const (
 	TrackProcessStepResults
 	// TrackWaitForEvent represents a track waiting for an event
 	TrackWaitForEvent
+	// TrackAwaitingMerge represents a track that reached a synchronizing join,
+	// did not complete it, and whose goroutine has returned — it is retained as
+	// a record until the join fires (ADR-005 §2.4). Its token projects Alive.
+	TrackAwaitingMerge
 
 	// Final statuses
 	// TrackMerged represents a track that has been merged
@@ -89,7 +93,7 @@ func (t trackState) String() string {
 		"TrackExecutingStep",
 		"TrackProcessStepResults",
 		"TrackWaitForEvent",
-		"TrackWaitForInteraction",
+		"TrackAwaitingMerge",
 		"TrackMerged",
 		"TrackEnded",
 		"TrackCanceled",
@@ -130,8 +134,12 @@ func (ss stepState) String() string {
 
 // stepInfo keeps information about single track step
 type stepInfo struct {
-	node  flow.Node
-	state stepState
+	node flow.Node
+	// inFlow is the sequence flow the track traversed to reach this node (nil
+	// for an entry node). A synchronizing join reads its id to record which
+	// incoming flow delivered the arriving token.
+	inFlow *flow.SequenceFlow
+	state  stepState
 }
 
 // track processed single line of the process from start noed or
@@ -141,7 +149,10 @@ type track struct {
 	lastErr  error
 	instance *Instance
 	foundation.BaseElement
-	prev []*track
+	// prev is the lineage of this track: the ids of the ancestor tracks it
+	// descends from (forks) or absorbed (synchronizing-join merges). Ids, not
+	// pointers, so a survivor does not retain the merged-away (dead) tracks.
+	prev []string
 	// hist is the append-only list of track-state transitions (SRD-001 M3).
 	// It is written only by this track's goroutine via record() and published
 	// copy-on-write, so token projection / path history / timing are derived
@@ -188,7 +199,7 @@ func (t *track) Token() Token {
 func (t *track) path() TokenPath {
 	parent := ""
 	if n := len(t.prev); n != 0 {
-		parent = t.prev[n-1].ID()
+		parent = t.prev[n-1]
 	}
 
 	tp := TokenPath{TrackID: t.ID(), ParentID: parent}
@@ -237,7 +248,7 @@ func newTrack(
 
 	t := track{
 		BaseElement: *be,
-		prev:        []*track{},
+		prev:        []string{},
 		steps: []*stepInfo{
 			{
 				node:  start,
@@ -249,7 +260,7 @@ func newTrack(
 	}
 
 	if prevTrack != nil {
-		t.prev = append(t.prev, append(prevTrack.prev, prevTrack)...)
+		t.prev = append(t.prev, append(prevTrack.prev, prevTrack.ID())...)
 	}
 
 	// History is recorded once the track runs (per-node visits + state
@@ -379,6 +390,13 @@ func (t *track) run(
 			return
 		}
 
+		// at a synchronizing join the node decides whether this token proceeds
+		// (the completing arrival, the survivor) or waits (AwaitingMerge — the
+		// goroutine returns). Synchronization settles before the node executes.
+		if proceed := t.synchronize(step); !proceed {
+			return
+		}
+
 		nextFlows, err := t.executeNode(ctx, step)
 		if err != nil {
 			t.lastErr = err
@@ -395,6 +413,49 @@ func (t *track) run(
 			return
 		}
 	}
+}
+
+// synchronize handles a synchronizing-join node (ADR-005 §2.4). For a node that
+// is not a synchronizing join, or has at most one incoming flow, it returns true
+// (proceed) immediately. Otherwise it calls the node's atomic Arrive with the
+// incoming flow this token arrived on:
+//
+//   - not complete: the track becomes AwaitingMerge, tells the loop (evAwaiting)
+//     and returns false — the run goroutine then returns (no goroutine is kept);
+//   - complete: this track is the survivor — it declares the merge (evMerged,
+//     which flips the absorbed tracks to Merged) before the node executes, then
+//     returns true to proceed.
+//
+// The survivor's prev (its creation lineage) is left untouched: a token at a
+// join has many parents, but TokenPath.ParentID holds one. The convergence is
+// represented by the absorbed tracks' own path entries — each terminating at
+// the join, Consumed — not by folding their ids into the survivor's parent slot.
+func (t *track) synchronize(step *stepInfo) (proceed bool) {
+	sj, ok := step.node.(exec.SynchronizingJoin)
+	if !ok || len(step.node.Incoming()) <= 1 {
+		return true
+	}
+
+	var inFlowID string
+	if step.inFlow != nil {
+		inFlowID = step.inFlow.ID()
+	}
+
+	complete, merged := sj.Arrive(inFlowID, t.ID())
+	if !complete {
+		// not the completing arrival: become AwaitingMerge and stop. The run
+		// goroutine returns; the loop is told via evAwaiting (emitted by the
+		// spawn wrapper, which sees the final state).
+		t.updateState(TrackAwaitingMerge)
+
+		return false
+	}
+
+	// declare the merge: the loop flips the absorbed tracks to Merged. prev is
+	// not touched — see the doc comment on why convergence is not a parent edge.
+	t.instance.emit(trackEvent{kind: evMerged, track: t, mergedIDs: merged})
+
+	return true
 }
 
 // executeNode tries to execute flow.Node n.
@@ -506,10 +567,12 @@ func (t *track) checkFlows(flows []*flow.SequenceFlow) error {
 	}
 
 	// the track continues on the chosen flow (it carries its single position;
-	// no token object).
+	// no token object). inFlow records that flow so a synchronizing-join target
+	// knows which incoming flow this token arrived on.
 	nextStep := stepInfo{
-		node:  flows[nextNode].Target().Node(),
-		state: StepCreated,
+		node:   flows[nextNode].Target().Node(),
+		inFlow: flows[nextNode],
+		state:  StepCreated,
 	}
 	t.steps = append(t.steps, &nextStep)
 

@@ -61,6 +61,80 @@ func TestParallelGatewayExec(t *testing.T) {
 	require.True(t, got[f2.ID()])
 }
 
+func TestParallelGatewayArrive(t *testing.T) {
+	// converging gateway: two incoming, one outgoing.
+	pg, err := gateways.NewParallelGateway(
+		gateways.WithDirection(gateways.Converging))
+	require.NoError(t, err)
+
+	nodes := getDummyNodes(3)
+	f1, err := flow.Link(nodes[0], pg)
+	require.NoError(t, err)
+	f2, err := flow.Link(nodes[1], pg)
+	require.NoError(t, err)
+	_, err = flow.Link(pg, nodes[2])
+	require.NoError(t, err)
+
+	require.Len(t, pg.Incoming(), 2)
+
+	// first arrival: not complete, the arriving track id is recorded.
+	complete, merged := pg.Arrive(f1.ID(), "track-A")
+	require.False(t, complete)
+	require.Nil(t, merged)
+
+	// second (completing) arrival: complete; returns the absorbed track id, not
+	// the survivor's (track-B is the completing arrival).
+	complete, merged = pg.Arrive(f2.ID(), "track-B")
+	require.True(t, complete)
+	require.Equal(t, []string{"track-A"}, merged)
+
+	// the arrival state reset on fire: a fresh round starts incomplete again.
+	complete, merged = pg.Arrive(f1.ID(), "track-C")
+	require.False(t, complete)
+	require.Nil(t, merged)
+}
+
+func TestParallelGatewayArriveConcurrent(t *testing.T) {
+	pg, err := gateways.NewParallelGateway(
+		gateways.WithDirection(gateways.Converging))
+	require.NoError(t, err)
+
+	nodes := getDummyNodes(3)
+	f1, err := flow.Link(nodes[0], pg)
+	require.NoError(t, err)
+	f2, err := flow.Link(nodes[1], pg)
+	require.NoError(t, err)
+	_, err = flow.Link(pg, nodes[2])
+	require.NoError(t, err)
+
+	// two tracks arrive concurrently; the mutex serializes them so exactly one
+	// gets complete=true (the run -race detector backs the atomicity).
+	type res struct {
+		merged   []string
+		complete bool
+	}
+
+	results := make(chan res, 2)
+	flows := []string{f1.ID(), f2.ID()}
+	trackIDs := []string{"track-0", "track-1"}
+
+	for i := range 2 {
+		go func(flowID, trackID string) {
+			c, m := pg.Arrive(flowID, trackID)
+			results <- res{complete: c, merged: m}
+		}(flows[i], trackIDs[i])
+	}
+
+	completes := 0
+	for range 2 {
+		if (<-results).complete {
+			completes++
+		}
+	}
+
+	require.Equal(t, 1, completes, "exactly one arrival completes the join")
+}
+
 func TestParallelGatewayClone(t *testing.T) {
 	pg, err := gateways.NewParallelGateway(
 		gateways.WithDirection(gateways.Diverging))

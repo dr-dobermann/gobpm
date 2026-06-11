@@ -94,20 +94,28 @@ one critical section.
   intermediate state **`AwaitingMerge`** and its **goroutine returns** — it is
   *not* suspended and cannot be resumed; the track object is **retained** as a
   record (`evAwaiting` tells the instance to keep it as *awaiting* — neither active
-  nor ended). It is **not** marked `Merged` yet: until the join fires, the
-  survivor — and therefore the merged track's `next` pointer — is unknown.
+  nor ended). It is **not** marked `Merged` yet: until the join fires, which
+  arrival is the survivor is unknown.
 - **The completing arrival is the survivor.** Under the node mutex it has
-  collected the awaiting tracks. It **first completes the join** — flips each
-  awaiting track to **`Merged`** with `next` = itself, **absorbs their lineage
-  into its own `previous`**, and emits one `evMerged{ merged, into }` so the loop
-  updates its books — **before** the node runs (§2.5: synchronization settles
-  before execution). It **then** executes the join node and continues/forks on the
-  outgoing flows.
+  collected the awaiting tracks' ids. It **first completes the join** — declaring
+  the merge (`evMerged`) so the loop flips each awaiting track to **`Merged`** (its
+  token becomes `Consumed`) — **before** the node runs (§2.5: synchronization
+  settles before execution). It **then** executes the join node and
+  continues/forks on the outgoing flows.
 
 No new track is created at a join — the continuation **rides the completing
 arrival** (ADR-001's 1:1 track:position discipline holds). Which arriving track
 survives is simply whichever token completes the set; BPMN requires only one
 token out per outgoing flow.
+
+**Convergence is not a parent edge.** A token reaching a join has *many*
+predecessors (every branch that converged), but a token records a **single**
+parent (its fork origin). The merge therefore does **not** re-parent the survivor
+or fold the absorbed tracks into its lineage — doing so would make the survivor
+claim a track it spawned as its own parent, a cycle that breaks history
+reconstruction. Convergence is instead represented by each absorbed track's own
+terminal (`Consumed`) entry at the join node; the survivor keeps its creation
+lineage intact.
 
 **Race-safety.** Only the survivor ever executes the join node, so no two tracks
 run its `Exec` at once. The arrival state is node-local under the node's mutex and
@@ -158,7 +166,7 @@ Three events flow track → loop (all are notifications — none block for a rep
 |---|---|---|
 | **spawn** | a fork activated extra outgoing flows | creates + registers one track per extra flow |
 | **awaiting** | the track reached a synchronizing join, did not complete it, and **its goroutine returned** | records the track as *awaiting* — neither active nor ended |
-| **merged** | the completing track absorbed the awaiting tracks | flips each listed track to `Merged` (`next` = survivor), removes them from *awaiting* |
+| **merged** | the completing track declares the absorbed tracks (by id) | the loop resolves the ids and flips each to `Merged`, removing them from *awaiting* |
 | **ended** | the track terminated (end event, canceled, failed) | deregisters it; when none remain active or awaiting, completes the instance |
 
 **What drives each event — uniform structural rules, not the node.** A track does
@@ -191,7 +199,7 @@ flowchart TD
     B -- yes --> E["Call N.Arrive(incoming flow)<br/>(atomic under N's mutex)"]
     E --> F{Join complete?}
     F -- no --> G["Enter AwaitingMerge, emit evAwaiting,<br/>goroutine returns (token still Alive)"]
-    F -- yes --> H["Complete the join: flip awaiting tracks to Merged,<br/>absorb lineage, emit evMerged; then execute N (survivor)"]
+    F -- yes --> H["Complete the join: emit evMerged (loop flips<br/>awaiting tracks to Merged); then execute N (survivor)"]
     C --> D[Continue / spawn on N's outgoing flows]
     H --> D
 ```
@@ -211,7 +219,7 @@ sequenceDiagram
     Note over A: enter AwaitingMerge, goroutine returns
     B->>J: Arrive via flow fb (under J mutex)
     Note over J: record fb, complete, hand back awaiting set
-    Note over B: flip A to Merged with next B, absorb A lineage
+    Note over B: declare merge of A (loop flips A to Merged)
     B->>L: evMerged with merged A
     Note over B: now execute J, then fork
     B->>L: spawn extra outgoing
@@ -231,7 +239,7 @@ stateDiagram-v2
     Running --> Ended: End event or completing arrival finishes
     Running --> Canceled: context cancel
     Running --> Failed: execution error
-    AwaitingMerge --> Merged: join fires, survivor sets next
+    AwaitingMerge --> Merged: join fires (loop flips)
     Merged --> [*]
     Ended --> [*]
     Canceled --> [*]
@@ -345,4 +353,4 @@ produced (N−1 merged + survivor → survivor + M−1 spawned).
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-09 | Ruslan Gabitov | Authored in full for the **Parallel (AND) gateway** (split + synchronizing join), landed with its accompanying SRD. Decisions: per-type gateway behaviour (no central type switch); Parallel split produces a token on every outgoing flow; **synchronization is owned by the synchronizing node** — it holds its per-instance arrival state ([ADR-009 v.1](ADR-009-per-instance-node-graph.md), Accepted), the completion rule, and a **per-node mutex** that makes a concurrent `Arrive` atomic; a non-completing arrival enters the intermediate **`AwaitingMerge`** state and its goroutine returns (the track object is retained as a record, instance notified via `evAwaiting`); the **completing arrival** is the survivor — it first completes the join (flips the awaiting tracks to `Merged` (`next` = survivor), absorbs their lineage into its `previous`, emits `evMerged`) **before** executing the node, then executes and forks; the loop keeps only awaiting/ended bookkeeping. The **node-execution contract collapses to a single Execute** — the prologue/epilogue hooks are removed and their concerns (subscription → ADR-006; interaction registration → the task's Execute) relocated. Inclusive/Complex/Event-Based and loops/excess tokens are deferred (§4); the non-synchronizing-merge shared-node race is **resolved by ADR-009**. Supersedes the v.1 Draft seed and an interim loop-serialized/verdict-channel draft (rejected once ADR-009 made the node own its state — §5). Refines pin ADR-001 v.5. |
+| v.1 | 2026-06-09 | Ruslan Gabitov | Authored in full for the **Parallel (AND) gateway** (split + synchronizing join), landed with its accompanying SRD. Decisions: per-type gateway behaviour (no central type switch); Parallel split produces a token on every outgoing flow; **synchronization is owned by the synchronizing node** — it holds its per-instance arrival state ([ADR-009 v.1](ADR-009-per-instance-node-graph.md), Accepted), the completion rule, and a **per-node mutex** that makes a concurrent `Arrive` atomic; a non-completing arrival enters the intermediate **`AwaitingMerge`** state and its goroutine returns (the track object is retained as a record, instance notified via `evAwaiting`); the **completing arrival** is the survivor — it first completes the join (declares the absorbed track ids via `evMerged`; the loop flips each to `Merged`) **before** executing the node, then executes and forks; the survivor's creation lineage is left intact (convergence is recorded by the absorbed tracks' own terminal `Consumed` entries, not by re-parenting the survivor); the loop keeps only awaiting/ended bookkeeping. The **node-execution contract collapses to a single Execute** — the prologue/epilogue hooks are removed and their concerns (subscription → ADR-006; interaction registration → the task's Execute) relocated. Inclusive/Complex/Event-Based and loops/excess tokens are deferred (§4); the non-synchronizing-merge shared-node race is **resolved by ADR-009**. Supersedes the v.1 Draft seed and an interim loop-serialized/verdict-channel draft (rejected once ADR-009 made the node own its state — §5). Refines pin ADR-001 v.5. |
