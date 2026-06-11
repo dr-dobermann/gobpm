@@ -8,10 +8,11 @@ GO = go
 DC = docker compose
 
 # Diff-coverage gate (SRD-002): minimum patch coverage on the lines a change
-# adds/modifies. Raised 70 -> 80 (the standing standard); next phase toward 100
-# as the coverage backlog is paid down. COVER_BASE is the ref the diff is taken
-# against.
-COVER_MIN ?= 80
+# adds/modifies. Raised 70 -> 80 -> 95 (the standing standard); next phase toward
+# 100 as the coverage backlog is paid down. The gate is diff-only, so a higher
+# floor binds new/changed lines without touching the untouched-code backlog.
+# COVER_BASE is the ref the diff is taken against.
+COVER_MIN ?= 95
 COVER_BASE ?= origin/master
 
 # All Go modules in the monorepo (each with its own go.mod).
