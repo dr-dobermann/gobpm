@@ -53,6 +53,13 @@ func (eg *ExclusiveGateway) Clone() flow.Node {
 	}
 }
 
+// Node returns the gateway as its concrete flow node, so a track reaching it via
+// a sequence flow (flow.Target().Node()) dispatches it as the ExclusiveGateway —
+// not the embedded base Gateway, which is not a NodeExecutor.
+func (eg *ExclusiveGateway) Node() flow.Node {
+	return eg
+}
+
 // Exec runs single node and returns its valid
 // output sequence flows on success or error on failure.
 //
