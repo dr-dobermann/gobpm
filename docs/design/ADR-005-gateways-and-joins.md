@@ -1,100 +1,348 @@
 # ADR-005 — Gateways & Joins
 
-| Field | Value |
-|---|---|
-| Status | Draft |
-| Version | v.1 |
-| Date | 2026-06-07 |
-| Owner | Ruslan Gabitov |
-| Refines | [ADR-001 v.3 Execution Model](ADR-001-execution-model.md) |
+| Field   | Value                                                     |
+| ------- | --------------------------------------------------------- |
+| Status  | Draft                                                     |
+| Version | v.1                                                       |
+| Date    | 2026-06-09                                                |
+| Owner   | Ruslan Gabitov                                            |
+| Refines | [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) |
 
-> **Draft — not yet implemented.** This ADR is the home for the gateway/join
-> conception relocated out of ADR-001 (which scopes itself to the built runtime
-> core). It is authored in full when the gateway workstream lands, with its own
-> SRD and code in the same branch. Nothing here is implemented yet.
+> **Scope of this revision.** This authors the conception in full **for the
+> Parallel (AND) gateway** — split and synchronizing join — and the
+> track-coordination model that follows from it. The Inclusive (OR), Complex,
+> and Event-Based gateways are named but **deferred** (§4); Parallel is the pilot
+> that establishes the synchronizing-join model the others reuse. Its landing
+> requirements and implementation are specified by its accompanying SRD.
 
 ## 1. Context
 
-ADR-001 defines the in-memory runtime: an Instance owning tracks, fork creating
-a new track per extra outgoing flow, and the generic `context` cancellation
-cascade. It deliberately does **not** define what happens at a node with **more
-than one incoming flow** (a join/merge) or how a gateway's *type* selects which
-outgoing flows activate at a fork. Those are this ADR's scope.
+BPMN routes the flow of control through **gateways**. A diverging gateway forks
+token flow onto multiple outgoing paths; a converging gateway merges or
+synchronizes incoming paths. The standard ([§13.4](../bpmn-spec/semantics/gateways.md))
+defines distinct gateway types — Exclusive, Parallel, Inclusive, Complex,
+Event-Based — each with its own fork-activation and join-synchronization rule.
 
-The runtime today has **no join accounting** and **no gateway types**: a fork
-node activates all outgoing flows (uncontrolled split), and a node reached by
-several tracks is simply executed once per arrival.
+[ADR-001](ADR-001-execution-model.md) established the engine's execution model:
+an Instance owns one or more **tracks** (each a thread of execution carrying a
+flow position); the **token** is a logical projection of a track's position; a
+fork creates a track per additional branch (the arriving track continuing on
+one); and **all instance-scoped lifecycle state is mutated by a single
+event-loop goroutine** — tracks report progress as events and never mutate that
+state directly. ADR-001 deliberately left two gateway concerns to this ADR:
+which outgoing flows a fork activates (by gateway type), and what happens at a
+converging node (join/merge).
 
-## 2. Decision (seed — to be expanded)
+This ADR decides both **for the Parallel gateway**, and in doing so fixes how
+**synchronization** is owned in the two-layer model — which has a consequence for
+the node-execution contract (§2.5).
 
-### 2.1 Join mechanics (relocated from ADR-001 §4.5)
+## 2. Decision
 
-A **join point** is any FlowNode with N>1 incoming flows (gateway or activity
-uncontrolled merge). The Instance applies the join rule **by merge type**:
+### 2.1 Gateway behaviour is per type; the standard's object model is fixed
 
-- **Synchronizing — Parallel** (wait for all expected) / **Inclusive** (wait
-  for the expected reachable subset): once satisfied, the join **consumes** the
-  arrived tokens and continues on **one** track — the first-arrived track
-  survives and advances on the outgoing flow; the others **end** (`TrackMerged`),
-  their token projections reading `Consumed`.
-- **Non-synchronizing — Exclusive**, or any node with N>1 incoming flows
-  (uncontrolled merge): **no wait, no consumption** — **each** arriving track
-  passes straight through and continues independently. Several tracks
-  legitimately cross the same node; this is a merge, not a fork.
+Each BPMN gateway type carries its own routing rule, so the engine realises each
+type as its own node behaviour rather than a central switch over a type tag. A
+gateway's direction (converging / diverging / mixed) and its sequence flows come
+from the standard's gateway object model, which is the fixed ground truth; the
+engine implements the standard's taxonomy, it does not invent one.
 
-No new track is created at a join — continuation always rides an arriving track.
-The 1:1 track:position discipline holds throughout. Token **consumption** is
-not a generic join outcome: tokens are consumed at End Events and Terminate, as
-the merged-away tokens of a synchronizing join, and on withdrawal — never by a
-non-synchronizing merge.
+### 2.2 Parallel split — activate all outgoing
 
-### 2.2 Fork-flow activation by gateway type (relocated from ADR-001 §4.4)
+A diverging Parallel gateway produces one token on **every** outgoing sequence
+flow, unconditionally (§13.4.1): no condition evaluation, no default flow, and it
+cannot fail. In the two-layer model this is the ordinary fork — the arriving
+track continues on one activated flow and each remaining activated flow becomes a
+new track.
 
-The fork node's type (parallel / inclusive split / activity uncontrolled split)
-selects which outgoing flows activate (per
-[gateways.md](../bpmn-spec/semantics/gateways.md)); only activated flows
-participate. ADR-001's fork mechanic (parent continues on F1, one new track per
-extra activated flow) is unchanged; this ADR defines *which* flows count as
-active per gateway type.
+### 2.3 Join — synchronizing vs non-synchronizing
 
-### 2.3 Inclusive (OR-join) — must pin one semantics
+A converging node (more than one incoming flow) either synchronizes or it does
+not, decided **by gateway type**:
 
-The converging Inclusive Gateway's synchronization is conditional and
-**non-local**: per BPMN ("a token *MAY* be synchronized with some other tokens
-that arrive later", spec p.291 / KB §13.4.3), a token waits only for incoming
-flows that *could still* receive a token — **not** "wait for all". This is the
-hardest join to get right; the join coordinator must support conditional
-subset-waiting via graph-reachability (ComplexGateway's reset phase reuses the
-same test). The standard's OR-join treatment is **acknowledged-ambiguous** in
-the literature (the spec's *global* upstream-reachability definition vs more
-efficient *local* characterizations; published formalizations diverge) — so this
-ADR must **pin one compliant semantics**, not assume.
+- **Non-synchronizing** — an Exclusive merge, or an activity's uncontrolled merge
+  (which BPMN treats as an implicit Exclusive): each arriving token passes
+  straight through and continues independently. No waiting, no consumption.
+- **Synchronizing** — Parallel (and later Inclusive): the gateway waits for the
+  expected set of incoming tokens, then consumes them and emits its outgoing
+  token(s).
 
-### 2.4 Event-Based Gateway & the `Withdrawn` token state
+For the **Parallel join** the expected set is **one token on each incoming flow**
+(§13.4.1): it fires only when every incoming flow has delivered a token, and
+consumes exactly one token per flow (excess tokens on a flow are not consumed).
 
-Event-Based Gateway is not a join — it has one inbound flow and races on the
-outbound side; race-loss siblings end as `TrackCanceled` with **end-reason =
-withdrawn**. The `TokenWithdrawn` projection value already exists in the runtime
-(`token.go`) with **no producer**; this ADR introduces its producer (the track
-end-reason set on Event-Based Gateway race loss).
+### 2.4 Synchronization is owned by the synchronizing node
 
-## 3. Known issue inherited from the runtime
+A synchronizing gateway owns its synchronization **completely**: its per-instance
+**arrival state** (which incoming flows have delivered a token — node-owned state
+per [ADR-009 v.1](ADR-009-per-instance-node-graph.md)), its **completion rule**
+(Parallel: every incoming flow has arrived; Inclusive, later: the reachable
+subset), and the **serialization** that makes concurrent arrivals safe (a
+**per-node mutex**). The track does what the node tells it; it does **not** ask
+the loop to decide. The loop keeps only **lifecycle bookkeeping** — the track
+registry and the awaiting/ended accounting — it no longer decides synchronization.
+(This is the whole synchronization concern on the node; there is no
+mechanism-on-the-loop / rule-on-the-node split — the only per-type variation is
+the completion rule each synchronizing gateway implements.)
 
-A non-synchronizing merge (multiple tracks crossing one node) currently triggers
-a **data race**: node execution calls `NodeDataLoader.RegisterData`, which
-**mutates the shared node** (e.g. `EndEvent.dataPath`). This violates ADR-001
-§4.7's "node definitions MUST stay immutable". The fix — a per-node state /
-data-loading contract that does not mutate the shared definition — is owned by
-the **Persistence & State ADR** (§4.7). Until it lands, non-synchronizing merge
-over a shared node is not race-safe, and ADR-001's §7 gate does not claim it.
+Two tracks can reach the join **concurrently** (separate goroutines), so the
+node's arrival step is **atomic under its own mutex**: record the arriving flow,
+test the completion rule, and — when complete — yield the awaiting tracks, all in
+one critical section.
 
-## 4. References
+- **A non-completing arrival ends the track's goroutine.** The track enters the
+  intermediate state **`AwaitingMerge`** and its **goroutine returns** — it is
+  *not* suspended and cannot be resumed; the track object is **retained** as a
+  record (`evAwaiting` tells the instance to keep it as *awaiting* — neither active
+  nor ended). It is **not** marked `Merged` yet: until the join fires, the
+  survivor — and therefore the merged track's `next` pointer — is unknown.
+- **The completing arrival is the survivor.** Under the node mutex it has
+  collected the awaiting tracks. It **first completes the join** — flips each
+  awaiting track to **`Merged`** with `next` = itself, **absorbs their lineage
+  into its own `previous`**, and emits one `evMerged{ merged, into }` so the loop
+  updates its books — **before** the node runs (§2.5: synchronization settles
+  before execution). It **then** executes the join node and continues/forks on the
+  outgoing flows.
 
-- [ADR-001 v.3 Execution Model](ADR-001-execution-model.md) — the runtime this refines.
-- [docs/bpmn-spec/semantics/gateways.md](../bpmn-spec/semantics/gateways.md), [token-flow.md](../bpmn-spec/semantics/token-flow.md) — normative gateway/token semantics.
+No new track is created at a join — the continuation **rides the completing
+arrival** (ADR-001's 1:1 track:position discipline holds). Which arriving track
+survives is simply whichever token completes the set; BPMN requires only one
+token out per outgoing flow.
+
+**Race-safety.** Only the survivor ever executes the join node, so no two tracks
+run its `Exec` at once. The arrival state is node-local under the node's mutex and
+per-instance ([ADR-009 v.1](ADR-009-per-instance-node-graph.md)) — never raced
+across tracks or instances. (The cross-instance shared-node race an earlier draft
+deferred to a future Persistence ADR is already resolved by ADR-009.)
+
+The concrete protocol — the events a track sends the loop, how a track decides
+what to do at a node, and the state/rendezvous diagrams — is §2.7.
+
+### 2.5 Node-execution contract — a single Execute
+
+A node's responsibility is to **execute**: produce its outgoing tokens (a
+gateway's routing) or perform its activity. Synchronization (§2.4) is a separate
+concern the synchronizing node settles **before** it executes — via its `Arrive`
+step, not through pre-/post-execution hooks — so the node-execution contract
+collapses to a **single Execute step**. The earlier
+pre-/post-execution hooks (a node "prologue" and "epilogue") existed when nodes
+drove flow control; under track coordination they are redundant and are
+**removed**. The concerns they were used for move to the layer that owns them:
+
+- A catch/receive node's **subscription** to a message/signal is owned by the
+  event & subscription machinery (ADR-006), which suspends and later resumes the
+  track; the node's Execute consumes the delivered event. It is not a node
+  prologue/epilogue.
+- A human task's **registration** for interaction is part of executing that task
+  (its Execute registers, then awaits the outcome), not a separate hook.
+
+Where this contradicts the current node interface, the implementation removes the
+hooks and relocates their logic — the concept leads, the code follows.
+
+### 2.6 Token consumption stays narrow
+
+Tokens are consumed only at End Events and Terminate, as the absorbed tokens of a
+synchronizing join (§2.4), and on withdrawal. A non-synchronizing merge never
+consumes tokens.
+
+### 2.7 Track ↔ Instance coordination (mechanics)
+
+A track runs autonomously in its own goroutine, advancing node by node. At each
+node it asks the node what to do; only a **synchronizing join** changes the
+track's course. The Instance's single event-loop goroutine owns **lifecycle
+bookkeeping** — the track registry and the awaiting/ended accounting; it is told
+about lifecycle changes through events but does **not** decide synchronization.
+Three events flow track → loop (all are notifications — none block for a reply):
+
+| Event (track → loop) | Raised when | Loop does |
+|---|---|---|
+| **spawn** | a fork activated extra outgoing flows | creates + registers one track per extra flow |
+| **awaiting** | the track reached a synchronizing join, did not complete it, and **its goroutine returned** | records the track as *awaiting* — neither active nor ended |
+| **merged** | the completing track absorbed the awaiting tracks | flips each listed track to `Merged` (`next` = survivor), removes them from *awaiting* |
+| **ended** | the track terminated (end event, canceled, failed) | deregisters it; when none remain active or awaiting, completes the instance |
+
+**What drives each event — uniform structural rules, not the node.** A track does
+**not** ask the node "what event should I fire". It derives events from structure,
+and only **one** question is node-specific:
+
+- **Fork** is driven by how many flows `Exec` returns. For **any** node the track
+  continues on one activated flow and emits `spawn` for the rest. The node
+  controls only the *count* (Exclusive returns one → no fork; Parallel and an
+  uncontrolled activity-split return all → fork). A Task with multiple outgoing
+  forks exactly like a Parallel split — there is no node-type-specific fork logic.
+- **Merge** is **only** a synchronizing-join concern. A non-synchronizing merge —
+  a Task, an intermediate event, or an Exclusive gateway reached by more than one
+  incoming flow — is **pass-through**: each arriving token executes the node
+  independently and continues, with **no event and no consumption** (BPMN's
+  uncontrolled merge = implicit Exclusive).
+
+**How a track decides what to do at a node.** At node N the track asks the single
+node-specific question: does N implement `SynchronizingJoin` **and** have more
+than one incoming flow? If not, it executes N locally (a normal node, a split, or
+a non-synchronizing merge). If so, it calls **`N.Arrive(its incoming flow)`** —
+atomic under N's mutex (§2.4) — which returns one of exactly two answers: *stop
+and wait* → enter `AwaitingMerge` and the goroutine returns; *execute* → proceed
+as the survivor.
+
+```mermaid
+flowchart TD
+    A[Track positioned at node N] --> B{"N is a synchronizing join AND<br/>has more than one incoming flow?"}
+    B -- no --> C["Execute N locally<br/>(normal node, split, or non-synchronizing merge)"]
+    B -- yes --> E["Call N.Arrive(incoming flow)<br/>(atomic under N's mutex)"]
+    E --> F{Join complete?}
+    F -- no --> G["Enter AwaitingMerge, emit evAwaiting,<br/>goroutine returns (token still Alive)"]
+    F -- yes --> H["Complete the join: flip awaiting tracks to Merged,<br/>absorb lineage, emit evMerged; then execute N (survivor)"]
+    C --> D[Continue / spawn on N's outgoing flows]
+    H --> D
+```
+
+**Synchronizing-join rendezvous** — two branches converge on join `J`; the
+*completing* (second) arrival survives, the first is absorbed:
+
+```mermaid
+sequenceDiagram
+    participant A as Track A
+    participant J as Join node J
+    participant L as Instance loop
+    participant B as Track B
+    A->>J: Arrive via flow fa (under J mutex)
+    Note over J: record fa, not complete
+    A->>L: evAwaiting
+    Note over A: enter AwaitingMerge, goroutine returns
+    B->>J: Arrive via flow fb (under J mutex)
+    Note over J: record fb, complete, hand back awaiting set
+    Note over B: flip A to Merged with next B, absorb A lineage
+    B->>L: evMerged with merged A
+    Note over B: now execute J, then fork
+    B->>L: spawn extra outgoing
+    Note over B: continue on first outgoing flow
+```
+
+Which branch arrives first is immaterial — J's mutex serializes the arrivals, so
+whichever token *completes* the set is the survivor.
+
+**Track lifecycle** — `AwaitingMerge` is intermediate: the goroutine has already
+returned; the track object is retained as a record until the join fires:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Running
+    Running --> AwaitingMerge: arrive at join, not completing (goroutine returns)
+    Running --> Ended: End event or completing arrival finishes
+    Running --> Canceled: context cancel
+    Running --> Failed: execution error
+    AwaitingMerge --> Merged: join fires, survivor sets next
+    Merged --> [*]
+    Ended --> [*]
+    Canceled --> [*]
+    Failed --> [*]
+```
+
+J's mutex makes arrival atomic, so exactly one arrival per join completes the set
+and becomes the survivor; the rest enter `AwaitingMerge` (their goroutines have
+returned) and are flipped to `Merged` when it fires. No track is created at a join; the continuation rides the
+completing arrival (§2.4).
+
+**Forking on the outgoing flows** (unchanged from ADR-001 §4.4). After a node's
+`Exec` returns the activated outgoing flows, the track **continues on one itself**
+— preferring a flow that loops back to the same node (a cyclic/self flow) if one
+exists, otherwise the first — and emits **spawn** for the remaining flows, one new
+track each. Parallel split feeds this with **all** outgoing flows (§2.2); the
+mechanic is otherwise the same as any fork.
+
+**Mixed gateway (N incoming *and* M outgoing).** BPMN permits one Parallel
+gateway to both converge and diverge. This needs **no special machinery** — it is
+the join half followed by the fork half on the **one surviving track**: the
+completing arrival joins (emits `evMerged`), executes the node (`Exec` returns all
+M outgoing), then forks (continues on one, emits `spawn` for the rest). So the
+instance receives **`evMerged` then `spawn`** consecutively from the same
+goroutine; the loop applies them FIFO (merge bookkeeping, then track creation).
+The survivor stays **active across both events** — it never ends between them — so
+the instance cannot prematurely complete; net, N tokens are consumed and M
+produced (N−1 merged + survivor → survivor + M−1 spawned).
+
+## 3. Consequences
+
+- The engine gains real fork/join: any acyclic process using Parallel split
+  and/or synchronizing join executes correctly — lifting it from linear-only to
+  branching control flow (roadmap M1 MVP).
+- The synchronizing node gains arrival accounting + a **per-node mutex**; the loop
+  gains *awaiting*/*merged* bookkeeping (no decision logic). A new intermediate
+  track state **`AwaitingMerge`** is added; an awaiting track's goroutine returns
+  (nothing stays running while a track awaits merge).
+- The synchronizing-join seam (§2.4) is the reusable basis for Inclusive/Complex.
+- The node interface simplifies to one Execute (§2.5); the prologue/epilogue hooks
+  are removed and their logic relocated.
+- A Parallel join whose expected incoming set can never complete (an upstream
+  exclusive choice bypasses one incoming branch) **deadlocks the instance** — a
+  BPMN modeling error; detecting it is out of scope (§4).
+
+## 4. Deferred / out of scope
+
+- **Inclusive (OR).** Its converging synchronization is conditional and non-local:
+  a token waits only for incoming flows that *could still* receive a token — not
+  "wait for all". The standard's OR-join is acknowledged-ambiguous in the
+  literature; this ADR will **pin one compliant semantics when OR lands**,
+  informed by the machinery Parallel establishes — not assume one now. See
+  [[project_orjoin_synchronization_undecided]].
+- **Complex gateway** (reuses OR's reachability test); **Event-Based gateway** and
+  its withdrawn-token producer (race-loss siblings end as withdrawn) — ties to
+  event delivery ([ADR-006](ADR-006-events-and-subscriptions.md)).
+- **Loops & excess tokens.** This conception scopes to **acyclic, single-pass**
+  joins: each incoming flow delivers one token; the join fires when all distinct
+  incoming flows have arrived once. Re-arming a join under a loop needs the same
+  machinery OR brings — deferred.
+- *(Resolved, no longer deferred:* the non-synchronizing-merge shared-node data
+  race is fixed by [ADR-009 v.1](ADR-009-per-instance-node-graph.md)'s per-instance
+  node graph — each instance owns its node objects, so a merge over one node no
+  longer races across instances. Per-execution data flow within an instance is
+  [ADR-010](ADR-010-process-data-model.md)'s concern.)*
+
+## 5. Alternatives considered
+
+- **First-arrived survivor** (vs. completing/last). Rejected: it forces the first
+  track to wait and any merging track to touch the shared node; a completing-
+  arrival survivor whose non-survivors never execute the node is simpler and
+  race-avoiding (§2.4).
+- **Spawning a fresh continuation track at the join.** Rejected: violates
+  ADR-001's "no new track is created at a join" and the 1:1 track handoff.
+- **A central gateway-type switch.** Rejected: per-type node behaviour is open for
+  extension; a central switch is a closed set that every new gateway must edit.
+- **Loop-serialized decision + verdict channel** (an earlier draft of this ADR):
+  the track emits an `arrive` event and *blocks* on a reply channel while the loop
+  records the arrival and decides. Rejected: now that the node owns its
+  per-instance state ([ADR-009 v.1](ADR-009-per-instance-node-graph.md)), the
+  track can ask the node directly; the loop round-trip and the verdict channel are
+  unnecessary overhead. A narrow per-node mutex is simpler and clearer (§2.4).
+- **A blocking node** (a node — or track — that keeps a goroutine **suspended**
+  until siblings arrive). Rejected: an awaiting track's goroutine **returns**; the
+  track is retained as an object in `AwaitingMerge`, so no goroutine is held
+  (§2.7).
+- **Mechanism-on-the-loop / rule-on-the-node split.** Rejected: with node-owned
+  state and a per-node mutex the node owns the whole synchronization concern; the
+  only per-type variation is the completion rule. There is no mechanism/policy
+  layering to maintain.
+- **Keeping the prologue/epilogue hooks.** Rejected (§2.5): redundant under track
+  coordination; subscription and registration belong to their owning layers.
+
+## 6. References
+
+- [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) — the two-layer
+  runtime (fork §4.4; join relocated §4.5; runtime-state ownership §4.7).
+- [ADR-009 v.1 Per-instance node graph](ADR-009-per-instance-node-graph.md) — the
+  per-instance node graph the join's arrival state lives on; resolves the
+  shared-node data race an earlier draft deferred.
+- [bpmn-spec/semantics/gateways.md](../bpmn-spec/semantics/gateways.md) (§13.4),
+  [token-flow.md](../bpmn-spec/semantics/token-flow.md) — normative gateway/token
+  semantics.
+
+## 7. Open questions
+
+- None blocking for Parallel. The OR-join semantics pin (§4) is an open question
+  **for the next gateway revision**, deliberately not answered here.
 
 ## Document History
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-07 | Ruslan Gabitov | Initial Draft seed — gateway/join conception relocated from ADR-001 v.3 (§4.4 flow-activation, §4.5 join mechanics, OR-join note, Event-Based Gateway/withdrawn). Not yet implemented. |
+| v.1 | 2026-06-09 | Ruslan Gabitov | Authored in full for the **Parallel (AND) gateway** (split + synchronizing join), landed with its accompanying SRD. Decisions: per-type gateway behaviour (no central type switch); Parallel split produces a token on every outgoing flow; **synchronization is owned by the synchronizing node** — it holds its per-instance arrival state ([ADR-009 v.1](ADR-009-per-instance-node-graph.md), Accepted), the completion rule, and a **per-node mutex** that makes a concurrent `Arrive` atomic; a non-completing arrival enters the intermediate **`AwaitingMerge`** state and its goroutine returns (the track object is retained as a record, instance notified via `evAwaiting`); the **completing arrival** is the survivor — it first completes the join (flips the awaiting tracks to `Merged` (`next` = survivor), absorbs their lineage into its `previous`, emits `evMerged`) **before** executing the node, then executes and forks; the loop keeps only awaiting/ended bookkeeping. The **node-execution contract collapses to a single Execute** — the prologue/epilogue hooks are removed and their concerns (subscription → ADR-006; interaction registration → the task's Execute) relocated. Inclusive/Complex/Event-Based and loops/excess tokens are deferred (§4); the non-synchronizing-merge shared-node race is **resolved by ADR-009**. Supersedes the v.1 Draft seed and an interim loop-serialized/verdict-channel draft (rejected once ADR-009 made the node own its state — §5). Refines pin ADR-001 v.5. |
