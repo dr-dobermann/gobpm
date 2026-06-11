@@ -395,9 +395,14 @@ func (t *Thresher) launchInstance(s *snapshot.Snapshot) error {
 			errs.E(err))
 	}
 
+	// The instance owns this context for its whole lifetime; cancel is retained
+	// in instanceReg.stop for later teardown (engine stop / instance cleanup).
+	// It must NOT be deferred here — inst.Run is non-blocking, so a deferred
+	// cancel would terminate the instance the moment launchInstance returns.
 	ctx, cancel := context.WithCancel(t.ctx)
-	defer cancel()
 	if err := inst.Run(ctx); err != nil {
+		cancel()
+
 		return errs.New(
 			errs.M("inctance %q of process %q failed to run",
 				inst.ID(), s.ProcessID),
