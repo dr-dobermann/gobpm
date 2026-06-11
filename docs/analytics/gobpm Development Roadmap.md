@@ -55,7 +55,7 @@ Grounded in the code, not aspiration.
 
 ### 2.3 Document status & integrity
 
-- **Statuses:** SAD-001 v.1 Draft; **ADR-001 v.3 Accepted**; ADR-002 / ADR-003 / ADR-004 v.1 Draft; **ADR-005 / ADR-006 / ADR-007 v.1 Draft** (gateways/events/long-waits, relocated from ADR-001); **SRD-001 v.1 Accepted** (instance/track/token refactor); FIX-001 v.1 **Accepted**. (ADR-008 Distribution & Scale — planned, the home for SAD §13.)
+- **Statuses:** SAD-001 v.1 Draft; **ADR-001 v.5 Accepted**; ADR-002 / ADR-003 / ADR-004 v.1 Draft; **ADR-005 / ADR-006 / ADR-007 v.1 Draft** (gateways/events/long-waits, relocated from ADR-001); **ADR-009 v.1 Accepted** (per-instance node graph — node-owned runtime state; decides the ADR-001 §4.7 deferral and eliminates the shared-node data race); **SRD-001 v.1 Accepted** (instance/track/token refactor); **SRD-006 v.1 Accepted** (per-instance cloning, lands ADR-009); FIX-001 v.1 **Accepted**. (ADR-008 Distribution & Scale — planned, the home for SAD §13.) *Note: the §2.2 implemented/stubbed inventory predates SRD-004's extension-skeleton landing and is partially stale — a roadmap refresh is a pending follow-up.*
 - **Document integrity:** FIX-001's earlier dead `SRD-001` reference (a *never-written* doc at the time) was repointed to the real sources (the `chore/ci-audit` `-race` gate + SAD-001 §9 / ADR-003 for the multi-module scaffold); ADR-004's legacy IAM-ADR reference is folded into the AuthN/Z model (§4.7 + `AuthorizationProvider`). A real **SRD-001** was later authored for the two-layer runtime refactor and is Accepted with its implementation (per the rule that SRD/FIX land in the same change-set as their code).
 
 ## 3. Sequencing principles

@@ -2,12 +2,12 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-10 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-009 v.1 Per-instance node graph](../design/ADR-009-per-instance-node-graph.md) |
-| Refines | [ADR-001 v.4 Execution Model](../design/ADR-001-execution-model.md) |
+| Refines | [ADR-001 v.5 Execution Model](../design/ADR-001-execution-model.md) |
 
 This SRD lands [ADR-009](../design/ADR-009-per-instance-node-graph.md): each Instance **clones** the immutable process node-graph into its own private graph, and nodes hold their **per-instance runtime state** directly. It removes the shared-node data race and gives synchronizing gateways / timers / correlation a home on the node. It is the foundation the Parallel-gateway work (ADR-005) resumes on.
 
@@ -97,7 +97,7 @@ The four fields in FR-3 already live on the node; the only change is that they a
 | V3 | Unit: `ServiceTask` clone has a per-instance operation; exec on one clone doesn't mutate another's message state (FR-5). | no shared operation mutation. |
 | V4 | Integration: two concurrent instances of one process run under `-race` with **no race** and independent node state (FR-1/NFR-1). | `-race` clean. |
 | V5 | No regression: existing instance/snapshot/event tests pass; single-instance behavior unchanged; all three examples exit 0 (NFR-3). | all green. |
-| V6 | `make ci` green — `-race`, diff-coverage ≥80 % touched, govulncheck (NFR-4). | pass. |
+| V6 | `make ci` green — `-race`, diff-coverage ≥95 % touched, govulncheck (NFR-4). | pass. |
 | V7 | Docs: ADR-001 §4.7 reconciled; roadmap lists ADR-009; ADR-009 + SRD-006 flipped Accepted (G5). | done. |
 
 ## 6. Risks & regressions
@@ -105,17 +105,42 @@ The four fields in FR-3 already live on the node; the only change is that they a
 - **`service.Operation` entanglement (FR-5).** Its message Items are exec-mutated; if a clean per-instance clone is hard, fall back to routing message data through per-instance scope (decided in M2 with evidence). A V3 test guards it.
 - **`container` back-pointer (FR-6).** A cloned node still pointing at the original Process container, or a rewire that triggers `Container().Add`, can fail validation (`sequenceflow.go:122-128/176`). The rewire must skip container insertion and clones must not retain a foreign container.
 - **Unexported `flows` (FR-4).** The rewire must live in package `flow` (or use `AddFlow`); a clone outside the package can't rebuild the map directly.
-- **Event-def id registration (FR-7).** If the EventProducer keys by `defID` alone, two instances reusing a definition id would collide; M3 confirms `(processor, defID)` keying or fixes it.
+- **Event-def id registration (FR-7).** Confirmed: the EventHub keys waiters by `eDef.ID()` alone, so cloned event nodes (sharing definition ids) would share a waiter. This is per-instance **event-subscription** isolation — event-delivery semantics owned by **ADR-006**, not this SRD's node-state ownership — and is **deferred** there. The node-state race this SRD removes lives on plain flow (no waiters); V4 proves it on a plain process.
 - **Clone-completeness tax.** A new node type must implement `Clone()` correctly or silently share state — documented as the standing rule (ADR-009 §3); a lint/test could guard it later.
 
 ## 7. Implementation summary
 
-> ⚠️ TODO: filled at landing — files/lines, V-results, milestone SHAs.
+Landed on branch `feat/node-runtime-state` (off `master`).
+
+**Changes**
+
+- **M1 — `Clone()` across the model.** `flow.Node` gained `Clone() Node`; `flow.BaseNode.CloneShell` (fresh identity, empty flows, no container) + panic-stub `BaseNode.Clone`; `flow.CloneFlow` edge helper (preserve id/condition, no container insert). `Clone()` on the 5 executable node types (`StartEvent`, `EndEvent`, `ServiceTask`, `UserTask`, `ExclusiveGateway`) + embedded parents — config shared by reference, the exec-mutated fields fresh (`Event.dataPath`, `activity.dataPath`, `UserTask.resChan`, `ExclusiveGateway.scope`), `ServiceTask` per-instance `service.Operation` (FR-2/3/5). The clone chain is non-erroring (`Must` form, mirroring `data.Value.Clone`): `Message.Clone`/`Operation.Clone` drop their error returns.
+- **M2 — wiring.** `snapshot.(*Snapshot).Clone()` mirrors `snapshot.New`'s node-loop/flow-loop (clone nodes; relink edges via `flow.MustCloneFlow` preserving id/condition; remap each gateway's default flow onto its cloned edge via `flow.DefaultFlowHolder` / `Gateway.MustUpdateDefaultFlow`; share the immutable header). `instance.New` swaps the shared snapshot for `s.Clone()` (FR-1); `createTracks`/forks transparently use the clone (FR-6 — clones carry no container).
+- **FR-7** documented + deferred to ADR-006 (the EventHub keys waiters by `eDef.ID()` alone — event-delivery semantics, not node-state ownership).
+
+**Verification results**
+
+| # | Result |
+|---|---|
+| V1 | 🟢 `TestSnapshotClone` — independent `*Snapshot`, endpoints rewired to clones, ids/conditions preserved, header shared. |
+| V2 | 🟢 per-type clone tests — config shared by reference, state fields zeroed. |
+| V3 | 🟢 `TestServiceTaskClone` / `Operation` clone test — per-instance operation; running a clone leaves the original's message untouched. |
+| V4 | 🟢 `TestCloneRaceTwoInstances` — two concurrent instances over independent clones, clean under `-race`. |
+| V5 | 🟢 existing tests pass; all three examples (`basic-process`, `timer-event`, `simple-timer`) exit 0. |
+| V6 | 🟢 `make ci` green at the 95 % gate (diff-coverage 97.8 %; race tests; govulncheck). |
+| V7 | 🟢 ADR-001 §4.7 reconciled (v.5); roadmap notes ADR-009; ADR-009 + SRD-006 Accepted. |
+
+**Milestone commits**
+
+- `e7ca400` — M1: `Clone()` across the node model.
+- `aa450ab` — diff-coverage gate raised 80 → 95.
+- `67956c0` — M2: per-instance node graph via `Snapshot.Clone` + `-race` proof.
+- (this commit) — M3: acceptance — ADR-001 §4.7 reconciled, roadmap, status flips.
 
 ## 8. References
 
 - [ADR-009 v.1 Per-instance node graph](../design/ADR-009-per-instance-node-graph.md) — the decision this lands.
-- [ADR-001 v.4 Execution Model](../design/ADR-001-execution-model.md) — §4.7 (runtime-state ownership, reconciled here; durable persistence still deferred); the single event-loop writer.
+- [ADR-001 v.5 Execution Model](../design/ADR-001-execution-model.md) — §4.7 (runtime-state ownership, reconciled here; durable persistence still deferred); the single event-loop writer.
 
 ## 9. Open questions
 

@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.4 |
-| Date | 2026-06-08 |
+| Version | v.5 |
+| Date | 2026-06-11 |
 | Owner | Ruslan Gabitov |
 | Supersedes | v.2 (three-layer Instance / track / token). v.3 collapses to **two layers** — `token` becomes a logical *projection* of a track, not a stored entity — and **defers persistence / rehydration** to a dedicated ADR. |
 | Refines | [SAD-001 v.1 §10 Execution Model](SAD-001-vision-and-architecture.md) |
@@ -212,7 +212,7 @@ fresh track is spawned on trigger arrival) is owned by
 core fixes only the runtime invariants both must honor:
 
 - A track's continuation state is fully described by its **position (node), track/step state, Scope data, and lineage** — there is no hidden state on a separate token object.
-- A node with resumable in-flight state (timer position, correlation subscription, partial activity state) owns the shape of that state; persistence will reach it through a per-node state contract (defined in the Persistence ADR), **not** by storing mutable state on the shared node definition (node definitions are shared across instances and tracks and MUST stay immutable).
+- A node with resumable in-flight state (timer position, correlation subscription, partial activity state) owns the shape of that state. **Runtime-state *ownership* is decided by [ADR-009 v.1](ADR-009-per-instance-node-graph.md): each instance clones the process *template* into its own private node graph, so per-instance runtime state lives on that instance's own node — the shared template definitions stay immutable.** **Durable** persistence of that state — serializing it and rehydrating across a restart — remains the Persistence & State ADR's concern.
 
 ## 5. Consequences
 
@@ -304,6 +304,7 @@ acceptance gate and lands with its own SRD + code:
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.5 | 2026-06-11 | Ruslan Gabitov | §4.7 reconciled with [ADR-009 v.1](ADR-009-per-instance-node-graph.md): per-node runtime-state **ownership** is now decided (each instance clones the process template into its own private node graph; per-instance runtime state lives on the instance's own node; the shared template definitions stay immutable), where v.4 deferred it wholesale to the Persistence ADR. **Durable** persistence/serialization/rehydration stays the future Persistence & State ADR. No execution-model change otherwise. RU twin sync deferred (batched). |
 | v.4 | 2026-06-08 | Ruslan Gabitov | Recorded the **per-adapter ADR policy** (§9): each substantial extension adapter gets its own ADR; the SRD-004 skeleton ships only minimal in-memory default contracts to run current BPMN on the two-layer model, with production-grade contracts (notably durable `Repository` — serialization, versioning, transactions, history/inbox/subscriptions, pagination) deferred to per-adapter ADRs. The minimal `Repository` of ADR-002 v.1 is sufficient for the in-memory migration goal. No execution-model change. RU twin sync deferred (batched until the current edit run settles). |
 | v.3 | 2026-06-07 | Ruslan Gabitov | **Accepted.** Collapsed the three-layer model to **two layers** (Instance + track); `token` becomes a logical projection of a track's current step, not a stored type (removes `token.inst`/`trk`, `Instance.tokens[]`, duplicate lineage). Adopted the single event-loop goroutine for instance-state mutation (no locks). Scoped this ADR to the runtime **core** — relocated join/merge (ADR-005), event delivery & triggers (ADR-006), and the in-memory long-wait release model (ADR-007) to dedicated ADRs (§9), so doc equals code. Reconciled the instance lifecycle to `Created → Active → Completed` (+ `Terminating → Terminated`). §7 gate exercised and green (race-freedom, leak-free, fork, projection, completion, termination cascade) — including two bugs the gate surfaced (`track.stopIt` race; `emit` dropping `evEnded` on cancel). Persistence/rehydration deferred to the Persistence & State ADR. Pre-acceptance Draft iteration folded in without per-round rows. |
 | v.2 | 2026-05-29 | Ruslan Gabitov | Three-layer Instance/track/token model (superseded by v.3). |

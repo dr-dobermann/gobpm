@@ -2,11 +2,11 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-10 |
 | Owner | Ruslan Gabitov |
-| Refines | [ADR-001 v.4 Execution Model](ADR-001-execution-model.md) |
+| Refines | [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) |
 
 > **Scope.** This decides **where per-node runtime state lives** — the question
 > ADR-001 §4.7 deferred. It is the foundation the synchronizing-gateway work
@@ -141,7 +141,7 @@ node kind (and what the clone copies vs. allocates).
 
 ## 5. References
 
-- [ADR-001 v.4 Execution Model](ADR-001-execution-model.md) — the two-layer
+- [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) — the two-layer
   runtime, the single event-loop writer, and §4.7 (node-immutability invariant +
   the per-node-state deferral this ADR decides; updated when this lands).
 - BPMN 2.0 object model — node *configuration* (events, activities, gateways and
@@ -159,4 +159,4 @@ node kind (and what the clone copies vs. allocates).
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-10 | Ruslan Gabitov | Initial. Decides per-node runtime-state ownership (the ADR-001 §4.7 deferral): each Instance clones the immutable process template into its **own** node graph; a node is one per-instance stateful object holding config (shared by reference) + fresh runtime state, with behaviour and state on the same type (no separate state object, no wrapper); cloning is shallow-over-config + fresh-over-state with topology relinked via existing sequence-flow linking; the event-loop stays the single writer (lock-free). Eliminates the shared-node data race. Refines ADR-001 v.4 §4.7 (runtime-state ownership decided here; durable persistence stays the future Persistence & State ADR). Rejected: separate state object, embedding wrapper (type doubling), instance-held generic maps, no-per-node-state. |
+| v.1 | 2026-06-10 | Ruslan Gabitov | Initial. Decides per-node runtime-state ownership (the ADR-001 §4.7 deferral): each Instance clones the immutable process template into its **own** node graph; a node is one per-instance stateful object holding config (shared by reference) + fresh runtime state, with behaviour and state on the same type (no separate state object, no wrapper); cloning is shallow-over-config + fresh-over-state with topology relinked via existing sequence-flow linking; the event-loop stays the single writer (lock-free). Eliminates the shared-node data race. Refines ADR-001 v.5 §4.7 (runtime-state ownership decided here; durable persistence stays the future Persistence & State ADR). Rejected: separate state object, embedding wrapper (type doubling), instance-held generic maps, no-per-node-state. |
