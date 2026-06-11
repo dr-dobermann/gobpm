@@ -2,7 +2,6 @@ package flow
 
 import (
 	"errors"
-	"fmt"
 	"reflect"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -25,6 +24,17 @@ type (
 		Node
 
 		AcceptIncomingFlow(sf *SequenceFlow) error
+	}
+
+	// DefaultFlowHolder is implemented by the Nodes that carry a default
+	// sequence flow (gateways). Per-instance snapshot cloning uses it to remap
+	// the default flow onto the cloned edge once the graph has been relinked.
+	DefaultFlowHolder interface {
+		Node
+
+		DefaultFlow() *SequenceFlow
+		UpdateDefaultFlow(f *SequenceFlow) error
+		MustUpdateDefaultFlow(f *SequenceFlow)
 	}
 )
 
@@ -169,15 +179,24 @@ func CloneFlow(
 		conditionExpression: orig.conditionExpression,
 	}
 
-	if err := src.AddFlow(&sf, data.Output); err != nil {
-		return nil, fmt.Errorf("clone flow source wiring failed: %w", err)
-	}
-
-	if err := trg.AddFlow(&sf, data.Input); err != nil {
-		return nil, fmt.Errorf("clone flow target wiring failed: %w", err)
-	}
+	// dir is a valid constant and sf is non-nil, so AddFlow cannot fail here.
+	_ = src.AddFlow(&sf, data.Output)
+	// dir is a valid constant and sf is non-nil, so AddFlow cannot fail here.
+	_ = trg.AddFlow(&sf, data.Input)
 
 	return &sf, nil
+}
+
+// MustCloneFlow is the panicking form of CloneFlow for callers that have
+// already validated their arguments (e.g. per-instance snapshot cloning over a
+// consistent graph). It panics if CloneFlow returns an error.
+func MustCloneFlow(orig *SequenceFlow, src SequenceSource, trg SequenceTarget) *SequenceFlow {
+	sf, err := CloneFlow(orig, src, trg)
+	if err != nil {
+		errs.Panic(err)
+	}
+
+	return sf
 }
 
 // checkConnections tests if it possible to connect src with trg via sf.

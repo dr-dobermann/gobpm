@@ -183,6 +183,15 @@ func (g *Gateway) UpdateDefaultFlow(f *flow.SequenceFlow) error {
 		errs.C(errorClass, errs.ObjectNotFound))
 }
 
+// MustUpdateDefaultFlow is the panicking form of UpdateDefaultFlow for callers
+// that pass a flow already known to be a valid outgoing flow (e.g. per-instance
+// snapshot cloning). It panics if UpdateDefaultFlow returns an error.
+func (g *Gateway) MustUpdateDefaultFlow(f *flow.SequenceFlow) {
+	if err := g.UpdateDefaultFlow(f); err != nil {
+		errs.Panic(err)
+	}
+}
+
 // Direction returns the gateway's direction.
 func (g *Gateway) Direction() GDirection {
 	return g.direction

@@ -24,12 +24,12 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/interactor"
 	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/internal/scope"
-	engrenv "github.com/dr-dobermann/gobpm/pkg/renv"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	engrenv "github.com/dr-dobermann/gobpm/pkg/renv"
 )
 
 const (
@@ -124,6 +124,17 @@ func New(
 			errs.New(
 				errs.M("no snapshot is given"),
 				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	// Each Instance owns a private clone of the node graph so concurrent
+	// instances of the same process never share a node (ADR-009); the snapshot
+	// passed in stays the shared immutable template.
+	s, err := s.Clone()
+	if err != nil {
+		return nil, errs.New(
+			errs.M("snapshot clone for instance failed"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
 	}
 
 	if er == nil {

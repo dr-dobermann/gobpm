@@ -90,6 +90,39 @@ func TestCloneFlow(t *testing.T) {
 		})
 }
 
+// TestMustCloneFlow verifies the panicking wrapper around CloneFlow: it returns
+// the cloned edge on valid input and panics when CloneFlow would error.
+func TestMustCloneFlow(t *testing.T) {
+	se, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+	ee, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	orig, err := flow.Link(se, ee, foundation.WithID("edge-1"))
+	require.NoError(t, err)
+
+	seClone, ok := se.Clone().(*events.StartEvent)
+	require.True(t, ok)
+	eeClone, ok := ee.Clone().(*events.EndEvent)
+	require.True(t, ok)
+
+	t.Run("success returns cloned edge",
+		func(t *testing.T) {
+			cf := flow.MustCloneFlow(orig, seClone, eeClone)
+			require.NotNil(t, cf)
+			require.Equal(t, orig.ID(), cf.ID())
+			require.Same(t, seClone, cf.Source())
+			require.Same(t, eeClone, cf.Target())
+		})
+
+	t.Run("nil original panics",
+		func(t *testing.T) {
+			require.Panics(t, func() {
+				_ = flow.MustCloneFlow(nil, seClone, eeClone)
+			})
+		})
+}
+
 func TestBaseNodeCloneStub(t *testing.T) {
 	bn, err := flow.NewBaseNode("bn")
 	require.NoError(t, err)
