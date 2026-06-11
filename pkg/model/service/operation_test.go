@@ -133,4 +133,46 @@ func TestOperation(t *testing.T) {
 
 			require.NoError(t, o.Run(context.Background()))
 		})
+
+	t.Run("clone shares definition, isolates message state",
+		func(t *testing.T) {
+			ctx := context.Background()
+
+			localIn := bpmncommon.MustMessage("clone_in_msg",
+				data.MustItemDefinition(values.NewVariable(42)))
+			localOut := bpmncommon.MustMessage("clone_out_msg",
+				data.MustItemDefinition(values.NewVariable(100)))
+
+			o := service.MustOperation("clone me", localIn, localOut, &exctr{})
+
+			clone := o.Clone()
+
+			// identity preserved, independent object.
+			require.NotSame(t, o, clone)
+			require.Equal(t, o.ID(), clone.ID())
+			require.Equal(t, o.Name(), clone.Name())
+			require.Equal(t, o.Type(), clone.Type())
+
+			// message ids preserved, but carriers are fresh per-instance.
+			require.Equal(t,
+				o.IncomingMessage().Item().ID(),
+				clone.IncomingMessage().Item().ID())
+			require.NotSame(t,
+				o.IncomingMessage().Item(),
+				clone.IncomingMessage().Item())
+
+			// running the clone mutates only the clone's outgoing message.
+			require.NoError(t, clone.Run(ctx))
+			require.Equal(t, 42, clone.OutgoingMessage().Item().Structure().Get(ctx))
+			require.Equal(t, 100, o.OutgoingMessage().Item().Structure().Get(ctx))
+		})
+
+	t.Run("clone with empty messages",
+		func(t *testing.T) {
+			o := service.MustOperation("empty clone", nil, nil, &exctr{})
+
+			clone := o.Clone()
+			require.Nil(t, clone.IncomingMessage())
+			require.Nil(t, clone.OutgoingMessage())
+		})
 }

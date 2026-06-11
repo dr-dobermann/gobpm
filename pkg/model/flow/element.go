@@ -112,6 +112,17 @@ func NewBaseElement(name string, opts ...options.Option) (*BaseElement, error) {
 		nil
 }
 
+// cloneIdentity returns a copy of fe that preserves its identity (the embedded
+// foundation.BaseElement id/docs and the name) but clears the container
+// back-reference, so a cloned node is not bound to the template's container.
+func (fe *BaseElement) cloneIdentity() BaseElement {
+	return BaseElement{
+		BaseElement: fe.BaseElement,
+		name:        fe.name,
+		container:   nil,
+	}
+}
+
 // Name returns the name of the BaseElement.
 func (fe *BaseElement) Name() string {
 	return fe.name

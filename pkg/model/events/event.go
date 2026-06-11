@@ -154,6 +154,19 @@ func newEvent(
 	return &e, nil
 }
 
+// clone returns a per-instance copy of the Event: properties, definitions and
+// triggers are shared by reference (immutable configuration); the BaseNode shell
+// is fresh (empty flows, no container); the dataPath runtime field starts zero.
+func (e *Event) clone() Event {
+	return Event{
+		BaseNode:    e.CloneShell(),
+		properties:  e.properties,
+		definitions: e.definitions,
+		triggers:    e.triggers,
+		dataPath:    scope.DataPath(""),
+	}
+}
+
 // Properties returns a copy of the Event properties.
 func (e Event) Properties() []*data.Property {
 	return append([]*data.Property{}, e.properties...)
@@ -224,6 +237,19 @@ func newCatchEvent(
 		dataOutputs:        map[string]*data.Parameter{},
 		parallelMultiple:   e.triggers.Count() > 1 && parallel,
 	}, nil
+}
+
+// clone returns a per-instance copy of the catchEvent: the embedded Event is
+// cloned (fresh shell + dataPath, shared config), and the data outputs / output
+// set / output associations are shared by reference as immutable configuration.
+func (ce *catchEvent) clone() catchEvent {
+	return catchEvent{
+		Event:              ce.Event.clone(),
+		dataOutputs:        ce.dataOutputs,
+		outputSet:          ce.outputSet,
+		outputAssociations: ce.outputAssociations,
+		parallelMultiple:   ce.parallelMultiple,
+	}
 }
 
 // IsParallelMultiple returns parallelMultiple settings of the catchEvent.
@@ -312,6 +338,18 @@ func newThrowEvent(
 		inputAssociations: []*data.Association{},
 		dataInputs:        map[string]*data.Parameter{},
 	}, nil
+}
+
+// clone returns a per-instance copy of the throwEvent: the embedded Event is
+// cloned (fresh shell + dataPath, shared config), and the data inputs / input
+// set / input associations are shared by reference as immutable configuration.
+func (te *throwEvent) clone() throwEvent {
+	return throwEvent{
+		Event:             te.Event.clone(),
+		dataInputs:        te.dataInputs,
+		inputSet:          te.inputSet,
+		inputAssociations: te.inputAssociations,
+	}
 }
 
 // ---------------- exec.NodeDataProducer interface ----------------------------

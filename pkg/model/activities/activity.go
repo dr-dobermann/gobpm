@@ -79,6 +79,28 @@ func newActivity(
 	return cfg.newActivity()
 }
 
+// clone returns a per-instance copy of the activity: every configuration field
+// (loop characteristics, roles, default flow, properties, IoSpec, data
+// associations, boundary events, quantities, flags) is shared by reference; the
+// BaseNode shell is fresh (empty flows, no container) and the dataPath runtime
+// field starts zero.
+func (a *activity) clone() activity {
+	return activity{
+		BaseNode:            a.CloneShell(),
+		loopCharacteristics: a.loopCharacteristics,
+		roles:               a.roles,
+		defaultFlow:         a.defaultFlow,
+		properties:          a.properties,
+		IoSpec:              a.IoSpec,
+		dataAssociations:    a.dataAssociations,
+		dataPath:            scope.DataPath(""),
+		boundaryEvents:      a.boundaryEvents,
+		startQuantity:       a.startQuantity,
+		completionQuantity:  a.completionQuantity,
+		isForCompensation:   a.isForCompensation,
+	}
+}
+
 // Roles returns list of ResourceRoles of the activity.
 func (a *activity) Roles() []*hi.ResourceRole {
 	return maps.Values(a.roles)

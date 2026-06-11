@@ -106,6 +106,34 @@ func MustOperation(
 	return o
 }
 
+// Clone returns a per-instance copy of the Operation. The immutable definition —
+// the implementation, the error-class set, the name and the id — is shared by
+// reference, while the incoming and outgoing messages get fresh per-instance
+// carriers (via Message.Clone) so the exec-time mutation of their item values is
+// not shared across concurrent instances. Cloning a valid Operation cannot
+// produce an invalid one, so the helper does not error (mirroring Message.Clone
+// and data.Value.Clone).
+func (o *Operation) Clone() *Operation {
+	var inMsg, outMsg *bpmncommon.Message
+
+	if o.inMessage != nil {
+		inMsg = o.inMessage.Clone()
+	}
+
+	if o.outMessage != nil {
+		outMsg = o.outMessage.Clone()
+	}
+
+	return &Operation{
+		BaseElement:    *foundation.MustBaseElement(foundation.WithID(o.ID())),
+		name:           o.name,
+		inMessage:      inMsg,
+		outMessage:     outMsg,
+		errors:         o.errors,
+		implementation: o.implementation,
+	}
+}
+
 // Name returns the name of the Operation.
 func (o *Operation) Name() string {
 	return o.name

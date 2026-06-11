@@ -137,6 +137,17 @@ func New(opts ...options.Option) (*Gateway, error) {
 	return gc.newGateway()
 }
 
+// clone returns a per-instance copy of the Gateway: the direction and the
+// default flow are shared by reference as immutable configuration, and the
+// BaseNode shell is fresh (empty flows, no container).
+func (g *Gateway) clone() Gateway {
+	return Gateway{
+		defaultFlow: g.defaultFlow,
+		direction:   g.direction,
+		BaseNode:    g.CloneShell(),
+	}
+}
+
 // DefaultFlow return default flow of the gateway.
 func (g *Gateway) DefaultFlow() *flow.SequenceFlow {
 	return g.defaultFlow
@@ -170,6 +181,15 @@ func (g *Gateway) UpdateDefaultFlow(f *flow.SequenceFlow) error {
 	return errs.New(
 		errs.M("there is no outgoing flow #%s", f.ID()),
 		errs.C(errorClass, errs.ObjectNotFound))
+}
+
+// MustUpdateDefaultFlow is the panicking form of UpdateDefaultFlow for callers
+// that pass a flow already known to be a valid outgoing flow (e.g. per-instance
+// snapshot cloning). It panics if UpdateDefaultFlow returns an error.
+func (g *Gateway) MustUpdateDefaultFlow(f *flow.SequenceFlow) {
+	if err := g.UpdateDefaultFlow(f); err != nil {
+		errs.Panic(err)
+	}
 }
 
 // Direction returns the gateway's direction.

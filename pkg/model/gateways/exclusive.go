@@ -42,6 +42,17 @@ func NewExclusiveGateway(opts ...options.Option) (*ExclusiveGateway, error) {
 		nil
 }
 
+// Clone returns a per-instance copy of the ExclusiveGateway: the embedded
+// Gateway is cloned (direction and default flow shared by reference, fresh
+// shell, empty flows, no container) and the scope runtime field starts nil (set
+// per instance at Exec time).
+func (eg *ExclusiveGateway) Clone() flow.Node {
+	return &ExclusiveGateway{
+		Gateway: eg.clone(),
+		scope:   nil,
+	}
+}
+
 // Exec runs single node and returns its valid
 // output sequence flows on success or error on failure.
 //

@@ -25,6 +25,17 @@ type (
 
 		AcceptIncomingFlow(sf *SequenceFlow) error
 	}
+
+	// DefaultFlowHolder is implemented by the Nodes that carry a default
+	// sequence flow (gateways). Per-instance snapshot cloning uses it to remap
+	// the default flow onto the cloned edge once the graph has been relinked.
+	DefaultFlowHolder interface {
+		Node
+
+		DefaultFlow() *SequenceFlow
+		UpdateDefaultFlow(f *SequenceFlow) error
+		MustUpdateDefaultFlow(f *SequenceFlow)
+	}
 )
 
 // SequenceFlow is used to show the order of Flow Elements in a Process or
@@ -128,6 +139,64 @@ func newSequenceFlow(
 	}
 
 	return sf, nil
+}
+
+// CloneFlow rebuilds an edge between two cloned nodes for a per-instance node
+// graph. It creates a SequenceFlow that preserves orig's id and condition, sets
+// its source/target to the passed clones and wires it into both nodes' flow maps
+// via AddFlow. Unlike newSequenceFlow it performs no container insertion: clones
+// carry no shared container, so a Container().Add must not fire.
+func CloneFlow(
+	orig *SequenceFlow,
+	src SequenceSource,
+	trg SequenceTarget,
+) (*SequenceFlow, error) {
+	if orig == nil {
+		return nil,
+			errs.New(
+				errs.M("CloneFlow: a nil original SequenceFlow isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if src == nil {
+		return nil,
+			errs.New(
+				errs.M("CloneFlow: a nil flow source isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if trg == nil {
+		return nil,
+			errs.New(
+				errs.M("CloneFlow: a nil flow target isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	sf := SequenceFlow{
+		BaseElement:         orig.cloneIdentity(),
+		source:              src,
+		target:              trg,
+		conditionExpression: orig.conditionExpression,
+	}
+
+	// dir is a valid constant and sf is non-nil, so AddFlow cannot fail here.
+	_ = src.AddFlow(&sf, data.Output)
+	// dir is a valid constant and sf is non-nil, so AddFlow cannot fail here.
+	_ = trg.AddFlow(&sf, data.Input)
+
+	return &sf, nil
+}
+
+// MustCloneFlow is the panicking form of CloneFlow for callers that have
+// already validated their arguments (e.g. per-instance snapshot cloning over a
+// consistent graph). It panics if CloneFlow returns an error.
+func MustCloneFlow(orig *SequenceFlow, src SequenceSource, trg SequenceTarget) *SequenceFlow {
+	sf, err := CloneFlow(orig, src, trg)
+	if err != nil {
+		errs.Panic(err)
+	}
+
+	return sf
 }
 
 // checkConnections tests if it possible to connect src with trg via sf.

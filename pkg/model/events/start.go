@@ -103,6 +103,16 @@ func (se *StartEvent) Node() flow.Node {
 	return se
 }
 
+// Clone returns a per-instance copy of the StartEvent: the embedded catchEvent
+// is cloned (config shared by reference, fresh Event shell, zero dataPath, empty
+// flows, no container) and the interrupting flag is copied as configuration.
+func (se *StartEvent) Clone() flow.Node {
+	return &StartEvent{
+		catchEvent:   se.clone(),
+		interrupting: se.interrupting,
+	}
+}
+
 // EventClass returns the event class.
 func (se *StartEvent) EventClass() flow.EventClass {
 	return flow.StartEventClass

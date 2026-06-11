@@ -68,7 +68,7 @@ tidy-check → lint → build → race tests → **diff-coverage gate** → govu
 all modules. Run it before pushing — if it's green, CI is green.
 
 The **diff-coverage gate** (`make cover-check`, SRD-002) fails when the lines a change
-adds/modifies are covered below `COVER_MIN` (80% now, rising toward 100). It judges
+adds/modifies are covered below `COVER_MIN` (95% now, rising toward 100). It judges
 only changed lines — reusing the `coverage.txt` `test-all` writes — so the untouched-code
 coverage backlog never blocks a PR. The gate runs locally (`make ci`) and in CI via the
 same `cmd/covercheck` binary, preserving local↔CI parity.
