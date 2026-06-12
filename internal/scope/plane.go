@@ -236,6 +236,16 @@ func (p *Plane) CloseScope(path DataPath) error {
 	return nil
 }
 
+// opened reports whether the container scope at path is open.
+func (p *Plane) opened(path DataPath) bool {
+	p.m.Lock()
+	defer p.m.Unlock()
+
+	_, ok := p.scopes[path]
+
+	return ok
+}
+
 // getData walks from `from` parent-ward to the root, returning the first
 // item the finder matches. The caller holds the plane's mutex.
 func (p *Plane) getData(
