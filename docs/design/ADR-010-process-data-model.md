@@ -166,8 +166,11 @@ of exactly one execution of one node by one track:
   per the standard's copy semantics.
 - **Isolated while executing.** The node works only on its frame: input and
   output parameter instances and execution carriers (a user task's response
-  channel, a gateway's evaluation context) live in the frame, keyed by the
-  execution's identity — never by node name. Two tracks crossing one node
+  channel, a gateway's evaluation context) live in the frame or as locals of
+  the executing code — never on the node, never keyed by node name. The frame
+  carries what crosses the execution's stage boundaries (load → execute →
+  commit); a carrier confined to one stage is per-execution by construction
+  as a local. Two tracks crossing one node
   get two frames; loop iterations get one frame each; multi-instance branches
   (future) get one frame per branch.
 - **Identified by (track, node).** A track executes sequentially, so at most
