@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/generated/mockrenv"
-	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -17,6 +16,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -135,10 +135,26 @@ func TestSrvTaskExec(t *testing.T) {
 
 	op := service.MustOperation("hello user", in, out, hello)
 
+	// the input data is missing from the execution's resolution → Exec fails.
+	bad := mockrenv.NewMockRuntimeEnvironment(t)
+	bad.EXPECT().
+		GetDataByID("user_name").
+		Return(nil, fmt.Errorf("not found"))
+
+	est, err := activities.NewServiceTask("error hello",
+		op, activities.WithoutParams())
+	require.NoError(t, err)
+
+	_, err = est.Exec(context.Background(), bad)
+	require.Error(t, err)
+	t.Log("service failed as expected with error:\n", err)
+
+	// happy path: the input resolves, the operation runs on its
+	// per-execution clone, and the result reaches the frame as a put.
 	re := mockrenv.NewMockRuntimeEnvironment(t)
 
 	re.EXPECT().
-		GetDataByID(scope.EmptyDataPath, "user_name").
+		GetDataByID("user_name").
 		Return(data.MustParameter("user_name",
 			data.MustItemAwareElement(
 				data.MustItemDefinition(
@@ -147,33 +163,33 @@ func TestSrvTaskExec(t *testing.T) {
 				data.ReadyDataState)),
 			nil)
 
-	// service task without output parameter
-	est, err := activities.NewServiceTask("error hello",
-		op, activities.WithoutParams())
-	require.NoError(t, err)
+	var put data.Data
 
-	_, err = est.Exec(context.Background(), re)
-	require.Error(t, err)
-	t.Log("service failed as expected with error:\n", err)
+	re.EXPECT().
+		Put(mock.Anything).
+		RunAndReturn(func(dd ...data.Data) error {
+			require.Len(t, dd, 1)
+			put = dd[0]
 
-	// service task with output parameter
+			return nil
+		})
+
 	st, err := activities.NewServiceTask("hello", op, activities.WithoutParams())
 	require.NoError(t, err)
-
-	outs := data.MustSet("default_output")
-	require.NoError(t, st.IoSpec.AddSet(outs, data.Output))
-
-	outp := data.MustParameter("hello string",
-		data.MustItemAwareElement(
-			data.MustItemDefinition(
-				values.NewVariable(""),
-				foundation.WithID("hello_str")),
-			data.UnavailableDataState))
-
-	require.NoError(t, st.IoSpec.AddParameter(outp, data.Output))
-	outs.AddParameter(outp, data.DefaultSet)
 
 	flows, err := st.Exec(context.Background(), re)
 	require.NoError(t, err)
 	require.Empty(t, flows)
+
+	// the operation result is handed to the frame, keyed by the outgoing
+	// message item id; the producer stage copies it into the output instance.
+	require.NotNil(t, put)
+	require.Equal(t, "hello_str", put.ItemDefinition().ID())
+	require.Equal(t, "  >>>> Hello, dr.Dobermann",
+		put.Value().Get(context.Background()))
+
+	// the NODE's operation message stays untouched — the run mutated the
+	// per-execution clone only (ADR-010 §2.3).
+	require.Equal(t, "",
+		out.Item().Structure().Get(context.Background()))
 }

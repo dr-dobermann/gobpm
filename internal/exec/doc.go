@@ -69,35 +69,27 @@ Instance receives a copy of the processed Event.
 
 ##Data management
 
-Acces to the Instance's data provided by object implementing Scope interface.
-Scope refers to the storage of available Data objects.
+Persistent process data lives in the Instance's data plane (scope.Scope): a
+tree of container scopes rooted at the process scope, holding the process
+properties and data committed by node executions (ADR-010). Sub-processes
+will attach child container scopes to the tree.
 
-The initial Scope is created by an Instance of the process. It is filled with
-process properties, input data parameters, and DataObjects.
+Each node execution runs on its own scope.Frame keyed by (track, node):
 
-Scopes can be organized into a tree structure, with the root of the tree
-being the started Instance and the subsequent nodes being sub-processes
-and tasks.
-
-The data flow during Instance runtime follows these steps:
-
-When a Node starts execution:
-  - If the Node supports the NodeDataLoader interface, the Scope creates a new
-    data path from its root and asks the Node to fill its data into it with
-	RegisterData call:
-      - The Node loads its Parameters and Properties.
-      - After the Node execution finishes:
-        - It stores output data parameters in the root of the Scope.
-        - It fills all outgoing data associations.
-  - The Scope deletes all node's data and deletes the data path.
-
-When a Node tries to retrieve a value from the Scope, it could take the
-following steps:
-  - The Scope looks for the Name in the Node's data path.
-  - If the Data name isn't in the data path, the Scope tries to look for the
-    name in the upper data path until it reaches the root data path.
-  - If the Scope has a parent Scope, it tries to get the data from the root of
-    the parent Scope.
+  - Before the node executes, its NodeDataConsumer.LoadData (if implemented)
+    instantiates the node's inputs, outputs and properties in the frame as
+    per-execution copies of the node's immutable definitions, and fills the
+    inputs from the incoming data associations.
+  - The node executes against a per-execution RuntimeEnvironment: reads
+    resolve frame-first (inputs, properties, node-produced puts) and then
+    walk the container scopes from the frame's attachment point up to the
+    root; results go to the frame (Put or output instances).
+  - After a successful execution, its NodeDataProducer.UploadData (if
+    implemented) fills the output instances and pushes the outgoing data
+    associations; the track then commits the frame — outputs and puts reach
+    the container scope as ONE atomic batch.
+  - On any failure the frame is discarded: the container scope observes
+    nothing of the failed execution.
 */
 
 // Package exec provides node execution interfaces and implementations.

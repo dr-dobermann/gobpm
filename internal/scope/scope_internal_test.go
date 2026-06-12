@@ -51,12 +51,12 @@ func mustPath(t *testing.T, p string) DataPath {
 
 func TestNewPlane(t *testing.T) {
 	t.Run("invalid root", func(t *testing.T) {
-		_, err := NewPlane(DataPath("no-slash"), nil)
+		_, err := New(DataPath("no-slash"), nil)
 		require.Error(t, err)
 	})
 
 	t.Run("valid root, nil supplier", func(t *testing.T) {
-		p, err := NewPlane(mustPath(t, "/proc"), nil)
+		p, err := New(mustPath(t, "/proc"), nil)
 		require.NoError(t, err)
 		require.Equal(t, mustPath(t, "/proc"), p.Root())
 	})
@@ -66,7 +66,7 @@ func TestPlaneCommitAndGet(t *testing.T) {
 	root := mustPath(t, "/proc")
 	child := mustPath(t, "/proc/sub")
 
-	p, err := NewPlane(root, nil)
+	p, err := New(root, nil)
 	require.NoError(t, err)
 	require.NoError(t, p.OpenScope(child))
 
@@ -130,7 +130,7 @@ func TestPlaneCommitAndGet(t *testing.T) {
 func TestPlaneCommitValidation(t *testing.T) {
 	root := mustPath(t, "/proc")
 
-	p, err := NewPlane(root, nil)
+	p, err := New(root, nil)
 	require.NoError(t, err)
 
 	t.Run("nil data rejected, nothing applied", func(t *testing.T) {
@@ -202,7 +202,7 @@ func TestPlaneOpenClose(t *testing.T) {
 	child := mustPath(t, "/proc/sub")
 	grand := mustPath(t, "/proc/sub/inner")
 
-	p, err := NewPlane(root, nil)
+	p, err := New(root, nil)
 	require.NoError(t, err)
 
 	t.Run("open child of root", func(t *testing.T) {
@@ -219,6 +219,10 @@ func TestPlaneOpenClose(t *testing.T) {
 
 	t.Run("orphan open rejected", func(t *testing.T) {
 		require.Error(t, p.OpenScope(mustPath(t, "/proc/no-parent/inner")))
+	})
+
+	t.Run("invalid path open rejected", func(t *testing.T) {
+		require.Error(t, p.OpenScope(DataPath("bad")))
 	})
 
 	t.Run("close with open child rejected", func(t *testing.T) {
@@ -246,7 +250,7 @@ func TestPlaneOpenClose(t *testing.T) {
 
 func TestPlaneRootDataPath(t *testing.T) {
 	// a plane rooted at "/" contains every valid path.
-	p, err := NewPlane(RootDataPath, nil)
+	p, err := New(RootDataPath, nil)
 	require.NoError(t, err)
 
 	require.NoError(t, p.OpenScope(mustPath(t, "/any")))
@@ -269,7 +273,7 @@ func TestPlaneConcurrent(t *testing.T) {
 
 	root := mustPath(t, "/proc")
 
-	p, err := NewPlane(root, nil)
+	p, err := New(root, nil)
 	require.NoError(t, err)
 
 	seed := testData(t, "seed", 0)

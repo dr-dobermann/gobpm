@@ -6,7 +6,6 @@ import (
 
 	"github.com/dr-dobermann/gobpm/internal/exec"
 	"github.com/dr-dobermann/gobpm/internal/renv"
-	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -15,7 +14,6 @@ import (
 
 // ExclusiveGateway represents a BPMN exclusive gateway.
 type ExclusiveGateway struct {
-	scope scope.Scope
 	Gateway
 }
 
@@ -44,12 +42,12 @@ func NewExclusiveGateway(opts ...options.Option) (*ExclusiveGateway, error) {
 
 // Clone returns a per-instance copy of the ExclusiveGateway: the embedded
 // Gateway is cloned (direction and default flow shared by reference, fresh
-// shell, empty flows, no container) and the scope runtime field starts nil (set
-// per instance at Exec time).
+// shell, empty flows, no container). The gateway holds no execution data —
+// condition evaluation reads variables through the per-execution environment
+// (ADR-010 §2.4).
 func (eg *ExclusiveGateway) Clone() flow.Node {
 	return &ExclusiveGateway{
 		Gateway: eg.clone(),
-		scope:   nil,
 	}
 }
 
@@ -73,8 +71,6 @@ func (eg *ExclusiveGateway) Exec(
 	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
 	flows := []*flow.SequenceFlow{}
-
-	eg.scope = re
 
 	for _, of := range eg.Outgoing() {
 		cond := of.Condition()
@@ -139,7 +135,7 @@ func (eg *ExclusiveGateway) checkCondition(
 				errs.D("exclusive_gateway_id", eg.ID()))
 	}
 
-	res, err := re.ExpressionEngine().Evaluate(ctx, cond, eg)
+	res, err := re.ExpressionEngine().Evaluate(ctx, cond, re)
 	if err != nil {
 		return false,
 			errs.New(
@@ -153,34 +149,9 @@ func (eg *ExclusiveGateway) checkCondition(
 	return res.Get(ctx).(bool), nil
 }
 
-// ----------------------- data.Source interface ------------------------------
-
-// Find returns Data object named name.
-func (eg *ExclusiveGateway) Find(
-	_ context.Context,
-	name string,
-) (data.Data, error) {
-	if eg.scope == nil {
-		return nil,
-			errs.New(
-				errs.M("object Scope isn't set"),
-				errs.C(errorClass, errs.InvalidState),
-				errs.D("exclusive_gate_id", eg.ID()))
-	}
-
-	d, err := eg.scope.GetData(eg.scope.Root(), name)
-	if err != nil {
-		return nil, err
-	}
-
-	return d, nil
-}
-
 // ----------------------------------------------------------------------------
 
 // interface check
 var (
 	_ exec.NodeExecutor = (*ExclusiveGateway)(nil)
-
-	_ data.Source = (*ExclusiveGateway)(nil)
 )

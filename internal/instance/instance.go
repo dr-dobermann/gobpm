@@ -12,8 +12,6 @@ package instance
 import (
 	"context"
 	"fmt"
-	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -22,7 +20,6 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/interactor"
-	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -34,8 +31,6 @@ import (
 
 const (
 	errorClass = "INSTANCE_ERROR"
-
-	runtimeVars = "RUNTIME"
 
 	// StartedAt represents the started time variable name.
 	StartedAt = "STARTED_AT"
@@ -77,9 +72,6 @@ func (s State) String() string {
 	}[s]
 }
 
-// dataFinder is used to find Data in Scope by Name or by Id.
-type dataFinder func(data.Data) bool
-
 // Instance represents a process instance for execution.
 type Instance struct {
 	startTime time.Time
@@ -90,31 +82,34 @@ type Instance struct {
 	engrenv.EngineRuntime
 	rr                  interactor.Registrator
 	parentEventProducer eventproc.EventProducer
-	parentScope         scope.Scope
+	// dataPlane is the instance's container-scope tree — the single
+	// authority for persistent process data (ADR-010 §2.2). It owns its own
+	// serialization; the instance never holds live data itself.
+	dataPlane *scope.Scope
 	// tracks is the live track registry, owned by loop() (not guarded by m).
 	tracks map[string]*track
 	// tracksSnap is a copy-on-write snapshot for lock-free GetTokens /
 	// TokenHistory reads.
 	tracksSnap atomic.Pointer[[]*track]
 	// lastErr is a fatal fork-construct error, if any.
-	lastErr      atomic.Pointer[error]
-	scopes       map[scope.DataPath]map[string]data.Data
-	s            *snapshot.Snapshot
-	events       chan trackEvent // tracks -> loop()
-	loopDone     chan struct{}   // closed when loop() exits
-	now          func() time.Time
-	runtimeScope scope.DataPath
-	rootScope    scope.DataPath
+	lastErr   atomic.Pointer[error]
+	s         *snapshot.Snapshot
+	events    chan trackEvent // tracks -> loop()
+	loopDone  chan struct{}   // closed when loop() exits
+	now       func() time.Time
+	rootScope scope.DataPath
 	foundation.BaseElement
 	trackCount atomic.Int64
-	m          sync.RWMutex  // guards scopes + tokens (NOT lifecycle state/tracks)
 	state      atomic.Uint32 // written only by loop(), read via State()
 }
 
 // New creates a new Instance from the Snapshot s and sets state to Created.
+// parentRoot is the container-scope path the instance's root scope attaches
+// under (sub-process / call-activity nesting, future); scope.EmptyDataPath
+// roots the instance at the top.
 func New(
 	s *snapshot.Snapshot,
-	parentScope scope.Scope,
+	parentRoot scope.DataPath,
 	er engrenv.EngineRuntime,
 	ep eventproc.EventProducer,
 	rr interactor.Registrator,
@@ -161,17 +156,15 @@ func New(
 		EngineRuntime:       er,
 		s:                   s,
 		now:                 er.Clock().Now,
-		scopes:              map[scope.DataPath]map[string]data.Data{},
 		tracks:              map[string]*track{},
 		events:              make(chan trackEvent),
 		loopDone:            make(chan struct{}),
-		parentScope:         parentScope,
 		parentEventProducer: ep,
 		rr:                  rr,
 	}
 	inst.state.Store(uint32(Created))
 
-	if err := inst.loadProperties(parentScope); err != nil {
+	if err := inst.loadProperties(parentRoot); err != nil {
 		return nil, errs.New(
 			errs.M("couldn't load process'es properties into Instance scope"),
 			errs.E(err),
@@ -191,39 +184,32 @@ func New(
 	return &inst, nil
 }
 
-// loadProperties sets the Instance rootScope name and load process'es
-// properties into the instance's root Scope.
-func (inst *Instance) loadProperties(parentScope scope.Scope) error {
+// loadProperties creates the instance's data plane rooted under parentRoot
+// and commits the process properties into the root container scope.
+func (inst *Instance) loadProperties(parentRoot scope.DataPath) error {
+	root := parentRoot
+	if root == scope.EmptyDataPath {
+		root = scope.RootDataPath
+	}
+
+	var err error
+
+	inst.rootScope, err = root.Append(inst.s.ProcessName)
+	if err != nil {
+		return fmt.Errorf("couldn't create instance's scope data path: %w", err)
+	}
+
+	inst.dataPlane, err = scope.New(inst.rootScope, inst)
+	if err != nil {
+		return fmt.Errorf("couldn't create instance's data plane: %w", err)
+	}
+
 	dd := make([]data.Data, 0, len(inst.s.Properties))
 	for _, p := range inst.s.Properties {
 		dd = append(dd, p)
 	}
 
-	inst.rootScope = scope.RootDataPath
-	if parentScope != nil {
-		inst.rootScope = parentScope.Root()
-	}
-
-	var err error
-
-	inst.rootScope, err = inst.rootScope.Append(inst.s.ProcessName)
-	if err != nil {
-		return fmt.Errorf("couldn't create instance's scope data path: %w", err)
-	}
-
-	inst.runtimeScope, err = inst.rootScope.Append(runtimeVars)
-	if err != nil {
-		return fmt.Errorf(
-			"couldn't create instance's scope runtime variables data path: %w",
-			err)
-	}
-
-	inst.scopes[inst.rootScope] = map[string]data.Data{}
-	if err := inst.addData(inst.rootScope, dd...); err != nil {
-		return err
-	}
-
-	return nil
+	return inst.dataPlane.Commit(inst.rootScope, dd...)
 }
 
 // State returns current state of the Instance.
@@ -501,77 +487,10 @@ func (inst *Instance) createTracks() error {
 	return nil
 }
 
-// addData adds data to scope named path
-func (inst *Instance) addData(path scope.DataPath, dd ...data.Data) error {
-	inst.m.RLock()
-	vv, ok := inst.scopes[path]
-	inst.m.RUnlock()
-
-	if !ok {
-		vv = make(map[string]data.Data)
-	}
-
-	for _, d := range dd {
-		if d == nil {
-			return fmt.Errorf("data is empty")
-		}
-
-		dn := strings.TrimSpace(d.Name())
-		if dn == "" {
-			return fmt.Errorf("couldn't add data with no name")
-		}
-
-		vv[dn] = d
-	}
-
-	inst.m.Lock()
-	inst.scopes[path] = vv
-	inst.m.Unlock()
-
-	return nil
-}
-
-// getData is looking for data.Data in exec.Scope (Instance).
-// if there is no data in path, then getData looks upper path
-// until it checks instance root path.
-func (inst *Instance) getData(
-	path scope.DataPath,
-	finder dataFinder,
-) (data.Data, error) {
-	if err := path.Validate(); err != nil {
-		return nil, err
-	}
-
-	var err error
-
-	for {
-		s, ok := inst.scopes[path]
-		if ok {
-			for _, d := range s {
-				if finder(d) {
-					return d, nil
-				}
-			}
-		}
-
-		if path == scope.RootDataPath {
-			break
-		}
-
-		path, err = path.DropTail()
-		if err != nil {
-			return nil,
-				fmt.Errorf("couldn't get upper level for Scope %q: %w",
-					path.String(), err)
-		}
-	}
-
-	return nil,
-		fmt.Errorf("data not found")
-}
-
-// getRuntimeVar tries to find the Instance's runtime variable by its name.
-func (inst *Instance) getRuntimeVar(name string) (data.Data, error) {
+// RuntimeVar implements scope.RuntimeVarsSupplier: the data plane delegates
+// reads under the reserved RUNTIME subtree here, so every read observes the
+// live engine state (SRD-007 FR-9).
+func (inst *Instance) RuntimeVar(name string) (data.Data, error) {
 	var d data.Value
 
 	switch name {
@@ -696,184 +615,7 @@ func (inst *Instance) PropagateEvent(
 	return nil
 }
 
-// -------------------- exec.Scope interface -----------------------------------
-
-// Root returns the root dataPath of the Scope.
-func (inst *Instance) Root() scope.DataPath {
-	return inst.rootScope
-}
-
-// Scopes returns list of scopes controlled by Scope.
-func (inst *Instance) Scopes() []scope.DataPath {
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
-	return maps.Keys(inst.scopes)
-}
-
-// AddData adds data.Data to the NodeDataLoader scope or to rootScope
-// if NodeDataLoader is nil.
-func (inst *Instance) AddData(
-	ndl scope.NodeDataLoader,
-	vv ...data.Data,
-) error {
-	var (
-		dp  = inst.rootScope
-		err error
-	)
-
-	if ndl != nil {
-		dp, err = dp.Append(ndl.Name())
-		if err != nil {
-			return errs.New(
-				errs.M("couldn't form data path for node %q", ndl.Name()),
-				errs.E(err))
-		}
-	}
-
-	inst.m.Lock()
-	defer inst.m.Unlock()
-
-	return inst.addData(dp, vv...)
-}
-
-// GetData tries to return value of data.Data object with name Name.
-// dataPath selects the initial scope to look for the name.
-// If current Scope doesn't find the name, then it looks in upper
-// Scope until find or failed to find.
-//
-// To get the Instance's runtime variables only GetData could be used,
-// since runtime variables doesn't have Id.
-func (inst *Instance) GetData(
-	path scope.DataPath,
-	name string,
-) (data.Data, error) {
-	if path == inst.runtimeScope {
-		return inst.getRuntimeVar(name)
-	}
-
-	byName := func(d data.Data) bool {
-		return d.Name() == name
-	}
-
-	d, err := inst.getData(path, byName)
-	if err != nil {
-		return nil,
-			errs.New(
-				errs.M("couldn't get Data %q from scoppe %s",
-					name, inst.ID()),
-				errs.E(err))
-	}
-
-	return d, nil
-}
-
-// GetDataByID tries to find data.Data in the Scope by its ItemDefinition
-// ID. It starts looking for the data from dataPath and continues to locate
-// it until Scope root.
-func (inst *Instance) GetDataByID(
-	path scope.DataPath,
-	id string,
-) (data.Data, error) {
-	byID := func(d data.Data) bool {
-		return d.ItemDefinition().ID() == id
-	}
-
-	d, err := inst.getData(path, byID)
-	if err != nil {
-		return nil,
-			errs.New(
-				errs.M("couldn't get Data #%s from scope %s",
-					id, inst.ID()),
-				errs.E(err))
-	}
-
-	return d, nil
-}
-
-// LoadData loads a data data.Data into the Scope into
-// the dataPath.
-func (inst *Instance) LoadData(
-	ndl scope.NodeDataLoader,
-	vv ...data.Data,
-) error {
-	dp, err := inst.rootScope.Append(ndl.Name())
-	if err != nil {
-		return errs.New(
-			errs.M("couldn't create data path for node %q", ndl.Name()),
-			errs.E(err))
-	}
-
-	return inst.addData(dp, vv...)
-}
-
-// ExtendScope adds a new child Scope to the Scope and returns
-// its full path.
-func (inst *Instance) ExtendScope(
-	ndl scope.NodeDataLoader,
-) error {
-	dp, err := inst.rootScope.Append(ndl.Name())
-	if err != nil {
-		return errs.New(
-			errs.M("couldn't add scope for %q"),
-			errs.E(err))
-	}
-
-	inst.m.RLock()
-	_, found := inst.scopes[dp]
-	inst.m.RUnlock()
-
-	if found {
-		return errs.New(
-			errs.M("scope %q already existed", dp.String()))
-	}
-
-	inst.m.Lock()
-	inst.scopes[dp] = make(map[string]data.Data)
-	inst.m.Unlock()
-
-	if err := ndl.RegisterData(dp, inst); err != nil {
-		return errs.New(
-			errs.M("data loading for noed %q failed"),
-			errs.E(err))
-	}
-
-	return nil
-}
-
-// LeaveScope calls the Scope to clear all data saved by NodeDataLoader.
-func (inst *Instance) LeaveScope(ndl scope.NodeDataLoader) error {
-	if ndl == nil {
-		return errs.New(
-			errs.M("no NodeDataLoader"))
-	}
-
-	// get scope name for the NodeDataLoader
-	dp, err := inst.rootScope.Append(ndl.Name())
-	if err != nil {
-		return errs.New(
-			errs.M("couldn't compose data path for Node %q", ndl.Name()),
-			errs.E(err))
-	}
-
-	inst.m.Lock()
-	defer inst.m.Unlock()
-	vv, ok := inst.scopes[dp]
-	if !ok {
-		return nil
-	}
-
-	vnn := maps.Keys(vv)
-	for _, v := range vnn {
-		delete(inst.scopes[dp], v)
-	}
-
-	delete(inst.scopes, dp)
-
-	return nil
-}
-
-// ------------------ exec.RuntimeEnvironment interface ------------------------
+// ------------------ instance identity & services -----------------------------
 
 // InstanceID returns ID of the Instance.
 func (inst *Instance) InstanceID() string {
@@ -893,7 +635,6 @@ func (inst *Instance) RenderRegistrator() interactor.Registrator {
 // =============================================================================
 // Interfaces check
 var (
-	_ eventproc.EventProducer = (*Instance)(nil)
-	_ renv.RuntimeEnvironment = (*Instance)(nil)
-	_ scope.Scope             = (*Instance)(nil)
+	_ eventproc.EventProducer   = (*Instance)(nil)
+	_ scope.RuntimeVarsSupplier = (*Instance)(nil)
 )

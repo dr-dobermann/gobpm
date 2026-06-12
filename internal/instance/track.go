@@ -461,6 +461,12 @@ func (t *track) synchronize(step *stepInfo) (proceed bool) {
 // executeNode tries to execute flow.Node n.
 // On succes it returns a list (probably empty) of outgoing sequence flows.
 // On failure it returns error.
+//
+// The execution runs on its own frame (ADR-010 §2.3): the consumer role
+// loads into it, the node executes against the per-execution environment,
+// the producer role fills it, and the frame commits atomically on success.
+// The deferred Discard is a no-op after a successful commit, so a failure at
+// ANY stage leaves the container scope untouched.
 func (t *track) executeNode(
 	ctx context.Context,
 	step *stepInfo,
@@ -473,60 +479,61 @@ func (t *track) executeNode(
 				errs.C(errorClass, errs.TypeCastingError))
 	}
 
-	if err := t.prepareNodeExecution(ctx, step); err != nil {
-		return nil, err
+	f, err := scope.NewFrame(
+		t.ID(), step.node.ID(),
+		t.instance.dataPlane.Root(), t.instance.dataPlane)
+	if err != nil {
+		return nil,
+			errs.New(
+				errs.M("couldn't create the execution frame for node %q",
+					step.node.Name()),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err))
 	}
 
-	nexts, err := t.executeNodeCore(ctx, step, ne)
+	defer f.Discard()
+
+	if perr := t.prepareNodeExecution(ctx, step, f); perr != nil {
+		return nil, perr
+	}
+
+	nexts, err := t.executeNodeCore(ctx, step, ne, f)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := t.finalizeNodeExecution(ctx, step, nexts); err != nil {
+	if err := t.finalizeNodeExecution(ctx, step, f); err != nil {
 		return nil, err
 	}
 
 	return nexts, nil
 }
 
-// prepareNodeExecution marks the step started, loads incoming data, and extends
-// scope for data-loader nodes.
+// prepareNodeExecution marks the step started and runs the consumer role:
+// the node loads its inputs and properties into the execution frame.
 func (t *track) prepareNodeExecution(
 	ctx context.Context,
 	step *stepInfo,
+	f *scope.Frame,
 ) error {
 	t.updateState(TrackExecutingStep)
 	step.state = StepStarted
 	t.record(TrackExecutingStep) // record this node visit (path + timing)
 
-	if err := t.loadIncomingData(ctx, step.node); err != nil {
-		return err
-	}
-
-	ndl, ok := step.node.(scope.NodeDataLoader)
-	if ok {
-		err := t.instance.ExtendScope(ndl)
-		if err != nil {
-			return err
-		}
-
-		defer func() {
-			_ = t.instance.LeaveScope(ndl)
-		}()
-	}
-
-	return nil
+	return t.loadIncomingData(ctx, step.node, f)
 }
 
-// executeNodeCore runs the node's executor and returns its outgoing flows.
+// executeNodeCore runs the node's executor against the per-execution
+// environment and returns its outgoing flows.
 func (t *track) executeNodeCore(
 	ctx context.Context,
 	step *stepInfo,
 	ne exec.NodeExecutor,
+	f *scope.Frame,
 ) ([]*flow.SequenceFlow, error) {
 	step.state = StepExecuting
 
-	nexts, err := ne.Exec(ctx, t.instance)
+	nexts, err := ne.Exec(ctx, newExecEnv(t.instance, f))
 	if err != nil {
 		return nil, err
 	}
@@ -534,15 +541,21 @@ func (t *track) executeNodeCore(
 	return nexts, nil
 }
 
-// finalizeNodeExecution marks the step ended and uploads its outgoing data.
+// finalizeNodeExecution marks the step ended, runs the producer role and
+// commits the execution frame — the only moment the node's results reach the
+// container scope, as one atomic batch.
 func (t *track) finalizeNodeExecution(
 	ctx context.Context,
 	step *stepInfo,
-	_ []*flow.SequenceFlow,
+	f *scope.Frame,
 ) error {
 	step.state = StepEnded
 
-	return t.uploadOutgoingData(ctx, step.node)
+	if err := t.uploadOutgoingData(ctx, step.node, f); err != nil {
+		return err
+	}
+
+	return f.Commit()
 }
 
 // checkFlows processes a node's outgoing flows. The track continues on the
@@ -618,24 +631,32 @@ func (t *track) unregisterEvent(n flow.Node) error {
 
 // loadIncomingData checks if the flow.Node n implements flow.NodeDataConsumer
 // and if so, calls the LoadData of the Node from input DataObjects.
-func (t *track) loadIncomingData(ctx context.Context, n flow.Node) error {
+func (t *track) loadIncomingData(
+	ctx context.Context,
+	n flow.Node,
+	f *scope.Frame,
+) error {
 	dc, ok := n.(scope.NodeDataConsumer)
 	if !ok {
 		return nil
 	}
 
-	return dc.LoadData(ctx)
+	return dc.LoadData(ctx, f)
 }
 
 // uploadOutgoingData checks if the flow.Node n impmements flow.NoadDataProducer
 // and if so, calls the UploadData of the Node.
-func (t *track) uploadOutgoingData(ctx context.Context, n flow.Node) error {
+func (t *track) uploadOutgoingData(
+	ctx context.Context,
+	n flow.Node,
+	f *scope.Frame,
+) error {
 	dp, ok := n.(scope.NodeDataProducer)
 	if !ok {
 		return nil
 	}
 
-	return dp.UploadData(ctx, t.instance)
+	return dp.UploadData(ctx, f)
 }
 
 // --------------------- exec.EventProcessor interface -------------------------

@@ -25,10 +25,10 @@ func (s *stubSupplier) RuntimeVar(name string) (data.Data, error) {
 
 func TestPlaneRuntimeVars(t *testing.T) {
 	root := mustPath(t, "/proc")
-	rtPath := mustPath(t, "/proc/" + RuntimeVarsSegment)
+	rtPath := mustPath(t, "/proc/"+RuntimeVarsSegment)
 
 	t.Run("supplier serves the reserved path", func(t *testing.T) {
-		p, err := NewPlane(root, &stubSupplier{t: t})
+		p, err := New(root, &stubSupplier{t: t})
 		require.NoError(t, err)
 
 		d, err := p.GetData(rtPath, "alive")
@@ -40,7 +40,7 @@ func TestPlaneRuntimeVars(t *testing.T) {
 	})
 
 	t.Run("reserved path is read-only with a supplier", func(t *testing.T) {
-		p, err := NewPlane(root, &stubSupplier{t: t})
+		p, err := New(root, &stubSupplier{t: t})
 		require.NoError(t, err)
 
 		require.Error(t, p.Commit(rtPath, testData(t, "x", 1)))
@@ -49,7 +49,7 @@ func TestPlaneRuntimeVars(t *testing.T) {
 
 	t.Run("reserved path is read-only without a supplier",
 		func(t *testing.T) {
-			p, err := NewPlane(root, nil)
+			p, err := New(root, nil)
 			require.NoError(t, err)
 
 			require.Error(t, p.Commit(rtPath, testData(t, "x", 1)))
@@ -63,7 +63,7 @@ func TestPlaneRuntimeVars(t *testing.T) {
 
 	t.Run("subtree under the reserved path is protected too",
 		func(t *testing.T) {
-			p, err := NewPlane(root, nil)
+			p, err := New(root, nil)
 			require.NoError(t, err)
 
 			sub := mustPath(t, "/proc/"+RuntimeVarsSegment+"/deep")

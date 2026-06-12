@@ -7,8 +7,6 @@ pkgname: "mock{{.SrcPackageName}}"
 packages:
   github.com/dr-dobermann/gobpm/internal/scope:
     interfaces:
-      Scope:
-      NodeDataLoader:
       NodeDataConsumer:
       NodeDataProducer:
   github.com/dr-dobermann/gobpm/internal/renv:

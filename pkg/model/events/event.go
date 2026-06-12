@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
+	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -121,9 +122,6 @@ type Event struct {
 	// This is an ordered set.
 	definitions []flow.EventDefinition
 
-	// dataPaht holds Event's data path in runtime's Scope.
-	dataPath scope.DataPath
-
 	// triggers holds information about TriggerTypes of the Event.
 	triggers set.Set[flow.EventTrigger]
 }
@@ -156,14 +154,14 @@ func newEvent(
 
 // clone returns a per-instance copy of the Event: properties, definitions and
 // triggers are shared by reference (immutable configuration); the BaseNode shell
-// is fresh (empty flows, no container); the dataPath runtime field starts zero.
+// is fresh (empty flows, no container). Execution data lives in the
+// per-execution frame, never on the node (ADR-010 §2.4).
 func (e *Event) clone() Event {
 	return Event{
 		BaseNode:    e.CloneShell(),
 		properties:  e.properties,
 		definitions: e.definitions,
 		triggers:    e.triggers,
-		dataPath:    scope.DataPath(""),
 	}
 }
 
@@ -192,21 +190,6 @@ func (e Event) NodeType() flow.NodeType {
 	return flow.EventNodeType
 }
 
-// DataPath returns the Event's data path in runtime Scope.
-func (e *Event) DataPath() scope.DataPath {
-	return e.dataPath
-}
-
-// getEventData returns a list of its Properties as list of data.Data.
-func (e *Event) getEventData() []data.Data {
-	pcnt := len(e.properties)
-	dd := make([]data.Data, pcnt)
-	for i, p := range e.properties {
-		dd[i] = p
-	}
-
-	return dd
-}
 
 // *****************************************************************************
 
@@ -257,15 +240,35 @@ func (ce catchEvent) IsParallelMultiple() bool {
 	return ce.parallelMultiple
 }
 
-// ------------------ exec.NodeDataProducer interface --------------------------
+// ------------------ scope.NodeDataProducer interface --------------------------
 
-// UploadData fills all catchEvent outputAssociations with its output values.
-func (ce *catchEvent) UploadData(ctx context.Context) error {
+// UploadData instantiates the catchEvent's outputs in the execution frame
+// (per-execution copies of the output definitions, carrying the values the
+// triggering event delivered) and fills all outputAssociations from those
+// instances.
+func (ce *catchEvent) UploadData(ctx context.Context, f *scope.Frame) error {
+	defs := make([]*data.Parameter, 0, len(ce.dataOutputs))
+	for _, def := range ce.dataOutputs {
+		defs = append(defs, def)
+	}
+
+	if err := f.InstantiateOutputs(defs); err != nil {
+		return errs.New(
+			errs.M("couldn't instantiate outputs of event %q", ce.Name()),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
+	outs := map[string]*data.Parameter{}
+	for _, o := range f.Outputs() {
+		outs[o.ItemDefinition().ID()] = o
+	}
+
 	ee := []error{}
 
 	for _, oa := range ce.outputAssociations {
 		for _, sid := range oa.SourcesIDs() {
-			out, ok := ce.dataOutputs[sid]
+			out, ok := outs[sid]
 			if !ok {
 				ee = append(ee,
 					errs.New(
@@ -352,9 +355,36 @@ func (te *throwEvent) clone() throwEvent {
 	}
 }
 
-// ---------------- exec.NodeDataProducer interface ----------------------------
+// ---------------- scope.NodeDataConsumer interface ----------------------------
 
-func (te *throwEvent) LoadData(ctx context.Context) error {
+// LoadData instantiates the throwEvent's inputs and properties in the
+// execution frame and fills the input instances from the incoming data
+// associations.
+func (te *throwEvent) LoadData(ctx context.Context, f *scope.Frame) error {
+	defs := make([]*data.Parameter, 0, len(te.dataInputs))
+	for _, def := range te.dataInputs {
+		defs = append(defs, def)
+	}
+
+	if err := f.InstantiateInputs(defs); err != nil {
+		return errs.New(
+			errs.M("couldn't instantiate inputs of event %q", te.Name()),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
+	if err := f.LoadProperties(te.properties); err != nil {
+		return errs.New(
+			errs.M("couldn't load properties of event %q", te.Name()),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
+	ins := map[string]*data.Parameter{}
+	for _, in := range f.Inputs() {
+		ins[in.ItemDefinition().ID()] = in
+	}
+
 	ee := []error{}
 
 	for _, ia := range te.inputAssociations {
@@ -367,7 +397,7 @@ func (te *throwEvent) LoadData(ctx context.Context) error {
 			continue
 		}
 
-		in, ok := te.dataInputs[ia.TargetItemDefID()]
+		in, ok := ins[ia.TargetItemDefID()]
 		if !ok {
 			ee = append(ee,
 				errs.New(
@@ -396,6 +426,19 @@ func (te *throwEvent) LoadData(ctx context.Context) error {
 						te.Name(), te.ID(), in.ItemDefinition().ID()),
 					errs.C(errorClass, errs.OperationFailed),
 					errs.E(err)))
+
+			continue
+		}
+
+		// a DataInput filled by its association becomes available (BPMN
+		// §10.4.2) — the state flip targets the frame instance only.
+		if err := in.UpdateState(data.ReadyDataState); err != nil {
+			ee = append(ee,
+				errs.New(
+					errs.M("node %q[%s] input #%s state update failed",
+						te.Name(), te.ID(), in.ItemDefinition().ID()),
+					errs.C(errorClass, errs.OperationFailed),
+					errs.E(err)))
 		}
 	}
 
@@ -411,23 +454,19 @@ func (te *throwEvent) LoadData(ctx context.Context) error {
 
 // emitEvent tries to evmit single event based on flow.EventDefinition ed.
 // On failure it returns error.
+//
+// The data items the definition depends on resolve through the execution
+// environment: the frame's input instances (loaded by LoadData) first, then
+// the container scopes.
 func (te *throwEvent) emitEvent(
-	s scope.Scope,
+	re renv.RuntimeEnvironment,
 	eProd eventproc.EventProducer,
 	ed flow.EventDefinition,
 ) error {
 	// get all dataItems the ed depends on
 	idd := []data.Data{}
 	for _, it := range ed.GetItemsList() {
-		// for every dataitem check its presence in inputs of the event
-		if inp, ok := te.dataInputs[it.ID()]; ok {
-			idd = append(idd, inp)
-
-			continue
-		}
-
-		// or in the runtime Scope
-		d, err := s.GetDataByID(te.dataPath, it.ID())
+		d, err := re.GetDataByID(it.ID())
 		if err != nil {
 			return errs.New(
 				errs.M("couldn't find ItemDefinition #%s", it.ID()),

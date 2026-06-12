@@ -1,7 +1,6 @@
 package gateways_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -94,8 +93,4 @@ func TestExclusiveGatewayClone(t *testing.T) {
 	require.Empty(t, clone.Outgoing())
 	require.Empty(t, clone.Incoming())
 	require.Nil(t, clone.Container())
-
-	// fresh scope: Find before any Exec reports the unset scope on the clone.
-	_, err = clone.Find(context.Background(), "anything")
-	require.Error(t, err)
 }

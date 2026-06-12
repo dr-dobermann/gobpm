@@ -41,10 +41,10 @@ func testProp(t *testing.T, name string, val any) *data.Property {
 }
 
 // newTestFrame builds a plane rooted at /proc and an open frame on it.
-func newTestFrame(t *testing.T) (*Plane, *Frame) {
+func newTestFrame(t *testing.T) (*Scope, *Frame) {
 	t.Helper()
 
-	p, err := NewPlane(mustPath(t, "/proc"), nil)
+	p, err := New(mustPath(t, "/proc"), nil)
 	require.NoError(t, err)
 
 	f, err := NewFrame("track-1", "node-1", p.Root(), p)
@@ -54,7 +54,7 @@ func newTestFrame(t *testing.T) (*Plane, *Frame) {
 }
 
 func TestNewFrame(t *testing.T) {
-	p, err := NewPlane(mustPath(t, "/proc"), nil)
+	p, err := New(mustPath(t, "/proc"), nil)
 	require.NoError(t, err)
 
 	t.Run("empty ids rejected", func(t *testing.T) {
@@ -108,7 +108,7 @@ func TestFrameInstantiation(t *testing.T) {
 	})
 
 	t.Run("two frames get independent instances", func(t *testing.T) {
-		p, err := NewPlane(mustPath(t, "/proc"), nil)
+		p, err := New(mustPath(t, "/proc"), nil)
 		require.NoError(t, err)
 
 		def := testParam(t, "x", 1)
@@ -230,7 +230,7 @@ func TestFrameResolution(t *testing.T) {
 		require.Error(t, err)
 	})
 
-	t.Run("every frame group resolves", func(t *testing.T) {
+	t.Run("readable frame groups resolve, outputs don't", func(t *testing.T) {
 		_, f := newTestFrame(t)
 
 		in := testParam(t, "in", 1)
@@ -241,11 +241,20 @@ func TestFrameResolution(t *testing.T) {
 			f.LoadProperties([]*data.Property{testProp(t, "prop", 3)}))
 		require.NoError(t, f.Put(testData(t, "put", 4)))
 
-		for _, n := range []string{"in", "out", "prop", "put"} {
+		for _, n := range []string{"in", "prop", "put"} {
 			d, err := f.GetData(n)
 			require.NoError(t, err)
 			require.Equal(t, n, d.Name())
 		}
+
+		// outputs are write targets, not sources: they never resolve —
+		// otherwise a not-yet-filled output would shadow the data meant to
+		// fill it at the producer stage.
+		_, err := f.GetData("out")
+		require.Error(t, err)
+
+		_, err = f.GetDataByID(out.ItemDefinition().ID())
+		require.Error(t, err)
 
 		// id lookup hits the frame before the container.
 		d, err := f.GetDataByID(in.ItemDefinition().ID())
@@ -311,7 +320,7 @@ func TestFrameCommitAndDiscard(t *testing.T) {
 	})
 
 	t.Run("commit propagates plane failures", func(t *testing.T) {
-		pl, err := NewPlane(mustPath(t, "/proc"), nil)
+		pl, err := New(mustPath(t, "/proc"), nil)
 		require.NoError(t, err)
 
 		child := mustPath(t, "/proc/sub")

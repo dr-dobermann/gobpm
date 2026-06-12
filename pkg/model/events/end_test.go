@@ -6,8 +6,6 @@ import (
 
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
 	"github.com/dr-dobermann/gobpm/generated/mockrenv"
-	"github.com/dr-dobermann/gobpm/generated/mockscope"
-	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
@@ -99,22 +97,6 @@ func TestNewEndEvent(t *testing.T) {
 			require.Equal(t, flow.EndEventClass, ee.EventClass())
 			require.Nil(t, ee.AcceptIncomingFlow(nil))
 			require.Equal(t, flow.EventNodeType, ee.NodeType())
-			require.Empty(t, ee.DataPath())
-
-			ms := mockscope.NewMockScope(t)
-			ms.EXPECT().
-				LoadData(mock.Anything, mock.Anything).
-				RunAndReturn(
-					func(ndl scope.NodeDataLoader, dd ...data.Data) error {
-						for _, d := range dd {
-							t.Log("Loading data to datapath [", ndl.Name(), "]: ",
-								d.Name(), " - ", d.Value().Get(context.Background()))
-						}
-						return nil
-					})
-
-			require.NoError(t, ee.RegisterData(
-				scope.DataPath("my end_event data_path"), ms))
 		})
 
 	t.Run("all triggers end event",
@@ -158,9 +140,9 @@ func TestNewEndEvent(t *testing.T) {
 
 			mre := mockrenv.NewMockRuntimeEnvironment(t)
 			mre.EXPECT().EventProducer().Return(mep)
-			mre.EXPECT().GetDataByID(mock.Anything, mock.Anything).
+			mre.EXPECT().GetDataByID(mock.Anything).
 				RunAndReturn(
-					func(dp scope.DataPath, s string) (data.Data, error) {
+					func(s string) (data.Data, error) {
 						dd := map[string]data.Data{
 							"error_item": data.MustParameter(
 								"error",

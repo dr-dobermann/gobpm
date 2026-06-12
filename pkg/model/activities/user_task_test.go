@@ -9,7 +9,6 @@ import (
 
 	"github.com/dr-dobermann/gobpm/generated/mockinteractor"
 	"github.com/dr-dobermann/gobpm/generated/mockrenv"
-	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -90,12 +89,11 @@ func TestNewUserTask(t *testing.T) {
 			mrenv := mockrenv.NewMockRuntimeEnvironment(t)
 			mrenv.EXPECT().InstanceID().Return("mocked_instance").Maybe()
 			mrenv.EXPECT().RenderRegistrator().Return(mrr).Once()
-			mrenv.EXPECT().AddData(mock.Anything, mock.Anything, mock.Anything).
+			mrenv.EXPECT().Put(mock.Anything, mock.Anything).
 				RunAndReturn(
-					func(ndl scope.NodeDataLoader, dd ...data.Data) error {
+					func(dd ...data.Data) error {
 						for _, d := range dd {
-							t.Log("got data from ", ndl.Name(),
-								": name [", d.Name(),
+							t.Log("got data: name [", d.Name(),
 								"] value [", d.Value().Get(context.Background()), "]")
 						}
 
@@ -199,7 +197,7 @@ func TestUserTaskExecErrors(t *testing.T) {
 
 			mrenv := mockrenv.NewMockRuntimeEnvironment(t)
 			mrenv.EXPECT().RenderRegistrator().Return(mrr).Once()
-			mrenv.EXPECT().AddData(mock.Anything, mock.Anything).
+			mrenv.EXPECT().Put(mock.Anything).
 				Return(errors.New("boom")).Once()
 
 			_, err := ut.Exec(context.Background(), mrenv)

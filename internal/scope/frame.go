@@ -21,9 +21,9 @@ const (
 // frame-first lookup with container walk-up, and an all-or-nothing commit.
 //
 // A frame is owned by exactly one execution — it is NOT safe for concurrent
-// use; cross-track serialization happens in the Plane, never in frames.
+// use; cross-track serialization happens in the Scope, never in frames.
 type Frame struct {
-	plane   *Plane
+	plane   *Scope
 	inputs  map[string]*data.Parameter
 	outputs map[string]*data.Parameter
 	props   map[string]data.Data
@@ -39,7 +39,7 @@ type Frame struct {
 func NewFrame(
 	trackID, nodeID string,
 	at DataPath,
-	p *Plane,
+	p *Scope,
 ) (*Frame, error) {
 	trackID = strings.TrimSpace(trackID)
 	nodeID = strings.TrimSpace(nodeID)
@@ -54,7 +54,7 @@ func NewFrame(
 	if p == nil {
 		return nil,
 			errs.New(
-				errs.M("NewFrame: a nil Plane isn't allowed"),
+				errs.M("NewFrame: a nil Scope isn't allowed"),
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
@@ -166,9 +166,9 @@ func (f *Frame) Put(dd ...data.Data) error {
 	return nil
 }
 
-// GetData resolves name frame-first — inputs, outputs, properties, puts —
-// and then walks the container scopes from the frame's attachment point up
-// to the plane's root.
+// GetData resolves name frame-first — inputs, properties, puts (outputs are
+// write targets, not sources — see lookup) — and then walks the container
+// scopes from the frame's attachment point up to the plane's root.
 func (f *Frame) GetData(name string) (data.Data, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -210,7 +210,7 @@ func (f *Frame) GetDataByID(id string) (data.Data, error) {
 }
 
 // Commit flushes the frame's outputs and puts into the container scope as
-// one atomic Plane batch and seals the frame. A frame commits at most once
+// one atomic Scope batch and seals the frame. A frame commits at most once
 // and never after Discard (ADR-010 §2.3).
 func (f *Frame) Commit() error {
 	if err := f.checkOpen("Commit"); err != nil {
@@ -250,17 +250,15 @@ func (f *Frame) Discard() {
 	}
 }
 
-// lookup searches the frame's own groups in resolution order.
+// lookup searches the frame's own groups in resolution order: inputs,
+// properties, puts. OUTPUTS are deliberately excluded — an output instance
+// is a write target, and resolving it would let a not-yet-filled output
+// shadow the data meant to fill it (the producer stage looks the fill value
+// up by the output's own ItemDefinition id).
 func (f *Frame) lookup(finder dataFinder) (data.Data, bool) {
 	for _, in := range f.inputs {
 		if finder(in) {
 			return in, true
-		}
-	}
-
-	for _, out := range f.outputs {
-		if finder(out) {
-			return out, true
 		}
 	}
 

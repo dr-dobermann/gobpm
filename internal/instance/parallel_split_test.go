@@ -8,6 +8,7 @@ import (
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
 	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -57,7 +58,7 @@ func TestParallelSplitCompletes(t *testing.T) {
 
 	ep := mockeventproc.NewMockEventProducer(t)
 
-	inst, err := New(s, nil, enginert.Default(), ep, nil)
+	inst, err := New(s, scope.EmptyDataPath, enginert.Default(), ep, nil)
 	require.NoError(t, err)
 
 	leak := assertNoGoroutineLeak(t)
