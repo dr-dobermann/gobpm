@@ -2,12 +2,9 @@ package activities
 
 import (
 	"context"
-	"fmt"
-	"reflect"
 	"slices"
 	"testing"
 
-	"github.com/dr-dobermann/gobpm/generated/mockscope"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
@@ -15,7 +12,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -104,53 +100,12 @@ func TestTaskData(t *testing.T) {
 					}))
 			require.NoError(t, err)
 
-			// set task data path
-			dp, err := scope.NewDataPath("/task")
+			// real data plane + execution frame (no scope mock: the frame
+			// model is exercised end-to-end).
+			pl, err := scope.New(scope.RootDataPath, nil)
 			require.NoError(t, err)
 
-			s := mockscope.NewMockScope(t)
-			s.On("LoadData", task,
-				mock.Anything).
-				// mock.AnythingOfType("data.Data"),
-				// mock.AnythingOfType("data.Data"),
-				// mock.AnythingOfType("data.Data")).
-				Return(
-					func(ndl scope.NodeDataLoader, dd ...data.Data) error {
-						for _, d := range dd {
-							t.Log("   >> got data: ", d.Name(), " = ",
-								d.Value().Get(context.Background()))
-
-							switch dv := d.(type) {
-							case *data.Property:
-								if idx := slices.IndexFunc(
-									props,
-									func(prop *data.Property) bool {
-										return dv.ID() == prop.ID()
-									}); idx == -1 {
-									return fmt.Errorf("couldn't find property %q", d.Name())
-								}
-							case *data.Parameter:
-								if dv.Name() != "y param" {
-									return fmt.Errorf("invalid parameter name")
-								}
-							default:
-								return fmt.Errorf("TEST: invalid type of data: %s",
-									reflect.TypeOf(d).String())
-							}
-
-						}
-
-						return nil
-					})
-			s.EXPECT().
-				GetDataByID(dp, "y").
-				Return(data.MustItemAwareElement(
-					data.MustItemDefinition(
-						values.NewVariable(23.02),
-						foundation.WithID("y")),
-					data.ReadyDataState), nil)
-
-			err = task.RegisterData(dp, s)
+			f, err := scope.NewFrame("track-1", task.ID(), pl.Root(), pl)
 			require.NoError(t, err)
 
 			// add association to DataObject
@@ -172,17 +127,27 @@ func TestTaskData(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, outDO.AssociateSource(task, []string{"y"}, nil))
 
-			require.NoError(t, task.LoadData(context.Background()))
+			require.NoError(t, task.LoadData(context.Background(), f))
 
 			ctx := context.Background()
 
-			// check input parameters
-			inParams, err := task.IoSpec.Parameters(data.Input)
+			// the FRAME input instance got the association value. (The
+			// association evaluation itself still writes its target — the
+			// definition's IAE — as before: association mechanics are the
+			// data-flow ADR's domain, SRD-007 §2.6. The per-frame guarantee
+			// covers frame writes and is proven in the scope package tests.)
+			in, err := f.GetDataByID("y")
 			require.NoError(t, err)
-			require.Len(t, inParams, 1)
-			require.Equal(t, 23.02, inParams[0].Subject().Structure().Get(ctx))
+			require.Equal(t, 23.02, in.Value().Get(ctx))
 
-			require.NoError(t, task.UploadData(ctx, s))
+			// the frame sees the properties too.
+			for _, p := range props {
+				d, err := f.GetData(p.Name())
+				require.NoError(t, err)
+				require.Equal(t, p.Name(), d.Name())
+			}
+
+			require.NoError(t, task.UploadData(ctx, f))
 			require.Equal(t, 23.02, outDO.Subject().Structure().Get(ctx))
 		})
 

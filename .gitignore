@@ -35,3 +35,4 @@ examples/basic-process/basic-process
 examples/parallel-gateway/parallel-gateway
 examples/simple-timer/simple-timer
 examples/timer-event/timer-event
+examples/process-data/process-data

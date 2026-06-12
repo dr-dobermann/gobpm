@@ -121,10 +121,11 @@ func (st *ServiceTask) TaskType() flow.TaskType {
 // Exec runs single node and returns its valid
 // output sequence flows on success or error on failure.
 //
-// Exec fills operation input message with data from the scope and
-// runs the operation.
-// After this it updates tasks output values with output message of the
-// operation.
+// Exec runs the operation on a PER-EXECUTION clone (its message carriers are
+// exec-mutated state — ADR-010 §2.3): the input message is filled from the
+// execution's data resolution, the operation runs, and its result is handed
+// to the frame as node-produced data, which the producer stage copies into
+// the execution's output instance.
 func (st *ServiceTask) Exec(
 	ctx context.Context,
 	re renv.RuntimeEnvironment,
@@ -136,11 +137,13 @@ func (st *ServiceTask) Exec(
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	err := st.loadInputMessage(ctx, re)
+	op := st.operation.Clone()
+
+	err := st.loadInputMessage(ctx, re, op)
 	if err == nil {
-		err = st.operation.Run(ctx)
+		err = op.Run(ctx)
 		if err == nil {
-			err = st.uploadOutputMessage(ctx)
+			err = st.uploadOutputMessage(re, op)
 			if err == nil {
 				return st.Outgoing(), nil
 			}
@@ -149,7 +152,7 @@ func (st *ServiceTask) Exec(
 
 	return nil,
 		errs.New(
-			errs.M("couldn't set operation's incoming message"),
+			errs.M("operation execution failed"),
 			errs.C(errorClass),
 			errs.E(err),
 			errs.D("service_task_name", st.Name()),
@@ -157,17 +160,19 @@ func (st *ServiceTask) Exec(
 			errs.D("operation_id", st.operation.ID()))
 }
 
-// loadInputMessage tries to set value of the operation's incoming message
-// from scope data if them are Ready..
-func (st *ServiceTask) loadInputMessage(ctx context.Context, re renv.RuntimeEnvironment) error {
-	if st.operation.IncomingMessage() == nil ||
-		st.operation.IncomingMessage().Item() == nil {
+// loadInputMessage fills the per-execution operation's incoming message from
+// the execution's data resolution (frame input instances first).
+func (st *ServiceTask) loadInputMessage(
+	ctx context.Context,
+	re renv.RuntimeEnvironment,
+	op *service.Operation,
+) error {
+	if op.IncomingMessage() == nil ||
+		op.IncomingMessage().Item() == nil {
 		return nil
 	}
 
-	d, err := re.GetDataByID(
-		st.dataPath,
-		st.operation.IncomingMessage().Item().ID())
+	d, err := re.GetDataByID(op.IncomingMessage().Item().ID())
 	if err != nil {
 		return errs.New(
 			errs.M("couldn't find item definition"),
@@ -180,7 +185,7 @@ func (st *ServiceTask) loadInputMessage(ctx context.Context, re renv.RuntimeEnvi
 		)
 	}
 
-	if err := st.operation.IncomingMessage().Item().
+	if err := op.IncomingMessage().Item().
 		Structure().Update(ctx, d.Value().Get(ctx)); err != nil {
 		return errs.New(
 			errs.M("couldn't update operation's incoming message"),
@@ -190,42 +195,28 @@ func (st *ServiceTask) loadInputMessage(ctx context.Context, re renv.RuntimeEnvi
 	return nil
 }
 
-// uploadOutputMessage uploads operation's output message into task's
-// output and set their state to Ready.
-func (st *ServiceTask) uploadOutputMessage(ctx context.Context) error {
-	if st.operation.OutgoingMessage() == nil ||
-		st.operation.OutgoingMessage().Item() == nil {
+// uploadOutputMessage hands the operation's result to the execution frame as
+// node-produced data; the producer stage (updateOutputs) copies it into the
+// not-Ready output instance whose ItemDefinition matches the outgoing
+// message item.
+func (st *ServiceTask) uploadOutputMessage(
+	re renv.RuntimeEnvironment,
+	op *service.Operation,
+) error {
+	if op.OutgoingMessage() == nil ||
+		op.OutgoingMessage().Item() == nil {
 		return nil
 	}
 
-	outs, err := st.IoSpec.Parameters(data.Output)
-	if err != nil {
-		return errs.New(
-			errs.M("couldn't get task output parameters"))
-	}
+	item := op.OutgoingMessage().Item()
 
-	for _, o := range outs {
-		if o.ItemDefinition().ID() == st.operation.OutgoingMessage().Item().ID() {
-			err = st.operation.OutgoingMessage().
-				Item().Structure().
-				Update(ctx, o.ItemDefinition().Structure().Get(ctx))
-			if err == nil {
-				if err = o.UpdateState(data.ReadyDataState); err != nil {
-					return errs.New(
-						errs.M("couldn't update task's output state to Ready"),
-						errs.C(err.Error(), errs.OperationFailed),
-						errs.E(err),
-						errs.D("task_name", st.Name()),
-						errs.D("output_name", o.Name()))
-				}
-			}
+	// Must-constructors: the item is non-nil (guarded above) and its id is
+	// engine-generated and non-empty — a failure here is a programming
+	// error, not an input condition.
+	res := data.MustParameter(item.ID(),
+		data.MustItemAwareElement(item, data.ReadyDataState))
 
-			return err
-		}
-	}
-
-	return errs.New(
-		errs.M("couldn't find task output for operation output message"))
+	return re.Put(res)
 }
 
 // -----------------------------------------------------------------------------

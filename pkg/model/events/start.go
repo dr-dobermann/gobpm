@@ -128,22 +128,13 @@ func (se *StartEvent) Exec(
 	return append([]*flow.SequenceFlow{}, se.Outgoing()...), nil
 }
 
-// ------------------- exec.NodeDataLoader interface ---------------------------
-
-// RegisterData sends all StartEvent data.Data to the exec.Scope.
-func (se *StartEvent) RegisterData(dp scope.DataPath, s scope.Scope) error {
-	se.dataPath = dp
-
-	return s.LoadData(se, se.getEventData()...)
-}
-
 // -----------------------------------------------------------------------------
 
 // interfaces checks
 var (
-	_ flow.SequenceSource  = (*StartEvent)(nil)
-	_ flow.Node            = (*StartEvent)(nil)
-	_ flow.EventNode       = (*StartEvent)(nil)
-	_ exec.NodeExecutor    = (*StartEvent)(nil)
-	_ scope.NodeDataLoader = (*StartEvent)(nil)
+	_ flow.SequenceSource    = (*StartEvent)(nil)
+	_ flow.Node              = (*StartEvent)(nil)
+	_ flow.EventNode         = (*StartEvent)(nil)
+	_ exec.NodeExecutor      = (*StartEvent)(nil)
+	_ scope.NodeDataProducer = (*StartEvent)(nil)
 )

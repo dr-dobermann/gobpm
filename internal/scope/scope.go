@@ -1,101 +1,353 @@
 package scope
 
 import (
-	"context"
+	"strings"
+	"sync"
 
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
-	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
-// All Nodes supports the Node's Data Model.
+// dataFinder reports whether a data.Data item matches a lookup criterion.
+type dataFinder func(data.Data) bool
+
+// Scope is the per-instance data plane: the container-scope tree and the
+// single authority for persistent process data (ADR-010 §2.2, SRD-007 FR-1).
+// Every operation runs atomically under the plane's own mutex — no compound
+// operation spans lock acquisitions, so concurrent tracks cannot interleave
+// inside one logical operation.
 //
-// Node's data is used as followed:
+// The name resolution (GetData / GetDataByID) walks parent-ward from the
+// requested container scope up to the plane's root — the structural
+// visibility of BPMN §10.4.
 //
-//  1. LoadData loads data from incoming data associations and fills Node's inputs.
-//
-//  2. Node's data(properties, inputs) are registered in the execution Scope by
-//     Register Data.
-//     The path to the stored data created by external Scope and sends it to
-//     NodeDataLoader for further access to stored data.
-//
-//     ... Execute the Node and fill Node's output parameters with results of
-//     the execution.
-//
-//  3. On success execution all Node's output with not-Ready state are updated
-//     from the Scope and then Node's UploadData is called to fill all outgoing
-//     data associations from Node's outputs.
-//
-//  4. Clears scope from Node's data by LeaveScope call.
-
-// Scope keeps all variables of the scope and returns its values.
-type Scope interface {
-	// Root returns the root dataPath of the Scope.
-	Root() DataPath
-
-	// Scopes returns list of scopes controlled by Scope.
-	Scopes() []DataPath
-
-	// LoadData loads data.Data into the Scope on
-	// the NodeDataLoader's DataPath.
-	LoadData(NodeDataLoader, ...data.Data) error
-
-	// GetData tries to return value of data.Data object with name Name.
-	// dataPath selects the initial scope to look for the name.
-	// If current Scope doesn't find the name, then it looks in upper
-	// Scope until find or failed to find.
-	GetData(dataPath DataPath, name string) (data.Data, error)
-
-	// GetDataByID tries to find data.Data in the Scope by its ItemDefinition
-	// id.
-	// It starts looking for the data from dataPath and continues to locate
-	// it until Scope root.
-	GetDataByID(dataPath DataPath, id string) (data.Data, error)
-
-	// AddData adds data.Data to the NodeDataLoader scope or to rootScope
-	// if NodeDataLoader is nil.
-	AddData(NodeDataLoader, ...data.Data) error
-
-	// ExtendScope adds a new child Scope to the Scope and returns
-	// its full path.
-	ExtendScope(NodeDataLoader) error
-
-	// LeaveScope calls the Scope to clear all data saved by NodeDataLoader.
-	LeaveScope(NodeDataLoader) error
+// The name is transitional: when the legacy Scope interface retires
+// (SRD-007 M4), Scope is renamed to Scope.
+type Scope struct {
+	scopes map[DataPath]map[string]data.Data
+	rt     RuntimeVarsSupplier
+	root   DataPath
+	rtPath DataPath
+	m      sync.Mutex
 }
 
-// NodeDataLoader is implemented by Nodes, which stores data in
-// external Scope before Node execution to make them accessible in Node
-// execution or condiitons checks.
-type NodeDataLoader interface {
-	// NodeDataLoader name is used to create the Node's scope name.
-	flow.Node
+// New creates a data plane rooted at root with the root container scope
+// already open. rt serves the reserved read-only RUNTIME subtree (SRD-007
+// FR-9); a nil rt is allowed and disables the subtree — the reserved path
+// stays write-protected either way.
+func New(root DataPath, rt RuntimeVarsSupplier) (*Scope, error) {
+	if err := root.Validate(); err != nil {
+		return nil,
+			errs.New(
+				errs.M("New: invalid root path %q", root),
+				errs.C(errorClass, errs.InvalidParameter),
+				errs.E(err))
+	}
 
-	// RegisterData sends all Node Data (properties, inputs) to the Node's
-	// scope.
-	//
-	// DataRegistration is called by Scope.LaodData.
-	// DataPath is the path of the NodeDataLoader data in the Scope.
-	// It should be saved for further getting data from it.
-	RegisterData(DataPath, Scope) error
+	rtPath, err := root.Append(RuntimeVarsSegment)
+	if err != nil {
+		// unreachable: Append fails only on a blank tail, and the segment
+		// is a non-blank constant — a failure here is a programming error.
+		errs.Panic(err.Error())
+	}
+
+	return &Scope{
+		scopes: map[DataPath]map[string]data.Data{
+			root: {},
+		},
+		rt:     rt,
+		root:   root,
+		rtPath: rtPath,
+	}, nil
 }
 
-// NodeDataConsumer implemented by Nodes which load data from flow.DataObjects
-// binded to Node over incoming data.Associations.
-// This interface is called before Node execution and Node's RegisterData call.
-type NodeDataConsumer interface {
-	flow.Node
-
-	// LoadData loads Node's data from its incoming data.Associations.
-	LoadData(context.Context) error
+// Root returns the root container-scope path of the plane.
+func (p *Scope) Root() DataPath {
+	return p.root
 }
 
-// NodeDataProducer implemented by Nodes which needs to upload data to
-// flow.DataObject binded to Node over outgoing data.Associations.
-// This interface is called after success Node execution.
-type NodeDataProducer interface {
-	flow.Node
+// GetData returns the data named name, resolving from the container scope
+// `from` parent-ward to the root. A read addressed exactly at the reserved
+// RUNTIME path is served by the RuntimeVarsSupplier (if configured).
+func (p *Scope) GetData(from DataPath, name string) (data.Data, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil,
+			errs.New(
+				errs.M("GetData: an empty data name isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
 
-	// UploadData uploads Node's data into flow.DataObjects binded to Node over
-	// its outgoing data.Association.
-	UploadData(ctx context.Context, s Scope) error
+	if err := p.checkContained("GetData", from); err != nil {
+		return nil, err
+	}
+
+	p.m.Lock()
+	defer p.m.Unlock()
+
+	if p.rt != nil && from == p.rtPath {
+		return p.rt.RuntimeVar(name)
+	}
+
+	return p.getData(
+		from, name,
+		func(d data.Data) bool {
+			return d.Name() == name
+		})
+}
+
+// GetDataByID returns the data whose ItemDefinition id is id, resolving from
+// the container scope `from` parent-ward to the root.
+func (p *Scope) GetDataByID(from DataPath, id string) (data.Data, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil,
+			errs.New(
+				errs.M("GetDataByID: an empty ItemDefinition id isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if err := p.checkContained("GetDataByID", from); err != nil {
+		return nil, err
+	}
+
+	p.m.Lock()
+	defer p.m.Unlock()
+
+	return p.getData(
+		from, id,
+		func(d data.Data) bool {
+			idef := d.ItemDefinition()
+
+			return idef != nil && idef.ID() == id
+		})
+}
+
+// Commit atomically stores the batch dd into the open container scope at.
+// The whole batch is validated before anything is applied, and the
+// application happens under one critical section — other plane users observe
+// either none or all of the batch (ADR-010 §2.3). An empty batch is a no-op.
+func (p *Scope) Commit(at DataPath, dd ...data.Data) error {
+	if err := p.checkContained("Commit", at); err != nil {
+		return err
+	}
+
+	if err := p.checkWritable("Commit", at); err != nil {
+		return err
+	}
+
+	names, err := batchNames("Commit", dd)
+	if err != nil {
+		return err
+	}
+
+	if len(dd) == 0 {
+		return nil
+	}
+
+	p.m.Lock()
+	defer p.m.Unlock()
+
+	vv, ok := p.scopes[at]
+	if !ok {
+		return errs.New(
+			errs.M("Commit: container scope %q isn't open", at),
+			errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	for i, d := range dd {
+		vv[names[i]] = d
+	}
+
+	return nil
+}
+
+// OpenScope opens a child container scope at path. The parent scope must
+// already be open (container scopes form a tree rooted at Root).
+func (p *Scope) OpenScope(path DataPath) error {
+	if err := p.checkContained("OpenScope", path); err != nil {
+		return err
+	}
+
+	if err := p.checkWritable("OpenScope", path); err != nil {
+		return err
+	}
+
+	// DropTail can't fail on a path checkContained validated; if it ever
+	// did, parent would be empty and fail the parent-is-open check below.
+	parent, _ := path.DropTail()
+
+	p.m.Lock()
+	defer p.m.Unlock()
+
+	if _, ok := p.scopes[path]; ok {
+		return errs.New(
+			errs.M("OpenScope: container scope %q is already open", path),
+			errs.C(errorClass, errs.DuplicateObject))
+	}
+
+	if _, ok := p.scopes[parent]; !ok {
+		return errs.New(
+			errs.M("OpenScope: parent scope %q of %q isn't open",
+				parent, path),
+			errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	p.scopes[path] = map[string]data.Data{}
+
+	return nil
+}
+
+// CloseScope closes the container scope at path and drops its data. The
+// root scope can't be closed, and a scope with open children must have them
+// closed first.
+func (p *Scope) CloseScope(path DataPath) error {
+	if err := p.checkContained("CloseScope", path); err != nil {
+		return err
+	}
+
+	if path == p.root {
+		return errs.New(
+			errs.M("CloseScope: the root scope %q can't be closed", path),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	p.m.Lock()
+	defer p.m.Unlock()
+
+	if _, ok := p.scopes[path]; !ok {
+		return errs.New(
+			errs.M("CloseScope: container scope %q isn't open", path),
+			errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	prefix := path.String() + PathSeparator
+	for open := range p.scopes {
+		if strings.HasPrefix(open.String(), prefix) {
+			return errs.New(
+				errs.M("CloseScope: scope %q has an open child %q",
+					path, open),
+				errs.C(errorClass, errs.ConditionFailed))
+		}
+	}
+
+	delete(p.scopes, path)
+
+	return nil
+}
+
+// opened reports whether the container scope at path is open.
+func (p *Scope) opened(path DataPath) bool {
+	p.m.Lock()
+	defer p.m.Unlock()
+
+	_, ok := p.scopes[path]
+
+	return ok
+}
+
+// getData walks from `from` parent-ward to the root, returning the first
+// item the finder matches. The caller holds the plane's mutex.
+func (p *Scope) getData(
+	from DataPath,
+	what string,
+	finder dataFinder,
+) (data.Data, error) {
+	path := from
+
+	for {
+		if vv, ok := p.scopes[path]; ok {
+			for _, d := range vv {
+				if finder(d) {
+					return d, nil
+				}
+			}
+		}
+
+		if path == p.root {
+			break
+		}
+
+		var err error
+
+		path, err = path.DropTail()
+		if err != nil {
+			return nil,
+				errs.New(
+					errs.M("couldn't walk up from scope %q", path),
+					errs.C(errorClass, errs.OperationFailed),
+					errs.E(err))
+		}
+	}
+
+	return nil,
+		errs.New(
+			errs.M("data %q isn't found from scope %q up to root", what, from),
+			errs.C(errorClass, errs.ObjectNotFound))
+}
+
+// checkContained validates the path and ensures it addresses the plane's
+// container tree (the root itself or a descendant of it).
+func (p *Scope) checkContained(op string, path DataPath) error {
+	if err := path.Validate(); err != nil {
+		return errs.New(
+			errs.M("%s: invalid container-scope path %q", op, path),
+			errs.C(errorClass, errs.InvalidParameter),
+			errs.E(err))
+	}
+
+	if path == p.root ||
+		strings.HasPrefix(path.String(), p.root.String()+PathSeparator) ||
+		p.root == RootDataPath {
+		return nil
+	}
+
+	return errs.New(
+		errs.M("%s: path %q is outside the plane rooted at %q",
+			op, path, p.root),
+		errs.C(errorClass, errs.InvalidParameter))
+}
+
+// checkWritable rejects mutating operations addressed at or under the
+// reserved read-only RUNTIME subtree. The namespace is reserved even when no
+// RuntimeVarsSupplier is configured.
+func (p *Scope) checkWritable(op string, path DataPath) error {
+	if path == p.rtPath ||
+		strings.HasPrefix(path.String(), p.rtPath.String()+PathSeparator) {
+		return errs.New(
+			errs.M("%s: %q is the reserved read-only runtime subtree",
+				op, path),
+			errs.C(errorClass, errs.ConditionFailed))
+	}
+
+	return nil
+}
+
+// batchNames validates a commit batch — no nil items, no unnamed items —
+// and returns the trimmed names, index-aligned with the batch.
+func batchNames(op string, dd []data.Data) ([]string, error) {
+	names := make([]string, len(dd))
+
+	for i, d := range dd {
+		if d == nil {
+			return nil,
+				errs.New(
+					errs.M("%s: a nil data item isn't allowed (index %d)",
+						op, i),
+					errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		name := strings.TrimSpace(d.Name())
+		if name == "" {
+			return nil,
+				errs.New(
+					errs.M("%s: a data item with an empty name isn't "+
+						"allowed (index %d)", op, i),
+					errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		names[i] = name
+	}
+
+	return names, nil
 }

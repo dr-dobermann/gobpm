@@ -151,22 +151,13 @@ func (ee *EndEvent) Exec(
 	return []*flow.SequenceFlow{}, nil
 }
 
-// ------------------- scope.NodeDataLoader interface ---------------------------
-
-// RegisterData sends all EndEvent data.Data to the exec.Scope.
-func (ee *EndEvent) RegisterData(dp scope.DataPath, s scope.Scope) error {
-	ee.dataPath = dp
-
-	return s.LoadData(ee, ee.getEventData()...)
-}
-
 // -----------------------------------------------------------------------------
 
 // interfaces check
 var (
-	_ flow.Node            = (*EndEvent)(nil)
-	_ flow.EventNode       = (*EndEvent)(nil)
-	_ flow.SequenceTarget  = (*EndEvent)(nil)
-	_ exec.NodeExecutor    = (*EndEvent)(nil)
-	_ scope.NodeDataLoader = (*EndEvent)(nil)
+	_ flow.Node              = (*EndEvent)(nil)
+	_ flow.EventNode         = (*EndEvent)(nil)
+	_ flow.SequenceTarget    = (*EndEvent)(nil)
+	_ exec.NodeExecutor      = (*EndEvent)(nil)
+	_ scope.NodeDataConsumer = (*EndEvent)(nil)
 )

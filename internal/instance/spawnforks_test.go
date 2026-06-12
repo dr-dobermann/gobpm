@@ -5,6 +5,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
 	"github.com/dr-dobermann/gobpm/internal/enginert"
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -32,7 +33,7 @@ func (p plainNode) Node() flow.Node { return p }
 func TestSpawnForks(t *testing.T) {
 	_ = data.CreateDefaultStates()
 
-	inst, err := New(buildForkSnapshot(t), nil, enginert.Default(),
+	inst, err := New(buildForkSnapshot(t), scope.EmptyDataPath, enginert.Default(),
 		mockeventproc.NewMockEventProducer(t), nil)
 	require.NoError(t, err)
 

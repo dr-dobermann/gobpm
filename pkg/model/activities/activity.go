@@ -7,7 +7,6 @@ import (
 
 	"golang.org/x/exp/maps"
 
-	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -26,7 +25,6 @@ type activity struct {
 	properties          map[string]*data.Property
 	IoSpec              *data.InputOutputSpecification
 	dataAssociations    map[data.Direction][]*data.Association
-	dataPath            scope.DataPath
 	boundaryEvents      []flow.EventNode
 	startQuantity       int
 	completionQuantity  int
@@ -82,8 +80,8 @@ func newActivity(
 // clone returns a per-instance copy of the activity: every configuration field
 // (loop characteristics, roles, default flow, properties, IoSpec, data
 // associations, boundary events, quantities, flags) is shared by reference; the
-// BaseNode shell is fresh (empty flows, no container) and the dataPath runtime
-// field starts zero.
+// BaseNode shell is fresh (empty flows, no container). Execution data lives in
+// the per-execution frame, never on the node (ADR-010 §2.4).
 func (a *activity) clone() activity {
 	return activity{
 		BaseNode:            a.CloneShell(),
@@ -93,7 +91,6 @@ func (a *activity) clone() activity {
 		properties:          a.properties,
 		IoSpec:              a.IoSpec,
 		dataAssociations:    a.dataAssociations,
-		dataPath:            scope.DataPath(""),
 		boundaryEvents:      a.boundaryEvents,
 		startQuantity:       a.startQuantity,
 		completionQuantity:  a.completionQuantity,

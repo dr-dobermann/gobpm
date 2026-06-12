@@ -39,7 +39,6 @@ const (
 // they SHOULD use attributes defined by the OASIS WSHumanTask specification.
 type UserTask struct {
 	outputs   *bpmncommon.Resource
-	resChan   chan data.Data
 	renderers []hi.Renderer
 	task
 }
@@ -140,15 +139,13 @@ func (ut *UserTask) Node() flow.Node {
 }
 
 // Clone returns a per-instance copy of the UserTask. The embedded task is cloned
-// (config shared by reference, fresh activity shell, zero dataPath); the outputs
-// resource and renderers are shared by reference as immutable configuration; the
-// resChan runtime field starts nil (set per instance by Exec).
+// (config shared by reference, fresh activity shell); the outputs resource and
+// renderers are shared by reference as immutable configuration.
 func (ut *UserTask) Clone() flow.Node {
 	return &UserTask{
 		task:      ut.clone(),
 		outputs:   ut.outputs,
 		renderers: ut.renderers,
-		resChan:   nil,
 	}
 }
 
@@ -163,12 +160,13 @@ func (ut *UserTask) TaskType() flow.TaskType {
 
 // Exec registers the UserTask as an Interactor in the runtime environment, then
 // waits on the result channel for the user interaction to complete. Registration
-// happens first so the channel exists before Exec blocks on it.
+// happens first so the channel exists before Exec blocks on it. The channel is
+// an Exec-local (per-execution by construction — ADR-010 §2.3); the interaction
+// results go to the execution frame and reach the container scope at the frame
+// commit.
 //
-// NOTE: the UserTask interaction model (registration + result channel held on the
-// node) is provisional and slated for a dedicated review — the per-execution
-// channel state belongs in the execution context per ADR-010 (process data
-// model), and event/subscription concerns relate to ADR-006.
+// NOTE: the UserTask interaction model (renderer registration) is provisional;
+// event/subscription concerns relate to ADR-006.
 func (ut *UserTask) Exec(
 	_ context.Context,
 	re renv.RuntimeEnvironment,
@@ -191,20 +189,20 @@ func (ut *UserTask) Exec(
 			errs.E(err))
 	}
 
-	ut.resChan = rCh
-
 	dd := []data.Data{}
 
-	for d := range ut.resChan {
+	for d := range rCh {
 		dd = append(dd, d)
 	}
 
-	if err := re.AddData(ut, dd...); err != nil {
-		return nil,
-			errs.New(
-				errs.M("interaction result adding error"),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.E(err))
+	if len(dd) > 0 {
+		if err := re.Put(dd...); err != nil {
+			return nil,
+				errs.New(
+					errs.M("interaction result adding error"),
+					errs.C(errorClass, errs.OperationFailed),
+					errs.E(err))
+		}
 	}
 
 	return ut.Outgoing(), nil

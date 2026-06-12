@@ -8,6 +8,7 @@ import (
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
 	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
@@ -65,11 +66,11 @@ func TestCloneRaceTwoInstances(t *testing.T) {
 
 	s := buildPlainSnapshot(t)
 
-	inst1, err := New(s, nil, enginert.Default(),
+	inst1, err := New(s, scope.EmptyDataPath, enginert.Default(),
 		mockeventproc.NewMockEventProducer(t), nil)
 	require.NoError(t, err)
 
-	inst2, err := New(s, nil, enginert.Default(),
+	inst2, err := New(s, scope.EmptyDataPath, enginert.Default(),
 		mockeventproc.NewMockEventProducer(t), nil)
 	require.NoError(t, err)
 

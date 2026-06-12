@@ -30,17 +30,17 @@ import (
 func TestInstIvalidParams(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
-	_, err := instance.New(nil, nil, enginert.Default(), nil, nil)
+	_, err := instance.New(nil, scope.EmptyDataPath, enginert.Default(), nil, nil)
 	require.Error(t, err)
 
 	s, err := getSnapshot("invalid_params_test")
 	require.NoError(t, err)
 
-	_, err = instance.New(s, nil, enginert.Default(), nil, nil)
+	_, err = instance.New(s, scope.EmptyDataPath, enginert.Default(), nil, nil)
 	require.Error(t, err)
 
 	// nil engine runtime
-	_, err = instance.New(s, nil, nil, nil, nil)
+	_, err = instance.New(s, scope.EmptyDataPath, nil, nil, nil)
 	require.Error(t, err)
 }
 
@@ -50,27 +50,25 @@ func TestMonitoring(t *testing.T) {
 
 	ep := mockeventproc.NewMockEventProducer(t)
 
-	inst, err := instance.New(s, nil, enginert.Default(), ep, nil)
+	inst, err := instance.New(s, scope.EmptyDataPath, enginert.Default(), ep, nil)
 	require.NoError(t, err)
 
-	// test runtime variables
-	rvs, err := scope.NewDataPath("/monitoring/RUNTIME")
-	require.NoError(t, err)
-
-	_, err = inst.GetData(rvs, "INVALID_NAME")
+	// test runtime variables (served by the data plane's reserved RUNTIME
+	// subtree through the instance's RuntimeVarsSupplier).
+	_, err = inst.RuntimeVar("INVALID_NAME")
 	require.Error(t, err)
 
 	ctx := context.Background()
 
-	tc, err := inst.GetData(rvs, instance.TracksCount)
+	tc, err := inst.RuntimeVar(instance.TracksCount)
 	require.NoError(t, err)
 	require.Equal(t, 1, tc.Value().Get(ctx).(int))
 
-	st, err := inst.GetData(rvs, instance.CurrState)
+	st, err := inst.RuntimeVar(instance.CurrState)
 	require.NoError(t, err)
 	require.Equal(t, instance.Created, st.Value().Get(ctx).(instance.State))
 
-	start, err := inst.GetData(rvs, instance.StartedAt)
+	start, err := inst.RuntimeVar(instance.StartedAt)
 	require.NoError(t, err)
 	require.True(t, start.Value().Get(ctx).(time.Time).IsZero())
 

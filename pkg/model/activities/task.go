@@ -77,17 +77,16 @@ func (t *task) ActivityType() flow.ActivityType {
 
 // ------------------ scope.NodeDataConsumer interface --------------------------
 
-// LoadData loads data from Task's incoming data associations into its
-// inputs.
-func (t *task) LoadData(ctx context.Context) error {
-	dii, err := t.IoSpec.Parameters(data.Input)
-	if err != nil {
-		return errs.New(
-			errs.M("couldn't get task inputs"),
-			errs.C(errorClass, errs.ObjectNotFound),
-			errs.D("task_name", t.Name()),
-			errs.E(err))
+// LoadData instantiates the Task's inputs, outputs and properties in the
+// execution frame and fills the input instances from the Task's incoming
+// data associations. The IoSpec definitions on the node stay untouched —
+// every execution works on its own instances (ADR-010 §2.3).
+func (t *task) LoadData(ctx context.Context, f *scope.Frame) error {
+	if err := t.instantiateData(f); err != nil {
+		return err
 	}
+
+	dii := f.Inputs()
 
 	for _, ia := range t.dataAssociations[data.Input] {
 		index := slices.IndexFunc(
@@ -117,45 +116,79 @@ func (t *task) LoadData(ctx context.Context) error {
 				errs.C(errorClass, errs.OperationFailed),
 				errs.E(err))
 		}
+
+		// a DataInput filled by its DataInputAssociation becomes available
+		// (BPMN §10.4.2) — the state flip targets the frame instance only.
+		if err := dii[index].UpdateState(data.ReadyDataState); err != nil {
+			return errs.New(
+				errs.M("couldn't set input %q to Ready", dii[index].Name()),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err))
+		}
 	}
 
 	return nil
 }
 
-// ----------------- scope.NodeDataLoader interface ----------------------------
-
-// RegisterData adds all Task's properties and inputs to the Scope s.
-func (t *task) RegisterData(dp scope.DataPath, s scope.Scope) error {
-	t.dataPath = dp
-
+// instantiateData builds the per-execution instances of the Task's data
+// definitions in the frame: inputs, outputs, and properties.
+func (t *task) instantiateData(f *scope.Frame) error {
 	inputs, err := t.IoSpec.Parameters(data.Input)
 	if err != nil {
 		return errs.New(
 			errs.M("couldn't get task inputs"),
+			errs.C(errorClass, errs.ObjectNotFound),
 			errs.D("task_name", t.Name()),
-			errs.D("task_id", t.ID()),
 			errs.E(err))
 	}
 
-	dd := make([]data.Data, 0, len(t.properties)+len(inputs))
+	if err = f.InstantiateInputs(inputs); err != nil {
+		return errs.New(
+			errs.M("couldn't instantiate task inputs"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.D("task_name", t.Name()),
+			errs.E(err))
+	}
 
+	outputs, err := t.IoSpec.Parameters(data.Output)
+	if err != nil {
+		return errs.New(
+			errs.M("couldn't get task outputs"),
+			errs.C(errorClass, errs.ObjectNotFound),
+			errs.D("task_name", t.Name()),
+			errs.E(err))
+	}
+
+	if err := f.InstantiateOutputs(outputs); err != nil {
+		return errs.New(
+			errs.M("couldn't instantiate task outputs"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.D("task_name", t.Name()),
+			errs.E(err))
+	}
+
+	props := make([]*data.Property, 0, len(t.properties))
 	for _, p := range t.properties {
-		dd = append(dd, p)
+		props = append(props, p)
 	}
 
-	for _, in := range inputs {
-		dd = append(dd, in)
+	if err := f.LoadProperties(props); err != nil {
+		return errs.New(
+			errs.M("couldn't load task properties"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.D("task_name", t.Name()),
+			errs.E(err))
 	}
 
-	return s.LoadData(t, dd...)
+	return nil
 }
 
 // ------------------ scope.NodeDataProducer interface --------------------------
 
-// UploadData fills all Task's outputs with not-Ready state from the Scope and
-// loads all Task's outgoing data associations from Task's outputs.
-func (t *task) UploadData(ctx context.Context, s scope.Scope) error {
-	doo, err := t.updateOutputs(ctx, s)
+// UploadData fills the not-Ready output instances of the execution frame and
+// pushes the Task's outgoing data associations from those instances.
+func (t *task) UploadData(ctx context.Context, f *scope.Frame) error {
+	doo, err := t.updateOutputs(ctx, f)
 	if err != nil {
 		return errs.New(
 			errs.M("couldn't get output parameters for task", t.Name(), t.ID()),
@@ -193,23 +226,23 @@ func (t *task) UploadData(ctx context.Context, s scope.Scope) error {
 	return nil
 }
 
-// updateOutputs checks all Task's output parameters and if it's not in Ready
-// state it tries to fill it from the Scope.
-func (t *task) updateOutputs(ctx context.Context, s scope.Scope) ([]*data.Parameter, error) {
-	oo, err := t.IoSpec.Parameters(data.Output)
-	if err != nil {
-		return nil, fmt.Errorf("couldn't get task's output parameters")
-	}
+// updateOutputs checks the frame's output instances and fills every
+// not-Ready one from the frame's resolution (puts, inputs, container walk).
+func (t *task) updateOutputs(
+	ctx context.Context,
+	f *scope.Frame,
+) ([]*data.Parameter, error) {
+	oo := f.Outputs()
 
 	for _, o := range oo {
 		if o.State().Name() == data.ReadyDataState.Name() {
 			continue
 		}
 
-		d, err := s.GetDataByID(t.dataPath, o.ItemDefinition().ID())
+		d, err := f.GetDataByID(o.ItemDefinition().ID())
 		if err != nil {
 			return nil,
-				fmt.Errorf("couldn't get data #%s from Scope: %w",
+				fmt.Errorf("couldn't get data #%s from the frame: %w",
 					o.ItemDefinition().ID(), err)
 		}
 
@@ -300,7 +333,6 @@ func (t *task) BindIncoming(ia *data.Association) error {
 // interfaces check
 var (
 	_ flow.ActivityNode      = (*task)(nil)
-	_ scope.NodeDataLoader   = (*task)(nil)
 	_ scope.NodeDataConsumer = (*task)(nil)
 	_ scope.NodeDataProducer = (*task)(nil)
 	_ flow.AssociationSource = (*task)(nil)

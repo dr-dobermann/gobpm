@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/generated/mockrenv"
-	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
@@ -17,6 +16,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,11 +39,7 @@ func TestExclusiveGatewayExec(t *testing.T) {
 
 	re := mockrenv.NewMockRuntimeEnvironment(t)
 	re.EXPECT().
-		Root().
-		Return(scope.DataPath("/")).
-		Maybe()
-	re.EXPECT().
-		GetData(scope.DataPath("/"), "X").
+		Find(mock.Anything, "X").
 		Return(
 			data.MustParameter(
 				"X",
