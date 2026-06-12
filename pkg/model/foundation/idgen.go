@@ -3,27 +3,36 @@ package foundation
 import (
 	rand "math/rand"
 	"strconv"
-	"time"
+	"sync"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 )
 
-var generator IDGenerator
+var (
+	// genM guards generator: model elements are constructed from concurrent
+	// goroutines (per-execution frame instantiation, concurrent instance
+	// startup), so the generator swap and the fetch must not race.
+	genM sync.RWMutex
 
-// IDGenerator creates a new Id every time Generate called.
+	generator IDGenerator = newDefaultGenerator()
+)
+
+// IDGenerator provides unique identifiers for model elements.
 type IDGenerator interface {
 	Generate() string
 }
 
-// GenFunc represents a function that generates IDs.
+// GenFunc adapts a plain function to the IDGenerator interface.
 type GenFunc func() string
 
-// Generate implements IDGenerator interface for GenFunc.
+// Generate implements IDGenerator for GenFunc.
 func (gf GenFunc) Generate() string {
 	return gf()
 }
 
-// SetGenerator sets user-defined Id generator.
+// SetGenerator replaces the package id generator. It is safe to call
+// concurrently with GenerateID; in-flight generations finish on the
+// previous generator.
 func SetGenerator(newGen IDGenerator) error {
 	if newGen == nil {
 		return errs.New(
@@ -31,36 +40,35 @@ func SetGenerator(newGen IDGenerator) error {
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
+	genM.Lock()
+	defer genM.Unlock()
+
 	generator = newGen
 
 	return nil
 }
 
-// GenerateID returns a new ID from generator. If there is no generator, then
-// default Generator will be used.
+// GenerateID returns a new identifier from the configured generator.
 func GenerateID() string {
-	if generator == nil {
-		if err := SetGenerator(newDefaultGenerator()); err != nil {
-			errs.Panic("default generator setup failed: " + err.Error())
-		}
-	}
+	genM.RLock()
+	g := generator
+	genM.RUnlock()
 
-	return generator.Generate()
+	return g.Generate()
 }
 
-// ------------------- Default Generator ---------------------------------------
-// defaultIdGenerator is a default based on math/rand/v2 Id generator.
-type defaultIDGenerator struct {
-	r *rand.Rand
-}
+// defaultIDGenerator produces ids from the shared math/rand source — the
+// top-level functions are goroutine-safe and auto-seeded, so the generator
+// itself carries no state.
+type defaultIDGenerator struct{}
 
 func newDefaultGenerator() *defaultIDGenerator {
-	return &defaultIDGenerator{
-		//nolint: gosec
-		r: rand.New(rand.NewSource(time.Now().UnixMilli())),
-	}
+	return &defaultIDGenerator{}
 }
 
+// Generate implements IDGenerator.
 func (g *defaultIDGenerator) Generate() string {
-	return strconv.Itoa(int(g.r.Int63()))
+	// model-element ids are not security material; the shared math/rand
+	// source is used for its goroutine safety, not unpredictability.
+	return strconv.Itoa(int(rand.Int63())) //nolint:gosec
 }

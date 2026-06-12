@@ -245,6 +245,14 @@ producer signature and becomes reachable (FR-6).
   (mutating a frame's parameter leaves the node's `IoSpec` definitions and
   other frames untouched), frame-first lookup, commit batch, discard.
   Unwired.
+- **M3a — id-generator concurrency fix** (discovered at M2, owner-approved
+  addition): `foundation`'s id generator drove an unsynchronized
+  `math/rand.Rand` and lazily initialized its package variable with a racy
+  check-then-assign — concurrent model-element construction was a data
+  race. Fixed (goroutine-safe top-level `rand`, eager init, `RWMutex` over
+  the generator swap/fetch) with a `-race` regression test. Hard
+  precondition for M4: frames instantiate parameter instances from
+  concurrent tracks, so every node crossing generates ids concurrently.
 - **M4 — switch-over.** `renv` slims (FR-3); track hooks rework (FR-4); node
   migration (FR-5/6/7); Instance sheds scope (FR-8); deletions
   (`NodeDataLoader`, old `Scope` interface + Instance methods, node fields,
@@ -277,6 +285,12 @@ producer signature and becomes reachable (FR-6).
   track, the Instance, mocks, and tests in one commit. Mitigation: M2/M3 land
   the new world fully tested first; M4 is mechanical re-targeting against
   stable contracts; the per-kind V5 tests are written *with* M4.
+- **Concurrent construction beyond the data plane.** Frame instantiation
+  builds model elements (parameters, item-aware elements) from concurrent
+  track goroutines — every shared global in the construction path is a race
+  candidate. The id generator was the confirmed instance (fixed in M3a);
+  V3's `-race` crossing test is the standing guard for the rest of the
+  path.
 - **Clone fidelity of parameter instances.** `ItemAwareElement.Clone()`
   (`item.go:321`) must give value-independent copies for every `values.Value`
   kind a frame can carry; a shallow spot would silently re-share state. V3

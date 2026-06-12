@@ -1,6 +1,7 @@
 package foundation_test
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -39,5 +40,43 @@ func TestGenerator(t *testing.T) {
 	// t.Log(id2)
 
 	require.NotEqual(t, id1, id2)
+}
 
+// TestGeneratorConcurrent is the regression for the unsynchronized
+// generator: model elements are built from concurrent goroutines
+// (per-execution frames, concurrent instance startup), so GenerateID and
+// SetGenerator must be race-free (run with -race).
+func TestGeneratorConcurrent(t *testing.T) {
+	const (
+		goroutines = 8
+		iterations = 200
+	)
+
+	var wg sync.WaitGroup
+
+	ids := make(chan string, goroutines*iterations)
+
+	for range goroutines {
+		wg.Go(func() {
+			for range iterations {
+				ids <- foundation.GenerateID()
+			}
+		})
+	}
+
+	// a concurrent generator swap must not race in-flight generations.
+	var swapErr error
+
+	wg.Go(func() {
+		swapErr = foundation.SetGenerator(foundation.GenFunc(GenerateUUID))
+	})
+
+	wg.Wait()
+	close(ids)
+
+	require.NoError(t, swapErr)
+
+	for id := range ids {
+		require.NotEmpty(t, id)
+	}
 }
