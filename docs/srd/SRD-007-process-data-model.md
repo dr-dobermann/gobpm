@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-12 |
 | Owner | Ruslan Gabitov |
@@ -312,8 +312,67 @@ producer signature and becomes reachable (FR-6).
 
 ## 7. Implementation summary
 
-*Post-landing placeholder — filled at M5 with files, verification results,
-and milestone SHAs.*
+Landed on branch `feat/process-data-model` (off `master`).
+
+**Milestone commits**
+
+- `d30dd2c` — M2: the data plane (`internal/scope` `Scope` struct — landed
+  under the transitional exported name `Plane`, renamed at M4 — with
+  whole-operation atomicity, batch `Commit`, reserved RUNTIME subtree).
+- `62dfc76` — M3: `scope.Frame` (per-frame instances via `IAE.Clone`,
+  frame-first lookup, all-or-nothing commit, discard-on-failure).
+- `389f075` — M3a: race-free id generation (`foundation` — top-level
+  `math/rand`, eager init, `RWMutex` over the generator swap).
+- `fbfc018` — M4: the atomic switch-over (legacy `Scope` interface +
+  `NodeDataLoader` deleted; `renv` slimmed to the per-execution surface;
+  `execEnv`; track frame lifecycle; all node kinds migrated; Instance owns
+  the plane and supplies RUNTIME vars; mocks regenerated).
+- `6c86620` — M5: `examples/process-data` (FR-11).
+
+**Contract details pinned during implementation** (per §4.4 the exact role
+signatures were an M3/M4 concern):
+
+- `NodeDataConsumer.LoadData(ctx, *scope.Frame)` /
+  `NodeDataProducer.UploadData(ctx, *scope.Frame)`.
+- Frame resolution order: inputs → properties → puts → container walk.
+  **Output instances never resolve** — they are write targets; resolving
+  them would let a not-yet-filled output shadow the data meant to fill it
+  at the producer stage (`updateOutputs` pulls the fill value by the
+  output's own ItemDefinition id).
+- A `DataInput` filled by its association flips its frame instance to
+  Ready (BPMN §10.4.2) — before, nothing ever performed the flip, so the
+  real input path could not complete (it existed only behind scope mocks).
+- `ServiceTask` runs its operation on a per-execution clone; the result
+  reaches the frame as a put keyed by the outgoing message item id. The
+  pre-existing message flow was INVERTED (the output was copied into the
+  operation message; the run result never reached the output) — fixed,
+  with a missing output declaration no longer an exec-time error (model
+  validation belongs to the data-flow ADR).
+- `catchEvent.UploadData` went live (its old signature never satisfied the
+  producer role); output associations still have no binding API
+  (message-correlation work, WS-C3).
+
+**Discovered and fixed beyond the plan**
+
+- M3a (owner-approved insert): the id generator was a triple data race —
+  unsynchronized `rand.Rand`, racy lazy init, unsynchronized setter.
+- The legacy `Instance.AddData` self-deadlock and the
+  Leave-scope-before-Exec defect died with their code (§1.1).
+
+**Verification results**
+
+| # | Result |
+|---|---|
+| V1 | 🟢 scope-package suite: atomicity, walk-up, batch all-or-nothing, open/close, reserved subtree, validation. |
+| V2 | 🟢 `-race` hammer (8 writers + 8 readers, no lost commit). |
+| V3 | 🟢 `TestDataCrossingParallelFork` — two forked tracks commit per-branch results; `-race` clean. |
+| V4 | 🟢 `TestFrameDiscardOnFailure` — a failing execution leaves zero container trace. |
+| V5 | 🟢 per-kind suites: frame-based task data flow incl. error paths; throw/catch association branches (white-box); `TestCatchEventUploadData` (live producer role); `TestExecuteNodeFailureStages`. |
+| V6 | 🟢 RUNTIME subtree (reserved, read-only, live values; `TestMonitoring` via `RuntimeVar`). |
+| V7 | 🟢 full suite green (450+); all pre-existing examples run. |
+| V8 | 🟢 `examples/process-data` exits 0 printing both committed results. |
+| V9 | 🟢 `make ci` green; diff-coverage 95.1 % of 628 changed lines (gate ≥95). |
+| V10 | 🟢 ADR-010 + SRD-007 → Accepted; roadmap synced; cross-doc pins audited (no downward refs; all pinned versions exist). |
 
 ## 8. References
 
@@ -343,3 +402,4 @@ and milestone SHAs.*
 | Version | Date | Author | Change |
 |---|---|---|---|
 | v.1 | 2026-06-12 | Ruslan Gabitov | Draft. Lands ADR-010: `internal/scope` reborn as the concrete data plane (container tree, one mutex, whole-operation atomicity, batch `Commit`, reserved read-only RUNTIME subtree); `scope.Frame` keyed (track, node) with per-frame parameter/property instances (`NewParameter` + `IAE.Clone`), frame-first lookup, all-or-nothing commit, discard-on-failure; `renv` drops the embedded `scope.Scope` for a frame-backed per-execution environment (also the `data.Source` for expressions); track hooks create/commit/discard frames; nodes lose `dataPath`/captured scope/`RegisterData`/`NodeDataLoader` (the `AddData` self-deadlock and the dead `catchEvent.UploadData` go with them); Instance sheds its eight scope methods and owns the data plane. Five milestones: data plane → frame → atomic switch-over → acceptance with a new `examples/process-data`. |
+| v.1 | 2026-06-12 | Ruslan Gabitov | **Accepted.** Landed across M2–M5 (`d30dd2c` / `62dfc76` / `389f075` / `fbfc018` / `6c86620`). Contract details pinned during landing (folded into §7): frame role signatures take `*scope.Frame`; frame resolution excludes output instances (write targets); association-filled inputs flip Ready (BPMN §10.4.2); `ServiceTask` runs a per-execution operation clone with the result as a frame put — fixing the pre-existing inverted message flow; `catchEvent.UploadData` went live. M3a inserted (id-generator data race, discovered at M2). `make ci` green; diff-coverage 95.1 % (gate ≥95). |

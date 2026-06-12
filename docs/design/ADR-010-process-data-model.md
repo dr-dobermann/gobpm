@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-12 |
 | Owner | Ruslan Gabitov |
@@ -391,3 +391,4 @@ should follow:
 | Version | Date | Author | Change |
 |---|---|---|---|
 | v.1 | 2026-06-12 | Ruslan Gabitov | Full authoring (expands the 2026-06-11 seed). Decides the runtime data model: persistent data in per-instance **container scopes** (process root + future sub-process children; no track scopes, no node scopes); the scope tree extracted from Instance into a dedicated **data plane** with whole-operation atomicity (fixes the audit's §1.2 race class by construction); one **execution frame** per node execution, keyed by (track, node) — a track is sequential, so at most one live frame per pair; per-frame parameter instances, atomic batch commit, discard-uncommitted on failure (no partial flush, no scope residue); nodes keep data *definitions* + ADR-009 lifetime state only — `RegisterData`/node-held `DataPath` retired, track provides a per-execution environment; **last-committed-wins** for concurrent same-variable commits. Out of scope: model-layer data-flow semantics (separate ADR), DataStore & durable persistence (Persistence ADR), scope-change subscriptions. Rejected: lock-fix-only, loop-mediated data ops, per-track scopes with join merge, execution data on nodes, path-addressable frames. |
+| v.1 | 2026-06-12 | Ruslan Gabitov | **Accepted**, landed via SRD-007 v.1 (M2–M5, `d30dd2c`…`6c86620`). One wording amendment during landing (§2.3): execution carriers live in the frame OR as locals of the executing code — the frame carries what crosses the load → execute → commit stage boundaries; a stage-confined carrier is per-execution by construction. The frame-mechanics details the implementation pinned (resolution order with outputs as non-resolving write targets; the Ready flip on association-filled inputs) live in SRD-007 §7 — they refine, not change, this decision. |
