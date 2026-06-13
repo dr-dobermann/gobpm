@@ -17,6 +17,7 @@ func TestTokenStateProjection(t *testing.T) {
 		in   trackState
 		want TokenState
 	}{
+		{TrackCreated, TokenAlive},
 		{TrackReady, TokenAlive},
 		{TrackExecutingStep, TokenAlive},
 		{TrackProcessStepResults, TokenAlive},

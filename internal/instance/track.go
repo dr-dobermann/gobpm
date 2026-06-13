@@ -541,15 +541,22 @@ func (t *track) executeNodeCore(
 	return nexts, nil
 }
 
-// finalizeNodeExecution marks the step ended, runs the producer role and
-// commits the execution frame — the only moment the node's results reach the
-// container scope, as one atomic batch.
+// finalizeNodeExecution marks the step ended, enters the results-processing
+// stage, runs the producer role and commits the execution frame — the only
+// moment the node's results reach the container scope, as one atomic batch.
+//
+// The track transitions to TrackProcessStepResults here so the ADR-001 §4.2
+// state machine (… → TrackExecutingStep → TrackProcessStepResults → …) is
+// real and observable in the token history, not just a declared constant. The
+// stage projects TokenAlive (the token still sits on the node until the
+// outgoing flows are resolved).
 func (t *track) finalizeNodeExecution(
 	ctx context.Context,
 	step *stepInfo,
 	f *scope.Frame,
 ) error {
 	step.state = StepEnded
+	t.updateState(TrackProcessStepResults)
 
 	if err := t.uploadOutgoingData(ctx, step.node, f); err != nil {
 		return err
