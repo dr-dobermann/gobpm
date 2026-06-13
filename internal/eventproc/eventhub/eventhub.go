@@ -114,10 +114,17 @@ func (eh *EventHub) RegisterEvent(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	eh.m.RLock()
-	w, ok := eh.waiters[eDef.ID()]
-	eh.m.RUnlock()
-	if ok {
+	// The lookup, create, start and insert run under ONE critical section so
+	// two concurrent registrations of the same eDef.ID() can't both miss the
+	// existence check and both create a waiter — the second insert would
+	// orphan the first waiter and its serving goroutine (audit 1.5 /
+	// FIX-003 C). CreateWaiter and AddEventProcessor never re-enter eh.m, and
+	// Service() only spawns a detached goroutine that touches eh.m no sooner
+	// than its first fire, so holding eh.m across them is safe.
+	eh.m.Lock()
+	defer eh.m.Unlock()
+
+	if w, ok := eh.waiters[eDef.ID()]; ok {
 		if err := w.AddEventProcessor(ep); err != nil {
 			return errs.New(
 				errs.M("couldn't add event processor to waiter"),
@@ -141,10 +148,8 @@ func (eh *EventHub) RegisterEvent(
 			errs.E(err))
 	}
 
-	eh.m.Lock()
-	eh.waiters[eDef.ID()] = w
-	eh.m.Unlock()
-
+	// Start the waiter BEFORE inserting it: a failed start never leaves a
+	// dead, non-serving waiter in the map (no cleanup branch needed).
 	if err := w.Service(eh.ctx); err != nil {
 		return errs.New(
 			errs.M("failed to start waiter service"),
@@ -152,6 +157,8 @@ func (eh *EventHub) RegisterEvent(
 			errs.D("waiter_id", w.ID()),
 			errs.E(err))
 	}
+
+	eh.waiters[eDef.ID()] = w
 
 	return nil
 }
