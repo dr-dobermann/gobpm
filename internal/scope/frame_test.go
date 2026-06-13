@@ -296,6 +296,37 @@ func TestFrameSourceResolution(t *testing.T) {
 	})
 }
 
+func TestFrameDiscovery(t *testing.T) {
+	pl, err := New(mustPath(t, "/proc"), &stubSupplier{t: t})
+	require.NoError(t, err)
+
+	// a child container scope under the root
+	sub := mustPath(t, "/proc/sub")
+	require.NoError(t, pl.OpenScope(sub))
+
+	require.NoError(t, pl.Commit(pl.Root(), testData(t, "root-var", 1)))
+	require.NoError(t, pl.Commit(sub, testData(t, "sub-var", 2)))
+
+	f, err := NewFrame("track-1", "node-1", sub, pl)
+	require.NoError(t, err)
+
+	t.Run("GetSources delegates to the plane", func(t *testing.T) {
+		require.Equal(t, []string{RuntimeVarsSegment}, f.GetSources())
+	})
+
+	t.Run("List of a source returns its names", func(t *testing.T) {
+		names, err := f.List(RuntimeVarsSegment)
+		require.NoError(t, err)
+		require.Equal(t, []string{"alive"}, names)
+	})
+
+	t.Run("List of the default scope walks parent-ward", func(t *testing.T) {
+		names, err := f.List("")
+		require.NoError(t, err)
+		require.Equal(t, []string{"root-var", "sub-var"}, names)
+	})
+}
+
 func TestFrameCommitAndDiscard(t *testing.T) {
 	t.Run("commit flushes outputs and puts", func(t *testing.T) {
 		pl, f := newTestFrame(t)

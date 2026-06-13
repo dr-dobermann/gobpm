@@ -36,6 +36,17 @@ func (e *execEnv) GetDataByID(id string) (data.Data, error) {
 	return e.frame.GetDataByID(id)
 }
 
+// GetSources lists the named data sources reachable through the environment.
+func (e *execEnv) GetSources() []string {
+	return e.frame.GetSources()
+}
+
+// List enumerates variable names at the default scope (empty path) or a named
+// source.
+func (e *execEnv) List(path string) ([]string, error) {
+	return e.frame.List(path)
+}
+
 // Put stores node-produced values in the execution's frame.
 func (e *execEnv) Put(dd ...data.Data) error {
 	return e.frame.Put(dd...)

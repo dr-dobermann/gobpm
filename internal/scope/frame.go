@@ -197,6 +197,23 @@ func (f *Frame) GetData(name string) (data.Data, error) {
 	return f.plane.GetData(f.at, name)
 }
 
+// GetSources lists the data plane's named-source segments.
+func (f *Frame) GetSources() []string {
+	return f.plane.GetSources()
+}
+
+// List enumerates variable names. An empty path lists the default-scope names
+// the execution sees (its attachment point parent-ward to the root); a source
+// segment returns that provider's names.
+func (f *Frame) List(path string) ([]string, error) {
+	path = strings.TrimSpace(path)
+	if path != "" {
+		return f.plane.List(path)
+	}
+
+	return f.plane.namesFrom(f.at), nil
+}
+
 // GetDataByID resolves an ItemDefinition id frame-first and then through
 // the container scopes from the frame's attachment point.
 func (f *Frame) GetDataByID(id string) (data.Data, error) {

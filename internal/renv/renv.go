@@ -43,6 +43,14 @@ type RuntimeEnvironment interface {
 	// same frame-first resolution.
 	GetDataByID(id string) (data.Data, error)
 
+	// GetSources lists the named data sources reachable through the
+	// environment (the default scope is addressed by plain name, not listed).
+	GetSources() []string
+
+	// List enumerates variable names: an empty path lists the default-scope
+	// names the execution sees; a source segment returns that source's names.
+	List(path string) ([]string, error)
+
 	// Put stores node-produced values in the execution's frame; they reach
 	// the container scope at the frame commit.
 	Put(dd ...data.Data) error
