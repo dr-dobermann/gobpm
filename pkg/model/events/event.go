@@ -380,14 +380,29 @@ func (te *throwEvent) LoadData(ctx context.Context, f *scope.Frame) error {
 		ins[in.ItemDefinition().ID()] = in
 	}
 
+	// an input gates the event firing unless it is optional or while-executing
+	// (ADR-011 v.2 §2.2-§2.3); events never wait on data.
+	inDefs := make([]*data.Parameter, 0, len(te.dataInputs))
+	for _, d := range te.dataInputs {
+		inDefs = append(inDefs, d)
+	}
+
+	gating := data.RequiredItemIDs(inDefs)
+
 	ee := []error{}
 
 	for _, ia := range te.inputAssociations {
 		if !ia.IsReady() {
-			ee = append(ee,
-				errs.New(
-					errs.M("association #%s data isn't ready", ia.ID()),
-					errs.C(errorClass, errs.InvalidState)))
+			// a required input that can't be filled is a fail-fast error —
+			// gobpm never waits for data. An optional / while-executing input
+			// may stay Unavailable.
+			if gating[ia.TargetItemDefID()] {
+				ee = append(ee,
+					errs.New(
+						errs.M("required input of association #%s is unavailable "+
+							"(gobpm does not wait for data)", ia.ID()),
+						errs.C(errorClass, errs.ConditionFailed)))
+			}
 
 			continue
 		}
@@ -437,6 +452,10 @@ func (te *throwEvent) LoadData(ctx context.Context, f *scope.Frame) error {
 		}
 	}
 
+	// the start-gate: every required input must now be available — also catches
+	// a required input with no association to fill it.
+	ee = append(ee, missingRequiredInputs(f, gating, te.Name())...)
+
 	if len(ee) != 0 {
 		return errs.New(
 			errs.M("node %q[%s] associations data load failed", te.Name(), te.ID()),
@@ -445,6 +464,33 @@ func (te *throwEvent) LoadData(ctx context.Context, f *scope.Frame) error {
 	}
 
 	return nil
+}
+
+// missingRequiredInputs returns an error for each required input (per gating)
+// whose frame instance is not Ready — the start-gate that never waits for data
+// (ADR-011 v.2 §2.3). Optional / while-executing inputs are skipped.
+func missingRequiredInputs(
+	f *scope.Frame,
+	gating map[string]bool,
+	eventName string,
+) []error {
+	ee := []error{}
+
+	for _, in := range f.Inputs() {
+		if !gating[in.ItemDefinition().ID()] {
+			continue
+		}
+
+		if in.State().Name() != data.ReadyDataState.Name() {
+			ee = append(ee,
+				errs.New(
+					errs.M("required input %q of event %q is unavailable "+
+						"(gobpm does not wait for data)", in.Name(), eventName),
+					errs.C(errorClass, errs.ConditionFailed)))
+		}
+	}
+
+	return ee
 }
 
 // emitEvent tries to evmit single event based on flow.EventDefinition ed.

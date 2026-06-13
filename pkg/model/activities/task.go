@@ -86,6 +86,10 @@ func (t *task) LoadData(ctx context.Context, f *scope.Frame) error {
 		return err
 	}
 
+	// an input gates the activity's start unless it is optional or
+	// while-executing (ADR-011 v.2 §2.2). InputSet is the input parameter list.
+	gating := data.RequiredItemIDs(t.IoSpec.InputSet())
+
 	dii := f.Inputs()
 
 	for _, ia := range t.dataAssociations[data.Input] {
@@ -104,10 +108,19 @@ func (t *task) LoadData(ctx context.Context, f *scope.Frame) error {
 
 		v, err := ia.Value(ctx)
 		if err != nil {
-			return errs.New(
-				errs.M("couldn't get value of the association %q", ia.ID()),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.E(err))
+			// a required input that can't be filled is a fail-fast error —
+			// gobpm never waits for data (ADR-011 v.2 §2.3). An optional or
+			// while-executing input may stay Unavailable.
+			if gating[ia.TargetItemDefID()] {
+				return errs.New(
+					errs.M("required input %q of task %q is unavailable "+
+						"(gobpm does not wait for data)",
+						dii[index].Name(), t.Name()),
+					errs.C(errorClass, errs.ConditionFailed),
+					errs.E(err))
+			}
+
+			continue
 		}
 
 		if err := dii[index].Subject().Structure().Update(ctx, v.Structure().Get(ctx)); err != nil {
@@ -124,6 +137,22 @@ func (t *task) LoadData(ctx context.Context, f *scope.Frame) error {
 				errs.M("couldn't set input %q to Ready", dii[index].Name()),
 				errs.C(errorClass, errs.OperationFailed),
 				errs.E(err))
+		}
+	}
+
+	// the start-gate: every required input must now be available — this also
+	// catches a required input with no association to fill it.
+	for _, in := range dii {
+		if !gating[in.ItemDefinition().ID()] {
+			continue
+		}
+
+		if in.State().Name() != data.ReadyDataState.Name() {
+			return errs.New(
+				errs.M("required input %q of task %q is unavailable "+
+					"(gobpm does not wait for data)",
+					in.Name(), t.Name()),
+				errs.C(errorClass, errs.ConditionFailed))
 		}
 	}
 

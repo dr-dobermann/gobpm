@@ -214,3 +214,91 @@ func TestTaskDataErrorPaths(t *testing.T) {
 			require.Equal(t, 99, sink.Subject().Structure().Get(ctx))
 		})
 }
+
+// TestTaskStartGate covers the SRD-009 start-gate in task.LoadData: a required
+// input that is unavailable fails fast (gobpm never waits, ADR-011 v.2 §2.3);
+// an optional input may be absent; a pre-Ready required input passes.
+func TestTaskStartGate(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+
+	// oneInput builds a task with a single input of the given state and
+	// optionality (no association) plus a Ready output.
+	oneInput := func(
+		t *testing.T,
+		state *data.SrcState,
+		opts ...data.ParameterOption,
+	) *task {
+		t.Helper()
+
+		tsk, err := newTask("gate",
+			WithParameters(data.Input, data.MustParameter("in",
+				data.MustItemAwareElement(
+					data.MustItemDefinition(values.NewVariable(0),
+						foundation.WithID("gate-in")),
+					state), opts...)),
+			WithParameters(data.Output, dataPar(t, "out", "gate-out", 0)))
+		require.NoError(t, err)
+
+		return tsk
+	}
+
+	t.Run("required input unavailable, no association, fails",
+		func(t *testing.T) {
+			tsk := oneInput(t, data.UnavailableDataState)
+			require.Error(t, tsk.LoadData(ctx, newFrameFor(t, tsk.ID())))
+		})
+
+	t.Run("optional input unavailable is allowed",
+		func(t *testing.T) {
+			tsk := oneInput(t, data.UnavailableDataState, data.Optional())
+			require.NoError(t, tsk.LoadData(ctx, newFrameFor(t, tsk.ID())))
+		})
+
+	t.Run("required input pre-ready passes",
+		func(t *testing.T) {
+			tsk := oneInput(t, data.ReadyDataState)
+			require.NoError(t, tsk.LoadData(ctx, newFrameFor(t, tsk.ID())))
+		})
+
+	// fedTask builds a task whose single input is filled by an association from
+	// a data object in the given state.
+	fedTask := func(
+		t *testing.T,
+		srcState *data.SrcState,
+		opts ...data.ParameterOption,
+	) *task {
+		t.Helper()
+
+		tsk, err := newTask("fed",
+			WithParameters(data.Input, data.MustParameter("in",
+				data.MustItemAwareElement(
+					data.MustItemDefinition(values.NewVariable(0),
+						foundation.WithID("fed-in")),
+					data.UnavailableDataState), opts...)),
+			WithParameters(data.Output, dataPar(t, "out", "fed-out", 0)))
+		require.NoError(t, err)
+
+		src, err := dataobjects.New("src",
+			data.MustItemDefinition(values.NewVariable(0),
+				foundation.WithID("fed-in")),
+			srcState)
+		require.NoError(t, err)
+		require.NoError(t, src.AssociateTarget(tsk, nil))
+
+		return tsk
+	}
+
+	t.Run("required input fed by an unavailable source fails",
+		func(t *testing.T) {
+			tsk := fedTask(t, data.UnavailableDataState)
+			require.Error(t, tsk.LoadData(ctx, newFrameFor(t, tsk.ID())))
+		})
+
+	t.Run("optional input fed by an unavailable source is allowed",
+		func(t *testing.T) {
+			tsk := fedTask(t, data.UnavailableDataState, data.Optional())
+			require.NoError(t, tsk.LoadData(ctx, newFrameFor(t, tsk.ID())))
+		})
+}

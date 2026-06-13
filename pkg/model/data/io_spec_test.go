@@ -122,6 +122,21 @@ func TestIOSpec(t *testing.T) {
 	require.Equal(t, "in_1", ios.InputSet()[0].Name())
 }
 
+// TestRequiredItemIDs covers the gating-set helper: only parameters that are
+// neither optional nor while-executing gate the start/completion.
+func TestRequiredItemIDs(t *testing.T) {
+	req := newParam(t, "req", 0)
+	opt := newParam(t, "opt", 0, data.Optional())
+	we := newParam(t, "we", 0, data.WhileExecuting())
+
+	ids := data.RequiredItemIDs([]*data.Parameter{req, opt, we})
+
+	require.Len(t, ids, 1)
+	require.True(t, ids[req.ItemDefinition().ID()])
+	require.False(t, ids[opt.ItemDefinition().ID()])
+	require.False(t, ids[we.ItemDefinition().ID()])
+}
+
 // TestIOSpecValidateDuplicateName covers the structural Validate: two
 // parameters sharing a name in one direction is an error; a well-formed spec
 // passes.

@@ -143,5 +143,22 @@ func (p *Parameter) IsWhileExecuting() bool {
 	return p.whileExecuting
 }
 
+// RequiredItemIDs returns the set of ItemDefinition ids of the parameters that
+// gate an activity's start or completion — those that are neither optional nor
+// while-executing (ADR-011 v.2 §2.2). It is keyed by ItemDefinition id, the form
+// the execution frame instances and data associations match on, so a runtime
+// availability gate can look a parameter up by the id it already has in hand.
+func RequiredItemIDs(defs []*Parameter) map[string]bool {
+	req := map[string]bool{}
+
+	for _, d := range defs {
+		if !d.IsOptional() && !d.IsWhileExecuting() {
+			req[d.ItemDefinition().ID()] = true
+		}
+	}
+
+	return req
+}
+
 // Interfaces check for Parameter
 var _ Data = (*Parameter)(nil)
