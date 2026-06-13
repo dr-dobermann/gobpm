@@ -302,3 +302,56 @@ func TestTaskStartGate(t *testing.T) {
 			require.NoError(t, tsk.LoadData(ctx, newFrameFor(t, tsk.ID())))
 		})
 }
+
+// TestTaskCompletionGate covers the SRD-009 completion-gate in task.UploadData:
+// a required output that wasn't produced is an error (covered by the existing
+// not-Ready-output case), while an optional output may be absent and its
+// association is skipped.
+func TestTaskCompletionGate(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+
+	// optOutTask builds a task with a single optional, unproduced output.
+	optOutTask := func(t *testing.T, outID string) *task {
+		t.Helper()
+
+		tsk, err := newTask("comp",
+			WithParameters(data.Output, data.MustParameter("out",
+				data.MustItemAwareElement(
+					data.MustItemDefinition(values.NewVariable(0),
+						foundation.WithID(outID)),
+					data.UnavailableDataState), data.Optional())))
+		require.NoError(t, err)
+
+		return tsk
+	}
+
+	t.Run("optional output not produced is allowed",
+		func(t *testing.T) {
+			tsk := optOutTask(t, "opt-out")
+			f := newFrameFor(t, tsk.ID())
+
+			require.NoError(t, tsk.LoadData(ctx, f))
+			// nothing produced opt-out; optional → UploadData succeeds.
+			require.NoError(t, tsk.UploadData(ctx, f))
+		})
+
+	t.Run("association of an absent optional output is skipped",
+		func(t *testing.T) {
+			tsk := optOutTask(t, "opt-out2")
+			f := newFrameFor(t, tsk.ID())
+
+			sink, err := dataobjects.New("sink",
+				data.MustItemDefinition(values.NewVariable(0),
+					foundation.WithID("opt-out2")),
+				nil)
+			require.NoError(t, err)
+			require.NoError(t,
+				sink.AssociateSource(tsk, []string{"opt-out2"}, nil))
+
+			require.NoError(t, tsk.LoadData(ctx, f))
+			// the optional output is absent → its association is skipped, no error.
+			require.NoError(t, tsk.UploadData(ctx, f))
+		})
+}

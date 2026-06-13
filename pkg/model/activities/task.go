@@ -238,6 +238,11 @@ func (t *task) UploadData(ctx context.Context, f *scope.Frame) error {
 				errs.C(errorClass, errs.ObjectNotFound))
 		}
 
+		// an optional output that wasn't produced has no value to push.
+		if doo[index].State().Name() != data.ReadyDataState.Name() {
+			continue
+		}
+
 		if err := oa.UpdateSource(
 			ctx,
 			doo[index].ItemDefinition(),
@@ -255,42 +260,47 @@ func (t *task) UploadData(ctx context.Context, f *scope.Frame) error {
 	return nil
 }
 
-// updateOutputs checks the frame's output instances and fills every
-// not-Ready one from the frame's resolution (puts, inputs, container walk).
+// updateOutputs checks the frame's output instances and fills every not-Ready
+// one from the frame's resolution (puts, inputs, container walk). It is the
+// completion-gate (ADR-011 v.2 §2.2): a required output that cannot be produced
+// is an error — gobpm never silently produces nothing — while an optional output
+// may be left Unavailable.
 func (t *task) updateOutputs(
 	ctx context.Context,
 	f *scope.Frame,
 ) ([]*data.Parameter, error) {
 	oo := f.Outputs()
+	required := data.RequiredItemIDs(t.IoSpec.OutputSet())
 
 	for _, o := range oo {
 		if o.State().Name() == data.ReadyDataState.Name() {
 			continue
 		}
 
-		d, err := f.GetDataByID(o.ItemDefinition().ID())
-		if err != nil {
-			return nil,
-				fmt.Errorf("couldn't get data #%s from the frame: %w",
-					o.ItemDefinition().ID(), err)
-		}
+		id := o.ItemDefinition().ID()
 
-		if d.State().Name() != data.ReadyDataState.Name() {
-			return nil,
-				fmt.Errorf("data isn't Ready for update task's output #%s",
-					d.ItemDefinition().ID())
+		d, err := f.GetDataByID(id)
+		if err != nil || d.State().Name() != data.ReadyDataState.Name() {
+			// the output wasn't produced: a required output is an error, an
+			// optional one may be absent.
+			if required[id] {
+				return nil,
+					fmt.Errorf("required output #%s of task %q was not produced",
+						id, t.Name())
+			}
+
+			continue
 		}
 
 		if err := o.Value().Update(ctx, d.Value().Get(ctx)); err != nil {
 			return nil,
-				fmt.Errorf("couldn't update task output #%s: %w",
-					o.ItemDefinition().ID(), err)
+				fmt.Errorf("couldn't update task output #%s: %w", id, err)
 		}
 
 		if err := o.UpdateState(data.ReadyDataState); err != nil {
 			return nil,
 				fmt.Errorf("couldn't set task output #%s state to Ready: %w",
-					o.ItemDefinition().ID(), err)
+					id, err)
 		}
 	}
 
