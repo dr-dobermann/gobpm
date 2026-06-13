@@ -63,8 +63,18 @@ engine, _ := thresher.New("demo-engine")
 
 proc, _ := process.New("demo-process")
 start, _ := events.NewStartEvent("start")
-op, _ := service.NewOperation("hello", nil, nil, nil)
+
+// A ServiceTask runs your Go code: wrap a functor as the operation's
+// implementation. The operation carries no in/out messages (nil, nil) —
+// no data mapping needed, the functor just runs inside the process.
+work, _ := gooper.New(
+    func(ctx context.Context, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
+        fmt.Println("  ▶ hello from inside the process")
+        return nil, nil
+    })
+op, _ := service.NewOperation("hello", nil, nil, work)
 task, _ := activities.NewServiceTask("work", op, activities.WithoutParams())
+
 end, _ := events.NewEndEvent("end")
 
 _ = proc.Add(start)
@@ -78,7 +88,16 @@ _ = engine.Run(context.Background())
 _ = engine.StartProcess(proc.ID())
 ```
 
-A complete, runnable version (with full error handling) lives in [`examples/basic-process/`](examples/basic-process/); see also [`examples/simple-timer/`](examples/simple-timer/) and [`examples/timer-event/`](examples/timer-event/).
+The `gooper` functor is how you embed arbitrary Go logic in a process — the
+same pattern scales from a `Println` to a real handler. A complete, runnable
+version (with error handling and waiting for the task to run) lives in
+[`examples/basic-process/`](examples/basic-process/); see also
+[`examples/parallel-gateway/`](examples/parallel-gateway/) (concurrent
+branches),
+[`examples/process-data/`](examples/process-data/) (process data through the
+task), and the timer examples
+[`examples/simple-timer/`](examples/simple-timer/) ·
+[`examples/timer-event/`](examples/timer-event/).
 
 ## Development
 

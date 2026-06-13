@@ -371,6 +371,17 @@ Conformance verification:
 - Conformance test suite (to be established): combination of MIWG public fixtures + project-internal element-coverage tests.
 - Each released version pinned to a BPMN-spec snapshot SHA so conformance claims are reproducible.
 
+### 14.1 Deliberate deviations from BPMN 2.0
+
+Some normative behaviours of the standard are **intentionally not implemented** — not "not yet" (those are tracked in the roadmap as unbuilt elements), but a design decision *not* to implement them. They share one principle: **gobpm rejects hidden, data-driven control that the process diagram does not show.** Implicit behaviour a modeller cannot see on the diagram is unpredictable and unmodellable; where the standard expresses control through invisible data conditions, gobpm requires the modeller to express it **explicitly** with the constructs the diagram does show (events, gateways).
+
+| BPMN behaviour (spec) | gobpm decision & why |
+|---|---|
+| **Data-availability wait** (§10.4.2) — an activity whose input data is unavailable *waits* until it becomes available. | **Not implemented.** A data wait is a hidden synchronization: a token sits and waits on a condition absent from the diagram. gobpm treats an unavailable *required* input as an **error/incident**, never a wait. A process that must pause until data is present models that with a catch event or a gateway — visible on the diagram. |
+| **Multiple input/output sets + data-driven selection** (§10.4.2) — an activity may declare several `InputSet`/`OutputSet`s; the engine selects, in declaration order, the first whose data is available, with an IORule pairing inputs to outputs. | **Not implemented.** Selecting a set by which data happens to be available is hidden, non-diagram branching — the same hazard as the data wait — and the feature is near-unused in practice (tooling barely exposes it; engines barely implement it). gobpm models **one `InputSet` and one `OutputSet`** per activity; genuine alternative input/output modes are modelled with gateways or boundary events. The optional/required and while-executing distinctions are kept *within* the single set, so nothing practical is lost; the model is shaped so multi-set selection can be added as an extension if a real demand ever appears. |
+
+Both deviations are conformance-relevant (full §10.4.2 includes them) and are recorded here so a reader coming from another engine is not surprised; this section is the authoritative register of intentional gobpm divergences from the standard.
+
 ## 15. Repository & Release Strategy
 
 ### 15.1 Repository

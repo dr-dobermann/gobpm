@@ -1,97 +1,125 @@
+// Command basic-process is the canonical GoBPM quick-start: a minimal
+// Start → ServiceTask → End process where the ServiceTask runs YOUR Go code.
+//
+// The ServiceTask's work is a `gooper` functor — an ordinary Go function
+// wrapped as the operation's implementation. This is how you embed arbitrary
+// Go logic inside a BPMN process without messages or data mapping: the
+// operation carries nil in/out messages and the functor just runs.
+//
+//	start ─> work (runs a Go functor) ─> end
 package main
 
 import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
+	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 )
 
 func main() {
-	// Create BPM engine
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	engine, err := thresher.New("basic-process-engine")
 	if err != nil {
-		log.Fatal("Failed to create BPM engine:", err)
+		return fmt.Errorf("create engine: %w", err)
 	}
 
-	// Create a simple process
-	proc, err := process.New("simple-process")
+	proc, err := process.New("basic-process")
 	if err != nil {
-		log.Fatal("Failed to create process:", err)
+		return fmt.Errorf("create process: %w", err)
 	}
 
-	// Create start event
-	startEvent, err := events.NewStartEvent("start")
+	// done lets main wait until the ServiceTask's Go code actually ran —
+	// engine execution is asynchronous.
+	done := make(chan struct{})
+
+	start, err := events.NewStartEvent("start")
 	if err != nil {
-		log.Fatal("Failed to create start event:", err)
+		return fmt.Errorf("create start: %w", err)
 	}
 
-	// Create service operation (simplified)
-	op, err := service.NewOperation("hello-world", nil, nil, nil)
+	// The ServiceTask runs a Go functor: an operation with no in/out messages
+	// (nil, nil) whose implementation is plain Go code. This is the simplest
+	// way to put your logic inside a process.
+	work, err := gooper.New(
+		func(_ context.Context, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			fmt.Println("  ▶ hello from inside the process (Go code in a ServiceTask)")
+			close(done)
+
+			return nil, nil
+		})
 	if err != nil {
-		log.Fatal("Failed to create service operation:", err)
+		return fmt.Errorf("create functor: %w", err)
 	}
 
-	// Create service task
-	serviceTask, err := activities.NewServiceTask("process-data", op,
-		activities.WithoutParams())
+	op, err := service.NewOperation("hello", nil, nil, work)
 	if err != nil {
-		log.Fatal("Failed to create service task:", err)
+		return fmt.Errorf("create operation: %w", err)
 	}
 
-	// Create end event
-	endEvent, err := events.NewEndEvent("end")
+	task, err := activities.NewServiceTask("work", op, activities.WithoutParams())
 	if err != nil {
-		log.Fatal("Failed to create end event:", err)
+		return fmt.Errorf("create service task: %w", err)
 	}
 
-	// Add elements to process
-	if err := proc.Add(startEvent); err != nil {
-		log.Fatal("Failed to add start event to process:", err)
-	}
-	if err := proc.Add(serviceTask); err != nil {
-		log.Fatal("Failed to add service task to process:", err)
-	}
-	if err := proc.Add(endEvent); err != nil {
-		log.Fatal("Failed to add end event to process:", err)
-	}
-
-	// Connect elements with sequence flows
-	_, err = flow.Link(startEvent, serviceTask)
+	end, err := events.NewEndEvent("end")
 	if err != nil {
-		log.Fatal("Failed to link start event to service task:", err)
+		return fmt.Errorf("create end: %w", err)
 	}
 
-	_, err = flow.Link(serviceTask, endEvent)
-	if err != nil {
-		log.Fatal("Failed to link service task to end event:", err)
+	for _, e := range []flow.Element{start, task, end} {
+		if err := proc.Add(e); err != nil {
+			return fmt.Errorf("add element: %w", err)
+		}
 	}
 
-	// Register process with engine
-	err = engine.RegisterProcess(proc)
-	if err != nil {
-		log.Fatal("Failed to register process:", err)
+	if _, err := flow.Link(start, task); err != nil {
+		return fmt.Errorf("link start->task: %w", err)
 	}
 
-	// Start engine
-	ctx := context.Background()
-	err = engine.Run(ctx)
-	if err != nil {
-		log.Fatal("Failed to start engine:", err)
+	if _, err := flow.Link(task, end); err != nil {
+		return fmt.Errorf("link task->end: %w", err)
 	}
 
-	// Start process execution
-	err = engine.StartProcess(proc.ID())
-	if err != nil {
-		log.Fatal("Failed to start process:", err)
+	if err := engine.RegisterProcess(proc); err != nil {
+		return fmt.Errorf("register process: %w", err)
 	}
 
-	fmt.Printf("Process '%s' started successfully with ID: %s\n",
-		proc.Name(), proc.ID())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := engine.Run(ctx); err != nil {
+		return fmt.Errorf("run engine: %w", err)
+	}
+
+	if err := engine.StartProcess(proc.ID()); err != nil {
+		return fmt.Errorf("start process: %w", err)
+	}
+
+	// wait for the ServiceTask's functor to run, then a brief grace for the
+	// token to reach End.
+	select {
+	case <-done:
+	case <-ctx.Done():
+		return fmt.Errorf("timed out waiting for the service task")
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	fmt.Println("✓ basic-process completed: start → service task (ran Go code) → end")
+
+	return nil
 }
