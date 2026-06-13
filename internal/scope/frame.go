@@ -166,9 +166,11 @@ func (f *Frame) Put(dd ...data.Data) error {
 	return nil
 }
 
-// GetData resolves name frame-first — inputs, properties, puts (outputs are
-// write targets, not sources — see lookup) — and then walks the container
-// scopes from the frame's attachment point up to the plane's root.
+// GetData resolves name. A path-qualified name ("SOURCE/addr") is dispatched
+// to the named source with no container traversal (ADR-010 v.2 §2.7). A plain
+// name resolves frame-first — inputs, properties, puts (outputs are write
+// targets, not sources — see lookup) — and then walks the container scopes
+// from the frame's attachment point up to the plane's root.
 func (f *Frame) GetData(name string) (data.Data, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -178,6 +180,14 @@ func (f *Frame) GetData(name string) (data.Data, error) {
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
+	// A path-qualified name splits on the FIRST PathSeparator: the leading
+	// segment selects a named source and the remainder is the provider's own
+	// address (dispatched verbatim, no container traversal). A plain name (no
+	// separator) resolves against the default scope below.
+	if source, addr, ok := strings.Cut(name, PathSeparator); ok {
+		return f.plane.GetSource(source, addr)
+	}
+
 	if d, ok := f.lookup(func(d data.Data) bool {
 		return d.Name() == name
 	}); ok {
@@ -185,6 +195,23 @@ func (f *Frame) GetData(name string) (data.Data, error) {
 	}
 
 	return f.plane.GetData(f.at, name)
+}
+
+// GetSources lists the data plane's named-source segments.
+func (f *Frame) GetSources() []string {
+	return f.plane.GetSources()
+}
+
+// List enumerates variable names. An empty path lists the default-scope names
+// the execution sees (its attachment point parent-ward to the root); a source
+// segment returns that provider's names.
+func (f *Frame) List(path string) ([]string, error) {
+	path = strings.TrimSpace(path)
+	if path != "" {
+		return f.plane.List(path)
+	}
+
+	return f.plane.namesFrom(f.at), nil
 }
 
 // GetDataByID resolves an ItemDefinition id frame-first and then through

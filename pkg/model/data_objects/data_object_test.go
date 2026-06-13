@@ -28,6 +28,10 @@ func TestNew(t *testing.T) {
 			_, err := dataobjects.New("", nil, nil)
 			require.Error(t, err)
 
+			// name carrying the reserved path separator
+			_, err = dataobjects.New("a/b", nil, nil)
+			require.Error(t, err)
+
 			// no IAE
 			_, err = dataobjects.New("no IAE", nil, nil)
 			require.Error(t, err)

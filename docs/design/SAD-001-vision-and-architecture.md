@@ -380,7 +380,15 @@ Some normative behaviours of the standard are **intentionally not implemented** 
 | **Data-availability wait** (§10.4.2) — an activity whose input data is unavailable *waits* until it becomes available. | **Not implemented.** A data wait is a hidden synchronization: a token sits and waits on a condition absent from the diagram. gobpm treats an unavailable *required* input as an **error/incident**, never a wait. A process that must pause until data is present models that with a catch event or a gateway — visible on the diagram. |
 | **Multiple input/output sets + data-driven selection** (§10.4.2) — an activity may declare several `InputSet`/`OutputSet`s; the engine selects, in declaration order, the first whose data is available, with an IORule pairing inputs to outputs. | **Not implemented.** Selecting a set by which data happens to be available is hidden, non-diagram branching — the same hazard as the data wait — and the feature is near-unused in practice (tooling barely exposes it; engines barely implement it). gobpm models **one `InputSet` and one `OutputSet`** per activity; genuine alternative input/output modes are modelled with gateways or boundary events. The optional/required and while-executing distinctions are kept *within* the single set, so nothing practical is lost; the model is shaped so multi-set selection can be added as an extension if a real demand ever appears. |
 
-Both deviations are conformance-relevant (full §10.4.2 includes them) and are recorded here so a reader coming from another engine is not surprised; this section is the authoritative register of intentional gobpm divergences from the standard.
+Both deviations are conformance-relevant (full §10.4.2 includes them) and are recorded here so a reader coming from another engine is not surprised; this section is the authoritative register of intentional gobpm non-implementations of the standard.
+
+### 14.2 Deliberate extensions to BPMN 2.0
+
+gobpm also adds capabilities **beyond** the standard, through the standard's own extensibility points. These are additive — they remove no conformant behaviour — and are recorded here so the divergence from a strict reading is explicit.
+
+| gobpm capability | Standard basis & why |
+|---|---|
+| **Go operation with a data reader** — a `ServiceTask`'s `Operation` may be implemented as an in-process Go functor that receives a narrow, public, read-only data reader (process properties + the engine's runtime variables `STARTED_AT`/`STATE`/`TRACKS_CNT`, by name) and returns its result, instead of the standard's message-in/message-out contract (§8.4.3, §13.3.3). | The standard fixes only the Operation's *message contract*; `implementationRef` leaves the implementation **mechanism engine-defined**. A Go functor with a data accessor is one such mechanism. The canonical **message operation** stays available and pure (decoupled, message-only); ambient read access is confined to the explicit Go kind, so it does not bend the standard for conformant/external services. |
 
 ## 15. Repository & Release Strategy
 

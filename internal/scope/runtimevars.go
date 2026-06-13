@@ -17,4 +17,23 @@ type RuntimeVarsSupplier interface {
 	// RuntimeVar returns the runtime variable named name or an error if no
 	// such variable exists.
 	RuntimeVar(name string) (data.Data, error)
+
+	// RuntimeVarNames lists the runtime variable names the supplier exposes.
+	RuntimeVarNames() []string
+}
+
+// runtimeSource adapts a RuntimeVarsSupplier to data.SourceProvider so the
+// runtime variables are reachable as the RUNTIME source ("RUNTIME/STATE").
+type runtimeSource struct {
+	rt RuntimeVarsSupplier
+}
+
+// Get resolves the runtime variable addressed by addr (a flat variable name).
+func (s runtimeSource) Get(addr string) (data.Data, error) {
+	return s.rt.RuntimeVar(addr)
+}
+
+// Names lists the runtime variable names the supplier exposes.
+func (s runtimeSource) Names() []string {
+	return s.rt.RuntimeVarNames()
 }

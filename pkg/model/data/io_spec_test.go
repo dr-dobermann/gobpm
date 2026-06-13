@@ -45,6 +45,10 @@ func TestParameter(t *testing.T) {
 			_, err = data.NewParameter("p", nil)
 			require.Error(t, err)
 
+			// name carrying the reserved path separator
+			_, err = data.NewParameter("a/b", iae)
+			require.Error(t, err)
+
 			require.Panics(t, func() { _ = data.MustParameter("", nil) })
 		})
 

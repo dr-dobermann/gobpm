@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 )
 
 // DataPath is path to data in the scope.
@@ -20,10 +21,12 @@ const (
 	// EmptyDataPath represents an empty data path.
 	EmptyDataPath DataPath = ""
 	// RootDataPath represents the root data path.
-	RootDataPath  DataPath = "/"
+	RootDataPath DataPath = "/"
 
-	// PathSeparator represents the data path separator character.
-	PathSeparator string = "/"
+	// PathSeparator represents the data path separator character. It aliases
+	// data.PathSeparator so the reserved separator has a single source of
+	// truth across the model and scope layers.
+	PathSeparator = data.PathSeparator
 )
 
 // NewDataPath creates a new DataPath from correctly formed string.

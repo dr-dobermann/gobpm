@@ -58,6 +58,10 @@ func TestMonitoring(t *testing.T) {
 	_, err = inst.RuntimeVar("INVALID_NAME")
 	require.Error(t, err)
 
+	require.ElementsMatch(t,
+		[]string{instance.StartedAt, instance.CurrState, instance.TracksCount},
+		inst.RuntimeVarNames())
+
 	ctx := context.Background()
 
 	tc, err := inst.RuntimeVar(instance.TracksCount)

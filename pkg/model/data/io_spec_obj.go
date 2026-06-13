@@ -92,6 +92,10 @@ func NewParameter(
 		return nil, err
 	}
 
+	if err := CheckName(name, errorClass); err != nil {
+		return nil, err
+	}
+
 	if iae == nil {
 		return nil,
 			errs.New(

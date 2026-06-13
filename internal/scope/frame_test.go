@@ -269,6 +269,82 @@ func TestFrameResolution(t *testing.T) {
 	})
 }
 
+func TestFrameSourceResolution(t *testing.T) {
+	pl, err := New(mustPath(t, "/proc"), &stubSupplier{t: t})
+	require.NoError(t, err)
+
+	f, err := NewFrame("track-1", "node-1", pl.Root(), pl)
+	require.NoError(t, err)
+
+	require.NoError(t, pl.Commit(pl.Root(), testData(t, "x", "container")))
+
+	t.Run("path-qualified name resolves via the source", func(t *testing.T) {
+		d, err := f.GetData(RuntimeVarsSegment + PathSeparator + "alive")
+		require.NoError(t, err)
+		require.Equal(t, "alive", d.Name())
+	})
+
+	t.Run("unknown source is an error", func(t *testing.T) {
+		_, err := f.GetData("BUSINESS" + PathSeparator + "order")
+		require.Error(t, err)
+	})
+
+	t.Run("plain name still walks the default scope", func(t *testing.T) {
+		d, err := f.GetData("x")
+		require.NoError(t, err)
+		require.Equal(t, "x", d.Name())
+	})
+
+	t.Run("a source never intersects a same-named user variable", func(t *testing.T) {
+		// the supplier serves "alive"; a user property of the same name is
+		// independent — the plain name reads the default scope, the qualified
+		// name reads the source (NFR-2).
+		require.NoError(t,
+			pl.Commit(pl.Root(), testData(t, "alive", "user-owned")))
+
+		user, err := f.GetData("alive")
+		require.NoError(t, err)
+		require.Equal(t, "user-owned",
+			user.Value().Get(context.Background()))
+
+		runtime, err := f.GetData(RuntimeVarsSegment + PathSeparator + "alive")
+		require.NoError(t, err)
+		require.Equal(t, true,
+			runtime.Value().Get(context.Background()))
+	})
+}
+
+func TestFrameDiscovery(t *testing.T) {
+	pl, err := New(mustPath(t, "/proc"), &stubSupplier{t: t})
+	require.NoError(t, err)
+
+	// a child container scope under the root
+	sub := mustPath(t, "/proc/sub")
+	require.NoError(t, pl.OpenScope(sub))
+
+	require.NoError(t, pl.Commit(pl.Root(), testData(t, "root-var", 1)))
+	require.NoError(t, pl.Commit(sub, testData(t, "sub-var", 2)))
+
+	f, err := NewFrame("track-1", "node-1", sub, pl)
+	require.NoError(t, err)
+
+	t.Run("GetSources delegates to the plane", func(t *testing.T) {
+		require.Equal(t, []string{RuntimeVarsSegment}, f.GetSources())
+	})
+
+	t.Run("List of a source returns its names", func(t *testing.T) {
+		names, err := f.List(RuntimeVarsSegment)
+		require.NoError(t, err)
+		require.Equal(t, []string{"alive"}, names)
+	})
+
+	t.Run("List of the default scope walks parent-ward", func(t *testing.T) {
+		names, err := f.List("")
+		require.NoError(t, err)
+		require.Equal(t, []string{"root-var", "sub-var"}, names)
+	})
+}
+
 func TestFrameCommitAndDiscard(t *testing.T) {
 	t.Run("commit flushes outputs and puts", func(t *testing.T) {
 		pl, f := newTestFrame(t)

@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.2 |
+| Version | v.4 |
 | Date | 2026-06-13 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) |
@@ -13,7 +13,7 @@
 > `IoSpec` / `InputSet` / `OutputSet` / `DataAssociation` model, how an input set
 > is selected, how data states gate that selection, how associations copy data,
 > what in-process service code may read, and the shape the model layer should
-> take. It is the sibling of [ADR-010 v.1](ADR-010-process-data-model.md): ADR-010
+> take. It is the sibling of [ADR-010 v.2](ADR-010-process-data-model.md): ADR-010
 > decided **where** data lives and the runtime contract it is evaluated against
 > (container scopes, the data plane, execution frames); this ADR decides **what**
 > the model evaluates against that contract. ADR-010 §2.6 explicitly deferred the
@@ -232,35 +232,56 @@ required input is an error at fire time. The process-level Start/End special cas
 `DataOutput`s as sources of an End event's input associations) is part of the
 conception and lands with the messaging/call-activity work that needs it.
 
-### 2.6 In-process service code reads data by name through a narrow reader
+### 2.6 The Operation is polymorphic; in-process Go code reads through a narrow reader
 
-A service implementation (today a Go functor behind a `ServiceTask`'s operation)
-**receives a narrow, public data reader** in addition to its operation input. The
-reader exposes read access **by name** and **by item-definition id** over the
-execution's data — its operation inputs, the process properties in scope, and the
-engine's runtime variables — resolving with the execution's normal frame→container
-walk (ADR-010).
+A `ServiceTask`'s `Operation` is **polymorphic**. BPMN fixes the *message
+contract* of an Operation (`inMessageRef`/`outMessageRef`/`errorRef`) but leaves
+*how* it is implemented engine-defined — `implementationRef` is a mechanism hint
+(`##WebService`, `##Unspecified`, or vendor-specific). gobpm makes `Operation` an
+interface with two kinds:
 
-- **Reader, not the environment.** The service is handed a *narrow read-only*
-  interface, not the internal runtime environment. Service code is user-facing
-  and must not depend on internal engine types; the reader is the public surface
-  (its placement relative to the layering decision is the layering ADR's, but its
-  *existence and shape* are decided here). It offers read-by-name / read-by-id and
-  nothing else — no scope mutation, no lifecycle, no event access.
-- **Runtime variables are addressable by name.** The engine exposes a small set of
-  runtime variables (`STARTED_AT`, `STATE`, `TRACKS_CNT`) in a reserved, read-only
-  region of the data plane. The reader resolves them **by their names** alongside
-  process properties, so service code can read them without knowing the reserved
-  addressing — the reader hides it.
+- **Message operation (canonical).** The standard's model: data flows in through
+  the operation's `inMessage` (bound from the activity's `DataInput`s by data
+  associations) and out through its `outMessage`; the implementation sees **only
+  its message** and is decoupled from process scope. This is the conformant path
+  for external services.
+- **Go operation (gobpm-native).** An in-process Go functor that receives a
+  **narrow, public, read-only data reader** and **returns its result** — no
+  message ceremony. The reader is the public face of the data-plane's addressable
+  read interface ([ADR-010 v.2 §2.7](ADR-010-process-data-model.md)): the default
+  scope by plain name, named sources by `SOURCE/var`, plus discovery
+  (`GetSources`/`List`). This is a deliberate extension to the standard's
+  message-only Operation, registered in the conformance scope
+  ([SAD-001 v.1 §14.2](SAD-001-vision-and-architecture.md)); `implementationRef`
+  marks the mechanism.
+
+Making `Operation` an interface keeps the canonical message model **pure** — a
+service that uses it cannot reach into process scope — while giving Go-in-process
+code first-class data access as an **opt-in kind**, not a reader bolted onto every
+operation. The reader's properties:
+
+- **Reader, not the environment.** A *narrow read-only* interface, not the internal
+  runtime environment. Service code is user-facing and must not depend on internal
+  engine types; the reader is the public surface (its placement relative to the
+  layering decision is the layering ADR's, but its *existence and shape* are
+  decided here). It offers read-by-name / read-by-id and nothing else — no scope
+  mutation, no lifecycle, no event access, and **no write** (a Go operation returns
+  its result; the `ServiceTask` commits it as the activity's output).
+- **Runtime variables are read via the `RUNTIME` data source.** The engine's
+  read-only runtime variables (`STARTED_AT`, `STATE`, `TRACKS_CNT`, …) are a named
+  data source; the functor reads them by their explicit path `RUNTIME/<var>`
+  (ADR-010 v.2 §2.7), which never intersects the process's own properties — a
+  process may keep its own `STATE`. The addressing is explicit, not hidden.
 - **Read, not observe-from-outside.** This is *in-process* access — code running
   *as part of* the process execution. Observing an instance's data from *outside*
   (a caller inspecting a running instance's properties / runtime variables) is a
   separate concern: the public engine API is write-only today (the audit's §2.2),
   and that belongs to the observability ADR, not here.
 
-This makes a service a first-class data consumer: it can read a process property
-and a runtime variable by name and act on them, the way in-process Go code should
-be able to.
+A Go operation is thus a first-class data consumer: it reads a process property
+(plain name) and a runtime variable (`RUNTIME/<var>`) and returns its result, the
+way in-process Go code should be able to — without compromising the canonical
+message contract.
 
 ### 2.7 The model layer is shaped for the conception
 
@@ -350,9 +371,11 @@ target shapes (the implementing SRD does the file-level work):
   selection, §2.8). Missing required data fails loudly; both waiting and branching
   are always something the diagram shows. Two deliberate, documented deviations from
   the standard, flowing from one principle.
-- **Service code becomes a real data consumer.** A functor can read process
-  properties and runtime variables by name through a narrow public reader —
-  Go-in-process gains access to process data, not just its operation message.
+- **Service code becomes a real data consumer, without bending the standard.**
+  The `Operation` is polymorphic: a canonical message operation stays
+  message-only (decoupled, conformant), while a Go operation hands its functor a
+  narrow public reader (process properties + runtime variables by name) and takes
+  its return — ambient access confined to the explicit Go kind.
 - **The model layer gets simpler and safer.** No `Set` type (the `IoSpec` owns
   parameters directly), selection separated from storage, value-vs-notification
   separated, compile-time-checked event construction, a validated process, and the
@@ -394,6 +417,12 @@ target shapes (the implementing SRD does the file-level work):
   but leaks internal engine types into user-facing service code — the very
   layering coupling a later ADR must remove, and a hard-to-narrow surface.
   Rejected for a narrow public reader (§2.6).
+- **Bolt a reader onto every operation** (the v.2 §2.6 shape). Gives ambient
+  read access to *all* services, contaminating the standard's message-only
+  Operation even for external/conformant ones. Rejected for the polymorphic split
+  (§2.6 v.3): a canonical message operation stays pure; ambient access is confined
+  to the explicit Go operation kind, which the standard already sanctions via the
+  engine-defined `implementationRef` mechanism.
 - **Leave the model-layer shapes as they are and fix only the two bugs.** Cures the
   symptoms, leaves the two-sided I/O graph, the in-value async notifications, the
   runtime-asserted event options, and the unguarded mutable process — the
@@ -444,7 +473,7 @@ Advisory, not gating — conventions the landing SRD(s) and later work should fo
   deviations this ADR decides (the no-wait rule §2.3, the single-set rule §2.8).
 - [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) — the two-layer
   runtime and lifecycle this data flow is synchronous to; the data side it refines.
-- [ADR-010 v.1 Process Data Model](ADR-010-process-data-model.md) — **where** data
+- [ADR-010 v.2 Process Data Model](ADR-010-process-data-model.md) — **where** data
   lives and the runtime contract (container scopes, the data plane, execution
   frames, copy/commit). §2.6 deferred the model-layer semantics decided here; this
   ADR is its sibling continuation.
@@ -469,5 +498,7 @@ Advisory, not gating — conventions the landing SRD(s) and later work should fo
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.4 | 2026-06-13 | Ruslan Gabitov | Aligned §2.6 to the data-source access model: the Go reader is the public face of the data-plane's addressable read interface ([ADR-010 v.2 §2.7](ADR-010-process-data-model.md)) — default scope by plain name, named sources by `SOURCE/var`, discovery via `GetSources`/`List`. Runtime variables are read via the explicit `RUNTIME/<var>` path (a named data source), **not** "by name with the reader hiding the reserved addressing" (dropped) — so engine runtime vars never intersect a process's own `STATE`/`INSTANCE`. No special accessor is needed. Lands via SRD-010 (data plane) + SRD-011 (service reader). Amends §2.6. |
+| v.3 | 2026-06-13 | Ruslan Gabitov | Reshaped §2.6: the `Operation` is **polymorphic**, not "a reader handed to every operation." Grounding the standard — an Operation is a pure message-in/message-out contract (`inMessageRef`/`outMessageRef`/`errorRef`), and `implementationRef` leaves the mechanism engine-defined — gobpm makes `Operation` an interface with two kinds: a **message operation** (canonical, decoupled, message-only) and a **Go operation** (gobpm-native: the in-process functor receives a narrow public read-only data reader over process properties + runtime-vars-by-name and **returns its result**, no message ceremony). This keeps the canonical model pure and confines ambient read access to the explicit Go kind (a standard-sanctioned `implementationRef` mechanism), instead of contaminating every operation. The Go operation is registered as a deliberate extension in SAD-001 v.1 §14.1. Lands via the service-reader SRD. Amends §2.6/§3/§4. |
 | v.2 | 2026-06-13 | Ruslan Gabitov | Dropped the reified `Set` type. With exactly one input/output set per activity (§2.2), a `Set` object only duplicated the `IoSpec`'s per-direction parameter lists; the `IoSpec` now owns its `DataInput`/`DataOutput` parameters directly, with **required/optional/while-executing as per-parameter attributes** (`optional` default `false`) rather than set membership. `InputSet`/`OutputSet` are kept as BPMN vocabulary (IoSpec views), not a stateful type. Supersedes v.1 §2.7's single-ownership `Parameter`↔`Set` graph (landed by SRD-008) — with no `Set`, there is no cross-type graph. §2.8: re-introducing multiple sets would now be a reshape (reintroducing `Set`), not a drop-in extension — an accepted trade-off for the simpler model. Lands via SRD-009. Amends §2.2/§2.7/§2.8/§3/§4. |
 | v.1 | 2026-06-13 | Ruslan Gabitov | **Accepted**, first model-layer-hardening part landed via SRD-008 v.1 (`f920b11`, `3658acc`, `7bba5e6`); the §2.7 "freeze after snapshot" was dropped during that landing (the snapshot is already the frozen model) — kept here as the validate-at-registration decision. The §2.2–§2.6 evaluation/reader semantics and the deferred §2.7 items (value-notification split, event-options unification) land via later SRDs. Decides the model-layer data-flow semantics (the layer ADR-010 §2.6 deferred): the item-aware model with a closed three-value data state; **exactly one `InputSet` and one `OutputSet` per activity** with a real required-availability check and association execution — multiple I/O sets and their ordered, data-driven selection + IORule pairing are an explicit **non-goal** (hidden non-diagram branching, near-unused in practice, modelled with gateways instead; structure left extensible if ever demanded); **availability gates the start but never makes the activity wait** — a deliberate documented deviation from §10.4.2 (a data wait is a hidden, non-diagram synchronization → unpredictable; unavailable required input is an error, explicit waiting is modelled with events/gateways); optional/required and while-executing kept *within* the single set; data associations copy in the standard's three shapes; events carry data without sets and never wait; in-process service code receives a **narrow public data reader** (read by name/id over operation inputs, properties, and runtime variables — runtime vars addressable by name); and the model layer is reshaped (single-ownership I/O graph, set-evaluation separated from storage, value-vs-notification separated, compile-time-checked event construction, `Process.Validate()` run at registration (no freeze — the snapshot is already the frozen model), the GetKeys/RemoveParameter defects corrected). Two deliberate BPMN deviations (no data wait, no multiple I/O sets) from one principle — no hidden data-driven control. Refines ADR-001 v.5 (data side); sibling of ADR-010 v.1. Out of scope: persistence, executor/reader layering, observe-from-outside, data-driven gateways. Rejected: partial "default-Ready" check, full multi-set selection, the standard data wait, deferring (vs rejecting) the wait, leaking the runtime env to functors, bug-fix-only, an extensible DataState. |

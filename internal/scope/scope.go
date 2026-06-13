@@ -1,6 +1,7 @@
 package scope
 
 import (
+	"sort"
 	"strings"
 	"sync"
 
@@ -24,11 +25,12 @@ type dataFinder func(data.Data) bool
 // The name is transitional: when the legacy Scope interface retires
 // (SRD-007 M4), Scope is renamed to Scope.
 type Scope struct {
-	scopes map[DataPath]map[string]data.Data
-	rt     RuntimeVarsSupplier
-	root   DataPath
-	rtPath DataPath
-	m      sync.Mutex
+	scopes  map[DataPath]map[string]data.Data
+	sources map[string]data.SourceProvider
+	rt      RuntimeVarsSupplier
+	root    DataPath
+	rtPath  DataPath
+	m       sync.Mutex
 }
 
 // New creates a data plane rooted at root with the root container scope
@@ -51,13 +53,19 @@ func New(root DataPath, rt RuntimeVarsSupplier) (*Scope, error) {
 		errs.Panic(err.Error())
 	}
 
+	sources := map[string]data.SourceProvider{}
+	if rt != nil {
+		sources[RuntimeVarsSegment] = runtimeSource{rt: rt}
+	}
+
 	return &Scope{
 		scopes: map[DataPath]map[string]data.Data{
 			root: {},
 		},
-		rt:     rt,
-		root:   root,
-		rtPath: rtPath,
+		sources: sources,
+		rt:      rt,
+		root:    root,
+		rtPath:  rtPath,
 	}, nil
 }
 
@@ -94,6 +102,82 @@ func (p *Scope) GetData(from DataPath, name string) (data.Data, error) {
 		func(d data.Data) bool {
 			return d.Name() == name
 		})
+}
+
+// GetSource resolves addr at the named source, dispatching addr verbatim to
+// the provider (its own address space). It never traverses the container tree
+// — a source owns its names (ADR-010 v.2 §2.7). An unknown source is an error.
+// The registry is built at New and never mutated, so no lock is taken.
+func (p *Scope) GetSource(source, addr string) (data.Data, error) {
+	prov, ok := p.sources[source]
+	if !ok {
+		return nil,
+			errs.New(
+				errs.M("GetSource: unknown data source %q", source),
+				errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	return prov.Get(addr)
+}
+
+// GetSources lists the registered named-source segments (sorted). The default
+// scope is not a named source and is not listed. Lock-free — the registry is
+// immutable after New.
+func (p *Scope) GetSources() []string {
+	ss := make([]string, 0, len(p.sources))
+	for s := range p.sources {
+		ss = append(ss, s)
+	}
+	sort.Strings(ss)
+
+	return ss
+}
+
+// List enumerates variable names. An empty path lists the default-scope names
+// visible from the root (process-level data); a source segment returns that
+// provider's Names(); an unknown source is an error.
+func (p *Scope) List(path string) ([]string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return p.namesFrom(p.root), nil
+	}
+
+	prov, ok := p.sources[path]
+	if !ok {
+		return nil,
+			errs.New(
+				errs.M("List: unknown data source %q", path),
+				errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	return prov.Names(), nil
+}
+
+// namesFrom collects the default-scope data names visible from `from` — the
+// data in `from` itself and in every ancestor container scope up to the root
+// — deduplicated and sorted.
+func (p *Scope) namesFrom(from DataPath) []string {
+	p.m.Lock()
+	defer p.m.Unlock()
+
+	seen := map[string]struct{}{}
+	prefix := from.String() + PathSeparator
+
+	for path, vv := range p.scopes {
+		if path == from || strings.HasPrefix(prefix, path.String()+PathSeparator) {
+			for n := range vv {
+				seen[n] = struct{}{}
+			}
+		}
+	}
+
+	names := make([]string, 0, len(seen))
+	for n := range seen {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	return names
 }
 
 // GetDataByID returns the data whose ItemDefinition id is id, resolving from

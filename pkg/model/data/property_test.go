@@ -31,6 +31,10 @@ func TestProperty(t *testing.T) {
 			_, err = data.NewProp("", nil)
 			require.Error(t, err)
 
+			// name carrying the reserved path separator
+			_, err = data.NewProperty("a/b", nil, data.ReadyDataState)
+			require.Error(t, err)
+
 			// empty parameters
 			_, err = data.NewProperty("empty item", nil, data.ReadyDataState)
 			require.Error(t, err)
