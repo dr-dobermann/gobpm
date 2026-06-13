@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-13 |
 | Owner | Ruslan Gabitov |
@@ -169,7 +169,52 @@ five examples as smoke.
 
 ## 7. Implementation summary
 
-*Post-landing placeholder — filled at the final audit with files, V-results, and milestone SHAs.*
+Landed on branch `feat/io-set-evaluation` (after the ADR-011 v.2 amendment and
+the SRD doc) in three milestone commits; `make ci` green and diff-coverage ≥95%
+on touched files at each.
+
+### 7.1 Milestones by commit
+
+| Milestone | Commit | Scope | Tests |
+|---|---|---|---|
+| ADR-011 v.2 | `89ca4fd` | drop-Set conception amendment | — |
+| Doc | `57152f9` | SRD-009 | — |
+| M1 — drop Set, flag params | `75a8105` | remove `Set`/`SetType`; `Parameter` flags + options; `IoSpec` owns params + `InputSet()`/`OutputSet()`; `WithParameters`; events drop `*data.Set` | `TestParameter`, `TestIOSpec`, `TestIOSpecValidateDuplicateName`, `TestRequiredItemIDs` (+ migrated activity/event tests) |
+| M2 — start-gate | `8530583` | `data.RequiredItemIDs`; required-input availability gate in `task.LoadData` / `throwEvent.LoadData` (no wait; optional skipped) | `TestTaskStartGate`, `TestThrowEventStartGate` |
+| M3 — completion-gate | `0296ab4` | required-output production gate in `updateOutputs` / `UploadData` (optional absent allowed) | `TestTaskCompletionGate` |
+
+### 7.2 Verification results (§5)
+
+- **V1–V4** — `Set`/`SetType` gone (no repo references); `Parameter` flags +
+  accessors; `IoSpec.InputSet()`/`OutputSet()` views; structural `Validate`;
+  construction via `WithParameters`/`WithoutParams`; no `*data.Set` field. Green.
+- **V5** — start-gate: required input unavailable → classified error, no wait;
+  optional input absent → proceeds. Green.
+- **V6** — completion-gate: required output not produced → error; optional
+  output absent → commit proceeds. Green.
+- **V7** — data / activities / events / process / instance / thresher suites
+  pass; all five examples run to exit 0.
+- **V8** — `make ci` green; diff-coverage M1 96.2% / M2 98.3% / M3 96.9%
+  (≥95% on touched files).
+
+### 7.3 Where reality diverged from the §3 draft
+
+- **`ParameterOption` is error-free** (`func(*Parameter)`), not the
+  `options.Option` form FR-1's prose implied. The flag options cannot fail, so an
+  error return would be an uncoverable branch (the SRD-008 lesson); the simpler
+  signature is honest and fully covered.
+- **The gates read the IoSpec / dataInputs *definitions*, not the frame
+  instances.** `scope.Frame.instantiateParams` rebuilds parameters from name +
+  `ItemAwareElement` only, so the per-execution instances do not carry the
+  optional/while-executing flags; `data.RequiredItemIDs` therefore runs over the
+  definitions (`IoSpec.InputSet()`/`OutputSet()`, `throwEvent.dataInputs`).
+- **Availability is state-based, not association-based.** A required input
+  pre-seeded `Ready` by its definition passes the start-gate without an
+  association; the gate checks the frame instance's state, which is the correct
+  BPMN "available" semantics.
+- **`throwEvent.LoadData`'s post-check was extracted** to
+  `missingRequiredInputs` to keep the function within the gocyclo budget after
+  the gate additions.
 
 ## 8. References
 
@@ -200,4 +245,4 @@ five examples as smoke.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-13 | Ruslan Gabitov | Draft. Lands ADR-011 v.2 §2.2–§2.5 + §2.7 "no `Set` type": drops the reified `Set`/`SetType` (incl. dead `Link`/`linkedSets`), makes required/optional/while-executing per-parameter attributes on `Parameter`, has the `IoSpec` own its parameters directly with `InputSet()`/`OutputSet()` views, replaces the `WithSet`/`WithEmptySet` construction with flagged-parameter options, and adds the runtime start-gate (required inputs available else fail-fast error, no wait; optional may be absent) and completion-gate (required outputs produced else error). `whileExecuting` runtime evaluation, the service reader, and multiple I/O sets are deferred. Three milestones (drop Set → start-gate → completion-gate). Implements ADR-011 v.2; refines ADR-010 v.1. |
+| v.1 | 2026-06-13 | Ruslan Gabitov | **Accepted**, landed on `feat/io-set-evaluation` (M1 `75a8105`, M2 `8530583`, M3 `0296ab4`, after the ADR-011 v.2 amendment `89ca4fd`); `make ci` green, diff-coverage ≥95% per milestone; all five examples run. §7 filled — see §7.3 for divergences (error-free `ParameterOption`; gates read definitions not frame instances; state-based availability; the `throwEvent` post-check extracted). Lands ADR-011 v.2 §2.2–§2.5 + §2.7 "no `Set` type": drops the reified `Set`/`SetType` (incl. dead `Link`/`linkedSets`), makes required/optional/while-executing per-parameter attributes on `Parameter`, has the `IoSpec` own its parameters directly with `InputSet()`/`OutputSet()` views, replaces the `WithSet`/`WithEmptySet` construction with flagged-parameter options, and adds the runtime start-gate (required inputs available else fail-fast error, no wait; optional may be absent) and completion-gate (required outputs produced else error). `whileExecuting` runtime evaluation, the service reader, and multiple I/O sets are deferred. Three milestones (drop Set → start-gate → completion-gate). Implements ADR-011 v.2; refines ADR-010 v.1. |
