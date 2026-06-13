@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-13 |
 | Owner | Ruslan Gabitov |
@@ -19,7 +19,7 @@ This SRD lands the structural and correctness part of [ADR-011](../design/ADR-01
 - **`Parameter.Sets()` has no external consumers.** It is called only inside the data package: `InputOutputSpecification.Validate` (`io_spec.go:187`) and `InputOutputSpecification.RemoveParameter` (`io_spec.go:278`), plus tests. The runtime — `task.instantiateData` (`task.go:136,151`) — reads I/O **top-down** via `IoSpec.Parameters(dir)` (`io_spec.go:109`), never bottom-up through `Parameter.Sets()`. So the back-reference serves only two internal callers.
 - **Two defects.**
   - `Array.GetKeys` (`values/array.go:192-202`): `res := make([]any, len(a.elements))` then `res = append(res, i)` in the loop — the `make`-with-length pre-fills `len` zero values and `append` extends beyond them, yielding a **double-length, half-nil** slice. `Array.GetKeysT` (`values/array_t.go:84-92`) has the identical bug (`make([]int, len)` + `append`).
-  - `InputOutputSpecification.RemoveParameter` (`io_spec.go:248`) has a **value receiver** `(ios InputOutputSpecification)` — its `ios.params[dir] = append(...)` (`io_spec.go:288`) mutates a copy, so the removal is silently lost. Every sibling method (`Parameters`, `AddParameter`, `AddSet`, `RemoveSet`, `Sets`) uses a pointer receiver. No production caller exists (tests only), so the bug has never surfaced.
+  - `InputOutputSpecification.RemoveParameter` (`io_spec.go:248`) has a **value receiver** `(ios InputOutputSpecification)`, inconsistent with every sibling method (`Parameters`, `AddParameter`, `AddSet`, `RemoveSet`, `Sets` — all pointer-receiver). The removal happens to persist today because `ios.params` is a map (a value receiver still writes through to the shared backing), but the value receiver copies the whole struct on each call and would silently drop any future field assignment or map re-creation — a latent fragility, not an active data loss. No production caller exists (tests only).
 - **`Process` is freely mutable and unvalidated.** `Process.Add` (`process.go:168`) and `Process.Remove` (`process.go:204`) are public and unguarded; there is **no `Process.Validate()`** (only `processConfig.Validate` on the build config, `process_options.go:24`), so a malformed graph — a flow whose source/target node isn't in the process, a mistyped element — is caught late or not at all. `Add` dispatches on `e.EType()` then does **unchecked** type assertions `e.(flow.Node)` / `e.(*flow.SequenceFlow)` (`process.go:177,180`) that would panic on a malformed element rather than return an error. Execution is already isolated from later mutation: `snapshot.New(p)` (`snapshot/snapshot.go:28`) copies `p.Nodes()`/`p.Flows()` into **fresh maps** (`snapshot.go:43-44,52,88`) and the instance runs a per-instance `Clone()` (`snapshot.go:99`), so the live `Process` is never read during execution. The gap is therefore **not isolation but the absence of a validation gate at registration**: a broken graph silently produces a broken snapshot. `Add`/`Remove` have no production callers (model construction goes through the element constructors' internal `addNode`/`addFlow`); only tests call them.
 
 ### 1.2 Why
@@ -51,7 +51,7 @@ ADR-011 §2.7 prescribes a clean model-layer foundation for the data-flow concep
 | FR-1 | `Parameter` (`io_spec_obj.go:44`) drops its `sets map[SetType][]*Set` field and the `addSet`/`removeSet`/`Sets` methods (`io_spec_obj.go:95-170`). A `Parameter` is `{name, ItemAwareElement}`. |
 | FR-2 | `Set.AddParameter` / `Set.RemoveParameter` (`io_spec_obj.go:253,303`) maintain **only** `Set.values`; the calls to `p.addSet` / `p.removeSet` are removed. The dedup/validation behaviour (duplicate-name rejection, set-type validation) is preserved. |
 | FR-3 | `InputOutputSpecification.Validate` (`io_spec.go:187`) is rewritten to derive a parameter's set-membership by iterating the IoSpec's own `Set`s (per direction) rather than calling `Parameter.Sets()`. The validation result (every parameter belongs to ≥1 set, etc.) is unchanged. |
-| FR-4 | `InputOutputSpecification.RemoveParameter` (`io_spec.go:248`) takes a **pointer receiver** `(ios *InputOutputSpecification)` and removes the parameter from `ios.params[dir]` **and** from every `Set` in that direction that contains it (derived by iterating `ios.sets[dir]`, calling `Set.RemoveParameter`), replacing the old `p.Sets(AllSets)` walk (`io_spec.go:278`). |
+| FR-4 | `InputOutputSpecification.RemoveParameter` (`io_spec.go:248`) takes a **pointer receiver** `(ios *InputOutputSpecification)` — for consistency with its sibling methods and future-safety (the removal already persisted via map semantics; this is robustness, not a data-loss fix). It removes the parameter from `ios.params[dir]` **and** from every `Set` of that direction via the derived top-down query (iterating `ios.sets[dir]`, calling the unexported error-free `Set.removeParameter`), replacing the old `p.Sets(AllSets)` walk (`io_spec.go:278`). |
 | FR-5 | `Array.GetKeys` (`values/array.go:192`) and `Array.GetKeysT` (`values/array_t.go:84`) build the index slice by **index assignment** (`res[i] = i`), returning exactly `len(elements)` keys. |
 | FR-6 | `Process` gains `Validate() error` — a well-formedness check: every `SequenceFlow`'s `Source()` and `Target()` resolve to a node present in the process; no nil node/flow; (extend with the obvious structural invariants). It does not enforce BPMN element-completeness (that is the snapshot's existing Start/End check). |
 | FR-7 | `snapshot.New` (`snapshot/snapshot.go:28`) calls `Process.Validate()` before building the snapshot and returns its error, so registering a malformed process fails at registration with a clear error (the snapshot's existing Start/End check, `snapshot.go:81-85`, stays). **No** `Freeze()` / frozen-state guard is added — the snapshot already isolates execution (fresh maps + per-instance `Clone()`), so freezing the live `Process` would guard only the test-only `Add`/`Remove` against a path a running instance cannot reach. |
@@ -90,10 +90,10 @@ top-down:
 - **`IoSpec.Validate`** — instead of `for ss := range p.Sets(AllSets)`, iterate
   `ios.sets[dir]` and check each parameter's membership across those sets.
 - **`IoSpec.RemoveParameter`** — instead of `p.Sets(AllSets)` then per-set
-  removal, iterate `ios.sets[dir]`, call `Set.RemoveParameter(p, …)` on each
-  set that contains `p`, then drop `p` from `ios.params[dir]`; pointer receiver
-  so the mutation sticks (FR-4 folds the FR-2/G2 defect fix into the rewrite,
-  avoiding churn).
+  removal, iterate `ios.sets[dir]` and call the unexported error-free
+  `Set.removeParameter(p)` on each (it drops `p` wherever referenced, a no-op
+  otherwise), then drop `p` from `ios.params[dir]`; pointer receiver for
+  consistency with its siblings.
 
 If a public "which sets is this parameter in?" query is wanted later, it is
 **promoted** as a derived `IoSpec` method then — not carried as a field now.
@@ -171,7 +171,49 @@ duplicate/validation preserved), `values_test.go` (GetKeys/GetKeysT length),
 
 ## 7. Implementation summary
 
-*Post-landing placeholder — filled at the final audit with files, V-results, and milestone SHAs.*
+Landed on branch `feat/data-model-hardening` in three milestone commits after
+the doc commit; `make ci` green and diff-coverage 100% on the touched files at
+each milestone.
+
+### 7.1 Milestones by commit
+
+| Milestone | Commit | Scope | Tests |
+|---|---|---|---|
+| Doc | `aaaa5bc` | SRD-008 + the ADR-011 §2.7 freeze→validate amendment | — |
+| M1 — single-ownership I/O graph | `f920b11` | dropped `Parameter.sets`/`addSet`/`removeSet`/`Sets`; added `Set.hasParameter`/`removeParameter`; `IoSpec.Validate`/`RemoveParameter` derived; pointer receiver | `TestIOSpecRemoveParameterFromSets` + `TestSet`/`TestIOSpec` parity |
+| M2 — collection key defects | `3658acc` | `GetKeys`/`GetKeysT` index assignment | `values_test.go` exact-slice assertions |
+| M3 — process validation | `7bba5e6` | `Process.Validate()`, comma-ok `Add`, `snapshot.New` validates before building | `TestProcessValidate`, `TestProcessAddTypeMismatch`, `TestSnapshotNewRejectsMalformed` |
+
+### 7.2 Verification results (§5)
+
+- **V1–V4** (data) — `Parameter` is a leaf; `RemoveParameter` (pointer)
+  removes from `params` and every containing set; `Validate` derives membership
+  with parity; `GetKeys`/`GetKeysT` return exactly `len(elements)` keys. Green.
+- **V5–V7** (process) — `Validate` passes a well-formed graph and rejects a
+  flow whose endpoints are absent; `Add` returns a classified error (no panic)
+  on a type-mismatched element. Green.
+- **V8** — all five examples (`basic-process`, `parallel-gateway`,
+  `process-data`, `simple-timer`, `timer-event`) run to exit 0.
+- **V9** — `make ci` green; diff-coverage 100% (65/65 changed coverable lines).
+
+### 7.3 Where reality diverged from the §3 draft
+
+- **The `RemoveParameter` value receiver was not an active data-loss bug.**
+  The draft framed it as "the removal is silently lost". In fact `ios.params`
+  is a map, so a value receiver still writes through to the shared backing and
+  the removal persisted (the existing `TestIOSpec` exercised it). The pointer
+  receiver is kept for consistency with its siblings and future-safety, not as
+  a data-loss fix; §1.1 / FR-4 were corrected to say so. Found while
+  implementing M1.
+- **`IoSpec.RemoveParameter` uses an unexported `Set.removeParameter`, not the
+  public `Set.RemoveParameter`.** The public method re-validates its set-type
+  argument and returns an error that is unreachable for an already-validated
+  caller — an uncoverable branch. M1 introduced the error-free unexported
+  `Set.removeParameter` for the derived removal; §4.1 / FR-4 updated.
+- **A flow with exactly one endpoint outside the process is not
+  constructible.** `flow.SequenceFlow.BindTo` requires both endpoints to share
+  a container, so `Process.Validate`'s only reachable failure is a flow whose
+  endpoints are *both* outside the process — the M3 test reflects this.
 
 ## 8. References
 
@@ -199,4 +241,4 @@ duplicate/validation preserved), `values_test.go` (GetKeys/GetKeysT length),
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-13 | Ruslan Gabitov | Draft. Lands the structural/correctness part of ADR-011 v.1 §2.7: single-ownership I/O graph (drop `Parameter`'s set back-reference + `addSet`/`removeSet`/`Sets`; `Set` owns parameters; `IoSpec.Validate`/`RemoveParameter` become derived queries; `RemoveParameter` gets a pointer receiver); the `GetKeys`/`GetKeysT` double-length defect; `Process.Validate()` wired into `snapshot.New` (validation at registration), with comma-ok `Add` assertions. No process *freeze* — the snapshot is already the frozen model (fresh-map copy + per-instance `Clone()`), so freezing the live `Process` would guard only test-only mutators. Three milestones (I/O graph → key defect → process validation). Explicitly defers the §2.7 value-notification split (until the notification model is defined) and the §2.7 event-options unification (its own SRD); the §2.2–§2.6 evaluation/reader semantics are later SRDs. Implements ADR-011 v.1; refines ADR-001 v.5. |
+| v.1 | 2026-06-13 | Ruslan Gabitov | **Accepted**, landed on `feat/data-model-hardening` (M1 `f920b11`, M2 `3658acc`, M3 `7bba5e6`); `make ci` green, diff-coverage 100%. During implementation §1.1/FR-4/§4.1 were corrected (the value-receiver was a consistency fix, not a data-loss fix — `ios.params` is a map; derived removal uses an unexported `Set.removeParameter`) and §7 filled — see §7.3. Lands the structural/correctness part of ADR-011 v.1 §2.7: single-ownership I/O graph (drop `Parameter`'s set back-reference + `addSet`/`removeSet`/`Sets`; `Set` owns parameters; `IoSpec.Validate`/`RemoveParameter` become derived queries; `RemoveParameter` gets a pointer receiver); the `GetKeys`/`GetKeysT` double-length defect; `Process.Validate()` wired into `snapshot.New` (validation at registration), with comma-ok `Add` assertions. No process *freeze* — the snapshot is already the frozen model (fresh-map copy + per-instance `Clone()`), so freezing the live `Process` would guard only test-only mutators. Three milestones (I/O graph → key defect → process validation). Explicitly defers the §2.7 value-notification split (until the notification model is defined) and the §2.7 event-options unification (its own SRD); the §2.2–§2.6 evaluation/reader semantics are later SRDs. Implements ADR-011 v.1; refines ADR-001 v.5. |
