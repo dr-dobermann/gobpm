@@ -250,15 +250,19 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 	return nil
 }
 
-// runTimerService runs the timer waiter service in a background goroutine
+// runTimerService runs the timer waiter service in a background goroutine.
+//
+// tw.stopCh has exactly ONE closing owner — Stop() — whose close is atomic
+// with the state check under tw.m. The ctx.Done branch here does NOT close
+// the channel: this goroutine is its only reader and it returns immediately,
+// so the close would signal nothing while racing Stop()'s close
+// (panic: close of closed channel — audit 1.3 / FIX-003 A).
 func (tw *timeWaiter) runTimerService(ctx context.Context) {
 	tckr := time.NewTicker(tw.duration)
 
 	for {
 		select {
 		case <-ctx.Done():
-			close(tw.stopCh)
-
 			tckr.Stop()
 
 			tw.m.Lock()
@@ -268,7 +272,8 @@ func (tw *timeWaiter) runTimerService(ctx context.Context) {
 			return
 
 		case <-tw.stopCh:
-			fmt.Println("stopping waiter ", tw.id, "...")
+			tw.rt.Logger().Debug("timer waiter stopping",
+				"waiter_id", tw.id)
 
 			tckr.Stop()
 
