@@ -17,7 +17,6 @@ type (
 	endConfig struct {
 		props      map[string]*data.Property
 		dataInputs map[string]*data.Parameter
-		inputSet   *data.Set
 		name       string
 		baseOpts   []options.Option
 		defs       []flow.EventDefinition
@@ -87,8 +86,6 @@ func (ec *endConfig) AddProperty(prop *data.Property) error {
 
 // endEvent builds an EndEvent from the endConfig.
 func (ec *endConfig) endEvent() (*EndEvent, error) {
-	const inputSetName = "endEventInput"
-
 	te, err := newThrowEvent(
 		ec.name,
 		map2slice(ec.props),
@@ -98,20 +95,8 @@ func (ec *endConfig) endEvent() (*EndEvent, error) {
 		return nil, err
 	}
 
-	// create and fill input set
 	if len(ec.dataInputs) > 0 {
-		te.inputSet, err = data.NewSet(inputSetName)
-		if err != nil {
-			return nil, err
-		}
-
 		te.dataInputs = ec.dataInputs
-
-		for _, di := range te.dataInputs {
-			if err := te.inputSet.AddParameter(di, data.DefaultSet); err != nil {
-				return nil, err
-			}
-		}
 	}
 
 	return &EndEvent{

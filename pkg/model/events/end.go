@@ -58,7 +58,6 @@ func NewEndEvent(
 		baseOpts:   []options.Option{},
 		defs:       []flow.EventDefinition{},
 		dataInputs: map[string]*data.Parameter{},
-		inputSet:   &data.Set{},
 	}
 
 	ee := []error{}

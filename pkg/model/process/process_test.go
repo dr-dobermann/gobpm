@@ -66,24 +66,14 @@ func TestProcess(t *testing.T) {
 		service.MustOperation(
 			"runs_service1",
 			nil, nil, nil),
-		activities.WithEmptySet(
-			"default input set for task1",
-			"",
-			data.Input),
-		activities.WithSet(
-			"output set for task1",
-			"",
-			data.Output,
-			data.DefaultSet,
-			[]*data.Parameter{
-				data.MustParameter(
-					"y",
-					data.MustItemAwareElement(
-						data.MustItemDefinition(
-							values.NewVariable(23.02),
-							foundation.WithID("y")),
-						data.ReadyDataState)),
-			}))
+		activities.WithParameters(data.Output,
+			data.MustParameter(
+				"y",
+				data.MustItemAwareElement(
+					data.MustItemDefinition(
+						values.NewVariable(23.02),
+						foundation.WithID("y")),
+					data.ReadyDataState))))
 	require.NoError(t, err)
 
 	task2, err := activities.NewServiceTask(
@@ -91,22 +81,14 @@ func TestProcess(t *testing.T) {
 		service.MustOperation(
 			"runs_service2",
 			nil, nil, nil),
-		activities.WithSet(
-			"input set for task2",
-			"",
-			data.Input,
-			data.DefaultSet,
-			[]*data.Parameter{
-				data.MustParameter(
-					"y",
-					data.MustItemAwareElement(
-						data.MustItemDefinition(
-							values.NewVariable(0.0),
-							foundation.WithID("y")),
-						nil)),
-			}),
-		activities.WithEmptySet(
-			"default output set for task2", "", data.Output))
+		activities.WithParameters(data.Input,
+			data.MustParameter(
+				"y",
+				data.MustItemAwareElement(
+					data.MustItemDefinition(
+						values.NewVariable(0.0),
+						foundation.WithID("y")),
+					nil))))
 	require.NoError(t, err)
 
 	end, err := events.NewEndEvent("finish")

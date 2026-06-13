@@ -1,12 +1,9 @@
 package data
 
 import (
-	"slices"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
-	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // Direction represents input/output direction for BPMN parameters.
@@ -42,19 +39,49 @@ func Opposite(dir Direction) Direction {
 // Parameter is type which is used as substitute for DataInput and DataOutput
 // BPMN types.
 //
-// A Parameter is a leaf in the I/O graph: a Set owns the reference to its
-// Parameters, while a Parameter holds no back-reference to the Sets it belongs
-// to. Membership is queried top-down from the InputOutputSpecification (see
-// Set.hasParameter), so the graph stays single-ownership and no cross-type
-// invariant has to be maintained in two places.
+// A Parameter carries its own role within the activity's single input/output
+// set (ADR-011 v.2): it is required unless flagged optional, and whileExecuting
+// marks the niche parameters the standard evaluates during execution rather than
+// at start/completion. The InputOutputSpecification owns its parameters directly;
+// there is no separate Set type.
 type Parameter struct {
 	name string
 	ItemAwareElement
+	optional       bool
+	whileExecuting bool
+}
+
+// ParameterOption configures a Parameter at construction. Options are
+// self-naming closures (Optional, WhileExecuting); applied in order. They set
+// flags and cannot fail, so they carry no error.
+type ParameterOption func(p *Parameter)
+
+// Optional marks the Parameter as optional: a required input must be available
+// when the activity starts, an optional one may be absent (ADR-011 v.2 §2.2).
+func Optional() ParameterOption {
+	return func(p *Parameter) {
+		p.optional = true
+	}
+}
+
+// WhileExecuting marks the Parameter as evaluated while the activity executes
+// rather than gating its start/completion (the standard's
+// whileExecutingInputRefs / whileExecutingOutputRefs). Its runtime evaluation is
+// not yet implemented; the flag only records the intent.
+func WhileExecuting() ParameterOption {
+	return func(p *Parameter) {
+		p.whileExecuting = true
+	}
 }
 
 // NewParameter creates a new Parameter and returns its pointer on success or
-// error on failure.
-func NewParameter(name string, iae *ItemAwareElement) (*Parameter, error) {
+// error on failure. By default a Parameter is required and not while-executing;
+// pass Optional() / WhileExecuting() to change that.
+func NewParameter(
+	name string,
+	iae *ItemAwareElement,
+	opts ...ParameterOption,
+) (*Parameter, error) {
 	name = strings.TrimSpace(name)
 
 	if err := errs.CheckStr(
@@ -72,17 +99,26 @@ func NewParameter(name string, iae *ItemAwareElement) (*Parameter, error) {
 				errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
 	}
 
-	return &Parameter{
-			ItemAwareElement: *iae,
-			name:             name,
-		},
-		nil
+	p := &Parameter{
+		ItemAwareElement: *iae,
+		name:             name,
+	}
+
+	for _, opt := range opts {
+		opt(p)
+	}
+
+	return p, nil
 }
 
 // MustParameter creates a new Parameter and returns its pointer or panics on
 // failure.
-func MustParameter(name string, iae *ItemAwareElement) *Parameter {
-	p, err := NewParameter(name, iae)
+func MustParameter(
+	name string,
+	iae *ItemAwareElement,
+	opts ...ParameterOption,
+) *Parameter {
+	p, err := NewParameter(name, iae, opts...)
 	if err != nil {
 		errs.Panic(err.Error())
 	}
@@ -95,323 +131,16 @@ func (p *Parameter) Name() string {
 	return p.name
 }
 
-// Set implements bothelpers.InputSet and OutputSet of BPMNv2
-type Set struct {
-	values map[SetType][]*Parameter
-	name   string
-	foundation.BaseElement
-	linkedSets []*Set
-	valid      bool
+// IsOptional reports whether the Parameter is optional (may be absent when the
+// activity starts/completes). The default is required.
+func (p *Parameter) IsOptional() bool {
+	return p.optional
 }
 
-// NewSet creates a new Set and returns its pointer on succes or
-// error on failure
-func NewSet(name string, baseOpts ...options.Option) (*Set, error) {
-	name = strings.TrimSpace(name)
-
-	if err := errs.CheckStr(
-		name,
-		"name shouldn't be empty",
-		errorClass,
-	); err != nil {
-		return nil, err
-	}
-
-	be, err := foundation.NewBaseElement(baseOpts...)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Set{
-			BaseElement: *be,
-			name:        name,
-			values:      map[SetType][]*Parameter{},
-			linkedSets:  []*Set{},
-		},
-		nil
-}
-
-// MustSet creates a new Set and returns its pointer. On error it
-// panics.
-func MustSet(name string, baseOpts ...options.Option) *Set {
-	s, err := NewSet(name, baseOpts...)
-	if err != nil {
-		errs.Panic(err)
-	}
-
-	return s
-}
-
-// Name returns the Set name.
-func (s *Set) Name() string {
-	return s.name
-}
-
-// Parameters returns parameters of one or a few set types.
-// If there is no values of such type it returns error.
-func (s *Set) Parameters(from SetType) (map[SetType][]*Parameter, error) {
-	if err := from.Validate(CombinedTypes); err != nil {
-		return nil,
-			errs.New(
-				errs.M("invalid data set type (%d)", from),
-				errs.C(errorClass, errs.InvalidParameter))
-	}
-
-	res := map[SetType][]*Parameter{}
-
-	for _, st := range allTypes() {
-		if st&from == st {
-			ds, ok := s.values[st]
-			if ok {
-				res[st] = append([]*Parameter{}, ds...)
-			}
-		}
-	}
-
-	return res, nil
-}
-
-// AddParameter add non-empty parameter into the selected Set.
-// It checks if there is already parameter with equal name but different
-// id. In this case error returned.
-// If Id and Name of p Parameter equeal to the saved one, then no error
-// returned.
-func (s *Set) AddParameter(p *Parameter, where SetType) error {
-	if err := where.Validate(CombinedTypes); err != nil {
-		return errs.New(
-			errs.M("invalid data set type/types combination (%d)", where),
-			errs.C(errorClass, errs.InvalidParameter))
-	}
-
-	if p == nil {
-		return errs.New(
-			errs.M("parameter should be provided"),
-			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
-	}
-
-	for _, st := range allTypes() {
-		if where&st != st {
-			continue
-		}
-
-		vv, ok := s.values[st]
-		if !ok {
-			vv = []*Parameter{}
-		}
-
-		for _, v := range vv {
-			if v.name == p.name {
-				if v.ID() != p.ID() {
-					return errs.New(
-						errs.M("data set already has parameter with the name %q",
-							v.name),
-						errs.C(errorClass, errs.InvalidParameter,
-							errs.DuplicateObject))
-				}
-
-				return nil
-			}
-		}
-
-		s.values[st] = append(vv, p)
-	}
-
-	return nil
-}
-
-// hasParameter reports whether p is referenced by this Set under any set type.
-// It is the top-down membership query that replaces the former
-// Parameter -> Set back-reference: the Set owns its Parameters, so membership
-// is answered by scanning the Set's own values rather than asking the
-// Parameter which Sets it belongs to.
-func (s *Set) hasParameter(p *Parameter) bool {
-	for _, st := range allTypes() {
-		if slices.Contains(s.values[st], p) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// removeParameter drops p from this Set under every set type it appears in.
-//
-// It is the unexported, error-free counterpart of RemoveParameter used for
-// derived removal from the InputOutputSpecification: the caller has already
-// validated its inputs, so no set-type validation (and no error) is needed
-// here, unlike the public RemoveParameter that guards an external caller.
-func (s *Set) removeParameter(p *Parameter) {
-	for _, st := range allTypes() {
-		vv := s.values[st]
-		if idx := slices.Index(vv, p); idx != -1 {
-			s.values[st] = append(vv[:idx], vv[idx+1:]...)
-		}
-	}
-}
-
-// RemoveParameter removes non-empty parameter from the Set.
-// If values of that type isn't existed error returned.
-func (s *Set) RemoveParameter(p *Parameter, from SetType) error {
-	if err := from.Validate(CombinedTypes); err != nil {
-		return errs.New(
-			errs.M("invalid data set type (%d)", from),
-			errs.C(errorClass, errs.InvalidParameter))
-	}
-
-	if p == nil {
-		return errs.New(
-			errs.M("parameter should be provided"),
-			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
-	}
-
-	for _, st := range allTypes() {
-		vv, ok := s.values[st]
-		if !ok || len(vv) == 0 {
-			continue
-		}
-
-		index := slices.Index(vv, p)
-		if index != -1 {
-			s.values[st] = append(vv[:index], vv[index+1:]...)
-		}
-	}
-
-	return nil
-}
-
-// Clear removes all parameters from the Set.
-func (s *Set) Clear() error {
-	for st, paramList := range s.values {
-		// make a copy of parameters and delete them all
-		pp := append([]*Parameter{}, paramList...)
-		for _, p := range pp {
-			if err := s.RemoveParameter(p, st); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-// Link links the ds Set to the s Set.
-func (s *Set) Link(ds *Set) error {
-	if ds == nil {
-		return errs.New(
-			errs.M("couldn't link empty dataset"),
-			errs.C(errorClass, errs.InvalidParameter, errs.EmptyNotAllowed))
-	}
-
-	if ds == s {
-		return errs.New(
-			errs.M("couldn't link to itself"),
-			errs.C(errorClass, errs.InvalidParameter))
-	}
-
-	if idx := slices.Index(s.linkedSets, ds); idx == -1 {
-		s.linkedSets = append(s.linkedSets, ds)
-	}
-
-	return nil
-}
-
-// Unlink removes ds from s linked data sets.
-func (s *Set) Unlink(ds *Set) error {
-	if ds == nil {
-		return errs.New(
-			errs.M("couldn't unlink empty dataset"),
-			errs.C(errorClass, errs.InvalidParameter, errs.EmptyNotAllowed))
-	}
-
-	idx := slices.Index(s.linkedSets, ds)
-	if idx == -1 {
-		return errs.New(
-			errs.M("data set isn't linked"),
-			errs.C(errorClass, errs.InvalidParameter))
-	}
-
-	s.linkedSets = append(s.linkedSets[:idx], s.linkedSets[idx+1:]...)
-
-	return nil
-}
-
-// LinkedSets returns linked to the s data sets.
-func (s *Set) LinkedSets() []*Set {
-	return append([]*Set{}, s.linkedSets...)
-}
-
-// IsValid returns the Set's validity flag.
-func (s *Set) IsValid() bool {
-	return s.valid
-}
-
-// Validate checks Set for validness.
-// It uses given readyState SrcState to compare with every Parameter state.
-// If readyState is nil, then data.ReadyDataState is used (if set).
-//
-// By default Validate checks only DefaultSet dataSet.
-// if executionFinished flag is true, then WhileExecutionSet is also checked.
-//
-// If the desired SetType parameter set is empty, check is successful.
-func (s *Set) Validate(
-	readyState *SrcState,
-	executionFinished bool,
-) error {
-	rs := readyState
-
-	s.valid = false
-
-	if readyState == nil {
-		rs = ReadyDataState
-		if rs == nil {
-			return errs.New(
-				errs.M("default ready state isn't initialized "+
-					"(use data.CreateDefaultStates to initialize)"),
-				errs.C(errorClass, errs.InvalidParameter))
-		}
-	}
-
-	if _, ok := s.values[DefaultSet]; ok {
-		if err := checkParamsState(
-			rs,
-			s.values[DefaultSet],
-			DefaultSet); err != nil {
-			return err
-		}
-	}
-
-	if executionFinished {
-		if _, ok := s.values[WhileExecutionSet]; ok {
-			if err := checkParamsState(
-				rs,
-				s.values[WhileExecutionSet],
-				WhileExecutionSet); err != nil {
-				return err
-			}
-		}
-	}
-
-	s.valid = true
-
-	return nil
-}
-
-// checkParamState checks set of parameter on rs SrcState equality.
-// If any parameter DataSate is differs from rs, then error returned.
-func checkParamsState(rs *SrcState, pp []*Parameter, sType SetType) error {
-	for _, p := range pp {
-		if p.dataState.ID() != rs.ID() {
-			return errs.New(
-				errs.M("parameter has not desired state"),
-				errs.C(errorClass, errs.ConditionFailed),
-				errs.D("parameter_name", p.name),
-				errs.D("data_set", sType.String()),
-				errs.D("requested_state", rs.name),
-				errs.D("parameter_state", p.State().name))
-		}
-	}
-
-	return nil
+// IsWhileExecuting reports whether the Parameter is evaluated while the activity
+// executes rather than gating its start/completion.
+func (p *Parameter) IsWhileExecuting() bool {
+	return p.whileExecuting
 }
 
 // Interfaces check for Parameter

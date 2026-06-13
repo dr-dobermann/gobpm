@@ -2,58 +2,13 @@ package activities
 
 import (
 	"reflect"
-	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
-
-// setDef defines single set for activity InputOutputSpecifictation.
-type setDef struct {
-	set     *data.Set
-	dir     data.Direction
-	params  []*data.Parameter
-	setType data.SetType
-}
-
-// newSetDef tries to create sn IoSpec set definition and return its pointer or
-// error on failure.
-func newSetDef(name, id string,
-	d data.Direction,
-	st data.SetType,
-	params []*data.Parameter,
-) (*setDef, error) {
-	name = strings.TrimSpace(name)
-	id = strings.TrimSpace(id)
-	var (
-		s   *data.Set
-		err error
-	)
-
-	if id == "" {
-		s, err = data.NewSet(name)
-	} else {
-		s, err = data.NewSet(name, foundation.WithID(id))
-	}
-	if err != nil {
-		return nil, errs.New(
-			errs.M("couldn't create new set"),
-			errs.E(err),
-			errs.D("set_name", name),
-			errs.D("set_id", id))
-	}
-
-	return &setDef{
-		set:     s,
-		dir:     d,
-		setType: st,
-		params:  append([]*data.Parameter{}, params...),
-	}, nil
-}
 
 type (
 	activityConfig struct {
@@ -61,7 +16,7 @@ type (
 		roles            map[string]*hi.ResourceRole
 		props            map[string]*data.Property
 		dataAssociations map[data.Direction][]*data.Association
-		sets             map[data.Direction][]*setDef
+		params           map[data.Direction][]*data.Parameter
 		defaultFlow      *flow.SequenceFlow
 		name             string
 		baseOpts         []options.Option
@@ -111,11 +66,11 @@ func (ac *activityConfig) newActivity() (*activity, error) {
 	return &a, nil
 }
 
-// createIOSpecs creates a new InputOutputSpecification and returns its
-// pointer on success or error on failure.
-// if activityConfig has withoutParams flag set, then all Parameters and
-// Sets are ignored and IOSpec creates with default_input and default_output
-// empty sets.
+// createIOSpecs creates a new InputOutputSpecification from the activity's
+// declared parameters and returns its pointer on success or error on failure.
+// With withoutParams set (or no parameters declared) it returns an IOSpec with
+// empty input/output parameter lists — the activity needs and produces no data
+// (ADR-011 v.2: the empty input/output set).
 func createIOSpecs(ac *activityConfig) (*data.InputOutputSpecification, error) {
 	ioSpecs, err := data.NewIOSpec()
 	if err != nil {
@@ -123,66 +78,24 @@ func createIOSpecs(ac *activityConfig) (*data.InputOutputSpecification, error) {
 	}
 
 	if ac.withoutParams {
-		for _, d := range []data.Direction{data.Input, data.Output} {
-			s, err := data.NewSet("default_" + strings.ToLower(string(d)))
-			if err != nil {
-				return nil, err
-			}
-
-			if err := ioSpecs.AddSet(s, d); err != nil {
-				return nil, err
-			}
-		}
-
 		return ioSpecs, nil
 	}
 
-	for d, ss := range ac.sets {
-		for _, s := range ss {
-			if err := addSetParams(ioSpecs, d, s); err != nil {
-				return nil, err
-			}
-
-			// add set to IOSpecs
-			if err := ioSpecs.AddSet(s.set, d); err != nil {
-				return nil, err
+	for d, pp := range ac.params {
+		for _, p := range pp {
+			// AddParameter dedups by identity, so a parameter listed twice is
+			// added once.
+			if err := ioSpecs.AddParameter(p, d); err != nil {
+				return nil, errs.New(
+					errs.M("couldn't add parameter"),
+					errs.E(err),
+					errs.D("param_name", p.Name()),
+					errs.D("param_direction", string(d)))
 			}
 		}
 	}
 
 	return ioSpecs, nil
-}
-
-// addSetParams adds params to the data.Set if parameters aren't existed in
-// ioSpecs, it add them to the ioSpecs too.
-func addSetParams(
-	ioSpecs *data.InputOutputSpecification,
-	d data.Direction,
-	s *setDef,
-) error {
-	for _, p := range s.params {
-		if !ioSpecs.HasParameter(p, d) {
-			if err := ioSpecs.AddParameter(p, d); err != nil {
-				return errs.New(
-					errs.M("couldn't add set's parameter"),
-					errs.E(err),
-					errs.D("set_name", s.set.Name()),
-					errs.D("param_name", p.Name()),
-					errs.D("param_direction", string(d)))
-			}
-		}
-
-		if err := s.set.AddParameter(p, s.setType); err != nil {
-			return errs.New(
-				errs.M("couldn't add parameter to set"),
-				errs.E(err),
-				errs.D("set_name", s.set.Name()),
-				errs.D("param_name", p.Name()),
-				errs.D("param_direction", string(d)))
-		}
-	}
-
-	return nil
 }
 
 // WithCompensation sets isForCompensation Activity flag to true.
@@ -239,106 +152,39 @@ func WithCompletionQuantity(qty int) ActivityOption {
 	return ActivityOption(f)
 }
 
-// WithEmptySet adds empty unique Set into the Activity config.
-// WithEmptySet called since BPMN standard demands non-empty input and
-// output set for the activity.
-//
-// It creates an default set on given direction. If there is already exists
-// any set for the direction, error returned.
+// WithParameters declares the activity's input or output parameters for the
+// given direction (ADR-011 v.2: the single input/output set is the parameter
+// list; per-parameter optional/whileExecuting flags carry the role). Parameters
+// already present (by id) for the direction are skipped. May be called more than
+// once per direction; the lists accumulate.
 //
 // Parameters:
-//   - name -- data set name
-//   - id -- data set id. If empty, will be generated
-//   - d -- data set direction.
-func WithEmptySet(
-	name, id string,
+//   - d -- the parameters' direction
+//   - params -- the parameters to add (each pre-flagged via data.Optional() /
+//     data.WhileExecuting() at construction)
+func WithParameters(
 	d data.Direction,
+	params ...*data.Parameter,
 ) ActivityOption {
 	f := func(cfg *activityConfig) error {
 		if err := d.Validate(); err != nil {
 			return errs.New(
-				errs.M("invalid direction %q for data.Set %q",
-					d, name),
+				errs.M("WithParameters: invalid direction %q", d),
 				errs.C(errorClass, errs.InvalidParameter),
 				errs.E(err))
 		}
 
-		sd, err := newSetDef(name, id, d, data.DefaultSet, []*data.Parameter{})
-		if err != nil {
-			return err
-		}
-
-		// check for duplication
-		tss, ok := cfg.sets[d]
-		if ok && len(tss) != 0 {
-			return errs.New(
-				errs.M("couldn't add empty set to non-empty ones"),
-				errs.C(errorClass, errs.InvalidParameter),
-				errs.D("set_name", name),
-				errs.D("set_direction", d),
-				errs.E(err))
-		}
-
-		cfg.sets[d] = []*setDef{sd}
-
-		return nil
-	}
-
-	return ActivityOption(f)
-}
-
-// WithSet adds non-empty unique Set into the Activity config.
-//
-// Parameters:
-//   - name -- data set name
-//   - id -- data set id. If empty, will be generated
-//   - st -- data set type from data.SetType
-//   - params -- list of data set parameters
-func WithSet(
-	name, id string,
-	d data.Direction,
-	st data.SetType,
-	params []*data.Parameter,
-) ActivityOption {
-	f := func(cfg *activityConfig) error {
-		if err := d.Validate(); err != nil {
-			return errs.New(
-				errs.M("invalid direction for data.Set"),
-				errs.C(errorClass, errs.InvalidParameter),
-				errs.D("set_name", name),
-				errs.D("set_direction", d),
-				errs.E(err))
-		}
-
-		if err := st.Validate(data.CombinedTypes); err != nil {
-			return errs.New(
-				errs.M("invalid set type for data.Set"),
-				errs.C(errorClass, errs.InvalidParameter),
-				errs.D("set_name", name),
-				errs.D("set_type", st),
-				errs.E(err))
-		}
-
-		sd, err := newSetDef(name, id, d, st, params)
-		if err != nil {
-			return err
-		}
-
-		// check for duplication
-		tss, ok := cfg.sets[d]
-		if !ok {
-			cfg.sets[d] = []*setDef{sd}
-
-			return nil
-		}
-
-		for _, ts := range tss {
-			if ts.set.ID() == sd.set.ID() {
-				return nil
+		for _, p := range params {
+			if p == nil {
+				return errs.New(
+					errs.M("WithParameters: a nil parameter isn't allowed"),
+					errs.C(errorClass, errs.EmptyNotAllowed,
+						errs.InvalidParameter),
+					errs.D("direction", d))
 			}
 		}
 
-		cfg.sets[d] = append(tss, sd)
+		cfg.params[d] = append(cfg.params[d], params...)
 
 		return nil
 	}
@@ -346,10 +192,9 @@ func WithSet(
 	return ActivityOption(f)
 }
 
-// WithoutParams indicates that the Activity has neither incoming
-// nor outgoing parameters and ignores all Parameters and Sets options.
-// It creates an empty input and output data.Sets in IOSpec with no
-// parameters.
+// WithoutParams indicates that the Activity has neither incoming nor outgoing
+// parameters and ignores any WithParameters options. It creates an IOSpec with
+// empty input and output parameter lists.
 func WithoutParams() ActivityOption {
 	f := func(cfg *activityConfig) error {
 		cfg.withoutParams = true

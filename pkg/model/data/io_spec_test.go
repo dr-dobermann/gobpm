@@ -1,342 +1,137 @@
 package data_test
 
 import (
-	"strconv"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/stretchr/testify/require"
 )
 
-func TestSet(t *testing.T) {
-	rs, err := data.NewSrcState("my ready state")
+// newParam builds a ready Parameter for the given value, applying any parameter
+// options (Optional/WhileExecuting).
+func newParam(
+	t *testing.T,
+	name string,
+	v any,
+	opts ...data.ParameterOption,
+) *data.Parameter {
+	t.Helper()
+
+	rs, err := data.NewSrcState("ready")
 	require.NoError(t, err)
 
-	params := make([]*data.Parameter, 2)
-	for i := 0; i < 2; i++ {
-		p, err := data.NewParameter("Parameter_"+strconv.Itoa(i+1),
-			data.MustItemAwareElement(
-				data.MustItemDefinition(
-					values.NewVariable(i)),
-				rs))
-		require.NoError(t, err)
-
-		params[i] = p
-	}
-
-	duplParam, err := data.NewParameter("Parameter_1",
+	p, err := data.NewParameter(name,
 		data.MustItemAwareElement(
-			data.MustItemDefinition(
-				values.NewVariable(100)),
-			rs))
+			data.MustItemDefinition(values.NewVariable(v)), rs),
+		opts...)
 	require.NoError(t, err)
 
-	t.Run("empty set",
+	return p
+}
+
+func TestParameter(t *testing.T) {
+	rs, err := data.NewSrcState("ready")
+	require.NoError(t, err)
+
+	iae := data.MustItemAwareElement(
+		data.MustItemDefinition(values.NewVariable(1)), rs)
+
+	t.Run("invalid construction",
 		func(t *testing.T) {
-			s, err := data.NewSet("")
+			_, err := data.NewParameter("", iae)
 			require.Error(t, err)
-			require.Empty(t, s)
-			require.Panics(t, func() {
-				s := data.MustSet("")
-				t.Log(s)
-			})
+
+			_, err = data.NewParameter("p", nil)
+			require.Error(t, err)
+
+			require.Panics(t, func() { _ = data.MustParameter("", nil) })
 		})
 
-	t.Run("named set",
+	t.Run("required by default",
 		func(t *testing.T) {
-			s, err := data.NewSet("test_set", foundation.WithID("set_id"))
+			p, err := data.NewParameter("p", iae)
 			require.NoError(t, err)
-			require.Equal(t, "test_set", s.Name())
-			require.Equal(t, "set_id", s.ID())
-			require.False(t, s.IsValid())
-			require.NoError(t, s.Validate(rs, false))
-			require.True(t, s.IsValid())
-			require.Error(t, s.Link(nil))
+			require.Equal(t, "p", p.Name())
+			require.False(t, p.IsOptional())
+			require.False(t, p.IsWhileExecuting())
+		})
 
-			pp, err := s.Parameters(data.DefaultSet)
-			require.NoError(t, err)
-			require.Empty(t, pp)
-
-			_, err = s.Parameters(42)
-			require.Error(t, err)
-
-			// ------------- parameter -------------------------------
-			// invalid params
-			require.Panics(t, func() {
-				p := data.MustParameter("", nil)
-				t.Log(p)
-			})
-			require.Panics(t, func() {
-				p := data.MustParameter("test", nil)
-				t.Log(p)
-			})
-
-			// ----------------- set's parameters --------------------
-
-			// invalid parameters
-			require.Error(t, s.AddParameter(nil, data.DefaultSet))
-			require.Error(t, s.AddParameter(params[0], 42))
-
-			// normal
-			require.NoError(t, s.AddParameter(params[0], data.DefaultSet))
-
-			// add same param
-			require.NoError(t, s.AddParameter(params[0], data.DefaultSet))
-
-			// add duplicate param
-			require.Error(t, s.AddParameter(duplParam, data.DefaultSet))
-
-			// add param into multiple set types
-			require.NoError(t, s.AddParameter(params[1],
-				data.OptionalSet|data.WhileExecutionSet))
-			t.Log(s.Parameters(data.AllSets))
-
-			defaultParams, err := s.Parameters(data.DefaultSet)
-			require.NoError(t, err)
-			optionalParams, err := s.Parameters(data.OptionalSet)
-			require.NoError(t, err)
-			whileExcParams, err := s.Parameters(data.WhileExecutionSet)
-			require.NoError(t, err)
-			require.Equal(t, "Parameter_1", defaultParams[data.DefaultSet][0].Name())
-			require.NoError(t, s.Validate(rs, true))
-			require.True(t, s.IsValid())
-			require.Equal(t, 1, len(optionalParams))
-			require.Equal(t, 1, len(whileExcParams))
-
-			// invalid state validation
-			ws, err := data.NewSrcState("not ready data state")
-			require.NoError(t, err)
-			require.Error(t, s.Validate(ws, true))
-
-			// remove invalid param
-			require.Error(t, s.RemoveParameter(nil, data.DefaultSet))
-			require.Error(t, s.RemoveParameter(params[0], 32))
-			require.NoError(t, s.RemoveParameter(params[0], data.OptionalSet))
-
-			// remove param from single set type
-			require.NoError(t, s.RemoveParameter(params[0], data.DefaultSet))
-			pp, err = s.Parameters(data.DefaultSet)
-			require.NoError(t, err)
-			require.Equal(t, 0, len(pp[data.DefaultSet]))
-			_, ok := pp[data.OptionalSet]
-			require.False(t, ok)
-
-			// remove param from multiple set types
-			require.NoError(t, s.RemoveParameter(params[1],
-				data.OptionalSet|data.WhileExecutionSet))
-			pp, err = s.Parameters(data.OptionalSet | data.WhileExecutionSet)
-			require.NoError(t, err)
-			require.Equal(t, 0, len(pp[data.OptionalSet]))
-			require.Equal(t, 0, len(pp[data.WhileExecutionSet]))
-			require.NoError(t, s.Validate(rs, true))
-			require.True(t, s.IsValid())
-
-			// clear data set
-			require.NoError(t, s.AddParameter(params[0], data.DefaultSet))
-			pp, err = s.Parameters(data.DefaultSet)
-			require.NoError(t, err)
-			require.Equal(t, 1, len(pp[data.DefaultSet]))
-
-			require.NoError(t, s.Clear())
-			pp, err = s.Parameters(data.DefaultSet)
-			require.NoError(t, err)
-			require.Equal(t, 0, len(pp[data.DefaultSet]))
-
-			// link data set
-			require.Error(t, s.Link(s))
-			require.Error(t, s.Link(nil))
-			require.Equal(t, 0, len(s.LinkedSets()))
-
-			ls, err := data.NewSet("linked_set")
-			require.NoError(t, err)
-			require.NoError(t, s.Link(ls))
-			require.Equal(t, 1, len(s.LinkedSets()))
-			require.Equal(t, "linked_set", s.LinkedSets()[0].Name())
-
-			require.Error(t, s.Unlink(nil))
-			require.NoError(t, s.Unlink(ls))
-			require.Equal(t, 0, len(s.LinkedSets()))
-			require.Error(t, s.Unlink(ls))
+	t.Run("flagged optional and while-executing",
+		func(t *testing.T) {
+			p := data.MustParameter("p", iae,
+				data.Optional(), data.WhileExecuting())
+			require.True(t, p.IsOptional())
+			require.True(t, p.IsWhileExecuting())
 		})
 }
 
 func TestIOSpec(t *testing.T) {
-	sets := []*data.Set{}
-	for i := 0; i < 2; i++ {
-		s, err := data.NewSet(
-			"data_set_" + strconv.Itoa(i+1))
-		require.NoError(t, err)
-		sets = append(sets, s)
-	}
-
-	rs, err := data.NewSrcState("my ready state")
-	require.NoError(t, err)
-
-	params := make([]*data.Parameter, 2)
-	for i := 0; i < 2; i++ {
-		p, err := data.NewParameter("Parameter_"+strconv.Itoa(i+1),
-			data.MustItemAwareElement(
-				data.MustItemDefinition(
-					values.NewVariable(i)),
-				rs))
-		require.NoError(t, err)
-
-		params[i] = p
-	}
+	in0 := newParam(t, "in_0", 0)
+	in1 := newParam(t, "in_1", 1, data.Optional())
+	out0 := newParam(t, "out_0", "")
 
 	ios, err := data.NewIOSpec()
 	require.NoError(t, err)
 	require.NotEmpty(t, ios)
 
-	// empty parameters list
+	// empty parameter lists and the set views
 	pp, err := ios.Parameters(data.Input)
 	require.NoError(t, err)
 	require.Empty(t, pp)
+	require.Empty(t, ios.InputSet())
+	require.Empty(t, ios.OutputSet())
 
-	// invalid parameters type
-	pp, err = ios.Parameters("invalid type")
+	// invalid direction
+	_, err = ios.Parameters("invalid type")
 	require.Error(t, err)
-	require.Empty(t, pp)
 
-	// -------------------- parameters ---------------------------------
 	// invalid params
 	require.Error(t, ios.AddParameter(nil, data.Input))
-	require.Error(t, ios.AddParameter(params[0], "wrong param type"))
+	require.Error(t, ios.AddParameter(in0, "wrong direction"))
 	require.False(t, ios.HasParameter(nil, data.Input))
-	require.False(t, ios.HasParameter(params[0], "invalid_direction"))
+	require.False(t, ios.HasParameter(in0, "invalid_direction"))
 
-	// one type param
-	require.NoError(t, ios.AddParameter(params[0], data.Input))
-	require.True(t, ios.HasParameter(params[0], data.Input))
-	require.False(t, ios.HasParameter(params[0], data.Output))
-	pp, err = ios.Parameters(data.Input)
-	require.NoError(t, err)
-	require.Equal(t, 1, len(pp))
-	require.Equal(t, "Parameter_1", pp[0].Name())
+	// add params
+	require.NoError(t, ios.AddParameter(in0, data.Input))
+	require.NoError(t, ios.AddParameter(in1, data.Input))
+	require.NoError(t, ios.AddParameter(out0, data.Output))
+	require.True(t, ios.HasParameter(in0, data.Input))
+	require.False(t, ios.HasParameter(in0, data.Output))
 
-	// two type param
-	require.NoError(t, ios.AddParameter(params[1], data.Input))
-	require.NoError(t, ios.AddParameter(params[1], data.Output))
+	// adding the same parameter again is idempotent
+	require.NoError(t, ios.AddParameter(in0, data.Input))
 
-	// duplicate param
-	require.NoError(t, ios.AddParameter(params[0], data.Input))
-	pp, err = ios.Parameters(data.Input)
-	require.NoError(t, err)
-	require.Equal(t, 2, len(pp))
-	require.Equal(t, "Parameter_1", pp[0].Name())
-	require.Equal(t, "Parameter_2", pp[1].Name())
+	// the views reflect the params in order; the per-parameter flags survive
+	is := ios.InputSet()
+	require.Len(t, is, 2)
+	require.Equal(t, "in_0", is[0].Name())
+	require.False(t, is[0].IsOptional())
+	require.Equal(t, "in_1", is[1].Name())
+	require.True(t, is[1].IsOptional())
+	require.Len(t, ios.OutputSet(), 1)
 
-	// remove param
-	require.NoError(t, ios.RemoveParameter(params[0], data.Input))
+	// a well-formed spec validates
+	require.NoError(t, ios.Validate())
 
-	// remove non-existing param
+	// remove a param
+	require.NoError(t, ios.RemoveParameter(in0, data.Input))
 	require.Error(t, ios.RemoveParameter(nil, data.Input))
-	require.Error(t, ios.RemoveParameter(params[0], data.Input))
-	require.Error(t, ios.RemoveParameter(params[0], data.Output))
-	pp, err = ios.Parameters(data.Input)
-	require.NoError(t, err)
-	require.Equal(t, 1, len(pp))
-	require.Equal(t, "Parameter_2", pp[0].Name())
-
-	// --------------- data sets ---------------------------------------
-	// invalid sets
-	require.Error(t, ios.AddSet(nil, data.Input))
-	require.Error(t, ios.AddSet(sets[0], "ErrorType"))
-
-	// normal sets
-	require.NoError(t, ios.AddSet(sets[0], data.Input))
-	require.NoError(t, ios.AddSet(sets[1], data.Output))
-
-	// duplicate set
-	require.NoError(t, ios.AddSet(sets[0], data.Input))
-
-	// set in opposite type
-	require.Error(t, ios.AddSet(sets[0], data.Output))
-
-	ss, err := ios.Sets(data.Input)
-	require.NoError(t, err)
-	require.Equal(t, 1, len(ss))
-	require.Equal(t, "data_set_1", ss[0].Name())
-
-	require.NoError(t, ss[0].AddParameter(params[1], data.DefaultSet))
-
-	// remove data set
-	require.NoError(t, ios.RemoveSet(ss[0], data.Input))
-
-	// remove non-existed data set
-	require.Error(t, ios.RemoveSet(ss[0], data.Input))
-	require.Error(t, ios.RemoveSet(nil, data.Output))
-	require.Error(t, ios.RemoveSet(ss[0], data.Output))
-
-	// ------------------ IOSpecs validation ---------------------------
-	require.Error(t, ios.Validate())
-	t.Log(ios.Validate())
-
-	ios2, err := data.NewIOSpec()
-	require.NoError(t, err)
-	require.NotEmpty(t, ios2)
-
-	inpS := data.MustSet("input set")
-	require.NoError(t, ios2.AddSet(
-		inpS, data.Input))
-	outS := data.MustSet("output set")
-	require.NoError(t, ios2.AddSet(
-		outS, data.Output))
-	require.NoError(t, ios2.Validate())
-
-	inpP := data.MustParameter("input",
-		data.MustItemAwareElement(
-			data.MustItemDefinition(
-				values.NewVariable(42)), rs))
-	require.NoError(t, ios2.AddParameter(inpP, data.Input))
-	require.Error(t, ios2.Validate())
-	// parameter in invalid set direction
-	require.NoError(t, outS.AddParameter(inpP, data.DefaultSet))
-	require.Error(t, ios2.Validate())
-
-	require.NoError(t, outS.RemoveParameter(inpP, data.DefaultSet))
-
-	// right parameter in right set
-	require.NoError(t, inpS.AddParameter(inpP, data.DefaultSet))
-	require.NoError(t, ios2.Validate())
+	require.Error(t, ios.RemoveParameter(in0, data.Input)) // already gone
+	require.Len(t, ios.InputSet(), 1)
+	require.Equal(t, "in_1", ios.InputSet()[0].Name())
 }
 
-// TestIOSpecRemoveParameterFromSets covers the single-ownership rewrite of
-// RemoveParameter: it must drop the parameter from the IOSpec and from every
-// set of that direction that references it, deriving set membership top-down
-// (no Parameter -> Set back-reference). The pointer receiver makes the removal
-// stick.
-func TestIOSpecRemoveParameterFromSets(t *testing.T) {
-	rs, err := data.NewSrcState("ready")
-	require.NoError(t, err)
-
+// TestIOSpecValidateDuplicateName covers the structural Validate: two
+// parameters sharing a name in one direction is an error; a well-formed spec
+// passes.
+func TestIOSpecValidateDuplicateName(t *testing.T) {
 	ios, err := data.NewIOSpec()
 	require.NoError(t, err)
 
-	inpS := data.MustSet("input set")
-	require.NoError(t, ios.AddSet(inpS, data.Input))
-	outS := data.MustSet("output set")
-	require.NoError(t, ios.AddSet(outS, data.Output))
+	require.NoError(t, ios.AddParameter(newParam(t, "same", 1), data.Input))
+	require.NoError(t, ios.AddParameter(newParam(t, "same", 2), data.Input))
 
-	inpP := data.MustParameter("input",
-		data.MustItemAwareElement(
-			data.MustItemDefinition(values.NewVariable(42)), rs))
-	require.NoError(t, ios.AddParameter(inpP, data.Input))
-	require.NoError(t, inpS.AddParameter(inpP, data.DefaultSet))
-
-	// well-formed: the input parameter belongs to the input set.
-	require.NoError(t, ios.Validate())
-
-	// remove the parameter: it must vanish from the IOSpec and from inpS.
-	require.NoError(t, ios.RemoveParameter(inpP, data.Input))
-	require.False(t, ios.HasParameter(inpP, data.Input))
-
-	setParams, err := inpS.Parameters(data.AllSets)
-	require.NoError(t, err)
-	require.Empty(t, setParams[data.DefaultSet])
-
-	// the spec with no parameters left is still well-formed.
-	require.NoError(t, ios.Validate())
+	require.Error(t, ios.Validate())
+	t.Log(ios.Validate())
 }

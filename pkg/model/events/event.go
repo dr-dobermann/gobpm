@@ -190,12 +190,10 @@ func (e Event) NodeType() flow.NodeType {
 	return flow.EventNodeType
 }
 
-
 // *****************************************************************************
 
 type catchEvent struct {
 	dataOutputs map[string]*data.Parameter
-	outputSet   *data.Set
 	Event
 	outputAssociations []*data.Association
 	parallelMultiple   bool
@@ -224,12 +222,11 @@ func newCatchEvent(
 
 // clone returns a per-instance copy of the catchEvent: the embedded Event is
 // cloned (fresh shell + dataPath, shared config), and the data outputs / output
-// set / output associations are shared by reference as immutable configuration.
+// associations are shared by reference as immutable configuration.
 func (ce *catchEvent) clone() catchEvent {
 	return catchEvent{
 		Event:              ce.Event.clone(),
 		dataOutputs:        ce.dataOutputs,
-		outputSet:          ce.outputSet,
 		outputAssociations: ce.outputAssociations,
 		parallelMultiple:   ce.parallelMultiple,
 	}
@@ -319,7 +316,6 @@ func (ce *catchEvent) UploadData(ctx context.Context, f *scope.Frame) error {
 // an extension to it or explicit by a throw Event.
 type throwEvent struct {
 	dataInputs map[string]*data.Parameter
-	inputSet   *data.Set
 	Event
 	inputAssociations []*data.Association
 }
@@ -345,12 +341,11 @@ func newThrowEvent(
 
 // clone returns a per-instance copy of the throwEvent: the embedded Event is
 // cloned (fresh shell + dataPath, shared config), and the data inputs / input
-// set / input associations are shared by reference as immutable configuration.
+// associations are shared by reference as immutable configuration.
 func (te *throwEvent) clone() throwEvent {
 	return throwEvent{
 		Event:             te.Event.clone(),
 		dataInputs:        te.dataInputs,
-		inputSet:          te.inputSet,
 		inputAssociations: te.inputAssociations,
 	}
 }

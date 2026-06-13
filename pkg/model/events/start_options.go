@@ -85,8 +85,6 @@ func (sc *startConfig) Validate() error {
 
 // startEvent creates a new StartEvent from startConfig.
 func (sc *startConfig) startEvent() (*StartEvent, error) {
-	const outputSetName = "startEventOutput"
-
 	ce, err := newCatchEvent(
 		sc.name,
 		map2slice(sc.props),
@@ -97,21 +95,8 @@ func (sc *startConfig) startEvent() (*StartEvent, error) {
 		return nil, err
 	}
 
-	// create and fill output set
 	if len(sc.dataOutputs) > 0 {
-		ce.outputSet, err = data.NewSet(outputSetName)
-		if err != nil {
-			return nil, err
-		}
-
 		ce.dataOutputs = sc.dataOutputs
-
-		for _, do := range ce.dataOutputs {
-			if err := ce.outputSet.AddParameter(
-				do, data.DefaultSet); err != nil {
-				return nil, err
-			}
-		}
 	}
 
 	return &StartEvent{

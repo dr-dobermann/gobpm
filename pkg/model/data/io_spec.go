@@ -4,70 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strconv"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
-
-// SetType represents different set types for input/output specifications.
-type SetType uint8
-
-const (
-	// InvalidSet represents an invalid set type.
-	InvalidSet SetType = iota
-	// DefaultSet represents the default set type.
-	DefaultSet SetType = 1 << iota
-	// OptionalSet represents an optional set type.
-	OptionalSet SetType = 1 << iota
-	// WhileExecutionSet represents a while-execution set type.
-	WhileExecutionSet SetType = 1 << iota
-
-	// AllSets represents all set types combined.
-	AllSets SetType = DefaultSet | OptionalSet | WhileExecutionSet
-
-	// SingleType represents single type validation mode.
-	SingleType = true
-	// CombinedTypes represents combined types validation mode.
-	CombinedTypes = false
-)
-
-func (st SetType) String() string {
-	if err := st.Validate(SingleType); err != nil {
-		errs.Panic("ivalid set type: " + strconv.Itoa(int(st)))
-	}
-
-	return map[SetType]string{
-		InvalidSet:        "InvalidSet",
-		DefaultSet:        "DefaultSet",
-		OptionalSet:       "OptionalSet",
-		WhileExecutionSet: "WhileExecutionSet",
-	}[st]
-}
-
-// allTypes returns all valid set types list.
-func allTypes() []SetType {
-	return []SetType{DefaultSet, OptionalSet, WhileExecutionSet}
-}
-
-// Validate tests if the st is a proper SetType.
-// If single is true, then checkSetType test st against single
-// SetType and fails on combined states.
-func (st SetType) Validate(single bool) error {
-	if st&AllSets != st {
-		return fmt.Errorf("invalid data set type or types combination: %d", st)
-	}
-
-	if single &&
-		st != DefaultSet &&
-		st != OptionalSet &&
-		st != WhileExecutionSet {
-		return fmt.Errorf("invalid single data set type %d", st)
-	}
-
-	return nil
-}
 
 // InputOutputSpecification represents BPMN input/output specification for activities and processes.
 // Activities and Processes often need data in order to execute. In addition
@@ -84,7 +25,6 @@ func (st SetType) Validate(single bool) error {
 // Outputs directly, however they MAY define them indirectly via
 // MultiInstanceLoopCharacteristics.
 type InputOutputSpecification struct {
-	sets   map[Direction][]*Set
 	params map[Direction][]*Parameter
 	foundation.BaseElement
 }
@@ -99,7 +39,6 @@ func NewIOSpec(baseOpts ...options.Option) (*InputOutputSpecification, error) {
 
 	return &InputOutputSpecification{
 			BaseElement: *be,
-			sets:        map[Direction][]*Set{},
 			params:      map[Direction][]*Parameter{},
 		},
 		nil
@@ -122,81 +61,29 @@ func (ios *InputOutputSpecification) Parameters(
 		nil
 }
 
-// Validate checks all conditions the InputOutputSpecification should
-// comply. If all the  condiitons met, no error returned.
+// Validate performs a structural check of the InputOutputSpecification: within
+// each direction no two parameters share a name. Parameters are non-nil by
+// construction (AddParameter rejects nil).
 //
-// An InputSet is a collection of DataInput elements that together define
-// a valid set of data inputs for an InputOutputSpecification. An
-// InputOutputSpecification MUST have at least one InputSet element.  An
-// InputSet MAY reference zero or more DataInput elements. A single
-// DataInput MAY be associated with multiple InputSet elements, but it MUST
-// always be referenced by at least one InputSet.
-//
-// An “empty” InputSet, one that references no DataInput elements, signifies
-// that the Activity requires no data to start executing (this implies that
-// either there are no data inputs or they are referenced by another input
-// set).
-//
-// InputSet elements are contained by InputOutputSpecification elements;
-// the order in which these elements are included defines the order in which
-// they will be evaluated.
-//
-// An OutputSet is a collection of DataOutputs elements that together can be
-// produced as output from an Activity or Event. An InputOutputSpecification
-// element MUST define at least OutputSet element. An OutputSet MAY reference
-// zero or more DataOutput elements. A single DataOutput MAY be associated with
-// multiple OutputSet elements, but it MUST always be referenced by at least
-// one OutputSet.
-//
-// An “empty” OutputSet, one that is associated with no DataOutput elements,
-// signifies that the ACTIVITY produces no data.
+// With the single-set model (ADR-011 v.2) the input set is the input parameter
+// list and the output set is the output parameter list — there are no separate
+// sets to cross-check. Input availability and required-output production are
+// runtime concerns, gated when the activity starts and completes, not here.
 func (ios *InputOutputSpecification) Validate() error {
 	ee := []error{}
 
-	names := map[Direction]struct {
-		setName, dataName string
-	}{
-		Input: {
-			setName:  "InputSet",
-			dataName: "DataInput",
-		},
-		Output: {
-			setName:  "OutputSet",
-			dataName: "DataOutput",
-		},
-	}
+	for _, dir := range []Direction{Input, Output} {
+		seen := map[string]bool{}
 
-	for _, tp := range []Direction{Input, Output} {
-		_, ok := ios.sets[tp]
-		if !ok {
-			ee = append(ee,
-				fmt.Errorf(
-					"the InputOutputSpecification should have at least one %s",
-					names[tp].setName))
+		for _, p := range ios.params[dir] {
+			if seen[p.name] {
+				ee = append(ee,
+					fmt.Errorf("duplicate %s parameter name %q", dir, p.name))
 
-			continue
-		}
-		// every parameter of this direction must belong to at least one of
-		// the direction's sets. Membership is derived top-down: a Set owns
-		// its Parameters, so we ask each set whether it references p rather
-		// than asking p which sets it belongs to.
-		ipp, ok := ios.params[tp]
-		if ok {
-			// for every param
-			for _, p := range ipp {
-				belongs := slices.ContainsFunc(
-					ios.sets[tp],
-					func(s *Set) bool {
-						return s.hasParameter(p)
-					})
-
-				if !belongs {
-					ee = append(ee,
-						fmt.Errorf(
-							"the %s %q should be assigned to %s",
-							names[tp].dataName, p.name, names[tp].setName))
-				}
+				continue
 			}
+
+			seen[p.name] = true
 		}
 	}
 
@@ -271,14 +158,6 @@ func (ios *InputOutputSpecification) RemoveParameter(
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
-	// drop p from every set of this direction. Membership is derived
-	// top-down (no Parameter -> Set back-reference): removeParameter drops p
-	// wherever it is referenced and is a no-op for a set that doesn't hold it.
-	for _, s := range ios.sets[dir] {
-		s.removeParameter(p)
-	}
-
-	// remove parameter
 	ios.params[dir] = append(pp[:idx], pp[idx+1:]...)
 
 	return nil
@@ -305,104 +184,16 @@ func (ios *InputOutputSpecification) HasParameter(
 	return false
 }
 
-// AddSet adds single data set into InputOutputSpecification and check
-// if it is already exist in selected by dir list of data sets.
-// Set could be set only as input or output.
-func (ios *InputOutputSpecification) AddSet(
-	s *Set,
-	dir Direction,
-) error {
-	if s == nil {
-		return errs.New(
-			errs.M("no data set"),
-			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
-	}
-
-	// check param type
-	if err := dir.Validate(); err != nil {
-		return err
-	}
-
-	// check if required set is existed
-	ss, ok := ios.sets[dir]
-	if !ok {
-		ios.sets[dir] = []*Set{s}
-
-		return nil
-	}
-
-	// check if s isn't used as opposite sets
-	if idx := slices.Index(ios.sets[Opposite(dir)], s); idx != -1 {
-		return errs.New(
-			errs.M("data set is already used as %s set", Opposite(dir)),
-			errs.C(errorClass, errs.InvalidParameter, errs.DuplicateObject))
-	}
-
-	// check if s isn't registered yet
-	if idx := slices.Index(ss, s); idx == -1 {
-		ios.sets[dir] = append(ss, s)
-	}
-
-	return nil
+// InputSet returns the activity's input set — its list of input parameters
+// (ADR-011 v.2: the single InputSet is the input parameter list, no Set type).
+// The returned slice is a copy.
+func (ios *InputOutputSpecification) InputSet() []*Parameter {
+	return append([]*Parameter{}, ios.params[Input]...)
 }
 
-// RemoveSet removes non-empty data set and clears all references on it
-// from parameters.
-func (ios *InputOutputSpecification) RemoveSet(
-	s *Set,
-	dir Direction,
-) error {
-	if s == nil {
-		return errs.New(
-			errs.M("no data set"),
-			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
-	}
-
-	// check param type
-	if err := dir.Validate(); err != nil {
-		return err
-	}
-
-	// check if required set is existed
-	ss, ok := ios.sets[dir]
-	if !ok || len(ss) == 0 {
-		return errs.New(
-			errs.M("sets list %q is empty", dir),
-			errs.C(errorClass, errs.InvalidParameter))
-	}
-
-	idx := slices.Index(ss, s)
-	if idx == -1 {
-		return errs.New(
-			errs.M("set isn't existed in %q lists", dir),
-			errs.C(errorClass, errs.InvalidParameter))
-	}
-
-	// clear all existed references on params
-	if err := ss[idx].Clear(); err != nil {
-		return err
-	}
-
-	// remove set
-	ios.sets[dir] = append(ios.sets[dir][:idx], ios.sets[dir][idx+1:]...)
-
-	return nil
-}
-
-// Sets returns data sets of dir type.
-func (ios *InputOutputSpecification) Sets(
-	dir Direction,
-) ([]*Set, error) {
-	// check param type
-	if err := dir.Validate(); err != nil {
-		return nil, err
-	}
-
-	ss, ok := ios.sets[dir]
-	if !ok {
-		return []*Set{}, nil
-	}
-
-	return append([]*Set{}, ss...),
-		nil
+// OutputSet returns the activity's output set — its list of output parameters
+// (ADR-011 v.2: the single OutputSet is the output parameter list, no Set type).
+// The returned slice is a copy.
+func (ios *InputOutputSpecification) OutputSet() []*Parameter {
+	return append([]*Parameter{}, ios.params[Output]...)
 }

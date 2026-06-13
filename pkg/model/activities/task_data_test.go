@@ -42,18 +42,16 @@ func newIOTask(t *testing.T, inID, outID string, inVal, outVal any) *task {
 	t.Helper()
 
 	tsk, err := newTask("io-task",
-		WithSet("ins", "", data.Input, data.DefaultSet,
-			[]*data.Parameter{data.MustParameter("in param",
-				data.MustItemAwareElement(
-					data.MustItemDefinition(values.NewVariable(inVal),
-						foundation.WithID(inID)),
-					data.ReadyDataState))}),
-		WithSet("outs", "", data.Output, data.DefaultSet,
-			[]*data.Parameter{data.MustParameter("out param",
-				data.MustItemAwareElement(
-					data.MustItemDefinition(values.NewVariable(outVal),
-						foundation.WithID(outID)),
-					nil))}))
+		WithParameters(data.Input, data.MustParameter("in param",
+			data.MustItemAwareElement(
+				data.MustItemDefinition(values.NewVariable(inVal),
+					foundation.WithID(inID)),
+				data.ReadyDataState))),
+		WithParameters(data.Output, data.MustParameter("out param",
+			data.MustItemAwareElement(
+				data.MustItemDefinition(values.NewVariable(outVal),
+					foundation.WithID(outID)),
+				nil))))
 	require.NoError(t, err)
 
 	return tsk
@@ -151,28 +149,22 @@ func TestTaskDataErrorPaths(t *testing.T) {
 			}
 
 			badIn, err := newTask("bad-in",
-				WithSet("ins", "", data.Input, data.DefaultSet,
-					[]*data.Parameter{bare("in", "bad-in-id")}),
-				WithSet("outs", "", data.Output, data.DefaultSet,
-					[]*data.Parameter{dataPar(t, "out", "ok-out", 0)}))
+				WithParameters(data.Input, bare("in", "bad-in-id")),
+				WithParameters(data.Output, dataPar(t, "out", "ok-out", 0)))
 			require.NoError(t, err)
 			require.Error(t, badIn.LoadData(ctx, newFrameFor(t, badIn.ID())))
 
 			badOut, err := newTask("bad-out",
-				WithSet("ins", "", data.Input, data.DefaultSet,
-					[]*data.Parameter{dataPar(t, "in", "ok-in", 0)}),
-				WithSet("outs", "", data.Output, data.DefaultSet,
-					[]*data.Parameter{bare("out", "bad-out-id")}))
+				WithParameters(data.Input, dataPar(t, "in", "ok-in", 0)),
+				WithParameters(data.Output, bare("out", "bad-out-id")))
 			require.NoError(t, err)
 			require.Error(t, badOut.LoadData(ctx, newFrameFor(t, badOut.ID())))
 
 			badProp, err := newTask("bad-prop",
 				data.WithProperties(data.MustProperty("p",
 					data.MustItemDefinition(nil), data.ReadyDataState)),
-				WithSet("ins", "", data.Input, data.DefaultSet,
-					[]*data.Parameter{dataPar(t, "in", "ok-in2", 0)}),
-				WithSet("outs", "", data.Output, data.DefaultSet,
-					[]*data.Parameter{dataPar(t, "out", "ok-out2", 0)}))
+				WithParameters(data.Input, dataPar(t, "in", "ok-in2", 0)),
+				WithParameters(data.Output, dataPar(t, "out", "ok-out2", 0)))
 			require.NoError(t, err)
 			require.Error(t,
 				badProp.LoadData(ctx, newFrameFor(t, badProp.ID())))
