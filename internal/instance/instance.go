@@ -11,7 +11,9 @@ package instance
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -579,13 +581,47 @@ func (inst *Instance) RegisterEvent(
 		proc, eDef)
 }
 
-// UnregisterEvent removes event definition to EventProcessor link from
+// UnregisterEvent removes the eDefID-to-proc subscription, mirroring
+// RegisterEvent: it validates its arguments and delegates to the parent
 // EventProducer.
+//
+// It is idempotent: if the parent reports the waiter or the processor is
+// already gone (ObjectNotFound), the desired end state — proc no longer
+// subscribed to eDefID — is already reached, so it returns nil. This keeps
+// the fired-event flow working, where the waiter self-removes before the
+// track unregisters (track.go unregisterEvent). Resolving who OWNS the
+// waiter's lifecycle (the hub vs the waiter) is ADR-006's concern; this is
+// the interim seam.
 func (inst *Instance) UnregisterEvent(
-	_ eventproc.EventProcessor,
-	_ string,
+	proc eventproc.EventProcessor,
+	eDefID string,
 ) error {
-	return nil
+	if proc == nil {
+		return errs.New(
+			errs.M("empty EventProcessor"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if strings.TrimSpace(eDefID) == "" {
+		return errs.New(
+			errs.M("empty event definition id"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if inst.parentEventProducer == nil {
+		return errs.New(
+			errs.M("no registered EventProducer"),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	err := inst.parentEventProducer.UnregisterEvent(proc, eDefID)
+
+	var ae *errs.ApplicationError
+	if errors.As(err, &ae) && ae.HasClass(errs.ObjectNotFound) {
+		return nil
+	}
+
+	return err
 }
 
 // PropagateEvent sends a fired throw event's eventDefinition

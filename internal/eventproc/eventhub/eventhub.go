@@ -186,9 +186,13 @@ func (eh *EventHub) UnregisterEvent(
 	eh.m.RUnlock()
 
 	if !ok {
+		// ObjectNotFound (not InvalidParameter): a missing waiter is an
+		// "already gone" condition the instance treats as idempotent —
+		// the fired-timer path self-removes the waiter before the track
+		// unregisters (FIX-003 B).
 		return errs.New(
 			errs.M("couldn't find waiter for the event definition"),
-			errs.C(errorClass, errs.InvalidParameter),
+			errs.C(errorClass, errs.ObjectNotFound),
 			errs.D("event_definition_id", eDefID))
 	}
 

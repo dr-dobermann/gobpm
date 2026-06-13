@@ -181,7 +181,9 @@ func (tw *timeWaiter) EventDefinition() flow.EventDefinition {
 // If the EventProcessor already exists in waiters queue, no errors returned.
 func (tw *timeWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 	if ep == nil {
-		return fmt.Errorf("empty EventProcessor")
+		return errs.New(
+			errs.M("empty EventProcessor isn't allowed"),
+			errs.C(TimerWatierError, errs.EmptyNotAllowed))
 	}
 
 	tw.m.Lock()
@@ -194,9 +196,32 @@ func (tw *timeWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 	return nil
 }
 
-// RemoveEventProcessor removes the ep EventProcessor from waiter's event
-// processors list.
-func (tw *timeWaiter) RemoveEventProcessor(_ eventproc.EventProcessor) error {
+// RemoveEventProcessor removes the ep EventProcessor from the waiter's
+// processors list — the mirror of AddEventProcessor (same value comparison).
+// It returns ObjectNotFound if ep was never registered, so the EventHub can
+// tell an idempotent "already gone" from a real failure (FIX-003 B); the hub
+// stops and drops the waiter once its last processor leaves.
+func (tw *timeWaiter) RemoveEventProcessor(ep eventproc.EventProcessor) error {
+	if ep == nil {
+		return errs.New(
+			errs.M("empty EventProcessor isn't allowed"),
+			errs.C(TimerWatierError, errs.EmptyNotAllowed))
+	}
+
+	tw.m.Lock()
+	defer tw.m.Unlock()
+
+	idx := slices.Index(tw.processors, ep)
+	if idx == -1 {
+		return errs.New(
+			errs.M("event processor isn't registered with the waiter"),
+			errs.C(TimerWatierError, errs.ObjectNotFound),
+			errs.D("waiter_id", tw.id),
+			errs.D("event_processor_id", ep.ID()))
+	}
+
+	tw.processors = slices.Delete(tw.processors, idx, idx+1)
+
 	return nil
 }
 

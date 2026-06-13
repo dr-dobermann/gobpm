@@ -131,3 +131,35 @@ func TestRegisterEventServiceFailure(t *testing.T) {
 	require.Empty(t, hub.waiters,
 		"a waiter that failed to start must not be left in the map")
 }
+
+// TestUnregisterEventFullChain proves the now-real unregistration chain
+// (FIX-003 B): unregistering the only processor of a running waiter removes
+// the now-empty waiter from the hub (the empty->Stop->RemoveWaiter path that
+// was dead while RemoveEventProcessor was a no-op).
+func TestUnregisterEventFullChain(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	hub, err := New(enginert.Default())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, hub.Start(ctx))
+
+	p := mockeventproc.NewMockEventProcessor(t)
+	p.EXPECT().ID().Return("p").Maybe()
+
+	eDef := timerAt(time.Now().Add(time.Hour))
+	require.NoError(t, hub.RegisterEvent(p, eDef))
+
+	hub.m.RLock()
+	require.Len(t, hub.waiters, 1)
+	hub.m.RUnlock()
+
+	require.NoError(t, hub.UnregisterEvent(p, eDef.ID()))
+
+	hub.m.RLock()
+	require.Empty(t, hub.waiters,
+		"the last processor leaving stops and removes the waiter")
+	hub.m.RUnlock()
+}
