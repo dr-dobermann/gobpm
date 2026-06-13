@@ -2,14 +2,17 @@ package waiters_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/dr-dobermann/gobpm/internal/enginert"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
+	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub/waiters"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
@@ -312,4 +315,97 @@ func TestTimeWaiter(t *testing.T) {
 
 			time.Sleep(7 * time.Second)
 		})
+}
+
+// TestTimerWaiterStopCtxRace is the regression for the double-close panic
+// (audit 1.3 / FIX-003 A): a running waiter has ctx cancelled and Stop()
+// called concurrently. Under the old code both closed tw.stopCh — a
+// "close of closed channel" panic; now Stop() is the single closer. Run
+// under -race; repeated to make the interleaving likely.
+func TestTimerWaiterStopCtxRace(t *testing.T) {
+	ep := mockeventproc.NewMockEventProcessor(t)
+	mockHub := mockeventproc.NewMockEventHub(t)
+
+	// a far-future timer so it never fires during the test.
+	farEDef := func() flow.EventDefinition {
+		return events.MustTimerEventDefinition(
+			goexpr.Must(
+				nil,
+				data.MustItemDefinition(values.NewVariable(time.Now())),
+				func(_ context.Context, _ data.Source) (data.Value, error) {
+					return values.NewVariable(time.Now().Add(time.Hour)), nil
+				}),
+			nil, nil)
+	}
+
+	for range 50 {
+		w, err := waiters.NewTimeWaiter(
+			mockHub, ep, farEDef(), "race timer", enginert.Default())
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		require.NoError(t, w.Service(ctx))
+
+		var wg sync.WaitGroup
+
+		wg.Add(2)
+
+		go func() { defer wg.Done(); cancel() }()
+		go func() { defer wg.Done(); _ = w.Stop() }()
+
+		wg.Wait()
+	}
+}
+
+// TestTimerWaiterRemoveEventProcessor exercises the real RemoveEventProcessor
+// (FIX-003 B): remove one of several, removing an unknown processor errors
+// (ObjectNotFound), and the list empties when the last one leaves.
+func TestTimerWaiterRemoveEventProcessor(t *testing.T) {
+	ep1 := mockeventproc.NewMockEventProcessor(t)
+	ep1.EXPECT().ID().Return("ep-1").Maybe()
+	ep2 := mockeventproc.NewMockEventProcessor(t)
+	ep2.EXPECT().ID().Return("ep-2").Maybe()
+	other := mockeventproc.NewMockEventProcessor(t)
+	other.EXPECT().ID().Return("other").Maybe()
+	mockHub := mockeventproc.NewMockEventHub(t)
+
+	farEDef := events.MustTimerEventDefinition(
+		goexpr.Must(
+			nil,
+			data.MustItemDefinition(values.NewVariable(time.Now())),
+			func(_ context.Context, _ data.Source) (data.Value, error) {
+				return values.NewVariable(time.Now().Add(time.Hour)), nil
+			}),
+		nil, nil)
+
+	w, err := waiters.NewTimeWaiter(
+		mockHub, ep1, farEDef, "remove timer", enginert.Default())
+	require.NoError(t, err)
+
+	// nil processor rejected on add too.
+	require.Error(t, w.AddEventProcessor(nil))
+
+	require.NoError(t, w.AddEventProcessor(ep2))
+	require.Len(t, w.EventProcessors(), 2)
+
+	// removing an unregistered processor is an ObjectNotFound error.
+	err = w.RemoveEventProcessor(other)
+	require.Error(t, err)
+
+	var ae *errs.ApplicationError
+
+	require.True(t, errors.As(err, &ae))
+	require.True(t, ae.HasClass(errs.ObjectNotFound))
+
+	// nil processor rejected.
+	require.Error(t, w.RemoveEventProcessor(nil))
+
+	// remove one -> one left.
+	require.NoError(t, w.RemoveEventProcessor(ep1))
+	require.Len(t, w.EventProcessors(), 1)
+	require.Contains(t, w.EventProcessors(), ep2)
+
+	// remove the last -> empty.
+	require.NoError(t, w.RemoveEventProcessor(ep2))
+	require.Empty(t, w.EventProcessors())
 }

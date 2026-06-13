@@ -77,7 +77,10 @@ type stepUpdate struct {
 // tokenStateFor projects a track state onto the BPMN token state.
 func tokenStateFor(ts trackState) TokenState {
 	switch ts {
-	case TrackReady, TrackExecutingStep, TrackProcessStepResults, TrackAwaitingMerge:
+	case TrackCreated, TrackReady, TrackExecutingStep,
+		TrackProcessStepResults, TrackAwaitingMerge:
+		// Created: a freshly created track already holds a position (its
+		// start node), so its token is Alive (ADR-001 §6) — not Invalid.
 		// AwaitingMerge: the token still sits at the join, not yet consumed.
 		return TokenAlive
 

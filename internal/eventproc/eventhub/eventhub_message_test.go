@@ -2,11 +2,13 @@ package eventhub_test
 
 import (
 	"context"
-	"github.com/dr-dobermann/gobpm/internal/enginert"
+	"errors"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
+	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
@@ -36,8 +38,18 @@ func TestMessageEvents_CurrentLimitations(t *testing.T) {
 		// Registration should fail because waiters doesn't support Message events yet
 		err = hub.RegisterEvent(mockProcessor, messageEvent)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "eventWaiter building failed")
-		require.Contains(t, err.Error(), "couldn't find builder for eventDefintion")
+
+		// RegisterEvent wraps the builder failure in its own classified
+		// error (FIX-003 §3.2.1) — the caller sees BUILDING_FAILED, and the
+		// inner WAITERS_ERROR/OBJECT_NOT_FOUND chain (the unsupported
+		// trigger) is preserved in the message.
+		var ae *errs.ApplicationError
+
+		require.True(t, errors.As(err, &ae))
+		require.True(t, ae.HasClass(errs.BulidingFailed),
+			"registration failure must be classified BUILDING_FAILED")
+		require.Contains(t, err.Error(), errs.ObjectNotFound,
+			"inner builder error preserved (no matching trigger)")
 		require.Contains(t, err.Error(), "of type Message")
 	})
 }
