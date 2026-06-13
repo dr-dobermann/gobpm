@@ -1,7 +1,7 @@
 # FIX-003 «Audit bug sweep: event-subsystem defects + track-state minors»
 
 **Type:** FIX (one-shot bug-fix; not rewritten after landing).
-**Status:** Draft v.1 (2026-06-13, branch `fix/audit-bug-sweep`, not yet implemented).
+**Status:** Landed v.1 (2026-06-13, branch `fix/audit-bug-sweep`, M1–M4 implemented, `make ci` green).
 **Date:** 2026-06-13.
 **Author:** Ruslan Gabitov.
 **Branch:** `fix/audit-bug-sweep` (one sweep over the audit-confirmed point defects; each is local and independently testable).
@@ -376,11 +376,39 @@ None — single-module repo; ADR-006/ADR-011 items are queued in the roadmap.
 
 | Stage | Commit | Scope | Tests |
 |---|---|---|---|
-| 1 | `<sha>` | … | … |
+| doc | `059e319` | FIX-003 authored (evidence-first; `/review-srd` corrected one race-claim + two snippet inaccuracies) | — |
+| M1 (defect D) | `0bab187` | `finalizeNodeExecution` enters `TrackProcessStepResults`; `tokenStateFor` `TrackCreated`→`TokenAlive`; `waiters.go` `fmt.Errorf`→`errs` | `TestNewWaiter` (upgraded), `TestTokenStateProjection` row, `TestTrackEntersProcessStepResults`, `eventhub_message_test` re-point |
+| M2 (defect A) | `2474e69` | timer single close owner (ctx branch stops closing); `Println`→`Logger().Debug` | `TestTimerWaiterStopCtxRace` (`-race`; proven to panic under the old double-close) |
+| M3 (defect C) | `cd6084f` | `RegisterEvent` one critical section (Service-before-insert) | `TestRegisterEventConcurrent`, `TestRegisterEventServiceFailure` (white-box, `-race`) |
+| M4 (defect B) | `c1a5f74` | real `RemoveEventProcessor`; hub not-found→`ObjectNotFound`; idempotent `Instance.UnregisterEvent` | `TestTimerWaiterRemoveEventProcessor`, `TestUnregisterEventFullChain`, `TestInstanceUnregisterEvent`; timer examples smoke |
+
+`make ci` green at each stage; cumulative diff-coverage 100% of 76 changed
+lines (gate ≥95).
 
 ### §8.2 Empirical findings — where reality diverged from the §3 draft
 
-*(to be filled)*
+- **§3.2.3 — Service-before-insert beats insert-then-cleanup.** The draft
+  proposed inserting the waiter, then `delete`-ing it on a `Service` failure.
+  Implementation found the cleaner shape: start the waiter (Service) *before*
+  inserting it into the map, so a failed start simply never enters the map —
+  no dead-waiter cleanup branch exists. Matters for future readers: there is
+  deliberately no "remove on failure" code to look for.
+- **§4.1.1 — `TestCreateWaiterErrors` realized as an upgraded
+  `TestNewWaiter`.** The existing `TestNewWaiter` already drove all four
+  builder-error cases (`require.Error`); rather than add a redundant test it
+  was upgraded to assert the `errs` classes (`errors.As` + `HasClass`). Same
+  coverage, one test.
+- **`eventhub_message_test` relied on the old bare-error string.** The §6.1
+  audit anticipated old-behaviour reliance; the message-unsupported test
+  asserted the literal `fmt.Errorf` string (`"eventDefintion"` typo). It was
+  re-pointed to assert the hub's wrapping `BUILDING_FAILED` class plus the
+  preserved inner `OBJECT_NOT_FOUND` — a real instance of the §6.1 risk.
+- **Hub not-found class changed `InvalidParameter`→`ObjectNotFound`.** Not in
+  the §3.2 file list as a standalone item, but required by §3.2.4's
+  idempotency: aligning all three already-absent cases (waiter gone,
+  processor gone, `RemoveWaiter` not-found) under one class lets the instance
+  key idempotency on `ObjectNotFound` alone. Existing tests asserted the
+  message, not the class, so none broke.
 
 ### §8.3 Backlog (out of FIX-003 scope)
 
