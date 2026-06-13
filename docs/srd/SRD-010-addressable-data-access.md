@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-13 |
 | Owner | Ruslan Gabitov |
@@ -146,7 +146,46 @@ shadows nothing; `GetSources`/`List`), `frame` tests (qualified vs plain),
 
 ## 7. Implementation summary
 
-*Post-landing placeholder — filled at the final audit with files, V-results, and milestone SHAs.*
+Landed on `feat/service-data-reader` in three milestone commits plus a doc
+amendment, all `make ci`-green with **100 %** diff-coverage on touched files.
+
+### 7.1 Milestones
+
+| Milestone | Commit | Scope |
+|---|---|---|
+| M1 — reserve `/` | `2e1d738` | `data.PathSeparator` + `data.CheckName`; guards in `NewParameter`/`NewProperty`/`dataobjects.New`; `scope.PathSeparator` re-exports the canonical constant. |
+| (doc) public seam | `189844f` | SRD amendment: `SourceProvider` moved to public `pkg/model/data`; FR-1 aligned to `data.PathSeparator`. |
+| M2 — providers + resolution | `b97e49b` | public `data.SourceProvider`; `Scope.sources` registry + `runtimeSource` adapter (`RUNTIME`); `Scope.GetSource`; `Frame.GetData` first-`/` split; `RuntimeVarsSupplier.RuntimeVarNames`; `Instance.RuntimeVarNames`. |
+| M3 — discovery + renv | `835d9a1` | `Scope`/`Frame` `GetSources`/`List` (default-scope walk via `namesFrom`); `renv.RuntimeEnvironment` surface + `execEnv` delegation; `mockrenv` regenerated. |
+
+### 7.2 Files
+
+- `pkg/model/data/name.go` (new) — `PathSeparator`, `CheckName`.
+- `pkg/model/data/source.go` (new) — public `SourceProvider`.
+- `pkg/model/data/{io_spec_obj,property}.go`, `pkg/model/data_objects/data_object.go` — name guards.
+- `internal/scope/{scope,frame,runtimevars}.go` — registry, `GetSource`, path split, discovery, adapter.
+- `internal/renv/renv.go` — interface surface; `internal/instance/{execenv,instance}.go` — delegation + enumeration.
+
+### 7.3 Verification results
+
+| Check | Result |
+|---|---|
+| V1 reject `/` names | ✅ `TestCheckName` + constructor reject cases |
+| V2 `RUNTIME/STATE` vs default scope | ✅ `TestFrameSourceResolution` (incl. same-name non-intersection, NFR-2) |
+| V3 `GetSources`/`List` | ✅ `TestDiscovery`, `TestFrameDiscovery` |
+| V4 renv surface + mock | ✅ `TestExecEnvDataSurface`; `mockrenv` regenerated |
+| V5 gateway reads `RUNTIME/STATE` | ✅ `TestExecEnvDataSurface` (via `Find`) |
+| V6 suites + 5 examples exit 0 | ✅ `make ci` green; all examples ran |
+| V7 `make ci` + diff-coverage | ✅ 100 % of changed lines (min 95 %) |
+
+### 7.4 Deviations from the §4 plan
+
+- `splitSource` helper dropped in favour of inlining `strings.Cut` in
+  `Frame.GetData` (linter-preferred; `Cut`'s "before = whole string on miss" is
+  harmless since only `ok` is consulted).
+- `namesFrom` collects ancestor scopes by path-prefix rather than a `DropTail`
+  walk — same name set, and it avoids an unreachable defensive branch (100 %
+  coverable).
 
 ## 8. References
 
@@ -171,4 +210,4 @@ shadows nothing; `GetSources`/`List`), `frame` tests (qualified vs plain),
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-13 | Ruslan Gabitov | Draft. Lands ADR-010 v.2 §2.7 (addressable data access): reserve `/` in default-scope data names; a **public** `data.SourceProvider` abstraction (in `pkg/model/data`, so an embedding application can implement its own source) + a data-plane source registry with `RUNTIME` (the runtime-vars supplier, gaining enumeration) as the first provider; path-qualified `GetData("SOURCE/addr")` that splits on the **first** `/` and dispatches the verbatim remainder to the provider (the provider owns its address space — a flat name for `RUNTIME`, JSONPath/dotted for a future JSON provider), resolving at the source with no traversal (plain names keep the walk-up); `GetSources()`/`List(path)` discovery; surfaced on `renv.RuntimeEnvironment` so the service reader (SRD-011) and condition/gateway resolution read through it. Runtime/instance variables thus need no special accessor — read by `RUNTIME/<var>`, non-intersecting with user data. Three milestones (reserve `/` → providers + path resolution → discovery + runtime surface). Defers the public service reader (SRD-011) and concrete non-RUNTIME providers. Implements ADR-010 v.2. |
+| v.1 | 2026-06-13 | Ruslan Gabitov | Accepted (landed). Lands ADR-010 v.2 §2.7 (addressable data access): reserve `/` in default-scope data names; a **public** `data.SourceProvider` abstraction (in `pkg/model/data`, so an embedding application can implement its own source) + a data-plane source registry with `RUNTIME` (the runtime-vars supplier, gaining enumeration) as the first provider; path-qualified `GetData("SOURCE/addr")` that splits on the **first** `/` and dispatches the verbatim remainder to the provider (the provider owns its address space — a flat name for `RUNTIME`, JSONPath/dotted for a future JSON provider), resolving at the source with no traversal (plain names keep the walk-up); `GetSources()`/`List(path)` discovery; surfaced on `renv.RuntimeEnvironment` so the service reader (SRD-011) and condition/gateway resolution read through it. Runtime/instance variables thus need no special accessor — read by `RUNTIME/<var>`, non-intersecting with user data. Three milestones (reserve `/` → providers + path resolution → discovery + runtime surface). Defers the public service reader (SRD-011) and concrete non-RUNTIME providers. Implements ADR-010 v.2. |

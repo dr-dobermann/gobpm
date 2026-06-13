@@ -294,6 +294,24 @@ func TestFrameSourceResolution(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "x", d.Name())
 	})
+
+	t.Run("a source never intersects a same-named user variable", func(t *testing.T) {
+		// the supplier serves "alive"; a user property of the same name is
+		// independent — the plain name reads the default scope, the qualified
+		// name reads the source (NFR-2).
+		require.NoError(t,
+			pl.Commit(pl.Root(), testData(t, "alive", "user-owned")))
+
+		user, err := f.GetData("alive")
+		require.NoError(t, err)
+		require.Equal(t, "user-owned",
+			user.Value().Get(context.Background()))
+
+		runtime, err := f.GetData(RuntimeVarsSegment + PathSeparator + "alive")
+		require.NoError(t, err)
+		require.Equal(t, true,
+			runtime.Value().Get(context.Background()))
+	})
 }
 
 func TestFrameDiscovery(t *testing.T) {
