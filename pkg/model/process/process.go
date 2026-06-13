@@ -174,15 +174,68 @@ func (p *Process) Add(e flow.Element) error {
 
 	switch e.EType() {
 	case flow.NodeElement:
-		return p.addNode(e.(flow.Node))
+		n, ok := e.(flow.Node)
+		if !ok {
+			return errs.New(
+				errs.M("element %q reports NodeElement type but is not a flow.Node",
+					e.ID()),
+				errs.C(errorClass, errs.TypeCastingError))
+		}
+
+		return p.addNode(n)
 
 	case flow.SequenceBaseElement:
-		return p.addFlow(e.(*flow.SequenceFlow))
+		f, ok := e.(*flow.SequenceFlow)
+		if !ok {
+			return errs.New(
+				errs.M("element %q reports SequenceBaseElement type but is not a *flow.SequenceFlow",
+					e.ID()),
+				errs.C(errorClass, errs.TypeCastingError))
+		}
+
+		return p.addFlow(f)
 	}
 
 	return errs.New(
 		errs.M("invalid flow element type: %s", reflect.TypeOf(e).String()),
 		errs.C(errorClass, errs.InvalidParameter))
+}
+
+// Validate checks that the Process is a well-formed flow graph: every sequence
+// flow connects a source and a target node that belong to the Process. It is
+// run at registration (snapshot.New) so a malformed process fails with a clear
+// error before a snapshot is built, rather than producing a broken snapshot.
+//
+// Validate does not re-check BPMN element completeness (the "an EndEvent
+// requires a StartEvent" rule the snapshot already enforces). Flow endpoints
+// are guaranteed non-nil by flow.Link, so only their membership in the Process
+// is checked here.
+func (p *Process) Validate() error {
+	ee := []error{}
+
+	for id, f := range p.flows {
+		if _, ok := p.nodes[f.Source().ID()]; !ok {
+			ee = append(ee,
+				errs.New(
+					errs.M("source %q of sequence flow %q is not in the process",
+						f.Source().ID(), id),
+					errs.C(errorClass, errs.ObjectNotFound)))
+		}
+
+		if _, ok := p.nodes[f.Target().ID()]; !ok {
+			ee = append(ee,
+				errs.New(
+					errs.M("target %q of sequence flow %q is not in the process",
+						f.Target().ID(), id),
+					errs.C(errorClass, errs.ObjectNotFound)))
+		}
+	}
+
+	if len(ee) > 0 {
+		return errors.Join(ee...)
+	}
+
+	return nil
 }
 
 // Elements returns all processes elements.
