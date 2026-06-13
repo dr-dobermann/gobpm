@@ -29,7 +29,7 @@ ADR-010 v.2 §2.7 decides addressable data access: plain names read the default 
 ### 2.1 Goals (in scope)
 
 - **G1.** `/` is reserved: data names (`Parameter`, `Property`, `DataObject`) reject it at construction, with a self-identifying error.
-- **G2.** A `SourceProvider` abstraction (resolve a variable by name + enumerate its names); the data plane holds **named sources** keyed by segment; `RUNTIME` is registered from the runtime-vars supplier (extended to enumerate). The mechanism admits more providers without changing callers.
+- **G2.** A **public** `data.SourceProvider` abstraction (resolve a variable by address + enumerate its addresses) so an embedding application can implement its own source — gobpm is a library, the pluggability seam of ADR-010 v.2 §2.7 must be importable. The data plane holds **named sources** keyed by segment; `RUNTIME` is registered (internally) from the runtime-vars supplier (extended to enumerate). The mechanism admits more providers without changing callers.
 - **G3.** **Path-qualified resolution.** `GetData("SOURCE/addr")` splits on the **first** `/`: it resolves `addr` (everything after, verbatim) at that source with **no parent traversal** — the address is the provider's own (a plain name for `RUNTIME`, or a dotted/JSONPath expression for a future JSON provider). A plain `GetData("var")` keeps the frame-first walk-up. A source never intersects the default scope (a process may keep its own `STATE`).
 - **G4.** **Discovery.** `GetSources()` → the named sources (now `["RUNTIME"]`; the default scope is not listed); `List(path)` → the variable names at a source, `List("")` → the default scope's instance-variable names.
 - **G5.** These reach the runtime through `renv.RuntimeEnvironment` (so SRD-011's reader and condition/gateway resolution use them); plain-name resolution and writes are unchanged.
@@ -37,7 +37,7 @@ ADR-010 v.2 §2.7 decides addressable data access: plain names read the default 
 ### 2.2 Non-goals (deferred, each with a named home)
 
 - **The public `service.DataReader` + polymorphic `Operation`** — SRD-011 (the service reader), which consumes this data-plane interface.
-- **Concrete non-`RUNTIME` providers** (application/business data, JSON documents) — future; ADR-010 v.2 §2.7 fixes the mechanism, not specific providers.
+- **Concrete non-`RUNTIME` providers** (application/business data, JSON documents) **and the public API to register them** — future; ADR-010 v.2 §2.7 fixes the mechanism, not specific providers. This SRD publishes the `data.SourceProvider` *contract* (so it is implementable now) but registers only `RUNTIME`, internally; the engine/thresher surface for an application to plug a provider in lands with the first concrete external provider.
 - **Reserved-name *write* protection beyond the existing `rtPath` carve-out** — the `RUNTIME` subtree is already write-protected (`checkWritable`); no new write paths here.
 - **Observe-from-outside / persistence of sources** — ADR-013 / the Persistence ADR.
 
@@ -47,8 +47,8 @@ ADR-010 v.2 §2.7 decides addressable data access: plain names read the default 
 
 | # | Requirement |
 |---|---|
-| FR-1 | `NewParameter` (`io_spec_obj.go:80`), `NewProperty` (`property.go:21`), `dataobjects.New` (`data_object.go:36`) (and their `Must*` forms) reject a `name` containing `scope.PathSeparator` (`"/"`) with a classified, self-identifying error. |
-| FR-2 | A `scope.SourceProvider` interface: `Get(addr string) (data.Data, error)` (where `addr` is the provider's own address, see FR-3) and `Names() []string`. `Scope` holds a registry of named sources (segment → provider). `RUNTIME` is registered from the runtime-vars supplier; `RuntimeVarsSupplier` gains `RuntimeVarNames() []string` (or a `SourceProvider`-shaped successor), and `Instance` enumerates `STARTED_AT`/`STATE`/`TRACKS_CNT`. `scope.New`'s supplier wiring is adapted accordingly. |
+| FR-1 | `NewParameter` (`io_spec_obj.go:80`), `NewProperty` (`property.go:21`), `dataobjects.New` (`data_object.go:36`) (and their `Must*` forms) reject a `name` containing the reserved separator `data.PathSeparator` (`"/"`) with a classified, self-identifying error (`data.CheckName`). The separator is canonical in `data` and re-exported by `scope.PathSeparator` (`data` cannot import `scope` — `scope` already imports `data`). |
+| FR-2 | A **public** `data.SourceProvider` interface (in `pkg/model/data`, beside `data.Source`): `Get(addr string) (data.Data, error)` (where `addr` is the provider's own address, see FR-3) and `Names() []string` — public so an embedding application can implement a provider. `Scope` holds a registry of named sources (segment → `data.SourceProvider`); the runtime-vars supplier is adapted to a provider (`runtimeSource`, internal) and registered under `RUNTIME`. `RuntimeVarsSupplier` gains `RuntimeVarNames() []string`, and `Instance` enumerates `STARTED_AT`/`STATE`/`TRACKS_CNT`. `scope.New`'s supplier wiring is adapted accordingly. (External *registration* of application providers is deferred — see §2.2.) |
 | FR-3 | `Frame.GetData(name)` (`frame.go:172`): split on the **first** `/` only. No `/` → the current frame-first walk-up over the default scope. `SOURCE/addr` → resolve at the named source `SOURCE` with **no walk-up**, passing `addr` (everything after the first `/`, **verbatim**) to `provider.Get(addr)`. The remainder is the **provider's own address space** — opaque to the data plane — so a provider may use a plain name, a dotted path, or a JSONPath expression (a JSON/business-data provider could resolve `BUSINESS/order.items[0].price`). `RUNTIME` treats `addr` as a flat variable name. `GetDataByID` is unchanged (id-based). |
 | FR-4 | `Scope` and `Frame` gain `GetSources() []string` (the registered source segments) and `List(path string) ([]string, error)` (`path==""` → the default scope's instance-variable names; `path=="RUNTIME"` → the provider's `Names()`; unknown source → error). |
 | FR-5 | `renv.RuntimeEnvironment` exposes the path-qualified `GetData` (already its method; behaviour extended via the frame) plus `GetSources()` / `List(path)`; `execEnv` (`internal/instance/execenv.go`) delegates to the frame. |
@@ -76,8 +76,8 @@ flowchart TD
 ```
 
 The default scope (container tree) is unchanged. A **named source** is a
-`SourceProvider` registered under a segment; `RUNTIME` wraps the runtime-vars
-supplier. A path-qualified name splits on the **first** `/`: the leading segment
+`data.SourceProvider` registered under a segment; `RUNTIME` wraps the
+runtime-vars supplier (the `runtimeSource` adapter). A path-qualified name splits on the **first** `/`: the leading segment
 selects the source, and everything after it is the **address the provider
 interprets** (verbatim — a plain name, a dotted path, a JSONPath expression). The
 data plane does not parse the address; it dispatches it. Resolution is at the
@@ -103,8 +103,8 @@ best-effort per provider; `RUNTIME` enumerates fully.
 - **M1 — reserve `/` in data names** (FR-1). The construction-time guard +
   tests. Independent and small.
 - **M2 — source providers + path-qualified resolution** (FR-2/3). The
-  `SourceProvider` interface, the `Scope` source registry, `RUNTIME` provider
-  (supplier gains `Names`), `Frame.GetData` path parsing. Behaviour-preserving
+  public `data.SourceProvider` interface, the `Scope` source registry, the
+  `RUNTIME` provider (supplier gains `Names`), `Frame.GetData` path parsing. Behaviour-preserving
   for plain names.
 - **M3 — discovery + runtime surface** (FR-4/5/6). `GetSources`/`List` on
   `Scope`/`Frame`/`renv.RuntimeEnvironment` (`execEnv` delegation); regenerate
@@ -161,7 +161,7 @@ shadows nothing; `GetSources`/`List`), `frame` tests (qualified vs plain),
 
 ## 9. Open questions
 
-- None. The provider abstraction (`SourceProvider`: `Get`+`Names`), the
+- None. The public provider abstraction (`data.SourceProvider`: `Get`+`Names`), the
   path-qualified split (on the **first** `/`; the remainder is the provider's own
   verbatim address — JSONPath-capable), the `/` reservation in default-scope data
   names, and the discovery shape (`GetSources`/`List`, `List("")` = default scope)
@@ -171,4 +171,4 @@ shadows nothing; `GetSources`/`List`), `frame` tests (qualified vs plain),
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-13 | Ruslan Gabitov | Draft. Lands ADR-010 v.2 §2.7 (addressable data access): reserve `/` in default-scope data names; a `SourceProvider` abstraction + a data-plane source registry with `RUNTIME` (the runtime-vars supplier, gaining enumeration) as the first provider; path-qualified `GetData("SOURCE/addr")` that splits on the **first** `/` and dispatches the verbatim remainder to the provider (the provider owns its address space — a flat name for `RUNTIME`, JSONPath/dotted for a future JSON provider), resolving at the source with no traversal (plain names keep the walk-up); `GetSources()`/`List(path)` discovery; surfaced on `renv.RuntimeEnvironment` so the service reader (SRD-011) and condition/gateway resolution read through it. Runtime/instance variables thus need no special accessor — read by `RUNTIME/<var>`, non-intersecting with user data. Three milestones (reserve `/` → providers + path resolution → discovery + runtime surface). Defers the public service reader (SRD-011) and concrete non-RUNTIME providers. Implements ADR-010 v.2. |
+| v.1 | 2026-06-13 | Ruslan Gabitov | Draft. Lands ADR-010 v.2 §2.7 (addressable data access): reserve `/` in default-scope data names; a **public** `data.SourceProvider` abstraction (in `pkg/model/data`, so an embedding application can implement its own source) + a data-plane source registry with `RUNTIME` (the runtime-vars supplier, gaining enumeration) as the first provider; path-qualified `GetData("SOURCE/addr")` that splits on the **first** `/` and dispatches the verbatim remainder to the provider (the provider owns its address space — a flat name for `RUNTIME`, JSONPath/dotted for a future JSON provider), resolving at the source with no traversal (plain names keep the walk-up); `GetSources()`/`List(path)` discovery; surfaced on `renv.RuntimeEnvironment` so the service reader (SRD-011) and condition/gateway resolution read through it. Runtime/instance variables thus need no special accessor — read by `RUNTIME/<var>`, non-intersecting with user data. Three milestones (reserve `/` → providers + path resolution → discovery + runtime surface). Defers the public service reader (SRD-011) and concrete non-RUNTIME providers. Implements ADR-010 v.2. |
