@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.1 |
+| Version | v.2 |
 | Date | 2026-06-12 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) |
@@ -265,6 +265,42 @@ accident.
 - **Scope-change subscriptions** (conditional events, listeners) — future
   work; §2.2's single data authority is deliberately the place such hooks
   attach.
+- **Concrete non-`RUNTIME` source providers** (application / business data,
+  JSON documents) — future; §2.7 fixes the mechanism, not specific providers.
+
+### 2.7 Addressable data access: the default scope and named data sources
+
+*(Added in v.2.)* Read access spans two target kinds, distinguished by the
+**name** passed to `GetData`:
+
+- **The default scope** — the container-scope tree (§2.1). A **plain** name
+  (`"user_name"`) resolves frame-first then walks **up** to the root — the
+  process's own persistent data; users name variables freely.
+- **Named data sources** — read-only **providers** addressed by a
+  **path-qualified** name `SOURCE/var` (e.g. `RUNTIME/STATE`), resolving at that
+  source **with no parent traversal**. A source never intersects the default
+  scope, so a user may keep their own `STATE`/`INSTANCE` variables.
+
+`/` is the **reserved path separator** and is prohibited in data names, so the
+split is unambiguous.
+
+Sources are **pluggable**: a provider resolves a variable by name and enumerates
+its names. The engine ships one — **`RUNTIME`** (the read-only engine/instance
+variables: `STARTED_AT`, `STATE`, `TRACKS_CNT` now; `initiator`, `tenant`, … as
+they are added) — and the mechanism is open to more (application/business data,
+JSON documents) without changing callers (§2.6).
+
+Two discovery helpers complete the read surface:
+
+- **`GetSources()`** — the named sources available (now `["RUNTIME"]`; the
+  default scope is not listed, as it needs no path prefix).
+- **`List(path)`** — the variable names available at a source; `List("")` returns
+  the default scope's instance-variable names.
+
+This is the access model the public service reader (the accompanying data-flow
+ADR) and condition/gateway resolution both read through; runtime/instance
+variables therefore need no special accessor — they are read by their path like
+any data.
 
 ## 3. Consequences
 
@@ -283,6 +319,11 @@ accident.
   a child container scope; visibility and lifecycle follow the tree.
 - **Persistence gets its data unit**: container scopes (durable) and frames
   (in-flight executions) are the exact units a checkpoint serializes.
+- **Data access is uniform, discoverable, and extensible** (§2.7): plain names
+  read the default scope (walk-up); `SOURCE/var` reads a named provider (no
+  traversal); `GetSources`/`List` discover them. Engine/instance runtime
+  variables become ordinary path-addressed reads (no special accessor), and new
+  source providers (app/business data) plug in without touching callers.
 - **Migration cost:** every node kind's data path changes — loading and
   unloading move from node-held paths to frames, and the per-execution
   environment replaces instance-as-environment. The landing SRD stages this
@@ -390,5 +431,6 @@ should follow:
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.2 | 2026-06-13 | Ruslan Gabitov | Added §2.7 (addressable data access): read access spans the **default scope** (plain names, walk-up — the process's own data) and **named data sources** (read-only pluggable providers, addressed by a path-qualified `SOURCE/var` with no traversal). `/` is the reserved path separator, prohibited in data names, so sources never intersect user data (a user may keep their own `STATE`/`INSTANCE`). The engine ships the `RUNTIME` provider (`STARTED_AT`/`STATE`/`TRACKS_CNT` now; `initiator`/`tenant`/… later); more providers (app/business data, JSON) plug in without changing callers. Adds discovery helpers `GetSources()` and `List(path)`. Consequence: runtime/instance variables become ordinary path-addressed reads (no special accessor), used uniformly by the service reader and condition/gateway resolution. Lands via SRD-010. §2.1-§2.6 unchanged (no renumber). |
 | v.1 | 2026-06-12 | Ruslan Gabitov | Full authoring (expands the 2026-06-11 seed). Decides the runtime data model: persistent data in per-instance **container scopes** (process root + future sub-process children; no track scopes, no node scopes); the scope tree extracted from Instance into a dedicated **data plane** with whole-operation atomicity (fixes the audit's §1.2 race class by construction); one **execution frame** per node execution, keyed by (track, node) — a track is sequential, so at most one live frame per pair; per-frame parameter instances, atomic batch commit, discard-uncommitted on failure (no partial flush, no scope residue); nodes keep data *definitions* + ADR-009 lifetime state only — `RegisterData`/node-held `DataPath` retired, track provides a per-execution environment; **last-committed-wins** for concurrent same-variable commits. Out of scope: model-layer data-flow semantics (separate ADR), DataStore & durable persistence (Persistence ADR), scope-change subscriptions. Rejected: lock-fix-only, loop-mediated data ops, per-track scopes with join merge, execution data on nodes, path-addressable frames. |
 | v.1 | 2026-06-12 | Ruslan Gabitov | **Accepted**, landed via SRD-007 v.1 (M2–M5, `d30dd2c`…`6c86620`). One wording amendment during landing (§2.3): execution carriers live in the frame OR as locals of the executing code — the frame carries what crosses the load → execute → commit stage boundaries; a stage-confined carrier is per-execution by construction. The frame-mechanics details the implementation pinned (resolution order with outputs as non-resolving write targets; the Ready flip on association-filled inputs) live in SRD-007 §7 — they refine, not change, this decision. |
