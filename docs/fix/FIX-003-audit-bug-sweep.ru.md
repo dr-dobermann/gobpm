@@ -142,7 +142,7 @@ check-then-insert карты waiter'ов.)
 Константа `TrackProcessStepResults` добавлена вместе с машиной состояний ADR-001,
 но шаговый цикл `track.run()` идёт `TrackExecutingStep` → (checkFlows)
 `TrackReady`/`TrackEnded` напрямую; стадия обработки результатов
-(`finalizeNodeExecution` — роль производителя + коммит фрейма со времён SRD-007)
+(`finalizeNodeExecution` — роль производителя + коммит frame'а со времён SRD-007)
 никогда о себе не заявляет. `tokenStateFor` написан против только *наблюдаемых*
 состояний, поэтому предписанная-но-ненаблюдаемая проекция `TrackCreated` падает в
 `TokenInvalid`. `waiters.go` старше конвенции классов `errs`.
