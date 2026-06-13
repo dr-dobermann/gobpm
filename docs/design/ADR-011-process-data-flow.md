@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.1 |
+| Version | v.2 |
 | Date | 2026-06-13 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) |
@@ -132,13 +132,23 @@ closed by decision; a future need reopens it here, not ad hoc.
 ### 2.2 One input set and one output set per activity
 
 An activity has **exactly one** `InputSet` and **exactly one** `OutputSet` — the
-standard's cardinality minimum (≥1 each). gobpm does **not** model multiple sets
-or the ordered, data-driven selection between them; multiple I/O sets are an
-explicit non-goal (§2.8) on the same principle as §2.3 — a set *chosen by which
-data happens to be available* is hidden, non-diagram branching, and every real
-alternative is modelled with a gateway or boundary event. The rich within-set
-distinctions the standard defines are kept; only the multi-set *selection* is
-dropped.
+standard's cardinality minimum (≥1 each). Because there is always exactly one of
+each, gobpm does **not** reify a `Set` object: an activity's input set **is** its
+list of `DataInput` parameters and its output set its list of `DataOutput`
+parameters, held directly by the `InputOutputSpecification`. `InputSet` /
+`OutputSet` remain as **BPMN vocabulary** for those per-direction lists, exposed
+as `IoSpec` views, not as a separate stateful type (§2.7). gobpm does **not**
+model multiple sets or the ordered, data-driven selection between them; multiple
+I/O sets are an explicit non-goal (§2.8) on the same principle as §2.3 — a set
+*chosen by which data happens to be available* is hidden, non-diagram branching,
+and every real alternative is modelled with a gateway or boundary event.
+
+The rich within-set distinctions the standard defines are kept, as
+**per-parameter attributes** rather than set membership: a `DataInput` is
+**required** unless flagged `optional` (the standard's `optionalInputRefs` /
+`optional` attribute, default `false`); a `DataOutput` likewise
+(`optionalOutputRefs`); `whileExecuting` marks the niche inputs/outputs the
+standard evaluates *during* execution. Only the multi-set *selection* is dropped.
 
 ```mermaid
 flowchart TD
@@ -166,11 +176,11 @@ flowchart TD
   an empty `OutputSet` means "produces no data" — the common case for today's
   tasks, modelled explicitly, not as a degenerate validity result.
 
-The model layer is shaped (§2.7) so the single-set evaluation is a small,
-self-contained component over the I/O graph — which keeps the door open: if a
-real demand for multiple I/O sets ever appears, the ordered-selection variant can
-be **added as an extension** to that component without reshaping the data model.
-The conception scopes to one set; the structure does not foreclose more.
+The model layer is shaped (§2.7) so single-set evaluation is a small,
+self-contained component over the `IoSpec`'s parameter lists. The conception
+scopes to one set; re-introducing multiple sets would mean reintroducing a `Set`
+abstraction and ordered selection over it — a reshape, not a drop-in extension
+(§2.8) — an accepted trade-off for the simpler model.
 
 ### 2.3 Availability gates selection; it never makes the activity wait
 
@@ -257,17 +267,20 @@ be able to.
 The data-flow model must be a clean foundation for §2.2–§2.6. gobpm prescribes the
 target shapes (the implementing SRD does the file-level work):
 
-- **Single-ownership of the I/O graph.** The `InputOutputSpecification` is the one
-  owner of its parameters and sets; the parameter↔set relationship is
-  **one-directional** (a set knows its parameters; a parameter does not carry
-  back-references to every set it belongs to). The two-sided, mutually-referential
-  graph that must keep cross-type invariants in step is replaced by single
-  ownership with derived queries. Mutation has one authority, not two.
+- **No `Set` type; the `IoSpec` owns parameters directly.** Because an activity
+  has exactly one input and one output set (§2.2), a reified `Set` object carries
+  no information beyond the `InputOutputSpecification`'s own per-direction
+  parameter lists. gobpm therefore **drops the `Set` type**: the `IoSpec` owns its
+  `DataInput`/`DataOutput` parameters directly, each carrying its own
+  `optional`/`whileExecuting` attributes, and exposes `InputSet()`/`OutputSet()`
+  as views over those lists. This **supersedes the earlier two-sided
+  `Parameter`↔`Set` graph** (and the single-ownership remediation SRD-008 used to
+  harden it) — with no `Set`, there is no cross-type invariant to keep. Mutation
+  has one owner, the `IoSpec`.
 - **Set evaluation is a distinct concern from storage.** The input/output **set
   evaluation** (§2.2 — required-availability check, association execution) is its
-  own component over the I/O graph, not methods smeared across the storage types.
-  Keeping it separated is also what makes the multi-set extension (§2.8)
-  addable later without reshaping the data structures, should it ever be demanded.
+  own component over the `IoSpec`'s parameter lists, not methods smeared across the
+  storage types.
 - **A value holds data; change-notification is separate.** The collection value
   type holds elements and nothing else. Change-notification (the callback/observer
   mechanism) is a **separate, opt-in decorator** over a value, not embedded in it
@@ -303,10 +316,11 @@ target shapes (the implementing SRD does the file-level work):
   chosen by which data is available is hidden, non-diagram branching — the same
   hazard as the data wait (§2.3) and OR-join synchronization — and in practice
   alternative input/output modes are modelled clearly with gateways or boundary
-  events. The optional/required and while-executing distinctions are kept *within*
-  the single set, so nothing practical is lost. The model layer (§2.7) is shaped
-  so the ordered-selection variant can be **added as an extension** if a real
-  demand ever appears, without reshaping the data model. This deviation and the
+  events. The optional/required and while-executing distinctions are kept as
+  per-parameter attributes within the single set, so nothing practical is lost.
+  Re-introducing multiple sets would require reintroducing a `Set` abstraction and
+  ordered selection over it — a reshape, not a drop-in extension — an accepted
+  trade-off for the simpler single-set model (§2.7). This deviation and the
   no-wait deviation (§2.3) are registered in the engine's conformance scope
   ([SAD-001 v.1 §14.1](SAD-001-vision-and-architecture.md)).
 - **Where data lives and the runtime contract** — ADR-010 (container scopes, the
@@ -339,9 +353,9 @@ target shapes (the implementing SRD does the file-level work):
 - **Service code becomes a real data consumer.** A functor can read process
   properties and runtime variables by name through a narrow public reader —
   Go-in-process gains access to process data, not just its operation message.
-- **The model layer gets simpler and safer.** Single ownership of the I/O graph,
-  selection separated from storage, value-vs-notification separated,
-  compile-time-checked event construction, a validated process, and the
+- **The model layer gets simpler and safer.** No `Set` type (the `IoSpec` owns
+  parameters directly), selection separated from storage, value-vs-notification
+  separated, compile-time-checked event construction, a validated process, and the
   two defects gone — a foundation later element work builds on.
 - **Cost: a substantial model-layer refactor.** The I/O graph, the collection
   value, event options, and the process container all change shape; the implementing
@@ -365,7 +379,8 @@ target shapes (the implementing SRD does the file-level work):
   — the same hidden-control hazard as the data wait — and in practice the feature is
   near-unused (tools barely expose it; engines barely implement it); every real
   alternative input/output mode is clearer as a gateway. Rejected on the modelling
-  principle (§2.8); the structure stays open to adding it if a real demand appears.
+  principle (§2.8); re-adding it would be a reshape (reintroducing a `Set`
+  abstraction), an accepted trade-off for the simpler single-set model.
 - **Implement the standard's data-availability wait.** Conformant to the letter,
   but introduces exactly the hidden, non-diagram synchronization gobpm rejects
   (§2.3) — unpredictable, unmodellable blocking. Rejected on the modelling
@@ -454,4 +469,5 @@ Advisory, not gating — conventions the landing SRD(s) and later work should fo
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.2 | 2026-06-13 | Ruslan Gabitov | Dropped the reified `Set` type. With exactly one input/output set per activity (§2.2), a `Set` object only duplicated the `IoSpec`'s per-direction parameter lists; the `IoSpec` now owns its `DataInput`/`DataOutput` parameters directly, with **required/optional/while-executing as per-parameter attributes** (`optional` default `false`) rather than set membership. `InputSet`/`OutputSet` are kept as BPMN vocabulary (IoSpec views), not a stateful type. Supersedes v.1 §2.7's single-ownership `Parameter`↔`Set` graph (landed by SRD-008) — with no `Set`, there is no cross-type graph. §2.8: re-introducing multiple sets would now be a reshape (reintroducing `Set`), not a drop-in extension — an accepted trade-off for the simpler model. Lands via SRD-009. Amends §2.2/§2.7/§2.8/§3/§4. |
 | v.1 | 2026-06-13 | Ruslan Gabitov | **Accepted**, first model-layer-hardening part landed via SRD-008 v.1 (`f920b11`, `3658acc`, `7bba5e6`); the §2.7 "freeze after snapshot" was dropped during that landing (the snapshot is already the frozen model) — kept here as the validate-at-registration decision. The §2.2–§2.6 evaluation/reader semantics and the deferred §2.7 items (value-notification split, event-options unification) land via later SRDs. Decides the model-layer data-flow semantics (the layer ADR-010 §2.6 deferred): the item-aware model with a closed three-value data state; **exactly one `InputSet` and one `OutputSet` per activity** with a real required-availability check and association execution — multiple I/O sets and their ordered, data-driven selection + IORule pairing are an explicit **non-goal** (hidden non-diagram branching, near-unused in practice, modelled with gateways instead; structure left extensible if ever demanded); **availability gates the start but never makes the activity wait** — a deliberate documented deviation from §10.4.2 (a data wait is a hidden, non-diagram synchronization → unpredictable; unavailable required input is an error, explicit waiting is modelled with events/gateways); optional/required and while-executing kept *within* the single set; data associations copy in the standard's three shapes; events carry data without sets and never wait; in-process service code receives a **narrow public data reader** (read by name/id over operation inputs, properties, and runtime variables — runtime vars addressable by name); and the model layer is reshaped (single-ownership I/O graph, set-evaluation separated from storage, value-vs-notification separated, compile-time-checked event construction, `Process.Validate()` run at registration (no freeze — the snapshot is already the frozen model), the GetKeys/RemoveParameter defects corrected). Two deliberate BPMN deviations (no data wait, no multiple I/O sets) from one principle — no hidden data-driven control. Refines ADR-001 v.5 (data side); sibling of ADR-010 v.1. Out of scope: persistence, executor/reader layering, observe-from-outside, data-driven gateways. Rejected: partial "default-Ready" check, full multi-set selection, the standard data wait, deferring (vs rejecting) the wait, leaking the runtime env to functors, bug-fix-only, an extensible DataState. |
