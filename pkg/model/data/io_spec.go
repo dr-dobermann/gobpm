@@ -176,26 +176,21 @@ func (ios *InputOutputSpecification) Validate() error {
 
 			continue
 		}
-		// take all params
+		// every parameter of this direction must belong to at least one of
+		// the direction's sets. Membership is derived top-down: a Set owns
+		// its Parameters, so we ask each set whether it references p rather
+		// than asking p which sets it belongs to.
 		ipp, ok := ios.params[tp]
 		if ok {
 			// for every param
 			for _, p := range ipp {
-				links := 0
+				belongs := slices.ContainsFunc(
+					ios.sets[tp],
+					func(s *Set) bool {
+						return s.hasParameter(p)
+					})
 
-				// take all its set
-				for _, ss := range p.Sets(AllSets) {
-					// for every set
-					for _, s := range ss {
-						// check if it belongs to the same
-						// type as the parameter helpers.Index(s, ios.sets[tp])
-						if idx := slices.Index(ios.sets[tp], s); idx != -1 {
-							links++
-						}
-					}
-				}
-
-				if links == 0 {
+				if !belongs {
 					ee = append(ee,
 						fmt.Errorf(
 							"the %s %q should be assigned to %s",
@@ -243,9 +238,12 @@ func (ios *InputOutputSpecification) AddParameter(
 	return nil
 }
 
-// RemoveParameter removes Parameter p of dir type from all sets
-// referenced on it and from IOSpec itself.
-func (ios InputOutputSpecification) RemoveParameter(
+// RemoveParameter removes Parameter p of dir type from every set of that
+// direction that references it and from the IOSpec itself.
+//
+// The receiver is a pointer: the method mutates ios.params, so a value
+// receiver would drop the removal on a copy and silently keep the parameter.
+func (ios *InputOutputSpecification) RemoveParameter(
 	p *Parameter,
 	dir Direction,
 ) error {
@@ -273,15 +271,11 @@ func (ios InputOutputSpecification) RemoveParameter(
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
-	// get all data sets, referenced on the parameter and delete that
-	// reference.
-	sets := p.Sets(AllSets)
-	for st, ss := range sets {
-		for _, s := range ss {
-			if err := s.RemoveParameter(p, st); err != nil {
-				return err
-			}
-		}
+	// drop p from every set of this direction. Membership is derived
+	// top-down (no Parameter -> Set back-reference): removeParameter drops p
+	// wherever it is referenced and is a no-op for a set that doesn't hold it.
+	for _, s := range ios.sets[dir] {
+		s.removeParameter(p)
 	}
 
 	// remove parameter
