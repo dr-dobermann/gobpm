@@ -166,9 +166,11 @@ func (f *Frame) Put(dd ...data.Data) error {
 	return nil
 }
 
-// GetData resolves name frame-first — inputs, properties, puts (outputs are
-// write targets, not sources — see lookup) — and then walks the container
-// scopes from the frame's attachment point up to the plane's root.
+// GetData resolves name. A path-qualified name ("SOURCE/addr") is dispatched
+// to the named source with no container traversal (ADR-010 v.2 §2.7). A plain
+// name resolves frame-first — inputs, properties, puts (outputs are write
+// targets, not sources — see lookup) — and then walks the container scopes
+// from the frame's attachment point up to the plane's root.
 func (f *Frame) GetData(name string) (data.Data, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -176,6 +178,14 @@ func (f *Frame) GetData(name string) (data.Data, error) {
 			errs.New(
 				errs.M("GetData: an empty data name isn't allowed"),
 				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	// A path-qualified name splits on the FIRST PathSeparator: the leading
+	// segment selects a named source and the remainder is the provider's own
+	// address (dispatched verbatim, no container traversal). A plain name (no
+	// separator) resolves against the default scope below.
+	if source, addr, ok := strings.Cut(name, PathSeparator); ok {
+		return f.plane.GetSource(source, addr)
 	}
 
 	if d, ok := f.lookup(func(d data.Data) bool {

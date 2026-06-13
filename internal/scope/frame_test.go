@@ -269,6 +269,33 @@ func TestFrameResolution(t *testing.T) {
 	})
 }
 
+func TestFrameSourceResolution(t *testing.T) {
+	pl, err := New(mustPath(t, "/proc"), &stubSupplier{t: t})
+	require.NoError(t, err)
+
+	f, err := NewFrame("track-1", "node-1", pl.Root(), pl)
+	require.NoError(t, err)
+
+	require.NoError(t, pl.Commit(pl.Root(), testData(t, "x", "container")))
+
+	t.Run("path-qualified name resolves via the source", func(t *testing.T) {
+		d, err := f.GetData(RuntimeVarsSegment + PathSeparator + "alive")
+		require.NoError(t, err)
+		require.Equal(t, "alive", d.Name())
+	})
+
+	t.Run("unknown source is an error", func(t *testing.T) {
+		_, err := f.GetData("BUSINESS" + PathSeparator + "order")
+		require.Error(t, err)
+	})
+
+	t.Run("plain name still walks the default scope", func(t *testing.T) {
+		d, err := f.GetData("x")
+		require.NoError(t, err)
+		require.Equal(t, "x", d.Name())
+	})
+}
+
 func TestFrameCommitAndDiscard(t *testing.T) {
 	t.Run("commit flushes outputs and puts", func(t *testing.T) {
 		pl, f := newTestFrame(t)

@@ -538,6 +538,12 @@ func (inst *Instance) RuntimeVar(name string) (data.Data, error) {
 	return p, nil
 }
 
+// RuntimeVarNames implements scope.RuntimeVarsSupplier: it lists the runtime
+// variables the instance exposes under the RUNTIME source.
+func (inst *Instance) RuntimeVarNames() []string {
+	return []string{StartedAt, CurrState, TracksCount}
+}
+
 // -------------------- exec.EventProducer interface ---------------------------
 
 // RegisterEvent register tracks awaited for the event.

@@ -23,6 +23,10 @@ func (s *stubSupplier) RuntimeVar(name string) (data.Data, error) {
 	return testData(s.t, name, true), nil
 }
 
+func (s *stubSupplier) RuntimeVarNames() []string {
+	return []string{"alive"}
+}
+
 func TestPlaneRuntimeVars(t *testing.T) {
 	root := mustPath(t, "/proc")
 	rtPath := mustPath(t, "/proc/"+RuntimeVarsSegment)
