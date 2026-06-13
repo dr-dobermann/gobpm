@@ -277,12 +277,17 @@ accident.
   (`"user_name"`) resolves frame-first then walks **up** to the root — the
   process's own persistent data; users name variables freely.
 - **Named data sources** — read-only **providers** addressed by a
-  **path-qualified** name `SOURCE/var` (e.g. `RUNTIME/STATE`), resolving at that
-  source **with no parent traversal**. A source never intersects the default
+  **path-qualified** name `SOURCE/address` (e.g. `RUNTIME/STATE`), resolving at
+  that source **with no parent traversal**. A source never intersects the default
   scope, so a user may keep their own `STATE`/`INSTANCE` variables.
 
-`/` is the **reserved path separator** and is prohibited in data names, so the
-split is unambiguous.
+A path-qualified name **splits on the first `/`**: the leading segment selects
+the source, and the **remainder is the provider's own address space** — the data
+plane dispatches it **verbatim**, it does not parse it. So a provider is free to
+name its variables as it likes: a flat name for `RUNTIME` (`RUNTIME/STATE`), or a
+dotted path / JSONPath for a JSON/business-data provider
+(`BUSINESS/order.items[0].price`). `/` is the **reserved separator** and is
+prohibited in default-scope data names, so the first-`/` split is unambiguous.
 
 Sources are **pluggable**: a provider resolves a variable by name and enumerates
 its names. The engine ships one — **`RUNTIME`** (the read-only engine/instance
@@ -431,6 +436,6 @@ should follow:
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.2 | 2026-06-13 | Ruslan Gabitov | Added §2.7 (addressable data access): read access spans the **default scope** (plain names, walk-up — the process's own data) and **named data sources** (read-only pluggable providers, addressed by a path-qualified `SOURCE/var` with no traversal). `/` is the reserved path separator, prohibited in data names, so sources never intersect user data (a user may keep their own `STATE`/`INSTANCE`). The engine ships the `RUNTIME` provider (`STARTED_AT`/`STATE`/`TRACKS_CNT` now; `initiator`/`tenant`/… later); more providers (app/business data, JSON) plug in without changing callers. Adds discovery helpers `GetSources()` and `List(path)`. Consequence: runtime/instance variables become ordinary path-addressed reads (no special accessor), used uniformly by the service reader and condition/gateway resolution. Lands via SRD-010. §2.1-§2.6 unchanged (no renumber). |
+| v.2 | 2026-06-13 | Ruslan Gabitov | Added §2.7 (addressable data access): read access spans the **default scope** (plain names, walk-up — the process's own data) and **named data sources** (read-only pluggable providers, addressed by a path-qualified `SOURCE/address` with no traversal). A path-qualified name splits on the **first** `/` — the leading segment is the source, the remainder is the provider's own address space (a flat name for `RUNTIME`, a dotted/JSONPath address for a JSON provider), dispatched verbatim. `/` is the reserved separator, prohibited in default-scope data names, so sources never intersect user data (a user may keep their own `STATE`/`INSTANCE`). The engine ships the `RUNTIME` provider (`STARTED_AT`/`STATE`/`TRACKS_CNT` now; `initiator`/`tenant`/… later); more providers (app/business data, JSON) plug in without changing callers. Adds discovery helpers `GetSources()` and `List(path)`. Consequence: runtime/instance variables become ordinary path-addressed reads (no special accessor), used uniformly by the service reader and condition/gateway resolution. Lands via SRD-010. §2.1-§2.6 unchanged (no renumber). |
 | v.1 | 2026-06-12 | Ruslan Gabitov | Full authoring (expands the 2026-06-11 seed). Decides the runtime data model: persistent data in per-instance **container scopes** (process root + future sub-process children; no track scopes, no node scopes); the scope tree extracted from Instance into a dedicated **data plane** with whole-operation atomicity (fixes the audit's §1.2 race class by construction); one **execution frame** per node execution, keyed by (track, node) — a track is sequential, so at most one live frame per pair; per-frame parameter instances, atomic batch commit, discard-uncommitted on failure (no partial flush, no scope residue); nodes keep data *definitions* + ADR-009 lifetime state only — `RegisterData`/node-held `DataPath` retired, track provides a per-execution environment; **last-committed-wins** for concurrent same-variable commits. Out of scope: model-layer data-flow semantics (separate ADR), DataStore & durable persistence (Persistence ADR), scope-change subscriptions. Rejected: lock-fix-only, loop-mediated data ops, per-track scopes with join merge, execution data on nodes, path-addressable frames. |
 | v.1 | 2026-06-12 | Ruslan Gabitov | **Accepted**, landed via SRD-007 v.1 (M2–M5, `d30dd2c`…`6c86620`). One wording amendment during landing (§2.3): execution carriers live in the frame OR as locals of the executing code — the frame carries what crosses the load → execute → commit stage boundaries; a stage-confined carrier is per-execution by construction. The frame-mechanics details the implementation pinned (resolution order with outputs as non-resolving write targets; the Ready flip on association-filled inputs) live in SRD-007 §7 — they refine, not change, this decision. |
