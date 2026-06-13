@@ -47,7 +47,7 @@ type ServiceTask struct {
 //   - activities.WithLoop
 //   - activities.WithStartQuantity
 //   - activities.WithCompletionQuantity
-//   - activities.WithSet
+//   - activities.WithParameters
 //   - activities.WithoutParams
 //   - foundation.WithId
 //   - foundation.WithDoc

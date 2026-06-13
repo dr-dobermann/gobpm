@@ -21,13 +21,13 @@ func TestActivity(t *testing.T) {
 			require.Error(t, err)
 			require.Empty(t, a)
 
-			// empty roles
-			_, err = newActivity("invalid roles", WithRoles(nil))
-			require.Error(t, err)
+			// nil roles / properties are silently skipped (variadic
+			// tolerance), not an error
+			_, err = newActivity("nil roles skipped", WithRoles(nil))
+			require.NoError(t, err)
 
-			// empty properties
-			_, err = newActivity("invalid roles", data.WithProperties(nil))
-			require.Error(t, err)
+			_, err = newActivity("nil props skipped", data.WithProperties(nil))
+			require.NoError(t, err)
 		})
 
 	prop, err := data.NewProperty(
@@ -98,46 +98,42 @@ func TestActivity(t *testing.T) {
 				data.MustItemAwareElement(paramItem, is))
 			require.NoError(t, err)
 
-			// invlaid sets
+			// invalid: WithParameters with a bad direction, or a nil parameter
 			_, err = newActivity(
-				"bad iospec",
-				WithSet("", "", data.Input, data.AllSets, []*data.Parameter{}),
-				WithSet("wrong dir set", "", "wrong direction", data.AllSets, []*data.Parameter{}),
-				WithSet("input set", "", data.Input, 42, []*data.Parameter{}),
-			)
+				"bad direction",
+				WithParameters("wrong direction", pi))
 			require.Error(t, err)
 
-			// invalid IOSpecs with no Sets
-			a, err := newActivity(
-				"iospec with no sets")
-			require.Empty(t, a)
-			require.Error(t, err)
-
-			// invalid IOSpecs with duplicate empty sets
 			_, err = newActivity(
-				"iospec without params",
-				// duplicate set
-				WithEmptySet("input set", "", data.Input),
-				WithEmptySet("output set", "", data.Output),
-				WithEmptySet("duplicate output set", "", data.Output),
-			)
+				"nil param",
+				WithParameters(data.Input, nil))
 			require.Error(t, err)
 
-			// normal IOSpecs with no parameters
-			a, err = newActivity(
-				"iospec without params",
-				WithEmptySet("input set", "", data.Input),
-				WithEmptySet("output_set", "", data.Output),
-			)
+			// an activity with no parameters declared is valid: empty I/O
+			a, err := newActivity("no params")
 			require.NoError(t, err)
 			require.NotEmpty(t, a)
 
-			// full IOSpecs
+			// WithoutParams is equally valid
+			a, err = newActivity("without params", WithoutParams())
+			require.NoError(t, err)
+			require.NotEmpty(t, a)
+
+			// duplicate parameter name in one direction fails structural Validate
+			_, err = newActivity(
+				"dup names",
+				WithParameters(data.Input,
+					data.MustParameter("dup",
+						data.MustItemAwareElement(paramItem, is)),
+					data.MustParameter("dup",
+						data.MustItemAwareElement(paramItem, is))))
+			require.Error(t, err)
+
+			// full IOSpec with an input and an output parameter
 			a, err = newActivity(
 				"full iospec",
-				WithSet("input set", "", data.Input, data.DefaultSet, []*data.Parameter{pi}),
-				WithSet("output set", "", data.Output, data.DefaultSet, []*data.Parameter{po}),
-			)
+				WithParameters(data.Input, pi),
+				WithParameters(data.Output, po))
 			require.NoError(t, err)
 			require.NotEmpty(t, a)
 		})

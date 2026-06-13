@@ -60,7 +60,7 @@ type UserTask struct {
 //		- WithLoop
 //		- WithStartQuantity
 //		- WithCompleteQuantity
-//		- WithSet
+//		- WithParameters
 //		- WithoutParams
 //		- WithRoles
 //

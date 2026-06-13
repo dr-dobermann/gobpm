@@ -222,6 +222,57 @@ func TestThrowEventLoadData(t *testing.T) {
 	})
 }
 
+// TestThrowEventStartGate covers the SRD-009 start-gate in throwEvent.LoadData:
+// a required input that can't be filled fails fast (gobpm never waits for data,
+// ADR-011 v.2 §2.3), while an optional input may stay unavailable.
+func TestThrowEventStartGate(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+
+	t.Run("optional input with a not-ready association is allowed",
+		func(t *testing.T) {
+			te, err := newThrowEvent("thr-opt", nil, nil)
+			require.NoError(t, err)
+
+			te.dataInputs["opt-1"] = data.MustParameter("opt-in",
+				data.MustItemAwareElement(
+					data.MustItemDefinition(values.NewVariable(""),
+						foundation.WithID("opt-1")),
+					data.UnavailableDataState), data.Optional())
+
+			target := data.MustItemAwareElement(
+				data.MustItemDefinition(values.NewVariable(""),
+					foundation.WithID("opt-1")),
+				data.UnavailableDataState)
+
+			ia, err := data.NewAssociation(target,
+				data.WithSource(data.MustItemAwareElement(
+					data.MustItemDefinition(values.NewVariable(""),
+						foundation.WithID("src-x")),
+					data.UnavailableDataState)))
+			require.NoError(t, err)
+
+			te.inputAssociations = append(te.inputAssociations, ia)
+
+			require.NoError(t, te.LoadData(ctx, frameFor(t, te.ID())))
+		})
+
+	t.Run("required input with no association fails",
+		func(t *testing.T) {
+			te, err := newThrowEvent("thr-req", nil, nil)
+			require.NoError(t, err)
+
+			te.dataInputs["req-1"] = data.MustParameter("req-in",
+				data.MustItemAwareElement(
+					data.MustItemDefinition(values.NewVariable(""),
+						foundation.WithID("req-1")),
+					data.UnavailableDataState))
+
+			require.Error(t, te.LoadData(ctx, frameFor(t, te.ID())))
+		})
+}
+
 // TestCatchEventUploadDataBranches covers the catch-side producer role
 // branches: the association push from frame output instances, the
 // not-Ready guard, and the missing-output guard (SRD-007 FR-6).

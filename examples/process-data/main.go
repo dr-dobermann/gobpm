@@ -199,18 +199,8 @@ func newGreeter(
 		return nil, nil, fmt.Errorf("create %s operation: %w", name, err)
 	}
 
-	st, err := activities.NewServiceTask(name, op, activities.WithoutParams())
-	if err != nil {
-		return nil, nil, fmt.Errorf("create %s task: %w", name, err)
-	}
-
 	// declare the task output the operation result fills (the producer
 	// stage copies the frame put into this output's per-execution instance).
-	outSet := data.MustSet(name + "-outs")
-	if err := st.IoSpec.AddSet(outSet, data.Output); err != nil {
-		return nil, nil, fmt.Errorf("add %s output set: %w", name, err)
-	}
-
 	outParam := data.MustParameter(name+" result",
 		data.MustItemAwareElement(
 			data.MustItemDefinition(
@@ -218,12 +208,10 @@ func newGreeter(
 				foundation.WithID(resID)),
 			data.UnavailableDataState))
 
-	if err := st.IoSpec.AddParameter(outParam, data.Output); err != nil {
-		return nil, nil, fmt.Errorf("add %s output: %w", name, err)
-	}
-
-	if err := outSet.AddParameter(outParam, data.DefaultSet); err != nil {
-		return nil, nil, fmt.Errorf("bind %s output set: %w", name, err)
+	st, err := activities.NewServiceTask(name, op,
+		activities.WithParameters(data.Output, outParam))
+	if err != nil {
+		return nil, nil, fmt.Errorf("create %s task: %w", name, err)
 	}
 
 	// the DataObject the branch result lands in via the output association.

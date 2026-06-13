@@ -42,18 +42,16 @@ func newIOTask(t *testing.T, inID, outID string, inVal, outVal any) *task {
 	t.Helper()
 
 	tsk, err := newTask("io-task",
-		WithSet("ins", "", data.Input, data.DefaultSet,
-			[]*data.Parameter{data.MustParameter("in param",
-				data.MustItemAwareElement(
-					data.MustItemDefinition(values.NewVariable(inVal),
-						foundation.WithID(inID)),
-					data.ReadyDataState))}),
-		WithSet("outs", "", data.Output, data.DefaultSet,
-			[]*data.Parameter{data.MustParameter("out param",
-				data.MustItemAwareElement(
-					data.MustItemDefinition(values.NewVariable(outVal),
-						foundation.WithID(outID)),
-					nil))}))
+		WithParameters(data.Input, data.MustParameter("in param",
+			data.MustItemAwareElement(
+				data.MustItemDefinition(values.NewVariable(inVal),
+					foundation.WithID(inID)),
+				data.ReadyDataState))),
+		WithParameters(data.Output, data.MustParameter("out param",
+			data.MustItemAwareElement(
+				data.MustItemDefinition(values.NewVariable(outVal),
+					foundation.WithID(outID)),
+				nil))))
 	require.NoError(t, err)
 
 	return tsk
@@ -151,28 +149,22 @@ func TestTaskDataErrorPaths(t *testing.T) {
 			}
 
 			badIn, err := newTask("bad-in",
-				WithSet("ins", "", data.Input, data.DefaultSet,
-					[]*data.Parameter{bare("in", "bad-in-id")}),
-				WithSet("outs", "", data.Output, data.DefaultSet,
-					[]*data.Parameter{dataPar(t, "out", "ok-out", 0)}))
+				WithParameters(data.Input, bare("in", "bad-in-id")),
+				WithParameters(data.Output, dataPar(t, "out", "ok-out", 0)))
 			require.NoError(t, err)
 			require.Error(t, badIn.LoadData(ctx, newFrameFor(t, badIn.ID())))
 
 			badOut, err := newTask("bad-out",
-				WithSet("ins", "", data.Input, data.DefaultSet,
-					[]*data.Parameter{dataPar(t, "in", "ok-in", 0)}),
-				WithSet("outs", "", data.Output, data.DefaultSet,
-					[]*data.Parameter{bare("out", "bad-out-id")}))
+				WithParameters(data.Input, dataPar(t, "in", "ok-in", 0)),
+				WithParameters(data.Output, bare("out", "bad-out-id")))
 			require.NoError(t, err)
 			require.Error(t, badOut.LoadData(ctx, newFrameFor(t, badOut.ID())))
 
 			badProp, err := newTask("bad-prop",
 				data.WithProperties(data.MustProperty("p",
 					data.MustItemDefinition(nil), data.ReadyDataState)),
-				WithSet("ins", "", data.Input, data.DefaultSet,
-					[]*data.Parameter{dataPar(t, "in", "ok-in2", 0)}),
-				WithSet("outs", "", data.Output, data.DefaultSet,
-					[]*data.Parameter{dataPar(t, "out", "ok-out2", 0)}))
+				WithParameters(data.Input, dataPar(t, "in", "ok-in2", 0)),
+				WithParameters(data.Output, dataPar(t, "out", "ok-out2", 0)))
 			require.NoError(t, err)
 			require.Error(t,
 				badProp.LoadData(ctx, newFrameFor(t, badProp.ID())))
@@ -220,5 +212,146 @@ func TestTaskDataErrorPaths(t *testing.T) {
 
 			require.NoError(t, tsk.UploadData(ctx, f))
 			require.Equal(t, 99, sink.Subject().Structure().Get(ctx))
+		})
+}
+
+// TestTaskStartGate covers the SRD-009 start-gate in task.LoadData: a required
+// input that is unavailable fails fast (gobpm never waits, ADR-011 v.2 §2.3);
+// an optional input may be absent; a pre-Ready required input passes.
+func TestTaskStartGate(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+
+	// oneInput builds a task with a single input of the given state and
+	// optionality (no association) plus a Ready output.
+	oneInput := func(
+		t *testing.T,
+		state *data.SrcState,
+		opts ...data.ParameterOption,
+	) *task {
+		t.Helper()
+
+		tsk, err := newTask("gate",
+			WithParameters(data.Input, data.MustParameter("in",
+				data.MustItemAwareElement(
+					data.MustItemDefinition(values.NewVariable(0),
+						foundation.WithID("gate-in")),
+					state), opts...)),
+			WithParameters(data.Output, dataPar(t, "out", "gate-out", 0)))
+		require.NoError(t, err)
+
+		return tsk
+	}
+
+	t.Run("required input unavailable, no association, fails",
+		func(t *testing.T) {
+			tsk := oneInput(t, data.UnavailableDataState)
+			require.Error(t, tsk.LoadData(ctx, newFrameFor(t, tsk.ID())))
+		})
+
+	t.Run("optional input unavailable is allowed",
+		func(t *testing.T) {
+			tsk := oneInput(t, data.UnavailableDataState, data.Optional())
+			require.NoError(t, tsk.LoadData(ctx, newFrameFor(t, tsk.ID())))
+		})
+
+	t.Run("required input pre-ready passes",
+		func(t *testing.T) {
+			tsk := oneInput(t, data.ReadyDataState)
+			require.NoError(t, tsk.LoadData(ctx, newFrameFor(t, tsk.ID())))
+		})
+
+	// fedTask builds a task whose single input is filled by an association from
+	// a data object in the given state.
+	fedTask := func(
+		t *testing.T,
+		srcState *data.SrcState,
+		opts ...data.ParameterOption,
+	) *task {
+		t.Helper()
+
+		tsk, err := newTask("fed",
+			WithParameters(data.Input, data.MustParameter("in",
+				data.MustItemAwareElement(
+					data.MustItemDefinition(values.NewVariable(0),
+						foundation.WithID("fed-in")),
+					data.UnavailableDataState), opts...)),
+			WithParameters(data.Output, dataPar(t, "out", "fed-out", 0)))
+		require.NoError(t, err)
+
+		src, err := dataobjects.New("src",
+			data.MustItemDefinition(values.NewVariable(0),
+				foundation.WithID("fed-in")),
+			srcState)
+		require.NoError(t, err)
+		require.NoError(t, src.AssociateTarget(tsk, nil))
+
+		return tsk
+	}
+
+	t.Run("required input fed by an unavailable source fails",
+		func(t *testing.T) {
+			tsk := fedTask(t, data.UnavailableDataState)
+			require.Error(t, tsk.LoadData(ctx, newFrameFor(t, tsk.ID())))
+		})
+
+	t.Run("optional input fed by an unavailable source is allowed",
+		func(t *testing.T) {
+			tsk := fedTask(t, data.UnavailableDataState, data.Optional())
+			require.NoError(t, tsk.LoadData(ctx, newFrameFor(t, tsk.ID())))
+		})
+}
+
+// TestTaskCompletionGate covers the SRD-009 completion-gate in task.UploadData:
+// a required output that wasn't produced is an error (covered by the existing
+// not-Ready-output case), while an optional output may be absent and its
+// association is skipped.
+func TestTaskCompletionGate(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+
+	// optOutTask builds a task with a single optional, unproduced output.
+	optOutTask := func(t *testing.T, outID string) *task {
+		t.Helper()
+
+		tsk, err := newTask("comp",
+			WithParameters(data.Output, data.MustParameter("out",
+				data.MustItemAwareElement(
+					data.MustItemDefinition(values.NewVariable(0),
+						foundation.WithID(outID)),
+					data.UnavailableDataState), data.Optional())))
+		require.NoError(t, err)
+
+		return tsk
+	}
+
+	t.Run("optional output not produced is allowed",
+		func(t *testing.T) {
+			tsk := optOutTask(t, "opt-out")
+			f := newFrameFor(t, tsk.ID())
+
+			require.NoError(t, tsk.LoadData(ctx, f))
+			// nothing produced opt-out; optional → UploadData succeeds.
+			require.NoError(t, tsk.UploadData(ctx, f))
+		})
+
+	t.Run("association of an absent optional output is skipped",
+		func(t *testing.T) {
+			tsk := optOutTask(t, "opt-out2")
+			f := newFrameFor(t, tsk.ID())
+
+			sink, err := dataobjects.New("sink",
+				data.MustItemDefinition(values.NewVariable(0),
+					foundation.WithID("opt-out2")),
+				nil)
+			require.NoError(t, err)
+			require.NoError(t,
+				sink.AssociateSource(tsk, []string{"opt-out2"}, nil))
+
+			require.NoError(t, tsk.LoadData(ctx, f))
+			// the optional output is absent → its association is skipped, no error.
+			require.NoError(t, tsk.UploadData(ctx, f))
 		})
 }

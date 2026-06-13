@@ -77,27 +77,21 @@ func TestTaskData(t *testing.T) {
 			task, err := newTask(
 				"test",
 				data.WithProperties(props...),
-				WithSet("input set", "",
-					data.Input, data.DefaultSet,
-					[]*data.Parameter{
-						data.MustParameter("y param",
-							data.MustItemAwareElement(
-								data.MustItemDefinition(
-									values.NewVariable(100.500),
-									foundation.WithID("y")),
-								data.ReadyDataState)),
-					}),
-				WithSet("output set", "",
-					data.Output, data.DefaultSet,
-					[]*data.Parameter{
-						data.MustParameter(
-							"y param",
-							data.MustItemAwareElement(
-								data.MustItemDefinition(
-									values.NewVariable(0.0),
-									foundation.WithID("y")),
-								nil)),
-					}))
+				WithParameters(data.Input,
+					data.MustParameter("y param",
+						data.MustItemAwareElement(
+							data.MustItemDefinition(
+								values.NewVariable(100.500),
+								foundation.WithID("y")),
+							data.ReadyDataState))),
+				WithParameters(data.Output,
+					data.MustParameter(
+						"y param",
+						data.MustItemAwareElement(
+							data.MustItemDefinition(
+								values.NewVariable(0.0),
+								foundation.WithID("y")),
+							nil))))
 			require.NoError(t, err)
 
 			// real data plane + execution frame (no scope mock: the frame
@@ -167,26 +161,10 @@ func TestTaskData(t *testing.T) {
 
 			task, err := newTask(
 				"Task 1",
-				WithSet(
-					"inputs",
-					"input_set_id",
-					data.Input,
-					data.DefaultSet,
-					[]*data.Parameter{
-						data.MustParameter(
-							"x",
-							input),
-					}),
-				WithSet(
-					"outputs",
-					"output_set_id",
-					data.Output,
-					data.DefaultSet,
-					[]*data.Parameter{
-						data.MustParameter(
-							"x",
-							output),
-					}))
+				WithParameters(data.Input,
+					data.MustParameter("x", input)),
+				WithParameters(data.Output,
+					data.MustParameter("x", output)))
 			require.NoError(t, err)
 
 			// check input binding
