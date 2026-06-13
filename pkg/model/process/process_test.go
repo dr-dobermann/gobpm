@@ -200,3 +200,78 @@ func TestProcess(t *testing.T) {
 			t.Log(err)
 		})
 }
+
+// fakeElement is a flow.Element whose EType lies about its concrete type: it
+// reports NodeElement or SequenceBaseElement while being neither a flow.Node
+// nor a *flow.SequenceFlow. It exercises the comma-ok guards in Process.Add.
+type fakeElement struct {
+	id    string
+	etype flow.ElementType
+}
+
+func (f fakeElement) ID() string                        { return f.id }
+func (f fakeElement) Docs() []*foundation.Documentation { return nil }
+func (f fakeElement) Name() string                      { return "fake" }
+func (f fakeElement) Container() flow.Container         { return nil }
+func (f fakeElement) EType() flow.ElementType           { return f.etype }
+func (f fakeElement) BindTo(flow.Container) error       { return nil }
+func (f fakeElement) Unbind() error                     { return nil }
+
+func TestProcessAddTypeMismatch(t *testing.T) {
+	p, err := process.New("type mismatch")
+	require.NoError(t, err)
+
+	// reports NodeElement but is not a flow.Node
+	require.Error(t,
+		p.Add(fakeElement{id: "fake_node", etype: flow.NodeElement}))
+
+	// reports SequenceBaseElement but is not a *flow.SequenceFlow
+	require.Error(t,
+		p.Add(fakeElement{id: "fake_flow", etype: flow.SequenceBaseElement}))
+}
+
+func TestProcessValidate(t *testing.T) {
+	t.Run("well-formed graph passes",
+		func(t *testing.T) {
+			p, err := process.New("well-formed")
+			require.NoError(t, err)
+
+			start, err := events.NewStartEvent("start")
+			require.NoError(t, err)
+			end, err := events.NewEndEvent("end")
+			require.NoError(t, err)
+
+			require.NoError(t, p.Add(start))
+			require.NoError(t, p.Add(end))
+
+			// start is in p, so the flow auto-adds into p.
+			_, err = flow.Link(start, end)
+			require.NoError(t, err)
+
+			require.NoError(t, p.Validate())
+		})
+
+	// Note: a flow with exactly one endpoint outside the process is not
+	// constructible — flow.SequenceFlow.BindTo requires the source and target
+	// to share a container, so a flow added to the process has both endpoints
+	// in it or (as below) both outside it.
+	t.Run("flow whose endpoints are not in the process fails",
+		func(t *testing.T) {
+			p, err := process.New("dangling endpoints")
+			require.NoError(t, err)
+
+			start, err := events.NewStartEvent("start")
+			require.NoError(t, err)
+			end, err := events.NewEndEvent("end")
+			require.NoError(t, err)
+
+			// neither node is added: both have a nil container, so the flow
+			// can be added to the process (container-consistent), and Validate
+			// must flag both the missing source and the missing target.
+			f, err := flow.Link(start, end)
+			require.NoError(t, err)
+			require.NoError(t, p.Add(f))
+
+			require.Error(t, p.Validate())
+		})
+}

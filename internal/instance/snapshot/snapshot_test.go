@@ -46,6 +46,29 @@ func TestSnapshot(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestSnapshotNewRejectsMalformed covers the registration-time Process.Validate
+// gate in snapshot.New: a process whose sequence flow connects nodes that are
+// not in the process is rejected before a snapshot is built.
+func TestSnapshotNewRejectsMalformed(t *testing.T) {
+	p, err := process.New("malformed")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	// the flow's endpoints are never added to the process, so Validate must
+	// reject it and snapshot.New must surface that error.
+	f, err := flow.Link(start, end)
+	require.NoError(t, err)
+	require.NoError(t, p.Add(f))
+
+	_, err = snapshot.New(p)
+	require.Error(t, err)
+}
+
 func TestSnapshotClone(t *testing.T) {
 	p, err := process.New("clone-src")
 	require.NoError(t, err)

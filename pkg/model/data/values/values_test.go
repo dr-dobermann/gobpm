@@ -61,11 +61,10 @@ func TestArray(t *testing.T) {
 			require.Equal(t, 0, a.Index())
 			require.Equal(t, 1, a.Get(ctx))
 
-			// check keys
+			// check keys: exactly one key per element, 0..n-1 in order
+			// (guards the former double-length, half-nil result).
 			kk := a.GetKeys()
-			for i := range []int{1, 2, 3, 4, 5} {
-				require.Contains(t, kk, i)
-			}
+			require.Equal(t, []any{0, 1, 2, 3, 4}, kk)
 
 			// get at normal index
 			v, err := a.GetAt(ctx, 1)
@@ -157,11 +156,10 @@ func TestArray(t *testing.T) {
 			require.Equal(t, 0, a.Index())
 			require.Equal(t, 1, a.GetT())
 
-			// check keys
+			// check keys: exactly one key per element, 0..n-1 in order
+			// (guards the former double-length, half-nil result).
 			kk := a.GetKeysT()
-			for i := range []int{1, 2, 3, 4, 5} {
-				require.Contains(t, kk, i)
-			}
+			require.Equal(t, []int{0, 1, 2, 3, 4}, kk)
 			// getall
 
 			vv := a.GetAllT()

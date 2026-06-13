@@ -302,3 +302,41 @@ func TestIOSpec(t *testing.T) {
 	require.NoError(t, inpS.AddParameter(inpP, data.DefaultSet))
 	require.NoError(t, ios2.Validate())
 }
+
+// TestIOSpecRemoveParameterFromSets covers the single-ownership rewrite of
+// RemoveParameter: it must drop the parameter from the IOSpec and from every
+// set of that direction that references it, deriving set membership top-down
+// (no Parameter -> Set back-reference). The pointer receiver makes the removal
+// stick.
+func TestIOSpecRemoveParameterFromSets(t *testing.T) {
+	rs, err := data.NewSrcState("ready")
+	require.NoError(t, err)
+
+	ios, err := data.NewIOSpec()
+	require.NoError(t, err)
+
+	inpS := data.MustSet("input set")
+	require.NoError(t, ios.AddSet(inpS, data.Input))
+	outS := data.MustSet("output set")
+	require.NoError(t, ios.AddSet(outS, data.Output))
+
+	inpP := data.MustParameter("input",
+		data.MustItemAwareElement(
+			data.MustItemDefinition(values.NewVariable(42)), rs))
+	require.NoError(t, ios.AddParameter(inpP, data.Input))
+	require.NoError(t, inpS.AddParameter(inpP, data.DefaultSet))
+
+	// well-formed: the input parameter belongs to the input set.
+	require.NoError(t, ios.Validate())
+
+	// remove the parameter: it must vanish from the IOSpec and from inpS.
+	require.NoError(t, ios.RemoveParameter(inpP, data.Input))
+	require.False(t, ios.HasParameter(inpP, data.Input))
+
+	setParams, err := inpS.Parameters(data.AllSets)
+	require.NoError(t, err)
+	require.Empty(t, setParams[data.DefaultSet])
+
+	// the spec with no parameters left is still well-formed.
+	require.NoError(t, ios.Validate())
+}

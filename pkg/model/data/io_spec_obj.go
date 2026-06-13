@@ -41,8 +41,13 @@ func Opposite(dir Direction) Direction {
 
 // Parameter is type which is used as substitute for DataInput and DataOutput
 // BPMN types.
+//
+// A Parameter is a leaf in the I/O graph: a Set owns the reference to its
+// Parameters, while a Parameter holds no back-reference to the Sets it belongs
+// to. Membership is queried top-down from the InputOutputSpecification (see
+// Set.hasParameter), so the graph stays single-ownership and no cross-type
+// invariant has to be maintained in two places.
 type Parameter struct {
-	sets map[SetType][]*Set
 	name string
 	ItemAwareElement
 }
@@ -70,7 +75,6 @@ func NewParameter(name string, iae *ItemAwareElement) (*Parameter, error) {
 	return &Parameter{
 			ItemAwareElement: *iae,
 			name:             name,
-			sets:             map[SetType][]*Set{},
 		},
 		nil
 }
@@ -89,84 +93,6 @@ func MustParameter(name string, iae *ItemAwareElement) *Parameter {
 // Name returns the Parameter's name.
 func (p *Parameter) Name() string {
 	return p.name
-}
-
-// Sets returns the parameter sets filtered by the given set type.
-func (p *Parameter) Sets(st SetType) map[SetType][]*Set {
-	res := map[SetType][]*Set{}
-
-	for t, ss := range p.sets {
-		if t&st == t {
-			res[t] = append([]*Set{}, ss...)
-		}
-	}
-
-	return res
-}
-
-// addSet adds new Set which references onto the Parameter.
-func (p *Parameter) addSet(s *Set, where SetType) error {
-	if err := where.Validate(SingleType); err != nil {
-		return errs.New(
-			errs.M("invalid data set type (%d)", where),
-			errs.C(errorClass, errs.InvalidParameter))
-	}
-
-	if s == nil {
-		return errs.New(
-			errs.M("data set should be provided"),
-			errs.C(errorClass, errs.InvalidParameter, errs.EmptyNotAllowed))
-	}
-
-	ss, ok := p.sets[where]
-	if !ok {
-		p.sets[where] = []*Set{s}
-
-		return nil
-	}
-
-	if ind := slices.Index(ss, s); ind == -1 {
-		p.sets[where] = append(ss, s)
-	}
-
-	return nil
-}
-
-// removeSet removes the Set references on the Parameter.
-func (p *Parameter) removeSet(s *Set, from SetType) error {
-	if err := from.Validate(SingleType); err != nil {
-		return errs.New(
-			errs.M("invalid data set type (%d)", from),
-			errs.C(errorClass, errs.InvalidParameter))
-	}
-
-	if s == nil {
-		return errs.New(
-			errs.M("data set should be provided"),
-			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
-	}
-
-	ss, ok := p.sets[from]
-	if !ok || ss == nil {
-		return errs.New(
-			errs.M("parameter doesn't belong to data set"),
-			errs.C(errorClass, errs.InvalidParameter),
-			errs.D("parameter_name", p.name),
-			errs.D("set_type", from.String()),
-			errs.D("set_name", s.name))
-	}
-
-	ind := slices.Index(ss, s)
-	if ind == -1 {
-		return errs.New(
-			errs.M("parameter %q doesn't belong to data set %q",
-				p.name, s.name),
-			errs.C(errorClass, errs.ConditionFailed))
-	}
-
-	p.sets[from] = append(ss[:ind], ss[ind+1:]...)
-
-	return nil
 }
 
 // Set implements bothelpers.InputSet and OutputSet of BPMNv2
@@ -287,18 +213,43 @@ func (s *Set) AddParameter(p *Parameter, where SetType) error {
 			}
 		}
 
-		if err := p.addSet(s, st); err != nil {
-			return err
-		}
-
 		s.values[st] = append(vv, p)
 	}
 
 	return nil
 }
 
-// RemoveParameter removes non-empty parameter from the Set and
-// removes the reference on the Set from the Parameter.
+// hasParameter reports whether p is referenced by this Set under any set type.
+// It is the top-down membership query that replaces the former
+// Parameter -> Set back-reference: the Set owns its Parameters, so membership
+// is answered by scanning the Set's own values rather than asking the
+// Parameter which Sets it belongs to.
+func (s *Set) hasParameter(p *Parameter) bool {
+	for _, st := range allTypes() {
+		if slices.Contains(s.values[st], p) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// removeParameter drops p from this Set under every set type it appears in.
+//
+// It is the unexported, error-free counterpart of RemoveParameter used for
+// derived removal from the InputOutputSpecification: the caller has already
+// validated its inputs, so no set-type validation (and no error) is needed
+// here, unlike the public RemoveParameter that guards an external caller.
+func (s *Set) removeParameter(p *Parameter) {
+	for _, st := range allTypes() {
+		vv := s.values[st]
+		if idx := slices.Index(vv, p); idx != -1 {
+			s.values[st] = append(vv[:idx], vv[idx+1:]...)
+		}
+	}
+}
+
+// RemoveParameter removes non-empty parameter from the Set.
 // If values of that type isn't existed error returned.
 func (s *Set) RemoveParameter(p *Parameter, from SetType) error {
 	if err := from.Validate(CombinedTypes); err != nil {
@@ -321,10 +272,6 @@ func (s *Set) RemoveParameter(p *Parameter, from SetType) error {
 
 		index := slices.Index(vv, p)
 		if index != -1 {
-			if err := p.removeSet(s, st); err != nil {
-				return err
-			}
-
 			s.values[st] = append(vv[:index], vv[index+1:]...)
 		}
 	}

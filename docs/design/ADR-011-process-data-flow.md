@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-13 |
 | Owner | Ruslan Gabitov |
@@ -92,8 +92,9 @@ The **model layer** that those frames evaluate, however, is partial and uneven:
   inside a model whose evaluation the standard requires to be synchronous. Event
   construction routes through eight adapter interfaces resolved by runtime type
   assertion, so a mismatched trigger/event pairing surfaces at run time rather
-  than compile time. The process container is freely mutable with no validation
-  and no freeze after a snapshot is taken. Two outright defects exist (a
+  than compile time. The process container is freely mutable and unvalidated, so a
+  malformed graph (a flow to a missing node, a mistyped element) is caught late,
+  deep in execution, or not at all. Two outright defects exist (a
   collection key-listing that returns a double-length half-nil slice; a parameter
   removal on a value receiver that mutates a copy).
 - **In-process service code is data-starved.** A `ServiceTask`'s operation runs a
@@ -279,12 +280,15 @@ target shapes (the implementing SRD does the file-level work):
   a trigger with its event kind at compile time (a mismatched trigger/event is a
   build error, not a runtime surprise). Activities and events converge on **one**
   options idiom rather than two opposed ones.
-- **The process is validated and frozen.** `Process` gains an explicit
+- **The process is validated at registration.** `Process` gains an explicit
   `Validate()` (a well-formed graph: flows connect existing nodes; no dangling or
-  mistyped elements — the unchecked type assertions become guarded). After a
-  snapshot is taken the process definition is **frozen**: structural mutation
-  after first snapshot is rejected, so a running instance can never observe its
-  template change underneath it.
+  mistyped elements — the unchecked type assertions become guarded), run when the
+  process is registered, **before** its snapshot is built, so a malformed graph
+  fails with a clear error instead of producing a broken snapshot. No separate
+  *freeze* is introduced: the snapshot already **is** the frozen model —
+  `snapshot.New` copies the graph into its own maps and the running instance
+  executes a per-instance `Clone()` of it, so the live `Process` is never read
+  during execution and post-registration mutation cannot reach a running instance.
 - **The two defects are corrected.** Collection key-listing returns the index set,
   not a double-length half-nil slice; parameter removal mutates through a pointer
   receiver, not a copy. (Mechanical; named here so the conception is complete, but
@@ -337,7 +341,7 @@ target shapes (the implementing SRD does the file-level work):
   Go-in-process gains access to process data, not just its operation message.
 - **The model layer gets simpler and safer.** Single ownership of the I/O graph,
   selection separated from storage, value-vs-notification separated,
-  compile-time-checked event construction, a validated and frozen process, and the
+  compile-time-checked event construction, a validated process, and the
   two defects gone — a foundation later element work builds on.
 - **Cost: a substantial model-layer refactor.** The I/O graph, the collection
   value, event options, and the process container all change shape; the implementing
@@ -440,7 +444,7 @@ Advisory, not gating — conventions the landing SRD(s) and later work should fo
 - Architecture audit 2026-06-11 (`docs/audit/architecture-audit-2026-06-11.md`) —
   the model-layer findings this ADR's §2.7 remediates (1.6 data items; 3.1 I/O-spec
   complexity and the collection notification coupling; 3.2 event-option adapters;
-  3.3 process validation/freeze).
+  3.3 process validation).
 - Persistence & State ADR *(future)* — durable serialization of data.
 - Layering ADR *(future)* — placement of the public service reader and node-executor
   contracts.
@@ -450,4 +454,4 @@ Advisory, not gating — conventions the landing SRD(s) and later work should fo
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-13 | Ruslan Gabitov | Initial. Decides the model-layer data-flow semantics (the layer ADR-010 §2.6 deferred): the item-aware model with a closed three-value data state; **exactly one `InputSet` and one `OutputSet` per activity** with a real required-availability check and association execution — multiple I/O sets and their ordered, data-driven selection + IORule pairing are an explicit **non-goal** (hidden non-diagram branching, near-unused in practice, modelled with gateways instead; structure left extensible if ever demanded); **availability gates the start but never makes the activity wait** — a deliberate documented deviation from §10.4.2 (a data wait is a hidden, non-diagram synchronization → unpredictable; unavailable required input is an error, explicit waiting is modelled with events/gateways); optional/required and while-executing kept *within* the single set; data associations copy in the standard's three shapes; events carry data without sets and never wait; in-process service code receives a **narrow public data reader** (read by name/id over operation inputs, properties, and runtime variables — runtime vars addressable by name); and the model layer is reshaped (single-ownership I/O graph, set-evaluation separated from storage, value-vs-notification separated, compile-time-checked event construction, `Process.Validate()` + freeze-after-snapshot, the GetKeys/RemoveParameter defects corrected). Two deliberate BPMN deviations (no data wait, no multiple I/O sets) from one principle — no hidden data-driven control. Refines ADR-001 v.5 (data side); sibling of ADR-010 v.1. Out of scope: persistence, executor/reader layering, observe-from-outside, data-driven gateways. Rejected: partial "default-Ready" check, full multi-set selection, the standard data wait, deferring (vs rejecting) the wait, leaking the runtime env to functors, bug-fix-only, an extensible DataState. |
+| v.1 | 2026-06-13 | Ruslan Gabitov | **Accepted**, first model-layer-hardening part landed via SRD-008 v.1 (`f920b11`, `3658acc`, `7bba5e6`); the §2.7 "freeze after snapshot" was dropped during that landing (the snapshot is already the frozen model) — kept here as the validate-at-registration decision. The §2.2–§2.6 evaluation/reader semantics and the deferred §2.7 items (value-notification split, event-options unification) land via later SRDs. Decides the model-layer data-flow semantics (the layer ADR-010 §2.6 deferred): the item-aware model with a closed three-value data state; **exactly one `InputSet` and one `OutputSet` per activity** with a real required-availability check and association execution — multiple I/O sets and their ordered, data-driven selection + IORule pairing are an explicit **non-goal** (hidden non-diagram branching, near-unused in practice, modelled with gateways instead; structure left extensible if ever demanded); **availability gates the start but never makes the activity wait** — a deliberate documented deviation from §10.4.2 (a data wait is a hidden, non-diagram synchronization → unpredictable; unavailable required input is an error, explicit waiting is modelled with events/gateways); optional/required and while-executing kept *within* the single set; data associations copy in the standard's three shapes; events carry data without sets and never wait; in-process service code receives a **narrow public data reader** (read by name/id over operation inputs, properties, and runtime variables — runtime vars addressable by name); and the model layer is reshaped (single-ownership I/O graph, set-evaluation separated from storage, value-vs-notification separated, compile-time-checked event construction, `Process.Validate()` run at registration (no freeze — the snapshot is already the frozen model), the GetKeys/RemoveParameter defects corrected). Two deliberate BPMN deviations (no data wait, no multiple I/O sets) from one principle — no hidden data-driven control. Refines ADR-001 v.5 (data side); sibling of ADR-010 v.1. Out of scope: persistence, executor/reader layering, observe-from-outside, data-driven gateways. Rejected: partial "default-Ready" check, full multi-set selection, the standard data wait, deferring (vs rejecting) the wait, leaking the runtime env to functors, bug-fix-only, an extensible DataState. |

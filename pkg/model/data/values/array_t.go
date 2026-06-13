@@ -86,8 +86,8 @@ func (a *Array[T]) GetKeysT() []int {
 	defer a.lock.Unlock()
 
 	res := make([]int, len(a.elements))
-	for i := 0; i < len(a.elements); i++ {
-		res = append(res, i)
+	for i := range a.elements {
+		res[i] = i
 	}
 
 	return res

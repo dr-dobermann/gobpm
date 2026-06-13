@@ -36,6 +36,13 @@ func New(
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
+	// validate the process graph before taking the snapshot, so a malformed
+	// process (a sequence flow whose source or target is not in the process)
+	// is rejected at registration rather than producing a broken snapshot.
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+
 	s := Snapshot{
 		ID:          *foundation.NewID(),
 		ProcessID:   p.ID(),
