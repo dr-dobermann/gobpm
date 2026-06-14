@@ -136,18 +136,14 @@ func run() error {
 // execution and signals done, so the example shows real per-branch work rather
 // than a silent no-op.
 func newWorker(name string, done chan<- string) (*activities.ServiceTask, error) {
-	impl, err := gooper.New(
-		func(_ context.Context, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
+	op, err := gooper.New(
+		name+"-op",
+		func(_ context.Context, _ service.DataReader, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
 			fmt.Printf("  ▶ %s executed\n", name)
 			done <- name
 
 			return nil, nil
 		})
-	if err != nil {
-		return nil, fmt.Errorf("create %s implementor: %w", name, err)
-	}
-
-	op, err := service.NewOperation(name+"-op", nil, nil, impl)
 	if err != nil {
 		return nil, fmt.Errorf("create %s operation: %w", name, err)
 	}

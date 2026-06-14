@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/generated/mockrenv"
+	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -19,6 +20,11 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+// renv.RuntimeEnvironment must structurally satisfy the narrow public
+// service.DataReader, so ServiceTask can pass re straight to op.Execute
+// without an adapter or an internal-type leak (SRD-011 FR-2/NFR-2, V2).
+var _ service.DataReader = (renv.RuntimeEnvironment)(nil)
 
 func TestServiceTaskDefinition(t *testing.T) {
 	op, err := service.NewOperation("my op", nil, nil, nil)
@@ -74,14 +80,14 @@ func TestServiceTaskDefinition(t *testing.T) {
 
 	t.Run("simple no args operation",
 		func(t *testing.T) {
-			hello, err := gooper.New(
-				func(_ context.Context, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			sop, err := gooper.New(
+				"hello world",
+				func(_ context.Context, _ service.DataReader, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
 					fmt.Println("  >>>> Hello, world!")
 
 					return nil, nil
 				})
 			require.NoError(t, err)
-			sop := service.MustOperation("hello world", nil, nil, hello)
 
 			st, err := activities.NewServiceTask("hello",
 				sop, activities.WithoutParams())
@@ -112,8 +118,9 @@ func TestSrvTaskExec(t *testing.T) {
 		data.MustItemDefinition(values.NewVariable(""),
 			foundation.WithID("hello_str")))
 
-	hello, err := gooper.New(
-		func(ctx context.Context, d *data.ItemDefinition) (*data.ItemDefinition, error) {
+	op, err := gooper.New(
+		"hello user",
+		func(ctx context.Context, _ service.DataReader, d *data.ItemDefinition) (*data.ItemDefinition, error) {
 			v := d.Structure().Get(context.Background())
 			name, ok := v.(string)
 			if !ok {
@@ -130,10 +137,10 @@ func TestSrvTaskExec(t *testing.T) {
 					values.NewVariable(hello_str),
 					foundation.WithID("hello_str")),
 				nil
-		})
+		},
+		gooper.WithInMessage(in),
+		gooper.WithOutMessage(out))
 	require.NoError(t, err)
-
-	op := service.MustOperation("hello user", in, out, hello)
 
 	// the input data is missing from the execution's resolution → Exec fails.
 	bad := mockrenv.NewMockRuntimeEnvironment(t)
@@ -192,4 +199,26 @@ func TestSrvTaskExec(t *testing.T) {
 	// per-execution clone only (ADR-010 §2.3).
 	require.Equal(t, "",
 		out.Item().Structure().Get(context.Background()))
+
+	// committing the result fails → Exec surfaces a wrapped error.
+	putErr := mockrenv.NewMockRuntimeEnvironment(t)
+	putErr.EXPECT().
+		GetDataByID("user_name").
+		Return(data.MustParameter("user_name",
+			data.MustItemAwareElement(
+				data.MustItemDefinition(
+					values.NewVariable("dr.Dobermann"),
+					foundation.WithID("user_name")),
+				data.ReadyDataState)),
+			nil)
+	putErr.EXPECT().
+		Put(mock.Anything).
+		Return(fmt.Errorf("commit failed"))
+
+	pst, err := activities.NewServiceTask("put error", op,
+		activities.WithoutParams())
+	require.NoError(t, err)
+
+	_, err = pst.Exec(context.Background(), putErr)
+	require.Error(t, err)
 }

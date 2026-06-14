@@ -110,8 +110,9 @@ func getSnapshot(pname string) (*snapshot.Snapshot, error) {
 		return nil, err
 	}
 
-	helloFunc, err := gooper.New(
-		func(ctx context.Context, in *data.ItemDefinition) (*data.ItemDefinition, error) {
+	op, err := gooper.New(
+		"print user_name",
+		func(ctx context.Context, _ service.DataReader, in *data.ItemDefinition) (*data.ItemDefinition, error) {
 			const inId = "user_name"
 
 			if in == nil {
@@ -143,21 +144,16 @@ func getSnapshot(pname string) (*snapshot.Snapshot, error) {
 
 			return nil, nil
 		},
-		errs.ObjectNotFound,
-		errs.EmptyNotAllowed)
+		gooper.WithInMessage(
+			bpmncommon.MustMessage(
+				"user_name",
+				data.MustItemDefinition(
+					values.NewVariable(""),
+					foundation.WithID("user_name")))),
+		gooper.WithErrors(errs.ObjectNotFound, errs.EmptyNotAllowed))
 	if err != nil {
 		return nil, err
 	}
-
-	op := service.MustOperation(
-		"print user_name",
-		bpmncommon.MustMessage(
-			"user_name",
-			data.MustItemDefinition(
-				values.NewVariable(""),
-				foundation.WithID("user_name"))),
-		nil,
-		helloFunc)
 
 	task, err := activities.NewServiceTask(
 		"Print User Name", op, activities.WithoutParams())

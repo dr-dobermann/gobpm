@@ -10,7 +10,7 @@ import (
 // sent, the Task is completed.
 type SendTask struct {
 	Message        *bpmncommon.Message
-	Operation      *service.Operation
+	Operation      service.Operation
 	Implementation string
 	task
 }

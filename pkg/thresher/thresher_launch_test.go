@@ -34,15 +34,13 @@ func TestStartProcess_RunsToCompletion(t *testing.T) {
 
 	ran := make(chan struct{}, 1)
 
-	impl, err := gooper.New(
-		func(_ context.Context, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
+	op, err := gooper.New(
+		"work-op",
+		func(_ context.Context, _ service.DataReader, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
 			ran <- struct{}{}
 
 			return nil, nil
 		})
-	require.NoError(t, err)
-
-	op, err := service.NewOperation("work-op", nil, nil, impl)
 	require.NoError(t, err)
 
 	// start -> work -> end

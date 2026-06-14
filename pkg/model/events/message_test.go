@@ -41,6 +41,9 @@ func TestNewMessageEventDefinition(t *testing.T) {
 			iDefs := med.GetItemsList()
 			require.Equal(t, 1, len(iDefs))
 			require.Equal(t, "42", iDefs[0].ID())
+
+			// no operation was attached, so the accessor returns nil.
+			require.Nil(t, med.Operation())
 		})
 
 	t.Run(

@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
-	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
@@ -160,29 +159,33 @@ func run() error {
 	return nil
 }
 
-// newGreeter builds a ServiceTask whose operation reads the user_name data
-// through the execution environment and produces a greeting, plus the
-// DataObject its output association feeds.
+// newGreeter builds a ServiceTask whose Go operation reads the user_name
+// process property (by plain name) and the engine's STARTED_AT runtime
+// variable (by its RUNTIME path) through the public data reader, produces a
+// greeting, and returns it — plus the DataObject its output association feeds.
 func newGreeter(
 	name, resID, greeting string,
 	done chan<- string,
 ) (*activities.ServiceTask, *dataobjects.DataObject, error) {
-	in := bpmncommon.MustMessage(name+"-in",
-		data.MustItemDefinition(
-			values.NewVariable(""),
-			foundation.WithID("user_name")))
+	op, err := gooper.New(
+		name+"-op",
+		func(ctx context.Context, r service.DataReader, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			// the process property, by plain name ...
+			who, err := r.GetData("user_name")
+			if err != nil {
+				return nil, fmt.Errorf("read user_name: %w", err)
+			}
 
-	out := bpmncommon.MustMessage(name+"-out",
-		data.MustItemDefinition(
-			values.NewVariable(""),
-			foundation.WithID(resID)))
+			// ... and an engine runtime variable, by its RUNTIME path.
+			started, err := r.GetData("RUNTIME/STARTED_AT")
+			if err != nil {
+				return nil, fmt.Errorf("read RUNTIME/STARTED_AT: %w", err)
+			}
 
-	impl, err := gooper.New(
-		func(ctx context.Context, d *data.ItemDefinition) (*data.ItemDefinition, error) {
-			user, _ := d.Structure().Get(ctx).(string)
-			res := fmt.Sprintf("%s, %s!", greeting, user)
+			res := fmt.Sprintf("%s, %s!", greeting, who.Value().Get(ctx))
 
-			fmt.Printf("  ▶ %s produced %q\n", name, res)
+			fmt.Printf("  ▶ %s produced %q (instance started %v)\n",
+				name, res, started.Value().Get(ctx))
 			done <- name
 
 			return data.MustItemDefinition(
@@ -190,11 +193,6 @@ func newGreeter(
 					foundation.WithID(resID)),
 				nil
 		})
-	if err != nil {
-		return nil, nil, fmt.Errorf("create %s implementor: %w", name, err)
-	}
-
-	op, err := service.NewOperation(name+"-op", in, out, impl)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create %s operation: %w", name, err)
 	}

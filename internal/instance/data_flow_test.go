@@ -41,7 +41,8 @@ func newResultTask(
 			foundation.WithID(itemID)))
 
 	op, err := gooper.New(
-		func(_ context.Context, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
+		name+" op",
+		func(_ context.Context, _ service.DataReader, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
 			if fail {
 				return nil, fmt.Errorf("functor failed by design")
 			}
@@ -52,12 +53,13 @@ func newResultTask(
 					values.NewVariable(val),
 					foundation.WithID(itemID)),
 				nil
-		})
+		},
+		gooper.WithOutMessage(out))
 	require.NoError(t, err)
 
 	st, err := activities.NewServiceTask(
 		name,
-		service.MustOperation(name+" op", nil, out, op),
+		op,
 		activities.WithoutParams())
 	require.NoError(t, err)
 

@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.4 |
+| Version | v.5 |
 | Date | 2026-06-13 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) |
@@ -232,33 +232,43 @@ required input is an error at fire time. The process-level Start/End special cas
 `DataOutput`s as sources of an End event's input associations) is part of the
 conception and lands with the messaging/call-activity work that needs it.
 
-### 2.6 The Operation is polymorphic; in-process Go code reads through a narrow reader
+### 2.6 The Operation is polymorphic by execution locus; in-process code composes message and reader access
 
 A `ServiceTask`'s `Operation` is **polymorphic**. BPMN fixes the *message
 contract* of an Operation (`inMessageRef`/`outMessageRef`/`errorRef`) but leaves
 *how* it is implemented engine-defined — `implementationRef` is a mechanism hint
-(`##WebService`, `##Unspecified`, or vendor-specific). gobpm makes `Operation` an
-interface with two kinds:
+(`##WebService`, `##Unspecified`, or vendor-specific). gobpm splits the kinds by
+**where the implementation runs**, and lets in-process code **compose** its
+data-access methods rather than forcing one:
 
-- **Message operation (canonical).** The standard's model: data flows in through
-  the operation's `inMessage` (bound from the activity's `DataInput`s by data
+- **External message operation (canonical).** An out-of-process implementation
+  (a web service, a connector — an `Implementor`). Data flows in through the
+  operation's `inMessage` (bound from the activity's `DataInput`s by data
   associations) and out through its `outMessage`; the implementation sees **only
-  its message** and is decoupled from process scope. This is the conformant path
-  for external services.
-- **Go operation (gobpm-native).** An in-process Go functor that receives a
-  **narrow, public, read-only data reader** and **returns its result** — no
-  message ceremony. The reader is the public face of the data-plane's addressable
-  read interface ([ADR-010 v.2 §2.7](ADR-010-process-data-model.md)): the default
-  scope by plain name, named sources by `SOURCE/var`, plus discovery
-  (`GetSources`/`List`). This is a deliberate extension to the standard's
-  message-only Operation, registered in the conformance scope
+  its message**. It is message-only **by locus** — an out-of-process service
+  cannot be handed an in-process reader — which is exactly the decoupled,
+  conformant path for external services.
+- **In-process Go operation (gobpm-native).** An in-process Go functor. It
+  receives the **narrow, public, read-only data reader** (the data plane's
+  addressable reads — [ADR-010 v.2 §2.7](ADR-010-process-data-model.md): default
+  scope by plain name, named sources by `SOURCE/var`, discovery
+  `GetSources`/`List`) **and** its **optional bound input message**, may declare
+  an **optional output message**, and **returns its result** (committed by the
+  `ServiceTask`, filling the output message when one is declared). Message-based
+  and reader-based access **compose**: the author uses the reader, the message
+  I/O, or both — whichever the task needs. This is a deliberate extension to the
+  standard's message-only Operation, registered in the conformance scope
   ([SAD-001 v.1 §14.2](SAD-001-vision-and-architecture.md)); `implementationRef`
   marks the mechanism.
 
-Making `Operation` an interface keeps the canonical message model **pure** — a
-service that uses it cannot reach into process scope — while giving Go-in-process
-code first-class data access as an **opt-in kind**, not a reader bolted onto every
-operation. The reader's properties:
+The split is by **execution locus**, not by data-access method — the correction
+over the earlier "the Go kind is message-free, the message kind cannot reach
+scope" framing, which restricted in-process code for no reason the conformance
+boundary requires. The boundary that *does* matter is preserved: **ambient scope
+access is confined to in-process code**. An external service never receives a
+reader (it can't), so the canonical message contract stays pure and decoupled;
+an in-process functor — code running *as part of* the execution — composes its
+message I/O and reader access freely. The reader's properties:
 
 - **Reader, not the environment.** A *narrow read-only* interface, not the internal
   runtime environment. Service code is user-facing and must not depend on internal
@@ -279,9 +289,16 @@ operation. The reader's properties:
   and that belongs to the observability ADR, not here.
 
 A Go operation is thus a first-class data consumer: it reads a process property
-(plain name) and a runtime variable (`RUNTIME/<var>`) and returns its result, the
-way in-process Go code should be able to — without compromising the canonical
-message contract.
+(plain name) and a runtime variable (`RUNTIME/<var>`), and — when the task warrants
+it — also consumes/produces messages, returning its result the way in-process Go
+code should be able to, without compromising the canonical (external) message
+contract. The author decides whether to combine the two access methods or use one.
+
+The **node-level** message-handling seam (a `SendTask` producing, a `ReceiveTask`
+consuming, throw/catch message events) — e.g. `MessageProducer` / `MessageConsumer`
+role interfaces — is a separate concern that lands with the `SendTask`/`ReceiveTask`
+executors (a future SRD), where there are several implementors to force its shape;
+it is not needed to grant the in-process composition above.
 
 ### 2.7 The model layer is shaped for the conception
 
@@ -372,10 +389,11 @@ target shapes (the implementing SRD does the file-level work):
   are always something the diagram shows. Two deliberate, documented deviations from
   the standard, flowing from one principle.
 - **Service code becomes a real data consumer, without bending the standard.**
-  The `Operation` is polymorphic: a canonical message operation stays
-  message-only (decoupled, conformant), while a Go operation hands its functor a
-  narrow public reader (process properties + runtime variables by name) and takes
-  its return — ambient access confined to the explicit Go kind.
+  The `Operation` is polymorphic by execution locus: an external message
+  operation stays message-only (decoupled, conformant — by locus), while an
+  in-process Go operation composes a narrow public reader (process properties +
+  runtime variables by name) with optional message I/O and takes its return —
+  ambient scope access confined to the in-process kind.
 - **The model layer gets simpler and safer.** No `Set` type (the `IoSpec` owns
   parameters directly), selection separated from storage, value-vs-notification
   separated, compile-time-checked event construction, a validated process, and the
@@ -419,10 +437,17 @@ target shapes (the implementing SRD does the file-level work):
   Rejected for a narrow public reader (§2.6).
 - **Bolt a reader onto every operation** (the v.2 §2.6 shape). Gives ambient
   read access to *all* services, contaminating the standard's message-only
-  Operation even for external/conformant ones. Rejected for the polymorphic split
-  (§2.6 v.3): a canonical message operation stays pure; ambient access is confined
-  to the explicit Go operation kind, which the standard already sanctions via the
-  engine-defined `implementationRef` mechanism.
+  Operation even for external/conformant ones. Rejected for the locus-based split
+  (§2.6): an external message operation stays pure (it cannot receive an
+  in-process reader); ambient scope access is confined to the in-process Go kind,
+  which the standard already sanctions via the engine-defined `implementationRef`
+  mechanism.
+- **Force the in-process kind to be message-free** (the v.3/v.4 §2.6 shape).
+  Split the kinds by *data-access method* — message-only vs reader-only — so a Go
+  functor could not also use messages. Rejected (§2.6 v.5): the conformance
+  boundary only requires that *external* services stay message-only; restricting
+  *in-process* code from composing message I/O with reader access is gratuitous.
+  The split is by execution locus; in-process authors compose both methods.
 - **Leave the model-layer shapes as they are and fix only the two bugs.** Cures the
   symptoms, leaves the two-sided I/O graph, the in-value async notifications, the
   runtime-asserted event options, and the unguarded mutable process — the
@@ -498,6 +523,7 @@ Advisory, not gating — conventions the landing SRD(s) and later work should fo
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.5 | 2026-06-14 | Ruslan Gabitov | Refined §2.6 to split the kinds by **execution locus**, not by data-access method. The earlier "the Go kind is message-free, the message kind cannot reach scope" framing restricted in-process code gratuitously. New shape: an **external message operation** (`Implementor`, out-of-process) is message-only **by locus** (it cannot receive an in-process reader — the decoupled, conformant path); an **in-process Go operation** receives the reader **and** its optional bound input message, may declare an optional output message, and returns its result — message-based and reader-based access **compose**, the author's choice. The preserved boundary: ambient scope access is confined to in-process code. The node-level message-handling seam (`MessageProducer`/`MessageConsumer` for `SendTask`/`ReceiveTask`/throw-catch events) is deferred to the executor SRD. Amends §2.6/§3/§4. Lands via SRD-011. |
 | v.4 | 2026-06-13 | Ruslan Gabitov | Aligned §2.6 to the data-source access model: the Go reader is the public face of the data-plane's addressable read interface ([ADR-010 v.2 §2.7](ADR-010-process-data-model.md)) — default scope by plain name, named sources by `SOURCE/var`, discovery via `GetSources`/`List`. Runtime variables are read via the explicit `RUNTIME/<var>` path (a named data source), **not** "by name with the reader hiding the reserved addressing" (dropped) — so engine runtime vars never intersect a process's own `STATE`/`INSTANCE`. No special accessor is needed. Lands via SRD-010 (data plane) + SRD-011 (service reader). Amends §2.6. |
 | v.3 | 2026-06-13 | Ruslan Gabitov | Reshaped §2.6: the `Operation` is **polymorphic**, not "a reader handed to every operation." Grounding the standard — an Operation is a pure message-in/message-out contract (`inMessageRef`/`outMessageRef`/`errorRef`), and `implementationRef` leaves the mechanism engine-defined — gobpm makes `Operation` an interface with two kinds: a **message operation** (canonical, decoupled, message-only) and a **Go operation** (gobpm-native: the in-process functor receives a narrow public read-only data reader over process properties + runtime-vars-by-name and **returns its result**, no message ceremony). This keeps the canonical model pure and confines ambient read access to the explicit Go kind (a standard-sanctioned `implementationRef` mechanism), instead of contaminating every operation. The Go operation is registered as a deliberate extension in SAD-001 v.1 §14.1. Lands via the service-reader SRD. Amends §2.6/§3/§4. |
 | v.2 | 2026-06-13 | Ruslan Gabitov | Dropped the reified `Set` type. With exactly one input/output set per activity (§2.2), a `Set` object only duplicated the `IoSpec`'s per-direction parameter lists; the `IoSpec` now owns its `DataInput`/`DataOutput` parameters directly, with **required/optional/while-executing as per-parameter attributes** (`optional` default `false`) rather than set membership. `InputSet`/`OutputSet` are kept as BPMN vocabulary (IoSpec views), not a stateful type. Supersedes v.1 §2.7's single-ownership `Parameter`↔`Set` graph (landed by SRD-008) — with no `Set`, there is no cross-type graph. §2.8: re-introducing multiple sets would now be a reshape (reintroducing `Set`), not a drop-in extension — an accepted trade-off for the simpler model. Lands via SRD-009. Amends §2.2/§2.7/§2.8/§3/§4. |
