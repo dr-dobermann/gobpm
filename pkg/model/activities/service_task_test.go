@@ -80,14 +80,14 @@ func TestServiceTaskDefinition(t *testing.T) {
 
 	t.Run("simple no args operation",
 		func(t *testing.T) {
-			hello, err := gooper.New(
-				func(_ context.Context, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			sop, err := gooper.New(
+				"hello world",
+				func(_ context.Context, _ service.DataReader, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
 					fmt.Println("  >>>> Hello, world!")
 
 					return nil, nil
 				})
 			require.NoError(t, err)
-			sop := service.MustOperation("hello world", nil, nil, hello)
 
 			st, err := activities.NewServiceTask("hello",
 				sop, activities.WithoutParams())
@@ -118,8 +118,9 @@ func TestSrvTaskExec(t *testing.T) {
 		data.MustItemDefinition(values.NewVariable(""),
 			foundation.WithID("hello_str")))
 
-	hello, err := gooper.New(
-		func(ctx context.Context, d *data.ItemDefinition) (*data.ItemDefinition, error) {
+	op, err := gooper.New(
+		"hello user",
+		func(ctx context.Context, _ service.DataReader, d *data.ItemDefinition) (*data.ItemDefinition, error) {
 			v := d.Structure().Get(context.Background())
 			name, ok := v.(string)
 			if !ok {
@@ -136,10 +137,10 @@ func TestSrvTaskExec(t *testing.T) {
 					values.NewVariable(hello_str),
 					foundation.WithID("hello_str")),
 				nil
-		})
+		},
+		gooper.WithInMessage(in),
+		gooper.WithOutMessage(out))
 	require.NoError(t, err)
-
-	op := service.MustOperation("hello user", in, out, hello)
 
 	// the input data is missing from the execution's resolution → Exec fails.
 	bad := mockrenv.NewMockRuntimeEnvironment(t)

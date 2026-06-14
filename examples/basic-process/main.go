@@ -54,18 +54,14 @@ func run() error {
 	// The ServiceTask runs a Go functor: an operation with no in/out messages
 	// (nil, nil) whose implementation is plain Go code. This is the simplest
 	// way to put your logic inside a process.
-	work, err := gooper.New(
-		func(_ context.Context, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
+	op, err := gooper.New(
+		"hello",
+		func(_ context.Context, _ service.DataReader, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
 			fmt.Println("  ▶ hello from inside the process (Go code in a ServiceTask)")
 			close(done)
 
 			return nil, nil
 		})
-	if err != nil {
-		return fmt.Errorf("create functor: %w", err)
-	}
-
-	op, err := service.NewOperation("hello", nil, nil, work)
 	if err != nil {
 		return fmt.Errorf("create operation: %w", err)
 	}

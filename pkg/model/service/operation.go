@@ -196,14 +196,9 @@ func (o *messageOperation) Execute(
 			errs.C(errorClass, errs.ObjectNotFound))
 	}
 
-	var in *data.ItemDefinition
-
-	if o.inMessage != nil && o.inMessage.Item() != nil {
-		if err := o.bindInput(ctx, r); err != nil {
-			return nil, err
-		}
-
-		in = o.inMessage.Item()
+	in, err := BindInput(ctx, r, o.inMessage)
+	if err != nil {
+		return nil, err
 	}
 
 	out, err := o.implementation.Execute(ctx, in)
@@ -250,32 +245,42 @@ func (o *messageOperation) produceOutput(
 	return nil, nil
 }
 
-// bindInput copies the input item's value from process scope into the
-// operation's incoming message, so the implementation sees the current value.
-func (o *messageOperation) bindInput(ctx context.Context, r DataReader) error {
-	d, err := r.GetDataByID(o.inMessage.Item().ID())
+// BindInput copies msg's item value from process scope (via r, by the item's
+// id, Ready-state checked) into the message and returns the bound item, or
+// (nil, nil) if msg carries no item. Operation implementors that accept an
+// input message use it to bind the message before running their logic.
+func BindInput(
+	ctx context.Context,
+	r DataReader,
+	msg *bpmncommon.Message,
+) (*data.ItemDefinition, error) {
+	if msg == nil || msg.Item() == nil {
+		return nil, nil
+	}
+
+	d, err := r.GetDataByID(msg.Item().ID())
 	if err != nil {
-		return errs.New(
+		return nil, errs.New(
 			errs.M("couldn't find item definition"),
 			errs.C(errorClass, errs.ObjectNotFound),
 			errs.E(err))
 	}
 
 	if d.State().Name() != data.ReadyDataState.Name() {
-		return errs.New(
+		return nil, errs.New(
 			errs.M("data state isn't ready"),
 			errs.C(errorClass, errs.ConditionFailed))
 	}
 
-	if err := o.inMessage.Item().
+	if err := msg.Item().
 		Structure().Update(ctx, d.Value().Get(ctx)); err != nil {
-		return errs.New(
+		return nil, errs.New(
 			errs.M("couldn't update operation's incoming message"),
 			errs.C(errorClass, errs.OperationFailed),
 			errs.E(err))
 	}
 
-	return nil
+	return msg.Item(), nil
 }
 
 var _ Operation = (*messageOperation)(nil)
