@@ -6,9 +6,9 @@
 | Version | v.1 |
 | Date | 2026-06-14 |
 | Owner | Ruslan Gabitov |
-| Implements | [ADR-011 v.4 Process Data Flow](../design/ADR-011-process-data-flow.md) |
+| Implements | [ADR-011 v.5 Process Data Flow](../design/ADR-011-process-data-flow.md) |
 
-This SRD lands [ADR-011 v.4](../design/ADR-011-process-data-flow.md) §2.6: a `ServiceTask`'s `Operation` becomes **polymorphic** — a canonical **message operation** (BPMN `inMessage`→`outMessage`, decoupled) and a gobpm-native **Go operation** whose in-process functor receives a **narrow, public, read-only `DataReader`** (the data plane's addressable reads from [ADR-010 v.2 §2.7](../design/ADR-010-process-data-model.md), landed by [SRD-010 v.1](SRD-010-addressable-data-access.md)) and **returns its result** — no message ceremony. The Go-operation extension is registered in [SAD-001 v.1 §14.2](../design/SAD-001-vision-and-architecture.md).
+This SRD lands [ADR-011 v.5](../design/ADR-011-process-data-flow.md) §2.6: a `ServiceTask`'s `Operation` becomes **polymorphic by execution locus** — an **external message operation** (an out-of-process `Implementor`, message-only by locus, decoupled) and an in-process **Go operation** whose functor receives a **narrow, public, read-only `DataReader`** (the data plane's addressable reads from [ADR-010 v.2 §2.7](../design/ADR-010-process-data-model.md), landed by [SRD-010 v.1](SRD-010-addressable-data-access.md)) **and** its optional bound input message, **composing** reader-based and message-based access at the author's choice and **returning its result**. The Go-operation extension is registered in [SAD-001 v.1 §14.2](../design/SAD-001-vision-and-architecture.md).
 
 ## 1. Background & motivation
 
@@ -22,7 +22,7 @@ This SRD lands [ADR-011 v.4](../design/ADR-011-process-data-flow.md) §2.6: a `S
 
 ### 1.2 Why
 
-ADR-011 v.4 §2.6 decides the polymorphic `Operation`: keep the canonical message model pure (the implementation sees only its message, decoupled from process scope — the conformant path for external services) while giving in-process Go code first-class data access as an **opt-in kind** — a functor handed a narrow public reader that returns its result. SRD-010 built the addressable data plane and surfaced it on `renv.RuntimeEnvironment`; this SRD exposes a **public** read-only face of it to service code and reshapes `Operation` into the two kinds. The blast radius is small because the message accessors have no external readers (§1.1).
+ADR-011 v.5 §2.6 decides the polymorphic `Operation`, split by **execution locus**: an external (out-of-process) service stays message-only and decoupled *by locus* — it cannot receive an in-process reader — while in-process Go code **composes** data-access methods: its functor gets a narrow public reader **and** its optional bound input message, may declare an output message, and returns its result. The author chooses to use the reader, message I/O, or both. SRD-010 built the addressable data plane and surfaced it on `renv.RuntimeEnvironment`; this SRD exposes a **public** read-only face of it to service code and reshapes `Operation` into the two kinds. The blast radius is small because the message accessors have no external readers (§1.1).
 
 ## 2. Goals & scope
 
@@ -30,14 +30,14 @@ ADR-011 v.4 §2.6 decides the polymorphic `Operation`: keep the canonical messag
 
 - **G1.** `service.Operation` is an **interface** with a uniform `Execute(ctx, r DataReader) (*data.ItemDefinition, error)` plus identity/metadata (`ID`/`Name`/`Type`/`Errors`/`Clone`). Two implementations: `messageOperation` (canonical) and `goOperation` (gobpm-native). The interface is **minimal** — message accessors stay private to `messageOperation` (nothing external reads them, §1.1).
 - **G2.** A **public, narrow, read-only `service.DataReader`** (in `pkg/model/service`): `GetData`/`GetDataByID`/`GetSources`/`List` and nothing else — no writes, no lifecycle, no events. `renv.RuntimeEnvironment` structurally satisfies it, so `ServiceTask` passes `re` directly (no adapter, no import cycle — `service` does not import `renv`).
-- **G3.** The **Go operation**: `gooper.OpFunctor = func(ctx, r service.DataReader) (*data.ItemDefinition, error)`; `gooper.New(name, f, ers…) (service.Operation, error)` returns a message-free Go operation; its `Execute` runs the functor and returns its result. Runtime variables are read by their explicit path `RUNTIME/<var>`; process properties by plain name.
+- **G3.** The **Go operation** composes reader + optional message access: `gooper.OpFunctor = func(ctx, r service.DataReader, in *data.ItemDefinition) (*data.ItemDefinition, error)` (`in` is the bound input message item, `nil` if none declared); `gooper.New(name, f, opts…) (service.Operation, error)` builds it, with optional in/out messages and error classes supplied via functional options. Its `Execute` binds the input message from scope (if declared), calls the functor with the reader and that item, and returns its result (filling the output message when one is declared). Runtime variables are read by their explicit path `RUNTIME/<var>`; process properties by plain name.
 - **G4.** The **message operation** preserves today's behaviour: `Execute` folds in the bind-input / run-implementation / produce-output choreography (the implementation still sees only its message). `Implementor` is unchanged.
 - **G5.** `ServiceTask.Exec` becomes **kind-agnostic**: `out, err := op.Execute(ctx, re)`; if `out != nil`, commit it via `re.Put`. `loadInputMessage`/`uploadOutputMessage` move into `messageOperation`.
 - **G6.** An example demonstrates a Go operation reading **a process property (plain name) and a runtime variable (`RUNTIME/STARTED_AT`)** through the reader and returning a result.
 
 ### 2.2 Non-goals (deferred, each with a named home)
 
-- **Layering of the public reader / node-executor contracts** (which package they ultimately live in) — the layering ADR (ADR-012). This SRD fixes the reader's *existence and shape* (ADR-011 v.4 §2.6 decides that here); placement is provisional in `pkg/model/service`.
+- **Layering of the public reader / node-executor contracts** (which package they ultimately live in) — the layering ADR (ADR-012). This SRD fixes the reader's *existence and shape* (ADR-011 v.5 §2.6 decides that here); placement is provisional in `pkg/model/service`.
 - **Observe-from-outside** (a caller inspecting a running instance's data) — ADR-013. This is *in-process* read access only.
 - **Write access from service code** — out of scope by design: a Go operation **returns** its result; the `ServiceTask` commits it as the activity's output (ADR §2.6, "no write").
 - **`SendTask`/`ReceiveTask` execution semantics** — still stubs; only their `Operation` field type changes. Their executors are a separate effort.
@@ -52,10 +52,10 @@ ADR-011 v.4 §2.6 decides the polymorphic `Operation`: keep the canonical messag
 | FR-1 | `service.Operation` is an interface: `ID() string`, `Name() string`, `Type() string`, `Errors() []string`, `Clone() Operation`, `Execute(ctx context.Context, r DataReader) (*data.ItemDefinition, error)`. No message accessors on the interface. |
 | FR-2 | `service.DataReader` (public, `pkg/model/service`): `GetData(name string) (data.Data, error)`, `GetDataByID(id string) (data.Data, error)`, `GetSources() []string`, `List(path string) ([]string, error)`. It mirrors the read subset of `renv.RuntimeEnvironment` so an `renv.RuntimeEnvironment` value satisfies it structurally. |
 | FR-3 | `messageOperation` (the current struct, unexported) implements `Operation`. `NewOperation(name, inMsg, outMsg, implementor, …)` and `MustOperation(…)` return `Operation`. `messageOperation.Execute(ctx, r)`: if `inMessage` has an item, read it by id via `r` (Ready-state check) and update the message structure; run `implementation.Execute(ctx, inItem)`; reconcile against `outMessage` (today's `Run` rules — mismatched presence/absence is an error); return `outMessage.Item()` (or `nil`). The `Implementor` still sees only its message item. |
-| FR-4 | `gooper.OpFunctor = func(ctx context.Context, r service.DataReader) (*data.ItemDefinition, error)`. `gooper.New(name string, f OpFunctor, ers ...string) (service.Operation, error)` validates a non-empty `name` and a non-nil `f`, and returns a `goOperation` (message-free) implementing `Operation` with `Type() == GoOperType`. `goOperation.Execute(ctx, r)` calls `f(ctx, r)` and returns its result (wrapped on error). The old `Implementor`-returning `gooper.New` is removed. |
+| FR-4 | `gooper.OpFunctor = func(ctx context.Context, r service.DataReader, in *data.ItemDefinition) (*data.ItemDefinition, error)`. `gooper.New(name string, f OpFunctor, opts ...Option) (service.Operation, error)` validates a non-empty `name` and a non-nil `f`, and returns a `goOperation` implementing `Operation` with `Type() == GoOperType`. Functional options supply the optional incoming/outgoing messages and error classes: `WithInMessage(*bpmncommon.Message)`, `WithOutMessage(*bpmncommon.Message)`, `WithErrors(...string)`. `goOperation.Execute(ctx, r)` binds the input message from `r` by id (Ready-state check) when one is declared, calls `f(ctx, r, in)` (`in` nil if no input message), and returns its result — filling the outgoing message when one is declared (wrapped on error). The old `Implementor`-returning `gooper.New` is removed. |
 | FR-5 | `ServiceTask`: the `operation` field and `NewServiceTask`/`loadInputMessage`/`uploadOutputMessage` signatures use `service.Operation` (interface). `Exec` becomes `op := st.operation.Clone(); out, err := op.Execute(ctx, re); if out != nil { re.Put(wrap(out)) }`; `loadInputMessage`/`uploadOutputMessage` are removed (folded into `messageOperation`). `re` (an `renv.RuntimeEnvironment`) is passed where a `DataReader` is expected. |
 | FR-6 | Field-type blast radius (no logic change): `events.MessageEventDefinition.operation` + its `NewMessageEventDefinition`/`MustMessageEventDefinition`/`Operation()` signatures, `activities.SendTask.Operation`, `activities.ReceiveTask.Operation` change `*service.Operation` / `service.Operation` (struct) → `service.Operation` (interface). |
-| FR-7 | The `process-data` example's Go operation reads a process property by plain name **and** a runtime variable by `RUNTIME/STARTED_AT` through the reader, and returns a result; `basic-process` and `parallel-gateway` Go operations adopt the new `OpFunctor` signature (message-free). |
+| FR-7 | The `process-data` example's Go operation reads a process property by plain name **and** a runtime variable by `RUNTIME/STARTED_AT` through the reader, and returns a result; `basic-process` and `parallel-gateway` Go operations adopt the new `OpFunctor` signature (reader-only — they declare no messages). |
 
 ### 3.2 Non-functional
 
@@ -89,15 +89,17 @@ classDiagram
     }
     class goOperation {
         -f OpFunctor
+        -inMessage Message
+        -outMessage Message
         -errors Set
     }
     Operation <|.. messageOperation
     Operation <|.. goOperation
-    messageOperation ..> Implementor : runs (sees only its message)
-    goOperation ..> DataReader : reads (process props + RUNTIME/*)
+    messageOperation ..> Implementor : external; sees only its message
+    goOperation ..> DataReader : in-process; reader + optional messages
 ```
 
-`Execute` is uniform; the kinds differ in *what they read*. The message kind binds its `inMessage` from scope (via the reader's `GetDataByID`) and hands the **Implementor** only that message — the external implementation stays decoupled. The Go kind hands its **functor** the reader and returns whatever it produces. Either way, `ServiceTask` commits the returned item.
+`Execute` is uniform; the kinds differ by **locus**. The external message kind binds its `inMessage` from scope (via the reader's `GetDataByID`) and hands the **Implementor** only that message — the out-of-process implementation stays decoupled. The in-process Go kind hands its **functor** the reader **and** its optional bound input message, composing both access methods, and returns whatever it produces. Either way, `ServiceTask` commits the returned item.
 
 ### 4.2 The reader is the read subset of the environment
 
@@ -141,9 +143,10 @@ The message-binding (`loadInputMessage`) and output-wrapping (`uploadOutputMessa
 ### 4.4 Worked example — a Go operation reading scope (FR-7)
 
 ```go
-// a Go operation: read a process property + a runtime variable, return a result
+// a reader-only Go operation: read a process property + a runtime variable
+// (no messages declared, so the functor's `in` is nil and ignored)
 greet, err := gooper.New("greet",
-    func(ctx context.Context, r service.DataReader) (*data.ItemDefinition, error) {
+    func(ctx context.Context, r service.DataReader, in *data.ItemDefinition) (*data.ItemDefinition, error) {
         who, err := r.GetData("customer") // process property, plain name
         if err != nil {
             return nil, err
@@ -163,12 +166,12 @@ greet, err := gooper.New("greet",
 task, err := activities.NewServiceTask("greet-task", greet)
 ```
 
-At execution the `ServiceTask` calls `greet.Execute(ctx, re)`; the functor reads `customer` from the default scope and `RUNTIME/STARTED_AT` from the `RUNTIME` source (no collision — SRD-010 NFR-2), and the returned item is committed as the task's output.
+A task that *also* wants message I/O declares it: `gooper.New("greet", fn, gooper.WithInMessage(in), gooper.WithOutMessage(out))` — then the functor's `in` carries the bound input item and the returned result fills `out`. At execution the `ServiceTask` calls `greet.Execute(ctx, re)`; the functor reads `customer` from the default scope and `RUNTIME/STARTED_AT` from the `RUNTIME` source (no collision — SRD-010 NFR-2), and the returned item is committed as the task's output.
 
 ### 4.5 Milestones (each = one commit, CI-green)
 
 - **M1 — polymorphic `Operation` + `DataReader` (message side).** Introduce `service.DataReader`; turn `Operation` into the interface; rename the struct to `messageOperation` and fold the choreography into its `Execute`; `NewOperation`/`MustOperation` return the interface; `ServiceTask.Exec` → `Execute`+`Put` (drop `loadInputMessage`/`uploadOutputMessage`); change the field types in `events.MessageEventDefinition`, `SendTask`, `ReceiveTask`. `Implementor` and `gooper` (still returning an `Implementor`) are untouched, so every existing example keeps compiling and passing — behaviour-preserving (FR-1/2/3/5/6, NFR-1).
-- **M2 — the Go operation kind + example reworks.** `gooper.OpFunctor` gains the reader; `goOperation` implements `service.Operation`; `gooper.New(name, f, ers…)` returns it; remove the old `Implementor` path. Update `basic-process` and `parallel-gateway` (functor signature, message-free) and rework `process-data` into the showcase (FR-4/7). Smoke all five examples (FR-7, NFR-1).
+- **M2 — the Go operation kind + example reworks.** `gooper.OpFunctor` gains the reader and the optional input message; `goOperation` (carrying optional in/out messages) implements `service.Operation`; `gooper.New(name, f, opts…)` returns it with functional options (`WithInMessage`/`WithOutMessage`/`WithErrors`); remove the old `Implementor` path. Update `basic-process` and `parallel-gateway` (reader-only functor signature) and rework `process-data` into the showcase (FR-4/7). Smoke all five examples (FR-7, NFR-1).
 
 ### 4.6 Tests (per milestone; details §5)
 
@@ -199,17 +202,17 @@ At execution the `ServiceTask` calls `greet.Execute(ctx, re)`; the functor reads
 
 ## 8. References
 
-- [ADR-011 v.4 Process Data Flow](../design/ADR-011-process-data-flow.md) — §2.6 (the polymorphic `Operation`: message kind + Go kind with a narrow public reader) this SRD lands.
+- [ADR-011 v.5 Process Data Flow](../design/ADR-011-process-data-flow.md) — §2.6 (the polymorphic `Operation`: message kind + Go kind with a narrow public reader) this SRD lands.
 - [ADR-010 v.2 Process Data Model](../design/ADR-010-process-data-model.md) — §2.7 (addressable data access) the reader exposes; runtime variables read via `RUNTIME/<var>`.
 - [SRD-010 v.1 Addressable data access](SRD-010-addressable-data-access.md) — the data plane (`GetData`/`GetDataByID`/`GetSources`/`List` on `renv.RuntimeEnvironment`) the `DataReader` mirrors; sideways reference.
 - [SAD-001 v.1 Vision & Architecture](../design/SAD-001-vision-and-architecture.md) — §14.2 registers the Go-operation-with-a-data-reader extension.
 
 ## 9. Open questions
 
-- None. The `Operation` interface surface (minimal — no message accessors, confirmed), the `DataReader` placement (`pkg/model/service`, confirmed; layering ADR may relocate), the `Execute(ctx, DataReader)` uniform signature with the message choreography folded into `messageOperation`, and `gooper.New(name, f, ers…)` returning the Go kind are decided above. `SendTask`/`ReceiveTask` execution and concrete non-`RUNTIME` sources are deferred (§2.2).
+- None. The `Operation` interface surface (minimal — no message accessors, confirmed), the `DataReader` placement (`pkg/model/service`, confirmed; layering ADR may relocate), the `Execute(ctx, DataReader)` uniform signature with the message choreography folded into `messageOperation`, the in-process Go operation composing reader + optional message access (ADR-011 v.5 — author's choice), and `gooper.New(name, f, opts…)` (functional options for messages/errors) returning the Go kind are decided above. The node-level `MessageProducer`/`MessageConsumer` seam, `SendTask`/`ReceiveTask` execution, and concrete non-`RUNTIME` sources are deferred (§2.2; ADR-011 v.5 §2.6).
 
 ## Document History
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-14 | Ruslan Gabitov | Draft. Lands ADR-011 v.4 §2.6: `service.Operation` becomes a polymorphic interface (`Execute(ctx, DataReader)`) with a canonical `messageOperation` (folds the bind/run/produce choreography; `Implementor` unchanged) and a gobpm-native `goOperation` (`gooper.New(name, f, ers…)`, `OpFunctor` gains a public read-only `service.DataReader`). `DataReader` is the read subset of `renv.RuntimeEnvironment`, satisfied structurally (no `internal` import). `ServiceTask.Exec` collapses to `Execute`+`Put`. Field-type blast radius in `events.MessageEventDefinition`/`SendTask`/`ReceiveTask` (no message-accessor callers). Two milestones (message-side interface, behaviour-preserving → Go-operation kind + example showcase reading a property + `RUNTIME/STARTED_AT`). Implements ADR-011 v.4. |
+| v.1 | 2026-06-14 | Ruslan Gabitov | Draft. Lands ADR-011 v.5 §2.6: `service.Operation` becomes a polymorphic interface (`Execute(ctx, DataReader)`) split by **execution locus** — a canonical external `messageOperation` (folds the bind/run/produce choreography; `Implementor` unchanged; message-only by locus) and an in-process gobpm-native `goOperation` that **composes** reader + optional message access (`OpFunctor = func(ctx, r DataReader, in *data.ItemDefinition) …`; `gooper.New(name, f, opts…)` with `WithInMessage`/`WithOutMessage`/`WithErrors`). `DataReader` is the read subset of `renv.RuntimeEnvironment`, satisfied structurally (no `internal` import). `ServiceTask.Exec` collapses to `Execute`+`Put`. Field-type blast radius in `events.MessageEventDefinition`/`SendTask`/`ReceiveTask` (no message-accessor callers). The node-level `MessageProducer`/`MessageConsumer` seam is deferred to the `SendTask`/`ReceiveTask` executor SRD. Two milestones (message-side interface, behaviour-preserving → Go-operation kind + example showcase reading a property + `RUNTIME/STARTED_AT`). Implements ADR-011 v.5. |
