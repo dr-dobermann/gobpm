@@ -162,22 +162,38 @@ func New(id string, opts ...Option) (*Thresher, error) {
 	return t, nil
 }
 
-// logStartupConfig emits one INFO record naming every resolved engine-level
-// extension by its implementation type, so the wiring is visible at startup
-// (ADR-002 §4.4.1).
+// logStartupConfig prints the engine banner, build metadata and every resolved
+// engine-level extension on its own INFO line, so the full wiring is readable at
+// startup instead of crammed into one dense record (ADR-002 §4.4.1).
 func (t *Thresher) logStartupConfig() {
-	t.cfg.logger.Info("thresher.starting",
-		"id", t.id,
-		"repository", fmt.Sprintf("%T", t.cfg.repository),
-		"logger", fmt.Sprintf("%T", t.cfg.logger),
-		"tracer", fmt.Sprintf("%T", t.cfg.tracer),
-		"metricsRecorder", fmt.Sprintf("%T", t.cfg.metrics),
-		"clock", fmt.Sprintf("%T", t.cfg.clock),
-		"messageBroker", fmt.Sprintf("%T", t.cfg.msgBroker),
-		"expressionEngine", fmt.Sprintf("%T", t.cfg.exprEngine),
-		"authorizationProvider", fmt.Sprintf("%T", t.cfg.authz),
-		"workerDispatcher", fmt.Sprintf("%T", t.cfg.dispatcher),
-	)
+	log := t.cfg.logger
+	bi := readBuildInfo()
+
+	for line := range strings.SplitSeq(banner, "\n") {
+		log.Info(line)
+	}
+
+	log.Info("GoBPM — BPMN v2 process engine")
+	log.Info(fmt.Sprintf("version:     %s", bi.version))
+	log.Info(fmt.Sprintf("last commit: %s (%s)", bi.shortRevision(), bi.revTime))
+	log.Info(fmt.Sprintf("thresher id: %s", t.id))
+
+	module := func(name string, impl any) {
+		log.Info(fmt.Sprintf("  %-22s %T", name+":", impl))
+	}
+
+	log.Info("configuration:")
+	module("repository", t.cfg.repository)
+	module("logger", t.cfg.logger)
+	module("tracer", t.cfg.tracer)
+	module("metricsRecorder", t.cfg.metrics)
+	module("clock", t.cfg.clock)
+	module("messageBroker", t.cfg.msgBroker)
+	module("expressionEngine", t.cfg.exprEngine)
+	module("authorizationProvider", t.cfg.authz)
+	module("workerDispatcher", t.cfg.dispatcher)
+
+	log.Info(separator)
 }
 
 // State returns current state of the Threasher.

@@ -3,6 +3,7 @@ package thresher
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/auth/allowall"
@@ -111,9 +112,9 @@ func TestZeroOptionNewWorks(t *testing.T) {
 // capHandler captures emitted slog records.
 type capHandler struct{ records []slog.Record }
 
-func (h *capHandler) Enabled(context.Context, slog.Level) bool  { return true }
-func (h *capHandler) WithAttrs([]slog.Attr) slog.Handler        { return h }
-func (h *capHandler) WithGroup(string) slog.Handler             { return h }
+func (h *capHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *capHandler) WithAttrs([]slog.Attr) slog.Handler       { return h }
+func (h *capHandler) WithGroup(string) slog.Handler            { return h }
 func (h *capHandler) Handle(_ context.Context, r slog.Record) error {
 	h.records = append(h.records, r)
 
@@ -127,29 +128,28 @@ func TestStartupConfigLog(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	if len(h.records) != 1 {
-		t.Fatalf("records = %d, want exactly 1", len(h.records))
+	// The startup config is printed line by line: the banner, build metadata
+	// and one record per resolved module. Collect every message and assert the
+	// human-readable lines are present, all at INFO level.
+	var msgs []string
+	for _, rec := range h.records {
+		if rec.Level != slog.LevelInfo {
+			t.Fatalf("record %q at %v, want INFO", rec.Message, rec.Level)
+		}
+
+		msgs = append(msgs, rec.Message)
 	}
 
-	rec := h.records[0]
-	if rec.Message != "thresher.starting" || rec.Level != slog.LevelInfo {
-		t.Fatalf("record = %q @ %v, want \"thresher.starting\" @ INFO", rec.Message, rec.Level)
-	}
-
-	keys := map[string]bool{}
-	rec.Attrs(func(a slog.Attr) bool {
-		keys[a.Key] = true
-
-		return true
-	})
+	joined := strings.Join(msgs, "\n")
 
 	for _, want := range []string{
-		"id", "repository", "logger", "tracer", "metricsRecorder", "clock",
-		"messageBroker", "expressionEngine", "authorizationProvider",
-		"workerDispatcher",
+		"version:", "last commit:", "thresher id:", "configuration:",
+		"repository:", "logger:", "tracer:", "metricsRecorder:", "clock:",
+		"messageBroker:", "expressionEngine:", "authorizationProvider:",
+		"workerDispatcher:",
 	} {
-		if !keys[want] {
-			t.Fatalf("startup log missing attr %q (got %v)", want, keys)
+		if !strings.Contains(joined, want) {
+			t.Fatalf("startup log missing line %q (got %v)", want, msgs)
 		}
 	}
 }
