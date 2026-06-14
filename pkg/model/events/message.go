@@ -13,7 +13,7 @@ import (
 // MessageEventDefinition represents a message event definition.
 type MessageEventDefinition struct {
 	message   *bpmncommon.Message
-	operation *service.Operation
+	operation service.Operation
 	definition
 }
 
@@ -21,7 +21,7 @@ type MessageEventDefinition struct {
 // returns its pointer. If nil message was given then error returned.
 func NewMessageEventDefinition(
 	msg *bpmncommon.Message,
-	operation *service.Operation,
+	operation service.Operation,
 	baseOpts ...options.Option,
 ) (*MessageEventDefinition, error) {
 	if msg == nil {
@@ -47,7 +47,7 @@ func NewMessageEventDefinition(
 // error occurred, then panic fired.
 func MustMessageEventDefinition(
 	msg *bpmncommon.Message,
-	operation *service.Operation,
+	operation service.Operation,
 	baseOpts ...options.Option,
 ) *MessageEventDefinition {
 	med, err := NewMessageEventDefinition(msg, operation, baseOpts...)
@@ -64,7 +64,7 @@ func (med *MessageEventDefinition) Message() *bpmncommon.Message {
 }
 
 // Operation returns an operation of the MessageEventDefinition.
-func (med *MessageEventDefinition) Operation() *service.Operation {
+func (med *MessageEventDefinition) Operation() service.Operation {
 	return med.operation
 }
 

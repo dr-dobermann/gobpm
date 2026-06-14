@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/generated/mockrenv"
+	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -19,6 +20,11 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+// renv.RuntimeEnvironment must structurally satisfy the narrow public
+// service.DataReader, so ServiceTask can pass re straight to op.Execute
+// without an adapter or an internal-type leak (SRD-011 FR-2/NFR-2, V2).
+var _ service.DataReader = (renv.RuntimeEnvironment)(nil)
 
 func TestServiceTaskDefinition(t *testing.T) {
 	op, err := service.NewOperation("my op", nil, nil, nil)
@@ -192,4 +198,26 @@ func TestSrvTaskExec(t *testing.T) {
 	// per-execution clone only (ADR-010 §2.3).
 	require.Equal(t, "",
 		out.Item().Structure().Get(context.Background()))
+
+	// committing the result fails → Exec surfaces a wrapped error.
+	putErr := mockrenv.NewMockRuntimeEnvironment(t)
+	putErr.EXPECT().
+		GetDataByID("user_name").
+		Return(data.MustParameter("user_name",
+			data.MustItemAwareElement(
+				data.MustItemDefinition(
+					values.NewVariable("dr.Dobermann"),
+					foundation.WithID("user_name")),
+				data.ReadyDataState)),
+			nil)
+	putErr.EXPECT().
+		Put(mock.Anything).
+		Return(fmt.Errorf("commit failed"))
+
+	pst, err := activities.NewServiceTask("put error", op,
+		activities.WithoutParams())
+	require.NoError(t, err)
+
+	_, err = pst.Exec(context.Background(), putErr)
+	require.Error(t, err)
 }

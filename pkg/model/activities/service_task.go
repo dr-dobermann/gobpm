@@ -33,7 +33,7 @@ import (
 // defined by Message referred to by the outMessageRef attribute of the
 // Operation.
 type ServiceTask struct {
-	operation      *service.Operation
+	operation      service.Operation
 	implementation string
 	task
 }
@@ -53,7 +53,7 @@ type ServiceTask struct {
 //   - foundation.WithDoc
 func NewServiceTask(
 	name string,
-	operation *service.Operation,
+	operation service.Operation,
 	taskOpts ...options.Option,
 ) (*ServiceTask, error) {
 	name = strings.TrimSpace(name)
@@ -139,84 +139,42 @@ func (st *ServiceTask) Exec(
 
 	op := st.operation.Clone()
 
-	err := st.loadInputMessage(ctx, re, op)
-	if err == nil {
-		err = op.Run(ctx)
-		if err == nil {
-			err = st.uploadOutputMessage(re, op)
-			if err == nil {
-				return st.Outgoing(), nil
-			}
+	// The operation is kind-agnostic here: a message operation binds its input
+	// from scope and produces its output message; a Go operation reads through
+	// the reader and returns its result. re (an renv.RuntimeEnvironment)
+	// satisfies the narrow service.DataReader structurally.
+	out, err := op.Execute(ctx, re)
+	if err != nil {
+		return nil,
+			errs.New(
+				errs.M("operation execution failed"),
+				errs.C(errorClass),
+				errs.E(err),
+				errs.D("service_task_name", st.Name()),
+				errs.D("service_task_id", st.ID()),
+				errs.D("operation_id", st.operation.ID()))
+	}
+
+	if out != nil {
+		// Must-constructors: out is non-nil (guarded) and its id is
+		// engine-generated and non-empty — a failure here is a programming
+		// error, not an input condition.
+		res := data.MustParameter(out.ID(),
+			data.MustItemAwareElement(out, data.ReadyDataState))
+
+		if err := re.Put(res); err != nil {
+			return nil,
+				errs.New(
+					errs.M("couldn't commit operation result"),
+					errs.C(errorClass),
+					errs.E(err),
+					errs.D("service_task_name", st.Name()),
+					errs.D("service_task_id", st.ID()),
+					errs.D("operation_id", st.operation.ID()))
 		}
 	}
 
-	return nil,
-		errs.New(
-			errs.M("operation execution failed"),
-			errs.C(errorClass),
-			errs.E(err),
-			errs.D("service_task_name", st.Name()),
-			errs.D("service_task_id", st.ID()),
-			errs.D("operation_id", st.operation.ID()))
-}
-
-// loadInputMessage fills the per-execution operation's incoming message from
-// the execution's data resolution (frame input instances first).
-func (st *ServiceTask) loadInputMessage(
-	ctx context.Context,
-	re renv.RuntimeEnvironment,
-	op *service.Operation,
-) error {
-	if op.IncomingMessage() == nil ||
-		op.IncomingMessage().Item() == nil {
-		return nil
-	}
-
-	d, err := re.GetDataByID(op.IncomingMessage().Item().ID())
-	if err != nil {
-		return errs.New(
-			errs.M("couldn't find item definition"),
-			errs.E(err))
-	}
-
-	if d.State().Name() != data.ReadyDataState.Name() {
-		return errs.New(
-			errs.M("data state isn't ready"),
-		)
-	}
-
-	if err := op.IncomingMessage().Item().
-		Structure().Update(ctx, d.Value().Get(ctx)); err != nil {
-		return errs.New(
-			errs.M("couldn't update operation's incoming message"),
-			errs.E(err))
-	}
-
-	return nil
-}
-
-// uploadOutputMessage hands the operation's result to the execution frame as
-// node-produced data; the producer stage (updateOutputs) copies it into the
-// not-Ready output instance whose ItemDefinition matches the outgoing
-// message item.
-func (st *ServiceTask) uploadOutputMessage(
-	re renv.RuntimeEnvironment,
-	op *service.Operation,
-) error {
-	if op.OutgoingMessage() == nil ||
-		op.OutgoingMessage().Item() == nil {
-		return nil
-	}
-
-	item := op.OutgoingMessage().Item()
-
-	// Must-constructors: the item is non-nil (guarded above) and its id is
-	// engine-generated and non-empty — a failure here is a programming
-	// error, not an input condition.
-	res := data.MustParameter(item.ID(),
-		data.MustItemAwareElement(item, data.ReadyDataState))
-
-	return re.Put(res)
+	return st.Outgoing(), nil
 }
 
 // -----------------------------------------------------------------------------
