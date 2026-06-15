@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-14 |
 | Owner | Ruslan Gabitov |
@@ -136,7 +136,51 @@ Relocation is behaviour-preserving, so the test work is mostly **import-path edi
 
 ## 7. Implementation summary
 
-*Post-landing placeholder — filled at the final audit with files, V-results, and milestone SHAs.*
+Landed on `feat/srd-012-execution-layering` in five milestone commits, all
+`make ci`-green; behaviour-preserving (the 5 examples run to exit 0 unchanged).
+
+### 7.1 Milestones
+
+| Milestone | Commit | Scope |
+|---|---|---|
+| M1a | `9dac9ff` | `internal/interactor` → `pkg/interactor` (whole-package move). |
+| M1b | `e9b5c73` | `EventProducer`/`EventProcessor` → `pkg/eventproc` (carve; `internal/eventproc` re-exports them as type aliases so its `EventHub`/`EventWaiter` and internal consumers stay untouched; only the model's `event.go` re-points). |
+| M2 | `53ddfe5` | `RuntimeEnvironment` promoted to `pkg/renv` (embeds `service.DataReader`); `internal/renv` retired. |
+| M3 | `c74a78b` | `NodeExecutor`/`SynchronizingJoin` + the data-binding `NodeDataConsumer`/`NodeDataProducer` + the new `Frame` interface → `pkg/exec` (concrete `*scope.Frame` → interface); `internal/exec` retired; **completed the model relocation**. |
+| M4 | `f7f6f35` | `model-no-internal` depguard rule (verified it fires on a throwaway violation). |
+
+The SRD's planned M4 "mop-up" collapsed — M3 finished the re-pointing, so the
+final milestone is just the depguard rule.
+
+### 7.2 Files
+
+- New public: `pkg/exec/{exec,frame}.go`, `pkg/renv/runtimeenvironment.go`, `pkg/eventproc/eventproc.go`, `pkg/interactor/interactor.go`.
+- Retired: `internal/exec/`, `internal/renv/`, `internal/scope/roles.go`.
+- Re-pointed: `internal/instance/{track,execenv}.go`, `internal/eventproc/eventproc.go` (aliases), `internal/scope/exec_assert.go` (new — `var _ exec.Frame`), the 8 `pkg/model` element files, `.golangci.yml`, `.mockery.yaml`.
+
+### 7.3 Verification results
+
+| Check | Result |
+|---|---|
+| V1 `grep gobpm/internal pkg/model` (non-test) empty | ✅ + `go list -deps` shows no transitive internal |
+| V2 contracts in public homes; `internal/exec`+`internal/renv` retired; EventHub/Waiter internal | ✅ |
+| V3 satisfaction assertions compile (`execEnv`→`RuntimeEnvironment`, `scope.Frame`→`exec.Frame`) | ✅ |
+| V4 dispatch unchanged; no internal types in exported model signatures | ✅ |
+| V5 `model-no-internal` depguard added; fires on violation; `make ci` green | ✅ |
+| V6 `internal/instance`/`pkg/model`/`pkg/thresher` suites pass; 5 examples exit 0 | ✅ |
+| V7 model-only proof (no transitive internal); no cycles | ✅ |
+
+### 7.4 Deviations from the §4 plan
+
+- **M1b used type aliases** in `internal/eventproc` (re-exporting the public
+  `EventProducer`/`EventProcessor`) instead of re-pointing every internal
+  consumer — same layering outcome (model imports the public package), far less
+  churn; internal consumers stay on `internal/eventproc`.
+- **M3 completed FR-5**, so the planned M4 re-point was empty and the final
+  milestone is depguard-only.
+- A test stub (`failNode` in `executenode_test.go`) needed its
+  `LoadData`/`UploadData` signature updated to `exec.Frame` — otherwise it
+  silently stopped satisfying the role (the failure-stages test caught it).
 
 ## 8. References
 
@@ -154,4 +198,4 @@ Relocation is behaviour-preserving, so the test work is mostly **import-path edi
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-14 | Ruslan Gabitov | Draft. Lands ADR-012 v.1: relocate the five execution contracts the model touches to public packages — `pkg/exec` (`NodeExecutor`/`SynchronizingJoin`/`NodeDataConsumer`/`NodeDataProducer`/`Frame` interface), `pkg/renv.RuntimeEnvironment` (promoted, embeds `service.DataReader`), `pkg/eventproc.EventProducer`(+`EventProcessor`), `pkg/interactor` (moved wholesale) — while `internal/*` keeps the implementations (execEnv/Instance, scope.Frame, eventhub) satisfying the now-public interfaces. `pkg/model` imports zero `internal/*`; dispatch unchanged (closed node set, no registry); a `model-no-internal` depguard rule enforces the boundary. Env and `Frame` kept as two contracts. Encapsulation refactor — no behaviour change. Five milestones (publish leaves → env → executor+data-binding → re-point model → depguard+model-only build). Implements ADR-012 v.1. |
+| v.1 | 2026-06-15 | Ruslan Gabitov | Accepted (landed, 5 milestones M1a/M1b/M2/M3/M4, make ci green, 5 examples exit 0). Lands ADR-012 v.1: relocate the five execution contracts the model touches to public packages — `pkg/exec` (`NodeExecutor`/`SynchronizingJoin`/`NodeDataConsumer`/`NodeDataProducer`/`Frame` interface), `pkg/renv.RuntimeEnvironment` (promoted, embeds `service.DataReader`), `pkg/eventproc.EventProducer`(+`EventProcessor`), `pkg/interactor` (moved wholesale) — while `internal/*` keeps the implementations (execEnv/Instance, scope.Frame, eventhub) satisfying the now-public interfaces. `pkg/model` imports zero `internal/*`; dispatch unchanged (closed node set, no registry); a `model-no-internal` depguard rule enforces the boundary. Env and `Frame` kept as two contracts. Encapsulation refactor — no behaviour change. Five milestones (publish leaves → env → executor+data-binding → re-point model → depguard+model-only build). Implements ADR-012 v.1. |
