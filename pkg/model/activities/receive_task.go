@@ -1,9 +1,6 @@
 package activities
 
-import (
-	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
-	"github.com/dr-dobermann/gobpm/pkg/model/service"
-)
+import "github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 
 // ReceiveTask is a simple Task that is designed to wait for a Message to
 // arrive from an external Participant (relative to the Process). Once the
@@ -16,7 +13,6 @@ import (
 // instantiate the Process its instantiate attribute MUST be set to true and it
 // MUST NOT have any incoming Sequence Flow.
 type ReceiveTask struct {
-	Operation      service.Operation
 	Message        *bpmncommon.Message
 	Implementation string
 	task

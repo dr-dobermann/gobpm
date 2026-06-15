@@ -52,8 +52,8 @@ ADR-014 decided message handling: messages travel the broker, the EventHub stays
 | # | Requirement |
 |---|---|
 | FR-1 | Remove the `service.Operation` field from `SendTask` and `ReceiveTask` (and the now-unused `service` import). No code references it (§1.1). |
-| FR-2 | New public package **`pkg/model/msgflow`**: a `Publish(ctx, re renv.RuntimeEnvironment, msg *bpmncommon.Message) error` helper — bind `msg` from scope (`service.BindInput`), build a `messaging.Envelope{Name: msg.Name(), Payload: <item value>}`, `re.MessageBroker().Publish`. It imports only public packages (`pkg/messaging`, `pkg/renv`, `pkg/model/{bpmncommon,service,data}`); no cycle. |
-| FR-3 | `SendTask` gains `NewSendTask(name, msg, opts…)`, `Exec(ctx, re) ([]*flow.SequenceFlow, error)` (calls `msgflow.Publish`, returns `Outgoing()`), `Clone()`, `TaskType()→flow.SendTask`, and `var _ exec.NodeExecutor = (*SendTask)(nil)`. |
+| FR-2 | New public package **`pkg/model/msgflow`**: a `Send(ctx, re renv.RuntimeEnvironment, msg *bpmncommon.Message) error` helper — bind `msg` from scope (`service.BindInput`), build a `messaging.Envelope{Name: msg.Name(), Payload: <item value>}`, `re.MessageBroker().Publish`. It imports only public packages (`pkg/messaging`, `pkg/renv`, `pkg/model/{bpmncommon,service,data}`); no cycle. |
+| FR-3 | `SendTask` gains `NewSendTask(name, msg, opts…)`, `Exec(ctx, re) ([]*flow.SequenceFlow, error)` (calls `msgflow.Send`, returns `Outgoing()`), `Clone()`, `TaskType()→flow.SendTask`, and `var _ exec.NodeExecutor = (*SendTask)(nil)`. |
 | FR-4 | New **`MessageWaiter`** (`internal/eventproc/eventhub/waiters/message.go`) mirroring `TimerWaiter`: constructed `(hub, ep, eDef, id, rt renv.EngineRuntime)`; `Service(ctx)` subscribes `rt.MessageBroker().Subscribe(ctx, name, "")` and runs a goroutine; on the first matching `Envelope` it reconstructs a typed `data.Data` for the message's `ItemDefinition`, clones the event definition carrying it, and fires `ep.ProcessEvent` (TimerWaiter's lock discipline), then `hub.RemoveWaiter`; `Stop()`/ctx terminate the goroutine and release the subscription. `waiters.go`'s `CreateWaiter` gains `case flow.TriggerMessage`. |
 | FR-5 | `ReceiveTask` implements `flow.EventNode` (synthesizing a `MessageEventDefinition` from its `Message` so `checkNodeType` registers it and parks the track), `eventproc.EventProcessor` (`ProcessEvent` captures the arrived payload into a per-execution field), and `exec.NodeExecutor` (`Exec` `re.Put`s the captured payload as a Ready datum for the message item, returns `Outgoing()`; the inherited `task.UploadData` pushes it to scope). Constructor `NewReceiveTask`, `Clone`, `TaskType()→flow.ReceiveTask`, interface assertions. |
 | FR-6 | Phase-1 correlation: the broker matches on **message name** (empty correlation key). The producer sets `Envelope.Name = msg.Name()` and `Payload` = the bound item's value; the `MessageWaiter` reconstructs a typed datum from `Payload` using the message's `ItemDefinition`. |
@@ -74,13 +74,13 @@ ADR-014 decided message handling: messages travel the broker, the EventHub stays
 
 ```mermaid
 flowchart LR
-    A["SendTask.Exec"] --> B["msgflow.Publish: BindInput(msg) from scope"]
+    A["SendTask.Exec"] --> B["msgflow.Send: BindInput(msg) from scope"]
     B --> C["Envelope{Name, Payload}"]
     C --> D["re.MessageBroker().Publish"]
     D --> E["return Outgoing()"]
 ```
 
-`SendTask` mirrors `ServiceTask`: it never waits (a request/reply is a send node then a receive node — the diagram shows the wait). `msgflow.Publish` is the shared producer choreography the throw message event will also call (next SRD).
+`SendTask` mirrors `ServiceTask`: it never waits (a request/reply is a send node then a receive node — the diagram shows the wait). `msgflow.Send` is the shared producer choreography the throw message event will also call (next SRD).
 
 ### 4.2 Receive: wait (via MessageWaiter) → capture → bind
 
@@ -104,7 +104,7 @@ The broker's `Payload any` meets the typed data plane at the waiter: the produce
 
 ### 4.4 Milestones (each = one commit, `make ci` green)
 
-- **M1 — drop `Operation`; add `msgflow.Publish`.** Remove the vestigial field from both tasks; add `pkg/model/msgflow` with the `Publish` helper. Pure additions/removals; nothing references the field.
+- **M1 — drop `Operation`; add `msgflow.Send`.** Remove the vestigial field from both tasks; add `pkg/model/msgflow` with the `Send` helper. Pure additions/removals; nothing references the field.
 - **M2 — `SendTask` publishes.** `NewSendTask`, `Exec`, `Clone`, `TaskType`, assertion; unit test against an in-memory broker (publish observed).
 - **M3 — `MessageWaiter`.** `waiters/message.go` + the `TriggerMessage` case; waiter unit test mirroring `timer_test.go` (mock `EventProcessor` + in-mem broker; assert fire + cleanup, no leak).
 - **M4 — `ReceiveTask` waits + binds.** `flow.EventNode` + `eventproc.EventProcessor` + `Exec`; implement the node-level `ProcessEvent` (first real one — verify the timer path still works). Integration test: publish then receive, payload reaches scope.
@@ -112,7 +112,7 @@ The broker's `Payload any` meets the typed data plane at the waiter: the produce
 
 ### 4.5 Tests
 
-`pkg/model/msgflow` (Publish against a fake/in-mem broker), `SendTask.Exec` (publishes the bound payload), `MessageWaiter` (fires on envelope, cleans up — mirrors `timer_test.go`), `ReceiveTask` end-to-end (RegisterEvent → waiter → ProcessEvent → Exec → scope-bound), and the example as smoke. Cover the node-level `ProcessEvent` path (latent until now).
+`pkg/model/msgflow` (Send against a fake/in-mem broker), `SendTask.Exec` (publishes the bound payload), `MessageWaiter` (fires on envelope, cleans up — mirrors `timer_test.go`), `ReceiveTask` end-to-end (RegisterEvent → waiter → ProcessEvent → Exec → scope-bound), and the example as smoke. Cover the node-level `ProcessEvent` path (latent until now).
 
 ## 5. Verification (Definition of Done)
 
@@ -153,4 +153,4 @@ The broker's `Payload any` meets the typed data plane at the waiter: the produce
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-15 | Ruslan Gabitov | Draft. Lands the **task half** of ADR-014 v.1: drop the vestigial `service.Operation` from `SendTask`/`ReceiveTask`; `SendTask` binds its message from scope (`service.BindInput`) and publishes an `Envelope` to `re.MessageBroker()` via a new `pkg/model/msgflow.Publish` helper, then completes; a new `MessageWaiter` (peer of `TimerWaiter`, `TriggerMessage` wired) subscribes the broker and fires `ProcessEvent` on arrival, cleaning up its goroutine+subscription on Stop/ctx; `ReceiveTask` becomes a `flow.EventNode` + `eventproc.EventProcessor` + `exec.NodeExecutor` that parks the track, captures the arrived payload (reconstructed typed per the message item), and binds it to scope on resume via the inherited `task.UploadData` — the first real node-level `ProcessEvent`. Phase-1 correlation = match-by-message-name; `Envelope` carries the item value. Five milestones + a send→receive example. Deferred to follow-up SRDs: throw/catch message events + the `MessageProducer`/`MessageConsumer` interface declarations (second implementor; closes the WS-C3 catch-binding TODO), correlation-key derivation, message-triggered instantiation, and the EventHub `WaitGroup` shutdown (ADR-006's SRD). Implements ADR-014 v.1 (task half). |
+| v.1 | 2026-06-15 | Ruslan Gabitov | Draft. Lands the **task half** of ADR-014 v.1: drop the vestigial `service.Operation` from `SendTask`/`ReceiveTask`; `SendTask` binds its message from scope (`service.BindInput`) and publishes an `Envelope` to `re.MessageBroker()` via a new `pkg/model/msgflow.Send` helper, then completes; a new `MessageWaiter` (peer of `TimerWaiter`, `TriggerMessage` wired) subscribes the broker and fires `ProcessEvent` on arrival, cleaning up its goroutine+subscription on Stop/ctx; `ReceiveTask` becomes a `flow.EventNode` + `eventproc.EventProcessor` + `exec.NodeExecutor` that parks the track, captures the arrived payload (reconstructed typed per the message item), and binds it to scope on resume via the inherited `task.UploadData` — the first real node-level `ProcessEvent`. Phase-1 correlation = match-by-message-name; `Envelope` carries the item value. Five milestones + a send→receive example. Deferred to follow-up SRDs: throw/catch message events + the `MessageProducer`/`MessageConsumer` interface declarations (second implementor; closes the WS-C3 catch-binding TODO), correlation-key derivation, message-triggered instantiation, and the EventHub `WaitGroup` shutdown (ADR-006's SRD). Implements ADR-014 v.1 (task half). |
