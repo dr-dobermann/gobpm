@@ -5,17 +5,19 @@ filename: "mock_{{.InterfaceName}}.go"
 pkgname: "mock{{.SrcPackageName}}"
 
 packages:
-  github.com/dr-dobermann/gobpm/internal/scope:
+  github.com/dr-dobermann/gobpm/pkg/exec:
     interfaces:
       NodeDataConsumer:
       NodeDataProducer:
-  github.com/dr-dobermann/gobpm/internal/renv:
+  github.com/dr-dobermann/gobpm/pkg/renv:
     interfaces:
       RuntimeEnvironment:
+  github.com/dr-dobermann/gobpm/pkg/eventproc:
+    interfaces:
+      EventProducer:
+      EventProcessor:
   github.com/dr-dobermann/gobpm/internal/eventproc:
     interfaces:
-      EventProducer:    
-      EventProcessor:
       EventWaiter:
       EventHub:
   github.com/dr-dobermann/gobpm/pkg/model/data:
@@ -23,7 +25,7 @@ packages:
       Source:
       PropertyAdder:
       FormalExpression:
-  github.com/dr-dobermann/gobpm/internal/interactor:
+  github.com/dr-dobermann/gobpm/pkg/interactor:
     interfaces:
       Registrator:
   github.com/dr-dobermann/gobpm/pkg/model/flow:

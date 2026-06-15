@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -75,13 +75,13 @@ func (t *task) ActivityType() flow.ActivityType {
 	return flow.TaskActivity
 }
 
-// ------------------ scope.NodeDataConsumer interface --------------------------
+// ------------------ exec.NodeDataConsumer interface --------------------------
 
 // LoadData instantiates the Task's inputs, outputs and properties in the
 // execution frame and fills the input instances from the Task's incoming
 // data associations. The IoSpec definitions on the node stay untouched —
 // every execution works on its own instances (ADR-010 §2.3).
-func (t *task) LoadData(ctx context.Context, f *scope.Frame) error {
+func (t *task) LoadData(ctx context.Context, f exec.Frame) error {
 	if err := t.instantiateData(f); err != nil {
 		return err
 	}
@@ -161,7 +161,7 @@ func (t *task) LoadData(ctx context.Context, f *scope.Frame) error {
 
 // instantiateData builds the per-execution instances of the Task's data
 // definitions in the frame: inputs, outputs, and properties.
-func (t *task) instantiateData(f *scope.Frame) error {
+func (t *task) instantiateData(f exec.Frame) error {
 	inputs, err := t.IoSpec.Parameters(data.Input)
 	if err != nil {
 		return errs.New(
@@ -212,11 +212,11 @@ func (t *task) instantiateData(f *scope.Frame) error {
 	return nil
 }
 
-// ------------------ scope.NodeDataProducer interface --------------------------
+// ------------------ exec.NodeDataProducer interface --------------------------
 
 // UploadData fills the not-Ready output instances of the execution frame and
 // pushes the Task's outgoing data associations from those instances.
-func (t *task) UploadData(ctx context.Context, f *scope.Frame) error {
+func (t *task) UploadData(ctx context.Context, f exec.Frame) error {
 	doo, err := t.updateOutputs(ctx, f)
 	if err != nil {
 		return errs.New(
@@ -267,7 +267,7 @@ func (t *task) UploadData(ctx context.Context, f *scope.Frame) error {
 // may be left Unavailable.
 func (t *task) updateOutputs(
 	ctx context.Context,
-	f *scope.Frame,
+	f exec.Frame,
 ) ([]*data.Parameter, error) {
 	oo := f.Outputs()
 	required := data.RequiredItemIDs(t.IoSpec.OutputSet())
@@ -372,8 +372,8 @@ func (t *task) BindIncoming(ia *data.Association) error {
 // interfaces check
 var (
 	_ flow.ActivityNode      = (*task)(nil)
-	_ scope.NodeDataConsumer = (*task)(nil)
-	_ scope.NodeDataProducer = (*task)(nil)
+	_ exec.NodeDataConsumer  = (*task)(nil)
+	_ exec.NodeDataProducer  = (*task)(nil)
 	_ flow.AssociationSource = (*task)(nil)
 	_ flow.AssociationTarget = (*task)(nil)
 )

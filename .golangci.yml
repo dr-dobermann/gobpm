@@ -53,6 +53,12 @@ linters:
           deny:
             - pkg: "github.com/dr-dobermann/gobpm/internal"
               desc: "examples demonstrate public API only (ADR-003 §4.4)"
+        model-no-internal:
+          files:
+            - "**/pkg/model/**/*.go"
+          deny:
+            - pkg: "github.com/dr-dobermann/gobpm/internal"
+              desc: "pkg/model is the public modeling API; it MUST NOT import internal (ADR-012, ADR-003 §4.4)"
         adapters-no-cross-adapter:
           files:
             - "**/adapters/**/*.go"

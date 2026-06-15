@@ -6,40 +6,22 @@ import (
 	"strconv"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	pubevent "github.com/dr-dobermann/gobpm/pkg/eventproc"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
 
-// EventProcessor represents an event processor interface.
-// ============================================================================
-// EventProcessor handles single event.
-type EventProcessor interface {
-	foundation.Identifyer
-
-	// ProcessEvent processes single event definition by node, it registered
-	// in EventProducer.
-	ProcessEvent(context.Context, flow.EventDefinition) error
-}
-
-// EventProducer represents an event producer interface.
-// ============================================================================
-// EventProducer registers events with event processors which expect those
-// events.
-type EventProducer interface {
-	// RegisterEvent registers the EventDefinition the EventProcessor
-	// is waiting for. Once the EventProducer got the event with event
-	// definition matched with registered event definition Id, it calls the
-	// registered EventProcessor with given event definition.
-	RegisterEvent(EventProcessor, flow.EventDefinition) error
-
-	// UnregisterEvents removes event definition to EventProcessor link from
-	// EventProducer.
-	UnregisterEvent(ep EventProcessor, eDefID string) error
-
-	// PropagateEvent sends a fired throw event's eventDefinition
-	// up to chain of EventProducers
-	PropagateEvent(context.Context, flow.EventDefinition) error
-}
+// EventProcessor and EventProducer are the public node-facing event contracts
+// (ADR-012 v.1). They live in pkg/eventproc; the aliases here let the internal
+// EventHub/EventWaiter and the internal consumers keep referring to them
+// unqualified while the implementations stay in this package.
+type (
+	// EventProcessor handles a single fired event (pkg/eventproc.EventProcessor).
+	EventProcessor = pubevent.EventProcessor
+	// EventProducer registers processors and propagates events
+	// (pkg/eventproc.EventProducer).
+	EventProducer = pubevent.EventProducer
+)
 
 // EventHub represents a central event distribution hub.
 // ============================================================================

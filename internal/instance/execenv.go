@@ -3,9 +3,9 @@ package instance
 import (
 	"context"
 
-	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
 
 // execEnv is the per-execution runtime environment the track hands a node

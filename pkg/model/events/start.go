@@ -6,13 +6,12 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/dr-dobermann/gobpm/internal/exec"
-	"github.com/dr-dobermann/gobpm/internal/renv"
-	"github.com/dr-dobermann/gobpm/internal/scope"
+	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
+	"github.com/dr-dobermann/gobpm/pkg/renv"
 	"github.com/dr-dobermann/gobpm/pkg/set"
 )
 
@@ -132,9 +131,9 @@ func (se *StartEvent) Exec(
 
 // interfaces checks
 var (
-	_ flow.SequenceSource    = (*StartEvent)(nil)
-	_ flow.Node              = (*StartEvent)(nil)
-	_ flow.EventNode         = (*StartEvent)(nil)
-	_ exec.NodeExecutor      = (*StartEvent)(nil)
-	_ scope.NodeDataProducer = (*StartEvent)(nil)
+	_ flow.SequenceSource   = (*StartEvent)(nil)
+	_ flow.Node             = (*StartEvent)(nil)
+	_ flow.EventNode        = (*StartEvent)(nil)
+	_ exec.NodeExecutor     = (*StartEvent)(nil)
+	_ exec.NodeDataProducer = (*StartEvent)(nil)
 )
