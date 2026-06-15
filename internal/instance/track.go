@@ -277,25 +277,32 @@ func newTrack(
 // checkNodeType determines if node awaits for event or human interaction
 // and updates track state on positive comparison.
 func (t *track) checkNodeType(node flow.Node) error {
-	if en, ok := node.(flow.EventNode); ok {
-		edCnt := 0
+	en, ok := node.(flow.EventNode)
+	if !ok {
+		return nil
+	}
 
-		for _, d := range en.Definitions() {
-			if err := t.instance.RegisterEvent(t, d); err != nil {
-				return errs.New(
-					errs.M("couldn't register event definitions"),
-					errs.C(errorClass, errs.BulidingFailed),
-					errs.D("node_id", en.ID()),
-					errs.D("node_name", en.Name()),
-					errs.D("event_definition_id", d.ID()),
-					errs.E(err))
-			}
+	defs := en.Definitions()
+	if len(defs) == 0 {
+		return nil
+	}
 
-			edCnt++
-		}
+	// Declare the wait BEFORE registering: a waiter may deliver an event
+	// synchronously on registration (a MessageWaiter draining a message the
+	// broker already buffered fires at once), and ProcessEvent only accepts an
+	// event while the track is in TrackWaitForEvent. Setting the state first
+	// removes that race; timers, which fire later, are unaffected.
+	t.updateState(TrackWaitForEvent)
 
-		if edCnt != 0 {
-			t.updateState(TrackWaitForEvent)
+	for _, d := range defs {
+		if err := t.instance.RegisterEvent(t, d); err != nil {
+			return errs.New(
+				errs.M("couldn't register event definitions"),
+				errs.C(errorClass, errs.BulidingFailed),
+				errs.D("node_id", en.ID()),
+				errs.D("node_name", en.Name()),
+				errs.D("event_definition_id", d.ID()),
+				errs.E(err))
 		}
 	}
 
@@ -595,6 +602,15 @@ func (t *track) checkFlows(flows []*flow.SequenceFlow) error {
 		state:  StepCreated,
 	}
 	t.steps = append(t.steps, &nextStep)
+
+	// The token continues on this track to nextStep's node. newTrack only
+	// classified the track's initial node, so a mid-flow event node (e.g. a
+	// ReceiveTask reached from an upstream node) must be classified here too —
+	// otherwise it would execute without registering its event or parking the
+	// track. checkNodeType is a no-op for non-event nodes.
+	if err := t.checkNodeType(nextStep.node); err != nil {
+		return err
+	}
 
 	// the remaining flows fork: build a fresh slice (don't mutate the caller's)
 	// and hand it to the loop, which constructs the new tracks. The track never
