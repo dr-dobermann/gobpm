@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-15 |
 | Owner | Ruslan Gabitov |
@@ -135,7 +135,35 @@ The broker's `Payload any` meets the typed data plane at the waiter: the produce
 
 ## 7. Implementation summary
 
-*Post-landing placeholder — filled at the final audit with files, V-results, and milestone SHAs.*
+Landed on `feat/srd-013-message-handling` in five milestones (each one commit,
+`make ci` green). `/check-srd` audit: PASS; all V1–V7 met.
+
+### 7.1 Milestones
+
+| M | Commit | Scope | Tests |
+|---|---|---|---|
+| doc | `66c2a79` | SRD-013 (this doc) | — |
+| M1 | `a0c1454` | drop vestigial `Operation` from both tasks; new `pkg/model/msgflow` with `Send` (bind → `Envelope` → `re.MessageBroker().Publish`) | `msgflow` `Send` 100% |
+| M2 | `99294d6` | `SendTask` executor (`NewSendTask`/`Exec`/`Clone`/`TaskType`/accessors + `exec.NodeExecutor`) | `send_task.go` 100% |
+| M3 | `81b39a8` | `MessageWaiter` (peer of `TimerWaiter`) + `TriggerMessage` wired; payload reconstructed and conveyed via `CloneEvent`; per-waiter cleanup; updates the obsolete eventhub limitation test | `message.go` avg 98.6% (2 unreachable defensive branches) |
+| M4 | `106bb05` | `ReceiveTask` = `flow.EventNode` + `eventproc.EventProcessor` + `exec.NodeExecutor` (first real node `ProcessEvent`); binds payload via inherited `task.UploadData` | `receive_task.go` 97.6% |
+| M5 | `f3a3be0` | runnable `examples/message-send-receive` (own module) + instance integration test; **mid-flow event registration fix** in `internal/instance/track.go` (smoke-surfaced) | `track.go` 100% of changed lines; `message_flow_test.go` (V4 end-to-end + negative) |
+
+### 7.2 Key files
+
+- `pkg/model/msgflow/{msgflow,send}.go` — public producer choreography (`Send`).
+- `pkg/model/activities/{send_task,receive_task}.go` — the two executors.
+- `internal/eventproc/eventhub/waiters/message.go` + `waiters.go` — `MessageWaiter` and its registry wiring.
+- `internal/instance/track.go` — `checkNodeType` reorder (wait-before-register) and `checkFlows` mid-flow registration.
+- `examples/message-send-receive/` — runnable demo.
+
+### 7.3 V-results
+
+V1–V7 all green: `Operation` removed (V1); `SendTask.Exec` publishes (V2); `MessageWaiter` fires + cleans up, `TriggerMessage` wired (V3); `ReceiveTask` parks/captures/binds, node `ProcessEvent` resolves (V4); name-match delivery with typed payload (V5); example exits 0 and the suite is green (V6); `make ci` green, diff-coverage 97.0 % (min 95), `msgflow` imports no internal (V7).
+
+### 7.4 Notable delta vs the draft
+
+The §6 risk "intermediate event nodes" surfaced concretely: a mid-flow `ReceiveTask` reached by the token never registered its event, because `checkNodeType` ran only for a track's initial node (`newTrack`). M5 adds the registration at token-advance (`checkFlows`) and reorders `checkNodeType` to declare `TrackWaitForEvent` before registering (so a broker-buffered message delivered synchronously on subscribe is accepted). Start (no-incoming) nodes are unchanged — they still pre-register via `createTracks`. The `MessageEventDefinition` cloner concern (§6) resolved by using its concrete `CloneEvent` method (the `EventDefCloner` interface is unused in the codebase).
 
 ## 8. References
 
