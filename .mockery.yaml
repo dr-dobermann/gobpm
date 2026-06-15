@@ -9,7 +9,7 @@ packages:
     interfaces:
       NodeDataConsumer:
       NodeDataProducer:
-  github.com/dr-dobermann/gobpm/internal/renv:
+  github.com/dr-dobermann/gobpm/pkg/renv:
     interfaces:
       RuntimeEnvironment:
   github.com/dr-dobermann/gobpm/pkg/eventproc:

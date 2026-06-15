@@ -5,10 +5,10 @@ import (
 	"sync"
 
 	"github.com/dr-dobermann/gobpm/internal/exec"
-	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
+	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
 
 // ParallelGateway represents a BPMN parallel (AND) gateway. Diverging, it

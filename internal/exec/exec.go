@@ -3,8 +3,8 @@ package exec
 import (
 	"context"
 
-	"github.com/dr-dobermann/gobpm/internal/renv"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
 
 // NodeExecutor is an interface for executing single flowNode.
