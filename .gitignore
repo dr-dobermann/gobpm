@@ -36,3 +36,4 @@ examples/parallel-gateway/parallel-gateway
 examples/simple-timer/simple-timer
 examples/timer-event/timer-event
 examples/process-data/process-data
+examples/message-send-receive/message-send-receive

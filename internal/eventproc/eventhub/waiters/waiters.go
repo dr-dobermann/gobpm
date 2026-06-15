@@ -48,6 +48,9 @@ func CreateWaiter(
 	case flow.TriggerTimer:
 		w, err = NewTimeWaiter(eh, ep, eDef, "", rt)
 
+	case flow.TriggerMessage:
+		w, err = NewMessageWaiter(eh, ep, eDef, "", rt)
+
 	default:
 		err = errs.New(
 			errs.M("couldn't find builder for event definition of type %s",
