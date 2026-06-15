@@ -11,6 +11,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/msgflow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
@@ -85,6 +86,12 @@ func (rt *ReceiveTask) Message() *bpmncommon.Message {
 	return rt.message
 }
 
+// ExpectedMessage returns the message the task waits for. Implements
+// msgflow.MessageConsumer.
+func (rt *ReceiveTask) ExpectedMessage() *bpmncommon.Message {
+	return rt.message
+}
+
 // Implementation returns the technology used to receive the message (empty
 // until a receiving technology beyond the broker is wired).
 func (rt *ReceiveTask) Implementation() string {
@@ -140,9 +147,7 @@ func (rt *ReceiveTask) ProcessEvent(
 	_ context.Context,
 	eDef flow.EventDefinition,
 ) error {
-	if items := eDef.GetItemsList(); len(items) != 0 {
-		rt.received = items[0]
-	}
+	rt.received = msgflow.CaptureItem(eDef)
 
 	return nil
 }
@@ -151,7 +156,7 @@ func (rt *ReceiveTask) ProcessEvent(
 // the inherited task.UploadData then pushes it through the output associations)
 // and completes, returning the task's outgoing sequence flows.
 func (rt *ReceiveTask) Exec(
-	_ context.Context,
+	ctx context.Context,
 	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
 	if re == nil {
@@ -161,19 +166,14 @@ func (rt *ReceiveTask) Exec(
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	if rt.received != nil {
-		res := data.MustParameter(rt.received.ID(),
-			data.MustItemAwareElement(rt.received, data.ReadyDataState))
-
-		if err := re.Put(res); err != nil {
-			return nil,
-				errs.New(
-					errs.M("couldn't bind the received message payload"),
-					errs.C(errorClass),
-					errs.E(err),
-					errs.D("receive_task_name", rt.Name()),
-					errs.D("receive_task_id", rt.ID()))
-		}
+	if err := msgflow.Bind(ctx, re, rt.received); err != nil {
+		return nil,
+			errs.New(
+				errs.M("couldn't bind the received message payload"),
+				errs.C(errorClass),
+				errs.E(err),
+				errs.D("receive_task_name", rt.Name()),
+				errs.D("receive_task_id", rt.ID()))
 	}
 
 	return rt.Outgoing(), nil
@@ -183,4 +183,5 @@ var (
 	_ exec.NodeExecutor        = (*ReceiveTask)(nil)
 	_ flow.EventNode           = (*ReceiveTask)(nil)
 	_ eventproc.EventProcessor = (*ReceiveTask)(nil)
+	_ msgflow.MessageConsumer  = (*ReceiveTask)(nil)
 )

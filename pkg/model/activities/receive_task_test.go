@@ -50,6 +50,7 @@ func TestNewReceiveTask(t *testing.T) {
 			require.Equal(t, flow.ReceiveTask, rt.TaskType())
 			require.Equal(t, rt, rt.Node())
 			require.Equal(t, msg, rt.Message())
+			require.Equal(t, msg, rt.ExpectedMessage())
 			require.Empty(t, rt.Implementation())
 			require.False(t, rt.Instantiate())
 			require.Equal(t, flow.IntermediateEventClass, rt.EventClass())
