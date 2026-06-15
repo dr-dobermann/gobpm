@@ -9,6 +9,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/msgflow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 	"github.com/dr-dobermann/gobpm/pkg/set"
@@ -195,8 +196,25 @@ func (e Event) NodeType() flow.NodeType {
 type catchEvent struct {
 	dataOutputs map[string]*data.Parameter
 	Event
+	// received holds the payload item captured from a fired message event
+	// definition, bound into scope on resume (ADR-014 v.1 §2.2). It is
+	// per-instance runtime state, nil until a payload-carrying event fires.
+	received           *data.ItemDefinition
 	outputAssociations []*data.Association
 	parallelMultiple   bool
+}
+
+// ProcessEvent captures the payload carried by a fired event definition, so a
+// catch event can bind it into scope on resume (the consumer side of ADR-014
+// v.1 §2.2). A definition fired without a payload captures nothing. Implements
+// eventproc.EventProcessor for every catch event (StartEvent, IntermediateCatchEvent).
+func (ce *catchEvent) ProcessEvent(
+	_ context.Context,
+	eDef flow.EventDefinition,
+) error {
+	ce.received = msgflow.CaptureItem(eDef)
+
+	return nil
 }
 
 // NewCatchEvent creates a new catchEvent and returns its pointer.

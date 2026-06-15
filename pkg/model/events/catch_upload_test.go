@@ -17,9 +17,14 @@ import (
 // TestCatchEventUploadData covers SRD-007 FR-6: the catch-side producer role
 // is LIVE (its signature satisfies exec.NodeDataProducer — before the frame
 // model it never matched and was dead code) and instantiates the event's
-// outputs in the execution frame. Output ASSOCIATIONS have no binding API
-// yet (message-correlation work, WS-C3), so the association push is an empty
-// loop here.
+// outputs in the execution frame from the STATIC dataOutputs (the path for a
+// payload-less trigger).
+//
+// The WS-C3 runtime-payload gap is closed (SRD-014): a catch event now
+// captures a fired message payload via ProcessEvent (see
+// catchevent_internal_test.go) and an IntermediateCatchEvent binds it into
+// scope on resume. This test still asserts the static path, which remains the
+// behaviour when no payload was captured.
 func TestCatchEventUploadData(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
