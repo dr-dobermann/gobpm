@@ -12,10 +12,12 @@ packages:
   github.com/dr-dobermann/gobpm/internal/renv:
     interfaces:
       RuntimeEnvironment:
+  github.com/dr-dobermann/gobpm/pkg/eventproc:
+    interfaces:
+      EventProducer:
+      EventProcessor:
   github.com/dr-dobermann/gobpm/internal/eventproc:
     interfaces:
-      EventProducer:    
-      EventProcessor:
       EventWaiter:
       EventHub:
   github.com/dr-dobermann/gobpm/pkg/model/data:
