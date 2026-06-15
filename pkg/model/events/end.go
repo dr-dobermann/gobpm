@@ -126,13 +126,13 @@ func (ee *EndEvent) AcceptIncomingFlow(_ *flow.SequenceFlow) error {
 // All events defined for the EndEvent should be thrown out or EndEvent
 // execution failed.
 func (ee *EndEvent) Exec(
-	_ context.Context,
+	ctx context.Context,
 	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
 	ers := []error{}
 
 	for _, ed := range ee.definitions {
-		if err := ee.emitEvent(re, re.EventProducer(), ed); err != nil {
+		if err := ee.emitDefinition(ctx, re, ed); err != nil {
 			ers = append(ers, err)
 		}
 	}

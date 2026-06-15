@@ -554,6 +554,22 @@ func missingRequiredInputs(
 // The data items the definition depends on resolve through the execution
 // environment: the frame's input instances (loaded by LoadData) first, then
 // the container scopes.
+// emitDefinition routes one event definition: a message definition is published
+// to the broker (the producer choreography, ADR-014 v.1 §2.2), any other kind
+// propagates through the internal event bus. Shared by EndEvent and
+// IntermediateThrowEvent.
+func (te *throwEvent) emitDefinition(
+	ctx context.Context,
+	re renv.RuntimeEnvironment,
+	ed flow.EventDefinition,
+) error {
+	if med, ok := ed.(*MessageEventDefinition); ok {
+		return msgflow.Send(ctx, re, med.Message())
+	}
+
+	return te.emitEvent(re, re.EventProducer(), ed)
+}
+
 func (te *throwEvent) emitEvent(
 	re renv.RuntimeEnvironment,
 	eProd eventproc.EventProducer,

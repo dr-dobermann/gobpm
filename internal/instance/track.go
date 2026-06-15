@@ -286,6 +286,14 @@ func (t *track) checkNodeType(node flow.Node) error {
 		return nil
 	}
 
+	// Only a node that can PROCESS a fired event waits for one. A throw event
+	// (EndEvent, IntermediateThrowEvent) is a flow.EventNode but not an
+	// eventproc.EventProcessor — it emits its definitions in Exec and must not
+	// be parked as a waiter for the message it is about to throw.
+	if _, ok := node.(eventproc.EventProcessor); !ok {
+		return nil
+	}
+
 	defs := en.Definitions()
 	if len(defs) == 0 {
 		return nil
