@@ -23,7 +23,7 @@ packages:
       Source:
       PropertyAdder:
       FormalExpression:
-  github.com/dr-dobermann/gobpm/internal/interactor:
+  github.com/dr-dobermann/gobpm/pkg/interactor:
     interfaces:
       Registrator:
   github.com/dr-dobermann/gobpm/pkg/model/flow:

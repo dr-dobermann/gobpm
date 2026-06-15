@@ -3,7 +3,7 @@ package renv
 
 import (
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
-	"github.com/dr-dobermann/gobpm/internal/interactor"
+	"github.com/dr-dobermann/gobpm/pkg/interactor"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	engrenv "github.com/dr-dobermann/gobpm/pkg/renv"
 )
