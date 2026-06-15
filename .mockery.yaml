@@ -5,7 +5,7 @@ filename: "mock_{{.InterfaceName}}.go"
 pkgname: "mock{{.SrcPackageName}}"
 
 packages:
-  github.com/dr-dobermann/gobpm/internal/scope:
+  github.com/dr-dobermann/gobpm/pkg/exec:
     interfaces:
       NodeDataConsumer:
       NodeDataProducer:

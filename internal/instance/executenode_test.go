@@ -8,6 +8,7 @@ import (
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
 	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"github.com/dr-dobermann/gobpm/internal/scope"
+	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
@@ -40,7 +41,7 @@ func (fn *failNode) Exec(
 	return nil, nil
 }
 
-func (fn *failNode) LoadData(_ context.Context, _ *scope.Frame) error {
+func (fn *failNode) LoadData(_ context.Context, _ exec.Frame) error {
 	if fn.failLoad {
 		return fmt.Errorf("load failed by design")
 	}
@@ -48,7 +49,7 @@ func (fn *failNode) LoadData(_ context.Context, _ *scope.Frame) error {
 	return nil
 }
 
-func (fn *failNode) UploadData(_ context.Context, _ *scope.Frame) error {
+func (fn *failNode) UploadData(_ context.Context, _ exec.Frame) error {
 	if fn.failUpload {
 		return fmt.Errorf("upload failed by design")
 	}

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
+	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
@@ -14,7 +15,7 @@ import (
 )
 
 // TestCatchEventUploadData covers SRD-007 FR-6: the catch-side producer role
-// is LIVE (its signature satisfies scope.NodeDataProducer — before the frame
+// is LIVE (its signature satisfies exec.NodeDataProducer — before the frame
 // model it never matched and was dead code) and instantiates the event's
 // outputs in the execution frame. Output ASSOCIATIONS have no binding API
 // yet (message-correlation work, WS-C3), so the association push is an empty
@@ -36,7 +37,7 @@ func TestCatchEventUploadData(t *testing.T) {
 	require.NoError(t, err)
 
 	// the producer role matches (the pre-frame signature never did).
-	var _ scope.NodeDataProducer = se
+	var _ exec.NodeDataProducer = se
 
 	pl, err := scope.New(scope.RootDataPath, nil)
 	require.NoError(t, err)

@@ -44,9 +44,9 @@ import (
 	"sync/atomic"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
-	"github.com/dr-dobermann/gobpm/internal/exec"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
@@ -643,7 +643,7 @@ func (t *track) loadIncomingData(
 	n flow.Node,
 	f *scope.Frame,
 ) error {
-	dc, ok := n.(scope.NodeDataConsumer)
+	dc, ok := n.(exec.NodeDataConsumer)
 	if !ok {
 		return nil
 	}
@@ -658,7 +658,7 @@ func (t *track) uploadOutgoingData(
 	n flow.Node,
 	f *scope.Frame,
 ) error {
-	dp, ok := n.(scope.NodeDataProducer)
+	dp, ok := n.(exec.NodeDataProducer)
 	if !ok {
 		return nil
 	}

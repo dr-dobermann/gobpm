@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/eventproc"
+	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -237,13 +237,13 @@ func (ce catchEvent) IsParallelMultiple() bool {
 	return ce.parallelMultiple
 }
 
-// ------------------ scope.NodeDataProducer interface --------------------------
+// ------------------ exec.NodeDataProducer interface --------------------------
 
 // UploadData instantiates the catchEvent's outputs in the execution frame
 // (per-execution copies of the output definitions, carrying the values the
 // triggering event delivered) and fills all outputAssociations from those
 // instances.
-func (ce *catchEvent) UploadData(ctx context.Context, f *scope.Frame) error {
+func (ce *catchEvent) UploadData(ctx context.Context, f exec.Frame) error {
 	defs := make([]*data.Parameter, 0, len(ce.dataOutputs))
 	for _, def := range ce.dataOutputs {
 		defs = append(defs, def)
@@ -350,12 +350,12 @@ func (te *throwEvent) clone() throwEvent {
 	}
 }
 
-// ---------------- scope.NodeDataConsumer interface ----------------------------
+// ---------------- exec.NodeDataConsumer interface ----------------------------
 
 // LoadData instantiates the throwEvent's inputs and properties in the
 // execution frame and fills the input instances from the incoming data
 // associations.
-func (te *throwEvent) LoadData(ctx context.Context, f *scope.Frame) error {
+func (te *throwEvent) LoadData(ctx context.Context, f exec.Frame) error {
 	defs := make([]*data.Parameter, 0, len(te.dataInputs))
 	for _, def := range te.dataInputs {
 		defs = append(defs, def)
@@ -470,7 +470,7 @@ func (te *throwEvent) LoadData(ctx context.Context, f *scope.Frame) error {
 // whose frame instance is not Ready — the start-gate that never waits for data
 // (ADR-011 v.2 §2.3). Optional / while-executing inputs are skipped.
 func missingRequiredInputs(
-	f *scope.Frame,
+	f exec.Frame,
 	gating map[string]bool,
 	eventName string,
 ) []error {
