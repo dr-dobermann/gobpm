@@ -165,9 +165,13 @@ type track struct {
 }
 
 // record appends a track-state transition to the history, copy-on-write, and
-// publishes it atomically. Called only from this track's goroutine.
+// publishes it atomically. It is called from the track's run goroutine and,
+// via ProcessEvent -> updateState, from a waiter goroutine, so the read of
+// t.steps is guarded by t.m (the same lock checkFlows takes to append a step).
 func (t *track) record(state trackState) {
+	t.m.RLock()
 	node := t.steps[len(t.steps)-1].node
+	t.m.RUnlock()
 
 	old := t.hist.Load()
 
@@ -601,7 +605,13 @@ func (t *track) checkFlows(flows []*flow.SequenceFlow) error {
 		inFlow: flows[nextNode],
 		state:  StepCreated,
 	}
+
+	// Guard the append: checkNodeType below may register a mid-flow event whose
+	// waiter fires synchronously (a broker-buffered message) and reads t.steps
+	// from its own goroutine via ProcessEvent -> updateState -> record.
+	t.m.Lock()
 	t.steps = append(t.steps, &nextStep)
+	t.m.Unlock()
 
 	// The token continues on this track to nextStep's node. newTrack only
 	// classified the track's initial node, so a mid-flow event node (e.g. a
@@ -704,7 +714,11 @@ func (t *track) ProcessEvent(
 		ctx = t.ctx
 	}
 
+	// ProcessEvent runs on a waiter goroutine; guard the t.steps read against
+	// the run goroutine's checkFlows append (same t.m).
+	t.m.RLock()
 	n := t.steps[len(t.steps)-1].node
+	t.m.RUnlock()
 
 	ep, ok := n.(eventproc.EventProcessor)
 	if !ok {

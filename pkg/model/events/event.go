@@ -3,6 +3,7 @@ package events
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/eventproc"
@@ -217,6 +218,25 @@ func (ce *catchEvent) ProcessEvent(
 	return nil
 }
 
+// addMessagePayloadOutput registers a data output for med's message item, so a
+// received payload has an output to land in (and flow through associations).
+// Mirrors the message dataOutput a start event gets via WithMessageTrigger. A
+// MessageEventDefinition always carries a message with an item (NewMessage
+// invariant), so the Must* construction can't fail with valid input.
+func (ce *catchEvent) addMessagePayloadOutput(med *MessageEventDefinition) {
+	item := med.Message().Item()
+
+	ds := data.ReadyDataState
+	if item.Structure() == nil {
+		ds = data.UndefinedSrcState
+	}
+
+	ce.dataOutputs[item.ID()] = data.MustParameter(
+		fmt.Sprintf("message %q(%s) output",
+			med.Message().Name(), med.Message().ID()),
+		data.MustItemAwareElement(item, ds))
+}
+
 // NewCatchEvent creates a new catchEvent and returns its pointer.
 func newCatchEvent(
 	name string,
@@ -276,7 +296,24 @@ func (ce *catchEvent) UploadData(ctx context.Context, f exec.Frame) error {
 
 	outs := map[string]*data.Parameter{}
 	for _, o := range f.Outputs() {
-		outs[o.ItemDefinition().ID()] = o
+		id := o.ItemDefinition().ID()
+
+		// WS-C3 (ADR-014 v.1): a catch event that received a message binds the
+		// runtime payload into the matching output, overriding the static
+		// value, so it commits to scope and flows through the associations. A
+		// catch with no captured payload keeps the static-output path.
+		if ce.received != nil && id == ce.received.ID() {
+			if err := o.ItemDefinition().Structure().
+				Update(ctx, ce.received.Structure().Get(ctx)); err != nil {
+				return errs.New(
+					errs.M("couldn't bind received payload for event %q",
+						ce.Name()),
+					errs.C(errorClass, errs.OperationFailed),
+					errs.E(err))
+			}
+		}
+
+		outs[id] = o
 	}
 
 	ee := []error{}
