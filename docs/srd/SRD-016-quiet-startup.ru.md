@@ -2,7 +2,7 @@
 
 | Поле | Значение |
 |---|---|
-| Статус | Draft |
+| Статус | Принято |
 | Версия | v.1 |
 | Дата | 2026-06-16 |
 | Владелец | Руслан Габитов |
@@ -151,10 +151,34 @@ eng, _ := thresher.New("worker-7", thresher.WithoutStartupConfig())
 
 ## 10. Implementation summary
 
-*Плейсхолдер после приземления — заполняется на финальном аудите файлами, V-результатами и SHA вех.*
+Приземлено на `feat/thresher-quiet-startup` в четыре коммита; `make ci` зелёный
+от начала до конца. Аудит `/check-srd`: **PASS** — FR-1…FR-5 и NFR-1…NFR-3 все
+связаны и покрыты тестами.
+
+### 10.1 Коммиты
+
+| Коммит | Объём |
+|---|---|
+| `6077ab8` | ADR-002 v.2 §4.4.1 — решение о поблочном opt-out (EN + RU) |
+| `4341778` | SRD-016 (этот документ) + RU-twin |
+| `5cea5cb` | M1 — `WithoutBanner()` / `WithoutStartupConfig()` + флаги `thresherConfig` + `logStartupConfig` два защищённых блока + привязанный разделитель + T-2…T-5 |
+| `74d3ba4` | M2 — заметка «Startup logging» в README |
+
+### 10.2 Ключевые файлы
+
+- `pkg/thresher/options.go` — поля `suppressBanner` / `suppressStartupConfig`; опции `WithoutBanner` / `WithoutStartupConfig`.
+- `pkg/thresher/thresher.go` — `logStartupConfig` перестроен в блок баннера и блок конфигурации, `readBuildInfo` теперь внутри ветки баннера, разделитель привязан к `printed`.
+- `pkg/thresher/options_test.go` — хелпер `captureStartup` + T-2…T-5.
+- `README.md` — заметка об opt-out стартового логирования.
+
+### 10.3 V-результаты
+
+- `make ci` зелёный (`CI_EXIT=0`): tidy → lint (0 issues, вкл. fieldalignment) → build → race-тесты (50 pass) → diff-coverage → govulncheck.
+- Затронутые функции на **100%**: `logStartupConfig`, `WithoutBanner`, `WithoutStartupConfig` (≥95 `COVER_MIN`).
+- Smoke `examples/basic-process`: дефолтный старт рендерит баннер + конфигурацию + разделитель, процесс отрабатывает, **exit 0** (FR-4 — дефолтный путь без изменений).
 
 ## Document History
 
 | Версия | Дата | Автор | Изменение |
 |---|---|---|---|
-| v.1 | 2026-06-16 | Руслан Габитов | Draft. Две безаргументные опции `thresher.New` — `WithoutBanner()` / `WithoutStartupConfig()` — приземляющие поблочный opt-out стартового отчёта, решённый в ADR-002 v.2 §4.4.1. Разделитель привязан к «блок напечатался»; подавление обоих ⇒ молчаливый старт. |
+| v.1 | 2026-06-16 | Руслан Габитов | Две безаргументные опции `thresher.New` — `WithoutBanner()` / `WithoutStartupConfig()` — приземляющие поблочный opt-out стартового отчёта, решённый в ADR-002 v.2 §4.4.1. Разделитель привязан к «блок напечатался»; подавление обоих ⇒ молчаливый старт. Приземлено на `feat/thresher-quiet-startup` (M1 `5cea5cb` + M2 `74d3ba4`); `/check-srd` PASS; статус Draft → **Принято**. |

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-16 |
 | Owner | Ruslan Gabitov |
@@ -150,10 +150,34 @@ Captured via the existing `capHandler` (`options_test.go:113`).
 
 ## 10. Implementation summary
 
-*Post-landing placeholder — filled at the final audit with files, V-results, and milestone SHAs.*
+Landed on `feat/thresher-quiet-startup` in four commits; `make ci` green
+end to end. `/check-srd` audit: **PASS** — FR-1…FR-5 and NFR-1…NFR-3 all wired
+and tested.
+
+### 10.1 Commits
+
+| Commit | Scope |
+|---|---|
+| `6077ab8` | ADR-002 v.2 §4.4.1 — the per-block opt-out decision (EN + RU) |
+| `4341778` | SRD-016 (this doc) + RU twin |
+| `5cea5cb` | M1 — `WithoutBanner()` / `WithoutStartupConfig()` + `thresherConfig` flags + `logStartupConfig` two guarded blocks + gated separator + T-2…T-5 |
+| `74d3ba4` | M2 — README "Startup logging" opt-out note |
+
+### 10.2 Key files
+
+- `pkg/thresher/options.go` — `suppressBanner` / `suppressStartupConfig` fields; `WithoutBanner` / `WithoutStartupConfig` options.
+- `pkg/thresher/thresher.go` — `logStartupConfig` restructured into a banner block and a config block, `readBuildInfo` now inside the banner branch, separator gated on `printed`.
+- `pkg/thresher/options_test.go` — `captureStartup` helper + T-2…T-5.
+- `README.md` — startup-logging opt-out note.
+
+### 10.3 V-results
+
+- `make ci` green (`CI_EXIT=0`): tidy → lint (0 issues, fieldalignment incl.) → build → race tests (50 pass) → diff-coverage → govulncheck.
+- Touched functions at **100%**: `logStartupConfig`, `WithoutBanner`, `WithoutStartupConfig` (≥95 `COVER_MIN`).
+- `examples/basic-process` smoke: default startup renders banner + config + separator, process runs, **exit 0** (FR-4 — default path unchanged).
 
 ## Document History
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-16 | Ruslan Gabitov | Draft. Two no-argument `thresher.New` options — `WithoutBanner()` / `WithoutStartupConfig()` — landing the per-block startup-report opt-out decided in ADR-002 v.2 §4.4.1. Separator gated on "a block printed"; both suppressed ⇒ silent startup. |
+| v.1 | 2026-06-16 | Ruslan Gabitov | Two no-argument `thresher.New` options — `WithoutBanner()` / `WithoutStartupConfig()` — landing the per-block startup-report opt-out decided in ADR-002 v.2 §4.4.1. Separator gated on "a block printed"; both suppressed ⇒ silent startup. Landed on `feat/thresher-quiet-startup` (M1 `5cea5cb` + M2 `74d3ba4`); `/check-srd` PASS; status Draft → **Accepted**. |
