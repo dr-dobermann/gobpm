@@ -146,6 +146,28 @@ Decided properties:
   Y" entry path distinct from the plain `StartProcess`: the start node is treated
   as already fired (its outputs are the bound payload), and the token starts on
   the start node's outgoing flow.
+- **Registration mode — auto (default) vs manual (engine note, a deliberate
+  deviation).** BPMN has no switch to disable a message start event's
+  instantiation — a matching message creates an instance, full stop (§13.2 /
+  §13.5.1). gobpm keeps that as the **default** (auto): every instantiating start
+  trigger registers a persistent instance-starter, as above. It additionally
+  offers an **opt-out at registration** (`Thresher.RegisterProcess` with a
+  `WithManualStart` option): a process registered manual-start gets **no**
+  persistent instance-starter, so no message ever spawns an instance of it — it
+  is instantiated **only** via an explicit `StartProcess`. Inside such a manually
+  started instance, its instantiating start nodes are **not** skipped by
+  `createTracks`; they are seeded as **ordinary in-instance catches** and obey the
+  same wait rule as intermediate catch events (a `StartEvent` embeds `catchEvent`,
+  so it already is an `EventProcessor` the track parks and registers a single-shot
+  waiter for). The visible semantic difference: in auto mode the instance exists
+  *because* the message arrived; in manual mode the instance exists *before* the
+  message and then waits for it. This is purely an **engine affordance** — for
+  tests (avoiding an instance-start storm from a shared broker) and for
+  back-pressure control — and it never changes the conformant default; it is the
+  toggle that also disambiguates `StartProcess` on a message-start process
+  (auto = born-from-event only; manual = `StartProcess`-driven, start-as-catch).
+  It is trigger-agnostic (covers a future timer start and the instantiate
+  `ReceiveTask` the same way).
 
 ### 2.3 Correlation, phased
 

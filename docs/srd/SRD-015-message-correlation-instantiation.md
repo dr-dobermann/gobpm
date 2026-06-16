@@ -59,6 +59,7 @@ ADR-015 decided the model; without it gobpm cannot start a process from a messag
 | FR-6 | Resolution: an incoming message derives its key and routes to the **existing** instance whose receiver waits on that `(name, key)` if one exists; otherwise, if an instantiating start trigger matches, a **new** instance is created; otherwise it is held (bounded, pull-on-subscribe — ADR-015 §2.5). Subsequent start triggers sharing the key join the existing instance (no duplicate). |
 | FR-7 | Builders/options for the correlation structs and a **process-level** `CorrelationKey` declaration that a message start event / receiver references (Conversation-less, §4.5); no `internal/*` import from `pkg/model`. |
 | FR-8 | A runnable example (own module): process A publishes a message that instantiates/routes to process B by correlation key; exits 0, proving inter-instance correlation. |
+| FR-9 | `Thresher.RegisterProcess` accepts options; `WithManualStart()` registers a process **manual-start**: no persistent instance-starter is registered for it (no message spawns an instance — opt-out of auto-instantiation, for testing / back-pressure, ADR-015 §2.2 engine note). Such a process is instantiated **only** via `StartProcess`, and inside that instance its instantiating start nodes are **not** skipped by `createTracks` — they are seeded as ordinary in-instance catches (the intermediate-node rule). Default (no option) is unchanged: auto-instantiation as FR-2/FR-3. The skip in FR-3 is therefore **mode-driven** (auto skips instantiating starts; manual seeds them). |
 
 ### 3.2 Non-functional
 
@@ -115,7 +116,9 @@ the whole waiter family, not a message-only slice.
 
 ```mermaid
 flowchart LR
-    RP["RegisterProcess(def)"] --> SC["scan snapshot: instantiating start triggers\n(message StartEvent / instantiate ReceiveTask, no incoming)"]
+    RP["RegisterProcess(def, opts...)"] --> MS{"WithManualStart?"}
+    MS -->|"yes (manual)"| SK["no starter registered\n(StartProcess-only)"]
+    MS -->|"no (auto, default)"| SC["scan snapshot: instantiating start triggers\n(message StartEvent / instantiate ReceiveTask, no incoming)"]
     SC --> REG["register a persistent instance-starter per trigger on the engine EventHub"]
     B[("MessageBroker")] -->|"message"| W["persistent waiter"]
     W -->|"ProcessEvent"| ST["instanceStarter"]
@@ -124,11 +127,11 @@ flowchart LR
     UP["UnregisterProcess(def)"] --> RM["UnregisterEvent -> RemoveWaiter (teardown)"]
 ```
 
-A focused collaborator owned by the `Thresher` (a struct field, built in `New`), wired into `RegisterProcess`/`UnregisterProcess`. The starter implements `eventproc.EventProcessor`; its `ProcessEvent` calls a new `launchInstanceFromEvent` (sibling of `launchInstance`). Never touches `Instance`.
+A focused collaborator owned by the `Thresher` (a struct field, built in `New`), wired into `RegisterProcess`/`UnregisterProcess`. The starter implements `eventproc.EventProcessor`; its `ProcessEvent` calls a new `launchInstanceFromEvent` (sibling of `launchInstance`). Never touches `Instance`. The scan runs only in **auto** mode (the default); a `WithManualStart`-registered process registers **no** starter (FR-9, ADR-015 §2.2 engine note) — its lifecycle stays `StartProcess`-only. Because `RegisterProcess` may be called before `Run` (the hub starts in `Run`), starters are registered on the hub at the later of `RegisterProcess`/`Run`, and torn down at `UnregisterProcess`.
 
-### 4.4 Born-from-event instantiation
+### 4.4 Born-from-event instantiation (mode-driven `createTracks` skip)
 
-`createTracks` gains a predicate to **skip** a no-incoming node that is an instantiating start trigger (so it does not auto-park). A new instance-creation entry (`instance.NewFromEvent`, or a parameter to `New`) builds the instance with that start node **already fired**: its payload is bound as its output (reuse the `catchEvent` dataOutput path / `msgflow.Bind`), and the initial track starts on the start node's **outgoing** flow(s) — analogous to fork seeding (`instance.go:396`) — bypassing `track.checkNodeType` parking. A `none` start event is unaffected (still `StartProcess`).
+`createTracks` gains a predicate to **skip** a no-incoming node that is an instantiating start trigger **so long as the instance is born from an event (auto mode)**: such a node does not auto-park because the starter pre-fires it. A new instance-creation entry (`instance.NewFromEvent`, or a parameter to `New`) builds the instance with that start node **already fired**: its payload is bound as its output (reuse the `catchEvent` dataOutput path / `msgflow.Bind`), and the initial track starts on the start node's **outgoing** flow(s) — analogous to fork seeding (`instance.go:396`) — bypassing `track.checkNodeType` parking. In **manual** mode (FR-9) the skip does **not** apply: the instantiating start node is seeded as an ordinary in-instance catch (`StartEvent` embeds `catchEvent`, so `track.checkNodeType` parks it and registers a single-shot waiter — `event.go:212`), and the instance waits for its message after an explicit `StartProcess`. A `none` start event is unaffected in either mode (still `StartProcess`).
 
 ### 4.5 Key derivation & Conversation-less key declaration
 
@@ -146,22 +149,22 @@ flowchart LR
 ### 4.6 Milestones (each = one commit, `make ci` green)
 
 - **M1 — single-shot/persistent waiter flag (hub-owned removal, unified).** Add the constructor flag to the existing message waiter and **move removal from the waiter to the EventHub** via a new `EventHub.WaiterFired(eDefID)` (the hub removes a waiter only when it reports a terminal state — single-shot after one fire, never a persistent one — ADR-006 v.1 §2.5) + `NewMessageWaiter`/`CreateWaiter` wiring. **Unify all waiters now**: migrate the timer waiter off its `RemoveWaiter` self-call to `WaiterFired` too, so no waiter self-removes. Unit tests (single-shot removed by the hub as before; persistent fires repeatedly, retained; timer still removed after its last cycle, now via the hub; `WaiterFired` reaps terminal / keeps running).
-- **M2 — instance-starter + manager + `createTracks` skip.** Thresher collaborator scans at `RegisterProcess`, registers starters, `UnregisterProcess` tears down; `createTracks` skips instantiating starts. Tests (registration wires/teardowns subscriptions).
-- **M3 — born-from-event instantiation.** `instance.NewFromEvent` + `Thresher.launchInstanceFromEvent`; a message start event spawns an instance that runs from the start node with the payload. Instance integration test (publish → new instance completes, payload in scope).
+- **M2 — instance-starter + manager + registration option.** `EventHub` gains a persistent registration path (`RegisterPersistentEvent` + `waiters.CreatePersistentWaiter`); Thresher collaborator scans at `RegisterProcess` (auto mode only), registers persistent starters at the later of `RegisterProcess`/`Run`, `UnregisterProcess` tears down. `RegisterProcess(p, ...RegisterOption)` + `WithManualStart()` (FR-9) suppresses the scan. Tests (registration wires/teardowns subscriptions; manual-start registers none). The actual launch (`launchInstanceFromEvent`) is a one-commit placeholder filled in M3.
+- **M3 — born-from-event instantiation + mode-driven `createTracks` skip.** `instance.NewFromEvent` + `Thresher.launchInstanceFromEvent`; a message start event spawns an instance that runs from the start node with the payload. `createTracks` skips instantiating starts **for born-from-event (auto) instances** and seeds them as catches otherwise (FR-9). Instance integration tests (auto: publish → new instance completes, payload in scope; manual: `StartProcess` → instance waits at the start node, then publish → completes).
 - **M4 — instantiate `ReceiveTask`.** `WithInstantiate` option; a no-incoming instantiate receiver instantiates like a message start event. Tests.
 - **M5 — key-based correlation.** Derivation helper + payload→`Source` adapter; correlation builders + process-level key declaration; `msgflow.Send` sets `Envelope.CorrelationKey`; resolution routes existing-vs-new by key (incl. "subsequent start joins existing"). Tests (two instances disambiguated by key).
 - **M6 — example + DoD.** Inter-instance "A starts/routes to B by key" example (own module); smoke exit 0; coverage gate.
 
 ### 4.7 Tests
 
-Persistent waiter (multi-fire, no self-remove, teardown); start-subscription manager (register/unregister); born-from-event instantiation (instance + thresher level — publish a message-start message, assert a new instance is created and completes with the payload bound, mirroring `internal/instance/message_flow_test.go` + `pkg/thresher/thresher_process_test.go`); instantiate `ReceiveTask`; key derivation (composite key from a payload; partial key invalid); resolution (existing-vs-new; two parallel instances correlated by distinct keys; subsequent start joins existing); the example as smoke.
+Persistent waiter (multi-fire, no self-remove, teardown); start-subscription manager (register/unregister; `WithManualStart` registers no starter); born-from-event instantiation (instance + thresher level — publish a message-start message, assert a new instance is created and completes with the payload bound, mirroring `internal/instance/message_flow_test.go` + `pkg/thresher/thresher_process_test.go`); manual-start mode (a `WithManualStart` process is not auto-instantiated by a published message, and a `StartProcess`-launched instance waits at its message-start node then completes on delivery); instantiate `ReceiveTask`; key derivation (composite key from a payload; partial key invalid); resolution (existing-vs-new; two parallel instances correlated by distinct keys; subsequent start joins existing); the example as smoke.
 
 ## 5. Verification (Definition of Done)
 
 | # | Check | Expectation |
 |---|---|---|
 | V1 | Persistent waiter fires repeatedly without self-removing; one-shot in-instance waiter unchanged; clean teardown, -race (FR-1, NFR-2). | green |
-| V2 | `RegisterProcess` registers instance-starters for instantiating start triggers; `UnregisterProcess` removes them; `createTracks` no longer parks them (FR-2/3). | green |
+| V2 | `RegisterProcess` (auto, default) registers instance-starters for instantiating start triggers; `UnregisterProcess` removes them; `createTracks` no longer parks them in a born-from-event instance. `WithManualStart` registers no starter and the start node is seeded as a catch in a `StartProcess`-launched instance (FR-2/3/9). | green |
 | V3 | A published message-start message creates a new instance, born with the start node fired and the payload bound; it runs to completion (FR-3). | green |
 | V4 | An instantiate `ReceiveTask` (WithInstantiate, no incoming) instantiates on a matching message (FR-4). | green |
 | V5 | A composite `CorrelationKey` is derived from the payload (all properties required); `Envelope.CorrelationKey` is set by the producer (FR-5/7). | green |
