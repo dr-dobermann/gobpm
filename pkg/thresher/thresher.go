@@ -519,24 +519,50 @@ func (t *Thresher) registerAllStarters() error {
 }
 
 // launchInstanceFromEvent creates a new instance born from an event-triggered
-// start (the persistent instance-starter fired) — the start node is treated as
-// already fired and the message payload is bound onto it (ADR-015 §2.2).
-//
-// SRD-015 M3 implements the born-from-event instance construction; in M2 this is
-// a placeholder so the instance-starter wiring is complete and testable. M2
-// tests assert subscription register/teardown only and never publish a message,
-// so this path is not exercised until M3 replaces it.
+// start (the persistent instance-starter fired): the start node is treated as
+// already fired and the message payload carried by eDef is bound into the new
+// instance, which then runs from the start node's outgoing flow(s) (ADR-015
+// §2.2, SRD-015 §4.4). It mirrors launchInstance but uses instance.NewFromEvent.
 func (t *Thresher) launchInstanceFromEvent(
 	_ context.Context,
 	s *snapshot.Snapshot,
-	_ flow.Node,
+	startNode flow.Node,
 	eDef flow.EventDefinition,
 ) error {
-	return errs.New(
-		errs.M("event-triggered instantiation is implemented in SRD-015 M3"),
-		errs.C(errorClass, errs.OperationFailed),
-		errs.D("process_id", s.ProcessID),
-		errs.D("event_definition_id", eDef.ID()))
+	inst, err := instance.NewFromEvent(
+		s, scope.EmptyDataPath, &t.cfg, t, nil, startNode.ID(), eDef)
+	if err != nil {
+		return errs.New(
+			errs.M("couldn't create an event-born Instance for process %q",
+				s.ProcessID),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.D("event_definition_id", eDef.ID()),
+			errs.E(err))
+	}
+
+	// The instance owns this context for its whole lifetime; cancel is retained
+	// in instanceReg.stop for later teardown (see launchInstance for why it is
+	// not deferred).
+	ctx, cancel := context.WithCancel(t.ctx)
+	if err := inst.Run(ctx); err != nil {
+		cancel()
+
+		return errs.New(
+			errs.M("event-born instance %q of process %q failed to run",
+				inst.ID(), s.ProcessID),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	t.instances[inst.ID()] = instanceReg{
+		stop: cancel,
+		inst: inst,
+	}
+
+	return nil
 }
 
 // StartProcess runs process with processId without any event even if

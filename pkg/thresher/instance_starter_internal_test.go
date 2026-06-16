@@ -208,6 +208,29 @@ func TestStarterLifecycle(t *testing.T) {
 	})
 }
 
+// TestLaunchInstanceFromEventError covers launchInstanceFromEvent's build-error
+// wrap: a start node absent from the snapshot makes instance.NewFromEvent fail.
+func TestLaunchInstanceFromEventError(t *testing.T) {
+	th, err := New("launch-err")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, th.Run(ctx))
+
+	s, err := snapshot.New(noneStartProcess(t, "p-launch"))
+	require.NoError(t, err)
+
+	// a start node id that is not present in the snapshot → NewFromEvent fails.
+	bogus, err := events.NewStartEvent("bogus")
+	require.NoError(t, err)
+
+	med := events.MustMessageEventDefinition(
+		bpmncommon.MustMessage("m", data.MustItemDefinition(nil)), nil)
+
+	require.Error(t, th.launchInstanceFromEvent(ctx, s, bogus, med))
+}
+
 // TestRegisterStartersError covers the registerStarters error path: a hub that
 // rejects a persistent registration surfaces a wrapped error.
 func TestRegisterStartersError(t *testing.T) {
@@ -288,21 +311,3 @@ func TestRunRegisterStartersError(t *testing.T) {
 	require.Error(t, th.Run(ctx))
 }
 
-// TestInstanceStarterProcessEventM2Placeholder documents the M2 placeholder
-// launch: the starter's ProcessEvent delegates to launchInstanceFromEvent,
-// which SRD-015 M3 implements; in M2 it returns a typed error. (No persistent
-// waiter fires this path in the other M2 tests.)
-func TestInstanceStarterProcessEventM2Placeholder(t *testing.T) {
-	th, err := New("placeholder")
-	require.NoError(t, err)
-
-	s, err := snapshot.New(msgStartProcess(t, "p-ph", "order placed"))
-	require.NoError(t, err)
-
-	starters := scanInstantiatingStarts(s, th)
-	require.Len(t, starters, 1)
-
-	err = starters[0].ProcessEvent(context.Background(), starters[0].eDef)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "SRD-015 M3")
-}
