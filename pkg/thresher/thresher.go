@@ -164,36 +164,53 @@ func New(id string, opts ...Option) (*Thresher, error) {
 
 // logStartupConfig prints the engine banner, build metadata and every resolved
 // engine-level extension on its own INFO line, so the full wiring is readable at
-// startup instead of crammed into one dense record (ADR-002 §4.4.1).
+// startup instead of crammed into one dense record (ADR-002 v.2 §4.4.1). The
+// banner and the configuration dump are each suppressible (WithoutBanner /
+// WithoutStartupConfig); the closing separator prints only when a block did.
 func (t *Thresher) logStartupConfig() {
 	log := t.cfg.logger
-	bi := readBuildInfo()
+	printed := false
 
-	for line := range strings.SplitSeq(banner, "\n") {
-		log.Info(line)
+	if !t.cfg.suppressBanner {
+		bi := readBuildInfo()
+
+		for line := range strings.SplitSeq(banner, "\n") {
+			log.Info(line)
+		}
+
+		log.Info("GoBPM — BPMN v2 process engine")
+		log.Info(fmt.Sprintf("version:     %s", bi.version))
+		log.Info(fmt.Sprintf("last commit: %s (%s)", bi.shortRevision(), bi.revTime))
+
+		printed = true
 	}
 
-	log.Info("GoBPM — BPMN v2 process engine")
-	log.Info(fmt.Sprintf("version:     %s", bi.version))
-	log.Info(fmt.Sprintf("last commit: %s (%s)", bi.shortRevision(), bi.revTime))
-	log.Info(fmt.Sprintf("thresher id: %s", t.id))
+	if !t.cfg.suppressStartupConfig {
+		log.Info(fmt.Sprintf("thresher id: %s", t.id))
 
-	module := func(name string, impl any) {
-		log.Info(fmt.Sprintf("  %-22s %T", name+":", impl))
+		module := func(name string, impl any) {
+			log.Info(fmt.Sprintf("  %-22s %T", name+":", impl))
+		}
+
+		log.Info("configuration:")
+		module("repository", t.cfg.repository)
+		module("logger", t.cfg.logger)
+		module("tracer", t.cfg.tracer)
+		module("metricsRecorder", t.cfg.metrics)
+		module("clock", t.cfg.clock)
+		module("messageBroker", t.cfg.msgBroker)
+		module("expressionEngine", t.cfg.exprEngine)
+		module("authorizationProvider", t.cfg.authz)
+		module("workerDispatcher", t.cfg.dispatcher)
+
+		printed = true
 	}
 
-	log.Info("configuration:")
-	module("repository", t.cfg.repository)
-	module("logger", t.cfg.logger)
-	module("tracer", t.cfg.tracer)
-	module("metricsRecorder", t.cfg.metrics)
-	module("clock", t.cfg.clock)
-	module("messageBroker", t.cfg.msgBroker)
-	module("expressionEngine", t.cfg.exprEngine)
-	module("authorizationProvider", t.cfg.authz)
-	module("workerDispatcher", t.cfg.dispatcher)
-
-	log.Info(separator)
+	// The separator closes the report only when a block printed; suppressing
+	// both blocks yields a fully silent startup (ADR-002 v.2 §4.4.1).
+	if printed {
+		log.Info(separator)
+	}
 }
 
 // State returns current state of the Threasher.
