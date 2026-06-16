@@ -71,6 +71,14 @@ type EventHub interface {
 	// Takes the eventDefinition ID (not the waiter) for the same reflect-race
 	// reason as RemoveWaiter.
 	WaiterFired(eDefID string) error
+
+	// RegisterPersistentEvent registers a persistent (never single-shot)
+	// subscription for an event-triggered instance-starter (SRD-015): the
+	// waiter fires for every matching message and is retained until it is
+	// unregistered (UnregisterEvent) or stopped, rather than being removed
+	// after the first fire like the single-shot in-instance receiver
+	// RegisterEvent builds. Only message triggers are accepted.
+	RegisterPersistentEvent(ep EventProcessor, eDef flow.EventDefinition) error
 }
 
 // EventWaiter represents an event waiter interface.

@@ -43,7 +43,6 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub"
 	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
-	"github.com/dr-dobermann/gobpm/internal/runner"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -108,6 +107,7 @@ type Thresher struct {
 	eventHub  eventproc.EventHub
 	snapshots map[string]*snapshot.Snapshot
 	instances map[string]instanceReg
+	starters  map[string][]*instanceStarter
 	id        string
 	m         sync.Mutex
 	state     State
@@ -141,6 +141,7 @@ func New(id string, opts ...Option) (*Thresher, error) {
 		state:     NotStarted,
 		snapshots: map[string]*snapshot.Snapshot{},
 		instances: map[string]instanceReg{},
+		starters:  map[string][]*instanceStarter{},
 	}
 
 	// The EventHub receives the engine's resolved runtime (&t.cfg implements
@@ -281,6 +282,16 @@ func (t *Thresher) Run(ctx context.Context) error {
 			errs.E(err))
 	}
 
+	// Register the persistent instance-starters for processes registered before
+	// Run (the hub only accepts registrations once Started; SRD-015 FR-2).
+	// Processes registered after Run wire their starters in RegisterProcess.
+	if err := t.registerAllStarters(); err != nil {
+		return errs.New(
+			errs.M("couldn't register instance-starters at startup"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
 	return nil
 }
 
@@ -360,14 +371,33 @@ func (t *Thresher) PropagateEvent(
 
 // --------------- exec.Runner interface ---------------------------------------
 
-// RegisterProcess registers a process directly, creating snapshot internally
+// RegisterProcess registers a process directly, creating its snapshot
+// internally. By default the process is registered for auto-instantiation: a
+// persistent instance-starter is registered for each instantiating start
+// trigger (a message StartEvent with no incoming flow), so a matching message
+// spawns a new instance. WithManualStart (SRD-015 FR-9) opts out: no starter is
+// registered and the process is instantiated only via StartProcess.
+//
+// Re-registering an already-registered process is idempotent (the first
+// registration wins).
 func (t *Thresher) RegisterProcess(
 	p *process.Process,
+	opts ...RegisterOption,
 ) error {
 	if p == nil {
 		return errs.New(
 			errs.M("empty process"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	var rc registerConfig
+	for _, o := range opts {
+		if err := o(&rc); err != nil {
+			return errs.New(
+				errs.M("invalid register option"),
+				errs.C(errorClass, errs.InvalidParameter),
+				errs.E(err))
+		}
 	}
 
 	// Create snapshot from process
@@ -379,14 +409,134 @@ func (t *Thresher) RegisterProcess(
 			errs.E(err))
 	}
 
-	t.m.Lock()
-	defer t.m.Unlock()
+	// Auto mode (default) registers a persistent instance-starter per
+	// instantiating start trigger; manual-start (FR-9) registers none.
+	var starters []*instanceStarter
+	if !rc.manualStart {
+		starters = scanInstantiatingStarts(s, t)
+	}
 
-	if _, ok := t.snapshots[s.ProcessID]; !ok {
-		t.snapshots[s.ProcessID] = s
+	t.m.Lock()
+	if _, ok := t.snapshots[s.ProcessID]; ok {
+		// Already registered — idempotent, keep the first registration.
+		t.m.Unlock()
+
+		return nil
+	}
+
+	t.snapshots[s.ProcessID] = s
+	t.starters[s.ProcessID] = starters
+	started := t.state == Started
+	t.m.Unlock()
+
+	// Register the starters on the EventHub OUTSIDE t.m: the hub path is
+	// independent of t.m, and holding the engine lock across an engine-subsystem
+	// call is the deadlock class FIX-002 RC2 warns about. Before Run the hub
+	// isn't started yet, so registration is deferred to Run.
+	if started {
+		return t.registerStarters(starters)
 	}
 
 	return nil
+}
+
+// UnregisterProcess removes a registered process: it tears down every
+// persistent instance-starter subscription registered for it and drops its
+// snapshot. It is the teardown counterpart of RegisterProcess (SRD-015 FR-2).
+// Running instances of the process are unaffected.
+func (t *Thresher) UnregisterProcess(processID string) error {
+	processID = strings.TrimSpace(processID)
+	if processID == "" {
+		return errs.New(
+			errs.M("empty process id"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	t.m.Lock()
+	_, ok := t.snapshots[processID]
+	starters := t.starters[processID]
+	started := t.state == Started
+	if ok {
+		delete(t.snapshots, processID)
+		delete(t.starters, processID)
+	}
+	t.m.Unlock()
+
+	if !ok {
+		return errs.New(
+			errs.M("process %q isn't registered", processID),
+			errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	// Tear down the hub subscriptions OUTSIDE t.m (same reason as
+	// RegisterProcess). Starters are only on the hub once the engine is Started;
+	// before Run they were never registered, so nothing to unregister.
+	if started {
+		for _, st := range starters {
+			if err := t.eventHub.UnregisterEvent(st, st.eDef.ID()); err != nil {
+				return errs.New(
+					errs.M("couldn't unregister instance-starter subscription"),
+					errs.C(errorClass, errs.OperationFailed),
+					errs.D("process_id", processID),
+					errs.D("event_definition_id", st.eDef.ID()),
+					errs.E(err))
+			}
+		}
+	}
+
+	return nil
+}
+
+// registerStarters registers each instance-starter as a persistent subscription
+// on the engine EventHub. Called at the later of RegisterProcess (auto mode,
+// engine already Started) and Run (for processes registered before Run).
+func (t *Thresher) registerStarters(starters []*instanceStarter) error {
+	for _, st := range starters {
+		if err := t.eventHub.RegisterPersistentEvent(st, st.eDef); err != nil {
+			return errs.New(
+				errs.M("couldn't register instance-starter subscription"),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.D("process_id", st.snapshot.ProcessID),
+				errs.D("event_definition_id", st.eDef.ID()),
+				errs.E(err))
+		}
+	}
+
+	return nil
+}
+
+// registerAllStarters registers the instance-starters of every process
+// registered before Run (the hub only accepts registrations once Started).
+func (t *Thresher) registerAllStarters() error {
+	t.m.Lock()
+	all := make([]*instanceStarter, 0, len(t.starters))
+	for _, sts := range t.starters {
+		all = append(all, sts...)
+	}
+	t.m.Unlock()
+
+	return t.registerStarters(all)
+}
+
+// launchInstanceFromEvent creates a new instance born from an event-triggered
+// start (the persistent instance-starter fired) — the start node is treated as
+// already fired and the message payload is bound onto it (ADR-015 §2.2).
+//
+// SRD-015 M3 implements the born-from-event instance construction; in M2 this is
+// a placeholder so the instance-starter wiring is complete and testable. M2
+// tests assert subscription register/teardown only and never publish a message,
+// so this path is not exercised until M3 replaces it.
+func (t *Thresher) launchInstanceFromEvent(
+	_ context.Context,
+	s *snapshot.Snapshot,
+	_ flow.Node,
+	eDef flow.EventDefinition,
+) error {
+	return errs.New(
+		errs.M("event-triggered instantiation is implemented in SRD-015 M3"),
+		errs.C(errorClass, errs.OperationFailed),
+		errs.D("process_id", s.ProcessID),
+		errs.D("event_definition_id", eDef.ID()))
 }
 
 // StartProcess runs process with processId without any event even if
@@ -458,7 +608,4 @@ func (t *Thresher) launchInstance(s *snapshot.Snapshot) error {
 // =============================================================================
 // Interface implementation check
 
-var (
-	_ eventproc.EventProducer = (*Thresher)(nil)
-	_ runner.ProcessRunner    = (*Thresher)(nil)
-)
+var _ eventproc.EventProducer = (*Thresher)(nil)

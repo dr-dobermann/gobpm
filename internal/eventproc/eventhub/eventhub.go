@@ -114,13 +114,59 @@ func (eh *EventHub) RegisterEvent(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	// The lookup, create, start and insert run under ONE critical section so
-	// two concurrent registrations of the same eDef.ID() can't both miss the
-	// existence check and both create a waiter — the second insert would
-	// orphan the first waiter and its serving goroutine (audit 1.5 /
-	// FIX-003 C). CreateWaiter and AddEventProcessor never re-enter eh.m, and
-	// Service() only spawns a detached goroutine that touches eh.m no sooner
-	// than its first fire, so holding eh.m across them is safe.
+	return eh.registerWaiter(ep, eDef, waiters.CreateWaiter)
+}
+
+// RegisterPersistentEvent registers a persistent instance-starter subscription
+// (SRD-015): the waiter built by waiters.CreatePersistentWaiter fires for every
+// matching message and is retained until UnregisterEvent/Stop, unlike the
+// single-shot in-instance receiver RegisterEvent builds. Only message triggers
+// are accepted (CreatePersistentWaiter enforces it).
+func (eh *EventHub) RegisterPersistentEvent(
+	ep eventproc.EventProcessor,
+	eDef flow.EventDefinition,
+) error {
+	if !eh.started {
+		return errs.New(
+			errs.M("eventHub isn't started"),
+			errs.C(errorClass, errs.InvalidState))
+	}
+
+	if ep == nil {
+		return errs.New(
+			errs.M("empty event processor isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	return eh.registerWaiter(ep, eDef, waiters.CreatePersistentWaiter)
+}
+
+// waiterBuilder builds the waiter a registration installs — either the
+// single-shot waiters.CreateWaiter or the persistent
+// waiters.CreatePersistentWaiter. Extracting it lets RegisterEvent and
+// RegisterPersistentEvent share the one critical section below.
+type waiterBuilder func(
+	eventproc.EventHub,
+	eventproc.EventProcessor,
+	flow.EventDefinition,
+	renv.EngineRuntime,
+) (eventproc.EventWaiter, error)
+
+// registerWaiter is the shared lookup→build→start→insert path for both
+// RegisterEvent and RegisterPersistentEvent.
+//
+// The lookup, create, start and insert run under ONE critical section so
+// two concurrent registrations of the same eDef.ID() can't both miss the
+// existence check and both create a waiter — the second insert would
+// orphan the first waiter and its serving goroutine (audit 1.5 /
+// FIX-003 C). The build func and AddEventProcessor never re-enter eh.m, and
+// Service() only spawns a detached goroutine that touches eh.m no sooner
+// than its first fire, so holding eh.m across them is safe.
+func (eh *EventHub) registerWaiter(
+	ep eventproc.EventProcessor,
+	eDef flow.EventDefinition,
+	build waiterBuilder,
+) error {
 	eh.m.Lock()
 	defer eh.m.Unlock()
 
@@ -138,7 +184,7 @@ func (eh *EventHub) RegisterEvent(
 		return nil
 	}
 
-	w, err := waiters.CreateWaiter(eh, ep, eDef, eh.rt)
+	w, err := build(eh, ep, eDef, eh.rt)
 	if err != nil {
 		return errs.New(
 			errs.M("eventWaiter building failed"),

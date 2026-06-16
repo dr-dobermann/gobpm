@@ -241,6 +241,37 @@ func TestMessageWaiterProcessEventError(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+// TestCreatePersistentWaiter covers the instance-starter builder (SRD-015 M2):
+// a message trigger yields a persistent (Ready) waiter; a non-message trigger
+// and nil dependencies are rejected.
+func TestCreatePersistentWaiter(t *testing.T) {
+	ep := mockeventproc.NewMockEventProcessor(t)
+	hub := mockeventproc.NewMockEventHub(t)
+
+	w, err := waiters.CreatePersistentWaiter(hub, ep, msgEventDef(t),
+		enginert.Default())
+	require.NoError(t, err)
+	require.Equal(t, eventproc.WSReady, w.State())
+	require.NotEmpty(t, w.ID())
+
+	// non-message trigger rejected.
+	_, err = waiters.CreatePersistentWaiter(hub, ep,
+		events.MustSignalEventDefinition(&events.Signal{}), enginert.Default())
+	require.Error(t, err)
+
+	// nil dependencies rejected.
+	_, err = waiters.CreatePersistentWaiter(nil, ep, msgEventDef(t),
+		enginert.Default())
+	require.Error(t, err)
+
+	_, err = waiters.CreatePersistentWaiter(hub, nil, msgEventDef(t),
+		enginert.Default())
+	require.Error(t, err)
+
+	_, err = waiters.CreatePersistentWaiter(hub, ep, nil, enginert.Default())
+	require.Error(t, err)
+}
+
 func TestMessageWaiterStop(t *testing.T) {
 	ep := mockeventproc.NewMockEventProcessor(t)
 	hub := mockeventproc.NewMockEventHub(t)
