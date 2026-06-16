@@ -84,6 +84,14 @@ Correlation produces the routing key; the engine then either resumes a parked
 receiver, creates a new instance, or holds the message. This single model unifies
 in-instance waiting (ADR-014) and instantiation (this ADR).
 
+**Create-or-route is atomic per key.** Two messages arriving for the *same*
+not-yet-existing key must not each spawn an instance — resolution per
+`(name, key)` is **single-flight**: the first creates the instance, concurrent
+ones route to it. Likewise a subsequent start trigger that shares a key with an
+already-created instance **joins** that instance rather than creating a second
+(BPMN §13.5.1). The decision "new vs existing" and the act of creating must
+therefore be one atomic step keyed by the correlation key, not a check-then-act.
+
 ### 2.2 Event-triggered instantiation: a definition-level instance-starter
 
 A start trigger is **not** a parked instance. When a process is **registered**
@@ -120,11 +128,16 @@ Decided properties:
   `Instance` responsibilities the 2026-06-11 audit flagged. Extracting the
   collaborator to its own package later is allowed if it grows (start hosted-in-
   Thresher; YAGNI).
-- **Subscription lifecycle is the inverse of an in-instance waiter.** An in-
-  instance `MessageWaiter` is **one-shot** (it unregisters after the single
-  resume). An instance-starter subscription is **long-lived**: every matching
-  message spawns *another* instance, so it persists for the lifetime of the
-  process registration and must not self-remove. `UnregisterProcess` removes it.
+- **Subscription lifecycle: a single-shot/persistent flag, removal owned by the
+  EventHub.** The starter reuses the **existing** message waiter with a
+  **single-shot vs persistent flag** — not a new waiter type. The waiter
+  **never removes itself**; the **EventHub is the sole remover**
+  ([ADR-006 v.1 §2.5](ADR-006-events-and-subscriptions.md)). A **single-shot**
+  waiter (the in-instance receiver) is removed by the hub after it fires once; a
+  **persistent** waiter (the instance-starter) fires for *every* matching message
+  and is retained until `UnregisterProcess` (→ the hub unregisters it). This both
+  fixes the current waiter self-removal and gives instantiation its long-lived
+  subscription with no new lifecycle machinery.
 - **`createTracks` stops seeding instantiating start events.** A start event with
   an instantiating trigger no longer becomes an eager parked initial track; the
   instance is born from the starter when the trigger fires, with that start node
@@ -161,6 +174,20 @@ payload. gobpm phases it:
 
 The `Envelope.CorrelationKey` field (already present) carries the derived key, so
 adding derivation does not reshape the producer/consumer seam (ADR-014 §2.2).
+
+**Where correlation keys are declared (engine note — a deliberate,
+standard-grounded deviation).** In BPMN a `CorrelationKey` belongs to a
+`Conversation` (§8.4.2). gobpm keeps `Conversation` **out of scope** (§2.6, a
+logical grouping with no execution effect for the Process-Execution conformance
+target), so a `CorrelationKey` is declared at the **process level** instead, and
+a message start event / receiver references the key it correlates on. The
+standard's **object model is preserved verbatim** — `CorrelationKey`,
+`CorrelationProperty`, `CorrelationPropertyRetrievalExpression`,
+`CorrelationSubscription`, `CorrelationPropertyBinding` are exactly as specified;
+only the *container* (Conversation) is replaced by the process. This swap is
+called out here rather than silently reinterpreted, and the Conversation
+container remains the standard escape hatch if cross-process grouping is ever
+needed (deferred).
 
 ### 2.4 Instantiation entry points
 
@@ -256,6 +283,18 @@ No error is raised to the publisher (messaging is fire-and-forget at this layer)
 - **Per-message new instance always** (rejected). Ignore correlation and spawn an
   instance per message. Trivial but wrong for follow-up messages that must reach
   the originating instance.
+- **A separate persistent-waiter type vs a flag** (chose the flag). The starter
+  could be a new waiter type parallel to the in-instance waiter. Rejected as
+  duplication: the existing message waiter already does the broker subscription
+  and payload reconstruction; a **single-shot/persistent flag** plus
+  **EventHub-owned removal** (ADR-006 §2.5) covers both with one type and no
+  parallel lifecycle path.
+- **Correlation keys on a `Conversation` vs on the process** (chose the process,
+  Conversation deferred). The standard's home for keys is the `Conversation`
+  container, which gobpm keeps out of scope. Declaring keys at the process level
+  preserves the standard key/property/retrieval model while avoiding a container
+  with no execution effect for this conformance target; the Conversation remains
+  the escape hatch if cross-process grouping is later required (§2.3).
 
 ## 5. Enterprise-readiness recommendations
 
