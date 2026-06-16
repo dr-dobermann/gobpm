@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-15 |
 | Owner | Ruslan Gabitov |
@@ -151,7 +151,39 @@ The intermediate catch event is the event-shaped `ReceiveTask`: same registratio
 
 ## 7. Implementation summary
 
-*Post-landing placeholder — filled at the final audit with files, V-results, and milestone SHAs.*
+Landed on `feat/srd-014-message-events` in five milestones (each one commit,
+`make ci` green). `/check-srd` audit: PASS; all V1–V7 met. ADR-014 is fully
+implemented (task half SRD-013 + event half SRD-014) and flips to Accepted.
+
+### 7.1 Milestones
+
+| M | Commit | Scope | Tests |
+|---|---|---|---|
+| doc | `d07e5a5` | SRD-014 (this doc) | — |
+| M1 | `e9395f4` | `MessageProducer`/`MessageConsumer` seam + shared choreography (`Publish`/`CaptureItem`/`Bind`) in `pkg/model/msgflow`; `SendTask`/`ReceiveTask` adopt them (no behaviour change) | `seam.go` 100% |
+| M2 | `22b80b2` | catch-side payload capture on the `catchEvent` base (`ProcessEvent`); `StartEvent` preserved | `ProcessEvent` 100% |
+| M3 | `0cd04f0` | `IntermediateCatchEvent` + payload-aware `UploadData` (WS-C3 bind); **folded-in fix**: `t.steps` race between the run goroutine's `checkFlows` and a waiter goroutine's `record` (guarded by `t.m`) | events units + instance integration; -race clean |
+| M4 | `292d6cf` | `IntermediateThrowEvent` + `EndEvent` message-throw to the broker (shared `emitDefinition`); throw-not-parked (`checkNodeType` registers only `eventproc.EventProcessor` nodes) | events units; -race clean |
+| M5 | `9034951` | runnable `examples/message-intermediate-events` (own module) | smoke exit 0 |
+
+### 7.2 Key files
+
+- `pkg/model/msgflow/seam.go` — `MessageProducer`/`MessageConsumer` + `Publish`/`CaptureItem`/`Bind`.
+- `pkg/model/events/event.go` — `catchEvent.ProcessEvent` + payload-aware `UploadData` + `addMessagePayloadOutput`; `throwEvent.emitDefinition`.
+- `pkg/model/events/intermediate_catch.go` / `intermediate_throw.go` — the two new node types.
+- `pkg/model/events/end.go` — `EndEvent` message-throw via `emitDefinition`.
+- `internal/instance/track.go` — `checkNodeType` EventProcessor gate (throw-not-parked) + `t.steps` lock fix.
+- `examples/message-intermediate-events/` — throw→catch demo.
+
+### 7.3 V-results
+
+V1–V7 all green: the seam + helpers exist and the tasks adopt them, SRD-013 tests green (V1); `IntermediateThrowEvent.Exec` publishes a message and propagates non-message kinds (V2); `EndEvent` message-throw reaches the broker, non-message unchanged (V3); `IntermediateCatchEvent` registers/parks/captures/binds (V4); WS-C3 closed — fired payload reaches scope, payload-less keeps the static path (V5); the throw→catch example exits 0 and the suite is green (V6); `make ci` green, diff-coverage 98.0 % (min 95), `events`/`msgflow` import no internal (V7).
+
+### 7.4 Notable deltas vs the draft
+
+- **Throw-not-parked (§6 trap, confirmed).** A throw event is a `flow.EventNode` with `Definitions()`, so `checkNodeType` would have registered it as a waiter. Resolved cleanly: `checkNodeType` registers only nodes that are also `eventproc.EventProcessor` — catch events implement it, throw events don't.
+- **Track-step race (folded in per the user's call).** The smoke-equivalent integration test surfaced a pre-existing race: `t.steps` was read by a waiter goroutine (`ProcessEvent→updateState→record`) while the run goroutine appended it in `checkFlows`. It also affected the merged SRD-013 `ReceiveTask`. Guarded `t.steps` with `t.m`; confirmed gone under 160+ `-race` runs. (A standalone FIX was the alternative; the user chose to fold it into M3.)
+- **No new options-config boilerplate.** Both intermediate event types use lean def-taking constructors rather than mirroring the full `startConfig` options machinery.
 
 ## 8. References
 
