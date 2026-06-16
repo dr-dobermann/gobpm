@@ -436,8 +436,8 @@ Versioning follows semver per module. The core library is the version-of-record 
 | ADR-012 | Execution Layering | **Accepted v.1** | Execution contracts relocated to public `pkg/exec`/`renv`/`eventproc`/`interactor`; `pkg/model` imports no `internal/*` (`model-no-internal` depguard) |
 | ADR-013 | Instance Observability & Control | Draft | One lifecycle channel nodes plug into (instance lifecycle listeners / conventions) |
 | ADR-014 | Message Handling | **Accepted v.1** | SendTask/ReceiveTask + throw/catch message events over a pluggable `MessageBroker` via the node-agnostic `MessageWaiter`; producer/consumer seam; `Envelope` |
-| ADR-015 | Event-Triggered Instantiation | Draft v.1 | A message start event / instantiate ReceiveTask spawns an instance via a definition-level instance-starter; born-from-event seeding; manual-start opt-out |
-| ADR-016 | Message Correlation | Draft v.1 | Message-to-instance resolution (route / create / hold); key-based correlation (composite key derived from the payload); conversation-token threading + context-based correlation phased |
+| ADR-015 | Event-Triggered Instantiation | **Accepted v.1** | A message start event / instantiate ReceiveTask spawns an instance via a definition-level instance-starter; born-from-event seeding; manual-start opt-out |
+| ADR-016 | Message Correlation | **Accepted v.1** | Message-to-instance resolution (route / create / hold); key-based correlation (composite key derived from the payload); conversation-token threading + context-based correlation decided-but-deferred (phases 2c/3) |
 
 ### Reference material
 

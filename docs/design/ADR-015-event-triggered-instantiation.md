@@ -2,13 +2,14 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-16 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) |
 
-> **Draft.** Decides **event-triggered instantiation**: the engine creating a
+> **Accepted** — landed by its implementing SRD.
+> Decides **event-triggered instantiation**: the engine creating a
 > process instance when a *start trigger* fires — a **message start event** or an
 > unbounded (`instantiate=true`) `ReceiveTask` — via a definition-level
 > instance-starter, born-from-event seeding, and an opt-out **manual-start** mode.
@@ -286,4 +287,5 @@ deferred to named follow-ups.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.1 (Accepted) | 2026-06-16 | Ruslan Gabitov | **Accepted** — landed by its implementing SRD: the instance-starter (message start event + instantiate ReceiveTask), born-from-event seeding, and the manual-start opt-out, each milestone `make ci` green. |
 | v.1 | 2026-06-16 | Ruslan Gabitov | Draft. **Event-triggered instantiation**: a definition-level **instance-starter** registered at `RegisterProcess` as an engine-level event processor reusing the node-agnostic `MessageWaiter` as a **persistent** subscription; on a matching message it creates a new instance with the start node **born from the event** (pre-fired, payload bound). Owned by a **Thresher-hosted collaborator** (never on `Instance`); `createTracks` stops eagerly seeding instantiating start events. Entry points: message start event + instantiate `ReceiveTask` (event-based-gateway start deferred). Adds a **manual-start** registration mode (opt out of auto-instantiation; start-as-catch). The **correlation** conception (object model, key-based / context-based mechanisms, the message-to-instance resolution model, conversation-token threading, Conversation-less key declaration, no-target/bounded-buffer) was **carved out to the sibling [ADR-016 v.1](ADR-016-message-correlation.md)** while this ADR was still Draft; this ADR's starter consumes ADR-016's resolution decision. Refines ADR-001 v.5; siblings ADR-016 v.1, ADR-006 v.1, ADR-014 v.1; grounded in BPMN §13.2 / §13.3.3 / §13.5.1. |

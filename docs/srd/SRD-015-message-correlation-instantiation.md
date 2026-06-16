@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-16 |
 | Owner | Ruslan Gabitov |
@@ -56,7 +56,7 @@ ADR-015 decided the model; without it gobpm cannot start a process from a messag
 | FR-3 | The instance-starter's `ProcessEvent` creates a **new instance** via a born-from-event path: the start node is treated as already fired, the payload is bound as its output, and the initial track starts on the start node's outgoing flow(s). `createTracks` no longer seeds instantiating start triggers (they instantiate via the starter, not as eager parked tracks). A `none` start event keeps the `StartProcess` path. |
 | FR-4 | `ReceiveTask` gains a `WithInstantiate` option setting `instantiate=true`; a no-incoming instantiate `ReceiveTask` participates in FR-2/FR-3 like a message start event. |
 | FR-5 | Key derivation: given a `CorrelationKey`'s `CorrelationProperty` set and a message payload, compose the composite key by evaluating each property's `CorrelationPropertyRetrievalExpression.MessagePath` (whose `MessageRef` matches the message) over a payload-backed `data.Source`, via the `ExpressionEngine`. A key is valid only when **all** its properties resolve. `msgflow.Send` sets `Envelope.CorrelationKey` from the producer's correlation declaration. |
-| FR-6 | Resolution: an incoming message derives its key and routes to the **existing** instance whose receiver waits on that `(name, key)` if one exists; otherwise, if an instantiating start trigger matches, a **new** instance is created; otherwise it is held (bounded, pull-on-subscribe — ADR-015 §2.5). Subsequent start triggers sharing the key join the existing instance (no duplicate). |
+| FR-6 | Resolution (phase-2b): an incoming message derives its key; the starter does **create-or-route-or-join** per key — an unseen key creates a **new** instance, a seen key **joins** the existing one (a subsequent start sharing the key does **not** duplicate), and a message with no derivable key instantiates as before; an unrouteable message is held (bounded, pull-on-subscribe — ADR-015 §2.5). **Deferred to phase-2c** (ADR-016 §2.4/§2.8): routing a *follow-up* message to a *specific running* instance's keyed in-instance receiver (the conversation-token threading) — in-instance receivers still subscribe by name in this SRD. |
 | FR-7 | Builders/options for the correlation structs and a **process-level** `CorrelationKey` declaration that a message start event / receiver references (Conversation-less, §4.5); no `internal/*` import from `pkg/model`. |
 | FR-8 | A runnable example (own module): process A publishes a message that instantiates/routes to process B by correlation key; exits 0, proving inter-instance correlation. |
 | FR-9 | `Thresher.RegisterProcess` accepts options; `WithManualStart()` registers a process **manual-start**: no persistent instance-starter is registered for it (no message spawns an instance — opt-out of auto-instantiation, for testing / back-pressure, ADR-015 §2.2 engine note). Such a process is instantiated **only** via `StartProcess`, and inside that instance its instantiating start nodes are **not** skipped by `createTracks` — they are seeded as ordinary in-instance catches (the intermediate-node rule). Default (no option) is unchanged: auto-instantiation as FR-2/FR-3. The skip in FR-3 is therefore **mode-driven** (auto skips instantiating starts; manual seeds them). |
@@ -171,7 +171,7 @@ Persistent waiter (multi-fire, no self-remove, teardown); start-subscription man
 | V3 | A published message-start message creates a new instance, born with the start node fired and the payload bound; it runs to completion (FR-3). | green |
 | V4 | An instantiate `ReceiveTask` (WithInstantiate, no incoming) instantiates on a matching message (FR-4). | green |
 | V5 | A composite `CorrelationKey` is derived from the payload (all properties required); `Envelope.CorrelationKey` is set by the producer (FR-5/7). | green |
-| V6 | Resolution: a message routes to the existing correlated instance when one waits, else instantiates; two parallel instances are disambiguated by key; a subsequent start sharing the key joins the existing instance (FR-6). | green |
+| V6 | Resolution (phase-2b): two parallel instances are disambiguated by distinct keys; a subsequent start sharing a key joins the existing instance (no duplicate); a no-key message instantiates each time (FR-6). Routing a follow-up message to a specific running instance's keyed receiver is phase-2c (deferred). | green |
 | V7 | Inter-instance example (A → B by key) runs to exit 0; existing suites pass (FR-8, NFR-3). | green |
 | V8 | `make ci` green; diff-coverage ≥95 % on touched files; `pkg/model` imports no internal; held buffer bounded; no goroutine/subscription leak (NFR-2/3/4). | pass |
 
@@ -186,7 +186,55 @@ Persistent waiter (multi-fire, no self-remove, teardown); start-subscription man
 
 ## 7. Implementation summary
 
-*Post-landing placeholder — filled at the final audit with files, V-results, and milestone SHAs.*
+Landed on `feat/srd-015-message-correlation-instantiation`, one commit per
+milestone, each `make ci` green (build · `-race` · diff-coverage ≥95% · vuln).
+
+### 7.1 Milestones by commit
+
+| Milestone | Commit | Scope |
+|---|---|---|
+| M1 — hub-owned `WaiterFired` (unified) | `e49d27f` | `singleShot` flag on the message waiter; `EventHub.WaiterFired`; timer waiter migrated off self-removal |
+| manual-start mode (doc) | `e72a4d7` | ADR-015/SRD-015 amendment: `WithManualStart` engine note (FR-9) |
+| M2 — instance-starter + manager | `05de56a` | `RegisterPersistentEvent` + `CreatePersistentWaiter`; `scanInstantiatingStarts`; `RegisterProcess(…RegisterOption)` + `WithManualStart`; `UnregisterProcess`; removed dead `internal/runner` |
+| M3 — born-from-event instantiation | `1462886` | `instance.NewFromEvent` (variadic born-from-event option); `createTracks(bornStart)` skip; real `launchInstanceFromEvent` |
+| M4 — instantiate `ReceiveTask` | `8c713d3` | `WithInstantiate`; scan matches instantiate ReceiveTasks; snapshot validation accepts an instantiating ReceiveTask as the instantiation point |
+| M5a — correlation key derivation | `8e0d9e6` | `NewCorrelationKey/Property/RetrievalExpression`; `msgflow.DeriveKey` + payload→`data.Source` adapter |
+| ADR-016 carve (doc) | `1d2ec63` | correlation conception split out of ADR-015 → ADR-016; ADR-015 retitled "Event-triggered instantiation" |
+| M5b-consumer — key resolution | `b509eaf` | `events.WithCorrelationKey`; starter derives the key; `resolveAndLaunch` create-or-route-or-join per key |
+| M5b-producer — producer key | `b79ae08` | `activities.WithCorrelationKey` on `SendTask`; `Send` stamps `Envelope.CorrelationKey` |
+| M6 — example | `e2d6a52` | `examples/inter-instance-correlation/` (split by concern); smoke exit 0 |
+| linked-docs sync | `2f127fd` | README capability + examples; SAD-001 §16 ADR catalog (009–016) + §10 instance-creation bullet |
+
+### 7.2 V-results
+
+| Check | Result |
+|---|---|
+| V1 persistent waiter / teardown / -race | 🟢 |
+| V2 starter register-unregister; manual-start registers none | 🟢 |
+| V3 born-from-event instance completes, payload bound | 🟢 |
+| V4 instantiate `ReceiveTask` | 🟢 |
+| V5 composite key derived; producer sets `Envelope.CorrelationKey` | 🟢 |
+| V6 disambiguate by key + join (phase-2b); keyed-receiver routing = phase-2c (deferred) | 🟢 (phase-2b) |
+| V7 example exits 0; suites pass | 🟢 |
+| V8 `make ci` green; diff-coverage ≥95%; no `internal` import; bounded buffer | 🟢 |
+
+### 7.3 Notes vs the §4 draft
+
+- **ADR split (mid-flight).** The §4 draft assumed one ADR (ADR-015) for both
+  instantiation and correlation; correlation was carved into the sibling
+  **ADR-016** while both were still Draft, so the deferred parts (conversation-
+  token threading, context-based correlation) gained a conceptual home and the
+  SRD's scope phasing (2a/2b/2c) became ADR-decided rather than ad-hoc.
+- **M5 split.** §4.6's "M5 — keyed resolution" was split into **M5a** (pure
+  derivation), **M5b-consumer** (starter resolution), **M5b-producer** (Send
+  sets the key) — each independently testable.
+- **Born-from-event via a `New` option, not a `build` extraction.** `New` keeps
+  its body and gains a born-from-event option (`NewFromEvent` wraps it); this
+  avoids moving `New`'s defensive error-handling into the diff (a diff-coverage
+  artifact), keeping the unreachable guards out of the changed-line set.
+- **`internal/runner` removed.** A speculative one-implementation interface with
+  no polymorphic consumer; dropped so `RegisterOption` lives natively in
+  `thresher` (no import-cycle alias).
 
 ## 8. References
 
@@ -207,4 +255,5 @@ None. Scope is ADR-015 phase-2: event-triggered instantiation (message start eve
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.1 (Accepted) | 2026-06-16 | Ruslan Gabitov | **Accepted** at landing — all six milestones (M1–M6) on `feat/srd-015-message-correlation-instantiation`, each `make ci` green (build · -race · diff-coverage ≥95% · vuln); the inter-instance example smoke-runs to exit 0. `/check-srd` PASS (one pre-flip amendment: FR-6/V6 scoped to phase-2b — keyed-receiver routing is the deferred phase-2c). §7 implementation summary filled (milestone SHAs, V-results). |
 | v.1 | 2026-06-16 | Ruslan Gabitov | Draft. Implements ADR-015 v.1 phase-2: **event-triggered instantiation** (message start event + instantiate `ReceiveTask`) via a Thresher-hosted **instance-starter** on the existing message waiter given a **single-shot/persistent constructor flag**, with **removal owned by the EventHub** (ADR-006 v.1 §2.5 — the waiter never self-removes; the hub removes single-shot waiters after they fire and retains persistent ones, correcting the current `message.go:250` self-removal); `RegisterProcess` registers starters, `UnregisterProcess` tears them down; `createTracks` stops seeding instantiating start triggers; a born-from-event `instance.NewFromEvent` seeds the new instance with the start node pre-fired and the payload bound. **Key-based correlation**: a composite `CorrelationKey` derived from the message payload via `CorrelationPropertyRetrievalExpression.MessagePath` over a payload-backed `data.Source` (new adapter) through the `ExpressionEngine`; `msgflow.Send` sets `Envelope.CorrelationKey`; resolution routes a message to the existing correlated instance or instantiates a new one (subsequent start sharing the key joins the existing instance). The correlation structs already exist in `bpmncommon`; this adds builders, a process-level key declaration (Conversation-less engine note — standard object model preserved), and the runtime derivation. Six milestones + an inter-instance "A starts/routes to B by key" example. Deferred: context-based/predicate correlation, event-based-gateway start, `Conversation`, durability, broker-quality guarantees. Implements ADR-015 v.1. |

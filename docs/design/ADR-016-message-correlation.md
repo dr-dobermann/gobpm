@@ -2,13 +2,16 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-16 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) |
 
-> **Draft.** Decides the **message correlation** conception in full: how an
+> **Accepted** — the conception is decided; its first phases (2a key derivation,
+> 2b key-based instantiation-resolution) are implemented, while conversation-token
+> threading (phase-2c) and context-based correlation (phase-3) remain decided-but-
+> deferred (§2.8). Decides the **message correlation** conception in full: how an
 > incoming message is matched to the conversation/instance it belongs to, the
 > **message-to-instance resolution model** (route to an existing instance vs
 > instantiate a new one vs hold), and the **phasing** of correlation
@@ -339,4 +342,5 @@ None.
 
 | Version | Date | Change |
 |---|---|---|
+| v.1 (Accepted) | 2026-06-16 | **Accepted** — conception decided; phases 2a (key derivation) and 2b (key-based instantiation-resolution) implemented by the landing SRD; phase-2c (conversation-token threading) and phase-3 (context-based correlation) decided-but-deferred (§2.8). |
 | v.1 | 2026-06-16 | Initial draft. Carved the correlation conception out of ADR-015 v.1 (object model, key-based mechanism, resolution model, conversation-token threading, context-based correlation, Conversation-less key declaration, no-target/bounded-buffer) and added the phasing (2a/2b/2c/3). |
