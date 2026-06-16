@@ -6,9 +6,9 @@
 | Version | v.1 |
 | Date | 2026-06-16 |
 | Owner | Ruslan Gabitov |
-| Implements | [ADR-015 v.1 Message correlation & event-triggered instantiation](../design/ADR-015-message-correlation-instantiation.md) |
+| Implements | [ADR-015 v.1 Event-triggered instantiation](../design/ADR-015-event-triggered-instantiation.md) + [ADR-016 v.1 Message correlation](../design/ADR-016-message-correlation.md) |
 
-This SRD lands **phase-2 of [ADR-015 v.1](../design/ADR-015-message-correlation-instantiation.md)**: **event-triggered instantiation** (a message creates a process instance) and **key-based correlation** (a message routes to the right instance, or a new one, by a key derived from its payload). It builds on the message tasks/events of ADR-014 (SRD-013/014) and uses the BPMN §8.4.2 correlation model and §13.2/§13.5.1/§13.3.3 instantiation semantics that ADR-015 decided. Context-based/predicate correlation, the event-based-gateway start, `Conversation`, and durability stay deferred (ADR-015 §2.6).
+This SRD lands **event-triggered instantiation ([ADR-015 v.1](../design/ADR-015-event-triggered-instantiation.md))** — a message creates a process instance — and **key-based correlation ([ADR-016 v.1](../design/ADR-016-message-correlation.md), phase-2a/2b)** — a message routes to the right instance, or a new one, by a key derived from its payload. It builds on the message tasks/events of ADR-014 (SRD-013/014) and uses the BPMN §8.4.2 correlation model and §13.2/§13.5.1/§13.3.3 instantiation semantics. Conversation-token threading (ADR-016 §2.4, phase-2c), context-based/predicate correlation (ADR-016 §2.5), the event-based-gateway start, `Conversation`, and durability stay deferred.
 
 ## 1. Background & motivation
 
@@ -144,7 +144,7 @@ flowchart LR
 ```
 
 - **Derivation** — a runtime helper takes a `CorrelationKey` (its `CorrelationProperty`s, each with a `CorrelationPropertyRetrievalExpression` selected by `MessageRef`) and a payload, and composes the composite key string via the `ExpressionEngine` over a payload-backed `data.Source` (new adapter, mirroring how `fireDefinition` reconstructs the payload as a typed datum). The producer (`msgflow.Send`) sets `Envelope.CorrelationKey`; the consumer/starter derives the same key to match.
-- **Where keys live (engine note — a deliberate, standard-grounded deviation).** In BPMN, `CorrelationKey`s belong to a `Conversation` (§8.4.2). gobpm keeps `Conversation` **out of scope** (conformance), so phase-2 declares `CorrelationKey`s at the **process level** (the structs already hang off the process), and a message start event / receiver references the key it correlates on. This preserves the standard's *key/property/retrieval* object model verbatim; only the *container* (Conversation) is replaced by the process, called out here rather than silently reinterpreted.
+- **Where keys live (engine note — owned by [ADR-016 v.1 §2.6](../design/ADR-016-message-correlation.md)).** In BPMN, `CorrelationKey`s belong to a `Conversation` (§8.4.2); gobpm keeps `Conversation` out of scope and declares keys at the **process level** instead (the structs already hang off the process), preserving the standard's *key/property/retrieval* object model verbatim — only the *container* is replaced. A message start event / receiver references the key it correlates on.
 
 ### 4.6 Milestones (each = one commit, `make ci` green)
 
@@ -188,7 +188,8 @@ Persistent waiter (multi-fire, no self-remove, teardown); start-subscription man
 
 ## 8. References
 
-- [ADR-015 v.1 Message correlation & event-triggered instantiation](../design/ADR-015-message-correlation-instantiation.md) — the decision this implements (phase-2: key-based correlation + basic instantiation); §2.2 instance-starter, §2.3 correlation phasing, §2.4 entry points, §2.5 no-target/bounded, §2.6 deferrals.
+- [ADR-015 v.1 Event-triggered instantiation](../design/ADR-015-event-triggered-instantiation.md) — the instantiation decision this implements; §2.2 instance-starter, §2.4 entry points, §2.6 deferrals.
+- [ADR-016 v.1 Message correlation](../design/ADR-016-message-correlation.md) — the correlation decision this implements (phase-2a key derivation done; phase-2b key-based instantiation-resolution); §2.2 key-based, §2.3 resolution model, §2.6 Conversation-less key declaration, §2.7 no-target/bounded, §2.8 phasing.
 - [ADR-014 v.1 Message Handling](../design/ADR-014-message-handling.md) — the message tasks/events + the node-agnostic `MessageWaiter` + `Envelope.CorrelationKey` this builds on.
 - [ADR-006 v.1 Events & Subscriptions](../design/ADR-006-events-and-subscriptions.md) — §2.5 the EventHub is the **sole owner** of waiter removal (no self-removal); SRD-015 adopts it for the message waiter (single-shot removed by the hub, persistent retained) and corrects the current `message.go:250` self-removal.
 - [ADR-002 v.1 Extension Architecture](../design/ADR-002-extension-architecture.md) — the `MessageBroker` boundary the starter subscribes on; bounded-in-memory defaults.
