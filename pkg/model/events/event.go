@@ -564,7 +564,9 @@ func (te *throwEvent) emitDefinition(
 	ed flow.EventDefinition,
 ) error {
 	if med, ok := ed.(*MessageEventDefinition); ok {
-		return msgflow.Send(ctx, re, med.Message())
+		// Throw-event correlation keys are not yet wired (ADR-016 phase-2c);
+		// the throw publishes name-keyed only.
+		return msgflow.Send(ctx, re, med.Message(), nil)
 	}
 
 	return te.emitEvent(re, re.EventProducer(), ed)

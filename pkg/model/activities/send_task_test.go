@@ -146,3 +146,29 @@ func TestSendTaskExec(t *testing.T) {
 			require.ErrorContains(t, err, "publication failed")
 		})
 }
+
+// TestSendTaskCorrelationKey covers WithCorrelationKey on a SendTask (SRD-015
+// M5b-producer / ADR-016 §2.2): the option sets the key, the accessor returns
+// it, and it survives Clone. The default is nil.
+func TestSendTaskCorrelationKey(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	msg := bpmncommon.MustMessage("order placed",
+		data.MustItemDefinition(values.NewVariable(""),
+			foundation.WithID("order_item")))
+
+	plain, err := activities.NewSendTask("send", msg, activities.WithoutParams())
+	require.NoError(t, err)
+	require.Nil(t, plain.CorrelationKey())
+
+	key := &bpmncommon.CorrelationKey{Name: "orderKey"}
+
+	st, err := activities.NewSendTask("send", msg,
+		activities.WithoutParams(), activities.WithCorrelationKey(key))
+	require.NoError(t, err)
+	require.Same(t, key, st.CorrelationKey())
+
+	cl, ok := st.Clone().(*activities.SendTask)
+	require.True(t, ok)
+	require.Same(t, key, cl.CorrelationKey())
+}

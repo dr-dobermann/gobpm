@@ -38,7 +38,17 @@ func Publish(
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
-	return Send(ctx, re, p.MessageToSend())
+	// A producer may declare the CorrelationKey to stamp on the message
+	// (ADR-016 v.1 §2.2); read it structurally so the seam needn't know the
+	// concrete producer type.
+	var key *bpmncommon.CorrelationKey
+	if kp, ok := p.(interface {
+		CorrelationKey() *bpmncommon.CorrelationKey
+	}); ok {
+		key = kp.CorrelationKey()
+	}
+
+	return Send(ctx, re, p.MessageToSend(), key)
 }
 
 // CaptureItem returns the payload item carried by a fired event definition, or

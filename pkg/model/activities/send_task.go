@@ -18,6 +18,7 @@ import (
 // sent, the Task is completed.
 type SendTask struct {
 	message        *bpmncommon.Message
+	correlationKey *bpmncommon.CorrelationKey
 	implementation string
 	task
 }
@@ -44,16 +45,38 @@ func NewSendTask(
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	t, err := newTask(name, taskOpts...)
+	// Separate the SendTask-specific options (e.g. WithCorrelationKey) from the
+	// embedded task's options before building the task.
+	var sc sndTaskConfig
+
+	baseOpts := make([]options.Option, 0, len(taskOpts))
+	for _, o := range taskOpts {
+		if sto, ok := o.(SndTaskOption); ok {
+			sto(&sc)
+
+			continue
+		}
+
+		baseOpts = append(baseOpts, o)
+	}
+
+	t, err := newTask(name, baseOpts...)
 	if err != nil {
 		return nil, err
 	}
 
 	return &SendTask{
-			task:    *t,
-			message: msg,
+			task:           *t,
+			message:        msg,
+			correlationKey: sc.correlationKey,
 		},
 		nil
+}
+
+// CorrelationKey returns the CorrelationKey this SendTask stamps onto its
+// outgoing message, or nil for name-match only (ADR-016 v.1 §2.2).
+func (st *SendTask) CorrelationKey() *bpmncommon.CorrelationKey {
+	return st.correlationKey
 }
 
 // Message returns the message the task sends.
@@ -84,6 +107,7 @@ func (st *SendTask) Clone() flow.Node {
 		task:           st.clone(),
 		implementation: st.implementation,
 		message:        st.message.Clone(),
+		correlationKey: st.correlationKey,
 	}
 }
 

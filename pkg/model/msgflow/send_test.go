@@ -11,7 +11,9 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/messaging/membroker"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
+	exprgo "github.com/dr-dobermann/gobpm/pkg/model/expression/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/msgflow"
 	"github.com/stretchr/testify/require"
@@ -62,7 +64,7 @@ func TestSend(t *testing.T) {
 				Return(readyParam("order_item", "ORD-42"), nil)
 			re.EXPECT().MessageBroker().Return(broker)
 
-			require.NoError(t, msgflow.Send(ctx, re, msg))
+			require.NoError(t, msgflow.Send(ctx, re, msg, nil))
 
 			select {
 			case env := <-ch:
@@ -73,13 +75,91 @@ func TestSend(t *testing.T) {
 			}
 		})
 
+	t.Run("keyed: the derived correlation key is stamped on the envelope",
+		func(t *testing.T) {
+			msg := bpmncommon.MustMessage("order placed",
+				data.MustItemDefinition(values.NewVariable(""),
+					foundation.WithID("order_item")))
+
+			// CorrelationKey: orderId = the payload value read from the item.
+			mp := goexpr.Must(nil,
+				data.MustItemDefinition(values.NewVariable("")),
+				func(ctx context.Context, ds data.Source) (data.Value, error) {
+					d, err := ds.Find(ctx, "order_item")
+					if err != nil {
+						return nil, err
+					}
+
+					return values.NewVariable(fmt.Sprint(d.Value().Get(ctx))), nil
+				})
+			re2, err := bpmncommon.NewCorrelationPropertyRetrievalExpression(mp, msg)
+			require.NoError(t, err)
+			prop, err := bpmncommon.NewCorrelationProperty("orderId", "string",
+				[]bpmncommon.CorrelationPropertyRetrievalExpression{*re2})
+			require.NoError(t, err)
+			key, err := bpmncommon.NewCorrelationKey("orderKey",
+				[]bpmncommon.CorrelationProperty{*prop})
+			require.NoError(t, err)
+
+			broker := membroker.New()
+			ch, err := broker.Subscribe(ctx, "order placed", "")
+			require.NoError(t, err)
+
+			re := mockrenv.NewMockRuntimeEnvironment(t)
+			re.EXPECT().
+				GetDataByID("order_item").
+				Return(readyParam("order_item", "ORD-99"), nil)
+			re.EXPECT().ExpressionEngine().Return(exprgo.New())
+			re.EXPECT().MessageBroker().Return(broker)
+
+			require.NoError(t, msgflow.Send(ctx, re, msg, key))
+
+			select {
+			case env := <-ch:
+				// the consumer would derive the same key from the same payload.
+				require.Equal(t, "ORD-99", env.CorrelationKey)
+			default:
+				t.Fatal("no envelope delivered to the subscriber")
+			}
+		})
+
+	t.Run("a failing key derivation fails the send",
+		func(t *testing.T) {
+			msg := bpmncommon.MustMessage("order placed",
+				data.MustItemDefinition(values.NewVariable(""),
+					foundation.WithID("order_item")))
+
+			badExpr := goexpr.Must(nil,
+				data.MustItemDefinition(values.NewVariable("")),
+				func(_ context.Context, _ data.Source) (data.Value, error) {
+					return nil, fmt.Errorf("extraction failed")
+				})
+			re2, err := bpmncommon.NewCorrelationPropertyRetrievalExpression(
+				badExpr, msg)
+			require.NoError(t, err)
+			prop, err := bpmncommon.NewCorrelationProperty("orderId", "string",
+				[]bpmncommon.CorrelationPropertyRetrievalExpression{*re2})
+			require.NoError(t, err)
+			key, err := bpmncommon.NewCorrelationKey("orderKey",
+				[]bpmncommon.CorrelationProperty{*prop})
+			require.NoError(t, err)
+
+			re := mockrenv.NewMockRuntimeEnvironment(t)
+			re.EXPECT().
+				GetDataByID("order_item").
+				Return(readyParam("order_item", "x"), nil)
+			re.EXPECT().ExpressionEngine().Return(exprgo.New())
+
+			require.Error(t, msgflow.Send(ctx, re, msg, key))
+		})
+
 	t.Run("nil RuntimeEnvironment is rejected",
 		func(t *testing.T) {
 			msg := bpmncommon.MustMessage("ping",
 				data.MustItemDefinition(values.NewVariable(""),
 					foundation.WithID("ping_item")))
 
-			err := msgflow.Send(ctx, nil, msg)
+			err := msgflow.Send(ctx, nil, msg, nil)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "RuntimeEnvironment")
 		})
@@ -88,7 +168,7 @@ func TestSend(t *testing.T) {
 		func(t *testing.T) {
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 
-			err := msgflow.Send(ctx, re, nil)
+			err := msgflow.Send(ctx, re, nil, nil)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "Message")
 		})
@@ -104,7 +184,7 @@ func TestSend(t *testing.T) {
 				GetDataByID("order_item").
 				Return(nil, fmt.Errorf("not in scope"))
 
-			err := msgflow.Send(ctx, re, msg)
+			err := msgflow.Send(ctx, re, msg, nil)
 			require.Error(t, err)
 			require.ErrorContains(t, err, "bind message")
 
@@ -124,7 +204,7 @@ func TestSend(t *testing.T) {
 				Return(readyParam("order_item", "ORD-42"), nil)
 			re.EXPECT().MessageBroker().Return(errBroker{})
 
-			err := msgflow.Send(ctx, re, msg)
+			err := msgflow.Send(ctx, re, msg, nil)
 			require.Error(t, err)
 			require.ErrorContains(t, err, "broker rejected")
 		})
