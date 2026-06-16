@@ -2,10 +2,12 @@ package events_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
 	"github.com/dr-dobermann/gobpm/generated/mockrenv"
+	"github.com/dr-dobermann/gobpm/pkg/messaging/membroker"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
@@ -140,6 +142,9 @@ func TestNewEndEvent(t *testing.T) {
 
 			mre := mockrenv.NewMockRuntimeEnvironment(t)
 			mre.EXPECT().EventProducer().Return(mep)
+			// the message trigger is now published to the broker (SRD-014),
+			// not propagated through the event bus.
+			mre.EXPECT().MessageBroker().Return(membroker.New()).Maybe()
 			mre.EXPECT().GetDataByID(mock.Anything).
 				RunAndReturn(
 					func(s string) (data.Data, error) {
@@ -170,4 +175,27 @@ func TestNewEndEvent(t *testing.T) {
 			_, err = ee.Exec(context.Background(), mre)
 			require.NoError(t, err)
 		})
+}
+
+// TestEndEventMessageThrowError covers the EndEvent.Exec error path when a
+// message throw fails (the payload can't be bound from scope).
+func TestEndEventMessageThrowError(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	msg := bpmncommon.MustMessage("message",
+		data.MustItemDefinition(values.NewVariable(""),
+			foundation.WithID("message_item")))
+	msgEd, err := events.NewMessageEventDefinition(msg, nil)
+	require.NoError(t, err)
+
+	ee, err := events.NewEndEvent("end", events.WithMessageTrigger(msgEd))
+	require.NoError(t, err)
+
+	re := mockrenv.NewMockRuntimeEnvironment(t)
+	re.EXPECT().
+		GetDataByID("message_item").
+		Return(nil, fmt.Errorf("not in scope"))
+
+	_, err = ee.Exec(context.Background(), re)
+	require.Error(t, err)
 }

@@ -197,3 +197,81 @@ func TestMidFlowEventRegistrationFailureFailsTrack(t *testing.T) {
 	}, 2*time.Second, 5*time.Millisecond,
 		"the failed mid-flow registration must fail the track")
 }
+
+// TestSendToIntermediateCatchEvent is SRD-014 V4: a SendTask publishes a
+// message that a mid-flow IntermediateCatchEvent waits for and binds into scope
+// (the event-shaped peer of ReceiveTask; closes WS-C3).
+//
+//	start -> send-order -> catch-order -> end
+func TestSendToIntermediateCatchEvent(t *testing.T) {
+	_ = data.CreateDefaultStates()
+
+	p, err := process.New("msg-event-flow",
+		data.WithProperties(
+			data.MustProperty("order_out",
+				data.MustItemDefinition(values.NewVariable("ORD-7"),
+					foundation.WithID("order_out")),
+				data.ReadyDataState)))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	send, err := activities.NewSendTask("send-order",
+		bpmncommon.MustMessage("order placed",
+			data.MustItemDefinition(values.NewVariable(""),
+				foundation.WithID("order_out"))),
+		activities.WithoutParams())
+	require.NoError(t, err)
+
+	catch, err := events.NewIntermediateCatchEvent("catch-order",
+		events.MustMessageEventDefinition(
+			bpmncommon.MustMessage("order placed",
+				data.MustItemDefinition(values.NewVariable(""),
+					foundation.WithID("order_in"))),
+			nil))
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, send, catch, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	for _, l := range [][2]flow.Element{
+		{start, send}, {send, catch}, {catch, end},
+	} {
+		_, err := flow.Link(l[0].(flow.SequenceSource), l[1].(flow.SequenceTarget))
+		require.NoError(t, err)
+	}
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rt := enginert.Default()
+
+	eh, err := eventhub.New(rt)
+	require.NoError(t, err)
+	require.NoError(t, eh.Start(ctx))
+
+	go func() { _ = eh.Run(ctx) }()
+
+	inst, err := New(s, scope.EmptyDataPath, rt, eh, nil)
+	require.NoError(t, err)
+
+	require.NoError(t, inst.Run(ctx))
+
+	require.Eventually(t,
+		func() bool { return inst.State() == Completed },
+		2*time.Second, 5*time.Millisecond,
+		"the send/intermediate-catch round-trip must complete")
+	require.NoError(t, inst.LastErr())
+
+	d, err := inst.dataPlane.GetDataByID(inst.rootScope, "order_in")
+	require.NoError(t, err)
+	require.Equal(t, "ORD-7", d.Value().Get(ctx))
+}

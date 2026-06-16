@@ -3,12 +3,14 @@ package events
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/eventproc"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/msgflow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 	"github.com/dr-dobermann/gobpm/pkg/set"
@@ -195,8 +197,44 @@ func (e Event) NodeType() flow.NodeType {
 type catchEvent struct {
 	dataOutputs map[string]*data.Parameter
 	Event
+	// received holds the payload item captured from a fired message event
+	// definition, bound into scope on resume (ADR-014 v.1 §2.2). It is
+	// per-instance runtime state, nil until a payload-carrying event fires.
+	received           *data.ItemDefinition
 	outputAssociations []*data.Association
 	parallelMultiple   bool
+}
+
+// ProcessEvent captures the payload carried by a fired event definition, so a
+// catch event can bind it into scope on resume (the consumer side of ADR-014
+// v.1 §2.2). A definition fired without a payload captures nothing. Implements
+// eventproc.EventProcessor for every catch event (StartEvent, IntermediateCatchEvent).
+func (ce *catchEvent) ProcessEvent(
+	_ context.Context,
+	eDef flow.EventDefinition,
+) error {
+	ce.received = msgflow.CaptureItem(eDef)
+
+	return nil
+}
+
+// addMessagePayloadOutput registers a data output for med's message item, so a
+// received payload has an output to land in (and flow through associations).
+// Mirrors the message dataOutput a start event gets via WithMessageTrigger. A
+// MessageEventDefinition always carries a message with an item (NewMessage
+// invariant), so the Must* construction can't fail with valid input.
+func (ce *catchEvent) addMessagePayloadOutput(med *MessageEventDefinition) {
+	item := med.Message().Item()
+
+	ds := data.ReadyDataState
+	if item.Structure() == nil {
+		ds = data.UndefinedSrcState
+	}
+
+	ce.dataOutputs[item.ID()] = data.MustParameter(
+		fmt.Sprintf("message %q(%s) output",
+			med.Message().Name(), med.Message().ID()),
+		data.MustItemAwareElement(item, ds))
 }
 
 // NewCatchEvent creates a new catchEvent and returns its pointer.
@@ -258,7 +296,24 @@ func (ce *catchEvent) UploadData(ctx context.Context, f exec.Frame) error {
 
 	outs := map[string]*data.Parameter{}
 	for _, o := range f.Outputs() {
-		outs[o.ItemDefinition().ID()] = o
+		id := o.ItemDefinition().ID()
+
+		// WS-C3 (ADR-014 v.1): a catch event that received a message binds the
+		// runtime payload into the matching output, overriding the static
+		// value, so it commits to scope and flows through the associations. A
+		// catch with no captured payload keeps the static-output path.
+		if ce.received != nil && id == ce.received.ID() {
+			if err := o.ItemDefinition().Structure().
+				Update(ctx, ce.received.Structure().Get(ctx)); err != nil {
+				return errs.New(
+					errs.M("couldn't bind received payload for event %q",
+						ce.Name()),
+					errs.C(errorClass, errs.OperationFailed),
+					errs.E(err))
+			}
+		}
+
+		outs[id] = o
 	}
 
 	ee := []error{}
@@ -499,6 +554,22 @@ func missingRequiredInputs(
 // The data items the definition depends on resolve through the execution
 // environment: the frame's input instances (loaded by LoadData) first, then
 // the container scopes.
+// emitDefinition routes one event definition: a message definition is published
+// to the broker (the producer choreography, ADR-014 v.1 §2.2), any other kind
+// propagates through the internal event bus. Shared by EndEvent and
+// IntermediateThrowEvent.
+func (te *throwEvent) emitDefinition(
+	ctx context.Context,
+	re renv.RuntimeEnvironment,
+	ed flow.EventDefinition,
+) error {
+	if med, ok := ed.(*MessageEventDefinition); ok {
+		return msgflow.Send(ctx, re, med.Message())
+	}
+
+	return te.emitEvent(re, re.EventProducer(), ed)
+}
+
 func (te *throwEvent) emitEvent(
 	re renv.RuntimeEnvironment,
 	eProd eventproc.EventProducer,

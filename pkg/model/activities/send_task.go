@@ -61,6 +61,12 @@ func (st *SendTask) Message() *bpmncommon.Message {
 	return st.message
 }
 
+// MessageToSend returns the message the task publishes. Implements
+// msgflow.MessageProducer.
+func (st *SendTask) MessageToSend() *bpmncommon.Message {
+	return st.message
+}
+
 // Implementation returns the technology used to send the message (empty until
 // a sending technology beyond the broker is wired).
 func (st *SendTask) Implementation() string {
@@ -99,7 +105,7 @@ func (st *SendTask) Exec(
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	if err := msgflow.Send(ctx, re, st.message); err != nil {
+	if err := msgflow.Publish(ctx, re, st); err != nil {
 		return nil,
 			errs.New(
 				errs.M("send task message publication failed"),
@@ -113,5 +119,6 @@ func (st *SendTask) Exec(
 }
 
 var (
-	_ exec.NodeExecutor = (*SendTask)(nil)
+	_ exec.NodeExecutor       = (*SendTask)(nil)
+	_ msgflow.MessageProducer = (*SendTask)(nil)
 )
