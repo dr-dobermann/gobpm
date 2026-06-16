@@ -263,6 +263,7 @@ Detailed in **ADR-001 v.3 Execution Model** (Accepted). Key points captured here
 - **Long waits do NOT hold goroutines.** A UserTask waiting 3 days externalizes state to `Repository`. The track goroutine exits. When the trigger arrives (human submits form, timer fires, message arrives), the instance rehydrates from persistence and spawns a fresh track. Combined or alternative mechanisms (event-driven wake-up, polling, push from external system) are all valid — the persistence + rehydration contract is invariant.
 - **Persistence checkpoints align with lifecycle transitions.** State persisted at every observable BPMN state transition (per `docs/bpmn-spec/state-machines/activity-lifecycle.md`).
 - **On runtime start / restart**, the runtime queries `Repository` for in-flight instances and rehydrates them. Recovery should be straightforward and bounded — not a fragile dance.
+- **Instances are created by an explicit start *or* by an event.** Beyond `StartProcess`, a **message start event** or an instantiating `ReceiveTask` spawns an instance when a matching message arrives — the instance is *born from the event* (the start node pre-fired, its payload bound), created by a definition-level **instance-starter** (ADR-014/ADR-015). **Message correlation** (ADR-016) decides whether a message creates a new instance or routes to an existing one, by a composite key derived from the payload; a `WithManualStart` registration opts a process out of auto-instantiation (tests / back-pressure).
 
 ## 11. Extension Model (overview)
 
@@ -429,6 +430,14 @@ Versioning follows semver per module. The core library is the version-of-record 
 | ADR-006 | Events & Subscriptions | Draft | EventHub delivery, Terminate End Event, interrupting boundary events, wait nodes |
 | ADR-007 | In-Memory Long Waits | Draft | Subscription → goroutine ends → re-spawn (durable version → Persistence ADR) |
 | ADR-008 | Distribution & Scale | planned | The §13 preliminary content, when multi-node demand materializes |
+| ADR-009 | Per-Instance Node Graph | **Accepted v.1** | Node-owned runtime state; each instance clones the node graph — resolves the ADR-001 §4.7 deferral and eliminates the shared-node data race |
+| ADR-010 | Process Data Model | **Accepted v.2** | Container-scope data plane + per-execution frames; §2.7 addressable data access (default scope by name + named `SOURCE/address` providers) |
+| ADR-011 | Process Data Flow | **Accepted v.5** | One input/output set per activity (per-parameter flags, no Set type); availability-gated start; polymorphic Operation (message + in-process Go kinds) |
+| ADR-012 | Execution Layering | **Accepted v.1** | Execution contracts relocated to public `pkg/exec`/`renv`/`eventproc`/`interactor`; `pkg/model` imports no `internal/*` (`model-no-internal` depguard) |
+| ADR-013 | Instance Observability & Control | Draft | One lifecycle channel nodes plug into (instance lifecycle listeners / conventions) |
+| ADR-014 | Message Handling | **Accepted v.1** | SendTask/ReceiveTask + throw/catch message events over a pluggable `MessageBroker` via the node-agnostic `MessageWaiter`; producer/consumer seam; `Envelope` |
+| ADR-015 | Event-Triggered Instantiation | Draft v.1 | A message start event / instantiate ReceiveTask spawns an instance via a definition-level instance-starter; born-from-event seeding; manual-start opt-out |
+| ADR-016 | Message Correlation | Draft v.1 | Message-to-instance resolution (route / create / hold); key-based correlation (composite key derived from the payload); conversation-token threading + context-based correlation phased |
 
 ### Reference material
 
