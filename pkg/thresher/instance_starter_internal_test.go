@@ -4,12 +4,16 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
+	"github.com/dr-dobermann/gobpm/pkg/messaging"
+	"github.com/dr-dobermann/gobpm/pkg/messaging/membroker"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -390,3 +394,185 @@ func TestRunRegisterStartersError(t *testing.T) {
 	require.Error(t, th.Run(ctx))
 }
 
+// corrStartProcess builds a message-start process declaring a CorrelationKey
+// whose single property extracts the payload value (read from the message item)
+// as the key. The start is wired to an EndEvent.
+func corrStartProcess(t *testing.T, name, msgName, refName string) *process.Process {
+	t.Helper()
+
+	require.NoError(t, data.CreateDefaultStates())
+
+	// the retrieval expression reads the payload (bound under the message item
+	// id "order_in") and returns it as the partial key.
+	mp := goexpr.Must(nil,
+		data.MustItemDefinition(values.NewVariable("")),
+		func(ctx context.Context, ds data.Source) (data.Value, error) {
+			d, err := ds.Find(ctx, "order_in")
+			if err != nil {
+				return nil, err
+			}
+
+			return values.NewVariable(fmt.Sprint(d.Value().Get(ctx))), nil
+		})
+
+	// refName names the MessageRef the retrieval expression applies to; when it
+	// differs from the start message name the key can't be derived (ok=false).
+	re, err := bpmncommon.NewCorrelationPropertyRetrievalExpression(mp,
+		bpmncommon.MustMessage(refName, data.MustItemDefinition(
+			values.NewVariable(""), foundation.WithID("order_in"))))
+	require.NoError(t, err)
+
+	prop, err := bpmncommon.NewCorrelationProperty("orderId", "string",
+		[]bpmncommon.CorrelationPropertyRetrievalExpression{*re})
+	require.NoError(t, err)
+
+	key, err := bpmncommon.NewCorrelationKey("orderKey",
+		[]bpmncommon.CorrelationProperty{*prop})
+	require.NoError(t, err)
+
+	proc, err := process.New(name)
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start",
+		events.WithMessageTrigger(events.MustMessageEventDefinition(
+			bpmncommon.MustMessage(msgName, data.MustItemDefinition(
+				values.NewVariable(""), foundation.WithID("order_in"))), nil)),
+		events.WithCorrelationKey(key))
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	require.NoError(t, proc.Add(start))
+	require.NoError(t, proc.Add(end))
+	_, err = flow.Link(start, end)
+	require.NoError(t, err)
+
+	return proc
+}
+
+func instanceCount(th *Thresher) int {
+	th.m.Lock()
+	defer th.m.Unlock()
+
+	return len(th.instances)
+}
+
+// TestCorrelationDedup is ADR-016 v.1 §2.3 / SRD-015 V6: messages with distinct
+// derived keys spawn distinct instances; a repeat of a seen key joins the
+// existing instance (no duplicate).
+func TestCorrelationDedup(t *testing.T) {
+	broker := membroker.New()
+
+	th, err := New("corr", WithMessageBroker(broker))
+	require.NoError(t, err)
+
+	proc := corrStartProcess(t, "p-corr", "order placed", "order placed")
+	require.NoError(t, th.RegisterProcess(proc))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, th.Run(ctx))
+
+	// keys A, B, A — A and B each instantiate once; the second A joins.
+	for _, k := range []string{"A", "B", "A"} {
+		require.NoError(t, broker.Publish(ctx,
+			messaging.Envelope{Name: "order placed", Payload: k}))
+	}
+
+	require.Eventually(t, func() bool { return instanceCount(th) == 2 },
+		3*time.Second, 10*time.Millisecond,
+		"two distinct keys must spawn exactly two instances")
+
+	th.m.Lock()
+	require.Len(t, th.seenKeys, 2)
+	th.m.Unlock()
+
+	// the duplicate A must not spawn a third instance.
+	require.Never(t, func() bool { return instanceCount(th) > 2 },
+		300*time.Millisecond, 50*time.Millisecond)
+}
+
+// TestCorrelationNoKeyEachInstantiates: with no CorrelationKey declared, every
+// message instantiates (name-match, no dedup — the M3 behaviour preserved).
+func TestCorrelationNoKeyEachInstantiates(t *testing.T) {
+	broker := membroker.New()
+
+	th, err := New("nocorr", WithMessageBroker(broker))
+	require.NoError(t, err)
+
+	require.NoError(t, th.RegisterProcess(msgStartProcess(t, "p-nocorr", "order placed")))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, th.Run(ctx))
+
+	for range 2 {
+		require.NoError(t, broker.Publish(ctx,
+			messaging.Envelope{Name: "order placed", Payload: "same"}))
+	}
+
+	require.Eventually(t, func() bool { return instanceCount(th) == 2 },
+		3*time.Second, 10*time.Millisecond,
+		"without a key, each message instantiates")
+}
+
+
+// TestCorrelationUnderivableKeyInstantiates: a declared key whose retrieval
+// expression doesn't apply to the message (MessageRef mismatch) can't be
+// derived (ok=false), so the message instantiates without dedup.
+func TestCorrelationUnderivableKeyInstantiates(t *testing.T) {
+	broker := membroker.New()
+
+	th, err := New("corr-mismatch", WithMessageBroker(broker))
+	require.NoError(t, err)
+
+	// the retrieval MessageRef ("other") differs from the start message name.
+	proc := corrStartProcess(t, "p-mm", "order placed", "other")
+	require.NoError(t, th.RegisterProcess(proc))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, th.Run(ctx))
+
+	for range 2 {
+		require.NoError(t, broker.Publish(ctx,
+			messaging.Envelope{Name: "order placed", Payload: "same"}))
+	}
+
+	require.Eventually(t, func() bool { return instanceCount(th) == 2 },
+		3*time.Second, 10*time.Millisecond,
+		"an underivable key instantiates per message (no dedup)")
+}
+
+// TestResolveAndLaunchRollback covers the create-or-route rollback: when the
+// launch fails after a key is reserved, the reservation is dropped so a later
+// message can retry.
+func TestResolveAndLaunchRollback(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	th, err := New("rollback")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, th.Run(ctx))
+
+	s, err := snapshot.New(noneStartProcess(t, "p-rb"))
+	require.NoError(t, err)
+
+	// a start node absent from the snapshot makes launchInstanceFromEvent fail.
+	bogus, err := events.NewStartEvent("bogus")
+	require.NoError(t, err)
+
+	eDef := events.MustMessageEventDefinition(
+		bpmncommon.MustMessage("m", data.MustItemDefinition(nil)), nil)
+
+	require.Error(t, th.resolveAndLaunch(ctx, s, bogus, eDef, "K1"))
+
+	// the reservation was rolled back.
+	th.m.Lock()
+	_, seen := th.seenKeys["p-rb\x1fK1"]
+	th.m.Unlock()
+	require.False(t, seen)
+}

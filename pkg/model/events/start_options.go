@@ -6,6 +6,7 @@ import (
 	"reflect"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -15,15 +16,34 @@ type (
 	startOption func(*startConfig) error
 
 	startConfig struct {
-		props         map[string]*data.Property
-		dataOutputs   map[string]*data.Parameter
-		name          string
-		baseOpts      []options.Option
-		defs          []flow.EventDefinition
-		parallel      bool
-		interrurpting bool
+		props          map[string]*data.Property
+		dataOutputs    map[string]*data.Parameter
+		correlationKey *bpmncommon.CorrelationKey
+		name           string
+		baseOpts       []options.Option
+		defs           []flow.EventDefinition
+		parallel       bool
+		interrurpting  bool
 	}
 )
+
+// WithCorrelationKey declares the CorrelationKey an instantiating message start
+// event correlates on (ADR-016 v.1 §2.2): the engine derives an incoming
+// message's key from it to decide create-or-route-or-join. A nil key is
+// rejected.
+func WithCorrelationKey(key *bpmncommon.CorrelationKey) options.Option {
+	return startOption(func(sc *startConfig) error {
+		if key == nil {
+			return errs.New(
+				errs.M("WithCorrelationKey: a nil CorrelationKey isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		sc.correlationKey = key
+
+		return nil
+	})
+}
 
 // eventType implements eventConfig interface
 func (sc *startConfig) eventType() eventConfigType {
@@ -100,8 +120,9 @@ func (sc *startConfig) startEvent() (*StartEvent, error) {
 	}
 
 	return &StartEvent{
-		catchEvent:    *ce,
-		interrupting: sc.interrurpting,
+		catchEvent:     *ce,
+		correlationKey: sc.correlationKey,
+		interrupting:   sc.interrurpting,
 	}, nil
 }
 

@@ -253,3 +253,25 @@ func getTimerExpression(t *testing.T, fName string) data.FormalExpression {
 
 	panic("invalid timer expression name: " + fName)
 }
+
+// TestStartEventCorrelationKey covers WithCorrelationKey (SRD-015 / ADR-016
+// §2.2): the option sets the key, the accessor returns it, it survives Clone,
+// and a nil key is rejected.
+func TestStartEventCorrelationKey(t *testing.T) {
+	plain, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+	require.Nil(t, plain.CorrelationKey())
+
+	key := &bpmncommon.CorrelationKey{Name: "orderKey"}
+
+	se, err := events.NewStartEvent("start", events.WithCorrelationKey(key))
+	require.NoError(t, err)
+	require.Same(t, key, se.CorrelationKey())
+
+	cl, ok := se.Clone().(*events.StartEvent)
+	require.True(t, ok)
+	require.Same(t, key, cl.CorrelationKey())
+
+	_, err = events.NewStartEvent("start", events.WithCorrelationKey(nil))
+	require.Error(t, err)
+}

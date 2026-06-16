@@ -108,6 +108,7 @@ type Thresher struct {
 	snapshots map[string]*snapshot.Snapshot
 	instances map[string]instanceReg
 	starters  map[string][]*instanceStarter
+	seenKeys  map[string]struct{}
 	id        string
 	m         sync.Mutex
 	state     State
@@ -142,6 +143,7 @@ func New(id string, opts ...Option) (*Thresher, error) {
 		snapshots: map[string]*snapshot.Snapshot{},
 		instances: map[string]instanceReg{},
 		starters:  map[string][]*instanceStarter{},
+		seenKeys:  map[string]struct{}{},
 	}
 
 	// The EventHub receives the engine's resolved runtime (&t.cfg implements
@@ -516,6 +518,50 @@ func (t *Thresher) registerAllStarters() error {
 	t.m.Unlock()
 
 	return t.registerStarters(all)
+}
+
+// resolveAndLaunch performs the create-or-route-or-join decision per correlation
+// key (ADR-016 v.1 §2.3). An empty key always instantiates (name-match, no
+// dedup — the M3 behavior). A non-empty key instantiates a new instance only if
+// it is unseen for this process, recording it so a subsequent same-key start
+// **joins** the existing instance (no duplicate) rather than spawning a second.
+// The check-and-record is atomic under t.m; the launch runs after the lock is
+// released (launchInstance re-acquires t.m — FIX-002 RC2).
+func (t *Thresher) resolveAndLaunch(
+	ctx context.Context,
+	s *snapshot.Snapshot,
+	startNode flow.Node,
+	eDef flow.EventDefinition,
+	key string,
+) error {
+	if key == "" {
+		return t.launchInstanceFromEvent(ctx, s, startNode, eDef)
+	}
+
+	// Namespace the key by process so two processes correlating on the same
+	// value remain distinct conversations.
+	nsKey := s.ProcessID + "\x1f" + key
+
+	t.m.Lock()
+	if _, seen := t.seenKeys[nsKey]; seen {
+		t.m.Unlock()
+
+		return nil // an instance already exists for this key: join, no duplicate
+	}
+
+	t.seenKeys[nsKey] = struct{}{}
+	t.m.Unlock()
+
+	if err := t.launchInstanceFromEvent(ctx, s, startNode, eDef); err != nil {
+		// the launch failed — drop the reservation so a later message can retry.
+		t.m.Lock()
+		delete(t.seenKeys, nsKey)
+		t.m.Unlock()
+
+		return err
+	}
+
+	return nil
 }
 
 // launchInstanceFromEvent creates a new instance born from an event-triggered

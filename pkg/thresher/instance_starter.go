@@ -5,9 +5,11 @@ import (
 
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/pkg/eventproc"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/msgflow"
 )
 
 // instanceStarter is the definition-level collaborator that turns an
@@ -22,6 +24,7 @@ type instanceStarter struct {
 	snapshot  *snapshot.Snapshot
 	startNode flow.Node
 	eDef      *events.MessageEventDefinition
+	corrKey   *bpmncommon.CorrelationKey
 	id        string
 }
 
@@ -32,13 +35,50 @@ func (s *instanceStarter) ID() string {
 }
 
 // ProcessEvent is the EventProcessor entry point invoked by the persistent
-// waiter on a matching message: it asks the Thresher to launch a new instance
-// born from the event, carrying the message payload onto the start node.
+// waiter on a matching message: it derives the incoming message's correlation
+// key from the payload (ADR-016 v.1 §2.2) and asks the Thresher to resolve
+// create-or-route-or-join by that key (§2.3), launching a new instance born
+// from the event when the key is unseen.
 func (s *instanceStarter) ProcessEvent(
 	ctx context.Context,
 	eDef flow.EventDefinition,
 ) error {
-	return s.thr.launchInstanceFromEvent(ctx, s.snapshot, s.startNode, eDef)
+	key, err := s.deriveKey(ctx, eDef)
+	if err != nil {
+		return err
+	}
+
+	return s.thr.resolveAndLaunch(ctx, s.snapshot, s.startNode, eDef, key)
+}
+
+// deriveKey computes the incoming message's composite correlation key from the
+// fired event's payload, or "" when the starter declares no CorrelationKey (or
+// the key can't be fully resolved — an underivable key correlates nothing, so
+// the message instantiates without dedup, ADR-016 v.1 §2.2).
+func (s *instanceStarter) deriveKey(
+	ctx context.Context,
+	eDef flow.EventDefinition,
+) (string, error) {
+	if s.corrKey == nil {
+		return "", nil
+	}
+
+	var payload any
+	if items := eDef.GetItemsList(); len(items) != 0 {
+		payload = items[0].Structure().Get(ctx)
+	}
+
+	key, ok, err := msgflow.DeriveKey(ctx, s.thr.cfg.ExpressionEngine(),
+		s.corrKey, s.eDef.Message(), payload)
+	if err != nil {
+		return "", err
+	}
+
+	if !ok {
+		return "", nil
+	}
+
+	return key, nil
 }
 
 // scanInstantiatingStarts walks a process snapshot and builds an instanceStarter
@@ -74,12 +114,27 @@ func scanInstantiatingStarts(s *snapshot.Snapshot, thr *Thresher) []*instanceSta
 				snapshot:  s,
 				startNode: n,
 				eDef:      med,
+				corrKey:   correlationKeyOf(n),
 				id:        foundation.GenerateID(),
 			})
 		}
 	}
 
 	return starters
+}
+
+// correlationKeyOf returns the CorrelationKey a start node declares, read
+// structurally so the thresher needn't depend on the concrete node package
+// (StartEvent / instantiate ReceiveTask both expose CorrelationKey()). nil =
+// name-match only.
+func correlationKeyOf(n flow.Node) *bpmncommon.CorrelationKey {
+	if ck, ok := n.(interface {
+		CorrelationKey() *bpmncommon.CorrelationKey
+	}); ok {
+		return ck.CorrelationKey()
+	}
+
+	return nil
 }
 
 // isInstantiatingStartNode reports whether n is an instantiating start trigger:
