@@ -49,7 +49,10 @@ func CreateWaiter(
 		w, err = NewTimeWaiter(eh, ep, eDef, "", rt)
 
 	case flow.TriggerMessage:
-		w, err = NewMessageWaiter(eh, ep, eDef, "", rt)
+		// CreateWaiter builds in-instance receivers — single-shot (the hub
+		// removes them after one fire). The persistent instance-starter waiter
+		// (SRD-015) is built on a dedicated path, not here.
+		w, err = NewMessageWaiter(eh, ep, eDef, "", rt, true)
 
 	default:
 		err = errs.New(

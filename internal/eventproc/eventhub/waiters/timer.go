@@ -314,7 +314,7 @@ func (tw *timeWaiter) runTimerService(ctx context.Context) {
 
 // processTimerEvent handles timer event processing.
 //
-// External interface calls (ep.ProcessEvent, tw.hub.RemoveWaiter) are
+// External interface calls (ep.ProcessEvent, tw.hub.WaiterFired) are
 // made WITHOUT holding tw.m. Holding a mutex across an interface call
 // risks a callback re-entering the waiter and deadlocking, and makes
 // the receiver's mutex memory observable to third-party reflect-based
@@ -346,7 +346,9 @@ func (tw *timeWaiter) processTimerEvent(ctx context.Context) error {
 		tw.state = eventproc.WSEnded
 		tw.m.Unlock()
 
-		_ = tw.hub.RemoveWaiter(eDef.ID()) // ignore error during cleanup
+		// Terminal: report the fire; the EventHub (sole remover, ADR-006 v.1
+		// §2.5) removes the waiter. The timer no longer removes itself.
+		_ = tw.hub.WaiterFired(eDef.ID()) // ignore error during cleanup
 
 		return errs.New(errs.M("timer completed")) // signal completion
 	}

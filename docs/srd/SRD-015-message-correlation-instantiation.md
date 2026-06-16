@@ -102,10 +102,14 @@ the **hub** removes it when **single-shot** and **keeps** it when **persistent**
 
 It subscribes for `(name, derived-key)` (or `(name, "")` and filters by key).
 `fireDefinition` is shared. The hub holds or drops the waiter purely per the
-flag; the waiter is removal-passive. (The timer waiter has the same current
-self-removal; fully aligning every waiter to ADR-006 §2.5 is that ADR's events
-workstream — SRD-015 does the message-waiter slice it needs and may align the
-timer for consistency.)
+flag; the waiter is removal-passive. **Removal is unified across every waiter**
+(not just the message one): a new `EventHub.WaiterFired(eDefID)` is the single
+removal entry point — a waiter reports its fire and the hub removes it **iff**
+the waiter is in a terminal state (`WSEnded`/`WSFailed`), keeping a still-running
+one (a persistent message waiter, or a timer mid-cycle). The **timer waiter is
+migrated in the same milestone** from its own `RemoveWaiter` self-call to
+`WaiterFired`, so no waiter self-removes — fully realizing ADR-006 v.1 §2.5 for
+the whole waiter family, not a message-only slice.
 
 ### 4.3 The instance-starter & start-subscription manager (Thresher)
 
@@ -141,7 +145,7 @@ flowchart LR
 
 ### 4.6 Milestones (each = one commit, `make ci` green)
 
-- **M1 — single-shot/persistent waiter flag (hub-owned removal).** Add the constructor flag to the existing message waiter and **move removal from the waiter to the EventHub** (the hub removes single-shot waiters after they fire, keeps persistent ones; the waiter no longer calls `RemoveWaiter` — ADR-006 v.1 §2.5) + `NewMessageWaiter`/`CreateWaiter` wiring; unit tests (single-shot removed by the hub as before; persistent fires repeatedly, retained, clean teardown).
+- **M1 — single-shot/persistent waiter flag (hub-owned removal, unified).** Add the constructor flag to the existing message waiter and **move removal from the waiter to the EventHub** via a new `EventHub.WaiterFired(eDefID)` (the hub removes a waiter only when it reports a terminal state — single-shot after one fire, never a persistent one — ADR-006 v.1 §2.5) + `NewMessageWaiter`/`CreateWaiter` wiring. **Unify all waiters now**: migrate the timer waiter off its `RemoveWaiter` self-call to `WaiterFired` too, so no waiter self-removes. Unit tests (single-shot removed by the hub as before; persistent fires repeatedly, retained; timer still removed after its last cycle, now via the hub; `WaiterFired` reaps terminal / keeps running).
 - **M2 — instance-starter + manager + `createTracks` skip.** Thresher collaborator scans at `RegisterProcess`, registers starters, `UnregisterProcess` tears down; `createTracks` skips instantiating starts. Tests (registration wires/teardowns subscriptions).
 - **M3 — born-from-event instantiation.** `instance.NewFromEvent` + `Thresher.launchInstanceFromEvent`; a message start event spawns an instance that runs from the start node with the payload. Instance integration test (publish → new instance completes, payload in scope).
 - **M4 — instantiate `ReceiveTask`.** `WithInstantiate` option; a no-incoming instantiate receiver instantiates like a message start event. Tests.

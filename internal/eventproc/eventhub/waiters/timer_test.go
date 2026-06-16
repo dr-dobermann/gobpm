@@ -223,7 +223,7 @@ func TestTimeWaiter(t *testing.T) {
 			ept := mockeventproc.NewMockEventProcessor(t)
 			mockHub := mockeventproc.NewMockEventHub(t)
 			mockHub.EXPECT().
-				RemoveWaiter(mock.Anything).
+				WaiterFired(mock.Anything).
 				Return(nil).
 				Maybe()
 			ept.EXPECT().
@@ -272,7 +272,7 @@ func TestTimeWaiter(t *testing.T) {
 			epc := mockeventproc.NewMockEventProcessor(t)
 			mockHub := mockeventproc.NewMockEventHub(t)
 			mockHub.EXPECT().
-				RemoveWaiter(mock.Anything).
+				WaiterFired(mock.Anything).
 				Return(nil).
 				Maybe()
 			epc.EXPECT().

@@ -22,10 +22,13 @@ import (
 const MessageWaiterError = "MESSAGE_WAITER_ERROR"
 
 // messageWaiter bridges the MessageBroker to the EventHub (ADR-014 v.1): it
-// subscribes the broker for its message name and, on the first matching
-// envelope, fires the event (carrying the payload) to the registered
-// processors, then removes itself from the hub. It is one-shot — a single
-// message resumes the waiting node.
+// subscribes the broker for its message name and, on a matching envelope, fires
+// the event (carrying the payload) to the registered processors and reports the
+// fire to the hub. It never removes itself — the EventHub is the sole remover
+// (ADR-006 v.1 §2.5). A **single-shot** waiter (the in-instance receiver)
+// reaches a terminal state after one fire so the hub removes it; a
+// **persistent** waiter (the instance-starter, SRD-015) keeps firing for every
+// matching message and is removed only on Stop/unregister.
 type messageWaiter struct {
 	hub        eventproc.EventHub
 	rt         renv.EngineRuntime
@@ -35,17 +38,22 @@ type messageWaiter struct {
 	id         string
 	processors []eventproc.EventProcessor
 	state      eventproc.EventWaiterState
+	singleShot bool
 	m          sync.Mutex
 }
 
 // NewMessageWaiter builds a messageWaiter for a MessageEventDefinition. It
-// rejects empty dependencies and a non-message event definition.
+// rejects empty dependencies and a non-message event definition. singleShot
+// selects the lifecycle: true = removed by the hub after one fire (in-instance
+// receiver); false = persistent, fires for every matching message until
+// Stop/unregister (the SRD-015 instance-starter).
 func NewMessageWaiter(
 	eh eventproc.EventHub,
 	ep eventproc.EventProcessor,
 	eDefI flow.EventDefinition,
 	id string,
 	rt renv.EngineRuntime,
+	singleShot bool,
 ) (eventproc.EventWaiter, error) {
 	if ep == nil || eDefI == nil || eh == nil || rt == nil {
 		return nil,
@@ -87,6 +95,7 @@ func NewMessageWaiter(
 		rt:         rt,
 		processors: []eventproc.EventProcessor{ep},
 		state:      eventproc.WSReady,
+		singleShot: singleShot,
 	}, nil
 }
 
@@ -192,33 +201,48 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 	return nil
 }
 
-// runMessageService waits for the first matching envelope (or a stop/cancel)
-// and resumes the waiting node. The waiter is one-shot: it returns after the
-// first delivered message.
+// runMessageService waits for matching envelopes (or a stop/cancel) and fires
+// the waiting node. A single-shot waiter returns after the first delivered
+// message; a persistent waiter loops, firing for every matching message until
+// stopped or canceled.
 func (mw *messageWaiter) runMessageService(
 	ctx context.Context,
 	ch <-chan messaging.Envelope,
 ) {
-	select {
-	case <-ctx.Done():
-		mw.setState(eventproc.WSStopped)
-
-	case <-mw.stopCh:
-		mw.rt.Logger().Debug("message waiter stopping", "waiter_id", mw.id)
-
-	case env, ok := <-ch:
-		if !ok {
+	for {
+		select {
+		case <-ctx.Done():
 			mw.setState(eventproc.WSStopped)
 
 			return
-		}
 
-		_ = mw.processMessageEvent(ctx, env)
+		case <-mw.stopCh:
+			mw.rt.Logger().Debug("message waiter stopping", "waiter_id", mw.id)
+
+			return
+
+		case env, ok := <-ch:
+			if !ok {
+				mw.setState(eventproc.WSStopped)
+
+				return
+			}
+
+			if err := mw.processMessageEvent(ctx, env); err != nil {
+				return
+			}
+
+			if mw.singleShot {
+				return
+			}
+		}
 	}
 }
 
 // processMessageEvent fires the payload-carrying event to every registered
-// processor, then removes the waiter from the hub.
+// processor, then reports the fire to the hub. It never removes itself: a
+// single-shot waiter sets a terminal state so the hub removes it; a persistent
+// waiter stays Runned so the hub keeps it (ADR-006 v.1 §2.5).
 func (mw *messageWaiter) processMessageEvent(
 	ctx context.Context,
 	env messaging.Envelope,
@@ -226,6 +250,7 @@ func (mw *messageWaiter) processMessageEvent(
 	eDef, err := mw.fireDefinition(env)
 	if err != nil {
 		mw.setState(eventproc.WSFailed)
+		_ = mw.hub.WaiterFired(mw.eDef.ID()) // terminal → the hub removes it
 
 		return err
 	}
@@ -237,17 +262,22 @@ func (mw *messageWaiter) processMessageEvent(
 	for _, ep := range processors {
 		if err := ep.ProcessEvent(ctx, eDef); err != nil {
 			mw.setState(eventproc.WSFailed)
+			_ = mw.hub.WaiterFired(mw.eDef.ID())
 
 			return err
 		}
 	}
 
-	mw.m.Lock()
-	mw.processors = []eventproc.EventProcessor{}
-	mw.state = eventproc.WSEnded
-	mw.m.Unlock()
+	// A single-shot waiter is done after one fire — reach a terminal state so
+	// the hub removes it; a persistent waiter stays Runned and keeps firing.
+	if mw.singleShot {
+		mw.m.Lock()
+		mw.processors = []eventproc.EventProcessor{}
+		mw.state = eventproc.WSEnded
+		mw.m.Unlock()
+	}
 
-	_ = mw.hub.RemoveWaiter(mw.eDef.ID()) // ignore error during cleanup
+	_ = mw.hub.WaiterFired(mw.eDef.ID()) // the hub removes iff terminal
 
 	return nil
 }

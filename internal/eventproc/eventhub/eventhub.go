@@ -294,6 +294,38 @@ func (eh *EventHub) RemoveWaiter(eDefID string) error {
 	return nil
 }
 
+// WaiterFired reports that the waiter for eDefID has fired. The EventHub is the
+// sole owner of waiter removal (ADR-006 v.1 §2.5): it removes the waiter iff it
+// has reached a terminal state (Ended/Failed) and keeps a still-running one (a
+// persistent message waiter, or a timer mid-cycle). A waiter never removes
+// itself — it sets its own state and reports here.
+func (eh *EventHub) WaiterFired(eDefID string) error {
+	eDefID = strings.TrimSpace(eDefID)
+	if eDefID == "" {
+		return errs.New(
+			errs.M("event definition id is empty"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	eh.m.Lock()
+	defer eh.m.Unlock()
+
+	w, ok := eh.waiters[eDefID]
+	if !ok {
+		return errs.New(
+			errs.M("waiter isn't found"),
+			errs.C(errorClass, errs.ObjectNotFound),
+			errs.D("event_definition_id", eDefID))
+	}
+
+	switch w.State() {
+	case eventproc.WSEnded, eventproc.WSFailed:
+		delete(eh.waiters, eDefID)
+	}
+
+	return nil
+}
+
 // ----------------------------------------------------------------------------
 
 // interfaces check

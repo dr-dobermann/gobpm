@@ -71,12 +71,12 @@ func TestNewMessageWaiterErrors(t *testing.T) {
 	ep := mockeventproc.NewMockEventProcessor(t)
 	hub := mockeventproc.NewMockEventHub(t)
 
-	_, err := waiters.NewMessageWaiter(nil, nil, nil, "", nil)
+	_, err := waiters.NewMessageWaiter(nil, nil, nil, "", nil, true)
 	require.Error(t, err)
 
 	_, err = waiters.NewMessageWaiter(hub, ep,
 		events.MustSignalEventDefinition(&events.Signal{}), "",
-		enginert.Default())
+		enginert.Default(), true)
 	require.Error(t, err)
 }
 
@@ -104,7 +104,7 @@ func TestMessageWaiterProcessors(t *testing.T) {
 	hub := mockeventproc.NewMockEventHub(t)
 
 	w, err := waiters.NewMessageWaiter(hub, ep, msgEventDef(t), "",
-		enginert.Default())
+		enginert.Default(), true)
 	require.NoError(t, err)
 
 	require.Error(t, w.AddEventProcessor(nil))
@@ -126,7 +126,7 @@ func TestMessageWaiterDelivery(t *testing.T) {
 
 	rt := enginert.Default()
 	hub := mockeventproc.NewMockEventHub(t)
-	hub.EXPECT().RemoveWaiter(eDef.ID()).Return(nil).Once()
+	hub.EXPECT().WaiterFired(eDef.ID()).Return(nil).Once()
 
 	done := make(chan flow.EventDefinition, 1)
 	ep := mockeventproc.NewMockEventProcessor(t)
@@ -138,7 +138,7 @@ func TestMessageWaiterDelivery(t *testing.T) {
 			return nil
 		})
 
-	w, err := waiters.NewMessageWaiter(hub, ep, eDef, "", rt)
+	w, err := waiters.NewMessageWaiter(hub, ep, eDef, "", rt, true)
 	require.NoError(t, err)
 	require.NoError(t, w.Service(ctx))
 
@@ -159,6 +159,56 @@ func TestMessageWaiterDelivery(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+// TestMessageWaiterPersistent exercises the persistent (singleShot=false)
+// lifecycle (SRD-015 FR-1): the waiter fires for every matching message and
+// stays Runned — it never reaches a terminal state on its own, so the hub
+// keeps it. Each fire still reports to the hub via WaiterFired.
+func TestMessageWaiterPersistent(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	eDef := msgEventDef(t)
+
+	rt := enginert.Default()
+	hub := mockeventproc.NewMockEventHub(t)
+	hub.EXPECT().WaiterFired(eDef.ID()).Return(nil)
+
+	const fires = 3
+
+	got := make(chan flow.EventDefinition, fires)
+	ep := mockeventproc.NewMockEventProcessor(t)
+	ep.EXPECT().
+		ProcessEvent(mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, ed flow.EventDefinition) error {
+			got <- ed
+
+			return nil
+		})
+
+	w, err := waiters.NewMessageWaiter(hub, ep, eDef, "", rt, false)
+	require.NoError(t, err)
+	require.NoError(t, w.Service(ctx))
+
+	for i := range fires {
+		require.NoError(t, rt.MessageBroker().Publish(ctx,
+			messaging.Envelope{Name: "order placed", Payload: i}))
+
+		select {
+		case ed := <-got:
+			items := ed.GetItemsList()
+			require.Len(t, items, 1)
+			require.Equal(t, i, items[0].Structure().Get(ctx))
+		case <-time.After(2 * time.Second):
+			t.Fatalf("message %d was not delivered to the processor", i)
+		}
+	}
+
+	// A persistent waiter never goes terminal on its own — it stays Runned
+	// until stopped. The hub keeps it (WaiterFired removes only terminal ones).
+	require.Equal(t, eventproc.WSRunned, w.State())
+	require.NoError(t, w.Stop())
+}
+
 func TestMessageWaiterProcessEventError(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
@@ -166,6 +216,7 @@ func TestMessageWaiterProcessEventError(t *testing.T) {
 
 	rt := enginert.Default()
 	hub := mockeventproc.NewMockEventHub(t)
+	hub.EXPECT().WaiterFired(mock.Anything).Return(nil).Maybe()
 
 	released := make(chan struct{})
 	ep := mockeventproc.NewMockEventProcessor(t)
@@ -177,7 +228,7 @@ func TestMessageWaiterProcessEventError(t *testing.T) {
 			return fmt.Errorf("processing failed")
 		})
 
-	w, err := waiters.NewMessageWaiter(hub, ep, msgEventDef(t), "", rt)
+	w, err := waiters.NewMessageWaiter(hub, ep, msgEventDef(t), "", rt, true)
 	require.NoError(t, err)
 	require.NoError(t, w.Service(ctx))
 
@@ -195,7 +246,7 @@ func TestMessageWaiterStop(t *testing.T) {
 	hub := mockeventproc.NewMockEventHub(t)
 
 	w, err := waiters.NewMessageWaiter(hub, ep, msgEventDef(t), "",
-		enginert.Default())
+		enginert.Default(), true)
 	require.NoError(t, err)
 
 	require.NoError(t, w.Service(context.Background()))
@@ -209,7 +260,7 @@ func TestMessageWaiterContextCancel(t *testing.T) {
 	hub := mockeventproc.NewMockEventHub(t)
 
 	w, err := waiters.NewMessageWaiter(hub, ep, msgEventDef(t), "",
-		enginert.Default())
+		enginert.Default(), true)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -227,7 +278,7 @@ func TestMessageWaiterClosedChannel(t *testing.T) {
 
 	rt := brokerRT{EngineRuntime: enginert.Default(), broker: closedChBroker{}}
 
-	w, err := waiters.NewMessageWaiter(hub, ep, msgEventDef(t), "", rt)
+	w, err := waiters.NewMessageWaiter(hub, ep, msgEventDef(t), "", rt, true)
 	require.NoError(t, err)
 	require.NoError(t, w.Service(context.Background()))
 
@@ -242,7 +293,7 @@ func TestMessageWaiterSubscribeError(t *testing.T) {
 
 	rt := brokerRT{EngineRuntime: enginert.Default(), broker: errSubBroker{}}
 
-	w, err := waiters.NewMessageWaiter(hub, ep, msgEventDef(t), "", rt)
+	w, err := waiters.NewMessageWaiter(hub, ep, msgEventDef(t), "", rt, true)
 	require.NoError(t, err)
 
 	require.Error(t, w.Service(context.Background()))
