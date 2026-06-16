@@ -1,8 +1,12 @@
 package bpmncommon
 
 import (
+	"strings"
+
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // 1. Key-based correlation.
@@ -114,3 +118,104 @@ type (
 		foundation.BaseElement
 	}
 )
+
+// NewCorrelationKey builds a CorrelationKey out of one or more partial-key
+// CorrelationProperties (SRD-015 §4.5). A blank name or an empty property set
+// is rejected.
+func NewCorrelationKey(
+	name string,
+	props []CorrelationProperty,
+	baseOpts ...options.Option,
+) (*CorrelationKey, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, errs.New(
+			errs.M("CorrelationKey should have a non-empty name"),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	if len(props) == 0 {
+		return nil, errs.New(
+			errs.M("CorrelationKey %q needs at least one CorrelationProperty",
+				name),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	be, err := foundation.NewBaseElement(baseOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return &CorrelationKey{
+		BaseElement: *be,
+		Name:        name,
+		Properties:  append([]CorrelationProperty(nil), props...),
+	}, nil
+}
+
+// NewCorrelationProperty builds a CorrelationProperty (a partial key) with the
+// per-Message retrieval expressions that extract its value. A blank name or an
+// empty expression set is rejected.
+func NewCorrelationProperty(
+	name, pType string,
+	exprs []CorrelationPropertyRetrievalExpression,
+	baseOpts ...options.Option,
+) (*CorrelationProperty, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, errs.New(
+			errs.M("CorrelationProperty should have a non-empty name"),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	if len(exprs) == 0 {
+		return nil, errs.New(
+			errs.M("CorrelationProperty %q needs at least one retrieval "+
+				"expression", name),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	be, err := foundation.NewBaseElement(baseOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return &CorrelationProperty{
+		BaseElement: *be,
+		Name:        name,
+		Type:        strings.TrimSpace(pType),
+		Expressions: append([]CorrelationPropertyRetrievalExpression(nil), exprs...),
+	}, nil
+}
+
+// NewCorrelationPropertyRetrievalExpression associates a FormalExpression
+// (extraction path over messageRef's payload) with the Message it applies to. A
+// nil messagePath or messageRef is rejected.
+func NewCorrelationPropertyRetrievalExpression(
+	messagePath data.FormalExpression,
+	messageRef *Message,
+	baseOpts ...options.Option,
+) (*CorrelationPropertyRetrievalExpression, error) {
+	if messagePath == nil {
+		return nil, errs.New(
+			errs.M("a nil MessagePath expression isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if messageRef == nil {
+		return nil, errs.New(
+			errs.M("a nil MessageRef isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	be, err := foundation.NewBaseElement(baseOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return &CorrelationPropertyRetrievalExpression{
+		MessagePath: messagePath,
+		MessageRef:  messageRef,
+		BaseElement: *be,
+	}, nil
+}

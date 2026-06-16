@@ -10,6 +10,7 @@ import (
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
 	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
@@ -162,4 +163,71 @@ func TestUnregisterEventFullChain(t *testing.T) {
 	require.Empty(t, hub.waiters,
 		"the last processor leaving stops and removes the waiter")
 	hub.m.RUnlock()
+}
+
+// TestWaiterFired covers the hub-owned removal contract (SRD-015 FR-1,
+// ADR-006 v.1 §2.5): the EventHub is the sole remover and reaps a waiter
+// only when it reports a terminal state. An empty id and an unknown waiter
+// are rejected; a terminal waiter (Ended/Failed) is removed; a still-running
+// one is kept.
+func TestWaiterFired(t *testing.T) {
+	hub, err := New(enginert.Default())
+	require.NoError(t, err)
+
+	t.Run("empty id rejected", func(t *testing.T) {
+		err := hub.WaiterFired("   ")
+		require.Error(t, err)
+
+		var ae *errs.ApplicationError
+
+		require.ErrorAs(t, err, &ae)
+		require.True(t, ae.HasClass(errs.EmptyNotAllowed))
+	})
+
+	t.Run("unknown waiter rejected", func(t *testing.T) {
+		err := hub.WaiterFired("nope")
+		require.Error(t, err)
+
+		var ae *errs.ApplicationError
+
+		require.ErrorAs(t, err, &ae)
+		require.True(t, ae.HasClass(errs.ObjectNotFound))
+	})
+
+	terminal := []eventproc.EventWaiterState{
+		eventproc.WSEnded, eventproc.WSFailed,
+	}
+	for _, st := range terminal {
+		t.Run("terminal "+st.String()+" removed", func(t *testing.T) {
+			w := mockeventproc.NewMockEventWaiter(t)
+			w.EXPECT().State().Return(st)
+
+			hub.m.Lock()
+			hub.waiters["term"] = w
+			hub.m.Unlock()
+
+			require.NoError(t, hub.WaiterFired("term"))
+
+			hub.m.RLock()
+			_, ok := hub.waiters["term"]
+			hub.m.RUnlock()
+			require.False(t, ok, "a terminal waiter must be removed")
+		})
+	}
+
+	t.Run("running waiter kept", func(t *testing.T) {
+		w := mockeventproc.NewMockEventWaiter(t)
+		w.EXPECT().State().Return(eventproc.WSRunned)
+
+		hub.m.Lock()
+		hub.waiters["run"] = w
+		hub.m.Unlock()
+
+		require.NoError(t, hub.WaiterFired("run"))
+
+		hub.m.RLock()
+		_, ok := hub.waiters["run"]
+		hub.m.RUnlock()
+		require.True(t, ok, "a running waiter must be kept")
+	})
 }

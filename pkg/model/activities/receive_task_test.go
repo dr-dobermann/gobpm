@@ -184,3 +184,27 @@ func TestReceiveTaskProcessThenExec(t *testing.T) {
 			require.Error(t, err)
 		})
 }
+
+// TestReceiveTaskInstantiate covers the WithInstantiate option (SRD-015 M4): it
+// marks the task as instantiating, the flag survives Clone, and the default is
+// false.
+func TestReceiveTaskInstantiate(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	// default: not instantiating.
+	plain, err := activities.NewReceiveTask("recv", recvMessage(t),
+		activities.WithoutParams())
+	require.NoError(t, err)
+	require.False(t, plain.Instantiate())
+
+	// WithInstantiate sets the flag.
+	inst, err := activities.NewReceiveTask("recv-inst", recvMessage(t),
+		activities.WithoutParams(), activities.WithInstantiate())
+	require.NoError(t, err)
+	require.True(t, inst.Instantiate())
+
+	// the flag survives Clone.
+	cl, ok := inst.Clone().(*activities.ReceiveTask)
+	require.True(t, ok)
+	require.True(t, cl.Instantiate())
+}

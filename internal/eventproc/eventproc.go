@@ -62,6 +62,23 @@ type EventHub interface {
 	// with concurrent calls that acquire that mutex — the race
 	// detector flags the reflect read against the lock CAS.
 	RemoveWaiter(eDefID string) error
+
+	// WaiterFired is called by a waiter (from its own goroutine) to report it
+	// has fired. The EventHub — the SOLE owner of waiter removal (ADR-006 v.1
+	// §2.5) — removes the waiter iff it has reached a terminal state, and keeps
+	// a still-running one (a persistent message waiter, or a timer mid-cycle).
+	// No waiter ever removes itself: it sets its own state and reports here.
+	// Takes the eventDefinition ID (not the waiter) for the same reflect-race
+	// reason as RemoveWaiter.
+	WaiterFired(eDefID string) error
+
+	// RegisterPersistentEvent registers a persistent (never single-shot)
+	// subscription for an event-triggered instance-starter (SRD-015): the
+	// waiter fires for every matching message and is retained until it is
+	// unregistered (UnregisterEvent) or stopped, rather than being removed
+	// after the first fire like the single-shot in-instance receiver
+	// RegisterEvent builds. Only message triggers are accepted.
+	RegisterPersistentEvent(ep EventProcessor, eDef flow.EventDefinition) error
 }
 
 // EventWaiter represents an event waiter interface.

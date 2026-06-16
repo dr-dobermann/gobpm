@@ -105,17 +105,47 @@ type Instance struct {
 	state      atomic.Uint32 // written only by loop(), read via State()
 }
 
+// newConfig holds the optional parameters of New. Its zero value builds a
+// normal instance (entry-node seeding); withBornEvent switches it to a
+// born-from-event instance (SRD-015).
+type newConfig struct {
+	bornEvent   flow.EventDefinition
+	bornStartID string
+}
+
+// newOption tunes New. Born-from-event is the only option and is exposed
+// publicly via NewFromEvent rather than the bare option.
+type newOption func(*newConfig)
+
+// withBornEvent makes New build a born-from-event instance: the instantiating
+// start node (startNodeID) is treated as already fired (its payload is bound,
+// its outgoing flows seeded) instead of parked.
+func withBornEvent(startNodeID string, eDef flow.EventDefinition) newOption {
+	return func(c *newConfig) {
+		c.bornStartID = startNodeID
+		c.bornEvent = eDef
+	}
+}
+
 // New creates a new Instance from the Snapshot s and sets state to Created.
 // parentRoot is the container-scope path the instance's root scope attaches
 // under (sub-process / call-activity nesting, future); scope.EmptyDataPath
-// roots the instance at the top.
+// roots the instance at the top. Initial tracks are seeded from the process's
+// entry nodes (no-incoming, non-gateway, non-boundary); withBornEvent
+// (NewFromEvent) seeds from a fired start node instead.
 func New(
 	s *snapshot.Snapshot,
 	parentRoot scope.DataPath,
 	er engrenv.EngineRuntime,
 	ep eventproc.EventProducer,
 	rr interactor.Registrator,
+	opts ...newOption,
 ) (*Instance, error) {
+	var cfg newConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
+
 	if s == nil {
 		return nil,
 			errs.New(
@@ -175,7 +205,27 @@ func New(
 			errs.D("process_id", s.ProcessID))
 	}
 
-	if err := inst.createTracks(); err != nil {
+	// Born-from-event: bind the payload and resolve the fired start node so
+	// createTracks seeds from its outgoing flows instead of parking it.
+	var bornStart flow.Node
+	if cfg.bornStartID != "" {
+		bs, ok := inst.s.Nodes[cfg.bornStartID]
+		if !ok {
+			return nil, errs.New(
+				errs.M("born-from-event start node %q not found in snapshot",
+					cfg.bornStartID),
+				errs.C(errorClass, errs.ObjectNotFound),
+				errs.D("process_id", inst.s.ProcessID))
+		}
+
+		bornStart = bs
+
+		if err := inst.bindEventPayload(cfg.bornEvent); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := inst.createTracks(bornStart); err != nil {
 		return nil, err
 	}
 
@@ -184,6 +234,58 @@ func New(
 	inst.trackCount.Store(int64(len(inst.tracks)))
 
 	return &inst, nil
+}
+
+// NewFromEvent creates an Instance born from an event-triggered start (SRD-015):
+// the instantiating start node (startNodeID) is treated as already fired. The
+// message payload carried by eDef is bound into the instance root scope and the
+// initial track(s) start on the start node's outgoing flow target(s), rather
+// than the start node being parked as a waiter. The auto-instantiation path
+// (Thresher.launchInstanceFromEvent) uses this; StartProcess keeps using New.
+func NewFromEvent(
+	s *snapshot.Snapshot,
+	parentRoot scope.DataPath,
+	er engrenv.EngineRuntime,
+	ep eventproc.EventProducer,
+	rr interactor.Registrator,
+	startNodeID string,
+	eDef flow.EventDefinition,
+) (*Instance, error) {
+	startNodeID = strings.TrimSpace(startNodeID)
+	if startNodeID == "" {
+		return nil, errs.New(
+			errs.M("NewFromEvent: empty start node id isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if eDef == nil {
+		return nil, errs.New(
+			errs.M("NewFromEvent: a nil event definition isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	return New(s, parentRoot, er, ep, rr, withBornEvent(startNodeID, eDef))
+}
+
+// bindEventPayload binds the payload carried by a born-from-event start into the
+// instance root scope: each item the fired event definition carries is committed
+// as a Ready datum keyed by its item id (the msgflow.Bind shape, at root), so a
+// downstream node reading that item observes the message payload (SRD-015 §4.4).
+func (inst *Instance) bindEventPayload(eDef flow.EventDefinition) error {
+	items := eDef.GetItemsList()
+	if len(items) == 0 {
+		return nil
+	}
+
+	dd := make([]data.Data, 0, len(items))
+	for _, item := range items {
+		dd = append(dd, data.MustParameter(item.ID(),
+			data.MustItemAwareElement(item, data.ReadyDataState)))
+	}
+
+	// Commit returns a self-classifying errs error (container/writable/name
+	// checks); pass it through rather than re-wrapping at this internal seam.
+	return inst.dataPlane.Commit(inst.rootScope, dd...)
 }
 
 // loadProperties creates the instance's data plane rooted under parentRoot
@@ -469,8 +571,15 @@ func (inst *Instance) TokenHistory() []TokenPath {
 }
 
 // createTrack creates all initial tracks of the Instance.
-func (inst *Instance) createTracks() error {
+func (inst *Instance) createTracks(bornStart flow.Node) error {
 	for _, n := range inst.s.Nodes {
+		// born-from-event: the instantiating start node is already fired, so it
+		// is not seeded as a track (it would otherwise park as a waiter); its
+		// outgoing targets are seeded below instead (SRD-015 §4.4).
+		if bornStart != nil && n.ID() == bornStart.ID() {
+			continue
+		}
+
 		_, boundaryEvent := n.(flow.BoundaryEvent)
 		if len(n.Incoming()) != 0 ||
 			n.NodeType() == flow.GatewayNodeType ||
@@ -484,6 +593,21 @@ func (inst *Instance) createTracks() error {
 		}
 
 		inst.tracks[t.ID()] = t
+	}
+
+	if bornStart != nil {
+		// Seed the initial track(s) on the already-fired start node's outgoing
+		// flow target(s) — the spawnForks pattern: the track's first step is the
+		// target node, recording the flow it arrived on.
+		for _, f := range bornStart.Outgoing() {
+			t, err := newTrack(f.Target().Node(), inst, nil)
+			if err != nil {
+				return err
+			}
+
+			t.steps[0].inFlow = f
+			inst.tracks[t.ID()] = t
+		}
 	}
 
 	return nil

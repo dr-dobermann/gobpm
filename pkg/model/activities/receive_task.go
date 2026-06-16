@@ -63,7 +63,22 @@ func NewReceiveTask(
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	t, err := newTask(name, taskOpts...)
+	// Separate the ReceiveTask-specific options (e.g. WithInstantiate) from the
+	// embedded task's options before building the task.
+	var rc rcvTaskConfig
+
+	baseOpts := make([]options.Option, 0, len(taskOpts))
+	for _, o := range taskOpts {
+		if rto, ok := o.(RcvTaskOption); ok {
+			rto(&rc)
+
+			continue
+		}
+
+		baseOpts = append(baseOpts, o)
+	}
+
+	t, err := newTask(name, baseOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -74,9 +89,10 @@ func NewReceiveTask(
 	}
 
 	return &ReceiveTask{
-			task:    *t,
-			message: msg,
-			eDef:    eDef,
+			task:        *t,
+			message:     msg,
+			eDef:        eDef,
+			instantiate: rc.instantiate,
 		},
 		nil
 }

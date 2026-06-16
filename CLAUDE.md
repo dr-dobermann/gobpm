@@ -173,4 +173,27 @@ GoBPM is a BPMN v2 compliant Business Process Management engine with an event-dr
 1. Run `make gen_mock_files` after interface changes
 2. Create unit tests with mocks
 3. Add integration tests in examples/
+
+## Design docs — BPMN standard grounding (ADR/SAD)
+
+gobpm's governing external standard is **BPMN 2.0**. Per the `/sdd-fix` and
+`/review-srd` evidence-first rules, every **standard-claim** in an ADR or SAD —
+an element/object-model name, a cardinality, a semantic ("the spec says X"), a
+lifecycle/state rule, terminology, or a "the standard requires / permits / is
+**silent** on Y" — MUST be verified against the authoritative source and **cited
+by section**, not asserted from memory. Silence is not a mandate.
+
+Authoritative sources, in order:
+- **`docs/bpmn-spec/`** — the vendored BPMN extract (elements, semantics,
+  state-machines, conformance scope). Read and quote it; it carries the spec
+  `§`-refs (e.g. correlation = `§8.4.2`).
+- The **BPMN 2.0 spec text** and the **BPMN NotebookLM notebook** for clauses not
+  covered by the extract.
+
+Cite `§N` on every standard-claim (`§8.4.2`, `§13.5.1`, …). Where gobpm
+deliberately diverges from the standard, call it out as an explicit **engine
+choice** (a "Engine notes" subsection), never as if the standard said so —
+matches the "preserve standard taxonomy" and "ADR is prescriptive,
+standard-grounded" project rules. `/review-srd` flags an un-pinned standard-claim
+🟠 before approval.
 4. Ensure coverage with `make test_coverage`

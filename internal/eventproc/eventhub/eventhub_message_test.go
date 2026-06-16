@@ -41,3 +41,71 @@ func TestMessageEvents(t *testing.T) {
 				hub.UnregisterEvent(mockProcessor, messageEvent.ID()))
 		})
 }
+
+// msgEDef builds a message event definition for the persistent-registration
+// tests.
+func msgEDef(t *testing.T, name string) *events.MessageEventDefinition {
+	t.Helper()
+
+	med, err := events.NewMessageEventDefinition(
+		bpmncommon.MustMessage(name, data.MustItemDefinition(nil)), nil)
+	require.NoError(t, err)
+
+	return med
+}
+
+// TestRegisterPersistentEvent covers the instance-starter registration path
+// (SRD-015 M2): a message trigger registers a persistent waiter that the hub
+// retains until UnregisterEvent; non-message triggers, an unstarted hub, and a
+// nil processor are rejected.
+func TestRegisterPersistentEvent(t *testing.T) {
+	t.Run("message registration succeeds and tears down", func(t *testing.T) {
+		hub, err := eventhub.New(enginert.Default())
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		require.NoError(t, hub.Start(ctx))
+
+		ep := mockeventproc.NewMockEventProcessor(t)
+		ep.EXPECT().ID().Return("starter").Maybe()
+
+		med := msgEDef(t, "start-message")
+		require.NoError(t, hub.RegisterPersistentEvent(ep, med))
+		require.NoError(t, hub.UnregisterEvent(ep, med.ID()))
+	})
+
+	t.Run("non-message trigger rejected", func(t *testing.T) {
+		hub, err := eventhub.New(enginert.Default())
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		require.NoError(t, hub.Start(ctx))
+
+		ep := mockeventproc.NewMockEventProcessor(t)
+		ep.EXPECT().ID().Return("starter").Maybe()
+
+		require.Error(t, hub.RegisterPersistentEvent(ep,
+			events.MustSignalEventDefinition(&events.Signal{})))
+	})
+
+	t.Run("unstarted hub rejected", func(t *testing.T) {
+		hub, err := eventhub.New(enginert.Default())
+		require.NoError(t, err)
+
+		ep := mockeventproc.NewMockEventProcessor(t)
+		require.Error(t, hub.RegisterPersistentEvent(ep, msgEDef(t, "m")))
+	})
+
+	t.Run("nil processor rejected", func(t *testing.T) {
+		hub, err := eventhub.New(enginert.Default())
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		require.NoError(t, hub.Start(ctx))
+
+		require.Error(t, hub.RegisterPersistentEvent(nil, msgEDef(t, "m")))
+	})
+}

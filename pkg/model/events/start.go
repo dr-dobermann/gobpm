@@ -7,6 +7,7 @@ import (
 	"reflect"
 
 	"github.com/dr-dobermann/gobpm/pkg/exec"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -27,6 +28,12 @@ var startTriggers = set.New[flow.EventTrigger](
 
 // StartEvent represents a start event in a process.
 type StartEvent struct {
+	// correlationKey, when set, is the CorrelationKey an instantiating message
+	// start event correlates on: the engine derives the incoming message's key
+	// from this declaration to decide create-or-route-or-join (ADR-016 v.1
+	// §2.2/§2.3). nil = no key-based correlation (name-match only).
+	correlationKey *bpmncommon.CorrelationKey
+
 	catchEvent
 
 	// This attribute only applies to Start Events of Event Sub-Processes; it is
@@ -107,9 +114,17 @@ func (se *StartEvent) Node() flow.Node {
 // flows, no container) and the interrupting flag is copied as configuration.
 func (se *StartEvent) Clone() flow.Node {
 	return &StartEvent{
-		catchEvent:   se.clone(),
-		interrupting: se.interrupting,
+		catchEvent:     se.clone(),
+		correlationKey: se.correlationKey,
+		interrupting:   se.interrupting,
 	}
+}
+
+// CorrelationKey returns the CorrelationKey this start event correlates on, or
+// nil for name-match only (ADR-016 v.1 §2.2). The engine reads it structurally
+// to derive an incoming message's key for create-or-route-or-join.
+func (se *StartEvent) CorrelationKey() *bpmncommon.CorrelationKey {
+	return se.correlationKey
 }
 
 // EventClass returns the event class.
