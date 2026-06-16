@@ -105,6 +105,85 @@ func TestEventTriggeredInstantiation(t *testing.T) {
 	}
 }
 
+// recvTaskConfirmProcess builds "instantiate-ReceiveTask -> confirm(service) ->
+// end": a no-incoming instantiate ReceiveTask is the entry, and confirm reads
+// the bound payload (order_in) and pushes it to done.
+func recvTaskConfirmProcess(t *testing.T, done chan<- string) *process.Process {
+	t.Helper()
+
+	require.NoError(t, data.CreateDefaultStates())
+
+	proc, err := process.New("recv-instantiated")
+	require.NoError(t, err)
+
+	recv, err := activities.NewReceiveTask("await-order",
+		bpmncommon.MustMessage("order placed",
+			data.MustItemDefinition(values.NewVariable(""),
+				foundation.WithID("order_in"))),
+		activities.WithoutParams(), activities.WithInstantiate())
+	require.NoError(t, err)
+
+	confirmOp, err := gooper.New("confirm-op",
+		func(ctx context.Context, r service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			got, err := r.GetDataByID("order_in")
+			if err != nil {
+				return nil, fmt.Errorf("read order_in: %w", err)
+			}
+
+			done <- fmt.Sprintf("%v", got.Value().Get(ctx))
+
+			return nil, nil
+		})
+	require.NoError(t, err)
+
+	confirm, err := activities.NewServiceTask("confirm", confirmOp,
+		activities.WithoutParams())
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{recv, confirm, end} {
+		require.NoError(t, proc.Add(e))
+	}
+
+	for _, l := range [][2]flow.Element{{recv, confirm}, {confirm, end}} {
+		_, err := flow.Link(
+			l[0].(flow.SequenceSource), l[1].(flow.SequenceTarget))
+		require.NoError(t, err)
+	}
+
+	return proc
+}
+
+// TestInstantiateReceiveTask is SRD-015 V4: a no-incoming instantiate
+// ReceiveTask spawns a new instance when a matching message is published; the
+// born instance runs from the receiver's outgoing flow and observes the payload.
+func TestInstantiateReceiveTask(t *testing.T) {
+	broker := membroker.New()
+
+	th, err := thresher.New("recv-e2e", thresher.WithMessageBroker(broker))
+	require.NoError(t, err)
+
+	done := make(chan string, 1)
+	require.NoError(t, th.RegisterProcess(recvTaskConfirmProcess(t, done)))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, th.Run(ctx))
+
+	require.NoError(t, broker.Publish(ctx,
+		messaging.Envelope{Name: "order placed", Payload: "ORD-77"}))
+
+	select {
+	case got := <-done:
+		require.Equal(t, "ORD-77", got)
+	case <-time.After(3 * time.Second):
+		t.Fatal("a published message did not instantiate via the ReceiveTask")
+	}
+}
+
 // TestManualStartNotInstantiated is SRD-015 FR-9: a WithManualStart process is
 // NOT auto-instantiated by a published message; it runs only via StartProcess,
 // where its message-start node waits as an in-instance catch until the message

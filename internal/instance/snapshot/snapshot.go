@@ -54,9 +54,17 @@ func New(
 
 	seExists := false
 	eeExists := false
+	instStartExists := false
 
 	for _, n := range p.Nodes() {
 		s.Nodes[n.ID()] = n
+
+		// An instantiate ReceiveTask with no incoming flow is a valid process
+		// instantiation point on its own (BPMN §13.3.3) — the task-shaped peer
+		// of a message start event.
+		if isInstantiatingTask(n) {
+			instStartExists = true
+		}
 
 		// check events
 		if n.NodeType() == flow.EventNodeType {
@@ -83,12 +91,14 @@ func New(
 		}
 	}
 
-	// by BPMN demands that, if there is an EndEvent in the process, there should
-	// be at least one StartEvent
-	if eeExists && !seExists {
+	// BPMN requires that, if there is an EndEvent, the process has an
+	// instantiation point: a StartEvent or a no-incoming instantiate
+	// ReceiveTask (§13.3.3).
+	if eeExists && !seExists && !instStartExists {
 		return nil,
 			errs.New(
-				errs.M("no StartEvent in process with an EndEvent"))
+				errs.M("no StartEvent or instantiating ReceiveTask in process "+
+					"with an EndEvent"))
 	}
 
 	for _, f := range p.Flows() {
@@ -96,6 +106,15 @@ func New(
 	}
 
 	return &s, nil
+}
+
+// isInstantiatingTask reports whether n is a no-incoming instantiate
+// ReceiveTask — a valid process instantiation point on its own (BPMN §13.3.3).
+// Matched structurally to avoid coupling the snapshot to the activities package.
+func isInstantiatingTask(n flow.Node) bool {
+	rt, ok := n.(interface{ Instantiate() bool })
+
+	return ok && rt.Instantiate() && len(n.Incoming()) == 0
 }
 
 // Clone returns a per-instance copy of the Snapshot. Every node is cloned (its

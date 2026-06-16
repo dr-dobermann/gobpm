@@ -69,6 +69,29 @@ func TestSnapshotNewRejectsMalformed(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestSnapshotRequiresInstantiationPoint covers the instantiation-point
+// validation: a process with an EndEvent but neither a StartEvent nor a
+// no-incoming instantiate ReceiveTask (here a plain task -> end) is rejected.
+func TestSnapshotRequiresInstantiationPoint(t *testing.T) {
+	p, err := process.New("no-start")
+	require.NoError(t, err)
+
+	task, err := activities.NewServiceTask("task",
+		service.MustOperation("op", nil, nil, nil), activities.WithoutParams())
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	require.NoError(t, p.Add(task))
+	require.NoError(t, p.Add(end))
+	_, err = flow.Link(task, end)
+	require.NoError(t, err)
+
+	_, err = snapshot.New(p)
+	require.Error(t, err)
+}
+
 func TestSnapshotClone(t *testing.T) {
 	p, err := process.New("clone-src")
 	require.NoError(t, err)

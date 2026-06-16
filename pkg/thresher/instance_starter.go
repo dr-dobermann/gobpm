@@ -54,12 +54,12 @@ func scanInstantiatingStarts(s *snapshot.Snapshot, thr *Thresher) []*instanceSta
 	var starters []*instanceStarter
 
 	for _, n := range s.Nodes {
-		en, ok := n.(flow.EventNode)
-		if !ok || en.EventClass() != flow.StartEventClass {
+		if len(n.Incoming()) != 0 || !isInstantiatingStartNode(n) {
 			continue
 		}
 
-		if len(n.Incoming()) != 0 {
+		en, ok := n.(flow.EventNode)
+		if !ok {
 			continue
 		}
 
@@ -80,6 +80,24 @@ func scanInstantiatingStarts(s *snapshot.Snapshot, thr *Thresher) []*instanceSta
 	}
 
 	return starters
+}
+
+// isInstantiatingStartNode reports whether n is an instantiating start trigger:
+// a message StartEvent, or an instantiate ReceiveTask (BPMN §13.2 / §13.3.3 /
+// §13.5.1). The incoming-flow check is the caller's. The ReceiveTask is matched
+// structurally (Instantiate() bool) to avoid coupling the thresher to the
+// activities package.
+func isInstantiatingStartNode(n flow.Node) bool {
+	if en, ok := n.(flow.EventNode); ok &&
+		en.EventClass() == flow.StartEventClass {
+		return true
+	}
+
+	if rt, ok := n.(interface{ Instantiate() bool }); ok && rt.Instantiate() {
+		return true
+	}
+
+	return false
 }
 
 // interface check

@@ -7,16 +7,95 @@ import (
 
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+// recvTaskProcess builds a process whose entry is a ReceiveTask waiting for
+// msgName. withIncoming prepends a none start (so the receiver is mid-flow, not
+// a start); instantiate toggles WithInstantiate.
+func recvTaskProcess(
+	t *testing.T, name, msgName string, instantiate, withIncoming bool,
+) *process.Process {
+	t.Helper()
+
+	require.NoError(t, data.CreateDefaultStates())
+
+	proc, err := process.New(name)
+	require.NoError(t, err)
+
+	opts := []options.Option{activities.WithoutParams()}
+	if instantiate {
+		opts = append(opts, activities.WithInstantiate())
+	}
+
+	recv, err := activities.NewReceiveTask(name+"-recv",
+		bpmncommon.MustMessage(msgName,
+			data.MustItemDefinition(values.NewVariable(""),
+				foundation.WithID("order_in"))),
+		opts...)
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	require.NoError(t, proc.Add(recv))
+	require.NoError(t, proc.Add(end))
+	_, err = flow.Link(recv, end)
+	require.NoError(t, err)
+
+	if withIncoming {
+		start, err := events.NewStartEvent("start")
+		require.NoError(t, err)
+		require.NoError(t, proc.Add(start))
+		_, err = flow.Link(start, recv)
+		require.NoError(t, err)
+	}
+
+	return proc
+}
+
+func TestScanInstantiatingReceiveTask(t *testing.T) {
+	th, err := New("scan-recv")
+	require.NoError(t, err)
+
+	t.Run("no-incoming instantiate ReceiveTask is a starter", func(t *testing.T) {
+		s, err := snapshot.New(recvTaskProcess(t, "p-i", "order placed", true, false))
+		require.NoError(t, err)
+
+		starters := scanInstantiatingStarts(s, th)
+		require.Len(t, starters, 1)
+		require.Equal(t, "order placed", starters[0].eDef.Message().Name())
+	})
+
+	t.Run("non-instantiate ReceiveTask is not a starter", func(t *testing.T) {
+		// a non-instantiate receiver must be mid-flow (a no-incoming
+		// non-instantiate ReceiveTask with an EndEvent is an invalid process —
+		// it has no instantiation point).
+		s, err := snapshot.New(recvTaskProcess(t, "p-n", "order placed", false, true))
+		require.NoError(t, err)
+
+		require.Empty(t, scanInstantiatingStarts(s, th))
+	})
+
+	t.Run("instantiate ReceiveTask with an incoming flow is not a starter",
+		func(t *testing.T) {
+			s, err := snapshot.New(
+				recvTaskProcess(t, "p-in", "order placed", true, true))
+			require.NoError(t, err)
+
+			require.Empty(t, scanInstantiatingStarts(s, th))
+		})
+}
 
 // msgStartProcess builds a process whose start is a message StartEvent (no
 // incoming flow) wired to an EndEvent.
