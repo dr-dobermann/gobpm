@@ -153,3 +153,93 @@ func TestStartupConfigLog(t *testing.T) {
 		}
 	}
 }
+
+// captureStartup constructs an engine with the given options plus a capturing
+// Logger and returns the emitted records joined by newline (and their count).
+func captureStartup(t *testing.T, opts ...Option) (string, int) {
+	t.Helper()
+
+	h := &capHandler{}
+	if _, err := New("eng", append(opts, WithLogger(slog.New(h)))...); err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	msgs := make([]string, 0, len(h.records))
+	for _, rec := range h.records {
+		msgs = append(msgs, rec.Message)
+	}
+
+	return strings.Join(msgs, "\n"), len(h.records)
+}
+
+// bannerMarkers / configMarkers identify lines unique to each startup block.
+var (
+	bannerMarkers = []string{"GoBPM —", "version:", "last commit:"}
+	configMarkers = []string{
+		"thresher id:", "configuration:", "repository:", "workerDispatcher:",
+	}
+)
+
+func TestWithoutBanner(t *testing.T) {
+	joined, n := captureStartup(t, WithoutBanner())
+	if n == 0 {
+		t.Fatal("WithoutBanner suppressed the whole report, want config block kept")
+	}
+
+	for _, m := range bannerMarkers {
+		if strings.Contains(joined, m) {
+			t.Fatalf("WithoutBanner left banner marker %q (got %q)", m, joined)
+		}
+	}
+
+	for _, m := range configMarkers {
+		if !strings.Contains(joined, m) {
+			t.Fatalf("WithoutBanner dropped config marker %q (got %q)", m, joined)
+		}
+	}
+
+	if !strings.Contains(joined, separator) {
+		t.Fatal("WithoutBanner dropped the separator, want it after the config block")
+	}
+}
+
+func TestWithoutStartupConfig(t *testing.T) {
+	joined, n := captureStartup(t, WithoutStartupConfig())
+	if n == 0 {
+		t.Fatal("WithoutStartupConfig suppressed the whole report, want banner kept")
+	}
+
+	for _, m := range configMarkers {
+		if strings.Contains(joined, m) {
+			t.Fatalf("WithoutStartupConfig left config marker %q (got %q)", m, joined)
+		}
+	}
+
+	for _, m := range bannerMarkers {
+		if !strings.Contains(joined, m) {
+			t.Fatalf("WithoutStartupConfig dropped banner marker %q (got %q)", m, joined)
+		}
+	}
+
+	if !strings.Contains(joined, separator) {
+		t.Fatal("WithoutStartupConfig dropped the separator, want it after the banner")
+	}
+}
+
+func TestQuietStartup(t *testing.T) {
+	_, n := captureStartup(t, WithoutBanner(), WithoutStartupConfig())
+	if n != 0 {
+		t.Fatalf("suppressing both blocks should be fully silent, got %d records", n)
+	}
+}
+
+func TestWithoutBannerIdempotent(t *testing.T) {
+	c := defaultConfig()
+
+	_ = WithoutBanner()(&c)
+	_ = WithoutBanner()(&c)
+
+	if !c.suppressBanner || c.suppressStartupConfig {
+		t.Fatalf("WithoutBanner not idempotent / leaked: %+v", c)
+	}
+}

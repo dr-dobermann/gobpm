@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.1 |
-| Date | 2026-06-09 |
+| Version | v.2 |
+| Date | 2026-06-16 |
 | Owner | Ruslan Gabitov |
 | Supersedes | — |
 | Refines | [SAD-001 v.1 §11 Extension Model](SAD-001-vision-and-architecture.md) |
@@ -180,7 +180,7 @@ The instance-level `RuntimeEnvironment` is what nodes see during execution. Per 
 - `MessageBroker` (in-mem inbox) — bounds the inbox / expires uncorrelated messages (TTL).
 - `WorkerDispatcher` (in-process) — a bounded worker pool, not an unbounded goroutine-per-task.
 
-The exact bound and eviction policy for each is settled at that extension's landing SRD (the skeleton SRD-004 ships the metrics series cap; the rest land with their execution wiring). **`AuthorizationProvider` is the exception** — its default question is not growth but *security posture*: the allow-all default delegates authorization to the host application, with deny-all the opt-in for a closed system. That is settled when authorization enforcement lands, not here.
+The exact bound and eviction policy for each is settled at that extension's landing SRD (the foundational extension-skeleton SRD ships the metrics series cap; the rest land with their execution wiring). **`AuthorizationProvider` is the exception** — its default question is not growth but *security posture*: the allow-all default delegates authorization to the host application, with deny-all the opt-in for a closed system. That is settled when authorization enforcement lands, not here.
 
 ### 4.3 RuntimeEnvironment interface — extended; Instance is the implementation
 
@@ -315,7 +315,7 @@ func New(id string, opts ...Option) (*Thresher, error) {
     if err != nil {
         return nil, err
     }
-    t.logStartupConfig()             // INFO line — see §4.4.1
+    t.logStartupConfig()             // startup report — see §4.4.1
     return t, nil
 }
 ```
@@ -324,31 +324,40 @@ This pattern means "default" is an internal implementation detail of `New`, not 
 
 #### 4.4.1 Startup configuration logging
 
-After `New` finishes wiring, Thresher emits a single INFO-level log line via the configured `Logger`, summarizing the resolved extension wiring. This gives ops a single-line answer to "what is this engine configured with?" at the moment of construction.
+After `New` finishes wiring, Thresher emits its startup report via the configured `Logger`, at INFO level, exactly once — after options are applied, before the engine accepts work. The report is two independent blocks, closed by a separator rule:
 
-Format (illustrative — final structure pinned during implementation):
+1. **Banner** — the engine wordmark (ASCII), the resolved `version`, and the `last commit` (the VCS revision and time the Go toolchain bakes into the binary). A fixed identity header answering *which build is this?*
+2. **Configuration dump** — one line per resolved engine-level extension, each carrying the Go type of the wired implementation, so the full extension wiring is readable. Answers *what is this engine configured with?*
+
+Format (illustrative):
 
 ```
-INFO thresher.starting
-     id=my-engine
-     repository=*memrepo.Repository
-     logger=*slog.Logger(JSONHandler)
-     tracer=noop.Tracer
-     metricsRecorder=noop.MetricsRecorder
-     clock=*systemclock.Clock
-     messageBroker=*membroker.Broker
-     expressionEngine=*goexpr.Engine
-     authorizationProvider=*allowall.Provider
-     workerDispatcher=*inproc.Dispatcher
+           ___ ___ __  __
+  __ _ ___| _ ) _ \  \/  |
+ / _` / _ \ _ \  _/ |\/| |
+ \__, \___/___/_| |_|  |_|
+ |___/
+GoBPM — BPMN v2 process engine
+version:     v0.1.1
+last commit: f9bf034 (2026-06-13T18:50:42Z)
+thresher id: my-engine
+configuration:
+  repository:             *memrepo.Repository
+  logger:                 *slog.Logger
+  … one line per extension …
+────────────────────────────────────────────────────────────
 ```
 
-Each value is the Go type of the wired implementation. The log line is structured (slog attributes), not free-form prose — downstream log processors can pivot on individual extension types.
+Each block prints one INFO record per line (not a single dense structured record), so a human reading raw logs sees the wiring laid out instead of crammed onto one line. Each value in the dump is the Go type of the wired implementation.
 
-Behavior:
+**Suppression.** Each block is independently opt-out, via a functional option:
 
-- INFO level by default. The line is silent only if the user explicitly configures a Logger that discards INFO output. This aligns with the project's visible-by-default observability policy ([memory: observability policy](../../)).
-- Emitted exactly once per `New` call, after options are applied but before the engine starts accepting work.
-- Required, not optional. There is no `WithoutStartupConfigLog()` option — silencing it is the user's responsibility via their Logger configuration.
+- `WithoutBanner()` — omit the wordmark / version / commit block.
+- `WithoutStartupConfig()` — omit the per-extension configuration dump.
+
+Both default to **on**: the report is visible by default, consistent with the project's visible-by-default observability policy ([memory: observability policy](../../)); suppression is an explicit opt-out, never opt-in. The separator rule closes the report only when at least one block printed — suppressing both yields a fully silent startup (no separator, no records).
+
+**Why opt-out (revised from v.1).** v.1 made the startup log required, with no option, leaving silencing to the user's Logger configuration. Practice showed two distinct nuisances the Logger-level lever can't address without also dropping legitimate application INFO: the banner is decorative ASCII that, emitted one record per line, is pure noise in a structured log aggregator; and the configuration dump is verbose for embedders that construct many short-lived engines or already capture the wiring elsewhere. A per-block opt-out removes the noise precisely while keeping the default loud.
 
 ### 4.5 Default implementation policy
 
@@ -408,7 +417,7 @@ Pre-1.0 (where we are): interface evolution is freer per Go's semver convention.
 | Engine constructor | `Thresher.New(id string)` — no options | `Thresher.New(id, opts ...Option)` — single constructor; zero options applies all defaults; each option overrides one default. No `NewDefault`. | Add `Option` type. Add functional-option implementations for each Engine-level extension. Refactor `New` to initialize defaults internally, then apply options. |
 | EngineRuntime / RuntimeEnvironment split | `RuntimeEnvironment` (internal) with `scope.Scope` embed, `InstanceID()`, `EventProducer()`, `RenderRegistrator()` | **Factor `EngineRuntime`** (the engine-level extension accessors: `Logger`, `Tracer`, `MetricsRecorder`, `Clock`, `Repository`, `ExpressionEngine`, `MessageBroker`, `AuthorizationProvider`, `WorkerDispatcher`) → **public** (`pkg/`, path per ADR-003), implemented by `Thresher`. `RuntimeEnvironment` **stays internal**, embeds the public `EngineRuntime`, and keeps `scope.Scope`/`InstanceID()`/`EventProducer()`/`RenderRegistrator()` (all internal-typed). `EventHub`/`EventProducer` and human interaction stay internal. | Promote only `EngineRuntime` to `pkg/`; leave `RuntimeEnvironment` in `internal/renv`. |
 | Instance-as-RE-implementation | Already done in current code | Preserved; track sees only `*Instance` and calls uniform method set | No relationship change — Instance continues to implement the (extended) RuntimeEnvironment interface. Add the new engine-level delegate methods to Instance, each forwarding to the engine config. |
-| Thresher startup logging | No startup logging | Thresher emits one INFO-level structured log line summarizing the resolved extension wiring on every successful `New` call (§4.4.1) | Add `logStartupConfig` method to Thresher. Required behavior; cannot be opted out (user silences via their Logger config if desired). |
+| Thresher startup logging | No startup logging | Thresher emits a startup report (banner + per-extension configuration dump) over INFO records on every successful `New` call (§4.4.1) | `logStartupConfig` on Thresher. Visible by default; each block opt-out via `WithoutBanner()` / `WithoutStartupConfig()` (v.2). |
 | Repository interface | Does not exist | Define `Repository` in `pkg/` with checkpoint / load / list-in-flight methods per ADR-001 v.4 §4.7 + the Persistence & State ADR | Implement in-memory default. Add to `Thresher` config. |
 | Logger / Tracer / MetricsRecorder | Do not exist | `Logger` = slog-satisfiable core interface; `Tracer`/`MetricsRecorder` = OTel-shaped core interfaces (no OTel import — SAD-001 G2) | Defaults: `slog.Default()` Logger; **in-memory queryable registry** Metrics (series-capped, `Snapshot()`); **no-op** Tracer (in-mem span-ring + OTel are opt-in). Real OTel in `adapters/otel/`. |
 | Clock | Does not exist | Define `Clock` interface in `pkg/` | Implement wall-clock default. Inject into Timer event handling. |
@@ -458,7 +467,7 @@ How we'll know the extension architecture works:
 | **Each option overrides the default** | Per-option test: construct with `WithLogger(custom)`; assert engine's Logger is `custom`, not `slog.Default()`. Repeat for each interface. |
 | **Last-write semantics** | Test: pass `WithLogger(A), WithLogger(B)`; assert engine uses B. |
 | **Cross-adapter composition** | Test (with a real/fake `RuntimeAware` adapter): given no storage option, the AuthZ adapter uses the engine's `Repository` via the injected `EngineRuntime` (default share); given `WithStorage(otherRepo)` it uses that instead (split). Verifies §3.5 Pattern C / §8.3. |
-| **Startup config log line** | Test: construct engine with a Logger that captures records. Assert: exactly one INFO-level record with key `thresher.starting` is emitted, containing attributes for every Engine-level extension (`repository`, `logger`, `tracer`, `metricsRecorder`, `clock`, `messageBroker`, `expressionEngine`, `authorizationProvider`, `workerDispatcher`) with values matching the wired implementation type names. Verifies §4.4.1. |
+| **Startup report** | Test: construct an engine with a Logger that captures records. Assert: by default the emitted INFO records carry the banner block (version / last commit) and one configuration line per Engine-level extension (`repository`, `logger`, `tracer`, `metricsRecorder`, `clock`, `messageBroker`, `expressionEngine`, `authorizationProvider`, `workerDispatcher`) with values matching the wired implementation type names. With `WithoutBanner()` the banner block is absent; with `WithoutStartupConfig()` the configuration lines are absent; with both, startup is silent. Verifies §4.4.1. |
 | **Instance implements RuntimeEnvironment** | Type assertion test: `var _ RuntimeEnvironment = (*Instance)(nil)`. Compile-time check that Instance satisfies the extended interface. |
 | **Instance engine-service delegates** | Per-method test: construct engine with custom Logger (or Clock, or Repository, …); spawn an Instance; assert `instance.Logger()` (etc.) returns the same value as the engine config holds. Verifies one-line delegate correctness. |
 | **Default impls match the public interface contract** | Conformance test: in-memory Repository default passes the same conformance suite that a hypothetical postgres Repository would. Same for MessageBroker, etc. |
@@ -682,4 +691,5 @@ This separation lets one runtime serve both "no classification needed" (internal
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-09 | Ruslan Gabitov | **Accepted.** Extension architecture landed via [SRD-004](../srd/SRD-004-extension-skeleton.md) (the one foundational skeleton SRD): nine engine-level extension contracts in `pkg/` with bundled defaults, functional-options assembly, the public `EngineRuntime` / internal `RuntimeEnvironment` split, and `ExpressionEngine`/`Clock` wired into execution. Key decisions folded into this Draft before acceptance (no per-round rows): `EventHub` kept internal (not an extension point); human-interaction `TaskDistributor` deferred to its own ADR; cost-tiered telemetry defaults; bounded-in-memory-defaults principle (§4.2); cross-adapter composition via injected `EngineRuntime` (§3.5 Pattern C). §7 defaults-only acceptance suite green (`make ci`). ADR-001 pins bumped v.3 → v.4. RU twin deferred (batched). |
+| v.1 | 2026-06-09 | Ruslan Gabitov | **Accepted.** Extension architecture landed via the one foundational extension-skeleton SRD: nine engine-level extension contracts in `pkg/` with bundled defaults, functional-options assembly, the public `EngineRuntime` / internal `RuntimeEnvironment` split, and `ExpressionEngine`/`Clock` wired into execution. Key decisions folded into this Draft before acceptance (no per-round rows): `EventHub` kept internal (not an extension point); human-interaction `TaskDistributor` deferred to its own ADR; cost-tiered telemetry defaults; bounded-in-memory-defaults principle (§4.2); cross-adapter composition via injected `EngineRuntime` (§3.5 Pattern C). §7 defaults-only acceptance suite green (`make ci`). ADR-001 pins bumped v.3 → v.4. RU twin deferred (batched). |
+| v.2 | 2026-06-16 | Ruslan Gabitov | **§4.4.1 startup logging revised.** Relax v.1's "required, not optional" stance: the startup report is now two independently opt-out blocks — `WithoutBanner()` and `WithoutStartupConfig()` — still visible by default (opt-out, never opt-in). Reconciles §4.4.1's prose with what shipped (a banner + one INFO record per extension, replacing the originally-illustrated single structured `thresher.starting` line); the separator closes the report only when a block printed, so suppressing both is fully silent. §6 decision row and §7 acceptance row updated. Landed by its accompanying implementing SRD. |

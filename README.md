@@ -99,6 +99,21 @@ task), and the timer examples
 [`examples/simple-timer/`](examples/simple-timer/) ·
 [`examples/timer-event/`](examples/timer-event/).
 
+### Startup logging
+
+`thresher.New` prints a startup report — an ASCII banner with the engine
+version and last commit, then one line per resolved extension — so the wiring
+is visible in the log at construction time. Both blocks are on by default; opt
+out per block when the noise isn't wanted:
+
+```go
+// Fully silent startup:
+eng, _ := thresher.New("worker-7",
+    thresher.WithoutBanner(),        // drop the banner / version / commit
+    thresher.WithoutStartupConfig(), // drop the per-extension config dump
+)
+```
+
 ## Development
 
 ```bash

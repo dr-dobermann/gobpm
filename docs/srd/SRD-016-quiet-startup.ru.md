@@ -1,0 +1,184 @@
+# SRD-016 — Тихий старт: подавляемые баннер и дамп конфигурации
+
+| Поле | Значение |
+|---|---|
+| Статус | Принято |
+| Версия | v.1 |
+| Дата | 2026-06-16 |
+| Владелец | Руслан Габитов |
+| Реализует | [ADR-002 v.2 §4.4.1 Extension Architecture](../design/ADR-002-extension-architecture.md) |
+
+Этот SRD приземляет [ADR-002 v.2 §4.4.1](../design/ADR-002-extension-architecture.md): две
+безаргументные опции `thresher.New`, каждая из которых подавляет один блок стартового отчёта —
+`WithoutBanner()` убирает блок ASCII-словесного знака / версии / последнего коммита, а
+`WithoutStartupConfig()` убирает дамп конфигурации по расширениям. Оба по умолчанию **включены**
+(видимы по умолчанию — opt-out, никогда не opt-in); закрывающая разделительная черта печатается
+только когда блок был эмитирован, так что подавление обоих даёт полностью молчаливый старт.
+
+## 1. Контекст и мотивация
+
+### 1.1 Текущее состояние (сверено с кодом)
+
+- **Стартовый отчёт безусловен.** `Thresher.New` вызывает `t.logStartupConfig()` после связывания
+  (`pkg/thresher/thresher.go:160`), без способа его заглушить. `logStartupConfig`
+  (`pkg/thresher/thresher.go:168`) эмитит по порядку: строки баннера (`strings.SplitSeq(banner,
+  "\n")`), `"GoBPM — BPMN v2 process engine"`, `version:`, `last commit:`, `thresher id:`,
+  `configuration:`, по строке `module(...)` на каждое расширение, затем `separator`.
+- **ADR-002 v.1 запрещал opt-out;** v.2 §4.4.1 это разворачивает, разбивая отчёт на блок *баннера*
+  и *дамп конфигурации*, каждый независимо отключаем. Этот SRD реализует то решение.
+- **Механика опций уже есть.** `Option = func(*thresherConfig) error`
+  (`pkg/thresher/options.go:42`); `New` применяет каждую опцию и оборачивает первую ошибку
+  (`thresher.go:123-131`). `thresherConfig` (`options.go:27`) держит девять расширений;
+  `defaultConfig()` (`options.go:201`) связывает их дефолты. Существующие опции `WithXxx` —
+  сеттеры значения, отвергающие nil-аргумент (`options.go:45-177`).
+- **Константы баннера / разделителя** живут в `pkg/thresher/buildinfo.go:13` (`banner`) и
+  `:21` (`separator`); `readBuildInfo()` (`:36`) разрешает версию + последний коммит.
+- **Текущее поведение покрыто** тестом `TestStartupConfigLog`
+  (`pkg/thresher/options_test.go:124`), который захватывает записи через `capHandler` и убеждается,
+  что человекочитаемые строки присутствуют на INFO.
+
+### 1.2 Проблема
+
+Баннер — это декоративный ASCII, печатаемый по одной INFO-записи на строку — чистый шум в
+структурированном агрегаторе логов — а дамп конфигурации многословен для встраивающих,
+конструирующих много короткоживущих движков или уже фиксирующих связывание в другом месте. Рычаг
+уровня Logger, на который указывал ADR-002 v.1, не может убрать этот шум, не отбрасывая заодно
+легитимный прикладной INFO. Поблочный opt-out убирает шум прицельно, сохраняя громкий дефолт.
+
+## 2. Решение
+
+Добавить две безаргументные опции в `pkg/thresher`:
+
+- `WithoutBanner()` — подавить **блок баннера**: ASCII-словесный знак, тэглайн
+  `"GoBPM — BPMN v2 process engine"`, `version:` и `last commit:`.
+- `WithoutStartupConfig()` — подавить **блок конфигурации**: `thresher id:`, заголовок
+  `configuration:` и строки `module(...)` по расширениям.
+
+Каждая опция выставляет неэкспортируемый `bool` на `thresherConfig`. `logStartupConfig` сверяется с
+двумя флагами и печатает каждый блок только когда его флаг снят. `separator` закрывает отчёт тогда и
+только тогда, когда напечатался хотя бы один блок; при подавлении обоих `logStartupConfig` не эмитит
+ничего.
+
+Два флага — это конфигурация конструирования движка, **не** часть `renv.EngineRuntime` — они не
+выставлены через runtime-интерфейс и не трогают ни один исполнитель или waiter.
+
+## 3. Функциональные требования
+
+| # | Требование | Приёмка |
+|---|---|---|
+| FR-1 | `WithoutBanner() Option` существует; применённая, подавляет блок баннера (словесный знак, тэглайн, `version:`, `last commit:`). | С опцией захваченные записи не содержат этих строк; блок конфигурации и разделитель по-прежнему присутствуют. |
+| FR-2 | `WithoutStartupConfig() Option` существует; применённая, подавляет блок конфигурации (`thresher id:`, `configuration:`, строки по расширениям). | С опцией захваченные записи не содержат этих строк; блок баннера и разделитель по-прежнему присутствуют. |
+| FR-3 | `separator` печатается тогда и только тогда, когда был эмитирован хотя бы один блок. | Дефолт → разделитель есть. Обе опции → **ноль** записей (нет разделителя). Любая одна → разделитель есть. |
+| FR-4 | Без опций стартовый вывод побайтово совпадает с поведением до изменения. | `TestStartupConfigLog` (без изменения проверок) остаётся зелёным. |
+| FR-5 | Опции соблюдают контракт `Option` и компонуются с остальными; не зависят от порядка; идемпотентны. | Каждая возвращает non-nil `Option`; применение дважды равно применению один раз; не возвращают ошибку (нет аргумента для валидации). |
+
+## 4. Нефункциональные требования
+
+| # | Требование |
+|---|---|
+| NFR-1 | Видимо-по-умолчанию сохранено: оба блока эмитят, пока явно не подавлены (только opt-out). |
+| NFR-2 | Нет изменения `renv.EngineRuntime`; флаги — неэкспортируемые поля `thresherConfig`. `TestConfigSatisfiesEngineRuntime` остаётся зелёным. |
+| NFR-3 | Diff-покрытие ≥ `COVER_MIN` (95) на каждую затронутую функцию, цель 100%. |
+
+## 5. Анализ путей (альтернативы)
+
+- **(A) Две безаргументные опции — выбрано.** `WithoutBanner()` / `WithoutStartupConfig()`.
+  Соответствует запрошенной гранулярности (подавлять каждый блок независимо) и форме существующего
+  семейства `WithXxx`. Нет аргумента — нечего валидировать; правило валидации публичного API
+  удовлетворено вакуумно.
+- **(B) Одна `WithQuietStartup()`, подавляющая всё.** Отклонено: менее гранулярно; нельзя убрать
+  только декоративный баннер, оставив дамп связывания (частое желание). Требование — явно *две*
+  опции.
+- **(C) Настраиваемая `WithStartupLog(level/mask)` enum или variadic.** Отклонено: переусложнено для
+  двух булевых; вводит вокабуляр, которому у движка нет другого применения.
+- **(D) Статус-кво — заглушать через уровень Logger пользователя (ADR-002 v.1).** Отклонено: это и
+  было решение v.1 и есть сама проблема — оно не может отделить шум баннера от прикладного INFO.
+
+## 6. API
+
+```go
+// WithoutBanner suppresses the startup banner block (the ASCII wordmark, the
+// product tagline, the version and the last-commit line). The configuration
+// dump still prints unless WithoutStartupConfig is also given.
+func WithoutBanner() Option
+
+// WithoutStartupConfig suppresses the startup configuration dump (the thresher
+// id, the "configuration:" header and the per-extension lines). The banner
+// still prints unless WithoutBanner is also given.
+func WithoutStartupConfig() Option
+```
+
+```go
+// Полностью молчаливый старт:
+eng, _ := thresher.New("worker-7",
+    thresher.WithoutBanner(),
+    thresher.WithoutStartupConfig(),
+)
+
+// Сохранить идентичность сборки, убрать дамп связывания:
+eng, _ := thresher.New("worker-7", thresher.WithoutStartupConfig())
+```
+
+## 7. План тестирования
+
+Захват через существующий `capHandler` (`options_test.go:113`).
+
+| # | Тест | Проверяет |
+|---|---|---|
+| T-1 | `TestStartupConfigLog` (существующий, без изменений) | Дефолт: баннер + конфигурация + разделитель — все на INFO (FR-4). |
+| T-2 | `TestWithoutBanner` | `WithoutBanner()`: нет строк словесного знака/`version:`/`last commit:`; `configuration:` + строки по расширениям + разделитель есть (FR-1, FR-3). |
+| T-3 | `TestWithoutStartupConfig` | `WithoutStartupConfig()`: нет `thresher id:`/`configuration:`/строк по расширениям; баннер + разделитель есть (FR-2, FR-3). |
+| T-4 | `TestQuietStartup` | Обе опции: **ноль** захваченных записей (FR-3). |
+| T-5 | `TestWithoutBannerIdempotent` | Применение `WithoutBanner()` дважды == один раз (FR-5). |
+
+## 8. Кросс-документная консистентность
+
+- Реализует [ADR-002 v.2 §4.4.1](../design/ADR-002-extension-architecture.md) (ссылка вверх, с
+  пином версии). Никакой другой документ не ссылается на форму стартового отчёта.
+- `README.md` (область Quick-start) получает короткую заметку о двух опциях (обновление в стиле
+  reference-дока, приземляемое в этом же change-set'е).
+
+## 9. Definition of Done
+
+- `WithoutBanner()` / `WithoutStartupConfig()` реализованы; `logStartupConfig` ветвится по двум
+  флагам; разделитель привязан к «блок напечатался».
+- T-1…T-5 зелёные; затронутые функции на ≥95% diff-покрытия (цель 100%).
+- `README.md` документирует две опции.
+- `make ci` зелёный от начала до конца (tidy → lint → build → race tests → diff-coverage →
+  govulncheck).
+- `/check-srd` PASS; §10 implementation summary заполнен; статус переведён в Принято.
+- RU-twin добавлен.
+
+## 10. Implementation summary
+
+Приземлено на `feat/thresher-quiet-startup` в четыре коммита; `make ci` зелёный
+от начала до конца. Аудит `/check-srd`: **PASS** — FR-1…FR-5 и NFR-1…NFR-3 все
+связаны и покрыты тестами.
+
+### 10.1 Коммиты
+
+| Коммит | Объём |
+|---|---|
+| `6077ab8` | ADR-002 v.2 §4.4.1 — решение о поблочном opt-out (EN + RU) |
+| `4341778` | SRD-016 (этот документ) + RU-twin |
+| `5cea5cb` | M1 — `WithoutBanner()` / `WithoutStartupConfig()` + флаги `thresherConfig` + `logStartupConfig` два защищённых блока + привязанный разделитель + T-2…T-5 |
+| `74d3ba4` | M2 — заметка «Startup logging» в README |
+
+### 10.2 Ключевые файлы
+
+- `pkg/thresher/options.go` — поля `suppressBanner` / `suppressStartupConfig`; опции `WithoutBanner` / `WithoutStartupConfig`.
+- `pkg/thresher/thresher.go` — `logStartupConfig` перестроен в блок баннера и блок конфигурации, `readBuildInfo` теперь внутри ветки баннера, разделитель привязан к `printed`.
+- `pkg/thresher/options_test.go` — хелпер `captureStartup` + T-2…T-5.
+- `README.md` — заметка об opt-out стартового логирования.
+
+### 10.3 V-результаты
+
+- `make ci` зелёный (`CI_EXIT=0`): tidy → lint (0 issues, вкл. fieldalignment) → build → race-тесты (50 pass) → diff-coverage → govulncheck.
+- Затронутые функции на **100%**: `logStartupConfig`, `WithoutBanner`, `WithoutStartupConfig` (≥95 `COVER_MIN`).
+- Smoke `examples/basic-process`: дефолтный старт рендерит баннер + конфигурацию + разделитель, процесс отрабатывает, **exit 0** (FR-4 — дефолтный путь без изменений).
+
+## Document History
+
+| Версия | Дата | Автор | Изменение |
+|---|---|---|---|
+| v.1 | 2026-06-16 | Руслан Габитов | Две безаргументные опции `thresher.New` — `WithoutBanner()` / `WithoutStartupConfig()` — приземляющие поблочный opt-out стартового отчёта, решённый в ADR-002 v.2 §4.4.1. Разделитель привязан к «блок напечатался»; подавление обоих ⇒ молчаливый старт. Приземлено на `feat/thresher-quiet-startup` (M1 `5cea5cb` + M2 `74d3ba4`); `/check-srd` PASS; статус Draft → **Принято**. |

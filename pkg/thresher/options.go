@@ -34,6 +34,11 @@ type thresherConfig struct {
 	exprEngine expression.Engine
 	authz      auth.AuthorizationProvider
 	dispatcher tasks.WorkerDispatcher
+
+	// Startup-report suppression (ADR-002 v.2 §4.4.1). Both default to false —
+	// the report is visible by default; each flag opts its block out.
+	suppressBanner        bool
+	suppressStartupConfig bool
 }
 
 // Option overrides one engine-level extension at thresher.New. An Option may
@@ -176,17 +181,39 @@ func WithWorkerDispatcher(d tasks.WorkerDispatcher) Option {
 	}
 }
 
+// WithoutBanner suppresses the startup banner block — the ASCII wordmark, the
+// product tagline, and the version / last-commit lines (ADR-002 v.2 §4.4.1).
+// The configuration dump still prints unless WithoutStartupConfig is also given.
+func WithoutBanner() Option {
+	return func(c *thresherConfig) error {
+		c.suppressBanner = true
+
+		return nil
+	}
+}
+
+// WithoutStartupConfig suppresses the startup configuration dump — the thresher
+// id, the "configuration:" header, and the per-extension lines (ADR-002 v.2
+// §4.4.1). The banner still prints unless WithoutBanner is also given.
+func WithoutStartupConfig() Option {
+	return func(c *thresherConfig) error {
+		c.suppressStartupConfig = true
+
+		return nil
+	}
+}
+
 // thresherConfig is the engine's resolved EngineRuntime (renv.EngineRuntime):
 // the Thresher shares it with instances and the EventHub so node executors and
 // event waiters reach the wired extensions.
 
-func (c *thresherConfig) Logger() observability.Logger          { return c.logger }
-func (c *thresherConfig) Tracer() observability.Tracer          { return c.tracer }
+func (c *thresherConfig) Logger() observability.Logger                   { return c.logger }
+func (c *thresherConfig) Tracer() observability.Tracer                   { return c.tracer }
 func (c *thresherConfig) MetricsRecorder() observability.MetricsRecorder { return c.metrics }
-func (c *thresherConfig) Clock() clock.Clock                    { return c.clock }
-func (c *thresherConfig) Repository() repository.Repository     { return c.repository }
-func (c *thresherConfig) MessageBroker() messaging.MessageBroker { return c.msgBroker }
-func (c *thresherConfig) ExpressionEngine() expression.Engine   { return c.exprEngine }
+func (c *thresherConfig) Clock() clock.Clock                             { return c.clock }
+func (c *thresherConfig) Repository() repository.Repository              { return c.repository }
+func (c *thresherConfig) MessageBroker() messaging.MessageBroker         { return c.msgBroker }
+func (c *thresherConfig) ExpressionEngine() expression.Engine            { return c.exprEngine }
 
 func (c *thresherConfig) AuthorizationProvider() auth.AuthorizationProvider {
 	return c.authz
