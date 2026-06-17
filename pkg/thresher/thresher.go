@@ -532,10 +532,10 @@ func (t *Thresher) resolveAndLaunch(
 	s *snapshot.Snapshot,
 	startNode flow.Node,
 	eDef flow.EventDefinition,
-	key string,
+	keyName, key string,
 ) error {
 	if key == "" {
-		return t.launchInstanceFromEvent(ctx, s, startNode, eDef)
+		return t.launchInstanceFromEvent(ctx, s, startNode, eDef, keyName, key)
 	}
 
 	// Namespace the key by process so two processes correlating on the same
@@ -552,7 +552,8 @@ func (t *Thresher) resolveAndLaunch(
 	t.seenKeys[nsKey] = struct{}{}
 	t.m.Unlock()
 
-	if err := t.launchInstanceFromEvent(ctx, s, startNode, eDef); err != nil {
+	if err := t.launchInstanceFromEvent(
+		ctx, s, startNode, eDef, keyName, key); err != nil {
 		// the launch failed — drop the reservation so a later message can retry.
 		t.m.Lock()
 		delete(t.seenKeys, nsKey)
@@ -574,6 +575,7 @@ func (t *Thresher) launchInstanceFromEvent(
 	s *snapshot.Snapshot,
 	startNode flow.Node,
 	eDef flow.EventDefinition,
+	keyName, keyVal string,
 ) error {
 	inst, err := instance.NewFromEvent(
 		s, scope.EmptyDataPath, &t.cfg, t, nil, startNode.ID(), eDef)
@@ -585,6 +587,11 @@ func (t *Thresher) launchInstanceFromEvent(
 			errs.D("event_definition_id", eDef.ID()),
 			errs.E(err))
 	}
+
+	// Seed the conversation key the message correlated on (SRD-017 FR-1) before
+	// the instance runs, so its in-instance receivers can subscribe on it. A
+	// no-op when the start trigger declares no CorrelationKey.
+	inst.AssociateConversationKey(keyName, keyVal)
 
 	// The instance owns this context for its whole lifetime; cancel is retained
 	// in instanceReg.stop for later teardown (see launchInstance for why it is

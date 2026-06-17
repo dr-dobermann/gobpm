@@ -48,7 +48,13 @@ func (s *instanceStarter) ProcessEvent(
 		return err
 	}
 
-	return s.thr.resolveAndLaunch(ctx, s.snapshot, s.startNode, eDef, key)
+	keyName := ""
+	if s.corrKey != nil {
+		keyName = s.corrKey.Name
+	}
+
+	return s.thr.resolveAndLaunch(
+		ctx, s.snapshot, s.startNode, eDef, keyName, key)
 }
 
 // deriveKey computes the incoming message's composite correlation key from the

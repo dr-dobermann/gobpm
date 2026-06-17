@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -78,31 +79,23 @@ func (s State) String() string {
 type Instance struct {
 	startTime time.Time
 	ctx       context.Context
-	// EngineRuntime is the Thresher's resolved engine-level extension set,
-	// embedded so node executors reach Logger()/Clock()/Repository()/... via
-	// the RuntimeEnvironment without per-method delegates.
 	engrenv.EngineRuntime
 	rr                  interactor.Registrator
 	parentEventProducer eventproc.EventProducer
-	// dataPlane is the instance's container-scope tree — the single
-	// authority for persistent process data (ADR-010 §2.2). It owns its own
-	// serialization; the instance never holds live data itself.
-	dataPlane *scope.Scope
-	// tracks is the live track registry, owned by loop() (not guarded by m).
-	tracks map[string]*track
-	// tracksSnap is a copy-on-write snapshot for lock-free GetTokens /
-	// TokenHistory reads.
-	tracksSnap atomic.Pointer[[]*track]
-	// lastErr is a fatal fork-construct error, if any.
-	lastErr   atomic.Pointer[error]
-	s         *snapshot.Snapshot
-	events    chan trackEvent // tracks -> loop()
-	loopDone  chan struct{}   // closed when loop() exits
-	now       func() time.Time
-	rootScope scope.DataPath
+	events              chan trackEvent
+	dataPlane           *scope.Scope
+	convKeys            map[string]string
+	now                 func() time.Time
+	tracksSnap          atomic.Pointer[[]*track]
+	lastErr             atomic.Pointer[error]
+	s                   *snapshot.Snapshot
+	tracks              map[string]*track
+	loopDone            chan struct{}
+	rootScope           scope.DataPath
 	foundation.BaseElement
 	trackCount atomic.Int64
-	state      atomic.Uint32 // written only by loop(), read via State()
+	convMu     sync.Mutex
+	state      atomic.Uint32
 }
 
 // newConfig holds the optional parameters of New. Its zero value builds a
@@ -189,6 +182,7 @@ func New(
 		s:                   s,
 		now:                 er.Clock().Now,
 		tracks:              map[string]*track{},
+		convKeys:            map[string]string{},
 		events:              make(chan trackEvent),
 		loopDone:            make(chan struct{}),
 		parentEventProducer: ep,
@@ -286,6 +280,25 @@ func (inst *Instance) bindEventPayload(eDef flow.EventDefinition) error {
 	// Commit returns a self-classifying errs error (container/writable/name
 	// checks); pass it through rather than re-wrapping at this internal seam.
 	return inst.dataPlane.Commit(inst.rootScope, dd...)
+}
+
+// AssociateConversationKey records value under the conversation key named name
+// if that key is not already held (set-if-absent — SRD-017 FR-1). The first
+// born-from-event trigger or keyed send initializes a key; a later derivation
+// of an already-held key does not overwrite it (that conflict is the delivery-
+// time mismatch handled later). Empty name or value is a no-op. Safe for
+// concurrent callers — forked tracks run on separate goroutines.
+func (inst *Instance) AssociateConversationKey(name, value string) {
+	if name == "" || value == "" {
+		return
+	}
+
+	inst.convMu.Lock()
+	defer inst.convMu.Unlock()
+
+	if _, ok := inst.convKeys[name]; !ok {
+		inst.convKeys[name] = value
+	}
 }
 
 // loadProperties creates the instance's data plane rooted under parentRoot

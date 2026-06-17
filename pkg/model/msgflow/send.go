@@ -10,6 +10,14 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
 
+// conversationKeyRecorder is the optional runtime capability that records a
+// derived correlation key on the sending instance (SRD-017 FR-1). The
+// in-instance RuntimeEnvironment implements it (via the Instance); mocks and
+// other runtimes do not, so Send silently skips recording for them.
+type conversationKeyRecorder interface {
+	AssociateConversationKey(name, value string)
+}
+
 // Send binds msg's item from the execution scope (service.BindInput) and
 // publishes it to the runtime's MessageBroker as an Envelope keyed by the
 // message name (ADR-014 v.1 §2.6). When key is non-nil, Send derives the
@@ -62,6 +70,14 @@ func Send(
 				errs.E(derr))
 		} else if ok {
 			corrKey = k
+
+			// Record the derived key on the sending instance so this
+			// conversation is reachable by it (SRD-017 FR-1, first-keyed-send
+			// initialization). The capability is optional — only the in-instance
+			// runtime implements it; other runtimes skip recording.
+			if r, recOK := re.(conversationKeyRecorder); recOK {
+				r.AssociateConversationKey(key.Name, corrKey)
+			}
 		}
 	}
 
