@@ -38,3 +38,5 @@ examples/timer-event/timer-event
 examples/process-data/process-data
 examples/message-send-receive/message-send-receive
 examples/message-intermediate-events/message-intermediate-events
+examples/inter-instance-correlation/inter-instance-correlation
+examples/conversation-routing/conversation-routing

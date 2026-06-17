@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -24,10 +25,12 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/interactor"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/msgflow"
 	engrenv "github.com/dr-dobermann/gobpm/pkg/renv"
 )
 
@@ -78,39 +81,33 @@ func (s State) String() string {
 type Instance struct {
 	startTime time.Time
 	ctx       context.Context
-	// EngineRuntime is the Thresher's resolved engine-level extension set,
-	// embedded so node executors reach Logger()/Clock()/Repository()/... via
-	// the RuntimeEnvironment without per-method delegates.
 	engrenv.EngineRuntime
 	rr                  interactor.Registrator
 	parentEventProducer eventproc.EventProducer
-	// dataPlane is the instance's container-scope tree — the single
-	// authority for persistent process data (ADR-010 §2.2). It owns its own
-	// serialization; the instance never holds live data itself.
-	dataPlane *scope.Scope
-	// tracks is the live track registry, owned by loop() (not guarded by m).
-	tracks map[string]*track
-	// tracksSnap is a copy-on-write snapshot for lock-free GetTokens /
-	// TokenHistory reads.
-	tracksSnap atomic.Pointer[[]*track]
-	// lastErr is a fatal fork-construct error, if any.
-	lastErr   atomic.Pointer[error]
-	s         *snapshot.Snapshot
-	events    chan trackEvent // tracks -> loop()
-	loopDone  chan struct{}   // closed when loop() exits
-	now       func() time.Time
-	rootScope scope.DataPath
+	events              chan trackEvent
+	dataPlane           *scope.Scope
+	convKeys            map[string]string
+	now                 func() time.Time
+	tracksSnap          atomic.Pointer[[]*track]
+	lastErr             atomic.Pointer[error]
+	s                   *snapshot.Snapshot
+	tracks              map[string]*track
+	loopDone            chan struct{}
+	rootScope           scope.DataPath
 	foundation.BaseElement
 	trackCount atomic.Int64
-	state      atomic.Uint32 // written only by loop(), read via State()
+	convMu     sync.Mutex
+	state      atomic.Uint32
 }
 
 // newConfig holds the optional parameters of New. Its zero value builds a
 // normal instance (entry-node seeding); withBornEvent switches it to a
 // born-from-event instance (SRD-015).
 type newConfig struct {
-	bornEvent   flow.EventDefinition
-	bornStartID string
+	bornEvent    flow.EventDefinition
+	bornStartID  string
+	convKeyName  string
+	convKeyValue string
 }
 
 // newOption tunes New. Born-from-event is the only option and is exposed
@@ -124,6 +121,17 @@ func withBornEvent(startNodeID string, eDef flow.EventDefinition) newOption {
 	return func(c *newConfig) {
 		c.bornStartID = startNodeID
 		c.bornEvent = eDef
+	}
+}
+
+// withConversationKey seeds the new instance's conversation key (SRD-017 §4.5)
+// before createTracks runs, so an in-instance receiver reached directly off the
+// born start subscribes keyed to it (createTracks parks receivers during
+// construction — the seed must precede it). An empty name/value is ignored.
+func withConversationKey(name, value string) newOption {
+	return func(c *newConfig) {
+		c.convKeyName = name
+		c.convKeyValue = value
 	}
 }
 
@@ -189,6 +197,7 @@ func New(
 		s:                   s,
 		now:                 er.Clock().Now,
 		tracks:              map[string]*track{},
+		convKeys:            map[string]string{},
 		events:              make(chan trackEvent),
 		loopDone:            make(chan struct{}),
 		parentEventProducer: ep,
@@ -225,6 +234,12 @@ func New(
 		}
 	}
 
+	// Seed the conversation key BEFORE createTracks (SRD-017 §4.5): createTracks
+	// parks an in-instance receiver reached directly off the born start, and the
+	// receiver must subscribe keyed to this conversation, so the key has to be
+	// present first.
+	inst.associateConversationKey(cfg.convKeyName, cfg.convKeyValue)
+
 	if err := inst.createTracks(bornStart); err != nil {
 		return nil, err
 	}
@@ -242,6 +257,8 @@ func New(
 // initial track(s) start on the start node's outgoing flow target(s), rather
 // than the start node being parked as a waiter. The auto-instantiation path
 // (Thresher.launchInstanceFromEvent) uses this; StartProcess keeps using New.
+// keyName/keyValue seed the conversation key the start trigger correlated on
+// (SRD-017 §4.5); both empty for an uncorrelated start.
 func NewFromEvent(
 	s *snapshot.Snapshot,
 	parentRoot scope.DataPath,
@@ -250,6 +267,7 @@ func NewFromEvent(
 	rr interactor.Registrator,
 	startNodeID string,
 	eDef flow.EventDefinition,
+	keyName, keyValue string,
 ) (*Instance, error) {
 	startNodeID = strings.TrimSpace(startNodeID)
 	if startNodeID == "" {
@@ -264,7 +282,9 @@ func NewFromEvent(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	return New(s, parentRoot, er, ep, rr, withBornEvent(startNodeID, eDef))
+	return New(s, parentRoot, er, ep, rr,
+		withBornEvent(startNodeID, eDef),
+		withConversationKey(keyName, keyValue))
 }
 
 // bindEventPayload binds the payload carried by a born-from-event start into the
@@ -286,6 +306,167 @@ func (inst *Instance) bindEventPayload(eDef flow.EventDefinition) error {
 	// Commit returns a self-classifying errs error (container/writable/name
 	// checks); pass it through rather than re-wrapping at this internal seam.
 	return inst.dataPlane.Commit(inst.rootScope, dd...)
+}
+
+// AssociateConversationKey records value under the conversation key named name
+// set-if-absent (SRD-017 FR-1). It is the no-result form the optional msgflow
+// recorder capability uses (first keyed send); the delivery path uses the
+// bool-returning associateConversationKey to learn whether to extend receivers.
+func (inst *Instance) AssociateConversationKey(name, value string) {
+	inst.associateConversationKey(name, value)
+}
+
+// associateConversationKey records value under name if name is not already held,
+// returning whether it was added (a new conversation key). Empty inputs are a
+// no-op returning false. Guarded by convMu — forked tracks run concurrently.
+func (inst *Instance) associateConversationKey(name, value string) bool {
+	if name == "" || value == "" {
+		return false
+	}
+
+	inst.convMu.Lock()
+	defer inst.convMu.Unlock()
+
+	if _, ok := inst.convKeys[name]; ok {
+		return false
+	}
+
+	inst.convKeys[name] = value
+
+	return true
+}
+
+// conversationKeyValues returns a snapshot of the instance's conversation key
+// values (SRD-017 §4.3): the keys its in-instance message receivers subscribe
+// on so a follow-up message routes to this instance. An instance with no
+// established key returns nil (a wildcard subscription). Taken under convMu —
+// forked tracks run on concurrent goroutines.
+func (inst *Instance) conversationKeyValues() []string {
+	inst.convMu.Lock()
+	defer inst.convMu.Unlock()
+
+	if len(inst.convKeys) == 0 {
+		return nil
+	}
+
+	vals := make([]string, 0, len(inst.convKeys))
+	for _, v := range inst.convKeys {
+		vals = append(vals, v)
+	}
+
+	return vals
+}
+
+// validateAndAssociate applies the conversation-token rules on a received
+// message (SRD-017 §4.5, BPMN §8.4.2). It derives every declared correlation key
+// from the message payload in two passes: first it checks for a mismatch — a key
+// this instance already holds whose derived value differs — and, if any, reports
+// mismatch=true and associates nothing (the message isn't for this conversation,
+// so the caller rejects it); otherwise it associates each not-yet-held value
+// (lazy secondary-key initialization), extending currently-parked receivers so
+// the conversation becomes reachable by the new key, and reports mismatch=false.
+func (inst *Instance) validateAndAssociate(
+	ctx context.Context,
+	eDef flow.EventDefinition,
+) (mismatch bool) {
+	keys := inst.s.CorrelationKeys
+	if len(keys) == 0 {
+		return false
+	}
+
+	mr, ok := eDef.(interface {
+		Message() *bpmncommon.Message
+	})
+	if !ok {
+		return false
+	}
+
+	msg := mr.Message()
+
+	var payload any
+	if items := eDef.GetItemsList(); len(items) != 0 {
+		payload = items[0].Structure().Get(ctx)
+	}
+
+	derived := make(map[string]string, len(keys))
+
+	for _, key := range keys {
+		v, ok, err := msgflow.DeriveKey(
+			ctx, inst.ExpressionEngine(), key, msg, payload)
+		if err != nil {
+			inst.Logger().Warn("conversation key derivation failed",
+				"instance_id", inst.ID(), "correlation_key", key.Name)
+
+			continue
+		}
+
+		if !ok {
+			continue
+		}
+
+		if held, isHeld := inst.heldConversationKey(key.Name); isHeld &&
+			held != v {
+			inst.Logger().Debug("correlation key mismatch — message dropped",
+				"instance_id", inst.ID(), "correlation_key", key.Name)
+
+			return true
+		}
+
+		derived[key.Name] = v
+	}
+
+	for name, v := range derived {
+		if inst.associateConversationKey(name, v) {
+			inst.extendReceivers(v)
+		}
+	}
+
+	return false
+}
+
+// heldConversationKey returns the value held for the named conversation key and
+// whether it is held. Read under convMu — forked tracks run concurrently.
+func (inst *Instance) heldConversationKey(name string) (string, bool) {
+	inst.convMu.Lock()
+	defer inst.convMu.Unlock()
+
+	v, ok := inst.convKeys[name]
+
+	return v, ok
+}
+
+// extendReceivers adds a newly-learned correlation value to every in-instance
+// message receiver's broker subscription (SRD-017 §4.5), so a follow-up carrying
+// it routes here. It reaches the EventHub's optional AddEventKey capability
+// structurally (no interface change). A receiver that isn't parked yet has no
+// waiter — a benign no-op; it picks the value up from the grown key-set when it
+// registers.
+func (inst *Instance) extendReceivers(value string) {
+	adder, ok := inst.parentEventProducer.(interface {
+		AddEventKey(eDefID, key string) error
+	})
+	if !ok {
+		return
+	}
+
+	for _, n := range inst.s.Nodes {
+		en, ok := n.(flow.EventNode)
+		if !ok {
+			continue
+		}
+
+		for _, d := range en.Definitions() {
+			if d.Type() != flow.TriggerMessage {
+				continue
+			}
+
+			if err := adder.AddEventKey(d.ID(), value); err != nil {
+				inst.Logger().Debug("extend receiver subscription failed",
+					"instance_id", inst.ID(),
+					"event_definition_id", d.ID())
+			}
+		}
+	}
 }
 
 // loadProperties creates the instance's data plane rooted under parentRoot

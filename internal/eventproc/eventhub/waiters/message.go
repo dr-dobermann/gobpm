@@ -2,6 +2,7 @@ package waiters
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"slices"
 	"strings"
@@ -34,12 +35,25 @@ type messageWaiter struct {
 	rt         renv.EngineRuntime
 	eDef       *events.MessageEventDefinition
 	stopCh     chan struct{}
+	sub        messaging.Subscription
 	name       string
 	id         string
 	processors []eventproc.EventProcessor
 	state      eventproc.EventWaiterState
 	singleShot bool
 	m          sync.Mutex
+}
+
+// AddKey extends the waiter's broker subscription with key (SRD-017 §4.5 lazy
+// association). It is safe before Service has subscribed (a nil subscription is
+// a no-op) — the receiver then picks the key up from its instance's grown
+// key-set when it does subscribe.
+func (mw *messageWaiter) AddKey(key string) error {
+	if mw.sub == nil {
+		return nil
+	}
+
+	return mw.sub.AddKey(key)
 }
 
 // NewMessageWaiter builds a messageWaiter for a MessageEventDefinition. It
@@ -174,6 +188,26 @@ func (mw *messageWaiter) Process(eDef flow.EventDefinition) error {
 // delivery goroutine. The subscription is registered synchronously, so a
 // message published after Service returns is delivered (subscribe-before-
 // publish, ADR-006 v.1 §2.4).
+// subscriptionKeys gathers the correlation keys the waiter's processors declare
+// for their subscription (SRD-017 §4.3 declared-filter): a processor that
+// implements CorrelationKeys (the in-instance receiver track) contributes its
+// instance's conversation key values, so the message routes to that instance; a
+// processor that declares none (the instance-starter) contributes nothing,
+// leaving a wildcard subscription.
+func (mw *messageWaiter) subscriptionKeys() []string {
+	var keys []string
+
+	for _, p := range mw.processors {
+		if kp, ok := p.(interface {
+			CorrelationKeys() []string
+		}); ok {
+			keys = append(keys, kp.CorrelationKeys()...)
+		}
+	}
+
+	return keys
+}
+
 func (mw *messageWaiter) Service(ctx context.Context) error {
 	if mw.state != eventproc.WSReady {
 		return errs.New(
@@ -182,7 +216,7 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 			errs.D("current_state", mw.state))
 	}
 
-	ch, err := mw.rt.MessageBroker().Subscribe(ctx, mw.name, "")
+	sub, err := mw.rt.MessageBroker().Subscribe(ctx, mw.name, mw.subscriptionKeys()...)
 	if err != nil {
 		mw.state = eventproc.WSFailed
 
@@ -193,10 +227,11 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 			errs.E(err))
 	}
 
+	mw.sub = sub
 	mw.state = eventproc.WSRunned
 	mw.stopCh = make(chan struct{})
 
-	go mw.runMessageService(ctx, ch)
+	go mw.runMessageService(ctx, sub.C())
 
 	return nil
 }
@@ -229,6 +264,12 @@ func (mw *messageWaiter) runMessageService(
 			}
 
 			if err := mw.processMessageEvent(ctx, env); err != nil {
+				if errors.Is(err, eventproc.ErrRejected) {
+					// rejected (correlation mismatch): keep waiting for a
+					// message that belongs to this conversation.
+					continue
+				}
+
 				return
 			}
 
@@ -260,7 +301,15 @@ func (mw *messageWaiter) processMessageEvent(
 	mw.m.Unlock()
 
 	for _, ep := range processors {
-		if err := ep.ProcessEvent(ctx, eDef); err != nil {
+		err := ep.ProcessEvent(ctx, eDef)
+		if errors.Is(err, eventproc.ErrRejected) {
+			// the message isn't for this receiver's conversation (a correlation
+			// mismatch — SRD-017 §4.5): stay subscribed and keep waiting; the
+			// message is dropped (the instance logged it). Not a failure.
+			return err
+		}
+
+		if err != nil {
 			mw.setState(eventproc.WSFailed)
 			_ = mw.hub.WaiterFired(mw.eDef.ID())
 

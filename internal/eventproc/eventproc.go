@@ -3,6 +3,7 @@ package eventproc
 
 import (
 	"context"
+	"errors"
 	"strconv"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -10,6 +11,13 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
+
+// ErrRejected is returned by an EventProcessor that declines a fired event that
+// isn't for it — a correlation mismatch (SRD-017 §4.5 / BPMN §8.4.2: a message
+// whose already-initialized key differs does not route to this conversation). A
+// single-shot message waiter treats it specially: it stays subscribed and keeps
+// waiting (the message is dropped) instead of terminating.
+var ErrRejected = errors.New("event rejected: not for this processor")
 
 // EventProcessor and EventProducer are the public node-facing event contracts
 // (ADR-012 v.1). They live in pkg/eventproc; the aliases here let the internal

@@ -311,7 +311,7 @@ func TestLaunchInstanceFromEventError(t *testing.T) {
 	med := events.MustMessageEventDefinition(
 		bpmncommon.MustMessage("m", data.MustItemDefinition(nil)), nil)
 
-	require.Error(t, th.launchInstanceFromEvent(ctx, s, bogus, med))
+	require.Error(t, th.launchInstanceFromEvent(ctx, s, bogus, med, "", ""))
 }
 
 // TestRegisterStartersError covers the registerStarters error path: a hub that
@@ -568,7 +568,7 @@ func TestResolveAndLaunchRollback(t *testing.T) {
 	eDef := events.MustMessageEventDefinition(
 		bpmncommon.MustMessage("m", data.MustItemDefinition(nil)), nil)
 
-	require.Error(t, th.resolveAndLaunch(ctx, s, bogus, eDef, "K1"))
+	require.Error(t, th.resolveAndLaunch(ctx, s, bogus, eDef, "orderKey", "K1"))
 
 	// the reservation was rolled back.
 	th.m.Lock()

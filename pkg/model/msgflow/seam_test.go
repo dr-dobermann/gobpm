@@ -38,8 +38,9 @@ func TestPublish(t *testing.T) {
 	t.Run("drives the producer's message to the broker",
 		func(t *testing.T) {
 			broker := membroker.New()
-			ch, err := broker.Subscribe(ctx, "order placed", "")
+			sub, err := broker.Subscribe(ctx, "order placed")
 			require.NoError(t, err)
+			ch := sub.C()
 
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 			re.EXPECT().

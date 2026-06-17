@@ -1,10 +1,15 @@
 package snapshot_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
@@ -286,4 +291,57 @@ func TestSnapshotCloneMalformed(t *testing.T) {
 			_, err := bad.Clone()
 			require.Error(t, err)
 		})
+}
+
+// TestSnapshotCorrelationKeys verifies the snapshot carries the process's
+// declared correlation keys (the Key of each CorrelationSubscription, nil keys
+// filtered) and that Clone shares them (SRD-017 §4.5).
+func TestSnapshotCorrelationKeys(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	p, err := process.New("p-corr")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	require.NoError(t, p.Add(start))
+	require.NoError(t, p.Add(end))
+
+	_, err = flow.Link(start, end)
+	require.NoError(t, err)
+
+	mp := goexpr.Must(nil, data.MustItemDefinition(values.NewVariable("")),
+		func(context.Context, data.Source) (data.Value, error) {
+			return values.NewVariable(""), nil
+		})
+
+	re, err := bpmncommon.NewCorrelationPropertyRetrievalExpression(mp,
+		bpmncommon.MustMessage("m", data.MustItemDefinition(nil)))
+	require.NoError(t, err)
+
+	prop, err := bpmncommon.NewCorrelationProperty("p", "string",
+		[]bpmncommon.CorrelationPropertyRetrievalExpression{*re})
+	require.NoError(t, err)
+
+	key, err := bpmncommon.NewCorrelationKey("orderKey",
+		[]bpmncommon.CorrelationProperty{*prop})
+	require.NoError(t, err)
+
+	// one subscription carries a key, one is nil (filtered out).
+	p.CorrelationSubscriptions = []*bpmncommon.CorrelationSubscription{
+		{Key: key}, {Key: nil},
+	}
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+	require.Len(t, s.CorrelationKeys, 1)
+	require.Equal(t, "orderKey", s.CorrelationKeys[0].Name)
+
+	clone, err := s.Clone()
+	require.NoError(t, err)
+	require.Equal(t, s.CorrelationKeys, clone.CorrelationKeys)
 }

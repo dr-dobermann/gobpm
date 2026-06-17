@@ -85,7 +85,7 @@ func TestNewFromEventBornInstance(t *testing.T) {
 	go func() { _ = eh.Run(ctx) }()
 
 	inst, err := NewFromEvent(
-		s, scope.EmptyDataPath, rt, eh, nil, start.ID(), firedDef)
+		s, scope.EmptyDataPath, rt, eh, nil, start.ID(), firedDef, "", "")
 	require.NoError(t, err)
 
 	require.NoError(t, inst.Run(ctx))
@@ -147,7 +147,7 @@ func TestNewFromEventSeedError(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = NewFromEvent(s, scope.EmptyDataPath, enginert.Default(),
-		failEventProducer{}, nil, start.ID(), med)
+		failEventProducer{}, nil, start.ID(), med, "", "")
 	require.Error(t, err)
 }
 
@@ -158,7 +158,7 @@ func TestNewFromEventBuildError(t *testing.T) {
 	s.ProcessName = "   "
 
 	_, err := NewFromEvent(s, scope.EmptyDataPath, enginert.Default(),
-		failEventProducer{}, nil, start.ID(), firedDef)
+		failEventProducer{}, nil, start.ID(), firedDef, "", "")
 	require.Error(t, err)
 }
 
@@ -229,15 +229,15 @@ func TestNewFromEventValidation(t *testing.T) {
 	require.NoError(t, err)
 
 	// empty start node id.
-	_, err = NewFromEvent(s, scope.EmptyDataPath, rt, eh, nil, "   ", firedDef)
+	_, err = NewFromEvent(s, scope.EmptyDataPath, rt, eh, nil, "   ", firedDef, "", "")
 	require.Error(t, err)
 
 	// nil event definition.
-	_, err = NewFromEvent(s, scope.EmptyDataPath, rt, eh, nil, start.ID(), nil)
+	_, err = NewFromEvent(s, scope.EmptyDataPath, rt, eh, nil, start.ID(), nil, "", "")
 	require.Error(t, err)
 
 	// start node not in the snapshot.
 	_, err = NewFromEvent(
-		s, scope.EmptyDataPath, rt, eh, nil, "no-such-node", firedDef)
+		s, scope.EmptyDataPath, rt, eh, nil, "no-such-node", firedDef, "", "")
 	require.Error(t, err)
 }

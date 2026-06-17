@@ -145,4 +145,19 @@ func (med *MessageEventDefinition) CloneEvent(
 	return nmed, nil
 }
 
+// CloneForInstance returns a per-instance copy of the MessageEventDefinition
+// with a FRESH id, sharing the (immutable) message and operation by reference.
+// Node cloning (Event.clone) uses it so each process instance's message receiver
+// registers a DISTINCT EventHub waiter (keyed by eDef id): without it concurrent
+// instances waiting on the same message would share one waiter and a single
+// point-to-point message would wake them all (SRD-017 §4.3). It is the opposite
+// of CloneEvent, which keeps the id so a FIRED event still matches its waiter.
+func (med *MessageEventDefinition) CloneForInstance() flow.EventDefinition {
+	return &MessageEventDefinition{
+		definition: definition{BaseElement: *foundation.MustBaseElement()},
+		message:    med.message,
+		operation:  med.operation,
+	}
+}
+
 // -----------------------------------------------------------------------------

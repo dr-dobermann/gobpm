@@ -3,6 +3,7 @@ package waiters_test
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,18 +43,24 @@ type brokerRT struct {
 
 func (b brokerRT) MessageBroker() messaging.MessageBroker { return b.broker }
 
+// chanSub adapts a channel to messaging.Subscription for the broker fakes.
+type chanSub struct{ ch <-chan messaging.Envelope }
+
+func (s chanSub) C() <-chan messaging.Envelope { return s.ch }
+func (chanSub) AddKey(string) error            { return nil }
+
 // closedChBroker returns an already-closed subscription channel.
 type closedChBroker struct{}
 
 func (closedChBroker) Publish(context.Context, messaging.Envelope) error { return nil }
 
 func (closedChBroker) Subscribe(
-	context.Context, string, string,
-) (<-chan messaging.Envelope, error) {
+	context.Context, string, ...string,
+) (messaging.Subscription, error) {
 	ch := make(chan messaging.Envelope)
 	close(ch)
 
-	return ch, nil
+	return chanSub{ch: ch}, nil
 }
 
 // errSubBroker fails on Subscribe.
@@ -62,8 +69,8 @@ type errSubBroker struct{}
 func (errSubBroker) Publish(context.Context, messaging.Envelope) error { return nil }
 
 func (errSubBroker) Subscribe(
-	context.Context, string, string,
-) (<-chan messaging.Envelope, error) {
+	context.Context, string, ...string,
+) (messaging.Subscription, error) {
 	return nil, fmt.Errorf("broker down")
 }
 
@@ -157,6 +164,113 @@ func TestMessageWaiterDelivery(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return w.State() == eventproc.WSEnded
 	}, time.Second, 10*time.Millisecond)
+}
+
+// keyedProc is an EventProcessor that declares correlation keys for its
+// subscription (the SRD-017 §4.3 declared-filter), like the in-instance track.
+type keyedProc struct {
+	*mockeventproc.MockEventProcessor
+	keys []string
+}
+
+func (k keyedProc) CorrelationKeys() []string { return k.keys }
+
+// TestMessageWaiterKeyedDelivery verifies that a waiter whose processor declares
+// correlation keys subscribes keyed: a non-matching key is not delivered, the
+// matching key wakes it (SRD-017 §4.3 / FR-2).
+func TestMessageWaiterKeyedDelivery(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	eDef := msgEventDef(t)
+
+	rt := enginert.Default()
+	hub := mockeventproc.NewMockEventHub(t)
+	hub.EXPECT().WaiterFired(eDef.ID()).Return(nil).Once()
+
+	done := make(chan flow.EventDefinition, 1)
+	mep := mockeventproc.NewMockEventProcessor(t)
+	mep.EXPECT().
+		ProcessEvent(mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, ed flow.EventDefinition) error {
+			done <- ed
+
+			return nil
+		})
+
+	ep := keyedProc{MockEventProcessor: mep, keys: []string{"ORD-1"}}
+
+	w, err := waiters.NewMessageWaiter(hub, ep, eDef, "", rt, true)
+	require.NoError(t, err)
+	require.NoError(t, w.Service(ctx))
+
+	// a non-matching key must not wake this keyed receiver.
+	require.NoError(t, rt.MessageBroker().Publish(ctx, messaging.Envelope{
+		Name: "order placed", Payload: "ORD-2", CorrelationKey: "ORD-2"}))
+
+	select {
+	case <-done:
+		t.Fatal("keyed receiver woke on a non-matching key")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// the matching key wakes it.
+	require.NoError(t, rt.MessageBroker().Publish(ctx, messaging.Envelope{
+		Name: "order placed", Payload: "ORD-1", CorrelationKey: "ORD-1"}))
+
+	select {
+	case ed := <-done:
+		require.Equal(t, "ORD-1", ed.GetItemsList()[0].Structure().Get(ctx))
+	case <-time.After(2 * time.Second):
+		t.Fatal("keyed receiver did not wake on the matching key")
+	}
+}
+
+// rejectingProc rejects the first fired event (a correlation mismatch) and
+// accepts the rest, recording the number of fires.
+type rejectingProc struct {
+	*mockeventproc.MockEventProcessor
+	calls atomic.Int32
+}
+
+func (p *rejectingProc) ProcessEvent(context.Context, flow.EventDefinition) error {
+	if p.calls.Add(1) == 1 {
+		return eventproc.ErrRejected
+	}
+
+	return nil
+}
+
+// TestMessageWaiterRejectKeepsWaiting verifies that a single-shot receiver which
+// rejects a message (ErrRejected — a correlation mismatch) stays subscribed and
+// keeps waiting, accepting a later message (SRD-017 §4.5 / M4b).
+func TestMessageWaiterRejectKeepsWaiting(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	eDef := msgEventDef(t)
+
+	rt := enginert.Default()
+	hub := mockeventproc.NewMockEventHub(t)
+	hub.EXPECT().WaiterFired(eDef.ID()).Return(nil).Maybe()
+
+	mep := mockeventproc.NewMockEventProcessor(t)
+	mep.EXPECT().ID().Return("p").Maybe()
+	rp := &rejectingProc{MockEventProcessor: mep}
+
+	w, err := waiters.NewMessageWaiter(hub, rp, eDef, "", rt, true)
+	require.NoError(t, err)
+	require.NoError(t, w.Service(ctx))
+
+	// first message: rejected — the waiter must stay subscribed.
+	require.NoError(t, rt.MessageBroker().Publish(ctx, messaging.Envelope{
+		Name: "order placed", Payload: "ORD-2"}))
+	// second message: accepted.
+	require.NoError(t, rt.MessageBroker().Publish(ctx, messaging.Envelope{
+		Name: "order placed", Payload: "ORD-1"}))
+
+	require.Eventually(t, func() bool { return rp.calls.Load() >= 2 },
+		2*time.Second, 10*time.Millisecond)
 }
 
 // TestMessageWaiterPersistent exercises the persistent (singleShot=false)

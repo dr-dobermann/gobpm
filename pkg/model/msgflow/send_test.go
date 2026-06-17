@@ -16,8 +16,22 @@ import (
 	exprgo "github.com/dr-dobermann/gobpm/pkg/model/expression/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/msgflow"
+	"github.com/dr-dobermann/gobpm/pkg/renv"
 	"github.com/stretchr/testify/require"
 )
+
+// recordingRE wraps a RuntimeEnvironment and captures conversation-key
+// associations, exercising the SRD-017 first-keyed-send seam (Send records the
+// derived key on the sending instance via the optional AssociateConversationKey
+// capability).
+type recordingRE struct {
+	renv.RuntimeEnvironment
+	recorded map[string]string
+}
+
+func (r *recordingRE) AssociateConversationKey(name, value string) {
+	r.recorded[name] = value
+}
 
 // errBroker is a MessageBroker whose Publish always fails — it exercises the
 // broker-rejection path of msgflow.Send.
@@ -28,8 +42,8 @@ func (errBroker) Publish(context.Context, messaging.Envelope) error {
 }
 
 func (errBroker) Subscribe(
-	context.Context, string, string,
-) (<-chan messaging.Envelope, error) {
+	context.Context, string, ...string,
+) (messaging.Subscription, error) {
 	return nil, nil
 }
 
@@ -55,8 +69,9 @@ func TestSend(t *testing.T) {
 					foundation.WithID("order_item")))
 
 			broker := membroker.New()
-			ch, err := broker.Subscribe(ctx, "order placed", "")
+			sub, err := broker.Subscribe(ctx, "order placed")
 			require.NoError(t, err)
+			ch := sub.C()
 
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 			re.EXPECT().
@@ -102,8 +117,9 @@ func TestSend(t *testing.T) {
 			require.NoError(t, err)
 
 			broker := membroker.New()
-			ch, err := broker.Subscribe(ctx, "order placed", "")
+			sub, err := broker.Subscribe(ctx, "order placed")
 			require.NoError(t, err)
+			ch := sub.C()
 
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 			re.EXPECT().
@@ -112,7 +128,11 @@ func TestSend(t *testing.T) {
 			re.EXPECT().ExpressionEngine().Return(exprgo.New())
 			re.EXPECT().MessageBroker().Return(broker)
 
-			require.NoError(t, msgflow.Send(ctx, re, msg, key))
+			rec := &recordingRE{
+				RuntimeEnvironment: re,
+				recorded:           map[string]string{},
+			}
+			require.NoError(t, msgflow.Send(ctx, rec, msg, key))
 
 			select {
 			case env := <-ch:
@@ -121,6 +141,9 @@ func TestSend(t *testing.T) {
 			default:
 				t.Fatal("no envelope delivered to the subscriber")
 			}
+
+			// the sender records the derived key on its instance (SRD-017 FR-1).
+			require.Equal(t, "ORD-99", rec.recorded["orderKey"])
 		})
 
 	t.Run("a failing key derivation fails the send",

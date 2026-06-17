@@ -532,10 +532,10 @@ func (t *Thresher) resolveAndLaunch(
 	s *snapshot.Snapshot,
 	startNode flow.Node,
 	eDef flow.EventDefinition,
-	key string,
+	keyName, key string,
 ) error {
 	if key == "" {
-		return t.launchInstanceFromEvent(ctx, s, startNode, eDef)
+		return t.launchInstanceFromEvent(ctx, s, startNode, eDef, keyName, key)
 	}
 
 	// Namespace the key by process so two processes correlating on the same
@@ -552,7 +552,8 @@ func (t *Thresher) resolveAndLaunch(
 	t.seenKeys[nsKey] = struct{}{}
 	t.m.Unlock()
 
-	if err := t.launchInstanceFromEvent(ctx, s, startNode, eDef); err != nil {
+	if err := t.launchInstanceFromEvent(
+		ctx, s, startNode, eDef, keyName, key); err != nil {
 		// the launch failed — drop the reservation so a later message can retry.
 		t.m.Lock()
 		delete(t.seenKeys, nsKey)
@@ -574,9 +575,14 @@ func (t *Thresher) launchInstanceFromEvent(
 	s *snapshot.Snapshot,
 	startNode flow.Node,
 	eDef flow.EventDefinition,
+	keyName, keyVal string,
 ) error {
+	// The conversation key (keyName/keyVal) is seeded inside NewFromEvent BEFORE
+	// createTracks parks any receiver, so an in-instance receiver reached
+	// directly off the born start subscribes keyed to it (SRD-017 §4.5).
 	inst, err := instance.NewFromEvent(
-		s, scope.EmptyDataPath, &t.cfg, t, nil, startNode.ID(), eDef)
+		s, scope.EmptyDataPath, &t.cfg, t, nil, startNode.ID(), eDef,
+		keyName, keyVal)
 	if err != nil {
 		return errs.New(
 			errs.M("couldn't create an event-born Instance for process %q",
