@@ -156,3 +156,28 @@ func TestRegisterPersistentEvent(t *testing.T) {
 		require.Error(t, hub.RegisterPersistentEvent(nil, msgEDef(t, "m")))
 	})
 }
+
+// TestAddEventKeyNonMessageWaiter covers the non-keyable branch of AddEventKey:
+// a timer (non-message) waiter has no keyed subscription, so AddEventKey is a
+// benign no-op (SRD-017 §4.5).
+func TestAddEventKeyNonMessageWaiter(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	hub, err := eventhub.New(enginert.Default())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, hub.Start(ctx))
+
+	mp := mockeventproc.NewMockEventProcessor(t)
+	mp.EXPECT().ID().Return("p").Maybe()
+	mp.EXPECT().ProcessEvent(mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	cycle, dur := createTimerExpressions(t)
+	timer, err := events.NewTimerEventDefinition(nil, cycle, dur)
+	require.NoError(t, err)
+	require.NoError(t, hub.RegisterEvent(mp, timer))
+
+	require.NoError(t, hub.AddEventKey(timer.ID(), "K1"))
+}

@@ -12,6 +12,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
@@ -19,6 +20,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/stretchr/testify/require"
 )
 
@@ -54,8 +56,12 @@ func testCorrKey(t *testing.T, msgName string) *bpmncommon.CorrelationKey {
 }
 
 // fakeEventProducer is an EventProducer that records AddEventKey calls (the
-// extend-parked seam — SRD-017 §4.5).
-type fakeEventProducer struct{ added map[string]string }
+// extend-parked seam — SRD-017 §4.5). With failAdd set, AddEventKey errors, to
+// exercise the extendReceivers debug-log branch.
+type fakeEventProducer struct {
+	added   map[string]string
+	failAdd bool
+}
 
 func (fakeEventProducer) RegisterEvent(
 	eventproc.EventProcessor, flow.EventDefinition,
@@ -76,9 +82,39 @@ func (fakeEventProducer) PropagateEvent(
 }
 
 func (f *fakeEventProducer) AddEventKey(eDefID, key string) error {
+	if f.failAdd {
+		return fmt.Errorf("add-event-key boom")
+	}
+
 	f.added[eDefID] = key
 
 	return nil
+}
+
+// failingCorrKey builds a CorrelationKey whose MessagePath errors on evaluation,
+// to exercise the derive-error branch of validateAndAssociate.
+func failingCorrKey(t *testing.T, msgName string) *bpmncommon.CorrelationKey {
+	t.Helper()
+
+	mp := goexpr.Must(nil, data.MustItemDefinition(values.NewVariable("")),
+		func(context.Context, data.Source) (data.Value, error) {
+			return nil, fmt.Errorf("derive boom")
+		})
+
+	re, err := bpmncommon.NewCorrelationPropertyRetrievalExpression(mp,
+		bpmncommon.MustMessage(msgName, data.MustItemDefinition(
+			values.NewVariable(""), foundation.WithID("order_in"))))
+	require.NoError(t, err)
+
+	prop, err := bpmncommon.NewCorrelationProperty("orderId", "string",
+		[]bpmncommon.CorrelationPropertyRetrievalExpression{*re})
+	require.NoError(t, err)
+
+	key, err := bpmncommon.NewCorrelationKey("orderKey",
+		[]bpmncommon.CorrelationProperty{*prop})
+	require.NoError(t, err)
+
+	return key
 }
 
 // plainEventProducer is an EventProducer WITHOUT AddEventKey (the no-adder
@@ -311,4 +347,112 @@ func TestValidateAndAssociateSameValue(t *testing.T) {
 	if len(fep.added) != 0 {
 		t.Fatalf("same-value message must not extend receivers: %v", fep.added)
 	}
+}
+
+// TestValidateAndAssociateDeriveError covers the derive-error branch: a key whose
+// MessagePath errors is logged and skipped (no mismatch, no association).
+func TestValidateAndAssociateDeriveError(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	inst := &Instance{
+		EngineRuntime:       enginert.Default(),
+		convKeys:            map[string]string{},
+		parentEventProducer: &fakeEventProducer{added: map[string]string{}},
+		s: &snapshot.Snapshot{
+			CorrelationKeys: []*bpmncommon.CorrelationKey{failingCorrKey(t, "reply")},
+			Nodes:           map[string]flow.Node{},
+		},
+	}
+
+	if inst.validateAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-1")) {
+		t.Fatal("a derivation error must not be reported as a mismatch")
+	}
+
+	require.Empty(t, inst.convKeys)
+}
+
+// TestValidateAndAssociateUnresolvedKey covers the not-derived skip: a key whose
+// retrieval expression's MessageRef doesn't match the message yields ok=false.
+func TestValidateAndAssociateUnresolvedKey(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	inst := &Instance{
+		EngineRuntime:       enginert.Default(),
+		convKeys:            map[string]string{},
+		parentEventProducer: &fakeEventProducer{added: map[string]string{}},
+		s: &snapshot.Snapshot{
+			// the key derives from "other", not the received "reply" message.
+			CorrelationKeys: []*bpmncommon.CorrelationKey{testCorrKey(t, "other")},
+			Nodes:           map[string]flow.Node{},
+		},
+	}
+
+	if inst.validateAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-1")) {
+		t.Fatal("an unresolved key must not be a mismatch")
+	}
+
+	require.Empty(t, inst.convKeys)
+}
+
+// TestExtendReceiversBranches covers the node-iteration branches: a non-event
+// node is skipped, a non-message event definition is skipped, and an AddEventKey
+// failure on a message receiver is logged (not fatal).
+func TestExtendReceiversBranches(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	task, err := activities.NewServiceTask("task",
+		service.MustOperation("op", nil, nil, nil), activities.WithoutParams())
+	require.NoError(t, err)
+
+	signalStart, err := events.NewStartEvent("sig",
+		events.WithSignalTrigger(events.MustSignalEventDefinition(&events.Signal{})))
+	require.NoError(t, err)
+
+	msgCatch, err := events.NewIntermediateCatchEvent("catch", msgEDef(t, "reply", ""))
+	require.NoError(t, err)
+
+	inst := &Instance{
+		EngineRuntime: enginert.Default(), // the debug-log branch needs Logger()
+		// failAdd exercises the debug-log branch on the message receiver.
+		parentEventProducer: &fakeEventProducer{
+			added: map[string]string{}, failAdd: true,
+		},
+		s: &snapshot.Snapshot{Nodes: map[string]flow.Node{
+			"task": task, "sig": signalStart, "catch": msgCatch,
+		}},
+	}
+
+	inst.extendReceivers("ORD-1") // must not panic; covers all three branches
+}
+
+// TestTrackProcessEventRejectsMismatch covers the track's mismatch path: when
+// validateAndAssociate reports a mismatch, ProcessEvent returns ErrRejected
+// without advancing the token (SRD-017 §4.5 / M4b).
+func TestTrackProcessEventRejectsMismatch(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	inst := &Instance{
+		EngineRuntime: enginert.Default(),
+		convKeys:      map[string]string{"orderKey": "ORD-1"},
+		s: &snapshot.Snapshot{
+			CorrelationKeys: []*bpmncommon.CorrelationKey{testCorrKey(t, "reply")},
+			Nodes:           map[string]flow.Node{},
+		},
+	}
+
+	recv, err := activities.NewReceiveTask("await",
+		bpmncommon.MustMessage("reply", data.MustItemDefinition(
+			values.NewVariable(""), foundation.WithID("order_in"))),
+		activities.WithoutParams())
+	require.NoError(t, err)
+
+	tr := &track{
+		instance: inst,
+		state:    TrackWaitForEvent,
+		steps:    []*stepInfo{{node: recv}},
+	}
+
+	// the message derives orderKey=ORD-2, conflicting with the held ORD-1.
+	err = tr.ProcessEvent(context.Background(), msgEDef(t, "reply", "ORD-2"))
+	require.ErrorIs(t, err, eventproc.ErrRejected)
 }
