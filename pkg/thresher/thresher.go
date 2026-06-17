@@ -577,8 +577,12 @@ func (t *Thresher) launchInstanceFromEvent(
 	eDef flow.EventDefinition,
 	keyName, keyVal string,
 ) error {
+	// The conversation key (keyName/keyVal) is seeded inside NewFromEvent BEFORE
+	// createTracks parks any receiver, so an in-instance receiver reached
+	// directly off the born start subscribes keyed to it (SRD-017 §4.5).
 	inst, err := instance.NewFromEvent(
-		s, scope.EmptyDataPath, &t.cfg, t, nil, startNode.ID(), eDef)
+		s, scope.EmptyDataPath, &t.cfg, t, nil, startNode.ID(), eDef,
+		keyName, keyVal)
 	if err != nil {
 		return errs.New(
 			errs.M("couldn't create an event-born Instance for process %q",
@@ -587,11 +591,6 @@ func (t *Thresher) launchInstanceFromEvent(
 			errs.D("event_definition_id", eDef.ID()),
 			errs.E(err))
 	}
-
-	// Seed the conversation key the message correlated on (SRD-017 FR-1) before
-	// the instance runs, so its in-instance receivers can subscribe on it. A
-	// no-op when the start trigger declares no CorrelationKey.
-	inst.AssociateConversationKey(keyName, keyVal)
 
 	// The instance owns this context for its whole lifetime; cancel is retained
 	// in instanceReg.stop for later teardown (see launchInstance for why it is

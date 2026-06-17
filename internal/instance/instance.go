@@ -104,8 +104,10 @@ type Instance struct {
 // normal instance (entry-node seeding); withBornEvent switches it to a
 // born-from-event instance (SRD-015).
 type newConfig struct {
-	bornEvent   flow.EventDefinition
-	bornStartID string
+	bornEvent    flow.EventDefinition
+	bornStartID  string
+	convKeyName  string
+	convKeyValue string
 }
 
 // newOption tunes New. Born-from-event is the only option and is exposed
@@ -119,6 +121,17 @@ func withBornEvent(startNodeID string, eDef flow.EventDefinition) newOption {
 	return func(c *newConfig) {
 		c.bornStartID = startNodeID
 		c.bornEvent = eDef
+	}
+}
+
+// withConversationKey seeds the new instance's conversation key (SRD-017 §4.5)
+// before createTracks runs, so an in-instance receiver reached directly off the
+// born start subscribes keyed to it (createTracks parks receivers during
+// construction — the seed must precede it). An empty name/value is ignored.
+func withConversationKey(name, value string) newOption {
+	return func(c *newConfig) {
+		c.convKeyName = name
+		c.convKeyValue = value
 	}
 }
 
@@ -221,6 +234,12 @@ func New(
 		}
 	}
 
+	// Seed the conversation key BEFORE createTracks (SRD-017 §4.5): createTracks
+	// parks an in-instance receiver reached directly off the born start, and the
+	// receiver must subscribe keyed to this conversation, so the key has to be
+	// present first.
+	inst.associateConversationKey(cfg.convKeyName, cfg.convKeyValue)
+
 	if err := inst.createTracks(bornStart); err != nil {
 		return nil, err
 	}
@@ -238,6 +257,8 @@ func New(
 // initial track(s) start on the start node's outgoing flow target(s), rather
 // than the start node being parked as a waiter. The auto-instantiation path
 // (Thresher.launchInstanceFromEvent) uses this; StartProcess keeps using New.
+// keyName/keyValue seed the conversation key the start trigger correlated on
+// (SRD-017 §4.5); both empty for an uncorrelated start.
 func NewFromEvent(
 	s *snapshot.Snapshot,
 	parentRoot scope.DataPath,
@@ -246,6 +267,7 @@ func NewFromEvent(
 	rr interactor.Registrator,
 	startNodeID string,
 	eDef flow.EventDefinition,
+	keyName, keyValue string,
 ) (*Instance, error) {
 	startNodeID = strings.TrimSpace(startNodeID)
 	if startNodeID == "" {
@@ -260,7 +282,9 @@ func NewFromEvent(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	return New(s, parentRoot, er, ep, rr, withBornEvent(startNodeID, eDef))
+	return New(s, parentRoot, er, ep, rr,
+		withBornEvent(startNodeID, eDef),
+		withConversationKey(keyName, keyValue))
 }
 
 // bindEventPayload binds the payload carried by a born-from-event start into the

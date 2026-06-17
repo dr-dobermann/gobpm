@@ -97,7 +97,7 @@ flowchart TD
 
 `Instance` gains an unexported `convKeys map[ /*CorrelationKey identity*/ string]string` (declared-key → value) plus initializer, an `AssociateKey` (set-if-absent, returns whether it was new), and an accessor returning the current value snapshot.
 
-- **Born-from-event:** `resolveAndLaunch` holds the derived key; pass it (with the `CorrelationKey` identity it satisfied) into `launchInstanceFromEvent` → `NewFromEvent`, seeding `convKeys` before `Run`.
+- **Born-from-event:** `resolveAndLaunch` holds the derived key; pass it (with the `CorrelationKey` identity it satisfied) into `launchInstanceFromEvent` → `NewFromEvent` (as `keyName, keyValue`), which seeds `convKeys` **before `createTracks`** — not merely before `Run`. `createTracks` parks an in-instance receiver reached directly off the born start *during construction* (`newTrack`→`checkNodeType`), so the key must already be present or that receiver subscribes wildcard.
 - **First keyed send:** `msgflow.Send` derives a non-empty key; because `msgflow` (in `pkg/model`) must not import `internal/instance`, this goes through a **seam on the `renv` runtime interface** — e.g. `AssociateConversationKey(keyName, value string)` that `execEnv`/the instance implements — recording the key if absent.
 - **Concurrency:** forked tracks run on concurrent goroutines (`instance.go:405`), so a send or a receiver-association may touch the key-set off the main loop. `convKeys` is therefore guarded by an instance mutex (`convMu`); `AssociateKey` is set-if-absent under the lock, the accessor snapshots the values under the lock (NFR-2).
 
