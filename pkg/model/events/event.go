@@ -162,9 +162,32 @@ func (e *Event) clone() Event {
 	return Event{
 		BaseNode:    e.CloneShell(),
 		properties:  e.properties,
-		definitions: e.definitions,
+		definitions: cloneDefsForInstance(e.definitions),
 		triggers:    e.triggers,
 	}
+}
+
+// cloneDefsForInstance gives every event definition that supports per-instance
+// identity (currently the message definition — SRD-017 §4.3) a fresh-id copy so
+// concurrent instances waiting on the same trigger register distinct EventHub
+// waiters instead of sharing one and all firing on a single point-to-point
+// message. Definitions without the capability are shared by reference as before.
+func cloneDefsForInstance(defs []flow.EventDefinition) []flow.EventDefinition {
+	out := make([]flow.EventDefinition, len(defs))
+
+	for i, d := range defs {
+		if c, ok := d.(interface {
+			CloneForInstance() flow.EventDefinition
+		}); ok {
+			out[i] = c.CloneForInstance()
+
+			continue
+		}
+
+		out[i] = d
+	}
+
+	return out
 }
 
 // Properties returns a copy of the Event properties.
