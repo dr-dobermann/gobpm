@@ -15,16 +15,31 @@ type Envelope struct {
 	// Name is the message name (matches bpmncommon.Message.Name).
 	Name string
 	// CorrelationKey selects the target instance/subscription; empty means
-	// "no key" (a subscription with an empty key matches any key for Name).
+	// "no key" (a wildcard subscription matches any key for Name).
 	CorrelationKey string
 }
 
-// MessageBroker delivers incoming messages to interested subscribers,
-// buffering undelivered ones in a (bounded, in the default) inbox.
+// Subscription is a live subscription handle returned by MessageBroker.Subscribe.
+type Subscription interface {
+	// C is the channel of envelopes matching the subscription.
+	C() <-chan Envelope
+	// AddKey extends the subscription's correlation key-set so that subsequent
+	// (and already-buffered) messages carrying key are delivered here. It backs
+	// lazy secondary-key association (SRD-017): a conversation that learns a new
+	// key becomes reachable by it. An empty key is rejected.
+	AddKey(key string) error
+}
+
+// MessageBroker delivers incoming messages to interested subscribers, buffering
+// undelivered ones in a (bounded, in the default) inbox. Delivery is
+// most-specific: a keyed subscription (one whose key-set contains the message's
+// correlation key) is preferred over a wildcard subscription (SRD-017,
+// ADR-016 §2.3).
 type MessageBroker interface {
 	// Publish submits an incoming message for delivery or buffering.
 	Publish(ctx context.Context, msg Envelope) error
-	// Subscribe returns a channel of envelopes matching name and
-	// correlationKey (an empty correlationKey matches any key for name).
-	Subscribe(ctx context.Context, name, correlationKey string) (<-chan Envelope, error)
+	// Subscribe returns a subscription for messages named name. With no keys (or
+	// only empty keys) it is a wildcard, matching any key for name; otherwise it
+	// matches only a message whose CorrelationKey is in the key-set.
+	Subscribe(ctx context.Context, name string, keys ...string) (Subscription, error)
 }

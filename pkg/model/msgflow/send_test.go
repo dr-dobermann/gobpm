@@ -28,8 +28,8 @@ func (errBroker) Publish(context.Context, messaging.Envelope) error {
 }
 
 func (errBroker) Subscribe(
-	context.Context, string, string,
-) (<-chan messaging.Envelope, error) {
+	context.Context, string, ...string,
+) (messaging.Subscription, error) {
 	return nil, nil
 }
 
@@ -55,8 +55,9 @@ func TestSend(t *testing.T) {
 					foundation.WithID("order_item")))
 
 			broker := membroker.New()
-			ch, err := broker.Subscribe(ctx, "order placed", "")
+			sub, err := broker.Subscribe(ctx, "order placed")
 			require.NoError(t, err)
+			ch := sub.C()
 
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 			re.EXPECT().
@@ -102,8 +103,9 @@ func TestSend(t *testing.T) {
 			require.NoError(t, err)
 
 			broker := membroker.New()
-			ch, err := broker.Subscribe(ctx, "order placed", "")
+			sub, err := broker.Subscribe(ctx, "order placed")
 			require.NoError(t, err)
+			ch := sub.C()
 
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 			re.EXPECT().

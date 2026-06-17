@@ -98,8 +98,9 @@ func TestSendTaskExec(t *testing.T) {
 			require.NoError(t, err)
 
 			broker := membroker.New()
-			ch, err := broker.Subscribe(ctx, "order placed", "")
+			sub, err := broker.Subscribe(ctx, "order placed")
 			require.NoError(t, err)
+			ch := sub.C()
 
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 			re.EXPECT().

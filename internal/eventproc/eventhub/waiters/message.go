@@ -182,7 +182,7 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 			errs.D("current_state", mw.state))
 	}
 
-	ch, err := mw.rt.MessageBroker().Subscribe(ctx, mw.name, "")
+	sub, err := mw.rt.MessageBroker().Subscribe(ctx, mw.name)
 	if err != nil {
 		mw.state = eventproc.WSFailed
 
@@ -196,7 +196,7 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 	mw.state = eventproc.WSRunned
 	mw.stopCh = make(chan struct{})
 
-	go mw.runMessageService(ctx, ch)
+	go mw.runMessageService(ctx, sub.C())
 
 	return nil
 }

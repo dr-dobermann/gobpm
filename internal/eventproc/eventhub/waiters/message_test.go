@@ -42,18 +42,24 @@ type brokerRT struct {
 
 func (b brokerRT) MessageBroker() messaging.MessageBroker { return b.broker }
 
+// chanSub adapts a channel to messaging.Subscription for the broker fakes.
+type chanSub struct{ ch <-chan messaging.Envelope }
+
+func (s chanSub) C() <-chan messaging.Envelope { return s.ch }
+func (chanSub) AddKey(string) error            { return nil }
+
 // closedChBroker returns an already-closed subscription channel.
 type closedChBroker struct{}
 
 func (closedChBroker) Publish(context.Context, messaging.Envelope) error { return nil }
 
 func (closedChBroker) Subscribe(
-	context.Context, string, string,
-) (<-chan messaging.Envelope, error) {
+	context.Context, string, ...string,
+) (messaging.Subscription, error) {
 	ch := make(chan messaging.Envelope)
 	close(ch)
 
-	return ch, nil
+	return chanSub{ch: ch}, nil
 }
 
 // errSubBroker fails on Subscribe.
@@ -62,8 +68,8 @@ type errSubBroker struct{}
 func (errSubBroker) Publish(context.Context, messaging.Envelope) error { return nil }
 
 func (errSubBroker) Subscribe(
-	context.Context, string, string,
-) (<-chan messaging.Envelope, error) {
+	context.Context, string, ...string,
+) (messaging.Subscription, error) {
 	return nil, fmt.Errorf("broker down")
 }
 
