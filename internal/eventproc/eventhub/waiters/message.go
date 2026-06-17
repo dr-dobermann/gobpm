@@ -174,6 +174,26 @@ func (mw *messageWaiter) Process(eDef flow.EventDefinition) error {
 // delivery goroutine. The subscription is registered synchronously, so a
 // message published after Service returns is delivered (subscribe-before-
 // publish, ADR-006 v.1 §2.4).
+// subscriptionKeys gathers the correlation keys the waiter's processors declare
+// for their subscription (SRD-017 §4.3 declared-filter): a processor that
+// implements CorrelationKeys (the in-instance receiver track) contributes its
+// instance's conversation key values, so the message routes to that instance; a
+// processor that declares none (the instance-starter) contributes nothing,
+// leaving a wildcard subscription.
+func (mw *messageWaiter) subscriptionKeys() []string {
+	var keys []string
+
+	for _, p := range mw.processors {
+		if kp, ok := p.(interface {
+			CorrelationKeys() []string
+		}); ok {
+			keys = append(keys, kp.CorrelationKeys()...)
+		}
+	}
+
+	return keys
+}
+
 func (mw *messageWaiter) Service(ctx context.Context) error {
 	if mw.state != eventproc.WSReady {
 		return errs.New(
@@ -182,7 +202,7 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 			errs.D("current_state", mw.state))
 	}
 
-	sub, err := mw.rt.MessageBroker().Subscribe(ctx, mw.name)
+	sub, err := mw.rt.MessageBroker().Subscribe(ctx, mw.name, mw.subscriptionKeys()...)
 	if err != nil {
 		mw.state = eventproc.WSFailed
 

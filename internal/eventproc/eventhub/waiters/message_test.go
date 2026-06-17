@@ -165,6 +165,66 @@ func TestMessageWaiterDelivery(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+// keyedProc is an EventProcessor that declares correlation keys for its
+// subscription (the SRD-017 §4.3 declared-filter), like the in-instance track.
+type keyedProc struct {
+	*mockeventproc.MockEventProcessor
+	keys []string
+}
+
+func (k keyedProc) CorrelationKeys() []string { return k.keys }
+
+// TestMessageWaiterKeyedDelivery verifies that a waiter whose processor declares
+// correlation keys subscribes keyed: a non-matching key is not delivered, the
+// matching key wakes it (SRD-017 §4.3 / FR-2).
+func TestMessageWaiterKeyedDelivery(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	eDef := msgEventDef(t)
+
+	rt := enginert.Default()
+	hub := mockeventproc.NewMockEventHub(t)
+	hub.EXPECT().WaiterFired(eDef.ID()).Return(nil).Once()
+
+	done := make(chan flow.EventDefinition, 1)
+	mep := mockeventproc.NewMockEventProcessor(t)
+	mep.EXPECT().
+		ProcessEvent(mock.Anything, mock.Anything).
+		RunAndReturn(func(_ context.Context, ed flow.EventDefinition) error {
+			done <- ed
+
+			return nil
+		})
+
+	ep := keyedProc{MockEventProcessor: mep, keys: []string{"ORD-1"}}
+
+	w, err := waiters.NewMessageWaiter(hub, ep, eDef, "", rt, true)
+	require.NoError(t, err)
+	require.NoError(t, w.Service(ctx))
+
+	// a non-matching key must not wake this keyed receiver.
+	require.NoError(t, rt.MessageBroker().Publish(ctx, messaging.Envelope{
+		Name: "order placed", Payload: "ORD-2", CorrelationKey: "ORD-2"}))
+
+	select {
+	case <-done:
+		t.Fatal("keyed receiver woke on a non-matching key")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// the matching key wakes it.
+	require.NoError(t, rt.MessageBroker().Publish(ctx, messaging.Envelope{
+		Name: "order placed", Payload: "ORD-1", CorrelationKey: "ORD-1"}))
+
+	select {
+	case ed := <-done:
+		require.Equal(t, "ORD-1", ed.GetItemsList()[0].Structure().Get(ctx))
+	case <-time.After(2 * time.Second):
+		t.Fatal("keyed receiver did not wake on the matching key")
+	}
+}
+
 // TestMessageWaiterPersistent exercises the persistent (singleShot=false)
 // lifecycle (SRD-015 FR-1): the waiter fires for every matching message and
 // stays Runned — it never reaches a terminal state on its own, so the hub

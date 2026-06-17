@@ -280,6 +280,16 @@ func newTrack(
 
 // checkNodeType determines if node awaits for event or human interaction
 // and updates track state on positive comparison.
+// CorrelationKeys returns the conversation key values the track's instance has
+// established (SRD-017 §4.3). The message waiter reads it structurally (the
+// "declared filter") to subscribe this in-instance receiver keyed to its
+// conversation; an instance with no keys yields none, leaving a wildcard
+// subscription. It is the subscriber declaring its own filter — the waiter
+// never references the instance directly.
+func (t *track) CorrelationKeys() []string {
+	return t.instance.conversationKeyValues()
+}
+
 func (t *track) checkNodeType(node flow.Node) error {
 	en, ok := node.(flow.EventNode)
 	if !ok {

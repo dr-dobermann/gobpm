@@ -301,6 +301,27 @@ func (inst *Instance) AssociateConversationKey(name, value string) {
 	}
 }
 
+// conversationKeyValues returns a snapshot of the instance's conversation key
+// values (SRD-017 §4.3): the keys its in-instance message receivers subscribe
+// on so a follow-up message routes to this instance. An instance with no
+// established key returns nil (a wildcard subscription). Taken under convMu —
+// forked tracks run on concurrent goroutines.
+func (inst *Instance) conversationKeyValues() []string {
+	inst.convMu.Lock()
+	defer inst.convMu.Unlock()
+
+	if len(inst.convKeys) == 0 {
+		return nil
+	}
+
+	vals := make([]string, 0, len(inst.convKeys))
+	for _, v := range inst.convKeys {
+		vals = append(vals, v)
+	}
+
+	return vals
+}
+
 // loadProperties creates the instance's data plane rooted under parentRoot
 // and commits the process properties into the root container scope.
 func (inst *Instance) loadProperties(parentRoot scope.DataPath) error {

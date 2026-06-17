@@ -1,6 +1,8 @@
 package instance
 
 import (
+	"slices"
+	"sort"
 	"strconv"
 	"sync"
 	"testing"
@@ -57,5 +59,34 @@ func TestAssociateConversationKeyConcurrent(t *testing.T) {
 
 	if len(inst.convKeys) != 50 {
 		t.Fatalf("concurrent associate: %d keys, want 50", len(inst.convKeys))
+	}
+}
+
+// TestConversationKeyValues verifies the snapshot accessor (empty -> nil; all
+// values otherwise) and that a track exposes its instance's values as the
+// declared subscription filter (SRD-017 §4.3).
+func TestConversationKeyValues(t *testing.T) {
+	inst := &Instance{convKeys: map[string]string{}}
+
+	if vals := inst.conversationKeyValues(); vals != nil {
+		t.Fatalf("empty instance: got %v, want nil", vals)
+	}
+
+	inst.AssociateConversationKey("orderKey", "ORD-1")
+	inst.AssociateConversationKey("shipKey", "SHP-2")
+
+	vals := inst.conversationKeyValues()
+	sort.Strings(vals)
+
+	if !slices.Equal(vals, []string{"ORD-1", "SHP-2"}) {
+		t.Fatalf("values: got %v, want [ORD-1 SHP-2]", vals)
+	}
+
+	// the track exposes the instance's values as its declared filter.
+	tk := (&track{instance: inst}).CorrelationKeys()
+	sort.Strings(tk)
+
+	if !slices.Equal(tk, []string{"ORD-1", "SHP-2"}) {
+		t.Fatalf("track keys: got %v, want [ORD-1 SHP-2]", tk)
 	}
 }
