@@ -25,10 +25,12 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/interactor"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/msgflow"
 	engrenv "github.com/dr-dobermann/gobpm/pkg/renv"
 )
 
@@ -283,22 +285,31 @@ func (inst *Instance) bindEventPayload(eDef flow.EventDefinition) error {
 }
 
 // AssociateConversationKey records value under the conversation key named name
-// if that key is not already held (set-if-absent — SRD-017 FR-1). The first
-// born-from-event trigger or keyed send initializes a key; a later derivation
-// of an already-held key does not overwrite it (that conflict is the delivery-
-// time mismatch handled later). Empty name or value is a no-op. Safe for
-// concurrent callers — forked tracks run on separate goroutines.
+// set-if-absent (SRD-017 FR-1). It is the no-result form the optional msgflow
+// recorder capability uses (first keyed send); the delivery path uses the
+// bool-returning associateConversationKey to learn whether to extend receivers.
 func (inst *Instance) AssociateConversationKey(name, value string) {
+	inst.associateConversationKey(name, value)
+}
+
+// associateConversationKey records value under name if name is not already held,
+// returning whether it was added (a new conversation key). Empty inputs are a
+// no-op returning false. Guarded by convMu — forked tracks run concurrently.
+func (inst *Instance) associateConversationKey(name, value string) bool {
 	if name == "" || value == "" {
-		return
+		return false
 	}
 
 	inst.convMu.Lock()
 	defer inst.convMu.Unlock()
 
-	if _, ok := inst.convKeys[name]; !ok {
-		inst.convKeys[name] = value
+	if _, ok := inst.convKeys[name]; ok {
+		return false
 	}
+
+	inst.convKeys[name] = value
+
+	return true
 }
 
 // conversationKeyValues returns a snapshot of the instance's conversation key
@@ -320,6 +331,86 @@ func (inst *Instance) conversationKeyValues() []string {
 	}
 
 	return vals
+}
+
+// deriveAndAssociate applies the lazy conversation-token rule on a received
+// message (SRD-017 §4.5): it derives every declared correlation key from the
+// message payload and associates any not-yet-held value with this instance's
+// conversation, extending currently-parked receivers so the conversation
+// becomes reachable by the new key. (Mismatch — a held key whose follow-up
+// value differs — is handled by a later milestone; here a derived value for an
+// already-held key is simply ignored by the set-if-absent associate.)
+func (inst *Instance) deriveAndAssociate(
+	ctx context.Context,
+	eDef flow.EventDefinition,
+) {
+	keys := inst.s.CorrelationKeys
+	if len(keys) == 0 {
+		return
+	}
+
+	mr, ok := eDef.(interface {
+		Message() *bpmncommon.Message
+	})
+	if !ok {
+		return
+	}
+
+	msg := mr.Message()
+
+	var payload any
+	if items := eDef.GetItemsList(); len(items) != 0 {
+		payload = items[0].Structure().Get(ctx)
+	}
+
+	for _, key := range keys {
+		v, ok, err := msgflow.DeriveKey(
+			ctx, inst.ExpressionEngine(), key, msg, payload)
+		if err != nil {
+			inst.Logger().Warn("conversation key derivation failed",
+				"instance_id", inst.ID(), "correlation_key", key.Name)
+
+			continue
+		}
+
+		if ok && inst.associateConversationKey(key.Name, v) {
+			inst.extendReceivers(v)
+		}
+	}
+}
+
+// extendReceivers adds a newly-learned correlation value to every in-instance
+// message receiver's broker subscription (SRD-017 §4.5), so a follow-up carrying
+// it routes here. It reaches the EventHub's optional AddEventKey capability
+// structurally (no interface change). A receiver that isn't parked yet has no
+// waiter — a benign no-op; it picks the value up from the grown key-set when it
+// registers.
+func (inst *Instance) extendReceivers(value string) {
+	adder, ok := inst.parentEventProducer.(interface {
+		AddEventKey(eDefID, key string) error
+	})
+	if !ok {
+		return
+	}
+
+	for _, n := range inst.s.Nodes {
+		en, ok := n.(flow.EventNode)
+		if !ok {
+			continue
+		}
+
+		for _, d := range en.Definitions() {
+			if d.Type() != flow.TriggerMessage {
+				continue
+			}
+
+			if err := adder.AddEventKey(d.ID(), value); err != nil {
+				inst.Logger().Debug("extend receiver subscription failed",
+					"instance_id", inst.ID(),
+					"event_definition_id", d.ID())
+			}
+		}
+	}
 }
 
 // loadProperties creates the instance's data plane rooted under parentRoot

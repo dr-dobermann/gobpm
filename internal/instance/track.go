@@ -750,6 +750,10 @@ func (t *track) ProcessEvent(
 		return err
 	}
 
+	// Lazy correlation-key association on receive (SRD-017 §4.5): learn any new
+	// declared key from the message so this conversation becomes reachable by it.
+	t.instance.deriveAndAssociate(ctx, eDef)
+
 	if err := t.unregisterEvent(n); err != nil {
 		return errs.New(
 			errs.M("node %q[%s] unregister events failed", n.Name(), n.ID()),

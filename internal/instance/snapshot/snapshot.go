@@ -3,6 +3,7 @@ package snapshot
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -21,6 +22,11 @@ type Snapshot struct {
 	Nodes       map[string]flow.Node
 	Flows       map[string]*flow.SequenceFlow
 	Properties  []*data.Property
+	// CorrelationKeys are the process's declared correlation keys (the Key of
+	// each CorrelationSubscription). An in-instance receiver derives them from
+	// an incoming message's payload to grow the instance's conversation key-set
+	// (lazy association — SRD-017 §4.5). Immutable config, shared by Clone.
+	CorrelationKeys []*bpmncommon.CorrelationKey
 }
 
 // New creates a new snapshot from the Process p and returns its
@@ -51,6 +57,8 @@ func New(
 		Flows:       map[string]*flow.SequenceFlow{},
 		Properties:  p.Properties(),
 	}
+
+	s.CorrelationKeys = correlationKeys(p)
 
 	seExists := false
 	eeExists := false
@@ -97,7 +105,7 @@ func New(
 	if eeExists && !seExists && !instStartExists {
 		return nil,
 			errs.New(
-				errs.M("no StartEvent or instantiating ReceiveTask in process "+
+				errs.M("no StartEvent or instantiating ReceiveTask in process " +
 					"with an EndEvent"))
 	}
 
@@ -106,6 +114,22 @@ func New(
 	}
 
 	return &s, nil
+}
+
+// correlationKeys extracts the process's declared correlation keys — the Key of
+// each non-nil CorrelationSubscription — for the snapshot (SRD-017 §4.5). An
+// in-instance receiver derives these from an incoming message to grow its
+// conversation key-set.
+func correlationKeys(p *process.Process) []*bpmncommon.CorrelationKey {
+	keys := make([]*bpmncommon.CorrelationKey, 0, len(p.CorrelationSubscriptions))
+
+	for _, cs := range p.CorrelationSubscriptions {
+		if cs != nil && cs.Key != nil {
+			keys = append(keys, cs.Key)
+		}
+	}
+
+	return keys
 }
 
 // isInstantiatingTask reports whether n is a no-incoming instantiate
@@ -124,12 +148,13 @@ func isInstantiatingTask(n flow.Node) bool {
 // properties — is shared. See ADR-009.
 func (s *Snapshot) Clone() (*Snapshot, error) {
 	clone := Snapshot{
-		ID:          *foundation.NewID(),
-		ProcessID:   s.ProcessID,
-		ProcessName: s.ProcessName,
-		Nodes:       make(map[string]flow.Node, len(s.Nodes)),
-		Flows:       make(map[string]*flow.SequenceFlow, len(s.Flows)),
-		Properties:  s.Properties,
+		ID:              *foundation.NewID(),
+		ProcessID:       s.ProcessID,
+		ProcessName:     s.ProcessName,
+		Nodes:           make(map[string]flow.Node, len(s.Nodes)),
+		Flows:           make(map[string]*flow.SequenceFlow, len(s.Flows)),
+		Properties:      s.Properties,
+		CorrelationKeys: s.CorrelationKeys,
 	}
 
 	// 1. clone every node; the clone starts with empty flows and any default

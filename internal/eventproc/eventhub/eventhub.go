@@ -372,6 +372,37 @@ func (eh *EventHub) WaiterFired(eDefID string) error {
 	return nil
 }
 
+// AddEventKey extends the broker subscription of the waiter registered for
+// eDefID with correlation key (SRD-017 §4.5 lazy association): a parked
+// in-instance message receiver becomes reachable by a key its instance learned
+// after it parked. A missing waiter (the receiver isn't parked) and a
+// non-keyable waiter (a timer, with no keyed subscription) are benign no-ops.
+func (eh *EventHub) AddEventKey(eDefID, key string) error {
+	eDefID = strings.TrimSpace(eDefID)
+	if eDefID == "" {
+		return errs.New(
+			errs.M("event definition id is empty"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	eh.m.RLock()
+	w, ok := eh.waiters[eDefID]
+	eh.m.RUnlock()
+
+	if !ok {
+		return nil
+	}
+
+	ka, ok := w.(interface {
+		AddKey(string) error
+	})
+	if !ok {
+		return nil
+	}
+
+	return ka.AddKey(key)
+}
+
 // ----------------------------------------------------------------------------
 
 // interfaces check

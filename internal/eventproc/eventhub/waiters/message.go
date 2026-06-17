@@ -34,12 +34,25 @@ type messageWaiter struct {
 	rt         renv.EngineRuntime
 	eDef       *events.MessageEventDefinition
 	stopCh     chan struct{}
+	sub        messaging.Subscription
 	name       string
 	id         string
 	processors []eventproc.EventProcessor
 	state      eventproc.EventWaiterState
 	singleShot bool
 	m          sync.Mutex
+}
+
+// AddKey extends the waiter's broker subscription with key (SRD-017 §4.5 lazy
+// association). It is safe before Service has subscribed (a nil subscription is
+// a no-op) — the receiver then picks the key up from its instance's grown
+// key-set when it does subscribe.
+func (mw *messageWaiter) AddKey(key string) error {
+	if mw.sub == nil {
+		return nil
+	}
+
+	return mw.sub.AddKey(key)
 }
 
 // NewMessageWaiter builds a messageWaiter for a MessageEventDefinition. It
@@ -213,6 +226,7 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 			errs.E(err))
 	}
 
+	mw.sub = sub
 	mw.state = eventproc.WSRunned
 	mw.stopCh = make(chan struct{})
 

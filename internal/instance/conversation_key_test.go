@@ -1,12 +1,115 @@
 package instance
 
 import (
+	"context"
+	"fmt"
 	"slices"
 	"sort"
 	"strconv"
 	"sync"
 	"testing"
+
+	"github.com/dr-dobermann/gobpm/internal/enginert"
+	"github.com/dr-dobermann/gobpm/internal/eventproc"
+	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/stretchr/testify/require"
 )
+
+// testCorrKey builds a CorrelationKey whose single property extracts the message
+// payload (bound under item id "order_in") as the key, for msgName messages.
+func testCorrKey(t *testing.T, msgName string) *bpmncommon.CorrelationKey {
+	t.Helper()
+
+	mp := goexpr.Must(nil, data.MustItemDefinition(values.NewVariable("")),
+		func(ctx context.Context, ds data.Source) (data.Value, error) {
+			d, err := ds.Find(ctx, "order_in")
+			if err != nil {
+				return nil, err
+			}
+
+			return values.NewVariable(fmt.Sprint(d.Value().Get(ctx))), nil
+		})
+
+	re, err := bpmncommon.NewCorrelationPropertyRetrievalExpression(mp,
+		bpmncommon.MustMessage(msgName, data.MustItemDefinition(
+			values.NewVariable(""), foundation.WithID("order_in"))))
+	require.NoError(t, err)
+
+	prop, err := bpmncommon.NewCorrelationProperty("orderId", "string",
+		[]bpmncommon.CorrelationPropertyRetrievalExpression{*re})
+	require.NoError(t, err)
+
+	key, err := bpmncommon.NewCorrelationKey("orderKey",
+		[]bpmncommon.CorrelationProperty{*prop})
+	require.NoError(t, err)
+
+	return key
+}
+
+// fakeEventProducer is an EventProducer that records AddEventKey calls (the
+// extend-parked seam — SRD-017 §4.5).
+type fakeEventProducer struct{ added map[string]string }
+
+func (fakeEventProducer) RegisterEvent(
+	eventproc.EventProcessor, flow.EventDefinition,
+) error {
+	return nil
+}
+
+func (fakeEventProducer) UnregisterEvent(
+	eventproc.EventProcessor, string,
+) error {
+	return nil
+}
+
+func (fakeEventProducer) PropagateEvent(
+	context.Context, flow.EventDefinition,
+) error {
+	return nil
+}
+
+func (f *fakeEventProducer) AddEventKey(eDefID, key string) error {
+	f.added[eDefID] = key
+
+	return nil
+}
+
+// plainEventProducer is an EventProducer WITHOUT AddEventKey (the no-adder
+// branch of extendReceivers).
+type plainEventProducer struct{}
+
+func (plainEventProducer) RegisterEvent(
+	eventproc.EventProcessor, flow.EventDefinition,
+) error {
+	return nil
+}
+
+func (plainEventProducer) UnregisterEvent(
+	eventproc.EventProcessor, string,
+) error {
+	return nil
+}
+
+func (plainEventProducer) PropagateEvent(
+	context.Context, flow.EventDefinition,
+) error {
+	return nil
+}
+
+func msgEDef(t *testing.T, name, value string) *events.MessageEventDefinition {
+	t.Helper()
+
+	return events.MustMessageEventDefinition(
+		bpmncommon.MustMessage(name, data.MustItemDefinition(
+			values.NewVariable(value), foundation.WithID("order_in"))), nil)
+}
 
 // TestAssociateConversationKeySetIfAbsent verifies the set-if-absent semantics
 // of the conversation key-set (SRD-017 FR-1): the first value for a key wins, a
@@ -89,4 +192,72 @@ func TestConversationKeyValues(t *testing.T) {
 	if !slices.Equal(tk, []string{"ORD-1", "SHP-2"}) {
 		t.Fatalf("track keys: got %v, want [ORD-1 SHP-2]", tk)
 	}
+}
+
+// TestDeriveAndAssociate verifies lazy association on delivery (SRD-017 §4.5):
+// a declared key derived from the message is associated with the conversation
+// and the instance's message receivers are extended with it.
+func TestDeriveAndAssociate(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	catch, err := events.NewIntermediateCatchEvent("catch", msgEDef(t, "reply", ""))
+	require.NoError(t, err)
+
+	fep := &fakeEventProducer{added: map[string]string{}}
+	inst := &Instance{
+		EngineRuntime:       enginert.Default(),
+		convKeys:            map[string]string{},
+		parentEventProducer: fep,
+		s: &snapshot.Snapshot{
+			CorrelationKeys: []*bpmncommon.CorrelationKey{testCorrKey(t, "reply")},
+			Nodes:           map[string]flow.Node{"catch": catch},
+		},
+	}
+
+	inst.deriveAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-1"))
+
+	if inst.convKeys["orderKey"] != "ORD-1" {
+		t.Fatalf("derived key: got %q, want ORD-1", inst.convKeys["orderKey"])
+	}
+
+	// the parked message receiver was extended with the learned value.
+	id := catch.Definitions()[0].ID()
+	if fep.added[id] != "ORD-1" {
+		t.Fatalf("receiver not extended: added=%v", fep.added)
+	}
+}
+
+// TestDeriveAndAssociateNoOp covers the early returns: no declared keys, and a
+// non-message event definition.
+func TestDeriveAndAssociateNoOp(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	inst := &Instance{
+		EngineRuntime: enginert.Default(),
+		convKeys:      map[string]string{},
+		s:             &snapshot.Snapshot{},
+	}
+
+	// no declared correlation keys -> no-op.
+	inst.deriveAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-1"))
+	require.Empty(t, inst.convKeys)
+
+	// a non-message event definition -> no Message() -> no-op.
+	inst.s = &snapshot.Snapshot{
+		CorrelationKeys: []*bpmncommon.CorrelationKey{testCorrKey(t, "reply")},
+	}
+	inst.deriveAndAssociate(context.Background(),
+		events.MustSignalEventDefinition(&events.Signal{}))
+	require.Empty(t, inst.convKeys)
+}
+
+// TestExtendReceiversNoAdder covers the branch where the parent event producer
+// doesn't implement AddEventKey (extend is a no-op, no panic).
+func TestExtendReceiversNoAdder(t *testing.T) {
+	inst := &Instance{
+		parentEventProducer: plainEventProducer{},
+		s:                   &snapshot.Snapshot{Nodes: map[string]flow.Node{}},
+	}
+
+	inst.extendReceivers("ORD-1") // must not panic
 }
