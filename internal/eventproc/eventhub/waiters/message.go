@@ -2,6 +2,7 @@ package waiters
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"slices"
 	"strings"
@@ -263,6 +264,12 @@ func (mw *messageWaiter) runMessageService(
 			}
 
 			if err := mw.processMessageEvent(ctx, env); err != nil {
+				if errors.Is(err, eventproc.ErrRejected) {
+					// rejected (correlation mismatch): keep waiting for a
+					// message that belongs to this conversation.
+					continue
+				}
+
 				return
 			}
 
@@ -294,7 +301,15 @@ func (mw *messageWaiter) processMessageEvent(
 	mw.m.Unlock()
 
 	for _, ep := range processors {
-		if err := ep.ProcessEvent(ctx, eDef); err != nil {
+		err := ep.ProcessEvent(ctx, eDef)
+		if errors.Is(err, eventproc.ErrRejected) {
+			// the message isn't for this receiver's conversation (a correlation
+			// mismatch — SRD-017 §4.5): stay subscribed and keep waiting; the
+			// message is dropped (the instance logged it). Not a failure.
+			return err
+		}
+
+		if err != nil {
 			mw.setState(eventproc.WSFailed)
 			_ = mw.hub.WaiterFired(mw.eDef.ID())
 

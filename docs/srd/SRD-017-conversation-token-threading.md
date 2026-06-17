@@ -124,15 +124,29 @@ buffer-drain on Subscribe / AddKey applies the same preference
 
 ### 4.5 Conversation-token rules on delivery (FR-4) — derive, associate, mismatch
 
-When a receiver is fired with an envelope, before resuming the token the instance:
-1. For each `CorrelationKey` declared on the process, run `msgflow.DeriveKey` over the message payload (its `MessageRef`-matched retrieval expression). A key whose properties don't all resolve is **absent** — skip.
-2. For each derived `(keyName, value)`:
-   - held with a **different** value → **mismatch**: stop, **reject** the message (it is not for this conversation) — the receiver does not consume it; the broker re-attempts delivery to another matching subscription or returns it to the held buffer.
-   - **not held** → `AssociateKey(keyName, value)`; extend the active subscriptions (FR-3) so the conversation is now reachable by it.
-   - held with the **same** value → no-op (the expected steady case).
-3. No mismatch → **accept**: resume the token with the payload (today's behaviour).
+When a receiver is fired, **before** the node processes the message,
+`track.ProcessEvent` calls `Instance.validateAndAssociate(ctx, eDef)`, which runs
+**two passes** over the process's declared `CorrelationKey`s (each derived with
+`msgflow.DeriveKey` over the payload, its `MessageRef`-matched retrieval
+expression; a key whose properties don't all resolve is absent and skipped):
 
-The reject path is the rare fallback (a message that routed in on key-A but conflicts on key-B); the common path is "same value or a new key."
+1. **Mismatch pass.** If any derived key is **already held** with a **different**
+   value → return `mismatch=true` and associate nothing — the message isn't for
+   this conversation (BPMN §8.4.2: an already-initialized key must equal).
+2. **Associate pass** (only if no mismatch). For each derived key **not yet
+   held** → `associateConversationKey` it and `extendReceivers` (FR-3) so the
+   conversation becomes reachable by it; a held-same-value key is a no-op.
+
+On `mismatch=true`, `track.ProcessEvent` returns the `eventproc.ErrRejected`
+sentinel **without** advancing the token. The single-shot message waiter treats
+`ErrRejected` specially: it does **not** terminate — it stays subscribed and
+keeps waiting for a message that belongs to this conversation; the contradictory
+message is **dropped** (logged at debug, key hash only — NFR-1), not re-routed
+(re-routing a contradictory message is loop-prone and out of scope). No mismatch
+→ the node processes and the token advances (the M4a behaviour).
+
+The reject path is the rare fallback (a message that routed in on key-A but
+conflicts on key-B); the common path is "same value or a new key."
 
 ### 4.6 Milestones (each = one commit, `make ci` green)
 

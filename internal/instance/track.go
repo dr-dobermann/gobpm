@@ -746,13 +746,17 @@ func (t *track) ProcessEvent(
 			errs.C(errorClass, errs.TypeCastingError))
 	}
 
+	// Conversation-token rules BEFORE the node processes (SRD-017 §4.5): a
+	// correlation mismatch (a held key whose value differs) means the message
+	// isn't for this conversation — reject it so the receiver keeps waiting,
+	// without advancing the token. Otherwise any new key is associated here.
+	if t.instance.validateAndAssociate(ctx, eDef) {
+		return eventproc.ErrRejected
+	}
+
 	if err := ep.ProcessEvent(ctx, eDef); err != nil {
 		return err
 	}
-
-	// Lazy correlation-key association on receive (SRD-017 §4.5): learn any new
-	// declared key from the message so this conversation becomes reachable by it.
-	t.instance.deriveAndAssociate(ctx, eDef)
 
 	if err := t.unregisterEvent(n); err != nil {
 		return errs.New(

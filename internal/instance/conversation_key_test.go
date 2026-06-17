@@ -214,7 +214,7 @@ func TestDeriveAndAssociate(t *testing.T) {
 		},
 	}
 
-	inst.deriveAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-1"))
+	inst.validateAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-1"))
 
 	if inst.convKeys["orderKey"] != "ORD-1" {
 		t.Fatalf("derived key: got %q, want ORD-1", inst.convKeys["orderKey"])
@@ -239,14 +239,14 @@ func TestDeriveAndAssociateNoOp(t *testing.T) {
 	}
 
 	// no declared correlation keys -> no-op.
-	inst.deriveAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-1"))
+	inst.validateAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-1"))
 	require.Empty(t, inst.convKeys)
 
 	// a non-message event definition -> no Message() -> no-op.
 	inst.s = &snapshot.Snapshot{
 		CorrelationKeys: []*bpmncommon.CorrelationKey{testCorrKey(t, "reply")},
 	}
-	inst.deriveAndAssociate(context.Background(),
+	inst.validateAndAssociate(context.Background(),
 		events.MustSignalEventDefinition(&events.Signal{}))
 	require.Empty(t, inst.convKeys)
 }
@@ -260,4 +260,55 @@ func TestExtendReceiversNoAdder(t *testing.T) {
 	}
 
 	inst.extendReceivers("ORD-1") // must not panic
+}
+
+// TestValidateAndAssociateMismatch verifies the §8.4.2 mismatch guard: a derived
+// value that differs from a held key reports mismatch and associates nothing.
+func TestValidateAndAssociateMismatch(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	fep := &fakeEventProducer{added: map[string]string{}}
+	inst := &Instance{
+		EngineRuntime:       enginert.Default(),
+		convKeys:            map[string]string{"orderKey": "ORD-1"},
+		parentEventProducer: fep,
+		s: &snapshot.Snapshot{
+			CorrelationKeys: []*bpmncommon.CorrelationKey{testCorrKey(t, "reply")},
+			Nodes:           map[string]flow.Node{},
+		},
+	}
+
+	// a message deriving orderKey=ORD-2 conflicts with the held ORD-1.
+	if !inst.validateAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-2")) {
+		t.Fatal("expected mismatch=true for a conflicting key value")
+	}
+
+	if inst.convKeys["orderKey"] != "ORD-1" {
+		t.Fatalf("held key must be unchanged on mismatch: %q", inst.convKeys["orderKey"])
+	}
+}
+
+// TestValidateAndAssociateSameValue verifies a derived value equal to the held
+// key is no mismatch and a benign no-op (the steady-state case).
+func TestValidateAndAssociateSameValue(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	fep := &fakeEventProducer{added: map[string]string{}}
+	inst := &Instance{
+		EngineRuntime:       enginert.Default(),
+		convKeys:            map[string]string{"orderKey": "ORD-1"},
+		parentEventProducer: fep,
+		s: &snapshot.Snapshot{
+			CorrelationKeys: []*bpmncommon.CorrelationKey{testCorrKey(t, "reply")},
+			Nodes:           map[string]flow.Node{},
+		},
+	}
+
+	if inst.validateAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-1")) {
+		t.Fatal("same-value message must not be a mismatch")
+	}
+
+	if len(fep.added) != 0 {
+		t.Fatalf("same-value message must not extend receivers: %v", fep.added)
+	}
 }

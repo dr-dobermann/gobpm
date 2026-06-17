@@ -333,27 +333,28 @@ func (inst *Instance) conversationKeyValues() []string {
 	return vals
 }
 
-// deriveAndAssociate applies the lazy conversation-token rule on a received
-// message (SRD-017 §4.5): it derives every declared correlation key from the
-// message payload and associates any not-yet-held value with this instance's
-// conversation, extending currently-parked receivers so the conversation
-// becomes reachable by the new key. (Mismatch — a held key whose follow-up
-// value differs — is handled by a later milestone; here a derived value for an
-// already-held key is simply ignored by the set-if-absent associate.)
-func (inst *Instance) deriveAndAssociate(
+// validateAndAssociate applies the conversation-token rules on a received
+// message (SRD-017 §4.5, BPMN §8.4.2). It derives every declared correlation key
+// from the message payload in two passes: first it checks for a mismatch — a key
+// this instance already holds whose derived value differs — and, if any, reports
+// mismatch=true and associates nothing (the message isn't for this conversation,
+// so the caller rejects it); otherwise it associates each not-yet-held value
+// (lazy secondary-key initialization), extending currently-parked receivers so
+// the conversation becomes reachable by the new key, and reports mismatch=false.
+func (inst *Instance) validateAndAssociate(
 	ctx context.Context,
 	eDef flow.EventDefinition,
-) {
+) (mismatch bool) {
 	keys := inst.s.CorrelationKeys
 	if len(keys) == 0 {
-		return
+		return false
 	}
 
 	mr, ok := eDef.(interface {
 		Message() *bpmncommon.Message
 	})
 	if !ok {
-		return
+		return false
 	}
 
 	msg := mr.Message()
@@ -362,6 +363,8 @@ func (inst *Instance) deriveAndAssociate(
 	if items := eDef.GetItemsList(); len(items) != 0 {
 		payload = items[0].Structure().Get(ctx)
 	}
+
+	derived := make(map[string]string, len(keys))
 
 	for _, key := range keys {
 		v, ok, err := msgflow.DeriveKey(
@@ -373,10 +376,39 @@ func (inst *Instance) deriveAndAssociate(
 			continue
 		}
 
-		if ok && inst.associateConversationKey(key.Name, v) {
+		if !ok {
+			continue
+		}
+
+		if held, isHeld := inst.heldConversationKey(key.Name); isHeld &&
+			held != v {
+			inst.Logger().Debug("correlation key mismatch — message dropped",
+				"instance_id", inst.ID(), "correlation_key", key.Name)
+
+			return true
+		}
+
+		derived[key.Name] = v
+	}
+
+	for name, v := range derived {
+		if inst.associateConversationKey(name, v) {
 			inst.extendReceivers(v)
 		}
 	}
+
+	return false
+}
+
+// heldConversationKey returns the value held for the named conversation key and
+// whether it is held. Read under convMu — forked tracks run concurrently.
+func (inst *Instance) heldConversationKey(name string) (string, bool) {
+	inst.convMu.Lock()
+	defer inst.convMu.Unlock()
+
+	v, ok := inst.convKeys[name]
+
+	return v, ok
 }
 
 // extendReceivers adds a newly-learned correlation value to every in-instance
