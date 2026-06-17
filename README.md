@@ -26,7 +26,7 @@ The library carries no runtime baggage; the runtime never reimplements the engin
 - **Predictable execution model** — one event-loop goroutine per process instance owns state; each *track* (thread of execution) runs in its own goroutine, and a token is a projection of a track's position, not a stored object; `context.Context` is the cancellation contract. See [ADR-001](docs/design/ADR-001-execution-model.md).
 - **Interface-driven extensibility** — persistence, expressions, messaging, observability, authorization, task distribution, and clock are all behind interfaces with in-core defaults. See [ADR-002](docs/design/ADR-002-extension-architecture.md).
 - **Observable by default** — `Logger` defaults to `slog.Default()`; you opt *out* of telemetry, you don't opt in. Tracer/metrics default to no-op (OpenTelemetry adapter ships separately).
-- **Message handling & correlation** — send/receive tasks and throw/catch message events over a pluggable broker; a message can **instantiate** a process (event-triggered instantiation) and **correlate** to the right instance by a key derived from the payload. See [ADR-014](docs/design/ADR-014-message-handling.md) / [ADR-015](docs/design/ADR-015-event-triggered-instantiation.md) / [ADR-016](docs/design/ADR-016-message-correlation.md).
+- **Message handling & correlation** — send/receive tasks and throw/catch message events over a pluggable broker; a message can **instantiate** a process (event-triggered instantiation) and **correlate** to the right instance by a key derived from the payload, and a **follow-up** message routes back to the specific running instance whose conversation it belongs to — across one or more keys (conversation-token threading). See [ADR-014](docs/design/ADR-014-message-handling.md) / [ADR-015](docs/design/ADR-015-event-triggered-instantiation.md) / [ADR-016](docs/design/ADR-016-message-correlation.md).
 - **Programmatic model construction** — processes are built in Go. XML parsing is intentionally decoupled from the model layer.
 
 ## Architecture
@@ -107,7 +107,10 @@ publishes to the broker, a ReceiveTask waits and binds the payload) ·
 (throw/catch message events), and
 [`examples/inter-instance-correlation/`](examples/inter-instance-correlation/) —
 a message **instantiates** a handler process and **correlates** by a key derived
-from the payload (one handler instance per distinct order).
+from the payload (one handler instance per distinct order) ·
+[`examples/conversation-routing/`](examples/conversation-routing/) — a follow-up
+message **routes back** to the specific handler instance whose conversation it
+belongs to (keyed in-instance receivers; two conversations stay isolated).
 
 ### Startup logging
 
