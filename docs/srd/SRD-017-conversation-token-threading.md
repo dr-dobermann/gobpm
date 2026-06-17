@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-17 |
 | Owner | Ruslan Gabitov |
@@ -183,7 +183,53 @@ conflicts on key-B); the common path is "same value or a new key."
 
 ## 7. Implementation summary
 
-> ⚠️ TODO: fill AFTER landing — milestone SHAs, V-results, and any deltas vs the §4 draft.
+Landed on `feat/srd-017-conversation-token-threading`, one commit per
+milestone, each `make ci` green (build · `-race` · diff-coverage ≥95% · vuln).
+
+### 7.1 Milestones by commit
+
+| Milestone | Commit | Scope |
+|---|---|---|
+| M1 — membroker key-set + most-specific | `1890da3` | `subscription` key-set; two-pass `Publish` (keyed beats wildcard, point-to-point); runtime `AddKey`; `messaging.Subscription` handle; `Subscribe(name, keys...)` |
+| M2 — instance conversation key-set | `414cb83` | `Instance.convKeys` + `AssociateConversationKey` (set-if-absent, mutex-guarded); seam via `msgflow` `conversationKeyRecorder` (first keyed send) |
+| M3a — per-instance message-eDef identity | `efcfae3` | `MessageEventDefinition.CloneForInstance` (fresh id); `Event.clone` applies it — distinct waiter per instance (fixes the message broadcast bug) |
+| M3b — keyed in-instance receivers | `37d2ec1` | `track.CorrelationKeys` (declared filter) + `messageWaiter.subscriptionKeys` → `Subscribe` keyed; `conversationKeyValues` |
+| M4a — lazy association on receive | `37afe0b` | snapshot carries `CorrelationKeys`; `track.ProcessEvent` → `deriveAndAssociate`; extend parked receivers via `EventHub.AddEventKey` → `messageWaiter.AddKey` |
+| M4b — mismatch guard | `cf25d79` | `validateAndAssociate` two-pass; `eventproc.ErrRejected`; single-shot waiter keeps waiting + drops the contradictory message |
+| M5 — routing integration + example | `240443c` | `TestConversationRouting`; `examples/conversation-routing`; seed-ordering fix (seed before `createTracks`) |
+
+(Plus `aa8ccce` doc, `ac01445` chore: untrack the SRD-015 example binary.)
+
+### 7.2 V-results
+
+| Check | Result |
+|---|---|
+| V1 membroker keyed/point-to-point/no-key/drain | 🟢 |
+| V2 instance key-set seed (born / first send), mutex-guarded | 🟢 |
+| V3 keyed receiver subscribes on the set; keyless → wildcard | 🟢 |
+| V4 lazy association of a new key; mismatch rejected | 🟢 |
+| V5 two conversations isolated; follow-up routes to the originator | 🟢 |
+| V6 `examples/conversation-routing` exits 0 | 🟢 |
+| V7 `make ci` green; diff-coverage ≥95% (96.6%); no internal import; no leak | 🟢 |
+
+### 7.3 Notes vs the §4 draft
+
+- **Seed-ordering fix (M5).** §4.2 first specified the born-from-event key
+  seeded "before `Run`". M5's integration test exposed that `createTracks`
+  parks an in-instance receiver reached directly off the born start *during
+  construction* (`newTrack`→`checkNodeType`), so the key had to be seeded
+  **before `createTracks`** — moved inside `NewFromEvent` (`keyName/keyValue`
+  params → `withConversationKey` option). §4.2 amended.
+- **Mismatch = drop + keep-waiting, not re-route (M4b).** §4.5 first sketched
+  the broker re-attempting delivery; the landed model keeps the single-shot
+  receiver subscribed (via `ErrRejected`) and drops the contradictory message
+  (logged) — re-routing is loop-prone and out of scope. §4.5 amended.
+- **Extend-parked via a structural `AddEventKey` (M4a).** Reached the EventHub
+  capability by a structural assertion on `parentEventProducer` rather than a
+  public `EventProducer` interface method — no interface change, no mock churn.
+- **Non-message broadcast bug deferred.** M3a's per-instance identity is scoped
+  to message definitions; the same latent bug for timer/signal catch events is
+  pre-existing and left to its own FIX.
 
 ## 8. References
 
@@ -205,4 +251,5 @@ None. Scope is ADR-016 phase-2c **in full**: a running instance carries a **muta
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.1 (Accepted) | 2026-06-17 | Ruslan Gabitov | **Accepted** at landing — seven milestones (M1–M5, M3/M4 split) on `feat/srd-017-conversation-token-threading`, each `make ci` green (build · -race · diff-coverage ≥95% (96.6%) · vuln); `examples/conversation-routing` smoke-runs to exit 0. `/check-srd` PASS (all FR wired, §6 tests present, cross-doc pins up/sideways with no downward ref). §7 implementation summary filled (milestone SHAs, V-results, §4.2/§4.5 deltas). |
 | v.1 | 2026-06-17 | Ruslan Gabitov | Draft. Implements ADR-016 v.1 §2.4/§2.8 **phase-2c in full** (multi-key): a running `Instance` carries a **mutable key-set** (seeded born-from-event via `resolveAndLaunch`→`NewFromEvent`, or from the first keyed `SendTask` through a `renv` seam, grown by **lazy secondary-key association**); in-instance receivers subscribe on the key-set instead of `(name, "")`; `membroker` subscriptions hold a **key-set** with **most-specific** two-pass delivery (a keyed receiver beats the wildcard starter) and a runtime **`AddKey`** for lazy association; on delivery the instance applies the BPMN §8.4.2 conversation-token rules — derive every declared key, **associate** new ones, **reject on mismatch** (already-held key, different value → no route). **Matching model = hybrid**: the producer stamps one routing key (`Envelope.CorrelationKey`, unchanged), the engine derives/associates/validates — keeping the broker as transport + specificity (the seam a future signal broadcast plugs into) and conversation semantics in the engine. Five milestones + a multi-key example (a conversation reachable by a second, later-learned key + isolation). Precondition: follow-up message names differ from start-trigger names (same-name resume deferred). Deferred: context-based correlation (§2.5, phase-3), `Conversation` object. Implements ADR-016 v.1; extends ADR-015 v.1; builds on SRD-015 v.1. |
