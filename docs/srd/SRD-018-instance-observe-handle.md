@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-18 |
 | Owner | Ruslan Gabitov |
@@ -317,10 +317,36 @@ at `instance.go:569-654`; tracks already centralize step transitions at
 
 ## 10. Implementation summary
 
-> ⚠️ TODO: fill AFTER landing — commits, key files, V-results, deltas vs this draft.
+### 10.1 Commits (branch `feat/instance-observability`)
+
+| Stage | Commit | Scope |
+|---|---|---|
+| doc | `79fdfee` | SRD-018 |
+| M1 | `c7c5fe7` | pull handle — `InstanceHandle` (`State`/`Tokens`/`History`/`Data`/`WaitCompletion`), `StartProcess`→handle, `Thresher.Instance` lookup, instance `Done()`/`DataReader()` + a lifetime root reader, call-site + example updates |
+| M2 | `85357eb` | event stream — `Observe`/`*Subscription`, async lossy delivery (buffered drain + drop counter + panic-recover), `ObsEvent` fan-out from `setState`+`record`, `TokenState`/`ObsKind` `String()` |
+
+### 10.2 Key files
+
+- `pkg/thresher/handle.go` — `InstanceHandle` + public vocab types.
+- `pkg/thresher/observer.go` — `Observer`/`Event`/`EventKind`/`Subscription` + `Observe`.
+- `internal/instance/observer.go` — `ObsEvent`/`ObsKind` + `AddObserver`/`removeObserver`/`notify`.
+- `internal/instance/instance.go` — `Done()`/`DataReader()`, lifetime reader (in `loadProperties`), `setState` emission; `pkg/thresher/thresher.go` `StartProcess`/`launchInstance`/`Instance`.
+- `internal/instance/track.go` — `record()` emission.
+
+### 10.3 V-results
+
+- `make ci` green: lint (incl. fieldalignment, misspell), build, `-race`, **diff-coverage 98.2%** of 222 changed lines (≥95), govulncheck clean.
+- All §7 tests green; all 9 examples smoke-run exit 0 (`examples/basic-process` migrated to `WaitCompletion`); README quick-start updated to the handle + a finish-listening/observer example.
+
+### 10.4 Deltas vs the draft
+
+- **Token vocabulary** — the projection collapses ended/merged/canceled to `Consumed` (no distinct `Merged`); `History()` surfaces merged tracks as `Consumed` with their join-node path + lineage (§4.1a wording corrected pre-implementation).
+- **`Observe` signature** — returns `*Subscription` (`Cancel()`/`Dropped()`) rather than a bare `cancel func()`, since FR-9 surfaces the drop count (§6 reconciled).
+- **Data reader** — became an instance **lifetime** resource built once in `loadProperties` (so `DataReader()` and the handle carry no error path), cleaner than a per-handle build.
+- **Carried unchanged**: ~4 unreachable defensive error guards in `launchInstance`/`loadProperties` (a pre-validated snapshot + fresh instance + open scope can't fail them) account for the <100% diff-coverage; accepted as the deterministic 98.2%.
 
 ## Document History
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-18 | Ruslan Gabitov | Draft. Lands the observe slice of ADR-013 v.1 (§2.1/§2.2/§2.4): a public `thresher.InstanceHandle` returned from `StartProcess` (pull: `State`/`Tokens` live + `History` incl. merged/`Data`/`WaitCompletion`) + one async best-effort lossy event stream (`Observe`); standard-named open vocabulary. Control + engine lifecycle (§2.3/§2.5) deferred to a sibling SRD. Code-grounded against `pkg/thresher`, `internal/instance`, `pkg/model/service`. Implements ADR-013 v.1; refs ADR-001 v.5, ADR-002 v.2, ADR-011 v.5, ADR-012 v.1. |
+| v.1 | 2026-06-18 | Ruslan Gabitov | Accepted (landed via M1 `c7c5fe7` + M2 `85357eb`, `make ci` green, diff-coverage 98.2%). Lands the observe slice of ADR-013 v.1 (§2.1/§2.2/§2.4): a public `thresher.InstanceHandle` returned from `StartProcess` (pull: `State`/`Tokens` live + `History` incl. merged/`Data`/`WaitCompletion`) + one async best-effort lossy event stream (`Observe`); standard-named open vocabulary. Control + engine lifecycle (§2.3/§2.5) deferred to a sibling SRD. Code-grounded against `pkg/thresher`, `internal/instance`, `pkg/model/service`. Implements ADR-013 v.1; refs ADR-001 v.5, ADR-002 v.2, ADR-011 v.5, ADR-012 v.1. |
