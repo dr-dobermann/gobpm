@@ -164,6 +164,14 @@ func TestMessageWaiterDelivery(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return w.State() == eventproc.WSEnded
 	}, time.Second, 10*time.Millisecond)
+
+	// The single-shot service goroutine exits after firing; Done reflects it
+	// (SRD-019: EventHub.Shutdown drains waiters via this channel).
+	select {
+	case <-w.Done():
+	case <-time.After(time.Second):
+		t.Fatal("message waiter Done did not close after the single-shot fire")
+	}
 }
 
 // keyedProc is an EventProcessor that declares correlation keys for its

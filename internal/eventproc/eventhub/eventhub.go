@@ -23,6 +23,20 @@ import (
 
 const errorClass = "EVENT_HUB_ERRORS"
 
+// hubState is the EventHub lifecycle, a single source of truth (one field can't
+// hold the invalid started-and-stopped combination two booleans allowed).
+type hubState uint8
+
+const (
+	// hubNotStarted is a freshly created hub, before Start.
+	hubNotStarted hubState = iota
+	// hubStarted is a started hub accepting registration and propagation.
+	hubStarted
+	// hubStopped is a shut-down hub: it drained its waiters and rejects further
+	// registration (terminal).
+	hubStopped
+)
+
 type (
 	// EventHub processes all registration requests from EventProcessors
 	// for specific eventDefinition.
@@ -34,7 +48,7 @@ type (
 		waiters map[string]eventproc.EventWaiter
 		events  []flow.EventDefinition
 		m       sync.RWMutex
-		started bool
+		state   hubState
 	}
 )
 
@@ -62,17 +76,17 @@ func New(rt renv.EngineRuntime) (*EventHub, error) {
 //
 // Start MUST be called exactly once before Run. Returning from Start
 // establishes a happens-before edge — any caller that observes the
-// successful return is guaranteed to see eh.started == true and the
+// successful return is guaranteed to see the hub in the started state and the
 // stored ctx, without needing additional synchronization. This is the
 // motivation for splitting Start from Run; see FIX-001.
 func (eh *EventHub) Start(ctx context.Context) error {
-	if eh.started {
+	if eh.state != hubNotStarted {
 		return errs.New(
-			errs.M("eventHub is already started"),
+			errs.M("eventHub is already started or stopped"),
 			errs.C(errorClass, errs.InvalidState))
 	}
 
-	eh.started = true
+	eh.state = hubStarted
 	eh.ctx = ctx
 
 	return nil
@@ -84,7 +98,7 @@ func (eh *EventHub) Start(ctx context.Context) error {
 //
 // Run blocks until its context is canceled and then returns ctx.Err().
 func (eh *EventHub) Run(ctx context.Context) error {
-	if !eh.started {
+	if eh.state != hubStarted {
 		return errs.New(
 			errs.M("eventHub isn't started"),
 			errs.C(errorClass, errs.InvalidState))
@@ -102,7 +116,7 @@ func (eh *EventHub) RegisterEvent(
 	ep eventproc.EventProcessor,
 	eDef flow.EventDefinition,
 ) error {
-	if !eh.started {
+	if eh.state != hubStarted {
 		return errs.New(
 			errs.M("eventHub isn't started"),
 			errs.C(errorClass, errs.InvalidState))
@@ -126,7 +140,7 @@ func (eh *EventHub) RegisterPersistentEvent(
 	ep eventproc.EventProcessor,
 	eDef flow.EventDefinition,
 ) error {
-	if !eh.started {
+	if eh.state != hubStarted {
 		return errs.New(
 			errs.M("eventHub isn't started"),
 			errs.C(errorClass, errs.InvalidState))
@@ -170,6 +184,13 @@ func (eh *EventHub) registerWaiter(
 	eh.m.Lock()
 	defer eh.m.Unlock()
 
+	if eh.state == hubStopped {
+		return errs.New(
+			errs.M("event hub is shut down; registration rejected"),
+			errs.C(errorClass, errs.InvalidState),
+			errs.D("event_definition_id", eDef.ID()))
+	}
+
 	if w, ok := eh.waiters[eDef.ID()]; ok {
 		if err := w.AddEventProcessor(ep); err != nil {
 			return errs.New(
@@ -209,13 +230,78 @@ func (eh *EventHub) registerWaiter(
 	return nil
 }
 
+// Shutdown stops every registered waiter and waits — bounded by ctx — for their
+// service goroutines to exit, so none outlives the hub (ADR-006 v.1 §2.5,
+// SRD-019). It marks the hub stopped (further registration is rejected) and
+// removes every waiter from the registry even if its Stop returns an error, so a
+// failed Stop never leaks the registry entry. Idempotent.
+func (eh *EventHub) Shutdown(ctx context.Context) error {
+	eh.m.Lock()
+	if eh.state == hubStopped {
+		eh.m.Unlock()
+
+		return nil
+	}
+
+	eh.state = hubStopped
+
+	ws := make([]eventproc.EventWaiter, 0, len(eh.waiters))
+	for _, w := range eh.waiters {
+		ws = append(ws, w)
+	}
+	// Remove all up front: the registry is clean regardless of any Stop error.
+	eh.waiters = map[string]eventproc.EventWaiter{}
+	eh.m.Unlock()
+
+	// Stop each waiter (logging — never aborting on — a failed Stop) and wait for
+	// its service goroutine to exit via its Done channel, off the lock.
+	var wg sync.WaitGroup
+
+	for _, w := range ws {
+		if err := w.Stop(); err != nil {
+			eh.rt.Logger().Warn("event waiter Stop failed during shutdown",
+				"waiter_id", w.ID(), "error", err.Error())
+		}
+
+		done := w.Done()
+		if done == nil {
+			continue // never serviced — no goroutine to drain
+		}
+
+		wg.Add(1)
+
+		go func(d <-chan struct{}) {
+			defer wg.Done()
+			<-d
+		}(done)
+	}
+
+	drained := make(chan struct{})
+
+	go func() {
+		wg.Wait()
+		close(drained)
+	}()
+
+	select {
+	case <-drained:
+		return nil
+
+	case <-ctx.Done():
+		return errs.New(
+			errs.M("event hub shutdown timed out before all waiters drained"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(ctx.Err()))
+	}
+}
+
 // UnregisterEvent removes the registered eventDefintions for single
 // EventProcessor.
 func (eh *EventHub) UnregisterEvent(
 	ep eventproc.EventProcessor,
 	eDefID string,
 ) error {
-	if !eh.started {
+	if eh.state != hubStarted {
 		return errs.New(
 			errs.M("eventHub isn't started"),
 			errs.C(errorClass, errs.InvalidState))
@@ -280,7 +366,7 @@ func (eh *EventHub) PropagateEvent(
 	_ context.Context,
 	eDef flow.EventDefinition,
 ) error {
-	if !eh.started {
+	if eh.state != hubStarted {
 		return errs.New(
 			errs.M("eventHub isn't started"),
 			errs.C(errorClass, errs.InvalidState))

@@ -35,6 +35,7 @@ type messageWaiter struct {
 	rt         renv.EngineRuntime
 	eDef       *events.MessageEventDefinition
 	stopCh     chan struct{}
+	done       chan struct{}
 	sub        messaging.Subscription
 	name       string
 	id         string
@@ -230,6 +231,7 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 	mw.sub = sub
 	mw.state = eventproc.WSRunned
 	mw.stopCh = make(chan struct{})
+	mw.done = make(chan struct{})
 
 	go mw.runMessageService(ctx, sub.C())
 
@@ -244,6 +246,8 @@ func (mw *messageWaiter) runMessageService(
 	ctx context.Context,
 	ch <-chan messaging.Envelope,
 ) {
+	defer close(mw.done) // signal goroutine exit for EventHub.Shutdown drain
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -383,6 +387,13 @@ func (mw *messageWaiter) setState(s eventproc.EventWaiterState) {
 	mw.m.Lock()
 	mw.state = s
 	mw.m.Unlock()
+}
+
+// Done returns a channel closed when the service goroutine has exited; nil until
+// Service starts it (a registered waiter is always serviced first). EventHub.
+// Shutdown waits on it to drain goroutines (ADR-006 v.1 §2.5).
+func (mw *messageWaiter) Done() <-chan struct{} {
+	return mw.done
 }
 
 var _ eventproc.EventWaiter = (*messageWaiter)(nil)

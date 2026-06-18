@@ -87,6 +87,12 @@ type EventHub interface {
 	// after the first fire like the single-shot in-instance receiver
 	// RegisterEvent builds. Only message triggers are accepted.
 	RegisterPersistentEvent(ep EventProcessor, eDef flow.EventDefinition) error
+
+	// Shutdown stops every registered waiter and waits — bounded by ctx — for
+	// their service goroutines to exit, removing each from the registry even if
+	// its Stop returns an error, so no waiter goroutine outlives the hub
+	// (ADR-006 v.1 §2.5). After Shutdown the hub rejects further registration.
+	Shutdown(ctx context.Context) error
 }
 
 // EventWaiter represents an event waiter interface.
@@ -131,6 +137,11 @@ type EventWaiter interface {
 
 	// State returns current state of the EventWaiter.
 	State() EventWaiterState
+
+	// Done returns a channel that is closed when the waiter's service goroutine
+	// has exited (by Stop, ctx cancel, or a terminal fire). EventHub.Shutdown
+	// waits on it to drain waiter goroutines without a leak (ADR-006 v.1 §2.5).
+	Done() <-chan struct{}
 }
 
 // EventWaiterState represents the state of an event waiter.

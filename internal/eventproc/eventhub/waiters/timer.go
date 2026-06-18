@@ -31,6 +31,7 @@ type timeWaiter struct {
 	hub        eventproc.EventHub
 	rt         renv.EngineRuntime
 	stopCh     chan struct{}
+	done       chan struct{}
 	id         string
 	processors []eventproc.EventProcessor
 	state      eventproc.EventWaiterState
@@ -269,6 +270,7 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 	}
 
 	tw.stopCh = make(chan struct{})
+	tw.done = make(chan struct{})
 
 	go tw.runTimerService(ctx)
 
@@ -283,6 +285,8 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 // so the close would signal nothing while racing Stop()'s close
 // (panic: close of closed channel — audit 1.3 / FIX-003 A).
 func (tw *timeWaiter) runTimerService(ctx context.Context) {
+	defer close(tw.done) // signal goroutine exit for EventHub.Shutdown drain
+
 	tckr := time.NewTicker(tw.duration)
 
 	for {
@@ -395,6 +399,13 @@ func (tw *timeWaiter) State() eventproc.EventWaiterState {
 	defer tw.m.Unlock()
 
 	return tw.state
+}
+
+// Done returns a channel closed when the service goroutine has exited; nil until
+// Service starts it (a registered waiter is always serviced first). EventHub.
+// Shutdown waits on it to drain goroutines (ADR-006 v.1 §2.5).
+func (tw *timeWaiter) Done() <-chan struct{} {
+	return tw.done
 }
 
 var _ eventproc.EventWaiter = (*timeWaiter)(nil)
