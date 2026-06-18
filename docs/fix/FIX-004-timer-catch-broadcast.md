@@ -1,7 +1,7 @@
 # FIX-004 «Concurrent timer-catch instances share one waiter — a timer fires them all»
 
 **Type:** FIX (one-shot bug-fix; not rewritten after landing).
-**Status:** Draft v.1 (2026-06-17, branch `fix/timer-catch-broadcast`, not yet implemented).
+**Status:** Accepted v.1 (2026-06-18, branch `fix/timer-catch-broadcast`, implemented).
 **Date:** 2026-06-17.
 **Author:** Ruslan Gabitov.
 **Branch:** `fix/timer-catch-broadcast` (one focused defect — the timer event definition gains per-instance identity, exactly as the message definition did in SRD-017).
@@ -211,9 +211,46 @@ Single-commit revert (the method + its test); no migration, no data.
   the "every waiter-backed catch definition is per-instance" rule should be
   stated once (an ADR or SAD note) rather than per-type.
 
-## §8 Implementation summary (fill AFTER landing)
+## §8 Implementation summary (stage-by-stage actual landings + deltas vs draft)
 
-> ⚠️ TODO: fill AFTER landing — stage commit SHA(s), V-results, empirical deltas.
+### §8.1 Stages by commit (branch `fix/timer-catch-broadcast`)
+
+| Stage | Commit | Scope | Tests |
+|---|---|---|---|
+| doc | `fb683ac` | FIX-004 document | — |
+| M1 | `b98c069` | `TimerEventDefinition.CloneForInstance` (timer.go) + `foundation` import; forward-note at the `CreateWaiter` switch (waiters.go); two canary tests (clone_for_instance_test.go) | `TestTimerEventDefinitionCloneForInstance`, `TestTimerReceiverPerInstanceClone` |
+
+Landed exactly as the §3.2 draft: one method, no `Event.clone` / interface /
+mock change. `cloneDefsForInstance`'s existing optional-interface check applied
+the new method automatically — the receiver canary proves it through the real
+clone path.
+
+### §8.2 Verification results
+
+- `make ci` (CI-parity gate): **PASS** — tidy / golangci-lint (incl.
+  fieldalignment, misspell) / build / `-race` tests / diff-coverage / govulncheck
+  all green. `TimerEventDefinition.CloneForInstance` measured **100%** covered.
+- All 9 runnable examples exit 0, including the timer examples `simple-timer`
+  and `timer-event` (timers still fire correctly — no fire-path regression,
+  confirming §6.1).
+- The existing `TestNonMessageDefSharedOnClone` (signal stays shared) still
+  passes — only the timer type flipped to per-instance, as intended.
+
+### §8.3 Empirical findings — where reality diverged from the §3 draft
+
+None. The fix landed as designed; the only authoring adjustments were
+US-spelling (`analogue`→`analog`) and comment line-wrapping for the project's
+80-column / misspell lints — no behavioural delta.
+
+### §8.4 Backlog (out of FIX-004 scope)
+
+- Signal / conditional intermediate catches: when they gain a `CreateWaiter`
+  builder, each MUST also implement `CloneForInstance` (see the §5 forward-note),
+  or this broadcast class reappears for them.
+- The two-instance engine-level no-broadcast assertion (§4.1.2) was covered by
+  the distinct-id canary rather than a dedicated thresher test — a future
+  integration test could exercise it end-to-end if a broader event-broadcast
+  suite is built.
 
 ## §9 Open questions
 
