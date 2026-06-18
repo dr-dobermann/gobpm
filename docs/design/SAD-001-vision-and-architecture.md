@@ -427,7 +427,7 @@ Versioning follows semver per module. The core library is the version-of-record 
 | ADR-003 | Module Layout | Draft | Multi-module monorepo; import directions; module evolution; future split-out path |
 | ADR-004 | Runtime Environment Contract | Draft | Tenancy, AuthN, AuthZ, observability, diagnostics, profiling — ownership and interfaces |
 | ADR-005 | Gateways & Joins | Draft | Synchronizing join, non-synchronizing merge, OR-join, Event-Based Gateway + `Withdrawn`; fork-flow activation by gateway type |
-| ADR-006 | Events & Subscriptions | Draft | EventHub delivery, Terminate End Event, interrupting boundary events, wait nodes |
+| ADR-006 | Events & Subscriptions | **Accepted v.1** | EventHub delivery, Terminate End Event, interrupting boundary events, wait nodes |
 | ADR-007 | In-Memory Long Waits | Draft | Subscription → goroutine ends → re-spawn (durable version → Persistence ADR) |
 | ADR-008 | Distribution & Scale | planned | The §13 preliminary content, when multi-node demand materializes |
 | ADR-009 | Per-Instance Node Graph | **Accepted v.1** | Node-owned runtime state; each instance clones the node graph — resolves the ADR-001 §4.7 deferral and eliminates the shared-node data race |
