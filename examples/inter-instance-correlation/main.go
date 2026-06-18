@@ -75,7 +75,7 @@ func run() error {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
-	if err := engine.StartProcess(producer.ID()); err != nil {
+	if _, err := engine.StartProcess(producer.ID()); err != nil {
 		return fmt.Errorf("start producer: %w", err)
 	}
 

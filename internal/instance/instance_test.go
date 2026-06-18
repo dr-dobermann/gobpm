@@ -89,6 +89,42 @@ func TestMonitoring(t *testing.T) {
 	cancel()
 }
 
+// TestObserveAccessors covers the SRD-018 instance-side observe accessors
+// (Done + DataReader) within the instance package, so diff-coverage attributes
+// them — they are otherwise exercised only cross-package, through the thresher
+// InstanceHandle.
+func TestObserveAccessors(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	s, err := getSnapshot("observe-accessors")
+	require.NoError(t, err)
+
+	ep := mockeventproc.NewMockEventProducer(t)
+
+	inst, err := instance.New(s, scope.EmptyDataPath, enginert.Default(), ep, nil)
+	require.NoError(t, err)
+
+	// DataReader exposes the root data plane (runtime variables) read-only.
+	r := inst.DataReader()
+
+	st, err := r.GetData("RUNTIME/STATE")
+	require.NoError(t, err)
+	require.NotNil(t, st)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, inst.Run(ctx))
+
+	// Done closes when the instance reaches a terminal state.
+	select {
+	case <-inst.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("instance did not signal Done")
+	}
+
+	require.Equal(t, instance.Completed, inst.State())
+}
+
 // getSnapshot creates a simple process with user_name property
 // StartEvent -> ServiceTask(print hello user_name) -> EndEvent
 // and retruns its Snapshot.

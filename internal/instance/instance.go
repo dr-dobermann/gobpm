@@ -31,6 +31,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/msgflow"
+	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	engrenv "github.com/dr-dobermann/gobpm/pkg/renv"
 )
 
@@ -86,6 +87,7 @@ type Instance struct {
 	parentEventProducer eventproc.EventProducer
 	events              chan trackEvent
 	dataPlane           *scope.Scope
+	reader              service.DataReader
 	convKeys            map[string]string
 	now                 func() time.Time
 	tracksSnap          atomic.Pointer[[]*track]
@@ -489,6 +491,17 @@ func (inst *Instance) loadProperties(parentRoot scope.DataPath) error {
 		return fmt.Errorf("couldn't create instance's data plane: %w", err)
 	}
 
+	// Build the read-only root data reader once (it backs host observation via
+	// the InstanceHandle, SRD-018): an empty frame at the open root scope reads
+	// live, so it sees the properties committed just below plus runtime vars.
+	reader, ferr := scope.NewFrame(
+		"observe", "observe", inst.dataPlane.Root(), inst.dataPlane)
+	if ferr != nil {
+		return fmt.Errorf("couldn't build instance data reader: %w", ferr)
+	}
+
+	inst.reader = reader
+
 	dd := make([]data.Data, 0, len(inst.s.Properties))
 	for _, p := range inst.s.Properties {
 		dd = append(dd, p)
@@ -517,6 +530,23 @@ func (inst *Instance) LastErr() error {
 	}
 
 	return nil
+}
+
+// Done returns a channel closed when the instance reaches a terminal state
+// (Completed or Terminated). It backs host WaitCompletion (SRD-018): a closed
+// channel is a non-blocking, broadcast completion signal — never dropped, unlike
+// the lossy observation stream. The loop closes it on exit.
+func (inst *Instance) Done() <-chan struct{} {
+	return inst.loopDone
+}
+
+// DataReader returns the instance's read-only root data reader — process
+// properties plus the runtime variables (StartedAt/CurrState/TracksCount). For
+// host observation (SRD-018): the returned value exposes only the read-only
+// service.DataReader surface, never a mutating method. Built once in New (an
+// empty frame at the process-root scope), so this getter cannot fail.
+func (inst *Instance) DataReader() service.DataReader {
+	return inst.reader
 }
 
 // Run starts the process instance execution. Execution could be stopped by

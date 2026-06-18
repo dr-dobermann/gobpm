@@ -107,11 +107,16 @@ states (`Failing`/`Paused`/`Compensating`) join additively later.
   — where execution currently is. Lock-free (copy-on-write snapshot).
 - **FR-4a — full token history.** `InstanceHandle.History() []TokenPath` projects the
   instance's `TokenHistory()` (`instance.go:740`) into a public `TokenPath{TrackID,
-  ParentID string; Steps []StepVisit; Terminal TokenState}` — **every** track (active,
-  merged, consumed, canceled), each with its lineage (`ParentID` = fork parent) and
-  per-step visit timings. This is the "include merged tokens" view; `Tokens()` (FR-4)
-  stays the live-active snapshot. Lock-free (copy-on-write). No single-track variant —
-  the full list is filterable by `TrackID`.
+  ParentID string; Steps []StepVisit; Terminal TokenState}` — **every** track, active
+  and finished, each with its lineage (`ParentID` = fork parent) and per-step visit
+  timings. This is the "include merged tokens" view; `Tokens()` (FR-4) stays the
+  live-active snapshot. **Vocabulary note (grounded):** the token projection collapses
+  ended / **merged** / canceled / failed tracks to **`Consumed`** (`token.go`
+  `tokenStateFor`) — there is no distinct `Merged` token value; a merged track appears
+  as a `Consumed` `TokenPath` whose `Steps` end at the join node, and its `ParentID`
+  reveals the fork lineage. Public `TokenState` is therefore the projected set
+  `Alive / WaitForEvent / Consumed / Withdrawn`. Lock-free (copy-on-write). No
+  single-track variant — the full list is filterable by `TrackID`.
 - **FR-5 — read-only data.** `InstanceHandle.Data() service.DataReader` exposes the
   instance's data plane (`instance.go:88`) read-only: process properties + RUNTIME
   vars (`StartedAt/CurrState/TracksCount`). No mutation surface.
@@ -217,7 +222,7 @@ type TokenPath struct {
 	TrackID  string
 	ParentID string      // immediate fork parent ("" if root)
 	Steps    []StepVisit
-	Terminal TokenState  // Merged / Consumed / Canceled / … (or the live state)
+	Terminal TokenState  // projected: Consumed for ended/merged/canceled, else the live state
 }
 type StepVisit struct {
 	NodeID   string
@@ -262,9 +267,9 @@ at `instance.go:569-654`; tracks already centralize step transitions at
 - **`TestTokensSnapshot`** — a process parked at a wait shows a `TokenView` with
   `State == WaitForEvent` at the expected node (FR-4).
 - **`TestHistoryIncludesMerged`** — a process with a parallel fork+join yields
-  `History()` entries for the **merged** tracks (terminal `Consumed`/`Merged`) plus
-  the survivor, each with `ParentID` lineage and step timings — proving the history
-  view includes non-active tokens that `Tokens()` omits (FR-4a).
+  `History()` entries for the merged tracks (terminal `Consumed`, `Steps` ending at the
+  join, `ParentID` lineage set) plus the survivor — proving the history view includes
+  non-active tokens that `Tokens()` omits (FR-4a).
 - **`TestHandleDataRead`** — `Data().GetData` reads a process property and a RUNTIME
   var read-only (FR-5).
 - **`TestObserverReceivesLifecycleEvents`** — an observer sees `InstanceState`
