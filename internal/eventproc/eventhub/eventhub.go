@@ -13,6 +13,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub/waiters"
@@ -48,7 +49,11 @@ type (
 		waiters map[string]eventproc.EventWaiter
 		events  []flow.EventDefinition
 		m       sync.RWMutex
-		state   hubState
+		// state is read lock-free by Run/PropagateEvent and written by
+		// Start/Shutdown, so it lives in an atomic to stay race-free across those
+		// unsynchronized readers (registration/shutdown still serialize the map
+		// under m; the atomic just removes the state data race).
+		state atomic.Uint32
 	}
 )
 
@@ -70,6 +75,19 @@ func New(rt renv.EngineRuntime) (*EventHub, error) {
 		nil
 }
 
+// getState reads the lock-free hub lifecycle state.
+func (eh *EventHub) getState() hubState {
+	// hubState is a 0..2 enum stored in the atomic; the narrowing never
+	// overflows.
+	//nolint:gosec // bounded enum, no overflow
+	return hubState(eh.state.Load())
+}
+
+// setState writes the lock-free hub lifecycle state.
+func (eh *EventHub) setState(s hubState) {
+	eh.state.Store(uint32(s))
+}
+
 // Start performs synchronous initialization of the EventHub: records the
 // context that subsequent Run / RegisterEvent / UnregisterEvent /
 // PropagateEvent calls will observe, and flips the started flag.
@@ -80,13 +98,13 @@ func New(rt renv.EngineRuntime) (*EventHub, error) {
 // stored ctx, without needing additional synchronization. This is the
 // motivation for splitting Start from Run; see FIX-001.
 func (eh *EventHub) Start(ctx context.Context) error {
-	if eh.state != hubNotStarted {
+	if eh.getState() != hubNotStarted {
 		return errs.New(
 			errs.M("eventHub is already started or stopped"),
 			errs.C(errorClass, errs.InvalidState))
 	}
 
-	eh.state = hubStarted
+	eh.setState(hubStarted)
 	eh.ctx = ctx
 
 	return nil
@@ -98,7 +116,7 @@ func (eh *EventHub) Start(ctx context.Context) error {
 //
 // Run blocks until its context is canceled and then returns ctx.Err().
 func (eh *EventHub) Run(ctx context.Context) error {
-	if eh.state != hubStarted {
+	if eh.getState() != hubStarted {
 		return errs.New(
 			errs.M("eventHub isn't started"),
 			errs.C(errorClass, errs.InvalidState))
@@ -116,7 +134,7 @@ func (eh *EventHub) RegisterEvent(
 	ep eventproc.EventProcessor,
 	eDef flow.EventDefinition,
 ) error {
-	if eh.state != hubStarted {
+	if eh.getState() != hubStarted {
 		return errs.New(
 			errs.M("eventHub isn't started"),
 			errs.C(errorClass, errs.InvalidState))
@@ -140,7 +158,7 @@ func (eh *EventHub) RegisterPersistentEvent(
 	ep eventproc.EventProcessor,
 	eDef flow.EventDefinition,
 ) error {
-	if eh.state != hubStarted {
+	if eh.getState() != hubStarted {
 		return errs.New(
 			errs.M("eventHub isn't started"),
 			errs.C(errorClass, errs.InvalidState))
@@ -184,7 +202,7 @@ func (eh *EventHub) registerWaiter(
 	eh.m.Lock()
 	defer eh.m.Unlock()
 
-	if eh.state == hubStopped {
+	if eh.getState() == hubStopped {
 		return errs.New(
 			errs.M("event hub is shut down; registration rejected"),
 			errs.C(errorClass, errs.InvalidState),
@@ -237,13 +255,13 @@ func (eh *EventHub) registerWaiter(
 // failed Stop never leaks the registry entry. Idempotent.
 func (eh *EventHub) Shutdown(ctx context.Context) error {
 	eh.m.Lock()
-	if eh.state == hubStopped {
+	if eh.getState() == hubStopped {
 		eh.m.Unlock()
 
 		return nil
 	}
 
-	eh.state = hubStopped
+	eh.setState(hubStopped)
 
 	ws := make([]eventproc.EventWaiter, 0, len(eh.waiters))
 	for _, w := range eh.waiters {
@@ -301,7 +319,7 @@ func (eh *EventHub) UnregisterEvent(
 	ep eventproc.EventProcessor,
 	eDefID string,
 ) error {
-	if eh.state != hubStarted {
+	if eh.getState() != hubStarted {
 		return errs.New(
 			errs.M("eventHub isn't started"),
 			errs.C(errorClass, errs.InvalidState))
@@ -366,7 +384,7 @@ func (eh *EventHub) PropagateEvent(
 	_ context.Context,
 	eDef flow.EventDefinition,
 ) error {
-	if eh.state != hubStarted {
+	if eh.getState() != hubStarted {
 		return errs.New(
 			errs.M("eventHub isn't started"),
 			errs.C(errorClass, errs.InvalidState))
