@@ -86,11 +86,41 @@ _, _ = flow.Link(task, end)
 
 _ = engine.RegisterProcess(proc)
 _ = engine.Run(context.Background())
-_ = engine.StartProcess(proc.ID())
+
+// StartProcess returns a read-only handle onto the running instance.
+inst, _ := engine.StartProcess(proc.ID())
+
+// Block until the instance finishes — the guaranteed completion signal.
+state, _ := inst.WaitCompletion(context.Background())
+fmt.Println("done:", state) // "Completed"
 ```
 
 The `gooper` functor is how you embed arbitrary Go logic in a process — the
-same pattern scales from a `Println` to a real handler. A complete, runnable
+same pattern scales from a `Println` to a real handler.
+
+`StartProcess` hands back a read-only **`InstanceHandle`** — your window onto the
+running instance: `State()`, a live `Tokens()` snapshot, full `History()` (every
+track, including merged ones), read-only `Data()`, and `WaitCompletion(ctx)` to
+await the finish. To follow progress as it happens, subscribe an observer to the
+instance's lifecycle / token / node event stream:
+
+```go
+// an Observer is any type with OnEvent(thresher.Event):
+type logger struct{}
+
+func (logger) OnEvent(ev thresher.Event) {
+    fmt.Printf("  • %s %s %s\n", ev.Kind, ev.NodeName, ev.State)
+}
+
+sub := inst.Observe(logger{})
+defer sub.Cancel() // deregister + drain; sub.Dropped() counts any overflow
+```
+
+Delivery is best-effort and lossy — a slow observer drops events rather than
+blocking the engine — so the **completion** signal from `WaitCompletion` is the
+one guaranteed, never-dropped event.
+
+A complete, runnable
 version (with error handling and waiting for the task to run) lives in
 [`examples/basic-process/`](examples/basic-process/); see also
 [`examples/parallel-gateway/`](examples/parallel-gateway/) (concurrent

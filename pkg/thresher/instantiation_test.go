@@ -216,7 +216,8 @@ func TestManualStartNotInstantiated(t *testing.T) {
 	// Started explicitly, the instance's message-start node waits as an
 	// in-instance catch; on subscribe it drains the buffered message and
 	// completes — proving manual = start-as-catch, StartProcess-driven.
-	require.NoError(t, th.StartProcess(proc.ID()))
+	_, serr := th.StartProcess(proc.ID())
+	require.NoError(t, serr)
 
 	select {
 	case got := <-done:

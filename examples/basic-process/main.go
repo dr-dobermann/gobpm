@@ -42,10 +42,6 @@ func run() error {
 		return fmt.Errorf("create process: %w", err)
 	}
 
-	// done lets main wait until the ServiceTask's Go code actually ran —
-	// engine execution is asynchronous.
-	done := make(chan struct{})
-
 	start, err := events.NewStartEvent("start")
 	if err != nil {
 		return fmt.Errorf("create start: %w", err)
@@ -58,7 +54,6 @@ func run() error {
 		"hello",
 		func(_ context.Context, _ service.DataReader, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
 			fmt.Println("  ▶ hello from inside the process (Go code in a ServiceTask)")
-			close(done)
 
 			return nil, nil
 		})
@@ -101,21 +96,20 @@ func run() error {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
-	if err := engine.StartProcess(proc.ID()); err != nil {
+	h, err := engine.StartProcess(proc.ID())
+	if err != nil {
 		return fmt.Errorf("start process: %w", err)
 	}
 
-	// wait for the ServiceTask's functor to run, then a brief grace for the
-	// token to reach End.
-	select {
-	case <-done:
-	case <-ctx.Done():
-		return fmt.Errorf("timed out waiting for the service task")
+	// Block until the instance finishes — the handle's completion signal
+	// replaces the manual done channel and the grace sleep (SRD-018).
+	state, err := h.WaitCompletion(ctx)
+	if err != nil {
+		return fmt.Errorf("waiting for completion: %w", err)
 	}
 
-	time.Sleep(100 * time.Millisecond)
-
-	fmt.Println("✓ basic-process completed: start → service task (ran Go code) → end")
+	fmt.Printf("✓ basic-process completed (%s): "+
+		"start → service task (ran Go code) → end\n", state)
 
 	return nil
 }

@@ -96,8 +96,9 @@ func (s State) String() string {
 
 // instanceReg holds single Instance registration.
 type instanceReg struct {
-	stop context.CancelFunc
-	inst *instance.Instance
+	stop   context.CancelFunc
+	inst   *instance.Instance
+	handle *InstanceHandle
 }
 
 // Thresher represents the main BPMN process execution engine.
@@ -619,9 +620,9 @@ func (t *Thresher) launchInstanceFromEvent(
 
 // StartProcess runs process with processId without any event even if
 // process awaits them.
-func (t *Thresher) StartProcess(processID string) error {
+func (t *Thresher) StartProcess(processID string) (*InstanceHandle, error) {
 	if st := t.State(); st != Started {
-		return errs.New(
+		return nil, errs.New(
 			errs.M("thresher isn't started"),
 			errs.C(errorClass, errs.InvalidState),
 			errs.D("current_state", st.String()))
@@ -637,7 +638,7 @@ func (t *Thresher) StartProcess(processID string) error {
 	t.m.Unlock()
 
 	if !ok {
-		return errs.New(
+		return nil, errs.New(
 			errs.M("couldn't find snapshot for process ID %q", processID),
 			errs.C(errorClass, errs.ObjectNotFound))
 	}
@@ -645,12 +646,26 @@ func (t *Thresher) StartProcess(processID string) error {
 	return t.launchInstance(s)
 }
 
-// launchInstance creates a new Instance from the Snapshot s, runs it and
-// append it to runned insances of the Thresher.
-func (t *Thresher) launchInstance(s *snapshot.Snapshot) error {
+// Instance returns the observation handle of a running instance by its id, or
+// false if no such instance is tracked (SRD-018). The handle is read-only.
+func (t *Thresher) Instance(instanceID string) (*InstanceHandle, bool) {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	reg, ok := t.instances[instanceID]
+	if !ok {
+		return nil, false
+	}
+
+	return reg.handle, true
+}
+
+// launchInstance creates a new Instance from the Snapshot s, runs it, appends it
+// to the running instances of the Thresher, and returns its read-only handle.
+func (t *Thresher) launchInstance(s *snapshot.Snapshot) (*InstanceHandle, error) {
 	inst, err := instance.New(s, scope.EmptyDataPath, &t.cfg, t, nil)
 	if err != nil {
-		return errs.New(
+		return nil, errs.New(
 			errs.M("couldn't create an Instance for process %q",
 				s.ProcessID),
 			errs.C(errorClass, errs.BulidingFailed),
@@ -662,25 +677,28 @@ func (t *Thresher) launchInstance(s *snapshot.Snapshot) error {
 	// It must NOT be deferred here — inst.Run is non-blocking, so a deferred
 	// cancel would terminate the instance the moment launchInstance returns.
 	ctx, cancel := context.WithCancel(t.ctx)
-	if err := inst.Run(ctx); err != nil {
+	if err = inst.Run(ctx); err != nil {
 		cancel()
 
-		return errs.New(
+		return nil, errs.New(
 			errs.M("inctance %q of process %q failed to run",
 				inst.ID(), s.ProcessID),
 			errs.C(errorClass, errs.OperationFailed),
 			errs.E(err))
 	}
 
+	h := &InstanceHandle{inst: inst}
+
 	t.m.Lock()
 	defer t.m.Unlock()
 
 	t.instances[inst.ID()] = instanceReg{
-		stop: cancel,
-		inst: inst,
+		stop:   cancel,
+		inst:   inst,
+		handle: h,
 	}
 
-	return nil
+	return h, nil
 }
 
 // =============================================================================

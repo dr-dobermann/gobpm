@@ -28,6 +28,26 @@ const (
 	TokenWithdrawn
 )
 
+// String returns the human-readable name of the projected token state.
+func (ts TokenState) String() string {
+	switch ts {
+	case TokenAlive:
+		return "Alive"
+
+	case TokenWaitForEvent:
+		return "WaitForEvent"
+
+	case TokenConsumed:
+		return "Consumed"
+
+	case TokenWithdrawn:
+		return "Withdrawn"
+
+	default:
+		return "Invalid"
+	}
+}
+
 // Validate checks if the TokenState is valid.
 func (ts TokenState) Validate() error {
 	if ts < TokenAlive || ts > TokenWithdrawn {

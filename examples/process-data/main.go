@@ -117,7 +117,7 @@ func run() error {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
-	if err := engine.StartProcess(proc.ID()); err != nil {
+	if _, err := engine.StartProcess(proc.ID()); err != nil {
 		return fmt.Errorf("start process: %w", err)
 	}
 

@@ -66,7 +66,8 @@ func TestStartProcess_RunsToCompletion(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, th.RegisterProcess(proc))
-	require.NoError(t, th.StartProcess(proc.ID()))
+	_, serr := th.StartProcess(proc.ID())
+	require.NoError(t, serr)
 
 	select {
 	case <-ran:

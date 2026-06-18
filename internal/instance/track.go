@@ -180,11 +180,19 @@ func (t *track) record(state trackState) {
 		base = *old
 	}
 
+	at := t.instance.now()
+
 	next := make([]stepUpdate, len(base), len(base)+1)
 	copy(next, base)
-	next = append(next, stepUpdate{node: node, state: state, at: t.instance.now()})
+	next = append(next, stepUpdate{node: node, state: state, at: at})
 
 	t.hist.Store(&next)
+
+	// Publish the transition to host observers (SRD-018): identity + projected
+	// token state only, never payload. Non-blocking at the sink; a no-op when
+	// no one is observing.
+	t.instance.notify(ObsNodeProgress, node.ID(), node.Name(),
+		tokenStateFor(state).String())
 }
 
 // Token returns the track's current token projection (lock-free).
