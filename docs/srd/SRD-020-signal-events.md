@@ -1,8 +1,8 @@
-# SRD-020 — Signal events: name-indexed broadcast catch & throw
+# SRD-020 — Signal events: name-matched broadcast catch & throw
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-18 |
 | Owner | Ruslan Gabitov |
@@ -239,7 +239,7 @@ this SRD wires their **runtime**.
   a no-op (no error), and a later catch of the same name is **not** retro-delivered
   (FR-4, NFR-1; the §2.4 no-buffer contract).
 - **`TestSignalSingleShotConsume`** — after a catch fires, its processor is removed;
-  a second throw does not re-fire the consumed catch; the name waiter is gone once
+  a second throw does not re-fire the consumed catch; the waiter is gone once
   empty (FR-5).
 - **`TestPropagateNoWaiterIsNoop`** (internal `eventhub`) — `PropagateEvent` with an
   absent key returns `nil` and logs at debug, for both a signal and a non-signal
@@ -256,7 +256,7 @@ this SRD wires their **runtime**.
 - [ADR-001 v.5](../design/ADR-001-execution-model.md) — the track/loop model the
   delivery path runs against (single-mutator; signal reuses `track.ProcessEvent`).
 - [ADR-009 v.1](../design/ADR-009-per-instance-node-graph.md) — per-instance clones;
-  each instance's catch is a distinct processor on the shared name waiter.
+  each instance's catch is a distinct processor on the shared waiter.
 - [ADR-013 v.1](../design/ADR-013-instance-observability.md) §2.5 / [SRD-019 v.1](SRD-019-instance-control-lifecycle.md)
   — the `EventHub.Shutdown` waiter drain the passive signal waiter obeys (closed
   `Done()`).
@@ -268,8 +268,8 @@ this SRD wires their **runtime**.
 ## 9. Definition of Done
 
 - FR-1…FR-7 wired and exercised by the §7 tests (incl. the `-race` broadcast canary).
-- `signalWaiter` + `CreateWaiter` signal case + name keying + §2.4 no-op present;
-  signal catch/throw/end run end-to-end.
+- `signalWaiter` + `CreateWaiter` signal case + `broadcastSignal` name-scan + §2.4
+  no-op present; signal catch/throw/end run end-to-end.
 - §2.4 closed: `PropagateEvent` no-waiter is a logged no-op (the old `ObjectNotFound`
   path is gone), proven by `TestPropagateNoWaiterIsNoop`.
 - `make ci` green (tidy, lint incl. fieldalignment, build, `-race`, diff-coverage
@@ -281,10 +281,48 @@ this SRD wires their **runtime**.
 
 ## 10. Implementation summary
 
-> ⚠️ TODO: fill AFTER landing — commits, key files, V-results, deltas vs this draft.
+Landed on `feat/signal-events` (off `master`): two code milestones + a
+prerequisite fix + a runnable example.
+
+### 10.1 Commits
+
+| # | Commit | Scope | Tests |
+|---|---|---|---|
+| doc | `24a451c` | SRD-020 draft | — |
+| fix | `30c8437` | Pre-existing SRD-019 race: `EventHub.state` made `atomic.Uint32` (Run/PropagateEvent read it lock-free while Start/Shutdown write it). Surfaced by M1's timing shift. | `TestThresherShutdown -race` |
+| M1 | `d4460a7` | §2.4 no-waiter no-op: `PropagateEvent` to an absent key → debug-logged `nil` (was `ObjectNotFound`). | `TestPropagateNoWaiterIsNoop` |
+| M2 | `ed43854` | Signal runtime: passive `signalWaiter`, `CreateWaiter` signal case, `broadcastSignal` name-scan in `PropagateEvent`. | `TestSignalWaiter*`, `TestBroadcastSignalFanOut`, `TestSignalCatchThrow`, `TestSignalBroadcast -race`, `TestSignalThrownIntoVoid`, `TestSignalSingleShotConsume` |
+| M3 | `ce0bc96` | `examples/signal-broadcast` (one throw → two watcher instances). | smoke |
+
+### 10.2 Key files
+
+- `internal/eventproc/eventhub/waiters/signal.go` (new) — the passive `signalWaiter`.
+- `internal/eventproc/eventhub/waiters/waiters.go` — `CreateWaiter` `TriggerSignal` case + per-trigger-identity NOTE.
+- `internal/eventproc/eventhub/eventhub.go` — `broadcastSignal`/`signalName`, the `PropagateEvent` signal branch + §2.4 no-op, and the `atomic.Uint32` state (race fix).
+- `examples/signal-broadcast/` (new) — `process.go` (catcher/thrower builders) + `main.go`.
+
+### 10.3 Verification
+
+- `make ci` green: tidy, lint, build, `-race`, **diff-coverage 97.2% of 212
+  changed lines (≥95)**, govulncheck. Touched funcs ≥80% (signal.go +
+  `broadcastSignal` 100%).
+- All **10** examples smoke-run exit 0 (incl. `signal-broadcast`).
+
+### 10.4 Deltas vs the draft
+
+- **Matching mechanism corrected (FR-2/§2/§5).** The draft first sketched a
+  name-keyed registry (`waiterKey`); implementation revealed the simpler truth:
+  catchers across instances already share one waiter (signal eDefs aren't
+  cloned), and throw→catch matches by **name-scan** in `PropagateEvent`
+  (`broadcastSignal`) — no keying change, no `UnregisterEvent` signature churn.
+  The doc was corrected in M2. A future `SubscriptionKey()` generalization
+  (when Link events land) is captured as a follow-up, not built here.
+- **Prerequisite race fix.** M1's `-race` run exposed a pre-existing SRD-019
+  `EventHub.state` data race; fixed as its own `30c8437` commit before M1, not
+  folded in silently.
 
 ## Document History
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-18 | Ruslan Gabitov | Draft. First runtime slice of the ADR-006 v.1 events workstream: signal events (intermediate catch + intermediate/end throw) via a name-keyed passive `signalWaiter` that reuses the hub's find-or-add-processor + fan-out + §2.5-ownership machinery to broadcast (one throw of name `X` → every catcher of `X` across instances in reach, §2.1/§10.5.1); no `CloneForInstance` (sharing the name waiter *is* the broadcast); and closes the §2.4 no-waiter gap (`PropagateEvent` absent-key → logged no-op, replacing `ObjectNotFound`). Signal **start** (instantiating) and **boundary** events deferred. Code-grounded against `pkg/model/events` (signal.go, intermediate_catch.go), `internal/eventproc/eventhub` (eventhub.go, waiters/), `internal/instance` (track.go ProcessEvent/checkNodeType). Implements ADR-006 v.1 §2.1/§2.4; refs ADR-001 v.5, ADR-009 v.1, ADR-013 v.1, ADR-014 v.1, SRD-019 v.1. |
+| v.1 | 2026-06-18 | Ruslan Gabitov | Accepted. First runtime slice of the ADR-006 v.1 events workstream: signal events (intermediate catch + intermediate/end throw) via a passive `signalWaiter` (no broker, no goroutine; `Process` fans out to all catchers, no correlation; closed `Done()` for §2.5 drain). Broadcast is matched by **name-scan** in `PropagateEvent` (`broadcastSignal`) — throw and catch are distinct nodes with distinct ids — while catchers across instances share one waiter because signal eDefs aren't cloned (`cloneDefsForInstance` shares by reference; the deliberate inverse of FIX-004's point-to-point clone). Also closes the §2.4 no-waiter gap (`PropagateEvent` absent-key → logged no-op, replacing `ObjectNotFound`; landed in M1) and fixed a pre-existing SRD-019 `EventHub.state` data race (atomic). Drafted with a name-keyed registry; corrected to shared-id + name-scan during implementation (no `waiterKey`/`UnregisterEvent` churn). Signal **start** (instantiating) and **boundary** events deferred; a polymorphic `SubscriptionKey()` matching generalization deferred to the Link-events workstream. Code-grounded against `pkg/model/events`, `internal/eventproc/eventhub`, `internal/instance`. Implements ADR-006 v.1 §2.1/§2.4; refs ADR-001 v.5, ADR-009 v.1, ADR-013 v.1, ADR-014 v.1, SRD-019 v.1. |
