@@ -65,15 +65,15 @@ engine, _ := thresher.New("demo-engine")
 proc, _ := process.New("demo-process")
 start, _ := events.NewStartEvent("start")
 
-// A ServiceTask runs your Go code: wrap a functor as the operation's
-// implementation. The operation carries no in/out messages (nil, nil) —
-// no data mapping needed, the functor just runs inside the process.
-work, _ := gooper.New(
-    func(ctx context.Context, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
+// A ServiceTask runs your Go code: gooper.New builds the operation straight
+// from a functor. The functor receives a read-only DataReader (process data
+// and engine runtime variables) and its optional bound input message — nil
+// here, since this operation declares no messages — and returns its result.
+op, _ := gooper.New("hello",
+    func(_ context.Context, _ service.DataReader, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
         fmt.Println("  ▶ hello from inside the process")
         return nil, nil
     })
-op, _ := service.NewOperation("hello", nil, nil, work)
 task, _ := activities.NewServiceTask("work", op, activities.WithoutParams())
 
 end, _ := events.NewEndEvent("end")
