@@ -127,10 +127,11 @@ states (`Failing`/`Paused`/`Compensating`) join additively later.
 
 **Observe-by-stream (the one channel):**
 
-- **FR-7 — observer registration.** `InstanceHandle.Observe(o Observer) (cancel
-  func())` registers an observer on the instance's single event stream; `cancel`
-  deregisters it and stops its drain goroutine. `Observer` is a one-method
-  interface (`OnEvent(Event)`).
+- **FR-7 — observer registration.** `InstanceHandle.Observe(o Observer)
+  *Subscription` registers an observer on the instance's single event stream;
+  the returned `Subscription` deregisters + drains via `Cancel()` and reports the
+  drop count via `Dropped()`. `Observer` is a one-method interface
+  (`OnEvent(Event)`).
 - **FR-8 — events the stream carries.** `Event{Kind EventKind; InstanceID,
   NodeID, NodeName string; State string; At time.Time}` for: instance lifecycle
   (created/active/completed/terminated), token movement (a token entering/leaving a
@@ -197,7 +198,12 @@ func (h *InstanceHandle) Tokens() []TokenView   // live active positions (Alive/
 func (h *InstanceHandle) History() []TokenPath  // every track incl. merged/consumed, lineage + timings
 func (h *InstanceHandle) Data() service.DataReader
 func (h *InstanceHandle) WaitCompletion(ctx context.Context) (InstanceState, error)
-func (h *InstanceHandle) Observe(o Observer) (cancel func())
+func (h *InstanceHandle) Observe(o Observer) *Subscription
+
+// Subscription is a live observer registration.
+type Subscription struct{ /* unexported */ }
+func (s *Subscription) Cancel()         // deregister + drain + stop
+func (s *Subscription) Dropped() uint64 // events dropped when the observer fell behind
 
 // InstanceState is the standard-named, OPEN lifecycle vocabulary (treat unknown
 // values gracefully — the set grows additively, ADR-013 §2.4).

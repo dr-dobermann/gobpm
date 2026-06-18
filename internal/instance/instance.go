@@ -97,8 +97,11 @@ type Instance struct {
 	loopDone            chan struct{}
 	rootScope           scope.DataPath
 	foundation.BaseElement
+	observers  []obsReg
 	trackCount atomic.Int64
+	obsMu      sync.RWMutex
 	convMu     sync.Mutex
+	obsID      uint64
 	state      atomic.Uint32
 }
 
@@ -520,6 +523,7 @@ func (inst *Instance) State() State {
 // atomic, so no lock is needed.
 func (inst *Instance) setState(newState State) {
 	inst.state.Store(uint32(newState))
+	inst.notify(ObsInstanceState, "", "", newState.String())
 }
 
 // LastErr returns the fatal error that stopped the instance (e.g. a fork
