@@ -395,11 +395,16 @@ func (eh *EventHub) PropagateEvent(
 	eh.m.RUnlock()
 
 	if !ok {
-		return errs.New(
-			errs.M("couldn't find waiter for EventDefinition"),
-			errs.C(errorClass, errs.ObjectNotFound),
-			errs.D("event_definition_id", eDef.ID()),
-			errs.D("event_definition_type", eDef.Type()))
+		// ADR-006 §2.4: propagating to no registered waiter is a logged no-op,
+		// not an error. A signal thrown with no live catcher is simply not
+		// caught (BPMN §10.5.1); the hub is a live dispatcher, not a store, so
+		// there is nothing to buffer and nothing to fail.
+		eh.rt.Logger().Debug(
+			"event propagated with no registered waiter; ignored (no-op)",
+			"event_definition_id", eDef.ID(),
+			"event_definition_type", string(eDef.Type()))
+
+		return nil
 	}
 
 	if err := w.Process(eDef); err != nil {

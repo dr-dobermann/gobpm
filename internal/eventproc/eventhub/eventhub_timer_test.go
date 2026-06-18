@@ -138,10 +138,10 @@ func TestTimerEvents(t *testing.T) {
 		timerEvent, err := events.NewTimerEventDefinition(nil, cycleExpr, durationExpr)
 		require.NoError(t, err)
 
-		// Try to propagate event when no processors are registered
+		// Propagating with no registered waiter is a logged no-op, not an
+		// error (ADR-006 §2.4, SRD-020).
 		err = hub.PropagateEvent(context.Background(), timerEvent)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "couldn't find waiter for EventDefinition")
+		require.NoError(t, err)
 	})
 }
 

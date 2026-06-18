@@ -172,7 +172,7 @@ func TestPropagateEvent_BaseErrors(t *testing.T) {
 		require.Contains(t, err.Error(), "eventHub isn't started")
 	})
 
-	t.Run("no waiters found error", func(t *testing.T) {
+	t.Run("no waiters found is a no-op (ADR-006 §2.4)", func(t *testing.T) {
 		hub, err := eventhub.New(enginert.Default())
 		require.NoError(t, err)
 
@@ -184,8 +184,33 @@ func TestPropagateEvent_BaseErrors(t *testing.T) {
 		mockEventDef.EXPECT().ID().Return("test-event-id").Maybe()
 		mockEventDef.EXPECT().Type().Return(flow.EventTrigger("TestType")).Maybe()
 
+		// Propagating to no registered waiter is a logged no-op, not an error.
 		err = hub.PropagateEvent(context.Background(), mockEventDef)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "couldn't find waiter for EventDefinition")
+		require.NoError(t, err)
 	})
+}
+
+// TestPropagateNoWaiterIsNoop is the ADR-006 §2.4 regression (SRD-020):
+// PropagateEvent to an absent key is a no-op returning nil for both a signal
+// and a non-signal trigger — correct for a signal thrown into the void
+// (BPMN §10.5.1), harmless for any other kind.
+func TestPropagateNoWaiterIsNoop(t *testing.T) {
+	for _, trig := range []flow.EventTrigger{
+		flow.TriggerSignal, flow.TriggerMessage,
+	} {
+		t.Run(string(trig), func(t *testing.T) {
+			hub, err := eventhub.New(enginert.Default())
+			require.NoError(t, err)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			require.NoError(t, hub.Start(ctx))
+
+			eDef := mockflow.NewMockEventDefinition(t)
+			eDef.EXPECT().ID().Return("absent-" + string(trig)).Maybe()
+			eDef.EXPECT().Type().Return(trig).Maybe()
+
+			require.NoError(t, hub.PropagateEvent(ctx, eDef))
+		})
+	}
 }
