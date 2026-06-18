@@ -1,0 +1,176 @@
+package thresher_test
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/process"
+	"github.com/dr-dobermann/gobpm/pkg/thresher"
+	"github.com/stretchr/testify/require"
+)
+
+// signalCatchProcess builds start -> catch(signal name) -> end.
+func signalCatchProcess(t *testing.T, procID, name string) *process.Process {
+	t.Helper()
+
+	sig, err := events.NewSignal(name, nil)
+	require.NoError(t, err)
+	def, err := events.NewSignalEventDefinition(sig)
+	require.NoError(t, err)
+
+	catch, err := events.NewIntermediateCatchEvent("catch-"+name, def)
+	require.NoError(t, err)
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	proc, err := process.New(procID)
+	require.NoError(t, err)
+	for _, e := range []flow.Element{start, catch, end} {
+		require.NoError(t, proc.Add(e))
+	}
+	link(t, start, catch)
+	link(t, catch, end)
+
+	return proc
+}
+
+// signalThrowProcess builds start -> throw(signal name) -> end.
+func signalThrowProcess(t *testing.T, procID, name string) *process.Process {
+	t.Helper()
+
+	sig, err := events.NewSignal(name, nil)
+	require.NoError(t, err)
+	def, err := events.NewSignalEventDefinition(sig)
+	require.NoError(t, err)
+
+	throw, err := events.NewIntermediateThrowEvent("throw-"+name, def)
+	require.NoError(t, err)
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	proc, err := process.New(procID)
+	require.NoError(t, err)
+	for _, e := range []flow.Element{start, throw, end} {
+		require.NoError(t, proc.Add(e))
+	}
+	link(t, start, throw)
+	link(t, throw, end)
+
+	return proc
+}
+
+// TestSignalCatchThrow verifies a thrown signal resumes a waiting catcher in
+// another instance (FR-1, FR-3, FR-6).
+func TestSignalCatchThrow(t *testing.T) {
+	catcher := signalCatchProcess(t, "sc-catch", "GO")
+	thrower := signalThrowProcess(t, "sc-throw", "GO")
+
+	th, cancel := runEngine(t, catcher)
+	defer cancel()
+	require.NoError(t, th.RegisterProcess(thrower))
+
+	ch, err := th.StartProcess(catcher.ID())
+	require.NoError(t, err)
+
+	time.Sleep(150 * time.Millisecond) // catcher reaches and parks on the catch
+
+	_, err = th.StartProcess(thrower.ID()) // throws GO
+	require.NoError(t, err)
+
+	ctx, cc := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cc()
+	st, err := ch.WaitCompletion(ctx)
+	require.NoError(t, err)
+	require.Equal(t, thresher.StateCompleted, st)
+}
+
+// TestSignalBroadcast verifies one throw fires EVERY catcher of the signal name
+// across instances (FR-2, FR-3, NFR-1) — the broadcast canary.
+func TestSignalBroadcast(t *testing.T) {
+	catcher := signalCatchProcess(t, "sb-catch", "GO")
+	thrower := signalThrowProcess(t, "sb-throw", "GO")
+
+	th, cancel := runEngine(t, catcher)
+	defer cancel()
+	require.NoError(t, th.RegisterProcess(thrower))
+
+	c1, err := th.StartProcess(catcher.ID())
+	require.NoError(t, err)
+	c2, err := th.StartProcess(catcher.ID())
+	require.NoError(t, err)
+
+	time.Sleep(150 * time.Millisecond) // both catchers park on the catch
+
+	_, err = th.StartProcess(thrower.ID()) // one throw of GO
+	require.NoError(t, err)
+
+	ctx, cc := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cc()
+	st1, err := c1.WaitCompletion(ctx)
+	require.NoError(t, err)
+	require.Equal(t, thresher.StateCompleted, st1)
+	st2, err := c2.WaitCompletion(ctx)
+	require.NoError(t, err)
+	require.Equal(t, thresher.StateCompleted, st2)
+}
+
+// TestSignalThrownIntoVoid verifies a signal with no catcher is a no-op and is
+// NOT buffered for a later catcher (FR-4, NFR-1 — the §2.4 no-store contract).
+func TestSignalThrownIntoVoid(t *testing.T) {
+	catcher := signalCatchProcess(t, "sv-catch", "GO")
+	thrower := signalThrowProcess(t, "sv-throw", "GO")
+
+	th, cancel := runEngine(t, thrower)
+	defer cancel()
+	require.NoError(t, th.RegisterProcess(catcher))
+
+	_, err := th.StartProcess(thrower.ID()) // throw GO with no catcher → no-op
+	require.NoError(t, err)
+
+	time.Sleep(150 * time.Millisecond)
+
+	ch, err := th.StartProcess(catcher.ID()) // starts AFTER the throw
+	require.NoError(t, err)
+
+	// The earlier signal is not retro-delivered: the catcher stays parked.
+	ctx, cc := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cc()
+	_, err = ch.WaitCompletion(ctx)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+// TestSignalSingleShotConsume verifies an intermediate catch consumes the signal
+// once, and a later throw with no catcher is a clean no-op (FR-5).
+func TestSignalSingleShotConsume(t *testing.T) {
+	catcher := signalCatchProcess(t, "ss-catch", "GO")
+	thrower := signalThrowProcess(t, "ss-throw", "GO")
+
+	th, cancel := runEngine(t, catcher)
+	defer cancel()
+	require.NoError(t, th.RegisterProcess(thrower))
+
+	ch, err := th.StartProcess(catcher.ID())
+	require.NoError(t, err)
+
+	time.Sleep(150 * time.Millisecond)
+
+	_, err = th.StartProcess(thrower.ID()) // throw 1 → catcher fires
+	require.NoError(t, err)
+
+	ctx, cc := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cc()
+	st, err := ch.WaitCompletion(ctx)
+	require.NoError(t, err)
+	require.Equal(t, thresher.StateCompleted, st)
+
+	// The catch is consumed; a second throw finds no catcher → clean no-op.
+	_, err = th.StartProcess(thrower.ID())
+	require.NoError(t, err)
+}

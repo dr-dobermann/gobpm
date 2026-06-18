@@ -13,10 +13,12 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub/waiters"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
@@ -48,7 +50,11 @@ type (
 		waiters map[string]eventproc.EventWaiter
 		events  []flow.EventDefinition
 		m       sync.RWMutex
-		state   hubState
+		// state is read lock-free by Run/PropagateEvent and written by
+		// Start/Shutdown, so it lives in an atomic to stay race-free across those
+		// unsynchronized readers (registration/shutdown still serialize the map
+		// under m; the atomic just removes the state data race).
+		state atomic.Uint32
 	}
 )
 
@@ -70,6 +76,19 @@ func New(rt renv.EngineRuntime) (*EventHub, error) {
 		nil
 }
 
+// getState reads the lock-free hub lifecycle state.
+func (eh *EventHub) getState() hubState {
+	// hubState is a 0..2 enum stored in the atomic; the narrowing never
+	// overflows.
+	//nolint:gosec // bounded enum, no overflow
+	return hubState(eh.state.Load())
+}
+
+// setState writes the lock-free hub lifecycle state.
+func (eh *EventHub) setState(s hubState) {
+	eh.state.Store(uint32(s))
+}
+
 // Start performs synchronous initialization of the EventHub: records the
 // context that subsequent Run / RegisterEvent / UnregisterEvent /
 // PropagateEvent calls will observe, and flips the started flag.
@@ -80,13 +99,13 @@ func New(rt renv.EngineRuntime) (*EventHub, error) {
 // stored ctx, without needing additional synchronization. This is the
 // motivation for splitting Start from Run; see FIX-001.
 func (eh *EventHub) Start(ctx context.Context) error {
-	if eh.state != hubNotStarted {
+	if eh.getState() != hubNotStarted {
 		return errs.New(
 			errs.M("eventHub is already started or stopped"),
 			errs.C(errorClass, errs.InvalidState))
 	}
 
-	eh.state = hubStarted
+	eh.setState(hubStarted)
 	eh.ctx = ctx
 
 	return nil
@@ -98,7 +117,7 @@ func (eh *EventHub) Start(ctx context.Context) error {
 //
 // Run blocks until its context is canceled and then returns ctx.Err().
 func (eh *EventHub) Run(ctx context.Context) error {
-	if eh.state != hubStarted {
+	if eh.getState() != hubStarted {
 		return errs.New(
 			errs.M("eventHub isn't started"),
 			errs.C(errorClass, errs.InvalidState))
@@ -116,7 +135,7 @@ func (eh *EventHub) RegisterEvent(
 	ep eventproc.EventProcessor,
 	eDef flow.EventDefinition,
 ) error {
-	if eh.state != hubStarted {
+	if eh.getState() != hubStarted {
 		return errs.New(
 			errs.M("eventHub isn't started"),
 			errs.C(errorClass, errs.InvalidState))
@@ -140,7 +159,7 @@ func (eh *EventHub) RegisterPersistentEvent(
 	ep eventproc.EventProcessor,
 	eDef flow.EventDefinition,
 ) error {
-	if eh.state != hubStarted {
+	if eh.getState() != hubStarted {
 		return errs.New(
 			errs.M("eventHub isn't started"),
 			errs.C(errorClass, errs.InvalidState))
@@ -184,7 +203,7 @@ func (eh *EventHub) registerWaiter(
 	eh.m.Lock()
 	defer eh.m.Unlock()
 
-	if eh.state == hubStopped {
+	if eh.getState() == hubStopped {
 		return errs.New(
 			errs.M("event hub is shut down; registration rejected"),
 			errs.C(errorClass, errs.InvalidState),
@@ -237,13 +256,13 @@ func (eh *EventHub) registerWaiter(
 // failed Stop never leaks the registry entry. Idempotent.
 func (eh *EventHub) Shutdown(ctx context.Context) error {
 	eh.m.Lock()
-	if eh.state == hubStopped {
+	if eh.getState() == hubStopped {
 		eh.m.Unlock()
 
 		return nil
 	}
 
-	eh.state = hubStopped
+	eh.setState(hubStopped)
 
 	ws := make([]eventproc.EventWaiter, 0, len(eh.waiters))
 	for _, w := range eh.waiters {
@@ -301,7 +320,7 @@ func (eh *EventHub) UnregisterEvent(
 	ep eventproc.EventProcessor,
 	eDefID string,
 ) error {
-	if eh.state != hubStarted {
+	if eh.getState() != hubStarted {
 		return errs.New(
 			errs.M("eventHub isn't started"),
 			errs.C(errorClass, errs.InvalidState))
@@ -366,10 +385,17 @@ func (eh *EventHub) PropagateEvent(
 	_ context.Context,
 	eDef flow.EventDefinition,
 ) error {
-	if eh.state != hubStarted {
+	if eh.getState() != hubStarted {
 		return errs.New(
 			errs.M("eventHub isn't started"),
 			errs.C(errorClass, errs.InvalidState))
+	}
+
+	// A signal is a broadcast publication matched by NAME, not by the throw's
+	// eDef.ID() (throw and catch are distinct nodes — ADR-006 v.1 §2.1, SRD-020):
+	// fan out to every catcher of the same signal name.
+	if eDef.Type() == flow.TriggerSignal {
+		return eh.broadcastSignal(eDef)
 	}
 
 	eh.m.RLock()
@@ -377,11 +403,16 @@ func (eh *EventHub) PropagateEvent(
 	eh.m.RUnlock()
 
 	if !ok {
-		return errs.New(
-			errs.M("couldn't find waiter for EventDefinition"),
-			errs.C(errorClass, errs.ObjectNotFound),
-			errs.D("event_definition_id", eDef.ID()),
-			errs.D("event_definition_type", eDef.Type()))
+		// ADR-006 §2.4: propagating to no registered waiter is a logged no-op,
+		// not an error. A signal thrown with no live catcher is simply not
+		// caught (BPMN §10.5.1); the hub is a live dispatcher, not a store, so
+		// there is nothing to buffer and nothing to fail.
+		eh.rt.Logger().Debug(
+			"event propagated with no registered waiter; ignored (no-op)",
+			"event_definition_id", eDef.ID(),
+			"event_definition_type", string(eDef.Type()))
+
+		return nil
 	}
 
 	if err := w.Process(eDef); err != nil {
@@ -399,6 +430,61 @@ func (eh *EventHub) PropagateEvent(
 	}
 
 	return nil
+}
+
+// broadcastSignal delivers a thrown signal to every registered catcher of the
+// same signal name — the BPMN broadcast publication strategy (ADR-006 v.1 §2.1,
+// §10.5.1). It matches by name (not eDef.ID(): throw and catch are distinct
+// nodes), scanning the waiter registry. No catcher in reach is a logged no-op,
+// not an error (§2.4). Each fired catcher self-unregisters as it resumes
+// (track.ProcessEvent), so the hub removes the emptied waiters. The linear scan
+// is the simple name index; an O(1) name→subscribers map is the deferred §5
+// optimization.
+func (eh *EventHub) broadcastSignal(eDef flow.EventDefinition) error {
+	name, ok := signalName(eDef)
+	if !ok {
+		return errs.New(
+			errs.M("not a signal event definition"),
+			errs.C(errorClass, errs.TypeCastingError),
+			errs.D("event_definition_id", eDef.ID()))
+	}
+
+	eh.m.RLock()
+	targets := make([]eventproc.EventWaiter, 0, len(eh.waiters))
+	for _, w := range eh.waiters {
+		if n, isSig := signalName(w.EventDefinition()); isSig && n == name {
+			targets = append(targets, w)
+		}
+	}
+	eh.m.RUnlock()
+
+	if len(targets) == 0 {
+		eh.rt.Logger().Debug(
+			"signal thrown with no catcher in reach; ignored (no-op)",
+			"signal", name)
+
+		return nil
+	}
+
+	// Fan out off the lock: each delivery resumes a catcher's track, which
+	// self-unregisters (track.ProcessEvent) — that removal needs eh.m. Process
+	// is best-effort and never returns a delivery error (it logs per catcher).
+	for _, w := range targets {
+		_ = w.Process(eDef)
+	}
+
+	return nil
+}
+
+// signalName returns the signal name of a SignalEventDefinition, or ("", false)
+// for any other event definition.
+func signalName(eDef flow.EventDefinition) (string, bool) {
+	sig, ok := eDef.(*events.SignalEventDefinition)
+	if !ok || sig.Signal() == nil {
+		return "", false
+	}
+
+	return sig.Signal().Name(), true
 }
 
 // RemoveWaiter removes the waiter registered for eDefID from the

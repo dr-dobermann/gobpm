@@ -1,0 +1,328 @@
+# SRD-020 — Signal events: name-matched broadcast catch & throw
+
+| Field | Value |
+|---|---|
+| Status | Accepted |
+| Version | v.1 |
+| Date | 2026-06-18 |
+| Owner | Ruslan Gabitov |
+| Implements | [ADR-006 v.1 Events & Subscriptions](../design/ADR-006-events-and-subscriptions.md) §2.1, §2.4 |
+
+This SRD lands the first runtime slice of the **events workstream** opened by
+[ADR-006 v.1](../design/ADR-006-events-and-subscriptions.md): **signal events** —
+the *publication / broadcast* trigger (§2.1) — for **intermediate catch** and
+**throw** (intermediate-throw + signal end event). It also closes the dormant
+**§2.4 no-waiter gap** (propagating to no listener becomes a logged no-op, not an
+error) that has been waiting for signals. Signal **start** (instantiating) and
+signal **boundary** events are deferred to the instantiation and boundary
+workstreams respectively.
+
+## 1. Background & motivation
+
+### 1.1 Current state (verified against the code)
+
+- **Signals are modelled but not executable.** `SignalEventDefinition`
+  (`pkg/model/events/signal.go:59-112`) exists with `Type() → flow.TriggerSignal`
+  (`:110-112`) and a `Signal()` accessor over a named `Signal`
+  (`signal.go:14-51`, `Name()` at `:49`); the intermediate-catch trigger
+  whitelist **already admits** signals
+  (`pkg/model/events/intermediate_catch.go:18-23`, `flow.TriggerSignal` at `:21`).
+  But there is **no signal waiter**: the waiter-builder switch
+  (`internal/eventproc/eventhub/waiters/waiters.go:53-70`) has cases only for
+  `TriggerTimer` and `TriggerMessage`; a signal falls through to the `default`
+  error ("couldn't find builder for event definition of type …", `:64-70`). So a
+  process with a signal catch/throw fails at registration today.
+- **The hub is point-to-point, keyed by `eDef.ID()`.** The registry is
+  `waiters map[string]eventproc.EventWaiter` (`eventhub.go:48`); `registerWaiter`
+  keys by `eDef.ID()` — *find-or-build*, and if a waiter already exists for the
+  key it **adds the processor to it** (`eventhub.go:194-228`). A waiter fans out
+  to **all** its registered `EventProcessor`s when it fires (the message waiter
+  loops them — `waiters/message.go:307-322`). `PropagateEvent` looks up **one**
+  waiter by `eDef.ID()` (`eventhub.go:376`) and delivers to it.
+- **Propagating to no waiter is an ERROR (the §2.4 gap).** `PropagateEvent`
+  returns `ObjectNotFound` when `eDef.ID()` is absent from the registry
+  (`eventhub.go:379-385`). For a **signal broadcast with no live catcher** this is
+  *wrong* — a signal thrown into the void is simply not caught (§10.5.1), a normal
+  condition, not a failure (ADR-006 §2.4).
+- **Delivery runs on the waiter goroutine, track-synchronized.** A fired event
+  reaches the waiting track via `track.ProcessEvent`
+  (`internal/instance/track.go:723-778`), which runs **on the waiter goroutine**
+  (comment `:743`), guards `TrackWaitForEvent` (`:730`), delivers to the node, then
+  `unregisterEvent` + `TrackReady` (`:769-775`). Registration is `track.checkNodeType`
+  → `RegisterEvent(t, d)` per definition when the token reaches the node
+  (`track.go:301-340`, register at `:328`). The throw side: a throw event's
+  `Execute` propagates via the instance's `EventProducer.PropagateEvent`
+  (`internal/instance/instance.go:987-1002`) → `Thresher.PropagateEvent`
+  (`thresher.go:400-419`) → `EventHub.PropagateEvent`. This is the proven path
+  message/timer already use; **signals reuse it** (ADR-006 §2.1's single-loop
+  inbound edge stays conception, as it is for message/timer today).
+
+### 1.2 Problem
+
+The signal trigger — BPMN's broadcast publication strategy (§10.5.1) — has a model
+but no runtime. A process cannot throw or catch a signal, and the hub's
+point-to-point, error-on-no-waiter behaviour is the wrong shape for broadcast. This
+SRD makes signals executable and turns the §2.4 contract into reality.
+
+## 2. Decision
+
+- **Broadcast falls out of shared eDef identity (no name index needed).** Signal
+  `EventDefinition`s have **no `CloneForInstance`**, so `Event.clone()`
+  (`events/event.go:161-167`) shares them **by reference** across per-instance
+  node-graph clones (ADR-009) via `cloneDefsForInstance` (`event.go:175-191`,
+  "definitions without the capability are shared by reference"). Every instance
+  catching the same modelled signal node therefore holds the **same `eDef.ID()`**,
+  so the existing find-or-add-processor `registerWaiter` lands all catchers on
+  **one** ID-keyed waiter as distinct processors, and a throw (`PropagateEvent` by
+  that id) fans `Process` out to all of them — **broadcast via the existing
+  registry**, no name index, no keying change. The clone-vs-share asymmetry in
+  `cloneDefsForInstance` already encodes it: message/timer clone → point-to-point
+  (the FIX-004 no-share rule); **signal shares → broadcast** (the deliberate
+  inverse). Signal therefore deliberately does **not** add `CloneForInstance`.
+- **A passive `signalWaiter`.** Unlike message (broker subscription) / timer
+  (ticker), a signal has **no external source** — it is fired only by an in-process
+  throw via `PropagateEvent`. So the signal waiter spawns **no service goroutine**;
+  its `Service` is a no-op that marks it running and its `Done()` is already closed.
+  It obeys §2.5 ownership (the hub creates/removes it; it never self-removes) and
+  fans `Process` out to all its processors with **no correlation filter** (signals
+  have no correlation, §10.5.1).
+- **No-waiter ⇒ logged no-op (closes §2.4).** `PropagateEvent` to an absent key is
+  a debug-logged no-op, not an error — correct for a signal broadcast with no live
+  catcher, harmless for any other kind.
+- **Catch is single-shot; the waiter persists until empty.** An intermediate catch
+  consumes the signal once: on fire the track `unregisterEvent`s (removes its
+  processor); when the last processor leaves, the hub removes the waiter. Because
+  the broadcast fan-out drives each catcher to self-unregister **during**
+  `Process`, the last unregister removes the now-empty waiter, so `PropagateEvent`'s
+  own post-`Process` empty-cleanup (`eventhub.go:397-398`) must **tolerate an
+  already-removed waiter** (a lock-check-delete, not a hard `RemoveWaiter` that
+  errors `ObjectNotFound`). This path is currently dead for message (its `Process`
+  errors) and timer (fires via `WaiterFired`), so signal is the first to exercise
+  it.
+- **Throw broadcasts.** Intermediate-throw and signal **end** events propagate
+  their `SignalEventDefinition`; the hub finds the shared-id waiter and fans out. Reach
+  is **engine-wide** (every instance registered in the `Thresher`), **including the
+  throwing instance's own catchers** — the single-process in-memory conformance
+  target (§2.4).
+
+```mermaid
+flowchart LR
+  TA[instance A: catch signal X] -->|register processor| W[(one waiter: shared eDef id of X)]
+  TB[instance B: catch signal X] -->|register processor| W
+  THR[instance C: throw signal X] -->|PropagateEvent| W
+  W -->|fan out, no correlation| TA
+  W -->|fan out| TB
+  W -.->|no processors -> logged no-op| VOID[thrown into the void]
+```
+
+## 3. Functional requirements
+
+- **FR-1 — signal catch waiter.** A `signalWaiter` (`eventproc.EventWaiter`) is
+  built for a `SignalEventDefinition`; `waiters.CreateWaiter` gains a
+  `flow.TriggerSignal` case. It is **passive** (no service goroutine): `Service`
+  marks it `WSRunned` and leaves `Done()` closed; `Stop` marks it stopped; it never
+  removes itself (§2.5).
+- **FR-2 — shared-eDef-id broadcast (no keying change).** Signal
+  `EventDefinition`s deliberately have **no `CloneForInstance`**, so all instances
+  catching the same modelled signal node share one `eDef.ID()` (`Event.clone` →
+  `cloneDefsForInstance`, shared by reference). The existing `eDef.ID()`-keyed
+  `registerWaiter` find-or-add-processor then lands every catcher on one waiter as a
+  distinct processor — broadcast, with **no `waiterKey` and no change to
+  `registerWaiter`/`PropagateEvent`/`UnregisterEvent` keying**.
+- **FR-3 — broadcast fan-out.** `signalWaiter.Process(eDef)` delivers to **every**
+  registered `EventProcessor` (each catching track), with no correlation filter; a
+  per-processor delivery error is logged and does not abort the rest of the
+  broadcast. Each delivered track resumes via the existing `track.ProcessEvent`
+  path.
+- **FR-4 — no-waiter no-op (closes §2.4).** `EventHub.PropagateEvent` with no
+  registered waiter for `eDef.ID()` is a **debug-logged no-op returning `nil`**,
+  replacing the current `ObjectNotFound` error (`eventhub.go:379-385`). **Landed in
+  M1.**
+- **FR-5 — single-shot catch + cleanup tolerance.** An intermediate signal catch is
+  consumed once: on fire the track unregisters its processor (existing
+  `track.ProcessEvent` `unregisterEvent`); the waiter is removed when its last
+  processor leaves. Since the broadcast fan-out makes catchers self-unregister
+  **during** `Process`, `PropagateEvent`'s post-`Process` empty-cleanup must
+  tolerate the waiter being **already removed** (lock-check-delete, not a hard
+  `RemoveWaiter`).
+- **FR-6 — signal throw.** Intermediate-throw and **signal end** events propagate a
+  `SignalEventDefinition` through the existing throw path
+  (`instance.PropagateEvent` → `Thresher.PropagateEvent` → `EventHub`); no new throw
+  plumbing — the shared-id waiter fans out.
+- **FR-7 — deferrals (documented, not built).** Signal **start** events
+  (instantiating — extends ADR-015) and signal **boundary** events (boundary
+  workstream) are out of scope; the catch path here is the intermediate **in-flow**
+  waiter only (ADR-006 §2.3 row 1).
+
+## 4. Non-functional requirements
+
+- **NFR-1 — BPMN broadcast semantics.** One throw of name `X` reaches **all**
+  current catchers of `X` in reach (§10.5.1); zero catchers is a no-op, never an
+  error or a buffered late-delivery (§2.4 — the hub is not a store).
+- **NFR-2 — §2.5 ownership.** The signal waiter is hub-owned: created on first
+  catch, removed when empty or on `Shutdown`; it never self-removes; it drains
+  cleanly (its `Done()` is closed, so `EventHub.Shutdown`'s wait is immediate).
+- **NFR-3 — no new locks / single-mutator preserved.** Registration/propagation
+  stay under the hub's existing `m sync.RWMutex`; delivery reuses the track's
+  existing `t.m`/state synchronization (ADR-001). No change to the instance loop.
+- **NFR-4 — coverage.** Touched files finish ≥80% (target 100%) diff-coverage;
+  `make ci` green (incl. `-race` — broadcast crosses instances/goroutines).
+
+## 5. Path analysis (alternatives)
+
+- **Shared-eDef-id via the existing registry (chosen) vs name-keying vs a parallel
+  `map[name][]subscriber` index.** Chosen: rely on signal eDefs being shared by
+  reference across instance clones (no `CloneForInstance`), so all catchers share
+  one `eDef.ID()` and the existing `eDef.ID()`-keyed find-or-add-processor +
+  fan-out + §2.5 ownership + empty-cleanup machinery gives broadcast **with no
+  keying change at all**. Rejected name-keying (`waiterKey`): it would force
+  `registerWaiter`/`PropagateEvent`/`UnregisterEvent` (which takes `eDef.ID()`) onto
+  a name-derived key — extra threading for an asymmetry `cloneDefsForInstance`
+  already encodes. Rejected a parallel index: duplicates ownership/shutdown and
+  splits propagation into two paths.
+- **Passive waiter (chosen) vs a service goroutine that waits on a channel.**
+  Chosen: a signal has no external source (it is fired by an in-process throw), so a
+  goroutine would block on nothing and only complicate the §2.5 drain. A passive
+  waiter (closed `Done()`) is the honest shape. Rejected the goroutine: needless
+  concurrency + a drain edge with no benefit.
+- **No `CloneForInstance` for signals (chosen) vs per-instance clone like
+  message/timer.** Chosen: message/timer clone to a fresh per-instance ID so
+  concurrent instances do **not** share a waiter (point-to-point — sharing was the
+  FIX-004 broadcast bug). For signals the opposite is correct: catchers across
+  instances **should** all fire on one throw, so they **should** share one waiter
+  as distinct processors — achieved precisely by *not* adding `CloneForInstance`
+  (`cloneDefsForInstance` then shares the eDef by reference). Rejected cloning: it
+  would fragment the broadcast into per-instance waiters a single throw can't reach.
+- **No-waiter no-op (chosen) vs keep the error / buffer the signal.** Chosen:
+  logged no-op (ADR-006 §2.4) — a signal with no catcher is normal BPMN. Rejected
+  the error (wrong for broadcast) and buffering (the hub is not a store; signals are
+  not replayed — §2.4).
+- **Reach = engine-wide incl. self-instance (chosen) vs per-instance only.**
+  Chosen: a thrown signal reaches every catcher in the engine, including the
+  thrower's own instance (§10.5.1 "within and across Processes"). The single-process
+  in-memory model is the conformance target (§2.4). Cross-engine reach is the
+  persistence/distribution ADR's, not here.
+
+## 6. API & key shapes
+
+```go
+// internal/eventproc/eventhub/waiters — new passive waiter:
+//   NewSignalWaiter(eh, ep, eDef, rt) (eventproc.EventWaiter, error)
+//   Process fans out to all EventProcessors (no correlation); Service is a
+//   no-op (no goroutine); Done() is closed; never self-removes (§2.5).
+// waiters.CreateWaiter gains:
+//   case flow.TriggerSignal: w, err = NewSignalWaiter(eh, ep, eDef, rt)
+
+// internal/eventproc/eventhub/eventhub.go:
+//   PropagateEvent post-Process empty-cleanup tolerates an already-removed
+//   waiter (the broadcast fan-out self-unregisters its catchers). The §2.4
+//   no-waiter no-op landed in M1.
+// No keying change: signal eDefs share one eDef.ID() across instances
+// (cloneDefsForInstance shares by reference), so the existing eDef.ID()-keyed
+// registry broadcasts via find-or-add-processor.
+```
+
+No new public `pkg/` surface: signals are authored with the existing
+`events.NewSignalEventDefinition` + intermediate catch/throw + end-event builders;
+this SRD wires their **runtime**.
+
+## 7. Test plan
+
+- **`TestSignalCatchThrow`** — one instance: a track waits on an intermediate
+  signal catch; another track (or a second flow) throws the same signal name; the
+  catch fires and the process completes (FR-1, FR-3, FR-6).
+- **`TestSignalBroadcast`** (`-race`) — two concurrent instances each catch signal
+  `X`; a throw of `X` (from a third) fires **both** — both reach their downstream
+  node (FR-2, FR-3, NFR-1). This is the broadcast canary (the inverse of FIX-004's
+  no-cross-instance rule, which holds for message/timer).
+- **`TestSignalThrownIntoVoid`** — throwing a signal with no registered catcher is
+  a no-op (no error), and a later catch of the same name is **not** retro-delivered
+  (FR-4, NFR-1; the §2.4 no-buffer contract).
+- **`TestSignalSingleShotConsume`** — after a catch fires, its processor is removed;
+  a second throw does not re-fire the consumed catch; the waiter is gone once
+  empty (FR-5).
+- **`TestPropagateNoWaiterIsNoop`** (internal `eventhub`) — `PropagateEvent` with an
+  absent key returns `nil` and logs at debug, for both a signal and a non-signal
+  eDef (FR-4) — the direct §2.4 regression test against `eventhub.go:379-385`.
+- Internal `internal/eventproc/eventhub/waiters` unit for `signalWaiter`
+  (passive `Service`/closed `Done`, fan-out `Process`, `Stop`) for cross-package
+  coverage attribution.
+
+## 8. Cross-document consistency
+
+- **Implements** [ADR-006 v.1](../design/ADR-006-events-and-subscriptions.md) §2.1
+  (publication/broadcast reach, per-instance subscription identity), §2.4 (no-waiter
+  no-op, non-durable, no buffering — signals are not the broker's job).
+- [ADR-001 v.5](../design/ADR-001-execution-model.md) — the track/loop model the
+  delivery path runs against (single-mutator; signal reuses `track.ProcessEvent`).
+- [ADR-009 v.1](../design/ADR-009-per-instance-node-graph.md) — per-instance clones;
+  each instance's catch is a distinct processor on the shared waiter.
+- [ADR-013 v.1](../design/ADR-013-instance-observability.md) §2.5 / [SRD-019 v.1](SRD-019-instance-control-lifecycle.md)
+  — the `EventHub.Shutdown` waiter drain the passive signal waiter obeys (closed
+  `Done()`).
+- [ADR-014 v.1](../design/ADR-014-message-handling.md) — the message waiter this
+  mirrors (and deliberately diverges from on correlation/broadcast).
+- References up/sideways, version-pinned; no downward refs (ADR-006 does not cite
+  SRD-020).
+
+## 9. Definition of Done
+
+- FR-1…FR-7 wired and exercised by the §7 tests (incl. the `-race` broadcast canary).
+- `signalWaiter` + `CreateWaiter` signal case + `broadcastSignal` name-scan + §2.4
+  no-op present; signal catch/throw/end run end-to-end.
+- §2.4 closed: `PropagateEvent` no-waiter is a logged no-op (the old `ObjectNotFound`
+  path is gone), proven by `TestPropagateNoWaiterIsNoop`.
+- `make ci` green (tidy, lint incl. fieldalignment, build, `-race`, diff-coverage
+  ≥95, govulncheck); touched files ≥80% (target 100%).
+- A runnable `examples/signal-broadcast` (or extension of an existing example)
+  smoke-runs exit 0, plus the existing 9 examples still exit 0.
+- §10 filled; status → Accepted; RU twin added; linked docs synced; GitHub
+  sub-issue under epic #90 closed by the PR.
+
+## 10. Implementation summary
+
+Landed on `feat/signal-events` (off `master`): two code milestones + a
+prerequisite fix + a runnable example.
+
+### 10.1 Commits
+
+| # | Commit | Scope | Tests |
+|---|---|---|---|
+| doc | `24a451c` | SRD-020 draft | — |
+| fix | `30c8437` | Pre-existing SRD-019 race: `EventHub.state` made `atomic.Uint32` (Run/PropagateEvent read it lock-free while Start/Shutdown write it). Surfaced by M1's timing shift. | `TestThresherShutdown -race` |
+| M1 | `d4460a7` | §2.4 no-waiter no-op: `PropagateEvent` to an absent key → debug-logged `nil` (was `ObjectNotFound`). | `TestPropagateNoWaiterIsNoop` |
+| M2 | `ed43854` | Signal runtime: passive `signalWaiter`, `CreateWaiter` signal case, `broadcastSignal` name-scan in `PropagateEvent`. | `TestSignalWaiter*`, `TestBroadcastSignalFanOut`, `TestSignalCatchThrow`, `TestSignalBroadcast -race`, `TestSignalThrownIntoVoid`, `TestSignalSingleShotConsume` |
+| M3 | `ce0bc96` | `examples/signal-broadcast` (one throw → two watcher instances). | smoke |
+
+### 10.2 Key files
+
+- `internal/eventproc/eventhub/waiters/signal.go` (new) — the passive `signalWaiter`.
+- `internal/eventproc/eventhub/waiters/waiters.go` — `CreateWaiter` `TriggerSignal` case + per-trigger-identity NOTE.
+- `internal/eventproc/eventhub/eventhub.go` — `broadcastSignal`/`signalName`, the `PropagateEvent` signal branch + §2.4 no-op, and the `atomic.Uint32` state (race fix).
+- `examples/signal-broadcast/` (new) — `process.go` (catcher/thrower builders) + `main.go`.
+
+### 10.3 Verification
+
+- `make ci` green: tidy, lint, build, `-race`, **diff-coverage 97.2% of 212
+  changed lines (≥95)**, govulncheck. Touched funcs ≥80% (signal.go +
+  `broadcastSignal` 100%).
+- All **10** examples smoke-run exit 0 (incl. `signal-broadcast`).
+
+### 10.4 Deltas vs the draft
+
+- **Matching mechanism corrected (FR-2/§2/§5).** The draft first sketched a
+  name-keyed registry (`waiterKey`); implementation revealed the simpler truth:
+  catchers across instances already share one waiter (signal eDefs aren't
+  cloned), and throw→catch matches by **name-scan** in `PropagateEvent`
+  (`broadcastSignal`) — no keying change, no `UnregisterEvent` signature churn.
+  The doc was corrected in M2. A future `SubscriptionKey()` generalization
+  (when Link events land) is captured as a follow-up, not built here.
+- **Prerequisite race fix.** M1's `-race` run exposed a pre-existing SRD-019
+  `EventHub.state` data race; fixed as its own `30c8437` commit before M1, not
+  folded in silently.
+
+## Document History
+
+| Version | Date | Author | Change |
+|---|---|---|---|
+| v.1 | 2026-06-18 | Ruslan Gabitov | Accepted. First runtime slice of the ADR-006 v.1 events workstream: signal events (intermediate catch + intermediate/end throw) via a passive `signalWaiter` (no broker, no goroutine; `Process` fans out to all catchers, no correlation; closed `Done()` for §2.5 drain). Broadcast is matched by **name-scan** in `PropagateEvent` (`broadcastSignal`) — throw and catch are distinct nodes with distinct ids — while catchers across instances share one waiter because signal eDefs aren't cloned (`cloneDefsForInstance` shares by reference; the deliberate inverse of FIX-004's point-to-point clone). Also closes the §2.4 no-waiter gap (`PropagateEvent` absent-key → logged no-op, replacing `ObjectNotFound`; landed in M1) and fixed a pre-existing SRD-019 `EventHub.state` data race (atomic). Drafted with a name-keyed registry; corrected to shared-id + name-scan during implementation (no `waiterKey`/`UnregisterEvent` churn). Signal **start** (instantiating) and **boundary** events deferred; a polymorphic `SubscriptionKey()` matching generalization deferred to the Link-events workstream. Code-grounded against `pkg/model/events`, `internal/eventproc/eventhub`, `internal/instance`. Implements ADR-006 v.1 §2.1/§2.4; refs ADR-001 v.5, ADR-009 v.1, ADR-013 v.1, ADR-014 v.1, SRD-019 v.1. |
