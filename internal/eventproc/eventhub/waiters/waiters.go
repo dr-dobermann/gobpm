@@ -44,6 +44,12 @@ func CreateWaiter(
 		err error
 	)
 
+	// NOTE: timer and message are the only catchable triggers with a waiter
+	// builder. Any future case added here (signal, conditional, …) MUST also
+	// give its EventDefinition a CloneForInstance method (see
+	// MessageEventDefinition / TimerEventDefinition), or concurrent instances
+	// waiting on it will share one waiter and a single occurrence will resume
+	// them all (the FIX-004 / SRD-017 per-instance-identity rule).
 	switch eDef.Type() {
 	case flow.TriggerTimer:
 		w, err = NewTimeWaiter(eh, ep, eDef, "", rt)

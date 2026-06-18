@@ -4,6 +4,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -86,6 +87,25 @@ func MustTimerEventDefinition(
 	}
 
 	return ted
+}
+
+// CloneForInstance returns a per-instance copy of the TimerEventDefinition
+// with a FRESH id, sharing the (immutable) timer expressions by reference.
+// Node cloning (Event.clone) uses it so each process instance's timer catch
+// registers a DISTINCT EventHub waiter (keyed by eDef id): without it
+// concurrent instances waiting on the same timer would share one waiter and a
+// single timer occurrence would resume them all (FIX-004; the timer analog of
+// MessageEventDefinition.CloneForInstance). A timer carries no payload, so
+// there is no fire-path CloneEvent to keep the id stable — only the
+// registration identity must be per-instance. Canary:
+// TestTimerReceiverPerInstanceClone.
+func (ted *TimerEventDefinition) CloneForInstance() flow.EventDefinition {
+	return &TimerEventDefinition{
+		definition:   definition{BaseElement: *foundation.MustBaseElement()},
+		timeDate:     ted.timeDate,
+		timeCycle:    ted.timeCycle,
+		timeDuration: ted.timeDuration,
+	}
 }
 
 // Time return the Timer's time.
