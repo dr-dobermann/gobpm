@@ -125,6 +125,42 @@ func TestObserveAccessors(t *testing.T) {
 	require.Equal(t, instance.Completed, inst.State())
 }
 
+// TestInstanceCancel covers Instance.Cancel within the instance package — the
+// no-op-before-Run guard and the after-Run cancel — since the public path is
+// only exercised cross-package via the thresher handle (SRD-019).
+func TestInstanceCancel(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	s, err := getSnapshot("cancel")
+	require.NoError(t, err)
+
+	ep := mockeventproc.NewMockEventProducer(t)
+
+	inst, err := instance.New(s, scope.EmptyDataPath, enginert.Default(), ep, nil)
+	require.NoError(t, err)
+
+	// Cancel before Run is a no-op (no context yet).
+	inst.Cancel()
+
+	ctx, cc := context.WithCancel(context.Background())
+	defer cc()
+	require.NoError(t, inst.Run(ctx))
+
+	inst.Cancel()
+
+	select {
+	case <-inst.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("Cancel did not terminate the instance")
+	}
+
+	// A terminal state either way (a fast process may complete before Cancel
+	// lands); the point is Cancel is wired and the instance settles.
+	require.Contains(t,
+		[]instance.State{instance.Completed, instance.Terminated},
+		inst.State())
+}
+
 // getSnapshot creates a simple process with user_name property
 // StartEvent -> ServiceTask(print hello user_name) -> EndEvent
 // and retruns its Snapshot.
