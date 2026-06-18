@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
+	"github.com/dr-dobermann/gobpm/generated/mockflow"
 	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub/waiters"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -14,6 +15,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/stretchr/testify/require"
 )
@@ -61,7 +63,16 @@ func TestNewWaiter(t *testing.T) {
 	_, err = waiters.CreateWaiter(mockHub, ep, nil, enginert.Default())
 	requireClass(err, errs.EmptyNotAllowed)
 
-	// unknown trigger type (signal has no builder yet).
-	_, err = waiters.CreateWaiter(mockHub, ep, signalEDef, enginert.Default())
+	// signal is now supported (SRD-020): CreateWaiter builds a passive
+	// signalWaiter.
+	w, err := waiters.CreateWaiter(mockHub, ep, signalEDef, enginert.Default())
+	require.NoError(t, err)
+	require.NotNil(t, w)
+
+	// an unsupported trigger (conditional) still hits the default branch.
+	condEDef := mockflow.NewMockEventDefinition(t)
+	condEDef.EXPECT().Type().Return(flow.TriggerConditional).Maybe()
+	condEDef.EXPECT().ID().Return("cond-1").Maybe()
+	_, err = waiters.CreateWaiter(mockHub, ep, condEDef, enginert.Default())
 	requireClass(err, errs.ObjectNotFound)
 }

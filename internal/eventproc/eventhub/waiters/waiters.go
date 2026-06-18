@@ -44,12 +44,13 @@ func CreateWaiter(
 		err error
 	)
 
-	// NOTE: timer and message are the only catchable triggers with a waiter
-	// builder. Any future case added here (signal, conditional, …) MUST also
-	// give its EventDefinition a CloneForInstance method (see
-	// MessageEventDefinition / TimerEventDefinition), or concurrent instances
-	// waiting on it will share one waiter and a single occurrence will resume
-	// them all (the FIX-004 / SRD-017 per-instance-identity rule).
+	// NOTE: per-instance identity is by trigger semantics, not a blanket rule.
+	// A POINT-TO-POINT trigger (message, timer) MUST give its EventDefinition a
+	// CloneForInstance method so concurrent instances get distinct per-id waiters
+	// — else one occurrence resumes them all (the FIX-004 / SRD-017 rule). A
+	// BROADCAST trigger (signal) MUST NOT: catchers across instances share one
+	// eDef.ID() (no CloneForInstance) so a single throw fans out to all of them
+	// (ADR-006 §2.1, SRD-020). Choose by reach when adding a trigger.
 	switch eDef.Type() {
 	case flow.TriggerTimer:
 		w, err = NewTimeWaiter(eh, ep, eDef, "", rt)
@@ -59,6 +60,12 @@ func CreateWaiter(
 		// removes them after one fire). The persistent instance-starter waiter
 		// (SRD-015) is built on a dedicated path: CreatePersistentWaiter.
 		w, err = NewMessageWaiter(eh, ep, eDef, "", rt, true)
+
+	case flow.TriggerSignal:
+		// Signal: a passive broadcast waiter, fired by an in-process throw via
+		// EventHub.Process (no broker, no goroutine). Catchers share one waiter
+		// by shared eDef.ID() (SRD-020).
+		w, err = NewSignalWaiter(eh, ep, eDef, "", rt)
 
 	default:
 		err = errs.New(

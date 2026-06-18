@@ -66,14 +66,19 @@ SRD makes signals executable and turns the §2.4 contract into reality.
 
 ## 2. Decision
 
-- **Signal waiters are keyed by signal NAME, not `eDef.ID()`.** A single hub
-  waiter represents one signal name; every track catching that name registers as a
-  **processor** on it. The existing find-or-add-processor `registerWaiter` then
-  gives **broadcast for free**: a throw of name `X` fires every processor on the
-  `X` waiter — i.e. every catching track across every instance in reach
-  (ADR-006 §2.1 broadcast; §10.5.1). No `CloneForInstance` for signals (unlike
-  message/timer, *sharing one waiter is exactly the desired broadcast*, because the
-  waiter holds one processor per catching track).
+- **Broadcast falls out of shared eDef identity (no name index needed).** Signal
+  `EventDefinition`s have **no `CloneForInstance`**, so `Event.clone()`
+  (`events/event.go:161-167`) shares them **by reference** across per-instance
+  node-graph clones (ADR-009) via `cloneDefsForInstance` (`event.go:175-191`,
+  "definitions without the capability are shared by reference"). Every instance
+  catching the same modelled signal node therefore holds the **same `eDef.ID()`**,
+  so the existing find-or-add-processor `registerWaiter` lands all catchers on
+  **one** ID-keyed waiter as distinct processors, and a throw (`PropagateEvent` by
+  that id) fans `Process` out to all of them — **broadcast via the existing
+  registry**, no name index, no keying change. The clone-vs-share asymmetry in
+  `cloneDefsForInstance` already encodes it: message/timer clone → point-to-point
+  (the FIX-004 no-share rule); **signal shares → broadcast** (the deliberate
+  inverse). Signal therefore deliberately does **not** add `CloneForInstance`.
 - **A passive `signalWaiter`.** Unlike message (broker subscription) / timer
   (ticker), a signal has **no external source** — it is fired only by an in-process
   throw via `PropagateEvent`. So the signal waiter spawns **no service goroutine**;
@@ -84,20 +89,25 @@ SRD makes signals executable and turns the §2.4 contract into reality.
 - **No-waiter ⇒ logged no-op (closes §2.4).** `PropagateEvent` to an absent key is
   a debug-logged no-op, not an error — correct for a signal broadcast with no live
   catcher, harmless for any other kind.
-- **Catch is single-shot; the name waiter persists until empty.** An intermediate
-  catch consumes the signal once: on fire the track `unregisterEvent`s (removes its
-  processor); when the last processor leaves, the hub removes the name waiter (the
-  existing empty-waiter cleanup, `eventhub.go:397-398`). A later throw of the same
-  name with no current catcher is a no-op.
-- **Throw broadcasts by name.** Intermediate-throw and signal **end** events
-  propagate their `SignalEventDefinition`; the hub keys by name and fans out. Reach
+- **Catch is single-shot; the waiter persists until empty.** An intermediate catch
+  consumes the signal once: on fire the track `unregisterEvent`s (removes its
+  processor); when the last processor leaves, the hub removes the waiter. Because
+  the broadcast fan-out drives each catcher to self-unregister **during**
+  `Process`, the last unregister removes the now-empty waiter, so `PropagateEvent`'s
+  own post-`Process` empty-cleanup (`eventhub.go:397-398`) must **tolerate an
+  already-removed waiter** (a lock-check-delete, not a hard `RemoveWaiter` that
+  errors `ObjectNotFound`). This path is currently dead for message (its `Process`
+  errors) and timer (fires via `WaiterFired`), so signal is the first to exercise
+  it.
+- **Throw broadcasts.** Intermediate-throw and signal **end** events propagate
+  their `SignalEventDefinition`; the hub finds the shared-id waiter and fans out. Reach
   is **engine-wide** (every instance registered in the `Thresher`), **including the
   throwing instance's own catchers** — the single-process in-memory conformance
   target (§2.4).
 
 ```mermaid
 flowchart LR
-  TA[instance A: catch signal X] -->|register processor| W[(hub waiter key=signal:X)]
+  TA[instance A: catch signal X] -->|register processor| W[(one waiter: shared eDef id of X)]
   TB[instance B: catch signal X] -->|register processor| W
   THR[instance C: throw signal X] -->|PropagateEvent| W
   W -->|fan out, no correlation| TA
@@ -112,27 +122,33 @@ flowchart LR
   `flow.TriggerSignal` case. It is **passive** (no service goroutine): `Service`
   marks it `WSRunned` and leaves `Done()` closed; `Stop` marks it stopped; it never
   removes itself (§2.5).
-- **FR-2 — name keying.** Signal waiters register and propagate under a
-  **name-derived key** (the signal name), not `eDef.ID()`. A hub helper resolves
-  the registry key per event kind (signal → name; others → `eDef.ID()`), used
-  consistently by `registerWaiter`, `PropagateEvent`, and removal. Two instances
-  catching the same signal name share one waiter as two processors.
+- **FR-2 — shared-eDef-id broadcast (no keying change).** Signal
+  `EventDefinition`s deliberately have **no `CloneForInstance`**, so all instances
+  catching the same modelled signal node share one `eDef.ID()` (`Event.clone` →
+  `cloneDefsForInstance`, shared by reference). The existing `eDef.ID()`-keyed
+  `registerWaiter` find-or-add-processor then lands every catcher on one waiter as a
+  distinct processor — broadcast, with **no `waiterKey` and no change to
+  `registerWaiter`/`PropagateEvent`/`UnregisterEvent` keying**.
 - **FR-3 — broadcast fan-out.** `signalWaiter.Process(eDef)` delivers to **every**
   registered `EventProcessor` (each catching track), with no correlation filter; a
   per-processor delivery error is logged and does not abort the rest of the
   broadcast. Each delivered track resumes via the existing `track.ProcessEvent`
   path.
 - **FR-4 — no-waiter no-op (closes §2.4).** `EventHub.PropagateEvent` with no
-  registered waiter for the (name/ID) key is a **debug-logged no-op returning
-  `nil`**, replacing the current `ObjectNotFound` error (`eventhub.go:379-385`).
-- **FR-5 — single-shot catch.** An intermediate signal catch is consumed once: on
-  fire the track unregisters its processor (existing `track.ProcessEvent`
-  `unregisterEvent`); the name waiter is removed when its last processor leaves
-  (existing empty-waiter cleanup).
+  registered waiter for `eDef.ID()` is a **debug-logged no-op returning `nil`**,
+  replacing the current `ObjectNotFound` error (`eventhub.go:379-385`). **Landed in
+  M1.**
+- **FR-5 — single-shot catch + cleanup tolerance.** An intermediate signal catch is
+  consumed once: on fire the track unregisters its processor (existing
+  `track.ProcessEvent` `unregisterEvent`); the waiter is removed when its last
+  processor leaves. Since the broadcast fan-out makes catchers self-unregister
+  **during** `Process`, `PropagateEvent`'s post-`Process` empty-cleanup must
+  tolerate the waiter being **already removed** (lock-check-delete, not a hard
+  `RemoveWaiter`).
 - **FR-6 — signal throw.** Intermediate-throw and **signal end** events propagate a
   `SignalEventDefinition` through the existing throw path
   (`instance.PropagateEvent` → `Thresher.PropagateEvent` → `EventHub`); no new throw
-  plumbing — the hub's name keying does the broadcast.
+  plumbing — the shared-id waiter fans out.
 - **FR-7 — deferrals (documented, not built).** Signal **start** events
   (instantiating — extends ADR-015) and signal **boundary** events (boundary
   workstream) are out of scope; the catch path here is the intermediate **in-flow**
@@ -154,12 +170,16 @@ flowchart LR
 
 ## 5. Path analysis (alternatives)
 
-- **Name-keyed shared waiter (chosen) vs a parallel `map[name][]subscriber`
-  index.** Chosen: key signal waiters by name in the **existing** registry, so the
-  find-or-add-processor + fan-out + §2.5 ownership + empty-cleanup machinery is
-  reused unchanged — broadcast falls out of the multi-processor waiter that already
-  exists. Rejected the parallel index: it duplicates ownership/shutdown logic the
-  hub already has, and splits propagation into two code paths.
+- **Shared-eDef-id via the existing registry (chosen) vs name-keying vs a parallel
+  `map[name][]subscriber` index.** Chosen: rely on signal eDefs being shared by
+  reference across instance clones (no `CloneForInstance`), so all catchers share
+  one `eDef.ID()` and the existing `eDef.ID()`-keyed find-or-add-processor +
+  fan-out + §2.5 ownership + empty-cleanup machinery gives broadcast **with no
+  keying change at all**. Rejected name-keying (`waiterKey`): it would force
+  `registerWaiter`/`PropagateEvent`/`UnregisterEvent` (which takes `eDef.ID()`) onto
+  a name-derived key — extra threading for an asymmetry `cloneDefsForInstance`
+  already encodes. Rejected a parallel index: duplicates ownership/shutdown and
+  splits propagation into two paths.
 - **Passive waiter (chosen) vs a service goroutine that waits on a channel.**
   Chosen: a signal has no external source (it is fired by an in-process throw), so a
   goroutine would block on nothing and only complicate the §2.5 drain. A passive
@@ -169,9 +189,10 @@ flowchart LR
   message/timer.** Chosen: message/timer clone to a fresh per-instance ID so
   concurrent instances do **not** share a waiter (point-to-point — sharing was the
   FIX-004 broadcast bug). For signals the opposite is correct: catchers across
-  instances **should** all fire on one throw, so they **should** share the
-  name-keyed waiter as distinct processors. Rejected cloning: it would fragment the
-  broadcast into per-instance waiters a single throw can't reach.
+  instances **should** all fire on one throw, so they **should** share one waiter
+  as distinct processors — achieved precisely by *not* adding `CloneForInstance`
+  (`cloneDefsForInstance` then shares the eDef by reference). Rejected cloning: it
+  would fragment the broadcast into per-instance waiters a single throw can't reach.
 - **No-waiter no-op (chosen) vs keep the error / buffer the signal.** Chosen:
   logged no-op (ADR-006 §2.4) — a signal with no catcher is normal BPMN. Rejected
   the error (wrong for broadcast) and buffering (the hub is not a store; signals are
@@ -187,15 +208,18 @@ flowchart LR
 ```go
 // internal/eventproc/eventhub/waiters — new passive waiter:
 //   NewSignalWaiter(eh, ep, eDef, rt) (eventproc.EventWaiter, error)
-//   keyed by the signal name; Process fans out to all EventProcessors (no
-//   correlation); Service is a no-op (no goroutine); Done() is closed.
+//   Process fans out to all EventProcessors (no correlation); Service is a
+//   no-op (no goroutine); Done() is closed; never self-removes (§2.5).
 // waiters.CreateWaiter gains:
 //   case flow.TriggerSignal: w, err = NewSignalWaiter(eh, ep, eDef, rt)
 
-// internal/eventproc/eventhub/eventhub.go — name-vs-id keying + §2.4 no-op:
-//   func waiterKey(eDef flow.EventDefinition) string // signal -> name; else eDef.ID()
-//   registerWaiter / PropagateEvent / removal use waiterKey(eDef).
-//   PropagateEvent: absent key -> debug log + return nil (was ObjectNotFound).
+// internal/eventproc/eventhub/eventhub.go:
+//   PropagateEvent post-Process empty-cleanup tolerates an already-removed
+//   waiter (the broadcast fan-out self-unregisters its catchers). The §2.4
+//   no-waiter no-op landed in M1.
+// No keying change: signal eDefs share one eDef.ID() across instances
+// (cloneDefsForInstance shares by reference), so the existing eDef.ID()-keyed
+// registry broadcasts via find-or-add-processor.
 ```
 
 No new public `pkg/` surface: signals are authored with the existing

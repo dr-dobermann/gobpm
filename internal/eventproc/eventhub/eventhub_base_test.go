@@ -9,6 +9,7 @@ import (
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
 	"github.com/dr-dobermann/gobpm/generated/mockflow"
 	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub"
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/stretchr/testify/require"
 )
@@ -191,26 +192,44 @@ func TestPropagateEvent_BaseErrors(t *testing.T) {
 }
 
 // TestPropagateNoWaiterIsNoop is the ADR-006 §2.4 regression (SRD-020):
-// PropagateEvent to an absent key is a no-op returning nil for both a signal
-// and a non-signal trigger — correct for a signal thrown into the void
-// (BPMN §10.5.1), harmless for any other kind.
+// PropagateEvent with no catcher is a no-op returning nil — for a signal thrown
+// into the void (broadcast with zero subscribers, BPMN §10.5.1) and for a
+// non-signal trigger with no registered waiter.
 func TestPropagateNoWaiterIsNoop(t *testing.T) {
-	for _, trig := range []flow.EventTrigger{
-		flow.TriggerSignal, flow.TriggerMessage,
-	} {
-		t.Run(string(trig), func(t *testing.T) {
-			hub, err := eventhub.New(enginert.Default())
-			require.NoError(t, err)
+	startedHub := func(t *testing.T) *eventhub.EventHub {
+		t.Helper()
 
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			require.NoError(t, hub.Start(ctx))
+		hub, err := eventhub.New(enginert.Default())
+		require.NoError(t, err)
+		require.NoError(t, hub.Start(context.Background()))
 
-			eDef := mockflow.NewMockEventDefinition(t)
-			eDef.EXPECT().ID().Return("absent-" + string(trig)).Maybe()
-			eDef.EXPECT().Type().Return(trig).Maybe()
-
-			require.NoError(t, hub.PropagateEvent(ctx, eDef))
-		})
+		return hub
 	}
+
+	t.Run("signal broadcast with no catcher", func(t *testing.T) {
+		sig, err := events.NewSignal("GO", nil)
+		require.NoError(t, err)
+		def, err := events.NewSignalEventDefinition(sig)
+		require.NoError(t, err)
+
+		require.NoError(t, startedHub(t).PropagateEvent(context.Background(), def))
+	})
+
+	t.Run("non-signal with no waiter", func(t *testing.T) {
+		eDef := mockflow.NewMockEventDefinition(t)
+		eDef.EXPECT().ID().Return("absent").Maybe()
+		eDef.EXPECT().Type().Return(flow.TriggerMessage).Maybe()
+
+		require.NoError(t, startedHub(t).PropagateEvent(context.Background(), eDef))
+	})
+
+	// A TriggerSignal eDef that isn't a *events.SignalEventDefinition trips
+	// broadcastSignal's defensive type guard (real signals always are).
+	t.Run("signal-typed non-signal errors", func(t *testing.T) {
+		eDef := mockflow.NewMockEventDefinition(t)
+		eDef.EXPECT().ID().Return("bogus").Maybe()
+		eDef.EXPECT().Type().Return(flow.TriggerSignal).Maybe()
+
+		require.Error(t, startedHub(t).PropagateEvent(context.Background(), eDef))
+	})
 }

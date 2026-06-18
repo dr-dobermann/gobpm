@@ -18,6 +18,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub/waiters"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
@@ -390,6 +391,13 @@ func (eh *EventHub) PropagateEvent(
 			errs.C(errorClass, errs.InvalidState))
 	}
 
+	// A signal is a broadcast publication matched by NAME, not by the throw's
+	// eDef.ID() (throw and catch are distinct nodes — ADR-006 v.1 §2.1, SRD-020):
+	// fan out to every catcher of the same signal name.
+	if eDef.Type() == flow.TriggerSignal {
+		return eh.broadcastSignal(eDef)
+	}
+
 	eh.m.RLock()
 	w, ok := eh.waiters[eDef.ID()]
 	eh.m.RUnlock()
@@ -422,6 +430,61 @@ func (eh *EventHub) PropagateEvent(
 	}
 
 	return nil
+}
+
+// broadcastSignal delivers a thrown signal to every registered catcher of the
+// same signal name — the BPMN broadcast publication strategy (ADR-006 v.1 §2.1,
+// §10.5.1). It matches by name (not eDef.ID(): throw and catch are distinct
+// nodes), scanning the waiter registry. No catcher in reach is a logged no-op,
+// not an error (§2.4). Each fired catcher self-unregisters as it resumes
+// (track.ProcessEvent), so the hub removes the emptied waiters. The linear scan
+// is the simple name index; an O(1) name→subscribers map is the deferred §5
+// optimization.
+func (eh *EventHub) broadcastSignal(eDef flow.EventDefinition) error {
+	name, ok := signalName(eDef)
+	if !ok {
+		return errs.New(
+			errs.M("not a signal event definition"),
+			errs.C(errorClass, errs.TypeCastingError),
+			errs.D("event_definition_id", eDef.ID()))
+	}
+
+	eh.m.RLock()
+	targets := make([]eventproc.EventWaiter, 0, len(eh.waiters))
+	for _, w := range eh.waiters {
+		if n, isSig := signalName(w.EventDefinition()); isSig && n == name {
+			targets = append(targets, w)
+		}
+	}
+	eh.m.RUnlock()
+
+	if len(targets) == 0 {
+		eh.rt.Logger().Debug(
+			"signal thrown with no catcher in reach; ignored (no-op)",
+			"signal", name)
+
+		return nil
+	}
+
+	// Fan out off the lock: each delivery resumes a catcher's track, which
+	// self-unregisters (track.ProcessEvent) — that removal needs eh.m. Process
+	// is best-effort and never returns a delivery error (it logs per catcher).
+	for _, w := range targets {
+		_ = w.Process(eDef)
+	}
+
+	return nil
+}
+
+// signalName returns the signal name of a SignalEventDefinition, or ("", false)
+// for any other event definition.
+func signalName(eDef flow.EventDefinition) (string, bool) {
+	sig, ok := eDef.(*events.SignalEventDefinition)
+	if !ok || sig.Signal() == nil {
+		return "", false
+	}
+
+	return sig.Signal().Name(), true
 }
 
 // RemoveWaiter removes the waiter registered for eDefID from the
