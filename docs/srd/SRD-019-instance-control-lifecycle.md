@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-18 |
 | Owner | Ruslan Gabitov |
@@ -303,10 +303,57 @@ Internal support: `internal/instance` — `Run` derives `inst.cancel`; `Instance
 
 ## 10. Implementation summary
 
-> ⚠️ TODO: fill AFTER landing — commits, key files, V-results, deltas vs this draft.
+Landed on `feat/instance-control-lifecycle` (off `master`): four milestones,
+each a single commit, plus a tangential example enhancement.
+
+### 10.1 Milestones (commits)
+
+| M | Commit | Scope | Tests |
+|---|---|---|---|
+| M1 | `a35012a` | Instance cancel: `inst.cancel` derived in `Run`, `Instance.Cancel()`; `InstanceHandle.Cancel(ctx)` (request + ctx-bounded wait, idempotent); reserved `Suspend`/`Resume` → `ErrNotImplemented` | `TestInstanceHandleCancel`, `TestCancelCtxBounded`, `TestSuspendResumeReserved`, `TestInstanceCancel` (internal) |
+| M2 | `0c1ffab` | `EventHub.Shutdown(ctx)` waiter drain: `EventWaiter.Done()` + hub `Shutdown`; timer/message waiters close a `done` channel on goroutine exit; `started bool` replaced by a `hubState` enum | `TestEventHubShutdownDrainsWaiters` (-race), `TestShutdownRemovesOnStopError`, `TestShutdownCtxBounded`; waiter `Done()` checks in timer/message tests |
+| M3 | `75dcde6` | `Thresher.Shutdown(ctx)` + terminal `Stopped` state; `Run` derives `t.engineCancel` (the cascade master switch); guards in `Run`/`StartProcess`/`RegisterProcess` | `TestThresherShutdown`, `TestThresherShutdownCtxBounded` |
+| M4 | `f3ee4a3` | Discovery + release: `Instances(filter)`+`InstanceFilter`, `Forget(ids...)` (batch all-or-nothing), `Starters()`+`StarterInfo`; `UnregisterProcess` doc note | `TestInstancesFilter`, `TestForget`, `TestStarters`, `TestUnregisterProcessWithLiveInstance` |
+
+Plus `ba32f4e` — the basic example reads a property + `RUNTIME/STARTED_AT`
+through the gofunc's `DataReader` (split per the >80-line example rule);
+tangential to this SRD, bundled in this branch's example phase.
+
+### 10.2 Key files
+
+- `pkg/thresher/handle.go` — `Cancel`/`Suspend`/`Resume` + `ErrNotImplemented`.
+- `pkg/thresher/thresher.go` — `Stopped` state, `engineCancel`, `Shutdown`, guards.
+- `pkg/thresher/discovery.go` (new) — `InstanceFilter`, `Instances`, `Forget`, `StarterInfo`, `Starters`.
+- `internal/instance/instance.go` — `inst.cancel` + `Instance.Cancel()`.
+- `internal/eventproc/eventproc.go` — `EventWaiter.Done()` + `EventHub.Shutdown` on the interfaces.
+- `internal/eventproc/eventhub/eventhub.go` — `hubState` enum, `EventHub.Shutdown`, registration guard.
+- `internal/eventproc/eventhub/waiters/{timer,message}.go` — `done` channel + `Done()`.
+
+### 10.3 Verification
+
+- `make ci` green: tidy, lint (incl. fieldalignment), build, `-race`,
+  **diff-coverage 96.8% of 189 changed lines (≥95)**, govulncheck.
+- Touched-function coverage all ≥80% (most 100%; `Shutdown` 96%, `Run` 87%,
+  `RegisterProcess` 96%).
+- All 9 examples smoke-run exit 0.
+- NFR-2 (no waiter goroutine outlives the hub) proven under `-race`.
+
+### 10.4 Deltas vs the draft
+
+- **`StarterInfo` fields.** The draft first sketched `{ProcessID, Trigger, Manual}`;
+  shipped as `{ProcessID, StartNode, Trigger}` — a **manual-start process registers
+  no starter**, so a listed starter is always auto-start (no `Manual` field). §6/FR-7b
+  reconciled in `f3ee4a3`.
+- **Waiter-drain test names.** §7's single `TestShutdownDrainsWaiters` landed as
+  `TestEventHubShutdownDrainsWaiters` (real-timer `-race` drain) +
+  `TestShutdownRemovesOnStopError` (the Stop-error-still-removed half) +
+  `TestShutdownCtxBounded`; same coverage, split for clarity.
+- **EventHub lifecycle.** M2 replaced the `started bool` with a `hubState` enum
+  (`notStarted`/`started`/`stopped`) so the shutdown flag can't form an invalid
+  started-and-stopped combination — a small refinement beyond the draft.
 
 ## Document History
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-18 | Ruslan Gabitov | Draft. Lands the control + engine-lifecycle slice of ADR-013 v.1 (§2.3/§2.5) and realizes the open part of ADR-006 v.1 §2.5: `InstanceHandle.Cancel(ctx)` (instance self-cancel via a `Run`-derived `inst.cancel`, request + ctx-bounded wait, idempotent) + reserved `Suspend`/`Resume`; `Thresher.Shutdown(ctx)` (new terminal `Stopped` state, cancel + settle running instances, drain the hub); `EventHub.Shutdown(ctx)` (hub `sync.WaitGroup` over waiter `Service` goroutines, ctx-bounded wait, remove-even-on-`Stop`-error); `Thresher.Forget(ids ...string)` (batch, all-or-nothing release of terminal instances) + `Instances(filter)` discovery (one function, `InstancesAll`/`InstancesRunning`/`InstancesCompleted`) + `Starters() []StarterInfo` (event-start registrations, which have no instance yet) + `UnregisterProcess` documented (live instances keep running). Code-grounded against `pkg/thresher`, `internal/instance`, `internal/eventproc/eventhub`. Sibling of SRD-018 v.1 (observe). Implements ADR-013 v.1; realizes ADR-006 v.1 §2.5; refs ADR-001 v.5, ADR-002 v.2. |
+| v.1 | 2026-06-18 | Ruslan Gabitov | Accepted. Lands the control + engine-lifecycle slice of ADR-013 v.1 (§2.3/§2.5) and realizes the open part of ADR-006 v.1 §2.5: `InstanceHandle.Cancel(ctx)` (instance self-cancel via a `Run`-derived `inst.cancel`, request + ctx-bounded wait, idempotent) + reserved `Suspend`/`Resume`; `Thresher.Shutdown(ctx)` (new terminal `Stopped` state, cancel + settle running instances, drain the hub); `EventHub.Shutdown(ctx)` (hub `sync.WaitGroup` over waiter `Service` goroutines, ctx-bounded wait, remove-even-on-`Stop`-error); `Thresher.Forget(ids ...string)` (batch, all-or-nothing release of terminal instances) + `Instances(filter)` discovery (one function, `InstancesAll`/`InstancesRunning`/`InstancesCompleted`) + `Starters() []StarterInfo` (event-start registrations, which have no instance yet) + `UnregisterProcess` documented (live instances keep running). Code-grounded against `pkg/thresher`, `internal/instance`, `internal/eventproc/eventhub`. Sibling of SRD-018 v.1 (observe). Implements ADR-013 v.1; realizes ADR-006 v.1 §2.5; refs ADR-001 v.5, ADR-002 v.2. |
