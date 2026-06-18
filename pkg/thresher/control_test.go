@@ -114,3 +114,53 @@ func TestSuspendResumeReserved(t *testing.T) {
 	require.ErrorIs(t, h.Suspend(context.Background()), thresher.ErrNotImplemented)
 	require.ErrorIs(t, h.Resume(context.Background()), thresher.ErrNotImplemented)
 }
+
+// TestThresherShutdown verifies graceful shutdown cancels running instances,
+// flips to Stopped, drains the hub, then rejects further lifecycle ops, and is
+// idempotent (FR-4, FR-5, FR-6).
+func TestThresherShutdown(t *testing.T) {
+	proc := blockingProcess(t, "sd-graceful")
+	th, cancel := runEngine(t, proc)
+	defer cancel()
+
+	h, err := th.StartProcess(proc.ID())
+	require.NoError(t, err)
+
+	time.Sleep(150 * time.Millisecond) // reach the blocking op
+
+	sctx, sc := context.WithTimeout(context.Background(), 3*time.Second)
+	defer sc()
+	require.NoError(t, th.Shutdown(sctx))
+
+	require.Equal(t, thresher.Stopped, th.State())
+	require.Equal(t, thresher.StateTerminated, h.State())
+
+	// A stopped engine rejects further lifecycle operations.
+	_, err = th.StartProcess(proc.ID())
+	require.Error(t, err)
+	require.Error(t, th.RegisterProcess(blockingProcess(t, "sd-after")))
+	require.Error(t, th.Run(context.Background()))
+
+	// Idempotent.
+	require.NoError(t, th.Shutdown(sctx))
+}
+
+// TestThresherShutdownCtxBounded verifies Shutdown honours its ctx deadline when
+// an instance will not settle promptly (a ctx-ignoring sleep), returning an
+// error while still having flipped to Stopped (FR-4, NFR-3).
+func TestThresherShutdownCtxBounded(t *testing.T) {
+	proc := linearProcess(t, "sd-bound", 2*time.Second) // op ignores ctx
+	th, cancel := runEngine(t, proc)
+	defer cancel()
+
+	_, err := th.StartProcess(proc.ID())
+	require.NoError(t, err)
+
+	time.Sleep(150 * time.Millisecond)
+
+	sctx, sc := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer sc()
+
+	require.Error(t, th.Shutdown(sctx))
+	require.Equal(t, thresher.Stopped, th.State())
+}
