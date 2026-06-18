@@ -137,9 +137,10 @@ never a hidden per-node listener (ADR-013 §4, ADR-011).
 - **FR-7b — starter discovery.** `Thresher.Starters() []StarterInfo` lists the
   registered **event-start** registrations (the `starters` map) — each a process awaiting
   an event, with **no instance yet**, so they cannot appear under `Instances`.
-  `StarterInfo` is a read-only projection of the internal `instanceStarter` (the process
-  it would instantiate, the trigger event-definition it waits on, and the auto/manual
-  start mode); exact fields are pinned against `instanceStarter` at implementation.
+  `StarterInfo` is a read-only projection of the internal `instanceStarter`: the process
+  it would instantiate, the start node fired on a match, and the message it waits on. A
+  **manual-start** process registers no starter, so every listed starter is auto-start
+  (no `Manual` field needed).
 - **FR-8 — unregister with live instances.** `UnregisterProcess` (`thresher.go:450`)
   removes the definition + starters and **leaves any live instances running** (current
   behaviour, now documented); the per-process `snapshots` entry is freed.
@@ -222,11 +223,12 @@ const (
 func (t *Thresher) Instances(filter InstanceFilter) []string
 func (t *Thresher) Forget(ids ...string) error // batch, terminal-only, all-or-nothing
 
-// Event-start registrations (no instance yet) — fields pinned at implementation:
+// Event-start registrations (no instance yet). A manual-start process registers
+// no starter, so a listed starter is always auto-start (hence no Manual field).
 type StarterInfo struct {
 	ProcessID string // the process a matching event instantiates
-	Trigger   string // the event-definition it waits on (e.g. message name/id)
-	Manual    bool   // manual-start mode (auto-instantiation opted out)
+	StartNode string // the start node fired on a match
+	Trigger   string // the message the starter waits on
 }
 func (t *Thresher) Starters() []StarterInfo
 

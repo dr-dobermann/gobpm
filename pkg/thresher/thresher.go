@@ -509,7 +509,9 @@ func (t *Thresher) RegisterProcess(
 // UnregisterProcess removes a registered process: it tears down every
 // persistent instance-starter subscription registered for it and drops its
 // snapshot. It is the teardown counterpart of RegisterProcess (SRD-015 FR-2).
-// Running instances of the process are unaffected.
+// Running instances of the process are unaffected — they keep executing against
+// their already-built snapshot; release finished instances via Forget, or stop
+// everything via Shutdown (SRD-019 FR-8).
 func (t *Thresher) UnregisterProcess(processID string) error {
 	processID = strings.TrimSpace(processID)
 	if processID == "" {
