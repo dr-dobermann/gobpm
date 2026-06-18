@@ -2,13 +2,13 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
-| Date | 2026-06-14 |
+| Date | 2026-06-18 |
 | Owner | Ruslan Gabitov |
-| Refines | [ADR-002 v.1 Extension Architecture](ADR-002-extension-architecture.md) |
+| Refines | [ADR-002 v.2 Extension Architecture](ADR-002-extension-architecture.md) |
 
-> **Draft — not yet implemented.** Fixes the audit's finding 2.2 (the public API
+> Conception (Accepted); the implementing SRD lands it. Fixes the audit's finding 2.2 (the public API
 > is write-only): once a process starts, a host can learn **nothing** but what
 > leaks to logs/console. This ADR builds the **observation-and-control
 > mechanism** now — a public `InstanceHandle` (state, token movement, node
@@ -67,7 +67,7 @@ Two reasons not to wait:
 The legitimate worry (raised in review) is that our lifecycle states are **not
 yet standard-complete**: the instance lifecycle is partial (`Created → Active →
 Completed`, `Terminating → Terminated`; `Failing`/`Failed` and `Paused` deferred
-to future ADRs), and BPMN's **activity** lifecycle (§13.2.2:
+to future ADRs), and BPMN's **activity** lifecycle (§13.3.2:
 `Ready → Active → Completing → Completed`, `Withdrawn`/`Compensating`/…) is **not
 modelled at all**. Exposing a *frozen state enum* publicly now would churn the
 public API when those subsystems land.
@@ -102,8 +102,8 @@ host's window into one instance:
 - **Node execution progress** — which nodes are active and their progress
   (entered → executing → left), reported by the nodes themselves (§2.2).
 - **Data read** — process properties + runtime variables, **read-only**, via
-  SRD-011's public reader surface (the "observe from outside" ADR-010/011
-  deferred here).
+  the public read-only data reader (ADR-011 v.5 §2.6; the "observe from outside"
+  use case ADR-010/011 deferred here).
 - **`WaitCompletion(ctx)`** — block until the instance finishes or `ctx` is done;
   returns the terminal state + any error (replaces the examples' `done` channel).
 - **Control** — `Cancel(ctx)` now (drives `Terminating → Terminated`);
@@ -302,7 +302,7 @@ Advisory, not gating — for the implementing SRD(s):
 - [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) — the instance/track
   lifecycle whose states this ADR names per the standard and whose deferred
   states (`Failing`/`Paused`, §4.2 §9) the open vocabulary reserves slots for.
-- [ADR-002 v.1 Extension Architecture](ADR-002-extension-architecture.md) — the
+- [ADR-002 v.2 Extension Architecture](ADR-002-extension-architecture.md) — the
   engine-level extension catalogue (§4.2) observers register through; the §4.7
   public-API versioning this surface joins.
 - [ADR-006 v.1 Events & Subscriptions](ADR-006-events-and-subscriptions.md) — the
@@ -317,9 +317,9 @@ Advisory, not gating — for the implementing SRD(s):
   public-contract surface this handle/channel extend (concurrent sibling).
 - [ADR-014 v.1 Message Handling](ADR-014-message-handling.md) — SendTask/
   ReceiveTask report progress into this ADR's lifecycle channel.
-- BPMN 2.0 §13.2.2 (Activity lifecycle), process lifecycle — the state names this
-  ADR aligns to (and extends as subsystems land); digested in
-  `docs/bpmn-spec/state-machines/`.
+- BPMN 2.0 §13.3.2 (Activity lifecycle, spec p428–429) + §13.2/§13.5.6 (process
+  lifecycle) — the state names this ADR aligns to (and extends as subsystems
+  land); digested in `docs/bpmn-spec/state-machines/`.
 - Architecture audit 2026-06-11 (`docs/audit/architecture-audit-2026-06-11.md`) —
   finding 2.2 (write-only API; `Shutdown`/`UnregisterProcess`/snapshots leak);
   touches 2.5 (waiter lifecycle, ADR-006).
@@ -328,4 +328,4 @@ Advisory, not gating — for the implementing SRD(s):
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-14 | Ruslan Gabitov | Draft. Fixes audit 2.2 by building the observation-**and-control** mechanism: a public `InstanceHandle` (state, token movement, node execution progress, read-only data via SRD-011's reader, `WaitCompletion`, `Cancel` now / `Suspend`·`Resume` reserved), **one lifecycle channel that nodes/tasks publish progress into** (the seam future node/task work plugs into), and the engine lifecycle (`Shutdown`, `UnregisterProcess`, fixing the snapshots leak). Reconciles the unsettled-state concern: the **mechanism** is the stable contract while the **state/node vocabulary is named per the BPMN standard but kept an open set** — align names now, extend additively as `Failing`/`Paused`/`Compensating` subsystems land (no public-API churn; consumers forward-compatible). Observers are read-only over data/flow (no mutating listeners — hidden control, ADR-011); lifecycle control is coarse, explicit, engine-mediated. **Async delivery** (stdlib): best-effort lossy per-observer buffered channel + drain goroutine + non-blocking send + drop counter — the track never blocks on an observer; only terminal completion is a guaranteed, blockable signal (a closed `done` channel via `WaitCompletion`). Phased core: deferred lifecycle states/subsystems, fine-grained step control, waiter-shutdown mechanics (2.5 → ADR-006), persistence/history, and the Instance god-object split (2.3) are out of scope. Refines ADR-002 v.1; siblings ADR-001 v.5, ADR-006 v.1, ADR-010 v.2, ADR-011 v.5, ADR-012 v.1, ADR-014 v.1. |
+| v.1 | 2026-06-18 | Ruslan Gabitov | Accepted. Fixes audit 2.2 by building the observation-**and-control** mechanism: a public `InstanceHandle` (state, token movement, node execution progress, read-only data via the public reader (ADR-011 v.5), `WaitCompletion`, `Cancel` now / `Suspend`·`Resume` reserved), **one lifecycle channel that nodes/tasks publish progress into** (the seam future node/task work plugs into), and the engine lifecycle (`Shutdown`, `UnregisterProcess`, fixing the snapshots leak). Reconciles the unsettled-state concern: the **mechanism** is the stable contract while the **state/node vocabulary is named per the BPMN standard but kept an open set** — align names now, extend additively as `Failing`/`Paused`/`Compensating` subsystems land (no public-API churn; consumers forward-compatible). Observers are read-only over data/flow (no mutating listeners — hidden control, ADR-011); lifecycle control is coarse, explicit, engine-mediated. **Async delivery** (stdlib): best-effort lossy per-observer buffered channel + drain goroutine + non-blocking send + drop counter — the track never blocks on an observer; only terminal completion is a guaranteed, blockable signal (a closed `done` channel via `WaitCompletion`). Phased core: deferred lifecycle states/subsystems, fine-grained step control, waiter-shutdown mechanics (2.5 → ADR-006), persistence/history, and the Instance god-object split (2.3) are out of scope. Refines ADR-002 v.2; siblings ADR-001 v.5, ADR-006 v.1 (Accepted), ADR-010 v.2, ADR-011 v.5, ADR-012 v.1, ADR-014 v.1. Accepted at v.1 with pin/standard-claim corrections at acceptance: ADR-002 v.1→v.2; activity-lifecycle §13.2.2→§13.3.2 (the KB attributes it to §13.3.2, p428–429). Conception; implementation rides the SRD. |
