@@ -82,6 +82,7 @@ func (s State) String() string {
 type Instance struct {
 	startTime time.Time
 	ctx       context.Context
+	cancel    context.CancelFunc
 	engrenv.EngineRuntime
 	rr                  interactor.Registrator
 	parentEventProducer eventproc.EventProducer
@@ -571,7 +572,10 @@ func (inst *Instance) Run(
 			errs.D("current_state", inst.State()))
 	}
 
-	inst.ctx = ctx
+	// Derive the instance's own cancellable context so Cancel() can terminate it
+	// (SRD-019). The parent ctx (the engine's, via the Thresher) still cascades —
+	// canceling either drives the loop's ctx.Done() termination path.
+	inst.ctx, inst.cancel = context.WithCancel(ctx)
 	inst.startTime = inst.now()
 	inst.setState(Active)
 
@@ -579,9 +583,20 @@ func (inst *Instance) Run(
 	// loop, which becomes the sole owner of lifecycle state from here on.
 	initial := maps.Values(inst.tracks)
 
-	go inst.loop(ctx, initial)
+	go inst.loop(inst.ctx, initial)
 
 	return nil
+}
+
+// Cancel requests termination of the instance: it cancels the instance context,
+// which the loop observes (ctx.Done()) and walks Active → Terminating →
+// Terminated, withdrawing its tracks. Idempotent and non-blocking — a host that
+// wants to await the terminal state uses the InstanceHandle's Cancel/
+// WaitCompletion. Safe before Run (no-op until the context exists).
+func (inst *Instance) Cancel() {
+	if inst.cancel != nil {
+		inst.cancel()
+	}
 }
 
 // emit delivers a track event to the loop. It never blocks forever: once the

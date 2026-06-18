@@ -190,6 +190,14 @@ func TestTimeWaiter(t *testing.T) {
 			time.Sleep(3 * time.Second)
 			require.NoError(t, ws.Stop())
 			require.Equal(t, eventproc.WSStopped, ws.State())
+
+			// Done closes once the service goroutine has exited (SRD-019:
+			// EventHub.Shutdown drains waiters via this channel).
+			select {
+			case <-ws.Done():
+			case <-time.After(time.Second):
+				t.Fatal("timer waiter Done did not close after Stop")
+			}
 		})
 
 	t.Run("normal",

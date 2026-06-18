@@ -67,11 +67,14 @@ const (
 	Started
 	// Paused represents a thresher that has been paused.
 	Paused
+	// Stopped represents a thresher that has been gracefully shut down. It is
+	// terminal: a Stopped thresher rejects RegisterProcess/StartProcess/Run.
+	Stopped
 )
 
 // Validate checks State to be valid.
 func (s State) Validate() error {
-	if s > Paused {
+	if s > Stopped {
 		return errs.New(
 			errs.M("invalid thresher state %d", uint8(s)))
 	}
@@ -91,6 +94,7 @@ func (s State) String() string {
 		"NotStarted ",
 		"Started",
 		"Paused",
+		"Stopped",
 	}[s]
 }
 
@@ -103,16 +107,17 @@ type instanceReg struct {
 
 // Thresher represents the main BPMN process execution engine.
 type Thresher struct {
-	ctx       context.Context
-	cfg       thresherConfig
-	eventHub  eventproc.EventHub
-	snapshots map[string]*snapshot.Snapshot
-	instances map[string]instanceReg
-	starters  map[string][]*instanceStarter
-	seenKeys  map[string]struct{}
-	id        string
-	m         sync.Mutex
-	state     State
+	ctx          context.Context
+	engineCancel context.CancelFunc
+	cfg          thresherConfig
+	eventHub     eventproc.EventHub
+	snapshots    map[string]*snapshot.Snapshot
+	instances    map[string]instanceReg
+	starters     map[string][]*instanceStarter
+	seenKeys     map[string]struct{}
+	id           string
+	m            sync.Mutex
+	state        State
 }
 
 // New creates a new empty Thresher in NotStarted state. Engine-level extensions
@@ -257,7 +262,11 @@ func (t *Thresher) Run(ctx context.Context) error {
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	t.ctx = ctx
+	// Derive the engine's own cancellable context: Shutdown cancels it to
+	// cascade-terminate every instance (launched under t.ctx) and unblock the
+	// hub Run, without touching the caller's ctx (SRD-019). The caller canceling
+	// their ctx still propagates here.
+	t.ctx, t.engineCancel = context.WithCancel(ctx)
 
 	// Synchronously initialize the EventHub so that any subsequent
 	// RegisterEvent / UnregisterEvent / PropagateEvent call sees a fully
@@ -266,7 +275,7 @@ func (t *Thresher) Run(ctx context.Context) error {
 	// FIX-001 for the race this replaces (previously the hub was spun up
 	// in a goroutine guarded only by a 1ms sleep, which is not a memory
 	// barrier under the Go memory model).
-	if err := t.eventHub.Start(ctx); err != nil {
+	if err := t.eventHub.Start(t.ctx); err != nil {
 		return errs.New(
 			errs.M("couldn't start eventHub"),
 			errs.C(errorClass, errs.OperationFailed),
@@ -274,7 +283,7 @@ func (t *Thresher) Run(ctx context.Context) error {
 	}
 
 	go func() {
-		_ = t.eventHub.Run(ctx)
+		_ = t.eventHub.Run(t.ctx)
 	}()
 
 	err := t.UpdateState(Started)
@@ -296,6 +305,53 @@ func (t *Thresher) Run(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// Shutdown gracefully stops the engine (ADR-013 §2.5): it flips to the terminal
+// Stopped state (rejecting further RegisterProcess/StartProcess/Run), cancels
+// the engine context — which cascade-terminates every running instance and
+// unblocks the hub Run — waits (bounded by ctx) for each instance to reach a
+// terminal state, then drains the EventHub's waiters (EventHub.Shutdown,
+// realizing ADR-006 §2.5). Idempotent; returns ctx.Err() if the deadline hits
+// before all instances settle.
+func (t *Thresher) Shutdown(ctx context.Context) error {
+	t.m.Lock()
+	if t.state == Stopped {
+		t.m.Unlock()
+
+		return nil
+	}
+
+	t.state = Stopped
+
+	regs := make([]instanceReg, 0, len(t.instances))
+	for _, r := range t.instances {
+		regs = append(regs, r)
+	}
+
+	cancel := t.engineCancel
+	t.m.Unlock()
+
+	// Cancel the engine context: every instance (launched under t.ctx) observes
+	// it and walks to Terminated; the hub Run unblocks.
+	if cancel != nil {
+		cancel()
+	}
+
+	// Settle each running instance, bounded by ctx.
+	for _, r := range regs {
+		select {
+		case <-r.inst.Done():
+		case <-ctx.Done():
+			return errs.New(
+				errs.M("thresher shutdown timed out before instances settled"),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(ctx.Err()))
+		}
+	}
+
+	// Drain the event machinery: stop waiters and wait for their goroutines.
+	return t.eventHub.Shutdown(ctx)
 }
 
 // ------------------ EventProducer interface ----------------------------------
@@ -393,6 +449,13 @@ func (t *Thresher) RegisterProcess(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
+	if st := t.State(); st == Stopped {
+		return errs.New(
+			errs.M("thresher is shut down; process registration rejected"),
+			errs.C(errorClass, errs.InvalidState),
+			errs.D("current_state", st.String()))
+	}
+
 	var rc registerConfig
 	for _, o := range opts {
 		if err := o(&rc); err != nil {
@@ -446,7 +509,9 @@ func (t *Thresher) RegisterProcess(
 // UnregisterProcess removes a registered process: it tears down every
 // persistent instance-starter subscription registered for it and drops its
 // snapshot. It is the teardown counterpart of RegisterProcess (SRD-015 FR-2).
-// Running instances of the process are unaffected.
+// Running instances of the process are unaffected — they keep executing against
+// their already-built snapshot; release finished instances via Forget, or stop
+// everything via Shutdown (SRD-019 FR-8).
 func (t *Thresher) UnregisterProcess(processID string) error {
 	processID = strings.TrimSpace(processID)
 	if processID == "" {

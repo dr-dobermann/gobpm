@@ -5,8 +5,16 @@ import (
 	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/instance"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
+
+// ErrNotImplemented marks a control operation that is part of the stable handle
+// contract but not yet implemented — Suspend/Resume await the Paused subsystem
+// (ADR-013 §2.3, SRD-019).
+var ErrNotImplemented = errs.New(
+	errs.M("operation reserved, not yet implemented"),
+	errs.C(errorClass, errs.OperationFailed))
 
 // InstanceHandle is a read-only window onto one running process instance
 // (SRD-018, ADR-013 §2.1). It is returned by StartProcess and found by
@@ -98,6 +106,31 @@ func (h *InstanceHandle) WaitCompletion(
 	case <-ctx.Done():
 		return h.State(), ctx.Err()
 	}
+}
+
+// Cancel requests termination of the instance and blocks until it reaches a
+// terminal state (Completed/Terminated) or ctx is done, returning the observed
+// state (+ ctx.Err() on timeout). Coarse, engine-mediated control (ADR-013 §2.3):
+// it drives the instance's ctx-cancel cascade, never a back door. Idempotent — a
+// second call, or Cancel of an already-terminal instance, returns the terminal
+// state at once.
+func (h *InstanceHandle) Cancel(ctx context.Context) (InstanceState, error) {
+	h.inst.Cancel()
+
+	return h.WaitCompletion(ctx)
+}
+
+// Suspend is reserved (ADR-013 §2.3): pausing token movement needs the deferred
+// Paused subsystem. The method exists so the control contract is stable; it
+// returns ErrNotImplemented until that subsystem lands.
+func (h *InstanceHandle) Suspend(_ context.Context) error {
+	return ErrNotImplemented
+}
+
+// Resume is reserved (ADR-013 §2.3) — the counterpart of Suspend; returns
+// ErrNotImplemented until the Paused subsystem lands.
+func (h *InstanceHandle) Resume(_ context.Context) error {
+	return ErrNotImplemented
 }
 
 // InstanceState is the standard-named, OPEN instance lifecycle vocabulary
