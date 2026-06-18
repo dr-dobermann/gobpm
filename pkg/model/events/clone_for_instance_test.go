@@ -1,14 +1,69 @@
 package events_test
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/stretchr/testify/require"
 )
+
+// newTimerEDef builds a date-only TimerEventDefinition for the clone tests.
+func newTimerEDef(t *testing.T) *events.TimerEventDefinition {
+	t.Helper()
+
+	return events.MustTimerEventDefinition(
+		goexpr.Must(nil,
+			data.MustItemDefinition(
+				values.NewVariable(time.Now().Add(time.Second))),
+			func(_ context.Context, _ data.Source) (data.Value, error) {
+				return values.NewVariable(time.Now().Add(time.Second)), nil
+			}),
+		nil, nil)
+}
+
+// TestTimerEventDefinitionCloneForInstance verifies CloneForInstance yields a
+// fresh id on each call (FIX-004) while sharing the timer expression by
+// reference.
+func TestTimerEventDefinitionCloneForInstance(t *testing.T) {
+	data.CreateDefaultStates()
+
+	ted := newTimerEDef(t)
+
+	c1 := ted.CloneForInstance()
+	c2 := ted.CloneForInstance()
+
+	require.NotEqual(t, ted.ID(), c1.ID(), "clone must have a fresh id")
+	require.NotEqual(t, c1.ID(), c2.ID(), "each clone must have a distinct id")
+
+	// the immutable timer expression is shared by reference, not copied.
+	require.Same(t, ted.Time(), c1.(*events.TimerEventDefinition).Time(),
+		"timer expression must be shared with the template")
+}
+
+// TestTimerReceiverPerInstanceClone verifies that cloning a timer-catch node
+// gives each clone a distinct timer-eDef id, so concurrent instances register
+// distinct EventHub waiters (no shared-waiter broadcast — FIX-004).
+func TestTimerReceiverPerInstanceClone(t *testing.T) {
+	data.CreateDefaultStates()
+
+	ted := newTimerEDef(t)
+
+	start, err := events.NewStartEvent("start", events.WithTimerTrigger(ted))
+	require.NoError(t, err)
+
+	id1 := start.Clone().(flow.EventNode).Definitions()[0].ID()
+	id2 := start.Clone().(flow.EventNode).Definitions()[0].ID()
+
+	require.NotEqual(t, ted.ID(), id1, "cloned timer eDef must have a fresh id")
+	require.NotEqual(t, id1, id2, "two instances must get distinct timer eDef ids")
+}
 
 // TestMessageEventDefinitionCloneForInstance verifies CloneForInstance yields a
 // fresh id on each call (SRD-017 §4.3) while sharing the message by reference.
