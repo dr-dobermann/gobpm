@@ -252,7 +252,7 @@ func (i *Instance) loop(ctx context.Context, initial []*track) {
 - [SAD-001 v.1 Vision & Architecture](SAD-001-vision-and-architecture.md) — §6 Quality Attributes; §10 Execution Model (этот ADR уточняет); §13 Distribution & Scale (предварительно).
 - [docs/bpmn-spec/state-machines/activity-lifecycle.md](../bpmn-spec/state-machines/activity-lifecycle.md), [process-lifecycle.md](../bpmn-spec/state-machines/process-lifecycle.md) — нормативные жизненные циклы.
 - [docs/bpmn-spec/semantics/token-flow.md](../bpmn-spec/semantics/token-flow.md), [gateways.md](../bpmn-spec/semantics/gateways.md), [end-events.md](../bpmn-spec/semantics/end-events.md) — семантика fork/join/завершения.
-- [ADR-005 v.1 Gateways & Joins](ADR-005-gateways-and-joins.md), [ADR-006 v.1 Events & Subscriptions](ADR-006-events-and-subscriptions.md), [ADR-007 v.1 In-Memory Long Waits](ADR-007-in-memory-long-waits.md) — концерны, уточняющие это ядро (см. §9).
+- [ADR-005 v.2 Gateways & Joins](ADR-005-gateways-and-joins.md), [ADR-006 v.1 Events & Subscriptions](ADR-006-events-and-subscriptions.md), [ADR-007 v.1 In-Memory Long Waits](ADR-007-in-memory-long-waits.md) — концерны, уточняющие это ядро (см. §9).
 - **Persistence & State ADR** (будет написан) — политика чекпойнтов, контракт состояния на узел, долговечность длинных ожиданий, восстановление после рестарта, состояние Scope/таймера/компенсации/ошибок/активности. Зависит от интерфейса `Repository` ([ADR-002 v.1 Extension Architecture](ADR-002-extension-architecture.md)).
 - Существующий код: `internal/instance/instance.go`, `track.go`, `token.go` — рантайм, который формализует этот ADR (тип token убран; event loop; жизненный цикл приведён).
 

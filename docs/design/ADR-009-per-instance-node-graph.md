@@ -26,7 +26,7 @@ and tracks, and explicitly **defers** per-node mutable runtime state to a future
 That question is now on the critical path. Several elements need **per-instance,
 per-node** runtime state *while the instance runs*:
 
-- a **synchronizing gateway** (ADR-005 v.1) must accumulate which incoming flows
+- a **synchronizing gateway** (ADR-005 v.2) must accumulate which incoming flows
   have delivered a token, **per join node, per instance**;
 - a **timer** node must hold its position/next-fire;
 - a **catch/receive** node must hold its message/signal subscription.

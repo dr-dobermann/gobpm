@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-19 |
 | Owner | Ruslan Gabitov |
@@ -194,7 +194,7 @@ No new public engine surface; processes author gateways with the existing
   (non-synchronizing pass-through), the Inclusive OR-join is §2.10 (SRD-022).
 - [ADR-001 v.5](../design/ADR-001-execution-model.md) — the fork mechanic
   (`Exec → checkFlows → spawn`) the splits feed.
-- [ADR-010 v.1](../design/ADR-010-process-data-model.md) — the per-execution data
+- [ADR-010 v.2](../design/ADR-010-process-data-model.md) — the per-execution data
   the conditions read (`re` data source).
 - References up/sideways, version-pinned; no downward refs (ADR-005 does not cite
   SRD-021).
@@ -215,10 +215,44 @@ No new public engine surface; processes author gateways with the existing
 
 ## 10. Implementation summary
 
-> ⚠️ TODO: fill AFTER landing — commits, key files, V-results, deltas vs this draft.
+Landed on `feat/routing-gateways` (off `master`): three milestones.
+
+### 10.1 Commits
+
+| M | Commit | Scope | Tests |
+|---|---|---|---|
+| doc | `186b6e4` | SRD-021 draft | — |
+| M1 | `3d95610` | Exclusive split → §2.8: first-true short-circuit, direction-aware pass-through, explicit default-exclusion; `checkCondition` moved to the base `Gateway` | `TestExclusiveGatewayExec` (first-true overlap, pass-through, default, exception, non-bool, eval-error) |
+| M2 | `754c128` | New `InclusiveGateway` — diverging `Exec` forks the true subset (§2.9); `NodeExecutor`, not `SynchronizingJoin` | `TestInclusiveSplitSubset`, `TestInclusiveConvergingUnsupported`, `TestNewInclusiveGateway`, `TestInclusiveGatewayClone` |
+| M3 | `2cec625` | Engine-level routing tests + `examples/gateway-routing` | `TestExclusiveRoutingEndToEnd`, `TestInclusiveSplitEndToEnd` |
+
+### 10.2 Key files
+
+- `pkg/model/gateways/gateway.go` — shared `checkCondition` (ExpressionEngine-backed, bool-typed).
+- `pkg/model/gateways/exclusive.go` — `Exec` reconciled to §2.8 (first-true, pass-through, default-exclusion, exception).
+- `pkg/model/gateways/inclusive.go` (new) — `InclusiveGateway` split (true subset); not `SynchronizingJoin`.
+- `pkg/thresher/gateway_routing_test.go` (new) — end-to-end XOR/OR routing.
+- `examples/gateway-routing/` (new) — data-based XOR branch.
+
+### 10.3 Verification
+
+- `make ci` green: lint, build, `-race`, **diff-coverage 100% of 97 changed lines
+  (≥95)**, govulncheck. Touched gateway functions 100%.
+- All 11 examples smoke-run exit 0.
+- Conditions evaluate at runtime via the `execEnv`'s `ExpressionEngine` + data
+  `Find` — verified no wiring change was needed.
+
+### 10.4 Deltas vs the draft
+
+- **Default-flow exclusion made explicit.** The Exclusive/Inclusive `Exec` skips
+  the default flow by identity (`of == defaultFlow`) rather than relying on it
+  being conditionless — caught in M1 review; the §2.8/§2.9 selection rule is
+  unchanged.
+- The runtime wiring (`execEnv` → ExpressionEngine/Find) already existed, so M3
+  was tests + example only — no engine change.
 
 ## Document History
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-19 | Ruslan Gabitov | Draft. Lands the data-based routing **splits** of ADR-005 v.2: reconciles `ExclusiveGateway.Exec` to §2.8 (**first-true short-circuit** replacing collect-all/error-on-overlap; **direction-aware pass-through** fixing the broken converging merge; default/exception kept) and adds a new `InclusiveGateway` whose diverging `Exec` forks the **true subset** (§2.9), with `checkCondition` factored to the base `Gateway` for both. Gateway conditional + default sequence flows exercised end-to-end; task-level conditional flows (#51) stay out of scope (tasks still fork all outgoing, ADR-005 §2.7) — separate work reusing this SRD's condition helper. The Inclusive **OR-join** (§2.10) is excluded — sibling SRD-022 — so `InclusiveGateway` implements `NodeExecutor` but not `SynchronizingJoin`; a converging Inclusive gateway is unsupported until then. Code-grounded against `pkg/model/gateways` (gateway.go/exclusive.go/parallel.go), `pkg/model/flow` (sequenceflow.go), `internal/instance` (track.go executeNode/checkFlows). Implements ADR-005 v.2 §2.8/§2.9; refs ADR-001 v.5, ADR-010 v.1. |
+| v.1 | 2026-06-19 | Ruslan Gabitov | Accepted. Lands the data-based routing **splits** of ADR-005 v.2: reconciles `ExclusiveGateway.Exec` to §2.8 (**first-true short-circuit** replacing collect-all/error-on-overlap; **direction-aware pass-through** fixing the broken converging merge; default/exception kept) and adds a new `InclusiveGateway` whose diverging `Exec` forks the **true subset** (§2.9), with `checkCondition` factored to the base `Gateway` for both. Gateway conditional + default sequence flows exercised end-to-end; task-level conditional flows (#51) stay out of scope (tasks still fork all outgoing, ADR-005 §2.7) — separate work reusing this SRD's condition helper. The Inclusive **OR-join** (§2.10) is excluded — sibling SRD-022 — so `InclusiveGateway` implements `NodeExecutor` but not `SynchronizingJoin`; a converging Inclusive gateway is unsupported until then. Code-grounded against `pkg/model/gateways` (gateway.go/exclusive.go/parallel.go), `pkg/model/flow` (sequenceflow.go), `internal/instance` (track.go executeNode/checkFlows). Implements ADR-005 v.2 §2.8/§2.9; refs ADR-001 v.5, ADR-010 v.2. |
