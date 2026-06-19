@@ -217,16 +217,112 @@ func TestInclusiveSplitSubset(t *testing.T) {
 		})
 }
 
-// TestInclusiveConvergingUnsupported documents that the Inclusive gateway is
-// split-only here: it must NOT satisfy exec.SynchronizingJoin until the OR-join
-// lands (SRD-022).
-func TestInclusiveConvergingUnsupported(t *testing.T) {
+// TestInclusiveIsReachabilityJoin asserts the converging Inclusive gateway is a
+// reachability-based synchronizing join (SRD-022 — replaces the SRD-021-era
+// "unsupported" assertion).
+func TestInclusiveIsReachabilityJoin(t *testing.T) {
 	ig, err := gateways.NewInclusiveGateway()
 	require.NoError(t, err)
 
-	_, ok := any(ig).(exec.SynchronizingJoin)
-	require.False(t, ok,
-		"InclusiveGateway must not implement SynchronizingJoin until SRD-022")
+	_, ok := any(ig).(exec.ReachabilityJoin)
+	require.True(t, ok,
+		"converging InclusiveGateway must be an exec.ReachabilityJoin (SRD-022)")
+}
+
+// stubChecker is a hand-written exec.FlowChecker for the OR-join unit tests.
+type stubChecker struct {
+	reachable []*flow.SequenceFlow
+	err       error
+}
+
+func (s stubChecker) CheckFlows(
+	_ flow.Node, _ []*flow.SequenceFlow,
+) ([]*flow.SequenceFlow, error) {
+	return s.reachable, s.err
+}
+
+// convergingOR builds an InclusiveGateway with n incoming flows and returns it
+// with those flows (in order).
+func convergingOR(t *testing.T, n int) (*gateways.InclusiveGateway, []*flow.SequenceFlow) {
+	t.Helper()
+
+	ig, err := gateways.NewInclusiveGateway()
+	require.NoError(t, err)
+
+	for _, src := range getDummyNodes(n) {
+		_, err := flow.Link(src, ig)
+		require.NoError(t, err)
+	}
+
+	return ig, ig.Incoming()
+}
+
+func TestORJoinArriveAllMarked(t *testing.T) {
+	ig, flows := convergingOR(t, 2)
+
+	complete, merged := ig.Arrive(flows[0].ID(), "t1")
+	require.False(t, complete)
+	require.Nil(t, merged)
+
+	// the second (last) arrival marks every flow → fire; survivor is the live
+	// arriving track (last-in), t1 is merged.
+	complete, merged = ig.Arrive(flows[1].ID(), "t2")
+	require.True(t, complete)
+	require.Equal(t, []string{"t1"}, merged)
+
+	// already fired → a further arrival is a no-op.
+	complete, _ = ig.Arrive(flows[0].ID(), "t3")
+	require.False(t, complete)
+}
+
+func TestORJoinArriveParks(t *testing.T) {
+	ig, flows := convergingOR(t, 3)
+
+	complete, merged := ig.Arrive(flows[0].ID(), "t1")
+	require.False(t, complete)
+	require.Nil(t, merged)
+
+	// a duplicate arrival on the same flow is ignored (still parked).
+	complete, _ = ig.Arrive(flows[0].ID(), "t1")
+	require.False(t, complete)
+}
+
+func TestORJoinRecheckFiresFirstIn(t *testing.T) {
+	ig, flows := convergingOR(t, 3)
+
+	ig.Arrive(flows[0].ID(), "t1")
+	ig.Arrive(flows[1].ID(), "t2") // 2 of 3 marked → parked
+
+	// the remaining flow is unreachable → fire; survivor is the earliest arrival
+	// (first-in, t1), the rest are merged.
+	complete, survivor, merged := ig.Recheck(stubChecker{reachable: nil})
+	require.True(t, complete)
+	require.Equal(t, "t1", survivor)
+	require.Equal(t, []string{"t2"}, merged)
+
+	// already fired → a further recheck is a no-op.
+	complete, _, _ = ig.Recheck(stubChecker{reachable: nil})
+	require.False(t, complete)
+}
+
+func TestORJoinRecheckNotComplete(t *testing.T) {
+	ig, flows := convergingOR(t, 3)
+	ig.Arrive(flows[0].ID(), "t1") // parked; f2, f3 un-marked
+
+	// an un-marked flow is still reachable → not complete.
+	complete, _, _ := ig.Recheck(
+		stubChecker{reachable: []*flow.SequenceFlow{flows[2]}})
+	require.False(t, complete)
+
+	// a reachability error is treated conservatively → not complete.
+	complete, _, _ = ig.Recheck(
+		stubChecker{err: errs.New(errs.M("boom"), errs.C("test", errs.OperationFailed))})
+	require.False(t, complete)
+
+	// no arrival yet (empty order) → not complete.
+	idle, _ := convergingOR(t, 2)
+	complete, _, _ = idle.Recheck(stubChecker{})
+	require.False(t, complete)
 }
 
 // TestInclusiveGatewayClone exercises the per-instance Clone + Node accessors.

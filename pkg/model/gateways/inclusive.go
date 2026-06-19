@@ -3,6 +3,7 @@ package gateways
 
 import (
 	"context"
+	"sync"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
@@ -13,13 +14,20 @@ import (
 
 // InclusiveGateway represents a BPMN inclusive (OR) gateway.
 //
-// This type implements the inclusive **split** (ADR-005 v.2 §2.9): a diverging
-// gateway forks every outgoing flow whose condition is true. It deliberately
-// does NOT implement exec.SynchronizingJoin — the inclusive **OR-join** (§2.10,
-// the synchronizing merge) is a separate landing (SRD-022); a converging
-// Inclusive gateway is unsupported until then.
+// Diverging, it implements the inclusive **split** (ADR-005 v.2 §2.9): it forks
+// every outgoing flow whose condition is true. Converging, it is the inclusive
+// **OR-join** (§2.10) — a reachability-based exec.ReachabilityJoin: it owns its
+// per-instance arrival state under its own mutex (ADR-005 §2.4 / ADR-009), and
+// the instance loop supplies reachability via an exec.FlowChecker, re-checking
+// the join when a token parks at it and on every token death. Completion is
+// count-only on Arrive (every incoming flow marked) or reachability-based on
+// Recheck (no live token can still reach an un-marked incoming flow).
 type InclusiveGateway struct {
+	order   []string
+	arrived map[string]string
 	Gateway
+	mu    sync.Mutex
+	fired bool
 }
 
 // NewInclusiveGateway creates a new InclusiveGateway.
@@ -41,17 +49,20 @@ func NewInclusiveGateway(opts ...options.Option) (*InclusiveGateway, error) {
 
 	return &InclusiveGateway{
 			Gateway: *g,
+			arrived: map[string]string{},
 		},
 		nil
 }
 
 // Clone returns a per-instance copy of the InclusiveGateway: the embedded
 // Gateway is cloned (direction and default flow shared by reference, fresh
-// shell). The gateway holds no execution data — condition evaluation reads
-// variables through the per-execution environment (ADR-010 §2.4).
+// shell) and the synchronizing-join state (mutex, arrival table, order log,
+// fired flag) starts fresh (ADR-009). Condition evaluation reads variables
+// through the per-execution environment (ADR-010 §2.4).
 func (ig *InclusiveGateway) Clone() flow.Node {
 	return &InclusiveGateway{
 		Gateway: ig.clone(),
+		arrived: map[string]string{},
 	}
 }
 
@@ -129,9 +140,94 @@ func (ig *InclusiveGateway) Exec(
 	return flows, nil
 }
 
+// Arrive records that arrivingTrackID reached the join on incomingFlowID and
+// reports completion via the **count fast path** only: the join completes when
+// every incoming flow has delivered a token (the live arriving track is then the
+// survivor — last-in — and merged holds the other arrived tracks). A subset
+// arrival is recorded and parks (returns false, nil); the reachability decision
+// for a subset is the loop's, via Recheck. Atomic under the gateway's own mutex.
+func (ig *InclusiveGateway) Arrive(
+	incomingFlowID, arrivingTrackID string,
+) (complete bool, merged []string) {
+	ig.mu.Lock()
+	defer ig.mu.Unlock()
+
+	if ig.fired {
+		return false, nil
+	}
+
+	if _, seen := ig.arrived[incomingFlowID]; !seen {
+		ig.arrived[incomingFlowID] = arrivingTrackID
+		ig.order = append(ig.order, arrivingTrackID)
+	}
+
+	if len(ig.arrived) < len(ig.Incoming()) {
+		return false, nil
+	}
+
+	ig.fired = true
+
+	return true, absorb(ig.order, arrivingTrackID)
+}
+
+// Recheck re-evaluates a parked OR-join without a new arrival (the loop calls it
+// when a token parks at the join and on every token death). It asks fc whether
+// any un-marked incoming flow is still reachable; when none is — and at least one
+// token has arrived — the join fires with the earliest arrival as survivor
+// (first-in) and the rest merged. A reachability error is treated conservatively
+// (not complete — wait). Atomic under the gateway's own mutex.
+func (ig *InclusiveGateway) Recheck(
+	fc exec.FlowChecker,
+) (complete bool, survivor string, merged []string) {
+	ig.mu.Lock()
+	defer ig.mu.Unlock()
+
+	if ig.fired || len(ig.order) == 0 {
+		return false, "", nil
+	}
+
+	if unmarked := ig.unmarkedFlows(); len(unmarked) > 0 {
+		reachable, err := fc.CheckFlows(ig, unmarked)
+		if err != nil || len(reachable) > 0 {
+			return false, "", nil
+		}
+	}
+
+	ig.fired = true
+	survivor = ig.order[0]
+
+	return true, survivor, absorb(ig.order, survivor)
+}
+
+// unmarkedFlows returns the incoming flows that have not yet delivered a token.
+func (ig *InclusiveGateway) unmarkedFlows() []*flow.SequenceFlow {
+	var unmarked []*flow.SequenceFlow
+
+	for _, in := range ig.Incoming() {
+		if _, marked := ig.arrived[in.ID()]; !marked {
+			unmarked = append(unmarked, in)
+		}
+	}
+
+	return unmarked
+}
+
+// absorb returns every track id in order except the survivor.
+func absorb(order []string, survivor string) []string {
+	var merged []string
+
+	for _, id := range order {
+		if id != survivor {
+			merged = append(merged, id)
+		}
+	}
+
+	return merged
+}
+
 // ----------------------------------------------------------------------------
 
 // interface check
 var (
-	_ exec.NodeExecutor = (*InclusiveGateway)(nil)
+	_ exec.ReachabilityJoin = (*InclusiveGateway)(nil)
 )
