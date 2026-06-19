@@ -3,8 +3,7 @@ package flow
 import (
 	"errors"
 	"fmt"
-
-	"golang.org/x/exp/maps"
+	"slices"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -94,8 +93,13 @@ type Node interface {
 // ============================================================================
 
 // BaseNode provides base functionality of all Nodes as sequence flows holder.
+//
+// flows are held per direction in a declaration-ordered slice, so
+// Incoming()/Outgoing() return them in the order they were added — the gateway
+// routing rules (Exclusive first-true §2.8, Inclusive subset §2.9) depend on that
+// stable order (BPMN §13.4.2).
 type BaseNode struct {
-	flows map[data.Direction]map[string]*SequenceFlow
+	flows map[data.Direction][]*SequenceFlow
 	BaseElement
 }
 
@@ -113,7 +117,7 @@ func NewBaseNode(name string, baseOpts ...options.Option) (*BaseNode, error) {
 
 	return &BaseNode{
 			BaseElement: *fe,
-			flows:       map[data.Direction]map[string]*SequenceFlow{},
+			flows:       map[data.Direction][]*SequenceFlow{},
 		},
 		nil
 }
@@ -126,23 +130,32 @@ func NewBaseNode(name string, baseOpts ...options.Option) (*BaseNode, error) {
 func (fn *BaseNode) CloneShell() BaseNode {
 	return BaseNode{
 		BaseElement: fn.cloneIdentity(),
-		flows:       map[data.Direction]map[string]*SequenceFlow{},
+		flows:       map[data.Direction][]*SequenceFlow{},
 	}
 }
 
 // --------------------- Node interface ----------------------------------------
 
-// Incoming returns all the BaseNode's incoming flows.
+// Incoming returns the BaseNode's incoming flows in declaration order.
 func (fn *BaseNode) Incoming() []*SequenceFlow {
-	return maps.Values(fn.flows[data.Input])
+	return fn.ordered(data.Input)
 }
 
-// Outgoing returns all the BaseNodes outgoing flows.
+// Outgoing returns the BaseNode's outgoing flows in declaration order.
 func (fn *BaseNode) Outgoing() []*SequenceFlow {
-	return maps.Values(fn.flows[data.Output])
+	return fn.ordered(data.Output)
 }
 
-// AddFlow adds new SequenceFlow to the BaseNode n.
+// ordered returns a copy of the direction's flows, already in the order they
+// were added — the gateway first-true/subset rules rely on this being stable
+// (BPMN §13.4.2). The copy keeps the internal slice unexposed.
+func (fn *BaseNode) ordered(dir data.Direction) []*SequenceFlow {
+	return slices.Clone(fn.flows[dir])
+}
+
+// AddFlow adds a SequenceFlow to the BaseNode in direction dir, appending it in
+// declaration order. Re-adding the same flow id overwrites in place (keeping its
+// position) rather than duplicating it.
 func (fn *BaseNode) AddFlow(sf *SequenceFlow, dir data.Direction) error {
 	if sf == nil {
 		return errs.New(
@@ -154,11 +167,15 @@ func (fn *BaseNode) AddFlow(sf *SequenceFlow, dir data.Direction) error {
 		return err
 	}
 
-	if _, ok := fn.flows[dir]; !ok {
-		fn.flows[dir] = map[string]*SequenceFlow{}
+	for i, f := range fn.flows[dir] {
+		if f.ID() == sf.ID() {
+			fn.flows[dir][i] = sf
+
+			return nil
+		}
 	}
 
-	fn.flows[dir][sf.ID()] = sf
+	fn.flows[dir] = append(fn.flows[dir], sf)
 
 	return nil
 }
