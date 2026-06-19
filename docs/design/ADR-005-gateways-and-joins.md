@@ -16,9 +16,9 @@
 > two-tier, re-evaluated-on-token-death** realization of the standard's
 > synchronizing merge (§2.10).
 >
-> **Implementation status.** Parallel (SRD-005), the Exclusive split, and the
-> Inclusive split (SRD-021) are implemented. The Inclusive **OR-join** (§2.10) is
-> conception-ahead — its reachability + re-evaluation machinery lands in SRD-022.
+> **Implementation status.** Parallel, the Exclusive and Inclusive splits, and the
+> Inclusive **OR-join** (§2.10) — including its backward-reachability completion and
+> death-trigger re-evaluation — are all implemented (with the accompanying SRDs).
 
 ## 1. Context
 
@@ -342,6 +342,30 @@ one token per marked incoming flow, evaluates all outgoing conditions and forks
 the true subset (default/exception per §2.9) — a §2.10 join immediately followed
 by a §2.9 split on the survivor.
 
+The diamond, and the decision the join makes on every arrival and every death:
+
+```mermaid
+flowchart LR
+    s((start)) --> S{OR-split}
+    S -->|cond| A[branch A]
+    S -->|cond| B[branch B]
+    S -->|cond| C[branch C]
+    A --> J{OR-join}
+    B --> J
+    C --> J
+    J --> e((end))
+```
+
+```mermaid
+flowchart TD
+    ev[a token arrives at the join,<br/>or any token dies] --> mark[mark the arriving flow, if any]
+    mark --> allq{every incoming<br/>flow marked?}
+    allq -->|yes| fire([FIRE: merge once, then split the outgoing])
+    allq -->|no| reach{can any live token still reach<br/>an un-marked incoming flow?<br/>backward over the static graph,<br/>conditions ignored, cycle-guarded}
+    reach -->|yes| wait([wait — keep the arrivals parked])
+    reach -->|no| fire
+```
+
 **Engine realization (gobpm choice — conservative, two-tier, re-evaluated on token
 death).** The spec's refinement clause is rarely material; gobpm realizes the
 practical, conservative form Camunda 7 proves out (internal analysis: *Camunda 7 —
@@ -350,7 +374,10 @@ Inclusive Gateway join*), with one deliberate improvement over it:
 - **Two-tier activation.** *Fast path* — a token has arrived on **every** incoming
   flow → fire, no analysis. *Slow path* — a **reachability** test over the static
   per-instance node graph (ADR-009): if **no** active track can still reach an
-  un-marked incoming flow of the join, fire; otherwise wait. The DFS is
+  un-marked incoming flow of the join, fire; otherwise wait. Concretely it walks
+  **backward** from each un-marked incoming flow toward the start — that flow is
+  still reachable if a live token sits anywhere on its backward closure (the walk
+  short-circuits on the first one and never crosses the join). The walk is
   **cycle-guarded** (a visited-set, so cyclic models can't hang the decision) and
   **ignores flow conditions** (a token's future condition outcomes are unknowable
   at decision time, so it is treated as able to traverse any structural path). This
@@ -371,13 +398,44 @@ Inclusive Gateway join*), with one deliberate improvement over it:
   the instance's **active-track positions** (supplied by the loop) — the node still
   owns the *decision*, it just consults a wider marking than Parallel's local count.
 
-**Firing & the survivor.** Like Parallel (§2.4), an **arrival** that completes the
-join is the **survivor** — it rides the completing arrival, consumes the marked
-tokens, then executes and forks (§2.9). The **death-triggered** firing has no
-arrival to ride: the loop, having found the join can now fire, **promotes one
-awaiting track to survivor** and resumes flow from the join. (Parallel never fires
-from the loop; the OR-join's death-trigger is the one path that does — the concrete
-resume mechanic is the OR-join SRD's.)
+**Park-and-resume.** This is the one capability a plain (Parallel) join does not
+need. A Parallel arrival either completes the join (and continues) or ends; nothing
+waits to be woken. An OR-join can complete with **no further arrival** (the death
+case), so a token that arrives but cannot yet complete the join must **park** — it
+suspends in place, still counted as a live token holding its position, neither
+ended nor absorbed — until the engine's re-check settles its fate. The engine
+re-checks an awaiting join on **two triggers**: every later **arrival** at it, and
+every **token death** anywhere. When the check completes the join the engine wakes
+the parked tokens: one **resumes** as the survivor, the rest are **consumed**
+(merged). A token already **in transit onto** the join (on an incoming flow but not
+yet registered) is an imminent arrival and **defers** firing until it registers —
+so a sibling about to mark a flow is never raced into a premature fire.
+
+```mermaid
+sequenceDiagram
+    participant T as arriving token
+    participant J as OR-join
+    participant E as engine loop
+    T->>J: arrive — mark this incoming flow
+    alt completes now (all marked, or nothing reachable)
+        J-->>T: continue as survivor (last-in)
+    else must wait
+        T-->>J: park (suspend; still a live token)
+        Note over E: re-check on every later arrival AND every token death
+        E->>J: a death left no live token able to reach an un-marked flow
+        J-->>T: resume as survivor (first-in); the rest are consumed
+    end
+```
+
+**Firing & the survivor.** An **arrival** that completes the join is the
+**survivor** — the completing arrival (**last-in**) continues straight on, consumes
+the marked tokens, then executes and forks the outgoing subset (§2.9), exactly like
+Parallel. A **death-triggered** firing has no arrival to ride, so the engine
+**promotes the earliest-arrived parked token** (**first-in**) as the survivor and
+resumes it; the rest are consumed. (Which parked token survives is immaterial to
+the result — one token leaves the join either way — so it falls out of the
+mechanism: last-in on an arrival, first-in on a death. Parallel never fires from
+the loop; the OR-join's death-trigger is the one place the engine does.)
 
 **Scope.** Acyclic, single-pass (§4): each incoming flow is marked once; loop
 re-arming is deferred. The Complex gateway reuses this reachability test (§4).
@@ -483,4 +541,4 @@ re-arming is deferred. The Complex gateway reuses this reachability test (§4).
 |---|---|---|---|
 | v.1 | 2026-06-09 | Ruslan Gabitov | Authored in full for the **Parallel (AND) gateway** (split + synchronizing join), landed with its accompanying SRD. Decisions: per-type gateway behaviour (no central type switch); Parallel split produces a token on every outgoing flow; **synchronization is owned by the synchronizing node** — it holds its per-instance arrival state ([ADR-009 v.1](ADR-009-per-instance-node-graph.md), Accepted), the completion rule, and a **per-node mutex** that makes a concurrent `Arrive` atomic; a non-completing arrival enters the intermediate **`AwaitingMerge`** state and its goroutine returns (the track object is retained as a record, instance notified via `evAwaiting`); the **completing arrival** is the survivor — it first completes the join (declares the absorbed track ids via `evMerged`; the loop flips each to `Merged`) **before** executing the node, then executes and forks; the survivor's creation lineage is left intact (convergence is recorded by the absorbed tracks' own terminal `Consumed` entries, not by re-parenting the survivor); the loop keeps only awaiting/ended bookkeeping. The **node-execution contract collapses to a single Execute** — the prologue/epilogue hooks are removed and their concerns (subscription → ADR-006; interaction registration → the task's Execute) relocated. Inclusive/Complex/Event-Based and loops/excess tokens are deferred (§4); the non-synchronizing-merge shared-node race is **resolved by ADR-009**. Supersedes the v.1 Draft seed and an interim loop-serialized/verdict-channel draft (rejected once ADR-009 made the node own its state — §5). Refines pin ADR-001 v.5. |
 | v.1 | 2026-06-11 | Ruslan Gabitov | **Accepted**, landed via SRD-005 v.1. Two contract details settled during implementation and folded back into §2.4/§2.7: the node's `Arrive` exchanges **track ids** (not `*track`/`any`), keeping the model-layer node free of the runtime type; and the merge does **not** fold the absorbed tracks into the survivor's lineage — a token at a join has many predecessors but a token records one parent, so convergence is carried by the absorbed tracks' own terminal `Consumed` entries (folding produced a cyclic parent edge). Refines pin ADR-001 v.5. |
-| v.2 | 2026-06-19 | Ruslan Gabitov | Draft. Completes the **routing-gateway** conception with three new sections. **§2.8 Exclusive (XOR) split** — data-based exclusive choice (§13.4.2, Table 13.2): conditions in declared order, **first-true** (short-circuit), **default** when none, **instance failure** when none + no default; counterpart of §2.2 (Parallel = all) returning exactly one → §2.7 fork with no `spawn`; XOR merge was already the non-sync pass-through (§2.3/§2.7). **§2.9 Inclusive (OR) split** — fork the conditionally-**true subset** (≥1), default/exception as XOR (§13.4.3). **§2.10 Inclusive (OR) join** — the synchronizing merge (WCP-7, §13.4.3/Table 13.3): a **non-local** completion rule realized as gobpm's **conservative, two-tier** form (fast path = all incoming marked; slow path = condition-ignoring, cycle-guarded **reachability** DFS over the ADR-009 static graph — fire when no active track can still reach an un-marked incoming flow), **re-evaluated on token death as well as arrival** (the loop re-checks awaiting OR-joins on any track end/cancel/merge and can itself fire the join by promoting an awaiting track to survivor) — deliberately fixing Camunda 7's arrival-only deviation that hangs an OR-join when the awaited branch is interrupted; per-incoming-flow marking; ownership/mutex stay §2.4. Conservative variant chosen over the spec refinement clause (rarely material, errs only toward waiting). Implementation sliced: **XOR + OR-split first, OR-join its own SRD**; evaluation/reachability mechanics delegated to those SRDs (code-grounded). Answers the v.1 OR-join open question (§7); Complex/Event-Based and loop re-arming remain deferred (§4). Standard-grounded against `bpmn-spec/semantics/gateways.md` §13.4.2/§13.4.3; OR-join informed by the internal Camunda 7 OR-join analysis (§6). Refines pin ADR-001 v.5. **Accepted** with SRD-021 landing the Exclusive + Inclusive splits; the OR-join (§2.10) is conception-ahead, pending SRD-022. |
+| v.2 | 2026-06-19 | Ruslan Gabitov | Accepted. Completes the **routing-gateway** conception with three new sections. **§2.8 Exclusive (XOR) split** — data-based exclusive choice (§13.4.2, Table 13.2): conditions in declared order, **first-true** (short-circuit), **default** when none, **instance failure** when none + no default; counterpart of §2.2 (Parallel = all) returning exactly one → §2.7 fork with no `spawn`; XOR merge was already the non-sync pass-through (§2.3/§2.7). **§2.9 Inclusive (OR) split** — fork the conditionally-**true subset** (≥1), default/exception as XOR (§13.4.3). **§2.10 Inclusive (OR) join** — the synchronizing merge (WCP-7, §13.4.3/Table 13.3): a **non-local** completion rule realized as gobpm's **conservative, two-tier** form (fast path = all incoming marked; slow path = condition-ignoring, cycle-guarded **reachability** DFS over the ADR-009 static graph — fire when no active track can still reach an un-marked incoming flow), **re-evaluated on token death as well as arrival** (the loop re-checks awaiting OR-joins on any track end/cancel/merge and can itself fire the join by promoting an awaiting track to survivor) — deliberately fixing Camunda 7's arrival-only deviation that hangs an OR-join when the awaited branch is interrupted; per-incoming-flow marking; ownership/mutex stay §2.4. Conservative variant chosen over the spec refinement clause (rarely material, errs only toward waiting). Implementation sliced: **XOR + OR-split first, OR-join its own SRD**; evaluation/reachability mechanics delegated to those SRDs (code-grounded). Answers the v.1 OR-join open question (§7); Complex/Event-Based and loop re-arming remain deferred (§4). Standard-grounded against `bpmn-spec/semantics/gateways.md` §13.4.2/§13.4.3; OR-join informed by the internal Camunda 7 OR-join analysis (§6). Refines pin ADR-001 v.5. The Exclusive/Inclusive splits and the OR-join (§2.10) all land in this change-set. |

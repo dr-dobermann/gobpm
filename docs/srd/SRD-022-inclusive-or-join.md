@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-19 |
 | Owner | Ruslan Gabitov |
@@ -355,7 +355,57 @@ populate it.
 
 ## 10. Implementation summary
 
-> ⚠️ TODO: fill AFTER landing — commits, key files, V-results, deltas vs this draft.
+Landed on `feat/routing-gateways` (off `master`): five milestones + a prerequisite fix.
+
+### 10.1 Commits
+
+| M | Commit | Scope |
+|---|---|---|
+| doc | `c294f7d` | SRD-022 draft |
+| M1 | `e2f2fbe` | `exec.FlowChecker`/`ReachabilityJoin` contracts + `Instance.CheckFlows` (backward reachability) |
+| M2 | `b54edef` | `InclusiveGateway` = `ReachabilityJoin` (count-only `Arrive` + `Recheck` + arrival log) |
+| M3 | `a1901f4` | merge edge `MergedInto` (FR-8) via the shared `applyMerged` + thresher projection |
+| M4 | `8b93970` | loop integration — block-and-signal park/resume, `evParked` + death-recheck |
+| M5 | `6ce573e` | `examples/inclusive-join` + in-package OR-join coverage tests |
+
+Prerequisite: **FIX-005** (`76ea19b` / `36f3864`) — deterministic declaration-order
+flows (the first-true / subset rules depend on it).
+
+### 10.2 Key files
+
+- `pkg/exec/exec.go` — `FlowChecker`, `ReachabilityJoin` (`Arrive` unchanged; Parallel untouched).
+- `pkg/model/gateways/inclusive.go` — the OR-join surface (`Arrive`/`Recheck`, arrival table + order log).
+- `internal/instance/reachability.go` — `CheckFlows` backward walk + `occupiedNodes` (by position).
+- `internal/instance/track.go` — `TrackAwaitSync`, `parkCh`, the `synchronize` block.
+- `internal/instance/instance.go` — `recheckJoin`/`recheckAwaitingJoins`/`fireOrJoin`/`hasInTransitArrival`; loop `evParked` + death-recheck.
+- `internal/instance/token.go` + `pkg/thresher/handle.go` — `MergedInto`.
+- `examples/inclusive-join/` — the OR diamond.
+
+### 10.3 Verification
+
+- `make ci` green: lint, build, `-race`, diff-coverage **97.6%** (≥95), govulncheck.
+- All 12 examples smoke-run exit 0.
+- OR-join tests pass under `-race`: untaken-branch fires with **zero deaths**;
+  death-triggered fires via the **death-recheck** (the Camunda-7 anti-hang); at the
+  thresher (`TestORJoinUntakenBranch`/`DeathTriggered`) and in-package
+  (`TestORJoinUntakenInstance`/`DeathInstance`) levels; model-unit
+  (`TestORJoinArriveAllMarked`/`ArriveParks`/`RecheckFiresFirstIn`/`RecheckNotComplete`,
+  `TestInclusiveIsReachabilityJoin`); reachability (`TestCheckFlows*`/`TestReachesOccupied`);
+  merge edge (`TestMergedIntoRecorded`).
+
+### 10.4 Deltas vs the draft
+
+- **Parking pivoted from re-spawn to block-and-signal.** The draft re-spawned the
+  survivor; during M4 it became real parking — the goroutine blocks on a resume
+  channel mid-`run()` and continues naturally on a signal. §2/§6 were rewritten.
+- **Two reachability races fixed in M4:** `occupiedNodes` reads actual track
+  positions (a freshly forked sibling has no recorded history yet), and the new
+  `hasInTransitArrival` guard defers firing while a token is mid-arrival onto the
+  join — both were genuine premature-fire hangs caught under test.
+- **Cancel-while-parked** (`synchronize` `ctx.Done`) is a no-leak path covered
+  structurally by the `select`; a dedicated test is a small follow-up.
+- Some §7 test names drifted during landing (e.g. `…RecheckPrunesAndFires` →
+  `…RecheckFiresFirstIn`); §10.3 lists the actual names.
 
 ## Open questions
 

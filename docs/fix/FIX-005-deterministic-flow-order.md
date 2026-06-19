@@ -1,7 +1,7 @@
 # FIX-005 «Non-deterministic Outgoing/Incoming order makes the Exclusive first-true split random»
 
 **Type:** FIX (one-shot bug-fix; not rewritten after landing).
-**Status:** Draft v.1 (2026-06-19, branch `feat/routing-gateways`, not yet implemented).
+**Status:** Accepted v.1 (2026-06-19, branch `feat/routing-gateways`, implemented).
 **Date:** 2026-06-19.
 **Author:** Ruslan Gabitov.
 **Branch:** `feat/routing-gateways` (lands with the gateway routing it makes conformant — SRD-021/SRD-022; same PR. The first-true Exclusive split is only correct once flow order is deterministic).
@@ -158,7 +158,23 @@ Single-commit revert of `node.go` (+ test).
 
 ## §8 Implementation summary (stage-by-stage actual landings + deltas vs draft)
 
-> ⚠️ TODO: fill AFTER landing.
+### §8.1 Stages by commit (branch `feat/routing-gateways`)
+
+| Stage | Commit | Scope |
+|---|---|---|
+| doc | `76ea19b` | FIX-005 |
+| fix | `36f3864` | `BaseNode.flows` → a per-direction declaration-ordered slice; `AddFlow` appends/overwrites-in-place; `Incoming`/`Outgoing` return `slices.Clone`; `maps` import dropped. `TestBaseNodeFlowOrder`. |
+
+### §8.2 Empirical findings — where reality diverged from the §3 draft
+
+**Single ordered slice, not map+order.** The §3.1 draft first chose a map plus a
+parallel order slice (option B); on review that was redundant (two structures to
+sync, plus a per-flow map lookup in `Outgoing`). It was reworked to a single
+`map[Direction][]*SequenceFlow` before landing — `ordered` is one `slices.Clone`.
+§3.1/§3.2 were corrected to reflect this.
+
+**Result.** `first_true_wins_on_overlap` went from 6/30 flaky to 0/50;
+`make ci` green (diff-coverage 100% on the touched lines).
 
 ## §9 Open questions
 
