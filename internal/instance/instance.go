@@ -24,6 +24,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/interactor"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -682,6 +683,7 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 
 			case evEnded:
 				active--
+				inst.recheckAwaitingJoins()
 
 			case evAwaiting:
 				// the track reached a synchronizing join, did not complete it,
@@ -691,6 +693,14 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 
 			case evMerged:
 				inst.applyMerged(ev)
+				inst.recheckAwaitingJoins()
+
+			case evParked:
+				// the track blocked at a reachability join — its goroutine is
+				// alive, so active is unchanged. Recheck the join: a branch that
+				// was never taken can already be unreachable (it fires now, with
+				// no token death).
+				inst.recheckJoin(ev.track.currentStep().node)
 			}
 		}
 	}
@@ -747,6 +757,90 @@ func (inst *Instance) applyMerged(ev trackEvent) {
 			m.updateState(TrackMerged)
 		}
 	}
+}
+
+// recheckAwaitingJoins re-evaluates every reachability join currently holding a
+// parked (AwaitSync) track — the death-trigger: a token death can make an
+// un-marked incoming flow unreachable and fire a join that has no further arrival
+// to ride (SRD-022 §2.10, fixing Camunda 7's arrival-only hang). Called only from
+// loop() on a track end / merge.
+func (inst *Instance) recheckAwaitingJoins() {
+	seen := map[string]bool{}
+
+	for _, t := range inst.tracks {
+		if !t.inState(TrackAwaitSync) {
+			continue
+		}
+
+		node := t.currentStep().node
+		if seen[node.ID()] {
+			continue
+		}
+
+		seen[node.ID()] = true
+		inst.recheckJoin(node)
+	}
+}
+
+// hasInTransitArrival reports whether a live token sits on node but has not yet
+// parked there — a track whose position is node (moved by checkFlows) but which
+// has not reached synchronize's Arrive. Such an imminent arrival must not be
+// raced by a reachability fire. Called only from loop().
+func (inst *Instance) hasInTransitArrival(node flow.Node) bool {
+	for _, t := range inst.tracks {
+		if t.currentStep().node.ID() == node.ID() &&
+			!t.inState(TrackAwaitSync, TrackMerged,
+				TrackEnded, TrackCanceled, TrackFailed) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// recheckJoin re-evaluates a parked reachability join (OR-join) against the live
+// token positions and fires it when no un-marked incoming flow can still receive
+// a token (SRD-022 §2.10). Called only from loop().
+func (inst *Instance) recheckJoin(node flow.Node) {
+	rj, ok := node.(exec.ReachabilityJoin)
+	if !ok {
+		return
+	}
+
+	// An imminent arrival — a live token already on the join node but not yet
+	// parked (between checkFlows moving its position and synchronize's Arrive) —
+	// is invisible to the backward reachability (it sits at the excluded join)
+	// and is not yet marked. Defer: it will re-trigger this recheck via its own
+	// evParked once it parks.
+	if inst.hasInTransitArrival(node) {
+		return
+	}
+
+	if complete, survivor, merged := rj.Recheck(inst); complete {
+		inst.fireOrJoin(survivor, merged)
+	}
+}
+
+// fireOrJoin completes a reachability join: the absorbed tracks are flipped to
+// Merged (recording the merge edge, FR-8), then every parked track is signaled —
+// the survivor's blocked goroutine resumes into the node, the merged ones return.
+// parkCh is buffered(1), so the signal never blocks the loop. Called only from
+// loop().
+func (inst *Instance) fireOrJoin(survivorID string, merged []string) {
+	survivor := inst.tracks[survivorID]
+	if survivor == nil {
+		return
+	}
+
+	inst.applyMerged(trackEvent{track: survivor, mergedIDs: merged})
+
+	for _, id := range merged {
+		if m := inst.tracks[id]; m != nil {
+			m.parkCh <- struct{}{}
+		}
+	}
+
+	survivor.parkCh <- struct{}{}
 }
 
 // addToSnap appends a track to the lock-free tracks snapshot (copy-on-write).

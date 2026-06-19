@@ -102,10 +102,11 @@ type stepUpdate struct {
 func tokenStateFor(ts trackState) TokenState {
 	switch ts {
 	case TrackCreated, TrackReady, TrackExecutingStep,
-		TrackProcessStepResults, TrackAwaitingMerge:
+		TrackProcessStepResults, TrackAwaitingMerge, TrackAwaitSync:
 		// Created: a freshly created track already holds a position (its
 		// start node), so its token is Alive (ADR-001 §6) — not Invalid.
-		// AwaitingMerge: the token still sits at the join, not yet consumed.
+		// AwaitingMerge/AwaitSync: the token still sits at the join, not yet
+		// consumed (AwaitSync may yet resume as the survivor).
 		return TokenAlive
 
 	case TrackWaitForEvent:

@@ -103,8 +103,8 @@ func positionToken(t *testing.T, inst *Instance, node flow.Node) {
 	tr, err := newTrack(node, inst, nil)
 	require.NoError(t, err)
 
-	tr.updateState(TrackWaitForEvent)
-	inst.addToSnap(tr)
+	// occupiedNodes walks the loop-owned tracks map by position.
+	inst.tracks[tr.ID()] = tr
 }
 
 func newDiamondInstance(t *testing.T, p *process.Process) *Instance {
@@ -117,6 +117,10 @@ func newDiamondInstance(t *testing.T, p *process.Process) *Instance {
 
 	inst, err := New(s, scope.EmptyDataPath, enginert.Default(), ep, nil)
 	require.NoError(t, err)
+
+	// occupiedNodes walks inst.tracks by position; start from a clean set so each
+	// test controls exactly which tokens are live (positionToken adds them).
+	inst.tracks = map[string]*track{}
 
 	return inst
 }

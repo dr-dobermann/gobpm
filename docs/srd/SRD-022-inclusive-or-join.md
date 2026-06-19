@@ -97,16 +97,23 @@ join** (ADR-005 §2.10):
   2. **Any token dies** (end / cancel / merge) → `Recheck` **every node that holds
      `AwaitSync` tracks** — a death can vacate the last live token on a backward path.
   So `AwaitSync` **is** the death-recheck registry; no separate structure.
-- **Park-and-resume (the new primitive).** A non-completing arrival's goroutine
-  returns with the track in **`AwaitSync`**. When a `Recheck` completes the join, the
-  loop **re-spawns** one parked track to resume flow from the join (run `Exec` →
-  outgoing subset → fork) and flips the rest to `Merged`. Parallel never re-spawns.
+- **Park-and-resume — real parking (block-and-signal).** A non-completing arrival
+  **suspends its goroutine mid-`run()`**: it sets `TrackAwaitSync`, emits `evParked`
+  (so the loop knows to recheck the node), and **blocks** on a per-track resume
+  channel (`select`-ing on `ctx.Done()` so termination unblocks it cleanly). The
+  goroutine stays **alive and counted active** — so the loop never completes the
+  instance out from under a parked track, and there is no re-spawn. When a `Recheck`
+  completes the join, the loop flips the absorbed tracks to `Merged` and **signals
+  every parked track's channel**: the survivor's goroutine resumes `run()` straight
+  into the node's `Exec` (the §2.9 split → fork, continuing with its own id); the
+  merged goroutines observe `Merged` and return. Parallel keeps its return-based
+  `AwaitingMerge` (its absorbed tracks never resume).
 - **Survivor — falls out of the mechanism.** An **arrival** that completes the join
   keeps its live/just-parked track (*last-in*); a **death** that completes it has no
-  arrival, so the loop re-spawns the **earliest-parked** track (*first-in*). No
+  arrival, so the loop resumes the **earliest-parked** track (*first-in*). No
   candidate bookkeeping.
 - **`AwaitSync` track state.** Distinct from `AwaitingMerge` (always doomed to
-  `Merged`): an `AwaitSync` track has two fates — `AwaitSync → Alive` (re-spawned
+  `Merged`): an `AwaitSync` track has two fates — `AwaitSync → Alive` (resumed
   survivor) or `AwaitSync → Merged` (absorbed). It still **projects a live token**
   (like `AwaitingMerge`), so it stays in the set the backward walk consults — a parked
   token may resume and reach a downstream flow. What the walk excludes is the **checked
@@ -114,7 +121,7 @@ join** (ADR-005 §2.10):
   downstream of every un-marked flow's backward path, so it is harmless anyway.
 - **Contract.** `SynchronizingJoin.Arrive` is **unchanged**; a new instance-side
   `FlowChecker` carries reachability; a minimal `ReachabilityJoin` adds `Recheck(fc)`.
-  Parallel implements only `SynchronizingJoin` and is never rechecked/re-spawned.
+  Parallel implements only `SynchronizingJoin` and is never rechecked or resumed.
 - **Merge edge (FR-8).** Each absorbed track records `MergedInto = survivorID`, set in
   the shared `applyMerged` — a forward, acyclic edge (survivor's `ParentID` untouched,
   preserving FR-5b), observable in `TokenHistory`, for Parallel and Inclusive alike.
@@ -139,8 +146,9 @@ A→J flow, and **parks** (`AwaitSync`) — the B→J flow is still un-marked. T
 start`) and finds **no live token** on the way (A sits at the join, downstream of B's
 backward path; the B branch never received one) ⟹ B→J is **unreachable** ⟹ pruned ⟹
 no un-marked flow remains ⟹
-**fire**, with **no token death at all**. The loop re-spawns A as the survivor; it runs
-J's `Exec` (single outgoing → pass-through) and continues to the end.
+**fire**, with **no token death at all**. The loop signals A's resume channel; A's
+goroutine (which blocked at J) continues into J's `Exec` (single outgoing →
+pass-through) and on to the end.
 
 If instead both `c1` and `c2` were true, B's live track would sit on that backward
 path, so the parking `Recheck` keeps A waiting; J then fires when B arrives (all marked
@@ -166,10 +174,12 @@ path, so the parking `Recheck` keeps A waiting; J then fires when B arrives (all
   recheck that empties the un-marked set fires the join — covering both *branch never
   taken* (fires on the parking recheck, zero deaths) and *awaited branch dies* (fires
   on the death recheck — the Camunda-7 anti-hang).
-- **FR-5 — park-and-resume + survivor.** Non-completing arrivals park (`AwaitSync`);
-  on a `Recheck`-completion the loop **re-spawns** one parked track to resume from the
-  join (survivor = *first-in* on a death, *last-in* on the parking arrival's own
-  recheck) and flips the rest to `Merged`.
+- **FR-5 — park-and-resume + survivor.** A non-completing arrival **blocks** its
+  goroutine in `AwaitSync` (suspended mid-`run()`, alive and counted active). On a
+  `Recheck`-completion the loop **signals** the survivor's resume channel — its
+  goroutine continues straight into the join's `Exec` (survivor = *first-in* on a
+  death, *last-in* on the parking arrival's own recheck) — and flips the rest to
+  `Merged` (their goroutines unblock and return). No re-spawn.
 - **FR-6 — post-join split reuse.** The fired join evaluates its outgoing conditions
   and forks the true subset (default/exception per §2.9), reusing `InclusiveGateway.Exec`
   (SRD-021) unchanged; a single outgoing passes through.
@@ -187,7 +197,7 @@ path, so the parking `Recheck` keeps A waiting; J then fires when B arrives (all
 - **NFR-1 — standard-grounded, conservative.** Single-reachability-per-track per
   §13.4.3 / Table 13.3; errs toward waiting; not the spec refinement clause.
 - **NFR-2 — no Parallel regression.** `ParallelGateway` stays a plain `SynchronizingJoin`
-  with an unchanged `Arrive`; it is never in the recheck set and is never re-spawned.
+  with an unchanged `Arrive`; it is never in the recheck set and is never resumed.
 - **NFR-3 — race-free.** The arrival table is guarded by the per-node mutex (§2.4); all
   reachability + firing run **in the loop** (the single owner of positions), so the
   backward walk reads a consistent live-token set with no concurrent mutation. `make ci`
@@ -196,11 +206,18 @@ path, so the parking `Recheck` keeps A waiting; J then fires when B arrives (all
 
 ## 5. Path analysis (alternatives)
 
+- **Block-and-signal parking (chosen) vs re-spawning the survivor.** Re-spawning a
+  returned goroutine needs a state reset + a skip-`synchronize` flag + re-running the
+  node, and it forces an `active` 0→1 dance that risks premature completion. Blocking
+  the goroutine mid-`run()` is **real parking**: it stays alive and counted active
+  (so completion can't race it), and on a signal it simply continues into `executeNode`
+  — no re-spawn, no flag, no reset. The cost is one blocked goroutine per parked track
+  (bounded; freed on fire or `ctx.Done()`).
 - **Reachability loop-only via `Recheck` (chosen) vs `Arrive(+fc)` in-goroutine.**
   Putting reachability only in the loop keeps `Arrive` (and Parallel) untouched and
   removes any concurrent-position-read question — the loop is the single owner of
   positions. The arrival-time check happens on the parking event's recheck instead of
-  in the `Arrive` call; the cost is one re-spawn for a reachability-completing arrival.
+  in the `Arrive` call.
 - **Backward per-flow walk (chosen) vs forward multi-source sweep.** Equivalent, but
   anchoring at the un-marked flow lets the walk **short-circuit** on the first live
   token and never builds a full reachable set.
@@ -211,7 +228,7 @@ path, so the parking `Recheck` keeps A waiting; J then fires when B arrives (all
   "parked at a join," so the loop derives "which nodes to recheck on death" from it —
   no separate registry to keep in sync.
 - **Survivor first/last — immaterial; falls out.** Arrival-completion keeps its track
-  (last-in); death-completion re-spawns the earliest-parked (first-in).
+  (last-in); death-completion resumes the earliest-parked (first-in).
 
 ## 6. Models & API
 
@@ -269,15 +286,20 @@ The split `Exec` (SRD-021) is unchanged and reused for the post-fire outgoing sp
   bounded by
   `snapshot.Nodes`; `F` is reachable on the first visited node ∈ `occupied`. Return the
   reachable subset.
-- **`track.synchronize`** is unchanged except that a non-completing OR-join arrival
-  parks the track in **`AwaitSync`** (Parallel still uses `AwaitingMerge`); the
-  goroutine returns and `evAwaiting` carries the node.
-- **The loop** gains: (a) on `evAwaiting` for a `ReachabilityJoin`, record the parked
-  track + `Recheck` that node; (b) on every `evEnded`/`evMerged`/cancel, `Recheck`
-  each node currently holding `AwaitSync` tracks; (c) on a `Recheck` completion,
-  **re-spawn** the survivor at the join (`Exec` → outgoing subset → fork) and flip the
-  rest to `Merged`; (d) the `AwaitSync` state + its non-active `tokenStateFor`
-  projection. The re-spawn reuses `newTrack`/`spawn` lineage (`instance.go:705-734`).
+- **`track.synchronize`** — a non-completing OR-join arrival sets `TrackAwaitSync`,
+  emits **`evParked{track, node}`**, and **blocks** on the track's resume channel
+  (`select`-ing on `ctx.Done()`). On resume it inspects its state: `Merged` →
+  `return false` (the goroutine returns); otherwise (survivor) → `return true` (`run`
+  proceeds into the join's `Exec`). Parallel's non-completing arrival is unchanged
+  (sets `AwaitingMerge`, returns, `evAwaiting`).
+- **The loop** gains: (a) a per-track buffered(1) resume channel; (b) on `evParked`
+  (which, unlike `evAwaiting`, does **not** decrement `active` — the goroutine is
+  alive/blocked) `Recheck` that node; (c) on every `evEnded`/`evMerged`, `Recheck`
+  each node currently holding `AwaitSync` tracks; (d) on a `Recheck` completion,
+  `applyMerged` the absorbed (sets `MergedInto` + `Merged`) and **signal** every
+  parked track's channel — the survivor resumes into `Exec` → fork, the merged return;
+  (e) the `AwaitSync` state + its `Alive`-projecting `tokenStateFor`. No `newTrack`
+  re-spawn — the survivor is the same suspended goroutine, resumed.
 
 ### 6.4 Merge-lineage enrichment (`internal/instance` + `pkg/thresher`)
 

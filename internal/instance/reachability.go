@@ -34,17 +34,21 @@ func (inst *Instance) CheckFlows(
 	return reachable, nil
 }
 
-// occupiedNodes is the set of node ids that currently hold a live token. It uses
-// the projected active tokens (Alive or WaitForEvent), so a track parked at a
-// synchronizing join is included — it may still resume and reach a downstream
-// flow — while a dead track (Consumed) is excluded.
+// occupiedNodes is the set of node ids that currently hold a live token. It walks
+// the loop-owned tracks by their actual position (currentStep), not the projected
+// history — a freshly forked track holds a position before it has recorded any
+// history, and must still count as a reacher. A track parked at a synchronizing
+// join is included (it may resume and reach downstream); a dead track (Merged /
+// Ended / Canceled / Failed) is excluded. Called only from loop().
 func (inst *Instance) occupiedNodes() map[string]bool {
 	occupied := map[string]bool{}
 
-	for _, tok := range inst.GetTokens() {
-		if tok.Node != nil {
-			occupied[tok.Node.ID()] = true
+	for _, t := range inst.tracks {
+		if t.inState(TrackMerged, TrackEnded, TrackCanceled, TrackFailed) {
+			continue
 		}
+
+		occupied[t.currentStep().node.ID()] = true
 	}
 
 	return occupied

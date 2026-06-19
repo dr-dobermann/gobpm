@@ -73,6 +73,11 @@ const (
 	// did not complete it, and whose goroutine has returned — it is retained as
 	// a record until the join fires (ADR-005 §2.4). Its token projects Alive.
 	TrackAwaitingMerge
+	// TrackAwaitSync is the reachability-join (OR-join) counterpart of
+	// TrackAwaitingMerge: the track parked at a converging InclusiveGateway and
+	// may yet be **resumed** as the survivor (or merged away) once the loop's
+	// reachability recheck fires the join (SRD-022). Its token projects Alive.
+	TrackAwaitSync
 
 	// Final statuses
 	// TrackMerged represents a track that has been merged
@@ -94,6 +99,7 @@ func (t trackState) String() string {
 		"TrackProcessStepResults",
 		"TrackWaitForEvent",
 		"TrackAwaitingMerge",
+		"TrackAwaitSync",
 		"TrackMerged",
 		"TrackEnded",
 		"TrackCanceled",
@@ -163,10 +169,15 @@ type track struct {
 	// goroutine has already returned); path() readers are concurrent, so it is
 	// atomic like hist. nil until merged. SRD-022 FR-8.
 	mergedInto atomic.Pointer[string]
-	steps      []*stepInfo
-	m          sync.RWMutex
-	state      trackState
-	stopIt     atomic.Bool
+	// parkCh resumes a track blocked at a reachability join (OR-join): the track
+	// suspends its goroutine on it and the loop signals once it has decided the
+	// track's fate (survivor → proceed, merged → return). Buffered(1) so the
+	// loop never blocks on the signal. SRD-022.
+	parkCh chan struct{}
+	steps  []*stepInfo
+	m      sync.RWMutex
+	state  trackState
+	stopIt atomic.Bool
 }
 
 // record appends a track-state transition to the history, copy-on-write, and
@@ -278,6 +289,7 @@ func newTrack(
 		},
 		state:    TrackReady,
 		instance: inst,
+		parkCh:   make(chan struct{}, 1),
 	}
 
 	if prevTrack != nil {
@@ -488,20 +500,40 @@ func (t *track) synchronize(step *stepInfo) (proceed bool) {
 	}
 
 	complete, merged := sj.Arrive(inFlowID, t.ID())
-	if !complete {
-		// not the completing arrival: become AwaitingMerge and stop. The run
-		// goroutine returns; the loop is told via evAwaiting (emitted by the
-		// spawn wrapper, which sees the final state).
-		t.updateState(TrackAwaitingMerge)
+	if complete {
+		// the completing arrival is the survivor: declare the merge (the loop
+		// flips the absorbed tracks to Merged) and proceed. prev is not touched —
+		// see the doc comment on why convergence is not a parent edge.
+		t.instance.emit(trackEvent{kind: evMerged, track: t, mergedIDs: merged})
 
-		return false
+		return true
 	}
 
-	// declare the merge: the loop flips the absorbed tracks to Merged. prev is
-	// not touched — see the doc comment on why convergence is not a parent edge.
-	t.instance.emit(trackEvent{kind: evMerged, track: t, mergedIDs: merged})
+	// A non-completing arrival at a reachability join (OR-join) cannot decide
+	// alone — the loop owns the reachability test and may yet resume this very
+	// goroutine as the survivor. So it parks: suspend mid-run, blocked on parkCh,
+	// until the loop signals its fate (SRD-022). A plain join (Parallel) instead
+	// returns and lets the goroutine end (AwaitingMerge).
+	if _, isReach := step.node.(exec.ReachabilityJoin); isReach {
+		t.updateState(TrackAwaitSync)
+		t.instance.emit(trackEvent{kind: evParked, track: t})
 
-	return true
+		select {
+		case <-t.parkCh:
+			// resumed: the survivor proceeds into the node; a track the loop
+			// merged away returns (its run() ends).
+			return !t.inState(TrackMerged)
+
+		case <-t.ctx.Done():
+			t.updateState(TrackCanceled)
+
+			return false
+		}
+	}
+
+	t.updateState(TrackAwaitingMerge)
+
+	return false
 }
 
 // executeNode tries to execute flow.Node n.
