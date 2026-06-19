@@ -107,8 +107,11 @@ join** (ADR-005 §2.10):
   candidate bookkeeping.
 - **`AwaitSync` track state.** Distinct from `AwaitingMerge` (always doomed to
   `Merged`): an `AwaitSync` track has two fates — `AwaitSync → Alive` (re-spawned
-  survivor) or `AwaitSync → Merged` (absorbed) — and it is excluded from the
-  live-token set the backward walk consults.
+  survivor) or `AwaitSync → Merged` (absorbed). It still **projects a live token**
+  (like `AwaitingMerge`), so it stays in the set the backward walk consults — a parked
+  token may resume and reach a downstream flow. What the walk excludes is the **checked
+  join itself** (its boundary), not parked tracks; a parked track *at* that join is
+  downstream of every un-marked flow's backward path, so it is harmless anyway.
 - **Contract.** `SynchronizingJoin.Arrive` is **unchanged**; a new instance-side
   `FlowChecker` carries reachability; a minimal `ReachabilityJoin` adds `Recheck(fc)`.
   Parallel implements only `SynchronizingJoin` and is never rechecked/re-spawned.
@@ -133,8 +136,9 @@ flowchart LR
 `c1` true, `c2` false ⟹ the OR-split forks **only** A. A reaches the OR-join, marks the
 A→J flow, and **parks** (`AwaitSync`) — the B→J flow is still un-marked. The loop
 `Recheck`s J: `CheckFlows` walks **backward** from B→J's source (`B → OR-split →
-start`) and finds **no live token** on the way (A is parked, so excluded; the B branch
-never received one) ⟹ B→J is **unreachable** ⟹ pruned ⟹ no un-marked flow remains ⟹
+start`) and finds **no live token** on the way (A sits at the join, downstream of B's
+backward path; the B branch never received one) ⟹ B→J is **unreachable** ⟹ pruned ⟹
+no un-marked flow remains ⟹
 **fire**, with **no token death at all**. The loop re-spawns A as the survivor; it runs
 J's `Exec` (single outgoing → pass-through) and continues to the end.
 
@@ -258,9 +262,11 @@ The split `Exec` (SRD-021) is unchanged and reused for the post-fire outgoing sp
 ### 6.3 `internal/instance` — `FlowChecker` impl, track, loop
 
 - **`CheckFlows` (the `FlowChecker` on `Instance`).** Precompute the **occupied** set
-  = nodes holding a live (`Alive`/`WaitForEvent`) track, from the lock-free snapshot
-  (`AwaitSync`/parked excluded). For each candidate flow `F`, backward-DFS from
-  `F.Source()` over `Incoming() → Source()`, cycle-guarded (visited-set), bounded by
+  = nodes holding a live (`Alive`/`WaitForEvent`) token, from the lock-free snapshot
+  (dead/`Consumed` tracks excluded; a **parked** track stays in as resumable). For
+  each candidate flow `F`, backward-DFS from `F.Source()` over `Incoming() → Source()`,
+  with the **join node as the boundary** (never traversed), cycle-guarded (visited-set),
+  bounded by
   `snapshot.Nodes`; `F` is reachable on the first visited node ∈ `occupied`. Return the
   reachable subset.
 - **`track.synchronize`** is unchanged except that a non-completing OR-join arrival
