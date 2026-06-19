@@ -739,8 +739,11 @@ func (inst *Instance) spawnForks(
 // returned, so the loop is the sole writer of their state. Called only from
 // loop().
 func (inst *Instance) applyMerged(ev trackEvent) {
+	survivor := ev.track.ID()
+
 	for _, id := range ev.mergedIDs {
 		if m := inst.tracks[id]; m != nil {
+			m.mergedInto.Store(&survivor)
 			m.updateState(TrackMerged)
 		}
 	}

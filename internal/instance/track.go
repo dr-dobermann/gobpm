@@ -157,11 +157,16 @@ type track struct {
 	// It is written only by this track's goroutine via record() and published
 	// copy-on-write, so token projection / path history / timing are derived
 	// from it lock-free by any reader.
-	hist   atomic.Pointer[[]stepUpdate]
-	steps  []*stepInfo
-	m      sync.RWMutex
-	state  trackState
-	stopIt atomic.Bool
+	hist atomic.Pointer[[]stepUpdate]
+	// mergedInto is the survivor track id this track was absorbed into at a
+	// synchronizing join. The loop is the sole writer (the absorbed track's own
+	// goroutine has already returned); path() readers are concurrent, so it is
+	// atomic like hist. nil until merged. SRD-022 FR-8.
+	mergedInto atomic.Pointer[string]
+	steps      []*stepInfo
+	m          sync.RWMutex
+	state      trackState
+	stopIt     atomic.Bool
 }
 
 // record appends a track-state transition to the history, copy-on-write, and
@@ -215,6 +220,10 @@ func (t *track) path() TokenPath {
 	}
 
 	tp := TokenPath{TrackID: t.ID(), ParentID: parent}
+
+	if mi := t.mergedInto.Load(); mi != nil {
+		tp.MergedInto = *mi
+	}
 
 	h := t.hist.Load()
 	if h != nil {

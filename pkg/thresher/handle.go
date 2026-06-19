@@ -81,10 +81,11 @@ func (h *InstanceHandle) History() []TokenPath {
 		}
 
 		out = append(out, TokenPath{
-			TrackID:  p.TrackID,
-			ParentID: p.ParentID,
-			Steps:    steps,
-			Terminal: tokenState(p.Terminal),
+			TrackID:    p.TrackID,
+			ParentID:   p.ParentID,
+			MergedInto: p.MergedInto,
+			Steps:      steps,
+			Terminal:   tokenState(p.Terminal),
 		})
 	}
 
@@ -175,8 +176,11 @@ type TokenView struct {
 type TokenPath struct {
 	TrackID  string
 	ParentID string
-	Terminal TokenState
-	Steps    []StepVisit
+	// MergedInto is the survivor track this one was absorbed into at a
+	// synchronizing join ("" if not merged) — a forward, acyclic merge edge.
+	MergedInto string
+	Terminal   TokenState
+	Steps      []StepVisit
 }
 
 // StepVisit is one entry of a token's path: the node visited, the projected
