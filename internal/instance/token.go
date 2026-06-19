@@ -81,8 +81,12 @@ type StepVisit struct {
 type TokenPath struct {
 	TrackID  string
 	ParentID string // immediate parent track (fork origin); "" if root
-	Steps    []StepVisit
-	Terminal TokenState
+	// MergedInto is the survivor track this one was absorbed into at a
+	// synchronizing join ("" if not merged) — a forward, acyclic merge edge
+	// (the survivor's ParentID is untouched). See ADR-005 §2.4 / SRD-022 FR-8.
+	MergedInto string
+	Steps      []StepVisit
+	Terminal   TokenState
 }
 
 // stepUpdate is one recorded track-state transition: the node the track was
@@ -98,10 +102,11 @@ type stepUpdate struct {
 func tokenStateFor(ts trackState) TokenState {
 	switch ts {
 	case TrackCreated, TrackReady, TrackExecutingStep,
-		TrackProcessStepResults, TrackAwaitingMerge:
+		TrackProcessStepResults, TrackAwaitingMerge, TrackAwaitSync:
 		// Created: a freshly created track already holds a position (its
 		// start node), so its token is Alive (ADR-001 §6) — not Invalid.
-		// AwaitingMerge: the token still sits at the join, not yet consumed.
+		// AwaitingMerge/AwaitSync: the token still sits at the join, not yet
+		// consumed (AwaitSync may yet resume as the survivor).
 		return TokenAlive
 
 	case TrackWaitForEvent:

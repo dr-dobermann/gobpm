@@ -34,4 +34,9 @@ const (
 	// evMerged: the surviving track absorbed the listed awaiting tracks at a
 	// synchronizing join (flip them to Merged, fold their lineage in).
 	evMerged
+	// evParked: a track blocked at a reachability join (OR-join), suspending its
+	// goroutine. Unlike evAwaiting, the goroutine is alive (blocked), so it is NOT
+	// decremented from the active count; the loop rechecks the join and may signal
+	// the track to resume (survivor) or return (merged). SRD-022.
+	evParked
 )

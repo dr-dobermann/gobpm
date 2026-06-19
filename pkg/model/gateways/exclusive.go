@@ -6,7 +6,6 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
-	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
@@ -58,25 +57,40 @@ func (eg *ExclusiveGateway) Node() flow.Node {
 	return eg
 }
 
-// Exec runs single node and returns its valid
-// output sequence flows on success or error on failure.
+// Exec routes the arriving token (ADR-005 v.2 §2.8, BPMN §13.4.2):
 //
-// NOTE: Current implementation stops execution with error on condition
-// evaluation failure.
-// It's possible to consider condition evaluation fail as a condition false
-// result and continue process execution and don't return the flow with
-// failed condition.
+//   - A converging merge / single outgoing flow is a non-synchronizing
+//     pass-through (§2.3) — the outgoing flow is returned unconditionally.
+//   - A diverging gateway takes the FIRST outgoing flow whose condition
+//     evaluates true and stops (short-circuit); a conditionless non-default
+//     flow is never selected.
+//   - When no condition matches, the default flow is taken; when none matches
+//     and there is no default, the instance fails (an unroutable token is a
+//     modeling error).
 func (eg *ExclusiveGateway) Exec(
 	ctx context.Context,
 	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
-	flows := []*flow.SequenceFlow{}
+	out := eg.Outgoing()
 
-	for _, of := range eg.Outgoing() {
-		cond := of.Condition()
-		// nil condition means the condition is failed.
-		if cond == nil {
+	// Pass-through: a converging merge or a single outgoing continues
+	// unconditionally (non-synchronizing Exclusive merge, §2.3).
+	if len(out) <= 1 {
+		return out, nil
+	}
+
+	// Diverging: first-true wins, short-circuit (§13.4.2).
+	for _, of := range out {
+		// The default flow is the explicit fallback, never a conditional
+		// candidate — exclude it regardless of any condition (§13.4.2:
+		// "conditions on outgoing flows … except the default").
+		if of == eg.defaultFlow {
 			continue
+		}
+
+		cond := of.Condition()
+		if cond == nil {
+			continue // a non-default flow without a condition is never selected
 		}
 
 		res, err := eg.checkCondition(ctx, re, cond, of)
@@ -85,68 +99,20 @@ func (eg *ExclusiveGateway) Exec(
 		}
 
 		if res {
-			flows = append(flows, of)
+			return []*flow.SequenceFlow{of}, nil
 		}
 	}
 
-	// if there is no path with successful condition, default flow should be
-	// used. If there is no available outgoing flows the error returned.
-	if len(flows) == 0 {
-		if eg.defaultFlow == nil {
-			return nil,
-				errs.New(
-					errs.M("no available outgoing flows"),
-					errs.C(errorClass, errs.InvalidState),
-					errs.D("exclusive_gateway_id", eg.ID()))
-		}
-
-		flows = append(flows, eg.defaultFlow)
-	}
-
-	if len(flows) > 1 {
+	if eg.defaultFlow == nil {
 		return nil,
 			errs.New(
-				errs.M("exclusive gateway couldn't have more than 1 outgoing flows"),
-				errs.C(errorClass, errs.InvalidObject),
-				errs.D("exclusive_gateway_id", eg.ID()),
-				errs.D("outgoing_flows_count", len(flows)),
-				errs.D("outgoing_flows", flows))
-	}
-
-	return flows, nil
-}
-
-// checkCondition check condition result and return it or error on failure.
-// The condition is evaluated through the engine's ExpressionEngine (reached via
-// the RuntimeEnvironment), so the strategy is swappable; the default delegates
-// to the expression itself.
-func (eg *ExclusiveGateway) checkCondition(
-	ctx context.Context,
-	re renv.RuntimeEnvironment,
-	cond data.FormalExpression,
-	of *flow.SequenceFlow,
-) (bool, error) {
-	if cond.ResultType() != "bool" {
-		return false,
-			errs.New(
-				errs.M("invalid condition expression type"),
-				errs.C(errorClass, errs.TypeCastingError),
-				errs.D("outgoing_flow_id", of.ID()),
+				errs.M("no available outgoing flow: no condition matched and "+
+					"no default"),
+				errs.C(errorClass, errs.InvalidState),
 				errs.D("exclusive_gateway_id", eg.ID()))
 	}
 
-	res, err := re.ExpressionEngine().Evaluate(ctx, cond, re)
-	if err != nil {
-		return false,
-			errs.New(
-				errs.M("flow condition evaluation failed"),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.D("outgoing_flow_id", of.ID()),
-				errs.D("exclusive_gateway_id", eg.ID()),
-				errs.E(err))
-	}
-
-	return res.Get(ctx).(bool), nil
+	return []*flow.SequenceFlow{eg.defaultFlow}, nil
 }
 
 // ----------------------------------------------------------------------------

@@ -1,13 +1,16 @@
 package gateways
 
 import (
+	"context"
 	"errors"
 	"reflect"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
+	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
 
 // GDirection represents gateway direction.
@@ -195,6 +198,39 @@ func (g *Gateway) MustUpdateDefaultFlow(f *flow.SequenceFlow) {
 // Direction returns the gateway's direction.
 func (g *Gateway) Direction() GDirection {
 	return g.direction
+}
+
+// checkCondition evaluates a sequence flow's boolean condition through the
+// engine's ExpressionEngine (reached via the RuntimeEnvironment), so the
+// strategy is swappable. Shared by the Exclusive and Inclusive splits
+// (ADR-005 v.2 §2.8/§2.9). A non-bool condition result is an error.
+func (g *Gateway) checkCondition(
+	ctx context.Context,
+	re renv.RuntimeEnvironment,
+	cond data.FormalExpression,
+	of *flow.SequenceFlow,
+) (bool, error) {
+	if cond.ResultType() != "bool" {
+		return false,
+			errs.New(
+				errs.M("invalid condition expression type"),
+				errs.C(errorClass, errs.TypeCastingError),
+				errs.D("outgoing_flow_id", of.ID()),
+				errs.D("gateway_id", g.ID()))
+	}
+
+	res, err := re.ExpressionEngine().Evaluate(ctx, cond, re)
+	if err != nil {
+		return false,
+			errs.New(
+				errs.M("flow condition evaluation failed"),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.D("outgoing_flow_id", of.ID()),
+				errs.D("gateway_id", g.ID()),
+				errs.E(err))
+	}
+
+	return res.Get(ctx).(bool), nil
 }
 
 // testDirectionFlows checks whether the incoming and outgoing flow counts

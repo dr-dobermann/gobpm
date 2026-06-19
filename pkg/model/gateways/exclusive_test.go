@@ -165,4 +165,102 @@ func TestExclusiveGatewayExec(t *testing.T) {
 			require.Len(t, flows, 1)
 			require.Contains(t, flows, nf)
 		})
+
+	// ADR-005 v.2 §2.8: first-true wins, short-circuit — overlapping true
+	// conditions are NOT an error (the old >1 error path is gone).
+	t.Run("first true wins on overlap",
+		func(t *testing.T) {
+			eg, err := gateways.NewExclusiveGateway()
+			require.NoError(t, err)
+
+			nodes := getDummyNodes(3)
+			_, err = flow.Link(nodes[0], eg)
+			require.NoError(t, err)
+
+			first, err := flow.Link(eg, nodes[1], flow.WithCondition(xequal10))
+			require.NoError(t, err)
+			_, err = flow.Link(eg, nodes[2], flow.WithCondition(xequal10))
+			require.NoError(t, err)
+
+			flows, err := eg.Exec(context.Background(), re)
+			require.NoError(t, err)
+			require.Len(t, flows, 1)
+			require.Contains(t, flows, first)
+		})
+
+	// ADR-005 v.2 §2.3/§2.8: a converging merge (single outgoing) passes
+	// through unconditionally — no condition eval, no "no outgoing flow" error.
+	t.Run("converging merge passes through",
+		func(t *testing.T) {
+			eg, err := gateways.NewExclusiveGateway()
+			require.NoError(t, err)
+
+			nodes := getDummyNodes(3)
+			_, err = flow.Link(nodes[0], eg)
+			require.NoError(t, err)
+			_, err = flow.Link(nodes[1], eg)
+			require.NoError(t, err)
+
+			out, err := flow.Link(eg, nodes[2])
+			require.NoError(t, err)
+
+			flows, err := eg.Exec(context.Background(), re)
+			require.NoError(t, err)
+			require.Len(t, flows, 1)
+			require.Contains(t, flows, out)
+		})
+
+	// A non-bool condition result is a typing error.
+	t.Run("non-bool condition is an error",
+		func(t *testing.T) {
+			eg, err := gateways.NewExclusiveGateway()
+			require.NoError(t, err)
+
+			intCond, err := goexpr.New(
+				nil,
+				data.MustItemDefinition(values.NewVariable(0)), // result type int
+				func(ctx context.Context, ds data.Source) (data.Value, error) {
+					return values.NewVariable(1), nil
+				})
+			require.NoError(t, err)
+
+			nodes := getDummyNodes(3)
+			_, err = flow.Link(nodes[0], eg)
+			require.NoError(t, err)
+			_, err = flow.Link(eg, nodes[1], flow.WithCondition(intCond))
+			require.NoError(t, err)
+			_, err = flow.Link(eg, nodes[2])
+			require.NoError(t, err)
+
+			_, err = eg.Exec(context.Background(), re)
+			require.Error(t, err)
+		})
+
+	// A condition whose evaluation errors propagates the failure.
+	t.Run("condition evaluation error propagates",
+		func(t *testing.T) {
+			eg, err := gateways.NewExclusiveGateway()
+			require.NoError(t, err)
+
+			boomCond, err := goexpr.New(
+				nil,
+				data.MustItemDefinition(values.NewVariable(false)), // bool
+				func(ctx context.Context, ds data.Source) (data.Value, error) {
+					return nil, errs.New(
+						errs.M("boom"),
+						errs.C("test", errs.OperationFailed))
+				})
+			require.NoError(t, err)
+
+			nodes := getDummyNodes(3)
+			_, err = flow.Link(nodes[0], eg)
+			require.NoError(t, err)
+			_, err = flow.Link(eg, nodes[1], flow.WithCondition(boomCond))
+			require.NoError(t, err)
+			_, err = flow.Link(eg, nodes[2])
+			require.NoError(t, err)
+
+			_, err = eg.Exec(context.Background(), re)
+			require.Error(t, err)
+		})
 }

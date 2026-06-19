@@ -280,7 +280,7 @@ durable-checkpoint tests belong to the Persistence & State ADR.
 - [SAD-001 v.1 Vision & Architecture](SAD-001-vision-and-architecture.md) — §6 Quality Attributes; §10 Execution Model (this ADR refines); §13 Distribution & Scale (preliminary).
 - [docs/bpmn-spec/state-machines/activity-lifecycle.md](../bpmn-spec/state-machines/activity-lifecycle.md), [process-lifecycle.md](../bpmn-spec/state-machines/process-lifecycle.md) — normative lifecycles.
 - [docs/bpmn-spec/semantics/token-flow.md](../bpmn-spec/semantics/token-flow.md), [gateways.md](../bpmn-spec/semantics/gateways.md), [end-events.md](../bpmn-spec/semantics/end-events.md) — fork/join/termination semantics.
-- [ADR-005 v.1 Gateways & Joins](ADR-005-gateways-and-joins.md), [ADR-006 v.1 Events & Subscriptions](ADR-006-events-and-subscriptions.md), [ADR-007 v.1 In-Memory Long Waits](ADR-007-in-memory-long-waits.md) — concerns refining this core (see §9).
+- [ADR-005 v.2 Gateways & Joins](ADR-005-gateways-and-joins.md), [ADR-006 v.1 Events & Subscriptions](ADR-006-events-and-subscriptions.md), [ADR-007 v.1 In-Memory Long Waits](ADR-007-in-memory-long-waits.md) — concerns refining this core (see §9).
 - **Persistence & State ADR** (to be authored) — checkpoint policy, per-node state contract, long-wait durability, restart recovery, Scope/timer/compensation/error/activity state. Depends on the `Repository` interface ([ADR-002 v.1 Extension Architecture](ADR-002-extension-architecture.md)).
 - Existing code: `internal/instance/instance.go`, `track.go`, `token.go` — the runtime this ADR formalizes (token type removed; event loop; lifecycle reconciled).
 

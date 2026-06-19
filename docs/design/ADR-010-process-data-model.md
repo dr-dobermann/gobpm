@@ -415,7 +415,7 @@ should follow:
 - [ADR-009 v.1 Per-instance node graph](ADR-009-per-instance-node-graph.md) —
   node **lifetime** state ownership; the sibling boundary this ADR completes
   (per-execution data off the node).
-- [ADR-005 v.1 Gateways & Joins](ADR-005-gateways-and-joins.md) — the
+- [ADR-005 v.2 Gateways & Joins](ADR-005-gateways-and-joins.md) — the
   Parallel fork/join that makes concurrent same-node executions routine;
   precedent for component-owned serialization.
 - BPMN 2.0 §10.4 (Items and Data), §10.4.2 (Execution Semantics for Data),
