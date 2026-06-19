@@ -41,3 +41,4 @@ examples/message-intermediate-events/message-intermediate-events
 examples/inter-instance-correlation/inter-instance-correlation
 examples/conversation-routing/conversation-routing
 examples/signal-broadcast/signal-broadcast
+examples/gateway-routing/gateway-routing
