@@ -20,7 +20,6 @@ func TestTokenStateString(t *testing.T) {
 		instance.TokenAlive:        "Alive",
 		instance.TokenWaitForEvent: "WaitForEvent",
 		instance.TokenConsumed:     "Consumed",
-		instance.TokenWithdrawn:    "Withdrawn",
 		instance.TokenInvalid:      "Invalid",
 	} {
 		require.Equal(t, want, ts.String())

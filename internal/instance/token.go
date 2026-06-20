@@ -22,10 +22,6 @@ const (
 	TokenWaitForEvent
 	// TokenConsumed represents a token that has been consumed
 	TokenConsumed
-	// TokenWithdrawn represents a token withdrawn at an Event-Based Gateway
-	// race loss. The value exists for the projection; its producer arrives
-	// with the Event-Based Gateway (gateway SRD).
-	TokenWithdrawn
 )
 
 // String returns the human-readable name of the projected token state.
@@ -40,9 +36,6 @@ func (ts TokenState) String() string {
 	case TokenConsumed:
 		return "Consumed"
 
-	case TokenWithdrawn:
-		return "Withdrawn"
-
 	default:
 		return "Invalid"
 	}
@@ -50,7 +43,7 @@ func (ts TokenState) String() string {
 
 // Validate checks if the TokenState is valid.
 func (ts TokenState) Validate() error {
-	if ts < TokenAlive || ts > TokenWithdrawn {
+	if ts < TokenAlive || ts > TokenConsumed {
 		return errs.New(
 			errs.M("invalid token state: %d", ts),
 			errs.C(errorClass, errs.InvalidParameter))

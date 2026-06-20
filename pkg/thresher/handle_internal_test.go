@@ -19,7 +19,6 @@ func TestTokenStateMapping(t *testing.T) {
 		{instance.TokenAlive, TokenAlive},
 		{instance.TokenWaitForEvent, TokenWaitForEvent},
 		{instance.TokenConsumed, TokenConsumed},
-		{instance.TokenWithdrawn, TokenWithdrawn},
 		{instance.TokenInvalid, TokenInvalid},
 	} {
 		require.Equal(t, tc.want, tokenState(tc.in))

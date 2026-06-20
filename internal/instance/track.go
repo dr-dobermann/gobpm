@@ -858,9 +858,63 @@ func (t *track) ProcessEvent(
 			errs.E(err))
 	}
 
+	// An Event-Based gateway subscribes on behalf of its arms (SRD-024 §4.1): the
+	// fired event belongs to one of those arm nodes, not the gate. Advance the track
+	// onto the winning arm so run() executes the arm — its payload was just bound by
+	// the gate's delegated ProcessEvent and it is not re-registered as a waiter, so it
+	// continues straight to its outgoing flow; the gate itself is never executed. A
+	// plain catch event (no ArmFor) is executed in place, as before.
+	if er, ok := n.(eventRouter); ok {
+		t.advanceToArm(n, er, eDef)
+	}
+
 	t.updateState(TrackReady)
 
 	return nil
+}
+
+// eventRouter is implemented by a node (the Event-Based gateway) that subscribes for
+// several arm nodes at once and resolves a fired event to the arm that owns it.
+type eventRouter interface {
+	ArmFor(flow.EventDefinition) (flow.Node, bool)
+}
+
+// advanceToArm appends a step for the gate's winning arm so the run loop executes the
+// arm (its event already bound, the arm not re-registered as a waiter) rather than the
+// gate; the gate→arm sequence flow becomes the step's inFlow. It runs on the waiter
+// goroutine, so the t.steps append is guarded by t.m (the run goroutine reads
+// currentStep under the same lock).
+func (t *track) advanceToArm(
+	gate flow.Node,
+	er eventRouter,
+	eDef flow.EventDefinition,
+) {
+	arm, ok := er.ArmFor(eDef)
+	if !ok {
+		// Unreachable in practice: the gate's ProcessEvent (called just above)
+		// already resolved and bound this arm, so ArmFor cannot miss here. If it
+		// somehow did, append nothing — the loop re-enters the gate, whose Exec
+		// fails loudly, rather than advancing onto a nil arm.
+		return
+	}
+
+	var armFlow *flow.SequenceFlow
+
+	for _, of := range gate.Outgoing() {
+		if of.Target().Node().ID() == arm.ID() {
+			armFlow = of
+
+			break
+		}
+	}
+
+	t.m.Lock()
+	t.steps = append(t.steps, &stepInfo{
+		node:   arm,
+		inFlow: armFlow,
+		state:  StepCreated,
+	})
+	t.m.Unlock()
 }
 
 // -----------------------------------------------------------------------------

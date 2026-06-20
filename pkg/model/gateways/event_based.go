@@ -161,8 +161,10 @@ func (g *EventBasedGateway) EventClass() flow.EventClass {
 	return flow.IntermediateEventClass
 }
 
-// armFor returns the arm node that owns eDef, scanning each arm's event definitions.
-func (g *EventBasedGateway) armFor(
+// ArmFor returns the arm node that owns eDef, scanning each arm's event definitions.
+// The runtime calls it to resolve the winning arm and advance the token onto that arm's
+// path after the gate routes the fired event (SRD-024 §4.1).
+func (g *EventBasedGateway) ArmFor(
 	eDef flow.EventDefinition,
 ) (flow.Node, bool) {
 	for _, arm := range g.arms() {
@@ -190,7 +192,7 @@ func (g *EventBasedGateway) ProcessEvent(
 	ctx context.Context,
 	eDef flow.EventDefinition,
 ) error {
-	arm, ok := g.armFor(eDef)
+	arm, ok := g.ArmFor(eDef)
 	if !ok {
 		return errs.New(
 			errs.M("event-based gateway: no arm owns the fired event"),
