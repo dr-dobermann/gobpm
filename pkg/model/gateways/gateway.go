@@ -233,6 +233,60 @@ func (g *Gateway) checkCondition(
 	return res.Get(ctx).(bool), nil
 }
 
+// forkTrueSubset routes a diverging token through the Inclusive split rule (ADR-005
+// §2.9, BPMN §13.4.3): a converging merge or a single outgoing flow is a
+// non-synchronizing pass-through (returned as-is); otherwise it returns every
+// non-default outgoing flow whose condition is true (the true subset, >=1), the
+// default flow when none match, or an error when none match and there is no default
+// (an unroutable token is a modeling error). A conditionless non-default flow is
+// never selected. Shared by the Inclusive (§2.9) and Complex (§2.11) splits.
+func (g *Gateway) forkTrueSubset(
+	ctx context.Context,
+	re renv.RuntimeEnvironment,
+) ([]*flow.SequenceFlow, error) {
+	out := g.Outgoing()
+	if len(out) <= 1 {
+		return out, nil
+	}
+
+	flows := []*flow.SequenceFlow{}
+
+	for _, of := range out {
+		if of == g.defaultFlow {
+			continue
+		}
+
+		cond := of.Condition()
+		if cond == nil {
+			continue
+		}
+
+		res, err := g.checkCondition(ctx, re, cond, of)
+		if err != nil {
+			return nil, err
+		}
+
+		if res {
+			flows = append(flows, of)
+		}
+	}
+
+	if len(flows) == 0 {
+		if g.defaultFlow == nil {
+			return nil,
+				errs.New(
+					errs.M("no available outgoing flow: no condition matched and "+
+						"no default"),
+					errs.C(errorClass, errs.InvalidState),
+					errs.D("gateway_id", g.ID()))
+		}
+
+		flows = append(flows, g.defaultFlow)
+	}
+
+	return flows, nil
+}
+
 // testDirectionFlows checks whether the incoming and outgoing flow counts
 // comply with the given gateway direction rules. It returns an error message
 // describing the violation, or an empty string if the counts are valid.

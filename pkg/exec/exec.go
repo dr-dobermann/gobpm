@@ -8,6 +8,7 @@ package exec
 import (
 	"context"
 
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
@@ -55,4 +56,41 @@ type ReachabilityJoin interface {
 	// reports completion without a new arrival. On completion it returns the
 	// promoted survivor track id and the absorbed (merged) track ids.
 	Recheck(fc FlowChecker) (complete bool, survivor string, merged []string)
+}
+
+// GuardEval evaluates a Complex gateway's data guard against process-level data. It
+// is supplied by the caller (the instance, built over its root data scope + the
+// expression engine) so the gateway can test a triple's condition at a point —
+// Activate / Recheck — that has no per-node execution frame. A nil cond is true
+// (ADR-005 v.3 §2.11).
+type GuardEval func(cond data.FormalExpression) (bool, error)
+
+// Decision is the outcome of an ActivationJoin step: the gateway either fired (with a
+// promoted survivor and the absorbed merged track ids), aborted (its activation rule
+// can no longer be satisfied — the instance must fail), or neither (the arrival
+// parks).
+type Decision struct {
+	Survivor string
+	Merged   []string
+	Fired    bool
+	Aborted  bool
+}
+
+// ActivationJoin is a converging gateway whose completion is an activation rule over
+// per-triple data guards, arrival counts, and required gates (ADR-005 v.3 §2.11). It
+// reuses the reachability machinery (FlowChecker) but, unlike a ReachabilityJoin, a
+// token death makes it ABORT (the arrival count is monotonic, so a death can only
+// make a triple unsatisfiable) rather than fire — firing happens only on an arrival.
+type ActivationJoin interface {
+	NodeExecutor
+
+	// Activate records arrivingTrackID's arrival on incomingFlowID and decides the
+	// join's fate, using eval for data guards and fc for reachability.
+	Activate(
+		incomingFlowID, arrivingTrackID string,
+		eval GuardEval, fc FlowChecker,
+	) (Decision, error)
+
+	// Recheck re-decides a parked activation join on a token death (no new arrival).
+	Recheck(eval GuardEval, fc FlowChecker) (Decision, error)
 }

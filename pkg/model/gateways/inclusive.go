@@ -90,54 +90,9 @@ func (ig *InclusiveGateway) Exec(
 	ctx context.Context,
 	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
-	out := ig.Outgoing()
-
-	// Pass-through: a converging merge or a single outgoing continues
-	// unconditionally (the OR-join synchronizing merge is SRD-022).
-	if len(out) <= 1 {
-		return out, nil
-	}
-
-	// Diverging: collect the whole true subset (no short-circuit, unlike the
-	// Exclusive first-true rule).
-	flows := []*flow.SequenceFlow{}
-
-	for _, of := range out {
-		// The default flow is the explicit fallback, never a conditional
-		// candidate (§13.4.3 evaluates conditions except the default).
-		if of == ig.defaultFlow {
-			continue
-		}
-
-		cond := of.Condition()
-		if cond == nil {
-			continue // a non-default flow without a condition is never selected
-		}
-
-		res, err := ig.checkCondition(ctx, re, cond, of)
-		if err != nil {
-			return nil, err
-		}
-
-		if res {
-			flows = append(flows, of)
-		}
-	}
-
-	if len(flows) == 0 {
-		if ig.defaultFlow == nil {
-			return nil,
-				errs.New(
-					errs.M("no available outgoing flow: no condition matched and "+
-						"no default"),
-					errs.C(errorClass, errs.InvalidState),
-					errs.D("inclusive_gateway_id", ig.ID()))
-		}
-
-		flows = append(flows, ig.defaultFlow)
-	}
-
-	return flows, nil
+	// The inclusive split is the shared true-subset fork (§2.9); the OR-join
+	// synchronizing merge is handled by Arrive/Recheck (SRD-022), not Exec.
+	return ig.forkTrueSubset(ctx, re)
 }
 
 // Arrive records that arrivingTrackID reached the join on incomingFlowID and
