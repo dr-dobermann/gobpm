@@ -231,6 +231,21 @@ func (p *Process) Validate() error {
 		}
 	}
 
+	// Per-node self-validation (once the flows are linked): a node that needs to
+	// check its configuration against its incoming/outgoing flows — e.g. a Complex
+	// gateway's activation threshold against its incoming-flow count (ADR-005 v.3
+	// §2.11) — implements Validate() and is checked here at registration.
+	for _, n := range p.nodes {
+		v, ok := n.(interface{ Validate() error })
+		if !ok {
+			continue
+		}
+
+		if err := v.Validate(); err != nil {
+			ee = append(ee, err)
+		}
+	}
+
 	if len(ee) > 0 {
 		return errors.Join(ee...)
 	}

@@ -677,6 +677,14 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 			stopAll()
 
 		case ev := <-inst.events:
+			// Lock-free attrs only (ID is immutable): this runs per event, and the
+			// observability.Logger has no Enabled() gate, so the args are built even
+			// at INFO. Node-level detail lives in the fire/abort logs below.
+			inst.Logger().Debug("track event",
+				"instance", inst.ID(),
+				"kind", ev.kind.String(),
+				"track", ev.track.ID())
+
 			switch ev.kind {
 			case evFork:
 				inst.spawnForks(ev, spawn, stopAll, stopping)
@@ -697,10 +705,8 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 
 			case evParked:
 				// the track blocked at a reachability join — its goroutine is
-				// alive, so active is unchanged. Recheck the join: a branch that
-				// was never taken can already be unreachable (it fires now, with
-				// no token death).
-				inst.recheckJoin(ev.track.currentStep().node)
+				// alive, so active is unchanged.
+				inst.recheckParked(ev.track)
 			}
 		}
 	}
@@ -752,10 +758,21 @@ func (inst *Instance) applyMerged(ev trackEvent) {
 	survivor := ev.track.ID()
 
 	for _, id := range ev.mergedIDs {
-		if m := inst.tracks[id]; m != nil {
-			m.mergedInto.Store(&survivor)
-			m.updateState(TrackMerged)
+		m := inst.tracks[id]
+		if m == nil {
+			continue
 		}
+
+		m.mergedInto.Store(&survivor)
+		m.updateState(TrackMerged)
+
+		// Wake the merged track unconditionally (FIX-006). If it is parked at a
+		// reachability/Complex join (AwaitSync) it resumes and returns; if it has
+		// not yet reached the park select, the buffered(1) signal waits for it; if
+		// it already returned (Parallel AwaitingMerge) the signal is simply never
+		// read. Gating this on "is it AwaitSync now" races the track's own
+		// transition into AwaitSync and could miss it, hanging the instance.
+		m.parkCh <- struct{}{}
 	}
 }
 
@@ -798,15 +815,28 @@ func (inst *Instance) hasInTransitArrival(node flow.Node) bool {
 	return false
 }
 
+// recheckParked handles a track that just parked at a reachability join. If the join
+// already fired without recording this track (a late arrival deemed unreachable by an
+// earlier fire — FIX-006), the track is a trailing token: consume it (flip to Merged
+// and wake it so its goroutine returns). Otherwise recheck the join — a never-taken
+// branch may already be unreachable, firing it now with no token death.
+func (inst *Instance) recheckParked(t *track) {
+	node := t.currentStep().node
+
+	if rj, ok := node.(exec.ReachabilityJoin); ok && rj.IsTrailing(t.ID()) {
+		t.updateState(TrackMerged)
+		t.parkCh <- struct{}{}
+
+		return
+	}
+
+	inst.recheckJoin(node)
+}
+
 // recheckJoin re-evaluates a parked reachability join (OR-join) against the live
 // token positions and fires it when no un-marked incoming flow can still receive
 // a token (SRD-022 §2.10). Called only from loop().
 func (inst *Instance) recheckJoin(node flow.Node) {
-	rj, ok := node.(exec.ReachabilityJoin)
-	if !ok {
-		return
-	}
-
 	// An imminent arrival — a live token already on the join node but not yet
 	// parked (between checkFlows moving its position and synchronize's Arrive) —
 	// is invisible to the backward reachability (it sits at the excluded join)
@@ -816,29 +846,53 @@ func (inst *Instance) recheckJoin(node flow.Node) {
 		return
 	}
 
-	if complete, survivor, merged := rj.Recheck(inst); complete {
-		inst.fireOrJoin(survivor, merged)
+	switch j := node.(type) {
+	case exec.ActivationJoin:
+		// Complex gateway (ADR-005 v.3 §2.11 / SRD-023): the loop owns the
+		// fire/abort decision (with guard evaluation). A death can only make the
+		// activation unsatisfiable — never newly fire it — so the abort path lives
+		// here; firing resumes the parked survivor via fireOrJoin.
+		dec, err := j.Recheck(inst.guardEval(inst.ctx), inst)
+
+		switch {
+		case err != nil:
+			inst.fail(err)
+
+		case dec.Aborted:
+			inst.fail(
+				errs.New(
+					errs.M("complex gateway activation rule is unsatisfiable"),
+					errs.C(errorClass, errs.InvalidState),
+					errs.D("node_id", node.ID())))
+
+		case dec.Fired:
+			inst.fireOrJoin(dec.Survivor, dec.Merged)
+		}
+
+	case exec.ReachabilityJoin:
+		if complete, survivor, merged := j.Recheck(inst); complete {
+			inst.fireOrJoin(survivor, merged)
+		}
 	}
 }
 
-// fireOrJoin completes a reachability join: the absorbed tracks are flipped to
-// Merged (recording the merge edge, FR-8), then every parked track is signaled —
-// the survivor's blocked goroutine resumes into the node, the merged ones return.
-// parkCh is buffered(1), so the signal never blocks the loop. Called only from
-// loop().
+// fireOrJoin completes a reachability join: applyMerged flips the absorbed tracks to
+// Merged and wakes any that are parked (FR-8 / FIX-006); here we only resume the
+// survivor's blocked goroutine into the node. parkCh is buffered(1), so the signal
+// never blocks the loop. Called only from loop().
 func (inst *Instance) fireOrJoin(survivorID string, merged []string) {
 	survivor := inst.tracks[survivorID]
 	if survivor == nil {
 		return
 	}
 
-	inst.applyMerged(trackEvent{track: survivor, mergedIDs: merged})
+	inst.Logger().Debug("synchronizing join fired",
+		"instance", inst.ID(),
+		"node", survivor.currentStep().node.ID(),
+		"survivor", survivorID,
+		"merged", len(merged))
 
-	for _, id := range merged {
-		if m := inst.tracks[id]; m != nil {
-			m.parkCh <- struct{}{}
-		}
-	}
+	inst.applyMerged(trackEvent{track: survivor, mergedIDs: merged})
 
 	survivor.parkCh <- struct{}{}
 }

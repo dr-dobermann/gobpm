@@ -10,6 +10,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
@@ -256,4 +257,49 @@ func TestProcessValidate(t *testing.T) {
 
 			require.Error(t, p.Validate())
 		})
+}
+
+// TestProcessValidateComplexGateway covers the per-node Validate() hook in
+// Process.Validate (SRD-023 M2): a ComplexGateway whose activation threshold exceeds
+// its incoming-flow count is rejected at registration, a valid one passes, and nodes
+// without a Validate() method are untouched.
+func TestProcessValidateComplexGateway(t *testing.T) {
+	newProc := func(t *testing.T, threshold int) *process.Process {
+		t.Helper()
+
+		p, err := process.New("complex-validate")
+		require.NoError(t, err)
+
+		cg, err := gateways.NewComplexGateway(
+			gateways.WithActivationThreshold(threshold),
+			gateways.WithDirection(gateways.Converging))
+		require.NoError(t, err)
+
+		s1, err := events.NewStartEvent("s1")
+		require.NoError(t, err)
+		s2, err := events.NewStartEvent("s2")
+		require.NoError(t, err)
+		end, err := events.NewEndEvent("end")
+		require.NoError(t, err)
+
+		for _, n := range []flow.Element{cg, s1, s2, end} {
+			require.NoError(t, p.Add(n))
+		}
+
+		_, err = flow.Link(s1, cg)
+		require.NoError(t, err)
+		_, err = flow.Link(s2, cg)
+		require.NoError(t, err)
+		_, err = flow.Link(cg, end)
+		require.NoError(t, err)
+
+		return p
+	}
+
+	// threshold 2 == incoming 2 → valid (and the start/end events, which have no
+	// Validate(), don't interfere).
+	require.NoError(t, newProc(t, 2).Validate())
+
+	// threshold 5 > incoming 2 → rejected by the per-node hook.
+	require.Error(t, newProc(t, 5).Validate())
 }

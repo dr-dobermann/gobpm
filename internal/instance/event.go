@@ -23,6 +23,29 @@ type trackEvent struct {
 // trackEventKind enumerates the track→loop event kinds.
 type trackEventKind uint8
 
+// String returns the lower-case event-kind name for logging.
+func (k trackEventKind) String() string {
+	switch k {
+	case evFork:
+		return "fork"
+
+	case evEnded:
+		return "ended"
+
+	case evAwaiting:
+		return "awaiting"
+
+	case evMerged:
+		return "merged"
+
+	case evParked:
+		return "parked"
+
+	default:
+		return "unknown"
+	}
+}
+
 const (
 	// evFork: build one new track per extra active outgoing flow.
 	evFork trackEventKind = iota

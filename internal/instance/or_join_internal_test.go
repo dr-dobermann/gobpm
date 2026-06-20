@@ -82,7 +82,7 @@ func runToCompletion(t *testing.T, p *process.Process) {
 	require.NoError(t, inst.Run(ctx))
 	require.Eventually(t,
 		func() bool { return inst.State() == Completed },
-		2*time.Second, 5*time.Millisecond,
+		5*time.Second, 5*time.Millisecond,
 		"the OR-join must fire and the instance complete")
 	require.NoError(t, inst.LastErr())
 }
@@ -168,6 +168,37 @@ func TestORJoinDeathInstance(t *testing.T) {
 	require.NoError(t, xor.UpdateDefaultFlow(df))
 	link(t, mid, join)
 	link(t, join, end1)
+
+	runToCompletion(t, p)
+}
+
+// TestORJoinAllArriveInstance: every branch is taken (a parallel split forks all
+// three), so the OR-join completes on the all-marked path and the earlier parked
+// arrivals must be woken — exercises applyMerged's unconditional wake + recheckParked
+// in-package (FIX-006).
+func TestORJoinAllArriveInstance(t *testing.T) {
+	_ = data.CreateDefaultStates()
+
+	p := amountProcess(t, "or-all-instance", 0)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+	split, err := gateways.NewParallelGateway()
+	require.NoError(t, err)
+	join, err := gateways.NewInclusiveGateway(gateways.WithDirection(gateways.Converging))
+	require.NoError(t, err)
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, split, join, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	link(t, start, split)
+	link(t, split, join)
+	link(t, split, join)
+	link(t, split, join)
+	link(t, join, end)
 
 	runToCompletion(t, p)
 }

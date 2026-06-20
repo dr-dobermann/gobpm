@@ -61,6 +61,9 @@ func (r *Runtime) WithClock(c clock.Clock) *Runtime { r.clk = c; return r }
 // WithExpressionEngine overrides the expression engine and returns the Runtime.
 func (r *Runtime) WithExpressionEngine(e expression.Engine) *Runtime { r.expr = e; return r }
 
+// WithLogger overrides the logger and returns the Runtime.
+func (r *Runtime) WithLogger(l observability.Logger) *Runtime { r.logger = l; return r }
+
 // Logger returns the configured logger.
 func (r *Runtime) Logger() observability.Logger { return r.logger }
 
