@@ -10,12 +10,86 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/stretchr/testify/require"
 )
+
+// complexGuardProcess builds start → AND-split → 2 approvers → Complex join(guard) →
+// end, so a guarded triple's evaluation runs at the join (guard errors fail the
+// instance via the loop's recheck — the single writer of lastErr).
+func complexGuardProcess(
+	t *testing.T, id string, guard data.FormalExpression,
+) *process.Process {
+	t.Helper()
+
+	p := amountProcess(t, id, 0)
+
+	tr, err := gateways.NewTriple(2, gateways.WithGuard(guard))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+	split, err := gateways.NewParallelGateway()
+	require.NoError(t, err)
+	join, err := gateways.NewComplexGateway(
+		gateways.WithActivation(tr), gateways.WithDirection(gateways.Converging))
+	require.NoError(t, err)
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, split, join, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	link(t, start, split)
+	link(t, split, join)
+	link(t, split, join)
+	link(t, join, end)
+
+	return p
+}
+
+// TestComplexGuardEvalErrorInstance: a guard that fails to evaluate (reads a missing
+// variable) makes the loop fail the instance — exercises guardEval's error path +
+// recheckJoin's err → fail branch.
+func TestComplexGuardEvalErrorInstance(t *testing.T) {
+	_ = data.CreateDefaultStates()
+
+	bad, err := goexpr.New(
+		nil, data.MustItemDefinition(values.NewVariable(false)),
+		func(ctx context.Context, ds data.Source) (data.Value, error) {
+			if _, err := ds.Find(ctx, "no-such-var"); err != nil {
+				return nil, err // not found → evaluation error
+			}
+
+			return values.NewVariable(false), nil
+		})
+	require.NoError(t, err)
+
+	runToFailure(t, complexGuardProcess(t, "complex-guarderr", bad),
+		"guard evaluation failed")
+}
+
+// TestComplexGuardNotBoolInstance: a guard whose result is not boolean fails the
+// instance — exercises guardEval's type-assertion error path.
+func TestComplexGuardNotBoolInstance(t *testing.T) {
+	_ = data.CreateDefaultStates()
+
+	notBool, err := goexpr.New(
+		nil, data.MustItemDefinition(values.NewVariable(0)),
+		func(_ context.Context, _ data.Source) (data.Value, error) {
+			return values.NewVariable(42), nil // int, not bool
+		})
+	require.NoError(t, err)
+
+	runToFailure(t, complexGuardProcess(t, "complex-notbool", notBool),
+		"not boolean")
+}
 
 // runToFailure runs p and asserts it terminates with a fatal error containing
 // wantErr (the Complex-join abort path; SRD-023). In-package, so the wiring's

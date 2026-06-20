@@ -43,3 +43,4 @@ examples/conversation-routing/conversation-routing
 examples/signal-broadcast/signal-broadcast
 examples/gateway-routing/gateway-routing
 examples/inclusive-join/inclusive-join
+examples/complex-gateway/complex-gateway
