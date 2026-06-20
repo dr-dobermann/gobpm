@@ -56,6 +56,12 @@ type ReachabilityJoin interface {
 	// reports completion without a new arrival. On completion it returns the
 	// promoted survivor track id and the absorbed (merged) track ids.
 	Recheck(fc FlowChecker) (complete bool, survivor string, merged []string)
+
+	// IsTrailing reports whether arrivingTrackID reached the join after it had
+	// already fired without being recorded — a late arrival (a reachability fire
+	// can precede a branch that was deemed unreachable) that must be consumed, not
+	// parked. Atomic, so the answer is consistent with this track's own Arrive.
+	IsTrailing(arrivingTrackID string) bool
 }
 
 // GuardEval evaluates a Complex gateway's data guard against process-level data. It

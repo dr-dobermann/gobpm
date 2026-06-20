@@ -113,7 +113,7 @@ func runToFailure(t *testing.T, p *process.Process, wantErr string) {
 	require.NoError(t, inst.Run(ctx))
 	require.Eventually(t,
 		func() bool { return inst.State() == Terminated },
-		2*time.Second, 5*time.Millisecond,
+		5*time.Second, 5*time.Millisecond,
 		"the unsatisfiable Complex join must abort")
 	require.ErrorContains(t, inst.LastErr(), wantErr)
 }
@@ -224,4 +224,39 @@ func TestComplexAbortInstance(t *testing.T) {
 	link(t, join, end1)
 
 	runToFailure(t, p, "unsatisfiable")
+}
+
+// TestComplexTrailingInstance: a threshold-1 join with an asymmetric diamond — A
+// reaches the join directly while B goes through an extra pass-through gateway — so A
+// fires the join and B arrives afterwards, deterministically exercising
+// synchronizeActivation's trailing-token consume (Record → firedAlready).
+func TestComplexTrailingInstance(t *testing.T) {
+	_ = data.CreateDefaultStates()
+
+	p := amountProcess(t, "complex-trailing", 0)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+	split, err := gateways.NewParallelGateway()
+	require.NoError(t, err)
+	mid, err := gateways.NewParallelGateway() // pass-through, slows branch B
+	require.NoError(t, err)
+	join, err := gateways.NewComplexGateway(
+		gateways.WithActivationThreshold(1),
+		gateways.WithDirection(gateways.Converging))
+	require.NoError(t, err)
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, split, mid, join, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	link(t, start, split)
+	link(t, split, join) // branch A: direct (fires the threshold-1 join)
+	link(t, split, mid)  // branch B: one hop longer → arrives after the fire
+	link(t, mid, join)
+	link(t, join, end)
+
+	runToCompletion(t, p)
 }

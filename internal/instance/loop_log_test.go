@@ -67,3 +67,7 @@ func TestLoopEventLogging(t *testing.T) {
 	require.Contains(t, out, "kind=fork")
 	require.Contains(t, out, "kind=ended")
 }
+
+func TestTrackEventKindStringUnknown(t *testing.T) {
+	require.Equal(t, "unknown", trackEventKind(99).String())
+}

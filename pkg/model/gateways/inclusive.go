@@ -3,6 +3,7 @@ package gateways
 
 import (
 	"context"
+	"slices"
 	"sync"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -165,6 +166,17 @@ func (ig *InclusiveGateway) unmarkedFlows() []*flow.SequenceFlow {
 	}
 
 	return unmarked
+}
+
+// IsTrailing reports whether arrivingTrackID reached the join after it had already
+// fired without being recorded — a late arrival to be consumed, not parked (FIX-006).
+// A reachability fire can precede a branch that was deemed unreachable; that branch's
+// token then arrives but is not in the fired order. Atomic under the gateway's mutex.
+func (ig *InclusiveGateway) IsTrailing(arrivingTrackID string) bool {
+	ig.mu.Lock()
+	defer ig.mu.Unlock()
+
+	return ig.fired && !slices.Contains(ig.order, arrivingTrackID)
 }
 
 // absorb returns every track id in order except the survivor.
