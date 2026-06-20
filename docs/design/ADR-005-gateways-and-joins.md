@@ -2,8 +2,8 @@
 
 | Field   | Value                                                     |
 | ------- | --------------------------------------------------------- |
-| Status  | Accepted                                                  |
-| Version | v.3                                                       |
+| Status  | Draft (v.4 amendment; v.3 Accepted + implemented)         |
+| Version | v.4                                                       |
 | Date    | 2026-06-09                                                |
 | Owner   | Ruslan Gabitov                                            |
 | Refines | [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) |
@@ -11,9 +11,10 @@
 > **Scope.** This ADR decides the **routing gateways** and the track-coordination
 > model they share: **Parallel** (split §2.2 + synchronizing join §2.3–§2.4),
 > **Exclusive** (split §2.8; its merge is the non-synchronizing pass-through §2.3),
-> and **Inclusive** (split §2.9 + synchronizing **OR-join** §2.10), and **Complex**
-> (split §2.9 + an **activation-driven synchronizing join** §2.11). **Event-Based** is
-> deferred (§4). The OR-join pins a **conservative, two-tier,
+> and **Inclusive** (split §2.9 + synchronizing **OR-join** §2.10), **Complex**
+> (split §2.9 + an **activation-driven synchronizing join** §2.11), and **Event-Based**
+> (a **deferred choice** §2.12 — the gate subscribes all its arms and routes by
+> first-fire). The OR-join pins a **conservative, two-tier,
 > re-evaluated-on-token-death** realization of the standard's synchronizing merge
 > (§2.10); the Complex join reuses that machinery with an activation-rule completion
 > (§2.11).
@@ -21,7 +22,9 @@
 > **Implementation status.** Parallel, the Exclusive and Inclusive splits, the
 > Inclusive **OR-join** (§2.10), and the **Complex** gateway (§2.11 — the
 > activation-driven threshold join) are all implemented (with the accompanying SRDs).
-> Event-Based and the deferrals in §4 remain.
+> **Event-Based** (§2.12) is decided here as **conception-ahead** — its gate-as-router
+> deferred choice lands with the accompanying SRD (Exclusive mid-flow first; the
+> Parallel instantiator gated on correlation, §2.12.7). The deferrals in §4 remain.
 
 ## 1. Context
 
@@ -572,6 +575,188 @@ exactly a re-arm, which needs a loop to deliver a second wave of tokens, so it i
 engine-wide loop deferral (§4) that applies identically to Parallel and OR — not a
 Complex-shaped gap.
 
+### §2.12 Event-Based gateway (deferred choice)
+
+The Event-Based gateway is a **deferred choice** (WCP-16): a pass-through on its
+incoming side that, instead of evaluating data conditions, **waits for one of several
+events** and routes by **which event happens first**
+(`bpmn-spec/semantics/gateways.md` §13.4.4, Table 13.4 — "choice of outgoing branch is
+**deferred** until one of the subsequent Tasks or Events completes"). Its arms are
+intermediate **catch events** (Message, Timer, Signal, Conditional) or **Receive
+Tasks** (the spec's "Events/Tasks following an Event Gateway", §10.6.6). Two
+configurations exist — `eventGatewayType` **Exclusive** (default) and **Parallel**. The
+**Exclusive** choice may sit **mid-flow** or **at process start**; **Parallel** is
+**start-only** — an instantiation construct (§2.12.3), used with `instantiate=true`.
+
+#### §2.12.1 The gate is the subscriber and the router (the core mechanic)
+
+The whole gateway reduces to one idea: **the gate itself owns the wait.** When the
+gate activates, *it* subscribes to **every arm's** event — the gate is the single
+event receiver for all its arms. The token **does not leave the gate** onto any arm; it
+stays at the gate until an event fires (Table 13.4 — the branch is *deferred*, so no
+branch is taken, hence no token is produced on one, until a completion). On a fire the
+gate **routes** the event into the winning arm: it hands the event to that arm's own
+catch/receive behaviour (the arm binds its message/payload exactly as a standalone
+catch event or Receive Task would), then lets the single token continue **down that
+arm's path**.
+
+```mermaid
+sequenceDiagram
+    participant L as instance loop
+    participant G as event-based gate (subscriber)
+    participant H as event delivery (ADR-006)
+    participant A as winning arm (catch/receive)
+    L->>G: token arrives — activate
+    G->>H: subscribe arm-1, arm-2, arm-3
+    Note over G,H: token rests at the gate, no arm holds a token
+    H-->>G: arm-2 event fires
+    G->>A: route the event into arm-2's catch/receive behaviour
+    G->>H: unsubscribe arm-1, arm-3 (Exclusive)
+    G->>L: advance the token onto arm-2's path
+```
+
+**No token ever sits on an arm, so there is nothing to "withdraw".** An arm is a catch
+event or Receive Task **with an outgoing flow**; a token there would have to leave via
+that flow — by the termination rule a token only ever rests at a node with **no**
+outgoing flow (`bpmn-spec/state-machines/process-lifecycle.md` — "all tokens MUST reach
+an end node (a node with no outgoing sequence flows)"). So the losing arms never
+receive a token; the gate simply **drops their subscriptions**.
+
+> **Engine note — the spec's `Ready → Withdrawn` is subscription bookkeeping, not a
+> token.** The standard describes the arms as activities that go `Inactive → Ready` when
+> the gate fires and, for the losers, `Ready → Withdrawn`
+> (`bpmn-spec/semantics/gateways.md`, "Race-withdrawal interaction with Activity
+> Lifecycle"). gobpm realizes that lifecycle on the **gate's subscription set**:
+> *armed* = the gate holds that arm's subscription, *withdrawn* = the gate dropped it.
+> There is no arm token and therefore **no withdrawn-token producer** — the
+> `TokenWithdrawn` token-state reserved for this gateway is **retired** (an earlier
+> guess that the race would mint loser tokens; it does not). If race-losers ever need
+> to be visible in the instance history, that is a node-level "armed-but-not-taken"
+> record, decided by the observability slice — never a token.
+
+#### §2.12.2 Exclusive (default) — first event wins
+
+The first arm to fire is the choice: the gate emits **one** token onto that arm's path
+and drops every other subscription. Because the gate is a single subscriber feeding the
+instance's serialized event intake, the race is **loop-owned** — the loop processes
+fires one at a time and the first it processes wins; a sibling event that arrives a hair
+later finds its subscription already gone (the same single-writer discipline as the
+synchronizing joins, §2.4/§2.10/§2.11). One token in, one token out; the alternatives
+were never tokens.
+
+#### §2.12.3 Parallel — an instantiation construct (start-only)
+
+Per the spec the **Parallel** configuration exists **only at process start**: every
+`eventGatewayType=Parallel` mention is tied to instantiation
+(`bpmn-spec/semantics/gateways.md` — "*If used at Process start* with
+`eventGatewayType=Parallel`…"; `state-machines/process-lifecycle.md`), and the mid-flow
+§13.4.4 text describes only the Exclusive race (§2.12.2). **There is no mid-flow Parallel
+event gateway** — a mid-flow event gateway is always the Exclusive deferred choice. The
+Parallel instantiator is detailed in §2.12.4.
+
+Its completion semantics is a **barrier** — the gate holds until **all** its expected
+events have fired, then starts the arms together — **to be confirmed against the BPMN
+PDF**. The vendored extract is ambiguous (it says the *first* event creates the instance,
+then "waits for all other Events … completes only if all occurred"), so this is the one
+§2.12 claim not settled from the vendored spec; the **instantiator SRD resolves it
+against the normative text** before it lands.
+
+#### §2.12.4 At process start — the instantiating gate
+
+When the gate has no incoming flow and `instantiate=true`, it is an **instantiator**:
+the subscriber is the gate **at the definition level** (engine-owned, the same shape as
+the message-start instance-starter, [ADR-015](ADR-015-event-triggered-instantiation.md)),
+not a token in a running instance. Only **message-based** arms are permitted at start
+(`bpmn-spec/semantics/gateways.md` Engine note).
+
+- **Exclusive start:** each matching event **creates a new instance** and that instance
+  proceeds on its one creating arm — it does **not** wait for the gate's other events
+  (`bpmn-spec/state-machines/process-lifecycle.md`, "Event-Based Gateway as
+  instantiator"). There is no withdrawal — the arms are independent instance births.
+- **Parallel start:** the first event **creates one instance**; every **subsequent**
+  event of that gate is **correlated to that same instance** ("they MUST share
+  correlation info with the first") and feeds its remaining arms; the gate is a
+  **barrier** — the instance proceeds past it only once **all** the events have fired
+  (exact barrier-vs-gate wording to confirm against the PDF, §2.12.3). Depends on
+  **message correlation** ([ADR-016](ADR-016-message-correlation.md)) — see §2.12.7.
+
+The instantiation axis changes only **who owns the subscription** (engine vs in-instance
+token) and adds correlation for Parallel-start; the §2.12.1 routing — subscribe-all,
+fire-routes-to-winner — is identical.
+
+#### §2.12.5 Validation (registration-time)
+
+The gate's well-formedness is structural and knowable once flows are linked, so it is
+checked at registration (the per-node validation hook §2.11 introduced). A malformed
+gate is rejected before a snapshot is built:
+
+1. **At least two outgoing arms** — a deferred choice needs alternatives.
+2. **Every arm is a permitted node type** — an intermediate catch event (Message /
+   Timer / Signal / Conditional) or a Receive Task; no other node may follow the gate
+   (`bpmn-spec/semantics/gateways.md` §13.4.4 Engine notes).
+3. **Each arm has exactly one incoming flow — the gate.** The gate owns the arm's wait;
+   a second incoming flow would let a token reach the arm independently of the gate,
+   which the gate-driven arm cannot service. (Engine constraint, from §2.12.1.)
+4. **No `conditionExpression` on the gate's outgoing flows.** The branch is chosen by
+   the racing event, never by a data condition — a condition on an arm flow is
+   meaningless here. (Engine constraint.)
+5. **A Receive-Task arm carries no boundary events.** The gate absorbs the receive's
+   wait, so there is no independently-`Active` receive activity for a boundary event to
+   attach to. (Engine constraint, from §2.12.1.)
+6. **At start (`instantiate=true`): every arm is message-based** (Message catch or
+   Receive Task) — timer/signal/conditional cannot instantiate
+   (`bpmn-spec/semantics/gateways.md` Engine note).
+7. **Parallel-start arms must carry correlation** so subsequent events route to the
+   created instance (`bpmn-spec/state-machines/process-lifecycle.md`).
+8. **By default, arms are not mixed** — all intermediate catch events, or all Receive
+   Tasks, after one gate (BPMN §13.4.4). This default is **relaxable** — see the Engine
+   note.
+
+> **Engine note — mixing is parametrized, with the standard as the default.** BPMN
+> §13.4.4 forbids *combining* Receive Tasks with intermediate catch Events after one
+> gate — a restriction that guards message-routing ambiguity in engines that don't
+> isolate subscriptions. gobpm's gate-router treats every arm uniformly (each arm has
+> its own subscription and binds its own payload), so that ambiguity does not arise and
+> the restriction is not *inherent* here. The gateway therefore **parametrizes** it: the
+> **default conforms to the standard** (mixed arms rejected at validation), with an
+> explicit opt-in that **allows** mixed arm types. Standard-safe out of the box,
+> composition when asked. This is gobpm's general stance for any beyond-standard
+> relaxation — **parametrize it, and default to what the standard dictates.**
+
+#### §2.12.6 Why this is one mechanic, not four
+
+The configurations are **one** algorithm — *subscribe all arms; on a fire, route the
+event into the winner and emit on its path* — with two orthogonal knobs (Parallel being
+defined only at start):
+
+| | **Exclusive** | **Parallel** (start-only) |
+| --- | --- | --- |
+| **mid-flow** | first fire → one token; drop the rest | *n/a — not a BPMN construct; mid-flow is always Exclusive* |
+| **start** | each fire → a new instance | barrier: hold until all events fire, then start the arms (to-verify) |
+
+Withdrawal appears in **no** cell (there are never arm tokens); correlation appears in
+only **one** (Parallel-start). The gate is, in effect, a Complex-gateway activation
+rule (§2.11) moved to the **event** side: a policy over *which events fired* deciding
+*which arm flows open* — which is why richer policies (N-of-M, guarded) would slot into
+the same router should the standard ever need them.
+
+#### §2.12.7 Scope
+
+The decided model above is complete. Implementation is sliced by dependency readiness
+(carried by the accompanying SRD):
+
+- **Ready now** — Exclusive **mid-flow** (Message/Timer/Signal arms + Receive Task):
+  pure §2.12.1 routing over existing catch-event delivery; no new subsystem.
+- **Ready, additive** — the **Exclusive instantiator** (each event a new instance;
+  reuses born-from-event, [ADR-015](ADR-015-event-triggered-instantiation.md)).
+- **Gated on correlation** — the **Parallel instantiator** (start-only), which needs
+  same-instance correlation of subsequent triggers ([ADR-016](ADR-016-message-correlation.md),
+  whose conversation-token threading is itself deferred); its **barrier** semantics is
+  confirmed against the PDF when it lands (§2.12.3).
+- **Gated on a waiter** — **Conditional** arms: the conditional event has no waiter yet
+  (it must re-evaluate on data change, not fire once), so it is a valid arm in the model
+  but not armable until that waiter lands.
+
 ## 3. Consequences
 
 - The engine gains real fork/join: any acyclic process using Parallel split
@@ -606,9 +791,13 @@ Complex-shaped gap.
   single-reachability form; the standard's two-path refinement clause (a token
   that can *also* reach a marked incoming flow does not block) is **not**
   implemented — rarely material, and it only ever errs toward waiting longer.
-- **Event-Based gateway** and its withdrawn-token producer (race-loss siblings end
-  as withdrawn) — ties to event delivery ([ADR-006](ADR-006-events-and-subscriptions.md)).
-  Deferred.
+- **Event-Based gateway sub-parts.** The gateway itself is **decided in §2.12** (the
+  gate-as-router deferred choice). The `TokenWithdrawn` producer this bullet once
+  anticipated is **retired** — there are no arm tokens to withdraw (§2.12.1). Two
+  sub-parts stay deferred: the **Parallel instantiator**, which needs same-instance
+  correlation of subsequent triggers ([ADR-016](ADR-016-message-correlation.md)); and
+  **Conditional arms**, which need a re-evaluating conditional waiter the engine does
+  not yet have (§2.12.7).
 - **Loops & excess tokens (the one cross-cutting deferral).** This conception scopes
   to **acyclic, single-pass** joins — Parallel, OR, **and Complex** alike: each
   incoming flow is marked once and the join fires when its completion rule is met over
@@ -668,9 +857,10 @@ Complex-shaped gap.
 ## 7. Open questions
 
 - **None.** The routing gateways — Parallel, Exclusive, Inclusive (split + join),
-  and Complex (activation join, §2.11) — are decided. Event-Based, the OR-join
-  refinement clause, the Complex phase-2 reset / re-arm, and loop re-arming are
-  deliberate deferrals (§4), not open questions.
+  Complex (activation join, §2.11), and Event-Based (deferred choice, §2.12) — are
+  decided. The OR-join refinement clause, the Complex phase-2 reset / re-arm, the
+  Event-Based Parallel-instantiator and Conditional arms (§2.12.7), and loop re-arming
+  are deliberate deferrals (§4), not open questions.
 
 ## Document History
 
@@ -680,3 +870,4 @@ Complex-shaped gap.
 | v.1 | 2026-06-11 | Ruslan Gabitov | **Accepted**, landed via SRD-005 v.1. Two contract details settled during implementation and folded back into §2.4/§2.7: the node's `Arrive` exchanges **track ids** (not `*track`/`any`), keeping the model-layer node free of the runtime type; and the merge does **not** fold the absorbed tracks into the survivor's lineage — a token at a join has many predecessors but a token records one parent, so convergence is carried by the absorbed tracks' own terminal `Consumed` entries (folding produced a cyclic parent edge). Refines pin ADR-001 v.5. |
 | v.2 | 2026-06-19 | Ruslan Gabitov | Accepted. Completes the **routing-gateway** conception with three new sections. **§2.8 Exclusive (XOR) split** — data-based exclusive choice (§13.4.2, Table 13.2): conditions in declared order, **first-true** (short-circuit), **default** when none, **instance failure** when none + no default; counterpart of §2.2 (Parallel = all) returning exactly one → §2.7 fork with no `spawn`; XOR merge was already the non-sync pass-through (§2.3/§2.7). **§2.9 Inclusive (OR) split** — fork the conditionally-**true subset** (≥1), default/exception as XOR (§13.4.3). **§2.10 Inclusive (OR) join** — the synchronizing merge (WCP-7, §13.4.3/Table 13.3): a **non-local** completion rule realized as gobpm's **conservative, two-tier** form (fast path = all incoming marked; slow path = condition-ignoring, cycle-guarded **reachability** DFS over the ADR-009 static graph — fire when no active track can still reach an un-marked incoming flow), **re-evaluated on token death as well as arrival** (the loop re-checks awaiting OR-joins on any track end/cancel/merge and can itself fire the join by promoting an awaiting track to survivor) — deliberately fixing Camunda 7's arrival-only deviation that hangs an OR-join when the awaited branch is interrupted; per-incoming-flow marking; ownership/mutex stay §2.4. Conservative variant chosen over the spec refinement clause (rarely material, errs only toward waiting). Implementation sliced: **XOR + OR-split first, OR-join its own SRD**; evaluation/reachability mechanics delegated to those SRDs (code-grounded). Answers the v.1 OR-join open question (§7); Complex/Event-Based and loop re-arming remain deferred (§4). Standard-grounded against `bpmn-spec/semantics/gateways.md` §13.4.2/§13.4.3; OR-join informed by the internal Camunda 7 OR-join analysis (§6). Refines pin ADR-001 v.5. The Exclusive/Inclusive splits and the OR-join (§2.10) all land in this change-set. |
 | v.3 | 2026-06-19 | Ruslan Gabitov | Accepted. Adds **§2.11 Complex gateway** — an **activation-driven synchronizing join** (Discriminator / Partial Join, WCP-9/28/30/31; an explicit extension above the Common Executable Subclass, conformance §2.1.3). Converging Complex reuses §2.10's park/resume + reachability **wholesale**, changing only the completion rule. Activation is a disjunction of **triples** `(condition, count, requiredFlows)`: it **fires** when some triple holds — its data `condition` true, `arrived ≥ count`, and the `requiredFlows` gates all arrived; the completing arrival survives (last-in) and forks the outgoing subset (§2.8–§2.9); trailing tokens consumed. **Abort** (throw, fail the instance) when every triple is dead — count unreachable or a required gate unreachable — plus an Exclusive-style exhaustion no-match; the §2.10 anti-hang applied to the activation rule (exact, since counts are monotonic `≥` thresholds). Diverging Complex = the §2.9 split. **Engine note:** gobpm realizes §13.4.5's `activationExpression` as the structured triple form — the `count` and gate identities (`requiredFlows`) live in the triple, the `condition` stays a pure process-data expression — so per-gate `activationCount`s never enter the data namespace (no reserved names / collisions) while still covering count-thresholds, data-aware activation, and per-gate requirements; non-monotonic count rules are the omitted shape (§13.4.5 discourages them). **Validation:** per triple `1 ≤ count ≤ M`, `count ≥ |requiredFlows|`, `requiredFlows ⊆ incoming` — build + registration; out-of-range rejected. Scope: the single-pass converging activation join + the diverging split + the validation — **complete for the acyclic engine, no Complex-specific follow-up**; re-arming after a fire is the standard phase-2 *reset*, the engine-wide loop deferral identical to Parallel/OR (§4). Standard-grounded against `bpmn-spec/semantics/gateways.md` §13.4.5 + `conformance.md`. Also reconciles **§2.7** (the track→loop protocol) to document the reachability-join **block-park** (`AwaitSync` / `evParked` — the goroutine suspends and the loop resumes it) alongside the Parallel `AwaitingMerge` (goroutine returns) — a v.2 OR-join behaviour the §2.7 text had not captured. Refines pin ADR-001 v.5. The activation join lands in this change-set. |
+| v.4 | 2026-06-20 | Ruslan Gabitov | Draft. Adds **§2.12 Event-Based gateway** — the **deferred choice** (WCP-16, §13.4.4): a pass-through that subscribes to all its arms (intermediate Message/Timer/Signal/Conditional catch events or Receive Tasks) and routes by **which event fires first**. Core model — **the gate is the sole subscriber and router**: the token rests at the gate (never on an arm — a catch/receive node with an outgoing flow cannot hold a token, per the process-lifecycle termination rule), and on a fire the gate routes the event into the winning arm's own catch/receive behaviour and advances the token onto that arm's path. **Exclusive** (default): first fire wins, the other subscriptions dropped — a **loop-owned** race. **Parallel** is **start-only** (an instantiation construct — no mid-flow Parallel in BPMN): a **barrier** that holds until all events fire then starts the arms (exact semantics to-verify against the PDF). **Instantiation** (`instantiate=true`, message-arms only): Exclusive-start = each event a new instance; Parallel-start = first event creates one instance, subsequent events correlate to it. **Retires the `TokenWithdrawn` state** — the spec's arm `Ready→Withdrawn` is subscription bookkeeping on the gate, not a token, so there is no withdrawn-token producer (correcting the earlier §4 anticipation). **Validation** (registration, via the §2.11 per-node hook): ≥2 arms; each arm a permitted catch/receive node with exactly one incoming flow (the gate); no `conditionExpression` on arm flows; no boundary events on a Receive-Task arm; message-only arms at start; correlation on Parallel-start. **Engine note:** mixing receive/catch arms is **parametrized** — the per-arm subscription removes the routing ambiguity the BPMN §13.4.4 mix-ban guards, so gobpm offers it as an opt-in while **defaulting to the standard** (no mixing); the general stance for any beyond-standard relaxation. Standard-grounded against `bpmn-spec/semantics/gateways.md` §13.4.4 + `state-machines/process-lifecycle.md`. Resolves the §4 Event-Based deferral; the Parallel instantiator (needs ADR-016 correlation) and Conditional arms (need a conditional waiter) stay deferred (§2.12.7). Conception-ahead; the gate lands with the accompanying SRD. Refines pin ADR-001 v.5. |
