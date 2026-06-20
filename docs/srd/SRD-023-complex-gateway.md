@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-20 |
 | Owner | Ruslan Gabitov |
@@ -244,9 +244,12 @@ The Complex guards read **process-level** data (properties), which live in the
 instance **root** scope, not a node-local frame. So the instance can build a frame-free
 evaluator: `newExecEnv(inst, inst.dataPlane.Root())` → a `RuntimeEnvironment` for
 process-level reads. We expose that as a `GuardEval` closure and pass it into
-`Activate`/`Recheck`. The gateway keeps ownership of the decision (it knows its
-triples); the caller supplies only the capability. This avoids fabricating a node frame
-(architecturally wrong) and avoids putting counts in the namespace (NFR-1).
+**`Recheck`** (the loop's decision) — the track's `Record` takes no evaluator, because
+reachability **and** guards are read only by the loop, never off the arriving track's
+goroutine (the live-token set `CheckFlows` reads is loop-owned and must not be raced;
+proven by `-race`). The gateway keeps ownership of the decision (it knows its triples);
+the loop supplies the capability. This avoids fabricating a node frame (architecturally
+wrong) and avoids putting counts in the namespace (NFR-1).
 
 **Alternative considered — thread `renv.RuntimeEnvironment` through `Arrive`/`Recheck`.**
 Rejected: forces a per-node frame at sites that have none, and couples the join contract
@@ -264,9 +267,9 @@ unreachable → "all reachable arrived" → complete). The Complex count is a **
 `≥` threshold**: a death never increases `|arrived|`, so it can only push a triple from
 *maybe* to *dead*. Hence the Complex death path computes **abort**, never fire. This is
 why `ActivationJoin` is a distinct contract rather than reusing `ReachabilityJoin` — the
-`Decision.Aborted` arm has no OR-join analogue. Firing happens only on an **arrival**
-(the sole event that grows the count). The abort/exhaustion test reuses `CheckFlows`
-unchanged.
+`Decision.Aborted` arm has no OR-join analogue. Firing is decided by the loop's
+`Recheck` (an arrival records then parks, and the loop's recheck fires it); a death only
+ever aborts. The abort/exhaustion test reuses `CheckFlows` unchanged.
 
 ### 4.3 Why a per-node `Validate` hook
 
@@ -280,13 +283,15 @@ reusable by other nodes later. Build-time-knowable checks (`count ≥ 1`,
 
 ### 4.4 Track/loop wiring (reuse + the additive branch)
 
-`synchronize` (`track.go:491`) currently: `SynchronizingJoin?` → `Arrive`; then
-`ReachabilityJoin?` → park. Add: `ActivationJoin?` → build `eval` from `t.instance`,
-call `Activate(flowID, trackID, eval, t.instance)`; on `Fired` emit `evMerged`; on
-`Aborted` fail the track/instance; else park (reuse `TrackAwaitSync`/`parkCh`/`evParked`).
-`recheckJoin` (`instance.go:804`): recognise `ActivationJoin`, call
-`Recheck(inst.guardEval(), inst)`; `Fired` → `fireOrJoin`; `Aborted` → fail the
-instance. `hasInTransitArrival` guard (`instance.go:789`) applies unchanged.
+`synchronize` (`track.go`) gets an `ActivationJoin` branch **before** the
+`SynchronizingJoin` check (Complex is not a `SynchronizingJoin`):
+`synchronizeActivation` calls `Record(flowID, trackID)` and either **consumes** a
+trailing token (the gateway already fired) or **parks** (reuse
+`TrackAwaitSync`/`parkCh`/`evParked`) — the track makes **no** decision. `recheckJoin`
+(`instance.go`) gets an `ActivationJoin` branch via a type-switch:
+`Recheck(inst.guardEval(ctx), inst)` → `Fired` → `fireOrJoin` (resumes the parked
+survivor); `Aborted` → `fail` the instance (lastErr + cancel, loop-only single writer);
+else wait. The `hasInTransitArrival` guard applies unchanged.
 
 ---
 
@@ -304,39 +309,34 @@ instance. `hasInTransitArrival` guard (`instance.go:789`) applies unchanged.
 ## 6. Test scenarios
 
 **Model-unit** (`pkg/model/gateways/complex_test.go`, hand-written `FlowChecker` +
-`GuardEval` stubs, mirroring `inclusive_test.go`):
-- `TestNewComplexGateway` — options wiring; `WithActivationThreshold` + `WithActivation`
-  together → error; zero triples → error; `count < 1` / `count < len(required)` → error.
-- `TestComplexActivateThresholdFires` — `(nil, 2, nil)`, 3 incoming; first arrival parks,
-  second fires (survivor last-in, one merged).
-- `TestComplexActivateGuard` — `(amount<1000, 2, nil)`; guard true → fires at 2; guard
-  false → parks though count met.
-- `TestComplexActivateRequired` — `(nil, 2, [A])`; `A+B` fires, `B+C` (no A) parks.
-- `TestComplexRecheckAbortsCountUnreachable` — `(nil, 3, nil)`, 3 incoming, 1 arrived,
-  `CheckFlows` returns ∅ → `Decision.Aborted`.
-- `TestComplexRecheckAbortsRequiredUnreachable` — `(nil, 2, [A])`, A unreachable & not
-  arrived → aborted.
-- `TestComplexExhaustionNoMatch` — guard false, reachable empty → aborted (no-match).
-- `TestComplexIsActivationJoin` — `var _ exec.ActivationJoin` assertion.
-- `TestComplexValidate` — `count > M`, bad `required` id, `count < len(required)` →
-  `Validate()` errors; valid → nil.
-- `TestComplexGatewayClone` — fresh state.
-- Diverging split reuse: `TestComplexSplitSubset` (true subset / default / no-match).
+`GuardEval` stubs): `TestNewTriple` / `TestNewComplexGateway` (build validation +
+threshold-xor-expression mutual exclusion); `TestComplexFiresAtThreshold` (Record then
+Recheck fires at the threshold, survivor last-in); `TestComplexGuardGatesFire` (the
+guard gates the fire); `TestComplexRequiredFires` (a required gate);
+`TestComplexAbortCountUnreachable` / `TestComplexAbortRequiredUnreachable` /
+`TestComplexExhaustionNoMatch` (the abort paths); `TestComplexRecheckReachabilityError`
+/ `TestComplexGuardError` (conservative wait / guard-error propagation);
+`TestComplexRecheckNoArrivals`; `TestComplexOptionApplyWrongConfig`;
+`TestComplexIsActivationJoin`; `TestComplexValidate`; `TestComplexGatewayClone`;
+`TestComplexSplitSubset`.
 
-**Engine** (`pkg/thresher/complex_gateway_test.go`, mirroring `or_join_test.go`):
-- `TestComplexDiscriminator` — `(nil, 1, nil)`: first of 3 branches fires, the other two
-  arrive later and are consumed; instance completes once.
-- `TestComplexPartialJoin` — `(nil, 2, nil)`: fires at the 2nd of 3, the 3rd consumed.
-- `TestComplexDataAware` — `[(amount<1000, 2), (amount>=1000, 3)]`: amount picks the
-  threshold.
-- `TestComplexRequiredGate` — `(nil, 2, [A])`: a run where B+C arrive first parks until
-  A arrives.
-- `TestComplexAbortOnDeath` — a required/needed branch diverts via XOR and dies →
-  death-recheck aborts (instance fails, no hang).
-- All under `-race`, run 5×.
+**In-package** (`internal/instance/complex_internal_test.go`, runs a diamond on a real
+instance so the wiring is recorded by the per-package coverage profile):
+`TestComplexDiscriminatorInstance`, `TestComplexGuardInstance`,
+`TestComplexAbortInstance`, `TestComplexGuardEvalErrorInstance`,
+`TestComplexGuardNotBoolInstance`.
 
-**Example** (`examples/complex-gateway/`): a 3-approver discriminator/partial-join
-diamond (`process.go` + `main.go`, ≤80-line entry), smoke exit 0.
+**Registration** (`pkg/model/process/process_test.go`):
+`TestProcessValidateComplexGateway` — an out-of-range threshold is rejected at
+registration; a valid one passes; nodes without a `Validate()` method are untouched.
+
+**Engine** (`pkg/thresher/complex_gateway_test.go`, `-race`): `TestComplexDiscriminator`
+(1-of-3, the rest consumed), `TestComplexPartialJoin` (2-of-3, the 3rd consumed),
+`TestComplexDataAware` (amount picks the threshold), `TestComplexRequiredGate`,
+`TestComplexAbortOnDeath` (a diverted branch dies → death-recheck aborts, no hang).
+
+**Example** (`examples/complex-gateway/`): a 3-approver data-aware partial join
+(`process.go` + `main.go`, ≤80-line entry), smoke exit 0.
 
 ---
 
@@ -382,7 +382,50 @@ if cfo's branch dies first, the death-recheck aborts (no silent hang).
 
 ## 10. Implementation summary
 
-> ⚠️ TODO: fill AFTER landing — commits, key files, V-results, deltas vs this draft.
+Landed on `feat/complex-gateway` (off `master`): four milestones + the doc.
+
+### 10.1 Commits
+
+| M | Commit | Scope |
+|---|---|---|
+| doc | `b6d3da9` | SRD-023 draft |
+| M1 | `b344795` | `exec.ActivationJoin` + `ComplexGateway` model + model-unit tests |
+| M2 | `a956d76` | per-node `Process.Validate` hook |
+| M3 | `a632602` | instance wiring (Record/Recheck, guardEval, recheckJoin, synchronizeActivation) |
+| M4 | `55d02f7` | `examples/complex-gateway` + in-package coverage tests |
+
+Adjacent in the same PR: debug-level event logging (`5cdbd52`) and **FIX-006**
+(`6dcd370`) — the OR-join all-branches-arrive hang surfaced while building M3.
+
+### 10.2 Key files
+
+- `pkg/exec/exec.go` — `ActivationJoin` (`Record` + `Recheck`), `GuardEval`, `Decision`.
+- `pkg/model/gateways/complex.go` — `ComplexGateway`, `Triple`, options, `Exec` (via
+  `forkTrueSubset`), `Record`, `Recheck`, `decide`, `evalTriple`, `Validate`.
+- `pkg/model/gateways/gateway.go` — `forkTrueSubset` (the shared §2.9 split).
+- `pkg/model/process/process.go` — the per-node `Validate` hook.
+- `internal/instance/activation.go` — `guardEval`, `fail`.
+- `internal/instance/track.go` — `synchronizeActivation`.
+- `internal/instance/instance.go` — the `recheckJoin` `ActivationJoin` branch.
+- `examples/complex-gateway/`.
+
+### 10.3 Verification
+
+- `make ci` green: lint, build, `-race`, diff-coverage **97.4%** (≥95), govulncheck.
+- Tests: model-unit (Record/Recheck), in-package (`internal/instance`), registration
+  (`Process.Validate`), and engine (`-race`): discriminator, partial-join, data-aware,
+  required-gate, abort-on-death.
+- `examples/complex-gateway` smoke exit 0; all 13 examples exit 0.
+
+### 10.4 Deltas vs the draft
+
+- **`Activate` → `Record` + loop `Recheck`.** The draft had the track call
+  `Activate(eval, fc)` and decide. But `CheckFlows` is **loop-only** (a track read
+  races `inst.tracks`, proven by `-race`). So the track only **Records**; the loop owns
+  the whole fire/abort decision via `Recheck`. §3.3 + §4 reflect this.
+- **Trailing tokens via `Record` → `firedAlready`** — the post-fire consume; the same
+  pattern was mirrored into the OR-join by FIX-006.
+- §6 test names settled during landing; §6/§10.2 list the actual names.
 
 ## Open questions
 
