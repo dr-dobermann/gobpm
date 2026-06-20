@@ -190,14 +190,15 @@ type GuardEval func(cond data.FormalExpression) (bool, error)
 type ActivationJoin interface {
     NodeExecutor
 
-    // Activate records arrivingTrackID's arrival on incomingFlowID and decides, using
-    // eval for guards and fc for reachability: fired (with survivor + merged), or
-    // aborted (the rule became unsatisfiable / arrivals exhausted with no match), or
-    // neither (park).
-    Activate(incomingFlowID, arrivingTrackID string,
-        eval GuardEval, fc FlowChecker) (Decision, error)
+    // Record registers arrivingTrackID's arrival on incomingFlowID and reports
+    // whether the gateway already fired (the arrival is then a trailing token to
+    // consume). It makes NO activation decision — reachability + guards are read only
+    // by the loop (Recheck), never off the arriving track's goroutine, because the
+    // live-token set CheckFlows reads is loop-owned and must not be raced.
+    Record(incomingFlowID, arrivingTrackID string) (firedAlready bool)
 
-    // Recheck re-decides a parked activation join on a token death.
+    // Recheck is the loop's decision: fire (survivor + merged), abort (the rule is
+    // unsatisfiable), or wait. Run after an arrival parks and on every token death.
     Recheck(eval GuardEval, fc FlowChecker) (Decision, error)
 }
 

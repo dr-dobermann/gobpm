@@ -489,6 +489,13 @@ func (t *track) run(
 // represented by the absorbed tracks' own path entries — each terminating at
 // the join, Consumed — not by folding their ids into the survivor's parent slot.
 func (t *track) synchronize(step *stepInfo) (proceed bool) {
+	// A converging Complex gateway (ADR-005 v.3 §2.11) is an ActivationJoin, not a
+	// SynchronizingJoin — handle it on its own path.
+	if aj, ok := step.node.(exec.ActivationJoin); ok &&
+		len(step.node.Incoming()) > 1 {
+		return t.synchronizeActivation(step, aj)
+	}
+
 	sj, ok := step.node.(exec.SynchronizingJoin)
 	if !ok || len(step.node.Incoming()) <= 1 {
 		return true
@@ -534,6 +541,44 @@ func (t *track) synchronize(step *stepInfo) (proceed bool) {
 	t.updateState(TrackAwaitingMerge)
 
 	return false
+}
+
+// synchronizeActivation handles a converging Complex gateway (ADR-005 v.3 §2.11): it
+// records this arrival and — unless the gateway already fired (a trailing token, then
+// consumed) — parks, like the OR-join. The fire/abort decision is the loop's recheck,
+// which owns reachability + guard evaluation and instance failure (a guard error or an
+// unsatisfiable rule is surfaced there, the single writer of lastErr; SRD-023).
+func (t *track) synchronizeActivation(
+	step *stepInfo, aj exec.ActivationJoin,
+) bool {
+	var inFlowID string
+	if step.inFlow != nil {
+		inFlowID = step.inFlow.ID()
+	}
+
+	if aj.Record(inFlowID, t.ID()) {
+		// a trailing token after the gateway fired (a discriminator / partial join
+		// consumes the later arrivals): end this track, consumed at the join.
+		t.updateState(TrackMerged)
+
+		return false
+	}
+
+	// Park and let the loop decide (it owns reachability + guard evaluation): on
+	// resume this goroutine proceeds as the survivor, or returns if it was merged
+	// away; ctx cancel (incl. the loop aborting an unsatisfiable rule) ends it.
+	t.updateState(TrackAwaitSync)
+	t.instance.emit(trackEvent{kind: evParked, track: t})
+
+	select {
+	case <-t.parkCh:
+		return !t.inState(TrackMerged)
+
+	case <-t.ctx.Done():
+		t.updateState(TrackCanceled)
+
+		return false
+	}
 }
 
 // executeNode tries to execute flow.Node n.

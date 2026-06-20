@@ -802,11 +802,6 @@ func (inst *Instance) hasInTransitArrival(node flow.Node) bool {
 // token positions and fires it when no un-marked incoming flow can still receive
 // a token (SRD-022 §2.10). Called only from loop().
 func (inst *Instance) recheckJoin(node flow.Node) {
-	rj, ok := node.(exec.ReachabilityJoin)
-	if !ok {
-		return
-	}
-
 	// An imminent arrival — a live token already on the join node but not yet
 	// parked (between checkFlows moving its position and synchronize's Arrive) —
 	// is invisible to the backward reachability (it sits at the excluded join)
@@ -816,8 +811,33 @@ func (inst *Instance) recheckJoin(node flow.Node) {
 		return
 	}
 
-	if complete, survivor, merged := rj.Recheck(inst); complete {
-		inst.fireOrJoin(survivor, merged)
+	switch j := node.(type) {
+	case exec.ActivationJoin:
+		// Complex gateway (ADR-005 v.3 §2.11 / SRD-023): the loop owns the
+		// fire/abort decision (with guard evaluation). A death can only make the
+		// activation unsatisfiable — never newly fire it — so the abort path lives
+		// here; firing resumes the parked survivor via fireOrJoin.
+		dec, err := j.Recheck(inst.guardEval(inst.ctx), inst)
+
+		switch {
+		case err != nil:
+			inst.fail(err)
+
+		case dec.Aborted:
+			inst.fail(
+				errs.New(
+					errs.M("complex gateway activation rule is unsatisfiable"),
+					errs.C(errorClass, errs.InvalidState),
+					errs.D("node_id", node.ID())))
+
+		case dec.Fired:
+			inst.fireOrJoin(dec.Survivor, dec.Merged)
+		}
+
+	case exec.ReachabilityJoin:
+		if complete, survivor, merged := j.Recheck(inst); complete {
+			inst.fireOrJoin(survivor, merged)
+		}
 	}
 }
 

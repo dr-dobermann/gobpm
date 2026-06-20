@@ -160,8 +160,9 @@ hooks and relocates their logic — the concept leads, the code follows.
 ### 2.6 Token consumption stays narrow
 
 Tokens are consumed only at End Events and Terminate, as the absorbed tokens of a
-synchronizing join (§2.4), and on withdrawal. A non-synchronizing merge never
-consumes tokens.
+synchronizing join (§2.4), as the **trailing tokens a Complex gateway discards after
+it has fired** (§2.11 — a discriminator / partial join ignores the arrivals past the
+activating one), and on withdrawal. A non-synchronizing merge never consumes tokens.
 
 ### 2.7 Track ↔ Instance coordination (mechanics)
 

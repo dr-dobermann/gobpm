@@ -121,29 +121,28 @@ func TestComplexIsActivationJoin(t *testing.T) {
 	require.True(t, ok, "ComplexGateway must be an exec.ActivationJoin")
 }
 
-func TestComplexActivateThresholdFires(t *testing.T) {
+func TestComplexFiresAtThreshold(t *testing.T) {
 	cg, flows := convergingComplex(t,
 		gateways.WithActivationThreshold(2), "in0", "in1", "in2")
 	reachable := stubChecker{reachable: flows} // non-empty → "more can arrive"
 
-	d, err := cg.Activate(flows[0].ID(), "t1", guardTrue, reachable)
+	require.False(t, cg.Record(flows[0].ID(), "t1"))
+	d, err := cg.Recheck(guardTrue, reachable)
 	require.NoError(t, err)
-	require.False(t, d.Fired)
-	require.False(t, d.Aborted) // 1 of 2 → park
+	require.False(t, d.Fired) // 1 of 2 → wait
 
-	d, err = cg.Activate(flows[1].ID(), "t2", guardTrue, reachable)
+	require.False(t, cg.Record(flows[1].ID(), "t2"))
+	d, err = cg.Recheck(guardTrue, reachable)
 	require.NoError(t, err)
 	require.True(t, d.Fired)
 	require.Equal(t, "t2", d.Survivor) // last-in
 	require.Equal(t, []string{"t1"}, d.Merged)
 
-	// already fired → a further arrival is a no-op.
-	d, err = cg.Activate(flows[2].ID(), "t3", guardTrue, reachable)
-	require.NoError(t, err)
-	require.False(t, d.Fired)
+	// already fired → a further arrival is a trailing token.
+	require.True(t, cg.Record(flows[2].ID(), "t3"))
 }
 
-func TestComplexActivateGuard(t *testing.T) {
+func TestComplexGuardGatesFire(t *testing.T) {
 	cond := boolCond(t, func(x int) bool { return true })
 	tr, err := gateways.NewTriple(2, gateways.WithGuard(cond))
 	require.NoError(t, err)
@@ -152,40 +151,44 @@ func TestComplexActivateGuard(t *testing.T) {
 		"in0", "in1", "in2")
 	moreToCome := stubChecker{reachable: []*flow.SequenceFlow{flows[2]}}
 
+	require.False(t, cg.Record(flows[0].ID(), "t1"))
+	require.False(t, cg.Record(flows[1].ID(), "t2"))
+
 	// count met at 2 but guard false, third still reachable → wait.
-	_, err = cg.Activate(flows[0].ID(), "t1", guardFalse, moreToCome)
-	require.NoError(t, err)
-	d, err := cg.Activate(flows[1].ID(), "t2", guardFalse, moreToCome)
+	d, err := cg.Recheck(guardFalse, moreToCome)
 	require.NoError(t, err)
 	require.False(t, d.Fired)
 	require.False(t, d.Aborted)
 
-	// third arrives with the guard now true → fire.
-	d, err = cg.Activate(flows[2].ID(), "t3", guardTrue, stubChecker{})
+	// the guard turns true → fire.
+	d, err = cg.Recheck(guardTrue, moreToCome)
 	require.NoError(t, err)
 	require.True(t, d.Fired)
-	require.Equal(t, "t3", d.Survivor)
+	require.Equal(t, "t2", d.Survivor)
 }
 
-func TestComplexActivateRequired(t *testing.T) {
+func TestComplexRequiredFires(t *testing.T) {
 	tr, err := gateways.NewTriple(2, gateways.WithRequired("in0"))
 	require.NoError(t, err)
 
-	cg, flows := convergingComplex(t, gateways.WithActivation(tr),
+	cg, _ := convergingComplex(t, gateways.WithActivation(tr),
 		"in0", "in1", "in2")
-	all := stubChecker{reachable: flows}
+	all := stubChecker{reachable: nil}
 
-	// in1 + in2 reach count 2 but the required in0 is absent → not fired; in0 still
-	// reachable → wait.
-	_, err = cg.Activate("in1", "t1", guardTrue, all)
-	require.NoError(t, err)
-	d, err := cg.Activate("in2", "t2", guardTrue, all)
+	require.False(t, cg.Record("in1", "t1"))
+	require.False(t, cg.Record("in2", "t2"))
+
+	// in1 + in2 reach count 2 but the required in0 is absent; in0 still reachable →
+	// wait.
+	d, err := cg.Recheck(guardTrue,
+		stubChecker{reachable: []*flow.SequenceFlow{cg.Incoming()[0]}})
 	require.NoError(t, err)
 	require.False(t, d.Fired)
 	require.False(t, d.Aborted)
 
 	// in0 arrives → required satisfied, count met → fire.
-	d, err = cg.Activate("in0", "t3", guardTrue, stubChecker{})
+	require.False(t, cg.Record("in0", "t3"))
+	d, err = cg.Recheck(guardTrue, all)
 	require.NoError(t, err)
 	require.True(t, d.Fired)
 	require.Equal(t, "t3", d.Survivor)
@@ -195,9 +198,10 @@ func TestComplexAbortCountUnreachable(t *testing.T) {
 	cg, flows := convergingComplex(t,
 		gateways.WithActivationThreshold(3), "in0", "in1", "in2")
 
-	// one arrival, the rest still reachable → 1 of 3 → park.
-	d, err := cg.Activate(flows[0].ID(), "t1", guardTrue,
-		stubChecker{reachable: flows[1:]})
+	require.False(t, cg.Record(flows[0].ID(), "t1"))
+
+	// one arrival, the rest still reachable → 1 of 3 → wait.
+	d, err := cg.Recheck(guardTrue, stubChecker{reachable: flows[1:]})
 	require.NoError(t, err)
 	require.False(t, d.Fired)
 	require.False(t, d.Aborted)
@@ -217,13 +221,12 @@ func TestComplexAbortRequiredUnreachable(t *testing.T) {
 		"in0", "in1", "in2")
 	in0Reachable := stubChecker{reachable: []*flow.SequenceFlow{flows[0]}}
 
-	// in1 + in2 reach count 2 but the required in0 is absent; in0 still reachable →
-	// park.
-	_, err = cg.Activate("in1", "t1", guardTrue, in0Reachable)
+	require.False(t, cg.Record("in1", "t1"))
+	require.False(t, cg.Record("in2", "t2"))
+
+	// count 2 met but the required in0 is absent; in0 still reachable → wait.
+	d, err := cg.Recheck(guardTrue, in0Reachable)
 	require.NoError(t, err)
-	d, err := cg.Activate("in2", "t2", guardTrue, in0Reachable)
-	require.NoError(t, err)
-	require.False(t, d.Fired)
 	require.False(t, d.Aborted)
 
 	// a death makes in0 unreachable → the required gate can never come → abort.
@@ -239,47 +242,30 @@ func TestComplexExhaustionNoMatch(t *testing.T) {
 
 	cg, flows := convergingComplex(t, gateways.WithActivation(tr), "in0", "in1")
 
-	// in0 arrives, in1 still reachable → park.
-	d, err := cg.Activate(flows[0].ID(), "t1", guardFalse,
-		stubChecker{reachable: flows[1:]})
+	require.False(t, cg.Record(flows[0].ID(), "t1"))
+
+	// in0 in, in1 still reachable → wait.
+	d, err := cg.Recheck(guardFalse, stubChecker{reachable: flows[1:]})
 	require.NoError(t, err)
 	require.False(t, d.Aborted)
 
 	// in1 arrives: count met but the guard is false and nothing more can arrive →
 	// exhaustion no-match → abort.
-	d, err = cg.Activate(flows[1].ID(), "t2", guardFalse, stubChecker{reachable: nil})
+	require.False(t, cg.Record(flows[1].ID(), "t2"))
+	d, err = cg.Recheck(guardFalse, stubChecker{reachable: nil})
 	require.NoError(t, err)
 	require.True(t, d.Aborted)
 	require.False(t, d.Fired)
 }
 
-func TestComplexValidate(t *testing.T) {
-	good, err := gateways.NewTriple(2, gateways.WithRequired("in0"))
-	require.NoError(t, err)
-	cg, _ := convergingComplex(t, gateways.WithActivation(good),
-		"in0", "in1", "in2")
-	require.NoError(t, cg.Validate())
-
-	// count > M (incoming = 2).
-	big := gateways.WithActivationThreshold(5)
-	cgBig, _ := convergingComplex(t, big, "in0", "in1")
-	require.Error(t, cgBig.Validate())
-
-	// required id is not an incoming flow.
-	bad, err := gateways.NewTriple(2, gateways.WithRequired("nope"))
-	require.NoError(t, err)
-	cgBad, _ := convergingComplex(t, gateways.WithActivation(bad),
-		"in0", "in1", "in2")
-	require.Error(t, cgBad.Validate())
-}
-
-func TestComplexDecideReachabilityError(t *testing.T) {
+func TestComplexRecheckReachabilityError(t *testing.T) {
 	cg, flows := convergingComplex(t,
 		gateways.WithActivationThreshold(2), "in0", "in1")
 
+	require.False(t, cg.Record(flows[0].ID(), "t1"))
+
 	// a reachability error is treated conservatively: wait (no fire, no abort).
-	d, err := cg.Activate(flows[0].ID(), "t1", guardTrue,
-		stubChecker{err: errStub})
+	d, err := cg.Recheck(guardTrue, stubChecker{err: errStub})
 	require.NoError(t, err)
 	require.False(t, d.Fired)
 	require.False(t, d.Aborted)
@@ -292,7 +278,10 @@ func TestComplexGuardError(t *testing.T) {
 
 	cg, flows := convergingComplex(t, gateways.WithActivation(tr), "in0", "in1")
 
-	_, err = cg.Activate(flows[0].ID(), "t1",
+	require.False(t, cg.Record(flows[0].ID(), "t1"))
+
+	// count met at 1, so the guard is evaluated — its error propagates.
+	_, err = cg.Recheck(
 		func(_ data.FormalExpression) (bool, error) { return false, errStub },
 		stubChecker{reachable: flows[1:]})
 	require.Error(t, err)
@@ -318,6 +307,26 @@ func TestComplexGatewayClone(t *testing.T) {
 	require.IsType(t, &gateways.ComplexGateway{}, c)
 	require.NotSame(t, cg, c)
 	require.NotNil(t, cg.Node())
+}
+
+func TestComplexValidate(t *testing.T) {
+	good, err := gateways.NewTriple(2, gateways.WithRequired("in0"))
+	require.NoError(t, err)
+	cg, _ := convergingComplex(t, gateways.WithActivation(good),
+		"in0", "in1", "in2")
+	require.NoError(t, cg.Validate())
+
+	// count > M (incoming = 2).
+	cgBig, _ := convergingComplex(t, gateways.WithActivationThreshold(5),
+		"in0", "in1")
+	require.Error(t, cgBig.Validate())
+
+	// required id is not an incoming flow.
+	bad, err := gateways.NewTriple(2, gateways.WithRequired("nope"))
+	require.NoError(t, err)
+	cgBad, _ := convergingComplex(t, gateways.WithActivation(bad),
+		"in0", "in1", "in2")
+	require.Error(t, cgBad.Validate())
 }
 
 func TestComplexSplitSubset(t *testing.T) {

@@ -271,18 +271,17 @@ func (cg *ComplexGateway) Exec(
 	return cg.forkTrueSubset(ctx, re)
 }
 
-// Activate records arrivingTrackID's arrival on incomingFlowID and decides the join's
-// fate (ADR-005 v.3 §2.11), evaluating data guards via eval and reachability via fc.
-// Atomic under the gateway's own mutex.
-func (cg *ComplexGateway) Activate(
-	incomingFlowID, arrivingTrackID string,
-	eval exec.GuardEval, fc exec.FlowChecker,
-) (exec.Decision, error) {
+// Record registers arrivingTrackID's arrival on incomingFlowID and reports whether
+// the gateway has already fired (the arrival is then a trailing token to consume). It
+// makes no activation decision — reachability and guards are read only by the loop
+// (Recheck), never off the arriving track's goroutine. Atomic under the gateway's own
+// mutex.
+func (cg *ComplexGateway) Record(incomingFlowID, arrivingTrackID string) bool {
 	cg.mu.Lock()
 	defer cg.mu.Unlock()
 
 	if cg.fired {
-		return exec.Decision{}, nil
+		return true
 	}
 
 	if _, seen := cg.arrived[incomingFlowID]; !seen {
@@ -290,12 +289,14 @@ func (cg *ComplexGateway) Activate(
 		cg.order = append(cg.order, arrivingTrackID)
 	}
 
-	return cg.decide(eval, fc)
+	return false
 }
 
-// Recheck re-decides a parked join on a token death (no new arrival): it can abort
-// (the rule became unsatisfiable) but — the arrival count being monotonic — never
-// newly fires. Atomic under the gateway's own mutex.
+// Recheck is the loop's activation decision (ADR-005 v.3 §2.11): it fires when a
+// triple is satisfied (survivor = last-in), aborts when the rule is unsatisfiable, or
+// waits. It runs after an arrival parks (the firing path) and on every token death
+// (the abort path — a death can only make the rule unsatisfiable, never newly satisfy
+// it). Atomic under the gateway's own mutex.
 func (cg *ComplexGateway) Recheck(
 	eval exec.GuardEval, fc exec.FlowChecker,
 ) (exec.Decision, error) {
@@ -347,8 +348,9 @@ func (cg *ComplexGateway) decide(
 	}
 
 	if !anyAlive {
-		cg.fired = true // settled: the rule can never be satisfied
-
+		// Abort does NOT latch fired: the loop owns the abort action (it fails the
+		// instance), and leaving fired clear lets a later death-triggered Recheck
+		// re-detect the same abort idempotently.
 		return exec.Decision{Aborted: true}, nil
 	}
 

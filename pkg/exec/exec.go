@@ -80,17 +80,23 @@ type Decision struct {
 // per-triple data guards, arrival counts, and required gates (ADR-005 v.3 §2.11). It
 // reuses the reachability machinery (FlowChecker) but, unlike a ReachabilityJoin, a
 // token death makes it ABORT (the arrival count is monotonic, so a death can only
-// make a triple unsatisfiable) rather than fire — firing happens only on an arrival.
+// make a triple unsatisfiable) rather than fire.
+//
+// The arriving track only Records (reachability and guards are not read off the track
+// goroutine — the live-token set the loop owns must not be raced); the loop owns the
+// whole fire/abort decision via Recheck.
 type ActivationJoin interface {
 	NodeExecutor
 
-	// Activate records arrivingTrackID's arrival on incomingFlowID and decides the
-	// join's fate, using eval for data guards and fc for reachability.
-	Activate(
-		incomingFlowID, arrivingTrackID string,
-		eval GuardEval, fc FlowChecker,
-	) (Decision, error)
+	// Record registers arrivingTrackID's arrival on incomingFlowID and reports
+	// whether the gateway has already fired — in which case the arrival is a trailing
+	// token to be consumed (a discriminator / partial join ignores the arrivals after
+	// the activating one). It makes no activation decision.
+	Record(incomingFlowID, arrivingTrackID string) (firedAlready bool)
 
-	// Recheck re-decides a parked activation join on a token death (no new arrival).
+	// Recheck decides the join's fate using eval for data guards and fc for
+	// reachability. Called only from the instance loop, so fc's live-token view is
+	// consistent. Fires (Survivor + Merged), aborts (the rule is unsatisfiable), or
+	// neither (wait).
 	Recheck(eval GuardEval, fc FlowChecker) (Decision, error)
 }
