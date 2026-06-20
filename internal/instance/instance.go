@@ -677,6 +677,14 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 			stopAll()
 
 		case ev := <-inst.events:
+			// Lock-free attrs only (ID is immutable): this runs per event, and the
+			// observability.Logger has no Enabled() gate, so the args are built even
+			// at INFO. Node-level detail lives in the fire/abort logs below.
+			inst.Logger().Debug("track event",
+				"instance", inst.ID(),
+				"kind", ev.kind.String(),
+				"track", ev.track.ID())
+
 			switch ev.kind {
 			case evFork:
 				inst.spawnForks(ev, spawn, stopAll, stopping)
@@ -851,6 +859,12 @@ func (inst *Instance) fireOrJoin(survivorID string, merged []string) {
 	if survivor == nil {
 		return
 	}
+
+	inst.Logger().Debug("synchronizing join fired",
+		"instance", inst.ID(),
+		"node", survivor.currentStep().node.ID(),
+		"survivor", survivorID,
+		"merged", len(merged))
 
 	inst.applyMerged(trackEvent{track: survivor, mergedIDs: merged})
 

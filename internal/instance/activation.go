@@ -54,6 +54,9 @@ func (inst *Instance) guardEval(ctx context.Context) exec.GuardEval {
 // termination (the parked tracks unblock via ctx.Done). Called only from the loop
 // goroutine (recheckJoin), so it stays the single writer of lastErr.
 func (inst *Instance) fail(err error) {
+	inst.Logger().Warn("instance failing",
+		"instance", inst.ID(), "error", err)
+
 	inst.lastErr.Store(&err)
 
 	if inst.cancel != nil {
