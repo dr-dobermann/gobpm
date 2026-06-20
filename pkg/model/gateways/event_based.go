@@ -8,6 +8,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/eventproc"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
@@ -174,13 +175,33 @@ func (g *EventBasedGateway) ArmFor(
 		}
 
 		for _, d := range en.Definitions() {
-			if d.ID() == eDef.ID() {
+			if defMatches(d, eDef) {
 				return arm, true
 			}
 		}
 	}
 
 	return nil, false
+}
+
+// defMatches reports whether the arm's event definition d corresponds to the fired
+// event definition. Point-to-point triggers (Message, Timer) deliver the arm's own
+// definition, so identity (ID) matches. A Signal is BROADCAST by name — the delivered
+// definition is the thrower's, a different object — so signals match by signal name
+// (the same key the EventHub broadcast routes on).
+func defMatches(d, fired flow.EventDefinition) bool {
+	if d.ID() == fired.ID() {
+		return true
+	}
+
+	ds, dok := d.(*events.SignalEventDefinition)
+	fs, fok := fired.(*events.SignalEventDefinition)
+
+	if dok && fok && ds.Signal() != nil && fs.Signal() != nil {
+		return ds.Signal().Name() == fs.Signal().Name()
+	}
+
+	return false
 }
 
 // ProcessEvent routes a fired event into its owning arm: it resolves the arm and

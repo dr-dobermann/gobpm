@@ -404,3 +404,33 @@ func TestEventBasedGatewayValidateReceiveArmBoundary(t *testing.T) {
 
 	require.ErrorContains(t, g.Validate(), "boundary events")
 }
+
+// TestEventBasedGatewayArmForSignalByName covers the broadcast case: a signal is
+// delivered as the THROWER's definition (a different object, same name), so ArmFor must
+// resolve it to the arm by signal name, not by id (defMatches' signal branch).
+func TestEventBasedGatewayArmForSignalByName(t *testing.T) {
+	g, err := gateways.NewEventBasedGateway()
+	require.NoError(t, err)
+
+	a, b := signalArm(t, "a"), signalArm(t, "b")
+	ebLink(t, g, a)
+	ebLink(t, g, b)
+
+	fired := signalDef(t, "a") // name "sig-a", a fresh id (the thrower's def)
+	arm, ok := g.ArmFor(fired)
+	require.True(t, ok)
+	require.Equal(t, a.ID(), arm.ID())
+
+	// a signal name with no arm still misses (name-branch mismatch).
+	_, ok = g.ArmFor(signalDef(t, "zzz"))
+	require.False(t, ok)
+
+	// a non-signal def with no matching id misses via the final branch.
+	msgDef, err := events.NewMessageEventDefinition(
+		bpmncommon.MustMessage("nm", data.MustItemDefinition(
+			values.NewVariable(""), foundation.WithID("nm_in"))), nil)
+	require.NoError(t, err)
+
+	_, ok = g.ArmFor(msgDef)
+	require.False(t, ok)
+}
