@@ -2,8 +2,8 @@
 
 | Field   | Value                                                     |
 | ------- | --------------------------------------------------------- |
-| Status  | Accepted                                                  |
-| Version | v.2                                                       |
+| Status  | Draft (v.3 amendment; v.2 Accepted + implemented)         |
+| Version | v.3                                                       |
 | Date    | 2026-06-09                                                |
 | Owner   | Ruslan Gabitov                                            |
 | Refines | [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) |
@@ -11,14 +11,18 @@
 > **Scope.** This ADR decides the **routing gateways** and the track-coordination
 > model they share: **Parallel** (split §2.2 + synchronizing join §2.3–§2.4),
 > **Exclusive** (split §2.8; its merge is the non-synchronizing pass-through §2.3),
-> and **Inclusive** (split §2.9 + synchronizing **OR-join** §2.10). **Complex** and
-> **Event-Based** gateways are deferred (§4). The OR-join pins a **conservative,
-> two-tier, re-evaluated-on-token-death** realization of the standard's
-> synchronizing merge (§2.10).
+> and **Inclusive** (split §2.9 + synchronizing **OR-join** §2.10), and **Complex**
+> (split §2.9 + an **activation-driven synchronizing join** §2.11). **Event-Based** is
+> deferred (§4). The OR-join pins a **conservative, two-tier,
+> re-evaluated-on-token-death** realization of the standard's synchronizing merge
+> (§2.10); the Complex join reuses that machinery with an activation-rule completion
+> (§2.11).
 >
 > **Implementation status.** Parallel, the Exclusive and Inclusive splits, and the
 > Inclusive **OR-join** (§2.10) — including its backward-reachability completion and
-> death-trigger re-evaluation — are all implemented (with the accompanying SRDs).
+> death-trigger re-evaluation — are all implemented (with the accompanying SRDs). The
+> **Complex** gateway (§2.11) is conception-ahead — its activation-driven synchronizing
+> join lands with the accompanying SRD.
 
 ## 1. Context
 
@@ -166,14 +170,17 @@ node it asks the node what to do; only a **synchronizing join** changes the
 track's course. The Instance's single event-loop goroutine owns **lifecycle
 bookkeeping** — the track registry and the awaiting/ended accounting; it is told
 about lifecycle changes through events but does **not** decide synchronization.
-Three events flow track → loop (all are notifications — none block for a reply):
+Events flow track → loop — notifications; the loop never blocks waiting for a
+reply. The one twist is a **parked** track: it suspends *itself* right after
+notifying and waits for the loop's later resume signal (§2.10 / §2.11).
 
-| Event (track → loop) | Raised when | Loop does |
-|---|---|---|
-| **spawn** | a fork activated extra outgoing flows | creates + registers one track per extra flow |
-| **awaiting** | the track reached a synchronizing join, did not complete it, and **its goroutine returned** | records the track as *awaiting* — neither active nor ended |
-| **merged** | the completing track declares the absorbed tracks (by id) | the loop resolves the ids and flips each to `Merged`, removing them from *awaiting* |
-| **ended** | the track terminated (end event, canceled, failed) | deregisters it; when none remain active or awaiting, completes the instance |
+| Event (track → loop) | Raised when                                                                                 | Loop does                                                                           |
+| -------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| **spawn**            | a fork activated extra outgoing flows                                                       | creates + registers one track per extra flow                                        |
+| **awaiting**         | a **Parallel** join arrival did not complete it, and the track's **goroutine returned**       | records the track as *awaiting* — neither active nor ended; the track object is kept |
+| **parked**           | a **reachability** join arrival (OR §2.10 / Complex §2.11) did not complete it, and the track **suspended its goroutine** on a resume channel | records the track as *awaiting-sync*; its goroutine stays alive (still counted) until the loop **wakes** it — resume as survivor, or consume as merged |
+| **merged**           | the completing track declares the absorbed tracks (by id)                                   | the loop resolves the ids and flips each to `Merged`, removing them from *awaiting* |
+| **ended**            | the track terminated (end event, canceled, failed)                                          | deregisters it; when none remain active or awaiting, completes the instance         |
 
 **What drives each event — uniform structural rules, not the node.** A track does
 **not** ask the node "what event should I fire". It derives events from structure,
@@ -195,8 +202,10 @@ node-specific question: does N implement `SynchronizingJoin` **and** have more
 than one incoming flow? If not, it executes N locally (a normal node, a split, or
 a non-synchronizing merge). If so, it calls **`N.Arrive(its incoming flow)`** —
 atomic under N's mutex (§2.4) — which returns one of exactly two answers: *stop
-and wait* → enter `AwaitingMerge` and the goroutine returns; *execute* → proceed
-as the survivor.
+and wait* → park (a **Parallel** join enters `AwaitingMerge` and the goroutine
+**returns**; a **reachability** join — OR §2.10 / Complex §2.11 — enters
+`AwaitSync` and the goroutine **suspends** on a resume channel); *execute* →
+proceed as the survivor.
 
 ```mermaid
 flowchart TD
@@ -235,17 +244,23 @@ sequenceDiagram
 Which branch arrives first is immaterial — J's mutex serializes the arrivals, so
 whichever token *completes* the set is the survivor.
 
-**Track lifecycle** — `AwaitingMerge` is intermediate: the goroutine has already
-returned; the track object is retained as a record until the join fires:
+**Track lifecycle** — `AwaitingMerge` (Parallel) is intermediate: the goroutine
+has already returned; the track object is retained as a record until the join
+fires. A **reachability** join (OR/Complex) instead uses `AwaitSync`: the
+goroutine is **suspended, not returned**, and the loop **resumes** it when the
+join fires (§2.10 / §2.11):
 
 ```mermaid
 stateDiagram-v2
     [*] --> Running
-    Running --> AwaitingMerge: arrive at join, not completing (goroutine returns)
+    Running --> AwaitingMerge: Parallel join arrival, not completing (goroutine returns)
+    Running --> AwaitSync: reachability join arrival, not completing (goroutine suspends)
     Running --> Ended: End event or completing arrival finishes
     Running --> Canceled: context cancel
     Running --> Failed: execution error
     AwaitingMerge --> Merged: join fires (loop flips)
+    AwaitSync --> Running: join fires, this track is survivor (loop wakes + resumes)
+    AwaitSync --> Merged: join fires, this track absorbed (loop wakes + flips)
     Merged --> [*]
     Ended --> [*]
     Canceled --> [*]
@@ -253,8 +268,9 @@ stateDiagram-v2
 ```
 
 J's mutex makes arrival atomic, so exactly one arrival per join completes the set
-and becomes the survivor; the rest enter `AwaitingMerge` (their goroutines have
-returned) and are flipped to `Merged` when it fires. No track is created at a join; the continuation rides the
+and becomes the survivor; the rest enter `AwaitingMerge` (Parallel — their
+goroutines have returned) or `AwaitSync` (reachability joins — their goroutines
+are suspended) and are flipped to `Merged` when it fires. No track is created at a join; the continuation rides the
 completing arrival (§2.4).
 
 **Forking on the outgoing flows** (unchanged from ADR-001 §4.4). After a node's
@@ -420,10 +436,10 @@ sequenceDiagram
     alt completes now (all marked, or nothing reachable)
         J-->>T: continue as survivor (last-in)
     else must wait
-        T-->>J: park (suspend; still a live token)
+        T-->>J: park (suspend, still a live token)
         Note over E: re-check on every later arrival AND every token death
         E->>J: a death left no live token able to reach an un-marked flow
-        J-->>T: resume as survivor (first-in); the rest are consumed
+        J-->>T: resume as survivor (first-in), the rest are consumed
     end
 ```
 
@@ -438,7 +454,123 @@ mechanism: last-in on an arrival, first-in on a death. Parallel never fires from
 the loop; the OR-join's death-trigger is the one place the engine does.)
 
 **Scope.** Acyclic, single-pass (§4): each incoming flow is marked once; loop
-re-arming is deferred. The Complex gateway reuses this reachability test (§4).
+re-arming is deferred. The Complex gateway reuses this reachability test (§2.11).
+
+### 2.11 Complex gateway — activation-driven synchronizing join (discriminator / partial join)
+
+The Complex gateway is the general synchronizing gateway: it fires on its **own,
+gateway-level condition**, not only on flow conditions. It is the one gateway in
+gobpm's scope that sits **above** the Common Executable Subclass (conformance
+§2.1.3) — an explicit extension included for the patterns the others cannot express:
+**Structured / Blocking Discriminator** (WCP-9 / WCP-28) and **Structured / Blocking
+Partial Join** (WCP-30 / WCP-31).
+
+**Normative model (§13.4.5).** Each incoming gate carries an `activationCount` (tokens
+on that flow); the gateway has an `activationExpression` — a Boolean over those counts
+(e.g. `x1 + … + xm ≥ 3`), optionally over process data — and runs a **two-phase**
+machine: *waitingForStart* (when the expression turns true, consume the arrived
+tokens, evaluate outgoing conditions, emit the true subset / default) →
+*waitingForReset* (wait for the trailing tokens — with the **Inclusive graph-reachability**
+cutoff for ones that can no longer arrive — then re-arm). Diverging, it behaves as the
+Inclusive split.
+
+```mermaid
+flowchart LR
+    A[A] --> X{"Complex join<br/>fire when an activation triple is met"}
+    B[B] --> X
+    C[C] --> X
+    X --> k((continue))
+```
+
+**Engine realization (gobpm choice — activation as guarded count-thresholds).**
+
+- **Diverging** Complex = the Inclusive split (§2.9): fork the conditionally-true
+  outgoing subset (default / exception as §2.8).
+- **Converging** Complex = a **synchronizing join driven by an activation rule** — a
+  disjunction of **triples** `(condition, count, requiredFlows)`:
+  - **`condition`** — an optional data guard: an ordinary flow-style expression over
+    **process data** (absent = always true);
+  - **`count`** — how many incoming flows must have arrived (the total);
+  - **`requiredFlows`** — an optional set of incoming flows that must be **among** the
+    arrived.
+
+  The gateway **fires when some triple is satisfied**: its `condition` holds, `arrived
+  ≥ count`, and every `requiredFlows` gate has arrived. The bare threshold "N of M" is
+  the degenerate triple `(—, N, ∅)` — **N = 1** the Discriminator, **1 < N < M** the
+  Partial Join, **N = M** the Parallel join; a guard makes the threshold
+  data-dependent; `requiredFlows` pins specific gates ("the CFO branch must be one of
+  the two").
+
+  > **Engine note — activation as a disjunction of guarded count-thresholds, not a
+  > count-expression.** gobpm does **not** realize §13.4.5's `activationExpression` by
+  > injecting per-gate `activationCount`s into the expression's namespace — that would
+  > force reserved variable names that collide with process variables. Instead the
+  > activation is **structured**: each triple's data `condition` stays a pure
+  > process-data expression, while the **count** and the **gate identities**
+  > (`requiredFlows`) live in the triple itself, never in the expression. The data
+  > namespace is untouched (no reserved names, no prefixes), yet the rule still spans
+  > the standard's space — count thresholds, data-aware activation, and per-gate
+  > requirements. The one shape it omits is a *non-monotonic* count (e.g. "exactly
+  > 2"), which §13.4.5 itself steers modelers away from to avoid oscillation. The
+  > standard's `activationExpression` is documented above and remains the reference.
+
+- **Reuses §2.10 wholesale.** The converging Complex gateway is a synchronizing join
+  (§2.4): it **parks** non-completing arrivals and the engine **re-checks it on every
+  arrival and every token death** — the same park/resume + reachability machinery as
+  the OR-join. Only the **completion rule** differs. Let `arrived` = the incoming
+  flows that have delivered a token and `reachable` = the un-marked incoming flows
+  still reachable by a live token (the §2.10 backward test):
+
+```mermaid
+flowchart TD
+    ev[a token arrives at the join,<br/>or any token dies] --> fq{"some triple satisfied?<br/>cond AND arrived ≥ count AND required ⊆ arrived"}
+    fq -->|yes| fire([FIRE — the completing arrival survives, fork the outgoing subset])
+    fq -->|no| dead{"every triple dead?<br/>count unreachable, or a required gate unreachable"}
+    dead -->|yes| abort([ABORT — activation unsatisfiable, throw and fail the instance])
+    dead -->|no| exh{"no more arrivals AND no guard holds?"}
+    exh -->|yes| nomatch([THROW — arrivals exhausted, no activation matched])
+    exh -->|no| wait([wait — park the arrivals])
+```
+
+  - **Fire** when some triple is satisfied (`condition` true, `|arrived| ≥ count`,
+    `requiredFlows ⊆ arrived`): the completing arrival is the **survivor** (last-in),
+    consumes the marked tokens, then executes and forks the outgoing subset (§2.8–§2.9
+    flow conditions / default / exception). If one arrival satisfies several triples,
+    any of them fires — the result is the same.
+  - **Abort** when **every** triple is **dead** — provably never satisfiable:
+    `|arrived| + |reachable| < count` (its count can never be reached) **or** a
+    `requiredFlows` gate is neither arrived nor reachable (a mandatory gate can never
+    come). The gateway then **throws** and fails the instance instead of blocking
+    forever — the OR-join death-trigger anti-hang (§2.10) applied to the activation
+    rule. Every count is a `≥` threshold (monotonic) and gate-reachability is
+    structural, so this test is **exact**.
+  - **Exhaustion no-match** — when no more tokens can arrive (`reachable` empty) and no
+    triple's `condition` holds, the gateway **throws** "arrivals exhausted, no
+    activation matched," exactly the Exclusive "no condition matched and no default"
+    rule (§2.8).
+  - **Wait** otherwise: the arrival parks.
+
+- **Trailing tokens.** Once fired, a Complex gateway in this scope **consumes** any
+  later arrival on its other incoming flows (that token's track ends at the gateway) —
+  the single-pass form of the standard's reset. It does **not** re-arm.
+
+**Validation — every triple is bounded.** For each triple: `1 ≤ count ≤ M` (M = the
+gateway's incoming-flow count — `count < 1` would fire on nothing, `count > M` is
+unsatisfiable from the start), `count ≥ |requiredFlows|` (cannot demand more specific
+gates than the budget allows), and every id in `requiredFlows` is an actual incoming
+flow. `count ≥ 1` and the `count ≥ |requiredFlows|` check run when the gateway is
+built; **`count ≤ M`** and the flow-id membership are checked at **process validation
+(registration)**, once the incoming flows are linked — a process with an out-of-range
+activation rule is **rejected, not run**. At least one triple is required.
+
+**Scope — complete for the acyclic engine.** The converging activation join (firing,
+abort, exhaustion no-match, and consuming trailing tokens after it fires), the §2.9
+diverging split, and the activation validation are the **whole** Complex gateway under
+the engine's single-pass model — there is **no Complex-specific follow-up**. The only
+thing out of scope is **re-arming after a fire**: the standard's phase-2 *reset* is
+exactly a re-arm, which needs a loop to deliver a second wave of tokens, so it is the
+engine-wide loop deferral (§4) that applies identically to Parallel and OR — not a
+Complex-shaped gap.
 
 ## 3. Consequences
 
@@ -446,9 +578,10 @@ re-arming is deferred. The Complex gateway reuses this reachability test (§4).
   and/or synchronizing join executes correctly — lifting it from linear-only to
   branching control flow (roadmap M1 MVP).
 - The synchronizing node gains arrival accounting + a **per-node mutex**; the loop
-  gains *awaiting*/*merged* bookkeeping (no decision logic). A new intermediate
-  track state **`AwaitingMerge`** is added; an awaiting track's goroutine returns
-  (nothing stays running while a track awaits merge).
+  gains *awaiting*/*merged* bookkeeping (no decision logic). A Parallel non-completing
+  arrival enters **`AwaitingMerge`** and its goroutine returns; a reachability join
+  (OR/Complex) enters **`AwaitSync`** and its goroutine suspends until the loop
+  resumes it (§2.7 / §2.10 / §2.11).
 - The synchronizing-join seam (§2.4) is the reusable basis for Inclusive/Complex.
 - The node interface simplifies to one Execute (§2.5); the prologue/epilogue hooks
   are removed and their logic relocated.
@@ -473,13 +606,16 @@ re-arming is deferred. The Complex gateway reuses this reachability test (§4).
   single-reachability form; the standard's two-path refinement clause (a token
   that can *also* reach a marked incoming flow does not block) is **not**
   implemented — rarely material, and it only ever errs toward waiting longer.
-- **Complex gateway** — reuses §2.10's reachability test; **Event-Based gateway**
-  and its withdrawn-token producer (race-loss siblings end as withdrawn) — ties to
-  event delivery ([ADR-006](ADR-006-events-and-subscriptions.md)). Both deferred.
-- **Loops & excess tokens.** This conception scopes to **acyclic, single-pass**
-  joins (Parallel and OR alike): each incoming flow is marked once; the join fires
-  when its completion rule is met over a single pass. Re-arming a join under a loop
-  is deferred.
+- **Event-Based gateway** and its withdrawn-token producer (race-loss siblings end
+  as withdrawn) — ties to event delivery ([ADR-006](ADR-006-events-and-subscriptions.md)).
+  Deferred.
+- **Loops & excess tokens (the one cross-cutting deferral).** This conception scopes
+  to **acyclic, single-pass** joins — Parallel, OR, **and Complex** alike: each
+  incoming flow is marked once and the join fires when its completion rule is met over
+  a single pass. **Re-arming a join under a loop is deferred uniformly across all join
+  types** — and the Complex gateway's standard **phase-2 reset is precisely its
+  re-arm**, so it falls here, not as a Complex-specific gap. It needs loop support the
+  engine does not yet have; no single gateway is left half-built by it.
 - *(Resolved, no longer deferred:* the non-synchronizing-merge shared-node data
   race is fixed by [ADR-009 v.1](ADR-009-per-instance-node-graph.md)'s per-instance
   node graph — each instance owns its node objects, so a merge over one node no
@@ -531,9 +667,10 @@ re-arming is deferred. The Complex gateway reuses this reachability test (§4).
 
 ## 7. Open questions
 
-- **None.** The routing gateways — Parallel, Exclusive, and Inclusive (split +
-  join) — are decided. Complex, Event-Based, the OR-join refinement clause, and
-  loop re-arming are deliberate deferrals (§4), not open questions.
+- **None.** The routing gateways — Parallel, Exclusive, Inclusive (split + join),
+  and Complex (activation join, §2.11) — are decided. Event-Based, the OR-join
+  refinement clause, the Complex phase-2 reset / re-arm, and loop re-arming are
+  deliberate deferrals (§4), not open questions.
 
 ## Document History
 
@@ -542,3 +679,4 @@ re-arming is deferred. The Complex gateway reuses this reachability test (§4).
 | v.1 | 2026-06-09 | Ruslan Gabitov | Authored in full for the **Parallel (AND) gateway** (split + synchronizing join), landed with its accompanying SRD. Decisions: per-type gateway behaviour (no central type switch); Parallel split produces a token on every outgoing flow; **synchronization is owned by the synchronizing node** — it holds its per-instance arrival state ([ADR-009 v.1](ADR-009-per-instance-node-graph.md), Accepted), the completion rule, and a **per-node mutex** that makes a concurrent `Arrive` atomic; a non-completing arrival enters the intermediate **`AwaitingMerge`** state and its goroutine returns (the track object is retained as a record, instance notified via `evAwaiting`); the **completing arrival** is the survivor — it first completes the join (declares the absorbed track ids via `evMerged`; the loop flips each to `Merged`) **before** executing the node, then executes and forks; the survivor's creation lineage is left intact (convergence is recorded by the absorbed tracks' own terminal `Consumed` entries, not by re-parenting the survivor); the loop keeps only awaiting/ended bookkeeping. The **node-execution contract collapses to a single Execute** — the prologue/epilogue hooks are removed and their concerns (subscription → ADR-006; interaction registration → the task's Execute) relocated. Inclusive/Complex/Event-Based and loops/excess tokens are deferred (§4); the non-synchronizing-merge shared-node race is **resolved by ADR-009**. Supersedes the v.1 Draft seed and an interim loop-serialized/verdict-channel draft (rejected once ADR-009 made the node own its state — §5). Refines pin ADR-001 v.5. |
 | v.1 | 2026-06-11 | Ruslan Gabitov | **Accepted**, landed via SRD-005 v.1. Two contract details settled during implementation and folded back into §2.4/§2.7: the node's `Arrive` exchanges **track ids** (not `*track`/`any`), keeping the model-layer node free of the runtime type; and the merge does **not** fold the absorbed tracks into the survivor's lineage — a token at a join has many predecessors but a token records one parent, so convergence is carried by the absorbed tracks' own terminal `Consumed` entries (folding produced a cyclic parent edge). Refines pin ADR-001 v.5. |
 | v.2 | 2026-06-19 | Ruslan Gabitov | Accepted. Completes the **routing-gateway** conception with three new sections. **§2.8 Exclusive (XOR) split** — data-based exclusive choice (§13.4.2, Table 13.2): conditions in declared order, **first-true** (short-circuit), **default** when none, **instance failure** when none + no default; counterpart of §2.2 (Parallel = all) returning exactly one → §2.7 fork with no `spawn`; XOR merge was already the non-sync pass-through (§2.3/§2.7). **§2.9 Inclusive (OR) split** — fork the conditionally-**true subset** (≥1), default/exception as XOR (§13.4.3). **§2.10 Inclusive (OR) join** — the synchronizing merge (WCP-7, §13.4.3/Table 13.3): a **non-local** completion rule realized as gobpm's **conservative, two-tier** form (fast path = all incoming marked; slow path = condition-ignoring, cycle-guarded **reachability** DFS over the ADR-009 static graph — fire when no active track can still reach an un-marked incoming flow), **re-evaluated on token death as well as arrival** (the loop re-checks awaiting OR-joins on any track end/cancel/merge and can itself fire the join by promoting an awaiting track to survivor) — deliberately fixing Camunda 7's arrival-only deviation that hangs an OR-join when the awaited branch is interrupted; per-incoming-flow marking; ownership/mutex stay §2.4. Conservative variant chosen over the spec refinement clause (rarely material, errs only toward waiting). Implementation sliced: **XOR + OR-split first, OR-join its own SRD**; evaluation/reachability mechanics delegated to those SRDs (code-grounded). Answers the v.1 OR-join open question (§7); Complex/Event-Based and loop re-arming remain deferred (§4). Standard-grounded against `bpmn-spec/semantics/gateways.md` §13.4.2/§13.4.3; OR-join informed by the internal Camunda 7 OR-join analysis (§6). Refines pin ADR-001 v.5. The Exclusive/Inclusive splits and the OR-join (§2.10) all land in this change-set. |
+| v.3 | 2026-06-19 | Ruslan Gabitov | Draft. Adds **§2.11 Complex gateway** — an **activation-driven synchronizing join** (Discriminator / Partial Join, WCP-9/28/30/31; an explicit extension above the Common Executable Subclass, conformance §2.1.3). Converging Complex reuses §2.10's park/resume + reachability **wholesale**, changing only the completion rule. Activation is a disjunction of **triples** `(condition, count, requiredFlows)`: it **fires** when some triple holds — its data `condition` true, `arrived ≥ count`, and the `requiredFlows` gates all arrived; the completing arrival survives (last-in) and forks the outgoing subset (§2.8–§2.9); trailing tokens consumed. **Abort** (throw, fail the instance) when every triple is dead — count unreachable or a required gate unreachable — plus an Exclusive-style exhaustion no-match; the §2.10 anti-hang applied to the activation rule (exact, since counts are monotonic `≥` thresholds). Diverging Complex = the §2.9 split. **Engine note:** gobpm realizes §13.4.5's `activationExpression` as the structured triple form — the `count` and gate identities (`requiredFlows`) live in the triple, the `condition` stays a pure process-data expression — so per-gate `activationCount`s never enter the data namespace (no reserved names / collisions) while still covering count-thresholds, data-aware activation, and per-gate requirements; non-monotonic count rules are the omitted shape (§13.4.5 discourages them). **Validation:** per triple `1 ≤ count ≤ M`, `count ≥ |requiredFlows|`, `requiredFlows ⊆ incoming` — build + registration; out-of-range rejected. Scope: the single-pass converging activation join + the diverging split + the validation — **complete for the acyclic engine, no Complex-specific follow-up**; re-arming after a fire is the standard phase-2 *reset*, the engine-wide loop deferral identical to Parallel/OR (§4). Standard-grounded against `bpmn-spec/semantics/gateways.md` §13.4.5 + `conformance.md`. Also reconciles **§2.7** (the track→loop protocol) to document the reachability-join **block-park** (`AwaitSync` / `evParked` — the goroutine suspends and the loop resumes it) alongside the Parallel `AwaitingMerge` (goroutine returns) — a v.2 OR-join behaviour the §2.7 text had not captured. Refines pin ADR-001 v.5. Conception-ahead; the activation join lands with the accompanying SRD. |
