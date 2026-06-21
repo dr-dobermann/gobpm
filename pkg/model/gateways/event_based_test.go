@@ -8,6 +8,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -189,6 +190,41 @@ func TestEventBasedGatewayClone(t *testing.T) {
 	require.NotSame(t, g, cg)
 }
 
+func TestEventBasedGatewayStartAttributes(t *testing.T) {
+	t.Run("default mid-flow exclusive", func(t *testing.T) {
+		g, err := gateways.NewEventBasedGateway()
+		require.NoError(t, err)
+		require.False(t, g.Instantiate())
+		require.Equal(t, gateways.ExclusiveEvents, g.EventGatewayType())
+	})
+
+	t.Run("instantiate + parallel read back", func(t *testing.T) {
+		g, err := gateways.NewEventBasedGateway(
+			gateways.WithInstantiate(),
+			gateways.WithEventGatewayType(gateways.ParallelEvents))
+		require.NoError(t, err)
+		require.True(t, g.Instantiate())
+		require.Equal(t, gateways.ParallelEvents, g.EventGatewayType())
+	})
+}
+
+func TestEventBasedGatewayCloneCarriesStart(t *testing.T) {
+	g, err := gateways.NewEventBasedGateway(
+		gateways.WithInstantiate(),
+		gateways.WithEventGatewayType(gateways.ParallelEvents))
+	require.NoError(t, err)
+
+	cg, ok := g.Clone().(*gateways.EventBasedGateway)
+	require.True(t, ok)
+	require.True(t, cg.Instantiate())
+	require.Equal(t, gateways.ParallelEvents, cg.EventGatewayType())
+}
+
+func TestEventBasedOptionApplyWrongConfig(t *testing.T) {
+	// Apply against a foreign configurator must fail the type assertion.
+	require.Error(t, gateways.WithInstantiate().Apply(otherConfig{}))
+}
+
 func TestEventBasedGatewayDefinitions(t *testing.T) {
 	g, err := gateways.NewEventBasedGateway()
 	require.NoError(t, err)
@@ -348,6 +384,51 @@ func TestEventBasedGatewayValidate(t *testing.T) {
 		ebLink(t, g, receiveArm(t, "b"))
 		require.NoError(t, g.Validate())
 	})
+
+	t.Run("instantiating exclusive gate is valid", func(t *testing.T) {
+		g, err := gateways.NewEventBasedGateway(gateways.WithInstantiate())
+		require.NoError(t, err)
+		ebLink(t, g, messageCatchArm(t, "a"))
+		ebLink(t, g, messageCatchArm(t, "b"))
+		require.NoError(t, g.Validate())
+	})
+
+	t.Run("instantiating parallel gate is valid", func(t *testing.T) {
+		g, err := gateways.NewEventBasedGateway(
+			gateways.WithInstantiate(),
+			gateways.WithEventGatewayType(gateways.ParallelEvents))
+		require.NoError(t, err)
+		ebLink(t, g, messageCatchArm(t, "a"))
+		ebLink(t, g, messageCatchArm(t, "b"))
+		require.NoError(t, g.Validate())
+	})
+
+	t.Run("instantiating gate with incoming flow rejected", func(t *testing.T) {
+		g, err := gateways.NewEventBasedGateway(gateways.WithInstantiate())
+		require.NoError(t, err)
+		ebLink(t, g, messageCatchArm(t, "a"))
+		ebLink(t, g, messageCatchArm(t, "b"))
+		ebLink(t, newDummyNode("up"), g) // the gate gets an incoming flow
+		require.ErrorContains(t, g.Validate(),
+			"instantiating gate must have no")
+	})
+
+	t.Run("instantiating gate with non-message arm rejected", func(t *testing.T) {
+		g, err := gateways.NewEventBasedGateway(gateways.WithInstantiate())
+		require.NoError(t, err)
+		ebLink(t, g, messageCatchArm(t, "a"))
+		ebLink(t, g, signalArm(t, "b")) // a Signal cannot instantiate
+		require.ErrorContains(t, g.Validate(), "message-based")
+	})
+
+	t.Run("parallel without instantiate rejected", func(t *testing.T) {
+		g, err := gateways.NewEventBasedGateway(
+			gateways.WithEventGatewayType(gateways.ParallelEvents))
+		require.NoError(t, err)
+		ebLink(t, g, signalArm(t, "a"))
+		ebLink(t, g, signalArm(t, "b"))
+		require.ErrorContains(t, g.Validate(), "requires WithInstantiate")
+	})
 }
 
 // stubTaskBoundary is an activity-typed arm that reports boundary events.
@@ -406,6 +487,106 @@ func TestNewEventBasedGatewayBadOption(t *testing.T) {
 	_, err := gateways.NewEventBasedGateway(
 		gateways.WithDirection(gateways.GDirection("bogus")))
 	require.Error(t, err)
+}
+
+// TestWithCorrelationKeyNil covers the WithCorrelationKey nil guard: a nil key is
+// rejected with a self-naming error rather than silently erasing the gate's
+// correlation (the option-constructor validation rule).
+func TestWithCorrelationKeyNil(t *testing.T) {
+	_, err := gateways.NewEventBasedGateway(gateways.WithCorrelationKey(nil))
+	require.ErrorContains(t, err, "WithCorrelationKey")
+}
+
+// minimalCorrKey builds a syntactically valid one-property CorrelationKey.
+func minimalCorrKey(t *testing.T) *bpmncommon.CorrelationKey {
+	t.Helper()
+
+	expr := goexpr.Must(nil, data.MustItemDefinition(values.NewVariable("")),
+		func(_ context.Context, _ data.Source) (data.Value, error) {
+			return values.NewVariable(""), nil
+		})
+
+	re, err := bpmncommon.NewCorrelationPropertyRetrievalExpression(expr,
+		bpmncommon.MustMessage("m", data.MustItemDefinition(
+			values.NewVariable(""), foundation.WithID("m_in"))))
+	require.NoError(t, err)
+
+	prop, err := bpmncommon.NewCorrelationProperty("p", "string",
+		[]bpmncommon.CorrelationPropertyRetrievalExpression{*re})
+	require.NoError(t, err)
+
+	key, err := bpmncommon.NewCorrelationKey("k",
+		[]bpmncommon.CorrelationProperty{*prop})
+	require.NoError(t, err)
+
+	return key
+}
+
+// TestEventBasedGatewayParallelStartAndKey covers the instantiating-start accessors: a
+// Parallel instantiating gate stores and returns its CorrelationKey and reports
+// ParallelStart; a plain gate carries neither (SRD-025 §4).
+func TestEventBasedGatewayParallelStartAndKey(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	key := minimalCorrKey(t)
+
+	g, err := gateways.NewEventBasedGateway(
+		gateways.WithInstantiate(),
+		gateways.WithEventGatewayType(gateways.ParallelEvents),
+		gateways.WithCorrelationKey(key))
+	require.NoError(t, err)
+	require.True(t, g.ParallelStart())
+	require.Equal(t, gateways.ParallelEvents, g.EventGatewayType())
+	require.Equal(t, key, g.CorrelationKey())
+
+	plain, err := gateways.NewEventBasedGateway()
+	require.NoError(t, err)
+	require.False(t, plain.ParallelStart())
+	require.Nil(t, plain.CorrelationKey())
+}
+
+// TestEventBasedGatewayArmForMessageByName covers defMatches' message-name branch: a
+// Parallel-start gate resolves its firing arm from the starter's snapshot definition
+// against the instance's cloned arms — different objects, same message name (SRD-025 §4.3).
+func TestEventBasedGatewayArmForMessageByName(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	g, err := gateways.NewEventBasedGateway()
+	require.NoError(t, err)
+
+	a := msgArm(t, "ma", "msg-a")
+	ebLink(t, g, a)
+
+	// a message def with the same name but a fresh id (a clone) matches by name.
+	arm, ok := g.ArmFor(msgDef(t, "msg-a"))
+	require.True(t, ok)
+	require.Equal(t, a.ID(), arm.ID())
+
+	// a different message name still misses.
+	_, ok = g.ArmFor(msgDef(t, "msg-z"))
+	require.False(t, ok)
+}
+
+// msgArm builds a message IntermediateCatchEvent arm waiting for msgName.
+func msgArm(t *testing.T, id, msgName string) *events.IntermediateCatchEvent {
+	t.Helper()
+
+	ice, err := events.NewIntermediateCatchEvent(id, msgDef(t, msgName))
+	require.NoError(t, err)
+
+	return ice
+}
+
+// msgDef builds a stand-alone message event definition for msgName (a fresh id).
+func msgDef(t *testing.T, msgName string) flow.EventDefinition {
+	t.Helper()
+
+	def, err := events.NewMessageEventDefinition(
+		bpmncommon.MustMessage(msgName, data.MustItemDefinition(
+			values.NewVariable(""), foundation.WithID(msgName+"_in"))), nil)
+	require.NoError(t, err)
+
+	return def
 }
 
 func TestEventBasedGatewayValidateReceiveArmBoundary(t *testing.T) {

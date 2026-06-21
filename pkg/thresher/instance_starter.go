@@ -53,6 +53,12 @@ func (s *instanceStarter) ProcessEvent(
 		keyName = s.corrKey.Name
 	}
 
+	s.thr.cfg.logger.Debug("instance-starter fired",
+		"start_node_id", s.startNode.ID(),
+		"event_definition_id", eDef.ID(),
+		"key_name", keyName,
+		"key", key)
+
 	return s.thr.resolveAndLaunch(
 		ctx, s.snapshot, s.startNode, eDef, keyName, key)
 }
@@ -109,18 +115,44 @@ func scanInstantiatingStarts(s *snapshot.Snapshot, thr *Thresher) []*instanceSta
 			continue
 		}
 
+		// An instantiating Event-Based gateway exposes its arms' definitions as its
+		// union (SRD-024), detected structurally so the thresher stays free of the
+		// gateways package. Exclusive-start: each fired arm's instance runs from that
+		// ARM's continuation, so the arm is the start node (SRD-025 §4.2). Parallel-start:
+		// the instance is born from the GATE (seedParallelStart pre-fires the firing arm,
+		// arms the others), so the gate stays the start node and the arms share the
+		// gate's CorrelationKey, so resolveAndLaunch dedups to one instance (§4.3).
+		router, isGate := n.(interface {
+			ArmFor(flow.EventDefinition) (flow.Node, bool)
+		})
+
+		parallel := false
+		if ps, ok := n.(interface{ ParallelStart() bool }); ok {
+			parallel = ps.ParallelStart()
+		}
+
 		for _, eDef := range en.Definitions() {
 			med, ok := eDef.(*events.MessageEventDefinition)
 			if !ok {
 				continue
 			}
 
+			startNode := n
+			corrKey := correlationKeyOf(n)
+
+			if isGate {
+				if arm, ok := router.ArmFor(eDef); ok && !parallel {
+					startNode = arm
+					corrKey = correlationKeyOf(arm)
+				}
+			}
+
 			starters = append(starters, &instanceStarter{
 				thr:       thr,
 				snapshot:  s,
-				startNode: n,
+				startNode: startNode,
 				eDef:      med,
-				corrKey:   correlationKeyOf(n),
+				corrKey:   corrKey,
 				id:        foundation.GenerateID(),
 			})
 		}

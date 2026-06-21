@@ -25,6 +25,12 @@ func main() {
 }
 
 func run() error {
+	fmt.Print(`
+  signal-broadcast (one throw → every catcher):
+    watcher ×2:  start → catch(order-cancelled) → end
+    canceller:   start → throw(order-cancelled) → end
+
+`)
 	const signal = "order-cancelled"
 
 	engine, err := thresher.New("signal-broadcast-engine")

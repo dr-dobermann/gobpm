@@ -41,6 +41,14 @@ func main() {
 }
 
 func run() error {
+	fmt.Print(`
+  message-intermediate-events:
+    start ─> throw-order ─> catch-order ─> confirm ─> end
+             (publishes      (waits on the   (reads the
+              "order          broker, binds   bound payload)
+              placed")        the payload)
+
+`)
 	if err := data.CreateDefaultStates(); err != nil {
 		return fmt.Errorf("create default states: %w", err)
 	}

@@ -233,6 +233,9 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 	mw.stopCh = make(chan struct{})
 	mw.done = make(chan struct{})
 
+	mw.rt.Logger().Debug("message waiter serviced",
+		"waiter_id", mw.id, "message_name", mw.name)
+
 	go mw.runMessageService(ctx, sub.C())
 
 	return nil
@@ -303,6 +306,10 @@ func (mw *messageWaiter) processMessageEvent(
 	mw.m.Lock()
 	processors := append([]eventproc.EventProcessor(nil), mw.processors...)
 	mw.m.Unlock()
+
+	mw.rt.Logger().Debug("message waiter delivering",
+		"waiter_id", mw.id, "message_name", mw.name,
+		"processors", len(processors))
 
 	for _, ep := range processors {
 		err := ep.ProcessEvent(ctx, eDef)

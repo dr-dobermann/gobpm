@@ -14,6 +14,12 @@ DC = docker compose
 # COVER_BASE is the ref the diff is taken against.
 COVER_MIN ?= 95
 COVER_BASE ?= origin/master
+# Log/observability statements are excluded from the gate's denominator
+# (covercheck -exclude-lines, v0.1.2+): a Debug/Info/Warn/Error call is
+# observability, not logic, and shouldn't demand a test just to be "covered".
+# Matches the two logger-access forms in the codebase: `.logger.LEVEL(` and
+# `.Logger().LEVEL(`.
+COVER_EXCLUDE ?= \.(logger|Logger\(\))\.(Debug|Info|Warn|Error)\(
 
 # All Go modules in the monorepo (each with its own go.mod).
 # Discovered dynamically so adding a new module needs no Makefile edit.
@@ -33,7 +39,7 @@ MODULES := $(shell /usr/bin/find . -name go.mod -not -path './.git/*' -exec dirn
 MOCKERY_VERSION     := v3.5.0
 GOLANGCI_VERSION    := v2.11.4
 GOVULNCHECK_VERSION := latest
-COVERCHECK_VERSION  := v0.1.1
+COVERCHECK_VERSION  := v0.1.2
 
 define require-tool
 @command -v $(1) >/dev/null 2>&1 || { echo "ERROR: '$(1)' not found in PATH. Run 'make tools' (installs CI-pinned versions) or: $(2)"; exit 1; }
@@ -154,7 +160,8 @@ vuln:
 # Judges only changed lines, so the untouched-code backlog never blocks it.
 cover-check:
 	$(call require-tool,covercheck,$(GO) install github.com/dr-dobermann/covercheck/cmd/covercheck@$(COVERCHECK_VERSION))
-	covercheck -min $(COVER_MIN) -base $(COVER_BASE) -profiles coverage.txt
+	covercheck -min $(COVER_MIN) -base $(COVER_BASE) \
+		-exclude-lines '$(COVER_EXCLUDE)' -profiles coverage.txt
 .PHONY: cover-check
 
 # Umbrella target that runs the full local-equivalent of CI.

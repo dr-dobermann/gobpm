@@ -179,6 +179,9 @@ func (sw *signalWaiter) Service(ctx context.Context) error {
 	sw.ctx = ctx
 	sw.state = eventproc.WSRunned
 
+	sw.rt.Logger().Debug("signal waiter serviced",
+		"waiter_id", sw.id, "signal", sw.name)
+
 	return nil
 }
 
@@ -194,6 +197,10 @@ func (sw *signalWaiter) Process(eDef flow.EventDefinition) error {
 	// sw.processors under sw.m while we fan out.
 	processors := append([]eventproc.EventProcessor(nil), sw.processors...)
 	sw.m.Unlock()
+
+	sw.rt.Logger().Debug("signal waiter delivering",
+		"waiter_id", sw.id, "signal", sw.name,
+		"processors", len(processors))
 
 	for _, ep := range processors {
 		if err := ep.ProcessEvent(ctx, eDef); err != nil {

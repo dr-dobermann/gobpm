@@ -31,6 +31,12 @@ func main() {
 }
 
 func run() error {
+	fmt.Print(`
+  parallel-gateway:
+    start ─> split ─┬─> worker-a ─┬─> join ─> end
+                    └─> worker-b ─┘
+
+`)
 	engine, err := thresher.New("parallel-gateway-engine")
 	if err != nil {
 		return fmt.Errorf("create engine: %w", err)

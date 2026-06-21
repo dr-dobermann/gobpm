@@ -95,8 +95,12 @@ func (h brokerSub) AddKey(key string) error {
 	h.b.mu.Lock()
 	defer h.b.mu.Unlock()
 
+	before := len(h.b.inbox)
 	h.sub.keys[key] = struct{}{}
 	h.b.drainInboxLocked(h.sub)
+
+	h.b.logger.Debug("membroker: key added; drained buffered",
+		"key", key, "drained", before-len(h.b.inbox))
 
 	return nil
 }
@@ -144,11 +148,16 @@ func (b *Broker) Publish(_ context.Context, msg messaging.Envelope) error {
 		keyedMatched = true
 
 		if trySend(s.ch, msg) {
+			b.logger.Debug("membroker: routed (keyed)",
+				"name", msg.Name, "key", msg.CorrelationKey)
+
 			return nil
 		}
 	}
 
 	if keyedMatched {
+		b.logger.Debug("membroker: buffered (keyed subscriber busy)",
+			"name", msg.Name, "key", msg.CorrelationKey)
 		b.bufferLocked(msg)
 
 		return nil
@@ -160,10 +169,15 @@ func (b *Broker) Publish(_ context.Context, msg messaging.Envelope) error {
 		}
 
 		if trySend(s.ch, msg) {
+			b.logger.Debug("membroker: routed (wildcard)",
+				"name", msg.Name, "key", msg.CorrelationKey)
+
 			return nil
 		}
 	}
 
+	b.logger.Debug("membroker: buffered (no subscriber)",
+		"name", msg.Name, "key", msg.CorrelationKey)
 	b.bufferLocked(msg)
 
 	return nil
@@ -187,6 +201,9 @@ func (b *Broker) Subscribe(
 
 	b.drainInboxLocked(sub)
 	b.subs = append(b.subs, sub)
+
+	b.logger.Debug("membroker: subscribed",
+		"name", name, "keys", len(sub.keys))
 
 	return brokerSub{b: b, sub: sub}, nil
 }

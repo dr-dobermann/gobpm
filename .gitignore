@@ -45,3 +45,4 @@ examples/gateway-routing/gateway-routing
 examples/inclusive-join/inclusive-join
 examples/complex-gateway/complex-gateway
 examples/event-based-gateway/event-based-gateway
+examples/event-based-parallel-start/event-based-parallel-start

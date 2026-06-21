@@ -38,6 +38,14 @@ func main() {
 }
 
 func run() error {
+	fmt.Print(`
+  conversation-routing (SRD-017 phase-2c keyed routing):
+    publish "order placed"     ORD-1 ─▶ born(ORD-1) ─▶ await "payment received"
+    publish "order placed"     ORD-2 ─▶ born(ORD-2) ─▶ await "payment received"
+    publish "payment received" ORD-1 ─▶ routed to the ORD-1 handler
+    publish "payment received" ORD-2 ─▶ routed to the ORD-2 handler
+
+`)
 	if err := data.CreateDefaultStates(); err != nil {
 		return fmt.Errorf("create default states: %w", err)
 	}

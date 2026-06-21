@@ -601,6 +601,10 @@ func (t *Thresher) resolveAndLaunch(
 	keyName, key string,
 ) error {
 	if key == "" {
+		t.cfg.logger.Debug(
+			"instance-starter: creating instance (no correlation key)",
+			"process_id", s.ProcessID, "start_node_id", startNode.ID())
+
 		return t.launchInstanceFromEvent(ctx, s, startNode, eDef, keyName, key)
 	}
 
@@ -611,6 +615,9 @@ func (t *Thresher) resolveAndLaunch(
 	t.m.Lock()
 	if _, seen := t.seenKeys[nsKey]; seen {
 		t.m.Unlock()
+
+		t.cfg.logger.Debug("instance-starter: joined existing instance (key seen)",
+			"process_id", s.ProcessID, "key", key)
 
 		return nil // an instance already exists for this key: join, no duplicate
 	}
@@ -627,6 +634,9 @@ func (t *Thresher) resolveAndLaunch(
 
 		return err
 	}
+
+	t.cfg.logger.Debug("instance-starter: created new instance",
+		"process_id", s.ProcessID, "key", key)
 
 	return nil
 }
@@ -675,9 +685,13 @@ func (t *Thresher) launchInstanceFromEvent(
 	t.m.Lock()
 	defer t.m.Unlock()
 
+	// An event-born instance is tracked with its read-only handle just like a
+	// StartProcess one, so the SRD-019 discovery API (Instances -> Instance(id))
+	// returns a usable handle for it instead of a nil that panics on observation.
 	t.instances[inst.ID()] = instanceReg{
-		stop: cancel,
-		inst: inst,
+		stop:   cancel,
+		inst:   inst,
+		handle: &InstanceHandle{inst: inst},
 	}
 
 	return nil

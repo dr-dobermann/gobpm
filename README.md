@@ -130,6 +130,17 @@ task), and the timer examples
 [`examples/simple-timer/`](examples/simple-timer/) ·
 [`examples/timer-event/`](examples/timer-event/).
 
+For the routing gateways, see
+[`examples/gateway-routing/`](examples/gateway-routing/) (exclusive choice) ·
+[`examples/inclusive-join/`](examples/inclusive-join/) (inclusive split + OR-join) ·
+[`examples/complex-gateway/`](examples/complex-gateway/) (activation-threshold join),
+and the **Event-Based** gateway —
+[`examples/event-based-gateway/`](examples/event-based-gateway/) (mid-flow deferred
+choice: the first of several events to fire wins, the rest are dropped) ·
+[`examples/event-based-parallel-start/`](examples/event-based-parallel-start/) (a
+process **started** by an event gateway — the first of two correlated messages creates
+the instance, the other re-arms to it, and it completes once both have arrived).
+
 For message handling, see
 [`examples/message-send-receive/`](examples/message-send-receive/) (a SendTask
 publishes to the broker, a ReceiveTask waits and binds the payload) ·
