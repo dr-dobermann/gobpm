@@ -135,9 +135,9 @@ StepCreated → StepStarted → StepPrologued → StepExecuting → StepEpilogue
 | `Alive` | `TrackReady` / `TrackExecutingStep` / `TrackProcessStepResults` |
 | `WaitForEvent` | `TrackWaitForEvent` |
 | `Consumed` | `TrackEnded` / `TrackMerged` / `TrackCanceled` / `TrackFailed` |
-| `Withdrawn` | **зарезервировано** — проигрыш гонки Event-Based Gateway; производитель в [ADR-005](ADR-005-gateways-and-joins.md), пока не производится |
+| ~~`Withdrawn`~~ | **снято** — Event-Based gateway маршрутизирует без создания токенов на плечах, поэтому токен Withdrawn не производится ([ADR-005 v.4 §2.12.1](ADR-005-gateways-and-joins.md)) |
 
-Это заменяет хранимый enum `TokenState` из v.2 производным видом. Значение `TokenWithdrawn` существует в типе-проекции, но пока не имеет производителя; различие «withdrawn vs canceled» (причина завершения track'а) приходит с ADR-005.
+Это заменяет хранимый enum `TokenState` из v.2 производным видом. (Значение `TokenWithdrawn` когда-то было зарезервировано под проигрыш гонки на Event-Based Gateway; [ADR-005 v.4 §2.12.1](ADR-005-gateways-and-joins.md) сняло его — шлюз маршрутизирует, никогда не помещая токен на проигравшее плечо, так что проецировать Withdrawn не из чего.)
 
 ### 4.3 Топология каналов (event loop)
 

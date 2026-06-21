@@ -150,8 +150,9 @@ const (
 )
 
 // TokenState is the standard-named, OPEN projected token-position vocabulary.
-// The engine collapses ended/merged/canceled/failed tracks to Consumed; the
-// Withdrawn value awaits the Event-Based Gateway.
+// The engine collapses ended/merged/canceled/failed tracks to Consumed. (The
+// Event-Based gateway routes without minting arm tokens, so there is no Withdrawn
+// state — ADR-005 v.4 §2.12.1.)
 type TokenState string
 
 // The projected token states (token.go tokenStateFor).
@@ -159,7 +160,6 @@ const (
 	TokenAlive        TokenState = "Alive"
 	TokenWaitForEvent TokenState = "WaitForEvent"
 	TokenConsumed     TokenState = "Consumed"
-	TokenWithdrawn    TokenState = "Withdrawn"
 	TokenInvalid      TokenState = "Invalid"
 )
 
@@ -204,9 +204,6 @@ func tokenState(ts instance.TokenState) TokenState {
 
 	case instance.TokenConsumed:
 		return TokenConsumed
-
-	case instance.TokenWithdrawn:
-		return TokenWithdrawn
 
 	default:
 		return TokenInvalid
