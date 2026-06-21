@@ -109,7 +109,7 @@ func (t *Thresher) Starters() []StarterInfo {
 			out = append(out, StarterInfo{
 				ProcessID: procID,
 				StartNode: s.startNode.Name(),
-				Trigger:   s.eDef.Message().Name(),
+				Trigger:   triggerName(s.eDef),
 			})
 		}
 	}

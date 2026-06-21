@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
@@ -173,4 +174,125 @@ func TestSignalSingleShotConsume(t *testing.T) {
 	// The catch is consumed; a second throw finds no catcher → clean no-op.
 	_, err = th.StartProcess(thrower.ID())
 	require.NoError(t, err)
+}
+
+// sigDef builds a signal event definition for name — the broadcast match key.
+func sigDef(t *testing.T, name string) *events.SignalEventDefinition {
+	t.Helper()
+
+	sig, err := events.NewSignal(name, nil)
+	require.NoError(t, err)
+	def, err := events.NewSignalEventDefinition(sig)
+	require.NoError(t, err)
+
+	return def
+}
+
+// signalStartProcess builds a process whose start is a signal StartEvent (no
+// incoming) on sigName: start(signal) → marker(ServiceTask) → end. A broadcast of
+// sigName instantiates it (SRD-026 FR-4); the marker pushes onto done when it runs.
+func signalStartProcess(
+	t *testing.T, procID, sigName, marker string, done chan<- string,
+) *process.Process {
+	t.Helper()
+
+	require.NoError(t, data.CreateDefaultStates())
+
+	start, err := events.NewStartEvent("start",
+		events.WithSignalTrigger(sigDef(t, sigName)))
+	require.NoError(t, err)
+
+	mark := ebMarkerService(t, "mark-"+procID, marker, done)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	proc, err := process.New(procID)
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, mark, end} {
+		require.NoError(t, proc.Add(e))
+	}
+
+	link(t, start, mark)
+	link(t, mark, end)
+
+	return proc
+}
+
+// TestSignalStartInstantiates: a broadcast signal instantiates a process whose
+// start trigger is a signal StartEvent (SRD-026 FR-4).
+func TestSignalStartInstantiates(t *testing.T) {
+	done := make(chan string, 4)
+	proc := signalStartProcess(t, "sig-start", "GO", "X", done)
+
+	th, cancel := runEngine(t, proc)
+	defer cancel()
+
+	require.NoError(t, th.PropagateEvent(context.Background(), sigDef(t, "GO")))
+
+	select {
+	case got := <-done:
+		require.Equal(t, "X", got, "the signal-start instance runs")
+	case <-time.After(3 * time.Second):
+		t.Fatal("broadcasting GO did not instantiate the signal-start process")
+	}
+
+	// exactly one instance — a single signal-start declaration.
+	select {
+	case got := <-done:
+		t.Fatalf("unexpected extra run %q", got)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// TestSignalStartBroadcastInstantiatesAll: one broadcast instantiates EVERY
+// process declaring a signal StartEvent of that name — broadcast, not
+// point-to-point (SRD-026 FR-4).
+func TestSignalStartBroadcastInstantiatesAll(t *testing.T) {
+	done := make(chan string, 4)
+	procA := signalStartProcess(t, "sig-start-a", "GO", "A", done)
+	procB := signalStartProcess(t, "sig-start-b", "GO", "B", done)
+
+	th, cancel := runEngine(t, procA)
+	defer cancel()
+	require.NoError(t, th.RegisterProcess(procB))
+
+	require.NoError(t, th.PropagateEvent(context.Background(), sigDef(t, "GO")))
+
+	got := map[string]bool{}
+
+	for range 2 {
+		select {
+		case m := <-done:
+			got[m] = true
+		case <-time.After(3 * time.Second):
+			t.Fatalf("expected both signal-start processes to instantiate, got %v", got)
+		}
+	}
+
+	require.True(t, got["A"] && got["B"],
+		"one broadcast instantiated both: %v", got)
+}
+
+// TestSignalStartEachBroadcastNewInstance: each broadcast instantiates anew — no
+// dedup, the starter uses an empty key (SRD-026 FR-4).
+func TestSignalStartEachBroadcastNewInstance(t *testing.T) {
+	done := make(chan string, 4)
+	proc := signalStartProcess(t, "sig-start-multi", "GO", "X", done)
+
+	th, cancel := runEngine(t, proc)
+	defer cancel()
+
+	require.NoError(t, th.PropagateEvent(context.Background(), sigDef(t, "GO")))
+	require.NoError(t, th.PropagateEvent(context.Background(), sigDef(t, "GO")))
+
+	for i := range 2 {
+		select {
+		case got := <-done:
+			require.Equal(t, "X", got)
+		case <-time.After(3 * time.Second):
+			t.Fatalf("expected 2 instances from 2 broadcasts, got %d", i)
+		}
+	}
 }

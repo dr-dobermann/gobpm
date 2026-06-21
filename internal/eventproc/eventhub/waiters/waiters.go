@@ -109,14 +109,23 @@ func CreatePersistentWaiter(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	if eDef.Type() != flow.TriggerMessage {
+	switch eDef.Type() {
+	case flow.TriggerMessage:
+		return NewMessageWaiter(eh, ep, eDef, "", rt, false)
+
+	case flow.TriggerSignal:
+		// A persistent signal-starter needs no one-shot flag — persistence is
+		// processor-driven: a catch track self-unregisters as it resumes, whereas a
+		// starter never self-unregisters, so it stays subscribed and fires on every
+		// broadcast (SRD-026 §3.2).
+		return NewSignalWaiter(eh, ep, eDef, "", rt)
+
+	default:
 		return nil, errs.New(
-			errs.M("only message triggers can back a persistent "+
+			errs.M("only message or signal triggers can back a persistent "+
 				"instance-starter, got %s", eDef.Type()),
 			errs.C(errorClass, errs.InvalidParameter),
 			errs.D("event_definition_id", eDef.ID()),
 			errs.D("event_definition_type", eDef.Type()))
 	}
-
-	return NewMessageWaiter(eh, ep, eDef, "", rt, false)
 }

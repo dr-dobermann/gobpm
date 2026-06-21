@@ -376,9 +376,15 @@ func TestCreatePersistentWaiter(t *testing.T) {
 	require.Equal(t, eventproc.WSReady, w.State())
 	require.NotEmpty(t, w.ID())
 
-	// non-message trigger rejected.
-	_, err = waiters.CreatePersistentWaiter(hub, ep,
-		events.MustSignalEventDefinition(&events.Signal{}), enginert.Default())
+	// signal trigger now backs a persistent signal waiter (SRD-026 §3.2).
+	sw, err := waiters.CreatePersistentWaiter(hub, ep, signalEDef(t, "GO"),
+		enginert.Default())
+	require.NoError(t, err)
+	require.NotNil(t, sw)
+
+	// a non-message, non-signal trigger is still rejected.
+	_, err = waiters.CreatePersistentWaiter(hub, ep, timerEDef(t),
+		enginert.Default())
 	require.Error(t, err)
 
 	// nil dependencies rejected.

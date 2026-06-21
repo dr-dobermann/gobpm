@@ -122,7 +122,7 @@ func TestRegisterPersistentEvent(t *testing.T) {
 		require.NoError(t, hub.UnregisterEvent(ep, med.ID()))
 	})
 
-	t.Run("non-message trigger rejected", func(t *testing.T) {
+	t.Run("signal trigger backs a persistent signal starter", func(t *testing.T) {
 		hub, err := eventhub.New(enginert.Default())
 		require.NoError(t, err)
 
@@ -131,10 +131,13 @@ func TestRegisterPersistentEvent(t *testing.T) {
 		require.NoError(t, hub.Start(ctx))
 
 		ep := mockeventproc.NewMockEventProcessor(t)
-		ep.EXPECT().ID().Return("starter").Maybe()
+		ep.EXPECT().ID().Return("sig-starter").Maybe()
 
-		require.Error(t, hub.RegisterPersistentEvent(ep,
-			events.MustSignalEventDefinition(&events.Signal{})))
+		// A signal StartEvent now backs a persistent signal starter (SRD-026 §3.2);
+		// the non-message/non-signal rejection is covered in the waiters package.
+		sed := signalDef(t, "GO")
+		require.NoError(t, hub.RegisterPersistentEvent(ep, sed))
+		require.NoError(t, hub.UnregisterEvent(ep, sed.ID()))
 	})
 
 	t.Run("unstarted hub rejected", func(t *testing.T) {
