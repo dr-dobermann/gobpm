@@ -4,6 +4,20 @@
 # (internal/covercheck.DefaultExcluded, SRD-002): CLI entry points, generated
 # mocks, and runnable examples are not unit-tested by design — their logic lives
 # in (and is covered through) internal/ packages — so Codecov ignores them too.
+#
+# Log/observability statements are EXCLUDED from the enforced diff-coverage gate
+# (covercheck -exclude-lines, Makefile COVER_EXCLUDE). Codecov has no
+# content/line-level masking (only the path-level `ignore` below), so it would
+# still count those lines. The authoritative diff gate is covercheck, run in CI;
+# Codecov's patch status is therefore marked informational, so an excluded log
+# line can't post a redundant failing patch check. (Project status stays a
+# regular signal on overall coverage.)
+coverage:
+  status:
+    patch:
+      default:
+        informational: true
+
 ignore:
   - "cmd/**/*"          # CLI entry points: thin flag-parsing shells
   - "generated/**/*"    # mockery-generated mocks
