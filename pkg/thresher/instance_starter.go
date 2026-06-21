@@ -109,18 +109,34 @@ func scanInstantiatingStarts(s *snapshot.Snapshot, thr *Thresher) []*instanceSta
 			continue
 		}
 
+		// An instantiating Event-Based gateway exposes its arms' definitions as its
+		// union (SRD-024), but a fired arm's instance must run from that ARM's
+		// continuation, not the gate's full outgoing. Resolve each definition's arm via
+		// ArmFor and use it as the start node (Exclusive-start, SRD-025 §4.2). Detected
+		// structurally so the thresher stays free of the gateways package.
+		router, isGate := n.(interface {
+			ArmFor(flow.EventDefinition) (flow.Node, bool)
+		})
+
 		for _, eDef := range en.Definitions() {
 			med, ok := eDef.(*events.MessageEventDefinition)
 			if !ok {
 				continue
 			}
 
+			startNode := n
+			if isGate {
+				if arm, ok := router.ArmFor(eDef); ok {
+					startNode = arm
+				}
+			}
+
 			starters = append(starters, &instanceStarter{
 				thr:       thr,
 				snapshot:  s,
-				startNode: n,
+				startNode: startNode,
 				eDef:      med,
-				corrKey:   correlationKeyOf(n),
+				corrKey:   correlationKeyOf(startNode),
 				id:        foundation.GenerateID(),
 			})
 		}
