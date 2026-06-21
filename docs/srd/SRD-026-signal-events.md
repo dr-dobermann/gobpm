@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-21 |
 | Owner | Ruslan Gabitov |
@@ -212,12 +212,14 @@ this SRD documents the global-reach choice rather than implementing scoping.
 | 1 | `TestSignalStartInstantiates` | a process with a signal StartEvent (no incoming); broadcast its signal | one new instance is born from the signal start and runs to completion |
 | 2 | `TestSignalStartBroadcastInstantiatesAll` | two processes, each a signal StartEvent on the **same** signal name; one broadcast | **both** instantiate (one instance each — broadcast, not point-to-point) |
 | 3 | `TestSignalStartEachBroadcastNewInstance` | broadcast the same signal twice | two independent instances (empty key ⇒ no dedup) |
-| 4 | `TestSignalThrowCatch` (regression) | intermediate signal throw in one instance, intermediate signal catch in another | the catcher resumes on the broadcast |
-| 5 | `TestSignalBroadcastFanOut` (regression, exists) | one throw, N waiting catchers (distinct eDef ids, same name) | all N receive it (`eventhub_signal_test.go`) |
-| 6 | `TestSignalThrowNoCatcherNoOp` (regression) | broadcast a signal with no registered catcher | no error; logged no-op (`eventhub.go:428-437`) |
+| 4 | `TestSignalCatchThrow` (regression, exists) | intermediate signal throw in one instance, intermediate signal catch in another | the catcher resumes on the broadcast |
+| 5 | `TestBroadcastSignalFanOut` / `TestSignalWaiterBroadcastFanOut` (regression, exist) | one throw, N waiting catchers (distinct eDef ids, same name) | all N receive it (`eventhub_signal_test.go`, `waiters/signal_test.go`) |
+| 6 | `TestSignalThrownIntoVoid` (regression, exists) | broadcast a signal with no registered catcher | no error; logged no-op (`eventhub.go:428-437`) |
 
-In-package (`pkg/thresher`) tests cover the signal-start starter; existing
-`waiters/signal_test.go` + `eventhub_signal_test.go` cover the waiter + fan-out.
+`TestSignalBroadcast` (cross-instance broadcast) and `TestSignalSingleShotConsume`
+(a catch consumes once) in `pkg/thresher/signal_test.go` add further coverage; the
+signal-start starter is covered by tests 1–3 there, and `waiters/signal_test.go` +
+`eventhub_signal_test.go` cover the waiter + fan-out.
 
 ---
 
@@ -242,7 +244,28 @@ deliberately absent on the signal path — NFR-2). Versions pinned; no downward 
 
 ## 10. Implementation summary
 
-> ⚠️ TODO: fill AFTER landing — commits, key files, V-results, deltas vs this draft.
+Landed on branch `feat/signal-events` (off `master`).
+
+### 10.1 Stages by commit
+
+| Milestone | Commit | Scope | Tests |
+|---|---|---|---|
+| Doc | `c18ab2d` | SRD-026 (this doc) | — |
+| M1 — signal-start instantiation | `65213ab` | `CreatePersistentWaiter` accepts `TriggerSignal` → `NewSignalWaiter` (`waiters.go`); `instanceStarter.eDef` → `flow.EventDefinition`; `scanInstantiatingStarts` accepts `*SignalEventDefinition`; `deriveKey`/`discovery.go` signal-aware (`triggerName`) | `TestSignalStartInstantiates`, `…BroadcastInstantiatesAll`, `…EachBroadcastNewInstance`, `TestTriggerName`, `TestCreatePersistentWaiter` (signal) |
+| M2 — FR-1…FR-3 regression | (no commit) | Behaviour already wired **and tested** — `TestSignalCatchThrow`, `TestSignalBroadcast`, `TestSignalThrownIntoVoid`, `TestBroadcastSignalFanOut` pre-existed; no new tests needed | (existing) |
+| M3 — signal-start example | `ce50ffe` | `examples/signal-start/` (one broadcast → two signal-start instances) | smoke exit 0 |
+
+### 10.2 Deltas vs the draft
+
+- **Waiter-layer change (the v.1 draft missed it).** §3.1 alone was insufficient: `CreatePersistentWaiter` (`waiters.go:112`) rejected non-message triggers, so a signal starter would build then fail at registration. M1 added the §3.2 fix — the persistent signal waiter (no new waiter type; persistence is processor-driven, a starter never self-unregisters). SRD §3.2/§4.2 amended (Draft) and landed with the M1 code.
+- **M2 was a no-op.** The draft assumed signal throw/catch/broadcast lacked tests; in fact `TestSignalCatchThrow` / `TestSignalBroadcast` / `TestSignalThrownIntoVoid` / `TestBroadcastSignalFanOut` already existed and pass. §5 names were aligned to the real tests; no new tests were written.
+- **Two stale memory items confirmed + closed:** ADR-006 §2.4 no-catcher no-op is already implemented (`eventhub.go:428-437`), and the non-message-broadcast concern doesn't apply to signals (multi-processor fan-out is correct).
+
+### 10.3 Verification (V-results)
+
+- `make ci` green at HEAD: tidy, lint, build, `-race`, **diff-coverage 97.1%** (`COVER_MIN` 95; covercheck v0.1.2 excludes log lines), govulncheck clean.
+- All 16 `examples/` smoke green (exit 0), incl. the new `examples/signal-start`.
+- §5 tests pass under `-race`; message-start instantiation unaffected (its tests still pass).
 
 ## Open questions
 
