@@ -133,11 +133,13 @@ StepCreated → StepStarted → StepPrologued → StepExecuting → StepEpilogue
 | `Alive` | `TrackReady` / `TrackExecutingStep` / `TrackProcessStepResults` |
 | `WaitForEvent` | `TrackWaitForEvent` |
 | `Consumed` | `TrackEnded` / `TrackMerged` / `TrackCanceled` / `TrackFailed` |
-| `Withdrawn` | **reserved** — Event-Based Gateway race loss; producer in [ADR-005](ADR-005-gateways-and-joins.md), not yet produced |
+| ~~`Withdrawn`~~ | **retired** — the Event-Based gateway routes without minting arm tokens, so no Withdrawn token is produced ([ADR-005 v.4 §2.12.1](ADR-005-gateways-and-joins.md)) |
 
-This replaces the v.2 stored `TokenState` enum with a derived view. The
-`TokenWithdrawn` value exists in the projection type but has no producer yet;
-the "withdrawn vs canceled" distinction (a track end-reason) lands with ADR-005.
+This replaces the v.2 stored `TokenState` enum with a derived view. (The
+`TokenWithdrawn` value was once reserved for an Event-Based Gateway race loss;
+[ADR-005 v.4 §2.12.1](ADR-005-gateways-and-joins.md) retired it — the gate routes
+without ever placing a token on a losing arm, so there is no Withdrawn token to
+project.)
 
 ### 4.3 Channel topology (event loop)
 
