@@ -1,7 +1,7 @@
-# FIX-007 «Event-Based gateway double-win under concurrent fires»
+# FIX-007 «Event-Based gateway concurrent-fire races (double-win + gate self-execution)»
 
 **Type:** FIX (one-shot bug-fix; not rewritten after landing).
-**Status:** Draft v.1 (2026-06-21, branch `fix/event-gate-concurrent-fire`, not yet implemented).
+**Status:** Accepted v.1 (2026-06-21, branch `fix/event-gate-concurrent-fire`, implemented).
 **Date:** 2026-06-21.
 **Author:** Ruslan Gabitov.
 **Branch:** `fix/event-gate-concurrent-fire` (the defect is a concurrent-fire race in the Event-Based gateway's deferred choice).
@@ -35,130 +35,115 @@ require.True(t, ranA != ranB, "exactly one arm wins")
 
 ## 2. Root cause analysis
 
-### 2.1 A TOCTOU in `track.ProcessEvent` (`internal/instance/track.go`)
+The flake is **two distinct concurrent-fire races** on the gate track, not one — the second was found during implementation (`eventMu` fixed the double-win but the canary still failed). Both stem from the gate track being mutated by a **waiter goroutine** (`ProcessEvent`) racing another goroutine: a second waiter (race 1), then the track's own `run()` (race 2).
 
-`ProcessEvent` guards on the track state, then much later transitions it — with no lock held across the two:
+### 2.1 Race 1 — double-win (waiter-vs-waiter): a TOCTOU in `track.ProcessEvent`
+
+An Event-Based gateway subscribes the hub on behalf of **all** its arms through a single gate track (SRD-024 v.1 §4.1) — the gate track is the one `EventProcessor` for every arm's definition. So two concurrent `eh.PropagateEvent` calls (`GO_A`, `GO_B`) become **two waiter goroutines** both invoking `ProcessEvent` on the **same** track. The method guards on the track state, then transitions it much later, with no lock across (`internal/instance/track.go`):
 
 ```go
-func (t *track) ProcessEvent(ctx context.Context, eDef flow.EventDefinition) error {
-	if !t.inState(TrackWaitForEvent) {          // :816  — lock-free guard (check)
-		return errs.New(errs.M("...doesn't expect any event"), ...)
-	}
-	...
-	if t.instance.validateAndAssociate(ctx, eDef) { // :847 — correlation reject (keeps waiting)
-		return eventproc.ErrRejected
-	}
-	if err := ep.ProcessEvent(ctx, eDef); err != nil { // :851 — bind + (gate) resolve the arm
-		return err
-	}
-	...
-	if er, ok := n.(eventRouter); ok {
-		t.advanceToArm(n, er, eDef)             // :868 — append the winning arm's step
-	}
-	t.updateState(TrackReady)                   // :871 — state finally leaves WaitForEvent (act)
-	return nil
+func (t *track) ProcessEvent(...) error {
+	if !t.inState(TrackWaitForEvent) { ... }     // :838 — guard (check)
+	... ep.ProcessEvent(...) ...                  // bind + (gate) resolve the arm
+	t.advanceToArm(n, er, eDef)                   // :889 — append the winning arm's step
+	t.updateState(TrackReady)                     // :892 — state leaves WaitForEvent (act)
 }
 ```
 
-The check is at `:816`; the state only changes at `:871`, **after** `advanceToArm`. The window `:816 → :871` is unprotected.
-
-### 2.2 Why two arms win
-
-An Event-Based gateway subscribes the hub on behalf of **all** its arms through a single gate track (SRD-024 v.1 §4.1) — the gate track is the one `EventProcessor` for every arm's definition. So two concurrent `eh.PropagateEvent` calls (here `GO_A` and `GO_B`) become **two waiter goroutines** both invoking `ProcessEvent` on the **same** gate track:
-
 ```
 goroutine A (GO_A)              goroutine B (GO_B)
-:816 inState(WaitForEvent)=true
-                                :816 inState(WaitForEvent)=true   ← both pass
-:868 advanceToArm(armA)
-                                :868 advanceToArm(armB)           ← both arms appended
-:871 updateState(Ready)
-                                :871 updateState(Ready)
+:838 inState(WaitForEvent)=true
+                                :838 inState(WaitForEvent)=true   ← both pass
+:889 advanceToArm(armA)
+                                :889 advanceToArm(armB)           ← both arms appended
 ```
 
-Both append an arm step → both arms run → `ranA && ranB` → the invariant breaks. The narrow window (state changes only at `:871`) is why it is rare.
+Both append an arm step → both arms run → `ranA && ranB`. The narrow window (state changes only at `:892`) is why it is rare. Signals make it reachable in real use: a broadcast (`broadcastSignal`, SRD-026) fans out by name and can deliver to two arms near-simultaneously.
 
-Signals make this reachable in real use, not just in a stress test: a signal broadcast (`broadcastSignal`, SRD-026) fans out to every catcher by name and can deliver to two arms of the same gate near-simultaneously.
+### 2.2 Race 2 — gate self-execution (waiter-vs-`run()`)
+
+Serializing `ProcessEvent` (race 1) was **necessary but not sufficient** — the stress canary still failed, now with the instance `Completed` but the winning arm short of its end (`arm=true, end=false`). A *different* goroutine pair: the waiter (`ProcessEvent`) vs the track's own `run()` loop, which captured the step **before** the wait-guard:
+
+```go
+for {
+	step := t.currentStep()                 // captured here — the GATE step
+	... if t.inState(TrackWaitForEvent) { continue } ...   // :443 — wait-guard
+	... executeNode(ctx, step) ...          // ran the stale captured step
+}
+```
+
+When `ProcessEvent` (waiter goroutine) flipped the state out of `WaitForEvent` and appended the arm step **mid-iteration**, `run()` fell through the `:443` guard but executed the **stale GATE step** — the gate node's `Exec` fails loudly ("the gate must not be executed", SRD-024) → `TrackFailed`, and the instance then silently completed with the arm short of its end. (That silent completion of a `TrackFailed` track is a *separate* latent bug — see §7 / FIX-008 / #165.)
 
 ### 2.3 Why the test didn't catch it earlier
 
-`TestEventGatewayConcurrentFires` exists but fires the two events exactly once per run — it exercises the race but only **non-deterministically** wins it, so it passed nearly always and did not reliably guard the invariant (§4.1 hardens it).
+`TestEventGatewayConcurrentFires` fired the two events exactly once per run — it exercised the races but only **non-deterministically** triggered them, so it passed nearly always and did not reliably guard the invariant. §4.1 adds a looped stress canary that reproduces both.
 
 ---
 
 ## 3. Solution
 
-Serialize event delivery to a track with a **dedicated per-track mutex** held across `ProcessEvent`'s critical section, so the first fire runs to completion (transitioning the state) before any second fire is evaluated. The loser then fails the `:816` guard (state is no longer `TrackWaitForEvent`) and is dropped.
+A two-part serialization fix plus a benign-drop tidy:
 
-The correlation-reject path needs **no special handling**: `validateAndAssociate` (`:847`) returning `ErrRejected` does not transition the state, so a wrong-conversation message naturally leaves the track in `TrackWaitForEvent` — the next event still finds it waiting.
+1. **`eventMu`** (race 1): a dedicated per-track mutex held across `ProcessEvent`'s critical section, so the first fire completes (transitioning the state) before any second fire is evaluated; the loser then fails the guard.
+2. **Re-fetch-after-guard** (race 2): `run()` reads the current step **after** the wait-guard, not before — once the track is no longer `WaitForEvent`, `advanceToArm` has appended the arm step, so `run()` runs the arm, never the stale gate step. `eventMu` alone did not fix this (a different goroutine pair); the re-fetch is the surgical fix for the waiter-vs-`run()` race.
+3. **Benign loser-drop**: the guard returns `eventproc.ErrRejected` (not an InvalidState error), and the signal waiter treats `ErrRejected` as a Debug no-op (mirroring the message waiter), so the normal deferred-choice drop no longer logs a misleading "delivery failed" WARN.
+
+The correlation-reject path (`validateAndAssociate` → `ErrRejected`) needs **no special handling**: it doesn't transition the state, so a wrong-conversation message naturally stays waiting.
 
 ### 3.1 Alternatives considered
 
 | Alternative | Pros | Cons | Decision |
 |---|---|---|---|
-| **A. Dedicated `eventMu` held across `ProcessEvent`** | Minimal; serializes the check+act; the reject path is correct for free (state untouched ⇒ still waiting) | A losing fire blocks briefly (µs) before being dropped | ✅ **chosen** |
-| B. Claimed-flag (`bool` guard + claim/release) | Loser fails fast (no block) | Needs an **explicit un-claim** on the `validateAndAssociate` reject path, or a rejected message wedges the waiter — extra state, easy to get wrong | ❌ rejected: more error-prone for no real gain |
-| C. Async event-consumer queue (route `ProcessEvent` through the instance loop / a per-instance event queue — single-writer, ADR-001-aligned) | Eliminates the **whole** waiter-goroutine race class, not just this site | Changes `PropagateEvent`'s **synchronous contract** — callers get the processing error / no-catcher no-op / `ErrRejected` inline today; a queue decouples that — a design change touching the waiter→track→loop flow | ❌ rejected for now: too big for a one-shot FIX → recorded as a follow-up ADR (§7) |
+| **A. `eventMu` + re-fetch-after-guard** | Surgical; serializes waiter-vs-waiter (`eventMu`) **and** fixes waiter-vs-`run()` (re-fetch); the reject path is correct for free | a losing fire blocks briefly (µs) | ✅ **chosen** |
+| B. Claimed-flag (`bool` guard + claim/release) | loser fails fast (no block) | needs an explicit un-claim on the reject path or the waiter wedges — extra state, error-prone | ❌ rejected |
+| C. Async event-consumer / single-writer event delivery (route `ProcessEvent` through the instance loop) | eliminates the **whole** waiter-goroutine race class (both races + future ones) | changes `PropagateEvent`'s **synchronous contract** (inline error / no-catcher no-op / `ErrRejected`) — a design change touching the waiter→track→loop flow | ❌ for now → ADR-017 (§7) |
 
-**Critical implementation detail:** it MUST be a **new** mutex, **not** the existing `t.m`. `t.m` (a `sync.RWMutex`, `track` field at `:178`) is taken **inside** the method — the steps `RLock` at `:831` and again inside `advanceToArm`. Go mutexes are not reentrant, so holding `t.m` across the body would deadlock; reusing it would force gutting the inner locking. A separate `eventMu` is the surgical change.
+`eventMu` **alone** (a per-site lock for race 1) was insufficient — race 2 (waiter-vs-`run()`) needed the re-fetch. Per-site fixes patch each site; the race *class* is what ADR-017 would close.
+
+**Critical detail:** `eventMu` MUST be a **new** mutex, not `t.m`. `t.m` (a `sync.RWMutex`) is taken **inside** `ProcessEvent` (the steps read; `advanceToArm`) — Go mutexes aren't reentrant, so holding `t.m` across the body would deadlock.
 
 ### 3.2 Changes by file
 
-#### §3.2.1 `internal/instance/track.go` — `eventMu` field + held critical section
+#### §3.2.1 `internal/instance/track.go`
 
-New field on `track` (placed next to the existing `m sync.RWMutex`):
+- **`eventMu sync.Mutex`** field on `track` (beside `m sync.RWMutex`), held as the first statement of `ProcessEvent` (`:835`). The guard's not-`WaitForEvent` case (`:838`) now returns `eventproc.ErrRejected` (benign drop) instead of an InvalidState error.
+- **`run()` re-fetch** (`:454`): `step := t.currentStep()` moved to **after** the wait-guard (`:443`), so it observes the advanced arm step rather than the stale gate step.
 
-```go
-// eventMu serializes ProcessEvent on this track: one event is processed to
-// completion (guard → state transition) before the next is evaluated, so
-// concurrent fires at an Event-Based gateway can't both advance an arm
-// (FIX-007). Distinct from m (the steps lock, taken inside) — Go mutexes
-// aren't reentrant.
-eventMu sync.Mutex
-```
+#### §3.2.2 `internal/eventproc/eventhub/waiters/signal.go`
 
-`ProcessEvent` takes `eventMu` for the whole body:
+The delivery loop treats `errors.Is(err, eventproc.ErrRejected)` (`:212`) as a Debug no-op ("signal delivery skipped: catcher not waiting", `:216`) and continues; other errors keep the existing `Warn` (`:223`). Mirrors the message waiter.
 
-```go
-func (t *track) ProcessEvent(ctx context.Context, eDef flow.EventDefinition) error {
-	t.eventMu.Lock()
-	defer t.eventMu.Unlock()
+#### §3.2.3 `internal/eventproc/eventhub/waiters/signal_test.go`
 
-	if !t.inState(TrackWaitForEvent) {   // loser (2nd concurrent fire) lands here → dropped
-		return errs.New(errs.M("...doesn't expect any event"), ...)
-	}
-	// ... unchanged: steps read, validateAndAssociate, ep.ProcessEvent, advanceToArm, updateState ...
-}
-```
+`TestSignalWaiterEdgeCases` extended with an `ErrRejected`-returning catcher (covers the benign branch).
 
-No other production change. `validateAndAssociate`, `advanceToArm`, the gate, and the catch/receive paths are untouched.
+(The timer waiter was **not** changed — see §6.)
 
 ---
 
 ## 4. Verification
 
-Current coverage: `TestEventGatewayConcurrentFires` (`event_gateway_internal_test.go:209`) exercises the race but wins it non-deterministically — it is not a reliable canary.
+`TestEventGatewayConcurrentFires` (`event_gateway_internal_test.go:210`) exercised the races non-deterministically — not a reliable canary.
 
-### 4.1 Regression test (mandatory)
+### 4.1 Regression tests
 
-Harden the canary so it reproduces the double-win **pre-fix** and is green **post-fix**.
+`TestEventGatewayConcurrentFiresStress` (`event_gateway_internal_test.go:247`): the two-arm gate, both arms fired concurrently, **looped 500× (a fresh instance per iteration)** under `-race`, asserting exactly one arm wins every iteration. It reproduces **both** races pre-fix (the double-win, then the gate-self-execution at iter ~354) and is green post-fix.
 
-| Test | Setup | Assertion |
-|---|---|---|
-| `TestEventGatewayConcurrentFires` (or a new `TestEventGatewayConcurrentFiresStress`) | the same two-arm gate; fire both arms concurrently, **looped 200–1000 iterations** (a fresh instance per iteration) under `-race` | every iteration: exactly one arm wins (`ranA != ranB`); never a double-win |
+`TestSignalWaiterEdgeCases` (`waiters/signal_test.go:95`) is extended with an `ErrRejected`-returning catcher — covers the benign-drop branch.
 
-Run pre-fix (expect a failure within the loop) and post-fix (`go test ./internal/instance/ -run ConcurrentFires -race -count=1` green; also `-count=20`).
+Post-fix: `go test ./internal/instance/ -run ConcurrentFires -race -count=8` green; `make ci` green.
 
 ### 4.5 Observability
 
-None needed — the loser already returns the existing "doesn't expect any event" error, which `broadcastSignal` ignores (best-effort delivery).
+None needed — the deferred-choice loser-drop is now a Debug no-op (`signal delivery skipped: catcher not waiting`), not a WARN.
 
 ---
 
 ## 5. Prevention
 
 - Doc-comment on `ProcessEvent` stating the serialization invariant: **one event is processed to completion per track**, guarded by `eventMu`; concurrent fires at an Event-Based gateway are serialized so exactly one arm wins.
-- The §4.1 stress test is the named canary — if it falls, the serialization regressed.
+- Doc-comment on the `run()` re-fetch: the step is read **after** the wait-guard so a gate advance landing mid-iteration is observed (never the stale gate step).
+- The §4.1 stress test is the named canary — if it falls, either the serialization or the re-fetch regressed.
 
 ---
 
@@ -171,7 +156,8 @@ None needed — the loser already returns the existing "doesn't expect any event
 - **Deadlock:** confirm `eventMu` never nests with `t.m` or the instance loop in a cycle. `eventMu` is held across the body; `t.m` is taken *inside* (steps / `advanceToArm`) — strictly nested (eventMu ⊃ t.m), never the reverse, so no lock-order cycle. The loop never takes `eventMu`.
 - **Normal single-event paths** (catch, receive, gate first-fire) still work — `eventMu` is uncontended there.
 - **Correlation reject** (`validateAndAssociate` → `ErrRejected`) still leaves the track waiting (state untouched under the held lock).
-- The loser's "doesn't expect any event" error is already swallowed by `broadcastSignal` (best-effort) — no new error surfaces to callers.
+- The loser-drop now returns `eventproc.ErrRejected` (was an InvalidState error); the signal + message waiters treat it as a benign no-op, so no failure surfaces to callers.
+- **Timer-waiter note (follow-up, not in this FIX):** the timer waiter still treats *any* delivery error as a waiter failure (`WSFailed`), so a timer-arm loser-drop would mark the waiter failed. Pre-existing and rare — timer arms don't fire concurrently the way signals broadcast — so it's left unchanged to keep FIX-007 focused; aligning the timer waiter with the signal/message benign-`ErrRejected` handling is a small follow-up.
 
 ### 6.2 Rollback path
 
@@ -181,7 +167,8 @@ Single-commit revert (the `eventMu` field + the lock placement + the test).
 
 ## 7. Related
 
-- **Promote-to-ADR candidate (follow-up):** Option C — an **async event-consumer / single-writer event delivery** model (route `ProcessEvent` through the instance loop or a per-instance event queue). It would eliminate the whole class of waiter-goroutine races and align event delivery with ADR-001 v.5's single-writer principle, at the cost of redesigning `PropagateEvent`'s synchronous contract (inline error / no-catcher no-op / `ErrRejected`). To be drafted as an ADR after this fix lands.
+- **Follow-up ADR — ADR-017 (single-writer event delivery):** route `ProcessEvent` through the instance loop / a per-instance event queue so a track is mutated only by its owner — eliminates the whole waiter-goroutine race class (both races here + future ones) and aligns with ADR-001 v.5's single-writer principle, at the cost of redesigning `PropagateEvent`'s synchronous contract (inline error / no-catcher no-op / `ErrRejected`). Drafted as a deferred conception after this fix lands.
+- **Sibling bug — FIX-008 / [#165](https://github.com/dr-dobermann/gobpm/issues/165):** a `TrackFailed` track silently completes the instance (`evEnded` → `active--` → `Completed`, `lastErr` lost) — found during this diagnosis (it masked race 2's failure as a silent partial completion). Latent in general; an independent surgical fix.
 - [SRD-024 v.1](../srd/SRD-024-event-based-gateway.md) — the Event-Based gateway whose deferred-choice invariant this protects.
 - [SRD-026 v.1](../srd/SRD-026-signal-events.md) — signals; concurrent broadcast delivery is what makes the race reachable in real use.
 - [ADR-001 v.5](../design/ADR-001-execution-model.md) — the single-writer execution model the §7 follow-up ADR would extend.
@@ -190,7 +177,27 @@ Single-commit revert (the `eventMu` field + the lock placement + the test).
 
 ## 8. Implementation summary (stage-by-stage actual landings + deltas)
 
-> ⚠️ TODO: fill AFTER landing — stage commits, scope, tests, empirical deltas vs this §3 draft.
+### 8.1 Stages by commit (branch `fix/event-gate-concurrent-fire`)
+
+| Stage | Commit | Scope | Tests |
+|---|---|---|---|
+| Doc | `8e44513` | FIX-007 (this doc, Draft) | — |
+| Fix | `97db6c4` | `track.go` (`eventMu` + `run()` re-fetch + guard→`ErrRejected`); `signal.go` (`ErrRejected`-benign delivery); `signal_test.go` (ErrRejected catcher); the stress canary | `TestEventGatewayConcurrentFiresStress`, `TestSignalWaiterEdgeCases` |
+
+The fix commit was amended once: an initial version also touched the timer waiter and had a per-package coverage gap; the timer change was reverted and the signal `ErrRejected` test added before landing.
+
+### 8.2 Empirical findings — where reality diverged from the §3 draft
+
+- **The RCA was incomplete: one race → two.** The draft (and #164) saw only the double-win (waiter-vs-waiter). `eventMu` fixed that, but the stress canary still failed — a second race (gate self-execution, waiter-vs-`run()`) surfaced, fixed by the `run()` re-fetch-after-guard. §2 now documents both.
+- **`eventMu` necessary-but-not-sufficient.** A per-site lock closes only its site; race 2 was a different goroutine pair — the evidence motivating ADR-017 (the race *class*).
+- **The feared "needs single-writer" turned out surgical.** Diagnosis suggested race 2 might only be cleanly fixable via the async event-consumer (ADR-017); the re-fetch fixed it surgically. ADR-017 remains architectural prevention, not a prerequisite.
+- **Timer-waiter consistency reverted.** An interim version also made the timer waiter treat `ErrRejected` benignly; it dragged in the timer waiter's untested `Process` path and wasn't the reported symptom, so it was reverted (the timer-arm benign-drop is a §6 follow-up).
+- **A sibling latent bug found.** The `TrackFailed`-silently-completes hole (§7, FIX-008 / #165) was discovered while diagnosing race 2 — it had masked race 2's failure as a silent partial completion.
+
+### 8.3 Verification (V-results)
+
+- `make ci` PASS: build, lint, `-race`, **diff-coverage 100% of 30 changed lines** (`track.go` 15/15, `signal.go` 15/15), govulncheck.
+- `TestEventGatewayConcurrentFiresStress` green under `-race -count=8` (4000 concurrent-fire iterations); reproduced both races pre-fix.
 
 ## 9. Open questions
 
