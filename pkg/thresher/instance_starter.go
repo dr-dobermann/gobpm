@@ -53,6 +53,12 @@ func (s *instanceStarter) ProcessEvent(
 		keyName = s.corrKey.Name
 	}
 
+	s.thr.cfg.logger.Debug("instance-starter fired",
+		"start_node_id", s.startNode.ID(),
+		"event_definition_id", eDef.ID(),
+		"key_name", keyName,
+		"key", key)
+
 	return s.thr.resolveAndLaunch(
 		ctx, s.snapshot, s.startNode, eDef, keyName, key)
 }

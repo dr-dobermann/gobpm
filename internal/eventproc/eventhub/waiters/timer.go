@@ -272,6 +272,9 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 	tw.stopCh = make(chan struct{})
 	tw.done = make(chan struct{})
 
+	tw.rt.Logger().Debug("timer waiter serviced",
+		"waiter_id", tw.id, "duration", tw.duration)
+
 	go tw.runTimerService(ctx)
 
 	return nil
@@ -333,6 +336,9 @@ func (tw *timeWaiter) processTimerEvent(ctx context.Context) error {
 	processors := append([]eventproc.EventProcessor(nil), tw.processors...)
 	eDef := tw.eDef
 	tw.m.Unlock()
+
+	tw.rt.Logger().Debug("timer waiter delivering",
+		"waiter_id", tw.id, "processors", len(processors))
 
 	for _, ep := range processors {
 		if err := ep.ProcessEvent(ctx, eDef); err != nil {

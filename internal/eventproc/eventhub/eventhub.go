@@ -221,6 +221,12 @@ func (eh *EventHub) registerWaiter(
 				errs.D("event_processor_id", ep.ID()))
 		}
 
+		eh.rt.Logger().Debug("event registered (added to existing waiter)",
+			"event_processor_id", ep.ID(),
+			"event_definition_id", eDef.ID(),
+			"event_definition_type", string(eDef.Type()),
+			"waiter_id", w.ID())
+
 		return nil
 	}
 
@@ -245,6 +251,12 @@ func (eh *EventHub) registerWaiter(
 	}
 
 	eh.waiters[eDef.ID()] = w
+
+	eh.rt.Logger().Debug("event registered (new waiter)",
+		"event_processor_id", ep.ID(),
+		"event_definition_id", eDef.ID(),
+		"event_definition_type", string(eDef.Type()),
+		"waiter_id", w.ID())
 
 	return nil
 }
@@ -369,8 +381,18 @@ func (eh *EventHub) UnregisterEvent(
 			}
 		}
 
+		eh.rt.Logger().Debug("event unregistered (waiter stopped)",
+			"event_processor_id", ep.ID(),
+			"event_definition_id", eDefID,
+			"waiter_id", w.ID())
+
 		return eh.RemoveWaiter(w.EventDefinition().ID())
 	}
+
+	eh.rt.Logger().Debug("event unregistered (processor removed, waiter kept)",
+		"event_processor_id", ep.ID(),
+		"event_definition_id", eDefID,
+		"waiter_id", w.ID())
 
 	return nil
 }
@@ -465,6 +487,10 @@ func (eh *EventHub) broadcastSignal(eDef flow.EventDefinition) error {
 
 		return nil
 	}
+
+	eh.rt.Logger().Debug("signal broadcast",
+		"signal", name,
+		"catchers", len(targets))
 
 	// Fan out off the lock: each delivery resumes a catcher's track, which
 	// self-unregisters (track.ProcessEvent) — that removal needs eh.m. Process

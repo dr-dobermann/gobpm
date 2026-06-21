@@ -601,6 +601,10 @@ func (t *Thresher) resolveAndLaunch(
 	keyName, key string,
 ) error {
 	if key == "" {
+		t.cfg.logger.Debug(
+			"instance-starter: creating instance (no correlation key)",
+			"process_id", s.ProcessID, "start_node_id", startNode.ID())
+
 		return t.launchInstanceFromEvent(ctx, s, startNode, eDef, keyName, key)
 	}
 
@@ -611,6 +615,9 @@ func (t *Thresher) resolveAndLaunch(
 	t.m.Lock()
 	if _, seen := t.seenKeys[nsKey]; seen {
 		t.m.Unlock()
+
+		t.cfg.logger.Debug("instance-starter: joined existing instance (key seen)",
+			"process_id", s.ProcessID, "key", key)
 
 		return nil // an instance already exists for this key: join, no duplicate
 	}
@@ -627,6 +634,9 @@ func (t *Thresher) resolveAndLaunch(
 
 		return err
 	}
+
+	t.cfg.logger.Debug("instance-starter: created new instance",
+		"process_id", s.ProcessID, "key", key)
 
 	return nil
 }
