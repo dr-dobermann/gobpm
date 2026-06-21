@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-21 |
 | Owner | Ruslan Gabitov |
@@ -70,15 +70,22 @@ must cover its **several arms**); (3) **Parallel-start has no completion gate** 
 ### Functional
 
 - **FR-1 — gateway start attributes.** `EventBasedGateway` gains `WithInstantiate()` +
-  `Instantiate() bool` and `WithEventGatewayType(EventGatewayType)` +
+  `Instantiate() bool`, `WithEventGatewayType(EventGatewayType)` +
   `EventGatewayType() EventGatewayType` (the enum `{ ExclusiveEvents (default),
-  ParallelEvents }`, re-introduced — start-only). Carried through `Clone()` (ADR-009).
+  ParallelEvents }`, re-introduced — start-only), `WithCorrelationKey(*CorrelationKey)` +
+  `CorrelationKey()` (gate-level correlation, see FR-2), and the convenience
+  `ParallelStart() bool` (`instantiate && gwType == ParallelEvents`, read structurally by
+  the runtime). All carried through `Clone()` (ADR-009).
 - **FR-2 — start validation (registration).** Extend `Validate` (ADR-005 v.4 §2.12.5):
   an **instantiating** gate (`Instantiate()`) must have **no incoming flow** and only
   **message-based** arms (Message catch / Receive Task — BPMN §10.6.6 / §13.2);
   `ParallelEvents` **requires** `Instantiate()` (a non-instantiating gate MUST be
   Exclusive, §10.6.6); a non-instantiating gate keeps the §2.12.5 mid-flow rules. A
-  Parallel-start gate's arms must carry correlation (their messages share a key).
+  Parallel-start gate declares **one** gate-level `CorrelationKey` (`WithCorrelationKey`,
+  FR-1) whose property carries a per-arm-message retrieval expression — so the starter
+  derives the same conversation key from whichever arm fires first and the rest route to
+  that instance (BPMN §8.4.2). The key lives on the **gate**, not the arms (intermediate
+  catch events / receive tasks have no correlation declaration of their own).
 - **FR-3 — starter recognition.** `isInstantiatingStartNode` recognises an
   instantiating `EventBasedGateway`; `scanInstantiatingStarts` builds a starter that
   covers **all** the gate's arms — registered (persistent) on each arm's message
@@ -95,11 +102,13 @@ must cover its **several arms**); (3) **Parallel-start has no completion gate** 
   (born from the gate, seeded with `K`); the firing arm's continuation runs, and the
   gate's **remaining arms re-arm as in-instance receivers keyed to `K`** (reusing
   phase-2c specificity routing) so a subsequent arm's message reaches *this* instance.
-- **FR-6 — Parallel-start completion gate.** A Parallel-start instance records its gate's
-  **expected arms** at birth and completes only when **every** arm has fired **and**
-  `active == 0` (§2.12.3 — the instance "completes only if all Events … have occurred",
-  §13.2). An arm proceeds as its event arrives (no barrier); the gate only blocks
-  *completion*.
+- **FR-6 — Parallel-start completion gate (automatic).** A Parallel-start instance
+  completes only when **every** arm has fired (§2.12.3 — the instance "completes only if
+  all Events … have occurred", §13.2). This is achieved **without a dedicated gate field**:
+  the born path seeds the gate's not-yet-fired arms as **waiting tracks**, which keep the
+  instance's `active` count `> 0` until their events arrive, so the existing
+  `active == 0` completion (`instance.go:667`) already blocks on all arms. An arm proceeds
+  as its event arrives (no barrier); the unfired arms only block *completion*.
 - **FR-7 — Exclusive default / no-instantiate stays mid-flow.** Without `WithInstantiate`
   the gateway is exactly the SRD-024 mid-flow Exclusive gate (no behaviour change);
   `ParallelEvents` without `Instantiate` is a build/registration error (FR-2).
@@ -137,6 +146,7 @@ const (
 )
 
 type EventBasedGateway struct {
+	corrKey *bpmncommon.CorrelationKey // gate-level correlation (Parallel-start)
 	Gateway
 	instantiate bool
 	gwType      EventGatewayType
@@ -144,30 +154,38 @@ type EventBasedGateway struct {
 
 func WithInstantiate() EventBasedOption              // mark the gate a start instantiator
 func WithEventGatewayType(t EventGatewayType) EventBasedOption
+func WithCorrelationKey(k *bpmncommon.CorrelationKey) EventBasedOption
 
 func (g *EventBasedGateway) Instantiate() bool
 func (g *EventBasedGateway) EventGatewayType() EventGatewayType
+func (g *EventBasedGateway) CorrelationKey() *bpmncommon.CorrelationKey
+func (g *EventBasedGateway) ParallelStart() bool // instantiate && gwType == ParallelEvents
 ```
 
 (`EventBasedOption`/the config machinery removed in SRD-024's §10.6.6 rework is
-re-introduced minimally for these two options; mirrors `complex.go`/the old shape.)
+re-introduced minimally for these options; mirrors `complex.go`/the old shape.
+`WithCorrelationKey` carries **one** `CorrelationKey` whose `CorrelationProperty`
+holds a per-arm-message retrieval expression, so the starter derives the same
+conversation key from whichever arm fires first — BPMN §8.4.2: the gate's message
+triggers "share the same correlation information".)
 
-### 3.2 Per-instance completion gate (`internal/instance`)
+### 3.2 Parallel-start born seeding (`internal/instance`)
 
-The instance records the Parallel-start gate's expected arms at birth and which have
-fired:
+**No completion-gate field is needed** — completion is *automatic* (see §4.3). The
+Parallel-start born path `seedParallelStart` (`instance.go:1018`) pre-fires the firing
+arm (a track on its outgoing, via `ArmFor`) and seeds **a waiting track at each other
+arm node**. A `TrackWaitForEvent` track keeps the instance's `active` count `> 0` (the
+loop does `active++` per spawned track and `active--` only on `evEnded`, `instance.go`),
+so the existing completion check at `instance.go:667` — `active == 0` — already blocks
+until every arm has fired and run its continuation. The seeded conversation key makes
+the waiters keyed to `K` (`CorrelationKeys()`), so subsequent arms route to them.
 
 ```go
-// set when an instance is born from a Parallel-start Event-Based gateway: the arm
-// event-definition ids the instance must see fire before it may complete (FR-6). nil /
-// empty for every other instance, which complete on active==0 as before.
-type eventGate struct {
-	expected map[string]struct{} // arm eDef ids still awaited
-}
+// createTracks gains a Parallel-start branch: seedParallelStart(gate, bornEvent)
+// pre-fires the instantiating arm and arms the rest as keyed waiters. The other arms'
+// waiting tracks keep active>0 until they fire — no separate eventGate.expected field.
+func (inst *Instance) seedParallelStart(gate flow.Node, bornEvent flow.EventDefinition) error
 ```
-
-Completion (`instance.go:667`/`:717`) becomes `active == 0 && (gate == nil ||
-len(gate.expected) == 0)`.
 
 ---
 
@@ -191,17 +209,21 @@ key (normally Exclusive-start arms don't share one).
 
 ### 4.3 Parallel-start
 
-The first arm (key `K`) instantiates (born from the gate, seeded `K`). At birth the
-instance **arms the gate's remaining arms as in-instance keyed receivers** (phase-2c) and
-records the completion gate (`eventGate{expected: all arm eDef ids}`); the firing arm's
-id is removed and its continuation forked. A subsequent arm's message (key `K`) is routed
-by the membroker's **most-specific** rule (`pkg/messaging/membroker/membroker.go:128` —
-"a keyed subscription … is preferred over a wildcard") to *this* instance's keyed
-receiver in preference to the wildcard definition starter; it fires that arm, removes its
-id from `expected`, and forks its continuation. (Even if the starter also saw it, its
-`seenKeys` dedup makes it a no-op — the outcomes compose.) When `expected` is empty and `active == 0`, the instance completes (FR-6).
-The `resolveAndLaunch` seen-key path stays a no-op for instantiation (the subsequent
-message reaches the instance directly via phase-2c, not via the starter).
+The first arm (key `K`) instantiates (born from the gate, seeded `K`). At birth
+`seedParallelStart` (`instance.go:1018`) **pre-fires the firing arm** (a track on its
+outgoing, resolved via `ArmFor`) and **seeds a waiting track at each of the gate's other
+arm nodes**; the seeded conversation key makes those waiters keyed to `K`
+(`CorrelationKeys()`). A subsequent arm's message (key `K`) is routed by the membroker's
+**most-specific** rule (`pkg/messaging/membroker/membroker.go:128` — "a keyed subscription
+… is preferred over a wildcard") to *this* instance's keyed waiter in preference to the
+wildcard definition starter; it fires that arm and forks its continuation. (Even if the
+starter also saw it, its `seenKeys` dedup makes it a no-op — the outcomes compose.)
+
+**Completion is automatic** — each not-yet-fired arm's waiting track keeps `active > 0`;
+the instance reaches `active == 0` (`instance.go:667`) only once every arm has fired and
+run its continuation. So no `eventGate.expected` field is needed (a design simplification
+vs the v.1 draft — see §10). The `resolveAndLaunch` seen-key path stays a no-op for
+instantiation (the subsequent message reaches the instance directly via phase-2c).
 
 ### 4.4 Why no new ADR
 
@@ -221,8 +243,8 @@ ADR-015 §2.6's deferral** (a linked-doc sync, not an amendment).
 | 3 | `TestEventGatewayParallelStartCompletesOnAll` | instantiating Parallel gate, 2 correlated arms; publish A then B (same key) | first creates one instance; B routes to it; instance completes only after **both** |
 | 4 | `TestEventGatewayParallelStartDoesNotCompleteEarly` | publish only A | instance stays Active (completion gated on the unfired arm) until B arrives |
 | 5 | `TestEventGatewayParallelStartCorrelation` | two keys (K1, K2), arms interleaved | each instance sees only its own key's arms; no cross-talk |
-| 6 | `TestEventBasedGatewayInstantiateValidate` | Parallel without instantiate / instantiating gate with an incoming flow / non-message arm at start | each rejected at registration |
-| 7 | model-unit | `WithInstantiate`/`WithEventGatewayType`, `Instantiate`/`EventGatewayType`, `Clone` | construction + carry-through |
+| 6 | `TestEventBasedGatewayValidate` (+ `TestEventBasedConfigValidate`, `TestEventBasedGatewayValidateReceiveArmBoundary`) | Parallel without instantiate / instantiating gate with an incoming flow / non-message arm at start / receive-arm boundary | each rejected at registration |
+| 7 | model-unit (`TestEventBasedGatewayParallelStartAndKey`, `TestWithCorrelationKeyNil`, `TestEventBasedGatewayArmForMessageByName`, …) | `WithInstantiate`/`WithEventGatewayType`/`WithCorrelationKey`, `Instantiate`/`EventGatewayType`/`CorrelationKey`/`ParallelStart`, `Clone`, `defMatches` by-name | construction + carry-through + message-by-name match |
 
 In-package (`internal/instance`) tests cover the completion gate for per-package
 coverage.
@@ -253,7 +275,51 @@ coverage.
 
 ## 10. Implementation summary
 
-> ⚠️ TODO: fill AFTER landing — commits, key files, V-results, deltas vs this draft.
+Landed on branch `feat/event-based-instantiator` (off `master`).
+
+### 10.1 Stages by commit
+
+| Milestone | Commit | Scope | Tests |
+|---|---|---|---|
+| Doc | `9204e17` | SRD-025 (this doc) | — |
+| M1 — start attributes + validation | `577b117` | `EventBasedGateway` `WithInstantiate`/`WithEventGatewayType`/`Instantiate()`/`EventGatewayType()` + `Validate` start rules (`event_based.go`) | `TestEventBasedGatewayValidate`, `TestEventBasedConfigValidate` |
+| M2 — Exclusive-start | `28af691` | `scanInstantiatingStarts` gate branch (`startNode = arm` via `ArmFor`); born path reused (`instance_starter.go`) | `TestEventGatewayExclusiveStart`, `…EachEventNewInstance` |
+| M3 — Parallel-start (+ M3a, + 2 fixes) | `0e1f1a9` | gate `WithCorrelationKey`/`CorrelationKey()`/`ParallelStart()`; `seedParallelStart` (waiting-track seeding); `scanInstantiatingStarts` Parallel branch (`startNode = gate`, shared key); `defMatches` by-name; `launchInstanceFromEvent` handle | `…ParallelStartCompletesOnAll`, `…DoesNotCompleteEarly`, `…Correlation`, `TestSeedParallelStart*`, `TestEventBasedGatewayParallelStartAndKey`, `TestWithCorrelationKeyNil`, `TestEventBasedGatewayArmForMessageByName` |
+
+The branch also carries two cross-cutting commits folded in at the user's request
+(not SRD-025 milestones): `90d4f98` (examples print their process schema) and `2f22881`
+(event-processing Debug logging across the EventHub / membroker / starter).
+
+### 10.2 Deltas vs the v.1 draft
+
+- **Completion gate — automatic, no `eventGate` field (FR-6 / §3.2 / §4.3).** The draft
+  proposed an `eventGate{expected map[...]}` field cleared per fired arm. The
+  implementation seeds the gate's not-yet-fired arms as **waiting tracks**
+  (`seedParallelStart`, `instance.go:1018`), which keep `active > 0` until they fire, so
+  the existing `active == 0` completion (`instance.go:667`) already gates on all arms. No
+  new field — a simplification. (Verified by `…DoesNotCompleteEarly`: one arm fired ⇒ the
+  instance stays Active until the other arrives.)
+- **Gate-level `CorrelationKey` (M3a, FR-1 / FR-2).** A needed prerequisite the v.1 draft
+  only assumed (§4.3): `WithCorrelationKey`/`CorrelationKey()` were added to the gateway
+  (`event_based.go`) — correlation declaration is otherwise `StartEvent`/`SendTask`-only;
+  the gate's intermediate-catch / receive-task arms have none. One gate key with a
+  per-arm-message retrieval expression (BPMN §8.4.2).
+- **`defMatches` message-by-name (bug fixed en route).** `ArmFor` matched messages by def
+  ID, but `Clone()` gives the instance's arms fresh def IDs, so a Parallel-start gate
+  never resolved its firing arm. `defMatches` (`event_based.go:283`) now matches
+  `MessageEventDefinition`s by **name** too (mirroring the signal-by-name fallback).
+- **Event-born `InstanceHandle` (pre-existing bug fixed en route).**
+  `launchInstanceFromEvent` (`thresher.go:694`/`:769`) registered no handle, so
+  `Thresher.Instance(id)` returned nil and `WaitCompletion`/`State` broke for **every**
+  event-born instance (not just Parallel) — a latent SRD-015/019 gap. Now registers the
+  handle like `launchInstance`.
+
+### 10.3 Verification (V-results)
+
+- `make ci` green at HEAD: tidy, lint, build, `-race`, **diff-coverage 98.8%** (`COVER_MIN`
+  95), govulncheck clean.
+- All 15 `examples/` smoke green (exit 0), incl. the new `examples/event-based-parallel-start`.
+- §5 tests pass under `-race`.
 
 ## Open questions
 
