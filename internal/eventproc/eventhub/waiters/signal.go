@@ -2,6 +2,7 @@ package waiters
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"slices"
 	"strings"
@@ -203,13 +204,27 @@ func (sw *signalWaiter) Process(eDef flow.EventDefinition) error {
 		"processors", len(processors))
 
 	for _, ep := range processors {
-		if err := ep.ProcessEvent(ctx, eDef); err != nil {
-			sw.rt.Logger().Warn("signal delivery to a catcher failed",
-				"waiter_id", sw.id,
-				"signal", sw.name,
-				"event_processor_id", ep.ID(),
-				"error", err.Error())
+		err := ep.ProcessEvent(ctx, eDef)
+		if err == nil {
+			continue
 		}
+
+		if errors.Is(err, eventproc.ErrRejected) {
+			// the catcher is no longer waiting (an already-fired / deferred-choice
+			// loser, or a correlation mismatch): a benign drop, not a delivery
+			// failure — broadcast reaches every catcher in range (FIX-007).
+			sw.rt.Logger().Debug("signal delivery skipped: catcher not waiting",
+				"waiter_id", sw.id, "signal", sw.name,
+				"event_processor_id", ep.ID())
+
+			continue
+		}
+
+		sw.rt.Logger().Warn("signal delivery to a catcher failed",
+			"waiter_id", sw.id,
+			"signal", sw.name,
+			"event_processor_id", ep.ID(),
+			"error", err.Error())
 	}
 
 	return nil

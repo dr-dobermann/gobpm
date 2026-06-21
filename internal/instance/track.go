@@ -174,10 +174,18 @@ type track struct {
 	// track's fate (survivor → proceed, merged → return). Buffered(1) so the
 	// loop never blocks on the signal. SRD-022.
 	parkCh chan struct{}
-	steps  []*stepInfo
-	m      sync.RWMutex
-	state  trackState
-	stopIt atomic.Bool
+	steps []*stepInfo
+	m     sync.RWMutex
+	// eventMu serializes ProcessEvent on this track: one event is processed to
+	// completion — the state guard through the WaitForEvent→Ready transition —
+	// before the next is evaluated, so concurrent fires at an Event-Based gateway
+	// (its single gate track is the EventProcessor for every arm) can't both pass
+	// the guard and both advance an arm (FIX-007). Distinct from m (taken inside
+	// ProcessEvent, via the steps read and advanceToArm) — Go mutexes aren't
+	// reentrant, so reusing m would deadlock.
+	eventMu sync.Mutex
+	state   trackState
+	stopIt  atomic.Bool
 }
 
 // record appends a track-state transition to the history, copy-on-write, and
@@ -418,8 +426,6 @@ func (t *track) run(
 	t.ctx = ctx
 
 	for {
-		step := t.currentStep()
-
 		select {
 		case <-ctx.Done():
 			t.updateState(TrackCanceled)
@@ -438,6 +444,14 @@ func (t *track) run(
 				continue
 			}
 		}
+
+		// Read the current step AFTER the wait-guard, not before it. An Event-Based
+		// gateway's ProcessEvent (on the waiter goroutine) appends the winning arm's
+		// step and then flips the state out of TrackWaitForEvent; capturing the step
+		// before the guard could execute the stale gate step (which fails loudly,
+		// SRD-024) when the flip lands mid-iteration. Reading here — once the track is
+		// no longer WaitForEvent — observes the advanced arm step (FIX-007).
+		step := t.currentStep()
 
 		// run while there is a step to take
 		if step.state != StepCreated {
@@ -813,13 +827,20 @@ func (t *track) ProcessEvent(
 	ctx context.Context,
 	eDef flow.EventDefinition,
 ) error {
+	// Serialize event delivery to this track (FIX-007): the first fire runs to
+	// completion — the WaitForEvent guard below through the WaitForEvent→Ready
+	// transition — before any concurrent second fire is evaluated, so two events
+	// reaching an Event-Based gateway's single gate track can't both advance an arm.
+	// The loser then fails the guard (state is no longer WaitForEvent) and is dropped.
+	t.eventMu.Lock()
+	defer t.eventMu.Unlock()
+
 	if !t.inState(TrackWaitForEvent) {
-		return errs.New(
-			errs.M("track #%s of instance #%s doesn't expect any event",
-				t.ID(), t.instance.ID()),
-			errs.C(errorClass, errs.InvalidState),
-			errs.D("event_trigger", string(eDef.Type())),
-			errs.D("event_definition_id", eDef.ID()))
+		// An event reaching a track that isn't waiting — the Event-Based gateway's
+		// deferred-choice loser (a second concurrent fire after the winner already
+		// advanced), or any stray late delivery — is a benign drop, not a failure.
+		// Return ErrRejected so the waiters treat it as a no-op (no WARN); FIX-007.
+		return eventproc.ErrRejected
 	}
 
 	if ctx == nil {

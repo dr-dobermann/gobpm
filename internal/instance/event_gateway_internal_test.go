@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -236,4 +237,56 @@ func TestEventGatewayConcurrentFires(t *testing.T) {
 	ranA := v[armA.ID()] && v[endA.ID()]
 	ranB := v[armB.ID()] && v[endB.ID()]
 	require.True(t, ranA != ranB, "exactly one arm wins")
+}
+
+// TestEventGatewayConcurrentFiresStress is the FIX-007 canary: it loops the concurrent
+// two-arm fire many times so the deferred-choice "exactly one arm wins" invariant is
+// reliably exercised under -race. Pre-fix (the TOCTOU between the ProcessEvent state
+// guard and the state transition) it reproduces the double-win within the loop; post-fix
+// (the per-track eventMu serialization) every iteration wins exactly one arm.
+func TestEventGatewayConcurrentFiresStress(t *testing.T) {
+	_ = data.CreateDefaultStates()
+
+	const iterations = 500
+
+	for i := 0; i < iterations; i++ {
+		func() {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			p, nodes, defA, defB := ebGateProcess(
+				t, fmt.Sprintf("eb-stress-%d", i), "GO_A", "GO_B")
+			armA, endA, armB, endB := nodes[0], nodes[1], nodes[2], nodes[3]
+
+			inst, eh := startEventGate(t, ctx, p)
+
+			var wg sync.WaitGroup
+
+			wg.Add(2)
+
+			for _, d := range []flow.EventDefinition{defA, defB} {
+				go func(def flow.EventDefinition) {
+					defer wg.Done()
+
+					_ = eh.PropagateEvent(ctx, def)
+				}(d)
+			}
+
+			wg.Wait()
+			requireCompleted(t, inst)
+
+			// Exactly one arm's full path (arm + end) ran. Polled, so a history
+			// publish that lags the Completed flip settles rather than flaking; a
+			// genuine double-win (both paths) or stuck token (neither) never
+			// satisfies the XOR and times out.
+			require.Eventuallyf(t, func() bool {
+				v := visited(inst)
+				ranA := v[armA.ID()] && v[endA.ID()]
+				ranB := v[armB.ID()] && v[endB.ID()]
+
+				return ranA != ranB
+			}, 2*time.Second, 5*time.Millisecond,
+				"iteration %d: exactly one arm must win", i)
+		}()
+	}
 }
