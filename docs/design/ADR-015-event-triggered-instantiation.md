@@ -166,8 +166,10 @@ matching message creates a new instance **unless** correlation matches an existi
 instance for the same conversation, in which case it routes there (subsequent
 start triggers sharing correlation info join the existing instance).
 
-Deferred (§2.6): the **event-based gateway** used at start (its node type is not
-implemented yet) and the parallel-event-gateway start.
+The **event-based gateway** used at start and the parallel-event-gateway start —
+deferred to §2.6 at v.1 — are now implemented (the gate node landed with the mid-flow
+form, then the Exclusive-start and Parallel-start instantiators followed in the
+gateways workstream).
 
 ### 2.5 No-target messages are a broker concern — owned by ADR-016
 
@@ -184,8 +186,10 @@ the publisher (fire-and-forget at this layer).
 - **Correlation conception** (object model, key-based / context-based mechanisms,
   conversation-token threading, the Conversation-less key declaration) — the
   sibling [ADR-016 v.1](ADR-016-message-correlation.md).
-- **Event-based-gateway instantiation** — needs the event-based gateway node
-  (a separate gateway-implementation milestone).
+- **Event-based-gateway instantiation** — landed in the gateways workstream
+  ([ADR-005 v.4](ADR-005-gateways-and-joins.md) §2.12: the gate node plus the
+  Exclusive-start and Parallel-start instantiators). *(A separate
+  gateway-implementation milestone at v.1.)*
 - **Durable subscriptions / persistence** of starters and pending receivers
   across a restart — the Persistence ADR.
 - **Cross-instance delivery guarantees, ordering, dead-letter** — broker-quality
@@ -280,8 +284,9 @@ None. Scope: **event-triggered instantiation** only — the instance-starter
 (message start event, instantiate `ReceiveTask`), born-from-event seeding, and
 manual-start. Correlation (which instance a message belongs to, the resolution
 model) is the sibling [ADR-016 v.1](ADR-016-message-correlation.md);
-event-based-gateway start, durability, and broker-quality guarantees are
-deferred to named follow-ups.
+event-based-gateway start has since landed in the gateways workstream
+([ADR-005 v.4](ADR-005-gateways-and-joins.md) §2.12), while durability and
+broker-quality guarantees remain deferred to named follow-ups.
 
 ## Document History
 
