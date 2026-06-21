@@ -109,9 +109,10 @@ func TestEventGatewaySignalDeferredChoice(t *testing.T) {
 	}
 }
 
-// TestEventGatewayReceiveTaskArm covers a Receive-Task arm mixed with a signal arm
-// (WithMixedArms): a published message routes the token down the Receive-Task arm
-// end-to-end. Exercises the message delivery path the in-package M2 tests could not.
+// TestEventGatewayReceiveTaskArm covers a Receive-Task arm alongside a signal arm
+// (allowed by §10.6.6 — only Message-event + Receive-Task is barred): a published
+// message routes the token down the Receive-Task arm end-to-end. Exercises the message
+// delivery path the in-package M2 tests could not.
 func TestEventGatewayReceiveTaskArm(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
@@ -127,8 +128,7 @@ func TestEventGatewayReceiveTaskArm(t *testing.T) {
 	start, err := events.NewStartEvent("start")
 	require.NoError(t, err)
 	gate, err := gateways.NewEventBasedGateway(
-		gateways.WithDirection(gateways.Diverging),
-		gateways.WithMixedArms())
+		gateways.WithDirection(gateways.Diverging))
 	require.NoError(t, err)
 
 	recv, err := activities.NewReceiveTask("await-pay",

@@ -57,6 +57,24 @@ func receiveArm(t *testing.T, name string) *activities.ReceiveTask {
 	return rt
 }
 
+// messageCatchArm builds a Message IntermediateCatchEvent (a message catch-event arm).
+func messageCatchArm(
+	t *testing.T, name string,
+) *events.IntermediateCatchEvent {
+	t.Helper()
+
+	item := data.MustItemDefinition(values.NewVariable(0))
+
+	def, err := events.NewMessageEventDefinition(
+		bpmncommon.MustMessage("msg-"+name, item), nil)
+	require.NoError(t, err)
+
+	ice, err := events.NewIntermediateCatchEvent(name, def)
+	require.NoError(t, err)
+
+	return ice
+}
+
 // ebLink links src -> trg, failing the test on error.
 func ebLink(
 	t *testing.T,
@@ -157,13 +175,10 @@ func TestNewEventBasedGateway(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, g)
 	require.Same(t, flow.Node(g), g.Node())
-
-	_, err = gateways.NewEventBasedGateway(gateways.WithMixedArms())
-	require.NoError(t, err)
 }
 
 func TestEventBasedGatewayClone(t *testing.T) {
-	g, err := gateways.NewEventBasedGateway(gateways.WithMixedArms())
+	g, err := gateways.NewEventBasedGateway()
 	require.NoError(t, err)
 
 	c := g.Clone()
@@ -247,12 +262,10 @@ func TestEventBasedGatewayExecRejected(t *testing.T) {
 	require.ErrorContains(t, err, "must not be executed")
 }
 
-func TestEventBasedOptionApplyWrongConfig(t *testing.T) {
-	// Applying an EventBasedOption to a foreign configurator is rejected.
-	require.Error(t, gateways.WithMixedArms().Apply(otherConfig{}))
-}
-
 func TestEventBasedGatewayValidate(t *testing.T) {
+	// message/receive arms build ItemDefinitions, which need the default data states.
+	require.NoError(t, data.CreateDefaultStates())
+
 	t.Run("valid two signal arms", func(t *testing.T) {
 		g, err := gateways.NewEventBasedGateway()
 		require.NoError(t, err)
@@ -320,16 +333,16 @@ func TestEventBasedGatewayValidate(t *testing.T) {
 		require.ErrorContains(t, g.Validate(), "unsupported arm trigger")
 	})
 
-	t.Run("mixed arms rejected by default", func(t *testing.T) {
+	t.Run("message catch + receive task rejected", func(t *testing.T) {
 		g, err := gateways.NewEventBasedGateway()
 		require.NoError(t, err)
-		ebLink(t, g, signalArm(t, "a"))
+		ebLink(t, g, messageCatchArm(t, "a"))
 		ebLink(t, g, receiveArm(t, "b"))
-		require.ErrorContains(t, g.Validate(), "mixing catch events")
+		require.ErrorContains(t, g.Validate(), "§10.6.6")
 	})
 
-	t.Run("mixed arms allowed with WithMixedArms", func(t *testing.T) {
-		g, err := gateways.NewEventBasedGateway(gateways.WithMixedArms())
+	t.Run("signal catch + receive task allowed", func(t *testing.T) {
+		g, err := gateways.NewEventBasedGateway()
 		require.NoError(t, err)
 		ebLink(t, g, signalArm(t, "a"))
 		ebLink(t, g, receiveArm(t, "b"))
@@ -396,7 +409,9 @@ func TestNewEventBasedGatewayBadOption(t *testing.T) {
 }
 
 func TestEventBasedGatewayValidateReceiveArmBoundary(t *testing.T) {
-	g, err := gateways.NewEventBasedGateway(gateways.WithMixedArms())
+	require.NoError(t, data.CreateDefaultStates()) // receiveArm builds an ItemDefinition
+
+	g, err := gateways.NewEventBasedGateway()
 	require.NoError(t, err)
 
 	ebLink(t, g, signalArm(t, "a"))

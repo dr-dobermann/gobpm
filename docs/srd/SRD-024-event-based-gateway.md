@@ -17,8 +17,9 @@ withdrawal). Arms = Message/Timer/Signal catch events + Receive Tasks.
 
 **Parallel is out of scope** — per the spec it is an instantiation construct (start-only,
 no mid-flow Parallel; ADR-005 v.4 §2.12.3), so it lands with the **instantiator
-follow-up SRD**, which also confirms its **barrier** semantics against the BPMN PDF. The
-**instantiator** forms and **Conditional** arms are likewise out of scope (§9).
+follow-up SRD**; its semantics is a **completion gate** (verified §10.6.6/§13.2 — each
+arm proceeds as its event fires, only completion waits for all). The **instantiator**
+forms and **Conditional** arms are likewise out of scope (§9).
 
 ---
 
@@ -96,11 +97,14 @@ is a **mis-model** to retire (ADR-005 v.4 §2.12.1 — there are no arm tokens).
   (b) every arm is an intermediate **Message/Timer/Signal catch event or a Receive
   Task**; (c) each arm has **exactly one incoming flow** (this gate); (d) **no
   `conditionExpression`** on the gate's outgoing flows; (e) **no boundary events on a
-  Receive-Task arm**; (f) by **default no mixing** of catch events and Receive Tasks
+  Receive-Task arm**; (f) **a Message catch event and a Receive Task do not coexist**
   (FR-7).
-- **FR-7 — mixing parametrized.** `WithMixedArms()` opts into mixed arm families; the
-  **default rejects** mixed arms (ADR-005 v.4 §2.12.5 Engine note — standard default,
-  composition opt-in).
+- **FR-7 — Message-catch / Receive-Task mutual exclusion.** A gate with **both** a
+  Message intermediate catch event arm and a Receive Task arm is rejected at
+  registration — both consume messages, so the routing is ambiguous (BPMN §10.6.6: "If
+  Message Intermediate Events are used … Receive Tasks MUST NOT be used … and vice
+  versa"). Timer/Signal catch arms mix freely with a Receive Task; this ban guards a
+  real ambiguity, so it is enforced, not optional.
 - **FR-8 — per-instance arm state.** The gate's armed/fired bookkeeping (which arm won,
   to keep the fire idempotent and the unsubscribe correct) is **per-node, per-instance**,
   created fresh by `Clone()` (ADR-009) and mutated under the gateway's own mutex (NFR-2).
@@ -136,22 +140,19 @@ is a **mis-model** to retire (ADR-005 v.4 §2.12.1 — there are no arm tokens).
 // start-only instantiation construct and is out of this SRD's scope (§2.12.3).
 type EventBasedGateway struct {
 	Gateway
-	allowMixed bool
 }
 ```
 
-Per-instance arm state ("has the gate fired / which arm won") is held in the runtime
-layer keyed by the cloned gate (ADR-009), not in the model struct — the model carries
-only the static `allowMixed` policy.
+The gate carries no static policy and no per-instance arm state in this slice: the
+winner is decided by the runtime as the events fire (§4.2), and the single-fire guard is
+the existing `TrackWaitForEvent` state plus unregister-all (§10 delta vs FR-8).
 
-### 3.2 Constructor + options
+### 3.2 Constructor
 
 ```go
-// NewEventBasedGateway builds a diverging Exclusive Event-Based gateway; the default
-// rejects mixed arm families (WithMixedArms relaxes it).
+// NewEventBasedGateway builds a diverging Exclusive Event-Based gateway (just New(opts);
+// no gateway-specific options). Arm well-formedness is checked at registration.
 func NewEventBasedGateway(opts ...options.Option) (*EventBasedGateway, error)
-
-func WithMixedArms() options.Option // opt-in: mixed catch+receive arms (default: rejected)
 ```
 
 (`WithDirection(Diverging)` is inherited from `Gateway`; a converging Event-Based
@@ -201,8 +202,8 @@ route + (Exclusive) unsubscribe + step-advance as the single writer of track sta
 `count`/structure checks are knowable only after linking, so they run at registration
 via the per-node `Validate()` hook (`process.go:238`). The gate inspects its
 `Outgoing()` arms (their node types, each arm's `Incoming()` count, the absence of a
-`conditionExpression`, Receive-Task boundary events, and arm-family mixing under
-`allowMixed`).
+`conditionExpression`, Receive-Task boundary events, and the §10.6.6
+Message-catch / Receive-Task mutual exclusion).
 
 ### 4.5 Retiring `TokenWithdrawn`
 
@@ -220,8 +221,8 @@ and any reference are removed; race-losers are pure subscription drops.
 | 2 | `TestEventGatewayExclusiveTimerWins` | same; let the timer fire first | timer path runs, message arm unsubscribed |
 | 3 | `TestEventGatewayReceiveTaskArm` | gate → receive-task arm + signal arm | receive-task path runs on its message |
 | 4 | `TestEventGatewayRace` (`-race`) | concurrent fires on two arms | exactly one path runs, no race, no double |
-| 5 | `TestEventBasedGatewayValidate` | <2 arms / non-arm node / arm with 2 incoming / conditioned arm flow / receive-arm boundary / mixed (default) | each rejected at registration; mixed accepted under `WithMixedArms` |
-| 6 | model-unit | `NewEventBasedGateway`, `WithMixedArms`, `Clone` | construction + per-instance state |
+| 5 | `TestEventBasedGatewayValidate` | <2 arms / non-arm node / arm with 2 incoming / conditioned arm flow / receive-arm boundary / **message-catch + receive-task** | each rejected; **timer/signal-catch + receive-task accepted** |
+| 6 | model-unit | `NewEventBasedGateway`, `Clone`, `ArmFor` (signal-by-name) | construction + arm resolution |
 
 In-package (`internal/instance`) tests cover the routing for per-package coverage
 (cross-package thresher tests don't count — the SRD-022/023 lesson).
@@ -244,20 +245,82 @@ No downward references; versions pinned.
 
 ## 9. Definition of Done
 
-- FR-1…FR-8 wired; §5 tests exist and pass under `-race`.
+- FR-1…FR-7 wired (FR-8 dropped — §10.4); §5 tests exist and pass under `-race`.
 - `make ci` green: lint, build, `-race`, diff-coverage ≥95% (aim 100%), govulncheck.
 - `examples/` gains an event-based-gateway example (Exclusive deferred choice), smoke
   exit 0.
-- ADR-005 v.4 NotebookLM mixing-ban check done before its Accepted flip.
+- ADR-005 v.4 standard-claims verified against the BPMN PDF: the mixing rule (§10.6.6 —
+  only Message-catch + Receive-Task is forbidden) and the Parallel **completion-gate**
+  (§10.6.6 / §13.2).
 - **Out of scope (deferred, ADR-005 v.4 §2.12.7):** the **Parallel** configuration
-  (start-only — its **barrier** semantics to-verify against the BPMN PDF) and both
+  (start-only — completion-gate semantics, verified) and both
   **instantiators** (Exclusive-start, Parallel-start — born-from-event + correlation),
   all in a follow-up SRD; **Conditional** arms (need a conditional waiter); loop
   re-arming (engine-wide, §4).
 
 ## 10. Implementation summary
 
-> ⚠️ TODO: fill AFTER landing — commits, key files, V-results, deltas vs this draft.
+Landed on `feat/event-based-gateway` (off `master`): the doc + three milestones.
+
+### 10.1 Commits
+
+| M | Commit | Scope |
+|---|---|---|
+| doc | `1524c13` | SRD-024 (this doc) |
+| M1 | `b8b93ad` | `EventBasedGateway` model + options + `Validate` + model-unit tests |
+| M2 | `97030f0` | runtime routing (`track.ProcessEvent`→`advanceToArm`); `TokenWithdrawn` retired |
+| M3 | `adf39c4` | thresher tests + example; the `defMatches` signal-routing fix |
+
+ADR-005 v.4 (§2.12) is the decision; `6af7c0f`.
+
+### 10.2 Key files
+
+- `pkg/model/gateways/event_based.go` — `EventBasedGateway`,
+  `Definitions`/`EventClass` (flow.EventNode), `ArmFor`/`defMatches`/`ProcessEvent`
+  (eventproc.EventProcessor), `Exec` (fails loudly), `Validate`.
+- `internal/instance/track.go` — the `eventRouter` interface + `advanceToArm`, and the
+  `ProcessEvent` gate branch.
+- `internal/instance/token.go` + `pkg/thresher/handle.go` — `TokenWithdrawn` removed.
+- `examples/event-based-gateway/`.
+
+### 10.3 Verification
+
+- `make ci` green: lint, build, `-race`, diff-coverage **99.6%** (≥95), govulncheck.
+- `event_based.go` 100% (model-unit, external + in-package); `advanceToArm` 100%.
+- Tests: model-unit, in-package routing (`-race`), thresher deferred-choice (signal
+  first/second-wins + concurrent) and the receive-task arm via the broker.
+- All 14 `examples/` smoke exit 0.
+
+### 10.4 Deltas vs the draft
+
+- **Mixing rule corrected by the PDF check (post-draft rework).** The draft and the M1
+  code rejected *any* catch-event + Receive-Task mix and parametrized it
+  (`WithMixedArms`). The BPMN PDF (**§10.6.6**, not §13.4.4) only forbids a **Message**
+  intermediate event coexisting with a Receive Task; Timer/Signal + Receive Task is
+  allowed. Reworked `Validate` to the §10.6.6 rule and **removed `WithMixedArms` /
+  `allowMixed`** (its relaxation premise was a misreading). The same verification
+  confirmed Parallel is a **completion gate**, not a barrier (§2.12.3). This is exactly
+  the class of error the standard-claim verification exists to catch.
+- **`defMatches` (M3 — a real fix).** `ArmFor` first matched the fired event by **id**,
+  but a broadcast **Signal** is delivered as the *thrower's* definition (the EventHub
+  routes signals by **name**, not id), so a signal arm never resolved and the gate
+  parked forever. `defMatches` now matches point-to-point triggers (Message/Timer) by id
+  and Signals by name. The earlier milestones only fired signals via the arm's own
+  definition and messages point-to-point, so the broadcast path wasn't exercised until
+  the thresher signal test.
+- **FR-8 dropped.** Per-instance fired-state is unnecessary — `ProcessEvent`'s existing
+  `TrackWaitForEvent` guard (a second, in-flight event finds the track already `Ready`
+  → rejected) plus the unregister-all give single-fire for free.
+- **`TokenWithdrawn` retirement wider than §1/FR-5 listed.** Also the **public**
+  `thresher.TokenState` value + the `handle.go` mapping + both mapping tests, not just
+  `token.go`/`observer_test.go`.
+- **`advanceToArm` returns void, not error.** Its `ArmFor`-miss is unreachable — the
+  gate's `ProcessEvent` resolved+bound the arm just before — so the error path was dead;
+  a hypothetical miss degrades safely (no step appended → loop re-enters the gate →
+  `gate.Exec` fails loudly).
+- **Receive-task arm tested at thresher level (M3), not in-package (M2).** A message
+  isn't deliverable through the in-package `PropagateEvent` (signal-broadcast only); it
+  needs the broker, so that arm is covered by the thresher test.
 
 ## Open questions
 

@@ -21,81 +21,17 @@ import (
 // sits on an arm. (Parallel is a start-only instantiation construct, out of scope here.)
 type EventBasedGateway struct {
 	Gateway
-	allowMixed bool
 }
 
-// eventBasedConfig collects EventBasedGateway-specific construction options.
-type eventBasedConfig struct {
-	allowMixed bool
-}
-
-// Validate implements options.Configurator. The event-based config has nothing to check
-// at construction — the gate's arm structure is validated at registration (see
-// EventBasedGateway.Validate).
-func (c *eventBasedConfig) Validate() error {
-	return nil
-}
-
-// EventBasedOption configures an EventBasedGateway at construction.
-type EventBasedOption func(*eventBasedConfig) error
-
-// Apply implements options.Option against the eventBasedConfig.
-func (o EventBasedOption) Apply(cfg options.Configurator) error {
-	if ec, ok := cfg.(*eventBasedConfig); ok {
-		return o(ec)
-	}
-
-	return errs.New(
-		errs.M("cfg isn't an eventBasedConfig"),
-		errs.C(errorClass, errs.InvalidParameter, errs.TypeCastingError))
-}
-
-// WithMixedArms allows an Event-Based gateway to mix intermediate catch events and
-// Receive Tasks as arms. BPMN §13.4.4 forbids the mix; gobpm's per-arm-subscription
-// router removes the ambiguity that ban guards, so it is offered as an opt-in while the
-// default conforms to the standard (ADR-005 v.4 §2.12.5).
-func WithMixedArms() EventBasedOption {
-	return func(ec *eventBasedConfig) error {
-		ec.allowMixed = true
-
-		return nil
-	}
-}
-
-// NewEventBasedGateway creates a diverging Exclusive Event-Based gateway. By default
-// mixed arm families are rejected at registration; WithMixedArms relaxes that.
+// NewEventBasedGateway creates a diverging Exclusive Event-Based gateway. The gate's
+// arm well-formedness (BPMN §10.6.6) is checked at registration by Validate.
 //
 // Available options:
 //   - foundation.WithId / foundation.WithDoc
 //   - options.WithName
 //   - gateways.WithDirection
-//   - gateways.WithMixedArms
 func NewEventBasedGateway(opts ...options.Option) (*EventBasedGateway, error) {
-	ec := eventBasedConfig{}
-	baseOpts := make([]options.Option, 0, len(opts))
-	ee := []error{}
-
-	for _, opt := range opts {
-		if eo, ok := opt.(EventBasedOption); ok {
-			if err := eo.Apply(&ec); err != nil {
-				ee = append(ee, err)
-			}
-
-			continue
-		}
-
-		baseOpts = append(baseOpts, opt)
-	}
-
-	if len(ee) != 0 {
-		return nil,
-			errs.New(
-				errs.M("event-based gateway building failed"),
-				errs.C(errorClass, errs.BulidingFailed),
-				errs.E(errors.Join(ee...)))
-	}
-
-	g, err := New(baseOpts...)
+	g, err := New(opts...)
 	if err != nil {
 		return nil,
 			errs.New(
@@ -105,8 +41,7 @@ func NewEventBasedGateway(opts ...options.Option) (*EventBasedGateway, error) {
 	}
 
 	return &EventBasedGateway{
-			Gateway:    *g,
-			allowMixed: ec.allowMixed,
+			Gateway: *g,
 		},
 		nil
 }
@@ -123,8 +58,7 @@ func (g *EventBasedGateway) Node() flow.Node {
 // decided by the runtime as the events fire.
 func (g *EventBasedGateway) Clone() flow.Node {
 	return &EventBasedGateway{
-		Gateway:    g.clone(),
-		allowMixed: g.allowMixed,
+		Gateway: g.clone(),
 	}
 }
 
@@ -267,20 +201,24 @@ func (g *EventBasedGateway) Validate() error {
 			errs.D("arms", len(out))))
 	}
 
-	sawCatch, sawTask := false, false
+	msgCatch, recvTask := false, false
 
 	for _, of := range out {
-		catch, task, armErrs := g.validateArm(of)
+		mc, rt, armErrs := g.validateArm(of)
 		ee = append(ee, armErrs...)
-		sawCatch = sawCatch || catch
-		sawTask = sawTask || task
+		msgCatch = msgCatch || mc
+		recvTask = recvTask || rt
 	}
 
-	// (f) catch events and Receive Tasks are not mixed unless opted in.
-	if sawCatch && sawTask && !g.allowMixed {
+	// (f) a Message intermediate catch event and a Receive Task must not be arms of
+	// the same gate — both consume messages, so the routing is ambiguous (BPMN
+	// §10.6.6: "If Message Intermediate Events are used ... Receive Tasks MUST NOT be
+	// used ... and vice versa"). Timer/Signal catch events mix freely with a Receive
+	// Task.
+	if msgCatch && recvTask {
 		ee = append(ee, errs.New(
-			errs.M("event-based gateway: mixing catch events and Receive Tasks "+
-				"is not allowed by default (use WithMixedArms)"),
+			errs.M("event-based gateway: a Message catch event and a Receive Task "+
+				"cannot both be arms of one gate (BPMN §10.6.6)"),
 			errs.C(errorClass, errs.InvalidParameter),
 			errs.D("gateway_id", g.ID())))
 	}
@@ -292,12 +230,13 @@ func (g *EventBasedGateway) Validate() error {
 	return nil
 }
 
-// validateArm checks a single outgoing arm flow and its target node, reporting the
-// arm's family (a catch event vs a Receive Task) and any violations (ADR-005 v.4
-// §2.12.5 rules b–e). It is a helper of Validate.
+// validateArm checks a single outgoing arm flow and its target node, reporting whether
+// the arm is a Message intermediate catch event and whether it is a Receive Task (the
+// two that must not coexist, §10.6.6), plus any violations (ADR-005 v.4 §2.12.5 rules
+// b–e). It is a helper of Validate.
 func (g *EventBasedGateway) validateArm(
 	of *flow.SequenceFlow,
-) (isCatch, isTask bool, ee []error) {
+) (isMsgCatch, isReceiveTask bool, ee []error) {
 	// (d) the branch is chosen by the racing event, never by a condition.
 	if of.Condition() != nil {
 		ee = append(ee, errs.New(
@@ -328,9 +267,13 @@ func (g *EventBasedGateway) validateArm(
 			errs.D("arm_id", arm.ID())))
 	}
 
+	msgTrigger := false
+
 	for _, d := range en.Definitions() {
 		switch d.Type() {
-		case flow.TriggerMessage, flow.TriggerTimer, flow.TriggerSignal:
+		case flow.TriggerMessage:
+			msgTrigger = true
+		case flow.TriggerTimer, flow.TriggerSignal:
 			// supported in this slice
 		default:
 			ee = append(ee, errs.New(
@@ -370,7 +313,7 @@ func (g *EventBasedGateway) validateArm(
 		return false, true, ee
 	}
 
-	return true, false, ee
+	return msgTrigger, false, ee
 }
 
 // ----------------------------------------------------------------------------
