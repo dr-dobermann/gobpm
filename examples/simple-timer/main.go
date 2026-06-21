@@ -1,3 +1,7 @@
+// Command simple-timer demonstrates a timer Start Event: the process is
+// instantiated when its timer fires (here, 3 seconds from registration).
+//
+//	(timer start — fires in 3s) ◷─> end
 package main
 
 import (
@@ -19,6 +23,11 @@ import (
 )
 
 func main() {
+	fmt.Print(`
+  simple-timer:
+    (timer start — fires in 3s) ◷─> end
+
+`)
 	// Create the BPM engine. Engine-level extensions (logger, repository,
 	// clock, metrics, message broker, expression engine, authorization,
 	// worker dispatcher) are configurable via functional options; any option

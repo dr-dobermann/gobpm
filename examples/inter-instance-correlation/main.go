@@ -36,6 +36,14 @@ func main() {
 }
 
 func run() error {
+	fmt.Print(`
+  inter-instance-correlation (key-based instantiation):
+    process A (source)                 process B (handler, auto-instantiated)
+    begin ─▶ send ORD-1 ─▶ send ORD-2   (order placed) ─▶ report ─▶ end
+              │             │                  ▲
+              └──────"order placed"────────────┘  routed/instantiated by key
+
+`)
 	if err := data.CreateDefaultStates(); err != nil {
 		return fmt.Errorf("create default states: %w", err)
 	}

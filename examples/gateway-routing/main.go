@@ -25,6 +25,12 @@ func main() {
 }
 
 func run() error {
+	fmt.Print(`
+  gateway-routing:
+    start ─> XOR ─┬─ amount > 1000 ─> manager review ─> end
+                  └─ default        ─> auto-approve   ─> end
+
+`)
 	if err := data.CreateDefaultStates(); err != nil {
 		return fmt.Errorf("init data states: %w", err)
 	}

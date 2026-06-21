@@ -29,6 +29,12 @@ func main() {
 }
 
 func run() error {
+	fmt.Print(`
+  event-based-gateway:
+    start → event-gate ─┬→ catch(approval message) → approved → end
+                        └→ catch(10s timeout timer) → timedOut → end
+
+`)
 	if err := data.CreateDefaultStates(); err != nil {
 		return fmt.Errorf("init data states: %w", err)
 	}

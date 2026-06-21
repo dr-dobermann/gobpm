@@ -28,6 +28,11 @@ func main() {
 }
 
 func run() error {
+	fmt.Print(`
+  basic-process:
+    start ─> work (runs a Go functor) ─> end
+
+`)
 	// Process properties instantiate with the standard data states.
 	if err := data.CreateDefaultStates(); err != nil {
 		return fmt.Errorf("init data states: %w", err)

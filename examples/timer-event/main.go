@@ -1,3 +1,8 @@
+// Command timer-event demonstrates a timer Start Event driving a ServiceTask:
+// the process is instantiated when the timer fires (here, 5 seconds), runs a
+// service task, and ends.
+//
+//	(timer start — fires in 5s) ◷─> handle-timeout (ServiceTask) ─> end
 package main
 
 import (
@@ -19,6 +24,11 @@ import (
 )
 
 func main() {
+	fmt.Print(`
+  timer-event:
+    (timer start — fires in 5s) ◷─> handle-timeout (ServiceTask) ─> end
+
+`)
 	// Create BPM engine
 	engine, err := thresher.New("timer-event-engine")
 	if err != nil {

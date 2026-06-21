@@ -35,6 +35,12 @@ func main() {
 }
 
 func run() error {
+	fmt.Print(`
+  process-data:
+    start ─> split ─┬─> greet-a ─> end-a       (result-a DataObject)
+                    └─> greet-b ─> end-b       (result-b DataObject)
+
+`)
 	if err := data.CreateDefaultStates(); err != nil {
 		return fmt.Errorf("create default states: %w", err)
 	}

@@ -27,6 +27,13 @@ func main() {
 }
 
 func run() error {
+	fmt.Print(`
+  inclusive-join:
+    start → OR-split ─┬ >1000 → manager-review ┐
+                      ├ >500  → fraud-check     ┼→ OR-join → finalize → end
+                      └ <100  → fast-track      ┘
+
+`)
 	if err := data.CreateDefaultStates(); err != nil {
 		return fmt.Errorf("init data states: %w", err)
 	}

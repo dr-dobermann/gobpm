@@ -28,6 +28,13 @@ func main() {
 }
 
 func run() error {
+	fmt.Print(`
+  complex-gateway:
+    start → AND-split ─┬→ manager ─┐
+                       ├→ finance ─┼ Complex join → finalize → end
+                       └→ cfo ─────┘
+
+`)
 	if err := data.CreateDefaultStates(); err != nil {
 		return fmt.Errorf("init data states: %w", err)
 	}
