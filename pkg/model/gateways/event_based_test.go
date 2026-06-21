@@ -189,6 +189,41 @@ func TestEventBasedGatewayClone(t *testing.T) {
 	require.NotSame(t, g, cg)
 }
 
+func TestEventBasedGatewayStartAttributes(t *testing.T) {
+	t.Run("default mid-flow exclusive", func(t *testing.T) {
+		g, err := gateways.NewEventBasedGateway()
+		require.NoError(t, err)
+		require.False(t, g.Instantiate())
+		require.Equal(t, gateways.ExclusiveEvents, g.EventGatewayType())
+	})
+
+	t.Run("instantiate + parallel read back", func(t *testing.T) {
+		g, err := gateways.NewEventBasedGateway(
+			gateways.WithInstantiate(),
+			gateways.WithEventGatewayType(gateways.ParallelEvents))
+		require.NoError(t, err)
+		require.True(t, g.Instantiate())
+		require.Equal(t, gateways.ParallelEvents, g.EventGatewayType())
+	})
+}
+
+func TestEventBasedGatewayCloneCarriesStart(t *testing.T) {
+	g, err := gateways.NewEventBasedGateway(
+		gateways.WithInstantiate(),
+		gateways.WithEventGatewayType(gateways.ParallelEvents))
+	require.NoError(t, err)
+
+	cg, ok := g.Clone().(*gateways.EventBasedGateway)
+	require.True(t, ok)
+	require.True(t, cg.Instantiate())
+	require.Equal(t, gateways.ParallelEvents, cg.EventGatewayType())
+}
+
+func TestEventBasedOptionApplyWrongConfig(t *testing.T) {
+	// Apply against a foreign configurator must fail the type assertion.
+	require.Error(t, gateways.WithInstantiate().Apply(otherConfig{}))
+}
+
 func TestEventBasedGatewayDefinitions(t *testing.T) {
 	g, err := gateways.NewEventBasedGateway()
 	require.NoError(t, err)
@@ -347,6 +382,51 @@ func TestEventBasedGatewayValidate(t *testing.T) {
 		ebLink(t, g, signalArm(t, "a"))
 		ebLink(t, g, receiveArm(t, "b"))
 		require.NoError(t, g.Validate())
+	})
+
+	t.Run("instantiating exclusive gate is valid", func(t *testing.T) {
+		g, err := gateways.NewEventBasedGateway(gateways.WithInstantiate())
+		require.NoError(t, err)
+		ebLink(t, g, messageCatchArm(t, "a"))
+		ebLink(t, g, messageCatchArm(t, "b"))
+		require.NoError(t, g.Validate())
+	})
+
+	t.Run("instantiating parallel gate is valid", func(t *testing.T) {
+		g, err := gateways.NewEventBasedGateway(
+			gateways.WithInstantiate(),
+			gateways.WithEventGatewayType(gateways.ParallelEvents))
+		require.NoError(t, err)
+		ebLink(t, g, messageCatchArm(t, "a"))
+		ebLink(t, g, messageCatchArm(t, "b"))
+		require.NoError(t, g.Validate())
+	})
+
+	t.Run("instantiating gate with incoming flow rejected", func(t *testing.T) {
+		g, err := gateways.NewEventBasedGateway(gateways.WithInstantiate())
+		require.NoError(t, err)
+		ebLink(t, g, messageCatchArm(t, "a"))
+		ebLink(t, g, messageCatchArm(t, "b"))
+		ebLink(t, newDummyNode("up"), g) // the gate gets an incoming flow
+		require.ErrorContains(t, g.Validate(),
+			"instantiating gate must have no")
+	})
+
+	t.Run("instantiating gate with non-message arm rejected", func(t *testing.T) {
+		g, err := gateways.NewEventBasedGateway(gateways.WithInstantiate())
+		require.NoError(t, err)
+		ebLink(t, g, messageCatchArm(t, "a"))
+		ebLink(t, g, signalArm(t, "b")) // a Signal cannot instantiate
+		require.ErrorContains(t, g.Validate(), "message-based")
+	})
+
+	t.Run("parallel without instantiate rejected", func(t *testing.T) {
+		g, err := gateways.NewEventBasedGateway(
+			gateways.WithEventGatewayType(gateways.ParallelEvents))
+		require.NoError(t, err)
+		ebLink(t, g, signalArm(t, "a"))
+		ebLink(t, g, signalArm(t, "b"))
+		require.ErrorContains(t, g.Validate(), "requires WithInstantiate")
 	})
 }
 
