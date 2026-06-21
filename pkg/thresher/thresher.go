@@ -675,9 +675,13 @@ func (t *Thresher) launchInstanceFromEvent(
 	t.m.Lock()
 	defer t.m.Unlock()
 
+	// An event-born instance is tracked with its read-only handle just like a
+	// StartProcess one, so the SRD-019 discovery API (Instances -> Instance(id))
+	// returns a usable handle for it instead of a nil that panics on observation.
 	t.instances[inst.ID()] = instanceReg{
-		stop: cancel,
-		inst: inst,
+		stop:   cancel,
+		inst:   inst,
+		handle: &InstanceHandle{inst: inst},
 	}
 
 	return nil

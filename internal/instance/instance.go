@@ -247,7 +247,7 @@ func New(
 	// present first.
 	inst.associateConversationKey(cfg.convKeyName, cfg.convKeyValue)
 
-	if err := inst.createTracks(bornStart); err != nil {
+	if err := inst.createTracks(bornStart, cfg.bornEvent); err != nil {
 		return nil, err
 	}
 
@@ -952,7 +952,9 @@ func (inst *Instance) TokenHistory() []TokenPath {
 }
 
 // createTrack creates all initial tracks of the Instance.
-func (inst *Instance) createTracks(bornStart flow.Node) error {
+func (inst *Instance) createTracks(
+	bornStart flow.Node, bornEvent flow.EventDefinition,
+) error {
 	for _, n := range inst.s.Nodes {
 		// born-from-event: the instantiating start node is already fired, so it
 		// is not seeded as a track (it would otherwise park as a waiter); its
@@ -976,19 +978,88 @@ func (inst *Instance) createTracks(bornStart flow.Node) error {
 		inst.tracks[t.ID()] = t
 	}
 
-	if bornStart != nil {
-		// Seed the initial track(s) on the already-fired start node's outgoing
-		// flow target(s) — the spawnForks pattern: the track's first step is the
-		// target node, recording the flow it arrived on.
-		for _, f := range bornStart.Outgoing() {
-			t, err := newTrack(f.Target().Node(), inst, nil)
-			if err != nil {
-				return err
+	if bornStart == nil {
+		return nil
+	}
+
+	// A Parallel-start Event-Based gateway seeds differently: the arm whose event
+	// instantiated the process runs its continuation while the OTHER arms re-arm as
+	// in-instance waiters keyed to the seeded conversation (SRD-025 §4.3). Completion
+	// stays automatic — a waiting arm track keeps the instance active until it fires.
+	if ps, ok := bornStart.(interface{ ParallelStart() bool }); ok &&
+		ps.ParallelStart() {
+		return inst.seedParallelStart(bornStart, bornEvent)
+	}
+
+	// Single born start (message StartEvent, instantiate ReceiveTask, or an
+	// Exclusive-start gate arm): seed the initial track(s) on the already-fired
+	// start node's outgoing flow target(s) — the spawnForks pattern: the track's
+	// first step is the target node, recording the flow it arrived on.
+	for _, f := range bornStart.Outgoing() {
+		t, err := newTrack(f.Target().Node(), inst, nil)
+		if err != nil {
+			return err
+		}
+
+		t.steps[0].inFlow = f
+		inst.tracks[t.ID()] = t
+	}
+
+	return nil
+}
+
+// seedParallelStart seeds a Parallel-start Event-Based gateway instance (SRD-025 §4.3):
+// the arm whose event instantiated the process (resolved via the gate's ArmFor over the
+// born event) is pre-fired — tracks on its outgoing target(s), its payload already bound
+// at root — while every OTHER arm is seeded as a track AT the arm node, which
+// run()->checkNodeType arms as a waiter keyed to the seeded conversation key. The waiting
+// arms keep the instance active until they fire, so BPMN's "completes only once all
+// events have occurred" (§13.2) is automatic — no explicit completion counter.
+func (inst *Instance) seedParallelStart(
+	gate flow.Node, bornEvent flow.EventDefinition,
+) error {
+	router, ok := gate.(interface {
+		ArmFor(flow.EventDefinition) (flow.Node, bool)
+	})
+	if !ok {
+		return errs.New(
+			errs.M("parallel-start gate %q does not resolve arms", gate.ID()),
+			errs.C(errorClass, errs.InvalidState))
+	}
+
+	firing, ok := router.ArmFor(bornEvent)
+	if !ok {
+		return errs.New(
+			errs.M("parallel-start gate %q has no arm for the instantiating event",
+				gate.ID()),
+			errs.C(errorClass, errs.InvalidState))
+	}
+
+	for _, of := range gate.Outgoing() {
+		arm := of.Target().Node()
+
+		if arm.ID() == firing.ID() {
+			// pre-fire: run the firing arm's continuation (its payload is bound at root).
+			for _, af := range arm.Outgoing() {
+				t, err := newTrack(af.Target().Node(), inst, nil)
+				if err != nil {
+					return err
+				}
+
+				t.steps[0].inFlow = af
+				inst.tracks[t.ID()] = t
 			}
 
-			t.steps[0].inFlow = f
-			inst.tracks[t.ID()] = t
+			continue
 		}
+
+		// re-arm: a waiting track at the other arm node (keyed to the conversation key).
+		t, err := newTrack(arm, inst, nil)
+		if err != nil {
+			return err
+		}
+
+		inst.tracks[t.ID()] = t
 	}
 
 	return nil

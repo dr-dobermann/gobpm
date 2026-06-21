@@ -8,6 +8,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/eventproc"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -21,6 +22,7 @@ import (
 // **start** instantiator (§2.12.4): Exclusive — each arm event creates a new instance;
 // Parallel — the first creates one instance, which completes only once all arms fired.
 type EventBasedGateway struct {
+	corrKey *bpmncommon.CorrelationKey
 	Gateway
 	instantiate bool
 	gwType      EventGatewayType
@@ -42,6 +44,7 @@ const (
 
 // eventBasedConfig collects EventBasedGateway-specific construction options.
 type eventBasedConfig struct {
+	corrKey     *bpmncommon.CorrelationKey
 	instantiate bool
 	gwType      EventGatewayType
 }
@@ -83,6 +86,25 @@ func WithInstantiate() EventBasedOption {
 func WithEventGatewayType(t EventGatewayType) EventBasedOption {
 	return func(ec *eventBasedConfig) error {
 		ec.gwType = t
+
+		return nil
+	}
+}
+
+// WithCorrelationKey declares the gate's CorrelationKey — one key whose
+// CorrelationProperty carries a per-arm-message retrieval expression, so the starter can
+// derive the same conversation key from whichever arm fires first and route the
+// remaining arms to that instance (Parallel-start, ADR-016 §2.3; BPMN §8.4.2: the gate's
+// message triggers "share the same correlation information"). nil is rejected.
+func WithCorrelationKey(key *bpmncommon.CorrelationKey) EventBasedOption {
+	return func(ec *eventBasedConfig) error {
+		if key == nil {
+			return errs.New(
+				errs.M("WithCorrelationKey: a nil CorrelationKey isn't allowed"),
+				errs.C(errorClass, errs.InvalidParameter))
+		}
+
+		ec.corrKey = key
 
 		return nil
 	}
@@ -137,6 +159,7 @@ func NewEventBasedGateway(opts ...options.Option) (*EventBasedGateway, error) {
 			Gateway:     *g,
 			instantiate: ec.instantiate,
 			gwType:      ec.gwType,
+			corrKey:     ec.corrKey,
 		},
 		nil
 }
@@ -149,6 +172,21 @@ func (g *EventBasedGateway) Instantiate() bool {
 // EventGatewayType returns the gate's start policy (ExclusiveEvents by default).
 func (g *EventBasedGateway) EventGatewayType() EventGatewayType {
 	return g.gwType
+}
+
+// ParallelStart reports whether the gate is a Parallel-start instantiator — the first
+// arm event creates one instance, the other arms re-arm as in-instance receivers, and
+// the instance completes only once every arm has fired (ADR-005 v.4 §2.12.4). The
+// runtime detects it structurally to seed the born instance accordingly (SRD-025 M3).
+func (g *EventBasedGateway) ParallelStart() bool {
+	return g.instantiate && g.gwType == ParallelEvents
+}
+
+// CorrelationKey returns the gate's declared CorrelationKey (nil if none). Read
+// structurally by the thresher's starter to derive the conversation key from a fired
+// arm's message (SRD-025 §4.3), mirroring StartEvent.CorrelationKey().
+func (g *EventBasedGateway) CorrelationKey() *bpmncommon.CorrelationKey {
+	return g.corrKey
 }
 
 // Node returns the gateway as its concrete flow node, so a track reaching it via a
@@ -166,6 +204,7 @@ func (g *EventBasedGateway) Clone() flow.Node {
 		Gateway:     g.clone(),
 		instantiate: g.instantiate,
 		gwType:      g.gwType,
+		corrKey:     g.corrKey,
 	}
 }
 
@@ -226,13 +265,23 @@ func (g *EventBasedGateway) ArmFor(
 }
 
 // defMatches reports whether the arm's event definition d corresponds to the fired
-// event definition. Point-to-point triggers (Message, Timer) deliver the arm's own
-// definition, so identity (ID) matches. A Signal is BROADCAST by name — the delivered
-// definition is the thrower's, a different object — so signals match by signal name
-// (the same key the EventHub broadcast routes on).
+// event definition. In-instance (mid-flow) a fired Message/Timer is the arm's own
+// (cloned) definition, so identity (ID) matches. Two cases break identity and need a
+// name fallback: a Parallel-start gate resolves its firing arm from the starter's
+// SNAPSHOT definition against the instance's CLONED arms (SRD-025 §4.3) — different
+// objects, same message — so Message arms also match by message name; and a Signal is
+// BROADCAST by name (the delivered definition is the thrower's, a different object), so
+// signals match by signal name (the same key the EventHub broadcast routes on).
 func defMatches(d, fired flow.EventDefinition) bool {
 	if d.ID() == fired.ID() {
 		return true
+	}
+
+	if dm, dok := d.(*events.MessageEventDefinition); dok {
+		fm, fok := fired.(*events.MessageEventDefinition)
+		if fok && dm.Message() != nil && fm.Message() != nil {
+			return dm.Message().Name() == fm.Message().Name()
+		}
 	}
 
 	ds, dok := d.(*events.SignalEventDefinition)
