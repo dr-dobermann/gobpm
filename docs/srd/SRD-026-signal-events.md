@@ -127,9 +127,19 @@ optional `CorrelationKey`) and a `*SignalEventDefinition` (with `corrKey = nil`)
 `deriveKey` returns `""` whenever `corrKey == nil` (already its behaviour), so a signal
 start derives an empty key → `resolveAndLaunch` always instantiates.
 
-### 3.2 No other model change
+### 3.2 Persistent signal waiter for the starter (`internal/eventproc/eventhub/waiters/waiters.go`)
 
-Throw/catch/broadcast already exist; FR-1…FR-3 add no shapes. The signal waiter, the
+A starter is registered via `RegisterPersistentEvent` → `CreatePersistentWaiter`, which today
+**rejects non-message triggers** (`waiters.go:112`: `eDef.Type() != flow.TriggerMessage` → error).
+Extend it to also back a **signal** starter: for `flow.TriggerSignal`, build a `NewSignalWaiter`.
+No new waiter type and no one-shot flag are needed — persistence is **processor-driven**: a catch
+track self-unregisters as it resumes (one-shot), whereas a starter never self-unregisters, so it
+stays subscribed and fires on every broadcast (persistent). Update the message-only comment + error
+to "message or signal."
+
+### 3.3 No other model change
+
+Throw/catch/broadcast already exist; FR-1…FR-3 add no shapes. The signal waiter itself, the
 `broadcastSignal` name index, and the event-based-gateway signal-arm matching are unchanged.
 
 ---
@@ -152,10 +162,12 @@ keyed ⇒ dedup). The only thing blocking signals is the message-only cast at `:
 
 The fix: in `scanInstantiatingStarts`, when a start node's definition is a
 `*SignalEventDefinition`, build a starter with `eDef = that signal def`, `corrKey = nil`.
-The Thresher registers it on the hub exactly like a message starter; because the hub keys
-signal delivery by **name** (`broadcastSignal` → `signalName`), a broadcast of that signal
-reaches the starter's `ProcessEvent`, which calls `resolveAndLaunch(…, key="")` → a new
-instance **born from the signal StartEvent** (pre-fired, runs from its outgoing).
+The Thresher registers it via the same `RegisterPersistentEvent` path — which §3.2 extends so
+`CreatePersistentWaiter` backs a **persistent signal waiter** for a signal trigger (it was
+message-only). Because the hub keys signal delivery by **name** (`broadcastSignal` →
+`signalName`), a broadcast of that signal reaches the starter's `ProcessEvent`, which calls
+`resolveAndLaunch(…, key="")` → a new instance **born from the signal StartEvent** (pre-fired,
+runs from its outgoing).
 
 **Multi-instantiation is intended.** If several processes declare a signal StartEvent with
 the same signal name, each registers its own starter; one `broadcastSignal` fans out to all

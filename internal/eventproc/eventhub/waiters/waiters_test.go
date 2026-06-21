@@ -20,6 +20,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// timerEDef builds a minimal timer event definition — a non-message, non-signal
+// trigger, used to exercise CreatePersistentWaiter's rejection branch.
+func timerEDef(t *testing.T) *events.TimerEventDefinition {
+	t.Helper()
+
+	return events.MustTimerEventDefinition(
+		goexpr.Must(
+			nil,
+			data.MustItemDefinition(values.NewVariable(time.Now())),
+			func(_ context.Context, _ data.Source) (data.Value, error) {
+				return values.NewVariable(time.Now().Add(time.Second)), nil
+			}),
+		nil, nil)
+}
+
 func TestNewWaiter(t *testing.T) {
 	ep := mockeventproc.NewMockEventProcessor(t)
 	mockHub := mockeventproc.NewMockEventHub(t)

@@ -78,7 +78,7 @@ func TestScanInstantiatingReceiveTask(t *testing.T) {
 
 		starters := scanInstantiatingStarts(s, th)
 		require.Len(t, starters, 1)
-		require.Equal(t, "order placed", starters[0].eDef.Message().Name())
+		require.Equal(t, "order placed", triggerName(starters[0].eDef))
 	})
 
 	t.Run("non-instantiate ReceiveTask is not a starter", func(t *testing.T) {
@@ -164,7 +164,7 @@ func TestScanInstantiatingStarts(t *testing.T) {
 
 		starters := scanInstantiatingStarts(s, th)
 		require.Len(t, starters, 1)
-		require.Equal(t, "order placed", starters[0].eDef.Message().Name())
+		require.Equal(t, "order placed", triggerName(starters[0].eDef))
 		require.NotEmpty(t, starters[0].ID())
 		require.Same(t, s, starters[0].snapshot)
 		require.NotNil(t, starters[0].startNode)
@@ -575,4 +575,17 @@ func TestResolveAndLaunchRollback(t *testing.T) {
 	_, seen := th.seenKeys["p-rb\x1fK1"]
 	th.m.Unlock()
 	require.False(t, seen)
+}
+
+// TestTriggerName covers triggerName's signal and non-message/non-signal
+// branches (the message branch is covered through the Starters listing tests).
+func TestTriggerName(t *testing.T) {
+	sig, err := events.NewSignal("GO", nil)
+	require.NoError(t, err)
+	sed, err := events.NewSignalEventDefinition(sig)
+	require.NoError(t, err)
+	require.Equal(t, "GO", triggerName(sed))
+
+	// a non-message/non-signal definition yields "".
+	require.Equal(t, "", triggerName(nil))
 }

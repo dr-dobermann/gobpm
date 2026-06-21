@@ -13,17 +13,18 @@ import (
 )
 
 // instanceStarter is the definition-level collaborator that turns an
-// event-triggered start (a message StartEvent today; an instantiate ReceiveTask
-// in M4) into a new process instance (ADR-015 §2.2). It is registered on the
-// engine EventHub as a persistent EventProcessor — one per instantiating start
-// trigger of a process — so it fires for every matching message and is never
-// removed after a single fire. It owns no Instance state; on a fired event it
-// asks the Thresher to launch a new instance born from that event.
+// event-triggered start (a message or signal StartEvent; an instantiate
+// ReceiveTask) into a new process instance (ADR-015 §2.2; signals SRD-026 §4.2).
+// It is registered on the engine EventHub as a persistent EventProcessor — one
+// per instantiating start trigger of a process — so it fires for every matching
+// message or signal broadcast and is never removed after a single fire. It owns
+// no Instance state; on a fired event it asks the Thresher to launch a new
+// instance born from that event.
 type instanceStarter struct {
 	thr       *Thresher
 	snapshot  *snapshot.Snapshot
 	startNode flow.Node
-	eDef      *events.MessageEventDefinition
+	eDef      flow.EventDefinition // message (optionally correlated) or signal (never)
 	corrKey   *bpmncommon.CorrelationKey
 	id        string
 }
@@ -80,8 +81,11 @@ func (s *instanceStarter) deriveKey(
 		payload = items[0].Structure().Get(ctx)
 	}
 
+	// Reached only when corrKey != nil, i.e. a correlated message starter; a
+	// signal starter has corrKey == nil and returned above. So eDef is a message
+	// definition here.
 	key, ok, err := msgflow.DeriveKey(ctx, s.thr.cfg.ExpressionEngine(),
-		s.corrKey, s.eDef.Message(), payload)
+		s.corrKey, s.eDef.(*events.MessageEventDefinition).Message(), payload)
 	if err != nil {
 		return "", err
 	}
@@ -94,10 +98,10 @@ func (s *instanceStarter) deriveKey(
 }
 
 // scanInstantiatingStarts walks a process snapshot and builds an instanceStarter
-// for every instantiating start trigger: a StartEvent that carries a
-// MessageEventDefinition and has no incoming sequence flow (§13.2 / §13.5.1).
-// The instantiate ReceiveTask is added in M4 (FR-4). It builds the starters but
-// does not register them — the Thresher decides when (auto mode, at the later of
+// for every instantiating start trigger: a StartEvent (or instantiate
+// ReceiveTask) carrying a message or signal definition with no incoming sequence
+// flow (§13.2 / §13.5.1; signals SRD-026). It builds the starters but does not
+// register them — the Thresher decides when (auto mode, at the later of
 // RegisterProcess/Run) and whether (manual mode registers none, FR-9).
 //
 // It is an unexported helper called only by RegisterProcess with a freshly built
@@ -132,14 +136,20 @@ func scanInstantiatingStarts(s *snapshot.Snapshot, thr *Thresher) []*instanceSta
 		}
 
 		for _, eDef := range en.Definitions() {
-			med, ok := eDef.(*events.MessageEventDefinition)
-			if !ok {
+			// A start trigger backs an instance-starter when it is a message
+			// (point-to-point, optionally correlated) or a signal (broadcast, never
+			// correlated — BPMN §10.5.7, SRD-026). Other kinds don't instantiate here.
+			var corrKey *bpmncommon.CorrelationKey
+			switch eDef.(type) {
+			case *events.MessageEventDefinition:
+				corrKey = correlationKeyOf(n)
+			case *events.SignalEventDefinition:
+				// signals carry no correlation — corrKey stays nil
+			default:
 				continue
 			}
 
 			startNode := n
-			corrKey := correlationKeyOf(n)
-
 			if isGate {
 				if arm, ok := router.ArmFor(eDef); ok && !parallel {
 					startNode = arm
@@ -151,7 +161,7 @@ func scanInstantiatingStarts(s *snapshot.Snapshot, thr *Thresher) []*instanceSta
 				thr:       thr,
 				snapshot:  s,
 				startNode: startNode,
-				eDef:      med,
+				eDef:      eDef,
 				corrKey:   corrKey,
 				id:        foundation.GenerateID(),
 			})
@@ -159,6 +169,25 @@ func scanInstantiatingStarts(s *snapshot.Snapshot, thr *Thresher) []*instanceSta
 	}
 
 	return starters
+}
+
+// triggerName returns the human-readable trigger name of a starter's definition:
+// the message name for a message starter, the signal name for a signal starter
+// (SRD-026), or "" for any other kind.
+func triggerName(eDef flow.EventDefinition) string {
+	switch d := eDef.(type) {
+	case *events.MessageEventDefinition:
+		if m := d.Message(); m != nil {
+			return m.Name()
+		}
+
+	case *events.SignalEventDefinition:
+		if s := d.Signal(); s != nil {
+			return s.Name()
+		}
+	}
+
+	return ""
 }
 
 // correlationKeyOf returns the CorrelationKey a start node declares, read
