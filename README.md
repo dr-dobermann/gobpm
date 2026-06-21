@@ -153,6 +153,13 @@ from the payload (one handler instance per distinct order) ·
 message **routes back** to the specific handler instance whose conversation it
 belongs to (keyed in-instance receivers; two conversations stay isolated).
 
+For signal events (broadcast, no correlation), see
+[`examples/signal-broadcast/`](examples/signal-broadcast/) — one throw reaches
+**every** waiting catcher in reach · and
+[`examples/signal-start/`](examples/signal-start/) — a broadcast signal
+**instantiates** processes whose start trigger is a signal (one broadcast → one
+instance per signal-start declaration).
+
 ### Startup logging
 
 `thresher.New` prints a startup report — an ASCII banner with the engine
