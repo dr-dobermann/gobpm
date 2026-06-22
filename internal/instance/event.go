@@ -41,6 +41,9 @@ func (k trackEventKind) String() string {
 	case evParked:
 		return "parked"
 
+	case evFailed:
+		return "failed"
+
 	default:
 		return "unknown"
 	}
@@ -62,4 +65,9 @@ const (
 	// decremented from the active count; the loop rechecks the join and may signal
 	// the track to resume (survivor) or return (merged). SRD-022.
 	evParked
+	// evFailed: a track's run() returned in TrackFailed (its node execution errored).
+	// The loop surfaces the track's error as an instance failure (lastErr + terminate
+	// via Instance.fail) instead of treating it as a plain evEnded that would let the
+	// instance complete silently. FIX-008.
+	evFailed
 )
