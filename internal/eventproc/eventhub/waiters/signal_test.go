@@ -122,6 +122,15 @@ func TestSignalWaiterEdgeCases(t *testing.T) {
 		Return(errors.New("boom")).Once()
 	require.NoError(t, w.AddEventProcessor(failEP))
 
+	// A catcher that rejects the broadcast (ErrRejected — already fired / not
+	// waiting, FIX-007) is a benign Debug no-op: Process skips it without a WARN
+	// and still delivers to the rest.
+	rejEP := mockeventproc.NewMockEventProcessor(t)
+	rejEP.EXPECT().ID().Return("rej").Maybe()
+	rejEP.EXPECT().ProcessEvent(mock.Anything, def).
+		Return(eventproc.ErrRejected).Once()
+	require.NoError(t, w.AddEventProcessor(rejEP))
+
 	ep.EXPECT().ProcessEvent(mock.Anything, def).Return(nil).Once()
 	require.NoError(t, w.Process(def))
 }
