@@ -39,6 +39,7 @@ package instance
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -441,6 +442,16 @@ func (t *track) run(
 			}
 
 			if t.inState(TrackWaitForEvent) {
+				// Yield: a track parked on the WaitForEvent busy-wait must not
+				// starve the per-instance loop (which drives reachability-join
+				// re-evaluation, abort, completion). Before FIX-007 the
+				// per-iteration currentStep() read (an RLock) implicitly yielded
+				// here; the re-fetch below moved it out of the spin, so yield
+				// explicitly. (The poll-based wait is a pre-existing anti-pattern
+				// — TestComplexAbortInstance flakes on master too — whose proper
+				// cure is the event-driven, single-writer delivery of ADR-017.)
+				runtime.Gosched()
+
 				continue
 			}
 		}

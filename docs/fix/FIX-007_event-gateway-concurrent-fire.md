@@ -158,10 +158,11 @@ None needed — the deferred-choice loser-drop is now a Debug no-op (`signal del
 - **Correlation reject** (`validateAndAssociate` → `ErrRejected`) still leaves the track waiting (state untouched under the held lock).
 - The loser-drop now returns `eventproc.ErrRejected` (was an InvalidState error); the signal + message waiters treat it as a benign no-op, so no failure surfaces to callers.
 - **Timer-waiter note (follow-up, not in this FIX):** the timer waiter still treats *any* delivery error as a waiter failure (`WSFailed`), so a timer-arm loser-drop would mark the waiter failed. Pre-existing and rare — timer arms don't fire concurrently the way signals broadcast — so it's left unchanged to keep FIX-007 focused; aligning the timer waiter with the signal/message benign-`ErrRejected` handling is a small follow-up.
+- **Busy-wait yield (race-2 side-effect, fixed here):** the race-2 re-fetch moved `step := t.currentStep()` out of the `TrackWaitForEvent` busy-wait, removing the per-spin `t.m.RLock` that implicitly yielded — tightening the hot spin enough to starve the per-instance loop under `-race`, which **amplified a pre-existing ~1/100 `TestComplexAbortInstance` flake** (master flakes too, same rate) to ~7/100. A `runtime.Gosched()` in the spin's `continue` path restores master parity (~1/100) with no added latency. The residual ~1/100 is the poll-based `TrackWaitForEvent` wait anti-pattern itself — its proper cure is single-writer event delivery (ADR-017), not this FIX. The yield is correct regardless (a hot busy-wait should not starve the scheduler).
 
 ### 6.2 Rollback path
 
-Single-commit revert (the `eventMu` field + the lock placement + the test).
+Single-commit revert (the `eventMu` field, the `run()` re-fetch + `runtime.Gosched()` yield, the guard→`ErrRejected`, and the test).
 
 ---
 
