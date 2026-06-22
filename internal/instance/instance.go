@@ -636,12 +636,7 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 		go func(t *track) {
 			t.run(ctx)
 
-			kind := evEnded
-			if t.inState(TrackAwaitingMerge) {
-				kind = evAwaiting
-			}
-
-			inst.emit(trackEvent{kind: kind, track: t})
+			inst.emit(trackEvent{kind: trackEndKind(t), track: t})
 		}(t)
 	}
 
@@ -707,6 +702,12 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 				// the track blocked at a reachability join — its goroutine is
 				// alive, so active is unchanged.
 				inst.recheckParked(ev.track)
+
+			case evFailed:
+				// a node error faulted the track — surface it as an instance failure
+				// and terminate, rather than letting it complete silently (FIX-008).
+				inst.failFromTrack(ev.track, stopAll)
+				active--
 			}
 		}
 	}
@@ -716,6 +717,42 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	} else {
 		inst.setState(Completed)
 	}
+}
+
+// trackEndKind classifies a track that returned from run() into the loop event
+// kind: evAwaiting if it parked at a synchronizing join, evFailed if a node error
+// left it TrackFailed (so the loop faults the instance — FIX-008), else the normal
+// evEnded.
+func trackEndKind(t *track) trackEventKind {
+	switch {
+	case t.inState(TrackAwaitingMerge):
+		return evAwaiting
+
+	case t.inState(TrackFailed):
+		return evFailed
+
+	default:
+		return evEnded
+	}
+}
+
+// failFromTrack surfaces a TrackFailed track's error as an instance failure: it
+// records lastErr via Instance.fail (which also cancels the ctx so sibling tracks
+// stop) and calls stopAll so the Terminating flag is set synchronously. When this
+// is the last active track the ctx cancel alone would race the active--→loop-exit
+// and the instance would settle on Completed instead of Terminated; stopAll makes
+// the terminal state deterministic. Runs on the loop goroutine, the single writer
+// of lastErr (FIX-008).
+func (inst *Instance) failFromTrack(t *track, stopAll func()) {
+	err := t.lastErr
+	if err == nil {
+		err = errs.New(
+			errs.M("track %s failed", t.ID()),
+			errs.C(errorClass, errs.OperationFailed))
+	}
+
+	inst.fail(err)
+	stopAll()
 }
 
 // spawnForks builds and spawns one track per extra forked outgoing flow, runs

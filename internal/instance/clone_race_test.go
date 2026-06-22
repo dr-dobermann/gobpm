@@ -15,6 +15,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
+	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,10 +32,19 @@ func buildPlainSnapshot(t *testing.T) *snapshot.Snapshot {
 	start, err := events.NewStartEvent("start")
 	require.NoError(t, err)
 
+	// A working (no-op) operation so the node executes per-instance — exercising
+	// the clone-race — and the instances complete cleanly. (A no-implementation
+	// operation would fault the track and, since FIX-008, terminate the instance.)
+	op, err := gooper.New("noop",
+		func(_ context.Context, _ service.DataReader,
+			_ *data.ItemDefinition,
+		) (*data.ItemDefinition, error) {
+			return nil, nil
+		})
+	require.NoError(t, err)
+
 	task, err := activities.NewServiceTask(
-		"task1",
-		service.MustOperation("op", nil, nil, nil),
-		activities.WithoutParams())
+		"task1", op, activities.WithoutParams())
 	require.NoError(t, err)
 
 	end, err := events.NewEndEvent("end")
