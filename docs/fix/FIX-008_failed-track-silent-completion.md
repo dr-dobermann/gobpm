@@ -1,7 +1,7 @@
 # FIX-008 «A failed track silently completes the instance (track error lost)»
 
 **Type:** FIX (one-shot bug-fix; not rewritten after landing).
-**Status:** Draft v.1 (2026-06-22, branch `fix/surface-failed-track`, not yet implemented).
+**Status:** Accepted v.1 (2026-06-22, branch `fix/surface-failed-track`, implemented).
 **Date:** 2026-06-22.
 **Author:** Ruslan Gabitov.
 **Branch:** `fix/surface-failed-track` (surface a `TrackFailed` track as an instance failure).
@@ -114,31 +114,35 @@ There is no dedicated `Failed` instance state — the open vocabulary is `Create
 
 ### 3.2 Changes by file
 
-#### §3.2.1 `internal/instance/instance.go` — surface a failed track
+#### §3.2.1 `internal/instance/event.go` — the `evFailed` kind
 
-- Add an `evFailed` value to the track-event `kind` enum (beside `evEnded`/`evAwaiting`/`evMerged`/`evParked`/`evFork`).
-- Spawn wrapper (`:639-644`): classify a failed end:
+Add an `evFailed` value to the `trackEventKind` enum (beside `evEnded`/`evAwaiting`/`evMerged`/`evParked`/`evFork`) + its `String` case: a track whose `run()` returned in `TrackFailed` (its node execution errored).
 
-```go
-kind := evEnded
-switch {
-case t.inState(TrackAwaitingMerge):
-    kind = evAwaiting
-case t.inState(TrackFailed):
-    kind = evFailed
-}
-inst.emit(trackEvent{kind: kind, track: t})
-```
+#### §3.2.2 `internal/instance/instance.go` — classify + surface a failed track
 
-- Loop: add `case evFailed:` — surface the track's error via the existing `fail`, then decrement:
+Two helpers (extracted to keep `loop()` under the `gocyclo` limit, which the inline switch + new case would have exceeded):
+
+- **`trackEndKind(t)`** classifies a returned track — `TrackAwaitingMerge` → `evAwaiting`, **`TrackFailed` → `evFailed`**, else `evEnded`. The spawn wrapper (`:639`) calls it: `inst.emit(trackEvent{kind: trackEndKind(t), track: t})`.
+- **`failFromTrack(t, stopAll)`** surfaces the failure. The loop's new `case evFailed:` (`:706`) calls it, then `active--`:
 
 ```go
 case evFailed:
-    inst.fail(ev.track.lastErr) // store lastErr + cancel -> stopAll -> Terminated
+    inst.failFromTrack(ev.track, stopAll)
     active--
 ```
+```go
+func (inst *Instance) failFromTrack(t *track, stopAll func()) {
+    err := t.lastErr
+    if err == nil { // defensive: run() sets lastErr before TrackFailed
+        err = errs.New(errs.M("track %s failed", t.ID()),
+            errs.C(errorClass, errs.OperationFailed))
+    }
+    inst.fail(err) // store lastErr + cancel the instance ctx
+    stopAll()      // EXPLICIT — see below
+}
+```
 
-`fail` runs only on the loop goroutine (its contract), and the `evFailed` case *is* the loop goroutine, so it stays the single writer of `lastErr`. `inst.cancel()` makes the next select iteration take `case <-done: stopAll()`, so the other live tracks are stopped and the loop ends `Terminated` (`:715`). A defensive non-nil guard wraps a `nil` `t.lastErr` (shouldn't happen — `run()` sets it before `TrackFailed`) in a generic "track failed" error so the instance still fails rather than completing.
+**`stopAll()` must be called explicitly** — the draft assumed `inst.fail` (→ `cancel` → `<-done` → `stopAll`) would terminate, but that is wrong for the **last** track: `case evFailed: …; active--` drops `active` to 0, and the loop exits *before* the next `select` iteration can take `case <-done:`, so `stopping` stays false and the instance settles **`Completed`**, not `Terminated`. Calling `stopAll()` synchronously sets `Terminating`, so the loop ends `Terminated` (`:715`). `failFromTrack` runs on the loop goroutine (the `evFailed` case *is* the loop), preserving `fail`'s single-writer-of-`lastErr` contract. The defensive nil-guard wraps a `nil` `t.lastErr` (shouldn't happen — `run()` sets it before `TrackFailed`) so the instance still fails rather than completing.
 
 **`TrackCanceled` stays `evEnded`** — a canceled track only occurs during an already-in-progress terminate (ctx cancel / `stopAll`), where `stopping` is set and the instance is heading to `Terminated` anyway; re-failing it would be wrong (a deliberate cancel is not a fault).
 
@@ -150,14 +154,15 @@ Current coverage: the loop's terminal-state tests cover `Completed` and ctx-canc
 
 ### 4.1 Regression tests (mandatory)
 
-**New:** `internal/instance/*_test.go` (in-package, alongside the existing loop tests).
+**New:** `internal/instance/failed_track_test.go` (external `package instance_test`) + `failed_track_internal_test.go` (in-package, for the nil-guard).
 
 | Test | Setup | Assertion |
 |---|---|---|
-| `TestFailedTrackFailsInstance` | a process whose single node's `Exec` returns an error (a mock `exec.NodeExecutor` / a deliberately-failing ServiceTask) | the instance ends **`Terminated`** (not `Completed`); `inst.LastErr()` / `WaitCompletion`'s error is the node's error (not nil) |
+| `TestFailedTrackFailsInstance` | a process whose node's `Exec` returns an error | the instance ends **`Terminated`** (not `Completed`); `inst.LastErr()` is the node's error (not nil) |
 | `TestNormalCompletionUnaffected` (regression) | an ordinary process that runs clean | ends **`Completed`** with `lastErr == nil` — the `evFailed` path doesn't perturb the success case |
+| `TestFailFromTrackNilErr` (in-package) | `failFromTrack` with a track carrying a `nil` `lastErr` | the defensive guard substitutes a generic "track failed" error; the instance still fails (no nil deref, not `Completed`) |
 
-Run under `-race`. (A multi-track variant — one track fails while another is live — confirms `stopAll` stops the sibling and the instance still ends `Terminated`; add if cheap.)
+Run under `-race`. (A multi-track variant — one track fails while another is live — confirms `stopAll` stops the sibling and the instance still ends `Terminated`.)
 
 ### 4.5 Observability
 
@@ -180,6 +185,7 @@ Run under `-race`. (A multi-track variant — one track fails while another is l
 - **`TrackCanceled`** stays `evEnded` — unchanged; canceled tracks during a terminate still just decrement, and the instance ends `Terminated` because `stopping` is already set.
 - **The `activation.go` `fail` path** (join/activation failures) is unchanged — this fix reuses the same `fail`, so both failure sources converge on one surfacing mechanism.
 - **No double-terminate:** `stopAll` is guarded by `if stopping { return }`, and `fail`→`cancel` is idempotent; a second failed track calling `fail` re-stores `lastErr` (last-writer) without re-terminating destructively.
+- **A pre-existing test relied on the bug — `TestCloneRaceTwoInstances`.** Its `ServiceTask` used an operation with **no implementation**, which errored on every run — silently `Completed` pre-fix. FIX-008 correctly surfaced it (→ `Terminated`), breaking the test's `Eventually(Completed)` / `NoError(LastErr)` assertions (master passed; the FIX-008 branch failed, reproducible in isolation). The test's intent is the clone data-race (per-instance node graphs, no shared mutation), not task failure, so its op was replaced with a succeeding `gooper` no-op. This is exactly the masked-failure class this fix targets — a real validation, not a workaround.
 
 ### 6.2 Rollback path
 
@@ -197,7 +203,24 @@ Single-commit revert (the `evFailed` kind, the spawn-wrapper branch, the loop ca
 
 ## 8. Implementation summary (stage-by-stage actual landings + deltas)
 
-> ⚠️ TODO: fill AFTER landing — stage commits, scope, tests, empirical deltas vs this §3 draft.
+### 8.1 Stages by commit (branch `fix/surface-failed-track`)
+
+| Stage | Commit | Scope | Tests |
+|---|---|---|---|
+| Doc | `58c0c98` | FIX-008 (this doc, Draft) | — |
+| Fix | `0cf6442` | `event.go` (`evFailed` kind + `String`); `instance.go` (`trackEndKind` + `failFromTrack` helpers, the `case evFailed:`); `clone_race_test.go` (bug-reliant op replaced) | `TestFailedTrackFailsInstance`, `TestNormalCompletionUnaffected`, `TestFailFromTrackNilErr` |
+
+### 8.2 Empirical findings — where reality diverged from the §3 draft
+
+- **`stopAll()` must be explicit (§3.2 corrected).** The draft assumed `inst.fail` (→ `cancel` → `<-done` → `stopAll`) would terminate; for the **last** track `active` hits 0 and the loop exits *before* `<-done` is selected, settling `Completed`. `failFromTrack` now calls `stopAll()` synchronously → `Terminated`.
+- **A pre-existing test relied on the bug** (`TestCloneRaceTwoInstances`, §6.1) — its no-implementation op errored every run and silently `Completed`; FIX-008 surfaced it, so the test was given a succeeding no-op op. A direct validation of the fix.
+- **`gocyclo` extraction.** The inline spawn-switch + the new `case evFailed:` pushed `loop()` over the `gocyclo` limit; extracting `trackEndKind`/`failFromTrack` brings it back under.
+
+### 8.3 Verification (V-results)
+
+- `make ci` PASS: build, lint, `-race`, diff-coverage **100% of 25 changed lines**, govulncheck.
+- Touched funcs `trackEndKind` / `failFromTrack` / `String` (the `evFailed` case) → 100%.
+- Full `internal/instance/ -race` green (incl. Complex + clone-race + the new tests); `FailedTrack|NormalCompletion|CloneRace` `-race -count=10` green.
 
 ## 9. Open questions
 
