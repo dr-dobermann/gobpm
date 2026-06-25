@@ -63,8 +63,8 @@ the wrong goroutines**. The root cause is structural and is best removed structu
 
 ### Rule 1 — Inbound (events → track): channel-park, loop-dispatched
 
-A waiting track exposes a **buffered channel** (`t.evtCh`, depth a parametrized engine option,
-**default 1** — see §3) and parks in a blocking `select { case <-ctx.Done(): … case ev :=
+A waiting track exposes a **buffered channel** (`t.evtCh`, a fixed single-slot buffer — see §3) and
+parks in a blocking `select { case <-ctx.Done(): … case ev :=
 <-t.evtCh: … }`. A producer **never calls into the track** and **never sends to the track
 directly**: it **emits the fired event to the per-instance loop** — the same `inst.events` channel
 tracks already use to report lifecycle changes — and returns. The **loop is the sole sender** to a
@@ -150,12 +150,14 @@ sequenceDiagram
   owner of the subscription index. "Unsubscribe" and "dispatch" are the same goroutine's serial
   steps, so the loop can never send to a track it just retired — the **send-on-closed-channel trap
   cannot arise**, and no `done`-guarded send is needed.
-- **Buffering / backpressure.** `t.evtCh` depth is a parametrized engine option, **default 1**: a
-  parked track receives immediately, and depth 1 covers the dispatch→receive window (and the
-  deferred-choice flip above, so the loop never blocks on the send). The policy is **never drop an
-  event aimed at a parked track**; dropping an event for an already-dispatched, not-parked track is
-  correct (it is a losing arm, not a lost trigger). Ordering: per-track FIFO via the channel;
-  per-instance, the loop's arrival order; cross-track, none — tracks are concurrent.
+- **Buffering / backpressure.** `t.evtCh` is a **fixed single-slot buffer** (a constant, not an
+  engine option — under flip-on-dispatch the loop sends at most one event per parked episode, so one
+  slot is exactly enough and the only correct value). The single slot decouples the loop's send from
+  the track's scheduling so the loop never blocks; unbuffered would risk blocking it in the window
+  between the track's `evWaiting` and its receive. The policy is **never drop an event aimed at a
+  parked track**; dropping an event for an already-dispatched, not-parked track is correct (it is a
+  losing arm, not a lost trigger). Ordering: per-track FIFO via the channel; per-instance, the
+  loop's arrival order; cross-track, none — tracks are concurrent.
 - **Execution serializes per instance for shared state; concurrency lives between instances.** The
   loop applies events and owns shared state on one goroutine, so an instance's shared-state changes
   are serial. This is acceptable and conventional — BPMN parallel branches are *orchestration*, not
@@ -212,8 +214,8 @@ sequenceDiagram
   later (persist the intake stream; replay on hydration), a prerequisite for the deferred
   persistence workstream. Not required now, but the model must not preclude it.
 - **Delivery-contract documentation:** the implementing SRD slices should specify the new async
-  contract (ordering, the default-1 buffer and its tuning, teardown) as first-class public
-  behaviour, since it changes how hosts and the broker observe delivery outcomes.
+  contract (ordering, the fixed single-slot buffer, teardown) as first-class public behaviour,
+  since it changes how hosts and the broker observe delivery outcomes.
 
 ## 6. References
 
@@ -243,7 +245,7 @@ and implemented under the project's SDD discipline (its own SRD, milestones, and
    token-position / join view that reachability and joins read, removing the loop-reads-track-state
    race (the Complex / OR-join transient spurious abort).
 
-**Open questions: None.** Buffering/backpressure (parametrized depth, default 1; never-drop for a
+**Open questions: None.** Buffering/backpressure (a fixed single-slot buffer; never-drop for a
 parked track), teardown (loop-as-sole-sender), and broadcast fan-out (the two-level index) are
 decided above (§2–§3); the SRD slices fix the concrete signatures and tests, not the model.
 
