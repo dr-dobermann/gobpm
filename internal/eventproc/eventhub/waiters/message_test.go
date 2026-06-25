@@ -3,7 +3,6 @@ package waiters_test
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -78,12 +77,12 @@ func TestNewMessageWaiterErrors(t *testing.T) {
 	ep := mockeventproc.NewMockEventProcessor(t)
 	hub := mockeventproc.NewMockEventHub(t)
 
-	_, err := waiters.NewMessageWaiter(nil, nil, nil, "", nil, true)
+	_, err := waiters.NewMessageWaiter(nil, nil, nil, "", nil)
 	require.Error(t, err)
 
 	_, err = waiters.NewMessageWaiter(hub, ep,
 		events.MustSignalEventDefinition(&events.Signal{}), "",
-		enginert.Default(), true)
+		enginert.Default())
 	require.Error(t, err)
 }
 
@@ -111,7 +110,7 @@ func TestMessageWaiterProcessors(t *testing.T) {
 	hub := mockeventproc.NewMockEventHub(t)
 
 	w, err := waiters.NewMessageWaiter(hub, ep, msgEventDef(t), "",
-		enginert.Default(), true)
+		enginert.Default())
 	require.NoError(t, err)
 
 	require.Error(t, w.AddEventProcessor(nil))
@@ -145,7 +144,7 @@ func TestMessageWaiterDelivery(t *testing.T) {
 			return nil
 		})
 
-	w, err := waiters.NewMessageWaiter(hub, ep, eDef, "", rt, true)
+	w, err := waiters.NewMessageWaiter(hub, ep, eDef, "", rt)
 	require.NoError(t, err)
 	require.NoError(t, w.Service(ctx))
 
@@ -161,16 +160,17 @@ func TestMessageWaiterDelivery(t *testing.T) {
 		t.Fatal("message was not delivered to the processor")
 	}
 
-	require.Eventually(t, func() bool {
-		return w.State() == eventproc.WSEnded
-	}, time.Second, 10*time.Millisecond)
+	// The waiter is a pure forwarder (ADR-017 v.1 §2): it does not self-terminate
+	// on a fire. With a mock processor that never unregisters, it stays Runned —
+	// in production the hub removes it when the receiving track consumes and
+	// unregisters. Stop ends the service goroutine and closes Done (SRD-019).
+	require.Equal(t, eventproc.WSRunned, w.State())
+	require.NoError(t, w.Stop())
 
-	// The single-shot service goroutine exits after firing; Done reflects it
-	// (SRD-019: EventHub.Shutdown drains waiters via this channel).
 	select {
 	case <-w.Done():
 	case <-time.After(time.Second):
-		t.Fatal("message waiter Done did not close after the single-shot fire")
+		t.Fatal("message waiter Done did not close after Stop")
 	}
 }
 
@@ -208,7 +208,7 @@ func TestMessageWaiterKeyedDelivery(t *testing.T) {
 
 	ep := keyedProc{MockEventProcessor: mep, keys: []string{"ORD-1"}}
 
-	w, err := waiters.NewMessageWaiter(hub, ep, eDef, "", rt, true)
+	w, err := waiters.NewMessageWaiter(hub, ep, eDef, "", rt)
 	require.NoError(t, err)
 	require.NoError(t, w.Service(ctx))
 
@@ -234,57 +234,12 @@ func TestMessageWaiterKeyedDelivery(t *testing.T) {
 	}
 }
 
-// rejectingProc rejects the first fired event (a correlation mismatch) and
-// accepts the rest, recording the number of fires.
-type rejectingProc struct {
-	*mockeventproc.MockEventProcessor
-	calls atomic.Int32
-}
-
-func (p *rejectingProc) ProcessEvent(context.Context, flow.EventDefinition) error {
-	if p.calls.Add(1) == 1 {
-		return eventproc.ErrRejected
-	}
-
-	return nil
-}
-
-// TestMessageWaiterRejectKeepsWaiting verifies that a single-shot receiver which
-// rejects a message (ErrRejected — a correlation mismatch) stays subscribed and
-// keeps waiting, accepting a later message (SRD-017 §4.5 / M4b).
-func TestMessageWaiterRejectKeepsWaiting(t *testing.T) {
-	require.NoError(t, data.CreateDefaultStates())
-
-	ctx := context.Background()
-	eDef := msgEventDef(t)
-
-	rt := enginert.Default()
-	hub := mockeventproc.NewMockEventHub(t)
-	hub.EXPECT().WaiterFired(eDef.ID()).Return(nil).Maybe()
-
-	mep := mockeventproc.NewMockEventProcessor(t)
-	mep.EXPECT().ID().Return("p").Maybe()
-	rp := &rejectingProc{MockEventProcessor: mep}
-
-	w, err := waiters.NewMessageWaiter(hub, rp, eDef, "", rt, true)
-	require.NoError(t, err)
-	require.NoError(t, w.Service(ctx))
-
-	// first message: rejected — the waiter must stay subscribed.
-	require.NoError(t, rt.MessageBroker().Publish(ctx, messaging.Envelope{
-		Name: "order placed", Payload: "ORD-2"}))
-	// second message: accepted.
-	require.NoError(t, rt.MessageBroker().Publish(ctx, messaging.Envelope{
-		Name: "order placed", Payload: "ORD-1"}))
-
-	require.Eventually(t, func() bool { return rp.calls.Load() >= 2 },
-		2*time.Second, 10*time.Millisecond)
-}
-
-// TestMessageWaiterPersistent exercises the persistent (singleShot=false)
-// lifecycle (SRD-015 FR-1): the waiter fires for every matching message and
-// stays Runned — it never reaches a terminal state on its own, so the hub
-// keeps it. Each fire still reports to the hub via WaiterFired.
+// TestMessageWaiterPersistent exercises the forward-every-message lifecycle
+// (SRD-015 FR-1): the waiter fires for every matching message and stays Runned —
+// it never reaches a terminal state on its own, so the hub keeps it (here the
+// mock processor never unregisters). Each fire still reports to the hub via
+// WaiterFired. Correlation mismatches are dropped by the receiving loop, not the
+// waiter (ADR-017 v.1 §2), so the waiter forwards unconditionally.
 func TestMessageWaiterPersistent(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
@@ -307,7 +262,7 @@ func TestMessageWaiterPersistent(t *testing.T) {
 			return nil
 		})
 
-	w, err := waiters.NewMessageWaiter(hub, ep, eDef, "", rt, false)
+	w, err := waiters.NewMessageWaiter(hub, ep, eDef, "", rt)
 	require.NoError(t, err)
 	require.NoError(t, w.Service(ctx))
 
@@ -350,7 +305,7 @@ func TestMessageWaiterProcessEventError(t *testing.T) {
 			return fmt.Errorf("processing failed")
 		})
 
-	w, err := waiters.NewMessageWaiter(hub, ep, msgEventDef(t), "", rt, true)
+	w, err := waiters.NewMessageWaiter(hub, ep, msgEventDef(t), "", rt)
 	require.NoError(t, err)
 	require.NoError(t, w.Service(ctx))
 
@@ -405,7 +360,7 @@ func TestMessageWaiterStop(t *testing.T) {
 	hub := mockeventproc.NewMockEventHub(t)
 
 	w, err := waiters.NewMessageWaiter(hub, ep, msgEventDef(t), "",
-		enginert.Default(), true)
+		enginert.Default())
 	require.NoError(t, err)
 
 	require.NoError(t, w.Service(context.Background()))
@@ -419,7 +374,7 @@ func TestMessageWaiterContextCancel(t *testing.T) {
 	hub := mockeventproc.NewMockEventHub(t)
 
 	w, err := waiters.NewMessageWaiter(hub, ep, msgEventDef(t), "",
-		enginert.Default(), true)
+		enginert.Default())
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -437,7 +392,7 @@ func TestMessageWaiterClosedChannel(t *testing.T) {
 
 	rt := brokerRT{EngineRuntime: enginert.Default(), broker: closedChBroker{}}
 
-	w, err := waiters.NewMessageWaiter(hub, ep, msgEventDef(t), "", rt, true)
+	w, err := waiters.NewMessageWaiter(hub, ep, msgEventDef(t), "", rt)
 	require.NoError(t, err)
 	require.NoError(t, w.Service(context.Background()))
 
@@ -452,7 +407,7 @@ func TestMessageWaiterSubscribeError(t *testing.T) {
 
 	rt := brokerRT{EngineRuntime: enginert.Default(), broker: errSubBroker{}}
 
-	w, err := waiters.NewMessageWaiter(hub, ep, msgEventDef(t), "", rt, true)
+	w, err := waiters.NewMessageWaiter(hub, ep, msgEventDef(t), "", rt)
 	require.NoError(t, err)
 
 	require.Error(t, w.Service(context.Background()))

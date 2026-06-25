@@ -635,6 +635,14 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 		inst.addToSnap(t)
 		active++
 
+		// A track built already parked (an event-start source waiter, registered
+		// during New) is recorded here — on the loop goroutine, before its run
+		// goroutine starts — so it is in `waiting` before any evDeliver can target it
+		// (SRD-027 FR-5). Mid-run waits emit evWaiting from checkNodeType instead.
+		if t.inState(TrackWaitForEvent) {
+			waiting[t.ID()] = struct{}{}
+		}
+
 		// run the track and report back to the loop. A track that reached a
 		// synchronizing join without completing it ends its goroutine in
 		// AwaitingMerge — reported as evAwaiting, not evEnded, so the loop keeps
@@ -658,7 +666,16 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 
 		for _, t := range inst.tracks {
 			t.stop()
+			// Wake a track parked on evtCh: the loop is its sole sender, so closing
+			// here is safe and doubles as teardown (SRD-027 FR-7). stopIt covers the
+			// running path; the closed channel covers the parked one.
+			close(t.evtCh)
 		}
+
+		// After stop no track is dispatched to — a parked track is woken by its closed
+		// channel, not an evDeliver — so drop the set; this also prevents a send on a
+		// closed evtCh.
+		clear(waiting)
 	}
 
 	for _, t := range initial {
@@ -686,53 +703,7 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 				"kind", ev.kind.String(),
 				"track", ev.track.ID())
 
-			switch ev.kind {
-			case evFork:
-				inst.spawnForks(ev, spawn, stopAll, stopping)
-
-			case evEnded:
-				active--
-				delete(waiting, ev.track.ID())
-				inst.recheckAwaitingJoins()
-
-			case evAwaiting:
-				// the track reached a synchronizing join, did not complete it,
-				// and its goroutine returned — no longer active, but retained as
-				// awaiting until the join fires (ADR-005 §2.4).
-				active--
-
-			case evMerged:
-				inst.applyMerged(ev)
-				inst.recheckAwaitingJoins()
-
-			case evParked:
-				// the track blocked at a reachability join — its goroutine is
-				// alive, so active is unchanged.
-				inst.recheckParked(ev.track)
-
-			case evFailed:
-				// a node error faulted the track — surface it as an instance failure
-				// and terminate, rather than letting it complete silently (FIX-008).
-				inst.failFromTrack(ev.track, stopAll)
-				active--
-				delete(waiting, ev.track.ID())
-
-			case evWaiting:
-				// the track parked on its evtCh and is ready to receive — record it as
-				// parked-and-undelivered (SRD-027 FR-4/FR-5).
-				waiting[ev.track.ID()] = struct{}{}
-
-			case evDeliver:
-				// dispatch to a parked-and-undelivered track. The flip — delete on the
-				// first delivery — makes deferred choice atomic: a later event for the same
-				// track finds it absent and is dropped (the losing arm / a duplicate fire).
-				// The loop is the sole sender to evtCh; the buffered slot keeps this send
-				// from blocking the loop (SRD-027 FR-3/FR-4).
-				if _, parked := waiting[ev.track.ID()]; parked {
-					delete(waiting, ev.track.ID())
-					ev.track.evtCh <- ev.eDef
-				}
-			}
+			inst.applyEvent(ctx, ev, &active, &stopping, waiting, spawn, stopAll)
 		}
 	}
 
@@ -741,6 +712,90 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	} else {
 		inst.setState(Completed)
 	}
+}
+
+// applyEvent applies one track→loop event to the loop-owned state on the loop goroutine.
+// active and stopping are the loop's own counters, passed by pointer so this method and the
+// spawn/stopAll closures mutate the same values; waiting is the loop-owned parked set. Called
+// only by loop().
+func (inst *Instance) applyEvent(
+	ctx context.Context,
+	ev trackEvent,
+	active *int,
+	stopping *bool,
+	waiting map[string]struct{},
+	spawn func(*track),
+	stopAll func(),
+) {
+	switch ev.kind {
+	case evFork:
+		inst.spawnForks(ev, spawn, stopAll, *stopping)
+
+	case evEnded:
+		*active--
+		delete(waiting, ev.track.ID())
+		inst.recheckAwaitingJoins()
+
+	case evAwaiting:
+		// the track reached a synchronizing join, did not complete it, and its
+		// goroutine returned — no longer active, but retained as awaiting until the
+		// join fires (ADR-005 §2.4).
+		*active--
+
+	case evMerged:
+		inst.applyMerged(ev)
+		inst.recheckAwaitingJoins()
+
+	case evParked:
+		// the track blocked at a reachability join — its goroutine is alive, so
+		// active is unchanged.
+		inst.recheckParked(ev.track)
+
+	case evFailed:
+		// a node error faulted the track — surface it as an instance failure and
+		// terminate, rather than letting it complete silently (FIX-008).
+		inst.failFromTrack(ev.track, stopAll)
+		*active--
+		delete(waiting, ev.track.ID())
+
+	case evWaiting:
+		// the track parked on its evtCh and is ready to receive — record it as
+		// parked-and-undelivered (SRD-027 FR-4/FR-5). Not during shutdown: a parked
+		// track is woken by its closed evtCh, not an evDeliver, and recording it
+		// would risk a send on the closed channel.
+		if !*stopping {
+			waiting[ev.track.ID()] = struct{}{}
+		}
+
+	case evDeliver:
+		inst.dispatchToParked(ctx, ev, waiting)
+	}
+}
+
+// dispatchToParked sends a fired event to its parked-and-undelivered track. A message
+// whose correlation does not match this conversation is gated here, on the loop goroutine —
+// the sole owner of instance conversation state — and the track stays parked for the next
+// message (SRD-027 §3.4 / NFR-2). On a match — or any non-message event, where
+// validateAndAssociate is a no-op — the flip (delete on first delivery) makes deferred
+// choice atomic: a later event for the same track finds it absent and is dropped (a losing
+// Event-Based-gateway arm or a duplicate fire). The loop is the sole sender to evtCh, and the
+// single buffered slot keeps this send from blocking it (SRD-027 FR-3/FR-4). Called only by
+// loop(), so it touches the loop-owned waiting set without a lock.
+func (inst *Instance) dispatchToParked(
+	ctx context.Context,
+	ev trackEvent,
+	waiting map[string]struct{},
+) {
+	if _, parked := waiting[ev.track.ID()]; !parked {
+		return
+	}
+
+	if inst.validateAndAssociate(ctx, ev.eDef) {
+		return // correlation mismatch — drop, keep the track parked
+	}
+
+	delete(waiting, ev.track.ID())
+	ev.track.evtCh <- ev.eDef
 }
 
 // trackEndKind classifies a track that returned from run() into the loop event

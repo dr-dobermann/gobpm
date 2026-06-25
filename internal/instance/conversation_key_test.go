@@ -425,34 +425,8 @@ func TestExtendReceiversBranches(t *testing.T) {
 	inst.extendReceivers("ORD-1") // must not panic; covers all three branches
 }
 
-// TestTrackProcessEventRejectsMismatch covers the track's mismatch path: when
-// validateAndAssociate reports a mismatch, ProcessEvent returns ErrRejected
-// without advancing the token (SRD-017 §4.5 / M4b).
-func TestTrackProcessEventRejectsMismatch(t *testing.T) {
-	require.NoError(t, data.CreateDefaultStates())
-
-	inst := &Instance{
-		EngineRuntime: enginert.Default(),
-		convKeys:      map[string]string{"orderKey": "ORD-1"},
-		s: &snapshot.Snapshot{
-			CorrelationKeys: []*bpmncommon.CorrelationKey{testCorrKey(t, "reply")},
-			Nodes:           map[string]flow.Node{},
-		},
-	}
-
-	recv, err := activities.NewReceiveTask("await",
-		bpmncommon.MustMessage("reply", data.MustItemDefinition(
-			values.NewVariable(""), foundation.WithID("order_in"))),
-		activities.WithoutParams())
-	require.NoError(t, err)
-
-	tr := &track{
-		instance: inst,
-		state:    TrackWaitForEvent,
-		steps:    []*stepInfo{{node: recv}},
-	}
-
-	// the message derives orderKey=ORD-2, conflicting with the held ORD-1.
-	err = tr.ProcessEvent(context.Background(), msgEDef(t, "reply", "ORD-2"))
-	require.ErrorIs(t, err, eventproc.ErrRejected)
-}
+// The track's old synchronous mismatch path (ProcessEvent → ErrRejected) is gone:
+// under ADR-017 the loop runs validateAndAssociate and drops a mismatch while the
+// track stays parked. The gate function itself is covered by
+// TestValidateAndAssociateMismatch; the loop-level drop is covered by
+// TestLoopKeepsParkedOnCorrelationMismatch (inbound_delivery_test.go).

@@ -10,6 +10,9 @@ type trackEvent struct {
 	// evEnded, the awaiting track for evAwaiting, the surviving (completing)
 	// track for evMerged.
 	track *track
+	// eDef, for evDeliver, is the fired event definition the loop dispatches to the
+	// subject track's evtCh (SRD-027 FR-2).
+	eDef flow.EventDefinition
 	// flows, for evFork, are the extra outgoing flows (beyond the one the
 	// parent continues on) that the loop builds a new track for.
 	flows []*flow.SequenceFlow
@@ -17,10 +20,7 @@ type trackEvent struct {
 	// surviving track absorbed at a synchronizing join. Ids, not pointers: the
 	// loop resolves them against inst.tracks (which it owns) to flip their state.
 	mergedIDs []string
-	// eDef, for evDeliver, is the fired event definition the loop dispatches to the
-	// subject track's evtCh (SRD-027 FR-2).
-	eDef flow.EventDefinition
-	kind trackEventKind
+	kind      trackEventKind
 }
 
 // trackEventKind enumerates the track→loop event kinds.

@@ -39,7 +39,6 @@ package instance
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -179,19 +178,11 @@ type track struct {
 	// (SRD-027 FR-1). The per-instance loop is the SOLE sender and sole closer; the track
 	// only receives. Buffered to one slot (eventBufferDepth) so the loop never blocks on the
 	// send — with flip-on-dispatch the loop delivers at most one event per parked episode.
-	evtCh chan flow.EventDefinition
-	steps []*stepInfo
-	m     sync.RWMutex
-	// eventMu serializes ProcessEvent on this track: one event is processed to
-	// completion — the state guard through the WaitForEvent→Ready transition —
-	// before the next is evaluated, so concurrent fires at an Event-Based gateway
-	// (its single gate track is the EventProcessor for every arm) can't both pass
-	// the guard and both advance an arm (FIX-007). Distinct from m (taken inside
-	// ProcessEvent, via the steps read and advanceToArm) — Go mutexes aren't
-	// reentrant, so reusing m would deadlock.
-	eventMu sync.Mutex
-	state   trackState
-	stopIt  atomic.Bool
+	evtCh  chan flow.EventDefinition
+	steps  []*stepInfo
+	m      sync.RWMutex
+	state  trackState
+	stopIt atomic.Bool
 }
 
 // record appends a track-state transition to the history, copy-on-write, and
@@ -367,6 +358,15 @@ func (t *track) checkNodeType(node flow.Node) error {
 	// removes that race; timers, which fire later, are unaffected.
 	t.updateState(TrackWaitForEvent)
 
+	// Tell the loop this track is parked BEFORE registering its waiters, so a fired
+	// event (dispatched by the loop as evDeliver) can never reach the loop before the
+	// track is recorded as parked-and-undelivered (SRD-027 FR-5). Gated on Active: at
+	// construction (New, before the loop runs) the loop records the track via spawn
+	// instead, and emitting here would block on the not-yet-draining inst.events.
+	if t.instance.State() == Active {
+		t.instance.emit(trackEvent{kind: evWaiting, track: t})
+	}
+
 	for _, d := range defs {
 		if err := t.instance.RegisterEvent(t, d); err != nil {
 			return errs.New(
@@ -440,6 +440,44 @@ func (t *track) run(
 	t.ctx = ctx
 
 	for {
+		if t.stopIt.Load() {
+			t.updateState(TrackCanceled)
+
+			return
+		}
+
+		if t.inState(TrackWaitForEvent) {
+			// Park on evtCh instead of busy-waiting (SRD-027 FR-1): the per-instance
+			// loop is the SOLE sender and sole closer, so a delivered event is applied
+			// on the track's OWN goroutine here — no foreign-goroutine mutation, no
+			// event mutex. Zero CPU until the loop dispatches a fired event (already
+			// past any correlation gate, §3.4) or closes evtCh on stop (FR-7).
+			select {
+			case <-ctx.Done():
+				t.updateState(TrackCanceled)
+				t.lastErr = ctx.Err()
+
+				return
+
+			case eDef, ok := <-t.evtCh:
+				if !ok {
+					// the loop closed evtCh on stop — terminate like a cancellation.
+					t.updateState(TrackCanceled)
+
+					return
+				}
+
+				if err := t.deliver(ctx, eDef); err != nil {
+					t.lastErr = err
+					t.updateState(TrackFailed)
+
+					return
+				}
+			}
+
+			continue
+		}
+
 		select {
 		case <-ctx.Done():
 			t.updateState(TrackCanceled)
@@ -448,33 +486,13 @@ func (t *track) run(
 			return
 
 		default:
-			if t.stopIt.Load() {
-				t.updateState(TrackCanceled)
-
-				return
-			}
-
-			if t.inState(TrackWaitForEvent) {
-				// Yield: a track parked on the WaitForEvent busy-wait must not
-				// starve the per-instance loop (which drives reachability-join
-				// re-evaluation, abort, completion). Before FIX-007 the
-				// per-iteration currentStep() read (an RLock) implicitly yielded
-				// here; the re-fetch below moved it out of the spin, so yield
-				// explicitly. (The poll-based wait is a pre-existing anti-pattern
-				// — TestComplexAbortInstance flakes on master too — whose proper
-				// cure is the event-driven, single-writer delivery of ADR-017.)
-				runtime.Gosched()
-
-				continue
-			}
 		}
 
-		// Read the current step AFTER the wait-guard, not before it. An Event-Based
-		// gateway's ProcessEvent (on the waiter goroutine) appends the winning arm's
-		// step and then flips the state out of TrackWaitForEvent; capturing the step
-		// before the guard could execute the stale gate step (which fails loudly,
-		// SRD-024) when the flip lands mid-iteration. Reading here — once the track is
-		// no longer WaitForEvent — observes the advanced arm step (FIX-007).
+		// Read the current step here, after the park: for an Event-Based gateway,
+		// deliver() (on THIS goroutine, just above) advanced the track onto the winning
+		// arm before returning Ready, so currentStep() observes the arm step, not the
+		// stale gate step (SRD-024). Single-writer delivery removes the cross-goroutine
+		// flip the old FIX-007 re-read guarded against.
 		step := t.currentStep()
 
 		// run while there is a step to take
@@ -844,35 +862,37 @@ func (t *track) uploadOutgoingData(
 
 // --------------------- exec.EventProcessor interface -------------------------
 
-// ProcessEvent delivers a fired event to the waiting node, unregisters the
-// node's event definitions, and returns the track to the Ready state so run()
-// resumes it. Implements eventproc.EventProcessor.
+// ProcessEvent (eventproc.EventProcessor) is called by an event producer on its OWN
+// goroutine when an event fires. It does NOT touch track state: it hands the event to
+// the per-instance loop (SRD-027 FR-2), which gates correlation and dispatches it to
+// this track's evtCh, where deliver() applies it on the track's own goroutine. Returns
+// once enqueued, not once applied.
 func (t *track) ProcessEvent(
+	_ context.Context,
+	eDef flow.EventDefinition,
+) error {
+	t.instance.emit(trackEvent{kind: evDeliver, track: t, eDef: eDef})
+
+	return nil
+}
+
+// deliver applies a fired event to the waiting node on the track's OWN goroutine: run()
+// receives it from evtCh — the loop having already passed the correlation gate (§3.4) —
+// and calls this. It lets the node process the payload, unregisters the node's event
+// definitions, advances onto the winning arm for an Event-Based gateway, and returns the
+// track to Ready so run() resumes (SRD-027 FR-2). No event mutex and no WaitForEvent
+// guard: the loop guarantees a single delivery to a parked track, so this goroutine is
+// the only one touching the track's state.
+func (t *track) deliver(
 	ctx context.Context,
 	eDef flow.EventDefinition,
 ) error {
-	// Serialize event delivery to this track (FIX-007): the first fire runs to
-	// completion — the WaitForEvent guard below through the WaitForEvent→Ready
-	// transition — before any concurrent second fire is evaluated, so two events
-	// reaching an Event-Based gateway's single gate track can't both advance an arm.
-	// The loser then fails the guard (state is no longer WaitForEvent) and is dropped.
-	t.eventMu.Lock()
-	defer t.eventMu.Unlock()
-
-	if !t.inState(TrackWaitForEvent) {
-		// An event reaching a track that isn't waiting — the Event-Based gateway's
-		// deferred-choice loser (a second concurrent fire after the winner already
-		// advanced), or any stray late delivery — is a benign drop, not a failure.
-		// Return ErrRejected so the waiters treat it as a no-op (no WARN); FIX-007.
-		return eventproc.ErrRejected
-	}
-
 	if ctx == nil {
 		ctx = t.ctx
 	}
 
-	// ProcessEvent runs on a waiter goroutine; guard the t.steps read against
-	// the run goroutine's checkFlows append (same t.m).
+	// Only this goroutine writes t.steps, but path()/occupiedNodes read it
+	// concurrently, so the read stays guarded by t.m.
 	t.m.RLock()
 	n := t.steps[len(t.steps)-1].node
 	t.m.RUnlock()
@@ -883,14 +903,6 @@ func (t *track) ProcessEvent(
 			errs.M("node %q(%s) doesn't support event processing",
 				n.Name(), n.ID()),
 			errs.C(errorClass, errs.TypeCastingError))
-	}
-
-	// Conversation-token rules BEFORE the node processes (SRD-017 §4.5): a
-	// correlation mismatch (a held key whose value differs) means the message
-	// isn't for this conversation — reject it so the receiver keeps waiting,
-	// without advancing the token. Otherwise any new key is associated here.
-	if t.instance.validateAndAssociate(ctx, eDef) {
-		return eventproc.ErrRejected
 	}
 
 	if err := ep.ProcessEvent(ctx, eDef); err != nil {
