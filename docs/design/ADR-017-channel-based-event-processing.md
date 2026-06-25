@@ -4,7 +4,7 @@
 |---|---|
 | Status | Draft |
 | Version | v.1 |
-| Date | 2026-06-22 |
+| Date | 2026-06-25 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) |
 
@@ -64,36 +64,87 @@ the wrong goroutines**. The root cause is structural and is best removed structu
 ### Rule 1 — Inbound (events → track): channel-park, loop-dispatched
 
 A waiting track exposes a **buffered channel** (`t.evtCh`, a fixed single-slot buffer — see §3) and
-parks in a blocking `select { case <-ctx.Done(): … case ev :=
-<-t.evtCh: … }`. A producer **never calls into the track** and **never sends to the track
-directly**: it **emits the fired event to the per-instance loop** — the same `inst.events` channel
-tracks already use to report lifecycle changes — and returns. The **loop is the sole sender** to a
-track's channel: it looks up the target track in the registry it *already owns* (`inst.tracks`,
-lock-free) and dispatches. No busy-spin (a blocked goroutine parks at zero CPU), no event mutex
-(only the track's own goroutine touches its state when it receives), no idle computation.
+parks in a blocking `select { case <-ctx.Done(): … case eDef :=
+<-t.evtCh: … }`. A producer **never mutates track state** and **never sends to its channel
+directly**: a producer's `ProcessEvent` only **emits** the fired event to the loop and returns (it no
+longer touches the track), and the **loop is the sole sender** to a track's channel. Everything
+inbound funnels through `inst.events` — the same channel tracks already use to report lifecycle
+changes — and the loop dispatches from the registry it *already owns* (`inst.tracks`, lock-free). No
+busy-spin (a blocked goroutine parks at zero CPU), no event mutex (only the track's own goroutine
+touches its state when it receives), no idle computation.
+
+**What the hub holds as the registered `EventProcessor` is chosen by trigger — and the choice is
+driven by one question: *does this trigger correlate?*** Correlation is the only reason to centralize
+the hub boundary above the track, and in BPMN it is a **Message-only** condition (Correlation §8.4.2;
+`docs/bpmn-spec/conformance.md:113`, `:177`).
+
+- **Message — the Instance is the registered processor.** Message is the only BPMN trigger matched
+  by a key derived from the event payload (`docs/bpmn-spec/semantics/event-handling.md:220`: a
+  subscriber "doesn't see a published Message unless the Message's correlation matches the
+  subscriber's Conversation correlation"). That matching state — the conversation keys, their lazy
+  association (ADR-016 v.1), and the keyed broker subscription — is **instance-owned**, so the
+  Instance is the natural boundary: it subscribes once carrying its keys, and its `ProcessEvent`
+  emits `evDeliver` to its own loop. The **loop** then runs the fine correlation gate
+  (`validateAndAssociate`): a non-matching publication is **dropped with the track left parked** (the
+  receiver keeps waiting — `event-handling.md:220`); a match flips the track and is dispatched. The
+  loop resolves the target track through a **per-instance `eDef → track` index** it builds as tracks
+  park.
+- **Signal, Timer — the track is the registered processor.** Neither correlates. Signal is an
+  unscoped **broadcast** ("Signals do NOT use correlation. Every catching Signal handler in reach …
+  receives the Signal" — `event-handling.md:221`) whose fan-out already addresses each catching track
+  directly; Timer is **clock-driven**, point-to-point per instance. For both, the track is an opaque
+  `EventProcessor` to the hub: its `ProcessEvent` emits `evDeliver` to the loop, which dispatches.
+  Routing these through the Instance would force a needless internal re-fan-out and centralize no
+  matching state.
+
+In **every** case the producer's `ProcessEvent` only **emits to the loop and returns**; the loop is
+the universal dispatcher. So a mixed-trigger **Event-Based gateway** (*receive-reply OR timeout* — a
+message arm and a timer arm on one track) stays correct: the message arm registers via the Instance,
+the timer arm via the track, but **both deliveries meet at the same loop targeting the same track**,
+where the deferred-choice flip (§3) picks the winner. The flip is never split across registration
+paths because Model Y funnels everything through the loop regardless of who was registered.
 
 ```mermaid
 sequenceDiagram
-    participant P as producer goroutine (timer/message/signal)
+    participant P as message waiter (broker goroutine)
+    participant I as Instance.ProcessEvent
     participant L as inst.loop (single writer)
     participant T as track.run goroutine (parked)
-    P->>L: emit evDeliver{track, eDef} on inst.events
-    Note over L: owns inst.tracks — target live & parked?
-    L->>T: t.evtCh <- eDef   (loop is sole sender)
-    Note over T: receives on its OWN goroutine
-    T->>T: ProcessEvent(eDef) — correlation validation stays here
-    T->>L: emit evEnded / evFork / … (advance, as today)
+    P->>I: ProcessEvent(eDef)   (Instance is the registered processor)
+    I->>L: emit evDeliver{eDef} on inst.events
+    Note over L: validateAndAssociate — fine correlation gate
+    alt key matches (or first association)
+        Note over L: resolve track via eDef→track index, then flip to not-parked
+        L->>T: t.evtCh <- eDef   (loop is sole sender)
+        T->>T: deliver(eDef) on its OWN goroutine — bind payload, advance
+    else key mismatch
+        Note over L: drop — track stays parked (receiver keeps waiting)
+    end
 ```
 
-**Matching (concrete, not a framework).** The loop dispatches to the track(s) a fired event
-addresses. For the **per-instance** kinds — timer and message — the waiter already knows its target
-track, so addressing is direct (message correlation keeps its two-tier shape: a coarse name+key
-match in the broker, then the fine `validateAndAssociate` on the track goroutine — unchanged from
-ADR-014/016). For **signal** — unscoped broadcast within reach — a `map[signalName][]subscriber`
-index replaces today's O(n) linear scan of *all* waiters. A general polymorphic match key over
-every BPMN trigger kind is **deliberately deferred**: only signal/message/timer are wired today, and
-universality for three cases costs more than it brings; the index generalizes when Error /
-Escalation / Link / Conditional actually land.
+Signal and Timer skip the Instance: their producer calls the **track's** `ProcessEvent`, which emits
+`evDeliver{track}` to the loop (the broadcast path is diagrammed below).
+
+**Matching (concrete, not a framework).** The loop addresses the track(s) a fired event targets. For
+**message**, the Instance's loop resolves the track via the per-instance `eDef → track` index above
+(message correlation keeps its two-tier shape — a coarse name+key match in the broker, then the fine
+`validateAndAssociate`, now run **in the loop** rather than on the track goroutine; unchanged from
+ADR-014/016 in *what* it matches). For **signal** — unscoped broadcast within reach — a
+`map[signalName][]subscriber` index replaces today's O(n) linear scan of *all* waiters. A general
+polymorphic match key over every BPMN trigger kind is **deliberately deferred**: only
+signal/message/timer are wired today, and universality for three cases costs more than it brings; the
+index — and the instance-vs-track boundary — generalize when Error / Escalation / Link / Conditional
+actually land.
+
+**Engine note — why only Message is instance-level.** Centralizing the hub boundary at the Instance
+earns its keep exactly when there is **instance-scoped matching state** to own: conversation keys and
+their association. That is a Message-only condition. Signal broadcasts without correlation
+(`event-handling.md:221`), Timer fires by the clock, and the not-yet-built data/internal triggers
+either evaluate against local data (Conditional) or route **structurally through the scope chain**,
+not by an external key (Error / Escalation: `event-handling.md:218` — "walk from the throwing scope
+outward … checking each for a catching Event with matching `errorRef`/`escalationRef`"). The rule is
+therefore **instance-as-processor iff the trigger correlates**, which today means **Message alone**;
+the boundary moves only if a future correlated trigger lands.
 
 ### Rule 2 — Outbound (track state → loop): the loop owns the shared view
 
@@ -110,29 +161,31 @@ two EPS paths that still bypassed it.
 
 ### Broadcast fan-out is two-level
 
-A signal reaches every catching handler in reach, across instances. The hub does **Level 1**
-(`signalName → {(instance, track)}`) and emits an `evDeliver` to each target instance's loop; each
-loop does **Level 2** (the targeted send to its own parked track). The thrower touches no track — it
-emits N times and returns.
+A signal reaches every catching handler in reach, across instances — and because Signal is
+track-registered, the fan-out addresses each catching **track** directly (no instance-level
+indirection). The hub does **Level 1** (`signalName → {track-processors in reach}`) and calls each
+catching track's `ProcessEvent`, which emits an `evDeliver` to that track's own loop; each loop does
+**Level 2** (the targeted send to its own parked track). The thrower mutates no track state — the
+fan-out is N emits and a return.
 
 ```mermaid
 sequenceDiagram
     participant Th as thrower goroutine (PropagateEvent)
     participant H as EventHub (signalName index)
+    participant PA as track A.ProcessEvent
     participant LA as inst-A.loop
-    participant LB as inst-B.loop
     participant TA as track A (parked)
-    participant TB as track B (parked)
     Th->>H: broadcastSignal(eDef)
-    Note over H: Level 1 — name → {(A,TA),(B,TB)}
-    H->>LA: A.deliverEvent(TA, eDef) → emit evDeliver
-    H->>LB: B.deliverEvent(TB, eDef) → emit evDeliver
-    Note over Th: returns — no ProcessEvent on thrower
+    Note over H: Level 1 — signalName → {track-processors in reach}
+    H->>PA: TA.ProcessEvent(eDef)   (track is the registered processor)
+    PA->>LA: emit evDeliver{TA, eDef}
+    Note over Th: returns — no track-state mutation on the thrower
     LA->>TA: Level 2 — TA.evtCh <- eDef
-    LB->>TB: TB.evtCh <- eDef
-    TA->>TA: ProcessEvent on own goroutine
-    TB->>TB: ProcessEvent on own goroutine
+    TA->>TA: deliver on own goroutine
 ```
+
+The diagram shows one catcher; the hub repeats `ProcessEvent` per catching track in reach (across
+instances), each emitting to its own loop.
 
 ## 3. Consequences
 
@@ -145,11 +198,40 @@ sequenceDiagram
   tears down the track's sibling subscriptions. A second event arriving for that track (the losing
   arm of an Event-Based gateway) then sees a not-parked target and is **correctly dropped** — the
   gateway already picked. The FIX-007 concurrent-fire double-win cannot occur; "exactly one arm
-  wins" holds without a guard.
+  wins" holds without a guard. This holds even for a **mixed-trigger** gateway (a message arm
+  registered via the Instance, a timer arm via the track): both arms deliver `evDeliver` to the same
+  loop targeting the same track, so the flip sees them serially — the hybrid registration never
+  splits the choice.
 - **Teardown is free by construction.** The loop is the **sole sender** to `t.evtCh` *and* the sole
   owner of the subscription index. "Unsubscribe" and "dispatch" are the same goroutine's serial
   steps, so the loop can never send to a track it just retired — the **send-on-closed-channel trap
   cannot arise**, and no `done`-guarded send is needed.
+- **The loop hop is not net overhead — it substitutes for a lock.** A single delivery costs **two
+  goroutine handoffs** — producer → loop (`emit(evDeliver)`) and loop → track (`t.evtCh`) — plus the
+  track's ordinary post-delivery `emit` reporting its advance back to the loop. That **outbound
+  notify is unavoidable in any design**: the loop is the single owner of lifecycle state (ADR-001
+  v.5), so the track must report its state change however the event reached it. Model Y's inbound
+  `emit(evDeliver)` is the *same channel-send machinery* as that mandatory notify, and it earns the
+  loop the lock-free deferred-choice flip and teardown above. Alternative D (direct producer →
+  `t.evtCh`) drops the inbound `emit` but must reintroduce a lock to make the flip atomic and to dodge
+  send-on-closed — so it trades a cheap, lock-free channel send for a lock, not for nothing. The
+  **hybrid adds no hop on top of this**: Message and Signal/Timer have identical handoff counts; only
+  the registered adapter (Instance vs track) and the loop's in-line work for Message (the
+  `eDef → track` lookup + the correlation gate, intrinsic to correlation) differ.
+- **Synchronous producer→loop binding (bounded, decouplable later).** The hub invokes `ProcessEvent`
+  synchronously on the producer goroutine; `emit`'s `<-loopDone` arm bounds this to the instance's
+  lifetime — **no deadlock, no send-on-closed, and a stale processor reference is a safe no-op**
+  (a dying instance unblocks the producer immediately rather than blocking it). Producers never run
+  on a loop goroutine, so there is no reentrancy cycle (even a self-signal is `track → loop`). The
+  only residual cost is **broadcast head-of-line latency** — signal fan-out is sequential on the
+  thrower's goroutine — bounded by the loop's drain rate, and the loop does no CPU-bound work (node
+  execution stays on track goroutines); **message is unaffected** (the broker calls
+  `Instance.ProcessEvent` on a per-waiter goroutine, naturally parallel). Binding the hub to the
+  **long-lived Instance** for Message is in fact *more* stable than a per-track binding (the
+  reference lasts the instance's life, not each receive episode). Full decoupling — an async,
+  buffered per-instance inbound queue the hub posts to without blocking — is the deferred
+  buffered-intake / durability seam (§5), to be added **only on measured contention**, not
+  speculatively.
 - **Buffering / backpressure.** `t.evtCh` is a **fixed single-slot buffer** (a constant, not an
   engine option — under flip-on-dispatch the loop sends at most one event per parked episode, so one
   slot is exactly enough and the only correct value). The single slot decouples the loop's send from
@@ -173,8 +255,10 @@ sequenceDiagram
   - **A no-catcher broadcast stays a benign no-op** (ADR-006 v.1 §2.4: "No waiter ⇒ no-op, not an
     error"): an empty subscriber set emits nothing.
   - **Message correlation rejection still leaves the receiver waiting** — the fine
-    `validateAndAssociate` runs on the track goroutine after receive; a non-matching publication is
-    not delivered (`event-handling.md:220`).
+    `validateAndAssociate` runs **in the loop** when the Instance emits an inbound message; a
+    non-matching publication is dropped and the track stays parked (`event-handling.md:220`). Moving
+    the gate from the track goroutine to the loop changes *which goroutine* decides, never the
+    verdict.
 - **Net simplification once landed.** The site-by-site EPS guards are removed; the engine gains one
   place to reason about event ordering, delivery, and teardown, consistent with the rest of the
   single-writer model.
@@ -185,8 +269,10 @@ sequenceDiagram
   the producer emits to the loop; the loop is the sole dispatcher to tracks and the sole owner of
   positions. Removes the race class by construction, no lock, and folds delivery, teardown,
   fan-out, and deferred-choice atomicity into **one** mechanism — the loop the engine already runs.
-  This is the Go-native realization of the "loop owns one event flow" direction. Cost: a per-track
-  channel and one extra in-process hop (producer → loop → track), negligible for orchestration.
+  This is the Go-native realization of the "loop owns one event flow" direction. The hub boundary is
+  **per-trigger** (Rule 1): the Instance for Message (correlation is instance-owned), the track
+  otherwise. Cost: a per-track channel and one extra in-process hop (producer → loop → track),
+  negligible for orchestration.
 - **B — Per-site locks / defensive re-reads (the status quo + the patches).** Guard each site
   individually (a per-track event mutex; re-read positions after a guard; a snapshot). *Rejected as
   the end state:* correct per site but does not generalize — lock proliferation, and every new
@@ -203,6 +289,16 @@ sequenceDiagram
   own view of which tracks are parked — a **second registry racing the loop's `inst.tracks`**, which
   is exactly the cross-goroutine read Rule 2 forbids, merely relocated to the send side. A keeps a
   single owner; D trades that for a hop it does not need.
+- **E — Uniform instance-as-processor (every trigger registered via the Instance).** Make the hub
+  talk only to Instances; the Instance routes every fired event to its tracks. Conceptually tidy —
+  the hub never holds a track. *Rejected in favour of the per-trigger boundary in A/Rule 1:* it pays
+  a cost only Message redeems. Signal is the worst fit — a shared cross-instance signal waiter
+  fanning out to **Instances** would force each Instance to **re-fan-out internally** to its catching
+  tracks, replacing the broadcast's natural per-track addressing with an extra redispatch for zero
+  correlation benefit; Timer gains nothing either. Uniformity here optimizes a non-problem (the hub
+  holding an opaque `EventProcessor` leaks nothing for non-correlated triggers) while complicating
+  the one path — broadcast — that is simplest per-track. The hybrid centralizes **only** where
+  instance-scoped matching state exists.
 
 ## 5. Enterprise-readiness recommendations
 
@@ -227,7 +323,9 @@ sequenceDiagram
   across the new async boundary.
 - [ADR-014 v.1 Message handling](ADR-014-message-handling.md) / [ADR-016 v.1 Message correlation](ADR-016-message-correlation.md)
   — the message broker stays the message backend; its two-tier correlation match (broker name+key,
-  then track-side `validateAndAssociate`) is unchanged by this rework.
+  then the fine `validateAndAssociate`) is unchanged in *what* it matches. This rework relocates the
+  fine step from the track goroutine to the **loop**, and makes the **Instance** the hub-facing
+  processor for Message so its conversation keys and keyed subscription stay instance-owned.
 - BPMN 2.0 — `docs/bpmn-spec/semantics/event-handling.md`: signal publication is unscoped within
   reach and carries no correlation (:221), publication is broadcast across Pools/Processes (:15),
   Message publication is correlation-matched (:220). The async path keeps these intact.
@@ -238,9 +336,12 @@ The model lands as **two SRD slices on a single branch** (`feat/adr-017-eps-rewo
 and implemented under the project's SDD discipline (its own SRD, milestones, and tests):
 
 1. **Inbound slice (first).** Channel-park delivery: the per-track `t.evtCh`, the `evDeliver`
-   loop-dispatch path, the `signalName → subscribers` index, deferred-choice atomicity, and
-   subscription teardown. Removes the busy-spin, the per-track event mutex, and the synchronous
-   signal foreign-goroutine path; makes deferred choice free.
+   loop-dispatch path, the **per-trigger hub boundary** (the Instance as the registered processor for
+   Message, the track otherwise), the loop-side correlation gate (`validateAndAssociate`) with its
+   per-instance `eDef → track` index, the `signalName → subscribers` index, deferred-choice
+   atomicity, and subscription teardown. Removes the busy-spin, the per-track event mutex, the
+   track's correlation-keys exposure, and the synchronous signal foreign-goroutine path; makes
+   deferred choice free.
 2. **Outbound slice (second).** Loop-owned positions: the loop becomes the sole owner of the
    token-position / join view that reachability and joins read, removing the loop-reads-track-state
    race (the Complex / OR-join transient spurious abort).
@@ -253,4 +354,4 @@ decided above (§2–§3); the SRD slices fix the concrete signatures and tests,
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 (Draft) | 2026-06-22 | Ruslan Gabitov | Draft conception of the EPS concurrency model: a waiting track **parks on a channel** fed **only by the per-instance loop** (producers emit to the loop, never call `ProcessEvent` or send to the track directly) and **never exposes mutable state for others to read** (the loop owns the shared view of positions/joins). Extends ADR-001 v.5's single-writer principle to both event delivery and cross-goroutine state reads, making the loop the single **dispatcher** of inbound events so teardown, broadcast fan-out, and deferred-choice atomicity fall out of one mechanism; eliminates the foreign-goroutine / cross-read race class by construction; preserves ADR-006 v.1 / ADR-014 / ADR-016 delivery semantics. Signal matching becomes a `signalName → subscribers` index (the O(n) scan dropped); a general polymorphic match key is deferred until more event kinds land. Lands as two SRD slices (inbound, then outbound) on one branch. |
+| v.1 (Draft) | 2026-06-25 | Ruslan Gabitov | Draft conception of the EPS concurrency model: a waiting track **parks on a channel** fed **only by the per-instance loop** (producers emit to the loop, never send to the track directly) and **never exposes mutable state for others to read** (the loop owns the shared view of positions/joins). Extends ADR-001 v.5's single-writer principle to both event delivery and cross-goroutine state reads, making the loop the single **dispatcher** of inbound events so teardown, broadcast fan-out, and deferred-choice atomicity fall out of one mechanism; eliminates the foreign-goroutine / cross-read race class by construction; preserves ADR-006 v.1 / ADR-014 / ADR-016 delivery semantics. The hub-facing `EventProcessor` is **per-trigger**: the **Instance** for Message (correlation — conversation keys, lazy association, keyed subscription — is instance-owned, so the fine `validateAndAssociate` runs **in the loop**, which resolves the target track via a per-instance `eDef → track` index) and the **track** for Signal/Timer (no correlation; broadcast/clock address the track directly). Signal matching becomes a `signalName → subscribers` index (the O(n) scan dropped); a general polymorphic match key, and the instance-vs-track boundary, are deferred until more event kinds land. Lands as two SRD slices (inbound, then outbound) on one branch. |
