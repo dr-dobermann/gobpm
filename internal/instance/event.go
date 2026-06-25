@@ -17,7 +17,10 @@ type trackEvent struct {
 	// surviving track absorbed at a synchronizing join. Ids, not pointers: the
 	// loop resolves them against inst.tracks (which it owns) to flip their state.
 	mergedIDs []string
-	kind      trackEventKind
+	// eDef, for evDeliver, is the fired event definition the loop dispatches to the
+	// subject track's evtCh (SRD-027 FR-2).
+	eDef flow.EventDefinition
+	kind trackEventKind
 }
 
 // trackEventKind enumerates the track→loop event kinds.
@@ -43,6 +46,12 @@ func (k trackEventKind) String() string {
 
 	case evFailed:
 		return "failed"
+
+	case evWaiting:
+		return "waiting"
+
+	case evDeliver:
+		return "deliver"
 
 	default:
 		return "unknown"
@@ -70,4 +79,14 @@ const (
 	// via Instance.fail) instead of treating it as a plain evEnded that would let the
 	// instance complete silently. FIX-008.
 	evFailed
+	// evWaiting: a track entered TrackWaitForEvent and parked on its evtCh. Emitted BEFORE
+	// the catch node registers its hub waiters (SRD-027 FR-5) so the loop records the track as
+	// parked-and-undelivered before any evDeliver can target it; the loop adds it to the
+	// waiting set.
+	evWaiting
+	// evDeliver: a producer handed a fired event (eDef) to the loop for the subject track
+	// (SRD-027 FR-2). The loop dispatches it to track.evtCh iff the track is parked-and-
+	// undelivered, else drops it (the losing arm of an Event-Based gateway / a duplicate
+	// fire — FR-4).
+	evDeliver
 )

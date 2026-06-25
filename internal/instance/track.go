@@ -175,6 +175,11 @@ type track struct {
 	// track's fate (survivor → proceed, merged → return). Buffered(1) so the
 	// loop never blocks on the signal. SRD-022.
 	parkCh chan struct{}
+	// evtCh delivers a fired event to this track while it is parked in TrackWaitForEvent
+	// (SRD-027 FR-1). The per-instance loop is the SOLE sender and sole closer; the track
+	// only receives. Buffered to one slot (eventBufferDepth) so the loop never blocks on the
+	// send — with flip-on-dispatch the loop delivers at most one event per parked episode.
+	evtCh chan flow.EventDefinition
 	steps []*stepInfo
 	m     sync.RWMutex
 	// eventMu serializes ProcessEvent on this track: one event is processed to
@@ -257,6 +262,13 @@ func (t *track) path() TokenPath {
 	return tp
 }
 
+// eventBufferDepth is the per-track inbound event-channel (evtCh) capacity. One slot is
+// exactly enough: the loop dispatches at most one event per parked episode (it removes the
+// track from its waiting set on first delivery), and a single slot decouples the loop's send
+// from the track's scheduling so the loop never blocks. Unbuffered would risk blocking the loop
+// in the window between the track's evWaiting and its receive. SRD-027 §3.6.
+const eventBufferDepth = 1
+
 // newTrack creates the new track from the start flow.Node and sets it
 // in TrackReady state.
 // newTrack retruns created track's pointer on success or error on failure.
@@ -299,6 +311,7 @@ func newTrack(
 		state:    TrackReady,
 		instance: inst,
 		parkCh:   make(chan struct{}, 1),
+		evtCh:    make(chan flow.EventDefinition, eventBufferDepth),
 	}
 
 	if prevTrack != nil {

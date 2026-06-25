@@ -621,6 +621,12 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 
 	active := 0
 	stopping := false
+	// waiting holds tracks parked on their evtCh and not yet delivered (SRD-027 FR-4):
+	// presence ⟺ parked-and-undelivered. Loop-goroutine-only, so no lock — like active /
+	// stopping. evWaiting adds a track; the first evDeliver for it removes it and sends the
+	// event (the winner); a later evDeliver for it finds it absent and drops (a losing arm of
+	// an Event-Based gateway, or a duplicate fire).
+	waiting := map[string]struct{}{}
 
 	// spawn registers a track, adds it to the read snapshot, counts it
 	// active, and runs it in its own goroutine.
@@ -686,6 +692,7 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 
 			case evEnded:
 				active--
+				delete(waiting, ev.track.ID())
 				inst.recheckAwaitingJoins()
 
 			case evAwaiting:
@@ -708,6 +715,23 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 				// and terminate, rather than letting it complete silently (FIX-008).
 				inst.failFromTrack(ev.track, stopAll)
 				active--
+				delete(waiting, ev.track.ID())
+
+			case evWaiting:
+				// the track parked on its evtCh and is ready to receive — record it as
+				// parked-and-undelivered (SRD-027 FR-4/FR-5).
+				waiting[ev.track.ID()] = struct{}{}
+
+			case evDeliver:
+				// dispatch to a parked-and-undelivered track. The flip — delete on the
+				// first delivery — makes deferred choice atomic: a later event for the same
+				// track finds it absent and is dropped (the losing arm / a duplicate fire).
+				// The loop is the sole sender to evtCh; the buffered slot keeps this send
+				// from blocking the loop (SRD-027 FR-3/FR-4).
+				if _, parked := waiting[ev.track.ID()]; parked {
+					delete(waiting, ev.track.ID())
+					ev.track.evtCh <- ev.eDef
+				}
 			}
 		}
 	}
