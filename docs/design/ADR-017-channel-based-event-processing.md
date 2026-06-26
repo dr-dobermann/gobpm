@@ -2,13 +2,14 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-25 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) |
 
-> **Draft (conception; implementation sliced into accompanying SRDs).** Reworks the
+> **Accepted (conception decided; both slices landed by the accompanying SRDs — SRD-027 inbound,
+> SRD-028 outbound).** Reworks the
 > event-processing subsystem (EPS) onto a **Go-native, channel-based** model with two rules: a
 > waiting track receives events by **parking on a channel** fed **only by the per-instance loop**
 > (a producer *emits* the fired event to the loop, it never calls into the track), and a track
@@ -424,4 +425,5 @@ decided above (§2–§3); the SRD slices fix the concrete signatures and tests,
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.1 (Accepted) | 2026-06-26 | Ruslan Gabitov | **Accepted** — conception decided and fully realized; both slices landed on `feat/adr-017-eps-rework`. **Rule 1 (inbound)** via SRD-027: a waiting track parks on `t.evtCh`, producers emit to the loop (`evDeliver`), the loop is the sole dispatcher; the busy-spin and the per-track event mutex are gone; an O(1) `signalName → subscribers` index replaces the broadcast scan; the Instance is the hub `EventProcessor` for Message (instance-owned correlation), the track for Signal/Timer. **Rule 2 (outbound)** via SRD-028: the loop owns the `position`/`parked` view, fed by `evMoved` + a node-carrying `evParked`; `joinPositions` is pure over those maps; the dead live `FlowChecker` is removed; `t.m` is retained for the quiescent merged-track finalization seam (full removal a deliberate non-goal — `track` is unexported within the instance package). The race-freedom gate is exercised: `make ci` green, `pkg/thresher` under `-race` ×40 clean, diff-coverage 99.7%. |
 | v.1 (Draft) | 2026-06-25 | Ruslan Gabitov | Draft conception of the EPS concurrency model: a waiting track **parks on a channel** fed **only by the per-instance loop** (producers emit to the loop, never send to the track directly) and **never exposes mutable state for others to read** (the loop owns the shared view of positions/joins). Extends ADR-001 v.5's single-writer principle to both event delivery and cross-goroutine state reads, making the loop the single **dispatcher** of inbound events so teardown, broadcast fan-out, and deferred-choice atomicity fall out of one mechanism; eliminates the foreign-goroutine / cross-read race class by construction; preserves ADR-006 v.1 / ADR-014 / ADR-016 delivery semantics. The hub-facing `EventProcessor` is **per-trigger**: the **Instance** for Message (correlation — conversation keys, lazy association, keyed subscription — is instance-owned, so the fine `validateAndAssociate` runs **in the loop**, which resolves the target track via a per-instance `eDef → track` index) and the **track** for Signal/Timer (no correlation; broadcast/clock address the track directly). Signal matching becomes a `signalName → subscribers` index (the O(n) scan dropped); a general polymorphic match key, and the instance-vs-track boundary, are deferred until more event kinds land. Lands as two SRD slices (inbound, then outbound) on one branch. |

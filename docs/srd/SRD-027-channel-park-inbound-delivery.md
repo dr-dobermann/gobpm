@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-25 |
 | Owner | Ruslan Gabitov |
@@ -412,19 +412,50 @@ complex/OR-join tests flake under `-race`:
 
 ## 9. Definition of Done
 
-- [ ] FR-1…FR-8 wired and demonstrated by §6 tests.
-- [ ] `eventMu` and the `runtime.Gosched` busy-spin removed; `track.CorrelationKeys` moved to
+- [x] FR-1…FR-8 wired and demonstrated by §6 tests.
+- [x] `eventMu` and the `runtime.Gosched` busy-spin removed; `track.CorrelationKeys` moved to
       `Instance`; no new mutex added.
-- [ ] `make ci` green (tidy → lint → build → `-race` tests → diff-coverage ≥ 95% on touched
+- [x] `make ci` green (tidy → lint → build → `-race` tests → diff-coverage ≥ 95% on touched
       functions → govulncheck), across modules.
-- [ ] Runnable examples smoke-run (not just build) exit 0 (FIX-002 discipline).
-- [ ] §8 cross-doc pins consistent (up/sideways only; every referenced doc exists at its pin).
-- [ ] §10 implementation summary filled (files/lines, V-results, milestone SHAs). ADR-017 stays
-      **Draft** until SRD-028 also lands (per the conception's two-slice rollout).
+- [x] Runnable examples smoke-run (not just build) exit 0 (FIX-002 discipline).
+- [x] §8 cross-doc pins consistent (up/sideways only; every referenced doc exists at its pin).
+- [x] §10 implementation summary filled (files/lines, V-results, milestone SHAs). ADR-017 lands
+      Accepted now that SRD-028 (the outbound slice) has also landed (the conception's two-slice
+      rollout is complete).
 
 ## 10. Implementation summary
 
-_(placeholder — filled at landing: §10.1 stages by commit · §10.2 deltas vs draft · §10.3 V-results)_
+Landed on `feat/adr-017-eps-rework`.
+
+### 10.1 Commits
+
+| Stage | SHA | Scope |
+|-------|-----|-------|
+| M1 — inbound plumbing + loop dispatch | `ce44831` | `evDeliver` trackEvent + the loop's dispatch-to-parked path; `t.evtCh` added; the producer→loop emit replaces the cross-goroutine `track.ProcessEvent`. |
+| M2 — channel-park inbound delivery | `f9ee4c6` | the waiting track parks on `t.evtCh` (busy-spin removed); `eventMu` removed; the waiter builders (`message.go`/`waiters.go`) stop mutating the track; loop-owned subscription teardown. |
+| M3 — hybrid instance-as-processor (Message) | `ba1648c` | the **Instance** is the hub `EventProcessor` for Message (correlation is instance-owned); `validateAndAssociate` runs in the loop; the target track resolves via the per-instance `msgEDef → track` index; Signal/Timer stay track-addressed. |
+| M4 — O(1) signal-name index | `1ef7609` | `signalName → subscribers` index in the eventhub replaces the O(n) all-waiters scan in `broadcastSignal`. |
+| §3.8 — race-free complex/OR-join recheck | `4c8828f` | single-snapshot recheck/abort over the join positions (the intra-MR band-aid for the loop's transitional cross-read — later **superseded** by SRD-028's loop-owned `position` view). |
+
+### 10.2 Key files
+
+- `internal/instance/event.go` — `evDeliver`/`evWaiting` kinds; `trackEvent` carries `eDef`/`msgDefIDs`.
+- `internal/instance/instance.go` — loop dispatch, the `waiting` set, the `msgEDef → track` index, `validateAndAssociate` in the loop, `Instance.ProcessEvent`/`Instance.CorrelationKeys`.
+- `internal/instance/track.go` — `t.evtCh`, park-on-channel in `run`, `eventMu`/`runtime.Gosched` removed.
+- `internal/eventproc/eventhub/{eventhub,waiters/message,waiters/waiters}.go` — signal-name index, loop-driven waiter teardown.
+
+### 10.3 Verification
+
+- **§6 tests.** `inbound_delivery_test.go`, `conversation_key_test.go`, `eventhub_signal_test.go`, `message_test.go` — green under `-race`.
+- **`make ci`.** Green across all modules (tidy, lint 0 issues, build, `-race` tests, diff-coverage, govulncheck).
+- **Diff coverage.** `covercheck -min 95 -base origin/master` PASS — eventhub.go / waiters/message.go / waiters/waiters.go / event.go / instance.go 100%, track.go 98.7% (the branch run, shared with SRD-028).
+- **`-race` stress.** `pkg/thresher` under `-race` ×40 clean.
+- **Examples.** All 16 `examples/*` run to exit 0 (FIX-002 runtime-smoke discipline).
+
+### 10.4 Deltas vs the draft
+
+- Added **§3.8** (race-free complex/OR-join recheck) as an intra-MR amendment when the M2/M3 loop transition exposed a transient cross-read at the join; the single-snapshot recheck is the inbound-slice band-aid, **superseded** by SRD-028's loop-owned `position` view (no cross-read at all).
+- Otherwise the landing matches the draft: FR-1…FR-8 wired as specified; no scope added or dropped.
 
 ## Open questions
 
