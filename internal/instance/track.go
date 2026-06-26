@@ -818,6 +818,16 @@ func (t *track) checkFlows(flows []*flow.SequenceFlow) error {
 		return err
 	}
 
+	// Report the advance to the loop — the sole owner of the position view (ADR-017 Rule 2,
+	// SRD-028 FR-2). The node is carried in the event so the loop never reads currentStep
+	// cross-goroutine. Reached only from run() (instance Active), so no construction gating.
+	// Emitted AFTER checkNodeType: for a wait node, checkNodeType makes the token observably
+	// WaitForEvent and then registers its hub waiters; inserting this loop round-trip before
+	// that registration would widen the window in which a fired event finds no subscriber and
+	// is lost. The position view does not need the move before evWaiting (a join recheck is
+	// triggered by a death/park, never by a move).
+	t.instance.emit(trackEvent{kind: evMoved, track: t, node: nextStep.node})
+
 	// the remaining flows fork: build a fresh slice (don't mutate the caller's)
 	// and hand it to the loop, which constructs the new tracks. The track never
 	// mutates instance state itself.
@@ -1000,6 +1010,10 @@ func (t *track) advanceToArm(
 		state:  StepCreated,
 	})
 	t.m.Unlock()
+
+	// Report the arm advance to the loop, like checkFlows (ADR-017 Rule 2, SRD-028 FR-2):
+	// the winning arm becomes this track's position in the loop's own view.
+	t.instance.emit(trackEvent{kind: evMoved, track: t, node: arm})
 }
 
 // -----------------------------------------------------------------------------

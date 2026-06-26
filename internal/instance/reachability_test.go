@@ -17,7 +17,7 @@ import (
 
 // orDiamond builds:  start → split ─┬→ a → merge ─→ end
 //
-//	                              └→ b ─┘
+//	└→ b ─┘
 //
 // (split diverging, merge converging) and returns the process + the nodes the
 // reachability tests anchor on.
@@ -94,19 +94,6 @@ func TestReachesOccupied(t *testing.T) {
 		})
 }
 
-// positionToken parks a freshly created track at node so it projects a live
-// (WaitForEvent) token there — enough to exercise CheckFlows/occupiedNodes
-// without running the instance.
-func positionToken(t *testing.T, inst *Instance, node flow.Node) {
-	t.Helper()
-
-	tr, err := newTrack(node, inst, nil)
-	require.NoError(t, err)
-
-	// occupiedNodes walks the loop-owned tracks map by position.
-	inst.tracks[tr.ID()] = tr
-}
-
 func newDiamondInstance(t *testing.T, p *process.Process) *Instance {
 	t.Helper()
 
@@ -118,48 +105,42 @@ func newDiamondInstance(t *testing.T, p *process.Process) *Instance {
 	inst, err := New(s, scope.EmptyDataPath, enginert.Default(), ep, nil)
 	require.NoError(t, err)
 
-	// occupiedNodes walks inst.tracks by position; start from a clean set so each
-	// test controls exactly which tokens are live (positionToken adds them).
+	// Start from a clean tracks set so each test controls exactly which tokens are live.
 	inst.tracks = map[string]*track{}
 
 	return inst
 }
 
-func TestCheckFlowsBranchNeverTaken(t *testing.T) {
+// TestCheckFlowsWith exercises the reachability subset logic (checkFlowsWith) over an explicit
+// occupied-node snapshot — the same snapshot recheckJoin now builds from the loop-owned position
+// view (SRD-028 §3.4), without the removed live inst.CheckFlows path.
+func TestCheckFlowsWith(t *testing.T) {
 	_ = data.CreateDefaultStates()
 
-	p, _, _, _, merge := orDiamond(t)
-	inst := newDiamondInstance(t, p)
+	_, split, _, _, merge := orDiamond(t)
 
-	// No live token anywhere → both incoming flows of merge are unreachable.
-	reachable, err := inst.CheckFlows(merge, merge.Incoming())
-	require.NoError(t, err)
-	require.Empty(t, reachable)
-}
+	t.Run("branch never taken — no live token, none reachable",
+		func(t *testing.T) {
+			reachable, err := checkFlowsWith(merge, merge.Incoming(), map[string]bool{})
+			require.NoError(t, err)
+			require.Empty(t, reachable)
+		})
 
-func TestCheckFlowsNilFlowSkipped(t *testing.T) {
-	_ = data.CreateDefaultStates()
+	t.Run("nil flow skipped",
+		func(t *testing.T) {
+			flows := append([]*flow.SequenceFlow{nil}, merge.Incoming()...)
 
-	p, _, _, _, merge := orDiamond(t)
-	inst := newDiamondInstance(t, p)
+			reachable, err := checkFlowsWith(merge, flows, map[string]bool{})
+			require.NoError(t, err)
+			require.Empty(t, reachable) // nil entry skipped; no token → none reachable
+		})
 
-	flows := append([]*flow.SequenceFlow{nil}, merge.Incoming()...)
-
-	reachable, err := inst.CheckFlows(merge, flows)
-	require.NoError(t, err)
-	require.Empty(t, reachable) // nil entry skipped; no token → none reachable
-}
-
-func TestCheckFlowsLiveTokenUpstream(t *testing.T) {
-	_ = data.CreateDefaultStates()
-
-	p, split, _, _, merge := orDiamond(t)
-	inst := newDiamondInstance(t, p)
-
-	// A token at split can still reach both a and b → both flows reachable.
-	positionToken(t, inst, split)
-
-	reachable, err := inst.CheckFlows(merge, merge.Incoming())
-	require.NoError(t, err)
-	require.Len(t, reachable, 2)
+	t.Run("live token upstream — both branches reachable",
+		func(t *testing.T) {
+			// A token at split can still reach both a and b → both flows reachable.
+			reachable, err := checkFlowsWith(
+				merge, merge.Incoming(), map[string]bool{split.ID(): true})
+			require.NoError(t, err)
+			require.Len(t, reachable, 2)
+		})
 }

@@ -10,6 +10,10 @@ type trackEvent struct {
 	// evEnded, the awaiting track for evAwaiting, the surviving (completing)
 	// track for evMerged.
 	track *track
+	// node, for evMoved, is the node the track just advanced onto. It is carried in the
+	// event so the loop updates its own position view WITHOUT reading the track's
+	// currentStep cross-goroutine (ADR-017 Rule 2, SRD-028 FR-2).
+	node flow.Node
 	// eDef, for evDeliver, is the fired event definition the loop dispatches to the
 	// subject track's evtCh (SRD-027 FR-2). For a Message evDeliver (track == nil,
 	// emitted by Instance.ProcessEvent) the loop resolves the target track from its
@@ -59,6 +63,9 @@ func (k trackEventKind) String() string {
 	case evDeliver:
 		return "deliver"
 
+	case evMoved:
+		return "moved"
+
 	default:
 		return "unknown"
 	}
@@ -97,4 +104,8 @@ const (
 	// track's evtCh iff it is parked-and-undelivered, else drops it (the losing arm of an
 	// Event-Based gateway / a duplicate fire / a correlation mismatch — FR-4/FR-8).
 	evDeliver
+	// evMoved: a track advanced onto a new node (ev.node carries it). The loop sets its own
+	// position view (position[track] = node) so reachability and joins read the loop-owned
+	// map instead of the track's currentStep cross-goroutine (ADR-017 Rule 2, SRD-028 FR-1/FR-2).
+	evMoved
 )
