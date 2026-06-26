@@ -183,6 +183,60 @@ func TestRecheckParkedTrailing(t *testing.T) {
 	}
 }
 
+// TestApplyEventParkedDuringShutdown covers the shutdown guard of the evParked case (SRD-028
+// FR-3): once the loop is stopping, stopAll has cleared the parked view and joins do not fire,
+// so a late park must NOT be recorded — otherwise it would leave a stale entry a later
+// recheckAwaitingJoins would walk.
+func TestApplyEventParkedDuringShutdown(t *testing.T) {
+	p, split, _, _, _ := orDiamond(t)
+	inst := newDiamondInstance(t, p)
+
+	tr, err := newTrack(split, inst, nil)
+	require.NoError(t, err)
+
+	position := map[string]flow.Node{} // cleared, as stopAll leaves it
+	parked := map[string]flow.Node{}
+	active := 1
+	stopping := true
+
+	require.NotPanics(t, func() {
+		inst.applyEvent(context.Background(),
+			trackEvent{kind: evParked, track: tr, node: split},
+			&active, &stopping,
+			map[string]struct{}{}, map[string]*track{}, position, parked,
+			func(*track) {}, func() {})
+	})
+
+	require.Empty(t, parked, "a park during shutdown is not recorded")
+}
+
+// TestApplyEventParkedAfterMerge covers the merge-race guard of the evParked case (SRD-028
+// FR-3): when all branches arrive at an OR-join, the completing arrival's evMerged can be
+// applied before a co-arriving track's own evParked, clearing it from position. The late park
+// must then be dropped (the track is already merged) rather than re-inserted as a stale entry.
+func TestApplyEventParkedAfterMerge(t *testing.T) {
+	p, split, _, _, _ := orDiamond(t)
+	inst := newDiamondInstance(t, p)
+
+	tr, err := newTrack(split, inst, nil)
+	require.NoError(t, err)
+
+	position := map[string]flow.Node{} // tr already cleared by an earlier evMerged
+	parked := map[string]flow.Node{}
+	active := 0
+	stopping := false
+
+	require.NotPanics(t, func() {
+		inst.applyEvent(context.Background(),
+			trackEvent{kind: evParked, track: tr, node: split},
+			&active, &stopping,
+			map[string]struct{}{}, map[string]*track{}, position, parked,
+			func(*track) {}, func() {})
+	})
+
+	require.Empty(t, parked, "a park for an already-merged track is dropped")
+}
+
 // TestNodeIDOf covers the nil-node guard of the position log helper (SRD-028 FR-5).
 func TestNodeIDOf(t *testing.T) {
 	require.Equal(t, "<none>", nodeIDOf(nil))

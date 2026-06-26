@@ -191,9 +191,13 @@ type track struct {
 }
 
 // record appends a track-state transition to the history, copy-on-write, and
-// publishes it atomically. It is called from the track's run goroutine and,
-// via ProcessEvent -> updateState, from a waiter goroutine, so the read of
-// t.steps is guarded by t.m (the same lock checkFlows takes to append a step).
+// publishes it atomically. It runs on the track's own run goroutine, and also on
+// the loop goroutine when the loop finalizes a QUIESCENT merged track
+// (applyMerged / recheckParked -> updateState(TrackMerged) -> record). That track's
+// own goroutine has already returned (AwaitingMerge) or is suspended on parkCh
+// (AwaitSync), so the loop-side read of t.steps is ordered after the track's last
+// write by the emit / parkCh handoff (ADR-001 single-writer of a quiescent track,
+// SRD-028 §3.6); t.m guards that read uniformly with the track's own appends.
 func (t *track) record(state trackState) {
 	t.m.RLock()
 	node := t.steps[len(t.steps)-1].node
@@ -607,7 +611,9 @@ func (t *track) synchronize(step *stepInfo) (proceed bool) {
 	// returns and lets the goroutine end (AwaitingMerge).
 	if _, isReach := step.node.(exec.ReachabilityJoin); isReach {
 		t.updateState(TrackAwaitSync)
-		t.instance.emit(trackEvent{kind: evParked, track: t})
+		// Carry the join node so the loop records the park from the event itself, never
+		// inferring it from its position view (SRD-028 FR-3).
+		t.instance.emit(trackEvent{kind: evParked, track: t, node: step.node})
 
 		select {
 		case <-t.parkCh:
@@ -652,7 +658,8 @@ func (t *track) synchronizeActivation(
 	// resume this goroutine proceeds as the survivor, or returns if it was merged
 	// away; ctx cancel (incl. the loop aborting an unsatisfiable rule) ends it.
 	t.updateState(TrackAwaitSync)
-	t.instance.emit(trackEvent{kind: evParked, track: t})
+	// Carry the join node so the loop records the park from the event (SRD-028 FR-3).
+	t.instance.emit(trackEvent{kind: evParked, track: t, node: step.node})
 
 	select {
 	case <-t.parkCh:
@@ -929,8 +936,10 @@ func (t *track) deliver(
 		ctx = t.ctx
 	}
 
-	// Only this goroutine writes t.steps, but path()/occupiedNodes read it
-	// concurrently, so the read stays guarded by t.m.
+	// Read the waiting node's position. t.steps is written only by this goroutine, but t.m is
+	// held here uniformly with the other steps accessors (currentStep / record) so the loop's
+	// merge-path record() — finalizing a quiescent merged track — never races an append
+	// (SRD-028 §3.6). path() / Token() read the lock-free hist projection, not t.steps.
 	t.m.RLock()
 	n := t.steps[len(t.steps)-1].node
 	t.m.RUnlock()

@@ -10,9 +10,10 @@ type trackEvent struct {
 	// evEnded, the awaiting track for evAwaiting, the surviving (completing)
 	// track for evMerged.
 	track *track
-	// node, for evMoved, is the node the track just advanced onto. It is carried in the
-	// event so the loop updates its own position view WITHOUT reading the track's
-	// currentStep cross-goroutine (ADR-017 Rule 2, SRD-028 FR-2).
+	// node carries a node for two kinds: for evMoved the node the track just advanced onto
+	// (the loop sets position), and for evParked the join node the track suspended on (the
+	// loop sets parked). Carried in the event so the loop never infers it from a
+	// cross-goroutine read of the track's currentStep (ADR-017 Rule 2, SRD-028 FR-2/FR-3).
 	node flow.Node
 	// eDef, for evDeliver, is the fired event definition the loop dispatches to the
 	// subject track's evtCh (SRD-027 FR-2). For a Message evDeliver (track == nil,

@@ -826,9 +826,24 @@ func (inst *Instance) applyEvent(
 
 	case evParked:
 		// the track blocked at a reachability join — its goroutine is alive, so active is
-		// unchanged. Record its join node (it moved there via evMoved first — FIFO) in the
-		// loop-owned parked view, then recheck. SRD-028 FR-3.
-		parked[ev.track.ID()] = position[ev.track.ID()]
+		// unchanged. Record its join node (carried in the event) in the loop-owned parked
+		// view, then recheck. SRD-028 FR-3. Two guards:
+		//   - during shutdown stopAll has cleared the view and joins do not fire while
+		//     terminating; a late park is woken by ctx.Done(), not recorded here (mirrors
+		//     evWaiting);
+		//   - the track must still be live in the position view. If it is absent, the
+		//     completing arrival's evMerged was applied FIRST and already merged this
+		//     co-arriving track at the join (clearing its position) — its fate is settled,
+		//     so recording it now would re-insert a stale parked entry.
+		if *stopping {
+			return
+		}
+
+		if _, live := position[ev.track.ID()]; !live {
+			return
+		}
+
+		parked[ev.track.ID()] = ev.node
 		inst.recheckParked(ev.track, position, parked, stopAll)
 
 	case evFailed:
