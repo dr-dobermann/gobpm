@@ -104,8 +104,12 @@ ADR-017 (Draft) decided the structural fix. This SRD implements its **inbound** 
   **`loop()`** when the Instance emits an inbound message (FR-8), not on the track goroutine. A
   mismatch leaves the track parked (it keeps waiting), never advances it; the verdict is identical,
   only the deciding goroutine changes.
-- **NFR-3 — Deferred-choice / abort flakes cured.** `TestComplexAbortInstance` and the poll-based
-  wait flakes (whose root cause is the busy-spin) no longer flake under `-race`.
+- **NFR-3 — Deferred-choice / abort flakes cured (the real root cause).** Removing the busy-spin
+  (FR-1) was necessary but **not sufficient**: the complex/OR-join `-race` flakes
+  (`TestComplexRequiredGate`, `TestComplexAbortOnDeath`, `TestComplexAbortInstance`) had two
+  distinct timing races in the loop's join recheck — a double-read of token positions and an abort
+  that did not stop the loop deterministically (§3.8). Both are fixed; `pkg/thresher` under `-race`
+  passes 40/40 (was ~1/6).
 - **NFR-4 — Diff coverage ≥ COVER_MIN (95%) on touched functions**, aiming 100%.
 
 ## 3. Models
@@ -278,6 +282,33 @@ for _, d := range defs {
 in `defs`, so the loop's `msgIdx` resolves a fired message back to this track. `track.CorrelationKeys`
 is deleted (only the message path was keyed, and that is now the Instance's — §3.2).
 
+### 3.8 Race-free join recheck (`internal/instance/reachability.go`, `instance.go`)
+
+Removing the busy-spin let the loop's reachability/activation-join recheck (SRD-022 / SRD-023)
+run at moments it previously never reached, exposing two pre-existing timing races that made the
+complex/OR-join tests flake under `-race`:
+
+- **Double-read of token positions.** `recheckJoin` sampled live positions **twice** — once for the
+  in-transit guard (the old `hasInTransitArrival`), then again for reachability
+  (`Recheck` → `CheckFlows` → `occupiedNodes`). A token slipping from a branch node (where it makes
+  its join flow *reachable*) to the join node (*arrived-pending*, its incoming flow not yet marked)
+  was read as "on the branch" by the guard (→ proceed) but "at the join" by reachability (→
+  unreachable), so a required flow looked **neither arrived nor reachable** → a spurious
+  *"complex gateway activation rule is unsatisfiable"* abort (and the symmetric *missed* abort).
+  **Fix:** one snapshot. `joinPositions(node)` does a **single** pass over `inst.tracks` returning
+  `(occupied, inTransit)` — each position read exactly once; `recheckJoin` defers on `inTransit`
+  and passes a `fixedFlowChecker` bound to that same `occupied` set to `Recheck`, so the guard and
+  the reachability can never disagree across two reads. `hasInTransitArrival` is removed;
+  `occupiedNodes` delegates to `joinPositions(nil)`.
+- **Abort did not stop the loop deterministically.** An activation-join abort called `inst.fail`,
+  which only records `lastErr` and cancels the instance ctx, relying on the loop *then* selecting
+  `<-ctx.Done()` → `stopAll`. But the cancel also wakes the parked tracks, whose `evEnded` events
+  race the `<-done` case; if they drained `active` to 0 first (Go `select` picks randomly among
+  ready cases), the loop exited with `stopping == false` → the instance reported **Completed**
+  instead of **Terminated**. **Fix:** the abort (and guard-error) path calls `stopAll()` right after
+  `inst.fail()` — matching the existing `failFromTrack` pattern; `stopAll` is threaded through
+  `recheckParked` / `recheckAwaitingJoins` / `recheckJoin`.
+
 ## 4. Analysis
 
 - **Path (chosen) — ADR-017 Rule 1 (Model Y, loop-dispatched, per-trigger boundary).** Producers
@@ -359,6 +390,9 @@ is deleted (only the message path was keyed, and that is now the Instance's — 
 - **T-8 (FR-2/FR-8, hybrid):** a Message catch registers the **Instance** as the hub processor and a
   Signal catch registers the **track**; a **mixed-trigger** Event-Based gateway (message arm + timer
   arm) resolves both deliveries at the same loop/track and picks exactly one winner.
+- **T-9 (NFR-3, §3.8 join recheck):** the complex/OR-join `-race` stress is stable —
+  `pkg/thresher` under `-race` passes 40/40 (was ~1/6); `TestComplexRequiredGate` no longer
+  false-aborts and `TestComplexAbortOnDeath` reaches **Terminated**, not **Completed**.
 
 ## 8. Cross-doc
 
@@ -369,6 +403,10 @@ is deleted (only the message path was keyed, and that is now the Instance's — 
   Message processor becomes the Instance).
 - **Supersedes the mechanism of** FIX-007 (the `eventMu` + post-guard re-read) — the inbound slice
   removes the guard's reason to exist; FIX-007 remains a frozen historical record (not edited).
+- **Fixes the recheck of** [SRD-022](SRD-022-inclusive-or-join.md) (OR-join) /
+  [SRD-023](SRD-023-complex-gateway.md) (complex gateway) — §3.8 makes their loop-side recheck
+  race-free; *what* those joins decide is unchanged, only the racing reads are removed. Sideways
+  (SRD→SRD); no version pin — SRD/FIX are single-shot.
 - **Paired slice:** SRD-028 (outbound, loop-owned positions) — the ADR-017 second slice; **not** in
   this change-set.
 

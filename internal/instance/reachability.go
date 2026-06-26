@@ -16,7 +16,33 @@ func (inst *Instance) CheckFlows(
 	node flow.Node,
 	flows []*flow.SequenceFlow,
 ) ([]*flow.SequenceFlow, error) {
-	occupied := inst.occupiedNodes()
+	return checkFlowsWith(node, flows, inst.occupiedNodes())
+}
+
+// fixedFlowChecker is an exec.FlowChecker bound to a precomputed occupied-node set, so a join
+// recheck evaluates reachability against the SAME token-position snapshot it used for its
+// in-transit guard. This closes the recheck double-read race (SRD-027 FIX): sampling positions
+// twice let a token slipping from a branch (reachable) to the join (arrived-pending) be invisible
+// to both reads, yielding a spurious unsatisfiable-rule abort (and the symmetric missed abort).
+type fixedFlowChecker struct {
+	occupied map[string]bool
+}
+
+// CheckFlows reuses the bound snapshot instead of re-reading live token positions.
+func (f fixedFlowChecker) CheckFlows(
+	node flow.Node,
+	flows []*flow.SequenceFlow,
+) ([]*flow.SequenceFlow, error) {
+	return checkFlowsWith(node, flows, f.occupied)
+}
+
+// checkFlowsWith returns the subset of flows still reachable from a live token, given a fixed
+// occupied-node snapshot. Shared by the live CheckFlows and the snapshot-bound fixedFlowChecker.
+func checkFlowsWith(
+	node flow.Node,
+	flows []*flow.SequenceFlow,
+	occupied map[string]bool,
+) ([]*flow.SequenceFlow, error) {
 	joinID := node.ID()
 
 	reachable := make([]*flow.SequenceFlow, 0, len(flows))
@@ -41,17 +67,41 @@ func (inst *Instance) CheckFlows(
 // join is included (it may resume and reach downstream); a dead track (Merged /
 // Ended / Canceled / Failed) is excluded. Called only from loop().
 func (inst *Instance) occupiedNodes() map[string]bool {
-	occupied := map[string]bool{}
+	occupied, _ := inst.joinPositions(nil)
+
+	return occupied
+}
+
+// joinPositions takes ONE consistent snapshot of live token positions for a join recheck:
+// the occupied-node set used for reachability AND whether a token is imminently arriving at
+// joinNode (sitting on the join but not yet parked in TrackAwaitSync). Reading both from a
+// single pass — each track's position read exactly once — is what makes the recheck race-free:
+// a token slipping from a branch (reachable) to the join (arrived-pending) is seen by BOTH the
+// in-transit guard and reachability as the same position, never invisible to both at once (the
+// double-read race behind the spurious "activation rule unsatisfiable" abort). joinNode may be
+// nil (plain occupied-set query); then inTransit is always false. Called only from loop().
+func (inst *Instance) joinPositions(
+	joinNode flow.Node,
+) (occupied map[string]bool, inTransit bool) {
+	occupied = map[string]bool{}
 
 	for _, t := range inst.tracks {
 		if t.inState(TrackMerged, TrackEnded, TrackCanceled, TrackFailed) {
 			continue
 		}
 
-		occupied[t.currentStep().node.ID()] = true
+		pos := t.currentStep().node.ID()
+		occupied[pos] = true
+
+		// A token on the join node that has not yet parked (TrackAwaitSync) is between
+		// checkFlows moving its position and synchronize recording its arrival — an
+		// imminent arrival the caller must wait for, not decide around.
+		if joinNode != nil && pos == joinNode.ID() && !t.inState(TrackAwaitSync) {
+			inTransit = true
+		}
 	}
 
-	return occupied
+	return occupied, inTransit
 }
 
 // reachesOccupied reports whether any node on a backward path from start (walking
@@ -88,5 +138,8 @@ func reachesOccupied(start flow.Node, stopID string, occupied map[string]bool) b
 	return false
 }
 
-// interface check
-var _ exec.FlowChecker = (*Instance)(nil)
+// interface checks
+var (
+	_ exec.FlowChecker = (*Instance)(nil)
+	_ exec.FlowChecker = fixedFlowChecker{}
+)

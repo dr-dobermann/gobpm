@@ -780,7 +780,7 @@ func (inst *Instance) applyEvent(
 	case evEnded:
 		*active--
 		flipNotParked(ev.track, waiting, msgIdx)
-		inst.recheckAwaitingJoins()
+		inst.recheckAwaitingJoins(stopAll)
 
 	case evAwaiting:
 		// the track reached a synchronizing join, did not complete it, and its
@@ -791,12 +791,12 @@ func (inst *Instance) applyEvent(
 
 	case evMerged:
 		inst.applyMerged(ev)
-		inst.recheckAwaitingJoins()
+		inst.recheckAwaitingJoins(stopAll)
 
 	case evParked:
 		// the track blocked at a reachability join — its goroutine is alive, so
 		// active is unchanged.
-		inst.recheckParked(ev.track)
+		inst.recheckParked(ev.track, stopAll)
 
 	case evFailed:
 		// a node error faulted the track — surface it as an instance failure and
@@ -994,7 +994,7 @@ func (inst *Instance) applyMerged(ev trackEvent) {
 // un-marked incoming flow unreachable and fire a join that has no further arrival
 // to ride (SRD-022 §2.10, fixing Camunda 7's arrival-only hang). Called only from
 // loop() on a track end / merge.
-func (inst *Instance) recheckAwaitingJoins() {
+func (inst *Instance) recheckAwaitingJoins(stopAll func()) {
 	seen := map[string]bool{}
 
 	for _, t := range inst.tracks {
@@ -1008,24 +1008,8 @@ func (inst *Instance) recheckAwaitingJoins() {
 		}
 
 		seen[node.ID()] = true
-		inst.recheckJoin(node)
+		inst.recheckJoin(node, stopAll)
 	}
-}
-
-// hasInTransitArrival reports whether a live token sits on node but has not yet
-// parked there — a track whose position is node (moved by checkFlows) but which
-// has not reached synchronize's Arrive. Such an imminent arrival must not be
-// raced by a reachability fire. Called only from loop().
-func (inst *Instance) hasInTransitArrival(node flow.Node) bool {
-	for _, t := range inst.tracks {
-		if t.currentStep().node.ID() == node.ID() &&
-			!t.inState(TrackAwaitSync, TrackMerged,
-				TrackEnded, TrackCanceled, TrackFailed) {
-			return true
-		}
-	}
-
-	return false
 }
 
 // recheckParked handles a track that just parked at a reachability join. If the join
@@ -1033,7 +1017,7 @@ func (inst *Instance) hasInTransitArrival(node flow.Node) bool {
 // earlier fire — FIX-006), the track is a trailing token: consume it (flip to Merged
 // and wake it so its goroutine returns). Otherwise recheck the join — a never-taken
 // branch may already be unreachable, firing it now with no token death.
-func (inst *Instance) recheckParked(t *track) {
+func (inst *Instance) recheckParked(t *track, stopAll func()) {
 	node := t.currentStep().node
 
 	if rj, ok := node.(exec.ReachabilityJoin); ok && rj.IsTrailing(t.ID()) {
@@ -1043,21 +1027,28 @@ func (inst *Instance) recheckParked(t *track) {
 		return
 	}
 
-	inst.recheckJoin(node)
+	inst.recheckJoin(node, stopAll)
 }
 
 // recheckJoin re-evaluates a parked reachability join (OR-join) against the live
 // token positions and fires it when no un-marked incoming flow can still receive
-// a token (SRD-022 §2.10). Called only from loop().
-func (inst *Instance) recheckJoin(node flow.Node) {
-	// An imminent arrival — a live token already on the join node but not yet
-	// parked (between checkFlows moving its position and synchronize's Arrive) —
-	// is invisible to the backward reachability (it sits at the excluded join)
-	// and is not yet marked. Defer: it will re-trigger this recheck via its own
-	// evParked once it parks.
-	if inst.hasInTransitArrival(node) {
+// a token (SRD-022 §2.10), or — for a complex (activation) join — aborts the instance
+// when the rule is unsatisfiable (SRD-023). stopAll is the loop's terminate action,
+// invoked on an abort so termination does not race the resulting track-end events
+// (inst.fail alone only cancels ctx, leaving `stopping` unset). Called only from loop().
+func (inst *Instance) recheckJoin(node flow.Node, stopAll func()) {
+	// One token-position snapshot drives BOTH the in-transit guard and the reachability the
+	// decision below uses (joinPositions), so they can't disagree across two reads. An
+	// imminent arrival — a live token already on the join node but not yet parked (between
+	// checkFlows moving its position and synchronize's Arrive) — is invisible to the backward
+	// reachability (it sits at the excluded join) and is not yet marked. Defer: it will
+	// re-trigger this recheck via its own evParked once it parks.
+	occupied, inTransit := inst.joinPositions(node)
+	if inTransit {
 		return
 	}
+
+	fc := fixedFlowChecker{occupied: occupied}
 
 	switch j := node.(type) {
 	case exec.ActivationJoin:
@@ -1065,11 +1056,12 @@ func (inst *Instance) recheckJoin(node flow.Node) {
 		// fire/abort decision (with guard evaluation). A death can only make the
 		// activation unsatisfiable — never newly fire it — so the abort path lives
 		// here; firing resumes the parked survivor via fireOrJoin.
-		dec, err := j.Recheck(inst.guardEval(inst.ctx), inst)
+		dec, err := j.Recheck(inst.guardEval(inst.ctx), fc)
 
 		switch {
 		case err != nil:
 			inst.fail(err)
+			stopAll()
 
 		case dec.Aborted:
 			inst.fail(
@@ -1077,13 +1069,14 @@ func (inst *Instance) recheckJoin(node flow.Node) {
 					errs.M("complex gateway activation rule is unsatisfiable"),
 					errs.C(errorClass, errs.InvalidState),
 					errs.D("node_id", node.ID())))
+			stopAll()
 
 		case dec.Fired:
 			inst.fireOrJoin(dec.Survivor, dec.Merged)
 		}
 
 	case exec.ReachabilityJoin:
-		if complete, survivor, merged := j.Recheck(inst); complete {
+		if complete, survivor, merged := j.Recheck(fc); complete {
 			inst.fireOrJoin(survivor, merged)
 		}
 	}
