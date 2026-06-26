@@ -396,19 +396,47 @@ future change but is **out of scope** here and of questionable benefit.
 
 ## 9. Definition of Done
 
-- [ ] FR-1…FR-7 wired; `position`/`parked` loop-owned; `evMoved` emitted at both move sites; live
+- [x] FR-1…FR-7 wired; `position`/`parked` loop-owned; `evMoved` emitted at both move sites; live
       `FlowChecker` removed.
-- [ ] NFR-1 audit: no loop-side `currentStep()`/`inState()`/`t.steps`/`t.state` read of another track
+- [x] NFR-1 audit: no loop-side `currentStep()`/`inState()`/`t.steps`/`t.state` read of another track
       remains (grep recorded in §10).
-- [ ] §6 tests added and passing; existing gateway/instance suites green (NFR-2).
-- [ ] `make ci` green across all modules; diff-coverage ≥ 95% on touched functions (NFR-4), aiming
-      100%.
-- [ ] Examples build **and run** (the SRD-027 runtime-smoke discipline).
-- [ ] §10 filled (files/lines, V-results, milestone SHAs); status flip is the owner's call.
+- [x] §6 tests added and passing; existing gateway/instance suites green (NFR-2).
+- [x] `make ci` green across all modules; diff-coverage ≥ 95% on touched functions (NFR-4), aiming
+      100% (99.7%, §10 V-5).
+- [x] Examples build **and run** (the SRD-027 runtime-smoke discipline).
+- [x] §10 filled (files/lines, V-results, milestone SHAs); status flip is the owner's call.
 
 ## 10. Implementation summary
 
-_(filled at landing)_
+Landed on `feat/adr-017-eps-rework` in two milestones.
+
+**Files touched**
+
+| File | Change |
+|------|--------|
+| `internal/instance/event.go` | `evMoved` kind + `String()` arm; `node flow.Node` field on `trackEvent` (carries the move node for `evMoved`, the join node for `evParked`). |
+| `internal/instance/track.go` | `checkFlows`/`advanceToArm` emit `evMoved` after appending the step; `synchronize`/`synchronizeActivation` emit `evParked` carrying the join node; corrected `record()`/`deliver()` doc comments (quiescent merged-track finalization). |
+| `internal/instance/instance.go` | loop-owned `position`/`parked` maps; `spawn` seeds the initial position; `applyEvent` threads + updates both (incl. the `evParked` shutdown + merge-race guards); `clearPosition`/`nodeIDOf` helpers; `applyMerged`/`recheckAwaitingJoins`/`recheckParked`/`recheckJoin`/`fireOrJoin` read the maps. |
+| `internal/instance/reachability.go` | `joinPositions` rewritten as a pure free function over the maps; dead live `FlowChecker` (`inst.CheckFlows`/`occupiedNodes`/the `(*Instance)` assertion) removed; `fixedFlowChecker`/`checkFlowsWith`/`reachesOccupied` kept. |
+| `internal/instance/reachability_loop_test.go`, `reachability_test.go` | T-1…T-9 (pure `joinPositions` table, `evMoved`, parked-iteration, trailing-park, shutdown + merge-race guards, `nodeIDOf`, `checkFlowsWith`). |
+
+**Milestone commits**
+
+| Milestone | SHA | Scope |
+|-----------|-----|-------|
+| M1 — loop-owned positions (emit-on-move) | `333b419` | `evMoved`, the two maps, pure `joinPositions`, dead `FlowChecker` removed, T-1…T-7. |
+| M2 — `evParked` guards (merge race + shutdown) | `b361236` | join node carried in `evParked`; the two guards; T-8/T-9. The `-race` stress (`TestORJoinAllBranchesArrive`) surfaced the merge-race nil before the guard. |
+| M2 — doc alignment | `98a7b76` | ADR-017 Rule 2 + `Rule 2 mechanics` subsection; SRD-028 (this doc) to the single-writer reality; `t.m` retained (Option A). |
+
+**Verification results**
+
+- **NFR-1 grep audit.** No loop-goroutine read of a **live** track's `currentStep()`/`inState()` remains. The residual reaches are (a) the construction-time spawn seed (`instance.go:689/696`, sequential, before the track's `go func`), and (b) `trackEndKind` (`instance.go:969-979`), called at `:711` **inside the track's own goroutine after `run()` returns** — a quiesced self-read, not a loop read of a live track.
+- **V-1 (T-1…T-9).** `go test -race -run 'TestJoinPositions|TestApplyEvent|TestRecheck|TestNodeIDOf|TestCheckFlowsWith' ./internal/instance/` — green.
+- **V-2 (regression).** OR-join (SRD-022) + Complex (SRD-023) gateway suites green under `make ci -race`.
+- **V-3 (`-race` stress, T-6).** `pkg/thresher` under `-race` ×40 — `THR_EXIT=0`, no data race.
+- **V-4 (`make ci`).** Green across all modules (tidy, lint 0 issues, build, `-race` tests, diff-coverage, govulncheck).
+- **V-5 (diff coverage, NFR-4).** `covercheck -min 95 -base origin/master`: **99.7%** of 346 changed coverable lines — PASS. instance.go / event.go / reachability.go 100%, track.go 98.7% (76/77).
+- **V-6 (examples build + run).** All 16 `examples/*` modules run to exit 0 (`go run .` per module, ≤40 s each) — CI only builds them; this slice's runtime smoke ran the full set, including the gateway-relevant `inclusive-join` / `complex-gateway` / `parallel-gateway` / `gateway-routing` / `event-based-gateway`.
 
 ## Open questions
 
