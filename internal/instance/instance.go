@@ -364,6 +364,39 @@ func (inst *Instance) conversationKeyValues() []string {
 	return vals
 }
 
+// The Instance is the hub-facing event processor for Message catches (SRD-027 FR-8).
+var _ eventproc.EventProcessor = (*Instance)(nil)
+
+// ProcessEvent (eventproc.EventProcessor) is the hub-facing entry for a Message catch: the
+// Instance is the registered processor (SRD-027 FR-8), because message correlation state is
+// instance-owned. It does NOT touch track state — it emits the fired event to its own loop
+// carrying NO track; the loop resolves the parked track via its msgEDef→track index and runs
+// validateAndAssociate before dispatch. Returns once enqueued, not once applied.
+func (inst *Instance) ProcessEvent(
+	_ context.Context,
+	eDef flow.EventDefinition,
+) error {
+	if eDef == nil {
+		return errs.New(
+			errs.M("Instance.ProcessEvent: a nil EventDefinition isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
+	}
+
+	// track == nil marks the Message branch — the loop resolves the target via msgIdx (§3.4).
+	inst.emit(trackEvent{kind: evDeliver, eDef: eDef})
+
+	return nil
+}
+
+// CorrelationKeys returns the conversation key values this instance has established
+// (SRD-017 §4.3, SRD-027 FR-8). The message waiter reads it structurally (the "declared
+// filter") to subscribe this receiver keyed to its conversation; an instance with no keys
+// yields none, leaving a wildcard subscription. Ownership moved here from track when the
+// Instance became the message processor — only the message path was ever keyed.
+func (inst *Instance) CorrelationKeys() []string {
+	return inst.conversationKeyValues()
+}
+
 // validateAndAssociate applies the conversation-token rules on a received
 // message (SRD-017 §4.5, BPMN §8.4.2). It derives every declared correlation key
 // from the message payload in two passes: first it checks for a mismatch — a key
@@ -627,6 +660,11 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	// event (the winner); a later evDeliver for it finds it absent and drops (a losing arm of
 	// an Event-Based gateway, or a duplicate fire).
 	waiting := map[string]struct{}{}
+	// msgIdx maps a waited Message catch-definition id → the parked track (SRD-027 FR-5/FR-8).
+	// A track-less Message evDeliver (from Instance.ProcessEvent) is resolved through it; it is
+	// seeded alongside waiting (by evWaiting / spawn) and a track is cleared from it the moment
+	// it flips out of waiting or ends, so an index entry never outlives its track.
+	msgIdx := map[string]*track{}
 
 	// spawn registers a track, adds it to the read snapshot, counts it
 	// active, and runs it in its own goroutine.
@@ -637,10 +675,15 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 
 		// A track built already parked (an event-start source waiter, registered
 		// during New) is recorded here — on the loop goroutine, before its run
-		// goroutine starts — so it is in `waiting` before any evDeliver can target it
-		// (SRD-027 FR-5). Mid-run waits emit evWaiting from checkNodeType instead.
+		// goroutine starts — so it is in `waiting` (and its message defs are in msgIdx)
+		// before any evDeliver can target it (SRD-027 FR-5). Mid-run waits emit evWaiting
+		// from checkNodeType instead.
 		if t.inState(TrackWaitForEvent) {
 			waiting[t.ID()] = struct{}{}
+
+			for _, id := range t.msgDefIDs {
+				msgIdx[id] = t
+			}
 		}
 
 		// run the track and report back to the loop. A track that reached a
@@ -673,9 +716,10 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 		}
 
 		// After stop no track is dispatched to — a parked track is woken by its closed
-		// channel, not an evDeliver — so drop the set; this also prevents a send on a
+		// channel, not an evDeliver — so drop both maps; this also prevents a send on a
 		// closed evtCh.
 		clear(waiting)
+		clear(msgIdx)
 	}
 
 	for _, t := range initial {
@@ -697,13 +741,14 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 		case ev := <-inst.events:
 			// Lock-free attrs only (ID is immutable): this runs per event, and the
 			// observability.Logger has no Enabled() gate, so the args are built even
-			// at INFO. Node-level detail lives in the fire/abort logs below.
+			// at INFO. Node-level detail lives in the fire/abort logs below. A Message
+			// evDeliver carries no track (FR-8), so the id is resolved defensively.
 			inst.Logger().Debug("track event",
 				"instance", inst.ID(),
 				"kind", ev.kind.String(),
-				"track", ev.track.ID())
+				"track", eventTrackID(ev))
 
-			inst.applyEvent(ctx, ev, &active, &stopping, waiting, spawn, stopAll)
+			inst.applyEvent(ctx, ev, &active, &stopping, waiting, msgIdx, spawn, stopAll)
 		}
 	}
 
@@ -716,14 +761,15 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 
 // applyEvent applies one track→loop event to the loop-owned state on the loop goroutine.
 // active and stopping are the loop's own counters, passed by pointer so this method and the
-// spawn/stopAll closures mutate the same values; waiting is the loop-owned parked set. Called
-// only by loop().
+// spawn/stopAll closures mutate the same values; waiting is the loop-owned parked set and
+// msgIdx its message-def→track index (SRD-027 FR-8). Called only by loop().
 func (inst *Instance) applyEvent(
 	ctx context.Context,
 	ev trackEvent,
 	active *int,
 	stopping *bool,
 	waiting map[string]struct{},
+	msgIdx map[string]*track,
 	spawn func(*track),
 	stopAll func(),
 ) {
@@ -733,14 +779,15 @@ func (inst *Instance) applyEvent(
 
 	case evEnded:
 		*active--
-		delete(waiting, ev.track.ID())
+		flipNotParked(ev.track, waiting, msgIdx)
 		inst.recheckAwaitingJoins()
 
 	case evAwaiting:
 		// the track reached a synchronizing join, did not complete it, and its
 		// goroutine returned — no longer active, but retained as awaiting until the
-		// join fires (ADR-005 §2.4).
+		// join fires (ADR-005 §2.4). Clear any index entry so it never outlives the track.
 		*active--
+		clearMsgIdx(msgIdx, ev.track)
 
 	case evMerged:
 		inst.applyMerged(ev)
@@ -756,46 +803,96 @@ func (inst *Instance) applyEvent(
 		// terminate, rather than letting it complete silently (FIX-008).
 		inst.failFromTrack(ev.track, stopAll)
 		*active--
-		delete(waiting, ev.track.ID())
+		flipNotParked(ev.track, waiting, msgIdx)
 
 	case evWaiting:
 		// the track parked on its evtCh and is ready to receive — record it as
-		// parked-and-undelivered (SRD-027 FR-4/FR-5). Not during shutdown: a parked
-		// track is woken by its closed evtCh, not an evDeliver, and recording it
-		// would risk a send on the closed channel.
+		// parked-and-undelivered and index its Message defs → track (SRD-027 FR-4/FR-5/
+		// FR-8). Not during shutdown: a parked track is woken by its closed evtCh, not an
+		// evDeliver, and recording it would risk a send on the closed channel.
 		if !*stopping {
 			waiting[ev.track.ID()] = struct{}{}
+
+			for _, id := range ev.msgDefIDs {
+				msgIdx[id] = ev.track
+			}
 		}
 
 	case evDeliver:
-		inst.dispatchToParked(ctx, ev, waiting)
+		inst.dispatchToParked(ctx, ev, waiting, msgIdx)
 	}
 }
 
-// dispatchToParked sends a fired event to its parked-and-undelivered track. A message
+// dispatchToParked sends a fired event to its parked-and-undelivered track. The target is
+// ev.track for a Signal/Timer evDeliver, or — for a track-less Message evDeliver (FR-8) —
+// resolved from the fired definition's id via msgIdx (a miss is a benign drop). A message
 // whose correlation does not match this conversation is gated here, on the loop goroutine —
 // the sole owner of instance conversation state — and the track stays parked for the next
-// message (SRD-027 §3.4 / NFR-2). On a match — or any non-message event, where
-// validateAndAssociate is a no-op — the flip (delete on first delivery) makes deferred
-// choice atomic: a later event for the same track finds it absent and is dropped (a losing
-// Event-Based-gateway arm or a duplicate fire). The loop is the sole sender to evtCh, and the
-// single buffered slot keeps this send from blocking it (SRD-027 FR-3/FR-4). Called only by
-// loop(), so it touches the loop-owned waiting set without a lock.
+// message (SRD-027 §3.4 / NFR-2); Signal/Timer carry their track and are not correlated.
+// On a match the flip (flipNotParked on first delivery) makes deferred choice atomic: a later
+// event for the same track finds it absent and is dropped (a losing Event-Based-gateway arm
+// or a duplicate fire). The loop is the sole sender to evtCh, and the single buffered slot
+// keeps this send from blocking it (SRD-027 FR-3/FR-4). Called only by loop(), so it touches
+// the loop-owned maps without a lock.
 func (inst *Instance) dispatchToParked(
 	ctx context.Context,
 	ev trackEvent,
 	waiting map[string]struct{},
+	msgIdx map[string]*track,
 ) {
-	if _, parked := waiting[ev.track.ID()]; !parked {
-		return
+	tr := ev.track
+	// Message (FR-8): a track-less evDeliver resolves the parked track from the fired def's id.
+	if tr == nil {
+		tr = msgIdx[ev.eDef.ID()]
+		if tr == nil {
+			return // no parked track for this message → drop
+		}
 	}
 
-	if inst.validateAndAssociate(ctx, ev.eDef) {
+	if _, parked := waiting[tr.ID()]; !parked {
+		return // losing arm / already delivered → drop (FR-4)
+	}
+
+	// Gate correlation only on the Message path (track == nil): a mismatch drops the event
+	// and keeps the track parked for the next message (SRD-027 FR-8/NFR-2).
+	if ev.track == nil && inst.validateAndAssociate(ctx, ev.eDef) {
 		return // correlation mismatch — drop, keep the track parked
 	}
 
-	delete(waiting, ev.track.ID())
-	ev.track.evtCh <- ev.eDef
+	flipNotParked(tr, waiting, msgIdx)
+	tr.evtCh <- ev.eDef
+}
+
+// flipNotParked removes tr from the parked set and clears its message-index entries — the
+// atomic flip that makes deferred choice single-winner (SRD-027 FR-4/§3.4): a later event for
+// tr finds it absent and is dropped. Also used on track end so no entry outlives its track.
+func flipNotParked(
+	tr *track,
+	waiting map[string]struct{},
+	msgIdx map[string]*track,
+) {
+	delete(waiting, tr.ID())
+	clearMsgIdx(msgIdx, tr)
+}
+
+// clearMsgIdx removes every msgEDef→track entry pointing at tr, so a fired message can no
+// longer resolve to a track that has flipped out of waiting or ended (SRD-027 §3.4).
+func clearMsgIdx(msgIdx map[string]*track, tr *track) {
+	for id, t := range msgIdx {
+		if t == tr {
+			delete(msgIdx, id)
+		}
+	}
+}
+
+// eventTrackID returns the subject track's id for logging, or "<none>" for a track-less
+// Message evDeliver (its target is resolved later via msgIdx — SRD-027 FR-8).
+func eventTrackID(ev trackEvent) string {
+	if ev.track == nil {
+		return "<none>"
+	}
+
+	return ev.track.ID()
 }
 
 // trackEndKind classifies a track that returned from run() into the loop event

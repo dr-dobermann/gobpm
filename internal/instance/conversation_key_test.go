@@ -147,6 +147,19 @@ func msgEDef(t *testing.T, name, value string) *events.MessageEventDefinition {
 			values.NewVariable(value), foundation.WithID("order_in"))), nil)
 }
 
+// msgEDefID is msgEDef with a fixed definition id. A test seeds the loop's msgIdx with that
+// id (via evWaiting.msgDefIDs) and then delivers a same-id message — mirroring how the real
+// fire path clones the registered definition with its id preserved (CloneEvent, SRD-027 FR-8),
+// so a fired message resolves back to the parked track through the index.
+func msgEDefID(t *testing.T, name, value, id string) *events.MessageEventDefinition {
+	t.Helper()
+
+	return events.MustMessageEventDefinition(
+		bpmncommon.MustMessage(name, data.MustItemDefinition(
+			values.NewVariable(value), foundation.WithID("order_in"))), nil,
+		foundation.WithID(id))
+}
+
 // TestAssociateConversationKeySetIfAbsent verifies the set-if-absent semantics
 // of the conversation key-set (SRD-017 FR-1): the first value for a key wins, a
 // later value for a held key does not overwrite, and empty inputs are no-ops.
@@ -202,8 +215,8 @@ func TestAssociateConversationKeyConcurrent(t *testing.T) {
 }
 
 // TestConversationKeyValues verifies the snapshot accessor (empty -> nil; all
-// values otherwise) and that a track exposes its instance's values as the
-// declared subscription filter (SRD-017 §4.3).
+// values otherwise) and that the Instance exposes its values as the declared
+// subscription filter (SRD-017 §4.3, SRD-027 FR-8).
 func TestConversationKeyValues(t *testing.T) {
 	inst := &Instance{convKeys: map[string]string{}}
 
@@ -221,12 +234,13 @@ func TestConversationKeyValues(t *testing.T) {
 		t.Fatalf("values: got %v, want [ORD-1 SHP-2]", vals)
 	}
 
-	// the track exposes the instance's values as its declared filter.
-	tk := (&track{instance: inst}).CorrelationKeys()
+	// the Instance exposes its values as the declared subscription filter — ownership
+	// moved here from the track when the Instance became the message processor (FR-8).
+	tk := inst.CorrelationKeys()
 	sort.Strings(tk)
 
 	if !slices.Equal(tk, []string{"ORD-1", "SHP-2"}) {
-		t.Fatalf("track keys: got %v, want [ORD-1 SHP-2]", tk)
+		t.Fatalf("instance keys: got %v, want [ORD-1 SHP-2]", tk)
 	}
 }
 

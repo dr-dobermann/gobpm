@@ -11,7 +11,9 @@ type trackEvent struct {
 	// track for evMerged.
 	track *track
 	// eDef, for evDeliver, is the fired event definition the loop dispatches to the
-	// subject track's evtCh (SRD-027 FR-2).
+	// subject track's evtCh (SRD-027 FR-2). For a Message evDeliver (track == nil,
+	// emitted by Instance.ProcessEvent) the loop resolves the target track from its
+	// id via the msgEDef→track index (FR-8).
 	eDef flow.EventDefinition
 	// flows, for evFork, are the extra outgoing flows (beyond the one the
 	// parent continues on) that the loop builds a new track for.
@@ -20,6 +22,10 @@ type trackEvent struct {
 	// surviving track absorbed at a synchronizing join. Ids, not pointers: the
 	// loop resolves them against inst.tracks (which it owns) to flip their state.
 	mergedIDs []string
+	// msgDefIDs, for evWaiting, are the ids of the track's Message catch definitions.
+	// The loop enters them into its msgEDef→track index so a fired message resolves
+	// back to this track (SRD-027 FR-5/FR-8). Empty for a Signal/Timer-only wait.
+	msgDefIDs []string
 	kind      trackEventKind
 }
 
@@ -82,11 +88,13 @@ const (
 	// evWaiting: a track entered TrackWaitForEvent and parked on its evtCh. Emitted BEFORE
 	// the catch node registers its hub waiters (SRD-027 FR-5) so the loop records the track as
 	// parked-and-undelivered before any evDeliver can target it; the loop adds it to the
-	// waiting set.
+	// waiting set and indexes its msgDefIDs (Message catch defs) → track (FR-8).
 	evWaiting
-	// evDeliver: a producer handed a fired event (eDef) to the loop for the subject track
-	// (SRD-027 FR-2). The loop dispatches it to track.evtCh iff the track is parked-and-
-	// undelivered, else drops it (the losing arm of an Event-Based gateway / a duplicate
-	// fire — FR-4).
+	// evDeliver: a producer handed a fired event (eDef) to the loop (SRD-027 FR-2). A
+	// track-carried evDeliver (Signal/Timer via track.ProcessEvent) targets ev.track directly;
+	// a track-less one (Message via Instance.ProcessEvent, FR-8) is resolved through the
+	// msgEDef→track index and correlation-gated before the flip. The loop dispatches to the
+	// track's evtCh iff it is parked-and-undelivered, else drops it (the losing arm of an
+	// Event-Based gateway / a duplicate fire / a correlation mismatch — FR-4/FR-8).
 	evDeliver
 )

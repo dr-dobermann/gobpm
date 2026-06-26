@@ -11,6 +11,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
 	"github.com/dr-dobermann/gobpm/internal/enginert"
+	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
@@ -128,6 +129,58 @@ func subjectTrack(t *testing.T, inst *Instance) *track {
 		evtCh:       make(chan flow.EventDefinition, eventBufferDepth),
 		state:       TrackWaitForEvent,
 	}
+}
+
+// registeredProcessorFor builds an instance whose only catch is node, captures the
+// EventProcessor that checkNodeType registers with the hub for it, and returns that
+// processor together with the instance and the built track. It lets a test assert the
+// hybrid registration boundary (Message → Instance, Signal/Timer → track — SRD-027 FR-8).
+func registeredProcessorFor(
+	t *testing.T,
+	node flow.Node,
+) (eventproc.EventProcessor, *Instance, *track) {
+	t.Helper()
+
+	_ = data.CreateDefaultStates()
+
+	p, err := process.New("srd027-reg")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, node, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	link(t, start, node)
+	link(t, node, end)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	var captured eventproc.EventProcessor
+
+	ep := mockeventproc.NewMockEventProducer(t)
+	ep.EXPECT().RegisterEvent(mock.Anything, mock.Anything).
+		Run(func(proc eventproc.EventProcessor, _ flow.EventDefinition) {
+			captured = proc
+		}).Return(nil).Maybe()
+
+	inst, err := New(s, scope.EmptyDataPath, enginert.Default(), ep, nil)
+	require.NoError(t, err)
+	inst.tracks = map[string]*track{}
+
+	// newTrack(node) parks the track and runs checkNodeType, which registers the per-trigger
+	// processor. The instance is still Created, so no evWaiting is emitted (the loop is not
+	// draining) and the call does not block.
+	tr, err := newTrack(node, inst, nil)
+	require.NoError(t, err)
+
+	return captured, inst, tr
 }
 
 // TestLoopDeliversEventToParkedTrack: evWaiting records the track as parked; the
@@ -298,9 +351,10 @@ func TestTrackRunCancelWhileRunning(t *testing.T) {
 		"a running track must cancel when its context is done")
 }
 
-// TestLoopKeepsParkedOnCorrelationMismatch: the loop runs validateAndAssociate before the
-// flip — a message whose derived key conflicts with a held conversation key is dropped and
-// the track stays parked, while a matching message is delivered (SRD-027 FR-8 / NFR-2).
+// TestLoopKeepsParkedOnCorrelationMismatch: a Message evDeliver is track-less (resolved via
+// msgIdx — FR-8) and correlation-gated in the loop before the flip. A message whose derived key
+// conflicts with a held conversation key is dropped and the track stays parked; a matching
+// message is delivered (SRD-027 FR-8 / NFR-2).
 func TestLoopKeepsParkedOnCorrelationMismatch(t *testing.T) {
 	inst, keeper, _ := parkedSignalTrack(t)
 
@@ -320,24 +374,181 @@ func TestLoopKeepsParkedOnCorrelationMismatch(t *testing.T) {
 		}
 	}()
 
+	const defID = "reply-catch"
 	sub := subjectTrack(t, inst)
-	inst.emit(trackEvent{kind: evWaiting, track: sub})
+	// Park the subject and index its message catch-def id → track (FR-5/FR-8), so a track-less
+	// Message evDeliver carrying that id resolves back to this track.
+	inst.emit(trackEvent{kind: evWaiting, track: sub, msgDefIDs: []string{defID}})
 
-	// Mismatch (derives ORD-2, conflicts with held ORD-1): gated and dropped at the loop.
-	inst.emit(trackEvent{kind: evDeliver, track: sub, eDef: msgEDef(t, "reply", "ORD-2")})
+	// Mismatch (derives ORD-2, conflicts with held ORD-1): resolved via msgIdx, gated and
+	// dropped at the loop; the track stays in waiting + msgIdx.
+	inst.emit(trackEvent{kind: evDeliver, eDef: msgEDefID(t, "reply", "ORD-2", defID)})
 	select {
 	case <-sub.evtCh:
 		t.Fatal("a correlation mismatch must be dropped, not delivered")
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	// Match (derives ORD-1): the still-parked track receives it.
-	match := msgEDef(t, "reply", "ORD-1")
-	inst.emit(trackEvent{kind: evDeliver, track: sub, eDef: match})
+	// Match (derives ORD-1): the still-parked track receives it via msgIdx resolution.
+	match := msgEDefID(t, "reply", "ORD-1", defID)
+	inst.emit(trackEvent{kind: evDeliver, eDef: match})
 	select {
 	case got := <-sub.evtCh:
 		require.Equal(t, match, got)
 	case <-time.After(2 * time.Second):
 		t.Fatal("a matching message must be delivered to the still-parked track")
+	}
+}
+
+// TestInstanceProcessEventReachesParkedTrack: Instance.ProcessEvent — the Message hub entry
+// (FR-8) — emits a track-less evDeliver that the loop resolves via msgIdx and dispatches; a nil
+// definition is rejected before any emit.
+func TestInstanceProcessEventReachesParkedTrack(t *testing.T) {
+	inst, _, stop := loopHarness(t)
+	defer stop()
+
+	const defID = "msg-catch"
+	sub := subjectTrack(t, inst)
+	inst.emit(trackEvent{kind: evWaiting, track: sub, msgDefIDs: []string{defID}})
+
+	// No CorrelationKeys configured → the gate is a no-op → the message is delivered.
+	def := msgEDefID(t, "reply", "ORD-1", defID)
+	require.NoError(t, inst.ProcessEvent(context.Background(), def))
+
+	select {
+	case got := <-sub.evtCh:
+		require.Equal(t, def, got)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Instance.ProcessEvent did not reach the parked track via msgIdx")
+	}
+
+	require.Error(t, inst.ProcessEvent(context.Background(), nil),
+		"a nil EventDefinition must be rejected")
+}
+
+// TestLoopDropsTracklessDeliverWithNoIndex: a track-less Message evDeliver whose definition id
+// is not in msgIdx (no parked receiver) is a benign drop — no panic, no send (SRD-027 FR-8).
+func TestLoopDropsTracklessDeliverWithNoIndex(t *testing.T) {
+	inst, _, stop := loopHarness(t)
+	defer stop()
+
+	// No evWaiting seeded msgIdx for this id; the loop must resolve to nil and drop.
+	require.NoError(t, inst.ProcessEvent(context.Background(),
+		msgEDefID(t, "reply", "ORD-1", "absent")))
+
+	// Nothing to assert beyond the loop surviving — give it a tick, then the keeper-backed
+	// loop is still draining (stop() verifies it stops cleanly).
+	time.Sleep(50 * time.Millisecond)
+}
+
+// TestSpawnSeedsMsgIdxForParkedMessageTrack: a track that starts parked on a Message catch at
+// construction (a parallelMultiple / instantiating-message start, parked before the loop drains
+// events) is seeded into the loop's msgIdx by spawn — the construction-time companion to the
+// evWaiting path (SRD-027 FR-5/FR-8). The loop then cancels the parked track cleanly on stop.
+func TestSpawnSeedsMsgIdxForParkedMessageTrack(t *testing.T) {
+	_ = data.CreateDefaultStates()
+
+	p, err := process.New("srd027-msg-park")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	arm, err := events.NewIntermediateCatchEvent("marm", msgEDef(t, "reply", ""))
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, arm, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	link(t, start, arm)
+	link(t, arm, end)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	ep := mockeventproc.NewMockEventProducer(t)
+	ep.EXPECT().RegisterEvent(mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	inst, err := New(s, scope.EmptyDataPath, enginert.Default(), ep, nil)
+	require.NoError(t, err)
+	inst.tracks = map[string]*track{}
+
+	// newTrack parks the track on the message catch and records its def ids (checkNodeType).
+	mt, err := newTrack(arm, inst, nil)
+	require.NoError(t, err)
+	require.True(t, mt.inState(TrackWaitForEvent))
+	require.NotEmpty(t, mt.msgDefIDs, "a message catch must record its definition ids")
+
+	ctx, cancel := context.WithCancel(t.Context())
+	go inst.loop(ctx, []*track{mt}) // spawn seeds msgIdx from mt.msgDefIDs before run() starts
+
+	cancel()
+	select {
+	case <-inst.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("loop did not stop after cancellation")
+	}
+	require.Equal(t, Terminated, inst.State(),
+		"the loop must terminate after the parked track stops")
+}
+
+// TestCheckNodeTypeRegistersPerTrigger: the hybrid boundary (FR-8/§3.7) — a Message catch
+// registers the Instance as the hub processor, a Signal catch registers the track.
+func TestCheckNodeTypeRegistersPerTrigger(t *testing.T) {
+	t.Run("message catch registers the Instance", func(t *testing.T) {
+		catch, err := events.NewIntermediateCatchEvent("m", msgEDef(t, "reply", ""))
+		require.NoError(t, err)
+
+		proc, inst, _ := registeredProcessorFor(t, catch)
+		require.Same(t, inst, proc,
+			"a Message catch must register the Instance (correlation owner)")
+	})
+
+	t.Run("signal catch registers the track", func(t *testing.T) {
+		arm, _, _ := ebSignalArm(t, "go")
+
+		proc, _, tr := registeredProcessorFor(t, arm)
+		require.Same(t, tr, proc,
+			"a Signal catch must register the track")
+	})
+}
+
+// TestLoopMixedArmDeferredChoice: an Event-Based gateway with a Message arm (delivered via the
+// Instance, track-less) and a Signal arm (delivered via the track) on the SAME track — the first
+// delivery wins and flips the track out; the second arm's event is dropped (SRD-027 FR-4 mixed
+// trigger).
+func TestLoopMixedArmDeferredChoice(t *testing.T) {
+	inst, _, stop := loopHarness(t)
+	defer stop()
+
+	const msgDefID = "mixed-msg"
+	sub := subjectTrack(t, inst)
+	// One track, parked on both a message arm (indexed) and a signal arm (track-carried).
+	inst.emit(trackEvent{kind: evWaiting, track: sub, msgDefIDs: []string{msgDefID}})
+
+	// The message arm fires first (track-less, resolved via msgIdx) and wins.
+	msg := msgEDefID(t, "reply", "ORD-1", msgDefID)
+	inst.emit(trackEvent{kind: evDeliver, eDef: msg})
+
+	select {
+	case got := <-sub.evtCh:
+		require.Equal(t, msg, got)
+	case <-time.After(2 * time.Second):
+		t.Fatal("the winning message arm was not delivered")
+	}
+
+	// The signal arm fires after the flip (track-carried) and must be dropped — the track is
+	// no longer in waiting, and the flip also cleared its msgIdx entry.
+	sigArm, _, sigDef := ebSignalArm(t, "late")
+	_ = sigArm
+	inst.emit(trackEvent{kind: evDeliver, track: sub, eDef: sigDef})
+	select {
+	case <-sub.evtCh:
+		t.Fatal("the losing (post-flip) arm must be dropped")
+	case <-time.After(100 * time.Millisecond):
 	}
 }

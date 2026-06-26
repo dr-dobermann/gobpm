@@ -178,11 +178,16 @@ type track struct {
 	// (SRD-027 FR-1). The per-instance loop is the SOLE sender and sole closer; the track
 	// only receives. Buffered to one slot (eventBufferDepth) so the loop never blocks on the
 	// send — with flip-on-dispatch the loop delivers at most one event per parked episode.
-	evtCh  chan flow.EventDefinition
-	steps  []*stepInfo
-	m      sync.RWMutex
-	state  trackState
-	stopIt atomic.Bool
+	evtCh chan flow.EventDefinition
+	steps []*stepInfo
+	// msgDefIDs are the ids of the Message catch definitions this track parks on, set by
+	// checkNodeType at construction (SRD-027 FR-8). The loop indexes them → this track so a
+	// fired message resolves back to it; spawn reads them for a track that starts parked
+	// before the loop drains events. Construction-immutable, so the loop reads it lock-free.
+	msgDefIDs []string
+	m         sync.RWMutex
+	state     trackState
+	stopIt    atomic.Bool
 }
 
 // record appends a track-state transition to the history, copy-on-write, and
@@ -322,16 +327,6 @@ func newTrack(
 
 // checkNodeType determines if node awaits for event or human interaction
 // and updates track state on positive comparison.
-// CorrelationKeys returns the conversation key values the track's instance has
-// established (SRD-017 §4.3). The message waiter reads it structurally (the
-// "declared filter") to subscribe this in-instance receiver keyed to its
-// conversation; an instance with no keys yields none, leaving a wildcard
-// subscription. It is the subscriber declaring its own filter — the waiter
-// never references the instance directly.
-func (t *track) CorrelationKeys() []string {
-	return t.instance.conversationKeyValues()
-}
-
 func (t *track) checkNodeType(node flow.Node) error {
 	en, ok := node.(flow.EventNode)
 	if !ok {
@@ -351,6 +346,11 @@ func (t *track) checkNodeType(node flow.Node) error {
 		return nil
 	}
 
+	// Record the Message catch-definition ids so the loop can index them → this track
+	// (SRD-027 FR-8): carried in the evWaiting emit below for a mid-run wait, and read by
+	// spawn for a track that starts parked before the loop drains events.
+	t.msgDefIDs = messageDefIDs(defs)
+
 	// Declare the wait BEFORE registering: a waiter may deliver an event
 	// synchronously on registration (a MessageWaiter draining a message the
 	// broker already buffered fires at once), and ProcessEvent only accepts an
@@ -360,15 +360,28 @@ func (t *track) checkNodeType(node flow.Node) error {
 
 	// Tell the loop this track is parked BEFORE registering its waiters, so a fired
 	// event (dispatched by the loop as evDeliver) can never reach the loop before the
-	// track is recorded as parked-and-undelivered (SRD-027 FR-5). Gated on Active: at
-	// construction (New, before the loop runs) the loop records the track via spawn
-	// instead, and emitting here would block on the not-yet-draining inst.events.
+	// track is recorded as parked-and-undelivered (SRD-027 FR-5). The emit carries the
+	// Message catch-definition IDs so the loop can index them → this track (FR-8). Gated
+	// on Active: at construction (New, before the loop runs) the loop records the track
+	// via spawn instead, and emitting here would block on the not-yet-draining inst.events.
 	if t.instance.State() == Active {
-		t.instance.emit(trackEvent{kind: evWaiting, track: t})
+		t.instance.emit(trackEvent{
+			kind:      evWaiting,
+			track:     t,
+			msgDefIDs: t.msgDefIDs,
+		})
 	}
 
+	// Per-trigger registration is the one place the hybrid boundary is chosen (SRD-027
+	// FR-8 / §3.7): a Message catch registers the Instance (it owns correlation), every
+	// other trigger registers the track.
 	for _, d := range defs {
-		if err := t.instance.RegisterEvent(t, d); err != nil {
+		proc := eventproc.EventProcessor(t)
+		if d.Type() == flow.TriggerMessage {
+			proc = t.instance
+		}
+
+		if err := t.instance.RegisterEvent(proc, d); err != nil {
 			return errs.New(
 				errs.M("couldn't register event definitions"),
 				errs.C(errorClass, errs.BulidingFailed),
@@ -380,6 +393,21 @@ func (t *track) checkNodeType(node flow.Node) error {
 	}
 
 	return nil
+}
+
+// messageDefIDs returns the ids of the Message-triggered definitions in defs (SRD-027
+// FR-8): the loop indexes these → the parked track so a fired message resolves back to
+// it. Returns nil when none are Message-triggered (a Signal/Timer-only wait).
+func messageDefIDs(defs []flow.EventDefinition) []string {
+	var ids []string
+
+	for _, d := range defs {
+		if d.Type() == flow.TriggerMessage {
+			ids = append(ids, d.ID())
+		}
+	}
+
+	return ids
 }
 
 // inState checks if track state is equal to any track state from the ss.
@@ -862,11 +890,11 @@ func (t *track) uploadOutgoingData(
 
 // --------------------- exec.EventProcessor interface -------------------------
 
-// ProcessEvent (eventproc.EventProcessor) is called by an event producer on its OWN
-// goroutine when an event fires. It does NOT touch track state: it hands the event to
-// the per-instance loop (SRD-027 FR-2), which gates correlation and dispatches it to
-// this track's evtCh, where deliver() applies it on the track's own goroutine. Returns
-// once enqueued, not once applied.
+// ProcessEvent (eventproc.EventProcessor) is called by a Signal/Timer producer on its OWN
+// goroutine when an event fires (Message is registered at instance granularity instead —
+// SRD-027 FR-8). It does NOT touch track state: it hands the event to the per-instance loop
+// (FR-2), which dispatches it to this track's evtCh, where deliver() applies it on the
+// track's own goroutine. Returns once enqueued, not once applied.
 func (t *track) ProcessEvent(
 	_ context.Context,
 	eDef flow.EventDefinition,
