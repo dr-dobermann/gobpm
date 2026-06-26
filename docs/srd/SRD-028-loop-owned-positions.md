@@ -70,10 +70,10 @@ slice removes (cf. the audit-stale-interfaces house rule).
 calls `updateState`/`record` — `track.go:898-905`, `instance.go:375-389`), so the "a synchronous
 waiter writes `t.steps` from its own goroutine" concern noted at `record` (`track.go:196`) and
 `checkFlows` (`track.go:805`) **no longer applies**. After this slice removes the four loop reads
-above, `t.steps`/`t.state` are touched only by the track's own goroutine, plus the `parkCh`-mediated
-merge handoff (`applyMerged`/`recheckParked` write `TrackMerged` then signal `parkCh`; the track
-reads its state only after `<-parkCh` — a channel happens-before). That makes the `t.m` guard
-reducible (§3.6).
+above, the only remaining cross-goroutine touch of `t.steps`/`t.state` is the loop **finalizing a
+quiescent merged track** (`applyMerged`/`recheckParked` write `TrackMerged`, then `record` reads
+`t.steps`, after the track has returned or parked on `parkCh` — a channel happens-before). `t.m` is
+**kept** to guard that handoff (§3.6).
 
 ADR-017 (Draft) decided the structural fix. This SRD implements its **outbound** half.
 
@@ -94,10 +94,10 @@ ADR-017 (Draft) decided the structural fix. This SRD implements its **outbound**
   before the track's goroutine starts (a sequential construction-time read, not a concurrent one —
   §3.3).
 - **FR-3 — The loop owns the parked-at-join view from `evParked`.** On `evParked` the loop records
-  `parked[track] = position[track]` (the track moved onto the join via `evMoved` before it parked —
-  FIFO on `inst.events` guarantees that order). A track leaves `parked` when it resumes and moves
-  (`evMoved` clears it), is merged away (`evMerged`), or ends. `recheckAwaitingJoins` iterates
-  `parked`, not `inst.tracks`.
+  `parked[track] = ev.node` — the join node **carried in the event** — **guarded** so it records only
+  a live, non-terminating track (the shutdown and merge-race edge cases — ADR-017 v.1 §“Rule 2 mechanics”). A track leaves
+  `parked` when it resumes and moves (`evMoved` clears it), is merged away (`evMerged`), or ends.
+  `recheckAwaitingJoins` iterates `parked`, not `inst.tracks`.
 - **FR-4 — `joinPositions` is a pure function over the loop-owned maps.** It derives the
   occupied-node set and the in-transit flag from `position`/`parked` only — no `inst.tracks` scan,
   no `currentStep()`, no `inState()`. Membership and timing are **identical** to today's snapshot
@@ -119,18 +119,21 @@ ADR-017 (Draft) decided the structural fix. This SRD implements its **outbound**
 
 ### Non-functional
 
-- **NFR-1 — No cross-goroutine track-state read remains in the loop.** After this slice, no loop-side
-  function calls `currentStep()`/`inState()`/reads `t.steps`/`t.state` of a track other than via the
-  loop-owned maps. Verified by an audit (grep) recorded in §10 and by `-race`.
+- **NFR-1 — No loop-side read of a LIVE track's position/state.** After this slice no loop function
+  reads `currentStep()`/`inState()` of a **running** track; reachability and joins read the loop-owned
+  `position`/`parked` maps. The loop still finalizes a **quiescent** merged track via `record()` (the
+  ADR-001 single-writer handoff, §3.6) — that is the established pattern, not a Rule-2 violation.
+  Verified by an audit (grep) recorded in §10 and by `-race`.
 - **NFR-2 — Reachability / join semantics byte-for-byte unchanged.** The OR-join death-trigger
   (SRD-022) and the Complex fire/abort (SRD-023) decide identically: the loop-owned occupied/
   in-transit view has the same membership and the same observable timing as today's `joinPositions`
   snapshot (§4 proves the equivalence). All existing gateway tests pass unmodified except those that
   call the removed/relocated internals directly.
-- **NFR-3 — `t.m` reduced to what is still shared.** With `t.steps`/`t.state` now track-goroutine-
-  local plus the `parkCh`-mediated merge handoff, the `t.m` guard on those fields is reducible
-  (§3.6). This slice removes the guard **only** where the happens-before argument is explicit and the
-  `-race` suite stays clean; anything not provably local keeps its guard (conservative).
+- **NFR-3 — `t.m` retained; the merge-path seam stays guarded.** `t.steps`/`t.state` are **not**
+  purely track-goroutine-local — the loop finalizes a quiescent merged track via `record()` (§3.6) —
+  so the per-track lock `t.m` is **kept** (now uncontended, the loop having left the reachability hot
+  path in §3.1–§3.4). Removing it is a deliberate non-goal: it would rest correctness on the
+  `emit`/`parkCh` happens-before without structural enforcement. The `-race` suite stays clean (T-6).
 - **NFR-4 — Diff coverage ≥ COVER_MIN (95%) on touched functions**, aiming 100%.
 
 ## 3. Models
@@ -142,7 +145,7 @@ Add one kind and one field:
 ```go
 type trackEvent struct {
 	track     *track
-	node      flow.Node            // for evMoved: the node the track just advanced onto
+	node      flow.Node            // evMoved: node advanced onto; evParked: the join node
 	eDef      flow.EventDefinition
 	flows     []*flow.SequenceFlow
 	mergedIDs []string
@@ -216,10 +219,14 @@ spawn := func(t *track) {
 | event | position | parked |
 |---|---|---|
 | `evMoved` | `position[t] = ev.node` | `delete(parked, t)` (moving ⟹ not parked) |
-| `evParked` | — | `parked[t] = position[t]` (the join node) |
+| `evParked` | — | `parked[t] = ev.node` — **iff** not stopping **and** `t` still in `position` (ADR-017 v.1 §“Rule 2 mechanics”) |
 | `evAwaiting` | keep (alive at join) | — (AwaitingMerge ≠ AwaitSync) |
 | `evMerged` | `delete` absorbed ids | `delete` absorbed ids |
 | `evEnded` / `evFailed` | `delete(position, t)` | `delete(parked, t)` |
+
+`evParked` carries the join node in the event (`ev.node`), so the recorded park never depends on
+`position` timing; the two guards on it (shutdown, and the merge-race where the completing arrival's
+`evMerged` clears `t` before its own `evParked` is applied) are detailed in ADR-017 v.1 §“Rule 2 mechanics”.
 
 `stopAll` clears both (like `waiting`/`msgIdx`). The recheck helpers (`recheckAwaitingJoins`,
 `recheckParked`, `recheckJoin`, `fireOrJoin`) take `position`/`parked` as parameters — the same
@@ -262,24 +269,34 @@ Delete `inst.CheckFlows` and `occupiedNodes` (no caller after SRD-027 — §1) a
 `reachesOccupied` stay. The `exec.FlowChecker` interface (`pkg/exec/exec.go:40`) is unchanged —
 `fixedFlowChecker` still implements it.
 
-### 3.6 `t.m` reduction (`internal/instance/track.go`)
+### 3.6 `t.m` is retained — the merge-path finalizes a quiescent track (`internal/instance/track.go`)
 
-After §3.1–§3.5 the loop no longer reads any track's `steps`/`state`. The remaining accessors are:
+After §3.1–§3.5 the loop no longer reads a **live** track's `steps`/`state`: the reachability and
+join machinery read the loop-owned `position`/`parked` maps (§3.4). That fulfils ADR-017 Rule 2's
+actual requirement — *no cross-goroutine read of a running track's position/state*.
 
-- `t.steps` — appended in `checkFlows`/`advanceToArm` and read in `currentStep`/`record`/`deliver`,
-  **all on the track's own goroutine**. No other goroutine touches `t.steps`.
-- `t.state` — written/read by the track's own goroutine (`run`/`synchronize`/`checkNodeType`/
-  `trackEndKind`), plus the loop writing `TrackMerged` in `applyMerged`/`recheckParked` immediately
-  **before** signalling `parkCh`; the track reads that state only after `<-parkCh`. The channel send
-  establishes happens-before, so this hand-off needs no mutex.
+`t.steps`/`t.state` are **not**, however, purely track-goroutine-local. The loop still finalizes a
+**quiescent merged** track: `applyMerged` / `recheckParked` call `updateState(TrackMerged)` →
+`record()`, which reads `steps[last]` on the **loop** goroutine. That track's own goroutine has
+already returned (`AwaitingMerge`) or is suspended on `parkCh` (`AwaitSync`), so the read is ordered
+after the track's last write by the `emit` / `parkCh` handoff — the ADR-001 single-writer pattern
+applied to a quiescent track, not a concurrent read.
 
-So `t.m` is reducible. This slice takes the **conservative** path: drop the `t.m` guard from the
-step accessors that are now provably single-goroutine (`currentStep`, the `record`/`deliver` step
-reads, the `checkFlows`/`advanceToArm` appends), keep any guard whose locality is not provable, and
-**gate the change on the `-race` suite staying clean** (NFR-1/NFR-3). The stale doc comments at
-`record` (`track.go:196`) and `deliver` (`track.go:922`) — which justify the guard by "path()/
-occupiedNodes read it concurrently" — are corrected: `occupiedNodes` is gone and `path()`/`Token()`
-read the lock-free `hist` projection, never `t.steps`.
+Because of that merge-path access, the per-track lock `t.m` is **retained**, not removed:
+
+- It is now **uncontended** (the loop took it out of the reachability hot path in §3.1–§3.4) and
+  guards the one remaining seam uniformly across both goroutines, so keeping it is nearly free.
+- `track` is an **unexported entity of the `instance` package** — the loop and the track are two
+  goroutines cooperating inside one internal abstraction, not a public boundary that must promise
+  goroutine isolation. A guarded quiescent handoff between them is a legitimate intra-package design,
+  not a leaked invariant.
+- Full lock removal would make correctness rest on the `emit`/`parkCh` happens-before reasoning
+  *without* structural enforcement — a deliberate **non-goal** (it trades a free, safe guard for
+  subtle-race exposure on any future change to the merge/resume paths).
+
+The stale doc comments at `record` and `deliver` — which justified the guard by the removed
+`occupiedNodes` and by `path()` (which actually reads the lock-free `hist`, never `t.steps`) — are
+corrected to name the real merge-path reader.
 
 ## 4. Analysis
 
@@ -319,10 +336,22 @@ and timing therefore match.
 
 ## 5. Public API surface
 
-**None.** `position`/`parked` are loop-locals; `evMoved`/the `node` field are package-internal.
-`GetTokens` / `TokenHistory` (`instance.go:1126-1158`) are unchanged — they derive from the
-lock-free `hist` snapshot, independent of the loop's position view. Re-pointing token-gathering at
-the loop-owned view is a possible future simplification, explicitly **out of scope** here.
+**None.** `position`/`parked` are loop-locals; the `evMoved`/`evParked` `node` field is
+package-internal. `GetTokens` / `TokenHistory` (`instance.go:1126-1158`) are **unchanged** — they
+derive from the lock-free atomic `hist` projection, which is what makes them safe to call from an
+external observer goroutine (SRD-018). They are deliberately **not** re-pointed at the loop-owned
+`position` map, for two reasons:
+
+1. **Safety.** `position` is loop-goroutine-only (no lock), so an external read would be a data race.
+   Exposing it would require the loop to publish an atomic position snapshot — redundant with `hist`.
+2. **They legitimately differ.** `hist`'s last entry is recorded when a node *starts executing*
+   (`record(TrackExecutingStep)` in `prepareNodeExecution`), so it lags `position` (set at
+   `checkFlows`/`evMoved`) by up to one step during a move. Reachability needs the **more-current**
+   `position` — an in-flight token must count at its new node — whereas observation is correctly
+   served by the recorded `hist` (an external reader sees a valid, eventually-consistent snapshot).
+
+Unifying the two (the loop publishing an atomic position view that `GetTokens` reads) is a possible
+future change but is **out of scope** here and of questionable benefit.
 
 ## 6. Test scenarios
 
@@ -347,6 +376,11 @@ the loop-owned view is a possible future simplification, explicitly **out of sco
   baseline), confirming the removed reads introduced no regression and the `t.m` reduction is clean.
 - **T-7 — Dead `FlowChecker` removed.** Compile-time: `inst.CheckFlows`/`occupiedNodes`/the
   `(*Instance)` assertion are gone; `fixedFlowChecker` remains the sole `exec.FlowChecker`.
+- **T-8 — `evParked` shutdown guard.** `applyEvent(evParked)` with `stopping = true` records
+  nothing (`parked` stays empty) and does not panic (ADR-017 v.1 §“Rule 2 mechanics”, shutdown).
+- **T-9 — `evParked` merge-race guard.** `applyEvent(evParked)` for a track absent from `position`
+  (already merged by the completing arrival) drops the park — `parked` stays empty (ADR-017 v.1 §“Rule 2 mechanics”, merge race).
+  Found by the T-6 `-race` stress (`TestORJoinAllBranchesArrive` nil-panicked before the guard).
 
 ## 8. Cross-doc
 

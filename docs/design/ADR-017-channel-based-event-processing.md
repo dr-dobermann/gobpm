@@ -148,16 +148,84 @@ the boundary moves only if a future correlated trigger lands.
 
 ### Rule 2 — Outbound (track state → loop): the loop owns the shared view
 
-A track **never exposes mutable state for others to read**. It **emits** its state changes —
-position moves, lifecycle transitions — to the loop, and the **loop is the sole owner** of the
-instance's authoritative shared state (token positions, join state) that reachability and joins
-consult. No goroutine reads another goroutine's state; the loop reads only its own.
+A track **never exposes mutable state for others to read while it is running**. It **emits** its
+state changes — position moves, lifecycle transitions — to the loop, and the **loop is the sole
+owner** of the instance's authoritative shared state (token positions, join state) that reachability
+and joins consult. The loop never reads a **live** track's position or state; it reads only its own
+loop-owned view.
 
-Together, **a track's state is touched by exactly one goroutine**, and everything cross-goroutine
-is a channel send into the loop. Rule 1 and Rule 2 are not two mechanisms but one: the loop the
+The one place the loop touches a track's own fields is **finalizing a quiescent track** — flipping a
+merged track to `Merged` and recording the transition after its goroutine has returned or parked on
+its resume channel; that is the ADR-001 single-writer pattern, ordered by the same `emit`/`parkCh`
+handoff, not a concurrent read. Since `track` is an **unexported entity of the instance package**
+(the loop and the track cooperate inside one internal abstraction, not across a public boundary), a
+small per-track lock is **retained** to guard that handoff rather than removed — making a track's
+state lock-free-by-construction would rest correctness on happens-before reasoning without structural
+enforcement, a deliberate non-goal for no practical gain (the lock is uncontended).
+
+Together, **a live track's state is touched by exactly one goroutine**, and everything else
+cross-goroutine is a channel send into the loop. Rule 1 and Rule 2 are not two mechanisms but one: the loop the
 engine already runs becomes the single point that both *applies* track-emitted changes and
 *dispatches* inbound events — the same move ADR-001 v.5 made for lifecycle state, now covering the
 two EPS paths that still bypassed it.
+
+### Rule 2 mechanics — building the loop-owned view
+
+The loop-owned shared view is two maps, each keyed by track:
+
+- **position** — every **live** track's current node. A track enters it when it is spawned (its
+  initial node) and updates it on every move it reports; it leaves when it dies (ends / fails) or is
+  merged away at a join.
+- **parked** — the join node of every track currently suspended at a reachability/Complex join. It is
+  a **subset** of the live set: a parked token still occupies its join, so a parked entry implies a
+  position entry.
+
+The loop builds both **purely from the events tracks emit** — it never reads a running track to learn
+a position:
+
+| track event | position | parked |
+|---|---|---|
+| spawned | set to the initial node | — |
+| moved onto a node | set to that node | drop (moving ⟹ no longer parked) |
+| parked at a join | — | set to that join — **iff** the track is still live and not terminating |
+| awaiting (Parallel join) | keep (still alive at the join) | — |
+| merged (absorbing others) | drop each absorbed track | drop each absorbed track |
+| ended / failed | drop | drop |
+| stop (shutdown) | clear | clear |
+
+**Invariants.** `parked ⊆ position`; a node counts as *occupied* for reachability iff some live
+track's position is that node; and a parked entry's join node is **carried in the park event**, never
+inferred from the position view — so it cannot go stale or null.
+
+**Edge case — the merge race.** When several branches arrive at one reachability join, each records
+its arrival and, unless it completes the join, reports a park; the **completing** arrival instead
+reports a merge that absorbs the others. Those reports race into the loop, so a completing merge can
+be applied **before** a co-arriver's own park — and the merge has already dropped the absorbed track
+from the view. The co-arriver's late park then finds the track **no longer live** and is **dropped**
+(its fate is settled), rather than re-recording a stale, already-merged token.
+
+```mermaid
+sequenceDiagram
+    participant T1 as track T1 (early arrival)
+    participant T2 as track T2 (completing arrival)
+    participant L as loop (position / parked)
+    T1->>L: moved onto join
+    Note over L: position[T1]=join
+    T2->>L: moved onto join
+    Note over L: position[T2]=join
+    T2->>L: merged, absorbing T1
+    Note over L: drop T1 → position={T2:join}, parked={}
+    T1->>L: parked at join
+    Note over L: T1 no longer live → drop (already merged)
+```
+
+The non-racing order (the park applied first) records the park, the recheck defers on the
+still-in-transit completing token, and the later merge drops it — same end state, no stale entry.
+
+**Edge case — shutdown.** On termination the loop clears the view and joins no longer fire; a track
+that reaches a join afterwards still reports a park, which the loop **skips** — the track is woken by
+context cancellation and unwinds, never by a loop recheck (mirroring the inbound wait's shutdown
+guard).
 
 ### Broadcast fan-out is two-level
 
@@ -190,9 +258,11 @@ instances), each emitting to its own loop.
 ## 3. Consequences
 
 - **The race class is eliminated by construction.** No foreign-goroutine mutation (Rule 1); no
-  cross-goroutine state reads (Rule 2). The per-track event mutex, the post-guard re-read, the
-  `Gosched`, and the positional snapshot all become unnecessary — there is no longer a window for
-  two goroutines to touch a track's state, so there is nothing to guard.
+  cross-goroutine read of a **live** track's position/state (Rule 2). The per-track event mutex, the
+  post-guard re-read, the `Gosched`, and the positional snapshot all become unnecessary. A small
+  per-track lock is **kept** for the one remaining seam — the loop finalizing a *quiescent* merged
+  track's lifecycle state under the `emit`/`parkCh` handoff, the ADR-001 single-writer pattern, not a
+  concurrent touch (full lock removal is a deliberate non-goal — see Rule 2).
 - **Deferred choice is atomic at the loop.** The loop is single-threaded, so when it dispatches the
   **first** matching event to a track it **flips that track to not-parked in the same step** and
   tears down the track's sibling subscriptions. A second event arriving for that track (the losing
