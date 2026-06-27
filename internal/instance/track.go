@@ -39,7 +39,6 @@ package instance
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -175,24 +174,30 @@ type track struct {
 	// track's fate (survivor → proceed, merged → return). Buffered(1) so the
 	// loop never blocks on the signal. SRD-022.
 	parkCh chan struct{}
+	// evtCh delivers a fired event to this track while it is parked in TrackWaitForEvent
+	// (SRD-027 FR-1). The per-instance loop is the SOLE sender and sole closer; the track
+	// only receives. Buffered to one slot (eventBufferDepth) so the loop never blocks on the
+	// send — with flip-on-dispatch the loop delivers at most one event per parked episode.
+	evtCh chan flow.EventDefinition
 	steps []*stepInfo
-	m     sync.RWMutex
-	// eventMu serializes ProcessEvent on this track: one event is processed to
-	// completion — the state guard through the WaitForEvent→Ready transition —
-	// before the next is evaluated, so concurrent fires at an Event-Based gateway
-	// (its single gate track is the EventProcessor for every arm) can't both pass
-	// the guard and both advance an arm (FIX-007). Distinct from m (taken inside
-	// ProcessEvent, via the steps read and advanceToArm) — Go mutexes aren't
-	// reentrant, so reusing m would deadlock.
-	eventMu sync.Mutex
-	state   trackState
-	stopIt  atomic.Bool
+	// msgDefIDs are the ids of the Message catch definitions this track parks on, set by
+	// checkNodeType at construction (SRD-027 FR-8). The loop indexes them → this track so a
+	// fired message resolves back to it; spawn reads them for a track that starts parked
+	// before the loop drains events. Construction-immutable, so the loop reads it lock-free.
+	msgDefIDs []string
+	m         sync.RWMutex
+	state     trackState
+	stopIt    atomic.Bool
 }
 
 // record appends a track-state transition to the history, copy-on-write, and
-// publishes it atomically. It is called from the track's run goroutine and,
-// via ProcessEvent -> updateState, from a waiter goroutine, so the read of
-// t.steps is guarded by t.m (the same lock checkFlows takes to append a step).
+// publishes it atomically. It runs on the track's own run goroutine, and also on
+// the loop goroutine when the loop finalizes a QUIESCENT merged track
+// (applyMerged / recheckParked -> updateState(TrackMerged) -> record). That track's
+// own goroutine has already returned (AwaitingMerge) or is suspended on parkCh
+// (AwaitSync), so the loop-side read of t.steps is ordered after the track's last
+// write by the emit / parkCh handoff (ADR-001 single-writer of a quiescent track,
+// SRD-028 §3.6); t.m guards that read uniformly with the track's own appends.
 func (t *track) record(state trackState) {
 	t.m.RLock()
 	node := t.steps[len(t.steps)-1].node
@@ -257,6 +262,13 @@ func (t *track) path() TokenPath {
 	return tp
 }
 
+// eventBufferDepth is the per-track inbound event-channel (evtCh) capacity. One slot is
+// exactly enough: the loop dispatches at most one event per parked episode (it removes the
+// track from its waiting set on first delivery), and a single slot decouples the loop's send
+// from the track's scheduling so the loop never blocks. Unbuffered would risk blocking the loop
+// in the window between the track's evWaiting and its receive. SRD-027 §3.6.
+const eventBufferDepth = 1
+
 // newTrack creates the new track from the start flow.Node and sets it
 // in TrackReady state.
 // newTrack retruns created track's pointer on success or error on failure.
@@ -299,6 +311,7 @@ func newTrack(
 		state:    TrackReady,
 		instance: inst,
 		parkCh:   make(chan struct{}, 1),
+		evtCh:    make(chan flow.EventDefinition, eventBufferDepth),
 	}
 
 	if prevTrack != nil {
@@ -318,16 +331,6 @@ func newTrack(
 
 // checkNodeType determines if node awaits for event or human interaction
 // and updates track state on positive comparison.
-// CorrelationKeys returns the conversation key values the track's instance has
-// established (SRD-017 §4.3). The message waiter reads it structurally (the
-// "declared filter") to subscribe this in-instance receiver keyed to its
-// conversation; an instance with no keys yields none, leaving a wildcard
-// subscription. It is the subscriber declaring its own filter — the waiter
-// never references the instance directly.
-func (t *track) CorrelationKeys() []string {
-	return t.instance.conversationKeyValues()
-}
-
 func (t *track) checkNodeType(node flow.Node) error {
 	en, ok := node.(flow.EventNode)
 	if !ok {
@@ -347,6 +350,11 @@ func (t *track) checkNodeType(node flow.Node) error {
 		return nil
 	}
 
+	// Record the Message catch-definition ids so the loop can index them → this track
+	// (SRD-027 FR-8): carried in the evWaiting emit below for a mid-run wait, and read by
+	// spawn for a track that starts parked before the loop drains events.
+	t.msgDefIDs = messageDefIDs(defs)
+
 	// Declare the wait BEFORE registering: a waiter may deliver an event
 	// synchronously on registration (a MessageWaiter draining a message the
 	// broker already buffered fires at once), and ProcessEvent only accepts an
@@ -354,8 +362,30 @@ func (t *track) checkNodeType(node flow.Node) error {
 	// removes that race; timers, which fire later, are unaffected.
 	t.updateState(TrackWaitForEvent)
 
+	// Tell the loop this track is parked BEFORE registering its waiters, so a fired
+	// event (dispatched by the loop as evDeliver) can never reach the loop before the
+	// track is recorded as parked-and-undelivered (SRD-027 FR-5). The emit carries the
+	// Message catch-definition IDs so the loop can index them → this track (FR-8). Gated
+	// on Active: at construction (New, before the loop runs) the loop records the track
+	// via spawn instead, and emitting here would block on the not-yet-draining inst.events.
+	if t.instance.State() == Active {
+		t.instance.emit(trackEvent{
+			kind:      evWaiting,
+			track:     t,
+			msgDefIDs: t.msgDefIDs,
+		})
+	}
+
+	// Per-trigger registration is the one place the hybrid boundary is chosen (SRD-027
+	// FR-8 / §3.7): a Message catch registers the Instance (it owns correlation), every
+	// other trigger registers the track.
 	for _, d := range defs {
-		if err := t.instance.RegisterEvent(t, d); err != nil {
+		proc := eventproc.EventProcessor(t)
+		if d.Type() == flow.TriggerMessage {
+			proc = t.instance
+		}
+
+		if err := t.instance.RegisterEvent(proc, d); err != nil {
 			return errs.New(
 				errs.M("couldn't register event definitions"),
 				errs.C(errorClass, errs.BulidingFailed),
@@ -367,6 +397,21 @@ func (t *track) checkNodeType(node flow.Node) error {
 	}
 
 	return nil
+}
+
+// messageDefIDs returns the ids of the Message-triggered definitions in defs (SRD-027
+// FR-8): the loop indexes these → the parked track so a fired message resolves back to
+// it. Returns nil when none are Message-triggered (a Signal/Timer-only wait).
+func messageDefIDs(defs []flow.EventDefinition) []string {
+	var ids []string
+
+	for _, d := range defs {
+		if d.Type() == flow.TriggerMessage {
+			ids = append(ids, d.ID())
+		}
+	}
+
+	return ids
 }
 
 // inState checks if track state is equal to any track state from the ss.
@@ -427,6 +472,44 @@ func (t *track) run(
 	t.ctx = ctx
 
 	for {
+		if t.stopIt.Load() {
+			t.updateState(TrackCanceled)
+
+			return
+		}
+
+		if t.inState(TrackWaitForEvent) {
+			// Park on evtCh instead of busy-waiting (SRD-027 FR-1): the per-instance
+			// loop is the SOLE sender and sole closer, so a delivered event is applied
+			// on the track's OWN goroutine here — no foreign-goroutine mutation, no
+			// event mutex. Zero CPU until the loop dispatches a fired event (already
+			// past any correlation gate, §3.4) or closes evtCh on stop (FR-7).
+			select {
+			case <-ctx.Done():
+				t.updateState(TrackCanceled)
+				t.lastErr = ctx.Err()
+
+				return
+
+			case eDef, ok := <-t.evtCh:
+				if !ok {
+					// the loop closed evtCh on stop — terminate like a cancellation.
+					t.updateState(TrackCanceled)
+
+					return
+				}
+
+				if err := t.deliver(ctx, eDef); err != nil {
+					t.lastErr = err
+					t.updateState(TrackFailed)
+
+					return
+				}
+			}
+
+			continue
+		}
+
 		select {
 		case <-ctx.Done():
 			t.updateState(TrackCanceled)
@@ -435,33 +518,13 @@ func (t *track) run(
 			return
 
 		default:
-			if t.stopIt.Load() {
-				t.updateState(TrackCanceled)
-
-				return
-			}
-
-			if t.inState(TrackWaitForEvent) {
-				// Yield: a track parked on the WaitForEvent busy-wait must not
-				// starve the per-instance loop (which drives reachability-join
-				// re-evaluation, abort, completion). Before FIX-007 the
-				// per-iteration currentStep() read (an RLock) implicitly yielded
-				// here; the re-fetch below moved it out of the spin, so yield
-				// explicitly. (The poll-based wait is a pre-existing anti-pattern
-				// — TestComplexAbortInstance flakes on master too — whose proper
-				// cure is the event-driven, single-writer delivery of ADR-017.)
-				runtime.Gosched()
-
-				continue
-			}
 		}
 
-		// Read the current step AFTER the wait-guard, not before it. An Event-Based
-		// gateway's ProcessEvent (on the waiter goroutine) appends the winning arm's
-		// step and then flips the state out of TrackWaitForEvent; capturing the step
-		// before the guard could execute the stale gate step (which fails loudly,
-		// SRD-024) when the flip lands mid-iteration. Reading here — once the track is
-		// no longer WaitForEvent — observes the advanced arm step (FIX-007).
+		// Read the current step here, after the park: for an Event-Based gateway,
+		// deliver() (on THIS goroutine, just above) advanced the track onto the winning
+		// arm before returning Ready, so currentStep() observes the arm step, not the
+		// stale gate step (SRD-024). Single-writer delivery removes the cross-goroutine
+		// flip the old FIX-007 re-read guarded against.
 		step := t.currentStep()
 
 		// run while there is a step to take
@@ -548,7 +611,9 @@ func (t *track) synchronize(step *stepInfo) (proceed bool) {
 	// returns and lets the goroutine end (AwaitingMerge).
 	if _, isReach := step.node.(exec.ReachabilityJoin); isReach {
 		t.updateState(TrackAwaitSync)
-		t.instance.emit(trackEvent{kind: evParked, track: t})
+		// Carry the join node so the loop records the park from the event itself, never
+		// inferring it from its position view (SRD-028 FR-3).
+		t.instance.emit(trackEvent{kind: evParked, track: t, node: step.node})
 
 		select {
 		case <-t.parkCh:
@@ -593,7 +658,8 @@ func (t *track) synchronizeActivation(
 	// resume this goroutine proceeds as the survivor, or returns if it was merged
 	// away; ctx cancel (incl. the loop aborting an unsatisfiable rule) ends it.
 	t.updateState(TrackAwaitSync)
-	t.instance.emit(trackEvent{kind: evParked, track: t})
+	// Carry the join node so the loop records the park from the event (SRD-028 FR-3).
+	t.instance.emit(trackEvent{kind: evParked, track: t, node: step.node})
 
 	select {
 	case <-t.parkCh:
@@ -759,6 +825,16 @@ func (t *track) checkFlows(flows []*flow.SequenceFlow) error {
 		return err
 	}
 
+	// Report the advance to the loop — the sole owner of the position view (ADR-017 Rule 2,
+	// SRD-028 FR-2). The node is carried in the event so the loop never reads currentStep
+	// cross-goroutine. Reached only from run() (instance Active), so no construction gating.
+	// Emitted AFTER checkNodeType: for a wait node, checkNodeType makes the token observably
+	// WaitForEvent and then registers its hub waiters; inserting this loop round-trip before
+	// that registration would widen the window in which a fired event finds no subscriber and
+	// is lost. The position view does not need the move before evWaiting (a join recheck is
+	// triggered by a death/park, never by a move).
+	t.instance.emit(trackEvent{kind: evMoved, track: t, node: nextStep.node})
+
 	// the remaining flows fork: build a fresh slice (don't mutate the caller's)
 	// and hand it to the loop, which constructs the new tracks. The track never
 	// mutates instance state itself.
@@ -831,35 +907,39 @@ func (t *track) uploadOutgoingData(
 
 // --------------------- exec.EventProcessor interface -------------------------
 
-// ProcessEvent delivers a fired event to the waiting node, unregisters the
-// node's event definitions, and returns the track to the Ready state so run()
-// resumes it. Implements eventproc.EventProcessor.
+// ProcessEvent (eventproc.EventProcessor) is called by a Signal/Timer producer on its OWN
+// goroutine when an event fires (Message is registered at instance granularity instead —
+// SRD-027 FR-8). It does NOT touch track state: it hands the event to the per-instance loop
+// (FR-2), which dispatches it to this track's evtCh, where deliver() applies it on the
+// track's own goroutine. Returns once enqueued, not once applied.
 func (t *track) ProcessEvent(
+	_ context.Context,
+	eDef flow.EventDefinition,
+) error {
+	t.instance.emit(trackEvent{kind: evDeliver, track: t, eDef: eDef})
+
+	return nil
+}
+
+// deliver applies a fired event to the waiting node on the track's OWN goroutine: run()
+// receives it from evtCh — the loop having already passed the correlation gate (§3.4) —
+// and calls this. It lets the node process the payload, unregisters the node's event
+// definitions, advances onto the winning arm for an Event-Based gateway, and returns the
+// track to Ready so run() resumes (SRD-027 FR-2). No event mutex and no WaitForEvent
+// guard: the loop guarantees a single delivery to a parked track, so this goroutine is
+// the only one touching the track's state.
+func (t *track) deliver(
 	ctx context.Context,
 	eDef flow.EventDefinition,
 ) error {
-	// Serialize event delivery to this track (FIX-007): the first fire runs to
-	// completion — the WaitForEvent guard below through the WaitForEvent→Ready
-	// transition — before any concurrent second fire is evaluated, so two events
-	// reaching an Event-Based gateway's single gate track can't both advance an arm.
-	// The loser then fails the guard (state is no longer WaitForEvent) and is dropped.
-	t.eventMu.Lock()
-	defer t.eventMu.Unlock()
-
-	if !t.inState(TrackWaitForEvent) {
-		// An event reaching a track that isn't waiting — the Event-Based gateway's
-		// deferred-choice loser (a second concurrent fire after the winner already
-		// advanced), or any stray late delivery — is a benign drop, not a failure.
-		// Return ErrRejected so the waiters treat it as a no-op (no WARN); FIX-007.
-		return eventproc.ErrRejected
-	}
-
 	if ctx == nil {
 		ctx = t.ctx
 	}
 
-	// ProcessEvent runs on a waiter goroutine; guard the t.steps read against
-	// the run goroutine's checkFlows append (same t.m).
+	// Read the waiting node's position. t.steps is written only by this goroutine, but t.m is
+	// held here uniformly with the other steps accessors (currentStep / record) so the loop's
+	// merge-path record() — finalizing a quiescent merged track — never races an append
+	// (SRD-028 §3.6). path() / Token() read the lock-free hist projection, not t.steps.
 	t.m.RLock()
 	n := t.steps[len(t.steps)-1].node
 	t.m.RUnlock()
@@ -870,14 +950,6 @@ func (t *track) ProcessEvent(
 			errs.M("node %q(%s) doesn't support event processing",
 				n.Name(), n.ID()),
 			errs.C(errorClass, errs.TypeCastingError))
-	}
-
-	// Conversation-token rules BEFORE the node processes (SRD-017 §4.5): a
-	// correlation mismatch (a held key whose value differs) means the message
-	// isn't for this conversation — reject it so the receiver keeps waiting,
-	// without advancing the token. Otherwise any new key is associated here.
-	if t.instance.validateAndAssociate(ctx, eDef) {
-		return eventproc.ErrRejected
 	}
 
 	if err := ep.ProcessEvent(ctx, eDef); err != nil {
@@ -947,6 +1019,10 @@ func (t *track) advanceToArm(
 		state:  StepCreated,
 	})
 	t.m.Unlock()
+
+	// Report the arm advance to the loop, like checkFlows (ADR-017 Rule 2, SRD-028 FR-2):
+	// the winning arm becomes this track's position in the loop's own view.
+	t.instance.emit(trackEvent{kind: evMoved, track: t, node: arm})
 }
 
 // -----------------------------------------------------------------------------

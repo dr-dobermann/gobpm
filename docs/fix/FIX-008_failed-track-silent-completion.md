@@ -7,7 +7,7 @@
 **Branch:** `fix/surface-failed-track` (surface a `TrackFailed` track as an instance failure).
 **Tracking issue:** [#165](https://github.com/dr-dobermann/gobpm/issues/165) (bug).
 **Paired doc:** none (local to `internal/instance` loop lifecycle).
-**Upstream:** [FIX-007](FIX-007_event-gateway-concurrent-fire.md) / [#164](https://github.com/dr-dobermann/gobpm/issues/164) (its diagnosis found this hole — sideways FIX→FIX), [ADR-001 v.5](../design/ADR-001-execution-model.md) (the single-writer loop owns lifecycle state + `lastErr`), [ADR-017 v.1](../design/ADR-017-single-writer-event-delivery.md) (the broader single-writer direction).
+**Upstream:** [FIX-007](FIX-007_event-gateway-concurrent-fire.md) / [#164](https://github.com/dr-dobermann/gobpm/issues/164) (its diagnosis found this hole — sideways FIX→FIX), [ADR-001 v.5](../design/ADR-001-execution-model.md) (the single-writer loop owns lifecycle state + `lastErr`).
 
 ---
 
@@ -197,7 +197,6 @@ Single-commit revert (the `evFailed` kind, the spawn-wrapper branch, the loop ca
 
 - [FIX-007](FIX-007_event-gateway-concurrent-fire.md) / [#164](https://github.com/dr-dobermann/gobpm/issues/164) — the diagnosis that surfaced this hole (it masked the gate-self-execution race as a silent partial completion). Sideways FIX→FIX.
 - [ADR-001 v.5](../design/ADR-001-execution-model.md) — the single-writer loop is the sole owner of instance lifecycle state and `lastErr`; this fix keeps `fail` on the loop goroutine. Up.
-- [ADR-017 v.1](../design/ADR-017-single-writer-event-delivery.md) — the broader single-writer direction; orthogonal to this fix but the same principle (one goroutine owns the instance's state). Sideways/up.
 
 ---
 

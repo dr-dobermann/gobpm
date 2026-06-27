@@ -42,3 +42,38 @@ func TestBroadcastSignalFanOut(t *testing.T) {
 	// the catcher (matched by name, not by the throw's eDef.ID()).
 	require.NoError(t, hub.PropagateEvent(context.Background(), signalDef(t, "GO")))
 }
+
+// TestBroadcastSignalNameIndex (SRD-027 §6 T-4): a broadcast reaches every catcher of the
+// name via the O(1) signal-name index (FR-6). Two catchers (distinct definitions / distinct
+// catch nodes, same name) both fire; after one unregisters only the other fires; after the
+// last unregisters the broadcast is a benign no-op (ADR-006 v.1 §2.4).
+func TestBroadcastSignalNameIndex(t *testing.T) {
+	hub, err := eventhub.New(enginert.Default())
+	require.NoError(t, err)
+	require.NoError(t, hub.Start(context.Background()))
+
+	defA := signalDef(t, "GO")
+	defB := signalDef(t, "GO")
+
+	epA := mockeventproc.NewMockEventProcessor(t)
+	epA.EXPECT().ID().Return("catcher-A").Maybe()
+	epA.EXPECT().ProcessEvent(mock.Anything, mock.Anything).Return(nil).Twice()
+
+	epB := mockeventproc.NewMockEventProcessor(t)
+	epB.EXPECT().ID().Return("catcher-B").Maybe()
+	epB.EXPECT().ProcessEvent(mock.Anything, mock.Anything).Return(nil).Once()
+
+	require.NoError(t, hub.RegisterEvent(epA, defA))
+	require.NoError(t, hub.RegisterEvent(epB, defB))
+
+	// Both catchers grouped under "GO" fire.
+	require.NoError(t, hub.PropagateEvent(context.Background(), signalDef(t, "GO")))
+
+	// Unregister B's waiter; the slice keeps A — only A fires next.
+	require.NoError(t, hub.UnregisterEvent(epB, defB.ID()))
+	require.NoError(t, hub.PropagateEvent(context.Background(), signalDef(t, "GO")))
+
+	// Unregister A's waiter; the now-empty "GO" key is dropped → the broadcast is a no-op.
+	require.NoError(t, hub.UnregisterEvent(epA, defA.ID()))
+	require.NoError(t, hub.PropagateEvent(context.Background(), signalDef(t, "GO")))
+}

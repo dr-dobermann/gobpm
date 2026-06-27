@@ -5,18 +5,30 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
-// CheckFlows implements exec.FlowChecker (ADR-005 v.2 §2.10, SRD-022 §6.3): given
-// a synchronizing join and a set of its un-marked incoming flows, it returns the
-// subset still reachable — those with a live token somewhere on a backward path
-// from the flow's source to the start. Reachability is structural
-// (condition-ignoring, so every edge counts) and cycle-guarded; it is computed on
-// demand with no cached graph. The instance loop is the sole caller, so the live
-// position set is read without contention.
-func (inst *Instance) CheckFlows(
+// fixedFlowChecker is an exec.FlowChecker bound to a precomputed occupied-node set, so a join
+// recheck evaluates reachability against the SAME token-position snapshot it used for its
+// in-transit guard. This closes the recheck double-read race (SRD-027 FIX): sampling positions
+// twice let a token slipping from a branch (reachable) to the join (arrived-pending) be invisible
+// to both reads, yielding a spurious unsatisfiable-rule abort (and the symmetric missed abort).
+type fixedFlowChecker struct {
+	occupied map[string]bool
+}
+
+// CheckFlows reuses the bound snapshot instead of re-reading live token positions.
+func (f fixedFlowChecker) CheckFlows(
 	node flow.Node,
 	flows []*flow.SequenceFlow,
 ) ([]*flow.SequenceFlow, error) {
-	occupied := inst.occupiedNodes()
+	return checkFlowsWith(node, flows, f.occupied)
+}
+
+// checkFlowsWith returns the subset of flows still reachable from a live token, given a fixed
+// occupied-node snapshot built from the loop-owned position view (SRD-028 §3.4).
+func checkFlowsWith(
+	node flow.Node,
+	flows []*flow.SequenceFlow,
+	occupied map[string]bool,
+) ([]*flow.SequenceFlow, error) {
 	joinID := node.ID()
 
 	reachable := make([]*flow.SequenceFlow, 0, len(flows))
@@ -34,24 +46,36 @@ func (inst *Instance) CheckFlows(
 	return reachable, nil
 }
 
-// occupiedNodes is the set of node ids that currently hold a live token. It walks
-// the loop-owned tracks by their actual position (currentStep), not the projected
-// history — a freshly forked track holds a position before it has recorded any
-// history, and must still count as a reacher. A track parked at a synchronizing
-// join is included (it may resume and reach downstream); a dead track (Merged /
-// Ended / Canceled / Failed) is excluded. Called only from loop().
-func (inst *Instance) occupiedNodes() map[string]bool {
-	occupied := map[string]bool{}
+// joinPositions derives, from the loop-owned position/parked maps, the occupied-node set used
+// for reachability AND whether a token is imminently arriving at joinNode (sitting on the join
+// but not yet parked there). It reads ONLY the loop's own maps — never another track's
+// currentStep/inState cross-goroutine (SRD-028 FR-4) — which is what makes the recheck race-free:
+//
+//   - position holds every LIVE track's current node (a dead track was dropped on its
+//     evEnded/evFailed/evMerged), so every entry counts as occupied — a freshly forked track
+//     too, seeded at spawn before it records any history;
+//   - a token on joinNode that is not in parked is between its evMoved onto the join and its
+//     evParked — an imminent arrival the caller must wait for, not decide around. A parked
+//     entry at the join is a settled arrival (TrackAwaitSync), not in transit.
+//
+// joinNode may be nil (plain occupied-set query); then inTransit is always false.
+func joinPositions(
+	joinNode flow.Node,
+	position, parked map[string]flow.Node,
+) (occupied map[string]bool, inTransit bool) {
+	occupied = make(map[string]bool, len(position))
 
-	for _, t := range inst.tracks {
-		if t.inState(TrackMerged, TrackEnded, TrackCanceled, TrackFailed) {
-			continue
+	for id, n := range position {
+		occupied[n.ID()] = true
+
+		if joinNode != nil && n.ID() == joinNode.ID() {
+			if _, isParked := parked[id]; !isParked {
+				inTransit = true
+			}
 		}
-
-		occupied[t.currentStep().node.ID()] = true
 	}
 
-	return occupied
+	return occupied, inTransit
 }
 
 // reachesOccupied reports whether any node on a backward path from start (walking
@@ -88,5 +112,6 @@ func reachesOccupied(start flow.Node, stopID string, occupied map[string]bool) b
 	return false
 }
 
-// interface check
-var _ exec.FlowChecker = (*Instance)(nil)
+// interface check — fixedFlowChecker is the only FlowChecker (the live inst.CheckFlows path
+// was removed with SRD-028: every recheck builds a snapshot from the loop-owned position view).
+var _ exec.FlowChecker = fixedFlowChecker{}
