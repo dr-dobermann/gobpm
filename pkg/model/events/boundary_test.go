@@ -11,6 +11,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // boundaryHostTask builds a real activity (a ReceiveTask) to attach boundary
@@ -128,6 +129,23 @@ func TestNewBoundaryEventValidation(t *testing.T) {
 			require.Equal(t, flow.BoundaryEventClass, be.EventClass())
 		})
 	}
+}
+
+// TestNewBoundaryEventCatchEventError: a base option the embedded catch event
+// rejects propagates out of NewBoundaryEvent (the newCatchEvent error path), after
+// the host/definition/trigger guards have passed.
+func TestNewBoundaryEventCatchEventError(t *testing.T) {
+	data.CreateDefaultStates()
+
+	host := boundaryHostTask(t)
+	sig := signalDef(t, "s_bad")
+
+	// options.WithName is not a valid base option for an event node, so the
+	// embedded catch-event build fails inside NewBoundaryEvent.
+	be, err := events.NewBoundaryEvent("b", host, sig, true,
+		options.WithName("not a base option"))
+	require.Error(t, err)
+	require.Nil(t, be)
 }
 
 // T-2 — attachment populates the host and multiplicity is enforced per Event
