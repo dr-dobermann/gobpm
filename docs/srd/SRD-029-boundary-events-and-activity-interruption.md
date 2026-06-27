@@ -76,7 +76,7 @@ cancel handle. **This SRD introduces it** — it is the linchpin of interrupting
 |---|---|
 | **FR-1** | A concrete **`BoundaryEvent`** type (package `events`) implements `flow.BoundaryEvent`, carries `attachedToRef` (the guarded `flow.ActivityNode`), a `cancelActivity bool` (default `true`), and exactly one trigger `EventDefinition` (Timer / Message / Signal / Error). One parameterized type — **not** four trigger-specific types (§4.1). |
 | **FR-2** | `NewBoundaryEvent(attachedTo, def, opts…)` validates **every** public parameter: non-nil `attachedTo`, non-nil `def`, `def.Type() ∈ {Timer,Message,Signal,Error}`, and **rejects `cancelActivity=false` when `def.Type()==TriggerError`** (Error is always interrupting — BPMN §10.5.6). Each rejection is a self-identifying `errs` error. |
-| **FR-3** | Attaching a `BoundaryEvent` populates the guarded activity's `boundaryEvents` (via `BoundTo` → an activity-internal `addBoundaryEvent`), so `activity.BoundaryEvents()` returns it. Attachment enforces **multiplicity**: at most one *interrupting* handler per `(activity, EventDefinition)` declaration; non-interrupting are unbounded (ADR-018 §2.5). |
+| **FR-3** | Attaching a `BoundaryEvent` populates the guarded activity's `boundaryEvents` (via `BoundTo` → the activity's exported `AddBoundaryEvent`), so `activity.BoundaryEvents()` returns it. Attachment enforces **multiplicity** (in `BoundTo`): at most one *interrupting* handler per `(activity, EventDefinition)` declaration; non-interrupting are unbounded (ADR-018 §2.5). |
 | **FR-4** | Each track runs under its **own** cancellable context `t.ctx, t.cancel = context.WithCancel(inst.ctx)` (replacing the shared `inst.ctx` hand-off). The loop can cancel **one** track via `t.cancel` without touching siblings; `inst.cancel` still cancels all (instance terminate is unchanged). |
 | **FR-5** | When a track **moves onto** an activity that has boundary events (observed via the existing `evMoved`), the loop **registers the activity's boundary watchers** (a catch subscription per trigger, reusing the Timer/Message/Signal waiter + the loop delivery path). When the track **moves off** the activity or the track ends (`evMoved` to the next node / `evEnded` / `evFailed`), the loop **tears the watchers down**. Teardown is loop-owned — no send-on-closed, no leak (inherits ADR-017 discipline). |
 | **FR-6** | An **interrupting** boundary fire (loop-applied): the loop (a) `t.cancel()`s the guarded track, (b) `spawnForks`-style spawns a fresh track on the boundary's **outgoing (exception) flow**, (c) tears the activity's watchers down. A **waiting** activity wakes on `<-t.ctx.Done()` and ends `TrackCanceled`; a **running** ctx-honouring `Exec` observes `ctx.Done()` and is interrupted *in its execution phase*; a ctx-ignoring `Exec` runs on but its result is discarded (§3.7). |
@@ -106,15 +106,15 @@ type over many definitions):
 // BoundaryEvent is a catch event attached to an activity; it fires while the
 // activity executes and either interrupts it (cancelActivity) or runs in parallel.
 type BoundaryEvent struct {
-	event                         // shared event base (id, name, definitions, class)
-	attachedTo     flow.ActivityNode
+	attachedTo flow.ActivityNode
+	catchEvent          // the shared catch base (id, name, single definition, payload outputs)
 	cancelActivity bool
-	def            flow.EventDefinition // Timer | Message | Signal | Error
 }
 
 // NewBoundaryEvent builds a boundary event and attaches it to host.
 // It validates every parameter (ADR-018 §2.5; CLAUDE.md public-API rule).
 func NewBoundaryEvent(
+	name string,
 	host flow.ActivityNode,
 	def flow.EventDefinition,
 	cancelActivity bool,
@@ -122,38 +122,62 @@ func NewBoundaryEvent(
 ) (*BoundaryEvent, error)
 ```
 
-Validation (FR-2), each a self-identifying `errs` error in the `errs.BulidingFailed` class:
+The trigger definition is held by the embedded `catchEvent` (one type over many triggers, like
+`IntermediateCatchEvent` — §4.1), so `Definitions()` returns `[]flow.EventDefinition{def}` and, for a
+message trigger, the payload output is registered (reusing `catchEvent.addMessagePayloadOutput`).
+
+Validation (FR-2), each a self-identifying `errs` error:
 
 - `host == nil` → `"NewBoundaryEvent: a nil host activity isn't allowed"`.
 - `def == nil` → `"NewBoundaryEvent: a nil event definition isn't allowed"`.
 - `def.Type()` ∉ {Timer,Message,Signal,Error} → names the rejected trigger.
 - `def.Type()==flow.TriggerError && !cancelActivity` → `"NewBoundaryEvent: an Error boundary is always interrupting; cancelActivity=false isn't allowed"`.
 
-`EventClass()` → a new `flow.BoundaryEventClass` (or the existing intermediate class if the enum
-treats boundary as a position — decided at impl by reading `flow.EventClass`). `Definitions()` returns
-`[]flow.EventDefinition{def}`. `BoundTo(host)` is the interface method; the constructor calls it.
+`EventClass()` returns the new `flow.BoundaryEventClass` (a boundary is a distinct event position in
+BPMN §10.5.6, so it gets its own class value rather than reusing the intermediate class). The interface
+`flow.BoundaryEvent` gains `CancelActivity() bool` (needed by the multiplicity check). `BoundTo(host)`
+is the interface method; the constructor calls it.
 
 ### 3.2 `flow.BoundaryEvent.BoundTo` + activity attachment (`pkg/model/activities/activity.go`)
 
-`BoundTo(host flow.ActivityNode) error` records the attachment and registers the boundary on the host:
+`BoundTo` records the attachment, enforces multiplicity, and registers the boundary on the host.
+Multiplicity lives **here** (in the `events` package) rather than on the activity, because the check
+must read the existing boundaries' trigger definitions — which the `events` package owns. `BoundTo`
+type-asserts the host to a narrow `boundaryHost` interface (so `flow.ActivityNode` need not widen):
 
 ```go
+// boundaryHost is the activity-side capability BoundTo needs.
+type boundaryHost interface {
+	flow.ActivityNode
+	BoundaryEvents() []flow.EventNode
+	AddBoundaryEvent(flow.BoundaryEvent) error
+}
+
 func (b *BoundaryEvent) BoundTo(host flow.ActivityNode) error {
-	if host == nil { /* errs: nil host */ }
+	// nil-host + not-boundary-capable guards (errs) …
+	h := host.(boundaryHost)
+	if b.cancelActivity {
+		// reject a 2nd interrupting handler for the same Event Declaration —
+		// keyed by declarationKey(b) = trigger + EventDefinition identity.
+	}
 	b.attachedTo = host
-	return host.addBoundaryEvent(b) // package-internal setter on activity
+	return h.AddBoundaryEvent(b)
 }
 ```
 
-Add the package-internal setter the field has lacked, enforcing multiplicity (FR-3):
+On the activity side, add the **exported** setter the field has lacked (exported because `BoundTo`
+lives in another package); it simply stores, since multiplicity is already enforced by `BoundTo`:
 
 ```go
-// addBoundaryEvent registers be, rejecting a second interrupting handler for the
-// same EventDefinition declaration on this activity (ADR-018 §2.5).
-func (a *activity) addBoundaryEvent(be flow.BoundaryEvent) error
+// AddBoundaryEvent stores the attachment (nil-checked); multiplicity is
+// enforced by BoundaryEvent.BoundTo before this is called.
+func (a *activity) AddBoundaryEvent(be flow.BoundaryEvent) error
 ```
 
-(The getter `BoundaryEvents()` is unchanged.)
+(The getter `BoundaryEvents()` is unchanged.) The declaration key is the trigger plus the
+EventDefinition identity (`declarationKey`), so two boundaries on **distinct** declarations — e.g.
+different `errorRef`, modeled as distinct definitions — are both allowed while a re-attachment of the
+**same** declaration as a second interrupting handler is rejected.
 
 ### 3.3 Per-track cancellable context (`internal/instance/track.go`, `instance.go`)
 

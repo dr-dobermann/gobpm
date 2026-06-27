@@ -10,11 +10,14 @@ type EventClass string
 
 const (
 	// StartEventClass represents a BPMN start event class.
-	StartEventClass        EventClass = "Start"
+	StartEventClass EventClass = "Start"
 	// IntermediateEventClass represents a BPMN intermediate event class.
 	IntermediateEventClass EventClass = "Intermediate"
 	// EndEventClass represents a BPMN end event class.
-	EndEventClass          EventClass = "End"
+	EndEventClass EventClass = "End"
+	// BoundaryEventClass represents a BPMN boundary event class — a catch
+	// event attached to an activity's execution window (§10.5.6).
+	BoundaryEventClass EventClass = "Boundary"
 )
 
 // EventTrigger represents different types of BPMN event triggers.
@@ -74,8 +77,12 @@ type EventDefCloner interface {
 type BoundaryEvent interface {
 	EventNode
 
-	// BoundTo returns the ActivityNode the event is bounded to.
+	// BoundTo attaches the boundary event to the ActivityNode it guards.
 	BoundTo(ActivityNode) error
+
+	// CancelActivity reports whether the boundary interrupts its host
+	// (interrupting) or fires in parallel (non-interrupting).
+	CancelActivity() bool
 }
 
 // EventNode represents a BPMN event node interface.

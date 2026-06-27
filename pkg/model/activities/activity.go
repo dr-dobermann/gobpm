@@ -138,6 +138,21 @@ func (a *activity) BoundaryEvents() []flow.EventNode {
 	return append([]flow.EventNode{}, a.boundaryEvents...)
 }
 
+// AddBoundaryEvent attaches a boundary event to the activity. Multiplicity (at
+// most one interrupting handler per Event Declaration) is enforced by
+// BoundaryEvent.BoundTo before this is called; this stores the attachment.
+func (a *activity) AddBoundaryEvent(be flow.BoundaryEvent) error {
+	if be == nil {
+		return errs.New(
+			errs.M("a nil boundary event isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	a.boundaryEvents = append(a.boundaryEvents, be)
+
+	return nil
+}
+
 // ------------------ flow.Node interface --------------------------------------
 
 // Node returns Node itself.
