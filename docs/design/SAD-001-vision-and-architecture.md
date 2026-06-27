@@ -416,6 +416,33 @@ Justification details: **ADR-003 Module Layout**.
 
 Versioning follows semver per module. The core library is the version-of-record for "the BPMN engine"; runtime tracks its own version.
 
+### 15.3 Release 0.1.0 — MVP element scope
+
+`goBpm`'s conformance **target** is the full Common Executable Subclass + ComplexGateway (§14); 0.1.0 is the **first milestone toward** that target, not a reduction of it. The 0.1.0 element set is chosen by **real-world frequency**, not spec completeness: empirical BPMN-usage studies (zur Muehlen & Recker; large model-repository analyses) and BPMS-vendor telemetry consistently show a **Pareto distribution** — a core of ~10–15 element types covers ~80–90% of executable models, while most of the 100+ notation elements are rare. 0.1.0 delivers that high-frequency core so the engine is *usable for the majority of real automation* before the long tail is filled in.
+
+**In 0.1.0 — already executable** (foundation landed):
+
+| Category | Elements |
+|---|---|
+| Events | None Start / None End; Intermediate Catch/Throw for **Timer**, **Message**, **Signal** |
+| Tasks | **Service**, **User**, **Send**, **Receive** |
+| Gateways | **Exclusive**, **Parallel**, **Inclusive** (split + OR-join), Complex, Event-Based |
+| Messaging | cross-instance Message correlation (conversation keys) |
+
+**In 0.1.0 — to build** (the two highest-frequency gaps, per the same data):
+
+| Element | Why it's in 0.1.0 |
+|---|---|
+| **Boundary events** (interrupting + non-interrupting), priority **Timer-boundary** | Timer-boundary is the most-used boundary event — timeouts, SLAs, escalations; no real process is "usable" without it. Message/Signal boundary come with the same infrastructure. |
+| **Error handling** — Error End Event (throw) + **Error Boundary Event** (catch), `ErrorEventDefinition` propagation (BpmnError) | The primary way to model business-error paths in automation. Tracked by epic #79. |
+| **Terminate End Event** | Completes the instance-termination story already in the runtime ([ADR-001 v.6](ADR-001-execution-model.md) §4.6); small, core. |
+
+**Deferred to 0.2.0:** Embedded **Sub-Process** and **Call Activity** (#85) — high value for reuse/structure, but a self-contained increment 0.1.0 does not block on.
+
+**Deferred to later releases** (tracked as epics, ordered by frequency, not spec order): Script & Business-Rule/DMN tasks (#87), Multi-Instance / Loop (#88), Conditional events (#89), Compensation / Escalation / Cancel / Link events (#90), Transaction & Event Sub-Process (#91), Ad-hoc Sub-Process (#92), Data Objects / Data Store (#82), Timer persistence & hydration (#84), Observability / Event Core (#76), Fault Tolerance — incidents/retry/DLQ (#80), and the platform epics (versioning #94, migration #95, multi-tenancy/IAM #73, forms #75, expression layer #74, admin tools #96). **Manual Task** is deliberately deprioritised — the engine treats it as a pass-through (no token block), so it carries near-zero execution value.
+
+**Permanent non-goals** are unchanged — see **§4** (no modeler, no DMN *engine*, no Choreography/Collaboration-metamodel execution, no DI, no BPEL, parser-as-separate-module) and the spec-level deviations in **§14.1**. The authoritative in/out element list remains [conformance.md](../bpmn-spec/conformance.md); this section is **release phasing** over it.
+
 ## 16. References
 
 ### Subordinate ADRs
