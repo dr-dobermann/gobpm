@@ -56,10 +56,11 @@ func CreateWaiter(
 		w, err = NewTimeWaiter(eh, ep, eDef, "", rt)
 
 	case flow.TriggerMessage:
-		// CreateWaiter builds in-instance receivers — single-shot (the hub
-		// removes them after one fire). The persistent instance-starter waiter
-		// (SRD-015) is built on a dedicated path: CreatePersistentWaiter.
-		w, err = NewMessageWaiter(eh, ep, eDef, "", rt, true)
+		// CreateWaiter builds in-instance receivers: the waiter forwards every
+		// matching message and is removed by the hub when the receiving track
+		// consumes the event and unregisters. The persistent instance-starter
+		// waiter (SRD-015) is built on a dedicated path: CreatePersistentWaiter.
+		w, err = NewMessageWaiter(eh, ep, eDef, "", rt)
 
 	case flow.TriggerSignal:
 		// Signal: a passive broadcast waiter, fired by an in-process throw via
@@ -80,11 +81,12 @@ func CreateWaiter(
 }
 
 // CreatePersistentWaiter builds a persistent waiter for an event-triggered
-// instance-starter (SRD-015): unlike CreateWaiter's single-shot in-instance
-// receiver, the persistent waiter fires for every matching message and is
-// retained by the EventHub until it is explicitly unregistered (ADR-006 v.1
-// §2.5). Only message triggers can instantiate a process, so a non-message
-// trigger is rejected.
+// instance-starter (SRD-015). Like every message waiter it forwards each
+// matching message, but its processor (the instance-starter) never unregisters,
+// so the EventHub retains it across fires until it is explicitly unregistered
+// (ADR-006 v.1 §2.5) — instantiating a process on every matching message. Only
+// message triggers can instantiate a process, so a non-message trigger is
+// rejected.
 func CreatePersistentWaiter(
 	eh eventproc.EventHub,
 	ep eventproc.EventProcessor,
@@ -111,7 +113,7 @@ func CreatePersistentWaiter(
 
 	switch eDef.Type() {
 	case flow.TriggerMessage:
-		return NewMessageWaiter(eh, ep, eDef, "", rt, false)
+		return NewMessageWaiter(eh, ep, eDef, "", rt)
 
 	case flow.TriggerSignal:
 		// A persistent signal-starter needs no one-shot flag — persistence is

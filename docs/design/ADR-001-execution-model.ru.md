@@ -3,8 +3,8 @@
 | Поле | Значение |
 |---|---|
 | Статус | Принято |
-| Версия | v.5 |
-| Дата | 2026-06-11 |
+| Версия | v.6 |
+| Дата | 2026-06-27 |
 | Владелец | Руслан Габитов |
 | Замещает | v.2 (трёхслойная модель Instance / track / token). v.3 сворачивает её до **двух слоёв** — `token` становится логической *проекцией* track'а, а не хранимой сущностью — и **откладывает персистентность / регидрацию** в отдельный ADR. |
 | Уточняет | [SAD-001 v.1 §10 Execution Model](SAD-001-vision-and-architecture.md) |
@@ -252,7 +252,7 @@ func (i *Instance) loop(ctx context.Context, initial []*track) {
 - [SAD-001 v.1 Vision & Architecture](SAD-001-vision-and-architecture.md) — §6 Quality Attributes; §10 Execution Model (этот ADR уточняет); §13 Distribution & Scale (предварительно).
 - [docs/bpmn-spec/state-machines/activity-lifecycle.md](../bpmn-spec/state-machines/activity-lifecycle.md), [process-lifecycle.md](../bpmn-spec/state-machines/process-lifecycle.md) — нормативные жизненные циклы.
 - [docs/bpmn-spec/semantics/token-flow.md](../bpmn-spec/semantics/token-flow.md), [gateways.md](../bpmn-spec/semantics/gateways.md), [end-events.md](../bpmn-spec/semantics/end-events.md) — семантика fork/join/завершения.
-- [ADR-005 v.2 Gateways & Joins](ADR-005-gateways-and-joins.md), [ADR-006 v.1 Events & Subscriptions](ADR-006-events-and-subscriptions.md), [ADR-007 v.1 In-Memory Long Waits](ADR-007-in-memory-long-waits.md) — концерны, уточняющие это ядро (см. §9).
+- [ADR-005 v.4 Gateways & Joins](ADR-005-gateways-and-joins.md), [ADR-006 v.1 Events & Subscriptions](ADR-006-events-and-subscriptions.md), [ADR-007 v.1 In-Memory Long Waits](ADR-007-in-memory-long-waits.md) — концерны, уточняющие это ядро (см. §9).
 - **Persistence & State ADR** (будет написан) — политика чекпойнтов, контракт состояния на узел, долговечность длинных ожиданий, восстановление после рестарта, состояние Scope/таймера/компенсации/ошибок/активности. Зависит от интерфейса `Repository` ([ADR-002 v.1 Extension Architecture](ADR-002-extension-architecture.md)).
 - Существующий код: `internal/instance/instance.go`, `track.go`, `token.go` — рантайм, который формализует этот ADR (тип token убран; event loop; жизненный цикл приведён).
 
@@ -262,8 +262,8 @@ func (i *Instance) loop(ctx context.Context, initial []*track) {
 
 | Концерн | Владелец | Статус |
 |---|---|---|
-| Семантика join/merge — синхронизирующий join, несинхронизирующий merge, OR-join, Event-Based Gateway + причина `Withdrawn`; активация flow форка по типу шлюза | [ADR-005 Gateways & Joins](ADR-005-gateways-and-joins.md) | Draft |
-| Доставка событий (`EventHub` → Instance), Terminate End Event, прерывающие boundary-события, узлы ожидания | [ADR-006 Events & Subscriptions](ADR-006-events-and-subscriptions.md) | Draft |
+| Семантика join/merge — синхронизирующий join, несинхронизирующий merge, OR-join, Event-Based Gateway + причина `Withdrawn`; активация flow форка по типу шлюза | [ADR-005 v.4 Gateways & Joins](ADR-005-gateways-and-joins.md) | Accepted |
+| Доставка событий (`EventHub` → Instance), Terminate End Event, прерывающие boundary-события, узлы ожидания | [ADR-006 v.1 Events & Subscriptions](ADR-006-events-and-subscriptions.md) | Accepted |
 | In-memory модель освобождения на длинном ожидании (подписка → горутина заканчивается → повторное порождение) | [ADR-007 In-Memory Long Waits](ADR-007-in-memory-long-waits.md) | Draft |
 | Долговечная персистентность и восстановление после рестарта; контракт состояния на узел (исправляет мутацию разделяемого узла `RegisterData`, §6) | Persistence & State ADR (будет написан) | — |
 | Состояния ошибок instance (`Failing/Failed`) и приостановка (`Paused`) | будущие Error-Handling / Persistence ADR | — |
@@ -274,6 +274,7 @@ func (i *Instance) loop(ctx context.Context, initial []*track) {
 
 | Версия | Дата | Автор | Изменение |
 |---|---|---|---|
+| v.6 | 2026-06-27 | Руслан Габитов | Фиксирует **дозревание принципа единственного писателя** (§2; §4.1 — *track'и никогда не мутируют состояние Instance напрямую*) и его §7-гейта свободы от гонок: владение теперь охватывает не только *мутацию* состояния instance, но и кросс-горутинные *чтения* — loop является **единственным читателем** разделяемого вида позиций токенов / join'ов, поэтому живой track больше не выставляет мутабельное состояние для чтения другой горутиной. Гонка чтения с чужой горутины, которую прежде латали по местам, тем самым устранена **по построению**; гейт теперь прогоняется в масштабе под `-race` (гейтится в CI, включая продлённые конкурентные стресс-прогоны). Концепция этого ядра не изменилась — реализующая это подсистема доставки событий принадлежит своему выделенному ADR (строка доставки событий в §9). На bump'е консолидированы устаревшие исходящие пины (§8 ADR-005 v.2→v.4; §9 статус ADR-005/006 →Accepted, проставлены пины). RU-twin синхронизирован до v.6 в этом change-set'е. |
 | v.5 | 2026-06-11 | Руслан Габитов | §4.7 согласован с [ADR-009 v.1](ADR-009-per-instance-node-graph.md): **владение** состоянием рантайма на каждый узел теперь решено (каждый instance клонирует шаблон процесса в свой собственный приватный граф узлов; состояние рантайма на каждый instance живёт на собственном узле этого instance; разделяемые определения шаблона остаются неизменяемыми), тогда как v.4 откладывала его целиком в Persistence ADR. **Долговечная** персистентность/сериализация/регидрация остаётся за будущим Persistence & State ADR. В остальном модель исполнения не изменилась. Синхронизация RU-twin отложена (пакетно). |
 | v.4 | 2026-06-08 | Руслан Габитов | Зафиксирована **политика «ADR на каждый адаптер»** (§9): каждый существенный адаптер расширения получает свой ADR; скелет SRD-004 поставляет только минимальные in-memory контракты-умолчания, чтобы исполнять текущий BPMN на двухслойной модели, а production-grade контракты (в частности долговечный `Repository` — сериализация, версионирование, транзакции, history/inbox/subscriptions, пагинация) отложены в ADR на каждый адаптер. Минимального `Repository` из ADR-002 v.1 достаточно для цели in-memory миграции. Модель исполнения не изменилась. Синхронизация RU-twin отложена (пакетно, до устаканивания текущего раунда правок). |
 | v.3 | 2026-06-07 | Руслан Габитов | **Принято.** Свёрнута трёхслойная модель до **двух слоёв** (Instance + track); `token` становится логической проекцией текущего шага track'а, не хранимым типом (убраны `token.inst`/`trk`, `Instance.tokens[]`, дублирующее происхождение). Принята одна горутина event-loop для мутации состояния instance (без блокировок). Этот ADR ограничен **ядром** рантайма — join/merge (ADR-005), доставка событий и триггеры (ADR-006) и in-memory модель освобождения на длинном ожидании (ADR-007) перенесены в выделенные ADR (§9), чтобы документ был равен коду. Жизненный цикл instance приведён к `Created → Active → Completed` (+ `Terminating → Terminated`). Гейт §7 проверен и зелёный (свобода от гонок, без утечек, форк, проекция, завершение, каскад завершения) — включая два бага, вскрытых гейтом (гонка `track.stopIt`; `emit`, отбрасывавший `evEnded` при отмене). Персистентность/регидрация отложена в Persistence & State ADR. Pre-acceptance Draft-итерация свёрнута без построчных записей. |

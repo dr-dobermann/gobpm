@@ -201,6 +201,9 @@ func TestWaiterFired(t *testing.T) {
 		t.Run("terminal "+st.String()+" removed", func(t *testing.T) {
 			w := mockeventproc.NewMockEventWaiter(t)
 			w.EXPECT().State().Return(st)
+			// WaiterFired now drops a removed waiter from the signal index; a
+			// non-signal definition makes that a no-op (SRD-027 FR-6).
+			w.EXPECT().EventDefinition().Return(nil)
 
 			hub.m.Lock()
 			hub.waiters["term"] = w

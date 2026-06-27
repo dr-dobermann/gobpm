@@ -48,8 +48,13 @@ type (
 		ctx     context.Context
 		rt      renv.EngineRuntime
 		waiters map[string]eventproc.EventWaiter
-		events  []flow.EventDefinition
-		m       sync.RWMutex
+		// signalIdx groups the registered signal waiters by signal name, so a thrown
+		// signal reaches its catchers by an O(1) name lookup instead of scanning every
+		// waiter (SRD-027 FR-6). One entry per waiter (per catch eDef.ID()), not per
+		// processor; maintained under m alongside waiters at the register/remove sites.
+		signalIdx map[string][]eventproc.EventWaiter
+		events    []flow.EventDefinition
+		m         sync.RWMutex
 		// state is read lock-free by Run/PropagateEvent and written by
 		// Start/Shutdown, so it lives in an atomic to stay race-free across those
 		// unsynchronized readers (registration/shutdown still serialize the map
@@ -69,9 +74,10 @@ func New(rt renv.EngineRuntime) (*EventHub, error) {
 	}
 
 	return &EventHub{
-			rt:      rt,
-			waiters: map[string]eventproc.EventWaiter{},
-			events:  []flow.EventDefinition{},
+			rt:        rt,
+			waiters:   map[string]eventproc.EventWaiter{},
+			signalIdx: map[string][]eventproc.EventWaiter{},
+			events:    []flow.EventDefinition{},
 		},
 		nil
 }
@@ -252,6 +258,12 @@ func (eh *EventHub) registerWaiter(
 
 	eh.waiters[eDef.ID()] = w
 
+	// A new signal waiter joins the name index (SRD-027 FR-6). The "added to existing
+	// waiter" branch above creates no waiter, so it leaves the index untouched.
+	if name, ok := signalName(eDef); ok {
+		eh.signalIdx[name] = append(eh.signalIdx[name], w)
+	}
+
 	eh.rt.Logger().Debug("event registered (new waiter)",
 		"event_processor_id", ep.ID(),
 		"event_definition_id", eDef.ID(),
@@ -282,6 +294,7 @@ func (eh *EventHub) Shutdown(ctx context.Context) error {
 	}
 	// Remove all up front: the registry is clean regardless of any Stop error.
 	eh.waiters = map[string]eventproc.EventWaiter{}
+	eh.signalIdx = map[string][]eventproc.EventWaiter{}
 	eh.m.Unlock()
 
 	// Stop each waiter (logging — never aborting on — a failed Stop) and wait for
@@ -457,11 +470,10 @@ func (eh *EventHub) PropagateEvent(
 // broadcastSignal delivers a thrown signal to every registered catcher of the
 // same signal name — the BPMN broadcast publication strategy (ADR-006 v.1 §2.1,
 // §10.5.1). It matches by name (not eDef.ID(): throw and catch are distinct
-// nodes), scanning the waiter registry. No catcher in reach is a logged no-op,
-// not an error (§2.4). Each fired catcher self-unregisters as it resumes
-// (track.ProcessEvent), so the hub removes the emptied waiters. The linear scan
-// is the simple name index; an O(1) name→subscribers map is the deferred §5
-// optimization.
+// nodes) via the O(1) signal-name index (SRD-027 FR-6) instead of scanning the
+// waiter registry. No catcher in reach is a logged no-op, not an error (§2.4).
+// Each fired catcher self-unregisters as it resumes (track.ProcessEvent), so the
+// hub removes the emptied waiters (and their index entries).
 func (eh *EventHub) broadcastSignal(eDef flow.EventDefinition) error {
 	name, ok := signalName(eDef)
 	if !ok {
@@ -472,12 +484,7 @@ func (eh *EventHub) broadcastSignal(eDef flow.EventDefinition) error {
 	}
 
 	eh.m.RLock()
-	targets := make([]eventproc.EventWaiter, 0, len(eh.waiters))
-	for _, w := range eh.waiters {
-		if n, isSig := signalName(w.EventDefinition()); isSig && n == name {
-			targets = append(targets, w)
-		}
-	}
+	targets := append([]eventproc.EventWaiter(nil), eh.signalIdx[name]...)
 	eh.m.RUnlock()
 
 	if len(targets) == 0 {
@@ -526,16 +533,49 @@ func (eh *EventHub) RemoveWaiter(eDefID string) error {
 	eh.m.Lock()
 	defer eh.m.Unlock()
 
-	if _, ok := eh.waiters[eDefID]; !ok {
+	w, ok := eh.waiters[eDefID]
+	if !ok {
 		return errs.New(
 			errs.M("waiter isn't found"),
 			errs.C(errorClass, errs.ObjectNotFound),
 			errs.D("event_definition_id", eDefID))
 	}
 
+	eh.removeWaiterFromIndex(w)
 	delete(eh.waiters, eDefID)
 
 	return nil
+}
+
+// removeWaiterFromIndex drops a signal waiter from signalIdx in step with its removal from the
+// registry (SRD-027 FR-6); a non-signal waiter is a no-op. Called under eh.m by every path that
+// deletes from eh.waiters, so the name index never outlives the registry.
+func (eh *EventHub) removeWaiterFromIndex(w eventproc.EventWaiter) {
+	if name, ok := signalName(w.EventDefinition()); ok {
+		eh.signalIdxRemove(name, w)
+	}
+}
+
+// signalIdxRemove drops waiter w from signalIdx[name], removing the name key entirely when
+// its last waiter goes so no empty slice lingers (SRD-027 FR-6). Called under eh.m.
+func (eh *EventHub) signalIdxRemove(name string, w eventproc.EventWaiter) {
+	ws := eh.signalIdx[name]
+
+	for i, x := range ws {
+		if x == w {
+			ws = append(ws[:i], ws[i+1:]...)
+
+			break
+		}
+	}
+
+	if len(ws) == 0 {
+		delete(eh.signalIdx, name)
+
+		return
+	}
+
+	eh.signalIdx[name] = ws
 }
 
 // WaiterFired reports that the waiter for eDefID has fired. The EventHub is the
@@ -564,6 +604,7 @@ func (eh *EventHub) WaiterFired(eDefID string) error {
 
 	switch w.State() {
 	case eventproc.WSEnded, eventproc.WSFailed:
+		eh.removeWaiterFromIndex(w)
 		delete(eh.waiters, eDefID)
 	}
 

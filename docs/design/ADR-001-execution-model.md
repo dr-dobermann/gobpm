@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.5 |
-| Date | 2026-06-11 |
+| Version | v.6 |
+| Date | 2026-06-27 |
 | Owner | Ruslan Gabitov |
 | Supersedes | v.2 (three-layer Instance / track / token). v.3 collapses to **two layers** — `token` becomes a logical *projection* of a track, not a stored entity — and **defers persistence / rehydration** to a dedicated ADR. |
 | Refines | [SAD-001 v.1 §10 Execution Model](SAD-001-vision-and-architecture.md) |
@@ -282,7 +282,7 @@ durable-checkpoint tests belong to the Persistence & State ADR.
 - [SAD-001 v.1 Vision & Architecture](SAD-001-vision-and-architecture.md) — §6 Quality Attributes; §10 Execution Model (this ADR refines); §13 Distribution & Scale (preliminary).
 - [docs/bpmn-spec/state-machines/activity-lifecycle.md](../bpmn-spec/state-machines/activity-lifecycle.md), [process-lifecycle.md](../bpmn-spec/state-machines/process-lifecycle.md) — normative lifecycles.
 - [docs/bpmn-spec/semantics/token-flow.md](../bpmn-spec/semantics/token-flow.md), [gateways.md](../bpmn-spec/semantics/gateways.md), [end-events.md](../bpmn-spec/semantics/end-events.md) — fork/join/termination semantics.
-- [ADR-005 v.2 Gateways & Joins](ADR-005-gateways-and-joins.md), [ADR-006 v.1 Events & Subscriptions](ADR-006-events-and-subscriptions.md), [ADR-007 v.1 In-Memory Long Waits](ADR-007-in-memory-long-waits.md) — concerns refining this core (see §9).
+- [ADR-005 v.4 Gateways & Joins](ADR-005-gateways-and-joins.md), [ADR-006 v.1 Events & Subscriptions](ADR-006-events-and-subscriptions.md), [ADR-007 v.1 In-Memory Long Waits](ADR-007-in-memory-long-waits.md) — concerns refining this core (see §9).
 - **Persistence & State ADR** (to be authored) — checkpoint policy, per-node state contract, long-wait durability, restart recovery, Scope/timer/compensation/error/activity state. Depends on the `Repository` interface ([ADR-002 v.1 Extension Architecture](ADR-002-extension-architecture.md)).
 - Existing code: `internal/instance/instance.go`, `track.go`, `token.go` — the runtime this ADR formalizes (token type removed; event loop; lifecycle reconciled).
 
@@ -294,8 +294,8 @@ acceptance gate and lands with its own SRD + code:
 
 | Concern | Owner | Status |
 |---|---|---|
-| Join/merge semantics — synchronizing join, non-synchronizing merge, OR-join, Event-Based Gateway + `Withdrawn` end-reason; fork-flow activation by gateway type | [ADR-005 Gateways & Joins](ADR-005-gateways-and-joins.md) | Draft |
-| Event delivery (`EventHub` → Instance), Terminate End Event, interrupting boundary events, wait nodes | [ADR-006 Events & Subscriptions](ADR-006-events-and-subscriptions.md) | Draft |
+| Join/merge semantics — synchronizing join, non-synchronizing merge, OR-join, Event-Based Gateway + `Withdrawn` end-reason; fork-flow activation by gateway type | [ADR-005 v.4 Gateways & Joins](ADR-005-gateways-and-joins.md) | Accepted |
+| Event delivery (`EventHub` → Instance), Terminate End Event, interrupting boundary events, wait nodes | [ADR-006 v.1 Events & Subscriptions](ADR-006-events-and-subscriptions.md) | Accepted |
 | In-memory long-wait release model (subscription → goroutine ends → re-spawn) | [ADR-007 In-Memory Long Waits](ADR-007-in-memory-long-waits.md) | Draft |
 | Durable persistence & restart recovery; per-node state contract (fixes the shared-node `RegisterData` mutation, §6) | Persistence & State ADR (to be authored) | — |
 | Instance error states (`Failing/Failed`) and suspend (`Paused`) | future Error-Handling / Persistence ADRs | — |
@@ -306,6 +306,7 @@ acceptance gate and lands with its own SRD + code:
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.6 | 2026-06-27 | Ruslan Gabitov | Records the maturation of the **single-writer principle** (§2; §4.1 — *tracks never mutate Instance state directly*) and its §7 race-freedom gate: ownership now spans not just instance-state *mutation* but cross-goroutine *reads* — the loop is the **sole reader** of the shared token-position / join view, so a live track no longer exposes mutable state for another goroutine to read. The foreign-goroutine read race that was previously patched site-by-site is thereby eliminated **by construction**; the gate is now exercised at scale under `-race` (CI-gated, incl. extended concurrent-stress runs). No change to this core's conception — the event-delivery subsystem realizing this is owned by its own dedicated ADR (§9 event-delivery row). Consolidated stale outgoing pins at bump (§8 ADR-005 v.2→v.4; §9 ADR-005/006 status →Accepted, pinned). RU twin synced to v.6 in this change-set. |
 | v.5 | 2026-06-11 | Ruslan Gabitov | §4.7 reconciled with [ADR-009 v.1](ADR-009-per-instance-node-graph.md): per-node runtime-state **ownership** is now decided (each instance clones the process template into its own private node graph; per-instance runtime state lives on the instance's own node; the shared template definitions stay immutable), where v.4 deferred it wholesale to the Persistence ADR. **Durable** persistence/serialization/rehydration stays the future Persistence & State ADR. No execution-model change otherwise. RU twin sync deferred (batched). |
 | v.4 | 2026-06-08 | Ruslan Gabitov | Recorded the **per-adapter ADR policy** (§9): each substantial extension adapter gets its own ADR; the SRD-004 skeleton ships only minimal in-memory default contracts to run current BPMN on the two-layer model, with production-grade contracts (notably durable `Repository` — serialization, versioning, transactions, history/inbox/subscriptions, pagination) deferred to per-adapter ADRs. The minimal `Repository` of ADR-002 v.1 is sufficient for the in-memory migration goal. No execution-model change. RU twin sync deferred (batched until the current edit run settles). |
 | v.3 | 2026-06-07 | Ruslan Gabitov | **Accepted.** Collapsed the three-layer model to **two layers** (Instance + track); `token` becomes a logical projection of a track's current step, not a stored type (removes `token.inst`/`trk`, `Instance.tokens[]`, duplicate lineage). Adopted the single event-loop goroutine for instance-state mutation (no locks). Scoped this ADR to the runtime **core** — relocated join/merge (ADR-005), event delivery & triggers (ADR-006), and the in-memory long-wait release model (ADR-007) to dedicated ADRs (§9), so doc equals code. Reconciled the instance lifecycle to `Created → Active → Completed` (+ `Terminating → Terminated`). §7 gate exercised and green (race-freedom, leak-free, fork, projection, completion, termination cascade) — including two bugs the gate surfaced (`track.stopIt` race; `emit` dropping `evEnded` on cancel). Persistence/rehydration deferred to the Persistence & State ADR. Pre-acceptance Draft iteration folded in without per-round rows. |

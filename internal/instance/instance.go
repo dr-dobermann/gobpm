@@ -364,6 +364,39 @@ func (inst *Instance) conversationKeyValues() []string {
 	return vals
 }
 
+// The Instance is the hub-facing event processor for Message catches (SRD-027 FR-8).
+var _ eventproc.EventProcessor = (*Instance)(nil)
+
+// ProcessEvent (eventproc.EventProcessor) is the hub-facing entry for a Message catch: the
+// Instance is the registered processor (SRD-027 FR-8), because message correlation state is
+// instance-owned. It does NOT touch track state — it emits the fired event to its own loop
+// carrying NO track; the loop resolves the parked track via its msgEDef→track index and runs
+// validateAndAssociate before dispatch. Returns once enqueued, not once applied.
+func (inst *Instance) ProcessEvent(
+	_ context.Context,
+	eDef flow.EventDefinition,
+) error {
+	if eDef == nil {
+		return errs.New(
+			errs.M("Instance.ProcessEvent: a nil EventDefinition isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
+	}
+
+	// track == nil marks the Message branch — the loop resolves the target via msgIdx (§3.4).
+	inst.emit(trackEvent{kind: evDeliver, eDef: eDef})
+
+	return nil
+}
+
+// CorrelationKeys returns the conversation key values this instance has established
+// (SRD-017 §4.3, SRD-027 FR-8). The message waiter reads it structurally (the "declared
+// filter") to subscribe this receiver keyed to its conversation; an instance with no keys
+// yields none, leaving a wildcard subscription. Ownership moved here from track when the
+// Instance became the message processor — only the message path was ever keyed.
+func (inst *Instance) CorrelationKeys() []string {
+	return inst.conversationKeyValues()
+}
+
 // validateAndAssociate applies the conversation-token rules on a received
 // message (SRD-017 §4.5, BPMN §8.4.2). It derives every declared correlation key
 // from the message payload in two passes: first it checks for a mismatch — a key
@@ -621,6 +654,27 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 
 	active := 0
 	stopping := false
+	// waiting holds tracks parked on their evtCh and not yet delivered (SRD-027 FR-4):
+	// presence ⟺ parked-and-undelivered. Loop-goroutine-only, so no lock — like active /
+	// stopping. evWaiting adds a track; the first evDeliver for it removes it and sends the
+	// event (the winner); a later evDeliver for it finds it absent and drops (a losing arm of
+	// an Event-Based gateway, or a duplicate fire).
+	waiting := map[string]struct{}{}
+	// msgIdx maps a waited Message catch-definition id → the parked track (SRD-027 FR-5/FR-8).
+	// A track-less Message evDeliver (from Instance.ProcessEvent) is resolved through it; it is
+	// seeded alongside waiting (by evWaiting / spawn) and a track is cleared from it the moment
+	// it flips out of waiting or ends, so an index entry never outlives its track.
+	msgIdx := map[string]*track{}
+	// position is the loop-owned token-position view (SRD-028 FR-1): live trackID → its current
+	// node. Seeded at spawn, advanced by evMoved, and cleared when a track dies (evEnded/evFailed/
+	// evMerged-absorbed). Loop-goroutine-only — no lock, like waiting/msgIdx. The reachability and
+	// join machinery read THIS map, never another track's currentStep cross-goroutine (Rule 2).
+	position := map[string]flow.Node{}
+	// parked is the loop-owned parked-at-join view (SRD-028 FR-3): trackID → join node, for tracks
+	// suspended at a reachability/Complex join (TrackAwaitSync). Seeded on evParked from position,
+	// cleared when the track resumes-and-moves, is merged away, or ends. recheckAwaitingJoins
+	// iterates this map instead of scanning inst.tracks for the AwaitSync state.
+	parked := map[string]flow.Node{}
 
 	// spawn registers a track, adds it to the read snapshot, counts it
 	// active, and runs it in its own goroutine.
@@ -628,6 +682,24 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 		inst.tracks[t.ID()] = t
 		inst.addToSnap(t)
 		active++
+
+		// Seed the track's initial position on the loop goroutine, BEFORE its run goroutine
+		// starts (the `go` below). The track has no other goroutine yet, so this read is
+		// sequential — not a Rule-2 cross-read; every later move arrives as evMoved (SRD-028 FR-2).
+		position[t.ID()] = t.currentStep().node
+
+		// A track built already parked (an event-start source waiter, registered
+		// during New) is recorded here — on the loop goroutine, before its run
+		// goroutine starts — so it is in `waiting` (and its message defs are in msgIdx)
+		// before any evDeliver can target it (SRD-027 FR-5). Mid-run waits emit evWaiting
+		// from checkNodeType instead.
+		if t.inState(TrackWaitForEvent) {
+			waiting[t.ID()] = struct{}{}
+
+			for _, id := range t.msgDefIDs {
+				msgIdx[id] = t
+			}
+		}
 
 		// run the track and report back to the loop. A track that reached a
 		// synchronizing join without completing it ends its goroutine in
@@ -652,7 +724,22 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 
 		for _, t := range inst.tracks {
 			t.stop()
+			// Wake a track parked on evtCh: the loop is its sole sender, so closing
+			// here is safe and doubles as teardown (SRD-027 FR-7). stopIt covers the
+			// running path; the closed channel covers the parked one.
+			close(t.evtCh)
 		}
+
+		// After stop no track is dispatched to — a parked track is woken by its closed
+		// channel, not an evDeliver — so drop both maps; this also prevents a send on a
+		// closed evtCh.
+		clear(waiting)
+		clear(msgIdx)
+
+		// The position/join view is no longer consulted once terminating (joins do not fire
+		// during teardown); drop it too so it does not outlive the run (SRD-028 FR-1/FR-3).
+		clear(position)
+		clear(parked)
 	}
 
 	for _, t := range initial {
@@ -674,41 +761,15 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 		case ev := <-inst.events:
 			// Lock-free attrs only (ID is immutable): this runs per event, and the
 			// observability.Logger has no Enabled() gate, so the args are built even
-			// at INFO. Node-level detail lives in the fire/abort logs below.
+			// at INFO. Node-level detail lives in the fire/abort logs below. A Message
+			// evDeliver carries no track (FR-8), so the id is resolved defensively.
 			inst.Logger().Debug("track event",
 				"instance", inst.ID(),
 				"kind", ev.kind.String(),
-				"track", ev.track.ID())
+				"track", eventTrackID(ev))
 
-			switch ev.kind {
-			case evFork:
-				inst.spawnForks(ev, spawn, stopAll, stopping)
-
-			case evEnded:
-				active--
-				inst.recheckAwaitingJoins()
-
-			case evAwaiting:
-				// the track reached a synchronizing join, did not complete it,
-				// and its goroutine returned — no longer active, but retained as
-				// awaiting until the join fires (ADR-005 §2.4).
-				active--
-
-			case evMerged:
-				inst.applyMerged(ev)
-				inst.recheckAwaitingJoins()
-
-			case evParked:
-				// the track blocked at a reachability join — its goroutine is
-				// alive, so active is unchanged.
-				inst.recheckParked(ev.track)
-
-			case evFailed:
-				// a node error faulted the track — surface it as an instance failure
-				// and terminate, rather than letting it complete silently (FIX-008).
-				inst.failFromTrack(ev.track, stopAll)
-				active--
-			}
+			inst.applyEvent(ctx, ev, &active, &stopping,
+				waiting, msgIdx, position, parked, spawn, stopAll)
 		}
 	}
 
@@ -717,6 +778,188 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	} else {
 		inst.setState(Completed)
 	}
+}
+
+// applyEvent applies one track→loop event to the loop-owned state on the loop goroutine.
+// active and stopping are the loop's own counters, passed by pointer so this method and the
+// spawn/stopAll closures mutate the same values; waiting is the loop-owned parked set and
+// msgIdx its message-def→track index (SRD-027 FR-8). Called only by loop().
+func (inst *Instance) applyEvent(
+	ctx context.Context,
+	ev trackEvent,
+	active *int,
+	stopping *bool,
+	waiting map[string]struct{},
+	msgIdx map[string]*track,
+	position, parked map[string]flow.Node,
+	spawn func(*track),
+	stopAll func(),
+) {
+	switch ev.kind {
+	case evFork:
+		inst.spawnForks(ev, spawn, stopAll, *stopping)
+
+	case evMoved:
+		// the track advanced onto a new node — update the loop-owned position view and
+		// clear any parked-at-join record (moving ⟹ not parked anymore). SRD-028 FR-2.
+		position[ev.track.ID()] = ev.node
+		delete(parked, ev.track.ID())
+
+	case evEnded:
+		*active--
+		flipNotParked(ev.track, waiting, msgIdx)
+		clearPosition(position, parked, ev.track)
+		inst.recheckAwaitingJoins(position, parked, stopAll)
+
+	case evAwaiting:
+		// the track reached a synchronizing join, did not complete it, and its
+		// goroutine returned — no longer active, but retained as awaiting until the
+		// join fires (ADR-005 §2.4). Clear any index entry so it never outlives the track.
+		// Its token is still Alive at the join, so it STAYS in position (not in parked —
+		// AwaitingMerge is a Parallel join, not the AwaitSync reachability park). SRD-028 FR-6.
+		*active--
+		clearMsgIdx(msgIdx, ev.track)
+
+	case evMerged:
+		inst.applyMerged(ev, position, parked)
+		inst.recheckAwaitingJoins(position, parked, stopAll)
+
+	case evParked:
+		// the track blocked at a reachability join — its goroutine is alive, so active is
+		// unchanged. Record its join node (carried in the event) in the loop-owned parked
+		// view, then recheck. SRD-028 FR-3. Two guards:
+		//   - during shutdown stopAll has cleared the view and joins do not fire while
+		//     terminating; a late park is woken by ctx.Done(), not recorded here (mirrors
+		//     evWaiting);
+		//   - the track must still be live in the position view. If it is absent, the
+		//     completing arrival's evMerged was applied FIRST and already merged this
+		//     co-arriving track at the join (clearing its position) — its fate is settled,
+		//     so recording it now would re-insert a stale parked entry.
+		if *stopping {
+			return
+		}
+
+		if _, live := position[ev.track.ID()]; !live {
+			return
+		}
+
+		parked[ev.track.ID()] = ev.node
+		inst.recheckParked(ev.track, position, parked, stopAll)
+
+	case evFailed:
+		// a node error faulted the track — surface it as an instance failure and
+		// terminate, rather than letting it complete silently (FIX-008).
+		inst.failFromTrack(ev.track, stopAll)
+		*active--
+		flipNotParked(ev.track, waiting, msgIdx)
+		clearPosition(position, parked, ev.track)
+
+	case evWaiting:
+		// the track parked on its evtCh and is ready to receive — record it as
+		// parked-and-undelivered and index its Message defs → track (SRD-027 FR-4/FR-5/
+		// FR-8). Not during shutdown: a parked track is woken by its closed evtCh, not an
+		// evDeliver, and recording it would risk a send on the closed channel.
+		if !*stopping {
+			waiting[ev.track.ID()] = struct{}{}
+
+			for _, id := range ev.msgDefIDs {
+				msgIdx[id] = ev.track
+			}
+		}
+
+	case evDeliver:
+		inst.dispatchToParked(ctx, ev, waiting, msgIdx)
+	}
+}
+
+// dispatchToParked sends a fired event to its parked-and-undelivered track. The target is
+// ev.track for a Signal/Timer evDeliver, or — for a track-less Message evDeliver (FR-8) —
+// resolved from the fired definition's id via msgIdx (a miss is a benign drop). A message
+// whose correlation does not match this conversation is gated here, on the loop goroutine —
+// the sole owner of instance conversation state — and the track stays parked for the next
+// message (SRD-027 §3.4 / NFR-2); Signal/Timer carry their track and are not correlated.
+// On a match the flip (flipNotParked on first delivery) makes deferred choice atomic: a later
+// event for the same track finds it absent and is dropped (a losing Event-Based-gateway arm
+// or a duplicate fire). The loop is the sole sender to evtCh, and the single buffered slot
+// keeps this send from blocking it (SRD-027 FR-3/FR-4). Called only by loop(), so it touches
+// the loop-owned maps without a lock.
+func (inst *Instance) dispatchToParked(
+	ctx context.Context,
+	ev trackEvent,
+	waiting map[string]struct{},
+	msgIdx map[string]*track,
+) {
+	tr := ev.track
+	// Message (FR-8): a track-less evDeliver resolves the parked track from the fired def's id.
+	if tr == nil {
+		tr = msgIdx[ev.eDef.ID()]
+		if tr == nil {
+			return // no parked track for this message → drop
+		}
+	}
+
+	if _, parked := waiting[tr.ID()]; !parked {
+		return // losing arm / already delivered → drop (FR-4)
+	}
+
+	// Gate correlation only on the Message path (track == nil): a mismatch drops the event
+	// and keeps the track parked for the next message (SRD-027 FR-8/NFR-2).
+	if ev.track == nil && inst.validateAndAssociate(ctx, ev.eDef) {
+		return // correlation mismatch — drop, keep the track parked
+	}
+
+	flipNotParked(tr, waiting, msgIdx)
+	tr.evtCh <- ev.eDef
+}
+
+// flipNotParked removes tr from the parked set and clears its message-index entries — the
+// atomic flip that makes deferred choice single-winner (SRD-027 FR-4/§3.4): a later event for
+// tr finds it absent and is dropped. Also used on track end so no entry outlives its track.
+func flipNotParked(
+	tr *track,
+	waiting map[string]struct{},
+	msgIdx map[string]*track,
+) {
+	delete(waiting, tr.ID())
+	clearMsgIdx(msgIdx, tr)
+}
+
+// clearMsgIdx removes every msgEDef→track entry pointing at tr, so a fired message can no
+// longer resolve to a track that has flipped out of waiting or ended (SRD-027 §3.4).
+func clearMsgIdx(msgIdx map[string]*track, tr *track) {
+	for id, t := range msgIdx {
+		if t == tr {
+			delete(msgIdx, id)
+		}
+	}
+}
+
+// clearPosition drops tr from the loop-owned position and parked views — a dead track
+// (Ended / Failed / Merged-absorbed) no longer holds a token, so it must not count as an
+// occupied node or a parked-at-join arrival (SRD-028 FR-6).
+func clearPosition(position, parked map[string]flow.Node, tr *track) {
+	delete(position, tr.ID())
+	delete(parked, tr.ID())
+}
+
+// eventTrackID returns the subject track's id for logging, or "<none>" for a track-less
+// Message evDeliver (its target is resolved later via msgIdx — SRD-027 FR-8).
+func eventTrackID(ev trackEvent) string {
+	if ev.track == nil {
+		return "<none>"
+	}
+
+	return ev.track.ID()
+}
+
+// nodeIDOf returns n.ID(), or "<none>" for a nil node — a defensive guard for log lines that
+// read the loop-owned position map, where a miss yields a nil flow.Node (SRD-028 FR-5).
+func nodeIDOf(n flow.Node) string {
+	if n == nil {
+		return "<none>"
+	}
+
+	return n.ID()
 }
 
 // trackEndKind classifies a track that returned from run() into the loop event
@@ -791,7 +1034,9 @@ func (inst *Instance) spawnForks(
 // against the loop-owned tracks map; the awaiting goroutines have already
 // returned, so the loop is the sole writer of their state. Called only from
 // loop().
-func (inst *Instance) applyMerged(ev trackEvent) {
+func (inst *Instance) applyMerged(
+	ev trackEvent, position, parked map[string]flow.Node,
+) {
 	survivor := ev.track.ID()
 
 	for _, id := range ev.mergedIDs {
@@ -802,6 +1047,10 @@ func (inst *Instance) applyMerged(ev trackEvent) {
 
 		m.mergedInto.Store(&survivor)
 		m.updateState(TrackMerged)
+
+		// the absorbed track is now dead (Merged) — drop it from the loop-owned position/
+		// parked views so it stops counting as occupied or parked (SRD-028 FR-6).
+		clearPosition(position, parked, m)
 
 		// Wake the merged track unconditionally (FIX-006). If it is parked at a
 		// reachability/Complex join (AwaitSync) it resumes and returns; if it has
@@ -818,38 +1067,21 @@ func (inst *Instance) applyMerged(ev trackEvent) {
 // un-marked incoming flow unreachable and fire a join that has no further arrival
 // to ride (SRD-022 §2.10, fixing Camunda 7's arrival-only hang). Called only from
 // loop() on a track end / merge.
-func (inst *Instance) recheckAwaitingJoins() {
+func (inst *Instance) recheckAwaitingJoins(
+	position, parked map[string]flow.Node, stopAll func(),
+) {
 	seen := map[string]bool{}
 
-	for _, t := range inst.tracks {
-		if !t.inState(TrackAwaitSync) {
-			continue
-		}
-
-		node := t.currentStep().node
+	// parked holds exactly the AwaitSync tracks (id → join node), so the loop reads its own
+	// view instead of scanning inst.tracks for the state cross-goroutine (SRD-028 FR-3).
+	for _, node := range parked {
 		if seen[node.ID()] {
 			continue
 		}
 
 		seen[node.ID()] = true
-		inst.recheckJoin(node)
+		inst.recheckJoin(node, position, parked, stopAll)
 	}
-}
-
-// hasInTransitArrival reports whether a live token sits on node but has not yet
-// parked there — a track whose position is node (moved by checkFlows) but which
-// has not reached synchronize's Arrive. Such an imminent arrival must not be
-// raced by a reachability fire. Called only from loop().
-func (inst *Instance) hasInTransitArrival(node flow.Node) bool {
-	for _, t := range inst.tracks {
-		if t.currentStep().node.ID() == node.ID() &&
-			!t.inState(TrackAwaitSync, TrackMerged,
-				TrackEnded, TrackCanceled, TrackFailed) {
-			return true
-		}
-	}
-
-	return false
 }
 
 // recheckParked handles a track that just parked at a reachability join. If the join
@@ -857,31 +1089,47 @@ func (inst *Instance) hasInTransitArrival(node flow.Node) bool {
 // earlier fire — FIX-006), the track is a trailing token: consume it (flip to Merged
 // and wake it so its goroutine returns). Otherwise recheck the join — a never-taken
 // branch may already be unreachable, firing it now with no token death.
-func (inst *Instance) recheckParked(t *track) {
-	node := t.currentStep().node
+func (inst *Instance) recheckParked(
+	t *track, position, parked map[string]flow.Node, stopAll func(),
+) {
+	// the join node is the one the track parked on, recorded in the loop-owned parked view
+	// by the evParked case — no currentStep cross-read (SRD-028 FR-5).
+	node := parked[t.ID()]
 
 	if rj, ok := node.(exec.ReachabilityJoin); ok && rj.IsTrailing(t.ID()) {
 		t.updateState(TrackMerged)
+		// a trailing token is consumed (Merged) — drop it from the position/parked views so
+		// it stops counting, matching today's "Merged ⇒ excluded" (SRD-028 FR-6).
+		clearPosition(position, parked, t)
 		t.parkCh <- struct{}{}
 
 		return
 	}
 
-	inst.recheckJoin(node)
+	inst.recheckJoin(node, position, parked, stopAll)
 }
 
 // recheckJoin re-evaluates a parked reachability join (OR-join) against the live
 // token positions and fires it when no un-marked incoming flow can still receive
-// a token (SRD-022 §2.10). Called only from loop().
-func (inst *Instance) recheckJoin(node flow.Node) {
-	// An imminent arrival — a live token already on the join node but not yet
-	// parked (between checkFlows moving its position and synchronize's Arrive) —
-	// is invisible to the backward reachability (it sits at the excluded join)
-	// and is not yet marked. Defer: it will re-trigger this recheck via its own
-	// evParked once it parks.
-	if inst.hasInTransitArrival(node) {
+// a token (SRD-022 §2.10), or — for a complex (activation) join — aborts the instance
+// when the rule is unsatisfiable (SRD-023). stopAll is the loop's terminate action,
+// invoked on an abort so termination does not race the resulting track-end events
+// (inst.fail alone only cancels ctx, leaving `stopping` unset). Called only from loop().
+func (inst *Instance) recheckJoin(
+	node flow.Node, position, parked map[string]flow.Node, stopAll func(),
+) {
+	// The loop-owned position/parked maps drive BOTH the in-transit guard and the reachability
+	// the decision below uses (joinPositions), so they can't disagree — and neither reads a
+	// track cross-goroutine (SRD-028 FR-4). An imminent arrival — a live token already on the
+	// join node but not yet parked (between its evMoved onto the join and its evParked) — is
+	// invisible to the backward reachability (it sits at the excluded join) and is not yet
+	// marked. Defer: it re-triggers this recheck via its own evParked once it parks.
+	occupied, inTransit := joinPositions(node, position, parked)
+	if inTransit {
 		return
 	}
+
+	fc := fixedFlowChecker{occupied: occupied}
 
 	switch j := node.(type) {
 	case exec.ActivationJoin:
@@ -889,11 +1137,12 @@ func (inst *Instance) recheckJoin(node flow.Node) {
 		// fire/abort decision (with guard evaluation). A death can only make the
 		// activation unsatisfiable — never newly fire it — so the abort path lives
 		// here; firing resumes the parked survivor via fireOrJoin.
-		dec, err := j.Recheck(inst.guardEval(inst.ctx), inst)
+		dec, err := j.Recheck(inst.guardEval(inst.ctx), fc)
 
 		switch {
 		case err != nil:
 			inst.fail(err)
+			stopAll()
 
 		case dec.Aborted:
 			inst.fail(
@@ -901,14 +1150,15 @@ func (inst *Instance) recheckJoin(node flow.Node) {
 					errs.M("complex gateway activation rule is unsatisfiable"),
 					errs.C(errorClass, errs.InvalidState),
 					errs.D("node_id", node.ID())))
+			stopAll()
 
 		case dec.Fired:
-			inst.fireOrJoin(dec.Survivor, dec.Merged)
+			inst.fireOrJoin(dec.Survivor, dec.Merged, position, parked)
 		}
 
 	case exec.ReachabilityJoin:
-		if complete, survivor, merged := j.Recheck(inst); complete {
-			inst.fireOrJoin(survivor, merged)
+		if complete, survivor, merged := j.Recheck(fc); complete {
+			inst.fireOrJoin(survivor, merged, position, parked)
 		}
 	}
 }
@@ -917,7 +1167,9 @@ func (inst *Instance) recheckJoin(node flow.Node) {
 // Merged and wakes any that are parked (FR-8 / FIX-006); here we only resume the
 // survivor's blocked goroutine into the node. parkCh is buffered(1), so the signal
 // never blocks the loop. Called only from loop().
-func (inst *Instance) fireOrJoin(survivorID string, merged []string) {
+func (inst *Instance) fireOrJoin(
+	survivorID string, merged []string, position, parked map[string]flow.Node,
+) {
 	survivor := inst.tracks[survivorID]
 	if survivor == nil {
 		return
@@ -925,11 +1177,11 @@ func (inst *Instance) fireOrJoin(survivorID string, merged []string) {
 
 	inst.Logger().Debug("synchronizing join fired",
 		"instance", inst.ID(),
-		"node", survivor.currentStep().node.ID(),
+		"node", nodeIDOf(position[survivorID]),
 		"survivor", survivorID,
 		"merged", len(merged))
 
-	inst.applyMerged(trackEvent{track: survivor, mergedIDs: merged})
+	inst.applyMerged(trackEvent{track: survivor, mergedIDs: merged}, position, parked)
 
 	survivor.parkCh <- struct{}{}
 }
