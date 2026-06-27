@@ -87,6 +87,11 @@ immediately on the exception flow, the activity's outputs are not committed) eve
 guarantee the *immediate cessation* of a context-ignoring operation. It is consistent with how every
 goroutine-based engine on a non-preemptible host behaves.
 
+**Interruption is not failure.** A cancelled activity routes to the boundary's exception flow (or,
+under instance terminate, simply ends) — it does *not* enter the error-propagation / instance-fault
+path of §2.4. The engine treats the interruption as authoritative: an error the activity's operation
+returns while unwinding does not turn the interruption into a failure.
+
 ```mermaid
 flowchart TD
   START[host activity starts] --> SUB[loop registers boundary watcher subscription]
