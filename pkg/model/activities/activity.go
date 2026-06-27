@@ -79,9 +79,15 @@ func newActivity(
 
 // clone returns a per-instance copy of the activity: every configuration field
 // (loop characteristics, roles, default flow, properties, IoSpec, data
-// associations, boundary events, quantities, flags) is shared by reference; the
-// BaseNode shell is fresh (empty flows, no container). Execution data lives in
-// the per-execution frame, never on the node (ADR-010 §2.4).
+// associations, quantities, flags) is shared by reference; the BaseNode shell is
+// fresh (empty flows, no container). Execution data lives in the per-execution
+// frame, never on the node (ADR-010 §2.4).
+//
+// boundaryEvents is deliberately left empty: a boundary's cross-references (host
+// ↔ boundary) must point at the instance's own cloned nodes, not the shared
+// model, so the per-instance graph build (snapshot.Clone) rebinds the cloned
+// boundaries onto this cloned host (SRD-029 M3a). Copying the model boundaries
+// here would leak shared nodes into the instance.
 func (a *activity) clone() activity {
 	return activity{
 		BaseNode:            a.CloneShell(),
@@ -91,7 +97,6 @@ func (a *activity) clone() activity {
 		properties:          a.properties,
 		IoSpec:              a.IoSpec,
 		dataAssociations:    a.dataAssociations,
-		boundaryEvents:      a.boundaryEvents,
 		startQuantity:       a.startQuantity,
 		completionQuantity:  a.completionQuantity,
 		isForCompensation:   a.isForCompensation,

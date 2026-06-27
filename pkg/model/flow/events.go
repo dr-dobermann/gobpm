@@ -80,6 +80,10 @@ type BoundaryEvent interface {
 	// BoundTo attaches the boundary event to the ActivityNode it guards.
 	BoundTo(ActivityNode) error
 
+	// AttachedTo returns the activity the boundary event guards (nil until
+	// BoundTo succeeds).
+	AttachedTo() ActivityNode
+
 	// CancelActivity reports whether the boundary interrupts its host
 	// (interrupting) or fires in parallel (non-interrupting).
 	CancelActivity() bool
