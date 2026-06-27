@@ -701,12 +701,22 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 			}
 		}
 
+		// Per-track cancellable context, derived here on the loop goroutine so
+		// t.cancel is loop-owned — the loop is the sole caller that interrupts a
+		// single track for an interrupting boundary (SRD-029 FR-4). inst.ctx stays
+		// the parent, so instance terminate (inst.cancel) still cascades to every
+		// track (NFR-4).
+		tctx, cancel := context.WithCancel(ctx)
+		t.cancel = cancel
+
 		// run the track and report back to the loop. A track that reached a
 		// synchronizing join without completing it ends its goroutine in
 		// AwaitingMerge — reported as evAwaiting, not evEnded, so the loop keeps
 		// it as awaiting (its run() will not resume).
 		go func(t *track) {
-			t.run(ctx)
+			defer cancel()
+
+			t.run(tctx)
 
 			inst.emit(trackEvent{kind: trackEndKind(t), track: t})
 		}(t)

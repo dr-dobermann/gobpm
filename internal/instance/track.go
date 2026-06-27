@@ -151,7 +151,12 @@ type stepInfo struct {
 // track processed single line of the process from start noed or
 // from fork of sequence flow.
 type track struct {
-	ctx      context.Context
+	ctx context.Context
+	// cancel cancels THIS track's context only (a child of the instance context),
+	// so the loop can interrupt a single guarded track for an interrupting
+	// boundary without touching its siblings (SRD-029 FR-4). Loop-owned: derived
+	// and stored by the loop's spawn, called only by the loop. nil until spawned.
+	cancel   context.CancelFunc
 	lastErr  error
 	instance *Instance
 	foundation.BaseElement
