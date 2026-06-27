@@ -3,10 +3,10 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.1 |
-| Date | 2026-06-18 |
+| Version | v.2 |
+| Date | 2026-06-27 |
 | Owner | Ruslan Gabitov |
-| Refines | [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) |
+| Refines | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md) |
 
 > Home for the event-delivery and event-triggered-cancellation conception
 > relocated out of ADR-001 (which scopes itself to the built runtime core). This
@@ -145,8 +145,10 @@ track runs on (§10.5.6).
 **Engine notes.**
 - *Error is always interrupting* (§10.5.6): there is no non-interrupting Error
   boundary. Error/Escalation use the **propagation** strategy — climb the scope
-  chain to the innermost enclosing catcher (§10.5.1, §11); unresolved Error is
-  critical (abort the instance), unresolved Escalation is silent. Scope-chain
+  chain to the innermost enclosing catcher (§10.5.1, §10.5.7); unresolved Error is
+  critical (abort the instance), unresolved Escalation is silent. **The Error
+  *event* model — throw points, `errorRef` matching, scope-chain propagation,
+  catch, and the unmatched→fault outcome — is detailed in §2.6.** Scope-chain
   propagation lands with the sub-process/boundary workstream; ADR-006 fixes the
   *delivery* and *interruption* model it will use.
 - *Handler multiplicity* (§10.5.6 p278): at most **one interrupting handler per
@@ -259,6 +261,86 @@ One owner, one shutdown path:
 This single-ownership model is what `TimeWaiter`, ADR-014's `MessageWaiter`, and
 any future waiter obey, and it is the mechanics ADR-013's `Thresher.Shutdown`
 drives.
+
+### 2.6 Error events: throw, propagation, and catch
+
+§2.2 fixes that an Error boundary is *always interrupting* and that Error uses the
+**propagation** strategy; this section details the Error *event* model the engine
+realizes — the throw points, the matching, the scope-chain propagation, and the
+catch and unmatched outcomes. (The boundary **interruption mechanism** — how a
+*running* activity is actually stopped — is the boundary workstream's, refining
+§2.2; it is not re-decided here.)
+
+**The Error object (§10.5.1; `event-definitions.md`).** An `ErrorEventDefinition`
+carries an optional `errorRef` (0..1) to an `Error`, which carries an `errorCode`
+(the contract identifier a catcher matches on), an optional `name`, and an
+optional `structureRef` (the error payload's `ItemDefinition`). An Error event
+definition is valid at **three positions only** (`conformance.md`): an **End
+Event** (throw), a **Boundary Event** (catch — always interrupting), and an
+**Event Sub-Process Start Event** (catch — deferred with Sub-Processes).
+
+**Throw — two sources.**
+- An **Error End Event** ends its path by throwing its associated `Error`
+  (§10.5.6 p279; `end-events.md`: "Error End Event → the associated `Error` is
+  thrown").
+- An **activity raising an error** — a `ServiceTask` whose invoked operation
+  returns a *fault*, a `ScriptTask` that throws, etc. — raises an interrupting
+  Error, and the activity transitions `Active → Failing` (`tasks.md`:
+  "treated as an interrupting error and the activity fails"; `activity-lifecycle.md`).
+
+Either way the throw is **critical** (§10.5.1): execution is *suspended at the
+throw location* — unlike an Escalation, which is non-critical and lets execution
+continue at the throw location. There is **no Error Intermediate Throw Event** in
+BPMN; an Error is thrown only at an End Event or by a failing activity.
+
+**Propagation — climb the scope chain (§10.5.1, §10.5.7).** A thrown Error is
+**forwarded from the throw location upward to the innermost enclosing scope
+instance that has an attached catching Event whose `errorRef` matches**: the
+engine walks from the throwing scope outward to enclosing scopes, and the **first**
+matching catcher consumes the trigger (`event-handling.md`, scope-chain walk). A
+*scope* (§10.5.7) is the execution context of an activity — its data objects, its
+events available for catch/throw, its conversations; the **Process is the
+outermost scope**, and each Sub-Process / Call Activity (future) introduces a
+nested one. Matching is **per Event Declaration**: a catcher for `errorRef=X` does
+not consume `errorRef=Y` (multiplicity is tracked per `(activity, EventDefinition)`
+pair — §2.2).
+
+**Catch — an Error Boundary Event (always interrupting).** A matched Error boundary
+drives its guarded activity to `Failing` (§13.3.2; `activity-lifecycle.md`) and a
+token is generated on the boundary's **exception flow**; per §10.5.6 the activity
+is cancelled **after** the boundary's outgoing flow is followed (the §10.5.6 §7
+interrupting-handler runtime order). *How* the running activity is interrupted is
+fixed by the boundary workstream that refines §2.2 — ADR-006 owns only the event
+model. The second standard catch path — an **Error Event Sub-Process** start
+(`conformance.md`: event-sub-process only) — lands with Sub-Processes.
+
+**Unmatched — the instance faults (engine choice).** If no catcher matches anywhere
+in the scope chain, the Error is **unresolved** (§10.5.1). The standard does **not**
+mandate a reaction; gobpm takes the typical one named in the spec — **log and fault
+the instance** (an unresolved Error is critical). This is the engine choice that
+turns a failed track into an instance failure.
+
+**Engine note — the single-scope reality before Sub-Processes.** Until nested
+scopes exist (Sub-Process / Call Activity are post-0.1.0; [SAD-001 v.1 §15.3](SAD-001-vision-and-architecture.md)),
+the scope chain has exactly **one** level — the Process. Two consequences follow
+with no loss of standard fidelity:
+- an Error raised by an activity is catchable only by an Error Boundary **on that
+  same activity** — there is no outer scope to climb to;
+- an **Error End Event**, throwing at Process scope, has no enclosing in-process
+  catcher, so it always resolves to an **instance fault** (the end-in-error case).
+
+Cross-scope climbing and the Error-Event-Sub-Process catch path become live the
+moment a nested scope is introduced; the propagation model above already describes
+them, so no rework is needed then.
+
+```mermaid
+flowchart TD
+  T1[Error End Event throws Error E] --> P[propagate: climb the scope chain]
+  T2[activity raises an error E: Active to Failing] --> P
+  P --> M{innermost enclosing catcher with errorRef = E?}
+  M -->|Error Boundary matches| C[interrupting catch: activity Failing; token on exception flow]
+  M -->|no match in any scope| F[unresolved Error: log + instance faults]
+```
 
 ## 3. Consequences
 
@@ -386,4 +468,5 @@ questions.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.2 | 2026-06-27 | Ruslan Gabitov | Added **§2.6 "Error events: throw, propagation, and catch"** — the detailed Error *event* model §2.2 named but left at engine-note depth: the `Error`/`ErrorEventDefinition` object (`errorRef`→`errorCode`/`structureRef`, valid only at End / Boundary / Event-Sub-Process-Start positions per `conformance.md`); the two **throw** sources (Error End Event throwing its `Error`, §10.5.6/`end-events.md`; and an activity raising an interrupting error → `Active→Failing`, `tasks.md`/`activity-lifecycle.md`) and that the throw is **critical** (§10.5.1) with no Error Intermediate Throw Event; **propagation** as the scope-chain walk to the innermost enclosing catcher matching `errorRef` (§10.5.1/§10.5.7), matching **per Event Declaration**; **catch** at an always-interrupting Error Boundary (activity→`Failing`, token on the exception flow, cancel-after-flow per §10.5.6 §7; Error Event Sub-Process catch deferred with Sub-Processes); **unmatched→instance fault** as the engine choice for the spec's "unresolved Error"; and an **engine note** on the single-scope reality before Sub-Processes (no scope to climb to → an activity's error is caught only by a boundary on that same activity, and an Error End Event always resolves to an instance fault) cross-referencing [SAD-001 v.1 §15.3]. Fixed the §2.2 engine-note citation `§11`→`§10.5.7` and pointed it at §2.6. Refines pin updated ADR-001 v.5→v.6. Standard-grounded against `docs/bpmn-spec/` (§10.5.1/§10.5.6/§10.5.7, `event-definitions.md`/`tasks.md`/`end-events.md`/`conformance.md`/`activity-lifecycle.md`). No code/behaviour change — conception only. |
 | v.1 | 2026-06-18 | Ruslan Gabitov | Accepted. Event-delivery & event-triggered-cancellation conception relocated from ADR-001 and authored in full: §2.1 external-signal delivery (single serialized inbound edge, per-instance subscription identity, publication/direct/propagation/implicit reach per §10.5.1), §2.2 cancellation-trigger nodes (Terminate End Event §13.5.6 over ADR-001's cascade; interrupting/non-interrupting boundary §10.5.6/§13.5.3; Error/Escalation propagation + handler multiplicity as engine notes), §2.3 wait-node subscription **lifecycle** (subscribe/unsubscribe per subscriber kind — in-flow on arrival/consume, non-compensation boundary on activity entry/exit, compensation boundary armed on `Completed` until enclosing scope finishes; §13.5.2/§13.5.3/§13.5.5; release mechanics delegated to ADR-007, compensation *handling* + the optional off-by-default `compensate-on-terminate` extension delegated to a future Compensation ADR; terminate runs **no** compensation by default per §13.5.6), §2.4 in-memory delivery contract (subscribe-before-publish, no-waiter no-op, broker-buffered messages, non-durable; remediates audit 2.4), §2.5 sole-hub waiter lifecycle (`WaitGroup`-synchronized shutdown, no self-removal, no leak on `Stop` error, single-lock registry; remediates audit 2.5). Standard-grounded against `docs/bpmn-spec/` (§10.5.1/§10.5.6/§10.5.7, §13.5.2/§13.5.3/§13.5.6). Refines ADR-001 v.5; siblings ADR-002 v.2, ADR-007 v.1, ADR-009 v.1, ADR-013 v.1, ADR-014 v.1. Conception; implementation rides the events-workstream SRD(s). |
