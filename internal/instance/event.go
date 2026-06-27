@@ -10,9 +10,10 @@ type trackEvent struct {
 	// evEnded, the awaiting track for evAwaiting, the surviving (completing)
 	// track for evMerged.
 	track *track
-	// node carries a node for two kinds: for evMoved the node the track just advanced onto
-	// (the loop sets position), and for evParked the join node the track suspended on (the
-	// loop sets parked). Carried in the event so the loop never infers it from a
+	// node carries a node for three kinds: for evMoved the node the track just advanced onto
+	// (the loop sets position), for evParked the join node the track suspended on (the loop sets
+	// parked), and for evBoundary the fired boundary node guarding ev.track's activity (the loop
+	// continues on its exception flow). Carried in the event so the loop never infers it from a
 	// cross-goroutine read of the track's currentStep (ADR-017 Rule 2, SRD-028 FR-2/FR-3).
 	node flow.Node
 	// eDef, for evDeliver, is the fired event definition the loop dispatches to the
@@ -67,6 +68,9 @@ func (k trackEventKind) String() string {
 	case evMoved:
 		return "moved"
 
+	case evBoundary:
+		return "boundary"
+
 	default:
 		return "unknown"
 	}
@@ -109,4 +113,9 @@ const (
 	// position view (position[track] = node) so reachability and joins read the loop-owned
 	// map instead of the track's currentStep cross-goroutine (ADR-017 Rule 2, SRD-028 FR-1/FR-2).
 	evMoved
+	// evBoundary: an interrupting boundary event fired over its guarded activity (ev.node is the
+	// boundary, ev.track the guarded host). Emitted by a boundaryWatch off the hub goroutine; the
+	// loop arbitrates the completion-vs-fire race, cancels the host track, and continues on the
+	// boundary's exception flow (SRD-029 FR-5/FR-8). The boundary-watch peer of evDeliver.
+	evBoundary
 )

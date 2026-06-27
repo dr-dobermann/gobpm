@@ -675,6 +675,15 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	// cleared when the track resumes-and-moves, is merged away, or ends. recheckAwaitingJoins
 	// iterates this map instead of scanning inst.tracks for the AwaitSync state.
 	parked := map[string]flow.Node{}
+	// watchers is the loop-owned boundary-subscription view (SRD-029 FR-5): trackID → the
+	// boundaryWatch list armed while that track occupies a guarded activity. Armed when a track
+	// arrives on an activity with interrupting boundaries (spawn / evMoved), torn down when it
+	// leaves, ends, or fails. Loop-goroutine-only, like the maps above.
+	watchers := map[string][]*boundaryWatch{}
+
+	// stopAll is forward-declared so spawn (which arms boundaries and faults the
+	// instance on an arm failure) can reference it; it is assigned below.
+	var stopAll func()
 
 	// spawn registers a track, adds it to the read snapshot, counts it
 	// active, and runs it in its own goroutine.
@@ -701,6 +710,12 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 			}
 		}
 
+		// Arm any interrupting boundary guarding the track's initial node — on the
+		// loop goroutine, before its run goroutine starts — so the watcher exists
+		// before the activity can complete or fire (SRD-029 FR-5). Subsequent moves
+		// arm via evMoved. A non-activity initial node (a StartEvent) is a no-op.
+		inst.armBoundaries(t, t.currentStep().node, watchers, stopAll)
+
 		// Per-track cancellable context, derived here on the loop goroutine so
 		// t.cancel is loop-owned — the loop is the sole caller that interrupts a
 		// single track for an interrupting boundary (SRD-029 FR-4). inst.ctx stays
@@ -724,7 +739,7 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 
 	// stopAll moves the instance to Terminating (once) and signals every
 	// live track to stop.
-	stopAll := func() {
+	stopAll = func() {
 		if stopping {
 			return
 		}
@@ -779,7 +794,7 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 				"track", eventTrackID(ev))
 
 			inst.applyEvent(ctx, ev, &active, &stopping,
-				waiting, msgIdx, position, parked, spawn, stopAll)
+				waiting, msgIdx, position, parked, watchers, spawn, stopAll)
 		}
 	}
 
@@ -793,7 +808,8 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 // applyEvent applies one track→loop event to the loop-owned state on the loop goroutine.
 // active and stopping are the loop's own counters, passed by pointer so this method and the
 // spawn/stopAll closures mutate the same values; waiting is the loop-owned parked set and
-// msgIdx its message-def→track index (SRD-027 FR-8). Called only by loop().
+// msgIdx its message-def→track index (SRD-027 FR-8); watchers is the loop-owned boundary
+// subscription view (SRD-029 FR-5). Called only by loop().
 func (inst *Instance) applyEvent(
 	ctx context.Context,
 	ev trackEvent,
@@ -802,6 +818,7 @@ func (inst *Instance) applyEvent(
 	waiting map[string]struct{},
 	msgIdx map[string]*track,
 	position, parked map[string]flow.Node,
+	watchers map[string][]*boundaryWatch,
 	spawn func(*track),
 	stopAll func(),
 ) {
@@ -812,13 +829,20 @@ func (inst *Instance) applyEvent(
 	case evMoved:
 		// the track advanced onto a new node — update the loop-owned position view and
 		// clear any parked-at-join record (moving ⟹ not parked anymore). SRD-028 FR-2.
+		// The track left its previous node, so tear down any boundaries that guarded it
+		// there and arm those guarding the new node (SRD-029 FR-5/FR-6).
+		inst.disarmBoundaries(ev.track.ID(), watchers)
 		position[ev.track.ID()] = ev.node
 		delete(parked, ev.track.ID())
+		inst.armBoundaries(ev.track, ev.node, watchers, stopAll)
 
 	case evEnded:
 		*active--
 		flipNotParked(ev.track, waiting, msgIdx)
 		clearPosition(position, parked, ev.track)
+		// the track's run() returned — its activity window (if any) is over, so
+		// tear down the boundaries that guarded it (SRD-029 FR-6).
+		inst.disarmBoundaries(ev.track.ID(), watchers)
 		inst.recheckAwaitingJoins(position, parked, stopAll)
 
 	case evAwaiting:
@@ -863,6 +887,7 @@ func (inst *Instance) applyEvent(
 		*active--
 		flipNotParked(ev.track, waiting, msgIdx)
 		clearPosition(position, parked, ev.track)
+		inst.disarmBoundaries(ev.track.ID(), watchers)
 
 	case evWaiting:
 		// the track parked on its evtCh and is ready to receive — record it as
@@ -879,6 +904,12 @@ func (inst *Instance) applyEvent(
 
 	case evDeliver:
 		inst.dispatchToParked(ctx, ev, waiting, msgIdx)
+
+	case evBoundary:
+		// an interrupting boundary fired over its guarded activity — cancel the host
+		// track and continue on the boundary's exception flow, the loop arbitrating the
+		// completion-vs-fire race (SRD-029 FR-5/FR-8).
+		inst.fireBoundary(ev, watchers, spawn, stopAll, *stopping)
 	}
 }
 
