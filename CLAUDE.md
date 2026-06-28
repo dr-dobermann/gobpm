@@ -138,7 +138,7 @@ GoBPM is a BPMN v2 compliant Business Process Management engine with an event-dr
 
 **Event-Driven Flow:** Processes execute through event publishing/consumption rather than direct method calls. Events flow through the EventHub to registered waiters.
 
-**Snapshot-Based State:** Process definitions are converted to snapshots for execution, allowing for state persistence and recovery.
+**Snapshot-Based State:** A process definition is converted once into an immutable snapshot — a validated launch template. Each instance `Clone`s that snapshot into its own node graph and mutates only its own copy; the immutable header (process id/name, properties, correlation keys) is shared by reference across clones. A snapshot is *not* a durable persistence/recovery mechanism — instance tracks, scopes, and history are not stored in it; durable persistence and rehydration remain future work (see ADR-009).
 
 **Interface-Heavy Design:** Heavy use of interfaces for extensibility, with comprehensive mock generation for testing.
 
