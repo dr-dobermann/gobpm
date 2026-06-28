@@ -550,8 +550,7 @@ func (t *track) run(
 
 		nextFlows, err := t.executeNode(ctx, step)
 		if err != nil {
-			t.lastErr = err
-			t.updateState(TrackFailed)
+			t.discardOrFail(ctx, err)
 
 			return
 		}
@@ -564,6 +563,25 @@ func (t *track) run(
 			return
 		}
 	}
+}
+
+// discardOrFail classifies a non-nil executeNode error (SRD-029 §3.7/§4.5): a
+// canceled context is a DISCARD — a boundary fire (or instance terminate)
+// interrupted the activity in its execution phase, so the track ends
+// TrackCanceled and the result is abandoned; the exception flow, if any, is the
+// loop's own action (it applied the fire), so the discard never needs to know
+// why it was canceled. Any other error is a genuine failure (TrackFailed) for
+// the loop's Error-boundary / instance-fault path.
+func (t *track) discardOrFail(ctx context.Context, err error) {
+	if ctx.Err() != nil {
+		t.updateState(TrackCanceled)
+		t.lastErr = ctx.Err()
+
+		return
+	}
+
+	t.lastErr = err
+	t.updateState(TrackFailed)
 }
 
 // synchronize handles a synchronizing-join node (ADR-005 §2.4). For a node that
@@ -717,6 +735,20 @@ func (t *track) executeNode(
 	}
 
 	nexts, err := t.executeNodeCore(ctx, step, ne, f)
+
+	// SRD-029 §3.7/§4.5 interruption checkpoint: cancellation wins over the
+	// returned error AND over success. A boundary fire (or instance terminate)
+	// cancels t.ctx; a ctx-honoring op returns early, a ctx-ignoring op returns
+	// late — either way the result is abandoned BEFORE finalize, so no output is
+	// committed (the deferred f.Discard rolls the frame back) and no flow is
+	// followed. Tested on ctx.Err(), not on err: a canceled op may return
+	// context.Canceled, a wrapped error, or even nil — if the context is done the
+	// result is discarded. The run loop maps a done ctx to TrackCanceled, not
+	// TrackFailed, so an interrupted activity is never mis-routed as a failure.
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
 	if err != nil {
 		return nil, err
 	}
