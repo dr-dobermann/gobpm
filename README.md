@@ -9,7 +9,7 @@
 
 **GoBPM** is a native Go BPMN 2.0 engine. It is designed to embed directly into a Go application as a minimal, dependency-light **library** — and to scale up to a standalone process **server** through additive runtime components, without forcing library users to ship what they don't need.
 
-> **Status:** v0.1.1 — active development, not yet production-ready.
+> **Status:** v0.7.0 — active development, not yet production-ready.
 
 The vision, scope, and architecture are defined in [SAD-001](docs/design/SAD-001-vision-and-architecture.md) and its ADRs; the delivery plan is the [Development Roadmap](docs/analytics/gobpm%20Development%20Roadmap.md).
 
@@ -63,16 +63,28 @@ go get github.com/dr-dobermann/gobpm
 // Start -> ServiceTask -> End  (errors elided for brevity)
 engine, _ := thresher.New("demo-engine")
 
-proc, _ := process.New("demo-process")
+// CreateDefaultStates wires the data states that process properties use.
+_ = data.CreateDefaultStates()
+
+// A process-level property the ServiceTask reads at runtime.
+proc, _ := process.New("demo-process",
+    data.WithProperties(
+        data.MustProperty("user_name",
+            data.MustItemDefinition(values.NewVariable("dr.Dobermann"),
+                foundation.WithID("user_name")),
+            data.ReadyDataState)))
 start, _ := events.NewStartEvent("start")
 
 // A ServiceTask runs your Go code: gooper.New builds the operation straight
-// from a functor. The functor receives a read-only DataReader (process data
-// and engine runtime variables) and its optional bound input message — nil
-// here, since this operation declares no messages — and returns its result.
-op, _ := gooper.New("hello",
-    func(_ context.Context, _ service.DataReader, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
-        fmt.Println("  ▶ hello from inside the process")
+// from a functor. The functor receives a read-only DataReader over process
+// data and engine runtime variables (and its optional bound input message —
+// nil here, since this operation declares no messages).
+op, _ := gooper.New("greet",
+    func(ctx context.Context, r service.DataReader, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
+        user, _ := r.GetData("user_name")             // a process property
+        started, _ := r.GetData("RUNTIME/STARTED_AT") // an engine runtime variable
+        fmt.Printf("  ▶ hello, %v (started at %v)\n",
+            user.Value().Get(ctx), started.Value().Get(ctx))
         return nil, nil
     })
 task, _ := activities.NewServiceTask("work", op, activities.WithoutParams())
@@ -96,8 +108,9 @@ state, _ := inst.WaitCompletion(context.Background())
 fmt.Println("done:", state) // "Completed"
 ```
 
-The `gooper` functor is how you embed arbitrary Go logic in a process — the
-same pattern scales from a `Println` to a real handler.
+The `gooper` functor is how you embed arbitrary Go logic in a process — here it
+reads a process property and an engine runtime variable through its read-only
+`DataReader`, and the same pattern scales to a real handler.
 
 `StartProcess` hands back a read-only **`InstanceHandle`** — your window onto the
 running instance: `State()`, a live `Tokens()` snapshot, full `History()` (every
