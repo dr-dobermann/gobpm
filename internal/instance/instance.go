@@ -633,6 +633,16 @@ func (inst *Instance) Cancel() {
 	}
 }
 
+// Terminate abnormally ends the instance on behalf of a Terminate End Event
+// (renv.RuntimeEnvironment, SRD-030 FR-2): it emits an evTerminate trackEvent
+// onto the loop's own channel — the single-writer lane every signal uses — and
+// the loop tears the instance down (stopAll). Reached only during an active run
+// (a Terminate End Event is executed by the loop); idempotent — repeat events
+// hit stopAll's stopping guard.
+func (inst *Instance) Terminate() {
+	inst.emit(trackEvent{kind: evTerminate})
+}
+
 // emit delivers a track event to the loop. It never blocks forever: once the
 // loop has exited (loopDone closed) it drops the event. It must NOT drop on
 // ctx cancellation — the loop keeps draining events until every track has
@@ -749,9 +759,15 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 
 		for _, t := range inst.tracks {
 			t.stop()
+			// Cancel the track context so a running ctx-honoring activity (a ServiceTask
+			// blocked in Exec) is interrupted — stopIt is only checked between nodes, not
+			// mid-Exec (SRD-030 §3.3, the cooperative-cancellation contract of SRD-029).
+			// On the abort/fault paths the instance ctx is already canceled, so this is a
+			// no-op there (CancelFunc is idempotent).
+			t.cancel()
 			// Wake a track parked on evtCh: the loop is its sole sender, so closing
 			// here is safe and doubles as teardown (SRD-027 FR-7). stopIt covers the
-			// running path; the closed channel covers the parked one.
+			// between-node path, t.cancel() the running one, the closed channel the parked one.
 			close(t.evtCh)
 		}
 
@@ -859,26 +875,7 @@ func (inst *Instance) applyEvent(
 		inst.recheckAwaitingJoins(position, parked, stopAll)
 
 	case evParked:
-		// the track blocked at a reachability join — its goroutine is alive, so active is
-		// unchanged. Record its join node (carried in the event) in the loop-owned parked
-		// view, then recheck. SRD-028 FR-3. Two guards:
-		//   - during shutdown stopAll has cleared the view and joins do not fire while
-		//     terminating; a late park is woken by ctx.Done(), not recorded here (mirrors
-		//     evWaiting);
-		//   - the track must still be live in the position view. If it is absent, the
-		//     completing arrival's evMerged was applied FIRST and already merged this
-		//     co-arriving track at the join (clearing its position) — its fate is settled,
-		//     so recording it now would re-insert a stale parked entry.
-		if *stopping {
-			return
-		}
-
-		if _, live := position[ev.track.ID()]; !live {
-			return
-		}
-
-		parked[ev.track.ID()] = ev.node
-		inst.recheckParked(ev.track, position, parked, stopAll)
+		inst.applyParked(ev, position, parked, stopAll, *stopping)
 
 	case evFailed:
 		inst.applyFailed(ev, active, waiting, msgIdx,
@@ -905,6 +902,13 @@ func (inst *Instance) applyEvent(
 		// track and continue on the boundary's exception flow, the loop arbitrating the
 		// completion-vs-fire race (SRD-029 FR-5/FR-8).
 		inst.fireBoundary(ev, watchers, spawn, stopAll, *stopping)
+
+	case evTerminate:
+		// a Terminate End Event was reached — abnormally terminate the instance (SRD-030
+		// FR-1). stopAll sets stopping, tears down parked/between-node tracks, and cancels
+		// each track's context to interrupt a running activity. It does NOT touch active:
+		// the terminate track's own evEnded (FIFO-after this event) accounts for it.
+		stopAll()
 	}
 }
 
@@ -1063,6 +1067,37 @@ func (inst *Instance) spawnForks(
 			nt.stop()
 		}
 	}
+}
+
+// applyParked records a track that blocked at a reachability join (OR-join) in the
+// loop-owned parked view and rechecks it (SRD-028 FR-3). Its goroutine is alive, so
+// active is unchanged. Two guards:
+//   - during shutdown stopAll has cleared the view and joins do not fire while
+//     terminating; a late park is woken by ctx.Done(), not recorded here (mirrors
+//     evWaiting);
+//   - the track must still be live in the position view. If it is absent, the
+//     completing arrival's evMerged was applied FIRST and already merged this
+//     co-arriving track at the join (clearing its position) — its fate is settled, so
+//     recording it now would re-insert a stale parked entry.
+//
+// Extracted from applyEvent to keep that switch under the complexity limit. Called
+// only from applyEvent.
+func (inst *Instance) applyParked(
+	ev trackEvent,
+	position, parked map[string]flow.Node,
+	stopAll func(),
+	stopping bool,
+) {
+	if stopping {
+		return
+	}
+
+	if _, live := position[ev.track.ID()]; !live {
+		return
+	}
+
+	parked[ev.track.ID()] = ev.node
+	inst.recheckParked(ev.track, position, parked, stopAll)
 }
 
 // applyFailed handles a track failure on the loop goroutine (SRD-029 FR-9). It

@@ -167,6 +167,12 @@ boundary** as a timeout on a long-running task: the 2s boundary fires before the
 ~4s activity finishes, cancels it, and routes the token onto the boundary's
 exception flow.
 
+For abnormal process termination, see
+[`examples/terminate-end-event/`](examples/terminate-end-event/) — a **Terminate
+End Event** on one branch of a parallel process: the fraud-check branch reaches it
+and ends the whole instance, cancelling the in-flight payment mid-charge — the
+instance settles `Terminated`, not `Completed`.
+
 ### Startup logging
 
 `thresher.New` prints a startup report — an ASCII banner with the engine

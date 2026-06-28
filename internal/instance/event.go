@@ -38,42 +38,29 @@ type trackEvent struct {
 // trackEventKind enumerates the track→loop event kinds.
 type trackEventKind uint8
 
+// trackEventKindNames is the kind→name table, keyed by the constant so it stays
+// correct if the iota block is reordered. Keep it in sync with that block below.
+var trackEventKindNames = [...]string{
+	evFork:      "fork",
+	evEnded:     "ended",
+	evAwaiting:  "awaiting",
+	evMerged:    "merged",
+	evParked:    "parked",
+	evFailed:    "failed",
+	evWaiting:   "waiting",
+	evDeliver:   "deliver",
+	evMoved:     "moved",
+	evBoundary:  "boundary",
+	evTerminate: "terminate",
+}
+
 // String returns the lower-case event-kind name for logging.
 func (k trackEventKind) String() string {
-	switch k {
-	case evFork:
-		return "fork"
-
-	case evEnded:
-		return "ended"
-
-	case evAwaiting:
-		return "awaiting"
-
-	case evMerged:
-		return "merged"
-
-	case evParked:
-		return "parked"
-
-	case evFailed:
-		return "failed"
-
-	case evWaiting:
-		return "waiting"
-
-	case evDeliver:
-		return "deliver"
-
-	case evMoved:
-		return "moved"
-
-	case evBoundary:
-		return "boundary"
-
-	default:
+	if int(k) >= len(trackEventKindNames) {
 		return "unknown"
 	}
+
+	return trackEventKindNames[k]
 }
 
 const (
@@ -118,4 +105,10 @@ const (
 	// loop arbitrates the completion-vs-fire race, cancels the host track, and continues on the
 	// boundary's exception flow (SRD-029 FR-5/FR-8). The boundary-watch peer of evDeliver.
 	evBoundary
+	// evTerminate: a Terminate End Event was reached (SRD-030 FR-2). Instance.Terminate
+	// emits it onto the loop's own channel — the single-writer lane every signal uses — and
+	// the loop abnormally terminates the instance (stopAll). Emitted from the terminate
+	// track before its own evEnded, so FIFO guarantees stopping is set first; it carries no
+	// track and does NOT touch the active count (the terminate track's evEnded accounts for it).
+	evTerminate
 )

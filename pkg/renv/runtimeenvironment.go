@@ -41,4 +41,10 @@ type RuntimeEnvironment interface {
 	// Put stores node-produced values in the execution's frame; they reach the
 	// container scope at the frame commit.
 	Put(dd ...data.Data) error
+
+	// Terminate abnormally ends the whole process instance (a Terminate End
+	// Event, BPMN §13.5.6): it cancels the instance context, so every track
+	// observes Done() and exits canceled and the instance settles Terminated.
+	// Idempotent.
+	Terminate()
 }

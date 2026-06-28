@@ -129,6 +129,18 @@ func (ee *EndEvent) Exec(
 	ctx context.Context,
 	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
+	// A Terminate End Event abnormally terminates the whole instance and performs NO
+	// other end-event behavior (BPMN §13.5.6, ADR-006 v.2 §2.2): no definition is
+	// emitted, no error is raised. Checked first, so Terminate wins over a co-located
+	// Error trigger (SRD-030 FR-3/§4.4).
+	for _, ed := range ee.definitions {
+		if _, ok := ed.(*TerminateEventDefinition); ok {
+			re.Terminate()
+
+			return []*flow.SequenceFlow{}, nil
+		}
+	}
+
 	// An Error End Event ends the process in error (BPMN §10.5.6). In 0.1.0's single
 	// scope there is no enclosing Sub-Process to catch the thrown error, so it
 	// resolves to an instance fault carrying the errorCode (SRD-029 FR-10, ADR-006

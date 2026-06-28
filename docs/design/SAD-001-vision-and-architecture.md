@@ -420,22 +420,24 @@ Versioning follows semver per module. The core library is the version-of-record 
 
 `goBpm`'s conformance **target** is the full Common Executable Subclass + ComplexGateway (§14); 0.1.0 is the **first milestone toward** that target, not a reduction of it. The 0.1.0 element set is chosen by **real-world frequency**, not spec completeness: empirical BPMN-usage studies (zur Muehlen & Recker; large model-repository analyses) and BPMS-vendor telemetry consistently show a **Pareto distribution** — a core of ~10–15 element types covers ~80–90% of executable models, while most of the 100+ notation elements are rare. 0.1.0 delivers that high-frequency core so the engine is *usable for the majority of real automation* before the long tail is filled in.
 
-**In 0.1.0 — already executable** (foundation landed):
+**In 0.1.0 — all executable** (the planned element set is complete):
 
 | Category | Elements |
 |---|---|
-| Events | None Start / None End; Intermediate Catch/Throw for **Timer**, **Message**, **Signal** |
+| Events | None Start / None End; Intermediate Catch/Throw for **Timer**, **Message**, **Signal**; **Error End** (throw); **Terminate End** |
 | Tasks | **Service**, **User**, **Send**, **Receive** |
-| Gateways | **Exclusive**, **Parallel**, **Inclusive** (split + OR-join), Complex, Event-Based |
+| Gateways | **Exclusive**, **Parallel**, **Inclusive** (split + OR-join), **Complex**, **Event-Based** |
+| Boundary events | interrupting + non-interrupting **Timer** / **Message** / **Signal** / **Error** boundary events |
 | Messaging | cross-instance Message correlation (conversation keys) |
 
-**In 0.1.0 — to build** (the two highest-frequency gaps, per the same data):
-
-| Element | Why it's in 0.1.0 |
-|---|---|
-| **Boundary events** (interrupting + non-interrupting), priority **Timer-boundary** | Timer-boundary is the most-used boundary event — timeouts, SLAs, escalations; no real process is "usable" without it. Message/Signal boundary come with the same infrastructure. |
-| **Error handling** — Error End Event (throw) + **Error Boundary Event** (catch), `ErrorEventDefinition` propagation (BpmnError) | The primary way to model business-error paths in automation. Tracked by epic #79. |
-| **Terminate End Event** | Completes the instance-termination story already in the runtime ([ADR-001 v.6](ADR-001-execution-model.md) §4.6); small, core. |
+The three highest-frequency gaps that opened 0.1.0 have all landed: **boundary events**
+([ADR-018 v.1](ADR-018-boundary-events-and-activity-interruption.md), SRD-029) — Timer-boundary first,
+then Message/Signal/Error on the same infrastructure; **error handling** — Error End Event (throw) +
+Error Boundary Event (catch) with `ErrorEventDefinition`/BpmnError propagation (epic #79; cross-scope
+and Sub-Process propagation deferred with #85 to 0.2.0); and the **Terminate End Event**
+(SRD-030) — abnormal whole-instance termination on the loop's native event lane, completing the
+instance-termination story in the runtime ([ADR-001 v.6](ADR-001-execution-model.md) §4.6,
+[ADR-006 v.2](ADR-006-events-and-subscriptions.md) §2.2).
 
 **Deferred to 0.2.0:** Embedded **Sub-Process** and **Call Activity** (#85) — high value for reuse/structure, but a self-contained increment 0.1.0 does not block on.
 
