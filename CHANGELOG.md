@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.7.0] - 2026-06-28
+
+**Version-line correction — no functional change from v0.1.1.**
+
+The module's tag history carries an abandoned pre-2023 codebase (the
+`v0.2.0-prerelease` … `v0.6.x` line, last published `v0.6.3` in 2022). Because
+the module proxy serves the **highest** semver tag as "latest", that old code —
+not the current ground-up rewrite — was what `pkg.go.dev` displayed, even after
+`v0.1.1`. This release renumbers the current code **above** that line so the
+proxy and `pkg.go.dev` reflect the actual module.
+
+### Changed
+- Version bumped `v0.1.1` → `v0.7.0` to supersede the abandoned `v0.6.x` line on
+  the module proxy. The code is identical to `v0.1.1` (the complete 0.1.0 MVP
+  element set — see below).
+
+### Removed
+- `retract` directive added for `[v0.2.0-prerelease, v0.6.4-prerelease]` — the
+  pre-2023 codebase no longer reflects this module's API and should not be
+  selected by `go get` or shown as current.
+
 ## [v0.1.1] - 2026-06-28
 
 The 0.1.0 MVP element set is complete: the engine executes the high-frequency

@@ -16,3 +16,8 @@ require (
 	github.com/stretchr/objx v0.5.2 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+// The v0.2.0-prerelease … v0.6.x tags are the pre-2023 GoBPM codebase,
+// fully replaced by the current ground-up rewrite. They no longer reflect
+// this module's architecture or API and must not be selected.
+retract [v0.2.0-prerelease, v0.6.4-prerelease]
