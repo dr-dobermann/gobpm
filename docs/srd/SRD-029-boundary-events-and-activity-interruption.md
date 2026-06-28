@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-27 |
 | Owner | Ruslan Gabitov |
@@ -397,17 +397,52 @@ Direction is up/sideways only. The instance-fault path this SRD intercepts is gr
 
 ## 9. Definition of Done
 
-- [ ] FR-1..FR-10 implemented and wired (model + runtime + error path).
-- [ ] NFR-1 (`-race` clean), NFR-2 (limitation documented + contract test), NFR-3 (no leak),
+- [x] FR-1..FR-10 implemented and wired (model + runtime + error path).
+- [x] NFR-1 (`-race` clean), NFR-2 (limitation documented + contract test), NFR-3 (no leak),
       NFR-4 (no behaviour change when no boundary attached), NFR-5 (diff-coverage ≥95 %).
-- [ ] T-1..T-14 green; `examples/boundary-events/` builds **and runs** (exit 0); its binary gitignored.
-- [ ] `make ci` green (tidy, lint, build, `-race`, cover-check, govulncheck).
-- [ ] §8 cross-doc pins verified directional + present.
-- [ ] §10 filled (files/lines, V-results, milestone SHAs); status flipped Draft → Accepted at landing.
+- [x] T-1..T-14 green; `examples/boundary-events/` builds **and runs** (exit 0); its binary gitignored.
+- [x] `make ci` green (tidy, lint, build, `-race`, cover-check, govulncheck).
+- [x] §8 cross-doc pins verified directional + present.
+- [x] §10 filled (files/lines, V-results, milestone SHAs); status flipped Draft → Accepted at landing.
 
 ## 10. Implementation summary
 
-_Filled at landing (files/lines, verification results, milestone commit SHAs)._
+Landed on `feat/adr-018-boundary-events` in five milestones (each one commit, tests included).
+
+### Files
+
+| Area | File | What |
+|---|---|---|
+| Model | `pkg/model/events/boundary.go` | `BoundaryEvent` type (one class, not four), `NewBoundaryEvent` (validates every public param), `BoundTo`, `declarationKey` |
+| Model | `pkg/model/events/bpmn_error.go` | `BpmnError{Code, Err}` typed error: `NewBpmnError` rejects empty code, `Error()` self-identifies, `Unwrap()` |
+| Model | `pkg/model/events/end.go` | Error End Event — `Exec` emits non-error defs, then faults with the `BpmnError` carrying the Error's code |
+| Model | `pkg/model/activities/activity.go` | `AddBoundaryEvent` + `BoundaryEvents()` host attachment/multiplicity |
+| Runtime | `internal/instance/boundary_watch.go` | `boundaryWatch` (loop-owned EventProcessor), `armBoundaries`/`disarmBoundaries`, `fireBoundary` (interrupting cancels the track), `matchErrorBoundary` (fault-path catch) |
+| Runtime | `internal/instance/instance.go` | loop-owned `watchers` map; `evBoundary` apply; arm-on-`evMoved`/disarm-on-`evEnded`/`evFailed`; `applyFailed` Error-boundary interception |
+| Runtime | `internal/instance/track.go` | per-track cancellable `ctx`/`cancel`; §3.7 interruption checkpoint (`ctx.Err()` before finalize) → `discardOrFail` (TrackCanceled, not TrackFailed) |
+| Runtime | `internal/instance/event.go` | `evBoundary` trackEventKind |
+| Example | `examples/boundary-events/` | interrupting timer boundary as a timeout on a ~4s payment task |
+
+### Verification (V-results)
+
+- `make ci` green: golangci-lint 0 findings, `-race` tests pass, govulncheck clean.
+- Diff-coverage **98.5 %** on touched files (gate ≥95 %), measured cumulatively across M1–M5.
+- T-1..T-14 green (T-4 e2e exercises a signal boundary; the timer-boundary path is covered end-to-end
+  by `examples/boundary-events/`. T-8 is a deterministic race-guard test, not a stress loop).
+- `examples/boundary-events/` runs to completion (exit 0); its binary is gitignored.
+
+### Milestone commits
+
+| # | SHA | Milestone |
+|---|---|---|
+| M1 | `36d9331` | Model — `BoundaryEvent` + `BoundTo` + multiplicity |
+| M2 | `07de552` | Per-track cancellable context |
+| M3a | `4e2171c` | Watcher scaffold + `evBoundary` |
+| — | `4329bb3` | Coverage backfill (model error paths) |
+| M3b | `52b6204` | Arm/disarm + interrupting/non-interrupting firing |
+| M3c | `4093d18`, `56d69ac` | Interruption of a running activity + §3.7 checkpoint |
+| M4 | `842f176` | Error path — `BpmnError`, `evFailed` catch, Error End Event |
+| M5 | `174a782` | Runnable example + `-race` sweep |
 
 ## Open questions
 
