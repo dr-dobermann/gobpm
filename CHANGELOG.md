@@ -7,59 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.1.1] - 2026-06-28
+
+The 0.1.0 MVP element set is complete: the engine executes the high-frequency
+BPMN core chosen by real-world usage frequency (SAD-001 §15.3).
+
 ### Added
-- Comprehensive test suite for core components
-- Modular test structure organized by functionality
-- Extensive documentation for event processing system
-- README_INDEX.md for organized documentation navigation
-- CHANGELOG.md for tracking project changes
-- Professional main README with comprehensive project overview
-- Working code examples with proper API usage
-- Examples directory with comprehensive documentation
+- **Gateways**: Exclusive, Parallel, Inclusive (split + synchronizing OR-join),
+  Complex (activation-threshold join), and Event-Based (mid-flow deferred choice
+  and event-based instance start).
+- **Events**: None start/end; Timer / Message / Signal intermediate catch and
+  throw; signal-start instantiation; **Error End Event**; **Terminate End Event**
+  (abnormal whole-instance termination).
+- **Boundary events**: interrupting and non-interrupting, on Timer / Message /
+  Signal / Error triggers, with per-track cancellation of the guarded activity.
+- **Error handling**: `BpmnError` propagation and the Error Boundary Event.
+- **Tasks**: Service, User, Send, Receive.
+- **Messaging**: cross-instance message correlation by conversation keys, and
+  event-triggered process instantiation.
+- **Process data**: a container-scoped data plane with per-execution frames and
+  addressable data sources (the `RUNTIME` provider, path-qualified reads).
+- **Observability**: structured `slog` logging, visible by default with an
+  explicit opt-out; a startup banner reporting the engine version and build
+  revision.
 
 ### Changed
-- Improved test coverage across multiple packages
-- Enhanced error handling and validation
-- Better mockery integration for testing
+- Execution core reworked to a single-writer, per-instance event loop: one
+  goroutine owns instance state and tracks communicate through it via events
+  (ADR-001 / ADR-017).
 
 ### Fixed
-- **CRITICAL**: Fixed nil map assignment bug in EventHub event registration
-- **CRITICAL**: Fixed missing map update in EventHub processor management
-- **EVENT SYSTEM**: Fixed timer event test failures in thresher_events_test.go
-- **EVENT SYSTEM**: Corrected timer event propagation logic in tests
-- **EVENT SYSTEM**: Fixed mock EventDefinition usage with proper TimerEventDefinition
-- Various test stability and reliability improvements
-- **DOCUMENTATION**: Fixed incorrect code examples in main README
-- **EXAMPLES**: Created working, tested code examples
+- OR-join all-branches-arrive synchronization hang.
+- Complex-join recheck race causing spurious gateway abort/hang.
+- Non-message broadcast double-fire across concurrent instances sharing a catch.
+- Runtime deadlocks in the bundled examples.
 
-### Testing Improvements
-- **pkg/model/artifacts**: 30% → 86.2% coverage (+56.2%)
-- **internal/eventproc/eventhub**: 0% → 77.6% coverage (+77.6%)
-- **pkg/thresher**: 0% → 74.4% coverage (+74.4%)
-- **EVENT SYSTEM**: Fixed timer event testing patterns and mock usage
-- **EVENT SYSTEM**: Corrected test logic for event propagation vs generation
-- **QUALITY**: All tests now pass with comprehensive coverage
-
-### Documentation
-- Added comprehensive documentation for event processing interfaces
-- Added detailed EventHub implementation documentation
-- **NEW**: Created comprehensive Event Processing Guide (docs/EVENT_PROCESSING_GUIDE.md)
-  - Detailed architecture and implementation patterns
-  - Event propagation vs generation patterns explained
-  - Timer waiter behavior and architectural limitations
-  - Testing strategies and common pitfalls
-  - Performance optimization techniques
-  - Integration patterns and best practices
-- Created centralized documentation index
-- Updated README_INDEX.md with Event Processing Guide link
-- Improved code examples and usage patterns
-- Modernized main README with professional presentation
-- Added feature highlights, use cases, and architecture overview
-- Included quick start guide with practical examples
-- Enhanced project status information and roadmap
-- **EXAMPLES**: Created examples/ directory with working code samples
-- **EXAMPLES**: Added comprehensive examples documentation
-- **EXAMPLES**: Fixed and tested all code examples in README
+### Testing
+- Diff-coverage CI gate (`covercheck`); every package now at or above 80%
+  statement coverage.
 
 ## [v0.1.0] - Initial Development Phase
 
