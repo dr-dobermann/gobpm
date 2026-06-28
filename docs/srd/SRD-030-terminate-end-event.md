@@ -53,8 +53,12 @@ flowchart LR
 ```
 
 - `Instance.Cancel()` (`instance.go:630`) → `inst.cancel()`.
-- `stopAll` is a loop-local closure (`instance.go:742`): sets `stopping=true`, `setState(Terminating)`,
-  stops & wakes every track, clears `waiting`/`msgIdx`/`position`/`parked`.
+- `stopAll` is a loop-local closure (`instance.go:750`): sets `stopping=true`, `setState(Terminating)`,
+  stops (`t.stop()`) & wakes (`close(t.evtCh)`) every track, clears `waiting`/`msgIdx`/`position`/`parked`.
+  It does **not** cancel track contexts — in the abort path a *running* ctx-honouring activity is
+  interrupted by `inst.cancel()` cascading to the per-track `tctx` (`instance.go:761` "stopIt covers the
+  running path" means the *between-node* check, not a blocked `Exec`). §3.3 adds `t.cancel()` to `stopAll`
+  so the `evTerminate` path interrupts a running activity without relying on instance-ctx cancellation.
 - The terminal-state decision (`instance.go:801`): `if stopping { Terminated } else { Completed }`.
 - A cancelled track resolves to `TrackCanceled` (not `TrackFailed`) at the SRD-029 §3.7 checkpoint
   (`track.go:575` `discardOrFail`: `ctx.Err() != nil` → discard).
@@ -73,20 +77,20 @@ node has no way to ask its instance to cancel itself. That seam is the whole of 
 | ID | Requirement |
 |---|---|
 | **FR-1** | Reaching a **Terminate End Event** abnormally terminates its process instance: every live track is cancelled, remaining tokens are discarded, and the instance settles in state **`Terminated`** (BPMN §13.5.6; ADR-006 v.2 §2.2). |
-| **FR-2** | Terminate is realized by the **instance cancelling its own context** — the exact cascade external abort uses (`inst.cancel()` → `ctx.Done()` → `stopAll` → `Terminated`). The Terminate node triggers it through a new `renv.RuntimeEnvironment.Terminate()` method (§3.1). No new termination primitive is introduced. |
+| **FR-2** | Terminate is realized on the loop's **native single-writer lane**: `renv.RuntimeEnvironment.Terminate()` (§3.1) emits an **`evTerminate`** trackEvent via `inst.emit` — the same channel every other signal uses — and the loop's `applyEvent` handles `case evTerminate` by calling its own `stopAll` (§3.3). No instance-context self-cancel reached from the node; no new termination primitive. |
 | **FR-3** | When a Terminate trigger is present, `EndEvent.Exec` performs **no other end-event behaviour**: the Terminate definition is **not** emitted through the EventProducer, and co-located non-error definitions are **not** emitted either (ADR-006 v.2 §2.2: "other end-event behaviours are *not* performed"). |
-| **FR-4** | The instance terminal-state decision settles `Terminated` whenever the instance context is cancelled — `if stopping \|\| ctx.Err() != nil`. This makes the terminal state deterministic regardless of the `select` race between `ctx.Done()` and the Terminate track's `evEnded` (§4.2). |
+| **FR-4** | The terminal state is **deterministic by construction**: the Terminate track emits `evTerminate` during `Exec`, then its terminal `evEnded` after — same goroutine, same channel, so **FIFO** guarantees the loop processes `evTerminate` (setting `stopping`) **before** that track's `evEnded`. The existing `if stopping → Terminated` decision is therefore correct with **no `select` race and no extra guard** (§4.2). |
 | **FR-5** | Terminate is **not a fault**: no `lastErr` is recorded and the instance is not driven through the error/boundary path. It is distinct from the Error End Event, which faults via `BpmnError` (SRD-029 FR-10). A clean Terminate carries no error; a faulted instance keeps its existing `Terminated`+`lastErr` shape. |
-| **FR-6** | `renv.RuntimeEnvironment.Terminate()` is **idempotent and safe** to call concurrently with the loop (it forwards to `inst.cancel()`, a `context.CancelFunc`; `stopAll` is already idempotent via its `stopping` guard). |
+| **FR-6** | Terminate is **idempotent**: repeated `evTerminate` events (multiple Terminate End Events firing, or one per concurrent branch) each reach `stopAll`, a no-op after the first via its `stopping` guard. `evTerminate` is emitted only during an active run — a Terminate End Event is reached *by* the loop, so the loop is always present to receive it. |
 | **FR-7** | **No compensation** is run on Terminate (BPMN-conformant default; ADR-006 v.2 §2.2). Optional compensation-on-terminate is an explicit **deferred extension** (§4.5), not built here. |
 
 ### Non-functional
 
 | ID | Requirement |
 |---|---|
-| **NFR-1** | `-race` clean — the self-cancel cascade and the terminal-state guard verified under `-race`, including the last-track race (FR-4). |
+| **NFR-1** | `-race` clean — the `evTerminate` teardown, including per-track cancellation of a running ctx-honouring activity, verified under `-race`; plus the last-track FIFO ordering (FR-4). |
 | **NFR-2** | **No behaviour change** for any instance without a Terminate End Event — the `Completed` path is untouched. |
-| **NFR-3** | Reuses the existing abort cascade and `stopAll`; the new surface is one `renv` method + a one-line terminal-state guard + the `Exec` branch. Minimal footprint. |
+| **NFR-3** | Reuses `stopAll` and the per-track `cancel` from SRD-029; the new surface is one `renv` method + one `evTerminate` trackEventKind + one `applyEvent` case + a per-track `t.cancel()` inside `stopAll` + the `Exec` branch. No terminal-state guard. Minimal footprint. |
 | **NFR-4** | Diff-coverage ≥95 % (aim 100 %) on touched files. |
 
 ## 3. Models
@@ -119,16 +123,18 @@ Implemented on `Instance` (which `execEnv` embeds — `execenv.go:14` `type exec
 so the interface is satisfied for free):
 
 ```go
-// Terminate cancels the instance context on behalf of a Terminate End Event,
-// reusing the external-abort cascade (loop ctx.Done() → stopAll → Terminated).
+// Terminate abnormally ends the instance on behalf of a Terminate End Event
+// (renv.RuntimeEnvironment): it emits an evTerminate trackEvent onto the loop's
+// own channel — the single-writer lane every signal uses — and the loop tears
+// the instance down (stopAll). Reached only during an active run.
 func (inst *Instance) Terminate() {
-	inst.Cancel() // → inst.cancel(); the loop arbitrates the rest (single writer)
+	inst.emit(trackEvent{kind: evTerminate})
 }
 ```
 
-`Terminate()` is a named, intent-revealing seam distinct from the host-facing `Instance.Cancel()`
-(`instance.go:630`) even though both funnel to `inst.cancel()` — node-requested self-termination vs
-host-requested abort. The `var _ renv.RuntimeEnvironment = (*execEnv)(nil)` check (`execenv.go:62`)
+`Terminate()` travels the **same `inst.emit` lane** as every other loop signal (`evDeliver`,
+`evMoved`, `evBoundary`, …) — the node never reaches across to cancel the instance context; the
+**loop** owns the teardown. The `var _ renv.RuntimeEnvironment = (*execEnv)(nil)` check (`execenv.go:62`)
 keeps the wiring honest.
 
 ### 3.2 `EndEvent.Exec` — Terminate handling (`pkg/model/events/end.go`)
@@ -155,51 +161,58 @@ func (ee *EndEvent) Exec(ctx context.Context, re renv.RuntimeEnvironment) ([]*fl
 The Terminate track returns success (`nil` error) → ends `evEnded` (clean, having done its job); the
 cascade triggered by `re.Terminate()` cancels the siblings.
 
-### 3.3 Terminal-state guard (`internal/instance/instance.go` loop)
+### 3.3 The `evTerminate` loop handler + `stopAll` per-track cancel (`internal/instance/`)
+
+A new `trackEventKind` `evTerminate` (`event.go`); the loop's `applyEvent` gains:
 
 ```go
-// settle Terminated whenever the ctx was cancelled (host abort OR a Terminate End
-// Event self-cancel), independent of the ctx.Done()-vs-evEnded select ordering.
-if stopping || ctx.Err() != nil {
-	inst.setState(Terminated)
-} else {
-	inst.setState(Completed)
-}
+case evTerminate:
+	// A Terminate End Event was reached: abnormally terminate the instance. stopAll
+	// sets stopping, tears down parked/between-node tracks, and cancels each track's
+	// context to interrupt a running activity. It does NOT touch active — the
+	// terminate track's own evEnded accounts for it.
+	stopAll()
 ```
+
+`stopAll` (`instance.go:750`) gains a per-track `t.cancel()` in its existing track loop, so a
+**running** ctx-honouring `ServiceTask` is interrupted (the cooperative-cancellation contract,
+SRD-029): `stopIt` + the closed `evtCh` cover the between-node and parked paths (`instance.go:761`),
+`t.cancel()` covers the running one. This also makes `stopAll` self-sufficient on the abort/fault
+paths (idempotent there — the ctx is already cancelled via `inst.cancel()`). The terminal-state
+decision (`instance.go:801` `if stopping → Terminated`) is **unchanged** — no guard is needed (§4.2).
 
 ## 4. Analysis
 
-### 4.1 Mechanism — self-cancel via `renv` (decided)
+### 4.1 Mechanism — `evTerminate` on the loop's native lane (decided)
 
-Three seams were surveyed:
+- **`evTerminate` trackEvent (chosen).** `renv.Terminate()` emits an `evTerminate` to the loop via
+  `inst.emit` — the **same single-writer channel** every other signal uses — and the loop calls its own
+  `stopAll`. Deterministic by channel FIFO (§4.2), single-writer-consistent (mirrors SRD-029's
+  `evBoundary`), and the **loop** — which owns `stopAll` — performs the teardown in-goroutine.
+- **Self-cancel via the instance context** (`re.Terminate()` → `inst.cancel()`, reusing the abort
+  path) — *rejected*. It matches ADR-006 §2.2's literal phrasing ("the instance cancels its own
+  context") and reuses the tested abort cascade, but the **signal travels an indirect lane**: the node
+  cancels the ctx and the loop only *reacts* via `<-ctx.Done()`, which **races** the Terminate track's
+  `evEnded` in the `select` (last-track case → spurious `Completed`) and forces a `ctx.Err()`
+  terminal-state guard — a patch over a mechanism that fights the loop's native channel. ADR-006 §2.2's
+  "cancels its own context" is a realization *sketch*; this SRD reconciles it with the code — the
+  observable semantics are identical (tracks cancelled, tokens discarded, `Terminated`, no compensation).
+- **A `terminate` sentinel error returned from `Exec`** (parallel to `BpmnError`) — *rejected*: routes
+  Terminate through the **failure** path (`discardOrFail`/`evFailed`), conflating an abnormal-but-clean
+  termination with a fault.
 
-- **Self-cancel via a `renv` method (chosen).** The node calls `re.Terminate()` → `inst.cancel()` →
-  the loop's existing `ctx.Done()` → `stopAll` cascade. This is the **literal ADR-006 v.2 §2.2
-  realization** ("the instance cancels its own context → every track observes `Done()` → each exits as
-  canceled → the instance reaches `Terminated`"), reuses the **already-tested external-abort path**
-  verbatim, and adds the smallest surface (one interface method, satisfied for free by `execEnv`'s
-  embedding). Cost: the `select` race (§4.2), closed by FR-4's one-line guard.
-- **A `terminate` sentinel error returned from `Exec`** (parallel to `BpmnError`) — *rejected*: it
-  routes Terminate through the **failure** path (`discardOrFail`/`applyFailed`/`evFailed`), conflating
-  an abnormal-but-clean termination with a fault, and needs the loop to special-case the sentinel to
-  avoid `failFromTrack`. Terminate is not a failure; abusing the fault path is a semantic smell.
-- **A new `evTerminate` trackEvent** mirroring SRD-029's `evBoundary` — *rejected*: deterministic via
-  channel FIFO, but it adds a new `trackEventKind` + an `applyEvent` case, couples the generic track to
-  a specific event trigger, and **does not reuse the proven abort cascade** — more moving parts for
-  identical observable semantics.
+Running-track interruption still requires context cancellation (a live goroutine cannot be stopped any
+other way — SRD-029's cooperative contract), but it is now **loop-owned** inside `stopAll` (§3.3), not
+reached from the node.
 
-All three end at the same `stopAll`; the chosen one gets there by the route the conception already
-fixed and the engine already exercises.
+### 4.2 Determinism by FIFO (no race)
 
-### 4.2 The terminal-state race and its guard (decided)
-
-`re.Terminate()` cancels the ctx from the **track goroutine**; the loop then has both `<-ctx.Done()`
-(persistently ready) and the Terminate track's `evEnded` ready in its `select`. If Terminate is the
-**last active track**, a `select` that picks `evEnded` first drops `active` to 0 and exits the loop
-**before** `stopAll` runs — settling `Completed` (wrong). FR-4's guard (`|| ctx.Err() != nil`) makes the
-terminal state depend on the *fact* of cancellation, not on `select` ordering: a cancelled ctx can never
-report `Completed`. This is also a latent-correctness improvement for the host-abort path (same
-guarantee, deterministically). Verified by a repeated/`-race` last-track test (T-3).
+`evTerminate` and the Terminate track's own `evEnded` are emitted from the **same goroutine** (the
+track) onto the **same channel** (`inst.events`), so the loop processes them **in order**: `evTerminate`
+first → `stopAll` sets `stopping` → then `evEnded` drops `active`. So even when Terminate is the **last
+active track**, the terminal state is `Terminated` with **no `select` race and no guard** — the property
+the rejected self-cancel design had to patch with `ctx.Err()`. Verified by a repeated `-race` last-track
+test (T-3).
 
 ### 4.3 Emit suppression (decided)
 
@@ -227,7 +240,9 @@ known, not to scope work into 0.1.0.
 
 - **`renv.RuntimeEnvironment`** gains `Terminate()`. New method on a public interface — every
   implementation must provide it; the only production implementation is `*execEnv` (via `*Instance`),
-  satisfied by the new `Instance.Terminate()`. Mock regeneration (`make gen_mock_files`) picks it up.
+  satisfied by `Instance.Terminate()`. Mock regeneration (`make gen_mock_files`) picks it up.
+- **`internal/instance`** gains the `evTerminate` trackEventKind, its `applyEvent` case, and a per-track
+  `t.cancel()` inside `stopAll` — all unexported, no public-surface change.
 - **No change** to `NewEndEvent` / `WithTerminateTrigger` / `NewTerminateEventDefinition` — already
   public and sufficient.
 
@@ -237,19 +252,19 @@ known, not to scope work into 0.1.0.
 |---|---|---|
 | **T-1** | A single-track process `start → … → Terminate-End` | instance settles **`Terminated`**, not `Completed`. |
 | **T-2** | A parallel split where one branch reaches a Terminate-End while a sibling is still running/waiting | the sibling is **cancelled** (does not run its downstream node); instance `Terminated`. |
-| **T-3** | Terminate as the **last active track**, run repeatedly / under `-race` | deterministically `Terminated` (FR-4 guard; the §4.2 race). |
+| **T-3** | Terminate as the **last active track**, run repeatedly under `-race` | deterministically `Terminated` (FIFO ordering §4.2 — `evTerminate` precedes the track's `evEnded`). |
 | **T-4** | A process with a plain (None) End Event, no Terminate | **`Completed`** — no regression (NFR-2). |
 | **T-5** | A Terminate-End carrying a co-located Message/Signal definition | the definition is **not** emitted through the EventProducer (FR-3 / §4.3). |
 | **T-6** | Terminate-End vs Error-End | Terminate → `Terminated`, **no `lastErr`**; Error → faults (distinct paths, FR-5). |
-| **T-7** | `Instance.Terminate()` called twice / concurrently with the loop | idempotent, no panic, no send-on-closed (FR-6). |
+| **T-7** | A process with **two** Terminate End Events on concurrent branches (both fire) | idempotent — `Terminated`, no panic, no send-on-closed (`stopAll` `stopping` guard, FR-6). |
 | **T-8** | Runnable example `examples/terminate-end-event/` | builds **and runs** (exit 0); shows one branch terminating the instance. |
 
 ## 7. Milestones
 
 | # | Milestone | FRs | Notes |
 |---|---|---|---|
-| **M1** | `renv.RuntimeEnvironment.Terminate()` + `Instance.Terminate()` seam; regenerate mocks | FR-2,6 | Pure seam; the cascade is reused. Tests T-7. |
-| **M2** | `EndEvent.Exec` Terminate branch (call + emit-suppression) + loop terminal-state guard | FR-1,3,4,5 | The behaviour. Tests T-1..T-6. |
+| **M1** | `renv.RuntimeEnvironment.Terminate()` interface seam; regenerate mocks (**landed** — commit `a8ae43c`; its `Instance.Terminate()` body is finalized in M2) | FR-2 | Pure seam. |
+| **M2** | `evTerminate` trackEventKind + loop `applyEvent` case + `stopAll` per-track `t.cancel()`; finalize `Instance.Terminate()` to emit `evTerminate`; `EndEvent.Exec` Terminate branch (call + emit-suppression) | FR-1,3,4,5,6 | The behaviour. Tests T-1..T-7. |
 | **M3** | Runnable example + `-race` sweep | all | `examples/terminate-end-event/`. T-8. |
 
 Each milestone is one commit, tests included; coverage gate per milestone (NFR-4).
@@ -269,7 +284,7 @@ Direction is up/sideways only. The terminal-state and cascade this SRD touches a
 
 ## 9. Definition of Done
 
-- [ ] FR-1..FR-7 implemented and wired (seam + Exec branch + terminal-state guard).
+- [ ] FR-1..FR-7 implemented and wired (renv seam + `evTerminate` kind/handler + `stopAll` per-track cancel + Exec branch).
 - [ ] NFR-1 (`-race` clean incl. last-track race), NFR-2 (no change without Terminate), NFR-3 (minimal surface), NFR-4 (diff-coverage ≥95 %).
 - [ ] T-1..T-8 green; `examples/terminate-end-event/` builds **and runs** (exit 0); its binary gitignored.
 - [ ] `make ci` green (tidy, lint, build, `-race`, cover-check, govulncheck); mocks regenerated.
