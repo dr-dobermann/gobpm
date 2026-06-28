@@ -129,9 +129,23 @@ func (ee *EndEvent) Exec(
 	ctx context.Context,
 	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
+	// An Error End Event ends the process in error (BPMN §10.5.6). In 0.1.0's single
+	// scope there is no enclosing Sub-Process to catch the thrown error, so it
+	// resolves to an instance fault carrying the errorCode (SRD-029 FR-10, ADR-006
+	// v.2 §2.6 engine note). The error definition itself is not propagated through
+	// the event bus (no catcher); any co-located non-error definitions still emit
+	// before the fault.
+	var errCode string
+
 	ers := []error{}
 
 	for _, ed := range ee.definitions {
+		if eed, ok := ed.(*ErrorEventDefinition); ok {
+			errCode = eed.Error().ErrorCode()
+
+			continue
+		}
+
 		if err := ee.emitDefinition(ctx, re, ed); err != nil {
 			ers = append(ers, err)
 		}
@@ -144,6 +158,12 @@ func (ee *EndEvent) Exec(
 					ee.Name(), ee.ID()),
 				errs.C(errorClass, errs.OperationFailed),
 				errs.E(errors.Join(ers...)))
+	}
+
+	// finding an error definition, end the process in error (FR-10): the track
+	// fails and — an end event carries no boundary — the instance faults.
+	if errCode != "" {
+		return nil, &BpmnError{Code: errCode}
 	}
 
 	return []*flow.SequenceFlow{}, nil

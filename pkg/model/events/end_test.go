@@ -172,8 +172,14 @@ func TestNewEndEvent(t *testing.T) {
 						return d, nil
 					})
 
+			// the Error trigger ends the process in error (SRD-029 FR-10): the
+			// non-error definitions still emit, then Exec returns a typed BpmnError
+			// carrying the errorCode.
 			_, err = ee.Exec(context.Background(), mre)
-			require.NoError(t, err)
+
+			var be *events.BpmnError
+			require.ErrorAs(t, err, &be)
+			require.Equal(t, "test_error_code", be.Code)
 		})
 }
 

@@ -2,8 +2,10 @@ package instance
 
 import (
 	"context"
+	"errors"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
@@ -79,6 +81,14 @@ func (inst *Instance) armBoundaries(
 		bev := be.(flow.BoundaryEvent)
 
 		for _, d := range bev.Definitions() {
+			// An Error boundary is not a waiting catch — an error is not a published
+			// trigger that arrives on the hub. It is matched against the failing
+			// activity in the loop's evFailed handling (matchErrorBoundary, FR-9), so
+			// it is never armed as a hub waiter (SRD-029 §4.4).
+			if d.Type() == flow.TriggerError {
+				continue
+			}
+
 			w := &boundaryWatch{host: t, boundary: bev, def: d}
 
 			if err := inst.RegisterEvent(w, d); err != nil {
@@ -161,6 +171,56 @@ func (inst *Instance) fireBoundary(
 		ev.track.cancel()
 		inst.disarmBoundaries(hostID, watchers)
 	}
+}
+
+// matchErrorBoundary handles the Error-catch path on the loop goroutine (SRD-029
+// FR-9 / §4.4): an Error boundary is not a waiting catch but a match against the
+// failing activity at the moment the track fails. If the track failed with a typed
+// BpmnError and the activity it failed on carries an Error boundary whose errorRef
+// code equals the BpmnError's Code, the loop routes to that boundary's outgoing
+// (exception) flow — the failed track being the canceled guarded activity — and
+// returns true so the caller does NOT fault the instance. A plain (untyped) error,
+// a failing node that holds no boundaries (e.g. an Error End Event), or no code
+// match returns false: the instance-fault path (§1.3) is unchanged. Called only
+// from loop().
+func (inst *Instance) matchErrorBoundary(
+	t *track,
+	position map[string]flow.Node,
+	spawn func(*track),
+	stopAll func(),
+	stopping bool,
+) bool {
+	var be *events.BpmnError
+	if !errors.As(t.lastErr, &be) {
+		return false // an untyped failure → fault, as before.
+	}
+
+	// position holds the node the track failed on; a node that carries no
+	// boundaries (an end event, a gateway) cannot catch — fault.
+	host, ok := position[t.ID()].(boundaryHoster)
+	if !ok {
+		return false
+	}
+
+	for _, en := range host.BoundaryEvents() {
+		// every entry was attached as a flow.BoundaryEvent — panicking form.
+		bev := en.(flow.BoundaryEvent)
+
+		for _, d := range bev.Definitions() {
+			eed, ok := d.(*events.ErrorEventDefinition)
+			if !ok || eed.Error().ErrorCode() != be.Code {
+				continue
+			}
+
+			inst.spawnForks(
+				trackEvent{track: t, flows: bev.Outgoing()},
+				spawn, stopAll, stopping)
+
+			return true
+		}
+	}
+
+	return false
 }
 
 // armedFor reports whether node is still among the watches armed for a host —

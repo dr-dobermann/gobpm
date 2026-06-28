@@ -881,13 +881,8 @@ func (inst *Instance) applyEvent(
 		inst.recheckParked(ev.track, position, parked, stopAll)
 
 	case evFailed:
-		// a node error faulted the track — surface it as an instance failure and
-		// terminate, rather than letting it complete silently (FIX-008).
-		inst.failFromTrack(ev.track, stopAll)
-		*active--
-		flipNotParked(ev.track, waiting, msgIdx)
-		clearPosition(position, parked, ev.track)
-		inst.disarmBoundaries(ev.track.ID(), watchers)
+		inst.applyFailed(ev, active, waiting, msgIdx,
+			position, parked, watchers, spawn, stopAll, *stopping)
 
 	case evWaiting:
 		// the track parked on its evtCh and is ready to receive — record it as
@@ -1068,6 +1063,34 @@ func (inst *Instance) spawnForks(
 			nt.stop()
 		}
 	}
+}
+
+// applyFailed handles a track failure on the loop goroutine (SRD-029 FR-9). It
+// first tries to catch a typed BpmnError at an Error boundary on the failing
+// activity (matchErrorBoundary, run before clearPosition so position still holds
+// the failing node): a match routes to the boundary's exception flow and the
+// instance runs on. Only an uncaught failure faults the instance (FIX-008). Then
+// the track is cleared from the loop-owned views and its boundaries disarmed.
+// Called only from applyEvent.
+func (inst *Instance) applyFailed(
+	ev trackEvent,
+	active *int,
+	waiting map[string]struct{},
+	msgIdx map[string]*track,
+	position, parked map[string]flow.Node,
+	watchers map[string][]*boundaryWatch,
+	spawn func(*track),
+	stopAll func(),
+	stopping bool,
+) {
+	if !inst.matchErrorBoundary(ev.track, position, spawn, stopAll, stopping) {
+		inst.failFromTrack(ev.track, stopAll)
+	}
+
+	*active--
+	flipNotParked(ev.track, waiting, msgIdx)
+	clearPosition(position, parked, ev.track)
+	inst.disarmBoundaries(ev.track.ID(), watchers)
 }
 
 // applyMerged flips the tracks the surviving track absorbed at a synchronizing
