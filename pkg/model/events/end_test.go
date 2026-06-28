@@ -67,9 +67,6 @@ func TestNewEndEvent(t *testing.T) {
 	escEd, err := events.NewEscalationEventDefintion(esc)
 	require.NoError(t, err)
 
-	termEd, err := events.NewTerminateEventDefinition()
-	require.NoError(t, err)
-
 	t.Run("empty trigger list end event",
 		func(t *testing.T) {
 			// invalid option
@@ -110,7 +107,6 @@ func TestNewEndEvent(t *testing.T) {
 				events.WithEscalationTrigger(escEd),
 				events.WithMessageTrigger(msgEd),
 				events.WithSignalTrigger(sigEd),
-				events.WithTerminateTrigger(termEd),
 			)
 
 			require.NoError(t, err)
@@ -126,10 +122,9 @@ func TestNewEndEvent(t *testing.T) {
 			require.True(t, ee.HasTrigger(flow.TriggerEscalation))
 			require.True(t, ee.HasTrigger(flow.TriggerMessage))
 			require.True(t, ee.HasTrigger(flow.TriggerSignal))
-			require.True(t, ee.HasTrigger(flow.TriggerTerminate))
 
-			require.Equal(t, 7, len(triggers))
-			require.Equal(t, 7, len(ee.Definitions()))
+			require.Equal(t, 6, len(triggers))
+			require.Equal(t, 6, len(ee.Definitions()))
 
 			mep := mockeventproc.NewMockEventProducer(t)
 			mep.EXPECT().
@@ -181,6 +176,36 @@ func TestNewEndEvent(t *testing.T) {
 			require.ErrorAs(t, err, &be)
 			require.Equal(t, "test_error_code", be.Code)
 		})
+}
+
+// TestEndEventTerminateWins covers the Terminate End Event branch of Exec (SRD-030
+// T-5, FR-3/§4.4): Terminate is checked first, so it WINS over a co-located trigger —
+// it calls renv.Terminate(), emits NOTHING (the strict mock fails on any
+// EventProducer/PropagateEvent call), and returns no flows and no error (not a fault).
+func TestEndEventTerminateWins(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	termEd, err := events.NewTerminateEventDefinition()
+	require.NoError(t, err)
+
+	// a co-located message trigger that must NOT be emitted
+	msg := bpmncommon.MustMessage("m",
+		data.MustItemDefinition(values.NewVariable(1),
+			foundation.WithID("term_msg_item")))
+	msgEd, err := events.NewMessageEventDefinition(msg, nil)
+	require.NoError(t, err)
+
+	ee, err := events.NewEndEvent("terminate end_event",
+		events.WithMessageTrigger(msgEd),
+		events.WithTerminateTrigger(termEd))
+	require.NoError(t, err)
+
+	mre := mockrenv.NewMockRuntimeEnvironment(t)
+	mre.EXPECT().Terminate().Return()
+
+	flows, err := ee.Exec(context.Background(), mre)
+	require.NoError(t, err)
+	require.Empty(t, flows)
 }
 
 // TestEndEventMessageThrowError covers the EndEvent.Exec error path when a
