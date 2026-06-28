@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-28 |
 | Owner | Ruslan Gabitov |
@@ -284,16 +284,41 @@ Direction is up/sideways only. The terminal-state and cascade this SRD touches a
 
 ## 9. Definition of Done
 
-- [ ] FR-1..FR-7 implemented and wired (renv seam + `evTerminate` kind/handler + `stopAll` per-track cancel + Exec branch).
-- [ ] NFR-1 (`-race` clean incl. last-track race), NFR-2 (no change without Terminate), NFR-3 (minimal surface), NFR-4 (diff-coverage ≥95 %).
-- [ ] T-1..T-8 green; `examples/terminate-end-event/` builds **and runs** (exit 0); its binary gitignored.
-- [ ] `make ci` green (tidy, lint, build, `-race`, cover-check, govulncheck); mocks regenerated.
-- [ ] §8 cross-doc pins verified directional + present.
-- [ ] §10 filled (files/lines, V-results, milestone SHAs); status flipped Draft → Accepted at landing.
+- [x] FR-1..FR-7 implemented and wired (renv seam + `evTerminate` kind/handler + `stopAll` per-track cancel + Exec branch).
+- [x] NFR-1 (`-race` clean incl. last-track race), NFR-2 (no change without Terminate), NFR-3 (minimal surface), NFR-4 (diff-coverage ≥95 %).
+- [x] T-1..T-8 green; `examples/terminate-end-event/` builds **and runs** (exit 0); its binary gitignored.
+- [x] `make ci` green (tidy, lint, build, `-race`, cover-check, govulncheck); mocks regenerated.
+- [x] §8 cross-doc pins verified directional + present.
+- [x] §10 filled (files/lines, V-results, milestone SHAs); status flipped Draft → Accepted at landing.
 
 ## 10. Implementation summary
 
-_Filled at landing (files/lines, verification results, milestone commit SHAs)._
+**Mechanism (final).** A Terminate End Event flows on the loop-native event lane, not by context
+self-cancellation: `EndEvent.Exec` calls `renv.Terminate()`, which emits an `evTerminate` `trackEvent`
+on `inst.emit` (the same single-writer channel every other event uses). The loop's `applyEvent`
+processes it in FIFO order ahead of the terminating track's own `evEnded`, so `stopAll` sets
+`stopping=true` *before* the natural completion is observed — the instance settles `Terminated`
+deterministically with no `select` race and no `ctx.Err()` guard. Running siblings are interrupted by
+the per-track `t.cancel()` that `stopAll` now calls (a goroutine blocked in `Exec` cannot be stopped any
+other way); that cancellation is loop-owned, issued from inside `applyEvent`.
+
+**Files / lines.**
+- `pkg/renv/runtimeenvironment.go` — `RuntimeEnvironment` interface gains `Terminate()` (M1); mocks regenerated.
+- `internal/instance/event.go` — `evTerminate` kind appended to the iota block; `String()` refactored to a keyed `trackEventKindNames` data table (M2).
+- `internal/instance/instance.go` — `Instance.Terminate()` emits `evTerminate`; `applyEvent` `case evTerminate` calls `stopAll`; `stopAll` per-track loop adds `t.cancel()` between `t.stop()` and `close(t.evtCh)`; `applyParked` helper extracted to keep `applyEvent` under gocyclo 15 (M2).
+- `pkg/model/events/end.go` — `EndEvent.Exec` scans definitions for `*TerminateEventDefinition` first; on match calls `re.Terminate()` and returns `nil, nil` (no definition emitted, no error) so Terminate wins over a co-located Error trigger (M2).
+- `examples/terminate-end-event/` — runnable demo (`main.go`/`process.go`/`handlers.go`), `README.md`; binary gitignored (M3).
+
+**Tests.** T-1 `TestTerminateEndEventTerminatesInstance`, T-2 `TestTerminateCancelsRunningSibling`,
+T-3 `TestTerminateLastTrackDeterministic` (50× under `-race`), T-4 `TestNoneEndEventCompletes`,
+T-5 `TestEndEventTerminateWins`, T-6 `TestTerminateIsNotAFault`, T-7 `TestTwoTerminateBranchesIdempotent`,
+plus `TestTrackEventKindStringTerminate`. T-8 = the runnable example.
+
+**Verification.** `make ci` green (tidy, golangci-lint, build, `-race`, cover-check, govulncheck).
+Diff-coverage 100 % on touched files (`event.go` 2/2, `instance.go` 26/26, `end.go` 10/10). The example
+runs to exit 0 and prints the `Terminated` state.
+
+**Milestone commits.** doc `52ec148` (+ `e85c628` review fold) · M1 `a8ae43c` · M2 `a1b0c5b` · M3 `c78b95b`.
 
 ## Open questions
 
