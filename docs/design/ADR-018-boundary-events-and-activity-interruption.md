@@ -2,13 +2,13 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-27 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-006 v.2 Events & Subscriptions](ADR-006-events-and-subscriptions.md) §2.2, §2.6, [ADR-001 v.6 Execution Model](ADR-001-execution-model.md) |
 
-> **Draft (conception; implementation in the accompanying SRD).** Decides the **mechanism** that
+> **Accepted** — landed by the accompanying SRD (SRD-029, M1–M5 on `feat/adr-018-boundary-events`). Decides the **mechanism** that
 > [ADR-006 v.2](ADR-006-events-and-subscriptions.md) §2.2 left open: how an interrupting boundary
 > event actually **interrupts a running activity**, how a boundary subscription is realized over an
 > activity's execution window, and how an **Error Boundary** catches a thrown error. The Error
@@ -290,4 +290,5 @@ None.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.1 (Accepted) | 2026-06-28 | Ruslan Gabitov | **Accepted** — conception realized; landed by the accompanying SRD (SRD-029) across milestones M1–M5 on `feat/adr-018-boundary-events`: the `BoundaryEvent` model + host attachment, the per-track cancellable context (the interruption signal the codebase lacked), the loop-owned `boundaryWatch` subscription with interrupting/non-interrupting firing and re-arm, the `BpmnError` typed error with the `evFailed` Error-boundary catch, and the Error End Event instance fault. The completion-vs-fire race is arbitrated by the ADR-017 single writer; interruption is cooperative track cancellation honoured at the §3.7 checkpoint (discard, not fault). `make ci` green, `-race` clean, diff-coverage 98.5% on touched files; a runnable `examples/boundary-events/` demonstrates the interrupting timer boundary as a timeout. |
 | v.1 (Draft) | 2026-06-27 | Ruslan Gabitov | Draft conception. Decides the boundary-event **mechanism** ADR-006 v.2 §2.2 deferred to the boundary workstream: a boundary is a **loop-owned watcher subscription** over the guarded activity's execution window (reusing the ADR-017 delivery core, so the completion-vs-fire race is arbitrated by the single writer); interrupting is **cooperative cancellation** of only the guarded track (clean for waiting activities, result-abandoning for a ctx-ignoring running ServiceTask — an inherent Go limitation); non-interrupting spawns a parallel continuation track and re-arms. Wires the **boundary's Error catch** onto the Error event model detailed in ADR-006 v.2 §2.6: in 0.1.0's single scope (no Sub-Processes), an activity-raised `BpmnError` is caught by an Error Boundary on that same activity (no chain walk), and an Error End Event resolves to an instance fault (end-in-error). 0.1.0 trigger scope: Timer (priority), Message, Signal (interrupting + non-interrupting) and Error (interrupting-only); Conditional/Escalation/Cancel/Compensation/Multiple deferred. Boundary-on-Sub-Process/Call-Activity deferred to 0.2.0. Refines ADR-006 v.2 §2.2/§2.6 and ADR-001 v.6. |
