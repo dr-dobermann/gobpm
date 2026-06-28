@@ -40,3 +40,22 @@ func TestBaseElement(t *testing.T) {
 			require.Equal(t, "text/rtf", docs[1].Format())
 		})
 }
+
+// foreignConfig is an options.Configurator that is not *baseConfig, used to
+// drive BaseOption.Apply down its type-casting error branch.
+type foreignConfig struct{}
+
+func (foreignConfig) Validate() error { return nil }
+
+func TestMustBaseElementPanics(t *testing.T) {
+	// a failing option (blank explicit id) makes the Must form panic.
+	require.Panics(t, func() {
+		_ = foundation.MustBaseElement(foundation.WithID("  "))
+	})
+}
+
+func TestBaseOptionApplyForeignConfig(t *testing.T) {
+	bo, ok := foundation.WithID("x").(foundation.BaseOption)
+	require.True(t, ok)
+	require.Error(t, bo.Apply(foreignConfig{}))
+}

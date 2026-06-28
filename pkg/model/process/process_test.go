@@ -303,3 +303,44 @@ func TestProcessValidateComplexGateway(t *testing.T) {
 	// threshold 5 > incoming 2 → rejected by the per-node hook.
 	require.Error(t, newProc(t, 5).Validate())
 }
+
+// TestProcessElementsNodesRemove covers Elements(), Remove() (nil, not-found,
+// node and flow removal) and the has() helper reached by Nodes() with a valid
+// type filter.
+func TestProcessElementsNodesRemove(t *testing.T) {
+	p, err := process.New("ops")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	// link before binding the nodes, so the flow is not auto-added to the
+	// process; add the nodes and the flow explicitly afterwards.
+	f, err := flow.Link(start, end)
+	require.NoError(t, err)
+
+	require.NoError(t, p.Add(start))
+	require.NoError(t, p.Add(end))
+	require.NoError(t, p.Add(f))
+
+	// Nodes() with a valid type filter drives the has() helper.
+	require.Len(t, p.Nodes(flow.EventNodeType), 2)
+	require.Empty(t, p.Nodes(flow.GatewayNodeType))
+
+	// Elements() returns every node and flow.
+	require.Len(t, p.Elements(), 3)
+
+	// Remove(): a nil element and an element not in the process are rejected.
+	require.Error(t, p.Remove(nil))
+
+	other, err := events.NewStartEvent("other")
+	require.NoError(t, err)
+	require.Error(t, p.Remove(other))
+
+	// removing the flow and a node succeeds and unbinds them.
+	require.NoError(t, p.Remove(f))
+	require.NoError(t, p.Remove(start))
+	require.Len(t, p.Elements(), 1)
+}

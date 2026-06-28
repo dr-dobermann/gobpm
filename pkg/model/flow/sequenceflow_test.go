@@ -8,9 +8,42 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
+	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSequenceFlowEType(t *testing.T) {
+	se, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+	ee, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	sf, err := flow.Link(se, ee)
+	require.NoError(t, err)
+	require.Equal(t, flow.SequenceBaseElement, sf.EType())
+}
+
+// TestSequenceFlowContainerMismatch drives connect → checkConnections →
+// SequenceFlow.Validate down its error branch: the source belongs to a process
+// while the target belongs to none, so the endpoints are not in the same (or a
+// uniformly nil) container. It also exercises getContainerID on both a non-nil
+// container (the source's) and a nil one (the target's).
+func TestSequenceFlowContainerMismatch(t *testing.T) {
+	se, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+	ee, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	proc, err := process.New("proc")
+	require.NoError(t, err)
+
+	// source bound to proc, target left unbound → container mismatch.
+	require.NoError(t, proc.Add(se))
+
+	_, err = flow.Link(se, ee)
+	require.Error(t, err)
+}
 
 func TestSequenceFlow(t *testing.T) {
 	se, err := events.NewStartEvent("start")
@@ -47,6 +80,10 @@ func TestSequenceFlow(t *testing.T) {
 			require.Error(t, err)
 
 			_, err = flow.Link(se, st1, activities.WithStartQuantity(1))
+			require.Error(t, err)
+
+			// a failing base option propagates out of the flow's BaseElement build.
+			_, err = flow.Link(se, st1, foundation.WithID("  "))
 			require.Error(t, err)
 		})
 
