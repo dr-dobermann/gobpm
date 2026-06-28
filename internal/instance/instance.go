@@ -633,6 +633,14 @@ func (inst *Instance) Cancel() {
 	}
 }
 
+// Terminate abnormally ends the instance on behalf of a Terminate End Event
+// (renv.RuntimeEnvironment, SRD-030 FR-2): it reuses the external-abort cascade
+// — cancel the instance context, which the loop observes (ctx.Done()) and walks
+// to Terminated, withdrawing every track. Idempotent and safe before Run.
+func (inst *Instance) Terminate() {
+	inst.Cancel()
+}
+
 // emit delivers a track event to the loop. It never blocks forever: once the
 // loop has exited (loopDone closed) it drops the event. It must NOT drop on
 // ctx cancellation — the loop keeps draining events until every track has
