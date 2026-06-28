@@ -6,9 +6,32 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
 	"github.com/stretchr/testify/require"
 )
+
+func TestBaseNodeGenericPanics(t *testing.T) {
+	bn, err := flow.NewBaseNode("bn")
+	require.NoError(t, err)
+
+	// Node and NodeType are abstract on a generic BaseNode — each concrete node
+	// type implements its own; the generic ones panic.
+	require.Panics(t, func() { _ = bn.Node() })
+	require.Panics(t, func() { _ = bn.NodeType() })
+}
+
+func TestBaseNodeEType(t *testing.T) {
+	bn, err := flow.NewBaseNode("bn")
+	require.NoError(t, err)
+	require.Equal(t, flow.NodeElement, bn.EType())
+}
+
+func TestNewBaseNodeError(t *testing.T) {
+	// a failing base option (empty explicit id) is propagated.
+	_, err := flow.NewBaseNode("bn", foundation.WithID("  "))
+	require.Error(t, err)
+}
 
 // TestBaseNodeFlowOrder guards FIX-005: Incoming()/Outgoing() return flows in
 // declaration order (not the randomized map order they used to), so the gateway
