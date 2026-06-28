@@ -3,10 +3,10 @@
 | Поле | Значение |
 |---|---|
 | Статус | Принято |
-| Версия | v.1 |
-| Дата | 2026-06-18 |
+| Версия | v.2 |
+| Дата | 2026-06-27 |
 | Владелец | Руслан Габитов |
-| Уточняет | [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) |
+| Уточняет | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md) |
 
 > EN-оригинал — канонический: [ADR-006-events-and-subscriptions.md](ADR-006-events-and-subscriptions.md). Этот файл — его перевод (twin). При расхождении приоритет у английского текста.
 
@@ -150,10 +150,13 @@ boundary-handler'а зарегистрирована на **весь срок ж
 **Engine notes.**
 - *Error всегда прерывающий* (§10.5.6): непрерывающего Error boundary не
   существует. Error/Escalation используют стратегию **propagation** — поднимаются
-  по цепочке scope до ближайшего внешнего catcher'а (§10.5.1, §11); неразрешённый
-  Error критичен (abort instance), неразрешённый Escalation тих. Propagation по
-  цепочке scope приземляется с workstream'ом sub-process/boundary; ADR-006
-  фиксирует модель *доставки* и *прерывания*, которую он будет использовать.
+  по цепочке scope до ближайшего внешнего catcher'а (§10.5.1, §10.5.7);
+  неразрешённый Error критичен (abort instance), неразрешённый Escalation тих.
+  **Модель *события* Error — точки throw, сопоставление по `errorRef`, propagation
+  по цепочке scope, catch и исход «без сопоставления → fault» — детализирована в
+  §2.6.** Propagation по цепочке scope приземляется с workstream'ом
+  sub-process/boundary; ADR-006 фиксирует модель *доставки* и *прерывания*, которую
+  он будет использовать.
 - *Множественность handler'ов* (§10.5.6 p278): максимум **один прерывающий
   handler на Event Declaration** на данной activity; непрерывающие handler'ы
   неограниченны и работают конкурентно. Движок отслеживает множественность по паре
@@ -265,6 +268,86 @@ broadcast-текущим-слушателям для signal'ов и явная n
 Этой модели единственного владения подчиняются `TimeWaiter`, `MessageWaiter` из
 ADR-014 и любой будущий waiter, и это та механика, которой управляет
 `Thresher.Shutdown` из ADR-013.
+
+### 2.6 События Error: throw, propagation и catch
+
+§2.2 фиксирует, что Error boundary *всегда прерывающий* и что Error использует
+стратегию **propagation**; этот раздел детализирует модель *события* Error,
+которую реализует движок — точки throw, сопоставление, propagation по цепочке
+scope, а также исходы catch и «без сопоставления». (Сам **механизм прерывания** —
+как именно останавливается *работающая* activity — принадлежит workstream'у
+boundary, уточняющему §2.2; здесь он не пере-решается.)
+
+**Объект Error (§10.5.1; `event-definitions.md`).** `ErrorEventDefinition` несёт
+опциональный `errorRef` (0..1) на `Error`, у которого есть `errorCode`
+(идентификатор контракта, по которому сопоставляет catcher), опциональное `name`
+и опциональный `structureRef` (`ItemDefinition` полезной нагрузки ошибки).
+Определение события Error допустимо **только в трёх позициях** (`conformance.md`):
+**End Event** (throw), **Boundary Event** (catch — всегда прерывающий) и **Start
+Event Event-Sub-Process'а** (catch — отложено вместе с Sub-Process'ами).
+
+**Throw — два источника.**
+- **Error End Event** завершает свой путь, бросая ассоциированный `Error`
+  (§10.5.6 p279; `end-events.md`: «Error End Event → ассоциированный `Error`
+  бросается»).
+- **Activity, поднимающая ошибку** — `ServiceTask`, у которого вызванная operation
+  вернула *fault*, `ScriptTask`, бросивший исключение, и т.п. — поднимает
+  прерывающий Error, и activity переходит `Active → Failing` (`tasks.md`:
+  «трактуется как прерывающая ошибка, и activity падает»; `activity-lifecycle.md`).
+
+В любом случае throw **критичен** (§10.5.1): выполнение *приостанавливается в точке
+throw* — в отличие от Escalation, который не критичен и позволяет выполнению
+продолжиться в точке throw. **Промежуточного Error Throw Event в BPMN нет**; Error
+бросается только в End Event или падающей activity.
+
+**Propagation — подъём по цепочке scope (§10.5.1, §10.5.7).** Брошенный Error
+**пересылается от точки throw вверх к ближайшему объемлющему экземпляру scope, у
+которого есть присоединённое ловящее событие с совпадающим `errorRef`**: движок
+идёт от бросившего scope наружу к объемлющим scope'ам, и **первый** совпавший
+catcher поглощает триггер (`event-handling.md`, обход цепочки scope). *Scope*
+(§10.5.7) — это контекст выполнения activity: её data objects, её события для
+catch/throw, её conversations; **Process — внешний scope**, а каждый Sub-Process /
+Call Activity (в будущем) вводит вложенный. Сопоставление — **на Event
+Declaration**: catcher для `errorRef=X` не поглощает `errorRef=Y` (множественность
+отслеживается по паре `(activity, EventDefinition)` — §2.2).
+
+**Catch — Error Boundary Event (всегда прерывающий).** Совпавший Error boundary
+переводит охраняемую activity в `Failing` (§13.3.2; `activity-lifecycle.md`), и
+токен порождается на **exception flow** boundary'я; по §10.5.6 activity отменяется
+**после** того, как пройден исходящий flow boundary'я (порядок runtime для
+прерывающего handler'а, §10.5.6 §7). *Как именно* прерывается работающая activity —
+фиксирует workstream boundary, уточняющий §2.2; ADR-006 владеет лишь моделью
+события. Второй стандартный путь catch — **Start Event Event-Sub-Process'а**
+(`conformance.md`: только event-sub-process) — приземляется с Sub-Process'ами.
+
+**Без сопоставления — instance падает (выбор движка).** Если ни один catcher не
+совпал нигде в цепочке scope, Error **неразрешён** (§10.5.1). Стандарт **не**
+предписывает реакцию; gobpm берёт типовую, названную в спецификации — **залогировать
+и уронить instance** (неразрешённый Error критичен). Это тот выбор движка, который
+превращает упавший track в падение instance.
+
+**Engine note — реальность единственного scope до Sub-Process'ов.** Пока вложенных
+scope'ов нет (Sub-Process / Call Activity — после 0.1.0; [SAD-001 v.1 §15.3](SAD-001-vision-and-architecture.md)),
+цепочка scope имеет ровно **один** уровень — Process. Из этого без потери
+соответствия стандарту следуют два вывода:
+- ошибка, поднятая activity, ловится только Error Boundary **на той же самой
+  activity** — наружу подниматься некуда;
+- **Error End Event**, бросающий на уровне Process, не имеет объемлющего
+  внутри-процессного catcher'а, поэтому всегда разрешается в **падение instance**
+  (случай end-in-error).
+
+Кросс-scope-подъём и путь catch через Error-Event-Sub-Process становятся
+актуальны в тот момент, когда вводится вложенный scope; модель propagation выше их
+уже описывает, так что переделка тогда не понадобится.
+
+```mermaid
+flowchart TD
+  T1[Error End Event бросает Error E] --> P[propagate: подъём по цепочке scope]
+  T2[activity поднимает ошибку E: Active to Failing] --> P
+  P --> M{ближайший объемлющий catcher с errorRef = E?}
+  M -->|Error Boundary совпал| C[прерывающий catch: activity Failing; токен на exception flow]
+  M -->|нет совпадения ни в одном scope| F[неразрешённый Error: log + instance падает]
+```
 
 ## 3. Последствия
 
@@ -394,4 +477,5 @@ ADR-007, durable-регидрация — persistence ADR, а propagation Error/
 
 | Версия | Дата | Автор | Изменение |
 |---|---|---|---|
+| v.2 | 2026-06-27 | Руслан Габитов | Добавлен **§2.6 «События Error: throw, propagation и catch»** — детальная модель *события* Error, которую §2.2 назвал, но оставил на глубине engine-note: объект `Error`/`ErrorEventDefinition` (`errorRef`→`errorCode`/`structureRef`, допустим только в позициях End / Boundary / Start-Event-Sub-Process'а по `conformance.md`); два источника **throw** (Error End Event, бросающий свой `Error`, §10.5.6/`end-events.md`; и activity, поднимающая прерывающую ошибку → `Active→Failing`, `tasks.md`/`activity-lifecycle.md`), а также критичность throw (§10.5.1) и отсутствие промежуточного Error Throw Event; **propagation** как обход цепочки scope к ближайшему объемлющему catcher'у с совпадающим `errorRef` (§10.5.1/§10.5.7), сопоставление **на Event Declaration**; **catch** на всегда-прерывающем Error Boundary (activity→`Failing`, токен на exception flow, отмена-после-flow по §10.5.6 §7; catch через Error-Event-Sub-Process отложен с Sub-Process'ами); **без сопоставления → падение instance** как выбор движка для «неразрешённого Error» из спецификации; и **engine note** о реальности единственного scope до Sub-Process'ов (наружу подниматься некуда → ошибка activity ловится только boundary'ем на той же activity, а Error End Event всегда разрешается в падение instance) со ссылкой на [SAD-001 v.1 §15.3]. Исправлена ссылка engine-note §2.2 `§11`→`§10.5.7` и направлена на §2.6. Pin «Уточняет» обновлён ADR-001 v.5→v.6. Обосновано по `docs/bpmn-spec/` (§10.5.1/§10.5.6/§10.5.7, `event-definitions.md`/`tasks.md`/`end-events.md`/`conformance.md`/`activity-lifecycle.md`). Без изменения кода/поведения — только концепция. |
 | v.1 | 2026-06-18 | Руслан Габитов | Принято. Концепция доставки событий и инициируемой событием отмены вынесена из ADR-001 и написана полностью: §2.1 доставка внешнего сигнала (единственная сериализованная входящая грань, per-instance-идентичность подписки, охват publication/direct/propagation/implicit по §10.5.1), §2.2 узлы-инициаторы отмены (Terminate End Event §13.5.6 над каскадом ADR-001; прерывающий/непрерывающий boundary §10.5.6/§13.5.3; propagation Error/Escalation + множественность handler'ов как engine notes; terminate по умолчанию **не** запускает компенсацию по §13.5.6), §2.3 жизненный цикл подписки wait-узлов (subscribe/unsubscribe по виду подписчика — in-flow на прибытии/consume, не-компенсационный boundary на входе/выходе activity, компенсационный boundary взводится при `Completed` до завершения объемлющего scope; §13.5.2/§13.5.3/§13.5.5; механика release делегирована ADR-007, *обработка* компенсации + опциональное выключенное-по-умолчанию расширение `compensate-on-terminate` делегированы будущему Compensation ADR), §2.4 in-memory-контракт доставки (subscribe-before-publish, no-op без waiter'а, сообщения буферизуются broker'ом, недолговечно; ремедиирует audit 2.4), §2.5 жизненный цикл waiter'а под единственным владением hub'а (shutdown, синхронизированный `WaitGroup`, без само-удаления, без утечки при падении `Stop`, реестр под одним локом; ремедиирует audit 2.5). Обосновано по `docs/bpmn-spec/` (§10.5.1/§10.5.6/§10.5.7, §13.5.2/§13.5.3/§13.5.6, §10.7). Уточняет ADR-001 v.5; siblings ADR-002 v.2, ADR-007 v.1, ADR-009 v.1, ADR-013 v.1, ADR-014 v.1. Концепция; реализация едет с SRD(ами) событийного workstream'а. |

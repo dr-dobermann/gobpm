@@ -161,6 +161,12 @@ For signal events (broadcast, no correlation), see
 **instantiates** processes whose start trigger is a signal (one broadcast → one
 instance per signal-start declaration).
 
+For boundary events (interrupting an activity), see
+[`examples/boundary-events/`](examples/boundary-events/) — an **interrupting timer
+boundary** as a timeout on a long-running task: the 2s boundary fires before the
+~4s activity finishes, cancels it, and routes the token onto the boundary's
+exception flow.
+
 ### Startup logging
 
 `thresher.New` prints a startup report — an ASCII banner with the engine

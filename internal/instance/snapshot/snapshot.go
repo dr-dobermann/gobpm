@@ -203,5 +203,35 @@ func (s *Snapshot) Clone() (*Snapshot, error) {
 		dfh.MustUpdateDefaultFlow(clone.Flows[df.ID()])
 	}
 
+	// 4. rebind each boundary event onto its cloned host activity. The cloned
+	//    activities start with no boundaries (activity.clone leaves them for this
+	//    step), so re-attaching the cloned boundary points BOTH cross-references
+	//    (host→boundary and boundary→host) at this instance's own nodes — a
+	//    boundary fire then acts on the instance graph, not the shared model
+	//    (SRD-029 M3a). Iterating the originals gives the host mapping via the
+	//    boundary's AttachedTo.
+	for id, n := range s.Nodes {
+		origBE, ok := n.(flow.BoundaryEvent)
+		if !ok {
+			continue
+		}
+
+		// The clones are cloned from valid model nodes — a BoundaryEvent's clone
+		// is a BoundaryEvent and its host's clone an ActivityNode — so, as with the
+		// flow relink above, these casts cannot fail (panicking form).
+		cloneBE := clone.Nodes[id].(flow.BoundaryEvent)
+		cloneHost := clone.Nodes[origBE.AttachedTo().ID()].(flow.ActivityNode)
+
+		// The cloned host starts with no boundaries (activity.clone), so the
+		// already-model-validated binding re-attaches without a multiplicity
+		// conflict; an error here can only mean a corrupt clone.
+		if err := cloneBE.BoundTo(cloneHost); err != nil {
+			return nil, errs.New(
+				errs.M("rebind boundary %q to its cloned host failed", id),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err))
+		}
+	}
+
 	return &clone, nil
 }

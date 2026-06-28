@@ -47,3 +47,4 @@ examples/complex-gateway/complex-gateway
 examples/event-based-gateway/event-based-gateway
 examples/event-based-parallel-start/event-based-parallel-start
 examples/signal-start/signal-start
+examples/boundary-events/boundary-events
