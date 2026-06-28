@@ -53,14 +53,13 @@ type boundaryHoster interface {
 	BoundaryEvents() []flow.EventNode
 }
 
-// armBoundaries registers a boundaryWatch for every interrupting boundary event
-// guarding node, once the track t has arrived on it (SRD-029 FR-5). Non-activity
-// nodes carry no boundaries and are skipped. A registration failure can't honor
-// the activity's declared interruption, so it faults the instance (fail+stopAll),
-// mirroring spawnForks' build-failure handling. Called only from loop().
-//
-// Non-interrupting boundaries are armed in M3c; here only interrupting ones
-// (CancelActivity) are wired.
+// armBoundaries registers a boundaryWatch for every boundary event guarding node
+// — interrupting and non-interrupting alike — once the track t has arrived on it
+// (SRD-029 FR-5). Non-activity nodes carry no boundaries and are skipped. A
+// registration failure can't honor the activity's declared boundary, so it faults
+// the instance (fail+stopAll), mirroring spawnForks' build-failure handling.
+// fireBoundary discriminates interrupting vs non-interrupting on fire. Called only
+// from loop().
 func (inst *Instance) armBoundaries(
 	t *track,
 	node flow.Node,
@@ -75,10 +74,9 @@ func (inst *Instance) armBoundaries(
 	var ws []*boundaryWatch
 
 	for _, be := range host.BoundaryEvents() {
-		bev, ok := be.(flow.BoundaryEvent)
-		if !ok || !bev.CancelActivity() {
-			continue
-		}
+		// every entry was attached via AddBoundaryEvent(flow.BoundaryEvent), so the
+		// cast cannot fail — use the panicking form (no unreachable error branch).
+		bev := be.(flow.BoundaryEvent)
 
 		for _, d := range bev.Definitions() {
 			w := &boundaryWatch{host: t, boundary: bev, def: d}
@@ -122,13 +120,21 @@ func (inst *Instance) disarmBoundaries(
 	delete(watchers, trackID)
 }
 
-// fireBoundary applies an interrupting boundary fire on the loop goroutine. The
-// loop is the single writer, so it arbitrates the completion-vs-fire race: if the
-// host's window already closed (its watchers were torn down between the watch
-// emitting evBoundary and this point), the fire lost and is dropped (FR-8).
-// Otherwise it cancels the host track (M2's per-track cancel), continues the
-// instance on the boundary's exception flow (spawnForks), and tears the host's
-// watchers down. Called only from loop().
+// fireBoundary applies a boundary fire on the loop goroutine. The loop is the
+// single writer, so it arbitrates the completion-vs-fire race: if the host's window
+// already closed (its watchers were torn down between the watch emitting evBoundary
+// and this point), the fire lost and is dropped (FR-8). Otherwise it continues the
+// instance on the boundary's outgoing flow as a fresh track lineaged from the host,
+// then discriminates on cancelActivity:
+//
+//   - interrupting: also cancel the guarded track (M2's per-track cancel) — its
+//     execution is abandoned by the §3.7 checkpoint — and tear the watchers down
+//     (one-shot).
+//   - non-interrupting: the host runs on and the watch stays armed, so it can fire
+//     again (multi-shot via the hub's retained signal waiter); it is disarmed when
+//     the host completes (evMoved-off / evEnded).
+//
+// Called only from loop().
 func (inst *Instance) fireBoundary(
 	ev trackEvent,
 	watchers map[string][]*boundaryWatch,
@@ -142,15 +148,19 @@ func (inst *Instance) fireBoundary(
 		return // the host already completed and disarmed — the fire lost the race.
 	}
 
-	// interrupting: cancel the guarded track, then continue on the boundary's
-	// outgoing (exception) flow as a fresh track lineaged from the host.
-	ev.track.cancel()
+	// ev.node is the boundaryWatch's own boundary (set in ProcessEvent), so the cast
+	// cannot fail — use the panicking form to avoid an unreachable error branch.
+	be := ev.node.(flow.BoundaryEvent)
 
+	// both kinds spawn a token on the boundary's outgoing (exception / parallel) flow.
 	inst.spawnForks(
 		trackEvent{track: ev.track, flows: ev.node.Outgoing()},
 		spawn, stopAll, stopping)
 
-	inst.disarmBoundaries(hostID, watchers)
+	if be.CancelActivity() {
+		ev.track.cancel()
+		inst.disarmBoundaries(hostID, watchers)
+	}
 }
 
 // armedFor reports whether node is still among the watches armed for a host —

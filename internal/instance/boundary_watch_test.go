@@ -183,11 +183,14 @@ func TestBoundaryEventKindString(t *testing.T) {
 	require.Equal(t, "boundary", evBoundary.String())
 }
 
-// TestArmDisarmBoundaryWatch (T-12): arming registers one watch for the interrupting
-// boundary (the non-interrupting one is skipped — M3c), the watch carries a unique
-// (host, boundary, def) identity, and disarming unregisters it and clears the entry.
+// TestArmDisarmBoundaryWatch (T-12): arming registers a watch for every boundary —
+// interrupting and non-interrupting alike (M3c) — each watch carries a unique
+// (host, boundary, def) identity, and disarming unregisters them all and clears the
+// entry.
 func TestArmDisarmBoundaryWatch(t *testing.T) {
 	ep := &recordingProducer{}
+
+	var defB flow.EventDefinition
 
 	// host carries an interrupting signal-A boundary plus a non-interrupting signal-B one.
 	inst, host, beA, _, sigDefA := guardedHostInstance(t, ep,
@@ -195,7 +198,7 @@ func TestArmDisarmBoundaryWatch(t *testing.T) {
 			sigB, err := events.NewSignal("sigB", nil)
 			require.NoError(t, err)
 
-			defB, err := events.NewSignalEventDefinition(sigB)
+			defB, err = events.NewSignalEventDefinition(sigB)
 			require.NoError(t, err)
 
 			beB, err := events.NewBoundaryEvent("bndB", h, defB, false) // non-interrupting
@@ -215,21 +218,28 @@ func TestArmDisarmBoundaryWatch(t *testing.T) {
 
 	inst.armBoundaries(tr, host, watchers, func() {})
 
-	require.Len(t, watchers[tr.ID()], 1, "only the interrupting boundary is armed")
-	require.Equal(t, []string{sigDefA.ID()}, ep.registeredDefs(),
-		"the non-interrupting boundary is not registered (M3c)")
+	require.Len(t, watchers[tr.ID()], 2,
+		"both the interrupting and non-interrupting boundaries are armed")
+	require.ElementsMatch(t, []string{sigDefA.ID(), defB.ID()}, ep.registeredDefs(),
+		"both boundary definitions are registered")
 
-	w := watchers[tr.ID()][0]
-	require.Equal(t, beA.ID(), w.boundary.ID())
+	// the interrupting watch carries the (host, boundary, def) identity.
+	var wA *boundaryWatch
+	for _, w := range watchers[tr.ID()] {
+		if w.boundary.ID() == beA.ID() {
+			wA = w
+		}
+	}
+	require.NotNil(t, wA)
 	require.Equal(t,
-		"boundary-watch:"+tr.ID()+":"+beA.ID()+":"+sigDefA.ID(), w.ID(),
+		"boundary-watch:"+tr.ID()+":"+beA.ID()+":"+sigDefA.ID(), wA.ID(),
 		"the watch identity is unique per (host, boundary, def)")
 
 	inst.disarmBoundaries(tr.ID(), watchers)
 
 	require.NotContains(t, watchers, tr.ID(), "disarm clears the track's entry")
-	require.Equal(t, []string{sigDefA.ID()}, ep.unregisteredDefs(),
-		"disarm unregisters the armed watch")
+	require.ElementsMatch(t, []string{sigDefA.ID(), defB.ID()}, ep.unregisteredDefs(),
+		"disarm unregisters every armed watch")
 }
 
 // TestFireBoundaryInterrupts (T-4 core): an interrupting fire cancels the guarded track,
@@ -291,6 +301,77 @@ func TestFireBoundaryRaceDropped(t *testing.T) {
 
 	require.NoError(t, ctx.Err(), "a lost fire does not cancel the (completed) host")
 	require.Empty(t, spawned, "a lost fire spawns no exception flow")
+}
+
+// TestNonInterruptingBoundaryFires (T-7/T-8): a non-interrupting fire spawns a parallel
+// token on the boundary's flow WITHOUT cancelling the host, keeps the watch armed so it
+// can fire again (multi-shot), and is dropped once the host completes and disarms.
+func TestNonInterruptingBoundaryFires(t *testing.T) {
+	ep := &recordingProducer{}
+
+	var (
+		beN  flow.BoundaryEvent
+		excN flow.Node
+	)
+
+	// host carries the default interrupting beA plus a non-interrupting beN -> excN.
+	inst, host, _, _, _ := guardedHostInstance(t, ep,
+		func(h flow.ActivityNode, p *process.Process) {
+			sigN, err := events.NewSignal("sigN", nil)
+			require.NoError(t, err)
+
+			defN, err := events.NewSignalEventDefinition(sigN)
+			require.NoError(t, err)
+
+			b, err := events.NewBoundaryEvent("bndN", h, defN, false) // non-interrupting
+			require.NoError(t, err)
+
+			exc, err := events.NewEndEvent("excN")
+			require.NoError(t, err)
+
+			require.NoError(t, p.Add(b))
+			require.NoError(t, p.Add(exc))
+			_, err = flow.Link(b, exc)
+			require.NoError(t, err)
+
+			beN, excN = b, exc
+		})
+
+	tr := bareTrack(t, inst, host)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tr.ctx = ctx
+	tr.cancel = cancel
+
+	watchers := map[string][]*boundaryWatch{}
+	inst.armBoundaries(tr, host, watchers, func() {})
+	require.Len(t, watchers[tr.ID()], 2, "both boundaries arm")
+
+	var spawned []*track
+	spawn := func(nt *track) { spawned = append(spawned, nt) }
+
+	fire := func() {
+		inst.fireBoundary(
+			trackEvent{kind: evBoundary, track: tr, node: beN},
+			watchers, spawn, func() {}, false)
+	}
+
+	fire()
+	require.NoError(t, ctx.Err(), "a non-interrupting fire does not cancel the host")
+	require.Contains(t, watchers, tr.ID(), "the watch stays armed (multi-shot)")
+	require.Len(t, watchers[tr.ID()], 2, "no watch is torn down on a non-interrupting fire")
+	require.Len(t, spawned, 1, "a parallel token is spawned on the boundary's flow")
+	require.Equal(t, excN.ID(), spawned[0].currentStep().node.ID())
+
+	fire()
+	require.Len(t, spawned, 2, "a non-interrupting boundary fires again")
+	require.NoError(t, ctx.Err())
+
+	// once the host completes its window closes (disarm); a later fire is dropped.
+	inst.disarmBoundaries(tr.ID(), watchers)
+	fire()
+	require.Len(t, spawned, 2, "a fire after the host completed is dropped")
 }
 
 // TestArmBoundaryRegisterFailureFaults: a boundary that cannot register can't honor its
