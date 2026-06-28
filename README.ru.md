@@ -65,16 +65,28 @@ go get github.com/dr-dobermann/gobpm
 // Start -> ServiceTask -> End  (errors elided for brevity)
 engine, _ := thresher.New("demo-engine")
 
-proc, _ := process.New("demo-process")
+// CreateDefaultStates wires the data states that process properties use.
+_ = data.CreateDefaultStates()
+
+// A process-level property the ServiceTask reads at runtime.
+proc, _ := process.New("demo-process",
+    data.WithProperties(
+        data.MustProperty("user_name",
+            data.MustItemDefinition(values.NewVariable("dr.Dobermann"),
+                foundation.WithID("user_name")),
+            data.ReadyDataState)))
 start, _ := events.NewStartEvent("start")
 
 // A ServiceTask runs your Go code: gooper.New builds the operation straight
-// from a functor. The functor receives a read-only DataReader (process data
-// and engine runtime variables) and its optional bound input message — nil
-// here, since this operation declares no messages — and returns its result.
-op, _ := gooper.New("hello",
-    func(_ context.Context, _ service.DataReader, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
-        fmt.Println("  ▶ hello from inside the process")
+// from a functor. The functor receives a read-only DataReader over process
+// data and engine runtime variables (and its optional bound input message —
+// nil here, since this operation declares no messages).
+op, _ := gooper.New("greet",
+    func(ctx context.Context, r service.DataReader, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
+        user, _ := r.GetData("user_name")             // a process property
+        started, _ := r.GetData("RUNTIME/STARTED_AT") // an engine runtime variable
+        fmt.Printf("  ▶ hello, %v (started at %v)\n",
+            user.Value().Get(ctx), started.Value().Get(ctx))
         return nil, nil
     })
 task, _ := activities.NewServiceTask("work", op, activities.WithoutParams())
@@ -98,7 +110,7 @@ state, _ := inst.WaitCompletion(context.Background())
 fmt.Println("done:", state) // "Completed"
 ```
 
-Функтор `gooper` — это то, как вы встраиваете произвольную Go-логику в процесс: тот же паттерн масштабируется от `Println` до настоящего обработчика.
+Функтор `gooper` — это то, как вы встраиваете произвольную Go-логику в процесс: здесь он читает свойство процесса и runtime-переменную движка через read-only `DataReader`, и тот же паттерн масштабируется до настоящего обработчика.
 
 `StartProcess` возвращает read-only **`InstanceHandle`** — ваше окно в выполняющийся инстанс: `State()`, живой снимок `Tokens()`, полную `History()` (каждый трек, включая слитые), read-only `Data()` и `WaitCompletion(ctx)` для ожидания завершения. Чтобы следить за прогрессом по мере его развития, подпишите наблюдателя на поток событий жизненного цикла / токенов / узлов инстанса:
 
