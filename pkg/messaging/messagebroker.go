@@ -28,6 +28,12 @@ type Subscription interface {
 	// lazy secondary-key association (SRD-017): a conversation that learns a new
 	// key becomes reachable by it. An empty key is rejected.
 	AddKey(key string) error
+	// Unsubscribe removes the subscription from the broker; no further published
+	// message is routed to it. A stopped subscriber MUST Unsubscribe, otherwise
+	// its (buffered) channel keeps claiming matching messages and silently
+	// swallows them away from live subscribers. Idempotent: a second call, or one
+	// after the broker already dropped the subscription, is a no-op.
+	Unsubscribe() error
 }
 
 // MessageBroker delivers incoming messages to interested subscribers, buffering

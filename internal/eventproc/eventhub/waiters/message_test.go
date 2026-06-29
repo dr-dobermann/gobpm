@@ -47,6 +47,7 @@ type chanSub struct{ ch <-chan messaging.Envelope }
 
 func (s chanSub) C() <-chan messaging.Envelope { return s.ch }
 func (chanSub) AddKey(string) error            { return nil }
+func (chanSub) Unsubscribe() error             { return nil }
 
 // closedChBroker returns an already-closed subscription channel.
 type closedChBroker struct{}
