@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-29 |
 | Owner | Ruslan Gabitov |
@@ -298,21 +298,74 @@ file is not decomposed here.
 
 ## 9. Definition of Done
 
-- [ ] FR-1..FR-5 wired; covered by T-1..T-7.
-- [ ] `Snapshot.InstantiatingStarts` populated in `New` post-wiring; probes moved
+- [x] FR-1..FR-5 wired; covered by T-1..T-7.
+- [x] `Snapshot.InstantiatingStarts` populated in `New` post-wiring; probes moved
   to the snapshot package; `scanInstantiatingStarts` is the thin adapter; `Clone`
   shares the section.
-- [ ] `instanceScope` owns the data-plane wiring; `Instance` delegates; no
+- [x] `instanceScope` owns the data-plane wiring; `Instance` delegates; no
   back-reference; `RuntimeVar`/`RuntimeVarNames` behavior unchanged.
-- [ ] `/check-style` clean; `/check-srd` PASS.
-- [ ] `make ci` green incl. diff-coverage ≥95% on touched files (NFR-3) and
+- [x] `/check-style` clean; `/check-srd` PASS.
+- [x] `make ci` green incl. diff-coverage ≥95% on touched files (NFR-3) and
   `go test -race ./...` (NFR-2); 18 examples run.
-- [ ] §8 cross-doc pins consistent (up/sideways, versioned); no downward ref.
-- [ ] §10 filled; status flipped Draft → Accepted (user's call).
+- [x] §8 cross-doc pins consistent (up/sideways, versioned); no downward ref.
+- [x] §10 filled; status flipped Draft → Accepted.
 
 ## 10. Implementation summary
 
-_(filled at landing: files/lines, T-results, milestone SHAs.)_
+Landed on `feat/srd-032-snapshot-starts-scope` over master `c1319cc` in two
+milestones plus the doc commit.
+
+**Commits**
+
+| Commit | Scope |
+|---|---|
+| `c721c41` | doc — SRD-032 |
+| `d55162a` | M1 — snapshot start-events precompute (FR-1/2/3) |
+| `d34d858` | M2 — `instanceScope` encapsulation (FR-4) |
+
+**M1 — files**
+
+- `internal/instance/snapshot/instantiating_starts.go` (new) — `InstantiatingStart`
+  descriptor; `discoverInstantiatingStarts` (the predicate / Event-Based arm /
+  correlation-key loop lifted from the thresher); the moved `isInstantiatingStartNode`
+  and `correlationKeyOf` probes.
+- `internal/instance/snapshot/snapshot.go` — `Snapshot.InstantiatingStarts` field;
+  populated in `New` after `wireClonedGraph`; shared by reference in `Clone`.
+- `pkg/thresher/instance_starter.go` — `scanInstantiatingStarts` reduced to a thin
+  adapter wrapping each descriptor into an `*instanceStarter`; the two probes deleted
+  (moved to the snapshot package).
+- `internal/instance/snapshot/instantiating_starts_test.go` (new) — T-1 (each start
+  kind / exclusions), T-2 (Event-Based arm: exclusive→arm, parallel→gate), T-4
+  (`Clone` share + no-alias).
+
+**M2 — files**
+
+- `internal/instance/scope.go` (new) — `instanceScope{plane, reader, root}` with
+  `load` (build plane + commit properties, supplier passed in — no `Instance`
+  back-ref), `openFrame` (consolidates the three `scope.NewFrame` sites),
+  `bindEventPayload`.
+- `internal/instance/instance.go` — three data-plane fields collapsed to one
+  `sc instanceScope`; `loadProperties`/`bindEventPayload` removed; call sites +
+  `DataReader` delegate to `inst.sc`.
+- `internal/instance/{activation.go,track.go}` — the guard frame and per-node
+  execution frame now go through `inst.sc.openFrame`.
+
+**Verification (V-results)**
+
+- `make ci` exit 0 (tidy-check · lint 0 issues · build-all · `-race` tests ·
+  diff-coverage · govulncheck) across all modules.
+- Combined diff-coverage **96.0% of 124 changed lines — PASS** (min 95%):
+  `snapshot.go` 100%, `track.go` 100%, `instance_starter.go` 100%,
+  `instantiating_starts.go` 98.2%, `scope.go` 90.0%. The 5 uncovered lines are
+  unreachable defensive error-returns (`scope.New`/`openFrame` cannot fail on a
+  valid-by-construction path; the non-`EventNode` guard) — the branch ceiling.
+- Behaviour preserved: 156 thresher + 180 instance tests pass unchanged
+  (characterization); all 18 examples run end-to-end (exit 0).
+- `/check-srd` PASS (HEAD `d34d858`).
+
+**Deferred (named in §7 Non-goals):** the real Instance god-object decomposition
+(event-loop / token-tracking extraction, ADR-012 §2.5) and the `track`-package
+split — each its own future ADR + SRD.
 
 ## Open questions
 
