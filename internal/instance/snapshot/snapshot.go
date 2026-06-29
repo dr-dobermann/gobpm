@@ -54,7 +54,6 @@ func New(
 		ProcessID:   p.ID(),
 		ProcessName: p.Name(),
 		Nodes:       map[string]flow.Node{},
-		Flows:       map[string]*flow.SequenceFlow{},
 		Properties:  p.Properties(),
 	}
 
@@ -64,8 +63,14 @@ func New(
 	eeExists := false
 	instStartExists := false
 
+	// srcNodes keeps the original process nodes for wireClonedGraph's boundary
+	// rebind; s.Nodes gets their clones so the snapshot owns an isolated graph
+	// (ADR-019 §2.3) — edits to the process after registration can't reach it.
+	srcNodes := make(map[string]flow.Node, len(p.Nodes()))
+
 	for _, n := range p.Nodes() {
-		s.Nodes[n.ID()] = n
+		srcNodes[n.ID()] = n
+		s.Nodes[n.ID()] = n.Clone()
 
 		// An instantiate ReceiveTask with no incoming flow is a valid process
 		// instantiation point on its own (BPMN §13.3.3) — the task-shaped peer
@@ -109,9 +114,20 @@ func New(
 					"with an EndEvent"))
 	}
 
+	srcFlows := make(map[string]*flow.SequenceFlow, len(p.Flows()))
 	for _, f := range p.Flows() {
-		s.Flows[f.ID()] = f
+		srcFlows[f.ID()] = f
 	}
+
+	// Wire the cloned graph the same way Clone does — relink flows between the
+	// clones, remap default flows, rebind boundary events — so the snapshot is
+	// born isolated in a single pass over the definition (SRD-031.A §3.3).
+	flows, err := wireClonedGraph(s.Nodes, srcNodes, srcFlows)
+	if err != nil {
+		return nil, err
+	}
+
+	s.Flows = flows
 
 	return &s, nil
 }
@@ -152,20 +168,46 @@ func (s *Snapshot) Clone() (*Snapshot, error) {
 		ProcessID:       s.ProcessID,
 		ProcessName:     s.ProcessName,
 		Nodes:           make(map[string]flow.Node, len(s.Nodes)),
-		Flows:           make(map[string]*flow.SequenceFlow, len(s.Flows)),
 		Properties:      s.Properties,
 		CorrelationKeys: s.CorrelationKeys,
 	}
 
-	// 1. clone every node; the clone starts with empty flows and any default
-	//    flow still points at the original edge (remapped in step 3).
+	// Clone every node (its immutable configuration shared by reference, its
+	// runtime state fresh); the clone starts with empty flows and any default
+	// flow still points at the original edge until wireClonedGraph remaps it.
 	for id, n := range s.Nodes {
 		clone.Nodes[id] = n.Clone()
 	}
 
-	// 2. relink the flow graph between the cloned nodes.
-	for id, f := range s.Flows {
-		src, ok := clone.Nodes[f.Source().ID()].(flow.SequenceSource)
+	flows, err := wireClonedGraph(clone.Nodes, s.Nodes, s.Flows)
+	if err != nil {
+		return nil, err
+	}
+
+	clone.Flows = flows
+
+	return &clone, nil
+}
+
+// wireClonedGraph completes a freshly cloned node set into a runnable graph: it
+// relinks the flow graph between the clones, remaps each gateway's default flow
+// onto its cloned edge, and rebinds each boundary event onto its cloned host
+// activity. It is shared by Snapshot.New (cloning from the process definition)
+// and Clone (cloning from the snapshot) — the node-cloning loop differs by
+// source, the wiring does not. clonedNodes is the already-cloned node set
+// (mutated in place for the default-flow and boundary rebinds); srcNodes and
+// srcFlows are the originals the clones were made from. It returns the cloned
+// flow set.
+func wireClonedGraph(
+	clonedNodes map[string]flow.Node,
+	srcNodes map[string]flow.Node,
+	srcFlows map[string]*flow.SequenceFlow,
+) (map[string]*flow.SequenceFlow, error) {
+	clonedFlows := make(map[string]*flow.SequenceFlow, len(srcFlows))
+
+	// 1. relink the flow graph between the cloned nodes.
+	for id, f := range srcFlows {
+		src, ok := clonedNodes[f.Source().ID()].(flow.SequenceSource)
 		if !ok {
 			return nil, errs.New(
 				errs.M("cloned source %q isn't a sequence source",
@@ -173,7 +215,7 @@ func (s *Snapshot) Clone() (*Snapshot, error) {
 				errs.C(errorClass, errs.TypeCastingError))
 		}
 
-		trg, ok := clone.Nodes[f.Target().ID()].(flow.SequenceTarget)
+		trg, ok := clonedNodes[f.Target().ID()].(flow.SequenceTarget)
 		if !ok {
 			return nil, errs.New(
 				errs.M("cloned target %q isn't a sequence target",
@@ -183,11 +225,11 @@ func (s *Snapshot) Clone() (*Snapshot, error) {
 
 		// src and trg are cloned graph nodes and f is a valid edge, so the
 		// edge can always be rebuilt; use the panicking form.
-		clone.Flows[id] = flow.MustCloneFlow(f, src, trg)
+		clonedFlows[id] = flow.MustCloneFlow(f, src, trg)
 	}
 
-	// 3. remap each gateway's default flow onto its cloned edge.
-	for _, n := range clone.Nodes {
+	// 2. remap each gateway's default flow onto its cloned edge.
+	for _, n := range clonedNodes {
 		dfh, ok := n.(flow.DefaultFlowHolder)
 		if !ok {
 			continue
@@ -200,31 +242,30 @@ func (s *Snapshot) Clone() (*Snapshot, error) {
 
 		// the default flow is one of this node's outgoing flows by
 		// construction, so the remap onto its clone cannot fail.
-		dfh.MustUpdateDefaultFlow(clone.Flows[df.ID()])
+		dfh.MustUpdateDefaultFlow(clonedFlows[df.ID()])
 	}
 
-	// 4. rebind each boundary event onto its cloned host activity. The cloned
+	// 3. rebind each boundary event onto its cloned host activity. The cloned
 	//    activities start with no boundaries (activity.clone leaves them for this
 	//    step), so re-attaching the cloned boundary points BOTH cross-references
-	//    (host→boundary and boundary→host) at this instance's own nodes — a
-	//    boundary fire then acts on the instance graph, not the shared model
-	//    (SRD-029 M3a). Iterating the originals gives the host mapping via the
-	//    boundary's AttachedTo.
-	for id, n := range s.Nodes {
+	//    (host→boundary and boundary→host) at the cloned nodes — a boundary fire
+	//    then acts on this graph, not the shared source (SRD-029 M3a). Iterating
+	//    the originals gives the host mapping via the boundary's AttachedTo.
+	for id, n := range srcNodes {
 		origBE, ok := n.(flow.BoundaryEvent)
 		if !ok {
 			continue
 		}
 
-		// The clones are cloned from valid model nodes — a BoundaryEvent's clone
-		// is a BoundaryEvent and its host's clone an ActivityNode — so, as with the
+		// The clones are cloned from valid nodes — a BoundaryEvent's clone is a
+		// BoundaryEvent and its host's clone an ActivityNode — so, as with the
 		// flow relink above, these casts cannot fail (panicking form).
-		cloneBE := clone.Nodes[id].(flow.BoundaryEvent)
-		cloneHost := clone.Nodes[origBE.AttachedTo().ID()].(flow.ActivityNode)
+		cloneBE := clonedNodes[id].(flow.BoundaryEvent)
+		cloneHost := clonedNodes[origBE.AttachedTo().ID()].(flow.ActivityNode)
 
 		// The cloned host starts with no boundaries (activity.clone), so the
-		// already-model-validated binding re-attaches without a multiplicity
-		// conflict; an error here can only mean a corrupt clone.
+		// already-validated binding re-attaches without a multiplicity conflict;
+		// an error here can only mean a corrupt clone.
 		if err := cloneBE.BoundTo(cloneHost); err != nil {
 			return nil, errs.New(
 				errs.M("rebind boundary %q to its cloned host failed", id),
@@ -233,5 +274,5 @@ func (s *Snapshot) Clone() (*Snapshot, error) {
 		}
 	}
 
-	return &clone, nil
+	return clonedFlows, nil
 }

@@ -388,3 +388,84 @@ func TestSnapshotCloneSharesProperties(t *testing.T) {
 	require.Same(t, s.Properties[0], clone.Properties[0],
 		"Clone must share the immutable Property, not copy it")
 }
+
+// TestSnapshotNewIsolatesFromModel verifies that New takes its own copy of the
+// definition's graph: editing the source process after registration — here,
+// adding a node — does not reach the already-taken snapshot. This is the
+// isolation that lets the process model stay mutable without a freeze (ADR-019
+// §2.3, SRD-031.A FR-1), and it closes the audit §3.3 leak where the snapshot
+// shared the model's nodes by reference.
+func TestSnapshotNewIsolatesFromModel(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	p, err := process.New("p-iso")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	require.NoError(t, p.Add(start))
+	require.NoError(t, p.Add(end))
+
+	_, err = flow.Link(start, end)
+	require.NoError(t, err)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	before := len(s.Nodes)
+
+	// mutate the source process after the snapshot was taken.
+	extra, err := events.NewEndEvent("extra-end")
+	require.NoError(t, err)
+	require.NoError(t, p.Add(extra))
+
+	// the snapshot is unchanged — the post-registration edit cannot reach it.
+	require.Len(t, s.Nodes, before)
+
+	_, inSnap := s.Nodes[extra.ID()]
+	require.False(t, inSnap,
+		"a node added to the process after New must not appear in the snapshot")
+}
+
+// TestSnapshotNewClonesGraph verifies that New stores clones of the definition's
+// nodes (distinct pointers), not the model objects themselves, and that the
+// resulting snapshot is fully wired so a per-instance Clone still produces a
+// working graph (SRD-031.A FR-1, T-2).
+func TestSnapshotNewClonesGraph(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	p, err := process.New("p-clone")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	require.NoError(t, p.Add(start))
+	require.NoError(t, p.Add(end))
+
+	_, err = flow.Link(start, end)
+	require.NoError(t, err)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	// the snapshot's node is a clone, not the model object.
+	require.NotSame(t, flow.Node(start), s.Nodes[start.ID()],
+		"New must clone the node, not store the model object")
+	require.Len(t, s.Flows, 1)
+
+	// the isolated snapshot is fully wired, so a per-instance Clone still works.
+	clone, err := s.Clone()
+	require.NoError(t, err)
+	require.Len(t, clone.Nodes, len(s.Nodes))
+	require.Len(t, clone.Flows, len(s.Flows))
+	require.NotSame(t, s.Nodes[start.ID()], clone.Nodes[start.ID()],
+		"Clone must clone the snapshot's node, not share it")
+}
