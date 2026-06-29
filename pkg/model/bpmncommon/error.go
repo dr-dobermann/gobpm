@@ -54,8 +54,15 @@ func (e *Error) ErrorCode() string {
 	return e.errorCode
 }
 
-// Structure returns the copy of Error payload.
+// Structure returns a copy of the Error payload, or nil when the Error carries
+// no ItemDefinition. A BPMN Error's structure is optional (NewError accepts a
+// nil structure), so callers must treat a nil return as "no payload" — the
+// guards in events/error.go (CheckItemDefinition / GetItemsList) rely on this.
 func (e *Error) Structure() *data.ItemDefinition {
+	if e.structure == nil {
+		return nil
+	}
+
 	str := *e.structure
 
 	return &str

@@ -153,6 +153,12 @@ func (eh *EventHub) RegisterEvent(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
+	if eDef == nil {
+		return errs.New(
+			errs.M("EventHub.RegisterEvent: a nil EventDefinition isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
 	return eh.registerWaiter(ep, eDef, waiters.CreateWaiter)
 }
 
@@ -174,6 +180,13 @@ func (eh *EventHub) RegisterPersistentEvent(
 	if ep == nil {
 		return errs.New(
 			errs.M("empty event processor isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if eDef == nil {
+		return errs.New(
+			errs.M("EventHub.RegisterPersistentEvent: a nil EventDefinition "+
+				"isn't allowed"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
@@ -424,6 +437,12 @@ func (eh *EventHub) PropagateEvent(
 		return errs.New(
 			errs.M("eventHub isn't started"),
 			errs.C(errorClass, errs.InvalidState))
+	}
+
+	if eDef == nil {
+		return errs.New(
+			errs.M("EventHub.PropagateEvent: a nil EventDefinition isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
 	// A signal is a broadcast publication matched by NAME, not by the throw's

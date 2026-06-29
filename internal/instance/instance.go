@@ -1455,6 +1455,21 @@ func (inst *Instance) RegisterEvent(
 	proc eventproc.EventProcessor,
 	eDef flow.EventDefinition,
 ) error {
+	// Validate the arguments BEFORE the state-specific branch below builds a
+	// diagnostic from proc.ID() — a nil processor must not panic the terminal
+	// path (FIX-010).
+	if proc == nil {
+		return errs.New(
+			errs.M("empty EventProcessor"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if eDef == nil {
+		return errs.New(
+			errs.M("empty EventDefinition"),
+			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
+	}
+
 	// Event registration is legitimate while the instance is being built
 	// (Created — start-event nodes register here) or running (Active — boundary
 	// / intermediate catch events); it is refused only on a terminal instance
@@ -1466,18 +1481,6 @@ func (inst *Instance) RegisterEvent(
 				is),
 			errs.C(errorClass, errs.InvalidState),
 			errs.D("requester_id", proc.ID()))
-	}
-
-	if proc == nil {
-		return errs.New(
-			errs.M("empty EventProcessor"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
-	if eDef == nil {
-		return errs.New(
-			errs.M("empty EventDefinition"),
-			errs.C(errorClass, errs.EmptyNotAllowed, errs.InvalidParameter))
 	}
 
 	if inst.parentEventProducer == nil {

@@ -155,7 +155,11 @@ func New(opts ...Option) *Broker {
 // else it is buffered in the bounded inbox. A message claimed by a keyed
 // subscriber whose channel is momentarily full is buffered (for that
 // subscriber's later drain), never handed to a wildcard subscriber.
-func (b *Broker) Publish(_ context.Context, msg messaging.Envelope) error {
+func (b *Broker) Publish(ctx context.Context, msg messaging.Envelope) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -209,8 +213,12 @@ func (b *Broker) Publish(_ context.Context, msg messaging.Envelope) error {
 // whose CorrelationKey is in the key-set. Already-buffered matches are drained
 // to the new subscription first.
 func (b *Broker) Subscribe(
-	_ context.Context, name string, keys ...string,
+	ctx context.Context, name string, keys ...string,
 ) (messaging.Subscription, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	sub := &subscription{
 		ch:   make(chan messaging.Envelope, subBuffer),
 		keys: keySet(keys),
