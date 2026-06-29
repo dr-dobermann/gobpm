@@ -97,11 +97,15 @@ _ = proc.Add(end)
 _, _ = flow.Link(start, task)
 _, _ = flow.Link(task, end)
 
-_ = engine.RegisterProcess(proc)
+// RegisterProcess returns a registration handle naming the (key, version);
+// re-registering the same process id mints a new version.
+reg, _ := engine.RegisterProcess(proc)
 _ = engine.Run(context.Background())
 
-// StartProcess returns a read-only handle onto the running instance.
-inst, _ := engine.StartProcess(proc.ID())
+// Start the exact registered version by its handle. StartLatest(key) and
+// StartVersion(key, n) address by process id instead. Each returns a read-only
+// handle onto the running instance.
+inst, _ := engine.StartProcess(reg)
 
 // Block until the instance finishes — the guaranteed completion signal.
 state, _ := inst.WaitCompletion(context.Background())
