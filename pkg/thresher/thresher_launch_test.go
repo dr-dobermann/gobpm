@@ -67,7 +67,7 @@ func TestStartProcess_RunsToCompletion(t *testing.T) {
 
 	_, err = th.RegisterProcess(proc)
 	require.NoError(t, err)
-	_, serr := th.StartProcess(proc.ID())
+	_, serr := th.StartLatest(proc.ID())
 	require.NoError(t, serr)
 
 	select {

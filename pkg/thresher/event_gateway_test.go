@@ -90,12 +90,12 @@ func TestEventGatewaySignalDeferredChoice(t *testing.T) {
 			_, err = th.RegisterProcess(thrower)
 			require.NoError(t, err)
 
-			h, err := th.StartProcess(proc.ID())
+			h, err := th.StartLatest(proc.ID())
 			require.NoError(t, err)
 
 			time.Sleep(150 * time.Millisecond) // gate parks on both arms
 
-			_, err = th.StartProcess(thrower.ID()) // throws tc.fire
+			_, err = th.StartLatest(thrower.ID()) // throws tc.fire
 			require.NoError(t, err)
 
 			ctx, cc := context.WithTimeout(context.Background(), 3*time.Second)
@@ -167,7 +167,7 @@ func TestEventGatewayReceiveTaskArm(t *testing.T) {
 	defer cancel()
 	require.NoError(t, th.Run(ctx))
 
-	h, err := th.StartProcess(proc.ID())
+	h, err := th.StartLatest(proc.ID())
 	require.NoError(t, err)
 
 	time.Sleep(150 * time.Millisecond) // gate parks on both arms

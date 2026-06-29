@@ -60,7 +60,7 @@ func TestInstanceHandleCancel(t *testing.T) {
 	th, cancel := runEngine(t, proc)
 	defer cancel()
 
-	h, err := th.StartProcess(proc.ID())
+	h, err := th.StartLatest(proc.ID())
 	require.NoError(t, err)
 
 	time.Sleep(150 * time.Millisecond) // let the track reach the blocking op
@@ -87,7 +87,7 @@ func TestCancelCtxBounded(t *testing.T) {
 	th, cancel := runEngine(t, proc)
 	defer cancel()
 
-	h, err := th.StartProcess(proc.ID())
+	h, err := th.StartLatest(proc.ID())
 	require.NoError(t, err)
 
 	time.Sleep(150 * time.Millisecond)
@@ -108,7 +108,7 @@ func TestSuspendResumeReserved(t *testing.T) {
 	th, cancel := runEngine(t, proc)
 	defer cancel()
 
-	h, err := th.StartProcess(proc.ID())
+	h, err := th.StartLatest(proc.ID())
 	require.NoError(t, err)
 
 	require.ErrorIs(t, h.Suspend(context.Background()), thresher.ErrNotImplemented)
@@ -123,7 +123,7 @@ func TestThresherShutdown(t *testing.T) {
 	th, cancel := runEngine(t, proc)
 	defer cancel()
 
-	h, err := th.StartProcess(proc.ID())
+	h, err := th.StartLatest(proc.ID())
 	require.NoError(t, err)
 
 	time.Sleep(150 * time.Millisecond) // reach the blocking op
@@ -136,7 +136,7 @@ func TestThresherShutdown(t *testing.T) {
 	require.Equal(t, thresher.StateTerminated, h.State())
 
 	// A stopped engine rejects further lifecycle operations.
-	_, err = th.StartProcess(proc.ID())
+	_, err = th.StartLatest(proc.ID())
 	require.Error(t, err)
 	_, err = th.RegisterProcess(blockingProcess(t, "sd-after"))
 	require.Error(t, err)
@@ -154,7 +154,7 @@ func TestThresherShutdownCtxBounded(t *testing.T) {
 	th, cancel := runEngine(t, proc)
 	defer cancel()
 
-	_, err := th.StartProcess(proc.ID())
+	_, err := th.StartLatest(proc.ID())
 	require.NoError(t, err)
 
 	time.Sleep(150 * time.Millisecond)

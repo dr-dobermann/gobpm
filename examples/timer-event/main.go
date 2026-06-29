@@ -121,7 +121,7 @@ func main() {
 	}
 
 	// Start process execution
-	_, err = engine.StartProcess(proc.ID())
+	_, err = engine.StartLatest(proc.ID())
 	if err != nil {
 		log.Fatal("Failed to start process:", err)
 	}

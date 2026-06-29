@@ -135,7 +135,7 @@ func TestStartProcessReturnsHandle(t *testing.T) {
 	th, cancel := runEngine(t, proc)
 	defer cancel()
 
-	h, err := th.StartProcess(proc.ID())
+	h, err := th.StartLatest(proc.ID())
 	require.NoError(t, err)
 	require.NotNil(t, h)
 	require.NotEmpty(t, h.ID())
@@ -157,7 +157,7 @@ func TestWaitCompletion(t *testing.T) {
 		th, cancel := runEngine(t, proc)
 		defer cancel()
 
-		h, err := th.StartProcess(proc.ID())
+		h, err := th.StartLatest(proc.ID())
 		require.NoError(t, err)
 
 		ctx, c := context.WithTimeout(context.Background(), 3*time.Second)
@@ -173,7 +173,7 @@ func TestWaitCompletion(t *testing.T) {
 		th, cancel := runEngine(t, proc)
 		defer cancel()
 
-		h, err := th.StartProcess(proc.ID())
+		h, err := th.StartLatest(proc.ID())
 		require.NoError(t, err)
 
 		ctx, c := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -192,7 +192,7 @@ func TestTokensSnapshot(t *testing.T) {
 	th, cancel := runEngine(t, proc)
 	defer cancel()
 
-	h, err := th.StartProcess(proc.ID())
+	h, err := th.StartLatest(proc.ID())
 	require.NoError(t, err)
 
 	time.Sleep(150 * time.Millisecond) // let the token reach the service node
@@ -214,7 +214,7 @@ func TestHistoryIncludesMerged(t *testing.T) {
 	th, cancel := runEngine(t, proc)
 	defer cancel()
 
-	h, err := th.StartProcess(proc.ID())
+	h, err := th.StartLatest(proc.ID())
 	require.NoError(t, err)
 
 	ctx, c := context.WithTimeout(context.Background(), 3*time.Second)
@@ -251,7 +251,7 @@ func TestHandleDataRead(t *testing.T) {
 	th, cancel := runEngine(t, proc)
 	defer cancel()
 
-	h, err := th.StartProcess(proc.ID())
+	h, err := th.StartLatest(proc.ID())
 	require.NoError(t, err)
 
 	st, err := h.Data().GetData("RUNTIME/STATE")

@@ -83,7 +83,7 @@ func TestComplexDiscriminator(t *testing.T) {
 	th, cancel := runEngine(t, proc)
 	defer cancel()
 
-	h, err := th.StartProcess(proc.ID())
+	h, err := th.StartLatest(proc.ID())
 	require.NoError(t, err)
 
 	ctx, cc := context.WithTimeout(context.Background(), 3*time.Second)
@@ -135,7 +135,7 @@ func TestComplexPartialJoin(t *testing.T) {
 	th, cancel := runEngine(t, proc)
 	defer cancel()
 
-	h, err := th.StartProcess(proc.ID())
+	h, err := th.StartLatest(proc.ID())
 	require.NoError(t, err)
 
 	ctx, cc := context.WithTimeout(context.Background(), 3*time.Second)
@@ -190,7 +190,7 @@ func TestComplexDataAware(t *testing.T) {
 	th, cancel := runEngine(t, proc)
 	defer cancel()
 
-	h, err := th.StartProcess(proc.ID())
+	h, err := th.StartLatest(proc.ID())
 	require.NoError(t, err)
 
 	ctx, cc := context.WithTimeout(context.Background(), 3*time.Second)
@@ -241,7 +241,7 @@ func TestComplexRequiredGate(t *testing.T) {
 	th, cancel := runEngine(t, proc)
 	defer cancel()
 
-	h, err := th.StartProcess(proc.ID())
+	h, err := th.StartLatest(proc.ID())
 	require.NoError(t, err)
 
 	ctx, cc := context.WithTimeout(context.Background(), 3*time.Second)
@@ -304,7 +304,7 @@ func TestComplexAbortOnDeath(t *testing.T) {
 	th, cancel := runEngine(t, proc)
 	defer cancel()
 
-	h, err := th.StartProcess(proc.ID())
+	h, err := th.StartLatest(proc.ID())
 	require.NoError(t, err)
 
 	ctx, cc := context.WithTimeout(context.Background(), 3*time.Second)

@@ -703,36 +703,111 @@ func (t *Thresher) launchInstanceFromEvent(
 	return nil
 }
 
-// StartProcess runs process with processId without any event even if
-// process awaits them.
-func (t *Thresher) StartProcess(processID string) (*InstanceHandle, error) {
-	if st := t.State(); st != Started {
+// StartProcess launches a new instance of the exact registered version named by
+// reg — the receipt RegisterProcess returned — and returns its read-only
+// observation handle. A nil reg is rejected. To start by key instead, use
+// StartLatest (the newest version) or StartVersion (a specific one).
+func (t *Thresher) StartProcess(reg *ProcessRegistration) (*InstanceHandle, error) {
+	if reg == nil {
 		return nil, errs.New(
-			errs.M("thresher isn't started"),
-			errs.C(errorClass, errs.InvalidState),
-			errs.D("current_state", st.String()))
+			errs.M("StartProcess: a nil ProcessRegistration isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if err := t.ensureStarted(); err != nil {
+		return nil, err
+	}
+
+	// launchInstance re-acquires t.m, so reg.snapshot is read lock-free here: a
+	// registration handle is immutable, and its snapshot is frozen (ADR-019).
+	return t.launchInstance(reg.snapshot)
+}
+
+// StartLatest launches a new instance of the LATEST registered version of the
+// process key, returning its observation handle. It errors if the key is empty
+// or no version is registered for it. This is the "just run the current one"
+// path; hold a ProcessRegistration and use StartProcess to pin an exact version.
+func (t *Thresher) StartLatest(key string) (*InstanceHandle, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, errs.New(
+			errs.M("StartLatest: empty process key isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if err := t.ensureStarted(); err != nil {
+		return nil, err
 	}
 
 	// Hold the engine lock only for the registry lookup; release it BEFORE
-	// launchInstance. launchInstance (and, for event-start nodes, the
-	// construction-time RegisterEvent -> Thresher.State()) re-acquire t.m, which
-	// would self-deadlock a non-reentrant mutex if held across them (FIX-002
-	// RC2). A bare process id starts the LATEST registered version of that key
-	// (A3 adds handle- and version-addressed starts).
+	// launchInstance, which re-acquires t.m and would self-deadlock a
+	// non-reentrant mutex if held across it (FIX-002 RC2).
 	t.m.Lock()
 	var s *snapshot.Snapshot
-	if regs := t.registrations[processID]; len(regs) > 0 {
+	if regs := t.registrations[key]; len(regs) > 0 {
 		s = regs[len(regs)-1].snapshot
 	}
 	t.m.Unlock()
 
 	if s == nil {
 		return nil, errs.New(
-			errs.M("couldn't find snapshot for process ID %q", processID),
+			errs.M("no registered version for process key %q", key),
 			errs.C(errorClass, errs.ObjectNotFound))
 	}
 
 	return t.launchInstance(s)
+}
+
+// StartVersion launches a new instance of a SPECIFIC registered version (1-based)
+// of the process key, returning its observation handle. It errors if the key is
+// empty, the version is below 1, or no such key/version is registered. Use it to
+// re-run an older version by its (key, version) without holding its handle.
+func (t *Thresher) StartVersion(key string, version int) (*InstanceHandle, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, errs.New(
+			errs.M("StartVersion: empty process key isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if version < 1 {
+		return nil, errs.New(
+			errs.M("StartVersion: version must be >= 1, got %d", version),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	if err := t.ensureStarted(); err != nil {
+		return nil, err
+	}
+
+	// Lock only for the lookup (FIX-002 RC2, as in StartLatest).
+	t.m.Lock()
+	var s *snapshot.Snapshot
+	if regs := t.registrations[key]; version <= len(regs) {
+		s = regs[version-1].snapshot
+	}
+	t.m.Unlock()
+
+	if s == nil {
+		return nil, errs.New(
+			errs.M("no version %d registered for process key %q", version, key),
+			errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	return t.launchInstance(s)
+}
+
+// ensureStarted returns an InvalidState error unless the engine is Started — the
+// precondition every Start* entry point shares.
+func (t *Thresher) ensureStarted() error {
+	if st := t.State(); st != Started {
+		return errs.New(
+			errs.M("thresher isn't started"),
+			errs.C(errorClass, errs.InvalidState),
+			errs.D("current_state", st.String()))
+	}
+
+	return nil
 }
 
 // Instance returns the observation handle of a running instance by its id, or

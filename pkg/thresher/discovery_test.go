@@ -20,9 +20,9 @@ func TestInstancesFilter(t *testing.T) {
 	_, err := th.RegisterProcess(lp)
 	require.NoError(t, err)
 
-	running, err := th.StartProcess(bp.ID())
+	running, err := th.StartLatest(bp.ID())
 	require.NoError(t, err)
-	doneH, err := th.StartProcess(lp.ID())
+	doneH, err := th.StartLatest(lp.ID())
 	require.NoError(t, err)
 
 	ctx, cc := context.WithTimeout(context.Background(), 3*time.Second)
@@ -56,9 +56,9 @@ func TestForget(t *testing.T) {
 	_, err := th.RegisterProcess(lp)
 	require.NoError(t, err)
 
-	running, err := th.StartProcess(bp.ID())
+	running, err := th.StartLatest(bp.ID())
 	require.NoError(t, err)
-	doneH, err := th.StartProcess(lp.ID())
+	doneH, err := th.StartLatest(lp.ID())
 	require.NoError(t, err)
 
 	ctx, cc := context.WithTimeout(context.Background(), 3*time.Second)
@@ -111,7 +111,7 @@ func TestUnregisterProcessWithLiveInstance(t *testing.T) {
 	th, cancel := runEngine(t, bp)
 	defer cancel()
 
-	h, err := th.StartProcess(bp.ID())
+	h, err := th.StartLatest(bp.ID())
 	require.NoError(t, err)
 	time.Sleep(150 * time.Millisecond)
 
@@ -123,6 +123,6 @@ func TestUnregisterProcessWithLiveInstance(t *testing.T) {
 	require.True(t, ok)
 
 	// The definition is gone — a new start is rejected.
-	_, err = th.StartProcess(bp.ID())
+	_, err = th.StartLatest(bp.ID())
 	require.Error(t, err)
 }

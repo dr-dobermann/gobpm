@@ -64,7 +64,7 @@ func run() error {
 
 	fmt.Printf("order amount = %d (needs 2 approvals)\n", amount)
 
-	h, err := engine.StartProcess(proc.ID())
+	h, err := engine.StartLatest(proc.ID())
 	if err != nil {
 		return fmt.Errorf("start process: %w", err)
 	}

@@ -47,7 +47,7 @@ func TestMergedIntoRecorded(t *testing.T) {
 	th, cancel := runEngine(t, proc)
 	defer cancel()
 
-	h, err := th.StartProcess(proc.ID())
+	h, err := th.StartLatest(proc.ID())
 	require.NoError(t, err)
 
 	ctx, cc := context.WithTimeout(context.Background(), 3*time.Second)

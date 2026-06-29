@@ -38,7 +38,7 @@ func TestThresher_ProcessManagement(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, thresher.NotStarted, th.State())
 
-		_, err = th.StartProcess("some-process-id")
+		_, err = th.StartLatest("some-process-id")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "thresher isn't started")
 	})
@@ -55,9 +55,9 @@ func TestThresher_ProcessManagement(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, thresher.Started, th.State())
 
-		_, err = th.StartProcess("non-existent-process")
+		_, err = th.StartLatest("non-existent-process")
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "couldn't find snapshot for process ID")
+		require.Contains(t, err.Error(), "no registered version for process key")
 	})
 
 	// Note: Testing actual process start would require complex setup with
@@ -96,7 +96,7 @@ func TestStartProcess_NoReentrantDeadlock(t *testing.T) {
 	require.NoError(t, err)
 
 	done := make(chan error, 1)
-	go func() { _, e := th.StartProcess(proc.ID()); done <- e }()
+	go func() { _, e := th.StartLatest(proc.ID()); done <- e }()
 
 	select {
 	case err := <-done:
