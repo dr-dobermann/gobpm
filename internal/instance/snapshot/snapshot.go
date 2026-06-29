@@ -27,6 +27,12 @@ type Snapshot struct {
 	// an incoming message's payload to grow the instance's conversation key-set
 	// (lazy association — SRD-017 §4.5). Immutable config, shared by Clone.
 	CorrelationKeys []*bpmncommon.CorrelationKey
+	// InstantiatingStarts are the process's instantiating start triggers
+	// (message / signal StartEvents and instantiate ReceiveTasks), discovered
+	// once by New after the graph is wired. The thresher wraps each into a
+	// persistent instance-starter at registration instead of re-scanning the
+	// node graph. Engine-agnostic descriptors only; immutable, shared by Clone.
+	InstantiatingStarts []InstantiatingStart
 }
 
 // New creates a new snapshot from the Process p and returns its
@@ -129,6 +135,11 @@ func New(
 
 	s.Flows = flows
 
+	// With the graph wired (each clone's Incoming() now populated), discover the
+	// instantiating start triggers once and store them, so registration wraps the
+	// descriptors into starters instead of re-walking the node graph.
+	s.InstantiatingStarts = discoverInstantiatingStarts(s.Nodes)
+
 	return &s, nil
 }
 
@@ -160,16 +171,17 @@ func isInstantiatingTask(n flow.Node) bool {
 // Clone returns a per-instance copy of the Snapshot. Every node is cloned (its
 // immutable configuration shared by reference, its runtime state fresh) and the
 // flow graph is relinked between the clones, so an instance built from the clone
-// mutates only its own nodes. The immutable header — process id/name and
-// properties — is shared. See ADR-009.
+// mutates only its own nodes. The immutable header — process id/name, properties,
+// correlation keys and instantiating starts — is shared. See ADR-009.
 func (s *Snapshot) Clone() (*Snapshot, error) {
 	clone := Snapshot{
-		ID:              *foundation.NewID(),
-		ProcessID:       s.ProcessID,
-		ProcessName:     s.ProcessName,
-		Nodes:           make(map[string]flow.Node, len(s.Nodes)),
-		Properties:      s.Properties,
-		CorrelationKeys: s.CorrelationKeys,
+		ID:                  *foundation.NewID(),
+		ProcessID:           s.ProcessID,
+		ProcessName:         s.ProcessName,
+		Nodes:               make(map[string]flow.Node, len(s.Nodes)),
+		Properties:          s.Properties,
+		CorrelationKeys:     s.CorrelationKeys,
+		InstantiatingStarts: s.InstantiatingStarts,
 	}
 
 	// Clone every node (its immutable configuration shared by reference, its
