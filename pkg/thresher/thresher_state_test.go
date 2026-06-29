@@ -13,8 +13,11 @@ func TestState(t *testing.T) {
 	t.Run("state validation", func(t *testing.T) {
 		// Valid states
 		require.NoError(t, thresher.NotStarted.Validate())
+		require.NoError(t, thresher.Starting.Validate())
 		require.NoError(t, thresher.Started.Validate())
 		require.NoError(t, thresher.Paused.Validate())
+		require.NoError(t, thresher.Stopping.Validate())
+		require.NoError(t, thresher.Stopped.Validate())
 
 		// Invalid state
 		invalidState := thresher.State(99)
@@ -22,9 +25,12 @@ func TestState(t *testing.T) {
 	})
 
 	t.Run("state string representation", func(t *testing.T) {
-		require.Equal(t, "NotStarted ", thresher.NotStarted.String())
+		require.Equal(t, "NotStarted", thresher.NotStarted.String())
+		require.Equal(t, "Starting", thresher.Starting.String())
 		require.Equal(t, "Started", thresher.Started.String())
 		require.Equal(t, "Paused", thresher.Paused.String())
+		require.Equal(t, "Stopping", thresher.Stopping.String())
+		require.Equal(t, "Stopped", thresher.Stopped.String())
 
 		// Invalid state returns error message
 		invalidState := thresher.State(99)

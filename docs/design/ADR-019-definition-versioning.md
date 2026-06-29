@@ -2,13 +2,14 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-06-28 |
 | Owner | Ruslan Gabitov |
 | Refines | [SAD-001 v.1 Vision & Architecture](SAD-001-vision-and-architecture.md) |
 
-> **Draft** — to be landed by its implementing SRDs.
+> **Accepted** — landed by its implementing SRDs (SRD-031.A versioning,
+> SRD-031.B registry concurrency).
 > Decides **definition versioning**: registering a process produces an immutable,
 > **versioned** snapshot addressed by a **registration handle**, rather than a
 > single mutable-by-accident registration keyed on the process id. Re-registering
@@ -411,4 +412,5 @@ deferrals (§2.8).
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-06-28 | Ruslan Gabitov | Draft. **Definition versioning**: `RegisterProcess` returns a **registration handle** naming a `(key, version)`; the versioning **key is the process id** (BPMN identity, not the display name), anonymous processes are singleton v1; the snapshot **deep-copies the graph at registration** so each version is frozen and the model stays **mutable** without a freeze (closing audit §3.3's leak/race by isolation); start **by handle** (exact), **by key+version** (specific), or **by key** (latest); **latest-supersedes** auto-start keeps the latest version as the sole live auto-starter — registering a newer version transfers the instance-starters to it, and unregistering the latest promotes the now-newest remaining version back to live (Camunda-grounded, symmetric in both directions). Refines SAD-001 v.1; siblings ADR-009 v.1, ADR-015 v.1, ADR-016 v.1, ADR-001 v.6, ADR-013 v.1. The **model-editing API** is carved out to a sibling rich-editing ADR; the **registry concurrency discipline** (audit §2.6) to a dedicated SRD; durable versioning/migration/cross-version correlation/version tags deferred. |
+| v.1 (Accepted) | 2026-06-29 | Ruslan Gabitov | **Accepted** — conception realized; landed by its implementing SRDs: **SRD-031.A** (versioning — registration handle, monotonic per-key versions, latest-supersedes + promote-on-removal, gapped versions, `UnregisterVersion` vs `UnregisterProcess`, `Registrations(key)`) and **SRD-031.B** (registry concurrency — atomic engine `state` with transitional `Starting`/`Stopping`, lock-free `State`/`UpdateState`/`ensureStarted`, registry critical sections confined to `…Locked` helpers; retires audit §2.6). `make ci` green, `-race` clean, diff-coverage 100% on touched files, 18 examples run. The model-editing API (rich-editing ADR) and durable versioning/migration remain deferred. |
+| v.1 (Draft) | 2026-06-28 | Ruslan Gabitov | Draft. **Definition versioning**: `RegisterProcess` returns a **registration handle** naming a `(key, version)`; the versioning **key is the process id** (BPMN identity, not the display name), anonymous processes are singleton v1; the snapshot **deep-copies the graph at registration** so each version is frozen and the model stays **mutable** without a freeze (closing audit §3.3's leak/race by isolation); start **by handle** (exact), **by key+version** (specific), or **by key** (latest); **latest-supersedes** auto-start keeps the latest version as the sole live auto-starter — registering a newer version transfers the instance-starters to it, and unregistering the latest promotes the now-newest remaining version back to live (Camunda-grounded, symmetric in both directions). Refines SAD-001 v.1; siblings ADR-009 v.1, ADR-015 v.1, ADR-016 v.1, ADR-001 v.6, ADR-013 v.1. The **model-editing API** is carved out to a sibling rich-editing ADR; the **registry concurrency discipline** (audit §2.6) to a dedicated SRD; durable versioning/migration/cross-version correlation/version tags deferred. |
