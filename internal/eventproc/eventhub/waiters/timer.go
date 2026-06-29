@@ -20,8 +20,8 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
 
-// TimerWatierError is the error class for timer waiter errors.
-const TimerWatierError = "TIMER_WAITER_ERRROR"
+// TimerWaiterError is the error class for timer waiter errors.
+const TimerWaiterError = "TIMER_WAITER_ERROR"
 
 // timeWaiter defines details of timer event described by
 // eDef.
@@ -53,7 +53,7 @@ func NewTimeWaiter(
 		return nil,
 			errs.New(
 				errs.M("couldn't create a Waiter with empty EventProcessor, EventDefinition, EventHub or EngineRuntime"),
-				errs.C(TimerWatierError, errs.InvalidParameter, errs.EmptyNotAllowed))
+				errs.C(TimerWaiterError, errs.InvalidParameter, errs.EmptyNotAllowed))
 	}
 
 	eDef, ok := eDefI.(*events.TimerEventDefinition)
@@ -61,7 +61,7 @@ func NewTimeWaiter(
 		return nil,
 			errs.New(
 				errs.M("not an TimerEventDefinition"),
-				errs.C(TimerWatierError, errs.TypeCastingError),
+				errs.C(TimerWaiterError, errs.TypeCastingError),
 				errs.D("event_definition_type", reflect.TypeOf(eDefI)))
 	}
 
@@ -82,7 +82,7 @@ func NewTimeWaiter(
 		return nil,
 			errs.New(
 				errs.M("TimerEventDefinition parsing failed"),
-				errs.C(TimerWatierError, errs.OperationFailed),
+				errs.C(TimerWaiterError, errs.OperationFailed),
 				errs.E(err))
 	}
 
@@ -184,7 +184,7 @@ func (tw *timeWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 	if ep == nil {
 		return errs.New(
 			errs.M("empty EventProcessor isn't allowed"),
-			errs.C(TimerWatierError, errs.EmptyNotAllowed))
+			errs.C(TimerWaiterError, errs.EmptyNotAllowed))
 	}
 
 	tw.m.Lock()
@@ -206,7 +206,7 @@ func (tw *timeWaiter) RemoveEventProcessor(ep eventproc.EventProcessor) error {
 	if ep == nil {
 		return errs.New(
 			errs.M("empty EventProcessor isn't allowed"),
-			errs.C(TimerWatierError, errs.EmptyNotAllowed))
+			errs.C(TimerWaiterError, errs.EmptyNotAllowed))
 	}
 
 	tw.m.Lock()
@@ -216,7 +216,7 @@ func (tw *timeWaiter) RemoveEventProcessor(ep eventproc.EventProcessor) error {
 	if idx == -1 {
 		return errs.New(
 			errs.M("event processor isn't registered with the waiter"),
-			errs.C(TimerWatierError, errs.ObjectNotFound),
+			errs.C(TimerWaiterError, errs.ObjectNotFound),
 			errs.D("waiter_id", tw.id),
 			errs.D("event_processor_id", ep.ID()))
 	}
@@ -248,8 +248,9 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 	if tw.state != eventproc.WSReady {
 		return errs.New(
 			errs.M("waiter isn't ready to start"),
-			errs.C(TimerWatierError, errs.InvalidState),
-			errs.D("current_state", eventproc.WSReady))
+			errs.C(TimerWaiterError, errs.InvalidState),
+			errs.D("current_state", tw.state),
+			errs.D("expected_state", eventproc.WSReady))
 	}
 
 	tw.state = eventproc.WSRunned
@@ -262,7 +263,7 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 	if tw.duration <= 0 {
 		return errs.New(
 			errs.M("waiter duration is not positive"),
-			errs.C(TimerWatierError, errs.InvalidState),
+			errs.C(TimerWaiterError, errs.InvalidState),
 			errs.D("waiter_id", tw.ID()),
 			errs.D("next_time", tw.next),
 			errs.D("duration", tw.duration),
@@ -356,7 +357,7 @@ func (tw *timeWaiter) processTimerEvent(ctx context.Context) error {
 		tw.state = eventproc.WSEnded
 		tw.m.Unlock()
 
-		// Terminal: report the fire; the EventHub (sole remover, ADR-006 v.1
+		// Terminal: report the fire; the EventHub (sole remover, ADR-006 v.2
 		// §2.5) removes the waiter. The timer no longer removes itself.
 		_ = tw.hub.WaiterFired(eDef.ID()) // ignore error during cleanup
 
@@ -383,7 +384,7 @@ func (tw *timeWaiter) Stop() error {
 	if tw.state != eventproc.WSRunned {
 		return errs.New(
 			errs.M("couldn't stop not runned waiter"),
-			errs.C(TimerWatierError, errs.InvalidState),
+			errs.C(TimerWaiterError, errs.InvalidState),
 			errs.D("current_state", tw.state))
 	}
 

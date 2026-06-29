@@ -417,3 +417,47 @@ func TestTimerWaiterRemoveEventProcessor(t *testing.T) {
 	require.NoError(t, w.RemoveEventProcessor(ep2))
 	require.Empty(t, w.EventProcessors())
 }
+
+// TestTimerWaiterServiceRejectsNonReady covers the FIX-012 diagnostic fix: a
+// Service call on a waiter that is not WSReady returns an error whose
+// current_state diagnostic is the ACTUAL state (WSRunned, after the first
+// Service), not the expected WSReady — the latter now lands under
+// expected_state. Previously current_state reported WSReady, hiding the real
+// state.
+func TestTimerWaiterServiceRejectsNonReady(t *testing.T) {
+	ep := mockeventproc.NewMockEventProcessor(t)
+	mockHub := mockeventproc.NewMockEventHub(t)
+
+	// a far-future timer so the service goroutine parks and never fires.
+	farEDef := events.MustTimerEventDefinition(
+		goexpr.Must(
+			nil,
+			data.MustItemDefinition(values.NewVariable(time.Now())),
+			func(_ context.Context, _ data.Source) (data.Value, error) {
+				return values.NewVariable(time.Now().Add(time.Hour)), nil
+			}),
+		nil, nil)
+
+	w, err := waiters.NewTimeWaiter(
+		mockHub, ep, farEDef, "not-ready timer", enginert.Default())
+	require.NoError(t, err)
+	require.Equal(t, eventproc.WSReady, w.State())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// first Service moves the waiter to WSRunned.
+	require.NoError(t, w.Service(ctx))
+	require.Equal(t, eventproc.WSRunned, w.State())
+
+	// second Service hits the not-ready guard.
+	err = w.Service(ctx)
+	require.Error(t, err)
+
+	var ae *errs.ApplicationError
+
+	require.True(t, errors.As(err, &ae))
+	require.True(t, ae.HasClass(errs.InvalidState))
+	require.Equal(t, eventproc.WSRunned, ae.Details["current_state"])
+	require.Equal(t, eventproc.WSReady, ae.Details["expected_state"])
+}
