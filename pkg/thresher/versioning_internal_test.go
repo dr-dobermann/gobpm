@@ -72,7 +72,7 @@ func TestUnregisterLatestPromotesPrevious(t *testing.T) {
 	require.NoError(t, th.Run(ctx))
 
 	// removing the latest (v2) promotes v1 to the live auto-start version.
-	require.NoError(t, th.UnregisterProcess(reg2))
+	require.NoError(t, th.UnregisterVersion(reg2))
 
 	th.m.Lock()
 	regs := th.registrations[reg1.Key()]

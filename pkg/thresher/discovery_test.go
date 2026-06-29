@@ -104,8 +104,10 @@ func TestStarters(t *testing.T) {
 	require.Len(t, th.Starters(), 1)
 }
 
-// TestUnregisterProcessWithLiveInstance verifies UnregisterProcess succeeds with
-// a live instance, which keeps running (FR-8).
+// TestUnregisterProcessWithLiveInstance verifies UnregisterVersion succeeds with
+// a live instance, which keeps running (SRD-031.A FR-8; the name predates the
+// UnregisterProcess→UnregisterVersion split and is kept to honor SRD-019's
+// frozen reference).
 func TestUnregisterProcessWithLiveInstance(t *testing.T) {
 	bp := blockingProcess(t, "unreg-live")
 
@@ -123,7 +125,7 @@ func TestUnregisterProcessWithLiveInstance(t *testing.T) {
 	require.NoError(t, err)
 	time.Sleep(150 * time.Millisecond)
 
-	require.NoError(t, th.UnregisterProcess(reg))
+	require.NoError(t, th.UnregisterVersion(reg))
 
 	// The live instance is unaffected: still Active and looked-up-able.
 	require.Equal(t, thresher.StateActive, h.State())

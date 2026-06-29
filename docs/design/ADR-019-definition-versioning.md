@@ -104,7 +104,11 @@ The **versioning key** is the process **id** — BPMN's stable element identity.
 caller fixes it explicitly (the BPMN `id` attribute; in gobpm, the process-id
 option). Two registrations carrying the same id are two **versions** of one
 logical definition; versions increment as integers (v1, v2, …) per key in
-registration order.
+registration order. A version number is **monotonic and never reused** for the
+lifetime of the key: removing a version (§2.5) leaves its number retired, so the
+sequence may carry gaps (v1, v3, …) and a later registration always takes a fresh
+higher number rather than refilling a hole. A version number therefore names one
+definition unambiguously for as long as the key lives.
 
 A process registered **without** an explicit id keeps gobpm's default — a
 generated unique id — and is therefore its own singleton key at version 1. That
@@ -164,10 +168,12 @@ specific:
 - **By handle** — `StartProcess(reg)` starts the exact version the handle names.
   The canonical, unambiguous path, and the only one that needs no lookup.
 - **By key + version** — `StartVersion(key, version)` starts that specific
-  integer version of the key, or errors if the key or version is unknown. This
-  addresses a particular historical version *without* holding its handle (the
-  human-friendly `(key, version)` rather than the opaque registration id) — e.g.
-  re-running v2 after v3 is live.
+  integer version of the key, or errors if the key or version is unknown. It
+  addresses by the version **number**, not a slice position, so it stays correct
+  across the gaps a removal can leave (§2.5) — re-running v3 after v2 was pruned
+  resolves v3, and the retired v2 errors. This addresses a particular historical
+  version *without* holding its handle (the human-friendly `(key, version)` rather
+  than the opaque registration id).
 - **By key (latest)** — `StartLatest(key)` starts the **latest** registered
   version of the key, or errors if the key is unknown. This mirrors Camunda's
   common "just run the current one" case, so the everyday call need not thread a
@@ -178,6 +184,12 @@ today (unchanged — distinct from the registration handle of §2.2). The exact
 method names/signatures are finalized in the implementing SRD; conceptually the
 engine exposes handle-addressed, `(key, version)`-addressed, and latest-of-key
 starts.
+
+Because removals can leave gaps in a key's version sequence (§2.5), the engine
+also exposes a **discovery** path: enumerating a key's registered versions
+(returning their handles) so a caller can see which versions exist — and pick one
+to start or unregister — rather than guessing a number. Enumeration is read-only
+discovery, the registration-side analogue of the SRD-019 instance/starter views.
 
 ### 2.5 Auto-start follows the latest version — supersede on register, promote on remove
 
@@ -205,6 +217,15 @@ direct lever to re-activate an earlier version's auto-start: remove the later
 versions until the wanted one is latest again. A previous (non-latest) version
 remains startable, but **only manually** via `StartVersion(key, n)` — it holds
 no hub subscriptions while a newer version exists.
+
+Removal comes in two granularities, named for their scope: removing **one
+version** (by handle) versus removing the **whole process** — every version of a
+key — in one operation. A *process* is the whole keyed definition; a *version* is
+one snapshot of it, so the bulk operation carries the `Process` name and the
+single-version one is explicitly a *version* removal. Both leave running instances
+untouched (they own their snapshots); only the live latest's starters are ever
+torn down. Whole-process removal also retires the key's version counter, so a
+later registration of that id restarts at v1.
 
 Correlation/dedup of an in-flight conversation ([ADR-016
 v.1](ADR-016-message-correlation.md)) remains keyed within the spawning version's
@@ -272,10 +293,11 @@ the *how* of the registry's internals and retires audit §2.6 there.
 
 **Negative / costs.**
 
-- **A contract change.** `RegisterProcess` gains a return value; `StartProcess` /
-  `UnregisterProcess` take a handle, with `StartVersion(key, version)` and
-  `StartLatest(key)` as the lookup-based paths. Pre-versioning call sites must
-  adopt the handle. This is acceptable pre-1.0 and is the point of the change.
+- **A contract change.** `RegisterProcess` gains a return value; `StartProcess` and
+  the single-version `UnregisterVersion` take a handle, with `StartVersion(key,
+  version)` / `StartLatest(key)` / `UnregisterProcess(key)` (whole-process removal)
+  as the key-addressed paths. Pre-versioning call sites must adopt the handle. This
+  is acceptable pre-1.0 and is the point of the change.
 - **Registration is no longer idempotent.** Re-registering now *adds a version*.
   Callers that re-registered defensively must stop, or accept version growth.
 - **Per-registration copy cost.** Deep-copying the graph at registration adds work

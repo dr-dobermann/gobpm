@@ -18,11 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `StartVersion(key, n)` (a specific version). The latest registered version
   owns auto-start — registering a newer version supersedes the previous one's
   starters, and unregistering the latest promotes the now-newest remaining
-  version.
+  version. Removal is split by scope: `UnregisterProcess(reg)` is renamed
+  `UnregisterVersion(reg)` (removes one version), and `UnregisterProcess(key)`
+  now removes the whole process (every version of the key). Version numbers are
+  monotonic per key and never reused, so removing a non-latest version leaves a
+  gap; `Registrations(key)` enumerates a key's versions.
 
   Migration: `engine.RegisterProcess(p)` → `reg, _ := engine.RegisterProcess(p)`;
   `engine.StartProcess(p.ID())` → `engine.StartProcess(reg)` or
-  `engine.StartLatest(p.ID())`.
+  `engine.StartLatest(p.ID())`; `engine.UnregisterProcess(reg)` →
+  `engine.UnregisterVersion(reg)` (or `engine.UnregisterProcess(p.ID())` to drop
+  all versions).
 
 ### Fixed
 

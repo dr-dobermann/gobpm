@@ -113,6 +113,7 @@ type Thresher struct {
 	cfg           thresherConfig
 	eventHub      eventproc.EventHub
 	registrations map[string][]*ProcessRegistration
+	nextVersion   map[string]int
 	instances     map[string]instanceReg
 	seenKeys      map[string]struct{}
 	id            string
@@ -147,6 +148,7 @@ func New(id string, opts ...Option) (*Thresher, error) {
 		cfg:           cfg,
 		state:         NotStarted,
 		registrations: map[string][]*ProcessRegistration{},
+		nextVersion:   map[string]int{},
 		instances:     map[string]instanceReg{},
 		seenKeys:      map[string]struct{}{},
 	}
@@ -489,9 +491,14 @@ func (t *Thresher) RegisterProcess(
 	if len(prev) > 0 {
 		prevLatest = prev[len(prev)-1]
 	}
+	// Version numbers come from a per-key monotonic counter, never the slice
+	// length: removing a non-latest version must not make the next registration
+	// reuse a still-live version number. The counter resets only when the key is
+	// fully unregistered (UnregisterProcess drops it with the key).
+	t.nextVersion[s.ProcessID]++
 	reg := &ProcessRegistration{
 		key:      s.ProcessID,
-		version:  len(prev) + 1,
+		version:  t.nextVersion[s.ProcessID],
 		id:       foundation.GenerateID(),
 		snapshot: s,
 		starters: starters,
@@ -523,20 +530,22 @@ func (t *Thresher) RegisterProcess(
 	return reg, nil
 }
 
-// UnregisterProcess removes one registered version — the one named by reg — by
+// UnregisterVersion removes ONE registered version — the one named by reg — by
 // tearing down its live instance-starter subscriptions (if any) and dropping it
-// from the registry. It is the teardown counterpart of RegisterProcess. Running
-// instances of that version are unaffected — they keep executing against their
-// own frozen snapshot; stop everything via Shutdown (SRD-019 FR-8).
+// from the registry. To remove the whole process (every version of a key) use
+// UnregisterProcess. Running instances of that version are unaffected — they keep
+// executing against their own frozen snapshot; stop everything via Shutdown
+// (SRD-019 FR-8).
 //
 // Only the latest version of a key has live starters (latest-supersedes), so a
 // superseded version has nothing on the hub to tear down. Removing the latest
-// version does NOT re-arm the previous one: auto-start for the key ceases until a
-// new version is registered (ADR-019 §2.5; no auto-promotion).
-func (t *Thresher) UnregisterProcess(reg *ProcessRegistration) error {
+// version PROMOTES the now-newest remaining version to live auto-start, so the
+// invariant "latest registration == live starter set" keeps holding
+// (ADR-019 §2.5; promote-on-removal).
+func (t *Thresher) UnregisterVersion(reg *ProcessRegistration) error {
 	if reg == nil {
 		return errs.New(
-			errs.M("UnregisterProcess: a nil ProcessRegistration isn't allowed"),
+			errs.M("UnregisterVersion: a nil ProcessRegistration isn't allowed"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
@@ -561,6 +570,9 @@ func (t *Thresher) UnregisterProcess(reg *ProcessRegistration) error {
 		regs = append(regs[:idx], regs[idx+1:]...)
 		if len(regs) == 0 {
 			delete(t.registrations, reg.key)
+			// Fully removed: forget the version counter so a later re-registration
+			// of this key starts a fresh v1 (no live version is left to collide).
+			delete(t.nextVersion, reg.key)
 		} else {
 			t.registrations[reg.key] = regs
 			if wasLatest {
@@ -590,6 +602,49 @@ func (t *Thresher) UnregisterProcess(reg *ProcessRegistration) error {
 		if len(promote) > 0 {
 			return t.registerStarters(promote)
 		}
+	}
+
+	return nil
+}
+
+// UnregisterProcess removes the WHOLE process — every registered version of key
+// — dropping them all from the registry and resetting the version counter (a
+// later registration of this key is v1 again). It is the bulk counterpart of
+// RegisterProcess; to remove a single version use UnregisterVersion. Running
+// instances of any version survive on their own frozen snapshots (stop them via
+// Shutdown). Only the latest version holds live starters, so only those are torn
+// down from the hub. Errors ObjectNotFound if key is unknown, EmptyNotAllowed if
+// key is empty.
+func (t *Thresher) UnregisterProcess(key string) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return errs.New(
+			errs.M("UnregisterProcess: an empty process key isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	// Under the lock: take the key's versions out and forget its counter. The
+	// latest version's starters are the only live ones (latest-supersedes); tear
+	// them down OUTSIDE the lock (FIX-002 RC2).
+	t.m.Lock()
+	regs := t.registrations[key]
+	var liveStarters []*instanceStarter
+	if n := len(regs); n > 0 {
+		liveStarters = regs[n-1].starters
+	}
+	started := t.state == Started
+	delete(t.registrations, key)
+	delete(t.nextVersion, key)
+	t.m.Unlock()
+
+	if len(regs) == 0 {
+		return errs.New(
+			errs.M("no registered version for process key %q", key),
+			errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	if started {
+		return t.unregisterStarters(liveStarters)
 	}
 
 	return nil
@@ -797,6 +852,8 @@ func (t *Thresher) StartLatest(key string) (*InstanceHandle, error) {
 	// Hold the engine lock only for the registry lookup; release it BEFORE
 	// launchInstance, which re-acquires t.m and would self-deadlock a
 	// non-reentrant mutex if held across it (FIX-002 RC2).
+	// The slice is appended in monotonic version order and removals preserve that
+	// order, so the last element is always the highest version = the latest.
 	t.m.Lock()
 	var s *snapshot.Snapshot
 	if regs := t.registrations[key]; len(regs) > 0 {
@@ -835,11 +892,17 @@ func (t *Thresher) StartVersion(key string, version int) (*InstanceHandle, error
 		return nil, err
 	}
 
-	// Lock only for the lookup (FIX-002 RC2, as in StartLatest).
+	// Lock only for the lookup (FIX-002 RC2, as in StartLatest). Address by the
+	// version NUMBER, not the slice position: removals can leave gaps (v1, v3, …),
+	// so scan for the matching version rather than indexing regs[version-1].
 	t.m.Lock()
 	var s *snapshot.Snapshot
-	if regs := t.registrations[key]; version <= len(regs) {
-		s = regs[version-1].snapshot
+	for _, r := range t.registrations[key] {
+		if r.version == version {
+			s = r.snapshot
+
+			break
+		}
 	}
 	t.m.Unlock()
 

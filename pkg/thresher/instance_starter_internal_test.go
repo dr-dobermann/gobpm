@@ -257,7 +257,7 @@ func TestStarterLifecycle(t *testing.T) {
 		// A clean UnregisterProcess proves the starter WAS registered on the hub
 		// at Run (the hub's UnregisterEvent would error ObjectNotFound were it
 		// not), and clears the bookkeeping.
-		require.NoError(t, th.UnregisterProcess(reg))
+		require.NoError(t, th.UnregisterVersion(reg))
 
 		th.m.Lock()
 		_, hasReg := th.registrations[proc.ID()]
@@ -276,7 +276,7 @@ func TestStarterLifecycle(t *testing.T) {
 		proc := msgStartProcess(t, "p-after", "order placed")
 		reg, err := th.RegisterProcess(proc)
 		require.NoError(t, err)
-		require.NoError(t, th.UnregisterProcess(reg))
+		require.NoError(t, th.UnregisterVersion(reg))
 	})
 
 	t.Run("manual-start: no starter, clean teardown", func(t *testing.T) {
@@ -290,14 +290,14 @@ func TestStarterLifecycle(t *testing.T) {
 		proc := msgStartProcess(t, "p-mlife", "order placed")
 		reg, err := th.RegisterProcess(proc, WithManualStart())
 		require.NoError(t, err)
-		require.NoError(t, th.UnregisterProcess(reg))
+		require.NoError(t, th.UnregisterVersion(reg))
 	})
 
 	t.Run("nil / foreign handle rejected", func(t *testing.T) {
 		th, err := New("life-bad")
 		require.NoError(t, err)
 
-		require.Error(t, th.UnregisterProcess(nil))
+		require.Error(t, th.UnregisterVersion(nil))
 
 		// a handle for a process never registered in this engine is rejected.
 		other, err := New("life-other")
@@ -305,7 +305,7 @@ func TestStarterLifecycle(t *testing.T) {
 		foreign, err := other.RegisterProcess(
 			msgStartProcess(t, "p-foreign", "order placed"))
 		require.NoError(t, err)
-		require.Error(t, th.UnregisterProcess(foreign))
+		require.Error(t, th.UnregisterVersion(foreign))
 	})
 }
 
@@ -355,8 +355,9 @@ func TestRegisterStartersError(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestUnregisterProcessHubError covers the UnregisterProcess teardown error
-// path: a hub that rejects UnregisterEvent surfaces a wrapped error.
+// TestUnregisterProcessHubError covers the UnregisterVersion teardown error
+// path: a hub that rejects UnregisterEvent surfaces a wrapped error. (Name kept
+// across the UnregisterProcess→UnregisterVersion split.)
 func TestUnregisterProcessHubError(t *testing.T) {
 	th, err := New("unreg-err")
 	require.NoError(t, err)
@@ -382,7 +383,7 @@ func TestUnregisterProcessHubError(t *testing.T) {
 	th.state = Started
 	th.m.Unlock()
 
-	require.Error(t, th.UnregisterProcess(reg))
+	require.Error(t, th.UnregisterVersion(reg))
 }
 
 // TestRunRegisterStartersError covers Run's startup-registration error path: a

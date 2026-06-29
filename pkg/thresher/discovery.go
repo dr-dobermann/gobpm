@@ -86,6 +86,23 @@ func (t *Thresher) Forget(ids ...string) error {
 	return nil
 }
 
+// Registrations returns the registered versions of a process key, ascending by
+// version (an empty slice for an unknown key). Each element is a live handle —
+// read its `Version()` / `ID()`, or pass it straight to `StartProcess` /
+// `UnregisterProcess`. Because removing a non-latest version may leave gaps
+// (v1, v3, …), this is how a caller discovers which versions exist before
+// addressing one by `StartVersion`. Snapshot-consistent under the engine lock.
+func (t *Thresher) Registrations(key string) []*ProcessRegistration {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	regs := t.registrations[key]
+	out := make([]*ProcessRegistration, len(regs))
+	copy(out, regs)
+
+	return out
+}
+
 // StarterInfo describes one event-start registration (SRD-019): a process
 // awaiting an event to instantiate — there is no instance yet, so it cannot
 // appear under Instances. A manual-start process registers no starter, so every
