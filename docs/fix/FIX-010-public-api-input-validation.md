@@ -5,7 +5,7 @@
 | Status | Draft |
 | Date | 2026-06-29 |
 | Owner | Ruslan Gabitov |
-| Related | [ADR-006 v.2 Event delivery](../design/ADR-006-event-subscription-delivery.md), [ADR-013 v.1 Lifecycle/handle](../design/ADR-013-instance-lifecycle-and-handle.md) |
+| Related | [ADR-006 v.2 Event delivery](../design/ADR-006-events-and-subscriptions.md), [ADR-013 v.1 Lifecycle/handle](../design/ADR-013-instance-observability.md) |
 
 One-shot remediation of a class of defects surfaced by the 2026-06-29 code
 reviews (`docs/audit/code-review-codex-second-pass-2026-06-29.md` §3/§4/§5/§7,

@@ -5,7 +5,7 @@
 | Status | Draft |
 | Date | 2026-06-29 |
 | Owner | Ruslan Gabitov |
-| Related | [ADR-006 v.2 Event delivery](../design/ADR-006-event-subscription-delivery.md) |
+| Related | [ADR-006 v.2 Event delivery](../design/ADR-006-events-and-subscriptions.md) |
 
 One-shot remediation of two **silent interface no-ops** surfaced by
 `docs/audit/code-review-third-pass-2026-06-29.md` §2.2 / §2.3: event-definition
