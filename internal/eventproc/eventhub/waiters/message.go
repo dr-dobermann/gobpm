@@ -352,7 +352,7 @@ func (mw *messageWaiter) fireDefinition(
 				foundation.WithID(item.ID())),
 			data.ReadyDataState))
 
-	return mw.eDef.CloneEvent([]data.Data{datum})
+	return mw.eDef.CloneEventDefinition([]data.Data{datum})
 }
 
 // Stop terminates the delivery goroutine of a running waiter.

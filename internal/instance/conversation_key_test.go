@@ -149,7 +149,7 @@ func msgEDef(t *testing.T, name, value string) *events.MessageEventDefinition {
 
 // msgEDefID is msgEDef with a fixed definition id. A test seeds the loop's msgIdx with that
 // id (via evWaiting.msgDefIDs) and then delivers a same-id message — mirroring how the real
-// fire path clones the registered definition with its id preserved (CloneEvent, SRD-027 FR-8),
+// fire path clones the registered definition with its id preserved (CloneEventDefinition, SRD-027 FR-8),
 // so a fired message resolves back to the parked track through the index.
 func msgEDefID(t *testing.T, name, value, id string) *events.MessageEventDefinition {
 	t.Helper()

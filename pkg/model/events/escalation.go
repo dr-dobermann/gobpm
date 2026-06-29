@@ -91,6 +91,13 @@ type EscalationEventDefinition struct {
 	definition
 }
 
+// Compile-time conformance (FIX-011): CloneEventDefinition must match
+// flow.EventDefCloner, else the throw-path clone-with-data step silently no-ops.
+var (
+	_ flow.EventDefinition = (*EscalationEventDefinition)(nil)
+	_ flow.EventDefCloner  = (*EscalationEventDefinition)(nil)
+)
+
 // NewEscalationEventDefintion creates a new EscalationEventDefintion and
 // returns its pointer.
 func NewEscalationEventDefintion(
@@ -152,9 +159,10 @@ func (eed *EscalationEventDefinition) GetItemsList() []*data.ItemDefinition {
 	return append(idd, eed.escalation.structure)
 }
 
-// CloneEvent clones EventDefinition with dedicated data.ItemDefinition
-// list.
-func (eed *EscalationEventDefinition) CloneEvent(
+// CloneEventDefinition clones EventDefinition with dedicated data.ItemDefinition
+// list. It satisfies flow.EventDefCloner (was previously named CloneEvent and so
+// never satisfied the interface — FIX-011).
+func (eed *EscalationEventDefinition) CloneEventDefinition(
 	evtData []data.Data,
 ) (flow.EventDefinition, error) {
 	var iDef *data.ItemDefinition
@@ -196,8 +204,3 @@ func (eed *EscalationEventDefinition) CloneEvent(
 }
 
 // -----------------------------------------------------------------------------
-
-// interface check
-var (
-	_ flow.EventDefinition = (*EscalationEventDefinition)(nil)
-)

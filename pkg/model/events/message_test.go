@@ -57,7 +57,7 @@ func TestNewMessageEventDefinition(t *testing.T) {
 
 			med := events.MustMessageEventDefinition(msg, nil)
 
-			_, err := med.CloneEvent([]data.Data{
+			_, err := med.CloneEventDefinition([]data.Data{
 				data.MustParameter(
 					"test_param",
 					data.MustItemAwareElement(
@@ -80,7 +80,7 @@ func TestNewMessageEventDefinition(t *testing.T) {
 
 			med := events.MustMessageEventDefinition(msg, nil)
 
-			nmed, err := med.CloneEvent([]data.Data{
+			nmed, err := med.CloneEventDefinition([]data.Data{
 				data.MustParameter(
 					"test_param",
 					data.MustItemAwareElement(

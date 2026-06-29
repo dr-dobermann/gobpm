@@ -92,7 +92,7 @@ func TestEscalationDefinition(t *testing.T) {
 				events.MustEscalation("test", "code", iDef))
 			require.NoError(t, err)
 
-			_, err = ed.CloneEvent(
+			_, err = ed.CloneEventDefinition(
 				[]data.Data{data.MustParameter(
 					"test",
 					data.MustItemAwareElement(
@@ -114,7 +114,7 @@ func TestEscalationDefinition(t *testing.T) {
 				events.MustEscalation("test", "code", iDef))
 			require.NoError(t, err)
 
-			ced, err := ed.CloneEvent(
+			ced, err := ed.CloneEventDefinition(
 				[]data.Data{data.MustParameter(
 					"test",
 					data.MustItemAwareElement(

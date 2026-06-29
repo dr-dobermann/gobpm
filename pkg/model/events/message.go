@@ -17,6 +17,13 @@ type MessageEventDefinition struct {
 	definition
 }
 
+// Compile-time conformance (FIX-011): CloneEventDefinition must match
+// flow.EventDefCloner, else the throw-path clone-with-data step silently no-ops.
+var (
+	_ flow.EventDefinition = (*MessageEventDefinition)(nil)
+	_ flow.EventDefCloner  = (*MessageEventDefinition)(nil)
+)
+
 // NewMessageEventDefinition creates a new MessageEventDefinition and
 // returns its pointer. If nil message was given then error returned.
 func NewMessageEventDefinition(
@@ -99,9 +106,10 @@ func (med *MessageEventDefinition) GetItemsList() []*data.ItemDefinition {
 	return append(idd, med.message.Item())
 }
 
-// CloneEvent clones EventDefinition with dedicated data.ItemDefinition
-// list.
-func (med *MessageEventDefinition) CloneEvent(
+// CloneEventDefinition clones EventDefinition with dedicated data.ItemDefinition
+// list. It satisfies flow.EventDefCloner (the method was previously named
+// CloneEvent and so never satisfied the interface — FIX-011).
+func (med *MessageEventDefinition) CloneEventDefinition(
 	evtData []data.Data,
 ) (flow.EventDefinition, error) {
 	var iDef *data.ItemDefinition
@@ -151,7 +159,7 @@ func (med *MessageEventDefinition) CloneEvent(
 // registers a DISTINCT EventHub waiter (keyed by eDef id): without it concurrent
 // instances waiting on the same message would share one waiter and a single
 // point-to-point message would wake them all (SRD-017 §4.3). It is the opposite
-// of CloneEvent, which keeps the id so a FIRED event still matches its waiter.
+// of CloneEventDefinition, which keeps the id so a FIRED event still matches its waiter.
 func (med *MessageEventDefinition) CloneForInstance() flow.EventDefinition {
 	return &MessageEventDefinition{
 		definition: definition{BaseElement: *foundation.MustBaseElement()},

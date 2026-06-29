@@ -128,7 +128,7 @@ func TestIntermediateThrowEventExec(t *testing.T) {
 
 	t.Run("a non-message throw propagates through the event bus",
 		func(t *testing.T) {
-			sig, err := events.NewSignal("sig", data.MustItemDefinition(nil))
+			sig, err := events.NewSignal("sig", nil)
 			require.NoError(t, err)
 			sigEd, err := events.NewSignalEventDefinition(sig)
 			require.NoError(t, err)

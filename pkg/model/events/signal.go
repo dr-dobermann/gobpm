@@ -61,6 +61,11 @@ type SignalEventDefinition struct {
 	definition
 }
 
+// Compile-time conformance (FIX-011): GetItemsList must override the embedded
+// definition's empty implementation; a misspelling would silently report no
+// items.
+var _ flow.EventDefinition = (*SignalEventDefinition)(nil)
+
 // NewSignalEventDefinition creates a new SignalEventDefinition with given
 // signal. If signal is empty, then error returned.
 func NewSignalEventDefinition(
@@ -121,11 +126,13 @@ func (sed *SignalEventDefinition) CheckItemDefinition(iDefID string) bool {
 	return sed.signal.structure.ID() == iDefID
 }
 
-// GetItemList returns a list of data.ItemDefinition the EventDefinition
-// is based on.
+// GetItemsList returns a list of data.ItemDefinition the EventDefinition
+// is based on. It overrides the embedded definition's empty implementation so a
+// signal's payload is reported (the method was previously misspelled
+// GetItemList and never overrode flow.EventDefinition — FIX-011).
 // If EventDefinition isn't based on any data.ItemDefinition, empty list
 // will be returned.
-func (sed *SignalEventDefinition) GetItemList() []*data.ItemDefinition {
+func (sed *SignalEventDefinition) GetItemsList() []*data.ItemDefinition {
 	idd := make([]*data.ItemDefinition, 0, 1)
 
 	if sed.signal.structure == nil {
