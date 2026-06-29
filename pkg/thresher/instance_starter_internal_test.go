@@ -416,6 +416,83 @@ func TestRunRegisterStartersError(t *testing.T) {
 	require.Error(t, th.Run(ctx))
 }
 
+// TestRegisterProcessSupersedeHubErrors covers the two latest-supersedes error
+// paths in RegisterProcess: tearing down the previous latest's starters, then
+// registering the new version's, each surfaces a hub failure (SRD-031.A FR-7).
+func TestRegisterProcessSupersedeHubErrors(t *testing.T) {
+	proc := msgStartProcess(t, "p-sup-err", "order placed")
+
+	seedV1 := func(t *testing.T, th *Thresher) string {
+		t.Helper()
+
+		s1, err := snapshot.New(proc)
+		require.NoError(t, err)
+
+		v1 := &ProcessRegistration{
+			key: s1.ProcessID, version: 1, snapshot: s1,
+			starters: scanInstantiatingStarts(s1, th),
+		}
+
+		th.m.Lock()
+		th.registrations[s1.ProcessID] = []*ProcessRegistration{v1}
+		th.state = Started
+		th.m.Unlock()
+
+		return s1.ProcessID
+	}
+
+	t.Run("teardown of the superseded version errors", func(t *testing.T) {
+		th, err := New("sup-teardown")
+		require.NoError(t, err)
+
+		mh := mockeventproc.NewMockEventHub(t)
+		mh.EXPECT().
+			UnregisterEvent(mock.Anything, mock.Anything).
+			Return(fmt.Errorf("hub teardown rejected")).
+			Once()
+		th.eventHub = mh
+
+		seedV1(t, th)
+
+		_, err = th.RegisterProcess(proc) // v2 supersedes → teardown fails
+		require.Error(t, err)
+	})
+
+	t.Run("re-register of the new version errors", func(t *testing.T) {
+		th, err := New("sup-rereg")
+		require.NoError(t, err)
+
+		mh := mockeventproc.NewMockEventHub(t)
+		mh.EXPECT().
+			UnregisterEvent(mock.Anything, mock.Anything).
+			Return(nil).
+			Once()
+		mh.EXPECT().
+			RegisterPersistentEvent(mock.Anything, mock.Anything).
+			Return(fmt.Errorf("hub register rejected")).
+			Once()
+		th.eventHub = mh
+
+		seedV1(t, th)
+
+		_, err = th.RegisterProcess(proc) // teardown ok, re-register fails
+		require.Error(t, err)
+	})
+}
+
+// TestStartersSkipsEmptyVersionSlice covers the defensive empty-slice guard in
+// Starters: a key mapped to a zero-length version slice contributes no starter.
+func TestStartersSkipsEmptyVersionSlice(t *testing.T) {
+	th, err := New("empty-slice")
+	require.NoError(t, err)
+
+	th.m.Lock()
+	th.registrations["ghost"] = nil
+	th.m.Unlock()
+
+	require.Empty(t, th.Starters())
+}
+
 // corrStartProcess builds a message-start process declaring a CorrelationKey
 // whose single property extracts the payload value (read from the message item)
 // as the key. The start is wired to an EndEvent.
