@@ -484,24 +484,37 @@ func (t *Thresher) RegisterProcess(
 	}
 
 	t.m.Lock()
+	prev := t.registrations[s.ProcessID]
+	var prevLatest *ProcessRegistration
+	if len(prev) > 0 {
+		prevLatest = prev[len(prev)-1]
+	}
 	reg := &ProcessRegistration{
 		key:      s.ProcessID,
-		version:  len(t.registrations[s.ProcessID]) + 1,
+		version:  len(prev) + 1,
 		id:       foundation.GenerateID(),
 		snapshot: s,
 		starters: starters,
 		manual:   rc.manualStart,
 	}
-	t.registrations[s.ProcessID] = append(t.registrations[s.ProcessID], reg)
+	t.registrations[s.ProcessID] = append(prev, reg)
 	started := t.state == Started
 	t.m.Unlock()
 
-	// Register the starters on the EventHub OUTSIDE t.m: the hub path is
-	// independent of t.m, and holding the engine lock across an engine-subsystem
-	// call is the deadlock class FIX-002 RC2 warns about. Before Run the hub
-	// isn't started yet, so registration is deferred to Run. (Latest-supersedes
-	// teardown of a prior version's starters is milestone A4.)
+	// Touch the EventHub OUTSIDE t.m: the hub path is independent of t.m, and
+	// holding the engine lock across an engine-subsystem call is the deadlock
+	// class FIX-002 RC2 warns about. Before Run the hub isn't started yet, so
+	// registration is deferred to Run (registerAllStarters wires latest-only).
 	if started {
+		// Latest-supersedes (ADR-019 §2.5): the new version takes over auto-start,
+		// so the previous latest's starters stop firing. A superseded version only
+		// finishes its already-running instances.
+		if prevLatest != nil {
+			if err := t.unregisterStarters(prevLatest.starters); err != nil {
+				return nil, err
+			}
+		}
+
 		if err := t.registerStarters(starters); err != nil {
 			return nil, err
 		}
@@ -510,49 +523,72 @@ func (t *Thresher) RegisterProcess(
 	return reg, nil
 }
 
-// UnregisterProcess removes a registered process: it tears down every
-// persistent instance-starter subscription registered for it and drops its
-// snapshot. It is the teardown counterpart of RegisterProcess (SRD-015 FR-2).
-// Running instances of the process are unaffected — they keep executing against
-// their already-built snapshot; release finished instances via Forget, or stop
-// everything via Shutdown (SRD-019 FR-8).
-func (t *Thresher) UnregisterProcess(processID string) error {
-	processID = strings.TrimSpace(processID)
-	if processID == "" {
+// UnregisterProcess removes one registered version — the one named by reg — by
+// tearing down its live instance-starter subscriptions (if any) and dropping it
+// from the registry. It is the teardown counterpart of RegisterProcess. Running
+// instances of that version are unaffected — they keep executing against their
+// own frozen snapshot; stop everything via Shutdown (SRD-019 FR-8).
+//
+// Only the latest version of a key has live starters (latest-supersedes), so a
+// superseded version has nothing on the hub to tear down. Removing the latest
+// version does NOT re-arm the previous one: auto-start for the key ceases until a
+// new version is registered (ADR-019 §2.5; no auto-promotion).
+func (t *Thresher) UnregisterProcess(reg *ProcessRegistration) error {
+	if reg == nil {
 		return errs.New(
-			errs.M("empty process id"),
+			errs.M("UnregisterProcess: a nil ProcessRegistration isn't allowed"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
 	t.m.Lock()
-	regs, ok := t.registrations[processID]
+	regs := t.registrations[reg.key]
+	idx := -1
+	for i, r := range regs {
+		if r == reg {
+			idx = i
+
+			break
+		}
+	}
+	wasLatest := idx >= 0 && idx == len(regs)-1
 	started := t.state == Started
-	if ok {
-		delete(t.registrations, processID)
+
+	// promote holds the now-newest remaining version's starters when the latest
+	// is removed — it is promoted to the live auto-start version so the invariant
+	// "latest registration == live starter set" keeps holding (FR-8).
+	var promote []*instanceStarter
+	if idx >= 0 {
+		regs = append(regs[:idx], regs[idx+1:]...)
+		if len(regs) == 0 {
+			delete(t.registrations, reg.key)
+		} else {
+			t.registrations[reg.key] = regs
+			if wasLatest {
+				promote = regs[len(regs)-1].starters
+			}
+		}
 	}
 	t.m.Unlock()
 
-	if !ok {
+	if idx < 0 {
 		return errs.New(
-			errs.M("process %q isn't registered", processID),
+			errs.M("registration %q (process %q v%d) isn't registered in this engine",
+				reg.id, reg.key, reg.version),
 			errs.C(errorClass, errs.ObjectNotFound))
 	}
 
-	// Tear down the hub subscriptions of every version OUTSIDE t.m (same reason
-	// as RegisterProcess). Starters are only on the hub once the engine is
-	// Started; before Run they were never registered, so nothing to unregister.
-	if started {
-		for _, reg := range regs {
-			for _, st := range reg.starters {
-				if err := t.eventHub.UnregisterEvent(st, st.eDef.ID()); err != nil {
-					return errs.New(
-						errs.M("couldn't unregister instance-starter subscription"),
-						errs.C(errorClass, errs.OperationFailed),
-						errs.D("process_id", processID),
-						errs.D("event_definition_id", st.eDef.ID()),
-						errs.E(err))
-				}
-			}
+	// Maintain the hub subscriptions OUTSIDE t.m. Only the latest version's
+	// starters are live (latest-supersedes), so removing a superseded version
+	// touches nothing; before Run nothing is on the hub at all.
+	if started && wasLatest {
+		if err := t.unregisterStarters(reg.starters); err != nil {
+			return err
+		}
+
+		// promote the now-newest remaining version to live auto-start (empty for
+		// a manual-start version or when the key had a single version).
+		if len(promote) > 0 {
+			return t.registerStarters(promote)
 		}
 	}
 
@@ -577,14 +613,33 @@ func (t *Thresher) registerStarters(starters []*instanceStarter) error {
 	return nil
 }
 
-// registerAllStarters registers the instance-starters of every process
-// registered before Run (the hub only accepts registrations once Started).
+// unregisterStarters tears down each instance-starter's persistent subscription
+// on the engine EventHub. Shared by UnregisterProcess and the latest-supersedes
+// teardown in RegisterProcess.
+func (t *Thresher) unregisterStarters(starters []*instanceStarter) error {
+	for _, st := range starters {
+		if err := t.eventHub.UnregisterEvent(st, st.eDef.ID()); err != nil {
+			return errs.New(
+				errs.M("couldn't unregister instance-starter subscription"),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.D("process_id", st.snapshot.ProcessID),
+				errs.D("event_definition_id", st.eDef.ID()),
+				errs.E(err))
+		}
+	}
+
+	return nil
+}
+
+// registerAllStarters registers, at Run, the instance-starters of the LATEST
+// version of every process registered before Run (only the latest auto-starts —
+// latest-supersedes; the hub accepts registrations once Started).
 func (t *Thresher) registerAllStarters() error {
 	t.m.Lock()
 	var all []*instanceStarter
 	for _, regs := range t.registrations {
-		for _, reg := range regs {
-			all = append(all, reg.starters...)
+		if n := len(regs); n > 0 {
+			all = append(all, regs[n-1].starters...)
 		}
 	}
 	t.m.Unlock()

@@ -108,14 +108,22 @@ func TestStarters(t *testing.T) {
 // a live instance, which keeps running (FR-8).
 func TestUnregisterProcessWithLiveInstance(t *testing.T) {
 	bp := blockingProcess(t, "unreg-live")
-	th, cancel := runEngine(t, bp)
-	defer cancel()
 
-	h, err := th.StartLatest(bp.ID())
+	th, err := thresher.New("test-unreg-live")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, th.Run(ctx))
+
+	reg, err := th.RegisterProcess(bp)
+	require.NoError(t, err)
+
+	h, err := th.StartProcess(reg)
 	require.NoError(t, err)
 	time.Sleep(150 * time.Millisecond)
 
-	require.NoError(t, th.UnregisterProcess(bp.ID()))
+	require.NoError(t, th.UnregisterProcess(reg))
 
 	// The live instance is unaffected: still Active and looked-up-able.
 	require.Equal(t, thresher.StateActive, h.State())

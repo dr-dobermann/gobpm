@@ -193,6 +193,17 @@ of "do all registered versions react to the same incoming message?" — they do
 not; the latest version owns the trigger. Manual-start versions register no
 starters, so there is nothing to supersede.
 
+The supersession is symmetric on removal: **un**registering the latest version
+**promotes** the now-newest remaining version — its starters are registered in
+turn, so it becomes the live auto-start version. The invariant *the latest
+registered version is the live auto-start version* therefore holds at all times,
+in both directions. This mirrors Camunda's delete-deployment behaviour (the
+previous version's start-event subscriptions re-activate) and gives users a
+direct lever to re-activate an earlier version's auto-start: remove the later
+versions until the wanted one is latest again. A previous (non-latest) version
+remains startable, but **only manually** via `StartVersion(key, n)` — it holds
+no hub subscriptions while a newer version exists.
+
 Correlation/dedup of an in-flight conversation ([ADR-016
 v.1](ADR-016-message-correlation.md)) remains keyed within the spawning version's
 lineage; because only the latest version auto-starts, create-or-join stays

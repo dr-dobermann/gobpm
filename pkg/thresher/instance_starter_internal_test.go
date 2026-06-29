@@ -247,7 +247,7 @@ func TestStarterLifecycle(t *testing.T) {
 		require.NoError(t, err)
 
 		proc := msgStartProcess(t, "p-life", "order placed")
-		_, err = th.RegisterProcess(proc)
+		reg, err := th.RegisterProcess(proc)
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -257,7 +257,7 @@ func TestStarterLifecycle(t *testing.T) {
 		// A clean UnregisterProcess proves the starter WAS registered on the hub
 		// at Run (the hub's UnregisterEvent would error ObjectNotFound were it
 		// not), and clears the bookkeeping.
-		require.NoError(t, th.UnregisterProcess(proc.ID()))
+		require.NoError(t, th.UnregisterProcess(reg))
 
 		th.m.Lock()
 		_, hasReg := th.registrations[proc.ID()]
@@ -274,9 +274,9 @@ func TestStarterLifecycle(t *testing.T) {
 		require.NoError(t, th.Run(ctx))
 
 		proc := msgStartProcess(t, "p-after", "order placed")
-		_, err = th.RegisterProcess(proc)
+		reg, err := th.RegisterProcess(proc)
 		require.NoError(t, err)
-		require.NoError(t, th.UnregisterProcess(proc.ID()))
+		require.NoError(t, th.UnregisterProcess(reg))
 	})
 
 	t.Run("manual-start: no starter, clean teardown", func(t *testing.T) {
@@ -288,17 +288,24 @@ func TestStarterLifecycle(t *testing.T) {
 		require.NoError(t, th.Run(ctx))
 
 		proc := msgStartProcess(t, "p-mlife", "order placed")
-		_, err = th.RegisterProcess(proc, WithManualStart())
+		reg, err := th.RegisterProcess(proc, WithManualStart())
 		require.NoError(t, err)
-		require.NoError(t, th.UnregisterProcess(proc.ID()))
+		require.NoError(t, th.UnregisterProcess(reg))
 	})
 
-	t.Run("unregister unknown / empty id rejected", func(t *testing.T) {
+	t.Run("nil / foreign handle rejected", func(t *testing.T) {
 		th, err := New("life-bad")
 		require.NoError(t, err)
 
-		require.Error(t, th.UnregisterProcess("nope"))
-		require.Error(t, th.UnregisterProcess("   "))
+		require.Error(t, th.UnregisterProcess(nil))
+
+		// a handle for a process never registered in this engine is rejected.
+		other, err := New("life-other")
+		require.NoError(t, err)
+		foreign, err := other.RegisterProcess(
+			msgStartProcess(t, "p-foreign", "order placed"))
+		require.NoError(t, err)
+		require.Error(t, th.UnregisterProcess(foreign))
 	})
 }
 
@@ -366,14 +373,16 @@ func TestUnregisterProcessHubError(t *testing.T) {
 		Once()
 	th.eventHub = mh
 
-	th.m.Lock()
-	th.registrations[s.ProcessID] = []*ProcessRegistration{
-		{key: s.ProcessID, version: 1, snapshot: s, starters: starters},
+	reg := &ProcessRegistration{
+		key: s.ProcessID, version: 1, snapshot: s, starters: starters,
 	}
+
+	th.m.Lock()
+	th.registrations[s.ProcessID] = []*ProcessRegistration{reg}
 	th.state = Started
 	th.m.Unlock()
 
-	require.Error(t, th.UnregisterProcess(s.ProcessID))
+	require.Error(t, th.UnregisterProcess(reg))
 }
 
 // TestRunRegisterStartersError covers Run's startup-registration error path: a

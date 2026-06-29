@@ -104,15 +104,20 @@ func (t *Thresher) Starters() []StarterInfo {
 
 	out := make([]StarterInfo, 0, len(t.registrations))
 
+	// Only the latest version of a key has live starters (latest-supersedes), so
+	// the live starter set is the latest registration's per key.
 	for key, regs := range t.registrations {
-		for _, reg := range regs {
-			for _, s := range reg.starters {
-				out = append(out, StarterInfo{
-					ProcessID: key,
-					StartNode: s.startNode.Name(),
-					Trigger:   triggerName(s.eDef),
-				})
-			}
+		n := len(regs)
+		if n == 0 {
+			continue
+		}
+
+		for _, s := range regs[n-1].starters {
+			out = append(out, StarterInfo{
+				ProcessID: key,
+				StartNode: s.startNode.Name(),
+				Trigger:   triggerName(s.eDef),
+			})
 		}
 	}
 
