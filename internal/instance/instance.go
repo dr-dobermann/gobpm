@@ -88,8 +88,7 @@ type Instance struct {
 	rr                  interactor.Registrator
 	parentEventProducer eventproc.EventProducer
 	events              chan trackEvent
-	dataPlane           *scope.Scope
-	reader              service.DataReader
+	sc                  instanceScope
 	convKeys            map[string]string
 	now                 func() time.Time
 	tracksSnap          atomic.Pointer[[]*track]
@@ -97,7 +96,6 @@ type Instance struct {
 	s                   *snapshot.Snapshot
 	tracks              map[string]*track
 	loopDone            chan struct{}
-	rootScope           scope.DataPath
 	foundation.BaseElement
 	observers  []obsReg
 	trackCount atomic.Int64
@@ -212,7 +210,8 @@ func New(
 	}
 	inst.state.Store(uint32(Created))
 
-	if err := inst.loadProperties(parentRoot); err != nil {
+	if err := inst.sc.load(
+		parentRoot, inst.s.ProcessName, inst.s.Properties, &inst); err != nil {
 		return nil, errs.New(
 			errs.M("couldn't load process'es properties into Instance scope"),
 			errs.E(err),
@@ -236,7 +235,7 @@ func New(
 
 		bornStart = bs
 
-		if err := inst.bindEventPayload(cfg.bornEvent); err != nil {
+		if err := inst.sc.bindEventPayload(cfg.bornEvent); err != nil {
 			return nil, err
 		}
 	}
@@ -292,27 +291,6 @@ func NewFromEvent(
 	return New(s, parentRoot, er, ep, rr,
 		withBornEvent(startNodeID, eDef),
 		withConversationKey(keyName, keyValue))
-}
-
-// bindEventPayload binds the payload carried by a born-from-event start into the
-// instance root scope: each item the fired event definition carries is committed
-// as a Ready datum keyed by its item id (the msgflow.Bind shape, at root), so a
-// downstream node reading that item observes the message payload (SRD-015 §4.4).
-func (inst *Instance) bindEventPayload(eDef flow.EventDefinition) error {
-	items := eDef.GetItemsList()
-	if len(items) == 0 {
-		return nil
-	}
-
-	dd := make([]data.Data, 0, len(items))
-	for _, item := range items {
-		dd = append(dd, data.MustParameter(item.ID(),
-			data.MustItemAwareElement(item, data.ReadyDataState)))
-	}
-
-	// Commit returns a self-classifying errs error (container/writable/name
-	// checks); pass it through rather than re-wrapping at this internal seam.
-	return inst.dataPlane.Commit(inst.rootScope, dd...)
 }
 
 // AssociateConversationKey records value under the conversation key named name
@@ -509,45 +487,6 @@ func (inst *Instance) extendReceivers(value string) {
 	}
 }
 
-// loadProperties creates the instance's data plane rooted under parentRoot
-// and commits the process properties into the root container scope.
-func (inst *Instance) loadProperties(parentRoot scope.DataPath) error {
-	root := parentRoot
-	if root == scope.EmptyDataPath {
-		root = scope.RootDataPath
-	}
-
-	var err error
-
-	inst.rootScope, err = root.Append(inst.s.ProcessName)
-	if err != nil {
-		return fmt.Errorf("couldn't create instance's scope data path: %w", err)
-	}
-
-	inst.dataPlane, err = scope.New(inst.rootScope, inst)
-	if err != nil {
-		return fmt.Errorf("couldn't create instance's data plane: %w", err)
-	}
-
-	// Build the read-only root data reader once (it backs host observation via
-	// the InstanceHandle, SRD-018): an empty frame at the open root scope reads
-	// live, so it sees the properties committed just below plus runtime vars.
-	reader, ferr := scope.NewFrame(
-		"observe", "observe", inst.dataPlane.Root(), inst.dataPlane)
-	if ferr != nil {
-		return fmt.Errorf("couldn't build instance data reader: %w", ferr)
-	}
-
-	inst.reader = reader
-
-	dd := make([]data.Data, 0, len(inst.s.Properties))
-	for _, p := range inst.s.Properties {
-		dd = append(dd, p)
-	}
-
-	return inst.dataPlane.Commit(inst.rootScope, dd...)
-}
-
 // State returns current state of the Instance.
 func (inst *Instance) State() State {
 	return State(inst.state.Load())
@@ -585,7 +524,7 @@ func (inst *Instance) Done() <-chan struct{} {
 // service.DataReader surface, never a mutating method. Built once in New (an
 // empty frame at the process-root scope), so this getter cannot fail.
 func (inst *Instance) DataReader() service.DataReader {
-	return inst.reader
+	return inst.sc.reader
 }
 
 // Run starts the process instance execution. Execution could be stopped by

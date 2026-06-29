@@ -24,7 +24,7 @@ func TestExecEnv(t *testing.T) {
 	require.NoError(t, err)
 
 	f, err := scope.NewFrame("track-x", "node-x",
-		inst.dataPlane.Root(), inst.dataPlane)
+		inst.sc.plane.Root(), inst.sc.plane)
 	require.NoError(t, err)
 
 	env := newExecEnv(inst, f)

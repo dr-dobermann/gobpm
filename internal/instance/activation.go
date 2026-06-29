@@ -3,7 +3,6 @@ package instance
 import (
 	"context"
 
-	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -18,9 +17,7 @@ import (
 // only process data does, so there is no name collision.
 func (inst *Instance) guardEval(ctx context.Context) exec.GuardEval {
 	return func(cond data.FormalExpression) (bool, error) {
-		f, err := scope.NewFrame(
-			"complex-guard", "complex-guard",
-			inst.dataPlane.Root(), inst.dataPlane)
+		f, err := inst.sc.openFrame("complex-guard", "complex-guard")
 		if err != nil {
 			return false,
 				errs.New(

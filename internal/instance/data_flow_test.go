@@ -134,7 +134,7 @@ func TestDataCrossingParallelFork(t *testing.T) {
 		"res-a": "from-A",
 		"res-b": "from-B",
 	} {
-		d, err := inst.dataPlane.GetDataByID(inst.rootScope, id)
+		d, err := inst.sc.plane.GetDataByID(inst.sc.root, id)
 		require.NoError(t, err, "result %q must be committed", id)
 		require.Equal(t, want, d.Value().Get(ctx))
 	}
@@ -199,6 +199,6 @@ func TestFrameDiscardOnFailure(t *testing.T) {
 		"the failing task must fail its track")
 
 	// nothing of the failed execution reached the container scope.
-	_, err = inst.dataPlane.GetDataByID(inst.rootScope, "res-bad")
+	_, err = inst.sc.plane.GetDataByID(inst.sc.root, "res-bad")
 	require.Error(t, err, "a discarded frame must leave no scope residue")
 }

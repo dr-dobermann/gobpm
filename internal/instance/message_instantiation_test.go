@@ -97,7 +97,7 @@ func TestNewFromEventBornInstance(t *testing.T) {
 	require.NoError(t, inst.LastErr())
 
 	// the payload was bound into the root scope under the message item id.
-	d, err := inst.dataPlane.GetDataByID(inst.rootScope, "order_in")
+	d, err := inst.sc.plane.GetDataByID(inst.sc.root, "order_in")
 	require.NoError(t, err)
 	require.Equal(t, "ORD-99", d.Value().Get(ctx))
 }
@@ -204,7 +204,7 @@ func TestBindEventPayloadNoItems(t *testing.T) {
 
 	// a signal definition carries no items.
 	require.NoError(t,
-		inst.bindEventPayload(events.MustSignalEventDefinition(&events.Signal{})))
+		inst.sc.bindEventPayload(events.MustSignalEventDefinition(&events.Signal{})))
 }
 
 // TestNewBlankProcessName covers New's loadProperties error path: a snapshot

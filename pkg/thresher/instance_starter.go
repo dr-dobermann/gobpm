@@ -97,75 +97,27 @@ func (s *instanceStarter) deriveKey(
 	return key, nil
 }
 
-// scanInstantiatingStarts walks a process snapshot and builds an instanceStarter
-// for every instantiating start trigger: a StartEvent (or instantiate
-// ReceiveTask) carrying a message or signal definition with no incoming sequence
-// flow (§13.2 / §13.5.1; signals SRD-026). It builds the starters but does not
-// register them — the Thresher decides when (auto mode, at the later of
-// RegisterProcess/Run) and whether (manual mode registers none, FR-9).
+// scanInstantiatingStarts wraps each of the snapshot's precomputed instantiating
+// start descriptors (snapshot.InstantiatingStarts, discovered once in
+// snapshot.New) into an instanceStarter, binding the engine: the live Thresher and
+// a fresh starter id. It builds the starters but does not register them — the
+// Thresher decides when (auto mode, at the later of RegisterProcess/Run) and
+// whether (manual mode registers none, FR-9).
 //
 // It is an unexported helper called only by RegisterProcess with a freshly built
 // snapshot and the live Thresher, so it takes both as guaranteed non-nil.
 func scanInstantiatingStarts(s *snapshot.Snapshot, thr *Thresher) []*instanceStarter {
-	var starters []*instanceStarter
+	starters := make([]*instanceStarter, 0, len(s.InstantiatingStarts))
 
-	for _, n := range s.Nodes {
-		if len(n.Incoming()) != 0 || !isInstantiatingStartNode(n) {
-			continue
-		}
-
-		en, ok := n.(flow.EventNode)
-		if !ok {
-			continue
-		}
-
-		// An instantiating Event-Based gateway exposes its arms' definitions as its
-		// union (SRD-024), detected structurally so the thresher stays free of the
-		// gateways package. Exclusive-start: each fired arm's instance runs from that
-		// ARM's continuation, so the arm is the start node (SRD-025 §4.2). Parallel-start:
-		// the instance is born from the GATE (seedParallelStart pre-fires the firing arm,
-		// arms the others), so the gate stays the start node and the arms share the
-		// gate's CorrelationKey, so resolveAndLaunch dedups to one instance (§4.3).
-		router, isGate := n.(interface {
-			ArmFor(flow.EventDefinition) (flow.Node, bool)
+	for _, is := range s.InstantiatingStarts {
+		starters = append(starters, &instanceStarter{
+			thr:       thr,
+			snapshot:  s,
+			startNode: is.StartNode,
+			eDef:      is.EventDef,
+			corrKey:   is.CorrelationKey,
+			id:        foundation.GenerateID(),
 		})
-
-		parallel := false
-		if ps, ok := n.(interface{ ParallelStart() bool }); ok {
-			parallel = ps.ParallelStart()
-		}
-
-		for _, eDef := range en.Definitions() {
-			// A start trigger backs an instance-starter when it is a message
-			// (point-to-point, optionally correlated) or a signal (broadcast, never
-			// correlated — BPMN §10.5.7, SRD-026). Other kinds don't instantiate here.
-			var corrKey *bpmncommon.CorrelationKey
-			switch eDef.(type) {
-			case *events.MessageEventDefinition:
-				corrKey = correlationKeyOf(n)
-			case *events.SignalEventDefinition:
-				// signals carry no correlation — corrKey stays nil
-			default:
-				continue
-			}
-
-			startNode := n
-			if isGate {
-				if arm, ok := router.ArmFor(eDef); ok && !parallel {
-					startNode = arm
-					corrKey = correlationKeyOf(arm)
-				}
-			}
-
-			starters = append(starters, &instanceStarter{
-				thr:       thr,
-				snapshot:  s,
-				startNode: startNode,
-				eDef:      eDef,
-				corrKey:   corrKey,
-				id:        foundation.GenerateID(),
-			})
-		}
 	}
 
 	return starters
@@ -188,38 +140,6 @@ func triggerName(eDef flow.EventDefinition) string {
 	}
 
 	return ""
-}
-
-// correlationKeyOf returns the CorrelationKey a start node declares, read
-// structurally so the thresher needn't depend on the concrete node package
-// (StartEvent / instantiate ReceiveTask both expose CorrelationKey()). nil =
-// name-match only.
-func correlationKeyOf(n flow.Node) *bpmncommon.CorrelationKey {
-	if ck, ok := n.(interface {
-		CorrelationKey() *bpmncommon.CorrelationKey
-	}); ok {
-		return ck.CorrelationKey()
-	}
-
-	return nil
-}
-
-// isInstantiatingStartNode reports whether n is an instantiating start trigger:
-// a message StartEvent, or an instantiate ReceiveTask (BPMN §13.2 / §13.3.3 /
-// §13.5.1). The incoming-flow check is the caller's. The ReceiveTask is matched
-// structurally (Instantiate() bool) to avoid coupling the thresher to the
-// activities package.
-func isInstantiatingStartNode(n flow.Node) bool {
-	if en, ok := n.(flow.EventNode); ok &&
-		en.EventClass() == flow.StartEventClass {
-		return true
-	}
-
-	if rt, ok := n.(interface{ Instantiate() bool }); ok && rt.Instantiate() {
-		return true
-	}
-
-	return false
 }
 
 // interface check
