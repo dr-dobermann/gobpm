@@ -380,8 +380,8 @@ func TestUnregisterProcessHubError(t *testing.T) {
 
 	th.m.Lock()
 	th.registrations[s.ProcessID] = []*ProcessRegistration{reg}
-	th.state = Started
 	th.m.Unlock()
+	th.state.Store(uint32(Started))
 
 	require.Error(t, th.UnregisterVersion(reg))
 }
@@ -436,8 +436,8 @@ func TestRegisterProcessSupersedeHubErrors(t *testing.T) {
 
 		th.m.Lock()
 		th.registrations[s1.ProcessID] = []*ProcessRegistration{v1}
-		th.state = Started
 		th.m.Unlock()
+		th.state.Store(uint32(Started))
 
 		return s1.ProcessID
 	}

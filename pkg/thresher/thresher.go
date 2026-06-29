@@ -38,6 +38,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub"
@@ -64,10 +65,19 @@ const (
 	Invalid State = iota
 	// NotStarted represents a thresher that has not been started.
 	NotStarted
-	// Started represents a thresher that has been started.
+	// Starting represents a thresher whose Run has claimed the start transition
+	// but whose EventHub is not yet accepting: a transient state between
+	// NotStarted and Started. Run publishes Started only after the hub is up.
+	Starting
+	// Started represents a thresher that has been started and is accepting
+	// launches.
 	Started
 	// Paused represents a thresher that has been paused.
 	Paused
+	// Stopping represents a thresher whose Shutdown has claimed the stop
+	// transition while teardown is in progress: a transient state between Started
+	// and Stopped. Stopped is published only once teardown completes.
+	Stopping
 	// Stopped represents a thresher that has been gracefully shut down. It is
 	// terminal: a Stopped thresher rejects RegisterProcess/StartProcess/Run.
 	Stopped
@@ -92,9 +102,11 @@ func (s State) String() string {
 
 	return []string{
 		"Invalid",
-		"NotStarted ",
+		"NotStarted",
+		"Starting",
 		"Started",
 		"Paused",
+		"Stopping",
 		"Stopped",
 	}[s]
 }
@@ -107,6 +119,18 @@ type instanceReg struct {
 }
 
 // Thresher represents the main BPMN process execution engine.
+//
+// Concurrency contract:
+//   - m guards ONLY the four registry maps (registrations, nextVersion,
+//     instances, seenKeys). Every critical section over them lives inside a
+//     "...Locked" helper that returns plain data; the lock is never held across
+//     an EventHub or launchInstance call.
+//   - state is atomic and lock-free — never read or written under m. This is
+//     what makes State() safe to call while m is held and removes the FIX-002
+//     RC2 self-deadlock vector by construction. Run/Shutdown drive it with
+//     compare-and-swap through the transitional Starting/Stopping states.
+//   - eventHub is an independent subsystem: it MUST NOT be touched while m is
+//     held. cfg is immutable after New.
 type Thresher struct {
 	ctx           context.Context
 	engineCancel  context.CancelFunc
@@ -118,7 +142,7 @@ type Thresher struct {
 	seenKeys      map[string]struct{}
 	id            string
 	m             sync.Mutex
-	state         State
+	state         atomic.Uint32 // a State; lock-free, NEVER accessed under m
 }
 
 // New creates a new empty Thresher in NotStarted state. Engine-level extensions
@@ -146,12 +170,12 @@ func New(id string, opts ...Option) (*Thresher, error) {
 	t := &Thresher{
 		id:            id,
 		cfg:           cfg,
-		state:         NotStarted,
 		registrations: map[string][]*ProcessRegistration{},
 		nextVersion:   map[string]int{},
 		instances:     map[string]instanceReg{},
 		seenKeys:      map[string]struct{}{},
 	}
+	t.state.Store(uint32(NotStarted))
 
 	// The EventHub receives the engine's resolved runtime (&t.cfg implements
 	// renv.EngineRuntime) so the waiters it builds reach Clock / ExpressionEngine
@@ -223,19 +247,17 @@ func (t *Thresher) logStartupConfig() {
 	}
 }
 
-// State returns current state of the Threasher.
+// State returns current state of the Threasher. It is lock-free (atomic load),
+// so it is safe to call while t.m is held — the property that removes the
+// FIX-002 RC2 re-entrant self-deadlock.
 func (t *Thresher) State() State {
-	t.m.Lock()
-	defer t.m.Unlock()
-
-	return t.state
+	//nolint:gosec // bounded State enum, no overflow
+	return State(t.state.Load())
 }
 
-// UpdateState sets new State ns for the Threasher if there is no any error.
+// UpdateState sets new State ns for the Threasher if there is no any error. It
+// is lock-free (atomic store): state is never guarded by t.m.
 func (t *Thresher) UpdateState(ns State) error {
-	t.m.Lock()
-	defer t.m.Unlock()
-
 	if err := ns.Validate(); err != nil {
 		return errs.New(
 			errs.M("couldn't set new state %q of the Thresher", ns.String()),
@@ -243,24 +265,28 @@ func (t *Thresher) UpdateState(ns State) error {
 			errs.E(err))
 	}
 
-	t.state = ns
+	t.state.Store(uint32(ns))
 
 	return nil
 }
 
 // Run starts Thresher event queue processing.
 func (t *Thresher) Run(ctx context.Context) error {
-	st := t.State()
-	if st != NotStarted {
-		return errs.New(
-			errs.M("couldn't start thresher from state %q (should be in NotStarted)", st),
-			errs.C(errorClass, errs.InvalidState))
-	}
-
 	if ctx == nil {
 		return errs.New(
 			errs.M("empty context"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	// Claim the start transition atomically: NotStarted -> Starting. A concurrent
+	// or repeat Run loses this CAS and is rejected. Starting is transient and not
+	// yet accepting — Started is published only after the hub is up, so no
+	// observer of Started ever sees a not-yet-ready hub.
+	if !t.state.CompareAndSwap(uint32(NotStarted), uint32(Starting)) {
+		return errs.New(
+			errs.M("couldn't start thresher from state %q (should be in NotStarted)",
+				t.State()),
+			errs.C(errorClass, errs.InvalidState))
 	}
 
 	// Derive the engine's own cancellable context: Shutdown cancels it to
@@ -277,6 +303,10 @@ func (t *Thresher) Run(ctx context.Context) error {
 	// in a goroutine guarded only by a 1ms sleep, which is not a memory
 	// barrier under the Go memory model).
 	if err := t.eventHub.Start(t.ctx); err != nil {
+		// The start failed: roll the claim back to NotStarted so a retry stays
+		// possible (preserving the pre-transitional-state behavior).
+		t.state.Store(uint32(NotStarted))
+
 		return errs.New(
 			errs.M("couldn't start eventHub"),
 			errs.C(errorClass, errs.OperationFailed),
@@ -287,13 +317,8 @@ func (t *Thresher) Run(ctx context.Context) error {
 		_ = t.eventHub.Run(t.ctx)
 	}()
 
-	err := t.UpdateState(Started)
-	if err != nil {
-		return errs.New(
-			errs.M("couldn't update Thresher state"),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err))
-	}
+	// Publish readiness: the hub is up and accepting.
+	t.state.Store(uint32(Started))
 
 	// Register the persistent instance-starters for processes registered before
 	// Run (the hub only accepts registrations once Started; SRD-015 FR-2).
@@ -316,15 +341,43 @@ func (t *Thresher) Run(ctx context.Context) error {
 // realizing ADR-006 §2.5). Idempotent; returns ctx.Err() if the deadline hits
 // before all instances settle.
 func (t *Thresher) Shutdown(ctx context.Context) error {
-	t.m.Lock()
-	if t.state == Stopped {
-		t.m.Unlock()
+	// Claim the stop transition atomically. Idempotent: a second Shutdown that
+	// finds Stopping/Stopped returns nil; one that finds NotStarted marks Stopped
+	// (nothing to tear down); Starting is rejected (cannot shut down mid-start —
+	// unreachable under the single-caller lifecycle). Started and Paused both own
+	// live engine resources, so both claim teardown.
+	switch st := t.State(); st {
+	case Stopped, Stopping:
+		return nil
+
+	case NotStarted:
+		t.state.Store(uint32(Stopped))
 
 		return nil
+
+	case Starting:
+		return errs.New(
+			errs.M("couldn't shut down thresher while it is starting"),
+			errs.C(errorClass, errs.InvalidState))
+
+	case Started, Paused:
+		if !t.state.CompareAndSwap(uint32(st), uint32(Stopping)) {
+			// Lost the race to a concurrent Shutdown that already claimed
+			// teardown; that caller owns publishing Stopped.
+			return nil
+		}
+
+	default: // Invalid — unreachable in the current lifecycle.
+		return errs.New(
+			errs.M("couldn't shut down thresher from state %q", st),
+			errs.C(errorClass, errs.InvalidState))
 	}
 
-	t.state = Stopped
+	// Teardown is claimed (Stopping). Publish the terminal Stopped once complete,
+	// on every exit path below (including the ctx-deadline path).
+	defer t.state.Store(uint32(Stopped))
 
+	t.m.Lock()
 	regs := make([]instanceReg, 0, len(t.instances))
 	for _, r := range t.instances {
 		regs = append(regs, r)
@@ -505,7 +558,7 @@ func (t *Thresher) RegisterProcess(
 		manual:   rc.manualStart,
 	}
 	t.registrations[s.ProcessID] = append(prev, reg)
-	started := t.state == Started
+	started := t.State() == Started
 	t.m.Unlock()
 
 	// Touch the EventHub OUTSIDE t.m: the hub path is independent of t.m, and
@@ -560,7 +613,7 @@ func (t *Thresher) UnregisterVersion(reg *ProcessRegistration) error {
 		}
 	}
 	wasLatest := idx >= 0 && idx == len(regs)-1
-	started := t.state == Started
+	started := t.State() == Started
 
 	// promote holds the now-newest remaining version's starters when the latest
 	// is removed — it is promoted to the live auto-start version so the invariant
@@ -632,7 +685,7 @@ func (t *Thresher) UnregisterProcess(key string) error {
 	if n := len(regs); n > 0 {
 		liveStarters = regs[n-1].starters
 	}
-	started := t.state == Started
+	started := t.State() == Started
 	delete(t.registrations, key)
 	delete(t.nextVersion, key)
 	t.m.Unlock()
