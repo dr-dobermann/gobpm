@@ -129,7 +129,7 @@ func TestSendReceiveMidFlow(t *testing.T) {
 	require.NoError(t, inst.LastErr())
 
 	// the received payload reached the container scope on the receive's commit.
-	d, err := inst.dataPlane.GetDataByID(inst.rootScope, "order_in")
+	d, err := inst.sc.plane.GetDataByID(inst.sc.root, "order_in")
 	require.NoError(t, err)
 	require.Equal(t, "ORD-7", d.Value().Get(ctx))
 }
@@ -271,7 +271,7 @@ func TestSendToIntermediateCatchEvent(t *testing.T) {
 		"the send/intermediate-catch round-trip must complete")
 	require.NoError(t, inst.LastErr())
 
-	d, err := inst.dataPlane.GetDataByID(inst.rootScope, "order_in")
+	d, err := inst.sc.plane.GetDataByID(inst.sc.root, "order_in")
 	require.NoError(t, err)
 	require.Equal(t, "ORD-7", d.Value().Get(ctx))
 }

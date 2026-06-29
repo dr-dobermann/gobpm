@@ -716,9 +716,7 @@ func (t *track) executeNode(
 				errs.C(errorClass, errs.TypeCastingError))
 	}
 
-	f, err := scope.NewFrame(
-		t.ID(), step.node.ID(),
-		t.instance.dataPlane.Root(), t.instance.dataPlane)
+	f, err := t.instance.sc.openFrame(t.ID(), step.node.ID())
 	if err != nil {
 		return nil,
 			errs.New(
