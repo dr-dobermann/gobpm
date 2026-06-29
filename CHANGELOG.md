@@ -30,6 +30,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `engine.UnregisterVersion(reg)` (or `engine.UnregisterProcess(p.ID())` to drop
   all versions).
 
+- **Thresher lifecycle: atomic state with transitional `Starting`/`Stopping`
+  (ADR-019 §2.7, SRD-031.B).** The engine `State` enum gains two transitional
+  values — `Starting` (between `NotStarted` and `Started`) and `Stopping`
+  (between `Started` and `Stopped`). `Run` and `Shutdown` now drive the lifecycle
+  with compare-and-swap, so concurrent double-`Run` / double-`Shutdown` are
+  deterministic (one wins; the rest reject or no-op), and `Started` / `Stopped`
+  carry stronger meanings (hub accepting / teardown complete). Successful
+  single-caller behavior is unchanged. Internally `state` is now lock-free
+  (atomic) and every registry critical section is confined to a lock-held helper,
+  retiring the fragile-mutex audit finding (§2.6).
+
 ### Fixed
 
 - **membroker: message subscriptions are torn down on waiter stop.** A stopped
