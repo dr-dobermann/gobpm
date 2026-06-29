@@ -107,18 +107,15 @@ proc.Add(endEvent)
 // 5. Link elements with sequence flows
 flow.Link(startEvent, endEvent)
 
-// 6. Create process snapshot
-snap, err := snapshot.New(proc)
+// 6. Register the process — returns a (key, version) registration handle
+reg, err := engine.RegisterProcess(proc)
 
-// 7. Register process with engine
-engine.RegisterProcess(snap)
-
-// 8. Start engine
+// 7. Start engine
 ctx := context.Background()
 engine.Run(ctx)
 
-// 9. Execute process
-engine.StartProcess(snap.ProcessId)
+// 8. Launch an instance — by handle, or by StartLatest(proc.ID())
+engine.StartProcess(reg)
 ```
 
 ### Error Handling

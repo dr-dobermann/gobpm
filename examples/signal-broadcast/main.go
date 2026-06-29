@@ -48,11 +48,11 @@ func run() error {
 		return fmt.Errorf("build thrower: %w", err)
 	}
 
-	if err := engine.RegisterProcess(catcher); err != nil {
+	if _, err := engine.RegisterProcess(catcher); err != nil {
 		return fmt.Errorf("register catcher: %w", err)
 	}
 
-	if err := engine.RegisterProcess(thrower); err != nil {
+	if _, err := engine.RegisterProcess(thrower); err != nil {
 		return fmt.Errorf("register thrower: %w", err)
 	}
 
@@ -64,12 +64,12 @@ func run() error {
 	}
 
 	// Two independent watcher instances, both waiting on the one signal.
-	h1, err := engine.StartProcess(catcher.ID())
+	h1, err := engine.StartLatest(catcher.ID())
 	if err != nil {
 		return fmt.Errorf("start watcher 1: %w", err)
 	}
 
-	h2, err := engine.StartProcess(catcher.ID())
+	h2, err := engine.StartLatest(catcher.ID())
 	if err != nil {
 		return fmt.Errorf("start watcher 2: %w", err)
 	}
@@ -77,7 +77,7 @@ func run() error {
 	time.Sleep(200 * time.Millisecond) // both reach and park on the catch
 	fmt.Println("  ▶ two watcher instances are waiting on \"order-cancelled\"")
 
-	if _, err := engine.StartProcess(thrower.ID()); err != nil { // one broadcast
+	if _, err := engine.StartLatest(thrower.ID()); err != nil { // one broadcast
 		return fmt.Errorf("start canceller: %w", err)
 	}
 	fmt.Println("  ▶ one canceller threw the signal once")

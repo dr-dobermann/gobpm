@@ -107,7 +107,7 @@ func TestObserverReceivesLifecycleEvents(t *testing.T) {
 	th, cancel := runEngine(t, proc)
 	defer cancel()
 
-	h, err := th.StartProcess(proc.ID())
+	h, err := th.StartLatest(proc.ID())
 	require.NoError(t, err)
 
 	c := &collector{}
@@ -133,7 +133,7 @@ func TestSlowObserverDropsNeverBlocks(t *testing.T) {
 	th, cancel := runEngine(t, proc)
 	defer cancel()
 
-	h, err := th.StartProcess(proc.ID())
+	h, err := th.StartLatest(proc.ID())
 	require.NoError(t, err)
 
 	blk := &blockingObserver{release: make(chan struct{})}
@@ -161,7 +161,7 @@ func TestObserverPanicRecovered(t *testing.T) {
 	th, cancel := runEngine(t, proc)
 	defer cancel()
 
-	h, err := th.StartProcess(proc.ID())
+	h, err := th.StartLatest(proc.ID())
 	require.NoError(t, err)
 
 	psub := h.Observe(panicObserver{})

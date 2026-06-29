@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING — process registration and start API (ADR-019, SRD-031.A).**
+  `Thresher.RegisterProcess` now returns a `(*ProcessRegistration, error)`
+  registration handle instead of a bare `error`, and re-registering the same
+  process id mints a new integer version instead of silently no-op'ing.
+  `StartProcess` now takes that handle (was: the process id). Two new methods
+  address by process id: `StartLatest(key)` (newest version) and
+  `StartVersion(key, n)` (a specific version). The latest registered version
+  owns auto-start — registering a newer version supersedes the previous one's
+  starters, and unregistering the latest promotes the now-newest remaining
+  version. Removal is split by scope: `UnregisterProcess(reg)` is renamed
+  `UnregisterVersion(reg)` (removes one version), and `UnregisterProcess(key)`
+  now removes the whole process (every version of the key). Version numbers are
+  monotonic per key and never reused, so removing a non-latest version leaves a
+  gap; `Registrations(key)` enumerates a key's versions.
+
+  Migration: `engine.RegisterProcess(p)` → `reg, _ := engine.RegisterProcess(p)`;
+  `engine.StartProcess(p.ID())` → `engine.StartProcess(reg)` or
+  `engine.StartLatest(p.ID())`; `engine.UnregisterProcess(reg)` →
+  `engine.UnregisterVersion(reg)` (or `engine.UnregisterProcess(p.ID())` to drop
+  all versions).
+
+### Fixed
+
+- **membroker: message subscriptions are torn down on waiter stop.** A stopped
+  message waiter previously left its subscription registered, so a later publish
+  on the same message name could be swallowed into the dead (buffered) channel
+  before a live waiter received it. `messaging.Subscription` gains
+  `Unsubscribe()`; the message waiter now unsubscribes on every exit path.
+
 ## [v0.7.0] - 2026-06-28
 
 **Version-line correction — no functional change from v0.1.1.**

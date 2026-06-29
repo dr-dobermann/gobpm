@@ -105,6 +105,27 @@ func (h brokerSub) AddKey(key string) error {
 	return nil
 }
 
+// Unsubscribe removes the subscription from the broker so no further published
+// message is routed to it. Idempotent — unsubscribing twice (or after the broker
+// already dropped it) finds nothing and is a no-op. Envelopes still buffered on
+// the subscription channel are abandoned with it.
+func (h brokerSub) Unsubscribe() error {
+	h.b.mu.Lock()
+	defer h.b.mu.Unlock()
+
+	for i, s := range h.b.subs {
+		if s == h.sub {
+			h.b.subs = append(h.b.subs[:i], h.b.subs[i+1:]...)
+
+			h.b.logger.Debug("membroker: unsubscribed", "name", h.sub.name)
+
+			break
+		}
+	}
+
+	return nil
+}
+
 // Option configures a Broker.
 type Option func(*Broker)
 

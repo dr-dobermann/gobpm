@@ -75,14 +75,15 @@ func TestSignalCatchThrow(t *testing.T) {
 
 	th, cancel := runEngine(t, catcher)
 	defer cancel()
-	require.NoError(t, th.RegisterProcess(thrower))
+	_, err := th.RegisterProcess(thrower)
+	require.NoError(t, err)
 
-	ch, err := th.StartProcess(catcher.ID())
+	ch, err := th.StartLatest(catcher.ID())
 	require.NoError(t, err)
 
 	time.Sleep(150 * time.Millisecond) // catcher reaches and parks on the catch
 
-	_, err = th.StartProcess(thrower.ID()) // throws GO
+	_, err = th.StartLatest(thrower.ID()) // throws GO
 	require.NoError(t, err)
 
 	ctx, cc := context.WithTimeout(context.Background(), 3*time.Second)
@@ -100,16 +101,17 @@ func TestSignalBroadcast(t *testing.T) {
 
 	th, cancel := runEngine(t, catcher)
 	defer cancel()
-	require.NoError(t, th.RegisterProcess(thrower))
-
-	c1, err := th.StartProcess(catcher.ID())
+	_, err := th.RegisterProcess(thrower)
 	require.NoError(t, err)
-	c2, err := th.StartProcess(catcher.ID())
+
+	c1, err := th.StartLatest(catcher.ID())
+	require.NoError(t, err)
+	c2, err := th.StartLatest(catcher.ID())
 	require.NoError(t, err)
 
 	time.Sleep(150 * time.Millisecond) // both catchers park on the catch
 
-	_, err = th.StartProcess(thrower.ID()) // one throw of GO
+	_, err = th.StartLatest(thrower.ID()) // one throw of GO
 	require.NoError(t, err)
 
 	ctx, cc := context.WithTimeout(context.Background(), 3*time.Second)
@@ -130,14 +132,15 @@ func TestSignalThrownIntoVoid(t *testing.T) {
 
 	th, cancel := runEngine(t, thrower)
 	defer cancel()
-	require.NoError(t, th.RegisterProcess(catcher))
+	_, err := th.RegisterProcess(catcher)
+	require.NoError(t, err)
 
-	_, err := th.StartProcess(thrower.ID()) // throw GO with no catcher → no-op
+	_, err = th.StartLatest(thrower.ID()) // throw GO with no catcher → no-op
 	require.NoError(t, err)
 
 	time.Sleep(150 * time.Millisecond)
 
-	ch, err := th.StartProcess(catcher.ID()) // starts AFTER the throw
+	ch, err := th.StartLatest(catcher.ID()) // starts AFTER the throw
 	require.NoError(t, err)
 
 	// The earlier signal is not retro-delivered: the catcher stays parked.
@@ -155,14 +158,15 @@ func TestSignalSingleShotConsume(t *testing.T) {
 
 	th, cancel := runEngine(t, catcher)
 	defer cancel()
-	require.NoError(t, th.RegisterProcess(thrower))
+	_, err := th.RegisterProcess(thrower)
+	require.NoError(t, err)
 
-	ch, err := th.StartProcess(catcher.ID())
+	ch, err := th.StartLatest(catcher.ID())
 	require.NoError(t, err)
 
 	time.Sleep(150 * time.Millisecond)
 
-	_, err = th.StartProcess(thrower.ID()) // throw 1 → catcher fires
+	_, err = th.StartLatest(thrower.ID()) // throw 1 → catcher fires
 	require.NoError(t, err)
 
 	ctx, cc := context.WithTimeout(context.Background(), 3*time.Second)
@@ -172,7 +176,7 @@ func TestSignalSingleShotConsume(t *testing.T) {
 	require.Equal(t, thresher.StateCompleted, st)
 
 	// The catch is consumed; a second throw finds no catcher → clean no-op.
-	_, err = th.StartProcess(thrower.ID())
+	_, err = th.StartLatest(thrower.ID())
 	require.NoError(t, err)
 }
 
@@ -256,7 +260,8 @@ func TestSignalStartBroadcastInstantiatesAll(t *testing.T) {
 
 	th, cancel := runEngine(t, procA)
 	defer cancel()
-	require.NoError(t, th.RegisterProcess(procB))
+	_, err := th.RegisterProcess(procB)
+	require.NoError(t, err)
 
 	require.NoError(t, th.PropagateEvent(context.Background(), sigDef(t, "GO")))
 

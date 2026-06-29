@@ -86,6 +86,23 @@ func (t *Thresher) Forget(ids ...string) error {
 	return nil
 }
 
+// Registrations returns the registered versions of a process key, ascending by
+// version (an empty slice for an unknown key). Each element is a live handle —
+// read its `Version()` / `ID()`, or pass it straight to `StartProcess` /
+// `UnregisterProcess`. Because removing a non-latest version may leave gaps
+// (v1, v3, …), this is how a caller discovers which versions exist before
+// addressing one by `StartVersion`. Snapshot-consistent under the engine lock.
+func (t *Thresher) Registrations(key string) []*ProcessRegistration {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	regs := t.registrations[key]
+	out := make([]*ProcessRegistration, len(regs))
+	copy(out, regs)
+
+	return out
+}
+
 // StarterInfo describes one event-start registration (SRD-019): a process
 // awaiting an event to instantiate — there is no instance yet, so it cannot
 // appear under Instances. A manual-start process registers no starter, so every
@@ -102,12 +119,19 @@ func (t *Thresher) Starters() []StarterInfo {
 	t.m.Lock()
 	defer t.m.Unlock()
 
-	out := make([]StarterInfo, 0, len(t.starters))
+	out := make([]StarterInfo, 0, len(t.registrations))
 
-	for procID, sts := range t.starters {
-		for _, s := range sts {
+	// Only the latest version of a key has live starters (latest-supersedes), so
+	// the live starter set is the latest registration's per key.
+	for key, regs := range t.registrations {
+		n := len(regs)
+		if n == 0 {
+			continue
+		}
+
+		for _, s := range regs[n-1].starters {
 			out = append(out, StarterInfo{
-				ProcessID: procID,
+				ProcessID: key,
 				StartNode: s.startNode.Name(),
 				Trigger:   triggerName(s.eDef),
 			})

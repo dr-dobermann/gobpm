@@ -68,11 +68,11 @@ func run() error {
 
 	// the handler is registered for auto-instantiation (a matching message
 	// spawns it); the source is started explicitly below.
-	if err := engine.RegisterProcess(consumer); err != nil {
+	if _, err := engine.RegisterProcess(consumer); err != nil {
 		return fmt.Errorf("register consumer: %w", err)
 	}
 
-	if err := engine.RegisterProcess(producer); err != nil {
+	if _, err := engine.RegisterProcess(producer); err != nil {
 		return fmt.Errorf("register producer: %w", err)
 	}
 
@@ -83,7 +83,7 @@ func run() error {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
-	if _, err := engine.StartProcess(producer.ID()); err != nil {
+	if _, err := engine.StartLatest(producer.ID()); err != nil {
 		return fmt.Errorf("start producer: %w", err)
 	}
 

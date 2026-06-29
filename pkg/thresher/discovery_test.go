@@ -17,11 +17,12 @@ func TestInstancesFilter(t *testing.T) {
 
 	th, cancel := runEngine(t, bp)
 	defer cancel()
-	require.NoError(t, th.RegisterProcess(lp))
-
-	running, err := th.StartProcess(bp.ID())
+	_, err := th.RegisterProcess(lp)
 	require.NoError(t, err)
-	doneH, err := th.StartProcess(lp.ID())
+
+	running, err := th.StartLatest(bp.ID())
+	require.NoError(t, err)
+	doneH, err := th.StartLatest(lp.ID())
 	require.NoError(t, err)
 
 	ctx, cc := context.WithTimeout(context.Background(), 3*time.Second)
@@ -52,11 +53,12 @@ func TestForget(t *testing.T) {
 
 	th, cancel := runEngine(t, bp)
 	defer cancel()
-	require.NoError(t, th.RegisterProcess(lp))
-
-	running, err := th.StartProcess(bp.ID())
+	_, err := th.RegisterProcess(lp)
 	require.NoError(t, err)
-	doneH, err := th.StartProcess(lp.ID())
+
+	running, err := th.StartLatest(bp.ID())
+	require.NoError(t, err)
+	doneH, err := th.StartLatest(lp.ID())
 	require.NoError(t, err)
 
 	ctx, cc := context.WithTimeout(context.Background(), 3*time.Second)
@@ -97,22 +99,33 @@ func TestStarters(t *testing.T) {
 	require.Equal(t, "order placed", starters[0].Trigger)
 
 	// A none-start process adds no starter.
-	require.NoError(t, th.RegisterProcess(blockingProcess(t, "no-starter")))
+	_, err := th.RegisterProcess(blockingProcess(t, "no-starter"))
+	require.NoError(t, err)
 	require.Len(t, th.Starters(), 1)
 }
 
-// TestUnregisterProcessWithLiveInstance verifies UnregisterProcess succeeds with
-// a live instance, which keeps running (FR-8).
+// TestUnregisterProcessWithLiveInstance verifies UnregisterVersion succeeds with
+// a live instance, which keeps running (SRD-031.A FR-8; the name predates the
+// UnregisterProcess→UnregisterVersion split and is kept to honor SRD-019's
+// frozen reference).
 func TestUnregisterProcessWithLiveInstance(t *testing.T) {
 	bp := blockingProcess(t, "unreg-live")
-	th, cancel := runEngine(t, bp)
-	defer cancel()
 
-	h, err := th.StartProcess(bp.ID())
+	th, err := thresher.New("test-unreg-live")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, th.Run(ctx))
+
+	reg, err := th.RegisterProcess(bp)
+	require.NoError(t, err)
+
+	h, err := th.StartProcess(reg)
 	require.NoError(t, err)
 	time.Sleep(150 * time.Millisecond)
 
-	require.NoError(t, th.UnregisterProcess(bp.ID()))
+	require.NoError(t, th.UnregisterVersion(reg))
 
 	// The live instance is unaffected: still Active and looked-up-able.
 	require.Equal(t, thresher.StateActive, h.State())
@@ -120,6 +133,6 @@ func TestUnregisterProcessWithLiveInstance(t *testing.T) {
 	require.True(t, ok)
 
 	// The definition is gone — a new start is rejected.
-	_, err = th.StartProcess(bp.ID())
+	_, err = th.StartLatest(bp.ID())
 	require.Error(t, err)
 }

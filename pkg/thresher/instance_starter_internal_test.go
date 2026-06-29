@@ -185,12 +185,14 @@ func TestRegisterProcessStarters(t *testing.T) {
 		require.NoError(t, err)
 
 		proc := msgStartProcess(t, "p-auto", "order placed")
-		require.NoError(t, th.RegisterProcess(proc))
+		_, err = th.RegisterProcess(proc)
+		require.NoError(t, err)
 
 		th.m.Lock()
-		got := th.starters[proc.ID()]
+		regs := th.registrations[proc.ID()]
 		th.m.Unlock()
-		require.Len(t, got, 1)
+		require.Len(t, regs, 1)
+		require.Len(t, regs[0].starters, 1)
 	})
 
 	t.Run("manual-start registers none", func(t *testing.T) {
@@ -198,12 +200,14 @@ func TestRegisterProcessStarters(t *testing.T) {
 		require.NoError(t, err)
 
 		proc := msgStartProcess(t, "p-manual", "order placed")
-		require.NoError(t, th.RegisterProcess(proc, WithManualStart()))
+		_, err = th.RegisterProcess(proc, WithManualStart())
+		require.NoError(t, err)
 
 		th.m.Lock()
-		got := th.starters[proc.ID()]
+		regs := th.registrations[proc.ID()]
 		th.m.Unlock()
-		require.Empty(t, got)
+		require.Len(t, regs, 1)
+		require.Empty(t, regs[0].starters)
 	})
 
 	t.Run("a failing register option is surfaced", func(t *testing.T) {
@@ -213,21 +217,27 @@ func TestRegisterProcessStarters(t *testing.T) {
 		boom := func(*registerConfig) error {
 			return fmt.Errorf("bad register option")
 		}
-		require.Error(t, th.RegisterProcess(noneStartProcess(t, "p-opt"), boom))
+		_, err = th.RegisterProcess(noneStartProcess(t, "p-opt"), boom)
+		require.Error(t, err)
 	})
 
-	t.Run("re-registration is idempotent", func(t *testing.T) {
-		th, err := New("idem")
+	t.Run("re-registration creates a new version", func(t *testing.T) {
+		th, err := New("versioned")
 		require.NoError(t, err)
 
-		proc := msgStartProcess(t, "p-idem", "order placed")
-		require.NoError(t, th.RegisterProcess(proc))
-		require.NoError(t, th.RegisterProcess(proc))
+		proc := msgStartProcess(t, "p-ver", "order placed")
+		reg1, err := th.RegisterProcess(proc)
+		require.NoError(t, err)
+		reg2, err := th.RegisterProcess(proc)
+		require.NoError(t, err)
+
+		require.Equal(t, 1, reg1.Version())
+		require.Equal(t, 2, reg2.Version())
 
 		th.m.Lock()
-		got := th.starters[proc.ID()]
+		regs := th.registrations[proc.ID()]
 		th.m.Unlock()
-		require.Len(t, got, 1)
+		require.Len(t, regs, 2)
 	})
 }
 
@@ -237,7 +247,8 @@ func TestStarterLifecycle(t *testing.T) {
 		require.NoError(t, err)
 
 		proc := msgStartProcess(t, "p-life", "order placed")
-		require.NoError(t, th.RegisterProcess(proc))
+		reg, err := th.RegisterProcess(proc)
+		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -246,14 +257,12 @@ func TestStarterLifecycle(t *testing.T) {
 		// A clean UnregisterProcess proves the starter WAS registered on the hub
 		// at Run (the hub's UnregisterEvent would error ObjectNotFound were it
 		// not), and clears the bookkeeping.
-		require.NoError(t, th.UnregisterProcess(proc.ID()))
+		require.NoError(t, th.UnregisterVersion(reg))
 
 		th.m.Lock()
-		_, hasStarters := th.starters[proc.ID()]
-		_, hasSnap := th.snapshots[proc.ID()]
+		_, hasReg := th.registrations[proc.ID()]
 		th.m.Unlock()
-		require.False(t, hasStarters)
-		require.False(t, hasSnap)
+		require.False(t, hasReg)
 	})
 
 	t.Run("register after Run wires immediately", func(t *testing.T) {
@@ -265,8 +274,9 @@ func TestStarterLifecycle(t *testing.T) {
 		require.NoError(t, th.Run(ctx))
 
 		proc := msgStartProcess(t, "p-after", "order placed")
-		require.NoError(t, th.RegisterProcess(proc))
-		require.NoError(t, th.UnregisterProcess(proc.ID()))
+		reg, err := th.RegisterProcess(proc)
+		require.NoError(t, err)
+		require.NoError(t, th.UnregisterVersion(reg))
 	})
 
 	t.Run("manual-start: no starter, clean teardown", func(t *testing.T) {
@@ -278,16 +288,24 @@ func TestStarterLifecycle(t *testing.T) {
 		require.NoError(t, th.Run(ctx))
 
 		proc := msgStartProcess(t, "p-mlife", "order placed")
-		require.NoError(t, th.RegisterProcess(proc, WithManualStart()))
-		require.NoError(t, th.UnregisterProcess(proc.ID()))
+		reg, err := th.RegisterProcess(proc, WithManualStart())
+		require.NoError(t, err)
+		require.NoError(t, th.UnregisterVersion(reg))
 	})
 
-	t.Run("unregister unknown / empty id rejected", func(t *testing.T) {
+	t.Run("nil / foreign handle rejected", func(t *testing.T) {
 		th, err := New("life-bad")
 		require.NoError(t, err)
 
-		require.Error(t, th.UnregisterProcess("nope"))
-		require.Error(t, th.UnregisterProcess("   "))
+		require.Error(t, th.UnregisterVersion(nil))
+
+		// a handle for a process never registered in this engine is rejected.
+		other, err := New("life-other")
+		require.NoError(t, err)
+		foreign, err := other.RegisterProcess(
+			msgStartProcess(t, "p-foreign", "order placed"))
+		require.NoError(t, err)
+		require.Error(t, th.UnregisterVersion(foreign))
 	})
 }
 
@@ -337,8 +355,9 @@ func TestRegisterStartersError(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestUnregisterProcessHubError covers the UnregisterProcess teardown error
-// path: a hub that rejects UnregisterEvent surfaces a wrapped error.
+// TestUnregisterProcessHubError covers the UnregisterVersion teardown error
+// path: a hub that rejects UnregisterEvent surfaces a wrapped error. (Name kept
+// across the UnregisterProcess→UnregisterVersion split.)
 func TestUnregisterProcessHubError(t *testing.T) {
 	th, err := New("unreg-err")
 	require.NoError(t, err)
@@ -355,13 +374,16 @@ func TestUnregisterProcessHubError(t *testing.T) {
 		Once()
 	th.eventHub = mh
 
+	reg := &ProcessRegistration{
+		key: s.ProcessID, version: 1, snapshot: s, starters: starters,
+	}
+
 	th.m.Lock()
-	th.snapshots[s.ProcessID] = s
-	th.starters[s.ProcessID] = starters
+	th.registrations[s.ProcessID] = []*ProcessRegistration{reg}
 	th.state = Started
 	th.m.Unlock()
 
-	require.Error(t, th.UnregisterProcess(s.ProcessID))
+	require.Error(t, th.UnregisterVersion(reg))
 }
 
 // TestRunRegisterStartersError covers Run's startup-registration error path: a
@@ -385,13 +407,91 @@ func TestRunRegisterStartersError(t *testing.T) {
 	th.eventHub = mh
 
 	th.m.Lock()
-	th.snapshots[s.ProcessID] = s
-	th.starters[s.ProcessID] = starters
+	th.registrations[s.ProcessID] = []*ProcessRegistration{
+		{key: s.ProcessID, version: 1, snapshot: s, starters: starters},
+	}
 	th.m.Unlock()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	require.Error(t, th.Run(ctx))
+}
+
+// TestRegisterProcessSupersedeHubErrors covers the two latest-supersedes error
+// paths in RegisterProcess: tearing down the previous latest's starters, then
+// registering the new version's, each surfaces a hub failure (SRD-031.A FR-7).
+func TestRegisterProcessSupersedeHubErrors(t *testing.T) {
+	proc := msgStartProcess(t, "p-sup-err", "order placed")
+
+	seedV1 := func(t *testing.T, th *Thresher) string {
+		t.Helper()
+
+		s1, err := snapshot.New(proc)
+		require.NoError(t, err)
+
+		v1 := &ProcessRegistration{
+			key: s1.ProcessID, version: 1, snapshot: s1,
+			starters: scanInstantiatingStarts(s1, th),
+		}
+
+		th.m.Lock()
+		th.registrations[s1.ProcessID] = []*ProcessRegistration{v1}
+		th.state = Started
+		th.m.Unlock()
+
+		return s1.ProcessID
+	}
+
+	t.Run("teardown of the superseded version errors", func(t *testing.T) {
+		th, err := New("sup-teardown")
+		require.NoError(t, err)
+
+		mh := mockeventproc.NewMockEventHub(t)
+		mh.EXPECT().
+			UnregisterEvent(mock.Anything, mock.Anything).
+			Return(fmt.Errorf("hub teardown rejected")).
+			Once()
+		th.eventHub = mh
+
+		seedV1(t, th)
+
+		_, err = th.RegisterProcess(proc) // v2 supersedes → teardown fails
+		require.Error(t, err)
+	})
+
+	t.Run("re-register of the new version errors", func(t *testing.T) {
+		th, err := New("sup-rereg")
+		require.NoError(t, err)
+
+		mh := mockeventproc.NewMockEventHub(t)
+		mh.EXPECT().
+			UnregisterEvent(mock.Anything, mock.Anything).
+			Return(nil).
+			Once()
+		mh.EXPECT().
+			RegisterPersistentEvent(mock.Anything, mock.Anything).
+			Return(fmt.Errorf("hub register rejected")).
+			Once()
+		th.eventHub = mh
+
+		seedV1(t, th)
+
+		_, err = th.RegisterProcess(proc) // teardown ok, re-register fails
+		require.Error(t, err)
+	})
+}
+
+// TestStartersSkipsEmptyVersionSlice covers the defensive empty-slice guard in
+// Starters: a key mapped to a zero-length version slice contributes no starter.
+func TestStartersSkipsEmptyVersionSlice(t *testing.T) {
+	th, err := New("empty-slice")
+	require.NoError(t, err)
+
+	th.m.Lock()
+	th.registrations["ghost"] = nil
+	th.m.Unlock()
+
+	require.Empty(t, th.Starters())
 }
 
 // corrStartProcess builds a message-start process declaring a CorrelationKey
@@ -468,7 +568,8 @@ func TestCorrelationDedup(t *testing.T) {
 	require.NoError(t, err)
 
 	proc := corrStartProcess(t, "p-corr", "order placed", "order placed")
-	require.NoError(t, th.RegisterProcess(proc))
+	_, err = th.RegisterProcess(proc)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -501,7 +602,8 @@ func TestCorrelationNoKeyEachInstantiates(t *testing.T) {
 	th, err := New("nocorr", WithMessageBroker(broker))
 	require.NoError(t, err)
 
-	require.NoError(t, th.RegisterProcess(msgStartProcess(t, "p-nocorr", "order placed")))
+	_, err = th.RegisterProcess(msgStartProcess(t, "p-nocorr", "order placed"))
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -517,7 +619,6 @@ func TestCorrelationNoKeyEachInstantiates(t *testing.T) {
 		"without a key, each message instantiates")
 }
 
-
 // TestCorrelationUnderivableKeyInstantiates: a declared key whose retrieval
 // expression doesn't apply to the message (MessageRef mismatch) can't be
 // derived (ok=false), so the message instantiates without dedup.
@@ -529,7 +630,8 @@ func TestCorrelationUnderivableKeyInstantiates(t *testing.T) {
 
 	// the retrieval MessageRef ("other") differs from the start message name.
 	proc := corrStartProcess(t, "p-mm", "order placed", "other")
-	require.NoError(t, th.RegisterProcess(proc))
+	_, err = th.RegisterProcess(proc)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

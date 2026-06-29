@@ -237,7 +237,7 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 	mw.rt.Logger().Debug("message waiter serviced",
 		"waiter_id", mw.id, "message_name", mw.name)
 
-	go mw.runMessageService(ctx, sub.C())
+	go mw.runMessageService(ctx, sub)
 
 	return nil
 }
@@ -250,9 +250,22 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 // hub when its track consumes the event and unregisters.
 func (mw *messageWaiter) runMessageService(
 	ctx context.Context,
-	ch <-chan messaging.Envelope,
+	sub messaging.Subscription,
 ) {
-	defer close(mw.done) // signal goroutine exit for EventHub.Shutdown drain
+	// Every exit path tears the broker subscription down: a stopped waiter that
+	// stayed subscribed would keep claiming published messages into its abandoned
+	// (buffered) channel, swallowing them away from a live waiter on the same
+	// message name — e.g. a superseding process version (SRD-031.A FR-7).
+	defer func() {
+		if err := sub.Unsubscribe(); err != nil {
+			mw.rt.Logger().Warn("message waiter unsubscribe failed",
+				"waiter_id", mw.id, "error", err.Error())
+		}
+
+		close(mw.done) // signal goroutine exit for EventHub.Shutdown drain
+	}()
+
+	ch := sub.C()
 
 	for {
 		select {
@@ -357,6 +370,20 @@ func (mw *messageWaiter) Stop() error {
 	mw.state = eventproc.WSStopped
 
 	close(mw.stopCh)
+
+	// Unsubscribe synchronously so the broker has dropped this subscription by the
+	// time Stop returns: EventHub.UnregisterEvent may immediately register a
+	// replacement waiter on the same message name (a superseding process version),
+	// and a subsequent publish must not be claimed into this now-dead, buffered
+	// channel (SRD-031.A FR-7). The service goroutine's deferred Unsubscribe (which
+	// covers the ctx-cancel / channel-closed exit paths that never call Stop) is
+	// idempotent, so the double call is harmless.
+	if mw.sub != nil {
+		if err := mw.sub.Unsubscribe(); err != nil {
+			mw.rt.Logger().Warn("message waiter unsubscribe failed on stop",
+				"waiter_id", mw.id, "error", err.Error())
+		}
+	}
 
 	return nil
 }

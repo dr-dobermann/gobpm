@@ -47,6 +47,7 @@ type chanSub struct{ ch <-chan messaging.Envelope }
 
 func (s chanSub) C() <-chan messaging.Envelope { return s.ch }
 func (chanSub) AddKey(string) error            { return nil }
+func (chanSub) Unsubscribe() error             { return nil }
 
 // closedChBroker returns an already-closed subscription channel.
 type closedChBroker struct{}
@@ -412,4 +413,45 @@ func TestMessageWaiterSubscribeError(t *testing.T) {
 
 	require.Error(t, w.Service(context.Background()))
 	require.Equal(t, eventproc.WSFailed, w.State())
+}
+
+// errUnsubSub never closes its channel and always fails to unsubscribe.
+type errUnsubSub struct{ ch <-chan messaging.Envelope }
+
+func (s errUnsubSub) C() <-chan messaging.Envelope { return s.ch }
+func (errUnsubSub) AddKey(string) error            { return nil }
+func (errUnsubSub) Unsubscribe() error             { return fmt.Errorf("unsubscribe failed") }
+
+// errUnsubBroker hands out subscriptions whose Unsubscribe always errors.
+type errUnsubBroker struct{}
+
+func (errUnsubBroker) Publish(context.Context, messaging.Envelope) error { return nil }
+
+func (errUnsubBroker) Subscribe(
+	context.Context, string, ...string,
+) (messaging.Subscription, error) {
+	return errUnsubSub{ch: make(chan messaging.Envelope)}, nil
+}
+
+// TestMessageWaiterUnsubscribeErrorIsLogged drives a subscription that fails to
+// unsubscribe: Stop still succeeds (the failure is logged, not propagated) and
+// the service goroutine still exits. It exercises both unsubscribe-failure
+// branches — the synchronous one in Stop and the deferred one on goroutine exit.
+func TestMessageWaiterUnsubscribeErrorIsLogged(t *testing.T) {
+	ep := mockeventproc.NewMockEventProcessor(t)
+	hub := mockeventproc.NewMockEventHub(t)
+
+	rt := brokerRT{EngineRuntime: enginert.Default(), broker: errUnsubBroker{}}
+
+	w, err := waiters.NewMessageWaiter(hub, ep, msgEventDef(t), "", rt)
+	require.NoError(t, err)
+	require.NoError(t, w.Service(context.Background()))
+
+	require.NoError(t, w.Stop())
+
+	select {
+	case <-w.Done():
+	case <-time.After(time.Second):
+		t.Fatal("Done did not close after Stop despite the unsubscribe error")
+	}
 }

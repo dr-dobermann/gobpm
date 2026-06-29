@@ -112,7 +112,7 @@ func run() error {
 		}
 	}
 
-	if err := engine.RegisterProcess(proc); err != nil {
+	if _, err := engine.RegisterProcess(proc); err != nil {
 		return fmt.Errorf("register process: %w", err)
 	}
 
@@ -123,7 +123,7 @@ func run() error {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
-	if _, err := engine.StartProcess(proc.ID()); err != nil {
+	if _, err := engine.StartLatest(proc.ID()); err != nil {
 		return fmt.Errorf("start process: %w", err)
 	}
 

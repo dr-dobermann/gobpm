@@ -315,3 +315,44 @@ func TestMaxInboxDisabled(t *testing.T) {
 		t.Fatalf("inbox kept %d, want 5 (cap disabled)", len(got))
 	}
 }
+
+// TestUnsubscribeStopsDelivery verifies that after Unsubscribe the broker no
+// longer routes to the dropped subscription: a later publish must reach a fresh
+// subscriber on the same name, not get swallowed into the dead one's channel.
+// This backs the EventHub teardown a superseded process version relies on.
+func TestUnsubscribeStopsDelivery(t *testing.T) {
+	b := New()
+	ctx := context.Background()
+
+	first := subscribe(t, b, "order") // wildcard
+	if err := first.Unsubscribe(); err != nil {
+		t.Fatalf("unsubscribe: %v", err)
+	}
+
+	// the published message must not land in the dropped subscription's channel.
+	_ = b.Publish(ctx, env("order", "k"))
+	if e, ok := recv(first.C()); ok {
+		t.Fatalf("dropped subscription still received: %+v", e)
+	}
+
+	// a fresh subscriber drains it from the inbox — it was buffered, not stolen.
+	second := subscribe(t, b, "order")
+	if e, ok := recv(second.C()); !ok || e.Name != "order" {
+		t.Fatalf("replacement subscriber did not receive: %+v, %v", e, ok)
+	}
+}
+
+// TestUnsubscribeIsIdempotent verifies a second Unsubscribe (the synchronous Stop
+// path plus the service goroutine's deferred call both fire) is a harmless no-op.
+func TestUnsubscribeIsIdempotent(t *testing.T) {
+	b := New()
+
+	s := subscribe(t, b, "order")
+	if err := s.Unsubscribe(); err != nil {
+		t.Fatalf("first unsubscribe: %v", err)
+	}
+
+	if err := s.Unsubscribe(); err != nil {
+		t.Fatalf("second unsubscribe must be a no-op: %v", err)
+	}
+}

@@ -122,7 +122,8 @@ func TestEventGatewayExclusiveStart(t *testing.T) {
 	require.NoError(t, err)
 
 	done := make(chan string, 4)
-	require.NoError(t, th.RegisterProcess(instExclusiveGateProcess(t, done)))
+	_, err = th.RegisterProcess(instExclusiveGateProcess(t, done))
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -155,7 +156,8 @@ func TestEventGatewayExclusiveStartEachEventNewInstance(t *testing.T) {
 	require.NoError(t, err)
 
 	done := make(chan string, 4)
-	require.NoError(t, th.RegisterProcess(instExclusiveGateProcess(t, done)))
+	_, err = th.RegisterProcess(instExclusiveGateProcess(t, done))
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
