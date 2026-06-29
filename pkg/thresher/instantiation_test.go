@@ -88,7 +88,8 @@ func TestEventTriggeredInstantiation(t *testing.T) {
 	require.NoError(t, err)
 
 	done := make(chan string, 1)
-	require.NoError(t, th.RegisterProcess(msgStartConfirmProcess(t, done)))
+	_, err = th.RegisterProcess(msgStartConfirmProcess(t, done))
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -167,7 +168,8 @@ func TestInstantiateReceiveTask(t *testing.T) {
 	require.NoError(t, err)
 
 	done := make(chan string, 1)
-	require.NoError(t, th.RegisterProcess(recvTaskConfirmProcess(t, done)))
+	_, err = th.RegisterProcess(recvTaskConfirmProcess(t, done))
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -196,7 +198,8 @@ func TestManualStartNotInstantiated(t *testing.T) {
 
 	done := make(chan string, 1)
 	proc := msgStartConfirmProcess(t, done)
-	require.NoError(t, th.RegisterProcess(proc, thresher.WithManualStart()))
+	_, err = th.RegisterProcess(proc, thresher.WithManualStart())
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

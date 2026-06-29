@@ -48,11 +48,11 @@ func run() error {
 		return fmt.Errorf("build thrower: %w", err)
 	}
 
-	if err := engine.RegisterProcess(catcher); err != nil {
+	if _, err := engine.RegisterProcess(catcher); err != nil {
 		return fmt.Errorf("register catcher: %w", err)
 	}
 
-	if err := engine.RegisterProcess(thrower); err != nil {
+	if _, err := engine.RegisterProcess(thrower); err != nil {
 		return fmt.Errorf("register thrower: %w", err)
 	}
 

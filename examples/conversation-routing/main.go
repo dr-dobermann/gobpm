@@ -65,7 +65,7 @@ func run() error {
 		return err
 	}
 
-	if err := engine.RegisterProcess(handler); err != nil {
+	if _, err := engine.RegisterProcess(handler); err != nil {
 		return fmt.Errorf("register handler: %w", err)
 	}
 

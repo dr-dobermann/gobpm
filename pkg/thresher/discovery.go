@@ -102,15 +102,17 @@ func (t *Thresher) Starters() []StarterInfo {
 	t.m.Lock()
 	defer t.m.Unlock()
 
-	out := make([]StarterInfo, 0, len(t.starters))
+	out := make([]StarterInfo, 0, len(t.registrations))
 
-	for procID, sts := range t.starters {
-		for _, s := range sts {
-			out = append(out, StarterInfo{
-				ProcessID: procID,
-				StartNode: s.startNode.Name(),
-				Trigger:   triggerName(s.eDef),
-			})
+	for key, regs := range t.registrations {
+		for _, reg := range regs {
+			for _, s := range reg.starters {
+				out = append(out, StarterInfo{
+					ProcessID: key,
+					StartNode: s.startNode.Name(),
+					Trigger:   triggerName(s.eDef),
+				})
+			}
 		}
 	}
 

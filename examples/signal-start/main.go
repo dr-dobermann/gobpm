@@ -49,7 +49,7 @@ func run() error {
 	}
 
 	for _, p := range []*process.Process{fulfillment, audit} {
-		if err := engine.RegisterProcess(p); err != nil {
+		if _, err := engine.RegisterProcess(p); err != nil {
 			return fmt.Errorf("register %s: %w", p.ID(), err)
 		}
 	}

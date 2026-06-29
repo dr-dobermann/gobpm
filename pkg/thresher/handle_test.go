@@ -122,7 +122,8 @@ func runEngine(t *testing.T, proc *process.Process) (*thresher.Thresher, context
 
 	ctx, cancel := context.WithCancel(context.Background())
 	require.NoError(t, th.Run(ctx))
-	require.NoError(t, th.RegisterProcess(proc))
+	_, err = th.RegisterProcess(proc)
+	require.NoError(t, err)
 
 	return th, cancel
 }

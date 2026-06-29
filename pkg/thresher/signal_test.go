@@ -75,7 +75,8 @@ func TestSignalCatchThrow(t *testing.T) {
 
 	th, cancel := runEngine(t, catcher)
 	defer cancel()
-	require.NoError(t, th.RegisterProcess(thrower))
+	_, err := th.RegisterProcess(thrower)
+	require.NoError(t, err)
 
 	ch, err := th.StartProcess(catcher.ID())
 	require.NoError(t, err)
@@ -100,7 +101,8 @@ func TestSignalBroadcast(t *testing.T) {
 
 	th, cancel := runEngine(t, catcher)
 	defer cancel()
-	require.NoError(t, th.RegisterProcess(thrower))
+	_, err := th.RegisterProcess(thrower)
+	require.NoError(t, err)
 
 	c1, err := th.StartProcess(catcher.ID())
 	require.NoError(t, err)
@@ -130,9 +132,10 @@ func TestSignalThrownIntoVoid(t *testing.T) {
 
 	th, cancel := runEngine(t, thrower)
 	defer cancel()
-	require.NoError(t, th.RegisterProcess(catcher))
+	_, err := th.RegisterProcess(catcher)
+	require.NoError(t, err)
 
-	_, err := th.StartProcess(thrower.ID()) // throw GO with no catcher → no-op
+	_, err = th.StartProcess(thrower.ID()) // throw GO with no catcher → no-op
 	require.NoError(t, err)
 
 	time.Sleep(150 * time.Millisecond)
@@ -155,7 +158,8 @@ func TestSignalSingleShotConsume(t *testing.T) {
 
 	th, cancel := runEngine(t, catcher)
 	defer cancel()
-	require.NoError(t, th.RegisterProcess(thrower))
+	_, err := th.RegisterProcess(thrower)
+	require.NoError(t, err)
 
 	ch, err := th.StartProcess(catcher.ID())
 	require.NoError(t, err)
@@ -256,7 +260,8 @@ func TestSignalStartBroadcastInstantiatesAll(t *testing.T) {
 
 	th, cancel := runEngine(t, procA)
 	defer cancel()
-	require.NoError(t, th.RegisterProcess(procB))
+	_, err := th.RegisterProcess(procB)
+	require.NoError(t, err)
 
 	require.NoError(t, th.PropagateEvent(context.Background(), sigDef(t, "GO")))
 

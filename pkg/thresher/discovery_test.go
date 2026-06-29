@@ -17,7 +17,8 @@ func TestInstancesFilter(t *testing.T) {
 
 	th, cancel := runEngine(t, bp)
 	defer cancel()
-	require.NoError(t, th.RegisterProcess(lp))
+	_, err := th.RegisterProcess(lp)
+	require.NoError(t, err)
 
 	running, err := th.StartProcess(bp.ID())
 	require.NoError(t, err)
@@ -52,7 +53,8 @@ func TestForget(t *testing.T) {
 
 	th, cancel := runEngine(t, bp)
 	defer cancel()
-	require.NoError(t, th.RegisterProcess(lp))
+	_, err := th.RegisterProcess(lp)
+	require.NoError(t, err)
 
 	running, err := th.StartProcess(bp.ID())
 	require.NoError(t, err)
@@ -97,7 +99,8 @@ func TestStarters(t *testing.T) {
 	require.Equal(t, "order placed", starters[0].Trigger)
 
 	// A none-start process adds no starter.
-	require.NoError(t, th.RegisterProcess(blockingProcess(t, "no-starter")))
+	_, err := th.RegisterProcess(blockingProcess(t, "no-starter"))
+	require.NoError(t, err)
 	require.Len(t, th.Starters(), 1)
 }
 

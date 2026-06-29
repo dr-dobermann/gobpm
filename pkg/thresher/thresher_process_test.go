@@ -17,7 +17,7 @@ func TestThresher_ProcessManagement(t *testing.T) {
 		th, err := thresher.New("test-thresher")
 		require.NoError(t, err)
 
-		err = th.RegisterProcess(nil)
+		_, err = th.RegisterProcess(nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "empty process")
 	})
@@ -29,7 +29,7 @@ func TestThresher_ProcessManagement(t *testing.T) {
 		proc, err := process.New("dummy process")
 		require.NoError(t, err)
 
-		err = th.RegisterProcess(proc)
+		_, err = th.RegisterProcess(proc)
 		require.NoError(t, err)
 	})
 
@@ -92,7 +92,8 @@ func TestStartProcess_NoReentrantDeadlock(t *testing.T) {
 	_, err = flow.Link(start, end)
 	require.NoError(t, err)
 
-	require.NoError(t, th.RegisterProcess(proc))
+	_, err = th.RegisterProcess(proc)
+	require.NoError(t, err)
 
 	done := make(chan error, 1)
 	go func() { _, e := th.StartProcess(proc.ID()); done <- e }()

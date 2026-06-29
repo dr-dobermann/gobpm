@@ -138,7 +138,8 @@ func TestThresherShutdown(t *testing.T) {
 	// A stopped engine rejects further lifecycle operations.
 	_, err = th.StartProcess(proc.ID())
 	require.Error(t, err)
-	require.Error(t, th.RegisterProcess(blockingProcess(t, "sd-after")))
+	_, err = th.RegisterProcess(blockingProcess(t, "sd-after"))
+	require.Error(t, err)
 	require.Error(t, th.Run(context.Background()))
 
 	// Idempotent.

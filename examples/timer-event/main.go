@@ -107,7 +107,7 @@ func main() {
 	}
 
 	// Register process with engine
-	err = engine.RegisterProcess(proc)
+	_, err = engine.RegisterProcess(proc)
 	if err != nil {
 		log.Fatal("Failed to register process:", err)
 	}

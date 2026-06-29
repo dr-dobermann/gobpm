@@ -185,12 +185,14 @@ func TestRegisterProcessStarters(t *testing.T) {
 		require.NoError(t, err)
 
 		proc := msgStartProcess(t, "p-auto", "order placed")
-		require.NoError(t, th.RegisterProcess(proc))
+		_, err = th.RegisterProcess(proc)
+		require.NoError(t, err)
 
 		th.m.Lock()
-		got := th.starters[proc.ID()]
+		regs := th.registrations[proc.ID()]
 		th.m.Unlock()
-		require.Len(t, got, 1)
+		require.Len(t, regs, 1)
+		require.Len(t, regs[0].starters, 1)
 	})
 
 	t.Run("manual-start registers none", func(t *testing.T) {
@@ -198,12 +200,14 @@ func TestRegisterProcessStarters(t *testing.T) {
 		require.NoError(t, err)
 
 		proc := msgStartProcess(t, "p-manual", "order placed")
-		require.NoError(t, th.RegisterProcess(proc, WithManualStart()))
+		_, err = th.RegisterProcess(proc, WithManualStart())
+		require.NoError(t, err)
 
 		th.m.Lock()
-		got := th.starters[proc.ID()]
+		regs := th.registrations[proc.ID()]
 		th.m.Unlock()
-		require.Empty(t, got)
+		require.Len(t, regs, 1)
+		require.Empty(t, regs[0].starters)
 	})
 
 	t.Run("a failing register option is surfaced", func(t *testing.T) {
@@ -213,21 +217,27 @@ func TestRegisterProcessStarters(t *testing.T) {
 		boom := func(*registerConfig) error {
 			return fmt.Errorf("bad register option")
 		}
-		require.Error(t, th.RegisterProcess(noneStartProcess(t, "p-opt"), boom))
+		_, err = th.RegisterProcess(noneStartProcess(t, "p-opt"), boom)
+		require.Error(t, err)
 	})
 
-	t.Run("re-registration is idempotent", func(t *testing.T) {
-		th, err := New("idem")
+	t.Run("re-registration creates a new version", func(t *testing.T) {
+		th, err := New("versioned")
 		require.NoError(t, err)
 
-		proc := msgStartProcess(t, "p-idem", "order placed")
-		require.NoError(t, th.RegisterProcess(proc))
-		require.NoError(t, th.RegisterProcess(proc))
+		proc := msgStartProcess(t, "p-ver", "order placed")
+		reg1, err := th.RegisterProcess(proc)
+		require.NoError(t, err)
+		reg2, err := th.RegisterProcess(proc)
+		require.NoError(t, err)
+
+		require.Equal(t, 1, reg1.Version())
+		require.Equal(t, 2, reg2.Version())
 
 		th.m.Lock()
-		got := th.starters[proc.ID()]
+		regs := th.registrations[proc.ID()]
 		th.m.Unlock()
-		require.Len(t, got, 1)
+		require.Len(t, regs, 2)
 	})
 }
 
@@ -237,7 +247,8 @@ func TestStarterLifecycle(t *testing.T) {
 		require.NoError(t, err)
 
 		proc := msgStartProcess(t, "p-life", "order placed")
-		require.NoError(t, th.RegisterProcess(proc))
+		_, err = th.RegisterProcess(proc)
+		require.NoError(t, err)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -249,11 +260,9 @@ func TestStarterLifecycle(t *testing.T) {
 		require.NoError(t, th.UnregisterProcess(proc.ID()))
 
 		th.m.Lock()
-		_, hasStarters := th.starters[proc.ID()]
-		_, hasSnap := th.snapshots[proc.ID()]
+		_, hasReg := th.registrations[proc.ID()]
 		th.m.Unlock()
-		require.False(t, hasStarters)
-		require.False(t, hasSnap)
+		require.False(t, hasReg)
 	})
 
 	t.Run("register after Run wires immediately", func(t *testing.T) {
@@ -265,7 +274,8 @@ func TestStarterLifecycle(t *testing.T) {
 		require.NoError(t, th.Run(ctx))
 
 		proc := msgStartProcess(t, "p-after", "order placed")
-		require.NoError(t, th.RegisterProcess(proc))
+		_, err = th.RegisterProcess(proc)
+		require.NoError(t, err)
 		require.NoError(t, th.UnregisterProcess(proc.ID()))
 	})
 
@@ -278,7 +288,8 @@ func TestStarterLifecycle(t *testing.T) {
 		require.NoError(t, th.Run(ctx))
 
 		proc := msgStartProcess(t, "p-mlife", "order placed")
-		require.NoError(t, th.RegisterProcess(proc, WithManualStart()))
+		_, err = th.RegisterProcess(proc, WithManualStart())
+		require.NoError(t, err)
 		require.NoError(t, th.UnregisterProcess(proc.ID()))
 	})
 
@@ -356,8 +367,9 @@ func TestUnregisterProcessHubError(t *testing.T) {
 	th.eventHub = mh
 
 	th.m.Lock()
-	th.snapshots[s.ProcessID] = s
-	th.starters[s.ProcessID] = starters
+	th.registrations[s.ProcessID] = []*ProcessRegistration{
+		{key: s.ProcessID, version: 1, snapshot: s, starters: starters},
+	}
 	th.state = Started
 	th.m.Unlock()
 
@@ -385,8 +397,9 @@ func TestRunRegisterStartersError(t *testing.T) {
 	th.eventHub = mh
 
 	th.m.Lock()
-	th.snapshots[s.ProcessID] = s
-	th.starters[s.ProcessID] = starters
+	th.registrations[s.ProcessID] = []*ProcessRegistration{
+		{key: s.ProcessID, version: 1, snapshot: s, starters: starters},
+	}
 	th.m.Unlock()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -468,7 +481,8 @@ func TestCorrelationDedup(t *testing.T) {
 	require.NoError(t, err)
 
 	proc := corrStartProcess(t, "p-corr", "order placed", "order placed")
-	require.NoError(t, th.RegisterProcess(proc))
+	_, err = th.RegisterProcess(proc)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -501,7 +515,8 @@ func TestCorrelationNoKeyEachInstantiates(t *testing.T) {
 	th, err := New("nocorr", WithMessageBroker(broker))
 	require.NoError(t, err)
 
-	require.NoError(t, th.RegisterProcess(msgStartProcess(t, "p-nocorr", "order placed")))
+	_, err = th.RegisterProcess(msgStartProcess(t, "p-nocorr", "order placed"))
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -517,7 +532,6 @@ func TestCorrelationNoKeyEachInstantiates(t *testing.T) {
 		"without a key, each message instantiates")
 }
 
-
 // TestCorrelationUnderivableKeyInstantiates: a declared key whose retrieval
 // expression doesn't apply to the message (MessageRef mismatch) can't be
 // derived (ok=false), so the message instantiates without dedup.
@@ -529,7 +543,8 @@ func TestCorrelationUnderivableKeyInstantiates(t *testing.T) {
 
 	// the retrieval MessageRef ("other") differs from the start message name.
 	proc := corrStartProcess(t, "p-mm", "order placed", "other")
-	require.NoError(t, th.RegisterProcess(proc))
+	_, err = th.RegisterProcess(proc)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

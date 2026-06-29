@@ -87,7 +87,8 @@ func TestEventGatewaySignalDeferredChoice(t *testing.T) {
 			defer cancel()
 
 			thrower := signalThrowProcess(t, "throw-"+tc.fire, tc.fire)
-			require.NoError(t, th.RegisterProcess(thrower))
+			_, err = th.RegisterProcess(thrower)
+			require.NoError(t, err)
 
 			h, err := th.StartProcess(proc.ID())
 			require.NoError(t, err)
@@ -159,7 +160,8 @@ func TestEventGatewayReceiveTaskArm(t *testing.T) {
 	link(t, paid, endP)
 	link(t, canceled, endC)
 
-	require.NoError(t, th.RegisterProcess(proc))
+	_, err = th.RegisterProcess(proc)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

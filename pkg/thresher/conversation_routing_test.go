@@ -136,7 +136,8 @@ func TestConversationRouting(t *testing.T) {
 	require.NoError(t, err)
 
 	done := make(chan string, 2)
-	require.NoError(t, th.RegisterProcess(orderConversationProcess(t, done)))
+	_, err = th.RegisterProcess(orderConversationProcess(t, done))
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

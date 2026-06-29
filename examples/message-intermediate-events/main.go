@@ -138,7 +138,7 @@ func run() error {
 		}
 	}
 
-	if err := engine.RegisterProcess(proc); err != nil {
+	if _, err := engine.RegisterProcess(proc); err != nil {
 		return fmt.Errorf("register process: %w", err)
 	}
 

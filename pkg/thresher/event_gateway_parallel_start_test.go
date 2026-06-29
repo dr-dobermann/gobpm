@@ -136,7 +136,8 @@ func runParallelGate(
 	th, err := thresher.New(name, thresher.WithMessageBroker(broker))
 	require.NoError(t, err)
 
-	require.NoError(t, th.RegisterProcess(instParallelGateProcess(t, done)))
+	_, err = th.RegisterProcess(instParallelGateProcess(t, done))
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
