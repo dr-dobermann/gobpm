@@ -98,3 +98,38 @@ landing SRD; fold into the planned Service/User-task interactor refactor.
 **Status**: Parked 2026-06-30 (pulled from the FIX-014 P2 cluster: the other two
 of that cluster — §2.1 `GExpression.Evaluate`, §2.11 `bpmncommon.Error.Structure`
 — were already resolved by FIX-010, so the cluster yields no FIX).
+
+---
+
+## AB-003 — Unspecified-direction gateway: enforce merge-or-split?
+
+- **Source**: `docs/audit/code-review-third-pass-2026-06-29.md` §3.5 (🟡 P3,
+  Active validation gap).
+- **Code**: `pkg/model/gateways/gateway.go` `testDirectionFlows`, the
+  `Unspecified` case (`:295-298`) accepts `inCount >= 1 && outCount >= 1` — so a
+  1-in/1-out gateway passes `TestFlows`.
+
+**Problem.** The audit asks to tighten the `Unspecified` rule to **merge-or-split**
+(`inCount >= 2 || outCount >= 2`), citing a BPMN mandate that "a Gateway MUST
+merge or split". **That normative rule is NOT in the vendored spec extract**:
+`docs/bpmn-spec/elements/gateways.md` lists `gatewayDirection` ∈ {`Unspecified`
+(default), `Converging`, `Diverging`, `Mixed`} and `docs/bpmn-spec/semantics/
+gateways.md` gives per-type token rules, but neither forbids a 1-in/1-out
+gateway. So the fix rests on an **unverified standard-claim**.
+
+**Why it's not a FIX.** Two coupled decisions, neither mechanical:
+1. **Verify the mandate** against the full BPMN 2.0 spec (and the BPMN NotebookLM)
+   with an actual `§`-pin — per the project's spec-grounding rule, an
+   asserted-from-memory standard-claim can't drive a validation change.
+2. **Policy**: tightening rejects processes that validate **today** (1-in/1-out
+   `Unspecified` gateways). The project rule is *standard-default + opt-in
+   relaxation* ([[feedback_parametrize_relaxations_default_standard]]) — so if the
+   mandate holds, the change likely needs a relaxation parameter, not a hard
+   reject. That is ADR-005 (gateways) work.
+
+**Governing docs to amend.** **ADR-005** (gateways-and-joins) — the
+direction-conformance decision + any relaxation knob; `docs/bpmn-spec/`
+elements/semantics gateways as the authority to pin.
+
+**Status**: Parked 2026-06-30 (pulled from the FIX-014 P3 sweep; the other 11
+sweep findings are mechanical and proceed as FIX-014).
