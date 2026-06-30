@@ -12,6 +12,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub/waiters"
+	"github.com/dr-dobermann/gobpm/pkg/clock/clocktest"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
@@ -460,4 +461,73 @@ func TestTimerWaiterServiceRejectsNonReady(t *testing.T) {
 	require.True(t, ae.HasClass(errs.InvalidState))
 	require.Equal(t, eventproc.WSRunned, ae.Details["current_state"])
 	require.Equal(t, eventproc.WSReady, ae.Details["expected_state"])
+}
+
+// TestTimerWaiterHonorsInjectedClock is the FIX-012 P1 regression: the service
+// goroutine must wait on the injected runtime Clock, not the real wall clock.
+// A one-hour Duration timer is driven to fire in milliseconds by advancing a
+// clocktest.Clock — under the former time.NewTicker(tw.duration) the ticker
+// would never tick within the test and this would time out.
+//
+// The bounded Advance-then-poll loop exists because clocktest does not expose
+// its pending timers, so the test cannot observe the exact instant the
+// goroutine registers After(); it advances repeatedly until the fire is seen.
+// This completes in one or two scheduling quanta (~ms), NOT the one-hour
+// duration.
+func TestTimerWaiterHonorsInjectedClock(t *testing.T) {
+	clk := clocktest.New(time.Now())
+	rt := enginert.Default().WithClock(clk)
+
+	fired := make(chan struct{}, 1)
+	ep := mockeventproc.NewMockEventProcessor(t)
+	ep.EXPECT().
+		ProcessEvent(mock.Anything, mock.Anything).
+		RunAndReturn(func(context.Context, flow.EventDefinition) error {
+			select {
+			case fired <- struct{}{}:
+			default:
+			}
+
+			return nil
+		})
+
+	mockHub := mockeventproc.NewMockEventHub(t)
+	mockHub.EXPECT().WaiterFired(mock.Anything).Return(nil).Maybe()
+
+	// a one-shot absolute Time timer one hour ahead of the injected clock.
+	// Service computes the delay as next.Sub(Clock().Now()) == one hour, so the
+	// wait honours the fake clock end-to-end.
+	hourEDef := events.MustTimerEventDefinition(
+		goexpr.Must(
+			nil,
+			data.MustItemDefinition(values.NewVariable(time.Now())),
+			func(context.Context, data.Source) (data.Value, error) {
+				return values.NewVariable(clk.Now().Add(time.Hour)), nil
+			}),
+		nil, nil)
+
+	w, err := waiters.CreateWaiter(mockHub, ep, hourEDef, rt)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	require.NoError(t, w.Service(ctx))
+
+	deadline := time.After(2 * time.Second)
+	for {
+		clk.Advance(time.Hour)
+
+		select {
+		case <-fired:
+			return // fired via the injected clock, no real one-hour wait
+
+		case <-deadline:
+			t.Fatal("timer never fired under the injected clock — " +
+				"wall clock not honoured")
+
+		case <-time.After(5 * time.Millisecond):
+			// the goroutine may not have registered After() yet; advance again.
+		}
+	}
 }

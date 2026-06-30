@@ -256,7 +256,10 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 	tw.state = eventproc.WSRunned
 
 	if !tw.next.IsZero() {
-		tw.duration = time.Until(tw.next)
+		// Measure the absolute-timer delay against the injected Clock (the same
+		// source the validation at parseEDef used), not the wall clock, so a
+		// substituted clock governs the wait — see runTimerService.
+		tw.duration = tw.next.Sub(tw.rt.Clock().Now())
 		tw.cyclesLeft = 0
 	}
 
@@ -288,16 +291,32 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 // the channel: this goroutine is its only reader and it returns immediately,
 // so the close would signal nothing while racing Stop()'s close
 // (panic: close of closed channel — audit 1.3 / FIX-003 A).
+//
+// The wait is driven by tw.rt.Clock().After, NOT time.NewTicker / time.After,
+// and the channel is re-armed at the top of every loop iteration. This exists
+// for test determinism (FIX-012): the runtime Clock is an injectable
+// abstraction (ADR-004 v.1 — "tests inject fake"), and routing the wait
+// through it lets a test substitute a clocktest.Clock and drive the timer with
+// Advance() instead of really sleeping for tw.duration. With the default syscl
+// Clock, After(d) is time.After(d), so production wall-clock behavior is
+// identical to the former ticker — the change costs nothing in production and
+// unlocks deterministic timer tests (and any future simulation/replay clock).
+// Re-arming per iteration covers both shapes uniformly: a one-shot timer
+// (cyclesLeft == 0) exits after the first fire because processTimerEvent
+// returns a completion error, while a cyclic timer re-arms the next interval.
+//
+// Do NOT "simplify" this back to time.NewTicker / time.After: it silently
+// re-breaks every fake-clock timer test (the goroutine would sleep on real
+// time while validation honors the injected clock — the exact split this FIX
+// removed).
 func (tw *timeWaiter) runTimerService(ctx context.Context) {
 	defer close(tw.done) // signal goroutine exit for EventHub.Shutdown drain
 
-	tckr := time.NewTicker(tw.duration)
-
 	for {
+		fire := tw.rt.Clock().After(tw.duration)
+
 		select {
 		case <-ctx.Done():
-			tckr.Stop()
-
 			tw.m.Lock()
 			tw.state = eventproc.WSStopped
 			tw.m.Unlock()
@@ -308,11 +327,9 @@ func (tw *timeWaiter) runTimerService(ctx context.Context) {
 			tw.rt.Logger().Debug("timer waiter stopping",
 				"waiter_id", tw.id)
 
-			tckr.Stop()
-
 			return
 
-		case <-tckr.C:
+		case <-fire:
 			if err := tw.processTimerEvent(ctx); err != nil {
 				return
 			}
