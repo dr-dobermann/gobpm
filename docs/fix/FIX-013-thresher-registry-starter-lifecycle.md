@@ -5,7 +5,7 @@
 | Status | Draft |
 | Date | 2026-06-30 |
 | Owner | Ruslan Gabitov |
-| Related | [ADR-019 v.1 Definition versioning](../design/ADR-019-definition-versioning.md), [SRD-031.B Registry concurrency](../srd/SRD-031.B-registry-concurrency.md), [SRD-031.A Definition versioning](../srd/SRD-031.A-definition-versioning.md), [ADR-006 v.2 §2.5 Waiter lifecycle](../design/ADR-006-events-and-subscriptions.md), [FIX-002 Event-start registration lifecycle](FIX-002-event-start-registration-lifecycle.md) |
+| Related | [ADR-019 v.1 Definition versioning](../design/ADR-019-definition-versioning.md), [SRD-031.B Registry concurrency](../srd/SRD-031.B-registry-concurrency.md), [SRD-031.A Definition versioning](../srd/SRD-031.A-definition-versioning.md), [SRD-032 Snapshot starts & instance scope](../srd/SRD-032-snapshot-starts-instance-scope.md), [ADR-006 v.2 §2.5 Waiter lifecycle](../design/ADR-006-events-and-subscriptions.md), [FIX-002 Event-start registration lifecycle](FIX-002-event-start-registration-lifecycle.md) |
 
 One-shot remediation of five defects in the `pkg/thresher` process registry and
 instance-starter lifecycle, surfaced by
@@ -189,8 +189,11 @@ latest-supersedes lifecycle the registry implements; §1.1's godoc must match it
 SRD-031.B (registry-concurrency discipline — the atomic-state / CAS-lifecycle /
 `…Locked`-helper design these residuals sit on; §1.2 and §1.4 are framed against
 it). SRD-031.A (the versioning half — the per-call versioning behaviour §1.1
-documents). ADR-006 v.2 §2.5 (waiter/hub lifecycle — the EventHub the starters
-subscribe to). FIX-002 (the RC2 lock-discipline this FIX must not break — the hub
+documents). SRD-032 (snapshot starts & instance scope — the `[]*instanceStarter`
+these register/unregister loops consume is derived by `scanInstantiatingStarts`
+from the precomputed `Snapshot.InstantiatingStarts`; FIX-013 changes the loops'
+failure handling, not the derivation, which SRD-032 owns). ADR-006 v.2 §2.5
+(waiter/hub lifecycle — the EventHub the starters subscribe to). FIX-002 (the RC2 lock-discipline this FIX must not break — the hub
 call stays outside `t.m`). The deferred `ParallelEvents`-no-CorrelationKey
 finding (third-pass §2.5) is reserved for **FIX-014**.
 
