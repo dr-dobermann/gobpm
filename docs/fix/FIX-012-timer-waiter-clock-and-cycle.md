@@ -119,8 +119,9 @@ state, and the error class is misspelled.
 | Test | Asserts |
 |---|---|
 | `TestTimerWaiterHonorsInjectedClock` | with a `clocktest.Clock`, advancing the fake clock (no real sleep) drives the waiter to fire; the test completes well under any real-time duration |
-| `TestCyclicTimerFiresExactlyN` (updated "cycle events") | a `Cycle` of N delivers **exactly** N events, with the timer def fed `N` (no `-1`) |
+| `TestTimeWaiter/"cycle events"` (rewritten on a `clocktest.Clock`) | a `Cycle` of N delivers **exactly** N events (def fed `N`, no `-1`), driven by `Advance` with no real sleep; a further advance after the Nth fire yields nothing (no `(N+1)`th) |
 | `TestTimerWaiterServiceRejectsNonReady` | `Service` on a non-ready waiter returns an error whose `current_state` diagnostic is the actual state, not `WSReady` |
+| `TestTimerWaiterServiceRejectsElapsedTimer` | a timer validated as future at creation, then overtaken by an advanced clock, is rejected by `Service` (`next.Sub(Clock().Now()) <= 0`) — covers the non-positive-duration guard |
 | (compile-time) | all references to the renamed `TimerWaiterError` build |
 
 ## 5. Prevention
@@ -146,7 +147,43 @@ the neighbouring double-`close(stopCh)` / `fmt.Println` defects in the same
 file.
 
 ## 8. Implementation summary
-*(filled at landing.)*
+
+Landed on branch `fix/audit-remediation-2026-06` across three milestones plus a
+coverage top-up, all in `internal/eventproc/eventhub/waiters/timer.go` and its
+test.
+
+**§3.2 changes:**
+- **3.2.1 clock honouring** — `Service` computes the absolute-timer delay as
+  `tw.next.Sub(tw.rt.Clock().Now())` (`timer.go:262`); `runTimerService`
+  re-arms `tw.rt.Clock().After(tw.duration)` per loop iteration (`:316`),
+  replacing `time.NewTicker`/`time.Until`, with a detailed rationale comment
+  (test determinism + ADR-004 contract; do-not-revert warning).
+- **3.2.2 cyclic count** — `processTimerEvent` decrements then tests
+  `tw.cyclesLeft <= 0` (`:376-377`), so a `Cycle` of N fires exactly N.
+- **3.2.3 diagnostic** — the not-ready guard reports `current_state=tw.state`
+  plus `expected_state=WSReady` (`:252-253`).
+- **3.2.4 naming** — `TimerWatierError` → `TimerWaiterError`,
+  `"TIMER_WAITER_ERRROR"` → `"TIMER_WAITER_ERROR"` (all 11 refs, package-local).
+- **3.2.5** — in-code `ADR-006 v.1 §2.5` → `v.2` (`:382`).
+
+**Tests (`timer_test.go`):** `TestTimerWaiterHonorsInjectedClock` (1-hour timer
+fires in ms via `Advance`), `TestTimeWaiter/"cycle events"` rewritten on a
+`clocktest.Clock` (exactly N, no `(N+1)`th; removed a 7-second real sleep) with
+the `advanceUntilFire` helper, `TestTimerWaiterServiceRejectsNonReady`,
+`TestTimerWaiterServiceRejectsElapsedTimer`.
+
+**Verification:** `make ci` green (golangci-lint 0 issues, `-race` tests,
+govulncheck); diff-coverage **100% of 74 changed lines** with `timer.go`'s
+touched functions (`Service`, `runTimerService`, `processTimerEvent`) at 100%;
+`simple-timer`, `timer-event`, `boundary-events` examples smoke exit 0.
+
+**Out of scope (already fixed):** the `architecture-audit-2026-06-11` §1.3
+double-`close(stopCh)` + `fmt.Println` defect (FIX-003 A); and the
+`code-review-2025` §1.5 Duration-/Cycle-only validation gap (a model-layer
+concern for a later FIX, not the waiter).
+
+**Commits:** doc `d097d6b`; M1 `dac3342` (naming + diagnostic + pin); M2
+`0d7ed32` (clock honouring); M3 `90192a2` (cyclic N); coverage `7955b95`.
 
 ## 9. Open questions
 None.
