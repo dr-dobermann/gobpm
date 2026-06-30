@@ -52,12 +52,17 @@ func (c *Clock) After(d time.Duration) <-chan time.Time {
 }
 
 // Advance moves the clock forward by d, firing any timers whose deadline has
-// passed.
+// passed. A non-positive d is ignored (the clock never moves backward),
+// mirroring Set's forward-only rule, so the fake clock stays monotonic as the
+// timer waiters assume; already-due timers still fire.
 func (c *Clock) Advance(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.now = c.now.Add(d)
+	if d > 0 {
+		c.now = c.now.Add(d)
+	}
+
 	c.fireDueLocked()
 }
 

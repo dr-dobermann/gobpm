@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/dr-dobermann/gobpm/generated/mockdata"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
@@ -12,6 +13,7 @@ import (
 	exprgo "github.com/dr-dobermann/gobpm/pkg/model/expression/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/msgflow"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -118,4 +120,69 @@ func TestDeriveKey(t *testing.T) {
 		_, _, err = msgflow.DeriveKey(ctx, eng, key, nil, payload)
 		require.Error(t, err)
 	})
+}
+
+// TestDeriveKeyPresentButNilValue covers FIX-014 1.7: a retrieval expression
+// that yields a present Value carrying no payload (Get == nil) fails correlation
+// (ok == false) rather than stamping a "<nil>" key part.
+func TestDeriveKeyPresentButNilValue(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	eng := exprgo.New()
+	m := msg(t)
+	payload := map[string]any{"orderId": "ORD-1"}
+
+	// a FormalExpression yielding a present Value whose Get is nil. The real
+	// goexpr engine can't pass nil through its result-Update machinery, so a
+	// mock models the present-but-empty optional field directly; exprgo just
+	// delegates to the expression's Evaluate.
+	expr := mockdata.NewMockFormalExpression(t)
+	expr.EXPECT().Evaluate(mock.Anything, mock.Anything).
+		Return(values.NewVariable[any](nil), nil)
+
+	re, err := bpmncommon.NewCorrelationPropertyRetrievalExpression(expr, m)
+	require.NoError(t, err)
+
+	prop, err := bpmncommon.NewCorrelationProperty("orderId", "string",
+		[]bpmncommon.CorrelationPropertyRetrievalExpression{*re})
+	require.NoError(t, err)
+
+	key, err := bpmncommon.NewCorrelationKey("orderKey",
+		[]bpmncommon.CorrelationProperty{*prop})
+	require.NoError(t, err)
+
+	_, ok, err := msgflow.DeriveKey(ctx, eng, key, m, payload)
+	require.NoError(t, err)
+	require.False(t, ok, "a present-but-nil value must not yield a key")
+}
+
+// TestDeriveKeyAbsentValue covers the sibling guard of FIX-014 1.7: an
+// expression that yields no Value at all (nil) also fails correlation.
+func TestDeriveKeyAbsentValue(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	eng := exprgo.New()
+	m := msg(t)
+	payload := map[string]any{"orderId": "ORD-1"}
+
+	expr := mockdata.NewMockFormalExpression(t)
+	expr.EXPECT().Evaluate(mock.Anything, mock.Anything).
+		Return(nil, nil)
+
+	re, err := bpmncommon.NewCorrelationPropertyRetrievalExpression(expr, m)
+	require.NoError(t, err)
+
+	prop, err := bpmncommon.NewCorrelationProperty("orderId", "string",
+		[]bpmncommon.CorrelationPropertyRetrievalExpression{*re})
+	require.NoError(t, err)
+
+	key, err := bpmncommon.NewCorrelationKey("orderKey",
+		[]bpmncommon.CorrelationProperty{*prop})
+	require.NoError(t, err)
+
+	_, ok, err := msgflow.DeriveKey(ctx, eng, key, m, payload)
+	require.NoError(t, err)
+	require.False(t, ok, "an absent value must not yield a key")
 }
