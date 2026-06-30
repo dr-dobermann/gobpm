@@ -892,7 +892,9 @@ func (t *track) unregisterEvent(n flow.Node) error {
 	en, ok := n.(flow.EventNode)
 	if !ok {
 		return errs.New(
-			errs.M("node %q[%s] doesn't implement flow.EventNode interface"))
+			errs.M("node %q[%s] doesn't implement flow.EventNode interface",
+				n.Name(), n.ID()),
+			errs.C(errorClass, errs.TypeCastingError))
 	}
 
 	for _, eDef := range en.Definitions() {

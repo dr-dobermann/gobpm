@@ -175,7 +175,11 @@ func (g *Gateway) UpdateDefaultFlow(f *flow.SequenceFlow) error {
 					errs.C(errorClass, errs.InvalidObject))
 			}
 
-			g.defaultFlow = f
+			// Store the verified member sf, not the caller's pointer f: routing
+			// selects the default by pointer identity (`of == g.defaultFlow`), so
+			// it must hold the gateway's own outgoing-flow object even when the
+			// caller passed a different same-ID pointer (FIX-014 1.5).
+			g.defaultFlow = sf
 
 			return nil
 		}

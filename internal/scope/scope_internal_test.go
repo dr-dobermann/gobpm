@@ -328,3 +328,21 @@ func TestPlaneConcurrent(t *testing.T) {
 		}
 	}
 }
+
+// TestScopeNamesFromRoot covers FIX-014 1.4: a root ("/") scope is visible as an
+// ancestor of a deeper `from`, where the old prefix test dropped it because
+// "/" + PathSeparator is "//" and never prefixes a child path. namesFrom is
+// exercised directly over a synthetic scope tree (a "/" root is unreachable in
+// production, where the root is keyed at the process name).
+func TestScopeNamesFromRoot(t *testing.T) {
+	p := &Scope{
+		scopes: map[DataPath]map[string]data.Data{
+			"/":    {"rootVar": testData(t, "rootVar", 1)},
+			"/sub": {"childVar": testData(t, "childVar", 2)},
+		},
+	}
+
+	names := p.namesFrom("/sub")
+	require.Contains(t, names, "rootVar")
+	require.Contains(t, names, "childVar")
+}

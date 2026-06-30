@@ -4,9 +4,45 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
 	"github.com/stretchr/testify/require"
 )
+
+// TestUpdateDefaultFlowStoresMember covers FIX-014 1.5: UpdateDefaultFlow stores
+// the gateway's own outgoing-flow object, not the caller's pointer, so the
+// pointer-identity routing (`of == g.defaultFlow`) recognises the default even
+// when the caller passes a different object carrying the same id.
+func TestUpdateDefaultFlowStoresMember(t *testing.T) {
+	g, err := gateways.New(gateways.WithDirection(gateways.Diverging))
+	require.NoError(t, err)
+
+	nodes := getDummyNodes(4)
+	_, err = flow.Link(nodes[0], g)
+	require.NoError(t, err)
+	_, err = flow.Link(g, nodes[1])
+	require.NoError(t, err)
+	df, err := flow.Link(g, nodes[2]) // df is one of g's outgoing members
+	require.NoError(t, err)
+
+	// a distinct flow object carrying the SAME id as the member df, not in g.
+	foreign, err := flow.Link(nodes[2], nodes[3], foundation.WithID(df.ID()))
+	require.NoError(t, err)
+	require.NotSame(t, df, foreign)
+	require.Equal(t, df.ID(), foreign.ID())
+
+	require.NoError(t, g.UpdateDefaultFlow(foreign))
+
+	require.Same(t, df, g.DefaultFlow(),
+		"the stored default must be the gateway's member, not the caller's pointer")
+	require.NotSame(t, foreign, g.DefaultFlow())
+
+	// a conditioned outgoing flow may not be the default.
+	cond, err := flow.Link(g, nodes[3],
+		flow.WithCondition(boolCond(t, func(x int) bool { return x == 1 })))
+	require.NoError(t, err)
+	require.Error(t, g.UpdateDefaultFlow(cond))
+}
 
 // TestMustUpdateDefaultFlow verifies the panicking wrapper around
 // UpdateDefaultFlow: it sets the default flow for a valid outgoing edge and
