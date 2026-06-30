@@ -107,6 +107,23 @@ func (p *Property) Name() string {
 	return p.name
 }
 
+// Clone returns a deep copy of the Property — a distinct ItemAwareElement (its
+// own value and state) under the same name. It lets a Snapshot give each
+// registered version and each instance private property objects instead of
+// sharing one mutable object across them (FIX-016). It errors when the embedded
+// ItemAwareElement can't be cloned (a nil value).
+func (p *Property) Clone() (*Property, error) {
+	iae, err := p.ItemAwareElement.Clone()
+	if err != nil {
+		return nil, err
+	}
+
+	return &Property{
+		name:             p.name,
+		ItemAwareElement: *iae,
+	}, nil
+}
+
 // ----------------------------------------------------------------------------
 // Test interfaces for Property.
 var _ Data = (*Property)(nil)
