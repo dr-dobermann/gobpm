@@ -4,10 +4,35 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
+
+// TestLiveSpanConcurrentUse covers FIX-014 1.11: a span's mutating methods are
+// safe under concurrent use (run with -race). Without the per-span mutex this
+// races on the span's data/ended fields.
+func TestLiveSpanConcurrentUse(t *testing.T) {
+	r := New(8)
+	_, span := r.Start(context.Background(), "concurrent")
+
+	var wg sync.WaitGroup
+	for i := range 16 {
+		wg.Add(1)
+
+		go func(i int) {
+			defer wg.Done()
+
+			span.SetAttributes(observability.Attr{Key: "k", Value: i})
+			span.SetStatus(observability.StatusOK, strconv.Itoa(i))
+			span.RecordError(errors.New("boom"))
+		}(i)
+	}
+
+	wg.Wait()
+	span.End()
+}
 
 func TestRecordsCompletedSpan(t *testing.T) {
 	r := New(0) // default capacity

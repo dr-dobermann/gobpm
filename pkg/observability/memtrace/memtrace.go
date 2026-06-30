@@ -69,13 +69,21 @@ func (r *Recorder) add(s Span) {
 	r.ring = append(r.ring, s)
 }
 
+// liveSpan is an in-progress span. Its mutating methods may be called from
+// different goroutines than the one that started it (the observability.Span
+// contract permits concurrent use), so every access to data/ended is guarded by
+// mu (FIX-014 1.11).
 type liveSpan struct {
 	rec   *Recorder
 	data  Span
+	mu    sync.Mutex
 	ended bool
 }
 
 func (s *liveSpan) End() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.ended {
 		return
 	}
@@ -85,12 +93,23 @@ func (s *liveSpan) End() {
 }
 
 func (s *liveSpan) SetAttributes(attrs ...observability.Attr) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.data.Attrs = append(s.data.Attrs, attrs...)
 }
 
-func (s *liveSpan) RecordError(err error) { s.data.Err = err }
+func (s *liveSpan) RecordError(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.data.Err = err
+}
 
 func (s *liveSpan) SetStatus(code observability.StatusCode, desc string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.data.Status = code
 	s.data.StatusDesc = desc
 }
