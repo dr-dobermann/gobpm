@@ -513,6 +513,41 @@ func TestTimerWaiterServiceRejectsNonReady(t *testing.T) {
 	require.Equal(t, eventproc.WSReady, ae.Details["expected_state"])
 }
 
+// TestTimerWaiterServiceRejectsElapsedTimer covers Service's non-positive
+// duration guard: a timer validated as future at creation can elapse before
+// Service runs if the clock advances past it (here via the injected fake
+// clock). Service computes next.Sub(Clock().Now()) <= 0 and refuses to start.
+func TestTimerWaiterServiceRejectsElapsedTimer(t *testing.T) {
+	clk := clocktest.New(time.Now())
+	rt := enginert.Default().WithClock(clk)
+
+	ep := mockeventproc.NewMockEventProcessor(t)
+	mockHub := mockeventproc.NewMockEventHub(t)
+
+	// one hour ahead at creation — valid (future relative to the fake clock).
+	edef := events.MustTimerEventDefinition(
+		goexpr.Must(
+			nil,
+			data.MustItemDefinition(values.NewVariable(time.Now())),
+			func(context.Context, data.Source) (data.Value, error) {
+				return values.NewVariable(clk.Now().Add(time.Hour)), nil
+			}),
+		nil, nil)
+
+	w, err := waiters.CreateWaiter(mockHub, ep, edef, rt)
+	require.NoError(t, err)
+
+	// advance the clock past the scheduled instant: the timer has now elapsed.
+	clk.Advance(2 * time.Hour)
+
+	err = w.Service(context.Background())
+	require.Error(t, err)
+
+	var ae *errs.ApplicationError
+	require.True(t, errors.As(err, &ae))
+	require.True(t, ae.HasClass(errs.InvalidState))
+}
+
 // TestTimerWaiterHonorsInjectedClock is the FIX-012 P1 regression: the service
 // goroutine must wait on the injected runtime Clock, not the real wall clock.
 // A one-hour Duration timer is driven to fire in milliseconds by advancing a
