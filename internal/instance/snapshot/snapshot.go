@@ -55,12 +55,24 @@ func New(
 		return nil, err
 	}
 
+	// Clone the process properties into the snapshot so the frozen template owns
+	// private property objects — like the node graph cloned below — and a process
+	// edit after registration can't reach the registered version (FIX-016,
+	// ADR-019 §2.3).
+	props, err := cloneProperties(p.Properties())
+	if err != nil {
+		return nil, errs.New(
+			errs.M("couldn't clone process properties into snapshot"),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.E(err))
+	}
+
 	s := Snapshot{
 		ID:          *foundation.NewID(),
 		ProcessID:   p.ID(),
 		ProcessName: p.Name(),
 		Nodes:       map[string]flow.Node{},
-		Properties:  p.Properties(),
+		Properties:  props,
 	}
 
 	s.CorrelationKeys = correlationKeys(p)
@@ -113,7 +125,7 @@ func New(
 	// BPMN requires that, if there is an EndEvent, the process has an
 	// instantiation point: a StartEvent or a no-incoming instantiate
 	// ReceiveTask (§13.3.3).
-	if eeExists && !seExists && !instStartExists {
+	if !hasInstantiationPoint(seExists, eeExists, instStartExists) {
 		return nil,
 			errs.New(
 				errs.M("no StartEvent or instantiating ReceiveTask in process " +
@@ -168,18 +180,57 @@ func isInstantiatingTask(n flow.Node) bool {
 	return ok && rt.Instantiate() && len(n.Incoming()) == 0
 }
 
+// hasInstantiationPoint reports whether the process can be instantiated for
+// BPMN's rule that a process containing an EndEvent must have an instantiation
+// point — a StartEvent or a no-incoming instantiate ReceiveTask (§13.3.3).
+func hasInstantiationPoint(seExists, eeExists, instStartExists bool) bool {
+	return !eeExists || seExists || instStartExists
+}
+
+// cloneProperties deep-copies a property set so a Snapshot — a frozen template
+// (New) or a per-instance clone (Clone) — owns private property objects rather
+// than sharing one mutable set across registrations and instances. It is the
+// property counterpart of node cloning (FIX-016). A nil input yields a nil set.
+func cloneProperties(props []*data.Property) ([]*data.Property, error) {
+	if props == nil {
+		return nil, nil
+	}
+
+	cloned := make([]*data.Property, len(props))
+	for i, p := range props {
+		c, err := p.Clone()
+		if err != nil {
+			return nil, errs.New(
+				errs.M("couldn't clone property %q", p.Name()),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err))
+		}
+
+		cloned[i] = c
+	}
+
+	return cloned, nil
+}
+
 // Clone returns a per-instance copy of the Snapshot. Every node is cloned (its
 // immutable configuration shared by reference, its runtime state fresh) and the
 // flow graph is relinked between the clones, so an instance built from the clone
-// mutates only its own nodes. The immutable header — process id/name, properties,
-// correlation keys and instantiating starts — is shared. See ADR-009.
+// mutates only its own nodes. Properties are cloned too — they carry per-instance
+// mutable runtime state, so each instance owns its own (FIX-016). The genuinely
+// immutable header — process id/name, correlation-key definitions and
+// instantiating-start descriptors — is shared by reference. See ADR-009.
 func (s *Snapshot) Clone() (*Snapshot, error) {
+	props, err := cloneProperties(s.Properties)
+	if err != nil {
+		return nil, err
+	}
+
 	clone := Snapshot{
 		ID:                  *foundation.NewID(),
 		ProcessID:           s.ProcessID,
 		ProcessName:         s.ProcessName,
 		Nodes:               make(map[string]flow.Node, len(s.Nodes)),
-		Properties:          s.Properties,
+		Properties:          props,
 		CorrelationKeys:     s.CorrelationKeys,
 		InstantiatingStarts: s.InstantiatingStarts,
 	}

@@ -346,49 +346,6 @@ func TestSnapshotCorrelationKeys(t *testing.T) {
 	require.Equal(t, s.CorrelationKeys, clone.CorrelationKeys)
 }
 
-// TestSnapshotCloneSharesProperties anchors the invariant that Clone shares the
-// process Properties by reference rather than deep-copying them (snapshot.go:
-// clone.Properties = s.Properties). This is intentional and safe only because a
-// Property is immutable configuration that an instance never rewrites: the
-// snapshot is a launch template, not a per-instance mutable store (ADR-009). The
-// test locks the sharing so a future change that breaks it — a defensive copy,
-// or a Property that becomes mutable — is caught here rather than silently
-// doubling the per-instance footprint or diverging clones from the snapshot.
-func TestSnapshotCloneSharesProperties(t *testing.T) {
-	require.NoError(t, data.CreateDefaultStates())
-
-	p, err := process.New("p-props",
-		data.WithProperties(
-			data.MustProperty("greeting",
-				data.MustItemDefinition(nil), data.ReadyDataState)))
-	require.NoError(t, err)
-
-	start, err := events.NewStartEvent("start")
-	require.NoError(t, err)
-
-	end, err := events.NewEndEvent("end")
-	require.NoError(t, err)
-
-	require.NoError(t, p.Add(start))
-	require.NoError(t, p.Add(end))
-
-	_, err = flow.Link(start, end)
-	require.NoError(t, err)
-
-	s, err := snapshot.New(p)
-	require.NoError(t, err)
-	require.Len(t, s.Properties, 1)
-
-	clone, err := s.Clone()
-	require.NoError(t, err)
-
-	// the same backing slice and the same Property pointers are shared, not
-	// copied — the immutable header travels by reference.
-	require.Len(t, clone.Properties, len(s.Properties))
-	require.Same(t, s.Properties[0], clone.Properties[0],
-		"Clone must share the immutable Property, not copy it")
-}
-
 // TestSnapshotNewIsolatesFromModel verifies that New takes its own copy of the
 // definition's graph: editing the source process after registration — here,
 // adding a node — does not reach the already-taken snapshot. This is the

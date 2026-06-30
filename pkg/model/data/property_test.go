@@ -1,15 +1,46 @@
 package data_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/generated/mockdata"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+// TestPropertyCloneIsDeepCopy covers FIX-016 3.2.1: Property.Clone returns a
+// distinct object (its own ItemAwareElement) under the same name, so mutating
+// the clone doesn't touch the source.
+func TestPropertyCloneIsDeepCopy(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	p := data.MustProperty("counter",
+		data.MustItemDefinition(values.NewVariable(1),
+			foundation.WithID("counter")),
+		data.ReadyDataState)
+
+	clone, err := p.Clone()
+	require.NoError(t, err)
+
+	require.NotSame(t, p, clone)
+	require.Equal(t, p.Name(), clone.Name())
+
+	ctx := context.Background()
+	require.NoError(t, clone.Value().Update(ctx, 42))
+	require.Equal(t, 1, p.Value().Get(ctx),
+		"mutating the clone must not affect the source")
+	require.Equal(t, 42, clone.Value().Get(ctx))
+
+	// a zero-value Property (no ItemDefinition) can't be cloned.
+	var empty data.Property
+	_, err = empty.Clone()
+	require.Error(t, err)
+}
 
 type invldPA struct{}
 
