@@ -277,7 +277,12 @@ func TestTimeWaiter(t *testing.T) {
 
 	t.Run("cycle events",
 		func(t *testing.T) {
-			cycles := 3
+			const cycles = 3
+
+			clk := clocktest.New(time.Now())
+			rt := enginert.Default().WithClock(clk)
+
+			got := make(chan struct{}, cycles+1)
 			epc := mockeventproc.NewMockEventProcessor(t)
 			mockHub := mockeventproc.NewMockEventHub(t)
 			mockHub.EXPECT().
@@ -285,45 +290,90 @@ func TestTimeWaiter(t *testing.T) {
 				Return(nil).
 				Maybe()
 			epc.EXPECT().
-				ProcessEvent(
-					mock.AnythingOfType("backgroundCtx"),
-					mock.Anything).
+				ProcessEvent(mock.Anything, mock.Anything).
 				RunAndReturn(
 					func(_ context.Context, ed flow.EventDefinition) error {
 						t.Log("   >>>> got cycle event: ", ed.Type(), " #", ed.ID())
-
-						require.NotEqual(t, 0, cycles)
-						cycles--
+						got <- struct{}{}
 
 						return nil
 					})
 
+			// a Cycle of N with a one-second interval. After FIX-012 a Cycle of
+			// N delivers EXACTLY N events (was N+1), so the def is fed N, not
+			// N-1.
 			cyclesEDef := events.MustTimerEventDefinition(
 				nil,
 				goexpr.Must(
 					nil,
 					data.MustItemDefinition(
 						values.NewVariable(0)),
-					func(ctx context.Context, ds data.Source) (data.Value, error) {
-						return values.NewVariable(cycles - 1), nil
+					func(context.Context, data.Source) (data.Value, error) {
+						return values.NewVariable(cycles), nil
 					}),
 				goexpr.Must(
 					nil,
 					data.MustItemDefinition(
 						values.NewVariable(time.Second)),
-					func(ctx context.Context, ds data.Source) (data.Value, error) {
+					func(context.Context, data.Source) (data.Value, error) {
 						return values.NewVariable(time.Second), nil
 					}))
 
-			w, err := waiters.CreateWaiter(mockHub, epc, cyclesEDef, enginert.Default())
+			w, err := waiters.CreateWaiter(mockHub, epc, cyclesEDef, rt)
 			require.NoError(t, err)
 			require.Equal(t, eventproc.WSReady, w.State())
 
-			err = w.Service(context.Background())
-			require.NoError(t, err)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 
-			time.Sleep(7 * time.Second)
+			require.NoError(t, w.Service(ctx))
+
+			// drive exactly N cycles deterministically via the fake clock.
+			for range cycles {
+				advanceUntilFire(t, clk, got, time.Second)
+			}
+
+			// no (N+1)th fire: the waiter ended on the Nth delivery, so
+			// advancing the clock further yields nothing.
+			clk.Advance(time.Second)
+
+			select {
+			case <-got:
+				t.Fatal("cyclic timer fired more than the requested N times")
+			case <-time.After(50 * time.Millisecond):
+			}
 		})
+}
+
+// advanceUntilFire advances the fake clock by step until exactly one timer
+// event lands on got, tolerating the service goroutine not having re-armed its
+// Clock().After() yet (clocktest does not expose pending timers). The waiter is
+// single-goroutine, so at most one After is pending at a time and over-advancing
+// in the retry cannot double-fire. Bounded so a never-firing timer fails fast
+// instead of hanging.
+func advanceUntilFire(
+	t *testing.T,
+	clk *clocktest.Clock,
+	got <-chan struct{},
+	step time.Duration,
+) {
+	t.Helper()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		clk.Advance(step)
+
+		select {
+		case <-got:
+			return
+
+		case <-deadline:
+			t.Fatal("cyclic timer did not fire within the deadline")
+
+		case <-time.After(5 * time.Millisecond):
+			// goroutine may not have re-armed After() yet; advance again.
+		}
+	}
 }
 
 // TestTimerWaiterStopCtxRace is the regression for the double-close panic

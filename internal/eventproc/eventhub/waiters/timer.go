@@ -368,8 +368,13 @@ func (tw *timeWaiter) processTimerEvent(ctx context.Context) error {
 		}
 	}
 
+	// Decrement first, THEN test the terminal condition (FIX-012): a Cycle of N
+	// must deliver exactly N events. Testing before the decrement spent one
+	// extra cycle (N+1 deliveries). A one-shot timer enters with cyclesLeft == 0
+	// and ends here on its first fire (0 -> -1, which is <= 0).
 	tw.m.Lock()
-	if tw.cyclesLeft == 0 {
+	tw.cyclesLeft--
+	if tw.cyclesLeft <= 0 {
 		tw.processors = []eventproc.EventProcessor{}
 		tw.state = eventproc.WSEnded
 		tw.m.Unlock()
@@ -381,7 +386,6 @@ func (tw *timeWaiter) processTimerEvent(ctx context.Context) error {
 		return errs.New(errs.M("timer completed")) // signal completion
 	}
 
-	tw.cyclesLeft--
 	tw.m.Unlock()
 
 	return nil
