@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-06-30 |
 | Owner | Ruslan Gabitov |
 | Related | [ADR-003 v.1 Module layout](../design/ADR-003-module-layout.md), [ADR-004 v.1 Runtime environment contract](../design/ADR-004-runtime-environment-contract.md) |
@@ -125,7 +125,25 @@ modules that gain third-party dependencies, which 1.1 must scan). The §3.17
 depguard finding is out of scope (see the intro note, **AB-004**).
 
 ## 8. Implementation summary
-*(filled at landing.)*
+
+Landed on `fix/audit-remediation-2026-06` in a single milestone commit
+`18ea6c0` (`Makefile`, `.golangci.yml` — no Go code):
+
+| Finding | Change |
+|---|---|
+| 1.1 | `Makefile` `vuln` loops over `$(MODULES)` (`@set -e; for dir in $(MODULES); do … (cd $$dir && govulncheck ./...) …`), scanning all 21 modules instead of only the root. |
+| 1.2 | `-count=1` added to the `-race` runs in `test-all` and to `test`/`test_coverage` (4 sites), so a re-run re-executes the race detector. |
+| 1.3 | `.golangci.yml` `run.tests: false` → `true`. |
+| 1.4 | `Makefile` `clear`: `rm ./bin/*` → `rm -rf ./bin/`. |
+
+**Verification results.** `make ci` exit 0 (HEAD `18ea6c0`): `lint-all-modules`
+with `tests: true` reports **0 issues across all 21 modules** (root + runtime +
+adapters/sqlite + 18 examples — the concurrency analyzers now cover `_test.go`);
+`test-all` runs `-race -count=1`; `vuln` emits a `::group::govulncheck <dir>` per
+module and reports **No vulnerabilities found** for each; `cover-check` passes.
+`make clear && make clear` on a checkout with no `bin/` both exit 0. No Go code
+changed, so there is no diff-coverage to measure. §3.17 (depguard) is deferred to
+**AB-004**.
 
 ## 9. Open questions
 None.
