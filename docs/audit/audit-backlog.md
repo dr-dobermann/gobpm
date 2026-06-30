@@ -133,3 +133,36 @@ elements/semantics gateways as the authority to pin.
 
 **Status**: Parked 2026-06-30 (pulled from the FIX-014 P3 sweep; the other 11
 sweep findings are mechanical and proceed as FIX-014).
+
+---
+
+## AB-004 — depguard core-import rule blocks the runtime server under per-module lint
+
+- **Source**: `docs/audit/code-review-third-pass-2026-06-29.md` §3.17 (🟡 P3,
+  Latent — server stub).
+- **Code**: `.golangci.yml:39-50` (the `core-no-runtime-no-adapters` depguard
+  rule, `files` globs include `**/cmd/**/*.go`); `runtime/cmd/gobpm-server/
+  main.go` (a stub today, no `runtime` import yet); `Makefile:132-139`
+  `lint-all-modules` runs `cd $$dir && golangci-lint run --config=$(CURDIR)/
+  .golangci.yml` per module.
+
+**Problem.** The rule denies *core* importing `…/runtime` / `…/adapters`. When
+the ADR-004 server is wired, `runtime/cmd/gobpm-server` must import `…/runtime`
+— and `make ci` (via `lint-all-modules`) will deny it, failing lint.
+
+**Why it's not a quick fix.** `lint-all-modules` `cd`s into each module and runs
+golangci with module-relative paths *and the forced root config*. Inside
+`runtime/`, the server's path is `cmd/gobpm-server/main.go` — **identical** to the
+core module's `cmd/…`. So a path-glob carve-out (`!**/runtime/cmd/**`) can't
+distinguish the two, and a `runtime/.golangci.yml` is overridden by the forced
+`--config`. The real remedy is a small **multi-module lint-config strategy**
+(give `runtime` its own config without the core-import deny, and stop forcing the
+root config — or a runtime-scoped rule), a decision best made and **validated
+against a real runtime import**, not blind against a stub.
+
+**Governing docs to amend.** **ADR-003** (layering — the core-import rule §4.4)
+and **ADR-004** (runtime server). Do it when the server actually wires `runtime`.
+
+**Status**: Parked 2026-06-30 (pulled from the FIX-015 CI/build-hardening
+cluster; the other four — §2.12, §3.15, §3.16, §3.18 — are mechanical and
+proceed as FIX-015).
