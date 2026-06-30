@@ -134,6 +134,13 @@ type instanceReg struct {
 //     compare-and-swap through the transitional Starting/Stopping states.
 //   - eventHub is an independent subsystem: it MUST NOT be touched while m is
 //     held. cfg is immutable after New.
+//   - keyLocks is a per-key serialization lock, DISTINCT from m, held across a
+//     whole RegisterProcess / UnregisterVersion / UnregisterProcess method —
+//     registry mutation plus the paired hub work — so register and unregister of
+//     the same key cannot orphan a starter (FIX-013 §1.4). Lock order is per-key
+//     (outer) -> m (inner, inside the "...Locked" helpers) -> hub work (under the
+//     per-key lock, never under m). State() never takes a per-key lock, so it
+//     adds no RC2 vector.
 type Thresher struct {
 	ctx           context.Context
 	engineCancel  context.CancelFunc
@@ -143,6 +150,7 @@ type Thresher struct {
 	nextVersion   map[string]int
 	instances     map[string]instanceReg
 	seenKeys      map[string]struct{}
+	keyLocks      *keyLockManager
 	id            string
 	m             sync.Mutex
 	state         atomic.Uint32 // a State; lock-free, NEVER accessed under m
@@ -177,6 +185,7 @@ func New(id string, opts ...Option) (*Thresher, error) {
 		nextVersion:   map[string]int{},
 		instances:     map[string]instanceReg{},
 		seenKeys:      map[string]struct{}{},
+		keyLocks:      newKeyLockManager(),
 	}
 	t.state.Store(uint32(NotStarted))
 
@@ -556,6 +565,14 @@ func (t *Thresher) RegisterProcess(
 			errs.E(err))
 	}
 
+	// Serialize this whole key operation against a concurrent unregister of the
+	// same key: the per-key lock spans the registry mutation AND the hub work
+	// below, so an UnregisterVersion/UnregisterProcess cannot drop the new
+	// version from the registry in the window before its starters reach the hub
+	// and leave them orphaned (FIX-013 §1.4). Acquired here (the key is known
+	// from the pure snapshot) and held to return.
+	defer t.lockKey(s.ProcessID)()
+
 	// Auto mode (default) registers a persistent instance-starter per
 	// instantiating start trigger; manual-start (FR-9) registers none.
 	var starters []*instanceStarter
@@ -606,6 +623,11 @@ func (t *Thresher) UnregisterVersion(reg *ProcessRegistration) error {
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
+	// Serialize against a concurrent register/unregister of the same key: the
+	// per-key lock spans the registry removal AND the hub teardown, closing the
+	// TOCTOU window of FIX-013 §1.4.
+	defer t.lockKey(reg.key)()
+
 	// promote holds the now-newest remaining version's starters when the latest
 	// is removed — it is promoted to the live auto-start version so the invariant
 	// "latest registration == live starter set" keeps holding (FR-8).
@@ -650,6 +672,11 @@ func (t *Thresher) UnregisterProcess(key string) error {
 			errs.M("UnregisterProcess: an empty process key isn't allowed"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
+
+	// Serialize against a concurrent register/unregister of the same key: the
+	// per-key lock spans the registry removal AND the hub teardown, closing the
+	// TOCTOU window of FIX-013 §1.4.
+	defer t.lockKey(key)()
 
 	// removeKeyLocked takes the key's versions out and forgets its counter. The
 	// latest version's starters are the only live ones (latest-supersedes); tear

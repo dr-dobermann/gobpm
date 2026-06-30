@@ -33,6 +33,25 @@ func TestThresher_ProcessManagement(t *testing.T) {
 		require.NoError(t, err)
 	})
 
+	t.Run("register process that can't be snapshotted", func(t *testing.T) {
+		th, err := thresher.New("test-thresher")
+		require.NoError(t, err)
+
+		// A process with an EndEvent but no StartEvent has no instantiation
+		// point, so snapshot.New rejects it (BPMN §13.3.3) — RegisterProcess
+		// must surface that as a snapshot-build failure, not register it.
+		proc, err := process.New("only-end")
+		require.NoError(t, err)
+
+		end, err := events.NewEndEvent("end")
+		require.NoError(t, err)
+		require.NoError(t, proc.Add(end))
+
+		_, err = th.RegisterProcess(proc)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "failed to create snapshot from process")
+	})
+
 	t.Run("start process when thresher not started", func(t *testing.T) {
 		th, err := thresher.New("test-thresher")
 		require.NoError(t, err)
