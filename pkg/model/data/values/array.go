@@ -94,12 +94,16 @@ func (a *Array[T]) Type() string {
 	return reflect.TypeOf(v).Name()
 }
 
-// Clone creates a clone of the Array with copies of the Array's elemnts.
+// Clone creates a clone of the Array with copies of the Array's elemnts,
+// preserving the iteration cursor so the clone resumes at the same position.
 func (a *Array[T]) Clone() data.Value {
 	a.lock.Lock()
 	defer a.lock.Unlock()
 
-	return NewArray[T](a.elements...)
+	clone := NewArray[T](a.elements...)
+	clone.index = a.index
+
+	return clone
 }
 
 // ********************* Collection interface **********************************
@@ -283,12 +287,26 @@ func (a *Array[T]) Insert(_ context.Context, value, index any) error {
 		return err
 	}
 
-	if err := checkIndex[T](idx, a); err != nil {
-		return err
+	// Insert accepts the append position too: a value may be placed at any index
+	// in [0, len], including the end and into an empty collection — unlike
+	// checkIndex's random-access bound [0, len), which would reject both.
+	if idx < 0 || idx > len(a.elements) {
+		return errs.New(
+			errs.M("insert index %d is out of range (len: %d)",
+				idx, len(a.elements)),
+			errs.C(errorClass, errs.OutOfRangeError))
 	}
+
+	wasEmpty := len(a.elements) == 0
 
 	a.elements = append(a.elements[:idx],
 		append([]T{v}, a.elements[idx:]...)...)
+
+	// Inserting into an empty collection establishes the cursor so Get works,
+	// mirroring NewArray/Add.
+	if wasEmpty {
+		a.index = 0
+	}
 
 	a.notify(data.ValueAdded, idx)
 
@@ -311,13 +329,12 @@ func (a *Array[T]) Delete(_ context.Context, index any) error {
 
 	a.elements = append(a.elements[:idx], a.elements[idx+1:]...)
 
+	// Re-seat the cursor, then notify on every successful delete — including the
+	// one that empties the collection (which previously returned early without
+	// firing the ValueDeleted callback).
 	if len(a.elements) == 0 {
 		a.index = -1
-
-		return nil
-	}
-
-	if a.index >= len(a.elements) {
+	} else if a.index >= len(a.elements) {
 		a.index = len(a.elements) - 1
 	}
 
