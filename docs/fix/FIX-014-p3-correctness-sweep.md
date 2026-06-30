@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-06-30 |
 | Owner | Ruslan Gabitov |
 | Related | [ADR-010 v.2 Process data model](../design/ADR-010-process-data-model.md), [ADR-016 v.1 Message correlation](../design/ADR-016-message-correlation.md), [ADR-005 v.4 Gateways and joins](../design/ADR-005-gateways-and-joins.md), [ADR-013 v.1 Instance observability](../design/ADR-013-instance-observability.md) |
@@ -218,7 +218,24 @@ The §3.5 (AB-003), §3.8 (FIX-012) and §3.9 (FIX-013) third-pass findings are 
 of this sweep's scope (see the intro note).
 
 ## 8. Implementation summary
-*(filled at landing.)*
+
+Landed on `fix/audit-remediation-2026-06` in four milestone commits, each
+verified (`make lint` clean, `-race` green, touched functions at 100%
+diff-coverage unless noted):
+
+| Milestone | Commit | Findings | Change |
+|---|---|---|---|
+| M1 | `44fc566` | 1.1, 1.2, 1.3 | `array.go` — `Insert` insertion-range bound `[0, len]` + empty-cursor seat (`:293`); `Clone` carries `clone.index = a.index` (`:104`); `Delete` notifies on the emptying path (`:341`). The empty-array subtest's old "Insert errors on empty" assertion (which encoded 1.1) is removed. Tests: `TestArrayInsertAtEnd`, `TestArrayCloneKeepsCursor`, `TestArrayDeleteLastNotifies`. |
+| M2 | `5b568f6` | 1.4, 1.5, 1.6 | `scope.go` — `namesFrom` admits the root (`path.String() == PathSeparator`, `:172`); `gateway.go` — `UpdateDefaultFlow` stores the member `sf` (`:182`); `track.go` — `unregisterEvent` interpolates `n.Name()/n.ID()` + `errs.C(errorClass, errs.TypeCastingError)` (`:896`). Tests: `TestScopeNamesFromRoot`, `TestUpdateDefaultFlowStoresMember`, `TestUnregisterEventNonEventNodeError`. |
+| M3 | `6d9da5c` | 1.7, 1.8 | `correlation.go` — `DeriveKey` guards `raw := val.Get(ctx); if raw == nil` (`:104`); `clocktest.go` — `Advance` is forward-only `if d > 0 {…}` mirroring `Set` (`:62`). Tests: `TestDeriveKeyPresentButNilValue`, `TestDeriveKeyAbsentValue` (mock `FormalExpression` — the goexpr engine can't pass nil through its result-Update), `TestClockAdvanceRejectsBackward`. DeriveKey 95.2% (the only gap is the `item==nil` defensive guard, unreachable via `NewMessage`/`MustMessage` which both reject a nil item). |
+| M4 | `9ac73a2` | 1.9, 1.10, 1.11 | `message.go` — `Clone` value-copies `m.BaseElement` (id + docs, `:102`); `memmetrics.go` — `seriesKey` is type-aware `%s=%T:%v` (`:223`), rippling the snapshot series-key format (`path=/a` → `path=string:/a`; 3 existing assertions updated); `memtrace.go` — `liveSpan` gains a per-span `sync.Mutex` guarding `End`/`SetAttributes`/`RecordError`/`SetStatus` (`:79`). Tests: `TestMessageCloneKeepsDocs`, `TestSeriesKeyTypeDistinct`, `TestLiveSpanConcurrentUse` (`-race`). |
+
+**Verification results.** `make ci` exit 0 across all modules (tidy → lint →
+build → `-race` → diff-coverage gate `COVER_MIN=95` → govulncheck:
+`No vulnerabilities found`). Touched functions at 100% (except `DeriveKey` 95.2%,
+per the M3 note). Representative examples exercising the changed areas
+(`process-data`, `conversation-routing`, `message-send-receive`,
+`boundary-events`) run end-to-end with exit 0.
 
 ## 9. Open questions
 None.
