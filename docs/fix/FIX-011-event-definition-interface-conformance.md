@@ -5,7 +5,7 @@
 | Status | Draft |
 | Date | 2026-06-29 |
 | Owner | Ruslan Gabitov |
-| Related | [ADR-006 v.2 Event delivery](../design/ADR-006-events-and-subscriptions.md) |
+| Related | [ADR-006 v.2 Event delivery](../design/ADR-006-events-and-subscriptions.md), [FIX-010 Public-API input validation](FIX-010-public-api-input-validation.md) |
 
 One-shot remediation of two **silent interface no-ops** surfaced by
 `docs/audit/code-review-third-pass-2026-06-29.md` §2.2 / §2.3: event-definition
@@ -80,11 +80,46 @@ report their items. No signature changes to the interfaces; only method renames
 on the concrete types and the one concrete call site.
 
 ## 7. Related
-ADR-006 v.2 (event delivery). FIX-010 fixed the neighbouring
+ADR-006 v.2 (event delivery).
+[FIX-010](FIX-010-public-api-input-validation.md) fixed the neighbouring
 `bpmncommon.Error.Structure()` nil panic on the same error-event path.
 
 ## 8. Implementation summary
-*(filled at landing.)*
+
+Landed on branch `fix/audit-remediation-2026-06`.
+
+**Production (4 files + 1 call site):**
+- `pkg/model/events/signal.go` — `GetItemList` → `GetItemsList` (+ doc); added
+  `var _ flow.EventDefinition = (*SignalEventDefinition)(nil)`.
+- `pkg/model/events/{message,error,escalation}.go` — `CloneEvent` →
+  `CloneEventDefinition` (+ doc) to satisfy `flow.EventDefCloner`; added the
+  `var _ flow.EventDefinition` + `var _ flow.EventDefCloner` assertion pair to
+  each type; removed the now-duplicate assertion block in `escalation.go`.
+- `internal/eventproc/eventhub/waiters/message.go:355` — call site
+  `CloneEvent(...)` → `CloneEventDefinition(...)`.
+- `pkg/model/events/timer.go` — fixed a stale `CloneEvent` mention in a comment.
+
+**Tests:**
+- `pkg/model/events/edef_test.go` — added `TestSignalEventDefinitionGetItemsList`
+  and `TestEventDefClonerSatisfied` (each of message/error/escalation satisfies
+  `flow.EventDefCloner`, the clone carries the supplied data item, and an
+  ID-mismatched datum is rejected).
+- `pkg/model/events/end_test.go`, `intermediate_throw_test.go` — the two tests
+  that had encoded the old dead behaviour now build a payload-less signal
+  (`NewSignal(name, nil)`), and the EndEvent all-triggers test gives its mocked
+  scope items the ids their definitions declare so the now-active
+  clone-with-data id check passes.
+- `escalation_test.go`, `message_test.go`, `conversation_key_test.go`,
+  `message_instantiation_test.go` — call-site renames.
+
+**Verification:** `make ci` green (golangci-lint 0 issues, `-race` tests,
+diff-coverage **100% of 53 changed lines**, govulncheck); full suite 1068
+passed; all 6 throw-path examples (`signal-broadcast`, `signal-start`,
+`terminate-end-event`, `message-intermediate-events`, `boundary-events`,
+`basic-process`) smoke exit 0; the `var _` assertions build.
+
+**Commits:** doc `2d94df2`; implementation `b69bae6`; dangling-ADR-link fix
+`29f10fa`.
 
 ## 9. Open questions
 None.
