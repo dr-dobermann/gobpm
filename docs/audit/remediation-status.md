@@ -22,7 +22,7 @@ Legend: ✅ Fixed · 🅿️ Postponed (design backlog) · ⏳ Open
 | 10 | `UserTask.Exec` ignores context — goroutine leak | 🟠 P2 | 🅿️ AB-002 |
 | 11 | `memrepo` can evict an Active instance after terminal→Active re-save | 🟠 P2 | ⏳ Open — Latent (persistence unwired); defer until persistence lands |
 | 12 | `bpmncommon.Error.Structure()` nil-derefs; `NewError` accepts nil | 🟠 P2 | ✅ FIX-010 |
-| 13 | `govulncheck` scans only the root module | 🟠 P2 | ⏳ Open — CI/build-hardening cluster |
+| 13 | `govulncheck` scans only the root module | 🟠 P2 | ✅ FIX-015 (1.1) |
 | 14 | `scope.namesFrom` omits a `/`-keyed root scope | 🟡 P3 | ✅ FIX-014 (1.4) |
 | 15 | `Array.Insert` off-by-one: cannot insert at `index == len` | 🟡 P3 | ✅ FIX-014 (1.1) |
 | 16 | `Array.Clone` resets the iteration cursor to 0 | 🟡 P3 | ✅ FIX-014 (1.2) |
@@ -37,20 +37,20 @@ Legend: ✅ Fixed · 🅿️ Postponed (design backlog) · ⏳ Open
 | 25 | `Message.Clone` drops `BaseElement` documentation | 🟡 P3 | ✅ FIX-014 (1.9) |
 | 26 | `memmetrics.seriesKey` uses `%v`, distinct sets collide | 🟡 P3 | ✅ FIX-014 (1.10) |
 | 27 | `memtrace.liveSpan` mutates span state without synchronization | 🟡 P3 | ✅ FIX-014 (1.11) |
-| 28 | `test`/`test-all`/`test_race` lack `-count=1` | 🟡 P3 | ⏳ Open — CI/build-hardening cluster |
-| 29 | `.golangci.yml` `tests: false` disables govet on `_test.go` | 🟡 P3 | ⏳ Open — CI/build-hardening cluster |
-| 30 | `depguard` rule will block the runtime server binary | 🟡 P3 | ⏳ Open — CI/build-hardening cluster (latent) |
-| 31 | `make clear` errors on a clean checkout | 🟡 P3 | ⏳ Open — CI/build-hardening cluster |
+| 28 | `test`/`test-all`/`test_race` lack `-count=1` | 🟡 P3 | ✅ FIX-015 (1.2) |
+| 29 | `.golangci.yml` `tests: false` disables govet on `_test.go` | 🟡 P3 | ✅ FIX-015 (1.3) |
+| 30 | `depguard` rule will block the runtime server binary | 🟡 P3 | 🅿️ AB-004 |
+| 31 | `make clear` errors on a clean checkout | 🟡 P3 | ✅ FIX-015 (1.4) |
 
 ## Tally
 
-- **✅ Fixed — 20** (FIX-010: #2, #12 · FIX-011: #3, #4 · FIX-012: #21 ·
-  FIX-013: #5, #7, #8, #22 · FIX-014: #14–17, #19, #20, #23–27).
-- **🅿️ Postponed — 4** across 3 backlog entries (AB-001: #6 · AB-002: #9, #10 ·
-  AB-003: #18). See `audit-backlog.md`.
-- **⏳ Open — 7**: the P1 data-flow race (#1), a latent persistence item (#11),
-  and the 5-finding **CI/build-hardening cluster** (#13, #28, #29, #30, #31) —
-  the next candidate FIX on this branch.
+- **✅ Fixed — 24** (FIX-010: #2, #12 · FIX-011: #3, #4 · FIX-012: #21 ·
+  FIX-013: #5, #7, #8, #22 · FIX-014: #14–17, #19, #20, #23–27 ·
+  FIX-015: #13, #28, #29, #31).
+- **🅿️ Postponed — 5** across 4 backlog entries (AB-001: #6 · AB-002: #9, #10 ·
+  AB-003: #18 · AB-004: #30). See `audit-backlog.md`.
+- **⏳ Open — 2**: the P1 data-flow race (#1, needs the data-flow ADR) and a
+  latent persistence item (#11, defer until persistence lands).
 
 All landed FIX docs are Accepted in `docs/fix/`. Earlier audits
 (`architecture-audit-2026-06-11`, `code-review-codex-second-pass-2026-06-29`)
