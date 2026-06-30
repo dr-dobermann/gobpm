@@ -2,7 +2,7 @@ version: "2"
 run:
   concurrency: 4
   go: "1.25"
-  tests: false
+  tests: true
   allow-parallel-runners: true
 linters:
   default: none
