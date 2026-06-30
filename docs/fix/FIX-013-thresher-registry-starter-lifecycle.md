@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-06-30 |
 | Owner | Ruslan Gabitov |
 | Related | [ADR-019 v.1 Definition versioning](../design/ADR-019-definition-versioning.md), [SRD-031.B Registry concurrency](../srd/SRD-031.B-registry-concurrency.md), [SRD-031.A Definition versioning](../srd/SRD-031.A-definition-versioning.md), [SRD-032 Snapshot starts & instance scope](../srd/SRD-032-snapshot-starts-instance-scope.md), [ADR-006 v.2 §2.5 Waiter lifecycle](../design/ADR-006-events-and-subscriptions.md), [FIX-002 Event-start registration lifecycle](FIX-002-event-start-registration-lifecycle.md) |
@@ -137,7 +137,11 @@ RC2 vector — and no fix holds `t.m` across an EventHub call.
   unwound its own partial subscriptions, so this rollback only has to undo the
   lifecycle transition. (Rolling back *from* `Started` rather than reordering
   `registerAllStarters` into the `Starting` window keeps SRD-031.B's
-  RegisterProcess gating intact — see §3.1.)
+  RegisterProcess gating intact — see §3.1.) Making a retry reachable exposes a
+  latent read race: the hub goroutine read the shared `t.ctx` field that a
+  second `Run` reassigns, so the goroutine now captures its context locally at
+  spawn (`runCtx := t.ctx`) and runs against that, never racing the retry's
+  write.
 - **3.2.3** `thresher.go` `registerStarters` / `unregisterStarters`
   (`:651-682`) — make each loop all-or-nothing: on a per-element failure, roll
   back the elements already applied in this call (unsubscribe the ones just
@@ -155,18 +159,19 @@ RC2 vector — and no fix holds `t.m` across an EventHub call.
   per-key lock while holding `t.m`, so the two cannot deadlock.
 - **3.2.5** `thresher.go:318-320` — log a non-`context.Canceled` `EventHub.Run`
   error instead of discarding it:
-  `if err := t.eventHub.Run(t.ctx); err != nil && !errors.Is(err, context.Canceled) { t.cfg.logger.Error("event hub run failed", "error", err) }`
-  (the engine logs via `t.cfg.logger`).
+  `if err := t.eventHub.Run(runCtx); err != nil && !errors.Is(err, context.Canceled) { t.cfg.logger.Error("event hub run loop failed", "error", err) }`
+  (the engine logs via `t.cfg.logger`; `runCtx` is the context captured at spawn
+  — see §3.2.2).
 
 ## 4. Verification
 
 ### 4.1 Tests
 | Test | Asserts |
 |---|---|
-| `TestRegisterProcessGodocMatchesVersioning` *(or doc-review)* | re-registering a key returns a new version (v2) and the latest supersedes — pins the behaviour the corrected godoc now describes |
+| `TestReRegisterCreatesNewVersion`, `TestLatestSupersedesAutoStart` | re-registering a key returns a new version (v2) and the latest supersedes — pins the behaviour the corrected §1.1 godoc now describes |
 | `TestRunRollsBackWhenStarterRegistrationFails` | with a hub stub that fails `RegisterPersistentEvent`, `Run` returns an error AND leaves the engine `NotStarted` (re-runnable), not `Started` |
-| `TestRegisterStartersRollsBackOnPartialFailure` | a starter set whose k-th registration fails leaves **no** starter subscribed (the first k-1 are rolled back) |
-| `TestRegisterUnregisterNoOrphanUnderRace` (`-race`) | concurrent `RegisterProcess`/`UnregisterVersion` on the same key never leave an orphaned hub subscription (final hub state matches the registry's latest) |
+| `TestRegisterStartersRollsBackOnPartialFailure`, `TestUnregisterStartersRollsBackOnPartialFailure` | a starter set whose k-th (un)registration fails leaves **no** net change (the first k-1 are rolled back) |
+| `TestKeyLockSerializesRegisterUnregister`, `TestKeyLockManagerGetSameAndDistinct`, `TestRegistryConcurrentStress` (`-race`) | a same-key operation serialises behind the held per-key lock while a different key proceeds (closing the §1.4 TOCTOU window); the stress test drives register/unregister churn under `-race` with no orphan or data race |
 | `TestEventHubRunErrorLogged` | a non-context `EventHub.Run` error is surfaced to the logger (observed via a capturing logger), not swallowed |
 
 ## 5. Prevention
@@ -198,7 +203,26 @@ call stays outside `t.m`). The deferred `ParallelEvents`-no-CorrelationKey
 finding (third-pass §2.5) is reserved for **FIX-014**.
 
 ## 8. Implementation summary
-*(filled at landing.)*
+
+Landed on `fix/audit-remediation-2026-06` in four milestone commits, each
+verified (`make lint` clean, `-race` green, touched functions at 100%
+diff-coverage):
+
+| Milestone | Commit | Symptom | Change |
+|---|---|---|---|
+| M1 | `0bcefa0` | 1.1, 1.5 | `RegisterProcess` godoc rewritten to the ADR-019 latest-supersedes contract (`thresher.go:518-529`); `EventHub.Run` goroutine logs a non-`context.Canceled` error via `t.cfg.logger` (`:338-340`). Tests: `lifecycle_internal_test.go` `TestEventHubRunErrorLogged` (+ `runErrHub`/`captureLogger`). |
+| M2 | `2c711b7` | 1.3 | `registerStarters`/`unregisterStarters` made all-or-nothing — accumulate `applied`, roll back on a mid-loop failure (`thresher.go:704-746`). Tests: `starter_rollback_internal_test.go` `TestRegisterStartersRollsBackOnPartialFailure`, `TestUnregisterStartersRollsBackOnPartialFailure`. |
+| M3 | `1e899a7` | 1.2 | `Run` rolls back `Started → NotStarted` on `registerAllStarters()` failure: `t.engineCancel()` + `t.state.Store(uint32(NotStarted))` (`thresher.go:357-358`); the hub goroutine captures `runCtx := t.ctx` at spawn (`:309`, used `:338`) to avoid racing a retry's `t.ctx` write. Tests: `lifecycle_internal_test.go` `TestRunRollsBackWhenStarterRegistrationFails` (+ `regFailHub`). |
+| M4 | `dbb449c` | 1.4 | New `keylock.go` (`keyLockManager` + `Thresher.lockKey`); `RegisterProcess`/`UnregisterVersion`/`UnregisterProcess` each take the per-key lock for the whole method (`thresher.go:574`/`:629`/`:679`), serialising registry mutation + hub work per key. Tests: `keylock_internal_test.go` `TestKeyLockManagerGetSameAndDistinct`, `TestKeyLockSerializesRegisterUnregister`; `TestRegistryConcurrentStress` (`-race`) drives contention; `thresher_process_test.go` adds the snapshot-build failure case to bring `RegisterProcess` to 100%. |
+
+**Verification results.** `make ci` exit 0 across all modules
+(tidy → lint → build → `-race` → diff-coverage gate `COVER_MIN=95` → govulncheck).
+Touched functions at 100% coverage: `registerStarters`, `unregisterStarters`,
+`Run`, `RegisterProcess`, `UnregisterVersion`, `UnregisterProcess`, and all of
+`keylock.go`. Representative examples (`basic-process`, `signal-start`,
+`message-send-receive`, `simple-timer`, `boundary-events`) run end-to-end with
+exit 0 and expected output — the auto-start/starter lifecycle these fixes touch
+exercises correctly.
 
 ## 9. Open questions
 None.
