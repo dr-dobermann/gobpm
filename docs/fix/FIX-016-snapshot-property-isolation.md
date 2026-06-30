@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-06-30 |
 | Owner | Ruslan Gabitov |
 | Related | [ADR-009 v.1 Per-instance node graph](../design/ADR-009-per-instance-node-graph.md), [ADR-019 v.1 Definition versioning](../design/ADR-019-definition-versioning.md) |
@@ -111,6 +111,8 @@ starter construction only (`pkg/thresher/instance_starter.go:110-112`). Only
 | `TestSnapshotClonePropertiesIsolated` | two `Snapshot.Clone`s of one snapshot hold **distinct** `*data.Property` objects; a `Value().Update` on one is **not** visible through the other (1.1; replaces the reproduced bug with the isolation invariant) |
 | `TestSnapshotCloneConcurrentPropertyWrites` (`-race`) | concurrent property writes across two clones are race-free (1.1) |
 | `TestSnapshotNewFreezesProperties` | mutating a process property **after** `snapshot.New` does not change the snapshot's property value (1.2; the frozen-template guarantee) |
+| `TestSnapshotNewRejectsValuelessProperty` | a process with a value-less property is rejected by `snapshot.New` (cloning can't copy it — it can never be filled; consequence of 3.2.1, see AB-005) |
+| `TestCloneRejectsValuelessProperty` (internal) | `Clone`'s defensive property-clone error path: a snapshot built directly with a value-less property fails to clone rather than sharing it |
 
 ## 5. Prevention
 `Property.Clone` gives both isolation boundaries (`New`, `Clone`) the deep-copy
@@ -136,7 +138,29 @@ properties). No new ADR: this applies both existing decisions to the property
 data that was missed, it does not change either contract.
 
 ## 8. Implementation summary
-*(filled at landing.)*
+
+Landed on `fix/snapshot-property-isolation` in one milestone commit
+(`35c2157`):
+
+| Finding | Change |
+|---|---|
+| 3.2.1 | `pkg/model/data/property.go` — `Property.Clone() (*Property, error)`: deep copy via the existing `ItemAwareElement.Clone`, `name` preserved. `IAE.Clone` is **unchanged**; it errors on a value-less item, which is correct — a value-less property can never be filled (gobpm binds a typed value at construction with no setter), so it's a degenerate state. |
+| 3.2.2 / 3.2.3 | `internal/instance/snapshot/snapshot.go` — `New` clones `p.Properties()` into the frozen template; `Clone` clones `s.Properties` per instance; both via the new `cloneProperties` helper. |
+| 3.2.4 | Corrected the `New`/`Clone` doc-comments (properties are NOT part of the shared immutable header). |
+| (refactor) | Extracted `hasInstantiationPoint` from `New`: the property-clone error check pushed `New` past gocyclo 15; extracting the instantiation predicate (covered) keeps the node loop inline/unchanged. Behavior-preserving. |
+
+**Consequence (a mini AB-005 (B), as a side-effect).** Because `New`/`Clone`
+now *clone* each property and a value-less property can't be cloned, a process
+declaring one is **rejected at `snapshot.New`** rather than silently shared —
+documented as a deliberate BPMN deviation in **SAD-001 v.1 §14.1** (a process
+with a value-less property cannot be executed).
+
+**Verification results.** `make ci` exit 0 (tidy → lint → build → `-race` →
+diff-coverage **100% of 41 changed lines** → govulncheck: no vulnerabilities).
+`Property.Clone`/`cloneProperties`/`Clone` at 100%; `New` 94.6% (the residual is
+the pre-existing, unchanged `!ok` EventNode defensive guard). The `process-data`
+example (process properties end-to-end) runs correctly with the cloned
+properties.
 
 ## 9. Open questions
 None.
