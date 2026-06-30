@@ -35,6 +35,7 @@ package thresher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -316,7 +317,13 @@ func (t *Thresher) Run(ctx context.Context) error {
 	}
 
 	go func() {
-		_ = t.eventHub.Run(t.ctx)
+		// A context.Canceled return is the expected shutdown path (engineCancel
+		// or the caller's ctx); any other error is a genuine hub-loop failure and
+		// must not be swallowed (FIX-013 §1.5).
+		if err := t.eventHub.Run(t.ctx); err != nil &&
+			!errors.Is(err, context.Canceled) {
+			t.cfg.logger.Error("event hub run loop failed", "error", err)
+		}
 	}()
 
 	// Publish readiness: the hub is up and accepting.
@@ -493,8 +500,9 @@ func (t *Thresher) PropagateEvent(
 // spawns a new instance. WithManualStart (SRD-015 FR-9) opts out: no starter is
 // registered and the process is instantiated only via StartProcess.
 //
-// Re-registering an already-registered process is idempotent (the first
-// registration wins).
+// Re-registering an already-registered key mints a NEW version (ADR-019), it is
+// not an idempotent no-op: the latest version supersedes for auto-instantiation,
+// and a superseded version only finishes its already-running instances.
 func (t *Thresher) RegisterProcess(
 	p *process.Process,
 	opts ...RegisterOption,

@@ -4,10 +4,61 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/stretchr/testify/require"
 )
+
+// runErrHub is an EventHub whose Start succeeds and whose Run returns a
+// non-context error; every other method is the embedded nil interface (none is
+// reached — Run with no registered processes only calls Start then Run).
+type runErrHub struct {
+	eventproc.EventHub
+
+	runErr error
+}
+
+func (runErrHub) Start(context.Context) error { return nil }
+
+func (h runErrHub) Run(context.Context) error { return h.runErr }
+
+// captureLogger records Error() messages on a channel; Debug/Info/Warn no-op.
+type captureLogger struct {
+	errs chan string
+}
+
+func (captureLogger) Debug(string, ...any) {}
+func (captureLogger) Info(string, ...any)  {}
+func (captureLogger) Warn(string, ...any)  {}
+
+func (c captureLogger) Error(msg string, _ ...any) {
+	select {
+	case c.errs <- msg:
+	default:
+	}
+}
+
+// TestEventHubRunErrorLogged covers FIX-013 §1.5: a non-context EventHub.Run
+// error is surfaced to the logger instead of being discarded.
+func TestEventHubRunErrorLogged(t *testing.T) {
+	cl := captureLogger{errs: make(chan string, 1)}
+
+	th, err := New("lc-runerr", WithLogger(cl))
+	require.NoError(t, err)
+
+	// swap in a hub whose Run loop fails with a non-context error.
+	th.eventHub = runErrHub{runErr: errors.New("hub boom")}
+
+	require.NoError(t, th.Run(context.Background()))
+
+	select {
+	case msg := <-cl.errs:
+		require.Equal(t, "event hub run loop failed", msg)
+	case <-time.After(2 * time.Second):
+		t.Fatal("EventHub.Run error was not logged")
+	}
+}
 
 // failStartHub is an EventHub whose Start fails; every other method is the
 // embedded nil interface (none is reached, because Run rolls back at Start).
