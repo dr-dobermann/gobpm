@@ -10,7 +10,7 @@ Legend: ✅ Fixed · 🅿️ Postponed (design backlog) · ⏳ Open
 
 | # | Finding | Sev | Disposition |
 |---|---------|-----|-------------|
-| 1 | `Snapshot.Clone` shares mutable process Properties across instances | 🔴 P1 | ⏳ Open — data-race; needs the data-flow ADR (audit-remediation triage 1.6/3.x), not a patch |
+| 1 | `Snapshot.Clone` shares mutable process Properties across instances | 🔴 P1 | ✅ FIX-016 — clone properties per template + per instance (mechanical, no data-flow ADR needed) |
 | 2 | `GExpression.Evaluate` nil-derefs a `(nil, nil)` result | 🟠 P2 | ✅ FIX-010 |
 | 3 | `SignalEventDefinition.GetItemList` misnamed | 🟠 P2 | ✅ FIX-011 |
 | 4 | `EventDefCloner` never satisfied | 🟠 P2 | ✅ FIX-011 |
@@ -44,13 +44,13 @@ Legend: ✅ Fixed · 🅿️ Postponed (design backlog) · ⏳ Open
 
 ## Tally
 
-- **✅ Fixed — 24** (FIX-010: #2, #12 · FIX-011: #3, #4 · FIX-012: #21 ·
+- **✅ Fixed — 25** (FIX-010: #2, #12 · FIX-011: #3, #4 · FIX-012: #21 ·
   FIX-013: #5, #7, #8, #22 · FIX-014: #14–17, #19, #20, #23–27 ·
-  FIX-015: #13, #28, #29, #31).
+  FIX-015: #13, #28, #29, #31 · FIX-016: #1).
 - **🅿️ Postponed — 5** across 4 backlog entries (AB-001: #6 · AB-002: #9, #10 ·
   AB-003: #18 · AB-004: #30). See `audit-backlog.md`.
-- **⏳ Open — 2**: the P1 data-flow race (#1, needs the data-flow ADR) and a
-  latent persistence item (#11, defer until persistence lands).
+- **⏳ Open — 1**: a latent persistence item (#11, `memrepo` evict-Active; defer
+  until persistence lands).
 
 All landed FIX docs are Accepted in `docs/fix/`. Earlier audits
 (`architecture-audit-2026-06-11`, `code-review-codex-second-pass-2026-06-29`)
