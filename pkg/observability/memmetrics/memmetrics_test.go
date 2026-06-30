@@ -30,7 +30,7 @@ func TestCounterAccumulatesPerSeries(t *testing.T) {
 		t.Fatalf("no-attr counter = %v, want 3", got)
 	}
 
-	if got := snap.Counters["hits"]["path=/a"]; got != 5 {
+	if got := snap.Counters["hits"]["path=string:/a"]; got != 5 {
 		t.Fatalf("attr counter = %v, want 5", got)
 	}
 }
@@ -110,7 +110,7 @@ func TestSeriesCapDropsAndWarnsOnce(t *testing.T) {
 		t.Fatalf("counter series = %d, want 2", len(snap.Counters["c"]))
 	}
 
-	if _, ok := snap.Counters["c"]["id=3"]; ok {
+	if _, ok := snap.Counters["c"]["id=string:3"]; ok {
 		t.Fatal("series id=3 should have been dropped")
 	}
 
@@ -149,12 +149,26 @@ func TestSeriesKeyIsOrderIndependent(t *testing.T) {
 		t.Fatalf("attribute order changed the key: %q vs %q", a, b)
 	}
 
-	if a != "a=1,b=2" {
-		t.Fatalf("key = %q, want %q", a, "a=1,b=2")
+	if a != "a=int:1,b=int:2" {
+		t.Fatalf("key = %q, want %q", a, "a=int:1,b=int:2")
 	}
 
 	if seriesKey(nil) != "" {
 		t.Fatal("empty attribute set must map to the empty key")
+	}
+}
+
+// TestSeriesKeyTypeDistinct covers FIX-014 1.10: attribute values that render
+// identically under %v but differ in type (int64(1), int(1), "1") must produce
+// distinct series keys, not collide onto one.
+func TestSeriesKeyTypeDistinct(t *testing.T) {
+	i64 := seriesKey([]observability.Attr{attr("n", int64(1))})
+	i := seriesKey([]observability.Attr{attr("n", int(1))})
+	s := seriesKey([]observability.Attr{attr("n", "1")})
+
+	if i64 == i || i64 == s || i == s {
+		t.Fatalf("type-distinct values collided: int64=%q int=%q string=%q",
+			i64, i, s)
 	}
 }
 

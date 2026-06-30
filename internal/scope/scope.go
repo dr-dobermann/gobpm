@@ -164,7 +164,13 @@ func (p *Scope) namesFrom(from DataPath) []string {
 	prefix := from.String() + PathSeparator
 
 	for path, vv := range p.scopes {
-		if path == from || strings.HasPrefix(prefix, path.String()+PathSeparator) {
+		// `path` is visible from `from` when it is `from` itself, an ancestor of
+		// `from` (its separator-terminated form prefixes `from`'s), or the root
+		// container. The root is special-cased because its string already IS the
+		// separator ("/"), so `path + sep` would be "//" and never prefix a
+		// child path — without this, a root-keyed scope is dropped (FIX-014 1.4).
+		if path == from || path.String() == PathSeparator ||
+			strings.HasPrefix(prefix, path.String()+PathSeparator) {
 			for n := range vv {
 				seen[n] = struct{}{}
 			}

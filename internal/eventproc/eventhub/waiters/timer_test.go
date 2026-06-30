@@ -12,6 +12,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub/waiters"
+	"github.com/dr-dobermann/gobpm/pkg/clock/clocktest"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
@@ -276,7 +277,12 @@ func TestTimeWaiter(t *testing.T) {
 
 	t.Run("cycle events",
 		func(t *testing.T) {
-			cycles := 3
+			const cycles = 3
+
+			clk := clocktest.New(time.Now())
+			rt := enginert.Default().WithClock(clk)
+
+			got := make(chan struct{}, cycles+1)
 			epc := mockeventproc.NewMockEventProcessor(t)
 			mockHub := mockeventproc.NewMockEventHub(t)
 			mockHub.EXPECT().
@@ -284,45 +290,90 @@ func TestTimeWaiter(t *testing.T) {
 				Return(nil).
 				Maybe()
 			epc.EXPECT().
-				ProcessEvent(
-					mock.AnythingOfType("backgroundCtx"),
-					mock.Anything).
+				ProcessEvent(mock.Anything, mock.Anything).
 				RunAndReturn(
 					func(_ context.Context, ed flow.EventDefinition) error {
 						t.Log("   >>>> got cycle event: ", ed.Type(), " #", ed.ID())
-
-						require.NotEqual(t, 0, cycles)
-						cycles--
+						got <- struct{}{}
 
 						return nil
 					})
 
+			// a Cycle of N with a one-second interval. After FIX-012 a Cycle of
+			// N delivers EXACTLY N events (was N+1), so the def is fed N, not
+			// N-1.
 			cyclesEDef := events.MustTimerEventDefinition(
 				nil,
 				goexpr.Must(
 					nil,
 					data.MustItemDefinition(
 						values.NewVariable(0)),
-					func(ctx context.Context, ds data.Source) (data.Value, error) {
-						return values.NewVariable(cycles - 1), nil
+					func(context.Context, data.Source) (data.Value, error) {
+						return values.NewVariable(cycles), nil
 					}),
 				goexpr.Must(
 					nil,
 					data.MustItemDefinition(
 						values.NewVariable(time.Second)),
-					func(ctx context.Context, ds data.Source) (data.Value, error) {
+					func(context.Context, data.Source) (data.Value, error) {
 						return values.NewVariable(time.Second), nil
 					}))
 
-			w, err := waiters.CreateWaiter(mockHub, epc, cyclesEDef, enginert.Default())
+			w, err := waiters.CreateWaiter(mockHub, epc, cyclesEDef, rt)
 			require.NoError(t, err)
 			require.Equal(t, eventproc.WSReady, w.State())
 
-			err = w.Service(context.Background())
-			require.NoError(t, err)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 
-			time.Sleep(7 * time.Second)
+			require.NoError(t, w.Service(ctx))
+
+			// drive exactly N cycles deterministically via the fake clock.
+			for range cycles {
+				advanceUntilFire(t, clk, got, time.Second)
+			}
+
+			// no (N+1)th fire: the waiter ended on the Nth delivery, so
+			// advancing the clock further yields nothing.
+			clk.Advance(time.Second)
+
+			select {
+			case <-got:
+				t.Fatal("cyclic timer fired more than the requested N times")
+			case <-time.After(50 * time.Millisecond):
+			}
 		})
+}
+
+// advanceUntilFire advances the fake clock by step until exactly one timer
+// event lands on got, tolerating the service goroutine not having re-armed its
+// Clock().After() yet (clocktest does not expose pending timers). The waiter is
+// single-goroutine, so at most one After is pending at a time and over-advancing
+// in the retry cannot double-fire. Bounded so a never-firing timer fails fast
+// instead of hanging.
+func advanceUntilFire(
+	t *testing.T,
+	clk *clocktest.Clock,
+	got <-chan struct{},
+	step time.Duration,
+) {
+	t.Helper()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		clk.Advance(step)
+
+		select {
+		case <-got:
+			return
+
+		case <-deadline:
+			t.Fatal("cyclic timer did not fire within the deadline")
+
+		case <-time.After(5 * time.Millisecond):
+			// goroutine may not have re-armed After() yet; advance again.
+		}
+	}
 }
 
 // TestTimerWaiterStopCtxRace is the regression for the double-close panic
@@ -416,4 +467,152 @@ func TestTimerWaiterRemoveEventProcessor(t *testing.T) {
 	// remove the last -> empty.
 	require.NoError(t, w.RemoveEventProcessor(ep2))
 	require.Empty(t, w.EventProcessors())
+}
+
+// TestTimerWaiterServiceRejectsNonReady covers the FIX-012 diagnostic fix: a
+// Service call on a waiter that is not WSReady returns an error whose
+// current_state diagnostic is the ACTUAL state (WSRunned, after the first
+// Service), not the expected WSReady — the latter now lands under
+// expected_state. Previously current_state reported WSReady, hiding the real
+// state.
+func TestTimerWaiterServiceRejectsNonReady(t *testing.T) {
+	ep := mockeventproc.NewMockEventProcessor(t)
+	mockHub := mockeventproc.NewMockEventHub(t)
+
+	// a far-future timer so the service goroutine parks and never fires.
+	farEDef := events.MustTimerEventDefinition(
+		goexpr.Must(
+			nil,
+			data.MustItemDefinition(values.NewVariable(time.Now())),
+			func(_ context.Context, _ data.Source) (data.Value, error) {
+				return values.NewVariable(time.Now().Add(time.Hour)), nil
+			}),
+		nil, nil)
+
+	w, err := waiters.NewTimeWaiter(
+		mockHub, ep, farEDef, "not-ready timer", enginert.Default())
+	require.NoError(t, err)
+	require.Equal(t, eventproc.WSReady, w.State())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// first Service moves the waiter to WSRunned.
+	require.NoError(t, w.Service(ctx))
+	require.Equal(t, eventproc.WSRunned, w.State())
+
+	// second Service hits the not-ready guard.
+	err = w.Service(ctx)
+	require.Error(t, err)
+
+	var ae *errs.ApplicationError
+
+	require.True(t, errors.As(err, &ae))
+	require.True(t, ae.HasClass(errs.InvalidState))
+	require.Equal(t, eventproc.WSRunned, ae.Details["current_state"])
+	require.Equal(t, eventproc.WSReady, ae.Details["expected_state"])
+}
+
+// TestTimerWaiterServiceRejectsElapsedTimer covers Service's non-positive
+// duration guard: a timer validated as future at creation can elapse before
+// Service runs if the clock advances past it (here via the injected fake
+// clock). Service computes next.Sub(Clock().Now()) <= 0 and refuses to start.
+func TestTimerWaiterServiceRejectsElapsedTimer(t *testing.T) {
+	clk := clocktest.New(time.Now())
+	rt := enginert.Default().WithClock(clk)
+
+	ep := mockeventproc.NewMockEventProcessor(t)
+	mockHub := mockeventproc.NewMockEventHub(t)
+
+	// one hour ahead at creation — valid (future relative to the fake clock).
+	edef := events.MustTimerEventDefinition(
+		goexpr.Must(
+			nil,
+			data.MustItemDefinition(values.NewVariable(time.Now())),
+			func(context.Context, data.Source) (data.Value, error) {
+				return values.NewVariable(clk.Now().Add(time.Hour)), nil
+			}),
+		nil, nil)
+
+	w, err := waiters.CreateWaiter(mockHub, ep, edef, rt)
+	require.NoError(t, err)
+
+	// advance the clock past the scheduled instant: the timer has now elapsed.
+	clk.Advance(2 * time.Hour)
+
+	err = w.Service(context.Background())
+	require.Error(t, err)
+
+	var ae *errs.ApplicationError
+	require.True(t, errors.As(err, &ae))
+	require.True(t, ae.HasClass(errs.InvalidState))
+}
+
+// TestTimerWaiterHonorsInjectedClock is the FIX-012 P1 regression: the service
+// goroutine must wait on the injected runtime Clock, not the real wall clock.
+// A one-hour Duration timer is driven to fire in milliseconds by advancing a
+// clocktest.Clock — under the former time.NewTicker(tw.duration) the ticker
+// would never tick within the test and this would time out.
+//
+// The bounded Advance-then-poll loop exists because clocktest does not expose
+// its pending timers, so the test cannot observe the exact instant the
+// goroutine registers After(); it advances repeatedly until the fire is seen.
+// This completes in one or two scheduling quanta (~ms), NOT the one-hour
+// duration.
+func TestTimerWaiterHonorsInjectedClock(t *testing.T) {
+	clk := clocktest.New(time.Now())
+	rt := enginert.Default().WithClock(clk)
+
+	fired := make(chan struct{}, 1)
+	ep := mockeventproc.NewMockEventProcessor(t)
+	ep.EXPECT().
+		ProcessEvent(mock.Anything, mock.Anything).
+		RunAndReturn(func(context.Context, flow.EventDefinition) error {
+			select {
+			case fired <- struct{}{}:
+			default:
+			}
+
+			return nil
+		})
+
+	mockHub := mockeventproc.NewMockEventHub(t)
+	mockHub.EXPECT().WaiterFired(mock.Anything).Return(nil).Maybe()
+
+	// a one-shot absolute Time timer one hour ahead of the injected clock.
+	// Service computes the delay as next.Sub(Clock().Now()) == one hour, so the
+	// wait honours the fake clock end-to-end.
+	hourEDef := events.MustTimerEventDefinition(
+		goexpr.Must(
+			nil,
+			data.MustItemDefinition(values.NewVariable(time.Now())),
+			func(context.Context, data.Source) (data.Value, error) {
+				return values.NewVariable(clk.Now().Add(time.Hour)), nil
+			}),
+		nil, nil)
+
+	w, err := waiters.CreateWaiter(mockHub, ep, hourEDef, rt)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	require.NoError(t, w.Service(ctx))
+
+	deadline := time.After(2 * time.Second)
+	for {
+		clk.Advance(time.Hour)
+
+		select {
+		case <-fired:
+			return // fired via the injected clock, no real one-hour wait
+
+		case <-deadline:
+			t.Fatal("timer never fired under the injected clock — " +
+				"wall clock not honoured")
+
+		case <-time.After(5 * time.Millisecond):
+			// the goroutine may not have registered After() yet; advance again.
+		}
+	}
 }

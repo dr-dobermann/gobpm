@@ -217,7 +217,10 @@ func seriesKey(attrs []observability.Attr) string {
 
 	parts := make([]string, len(sorted))
 	for i, a := range sorted {
-		parts[i] = fmt.Sprintf("%s=%v", a.Key, a.Value)
+		// Include the value's type: %v alone renders int(1), int64(1) and "1"
+		// identically, collapsing type-distinct attribute sets onto one series
+		// key (FIX-014 1.10).
+		parts[i] = fmt.Sprintf("%s=%T:%v", a.Key, a.Value, a.Value)
 	}
 
 	return strings.Join(parts, ",")

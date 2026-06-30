@@ -78,11 +78,11 @@ lint_all:
 .PHONY: lint_all
 
 test: gen_mock_files
-	go test -v -cover ./...
+	go test -v -count=1 -cover ./...
 .PHONY: test
 
 test_coverage: gen_mock_files
-	go test -v -coverprofile=c.out ./...
+	go test -v -count=1 -coverprofile=c.out ./...
 	go tool cover -html=c.out
 	rm c.out
 .PHONY: test_coverage
@@ -93,7 +93,7 @@ tag:
 .PHONY: tag
 
 clear:
-	rm ./bin/*
+	rm -rf ./bin/
 .PHONY: clear
 
 gen_mock_files:
@@ -121,9 +121,9 @@ test-all: gen_mock_files
 	@set -e; for dir in $(MODULES); do \
 		echo "::group::test $$dir"; \
 		if [ "$$dir" = "." ]; then \
-			(cd $$dir && $(GO) test -race -coverprofile=coverage.txt ./...) || exit 1; \
+			(cd $$dir && $(GO) test -race -count=1 -coverprofile=coverage.txt ./...) || exit 1; \
 		else \
-			(cd $$dir && $(GO) test -race ./...) || exit 1; \
+			(cd $$dir && $(GO) test -race -count=1 ./...) || exit 1; \
 		fi; \
 		echo "::endgroup::"; \
 	done
@@ -151,7 +151,11 @@ tidy-check-all: gen_mock_files
 
 vuln:
 	$(call require-tool,govulncheck,$(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION))
-	govulncheck ./...
+	@set -e; for dir in $(MODULES); do \
+		echo "::group::govulncheck $$dir"; \
+		(cd $$dir && govulncheck ./...) || exit 1; \
+		echo "::endgroup::"; \
+	done
 .PHONY: vuln
 
 # Diff-coverage gate: fail when the lines this change adds/modifies are covered

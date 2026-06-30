@@ -10,6 +10,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/stretchr/testify/require"
@@ -79,7 +80,7 @@ func TestErrorDefinitions(t *testing.T) {
 			require.True(t, eed.CheckItemDefinition("error_item"))
 
 			// cloning error
-			_, err = eed.CloneEvent(
+			_, err = eed.CloneEventDefinition(
 				[]data.Data{
 					data.MustParameter("invalid",
 						data.MustItemAwareElement(
@@ -90,7 +91,7 @@ func TestErrorDefinitions(t *testing.T) {
 				})
 			require.Error(t, err)
 
-			need, err := eed.CloneEvent(
+			need, err := eed.CloneEventDefinition(
 				[]data.Data{
 					data.MustParameter(
 						"new_error",
@@ -223,4 +224,101 @@ func TestErrorDefinitions(t *testing.T) {
 			require.NoError(t, err)
 			require.NotEmpty(t, sed)
 		})
+}
+
+// TestSignalEventDefinitionGetItemsList pins the FIX-011 rename: GetItemsList
+// (plural) now overrides flow.EventDefinition, so a signal built with an
+// ItemDefinition reports it (the misspelled GetItemList used to be dead and the
+// embedded definition's empty list was returned instead).
+func TestSignalEventDefinitionGetItemsList(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	// payload-less signal reports no items
+	bare, err := events.NewSignal("bare", nil)
+	require.NoError(t, err)
+	bareEd, err := events.NewSignalEventDefinition(bare)
+	require.NoError(t, err)
+	require.Empty(t, bareEd.GetItemsList())
+
+	// signal carrying an ItemDefinition reports exactly it
+	item := data.MustItemDefinition(values.NewVariable("payload"),
+		foundation.WithID("sig_item"))
+	sig, err := events.NewSignal("sig", item)
+	require.NoError(t, err)
+	sigEd, err := events.NewSignalEventDefinition(sig)
+	require.NoError(t, err)
+
+	items := sigEd.GetItemsList()
+	require.Len(t, items, 1)
+	require.Equal(t, "sig_item", items[0].ID())
+}
+
+// TestEventDefClonerSatisfied pins the FIX-011 rename: the three throw-able
+// event definitions name their clone method CloneEventDefinition and so satisfy
+// flow.EventDefCloner (the old CloneEvent never did, leaving the throw-path
+// clone-with-data step a silent no-op). It also checks the clone carries the
+// supplied data item.
+func TestEventDefClonerSatisfied(t *testing.T) {
+	ctx := context.Background()
+	require.NoError(t, data.CreateDefaultStates())
+
+	readyItem := func(id string, v any) []data.Data {
+		return []data.Data{
+			data.MustParameter(id,
+				data.MustItemAwareElement(
+					data.MustItemDefinition(values.NewVariable(v),
+						foundation.WithID(id)),
+					data.ReadyDataState)),
+		}
+	}
+
+	t.Run("message", func(t *testing.T) {
+		msg, err := bpmncommon.NewMessage("msg",
+			data.MustItemDefinition(values.NewVariable(0),
+				foundation.WithID("msg_item")))
+		require.NoError(t, err)
+		med, err := events.NewMessageEventDefinition(msg, nil)
+		require.NoError(t, err)
+
+		var cloner flow.EventDefCloner = med
+		cloned, err := cloner.CloneEventDefinition(readyItem("msg_item", 7))
+		require.NoError(t, err)
+		require.Equal(t, 7, cloned.GetItemsList()[0].Structure().Get(ctx))
+
+		// data whose item id does not match the definition's is rejected
+		_, err = cloner.CloneEventDefinition(readyItem("other", 7))
+		require.Error(t, err)
+	})
+
+	t.Run("error", func(t *testing.T) {
+		cErr, err := bpmncommon.NewError("err", "E1",
+			data.MustItemDefinition(values.NewVariable(0),
+				foundation.WithID("err_item")))
+		require.NoError(t, err)
+		eed, err := events.NewErrorEventDefinition(cErr)
+		require.NoError(t, err)
+
+		var cloner flow.EventDefCloner = eed
+		cloned, err := cloner.CloneEventDefinition(readyItem("err_item", 9))
+		require.NoError(t, err)
+		require.Equal(t, 9, cloned.GetItemsList()[0].Structure().Get(ctx))
+	})
+
+	t.Run("escalation", func(t *testing.T) {
+		esc, err := events.NewEscalation("esc", "S1",
+			data.MustItemDefinition(values.NewVariable(0),
+				foundation.WithID("esc_item")))
+		require.NoError(t, err)
+		eed, err := events.NewEscalationEventDefintion(esc)
+		require.NoError(t, err)
+
+		var cloner flow.EventDefCloner = eed
+		cloned, err := cloner.CloneEventDefinition(readyItem("esc_item", 11))
+		require.NoError(t, err)
+		require.Equal(t, 11, cloned.GetItemsList()[0].Structure().Get(ctx))
+
+		// data whose item id does not match the definition's is rejected
+		_, err = cloner.CloneEventDefinition(readyItem("other", 11))
+		require.Error(t, err)
+	})
 }

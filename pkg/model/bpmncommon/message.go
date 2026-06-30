@@ -95,7 +95,11 @@ func (m *Message) Clone() *Message {
 	}
 
 	return &Message{
-		BaseElement: *foundation.MustBaseElement(foundation.WithID(m.ID())),
+		// Value-copy the base so the clone keeps the id AND the documentation,
+		// not just the id (FIX-014 1.9) — mirroring flow.BaseElement.cloneIdentity.
+		// docs are immutable after construction (Docs() returns a copy), so
+		// sharing the slice header is safe.
+		BaseElement: m.BaseElement,
 		name:        m.name,
 		item:        item,
 	}

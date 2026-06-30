@@ -35,6 +35,7 @@ package thresher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -133,6 +134,13 @@ type instanceReg struct {
 //     compare-and-swap through the transitional Starting/Stopping states.
 //   - eventHub is an independent subsystem: it MUST NOT be touched while m is
 //     held. cfg is immutable after New.
+//   - keyLocks is a per-key serialization lock, DISTINCT from m, held across a
+//     whole RegisterProcess / UnregisterVersion / UnregisterProcess method —
+//     registry mutation plus the paired hub work — so register and unregister of
+//     the same key cannot orphan a starter (FIX-013 §1.4). Lock order is per-key
+//     (outer) -> m (inner, inside the "...Locked" helpers) -> hub work (under the
+//     per-key lock, never under m). State() never takes a per-key lock, so it
+//     adds no RC2 vector.
 type Thresher struct {
 	ctx           context.Context
 	engineCancel  context.CancelFunc
@@ -142,6 +150,7 @@ type Thresher struct {
 	nextVersion   map[string]int
 	instances     map[string]instanceReg
 	seenKeys      map[string]struct{}
+	keyLocks      *keyLockManager
 	id            string
 	m             sync.Mutex
 	state         atomic.Uint32 // a State; lock-free, NEVER accessed under m
@@ -176,6 +185,7 @@ func New(id string, opts ...Option) (*Thresher, error) {
 		nextVersion:   map[string]int{},
 		instances:     map[string]instanceReg{},
 		seenKeys:      map[string]struct{}{},
+		keyLocks:      newKeyLockManager(),
 	}
 	t.state.Store(uint32(NotStarted))
 
@@ -296,6 +306,7 @@ func (t *Thresher) Run(ctx context.Context) error {
 	// hub Run, without touching the caller's ctx (SRD-019). The caller canceling
 	// their ctx still propagates here.
 	t.ctx, t.engineCancel = context.WithCancel(ctx)
+	runCtx := t.ctx
 
 	// Synchronously initialize the EventHub so that any subsequent
 	// RegisterEvent / UnregisterEvent / PropagateEvent call sees a fully
@@ -316,7 +327,18 @@ func (t *Thresher) Run(ctx context.Context) error {
 	}
 
 	go func() {
-		_ = t.eventHub.Run(t.ctx)
+		// Use the context captured at spawn (runCtx), not t.ctx: a rollback
+		// (hub-start or starter-registration failure) followed by a retry Run
+		// reassigns t.ctx, and this goroutine must keep running against the
+		// context it was started with rather than racing that write.
+		//
+		// A context.Canceled return is the expected shutdown path (engineCancel
+		// or the caller's ctx); any other error is a genuine hub-loop failure and
+		// must not be swallowed (FIX-013 §1.5).
+		if err := t.eventHub.Run(runCtx); err != nil &&
+			!errors.Is(err, context.Canceled) {
+			t.cfg.logger.Error("event hub run loop failed", "error", err)
+		}
 	}()
 
 	// Publish readiness: the hub is up and accepting.
@@ -326,6 +348,15 @@ func (t *Thresher) Run(ctx context.Context) error {
 	// Run (the hub only accepts registrations once Started; SRD-015 FR-2).
 	// Processes registered after Run wire their starters in RegisterProcess.
 	if err := t.registerAllStarters(); err != nil {
+		// Reached Started but cannot auto-start the registered processes — roll
+		// the lifecycle back so a half-started engine is never observable and a
+		// retry stays possible (the hub-Start path above does the same). The
+		// engine context is canceled to stop the live hub goroutine and the
+		// state returns to NotStarted. registerStarters is all-or-nothing
+		// (FIX-013 §1.3), so no partial subscriptions linger to unwind here.
+		t.engineCancel()
+		t.state.Store(uint32(NotStarted))
+
 		return errs.New(
 			errs.M("couldn't register instance-starters at startup"),
 			errs.C(errorClass, errs.OperationFailed),
@@ -493,8 +524,9 @@ func (t *Thresher) PropagateEvent(
 // spawns a new instance. WithManualStart (SRD-015 FR-9) opts out: no starter is
 // registered and the process is instantiated only via StartProcess.
 //
-// Re-registering an already-registered process is idempotent (the first
-// registration wins).
+// Re-registering an already-registered key mints a NEW version (ADR-019), it is
+// not an idempotent no-op: the latest version supersedes for auto-instantiation,
+// and a superseded version only finishes its already-running instances.
 func (t *Thresher) RegisterProcess(
 	p *process.Process,
 	opts ...RegisterOption,
@@ -532,6 +564,14 @@ func (t *Thresher) RegisterProcess(
 			errs.C(errorClass, errs.BulidingFailed),
 			errs.E(err))
 	}
+
+	// Serialize this whole key operation against a concurrent unregister of the
+	// same key: the per-key lock spans the registry mutation AND the hub work
+	// below, so an UnregisterVersion/UnregisterProcess cannot drop the new
+	// version from the registry in the window before its starters reach the hub
+	// and leave them orphaned (FIX-013 §1.4). Acquired here (the key is known
+	// from the pure snapshot) and held to return.
+	defer t.lockKey(s.ProcessID)()
 
 	// Auto mode (default) registers a persistent instance-starter per
 	// instantiating start trigger; manual-start (FR-9) registers none.
@@ -583,6 +623,11 @@ func (t *Thresher) UnregisterVersion(reg *ProcessRegistration) error {
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
+	// Serialize against a concurrent register/unregister of the same key: the
+	// per-key lock spans the registry removal AND the hub teardown, closing the
+	// TOCTOU window of FIX-013 §1.4.
+	defer t.lockKey(reg.key)()
+
 	// promote holds the now-newest remaining version's starters when the latest
 	// is removed — it is promoted to the live auto-start version so the invariant
 	// "latest registration == live starter set" keeps holding (FR-8).
@@ -628,6 +673,11 @@ func (t *Thresher) UnregisterProcess(key string) error {
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
+	// Serialize against a concurrent register/unregister of the same key: the
+	// per-key lock spans the registry removal AND the hub teardown, closing the
+	// TOCTOU window of FIX-013 §1.4.
+	defer t.lockKey(key)()
+
 	// removeKeyLocked takes the key's versions out and forgets its counter. The
 	// latest version's starters are the only live ones (latest-supersedes); tear
 	// them down OUTSIDE the lock (FIX-002 RC2).
@@ -648,9 +698,20 @@ func (t *Thresher) UnregisterProcess(key string) error {
 // registerStarters registers each instance-starter as a persistent subscription
 // on the engine EventHub. Called at the later of RegisterProcess (auto mode,
 // engine already Started) and Run (for processes registered before Run).
+//
+// It is all-or-nothing (FIX-013 §1.3): if any subscription fails, the ones this
+// call already subscribed are best-effort unsubscribed before the error returns,
+// so a partial subscription set never persists.
 func (t *Thresher) registerStarters(starters []*instanceStarter) error {
+	applied := make([]*instanceStarter, 0, len(starters))
+
 	for _, st := range starters {
 		if err := t.eventHub.RegisterPersistentEvent(st, st.eDef); err != nil {
+			// roll back the ones already subscribed in this call.
+			for _, done := range applied {
+				_ = t.eventHub.UnregisterEvent(done, done.eDef.ID())
+			}
+
 			return errs.New(
 				errs.M("couldn't register instance-starter subscription"),
 				errs.C(errorClass, errs.OperationFailed),
@@ -658,6 +719,8 @@ func (t *Thresher) registerStarters(starters []*instanceStarter) error {
 				errs.D("event_definition_id", st.eDef.ID()),
 				errs.E(err))
 		}
+
+		applied = append(applied, st)
 	}
 
 	return nil
@@ -666,9 +729,20 @@ func (t *Thresher) registerStarters(starters []*instanceStarter) error {
 // unregisterStarters tears down each instance-starter's persistent subscription
 // on the engine EventHub. Shared by UnregisterProcess and the latest-supersedes
 // teardown in RegisterProcess.
+//
+// It is all-or-nothing (FIX-013 §1.3): if any teardown fails, the ones this call
+// already unsubscribed are best-effort re-subscribed before the error returns,
+// so a partial teardown never persists.
 func (t *Thresher) unregisterStarters(starters []*instanceStarter) error {
+	applied := make([]*instanceStarter, 0, len(starters))
+
 	for _, st := range starters {
 		if err := t.eventHub.UnregisterEvent(st, st.eDef.ID()); err != nil {
+			// roll back the ones already unsubscribed in this call.
+			for _, done := range applied {
+				_ = t.eventHub.RegisterPersistentEvent(done, done.eDef)
+			}
+
 			return errs.New(
 				errs.M("couldn't unregister instance-starter subscription"),
 				errs.C(errorClass, errs.OperationFailed),
@@ -676,6 +750,8 @@ func (t *Thresher) unregisterStarters(starters []*instanceStarter) error {
 				errs.D("event_definition_id", st.eDef.ID()),
 				errs.E(err))
 		}
+
+		applied = append(applied, st)
 	}
 
 	return nil

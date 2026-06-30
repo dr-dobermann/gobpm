@@ -132,6 +132,15 @@ func (ge *GExpression) Evaluate(
 				errs.E(err))
 	}
 
+	// A user GExpFunc may legitimately return (nil, nil); reject it as a
+	// classified error rather than nil-dereferencing res.Get below (FIX-010).
+	if res == nil {
+		return nil,
+			errs.New(
+				errs.M("goexpr: evaluation produced a nil value"),
+				errs.C(errorClass, errs.OperationFailed))
+	}
+
 	if err := ge.result.Structure().Update(ctx, res.Get(ctx)); err != nil {
 		return nil,
 			errs.New(

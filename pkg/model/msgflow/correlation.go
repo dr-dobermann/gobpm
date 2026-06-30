@@ -98,7 +98,15 @@ func DeriveKey(
 			return "", false, nil
 		}
 
-		parts = append(parts, fmt.Sprintf("%v", val.Get(ctx)))
+		// A present Value may still carry no payload (an unset optional field);
+		// an absent payload can't contribute a key part, so correlation fails
+		// (ok=false) rather than stamping a "<nil>" part (ADR-016 v.1).
+		raw := val.Get(ctx)
+		if raw == nil {
+			return "", false, nil
+		}
+
+		parts = append(parts, fmt.Sprintf("%v", raw))
 	}
 
 	return strings.Join(parts, keySeparator), true, nil

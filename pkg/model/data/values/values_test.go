@@ -28,8 +28,9 @@ func TestArray(t *testing.T) {
 			require.Error(t, a.Delete(ctx, 0))
 			require.Error(t, a.GoTo(0))
 			require.Error(t, a.Update(ctx, 5))
-			require.Error(t, a.Insert(ctx, 2, 0))
 			require.Error(t, a.Next(data.StepForward))
+			// NB: Insert into an empty collection at index 0 is now valid
+			// (FIX-014 1.1) — covered by TestArrayInsertAtEnd; not an error here.
 
 			nA := a.Clone()
 			require.Equal(t, "int", nA.Type())
@@ -359,4 +360,68 @@ func TestVariable(t *testing.T) {
 
 			require.Equal(t, int64(2), chCount.Load())
 		})
+}
+
+// TestArrayInsertAtEnd covers FIX-014 1.1: Insert accepts the append position
+// (index == len) and an insertion into an empty collection, where the old
+// random-access bound wrongly rejected both.
+func TestArrayInsertAtEnd(t *testing.T) {
+	ctx := context.Background()
+
+	// insert at index == len (the append position).
+	a := values.NewArray[int](1, 2, 3)
+	require.NoError(t, a.Insert(ctx, 4, 3))
+	require.Equal(t, 4, a.Count())
+
+	v, err := a.GetAt(ctx, 3)
+	require.NoError(t, err)
+	require.Equal(t, 4, v)
+
+	// insert into an empty collection at index 0 — the cursor is established so
+	// Get works afterwards.
+	e := values.NewArray[int]()
+	require.NoError(t, e.Insert(ctx, 7, 0))
+	require.Equal(t, 1, e.Count())
+	require.Equal(t, 0, e.Index())
+	require.Equal(t, 7, e.Get(ctx))
+
+	// an index beyond len is still rejected.
+	require.Error(t, a.Insert(ctx, 9, 99))
+}
+
+// TestArrayCloneKeepsCursor covers FIX-014 1.2: Clone preserves the source's
+// iteration cursor instead of resetting it to 0.
+func TestArrayCloneKeepsCursor(t *testing.T) {
+	a := values.NewArray[int](10, 20, 30)
+	require.NoError(t, a.GoTo(2))
+	require.Equal(t, 2, a.Index())
+
+	clone, ok := a.Clone().(data.Collection)
+	require.True(t, ok)
+	require.Equal(t, 2, clone.Index())
+}
+
+// TestArrayDeleteLastNotifies covers FIX-014 1.3: deleting the final element
+// (which empties the collection) still fires the ValueDeleted callback, where
+// the old early return skipped it. notify dispatches asynchronously, so the
+// callback is observed over a channel.
+func TestArrayDeleteLastNotifies(t *testing.T) {
+	ctx := context.Background()
+	a := values.NewArray[int](42)
+
+	got := make(chan data.ChangeType, 1)
+	require.NoError(t, a.Register("watch",
+		func(_ time.Time, ct data.ChangeType, _ any) {
+			got <- ct
+		}))
+
+	require.NoError(t, a.Delete(ctx, 0))
+	require.Equal(t, 0, a.Count())
+
+	select {
+	case ct := <-got:
+		require.Equal(t, data.ValueDeleted, ct)
+	case <-time.After(2 * time.Second):
+		t.Fatal("ValueDeleted not fired when deleting the last element")
+	}
 }

@@ -15,6 +15,13 @@ type ErrorEventDefinition struct {
 	definition
 }
 
+// Compile-time conformance (FIX-011): CloneEventDefinition must match
+// flow.EventDefCloner, else the throw-path clone-with-data step silently no-ops.
+var (
+	_ flow.EventDefinition = (*ErrorEventDefinition)(nil)
+	_ flow.EventDefCloner  = (*ErrorEventDefinition)(nil)
+)
+
 // NewErrorEventDefinition creates a new ErrorEventDefinition and returns
 // its pointer.
 func NewErrorEventDefinition(
@@ -73,9 +80,10 @@ func (eed *ErrorEventDefinition) GetItemsList() []*data.ItemDefinition {
 	return []*data.ItemDefinition{eed.err.Structure()}
 }
 
-// CloneEvent clones EventDefinition with dedicated data.ItemDefinition
-// list.
-func (eed *ErrorEventDefinition) CloneEvent(
+// CloneEventDefinition clones EventDefinition with dedicated data.ItemDefinition
+// list. It satisfies flow.EventDefCloner (was previously named CloneEvent and so
+// never satisfied the interface — FIX-011).
+func (eed *ErrorEventDefinition) CloneEventDefinition(
 	evtData []data.Data,
 ) (flow.EventDefinition, error) {
 	var iDef *data.ItemDefinition

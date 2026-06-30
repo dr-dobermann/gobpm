@@ -7,8 +7,21 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/stretchr/testify/require"
 )
+
+// TestMessageCloneKeepsDocs covers FIX-014 1.9: Message.Clone carries the
+// BaseElement documentation, not just the id.
+func TestMessageCloneKeepsDocs(t *testing.T) {
+	m := bpmncommon.MustMessage("order",
+		data.MustItemDefinition(values.NewVariable(map[string]any{})),
+		foundation.WithDoc("an order message", "text/plain"))
+
+	docs := m.Clone().Docs()
+	require.Len(t, docs, 1)
+	require.Equal(t, "an order message", docs[0].Text())
+}
 
 func TestMessage(t *testing.T) {
 	t.Run("invalid_params",

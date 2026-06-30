@@ -59,7 +59,7 @@ func msgStartSnapshot(
 				foundation.WithID(item.ID())),
 			data.ReadyDataState))
 
-	firedDef, err := med.CloneEvent([]data.Data{datum})
+	firedDef, err := med.CloneEventDefinition([]data.Data{datum})
 	require.NoError(t, err)
 
 	return s, start, firedDef

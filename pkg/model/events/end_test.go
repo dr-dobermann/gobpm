@@ -34,9 +34,7 @@ func TestNewEndEvent(t *testing.T) {
 	msgEd, err := events.NewMessageEventDefinition(msg, nil)
 	require.NoError(t, err)
 
-	sig, err := events.NewSignal(
-		"signal",
-		data.MustItemDefinition(nil))
+	sig, err := events.NewSignal("signal", nil)
 	require.NoError(t, err)
 
 	sigEd, err := events.NewSignalEventDefinition(sig)
@@ -147,17 +145,20 @@ func TestNewEndEvent(t *testing.T) {
 							"error_item": data.MustParameter(
 								"error",
 								data.MustItemAwareElement(
-									data.MustItemDefinition(values.NewVariable(42)),
+									data.MustItemDefinition(values.NewVariable(42),
+										foundation.WithID("error_item")),
 									data.ReadyDataState)),
 							"message_item": data.MustParameter(
 								"message",
 								data.MustItemAwareElement(
-									data.MustItemDefinition(values.NewVariable(23)),
+									data.MustItemDefinition(values.NewVariable(23),
+										foundation.WithID("message_item")),
 									data.ReadyDataState)),
 							"escalation_item": data.MustParameter(
 								"escalation",
 								data.MustItemAwareElement(
-									data.MustItemDefinition(values.NewVariable(100)),
+									data.MustItemDefinition(values.NewVariable(100),
+										foundation.WithID("escalation_item")),
 									data.ReadyDataState)),
 						}
 

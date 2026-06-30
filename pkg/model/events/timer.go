@@ -96,7 +96,7 @@ func MustTimerEventDefinition(
 // concurrent instances waiting on the same timer would share one waiter and a
 // single timer occurrence would resume them all (FIX-004; the timer analog of
 // MessageEventDefinition.CloneForInstance). A timer carries no payload, so
-// there is no fire-path CloneEvent to keep the id stable — only the
+// there is no fire-path CloneEventDefinition to keep the id stable — only the
 // registration identity must be per-instance. Canary:
 // TestTimerReceiverPerInstanceClone.
 func (ted *TimerEventDefinition) CloneForInstance() flow.EventDefinition {

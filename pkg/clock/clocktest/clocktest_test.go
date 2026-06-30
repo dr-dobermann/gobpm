@@ -78,3 +78,36 @@ func TestSetIgnoresEarlierAndFiresDue(t *testing.T) {
 		t.Fatal("Set past the deadline did not fire the timer")
 	}
 }
+
+// TestClockAdvanceRejectsBackward covers FIX-014 1.8: a non-positive Advance is
+// ignored (the clock never rewinds), mirroring Set, while a forward Advance
+// still fires due timers.
+func TestClockAdvanceRejectsBackward(t *testing.T) {
+	base := time.Unix(100, 0)
+	c := New(base)
+
+	c.Advance(time.Hour)
+	want := base.Add(time.Hour)
+
+	// backward — ignored, Now() unchanged.
+	c.Advance(-time.Minute)
+	if !c.Now().Equal(want) {
+		t.Fatalf("backward Advance changed Now() to %v, want %v", c.Now(), want)
+	}
+
+	// zero — also ignored, still no rewind.
+	c.Advance(0)
+	if !c.Now().Equal(want) {
+		t.Fatalf("zero Advance changed Now() to %v, want %v", c.Now(), want)
+	}
+
+	// forward still fires a due timer.
+	ch := c.After(30 * time.Minute)
+	c.Advance(time.Hour)
+
+	select {
+	case <-ch:
+	default:
+		t.Fatal("forward Advance did not fire the due timer")
+	}
+}

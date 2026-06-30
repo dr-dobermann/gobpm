@@ -20,8 +20,8 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
 
-// TimerWatierError is the error class for timer waiter errors.
-const TimerWatierError = "TIMER_WAITER_ERRROR"
+// TimerWaiterError is the error class for timer waiter errors.
+const TimerWaiterError = "TIMER_WAITER_ERROR"
 
 // timeWaiter defines details of timer event described by
 // eDef.
@@ -53,7 +53,7 @@ func NewTimeWaiter(
 		return nil,
 			errs.New(
 				errs.M("couldn't create a Waiter with empty EventProcessor, EventDefinition, EventHub or EngineRuntime"),
-				errs.C(TimerWatierError, errs.InvalidParameter, errs.EmptyNotAllowed))
+				errs.C(TimerWaiterError, errs.InvalidParameter, errs.EmptyNotAllowed))
 	}
 
 	eDef, ok := eDefI.(*events.TimerEventDefinition)
@@ -61,7 +61,7 @@ func NewTimeWaiter(
 		return nil,
 			errs.New(
 				errs.M("not an TimerEventDefinition"),
-				errs.C(TimerWatierError, errs.TypeCastingError),
+				errs.C(TimerWaiterError, errs.TypeCastingError),
 				errs.D("event_definition_type", reflect.TypeOf(eDefI)))
 	}
 
@@ -82,7 +82,7 @@ func NewTimeWaiter(
 		return nil,
 			errs.New(
 				errs.M("TimerEventDefinition parsing failed"),
-				errs.C(TimerWatierError, errs.OperationFailed),
+				errs.C(TimerWaiterError, errs.OperationFailed),
 				errs.E(err))
 	}
 
@@ -184,7 +184,7 @@ func (tw *timeWaiter) AddEventProcessor(ep eventproc.EventProcessor) error {
 	if ep == nil {
 		return errs.New(
 			errs.M("empty EventProcessor isn't allowed"),
-			errs.C(TimerWatierError, errs.EmptyNotAllowed))
+			errs.C(TimerWaiterError, errs.EmptyNotAllowed))
 	}
 
 	tw.m.Lock()
@@ -206,7 +206,7 @@ func (tw *timeWaiter) RemoveEventProcessor(ep eventproc.EventProcessor) error {
 	if ep == nil {
 		return errs.New(
 			errs.M("empty EventProcessor isn't allowed"),
-			errs.C(TimerWatierError, errs.EmptyNotAllowed))
+			errs.C(TimerWaiterError, errs.EmptyNotAllowed))
 	}
 
 	tw.m.Lock()
@@ -216,7 +216,7 @@ func (tw *timeWaiter) RemoveEventProcessor(ep eventproc.EventProcessor) error {
 	if idx == -1 {
 		return errs.New(
 			errs.M("event processor isn't registered with the waiter"),
-			errs.C(TimerWatierError, errs.ObjectNotFound),
+			errs.C(TimerWaiterError, errs.ObjectNotFound),
 			errs.D("waiter_id", tw.id),
 			errs.D("event_processor_id", ep.ID()))
 	}
@@ -248,21 +248,25 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 	if tw.state != eventproc.WSReady {
 		return errs.New(
 			errs.M("waiter isn't ready to start"),
-			errs.C(TimerWatierError, errs.InvalidState),
-			errs.D("current_state", eventproc.WSReady))
+			errs.C(TimerWaiterError, errs.InvalidState),
+			errs.D("current_state", tw.state),
+			errs.D("expected_state", eventproc.WSReady))
 	}
 
 	tw.state = eventproc.WSRunned
 
 	if !tw.next.IsZero() {
-		tw.duration = time.Until(tw.next)
+		// Measure the absolute-timer delay against the injected Clock (the same
+		// source the validation at parseEDef used), not the wall clock, so a
+		// substituted clock governs the wait — see runTimerService.
+		tw.duration = tw.next.Sub(tw.rt.Clock().Now())
 		tw.cyclesLeft = 0
 	}
 
 	if tw.duration <= 0 {
 		return errs.New(
 			errs.M("waiter duration is not positive"),
-			errs.C(TimerWatierError, errs.InvalidState),
+			errs.C(TimerWaiterError, errs.InvalidState),
 			errs.D("waiter_id", tw.ID()),
 			errs.D("next_time", tw.next),
 			errs.D("duration", tw.duration),
@@ -287,16 +291,32 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 // the channel: this goroutine is its only reader and it returns immediately,
 // so the close would signal nothing while racing Stop()'s close
 // (panic: close of closed channel — audit 1.3 / FIX-003 A).
+//
+// The wait is driven by tw.rt.Clock().After, NOT time.NewTicker / time.After,
+// and the channel is re-armed at the top of every loop iteration. This exists
+// for test determinism (FIX-012): the runtime Clock is an injectable
+// abstraction (ADR-004 v.1 — "tests inject fake"), and routing the wait
+// through it lets a test substitute a clocktest.Clock and drive the timer with
+// Advance() instead of really sleeping for tw.duration. With the default syscl
+// Clock, After(d) is time.After(d), so production wall-clock behavior is
+// identical to the former ticker — the change costs nothing in production and
+// unlocks deterministic timer tests (and any future simulation/replay clock).
+// Re-arming per iteration covers both shapes uniformly: a one-shot timer
+// (cyclesLeft == 0) exits after the first fire because processTimerEvent
+// returns a completion error, while a cyclic timer re-arms the next interval.
+//
+// Do NOT "simplify" this back to time.NewTicker / time.After: it silently
+// re-breaks every fake-clock timer test (the goroutine would sleep on real
+// time while validation honors the injected clock — the exact split this FIX
+// removed).
 func (tw *timeWaiter) runTimerService(ctx context.Context) {
 	defer close(tw.done) // signal goroutine exit for EventHub.Shutdown drain
 
-	tckr := time.NewTicker(tw.duration)
-
 	for {
+		fire := tw.rt.Clock().After(tw.duration)
+
 		select {
 		case <-ctx.Done():
-			tckr.Stop()
-
 			tw.m.Lock()
 			tw.state = eventproc.WSStopped
 			tw.m.Unlock()
@@ -307,11 +327,9 @@ func (tw *timeWaiter) runTimerService(ctx context.Context) {
 			tw.rt.Logger().Debug("timer waiter stopping",
 				"waiter_id", tw.id)
 
-			tckr.Stop()
-
 			return
 
-		case <-tckr.C:
+		case <-fire:
 			if err := tw.processTimerEvent(ctx); err != nil {
 				return
 			}
@@ -350,20 +368,24 @@ func (tw *timeWaiter) processTimerEvent(ctx context.Context) error {
 		}
 	}
 
+	// Decrement first, THEN test the terminal condition (FIX-012): a Cycle of N
+	// must deliver exactly N events. Testing before the decrement spent one
+	// extra cycle (N+1 deliveries). A one-shot timer enters with cyclesLeft == 0
+	// and ends here on its first fire (0 -> -1, which is <= 0).
 	tw.m.Lock()
-	if tw.cyclesLeft == 0 {
+	tw.cyclesLeft--
+	if tw.cyclesLeft <= 0 {
 		tw.processors = []eventproc.EventProcessor{}
 		tw.state = eventproc.WSEnded
 		tw.m.Unlock()
 
-		// Terminal: report the fire; the EventHub (sole remover, ADR-006 v.1
+		// Terminal: report the fire; the EventHub (sole remover, ADR-006 v.2
 		// §2.5) removes the waiter. The timer no longer removes itself.
 		_ = tw.hub.WaiterFired(eDef.ID()) // ignore error during cleanup
 
 		return errs.New(errs.M("timer completed")) // signal completion
 	}
 
-	tw.cyclesLeft--
 	tw.m.Unlock()
 
 	return nil
@@ -383,7 +405,7 @@ func (tw *timeWaiter) Stop() error {
 	if tw.state != eventproc.WSRunned {
 		return errs.New(
 			errs.M("couldn't stop not runned waiter"),
-			errs.C(TimerWatierError, errs.InvalidState),
+			errs.C(TimerWaiterError, errs.InvalidState),
 			errs.D("current_state", tw.state))
 	}
 
