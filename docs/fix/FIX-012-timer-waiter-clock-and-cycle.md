@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-06-29 |
 | Owner | Ruslan Gabitov |
 | Related | [ADR-004 v.1 Runtime environment contract](../design/ADR-004-runtime-environment-contract.md), [ADR-006 v.2 §2.5 Waiter lifecycle](../design/ADR-006-events-and-subscriptions.md) |

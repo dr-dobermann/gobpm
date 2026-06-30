@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-06-29 |
 | Owner | Ruslan Gabitov |
 | Related | [ADR-006 v.2 Event delivery](../design/ADR-006-events-and-subscriptions.md), [FIX-010 Public-API input validation](FIX-010-public-api-input-validation.md) |
