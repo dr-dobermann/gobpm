@@ -656,9 +656,20 @@ func (t *Thresher) UnregisterProcess(key string) error {
 // registerStarters registers each instance-starter as a persistent subscription
 // on the engine EventHub. Called at the later of RegisterProcess (auto mode,
 // engine already Started) and Run (for processes registered before Run).
+//
+// It is all-or-nothing (FIX-013 §1.3): if any subscription fails, the ones this
+// call already subscribed are best-effort unsubscribed before the error returns,
+// so a partial subscription set never persists.
 func (t *Thresher) registerStarters(starters []*instanceStarter) error {
+	applied := make([]*instanceStarter, 0, len(starters))
+
 	for _, st := range starters {
 		if err := t.eventHub.RegisterPersistentEvent(st, st.eDef); err != nil {
+			// roll back the ones already subscribed in this call.
+			for _, done := range applied {
+				_ = t.eventHub.UnregisterEvent(done, done.eDef.ID())
+			}
+
 			return errs.New(
 				errs.M("couldn't register instance-starter subscription"),
 				errs.C(errorClass, errs.OperationFailed),
@@ -666,6 +677,8 @@ func (t *Thresher) registerStarters(starters []*instanceStarter) error {
 				errs.D("event_definition_id", st.eDef.ID()),
 				errs.E(err))
 		}
+
+		applied = append(applied, st)
 	}
 
 	return nil
@@ -674,9 +687,20 @@ func (t *Thresher) registerStarters(starters []*instanceStarter) error {
 // unregisterStarters tears down each instance-starter's persistent subscription
 // on the engine EventHub. Shared by UnregisterProcess and the latest-supersedes
 // teardown in RegisterProcess.
+//
+// It is all-or-nothing (FIX-013 §1.3): if any teardown fails, the ones this call
+// already unsubscribed are best-effort re-subscribed before the error returns,
+// so a partial teardown never persists.
 func (t *Thresher) unregisterStarters(starters []*instanceStarter) error {
+	applied := make([]*instanceStarter, 0, len(starters))
+
 	for _, st := range starters {
 		if err := t.eventHub.UnregisterEvent(st, st.eDef.ID()); err != nil {
+			// roll back the ones already unsubscribed in this call.
+			for _, done := range applied {
+				_ = t.eventHub.RegisterPersistentEvent(done, done.eDef)
+			}
+
 			return errs.New(
 				errs.M("couldn't unregister instance-starter subscription"),
 				errs.C(errorClass, errs.OperationFailed),
@@ -684,6 +708,8 @@ func (t *Thresher) unregisterStarters(starters []*instanceStarter) error {
 				errs.D("event_definition_id", st.eDef.ID()),
 				errs.E(err))
 		}
+
+		applied = append(applied, st)
 	}
 
 	return nil
