@@ -297,6 +297,7 @@ func (t *Thresher) Run(ctx context.Context) error {
 	// hub Run, without touching the caller's ctx (SRD-019). The caller canceling
 	// their ctx still propagates here.
 	t.ctx, t.engineCancel = context.WithCancel(ctx)
+	runCtx := t.ctx
 
 	// Synchronously initialize the EventHub so that any subsequent
 	// RegisterEvent / UnregisterEvent / PropagateEvent call sees a fully
@@ -317,10 +318,15 @@ func (t *Thresher) Run(ctx context.Context) error {
 	}
 
 	go func() {
+		// Use the context captured at spawn (runCtx), not t.ctx: a rollback
+		// (hub-start or starter-registration failure) followed by a retry Run
+		// reassigns t.ctx, and this goroutine must keep running against the
+		// context it was started with rather than racing that write.
+		//
 		// A context.Canceled return is the expected shutdown path (engineCancel
 		// or the caller's ctx); any other error is a genuine hub-loop failure and
 		// must not be swallowed (FIX-013 §1.5).
-		if err := t.eventHub.Run(t.ctx); err != nil &&
+		if err := t.eventHub.Run(runCtx); err != nil &&
 			!errors.Is(err, context.Canceled) {
 			t.cfg.logger.Error("event hub run loop failed", "error", err)
 		}
@@ -333,6 +339,15 @@ func (t *Thresher) Run(ctx context.Context) error {
 	// Run (the hub only accepts registrations once Started; SRD-015 FR-2).
 	// Processes registered after Run wire their starters in RegisterProcess.
 	if err := t.registerAllStarters(); err != nil {
+		// Reached Started but cannot auto-start the registered processes — roll
+		// the lifecycle back so a half-started engine is never observable and a
+		// retry stays possible (the hub-Start path above does the same). The
+		// engine context is canceled to stop the live hub goroutine and the
+		// state returns to NotStarted. registerStarters is all-or-nothing
+		// (FIX-013 §1.3), so no partial subscriptions linger to unwind here.
+		t.engineCancel()
+		t.state.Store(uint32(NotStarted))
+
 		return errs.New(
 			errs.M("couldn't register instance-starters at startup"),
 			errs.C(errorClass, errs.OperationFailed),
