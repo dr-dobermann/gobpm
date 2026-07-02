@@ -159,56 +159,6 @@ func TestActivityCloneIsolatesProperties(t *testing.T) {
 		"a property write on the source must not leak into the clone")
 }
 
-// TestActivityCloneRejectsValueLessProperty covers FIX-017 3.2.2/3.2.4: a task
-// carrying a value-less property (no structure, unfillable) can't be cloned, so
-// Clone fails rather than sharing a degenerate object.
-func TestActivityCloneRejectsValueLessProperty(t *testing.T) {
-	require.NoError(t, data.CreateDefaultStates())
-
-	prop, err := data.NewProperty(
-		"empty", data.MustItemDefinition(nil), data.UnavailableDataState)
-	require.NoError(t, err)
-
-	st, err := activities.NewServiceTask("service", cloneOp(t),
-		data.WithProperties(prop), activities.WithoutParams())
-	require.NoError(t, err)
-
-	_, err = st.Clone()
-	require.Error(t, err)
-}
-
-// TestSendTaskCloneRejectsValueLessProperty covers FIX-017 3.2.2/3.2.4 for a
-// SendTask.
-func TestSendTaskCloneRejectsValueLessProperty(t *testing.T) {
-	require.NoError(t, data.CreateDefaultStates())
-
-	prop := data.MustProperty("empty",
-		data.MustItemDefinition(nil), data.UnavailableDataState)
-
-	st, err := activities.NewSendTask("notify", sendMessage(t),
-		activities.WithoutParams(), data.WithProperties(prop))
-	require.NoError(t, err)
-
-	_, err = st.Clone()
-	require.Error(t, err)
-}
-
-// TestReceiveTaskCloneRejectsValueLessProperty covers FIX-017 3.2.2/3.2.4 for a
-// ReceiveTask.
-func TestReceiveTaskCloneRejectsValueLessProperty(t *testing.T) {
-	require.NoError(t, data.CreateDefaultStates())
-
-	prop := data.MustProperty("empty",
-		data.MustItemDefinition(nil), data.UnavailableDataState)
-
-	rt, err := activities.NewReceiveTask("await", recvMessage(t),
-		activities.WithoutParams(), data.WithProperties(prop))
-	require.NoError(t, err)
-
-	_, err = rt.Clone()
-	require.Error(t, err)
-}
-
 // TestUserTaskAcceptsProperty covers FIX-018 3.2.1: NewUserTask now accepts
 // data.WithProperties and exposes the property.
 func TestUserTaskAcceptsProperty(t *testing.T) {

@@ -156,13 +156,11 @@ func TestFrameInstantiation(t *testing.T) {
 			require.Error(t,
 				f.InstantiateInputs([]*data.Parameter{def}))
 
-			prop, err := data.NewProperty(
-				"bare-prop", data.MustItemDefinition(nil),
-				data.ReadyDataState)
-			require.NoError(t, err)
-
+			// a value-less property can't be constructed (FIX-018); a bare
+			// zero-value struct is the only remaining value-less source, and
+			// LoadProperties still rejects it (the clone precondition).
 			require.Error(t,
-				f.LoadProperties([]*data.Property{prop}))
+				f.LoadProperties([]*data.Property{{}}))
 		})
 
 	t.Run("properties are frame-local", func(t *testing.T) {

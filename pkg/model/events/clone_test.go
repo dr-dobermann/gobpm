@@ -84,25 +84,6 @@ func TestEventCloneIsolatesProperties(t *testing.T) {
 		"a property write on the source must not leak into the clone")
 }
 
-// TestEventCloneRejectsValueLessProperty covers FIX-017 3.2.3/3.2.4: an event
-// carrying a value-less property (no structure, unfillable) can't be cloned, so
-// Clone fails rather than sharing a degenerate object.
-func TestEventCloneRejectsValueLessProperty(t *testing.T) {
-	require.NoError(t, data.CreateDefaultStates())
-
-	prop, err := data.NewProperty(
-		"empty",
-		data.MustItemDefinition(nil),
-		data.UnavailableDataState)
-	require.NoError(t, err)
-
-	se, err := events.NewStartEvent("start", data.WithProperties(prop))
-	require.NoError(t, err)
-
-	_, err = se.Clone()
-	require.Error(t, err)
-}
-
 // TestEndEventClone verifies that EndEvent.Clone shares configuration by
 // reference, zeroes the dataPath runtime field, starts with empty flows and
 // carries no container.
@@ -132,23 +113,7 @@ func TestEndEventClone(t *testing.T) {
 	require.Nil(t, clone.Container())
 }
 
-// TestEndEventCloneRejectsValueLessProperty covers FIX-017 3.2.3/3.2.4 for an
-// EndEvent (a throwEvent): a value-less property makes the clone fail.
-func TestEndEventCloneRejectsValueLessProperty(t *testing.T) {
-	require.NoError(t, data.CreateDefaultStates())
-
-	prop := data.MustProperty("empty",
-		data.MustItemDefinition(nil), data.UnavailableDataState)
-
-	ee, err := events.NewEndEvent("end", data.WithProperties(prop))
-	require.NoError(t, err)
-
-	_, err = ee.Clone()
-	require.Error(t, err)
-}
-
-// valuedEventProp / valuelessEventProp build the two property kinds the FIX-018
-// event tests need.
+// valuedEventProp builds a valued property for the FIX-018 event tests.
 func valuedEventProp(t *testing.T) *data.Property {
 	t.Helper()
 	require.NoError(t, data.CreateDefaultStates())

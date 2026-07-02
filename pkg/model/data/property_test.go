@@ -154,9 +154,35 @@ func TestCloneProperties(t *testing.T) {
 	require.NotSame(t, src[0], cloned[0])
 	require.Equal(t, src[0].Name(), cloned[0].Name())
 
-	_, err = data.CloneProperties([]*data.Property{
-		data.MustProperty("empty",
-			data.MustItemDefinition(nil), data.UnavailableDataState),
-	})
+	// a value-less property can no longer be constructed (FIX-018); a bare
+	// zero-value struct is the only remaining value-less source, and CloneProperties
+	// still rejects it (the data-layer clone precondition).
+	_, err = data.CloneProperties([]*data.Property{{}})
 	require.Error(t, err)
+}
+
+// TestNewPropertyRejectsValueLess covers FIX-018 3.2.4: a value-less property
+// (its item has no structure, Value()==nil) is rejected at construction —
+// NewProperty / NewProp return an error, MustProperty / MustProp panic — while a
+// valued property still constructs.
+func TestNewPropertyRejectsValueLess(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	_, err := data.NewProperty("p",
+		data.MustItemDefinition(nil), data.ReadyDataState)
+	require.Error(t, err)
+
+	_, err = data.NewProp("p",
+		data.WithIAE(data.WithIDefinition(nil)))
+	require.Error(t, err)
+
+	require.Panics(t, func() {
+		_ = data.MustProperty("p",
+			data.MustItemDefinition(nil), data.ReadyDataState)
+	})
+
+	// a valued property still constructs.
+	_, err = data.NewProperty("ok",
+		data.MustItemDefinition(values.NewVariable(0)), data.ReadyDataState)
+	require.NoError(t, err)
 }

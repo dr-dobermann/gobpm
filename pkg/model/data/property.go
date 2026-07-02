@@ -42,11 +42,32 @@ func NewProperty(
 		return nil, err
 	}
 
-	return &Property{
-			ItemAwareElement: *iae,
-			name:             name,
-		},
-		nil
+	p := &Property{
+		ItemAwareElement: *iae,
+		name:             name,
+	}
+
+	if err := rejectValueless(p); err != nil {
+		return nil, err
+	}
+
+	return p, nil
+}
+
+// rejectValueless reports an error if p has no value — its item has no structure,
+// so gobpm can never fill it (ADR-010: a property's structure IS its value,
+// immutable). A value-less property is rejected at construction (FIX-018): the
+// fail-fast, single source of truth for "every property is usable". The "declare
+// empty, fill later" intent uses a typed-zero value (NewVariable(0) / "").
+func rejectValueless(p *Property) error {
+	if p.Value() == nil {
+		return errs.New(
+			errs.M("property %q has no value: its item has no structure and "+
+				"can never be filled; declare it with a typed value", p.name),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	return nil
 }
 
 // MustProperty creates a new Property and returns its pointer on success or

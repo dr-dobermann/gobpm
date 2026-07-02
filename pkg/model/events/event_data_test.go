@@ -155,19 +155,6 @@ func TestThrowEventLoadData(t *testing.T) {
 			require.Error(t, te.LoadData(ctx, frameFor(t, te.ID())))
 		})
 
-	t.Run("under-specified property fails loading", func(t *testing.T) {
-		te, err := newThrowEvent("thr-bad-prop",
-			[]*data.Property{
-				data.MustProperty("bad-prop",
-					data.MustItemDefinition(nil),
-					data.ReadyDataState),
-			},
-			nil)
-		require.NoError(t, err)
-
-		require.Error(t, te.LoadData(ctx, frameFor(t, te.ID())))
-	})
-
 	t.Run("failing association evaluation is reported", func(t *testing.T) {
 		te := newThrow(t)
 
