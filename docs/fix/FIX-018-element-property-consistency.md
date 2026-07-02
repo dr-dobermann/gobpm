@@ -2,7 +2,7 @@
 
 | Field    | Value                                             |
 | -------- | ------------------------------------------------- |
-| Status   | Draft                                             |
+| Status   | Accepted                                          |
 | Date     | 2026-07-02                                        |
 | Owner    | Руслан Габитов                                    |
 | Related  | FIX-017, ADR-010 v.2, SAD-001 v.1 §14.1           |
@@ -171,15 +171,17 @@ configuration missing on some Activity/Event constructors"* and open question
 | ---- | ---- | ------- |
 | `TestUserTaskAcceptsProperty` | `activities/clone_test.go` | `NewUserTask(..., data.WithProperties(p))` succeeds and `Properties()` returns it. |
 | `TestIntermediateCatchEventAcceptsProperty`, `…Throw…`, `TestBoundaryEventAcceptsProperty` | `events/clone_test.go` | each constructor accepts `data.WithProperties` and exposes it via `Properties()`. |
-| `TestCatchEventLoadsProperty` (Start / IntermediateCatch / Boundary) | `events/*_test.go` | after the catch event's data step, its property is materialized in the frame (`GetData`). |
+| `TestCatchEventUploadDataLoadsProperties` | `events/event_data_test.go` | after a catch event's data step its property is materialized in the frame (`GetData`); all catch kinds share `catchEvent.UploadData`, so one test covers Start / IntermediateCatch / Boundary. |
+| `TestPropCollector`, `TestNewEventPropertyOptionError`, `TestCatchEventUploadDataPropertyError` | `events/event_property_internal_test.go` | cover `newEvent`'s property-option collection (collector paths, a failing option, and the load error wrap). |
 | `TestNewPropertyRejectsValueLess` | `data/property_test.go` | `NewProperty` / `NewProp` return an error and `MustProperty` / `MustProp` panic for a value-less property; a valued one still succeeds. |
-| data-layer clone precondition | `data/property_test.go` | `Property.Clone` / `data.CloneProperties` return an error for a value-less (zero-value) item — the clone precondition, covered once at the data layer. |
+| data-layer clone precondition | `data/property_test.go` (`TestCloneProperties`, `TestPropertyCloneIsDeepCopy`), `scope/frame_test.go` | `Property.Clone` / `data.CloneProperties` / `Frame.LoadProperties` return an error for a value-less (zero-value) item — the retained clone precondition. |
 
 Removed as meaningless after §3.2.4 (value-less no longer constructible into any
 node/process): every constructor-built value-less test from FIX-016/017 and M1
 (`Test*CloneRejectsValueLessProperty`, `TestSnapshotNewRejectsValueless*`,
-`TestCloneRejectsValueless*`). The value-less precondition is covered once, at the
-data layer.
+`TestCloneRejectsValueless*`), and the three `clone_internal_test.go` injection
+files. The value-less precondition is now covered with zero-value `data.Property`
+structs at the data/frame layer.
 
 ### 4.2 Gate
 
@@ -229,7 +231,24 @@ activity/event type inherits property support by construction.
 
 ## 8. Implementation summary
 
-_(filled at landing: files/lines, V-results, milestone SHAs.)_
+- **Commits (branch `fix/element-property-consistency`):** doc `b85c511`;
+  **M1** `3772277` (declaration: UserTask option case + `newEvent` collection);
+  **M2** `952c16d` (catch-event load); **M3** `23326d0` (construction guard +
+  value-less test migration); `952fb62` (coverage of the new event branches).
+- **Production (4 files):** `activities/user_task.go` (route `data.PropertyOption`
+  into `taskOpts`); `events/event.go` (`propCollector` + `newEvent` option
+  collection + `catchEvent.UploadData` `LoadProperties`); `data/property.go`
+  (`rejectValueless` + wire into `NewProperty`) and `data/data_options.go` (wire
+  into `newProperty`, used by `NewProp`/`MustProp`).
+- **Tests:** accept tests for the four newly-wired constructors; a catch-event
+  load test + collector/branch coverage; `TestNewPropertyRejectsValueLess`; the
+  data/frame value-less precondition converted to zero-value `data.Property`;
+  every constructor-built value-less test removed as unreachable, and the three
+  `clone_internal_test.go` injection files deleted.
+- **Verification:** `make ci` exit 0 — tidy · lint · build · `-race` ·
+  **diff-coverage 100.0% of 55 changed lines** (min 95%) · govulncheck clean.
+  All **18** example modules run end-to-end (exit 0) — no example uses a
+  value-less property, so the construction guard breaks none.
 
 ## 9. Open questions
 
