@@ -2,7 +2,7 @@
 
 | Field    | Value                                                  |
 | -------- | ------------------------------------------------------ |
-| Status   | Draft                                                  |
+| Status   | Accepted                                               |
 | Date     | 2026-07-02                                             |
 | Owner    | Руслан Габитов                                         |
 | Related  | ADR-010 v.2, SAD-001 v.1 §14.1, FIX-016                |
@@ -111,9 +111,9 @@ separate value-less predicate, no redundant re-clone.
 
 #### 3.2.1 `flow.Node.Clone()` gains an error — interface + implementors
 
-`pkg/model/flow/node.go:88` — `Clone() Node` → `Clone() (Node, error)`.
-`BaseNode.Clone` (`node.go:199`, panics) matches the new signature. All **15**
-concrete implementors are updated:
+`pkg/model/flow/node.go` — `Clone() Node` → `Clone() (Node, error)`.
+`BaseNode.Clone` (panics) matches the new signature. All **14** concrete
+implementors are updated:
 
 - Property-owning, real logic (§3.2.2–3.2.3): the activities (`ServiceTask`,
   `UserTask`, `SendTask`, `ReceiveTask`) and events (`StartEvent`, `EndEvent`,
@@ -126,29 +126,37 @@ The internal `clone()` helpers on the path propagate the error:
 (`event.go:287,423`), `Gateway.clone()` (`gateway.go:146`, `nil`). Generated
 mocks that implement `flow.Node` are regenerated (`make gen_mock_files`).
 
+A single `data.CloneProperties([]*Property) ([]*Property, error)` helper carries
+the deep-copy-and-validate logic (it clones each `*Property`, returning an error
+on the first value-less one). It replaces snapshot's now-duplicate local
+`cloneProperties`, so the process level (FIX-016) and the node level share one
+cloner.
+
 #### 3.2.2 `activity.clone()` deep-copies properties, fails on value-less
 
-`pkg/model/activities/activity.go:91` — `clone() activity` →
-`clone() (activity, error)`; the shared `properties: a.properties` becomes a
-deep copy built by cloning each `*Property` (`Property.Clone`), returning the
-error if any property is value-less. The clone now owns private property objects.
+`pkg/model/activities/activity.go` — `clone() activity` →
+`clone() (activity, error)`; the shared `properties: a.properties` map becomes a
+deep copy via `data.CloneProperties(maps.Values(a.properties))`, re-keyed by
+name, returning the error if any property is value-less. The clone now owns
+private property objects.
 
 #### 3.2.3 `Event.clone()` deep-copies properties, fails on value-less
 
-`pkg/model/events/event.go:161` — `clone() Event` → `clone() (Event, error)`;
-the shared `properties: e.properties` slice becomes a deep copy via
-`Property.Clone` per element, propagating a value-less error.
+`pkg/model/events/event.go` — `clone() Event` → `clone() (Event, error)`; the
+shared `properties: e.properties` slice becomes `data.CloneProperties(e.properties)`,
+propagating a value-less error.
 
-#### 3.2.4 Call sites propagate; process-level path unchanged
+#### 3.2.4 Call sites propagate
 
-`snapshot.New` (`snapshot.go:91`) and `snapshot.Clone` (`snapshot.go:242`) —
-`s.Nodes[n.ID()] = n.Clone()` → capture and return the error. A value-less
-activity/event property now rejects the process at `snapshot.New`, alongside the
-process-level rejection FIX-016 already performs there (its `cloneProperties`
-call is unchanged). Value-less properties can only enter at `snapshot.New` (a raw
-process); at per-instance `snapshot.Clone` the snapshot's properties are already
-validated, so that path's clone error is always `nil` in practice — but the
-signature stays honest.
+`snapshot.New` and `snapshot.Clone` (`snapshot.go`) clone each node via an
+extracted `cloneNode` helper that wraps the error with the node identity; both
+functions already return errors. A value-less activity/event property now rejects
+the process at `snapshot.New`, alongside the process-level rejection FIX-016
+performs there (both now via `data.CloneProperties`). Value-less properties can
+only enter at `snapshot.New` (a raw process); at per-instance `snapshot.Clone`
+the snapshot's properties are already validated, so that path's clone error is
+`nil` in practice — but the signature stays honest (exercised by an internal
+guard-test).
 
 ## 4. Verification
 
@@ -156,16 +164,23 @@ signature stays honest.
 
 | Test | Site | Asserts |
 | ---- | ---- | ------- |
-| `TestActivityCloneIsolatesProperties` | `pkg/model/activities/activity_test.go` | a cloned task's property is a distinct object from the source's (mutating one does not affect the other); the clone succeeds for valued properties. |
-| `TestActivityCloneRejectsValueLessProperty` | `pkg/model/activities/activity_test.go` | `Clone()` returns an error for a task carrying a value-less property; the error names the property and is `DATA_ERRORS`. |
-| `TestEventCloneIsolatesProperties` | `pkg/model/events/event_test.go` | same isolation guarantee for an event property. |
-| `TestEventCloneRejectsValueLessProperty` | `pkg/model/events/event_test.go` | `Clone()` errors for a value-less event property. |
-| `TestSnapshotNewRejectsValueLessActivityProperty` | `internal/instance/snapshot/property_isolation_test.go` | a process whose activity carries a value-less property is rejected at `snapshot.New` (previously surfaced only at run time). |
-| `TestSnapshotNewRejectsValueLessEventProperty` | `internal/instance/snapshot/property_isolation_test.go` | same for an event property. |
-| `TestSnapshotEditAfterRegistrationDoesNotLeak` | `internal/instance/snapshot/property_isolation_test.go` | removing/altering a task property on the source process after `snapshot.New` does not change the snapshot's cloned node. |
+| `TestActivityCloneIsolatesProperties` | `activities/clone_test.go` | a cloned task's property is a distinct object; a write through the source does not reach the clone. |
+| `TestActivityCloneRejectsValueLessProperty` | `activities/clone_test.go` | `ServiceTask.Clone()` errors for a value-less property. |
+| `TestSendTaskCloneRejectsValueLessProperty` | `activities/clone_test.go` | same for a `SendTask`. |
+| `TestReceiveTaskCloneRejectsValueLessProperty` | `activities/clone_test.go` | same for a `ReceiveTask`. |
+| `TestUserTaskCloneRejectsValueLessProperty` | `activities/clone_internal_test.go` | `UserTask.Clone()` error branch — value-less property injected directly (its constructor doesn't accept properties yet; see §8). |
+| `TestEventCloneIsolatesProperties` | `events/clone_test.go` | a cloned event's property is distinct; a source write does not leak. |
+| `TestEventCloneRejectsValueLessProperty` | `events/clone_test.go` | `StartEvent.Clone()` errors for a value-less property. |
+| `TestEndEventCloneRejectsValueLessProperty` | `events/clone_test.go` | same for an `EndEvent`. |
+| `TestIntermediateCatchEventCloneRejectsValueLessProperty`, `…Throw…`, `TestBoundaryEventCloneRejectsValueLessProperty` | `events/clone_internal_test.go` | Clone error branches — value-less property injected directly (see §8). |
+| `TestCloneProperties` | `data/property_test.go` | `data.CloneProperties`: nil→nil, valued→deep copies, value-less→error. |
+| `TestSnapshotNewRejectsValueLessNodeProperty` | `snapshot/property_isolation_test.go` | a process whose node carries a value-less property is rejected at `snapshot.New` (previously surfaced only at run time). |
+| `TestSnapshotNodeEditAfterRegistrationDoesNotLeak` | `snapshot/property_isolation_test.go` | a node-property edit on the source after `snapshot.New` does not reach the snapshot's cloned node. |
+| `TestCloneRejectsValuelessNodeProperty` | `snapshot/clone_internal_test.go` | `snapshot.Clone`'s node-clone error path. |
 
-The existing FIX-016 tests (`TestSnapshotNewRejectsValuelessProperty` for the
-process level, `TestCloneRejectsValuelessProperty`) stay green.
+`TestStartEventClone` was updated to use a valued property (properties are now
+deep-copied, not shared). The existing FIX-016 tests (`TestSnapshotNewRejectsValuelessProperty`,
+`TestCloneRejectsValuelessProperty`) stay green.
 
 ### 4.2 Gate
 
@@ -185,8 +200,7 @@ rather than patching each symptom.
 
 - **Public API:** `flow.Node.Clone()` signature changes to `(Node, error)`. All
   in-tree implementors and call sites are updated; embedders that implement
-  `flow.Node` must add the error return. Noted in SAD-001 (Snapshot-Based State /
-  §14.1 clone contract).
+  `flow.Node` must add the error return.
 - A process carrying a value-less property on an **activity or event** is now
   rejected at `snapshot.New` (was accepted at registration, failed later or never
   until execution reached it). Such a process was never executable.
@@ -199,18 +213,45 @@ rather than patching each symptom.
 - **ADR-010 v.2** — process data model: an `ItemDefinition`'s structure *is* its
   value (immutable, typed, no setter) — why a value-less property can never be
   filled.
-- **SAD-001 v.1 §14.1** — records the deviation from BPMN's optional
+- **SAD-001 v.1 §14.1** — already records the deviation from BPMN's optional
   `itemSubjectRef`/structure (`0..1`): a gobpm process declaring an
   underspecified item-aware element cannot be executed and is rejected at
-  registration. Updated at landing to note the `flow.Node.Clone()` error contract
-  and node-property isolation.
+  snapshot/registration. FIX-017 makes that rejection uniform (node-level as well
+  as process-level), so the deviation statement needs no change.
 - **FIX-016** — snapshot property isolation for process-level properties; this
   FIX generalizes it to node-level properties and unifies value-less rejection
   through the clone.
 
 ## 8. Implementation summary
 
-_(filled at landing: files/lines, V-results, milestone SHAs.)_
+- **Commits (branch `fix/reject-value-less-properties`):** doc `f2bd5e3`;
+  implementation `31a2269` (M1 signature ripple + M2 deep-copy/validation landed
+  together — M1 alone could not meet the diff-coverage gate, as its error
+  branches only become reachable with M2's deep-copy).
+- **Production (20 files):** `flow/node.go` (interface + `BaseNode`); the 4 task
+  and 5 event concrete `Clone` + their internal `clone()` helpers
+  (`activity/task`, `Event/catchEvent/throwEvent`); the 5 gateway `Clone` +
+  `Gateway.clone` (no error — gateways carry no properties);
+  `data/property.go` (`CloneProperties`); `snapshot.go` (`cloneNode`, `New`,
+  `Clone`, local `cloneProperties` removed in favour of `data.CloneProperties`).
+- **Tests (20 files):** the M1 call-site updates across every node package, plus
+  the §4.1 additions (2 new internal guard-test files:
+  `activities/clone_internal_test.go`, `events/clone_internal_test.go`).
+  Regenerated mocks (gitignored).
+- **Verification:** `make ci` exit 0 — tidy · lint · build · `-race` ·
+  **diff-coverage 100.0% of 148 changed coverable lines** (min 95%) ·
+  govulncheck clean across all modules.
+- **Discovery — constructor property gap.** Only `NewServiceTask` /
+  `NewSendTask` / `NewReceiveTask` and `NewStartEvent` / `NewEndEvent` accept
+  `data.WithProperties`; `NewUserTask`, `NewIntermediateCatchEvent`,
+  `NewIntermediateThrowEvent`, and `NewBoundaryEvent` reject it, so those four
+  node types cannot declare a property today. Their `Clone` error branch is
+  therefore a defensive guard (like the gateways'), exercised by internal
+  guard-tests that inject a value-less property directly — the same pattern the
+  snapshot package uses for a guard `New` prevents. The constructor gap is
+  recorded in `docs/backlog.md` (*Property configuration missing on some
+  Activity/Event constructors*); when it is closed those branches become
+  reachable through the public API.
 
 ## 9. Open questions
 
