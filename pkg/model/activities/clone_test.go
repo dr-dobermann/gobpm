@@ -208,3 +208,23 @@ func TestReceiveTaskCloneRejectsValueLessProperty(t *testing.T) {
 	_, err = rt.Clone()
 	require.Error(t, err)
 }
+
+// TestUserTaskAcceptsProperty covers FIX-018 3.2.1: NewUserTask now accepts
+// data.WithProperties and exposes the property.
+func TestUserTaskAcceptsProperty(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	prop := data.MustProperty("counter",
+		data.MustItemDefinition(values.NewVariable(0)), data.ReadyDataState)
+
+	r, err := consinp.NewRenderer(consinp.WithMessager("hello", "hello"))
+	require.NoError(t, err)
+
+	ut, err := activities.NewUserTask("user", activities.WithRenderer(r),
+		activities.WithOutput("name", "string", true),
+		activities.WithoutParams(), data.WithProperties(prop))
+	require.NoError(t, err)
+
+	require.Len(t, ut.Properties(), 1)
+	require.Equal(t, "counter", ut.Properties()[0].Name())
+}

@@ -146,3 +146,45 @@ func TestEndEventCloneRejectsValueLessProperty(t *testing.T) {
 	_, err = ee.Clone()
 	require.Error(t, err)
 }
+
+// valuedEventProp / valuelessEventProp build the two property kinds the FIX-018
+// event tests need.
+func valuedEventProp(t *testing.T) *data.Property {
+	t.Helper()
+	require.NoError(t, data.CreateDefaultStates())
+
+	return data.MustProperty("counter",
+		data.MustItemDefinition(values.NewVariable(0)), data.ReadyDataState)
+}
+
+// TestIntermediateCatchEventAcceptsProperty covers FIX-018 3.2.2: the
+// constructor now accepts data.WithProperties (via newEvent's option collection).
+func TestIntermediateCatchEventAcceptsProperty(t *testing.T) {
+	ice, err := events.NewIntermediateCatchEvent("await", catchMessageDef(t),
+		data.WithProperties(valuedEventProp(t)))
+	require.NoError(t, err)
+
+	require.Len(t, ice.Properties(), 1)
+	require.Equal(t, "counter", ice.Properties()[0].Name())
+}
+
+// TestIntermediateThrowEventAcceptsProperty covers FIX-018 3.2.2 for the throw
+// intermediate event.
+func TestIntermediateThrowEventAcceptsProperty(t *testing.T) {
+	ite, err := events.NewIntermediateThrowEvent("send", throwMessageDef(t),
+		data.WithProperties(valuedEventProp(t)))
+	require.NoError(t, err)
+
+	require.Len(t, ite.Properties(), 1)
+	require.Equal(t, "counter", ite.Properties()[0].Name())
+}
+
+// TestBoundaryEventAcceptsProperty covers FIX-018 3.2.2 for a boundary event.
+func TestBoundaryEventAcceptsProperty(t *testing.T) {
+	be, err := events.NewBoundaryEvent("b", boundaryHostTask(t), messageDef(t),
+		false, data.WithProperties(valuedEventProp(t)))
+	require.NoError(t, err)
+
+	require.Len(t, be.Properties(), 1)
+	require.Equal(t, "counter", be.Properties()[0].Name())
+}

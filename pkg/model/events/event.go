@@ -128,21 +128,70 @@ type Event struct {
 	triggers set.Set[flow.EventTrigger]
 }
 
-// NewEvent creates a new Event and returns its pointer.
+// propCollector gathers the properties supplied via data.PropertyOption during
+// event construction: it is the data.PropertyAdder those options target, so an
+// event constructor can accept data.WithProperties in its base options (FIX-018).
+// Its collected set is copied into the Event; the collector itself is discarded.
+type propCollector struct {
+	props []*data.Property
+}
+
+// AddProperty appends a non-nil property to the collector.
+func (pc *propCollector) AddProperty(p *data.Property) error {
+	if p == nil {
+		return errs.New(
+			errs.M("AddProperty: a nil property isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	pc.props = append(pc.props, p)
+
+	return nil
+}
+
+// Validate satisfies options.Configurator (a collector has nothing to validate).
+func (pc *propCollector) Validate() error { return nil }
+
+// NewEvent creates a new Event and returns its pointer. Properties may be
+// supplied positionally (props) or as data.PropertyOption base options
+// (FIX-018): the latter are separated from the node options, applied to a
+// collector, and merged into the event's property set. The remaining options
+// configure the BaseNode.
 func newEvent(
 	name string,
 	props []*data.Property,
 	defs []flow.EventDefinition,
 	baseOpts ...options.Option,
 ) (*Event, error) {
-	fn, err := flow.NewBaseNode(name, baseOpts...)
+	nodeOpts := make([]options.Option, 0, len(baseOpts))
+	pc := propCollector{}
+
+	for _, o := range baseOpts {
+		if po, ok := o.(data.PropertyOption); ok {
+			if err := po.Apply(&pc); err != nil {
+				return nil, errs.New(
+					errs.M("newEvent: couldn't apply a property option to "+
+						"event %q", name),
+					errs.C(errorClass, errs.BulidingFailed),
+					errs.E(err))
+			}
+
+			continue
+		}
+
+		nodeOpts = append(nodeOpts, o)
+	}
+
+	fn, err := flow.NewBaseNode(name, nodeOpts...)
 	if err != nil {
 		return nil, err
 	}
 
+	allProps := append(append([]*data.Property{}, props...), pc.props...)
+
 	e := Event{
 		BaseNode:    *fn,
-		properties:  append([]*data.Property{}, props...),
+		properties:  allProps,
 		definitions: append([]flow.EventDefinition{}, defs...),
 		triggers:    *set.New[flow.EventTrigger](),
 	}

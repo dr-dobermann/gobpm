@@ -78,7 +78,8 @@ func NewUserTask(
 
 	for _, o := range userTaskOpts {
 		switch opt := o.(type) {
-		case foundation.BaseOption, ActivityOption, taskOption:
+		case foundation.BaseOption, ActivityOption, taskOption,
+			data.PropertyOption:
 			utc.taskOpts = append(utc.taskOpts, opt)
 
 		case UsrTaskOption:
