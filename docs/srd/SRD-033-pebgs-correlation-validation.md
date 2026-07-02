@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-02 |
 | Owner | Ruslan Gabitov |
@@ -271,7 +271,32 @@ Non-goals: any change to Exclusive-start/message-start instantiation, to
 
 ## 10. Implementation summary
 
-_(filled at landing: files/lines, V-results, milestone SHAs.)_
+- **Commits (branch `feat/pebgs-correlation-validation`):** doc `b6fc058`;
+  **M1** `4dc7947` (registration-time validation); **M2** `72b7038` (runtime
+  guard + docs sync).
+- **M1 — validation (FR-1/FR-2):** `msgflow.MissingKeyProperties`
+  (`pkg/model/msgflow/correlation.go`), and `validateParallelStartCorrelation`
+  + `armMessage` wired into `validateStartGate`
+  (`pkg/model/gateways/event_based.go`). A Receive-Task arm's message is read
+  via a structural `interface{ Message() *bpmncommon.Message }` (not the
+  `activities` import); a message-catch arm's via its
+  `*events.MessageEventDefinition`. Fixtures that built keyless Parallel-start
+  gates (internal `seedParallelStart`, snapshot instantiating-starts, gateway
+  validate suite; `testCorrKey`) now declare covering keys.
+- **M2 — runtime guard (FR-3) + one-shot pin (FR-4):**
+  `instanceStarter.ProcessEvent` skips instantiation on an empty key for a
+  Parallel-start gate (`parallelStart`/`messageName` helpers), Warn-logging
+  without payload; `TestParallelStartArmFiresOnce` pins single-shot arm
+  consumption. Docs sync: the `semantics/gateways.md` parallel-start note gained
+  the MUST-share-correlation clause; AB-001 graduated from the audit backlog;
+  `remediation-status.md` #6 → ✅ SRD-033 (Fixed 26 / Postponed 4).
+- **Verification:** `make ci` exit 0 — tidy · lint · build · `-race` ·
+  **diff-coverage 100.0% of 79 changed lines** (min 95%) · govulncheck clean.
+  Touched functions at 100% (`MissingKeyProperties`,
+  `validateParallelStartCorrelation`, `armMessage`, `parallelStart`,
+  `messageName`; the FR-3 guard block covered — the one uncovered
+  `ProcessEvent` block is the pre-existing `deriveKey` error branch). The
+  `event-based-parallel-start` example runs green.
 
 ## Open questions
 
