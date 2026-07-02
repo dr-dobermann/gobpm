@@ -86,7 +86,10 @@ func TestIntermediateThrowEventClone(t *testing.T) {
 	ite, err := events.NewIntermediateThrowEvent("send", throwMessageDef(t))
 	require.NoError(t, err)
 
-	cl, ok := ite.Clone().(*events.IntermediateThrowEvent)
+	cn, err := ite.Clone()
+	require.NoError(t, err)
+
+	cl, ok := cn.(*events.IntermediateThrowEvent)
 	require.True(t, ok)
 	require.Equal(t, flow.IntermediateEventClass, cl.EventClass())
 }

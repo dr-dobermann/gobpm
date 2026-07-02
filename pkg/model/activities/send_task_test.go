@@ -80,7 +80,10 @@ func TestSendTaskClone(t *testing.T) {
 		activities.WithoutParams())
 	require.NoError(t, err)
 
-	cl, ok := st.Clone().(*activities.SendTask)
+	cn, err := st.Clone()
+	require.NoError(t, err)
+
+	cl, ok := cn.(*activities.SendTask)
 	require.True(t, ok)
 	require.Equal(t, "order placed", cl.Message().Name())
 	require.NotSame(t, st.Message(), cl.Message())
@@ -169,7 +172,10 @@ func TestSendTaskCorrelationKey(t *testing.T) {
 	require.NoError(t, err)
 	require.Same(t, key, st.CorrelationKey())
 
-	cl, ok := st.Clone().(*activities.SendTask)
+	cn, err := st.Clone()
+	require.NoError(t, err)
+
+	cl, ok := cn.(*activities.SendTask)
 	require.True(t, ok)
 	require.Same(t, key, cl.CorrelationKey())
 }

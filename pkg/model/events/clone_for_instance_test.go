@@ -58,8 +58,13 @@ func TestTimerReceiverPerInstanceClone(t *testing.T) {
 	start, err := events.NewStartEvent("start", events.WithTimerTrigger(ted))
 	require.NoError(t, err)
 
-	id1 := start.Clone().(flow.EventNode).Definitions()[0].ID()
-	id2 := start.Clone().(flow.EventNode).Definitions()[0].ID()
+	cn1, err := start.Clone()
+	require.NoError(t, err)
+	id1 := cn1.(flow.EventNode).Definitions()[0].ID()
+
+	cn2, err := start.Clone()
+	require.NoError(t, err)
+	id2 := cn2.(flow.EventNode).Definitions()[0].ID()
 
 	require.NotEqual(t, ted.ID(), id1, "cloned timer eDef must have a fresh id")
 	require.NotEqual(t, id1, id2, "two instances must get distinct timer eDef ids")
@@ -92,8 +97,13 @@ func TestMessageReceiverPerInstanceClone(t *testing.T) {
 	start, err := events.NewStartEvent("start", events.WithMessageTrigger(med))
 	require.NoError(t, err)
 
-	id1 := start.Clone().(flow.EventNode).Definitions()[0].ID()
-	id2 := start.Clone().(flow.EventNode).Definitions()[0].ID()
+	cn1, err := start.Clone()
+	require.NoError(t, err)
+	id1 := cn1.(flow.EventNode).Definitions()[0].ID()
+
+	cn2, err := start.Clone()
+	require.NoError(t, err)
+	id2 := cn2.(flow.EventNode).Definitions()[0].ID()
 
 	require.NotEqual(t, med.ID(), id1, "cloned message eDef must have a fresh id")
 	require.NotEqual(t, id1, id2, "two instances must get distinct message eDef ids")
@@ -110,6 +120,8 @@ func TestNonMessageDefSharedOnClone(t *testing.T) {
 	start, err := events.NewStartEvent("start", events.WithSignalTrigger(sed))
 	require.NoError(t, err)
 
-	id := start.Clone().(flow.EventNode).Definitions()[0].ID()
+	cn, err := start.Clone()
+	require.NoError(t, err)
+	id := cn.(flow.EventNode).Definitions()[0].ID()
 	require.Equal(t, sed.ID(), id, "non-message def must stay shared on clone")
 }

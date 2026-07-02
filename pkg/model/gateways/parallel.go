@@ -49,11 +49,11 @@ func NewParallelGateway(opts ...options.Option) (*ParallelGateway, error) {
 // is cloned (direction and default flow shared by reference, fresh shell, empty
 // flows, no container) and the synchronizing-join state (mutex, arrival set)
 // starts fresh. See ADR-009.
-func (pg *ParallelGateway) Clone() flow.Node {
+func (pg *ParallelGateway) Clone() (flow.Node, error) {
 	return &ParallelGateway{
 		Gateway: pg.clone(),
 		arrived: map[string]string{},
-	}
+	}, nil
 }
 
 // Arrive records that arrivingTrackID reached the join on incomingFlowID and

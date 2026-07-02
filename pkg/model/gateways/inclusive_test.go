@@ -330,7 +330,8 @@ func TestInclusiveGatewayClone(t *testing.T) {
 	ig, err := gateways.NewInclusiveGateway()
 	require.NoError(t, err)
 
-	c := ig.Clone()
+	c, err := ig.Clone()
+	require.NoError(t, err)
 	require.NotNil(t, c)
 	require.IsType(t, &gateways.InclusiveGateway{}, c)
 	require.NotSame(t, ig, c)

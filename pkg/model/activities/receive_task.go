@@ -132,16 +132,21 @@ func (rt *ReceiveTask) TaskType() flow.TaskType {
 
 // Clone returns a per-instance copy of the ReceiveTask as a flow.Node. The
 // captured payload is per-instance runtime state and is not carried over.
-func (rt *ReceiveTask) Clone() flow.Node {
+func (rt *ReceiveTask) Clone() (flow.Node, error) {
+	t, err := rt.clone()
+	if err != nil {
+		return nil, err
+	}
+
 	clonedMsg := rt.message.Clone()
 
 	return &ReceiveTask{
-		task:           rt.clone(),
+		task:           t,
 		implementation: rt.implementation,
 		instantiate:    rt.instantiate,
 		message:        clonedMsg,
 		eDef:           events.MustMessageEventDefinition(clonedMsg, nil),
-	}
+	}, nil
 }
 
 // Definitions returns the task's single message event definition, so the track

@@ -101,12 +101,17 @@ func (st *ServiceTask) Node() flow.Node {
 // the implementation string is copied. The operation gets a per-instance clone
 // (shared definition, fresh message carriers) so the exec-mutated message item
 // state is not shared across concurrent instances.
-func (st *ServiceTask) Clone() flow.Node {
+func (st *ServiceTask) Clone() (flow.Node, error) {
+	t, err := st.clone()
+	if err != nil {
+		return nil, err
+	}
+
 	return &ServiceTask{
-		task:           st.clone(),
+		task:           t,
 		implementation: st.implementation,
 		operation:      st.operation.Clone(),
-	}
+	}, nil
 }
 
 // ------------------ flow.Task interface --------------------------------------

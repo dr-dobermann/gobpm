@@ -154,17 +154,25 @@ func newEvent(
 	return &e, nil
 }
 
-// clone returns a per-instance copy of the Event: properties, definitions and
-// triggers are shared by reference (immutable configuration); the BaseNode shell
-// is fresh (empty flows, no container). Execution data lives in the
-// per-execution frame, never on the node (ADR-010 §2.4).
-func (e *Event) clone() Event {
+// clone returns a per-instance copy of the Event: the properties are deep-copied
+// so the clone owns private Property objects — a later edit to the source
+// process can't leak into a registered snapshot or a running instance, and a
+// value-less property is rejected here (FIX-017). Definitions get per-instance
+// identity where supported (cloneDefsForInstance); triggers are shared by
+// reference; the BaseNode shell is fresh (empty flows, no container). Execution
+// data lives in the per-execution frame, never on the node (ADR-010 §2.4).
+func (e *Event) clone() (Event, error) {
+	props, err := data.CloneProperties(e.properties)
+	if err != nil {
+		return Event{}, err
+	}
+
 	return Event{
 		BaseNode:    e.CloneShell(),
-		properties:  e.properties,
+		properties:  props,
 		definitions: cloneDefsForInstance(e.definitions),
 		triggers:    e.triggers,
-	}
+	}, nil
 }
 
 // cloneDefsForInstance gives every event definition that supports per-instance
@@ -284,13 +292,18 @@ func newCatchEvent(
 // clone returns a per-instance copy of the catchEvent: the embedded Event is
 // cloned (fresh shell + dataPath, shared config), and the data outputs / output
 // associations are shared by reference as immutable configuration.
-func (ce *catchEvent) clone() catchEvent {
+func (ce *catchEvent) clone() (catchEvent, error) {
+	e, err := ce.Event.clone()
+	if err != nil {
+		return catchEvent{}, err
+	}
+
 	return catchEvent{
-		Event:              ce.Event.clone(),
+		Event:              e,
 		dataOutputs:        ce.dataOutputs,
 		outputAssociations: ce.outputAssociations,
 		parallelMultiple:   ce.parallelMultiple,
-	}
+	}, nil
 }
 
 // IsParallelMultiple returns parallelMultiple settings of the catchEvent.
@@ -420,12 +433,17 @@ func newThrowEvent(
 // clone returns a per-instance copy of the throwEvent: the embedded Event is
 // cloned (fresh shell + dataPath, shared config), and the data inputs / input
 // associations are shared by reference as immutable configuration.
-func (te *throwEvent) clone() throwEvent {
+func (te *throwEvent) clone() (throwEvent, error) {
+	e, err := te.Event.clone()
+	if err != nil {
+		return throwEvent{}, err
+	}
+
 	return throwEvent{
-		Event:             te.Event.clone(),
+		Event:             e,
 		dataInputs:        te.dataInputs,
 		inputAssociations: te.inputAssociations,
-	}
+	}, nil
 }
 
 // ---------------- exec.NodeDataConsumer interface ----------------------------

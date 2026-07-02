@@ -89,7 +89,10 @@ func TestReceiveTaskClone(t *testing.T) {
 		activities.WithoutParams())
 	require.NoError(t, err)
 
-	cl, ok := rt.Clone().(*activities.ReceiveTask)
+	cn, err := rt.Clone()
+	require.NoError(t, err)
+
+	cl, ok := cn.(*activities.ReceiveTask)
 	require.True(t, ok)
 	require.Equal(t, "order placed", cl.Message().Name())
 	require.NotSame(t, rt.Message(), cl.Message())
@@ -204,7 +207,10 @@ func TestReceiveTaskInstantiate(t *testing.T) {
 	require.True(t, inst.Instantiate())
 
 	// the flag survives Clone.
-	cl, ok := inst.Clone().(*activities.ReceiveTask)
+	cn, err := inst.Clone()
+	require.NoError(t, err)
+
+	cl, ok := cn.(*activities.ReceiveTask)
 	require.True(t, ok)
 	require.True(t, cl.Instantiate())
 }

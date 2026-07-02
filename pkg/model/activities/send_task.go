@@ -102,13 +102,18 @@ func (st *SendTask) Node() flow.Node {
 }
 
 // Clone returns a deep copy of the SendTask as a flow.Node.
-func (st *SendTask) Clone() flow.Node {
+func (st *SendTask) Clone() (flow.Node, error) {
+	t, err := st.clone()
+	if err != nil {
+		return nil, err
+	}
+
 	return &SendTask{
-		task:           st.clone(),
+		task:           t,
 		implementation: st.implementation,
 		message:        st.message.Clone(),
 		correlationKey: st.correlationKey,
-	}
+	}, nil
 }
 
 // TaskType returns the BPMN task type.

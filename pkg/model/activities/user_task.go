@@ -141,12 +141,17 @@ func (ut *UserTask) Node() flow.Node {
 // Clone returns a per-instance copy of the UserTask. The embedded task is cloned
 // (config shared by reference, fresh activity shell); the outputs resource and
 // renderers are shared by reference as immutable configuration.
-func (ut *UserTask) Clone() flow.Node {
+func (ut *UserTask) Clone() (flow.Node, error) {
+	t, err := ut.clone()
+	if err != nil {
+		return nil, err
+	}
+
 	return &UserTask{
-		task:      ut.clone(),
+		task:      t,
 		outputs:   ut.outputs,
 		renderers: ut.renderers,
-	}
+	}, nil
 }
 
 // ------------------------ flow.Task interface -------------------------------

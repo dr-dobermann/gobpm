@@ -302,7 +302,8 @@ func TestComplexGatewayClone(t *testing.T) {
 	cg, err := gateways.NewComplexGateway(gateways.WithActivationThreshold(2))
 	require.NoError(t, err)
 
-	c := cg.Clone()
+	c, err := cg.Clone()
+	require.NoError(t, err)
 	require.NotNil(t, c)
 	require.IsType(t, &gateways.ComplexGateway{}, c)
 	require.NotSame(t, cg, c)

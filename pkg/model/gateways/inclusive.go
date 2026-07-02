@@ -60,11 +60,11 @@ func NewInclusiveGateway(opts ...options.Option) (*InclusiveGateway, error) {
 // shell) and the synchronizing-join state (mutex, arrival table, order log,
 // fired flag) starts fresh (ADR-009). Condition evaluation reads variables
 // through the per-execution environment (ADR-010 §2.4).
-func (ig *InclusiveGateway) Clone() flow.Node {
+func (ig *InclusiveGateway) Clone() (flow.Node, error) {
 	return &InclusiveGateway{
 		Gateway: ig.clone(),
 		arrived: map[string]string{},
-	}
+	}, nil
 }
 
 // Node returns the gateway as its concrete flow node, so a track reaching it via

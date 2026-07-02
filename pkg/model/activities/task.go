@@ -57,11 +57,16 @@ func newTask(
 // clone returns a per-instance copy of the task: the embedded activity is cloned
 // (config shared by reference, fresh shell, zero dataPath) and the
 // multyInstance flag is copied as configuration.
-func (t *task) clone() task {
-	return task{
-		activity:      t.activity.clone(),
-		multyInstance: t.multyInstance,
+func (t *task) clone() (task, error) {
+	a, err := t.activity.clone()
+	if err != nil {
+		return task{}, err
 	}
+
+	return task{
+		activity:      a,
+		multyInstance: t.multyInstance,
+	}, nil
 }
 
 // IsMultyinstance returns Task multyinstance settings.

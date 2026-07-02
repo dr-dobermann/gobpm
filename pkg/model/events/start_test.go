@@ -268,7 +268,10 @@ func TestStartEventCorrelationKey(t *testing.T) {
 	require.NoError(t, err)
 	require.Same(t, key, se.CorrelationKey())
 
-	cl, ok := se.Clone().(*events.StartEvent)
+	cn, err := se.Clone()
+	require.NoError(t, err)
+
+	cl, ok := cn.(*events.StartEvent)
 	require.True(t, ok)
 	require.Same(t, key, cl.CorrelationKey())
 

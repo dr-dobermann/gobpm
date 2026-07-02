@@ -114,7 +114,10 @@ func TestExclusiveGatewayClone(t *testing.T) {
 	require.NotEmpty(t, eg.Outgoing())
 	require.NotEmpty(t, eg.Incoming())
 
-	clone, ok := eg.Clone().(*gateways.ExclusiveGateway)
+	cn, err := eg.Clone()
+	require.NoError(t, err)
+
+	clone, ok := cn.(*gateways.ExclusiveGateway)
 	require.True(t, ok)
 
 	// independent object, same id.

@@ -90,7 +90,10 @@ func TestIntermediateCatchEventClone(t *testing.T) {
 	ice, err := events.NewIntermediateCatchEvent("await", catchMessageDef(t))
 	require.NoError(t, err)
 
-	cl, ok := ice.Clone().(*events.IntermediateCatchEvent)
+	cn, err := ice.Clone()
+	require.NoError(t, err)
+
+	cl, ok := cn.(*events.IntermediateCatchEvent)
 	require.True(t, ok)
 	require.Equal(t, flow.IntermediateEventClass, cl.EventClass())
 	require.Len(t, cl.Definitions(), 1)

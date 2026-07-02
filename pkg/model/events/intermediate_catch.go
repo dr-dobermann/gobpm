@@ -76,8 +76,13 @@ func (ice *IntermediateCatchEvent) Node() flow.Node {
 
 // Clone returns a per-instance copy. The captured payload is per-instance
 // runtime state and is not carried over.
-func (ice *IntermediateCatchEvent) Clone() flow.Node {
-	return &IntermediateCatchEvent{catchEvent: ice.clone()}
+func (ice *IntermediateCatchEvent) Clone() (flow.Node, error) {
+	ce, err := ice.clone()
+	if err != nil {
+		return nil, err
+	}
+
+	return &IntermediateCatchEvent{catchEvent: ce}, nil
 }
 
 // EventClass classifies the event as intermediate (a mid-flow wait).

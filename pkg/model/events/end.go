@@ -98,10 +98,15 @@ func (ee *EndEvent) Node() flow.Node {
 // Clone returns a per-instance copy of the EndEvent: the embedded throwEvent is
 // cloned (config shared by reference, fresh Event shell, zero dataPath, empty
 // flows, no container).
-func (ee *EndEvent) Clone() flow.Node {
-	return &EndEvent{
-		throwEvent: ee.clone(),
+func (ee *EndEvent) Clone() (flow.Node, error) {
+	te, err := ee.clone()
+	if err != nil {
+		return nil, err
 	}
+
+	return &EndEvent{
+		throwEvent: te,
+	}, nil
 }
 
 // ------------------ flow.EventNode interface ---------------------------------

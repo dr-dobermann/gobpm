@@ -137,3 +137,70 @@ func TestSnapshotCloneConcurrentPropertyWrites(t *testing.T) {
 
 	wg.Wait()
 }
+
+// nodePropProcess builds a minimal valid process (start -> end) whose start
+// event carries the given property, so a node-level property flows through
+// snapshot.New's node clone.
+func nodePropProcess(
+	t *testing.T,
+	prop *data.Property,
+) (*process.Process, flow.Node) {
+	t.Helper()
+
+	require.NoError(t, data.CreateDefaultStates())
+
+	start, err := events.NewStartEvent("start", data.WithProperties(prop))
+	require.NoError(t, err)
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	p, err := process.New("node-prop")
+	require.NoError(t, err)
+	require.NoError(t, p.Add(start))
+	require.NoError(t, p.Add(end))
+	_, err = flow.Link(start, end)
+	require.NoError(t, err)
+
+	return p, start
+}
+
+// TestSnapshotNewRejectsValueLessNodeProperty covers FIX-017 3.2.4: a value-less
+// property on a node (here a start event) can't be cloned, so snapshot.New
+// rejects the process at registration instead of failing later at execution.
+func TestSnapshotNewRejectsValueLessNodeProperty(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	prop := data.MustProperty("empty",
+		data.MustItemDefinition(nil), data.UnavailableDataState)
+
+	p, _ := nodePropProcess(t, prop)
+
+	_, err := snapshot.New(p)
+	require.Error(t, err)
+}
+
+// TestSnapshotNodeEditAfterRegistrationDoesNotLeak covers FIX-017 1.1: a node
+// property mutated on the source process after snapshot.New does not reach the
+// registered snapshot — the cloned node owns a private property copy.
+func TestSnapshotNodeEditAfterRegistrationDoesNotLeak(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	prop := data.MustProperty("counter",
+		data.MustItemDefinition(values.NewVariable(0), foundation.WithID("counter")),
+		data.ReadyDataState)
+
+	p, start := nodePropProcess(t, prop)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	require.NoError(t, prop.Value().Update(ctx, 7))
+
+	cloned, ok := s.Nodes[start.ID()].(interface {
+		Properties() []*data.Property
+	})
+	require.True(t, ok)
+	require.Equal(t, 0, cloned.Properties()[0].Value().Get(ctx),
+		"a node-property edit after snapshot.New must not reach the snapshot")
+}

@@ -112,12 +112,17 @@ func (se *StartEvent) Node() flow.Node {
 // Clone returns a per-instance copy of the StartEvent: the embedded catchEvent
 // is cloned (config shared by reference, fresh Event shell, zero dataPath, empty
 // flows, no container) and the interrupting flag is copied as configuration.
-func (se *StartEvent) Clone() flow.Node {
+func (se *StartEvent) Clone() (flow.Node, error) {
+	ce, err := se.clone()
+	if err != nil {
+		return nil, err
+	}
+
 	return &StartEvent{
-		catchEvent:     se.clone(),
+		catchEvent:     ce,
 		correlationKey: se.correlationKey,
 		interrupting:   se.interrupting,
-	}
+	}, nil
 }
 
 // CorrelationKey returns the CorrelationKey this start event correlates on, or

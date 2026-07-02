@@ -77,30 +77,44 @@ func newActivity(
 	return cfg.newActivity()
 }
 
-// clone returns a per-instance copy of the activity: every configuration field
-// (loop characteristics, roles, default flow, properties, IoSpec, data
-// associations, quantities, flags) is shared by reference; the BaseNode shell is
-// fresh (empty flows, no container). Execution data lives in the per-execution
-// frame, never on the node (ADR-010 §2.4).
+// clone returns a per-instance copy of the activity: the properties are
+// deep-copied so the clone owns private Property objects — a later edit to the
+// source process (removing or re-valuing a property) can't leak into a
+// registered snapshot or a running instance, and a value-less property is
+// rejected here (FIX-017). The other configuration fields (loop characteristics,
+// roles, default flow, IoSpec, data associations, quantities, flags) are shared
+// by reference; the BaseNode shell is fresh (empty flows, no container).
+// Execution data lives in the per-execution frame, never on the node
+// (ADR-010 §2.4).
 //
 // boundaryEvents is deliberately left empty: a boundary's cross-references (host
 // ↔ boundary) must point at the instance's own cloned nodes, not the shared
 // model, so the per-instance graph build (snapshot.Clone) rebinds the cloned
 // boundaries onto this cloned host (SRD-029 M3a). Copying the model boundaries
 // here would leak shared nodes into the instance.
-func (a *activity) clone() activity {
+func (a *activity) clone() (activity, error) {
+	props, err := data.CloneProperties(maps.Values(a.properties))
+	if err != nil {
+		return activity{}, err
+	}
+
+	properties := make(map[string]*data.Property, len(props))
+	for _, p := range props {
+		properties[p.Name()] = p
+	}
+
 	return activity{
 		BaseNode:            a.CloneShell(),
 		loopCharacteristics: a.loopCharacteristics,
 		roles:               a.roles,
 		defaultFlow:         a.defaultFlow,
-		properties:          a.properties,
+		properties:          properties,
 		IoSpec:              a.IoSpec,
 		dataAssociations:    a.dataAssociations,
 		startQuantity:       a.startQuantity,
 		completionQuantity:  a.completionQuantity,
 		isForCompensation:   a.isForCompensation,
-	}
+	}, nil
 }
 
 // Roles returns list of ResourceRoles of the activity.

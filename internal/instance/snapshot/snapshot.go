@@ -59,7 +59,7 @@ func New(
 	// private property objects — like the node graph cloned below — and a process
 	// edit after registration can't reach the registered version (FIX-016,
 	// ADR-019 §2.3).
-	props, err := cloneProperties(p.Properties())
+	props, err := data.CloneProperties(p.Properties())
 	if err != nil {
 		return nil, errs.New(
 			errs.M("couldn't clone process properties into snapshot"),
@@ -88,7 +88,13 @@ func New(
 
 	for _, n := range p.Nodes() {
 		srcNodes[n.ID()] = n
-		s.Nodes[n.ID()] = n.Clone()
+
+		cn, cerr := cloneNode(n)
+		if cerr != nil {
+			return nil, cerr
+		}
+
+		s.Nodes[n.ID()] = cn
 
 		// An instantiate ReceiveTask with no incoming flow is a valid process
 		// instantiation point on its own (BPMN §13.3.3) — the task-shaped peer
@@ -187,29 +193,19 @@ func hasInstantiationPoint(seExists, eeExists, instStartExists bool) bool {
 	return !eeExists || seExists || instStartExists
 }
 
-// cloneProperties deep-copies a property set so a Snapshot — a frozen template
-// (New) or a per-instance clone (Clone) — owns private property objects rather
-// than sharing one mutable set across registrations and instances. It is the
-// property counterpart of node cloning (FIX-016). A nil input yields a nil set.
-func cloneProperties(props []*data.Property) ([]*data.Property, error) {
-	if props == nil {
-		return nil, nil
+// cloneNode returns a clone of process node n, wrapping a clone failure with the
+// node's identity. A node clone fails when a property is value-less and thus
+// unclonable (FIX-017); a node without properties never errors.
+func cloneNode(n flow.Node) (flow.Node, error) {
+	cn, err := n.Clone()
+	if err != nil {
+		return nil, errs.New(
+			errs.M("couldn't clone node %q", n.ID()),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.E(err))
 	}
 
-	cloned := make([]*data.Property, len(props))
-	for i, p := range props {
-		c, err := p.Clone()
-		if err != nil {
-			return nil, errs.New(
-				errs.M("couldn't clone property %q", p.Name()),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.E(err))
-		}
-
-		cloned[i] = c
-	}
-
-	return cloned, nil
+	return cn, nil
 }
 
 // Clone returns a per-instance copy of the Snapshot. Every node is cloned (its
@@ -220,7 +216,7 @@ func cloneProperties(props []*data.Property) ([]*data.Property, error) {
 // immutable header — process id/name, correlation-key definitions and
 // instantiating-start descriptors — is shared by reference. See ADR-009.
 func (s *Snapshot) Clone() (*Snapshot, error) {
-	props, err := cloneProperties(s.Properties)
+	props, err := data.CloneProperties(s.Properties)
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +235,12 @@ func (s *Snapshot) Clone() (*Snapshot, error) {
 	// runtime state fresh); the clone starts with empty flows and any default
 	// flow still points at the original edge until wireClonedGraph remaps it.
 	for id, n := range s.Nodes {
-		clone.Nodes[id] = n.Clone()
+		cn, cerr := cloneNode(n)
+		if cerr != nil {
+			return nil, cerr
+		}
+
+		clone.Nodes[id] = cn
 	}
 
 	flows, err := wireClonedGraph(clone.Nodes, s.Nodes, s.Flows)

@@ -130,3 +130,33 @@ func TestProperty(t *testing.T) {
 			require.Contains(t, pNames, "sex")
 		})
 }
+
+// TestCloneProperties covers FIX-017 CloneProperties: a nil set clones to nil,
+// valued properties are deep-copied (distinct objects, names preserved), and a
+// value-less member makes the clone fail.
+func TestCloneProperties(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	got, err := data.CloneProperties(nil)
+	require.NoError(t, err)
+	require.Nil(t, got)
+
+	src := []*data.Property{
+		data.MustProperty("a",
+			data.MustItemDefinition(values.NewVariable(0)), data.ReadyDataState),
+		data.MustProperty("b",
+			data.MustItemDefinition(values.NewVariable(1)), data.ReadyDataState),
+	}
+
+	cloned, err := data.CloneProperties(src)
+	require.NoError(t, err)
+	require.Len(t, cloned, 2)
+	require.NotSame(t, src[0], cloned[0])
+	require.Equal(t, src[0].Name(), cloned[0].Name())
+
+	_, err = data.CloneProperties([]*data.Property{
+		data.MustProperty("empty",
+			data.MustItemDefinition(nil), data.UnavailableDataState),
+	})
+	require.Error(t, err)
+}

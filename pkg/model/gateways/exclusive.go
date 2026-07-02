@@ -44,10 +44,10 @@ func NewExclusiveGateway(opts ...options.Option) (*ExclusiveGateway, error) {
 // shell, empty flows, no container). The gateway holds no execution data —
 // condition evaluation reads variables through the per-execution environment
 // (ADR-010 §2.4).
-func (eg *ExclusiveGateway) Clone() flow.Node {
+func (eg *ExclusiveGateway) Clone() (flow.Node, error) {
 	return &ExclusiveGateway{
 		Gateway: eg.clone(),
-	}
+	}, nil
 }
 
 // Node returns the gateway as its concrete flow node, so a track reaching it via
