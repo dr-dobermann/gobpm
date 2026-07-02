@@ -84,8 +84,10 @@ type Node interface {
 	// Clone returns a per-instance copy of the Node: immutable configuration is
 	// shared by reference, per-instance runtime state is fresh, the flow
 	// collections are empty (rewired between clones afterwards) and the clone
-	// carries no container back-reference.
-	Clone() Node
+	// carries no container back-reference. Clone returns an error because
+	// copying a node's properties can fail — a value-less property is
+	// unclonable (FIX-017); a node without properties never errors.
+	Clone() (Node, error)
 }
 
 // ============================================================================
@@ -196,10 +198,10 @@ func (fn *BaseNode) NodeType() NodeType {
 
 // Clone panics for the generic BaseNode: each concrete node type implements its
 // own Clone. The shell-clone helper CloneShell is used by those implementations.
-func (fn *BaseNode) Clone() Node {
+func (fn *BaseNode) Clone() (Node, error) {
 	errs.Panic("don't use Clone from generic BaseNode")
 
-	return nil
+	return nil, nil
 }
 
 // ----------------- Element interface -----------------------------------------

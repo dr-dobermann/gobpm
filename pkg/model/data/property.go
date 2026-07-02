@@ -124,6 +124,34 @@ func (p *Property) Clone() (*Property, error) {
 	}, nil
 }
 
+// CloneProperties returns deep copies of props so a node or snapshot clone owns
+// private Property objects instead of sharing the source's — a later edit to the
+// source (removing or re-valuing a property) can't leak into a registered
+// snapshot or a running instance (FIX-017). It returns an error if any property
+// is value-less: an ItemAwareElement with no structure is unclonable (its value
+// is nil, Clone rejects it) and a process declaring one can't be executed, so it
+// is rejected here at registration. A nil slice clones to nil.
+func CloneProperties(props []*Property) ([]*Property, error) {
+	if props == nil {
+		return nil, nil
+	}
+
+	cloned := make([]*Property, len(props))
+	for i, p := range props {
+		c, err := p.Clone()
+		if err != nil {
+			return nil, errs.New(
+				errs.M("couldn't clone property %q", p.Name()),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err))
+		}
+
+		cloned[i] = c
+	}
+
+	return cloned, nil
+}
+
 // ----------------------------------------------------------------------------
 // Test interfaces for Property.
 var _ Data = (*Property)(nil)

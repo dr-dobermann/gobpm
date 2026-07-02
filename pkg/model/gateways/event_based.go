@@ -199,13 +199,13 @@ func (g *EventBasedGateway) Node() flow.Node {
 // cloned (fresh shell, empty flows) and the static instantiate/gwType policy is carried
 // over (ADR-009). The gate holds no per-instance arm state at the model layer — the
 // winner (mid-flow) / completion gate (Parallel-start) is decided by the runtime.
-func (g *EventBasedGateway) Clone() flow.Node {
+func (g *EventBasedGateway) Clone() (flow.Node, error) {
 	return &EventBasedGateway{
 		Gateway:     g.clone(),
 		instantiate: g.instantiate,
 		gwType:      g.gwType,
 		corrKey:     g.corrKey,
-	}
+	}, nil
 }
 
 // arms returns the gateway's arm nodes — the targets of its outgoing flows.

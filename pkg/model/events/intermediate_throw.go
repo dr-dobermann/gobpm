@@ -82,8 +82,13 @@ func (ite *IntermediateThrowEvent) Node() flow.Node {
 }
 
 // Clone returns a per-instance copy of the event.
-func (ite *IntermediateThrowEvent) Clone() flow.Node {
-	return &IntermediateThrowEvent{throwEvent: ite.clone()}
+func (ite *IntermediateThrowEvent) Clone() (flow.Node, error) {
+	te, err := ite.clone()
+	if err != nil {
+		return nil, err
+	}
+
+	return &IntermediateThrowEvent{throwEvent: te}, nil
 }
 
 // EventClass classifies the event as intermediate.

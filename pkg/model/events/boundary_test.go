@@ -251,7 +251,10 @@ func TestBoundaryEventNodeShape(t *testing.T) {
 	})
 
 	t.Run("Clone preserves cancelActivity and back-reference", func(t *testing.T) {
-		c, ok := be.Clone().(*events.BoundaryEvent)
+		cn, err := be.Clone()
+		require.NoError(t, err)
+
+		c, ok := cn.(*events.BoundaryEvent)
 		require.True(t, ok)
 		require.Equal(t, be.CancelActivity(), c.CancelActivity())
 		require.Equal(t, be.AttachedTo(), c.AttachedTo())

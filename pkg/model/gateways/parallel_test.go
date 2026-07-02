@@ -151,7 +151,10 @@ func TestParallelGatewayClone(t *testing.T) {
 	require.NotEmpty(t, pg.Outgoing())
 	require.NotEmpty(t, pg.Incoming())
 
-	clone, ok := pg.Clone().(*gateways.ParallelGateway)
+	cn, err := pg.Clone()
+	require.NoError(t, err)
+
+	clone, ok := cn.(*gateways.ParallelGateway)
 	require.True(t, ok)
 
 	// independent object, same id, shared configuration.

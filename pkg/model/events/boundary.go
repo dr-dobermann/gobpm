@@ -195,12 +195,17 @@ func (b *BoundaryEvent) Node() flow.Node {
 // Clone returns a per-instance copy. The host back-reference is shared and
 // rewired to the cloned activity at instance build; the captured payload is
 // per-instance runtime state and is not carried over.
-func (b *BoundaryEvent) Clone() flow.Node {
+func (b *BoundaryEvent) Clone() (flow.Node, error) {
+	ce, err := b.clone()
+	if err != nil {
+		return nil, err
+	}
+
 	return &BoundaryEvent{
-		catchEvent:     b.clone(),
+		catchEvent:     ce,
 		attachedTo:     b.attachedTo,
 		cancelActivity: b.cancelActivity,
-	}
+	}, nil
 }
 
 // AcceptIncomingFlow rejects an incoming sequence flow: a boundary event is

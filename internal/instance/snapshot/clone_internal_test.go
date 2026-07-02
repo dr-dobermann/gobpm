@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/stretchr/testify/require"
 )
@@ -24,5 +25,26 @@ func TestCloneRejectsValuelessProperty(t *testing.T) {
 	}
 
 	_, err := s.Clone()
+	require.Error(t, err)
+}
+
+// TestCloneRejectsValuelessNodeProperty covers Clone's node-clone error path: a
+// snapshot whose node carries a value-less property fails to clone. New rejects
+// such a node up front (FIX-017), so the snapshot is built directly — with empty
+// process Properties so the node clone, not the process-property clone, is the
+// failing step.
+func TestCloneRejectsValuelessNodeProperty(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	start, err := events.NewStartEvent("start",
+		data.WithProperties(data.MustProperty("empty",
+			data.MustItemDefinition(nil), data.UnavailableDataState)))
+	require.NoError(t, err)
+
+	s := &Snapshot{
+		Nodes: map[string]flow.Node{start.ID(): start},
+	}
+
+	_, err = s.Clone()
 	require.Error(t, err)
 }

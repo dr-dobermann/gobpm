@@ -53,7 +53,10 @@ func TestServiceTaskClone(t *testing.T) {
 	_, err = flow.Link(st, ee)
 	require.NoError(t, err)
 
-	clone, ok := st.Clone().(*activities.ServiceTask)
+	cn, err := st.Clone()
+	require.NoError(t, err)
+
+	clone, ok := cn.(*activities.ServiceTask)
 	require.True(t, ok)
 
 	// independent object, same id, shared implementation description.
@@ -87,7 +90,10 @@ func TestUserTaskClone(t *testing.T) {
 	_, err = flow.Link(se, ut)
 	require.NoError(t, err)
 
-	clone, ok := ut.Clone().(*activities.UserTask)
+	cn, err := ut.Clone()
+	require.NoError(t, err)
+
+	clone, ok := cn.(*activities.UserTask)
 	require.True(t, ok)
 
 	// independent object, same id, shared renderers/outputs.
@@ -109,5 +115,96 @@ func TestUserTaskClone(t *testing.T) {
 	mrenv.EXPECT().InstanceID().Return("clone-test").Maybe()
 
 	_, err = clone.Exec(context.Background(), mrenv)
+	require.Error(t, err)
+}
+
+// cloneOp builds a minimal service operation for a task under test.
+func cloneOp(t *testing.T) service.Operation {
+	t.Helper()
+
+	return service.MustOperation("op",
+		bpmncommon.MustMessage("in", data.MustItemDefinition(values.NewVariable(1))),
+		bpmncommon.MustMessage("out", data.MustItemDefinition(values.NewVariable(2))),
+		cloneExctr{})
+}
+
+// TestActivityCloneIsolatesProperties covers FIX-017 3.2.2: activity.clone
+// deep-copies its properties, so a task clone owns distinct Property objects and
+// a write through the source doesn't reach the clone.
+func TestActivityCloneIsolatesProperties(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	prop, err := data.NewProperty(
+		"counter",
+		data.MustItemDefinition(values.NewVariable(0)),
+		data.ReadyDataState)
+	require.NoError(t, err)
+
+	st, err := activities.NewServiceTask("service", cloneOp(t),
+		data.WithProperties(prop), activities.WithoutParams())
+	require.NoError(t, err)
+
+	cn, err := st.Clone()
+	require.NoError(t, err)
+
+	clone, ok := cn.(*activities.ServiceTask)
+	require.True(t, ok)
+
+	require.NotSame(t, st.Properties()[0], clone.Properties()[0],
+		"clone must own a distinct property object")
+
+	ctx := context.Background()
+	require.NoError(t, st.Properties()[0].Value().Update(ctx, 7))
+	require.Equal(t, 0, clone.Properties()[0].Value().Get(ctx),
+		"a property write on the source must not leak into the clone")
+}
+
+// TestActivityCloneRejectsValueLessProperty covers FIX-017 3.2.2/3.2.4: a task
+// carrying a value-less property (no structure, unfillable) can't be cloned, so
+// Clone fails rather than sharing a degenerate object.
+func TestActivityCloneRejectsValueLessProperty(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	prop, err := data.NewProperty(
+		"empty", data.MustItemDefinition(nil), data.UnavailableDataState)
+	require.NoError(t, err)
+
+	st, err := activities.NewServiceTask("service", cloneOp(t),
+		data.WithProperties(prop), activities.WithoutParams())
+	require.NoError(t, err)
+
+	_, err = st.Clone()
+	require.Error(t, err)
+}
+
+// TestSendTaskCloneRejectsValueLessProperty covers FIX-017 3.2.2/3.2.4 for a
+// SendTask.
+func TestSendTaskCloneRejectsValueLessProperty(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	prop := data.MustProperty("empty",
+		data.MustItemDefinition(nil), data.UnavailableDataState)
+
+	st, err := activities.NewSendTask("notify", sendMessage(t),
+		activities.WithoutParams(), data.WithProperties(prop))
+	require.NoError(t, err)
+
+	_, err = st.Clone()
+	require.Error(t, err)
+}
+
+// TestReceiveTaskCloneRejectsValueLessProperty covers FIX-017 3.2.2/3.2.4 for a
+// ReceiveTask.
+func TestReceiveTaskCloneRejectsValueLessProperty(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	prop := data.MustProperty("empty",
+		data.MustItemDefinition(nil), data.UnavailableDataState)
+
+	rt, err := activities.NewReceiveTask("await", recvMessage(t),
+		activities.WithoutParams(), data.WithProperties(prop))
+	require.NoError(t, err)
+
+	_, err = rt.Clone()
 	require.Error(t, err)
 }

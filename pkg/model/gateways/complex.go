@@ -248,12 +248,12 @@ func NewComplexGateway(opts ...options.Option) (*ComplexGateway, error) {
 // Clone returns a per-instance copy: the embedded Gateway is cloned and the
 // synchronizing-join state starts fresh (ADR-009); the activation rule is shared by
 // reference (immutable after construction).
-func (cg *ComplexGateway) Clone() flow.Node {
+func (cg *ComplexGateway) Clone() (flow.Node, error) {
 	return &ComplexGateway{
 		Gateway:    cg.clone(),
 		activation: cg.activation,
 		arrived:    map[string]string{},
-	}
+	}, nil
 }
 
 // Node returns the gateway as its concrete flow node.

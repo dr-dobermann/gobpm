@@ -1,9 +1,11 @@
 package events_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/stretchr/testify/require"
@@ -17,7 +19,7 @@ func TestStartEventClone(t *testing.T) {
 
 	prop, err := data.NewProperty(
 		"prop",
-		data.MustItemDefinition(nil),
+		data.MustItemDefinition(values.NewVariable("v")),
 		data.ReadyDataState)
 	require.NoError(t, err)
 
@@ -30,21 +32,75 @@ func TestStartEventClone(t *testing.T) {
 	_, err = flow.Link(se, ee)
 	require.NoError(t, err)
 
-	clone, ok := se.Clone().(*events.StartEvent)
+	cn, err := se.Clone()
+	require.NoError(t, err)
+
+	clone, ok := cn.(*events.StartEvent)
 	require.True(t, ok)
 
 	// independent object, same id.
 	require.NotSame(t, se, clone)
 	require.Equal(t, se.ID(), clone.ID())
 
-	// configuration shared by reference.
-	require.Equal(t, se.Properties(), clone.Properties())
+	// properties are deep-copied — distinct objects, same name (FIX-017); value
+	// isolation is covered by TestEventCloneIsolatesProperties.
+	require.Len(t, clone.Properties(), 1)
+	require.Equal(t, se.Properties()[0].Name(), clone.Properties()[0].Name())
 	require.Equal(t, se.IsInterrupting(), clone.IsInterrupting())
 
 	// flows empty, no container.
 	require.Empty(t, clone.Outgoing())
 	require.Empty(t, clone.Incoming())
 	require.Nil(t, clone.Container())
+}
+
+// TestEventCloneIsolatesProperties covers FIX-017 3.2.3: Event.clone deep-copies
+// its properties, so a clone owns distinct Property objects and a write through
+// the source doesn't reach the clone.
+func TestEventCloneIsolatesProperties(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	prop, err := data.NewProperty(
+		"counter",
+		data.MustItemDefinition(values.NewVariable(0)),
+		data.ReadyDataState)
+	require.NoError(t, err)
+
+	se, err := events.NewStartEvent("start", data.WithProperties(prop))
+	require.NoError(t, err)
+
+	cn, err := se.Clone()
+	require.NoError(t, err)
+
+	clone, ok := cn.(*events.StartEvent)
+	require.True(t, ok)
+
+	require.NotSame(t, se.Properties()[0], clone.Properties()[0],
+		"clone must own a distinct property object")
+
+	ctx := context.Background()
+	require.NoError(t, se.Properties()[0].Value().Update(ctx, 7))
+	require.Equal(t, 0, clone.Properties()[0].Value().Get(ctx),
+		"a property write on the source must not leak into the clone")
+}
+
+// TestEventCloneRejectsValueLessProperty covers FIX-017 3.2.3/3.2.4: an event
+// carrying a value-less property (no structure, unfillable) can't be cloned, so
+// Clone fails rather than sharing a degenerate object.
+func TestEventCloneRejectsValueLessProperty(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	prop, err := data.NewProperty(
+		"empty",
+		data.MustItemDefinition(nil),
+		data.UnavailableDataState)
+	require.NoError(t, err)
+
+	se, err := events.NewStartEvent("start", data.WithProperties(prop))
+	require.NoError(t, err)
+
+	_, err = se.Clone()
+	require.Error(t, err)
 }
 
 // TestEndEventClone verifies that EndEvent.Clone shares configuration by
@@ -61,7 +117,10 @@ func TestEndEventClone(t *testing.T) {
 	_, err = flow.Link(se, ee)
 	require.NoError(t, err)
 
-	clone, ok := ee.Clone().(*events.EndEvent)
+	cn, err := ee.Clone()
+	require.NoError(t, err)
+
+	clone, ok := cn.(*events.EndEvent)
 	require.True(t, ok)
 
 	require.NotSame(t, ee, clone)
@@ -71,4 +130,19 @@ func TestEndEventClone(t *testing.T) {
 	require.Empty(t, clone.Outgoing())
 	require.Empty(t, clone.Incoming())
 	require.Nil(t, clone.Container())
+}
+
+// TestEndEventCloneRejectsValueLessProperty covers FIX-017 3.2.3/3.2.4 for an
+// EndEvent (a throwEvent): a value-less property makes the clone fail.
+func TestEndEventCloneRejectsValueLessProperty(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	prop := data.MustProperty("empty",
+		data.MustItemDefinition(nil), data.UnavailableDataState)
+
+	ee, err := events.NewEndEvent("end", data.WithProperties(prop))
+	require.NoError(t, err)
+
+	_, err = ee.Clone()
+	require.Error(t, err)
 }

@@ -56,9 +56,14 @@ func TestCloneFlow(t *testing.T) {
 				flow.WithCondition(cond))
 			require.NoError(t, err)
 
-			seClone, ok := se.Clone().(*events.StartEvent)
+			seCn, err := se.Clone()
+			require.NoError(t, err)
+			seClone, ok := seCn.(*events.StartEvent)
 			require.True(t, ok)
-			eeClone, ok := ee.Clone().(*events.EndEvent)
+
+			eeCn, err := ee.Clone()
+			require.NoError(t, err)
+			eeClone, ok := eeCn.(*events.EndEvent)
 			require.True(t, ok)
 
 			require.Empty(t, seClone.Outgoing())
@@ -101,9 +106,14 @@ func TestMustCloneFlow(t *testing.T) {
 	orig, err := flow.Link(se, ee, foundation.WithID("edge-1"))
 	require.NoError(t, err)
 
-	seClone, ok := se.Clone().(*events.StartEvent)
+	seCn, err := se.Clone()
+	require.NoError(t, err)
+	seClone, ok := seCn.(*events.StartEvent)
 	require.True(t, ok)
-	eeClone, ok := ee.Clone().(*events.EndEvent)
+
+	eeCn, err := ee.Clone()
+	require.NoError(t, err)
+	eeClone, ok := eeCn.(*events.EndEvent)
 	require.True(t, ok)
 
 	t.Run("success returns cloned edge",
@@ -129,5 +139,5 @@ func TestBaseNodeCloneStub(t *testing.T) {
 
 	// The generic BaseNode has no standalone identity as a graph node: each
 	// concrete node type implements Clone; calling it on the bare base panics.
-	require.Panics(t, func() { _ = bn.Clone() })
+	require.Panics(t, func() { _, _ = bn.Clone() })
 }

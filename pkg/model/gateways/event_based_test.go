@@ -182,7 +182,8 @@ func TestEventBasedGatewayClone(t *testing.T) {
 	g, err := gateways.NewEventBasedGateway()
 	require.NoError(t, err)
 
-	c := g.Clone()
+	c, err := g.Clone()
+	require.NoError(t, err)
 	require.NotNil(t, c)
 
 	cg, ok := c.(*gateways.EventBasedGateway)
@@ -214,7 +215,10 @@ func TestEventBasedGatewayCloneCarriesStart(t *testing.T) {
 		gateways.WithEventGatewayType(gateways.ParallelEvents))
 	require.NoError(t, err)
 
-	cg, ok := g.Clone().(*gateways.EventBasedGateway)
+	cn, err := g.Clone()
+	require.NoError(t, err)
+
+	cg, ok := cn.(*gateways.EventBasedGateway)
 	require.True(t, ok)
 	require.True(t, cg.Instantiate())
 	require.Equal(t, gateways.ParallelEvents, cg.EventGatewayType())
