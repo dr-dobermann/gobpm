@@ -25,27 +25,35 @@ import (
 )
 
 // testCorrKey builds a CorrelationKey whose single property extracts the message
-// payload (bound under item id "order_in") as the key, for msgName messages.
-func testCorrKey(t *testing.T, msgName string) *bpmncommon.CorrelationKey {
+// payload (bound under item id "order_in") as the key, with one retrieval
+// expression per given message name — so every named message covers the key
+// (SRD-033: a Parallel-start gate's arm messages must all cover it).
+func testCorrKey(t *testing.T, msgNames ...string) *bpmncommon.CorrelationKey {
 	t.Helper()
 
-	mp := goexpr.Must(nil, data.MustItemDefinition(values.NewVariable("")),
-		func(ctx context.Context, ds data.Source) (data.Value, error) {
-			d, err := ds.Find(ctx, "order_in")
-			if err != nil {
-				return nil, err
-			}
+	res := make(
+		[]bpmncommon.CorrelationPropertyRetrievalExpression, 0, len(msgNames))
 
-			return values.NewVariable(fmt.Sprint(d.Value().Get(ctx))), nil
-		})
+	for _, mn := range msgNames {
+		mp := goexpr.Must(nil, data.MustItemDefinition(values.NewVariable("")),
+			func(ctx context.Context, ds data.Source) (data.Value, error) {
+				d, err := ds.Find(ctx, "order_in")
+				if err != nil {
+					return nil, err
+				}
 
-	re, err := bpmncommon.NewCorrelationPropertyRetrievalExpression(mp,
-		bpmncommon.MustMessage(msgName, data.MustItemDefinition(
-			values.NewVariable(""), foundation.WithID("order_in"))))
-	require.NoError(t, err)
+				return values.NewVariable(fmt.Sprint(d.Value().Get(ctx))), nil
+			})
 
-	prop, err := bpmncommon.NewCorrelationProperty("orderId", "string",
-		[]bpmncommon.CorrelationPropertyRetrievalExpression{*re})
+		re, err := bpmncommon.NewCorrelationPropertyRetrievalExpression(mp,
+			bpmncommon.MustMessage(mn, data.MustItemDefinition(
+				values.NewVariable(""), foundation.WithID("order_in"))))
+		require.NoError(t, err)
+
+		res = append(res, *re)
+	}
+
+	prop, err := bpmncommon.NewCorrelationProperty("orderId", "string", res)
 	require.NoError(t, err)
 
 	key, err := bpmncommon.NewCorrelationKey("orderKey",

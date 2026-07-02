@@ -112,6 +112,32 @@ func DeriveKey(
 	return strings.Join(parts, keySeparator), true, nil
 }
 
+// MissingKeyProperties reports which of key's properties declare no retrieval
+// expression for msg — the properties DeriveKey could never populate from that
+// message. An empty result means msg covers the key (BPMN §10.6.6: gateway-arm
+// messages MUST share the same correlation information); it is the static
+// registration-time counterpart of DeriveKey's runtime ok=false (SRD-033). A
+// nil key has nothing to cover (nil result); a nil msg can populate nothing, so
+// every property is missing.
+func MissingKeyProperties(
+	key *bpmncommon.CorrelationKey,
+	msg *bpmncommon.Message,
+) []string {
+	if key == nil {
+		return nil
+	}
+
+	var missing []string
+
+	for i := range key.Properties {
+		if msg == nil || retrievalExprFor(key.Properties[i], msg) == nil {
+			missing = append(missing, key.Properties[i].Name)
+		}
+	}
+
+	return missing
+}
+
 // retrievalExprFor returns prop's retrieval expression whose MessageRef matches
 // msg (by name), or nil when prop declares none for msg.
 func retrievalExprFor(
