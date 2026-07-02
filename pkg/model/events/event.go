@@ -379,6 +379,13 @@ func (ce *catchEvent) UploadData(ctx context.Context, f exec.Frame) error {
 			errs.E(err))
 	}
 
+	if err := f.LoadProperties(ce.properties); err != nil {
+		return errs.New(
+			errs.M("couldn't load properties of event %q", ce.Name()),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
 	outs := map[string]*data.Parameter{}
 	for _, o := range f.Outputs() {
 		id := o.ItemDefinition().ID()

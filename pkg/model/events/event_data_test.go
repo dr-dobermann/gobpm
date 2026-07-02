@@ -379,3 +379,30 @@ func TestCatchEventUploadDataBranches(t *testing.T) {
 			require.Error(t, ce.UploadData(ctx, frameFor(t, ce.ID())))
 		})
 }
+
+// TestCatchEventUploadDataLoadsProperties covers FIX-018 3.2.3: catchEvent.
+// UploadData materialises the event's properties in the frame, so a catch
+// event's declared property is readable during execution (like a throw event's
+// and a task's). All catch events (Start, IntermediateCatch, Boundary) share
+// this UploadData, so the single test covers the path for every catch kind.
+func TestCatchEventUploadDataLoadsProperties(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+
+	ce, err := newCatchEvent("catch",
+		[]*data.Property{
+			data.MustProperty("cnt",
+				data.MustItemDefinition(values.NewVariable(7)),
+				data.ReadyDataState),
+		},
+		nil, false)
+	require.NoError(t, err)
+
+	f := frameFor(t, ce.ID())
+	require.NoError(t, ce.UploadData(ctx, f))
+
+	p, err := f.GetData("cnt")
+	require.NoError(t, err)
+	require.Equal(t, 7, p.Value().Get(ctx))
+}
