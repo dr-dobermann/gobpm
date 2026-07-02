@@ -82,32 +82,6 @@ func TestSnapshotNewFreezesProperties(t *testing.T) {
 		"a process edit after snapshot.New must not reach the frozen snapshot")
 }
 
-// TestSnapshotNewRejectsValuelessProperty covers the FIX-016 consequence that
-// snapshot.New clones each property: a value-less (declared-but-unset) property
-// can't be cloned — gobpm can never fill it (see AB-005) — so registration is
-// rejected up front instead of silently sharing a degenerate object.
-func TestSnapshotNewRejectsValuelessProperty(t *testing.T) {
-	require.NoError(t, data.CreateDefaultStates())
-
-	p, err := process.New("p-valueless",
-		data.WithProperties(
-			data.MustProperty("empty",
-				data.MustItemDefinition(nil), data.UnavailableDataState)))
-	require.NoError(t, err)
-
-	start, err := events.NewStartEvent("start")
-	require.NoError(t, err)
-	end, err := events.NewEndEvent("end")
-	require.NoError(t, err)
-	require.NoError(t, p.Add(start))
-	require.NoError(t, p.Add(end))
-	_, err = flow.Link(start, end)
-	require.NoError(t, err)
-
-	_, err = snapshot.New(p)
-	require.Error(t, err)
-}
-
 // TestSnapshotCloneConcurrentPropertyWrites covers FIX-016 1.1 under -race:
 // concurrent property writes across two clones touch distinct objects, so they
 // are race-free.
@@ -162,21 +136,6 @@ func nodePropProcess(
 	require.NoError(t, err)
 
 	return p, start
-}
-
-// TestSnapshotNewRejectsValueLessNodeProperty covers FIX-017 3.2.4: a value-less
-// property on a node (here a start event) can't be cloned, so snapshot.New
-// rejects the process at registration instead of failing later at execution.
-func TestSnapshotNewRejectsValueLessNodeProperty(t *testing.T) {
-	require.NoError(t, data.CreateDefaultStates())
-
-	prop := data.MustProperty("empty",
-		data.MustItemDefinition(nil), data.UnavailableDataState)
-
-	p, _ := nodePropProcess(t, prop)
-
-	_, err := snapshot.New(p)
-	require.Error(t, err)
 }
 
 // TestSnapshotNodeEditAfterRegistrationDoesNotLeak covers FIX-017 1.1: a node

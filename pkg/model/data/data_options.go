@@ -32,6 +32,10 @@ func (cfg *propConfig) newProperty() (*Property, error) {
 		name:             cfg.name,
 	}
 
+	if err := rejectValueless(&p); err != nil {
+		return nil, err
+	}
+
 	return &p, nil
 }
 
