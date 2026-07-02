@@ -691,3 +691,17 @@ func TestTriggerName(t *testing.T) {
 	// a non-message/non-signal definition yields "".
 	require.Equal(t, "", triggerName(nil))
 }
+
+// TestStarterGuardHelpers covers the SRD-033 FR-3 log helpers' defensive
+// branches: a non-message starter yields no message name, and a non-gateway
+// node is not a Parallel start.
+func TestStarterGuardHelpers(t *testing.T) {
+	s := &instanceStarter{} // eDef nil — not a message definition
+	require.Equal(t, "", s.messageName())
+
+	require.False(t, parallelStart(nil))
+
+	end, err := events.NewEndEvent("e")
+	require.NoError(t, err)
+	require.False(t, parallelStart(end))
+}

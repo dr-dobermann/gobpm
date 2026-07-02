@@ -15,7 +15,7 @@ Legend: ✅ Fixed · 🅿️ Postponed (design backlog) · ⏳ Open
 | 3   | `SignalEventDefinition.GetItemList` misnamed                         | 🟠 P2 | ✅ FIX-011                                                                                      |
 | 4   | `EventDefCloner` never satisfied                                     | 🟠 P2 | ✅ FIX-011                                                                                      |
 | 5   | `RegisterProcess` godoc claims idempotent dedup                      | 🟠 P2 | ✅ FIX-013 (§1.1)                                                                               |
-| 6   | Parallel-start event gateway without a key double-instantiates       | 🟠 P2 | 🅿️ AB-001                                                                                     |
+| 6   | Parallel-start event gateway without a key double-instantiates       | 🟠 P2 | ✅ SRD-033 (was 🅿️ AB-001 — landed ADR-005 v.4 §2.12.5(7) validation)                          |
 | 7   | Register/Unregister TOCTOU can orphan a live starter                 | 🟠 P2 | ✅ FIX-013 (§1.4)                                                                               |
 | 8   | `Run` stays `Started` on starter-registration failure                | 🟠 P2 | ✅ FIX-013 (§1.2)                                                                               |
 | 9   | `WithRenderer` rejects a second renderer of the same impl type       | 🟠 P2 | 🅿️ AB-002                                                                                     |
@@ -44,11 +44,11 @@ Legend: ✅ Fixed · 🅿️ Postponed (design backlog) · ⏳ Open
 
 ## Tally
 
-- **✅ Fixed — 25** (FIX-010: #2, #12 · FIX-011: #3, #4 · FIX-012: #21 ·
+- **✅ Fixed — 26** (FIX-010: #2, #12 · FIX-011: #3, #4 · FIX-012: #21 ·
   FIX-013: #5, #7, #8, #22 · FIX-014: #14–17, #19, #20, #23–27 ·
-  FIX-015: #13, #28, #29, #31 · FIX-016: #1).
-- **🅿️ Postponed — 5** across 4 backlog entries (AB-001: #6 · AB-002: #9, #10 ·
-  AB-003: #18 · AB-004: #30). See `audit-backlog.md`.
+  FIX-015: #13, #28, #29, #31 · FIX-016: #1 · SRD-033: #6).
+- **🅿️ Postponed — 4** across 3 backlog entries (AB-002: #9, #10 · AB-003: #18 ·
+  AB-004: #30). See `audit-backlog.md`.
 - **⏳ Open — 1**: a latent persistence item (#11, `memrepo` evict-Active; defer
   until persistence lands).
 

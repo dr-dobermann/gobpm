@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dr-dobermann/gobpm/generated/mockdata"
 	"github.com/dr-dobermann/gobpm/pkg/messaging"
 	"github.com/dr-dobermann/gobpm/pkg/messaging/membroker"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
@@ -18,6 +19,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -69,7 +71,9 @@ func gateConvKey(t *testing.T) *bpmncommon.CorrelationKey {
 //
 //	(parallel instantiate gate) ─┬→ catch("order A") → confirmA[A] → endA
 //	                             └→ catch("order B") → confirmB[B] → endB
-func instParallelGateProcess(t *testing.T, done chan<- string) *process.Process {
+func instParallelGateProcess(
+	t *testing.T, done chan<- string, key *bpmncommon.CorrelationKey,
+) *process.Process {
 	t.Helper()
 
 	require.NoError(t, data.CreateDefaultStates())
@@ -80,7 +84,7 @@ func instParallelGateProcess(t *testing.T, done chan<- string) *process.Process 
 	gate, err := gateways.NewEventBasedGateway(
 		gateways.WithInstantiate(),
 		gateways.WithEventGatewayType(gateways.ParallelEvents),
-		gateways.WithCorrelationKey(gateConvKey(t)))
+		gateways.WithCorrelationKey(key))
 	require.NoError(t, err)
 
 	armA := ebMsgArm(t, "armA", "order A")
@@ -131,12 +135,21 @@ func runParallelGate(
 ) (*thresher.Thresher, *membroker.Broker, context.Context) {
 	t.Helper()
 
+	return runParallelGateWithKey(t, name, done, gateConvKey(t))
+}
+
+func runParallelGateWithKey(
+	t *testing.T, name string, done chan string,
+	key *bpmncommon.CorrelationKey,
+) (*thresher.Thresher, *membroker.Broker, context.Context) {
+	t.Helper()
+
 	broker := membroker.New()
 
 	th, err := thresher.New(name, thresher.WithMessageBroker(broker))
 	require.NoError(t, err)
 
-	_, err = th.RegisterProcess(instParallelGateProcess(t, done))
+	_, err = th.RegisterProcess(instParallelGateProcess(t, done, key))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -249,4 +262,93 @@ func TestEventGatewayParallelStartCorrelation(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return len(th.Instances(thresher.InstancesCompleted)) == 2
 	}, 3*time.Second, 10*time.Millisecond, "both instances complete on their own arms")
+}
+
+// nilValueKey builds a CorrelationKey whose retrieval expressions (one per arm
+// message, so FR-2 validation passes) yield a present Value carrying nil — the
+// model-level way to make DeriveKey fail correlation at runtime (ok=false; the
+// built-in goexpr engine can't emit nil through its result machinery, so a
+// custom expression models the empty optional field, the FIX-014 1.7 pattern).
+func nilValueKey(t *testing.T) *bpmncommon.CorrelationKey {
+	t.Helper()
+
+	expr := mockdata.NewMockFormalExpression(t)
+	expr.EXPECT().Evaluate(mock.Anything, mock.Anything).
+		Return(values.NewVariable[any](nil), nil)
+
+	mkRE := func(arm, msgName string) bpmncommon.CorrelationPropertyRetrievalExpression {
+		re, err := bpmncommon.NewCorrelationPropertyRetrievalExpression(expr,
+			bpmncommon.MustMessage(msgName, data.MustItemDefinition(
+				values.NewVariable(""), foundation.WithID(arm+"_in"))))
+		require.NoError(t, err)
+
+		return *re
+	}
+
+	prop, err := bpmncommon.NewCorrelationProperty("conv", "string",
+		[]bpmncommon.CorrelationPropertyRetrievalExpression{
+			mkRE("armA", "order A"), mkRE("armB", "order B")})
+	require.NoError(t, err)
+
+	key, err := bpmncommon.NewCorrelationKey("gateKey",
+		[]bpmncommon.CorrelationProperty{*prop})
+	require.NoError(t, err)
+
+	return key
+}
+
+// TestParallelStarterSkipsUnderivableKey covers SRD-033 FR-3: a message whose
+// payload cannot populate the Parallel-start gate's correlation key must NOT
+// instantiate — the starter consumes it with a warning instead of spawning a
+// stuck, uncorrelatable instance through the empty-key create branch.
+func TestParallelStarterSkipsUnderivableKey(t *testing.T) {
+	done := make(chan string, 4)
+	th, broker, ctx := runParallelGateWithKey(
+		t, "eb-par-nokey", done, nilValueKey(t))
+
+	require.NoError(t, broker.Publish(ctx, messaging.Envelope{
+		Name: "order A", Payload: "CONV-X"}))
+
+	require.Never(t, func() bool {
+		return len(th.Instances(thresher.InstancesAll)) != 0
+	}, 600*time.Millisecond, 50*time.Millisecond,
+		"an underivable key must not instantiate (BPMN §10.6.6)")
+}
+
+// TestParallelStartArmFiresOnce covers SRD-033 FR-4: each remaining arm of a
+// born Parallel-start instance consumes exactly one message — its single-shot
+// waiter dies with the fire — so a same-key duplicate for an already-fired arm
+// neither re-runs the arm's path nor creates another instance.
+func TestParallelStartArmFiresOnce(t *testing.T) {
+	done := make(chan string, 8)
+	th, broker, ctx := runParallelGate(t, "eb-par-once", done)
+
+	require.NoError(t, broker.Publish(ctx, messaging.Envelope{
+		Name: "order A", Payload: "CONV-7", CorrelationKey: "CONV-7"}))
+	awaitMarker(t, done, "A")
+
+	h := soleInstance(t, th)
+
+	// a duplicate same-key message for the already-fired arm A.
+	require.NoError(t, broker.Publish(ctx, messaging.Envelope{
+		Name: "order A", Payload: "CONV-7", CorrelationKey: "CONV-7"}))
+
+	select {
+	case m := <-done:
+		t.Fatalf("a duplicate arm message re-ran a path: %q", m)
+	case <-time.After(400 * time.Millisecond):
+	}
+
+	require.Len(t, th.Instances(thresher.InstancesAll), 1,
+		"the duplicate must not spawn another instance")
+
+	// the other arm still completes the one instance.
+	require.NoError(t, broker.Publish(ctx, messaging.Envelope{
+		Name: "order B", Payload: "CONV-7", CorrelationKey: "CONV-7"}))
+	awaitMarker(t, done, "B")
+
+	st, err := h.WaitCompletion(ctx)
+	require.NoError(t, err)
+	require.Equal(t, thresher.StateCompleted, st)
+	require.Len(t, th.Instances(thresher.InstancesAll), 1)
 }

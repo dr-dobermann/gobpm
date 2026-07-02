@@ -397,15 +397,17 @@ func TestEventBasedGatewayValidate(t *testing.T) {
 		require.NoError(t, g.Validate())
 	})
 
-	t.Run("instantiating parallel gate is valid", func(t *testing.T) {
-		g, err := gateways.NewEventBasedGateway(
-			gateways.WithInstantiate(),
-			gateways.WithEventGatewayType(gateways.ParallelEvents))
-		require.NoError(t, err)
-		ebLink(t, g, messageCatchArm(t, "a"))
-		ebLink(t, g, messageCatchArm(t, "b"))
-		require.NoError(t, g.Validate())
-	})
+	t.Run("instantiating parallel gate with a covering key is valid",
+		func(t *testing.T) {
+			g, err := gateways.NewEventBasedGateway(
+				gateways.WithInstantiate(),
+				gateways.WithEventGatewayType(gateways.ParallelEvents),
+				gateways.WithCorrelationKey(corrKeyFor(t, "msg-a", "msg-b")))
+			require.NoError(t, err)
+			ebLink(t, g, messageCatchArm(t, "a"))
+			ebLink(t, g, messageCatchArm(t, "b"))
+			require.NoError(t, g.Validate())
+		})
 
 	t.Run("instantiating gate with incoming flow rejected", func(t *testing.T) {
 		g, err := gateways.NewEventBasedGateway(gateways.WithInstantiate())
@@ -433,6 +435,107 @@ func TestEventBasedGatewayValidate(t *testing.T) {
 		ebLink(t, g, signalArm(t, "b"))
 		require.ErrorContains(t, g.Validate(), "requires WithInstantiate")
 	})
+}
+
+// TestParallelStartRequiresCorrelationKey covers SRD-033 FR-1 (ADR-005 v.4
+// §2.12.5 rule 7): a keyless Parallel-start gate is rejected at validation —
+// without a key every arm message would spawn its own stuck instance — while
+// the same gate with a covering key passes.
+func TestParallelStartRequiresCorrelationKey(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	keyless, err := gateways.NewEventBasedGateway(
+		gateways.WithInstantiate(),
+		gateways.WithEventGatewayType(gateways.ParallelEvents))
+	require.NoError(t, err)
+	ebLink(t, keyless, messageCatchArm(t, "a"))
+	ebLink(t, keyless, messageCatchArm(t, "b"))
+
+	err = keyless.Validate()
+	require.ErrorContains(t, err, "must declare a CorrelationKey")
+	require.ErrorContains(t, err, keyless.ID())
+
+	keyed, err := gateways.NewEventBasedGateway(
+		gateways.WithInstantiate(),
+		gateways.WithEventGatewayType(gateways.ParallelEvents),
+		gateways.WithCorrelationKey(corrKeyFor(t, "msg-a", "msg-b")))
+	require.NoError(t, err)
+	ebLink(t, keyed, messageCatchArm(t, "a"))
+	ebLink(t, keyed, messageCatchArm(t, "b"))
+
+	require.NoError(t, keyed.Validate())
+}
+
+// TestParallelStartArmMustCoverKey covers SRD-033 FR-2: a keyed Parallel-start
+// gate whose arm message lacks a retrieval expression for a key property is
+// rejected naming the arm and the uncovered property (BPMN §10.6.6 — the
+// gate's messages MUST share the same correlation information).
+func TestParallelStartArmMustCoverKey(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	// the key covers msg-a only; arm "b" consumes msg-b — uncovered.
+	g, err := gateways.NewEventBasedGateway(
+		gateways.WithInstantiate(),
+		gateways.WithEventGatewayType(gateways.ParallelEvents),
+		gateways.WithCorrelationKey(corrKeyFor(t, "msg-a")))
+	require.NoError(t, err)
+	ebLink(t, g, messageCatchArm(t, "a"))
+
+	armB := messageCatchArm(t, "b")
+	ebLink(t, g, armB)
+
+	err = g.Validate()
+	require.ErrorContains(t, err, "doesn't cover the gate's CorrelationKey")
+	require.ErrorContains(t, err, armB.ID())
+	require.ErrorContains(t, err, "msg-b")
+	require.ErrorContains(t, err, "p") // the uncovered property name
+}
+
+// TestParallelStartCorrelationArmResolution covers armMessage's branches
+// (SRD-033 §3.2): a Receive-Task arm resolves its message via its own
+// Message(); a non-message arm carries no message and is left to the
+// message-based start rule.
+func TestParallelStartCorrelationArmResolution(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	t.Run("receive-task arms covered by the key", func(t *testing.T) {
+		g, err := gateways.NewEventBasedGateway(
+			gateways.WithInstantiate(),
+			gateways.WithEventGatewayType(gateways.ParallelEvents),
+			gateways.WithCorrelationKey(corrKeyFor(t, "msg-a", "msg-b")))
+		require.NoError(t, err)
+		ebLink(t, g, receiveArm(t, "a"))
+		ebLink(t, g, receiveArm(t, "b"))
+
+		require.NoError(t, g.Validate())
+	})
+
+	t.Run("uncovered receive-task arm rejected", func(t *testing.T) {
+		g, err := gateways.NewEventBasedGateway(
+			gateways.WithInstantiate(),
+			gateways.WithEventGatewayType(gateways.ParallelEvents),
+			gateways.WithCorrelationKey(corrKeyFor(t, "msg-a")))
+		require.NoError(t, err)
+		ebLink(t, g, receiveArm(t, "a"))
+		ebLink(t, g, receiveArm(t, "b"))
+
+		require.ErrorContains(t, g.Validate(),
+			"doesn't cover the gate's CorrelationKey")
+	})
+
+	t.Run("non-message arm reported by the message-based rule",
+		func(t *testing.T) {
+			g, err := gateways.NewEventBasedGateway(
+				gateways.WithInstantiate(),
+				gateways.WithEventGatewayType(gateways.ParallelEvents),
+				gateways.WithCorrelationKey(corrKeyFor(t, "msg-a")))
+			require.NoError(t, err)
+			ebLink(t, g, messageCatchArm(t, "a"))
+			ebLink(t, g, signalArm(t, "b")) // event node, no message
+			ebLink(t, g, newDummyNode("c")) // not an event node at all
+
+			require.ErrorContains(t, g.Validate(), "message-based")
+		})
 }
 
 // stubTaskBoundary is an activity-typed arm that reports boundary events.
@@ -505,18 +608,33 @@ func TestWithCorrelationKeyNil(t *testing.T) {
 func minimalCorrKey(t *testing.T) *bpmncommon.CorrelationKey {
 	t.Helper()
 
-	expr := goexpr.Must(nil, data.MustItemDefinition(values.NewVariable("")),
-		func(_ context.Context, _ data.Source) (data.Value, error) {
-			return values.NewVariable(""), nil
-		})
+	return corrKeyFor(t, "m")
+}
 
-	re, err := bpmncommon.NewCorrelationPropertyRetrievalExpression(expr,
-		bpmncommon.MustMessage("m", data.MustItemDefinition(
-			values.NewVariable(""), foundation.WithID("m_in"))))
-	require.NoError(t, err)
+// corrKeyFor builds a one-property CorrelationKey whose retrieval expressions
+// cover exactly the given message names (SRD-033: an arm message covers the key
+// when every key property declares a retrieval expression for it).
+func corrKeyFor(t *testing.T, msgNames ...string) *bpmncommon.CorrelationKey {
+	t.Helper()
 
-	prop, err := bpmncommon.NewCorrelationProperty("p", "string",
-		[]bpmncommon.CorrelationPropertyRetrievalExpression{*re})
+	res := make(
+		[]bpmncommon.CorrelationPropertyRetrievalExpression, 0, len(msgNames))
+
+	for _, mn := range msgNames {
+		expr := goexpr.Must(nil, data.MustItemDefinition(values.NewVariable("")),
+			func(_ context.Context, _ data.Source) (data.Value, error) {
+				return values.NewVariable(""), nil
+			})
+
+		re, err := bpmncommon.NewCorrelationPropertyRetrievalExpression(expr,
+			bpmncommon.MustMessage(mn, data.MustItemDefinition(
+				values.NewVariable(""), foundation.WithID(mn+"_in"))))
+		require.NoError(t, err)
+
+		res = append(res, *re)
+	}
+
+	prop, err := bpmncommon.NewCorrelationProperty("p", "string", res)
 	require.NoError(t, err)
 
 	key, err := bpmncommon.NewCorrelationKey("k",

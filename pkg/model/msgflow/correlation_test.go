@@ -186,3 +186,29 @@ func TestDeriveKeyAbsentValue(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok, "an absent value must not yield a key")
 }
+
+// TestMissingKeyProperties covers SRD-033's static coverage check — the
+// registration-time counterpart of DeriveKey's runtime ok=false: it names the
+// key properties that declare no retrieval expression for a message.
+func TestMissingKeyProperties(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	m := msg(t)
+	key := corrKey(t, m,
+		[][2]string{{"id", "order"}, {"region", "order"}})
+
+	// every property declares an expression for m — full coverage.
+	require.Empty(t, msgflow.MissingKeyProperties(key, m))
+
+	// a foreign message covers nothing — every property is missing.
+	other := bpmncommon.MustMessage("other",
+		data.MustItemDefinition(values.NewVariable(map[string]any{}),
+			foundation.WithID("other")))
+	require.Equal(t, []string{"id", "region"},
+		msgflow.MissingKeyProperties(key, other))
+
+	// a nil key has nothing to cover; a nil message can populate nothing.
+	require.Nil(t, msgflow.MissingKeyProperties(nil, m))
+	require.Equal(t, []string{"id", "region"},
+		msgflow.MissingKeyProperties(key, nil))
+}

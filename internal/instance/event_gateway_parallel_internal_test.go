@@ -77,7 +77,8 @@ func parallelGateProc(t *testing.T) (
 
 	g, err := gateways.NewEventBasedGateway(
 		gateways.WithInstantiate(),
-		gateways.WithEventGatewayType(gateways.ParallelEvents))
+		gateways.WithEventGatewayType(gateways.ParallelEvents),
+		gateways.WithCorrelationKey(testCorrKey(t, "order A", "order B")))
 	require.NoError(t, err)
 
 	aArm, aDef := ebMsgArm(t, "armA", "order A")

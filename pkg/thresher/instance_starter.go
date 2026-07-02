@@ -49,6 +49,23 @@ func (s *instanceStarter) ProcessEvent(
 		return err
 	}
 
+	// A Parallel-start gate's messages MUST share the gate's correlation
+	// information (BPMN §10.6.6, SRD-033 FR-3). The gate's key is validated
+	// present at registration, so an empty key here means the payload couldn't
+	// populate it — a non-conformant message. It must not instantiate (the
+	// empty-key branch would spawn a stuck, uncorrelatable instance); consume
+	// it with a warning instead. No payload values are logged.
+	if key == "" && parallelStart(s.startNode) {
+		s.thr.cfg.logger.Warn(
+			"instance-starter: message can't populate the Parallel-start "+
+				"gate's correlation key — not instantiating (BPMN §10.6.6)",
+			"process_id", s.snapshot.ProcessID,
+			"start_node_id", s.startNode.ID(),
+			"message", s.messageName())
+
+		return nil
+	}
+
 	keyName := ""
 	if s.corrKey != nil {
 		keyName = s.corrKey.Name
@@ -67,7 +84,9 @@ func (s *instanceStarter) ProcessEvent(
 // deriveKey computes the incoming message's composite correlation key from the
 // fired event's payload, or "" when the starter declares no CorrelationKey (or
 // the key can't be fully resolved — an underivable key correlates nothing, so
-// the message instantiates without dedup, ADR-016 v.1 §2.2).
+// the message instantiates without dedup, ADR-016 v.1 §2.2; a Parallel-start
+// gate is the exception: ProcessEvent refuses to instantiate on an empty key,
+// SRD-033 FR-3).
 func (s *instanceStarter) deriveKey(
 	ctx context.Context,
 	eDef flow.EventDefinition,
@@ -95,6 +114,24 @@ func (s *instanceStarter) deriveKey(
 	}
 
 	return key, nil
+}
+
+// parallelStart reports whether n is a Parallel-start event-based gateway (the
+// same structural assertion the instance seeding uses).
+func parallelStart(n flow.Node) bool {
+	ps, ok := n.(interface{ ParallelStart() bool })
+
+	return ok && ps.ParallelStart()
+}
+
+// messageName returns the name of the message the starter subscribes to, or ""
+// for a non-message starter — safe log detail (never payload).
+func (s *instanceStarter) messageName() string {
+	if med, ok := s.eDef.(*events.MessageEventDefinition); ok {
+		return med.Message().Name()
+	}
+
+	return ""
 }
 
 // scanInstantiatingStarts wraps each of the snapshot's precomputed instantiating

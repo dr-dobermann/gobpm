@@ -105,7 +105,7 @@ Informally: the gateway waits until all expected tokens have arrived; expectatio
 - The "Tasks following an Event Gateway" are limited to **Receive Tasks** — see §10.6.6.
 - The "Events following" are intermediate catching events: Message, Timer, Signal, Conditional.
 - When used at Process start (`instantiate=true`), only **message-based** triggers are allowed.
-- If used at Process start with `eventGatewayType=Parallel`: first trigger instantiates the Process; remaining triggers join the existing instance (do not create new instances).
+- If used at Process start with `eventGatewayType=Parallel`: first trigger instantiates the Process; remaining triggers join the existing instance (do not create new instances). The messages that trigger the arms **MUST share the same correlation information** (§10.6.6, p. 298) — that shared key is how a later arm's message routes to the created instance rather than spawning its own.
 - Distinct configurations via `eventGatewayType`: `Exclusive` (default) vs `Parallel`.
 
 ### Race-withdrawal interaction with Activity Lifecycle

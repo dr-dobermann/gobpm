@@ -4,6 +4,7 @@ package gateways
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/eventproc"
@@ -11,6 +12,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/msgflow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
@@ -510,7 +512,82 @@ func (g *EventBasedGateway) validateStartGate() []error {
 			errs.D("gateway_id", g.ID())))
 	}
 
+	ee = append(ee, g.validateParallelStartCorrelation()...)
+
 	return ee
+}
+
+// validateParallelStartCorrelation enforces ADR-005 v.4 §2.12.5 rule 7 for a
+// Parallel-start gate (SRD-033): the gate must declare a CorrelationKey and
+// every arm's message must cover it — each key property declares a retrieval
+// expression for that message — so all arm messages correlate to the one
+// created instance (BPMN §10.6.6: "the Messages that trigger the Events of the
+// Gateway configuration MUST share the same correlation information"). Without
+// this a keyless (or uncovered) arm message hits the engine's empty-key
+// create branch and every arm spawns its own stuck instance.
+func (g *EventBasedGateway) validateParallelStartCorrelation() []error {
+	if !g.instantiate || g.gwType != ParallelEvents {
+		return nil
+	}
+
+	if g.corrKey == nil {
+		return []error{errs.New(
+			errs.M("event-based gateway: a Parallel-start gate must declare a "+
+				"CorrelationKey — its arm messages MUST share the same "+
+				"correlation information (BPMN §10.6.6)"),
+			errs.C(errorClass, errs.InvalidParameter),
+			errs.D("gateway_id", g.ID()))}
+	}
+
+	ee := []error{}
+
+	for _, of := range g.Outgoing() {
+		arm := of.Target().Node()
+
+		msg := armMessage(arm)
+		if msg == nil {
+			// a non-message arm is already rejected at start by the
+			// message-based rule; nothing to cover here.
+			continue
+		}
+
+		if missing := msgflow.MissingKeyProperties(g.corrKey, msg); len(missing) != 0 {
+			ee = append(ee, errs.New(
+				errs.M("event-based gateway: arm's message doesn't cover the "+
+					"gate's CorrelationKey — the gate's messages MUST share "+
+					"the same correlation information (BPMN §10.6.6)"),
+				errs.C(errorClass, errs.InvalidParameter),
+				errs.D("gateway_id", g.ID()),
+				errs.D("arm_id", arm.ID()),
+				errs.D("message", msg.Name()),
+				errs.D("missing_properties", strings.Join(missing, ", "))))
+		}
+	}
+
+	return ee
+}
+
+// armMessage resolves the message an arm consumes: a Receive-Task arm exposes
+// Message() itself (asserted structurally — gateways doesn't import
+// activities); a message-catch arm carries it in its MessageEventDefinition.
+// A non-message arm yields nil.
+func armMessage(arm flow.Node) *bpmncommon.Message {
+	if mp, ok := arm.(interface{ Message() *bpmncommon.Message }); ok {
+		return mp.Message()
+	}
+
+	en, ok := arm.(flow.EventNode)
+	if !ok {
+		return nil
+	}
+
+	for _, d := range en.Definitions() {
+		if med, ok := d.(*events.MessageEventDefinition); ok {
+			return med.Message()
+		}
+	}
+
+	return nil
 }
 
 // ----------------------------------------------------------------------------

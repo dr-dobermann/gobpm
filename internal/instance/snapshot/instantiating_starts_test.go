@@ -179,6 +179,41 @@ func ebArm(t *testing.T, name, msgName string) *events.IntermediateCatchEvent {
 	return ice
 }
 
+// gateCorrKey builds a one-property CorrelationKey covering the given message
+// names (SRD-033: a Parallel-start gate's arm messages must all cover its key).
+func gateCorrKey(
+	t *testing.T, msgNames ...string,
+) *bpmncommon.CorrelationKey {
+	t.Helper()
+
+	res := make(
+		[]bpmncommon.CorrelationPropertyRetrievalExpression, 0, len(msgNames))
+
+	for _, mn := range msgNames {
+		expr := goexpr.Must(nil,
+			data.MustItemDefinition(values.NewVariable("")),
+			func(_ context.Context, _ data.Source) (data.Value, error) {
+				return values.NewVariable(""), nil
+			})
+
+		re, err := bpmncommon.NewCorrelationPropertyRetrievalExpression(expr,
+			bpmncommon.MustMessage(mn, data.MustItemDefinition(
+				values.NewVariable(""), foundation.WithID(mn+"-key-in"))))
+		require.NoError(t, err)
+
+		res = append(res, *re)
+	}
+
+	prop, err := bpmncommon.NewCorrelationProperty("p", "string", res)
+	require.NoError(t, err)
+
+	key, err := bpmncommon.NewCorrelationKey("k",
+		[]bpmncommon.CorrelationProperty{*prop})
+	require.NoError(t, err)
+
+	return key
+}
+
 // gateProcess builds a process started by an instantiating Event-Based gateway
 // with two message arms, each arm → end. parallel selects the gateway type.
 func gateProcess(
@@ -191,7 +226,9 @@ func gateProcess(
 	opts := []options.Option{gateways.WithInstantiate()}
 	if parallel {
 		opts = append(opts,
-			gateways.WithEventGatewayType(gateways.ParallelEvents))
+			gateways.WithEventGatewayType(gateways.ParallelEvents),
+			gateways.WithCorrelationKey(
+				gateCorrKey(t, "order A", "order B")))
 	}
 
 	gate, err := gateways.NewEventBasedGateway(opts...)
