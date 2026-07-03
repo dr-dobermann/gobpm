@@ -7,13 +7,20 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 type (
 	usrTaskConfig struct {
-		name      string
+		name string
+
+		// authorization triad (ADR-020 §2.5); up to one Assignment per slot.
+		assignee        *hi.Assignment
+		candidateUsers  *hi.Assignment
+		candidateGroups *hi.Assignment
+
 		renderers []hi.Renderer
 		taskOpts  []options.Option
 		outputs   []*bpmncommon.ResourceParameter
@@ -48,12 +55,125 @@ func (utc *usrTaskConfig) newUsrTask() (*UserTask, error) {
 	}
 
 	ut := UserTask{
-		task:      *t,
-		renderers: append([]hi.Renderer{}, utc.renderers...),
-		outputs:   r,
+		task:            *t,
+		renderers:       append([]hi.Renderer{}, utc.renderers...),
+		outputs:         r,
+		assignee:        utc.assignee,
+		candidateUsers:  utc.candidateUsers,
+		candidateGroups: utc.candidateGroups,
 	}
 
 	return &ut, nil
+}
+
+// setAssignment stores a built Assignment in the config field matching its slot,
+// rejecting a slot that is already set (a slot takes one Assignment — static XOR
+// expression, once). The parameter validity (non-empty ids / non-nil expression)
+// is guaranteed by the hi.New*Assignment constructor that produced a.
+func (utc *usrTaskConfig) setAssignment(a *hi.Assignment) error {
+	switch a.Slot() {
+	case hi.Assignee:
+		if utc.assignee != nil {
+			return fmt.Errorf("%s is already set", a.Slot())
+		}
+
+		utc.assignee = a
+
+	case hi.CandidateUsers:
+		if utc.candidateUsers != nil {
+			return fmt.Errorf("%s is already set", a.Slot())
+		}
+
+		utc.candidateUsers = a
+
+	case hi.CandidateGroups:
+		if utc.candidateGroups != nil {
+			return fmt.Errorf("%s is already set", a.Slot())
+		}
+
+		utc.candidateGroups = a
+	}
+
+	return nil
+}
+
+// WithAssignee sets the task's assignee (actual owner) to a static user id. When
+// set, only that user may read/complete the task (ADR-020 §2.5). Rejects an empty
+// id.
+func WithAssignee(userID string) UsrTaskOption {
+	return func(cfg *usrTaskConfig) error {
+		a, err := hi.NewStaticAssignment(hi.Assignee, userID)
+		if err != nil {
+			return fmt.Errorf("WithAssignee: %w", err)
+		}
+
+		return cfg.setAssignment(a)
+	}
+}
+
+// WithAssigneeExpr sets the task's assignee from a FormalExpression evaluated per
+// instance to the owning user id. Rejects a nil expression.
+func WithAssigneeExpr(expr data.FormalExpression) UsrTaskOption {
+	return func(cfg *usrTaskConfig) error {
+		a, err := hi.NewExprAssignment(hi.Assignee, expr)
+		if err != nil {
+			return fmt.Errorf("WithAssigneeExpr: %w", err)
+		}
+
+		return cfg.setAssignment(a)
+	}
+}
+
+// WithCandidateUsers sets the static user ids eligible to claim/complete the
+// task. Rejects an empty list or an empty id.
+func WithCandidateUsers(userIDs ...string) UsrTaskOption {
+	return func(cfg *usrTaskConfig) error {
+		a, err := hi.NewStaticAssignment(hi.CandidateUsers, userIDs...)
+		if err != nil {
+			return fmt.Errorf("WithCandidateUsers: %w", err)
+		}
+
+		return cfg.setAssignment(a)
+	}
+}
+
+// WithCandidateUsersExpr sets the candidate users from a FormalExpression
+// evaluated per instance to a list of user ids. Rejects a nil expression.
+func WithCandidateUsersExpr(expr data.FormalExpression) UsrTaskOption {
+	return func(cfg *usrTaskConfig) error {
+		a, err := hi.NewExprAssignment(hi.CandidateUsers, expr)
+		if err != nil {
+			return fmt.Errorf("WithCandidateUsersExpr: %w", err)
+		}
+
+		return cfg.setAssignment(a)
+	}
+}
+
+// WithCandidateGroups sets the static group ids whose members may claim/complete
+// the task. Rejects an empty list or an empty id.
+func WithCandidateGroups(groupIDs ...string) UsrTaskOption {
+	return func(cfg *usrTaskConfig) error {
+		a, err := hi.NewStaticAssignment(hi.CandidateGroups, groupIDs...)
+		if err != nil {
+			return fmt.Errorf("WithCandidateGroups: %w", err)
+		}
+
+		return cfg.setAssignment(a)
+	}
+}
+
+// WithCandidateGroupsExpr sets the candidate groups from a FormalExpression
+// evaluated per instance to a list of group ids. Rejects a nil expression.
+func WithCandidateGroupsExpr(expr data.FormalExpression) UsrTaskOption {
+	return func(cfg *usrTaskConfig) error {
+		a, err := hi.NewExprAssignment(hi.CandidateGroups, expr)
+		if err != nil {
+			return fmt.Errorf("WithCandidateGroupsExpr: %w", err)
+		}
+
+		return cfg.setAssignment(a)
+	}
 }
 
 // WithRenderer adds new unique Render to user task config.
@@ -63,11 +183,13 @@ func WithRenderer(r hi.Renderer) UsrTaskOption {
 			return fmt.Errorf("no renderer")
 		}
 
+		// Distinct renderers are deduplicated by identity only (ADR-020 §2.9): two
+		// renderers of the same implementation kind (e.g. two HTML forms) are
+		// legitimately different renderings and must both survive.
 		if slices.ContainsFunc(
 			cfg.renderers,
 			func(r2c hi.Renderer) bool {
-				return r2c.ID() == r.ID() ||
-					r2c.Implementation() == r.Implementation()
+				return r2c.ID() == r.ID()
 			}) {
 			return fmt.Errorf("duplicate renderer: #%s", r.ID())
 		}

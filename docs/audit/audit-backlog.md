@@ -52,9 +52,16 @@ hinteraction-design question.
 the subsystem is `pkg/model/hinteraction` + `internal/interactor`) plus the
 landing SRD; fold into the planned Service/User-task interactor refactor.
 
-**Status**: Parked 2026-06-30 (pulled from the FIX-014 P2 cluster: the other two
-of that cluster — §2.1 `GExpression.Evaluate`, §2.11 `bpmncommon.Error.Structure`
-— were already resolved by FIX-010, so the cluster yields no FIX).
+**Status**: **Resolved** by [ADR-020](../design/ADR-020-human-interaction-execution-model.md)
++ SRD-034 (landed on `feat/human-interaction-model`, 2026-07-03) — the subsystem
+got its hinteraction/interactor ADR (the human-interaction execution model).
+§2.9 is dissolved by construction: UserTask is now a wait node parking cooperatively
+on the loop-owned `evtCh` (cancellable via `ctx`/teardown), so there is no
+uncancellable blocking loop; §2.8 is fixed by dedup-by-`ID()`-only. The whole
+blocking interactor contract (`Registrator`/`RenderRegistrator`) was removed.
+Originally parked 2026-06-30 (pulled from the FIX-014 P2 cluster: the other two —
+§2.1 `GExpression.Evaluate`, §2.11 `bpmncommon.Error.Structure` — were already
+resolved by FIX-010, so the cluster yielded no FIX).
 
 ---
 

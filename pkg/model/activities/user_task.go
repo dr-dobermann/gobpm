@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/eventproc"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/interactor"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
@@ -40,6 +41,21 @@ const (
 type UserTask struct {
 	outputs   *bpmncommon.Resource
 	renderers []hi.Renderer
+
+	// The authorization triad (ADR-020 §2.5): up to one Assignment per slot,
+	// each either static identifiers or a FormalExpression. The single source of
+	// truth for who may read/complete the task; coexists with the generic
+	// activity Roles(). Read by Authorize (user_task_authz.go), never mutated
+	// after construction, so shared by reference on Clone.
+	assignee        *hi.Assignment
+	candidateUsers  *hi.Assignment
+	candidateGroups *hi.Assignment
+
+	// completedOutputs holds the outputs a completion delivered (set by
+	// ProcessEvent on the track goroutine, read by Exec on the same goroutine
+	// right after). Runtime-only — nil until completion, not copied on Clone.
+	completedOutputs []data.Data
+
 	task
 }
 
@@ -47,25 +63,28 @@ type UserTask struct {
 //
 // Available options:
 //
-//		User Task options:
-//		- WithRenderer
-//	    - WithOutput
+//	User Task options:
+//	- WithRenderer
+//	- WithOutput
+//	- WithAssignee / WithAssigneeExpr
+//	- WithCandidateUsers / WithCandidateUsersExpr
+//	- WithCandidateGroups / WithCandidateGroupsExpr
 //
-//		foundation options:
-//		- WithId
-//		- WithDoc
+//	foundation options:
+//	- WithId
+//	- WithDoc
 //
-//		activitiy options:
-//		- WithCompensation
-//		- WithLoop
-//		- WithStartQuantity
-//		- WithCompleteQuantity
-//		- WithParameters
-//		- WithoutParams
-//		- WithRoles
+//	activitiy options:
+//	- WithCompensation
+//	- WithLoop
+//	- WithStartQuantity
+//	- WithCompleteQuantity
+//	- WithParameters
+//	- WithoutParams
+//	- WithRoles
 //
-//		data options:
-//		- WithProperties
+//	data options:
+//	- WithProperties
 func NewUserTask(
 	name string,
 	userTaskOpts ...options.Option,
@@ -149,9 +168,12 @@ func (ut *UserTask) Clone() (flow.Node, error) {
 	}
 
 	return &UserTask{
-		task:      t,
-		outputs:   ut.outputs,
-		renderers: ut.renderers,
+		task:            t,
+		outputs:         ut.outputs,
+		renderers:       ut.renderers,
+		assignee:        ut.assignee,
+		candidateUsers:  ut.candidateUsers,
+		candidateGroups: ut.candidateGroups,
 	}, nil
 }
 
@@ -164,49 +186,23 @@ func (ut *UserTask) TaskType() flow.TaskType {
 
 // ----------------------exec.NodeExecutor interface --------------------------
 
-// Exec registers the UserTask as an Interactor in the runtime environment, then
-// waits on the result channel for the user interaction to complete. Registration
-// happens first so the channel exists before Exec blocks on it. The channel is
-// an Exec-local (per-execution by construction — ADR-010 §2.3); the interaction
-// results go to the execution frame and reach the container scope at the frame
-// commit.
-//
-// NOTE: the UserTask interaction model (renderer registration) is provisional;
-// event/subscription concerns relate to ADR-006.
+// Exec binds the outputs a completed UserTask delivered — stored by ProcessEvent
+// when the completion event reached the parked track — into the execution frame,
+// then advances onto the outgoing flow(s). A UserTask is a wait node: it parked
+// (checkNodeType marks it a human task), was announced to the TaskDistributor,
+// and resumed only on an authorized, validated Complete (ADR-020 §2.1, §2.4). So
+// Exec is reached exactly once, after acceptance; it never blocks.
 func (ut *UserTask) Exec(
 	_ context.Context,
 	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
-	rr := re.RenderRegistrator()
-	if rr == nil {
-		return nil, errs.New(
-			errs.M("no RenderProvider for UserTask"),
-			errs.C(errorClass, errs.InvalidObject),
-			errs.D("task_id", ut.ID()),
-			errs.D("task_name", ut.Name()),
-			errs.D("instance_id", re.InstanceID()))
-	}
-
-	rCh, err := rr.Register(ut)
-	if err != nil {
-		return nil, errs.New(
-			errs.M("interactor registration failed"),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err))
-	}
-
-	dd := []data.Data{}
-
-	for d := range rCh {
-		dd = append(dd, d)
-	}
-
-	if len(dd) > 0 {
-		if err := re.Put(dd...); err != nil {
+	if len(ut.completedOutputs) > 0 {
+		if err := re.Put(ut.completedOutputs...); err != nil {
 			return nil,
 				errs.New(
-					errs.M("interaction result adding error"),
+					errs.M("user task completion output binding failed"),
 					errs.C(errorClass, errs.OperationFailed),
+					errs.D("task_id", ut.ID()),
 					errs.E(err))
 		}
 	}
@@ -214,12 +210,37 @@ func (ut *UserTask) Exec(
 	return ut.Outgoing(), nil
 }
 
+// ------------------ eventproc.EventProcessor interface ----------------------
+
+// ProcessEvent receives the synthetic completion event the instance loop delivers
+// to the parked track and stores its outputs for Exec to bind. It runs on the
+// track goroutine (via deliver); the outputs were already authorized and
+// validated by the loop (ADR-020 §2.4), so it only records them.
+func (ut *UserTask) ProcessEvent(
+	_ context.Context,
+	eDef flow.EventDefinition,
+) error {
+	tc, ok := eDef.(*interactor.TaskCompletion)
+	if !ok {
+		return errs.New(
+			errs.M("user task %q expects a task-completion event", ut.ID()),
+			errs.C(errorClass, errs.TypeCastingError),
+			errs.D("task_id", ut.ID()),
+			errs.D("event_type", string(eDef.Type())))
+	}
+
+	ut.completedOutputs = tc.Outputs()
+
+	return nil
+}
+
 // ----------------------------------------------------------------------------
 
 // interfaces check
 var (
-	_ flow.Node             = (*UserTask)(nil)
-	_ flow.Task             = (*UserTask)(nil)
-	_ exec.NodeExecutor     = (*UserTask)(nil)
-	_ interactor.Interactor = (*UserTask)(nil)
+	_ flow.Node                = (*UserTask)(nil)
+	_ flow.Task                = (*UserTask)(nil)
+	_ exec.NodeExecutor        = (*UserTask)(nil)
+	_ interactor.HumanTask     = (*UserTask)(nil)
+	_ eventproc.EventProcessor = (*UserTask)(nil)
 )

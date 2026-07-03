@@ -85,9 +85,10 @@ type Instance struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	engrenv.EngineRuntime
-	rr                  interactor.Registrator
+	td                  interactor.TaskDistributor
 	parentEventProducer eventproc.EventProducer
 	events              chan trackEvent
+	taskReq             chan taskRequest
 	sc                  instanceScope
 	convKeys            map[string]string
 	now                 func() time.Time
@@ -151,7 +152,7 @@ func New(
 	parentRoot scope.DataPath,
 	er engrenv.EngineRuntime,
 	ep eventproc.EventProducer,
-	rr interactor.Registrator,
+	td interactor.TaskDistributor,
 	opts ...newOption,
 ) (*Instance, error) {
 	var cfg newConfig
@@ -204,9 +205,10 @@ func New(
 		tracks:              map[string]*track{},
 		convKeys:            map[string]string{},
 		events:              make(chan trackEvent),
+		taskReq:             make(chan taskRequest),
 		loopDone:            make(chan struct{}),
 		parentEventProducer: ep,
-		rr:                  rr,
+		td:                  td,
 	}
 	inst.state.Store(uint32(Created))
 
@@ -270,7 +272,7 @@ func NewFromEvent(
 	parentRoot scope.DataPath,
 	er engrenv.EngineRuntime,
 	ep eventproc.EventProducer,
-	rr interactor.Registrator,
+	td interactor.TaskDistributor,
 	startNodeID string,
 	eDef flow.EventDefinition,
 	keyName, keyValue string,
@@ -288,7 +290,7 @@ func NewFromEvent(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	return New(s, parentRoot, er, ep, rr,
+	return New(s, parentRoot, er, ep, td,
 		withBornEvent(startNodeID, eDef),
 		withConversationKey(keyName, keyValue))
 }
@@ -629,6 +631,11 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	// arrives on an activity with interrupting boundaries (spawn / evMoved), torn down when it
 	// leaves, ends, or fails. Loop-goroutine-only, like the maps above.
 	watchers := map[string][]*boundaryWatch{}
+	// tasks is the loop-owned human-task registry (SRD-034): taskID → the parked
+	// UserTask track and node. Populated on evTaskWaiting (and at spawn for a task
+	// parked at construction), read by a Take/Complete taskReq, and cleared when
+	// the task completes or its track ends. Loop-goroutine-only, like the maps above.
+	tasks := map[string]taskEntry{}
 
 	// stopAll is forward-declared so spawn (which arms boundaries and faults the
 	// instance on an arm failure) can reference it; it is assigned below.
@@ -651,13 +658,11 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 		// goroutine starts — so it is in `waiting` (and its message defs are in msgIdx)
 		// before any evDeliver can target it (SRD-027 FR-5). Mid-run waits emit evWaiting
 		// from checkNodeType instead.
-		if t.inState(TrackWaitForEvent) {
-			waiting[t.ID()] = struct{}{}
-
-			for _, id := range t.msgDefIDs {
-				msgIdx[id] = t
-			}
-		}
+		// A track that begins already parked (a start-event waiter, or a UserTask
+		// reached as the initial node) is recorded here — on the loop goroutine,
+		// before its run goroutine starts — so it is registered before any delivery
+		// (SRD-027 FR-5, SRD-034).
+		inst.recordBornWaiter(ctx, t, waiting, msgIdx, tasks)
 
 		// Arm any interrupting boundary guarding the track's initial node — on the
 		// loop goroutine, before its run goroutine starts — so the watcher exists
@@ -720,6 +725,10 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 		// during teardown); drop it too so it does not outlive the run (SRD-028 FR-1/FR-3).
 		clear(position)
 		clear(parked)
+
+		// Withdraw every parked UserTask and drop the registry — a terminating
+		// instance's tasks are no longer completable (SRD-034).
+		inst.withdrawAllTasks(tasks)
 	}
 
 	for _, t := range initial {
@@ -749,7 +758,13 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 				"track", eventTrackID(ev))
 
 			inst.applyEvent(ctx, ev, &active, &stopping,
-				waiting, msgIdx, position, parked, watchers, spawn, stopAll)
+				waiting, msgIdx, position, parked, watchers, tasks, spawn, stopAll)
+
+		case req := <-inst.taskReq:
+			// A human acting on a parked UserTask (Take/Complete). Serviced on the
+			// loop goroutine so authorization/validation, scope access, and the
+			// resume all stay single-writer (SRD-034 §4.1).
+			inst.handleTaskRequest(ctx, req, tasks, waiting, msgIdx)
 		}
 	}
 
@@ -774,6 +789,7 @@ func (inst *Instance) applyEvent(
 	msgIdx map[string]*track,
 	position, parked map[string]flow.Node,
 	watchers map[string][]*boundaryWatch,
+	tasks map[string]taskEntry,
 	spawn func(*track),
 	stopAll func(),
 ) {
@@ -795,6 +811,10 @@ func (inst *Instance) applyEvent(
 		*active--
 		flipNotParked(ev.track, waiting, msgIdx)
 		clearPosition(position, parked, ev.track)
+		// a track that ended while owning a parked UserTask (canceled by an
+		// interrupting boundary or instance terminate) has its task withdrawn and
+		// dropped (SRD-034). A normal completion already removed it.
+		inst.cleanupTask(ctx, ev.track, tasks)
 		// the track's run() returned — its activity window (if any) is over, so
 		// tear down the boundaries that guarded it (SRD-029 FR-6).
 		inst.disarmBoundaries(ev.track.ID(), watchers)
@@ -832,6 +852,10 @@ func (inst *Instance) applyEvent(
 				msgIdx[id] = ev.track
 			}
 		}
+
+	case evTaskWaiting:
+		// a UserTask parked as a human task — register + announce it (SRD-034).
+		inst.onTaskWaiting(ctx, ev, *stopping, waiting, tasks)
 
 	case evDeliver:
 		inst.dispatchToParked(ctx, ev, waiting, msgIdx)
@@ -1573,11 +1597,6 @@ func (inst *Instance) InstanceID() string {
 // EventProducer returns the EventProducer of the runtime.
 func (inst *Instance) EventProducer() eventproc.EventProducer {
 	return inst
-}
-
-// RenderRegistrator returns the render registrator for the instance.
-func (inst *Instance) RenderRegistrator() interactor.Registrator {
-	return inst.rr
 }
 
 // =============================================================================

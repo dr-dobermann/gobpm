@@ -2,7 +2,6 @@ package renv
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/eventproc"
-	"github.com/dr-dobermann/gobpm/pkg/interactor"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
@@ -34,9 +33,6 @@ type RuntimeEnvironment interface {
 
 	// EventProducer returns the EventProducer of the runtime.
 	EventProducer() eventproc.EventProducer
-
-	// RenderRegistrator returns the user-interaction render registrator.
-	RenderRegistrator() interactor.Registrator
 
 	// Put stores node-produced values in the execution's frame; they reach the
 	// container scope at the frame commit.
