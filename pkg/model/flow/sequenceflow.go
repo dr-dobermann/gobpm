@@ -55,7 +55,7 @@ type SequenceFlow struct {
 // if source node is in a Container, Link also adds created sequence flow
 // inte the same Containier.
 // Possible options are:
-//   - foundation.WithId
+//   - foundation.WithID
 //   - foundation.WithDoc
 //   - options.WithName
 //   - flow.WithCondition

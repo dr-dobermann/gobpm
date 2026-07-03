@@ -21,7 +21,7 @@ type Message struct {
 //
 // Available options:
 //
-//   - foundation.WithId
+//   - foundation.WithID
 //   - foundation.WithDoc
 func NewMessage(
 	name string,

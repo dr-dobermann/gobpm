@@ -231,3 +231,27 @@ func TestEndEventMessageThrowError(t *testing.T) {
 	_, err = ee.Exec(context.Background(), re)
 	require.Error(t, err)
 }
+
+// TestEndEventRejectsCatchTriggers asserts that Conditional and Timer triggers —
+// catch-only triggers that an End Event cannot throw (BPMN 2.0 §13.5.6) — are
+// rejected at construction with a clear domain error, not a leaky type-cast one.
+func TestEndEventRejectsCatchTriggers(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	t.Run("conditional trigger rejected", func(t *testing.T) {
+		condEd := events.MustConditionalEventDefinition(getDummyCondition(t))
+
+		_, err := events.NewEndEvent("bad end",
+			events.WithConditionalTrigger(condEd))
+		require.ErrorContains(t, err, "cannot carry a Conditional trigger")
+	})
+
+	t.Run("timer trigger rejected", func(t *testing.T) {
+		timerEd := events.MustTimerEventDefinition(
+			getTimerExpression(t, "time"), nil, nil)
+
+		_, err := events.NewEndEvent("bad end",
+			events.WithTimerTrigger(timerEd))
+		require.ErrorContains(t, err, "cannot carry a Timer trigger")
+	})
+}

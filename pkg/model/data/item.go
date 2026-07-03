@@ -69,7 +69,7 @@ type ItemDefinition struct {
 // Available options:
 //   - data.WithKind - sets ItemDefinition kind. If not set InformationKind is used.
 //   - data.WithImport
-//   - foundation.WithId
+//   - foundation.WithID
 //   - foundation.WithDoc
 func NewItemDefinition(
 	value Value,
@@ -233,7 +233,7 @@ func MustItemAwareElement(
 // Available options:
 //   - data.WithIDef
 //   - data.WithState
-//   - foundation.WithId
+//   - foundation.WithID
 //   - foundation.WithDoc
 func NewIAE(
 	opts ...options.Option,

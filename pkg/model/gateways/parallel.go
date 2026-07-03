@@ -24,7 +24,7 @@ type ParallelGateway struct {
 // NewParallelGateway creates a new ParallelGateway.
 //
 // Available options are:
-//   - foundation.WithId
+//   - foundation.WithID
 //   - foundation.WithDoc
 //   - options.WithName
 //   - gateways.WithDirection

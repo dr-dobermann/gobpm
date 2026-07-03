@@ -108,7 +108,7 @@ type BaseNode struct {
 // NewBaseNode creates a new BaseNode object.
 //
 // Available options:
-//   - foundation.WithId
+//   - foundation.WithID
 //   - foundation.WithDoc
 func NewBaseNode(name string, baseOpts ...options.Option) (*BaseNode, error) {
 	fe, err := NewBaseElement(name, baseOpts...)

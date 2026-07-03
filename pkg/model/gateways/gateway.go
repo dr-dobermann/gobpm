@@ -98,7 +98,7 @@ type Gateway struct {
 // New creates a new Gateway with options opts.
 //
 // Available options are:
-//   - foundation.WithId
+//   - foundation.WithID
 //   - foundation.WithDoc
 //   - options.WithName
 //   - gateways.WithDirection

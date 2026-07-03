@@ -42,7 +42,7 @@ type Process struct {
 //
 //	activities.WithRoles
 //	data.WithProperties
-//	foundation.WithId
+//	foundation.WithID
 //	foundation.WithDoc
 func New(
 	name string,

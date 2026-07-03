@@ -35,18 +35,16 @@ type EndEvent struct {
 // or error on failure.
 //
 // Available options are:
-//   - foundation.WithId
-//   - foundation.WithDocs
+//   - foundation.WithID
+//   - foundation.WithDoc
 //   - data.WithProperties
 //   - events.WithTerminateTrigger
 //   - events.WithCancelTrigger
 //   - events.WithCompensationTrigger
-//   - events.WithConditionalTrigger
 //   - events.WithErrorTrigger
 //   - events.WithEscalationTrigger
 //   - events.WithMessageTrigger
-//   - evnets.WithSignalTrigger
-//   - events.WithTimerTrigger
+//   - events.WithSignalTrigger
 func NewEndEvent(
 	name string,
 	endEventOptions ...options.Option,
@@ -72,7 +70,7 @@ func NewEndEvent(
 			}
 
 		default:
-			ee = append(ee, fmt.Errorf("innapropriate option type: %s",
+			ee = append(ee, fmt.Errorf("inappropriate option type: %s",
 				reflect.TypeOf(so).Name()))
 		}
 	}
