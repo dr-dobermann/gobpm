@@ -189,3 +189,25 @@ func (ec *endConfig) setSignal(sed *SignalEventDefinition) error {
 
 	return nil
 }
+
+// setCondition implements conditionAdder solely to REJECT a Conditional
+// trigger: an End Event throws a result and cannot carry a catch-only
+// Conditional trigger (BPMN 2.0 §13.5.6). Implementing the interface turns the
+// attempt into a clear, intentional rejection at configuration building instead
+// of the leaky "cfg doesn't implement conditionAdder" type-cast error.
+func (ec *endConfig) setCondition(_ *ConditionalEventDefinition) error {
+	return errs.New(
+		errs.M("an End Event cannot carry a Conditional trigger; "+
+			"End Events throw only result definitions (BPMN 2.0 §13.5.6)"),
+		errs.C(errorClass, errs.InvalidParameter))
+}
+
+// setTimer implements timerAdder solely to REJECT a Timer trigger: a Timer is a
+// catch-only trigger, never an End Event result (BPMN 2.0 §13.5.6). See
+// setCondition for why the rejection lives here.
+func (ec *endConfig) setTimer(_ *TimerEventDefinition) error {
+	return errs.New(
+		errs.M("an End Event cannot carry a Timer trigger; "+
+			"End Events throw only result definitions (BPMN 2.0 §13.5.6)"),
+		errs.C(errorClass, errs.InvalidParameter))
+}

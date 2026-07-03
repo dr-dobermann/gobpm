@@ -41,12 +41,10 @@ type EndEvent struct {
 //   - events.WithTerminateTrigger
 //   - events.WithCancelTrigger
 //   - events.WithCompensationTrigger
-//   - events.WithConditionalTrigger
 //   - events.WithErrorTrigger
 //   - events.WithEscalationTrigger
 //   - events.WithMessageTrigger
 //   - events.WithSignalTrigger
-//   - events.WithTimerTrigger
 func NewEndEvent(
 	name string,
 	endEventOptions ...options.Option,
