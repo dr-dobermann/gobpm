@@ -45,6 +45,23 @@ func TestNewUserTask(t *testing.T) {
 		require.Error(t, err)
 	})
 
+	t.Run("two renderers of the same impl kind both kept", func(t *testing.T) {
+		r1, err := consinp.NewRenderer(consinp.WithMessager("a", "a"))
+		require.NoError(t, err)
+		r2, err := consinp.NewRenderer(consinp.WithMessager("b", "b"))
+		require.NoError(t, err)
+
+		require.NotEqual(t, r1.ID(), r2.ID())
+		require.Equal(t, r1.Implementation(), r2.Implementation())
+
+		ut, err := activities.NewUserTask("multi",
+			activities.WithRenderer(r1),
+			activities.WithRenderer(r2),
+			activities.WithOutput("x", "string", true))
+		require.NoError(t, err)
+		require.Len(t, ut.Renderers(), 2)
+	})
+
 	t.Run("construction exposes renderers and outputs", func(t *testing.T) {
 		r, err := consinp.NewRenderer(consinp.WithMessager("form", "form"))
 		require.NoError(t, err)

@@ -183,11 +183,13 @@ func WithRenderer(r hi.Renderer) UsrTaskOption {
 			return fmt.Errorf("no renderer")
 		}
 
+		// Distinct renderers are deduplicated by identity only (ADR-020 §2.9): two
+		// renderers of the same implementation kind (e.g. two HTML forms) are
+		// legitimately different renderings and must both survive.
 		if slices.ContainsFunc(
 			cfg.renderers,
 			func(r2c hi.Renderer) bool {
-				return r2c.ID() == r.ID() ||
-					r2c.Implementation() == r.Implementation()
+				return r2c.ID() == r.ID()
 			}) {
 			return fmt.Errorf("duplicate renderer: #%s", r.ID())
 		}
