@@ -6,9 +6,9 @@ type ActivityType string
 
 const (
 	// TaskActivity represents a BPMN task activity.
-	TaskActivity       ActivityType = "Task"
+	TaskActivity ActivityType = "Task"
 	// CallActivity represents a BPMN call activity.
-	CallActivity       ActivityType = "CallActivity"
+	CallActivity ActivityType = "CallActivity"
 	// SubProcessActivity represents a BPMN subprocess activity.
 	SubProcessActivity ActivityType = "SubProcess"
 )
@@ -27,13 +27,16 @@ const (
 	// ReceiveTask represents a BPMN receive task.
 	ReceiveTask TaskType = "ReceiveTask"
 	// ScriptTask represents a BPMN script task.
-	ScriptTask  TaskType = "ScriptTask"
+	ScriptTask TaskType = "ScriptTask"
 	// SendTask represents a BPMN send task.
-	SendTask    TaskType = "SendTask"
+	SendTask TaskType = "SendTask"
 	// ServiceTask represents a BPMN service task.
 	ServiceTask TaskType = "ServiceTask"
 	// UserTask represents a BPMN user task.
-	UserTask    TaskType = "UserTask"
+	UserTask TaskType = "UserTask"
+	// ManualTask represents a BPMN manual task (non-operational, §13.1): the
+	// engine treats it as a no-op pass-through.
+	ManualTask TaskType = "ManualTask"
 )
 
 // Task represents a BPMN task interface.
