@@ -49,3 +49,4 @@ examples/event-based-parallel-start/event-based-parallel-start
 examples/signal-start/signal-start
 examples/boundary-events/boundary-events
 examples/terminate-end-event/terminate-end-event
+examples/usertask/usertask
