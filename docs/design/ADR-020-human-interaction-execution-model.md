@@ -225,10 +225,14 @@ Users or Groups" and "MAY refer to Task instance data." That is the whole author
 standard offers, and it is deliberately silent on identity.
 
 We express it through the vocabulary embedders already know from Camunda — **`assignee`**,
-**`candidateUsers`**, **`candidateGroups`** — as an **ergonomic façade over `ResourceRole`**
-(`PotentialOwner`/`HumanPerformer`), *not* a parallel representation. The role objects remain the
-single, standard-conformant source of truth; the triad is how a modeler declares them and how the
-UserTask's `Authorizer` (§2.4) reads them.
+**`candidateUsers`**, **`candidateGroups`**. The standard `ResourceRole` cannot itself carry the triad —
+it holds one `Resource` ref **or** an expression, with no user-vs-group distinction, no static
+id-**list**, and no slot marker — so, exactly as Camunda keeps the triad in extension attributes rather
+than BPMN `ResourceRole`, the triad is a **typed structure on the UserTask** (each member either static
+identifiers or a `FormalExpression`, §2.7), the **single source of truth**, exposed via a typed accessor
+and read by the UserTask's `Authorizer` (§2.4). It **coexists** with the generic `Roles()` (any BPMN
+`ResourceRole`s declared via `WithRoles`); the two are not conflated and neither is projected into the
+other.
 
 **The unifying rule: resolve each triad member to a set of identifiers, then check membership.**
 
@@ -395,9 +399,11 @@ speaks of completion, not of reading).
    covers dynamic, data-dependent candidate sets. The actor self-reports authenticated identity +
    groups; richer directory integration is an embedder concern and a forward pointer (§7).
 
-5. **Triad as first-class `UserTask` fields alongside `Roles()`.** Rejected: two parallel
-   representations that can drift. The triad is a **façade over `ResourceRole`** so the standard object
-   model stays the single source of truth (§2.5).
+5. **Triad stored as generic `ResourceRole`s (in / projected into `Roles()`).** Rejected: `ResourceRole`
+   can't express the slot, the user/group kind, or a static id-**list**, so it is lossy and forces
+   re-parsing in `Authorize`. The triad is its own typed structure (§2.5), the single source of truth,
+   **coexisting** with the generic `Roles()` — as Camunda keeps it in extension attributes, not BPMN
+   `ResourceRole`.
 
 6. **`Take` returns `[]variable` (bare values).** Rejected: it discards data **state** and **type** and
    cannot carry Properties (`FORM_ID`) or runtime context. `TaskView` + `[]data.Data` gives the client a

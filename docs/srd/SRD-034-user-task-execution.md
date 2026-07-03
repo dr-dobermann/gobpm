@@ -165,10 +165,25 @@ type Actor interface {
 }
 ```
 
-### 3.2 Triad options + `Authorizer`/`OutputValidator` (`pkg/model/activities`)
+### 3.2 Triad + `Authorizer`/`OutputValidator` (`pkg/model/activities`, `pkg/model/hinteraction`)
 
-Options build `hi.ResourceRole`s (a static resource **or** a `resourceAssignmentExpression`) and record
-which triad slot each fills. `UserTask` implements both check interfaces:
+The standard `hi.ResourceRole` holds one `Resource` ref **or** an `assignmentExpression` — it cannot
+carry the triad's user/group distinction, static id-**lists**, or slot marker. So the triad is a **typed
+structure** (`pkg/model/hinteraction`), the single source of truth, exposed via a typed accessor and read
+by `Authorize`; it **coexists** with the generic `Roles()` rather than being projected into it (§4.3):
+
+```go
+// hinteraction — one triad member: static identifiers XOR an expression → a set.
+type AssignmentSlot int // Assignee | CandidateUsers | CandidateGroups
+type Assignment struct {
+    slot   AssignmentSlot
+    static []string              // XOR expr
+    expr   data.FormalExpression
+}
+```
+
+The UserTask holds up to one `Assignment` per slot (private fields) and implements both check interfaces;
+`Authorize` reads the typed `Assignment`s directly (not by re-parsing `Roles()`):
 
 ```go
 type Authorizer interface {
@@ -275,12 +290,16 @@ task id) instead of registering hub waiters. Completion still travels through `e
 `flow.EventDefinition` so the wake/deliver path is unchanged. **Rejected:** giving UserTask a fake
 message/signal definition — it would pollute correlation and the event hub with a non-event.
 
-### 4.3 Triad as a façade over `ResourceRole` (decided, from ADR-020)
+### 4.3 Typed triad, exposed via a typed accessor (decided; refines ADR-020 §2.5)
 
-The options construct `PotentialOwner`/`HumanPerformer` `ResourceRole`s via the existing `AddRole`
-machinery; `Roles()` stays the single source of truth. The `Authorizer` reads the triad back out of the
-roles. Static identifiers use a resource ref; the `*Expr` forms use `resourceAssignmentExpression`,
-resolved per instance at authorization time.
+Grounding showed `hi.ResourceRole` cannot natively carry the triad (one `Resource` ref XOR an
+expression; no user/group distinction, no static id-list, no slot). So the **typed `Assignment`** (§3.2)
+is the single source of truth: the six options set the UserTask's per-slot `Assignment`s, `Authorize`
+reads them directly, and the UserTask exposes them via a typed accessor (`Assignments()`). The triad
+**coexists** with the generic `Roles()` (`WithRoles`) — it is **not** projected into it: a projection
+would be lossy (static id-lists collapse to single-`Resource` roles; slot/kind is unrepresentable), and
+Camunda itself keeps the triad in extension attributes, separate from BPMN `ResourceRole`. **Rejected:**
+storing/projecting the triad *as* generic `ResourceRole`s.
 
 ### 4.4 Checks live on the UserTask; Instance orchestrates (decided, from ADR-020)
 

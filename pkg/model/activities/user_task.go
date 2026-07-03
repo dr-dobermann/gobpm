@@ -40,6 +40,16 @@ const (
 type UserTask struct {
 	outputs   *bpmncommon.Resource
 	renderers []hi.Renderer
+
+	// The authorization triad (ADR-020 §2.5): up to one Assignment per slot,
+	// each either static identifiers or a FormalExpression. The single source of
+	// truth for who may read/complete the task; coexists with the generic
+	// activity Roles(). Read by Authorize (user_task_authz.go), never mutated
+	// after construction, so shared by reference on Clone.
+	assignee        *hi.Assignment
+	candidateUsers  *hi.Assignment
+	candidateGroups *hi.Assignment
+
 	task
 }
 
@@ -47,25 +57,28 @@ type UserTask struct {
 //
 // Available options:
 //
-//		User Task options:
-//		- WithRenderer
-//	    - WithOutput
+//	User Task options:
+//	- WithRenderer
+//	- WithOutput
+//	- WithAssignee / WithAssigneeExpr
+//	- WithCandidateUsers / WithCandidateUsersExpr
+//	- WithCandidateGroups / WithCandidateGroupsExpr
 //
-//		foundation options:
-//		- WithId
-//		- WithDoc
+//	foundation options:
+//	- WithId
+//	- WithDoc
 //
-//		activitiy options:
-//		- WithCompensation
-//		- WithLoop
-//		- WithStartQuantity
-//		- WithCompleteQuantity
-//		- WithParameters
-//		- WithoutParams
-//		- WithRoles
+//	activitiy options:
+//	- WithCompensation
+//	- WithLoop
+//	- WithStartQuantity
+//	- WithCompleteQuantity
+//	- WithParameters
+//	- WithoutParams
+//	- WithRoles
 //
-//		data options:
-//		- WithProperties
+//	data options:
+//	- WithProperties
 func NewUserTask(
 	name string,
 	userTaskOpts ...options.Option,
@@ -149,9 +162,12 @@ func (ut *UserTask) Clone() (flow.Node, error) {
 	}
 
 	return &UserTask{
-		task:      t,
-		outputs:   ut.outputs,
-		renderers: ut.renderers,
+		task:            t,
+		outputs:         ut.outputs,
+		renderers:       ut.renderers,
+		assignee:        ut.assignee,
+		candidateUsers:  ut.candidateUsers,
+		candidateGroups: ut.candidateGroups,
 	}, nil
 }
 
