@@ -63,7 +63,7 @@ func createData(name string, v data.Value) (data.Data, error) {
 //
 // Available options:
 //   - consinp.WithInput
-//   - foundation.WithId
+//   - foundation.WithID
 //   - foundation.WithDoc
 func NewRenderer(
 	opts ...options.Option,

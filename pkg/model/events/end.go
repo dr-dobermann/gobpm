@@ -35,7 +35,7 @@ type EndEvent struct {
 // or error on failure.
 //
 // Available options are:
-//   - foundation.WithId
+//   - foundation.WithID
 //   - foundation.WithDocs
 //   - data.WithProperties
 //   - events.WithTerminateTrigger

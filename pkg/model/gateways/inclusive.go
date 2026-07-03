@@ -34,7 +34,7 @@ type InclusiveGateway struct {
 // NewInclusiveGateway creates a new InclusiveGateway.
 //
 // Available options are:
-//   - foundation.WithId
+//   - foundation.WithID
 //   - foundation.WithDoc
 //   - options.WithName
 //   - gateways.WithDirection

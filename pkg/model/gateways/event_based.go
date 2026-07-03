@@ -118,7 +118,7 @@ func WithCorrelationKey(key *bpmncommon.CorrelationKey) EventBasedOption {
 // §10.6.6 / §10.5.6) is checked at registration by Validate.
 //
 // Available options:
-//   - foundation.WithId / foundation.WithDoc
+//   - foundation.WithID / foundation.WithDoc
 //   - options.WithName
 //   - gateways.WithDirection
 //   - gateways.WithInstantiate

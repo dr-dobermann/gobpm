@@ -49,7 +49,7 @@ type ServiceTask struct {
 //   - activities.WithCompletionQuantity
 //   - activities.WithParameters
 //   - activities.WithoutParams
-//   - foundation.WithId
+//   - foundation.WithID
 //   - foundation.WithDoc
 func NewServiceTask(
 	name string,

@@ -213,7 +213,7 @@ type (
 //   - data.IDef
 //   - data.IDefinition
 //   - data.WithState
-//   - foundation.WithId
+//   - foundation.WithID
 //   - foundation.WithDoc
 func WithIAE(opts ...options.Option) IAEAdderOption {
 	f := func(cfg IAEAdder) error {

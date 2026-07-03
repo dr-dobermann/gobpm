@@ -42,7 +42,7 @@ type GExpression struct {
 //   - options of the expression.
 //
 // Available options are:
-//   - foundation.WithId
+//   - foundation.WithID
 //   - foundation.WithDoc
 func New(
 	ds data.Source,

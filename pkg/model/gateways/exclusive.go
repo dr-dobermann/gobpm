@@ -19,7 +19,7 @@ type ExclusiveGateway struct {
 // NewExclusiveGateway creates a new ExclusiveGateway.
 //
 // Available options are:
-//   - foundation.WithId
+//   - foundation.WithID
 //   - foundation.WithDoc
 //   - options.WithName
 //   - gateways.WithDirection
