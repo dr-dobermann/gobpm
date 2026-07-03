@@ -37,6 +37,11 @@ implemented), and leaves this list.
   polymorphic `SubscriptionKey()` (replacing the isolated signal name-scan). Its
   trigger is met — **Link events have landed** (`pkg/model/events/link.go`) — so
   the pass is now due.
+- **Optioned-constructor doc-comment audit** — sweep every `New*` constructor whose
+  doc comment enumerates its available options and reconcile each list with the
+  options actually accepted. Surfaced by `NewUserTask`'s list going stale when the
+  triad options were added (SRD-034 M1). A comment-only correctness pass, no
+  behaviour change.
 ### Tracked elsewhere (not duplicated here)
 - **Instance god-object — size decomposition** (event-loop seam): the audit §2.3
   finding is closed (SRD-032's `instanceScope` extraction); the remaining split is
