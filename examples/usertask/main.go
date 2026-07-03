@@ -27,6 +27,15 @@ func main() {
 }
 
 func run() error {
+	fmt.Print(`
+  usertask (console-driven approval):
+    start → (approve: UserTask) → end
+              │  candidateUsers: operator
+              │  output: decision (string)
+              └─ console driver: Take → render form → Complete
+
+`)
+
 	p, err := buildProcess()
 	if err != nil {
 		return err
