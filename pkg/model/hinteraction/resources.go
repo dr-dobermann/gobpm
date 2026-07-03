@@ -128,8 +128,3 @@ type ResourceParameterBinding struct {
 	// ResourceParameter.
 	Expression data.Expression
 }
-
-// Performer represents a BPMN performer.
-type Performer struct {
-	ResourceRole
-}

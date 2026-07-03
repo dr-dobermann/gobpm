@@ -107,15 +107,14 @@ func TestUserTaskClone(t *testing.T) {
 	require.Empty(t, clone.Incoming())
 	require.Nil(t, clone.Container())
 
-	// the clone is a working, independent node: Exec runs on it and reaches
-	// interactor registration (it errors here only because the runtime provides
-	// no RenderRegistrator), proving the clone carries no inherited exec state.
+	// the clone is a working, independent node: Exec runs on it — with no
+	// completion delivered it binds nothing and returns no outgoing flow — proving
+	// the clone carries no inherited exec state.
 	mrenv := mockrenv.NewMockRuntimeEnvironment(t)
-	mrenv.EXPECT().RenderRegistrator().Return(nil).Once()
-	mrenv.EXPECT().InstanceID().Return("clone-test").Maybe()
 
-	_, err = clone.Exec(context.Background(), mrenv)
-	require.Error(t, err)
+	flows, err := clone.Exec(context.Background(), mrenv)
+	require.NoError(t, err)
+	require.Empty(t, flows)
 }
 
 // cloneOp builds a minimal service operation for a task under test.

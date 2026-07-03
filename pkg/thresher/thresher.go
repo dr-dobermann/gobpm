@@ -47,6 +47,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/interactor"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 )
@@ -150,10 +151,15 @@ type Thresher struct {
 	nextVersion   map[string]int
 	instances     map[string]instanceReg
 	seenKeys      map[string]struct{}
-	keyLocks      *keyLockManager
-	id            string
-	m             sync.Mutex
-	state         atomic.Uint32 // a State; lock-free, NEVER accessed under m
+	// tasks maps a parked UserTask id → its owning instance id, so Take/Complete
+	// route to the right instance loop (SRD-034). Guarded by m. Populated/cleared
+	// by taskDist as tasks are announced/withdrawn.
+	tasks    map[string]string
+	taskDist interactor.TaskDistributor
+	keyLocks *keyLockManager
+	id       string
+	m        sync.Mutex
+	state    atomic.Uint32 // a State; lock-free, NEVER accessed under m
 }
 
 // New creates a new empty Thresher in NotStarted state. Engine-level extensions
@@ -185,9 +191,15 @@ func New(id string, opts ...Option) (*Thresher, error) {
 		nextVersion:   map[string]int{},
 		instances:     map[string]instanceReg{},
 		seenKeys:      map[string]struct{}{},
+		tasks:         map[string]string{},
 		keyLocks:      newKeyLockManager(),
 	}
 	t.state.Store(uint32(NotStarted))
+
+	// The routing distributor records taskID → instanceID on Distribute (so
+	// Take/Complete find the owning instance) and forwards to the embedder's
+	// TaskDistributor. Built after t so it can reference the registry (SRD-034).
+	t.taskDist = &routingDistributor{thr: t, next: cfg.TaskDistributor()}
 
 	// The EventHub receives the engine's resolved runtime (&t.cfg implements
 	// renv.EngineRuntime) so the waiters it builds reach Clock / ExpressionEngine
@@ -827,7 +839,7 @@ func (t *Thresher) launchInstanceFromEvent(
 	// createTracks parks any receiver, so an in-instance receiver reached
 	// directly off the born start subscribes keyed to it (SRD-017 §4.5).
 	inst, err := instance.NewFromEvent(
-		s, scope.EmptyDataPath, &t.cfg, t, nil, startNode.ID(), eDef,
+		s, scope.EmptyDataPath, &t.cfg, t, t.taskDist, startNode.ID(), eDef,
 		keyName, keyVal)
 	if err != nil {
 		return errs.New(
@@ -974,7 +986,7 @@ func (t *Thresher) Instance(instanceID string) (*InstanceHandle, bool) {
 // launchInstance creates a new Instance from the Snapshot s, runs it, appends it
 // to the running instances of the Thresher, and returns its read-only handle.
 func (t *Thresher) launchInstance(s *snapshot.Snapshot) (*InstanceHandle, error) {
-	inst, err := instance.New(s, scope.EmptyDataPath, &t.cfg, t, nil)
+	inst, err := instance.New(s, scope.EmptyDataPath, &t.cfg, t, t.taskDist)
 	if err != nil {
 		return nil, errs.New(
 			errs.M("couldn't create an Instance for process %q",

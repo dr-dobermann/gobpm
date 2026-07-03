@@ -47,6 +47,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
+	"github.com/dr-dobermann/gobpm/pkg/interactor"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
@@ -184,7 +185,12 @@ type track struct {
 	// only receives. Buffered to one slot (eventBufferDepth) so the loop never blocks on the
 	// send — with flip-on-dispatch the loop delivers at most one event per parked episode.
 	evtCh chan flow.EventDefinition
-	steps []*stepInfo
+	// taskID is the engine-minted id of a UserTask this track parks on as a human
+	// task (SRD-034). Set once by checkNodeType before parking; read by spawn on
+	// the loop goroutine (sequentially, before the run goroutine starts) so a task
+	// parked at construction is registered. Empty for a non-UserTask wait.
+	taskID string
+	steps  []*stepInfo
 	// msgDefIDs are the ids of the Message catch definitions this track parks on, set by
 	// checkNodeType at construction (SRD-027 FR-8). The loop indexes them → this track so a
 	// fired message resolves back to it; spawn reads them for a track that starts parked
@@ -337,6 +343,13 @@ func newTrack(
 // checkNodeType determines if node awaits for event or human interaction
 // and updates track state on positive comparison.
 func (t *track) checkNodeType(node flow.Node) error {
+	// A UserTask is a human-interaction wait node (SRD-034): it parks for a human
+	// Complete, not for a hub-delivered event. Recognize it before the event-node
+	// path (it is not a flow.EventNode) and park it without any hub registration.
+	if _, ok := node.(interactor.HumanTask); ok {
+		return t.parkHumanTask(node)
+	}
+
 	en, ok := node.(flow.EventNode)
 	if !ok {
 		return nil
@@ -399,6 +412,30 @@ func (t *track) checkNodeType(node flow.Node) error {
 				errs.D("event_definition_id", d.ID()),
 				errs.E(err))
 		}
+	}
+
+	return nil
+}
+
+// parkHumanTask parks the track on a UserTask (SRD-034): it mints a task id, marks
+// the track WaitForEvent (so run parks it on evtCh), and — when the loop is running
+// — emits evTaskWaiting so the loop registers the task and announces it to the
+// TaskDistributor. At construction the loop isn't draining events yet, so spawn
+// reads t.taskID and registers it instead (mirroring evWaiting's construction
+// path). The UserTask registers NO hub waiter — completion arrives via Complete,
+// delivered to evtCh as a synthetic event, not fired through the hub.
+func (t *track) parkHumanTask(node flow.Node) error {
+	t.taskID = foundation.GenerateID()
+
+	t.updateState(TrackWaitForEvent)
+
+	if t.instance.State() == Active {
+		t.instance.emit(trackEvent{
+			kind:   evTaskWaiting,
+			track:  t,
+			node:   node,
+			taskID: t.taskID,
+		})
 	}
 
 	return nil
@@ -993,10 +1030,15 @@ func (t *track) deliver(
 		return err
 	}
 
-	if err := t.unregisterEvent(n); err != nil {
-		return errs.New(
-			errs.M("node %q[%s] unregister events failed", n.Name(), n.ID()),
-			errs.E(err))
+	// A UserTask (human task) parked without a hub waiter (parkHumanTask) — there
+	// is nothing to unregister. Only an event catch (flow.EventNode) is torn down
+	// from the hub after delivery.
+	if _, isEvent := n.(flow.EventNode); isEvent {
+		if err := t.unregisterEvent(n); err != nil {
+			return errs.New(
+				errs.M("node %q[%s] unregister events failed", n.Name(), n.ID()),
+				errs.E(err))
+		}
 	}
 
 	// An Event-Based gateway subscribes on behalf of its arms (SRD-024 §4.1): the

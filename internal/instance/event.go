@@ -21,6 +21,11 @@ type trackEvent struct {
 	// emitted by Instance.ProcessEvent) the loop resolves the target track from its
 	// id via the msgEDef→track index (FR-8).
 	eDef flow.EventDefinition
+	// taskID, for evTaskWaiting, is the engine-minted id of a parked UserTask. The
+	// loop records taskID → {track, node} so Take/Complete route back to it, and
+	// announces the task to the TaskDistributor (ADR-020, SRD-034). ev.node carries
+	// the UserTask node (built into a TaskInfo/TaskView by the loop).
+	taskID string
 	// flows, for evFork, are the extra outgoing flows (beyond the one the
 	// parent continues on) that the loop builds a new track for.
 	flows []*flow.SequenceFlow
@@ -41,17 +46,18 @@ type trackEventKind uint8
 // trackEventKindNames is the kind→name table, keyed by the constant so it stays
 // correct if the iota block is reordered. Keep it in sync with that block below.
 var trackEventKindNames = [...]string{
-	evFork:      "fork",
-	evEnded:     "ended",
-	evAwaiting:  "awaiting",
-	evMerged:    "merged",
-	evParked:    "parked",
-	evFailed:    "failed",
-	evWaiting:   "waiting",
-	evDeliver:   "deliver",
-	evMoved:     "moved",
-	evBoundary:  "boundary",
-	evTerminate: "terminate",
+	evFork:        "fork",
+	evEnded:       "ended",
+	evAwaiting:    "awaiting",
+	evMerged:      "merged",
+	evParked:      "parked",
+	evFailed:      "failed",
+	evWaiting:     "waiting",
+	evDeliver:     "deliver",
+	evMoved:       "moved",
+	evBoundary:    "boundary",
+	evTerminate:   "terminate",
+	evTaskWaiting: "taskWaiting",
 }
 
 // String returns the lower-case event-kind name for logging.
@@ -111,4 +117,9 @@ const (
 	// track before its own evEnded, so FIFO guarantees stopping is set first; it carries no
 	// track and does NOT touch the active count (the terminate track's evEnded accounts for it).
 	evTerminate
+	// evTaskWaiting: a track reached a UserTask and parked it as a human task (ev.taskID is the
+	// minted task id, ev.node the UserTask). The loop records it in the task registry and
+	// announces it to the TaskDistributor; completion arrives later via a taskReq (ADR-020,
+	// SRD-034). It is the human-task peer of evWaiting — the UserTask registers no hub waiter.
+	evTaskWaiting
 )

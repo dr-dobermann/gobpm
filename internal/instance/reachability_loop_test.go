@@ -81,6 +81,7 @@ func TestApplyEventMoved(t *testing.T) {
 		&active, &stopping,
 		map[string]struct{}{}, map[string]*track{}, position, parked,
 		map[string][]*boundaryWatch{},
+		map[string]taskEntry{},
 		func(*track) {}, func() {})
 
 	require.Equal(t, a, position[tr.ID()], "position advanced to the new node")
@@ -206,6 +207,7 @@ func TestApplyEventParkedDuringShutdown(t *testing.T) {
 			&active, &stopping,
 			map[string]struct{}{}, map[string]*track{}, position, parked,
 			map[string][]*boundaryWatch{},
+			map[string]taskEntry{},
 			func(*track) {}, func() {})
 	})
 
@@ -234,6 +236,7 @@ func TestApplyEventParkedAfterMerge(t *testing.T) {
 			&active, &stopping,
 			map[string]struct{}{}, map[string]*track{}, position, parked,
 			map[string][]*boundaryWatch{},
+			map[string]taskEntry{},
 			func(*track) {}, func() {})
 	})
 
