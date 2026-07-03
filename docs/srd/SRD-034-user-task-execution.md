@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-03 |
 | Owner | Ruslan Gabitov |
@@ -385,7 +385,24 @@ option/authorization surface change.
 
 ## 10. Implementation summary
 
-_(filled at landing: files/lines, V-results, milestone SHAs.)_
+Landed on `feat/human-interaction-model` across five milestones; `make ci` green
+(diff-coverage 96.9% ≥ 95% gate, `-race` clean, lint clean, govulncheck clean,
+`examples/usertask/` smoke exits 0).
+
+| Milestone | Commit | Scope |
+|---|---|---|
+| M1 | `e322113` | `hi.Actor`, `hi.Assignment` (slot + static/expr `Resolve`), the six triad options, `UserTask.Authorize`/`ValidateOutputs`/`Assignments()`. |
+| M2a | `2d6fb0a` | `interactor.TaskRef`/`TaskInfo`/`TaskView`/`TaskDistributor`/`NopDistributor`; `thresher.WithTaskDistributor` + config field/accessor/default. |
+| M2b | `7e01999` | UserTask wait-node (`checkNodeType` branch, `parkHumanTask`, synthetic `TaskCompletion`, rewritten `Exec`/`ProcessEvent`); `inst.taskReq` loop request/reply + `Take`/`Complete`; Thresher registry + routing distributor + `Take`/`Complete`; removed the blocking `Exec`, the nil `Registrator`, and the dead `interactor.{Interactor,Registrator,RenderController}` / `renv.RenderRegistrator` / `hi.{Performer,HumanPerformer}` / `mockinteractor`. |
+| M3 | `d525d60` | `WithRenderer` dedup by `ID()` only (§2.8). |
+| M4 | `0a3e2ea` | `flow.ManualTask` + `activities.ManualTask` no-op pass-through. |
+| M5 | `3cb2268` | `pkg/interactor/console.Driver` (auto-drives via `consinp`) + runnable `examples/usertask/`. |
+
+**Refinements folded into the docs during implementation:** the triad is a typed
+structure exposed via `Assignments()`, **coexisting** with `Roles()` rather than
+projected into it (§3.2/§4.3, ADR-020 §2.5) — a projection is lossy (no user/group
+distinction, no static id-list, no slot); and M5 **reuses** the existing `consinp`
+console renderer rather than adding a new one (FR-12).
 
 ## Open questions
 

@@ -2,13 +2,13 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-02 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md), [ADR-017 v.1 Channel-Based Event Processing](ADR-017-channel-based-event-processing.md) §2, [SAD-001 v.1](SAD-001-vision-and-architecture.md) §6, §10, §11 |
 
-> **Draft** — the accompanying **SRD-034** lands it on `feat/human-interaction-model`. Decides how a
+> **Accepted** — landed by the accompanying **SRD-034** (M1–M5 on `feat/human-interaction-model`). Decides how a
 > **UserTask** executes on gobpm's park/resume core: it is a **wait node** whose completion is an
 > **external event** driven by a human through a pluggable **`TaskDistributor`** boundary (the
 > interface [SAD-001 v.1 §6](SAD-001-vision-and-architecture.md) defers to "a dedicated

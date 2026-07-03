@@ -30,9 +30,6 @@ Genuinely un-homed items — not yet tracked in an ADR/SRD, the roadmap, or the
 audit-backlog. Each graduates out into an ADR/SRD (when designed) or a FIX (when
 implemented), and leaves this list.
 
-- **ManualTask** — implement as a pass-through no-op, bundled with the
-  Service/User-task interactor refactor (see audit-backlog **AB-002**). Keep it in
-  the BPMN-spec taxonomy meanwhile.
 - **Event-matching generalization** — unify EventHub subscription matching via a
   polymorphic `SubscriptionKey()` (replacing the isolated signal name-scan). Its
   trigger is met — **Link events have landed** (`pkg/model/events/link.go`) — so
@@ -51,5 +48,5 @@ implemented), and leaves this list.
   services is *already* solved via the `data.Source` named-source model (the
   `RUNTIME` source, **SRD-007**).
 - **Audit findings**: disposition in
-  [`audit/remediation-status.md`](audit/remediation-status.md) (25 Fixed / 1 Open)
+  [`audit/remediation-status.md`](audit/remediation-status.md) (28 Fixed / 1 Open)
   and design deferrals in [`audit/audit-backlog.md`](audit/audit-backlog.md).
