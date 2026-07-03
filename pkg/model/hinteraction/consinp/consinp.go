@@ -62,7 +62,10 @@ func createData(name string, v data.Value) (data.Data, error) {
 // It fails on inputs duplication by name or value and empty inputs list.
 //
 // Available options:
-//   - consinp.WithInput
+//   - consinp.WithSource
+//   - consinp.WithIntInput
+//   - consinp.WithStringInput
+//   - consinp.WithMessager
 //   - foundation.WithID
 //   - foundation.WithDoc
 func NewRenderer(

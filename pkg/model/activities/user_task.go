@@ -74,14 +74,14 @@ type UserTask struct {
 //	- WithID
 //	- WithDoc
 //
-//	activitiy options:
+//	activity options:
+//	- WithMultyInstance
 //	- WithCompensation
 //	- WithLoop
 //	- WithStartQuantity
-//	- WithCompleteQuantity
+//	- WithCompletionQuantity
 //	- WithParameters
 //	- WithoutParams
-//	- WithRoles
 //
 //	data options:
 //	- WithProperties

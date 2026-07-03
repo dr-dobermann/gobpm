@@ -36,7 +36,7 @@ type EndEvent struct {
 //
 // Available options are:
 //   - foundation.WithID
-//   - foundation.WithDocs
+//   - foundation.WithDoc
 //   - data.WithProperties
 //   - events.WithTerminateTrigger
 //   - events.WithCancelTrigger
@@ -45,7 +45,7 @@ type EndEvent struct {
 //   - events.WithErrorTrigger
 //   - events.WithEscalationTrigger
 //   - events.WithMessageTrigger
-//   - evnets.WithSignalTrigger
+//   - events.WithSignalTrigger
 //   - events.WithTimerTrigger
 func NewEndEvent(
 	name string,
