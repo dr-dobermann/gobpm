@@ -51,6 +51,20 @@ A minimal example focusing on timer functionality:
 cd simple-timer && go run main.go
 ```
 
+### Definition Versioning (`versioning/`)
+Demonstrates Camunda-style definition versioning (ADR-019 / SRD-031.A): one
+process **key** carries many **versions**, addressable by latest, by number, or
+by the registration handle.
+
+**Key concepts:**
+- Registering under the same key yields versions `v1`, `v2`, … of one definition
+- `StartLatest(key)`, `StartVersion(key, n)`, `StartProcess(reg)` start modes
+- `Registrations(key)` enumeration and **promote-on-removal** on unregister
+
+```bash
+cd versioning && go run .
+```
+
 ## 🚀 Running Examples
 
 ### Prerequisites

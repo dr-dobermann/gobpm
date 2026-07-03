@@ -50,3 +50,4 @@ examples/signal-start/signal-start
 examples/boundary-events/boundary-events
 examples/terminate-end-event/terminate-end-event
 examples/usertask/usertask
+examples/versioning/versioning
