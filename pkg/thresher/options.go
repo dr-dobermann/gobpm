@@ -8,6 +8,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/clock"
 	"github.com/dr-dobermann/gobpm/pkg/clock/syscl"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/interactor"
 	"github.com/dr-dobermann/gobpm/pkg/messaging"
 	"github.com/dr-dobermann/gobpm/pkg/messaging/membroker"
 	"github.com/dr-dobermann/gobpm/pkg/model/expression"
@@ -34,6 +35,7 @@ type thresherConfig struct {
 	exprEngine expression.Engine
 	authz      auth.AuthorizationProvider
 	dispatcher tasks.WorkerDispatcher
+	taskDist   interactor.TaskDistributor
 
 	// Startup-report suppression (ADR-002 v.2 §4.4.1). Both default to false —
 	// the report is visible by default; each flag opts its block out.
@@ -136,6 +138,23 @@ func WithMessageBroker(b messaging.MessageBroker) Option {
 	}
 }
 
+// WithTaskDistributor sets the human-task distributor boundary — the embedder's
+// surface for announcing/retracting parked UserTasks (ADR-020 §2.2). Default: a
+// no-op distributor (tasks still park and are completable by id).
+func WithTaskDistributor(d interactor.TaskDistributor) Option {
+	return func(c *thresherConfig) error {
+		if d == nil {
+			return errs.New(
+				errs.M("WithTaskDistributor: a nil TaskDistributor isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		c.taskDist = d
+
+		return nil
+	}
+}
+
 // WithExpressionEngine sets the expression engine (default: Go-native).
 func WithExpressionEngine(e expression.Engine) Option {
 	return func(c *thresherConfig) error {
@@ -221,6 +240,8 @@ func (c *thresherConfig) AuthorizationProvider() auth.AuthorizationProvider {
 
 func (c *thresherConfig) WorkerDispatcher() tasks.WorkerDispatcher { return c.dispatcher }
 
+func (c *thresherConfig) TaskDistributor() interactor.TaskDistributor { return c.taskDist }
+
 var _ renv.EngineRuntime = (*thresherConfig)(nil)
 
 // defaultConfig wires every extension to its bundled core default. A zero-option
@@ -236,5 +257,6 @@ func defaultConfig() thresherConfig {
 		exprEngine: goexpr.New(),
 		authz:      allowall.New(),
 		dispatcher: localdispatcher.New(0),
+		taskDist:   interactor.NopDistributor(),
 	}
 }
