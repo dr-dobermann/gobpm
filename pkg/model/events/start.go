@@ -75,7 +75,7 @@ func NewStartEvent(
 			}
 
 		default:
-			ee = append(ee, fmt.Errorf("innapropriate option type: %s",
+			ee = append(ee, fmt.Errorf("inappropriate option type: %s",
 				reflect.TypeOf(so).Name()))
 		}
 	}

@@ -278,3 +278,22 @@ func TestStartEventCorrelationKey(t *testing.T) {
 	_, err = events.NewStartEvent("start", events.WithCorrelationKey(nil))
 	require.Error(t, err)
 }
+
+// TestStartEventRejectsCancelTrigger asserts that a Cancel trigger — an End
+// Event Transaction-abort trigger that a Start Event cannot carry — is rejected
+// at construction with a clear domain error, not a leaky type-cast one.
+func TestStartEventRejectsCancelTrigger(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	cancEd, err := events.NewCancelEventDefinition()
+	require.NoError(t, err)
+
+	_, err = events.NewStartEvent("bad start",
+		events.WithCancelTrigger(cancEd))
+	require.ErrorContains(t, err, "cannot carry a Cancel trigger")
+
+	// A structurally-unsupported option hits the default arm of the option
+	// switch — cover the "inappropriate option type" guard.
+	_, err = events.NewStartEvent("bad start", data.WithKind(data.InformationKind))
+	require.ErrorContains(t, err, "inappropriate option type")
+}

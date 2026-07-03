@@ -227,3 +227,15 @@ func (sc *startConfig) setTimer(ted *TimerEventDefinition) error {
 
 	return nil
 }
+
+// setCancel implements cancelAdder solely to REJECT a Cancel trigger: Cancel is
+// an End Event trigger (Transaction abort), never a Start Event trigger.
+// Implementing the interface turns the attempt into a clear INVALID_PARAMETER
+// error at configuration building instead of the leaky "cfg doesn't implement
+// cancelAdder" type-cast error (mirrors endConfig's catch-trigger rejections).
+func (sc *startConfig) setCancel(_ *CancelEventDefinition) error {
+	return errs.New(
+		errs.M("a Start Event cannot carry a Cancel trigger; "+
+			"Cancel is an End Event trigger (Transaction abort)"),
+		errs.C(errorClass, errs.InvalidParameter))
+}
