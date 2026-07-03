@@ -16,86 +16,32 @@ const (
 
 // Common event configuration interface and function.
 type (
-	// Specialized interface for event configuration
+	// eventConfig is the configuration an EventOption applies to. It carries a
+	// setXxx sink for every trigger definition an option can add. Both
+	// startConfig and endConfig implement all of them — each ADDS the triggers
+	// valid for its event kind and REJECTS the rest with a clear error (e.g. a
+	// Start Event rejects Cancel, an End Event rejects Conditional/Timer) — so a
+	// WithXxxTrigger option can call the matching sink directly, without a
+	// runtime type assertion or an unreachable "unsupported config" fallback.
+	// Any new eventConfig implementation must therefore decide, per trigger,
+	// whether to add or reject it — enforced at compile time.
 	eventConfig interface {
 		options.Configurator
 
 		eventType() eventConfigType
+
+		setCancel(ced *CancelEventDefinition) error
+		setCompensation(ced *CompensationEventDefinition) error
+		setCondition(ced *ConditionalEventDefinition) error
+		setError(eed *ErrorEventDefinition) error
+		setEscalation(eed *EscalationEventDefinition) error
+		setMessage(med *MessageEventDefinition) error
+		setSignal(sed *SignalEventDefinition) error
+		setTimer(ted *TimerEventDefinition) error
 	}
 
 	// EventOption is a function type for configuring events.
 	EventOption func(cfg eventConfig) error
-
-	// condigionAdder adds ConditionalEventDefinition into the event
-	// configuration.
-	// Used by Start and Intermediate Events.
-	conditionAdder interface {
-		eventConfig
-
-		setCondition(ced *ConditionalEventDefinition) error
-	}
-
-	// cancelAdder adds CancelEventDefinition into the event
-	// configuration.
-	// Used by Intermediate(boundary only) and End Events.
-	cancelAdder interface {
-		eventConfig
-
-		setCancel(ced *CancelEventDefinition) error
-	}
-
-	// compensationAdder adds CompensationEventDefinition into the event
-	// configuration.
-	// Used by Intermediate, Start(in-line Sub-Process only) and End Events.
-	compensationAdder interface {
-		eventConfig
-
-		setCompensation(sed *CompensationEventDefinition) error
-	}
-
-	// escalationAdder adds EscalationEventDefinition into the event
-	// configuration.
-	// Used by Intermediate, Start(in-line Sub-Process only) and End Events.
-	escalationAdder interface {
-		eventConfig
-
-		setEscalation(sed *EscalationEventDefinition) error
-	}
-
-	// errorAdder adds ErrorEventDefinition into the event configuration.
-	// Used by End, Starti(only in in-line Sub-Process) and
-	// Intermediate(boundary only) Events.
-	errorAdder interface {
-		eventConfig
-
-		setError(eed *ErrorEventDefinition) error
-	}
-
-	// messageAdder adds MessageEventDefinition into the
-	// event configureation and sets dataInput or dataOutput depending from
-	// event type.
-	// Used by all Events.
-	messageAdder interface {
-		eventConfig
-
-		setMessage(med *MessageEventDefinition) error
-	}
-
-	// signalAdder adds SignalEventDefinition into the event configuration.
-	// Used by All Events.
-	signalAdder interface {
-		eventConfig
-
-		setSignal(sed *SignalEventDefinition) error
-	}
-
-	// timerAdder adds TimerEventDefinition into the event configuration.
-	// Used by Start and Intermediate Events.
-	timerAdder interface {
-		eventConfig
-
-		setTimer(ted *TimerEventDefinition) error
-	}
 )
 
 // Apply implements options.Option interface for the EventOption.
@@ -111,172 +57,100 @@ func (eo EventOption) Apply(cfg options.Configurator) error {
 
 // WithCancelTrigger adds a CancelEventDefinition into eventConfig.
 func WithCancelTrigger(ced *CancelEventDefinition) EventOption {
-	f := func(cfg eventConfig) error {
+	return EventOption(func(cfg eventConfig) error {
 		if err := checkNil(ced,
 			"empty cancel event definition isn't allowed"); err != nil {
 			return err
 		}
 
-		if ca, ok := cfg.(cancelAdder); ok {
-			return ca.setCancel(ced)
-		}
-
-		return errs.New(
-			errs.M("cfg doens't implement cancelAdder interface: %s",
-				reflect.TypeOf(cfg).String()),
-			errs.C(errorClass, errs.TypeCastingError))
-	}
-
-	return EventOption(f)
+		return cfg.setCancel(ced)
+	})
 }
 
 // WithCompensationTrigger adds a CompensationEventDefinition into eventConfig.
 func WithCompensationTrigger(ced *CompensationEventDefinition) EventOption {
-	f := func(cfg eventConfig) error {
+	return EventOption(func(cfg eventConfig) error {
 		if err := checkNil(ced,
 			"empty compensation event definition isn't allowed"); err != nil {
 			return err
 		}
 
-		if ca, ok := cfg.(compensationAdder); ok {
-			return ca.setCompensation(ced)
-		}
-
-		return errs.New(
-			errs.M("cfg doens't implement compensationAdder interface: %s",
-				reflect.TypeOf(cfg).String()),
-			errs.C(errorClass, errs.TypeCastingError))
-	}
-
-	return EventOption(f)
+		return cfg.setCompensation(ced)
+	})
 }
 
 // WithConditionalTrigger adds a ConditionalEventDefinition into eventConfig.
 func WithConditionalTrigger(ced *ConditionalEventDefinition) EventOption {
-	f := func(cfg eventConfig) error {
+	return EventOption(func(cfg eventConfig) error {
 		if err := checkNil(ced,
 			"empty conditional event definition isn't allowed"); err != nil {
 			return err
 		}
 
-		if ca, ok := cfg.(conditionAdder); ok {
-			return ca.setCondition(ced)
-		}
-
-		return errs.New(
-			errs.M("cfg doens't implement conditionAdder interface: %s",
-				reflect.TypeOf(cfg).String()),
-			errs.C(errorClass, errs.TypeCastingError))
-	}
-
-	return EventOption(f)
+		return cfg.setCondition(ced)
+	})
 }
 
 // WithErrorTrigger adds ErrorEventDefinition into the eventConfig.
 func WithErrorTrigger(eed *ErrorEventDefinition) EventOption {
-	f := func(cfg eventConfig) error {
+	return EventOption(func(cfg eventConfig) error {
 		if err := checkNil(eed,
 			"empty error definition isn't allowed"); err != nil {
 			return err
 		}
 
-		if ea, ok := cfg.(errorAdder); ok {
-			return ea.setError(eed)
-		}
-
-		return errs.New(
-			errs.M("cfg doens't implement errorAdder interface: %s",
-				reflect.TypeOf(cfg).String()),
-			errs.C(errorClass, errs.TypeCastingError))
-	}
-
-	return EventOption(f)
+		return cfg.setError(eed)
+	})
 }
 
 // WithEscalationTrigger adds EscalationEventDefinition into the eventConfig.
 func WithEscalationTrigger(eed *EscalationEventDefinition) EventOption {
-	f := func(cfg eventConfig) error {
+	return EventOption(func(cfg eventConfig) error {
 		if err := checkNil(eed,
 			"empty escalation definition isn't allowed"); err != nil {
 			return err
 		}
 
-		if ea, ok := cfg.(escalationAdder); ok {
-			return ea.setEscalation(eed)
-		}
-
-		return errs.New(
-			errs.M("cfg doens't implement escalationAdder interface: %s",
-				reflect.TypeOf(cfg).String()),
-			errs.C(errorClass, errs.TypeCastingError))
-	}
-
-	return EventOption(f)
+		return cfg.setEscalation(eed)
+	})
 }
 
 // WithMessageTrigger adds a MessageEventDefinition into eventConfig.
 func WithMessageTrigger(
 	med *MessageEventDefinition,
 ) EventOption {
-	f := func(cfg eventConfig) error {
+	return EventOption(func(cfg eventConfig) error {
 		if err := checkNil(med,
 			"empty message definition isn't allowed"); err != nil {
 			return err
 		}
 
-		if ma, ok := cfg.(messageAdder); ok {
-			return ma.setMessage(med)
-		}
-
-		return errs.New(
-			errs.M("cfg doens't implement messageAdder interface: %s",
-				reflect.TypeOf(cfg).String()),
-			errs.C(errorClass, errs.TypeCastingError))
-	}
-
-	return EventOption(f)
+		return cfg.setMessage(med)
+	})
 }
 
 // WithSignalTrigger adds a SignalEventDefinition into eventConfig.
 func WithSignalTrigger(sed *SignalEventDefinition) EventOption {
-	f := func(cfg eventConfig) error {
+	return EventOption(func(cfg eventConfig) error {
 		if err := checkNil(sed,
 			"empty signal event definition isn't allowed"); err != nil {
 			return err
 		}
 
-		if sa, ok := cfg.(signalAdder); ok {
-			return sa.setSignal(sed)
-		}
-
-		return errs.New(
-			errs.M("cfg doens't implement signalAdder interface: %s",
-				reflect.TypeOf(cfg).String()),
-			errs.C(errorClass, errs.TypeCastingError))
-	}
-
-	return EventOption(f)
+		return cfg.setSignal(sed)
+	})
 }
 
 // WithTimerTrigger adds a TimerEventDefinition into eventConfig.
 func WithTimerTrigger(ted *TimerEventDefinition) EventOption {
-	f := func(cfg eventConfig) error {
+	return EventOption(func(cfg eventConfig) error {
 		if err := checkNil(ted,
 			"empty timer event definition isn't allowed"); err != nil {
 			return err
 		}
 
-		if ta, ok := cfg.(timerAdder); ok {
-			return ta.setTimer(ted)
-		}
-
-		return errs.New(
-			errs.M("cfg doens't implement timerAdder interface: %s",
-				reflect.TypeOf(cfg).String()),
-			errs.C(errorClass, errs.TypeCastingError))
-	}
-
-	return EventOption(f)
+		return cfg.setTimer(ted)
+	})
 }
 
 // checkNil checks if v is a nil, and if so, returns error with errMsg.
