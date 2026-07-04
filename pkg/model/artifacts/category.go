@@ -82,7 +82,7 @@ func (c *Category) RemoveCategoryValues(cvVals ...string) int {
 
 // CategoryValues returns list of copies of CategoryValues binded to Category.
 func (c *Category) CategoryValues() []CategoryValue {
-	cvv := []CategoryValue{}
+	cvv := make([]CategoryValue, 0, len(c.categoryValues))
 
 	for _, cv := range c.categoryValues {
 		cvv = append(cvv, *cv)
@@ -161,7 +161,7 @@ func (cv *CategoryValue) RemoveBaseElement(feeID ...string) int {
 
 // BaseElements returns a list of categorized BaseElements from CategoryValue.
 func (cv *CategoryValue) BaseElements() []flow.Element {
-	fee := []flow.Element{}
+	fee := make([]flow.Element, 0, len(cv.categorizedElements))
 
 	for _, fe := range cv.categorizedElements {
 		fee = append(fee, fe)
