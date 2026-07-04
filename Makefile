@@ -19,7 +19,12 @@ COVER_BASE ?= origin/master
 # observability, not logic, and shouldn't demand a test just to be "covered".
 # Matches the two logger-access forms in the codebase: `.logger.LEVEL(` and
 # `.Logger().LEVEL(`.
-COVER_EXCLUDE ?= \.(logger|Logger\(\))\.(Debug|Info|Warn|Error)\(
+#
+# Second regex: the `func (X) Option() {}` marker methods (FIX-020). Options
+# are dispatched by the constructor calling the underlying func directly, so
+# Option() is never invoked — it only makes the type satisfy options.Option at
+# compile time. An empty, never-called marker body is structurally uncoverable.
+COVER_EXCLUDE ?= \.(logger|Logger\(\))\.(Debug|Info|Warn|Error)\(,func \(.*\) Option\(\) \{\}
 
 # All Go modules in the monorepo (each with its own go.mod).
 # Discovered dynamically so adding a new module needs no Makefile edit.

@@ -98,17 +98,19 @@ func newSequenceFlow(
 
 	ee := []error{}
 
+	addErr := func(err error) {
+		if err != nil {
+			ee = append(ee, err)
+		}
+	}
+
 	for _, opt := range opts {
 		switch o := opt.(type) {
 		case options.NameOption: // *sflowConfig implements options.NameConfigurator
-			if err := o(&fc); err != nil {
-				ee = append(ee, err)
-			}
+			addErr(o(&fc))
 
 		case sflowOption:
-			if err := o(&fc); err != nil {
-				ee = append(ee, err)
-			}
+			addErr(o(&fc))
 
 		case foundation.BaseOption:
 			fc.baseOpts = append(fc.baseOpts, o)

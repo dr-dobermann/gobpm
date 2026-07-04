@@ -57,17 +57,19 @@ func New(
 
 	ee := []error{}
 
+	addErr := func(err error) {
+		if err != nil {
+			ee = append(ee, err)
+		}
+	}
+
 	for _, po := range procOpts {
 		switch opt := po.(type) {
 		case activities.RoleOption: // *processConfig implements RoleConfigurator
-			if err := opt(&pc); err != nil {
-				ee = append(ee, err)
-			}
+			addErr(opt(&pc))
 
 		case data.PropertyOption: // *processConfig implements data.PropertyAdder
-			if err := opt(&pc); err != nil {
-				ee = append(ee, err)
-			}
+			addErr(opt(&pc))
 
 		case foundation.BaseOption:
 			pc.baseOpts = append(pc.baseOpts, opt)
