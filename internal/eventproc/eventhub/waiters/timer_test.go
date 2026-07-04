@@ -509,8 +509,8 @@ func TestTimerWaiterServiceRejectsNonReady(t *testing.T) {
 
 	require.True(t, errors.As(err, &ae))
 	require.True(t, ae.HasClass(errs.InvalidState))
-	require.Equal(t, eventproc.WSRunned, ae.Details["current_state"])
-	require.Equal(t, eventproc.WSReady, ae.Details["expected_state"])
+	require.Equal(t, eventproc.WSRunned.String(), ae.Details["current_state"])
+	require.Equal(t, eventproc.WSReady.String(), ae.Details["expected_state"])
 }
 
 // TestTimerWaiterServiceRejectsElapsedTimer covers Service's non-positive

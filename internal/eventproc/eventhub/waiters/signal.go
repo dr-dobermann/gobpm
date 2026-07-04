@@ -3,7 +3,6 @@ package waiters
 import (
 	"context"
 	"errors"
-	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -66,7 +65,7 @@ func NewSignalWaiter(
 			errs.New(
 				errs.M("not a SignalEventDefinition"),
 				errs.C(SignalWaiterError, errs.TypeCastingError),
-				errs.D("event_definition_type", reflect.TypeOf(eDefI)))
+				errs.D("event_definition_type", string(eDefI.Type())))
 	}
 
 	sig := eDef.Signal()
@@ -174,7 +173,7 @@ func (sw *signalWaiter) Service(ctx context.Context) error {
 		return errs.New(
 			errs.M("waiter isn't ready to start"),
 			errs.C(SignalWaiterError, errs.InvalidState),
-			errs.D("current_state", sw.state))
+			errs.D("current_state", sw.state.String()))
 	}
 
 	sw.ctx = ctx

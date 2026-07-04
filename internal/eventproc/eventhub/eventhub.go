@@ -236,7 +236,7 @@ func (eh *EventHub) registerWaiter(
 				errs.C(errorClass, errs.OperationFailed),
 				errs.D("waiter_id", w.ID()),
 				errs.D("event_definition_id", eDef.ID()),
-				errs.D("event_definition_type", eDef.Type()),
+				errs.D("event_definition_type", string(eDef.Type())),
 				errs.D("event_processor_id", ep.ID()))
 		}
 
@@ -403,7 +403,7 @@ func (eh *EventHub) UnregisterEvent(
 					errs.C(errorClass, errs.OperationFailed),
 					errs.D("waiter_id", w.ID()),
 					errs.D("event_definition_idf", w.EventDefinition().ID()),
-					errs.D("event_definition_type", w.EventDefinition().Type()))
+					errs.D("event_definition_type", string(w.EventDefinition().Type())))
 			}
 		}
 
@@ -475,7 +475,7 @@ func (eh *EventHub) PropagateEvent(
 			errs.C(errorClass, errs.OperationFailed),
 			errs.D("waiter_id", w.ID()),
 			errs.D("event_definition_id", eDef.ID()),
-			errs.D("event_definition_type", eDef.Type()),
+			errs.D("event_definition_type", string(eDef.Type())),
 			errs.E(err))
 	}
 

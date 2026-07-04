@@ -180,7 +180,7 @@ func WithParameters(
 					errs.M("WithParameters: a nil parameter isn't allowed"),
 					errs.C(errorClass, errs.EmptyNotAllowed,
 						errs.InvalidParameter),
-					errs.D("direction", d))
+					errs.D("direction", string(d)))
 			}
 		}
 

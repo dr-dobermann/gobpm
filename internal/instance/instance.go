@@ -544,7 +544,7 @@ func (inst *Instance) Run(
 		return errs.New(
 			errs.M("invalid instance state to run"),
 			errs.C(errorClass, errs.InvalidState),
-			errs.D("current_state", inst.State()))
+			errs.D("current_state", inst.State().String()))
 	}
 
 	// Derive the instance's own cancellable context so Cancel() can terminate it
@@ -1571,7 +1571,7 @@ func (inst *Instance) PropagateEvent(
 		return errs.New(
 			errs.M("instance isn't active"),
 			errs.C(errorClass, errs.InvalidState),
-			errs.D("current_state", st),
+			errs.D("current_state", st.String()),
 			errs.D("instance_id", inst.ID()))
 	}
 
@@ -1580,7 +1580,7 @@ func (inst *Instance) PropagateEvent(
 			errs.M("event propagation failed"),
 			errs.C(errorClass, errs.OperationFailed),
 			errs.D("event_definition_id", eDef.ID()),
-			errs.D("event_definition_type", eDef.Type()),
+			errs.D("event_definition_type", string(eDef.Type())),
 			errs.E(err))
 	}
 

@@ -137,6 +137,15 @@ diagnostic serializer, not a hot path; hand-rolling JSON escaping trades a real
 correctness risk for a micro-optimization on a cold path. The hot
 `New`/`D`/`Error` paths become reflection-free either way.
 
+**JSON error handling (amended during implementation):** the original draft
+deleted `JSON()`'s marshal-failure branch as dead code. On review, silently
+swallowing a marshal error in a library is as objectionable as the old panic —
+so `JSON()` **propagates** it instead: the signature changes from `() []byte` to
+`() ([]byte, error)` and returns `json.Marshal(ae)` directly (no panic, no
+swallow, no fallback). With `map[string]string` the error is unreachable in
+practice, but a library surfaces it rather than hiding it. `JSON()` had **zero
+production callers** (only one test), so the signature change is free.
+
 ### §3.2 Changes by file
 
 #### §3.2.1 `pkg/errs/error_options.go` — string-typed details
@@ -158,9 +167,10 @@ copies `map[string]string`.
 - `ApplicationError.Details map[string]any` → `map[string]string`; `New`'s
   `details: map[string]any{}` init → `map[string]string{}`.
 - `Error()` detail loop uses `%s` (no reflection) and a `strings.Builder`.
-- `JSON()` — details are now always marshalable, so the `if err != nil {
-  Panic(...) }` branch (`errors.go:108-111`) is **unreachable → deleted**; keep
-  `json.Marshal` for the successful path.
+- `JSON()` — the old `if err != nil { Panic(...) }` branch is replaced by
+  **propagating** the error: signature `() []byte` → `() ([]byte, error)`,
+  body `return json.Marshal(ae)`. No panic, no swallow. Its one caller (a test)
+  is updated. (See the "JSON error handling" note in §3.1.)
 - `MarshalJSON()` anonymous struct field `Details map[string]any` →
   `map[string]string`.
 
@@ -203,11 +213,15 @@ Current `pkg/errs` coverage after slice-1 hardening: 96.7% (the residual is the
 |---|---|---|
 | `TestErrFuncApplyNil` | `errFunc(func(*errConfig) error { return nil }).apply(nil)` | returns the "empty error configuration" error (the guard `New` never reaches) |
 
-#### §4.1.3 Deleted-branch note
+#### §4.1.3 JSON error handling
 
-The `JSON()` marshal-failure branch (§1.3) is **removed**, not tested — a
-`map[string]string` cannot produce an `UnsupportedTypeError`. This is the FIX's
-whole point; §6.1 confirms no caller depends on the panic.
+The `JSON()` panic branch (§1.3) is replaced by **propagating** the marshal
+error (signature `() ([]byte, error)`). With `map[string]string` the error is
+unreachable — a `map[string]string`/scalar struct cannot produce an
+`UnsupportedTypeError` — so the error path isn't unit-testable, but surfacing
+it (rather than panicking or swallowing) is the honest library contract. The
+success path is covered by `TestJson`'s round-trip; §6.1 records the signature
+change's blast radius (one test caller).
 
 ### §4.5 Observability
 
@@ -242,9 +256,10 @@ functional output).
 - **JSON detail fidelity** — machine consumers parsing `errs` JSON `details` as
   native types (`{"count":3}`) now see strings (`{"count":"3"}`). Diagnostic
   output only; confirm no downstream parser asserts native types.
-- **`JSON()` panic contract** — nothing should depend on `JSON()` panicking on a
-  bad detail (it was a latent failure, never a feature). Grep
-  `grep -rn "\.JSON()" ...` — call sites expect bytes, not a panic.
+- **`JSON()` signature change** — `() []byte` → `() ([]byte, error)`. Grep
+  `grep -rn "\.JSON()" ...` confirmed **one** caller (a test), now updated to
+  handle the returned error. No caller depends on the old panic-on-bad-detail
+  behaviour (it was a latent failure, never a feature).
 
 ### §6.2 Rollback path
 

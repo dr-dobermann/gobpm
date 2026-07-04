@@ -2,7 +2,6 @@ package waiters
 
 import (
 	"context"
-	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -87,7 +86,7 @@ func NewMessageWaiter(
 			errs.New(
 				errs.M("not a MessageEventDefinition"),
 				errs.C(MessageWaiterError, errs.TypeCastingError),
-				errs.D("event_definition_type", reflect.TypeOf(eDefI)))
+				errs.D("event_definition_type", string(eDefI.Type())))
 	}
 
 	msg := eDef.Message()
@@ -183,7 +182,7 @@ func (mw *messageWaiter) Process(eDef flow.EventDefinition) error {
 		errs.M("messageWaiter doesn't process propagated EventDefinitions"),
 		errs.C(MessageWaiterError, errs.InvalidState),
 		errs.D("event_definition_id", eDef.ID()),
-		errs.D("event_definition_type", eDef.Type()))
+		errs.D("event_definition_type", string(eDef.Type())))
 }
 
 // Service subscribes the broker for the waiter's message name and starts the
@@ -215,7 +214,7 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 		return errs.New(
 			errs.M("waiter isn't ready to start"),
 			errs.C(MessageWaiterError, errs.InvalidState),
-			errs.D("current_state", mw.state))
+			errs.D("current_state", mw.state.String()))
 	}
 
 	sub, err := mw.rt.MessageBroker().Subscribe(ctx, mw.name, mw.subscriptionKeys()...)
@@ -364,7 +363,7 @@ func (mw *messageWaiter) Stop() error {
 		return errs.New(
 			errs.M("couldn't stop a not-runned waiter"),
 			errs.C(MessageWaiterError, errs.InvalidState),
-			errs.D("current_state", mw.state))
+			errs.D("current_state", mw.state.String()))
 	}
 
 	mw.state = eventproc.WSStopped

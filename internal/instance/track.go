@@ -941,7 +941,7 @@ func (t *track) unregisterEvent(n flow.Node) error {
 				errs.C(errorClass, errs.OperationFailed),
 				errs.D("track_id", t.ID()),
 				errs.D("event_definition_id", eDef.ID()),
-				errs.D("event_definition_type", eDef.Type()),
+				errs.D("event_definition_type", string(eDef.Type())),
 				errs.E(err))
 		}
 	}

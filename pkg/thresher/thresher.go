@@ -520,7 +520,7 @@ func (t *Thresher) PropagateEvent(
 			errs.M("event propagation failed"),
 			errs.C(errorClass, errs.OperationFailed),
 			errs.D("event_definition_id", eDef.ID()),
-			errs.D("event_definition_type", eDef.Type()),
+			errs.D("event_definition_type", string(eDef.Type())),
 			errs.E(err))
 	}
 

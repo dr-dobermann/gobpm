@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -332,8 +333,8 @@ func (g *Gateway) TestFlows() error {
 		return errs.New(
 			errs.M(errM),
 			errs.C(errorClass, errs.InvalidObject),
-			errs.D("incoming_count", inCount),
-			errs.D("outgoing_count", outCount))
+			errs.D("incoming_count", strconv.Itoa(inCount)),
+			errs.D("outgoing_count", strconv.Itoa(outCount)))
 	}
 
 	return nil

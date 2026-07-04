@@ -4,6 +4,7 @@ package gateways
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -356,7 +357,7 @@ func (g *EventBasedGateway) Validate() error {
 			errs.M("event-based gateway needs at least two arms"),
 			errs.C(errorClass, errs.InvalidParameter),
 			errs.D("gateway_id", g.ID()),
-			errs.D("arms", len(out))))
+			errs.D("arms", strconv.Itoa(len(out)))))
 	}
 
 	msgCatch, recvTask := false, false
@@ -455,7 +456,7 @@ func (g *EventBasedGateway) validateArm(
 			errs.C(errorClass, errs.InvalidParameter),
 			errs.D("gateway_id", g.ID()),
 			errs.D("arm_id", arm.ID()),
-			errs.D("incoming", len(in))))
+			errs.D("incoming", strconv.Itoa(len(in)))))
 	}
 
 	if arm.NodeType() == flow.ActivityNodeType {
@@ -501,7 +502,7 @@ func (g *EventBasedGateway) validateStartGate() []error {
 				"incoming flow"),
 			errs.C(errorClass, errs.InvalidParameter),
 			errs.D("gateway_id", g.ID()),
-			errs.D("incoming", len(g.Incoming()))))
+			errs.D("incoming", strconv.Itoa(len(g.Incoming())))))
 	}
 
 	if g.gwType == ParallelEvents && !g.instantiate {
