@@ -1,11 +1,7 @@
 package activities
 
 import (
-	"reflect"
-
-	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
-	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // sndTaskConfig collects the SendTask-specific options (those that don't belong
@@ -24,19 +20,9 @@ func (*sndTaskConfig) Validate() error {
 // options and applies them to the SendTask itself.
 type SndTaskOption func(*sndTaskConfig)
 
-// Apply applies the send-task option to the provided configurator.
-func (o SndTaskOption) Apply(cfg options.Configurator) error {
-	if sc, ok := cfg.(*sndTaskConfig); ok {
-		o(sc)
-
-		return nil
-	}
-
-	return errs.New(
-		errs.M("isn't sndTaskConfig"),
-		errs.C(errorClass, errs.TypeCastingError),
-		errs.D("cfg_type", reflect.TypeOf(cfg).String()))
-}
+// Option marks SndTaskOption as an options.Option; NewSendTask applies it by
+// calling the func directly.
+func (SndTaskOption) Option() {}
 
 // WithCorrelationKey declares the CorrelationKey the SendTask correlates its
 // outgoing message on (ADR-016 v.1 §2.2): Send derives the key from the message

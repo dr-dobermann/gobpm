@@ -2,9 +2,7 @@ package data
 
 import (
 	"fmt"
-	"reflect"
 
-	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -70,16 +68,9 @@ func WithImport(imp *foundation.Import) options.Option {
 }
 
 // --------------------- options.Option interface -----------------------------
-// Apply implements ItemOption interface for itemOption functor.
-func (o itemOption) Apply(cfg options.Configurator) error {
-	if ic, ok := cfg.(*itemConfig); ok {
-		return o(ic)
-	}
-
-	return errs.New(
-		errs.M("not itemConfig: %s", reflect.TypeOf(cfg).String()),
-		errs.C(errorClass, errs.TypeCastingError))
-}
+// Option marks itemOption as an options.Option; NewItemDefinition applies it by
+// calling the func directly after its type-switch matches.
+func (itemOption) Option() {}
 
 // ------------------- options.Configurator interface -------------------------
 func (ic *itemConfig) Validate() error {
@@ -165,14 +156,9 @@ func WithIDef(iDef *ItemDefinition) IAEOption {
 
 // ------------------- options.Option interface -------------------------------
 
-// Apply runs IAEOption on given cfg if its cast to iaeConfig.
-func (iaeO IAEOption) Apply(cfg options.Configurator) error {
-	if iaeC, ok := cfg.(*iaeConfig); ok {
-		return iaeO(iaeC)
-	}
-
-	return fmt.Errorf("not IEA config (%s)", reflect.TypeOf(cfg).String())
-}
+// Option marks IAEOption as an options.Option; NewIAE applies it by calling the
+// func directly after its type-switch matches.
+func (IAEOption) Option() {}
 
 // ------------------ options.Configurator interface --------------------------
 
@@ -234,16 +220,8 @@ func WithIAE(opts ...options.Option) IAEAdderOption {
 
 // ---------------------- options.Option interface ----------------------------
 
-// Apply applies the IAEAdderOption to the provided configurator.
-func (iaeO IAEAdderOption) Apply(cfg options.Configurator) error {
-	if iaeC, ok := cfg.(IAEAdder); ok {
-		return iaeO(iaeC)
-	}
-
-	return errs.New(
-		errs.M("invlaid configuration type"),
-		errs.C(errorClass, errs.TypeCastingError),
-		errs.D("config_type", reflect.TypeOf(cfg).String()))
-}
+// Option marks IAEAdderOption as an options.Option; the constructor applies it
+// by calling the func with a config that implements IAEAdder.
+func (IAEAdderOption) Option() {}
 
 // ----------------------------------------------------------------------------

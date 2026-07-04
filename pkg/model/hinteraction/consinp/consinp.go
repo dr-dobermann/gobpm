@@ -79,7 +79,7 @@ func NewRenderer(
 	for _, opt := range opts {
 		switch o := opt.(type) {
 		case ciOption:
-			err := o.Apply(&cfg)
+			err := o(&cfg)
 			if err != nil {
 				return nil,
 					errs.New(

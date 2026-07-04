@@ -74,7 +74,7 @@ func CreateWaiter(
 				eDef.Type()),
 			errs.C(errorClass, errs.ObjectNotFound),
 			errs.D("event_definition_id", eDef.ID()),
-			errs.D("event_definition_type", eDef.Type()))
+			errs.D("event_definition_type", string(eDef.Type())))
 	}
 
 	return w, err
@@ -128,6 +128,6 @@ func CreatePersistentWaiter(
 				"instance-starter, got %s", eDef.Type()),
 			errs.C(errorClass, errs.InvalidParameter),
 			errs.D("event_definition_id", eDef.ID()),
-			errs.D("event_definition_type", eDef.Type()))
+			errs.D("event_definition_type", string(eDef.Type())))
 	}
 }

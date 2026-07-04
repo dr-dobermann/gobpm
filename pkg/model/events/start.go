@@ -69,8 +69,18 @@ func NewStartEvent(
 		case foundation.BaseOption:
 			sc.baseOpts = append(sc.baseOpts, opt)
 
-		case startOption, EventOption, data.PropertyOption:
-			if err := so.Apply(&sc); err != nil {
+		case startOption:
+			if err := so(&sc); err != nil {
+				ee = append(ee, err)
+			}
+
+		case EventOption: // *startConfig implements eventConfig
+			if err := so(&sc); err != nil {
+				ee = append(ee, err)
+			}
+
+		case data.PropertyOption: // *startConfig implements data.PropertyAdder
+			if err := so(&sc); err != nil {
 				ee = append(ee, err)
 			}
 

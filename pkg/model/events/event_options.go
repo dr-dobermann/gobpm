@@ -1,8 +1,6 @@
 package events
 
 import (
-	"reflect"
-
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -44,16 +42,9 @@ type (
 	EventOption func(cfg eventConfig) error
 )
 
-// Apply implements options.Option interface for the EventOption.
-func (eo EventOption) Apply(cfg options.Configurator) error {
-	if ec, ok := cfg.(eventConfig); ok {
-		return eo(ec)
-	}
-
-	return errs.New(
-		errs.M("cfg isn't eventConfig: %s", reflect.TypeOf(cfg).String()),
-		errs.C(errorClass, errs.TypeCastingError))
-}
+// Option marks EventOption as an options.Option; the event constructors apply
+// it by calling the func with a config that implements eventConfig.
+func (EventOption) Option() {}
 
 // WithCancelTrigger adds a CancelEventDefinition into eventConfig.
 func WithCancelTrigger(ced *CancelEventDefinition) EventOption {

@@ -1,7 +1,6 @@
 package foundation
 
 import (
-	"reflect"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -29,16 +28,9 @@ func (bc *baseConfig) Validate() error {
 	return nil
 }
 
-// Apply implements options.Option interface for BaseOption
-func (bo BaseOption) Apply(cfg options.Configurator) error {
-	if bc, ok := cfg.(*baseConfig); ok {
-		return bo(bc)
-	}
-
-	return errs.New(
-		errs.M("not BaseConfig: %s", reflect.TypeOf(cfg).String()),
-		errs.C(errorClass, errs.TypeCastingError))
-}
+// Option marks BaseOption as an options.Option; NewBaseElement applies it by
+// calling the func directly after its type-switch matches.
+func (BaseOption) Option() {}
 
 // WithID updates id field in BaseConfig.
 func WithID(id string) options.Option {

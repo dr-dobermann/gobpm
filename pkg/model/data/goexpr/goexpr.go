@@ -5,6 +5,7 @@ package goexpr
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -55,9 +56,8 @@ func New(
 			errs.New(
 				errs.M("result, gfunc shouldn't be empty"),
 				errs.C(errorClass, errs.InvalidParameter),
-				errs.D("data_source", ds),
-				errs.D("result", res),
-				errs.D("gex_func", gfunc))
+				errs.D("result_is_nil", strconv.FormatBool(res == nil)),
+				errs.D("gfunc_is_nil", strconv.FormatBool(gfunc == nil)))
 	}
 
 	exp, err := data.NewExpression(opts...)

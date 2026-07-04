@@ -2,9 +2,7 @@ package activities
 
 import (
 	"errors"
-	"reflect"
 
-	"github.com/dr-dobermann/gobpm/pkg/errs"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
@@ -19,17 +17,9 @@ type RoleConfigurator interface {
 // RoleOption is a function type for configuring role-based access control.
 type RoleOption func(cfg RoleConfigurator) error
 
-// Apply converts roleOption into options.Option.
-func (ro RoleOption) Apply(cfg options.Configurator) error {
-	if rc, ok := cfg.(RoleConfigurator); ok {
-		return ro(rc)
-	}
-
-	return errs.New(
-		errs.M("config doesn't suppurt RoleConfigurator"),
-		errs.C(errorClass, errs.TypeCastingError),
-		errs.D("config_type", reflect.TypeOf(cfg).String()))
-}
+// Option marks RoleOption as an options.Option; the dispatching constructor
+// applies it by calling the func with a config that implements RoleConfigurator.
+func (RoleOption) Option() {}
 
 // WithRoles adds unique non-nil resources into the activityConfig.
 func WithRoles(ress ...*hi.ResourceRole) RoleOption {

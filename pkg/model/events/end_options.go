@@ -3,7 +3,6 @@ package events
 import (
 	"errors"
 	"fmt"
-	"reflect"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -32,16 +31,9 @@ func (ec *endConfig) eventType() eventConfigType {
 
 // -------------------- options.Option interface -------------------------------
 
-// Apply implements options.Option interface for endOption.
-func (eo endOption) Apply(cfg options.Configurator) error {
-	if ec, ok := cfg.(*endConfig); ok {
-		return eo(ec)
-	}
-
-	return errs.New(
-		errs.M("not an endConfig: %s", reflect.TypeOf(cfg).String()),
-		errs.C(errorClass, errs.TypeCastingError))
-}
+// Option marks endOption as an options.Option; newEndEvent applies it by
+// calling the func directly after its type-switch matches.
+func (endOption) Option() {}
 
 // ------------------------ options.Configurator interface ---------------------
 

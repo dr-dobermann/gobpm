@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strconv"
 	"sync"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -48,7 +49,7 @@ func NewTriple(count int, opts ...TripleOption) (Triple, error) {
 			errs.New(
 				errs.M("NewTriple: count must be >= 1"),
 				errs.C(errorClass, errs.InvalidParameter),
-				errs.D("count", t.count))
+				errs.D("count", strconv.Itoa(t.count)))
 	}
 
 	if t.count < len(t.required) {
@@ -56,8 +57,8 @@ func NewTriple(count int, opts ...TripleOption) (Triple, error) {
 			errs.New(
 				errs.M("NewTriple: count must be >= the number of required flows"),
 				errs.C(errorClass, errs.InvalidParameter),
-				errs.D("count", t.count),
-				errs.D("required", len(t.required)))
+				errs.D("count", strconv.Itoa(t.count)),
+				errs.D("required", strconv.Itoa(len(t.required))))
 	}
 
 	return t, nil
@@ -123,16 +124,9 @@ func (cc *complexConfig) Validate() error {
 // options.Option so it can be passed alongside the base/gateway options.
 type ComplexOption func(*complexConfig) error
 
-// Apply implements options.Option against the complexConfig.
-func (o ComplexOption) Apply(cfg options.Configurator) error {
-	if cc, ok := cfg.(*complexConfig); ok {
-		return o(cc)
-	}
-
-	return errs.New(
-		errs.M("cfg isn't a complexConfig"),
-		errs.C(errorClass, errs.InvalidParameter, errs.TypeCastingError))
-}
+// Option marks ComplexOption as an options.Option; NewComplexGateway applies it
+// by calling the func directly after its type-assertion matches.
+func (ComplexOption) Option() {}
 
 // WithActivationThreshold sets a single guard-less threshold triple ("N of M").
 // Mutually exclusive with WithActivation.
@@ -206,7 +200,7 @@ func NewComplexGateway(opts ...options.Option) (*ComplexGateway, error) {
 
 	for _, opt := range opts {
 		if co, ok := opt.(ComplexOption); ok {
-			if err := co.Apply(&cc); err != nil {
+			if err := co(&cc); err != nil {
 				ee = append(ee, err)
 			}
 
@@ -438,9 +432,9 @@ func (cg *ComplexGateway) Validate() error {
 				errs.New(
 					errs.M("complex gateway triple count out of range [1, incoming]"),
 					errs.C(errorClass, errs.InvalidObject),
-					errs.D("triple", i),
-					errs.D("count", t.count),
-					errs.D("incoming", m)))
+					errs.D("triple", strconv.Itoa(i)),
+					errs.D("count", strconv.Itoa(t.count)),
+					errs.D("incoming", strconv.Itoa(m))))
 		}
 
 		// count >= len(required) is a build invariant (NewTriple), not re-checked here.
@@ -450,7 +444,7 @@ func (cg *ComplexGateway) Validate() error {
 					errs.New(
 						errs.M("complex gateway required flow is not an incoming flow"),
 						errs.C(errorClass, errs.InvalidObject),
-						errs.D("triple", i),
+						errs.D("triple", strconv.Itoa(i)),
 						errs.D("flow_id", req)))
 			}
 		}

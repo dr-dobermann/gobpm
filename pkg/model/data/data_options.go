@@ -2,7 +2,6 @@ package data
 
 import (
 	"fmt"
-	"reflect"
 	"slices"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -158,13 +157,9 @@ func WithSource(iae *ItemAwareElement) options.Option {
 
 // -------------------- options.Option interface ------------------------------
 
-func (ao asscOption) Apply(cfg options.Configurator) error {
-	if aCfg, ok := cfg.(*asscConfig); ok {
-		return ao(aCfg)
-	}
-
-	return fmt.Errorf("not a asscConfig (%s)", reflect.TypeOf(cfg).String())
-}
+// Option marks asscOption as an options.Option; NewAssociation applies it by
+// calling the func directly after its type-switch matches.
+func (asscOption) Option() {}
 
 // --------------------- options.Configurator interface -----------------------
 

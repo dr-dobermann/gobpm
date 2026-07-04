@@ -5,8 +5,8 @@ package waiters
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -62,7 +62,7 @@ func NewTimeWaiter(
 			errs.New(
 				errs.M("not an TimerEventDefinition"),
 				errs.C(TimerWaiterError, errs.TypeCastingError),
-				errs.D("event_definition_type", reflect.TypeOf(eDefI)))
+				errs.D("event_definition_type", string(eDefI.Type())))
 	}
 
 	id = strings.TrimSpace(id)
@@ -249,8 +249,8 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 		return errs.New(
 			errs.M("waiter isn't ready to start"),
 			errs.C(TimerWaiterError, errs.InvalidState),
-			errs.D("current_state", tw.state),
-			errs.D("expected_state", eventproc.WSReady))
+			errs.D("current_state", tw.state.String()),
+			errs.D("expected_state", eventproc.WSReady.String()))
 	}
 
 	tw.state = eventproc.WSRunned
@@ -268,9 +268,9 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 			errs.M("waiter duration is not positive"),
 			errs.C(TimerWaiterError, errs.InvalidState),
 			errs.D("waiter_id", tw.ID()),
-			errs.D("next_time", tw.next),
-			errs.D("duration", tw.duration),
-			errs.D("cycles", tw.cyclesLeft))
+			errs.D("next_time", tw.next.String()),
+			errs.D("duration", tw.duration.String()),
+			errs.D("cycles", strconv.Itoa(tw.cyclesLeft)))
 	}
 
 	tw.stopCh = make(chan struct{})
@@ -406,7 +406,7 @@ func (tw *timeWaiter) Stop() error {
 		return errs.New(
 			errs.M("couldn't stop not runned waiter"),
 			errs.C(TimerWaiterError, errs.InvalidState),
-			errs.D("current_state", tw.state))
+			errs.D("current_state", tw.state.String()))
 	}
 
 	tw.state = eventproc.WSStopped

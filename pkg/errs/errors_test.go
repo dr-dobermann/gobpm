@@ -37,8 +37,9 @@ func TestJson(t *testing.T) {
 		errs.E(fmt.Errorf("test error")),
 		errs.D("name", "value"))
 
-	js := string(ae.JSON())
-	require.Equal(t, testJson, js)
+	jsBytes, err := ae.JSON()
+	require.NoError(t, err)
+	require.Equal(t, testJson, string(jsBytes))
 }
 
 func TestDontPanic(t *testing.T) {

@@ -3,7 +3,6 @@ package consinp
 import (
 	"fmt"
 	"io"
-	"reflect"
 	"slices"
 	"strings"
 
@@ -183,16 +182,8 @@ func (ciCfg *consInpConfig) Validate() error {
 
 // --------------- options.Option interface -----------------------------------
 
-// Apply adds option to the configuration cfg.
-func (cio ciOption) Apply(cfg options.Configurator) error {
-	if ciCfg, ok := cfg.(*consInpConfig); ok {
-		return cio(ciCfg)
-	}
-
-	return errs.New(
-		errs.M("not consInpConfig"),
-		errs.C(errorClass, errs.TypeCastingError),
-		errs.D("config_type", reflect.TypeOf(cfg).String()))
-}
+// Option marks ciOption as an options.Option; NewRenderer applies it by calling
+// the func directly after its type-switch matches.
+func (ciOption) Option() {}
 
 // -----------------------------------------------------------------------------

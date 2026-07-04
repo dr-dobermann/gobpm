@@ -102,7 +102,7 @@ func NewProp(name string, iaeOpt IAEAdderOption) (*Property, error) {
 		name: name,
 	}
 
-	if err := iaeOpt.Apply(&cfg); err != nil {
+	if err := iaeOpt(&cfg); err != nil {
 		return nil,
 			fmt.Errorf("property option applying error: %w", err)
 	}

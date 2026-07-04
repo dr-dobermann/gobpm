@@ -2,7 +2,6 @@ package gateways
 
 import (
 	"fmt"
-	"reflect"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -56,17 +55,9 @@ func WithDirection(dir GDirection) GatewayOption {
 
 // --------------------- option.Option interface ------------------------------
 
-// Apply updates the gateway configuration by GatewayOption.
-func (gOpt GatewayOption) Apply(cfg options.Configurator) error {
-	if gc, ok := cfg.(*gatewayConfig); ok {
-		return gOpt(gc)
-	}
-
-	return errs.New(
-		errs.M("cfg isn't an gatewayConfig"),
-		errs.C(errorClass, errs.InvalidParameter, errs.TypeCastingError),
-		errs.D("cfg_type", reflect.TypeOf(cfg).String()))
-}
+// Option marks GatewayOption as an options.Option; New applies it by calling
+// the func directly after its type-switch matches.
+func (GatewayOption) Option() {}
 
 // -------------------- options.Configurator interface ------------------------
 

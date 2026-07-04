@@ -3,7 +3,6 @@ package events
 import (
 	"errors"
 	"fmt"
-	"reflect"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
@@ -52,16 +51,9 @@ func (sc *startConfig) eventType() eventConfigType {
 
 // ------------------- options.Option interface --------------------------------
 
-// Apply implements options.Option interface for startOption.
-func (so startOption) Apply(cfg options.Configurator) error {
-	if sc, ok := cfg.(*startConfig); ok {
-		return so(sc)
-	}
-
-	return errs.New(
-		errs.M("not an startConfig: %s", reflect.TypeOf(cfg).String()),
-		errs.C(errorClass, errs.TypeCastingError))
-}
+// Option marks startOption as an options.Option; newStartEvent applies it by
+// calling the func directly after its type-switch matches.
+func (startOption) Option() {}
 
 // ------------------ data.PropertyConfigurator interface ----------------------
 

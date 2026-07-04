@@ -60,10 +60,13 @@ const (
 
 // ApplicationError represents a structured application error with classes, message, and details.
 type ApplicationError struct {
-	Err     error          `json:"error"`
-	Details map[string]any `json:"details"`
-	Message string         `json:"message"`
-	Classes []string       `json:"classes"`
+	Err error `json:"error"`
+	// Details are pre-stringified diagnostic key/values. Keeping them string
+	// (not any) makes error construction allocation-lean and Error()/JSON()
+	// reflection-free — and makes JSON() infallible (FIX-019).
+	Details map[string]string `json:"details"`
+	Message string            `json:"message"`
+	Classes []string          `json:"classes"`
 }
 
 // New returns pointer on created with errOptions ApplicationError.
@@ -72,7 +75,7 @@ func New(errOpts ...errOption) *ApplicationError {
 		err:     nil,
 		msg:     defaultMessage,
 		classes: []string{},
-		details: map[string]any{},
+		details: map[string]string{},
 	}
 
 	ee := make([]error, 0, len(errOpts)+1)
@@ -102,41 +105,52 @@ func (ae *ApplicationError) HasClass(class string) bool {
 	return false
 }
 
-// JSON returns the json representation of the ApplicationError ae.
-// On failure it panics.
-func (ae *ApplicationError) JSON() []byte {
-	js, err := json.Marshal(ae)
-	if err != nil {
-		Panic("couldn't convert application error to json: " + err.Error())
-		return nil
-	}
-
-	return js
+// JSON returns the JSON representation of the ApplicationError ae. It neither
+// panics nor swallows the marshal error — it propagates it, as a library
+// should. With Details map[string]string and scalar/slice-of-scalar fields the
+// error is unreachable in practice (FIX-019), but surfacing it keeps the
+// contract honest rather than hiding a theoretical failure.
+func (ae *ApplicationError) JSON() ([]byte, error) {
+	return json.Marshal(ae)
 }
 
-// Error returns a string representation of the ApplicationError.
+// Error returns a string representation of the ApplicationError. It builds the
+// text with a strings.Builder and plain string writes — no fmt/reflection —
+// since every part (classes, message, details, wrapped error) is already a
+// string (FIX-019).
 func (ae *ApplicationError) Error() string {
-	str := ""
+	var b strings.Builder
+
 	if len(ae.Classes) > 0 {
-		str += "Classes: [" + strings.Join(ae.Classes, ", ") + "]\n"
+		b.WriteString("Classes: [")
+		b.WriteString(strings.Join(ae.Classes, ", "))
+		b.WriteString("]\n")
 	}
 
 	if ae.Message != "" {
-		str += "Message: " + strings.Trim(ae.Message, " ") + "\n"
+		b.WriteString("Message: ")
+		b.WriteString(strings.Trim(ae.Message, " "))
+		b.WriteString("\n")
 	}
 
 	if len(ae.Details) > 0 {
-		str += "Details:\n"
+		b.WriteString("Details:\n")
 		for k, v := range ae.Details {
-			str += fmt.Sprintf(" %s: %v\n", k, v)
+			b.WriteString(" ")
+			b.WriteString(k)
+			b.WriteString(": ")
+			b.WriteString(v)
+			b.WriteString("\n")
 		}
 	}
 
 	if ae.Err != nil {
-		str += fmt.Errorf("Error: %w", ae.Err).Error() + "\n"
+		b.WriteString("Error: ")
+		b.WriteString(ae.Err.Error())
+		b.WriteString("\n")
 	}
 
-	return str
+	return b.String()
 }
 
 func (ae *ApplicationError) Unwrap() error {
@@ -156,10 +170,10 @@ func (ae ApplicationError) MarshalJSON() ([]byte, error) {
 
 	return json.Marshal(
 		struct {
-			Details map[string]any `json:"details"`
-			Err     string         `json:"error"`
-			Message string         `json:"message"`
-			Classes []string       `json:"classes"`
+			Details map[string]string `json:"details"`
+			Err     string            `json:"error"`
+			Message string            `json:"message"`
+			Classes []string          `json:"classes"`
 		}{
 			Err:     errS,
 			Message: ae.Message,

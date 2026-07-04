@@ -42,12 +42,6 @@ func TestPropertyCloneIsDeepCopy(t *testing.T) {
 	require.Error(t, err)
 }
 
-type invldPA struct{}
-
-func (ipa *invldPA) Validate() error {
-	return nil
-}
-
 func TestProperty(t *testing.T) {
 	t.Run("errors",
 		func(t *testing.T) {
@@ -84,12 +78,9 @@ func TestProperty(t *testing.T) {
 			// invalid params
 			mpac := mockdata.NewMockPropertyAdder(t)
 			po := data.WithProperty("", nil)
-			require.Error(t, po.Apply(mpac))
+			require.Error(t, po(mpac))
 			po = data.WithProperty("no iae", nil)
-			require.Error(t, po.Apply(mpac))
-
-			var ipac invldPA
-			require.Error(t, po.Apply(&ipac))
+			require.Error(t, po(mpac))
 		})
 
 	t.Run("normal",
@@ -116,7 +107,7 @@ func TestProperty(t *testing.T) {
 					data.ReadyDataState),
 			)
 
-			err := pa.Apply(mpac)
+			err := pa(mpac)
 			require.NoError(t, err)
 			require.Contains(t, pNames, "name")
 			require.Contains(t, pNames, "age")
@@ -125,7 +116,7 @@ func TestProperty(t *testing.T) {
 			pa = data.WithProperty("sex", data.WithIAE(
 				data.WithIDefinition(values.NewVariable("male"))))
 
-			err = pa.Apply(mpac)
+			err = pa(mpac)
 			require.NoError(t, err)
 			require.Contains(t, pNames, "sex")
 		})

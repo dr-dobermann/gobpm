@@ -1,8 +1,6 @@
 package flow
 
 import (
-	"reflect"
-
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -20,16 +18,10 @@ type sflowConfig struct {
 type sflowOption func(cfg *sflowConfig) error
 
 // ---------------- options.Option interface -----------------------------------
-func (so sflowOption) Apply(cfg options.Configurator) error {
-	if fc, ok := cfg.(*sflowConfig); ok {
-		return so(fc)
-	}
 
-	return errs.New(
-		errs.M("config doesn't suppurt figurator"),
-		errs.C(errorClass, errs.TypeCastingError),
-		errs.D("config_type", reflect.TypeOf(cfg).String()))
-}
+// Option marks sflowOption as an options.Option; newSequenceFlow applies it by
+// calling the func directly after its type-switch matches.
+func (sflowOption) Option() {}
 
 // --------------- options.Configureator interface -----------------------------
 

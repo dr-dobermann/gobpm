@@ -1,8 +1,6 @@
 package activities
 
 import (
-	"reflect"
-
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -180,7 +178,7 @@ func WithParameters(
 					errs.M("WithParameters: a nil parameter isn't allowed"),
 					errs.C(errorClass, errs.EmptyNotAllowed,
 						errs.InvalidParameter),
-					errs.D("direction", d))
+					errs.D("direction", string(d)))
 			}
 		}
 
@@ -207,17 +205,9 @@ func WithoutParams() ActivityOption {
 
 // --------------------- options.Option interface ------------------------------
 
-// Apply converts activityOption into options.Option.
-func (ao ActivityOption) Apply(cfg options.Configurator) error {
-	if ac, ok := cfg.(*activityConfig); ok {
-		return ao(ac)
-	}
-
-	return errs.New(
-		errs.M("cfg isn't an activityConfig"),
-		errs.C(errorClass, errs.InvalidParameter, errs.TypeCastingError),
-		errs.D("cfg_type", reflect.TypeOf(cfg).String()))
-}
+// Option marks ActivityOption as an options.Option; newActivity applies it by
+// calling the func directly after its type-switch matches.
+func (ActivityOption) Option() {}
 
 // ------------------ options.Configurator interface ---------------------------
 

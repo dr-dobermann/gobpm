@@ -12,7 +12,7 @@ const (
 type (
 	errConfig struct {
 		err     error
-		details map[string]any
+		details map[string]string
 		msg     string
 		classes []string
 	}
@@ -92,8 +92,12 @@ func C(classes ...string) errOption {
 	return errFunc(f)
 }
 
-// D adds the errConfig details.
-func D(k string, v any) errOption {
+// D adds a key/value diagnostic detail to the errConfig. The value is a
+// pre-stringified string: errs stores and renders details without reflection
+// or boxing, keeping error construction cheap on hot paths (FIX-019). Callers
+// stringify non-string values explicitly (strconv.Itoa, string(namedType),
+// x.ID()) — do not reintroduce `any` here.
+func D(k, v string) errOption {
 	f := func(cfg *errConfig) error {
 		k = strings.Trim(k, " ")
 		if k != "" && v != "" {

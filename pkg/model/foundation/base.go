@@ -2,6 +2,7 @@
 package foundation
 
 import (
+	"reflect"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -102,8 +103,20 @@ func NewBaseElement(opts ...options.Option) (*BaseElement, error) {
 	}
 
 	for _, opt := range opts {
-		if err := opt.Apply(&bc); err != nil {
-			return nil, err
+		switch o := opt.(type) {
+		case BaseOption:
+			if err := o(&bc); err != nil {
+				return nil, err
+			}
+
+		default:
+			// Base-layer catch-all: an option that leaked past a
+			// constructor without a category-(b) guard is rejected here
+			// (replaces the type-assertion BaseOption.Apply used to make).
+			return nil, errs.New(
+				errs.M("invalid base option type"),
+				errs.C(errorClass, errs.InvalidParameter, errs.TypeCastingError),
+				errs.D("option_type", reflect.TypeOf(o).String()))
 		}
 	}
 

@@ -50,12 +50,22 @@ func newActivity(
 
 	ee := []error{}
 
+	addErr := func(err error) {
+		if err != nil {
+			ee = append(ee, err)
+		}
+	}
+
 	for _, opt := range actOpts {
 		switch o := opt.(type) {
-		case ActivityOption, RoleOption, data.PropertyOption:
-			if err := o.Apply(&cfg); err != nil {
-				ee = append(ee, err)
-			}
+		case ActivityOption:
+			addErr(o(&cfg))
+
+		case RoleOption: // *activityConfig implements RoleConfigurator
+			addErr(o(&cfg))
+
+		case data.PropertyOption: // *activityConfig implements PropertyAdder
+			addErr(o(&cfg))
 
 		case foundation.BaseOption:
 			cfg.baseOpts = append(cfg.baseOpts, opt)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -115,8 +116,17 @@ func New(opts ...options.Option) (*Gateway, error) {
 		case foundation.BaseOption:
 			gc.baseOpts = append(gc.baseOpts, o)
 
-		case GatewayOption, options.NameOption:
-			if err := o.Apply(&gc); err != nil {
+		case GatewayOption:
+			if err := o(&gc); err != nil {
+				ee = append(ee,
+					errs.New(
+						errs.M("gateway option failed"),
+						errs.C(errorClass, errs.BulidingFailed),
+						errs.E(err)))
+			}
+
+		case options.NameOption: // *gatewayConfig implements options.NameConfigurator
+			if err := o(&gc); err != nil {
 				ee = append(ee,
 					errs.New(
 						errs.M("gateway option failed"),
@@ -332,8 +342,8 @@ func (g *Gateway) TestFlows() error {
 		return errs.New(
 			errs.M(errM),
 			errs.C(errorClass, errs.InvalidObject),
-			errs.D("incoming_count", inCount),
-			errs.D("outgoing_count", outCount))
+			errs.D("incoming_count", strconv.Itoa(inCount)),
+			errs.D("outgoing_count", strconv.Itoa(outCount)))
 	}
 
 	return nil

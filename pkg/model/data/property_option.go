@@ -3,10 +3,8 @@ package data
 import (
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 
-	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -68,16 +66,8 @@ func WithProperty(name string, iaeOpt IAEAdderOption) PropertyOption {
 	return PropertyOption(f)
 }
 
-// Apply applies propertyOption on to PropertyAdder configuration.
-func (po PropertyOption) Apply(cfg options.Configurator) error {
-	if pc, ok := cfg.(PropertyAdder); ok {
-		return po(pc)
-	}
-
-	return errs.New(
-		errs.M("config doesn't suppurt PropertyConfigurator"),
-		errs.C(errorClass, errs.TypeCastingError),
-		errs.D("config_type", reflect.TypeOf(cfg).String()))
-}
+// Option marks PropertyOption as an options.Option; the dispatching constructor
+// applies it by calling the func with a config that implements PropertyAdder.
+func (PropertyOption) Option() {}
 
 // -----------------------------------------------------------------------------
