@@ -93,3 +93,17 @@ func TestGroup(t *testing.T) {
 		require.Equal(t, groupName, group.CategoryValue.Value)
 	})
 }
+
+// TestNewGroupBaseElementError covers NewGroup's base-element build-failure
+// branch: an invalid base option (empty explicit id) fails NewBaseElement.
+func TestNewGroupBaseElementError(t *testing.T) {
+	_, err := artifacts.NewGroup("cat", foundation.WithID(""))
+	require.Error(t, err)
+}
+
+// TestMustGroupPanics covers MustGroup's panic branch on a NewGroup failure.
+func TestMustGroupPanics(t *testing.T) {
+	require.Panics(t, func() {
+		artifacts.MustGroup("cat", foundation.WithID(""))
+	})
+}

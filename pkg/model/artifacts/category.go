@@ -47,10 +47,6 @@ func (c *Category) Name() string {
 // binds the added CategoryValue to the Category.
 // It returns a number of added CategoryValues.
 func (c *Category) AddCategoryValues(cvv ...*CategoryValue) int {
-	if c.categoryValues == nil {
-		c.categoryValues = map[string]*CategoryValue{}
-	}
-
 	n := 0
 	for _, cv := range cvv {
 		if cv == nil {
@@ -70,12 +66,6 @@ func (c *Category) AddCategoryValues(cvv ...*CategoryValue) int {
 // and for removed ones clears its binding to Category.
 // It returns a number of removed elements.
 func (c *Category) RemoveCategoryValues(cvVals ...string) int {
-	if c.categoryValues == nil {
-		c.categoryValues = map[string]*CategoryValue{}
-
-		return 0
-	}
-
 	n := 0
 
 	for _, cvVal := range cvVals {
@@ -93,11 +83,6 @@ func (c *Category) RemoveCategoryValues(cvVals ...string) int {
 // CategoryValues returns list of copies of CategoryValues binded to Category.
 func (c *Category) CategoryValues() []CategoryValue {
 	cvv := []CategoryValue{}
-
-	if c.categoryValues == nil {
-		c.categoryValues = map[string]*CategoryValue{}
-		return cvv
-	}
 
 	for _, cv := range c.categoryValues {
 		cvv = append(cvv, *cv)
@@ -140,10 +125,6 @@ func (cv *CategoryValue) Category() *Category {
 // AddBaseElement adds BaseElements to the CategoryValue.
 // It returns a number of added BaseElements
 func (cv *CategoryValue) AddBaseElement(fee ...flow.Element) int {
-	if cv.categorizedElements == nil {
-		cv.categorizedElements = map[string]flow.Element{}
-	}
-
 	n := 0
 
 	for _, fe := range fee {
@@ -161,12 +142,6 @@ func (cv *CategoryValue) AddBaseElement(fee ...flow.Element) int {
 
 // RemoveBaseElement removes BaseElements from the CategoryValue.
 func (cv *CategoryValue) RemoveBaseElement(feeID ...string) int {
-	if cv.categorizedElements == nil {
-		cv.categorizedElements = map[string]flow.Element{}
-
-		return 0
-	}
-
 	n := 0
 
 	for _, fe := range feeID {
@@ -187,10 +162,6 @@ func (cv *CategoryValue) RemoveBaseElement(feeID ...string) int {
 // BaseElements returns a list of categorized BaseElements from CategoryValue.
 func (cv *CategoryValue) BaseElements() []flow.Element {
 	fee := []flow.Element{}
-
-	if cv.categorizedElements == nil {
-		return fee
-	}
 
 	for _, fe := range cv.categorizedElements {
 		fee = append(fee, fe)
