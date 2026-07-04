@@ -1,7 +1,7 @@
 # FIX-019 «`errs` error details use `any`, forcing boxing + reflection on error paths»
 
 **Type:** FIX (one-shot bug-fix; not rewritten after landing).
-**Status:** Draft v.1 (2026-07-04, branch `test/harden-core-coverage`, not yet implemented).
+**Status:** Accepted (2026-07-04, branch `test/harden-core-coverage`, landed `1dd8eff`).
 **Date:** 2026-07-04.
 **Author:** dr-dobermann.
 **Branch:** `test/harden-core-coverage` (folded into the in-flight core-hardening work per the user's request — the `errs` redesign was surfaced while hardening `pkg/errs` coverage).
@@ -286,18 +286,31 @@ None — `pkg/errs` is internal to gobpm; all call sites are in-repo.
 
 ## §8 Implementation summary (stage-by-stage actual landings + deltas vs draft)
 
-> ⚠️ TODO: fill AFTER landing; records the implementation history and empirical
-> findings vs the §3 draft.
-
 ### §8.1 Stages by commit (branch `test/harden-core-coverage`)
 | Stage | Commit | Scope | Tests |
 |---|---|---|---|
-| 1 | `<sha>` | `errs` core: `map[string]string`, `D(k,v string)`, reflection-free `Error()`, delete `JSON()` failure branch | `<count + names>` |
-| 2 | `<sha>` | call-site migration (int/named/object conversions) | build gate |
+| 1 | `1dd8eff` | `errs` core (`map[string]string`, `D(k, v string)`, reflection-free `Error()` via `strings.Builder`, `JSON()` → `([]byte, error)`) **and** the call-site migration, landed atomically — the `D` signature change requires every call site to build | `pkg/errs` suite + `timer_test` state-detail assertion updated to `.String()` |
+
+The core + migration could not be split into separately-green commits: the
+`D(k, v string)` signature change breaks every non-string call site until each
+is converted, so both land in one commit.
 
 ### §8.2 Empirical findings — where reality diverged from the §3 draft
-> ⚠️ TODO: e.g. any call site whose value could not be cheaply stringified;
-> any consumer of `.Details` found that needed a fix (would expand §3.2.3).
+- **JSON error handling (§3.1/§4.1.3 amended mid-flight).** The draft deleted
+  `JSON()`'s marshal-failure branch as dead. On review, silently swallowing a
+  marshal error in a library is as objectionable as the old panic — so `JSON()`
+  now **propagates** it: signature `() []byte` → `() ([]byte, error)`. Its one
+  caller (a test) was updated.
+- **`eDefI` diagnostics — method, not reflection.** The bare
+  `reflect.TypeOf(eDefI)` sites in the signal/message/timer waiters became
+  `string(eDefI.Type())` (a method call, reflection-free, and semantically
+  better — the trigger type, not the Go type), dropping `reflect` from all
+  three files. An earlier attempt to use `reflect.TypeOf(eDefI).String()` was
+  rejected precisely because it *keeps* the reflection.
+- **Blast radius larger than the ~20 estimate.** ~30 call sites needed
+  conversion (enumerated by the compiler). The 16 `reflect.TypeOf(cfg).String()`
+  config sites were already strings (no change) and were left for FIX-020's
+  dead-assertion removal.
 
 ### §8.3 Backlog (out of FIX-019 scope)
 - The `goexpr.go` / `EventDefinition()` detail sites that pass whole objects are

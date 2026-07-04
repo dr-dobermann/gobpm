@@ -1,7 +1,7 @@
 # FIX-020 «Every option type carries a dead config-type assertion (with reflection) in its `Apply` method»
 
 **Type:** FIX (one-shot bug-fix; not rewritten after landing).
-**Status:** Draft v.1 (2026-07-04, branch `test/harden-core-coverage`, not yet implemented).
+**Status:** Accepted (2026-07-04, branch `test/harden-core-coverage`, landed `8aacd72`).
 **Date:** 2026-07-04.
 **Author:** dr-dobermann.
 **Branch:** `test/harden-core-coverage` (folded into the in-flight core-hardening work; surfaced during [FIX-019] while making error paths reflection-free).
@@ -320,21 +320,37 @@ None — `pkg/model/options` and its consumers are all in-repo.
 
 ## §8 Implementation summary (stage-by-stage actual landings + deltas vs draft)
 
-> ⚠️ TODO: fill AFTER landing.
-
 ### §8.1 Stages by commit (branch `test/harden-core-coverage`)
 | Stage | Commit | Scope | Tests |
 |---|---|---|---|
-| 1 | `<sha>` | marker interface + delete 21 `Apply` methods | build gate |
-| 2 | `<sha>` | harden ~18 constructors + `NewBaseElement` switch | constructor suites |
-| 3 | `<sha>` | update ~10 test call sites | — |
+| 1 | `8aacd72` | marker `Option()` interface; deleted all 21 `Apply` methods; hardened ~18 constructors + `NewBaseElement` (switch + explicit reject); updated ~10 `.Apply` test call sites — landed atomically (the interface change ripples through all of it) | constructor suites unchanged; net −179 lines |
+| — | `8bbfa46` | error-path tests (see §8.2) | instance/thresher/eventhub |
+
+The 3 draft stages could not be separately-green: changing `options.Option` to
+the marker breaks every constructor that still calls `.Apply` until they all
+switch to direct dispatch, so it lands as one commit.
 
 ### §8.2 Empirical findings — where reality diverged from the §3 draft
-> ⚠️ TODO: e.g. `Configurator` kept-or-removed; any interface-typed option whose
-> config did NOT implement the interface (would break the direct-call harden);
-> any constructor lacking a (b) guard that needed one added.
+- **`Configurator` kept.** After deleting the `Apply` signatures, `Configurator`
+  is still referenced (embedded by `NameConfigurator`/`RoleConfigurator`/
+  `PropertyAdder`/`IAEAdder`/`eventConfig`; each config's `Validate()` is called
+  by its constructor), so it stays.
+- **All 5 interface-typed options compiled directly** — no config failed to
+  implement the required interface; the hardening had no exceptions.
+- **`errorClass` orphaned in `options`.** Deleting `NameOption.Apply` left
+  `options.errorClass` unused (golangci-lint `unused`); removed it. (No other
+  package's `errorClass` was affected — all still used by real errors.)
+- **Diff-coverage detour (`8bbfa46`).** The branch-wide diff-coverage gate
+  (measured vs `origin/master`, so it spans FIX-019+FIX-020) flagged 7 FIX-019
+  diagnostic-detail lines in error branches that were only *flakily* covered by
+  integration tests (FIX-019's own gate got lucky). Added deterministic unit
+  tests for `instance.Run`/`PropagateEvent` guards, `thresher.PropagateEvent`'s
+  hub-failure, and `eventhub`'s `Process`/`AddEventProcessor` failures → 96.8%.
 
 ### §8.3 Backlog (out of FIX-020 scope)
-> ⚠️ TODO.
+- Category-(b) constructor guards still reflect on the misused option
+  (`reflect.TypeOf(o).String()`); left in place (reachable input validation on a
+  cold misuse path, not a runtime hot path). De-reflecting them is a possible
+  follow-up.
 
 [FIX-019]: FIX-019-errs-string-typed-details.md
