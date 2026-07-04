@@ -100,8 +100,13 @@ func newSequenceFlow(
 
 	for _, opt := range opts {
 		switch o := opt.(type) {
-		case options.NameOption, sflowOption:
-			if err := o.Apply(&fc); err != nil {
+		case options.NameOption: // *sflowConfig implements options.NameConfigurator
+			if err := o(&fc); err != nil {
+				ee = append(ee, err)
+			}
+
+		case sflowOption:
+			if err := o(&fc); err != nil {
 				ee = append(ee, err)
 			}
 

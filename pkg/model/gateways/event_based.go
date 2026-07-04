@@ -62,16 +62,9 @@ func (c *eventBasedConfig) Validate() error {
 // EventBasedOption configures an EventBasedGateway at construction.
 type EventBasedOption func(*eventBasedConfig) error
 
-// Apply implements options.Option against the eventBasedConfig.
-func (o EventBasedOption) Apply(cfg options.Configurator) error {
-	if ec, ok := cfg.(*eventBasedConfig); ok {
-		return o(ec)
-	}
-
-	return errs.New(
-		errs.M("cfg isn't an eventBasedConfig"),
-		errs.C(errorClass, errs.InvalidParameter, errs.TypeCastingError))
-}
+// Option marks EventBasedOption as an options.Option; NewEventBasedGateway
+// applies it by calling the func directly after its type-assertion matches.
+func (EventBasedOption) Option() {}
 
 // WithInstantiate marks the gate a process-start instantiator (no incoming flow): an
 // event fired at one of its arms starts a process instance (ADR-005 v.4 §2.12.4, BPMN
@@ -131,7 +124,7 @@ func NewEventBasedGateway(opts ...options.Option) (*EventBasedGateway, error) {
 
 	for _, opt := range opts {
 		if eo, ok := opt.(EventBasedOption); ok {
-			if err := eo.Apply(&ec); err != nil {
+			if err := eo(&ec); err != nil {
 				ee = append(ee, err)
 			}
 

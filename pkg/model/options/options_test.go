@@ -1,7 +1,6 @@
 package options_test
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -35,7 +34,6 @@ func (nc *nameCfg) SetName(name string) error {
 }
 
 func TestNameOption(t *testing.T) {
-	configurator := cfg{}
 	emptyNameCfg := nameCfg{
 		cfg:              cfg{},
 		emptyNameAllowed: true,
@@ -45,22 +43,14 @@ func TestNameOption(t *testing.T) {
 		cfg: cfg{},
 	}
 
-	var ae *errs.ApplicationError
-
-	// not a NameConfigurator error
-	err := options.WithName("test name").Apply(&configurator)
-	require.Error(t, err)
-	require.True(t, errors.As(err, &ae))
-	require.True(t, ae.HasClass(errs.TypeCastingError))
-
 	// empty name isn't allowed
-	require.Error(t, options.WithName("").Apply(&nonEmptyNameCfg))
+	require.Error(t, options.WithName("")(&nonEmptyNameCfg))
 
 	// empty name allowed
-	require.NoError(t, options.WithName("").Apply(&emptyNameCfg))
+	require.NoError(t, options.WithName("")(&emptyNameCfg))
 	require.Empty(t, emptyNameCfg.name)
 
 	// nonempty name
-	require.NoError(t, options.WithName("test name").Apply(&nonEmptyNameCfg))
+	require.NoError(t, options.WithName("test name")(&nonEmptyNameCfg))
 	require.Equal(t, "test name", nonEmptyNameCfg.name)
 }

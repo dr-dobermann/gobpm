@@ -2,7 +2,6 @@ package activities
 
 import (
 	"fmt"
-	"reflect"
 	"slices"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -228,17 +227,9 @@ func WithOutput(name, pType string, required bool) UsrTaskOption {
 
 // --------------------- options.Option interface ------------------------------
 
-// Apply applies the user task option to the provided configurator.
-func (uto UsrTaskOption) Apply(cfg options.Configurator) error {
-	if utc, ok := cfg.(*usrTaskConfig); ok {
-		return uto(utc)
-	}
-
-	return errs.New(
-		errs.M("isn't usrTaskConfig"),
-		errs.C(errorClass, errs.TypeCastingError),
-		errs.D("cfg_type", reflect.TypeOf(cfg).String()))
-}
+// Option marks UsrTaskOption as an options.Option; newUserTask applies it by
+// calling the func directly after its type-switch matches.
+func (UsrTaskOption) Option() {}
 
 // ------------------ options.Configurator interface ---------------------------
 

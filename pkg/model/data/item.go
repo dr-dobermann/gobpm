@@ -94,7 +94,7 @@ func NewItemDefinition(
 			cfg.baseOptions = append(cfg.baseOptions, opt)
 
 		case itemOption:
-			if err := opt.Apply(&cfg); err != nil {
+			if err := o(&cfg); err != nil {
 				return nil, err
 			}
 
@@ -254,7 +254,7 @@ func NewIAE(
 			iaeC.baseOpts = append(iaeC.baseOpts, o)
 
 		case IAEOption:
-			if err := opt.Apply(&iaeC); err != nil {
+			if err := opt(&iaeC); err != nil {
 				ee = append(ee, fmt.Errorf("IAE option applying error: %w", err))
 			}
 

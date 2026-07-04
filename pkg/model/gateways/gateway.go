@@ -116,8 +116,17 @@ func New(opts ...options.Option) (*Gateway, error) {
 		case foundation.BaseOption:
 			gc.baseOpts = append(gc.baseOpts, o)
 
-		case GatewayOption, options.NameOption:
-			if err := o.Apply(&gc); err != nil {
+		case GatewayOption:
+			if err := o(&gc); err != nil {
+				ee = append(ee,
+					errs.New(
+						errs.M("gateway option failed"),
+						errs.C(errorClass, errs.BulidingFailed),
+						errs.E(err)))
+			}
+
+		case options.NameOption: // *gatewayConfig implements options.NameConfigurator
+			if err := o(&gc); err != nil {
 				ee = append(ee,
 					errs.New(
 						errs.M("gateway option failed"),

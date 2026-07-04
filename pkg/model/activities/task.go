@@ -33,7 +33,7 @@ func newTask(
 	for _, to := range taskOpts {
 		switch o := to.(type) {
 		case taskOption:
-			err := o.Apply(&mInst)
+			err := o(&mInst)
 			if err != nil {
 				return nil, err
 			}

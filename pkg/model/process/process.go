@@ -59,8 +59,13 @@ func New(
 
 	for _, po := range procOpts {
 		switch opt := po.(type) {
-		case activities.RoleOption, data.PropertyOption:
-			if err := opt.Apply(&pc); err != nil {
+		case activities.RoleOption: // *processConfig implements RoleConfigurator
+			if err := opt(&pc); err != nil {
+				ee = append(ee, err)
+			}
+
+		case data.PropertyOption: // *processConfig implements data.PropertyAdder
+			if err := opt(&pc); err != nil {
 				ee = append(ee, err)
 			}
 

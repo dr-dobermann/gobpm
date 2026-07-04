@@ -224,11 +224,6 @@ func TestEventBasedGatewayCloneCarriesStart(t *testing.T) {
 	require.Equal(t, gateways.ParallelEvents, cg.EventGatewayType())
 }
 
-func TestEventBasedOptionApplyWrongConfig(t *testing.T) {
-	// Apply against a foreign configurator must fail the type assertion.
-	require.Error(t, gateways.WithInstantiate().Apply(otherConfig{}))
-}
-
 func TestEventBasedGatewayDefinitions(t *testing.T) {
 	g, err := gateways.NewEventBasedGateway()
 	require.NoError(t, err)

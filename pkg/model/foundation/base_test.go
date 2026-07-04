@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,12 +42,6 @@ func TestBaseElement(t *testing.T) {
 		})
 }
 
-// foreignConfig is an options.Configurator that is not *baseConfig, used to
-// drive BaseOption.Apply down its type-casting error branch.
-type foreignConfig struct{}
-
-func (foreignConfig) Validate() error { return nil }
-
 func TestMustBaseElementPanics(t *testing.T) {
 	// a failing option (blank explicit id) makes the Must form panic.
 	require.Panics(t, func() {
@@ -54,8 +49,10 @@ func TestMustBaseElementPanics(t *testing.T) {
 	})
 }
 
-func TestBaseOptionApplyForeignConfig(t *testing.T) {
-	bo, ok := foundation.WithID("x").(foundation.BaseOption)
-	require.True(t, ok)
-	require.Error(t, bo.Apply(foreignConfig{}))
+func TestNewBaseElementRejectsForeignOption(t *testing.T) {
+	// an option that isn't a BaseOption is rejected by the base-layer
+	// catch-all (FIX-020 §6.1) — options.WithName yields an options.NameOption,
+	// not a foundation.BaseOption.
+	_, err := foundation.NewBaseElement(options.WithName("x"))
+	require.Error(t, err)
 }

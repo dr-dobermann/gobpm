@@ -64,8 +64,18 @@ func NewEndEvent(
 		case foundation.BaseOption:
 			ec.baseOpts = append(ec.baseOpts, opt)
 
-		case endOption, EventOption, data.PropertyOption:
-			if err := so.Apply(&ec); err != nil {
+		case endOption:
+			if err := so(&ec); err != nil {
+				ee = append(ee, err)
+			}
+
+		case EventOption: // *endConfig implements eventConfig
+			if err := so(&ec); err != nil {
+				ee = append(ee, err)
+			}
+
+		case data.PropertyOption: // *endConfig implements data.PropertyAdder
+			if err := so(&ec); err != nil {
 				ee = append(ee, err)
 			}
 

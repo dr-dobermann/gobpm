@@ -168,7 +168,7 @@ func newEvent(
 
 	for _, o := range baseOpts {
 		if po, ok := o.(data.PropertyOption); ok {
-			if err := po.Apply(&pc); err != nil {
+			if err := po(&pc); err != nil {
 				return nil, errs.New(
 					errs.M("newEvent: couldn't apply a property option to "+
 						"event %q", name),

@@ -95,7 +95,7 @@ func NewAssociation(
 	for _, o := range opts {
 		switch opt := o.(type) {
 		case asscOption:
-			if err := opt.Apply(&aCfg); err != nil {
+			if err := opt(&aCfg); err != nil {
 				ee = append(ee, err)
 			}
 

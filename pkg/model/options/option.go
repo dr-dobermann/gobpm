@@ -1,13 +1,15 @@
 package options
 
-const errorClass = "OPTIONS_ERRORS"
-
 // Configurator interface defines objects that can be configured and validated.
 type Configurator interface {
 	Validate() error
 }
 
-// Option interface defines configuration options that can be applied to Configurators.
+// Option is a compile-time marker for model configuration options. Options are
+// applied by each constructor's type-switch calling the option's concrete func
+// directly — there is no generic Apply. A new option type adds the marker method
+// (func (X) Option() {}) alongside its underlying func; a new constructor
+// dispatches by direct func call, never via an Apply(Configurator) round trip.
 type Option interface {
-	Apply(cfg Configurator) error
+	Option()
 }

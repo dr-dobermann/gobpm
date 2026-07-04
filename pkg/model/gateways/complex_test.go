@@ -104,15 +104,6 @@ func TestNewComplexGateway(t *testing.T) {
 	require.Error(t, err)
 }
 
-// otherConfig is an options.Configurator that is not a complexConfig.
-type otherConfig struct{}
-
-func (otherConfig) Validate() error { return nil }
-
-func TestComplexOptionApplyWrongConfig(t *testing.T) {
-	require.Error(t, gateways.WithActivationThreshold(2).Apply(otherConfig{}))
-}
-
 func TestComplexIsActivationJoin(t *testing.T) {
 	cg, err := gateways.NewComplexGateway(gateways.WithActivationThreshold(1))
 	require.NoError(t, err)

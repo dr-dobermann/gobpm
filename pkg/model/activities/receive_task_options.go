@@ -1,12 +1,5 @@
 package activities
 
-import (
-	"reflect"
-
-	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/options"
-)
-
 // rcvTaskConfig collects the ReceiveTask-specific options (those that don't
 // belong to the embedded task) applied at NewReceiveTask.
 type rcvTaskConfig struct {
@@ -25,19 +18,9 @@ func (*rcvTaskConfig) Validate() error {
 // via Apply (whose only failure is a wrong configurator type).
 type RcvTaskOption func(*rcvTaskConfig)
 
-// Apply applies the receive-task option to the provided configurator.
-func (o RcvTaskOption) Apply(cfg options.Configurator) error {
-	if rc, ok := cfg.(*rcvTaskConfig); ok {
-		o(rc)
-
-		return nil
-	}
-
-	return errs.New(
-		errs.M("isn't rcvTaskConfig"),
-		errs.C(errorClass, errs.TypeCastingError),
-		errs.D("cfg_type", reflect.TypeOf(cfg).String()))
-}
+// Option marks RcvTaskOption as an options.Option; NewReceiveTask applies it by
+// calling the func directly.
+func (RcvTaskOption) Option() {}
 
 // WithInstantiate marks the ReceiveTask as instantiating: a ReceiveTask with no
 // incoming sequence flow and instantiate=true starts a new process instance on
