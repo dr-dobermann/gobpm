@@ -63,7 +63,7 @@ Both journeys MUST work with high quality. The library MUST NOT carry runtime ba
 | N6 | BPEL mapping | Separate conformance subclass; not pursued. |
 | N7 | BPMN XML parser, as a core library concern | The parser will exist (it has to, for adoption), but it is a separate module that constructs the in-memory model the engine consumes. Core library accepts pre-built models. |
 
-> **Note on distribution / clustering.** Distribution is NOT a non-goal — see §13 Distribution & Scale. Task-level remote execution (ServiceTask / GlobalTask on remote workers via direct runtime dispatch) and instance-level distribution (sticky routing per instance ID with persistence-based failover) are within the architectural envelope as additive overlays on the single-process foundation. Cluster-wide shared state (cross-node correlation, signal broadcast, shared variables) is an open question, addressable via DB-backed Repository + event broadcast — to be tackled when concrete demand materializes.
+> **Note on distribution / clustering.** Distribution is NOT a non-goal — see §13 Distribution & Scale. Task-level remote execution (ServiceTask / GlobalTask on external workers via an engine-owned fetch-and-lock job queue, ADR-021) and instance-level distribution (sticky routing per instance ID with persistence-based failover) are within the architectural envelope as additive overlays on the single-process foundation. Cluster-wide shared state (cross-node correlation, signal broadcast, shared variables) is an open question, addressable via DB-backed Repository + event broadcast — to be tackled when concrete demand materializes.
 
 ## 5. Stakeholders & Use Cases
 
@@ -282,7 +282,7 @@ Initial extension interface set (subject to refinement in ADR-002):
 | `EventHub` | Event distribution (already in repo) | in-memory |
 | `ExpressionEngine` | FormalExpression evaluation | Go-native expr eval |
 | `TaskDistributor` | UserTask routing to humans | deferred — human-interaction ADR (current code ships `WorkerDispatcher` below, not this) |
-| `WorkerDispatcher` | Remote-worker dispatch for ServiceTask / GlobalTask (cluster-distribution extension, §13.2) | in-process (local execution — no dispatch) |
+| `WorkerDispatcher` | Asynchronous job queue (enqueue + fetch-and-lock + report) for ServiceTask / GlobalTask external workers (§13.2, ADR-021) | in-process (in-memory queue + local worker pool) |
 | `MessageBroker` | Message correlation inbox | in-memory |
 | `Clock` | Timer source (testability) | `time.Now` wrapper |
 | `Logger` | Structured logging | `slog.Default()` — visible by default; pass a discarding logger via `thresher.WithLogger(...)` for low-noise environments |
@@ -306,7 +306,7 @@ Detailed in **ADR-004 Runtime Environment Contract**. Lives in `runtime/` submod
 
 ## 13. Distribution & Scale
 
-> _**Status: preliminary, subject to refinement.** This section was sketched in the first review round but explicitly deferred for deeper discussion before SAD acceptance. The headline framing (additive overlay; direct worker dispatch over queues; persistence as the foundation) is the working direction, but specifics — protocol choice, dispatcher semantics, cluster-wide state design — will be refined here or relocated to a dedicated ADR (ADR-008) before this SAD flips to Accepted._
+> _**Status: preliminary, subject to refinement.** This section was sketched in the first review round but explicitly deferred for deeper discussion before SAD acceptance. The headline framing (additive overlay; an engine-owned async fetch-and-lock job queue per ADR-021; persistence as the foundation) is the working direction. The task-level worker-execution model is now decided in **ADR-021**; remaining specifics — remote protocol choice (ADR-004), cluster-wide state design — will be refined here or relocated to a dedicated ADR (ADR-008) before this SAD flips to Accepted._
 
 Single-process execution is the foundation. Distribution is achieved as an **additive overlay** through extension points and runtime-level dispatching — never by rewriting the core orchestration model.
 
@@ -315,22 +315,21 @@ Single-process execution is the foundation. Distribution is achieved as an **add
 | Level | Mechanism | Status |
 |---|---|---|
 | **Single-instance, single-node** | Event-loop + track goroutines, all in one process (the foundation, §10) | Always supported |
-| **Task-level remote execution** | Selected tasks (ServiceTask, GlobalTask) execute on remote workers registered with the runtime; runtime dispatches direct (not via queue) | Planned extension point; see §13.2 and `WorkerDispatcher` in §11 |
+| **Task-level remote execution** | Selected tasks (ServiceTask, GlobalTask) execute on external workers that **fetch-and-lock** jobs from an engine-owned asynchronous queue (ADR-021) | Extension point; in-process in-memory queue in 0.1.x (ADR-021), remote transport in ADR-004; see §13.2 |
 | **Instance-level distribution** | Each Process Instance pinned to one runtime node via sticky routing (consistent hash on instance ID); failover via persistence rehydration (§10) | Feasible by design; deferred until multi-node deployment demand materializes |
 | **Cluster-wide shared state** | Cross-node visibility of Signals / Message correlation / shared variables | Open question; solvable via DB-backed `Repository` + event broadcast + correlation-backend extension. To be addressed when concrete demand materializes. |
 
 ### 13.2 Task-level remote execution model
 
-The runtime exposes a worker-registration interface (concrete protocol — HTTP long-poll, gRPC stream, or similar — to be decided in ADR-004). A worker process:
+The runtime exposes an **asynchronous job queue** — the Camunda external-task model, decided in **ADR-021 Service Task Execution Model** (concrete remote protocol — HTTP long-poll, gRPC stream, or similar — to be decided in ADR-004). The flow:
 
-1. **Registers** with the runtime, declaring capabilities (which Task types or task names it can execute).
-2. Receives task-execution dispatches **directly** from the runtime (not via a shared message queue).
-3. **Executes** the task locally — the dispatch carries the full inputs the task needs (works because ServiceTask / GlobalTask inputs are bounded by the activity's DataInputs, not by the full instance context).
-4. **Returns** the result; the runtime forwards it back to the owning Orchestrator, which advances the instance.
+1. The engine **enqueues** a job — bounded by the activity's DataInputs, not the full instance context — onto the queue, keyed by topic, and **parks** the task. The engine holds no live call; only a queued job and a parked track, both persistable.
+2. A worker **fetches-and-locks** jobs for the topics it can execute (declaring its capabilities via the fetch), executes locally, and **reports** the outcome (complete / status / BPMN error / technical fail).
+3. The report re-enters the owning Orchestrator, which resumes the parked instance. A technical fail **re-enqueues with backoff** (job retries); a lock that expires without a report (worker crash) makes the job fetchable again.
 
-**Why direct dispatch, not a queue:** queue-based task brokers introduce a third-party dependency, a separate failure domain, ordering ambiguity, and an additional consistency surface. Direct runtime-to-worker dispatch keeps the topology two-tier (runtime + worker), aligns failure handling with the Orchestrator that already owns the instance, and avoids paying for queue infrastructure most deployments don't need.
+**Why an engine-owned fetch-and-lock queue** *(revised — supersedes the earlier "direct dispatch, not a queue" sketch; full rationale in ADR-021 §2.4)*: pull decouples the engine from worker addressing and holds **no live in-flight call**, so an instance waiting on a worker is **dehydratable** (the job sits in the store, the track is parked) — directly enabling persistence-based failover (§13.3) instead of blocking it. Retry-as-re-enqueue and crash-resilience-as-lock-expiry fall out for free. The original concern — third-party broker dependency, extra failure domain, queue infrastructure most deployments don't need — is avoided by keeping the queue **engine-owned**, not an external broker: the default is an **in-memory** queue + local worker pool (zero extra infrastructure); a durable store arrives only with persistence (ADR-009), and a remote wire protocol only when a deployment needs out-of-process workers (ADR-004). The topology stays two-tier (engine + worker); failure handling still aligns with the Orchestrator that owns the instance.
 
-This is **just another extension** implementing the `WorkerDispatcher` interface (§11) — no architectural change to core required. Library users who don't need it pay nothing for it (default impl is in-process local execution).
+This is **just another extension** implementing the `WorkerDispatcher` interface (§11) — no architectural change to core required. Library users who don't need it pay nothing for it (default impl is an in-process in-memory queue with a local worker pool).
 
 ### 13.3 Persistence and recovery as the foundation
 
