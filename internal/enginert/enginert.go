@@ -51,7 +51,7 @@ func Default() *Runtime {
 		broker:     membroker.New(),
 		expr:       goexpr.New(),
 		authz:      allowall.New(),
-		dispatcher: localdispatcher.New(0),
+		dispatcher: localdispatcher.New(nil, 0),
 	}
 }
 

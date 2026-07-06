@@ -1,68 +1,313 @@
-package localdispatcher
+package localdispatcher_test
 
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/dr-dobermann/gobpm/pkg/clock/clocktest"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
+	"github.com/dr-dobermann/gobpm/pkg/tasks/localdispatcher"
+	"github.com/stretchr/testify/require"
 )
 
-func TestRegisterAndDispatch(t *testing.T) {
-	d := New(0) // default pool size
-	want := "done"
+var base = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	if err := d.Register("greet", func(_ context.Context, _ tasks.Job) (any, error) {
-		return want, nil
-	}); err != nil {
-		t.Fatalf("Register: %v", err)
+// recordSink is a JobCompletionSink that records delivered outcomes.
+type recordSink struct {
+	mu       sync.Mutex
+	outcomes []*tasks.WorkerOutcome
+}
+
+func (s *recordSink) ReportJobCompletion(
+	_ context.Context, o *tasks.WorkerOutcome,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.outcomes = append(s.outcomes, o)
+
+	return nil
+}
+
+func (s *recordSink) last() *tasks.WorkerOutcome {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(s.outcomes) == 0 {
+		return nil
 	}
 
-	got, err := d.Dispatch(context.Background(), tasks.Job{Type: "greet"})
-	if err != nil || got != want {
-		t.Fatalf("Dispatch = %v, %v; want %q, nil", got, err, want)
+	return s.outcomes[len(s.outcomes)-1]
+}
+
+// TestLocalDispatcherNewDefaults: a nil clock and a non-positive maxLock fall
+// back to the bundled defaults.
+func TestLocalDispatcherNewDefaults(t *testing.T) {
+	require.NotNil(t, localdispatcher.New(nil, 0))
+}
+
+func topics(tt ...tasks.Topic) []tasks.Topic { return tt }
+
+func newJob(id tasks.JobID, topic tasks.Topic) tasks.Job {
+	return tasks.Job{ID: id, Topic: topic}
+}
+
+// TestLocalDispatcherEnqueueFetchComplete: the happy queue path — enqueue,
+// fetch-and-lock, complete delivers a WorkerOutcome to the sink (FR-1, FR-2).
+func TestLocalDispatcherEnqueueFetchComplete(t *testing.T) {
+	sink := &recordSink{}
+	d := localdispatcher.New(clocktest.New(base), time.Minute)
+	d.BindSink(sink)
+
+	ctx := context.Background()
+	require.NoError(t, d.Enqueue(ctx, newJob("j1", "charge")))
+
+	jobs, err := d.FetchAndLock(ctx, "w1", topics("charge"), time.Minute)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	require.Equal(t, tasks.JobID("j1"), jobs[0].ID)
+	require.Equal(t, tasks.WorkerID("w1"), jobs[0].WorkerID)
+
+	require.NoError(t, d.Complete(ctx, "j1", "w1", nil))
+	require.NotNil(t, sink.last())
+	require.Equal(t, tasks.JobID("j1"), sink.last().JobID())
+	require.NoError(t, sink.last().Cause())
+}
+
+// TestLocalDispatcherFetchWakesOnEnqueue: a fetcher blocked on an empty topic
+// is woken by a later Enqueue and returns the new job (the broadcast wake the
+// worker pool relies on) (FR-2).
+func TestLocalDispatcherFetchWakesOnEnqueue(t *testing.T) {
+	d := localdispatcher.New(clocktest.New(base), time.Minute)
+	ctx := t.Context()
+
+	type res struct {
+		jobs []tasks.LockedJob
+		err  error
+	}
+
+	got := make(chan res, 1)
+	go func() {
+		jobs, err := d.FetchAndLock(ctx, "w1", topics("charge"), time.Minute)
+		got <- res{jobs, err}
+	}()
+
+	// let the fetcher reach the select (no job yet), then enqueue.
+	time.Sleep(30 * time.Millisecond)
+	require.NoError(t, d.Enqueue(ctx, newJob("j1", "charge")))
+
+	select {
+	case r := <-got:
+		require.NoError(t, r.err)
+		require.Equal(t, tasks.JobID("j1"), r.jobs[0].ID)
+	case <-time.After(time.Second):
+		t.Fatal("fetcher didn't wake on enqueue")
 	}
 }
 
-func TestDispatchNoHandler(t *testing.T) {
-	d := New(1)
+// TestLocalDispatcherFailDeliversCause: Fail delivers an outcome carrying the
+// technical cause (FR-8).
+func TestLocalDispatcherFailDeliversCause(t *testing.T) {
+	sink := &recordSink{}
+	d := localdispatcher.New(clocktest.New(base), time.Minute)
+	d.BindSink(sink)
 
-	if _, err := d.Dispatch(context.Background(), tasks.Job{Type: "missing"}); !errors.Is(err, ErrNoHandler) {
-		t.Fatalf("err = %v, want ErrNoHandler", err)
-	}
+	ctx := context.Background()
+	require.NoError(t, d.Enqueue(ctx, newJob("j1", "charge")))
+	_, err := d.FetchAndLock(ctx, "w1", topics("charge"), time.Minute)
+	require.NoError(t, err)
+
+	require.NoError(t, d.Fail(ctx, "j1", "w1", errors.New("upstream 503")))
+	require.ErrorContains(t, sink.last().Cause(), "upstream 503")
 }
 
-func TestRegisterDuplicate(t *testing.T) {
-	d := New(1)
-	h := func(context.Context, tasks.Job) (any, error) { return nil, nil }
+// TestLocalDispatcherLockExpiryRefetch: a locked job whose lock expires becomes
+// fetchable again by another worker (FR-2, NFR-3 crash-resilience).
+func TestLocalDispatcherLockExpiryRefetch(t *testing.T) {
+	clk := clocktest.New(base)
+	d := localdispatcher.New(clk, time.Hour)
 
-	_ = d.Register("t", h)
-	if err := d.Register("t", h); !errors.Is(err, ErrDuplicateHandler) {
-		t.Fatalf("err = %v, want ErrDuplicateHandler", err)
-	}
-}
+	ctx := context.Background()
+	require.NoError(t, d.Enqueue(ctx, newJob("j1", "charge")))
 
-func TestBoundedPoolBlocksAndCtxCancels(t *testing.T) {
-	d := New(1) // pool of one
-	release := make(chan struct{})
-	started := make(chan struct{}, 1)
+	_, err := d.FetchAndLock(ctx, "wA", topics("charge"), 10*time.Second)
+	require.NoError(t, err)
 
-	_ = d.Register("block", func(_ context.Context, _ tasks.Job) (any, error) {
-		started <- struct{}{}
-		<-release
-
-		return nil, nil
-	})
-
-	go func() { _, _ = d.Dispatch(context.Background(), tasks.Job{Type: "block"}) }()
-	<-started // the only pool slot is now held
-
-	cctx, cancel := context.WithCancel(context.Background())
+	// while locked-and-unexpired, another worker finds nothing.
+	cctx, cancel := context.WithTimeout(ctx, 40*time.Millisecond)
+	_, err = d.FetchAndLock(cctx, "wB", topics("charge"), 10*time.Second)
 	cancel()
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 
-	if _, err := d.Dispatch(cctx, tasks.Job{Type: "block"}); !errors.Is(err, context.Canceled) {
-		t.Fatalf("err = %v, want context.Canceled", err)
+	// past the lock, wB re-fetches it.
+	clk.Advance(11 * time.Second)
+
+	jobs, err := d.FetchAndLock(ctx, "wB", topics("charge"), 10*time.Second)
+	require.NoError(t, err)
+	require.Equal(t, tasks.WorkerID("wB"), jobs[0].WorkerID)
+}
+
+// TestLocalDispatcherExtendLockHolderOnlyAndCap: only the holder can extend, and
+// extension is bounded by maxLockDuration (FR-2, NFR-3 liveness).
+func TestLocalDispatcherExtendLockHolderOnlyAndCap(t *testing.T) {
+	clk := clocktest.New(base)
+	d := localdispatcher.New(clk, 30*time.Second) // maxLock cap
+
+	ctx := context.Background()
+	require.NoError(t, d.Enqueue(ctx, newJob("j1", "charge")))
+	_, err := d.FetchAndLock(ctx, "wA", topics("charge"), 10*time.Second)
+	require.NoError(t, err)
+
+	// a non-holder can't extend.
+	require.ErrorIs(t,
+		d.ExtendLock(ctx, "j1", "wB", 5*time.Second),
+		localdispatcher.ErrNotLockHolder)
+
+	// the holder extends within the cap (base+20s <= base+30s).
+	require.NoError(t, d.ExtendLock(ctx, "j1", "wA", 20*time.Second))
+
+	// extension past the cap (base+40s > base+30s) is refused.
+	require.ErrorIs(t,
+		d.ExtendLock(ctx, "j1", "wA", 40*time.Second),
+		localdispatcher.ErrMaxLockExceeded)
+}
+
+// TestLocalDispatcherFetchOnlyRequestedTopics: FetchAndLock returns only jobs
+// for the requested topics (FR-2).
+func TestLocalDispatcherFetchOnlyRequestedTopics(t *testing.T) {
+	d := localdispatcher.New(clocktest.New(base), time.Minute)
+
+	ctx := context.Background()
+	require.NoError(t, d.Enqueue(ctx, newJob("j1", "email")))
+
+	cctx, cancel := context.WithTimeout(ctx, 40*time.Millisecond)
+	_, err := d.FetchAndLock(cctx, "w1", topics("charge"), time.Minute)
+	cancel()
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+
+	jobs, err := d.FetchAndLock(ctx, "w1", topics("email"), time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, tasks.JobID("j1"), jobs[0].ID)
+}
+
+// TestLocalDispatcherEnqueueValidation: enqueue rejects empty ID/topic and a
+// duplicate ID (FR-1).
+func TestLocalDispatcherEnqueueValidation(t *testing.T) {
+	d := localdispatcher.New(clocktest.New(base), time.Minute)
+	ctx := context.Background()
+
+	require.ErrorIs(t, d.Enqueue(ctx, newJob("", "charge")),
+		localdispatcher.ErrEmptyJobID)
+	require.ErrorIs(t, d.Enqueue(ctx, newJob("j1", "")),
+		localdispatcher.ErrEmptyTopic)
+
+	require.NoError(t, d.Enqueue(ctx, newJob("j1", "charge")))
+	require.ErrorIs(t, d.Enqueue(ctx, newJob("j1", "charge")),
+		localdispatcher.ErrDuplicateJob)
+}
+
+// TestLocalDispatcherReportGuards: Complete/Fail reject a foreign worker, an
+// unknown job, an expired lock, and (Complete) a missing sink (FR-2, FR-6).
+func TestLocalDispatcherReportGuards(t *testing.T) {
+	clk := clocktest.New(base)
+	d := localdispatcher.New(clk, time.Hour)
+	ctx := context.Background()
+
+	// no sink bound yet.
+	require.NoError(t, d.Enqueue(ctx, newJob("j1", "charge")))
+	_, err := d.FetchAndLock(ctx, "wA", topics("charge"), 10*time.Second)
+	require.NoError(t, err)
+
+	require.ErrorIs(t, d.Complete(ctx, "j1", "wA", nil),
+		localdispatcher.ErrNoSink)
+
+	// unknown job / foreign worker.
+	require.ErrorIs(t, d.Complete(ctx, "missing", "wA", nil),
+		localdispatcher.ErrJobNotFound)
+	require.ErrorIs(t, d.Complete(ctx, "j1", "wB", nil),
+		localdispatcher.ErrNotLockHolder)
+
+	// past the lock, the holder can no longer complete.
+	clk.Advance(11 * time.Second)
+	require.ErrorIs(t, d.Complete(ctx, "j1", "wA", nil),
+		localdispatcher.ErrLockExpired)
+}
+
+// TestLocalDispatcherRegisterWorkerValidation: RegisterWorker rejects an empty
+// topic, a nil worker, and a duplicate topic (FR-2).
+func TestLocalDispatcherRegisterWorkerValidation(t *testing.T) {
+	d := localdispatcher.New(clocktest.New(base), time.Minute)
+	ctx := t.Context()
+
+	fn := func(context.Context, tasks.LockedJob) (*data.ItemDefinition, error) {
+		return nil, nil
 	}
 
-	close(release)
+	require.ErrorIs(t, d.RegisterWorker(ctx, "", fn),
+		localdispatcher.ErrEmptyTopic)
+	require.ErrorIs(t, d.RegisterWorker(ctx, "charge", nil),
+		localdispatcher.ErrNilWorker)
+
+	require.NoError(t, d.RegisterWorker(ctx, "charge", fn))
+	require.ErrorIs(t, d.RegisterWorker(ctx, "charge", fn),
+		localdispatcher.ErrDuplicateWorker)
+}
+
+// TestLocalDispatcherWorkerPoolRunsHandler: a registered worker fetch-and-locks
+// an enqueued job, runs its handler, and reports Complete to the sink — the
+// batteries-included local pool (FR-2). Uses the real clock.
+func TestLocalDispatcherWorkerPoolRunsHandler(t *testing.T) {
+	sink := &recordSink{}
+	d := localdispatcher.New(nil, time.Minute)
+	d.BindSink(sink)
+
+	ctx := t.Context()
+
+	var ran tasks.JobID
+
+	var mu sync.Mutex
+
+	require.NoError(t, d.RegisterWorker(ctx, "charge",
+		func(_ context.Context, j tasks.LockedJob) (*data.ItemDefinition, error) {
+			mu.Lock()
+			ran = j.ID
+			mu.Unlock()
+
+			return nil, nil
+		}))
+
+	require.NoError(t, d.Enqueue(ctx, newJob("j1", "charge")))
+
+	require.Eventually(t, func() bool { return sink.last() != nil },
+		2*time.Second, 5*time.Millisecond)
+	require.Equal(t, tasks.JobID("j1"), sink.last().JobID())
+
+	mu.Lock()
+	require.Equal(t, tasks.JobID("j1"), ran)
+	mu.Unlock()
+}
+
+// TestLocalDispatcherWorkerPoolReportsFail: a worker handler that errors makes
+// the pool report Fail, delivering the cause to the sink (FR-2, FR-8).
+func TestLocalDispatcherWorkerPoolReportsFail(t *testing.T) {
+	sink := &recordSink{}
+	d := localdispatcher.New(nil, time.Minute)
+	d.BindSink(sink)
+
+	ctx := t.Context()
+
+	require.NoError(t, d.RegisterWorker(ctx, "charge",
+		func(context.Context, tasks.LockedJob) (*data.ItemDefinition, error) {
+			return nil, errors.New("worker boom")
+		}))
+
+	require.NoError(t, d.Enqueue(ctx, newJob("j1", "charge")))
+
+	require.Eventually(t, func() bool { return sink.last() != nil },
+		2*time.Second, 5*time.Millisecond)
+	require.ErrorContains(t, sink.last().Cause(), "worker boom")
 }
