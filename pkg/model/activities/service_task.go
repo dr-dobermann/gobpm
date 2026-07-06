@@ -3,6 +3,7 @@ package activities
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
@@ -36,6 +37,9 @@ type ServiceTask struct {
 	operation      service.Operation
 	implementation string
 	task
+	// timeout bounds the in-process operation execution when positive
+	// (WithTimeout, SRD-035); non-positive means unbounded.
+	timeout time.Duration
 }
 
 // NewServiceTask creates a new service task named name and operation as
@@ -50,6 +54,7 @@ type ServiceTask struct {
 //   - activities.WithParameters
 //   - activities.WithoutParams
 //   - activities.WithRoles
+//   - activities.WithTimeout
 //   - foundation.WithID
 //   - foundation.WithDoc
 func NewServiceTask(
@@ -72,7 +77,22 @@ func NewServiceTask(
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	t, err := newTask(name, taskOpts...)
+	// Separate the ServiceTask-specific options (e.g. WithTimeout) from the
+	// embedded task's options before building the task.
+	var sc srvTaskConfig
+
+	baseOpts := make([]options.Option, 0, len(taskOpts))
+	for _, o := range taskOpts {
+		if sto, ok := o.(SrvTaskOption); ok {
+			sto(&sc)
+
+			continue
+		}
+
+		baseOpts = append(baseOpts, o)
+	}
+
+	t, err := newTask(name, baseOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -81,6 +101,7 @@ func NewServiceTask(
 			task:           *t,
 			implementation: operation.Type(),
 			operation:      operation,
+			timeout:        sc.timeout,
 		},
 		nil
 }
@@ -112,6 +133,7 @@ func (st *ServiceTask) Clone() (flow.Node, error) {
 		task:           t,
 		implementation: st.implementation,
 		operation:      st.operation.Clone(),
+		timeout:        st.timeout,
 	}, nil
 }
 
@@ -149,16 +171,9 @@ func (st *ServiceTask) Exec(
 	// from scope and produces its output message; a Go operation reads through
 	// the reader and returns its result. re (an renv.RuntimeEnvironment)
 	// satisfies the narrow service.DataReader structurally.
-	out, err := op.Execute(ctx, re)
+	out, err := st.execOperation(ctx, re, op)
 	if err != nil {
-		return nil,
-			errs.New(
-				errs.M("operation execution failed"),
-				errs.C(errorClass),
-				errs.E(err),
-				errs.D("service_task_name", st.Name()),
-				errs.D("service_task_id", st.ID()),
-				errs.D("operation_id", st.operation.ID()))
+		return nil, err
 	}
 
 	if out != nil {
@@ -181,6 +196,81 @@ func (st *ServiceTask) Exec(
 	}
 
 	return st.Outgoing(), nil
+}
+
+// execOperation runs op honoring st.timeout. With no timeout (the default) the
+// operation runs synchronously on the track goroutine. With a positive timeout
+// it runs in a sub-goroutine and execOperation returns as soon as the operation
+// finishes, ctx is canceled, or the timeout elapses (SRD-035, ADR-021 §2.9).
+// An operation failure is wrapped; a cancellation returns ctx.Err(); a timeout
+// returns a self-identifying error that faults the task.
+//
+// The timeout bounds the TRACK's wait, not the operation: Go cannot terminate a
+// goroutine, so an operation that ignores ctx keeps running (and leaks) after a
+// timeout — hence the warning. The done channel is buffered so an operation
+// that eventually returns still exits cleanly, and the timer uses NewTimer+Stop
+// (not time.After) so it is released on every exit path.
+func (st *ServiceTask) execOperation(
+	ctx context.Context,
+	re renv.RuntimeEnvironment,
+	op service.Operation,
+) (*data.ItemDefinition, error) {
+	if st.timeout <= 0 {
+		out, err := op.Execute(ctx, re)
+
+		return out, st.wrapOpErr(err)
+	}
+
+	type opRes struct {
+		out *data.ItemDefinition
+		err error
+	}
+
+	done := make(chan opRes, 1)
+	go func() {
+		o, e := op.Execute(ctx, re)
+		done <- opRes{out: o, err: e}
+	}()
+
+	timer := time.NewTimer(st.timeout)
+	defer timer.Stop()
+
+	select {
+	case r := <-done:
+		return r.out, st.wrapOpErr(r.err)
+
+	case <-ctx.Done():
+		return nil, ctx.Err()
+
+	case <-timer.C:
+		re.Logger().Warn(
+			"service task timed out; its operation goroutine may still be running",
+			"task", st.Name(), "timeout", st.timeout)
+
+		return nil,
+			errs.New(
+				errs.M("service task %q timed out after %s",
+					st.Name(), st.timeout),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.D("service_task_id", st.ID()),
+				errs.D("timeout", st.timeout.String()))
+	}
+}
+
+// wrapOpErr wraps a non-nil operation error with ServiceTask context, or
+// returns nil for a nil error.
+func (st *ServiceTask) wrapOpErr(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	return errs.New(
+		errs.M("operation execution failed"),
+		errs.C(errorClass),
+		errs.E(err),
+		errs.D("service_task_name", st.Name()),
+		errs.D("service_task_id", st.ID()),
+		errs.D("operation_id", st.operation.ID()))
 }
 
 // -----------------------------------------------------------------------------
