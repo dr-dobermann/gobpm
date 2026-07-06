@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (pending impl) |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-06 |
 | Owner | Ruslan Gabitov |
@@ -236,9 +236,23 @@ New: `pkg/model/activities/service_task_timeout_test.go`.
 - Every FR/NFR covered by ≥1 named §6 test, all green under `-race`.
 - No behaviour change when `WithTimeout` is unset (existing ServiceTask tests stay green).
 - `make ci` green (tidy · lint · build · `-race` · diff-coverage ≥95% on touched files · govulncheck).
-- SRD-035 flips to Accepted. (ADR-021's Draft→Accepted is decided at the PR #1 merge point — see the branch note;
-  036–038 continue implementing it.)
+- SRD-035 flips to Accepted. **ADR-021 stays Draft** until all related SRDs (036–038) are grounded — so
+  code-grounding can still feed back into the design — then flips Accepted (owner decision).
 
 ## 10. Implementation summary (stage-by-stage actual landings + deltas vs draft)
 
-> ⚠️ TODO: fill AFTER landing (§8.1 stage commit SHA, §8.2 empirical findings vs this draft).
+### §10.1 Stages by commit (branch `feat/service-task-execution`)
+
+| Stage | Commit | Scope | Tests |
+|---|---|---|---|
+| M1 | `91d471f` | `WithTimeout` option (`service_task_options.go`: `SrvTaskOption` marker + `WithTimeout`) + `Exec` select-wrapper factored into `execOperation` / `wrapOpErr` (`service_task.go`) | `service_task_timeout_test.go` — 5 tests (completes · times-out + warning · ctx-cancel · zero-unbounded · leaked-goroutine-dropped), green under `-race` |
+
+### §10.2 Empirical findings — deltas vs the §3 draft
+
+- **Timer leak, fixed pre-code.** The initial `Exec` sketch used `time.After(st.timeout)`, which leaks the timer
+  until it fires; switched to `time.NewTimer(d)` + `defer timer.Stop()` (NFR-1) after the leak was caught in
+  review — before any code was written.
+- **Dead `Validate()` dropped.** A `srvTaskConfig.Validate()` (mirroring `sndTaskConfig`) was never called by the
+  type-switch dispatch, so it was removed as uncoverable dead code rather than test-covered.
+- **Verification.** `make ci` green — diff-coverage **100% of 64 changed coverable lines** (min 95%), lint 0
+  issues, `-race` clean, govulncheck clean.
