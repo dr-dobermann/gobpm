@@ -272,3 +272,14 @@ func TestOperation(t *testing.T) {
 			require.Nil(t, result)
 		})
 }
+
+// TestMessageOperationBindInputOnly: BindInputOnly binds the operation's input
+// message without running the implementation. With no input message it binds
+// nothing and returns (nil, nil), never touching the reader (SRD-036).
+func TestMessageOperationBindInputOnly(t *testing.T) {
+	op := service.MustOperation("op", nil, nil, nil)
+
+	in, err := op.BindInputOnly(context.Background(), nil)
+	require.NoError(t, err)
+	require.Nil(t, in)
+}

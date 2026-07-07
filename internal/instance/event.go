@@ -24,7 +24,9 @@ type trackEvent struct {
 	// taskID, for evTaskWaiting, is the engine-minted id of a parked UserTask. The
 	// loop records taskID → {track, node} so Take/Complete route back to it, and
 	// announces the task to the TaskDistributor (ADR-020, SRD-034). ev.node carries
-	// the UserTask node (built into a TaskInfo/TaskView by the loop).
+	// the UserTask node (built into a TaskInfo/TaskView by the loop). For
+	// evJobWaiting it carries the engine-minted JobID of a parked worker-dispatched
+	// ServiceTask instead, and ev.node the ServiceTask (SRD-036 §4.3).
 	taskID string
 	// flows, for evFork, are the extra outgoing flows (beyond the one the
 	// parent continues on) that the loop builds a new track for.
@@ -58,6 +60,7 @@ var trackEventKindNames = [...]string{
 	evBoundary:    "boundary",
 	evTerminate:   "terminate",
 	evTaskWaiting: "taskWaiting",
+	evJobWaiting:  "jobWaiting",
 }
 
 // String returns the lower-case event-kind name for logging.
@@ -122,4 +125,10 @@ const (
 	// announces it to the TaskDistributor; completion arrives later via a taskReq (ADR-020,
 	// SRD-034). It is the human-task peer of evWaiting — the UserTask registers no hub waiter.
 	evTaskWaiting
+	// evJobWaiting: a track reached a worker-dispatched ServiceTask and parked it (ev.taskID is
+	// the minted JobID, ev.node the ServiceTask). The loop binds the operation input from scope,
+	// enqueues a job on the WorkerDispatcher, and records jobID → track; the worker's terminal
+	// report arrives later via a jobReq and resumes the track (ADR-021, SRD-036). It is the
+	// external-worker peer of evTaskWaiting — the ServiceTask registers no hub waiter.
+	evJobWaiting
 )

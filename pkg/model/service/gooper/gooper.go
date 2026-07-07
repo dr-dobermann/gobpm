@@ -184,4 +184,15 @@ func (g *goOperation) Execute(
 	return out, nil
 }
 
+// BindInputOnly binds the optional input message from scope without running the
+// functor. A goOperation is an in-process closure and can't be worker-dispatched
+// (SRD-036 §2.3 build guard), so this exists only to satisfy the Operation
+// contract; it binds the input consistently with a message operation.
+func (g *goOperation) BindInputOnly(
+	ctx context.Context,
+	r service.DataReader,
+) (*data.ItemDefinition, error) {
+	return service.BindInput(ctx, r, g.inMessage)
+}
+
 var _ service.Operation = (*goOperation)(nil)

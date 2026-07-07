@@ -51,7 +51,7 @@ func TestEveryOptionOverridesItsDefault(t *testing.T) {
 	mb := membroker.New()
 	ee := goexpr.New()
 	az := allowall.New()
-	wd := localdispatcher.New(0)
+	wd := localdispatcher.New(nil, 0)
 
 	for _, o := range []Option{
 		WithLogger(lg), WithTracer(tr), WithMetricsRecorder(mr), WithClock(ck),

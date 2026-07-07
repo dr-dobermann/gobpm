@@ -50,6 +50,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/interactor"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
 // trackState represent the state of the whole track
@@ -350,6 +351,16 @@ func (t *track) checkNodeType(node flow.Node) error {
 		return t.parkHumanTask(node)
 	}
 
+	// A ServiceTask marked WithWorker is an external-worker wait node (SRD-036): it
+	// parks for a worker's report, not a hub-delivered event. Recognize it before
+	// the event-node path (it is not a flow.EventNode) and park it. An unmarked
+	// ServiceTask (WorkerTopic ok == false) runs in-process and falls through.
+	if ew, ok := node.(tasks.ExternalWorker); ok {
+		if _, isWorker := ew.WorkerTopic(); isWorker {
+			return t.parkServiceTask(node)
+		}
+	}
+
 	en, ok := node.(flow.EventNode)
 	if !ok {
 		return nil
@@ -435,6 +446,31 @@ func (t *track) parkHumanTask(node flow.Node) error {
 			track:  t,
 			node:   node,
 			taskID: t.taskID,
+		})
+	}
+
+	return nil
+}
+
+// parkServiceTask parks a worker-dispatched ServiceTask as an external-worker
+// wait node (SRD-036): it mints a JobID (embedding the instance id so a
+// completion routes back to this instance), enters TrackWaitForEvent, and emits
+// evJobWaiting so the loop binds the operation input and enqueues the job. The
+// track then waits on its evtCh for the worker's outcome, exactly like a UserTask
+// waits for a Complete. A ServiceTask is never an initial node (it always has an
+// incoming flow), so it is reached mid-run with the instance Active — the
+// construction (spawn) path parkHumanTask guards against is unreachable here.
+func (t *track) parkServiceTask(node flow.Node) error {
+	jobID := tasks.MakeJobID(t.instance.ID())
+
+	t.updateState(TrackWaitForEvent)
+
+	if t.instance.State() == Active {
+		t.instance.emit(trackEvent{
+			kind:   evJobWaiting,
+			track:  t,
+			node:   node,
+			taskID: string(jobID),
 		})
 	}
 

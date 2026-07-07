@@ -50,6 +50,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/interactor"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
+	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
 const (
@@ -200,6 +201,14 @@ func New(id string, opts ...Option) (*Thresher, error) {
 	// Take/Complete find the owning instance) and forwards to the embedder's
 	// TaskDistributor. Built after t so it can reference the registry (SRD-034).
 	t.taskDist = &routingDistributor{thr: t, next: cfg.TaskDistributor()}
+
+	// Bind the engine as the worker dispatcher's completion sink (when it accepts
+	// one) so a worker's Complete/Fail routes back to the owning instance by the id
+	// embedded in the job id (SRD-036 §4.5). A dispatcher that reaches the engine
+	// another way (a remote adapter) need not implement SinkBinder.
+	if binder, ok := cfg.WorkerDispatcher().(tasks.SinkBinder); ok {
+		binder.BindSink(t)
+	}
 
 	// The EventHub receives the engine's resolved runtime (&t.cfg implements
 	// renv.EngineRuntime) so the waiters it builds reach Clock / ExpressionEngine

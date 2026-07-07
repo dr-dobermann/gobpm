@@ -59,6 +59,15 @@ type Operation interface {
 	// the item to commit as the activity's output (nil if the operation
 	// produces none).
 	Execute(ctx context.Context, r DataReader) (*data.ItemDefinition, error)
+
+	// BindInputOnly binds the operation's input message from r without executing
+	// it, returning the bound input item (nil if the operation has no input
+	// message). A worker-dispatched ServiceTask uses it to build the job payload:
+	// the worker is the executor, so the operation contributes only its input
+	// contract (ADR-021 §2.5, SRD-036).
+	BindInputOnly(
+		ctx context.Context, r DataReader,
+	) (*data.ItemDefinition, error)
 }
 
 // A messageOperation is the canonical (BPMN) Operation kind: it defines
@@ -210,6 +219,15 @@ func (o *messageOperation) Execute(
 	}
 
 	return o.produceOutput(ctx, out)
+}
+
+// BindInputOnly binds the operation's input message from r without running the
+// implementation — the worker-dispatched path where the worker is the executor.
+func (o *messageOperation) BindInputOnly(
+	ctx context.Context,
+	r DataReader,
+) (*data.ItemDefinition, error) {
+	return BindInput(ctx, r, o.inMessage)
 }
 
 // produceOutput reconciles the implementation's result against the operation's

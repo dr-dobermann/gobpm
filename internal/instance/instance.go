@@ -34,6 +34,9 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/msgflow"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	engrenv "github.com/dr-dobermann/gobpm/pkg/renv"
+	// aliased: the loop's human-task registry local is named `tasks`, which would
+	// otherwise shadow the package name where the job map type is referenced.
+	wtasks "github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
 const (
@@ -89,6 +92,7 @@ type Instance struct {
 	parentEventProducer eventproc.EventProducer
 	events              chan trackEvent
 	taskReq             chan taskRequest
+	jobReq              chan jobRequest
 	sc                  instanceScope
 	convKeys            map[string]string
 	now                 func() time.Time
@@ -206,6 +210,7 @@ func New(
 		convKeys:            map[string]string{},
 		events:              make(chan trackEvent),
 		taskReq:             make(chan taskRequest),
+		jobReq:              make(chan jobRequest),
 		loopDone:            make(chan struct{}),
 		parentEventProducer: ep,
 		td:                  td,
@@ -636,6 +641,11 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	// parked at construction), read by a Take/Complete taskReq, and cleared when
 	// the task completes or its track ends. Loop-goroutine-only, like the maps above.
 	tasks := map[string]taskEntry{}
+	// jobs is the loop-owned worker-job registry (SRD-036): JobID → the parked
+	// worker-dispatched ServiceTask track. Populated on evJobWaiting (when the loop
+	// enqueues the job), read by a worker's jobReq to resume the track, and cleared
+	// when the job completes or its track ends. Loop-goroutine-only, like tasks.
+	jobs := map[wtasks.JobID]*track{}
 
 	// stopAll is forward-declared so spawn (which arms boundaries and faults the
 	// instance on an arm failure) can reference it; it is assigned below.
@@ -715,20 +725,7 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 			close(t.evtCh)
 		}
 
-		// After stop no track is dispatched to — a parked track is woken by its closed
-		// channel, not an evDeliver — so drop both maps; this also prevents a send on a
-		// closed evtCh.
-		clear(waiting)
-		clear(msgIdx)
-
-		// The position/join view is no longer consulted once terminating (joins do not fire
-		// during teardown); drop it too so it does not outlive the run (SRD-028 FR-1/FR-3).
-		clear(position)
-		clear(parked)
-
-		// Withdraw every parked UserTask and drop the registry — a terminating
-		// instance's tasks are no longer completable (SRD-034).
-		inst.withdrawAllTasks(tasks)
+		inst.dropLoopState(waiting, msgIdx, position, parked, tasks, jobs)
 	}
 
 	for _, t := range initial {
@@ -758,21 +755,57 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 				"track", eventTrackID(ev))
 
 			inst.applyEvent(ctx, ev, &active, &stopping,
-				waiting, msgIdx, position, parked, watchers, tasks, spawn, stopAll)
+				waiting, msgIdx, position, parked, watchers, tasks, jobs, spawn, stopAll)
 
 		case req := <-inst.taskReq:
 			// A human acting on a parked UserTask (Take/Complete). Serviced on the
 			// loop goroutine so authorization/validation, scope access, and the
 			// resume all stay single-writer (SRD-034 §4.1).
 			inst.handleTaskRequest(ctx, req, tasks, waiting, msgIdx)
+
+		case req := <-inst.jobReq:
+			// A worker's terminal report (Complete/Fail) for a parked ServiceTask.
+			// Serviced on the loop goroutine so the job→track resolution and the
+			// resume stay single-writer, mirroring taskReq (SRD-036 §4.5).
+			inst.handleJobCompletion(req, jobs, waiting, msgIdx)
 		}
 	}
 
+	inst.settleFinalState(stopping)
+}
+
+// dropLoopState tears down the loop-owned maps when the instance stops (stopAll):
+// after stop no track is dispatched to (a parked track is woken by its closed evtCh,
+// not an evDeliver), so waiting/msgIdx are dropped to prevent a send on a closed
+// channel (SRD-027 FR-7); the position/join view is no longer consulted (SRD-028
+// FR-1/FR-3); parked UserTasks are withdrawn (SRD-034); and the worker-job registry
+// is dropped — a terminating instance's jobs are no longer resumable, the enqueued
+// jobs left for the dispatcher to expire (SRD-036).
+func (inst *Instance) dropLoopState(
+	waiting map[string]struct{},
+	msgIdx map[string]*track,
+	position, parked map[string]flow.Node,
+	tasks map[string]taskEntry,
+	jobs map[wtasks.JobID]*track,
+) {
+	clear(waiting)
+	clear(msgIdx)
+	clear(position)
+	clear(parked)
+	inst.withdrawAllTasks(tasks)
+	clear(jobs)
+}
+
+// settleFinalState sets the instance's terminal state when loop() exits: Terminated
+// if a stop/terminate drove the exit, else Completed (all tracks ended normally).
+func (inst *Instance) settleFinalState(stopping bool) {
 	if stopping {
 		inst.setState(Terminated)
-	} else {
-		inst.setState(Completed)
+
+		return
 	}
+
+	inst.setState(Completed)
 }
 
 // applyEvent applies one track→loop event to the loop-owned state on the loop goroutine.
@@ -790,6 +823,7 @@ func (inst *Instance) applyEvent(
 	position, parked map[string]flow.Node,
 	watchers map[string][]*boundaryWatch,
 	tasks map[string]taskEntry,
+	jobs map[wtasks.JobID]*track,
 	spawn func(*track),
 	stopAll func(),
 ) {
@@ -815,6 +849,10 @@ func (inst *Instance) applyEvent(
 		// interrupting boundary or instance terminate) has its task withdrawn and
 		// dropped (SRD-034). A normal completion already removed it.
 		inst.cleanupTask(ctx, ev.track, tasks)
+		// a track that ended while owning a parked worker job drops its job entry
+		// (the enqueued job is left for the dispatcher to expire — the engine has
+		// no withdraw yet; a late report finds no track and is dropped). SRD-036.
+		cleanupJob(ev.track, jobs)
 		// the track's run() returned — its activity window (if any) is over, so
 		// tear down the boundaries that guarded it (SRD-029 FR-6).
 		inst.disarmBoundaries(ev.track.ID(), watchers)
@@ -841,21 +879,16 @@ func (inst *Instance) applyEvent(
 			position, parked, watchers, spawn, stopAll, *stopping)
 
 	case evWaiting:
-		// the track parked on its evtCh and is ready to receive — record it as
-		// parked-and-undelivered and index its Message defs → track (SRD-027 FR-4/FR-5/
-		// FR-8). Not during shutdown: a parked track is woken by its closed evtCh, not an
-		// evDeliver, and recording it would risk a send on the closed channel.
-		if !*stopping {
-			waiting[ev.track.ID()] = struct{}{}
-
-			for _, id := range ev.msgDefIDs {
-				msgIdx[id] = ev.track
-			}
-		}
+		inst.onWaiting(ev, *stopping, waiting, msgIdx)
 
 	case evTaskWaiting:
 		// a UserTask parked as a human task — register + announce it (SRD-034).
 		inst.onTaskWaiting(ctx, ev, *stopping, waiting, tasks)
+
+	case evJobWaiting:
+		// a worker-dispatched ServiceTask parked — bind its input, enqueue the job,
+		// and record it so the worker's report can resume it (SRD-036).
+		inst.onJobWaiting(ctx, ev, *stopping, waiting, jobs)
 
 	case evDeliver:
 		inst.dispatchToParked(ctx, ev, waiting, msgIdx)
@@ -872,6 +905,27 @@ func (inst *Instance) applyEvent(
 		// each track's context to interrupt a running activity. It does NOT touch active:
 		// the terminate track's own evEnded (FIFO-after this event) accounts for it.
 		stopAll()
+	}
+}
+
+// onWaiting records a track that parked on its evtCh as parked-and-undelivered and
+// indexes its Message catch defs → track (SRD-027 FR-4/FR-5/FR-8). Skipped during
+// shutdown: a parked track is then woken by its closed evtCh, not an evDeliver, and
+// recording it would risk a send on the closed channel. Runs on the loop goroutine.
+func (inst *Instance) onWaiting(
+	ev trackEvent,
+	stopping bool,
+	waiting map[string]struct{},
+	msgIdx map[string]*track,
+) {
+	if stopping {
+		return
+	}
+
+	waiting[ev.track.ID()] = struct{}{}
+
+	for _, id := range ev.msgDefIDs {
+		msgIdx[id] = ev.track
 	}
 }
 

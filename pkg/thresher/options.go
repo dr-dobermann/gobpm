@@ -256,7 +256,7 @@ func defaultConfig() thresherConfig {
 		msgBroker:  membroker.New(),
 		exprEngine: goexpr.New(),
 		authz:      allowall.New(),
-		dispatcher: localdispatcher.New(0),
+		dispatcher: localdispatcher.New(nil, 0),
 		taskDist:   interactor.NopDistributor(),
 	}
 }

@@ -51,18 +51,56 @@ func Default() *Runtime {
 		broker:     membroker.New(),
 		expr:       goexpr.New(),
 		authz:      allowall.New(),
-		dispatcher: localdispatcher.New(0),
+		dispatcher: localdispatcher.New(nil, 0),
 	}
 }
 
-// WithClock overrides the clock and returns the Runtime for chaining.
-func (r *Runtime) WithClock(c clock.Clock) *Runtime { r.clk = c; return r }
+// The override setters below all guard against a nil argument by keeping the
+// bundled default rather than erasing it. These are fluent (return *Runtime for
+// chaining), so they cannot report an error; a silently-erased default would
+// surface only later as a nil-deref far from the call (the FIX-020 bug class — a
+// setter must not let bad input replace a working default). The public option API
+// (thresher.WithXxx) rejects a nil with an explicit error instead.
 
-// WithExpressionEngine overrides the expression engine and returns the Runtime.
-func (r *Runtime) WithExpressionEngine(e expression.Engine) *Runtime { r.expr = e; return r }
+// WithClock overrides the clock and returns the Runtime for chaining. A nil clock
+// is ignored (the bundled default is kept).
+func (r *Runtime) WithClock(c clock.Clock) *Runtime {
+	if c != nil {
+		r.clk = c
+	}
 
-// WithLogger overrides the logger and returns the Runtime.
-func (r *Runtime) WithLogger(l observability.Logger) *Runtime { r.logger = l; return r }
+	return r
+}
+
+// WithExpressionEngine overrides the expression engine and returns the Runtime. A
+// nil engine is ignored (the bundled default is kept).
+func (r *Runtime) WithExpressionEngine(e expression.Engine) *Runtime {
+	if e != nil {
+		r.expr = e
+	}
+
+	return r
+}
+
+// WithLogger overrides the logger and returns the Runtime. A nil logger is ignored
+// (the bundled default is kept).
+func (r *Runtime) WithLogger(l observability.Logger) *Runtime {
+	if l != nil {
+		r.logger = l
+	}
+
+	return r
+}
+
+// WithWorkerDispatcher overrides the worker dispatcher and returns the Runtime. A
+// nil dispatcher is ignored (the bundled default is kept).
+func (r *Runtime) WithWorkerDispatcher(d tasks.WorkerDispatcher) *Runtime {
+	if d != nil {
+		r.dispatcher = d
+	}
+
+	return r
+}
 
 // Logger returns the configured logger.
 func (r *Runtime) Logger() observability.Logger { return r.logger }

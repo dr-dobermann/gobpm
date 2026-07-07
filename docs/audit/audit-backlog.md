@@ -130,3 +130,46 @@ and **ADR-004** (runtime server). Do it when the server actually wires `runtime`
 **Status**: Parked 2026-06-30 (pulled from the FIX-015 CI/build-hardening
 cluster; the other four — §2.12, §3.15, §3.16, §3.18 — are mechanical and
 proceed as FIX-015).
+
+---
+
+## AB-005 — Structured ItemDefinition composition / decomposition (multi-variable Data{Input,Output}Associations)
+
+- **Source**: surfaced during the **SRD-036** Service Task external-worker
+  design (input/output marshalling) — "how does a worker get more than one
+  process variable?".
+- **Code**: `pkg/model/service/operation.go` `BindInput` resolves a **single**
+  scope variable by the message item's ID
+  (`r.GetDataByID(msg.Item().ID())` → `msg.Item().Structure().Update(...)`);
+  `pkg/model/bpmncommon/message.go` `Message` carries a single
+  `item *data.ItemDefinition`; `pkg/model/data/item.go` `ItemDefinition` already
+  supports a composite `Structure()` value and `isCollection`.
+
+**Problem.** An Operation's input/output is a single Message → a single
+`ItemDefinition`, and gobpm binds it from **one** scope variable by ID. It does
+**not** (a) assemble several distinct process variables into one structured
+input item (a **`DataInputAssociation`** with multiple sources), nor (b) spread a
+structured output item's fields back out into several process variables (a
+**`DataOutputAssociation`** with multiple targets). So a ServiceTask/worker that
+needs several process variables must have them **pre-combined** into one
+structured variable, and cannot scatter a structured result across variables.
+
+**What's needed (bidirectional).**
+1. **Compose** — put multiple `data.Data` values (variables and other data) as
+   items **into** a structured `ItemDefinition` (gather → structure), to build a
+   worker's single input message from many process variables.
+2. **Spread** — destructure a structured `ItemDefinition`'s fields **out** into
+   separate process variables (structure → scatter), to land a worker's single
+   output message into many process variables.
+
+**Why it's not a quick fix.** This changes the **data-flow semantics** (how
+`ItemDefinition`s compose from / decompose to process variables) — a model /
+contract change touching the data layer, the association model, and operation
+binding — not a defect patch.
+
+**Governing docs to amend.** **ADR-011** (Process Data Flow — the data-binding
+model), plus a dedicated landing SRD.
+
+**Status**: Parked 2026-07-06. `Job.Input` stays a single `*data.ItemDefinition`
+(the operation contract is one message); this composition/spread is a data-layer
+concern **orthogonal** to the SRD-036 job-queue rework.

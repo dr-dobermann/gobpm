@@ -9,6 +9,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
+	wtasks "github.com/dr-dobermann/gobpm/pkg/tasks"
 	"github.com/stretchr/testify/require"
 )
 
@@ -82,6 +83,7 @@ func TestApplyEventMoved(t *testing.T) {
 		map[string]struct{}{}, map[string]*track{}, position, parked,
 		map[string][]*boundaryWatch{},
 		map[string]taskEntry{},
+		map[wtasks.JobID]*track{},
 		func(*track) {}, func() {})
 
 	require.Equal(t, a, position[tr.ID()], "position advanced to the new node")
@@ -208,6 +210,7 @@ func TestApplyEventParkedDuringShutdown(t *testing.T) {
 			map[string]struct{}{}, map[string]*track{}, position, parked,
 			map[string][]*boundaryWatch{},
 			map[string]taskEntry{},
+			map[wtasks.JobID]*track{},
 			func(*track) {}, func() {})
 	})
 
@@ -237,6 +240,7 @@ func TestApplyEventParkedAfterMerge(t *testing.T) {
 			map[string]struct{}{}, map[string]*track{}, position, parked,
 			map[string][]*boundaryWatch{},
 			map[string]taskEntry{},
+			map[wtasks.JobID]*track{},
 			func(*track) {}, func() {})
 	})
 
