@@ -41,6 +41,9 @@ import (
 type ServiceTask struct {
 	operation   service.Operation
 	errorMapper tasks.ErrorMapper
+	// outputMapping shapes a worker's raw Complete body into the output
+	// (WithOutputMapping, SRD-037 FR-7); empty = direct reconciliation.
+	outputMapping []tasks.OutputRule
 	// outcome stashes the worker's report (set by ProcessEvent, read by Exec on
 	// resume — same goroutine). Runtime-only; nil on a fresh Clone (SRD-037 §3.5).
 	outcome        *tasks.WorkerOutcome
@@ -70,6 +73,7 @@ type ServiceTask struct {
 //   - activities.WithWorker
 //   - activities.WithErrorMapper
 //   - activities.WithStatus
+//   - activities.WithOutputMapping
 //   - foundation.WithID
 //   - foundation.WithDoc
 func NewServiceTask(
@@ -120,13 +124,15 @@ func NewServiceTask(
 				errs.D("worker_topic", string(sc.workerTopic)))
 	}
 
-	// WithErrorMapper / WithStatus govern the worker outcome — meaningless on an
-	// in-process ServiceTask, so require WithWorker (SRD-037 §3.4).
-	if sc.workerTopic == "" && (sc.errorMapper != nil || sc.statusVar != "") {
+	// WithErrorMapper / WithStatus / WithOutputMapping govern the worker outcome —
+	// meaningless on an in-process ServiceTask, so require WithWorker (SRD-037 §3.4).
+	if sc.workerTopic == "" &&
+		(sc.errorMapper != nil || sc.statusVar != "" ||
+			len(sc.outputMapping) > 0) {
 		return nil,
 			errs.New(
-				errs.M("WithErrorMapper/WithStatus require a worker-dispatched "+
-					"ServiceTask (WithWorker); %q has none", name),
+				errs.M("WithErrorMapper/WithStatus/WithOutputMapping require a "+
+					"worker-dispatched ServiceTask (WithWorker); %q has none", name),
 				errs.C(errorClass, errs.InvalidParameter))
 	}
 
@@ -142,6 +148,7 @@ func NewServiceTask(
 			timeout:         sc.timeout,
 			workerTopic:     sc.workerTopic,
 			errorMapper:     sc.errorMapper,
+			outputMapping:   sc.outputMapping,
 			statusVar:       sc.statusVar,
 			statusOverwrite: sc.statusOverwrite,
 		},
@@ -178,6 +185,7 @@ func (st *ServiceTask) Clone() (flow.Node, error) {
 		timeout:         st.timeout,
 		workerTopic:     st.workerTopic,
 		errorMapper:     st.errorMapper,
+		outputMapping:   st.outputMapping,
 		statusVar:       st.statusVar,
 		statusOverwrite: st.statusOverwrite,
 	}, nil
@@ -350,28 +358,48 @@ func (st *ServiceTask) execWorkerOutcome(
 		return st.classifyFault(ctx, re, wo.Fault())
 
 	default: // OutcomeComplete
-		return st.bindOutput(re, wo.Output())
+		return st.bindOutput(ctx, re, wo.Output())
 	}
 }
 
-// bindOutput commits a completion's output item to the execution frame and
-// advances. (SRD-037 M5 inserts WithOutputMapping shaping before the bind.)
+// bindOutput commits a completion's output and advances. With WithOutputMapping
+// (SRD-037 FR-7) the raw body is shaped into the declared output variables (a
+// required path the body doesn't satisfy faults the task); otherwise the output
+// item is committed directly (the M3 direct-reconciliation default).
 func (st *ServiceTask) bindOutput(
+	ctx context.Context,
 	re renv.RuntimeEnvironment,
 	output *data.ItemDefinition,
 ) ([]*flow.SequenceFlow, error) {
-	if output != nil {
-		res := data.MustParameter(output.ID(),
-			data.MustItemAwareElement(output, data.ReadyDataState))
+	if output == nil {
+		return st.Outgoing(), nil
+	}
 
-		if err := re.Put(res); err != nil {
+	res := []data.Data{data.MustParameter(output.ID(),
+		data.MustItemAwareElement(output, data.ReadyDataState))}
+
+	if len(st.outputMapping) > 0 {
+		mapped, err := tasks.ApplyOutputMapping(
+			ctx, re.ExpressionEngine(), st.outputMapping, output)
+		if err != nil {
 			return nil,
 				errs.New(
-					errs.M("couldn't commit worker result"),
-					errs.C(errorClass),
+					errs.M("service task %q output mapping failed", st.Name()),
+					errs.C(errorClass, errs.OperationFailed),
 					errs.E(err),
 					errs.D("service_task_id", st.ID()))
 		}
+
+		res = mapped
+	}
+
+	if err := re.Put(res...); err != nil {
+		return nil,
+			errs.New(
+				errs.M("couldn't commit worker result"),
+				errs.C(errorClass),
+				errs.E(err),
+				errs.D("service_task_id", st.ID()))
 	}
 
 	return st.Outgoing(), nil

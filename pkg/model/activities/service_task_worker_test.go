@@ -458,3 +458,114 @@ func TestServiceTaskWorkerFaultMappedToStatus(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, flows)
 }
+
+// bodyValueExpr builds a FormalExpression that returns the body's value — the
+// shape a WithOutputMapping rule's Path takes.
+func bodyValueExpr(t *testing.T) data.FormalExpression {
+	t.Helper()
+
+	fe, err := goexpr.New(nil,
+		data.MustItemDefinition(values.NewVariable("")),
+		func(ctx context.Context, ds data.Source) (data.Value, error) {
+			b, err := ds.Find(ctx, "body")
+			if err != nil {
+				return nil, err
+			}
+
+			return values.NewVariable(b.Value().Get(ctx)), nil
+		})
+	require.NoError(t, err)
+
+	return fe
+}
+
+// TestServiceTaskWorkerOutputMappingShapesBody covers FR-7: WithOutputMapping
+// extracts the raw body into a declared output variable.
+func TestServiceTaskWorkerOutputMappingShapesBody(t *testing.T) {
+	st := workerTaskOpts(t, activities.WithOutputMapping(
+		tasks.OutputRule{Path: bodyValueExpr(t), Var: "orderId"}))
+
+	body := data.MustItemDefinition(values.NewVariable("order-42"),
+		foundation.WithID("body"))
+	require.NoError(t, st.ProcessEvent(context.Background(),
+		tasks.NewWorkerComplete("job-1", body)))
+
+	var put data.Data
+
+	re := mockrenv.NewMockRuntimeEnvironment(t)
+	re.EXPECT().ExpressionEngine().Return(exprengine.New())
+	re.EXPECT().Put(mock.Anything).RunAndReturn(func(dd ...data.Data) error {
+		put = dd[0]
+
+		return nil
+	})
+
+	flows, err := st.Exec(context.Background(), re)
+	require.NoError(t, err)
+	require.Empty(t, flows)
+	require.Equal(t, "orderId", put.Name())
+	require.Equal(t, "order-42", put.Value().Get(context.Background()))
+}
+
+// missingDatumExpr reads a datum the fault/body source never exposes, so its
+// evaluation always errors (used to force a required-path failure).
+func missingDatumExpr(t *testing.T) data.FormalExpression {
+	t.Helper()
+
+	fe, err := goexpr.New(nil,
+		data.MustItemDefinition(values.NewVariable("")),
+		func(ctx context.Context, ds data.Source) (data.Value, error) {
+			d, err := ds.Find(ctx, "nested")
+			if err != nil {
+				return nil, err
+			}
+
+			return values.NewVariable(d), nil
+		})
+	require.NoError(t, err)
+
+	return fe
+}
+
+// TestServiceTaskWorkerOutputMappingRequiredFaults covers FR-7: a required output
+// path the body doesn't satisfy faults the task.
+func TestServiceTaskWorkerOutputMappingRequiredFaults(t *testing.T) {
+	st := workerTaskOpts(t, activities.WithOutputMapping(
+		tasks.OutputRule{Path: missingDatumExpr(t), Var: "v", Required: true}))
+
+	// the required path reads a datum the body doesn't provide → unsatisfied.
+	require.NoError(t, st.ProcessEvent(context.Background(),
+		tasks.NewWorkerComplete("job-1",
+			data.MustItemDefinition(values.NewVariable("x")))))
+
+	re := mockrenv.NewMockRuntimeEnvironment(t)
+	re.EXPECT().ExpressionEngine().Return(exprengine.New())
+
+	_, err := st.Exec(context.Background(), re)
+	require.ErrorContains(t, err, "output mapping failed")
+}
+
+// TestWithOutputMappingRejectsInvalidRule: a nil Path or empty Var is rejected.
+func TestWithOutputMappingRejectsInvalidRule(t *testing.T) {
+	_, err := activities.NewServiceTask("svc",
+		service.MustOperation("op", nil, nil, nil),
+		activities.WithWorker("t"),
+		activities.WithOutputMapping(tasks.OutputRule{Var: "v"})) // nil Path
+	require.Error(t, err)
+
+	_, err = activities.NewServiceTask("svc",
+		service.MustOperation("op", nil, nil, nil),
+		activities.WithWorker("t"),
+		activities.WithOutputMapping(
+			tasks.OutputRule{Path: bodyValueExpr(t), Var: "  "})) // empty Var
+	require.Error(t, err)
+}
+
+// TestWithOutputMappingRejectsNonWorker: WithOutputMapping requires WithWorker.
+func TestWithOutputMappingRejectsNonWorker(t *testing.T) {
+	_, err := activities.NewServiceTask("svc",
+		service.MustOperation("op", nil, nil, nil),
+		activities.WithOutputMapping(
+			tasks.OutputRule{Path: bodyValueExpr(t), Var: "v"}))
+	require.ErrorContains(t, err, "require a")
+}

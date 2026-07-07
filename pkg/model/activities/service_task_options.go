@@ -15,6 +15,7 @@ type srvTaskConfig struct {
 	errorMapper     tasks.ErrorMapper
 	workerTopic     tasks.Topic
 	statusVar       string
+	outputMapping   []tasks.OutputRule
 	timeout         time.Duration
 	statusOverwrite bool
 }
@@ -98,6 +99,33 @@ func WithStatus(statusName string, overwrite bool) SrvTaskOption {
 
 		c.statusVar = statusName
 		c.statusOverwrite = overwrite
+
+		return nil
+	}
+}
+
+// WithOutputMapping shapes a worker's raw Complete response body into the
+// ServiceTask's output via {body-path → output variable} rules (ADR-021 §2.5,
+// SRD-037 FR-7). Absent a mapping, the Complete payload is taken as the output
+// directly. Each rule needs a non-nil Path and a non-empty Var. Valid only on a
+// worker-dispatched ServiceTask (checked at NewServiceTask).
+func WithOutputMapping(rules ...tasks.OutputRule) SrvTaskOption {
+	return func(c *srvTaskConfig) error {
+		for i, r := range rules {
+			if r.Path == nil {
+				return errs.New(
+					errs.M("WithOutputMapping: rule %d has a nil Path", i),
+					errs.C(errorClass, errs.EmptyNotAllowed))
+			}
+
+			if strings.TrimSpace(r.Var) == "" {
+				return errs.New(
+					errs.M("WithOutputMapping: rule %d has an empty Var", i),
+					errs.C(errorClass, errs.EmptyNotAllowed))
+			}
+		}
+
+		c.outputMapping = rules
 
 		return nil
 	}
