@@ -2,13 +2,13 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (pending impl) |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-06 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-021 v.1 Service Task Execution Model](../design/ADR-021-service-task-execution-model.md) §2.1–§2.5 |
 
-> **Draft** — second of four SRDs landing [ADR-021 v.1](../design/ADR-021-service-task-execution-model.md)
+> **Accepted** — second of four SRDs landing [ADR-021 v.1](../design/ADR-021-service-task-execution-model.md)
 > (**M2 + M3** of M1–M8). Lands the **external-worker foundation**: **M2** redefines the reserved
 > `WorkerDispatcher` seam from a blocking dispatch into an **asynchronous fetch-and-lock job queue** and reworks
 > the in-memory `localdispatcher` into a **job store**; **M3** makes a `WithWorker(topic)` ServiceTask a
@@ -378,4 +378,28 @@ options type-switch are reused unchanged.
 
 ## 10. Implementation summary (stage-by-stage actual landings + deltas vs draft)
 
-> ⚠️ TODO: fill AFTER landing (§10.1 stage commit SHAs for M2/M3, §10.2 empirical findings vs this draft).
+### 10.1 Stage commits (branch `feat/service-task-execution`)
+
+| Stage | Commit | Scope | Key tests |
+|---|---|---|---|
+| M2 | `237d6fc` | `WorkerDispatcher` job-queue interface + `localdispatcher` job store (topic queue, per-job lock/expiry, holder-only `ExtendLock` + `maxLockDuration` cap, local worker pool) + `WorkerOutcome` / `JobCompletionSink` types + wiring | `TestLocalDispatcher{EnqueueFetchComplete, LockExpiryRefetch, ExtendLockHolderOnlyAndCap, FetchOnlyRequestedTopics, …}` |
+| M3 | `24cfa36` | `WithWorker` + `parkServiceTask` (`checkNodeType` branch, `evJobWaiting`) + loop `onJobWaiting` (bind + `Enqueue`) + `ReportJobCompletion` routing (Thresher sink + jobID-embedded instance id) + `ServiceTask.ProcessEvent`/`Exec` resume-bind + message-operation build guard | `TestServiceTaskWorker{ParksAndEnqueues, CompleteResumesAndBinds, FailFaults, ExecutorIgnored, ExecBindsCompletedOutput, ExecFaultsOnCause, BoundaryInterruptDropsJob, EnqueueFailureFaults, BindInputFailureFaults}`, `TestReportJobCompletion{RoutesToParkedTrack, CanceledContext}`, `TestThresherReportJobCompletionRoutes`, `TestServiceTaskWithWorkerRejectsGoOperation`, `TestMakeJobIDRoundTrip`, `TestDefaultRuntimeWorkerDispatcherIsJobStore` |
+
+`make ci` green — lint/vet/build/`-race` clean, govulncheck clean, diff-coverage 97.7% of 519 changed lines (min 95%).
+
+### 10.2 Empirical findings — where the implementation refined the §3/§4 draft
+
+Both refinements preserve every required invariant (single-writer NFR-2, park/resume, dehydration-friendliness NFR-1) and are recorded here rather than by rewriting §3/§4 (one-shot doc). The draft used the UserTask-analogy prose; the code sharpened it.
+
+- **Bind + `Enqueue` moved from park (track) to the loop's `onJobWaiting` handler (FR-4, §4.3).** The draft placed input binding + `Enqueue` inside `parkExternalServiceTask` on the track. The implementation splits it: `parkServiceTask` (`internal/instance/track.go`) only mints the `JobID`, parks (`TrackWaitForEvent`), and emits `evJobWaiting`; the loop's `onJobWaiting` (`internal/instance/jobs.go`) opens a frame, binds the input, and `Enqueue`s — on the loop goroutine. **Why:** scope access (the frame) stays single-writer on the loop, exactly like `authorizeTask` for a UserTask; binding on the parked track's goroutine would cross that boundary. A bind/enqueue failure delivers a synthetic `Fail` outcome so the task faults rather than parking forever.
+  - Two supporting seams were added (not named in the draft): `service.Operation.BindInputOnly(ctx, r)` — bind the input message without running the executor (the worker is the executor) — on both `messageOperation` and `goOperation`; and a `tasks.ExternalWorker` interface (`WorkerTopic` + `BindJobInput`) that `checkNodeType` type-asserts, decoupling `internal/instance` from the concrete `ServiceTask`.
+
+- **Report re-entry uses a dedicated `jobReq` channel + `handleJobCompletion`, not `evDeliver`; routing is by an instance id embedded in the `JobID`, not a separate registry (FR-6, §3.4/§4.1).** The draft described `inst.emit(evDeliver, &outcome, track)` and a `Job.ID → (instanceID, trackID)` registry populated at `Enqueue`. The implementation mirrors the UserTask completion path instead: `Instance.ReportJobCompletion(ctx, *WorkerOutcome)` (a pointer, not the §3.4 value) hands the outcome to the loop over a dedicated `jobReq` channel (like `taskReq`), and `handleJobCompletion` resolves it against a loop-owned `jobs map[JobID]*track` and delivers on the track's `evtCh`. Cross-instance routing (one shared dispatcher, many instances) is solved by embedding the owning instance id in the `JobID` (`tasks.MakeJobID` / `JobID.InstanceID`): the Thresher implements `tasks.JobCompletionSink`, is bound at `New` via `SinkBinder`, and forwards to the owning instance — the WorkerDispatcher analogue of the UserTask `routingDistributor`. **Why:** a completion is a distinct control signal, not a generic hub event; the dedicated channel keeps it explicit, and the self-routing `JobID` needs no separate registry.
+
+### 10.3 Out-of-scope hardening folded in
+
+- The `internal/enginert` fluent override setters (`WithClock` / `WithLogger` / `WithExpressionEngine` / `WithWorkerDispatcher`) were hardened to ignore a nil argument and keep the bundled default rather than erasing it — the FIX-020 bug class (a public setter must not let bad input silently replace a working default). A fluent setter cannot report an error, so keep-default is the honoring; the public option API (`thresher.WithWorkerDispatcher`) already rejects nil with an explicit error.
+
+### 10.4 Coverage-gate note
+
+The diff-coverage gate is measured **per-package** (`make test-all` runs `go test -coverprofile ./...` without `-coverpkg`). The `ServiceTask` worker methods (`execWorkerOutcome`, `ProcessEvent`, the `Exec` worker branch) and `Operation.BindInputOnly` are exercised end-to-end by the `internal/instance` wait-node tests, but that cross-package coverage is not attributed to the `activities` / `service` packages. Same-package unit tests were therefore added (`service_task_worker_test.go` `Exec`/`ProcessEvent` cases; `operation_test.go` / `gooper_test.go` `BindInputOnly`) so each package's own coverage carries these methods and the per-package gate holds.
