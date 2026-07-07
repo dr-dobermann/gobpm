@@ -116,7 +116,7 @@ func (inst *Instance) onJobWaiting(
 		// instance surfaces it instead of parking forever with no job. The track was
 		// never registered (below), so deliver straight to its buffered evtCh where
 		// the loop is the sole sender; the track wakes and Exec faults. SRD-036 §4.3.
-		ev.track.evtCh <- tasks.NewWorkerFail(jobID, err)
+		ev.track.evtCh <- tasks.NewWorkerFault(jobID, tasks.Fault{Cause: err})
 
 		return
 	}

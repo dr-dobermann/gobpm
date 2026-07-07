@@ -2,6 +2,7 @@ package activities
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/eventproc"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
@@ -37,13 +39,19 @@ import (
 // defined by Message referred to by the outMessageRef attribute of the
 // Operation.
 type ServiceTask struct {
-	operation       service.Operation
-	outcomeErr      error
-	completedOutput *data.ItemDefinition
-	implementation  string
-	workerTopic     tasks.Topic
+	operation   service.Operation
+	errorMapper tasks.ErrorMapper
+	// outcome stashes the worker's report (set by ProcessEvent, read by Exec on
+	// resume — same goroutine). Runtime-only; nil on a fresh Clone (SRD-037 §3.5).
+	outcome        *tasks.WorkerOutcome
+	implementation string
+	workerTopic    tasks.Topic
+	// statusVar / statusOverwrite are the WithStatus config: the task-scoped
+	// variable a Business Status writes, and whether it may overwrite (SRD-037 FR-5).
+	statusVar string
 	task
-	timeout time.Duration
+	timeout         time.Duration
+	statusOverwrite bool
 }
 
 // NewServiceTask creates a new service task named name and operation as
@@ -60,6 +68,8 @@ type ServiceTask struct {
 //   - activities.WithRoles
 //   - activities.WithTimeout
 //   - activities.WithWorker
+//   - activities.WithErrorMapper
+//   - activities.WithStatus
 //   - foundation.WithID
 //   - foundation.WithDoc
 func NewServiceTask(
@@ -89,7 +99,9 @@ func NewServiceTask(
 	baseOpts := make([]options.Option, 0, len(taskOpts))
 	for _, o := range taskOpts {
 		if sto, ok := o.(SrvTaskOption); ok {
-			sto(&sc)
+			if err := sto(&sc); err != nil {
+				return nil, err
+			}
 
 			continue
 		}
@@ -108,17 +120,30 @@ func NewServiceTask(
 				errs.D("worker_topic", string(sc.workerTopic)))
 	}
 
+	// WithErrorMapper / WithStatus govern the worker outcome — meaningless on an
+	// in-process ServiceTask, so require WithWorker (SRD-037 §3.4).
+	if sc.workerTopic == "" && (sc.errorMapper != nil || sc.statusVar != "") {
+		return nil,
+			errs.New(
+				errs.M("WithErrorMapper/WithStatus require a worker-dispatched "+
+					"ServiceTask (WithWorker); %q has none", name),
+				errs.C(errorClass, errs.InvalidParameter))
+	}
+
 	t, err := newTask(name, baseOpts...)
 	if err != nil {
 		return nil, err
 	}
 
 	return &ServiceTask{
-			task:           *t,
-			implementation: operation.Type(),
-			operation:      operation,
-			timeout:        sc.timeout,
-			workerTopic:    sc.workerTopic,
+			task:            *t,
+			implementation:  operation.Type(),
+			operation:       operation,
+			timeout:         sc.timeout,
+			workerTopic:     sc.workerTopic,
+			errorMapper:     sc.errorMapper,
+			statusVar:       sc.statusVar,
+			statusOverwrite: sc.statusOverwrite,
 		},
 		nil
 }
@@ -147,11 +172,14 @@ func (st *ServiceTask) Clone() (flow.Node, error) {
 	}
 
 	return &ServiceTask{
-		task:           t,
-		implementation: st.implementation,
-		operation:      st.operation.Clone(),
-		timeout:        st.timeout,
-		workerTopic:    st.workerTopic,
+		task:            t,
+		implementation:  st.implementation,
+		operation:       st.operation.Clone(),
+		timeout:         st.timeout,
+		workerTopic:     st.workerTopic,
+		errorMapper:     st.errorMapper,
+		statusVar:       st.statusVar,
+		statusOverwrite: st.statusOverwrite,
 	}, nil
 }
 
@@ -185,9 +213,9 @@ func (st *ServiceTask) Exec(
 
 	// A worker-dispatched ServiceTask runs Exec only on RESUME — checkNodeType
 	// parks it (binding input + enqueuing a job) before the in-process path is
-	// ever reached, so here we bind the worker's reported outcome (SRD-036).
+	// ever reached, so here we classify + apply the worker's outcome (SRD-037).
 	if st.workerTopic != "" {
-		return st.execWorkerOutcome(re)
+		return st.execWorkerOutcome(ctx, re)
 	}
 
 	op := st.operation.Clone()
@@ -298,25 +326,43 @@ func (st *ServiceTask) wrapOpErr(err error) error {
 		errs.D("operation_id", st.operation.ID()))
 }
 
-// execWorkerOutcome finishes a worker-dispatched ServiceTask on resume: it binds
-// the worker's output (stashed by ProcessEvent) to the execution frame and
-// advances, or faults with the reported cause (SRD-036 §3.5). Retry of a
-// technical fault arrives in SRD-038; here a fault is terminal.
+// execWorkerOutcome classifies + applies the worker's stashed outcome on resume
+// (SRD-037 §3.5): a completion binds the output; a Business Error raises a BPMN
+// error caught by a boundary; a Business Status writes the WithStatus variable and
+// completes; a raw fault is run through the ErrorMapper. Runs on the track resume
+// goroutine, so re's expression engine + scope are available (no goroutine, §4.1).
 func (st *ServiceTask) execWorkerOutcome(
+	ctx context.Context,
 	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
-	if st.outcomeErr != nil {
-		return nil,
-			errs.New(
-				errs.M("service task %q worker reported a failure", st.Name()),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.E(st.outcomeErr),
-				errs.D("service_task_id", st.ID()))
-	}
+	wo := st.outcome
 
-	if st.completedOutput != nil {
-		res := data.MustParameter(st.completedOutput.ID(),
-			data.MustItemAwareElement(st.completedOutput, data.ReadyDataState))
+	switch wo.Kind() {
+	case tasks.OutcomeBpmnError:
+		code, message := wo.BpmnError()
+
+		return st.raiseBpmnError(code, message)
+
+	case tasks.OutcomeStatus:
+		return st.writeStatus(ctx, re, wo.StatusValue())
+
+	case tasks.OutcomeFault:
+		return st.classifyFault(ctx, re, wo.Fault())
+
+	default: // OutcomeComplete
+		return st.bindOutput(re, wo.Output())
+	}
+}
+
+// bindOutput commits a completion's output item to the execution frame and
+// advances. (SRD-037 M5 inserts WithOutputMapping shaping before the bind.)
+func (st *ServiceTask) bindOutput(
+	re renv.RuntimeEnvironment,
+	output *data.ItemDefinition,
+) ([]*flow.SequenceFlow, error) {
+	if output != nil {
+		res := data.MustParameter(output.ID(),
+			data.MustItemAwareElement(output, data.ReadyDataState))
 
 		if err := re.Put(res); err != nil {
 			return nil,
@@ -329,6 +375,122 @@ func (st *ServiceTask) execWorkerOutcome(
 	}
 
 	return st.Outgoing(), nil
+}
+
+// raiseBpmnError returns a *events.BpmnError as the resume error, so the track
+// fails with it and the loop's matchErrorBoundary routes it to a matching Error
+// boundary by code (SRD-037 FR-4). NewBpmnError errors only on an empty code —
+// which a Business Error precludes — propagated defensively as a technical fault.
+func (st *ServiceTask) raiseBpmnError(
+	code, message string,
+) ([]*flow.SequenceFlow, error) {
+	var cause error
+	if message != "" {
+		cause = errors.New(message)
+	}
+
+	be, err := events.NewBpmnError(code, cause)
+	if err != nil {
+		return nil,
+			errs.New(
+				errs.M("service task %q: invalid business-error code", st.Name()),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err),
+				errs.D("service_task_id", st.ID()))
+	}
+
+	return nil, be
+}
+
+// writeStatus writes value to the WithStatus variable and completes normally. A
+// Status outcome with no WithStatus configured is a runtime fault; overwrite=false
+// with a pre-existing variable is a collision fault — never a silent clobber
+// (SRD-037 FR-5).
+func (st *ServiceTask) writeStatus(
+	ctx context.Context,
+	re renv.RuntimeEnvironment,
+	value data.Value,
+) ([]*flow.SequenceFlow, error) {
+	if st.statusVar == "" {
+		return nil,
+			errs.New(
+				errs.M("service task %q: a Status outcome needs WithStatus", st.Name()),
+				errs.C(errorClass, errs.InvalidState),
+				errs.D("service_task_id", st.ID()))
+	}
+
+	if !st.statusOverwrite {
+		if _, err := re.Find(ctx, st.statusVar); err == nil {
+			return nil,
+				errs.New(
+					errs.M("service task %q: status variable %q already exists "+
+						"(overwrite=false)", st.Name(), st.statusVar),
+					errs.C(errorClass, errs.InvalidState),
+					errs.D("service_task_id", st.ID()),
+					errs.D("status_var", st.statusVar))
+		}
+	}
+
+	res := data.MustParameter(st.statusVar,
+		data.MustItemAwareElement(
+			data.MustItemDefinition(value), data.ReadyDataState))
+
+	if err := re.Put(res); err != nil {
+		return nil,
+			errs.New(
+				errs.M("couldn't write status variable %q", st.statusVar),
+				errs.C(errorClass),
+				errs.E(err),
+				errs.D("service_task_id", st.ID()))
+	}
+
+	return st.Outgoing(), nil
+}
+
+// classifyFault runs the ServiceTask's ErrorMapper over a raw fault (no mapper →
+// default Technical) and applies the mapped outcome (SRD-037 FR-3).
+func (st *ServiceTask) classifyFault(
+	ctx context.Context,
+	re renv.RuntimeEnvironment,
+	fault tasks.Fault,
+) ([]*flow.SequenceFlow, error) {
+	var mapped tasks.MappedOutcome = tasks.Technical{}
+
+	if st.errorMapper != nil {
+		m, err := st.errorMapper.Classify(ctx, re.ExpressionEngine(), fault)
+		if err != nil {
+			return nil,
+				errs.New(
+					errs.M("service task %q: error-mapping failed", st.Name()),
+					errs.C(errorClass, errs.OperationFailed),
+					errs.E(err),
+					errs.D("service_task_id", st.ID()))
+		}
+
+		mapped = m
+	}
+
+	switch o := mapped.(type) {
+	case tasks.BpmnError:
+		return st.raiseBpmnError(o.Code, o.Message)
+
+	case tasks.Status:
+		return st.writeStatus(ctx, re, o.Value)
+
+	default: // tasks.Technical (sealed interface — the only remaining kind)
+		return nil, st.technicalFault(fault)
+	}
+}
+
+// technicalFault wraps a raw fault as the terminal ServiceTask failure (retry
+// arrives in SRD-038).
+func (st *ServiceTask) technicalFault(fault tasks.Fault) error {
+	return errs.New(
+		errs.M("service task %q worker reported a technical fault", st.Name()),
+		errs.C(errorClass, errs.OperationFailed),
+		errs.E(fault.Cause),
+		errs.D("service_task_id", st.ID()),
+		errs.D("fault_code", fault.Code))
 }
 
 // ------------------ tasks.ExternalWorker interface ---------------------------
@@ -351,8 +513,9 @@ func (st *ServiceTask) BindJobInput(
 
 // ------------------ eventproc.EventProcessor interface -----------------------
 
-// ProcessEvent receives the synthetic WorkerOutcome the instance loop delivers
-// to the parked track and stashes it for Exec to bind on resume (SRD-036 §3.5).
+// ProcessEvent receives the synthetic WorkerOutcome the instance loop delivers to
+// the parked track and stashes it for Exec to classify + apply on resume (SRD-036
+// §3.5, SRD-037 §3.5).
 func (st *ServiceTask) ProcessEvent(
 	_ context.Context,
 	eDef flow.EventDefinition,
@@ -366,13 +529,7 @@ func (st *ServiceTask) ProcessEvent(
 			errs.D("event_type", string(eDef.Type())))
 	}
 
-	if cause := wo.Cause(); cause != nil {
-		st.outcomeErr = cause
-
-		return nil
-	}
-
-	st.completedOutput = wo.Output()
+	st.outcome = wo
 
 	return nil
 }

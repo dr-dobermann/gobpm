@@ -9,9 +9,12 @@ import (
 	"github.com/dr-dobermann/gobpm/generated/mockrenv"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	exprengine "github.com/dr-dobermann/gobpm/pkg/model/expression/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
@@ -64,11 +67,11 @@ func TestServiceTaskWorkerExecFaultsOnCause(t *testing.T) {
 	st := workerTask(t)
 
 	require.NoError(t, st.ProcessEvent(context.Background(),
-		tasks.NewWorkerFail("job-1", errors.New("boom"))))
+		tasks.NewWorkerFault("job-1", tasks.Fault{Cause: errors.New("boom")})))
 
 	re := mockrenv.NewMockRuntimeEnvironment(t) // no Put expected
 	_, err := st.Exec(context.Background(), re)
-	require.ErrorContains(t, err, "worker reported a failure")
+	require.ErrorContains(t, err, "worker reported a technical fault")
 }
 
 // TestServiceTaskWorkerExecNoOutputAdvances: a Complete outcome with no output
@@ -193,4 +196,265 @@ func TestServiceTaskProcessEventRejectsNonOutcome(t *testing.T) {
 	err = st.ProcessEvent(context.Background(), def)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "worker-outcome")
+}
+
+// workerTaskOpts builds a WithWorker ServiceTask over a no-message operation with
+// extra worker options (WithStatus / WithErrorMapper).
+func workerTaskOpts(
+	t *testing.T,
+	opts ...activities.SrvTaskOption,
+) *activities.ServiceTask {
+	t.Helper()
+	require.NoError(t, data.CreateDefaultStates())
+
+	all := []options.Option{
+		activities.WithWorker("topic-x"), activities.WithoutParams(),
+	}
+	for _, o := range opts {
+		all = append(all, o)
+	}
+
+	st, err := activities.NewServiceTask("svc",
+		service.MustOperation("op", nil, nil, nil), all...)
+	require.NoError(t, err)
+
+	return st
+}
+
+// bodyClauseNeedingBody builds a body-clause that reads "body" — it errors when
+// the fault carries none, exercising the ErrorMapper evaluation-error path.
+func bodyClauseNeedingBody(t *testing.T) data.FormalExpression {
+	t.Helper()
+
+	fe, err := goexpr.New(nil,
+		data.MustItemDefinition(values.NewVariable(false)),
+		func(ctx context.Context, ds data.Source) (data.Value, error) {
+			b, err := ds.Find(ctx, "body")
+			if err != nil {
+				return nil, err
+			}
+
+			s, _ := b.Value().Get(ctx).(string)
+
+			return values.NewVariable(s == "x"), nil
+		})
+	require.NoError(t, err)
+
+	return fe
+}
+
+// TestServiceTaskWorkerExecRaisesBpmnError: a Business Error outcome makes Exec
+// return a *events.BpmnError (caught by a boundary at the instance level).
+func TestServiceTaskWorkerExecRaisesBpmnError(t *testing.T) {
+	st := workerTask(t)
+
+	require.NoError(t, st.ProcessEvent(context.Background(),
+		tasks.NewWorkerBpmnError("job-1", "ResourceConflict", "already exists")))
+
+	re := mockrenv.NewMockRuntimeEnvironment(t)
+	_, err := st.Exec(context.Background(), re)
+
+	var be *events.BpmnError
+	require.True(t, errors.As(err, &be))
+	require.Equal(t, "ResourceConflict", be.Code)
+}
+
+// TestServiceTaskWorkerExecWritesStatus: a Business Status outcome writes the
+// WithStatus variable (no collision) and completes.
+func TestServiceTaskWorkerExecWritesStatus(t *testing.T) {
+	st := workerTaskOpts(t, activities.WithStatus("orderStatus", false))
+
+	require.NoError(t, st.ProcessEvent(context.Background(),
+		tasks.NewWorkerStatus("job-1", values.NewVariable("NOT_FOUND"))))
+
+	var put data.Data
+
+	re := mockrenv.NewMockRuntimeEnvironment(t)
+	re.EXPECT().Find(mock.Anything, "orderStatus").
+		Return(nil, errors.New("not found")) // no collision
+	re.EXPECT().Put(mock.Anything).RunAndReturn(func(dd ...data.Data) error {
+		put = dd[0]
+
+		return nil
+	})
+
+	flows, err := st.Exec(context.Background(), re)
+	require.NoError(t, err)
+	require.Empty(t, flows)
+	require.Equal(t, "orderStatus", put.Name())
+}
+
+// TestServiceTaskWorkerStatusOverwriteCollision: overwrite=false + a pre-existing
+// variable is a runtime fault (no silent clobber).
+func TestServiceTaskWorkerStatusOverwriteCollision(t *testing.T) {
+	st := workerTaskOpts(t, activities.WithStatus("s", false))
+
+	require.NoError(t, st.ProcessEvent(context.Background(),
+		tasks.NewWorkerStatus("job-1", values.NewVariable("X"))))
+
+	re := mockrenv.NewMockRuntimeEnvironment(t)
+	re.EXPECT().Find(mock.Anything, "s").Return(
+		data.MustParameter("s", data.MustItemAwareElement(
+			data.MustItemDefinition(values.NewVariable("old")),
+			data.ReadyDataState)), nil) // exists → collision
+
+	_, err := st.Exec(context.Background(), re)
+	require.ErrorContains(t, err, "already exists")
+}
+
+// TestServiceTaskWorkerStatusOverwriteTrue: overwrite=true upserts without the
+// collision check.
+func TestServiceTaskWorkerStatusOverwriteTrue(t *testing.T) {
+	st := workerTaskOpts(t, activities.WithStatus("s", true))
+
+	require.NoError(t, st.ProcessEvent(context.Background(),
+		tasks.NewWorkerStatus("job-1", values.NewVariable("X"))))
+
+	re := mockrenv.NewMockRuntimeEnvironment(t)
+	re.EXPECT().Put(mock.Anything).Return(nil) // no Find (overwrite skips the guard)
+
+	_, err := st.Exec(context.Background(), re)
+	require.NoError(t, err)
+}
+
+// TestServiceTaskWorkerStatusWithoutWithStatusFaults: a worker Status report on a
+// task with no WithStatus is a runtime fault.
+func TestServiceTaskWorkerStatusWithoutWithStatusFaults(t *testing.T) {
+	st := workerTask(t) // no WithStatus
+
+	require.NoError(t, st.ProcessEvent(context.Background(),
+		tasks.NewWorkerStatus("job-1", values.NewVariable("X"))))
+
+	re := mockrenv.NewMockRuntimeEnvironment(t)
+	_, err := st.Exec(context.Background(), re)
+	require.ErrorContains(t, err, "needs WithStatus")
+}
+
+// TestServiceTaskWorkerFaultClassifiedByMapper: a raw fault is run through the
+// ErrorMapper, which yields a Business Error here.
+func TestServiceTaskWorkerFaultClassifiedByMapper(t *testing.T) {
+	mapper, err := tasks.NewRuleMapper(
+		tasks.Rule{Code: "409", Yield: tasks.BpmnError{Code: "Conflict"}})
+	require.NoError(t, err)
+
+	st := workerTaskOpts(t, activities.WithErrorMapper(mapper))
+
+	require.NoError(t, st.ProcessEvent(context.Background(),
+		tasks.NewWorkerFault("job-1", tasks.Fault{Code: "409"})))
+
+	re := mockrenv.NewMockRuntimeEnvironment(t)
+	re.EXPECT().ExpressionEngine().Return(exprengine.New())
+
+	_, err = st.Exec(context.Background(), re)
+
+	var be *events.BpmnError
+	require.True(t, errors.As(err, &be))
+	require.Equal(t, "Conflict", be.Code)
+}
+
+// TestServiceTaskWorkerFaultMapperError: an ErrorMapper whose evaluation errors
+// surfaces from Exec.
+func TestServiceTaskWorkerFaultMapperError(t *testing.T) {
+	mapper, err := tasks.NewRuleMapper(
+		tasks.Rule{Code: "404", BodyClause: bodyClauseNeedingBody(t),
+			Yield: tasks.Status{Value: values.NewVariable("x")}})
+	require.NoError(t, err)
+
+	st := workerTaskOpts(t, activities.WithErrorMapper(mapper))
+
+	// Fault has no body → the clause's Find("body") errors → classify errors.
+	require.NoError(t, st.ProcessEvent(context.Background(),
+		tasks.NewWorkerFault("job-1", tasks.Fault{Code: "404"})))
+
+	re := mockrenv.NewMockRuntimeEnvironment(t)
+	re.EXPECT().ExpressionEngine().Return(exprengine.New())
+
+	_, err = st.Exec(context.Background(), re)
+	require.ErrorContains(t, err, "error-mapping failed")
+}
+
+// TestWithErrorMapperRejectsNil: a nil ErrorMapper is rejected at construction.
+func TestWithErrorMapperRejectsNil(t *testing.T) {
+	_, err := activities.NewServiceTask("svc",
+		service.MustOperation("op", nil, nil, nil),
+		activities.WithWorker("t"), activities.WithErrorMapper(nil))
+	require.Error(t, err)
+}
+
+// TestWithStatusRejectsEmpty: an empty status variable name is rejected.
+func TestWithStatusRejectsEmpty(t *testing.T) {
+	_, err := activities.NewServiceTask("svc",
+		service.MustOperation("op", nil, nil, nil),
+		activities.WithWorker("t"), activities.WithStatus("  ", false))
+	require.Error(t, err)
+}
+
+// TestClassificationOptionsRejectNonWorker: WithStatus/WithErrorMapper require a
+// worker-dispatched ServiceTask.
+func TestClassificationOptionsRejectNonWorker(t *testing.T) {
+	_, err := activities.NewServiceTask("svc",
+		service.MustOperation("op", nil, nil, nil),
+		activities.WithStatus("s", false))
+	require.ErrorContains(t, err, "require a worker-dispatched")
+
+	mapper, merr := tasks.NewRuleMapper(
+		tasks.Rule{Code: "1", Yield: tasks.Technical{}})
+	require.NoError(t, merr)
+
+	_, err = activities.NewServiceTask("svc",
+		service.MustOperation("op", nil, nil, nil),
+		activities.WithErrorMapper(mapper))
+	require.ErrorContains(t, err, "require a worker-dispatched")
+}
+
+// TestServiceTaskWorkerBpmnErrorEmptyCodeFaults: a Business Error with an empty
+// code can't be raised (NewBpmnError rejects it) — surfaced as a fault.
+func TestServiceTaskWorkerBpmnErrorEmptyCodeFaults(t *testing.T) {
+	st := workerTask(t)
+
+	require.NoError(t, st.ProcessEvent(context.Background(),
+		tasks.NewWorkerBpmnError("job-1", "", "no code")))
+
+	re := mockrenv.NewMockRuntimeEnvironment(t)
+	_, err := st.Exec(context.Background(), re)
+	require.ErrorContains(t, err, "invalid business-error code")
+}
+
+// TestServiceTaskWorkerStatusPutError: a failing commit of the status variable
+// surfaces a wrapped error.
+func TestServiceTaskWorkerStatusPutError(t *testing.T) {
+	st := workerTaskOpts(t, activities.WithStatus("s", true))
+
+	require.NoError(t, st.ProcessEvent(context.Background(),
+		tasks.NewWorkerStatus("job-1", values.NewVariable("X"))))
+
+	re := mockrenv.NewMockRuntimeEnvironment(t)
+	re.EXPECT().Put(mock.Anything).Return(fmt.Errorf("boom"))
+
+	_, err := st.Exec(context.Background(), re)
+	require.ErrorContains(t, err, "couldn't write status variable")
+}
+
+// TestServiceTaskWorkerFaultMappedToStatus: the ErrorMapper yields a Business
+// Status for a raw fault, which is written to the WithStatus variable.
+func TestServiceTaskWorkerFaultMappedToStatus(t *testing.T) {
+	mapper, err := tasks.NewRuleMapper(
+		tasks.Rule{Code: "404",
+			Yield: tasks.Status{Value: values.NewVariable("NOT_FOUND")}})
+	require.NoError(t, err)
+
+	st := workerTaskOpts(t,
+		activities.WithErrorMapper(mapper), activities.WithStatus("s", false))
+
+	require.NoError(t, st.ProcessEvent(context.Background(),
+		tasks.NewWorkerFault("job-1", tasks.Fault{Code: "404"})))
+
+	re := mockrenv.NewMockRuntimeEnvironment(t)
+	re.EXPECT().ExpressionEngine().Return(exprengine.New())
+	re.EXPECT().Find(mock.Anything, "s").Return(nil, errors.New("nf"))
+	re.EXPECT().Put(mock.Anything).Return(nil)
+
+	flows, err := st.Exec(context.Background(), re)
+	require.NoError(t, err)
+	require.Empty(t, flows)
 }

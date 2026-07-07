@@ -15,6 +15,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 // Named identifiers keep the extendable interface mixing-proof at compile time:
@@ -31,6 +32,9 @@ type (
 	// WorkerID identifies the worker holding a job's lock.
 	WorkerID string
 )
+
+// errorClass tags errors raised by the tasks package (ErrorMapper, options).
+const errorClass = "TASKS"
 
 // jobIDSep separates the owning instance id from the unique suffix inside a
 // JobID. A worker treats the whole JobID as opaque; the engine splits on the
@@ -78,9 +82,11 @@ type LockedJob struct {
 }
 
 // WorkerDispatcher is an asynchronous fetch-and-lock job queue (ADR-021 §2.4).
-// Enqueue is engine-facing; FetchAndLock / ExtendLock / Complete / Fail are
-// worker-facing. Report methods for the classified outcomes (business status,
-// BPMN error) join in SRD-037.
+// Enqueue is engine-facing; FetchAndLock / ExtendLock and the four terminal
+// reports (Complete / ReportBpmnError / ReportStatus / Fail) are worker-facing.
+// The reports mirror the four outcome kinds (SRD-037 §2.6): a worker either
+// self-classifies (ReportBpmnError / ReportStatus) or reports a raw Fault the
+// engine ErrorMapper classifies.
 type WorkerDispatcher interface {
 	// Enqueue adds a job to the queue (non-blocking); the engine then parks the
 	// ServiceTask.
@@ -114,8 +120,29 @@ type WorkerDispatcher interface {
 		output *data.ItemDefinition,
 	) error
 
-	// Fail reports a technical fault; cause identifies it.
-	Fail(ctx context.Context, jobID JobID, workerID WorkerID, cause error) error
+	// ReportBpmnError reports a worker-declared Business Error (Camunda
+	// handleBpmnError): the engine raises code (message is an optional
+	// diagnostic), caught by a matching Error boundary event (interrupting).
+	ReportBpmnError(
+		ctx context.Context,
+		jobID JobID,
+		workerID WorkerID,
+		code, message string,
+	) error
+
+	// ReportStatus reports a worker-declared Business Status: the engine writes
+	// value to the ServiceTask's WithStatus variable and the task completes.
+	ReportStatus(
+		ctx context.Context,
+		jobID JobID,
+		workerID WorkerID,
+		value data.Value,
+	) error
+
+	// Fail reports a raw fault the engine ErrorMapper classifies (§2.6). A
+	// pure-technical fault carries only Fault.Cause (empty code, nil body) and
+	// falls through to the default technical outcome.
+	Fail(ctx context.Context, jobID JobID, workerID WorkerID, fault Fault) error
 }
 
 // JobCompletionSink routes a worker's terminal report to the owning instance.
@@ -132,6 +159,14 @@ type JobCompletionSink interface {
 // not implement it.
 type SinkBinder interface {
 	BindSink(sink JobCompletionSink)
+}
+
+// LoggerBinder is an optional dispatcher capability: the engine binds its
+// configured logger (from the runtime config) at startup, so a dispatcher's own
+// lifecycle logging uses the embedder's logger rather than a private default. A
+// dispatcher that manages its own logging need not implement it.
+type LoggerBinder interface {
+	BindLogger(logger observability.Logger)
 }
 
 // ExternalWorker is implemented by a node whose work is dispatched to an

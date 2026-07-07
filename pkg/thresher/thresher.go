@@ -210,6 +210,13 @@ func New(id string, opts ...Option) (*Thresher, error) {
 		binder.BindSink(t)
 	}
 
+	// Bind the engine's configured logger so the dispatcher's own lifecycle logging
+	// uses the embedder's logger rather than its private default (SRD-037). Done
+	// after all options are applied, so a WithLogger override is honored.
+	if lb, ok := cfg.WorkerDispatcher().(tasks.LoggerBinder); ok {
+		lb.BindLogger(cfg.Logger())
+	}
+
 	// The EventHub receives the engine's resolved runtime (&t.cfg implements
 	// renv.EngineRuntime) so the waiters it builds reach Clock / ExpressionEngine
 	// (ADR-002 §4.3, Solution B). Built after t so it shares t's cfg pointer.

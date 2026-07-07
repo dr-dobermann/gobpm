@@ -1,23 +1,28 @@
 package activities
 
 import (
+	"strings"
 	"time"
 
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
 // srvTaskConfig collects the ServiceTask-specific options (those that don't
 // belong to the embedded task) applied at NewServiceTask. It is extended by the
-// external-worker options in later SRDs (SRD-037/038).
+// external-worker options (SRD-036/037/038).
 type srvTaskConfig struct {
-	workerTopic tasks.Topic
-	timeout     time.Duration
+	errorMapper     tasks.ErrorMapper
+	workerTopic     tasks.Topic
+	statusVar       string
+	timeout         time.Duration
+	statusOverwrite bool
 }
 
-// SrvTaskOption is a ServiceTask-specific construction option (e.g.
-// WithTimeout). NewServiceTask separates these from the embedded task's options
-// and applies them to the ServiceTask itself.
-type SrvTaskOption func(*srvTaskConfig)
+// SrvTaskOption is a ServiceTask-specific construction option (e.g. WithTimeout).
+// NewServiceTask separates these from the embedded task's options and applies
+// them to the ServiceTask itself; a bad option value is rejected with an error.
+type SrvTaskOption func(*srvTaskConfig) error
 
 // Option marks SrvTaskOption as an options.Option; NewServiceTask applies it by
 // calling the func directly.
@@ -38,8 +43,10 @@ func (SrvTaskOption) Option() {}
 // value (the engine binds only that), and honor the context for true
 // cancellation.
 func WithTimeout(d time.Duration) SrvTaskOption {
-	return func(c *srvTaskConfig) {
+	return func(c *srvTaskConfig) error {
 		c.timeout = d
+
+		return nil
 	}
 }
 
@@ -51,7 +58,47 @@ func WithTimeout(d time.Duration) SrvTaskOption {
 // with a Go operation is a build-time error (§2.3). An empty topic is a no-op
 // (the task stays in-process).
 func WithWorker(topic string) SrvTaskOption {
-	return func(c *srvTaskConfig) {
+	return func(c *srvTaskConfig) error {
 		c.workerTopic = tasks.Topic(topic)
+
+		return nil
+	}
+}
+
+// WithErrorMapper sets the per-service ErrorMapper that classifies a worker's raw
+// fault into a Business Error / Business Status / technical outcome (ADR-021 §2.6,
+// SRD-037). A nil mapper is rejected. Governs the worker outcome, so it is valid
+// only on a worker-dispatched ServiceTask (checked at NewServiceTask).
+func WithErrorMapper(m tasks.ErrorMapper) SrvTaskOption {
+	return func(c *srvTaskConfig) error {
+		if m == nil {
+			return errs.New(
+				errs.M("WithErrorMapper: a nil ErrorMapper isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		c.errorMapper = m
+
+		return nil
+	}
+}
+
+// WithStatus names the task-scoped variable a Business Status outcome writes, and
+// whether it may overwrite an existing one (ADR-021 §2.6, SRD-037 FR-5). An empty
+// name is rejected. overwrite=false makes a pre-existing variable a runtime
+// collision fault (no silent clobber). Valid only on a worker-dispatched
+// ServiceTask (checked at NewServiceTask).
+func WithStatus(statusName string, overwrite bool) SrvTaskOption {
+	return func(c *srvTaskConfig) error {
+		if strings.TrimSpace(statusName) == "" {
+			return errs.New(
+				errs.M("WithStatus: an empty status variable name isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		c.statusVar = statusName
+		c.statusOverwrite = overwrite
+
+		return nil
 	}
 }
