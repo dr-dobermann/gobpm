@@ -6,12 +6,15 @@ import (
 	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/eventproc"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
+	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
+	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
 // ServiceTask inherits the attributes and model associations of Activity.
@@ -34,11 +37,12 @@ import (
 // defined by Message referred to by the outMessageRef attribute of the
 // Operation.
 type ServiceTask struct {
-	operation      service.Operation
-	implementation string
+	operation       service.Operation
+	outcomeErr      error
+	completedOutput *data.ItemDefinition
+	implementation  string
+	workerTopic     tasks.Topic
 	task
-	// timeout bounds the in-process operation execution when positive
-	// (WithTimeout, SRD-035); non-positive means unbounded.
 	timeout time.Duration
 }
 
@@ -55,6 +59,7 @@ type ServiceTask struct {
 //   - activities.WithoutParams
 //   - activities.WithRoles
 //   - activities.WithTimeout
+//   - activities.WithWorker
 //   - foundation.WithID
 //   - foundation.WithDoc
 func NewServiceTask(
@@ -92,6 +97,17 @@ func NewServiceTask(
 		baseOpts = append(baseOpts, o)
 	}
 
+	// WithWorker is valid only on a message operation: a Go operation is an
+	// in-process closure with no shippable message boundary (SRD-036 §2.3).
+	if sc.workerTopic != "" && operation.Type() == gooper.GoOperType {
+		return nil,
+			errs.New(
+				errs.M("WithWorker requires a message-operation ServiceTask; "+
+					"%q has a Go operation", name),
+				errs.C(errorClass, errs.InvalidParameter),
+				errs.D("worker_topic", string(sc.workerTopic)))
+	}
+
 	t, err := newTask(name, baseOpts...)
 	if err != nil {
 		return nil, err
@@ -102,6 +118,7 @@ func NewServiceTask(
 			implementation: operation.Type(),
 			operation:      operation,
 			timeout:        sc.timeout,
+			workerTopic:    sc.workerTopic,
 		},
 		nil
 }
@@ -134,6 +151,7 @@ func (st *ServiceTask) Clone() (flow.Node, error) {
 		implementation: st.implementation,
 		operation:      st.operation.Clone(),
 		timeout:        st.timeout,
+		workerTopic:    st.workerTopic,
 	}, nil
 }
 
@@ -163,6 +181,13 @@ func (st *ServiceTask) Exec(
 			errs.New(
 				errs.M("no runtime environment"),
 				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	// A worker-dispatched ServiceTask runs Exec only on RESUME — checkNodeType
+	// parks it (binding input + enqueuing a job) before the in-process path is
+	// ever reached, so here we bind the worker's reported outcome (SRD-036).
+	if st.workerTopic != "" {
+		return st.execWorkerOutcome(re)
 	}
 
 	op := st.operation.Clone()
@@ -273,9 +298,90 @@ func (st *ServiceTask) wrapOpErr(err error) error {
 		errs.D("operation_id", st.operation.ID()))
 }
 
+// execWorkerOutcome finishes a worker-dispatched ServiceTask on resume: it binds
+// the worker's output (stashed by ProcessEvent) to the execution frame and
+// advances, or faults with the reported cause (SRD-036 §3.5). Retry of a
+// technical fault arrives in SRD-038; here a fault is terminal.
+func (st *ServiceTask) execWorkerOutcome(
+	re renv.RuntimeEnvironment,
+) ([]*flow.SequenceFlow, error) {
+	if st.outcomeErr != nil {
+		return nil,
+			errs.New(
+				errs.M("service task %q worker reported a failure", st.Name()),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(st.outcomeErr),
+				errs.D("service_task_id", st.ID()))
+	}
+
+	if st.completedOutput != nil {
+		res := data.MustParameter(st.completedOutput.ID(),
+			data.MustItemAwareElement(st.completedOutput, data.ReadyDataState))
+
+		if err := re.Put(res); err != nil {
+			return nil,
+				errs.New(
+					errs.M("couldn't commit worker result"),
+					errs.C(errorClass),
+					errs.E(err),
+					errs.D("service_task_id", st.ID()))
+		}
+	}
+
+	return st.Outgoing(), nil
+}
+
+// ------------------ tasks.ExternalWorker interface ---------------------------
+
+// WorkerTopic reports the external-worker topic and whether this ServiceTask is
+// worker-dispatched. The instance loop diverts a worker-dispatched task to the
+// wait-node park path; an in-process task (ok == false) runs its operation.
+func (st *ServiceTask) WorkerTopic() (tasks.Topic, bool) {
+	return st.workerTopic, st.workerTopic != ""
+}
+
+// BindJobInput binds the operation's input message from r (without executing),
+// for the engine to build the enqueued job's payload at park time (SRD-036).
+func (st *ServiceTask) BindJobInput(
+	ctx context.Context,
+	r service.DataReader,
+) (*data.ItemDefinition, error) {
+	return st.operation.BindInputOnly(ctx, r)
+}
+
+// ------------------ eventproc.EventProcessor interface -----------------------
+
+// ProcessEvent receives the synthetic WorkerOutcome the instance loop delivers
+// to the parked track and stashes it for Exec to bind on resume (SRD-036 §3.5).
+func (st *ServiceTask) ProcessEvent(
+	_ context.Context,
+	eDef flow.EventDefinition,
+) error {
+	wo, ok := eDef.(*tasks.WorkerOutcome)
+	if !ok {
+		return errs.New(
+			errs.M("service task %q expects a worker-outcome event", st.ID()),
+			errs.C(errorClass, errs.TypeCastingError),
+			errs.D("service_task_id", st.ID()),
+			errs.D("event_type", string(eDef.Type())))
+	}
+
+	if cause := wo.Cause(); cause != nil {
+		st.outcomeErr = cause
+
+		return nil
+	}
+
+	st.completedOutput = wo.Output()
+
+	return nil
+}
+
 // -----------------------------------------------------------------------------
 
 // interface check
 var (
-	_ exec.NodeExecutor = (*ServiceTask)(nil)
+	_ exec.NodeExecutor        = (*ServiceTask)(nil)
+	_ eventproc.EventProcessor = (*ServiceTask)(nil)
+	_ tasks.ExternalWorker     = (*ServiceTask)(nil)
 )

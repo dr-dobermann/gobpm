@@ -9,16 +9,21 @@ package tasks
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
 
 // Named identifiers keep the extendable interface mixing-proof at compile time:
 // a Topic can't be passed where a JobID is expected, and vice versa.
 type (
-	// JobID identifies one execution of a worker-dispatched ServiceTask
-	// (instance+track+node); a worker treats it as an idempotency key.
+	// JobID identifies one execution of a worker-dispatched ServiceTask; a
+	// worker treats it as an idempotency key. It embeds the owning instance's id
+	// (see MakeJobID) so a completion routes back to that instance without a
+	// separate registry (SRD-036 §4.5).
 	JobID string
 	// Topic is a job's type/fetch key — a worker fetches by topic, and it
 	// equals a ServiceTask's WithWorker topic.
@@ -26,6 +31,28 @@ type (
 	// WorkerID identifies the worker holding a job's lock.
 	WorkerID string
 )
+
+// jobIDSep separates the owning instance id from the unique suffix inside a
+// JobID. A worker treats the whole JobID as opaque; the engine splits on the
+// first separator to route a completion (InstanceID). It is a character the
+// default id generator (UUID) never emits, so the split is unambiguous.
+const jobIDSep = "|"
+
+// MakeJobID composes a JobID for a worker-dispatched ServiceTask on instanceID,
+// embedding that id so ReportJobCompletion routes the outcome back to the owning
+// instance without a registry (SRD-036 §4.5). The suffix is a fresh unique id,
+// so two jobs on the same instance never collide.
+func MakeJobID(instanceID string) JobID {
+	return JobID(instanceID + jobIDSep + foundation.GenerateID())
+}
+
+// InstanceID returns the owning instance id embedded in the JobID (the segment
+// before the first separator), or the whole string if it carries none.
+func (j JobID) InstanceID() string {
+	instanceID, _, _ := strings.Cut(string(j), jobIDSep)
+
+	return instanceID
+}
 
 // Policy is the per-service execution bundle shipped to a WorkerTrusted worker
 // (SRD-038): output mapping, error mapping, and retry policy. It is nil under
@@ -105,4 +132,21 @@ type JobCompletionSink interface {
 // not implement it.
 type SinkBinder interface {
 	BindSink(sink JobCompletionSink)
+}
+
+// ExternalWorker is implemented by a node whose work is dispatched to an
+// external worker rather than run in-process. The instance loop diverts a node
+// whose WorkerTopic reports ok == true to the wait-node park path (it enqueues a
+// job and resumes on the worker's report); ok == false runs the node in-process
+// as usual.
+type ExternalWorker interface {
+	// WorkerTopic reports the external-worker topic and whether the node is
+	// worker-dispatched.
+	WorkerTopic() (topic Topic, ok bool)
+
+	// BindJobInput binds the node's operation input message from r (without
+	// executing it) — the payload the engine puts in the enqueued Job.Input.
+	BindJobInput(
+		ctx context.Context, r service.DataReader,
+	) (*data.ItemDefinition, error)
 }

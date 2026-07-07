@@ -1,12 +1,17 @@
 package activities
 
-import "time"
+import (
+	"time"
+
+	"github.com/dr-dobermann/gobpm/pkg/tasks"
+)
 
 // srvTaskConfig collects the ServiceTask-specific options (those that don't
 // belong to the embedded task) applied at NewServiceTask. It is extended by the
-// external-worker options in later SRDs (SRD-036..038).
+// external-worker options in later SRDs (SRD-037/038).
 type srvTaskConfig struct {
-	timeout time.Duration
+	workerTopic tasks.Topic
+	timeout     time.Duration
 }
 
 // SrvTaskOption is a ServiceTask-specific construction option (e.g.
@@ -35,5 +40,18 @@ func (SrvTaskOption) Option() {}
 func WithTimeout(d time.Duration) SrvTaskOption {
 	return func(c *srvTaskConfig) {
 		c.timeout = d
+	}
+}
+
+// WithWorker makes the ServiceTask an EXTERNAL-worker wait node (ADR-021 §2.1,
+// SRD-036): instead of running its Operation in-process, the engine enqueues a
+// job on topic and parks the task until a worker fetches, executes, and reports
+// the outcome. Valid only on a message-operation ServiceTask — a Go operation
+// (an in-process closure) can't be shipped to a worker, so combining WithWorker
+// with a Go operation is a build-time error (§2.3). An empty topic is a no-op
+// (the task stays in-process).
+func WithWorker(topic string) SrvTaskOption {
+	return func(c *srvTaskConfig) {
+		c.workerTopic = tasks.Topic(topic)
 	}
 }

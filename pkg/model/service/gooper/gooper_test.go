@@ -192,3 +192,18 @@ func TestGoOperation(t *testing.T) {
 		require.Error(t, err)
 	})
 }
+
+// TestGoOperationBindInputOnly: a Go operation's BindInputOnly binds its optional
+// input message without running the functor. With no input message it returns
+// (nil, nil), never touching the reader (SRD-036).
+func TestGoOperationBindInputOnly(t *testing.T) {
+	op, err := gooper.New("op",
+		func(context.Context, service.DataReader, *data.ItemDefinition) (*data.ItemDefinition, error) {
+			return nil, nil
+		})
+	require.NoError(t, err)
+
+	in, err := op.BindInputOnly(context.Background(), nil)
+	require.NoError(t, err)
+	require.Nil(t, in)
+}
