@@ -38,6 +38,9 @@ type Runtime struct {
 	expr       expression.Engine
 	authz      auth.AuthorizationProvider
 	dispatcher tasks.WorkerDispatcher
+	// workerErrorMapper is the engine-wide default ErrorMapper (SRD-037 FR-3);
+	// nil by default (a per-service WithErrorMapper overrides it).
+	workerErrorMapper tasks.ErrorMapper
 }
 
 // Default returns a Runtime with every extension set to its bundled default.
@@ -128,5 +131,18 @@ func (r *Runtime) AuthorizationProvider() auth.AuthorizationProvider { return r.
 
 // WorkerDispatcher returns the configured worker dispatcher.
 func (r *Runtime) WorkerDispatcher() tasks.WorkerDispatcher { return r.dispatcher }
+
+// WorkerErrorMapper returns the engine-wide default ErrorMapper (nil = none).
+func (r *Runtime) WorkerErrorMapper() tasks.ErrorMapper { return r.workerErrorMapper }
+
+// WithWorkerErrorMapper overrides the engine-wide default ErrorMapper and returns
+// the Runtime. A nil mapper is ignored (the current default is kept).
+func (r *Runtime) WithWorkerErrorMapper(m tasks.ErrorMapper) *Runtime {
+	if m != nil {
+		r.workerErrorMapper = m
+	}
+
+	return r
+}
 
 var _ renv.EngineRuntime = (*Runtime)(nil)

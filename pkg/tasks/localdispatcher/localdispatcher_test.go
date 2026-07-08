@@ -9,6 +9,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/clock/clocktest"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 	"github.com/dr-dobermann/gobpm/pkg/tasks/localdispatcher"
 	"github.com/stretchr/testify/require"
@@ -75,7 +76,7 @@ func TestLocalDispatcherEnqueueFetchComplete(t *testing.T) {
 	require.NoError(t, d.Complete(ctx, "j1", "w1", nil))
 	require.NotNil(t, sink.last())
 	require.Equal(t, tasks.JobID("j1"), sink.last().JobID())
-	require.NoError(t, sink.last().Cause())
+	require.Equal(t, tasks.OutcomeComplete, sink.last().Kind())
 }
 
 // TestLocalDispatcherFetchWakesOnEnqueue: a fetcher blocked on an empty topic
@@ -121,8 +122,9 @@ func TestLocalDispatcherFailDeliversCause(t *testing.T) {
 	_, err := d.FetchAndLock(ctx, "w1", topics("charge"), time.Minute)
 	require.NoError(t, err)
 
-	require.NoError(t, d.Fail(ctx, "j1", "w1", errors.New("upstream 503")))
-	require.ErrorContains(t, sink.last().Cause(), "upstream 503")
+	require.NoError(t, d.Fail(ctx, "j1", "w1",
+		tasks.Fault{Cause: errors.New("upstream 503")}))
+	require.ErrorContains(t, sink.last().Fault().Cause, "upstream 503")
 }
 
 // TestLocalDispatcherLockExpiryRefetch: a locked job whose lock expires becomes
@@ -309,5 +311,86 @@ func TestLocalDispatcherWorkerPoolReportsFail(t *testing.T) {
 
 	require.Eventually(t, func() bool { return sink.last() != nil },
 		2*time.Second, 5*time.Millisecond)
-	require.ErrorContains(t, sink.last().Cause(), "worker boom")
+	require.ErrorContains(t, sink.last().Fault().Cause, "worker boom")
+}
+
+// spyLogger records log messages to verify the dispatcher uses a bound logger.
+type spyLogger struct {
+	mu   sync.Mutex
+	msgs []string
+}
+
+func (l *spyLogger) record(msg string) {
+	l.mu.Lock()
+	l.msgs = append(l.msgs, msg)
+	l.mu.Unlock()
+}
+
+func (l *spyLogger) Debug(msg string, _ ...any) { l.record(msg) }
+func (l *spyLogger) Info(msg string, _ ...any)  { l.record(msg) }
+func (l *spyLogger) Warn(msg string, _ ...any)  { l.record(msg) }
+func (l *spyLogger) Error(msg string, _ ...any) { l.record(msg) }
+
+func (l *spyLogger) has(msg string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	for _, m := range l.msgs {
+		if m == msg {
+			return true
+		}
+	}
+
+	return false
+}
+
+// TestLocalDispatcherReportBpmnError: a worker's Business Error is delivered to
+// the sink as an OutcomeBpmnError (SRD-037 FR-2).
+func TestLocalDispatcherReportBpmnError(t *testing.T) {
+	sink := &recordSink{}
+	d := localdispatcher.New(clocktest.New(base), time.Minute)
+	d.BindSink(sink)
+
+	ctx := context.Background()
+	require.NoError(t, d.Enqueue(ctx, newJob("j1", "charge")))
+	_, err := d.FetchAndLock(ctx, "w1", topics("charge"), time.Minute)
+	require.NoError(t, err)
+
+	require.NoError(t, d.ReportBpmnError(ctx, "j1", "w1", "Conflict", "dup"))
+	require.Equal(t, tasks.OutcomeBpmnError, sink.last().Kind())
+
+	code, msg := sink.last().BpmnError()
+	require.Equal(t, "Conflict", code)
+	require.Equal(t, "dup", msg)
+}
+
+// TestLocalDispatcherReportStatus: a worker's Business Status is delivered to the
+// sink as an OutcomeStatus carrying the value (SRD-037 FR-2).
+func TestLocalDispatcherReportStatus(t *testing.T) {
+	sink := &recordSink{}
+	d := localdispatcher.New(clocktest.New(base), time.Minute)
+	d.BindSink(sink)
+
+	ctx := context.Background()
+	require.NoError(t, d.Enqueue(ctx, newJob("j1", "charge")))
+	_, err := d.FetchAndLock(ctx, "w1", topics("charge"), time.Minute)
+	require.NoError(t, err)
+
+	require.NoError(t, d.ReportStatus(ctx, "j1", "w1",
+		values.NewVariable("NOT_FOUND")))
+	require.Equal(t, tasks.OutcomeStatus, sink.last().Kind())
+	require.Equal(t, "NOT_FOUND", sink.last().StatusValue().Get(ctx))
+}
+
+// TestLocalDispatcherBindLogger: a bound logger is used for lifecycle logging; a
+// nil logger is ignored (the default is kept).
+func TestLocalDispatcherBindLogger(t *testing.T) {
+	lg := &spyLogger{}
+	d := localdispatcher.New(clocktest.New(base), time.Minute)
+	d.BindLogger(nil) // ignored — keeps the default
+	d.BindLogger(lg)  // now uses lg
+
+	require.NoError(t, d.Enqueue(context.Background(), newJob("j1", "charge")))
+	require.True(t, lg.has("job enqueued"),
+		"the bound logger receives the lifecycle log")
 }

@@ -30,4 +30,10 @@ type EngineRuntime interface {
 	ExpressionEngine() expression.Engine
 	AuthorizationProvider() auth.AuthorizationProvider
 	WorkerDispatcher() tasks.WorkerDispatcher
+
+	// WorkerErrorMapper is the engine-wide default ErrorMapper applied to a
+	// worker-dispatched ServiceTask's raw fault when the task carries no
+	// per-service WithErrorMapper (SRD-037 FR-3, two-level config). nil = no
+	// default (a raw fault falls through to the default technical outcome).
+	WorkerErrorMapper() tasks.ErrorMapper
 }

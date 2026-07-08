@@ -14,6 +14,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/observability/noop"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 	"github.com/dr-dobermann/gobpm/pkg/repository/memrepo"
+	"github.com/dr-dobermann/gobpm/pkg/tasks"
 	"github.com/dr-dobermann/gobpm/pkg/tasks/localdispatcher"
 )
 
@@ -53,10 +54,16 @@ func TestEveryOptionOverridesItsDefault(t *testing.T) {
 	az := allowall.New()
 	wd := localdispatcher.New(nil, 0)
 
+	wem, werr := tasks.NewRuleMapper(tasks.Rule{Code: "1", Yield: tasks.Technical{}})
+	if werr != nil {
+		t.Fatalf("building the error mapper: %v", werr)
+	}
+
 	for _, o := range []Option{
 		WithLogger(lg), WithTracer(tr), WithMetricsRecorder(mr), WithClock(ck),
 		WithRepository(rp), WithMessageBroker(mb), WithExpressionEngine(ee),
 		WithAuthorizationProvider(az), WithWorkerDispatcher(wd),
+		WithWorkerErrorMapper(wem),
 	} {
 		if err := o(&c); err != nil {
 			t.Fatalf("option returned an error: %v", err)
@@ -65,7 +72,8 @@ func TestEveryOptionOverridesItsDefault(t *testing.T) {
 
 	if c.logger != lg || c.tracer != tr || c.metrics != mr || c.clock != ck ||
 		c.repository != rp || c.msgBroker != mb || c.exprEngine != ee ||
-		c.authz != az || c.dispatcher != wd {
+		c.authz != az || c.dispatcher != wd ||
+		c.WorkerErrorMapper() != wem {
 		t.Fatal("a WithXxx option did not override its field")
 	}
 }
@@ -241,5 +249,13 @@ func TestWithoutBannerIdempotent(t *testing.T) {
 
 	if !c.suppressBanner || c.suppressStartupConfig {
 		t.Fatalf("WithoutBanner not idempotent / leaked: %+v", c)
+	}
+}
+
+// TestWithWorkerErrorMapperRejectsNil: a nil engine-wide ErrorMapper is rejected.
+func TestWithWorkerErrorMapperRejectsNil(t *testing.T) {
+	c := defaultConfig()
+	if err := WithWorkerErrorMapper(nil)(&c); err == nil {
+		t.Fatal("a nil ErrorMapper should be rejected")
 	}
 }

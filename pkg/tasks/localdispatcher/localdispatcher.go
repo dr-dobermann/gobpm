@@ -8,12 +8,14 @@ package localdispatcher
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/clock"
 	"github.com/dr-dobermann/gobpm/pkg/clock/syscl"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
@@ -52,6 +54,7 @@ type jobEntry struct {
 type Dispatcher struct {
 	clk     clock.Clock
 	sink    tasks.JobCompletionSink
+	logger  observability.Logger
 	byID    map[tasks.JobID]*jobEntry
 	byTopic map[tasks.Topic][]*jobEntry
 	workers map[tasks.Topic]WorkerFunc
@@ -72,7 +75,10 @@ func New(clk clock.Clock, maxLock time.Duration) *Dispatcher {
 	}
 
 	return &Dispatcher{
-		clk:     clk,
+		clk: clk,
+		// Observability is visible by default (project policy: accidental silence
+		// is the worse bug); slog.Default() satisfies observability.Logger.
+		logger:  slog.Default(),
 		byID:    map[tasks.JobID]*jobEntry{},
 		byTopic: map[tasks.Topic][]*jobEntry{},
 		workers: map[tasks.Topic]WorkerFunc{},
@@ -88,6 +94,21 @@ func (d *Dispatcher) BindSink(sink tasks.JobCompletionSink) {
 	defer d.mu.Unlock()
 
 	d.sink = sink
+}
+
+// BindLogger sets the dispatcher's logger from the engine's runtime config at
+// startup (tasks.LoggerBinder), so the pool's lifecycle logs use the embedder's
+// configured logger. A nil logger is ignored — the slog.Default() set in New is
+// kept, never erased (logging is on by default; FIX-020 class).
+func (d *Dispatcher) BindLogger(logger observability.Logger) {
+	if logger == nil {
+		return
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.logger = logger
 }
 
 // Enqueue adds a job to the queue and wakes any waiting fetcher.
@@ -113,7 +134,11 @@ func (d *Dispatcher) Enqueue(_ context.Context, job tasks.Job) error {
 	d.byTopic[job.Topic] = append(d.byTopic[job.Topic], e)
 	d.broadcastLocked()
 
+	logger := d.logger
 	d.mu.Unlock()
+
+	logger.Debug("job enqueued",
+		"job_id", string(job.ID), "topic", string(job.Topic))
 
 	return nil
 }
@@ -131,9 +156,14 @@ func (d *Dispatcher) FetchAndLock(
 		d.mu.Lock()
 		lj, ok := d.lockNext(workerID, topics, lockDuration)
 		wake := d.wake
+		logger := d.logger
 		d.mu.Unlock()
 
 		if ok {
+			logger.Debug("job fetched and locked",
+				"worker_id", string(workerID), "job_id", string(lj.ID),
+				"topic", string(lj.Topic), "deadline", lj.Deadline)
+
 			return []tasks.LockedJob{lj}, nil
 		}
 
@@ -159,6 +189,13 @@ func (d *Dispatcher) lockNext(
 		for _, e := range d.byTopic[topic] {
 			if e.workerID != "" && !now.After(e.deadline) {
 				continue // locked and not expired
+			}
+
+			if e.workerID != "" {
+				// reaching here with a holder means the lock expired (the guard
+				// above continued otherwise) — reclaim it for crash recovery.
+				d.logger.Debug("expired job lock reclaimed",
+					"job_id", string(e.job.ID), "prev_worker", string(e.workerID))
 			}
 
 			e.workerID = workerID
@@ -201,6 +238,10 @@ func (d *Dispatcher) ExtendLock(
 
 	e.deadline = newDeadline
 
+	d.logger.Debug("job lock extended",
+		"job_id", string(jobID), "worker_id", string(workerID),
+		"deadline", newDeadline)
+
 	return nil
 }
 
@@ -214,14 +255,36 @@ func (d *Dispatcher) Complete(
 	return d.report(ctx, jobID, workerID, tasks.NewWorkerComplete(jobID, output))
 }
 
-// Fail reports a technical fault and removes the job from the store.
+// ReportBpmnError reports a worker-declared Business Error and removes the job.
+func (d *Dispatcher) ReportBpmnError(
+	ctx context.Context,
+	jobID tasks.JobID,
+	workerID tasks.WorkerID,
+	code, message string,
+) error {
+	return d.report(ctx, jobID, workerID,
+		tasks.NewWorkerBpmnError(jobID, code, message))
+}
+
+// ReportStatus reports a worker-declared Business Status and removes the job.
+func (d *Dispatcher) ReportStatus(
+	ctx context.Context,
+	jobID tasks.JobID,
+	workerID tasks.WorkerID,
+	value data.Value,
+) error {
+	return d.report(ctx, jobID, workerID, tasks.NewWorkerStatus(jobID, value))
+}
+
+// Fail reports a raw fault (the engine ErrorMapper classifies it) and removes the
+// job from the store.
 func (d *Dispatcher) Fail(
 	ctx context.Context,
 	jobID tasks.JobID,
 	workerID tasks.WorkerID,
-	cause error,
+	fault tasks.Fault,
 ) error {
-	return d.report(ctx, jobID, workerID, tasks.NewWorkerFail(jobID, cause))
+	return d.report(ctx, jobID, workerID, tasks.NewWorkerFault(jobID, fault))
 }
 
 // report validates the lock, removes the job, and delivers the outcome to the
@@ -252,7 +315,12 @@ func (d *Dispatcher) report(
 
 	d.remove(e)
 
+	logger := d.logger
 	d.mu.Unlock()
+
+	logger.Debug("job outcome reported",
+		"job_id", string(jobID), "worker_id", string(workerID),
+		"kind", outcome.Kind().String())
 
 	return sink.ReportJobCompletion(ctx, outcome)
 }
@@ -319,7 +387,10 @@ func (d *Dispatcher) RegisterWorker(
 
 	d.workers[topic] = fn
 
+	logger := d.logger
 	d.mu.Unlock()
+
+	logger.Info("registered local worker", "topic", string(topic))
 
 	go d.runWorker(ctx, topic, fn)
 
@@ -344,12 +415,23 @@ func (d *Dispatcher) runWorker(
 		for _, lj := range jobs {
 			out, e := fn(ctx, lj)
 			if e != nil {
-				_ = d.Fail(ctx, lj.ID, workerID, e)
+				// a pooled worker's plain error is a raw technical fault (no
+				// code/body → the ErrorMapper falls through to default technical).
+				if rerr := d.Fail(ctx, lj.ID, workerID,
+					tasks.Fault{Cause: e}); rerr != nil {
+					d.logger.Warn("local worker failed to report a job fault",
+						"topic", topic, "job_id", string(lj.ID),
+						"fault", e.Error(), "report_error", rerr.Error())
+				}
 
 				continue
 			}
 
-			_ = d.Complete(ctx, lj.ID, workerID, out)
+			if rerr := d.Complete(ctx, lj.ID, workerID, out); rerr != nil {
+				d.logger.Warn("local worker failed to report a job completion",
+					"topic", topic, "job_id", string(lj.ID),
+					"report_error", rerr.Error())
+			}
 		}
 	}
 }

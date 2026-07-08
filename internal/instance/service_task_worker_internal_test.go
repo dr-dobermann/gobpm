@@ -65,8 +65,20 @@ func (d *capDispatcher) Complete(
 	return nil
 }
 
+func (d *capDispatcher) ReportBpmnError(
+	context.Context, tasks.JobID, tasks.WorkerID, string, string,
+) error {
+	return nil
+}
+
+func (d *capDispatcher) ReportStatus(
+	context.Context, tasks.JobID, tasks.WorkerID, data.Value,
+) error {
+	return nil
+}
+
 func (d *capDispatcher) Fail(
-	context.Context, tasks.JobID, tasks.WorkerID, error,
+	context.Context, tasks.JobID, tasks.WorkerID, tasks.Fault,
 ) error {
 	return nil
 }
@@ -213,11 +225,11 @@ func TestServiceTaskWorkerFailFaults(t *testing.T) {
 	job := waitForJob(t, disp)
 
 	require.NoError(t, inst.ReportJobCompletion(context.Background(),
-		tasks.NewWorkerFail(job.ID, errors.New("boom"))))
+		tasks.NewWorkerFault(job.ID, tasks.Fault{Cause: errors.New("boom")})))
 
 	require.Eventually(t, func() bool { return inst.State() == Terminated },
 		2*time.Second, 5*time.Millisecond)
-	require.ErrorContains(t, inst.LastErr(), "worker reported a failure")
+	require.ErrorContains(t, inst.LastErr(), "worker reported a technical fault")
 }
 
 // TestServiceTaskWorkerExecutorIgnored covers §2.5: the operation's in-process
@@ -284,7 +296,7 @@ func TestServiceTaskWorkerEnqueueFailureFaults(t *testing.T) {
 
 	require.Eventually(t, func() bool { return inst.State() == Terminated },
 		2*time.Second, 5*time.Millisecond)
-	require.ErrorContains(t, inst.LastErr(), "worker reported a failure")
+	require.ErrorContains(t, inst.LastErr(), "worker reported a technical fault")
 }
 
 // guardedWorkerInstance builds start → host(ServiceTask, WithWorker) → normalEnd
@@ -425,7 +437,157 @@ func TestServiceTaskWorkerBindInputFailureFaults(t *testing.T) {
 
 	require.Eventually(t, func() bool { return inst.State() == Terminated },
 		2*time.Second, 5*time.Millisecond)
-	require.ErrorContains(t, inst.LastErr(), "worker reported a failure")
+	require.ErrorContains(t, inst.LastErr(), "worker reported a technical fault")
 	_, enqueued := disp.lastJob()
 	require.False(t, enqueued, "no job is enqueued when input binding fails")
+}
+
+// errorGuardedWorkerInstance builds start → host(ServiceTask, WithWorker) →
+// normalEnd with an interrupting Error boundary (errorRef boundaryCode) →
+// excEnd, backed by disp. A worker Business Error matching boundaryCode is caught
+// by the boundary (SRD-037 FR-4).
+func errorGuardedWorkerInstance(
+	t *testing.T,
+	disp tasks.WorkerDispatcher,
+	boundaryCode string,
+) (inst *Instance, normalEndID, excEndID string) {
+	t.Helper()
+	require.NoError(t, data.CreateDefaultStates())
+
+	p, err := process.New("st-worker-err")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	host, err := activities.NewServiceTask("host",
+		service.MustOperation("op", nil, nil, nil),
+		activities.WithWorker("topic-x"), activities.WithoutParams())
+	require.NoError(t, err)
+
+	normalEnd, err := events.NewEndEvent("normal-end")
+	require.NoError(t, err)
+
+	bpErr, err := bpmncommon.NewError("boundary-error", boundaryCode, nil)
+	require.NoError(t, err)
+
+	eed, err := events.NewErrorEventDefinition(bpErr)
+	require.NoError(t, err)
+
+	be, err := events.NewBoundaryEvent("err-bnd", host, eed, true)
+	require.NoError(t, err)
+
+	excEnd, err := events.NewEndEvent("exc-end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, host, normalEnd, be, excEnd} {
+		require.NoError(t, p.Add(e))
+	}
+
+	_, err = flow.Link(start, host)
+	require.NoError(t, err)
+	_, err = flow.Link(host, normalEnd)
+	require.NoError(t, err)
+	_, err = flow.Link(be, excEnd)
+	require.NoError(t, err)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	rt := enginert.Default().WithWorkerDispatcher(disp)
+	inst, err = New(s, scope.EmptyDataPath, rt,
+		mockeventproc.NewMockEventProducer(t), &failDist{})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, inst.Run(ctx))
+
+	return inst, normalEnd.ID(), excEnd.ID()
+}
+
+// TestWorkerReportBpmnErrorRaisesBoundary covers FR-2/FR-4: a worker's Business
+// Error matching an Error boundary interrupts the task and runs the exception flow.
+func TestWorkerReportBpmnErrorRaisesBoundary(t *testing.T) {
+	disp := &capDispatcher{}
+	inst, _, excEndID := errorGuardedWorkerInstance(t, disp, "ResourceConflict")
+
+	job := waitForJob(t, disp)
+
+	require.NoError(t, inst.ReportJobCompletion(context.Background(),
+		tasks.NewWorkerBpmnError(job.ID, "ResourceConflict", "conflict")))
+
+	require.Eventually(t, func() bool { return inst.State() == Completed },
+		2*time.Second, 5*time.Millisecond)
+	require.True(t, reachedNode(inst, excEndID), "the exception flow ran")
+}
+
+// TestWorkerBpmnErrorUnmatchedFaultsInstance covers FR-4: a Business Error with no
+// matching boundary faults the instance (not silently completed).
+func TestWorkerBpmnErrorUnmatchedFaultsInstance(t *testing.T) {
+	disp := &capDispatcher{}
+	inst, _, excEndID := errorGuardedWorkerInstance(t, disp, "ResourceConflict")
+
+	job := waitForJob(t, disp)
+
+	require.NoError(t, inst.ReportJobCompletion(context.Background(),
+		tasks.NewWorkerBpmnError(job.ID, "OtherCode", "x")))
+
+	require.Eventually(t, func() bool { return inst.State() == Terminated },
+		2*time.Second, 5*time.Millisecond)
+	require.False(t, reachedNode(inst, excEndID),
+		"no exception flow runs on a no-match")
+}
+
+// TestWorkerReportStatusCompletes covers FR-2/FR-5 end-to-end: a worker Business
+// Status writes the WithStatus variable into the real instance scope and the task
+// completes normally (proving re.Find/Put for a free-named var).
+func TestWorkerReportStatusCompletes(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	p, err := process.New("st-worker-status")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	host, err := activities.NewServiceTask("host",
+		service.MustOperation("op", nil, nil, nil),
+		activities.WithWorker("topic-x"),
+		activities.WithStatus("orderStatus", false),
+		activities.WithoutParams())
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, host, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	_, err = flow.Link(start, host)
+	require.NoError(t, err)
+	_, err = flow.Link(host, end)
+	require.NoError(t, err)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	disp := &capDispatcher{}
+	rt := enginert.Default().WithWorkerDispatcher(disp)
+	inst, err := New(s, scope.EmptyDataPath, rt,
+		mockeventproc.NewMockEventProducer(t), &failDist{})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, inst.Run(ctx))
+
+	job := waitForJob(t, disp)
+
+	require.NoError(t, inst.ReportJobCompletion(context.Background(),
+		tasks.NewWorkerStatus(job.ID, values.NewVariable("NOT_FOUND"))))
+
+	require.Eventually(t, func() bool { return inst.State() == Completed },
+		2*time.Second, 5*time.Millisecond)
 }

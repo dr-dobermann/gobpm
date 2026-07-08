@@ -51,8 +51,20 @@ func (d *capDispatcher) Complete(
 	return nil
 }
 
+func (d *capDispatcher) ReportBpmnError(
+	context.Context, tasks.JobID, tasks.WorkerID, string, string,
+) error {
+	return nil
+}
+
+func (d *capDispatcher) ReportStatus(
+	context.Context, tasks.JobID, tasks.WorkerID, data.Value,
+) error {
+	return nil
+}
+
 func (d *capDispatcher) Fail(
-	context.Context, tasks.JobID, tasks.WorkerID, error,
+	context.Context, tasks.JobID, tasks.WorkerID, tasks.Fault,
 ) error {
 	return nil
 }
