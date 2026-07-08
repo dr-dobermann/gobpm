@@ -77,3 +77,21 @@ func TestWithWorkerErrorMapper(t *testing.T) {
 		t.Fatal("a nil mapper should be ignored (default kept)")
 	}
 }
+
+// TestWithWorkerRetryPolicy covers SRD-038 FR-6: the engine-wide default
+// RetryPolicy is nil by default, set by WithWorkerRetryPolicy, nil ignored.
+func TestWithWorkerRetryPolicy(t *testing.T) {
+	p := tasks.NoRetry()
+
+	if Default().WorkerRetryPolicy() != nil {
+		t.Fatal("the default worker retry policy should be nil")
+	}
+
+	if Default().WithWorkerRetryPolicy(p).WorkerRetryPolicy() != p {
+		t.Fatal("WithWorkerRetryPolicy was not applied")
+	}
+
+	if Default().WithWorkerRetryPolicy(nil).WorkerRetryPolicy() != nil {
+		t.Fatal("a nil policy should be ignored (default kept)")
+	}
+}

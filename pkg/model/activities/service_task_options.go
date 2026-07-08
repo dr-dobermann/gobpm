@@ -13,6 +13,7 @@ import (
 // external-worker options (SRD-036/037/038).
 type srvTaskConfig struct {
 	errorMapper     tasks.ErrorMapper
+	retryPolicy     tasks.RetryPolicy
 	workerTopic     tasks.Topic
 	statusVar       string
 	outputMapping   []tasks.OutputRule
@@ -79,6 +80,25 @@ func WithErrorMapper(m tasks.ErrorMapper) SrvTaskOption {
 		}
 
 		c.errorMapper = m
+
+		return nil
+	}
+}
+
+// WithRetryPolicy sets the per-service RetryPolicy that governs technical-fault
+// retries for the worker-dispatched task (ADR-021 §2.7, SRD-038). A nil policy is
+// rejected. Overrides the engine-wide WithWorkerRetryPolicy default; absent both,
+// the engine's DefaultRetryPolicy applies. Valid only on a worker-dispatched
+// ServiceTask (checked at NewServiceTask).
+func WithRetryPolicy(p tasks.RetryPolicy) SrvTaskOption {
+	return func(c *srvTaskConfig) error {
+		if p == nil {
+			return errs.New(
+				errs.M("WithRetryPolicy: a nil RetryPolicy isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		c.retryPolicy = p
 
 		return nil
 	}

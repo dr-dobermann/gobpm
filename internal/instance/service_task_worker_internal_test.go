@@ -312,13 +312,14 @@ func mustMapper(t *testing.T, code string) tasks.ErrorMapper {
 	return m
 }
 
-// enqueuedWorkerPolicy builds and runs start → ServiceTask(WithWorker,
-// [WithErrorMapper(perSvc)]) → end on a runtime carrying engineWide as the
-// engine-wide default, and returns the enqueued job's resolved Policy (SRD-038
-// §3.6, two-level resolution at enqueue).
-func enqueuedWorkerPolicy(
+// enqueuedPolicy builds and runs start → ServiceTask(WithWorker, extra...) → end
+// on rt (whose dispatcher must be disp) and returns the enqueued job's resolved
+// Policy (SRD-038 §3.6, two-level resolution at enqueue).
+func enqueuedPolicy(
 	t *testing.T,
-	perSvc, engineWide tasks.ErrorMapper,
+	disp *capDispatcher,
+	rt *enginert.Runtime,
+	extra ...options.Option,
 ) *tasks.Policy {
 	t.Helper()
 	require.NoError(t, data.CreateDefaultStates())
@@ -329,11 +330,8 @@ func enqueuedWorkerPolicy(
 	start, err := events.NewStartEvent("start")
 	require.NoError(t, err)
 
-	stOpts := []options.Option{
-		activities.WithWorker("topic-x"), activities.WithoutParams()}
-	if perSvc != nil {
-		stOpts = append(stOpts, activities.WithErrorMapper(perSvc))
-	}
+	stOpts := append([]options.Option{
+		activities.WithWorker("topic-x"), activities.WithoutParams()}, extra...)
 
 	st, err := activities.NewServiceTask("svc",
 		service.MustOperation("op", nil, nil, nil), stOpts...)
@@ -353,13 +351,6 @@ func enqueuedWorkerPolicy(
 
 	s, err := snapshot.New(p)
 	require.NoError(t, err)
-
-	disp := &capDispatcher{}
-	rt := enginert.Default().WithWorkerDispatcher(disp)
-
-	if engineWide != nil {
-		rt = rt.WithWorkerErrorMapper(engineWide)
-	}
 
 	inst, err := New(s, scope.EmptyDataPath, rt,
 		mockeventproc.NewMockEventProducer(t), &failDist{})
@@ -381,10 +372,14 @@ func TestEnqueueResolvesPerServiceErrorMapper(t *testing.T) {
 	perSvc := mustMapper(t, "PerService")
 	engineWide := mustMapper(t, "EngineWide")
 
-	policy := enqueuedWorkerPolicy(t, perSvc, engineWide)
+	disp := &capDispatcher{}
+	rt := enginert.Default().WithWorkerDispatcher(disp).
+		WithWorkerErrorMapper(engineWide)
+
+	policy := enqueuedPolicy(t, disp, rt, activities.WithErrorMapper(perSvc))
 
 	require.Equal(t, perSvc, policy.ErrorMapper)
-	require.Nil(t, policy.RetryPolicy, "RetryPolicy resolution arrives in M7")
+	require.NotNil(t, policy.RetryPolicy, "the RetryPolicy is always resolved")
 }
 
 // TestEnqueueFallsBackToEngineErrorMapper covers FR-2/§3.6: absent a per-service
@@ -392,9 +387,43 @@ func TestEnqueueResolvesPerServiceErrorMapper(t *testing.T) {
 func TestEnqueueFallsBackToEngineErrorMapper(t *testing.T) {
 	engineWide := mustMapper(t, "EngineWide")
 
-	policy := enqueuedWorkerPolicy(t, nil, engineWide)
+	disp := &capDispatcher{}
+	rt := enginert.Default().WithWorkerDispatcher(disp).
+		WithWorkerErrorMapper(engineWide)
+
+	policy := enqueuedPolicy(t, disp, rt)
 
 	require.Equal(t, engineWide, policy.ErrorMapper)
+}
+
+// TestEnqueueResolvesPerServiceRetryPolicy covers FR-6/§3.6: a per-service
+// WithRetryPolicy wins over the engine-wide default in the enqueued Job.Policy.
+func TestEnqueueResolvesPerServiceRetryPolicy(t *testing.T) {
+	perSvc := tasks.FixedDelay(5, time.Second)
+	engineWide := tasks.NoRetry()
+
+	disp := &capDispatcher{}
+	rt := enginert.Default().WithWorkerDispatcher(disp).
+		WithWorkerRetryPolicy(engineWide)
+
+	policy := enqueuedPolicy(t, disp, rt, activities.WithRetryPolicy(perSvc))
+
+	require.Equal(t, perSvc, policy.RetryPolicy)
+}
+
+// TestEnqueueFallsBackToEngineRetryPolicy covers FR-6/§3.6: absent a per-service
+// policy, the engine-wide default populates the Job.Policy (not the built-in
+// DefaultRetryPolicy).
+func TestEnqueueFallsBackToEngineRetryPolicy(t *testing.T) {
+	engineWide := tasks.FixedDelay(7, 2*time.Second)
+
+	disp := &capDispatcher{}
+	rt := enginert.Default().WithWorkerDispatcher(disp).
+		WithWorkerRetryPolicy(engineWide)
+
+	policy := enqueuedPolicy(t, disp, rt)
+
+	require.Equal(t, engineWide, policy.RetryPolicy)
 }
 
 // guardedWorkerInstance builds start → host(ServiceTask, WithWorker) → normalEnd

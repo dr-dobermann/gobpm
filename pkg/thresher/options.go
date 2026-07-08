@@ -38,6 +38,10 @@ type thresherConfig struct {
 	// workerErrorMapper is the engine-wide default ErrorMapper (SRD-037 FR-3);
 	// nil by default, overridden per-service by activities.WithErrorMapper.
 	workerErrorMapper tasks.ErrorMapper
+	// workerRetryPolicy is the engine-wide default RetryPolicy (SRD-038 FR-6);
+	// nil by default, overridden per-service by activities.WithRetryPolicy;
+	// absent both, the resolver falls back to tasks.DefaultRetryPolicy.
+	workerRetryPolicy tasks.RetryPolicy
 	taskDist          interactor.TaskDistributor
 
 	// Startup-report suppression (ADR-002 v.2 §4.4.1). Both default to false —
@@ -220,6 +224,23 @@ func WithWorkerErrorMapper(m tasks.ErrorMapper) Option {
 	}
 }
 
+// WithWorkerRetryPolicy sets the engine-wide default RetryPolicy applied to a
+// worker-dispatched ServiceTask's technical fault when it carries no per-service
+// activities.WithRetryPolicy (SRD-038 FR-6, two-level config).
+func WithWorkerRetryPolicy(p tasks.RetryPolicy) Option {
+	return func(c *thresherConfig) error {
+		if p == nil {
+			return errs.New(
+				errs.M("WithWorkerRetryPolicy: a nil RetryPolicy isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		c.workerRetryPolicy = p
+
+		return nil
+	}
+}
+
 // WithoutBanner suppresses the startup banner block — the ASCII wordmark, the
 // product tagline, and the version / last-commit lines (ADR-002 v.2 §4.4.1).
 // The configuration dump still prints unless WithoutStartupConfig is also given.
@@ -261,6 +282,8 @@ func (c *thresherConfig) AuthorizationProvider() auth.AuthorizationProvider {
 func (c *thresherConfig) WorkerDispatcher() tasks.WorkerDispatcher { return c.dispatcher }
 
 func (c *thresherConfig) WorkerErrorMapper() tasks.ErrorMapper { return c.workerErrorMapper }
+
+func (c *thresherConfig) WorkerRetryPolicy() tasks.RetryPolicy { return c.workerRetryPolicy }
 
 func (c *thresherConfig) TaskDistributor() interactor.TaskDistributor { return c.taskDist }
 

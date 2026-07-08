@@ -47,8 +47,10 @@ type WorkerFunc func(ctx context.Context, job tasks.LockedJob) (*data.ItemDefini
 type jobEntry struct {
 	firstLock time.Time // when this lock was acquired (for the maxLock cap)
 	deadline  time.Time // current lock expiry
+	notBefore time.Time // > now while gated for a retry backoff (zero = available)
 	job       tasks.Job
 	workerID  tasks.WorkerID // "" = unlocked
+	attempt   int            // executions run so far (retry count = attempt-1)
 }
 
 // Dispatcher is the in-memory fetch-and-lock job store (ADR-021 §2.4).
@@ -172,9 +174,10 @@ func (d *Dispatcher) FetchAndLock(
 ) ([]tasks.LockedJob, error) {
 	for {
 		d.mu.Lock()
-		lj, ok := d.lockNext(workerID, topics, lockDuration)
+		lj, gate, ok := d.lockNext(workerID, topics, lockDuration)
 		wake := d.wake
 		logger := d.logger
+		now := d.clk.Now()
 		d.mu.Unlock()
 
 		if ok {
@@ -185,28 +188,48 @@ func (d *Dispatcher) FetchAndLock(
 			return []tasks.LockedJob{lj}, nil
 		}
 
+		// Nothing available now; if a retry backoff gate is pending, also wake at
+		// the nearest one (a nil timer channel never fires — the wake-only case).
+		var timer <-chan time.Time
+		if !gate.IsZero() {
+			timer = d.clk.After(gate.Sub(now))
+		}
+
 		select {
 		case <-wake:
 			continue // a job was enqueued (broadcast) — re-scan.
+		case <-timer:
+			continue // a retry backoff gate elapsed — re-scan.
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
 	}
 }
 
-// lockNext locks and returns the first available entry for one of topics.
-// Caller holds d.mu.
+// lockNext locks and returns the first available entry for one of topics. When
+// nothing is available it also returns the earliest future retry-backoff gate
+// (zero if none) so the caller can wake for it. Caller holds d.mu.
 func (d *Dispatcher) lockNext(
 	workerID tasks.WorkerID,
 	topics []tasks.Topic,
 	lockDuration time.Duration,
-) (tasks.LockedJob, bool) {
+) (tasks.LockedJob, time.Time, bool) {
 	now := d.clk.Now()
+
+	var gate time.Time
 
 	for _, topic := range topics {
 		for _, e := range d.byTopic[topic] {
 			if e.workerID != "" && !now.After(e.deadline) {
 				continue // locked and not expired
+			}
+
+			if !e.notBefore.IsZero() && now.Before(e.notBefore) {
+				if gate.IsZero() || e.notBefore.Before(gate) {
+					gate = e.notBefore // track the nearest backoff gate
+				}
+
+				continue // gated for a retry backoff
 			}
 
 			if e.workerID != "" {
@@ -219,16 +242,17 @@ func (d *Dispatcher) lockNext(
 			e.workerID = workerID
 			e.firstLock = now
 			e.deadline = now.Add(lockDuration)
+			e.notBefore = time.Time{} // consumed — the gate is now handed out
 
 			return tasks.LockedJob{
 				Job:      e.job,
 				WorkerID: workerID,
 				Deadline: e.deadline,
-			}, true
+			}, time.Time{}, true
 		}
 	}
 
-	return tasks.LockedJob{}, false
+	return tasks.LockedJob{}, gate, false
 }
 
 // ExtendLock extends jobID's lock (held by workerID) by newDuration from now,
@@ -296,10 +320,12 @@ func (d *Dispatcher) ReportStatus(
 
 // Fail reports a raw fault. The dispatcher classifies it engine-side via the
 // job's Policy.ErrorMapper (EngineAuthoritative, SRD-038 §3.4): a Business Error
-// or Status becomes a terminal verdict; a Technical fault is terminal for now
-// (retry arrives in M7). The classified terminal is delivered to the sink and
-// the job removed. Classification runs outside d.mu while the reporting worker
-// still holds the job's (unexpired) lock, so no concurrent fetch can take it.
+// or Status is a terminal verdict delivered to the sink; a Technical fault is
+// run through the Policy.RetryPolicy — a retry re-arms the job for a later
+// re-fetch (no delivery, the track stays parked), an exhausted policy delivers
+// the terminal fault. Classification runs outside d.mu while the reporting
+// worker still holds the job's (unexpired) lock, so no concurrent fetch can take
+// it; the retry decision re-acquires d.mu and re-validates the entry.
 func (d *Dispatcher) Fail(
 	ctx context.Context,
 	jobID tasks.JobID,
@@ -320,16 +346,80 @@ func (d *Dispatcher) Fail(
 	logger := d.logger
 	d.mu.Unlock()
 
-	terminal := classify(ctx, logger, jobID, policy, ee, fault)
+	outcome := classify(ctx, logger, jobID, policy, ee, fault)
 
-	return d.report(ctx, jobID, workerID, terminal)
+	// A business verdict (BpmnError / Status) is never retried — deliver it.
+	if outcome.Kind() != tasks.OutcomeFault {
+		return d.report(ctx, jobID, workerID, outcome)
+	}
+
+	// Technical fault — consult the retry policy (SRD-038 §3.4, FR-7/FR-8).
+	return d.retryOrExhaust(ctx, jobID, workerID, policy, fault, logger)
 }
 
-// classify runs the job's ErrorMapper over a raw fault and returns the
-// classified terminal outcome (SRD-038 §3.4). A nil policy / nil mapper / nil
-// engine, or a mapper error, falls through to a raw (technical) fault outcome —
-// the track terminates it (M7 adds retry on the technical branch, before this
-// terminal is reached).
+// retryOrExhaust applies the job's RetryPolicy to a technical fault: while it
+// retries, the entry is re-armed (unlocked, gated by a notBefore backoff, and
+// its attempt count incremented) for a later re-fetch, with no delivery so the
+// track stays parked; once exhausted (or with no policy) the terminal technical
+// fault is delivered. Re-validates the entry under d.mu before acting.
+func (d *Dispatcher) retryOrExhaust(
+	ctx context.Context,
+	jobID tasks.JobID,
+	workerID tasks.WorkerID,
+	policy *tasks.Policy,
+	fault tasks.Fault,
+	logger observability.Logger,
+) error {
+	d.mu.Lock()
+
+	e, err := d.heldEntry(jobID, workerID)
+	if err != nil {
+		d.mu.Unlock()
+
+		return err
+	}
+
+	attempt := e.attempt + 1
+
+	if backoff, retry := retryDecision(policy, attempt, fault.Cause); retry {
+		e.workerID = ""
+		e.attempt = attempt
+		e.notBefore = d.clk.Now().Add(backoff)
+		d.broadcastLocked()
+		d.mu.Unlock()
+
+		logger.Debug("job retry scheduled",
+			"job_id", string(jobID), "attempt", attempt, "backoff", backoff)
+
+		return nil
+	}
+
+	topic := e.job.Topic
+	d.mu.Unlock()
+
+	logger.Warn("job retries exhausted",
+		"job_id", string(jobID), "topic", string(topic), "attempts", attempt)
+
+	return d.report(ctx, jobID, workerID, tasks.NewWorkerFault(jobID, fault))
+}
+
+// retryDecision consults policy's RetryPolicy for the just-failed attempt; a nil
+// policy or RetryPolicy is a no-retry (terminal on first technical fault).
+func retryDecision(
+	policy *tasks.Policy, attempt int, cause error,
+) (time.Duration, bool) {
+	if policy == nil || policy.RetryPolicy == nil {
+		return 0, false
+	}
+
+	return policy.RetryPolicy.Retry(attempt, cause)
+}
+
+// classify runs the job's ErrorMapper over a raw fault and returns the mapped
+// outcome (SRD-038 §3.4): a Business Error / Status verdict, or a technical
+// OutcomeFault. A nil policy / nil mapper / nil engine, or a mapper error, falls
+// through to the technical outcome. The caller retries a technical outcome (via
+// the RetryPolicy) before it becomes terminal; a verdict is delivered as-is.
 func classify(
 	ctx context.Context,
 	logger observability.Logger,

@@ -128,12 +128,13 @@ func NewServiceTask(
 	// WithErrorMapper / WithStatus / WithOutputMapping govern the worker outcome —
 	// meaningless on an in-process ServiceTask, so require WithWorker (SRD-037 §3.4).
 	if sc.workerTopic == "" &&
-		(sc.errorMapper != nil || sc.statusVar != "" ||
+		(sc.errorMapper != nil || sc.retryPolicy != nil || sc.statusVar != "" ||
 			len(sc.outputMapping) > 0) {
 		return nil,
 			errs.New(
-				errs.M("WithErrorMapper/WithStatus/WithOutputMapping require a "+
-					"worker-dispatched ServiceTask (WithWorker); %q has none", name),
+				errs.M("WithErrorMapper/WithRetryPolicy/WithStatus/WithOutputMapping "+
+					"require a worker-dispatched ServiceTask (WithWorker); %q has none",
+					name),
 				errs.C(errorClass, errs.InvalidParameter))
 	}
 
@@ -149,6 +150,7 @@ func NewServiceTask(
 			timeout:         sc.timeout,
 			workerTopic:     sc.workerTopic,
 			errorMapper:     sc.errorMapper,
+			retryPolicy:     sc.retryPolicy,
 			outputMapping:   sc.outputMapping,
 			statusVar:       sc.statusVar,
 			statusOverwrite: sc.statusOverwrite,
@@ -186,6 +188,7 @@ func (st *ServiceTask) Clone() (flow.Node, error) {
 		timeout:         st.timeout,
 		workerTopic:     st.workerTopic,
 		errorMapper:     st.errorMapper,
+		retryPolicy:     st.retryPolicy,
 		outputMapping:   st.outputMapping,
 		statusVar:       st.statusVar,
 		statusOverwrite: st.statusOverwrite,

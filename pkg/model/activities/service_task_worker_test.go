@@ -320,6 +320,14 @@ func TestWithErrorMapperRejectsNil(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestWithRetryPolicyRejectsNil: a nil RetryPolicy is rejected at construction.
+func TestWithRetryPolicyRejectsNil(t *testing.T) {
+	_, err := activities.NewServiceTask("svc",
+		service.MustOperation("op", nil, nil, nil),
+		activities.WithWorker("t"), activities.WithRetryPolicy(nil))
+	require.Error(t, err)
+}
+
 // TestWithStatusRejectsEmpty: an empty status variable name is rejected.
 func TestWithStatusRejectsEmpty(t *testing.T) {
 	_, err := activities.NewServiceTask("svc",
@@ -519,12 +527,14 @@ func TestServiceTaskWorkerConfig(t *testing.T) {
 		tasks.Rule{Code: "409", Yield: tasks.BpmnError{Code: "Conflict"}})
 	require.NoError(t, err)
 
-	st := workerTaskOpts(t, activities.WithErrorMapper(mapper))
+	policy := tasks.NoRetry()
+	st := workerTaskOpts(t,
+		activities.WithErrorMapper(mapper), activities.WithRetryPolicy(policy))
 
 	em, rp, ok := st.WorkerConfig()
 	require.True(t, ok)
 	require.Equal(t, mapper, em)
-	require.Nil(t, rp) // WithRetryPolicy arrives in M7
+	require.Equal(t, policy, rp)
 
 	// an in-process ServiceTask (no WithWorker) reports ok == false.
 	in, err := activities.NewServiceTask("in",
