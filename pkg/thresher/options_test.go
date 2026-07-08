@@ -59,11 +59,13 @@ func TestEveryOptionOverridesItsDefault(t *testing.T) {
 		t.Fatalf("building the error mapper: %v", werr)
 	}
 
+	wrp := tasks.NoRetry()
+
 	for _, o := range []Option{
 		WithLogger(lg), WithTracer(tr), WithMetricsRecorder(mr), WithClock(ck),
 		WithRepository(rp), WithMessageBroker(mb), WithExpressionEngine(ee),
 		WithAuthorizationProvider(az), WithWorkerDispatcher(wd),
-		WithWorkerErrorMapper(wem),
+		WithWorkerErrorMapper(wem), WithWorkerRetryPolicy(wrp),
 	} {
 		if err := o(&c); err != nil {
 			t.Fatalf("option returned an error: %v", err)
@@ -73,7 +75,7 @@ func TestEveryOptionOverridesItsDefault(t *testing.T) {
 	if c.logger != lg || c.tracer != tr || c.metrics != mr || c.clock != ck ||
 		c.repository != rp || c.msgBroker != mb || c.exprEngine != ee ||
 		c.authz != az || c.dispatcher != wd ||
-		c.WorkerErrorMapper() != wem {
+		c.WorkerErrorMapper() != wem || c.WorkerRetryPolicy() != wrp {
 		t.Fatal("a WithXxx option did not override its field")
 	}
 }
@@ -257,5 +259,13 @@ func TestWithWorkerErrorMapperRejectsNil(t *testing.T) {
 	c := defaultConfig()
 	if err := WithWorkerErrorMapper(nil)(&c); err == nil {
 		t.Fatal("a nil ErrorMapper should be rejected")
+	}
+}
+
+// TestWithWorkerRetryPolicyRejectsNil: a nil engine-wide RetryPolicy is rejected.
+func TestWithWorkerRetryPolicyRejectsNil(t *testing.T) {
+	c := defaultConfig()
+	if err := WithWorkerRetryPolicy(nil)(&c); err == nil {
+		t.Fatal("a nil RetryPolicy should be rejected")
 	}
 }

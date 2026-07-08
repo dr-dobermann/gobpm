@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/expression"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
@@ -58,11 +59,20 @@ func (j JobID) InstanceID() string {
 	return instanceID
 }
 
-// Policy is the per-service execution bundle shipped to a WorkerTrusted worker
-// (SRD-038): output mapping, error mapping, and retry policy. It is nil under
-// EngineAuthoritative and throughout M2/M3 — a placeholder here that SRD-037/038
-// fill in.
-type Policy struct{}
+// Policy is a worker-dispatched ServiceTask's resolved outcome policy. Under
+// EngineAuthoritative (SRD-038) the dispatcher uses it to classify a raw fault
+// (ErrorMapper) and drive technical retries (RetryPolicy); under WorkerTrusted
+// (SRD-039) it is shipped to the worker. The instance resolves it (two-level:
+// per-service over engine-wide) at enqueue. A nil Policy = an in-process task or
+// a not-yet-populated job.
+type Policy struct {
+	// ErrorMapper classifies a raw fault; nil = raw faults fall through to the
+	// default Technical outcome.
+	ErrorMapper ErrorMapper
+	// RetryPolicy drives technical-fault retries; wired in SRD-038 M7 (nil when
+	// unset).
+	RetryPolicy RetryPolicy
+}
 
 // Job is the unit the engine Enqueues. Input is the single bound input-message
 // item (nil if the operation has no inMessage), per the operation contract.
@@ -167,6 +177,23 @@ type SinkBinder interface {
 // dispatcher that manages its own logging need not implement it.
 type LoggerBinder interface {
 	BindLogger(logger observability.Logger)
+}
+
+// ExpressionEngineBinder is an optional dispatcher capability: the engine binds
+// its expression engine at startup so the dispatcher can run a Job's ErrorMapper
+// (which evaluates FormalExpressions) when it classifies a raw fault engine-side
+// under EngineAuthoritative (SRD-038). A dispatcher that never classifies
+// engine-side (e.g. a WorkerTrusted-only remote adapter) need not implement it.
+type ExpressionEngineBinder interface {
+	BindExpressionEngine(ee expression.Engine)
+}
+
+// WorkerConfig is implemented by a node whose worker outcome the engine
+// classifies and retries. WorkerConfig returns the node's per-service policy —
+// either value nil means "fall back to the engine-wide default" resolved at
+// enqueue; ok == false for an in-process (non-worker) node.
+type WorkerConfig interface {
+	WorkerConfig() (errorMapper ErrorMapper, retryPolicy RetryPolicy, ok bool)
 }
 
 // ExternalWorker is implemented by a node whose work is dispatched to an

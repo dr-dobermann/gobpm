@@ -18,6 +18,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
@@ -297,6 +298,132 @@ func TestServiceTaskWorkerEnqueueFailureFaults(t *testing.T) {
 	require.Eventually(t, func() bool { return inst.State() == Terminated },
 		2*time.Second, 5*time.Millisecond)
 	require.ErrorContains(t, inst.LastErr(), "worker reported a technical fault")
+}
+
+// mustMapper builds a rule mapper yielding a Business Error of code (keyed on
+// fault code "409"), used to tell per-service from engine-wide by its yield.
+func mustMapper(t *testing.T, code string) tasks.ErrorMapper {
+	t.Helper()
+
+	m, err := tasks.NewRuleMapper(
+		tasks.Rule{Code: "409", Yield: tasks.BpmnError{Code: code}})
+	require.NoError(t, err)
+
+	return m
+}
+
+// enqueuedPolicy builds and runs start → ServiceTask(WithWorker, extra...) → end
+// on rt (whose dispatcher must be disp) and returns the enqueued job's resolved
+// Policy (SRD-038 §3.6, two-level resolution at enqueue).
+func enqueuedPolicy(
+	t *testing.T,
+	disp *capDispatcher,
+	rt *enginert.Runtime,
+	extra ...options.Option,
+) *tasks.Policy {
+	t.Helper()
+	require.NoError(t, data.CreateDefaultStates())
+
+	p, err := process.New("st-policy")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	stOpts := append([]options.Option{
+		activities.WithWorker("topic-x"), activities.WithoutParams()}, extra...)
+
+	st, err := activities.NewServiceTask("svc",
+		service.MustOperation("op", nil, nil, nil), stOpts...)
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, st, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	_, err = flow.Link(start, st)
+	require.NoError(t, err)
+	_, err = flow.Link(st, end)
+	require.NoError(t, err)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	inst, err := New(s, scope.EmptyDataPath, rt,
+		mockeventproc.NewMockEventProducer(t), &failDist{})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, inst.Run(ctx))
+
+	job := waitForJob(t, disp)
+	require.NotNil(t, job.Policy, "the enqueued job carries a resolved Policy")
+
+	return job.Policy
+}
+
+// TestEnqueueResolvesPerServiceErrorMapper covers FR-2/§3.6: a per-service
+// WithErrorMapper wins over the engine-wide default in the enqueued Job.Policy.
+func TestEnqueueResolvesPerServiceErrorMapper(t *testing.T) {
+	perSvc := mustMapper(t, "PerService")
+	engineWide := mustMapper(t, "EngineWide")
+
+	disp := &capDispatcher{}
+	rt := enginert.Default().WithWorkerDispatcher(disp).
+		WithWorkerErrorMapper(engineWide)
+
+	policy := enqueuedPolicy(t, disp, rt, activities.WithErrorMapper(perSvc))
+
+	require.Equal(t, perSvc, policy.ErrorMapper)
+	require.NotNil(t, policy.RetryPolicy, "the RetryPolicy is always resolved")
+}
+
+// TestEnqueueFallsBackToEngineErrorMapper covers FR-2/§3.6: absent a per-service
+// mapper, the engine-wide default populates the Job.Policy.
+func TestEnqueueFallsBackToEngineErrorMapper(t *testing.T) {
+	engineWide := mustMapper(t, "EngineWide")
+
+	disp := &capDispatcher{}
+	rt := enginert.Default().WithWorkerDispatcher(disp).
+		WithWorkerErrorMapper(engineWide)
+
+	policy := enqueuedPolicy(t, disp, rt)
+
+	require.Equal(t, engineWide, policy.ErrorMapper)
+}
+
+// TestEnqueueResolvesPerServiceRetryPolicy covers FR-6/§3.6: a per-service
+// WithRetryPolicy wins over the engine-wide default in the enqueued Job.Policy.
+func TestEnqueueResolvesPerServiceRetryPolicy(t *testing.T) {
+	perSvc := tasks.FixedDelay(5, time.Second)
+	engineWide := tasks.NoRetry()
+
+	disp := &capDispatcher{}
+	rt := enginert.Default().WithWorkerDispatcher(disp).
+		WithWorkerRetryPolicy(engineWide)
+
+	policy := enqueuedPolicy(t, disp, rt, activities.WithRetryPolicy(perSvc))
+
+	require.Equal(t, perSvc, policy.RetryPolicy)
+}
+
+// TestEnqueueFallsBackToEngineRetryPolicy covers FR-6/§3.6: absent a per-service
+// policy, the engine-wide default populates the Job.Policy (not the built-in
+// DefaultRetryPolicy).
+func TestEnqueueFallsBackToEngineRetryPolicy(t *testing.T) {
+	engineWide := tasks.FixedDelay(7, 2*time.Second)
+
+	disp := &capDispatcher{}
+	rt := enginert.Default().WithWorkerDispatcher(disp).
+		WithWorkerRetryPolicy(engineWide)
+
+	policy := enqueuedPolicy(t, disp, rt)
+
+	require.Equal(t, engineWide, policy.RetryPolicy)
 }
 
 // guardedWorkerInstance builds start → host(ServiceTask, WithWorker) → normalEnd

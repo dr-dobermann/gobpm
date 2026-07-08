@@ -217,6 +217,14 @@ func New(id string, opts ...Option) (*Thresher, error) {
 		lb.BindLogger(cfg.Logger())
 	}
 
+	// Bind the engine's expression engine so the dispatcher can run a Job's
+	// ErrorMapper when it classifies a raw fault engine-side (EngineAuthoritative,
+	// SRD-038). A dispatcher that never classifies engine-side need not implement
+	// ExpressionEngineBinder.
+	if eb, ok := cfg.WorkerDispatcher().(tasks.ExpressionEngineBinder); ok {
+		eb.BindExpressionEngine(cfg.ExpressionEngine())
+	}
+
 	// The EventHub receives the engine's resolved runtime (&t.cfg implements
 	// renv.EngineRuntime) so the waiters it builds reach Clock / ExpressionEngine
 	// (ADR-002 §4.3, Solution B). Built after t so it shares t's cfg pointer.

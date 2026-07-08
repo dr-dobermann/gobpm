@@ -36,4 +36,10 @@ type EngineRuntime interface {
 	// per-service WithErrorMapper (SRD-037 FR-3, two-level config). nil = no
 	// default (a raw fault falls through to the default technical outcome).
 	WorkerErrorMapper() tasks.ErrorMapper
+
+	// WorkerRetryPolicy is the engine-wide default RetryPolicy applied to a
+	// worker-dispatched ServiceTask's technical fault when the task carries no
+	// per-service WithRetryPolicy (SRD-038 FR-6, two-level config). nil = fall
+	// back to tasks.DefaultRetryPolicy at resolution.
+	WorkerRetryPolicy() tasks.RetryPolicy
 }

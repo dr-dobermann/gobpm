@@ -41,6 +41,10 @@ type Runtime struct {
 	// workerErrorMapper is the engine-wide default ErrorMapper (SRD-037 FR-3);
 	// nil by default (a per-service WithErrorMapper overrides it).
 	workerErrorMapper tasks.ErrorMapper
+	// workerRetryPolicy is the engine-wide default RetryPolicy (SRD-038 FR-6);
+	// nil by default (a per-service WithRetryPolicy overrides it; absent both,
+	// the resolver falls back to tasks.DefaultRetryPolicy).
+	workerRetryPolicy tasks.RetryPolicy
 }
 
 // Default returns a Runtime with every extension set to its bundled default.
@@ -140,6 +144,20 @@ func (r *Runtime) WorkerErrorMapper() tasks.ErrorMapper { return r.workerErrorMa
 func (r *Runtime) WithWorkerErrorMapper(m tasks.ErrorMapper) *Runtime {
 	if m != nil {
 		r.workerErrorMapper = m
+	}
+
+	return r
+}
+
+// WorkerRetryPolicy returns the engine-wide default RetryPolicy (nil = fall back
+// to tasks.DefaultRetryPolicy at resolution).
+func (r *Runtime) WorkerRetryPolicy() tasks.RetryPolicy { return r.workerRetryPolicy }
+
+// WithWorkerRetryPolicy overrides the engine-wide default RetryPolicy and returns
+// the Runtime. A nil policy is ignored (the current default is kept).
+func (r *Runtime) WithWorkerRetryPolicy(p tasks.RetryPolicy) *Runtime {
+	if p != nil {
+		r.workerRetryPolicy = p
 	}
 
 	return r
