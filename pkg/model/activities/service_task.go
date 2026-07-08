@@ -41,6 +41,7 @@ import (
 type ServiceTask struct {
 	operation   service.Operation
 	errorMapper tasks.ErrorMapper
+	retryPolicy tasks.RetryPolicy
 	// outputMapping shapes a worker's raw Complete body into the output
 	// (WithOutputMapping, SRD-037 FR-7); empty = direct reconciliation.
 	outputMapping []tasks.OutputRule
@@ -334,11 +335,14 @@ func (st *ServiceTask) wrapOpErr(err error) error {
 		errs.D("operation_id", st.operation.ID()))
 }
 
-// execWorkerOutcome classifies + applies the worker's stashed outcome on resume
-// (SRD-037 §3.5): a completion binds the output; a Business Error raises a BPMN
-// error caught by a boundary; a Business Status writes the WithStatus variable and
-// completes; a raw fault is run through the ErrorMapper. Runs on the track resume
-// goroutine, so re's expression engine + scope are available (no goroutine, §4.1).
+// execWorkerOutcome applies the worker's stashed terminal outcome on resume
+// (SRD-037 §3.5, reshaped SRD-038 §3.7): a completion binds the output; a
+// Business Error raises a BPMN error caught by a boundary; a Business Status
+// writes the WithStatus variable and completes; a terminal fault (the
+// retries-exhausted case) fails the task. Classification now runs in the
+// dispatcher before the loop, so the track only applies — it never sees a raw,
+// unclassified fault. Runs on the track resume goroutine, so re's scope is
+// available for the output/status write (no goroutine, §4.1).
 func (st *ServiceTask) execWorkerOutcome(
 	ctx context.Context,
 	re renv.RuntimeEnvironment,
@@ -355,7 +359,7 @@ func (st *ServiceTask) execWorkerOutcome(
 		return st.writeStatus(ctx, re, wo.StatusValue())
 
 	case tasks.OutcomeFault:
-		return st.classifyFault(ctx, re, wo.Fault())
+		return nil, st.technicalFault(wo.Fault())
 
 	default: // OutcomeComplete
 		return st.bindOutput(ctx, re, wo.Output())
@@ -475,51 +479,11 @@ func (st *ServiceTask) writeStatus(
 	return st.Outgoing(), nil
 }
 
-// classifyFault runs the ServiceTask's ErrorMapper over a raw fault (no mapper →
-// default Technical) and applies the mapped outcome (SRD-037 FR-3).
-func (st *ServiceTask) classifyFault(
-	ctx context.Context,
-	re renv.RuntimeEnvironment,
-	fault tasks.Fault,
-) ([]*flow.SequenceFlow, error) {
-	// Two-level ErrorMapper (SRD-037 FR-3): the per-service WithErrorMapper
-	// overrides the engine-wide WithWorkerErrorMapper default; absent both, a raw
-	// fault falls through to the default technical outcome.
-	mapper := st.errorMapper
-	if mapper == nil {
-		mapper = re.WorkerErrorMapper()
-	}
-
-	var mapped tasks.MappedOutcome = tasks.Technical{}
-
-	if mapper != nil {
-		m, err := mapper.Classify(ctx, re.ExpressionEngine(), fault)
-		if err != nil {
-			return nil,
-				errs.New(
-					errs.M("service task %q: error-mapping failed", st.Name()),
-					errs.C(errorClass, errs.OperationFailed),
-					errs.E(err),
-					errs.D("service_task_id", st.ID()))
-		}
-
-		mapped = m
-	}
-
-	switch o := mapped.(type) {
-	case tasks.BpmnError:
-		return st.raiseBpmnError(o.Code, o.Message)
-
-	case tasks.Status:
-		return st.writeStatus(ctx, re, o.Value)
-
-	default: // tasks.Technical (sealed interface — the only remaining kind)
-		return nil, st.technicalFault(fault)
-	}
-}
-
-// technicalFault wraps a raw fault as the terminal ServiceTask failure (retry
-// arrives in SRD-038).
+// technicalFault wraps a raw fault as the terminal ServiceTask failure — the
+// retries-exhausted outcome the dispatcher escalates once its RetryPolicy is
+// spent (SRD-038). A fault reaches the track only as this terminal; the
+// technical-vs-business classification now runs in the dispatcher, before the
+// loop, so the track never re-classifies here.
 func (st *ServiceTask) technicalFault(fault tasks.Fault) error {
 	return errs.New(
 		errs.M("service task %q worker reported a technical fault", st.Name()),
@@ -545,6 +509,15 @@ func (st *ServiceTask) BindJobInput(
 	r service.DataReader,
 ) (*data.ItemDefinition, error) {
 	return st.operation.BindInputOnly(ctx, r)
+}
+
+// WorkerConfig reports the ServiceTask's per-service outcome policy — its
+// WithErrorMapper and WithRetryPolicy — for the engine to resolve (two-level,
+// over the engine-wide defaults) and ship in the enqueued Job.Policy so the
+// dispatcher can classify + retry a raw fault engine-side. ok == false for an
+// in-process task (tasks.WorkerConfig, SRD-038 §3.3).
+func (st *ServiceTask) WorkerConfig() (tasks.ErrorMapper, tasks.RetryPolicy, bool) {
+	return st.errorMapper, st.retryPolicy, st.workerTopic != ""
 }
 
 // ------------------ eventproc.EventProcessor interface -----------------------

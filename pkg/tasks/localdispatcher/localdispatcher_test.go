@@ -233,6 +233,10 @@ func TestLocalDispatcherReportGuards(t *testing.T) {
 	require.ErrorIs(t, d.Complete(ctx, "j1", "wB", nil),
 		localdispatcher.ErrNotLockHolder)
 
+	// Fail runs the same lock guard before it classifies (SRD-038).
+	require.ErrorIs(t, d.Fail(ctx, "missing", "wA", tasks.Fault{}),
+		localdispatcher.ErrJobNotFound)
+
 	// past the lock, the holder can no longer complete.
 	clk.Advance(11 * time.Second)
 	require.ErrorIs(t, d.Complete(ctx, "j1", "wA", nil),

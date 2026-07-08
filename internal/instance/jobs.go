@@ -152,8 +152,31 @@ func (inst *Instance) enqueueJob(
 
 	topic, _ := ew.WorkerTopic()
 
-	return inst.WorkerDispatcher().Enqueue(ctx,
-		tasks.Job{ID: jobID, Topic: topic, Input: input})
+	return inst.WorkerDispatcher().Enqueue(ctx, tasks.Job{
+		ID:     jobID,
+		Topic:  topic,
+		Input:  input,
+		Policy: inst.resolveWorkerPolicy(ew),
+	})
+}
+
+// resolveWorkerPolicy resolves the enqueued job's outcome policy: the node's
+// per-service ErrorMapper (tasks.WorkerConfig) over the engine-wide default
+// (WorkerErrorMapper). The dispatcher classifies a raw fault with it engine-side
+// (SRD-038 §3.6); nil ErrorMapper = a raw fault falls through to the default
+// technical outcome. RetryPolicy resolution arrives in M7.
+func (inst *Instance) resolveWorkerPolicy(ew tasks.ExternalWorker) *tasks.Policy {
+	var em tasks.ErrorMapper
+
+	if wc, ok := ew.(tasks.WorkerConfig); ok {
+		em, _, _ = wc.WorkerConfig()
+	}
+
+	if em == nil {
+		em = inst.WorkerErrorMapper()
+	}
+
+	return &tasks.Policy{ErrorMapper: em}
 }
 
 // cleanupJob drops any job owned by a track that ended without completing it

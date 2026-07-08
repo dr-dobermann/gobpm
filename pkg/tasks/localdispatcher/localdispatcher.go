@@ -15,6 +15,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/clock"
 	"github.com/dr-dobermann/gobpm/pkg/clock/syscl"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/expression"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
@@ -52,15 +53,16 @@ type jobEntry struct {
 
 // Dispatcher is the in-memory fetch-and-lock job store (ADR-021 §2.4).
 type Dispatcher struct {
-	clk     clock.Clock
-	sink    tasks.JobCompletionSink
-	logger  observability.Logger
-	byID    map[tasks.JobID]*jobEntry
-	byTopic map[tasks.Topic][]*jobEntry
-	workers map[tasks.Topic]WorkerFunc
-	wake    chan struct{}
-	maxLock time.Duration
-	mu      sync.Mutex
+	clk        clock.Clock
+	sink       tasks.JobCompletionSink
+	logger     observability.Logger
+	exprEngine expression.Engine // classifies a raw fault's ErrorMapper (SRD-038)
+	byID       map[tasks.JobID]*jobEntry
+	byTopic    map[tasks.Topic][]*jobEntry
+	workers    map[tasks.Topic]WorkerFunc
+	wake       chan struct{}
+	maxLock    time.Duration
+	mu         sync.Mutex
 }
 
 // New returns an in-memory dispatcher whose locks are capped at maxLock
@@ -109,6 +111,22 @@ func (d *Dispatcher) BindLogger(logger observability.Logger) {
 	defer d.mu.Unlock()
 
 	d.logger = logger
+}
+
+// BindExpressionEngine sets the engine the dispatcher uses to run a Job's
+// ErrorMapper when it classifies a raw fault engine-side (EngineAuthoritative,
+// SRD-038). Bound at startup (tasks.ExpressionEngineBinder). A nil engine is
+// ignored — a dispatcher with no bound engine treats every raw fault as the
+// default technical outcome (no mapper can run).
+func (d *Dispatcher) BindExpressionEngine(ee expression.Engine) {
+	if ee == nil {
+		return
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.exprEngine = ee
 }
 
 // Enqueue adds a job to the queue and wakes any waiting fetcher.
@@ -276,15 +294,72 @@ func (d *Dispatcher) ReportStatus(
 	return d.report(ctx, jobID, workerID, tasks.NewWorkerStatus(jobID, value))
 }
 
-// Fail reports a raw fault (the engine ErrorMapper classifies it) and removes the
-// job from the store.
+// Fail reports a raw fault. The dispatcher classifies it engine-side via the
+// job's Policy.ErrorMapper (EngineAuthoritative, SRD-038 §3.4): a Business Error
+// or Status becomes a terminal verdict; a Technical fault is terminal for now
+// (retry arrives in M7). The classified terminal is delivered to the sink and
+// the job removed. Classification runs outside d.mu while the reporting worker
+// still holds the job's (unexpired) lock, so no concurrent fetch can take it.
 func (d *Dispatcher) Fail(
 	ctx context.Context,
 	jobID tasks.JobID,
 	workerID tasks.WorkerID,
 	fault tasks.Fault,
 ) error {
-	return d.report(ctx, jobID, workerID, tasks.NewWorkerFault(jobID, fault))
+	d.mu.Lock()
+
+	e, err := d.heldEntry(jobID, workerID)
+	if err != nil {
+		d.mu.Unlock()
+
+		return err
+	}
+
+	policy := e.job.Policy
+	ee := d.exprEngine
+	logger := d.logger
+	d.mu.Unlock()
+
+	terminal := classify(ctx, logger, jobID, policy, ee, fault)
+
+	return d.report(ctx, jobID, workerID, terminal)
+}
+
+// classify runs the job's ErrorMapper over a raw fault and returns the
+// classified terminal outcome (SRD-038 §3.4). A nil policy / nil mapper / nil
+// engine, or a mapper error, falls through to a raw (technical) fault outcome —
+// the track terminates it (M7 adds retry on the technical branch, before this
+// terminal is reached).
+func classify(
+	ctx context.Context,
+	logger observability.Logger,
+	jobID tasks.JobID,
+	policy *tasks.Policy,
+	ee expression.Engine,
+	fault tasks.Fault,
+) *tasks.WorkerOutcome {
+	if policy == nil || policy.ErrorMapper == nil || ee == nil {
+		return tasks.NewWorkerFault(jobID, fault)
+	}
+
+	mapped, err := policy.ErrorMapper.Classify(ctx, ee, fault)
+	if err != nil {
+		logger.Warn("error-mapping failed; treating as a technical fault",
+			"job_id", string(jobID), "error", err.Error())
+
+		return tasks.NewWorkerFault(jobID, fault)
+	}
+
+	switch o := mapped.(type) {
+	case tasks.BpmnError:
+		return tasks.NewWorkerBpmnError(jobID, o.Code, o.Message)
+
+	case tasks.Status:
+		return tasks.NewWorkerStatus(jobID, o.Value)
+
+	default: // tasks.Technical (sealed interface — the only remaining kind)
+		return tasks.NewWorkerFault(jobID, fault)
+	}
 }
 
 // report validates the lock, removes the job, and delivers the outcome to the
@@ -444,6 +519,8 @@ func (d *Dispatcher) broadcastLocked() {
 }
 
 var (
-	_ tasks.WorkerDispatcher = (*Dispatcher)(nil)
-	_ tasks.SinkBinder       = (*Dispatcher)(nil)
+	_ tasks.WorkerDispatcher       = (*Dispatcher)(nil)
+	_ tasks.SinkBinder             = (*Dispatcher)(nil)
+	_ tasks.LoggerBinder           = (*Dispatcher)(nil)
+	_ tasks.ExpressionEngineBinder = (*Dispatcher)(nil)
 )

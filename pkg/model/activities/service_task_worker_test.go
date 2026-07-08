@@ -61,16 +61,17 @@ func TestServiceTaskWorkerExecBindsCompletedOutput(t *testing.T) {
 	require.Equal(t, "res", put.ItemDefinition().ID())
 }
 
-// TestServiceTaskWorkerExecFaultsOnCause: a Fail outcome stashed by ProcessEvent
-// makes Exec return a wrapped fault (no output committed).
+// TestServiceTaskWorkerExecFaultsOnCause: a terminal Fault outcome (SRD-038: the
+// dispatcher already classified/exhausted it) makes Exec fail the task with a
+// technical fault — the track applies, it does not re-classify (no ErrorMapper
+// call, no Put).
 func TestServiceTaskWorkerExecFaultsOnCause(t *testing.T) {
 	st := workerTask(t)
 
 	require.NoError(t, st.ProcessEvent(context.Background(),
 		tasks.NewWorkerFault("job-1", tasks.Fault{Cause: errors.New("boom")})))
 
-	re := mockrenv.NewMockRuntimeEnvironment(t) // no Put expected
-	re.EXPECT().WorkerErrorMapper().Return(nil) // no engine-wide default
+	re := mockrenv.NewMockRuntimeEnvironment(t) // no ErrorMapper / Put expected
 	_, err := st.Exec(context.Background(), re)
 	require.ErrorContains(t, err, "worker reported a technical fault")
 }
@@ -222,28 +223,6 @@ func workerTaskOpts(
 	return st
 }
 
-// bodyClauseNeedingBody builds a body-clause that reads "body" — it errors when
-// the fault carries none, exercising the ErrorMapper evaluation-error path.
-func bodyClauseNeedingBody(t *testing.T) data.FormalExpression {
-	t.Helper()
-
-	fe, err := goexpr.New(nil,
-		data.MustItemDefinition(values.NewVariable(false)),
-		func(ctx context.Context, ds data.Source) (data.Value, error) {
-			b, err := ds.Find(ctx, "body")
-			if err != nil {
-				return nil, err
-			}
-
-			s, _ := b.Value().Get(ctx).(string)
-
-			return values.NewVariable(s == "x"), nil
-		})
-	require.NoError(t, err)
-
-	return fe
-}
-
 // TestServiceTaskWorkerExecRaisesBpmnError: a Business Error outcome makes Exec
 // return a *events.BpmnError (caught by a boundary at the instance level).
 func TestServiceTaskWorkerExecRaisesBpmnError(t *testing.T) {
@@ -333,47 +312,6 @@ func TestServiceTaskWorkerStatusWithoutWithStatusFaults(t *testing.T) {
 
 // TestServiceTaskWorkerFaultClassifiedByMapper: a raw fault is run through the
 // ErrorMapper, which yields a Business Error here.
-func TestServiceTaskWorkerFaultClassifiedByMapper(t *testing.T) {
-	mapper, err := tasks.NewRuleMapper(
-		tasks.Rule{Code: "409", Yield: tasks.BpmnError{Code: "Conflict"}})
-	require.NoError(t, err)
-
-	st := workerTaskOpts(t, activities.WithErrorMapper(mapper))
-
-	require.NoError(t, st.ProcessEvent(context.Background(),
-		tasks.NewWorkerFault("job-1", tasks.Fault{Code: "409"})))
-
-	re := mockrenv.NewMockRuntimeEnvironment(t)
-	re.EXPECT().ExpressionEngine().Return(exprengine.New())
-
-	_, err = st.Exec(context.Background(), re)
-
-	var be *events.BpmnError
-	require.True(t, errors.As(err, &be))
-	require.Equal(t, "Conflict", be.Code)
-}
-
-// TestServiceTaskWorkerFaultMapperError: an ErrorMapper whose evaluation errors
-// surfaces from Exec.
-func TestServiceTaskWorkerFaultMapperError(t *testing.T) {
-	mapper, err := tasks.NewRuleMapper(
-		tasks.Rule{Code: "404", BodyClause: bodyClauseNeedingBody(t),
-			Yield: tasks.Status{Value: values.NewVariable("x")}})
-	require.NoError(t, err)
-
-	st := workerTaskOpts(t, activities.WithErrorMapper(mapper))
-
-	// Fault has no body → the clause's Find("body") errors → classify errors.
-	require.NoError(t, st.ProcessEvent(context.Background(),
-		tasks.NewWorkerFault("job-1", tasks.Fault{Code: "404"})))
-
-	re := mockrenv.NewMockRuntimeEnvironment(t)
-	re.EXPECT().ExpressionEngine().Return(exprengine.New())
-
-	_, err = st.Exec(context.Background(), re)
-	require.ErrorContains(t, err, "error-mapping failed")
-}
-
 // TestWithErrorMapperRejectsNil: a nil ErrorMapper is rejected at construction.
 func TestWithErrorMapperRejectsNil(t *testing.T) {
 	_, err := activities.NewServiceTask("svc",
@@ -438,28 +376,6 @@ func TestServiceTaskWorkerStatusPutError(t *testing.T) {
 
 // TestServiceTaskWorkerFaultMappedToStatus: the ErrorMapper yields a Business
 // Status for a raw fault, which is written to the WithStatus variable.
-func TestServiceTaskWorkerFaultMappedToStatus(t *testing.T) {
-	mapper, err := tasks.NewRuleMapper(
-		tasks.Rule{Code: "404",
-			Yield: tasks.Status{Value: values.NewVariable("NOT_FOUND")}})
-	require.NoError(t, err)
-
-	st := workerTaskOpts(t,
-		activities.WithErrorMapper(mapper), activities.WithStatus("s", false))
-
-	require.NoError(t, st.ProcessEvent(context.Background(),
-		tasks.NewWorkerFault("job-1", tasks.Fault{Code: "404"})))
-
-	re := mockrenv.NewMockRuntimeEnvironment(t)
-	re.EXPECT().ExpressionEngine().Return(exprengine.New())
-	re.EXPECT().Find(mock.Anything, "s").Return(nil, errors.New("nf"))
-	re.EXPECT().Put(mock.Anything).Return(nil)
-
-	flows, err := st.Exec(context.Background(), re)
-	require.NoError(t, err)
-	require.Empty(t, flows)
-}
-
 // bodyValueExpr builds a FormalExpression that returns the body's value — the
 // shape a WithOutputMapping rule's Path takes.
 func bodyValueExpr(t *testing.T) data.FormalExpression {
@@ -595,48 +511,25 @@ func TestWorkerClassificationBeatsMapper(t *testing.T) {
 	require.Equal(t, "Conflict", be.Code)
 }
 
-// TestTwoLevelErrorMapperOverride covers FR-3: the per-service WithErrorMapper
-// overrides the engine-wide default (the engine default is not consulted).
-func TestTwoLevelErrorMapperOverride(t *testing.T) {
-	perService, err := tasks.NewRuleMapper(
-		tasks.Rule{Code: "409", Yield: tasks.BpmnError{Code: "PerService"}})
+// TestServiceTaskWorkerConfig covers the tasks.WorkerConfig surface (SRD-038
+// §3.3): a worker-dispatched task exposes its per-service ErrorMapper/RetryPolicy
+// with ok == true; an in-process task reports ok == false.
+func TestServiceTaskWorkerConfig(t *testing.T) {
+	mapper, err := tasks.NewRuleMapper(
+		tasks.Rule{Code: "409", Yield: tasks.BpmnError{Code: "Conflict"}})
 	require.NoError(t, err)
 
-	st := workerTaskOpts(t, activities.WithErrorMapper(perService))
+	st := workerTaskOpts(t, activities.WithErrorMapper(mapper))
 
-	require.NoError(t, st.ProcessEvent(context.Background(),
-		tasks.NewWorkerFault("job-1", tasks.Fault{Code: "409"})))
+	em, rp, ok := st.WorkerConfig()
+	require.True(t, ok)
+	require.Equal(t, mapper, em)
+	require.Nil(t, rp) // WithRetryPolicy arrives in M7
 
-	re := mockrenv.NewMockRuntimeEnvironment(t)
-	re.EXPECT().ExpressionEngine().Return(exprengine.New())
-	// WorkerErrorMapper NOT expected — per-service overrides, the fallback is skipped.
-
-	_, err = st.Exec(context.Background(), re)
-
-	var be *events.BpmnError
-	require.True(t, errors.As(err, &be))
-	require.Equal(t, "PerService", be.Code)
-}
-
-// TestEngineDefaultErrorMapperUsed covers FR-3: absent a per-service mapper, the
-// engine-wide WorkerErrorMapper default classifies the raw fault.
-func TestEngineDefaultErrorMapperUsed(t *testing.T) {
-	engineWide, err := tasks.NewRuleMapper(
-		tasks.Rule{Code: "409", Yield: tasks.BpmnError{Code: "EngineWide"}})
+	// an in-process ServiceTask (no WithWorker) reports ok == false.
+	in, err := activities.NewServiceTask("in",
+		service.MustOperation("op", nil, nil, nil))
 	require.NoError(t, err)
-
-	st := workerTask(t) // no per-service mapper
-
-	require.NoError(t, st.ProcessEvent(context.Background(),
-		tasks.NewWorkerFault("job-1", tasks.Fault{Code: "409"})))
-
-	re := mockrenv.NewMockRuntimeEnvironment(t)
-	re.EXPECT().WorkerErrorMapper().Return(engineWide)
-	re.EXPECT().ExpressionEngine().Return(exprengine.New())
-
-	_, err = st.Exec(context.Background(), re)
-
-	var be *events.BpmnError
-	require.True(t, errors.As(err, &be))
-	require.Equal(t, "EngineWide", be.Code)
+	_, _, ok = in.WorkerConfig()
+	require.False(t, ok)
 }
