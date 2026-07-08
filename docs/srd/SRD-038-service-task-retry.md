@@ -2,13 +2,13 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (pending impl) |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-08 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-021 v.1 Service Task Execution Model](../design/ADR-021-service-task-execution-model.md) §2.6–§2.8 |
 
-> **Draft** — fourth of five SRDs landing [ADR-021 v.1](../design/ADR-021-service-task-execution-model.md).
+> **Accepted** — fourth of five SRDs landing [ADR-021 v.1](../design/ADR-021-service-task-execution-model.md).
 > Builds on classification ([SRD-037](SRD-037-service-task-classification.md), Accepted). Two coupled changes:
 > **(1) Dispatch reshape** — move a worker fault's **classification** off the parked **track** and into the
 > **dispatcher**, so classification + retry happen **before** the instance loop and the track only **applies** a
@@ -438,4 +438,21 @@ dependency: ADR-004 is the remote *transport* for the same two protocols. Until 
 
 ## 10. Implementation summary (stage-by-stage actual landings + deltas vs draft)
 
-> ⚠️ TODO: fill AFTER landing (§10.1 stage commit SHAs for M6/M7, §10.2 empirical findings vs this draft).
+### 10.1 Stages by commit (branch `feat/service-task-retry`)
+
+| Stage | Commit | Scope | Tests |
+|---|---|---|---|
+| Doc | `4534255` | SRD-038 (this document) | — |
+| M6 | `d79208c` | Dispatch reshape: `classify` in `localdispatcher.Fail`; `ExpressionEngineBinder` + `BindExpressionEngine` + startup wiring; `Policy{ErrorMapper, RetryPolicy}`; `WorkerConfig` + `resolveWorkerPolicy` (ErrorMapper level) → `Job.Policy`; `classifyFault` deleted, `execWorkerOutcome` `OutcomeFault → technicalFault` | `TestDispatcherClassifiesFaultTo{BpmnError,Status}`, `TestDispatcher{UnmatchedFaultIsTechnical,FaultWithoutEngineDefaultsTechnical,FaultMapperErrorFallsBackTechnical}`, `TestBindExpressionEngineSeam`, `TestThresherBindsExpressionEngineToDispatcher`, `TestServiceTaskWorkerConfig`, `TestEnqueueResolves{PerServiceErrorMapper,FallsBackToEngineErrorMapper}`, `TestServiceTaskWorkerExecFaultsOnCause` (terminal-fault apply) |
+| M7 | `1367eee` | Retry policy: `RetryPolicy` batteries + `DefaultRetryPolicy`; two-level `WithRetryPolicy` / `WithWorkerRetryPolicy` (+ `renv.WorkerRetryPolicy()`); dispatcher re-arm loop (`retryOrExhaust`, `jobEntry.{attempt, notBefore}`, `lockNext` gate, `FetchAndLock` `clk.After` wake); exhaustion → terminal `Failed` | `TestRetryPolicy{NoRetry,FixedDelay,ExponentialBackoff,ExponentialCap,ExponentialJitter}`, `TestDefaultRetryPolicy`, `TestTechnicalFaultRetriesViaReArm`, `TestLocalDispatcherNotBeforeGate`, `TestRetryExhaustedFaultsWithDiagnostic`, `TestBusinessOutcomeNotRetried`, `TestRetryReValidatesExpiredLock`, `TestEnqueueResolves{PerServiceRetryPolicy,FallsBackToEngineRetryPolicy}`, `TestWith{RetryPolicy,WorkerRetryPolicy}RejectsNil` |
+
+`make ci` green at each milestone (tidy · lint 0 issues · build · `-race` · diff-coverage ≥95% on touched files · govulncheck); every new/changed function measured at 100% coverage.
+
+### 10.2 Empirical findings — deltas vs the §3 draft
+
+- **Classification locus landed exactly as designed** — in `localdispatcher.Fail` (the dispatcher), not the instance loop. `handleJobCompletion` is unchanged; the only instance-side addition is `resolveWorkerPolicy` at enqueue (populating `Job.Policy`). Confirms §1.1/§4.1.
+- **Interfaces reached final shape in M6, wiring in M7** — `RetryPolicy`, `WorkerConfig`, `ExpressionEngineBinder`, and both `Policy` fields were defined in M6 with the retry field inert, so M7 added no signature churn.
+- **`Fail` stopped delegating to `report()` for the retry branch** — the technical-retry path must keep the store entry to re-arm it, so it re-acquires `d.mu` and re-validates (`heldEntry`); the business-verdict and exhausted branches still deliver via `report()`.
+- **Re-validation guard is covered deterministically** — `TestRetryReValidatesExpiredLock` uses a clock-advancing `ErrorMapper` (`clockPokeMapper`) to expire the lock mid-classify, exercising the drop-the-re-arm path the shipped single-worker-per-topic pool never hits.
+- **SRD-037 track-side classification tests were relocated** — the M4 tests that drove `classifyFault` at the track were removed from `pkg/model/activities` (the logic moved) and re-established at the dispatcher (`classify_test.go`) and instance (`resolveWorkerPolicy`) layers.
+- **§6 test-name drift (all covered, no gaps):** the proposed `TestEnqueueResolvesTwoLevelPolicy` landed split per level (`…PerServiceErrorMapper` / `…PerServiceRetryPolicy` / `…FallsBackToEngine{ErrorMapper,RetryPolicy}`); `TestRetryPolicyBatteries` landed split per battery; `TestTrackAppliesTerminalOnly` is realized by `TestServiceTaskWorkerExecFaultsOnCause` plus the dispatcher classify tests.
