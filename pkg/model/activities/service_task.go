@@ -482,10 +482,18 @@ func (st *ServiceTask) classifyFault(
 	re renv.RuntimeEnvironment,
 	fault tasks.Fault,
 ) ([]*flow.SequenceFlow, error) {
+	// Two-level ErrorMapper (SRD-037 FR-3): the per-service WithErrorMapper
+	// overrides the engine-wide WithWorkerErrorMapper default; absent both, a raw
+	// fault falls through to the default technical outcome.
+	mapper := st.errorMapper
+	if mapper == nil {
+		mapper = re.WorkerErrorMapper()
+	}
+
 	var mapped tasks.MappedOutcome = tasks.Technical{}
 
-	if st.errorMapper != nil {
-		m, err := st.errorMapper.Classify(ctx, re.ExpressionEngine(), fault)
+	if mapper != nil {
+		m, err := mapper.Classify(ctx, re.ExpressionEngine(), fault)
 		if err != nil {
 			return nil,
 				errs.New(

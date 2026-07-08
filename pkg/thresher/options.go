@@ -35,7 +35,10 @@ type thresherConfig struct {
 	exprEngine expression.Engine
 	authz      auth.AuthorizationProvider
 	dispatcher tasks.WorkerDispatcher
-	taskDist   interactor.TaskDistributor
+	// workerErrorMapper is the engine-wide default ErrorMapper (SRD-037 FR-3);
+	// nil by default, overridden per-service by activities.WithErrorMapper.
+	workerErrorMapper tasks.ErrorMapper
+	taskDist          interactor.TaskDistributor
 
 	// Startup-report suppression (ADR-002 v.2 §4.4.1). Both default to false —
 	// the report is visible by default; each flag opts its block out.
@@ -200,6 +203,23 @@ func WithWorkerDispatcher(d tasks.WorkerDispatcher) Option {
 	}
 }
 
+// WithWorkerErrorMapper sets the engine-wide default ErrorMapper applied to a
+// worker-dispatched ServiceTask's raw fault when it carries no per-service
+// activities.WithErrorMapper (SRD-037 FR-3, two-level config).
+func WithWorkerErrorMapper(m tasks.ErrorMapper) Option {
+	return func(c *thresherConfig) error {
+		if m == nil {
+			return errs.New(
+				errs.M("WithWorkerErrorMapper: a nil ErrorMapper isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		c.workerErrorMapper = m
+
+		return nil
+	}
+}
+
 // WithoutBanner suppresses the startup banner block — the ASCII wordmark, the
 // product tagline, and the version / last-commit lines (ADR-002 v.2 §4.4.1).
 // The configuration dump still prints unless WithoutStartupConfig is also given.
@@ -239,6 +259,8 @@ func (c *thresherConfig) AuthorizationProvider() auth.AuthorizationProvider {
 }
 
 func (c *thresherConfig) WorkerDispatcher() tasks.WorkerDispatcher { return c.dispatcher }
+
+func (c *thresherConfig) WorkerErrorMapper() tasks.ErrorMapper { return c.workerErrorMapper }
 
 func (c *thresherConfig) TaskDistributor() interactor.TaskDistributor { return c.taskDist }
 

@@ -70,6 +70,7 @@ func TestServiceTaskWorkerExecFaultsOnCause(t *testing.T) {
 		tasks.NewWorkerFault("job-1", tasks.Fault{Cause: errors.New("boom")})))
 
 	re := mockrenv.NewMockRuntimeEnvironment(t) // no Put expected
+	re.EXPECT().WorkerErrorMapper().Return(nil) // no engine-wide default
 	_, err := st.Exec(context.Background(), re)
 	require.ErrorContains(t, err, "worker reported a technical fault")
 }
@@ -568,4 +569,74 @@ func TestWithOutputMappingRejectsNonWorker(t *testing.T) {
 		activities.WithOutputMapping(
 			tasks.OutputRule{Path: bodyValueExpr(t), Var: "v"}))
 	require.ErrorContains(t, err, "require a")
+}
+
+// TestWorkerClassificationBeatsMapper covers the FR-2/FR-3 precedence: an explicit
+// worker classification (ReportBpmnError) is honored directly — the ErrorMapper is
+// not consulted (it would map differently).
+func TestWorkerClassificationBeatsMapper(t *testing.T) {
+	mapper, err := tasks.NewRuleMapper(
+		tasks.Rule{Yield: tasks.Status{Value: values.NewVariable("mapped")}})
+	require.NoError(t, err)
+
+	st := workerTaskOpts(t,
+		activities.WithErrorMapper(mapper), activities.WithStatus("s", false))
+
+	// the worker self-classifies a Business Error → the mapper is bypassed.
+	require.NoError(t, st.ProcessEvent(context.Background(),
+		tasks.NewWorkerBpmnError("job-1", "Conflict", "dup")))
+
+	// no ExpressionEngine / Put expected — the mapper never runs.
+	re := mockrenv.NewMockRuntimeEnvironment(t)
+	_, err = st.Exec(context.Background(), re)
+
+	var be *events.BpmnError
+	require.True(t, errors.As(err, &be))
+	require.Equal(t, "Conflict", be.Code)
+}
+
+// TestTwoLevelErrorMapperOverride covers FR-3: the per-service WithErrorMapper
+// overrides the engine-wide default (the engine default is not consulted).
+func TestTwoLevelErrorMapperOverride(t *testing.T) {
+	perService, err := tasks.NewRuleMapper(
+		tasks.Rule{Code: "409", Yield: tasks.BpmnError{Code: "PerService"}})
+	require.NoError(t, err)
+
+	st := workerTaskOpts(t, activities.WithErrorMapper(perService))
+
+	require.NoError(t, st.ProcessEvent(context.Background(),
+		tasks.NewWorkerFault("job-1", tasks.Fault{Code: "409"})))
+
+	re := mockrenv.NewMockRuntimeEnvironment(t)
+	re.EXPECT().ExpressionEngine().Return(exprengine.New())
+	// WorkerErrorMapper NOT expected — per-service overrides, the fallback is skipped.
+
+	_, err = st.Exec(context.Background(), re)
+
+	var be *events.BpmnError
+	require.True(t, errors.As(err, &be))
+	require.Equal(t, "PerService", be.Code)
+}
+
+// TestEngineDefaultErrorMapperUsed covers FR-3: absent a per-service mapper, the
+// engine-wide WorkerErrorMapper default classifies the raw fault.
+func TestEngineDefaultErrorMapperUsed(t *testing.T) {
+	engineWide, err := tasks.NewRuleMapper(
+		tasks.Rule{Code: "409", Yield: tasks.BpmnError{Code: "EngineWide"}})
+	require.NoError(t, err)
+
+	st := workerTask(t) // no per-service mapper
+
+	require.NoError(t, st.ProcessEvent(context.Background(),
+		tasks.NewWorkerFault("job-1", tasks.Fault{Code: "409"})))
+
+	re := mockrenv.NewMockRuntimeEnvironment(t)
+	re.EXPECT().WorkerErrorMapper().Return(engineWide)
+	re.EXPECT().ExpressionEngine().Return(exprengine.New())
+
+	_, err = st.Exec(context.Background(), re)
+
+	var be *events.BpmnError
+	require.True(t, errors.As(err, &be))
+	require.Equal(t, "EngineWide", be.Code)
 }
