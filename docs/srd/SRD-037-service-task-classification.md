@@ -2,13 +2,13 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (pending impl) |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-07 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-021 v.1 Service Task Execution Model](../design/ADR-021-service-task-execution-model.md) §2.5–§2.6 |
 
-> **Draft** — third of four SRDs landing [ADR-021 v.1](../design/ADR-021-service-task-execution-model.md)
+> **Accepted** — third of four SRDs landing [ADR-021 v.1](../design/ADR-021-service-task-execution-model.md)
 > (**M4 + M5** of M1–M8). Builds on the external-worker foundation ([SRD-036](SRD-036-service-task-job-queue.md),
 > Accepted): a worker-dispatched ServiceTask parks, enqueues, and resumes on a **`Complete` / `Fail`** report.
 > **M4** adds **outcome classification** — a worker outcome resolves to one of four kinds (success, **Business
@@ -431,4 +431,27 @@ policy runs* (trust) and *what a technical outcome triggers* (retry) together, s
 
 ## 10. Implementation summary (stage-by-stage actual landings + deltas vs draft)
 
-> ⚠️ TODO: fill AFTER landing (§10.1 stage commit SHAs for M4/M5, §10.2 empirical findings vs this draft).
+### 10.1 Stage commits (branch `feat/service-task-classification`)
+
+| Stage | Commit | Scope | Key tests |
+|---|---|---|---|
+| M4 | `3972fd5` | classification model (`Fault`, sealed `MappedOutcome`, `RuleMapper` + `faultSource`, report surface `Fail(Fault)`/`ReportBpmnError`/`ReportStatus`, `WorkerOutcome` variants) + `execWorkerOutcome` dispatch (`raiseBpmnError`/`writeStatus`/`classifyFault`/`technicalFault`) + `WithErrorMapper`/`WithStatus` + build guards + the observability overhaul (§10.3) | `TestRuleMapper*` (7), `TestServiceTaskWorker{ExecBindsCompletedOutput, ExecFaultsOnCause, ExecRaisesBpmnError, ExecWritesStatus, StatusOverwriteCollision/True, StatusWithoutWithStatusFaults, FaultClassifiedByMapper, FaultMappedToStatus, FaultMapperError, BpmnErrorEmptyCodeFaults}`, `TestWorker{ReportBpmnErrorRaisesBoundary, BpmnErrorUnmatchedFaultsInstance, ReportStatusCompletes}`, `TestClassificationOptionsRejectNonWorker`, `TestLocalDispatcher{ReportBpmnError, ReportStatus, BindLogger}` |
+| M5 | `a14500b` | `OutputRule` + `ApplyOutputMapping` (`pkg/tasks/outputmapping.go`) + `WithOutputMapping` + `bindOutput` applies it (direct-reconciliation default; required-path fault) | `TestApplyOutputMapping*` (3), `TestServiceTaskWorkerOutputMapping{ShapesBody, RequiredFaults}`, `TestWithOutputMappingRejects{InvalidRule, NonWorker}` |
+| gate | `fbc2395` | FR-3 two-level closure (§10.2-e): engine-wide `WorkerErrorMapper` default | `TestWorkerClassificationBeatsMapper`, `TestTwoLevelErrorMapperOverride`, `TestEngineDefaultErrorMapperUsed`, `TestWithWorkerErrorMapper*` |
+
+`make ci` green — lint/vet/build/`-race` clean, govulncheck clean, diff-coverage 98.1% of 365 changed lines (min 95%).
+
+### 10.2 Empirical findings — where the implementation refined the §3/§4 draft
+
+All preserve the required invariants; recorded here rather than by rewriting §3/§4 (one-shot doc).
+
+- **Classification runs at resume in `execWorkerOutcome` (§4.1 confirmed).** The mapper + status write + output mapping all run on the track's resume `Exec` where `re`'s expression engine + scope exist — the direct, synchronous consequence of the report (no held goroutine, NFR-1). The raw outcome rides in the `WorkerOutcome` to the resume; the loop stays a pure router.
+- **Business Error reuses the existing raise→catch path (§4.2 confirmed).** `raiseBpmnError` builds `events.NewBpmnError(code, msg)` and returns the raw `*events.BpmnError`; the loop's `matchErrorBoundary` catches it via `errors.As(t.lastErr, &be)` (boundary_watch.go) — **zero new raise machinery**. `NewBpmnError` errors only on an empty code (a Business Error precludes it); that is propagated defensively as a technical fault.
+- **`SrvTaskOption` became error-returning.** To validate the new options (`WithErrorMapper` rejects nil, `WithStatus` rejects an empty name, `WithOutputMapping` rejects a nil Path / empty Var) the option type changed from `func(*srvTaskConfig)` to `func(*srvTaskConfig) error`; `WithTimeout`/`WithWorker` return nil. Public constructor signatures are unchanged.
+- **Test renames (§6 → code).** The `ErrorMapper*` §6 names landed as `RuleMapper*` (the declarative impl); `TestWithStatusOverwriteGuard` split into collision + upsert tests; `TestOutputMappingDirectReconciliationDefault` is covered by `TestServiceTaskWorkerExecBindsCompletedOutput` (no-mapping → direct bind); the worker-scoped tests carry a `ServiceTaskWorker` prefix. Intent preserved; §6 stays as authored, this table is the mapping.
+- **FR-3 two-level engine-wide default landed at the landing gate (`fbc2395`).** M4 landed only the per-service `WithErrorMapper`; `/check-srd` flagged the engine-wide `WithWorkerErrorMapper` (FR-3 / §3.4 / §5) as missing. Closed by adding `renv.EngineRuntime.WorkerErrorMapper()` (implemented by `enginert` + the thresher config; set by `thresher.WithWorkerErrorMapper` / `enginert.WithWorkerErrorMapper`) and making `classifyFault` two-level (per-service overrides engine-wide). The generated `RuntimeEnvironment` mock was regenerated.
+
+### 10.3 Out-of-scope hardening folded into M4
+
+- **Observability overhaul of `localdispatcher`** (surfaced at implementation review): the worker pool's `Complete`/`Fail` report errors are now **logged, not dropped**; logging is **on by default** (`slog.Default()`); **full lifecycle logging** was added (enqueue, fetch/lock, expired-lock reclaim, extend, the report funnel, worker registration); and the logger is taken **from the runtime config** via a new `tasks.LoggerBinder` seam bound in `Thresher.New` (the dispatcher analogue of `SinkBinder`). `OutcomeKind.String()` uses a constant-keyed array (project convention).
+- **Coverage gate:** the sealed `MappedOutcome` marker (`func (X) mappedOutcome() {}`) is structurally uncoverable (never called), so it was added to the Makefile `COVER_EXCLUDE` list alongside the existing `Option()` marker exclusion.
