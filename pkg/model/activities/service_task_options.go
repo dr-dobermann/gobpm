@@ -18,7 +18,9 @@ type srvTaskConfig struct {
 	statusVar       string
 	outputMapping   []tasks.OutputRule
 	timeout         time.Duration
+	trustMode       tasks.TrustMode
 	statusOverwrite bool
+	trustSet        bool
 }
 
 // SrvTaskOption is a ServiceTask-specific construction option (e.g. WithTimeout).
@@ -99,6 +101,27 @@ func WithRetryPolicy(p tasks.RetryPolicy) SrvTaskOption {
 		}
 
 		c.retryPolicy = p
+
+		return nil
+	}
+}
+
+// WithWorkerTrust sets the per-service trust mode — where the worker outcome's
+// policy bundle (output mapping, classification, retry) executes: WorkerTrusted
+// (the worker) or EngineAuthoritative (the engine's dispatcher) (ADR-021 §2.6,
+// SRD-039). An invalid mode is rejected. Overrides the engine-wide
+// WithWorkerTrustDefault; absent both, WorkerTrusted (the ADR default) applies.
+// Valid only on a worker-dispatched ServiceTask (checked at NewServiceTask).
+func WithWorkerTrust(mode tasks.TrustMode) SrvTaskOption {
+	return func(c *srvTaskConfig) error {
+		if mode != tasks.WorkerTrusted && mode != tasks.EngineAuthoritative {
+			return errs.New(
+				errs.M("WithWorkerTrust: unknown trust mode %q", mode.String()),
+				errs.C(errorClass, errs.InvalidParameter))
+		}
+
+		c.trustMode = mode
+		c.trustSet = true
 
 		return nil
 	}

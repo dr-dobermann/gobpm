@@ -187,12 +187,18 @@ func (inst *Instance) resolveWorkerPolicy(ew tasks.ExternalWorker) *tasks.Policy
 		rp = tasks.DefaultRetryPolicy()
 	}
 
-	// OutputMapping is per-service only (node-specific shaping — no engine-wide
-	// default); ship it so the policy owner maps the completion (SRD-039 M8).
+	// Trust resolves two-level: per-service over engine-wide over WorkerTrusted
+	// (the ADR-021 default) — Resolve maps an unset mode to its fallback (SRD-039
+	// M9). OutputMapping is per-service only (node-specific shaping — no
+	// engine-wide default); ship it so the policy owner maps the completion.
+	trust := ps.Trust.Resolve(
+		inst.WorkerTrustDefault().Resolve(tasks.WorkerTrusted))
+
 	return &tasks.Policy{
 		ErrorMapper:   em,
 		RetryPolicy:   rp,
 		OutputMapping: ps.OutputMapping,
+		Trust:         trust,
 	}
 }
 

@@ -54,7 +54,11 @@ type ServiceTask struct {
 	// variable a Business Status writes, and whether it may overwrite (SRD-037 FR-5).
 	statusVar string
 	task
-	timeout         time.Duration
+	timeout time.Duration
+	// trustMode selects the worker-outcome policy locus (WorkerTrusted /
+	// EngineAuthoritative); trustUnset resolves to the engine default at enqueue
+	// (SRD-039 M9).
+	trustMode       tasks.TrustMode
 	statusOverwrite bool
 }
 
@@ -128,13 +132,13 @@ func NewServiceTask(
 	// WithErrorMapper / WithStatus / WithOutputMapping govern the worker outcome —
 	// meaningless on an in-process ServiceTask, so require WithWorker (SRD-037 §3.4).
 	if sc.workerTopic == "" &&
-		(sc.errorMapper != nil || sc.retryPolicy != nil || sc.statusVar != "" ||
-			len(sc.outputMapping) > 0) {
+		(sc.errorMapper != nil || sc.retryPolicy != nil || sc.trustSet ||
+			sc.statusVar != "" || len(sc.outputMapping) > 0) {
 		return nil,
 			errs.New(
-				errs.M("WithErrorMapper/WithRetryPolicy/WithStatus/WithOutputMapping "+
-					"require a worker-dispatched ServiceTask (WithWorker); %q has none",
-					name),
+				errs.M("WithErrorMapper/WithRetryPolicy/WithWorkerTrust/WithStatus/"+
+					"WithOutputMapping require a worker-dispatched ServiceTask "+
+					"(WithWorker); %q has none", name),
 				errs.C(errorClass, errs.InvalidParameter))
 	}
 
@@ -151,6 +155,7 @@ func NewServiceTask(
 			workerTopic:     sc.workerTopic,
 			errorMapper:     sc.errorMapper,
 			retryPolicy:     sc.retryPolicy,
+			trustMode:       sc.trustMode,
 			outputMapping:   sc.outputMapping,
 			statusVar:       sc.statusVar,
 			statusOverwrite: sc.statusOverwrite,
@@ -189,6 +194,7 @@ func (st *ServiceTask) Clone() (flow.Node, error) {
 		workerTopic:     st.workerTopic,
 		errorMapper:     st.errorMapper,
 		retryPolicy:     st.retryPolicy,
+		trustMode:       st.trustMode,
 		outputMapping:   st.outputMapping,
 		statusVar:       st.statusVar,
 		statusOverwrite: st.statusOverwrite,
@@ -505,6 +511,7 @@ func (st *ServiceTask) WorkerConfig() (tasks.Policy, bool) {
 		ErrorMapper:   st.errorMapper,
 		RetryPolicy:   st.retryPolicy,
 		OutputMapping: st.outputMapping,
+		Trust:         st.trustMode,
 	}, st.workerTopic != ""
 }
 

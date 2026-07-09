@@ -76,6 +76,10 @@ type Policy struct {
 	// applied by the policy owner (dispatcher/worker), not the track (SRD-039 M8).
 	// Empty = the raw output is committed directly.
 	OutputMapping []OutputRule
+	// Trust selects the policy locus — the worker (WorkerTrusted) or the engine's
+	// dispatcher (EngineAuthoritative). Resolved at enqueue; never trustUnset on a
+	// shipped job (SRD-039 M9).
+	Trust TrustMode
 }
 
 // Job is the unit the engine Enqueues. Input is the single bound input-message

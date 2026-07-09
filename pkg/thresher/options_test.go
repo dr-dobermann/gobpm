@@ -60,12 +60,14 @@ func TestEveryOptionOverridesItsDefault(t *testing.T) {
 	}
 
 	wrp := tasks.NoRetry()
+	wtd := tasks.EngineAuthoritative
 
 	for _, o := range []Option{
 		WithLogger(lg), WithTracer(tr), WithMetricsRecorder(mr), WithClock(ck),
 		WithRepository(rp), WithMessageBroker(mb), WithExpressionEngine(ee),
 		WithAuthorizationProvider(az), WithWorkerDispatcher(wd),
 		WithWorkerErrorMapper(wem), WithWorkerRetryPolicy(wrp),
+		WithWorkerTrustDefault(wtd),
 	} {
 		if err := o(&c); err != nil {
 			t.Fatalf("option returned an error: %v", err)
@@ -75,7 +77,8 @@ func TestEveryOptionOverridesItsDefault(t *testing.T) {
 	if c.logger != lg || c.tracer != tr || c.metrics != mr || c.clock != ck ||
 		c.repository != rp || c.msgBroker != mb || c.exprEngine != ee ||
 		c.authz != az || c.dispatcher != wd ||
-		c.WorkerErrorMapper() != wem || c.WorkerRetryPolicy() != wrp {
+		c.WorkerErrorMapper() != wem || c.WorkerRetryPolicy() != wrp ||
+		c.WorkerTrustDefault() != wtd {
 		t.Fatal("a WithXxx option did not override its field")
 	}
 }
@@ -267,5 +270,14 @@ func TestWithWorkerRetryPolicyRejectsNil(t *testing.T) {
 	c := defaultConfig()
 	if err := WithWorkerRetryPolicy(nil)(&c); err == nil {
 		t.Fatal("a nil RetryPolicy should be rejected")
+	}
+}
+
+// TestWithWorkerTrustDefaultRejectsInvalid: an unknown engine-wide trust mode is
+// rejected.
+func TestWithWorkerTrustDefaultRejectsInvalid(t *testing.T) {
+	c := defaultConfig()
+	if err := WithWorkerTrustDefault(tasks.TrustMode(99))(&c); err == nil {
+		t.Fatal("an invalid trust mode should be rejected")
 	}
 }

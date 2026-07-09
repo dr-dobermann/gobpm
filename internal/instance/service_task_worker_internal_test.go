@@ -391,6 +391,30 @@ func TestEnqueueResolvesOutputMapping(t *testing.T) {
 	require.Equal(t, "orderId", policy.OutputMapping[0].Var)
 }
 
+// TestEnqueueResolvesTrust covers SRD-039 M9: the trust mode resolves two-level
+// into Job.Policy — per-service over engine-wide over the WorkerTrusted default.
+func TestEnqueueResolvesTrust(t *testing.T) {
+	// per-service WithWorkerTrust wins over the engine-wide default.
+	disp := &capDispatcher{}
+	rt := enginert.Default().WithWorkerDispatcher(disp).
+		WithWorkerTrustDefault(tasks.WorkerTrusted)
+	require.Equal(t, tasks.EngineAuthoritative,
+		enqueuedPolicy(t, disp, rt,
+			activities.WithWorkerTrust(tasks.EngineAuthoritative)).Trust)
+
+	// absent a per-service mode, the engine-wide default applies.
+	disp2 := &capDispatcher{}
+	rt2 := enginert.Default().WithWorkerDispatcher(disp2).
+		WithWorkerTrustDefault(tasks.EngineAuthoritative)
+	require.Equal(t, tasks.EngineAuthoritative,
+		enqueuedPolicy(t, disp2, rt2).Trust)
+
+	// absent both, WorkerTrusted (the ADR-021 default) applies.
+	disp3 := &capDispatcher{}
+	rt3 := enginert.Default().WithWorkerDispatcher(disp3)
+	require.Equal(t, tasks.WorkerTrusted, enqueuedPolicy(t, disp3, rt3).Trust)
+}
+
 // TestEnqueueResolvesPerServiceErrorMapper covers FR-2/§3.6: a per-service
 // WithErrorMapper wins over the engine-wide default in the enqueued Job.Policy.
 func TestEnqueueResolvesPerServiceErrorMapper(t *testing.T) {

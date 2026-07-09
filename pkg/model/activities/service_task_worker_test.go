@@ -338,6 +338,22 @@ func TestWithRetryPolicyRejectsNil(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestWithWorkerTrustRejectsInvalidMode: an unknown trust mode is rejected.
+func TestWithWorkerTrustRejectsInvalidMode(t *testing.T) {
+	_, err := activities.NewServiceTask("svc",
+		service.MustOperation("op", nil, nil, nil),
+		activities.WithWorker("t"), activities.WithWorkerTrust(tasks.TrustMode(99)))
+	require.ErrorContains(t, err, "unknown trust mode")
+}
+
+// TestWithWorkerTrustRejectsNonWorker: WithWorkerTrust requires WithWorker.
+func TestWithWorkerTrustRejectsNonWorker(t *testing.T) {
+	_, err := activities.NewServiceTask("svc",
+		service.MustOperation("op", nil, nil, nil),
+		activities.WithWorkerTrust(tasks.EngineAuthoritative))
+	require.ErrorContains(t, err, "require a")
+}
+
 // TestWithStatusRejectsEmpty: an empty status variable name is rejected.
 func TestWithStatusRejectsEmpty(t *testing.T) {
 	_, err := activities.NewServiceTask("svc",
@@ -475,12 +491,14 @@ func TestServiceTaskWorkerConfig(t *testing.T) {
 
 	policy := tasks.NoRetry()
 	st := workerTaskOpts(t,
-		activities.WithErrorMapper(mapper), activities.WithRetryPolicy(policy))
+		activities.WithErrorMapper(mapper), activities.WithRetryPolicy(policy),
+		activities.WithWorkerTrust(tasks.EngineAuthoritative))
 
 	ps, ok := st.WorkerConfig()
 	require.True(t, ok)
 	require.Equal(t, mapper, ps.ErrorMapper)
 	require.Equal(t, policy, ps.RetryPolicy)
+	require.Equal(t, tasks.EngineAuthoritative, ps.Trust)
 
 	// an in-process ServiceTask (no WithWorker) reports ok == false.
 	in, err := activities.NewServiceTask("in",
