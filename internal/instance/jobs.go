@@ -167,19 +167,18 @@ func (inst *Instance) enqueueJob(
 // (tasks.DefaultRetryPolicy when neither level sets one). The dispatcher uses
 // both to classify and retry a raw fault engine-side.
 func (inst *Instance) resolveWorkerPolicy(ew tasks.ExternalWorker) *tasks.Policy {
-	var (
-		em tasks.ErrorMapper
-		rp tasks.RetryPolicy
-	)
+	var ps tasks.Policy
 
 	if wc, ok := ew.(tasks.WorkerConfig); ok {
-		em, rp, _ = wc.WorkerConfig()
+		ps, _ = wc.WorkerConfig()
 	}
 
+	em := ps.ErrorMapper
 	if em == nil {
 		em = inst.WorkerErrorMapper()
 	}
 
+	rp := ps.RetryPolicy
 	if rp == nil {
 		rp = inst.WorkerRetryPolicy()
 	}
@@ -188,7 +187,13 @@ func (inst *Instance) resolveWorkerPolicy(ew tasks.ExternalWorker) *tasks.Policy
 		rp = tasks.DefaultRetryPolicy()
 	}
 
-	return &tasks.Policy{ErrorMapper: em, RetryPolicy: rp}
+	// OutputMapping is per-service only (node-specific shaping — no engine-wide
+	// default); ship it so the policy owner maps the completion (SRD-039 M8).
+	return &tasks.Policy{
+		ErrorMapper:   em,
+		RetryPolicy:   rp,
+		OutputMapping: ps.OutputMapping,
+	}
 }
 
 // cleanupJob drops any job owned by a track that ended without completing it

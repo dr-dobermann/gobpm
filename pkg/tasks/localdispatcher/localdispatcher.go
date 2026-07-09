@@ -287,14 +287,60 @@ func (d *Dispatcher) ExtendLock(
 	return nil
 }
 
-// Complete reports a successful outcome and removes the job from the store.
+// Complete reports a successful outcome and removes the job from the store. Under
+// EngineAuthoritative the dispatcher owns output mapping (SRD-039 §3.4): it shapes
+// the worker's raw output via the job's Policy.OutputMapping (over the bound
+// expression engine) into the final committed data before delivering, so the
+// track only commits. A required output path the body doesn't satisfy is a
+// contract violation — reported as a terminal technical fault, not retried.
 func (d *Dispatcher) Complete(
 	ctx context.Context,
 	jobID tasks.JobID,
 	workerID tasks.WorkerID,
 	output *data.ItemDefinition,
 ) error {
-	return d.report(ctx, jobID, workerID, tasks.NewWorkerComplete(jobID, output))
+	d.mu.Lock()
+
+	e, err := d.heldEntry(jobID, workerID)
+	if err != nil {
+		d.mu.Unlock()
+
+		return err
+	}
+
+	policy := e.job.Policy
+	ee := d.exprEngine
+	d.mu.Unlock()
+
+	res, mapErr := mapOutput(ctx, ee, policy, output)
+	if mapErr != nil {
+		return d.report(ctx, jobID, workerID,
+			tasks.NewWorkerFault(jobID, tasks.Fault{Cause: mapErr}))
+	}
+
+	return d.report(ctx, jobID, workerID, tasks.NewWorkerComplete(jobID, res))
+}
+
+// mapOutput shapes a worker's raw completion output into the final committed data
+// (SRD-039 §3.4): a nil output commits nothing; a job with Policy.OutputMapping
+// runs ApplyOutputMapping (a required path the body doesn't satisfy errors); an
+// unmapped output is committed directly (the M3 direct-reconciliation default).
+func mapOutput(
+	ctx context.Context,
+	ee expression.Engine,
+	policy *tasks.Policy,
+	output *data.ItemDefinition,
+) ([]data.Data, error) {
+	if output == nil {
+		return nil, nil
+	}
+
+	if policy != nil && len(policy.OutputMapping) > 0 && ee != nil {
+		return tasks.ApplyOutputMapping(ctx, ee, policy.OutputMapping, output)
+	}
+
+	return []data.Data{data.MustParameter(output.ID(),
+		data.MustItemAwareElement(output, data.ReadyDataState))}, nil
 }
 
 // ReportBpmnError reports a worker-declared Business Error and removes the job.

@@ -15,6 +15,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -207,7 +208,10 @@ func TestServiceTaskWorkerCompleteResumesAndBinds(t *testing.T) {
 
 	job := waitForJob(t, disp)
 
-	output := data.MustItemDefinition(values.NewVariable("worker-result"))
+	output := []data.Data{data.MustParameter("result",
+		data.MustItemAwareElement(
+			data.MustItemDefinition(values.NewVariable("worker-result")),
+			data.ReadyDataState))}
 	require.NoError(t, inst.ReportJobCompletion(context.Background(),
 		tasks.NewWorkerComplete(job.ID, output)))
 
@@ -364,6 +368,27 @@ func enqueuedPolicy(
 	require.NotNil(t, job.Policy, "the enqueued job carries a resolved Policy")
 
 	return job.Policy
+}
+
+// TestEnqueueResolvesOutputMapping covers SRD-039 M8/FR-3: the per-service
+// WithOutputMapping is resolved into the enqueued Job.Policy so the dispatcher can
+// map the completion off the track.
+func TestEnqueueResolvesOutputMapping(t *testing.T) {
+	path, err := goexpr.New(nil,
+		data.MustItemDefinition(values.NewVariable("")),
+		func(ctx context.Context, ds data.Source) (data.Value, error) {
+			return values.NewVariable("x"), nil
+		})
+	require.NoError(t, err)
+
+	disp := &capDispatcher{}
+	rt := enginert.Default().WithWorkerDispatcher(disp)
+
+	policy := enqueuedPolicy(t, disp, rt,
+		activities.WithOutputMapping(tasks.OutputRule{Path: path, Var: "orderId"}))
+
+	require.Len(t, policy.OutputMapping, 1)
+	require.Equal(t, "orderId", policy.OutputMapping[0].Var)
 }
 
 // TestEnqueueResolvesPerServiceErrorMapper covers FR-2/§3.6: a per-service

@@ -72,6 +72,10 @@ type Policy struct {
 	// RetryPolicy drives technical-fault retries; wired in SRD-038 M7 (nil when
 	// unset).
 	RetryPolicy RetryPolicy
+	// OutputMapping shapes a completion's raw body into the final committed output;
+	// applied by the policy owner (dispatcher/worker), not the track (SRD-039 M8).
+	// Empty = the raw output is committed directly.
+	OutputMapping []OutputRule
 }
 
 // Job is the unit the engine Enqueues. Input is the single bound input-message
@@ -189,11 +193,11 @@ type ExpressionEngineBinder interface {
 }
 
 // WorkerConfig is implemented by a node whose worker outcome the engine
-// classifies and retries. WorkerConfig returns the node's per-service policy —
-// either value nil means "fall back to the engine-wide default" resolved at
-// enqueue; ok == false for an in-process (non-worker) node.
+// classifies, maps, and retries. WorkerConfig returns the node's per-service
+// policy (a partial Policy — a nil/empty field means "fall back to the engine-wide
+// default" resolved at enqueue); ok == false for an in-process (non-worker) node.
 type WorkerConfig interface {
-	WorkerConfig() (errorMapper ErrorMapper, retryPolicy RetryPolicy, ok bool)
+	WorkerConfig() (perService Policy, ok bool)
 }
 
 // ExternalWorker is implemented by a node whose work is dispatched to an

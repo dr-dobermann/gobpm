@@ -15,14 +15,18 @@ import (
 // TestWorkerCompleteOutcome: a completion outcome carries the output item and no
 // cause, and is a well-formed flow.EventDefinition.
 func TestWorkerCompleteOutcome(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
 	item := data.MustItemDefinition(
 		values.NewVariable("ok"), foundation.WithID("out"))
+	out := []data.Data{data.MustParameter("out",
+		data.MustItemAwareElement(item, data.ReadyDataState))}
 
-	o := tasks.NewWorkerComplete("j1", item)
+	o := tasks.NewWorkerComplete("j1", out)
 
 	require.Equal(t, tasks.JobID("j1"), o.JobID())
 	require.Equal(t, tasks.OutcomeComplete, o.Kind())
-	require.Equal(t, item, o.Output())
+	require.Equal(t, out, o.Output())
 	require.Nil(t, o.GetItemsList())
 	require.NotEmpty(t, o.Type())
 	require.NotEmpty(t, o.ID())
