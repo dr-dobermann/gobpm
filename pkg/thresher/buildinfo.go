@@ -5,7 +5,7 @@ import "runtime/debug"
 // version is the engine's semantic version. It may be overridden at build time
 // with -ldflags "-X github.com/dr-dobermann/gobpm/pkg/thresher.version=v1.2.3".
 // When left empty the toolchain-embedded module version is used instead.
-var version = "v0.7.0"
+var version = "v0.8.0-rc.1"
 
 // banner is the engine wordmark printed at startup, one log record per line. A
 // raw literal keeps the backslashes literal; the lone backtick on line 3 is
