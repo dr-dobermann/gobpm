@@ -2,13 +2,13 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-05 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md), [ADR-011 v.5 Process Data Flow](ADR-011-process-data-flow.md), [ADR-017 v.1 Channel-Based Event Processing](ADR-017-channel-based-event-processing.md) §2, [ADR-018 v.1 Boundary Events & Activity Interruption](ADR-018-boundary-events-and-activity-interruption.md), [ADR-020 v.1 Human-Interaction Execution Model](ADR-020-human-interaction-execution-model.md), [SAD-001 v.1](SAD-001-vision-and-architecture.md) §11, §13 |
 
-> **Draft** — to be landed by the accompanying **SRD** on `feat/service-task-execution`. Decides how a
+> **Accepted** — landed incrementally by its accompanying SRDs. Decides how a
 > **ServiceTask** — "the primary automation primitive" — executes on gobpm's park/resume core. A ServiceTask
 > has **two cleanly-separated execution loci**: **in-process** (the synchronous `Operation` invocation on the
 > track goroutine — the default — now optionally **time-bounded and cancellable** via `WithTimeout`) and

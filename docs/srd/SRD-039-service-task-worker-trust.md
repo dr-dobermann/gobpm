@@ -2,13 +2,13 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (pending impl) |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-08 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-021 v.1 Service Task Execution Model](../design/ADR-021-service-task-execution-model.md) §2.5–§2.7 |
 
-> **Draft** — fifth and final SRD landing [ADR-021 v.1](../design/ADR-021-service-task-execution-model.md).
+> **Accepted** — fifth and final SRD landing [ADR-021 v.1](../design/ADR-021-service-task-execution-model.md).
 > It completes the "the track and the Instance take **only final results**" arc that SRD-038 began (classification
 > moved off the track into the dispatcher) and introduces the trust protocols. Three coupled changes:
 > **(1) Output-mapping relocation** — `WithOutputMapping` moves off the parked track (where SRD-037 put it) into
@@ -172,7 +172,7 @@ adds the trust knob + the `WorkerTrusted` worker (**M9**), then the example (**M
 // mapping, classification, retry) executes (ADR-021 §2.6). The zero value is
 // "unset" (an internal resolution sentinel); a resolved job is always one of the
 // two exported modes, defaulting to WorkerTrusted.
-type TrustMode int
+type TrustMode uint8
 
 const (
 	trustUnset TrustMode = iota // unexported: not configured (resolve to the default)
@@ -407,4 +407,25 @@ ADR-021 §2.5 says `Job.Policy` is "empty under `EngineAuthoritative`" — that 
 
 ## 10. Implementation summary (stage-by-stage actual landings + deltas vs draft)
 
-> ⚠️ TODO: fill AFTER landing (§10.1 stage commit SHAs for M8/M9/M10, §10.2 empirical findings vs this draft).
+### 10.1 Stages by commit (branch `feat/service-task-worker-trust`)
+
+| Stage | Commit | Scope | Tests |
+|---|---|---|---|
+| Doc | `84fc8b1` | SRD-039 (this document) | — |
+| M8 | `2ce14ec` | Output-mapping relocation: `Policy.OutputMapping`; the completion `WorkerOutcome` carrier → `[]data.Data`; `Dispatcher.Complete` maps (heldEntry + `mapOutput`); `bindOutput` shrinks to a commit; `WorkerConfig` → partial `Policy` | `TestDispatcherAppliesOutputMapping` / `…NoMappingDirect` / `…OutputMappingRequiredFaults`, `TestEnqueueResolvesOutputMapping`, `TestServiceTaskWorkerExecBindsCompletedOutput` |
+| M9 | `d87f686` | Trust plumbing (inert): `TrustMode`+`String`+`Resolve`; `Policy.Trust`; `WithWorkerTrust` / `WithWorkerTrustDefault` (+ renv/enginert/mock); two-level resolution | `TestTrustModeString/Resolve`, `TestWithWorkerTrust{RejectsInvalidMode,RejectsNonWorker}`, `TestWithWorkerTrustDefault(RejectsInvalid)`, `TestEnqueueResolvesTrust` |
+| M10 | `82452d3` | `WorkerTrusted` worker loop: `WorkerError`; `runWorker` trust-branch → `runTrusted` (map / self-classify / fallback `ErrorMapper` / in-process retry bounded by the lock window / report verdict via `report()`); `businessVerdict`, `reportTrusted` | `TestWorkerErrorSelfClassifies`, `TestWorkerTrusted{MapsAndCompletes,MapErrorFaults,ReportsBpmnError,ReportsStatus,FallbackErrorMapper,RetriesInProcess,ExhaustionForwarded,RetryExceedsLockWindow,CtxCancelDuringBackoff,ReportErrorLogged}`, `TestTrustSelectsPolicyLocus` |
+| M11 | `fcd28d6` | Worked example `examples/service-task-worker/` (process.go · worker.go · main.go · go.mod · README.md) | example-smoke (runs green under a timeout) |
+
+`make ci` green at each milestone (tidy · lint 0 issues · build across all modules incl. the example · `-race` · diff-coverage ≥95% on touched files · govulncheck); every new/changed function measured at 100% coverage.
+
+### 10.2 Empirical findings — deltas vs the §3/§7 draft
+
+- **Milestone reslice.** §7's M9 (trust knob + `WorkerTrusted` worker) was split into **M9** (inert plumbing) + **M10** (the worker loop), pushing the example to **M11** — landed as M8/M9/M10/M11. The plumbing lands behavior-neutral (the resolved `Trust` is carried but unused until M10), so each milestone compiles green independently.
+- **`WorkerConfig` returns a partial `tasks.Policy`** (`(Policy, bool)`), not a multi-value return — chosen at M8 to absorb the growing field set (M9 added `Trust`) without a signature that keeps widening.
+- **`TrustMode` is `uint8`** (mirroring `OutcomeKind`), not `int` as §3.1 first sketched. `Resolve(fallback)` composes the two-level resolution while keeping the `trustUnset` sentinel unexported.
+- **`WorkerError`** (not `WorkerFault`) — avoids colliding with the existing `NewWorkerFault` outcome builder.
+- **Completion carrier.** Only the internal `WorkerOutcome.output`/`Output()` changed (`*data.ItemDefinition` → `[]data.Data`); the exported `WorkerDispatcher.Complete(*data.ItemDefinition)` stayed raw (worker-facing contract unchanged).
+- **`mapOutput` is shared** by `Complete` (EngineAuthoritative) and `runTrusted` (WorkerTrusted); `runTrusted` forwards every verdict via the internal `report()` (bypassing `Complete`/`Fail`, which stay EngineAuthoritative — FR-8).
+- **Lock handling for the local pool.** The in-process retry runs within the single `maxLock` lease the worker already holds (bounding each backoff against `lj.Deadline`, terminating as exhausted rather than lapsing into a re-fetch); `ExtendLock`-style lease *extension* is a remote-worker mechanism (ADR-004).
+- **Test relocation + §6 name drift (all covered).** The SRD-037 track-side output-mapping tests moved to the dispatcher layer. `TestTrackCommitsFinalOutputNoRemap` → `TestServiceTaskWorkerExecBindsCompletedOutput` + the grep-zero structural proof; `TestEnqueueResolvesOutputMappingAndTrust` → split per level; `TestEngineAuthoritativeUnchanged` → the retry_test.go suite + `TestTrustSelectsPolicyLocus`; `TestServiceTaskWorkerExample` → the runnable example smoke.
