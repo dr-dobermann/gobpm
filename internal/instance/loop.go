@@ -359,7 +359,7 @@ func (inst *Instance) dispatchToParked(
 
 	// Gate correlation only on the Message path (track == nil): a mismatch drops the event
 	// and keeps the track parked for the next message (SRD-027 FR-8/NFR-2).
-	if ev.track == nil && inst.validateAndAssociate(ctx, ev.eDef) {
+	if ev.track == nil && inst.corr.validateAndAssociate(ctx, ev.eDef) {
 		return // correlation mismatch — drop, keep the track parked
 	}
 

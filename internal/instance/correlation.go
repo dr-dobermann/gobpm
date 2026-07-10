@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"sync"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -10,49 +11,62 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/msgflow"
 )
 
+// correlator owns the instance's conversation keys and the message-correlation
+// protocol (SRD-017, BPMN §8.4.2). It has its own lock because it is touched
+// from three goroutine contexts — track goroutines via the msgflow recorder
+// (AssociateConversationKey on a keyed send), the message waiter's structural
+// CorrelationKeys() read, and the loop (validateAndAssociate in dispatch) — the
+// one Instance concern besides observation that is NOT loop-confined (SRD-040).
+type correlator struct {
+	inst *Instance
+	keys map[string]string
+
+	m sync.Mutex
+}
+
 // AssociateConversationKey records value under the conversation key named name
 // set-if-absent (SRD-017 FR-1). It is the no-result form the optional msgflow
 // recorder capability uses (first keyed send); the delivery path uses the
-// bool-returning associateConversationKey to learn whether to extend receivers.
+// bool-returning associate to learn whether to extend receivers.
 func (inst *Instance) AssociateConversationKey(name, value string) {
-	inst.associateConversationKey(name, value)
+	inst.corr.associate(name, value)
 }
 
-// associateConversationKey records value under name if name is not already held,
-// returning whether it was added (a new conversation key). Empty inputs are a
-// no-op returning false. Guarded by convMu — forked tracks run concurrently.
-func (inst *Instance) associateConversationKey(name, value string) bool {
+// associate records value under name if name is not already held, returning
+// whether it was added (a new conversation key). Empty inputs are a no-op
+// returning false. Guarded by c.m — forked tracks run concurrently.
+func (c *correlator) associate(name, value string) bool {
 	if name == "" || value == "" {
 		return false
 	}
 
-	inst.convMu.Lock()
-	defer inst.convMu.Unlock()
+	c.m.Lock()
+	defer c.m.Unlock()
 
-	if _, ok := inst.convKeys[name]; ok {
+	if _, ok := c.keys[name]; ok {
 		return false
 	}
 
-	inst.convKeys[name] = value
+	c.keys[name] = value
 
 	return true
 }
 
-// conversationKeyValues returns a snapshot of the instance's conversation key
-// values (SRD-017 §4.3): the keys its in-instance message receivers subscribe
-// on so a follow-up message routes to this instance. An instance with no
-// established key returns nil (a wildcard subscription). Taken under convMu —
-// forked tracks run on concurrent goroutines.
-func (inst *Instance) conversationKeyValues() []string {
-	inst.convMu.Lock()
-	defer inst.convMu.Unlock()
+// values returns a snapshot of the instance's conversation key values
+// (SRD-017 §4.3): the keys its in-instance message receivers subscribe on so a
+// follow-up message routes to this instance. An instance with no established
+// key returns nil (a wildcard subscription). Taken under c.m — forked tracks
+// run on concurrent goroutines.
+func (c *correlator) values() []string {
+	c.m.Lock()
+	defer c.m.Unlock()
 
-	if len(inst.convKeys) == 0 {
+	if len(c.keys) == 0 {
 		return nil
 	}
 
-	vals := make([]string, 0, len(inst.convKeys))
-	for _, v := range inst.convKeys {
+	vals := make([]string, 0, len(c.keys))
+	for _, v := range c.keys {
 		vals = append(vals, v)
 	}
 
@@ -89,7 +103,7 @@ func (inst *Instance) ProcessEvent(
 // yields none, leaving a wildcard subscription. Ownership moved here from track when the
 // Instance became the message processor — only the message path was ever keyed.
 func (inst *Instance) CorrelationKeys() []string {
-	return inst.conversationKeyValues()
+	return inst.corr.values()
 }
 
 // validateAndAssociate applies the conversation-token rules on a received
@@ -100,11 +114,11 @@ func (inst *Instance) CorrelationKeys() []string {
 // so the caller rejects it); otherwise it associates each not-yet-held value
 // (lazy secondary-key initialization), extending currently-parked receivers so
 // the conversation becomes reachable by the new key, and reports mismatch=false.
-func (inst *Instance) validateAndAssociate(
+func (c *correlator) validateAndAssociate(
 	ctx context.Context,
 	eDef flow.EventDefinition,
 ) (mismatch bool) {
-	keys := inst.s.CorrelationKeys
+	keys := c.inst.s.CorrelationKeys
 	if len(keys) == 0 {
 		return false
 	}
@@ -127,10 +141,10 @@ func (inst *Instance) validateAndAssociate(
 
 	for _, key := range keys {
 		v, ok, err := msgflow.DeriveKey(
-			ctx, inst.ExpressionEngine(), key, msg, payload)
+			ctx, c.inst.ExpressionEngine(), key, msg, payload)
 		if err != nil {
-			inst.Logger().Warn("conversation key derivation failed",
-				"instance_id", inst.ID(), "correlation_key", key.Name)
+			c.inst.Logger().Warn("conversation key derivation failed",
+				"instance_id", c.inst.ID(), "correlation_key", key.Name)
 
 			continue
 		}
@@ -139,10 +153,9 @@ func (inst *Instance) validateAndAssociate(
 			continue
 		}
 
-		if held, isHeld := inst.heldConversationKey(key.Name); isHeld &&
-			held != v {
-			inst.Logger().Debug("correlation key mismatch — message dropped",
-				"instance_id", inst.ID(), "correlation_key", key.Name)
+		if held, isHeld := c.held(key.Name); isHeld && held != v {
+			c.inst.Logger().Debug("correlation key mismatch — message dropped",
+				"instance_id", c.inst.ID(), "correlation_key", key.Name)
 
 			return true
 		}
@@ -151,21 +164,21 @@ func (inst *Instance) validateAndAssociate(
 	}
 
 	for name, v := range derived {
-		if inst.associateConversationKey(name, v) {
-			inst.extendReceivers(v)
+		if c.associate(name, v) {
+			c.extendReceivers(v)
 		}
 	}
 
 	return false
 }
 
-// heldConversationKey returns the value held for the named conversation key and
-// whether it is held. Read under convMu — forked tracks run concurrently.
-func (inst *Instance) heldConversationKey(name string) (string, bool) {
-	inst.convMu.Lock()
-	defer inst.convMu.Unlock()
+// held returns the value held for the named conversation key and whether it is
+// held. Read under c.m — forked tracks run concurrently.
+func (c *correlator) held(name string) (string, bool) {
+	c.m.Lock()
+	defer c.m.Unlock()
 
-	v, ok := inst.convKeys[name]
+	v, ok := c.keys[name]
 
 	return v, ok
 }
@@ -176,15 +189,15 @@ func (inst *Instance) heldConversationKey(name string) (string, bool) {
 // structurally (no interface change). A receiver that isn't parked yet has no
 // waiter — a benign no-op; it picks the value up from the grown key-set when it
 // registers.
-func (inst *Instance) extendReceivers(value string) {
-	adder, ok := inst.parentEventProducer.(interface {
+func (c *correlator) extendReceivers(value string) {
+	adder, ok := c.inst.parentEventProducer.(interface {
 		AddEventKey(eDefID, key string) error
 	})
 	if !ok {
 		return
 	}
 
-	for _, n := range inst.s.Nodes {
+	for _, n := range c.inst.s.Nodes {
 		en, ok := n.(flow.EventNode)
 		if !ok {
 			continue
@@ -196,8 +209,8 @@ func (inst *Instance) extendReceivers(value string) {
 			}
 
 			if err := adder.AddEventKey(d.ID(), value); err != nil {
-				inst.Logger().Debug("extend receiver subscription failed",
-					"instance_id", inst.ID(),
+				c.inst.Logger().Debug("extend receiver subscription failed",
+					"instance_id", c.inst.ID(),
 					"event_definition_id", d.ID())
 			}
 		}

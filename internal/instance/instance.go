@@ -41,7 +41,7 @@ type Instance struct {
 	taskReq             chan taskRequest
 	jobReq              chan jobRequest
 	sc                  instanceScope
-	convKeys            map[string]string
+	corr                correlator
 	now                 func() time.Time
 	tracksSnap          atomic.Pointer[[]*track]
 	lastErr             atomic.Pointer[error]
@@ -52,7 +52,6 @@ type Instance struct {
 	observers  []obsReg
 	trackCount atomic.Int64
 	obsMu      sync.RWMutex
-	convMu     sync.Mutex
 	obsID      uint64
 	state      atomic.Uint32
 }
@@ -154,7 +153,6 @@ func New(
 		s:                   s,
 		now:                 er.Clock().Now,
 		tracks:              map[string]*track{},
-		convKeys:            map[string]string{},
 		events:              make(chan trackEvent),
 		taskReq:             make(chan taskRequest),
 		jobReq:              make(chan jobRequest),
@@ -163,6 +161,9 @@ func New(
 		td:                  td,
 	}
 	inst.state.Store(uint32(Created))
+	// The correlator back-pointer refers to the same heap object New returns —
+	// inst escapes via &inst below (the instanceScope loader takes it the same way).
+	inst.corr = correlator{inst: &inst, keys: map[string]string{}}
 
 	if err := inst.sc.load(
 		parentRoot, inst.s.ProcessName, inst.s.Properties, &inst); err != nil {
@@ -198,7 +199,7 @@ func New(
 	// parks an in-instance receiver reached directly off the born start, and the
 	// receiver must subscribe keyed to this conversation, so the key has to be
 	// present first.
-	inst.associateConversationKey(cfg.convKeyName, cfg.convKeyValue)
+	inst.corr.associate(cfg.convKeyName, cfg.convKeyValue)
 
 	if err := inst.createTracks(bornStart, cfg.bornEvent); err != nil {
 		return nil, err
