@@ -122,13 +122,21 @@ build-all:
 	done
 .PHONY: build-all
 
+# TEST_CPUS pins the race test run's CPU budget to what the GitHub runner
+# exposes (ubuntu-latest, public repo: 4 vCPUs), so scheduling-sensitive tests
+# (stress / deferred-choice races) behave the same locally and on CI instead of
+# hiding on a many-core dev box. GOMAXPROCS also drives `go test`'s package
+# parallelism (-p), so both knobs sync. Override with `make ci TEST_CPUS=` to
+# use the host default, or set another number to experiment.
+TEST_CPUS ?= 4
+
 test-all: gen_mock_files
 	@set -e; for dir in $(MODULES); do \
-		echo "::group::test $$dir"; \
+		echo "::group::test $$dir (TEST_CPUS=$(TEST_CPUS))"; \
 		if [ "$$dir" = "." ]; then \
-			(cd $$dir && $(GO) test -race -count=1 -coverprofile=coverage.txt ./...) || exit 1; \
+			(cd $$dir && GOMAXPROCS=$(TEST_CPUS) $(GO) test -race -count=1 -coverprofile=coverage.txt ./...) || exit 1; \
 		else \
-			(cd $$dir && $(GO) test -race -count=1 ./...) || exit 1; \
+			(cd $$dir && GOMAXPROCS=$(TEST_CPUS) $(GO) test -race -count=1 ./...) || exit 1; \
 		fi; \
 		echo "::endgroup::"; \
 	done

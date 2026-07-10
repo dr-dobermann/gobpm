@@ -163,6 +163,17 @@ func (sw *signalWaiter) EventProcessors() []eventproc.EventProcessor {
 	return sw.processors
 }
 
+// ProcessorCount reports the waiter's broadcast-set size. It backs the hub's
+// SignalCatchers readiness probe (FIX-021): a second instance catching the
+// same shared-id signal JOINS this waiter (AddEventProcessor) instead of
+// creating a new one, so counting waiters alone under-counts live catchers.
+func (sw *signalWaiter) ProcessorCount() int {
+	sw.m.Lock()
+	defer sw.m.Unlock()
+
+	return len(sw.processors)
+}
+
 // Service records the engine context the catchers resume under and marks the
 // waiter running. It spawns NO goroutine: a signal has no external source.
 func (sw *signalWaiter) Service(ctx context.Context) error {

@@ -60,7 +60,7 @@ func TestAddEventKey(t *testing.T) {
 	defer cancel()
 	require.NoError(t, hub.Start(ctx))
 
-	require.Error(t, hub.AddEventKey("", "K1"))         // empty id
+	require.Error(t, hub.AddEventKey("", "K1"))          // empty id
 	require.NoError(t, hub.AddEventKey("missing", "K1")) // unknown -> no-op
 
 	eDef := msgEDef(t, "reply")

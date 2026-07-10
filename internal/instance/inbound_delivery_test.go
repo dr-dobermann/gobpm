@@ -360,7 +360,7 @@ func TestLoopKeepsParkedOnCorrelationMismatch(t *testing.T) {
 
 	// Held key ORD-1 plus a correlation key derived from the "order_in" payload, set
 	// before the loop starts so the loop reads them without a race.
-	inst.convKeys = map[string]string{"orderKey": "ORD-1"}
+	inst.corr.keys = map[string]string{"orderKey": "ORD-1"}
 	inst.s.CorrelationKeys = []*bpmncommon.CorrelationKey{testCorrKey(t, "reply")}
 
 	ctx, cancel := context.WithCancel(t.Context())

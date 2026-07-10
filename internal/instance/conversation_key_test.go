@@ -172,37 +172,39 @@ func msgEDefID(t *testing.T, name, value, id string) *events.MessageEventDefinit
 // of the conversation key-set (SRD-017 FR-1): the first value for a key wins, a
 // later value for a held key does not overwrite, and empty inputs are no-ops.
 func TestAssociateConversationKeySetIfAbsent(t *testing.T) {
-	inst := &Instance{convKeys: map[string]string{}}
+	inst := &Instance{}
+	inst.corr = correlator{inst: inst, keys: map[string]string{}}
 
 	inst.AssociateConversationKey("orderKey", "ORD-1")
-	if got := inst.convKeys["orderKey"]; got != "ORD-1" {
+	if got := inst.corr.keys["orderKey"]; got != "ORD-1" {
 		t.Fatalf("first associate: got %q, want ORD-1", got)
 	}
 
 	// set-if-absent: a later value for a held key must not overwrite.
 	inst.AssociateConversationKey("orderKey", "ORD-2")
-	if got := inst.convKeys["orderKey"]; got != "ORD-1" {
+	if got := inst.corr.keys["orderKey"]; got != "ORD-1" {
 		t.Fatalf("associate overwrote a held key: got %q, want ORD-1", got)
 	}
 
 	// empty name or value is a no-op.
 	inst.AssociateConversationKey("", "X")
 	inst.AssociateConversationKey("shipKey", "")
-	if len(inst.convKeys) != 1 {
-		t.Fatalf("empty associate must be a no-op: keys = %v", inst.convKeys)
+	if len(inst.corr.keys) != 1 {
+		t.Fatalf("empty associate must be a no-op: keys = %v", inst.corr.keys)
 	}
 
 	// a distinct key is added.
 	inst.AssociateConversationKey("shipKey", "SHP-9")
-	if got := inst.convKeys["shipKey"]; got != "SHP-9" {
+	if got := inst.corr.keys["shipKey"]; got != "SHP-9" {
 		t.Fatalf("second key: got %q, want SHP-9", got)
 	}
 }
 
-// TestAssociateConversationKeyConcurrent exercises the convMu guard under
+// TestAssociateConversationKeyConcurrent exercises the correlator's lock under
 // concurrent association from many goroutines (forked tracks run concurrently).
 func TestAssociateConversationKeyConcurrent(t *testing.T) {
-	inst := &Instance{convKeys: map[string]string{}}
+	inst := &Instance{}
+	inst.corr = correlator{inst: inst, keys: map[string]string{}}
 
 	var wg sync.WaitGroup
 	for i := range 50 {
@@ -217,8 +219,8 @@ func TestAssociateConversationKeyConcurrent(t *testing.T) {
 
 	wg.Wait()
 
-	if len(inst.convKeys) != 50 {
-		t.Fatalf("concurrent associate: %d keys, want 50", len(inst.convKeys))
+	if len(inst.corr.keys) != 50 {
+		t.Fatalf("concurrent associate: %d keys, want 50", len(inst.corr.keys))
 	}
 }
 
@@ -226,16 +228,17 @@ func TestAssociateConversationKeyConcurrent(t *testing.T) {
 // values otherwise) and that the Instance exposes its values as the declared
 // subscription filter (SRD-017 §4.3, SRD-027 FR-8).
 func TestConversationKeyValues(t *testing.T) {
-	inst := &Instance{convKeys: map[string]string{}}
+	inst := &Instance{}
+	inst.corr = correlator{inst: inst, keys: map[string]string{}}
 
-	if vals := inst.conversationKeyValues(); vals != nil {
+	if vals := inst.corr.values(); vals != nil {
 		t.Fatalf("empty instance: got %v, want nil", vals)
 	}
 
 	inst.AssociateConversationKey("orderKey", "ORD-1")
 	inst.AssociateConversationKey("shipKey", "SHP-2")
 
-	vals := inst.conversationKeyValues()
+	vals := inst.corr.values()
 	sort.Strings(vals)
 
 	if !slices.Equal(vals, []string{"ORD-1", "SHP-2"}) {
@@ -264,18 +267,18 @@ func TestDeriveAndAssociate(t *testing.T) {
 	fep := &fakeEventProducer{added: map[string]string{}}
 	inst := &Instance{
 		EngineRuntime:       enginert.Default(),
-		convKeys:            map[string]string{},
 		parentEventProducer: fep,
 		s: &snapshot.Snapshot{
 			CorrelationKeys: []*bpmncommon.CorrelationKey{testCorrKey(t, "reply")},
 			Nodes:           map[string]flow.Node{"catch": catch},
 		},
 	}
+	inst.corr = correlator{inst: inst, keys: map[string]string{}}
 
-	inst.validateAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-1"))
+	inst.corr.validateAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-1"))
 
-	if inst.convKeys["orderKey"] != "ORD-1" {
-		t.Fatalf("derived key: got %q, want ORD-1", inst.convKeys["orderKey"])
+	if inst.corr.keys["orderKey"] != "ORD-1" {
+		t.Fatalf("derived key: got %q, want ORD-1", inst.corr.keys["orderKey"])
 	}
 
 	// the parked message receiver was extended with the learned value.
@@ -292,21 +295,21 @@ func TestDeriveAndAssociateNoOp(t *testing.T) {
 
 	inst := &Instance{
 		EngineRuntime: enginert.Default(),
-		convKeys:      map[string]string{},
 		s:             &snapshot.Snapshot{},
 	}
+	inst.corr = correlator{inst: inst, keys: map[string]string{}}
 
 	// no declared correlation keys -> no-op.
-	inst.validateAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-1"))
-	require.Empty(t, inst.convKeys)
+	inst.corr.validateAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-1"))
+	require.Empty(t, inst.corr.keys)
 
 	// a non-message event definition -> no Message() -> no-op.
 	inst.s = &snapshot.Snapshot{
 		CorrelationKeys: []*bpmncommon.CorrelationKey{testCorrKey(t, "reply")},
 	}
-	inst.validateAndAssociate(context.Background(),
+	inst.corr.validateAndAssociate(context.Background(),
 		events.MustSignalEventDefinition(&events.Signal{}))
-	require.Empty(t, inst.convKeys)
+	require.Empty(t, inst.corr.keys)
 }
 
 // TestExtendReceiversNoAdder covers the branch where the parent event producer
@@ -316,8 +319,9 @@ func TestExtendReceiversNoAdder(t *testing.T) {
 		parentEventProducer: plainEventProducer{},
 		s:                   &snapshot.Snapshot{Nodes: map[string]flow.Node{}},
 	}
+	inst.corr = correlator{inst: inst}
 
-	inst.extendReceivers("ORD-1") // must not panic
+	inst.corr.extendReceivers("ORD-1") // must not panic
 }
 
 // TestValidateAndAssociateMismatch verifies the §8.4.2 mismatch guard: a derived
@@ -328,21 +332,21 @@ func TestValidateAndAssociateMismatch(t *testing.T) {
 	fep := &fakeEventProducer{added: map[string]string{}}
 	inst := &Instance{
 		EngineRuntime:       enginert.Default(),
-		convKeys:            map[string]string{"orderKey": "ORD-1"},
 		parentEventProducer: fep,
 		s: &snapshot.Snapshot{
 			CorrelationKeys: []*bpmncommon.CorrelationKey{testCorrKey(t, "reply")},
 			Nodes:           map[string]flow.Node{},
 		},
 	}
+	inst.corr = correlator{inst: inst, keys: map[string]string{"orderKey": "ORD-1"}}
 
 	// a message deriving orderKey=ORD-2 conflicts with the held ORD-1.
-	if !inst.validateAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-2")) {
+	if !inst.corr.validateAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-2")) {
 		t.Fatal("expected mismatch=true for a conflicting key value")
 	}
 
-	if inst.convKeys["orderKey"] != "ORD-1" {
-		t.Fatalf("held key must be unchanged on mismatch: %q", inst.convKeys["orderKey"])
+	if inst.corr.keys["orderKey"] != "ORD-1" {
+		t.Fatalf("held key must be unchanged on mismatch: %q", inst.corr.keys["orderKey"])
 	}
 }
 
@@ -354,15 +358,15 @@ func TestValidateAndAssociateSameValue(t *testing.T) {
 	fep := &fakeEventProducer{added: map[string]string{}}
 	inst := &Instance{
 		EngineRuntime:       enginert.Default(),
-		convKeys:            map[string]string{"orderKey": "ORD-1"},
 		parentEventProducer: fep,
 		s: &snapshot.Snapshot{
 			CorrelationKeys: []*bpmncommon.CorrelationKey{testCorrKey(t, "reply")},
 			Nodes:           map[string]flow.Node{},
 		},
 	}
+	inst.corr = correlator{inst: inst, keys: map[string]string{"orderKey": "ORD-1"}}
 
-	if inst.validateAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-1")) {
+	if inst.corr.validateAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-1")) {
 		t.Fatal("same-value message must not be a mismatch")
 	}
 
@@ -378,19 +382,19 @@ func TestValidateAndAssociateDeriveError(t *testing.T) {
 
 	inst := &Instance{
 		EngineRuntime:       enginert.Default(),
-		convKeys:            map[string]string{},
 		parentEventProducer: &fakeEventProducer{added: map[string]string{}},
 		s: &snapshot.Snapshot{
 			CorrelationKeys: []*bpmncommon.CorrelationKey{failingCorrKey(t, "reply")},
 			Nodes:           map[string]flow.Node{},
 		},
 	}
+	inst.corr = correlator{inst: inst, keys: map[string]string{}}
 
-	if inst.validateAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-1")) {
+	if inst.corr.validateAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-1")) {
 		t.Fatal("a derivation error must not be reported as a mismatch")
 	}
 
-	require.Empty(t, inst.convKeys)
+	require.Empty(t, inst.corr.keys)
 }
 
 // TestValidateAndAssociateUnresolvedKey covers the not-derived skip: a key whose
@@ -400,7 +404,6 @@ func TestValidateAndAssociateUnresolvedKey(t *testing.T) {
 
 	inst := &Instance{
 		EngineRuntime:       enginert.Default(),
-		convKeys:            map[string]string{},
 		parentEventProducer: &fakeEventProducer{added: map[string]string{}},
 		s: &snapshot.Snapshot{
 			// the key derives from "other", not the received "reply" message.
@@ -408,12 +411,13 @@ func TestValidateAndAssociateUnresolvedKey(t *testing.T) {
 			Nodes:           map[string]flow.Node{},
 		},
 	}
+	inst.corr = correlator{inst: inst, keys: map[string]string{}}
 
-	if inst.validateAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-1")) {
+	if inst.corr.validateAndAssociate(context.Background(), msgEDef(t, "reply", "ORD-1")) {
 		t.Fatal("an unresolved key must not be a mismatch")
 	}
 
-	require.Empty(t, inst.convKeys)
+	require.Empty(t, inst.corr.keys)
 }
 
 // TestExtendReceiversBranches covers the node-iteration branches: a non-event
@@ -443,8 +447,9 @@ func TestExtendReceiversBranches(t *testing.T) {
 			"task": task, "sig": signalStart, "catch": msgCatch,
 		}},
 	}
+	inst.corr = correlator{inst: inst}
 
-	inst.extendReceivers("ORD-1") // must not panic; covers all three branches
+	inst.corr.extendReceivers("ORD-1") // must not panic; covers all three branches
 }
 
 // The track's old synchronous mismatch path (ProcessEvent → ErrRejected) is gone:

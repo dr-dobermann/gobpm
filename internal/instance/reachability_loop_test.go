@@ -9,7 +9,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
-	wtasks "github.com/dr-dobermann/gobpm/pkg/tasks"
 	"github.com/stretchr/testify/require"
 )
 
@@ -71,23 +70,16 @@ func TestApplyEventMoved(t *testing.T) {
 	tr, err := newTrack(split, inst, nil)
 	require.NoError(t, err)
 
-	position := map[string]flow.Node{tr.ID(): split}
-	parked := map[string]flow.Node{tr.ID(): split} // a stale park to be cleared on move
+	ls := newLoopState(inst)
+	ls.active = 1
+	ls.position[tr.ID()] = split
+	ls.parked[tr.ID()] = split // a stale park to be cleared on move
 
-	active := 1
-	stopping := false
+	ls.apply(context.Background(),
+		trackEvent{kind: evMoved, track: tr, node: a})
 
-	inst.applyEvent(context.Background(),
-		trackEvent{kind: evMoved, track: tr, node: a},
-		&active, &stopping,
-		map[string]struct{}{}, map[string]*track{}, position, parked,
-		map[string][]*boundaryWatch{},
-		map[string]taskEntry{},
-		map[wtasks.JobID]*track{},
-		func(*track) {}, func() {})
-
-	require.Equal(t, a, position[tr.ID()], "position advanced to the new node")
-	_, stillParked := parked[tr.ID()]
+	require.Equal(t, a, ls.position[tr.ID()], "position advanced to the new node")
+	_, stillParked := ls.parked[tr.ID()]
 	require.False(t, stillParked, "moving clears the parked-at-join record")
 }
 
@@ -98,8 +90,7 @@ func TestRecheckJoinNonReachability(t *testing.T) {
 	inst := newDiamondInstance(t, p)
 
 	require.NotPanics(t, func() {
-		inst.recheckJoin(split,
-			map[string]flow.Node{}, map[string]flow.Node{}, func() {})
+		newLoopState(inst).recheckJoin(split)
 	})
 }
 
@@ -113,17 +104,17 @@ func TestRecheckAwaitingJoinsIteratesParked(t *testing.T) {
 	t.Run("empty parked → no-op",
 		func(t *testing.T) {
 			require.NotPanics(t, func() {
-				inst.recheckAwaitingJoins(
-					map[string]flow.Node{}, map[string]flow.Node{}, func() {})
+				newLoopState(inst).recheckAwaitingJoins()
 			})
 		})
 
 	t.Run("two tracks parked at one node → one recheck, deduped",
 		func(t *testing.T) {
-			parked := map[string]flow.Node{"t1": split, "t2": split}
+			ls := newLoopState(inst)
+			ls.position = map[string]flow.Node{"t1": split, "t2": split}
+			ls.parked = map[string]flow.Node{"t1": split, "t2": split}
 			require.NotPanics(t, func() {
-				inst.recheckAwaitingJoins(
-					map[string]flow.Node{"t1": split, "t2": split}, parked, func() {})
+				ls.recheckAwaitingJoins()
 			})
 		})
 }
@@ -171,14 +162,15 @@ func TestRecheckParkedTrailing(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, join.IsTrailing(tr.ID()))
 
-	position := map[string]flow.Node{tr.ID(): join}
-	parked := map[string]flow.Node{tr.ID(): join}
+	ls := newLoopState(inst)
+	ls.position[tr.ID()] = join
+	ls.parked[tr.ID()] = join
 
-	inst.recheckParked(tr, position, parked, func() {})
+	ls.recheckParked(tr)
 
 	require.True(t, tr.inState(TrackMerged), "a trailing token is consumed (Merged)")
-	require.NotContains(t, position, tr.ID(), "dropped from the position view")
-	require.NotContains(t, parked, tr.ID(), "dropped from the parked view")
+	require.NotContains(t, ls.position, tr.ID(), "dropped from the position view")
+	require.NotContains(t, ls.parked, tr.ID(), "dropped from the parked view")
 
 	select {
 	case <-tr.parkCh:
@@ -198,23 +190,16 @@ func TestApplyEventParkedDuringShutdown(t *testing.T) {
 	tr, err := newTrack(split, inst, nil)
 	require.NoError(t, err)
 
-	position := map[string]flow.Node{} // cleared, as stopAll leaves it
-	parked := map[string]flow.Node{}
-	active := 1
-	stopping := true
+	ls := newLoopState(inst) // position/parked empty, as stopAll leaves them
+	ls.active = 1
+	ls.stopping = true
 
 	require.NotPanics(t, func() {
-		inst.applyEvent(context.Background(),
-			trackEvent{kind: evParked, track: tr, node: split},
-			&active, &stopping,
-			map[string]struct{}{}, map[string]*track{}, position, parked,
-			map[string][]*boundaryWatch{},
-			map[string]taskEntry{},
-			map[wtasks.JobID]*track{},
-			func(*track) {}, func() {})
+		ls.apply(context.Background(),
+			trackEvent{kind: evParked, track: tr, node: split})
 	})
 
-	require.Empty(t, parked, "a park during shutdown is not recorded")
+	require.Empty(t, ls.parked, "a park during shutdown is not recorded")
 }
 
 // TestApplyEventParkedAfterMerge covers the merge-race guard of the evParked case (SRD-028
@@ -228,23 +213,14 @@ func TestApplyEventParkedAfterMerge(t *testing.T) {
 	tr, err := newTrack(split, inst, nil)
 	require.NoError(t, err)
 
-	position := map[string]flow.Node{} // tr already cleared by an earlier evMerged
-	parked := map[string]flow.Node{}
-	active := 0
-	stopping := false
+	ls := newLoopState(inst) // position empty: tr already cleared by an earlier evMerged
 
 	require.NotPanics(t, func() {
-		inst.applyEvent(context.Background(),
-			trackEvent{kind: evParked, track: tr, node: split},
-			&active, &stopping,
-			map[string]struct{}{}, map[string]*track{}, position, parked,
-			map[string][]*boundaryWatch{},
-			map[string]taskEntry{},
-			map[wtasks.JobID]*track{},
-			func(*track) {}, func() {})
+		ls.apply(context.Background(),
+			trackEvent{kind: evParked, track: tr, node: split})
 	})
 
-	require.Empty(t, parked, "a park for an already-merged track is dropped")
+	require.Empty(t, ls.parked, "a park for an already-merged track is dropped")
 }
 
 // TestNodeIDOf covers the nil-node guard of the position log helper (SRD-028 FR-5).

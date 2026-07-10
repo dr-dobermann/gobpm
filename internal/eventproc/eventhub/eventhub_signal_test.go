@@ -77,3 +77,46 @@ func TestBroadcastSignalNameIndex(t *testing.T) {
 	require.NoError(t, hub.UnregisterEvent(epA, defA.ID()))
 	require.NoError(t, hub.PropagateEvent(context.Background(), signalDef(t, "GO")))
 }
+
+// TestSignalCatchersCount (FIX-021): the readiness probe reports the live count
+// of catch processors per signal name — 0 for an unknown name, one per
+// registered catcher across distinct waiters, INCLUDING processors that joined
+// an existing waiter (same shared-id definition), and back down as catchers
+// unregister.
+func TestSignalCatchersCount(t *testing.T) {
+	hub, err := eventhub.New(enginert.Default())
+	require.NoError(t, err)
+	require.NoError(t, hub.Start(context.Background()))
+
+	require.Zero(t, hub.SignalCatchers("GO"), "no catcher registered yet")
+
+	defA := signalDef(t, "GO")
+	defB := signalDef(t, "GO")
+
+	epA := mockeventproc.NewMockEventProcessor(t)
+	epA.EXPECT().ID().Return("catcher-A").Maybe()
+	epB := mockeventproc.NewMockEventProcessor(t)
+	epB.EXPECT().ID().Return("catcher-B").Maybe()
+	epC := mockeventproc.NewMockEventProcessor(t)
+	epC.EXPECT().ID().Return("catcher-C").Maybe()
+
+	require.NoError(t, hub.RegisterEvent(epA, defA))
+	require.Equal(t, 1, hub.SignalCatchers("GO"))
+
+	require.NoError(t, hub.RegisterEvent(epB, defB))
+	require.Equal(t, 2, hub.SignalCatchers("GO"), "distinct waiters both count")
+
+	// A second processor on the SAME definition joins defA's existing waiter
+	// (AddEventProcessor) — the probe counts it, where a waiter count would not.
+	require.NoError(t, hub.RegisterEvent(epC, defA))
+	require.Equal(t, 3, hub.SignalCatchers("GO"), "a joined processor counts")
+
+	require.Zero(t, hub.SignalCatchers("OTHER"), "counts are per name")
+
+	require.NoError(t, hub.UnregisterEvent(epC, defA.ID()))
+	require.Equal(t, 2, hub.SignalCatchers("GO"))
+
+	require.NoError(t, hub.UnregisterEvent(epA, defA.ID()))
+	require.NoError(t, hub.UnregisterEvent(epB, defB.ID()))
+	require.Zero(t, hub.SignalCatchers("GO"), "the last unregister empties the name")
+}

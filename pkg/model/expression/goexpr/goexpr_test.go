@@ -16,12 +16,12 @@ type fakeExpr struct {
 	called bool
 }
 
-func (f *fakeExpr) ID() string                          { return "fake" }
-func (f *fakeExpr) Docs() []*foundation.Documentation   { return nil }
-func (f *fakeExpr) Language() string                    { return "test" }
-func (f *fakeExpr) Result() (data.Value, error)         { return nil, nil }
-func (f *fakeExpr) ResultType() string                  { return "" }
-func (f *fakeExpr) IsEvaluated() bool                   { return false }
+func (f *fakeExpr) ID() string                        { return "fake" }
+func (f *fakeExpr) Docs() []*foundation.Documentation { return nil }
+func (f *fakeExpr) Language() string                  { return "test" }
+func (f *fakeExpr) Result() (data.Value, error)       { return nil, nil }
+func (f *fakeExpr) ResultType() string                { return "" }
+func (f *fakeExpr) IsEvaluated() bool                 { return false }
 
 func (f *fakeExpr) Evaluate(_ context.Context, src data.Source) (data.Value, error) {
 	f.called = true
