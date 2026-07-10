@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.8.0-rc.1] - 2026-07-10
+
+Completes the **Core Task Types** epic (#78): Service Task, User Task, and
+Manual Task now all execute on the park/resume core.
+
+### Added
+
+- **Service Task execution model — in-process & external workers (ADR-021).**
+  A `ServiceTask` now executes on two cleanly-separated loci. **In-process**
+  (default): the synchronous operation on the track goroutine, optionally
+  time-bounded and cancellable via `activities.WithTimeout(d)`. **External
+  workers**: the ServiceTask becomes a wait node that enqueues a job onto an
+  engine-owned asynchronous **fetch-and-lock job queue** (`activities.WithWorker(topic)`);
+  workers pull by topic, execute, and report, and the report resumes the parked
+  track — so a worker-waiting instance holds no live call (dehydration-ready).
+  The batteries-included in-memory `localdispatcher` + local worker pool need
+  zero extra infrastructure.
+
+  Worker outcomes are classified by `{code, body}` into four kinds via a
+  pluggable, declarative `ErrorMapper`: **Complete** (with `WithOutputMapping`
+  shaping the raw body into output variables), **Business Error** (interrupting —
+  a BPMN error caught by an Error boundary), **Business Status** (non-interrupting
+  — a domain state written to a `WithStatus` variable and routed by a gateway),
+  and **Technical fault** (retried). An extendable `RetryPolicy` (`NoRetry` /
+  `FixedDelay` / `ExponentialBackoff`; default 3× jittered backoff) governs
+  technical-fault retries. `WithWorkerTrust(mode)` selects where the whole policy
+  bundle (output mapping + classification + retry) runs: **`WorkerTrusted`**
+  (default) — the worker runs it in-process (maps, self-classifies via a
+  `WorkerError`, retries holding its lock) and reports a verdict;
+  **`EngineAuthoritative`** — the worker returns raw `{code, body}` and the engine
+  owns the policy (re-enqueue retry). Worked example:
+  `examples/service-task-worker/`.
+
+- **User Task & Manual Task execution (ADR-020).** `activities.NewUserTask` is a
+  wait node parked for a human to complete, gated by Camunda-style triad
+  authorization (assignee / candidate users / candidate groups over an
+  `Actor{UserID, Groups}`); a `TaskDistributor` boundary announces and retracts
+  parked tasks (with a bundled console driver) and a `TaskView` exposes them.
+  `ManualTask` is a pass-through no-op (a human-performed step with no engine
+  automation).
+
+- **Parallel-start event-gateway correlation validation (SRD-033).** Enforces the
+  ADR-005 rule that a parallel-start event-based gateway's arms must carry
+  correlation — rejected at registration, with a runtime guard for a conformant
+  model that meets a non-conformant (underivable-key) message. Closes the AB-001
+  defect where a keyless instantiating gateway spawned N stuck instances (one per
+  arm message) instead of one.
+
+- **Definition-versioning example (`examples/versioning/`).** A runnable demo of
+  the versioning surface: registering a key twice yields v1/v2; `StartLatest` /
+  `StartVersion` / `StartProcess` each resolve the expected version;
+  `Registrations(key)` enumerates live versions; unregistering the latest
+  promotes the previous one back.
+
 ### Changed
 
 - **BREAKING — process registration and start API (ADR-019, SRD-031.A).**
@@ -41,7 +95,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (atomic) and every registry critical section is confined to a lock-held helper,
   retiring the fragile-mutex audit finding (§2.6).
 
+- **BREAKING — `errs` error details are string-typed and reflection-free
+  (FIX-019).** In `pkg/errs`, `Details` changes from `map[string]any` to
+  `map[string]string`; `D(k string, v any)` becomes `D(k, v string)`; `Error()`
+  is rebuilt with a `strings.Builder` (no reflective `%v`); and `JSON()` returns
+  `([]byte, error)` instead of panicking. This removes `any`-boxing and reflective
+  formatting from the error path; call sites migrated to pre-stringified values
+  (`strconv.Itoa`, `.ID()`, etc.).
+
+- **Event-trigger validity is enforced at compile time.** Each Start/End event
+  configuration now add-or-rejects every trigger kind, so invalid combinations —
+  a Cancel trigger on a Start event, a Conditional/Timer trigger on an End event —
+  are rejected with a clear error instead of surfacing a leaky runtime
+  `INVALID_TYPECASTING`. No behavior change for valid usage.
+
 ### Fixed
+
+- **Snapshot property isolation (FIX-016).** A P1 data race: `Snapshot` shared
+  mutable process `Property` objects by reference, so concurrent instances of the
+  same process (and successive runs) corrupted each other's property state.
+  `Snapshot.Clone` now clones properties per instance and `Snapshot.New` freezes a
+  per-template copy, restoring the frozen-version guarantee (ADR-019).
+
+- **Node-property clone isolation + value-less rejection (FIX-017).** Activity
+  property maps and event property slices were copied by reference across the
+  process → snapshot → instance boundary, leaking mutable `*Property` objects
+  between instances; the clone is now a deep copy (a single `data.CloneProperties`
+  helper). Value-less properties are rejected uniformly at node level.
+
+- **Consistent element properties across all property-owning node types
+  (FIX-018).** `data.WithProperties` was accepted by only 4 of the 9 BPMN
+  property-owning node types (rejected by `NewUserTask` and the
+  intermediate/boundary events), and catch events never loaded their declared
+  properties at runtime. All property-owning activities and events now uniformly
+  declare and load properties.
+
+- **Correctness sweep — eleven localized defects (FIX-014).** Among them:
+  `Array.Insert` could not append at `index == len`; `Array.Clone` reset the
+  iteration cursor; a `/`-keyed root scope was omitted from name resolution;
+  default-flow routing stored the caller's pointer instead of the member;
+  `DeriveKey` accepted a present-but-nil value as a key part; `clocktest.Advance`
+  could move the clock backwards; `memmetrics.seriesKey` collided distinct
+  attribute sets; `memtrace.liveSpan` mutated span state without synchronization.
+  No public-contract changes.
+
+- **Doc-comment drift corrected.** Stale `WithId` references fixed to `WithID`;
+  optioned-constructor doc comments realigned to the code.
 
 - **membroker: message subscriptions are torn down on waiter stop.** A stopped
   message waiter previously left its subscription registered, so a later publish
