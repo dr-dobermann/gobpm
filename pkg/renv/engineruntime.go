@@ -42,4 +42,10 @@ type EngineRuntime interface {
 	// per-service WithRetryPolicy (SRD-038 FR-6, two-level config). nil = fall
 	// back to tasks.DefaultRetryPolicy at resolution.
 	WorkerRetryPolicy() tasks.RetryPolicy
+
+	// WorkerTrustDefault is the engine-wide default trust mode applied to a
+	// worker-dispatched ServiceTask that carries no per-service WithWorkerTrust
+	// (SRD-039 M9, two-level config). The zero value (trustUnset) resolves to
+	// WorkerTrusted (the ADR-021 default) at enqueue.
+	WorkerTrustDefault() tasks.TrustMode
 }

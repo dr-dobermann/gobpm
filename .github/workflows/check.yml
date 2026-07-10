@@ -30,7 +30,7 @@ jobs:
           # bare '1.25' resolved to whatever patch the runner happened to
           # cache, drifting from local results (govulncheck reports stdlib
           # vulns per toolchain patch).
-          go-version: '1.25.11'
+          go-version: '1.25.12'
           cache: true
 
       # Tool installation — pinned versions, CI-specific (not in Makefile to keep

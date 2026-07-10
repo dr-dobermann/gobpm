@@ -287,14 +287,60 @@ func (d *Dispatcher) ExtendLock(
 	return nil
 }
 
-// Complete reports a successful outcome and removes the job from the store.
+// Complete reports a successful outcome and removes the job from the store. Under
+// EngineAuthoritative the dispatcher owns output mapping (SRD-039 §3.4): it shapes
+// the worker's raw output via the job's Policy.OutputMapping (over the bound
+// expression engine) into the final committed data before delivering, so the
+// track only commits. A required output path the body doesn't satisfy is a
+// contract violation — reported as a terminal technical fault, not retried.
 func (d *Dispatcher) Complete(
 	ctx context.Context,
 	jobID tasks.JobID,
 	workerID tasks.WorkerID,
 	output *data.ItemDefinition,
 ) error {
-	return d.report(ctx, jobID, workerID, tasks.NewWorkerComplete(jobID, output))
+	d.mu.Lock()
+
+	e, err := d.heldEntry(jobID, workerID)
+	if err != nil {
+		d.mu.Unlock()
+
+		return err
+	}
+
+	policy := e.job.Policy
+	ee := d.exprEngine
+	d.mu.Unlock()
+
+	res, mapErr := mapOutput(ctx, ee, policy, output)
+	if mapErr != nil {
+		return d.report(ctx, jobID, workerID,
+			tasks.NewWorkerFault(jobID, tasks.Fault{Cause: mapErr}))
+	}
+
+	return d.report(ctx, jobID, workerID, tasks.NewWorkerComplete(jobID, res))
+}
+
+// mapOutput shapes a worker's raw completion output into the final committed data
+// (SRD-039 §3.4): a nil output commits nothing; a job with Policy.OutputMapping
+// runs ApplyOutputMapping (a required path the body doesn't satisfy errors); an
+// unmapped output is committed directly (the M3 direct-reconciliation default).
+func mapOutput(
+	ctx context.Context,
+	ee expression.Engine,
+	policy *tasks.Policy,
+	output *data.ItemDefinition,
+) ([]data.Data, error) {
+	if output == nil {
+		return nil, nil
+	}
+
+	if policy != nil && len(policy.OutputMapping) > 0 && ee != nil {
+		return tasks.ApplyOutputMapping(ctx, ee, policy.OutputMapping, output)
+	}
+
+	return []data.Data{data.MustParameter(output.ID(),
+		data.MustItemAwareElement(output, data.ReadyDataState))}, nil
 }
 
 // ReportBpmnError reports a worker-declared Business Error and removes the job.
@@ -578,6 +624,15 @@ func (d *Dispatcher) runWorker(
 		}
 
 		for _, lj := range jobs {
+			// WorkerTrusted: the worker runs the policy in-process and reports a
+			// verdict (SRD-039 M10). Otherwise (EngineAuthoritative / no policy) the
+			// worker returns raw and the dispatcher owns the policy.
+			if lj.Policy != nil && lj.Policy.Trust == tasks.WorkerTrusted {
+				d.runTrusted(ctx, lj, workerID, fn)
+
+				continue
+			}
+
 			out, e := fn(ctx, lj)
 			if e != nil {
 				// a pooled worker's plain error is a raw technical fault (no
@@ -598,6 +653,107 @@ func (d *Dispatcher) runWorker(
 					"report_error", rerr.Error())
 			}
 		}
+	}
+}
+
+// runTrusted runs a WorkerTrusted job's policy in-process (SRD-039 M10, FR-7): it
+// calls fn, maps a success, honors a *WorkerError's self-classification (or the
+// fallback ErrorMapper for a plain error), and retries a technical fault within
+// the held lock window — reporting only a final verdict, which the dispatcher
+// forwards via report (no re-classify / re-map / retry). The worker owns retry
+// accounting; the whole sequence runs under the single maxLock lease it holds.
+func (d *Dispatcher) runTrusted(
+	ctx context.Context,
+	lj tasks.LockedJob,
+	workerID tasks.WorkerID,
+	fn WorkerFunc,
+) {
+	for attempt := 1; ; attempt++ {
+		out, err := fn(ctx, lj)
+
+		// Success — the worker maps its output, then reports a completion.
+		if err == nil {
+			res, mapErr := mapOutput(ctx, d.exprEngine, lj.Policy, out)
+			if mapErr != nil {
+				d.reportTrusted(ctx, lj.ID, workerID,
+					tasks.NewWorkerFault(lj.ID, tasks.Fault{Cause: mapErr}))
+
+				return
+			}
+
+			d.reportTrusted(ctx, lj.ID, workerID,
+				tasks.NewWorkerComplete(lj.ID, res))
+
+			return
+		}
+
+		// A rich *WorkerError self-classifies a business outcome directly.
+		var we *tasks.WorkerError
+		if errors.As(err, &we) {
+			if verdict, ok := businessVerdict(lj.ID, we); ok {
+				d.reportTrusted(ctx, lj.ID, workerID, verdict)
+
+				return
+			}
+		}
+
+		// Technical (a plain error or a technical *WorkerError) — the fallback
+		// ErrorMapper may still reclassify it as a business outcome.
+		outcome := classify(ctx, d.logger, lj.ID, lj.Policy, d.exprEngine,
+			tasks.Fault{Cause: err})
+		if outcome.Kind() != tasks.OutcomeFault {
+			d.reportTrusted(ctx, lj.ID, workerID, outcome)
+
+			return
+		}
+
+		// Still technical — retry in-process, but only if the backoff fits inside
+		// the held lock window; otherwise report the terminal fault (exhausted),
+		// never letting the lock lapse into a re-fetch (NFR-2).
+		backoff, retry := retryDecision(lj.Policy, attempt, err)
+		if !retry || !d.clk.Now().Add(backoff).Before(lj.Deadline) {
+			d.reportTrusted(ctx, lj.ID, workerID, outcome)
+
+			return
+		}
+
+		select {
+		case <-d.clk.After(backoff):
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// businessVerdict turns a *WorkerError's self-classification into a business
+// outcome (BpmnError over Status); ok == false for a technical-only WorkerError.
+func businessVerdict(
+	jobID tasks.JobID, we *tasks.WorkerError,
+) (*tasks.WorkerOutcome, bool) {
+	switch {
+	case we.BpmnErrorCode != "":
+		return tasks.NewWorkerBpmnError(jobID, we.BpmnErrorCode, we.Message), true
+
+	case we.Status != nil:
+		return tasks.NewWorkerStatus(jobID, we.Status), true
+
+	default:
+		return nil, false
+	}
+}
+
+// reportTrusted delivers a WorkerTrusted verdict through the sink (removing the
+// job), logging a delivery failure like the raw-report path.
+func (d *Dispatcher) reportTrusted(
+	ctx context.Context,
+	jobID tasks.JobID,
+	workerID tasks.WorkerID,
+	outcome *tasks.WorkerOutcome,
+) {
+	if err := d.report(ctx, jobID, workerID, outcome); err != nil {
+		d.logger.Warn("local trusted worker failed to report a verdict",
+			"job_id", string(jobID), "kind", outcome.Kind().String(),
+			"report_error", err.Error())
 	}
 }
 

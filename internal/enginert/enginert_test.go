@@ -95,3 +95,19 @@ func TestWithWorkerRetryPolicy(t *testing.T) {
 		t.Fatal("a nil policy should be ignored (default kept)")
 	}
 }
+
+// TestWithWorkerTrustDefault covers SRD-039 M9: the engine-wide default trust
+// mode is unset (zero) by default and set by WithWorkerTrustDefault.
+func TestWithWorkerTrustDefault(t *testing.T) {
+	var unset tasks.TrustMode
+
+	if Default().WorkerTrustDefault() != unset {
+		t.Fatal("the default trust mode should be unset")
+	}
+
+	got := Default().
+		WithWorkerTrustDefault(tasks.EngineAuthoritative).WorkerTrustDefault()
+	if got != tasks.EngineAuthoritative {
+		t.Fatal("WithWorkerTrustDefault was not applied")
+	}
+}

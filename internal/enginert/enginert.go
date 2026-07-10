@@ -45,6 +45,9 @@ type Runtime struct {
 	// nil by default (a per-service WithRetryPolicy overrides it; absent both,
 	// the resolver falls back to tasks.DefaultRetryPolicy).
 	workerRetryPolicy tasks.RetryPolicy
+	// workerTrustDefault is the engine-wide default trust mode (SRD-039 M9);
+	// the zero value resolves to WorkerTrusted at enqueue.
+	workerTrustDefault tasks.TrustMode
 }
 
 // Default returns a Runtime with every extension set to its bundled default.
@@ -159,6 +162,18 @@ func (r *Runtime) WithWorkerRetryPolicy(p tasks.RetryPolicy) *Runtime {
 	if p != nil {
 		r.workerRetryPolicy = p
 	}
+
+	return r
+}
+
+// WorkerTrustDefault returns the engine-wide default trust mode (the zero value
+// resolves to WorkerTrusted at enqueue).
+func (r *Runtime) WorkerTrustDefault() tasks.TrustMode { return r.workerTrustDefault }
+
+// WithWorkerTrustDefault overrides the engine-wide default trust mode and returns
+// the Runtime.
+func (r *Runtime) WithWorkerTrustDefault(m tasks.TrustMode) *Runtime {
+	r.workerTrustDefault = m
 
 	return r
 }

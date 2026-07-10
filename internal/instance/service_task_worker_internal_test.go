@@ -15,6 +15,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -207,7 +208,10 @@ func TestServiceTaskWorkerCompleteResumesAndBinds(t *testing.T) {
 
 	job := waitForJob(t, disp)
 
-	output := data.MustItemDefinition(values.NewVariable("worker-result"))
+	output := []data.Data{data.MustParameter("result",
+		data.MustItemAwareElement(
+			data.MustItemDefinition(values.NewVariable("worker-result")),
+			data.ReadyDataState))}
 	require.NoError(t, inst.ReportJobCompletion(context.Background(),
 		tasks.NewWorkerComplete(job.ID, output)))
 
@@ -364,6 +368,51 @@ func enqueuedPolicy(
 	require.NotNil(t, job.Policy, "the enqueued job carries a resolved Policy")
 
 	return job.Policy
+}
+
+// TestEnqueueResolvesOutputMapping covers SRD-039 M8/FR-3: the per-service
+// WithOutputMapping is resolved into the enqueued Job.Policy so the dispatcher can
+// map the completion off the track.
+func TestEnqueueResolvesOutputMapping(t *testing.T) {
+	path, err := goexpr.New(nil,
+		data.MustItemDefinition(values.NewVariable("")),
+		func(ctx context.Context, ds data.Source) (data.Value, error) {
+			return values.NewVariable("x"), nil
+		})
+	require.NoError(t, err)
+
+	disp := &capDispatcher{}
+	rt := enginert.Default().WithWorkerDispatcher(disp)
+
+	policy := enqueuedPolicy(t, disp, rt,
+		activities.WithOutputMapping(tasks.OutputRule{Path: path, Var: "orderId"}))
+
+	require.Len(t, policy.OutputMapping, 1)
+	require.Equal(t, "orderId", policy.OutputMapping[0].Var)
+}
+
+// TestEnqueueResolvesTrust covers SRD-039 M9: the trust mode resolves two-level
+// into Job.Policy — per-service over engine-wide over the WorkerTrusted default.
+func TestEnqueueResolvesTrust(t *testing.T) {
+	// per-service WithWorkerTrust wins over the engine-wide default.
+	disp := &capDispatcher{}
+	rt := enginert.Default().WithWorkerDispatcher(disp).
+		WithWorkerTrustDefault(tasks.WorkerTrusted)
+	require.Equal(t, tasks.EngineAuthoritative,
+		enqueuedPolicy(t, disp, rt,
+			activities.WithWorkerTrust(tasks.EngineAuthoritative)).Trust)
+
+	// absent a per-service mode, the engine-wide default applies.
+	disp2 := &capDispatcher{}
+	rt2 := enginert.Default().WithWorkerDispatcher(disp2).
+		WithWorkerTrustDefault(tasks.EngineAuthoritative)
+	require.Equal(t, tasks.EngineAuthoritative,
+		enqueuedPolicy(t, disp2, rt2).Trust)
+
+	// absent both, WorkerTrusted (the ADR-021 default) applies.
+	disp3 := &capDispatcher{}
+	rt3 := enginert.Default().WithWorkerDispatcher(disp3)
+	require.Equal(t, tasks.WorkerTrusted, enqueuedPolicy(t, disp3, rt3).Trust)
 }
 
 // TestEnqueueResolvesPerServiceErrorMapper covers FR-2/§3.6: a per-service

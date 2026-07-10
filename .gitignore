@@ -51,3 +51,4 @@ examples/boundary-events/boundary-events
 examples/terminate-end-event/terminate-end-event
 examples/usertask/usertask
 examples/versioning/versioning
+examples/service-task-worker/service-task-worker

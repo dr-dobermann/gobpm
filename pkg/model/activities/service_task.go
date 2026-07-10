@@ -54,7 +54,11 @@ type ServiceTask struct {
 	// variable a Business Status writes, and whether it may overwrite (SRD-037 FR-5).
 	statusVar string
 	task
-	timeout         time.Duration
+	timeout time.Duration
+	// trustMode selects the worker-outcome policy locus (WorkerTrusted /
+	// EngineAuthoritative); trustUnset resolves to the engine default at enqueue
+	// (SRD-039 M9).
+	trustMode       tasks.TrustMode
 	statusOverwrite bool
 }
 
@@ -128,13 +132,13 @@ func NewServiceTask(
 	// WithErrorMapper / WithStatus / WithOutputMapping govern the worker outcome —
 	// meaningless on an in-process ServiceTask, so require WithWorker (SRD-037 §3.4).
 	if sc.workerTopic == "" &&
-		(sc.errorMapper != nil || sc.retryPolicy != nil || sc.statusVar != "" ||
-			len(sc.outputMapping) > 0) {
+		(sc.errorMapper != nil || sc.retryPolicy != nil || sc.trustSet ||
+			sc.statusVar != "" || len(sc.outputMapping) > 0) {
 		return nil,
 			errs.New(
-				errs.M("WithErrorMapper/WithRetryPolicy/WithStatus/WithOutputMapping "+
-					"require a worker-dispatched ServiceTask (WithWorker); %q has none",
-					name),
+				errs.M("WithErrorMapper/WithRetryPolicy/WithWorkerTrust/WithStatus/"+
+					"WithOutputMapping require a worker-dispatched ServiceTask "+
+					"(WithWorker); %q has none", name),
 				errs.C(errorClass, errs.InvalidParameter))
 	}
 
@@ -151,6 +155,7 @@ func NewServiceTask(
 			workerTopic:     sc.workerTopic,
 			errorMapper:     sc.errorMapper,
 			retryPolicy:     sc.retryPolicy,
+			trustMode:       sc.trustMode,
 			outputMapping:   sc.outputMapping,
 			statusVar:       sc.statusVar,
 			statusOverwrite: sc.statusOverwrite,
@@ -189,6 +194,7 @@ func (st *ServiceTask) Clone() (flow.Node, error) {
 		workerTopic:     st.workerTopic,
 		errorMapper:     st.errorMapper,
 		retryPolicy:     st.retryPolicy,
+		trustMode:       st.trustMode,
 		outputMapping:   st.outputMapping,
 		statusVar:       st.statusVar,
 		statusOverwrite: st.statusOverwrite,
@@ -365,39 +371,20 @@ func (st *ServiceTask) execWorkerOutcome(
 		return nil, st.technicalFault(wo.Fault())
 
 	default: // OutcomeComplete
-		return st.bindOutput(ctx, re, wo.Output())
+		return st.bindOutput(re, wo.Output())
 	}
 }
 
-// bindOutput commits a completion's output and advances. With WithOutputMapping
-// (SRD-037 FR-7) the raw body is shaped into the declared output variables (a
-// required path the body doesn't satisfy faults the task); otherwise the output
-// item is committed directly (the M3 direct-reconciliation default).
+// bindOutput commits a completion's already-shaped output and advances. The
+// output was mapped by the policy owner (the dispatcher under EngineAuthoritative,
+// the worker under WorkerTrusted) before it reached the track (SRD-039 M8), so the
+// track only commits it — no WithOutputMapping runs here anymore.
 func (st *ServiceTask) bindOutput(
-	ctx context.Context,
 	re renv.RuntimeEnvironment,
-	output *data.ItemDefinition,
+	res []data.Data,
 ) ([]*flow.SequenceFlow, error) {
-	if output == nil {
+	if len(res) == 0 {
 		return st.Outgoing(), nil
-	}
-
-	res := []data.Data{data.MustParameter(output.ID(),
-		data.MustItemAwareElement(output, data.ReadyDataState))}
-
-	if len(st.outputMapping) > 0 {
-		mapped, err := tasks.ApplyOutputMapping(
-			ctx, re.ExpressionEngine(), st.outputMapping, output)
-		if err != nil {
-			return nil,
-				errs.New(
-					errs.M("service task %q output mapping failed", st.Name()),
-					errs.C(errorClass, errs.OperationFailed),
-					errs.E(err),
-					errs.D("service_task_id", st.ID()))
-		}
-
-		res = mapped
 	}
 
 	if err := re.Put(res...); err != nil {
@@ -515,12 +502,17 @@ func (st *ServiceTask) BindJobInput(
 }
 
 // WorkerConfig reports the ServiceTask's per-service outcome policy — its
-// WithErrorMapper and WithRetryPolicy — for the engine to resolve (two-level,
-// over the engine-wide defaults) and ship in the enqueued Job.Policy so the
-// dispatcher can classify + retry a raw fault engine-side. ok == false for an
-// in-process task (tasks.WorkerConfig, SRD-038 §3.3).
-func (st *ServiceTask) WorkerConfig() (tasks.ErrorMapper, tasks.RetryPolicy, bool) {
-	return st.errorMapper, st.retryPolicy, st.workerTopic != ""
+// WithErrorMapper, WithRetryPolicy, and WithOutputMapping — for the engine to
+// resolve (two-level, over the engine-wide defaults) and ship in the enqueued
+// Job.Policy so the policy owner can classify / retry / map the outcome. ok ==
+// false for an in-process task (tasks.WorkerConfig, SRD-038 §3.3, SRD-039 M8).
+func (st *ServiceTask) WorkerConfig() (tasks.Policy, bool) {
+	return tasks.Policy{
+		ErrorMapper:   st.errorMapper,
+		RetryPolicy:   st.retryPolicy,
+		OutputMapping: st.outputMapping,
+		Trust:         st.trustMode,
+	}, st.workerTopic != ""
 }
 
 // ------------------ eventproc.EventProcessor interface -----------------------

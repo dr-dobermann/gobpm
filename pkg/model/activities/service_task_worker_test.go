@@ -12,7 +12,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
-	exprengine "github.com/dr-dobermann/gobpm/pkg/model/expression/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
@@ -35,6 +34,17 @@ func workerTask(t *testing.T) *activities.ServiceTask {
 	return st
 }
 
+// completeData wraps a raw output item as the final committed []data.Data a
+// completion outcome now carries (SRD-039 M8: the policy owner shaped it, the
+// track only commits).
+func completeData(t *testing.T, item *data.ItemDefinition) []data.Data {
+	t.Helper()
+	require.NoError(t, data.CreateDefaultStates())
+
+	return []data.Data{data.MustParameter(item.ID(),
+		data.MustItemAwareElement(item, data.ReadyDataState))}
+}
+
 // TestServiceTaskWorkerExecBindsCompletedOutput: on resume, ProcessEvent stashes
 // a Complete outcome and Exec binds its output to the frame (execWorkerOutcome).
 func TestServiceTaskWorkerExecBindsCompletedOutput(t *testing.T) {
@@ -43,7 +53,7 @@ func TestServiceTaskWorkerExecBindsCompletedOutput(t *testing.T) {
 	output := data.MustItemDefinition(values.NewVariable("res"),
 		foundation.WithID("res"))
 	require.NoError(t, st.ProcessEvent(context.Background(),
-		tasks.NewWorkerComplete("job-1", output)))
+		tasks.NewWorkerComplete("job-1", completeData(t, output))))
 
 	var put data.Data
 
@@ -98,7 +108,7 @@ func TestServiceTaskWorkerExecPutError(t *testing.T) {
 	output := data.MustItemDefinition(values.NewVariable("res"),
 		foundation.WithID("res"))
 	require.NoError(t, st.ProcessEvent(context.Background(),
-		tasks.NewWorkerComplete("job-1", output)))
+		tasks.NewWorkerComplete("job-1", completeData(t, output))))
 
 	re := mockrenv.NewMockRuntimeEnvironment(t)
 	re.EXPECT().Put(mock.Anything).Return(fmt.Errorf("commit failed"))
@@ -328,6 +338,22 @@ func TestWithRetryPolicyRejectsNil(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestWithWorkerTrustRejectsInvalidMode: an unknown trust mode is rejected.
+func TestWithWorkerTrustRejectsInvalidMode(t *testing.T) {
+	_, err := activities.NewServiceTask("svc",
+		service.MustOperation("op", nil, nil, nil),
+		activities.WithWorker("t"), activities.WithWorkerTrust(tasks.TrustMode(99)))
+	require.ErrorContains(t, err, "unknown trust mode")
+}
+
+// TestWithWorkerTrustRejectsNonWorker: WithWorkerTrust requires WithWorker.
+func TestWithWorkerTrustRejectsNonWorker(t *testing.T) {
+	_, err := activities.NewServiceTask("svc",
+		service.MustOperation("op", nil, nil, nil),
+		activities.WithWorkerTrust(tasks.EngineAuthoritative))
+	require.ErrorContains(t, err, "require a")
+}
+
 // TestWithStatusRejectsEmpty: an empty status variable name is rejected.
 func TestWithStatusRejectsEmpty(t *testing.T) {
 	_, err := activities.NewServiceTask("svc",
@@ -384,8 +410,9 @@ func TestServiceTaskWorkerStatusPutError(t *testing.T) {
 
 // TestServiceTaskWorkerFaultMappedToStatus: the ErrorMapper yields a Business
 // Status for a raw fault, which is written to the WithStatus variable.
-// bodyValueExpr builds a FormalExpression that returns the body's value — the
-// shape a WithOutputMapping rule's Path takes.
+// bodyValueExpr builds a valid body-path FormalExpression — the shape a
+// WithOutputMapping rule's Path takes (used to satisfy the Path validation while
+// testing the other option guards).
 func bodyValueExpr(t *testing.T) data.FormalExpression {
 	t.Helper()
 
@@ -402,72 +429,6 @@ func bodyValueExpr(t *testing.T) data.FormalExpression {
 	require.NoError(t, err)
 
 	return fe
-}
-
-// TestServiceTaskWorkerOutputMappingShapesBody covers FR-7: WithOutputMapping
-// extracts the raw body into a declared output variable.
-func TestServiceTaskWorkerOutputMappingShapesBody(t *testing.T) {
-	st := workerTaskOpts(t, activities.WithOutputMapping(
-		tasks.OutputRule{Path: bodyValueExpr(t), Var: "orderId"}))
-
-	body := data.MustItemDefinition(values.NewVariable("order-42"),
-		foundation.WithID("body"))
-	require.NoError(t, st.ProcessEvent(context.Background(),
-		tasks.NewWorkerComplete("job-1", body)))
-
-	var put data.Data
-
-	re := mockrenv.NewMockRuntimeEnvironment(t)
-	re.EXPECT().ExpressionEngine().Return(exprengine.New())
-	re.EXPECT().Put(mock.Anything).RunAndReturn(func(dd ...data.Data) error {
-		put = dd[0]
-
-		return nil
-	})
-
-	flows, err := st.Exec(context.Background(), re)
-	require.NoError(t, err)
-	require.Empty(t, flows)
-	require.Equal(t, "orderId", put.Name())
-	require.Equal(t, "order-42", put.Value().Get(context.Background()))
-}
-
-// missingDatumExpr reads a datum the fault/body source never exposes, so its
-// evaluation always errors (used to force a required-path failure).
-func missingDatumExpr(t *testing.T) data.FormalExpression {
-	t.Helper()
-
-	fe, err := goexpr.New(nil,
-		data.MustItemDefinition(values.NewVariable("")),
-		func(ctx context.Context, ds data.Source) (data.Value, error) {
-			d, err := ds.Find(ctx, "nested")
-			if err != nil {
-				return nil, err
-			}
-
-			return values.NewVariable(d), nil
-		})
-	require.NoError(t, err)
-
-	return fe
-}
-
-// TestServiceTaskWorkerOutputMappingRequiredFaults covers FR-7: a required output
-// path the body doesn't satisfy faults the task.
-func TestServiceTaskWorkerOutputMappingRequiredFaults(t *testing.T) {
-	st := workerTaskOpts(t, activities.WithOutputMapping(
-		tasks.OutputRule{Path: missingDatumExpr(t), Var: "v", Required: true}))
-
-	// the required path reads a datum the body doesn't provide → unsatisfied.
-	require.NoError(t, st.ProcessEvent(context.Background(),
-		tasks.NewWorkerComplete("job-1",
-			data.MustItemDefinition(values.NewVariable("x")))))
-
-	re := mockrenv.NewMockRuntimeEnvironment(t)
-	re.EXPECT().ExpressionEngine().Return(exprengine.New())
-
-	_, err := st.Exec(context.Background(), re)
-	require.ErrorContains(t, err, "output mapping failed")
 }
 
 // TestWithOutputMappingRejectsInvalidRule: a nil Path or empty Var is rejected.
@@ -520,8 +481,9 @@ func TestWorkerClassificationBeatsMapper(t *testing.T) {
 }
 
 // TestServiceTaskWorkerConfig covers the tasks.WorkerConfig surface (SRD-038
-// §3.3): a worker-dispatched task exposes its per-service ErrorMapper/RetryPolicy
-// with ok == true; an in-process task reports ok == false.
+// §3.3, SRD-039 M8): a worker-dispatched task exposes its per-service
+// ErrorMapper / RetryPolicy / OutputMapping with ok == true; an in-process task
+// reports ok == false.
 func TestServiceTaskWorkerConfig(t *testing.T) {
 	mapper, err := tasks.NewRuleMapper(
 		tasks.Rule{Code: "409", Yield: tasks.BpmnError{Code: "Conflict"}})
@@ -529,17 +491,19 @@ func TestServiceTaskWorkerConfig(t *testing.T) {
 
 	policy := tasks.NoRetry()
 	st := workerTaskOpts(t,
-		activities.WithErrorMapper(mapper), activities.WithRetryPolicy(policy))
+		activities.WithErrorMapper(mapper), activities.WithRetryPolicy(policy),
+		activities.WithWorkerTrust(tasks.EngineAuthoritative))
 
-	em, rp, ok := st.WorkerConfig()
+	ps, ok := st.WorkerConfig()
 	require.True(t, ok)
-	require.Equal(t, mapper, em)
-	require.Equal(t, policy, rp)
+	require.Equal(t, mapper, ps.ErrorMapper)
+	require.Equal(t, policy, ps.RetryPolicy)
+	require.Equal(t, tasks.EngineAuthoritative, ps.Trust)
 
 	// an in-process ServiceTask (no WithWorker) reports ok == false.
 	in, err := activities.NewServiceTask("in",
 		service.MustOperation("op", nil, nil, nil))
 	require.NoError(t, err)
-	_, _, ok = in.WorkerConfig()
+	_, ok = in.WorkerConfig()
 	require.False(t, ok)
 }

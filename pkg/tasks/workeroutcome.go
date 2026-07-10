@@ -55,7 +55,7 @@ func (k OutcomeKind) String() string {
 // exposes no ItemDefinitions.
 type WorkerOutcome struct {
 	status   data.Value
-	output   *data.ItemDefinition
+	output   []data.Data
 	fault    Fault
 	bpmnCode string
 	bpmnMsg  string
@@ -64,9 +64,12 @@ type WorkerOutcome struct {
 	kind OutcomeKind
 }
 
-// NewWorkerComplete builds a successful outcome for job jobID carrying output
-// (nil if the operation produced none).
-func NewWorkerComplete(jobID JobID, output *data.ItemDefinition) *WorkerOutcome {
+// NewWorkerComplete builds a successful outcome for job jobID carrying the final
+// committed output (nil if the operation produced none). The output is already
+// shaped — the policy owner (the dispatcher under EngineAuthoritative, the worker
+// under WorkerTrusted) applied WithOutputMapping before this outcome is built, so
+// the track only commits it (SRD-039 §3.4).
+func NewWorkerComplete(jobID JobID, output []data.Data) *WorkerOutcome {
 	return &WorkerOutcome{
 		BaseElement: *foundation.MustBaseElement(),
 		jobID:       jobID,
@@ -115,8 +118,9 @@ func (o *WorkerOutcome) JobID() JobID { return o.jobID }
 // Kind returns the outcome's classification.
 func (o *WorkerOutcome) Kind() OutcomeKind { return o.kind }
 
-// Output returns the operation result item on a completion (nil otherwise).
-func (o *WorkerOutcome) Output() *data.ItemDefinition { return o.output }
+// Output returns the final committed output on a completion — already shaped by
+// the policy owner (nil otherwise). The track commits it as-is.
+func (o *WorkerOutcome) Output() []data.Data { return o.output }
 
 // BpmnError returns the worker-declared business-error code and message (empty on
 // other kinds).

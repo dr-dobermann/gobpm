@@ -44,6 +44,10 @@ type thresherConfig struct {
 	workerRetryPolicy tasks.RetryPolicy
 	taskDist          interactor.TaskDistributor
 
+	// workerTrustDefault is the engine-wide default trust mode (SRD-039 M9);
+	// the zero value resolves to WorkerTrusted at enqueue.
+	workerTrustDefault tasks.TrustMode
+
 	// Startup-report suppression (ADR-002 v.2 §4.4.1). Both default to false —
 	// the report is visible by default; each flag opts its block out.
 	suppressBanner        bool
@@ -241,6 +245,23 @@ func WithWorkerRetryPolicy(p tasks.RetryPolicy) Option {
 	}
 }
 
+// WithWorkerTrustDefault sets the engine-wide default trust mode applied to a
+// worker-dispatched ServiceTask that carries no per-service activities.WithWorkerTrust
+// (SRD-039 M9, two-level config). An invalid mode is rejected.
+func WithWorkerTrustDefault(mode tasks.TrustMode) Option {
+	return func(c *thresherConfig) error {
+		if mode != tasks.WorkerTrusted && mode != tasks.EngineAuthoritative {
+			return errs.New(
+				errs.M("WithWorkerTrustDefault: unknown trust mode %q", mode.String()),
+				errs.C(errorClass, errs.InvalidParameter))
+		}
+
+		c.workerTrustDefault = mode
+
+		return nil
+	}
+}
+
 // WithoutBanner suppresses the startup banner block — the ASCII wordmark, the
 // product tagline, and the version / last-commit lines (ADR-002 v.2 §4.4.1).
 // The configuration dump still prints unless WithoutStartupConfig is also given.
@@ -284,6 +305,8 @@ func (c *thresherConfig) WorkerDispatcher() tasks.WorkerDispatcher { return c.di
 func (c *thresherConfig) WorkerErrorMapper() tasks.ErrorMapper { return c.workerErrorMapper }
 
 func (c *thresherConfig) WorkerRetryPolicy() tasks.RetryPolicy { return c.workerRetryPolicy }
+
+func (c *thresherConfig) WorkerTrustDefault() tasks.TrustMode { return c.workerTrustDefault }
 
 func (c *thresherConfig) TaskDistributor() interactor.TaskDistributor { return c.taskDist }
 

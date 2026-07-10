@@ -1,4 +1,4 @@
-module process-data
+module service-task-worker
 
 go 1.25
 
