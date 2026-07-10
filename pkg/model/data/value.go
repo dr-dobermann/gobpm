@@ -36,7 +36,7 @@ type StepDirection bool
 
 const (
 	// StepForward indicates forward stepping through collection elements.
-	StepForward  StepDirection = true
+	StepForward StepDirection = true
 	// StepBackward indicates backward stepping through collection elements.
 	StepBackward StepDirection = false
 )
@@ -113,7 +113,7 @@ const (
 	// ValueUpdated represents a value update change type.
 	ValueUpdated ChangeType = "Value_Updated"
 	// ValueAdded represents a value added change type.
-	ValueAdded   ChangeType = "Value_Added"
+	ValueAdded ChangeType = "Value_Added"
 	// ValueDeleted represents a value deleted change type.
 	ValueDeleted ChangeType = "Value_Deleted"
 )

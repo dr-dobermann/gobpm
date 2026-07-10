@@ -39,7 +39,7 @@ func NewCompensationEventDefinition(
 
 	return &CompensationEventDefinition{
 		definition:          *d,
-		activity:           activity,
+		activity:            activity,
 		waitForCompensation: wait4compensation,
 	}, nil
 }
