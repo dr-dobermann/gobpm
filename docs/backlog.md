@@ -41,8 +41,9 @@ implemented), and leaves this list.
   behaviour change.
 ### Tracked elsewhere (not duplicated here)
 - **Instance god-object — size decomposition** (event-loop seam): the audit §2.3
-  finding is closed (SRD-032's `instanceScope` extraction); the remaining split is
-  a named deferral in **ADR-012 v.1 §2.5**.
+  finding is **fully closed** — the data-plane half by SRD-032's `instanceScope`
+  extraction, the loop-state/correlation half by **SRD-040** (`loopState` +
+  `correlator` collaborators, one-concern-per-file split of `instance.go`).
 - **Shared / persistent data — BPMN `DataStore`**: future **Persistence-layer**
   work (**ADR-010 v.2 §2.6**, **ADR-009**). Runtime/instance data access for
   services is *already* solved via the `data.Source` named-source model (the
