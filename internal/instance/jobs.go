@@ -59,15 +59,10 @@ func (inst *Instance) ReportJobCompletion(
 // handleJobCompletion resolves the outcome's job to its parked track and resumes
 // it by delivering the WorkerOutcome to the track's evtCh, mirroring completeTask
 // (SRD-036 §4.5). Runs on the loop goroutine.
-func (inst *Instance) handleJobCompletion(
-	req jobRequest,
-	jobs map[tasks.JobID]*track,
-	waiting map[string]struct{},
-	msgIdx map[string]*track,
-) {
+func (ls *loopState) handleJobCompletion(req jobRequest) {
 	jobID := req.outcome.JobID()
 
-	tr, ok := jobs[jobID]
+	tr, ok := ls.jobs[jobID]
 	if !ok {
 		req.reply <- errs.New(
 			errs.M("job %q not found or already completed", string(jobID)),
@@ -82,8 +77,8 @@ func (inst *Instance) handleJobCompletion(
 	// sole sender and it is parked-and-undelivered (SRD-027). The track wakes,
 	// ProcessEvent stashes the outcome, and Exec binds the output (or faults on a
 	// Fail outcome). SRD-036 §4.4.
-	flipNotParked(tr, waiting, msgIdx)
-	delete(jobs, jobID)
+	ls.flipNotParked(tr)
+	delete(ls.jobs, jobID)
 	tr.evtCh <- req.outcome
 
 	req.reply <- nil
@@ -94,14 +89,8 @@ func (inst *Instance) handleJobCompletion(
 // track so the worker's report can resume it — all on the loop goroutine, unless
 // the instance is shutting down (SRD-036 §4.3). Binding on the loop goroutine (not
 // the parked track's) keeps scope access single-writer, mirroring authorizeTask.
-func (inst *Instance) onJobWaiting(
-	ctx context.Context,
-	ev trackEvent,
-	stopping bool,
-	waiting map[string]struct{},
-	jobs map[tasks.JobID]*track,
-) {
-	if stopping {
+func (ls *loopState) onJobWaiting(ctx context.Context, ev trackEvent) {
+	if ls.stopping {
 		return
 	}
 
@@ -111,7 +100,7 @@ func (inst *Instance) onJobWaiting(
 	// evJobWaiting), and ServiceTask implements ExternalWorker, so this cannot fail.
 	ew, _ := ev.node.(tasks.ExternalWorker)
 
-	if err := inst.enqueueJob(ctx, ev, ew, jobID); err != nil {
+	if err := ls.inst.enqueueJob(ctx, ev, ew, jobID); err != nil {
 		// binding or enqueue failed — resume the parked track with a fault so the
 		// instance surfaces it instead of parking forever with no job. The track was
 		// never registered (below), so deliver straight to its buffered evtCh where
@@ -125,8 +114,8 @@ func (inst *Instance) onJobWaiting(
 	// so the worker's report (via jobReq) resumes it. The report is serviced on this
 	// same loop goroutine (jobReq), strictly after this returns, so registering last
 	// cannot race a fast worker (SRD-036 §4.5).
-	waiting[ev.track.ID()] = struct{}{}
-	jobs[jobID] = ev.track
+	ls.waiting[ev.track.ID()] = struct{}{}
+	ls.jobs[jobID] = ev.track
 }
 
 // enqueueJob opens a transient root frame for the parked ServiceTask, binds its
@@ -206,10 +195,10 @@ func (inst *Instance) resolveWorkerPolicy(ew tasks.ExternalWorker) *tasks.Policy
 // (canceled by an interrupting boundary or instance terminate). The enqueued job
 // is left for the dispatcher to expire — the engine has no withdraw yet — so a
 // late worker report finds no track and is dropped (SRD-036).
-func cleanupJob(tr *track, jobs map[tasks.JobID]*track) {
-	for id, t := range jobs {
+func (ls *loopState) cleanupJob(tr *track) {
+	for id, t := range ls.jobs {
 		if t == tr {
-			delete(jobs, id)
+			delete(ls.jobs, id)
 		}
 	}
 }

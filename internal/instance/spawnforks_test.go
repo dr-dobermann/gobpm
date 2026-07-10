@@ -37,18 +37,12 @@ func TestSpawnForks(t *testing.T) {
 		mockeventproc.NewMockEventProducer(t), nil)
 	require.NoError(t, err)
 
+	// Start from a clean registry: the New-seeded tracks never went through
+	// ls.spawn (no cancel func), and only spawned tracks may meet stopAll.
+	inst.tracks = map[string]*track{}
+
 	start, err := events.NewStartEvent("spawn-src")
 	require.NoError(t, err)
-
-	var spawned []*track
-
-	spawn := func(tr *track) {
-		spawned = append(spawned, tr)
-		inst.tracks[tr.ID()] = tr
-	}
-
-	stopCalled := false
-	stopAll := func() { stopCalled = true }
 
 	t.Run("forked track stopped when instance is already stopping", func(t *testing.T) {
 		end, err := events.NewEndEvent("spawn-end")
@@ -57,13 +51,20 @@ func TestSpawnForks(t *testing.T) {
 		fValid, err := flow.Link(start, end) // target is a real executor
 		require.NoError(t, err)
 
-		inst.spawnForks(trackEvent{flows: []*flow.SequenceFlow{fValid}},
-			spawn, stopAll, true)
+		ls := newLoopState(inst)
+		ls.stopping = true
 
-		require.Len(t, spawned, 1)
-		require.True(t, spawned[0].stopIt.Load(),
+		before := trackIDSet(inst)
+		ls.spawnForks(t.Context(), trackEvent{flows: []*flow.SequenceFlow{fValid}})
+
+		forked := newTrackIDs(before, inst)
+		require.Len(t, forked, 1)
+		require.True(t, inst.tracks[forked[0]].stopIt.Load(),
 			"a track forked while stopping must be stopped at once")
-		require.False(t, stopCalled)
+
+		// the forked track really runs now — drain its terminal event so its
+		// goroutine exits (the loop is absent in this direct-drive test).
+		drainUntilEnd(t, inst, forked[0])
 	})
 
 	t.Run("newTrack build error records the error and stops the instance", func(t *testing.T) {
@@ -73,11 +74,15 @@ func TestSpawnForks(t *testing.T) {
 		fBad, err := flow.Link(start, plainNode{bn}) // target lacks NodeExecutor
 		require.NoError(t, err)
 
-		inst.spawnForks(trackEvent{flows: []*flow.SequenceFlow{fBad}},
-			spawn, stopAll, false)
+		ls := newLoopState(inst)
 
-		require.True(t, stopCalled, "a build error must trigger stopAll")
+		before := trackIDSet(inst)
+		ls.spawnForks(t.Context(), trackEvent{flows: []*flow.SequenceFlow{fBad}})
+
+		require.True(t, ls.stopping, "a build error must trigger stopAll")
+		require.Equal(t, Terminating, inst.State())
 		require.Error(t, inst.LastErr())
-		require.Len(t, spawned, 1, "no track is spawned on the error path")
+		require.Empty(t, newTrackIDs(before, inst),
+			"no track is spawned on the error path")
 	})
 }

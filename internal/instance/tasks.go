@@ -142,14 +142,8 @@ func (inst *Instance) taskRoundtrip(
 // §4.1). It resolves the parked task, authorizes the actor over the instance root
 // data source, and — for Complete — validates the outputs and delivers a synthetic
 // completion to the parked track. All scope access stays on this goroutine.
-func (inst *Instance) handleTaskRequest(
-	ctx context.Context,
-	req taskRequest,
-	tasks map[string]taskEntry,
-	waiting map[string]struct{},
-	msgIdx map[string]*track,
-) {
-	entry, ok := tasks[req.taskID]
+func (ls *loopState) handleTaskRequest(ctx context.Context, req taskRequest) {
+	entry, ok := ls.tasks[req.taskID]
 	if !ok {
 		req.reply <- taskReply{err: errs.New(
 			errs.M("task %q not found or already completed", req.taskID),
@@ -162,19 +156,19 @@ func (inst *Instance) handleTaskRequest(
 	// registers a task), so the assertion cannot fail.
 	ht, _ := entry.node.(interactor.HumanTask)
 
-	if err := inst.authorizeTask(ctx, ht, req.actor); err != nil {
+	if err := ls.inst.authorizeTask(ctx, ht, req.actor); err != nil {
 		req.reply <- taskReply{err: err} // non-terminal — task stays parked
 
 		return
 	}
 
 	if req.kind == reqTake {
-		req.reply <- taskReply{view: inst.buildTaskView(req.taskID, entry.node)}
+		req.reply <- taskReply{view: ls.inst.buildTaskView(req.taskID, entry.node)}
 
 		return
 	}
 
-	inst.completeTask(ctx, req, entry, tasks, waiting, msgIdx)
+	ls.completeTask(ctx, req, entry)
 }
 
 // authorizeTask runs the task's Authorize over a transient root frame (a
@@ -196,13 +190,10 @@ func (inst *Instance) authorizeTask(
 
 // completeTask validates the outputs and, on success, resumes the parked task by
 // delivering a synthetic completion event to its evtCh, then withdraws it.
-func (inst *Instance) completeTask(
+func (ls *loopState) completeTask(
 	ctx context.Context,
 	req taskRequest,
 	entry taskEntry,
-	tasks map[string]taskEntry,
-	waiting map[string]struct{},
-	msgIdx map[string]*track,
 ) {
 	ht, _ := entry.node.(interactor.HumanTask)
 
@@ -217,33 +208,33 @@ func (inst *Instance) completeTask(
 	// on this loop goroutine. So flip it out and deliver on its own evtCh, where the
 	// loop is the sole sender and it is parked-and-undelivered (SRD-027). The track
 	// wakes, ProcessEvent binds the outputs, Exec advances.
-	flipNotParked(entry.track, waiting, msgIdx)
-	delete(tasks, req.taskID)
+	ls.flipNotParked(entry.track)
+	delete(ls.tasks, req.taskID)
 	entry.track.evtCh <- interactor.NewTaskCompletion(req.outputs)
 
-	inst.withdrawTask(ctx, req.taskID)
+	ls.inst.withdrawTask(ctx, req.taskID)
 
 	req.reply <- taskReply{}
 }
 
 // addTask records a parked UserTask in the loop-owned registry and announces it
 // to the TaskDistributor. Called on the loop goroutine (evTaskWaiting / spawn).
-func (inst *Instance) addTask(
+func (ls *loopState) addTask(
 	ctx context.Context,
 	taskID string,
 	tr *track,
 	node flow.Node,
-	tasks map[string]taskEntry,
 ) {
 	if taskID == "" {
 		return // not a human task — nothing to register
 	}
 
-	tasks[taskID] = taskEntry{track: tr, node: node}
+	ls.tasks[taskID] = taskEntry{track: tr, node: node}
 
 	dctx, cancel := context.WithTimeout(ctx, distributorTimeout)
 	defer cancel()
 
+	inst := ls.inst
 	if err := inst.td.Distribute(dctx, inst.buildTaskInfo(taskID, node)); err != nil {
 		inst.Logger().Warn("user task distribute failed",
 			"instance", inst.ID(), "task_id", taskID, "error", err.Error())
@@ -255,67 +246,51 @@ func (inst *Instance) addTask(
 // track's run goroutine starts: it enters the parked set, indexes its Message
 // catch defs, and — for a UserTask — registers and announces the task (SRD-027
 // FR-5, SRD-034). A non-waiting track is a no-op.
-func (inst *Instance) recordBornWaiter(
-	ctx context.Context,
-	t *track,
-	waiting map[string]struct{},
-	msgIdx map[string]*track,
-	tasks map[string]taskEntry,
-) {
+func (ls *loopState) recordBornWaiter(ctx context.Context, t *track) {
 	if !t.inState(TrackWaitForEvent) {
 		return
 	}
 
-	waiting[t.ID()] = struct{}{}
+	ls.waiting[t.ID()] = struct{}{}
 
 	for _, id := range t.msgDefIDs {
-		msgIdx[id] = t
+		ls.msgIdx[id] = t
 	}
 
-	inst.addTask(ctx, t.taskID, t, t.currentStep().node, tasks)
+	ls.addTask(ctx, t.taskID, t, t.currentStep().node)
 }
 
 // onTaskWaiting records a parked UserTask and announces it to the distributor,
 // unless the instance is shutting down (a parked task is then torn down by
 // stopAll, not completed). It also marks the track parked-and-undelivered so a
 // Complete can deliver to it. Runs on the loop goroutine (SRD-034).
-func (inst *Instance) onTaskWaiting(
-	ctx context.Context,
-	ev trackEvent,
-	stopping bool,
-	waiting map[string]struct{},
-	tasks map[string]taskEntry,
-) {
-	if stopping {
+func (ls *loopState) onTaskWaiting(ctx context.Context, ev trackEvent) {
+	if ls.stopping {
 		return
 	}
 
-	waiting[ev.track.ID()] = struct{}{}
-	inst.addTask(ctx, ev.taskID, ev.track, ev.node, tasks)
+	ls.waiting[ev.track.ID()] = struct{}{}
+	ls.addTask(ctx, ev.taskID, ev.track, ev.node)
 }
 
 // withdrawAllTasks withdraws every parked task and clears the registry, used on
 // instance teardown when tasks are no longer completable (SRD-034). A fresh
 // context is used since the instance context is already canceled at that point.
-func (inst *Instance) withdrawAllTasks(tasks map[string]taskEntry) {
-	for id := range tasks {
-		inst.withdrawTask(context.Background(), id)
+func (ls *loopState) withdrawAllTasks() {
+	for id := range ls.tasks {
+		ls.inst.withdrawTask(context.Background(), id)
 	}
 
-	clear(tasks)
+	clear(ls.tasks)
 }
 
 // cleanupTask withdraws and drops any task owned by a track that ended without a
 // normal completion (canceled by an interrupting boundary or instance terminate).
-func (inst *Instance) cleanupTask(
-	ctx context.Context,
-	tr *track,
-	tasks map[string]taskEntry,
-) {
-	for id, e := range tasks {
+func (ls *loopState) cleanupTask(ctx context.Context, tr *track) {
+	for id, e := range ls.tasks {
 		if e.track == tr {
-			delete(tasks, id)
-			inst.withdrawTask(ctx, id)
+			delete(ls.tasks, id)
+			ls.inst.withdrawTask(ctx, id)
 		}
 	}
 }

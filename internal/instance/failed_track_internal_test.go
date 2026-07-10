@@ -24,9 +24,13 @@ func TestFailFromTrackNilErr(t *testing.T) {
 		mockeventproc.NewMockEventProducer(t), nil)
 	require.NoError(t, err)
 
+	// The New-seeded tracks never went through ls.spawn (no cancel func), and
+	// failFromTrack ends in stopAll, which walks the registry — clear it.
+	inst.tracks = map[string]*track{}
+
 	tr := &track{instance: inst} // lastErr == nil
 
-	inst.failFromTrack(tr, func() {}) // stopAll is a no-op for this unit test
+	newLoopState(inst).failFromTrack(tr)
 
 	require.Error(t, inst.LastErr(),
 		"a nil track error must be synthesized, not stored as nil")

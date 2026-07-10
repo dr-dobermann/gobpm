@@ -61,13 +61,8 @@ type boundaryHoster interface {
 // registration failure can't honor the activity's declared boundary, so it faults
 // the instance (fail+stopAll), mirroring spawnForks' build-failure handling.
 // fireBoundary discriminates interrupting vs non-interrupting on fire. Called only
-// from loop().
-func (inst *Instance) armBoundaries(
-	t *track,
-	node flow.Node,
-	watchers map[string][]*boundaryWatch,
-	stopAll func(),
-) {
+// from the loop goroutine.
+func (ls *loopState) armBoundaries(t *track, node flow.Node) {
 	host, ok := node.(boundaryHoster)
 	if !ok {
 		return
@@ -91,15 +86,15 @@ func (inst *Instance) armBoundaries(
 
 			w := &boundaryWatch{host: t, boundary: bev, def: d}
 
-			if err := inst.RegisterEvent(w, d); err != nil {
+			if err := ls.inst.RegisterEvent(w, d); err != nil {
 				werr := errs.New(
 					errs.M("arm boundary %q on activity %q failed",
 						bev.ID(), node.ID()),
 					errs.C(errorClass, errs.OperationFailed),
 					errs.E(err))
 
-				inst.fail(werr)
-				stopAll()
+				ls.inst.fail(werr)
+				ls.stopAll()
 
 				return
 			}
@@ -109,7 +104,7 @@ func (inst *Instance) armBoundaries(
 	}
 
 	if len(ws) > 0 {
-		watchers[t.ID()] = ws
+		ls.watchers[t.ID()] = ws
 	}
 }
 
@@ -117,17 +112,14 @@ func (inst *Instance) armBoundaries(
 // entry — the activity's execution window has closed (the track moved off it,
 // ended, or failed), so its boundaries no longer guard anything (SRD-029 FR-6).
 // UnregisterEvent is idempotent, so a watch the hub already removed is a no-op.
-// Called only from loop().
-func (inst *Instance) disarmBoundaries(
-	trackID string,
-	watchers map[string][]*boundaryWatch,
-) {
-	for _, w := range watchers[trackID] {
+// Called only from the loop goroutine.
+func (ls *loopState) disarmBoundaries(trackID string) {
+	for _, w := range ls.watchers[trackID] {
 		// the hub owns the waiter's lifecycle; a miss means it is already gone.
-		_ = inst.UnregisterEvent(w, w.def.ID())
+		_ = ls.inst.UnregisterEvent(w, w.def.ID())
 	}
 
-	delete(watchers, trackID)
+	delete(ls.watchers, trackID)
 }
 
 // fireBoundary applies a boundary fire on the loop goroutine. The loop is the
@@ -144,17 +136,11 @@ func (inst *Instance) disarmBoundaries(
 //     again (multi-shot via the hub's retained signal waiter); it is disarmed when
 //     the host completes (evMoved-off / evEnded).
 //
-// Called only from loop().
-func (inst *Instance) fireBoundary(
-	ev trackEvent,
-	watchers map[string][]*boundaryWatch,
-	spawn func(*track),
-	stopAll func(),
-	stopping bool,
-) {
+// Called only from the loop goroutine.
+func (ls *loopState) fireBoundary(ctx context.Context, ev trackEvent) {
 	hostID := ev.track.ID()
 
-	if !armedFor(watchers[hostID], ev.node) {
+	if !armedFor(ls.watchers[hostID], ev.node) {
 		return // the host already completed and disarmed — the fire lost the race.
 	}
 
@@ -163,13 +149,12 @@ func (inst *Instance) fireBoundary(
 	be := ev.node.(flow.BoundaryEvent)
 
 	// both kinds spawn a token on the boundary's outgoing (exception / parallel) flow.
-	inst.spawnForks(
-		trackEvent{track: ev.track, flows: ev.node.Outgoing()},
-		spawn, stopAll, stopping)
+	ls.spawnForks(ctx,
+		trackEvent{track: ev.track, flows: ev.node.Outgoing()})
 
 	if be.CancelActivity() {
 		ev.track.cancel()
-		inst.disarmBoundaries(hostID, watchers)
+		ls.disarmBoundaries(hostID)
 	}
 }
 
@@ -182,14 +167,8 @@ func (inst *Instance) fireBoundary(
 // returns true so the caller does NOT fault the instance. A plain (untyped) error,
 // a failing node that holds no boundaries (e.g. an Error End Event), or no code
 // match returns false: the instance-fault path (§1.3) is unchanged. Called only
-// from loop().
-func (inst *Instance) matchErrorBoundary(
-	t *track,
-	position map[string]flow.Node,
-	spawn func(*track),
-	stopAll func(),
-	stopping bool,
-) bool {
+// from the loop goroutine.
+func (ls *loopState) matchErrorBoundary(ctx context.Context, t *track) bool {
 	var be *events.BpmnError
 	if !errors.As(t.lastErr, &be) {
 		return false // an untyped failure → fault, as before.
@@ -197,7 +176,7 @@ func (inst *Instance) matchErrorBoundary(
 
 	// position holds the node the track failed on; a node that carries no
 	// boundaries (an end event, a gateway) cannot catch — fault.
-	host, ok := position[t.ID()].(boundaryHoster)
+	host, ok := ls.position[t.ID()].(boundaryHoster)
 	if !ok {
 		return false
 	}
@@ -212,9 +191,8 @@ func (inst *Instance) matchErrorBoundary(
 				continue
 			}
 
-			inst.spawnForks(
-				trackEvent{track: t, flows: bev.Outgoing()},
-				spawn, stopAll, stopping)
+			ls.spawnForks(ctx,
+				trackEvent{track: t, flows: bev.Outgoing()})
 
 			return true
 		}
