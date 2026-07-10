@@ -1,7 +1,7 @@
 # FIX-021 «Event-gate test readiness race: token parked ≠ waiters registered»
 
 **Type:** FIX (one-shot bug-fix; not rewritten after landing).
-**Status:** Draft v.1 (2026-07-10, branch `refactor/instance-internal-structure`, implemented, not yet committed).
+**Status:** Accepted (2026-07-10, branch `refactor/instance-internal-structure`, landed — §8.1 stages `dc95cd2`…`8fbea18`).
 **Date:** 2026-07-10.
 **Author:** Ruslan Gabitov.
 **Branch:** `refactor/instance-internal-structure` (the failure surfaced on this branch's PR CI run; the fix lands with it).
@@ -289,20 +289,54 @@ None (sole-maintainer project).
 
 ## §8 Implementation summary (stage-by-stage actual landings + deltas vs draft)
 
-> ⚠️ TODO: fill AFTER landing; records the implementation history and empirical
-> findings vs the §3 draft.
-
 ### §8.1 Stages by commit (branch `refactor/instance-internal-structure`)
 
 | Stage | Commit | Scope | Tests |
 |---|---|---|---|
-| 1 | `<sha>` | this doc | — |
-| 2 | `<sha>` | §3.2.1 harness fix | stress ×5,000 green under CI conditions |
-| 3 | `<sha>` | §3.2.2 TEST_CPUS sync | make ci exit 0 |
+| 1 | `dc95cd2` | this doc (Draft) | — |
+| 2 | `73636a1` | §3.2.1 event-gate harness (`registrationCounter` readiness) | stress ×5,000 green under the exposing CI conditions (GOMAXPROCS=2/4, `-race`, coverage) |
+| 3 | `884a7a7` | §3.2.2–§3.2.5 signal readiness (`SignalCatchers` + `ProcessorCount` + bridge + four sleep→gate rewires + unit tests in each owning package) | `TestSignal*` ×20 `-race` green; probe + waiter methods at 100% coverage |
+| 4 | `57aff73` | §3.2.6 `TEST_CPUS=4` CI-parity budget | full `make ci` exit 0 under the pinned budget |
+| 5 | `8fbea18` | companion hygiene: gofmt drift in 10 untouched files (whitespace-only, fixed on sight) | build + owning-package tests green |
+
+Full-stack gate: `make ci` exit 0; diff-coverage **97.2%** of 782 changed lines
+(min 95), every FIX-021-touched function at 100%.
 
 ### §8.2 Empirical findings — where reality diverged from the §3 draft
 
-> ⚠️ TODO after landing.
+- **Waiters under-count catchers.** The first probe version counted
+  `signalIdx` *waiters* and deterministically hung `TestSignalBroadcast`'s
+  two-catcher wait: a second instance catching the same shared-id signal JOINS
+  the existing waiter (`registerWaiter`'s `AddEventProcessor` branch) instead
+  of creating one. The probe became catcher-counting (`ProcessorCount` summed
+  per waiter) — the §3.2.2 design as landed. The hang was itself a
+  deterministic readiness gate doing its job: the old sleep would have hidden
+  the mistake.
+- **Cross-package coverage attribution bit twice.** Statements in
+  `waiters/signal.go` and `eventhub.go` exercised only through
+  `pkg/thresher`'s tests attribute no coverage to their own packages, so the
+  diff gate saw `ProcessorCount` at 0% — each owning package needed its own
+  unit test (`TestSignalWaiterProcessorCount`,
+  `TestSignalCatchersFallbackCount`). Same lesson as SRD-040's runtimevars
+  observation: the gate measures per-package, plan unit tests per owning
+  package.
+- **Amend targets HEAD, not "the commit you mean".** Folding the two coverage
+  tests via `--amend` landed them in the tip (gofmt) commit instead of stage 3;
+  recovered by `reset --soft` to stage 2 and rebuilding stages 3–5 with correct
+  scopes (all five commits were verified local-only first, per the
+  amend-after-push rule).
+- **A repo-wide `gofmt -l` found 10 drifted files** the lint config does not
+  police — the §8.1 stage-5 hygiene commit; a `gofmt`-enforcing linter setting
+  is a candidate improvement (backlog, §8.3).
+
+### §8.3 Backlog (out of FIX-021 scope)
+
+- `pkg/thresher/thresher_events_test.go` carries several short settle-sleeps
+  (10–50ms, post-fire/timer contexts). Not audited in depth here — they did
+  not match the fire-readiness class on inspection, but deserve the same
+  deterministic-gate treatment in a future sweep.
+- Consider enabling a `gofmt`/`gofumpt` linter in `.golangci.yml` so
+  formatting drift fails `make lint` instead of accumulating silently.
 
 ## §9 Open questions
 
