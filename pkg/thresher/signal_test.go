@@ -13,6 +13,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// waitSignalCatchers blocks until the engine's hub holds at least n signal-catch
+// processors for name — the deterministic "catcher(s) are ready" gate (FIX-021):
+// a catcher's token parks before its hub registration, so a sleep or a token
+// poll can pass while a thrown signal still has no catcher (a correct no-op
+// drop) and the test then hangs on WaitCompletion. Counts catchers, not
+// waiters — a second instance of the same catch joins the existing waiter.
+func waitSignalCatchers(t *testing.T, th *thresher.Thresher, name string, n int) {
+	t.Helper()
+
+	require.Eventually(t,
+		func() bool { return thresher.SignalCatchers(th, name) >= n },
+		2*time.Second, 5*time.Millisecond,
+		"%d signal catcher(s) for %q must be registered before the throw",
+		n, name)
+}
+
 // signalCatchProcess builds start -> catch(signal name) -> end.
 func signalCatchProcess(t *testing.T, procID, name string) *process.Process {
 	t.Helper()
@@ -81,7 +97,7 @@ func TestSignalCatchThrow(t *testing.T) {
 	ch, err := th.StartLatest(catcher.ID())
 	require.NoError(t, err)
 
-	time.Sleep(150 * time.Millisecond) // catcher reaches and parks on the catch
+	waitSignalCatchers(t, th, "GO", 1) // catcher parked AND registered at the hub
 
 	_, err = th.StartLatest(thrower.ID()) // throws GO
 	require.NoError(t, err)
@@ -109,7 +125,7 @@ func TestSignalBroadcast(t *testing.T) {
 	c2, err := th.StartLatest(catcher.ID())
 	require.NoError(t, err)
 
-	time.Sleep(150 * time.Millisecond) // both catchers park on the catch
+	waitSignalCatchers(t, th, "GO", 2) // both catchers parked AND registered
 
 	_, err = th.StartLatest(thrower.ID()) // one throw of GO
 	require.NoError(t, err)
@@ -135,10 +151,18 @@ func TestSignalThrownIntoVoid(t *testing.T) {
 	_, err := th.RegisterProcess(catcher)
 	require.NoError(t, err)
 
-	_, err = th.StartLatest(thrower.ID()) // throw GO with no catcher → no-op
+	tw, err := th.StartLatest(thrower.ID()) // throw GO with no catcher → no-op
 	require.NoError(t, err)
 
-	time.Sleep(150 * time.Millisecond)
+	// Deterministic "the throw happened" gate (FIX-021): the throw fires during
+	// the thrower's run, so its completion proves the signal was propagated (and
+	// dropped) BEFORE the catcher exists — the inverse of the catcher-readiness
+	// race a sleep only made probable.
+	twCtx, twCC := context.WithTimeout(context.Background(), 3*time.Second)
+	defer twCC()
+	st, err := tw.WaitCompletion(twCtx)
+	require.NoError(t, err)
+	require.Equal(t, thresher.StateCompleted, st)
 
 	ch, err := th.StartLatest(catcher.ID()) // starts AFTER the throw
 	require.NoError(t, err)
@@ -164,7 +188,7 @@ func TestSignalSingleShotConsume(t *testing.T) {
 	ch, err := th.StartLatest(catcher.ID())
 	require.NoError(t, err)
 
-	time.Sleep(150 * time.Millisecond)
+	waitSignalCatchers(t, th, "GO", 1) // catcher parked AND registered
 
 	_, err = th.StartLatest(thrower.ID()) // throw 1 → catcher fires
 	require.NoError(t, err)

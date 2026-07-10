@@ -7,6 +7,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
 	"github.com/dr-dobermann/gobpm/internal/enginert"
+	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -58,4 +59,19 @@ func TestRegisterEventAddProcessorError(t *testing.T) {
 	hub.m.Unlock()
 
 	require.Error(t, hub.RegisterEvent(ep, def))
+}
+
+// TestSignalCatchersFallbackCount (FIX-021): a signalIdx entry that does not
+// expose ProcessorCount (not the concrete signalWaiter) still counts as one
+// catcher — the defensive fallback of the readiness probe.
+func TestSignalCatchersFallbackCount(t *testing.T) {
+	eh, err := New(enginert.Default())
+	require.NoError(t, err)
+
+	// a bare mock EventWaiter has no ProcessorCount → the fallback branch.
+	eh.signalIdx["GO"] = []eventproc.EventWaiter{
+		mockeventproc.NewMockEventWaiter(t),
+	}
+
+	require.Equal(t, 1, eh.SignalCatchers("GO"))
 }

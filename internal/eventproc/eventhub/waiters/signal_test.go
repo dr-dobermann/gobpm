@@ -134,3 +134,29 @@ func TestSignalWaiterEdgeCases(t *testing.T) {
 	ep.EXPECT().ProcessEvent(mock.Anything, def).Return(nil).Once()
 	require.NoError(t, w.Process(def))
 }
+
+// TestSignalWaiterProcessorCount (FIX-021): the broadcast-set size follows the
+// processor list — one at construction, up on AddEventProcessor, down on
+// RemoveEventProcessor. The hub's SignalCatchers probe reads it structurally.
+func TestSignalWaiterProcessorCount(t *testing.T) {
+	epA := mockeventproc.NewMockEventProcessor(t)
+	epA.EXPECT().ID().Return("catcher-A").Maybe()
+	epB := mockeventproc.NewMockEventProcessor(t)
+	epB.EXPECT().ID().Return("catcher-B").Maybe()
+
+	w, err := waiters.NewSignalWaiter(
+		mockeventproc.NewMockEventHub(t), epA, signalEDef(t, "GO"), "",
+		enginert.Default())
+	require.NoError(t, err)
+
+	pc, ok := w.(interface{ ProcessorCount() int })
+	require.True(t, ok, "the signal waiter must expose ProcessorCount")
+
+	require.Equal(t, 1, pc.ProcessorCount(), "the constructing catcher counts")
+
+	require.NoError(t, w.AddEventProcessor(epB))
+	require.Equal(t, 2, pc.ProcessorCount())
+
+	require.NoError(t, w.RemoveEventProcessor(epA))
+	require.Equal(t, 1, pc.ProcessorCount())
+}

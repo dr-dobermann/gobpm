@@ -597,6 +597,33 @@ func (eh *EventHub) signalIdxRemove(name string, w eventproc.EventWaiter) {
 	eh.signalIdx[name] = ws
 }
 
+// SignalCatchers reports how many catch processors are currently subscribed
+// for the signal name — a waiter carrying several processors (a second
+// instance of the same shared-id catch joins the existing waiter rather than
+// creating one) contributes each of them. It is a readiness probe for tests
+// (FIX-021): a catcher's token parks BEFORE its hub registration runs, so an
+// observed parked token alone does not mean a thrown signal already has a
+// catcher. Deliberately NOT part of the eventproc.EventHub contract — callers
+// reach it via a type assertion on the concrete hub.
+func (eh *EventHub) SignalCatchers(name string) int {
+	eh.m.RLock()
+	defer eh.m.RUnlock()
+
+	total := 0
+
+	for _, w := range eh.signalIdx[name] {
+		if pc, ok := w.(interface{ ProcessorCount() int }); ok {
+			total += pc.ProcessorCount()
+
+			continue
+		}
+
+		total++
+	}
+
+	return total
+}
+
 // WaiterFired reports that the waiter for eDefID has fired. The EventHub is the
 // sole owner of waiter removal (ADR-006 v.1 §2.5): it removes the waiter iff it
 // has reached a terminal state (Ended/Failed) and keeps a still-running one (a
