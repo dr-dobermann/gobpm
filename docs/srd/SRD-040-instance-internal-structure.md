@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft v.1 |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-10 |
 | Owner | Ruslan Gabitov |
@@ -506,31 +506,77 @@ implements what they already prescribe).
 
 ## 9. Definition of Done
 
-- [ ] `instance.go` split per §3.3; no package file mixes unrelated concerns; every file
+- [x] `instance.go` split per §3.3; no package file mixes unrelated concerns; every file
       ≤ its single concern (FR-6).
-- [ ] `loopState` exists, constructed only inside `loop()`, never stored on `Instance`;
+- [x] `loopState` exists, constructed only inside `loop()`, never stored on `Instance`;
       grep proof: no `loopState` field on the `Instance` struct (FR-1/FR-3).
-- [ ] No method or package-function signature in `internal/instance` carries a loop-owned
+- [x] No method or package-function signature in `internal/instance` carries a loop-owned
       map, `*int` active/`*bool` stopping, or `spawn`/`stopAll` closure parameter — grep
       clean, with the single documented exemption of the pure `joinPositions`
       (`position, parked` — SRD-028 design) (FR-2).
-- [ ] `correlator` owns `keys`+`m`; `convKeys`/`convMu` no longer exist on `Instance`;
+- [x] `correlator` owns `keys`+`m`; `convKeys`/`convMu` no longer exist on `Instance`;
       public delegators intact (FR-4/FR-5).
-- [ ] `pkg/thresher` compiles with zero edits; exported signatures byte-identical (FR-5).
-- [ ] §6 tests exist and pass; the full suite green under `-race`; examples run to exit 0
+- [x] `pkg/thresher` compiles with zero edits; exported signatures byte-identical (FR-5).
+- [x] §6 tests exist and pass; the full suite green under `-race`; examples run to exit 0
       under a timeout.
-- [ ] `make ci` green; diff-coverage ≥95% (aim 100%) with no gate lowering or new
+- [x] `make ci` green; diff-coverage ≥95% (aim 100%) with no gate lowering or new
       exclusions (NFR-4).
-- [ ] Doc comments on moved blocks re-read against the relocated code; drift fixed in the
+- [x] Doc comments on moved blocks re-read against the relocated code; drift fixed in the
       same milestone.
-- [ ] §10 filled with milestone SHAs and deltas; status flipped only after `/check-srd` PASS.
+- [x] §10 filled with milestone SHAs and deltas; status flipped only after `/check-srd` PASS.
 
 ---
 
 ## 10. Implementation summary
 
-> ⚠️ TODO: filled after landing — milestone commits, touched-file inventory, deltas vs this
-> draft.
+Landed on `refactor/instance-internal-structure` in three milestones, exactly per §7; every
+milestone `make ci`-green; final `/check-srd` audit: **PASS** (28 🟢 / 1 🟡 / 0 🔴).
+
+### 10.1 Milestones by commit
+
+| # | Commit | Scope | Gate |
+|---|---|---|---|
+| doc | `d90651c` | this SRD, Draft v.1 (post-/review-srd, zero red) | — |
+| M1 | `07dee51` | file split §3.3 (instance.go 1661 → 374 lines; six new files) + a coverage top-up (the moved lines re-exposed pre-existing uncovered branches to the diff gate: new unit tests in `eventproducer_test.go`/`lifecycle_test.go`/`loop_test.go`) | ci PASS, diff-coverage 97.8% |
+| M2 | `d20158d` | `correlator` extraction §3.2 + `correlation_test.go` (T-1/T-2) + mechanical re-receiver of `conversation_key_test.go`/`inbound_delivery_test.go` | ci PASS, 97.8% |
+| M3 | `122e747` | `loopState` extraction §3.1 — 26 methods + 4 package helpers re-receivered across `loop.go`/`tasks.go`/`jobs.go`/`boundary_watch.go`; `spawn`/`stopAll` closures → methods; T-4/T-5 + branch unit tests | ci PASS, **98.0%** of 762 changed lines; every touched file 100% |
+
+Examples smoke: **21/21** `examples/*` ran to exit 0 under a timeout. Full `-race` suite green.
+`pkg/thresher`: `git diff d90651c..HEAD -- pkg/thresher/` is **empty** (FR-5 held exactly).
+
+### 10.2 Deltas vs the §3 draft
+
+- **T-3 test name.** The doc sketched `TestCorrelatorMismatchRejects`; the behavior landed as
+  the re-receivered SRD-017 suite driving `inst.corr.*` — `TestValidateAndAssociateMismatch`
+  (+ `SameValue`/`DeriveError`/`UnresolvedKey`, `TestDeriveAndAssociate(NoOp)`,
+  `TestExtendReceivers*`) in `conversation_key_test.go`; assertions unchanged.
+- **Field order (cosmetic, fieldalignment).** `loopState` places the seven maps first and
+  `active`/`stopping` last; `correlator` is `inst; keys; m` (the §3.2 sketch had the mutex
+  mid-struct).
+- **Same-concern extra decls per file.** `lifecycle.go` also carries the `State` type +
+  consts + `String()`; `loop.go` the log helpers `eventTrackID`/`nodeIDOf`/`trackEndKind`;
+  `instance.go` the `newConfig`/`newOption`/`withBornEvent`/`withConversationKey`
+  constructor options.
+- **Assertion placement.** `eventproc.EventProcessor` asserts in `correlation.go`;
+  `EventProducer` + `RuntimeVarsSupplier` in `eventproducer.go`.
+- **Test-harness reshape (assertions preserved).** The old direct-drive tests injected
+  `spawn`/`stopAll` closures as observation points; with methods, they assert on the
+  loop-state observables (`ls.watchers`/`ls.position`/`inst.tracks` growth, `ls.stopping` +
+  `Terminating`) and drain each really-running continuation track's terminal event
+  (`drainUntilEnd` — the loop's stand-in). Touched: `boundary_watch_test.go`,
+  `reachability_loop_test.go`, `spawnforks_test.go`, `failed_track_internal_test.go`.
+- **Extra unit tests beyond §6** (the access the extraction unlocked):
+  `TestLoopStateOnTaskWaitingStoppingDrops`, `TestLoopStateOnJobWaitingStoppingDrops`,
+  `TestLoopStateCleanupTaskDropsOwned`, `TestLoopStateApplyMergedGhost`,
+  `TestOnWaitingStoppingDrops`, `TestFireOrJoinUnknownSurvivor`,
+  `TestLoopNoInitialTracksCompletes`.
+- **Coverage carve-out (no exclusion added, gate untouched).** `runtimevars.go` sits at
+  64.3% per-file within the passing 98.0% aggregate: its three constructor-error wraps
+  (`NewItemDefinition`/`NewItemAwareElement`/`NewParameter`) are unreachable by construction
+  — the switch above always supplies a valid value; documented in `07dee51`.
+- **`ls.spawn`'s track goroutine closes over `ls`** but reads only the immutable `ls.inst`
+  (to `emit`) — the same synchronization as the former `inst` capture; no map is touched
+  off-loop.
 
 ---
 
