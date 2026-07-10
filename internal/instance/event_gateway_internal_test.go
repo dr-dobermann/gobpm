@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/enginert"
+	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/scope"
@@ -76,11 +78,49 @@ func ebGateProcess(
 	return p, [4]flow.Node{armA, endA, armB, endB}, defA, defB
 }
 
+// registrationCounter wraps the live hub as the instance's parent producer and
+// counts successful RegisterEvent calls. It exists because the token projection
+// flips to WaitForEvent BEFORE the arms register at the hub (checkNodeType:
+// updateState → evWaiting → RegisterEvent — the state must flip first for the
+// synchronous-delivery race), so a readiness poll over tokens alone can fire
+// into a not-yet-registered hub, where a signal is legitimately dropped
+// (non-durable, no waiter → no-op). Waiting for the registrations closes that
+// test-harness race deterministically.
+type registrationCounter struct {
+	inner *eventhub.EventHub
+	n     atomic.Int32
+}
+
+func (rc *registrationCounter) RegisterEvent(
+	p eventproc.EventProcessor, d flow.EventDefinition,
+) error {
+	if err := rc.inner.RegisterEvent(p, d); err != nil {
+		return err
+	}
+
+	rc.n.Add(1)
+
+	return nil
+}
+
+func (rc *registrationCounter) UnregisterEvent(
+	p eventproc.EventProcessor, defID string,
+) error {
+	return rc.inner.UnregisterEvent(p, defID)
+}
+
+func (rc *registrationCounter) PropagateEvent(
+	ctx context.Context, d flow.EventDefinition,
+) error {
+	return rc.inner.PropagateEvent(ctx, d)
+}
+
 // startEventGate snapshots p, starts a live EventHub, runs the instance, and waits
-// until the gate is parked on its arms (a token in WaitForEvent) so a fire won't be
-// lost. It returns the instance + the hub so the test can PropagateEvent. (The hub's
-// goroutines stop on ctx cancellation — graceful Shutdown is the deferred SRD-019
-// slice, so these tests don't goroutine-leak-check a still-live hub.)
+// until the gate is parked on its arms AND both arm waiters are registered at the
+// hub, so a fire cannot be lost in the park-to-register window. It returns the
+// instance + the hub so the test can PropagateEvent. (The hub's goroutines stop on
+// ctx cancellation — graceful Shutdown is the deferred SRD-019 slice, so these
+// tests don't goroutine-leak-check a still-live hub.)
 func startEventGate(
 	t *testing.T, ctx context.Context, p *process.Process,
 ) (*Instance, *eventhub.EventHub) {
@@ -97,12 +137,21 @@ func startEventGate(
 
 	go func() { _ = eh.Run(ctx) }()
 
-	inst, err := New(s, scope.EmptyDataPath, rt, eh, nil)
+	rc := &registrationCounter{inner: eh}
+
+	inst, err := New(s, scope.EmptyDataPath, rt, rc, nil)
 	require.NoError(t, err)
 
 	require.NoError(t, inst.Run(ctx))
 
 	require.Eventually(t, func() bool {
+		// both arms registered at the hub — a fire now reaches a live waiter…
+		if rc.n.Load() < 2 {
+			return false
+		}
+
+		// …and the gate's token is parked (the loop recorded the wait strictly
+		// before the registrations could run — evWaiting precedes RegisterEvent).
 		for _, tk := range inst.GetTokens() {
 			if tk.State == TokenWaitForEvent {
 				return true
@@ -111,7 +160,7 @@ func startEventGate(
 
 		return false
 	}, 2*time.Second, 5*time.Millisecond,
-		"the gate must be waiting on its arms before we fire")
+		"the gate must be waiting on its registered arms before we fire")
 
 	return inst, eh
 }
