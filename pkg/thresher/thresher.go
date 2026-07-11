@@ -373,7 +373,7 @@ func (t *Thresher) Run(ctx context.Context) error {
 		// must not be swallowed (FIX-013 §1.5).
 		if err := t.eventHub.Run(runCtx); err != nil &&
 			!errors.Is(err, context.Canceled) {
-			t.cfg.logger.Error("event hub run loop failed", "error", err)
+			t.cfg.logger.Error("event hub run loop failed", "error", err.Error())
 		}
 	}()
 
@@ -743,9 +743,13 @@ func (t *Thresher) registerStarters(starters []*instanceStarter) error {
 
 	for _, st := range starters {
 		if err := t.eventHub.RegisterPersistentEvent(st, st.eDef); err != nil {
-			// roll back the ones already subscribed in this call.
+			// roll back the ones already subscribed in this call; a rollback
+			// failure joins the cause rather than being swallowed (ADR-022 v.1
+			// §2.2), so a partial-rollback leak is not silent.
+			var rollback error
 			for _, done := range applied {
-				_ = t.eventHub.UnregisterEvent(done, done.eDef.ID())
+				rollback = errors.Join(rollback,
+					t.eventHub.UnregisterEvent(done, done.eDef.ID()))
 			}
 
 			return errs.New(
@@ -753,7 +757,7 @@ func (t *Thresher) registerStarters(starters []*instanceStarter) error {
 				errs.C(errorClass, errs.OperationFailed),
 				errs.D("process_id", st.snapshot.ProcessID),
 				errs.D("event_definition_id", st.eDef.ID()),
-				errs.E(err))
+				errs.E(errors.Join(err, rollback)))
 		}
 
 		applied = append(applied, st)
@@ -774,9 +778,13 @@ func (t *Thresher) unregisterStarters(starters []*instanceStarter) error {
 
 	for _, st := range starters {
 		if err := t.eventHub.UnregisterEvent(st, st.eDef.ID()); err != nil {
-			// roll back the ones already unsubscribed in this call.
+			// roll back the ones already unsubscribed in this call; a rollback
+			// failure joins the cause rather than being swallowed (ADR-022 v.1
+			// §2.2), so a partial-teardown leak is not silent.
+			var rollback error
 			for _, done := range applied {
-				_ = t.eventHub.RegisterPersistentEvent(done, done.eDef)
+				rollback = errors.Join(rollback,
+					t.eventHub.RegisterPersistentEvent(done, done.eDef))
 			}
 
 			return errs.New(
@@ -784,7 +792,7 @@ func (t *Thresher) unregisterStarters(starters []*instanceStarter) error {
 				errs.C(errorClass, errs.OperationFailed),
 				errs.D("process_id", st.snapshot.ProcessID),
 				errs.D("event_definition_id", st.eDef.ID()),
-				errs.E(err))
+				errs.E(errors.Join(err, rollback)))
 		}
 
 		applied = append(applied, st)
@@ -828,7 +836,7 @@ func (t *Thresher) resolveAndLaunch(
 
 	if !t.reserveKeyLocked(nsKey) {
 		t.cfg.logger.Debug("instance-starter: joined existing instance (key seen)",
-			"process_id", s.ProcessID, "key", key)
+			"process_id", s.ProcessID, "correlation_value", key)
 
 		return nil // an instance already exists for this key: join, no duplicate
 	}
@@ -842,7 +850,7 @@ func (t *Thresher) resolveAndLaunch(
 	}
 
 	t.cfg.logger.Debug("instance-starter: created new instance",
-		"process_id", s.ProcessID, "key", key)
+		"process_id", s.ProcessID, "correlation_value", key)
 
 	return nil
 }
