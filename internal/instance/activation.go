@@ -51,8 +51,11 @@ func (inst *Instance) guardEval(ctx context.Context) exec.GuardEval {
 // termination (the parked tracks unblock via ctx.Done). Called only from the loop
 // goroutine (recheckJoin), so it stays the single writer of lastErr.
 func (inst *Instance) fail(err error) {
-	inst.Logger().Warn("instance failing",
-		"instance", inst.ID(), "error", err)
+	// The whole instance is faulting — an actionable failure that affected
+	// engine state (ADR-022 v.1 §2.4 canonical Error). This is the single
+	// logging fault boundary; every fault path routes here (ADR-022 §2.3).
+	inst.Logger().Error("instance failing",
+		"instance_id", inst.ID(), "error", err.Error())
 
 	inst.lastErr.Store(&err)
 

@@ -108,9 +108,9 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 			// at INFO. Node-level detail lives in the fire/abort logs below. A Message
 			// evDeliver carries no track (FR-8), so the id is resolved defensively.
 			inst.Logger().Debug("track event",
-				"instance", inst.ID(),
+				"instance_id", inst.ID(),
 				"kind", ev.kind.String(),
-				"track", eventTrackID(ev))
+				"track_id", eventTrackID(ev))
 
 			ls.apply(ctx, ev)
 
@@ -444,7 +444,11 @@ func (ls *loopState) spawnForks(ctx context.Context, ev trackEvent) {
 	for _, f := range ev.flows {
 		nt, err := newTrack(f.Target().Node(), ls.inst, ev.track)
 		if err != nil {
-			ls.inst.lastErr.Store(&err)
+			// A fork target that can't be built is a genuine instance fault —
+			// route it through fail() (the single logging fault boundary,
+			// ADR-022 v.1 §2.3) instead of storing lastErr silently, mirroring
+			// failFromTrack / armBoundaries. fail() also cancels the ctx.
+			ls.inst.fail(err)
 			ls.stopAll()
 
 			return
@@ -645,9 +649,9 @@ func (ls *loopState) fireOrJoin(survivorID string, merged []string) {
 	}
 
 	ls.inst.Logger().Debug("synchronizing join fired",
-		"instance", ls.inst.ID(),
-		"node", nodeIDOf(ls.position[survivorID]),
-		"survivor", survivorID,
+		"instance_id", ls.inst.ID(),
+		"node_id", nodeIDOf(ls.position[survivorID]),
+		"survivor_track_id", survivorID,
 		"merged", len(merged))
 
 	ls.applyMerged(trackEvent{track: survivor, mergedIDs: merged})
