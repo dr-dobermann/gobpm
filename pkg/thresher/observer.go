@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/instance"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 // observerBuffer is the per-observer event-channel depth. A slower observer
@@ -15,23 +16,46 @@ const observerBuffer = 64
 
 // EventKind classifies an observation event. It is an OPEN vocabulary: a host
 // must tolerate unknown values, since kinds are added additively (ADR-013 §2.4).
-type EventKind string
+// It is a type alias of observability.Kind — the canonical engine-event
+// vocabulary (ADR-013 v.2 §2.6) — so a delivered public Event and an internal
+// observable event share one set of kind values with no conversion.
+type EventKind = observability.Kind
 
 const (
 	// EventInstanceState is an instance lifecycle transition.
-	EventInstanceState EventKind = "InstanceState"
+	EventInstanceState EventKind = observability.KindInstanceState
 
 	// EventNodeProgress is a token reaching a node in a given state.
-	EventNodeProgress EventKind = "NodeProgress"
+	EventNodeProgress EventKind = observability.KindNodeProgress
 
 	// EventTokenMoved is reserved for a future distinct token-movement event.
 	EventTokenMoved EventKind = "TokenMoved"
+)
+
+// The engine-wide kinds (ADR-013 v.2 §2.6) are delivered on the engine-scope
+// stream (Thresher.Observe): the transition name travels in Event.State and the
+// identifiers in Event.Details. Each is the same value as its observability.Kind
+// (EventKind is a type alias), so a delivered public event and an internal
+// observable event share one vocabulary.
+const (
+	EventEngineState      EventKind = observability.KindEngineState
+	EventHubState         EventKind = observability.KindHubState
+	EventProcessLifecycle EventKind = observability.KindProcessLifecycle
+	EventGatewayDecision  EventKind = observability.KindGatewayDecision
+	EventFlow             EventKind = observability.KindEventFlow
+	EventCorrelation      EventKind = observability.KindCorrelation
+	EventJobState         EventKind = observability.KindJobState
+	EventTaskState        EventKind = observability.KindTaskState
+	EventBoundary         EventKind = observability.KindBoundary
+	EventFault            EventKind = observability.KindFault
+	EventDataChange       EventKind = observability.KindDataChange
 )
 
 // Event is one observation event delivered to an Observer. It carries identity,
 // state and timing only — never process payloads (the masking rule).
 type Event struct {
 	At         time.Time
+	Details    map[string]string
 	Kind       EventKind
 	InstanceID string
 	NodeID     string

@@ -26,30 +26,20 @@ import (
 // thresherConfig holds the resolved engine-level extensions (ADR-002 §4.3).
 // EventHub is NOT here — it stays internal and the Thresher builds it itself.
 type thresherConfig struct {
-	logger     observability.Logger
-	tracer     observability.Tracer
-	metrics    observability.MetricsRecorder
-	clock      clock.Clock
-	repository repository.Repository
-	msgBroker  messaging.MessageBroker
-	exprEngine expression.Engine
-	authz      auth.AuthorizationProvider
-	dispatcher tasks.WorkerDispatcher
-	// workerErrorMapper is the engine-wide default ErrorMapper (SRD-037 FR-3);
-	// nil by default, overridden per-service by activities.WithErrorMapper.
-	workerErrorMapper tasks.ErrorMapper
-	// workerRetryPolicy is the engine-wide default RetryPolicy (SRD-038 FR-6);
-	// nil by default, overridden per-service by activities.WithRetryPolicy;
-	// absent both, the resolver falls back to tasks.DefaultRetryPolicy.
-	workerRetryPolicy tasks.RetryPolicy
-	taskDist          interactor.TaskDistributor
-
-	// workerTrustDefault is the engine-wide default trust mode (SRD-039 M9);
-	// the zero value resolves to WorkerTrusted at enqueue.
-	workerTrustDefault tasks.TrustMode
-
-	// Startup-report suppression (ADR-002 v.2 §4.4.1). Both default to false —
-	// the report is visible by default; each flag opts its block out.
+	dispatcher            tasks.WorkerDispatcher
+	workerErrorMapper     tasks.ErrorMapper
+	metrics               observability.MetricsRecorder
+	clock                 clock.Clock
+	repository            repository.Repository
+	msgBroker             messaging.MessageBroker
+	tracer                observability.Tracer
+	exprEngine            expression.Engine
+	logger                observability.Logger
+	authz                 auth.AuthorizationProvider
+	workerRetryPolicy     tasks.RetryPolicy
+	taskDist              interactor.TaskDistributor
+	obsSink               observability.ObsSink
+	workerTrustDefault    tasks.TrustMode
 	suppressBanner        bool
 	suppressStartupConfig bool
 }
@@ -301,6 +291,17 @@ func (c *thresherConfig) AuthorizationProvider() auth.AuthorizationProvider {
 }
 
 func (c *thresherConfig) WorkerDispatcher() tasks.WorkerDispatcher { return c.dispatcher }
+
+// ObservationSink returns the engine's observable-event sink (ADR-013 v.2 §2.7).
+// Absent an explicit sink, it returns an echo-only producer bound to the
+// configured logger — never nil, preserving the visible-by-default posture.
+func (c *thresherConfig) ObservationSink() observability.ObsSink {
+	if c.obsSink != nil {
+		return c.obsSink
+	}
+
+	return observability.NewEchoSink(c.logger)
+}
 
 func (c *thresherConfig) WorkerErrorMapper() tasks.ErrorMapper { return c.workerErrorMapper }
 

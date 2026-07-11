@@ -29,24 +29,18 @@ import (
 
 // Runtime is a concrete renv.EngineRuntime backed by the bundled defaults.
 type Runtime struct {
-	logger     observability.Logger
-	tracer     observability.Tracer
-	metrics    observability.MetricsRecorder
-	clk        clock.Clock
-	repo       repository.Repository
-	broker     messaging.MessageBroker
-	expr       expression.Engine
-	authz      auth.AuthorizationProvider
-	dispatcher tasks.WorkerDispatcher
-	// workerErrorMapper is the engine-wide default ErrorMapper (SRD-037 FR-3);
-	// nil by default (a per-service WithErrorMapper overrides it).
-	workerErrorMapper tasks.ErrorMapper
-	// workerRetryPolicy is the engine-wide default RetryPolicy (SRD-038 FR-6);
-	// nil by default (a per-service WithRetryPolicy overrides it; absent both,
-	// the resolver falls back to tasks.DefaultRetryPolicy).
-	workerRetryPolicy tasks.RetryPolicy
-	// workerTrustDefault is the engine-wide default trust mode (SRD-039 M9);
-	// the zero value resolves to WorkerTrusted at enqueue.
+	expr               expression.Engine
+	tracer             observability.Tracer
+	metrics            observability.MetricsRecorder
+	clk                clock.Clock
+	repo               repository.Repository
+	broker             messaging.MessageBroker
+	logger             observability.Logger
+	authz              auth.AuthorizationProvider
+	dispatcher         tasks.WorkerDispatcher
+	workerErrorMapper  tasks.ErrorMapper
+	workerRetryPolicy  tasks.RetryPolicy
+	obsSink            observability.ObsSink
 	workerTrustDefault tasks.TrustMode
 }
 
@@ -138,6 +132,27 @@ func (r *Runtime) AuthorizationProvider() auth.AuthorizationProvider { return r.
 
 // WorkerDispatcher returns the configured worker dispatcher.
 func (r *Runtime) WorkerDispatcher() tasks.WorkerDispatcher { return r.dispatcher }
+
+// ObservationSink returns the engine's observable-event sink (ADR-013 v.2 §2.7).
+// Absent an explicit sink, it returns an echo-only producer bound to the current
+// logger, so the result is never nil and the visible-by-default posture holds.
+func (r *Runtime) ObservationSink() observability.ObsSink {
+	if r.obsSink != nil {
+		return r.obsSink
+	}
+
+	return observability.NewEchoSink(r.logger)
+}
+
+// WithObservationSink overrides the observable-event sink and returns the Runtime
+// for chaining. A nil sink is ignored (the echo-only default is kept).
+func (r *Runtime) WithObservationSink(s observability.ObsSink) *Runtime {
+	if s != nil {
+		r.obsSink = s
+	}
+
+	return r
+}
 
 // WorkerErrorMapper returns the engine-wide default ErrorMapper (nil = none).
 func (r *Runtime) WorkerErrorMapper() tasks.ErrorMapper { return r.workerErrorMapper }

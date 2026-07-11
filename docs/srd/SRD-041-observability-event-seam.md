@@ -183,9 +183,30 @@ type ObsSink interface {
 }
 ```
 
-The canonical event struct moves to `pkg/observability` (`obs.ObsEvent`:
-`{At; Kind string; Phase string; NodeID; NodeName string; Details
-map[string]string}`) so `internal/instance`, the hub, the dispatcher, and
+The canonical event struct moves to `pkg/observability`. Its enumerated
+fields are **named string types**, not bare `string` (compile-checked, the
+vocabulary is discoverable): `type Kind string` (the 13 §2.6 kinds as typed
+consts) and `type Phase string` (the per-kind phases as typed consts).
+
+```go
+type ObsEvent struct {
+	At       time.Time
+	Kind     Kind
+	Phase    Phase
+	NodeID   string            // real id — bare string
+	NodeName string            // real name — bare string
+	Details  map[string]string // §2.5-keyed; values are variadic
+}
+```
+
+The **details keys** are named single-source constants (`AttrInstanceID =
+"instance_id"`, … — the ADR-022 §2.5 vocabulary, kept untyped string so one
+set of constants serves both the details map AND slog `...any` echo calls —
+the one-vocabulary-two-channels point of §2.9). `thresher.EventKind` becomes
+a **type alias** of `observability.Kind` (`type EventKind = observability.Kind`)
+so the public kind constants are the same values with no conversion, and the
+existing `EventInstanceState`/`EventNodeProgress` consts keep working. So
+`internal/instance`, the hub, the dispatcher, and
 `pkg/model` nodes all emit one type (the internal `ObsEvent`/`ObsKind` pair is
 replaced — FR-1); `thresher.Event` remains the delivered public shape
 (constructed from it, `InstanceID` promoted from details for compatibility).
