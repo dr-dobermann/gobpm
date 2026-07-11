@@ -242,13 +242,13 @@ level the single producer (§2.7) writes, per the ADR-022 v.1 §2.4 semantics.
 
 | Kind | Object | Phases (open set; ⏳ = reserved slot) | Scope | Log echo |
 |---|---|---|---|---|
-| `ObsEngineState` | Thresher | Starting, Started, Stopping, Stopped, ⏳Paused/Resumed | engine | Info |
+| `ObsEngineState` | Thresher | Starting, Started, Paused, Stopping, Stopped (⏳Resumed as a distinct phase — resuming re-emits Started meanwhile) | engine | Info |
 | `ObsHubState` | EventHub | Started, Stopped, ⏳Paused/Resumed | engine | Info |
 | `ObsProcessLifecycle` | process definition | Registered, Unregistered, VersionSuperseded | engine | Info |
 | `ObsInstanceState` | instance | Created, Active, Terminating, Completed, Terminated, Failed, ⏳Suspended/Resumed | instance | Info (Failed → Error) |
 | `ObsNodeProgress` | node on a track | Entered, Executing, Completed, Failed, Canceled, Merged, Parked (BPMN §13.3.2-aligned, un-collapsed — §2.10) | instance | Debug |
 | `ObsGatewayDecision` | gateway | BranchesChosen (the taken flow(s) in details) | instance | Debug |
-| `ObsEventFlow` | event definition | Registered, Fired, Delivered, Dropped, Unregistered | both | Debug |
+| `ObsEventFlow` | event definition | Registered, Fired, Delivered, Dropped, Unregistered | engine | Debug |
 | `ObsCorrelation` | conversation | KeyAssociated, Matched, Mismatched | instance | Debug |
 | `ObsJobState` | worker job | Enqueued, Locked, Completed, TechnicalFault, BusinessError, RetryScheduled, RetriesExhausted, LockReclaimed, ⏳Incident | engine | Debug (RetriesExhausted, LockReclaimed → Warn) |
 | `ObsTaskState` | user task | Announced, Taken, Completed, Withdrawn | both | Info |
