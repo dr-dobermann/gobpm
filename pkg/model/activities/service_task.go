@@ -314,15 +314,16 @@ func (st *ServiceTask) execOperation(
 		return nil, ctx.Err()
 
 	case <-timer.C:
-		re.Logger().Warn(
-			"service task timed out; its operation goroutine may still be running",
-			"task", st.Name(), "timeout", st.timeout)
-
+		// Log-and-return of the same failure is forbidden (ADR-022 v.1 §2.1);
+		// the timeout is reported once, by the returned error at its fault
+		// boundary. The Warn's unique nuance (the operation goroutine may still
+		// be running) folds into the message and details.
 		return nil,
 			errs.New(
-				errs.M("service task %q timed out after %s",
-					st.Name(), st.timeout),
+				errs.M("service task %q timed out after %s; its operation "+
+					"goroutine may still be running", st.Name(), st.timeout),
 				errs.C(errorClass, errs.OperationFailed),
+				errs.D("service_task_name", st.Name()),
 				errs.D("service_task_id", st.ID()),
 				errs.D("timeout", st.timeout.String()))
 	}
