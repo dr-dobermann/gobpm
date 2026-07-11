@@ -73,7 +73,10 @@ func (inst *Instance) observe(ev observability.ObsEvent) {
 		return
 	}
 
-	if ev.At.IsZero() {
+	// Stamp the time from the injected clock when one is set. A focused unit test
+	// may build a partial Instance (a runtime but no clock) and still exercise an
+	// emission path; At then stays zero — optional metadata, not a panic.
+	if ev.At.IsZero() && inst.now != nil {
 		ev.At = inst.now()
 	}
 

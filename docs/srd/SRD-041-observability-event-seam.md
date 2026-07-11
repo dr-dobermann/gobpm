@@ -210,10 +210,12 @@ existing `EventInstanceState`/`EventNodeProgress` consts keep working. So
 `pkg/model` nodes all emit one type (the internal `ObsEvent`/`ObsKind` pair is
 replaced — FR-1); `thresher.Event` remains the delivered public shape
 (constructed from it, `InstanceID` promoted from details for compatibility).
-`EngineRuntime` gains `ObservationSink() observability.ObsSink`; nodes reach
-it through `RuntimeEnvironment` (the same accessor path as `Logger()` —
-gateways already receive the runtime in `Exec`, so emitting the decision needs
-no new plumbing). Regeneration covers the generated `MockRuntimeEnvironment`
+`EngineRuntime` gains `ObservationSink() observability.ObsSink`; the internal
+emitters (the instance loop, the hub, the dispatcher) reach the sink through it.
+The one node-level emission — a gateway's branch decision — is emitted by the
+track at its node-execution site (§3.4), not from inside `Exec`, so a gateway's
+`Exec` stays a pure decision function and `RuntimeEnvironment` needs no new
+observation method. Regeneration covers the generated `MockRuntimeEnvironment`
 (the only renv mock; it satisfies `EngineRuntime` by expansion).
 
 **The default sink is never silent.** `enginert.Runtime` and `thresherConfig`
@@ -275,7 +277,7 @@ stream. One call, two channels, one vocabulary.
 | `RegisterProcess`/`UnregisterVersion`/`UnregisterProcess`/supersede | `ProcessLifecycle` |
 | `Instance.New` (+`setState`) | `InstanceState` incl. `Created`; `Failed` phase echoes Error (replaces the direct `fail()` log — the producer becomes its echo). `Failed` is **phase-only in this landing**: the `State` enum is untouched; `State()`/`WaitCompletion` still report `Terminated` |
 | `track.record` (un-collapsed) | `NodeProgress` with the real phase (Entered/Executing/Completed/Failed/Canceled/Merged/Parked mapped from `trackState`, not the token projection) |
-| gateway `Exec` (via `RuntimeEnvironment`) | `GatewayDecision` with chosen flow ids |
+| the track's node-execution site (`track.executeNodeCore`), when the executed node is a diverging gateway (`>1` outgoing) | `GatewayDecision` with chosen flow ids. Emitted at the one node-execution site — gated by a `DefaultFlow()` marker interface, not `NodeType()` (which panics on a bare `BaseNode`) — rather than inside each gateway's `Exec`, so `Exec` stays a pure decision function (no observation side-effect, no per-gateway test churn). A converging merge/join (single outgoing) is a pass-through, not a decision, and is skipped |
 | hub register/unregister/propagate/broadcast/drop | `EventFlow` |
 | `correlator.validateAndAssociate`/`associate` | `Correlation` |
 | `localdispatcher` enqueue/lock/report/retry/exhaust/reclaim | `JobState` (echo levels = the FIX-022 levels) |

@@ -6,6 +6,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 // guardEval returns an exec.GuardEval that evaluates a Complex gateway's data guard
@@ -47,15 +48,35 @@ func (inst *Instance) guardEval(ctx context.Context) exec.GuardEval {
 	}
 }
 
+// announceCreated emits the instance's Created transition (SRD-041 §3.4). New
+// sets the state directly rather than through setState, so this is the one place
+// Created is observable. No local handle observer can exist yet (the handle
+// reaches the host only after StartProcess), so it reaches the engine sink +
+// echo.
+func (inst *Instance) announceCreated() {
+	inst.observe(observability.ObsEvent{
+		Kind:  observability.KindInstanceState,
+		Phase: observability.PhaseCreated,
+	})
+}
+
 // fail records err as the instance's fatal error and cancels it, driving the loop's
 // termination (the parked tracks unblock via ctx.Done). Called only from the loop
 // goroutine (recheckJoin), so it stays the single writer of lastErr.
 func (inst *Instance) fail(err error) {
 	// The whole instance is faulting — an actionable failure that affected
-	// engine state (ADR-022 v.1 §2.4 canonical Error). This is the single
-	// logging fault boundary; every fault path routes here (ADR-022 §2.3).
-	inst.Logger().Error("instance failing",
-		"instance_id", inst.ID(), "error", err.Error())
+	// engine state (ADR-022 v.1 §2.4 canonical Error). This is the single fault
+	// boundary; every fault path routes here (ADR-022 §2.3). The operator-log
+	// record is now the producer's echo of this InstanceState/Failed event (it
+	// echoes at Error and carries the same instance_id + error), not a separate
+	// Logger().Error call — one producer, two channels (SRD-041 FR-4). Failed is
+	// phase-only: the State enum is untouched, so State()/WaitCompletion still
+	// report Terminated.
+	inst.observe(observability.ObsEvent{
+		Kind:    observability.KindInstanceState,
+		Phase:   observability.PhaseFailed,
+		Details: map[string]string{observability.AttrError: err.Error()},
+	})
 
 	inst.lastErr.Store(&err)
 

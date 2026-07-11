@@ -63,9 +63,11 @@ func (h *capHandler) attr(level slog.Level, msg, key string) (val string, ok boo
 
 // TestSpawnForksFaultRoutesThroughFail (FIX-022 §4.1.3, E3 + activation C):
 // a fork target that cannot be built faults the instance THROUGH fail() — the
-// single logging fault boundary — so LastErr is set and one "instance failing"
-// Error record appears under the canonical instance_id key, instead of the
-// error being stored silently.
+// single fault boundary — so LastErr is set and one Error record appears under
+// the canonical instance_id key, instead of the error being stored silently.
+// Since SRD-041 the record is the producer's echo of the InstanceState/Failed
+// event (fail() emits rather than logging directly); it still echoes at Error
+// with instance_id.
 func TestSpawnForksFaultRoutesThroughFail(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
@@ -90,8 +92,8 @@ func TestSpawnForksFaultRoutesThroughFail(t *testing.T) {
 	require.True(t, ls.stopping, "a build fault stops the instance")
 	require.Error(t, inst.LastErr(), "the fault is recorded")
 
-	errAttr, ok := h.attr(slog.LevelError, "instance failing", "instance_id")
+	errAttr, ok := h.attr(slog.LevelError, "InstanceState Failed", "instance_id")
 	require.True(t, ok,
-		"E3: a fork-build fault must log via fail() at Error, not store lastErr silently")
+		"E3: a fork-build fault must echo via fail() at Error, not store lastErr silently")
 	require.Equal(t, inst.ID(), errAttr, "the record carries the canonical instance_id")
 }

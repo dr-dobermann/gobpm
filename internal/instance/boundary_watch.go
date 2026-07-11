@@ -7,6 +7,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 // boundaryWatch is the hub-facing processor for one interrupting boundary event
@@ -100,6 +101,16 @@ func (ls *loopState) armBoundaries(t *track, node flow.Node) {
 			}
 
 			ws = append(ws, w)
+
+			// The boundary now guards the activity's execution window (SRD-041
+			// §3.4).
+			ls.inst.observe(observability.ObsEvent{
+				Kind:     observability.KindBoundary,
+				Phase:    observability.PhaseArmed,
+				NodeID:   bev.ID(),
+				NodeName: bev.Name(),
+				Details:  map[string]string{observability.AttrEventDefinitionID: d.ID()},
+			})
 		}
 	}
 
@@ -123,6 +134,16 @@ func (ls *loopState) disarmBoundaries(trackID string) {
 				"track_id", trackID, "waiter_id", w.ID(),
 				"event_definition_id", w.def.ID(), "error", err.Error())
 		}
+
+		// The activity's window closed — the boundary no longer guards it
+		// (SRD-041 §3.4).
+		ls.inst.observe(observability.ObsEvent{
+			Kind:     observability.KindBoundary,
+			Phase:    observability.PhaseDisarmed,
+			NodeID:   w.boundary.ID(),
+			NodeName: w.boundary.Name(),
+			Details:  map[string]string{observability.AttrEventDefinitionID: w.def.ID()},
+		})
 	}
 
 	delete(ls.watchers, trackID)
@@ -158,6 +179,15 @@ func (ls *loopState) fireBoundary(ctx context.Context, ev trackEvent) {
 	ls.spawnForks(ctx,
 		trackEvent{track: ev.track, flows: ev.node.Outgoing()})
 
+	// The boundary fired and continued the instance on its outgoing flow
+	// (SRD-041 §3.4).
+	ls.inst.observe(observability.ObsEvent{
+		Kind:     observability.KindBoundary,
+		Phase:    observability.PhaseFired,
+		NodeID:   ev.node.ID(),
+		NodeName: ev.node.Name(),
+	})
+
 	if be.CancelActivity() {
 		ev.track.cancel()
 		ls.disarmBoundaries(hostID)
@@ -180,29 +210,45 @@ func (ls *loopState) matchErrorBoundary(ctx context.Context, t *track) bool {
 		return false // an untyped failure → fault, as before.
 	}
 
-	// position holds the node the track failed on; a node that carries no
-	// boundaries (an end event, a gateway) cannot catch — fault.
-	host, ok := ls.position[t.ID()].(boundaryHoster)
-	if !ok {
-		return false
-	}
+	// position holds the node the track failed on; a node that carries
+	// boundaries may catch, one that carries none (an end event, a gateway)
+	// cannot — the BpmnError then escapes as Uncaught below.
+	if host, ok := ls.position[t.ID()].(boundaryHoster); ok {
+		for _, en := range host.BoundaryEvents() {
+			// every entry was attached as a flow.BoundaryEvent — panicking form.
+			bev := en.(flow.BoundaryEvent)
 
-	for _, en := range host.BoundaryEvents() {
-		// every entry was attached as a flow.BoundaryEvent — panicking form.
-		bev := en.(flow.BoundaryEvent)
+			for _, d := range bev.Definitions() {
+				eed, ok := d.(*events.ErrorEventDefinition)
+				if !ok || eed.Error().ErrorCode() != be.Code {
+					continue
+				}
 
-		for _, d := range bev.Definitions() {
-			eed, ok := d.(*events.ErrorEventDefinition)
-			if !ok || eed.Error().ErrorCode() != be.Code {
-				continue
+				// The boundary caught the thrown fault (SRD-041 §3.4).
+				ls.inst.observe(observability.ObsEvent{
+					Kind:     observability.KindFault,
+					Phase:    observability.PhaseCaught,
+					NodeID:   bev.ID(),
+					NodeName: bev.Name(),
+					Details:  map[string]string{observability.AttrError: be.Code},
+				})
+
+				ls.spawnForks(ctx,
+					trackEvent{track: t, flows: bev.Outgoing()})
+
+				return true
 			}
-
-			ls.spawnForks(ctx,
-				trackEvent{track: t, flows: bev.Outgoing()})
-
-			return true
 		}
 	}
+
+	// A thrown BpmnError with no matching boundary escapes the activity —
+	// Uncaught (SRD-041 §3.4); the caller faults the instance, whose separate
+	// InstanceState/Failed record carries the operator-facing Error echo.
+	ls.inst.observe(observability.ObsEvent{
+		Kind:    observability.KindFault,
+		Phase:   observability.PhaseUncaught,
+		Details: map[string]string{observability.AttrError: be.Code},
+	})
 
 	return false
 }

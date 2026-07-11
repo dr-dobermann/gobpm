@@ -120,6 +120,7 @@ const (
 	AttrCorrelationKey    = "correlation_key"
 	AttrCorrelationValue  = "correlation_value"
 	AttrError             = "error"
+	AttrChosenFlows       = "chosen_flows"
 )
 
 // ObsEvent is the canonical observable engine event (ADR-013 v.2 §2.6/§2.9): a

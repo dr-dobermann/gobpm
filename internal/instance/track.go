@@ -38,8 +38,10 @@ package instance
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -48,6 +50,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/interactor"
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
@@ -231,16 +234,43 @@ func (t *track) record(state trackState) {
 
 	t.hist.Store(&next)
 
-	// Publish the transition to host observers (SRD-018): identity + projected
-	// token state only, never payload. Non-blocking at the sink; a no-op when
-	// no one is observing. The projected token state rides in Phase for now — M3
-	// replaces it with the real node phase (SRD-041 FR-6).
+	// Publish the transition to host observers (SRD-018): identity + the real
+	// node phase, never payload. Non-blocking at the sink; a no-op when no one is
+	// observing. The phase is the un-collapsed track state (SRD-041 FR-6), not
+	// the 3-value token projection — that projection stays on the handle's token
+	// view (Tokens()/History()).
 	t.instance.observe(observability.ObsEvent{
 		Kind:     observability.KindNodeProgress,
-		Phase:    observability.Phase(tokenStateFor(state).String()),
+		Phase:    nodePhaseFor(state),
 		NodeID:   node.ID(),
 		NodeName: node.Name(),
 	})
+}
+
+// trackPhase maps each track state to its observable node phase (SRD-041 §3.4) —
+// a data table, not a switch. Several internal states share one phase (the three
+// wait states → Parked, the two active states → Executing), so the stream reports
+// node progress without leaking the track's internal state machine.
+var trackPhase = map[trackState]observability.Phase{
+	TrackCreated:            observability.PhaseEntered,
+	TrackReady:              observability.PhaseEntered,
+	TrackExecutingStep:      observability.PhaseExecuting,
+	TrackProcessStepResults: observability.PhaseExecuting,
+	TrackWaitForEvent:       observability.PhaseParked,
+	TrackAwaitingMerge:      observability.PhaseParked,
+	TrackAwaitSync:          observability.PhaseParked,
+	TrackMerged:             observability.PhaseMerged,
+	TrackEnded:              observability.PhaseCompleted,
+	TrackCanceled:           observability.PhaseCanceled,
+	TrackFailed:             observability.PhaseFailed,
+}
+
+// nodePhaseFor returns the observable node phase for a track state. Every valid
+// track state is in trackPhase, so a real state always maps; an out-of-range
+// state (never produced by the engine) yields the zero phase rather than
+// panicking on trackState.String()'s bounds.
+func nodePhaseFor(state trackState) observability.Phase {
+	return trackPhase[state]
 }
 
 // Token returns the track's current token projection (lock-free).
@@ -660,6 +690,23 @@ func (t *track) discardOrFail(ctx context.Context, err error) {
 	}
 
 	t.lastErr = err
+
+	// A typed BpmnError is a thrown BPMN fault (SRD-041 §3.4): announce Thrown
+	// before the track flips to Failed, so the stream carries the fault triple
+	// Thrown → (Caught | Uncaught). An untyped error is a technical failure, not
+	// a BPMN fault, and only surfaces as the instance's Failed state.
+	var be *events.BpmnError
+	if errors.As(err, &be) {
+		node := t.currentStep().node
+		t.instance.observe(observability.ObsEvent{
+			Kind:     observability.KindFault,
+			Phase:    observability.PhaseThrown,
+			NodeID:   node.ID(),
+			NodeName: node.Name(),
+			Details:  map[string]string{observability.AttrError: be.Code},
+		})
+	}
+
 	t.updateState(TrackFailed)
 }
 
@@ -866,7 +913,43 @@ func (t *track) executeNodeCore(
 		return nil, err
 	}
 
+	// A diverging gateway's execution IS its branch decision (SRD-041 §3.4):
+	// announce the chosen outgoing flows here, at the one node-execution site,
+	// rather than coupling each gateway's Exec to observation. A converging
+	// gateway (single outgoing merge/join) is a pass-through, not a decision.
+	if _, isGateway := step.node.(gatewayNode); isGateway &&
+		len(step.node.Outgoing()) > 1 {
+		t.announceGatewayDecision(step.node, nexts)
+	}
+
 	return nexts, nil
+}
+
+// gatewayNode marks a gateway among executed nodes: only gateways carry a default
+// flow. It attributes a branch decision without NodeType() (which panics on the
+// bare BaseNode some tests use) and without importing the gateways package.
+type gatewayNode interface {
+	DefaultFlow() *flow.SequenceFlow
+}
+
+// announceGatewayDecision emits a gateway's chosen branches (SRD-041 §3.4): the
+// gateway node and the ids of the outgoing flows its Exec selected.
+func (t *track) announceGatewayDecision(
+	node flow.Node,
+	chosen []*flow.SequenceFlow,
+) {
+	ids := make([]string, 0, len(chosen))
+	for _, cf := range chosen {
+		ids = append(ids, cf.ID())
+	}
+
+	t.instance.observe(observability.ObsEvent{
+		Kind:     observability.KindGatewayDecision,
+		Phase:    observability.PhaseBranchesChosen,
+		NodeID:   node.ID(),
+		NodeName: node.Name(),
+		Details:  map[string]string{observability.AttrChosenFlows: strings.Join(ids, ",")},
+	})
 }
 
 // finalizeNodeExecution marks the step ended, enters the results-processing

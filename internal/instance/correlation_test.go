@@ -13,7 +13,7 @@ import (
 // reporting true, refuses to overwrite a held key reporting false, and no-ops
 // an empty name or value.
 func TestCorrelatorAssociateSetIfAbsent(t *testing.T) {
-	c := correlator{keys: map[string]string{}}
+	c := correlator{inst: &Instance{}, keys: map[string]string{}}
 
 	require.True(t, c.associate("orderKey", "ORD-1"))
 	require.False(t, c.associate("orderKey", "ORD-2"),
@@ -33,7 +33,7 @@ func TestCorrelatorAssociateSetIfAbsent(t *testing.T) {
 // concurrent associate calls are safe under -race (forked tracks associate
 // concurrently — the correlator's own lock is the guard).
 func TestCorrelatorValuesSnapshot(t *testing.T) {
-	c := correlator{keys: map[string]string{}}
+	c := correlator{inst: &Instance{}, keys: map[string]string{}}
 
 	require.Nil(t, c.values(), "no held keys → nil (wildcard)")
 
