@@ -81,3 +81,56 @@ func TestUnregisterStartersRollsBackOnPartialFailure(t *testing.T) {
 
 	require.Error(t, th.unregisterStarters(starters))
 }
+
+// TestRegisterStartersJoinsRollbackFailure (FIX-022 §4.1.4, A7): when the
+// register fails AND a rollback unsubscribe ALSO fails, the returned error
+// carries BOTH — the rollback failure is joined into the cause, no longer
+// swallowed by a bare _ = discard (ADR-022 v.1 §2.2).
+func TestRegisterStartersJoinsRollbackFailure(t *testing.T) {
+	th, err := New("starter-reg-rollback-join")
+	require.NoError(t, err)
+
+	starters := []*instanceStarter{mkStarter(t, "0"), mkStarter(t, "1")}
+
+	hub := mockeventproc.NewMockEventHub(t)
+	hub.EXPECT().RegisterPersistentEvent(mock.Anything, mock.Anything).
+		Return(nil).Once()
+	hub.EXPECT().RegisterPersistentEvent(mock.Anything, mock.Anything).
+		Return(errors.New("register boom")).Once()
+	hub.EXPECT().UnregisterEvent(mock.Anything, mock.Anything).
+		Return(errors.New("rollback unreg boom")).Once()
+
+	th.eventHub = hub
+
+	err = th.registerStarters(starters)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "register boom", "the triggering error surfaces")
+	require.ErrorContains(t, err, "rollback unreg boom",
+		"the rollback failure is joined, not swallowed")
+}
+
+// TestUnregisterStartersJoinsRollbackFailure (FIX-022 §4.1.4, A8): the symmetric
+// case — a failed teardown whose rollback re-subscribe ALSO fails surfaces both
+// errors joined into the cause.
+func TestUnregisterStartersJoinsRollbackFailure(t *testing.T) {
+	th, err := New("starter-unreg-rollback-join")
+	require.NoError(t, err)
+
+	starters := []*instanceStarter{mkStarter(t, "0"), mkStarter(t, "1")}
+
+	hub := mockeventproc.NewMockEventHub(t)
+	hub.EXPECT().UnregisterEvent(mock.Anything, mock.Anything).
+		Return(nil).Once()
+	hub.EXPECT().UnregisterEvent(mock.Anything, mock.Anything).
+		Return(errors.New("unregister boom")).Once()
+	hub.EXPECT().RegisterPersistentEvent(mock.Anything, mock.Anything).
+		Return(errors.New("rollback reg boom")).Once()
+
+	th.eventHub = hub
+
+	err = th.unregisterStarters(starters)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "unregister boom")
+	require.ErrorContains(t, err, "rollback reg boom",
+		"the rollback failure is joined, not swallowed")
+}

@@ -141,3 +141,46 @@ func TestBaseNodeCloneStub(t *testing.T) {
 	// concrete node type implements Clone; calling it on the bare base panics.
 	require.Panics(t, func() { _, _ = bn.Clone() })
 }
+
+// errAddFlowSource/Target wrap a real endpoint and force AddFlow to fail, so
+// CloneFlow's error-propagation branches (FIX-022 A9/A10) are exercised — the
+// wiring error is returned, not discarded (ADR-022 v.1 §2.3 logger-less
+// carve-out: pkg/model propagates rather than logs).
+type errAddFlowSource struct{ flow.SequenceSource }
+
+func (errAddFlowSource) AddFlow(*flow.SequenceFlow, data.Direction) error {
+	return errAddFlowBoom
+}
+
+type errAddFlowTarget struct{ flow.SequenceTarget }
+
+func (errAddFlowTarget) AddFlow(*flow.SequenceFlow, data.Direction) error {
+	return errAddFlowBoom
+}
+
+var errAddFlowBoom = errAddFlow{}
+
+type errAddFlow struct{}
+
+func (errAddFlow) Error() string { return "addflow boom" }
+
+// TestCloneFlowPropagatesAddFlowError (FIX-022 §4.1.5): a source or target whose
+// AddFlow fails makes CloneFlow return that error instead of swallowing it.
+func TestCloneFlowPropagatesAddFlowError(t *testing.T) {
+	se, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+	ee, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+	orig, err := flow.Link(se, ee)
+	require.NoError(t, err)
+
+	t.Run("source AddFlow error is propagated", func(t *testing.T) {
+		_, err := flow.CloneFlow(orig, errAddFlowSource{se}, ee)
+		require.ErrorContains(t, err, "addflow boom")
+	})
+
+	t.Run("target AddFlow error is propagated", func(t *testing.T) {
+		_, err := flow.CloneFlow(orig, se, errAddFlowTarget{ee})
+		require.ErrorContains(t, err, "addflow boom")
+	})
+}

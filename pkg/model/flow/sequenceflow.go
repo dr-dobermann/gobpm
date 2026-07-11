@@ -186,10 +186,17 @@ func CloneFlow(
 		conditionExpression: orig.conditionExpression,
 	}
 
-	// dir is a valid constant and sf is non-nil, so AddFlow cannot fail here.
-	_ = src.AddFlow(&sf, data.Output)
-	// dir is a valid constant and sf is non-nil, so AddFlow cannot fail here.
-	_ = trg.AddFlow(&sf, data.Input)
+	// dir is a valid constant and sf is non-nil, so AddFlow is not expected to
+	// fail — but pkg/model has no logger, so the error is propagated rather than
+	// discarded: if the invariant ever breaks it surfaces instead of vanishing
+	// (ADR-022 v.1 §2.3, logger-less carve-out).
+	if err := src.AddFlow(&sf, data.Output); err != nil {
+		return nil, err
+	}
+
+	if err := trg.AddFlow(&sf, data.Input); err != nil {
+		return nil, err
+	}
 
 	return &sf, nil
 }

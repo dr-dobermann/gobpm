@@ -2,6 +2,7 @@ package waiters
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"sync"
@@ -287,7 +288,13 @@ func (mw *messageWaiter) runMessageService(
 
 			if err := mw.processMessageEvent(ctx, env); err != nil {
 				// a fire-definition / processor failure is terminal for this
-				// waiter (it already set WSFailed and reported the fire); stop.
+				// waiter (it already set WSFailed and reported the fire); log it
+				// at the goroutine top — nothing above can act on it — and stop
+				// (ADR-022 v.1 §2.3/§2.4).
+				mw.rt.Logger().Error("message waiter terminally failed",
+					"waiter_id", mw.id, "message_name", mw.name,
+					"error", err.Error())
+
 				return
 			}
 		}
@@ -305,13 +312,35 @@ func (mw *messageWaiter) processMessageEvent(
 	env messaging.Envelope,
 ) error {
 	eDef, err := mw.fireDefinition(env)
-	if err != nil {
-		mw.setState(eventproc.WSFailed)
-		_ = mw.hub.WaiterFired(mw.eDef.ID()) // terminal → the hub removes it
-
-		return err
+	if err == nil {
+		err = mw.deliver(ctx, eDef)
 	}
 
+	if err != nil {
+		mw.setState(eventproc.WSFailed)
+		// A build (fireDefinition) or delivery failure is terminal for the
+		// waiter; report the fire so the hub removes it, and join that report so
+		// a hub-side failure surfaces too rather than being swallowed
+		// (ADR-022 v.1 §2.2). runMessageService logs the joined error and stops.
+		return errors.Join(err, mw.hub.WaiterFired(mw.eDef.ID()))
+	}
+
+	// Success: report the fire so the hub removes the waiter iff terminal.
+	// WaiterFired errors only on an invariant violation — this waiter absent
+	// from the registry it registered into — i.e. hub-state divergence;
+	// propagate it (fail-fast, ADR-022 v.1 §2.3) so runMessageService stops the
+	// now-orphaned waiter. The normal nil lets the serve-loop continue.
+	return mw.hub.WaiterFired(mw.eDef.ID())
+}
+
+// deliver forwards eDef to every registered processor, returning the first
+// delivery error. A processor's ProcessEvent is fire-and-forget (ADR-017 v.1
+// §2): the receiver's loop runs the correlation gate and drops a mismatch on
+// its side, so a non-nil return is a real delivery failure, not a mismatch.
+func (mw *messageWaiter) deliver(
+	ctx context.Context,
+	eDef flow.EventDefinition,
+) error {
 	mw.m.Lock()
 	processors := append([]eventproc.EventProcessor(nil), mw.processors...)
 	mw.m.Unlock()
@@ -322,14 +351,9 @@ func (mw *messageWaiter) processMessageEvent(
 
 	for _, ep := range processors {
 		if err := ep.ProcessEvent(ctx, eDef); err != nil {
-			mw.setState(eventproc.WSFailed)
-			_ = mw.hub.WaiterFired(mw.eDef.ID())
-
 			return err
 		}
 	}
-
-	_ = mw.hub.WaiterFired(mw.eDef.ID()) // the hub removes iff terminal
 
 	return nil
 }

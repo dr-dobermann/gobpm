@@ -144,7 +144,8 @@ func (c *correlator) validateAndAssociate(
 			ctx, c.inst.ExpressionEngine(), key, msg, payload)
 		if err != nil {
 			c.inst.Logger().Warn("conversation key derivation failed",
-				"instance_id", c.inst.ID(), "correlation_key", key.Name)
+				"instance_id", c.inst.ID(), "correlation_key", key.Name,
+				"error", err.Error())
 
 			continue
 		}
@@ -209,9 +210,13 @@ func (c *correlator) extendReceivers(value string) {
 			}
 
 			if err := adder.AddEventKey(d.ID(), value); err != nil {
+				// Best-effort (ADR-022 v.1 §2.3(2)): AddEventKey no-ops on a
+				// not-yet-parked receiver; a real failure is degradation, logged
+				// with its error and the flow continues.
 				c.inst.Logger().Debug("extend receiver subscription failed",
 					"instance_id", c.inst.ID(),
-					"event_definition_id", d.ID())
+					"event_definition_id", d.ID(),
+					"error", err.Error())
 			}
 		}
 	}

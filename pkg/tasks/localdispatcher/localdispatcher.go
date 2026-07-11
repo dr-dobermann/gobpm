@@ -234,9 +234,11 @@ func (d *Dispatcher) lockNext(
 
 			if e.workerID != "" {
 				// reaching here with a holder means the lock expired (the guard
-				// above continued otherwise) — reclaim it for crash recovery.
-				d.logger.Debug("expired job lock reclaimed",
-					"job_id", string(e.job.ID), "prev_worker", string(e.workerID))
+				// above continued otherwise) — reclaim it for crash recovery. A
+				// worker that missed its deadline is degradation someone should
+				// see, not mere flow tracing (ADR-022 v.1 §2.4): Warn.
+				d.logger.Warn("expired job lock reclaimed",
+					"job_id", string(e.job.ID), "worker_id", string(e.workerID))
 			}
 
 			e.workerID = workerID
@@ -620,7 +622,11 @@ func (d *Dispatcher) runWorker(
 	for {
 		jobs, err := d.FetchAndLock(ctx, workerID, []tasks.Topic{topic}, d.maxLock)
 		if err != nil {
-			return // ctx done
+			// FetchAndLock returns a non-nil error ONLY on ctx cancellation
+			// (its sole error path) — the worker-pool shutdown signal, an
+			// expected exit with nothing to surface (ADR-022 v.1 §2.3). If a
+			// future change adds another error mode here, revisit to log it.
+			return
 		}
 
 		for _, lj := range jobs {
@@ -650,7 +656,7 @@ func (d *Dispatcher) runWorker(
 			if rerr := d.Complete(ctx, lj.ID, workerID, out); rerr != nil {
 				d.logger.Warn("local worker failed to report a job completion",
 					"topic", topic, "job_id", string(lj.ID),
-					"report_error", rerr.Error())
+					"error", rerr.Error())
 			}
 		}
 	}
@@ -753,7 +759,7 @@ func (d *Dispatcher) reportTrusted(
 	if err := d.report(ctx, jobID, workerID, outcome); err != nil {
 		d.logger.Warn("local trusted worker failed to report a verdict",
 			"job_id", string(jobID), "kind", outcome.Kind().String(),
-			"report_error", err.Error())
+			"error", err.Error())
 	}
 }
 

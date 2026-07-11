@@ -237,7 +237,7 @@ func (ls *loopState) addTask(
 	inst := ls.inst
 	if err := inst.td.Distribute(dctx, inst.buildTaskInfo(taskID, node)); err != nil {
 		inst.Logger().Warn("user task distribute failed",
-			"instance", inst.ID(), "task_id", taskID, "error", err.Error())
+			"instance_id", inst.ID(), "task_id", taskID, "error", err.Error())
 	}
 }
 
@@ -303,7 +303,7 @@ func (inst *Instance) withdrawTask(ctx context.Context, taskID string) {
 
 	if err := inst.td.Withdraw(dctx, taskID); err != nil {
 		inst.Logger().Warn("user task withdraw failed",
-			"instance", inst.ID(), "task_id", taskID, "error", err.Error())
+			"instance_id", inst.ID(), "task_id", taskID, "error", err.Error())
 	}
 }
 

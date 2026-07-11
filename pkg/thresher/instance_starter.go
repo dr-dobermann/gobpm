@@ -56,12 +56,15 @@ func (s *instanceStarter) ProcessEvent(
 	// empty-key branch would spawn a stuck, uncorrelatable instance); consume
 	// it with a warning instead. No payload values are logged.
 	if key == "" && parallelStart(s.startNode) {
-		s.thr.cfg.logger.Warn(
+		// A non-conformant message that correctly does not instantiate is a
+		// standard-mandated (BPMN §10.6.6) expected no-op, not a degradation —
+		// Debug with the reason, not Warn (ADR-022 v.1 §2.4 corollary).
+		s.thr.cfg.logger.Debug(
 			"instance-starter: message can't populate the Parallel-start "+
 				"gate's correlation key — not instantiating (BPMN §10.6.6)",
 			"process_id", s.snapshot.ProcessID,
 			"start_node_id", s.startNode.ID(),
-			"message", s.messageName())
+			"message_name", s.messageName())
 
 		return nil
 	}
@@ -74,8 +77,8 @@ func (s *instanceStarter) ProcessEvent(
 	s.thr.cfg.logger.Debug("instance-starter fired",
 		"start_node_id", s.startNode.ID(),
 		"event_definition_id", eDef.ID(),
-		"key_name", keyName,
-		"key", key)
+		"correlation_key", keyName,
+		"correlation_value", key)
 
 	return s.thr.resolveAndLaunch(
 		ctx, s.snapshot, s.startNode, eDef, keyName, key)

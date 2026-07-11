@@ -104,9 +104,12 @@ func (d *Driver) drive(ctx context.Context, taskID string) {
 	d.printf("task completed: id=%s\n", taskID)
 }
 
-// printf writes a progress line, ignoring the writer error (progress is
-// best-effort).
+// printf writes a best-effort progress line. The Driver IS the output channel
+// and has no logger to report a write failure to, so the error is deliberately
+// ignored per the ADR-022 v.1 §2.3 logger-less carve-out — progress output must
+// never fail the interaction.
 func (d *Driver) printf(format string, a ...any) {
+	// deliberate ignore (carve-out above): no logger, nothing to fall back to.
 	_, _ = fmt.Fprintf(d.w, format, a...)
 }
 

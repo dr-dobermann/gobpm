@@ -35,11 +35,12 @@ var errRegRejected = errors.New("registration rejected")
 // track (see the failEventProducer note in message_flow_test.go). regErr, when set,
 // fails every registration to exercise the arm-failure fault path.
 type recordingProducer struct {
-	mu     sync.Mutex
-	watch  *boundaryWatch
-	regIDs []string
-	unreg  []string
-	regErr error
+	mu       sync.Mutex
+	watch    *boundaryWatch
+	regIDs   []string
+	unreg    []string
+	regErr   error
+	unregErr error
 }
 
 func (r *recordingProducer) RegisterEvent(
@@ -68,7 +69,7 @@ func (r *recordingProducer) UnregisterEvent(
 
 	r.unreg = append(r.unreg, defID)
 
-	return nil
+	return r.unregErr
 }
 
 func (r *recordingProducer) PropagateEvent(
@@ -240,6 +241,26 @@ func TestArmDisarmBoundaryWatch(t *testing.T) {
 	require.NotContains(t, ls.watchers, tr.ID(), "disarm clears the track's entry")
 	require.ElementsMatch(t, []string{sigDefA.ID(), defB.ID()}, ep.unregisteredDefs(),
 		"disarm unregisters every armed watch")
+}
+
+// TestDisarmBoundariesUnregisterErrorIsLogged (FIX-022 A6): a boundary whose
+// hub UnregisterEvent errors (the idempotent "already gone" case) is best-effort
+// — disarm logs it at Debug and still clears the track's watcher entry, rather
+// than bare-discarding the error (ADR-022 v.1 §2.3(2)).
+func TestDisarmBoundariesUnregisterErrorIsLogged(t *testing.T) {
+	ep := &recordingProducer{unregErr: errRegRejected}
+	inst, host, _, _, _ := guardedHostInstance(t, ep, nil)
+	inst.tracks = map[string]*track{}
+
+	tr := bareTrack(t, inst, host)
+	ls := newLoopState(inst)
+	ls.armBoundaries(tr, host)
+	require.NotEmpty(t, ls.watchers[tr.ID()], "the boundary armed")
+
+	ls.disarmBoundaries(tr.ID()) // UnregisterEvent errors → the Debug branch
+
+	require.NotContains(t, ls.watchers, tr.ID(),
+		"disarm clears the entry despite the unregister error")
 }
 
 // TestFireBoundaryInterrupts (T-4 core): an interrupting fire cancels the guarded track,

@@ -115,8 +115,14 @@ func (ls *loopState) armBoundaries(t *track, node flow.Node) {
 // Called only from the loop goroutine.
 func (ls *loopState) disarmBoundaries(trackID string) {
 	for _, w := range ls.watchers[trackID] {
-		// the hub owns the waiter's lifecycle; a miss means it is already gone.
-		_ = ls.inst.UnregisterEvent(w, w.def.ID())
+		// The hub owns the waiter's lifecycle; a miss (waiter/processor already
+		// gone) is the expected idempotent case, not a fault — best-effort
+		// (ADR-022 v.1 §2.3(2)): log at Debug with its error and move on.
+		if err := ls.inst.UnregisterEvent(w, w.def.ID()); err != nil {
+			ls.inst.Logger().Debug("boundary watch disarm failed",
+				"track_id", trackID, "waiter_id", w.ID(),
+				"event_definition_id", w.def.ID(), "error", err.Error())
+		}
 	}
 
 	delete(ls.watchers, trackID)

@@ -1,9 +1,7 @@
 package activities_test
 
 import (
-	"bytes"
 	"context"
-	"log/slog"
 	"testing"
 	"time"
 
@@ -34,12 +32,6 @@ func sleepingOp(t *testing.T, d time.Duration) service.Operation {
 	return op
 }
 
-// bufLogger returns a slog logger writing to buf, usable where a ServiceTask
-// logs on timeout (re.Logger()).
-func bufLogger(buf *bytes.Buffer) *slog.Logger {
-	return slog.New(slog.NewTextHandler(buf, nil))
-}
-
 // TestServiceTaskWithTimeoutCompletes: an operation that finishes before the
 // timeout takes the done branch and completes normally (FR-1, FR-2).
 func TestServiceTaskWithTimeoutCompletes(t *testing.T) {
@@ -54,23 +46,23 @@ func TestServiceTaskWithTimeoutCompletes(t *testing.T) {
 }
 
 // TestServiceTaskWithTimeoutTimesOut: an operation that overruns the timeout
-// faults the task with a self-identifying error and logs a warning that its
-// goroutine may still be running (FR-2, NFR-1).
+// faults the task with a self-identifying error whose message carries the
+// "goroutine may still be running" nuance — folded in from the former Warn, so
+// the failure is reported once (ADR-022 v.1 §2.1), by the error at its fault
+// boundary, not logged-and-returned (FR-2, NFR-1).
 func TestServiceTaskWithTimeoutTimesOut(t *testing.T) {
-	var buf bytes.Buffer
-
 	st, err := activities.NewServiceTask("slow",
 		sleepingOp(t, 200*time.Millisecond),
 		activities.WithoutParams(), activities.WithTimeout(15*time.Millisecond))
 	require.NoError(t, err)
 
-	re := mockrenv.NewMockRuntimeEnvironment(t)
-	re.EXPECT().Logger().Return(bufLogger(&buf))
-
-	_, err = st.Exec(context.Background(), re)
+	_, err = st.Exec(context.Background(),
+		mockrenv.NewMockRuntimeEnvironment(t))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "timed out")
-	require.Contains(t, buf.String(), "may still be running")
+	require.Contains(t, err.Error(), "may still be running",
+		"the former Warn's nuance folds into the returned error")
+	require.Contains(t, err.Error(), "slow", "the error self-identifies the task")
 }
 
 // TestServiceTaskWithTimeoutCtxCancel: cancelling the context (a boundary
@@ -109,17 +101,13 @@ func TestServiceTaskWithTimeoutZeroIsUnbounded(t *testing.T) {
 // AFTER the timeout fired has its late result dropped by the buffered done
 // channel — no panic, no race (NFR-1). Run under -race.
 func TestServiceTaskWithTimeoutLeakedGoroutineDropped(t *testing.T) {
-	var buf bytes.Buffer
-
 	st, err := activities.NewServiceTask("leaky",
 		sleepingOp(t, 60*time.Millisecond),
 		activities.WithoutParams(), activities.WithTimeout(15*time.Millisecond))
 	require.NoError(t, err)
 
-	re := mockrenv.NewMockRuntimeEnvironment(t)
-	re.EXPECT().Logger().Return(bufLogger(&buf))
-
-	_, err = st.Exec(context.Background(), re)
+	_, err = st.Exec(context.Background(),
+		mockrenv.NewMockRuntimeEnvironment(t))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "timed out")
 
