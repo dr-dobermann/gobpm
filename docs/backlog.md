@@ -39,18 +39,15 @@ implemented), and leaves this list.
   options actually accepted. Surfaced by `NewUserTask`'s list going stale when the
   triad options were added (SRD-034 M1). A comment-only correctness pass, no
   behaviour change.
-- **Silent-error-discard remediation (repo-wide)** — no `_ = call()` on an
-  error-returning call in production code: per site, either propagate (a lone
-  trailing call becomes `return …`), combine (`errors.Join` when another error
-  is already in flight), or — where a return is impossible — log with context;
-  a deliberate ignore needs both a log and a why-comment. Raises logging
-  coverage on the affected error paths. Surfaced 2026-07-10 on
-  `waiters/message.go`'s three swallowed `hub.WaiterFired` errors; deliberately
-  deferred to a dedicated pass because each site is a small **behaviour**
-  change (newly propagated/joined errors reach callers) needing its own tests —
-  not a bulk edit. Covers ALL cases, not just the message waiter; graduates
-  into a FIX.
 ### Tracked elsewhere (not duplicated here)
+- **Error-propagation & logging policy** — **DONE**: the silent-error-discard
+  remediation graduated into **ADR-022** (the policy: handle-exactly-once,
+  the fail-fast-vs-best-effort discriminator, the canonical attribute
+  vocabulary) + **FIX-022** (the repo-wide sweep — no bare `_ =` error
+  discards in production, one record per failure, canonical keys), landed
+  2026-07-11. Follow-ups it spun off (below): the timer sentinel-error
+  refactor, an `errcheck check-blank` lint, a `gofmt`-enforcing lint (FIX-022
+  §8.3).
 - **Instance god-object — size decomposition** (event-loop seam): the audit §2.3
   finding is **fully closed** — the data-plane half by SRD-032's `instanceScope`
   extraction, the loop-state/correlation half by **SRD-040** (`loopState` +
