@@ -1,26 +1,34 @@
-# ADR-013 — Instance observability & control (one lifecycle channel nodes plug into)
+# ADR-013 — Observability & control (one event seam, engine-wide)
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
-| Version | v.1 |
-| Date | 2026-06-18 |
+| Status | Draft (v.2; v.1 remains the accepted contract until the v.2 wiring lands) |
+| Version | v.2 |
+| Date | 2026-07-11 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-002 v.2 Extension Architecture](ADR-002-extension-architecture.md) |
+| Siblings | [ADR-022 v.1 Error Propagation and Logging Policy](ADR-022-error-propagation-and-logging-policy.md) — the log channel this ADR's single producer echoes into |
 
-> Conception (Accepted); the implementing SRD lands it. Fixes the audit's finding 2.2 (the public API
-> is write-only): once a process starts, a host can learn **nothing** but what
-> leaks to logs/console. This ADR builds the **observation-and-control
-> mechanism** now — a public `InstanceHandle` (state, token movement, node
-> execution progress, data read, wait-for-completion), one **lifecycle channel**
-> that nodes and tasks publish into (so future node/task work plugs into one
-> seam), explicit **lifecycle control** (cancel now; suspend/resume reserved),
-> and the engine lifecycle (`Shutdown`, `UnregisterProcess`). The state/node
-> vocabulary is **named per the BPMN standard but left an open set**, so it is
-> stable now and extends additively as the deferred lifecycle subsystems land —
-> the mechanism is the frozen contract, the vocabulary grows. Per-node *mutating*
-> listeners stay rejected (hidden control, ADR-011); coarse *operator* control is
-> not that. Conception only; the SRD is code-grounded.
+> Conception; the implementing SRDs land it (v.2 is Draft until its wiring
+> SRD completes — v.1 stays the accepted contract meanwhile). **v.1** fixed the
+> audit's finding 2.2 (the public API is write-only) with the
+> observation-and-control mechanism: a public `InstanceHandle`, one lifecycle
+> channel nodes and tasks publish into, explicit coarse control, the engine
+> lifecycle (`Shutdown`, `UnregisterProcess`), and a standard-named **open**
+> state vocabulary. **v.2** completes the *coverage*: v.1's landed form was
+> deliberately minimal (see what happens inside one Instance); v.2 defines the
+> **full observable-event taxonomy** across every major engine object — engine,
+> event hub, process registration, instance, node, gateway decisions, events,
+> correlation, worker jobs, user tasks, boundaries, faults, data — emitted
+> through **one producer** that both feeds the observer stream and writes the
+> operator-log echo (levels per ADR-022 v.1), and adds the **engine-scope
+> observer registry** so non-instance events are observable too: one consistent
+> view of gobpm. A **visibility-policy seam** (optional capabilities on the
+> authorization extension; pass-through when unimplemented) lets an embedder
+> hide or redact events per recipient — the policy model itself rides the
+> future IAM work. Per-node *mutating* listeners stay rejected (hidden control,
+> ADR-011); coarse *operator* control is not that. Conception only; the SRDs
+> are code-grounded.
 
 ## 1. Context
 
@@ -43,13 +51,41 @@ product/architecture decision grounded in embeddability.
 
 ### 1.2 What the engine has today
 
-The public surface is **write-only** (audit 2.2): `StartProcess(id)` returns only
-an `error` — no handle, no state, no tokens, no completion, no data; the
-`examples` thread a manual `done` channel through a service functor just to learn
-the process ran. `Instance.State()` is `internal/`. There is **no
-`Thresher.Shutdown(ctx)`** and **no `UnregisterProcess`** (the `snapshots` map
-only grows — a leak). There is **no lifecycle channel** to subscribe to and **no
-way to cancel** a running instance.
+**v.1's mechanism landed**: the `InstanceHandle` (state, tokens, data reader,
+`WaitCompletion`, `Cancel`), the per-instance observer stream with its
+async lossy delivery contract, and the engine lifecycle
+(`Shutdown`, `UnregisterProcess`) all exist. The write-only-API finding (audit
+2.2) is closed.
+
+**But the landed coverage is deliberately minimal** — enough to see what
+happens inside one Instance, and no more. A completeness audit of both
+channels (the observer stream and the operator log, post the ADR-022 v.1
+remediation) shows:
+
+- The observer taxonomy carries **two event kinds**: the instance's lifecycle
+  state (and not even `Created`), and a node-progress event **collapsed to a
+  three-value token projection** — a listener cannot distinguish a node
+  entering from executing from leaving, nor a completed node from a failed,
+  canceled, or merged one.
+- **Everything outside the Instance is invisible to observers**: engine and
+  event-hub lifecycle, process registration/unregistration/version
+  supersession, the whole external-worker job lifecycle, correlation
+  decisions, user-task interactions, boundary-event arming and firing — all
+  richly *logged* since ADR-022, none *observable*. The inverse also holds:
+  instance state flips reach observers but write **no log**, though ADR-022
+  §2.4 names lifecycle milestones an `Info` concern.
+- Some transitions are silent on **both** channels: a gateway's branch
+  decision, a user task being taken, boundary arm/disarm — and, sharpest, a
+  **boundary-caught BPMN error**, which today leaves no trace anywhere (only
+  an *uncaught* fault surfaces, as the instance-fault `Error`).
+- The data plane has a **dormant change-notification mechanism**
+  (`data.UpdateCallback`, with added/updated/deleted change kinds and an async
+  fan-out) that no engine code consumes — wired to neither channel.
+
+So the host has two half-views that do not even overlap consistently. v.2
+exists to make the view **complete and consistent**: every failure and every
+major-object lifecycle transition observable, engine-wide, through one
+producer.
 
 ### 1.3 Why build the mechanism now (and the seam argument)
 
@@ -116,15 +152,10 @@ snapshot); control goes through the engine's own state machine, never a back doo
 
 ### 2.2 One lifecycle channel that nodes and tasks publish into
 
-The host registers **observers** on a single channel carrying:
-
-- **Instance** events — created / started / completed / terminated (and, later,
-  failed / suspended / resumed).
-- **Token-movement** events — a token entering/leaving a node, a flow taken.
-- **Node-execution** events — node entered / executing / left, plus
-  node-kind-specific progress a node chooses to report.
-- **Task** events — user-task created / assigned / completed (to the extent
-  user-task execution exists).
+The host registers **observers** on a single channel. v.1 sketched the event
+families in prose (instance / token-movement / node-execution / task events);
+**v.2 replaces that sketch with the canonical taxonomy of §2.6**, which is the
+authoritative catalog of what the channel carries.
 
 Crucially, **nodes and tasks report their own progress into this one channel** —
 it is the seam future node/task implementations plug into (ADR-014's SendTask/
@@ -201,7 +232,156 @@ breaking change — the reconciliation of §1.4.
   fixing the `snapshots` leak (2.2); rejects (or documents the policy for)
   removal with live instances.
 
-### 2.6 Non-goals and scope (phased core; each deferral named)
+### 2.6 The observable-event taxonomy (v.2) — kinds, phases, scope, log echo
+
+The canonical catalog. Each **kind** names an object class; its **phases** are
+an open, standard-named set (§2.4 discipline — extend additively, consumers
+tolerate unknowns); **scope** says which observer registry sees it natively
+(§2.8 — engine-scope observers see everything); **log echo** is the operator-log
+level the single producer (§2.7) writes, per the ADR-022 v.1 §2.4 semantics.
+
+| Kind | Object | Phases (open set; ⏳ = reserved slot) | Scope | Log echo |
+|---|---|---|---|---|
+| `ObsEngineState` | Thresher | Starting, Started, Stopping, Stopped, ⏳Paused/Resumed | engine | Info |
+| `ObsHubState` | EventHub | Started, Stopped, ⏳Paused/Resumed | engine | Info |
+| `ObsProcessLifecycle` | process definition | Registered, Unregistered, VersionSuperseded | engine | Info |
+| `ObsInstanceState` | instance | Created, Active, Terminating, Completed, Terminated, Failed, ⏳Suspended/Resumed | instance | Info (Failed → Error) |
+| `ObsNodeProgress` | node on a track | Entered, Executing, Completed, Failed, Canceled, Merged, Parked (BPMN §13.3.2-aligned, un-collapsed — §2.10) | instance | Debug |
+| `ObsGatewayDecision` | gateway | BranchesChosen (the taken flow(s) in details) | instance | Debug |
+| `ObsEventFlow` | event definition | Registered, Fired, Delivered, Dropped, Unregistered | both | Debug |
+| `ObsCorrelation` | conversation | KeyAssociated, Matched, Mismatched | instance | Debug |
+| `ObsJobState` | worker job | Enqueued, Locked, Completed, TechnicalFault, BusinessError, RetryScheduled, RetriesExhausted, LockReclaimed, ⏳Incident | engine | Debug (RetriesExhausted, LockReclaimed → Warn) |
+| `ObsTaskState` | user task | Announced, Taken, Completed, Withdrawn | both | Info |
+| `ObsBoundary` | boundary event | Armed, Fired, Disarmed | instance | Debug |
+| `ObsFault` | BPMN error / fault | Thrown, Caught, Uncaught | both | Debug (Thrown, Caught — a designed path is expected behavior) / Error (Uncaught — the instance fault) |
+| `ObsDataChange` | data element | Added, Updated, Deleted (the existing change-kind vocabulary) | instance | **none** — observer-stream only (§2.10 volume guard) |
+
+The table IS the listener contract: a listener implementation subscribes to
+kinds and switches on phases; both axes grow additively. The **emission
+completeness rule**: every failure and every transition named here MUST be
+emitted — an unemitted catalog transition is a defect of the same class as a
+silently discarded error (ADR-022 §2.6: accidental silence is worse than
+noise).
+
+### 2.7 One producer, two channels
+
+v.1 emitted observer events and (since ADR-022) operator logs **independently**
+— which is exactly how the two half-views of §1.2 diverged. v.2 unifies the
+**producer**, not the channels:
+
+- Every catalog transition is emitted by **one call** — conceptually
+  `Observe(event)` on the runtime seam — which **internally** (a) writes the
+  operator-log echo at the kind's §2.6 level, with the canonical ADR-022 §2.5
+  attribute keys, and (b) hands the event to the observer registries of its
+  scope (§2.8) under the v.1 async lossy delivery contract.
+- **One call site per transition** means the log and the observer stream can
+  never drift apart again: completeness is enforced at a single seam, and a
+  reviewer checks *one* emission per catalog row, not two.
+- Downstream, the channels **stay separate** exactly as ADR-022 §2.7 requires
+  — the log synchronous and reliable for operators, the observer stream
+  best-effort, lossy, and non-blocking for programmatic listeners. v.2
+  refines that rule to: *separate channels, single producer*.
+- **Not everything is an observable event.** Low-level diagnostics that are
+  not catalog transitions (a retry backoff computation, a subscription-extend
+  failure, config detail) remain plain `Logger()` calls under ADR-022
+  discipline. `Observe()` replaces the log-plus-notify *pair* only where the
+  catalog speaks.
+
+### 2.8 Two observer scopes — instance and engine
+
+v.1's registry is per-instance (`AddObserver` on the handle) — right for
+"follow my instance", but structurally unable to carry engine, hub, process,
+or worker-job events, which belong to no instance. v.2 adds the missing scope:
+
+- **Instance scope** (exists): observers registered on an `InstanceHandle`
+  receive that instance's events — `ObsInstanceState`, `ObsNodeProgress`,
+  gateway/correlation/boundary/task/fault/data events of that instance.
+- **Engine scope** (new): observers registered on the engine receive
+  **everything** — the engine-scope kinds natively (engine, hub, process,
+  job) **and every instance-scoped event of every instance** (each event
+  carries its `instance_id` in the details, §2.9). One subscription = the
+  consistent whole-engine view; a listener filters by kind/id rather than
+  juggling per-instance registrations.
+- Both scopes share the same event shape, the same delivery contract
+  (per-observer buffered channel, non-blocking send, drop counter, panic
+  containment), and the same read-only rule.
+
+### 2.9 The event payload — one attribute vocabulary across both channels
+
+The event keeps v.1's identity-only shape (timestamp, node id/name, the
+phase/state string, the kind) and gains a flat **string-to-string details
+map** for kind-specific identifiers — a job id, a task id, the chosen gateway
+flows, a correlation key name, an error code. Two rules:
+
+- **The details keys ARE the ADR-022 §2.5 canonical log-attribute vocabulary**
+  (`instance_id`, `node_id`, `job_id`, `task_id`, `correlation_key`/`_value`,
+  `error`, …). One vocabulary serves both channels, so a listener and a log
+  dashboard correlate on the same names — and the §2.7 producer can write the
+  log echo directly from the event's details.
+- **Masking holds**: ids, names, states, codes — **never payload values**
+  (ADR-010/011). `ObsDataChange` reports *that* a named element changed and
+  how (added/updated/deleted), never what it now contains; a listener that
+  needs the value reads it through the read-only data reader, visibly.
+
+### 2.10 Corrections to the landed v.1 minimal form
+
+Three defects of the landed minimum become contract-level requirements:
+
+- **Un-collapse node progress.** The landed node event projects everything
+  onto a three-value token state; §2.6's `ObsNodeProgress` phases carry the
+  real, BPMN-named execution phase (entered/executing/completed/failed/
+  canceled/merged/parked). The token *projection* remains available on the
+  handle's token view — it is the collapse into the *event stream* that goes.
+- **Faults are first-class events.** A BPMN error caught at a boundary is a
+  designed, expected path — but it must be *visible* (`ObsFault: Caught`,
+  Debug echo), not silent as today; an uncaught fault is `ObsFault: Uncaught`
+  with the `Error` echo (the existing instance-fault record becomes this
+  kind's log echo). `Thrown` completes the triple so a listener can follow an
+  error from raise to disposition.
+- **Data changes flow through the dormant callback.** The data plane's
+  existing change-notification mechanism (added/updated/deleted, async
+  fan-out) becomes the `ObsDataChange` source — wired to the observer stream
+  only. **No log echo**: at the measured hot-path volume (roughly ten writes
+  per node execution) even `Debug` would drown flow tracing; the stream's
+  lossy contract is the correct transport for high-frequency data ticks, and
+  the ADR-022 hot-path corollary stays intact.
+
+### 2.11 Visibility policy — hide-by-policy at the delivery edge
+
+Identifiers and names are themselves information: a `correlation_value` is a
+business value (possibly PII), node/task names can be sensitive, and the
+engine-scope observer (§2.8) sees **every** instance — in a multi-tenant host,
+one tenant's listener must not see another tenant's events. Structural masking
+(§2.9) keeps payload *values* out; visibility of the rest is a **policy**
+question, and policy belongs to the engine's policy authority.
+
+The mechanism is the house **optional-capability pattern** (a type assertion
+against an existing extension — the same way the hub's key-extension and the
+worker-config capabilities work), anchored on the **authorization provider**
+(ADR-002's auth extension), since "who may see what" is an authorization
+concern:
+
+- **Log visibility** — if the provider implements the log-redaction capability
+  (working name `LogRedactor`), the §2.7 producer passes each event through it
+  before writing the log echo: the policy may pass it, redact detail keys, or
+  suppress the record. One recipient (the log), one global decision.
+- **Observer visibility** — if the provider implements the observation-filter
+  capability (working name `ObservationFilter`), each event is checked **per
+  recipient** before delivery: allow as-is, deliver with redacted details, or
+  deny (the observer never sees the event; drop counters are not incremented —
+  a denied event is policy, not backpressure).
+- **Not implemented ⇒ pass-through.** No capability, no policy: events reach
+  the log and the observers exactly as produced. The default costs nothing —
+  the capability is asserted **once at wiring** (engine start / observer
+  registration), never per event.
+
+The **policy model itself** — identities, tenants, attribute classifications,
+per-kind rules — is deliberately *not* designed here: it arrives with the
+multi-tenancy/IAM work, implemented on the same authorization extension. This
+ADR fixes the seam, its anchor, and its zero-cost default; exact interface
+names and signatures are confirmed by the wiring SRD.
+
+### 2.12 Non-goals and scope (phased core; each deferral named)
 
 - **Mutating per-node listeners** (an observer that sets a variable, redirects a
   flow, vetoes a transition) — rejected on principle (§4), not deferred. Behaviour
@@ -216,10 +396,21 @@ breaking change — the reconciliation of §1.4.
   the public `Shutdown` contract that drives it.
 - **Persistence / durable history** (querying finished instances after restart) —
   the Persistence ADR; the channel and handle are live/in-memory here.
-- **Splitting the `Instance` god-object** (audit 2.3) — sibling refactor.
-- **The exact handle/observer/control interface shapes, sync-vs-async delivery,
-  and the token/progress representation** — implementation decisions for the
-  SRD(s), staged green.
+- **Splitting the `Instance` god-object** (audit 2.3) — landed as a sibling
+  refactor; no longer open.
+- **The exact handle/observer/control interface shapes and the token/progress
+  representation** — implementation decisions for the SRD(s), staged green.
+- **The v.2 taxonomy wiring** — emitting every §2.6 kind through the §2.7
+  producer, the engine-scope registry, the payload details map, the §2.11
+  visibility capabilities, and the three §2.10 corrections — rides the
+  accompanying SRD; this ADR fixes the contract.
+- **The visibility policy model** (identities, tenants, attribute
+  classifications, per-kind rules) — the multi-tenancy/IAM work owns it,
+  implemented on the same authorization extension §2.11 anchors to; this ADR
+  only fixes the capability seam and its pass-through default.
+- **Metrics/tracing export** of the same events (an OpenTelemetry bridge over
+  the engine-scope observer) — a natural consumer of this contract, deferred
+  to its own work.
 
 ## 3. Consequences
 
@@ -240,6 +431,20 @@ breaking change — the reconciliation of §1.4.
 - **Cost: a projection + a channel threaded through the track + cancel wiring.**
   Bounded by read-only-observation + coarse-control constraints; the SRD stages
   it, and nodes adopt progress-reporting incrementally.
+- **(v.2) The two channels cannot drift.** One producer per transition writes
+  both the log echo and the observer event — mirror-by-construction, one
+  review point per catalog row, and the ADR-022 handle-once rule extends
+  naturally (an `Observe()` call IS the single handling of that transition's
+  reporting).
+- **(v.2) Listeners become a real platform.** With the full §2.6 taxonomy and
+  the engine scope, audit trails, UIs, integration bridges, and a future
+  OpenTelemetry export all hang off one stable contract instead of scraping
+  logs.
+- **(v.2) Cost: an engine-level registry + one emission per catalog row.**
+  The per-event work is bounded (a map of ids + a non-blocking send); the
+  hot-frequency kind (`ObsDataChange`) deliberately skips the log echo, and
+  the emission sites are exactly the places the error-and-logging remediation
+  already visited — well-known, recently-touched code.
 
 ## 4. Alternatives considered
 
@@ -265,6 +470,23 @@ breaking change — the reconciliation of §1.4.
 - **Fold into the metrics/tracer extensions (ADR-002).** Aggregate telemetry is
   a different need from per-instance state/control + lifecycle callbacks.
   Complementary, not a substitute.
+- **(v.2) Keep two independent emissions per transition — a log call AND an
+  observer call, synchronized by convention (a "mirroring rule").** The first
+  v.2 draft. Rejected on review: it doubles every call site, and convention
+  is exactly what let the two channels diverge in the first place (instance
+  states observable-but-unlogged, worker events logged-but-unobservable).
+  The single producer makes the mirror structural.
+- **(v.2) A flat per-transition event enum** (one value per catalog row,
+  ~40+ values). Rejected: brittle and ever-growing; the kind + open-phase
+  model matches §2.4's vocabulary discipline and lets both axes extend
+  additively.
+- **(v.2) Merge the channels — deliver log records to observers, or logs via
+  an observer.** Rejected: the reliability contracts differ by design
+  (ADR-022 §2.7) — logs must not become lossy, and the stream must not become
+  blocking; only the *producer* unifies.
+- **(v.2) Log everything instead of extending observers** (completeness on the
+  log channel alone). Rejected: leaves programmatic listeners blind — logs are
+  for operators; the listener platform is the stream.
 
 ## 5. Enterprise-readiness recommendations
 
@@ -280,33 +502,43 @@ Advisory, not gating — for the implementing SRD(s):
   to in-flight instances on a `Shutdown` deadline.
 - **Return a completion *result*** (terminal state + error/incident) from
   `WaitCompletion`, not just a state.
+- **(v.2) Pair the visibility capabilities (§2.11) with compliance needs**:
+  PII/GDPR redaction on the log channel via `LogRedactor` + a JSON handler,
+  tenant isolation on the engine-scope observer via `ObservationFilter`;
+  document that a denied event is invisible by policy, not lost by
+  backpressure (the drop counter stays honest).
 
 ## 6. Open questions
 
-- None. Building the mechanism now (handle + one lifecycle/token/node channel +
-  coarse control), the standard-named **open** state vocabulary (align names now,
-  extend the set additively — §1.4/§2.4), read-only observers with explicit
-  operator control, and the engine lifecycle (`Shutdown`/`UnregisterProcess`) are
-  decided above — including the **async delivery contract** (best-effort lossy
-  per-observer buffered channel + drain goroutine + non-blocking send + drop
-  counter; terminal completion guaranteed via a closed `done` channel, §2.2).
-  Exact interface shapes, the buffer size N, the token/progress representation,
-  and how far the task-listener catalogue reaches are implementation concerns for
-  the SRD(s); the waiter-shutdown mechanics belong to ADR-006 (2.5), and the
-  deferred states to their subsystem ADRs.
+- None. v.1 decided the mechanism (handle + channel + coarse control + the
+  async lossy delivery contract + the open vocabulary). v.2 decides the
+  coverage: the **canonical taxonomy** (§2.6 — kinds, phases, scopes, log-echo
+  levels, reserved slots), the **single producer** over two still-separate
+  channels (§2.7), the **engine-scope registry** receiving everything (§2.8),
+  the **details map keyed by the ADR-022 §2.5 vocabulary** with masking intact
+  (§2.9), the three **corrections** to the landed minimum — un-collapsed
+  node phases, first-class faults, data changes via the existing callback with
+  no log echo (§2.10) — and the **visibility-policy seam** (optional
+  capabilities on the authorization extension, pass-through default; §2.11).
+  Exact type shapes, the emitter API's form, buffer sizes, and the staging of
+  emission sites are implementation concerns for the accompanying SRD(s).
 
 ## 7. References
 
 - [SAD-001 v.1 Vision & Architecture](SAD-001-vision-and-architecture.md) — the
   library-embedded-in-a-host goal that makes observability/control table stakes.
-- [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) — the instance/track
+- [ADR-001 v.6 Execution Model](ADR-001-execution-model.md) — the instance/track
   lifecycle whose states this ADR names per the standard and whose deferred
   states (`Failing`/`Paused`, §4.2 §9) the open vocabulary reserves slots for.
 - [ADR-002 v.2 Extension Architecture](ADR-002-extension-architecture.md) — the
   engine-level extension catalogue (§4.2) observers register through; the §4.7
   public-API versioning this surface joins.
-- [ADR-006 v.1 Events & Subscriptions](ADR-006-events-and-subscriptions.md) — the
+- [ADR-006 v.2 Events & Subscriptions](ADR-006-events-and-subscriptions.md) — the
   waiter lifecycle (2.5) `Shutdown` must close; sibling.
+- [ADR-022 v.1 Error Propagation and Logging Policy](ADR-022-error-propagation-and-logging-policy.md)
+  — the log channel's levels (§2.4), attribute vocabulary (§2.5), and the
+  two-channel separation (§2.7) this ADR's single producer writes into and
+  refines to "separate channels, single producer".
 - [ADR-010 v.2 Process Data Model](ADR-010-process-data-model.md) — the data
   plane (own lock → safe external reads) + §2.7 reads the handle's data view
   reuses; deferred "observe from outside" to here.
@@ -328,4 +560,5 @@ Advisory, not gating — for the implementing SRD(s):
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.2 | 2026-07-11 | Ruslan Gabitov | Draft (flips to Accepted with its wiring SRD; v.1 remains the accepted contract meanwhile). **Observability completeness — one event seam, engine-wide.** v.1's landed form was deliberately minimal (two observer-event kinds, instance scope only); a two-channel completeness audit showed the observer stream and the ADR-022 operator logs each covering a different half of the engine, with some transitions (gateway decisions, task-taken, boundary arm/disarm, boundary-**caught** faults) silent on both. v.2 adds: the **canonical observable-event taxonomy** (§2.6 — 13 kinds across engine/hub/process/instance/node/gateway/event/correlation/job/task/boundary/fault/data, each with an open phase set, a scope, a log-echo level, and ⏳ reserved slots for pause/resume/incident/dehydration) with the **emission-completeness rule** (an unemitted catalog transition is a defect); the **single producer** — one `Observe(event)`-style call per transition that writes the log echo AND feeds the observer stream, refining ADR-022 §2.7 to *separate channels, single producer* (rejects the two-independent-emissions "mirroring rule" that let the channels drift); the **engine-scope observer registry** (receives everything, incl. all instances' events — one consistent view of gobpm) alongside v.1's instance scope; the **details map** keyed by the ADR-022 §2.5 canonical attribute vocabulary (one vocabulary across both channels; masking intact — ids/names/codes, never payload values); and three **corrections to the landed minimum** — un-collapsed node-progress phases (the 3-value token projection stays on the handle, not in the stream), first-class `ObsFault` (Thrown/Caught/Uncaught — a boundary-caught error becomes visible), and `ObsDataChange` wired from the dormant data change-callback, observer-stream-only (no log echo at ~10 writes/node). Adds the **visibility-policy seam** (§2.11): optional capabilities on the authorization extension — log redaction (working name `LogRedactor`) and per-recipient observation filtering (`ObservationFilter`), discovered by type assertion at wiring; unimplemented ⇒ pass-through (events reach the log/observers as-is, zero cost); the policy model (identities/tenants/classifications) deferred to the multi-tenancy/IAM work on the same extension. Non-goals updated (god-object split landed; OTel bridge + the policy model deferred); references re-pinned (ADR-001 v.5→v.6, ADR-006 v.1→v.2, ADR-022 v.1 added). Conception; the taxonomy wiring rides the accompanying SRD. |
 | v.1 | 2026-06-18 | Ruslan Gabitov | Accepted. Fixes audit 2.2 by building the observation-**and-control** mechanism: a public `InstanceHandle` (state, token movement, node execution progress, read-only data via the public reader (ADR-011 v.5), `WaitCompletion`, `Cancel` now / `Suspend`·`Resume` reserved), **one lifecycle channel that nodes/tasks publish progress into** (the seam future node/task work plugs into), and the engine lifecycle (`Shutdown`, `UnregisterProcess`, fixing the snapshots leak). Reconciles the unsettled-state concern: the **mechanism** is the stable contract while the **state/node vocabulary is named per the BPMN standard but kept an open set** — align names now, extend additively as `Failing`/`Paused`/`Compensating` subsystems land (no public-API churn; consumers forward-compatible). Observers are read-only over data/flow (no mutating listeners — hidden control, ADR-011); lifecycle control is coarse, explicit, engine-mediated. **Async delivery** (stdlib): best-effort lossy per-observer buffered channel + drain goroutine + non-blocking send + drop counter — the track never blocks on an observer; only terminal completion is a guaranteed, blockable signal (a closed `done` channel via `WaitCompletion`). Phased core: deferred lifecycle states/subsystems, fine-grained step control, waiter-shutdown mechanics (2.5 → ADR-006), persistence/history, and the Instance god-object split (2.3) are out of scope. Refines ADR-002 v.2; siblings ADR-001 v.5, ADR-006 v.1 (Accepted), ADR-010 v.2, ADR-011 v.5, ADR-012 v.1, ADR-014 v.1. Accepted at v.1 with pin/standard-claim corrections at acceptance: ADR-002 v.1→v.2; activity-lifecycle §13.2.2→§13.3.2 (the KB attributes it to §13.3.2, p428–429). Conception; implementation rides the SRD. |
