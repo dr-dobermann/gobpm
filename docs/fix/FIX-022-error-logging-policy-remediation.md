@@ -1,7 +1,7 @@
 # FIX-022 «Bring error handling and logging up to the ADR-022 policy»
 
 **Type:** FIX (one-shot remediation; not rewritten after landing).
-**Status:** Draft v.1 (2026-07-10, branch `fix/silent-error-discards`, not yet implemented).
+**Status:** Accepted (2026-07-11, branch `fix/silent-error-discards`, landed — §8.1 stages `661b6bb`…`951a1c1`).
 **Date:** 2026-07-10.
 **Author:** Ruslan Gabitov.
 **Branch:** `fix/silent-error-discards` (the discard sweep that motivated the policy; the log audit rides along).
@@ -210,22 +210,59 @@ None (sole-maintainer project). Out-of-scope follow-ups → §8.3.
 
 ## §8 Implementation summary (stage-by-stage actual landings + deltas vs draft)
 
-> ⚠️ TODO: fill AFTER landing.
+Landed on `fix/silent-error-discards` in five layer-milestones, exactly per §3.2.
+Final `/check-srd` landing audit: **PASS** — 23/23 remediation sites wired,
+ADR-022 §2.1/§2.3/§2.5 all conformant, zero stray `_ =` error discards in
+production (the one remaining is the documented console carve-out, A11), all five
+§4.1 tests present, cross-doc pins clean (0 downward refs).
 
 ### §8.1 Stages by commit (branch `fix/silent-error-discards`)
 
-| Stage | Commit | Scope | Tests |
+| Stage | Commit | Scope | Gate |
 |---|---|---|---|
-| doc | `1d84a2e` (ADR-022) + `<sha>` (this) | policy + this FIX | — |
-| M1 | `<sha>` | eventproc layer | §4.1.1–§4.1.2 |
-| M2 | `<sha>` | instance layer | §4.1.3 |
-| M3 | `<sha>` | thresher layer | §4.1.4 |
-| M4 | `<sha>` | tasks/messaging layer | — (keys/levels) |
-| M5 | `<sha>` | model/interactor layer | §4.1.5 |
+| doc | `1d84a2e` (ADR-022) · `f9ac08e` (this FIX) | policy + spec | /review-srd |
+| M1 | `661b6bb` | eventproc (A1–A5, E1/E2) — §4.1.1/§4.1.2 | ci PASS, diff-cov 100% |
+| M2 | `7994955` | instance (A6, E3, activation C, correlation, key drift) — §4.1.3 | ci PASS, 100% |
+| M3 | `cd4cf99` | thresher (A7/A8, instance-starter C, keys) — §4.1.4 | ci PASS, 100% |
+| M4 | `ddb3dde` | tasks/messaging (levels + keys, E4) | ci PASS |
+| M5 | `951a1c1` | model/interactor (A9/A10, B1, A11) — §4.1.5 | ci PASS, diff-cov 99.2% |
+
+Every milestone `make ci`-green; full `-race` suite green.
 
 ### §8.2 Empirical findings — where reality diverged from the §3 draft
 
-> ⚠️ TODO after landing.
+- **A4 & A5 reclassified log-at-Warn → fail-fast propagate.** The census (§3.2.1
+  first draft, §3.2.2) initially classified the success/terminal `WaiterFired`
+  reports as best-effort log-at-Warn. Reading `WaiterFired`'s error surface
+  (`eventhub.go:632-658`) showed its *only* failure modes are invariant
+  violations (empty id — impossible here; waiter absent from the registry it
+  registered into — hub-state divergence). Per the ADR-022 §2.3 "judge by the
+  failure surface, not the call site" paragraph — itself added during this
+  implementation from the same finding — such a failure is **fail-fast**: A4
+  propagates so `runMessageService` stops the orphaned waiter and logs `Error`
+  (E1); A5's terminal report propagates so `runTimerService` logs `Error`. The
+  drafts' Warn plans were superseded; the design (and the ADR) improved.
+- **`processMessageEvent` restructured into a `deliver()` helper.** To make the
+  otherwise-unreachable `fireDefinition`-failure branch coverable, the build and
+  delivery failures were merged into one covered tail (`errors.Join` at
+  `message.go:325`), with the processor loop extracted to `deliver()`. Cleaner
+  code and no uncoverable line.
+- **The A3 gap.** The processor-loop failure path was initially left with its
+  bare `_ = WaiterFired` — caught by `TestMessageWaiterJoinsHubReportOnDelivery
+  Failure` before commit (the join carried only one error), then remediated. A
+  test caught a missed remediation, exactly its purpose.
+- **Reclaim level resolved to Warn.** §3.2.11 left the "expired job lock
+  reclaimed" level "decide at implementation"; landed as **Warn** — a worker
+  that missed its deadline is degradation someone should see (§2.4).
+- **E4 comment-only.** `runWorker`'s `FetchAndLock` exit: reading its surface
+  (`localdispatcher.go:204`) confirmed ctx-cancellation is its sole error mode,
+  so a defensive log would be unreachable dead code — landed as a strengthened
+  comment pinning the invariant, not a log.
+- **Coverage-gate lesson (process).** `make cover-check` reuses the
+  `coverage.txt` that `test-all` writes, so a test added after a `make ci` needs
+  a *full re-run* to be counted — cost one M1 re-cycle (the A1 defensive Debug's
+  continuation-arg lines) before the gate read 100%. Folded into each
+  milestone's verify step thereafter.
 
 ### §8.3 Backlog (out of FIX-022 scope)
 

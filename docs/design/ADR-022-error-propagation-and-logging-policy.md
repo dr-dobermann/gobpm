@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-10 |
 | Owner | Ruslan Gabitov |
@@ -286,4 +286,4 @@ None.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-07-10 | Ruslan Gabitov | Draft. The error-propagation and logging contract: handle-exactly-once (log XOR return); three propagation patterns (lone-call return, errors.Join, contextual wrap); the enumerated handling boundaries (goroutine tops, best-effort ops, deliberate ignores with log+comment) with the public API edge explicitly NOT a logging boundary and a carve-out for logger-less components (model constructors, console driver) that propagate or comment; level discipline (Error/Warn/Info/Debug with hot-path and expected-no-op corollaries); the canonical attribute vocabulary (grounded against the code: adds `event_definition_type`/`event_processor_id`/`worker_id`/`topic`/`start_node_id`, splits `correlation_key`/`correlation_value`, frees count attributes); silence-is-opt-out; logs vs ObsEvent stream separation. Grounded in Go practice (BPMN is silent on observability). Remediation rides the accompanying FIX: the discard sweep AND the existing-log audit (remove duplicates/noise, add missing boundary records, normalize levels and keys). |
+| v.1 | 2026-07-11 | Ruslan Gabitov | Accepted (authored 2026-07-10). The error-propagation and logging contract: handle-exactly-once (log XOR return); three propagation patterns (lone-call return, errors.Join, contextual wrap); the enumerated handling boundaries (goroutine tops, best-effort ops, deliberate ignores with log+comment) with the public API edge explicitly NOT a logging boundary, a **fail-fast-vs-best-effort discriminator** (judge by the failure surface — an invariant-only failure propagates, not logs — added during implementation from the WaiterFired finding), and a carve-out for logger-less components (model constructors, console driver) that propagate or comment; level discipline (Error/Warn/Info/Debug with hot-path and expected-no-op corollaries); the canonical attribute vocabulary (grounded against the code: adds `event_definition_type`/`event_processor_id`/`worker_id`/`topic`/`start_node_id`, splits `correlation_key`/`correlation_value`, frees count attributes); silence-is-opt-out; logs vs ObsEvent stream separation. Grounded in Go practice (BPMN is silent on observability). Landed by its accompanying FIX (the discard sweep + existing-log audit); Accepted after that FIX's /check-srd landing gate passed. |
