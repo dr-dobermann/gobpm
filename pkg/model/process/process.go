@@ -3,10 +3,10 @@ package process
 
 import (
 	"errors"
+	"maps"
 	"reflect"
+	"slices"
 	"strings"
-
-	"golang.org/x/exp/maps"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
@@ -98,7 +98,7 @@ func (p *Process) Name() string {
 
 // Properties returns the Process properties.
 func (p *Process) Properties() []*data.Property {
-	return maps.Values(p.properties)
+	return slices.Collect(maps.Values(p.properties))
 }
 
 // addNode adds non-empty unique BaseNode n to the process p.
