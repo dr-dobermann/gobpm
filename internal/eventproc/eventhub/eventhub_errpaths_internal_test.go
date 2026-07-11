@@ -75,3 +75,29 @@ func TestSignalCatchersFallbackCount(t *testing.T) {
 
 	require.Equal(t, 1, eh.SignalCatchers("GO"))
 }
+
+// TestBroadcastSignalProcessError covers broadcastSignal's defensive branch
+// (FIX-022 A1): a signalIdx waiter whose Process returns an error is logged and
+// the broadcast continues (best-effort — it must reach every catcher, FIX-007),
+// so broadcastSignal itself still returns nil.
+func TestBroadcastSignalProcessError(t *testing.T) {
+	hub, err := New(enginert.Default())
+	require.NoError(t, err)
+	require.NoError(t, hub.Start(context.Background()))
+
+	sig, err := events.NewSignal("GO", nil)
+	require.NoError(t, err)
+	def, err := events.NewSignalEventDefinition(sig)
+	require.NoError(t, err)
+
+	w := mockeventproc.NewMockEventWaiter(t)
+	w.EXPECT().Process(mock.Anything).Return(errors.New("process boom"))
+	w.EXPECT().ID().Return("mock-signal-waiter")
+
+	hub.m.Lock()
+	hub.signalIdx["GO"] = []eventproc.EventWaiter{w}
+	hub.m.Unlock()
+
+	require.NoError(t, hub.broadcastSignal(def),
+		"a per-waiter Process error is logged, not propagated")
+}

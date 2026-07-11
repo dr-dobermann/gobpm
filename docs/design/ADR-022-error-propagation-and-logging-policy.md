@@ -91,6 +91,20 @@ An error is logged exactly where nothing above can act on it:
    ignoring is safe. A bare `_ = f()` on an error-returning call is
    **forbidden** in production code.
 
+**Best-effort vs fail-fast — judge by the failure surface, not the call
+site.** An operation is best-effort (boundary class 2) only if its failure
+modes are genuinely inconsequential — a transient or external hiccup the flow
+can shrug off (a distributor timeout, an observer that errored, an idempotent
+op that no-ops on a miss). If the *only* way an operation can fail is an
+**invariant violation** — a state that cannot happen unless something upstream
+is already broken (a waiter absent from the registry it registered into) — its
+failure is **not** best-effort: it signals a corrupted environment, and doing
+more work on that environment is the worse outcome. Such a failure
+**propagates (fail-fast)** so the boundary above stops and logs it. Read what
+the called function actually returns an error for before classifying — the
+call site's shape (a goroutine top, a "best-effort" comment) suggests, but the
+error surface decides.
+
 The **public API edge is NOT a logging boundary**: an error returned to the
 embedder is itself the comprehensive report (self-identifying per the
 validate-all-parameters rule); logging it as well would double-report a

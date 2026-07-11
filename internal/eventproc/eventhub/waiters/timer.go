@@ -4,6 +4,7 @@ package waiters
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -309,6 +310,13 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 // re-breaks every fake-clock timer test (the goroutine would sleep on real
 // time while validation honors the injected clock — the exact split this FIX
 // removed).
+// errTimerCompleted is the internal control-flow signal processTimerEvent
+// returns when a one-shot or cycle-exhausted timer terminates normally — a
+// package sentinel so runTimerService can errors.Is-discriminate it from a
+// real delivery/hub fault (ADR-022 v.1 §2.3). It is never surfaced to callers.
+// (The deeper error-as-control-flow refactor is FIX-022 §8.3 backlog.)
+var errTimerCompleted = errors.New("timer completed")
+
 func (tw *timeWaiter) runTimerService(ctx context.Context) {
 	defer close(tw.done) // signal goroutine exit for EventHub.Shutdown drain
 
@@ -331,6 +339,15 @@ func (tw *timeWaiter) runTimerService(ctx context.Context) {
 
 		case <-fire:
 			if err := tw.processTimerEvent(ctx); err != nil {
+				// errTimerCompleted is the normal one-shot / exhausted
+				// termination — silent. Any other error is a real delivery or
+				// hub-report fault at this goroutine top; log it (ADR-022 v.1
+				// §2.3/§2.4).
+				if !errors.Is(err, errTimerCompleted) {
+					tw.rt.Logger().Error("timer waiter delivery failed",
+						"waiter_id", tw.id, "error", err.Error())
+				}
+
 				return
 			}
 		}
@@ -380,10 +397,16 @@ func (tw *timeWaiter) processTimerEvent(ctx context.Context) error {
 		tw.m.Unlock()
 
 		// Terminal: report the fire; the EventHub (sole remover, ADR-006 v.2
-		// §2.5) removes the waiter. The timer no longer removes itself.
-		_ = tw.hub.WaiterFired(eDef.ID()) // ignore error during cleanup
+		// §2.5) removes the waiter. WaiterFired errors only on hub-state
+		// divergence (this waiter absent from the registry it registered into) —
+		// fail-fast: propagate it as a real fault so runTimerService logs it at
+		// Error (ADR-022 v.1 §2.3). On the normal path return the completion
+		// sentinel, which runTimerService recognizes and drops silently.
+		if err := tw.hub.WaiterFired(eDef.ID()); err != nil {
+			return err
+		}
 
-		return errs.New(errs.M("timer completed")) // signal completion
+		return errTimerCompleted
 	}
 
 	tw.m.Unlock()

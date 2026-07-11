@@ -520,9 +520,15 @@ func (eh *EventHub) broadcastSignal(eDef flow.EventDefinition) error {
 
 	// Fan out off the lock: each delivery resumes a catcher's track, which
 	// self-unregisters (track.ProcessEvent) — that removal needs eh.m. Process
-	// is best-effort and never returns a delivery error (it logs per catcher).
+	// is best-effort and logs per catcher, so it returns nil today; the
+	// defensive branch keeps a would-be future error visible instead of
+	// silent, without stopping the broadcast (it must reach every catcher —
+	// FIX-007). ADR-022 v.1 §2.3(2).
 	for _, w := range targets {
-		_ = w.Process(eDef)
+		if err := w.Process(eDef); err != nil {
+			eh.rt.Logger().Debug("signal waiter delivery returned an error",
+				"signal", name, "waiter_id", w.ID(), "error", err.Error())
+		}
 	}
 
 	return nil

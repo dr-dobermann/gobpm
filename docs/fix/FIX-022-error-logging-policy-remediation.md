@@ -81,7 +81,7 @@ The dense, behavior-changing core.
 ##### §3.2.1 `internal/eventproc/eventhub/waiters/message.go` — A2, A3, A4, E1
 
 - **A2 (:310)** / **A3 (:326)** — `_ = mw.hub.WaiterFired(...)` on the two failure paths where an `err` is already in flight → `return errors.Join(err, mw.hub.WaiterFired(mw.eDef.ID()))` (ADR-022 §2.2 join).
-- **A4 (:332)** — the success path. **Not** a plain `return WaiterFired(...)`: the caller `runMessageService` (:288) treats *any* non-nil return as a terminal waiter failure, and a bookkeeping-report failure must not terminate a healthy waiter. → classify as **best-effort log at `Warn`** (§2.3(2)) with `waiter_id`, `message_name`, `error`; keep `return nil`.
+- **A4 (:332)** — the success path → `return mw.hub.WaiterFired(mw.eDef.ID())`. `WaiterFired` (eventhub.go:632–658) errors **only** on an invariant violation (empty id — impossible here; or this waiter absent from the registry it registered into — hub-state divergence), so its failure is **not** best-effort — it is fail-fast (ADR-022 §2.3 "judge by the failure surface"): propagate so `runMessageService` stops the now-orphaned waiter and the E1 boundary logs it. The normal `nil` lets the serve-loop continue. *(Earlier draft mis-classified this log-at-Warn; corrected after reading `WaiterFired`'s error surface — §8.2.)*
 - **E1 (:288)** — `runMessageService` returns on a terminal error with no record → add an `Error` log ("message waiter terminally failed", `waiter_id`, `message_name`, `error`) at the goroutine top (§2.3(1)/§2.4).
 
 ##### §3.2.2 `internal/eventproc/eventhub/waiters/timer.go` — A5, E2
@@ -189,7 +189,7 @@ The fix *is* observability: after it, every error is either returned or logged e
 
 By construction, nothing *depends* on a swallowed error — but surfacing one **is** the behavior change, per site:
 
-- **A2–A4 / A7–A8 (join/return)**: a hub-bookkeeping or rollback failure that used to vanish now reaches a caller / a log. A4 specifically is classified log-not-return precisely so it does **not** terminate a healthy waiter (the caller's any-error-is-terminal contract).
+- **A2–A4 / A7–A8 (join/return)**: a hub-bookkeeping or rollback failure that used to vanish now reaches a caller / a log. A4 specifically **propagates** (fail-fast): `WaiterFired`'s only failure is hub-state divergence, so on that error `runMessageService` correctly stops the now-orphaned waiter and the E1 goroutine-top logs it — the normal `nil` still lets the serve-loop continue, so healthy waiters are unaffected.
 - **E3 (spawnForks → fail)**: a track-build failure now cancels sibling tracks (via `fail`'s ctx-cancel) and logs — previously it stored `lastErr` and let the instance settle less deterministically. This is the *correct* fault behavior (matches every other build-failure site); verified by §4.1.3.
 - **Level changes** (activation Warn→Error, instance_starter Warn→Debug) shift what a level-filtered handler emits — intended, and the point of the audit.
 
