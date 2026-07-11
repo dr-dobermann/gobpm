@@ -5,7 +5,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
@@ -110,15 +109,23 @@ func (h *InstanceHandle) Observe(o Observer) *Subscription {
 		}
 	}()
 
-	cancelReg := h.inst.AddObserver(func(ie instance.ObsEvent) {
-		ev := Event{
-			At:         ie.At,
-			Kind:       eventKind(ie.Kind),
-			InstanceID: id,
-			NodeID:     ie.NodeID,
-			NodeName:   ie.NodeName,
-			State:      ie.State,
+	// The instance-scope visibility filter (SRD-041 FR-8 / ADR-013 §2.11): the
+	// policy is per-recipient with no scope carve-out, so it gates handle
+	// observers too. Asserted once here at registration; absent ⇒ pass-through.
+	filter, _ := h.inst.AuthorizationProvider().(observability.ObservationFilter)
+
+	cancelReg := h.inst.AddObserver(func(ie observability.ObsEvent) {
+		if filter != nil {
+			filtered, ok := filter.FilterObservation(o, ie)
+			if !ok {
+				return // policy-denied — not a counted drop
+			}
+
+			ie = filtered
 		}
+
+		ev := toPublicEvent(ie)
+		ev.InstanceID = id
 
 		select {
 		case ch <- ev:
@@ -153,16 +160,20 @@ func deliver(o Observer, ev Event) {
 	o.OnEvent(ev)
 }
 
-// eventKind maps the internal observation kind to the public open vocabulary.
-func eventKind(k instance.ObsKind) EventKind {
-	switch k {
-	case instance.ObsInstanceState:
-		return EventInstanceState
-
-	case instance.ObsNodeProgress:
-		return EventNodeProgress
-
-	default:
-		return EventKind(k.String())
+// toPublicEvent projects the canonical observable event onto the delivered
+// public Event (SRD-041 §3.2). Kind passes through (EventKind is a type alias of
+// observability.Kind); the phase becomes State (unchanged strings for the v.1
+// kinds — T-10); instance_id is promoted from details to the InstanceID field
+// for v.1 compatibility while the full details map rides along. Shared by the
+// instance handle and the engine-scope producer so both scopes deliver one shape.
+func toPublicEvent(ev observability.ObsEvent) Event {
+	return Event{
+		At:         ev.At,
+		Details:    ev.Details,
+		Kind:       ev.Kind,
+		InstanceID: ev.Details[observability.AttrInstanceID],
+		NodeID:     ev.NodeID,
+		NodeName:   ev.NodeName,
+		State:      string(ev.Phase),
 	}
 }

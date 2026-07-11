@@ -50,6 +50,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/interactor"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
@@ -232,9 +233,14 @@ func (t *track) record(state trackState) {
 
 	// Publish the transition to host observers (SRD-018): identity + projected
 	// token state only, never payload. Non-blocking at the sink; a no-op when
-	// no one is observing.
-	t.instance.notify(ObsNodeProgress, node.ID(), node.Name(),
-		tokenStateFor(state).String())
+	// no one is observing. The projected token state rides in Phase for now — M3
+	// replaces it with the real node phase (SRD-041 FR-6).
+	t.instance.observe(observability.ObsEvent{
+		Kind:     observability.KindNodeProgress,
+		Phase:    observability.Phase(tokenStateFor(state).String()),
+		NodeID:   node.ID(),
+		NodeName: node.Name(),
+	})
 }
 
 // Token returns the track's current token projection (lock-free).

@@ -1,56 +1,21 @@
 package instance
 
-import "time"
-
-// ObsKind classifies a host-observable event (SRD-018, ADR-013 §2.2).
-type ObsKind uint8
-
-const (
-	// ObsInstanceState is an instance lifecycle transition (Active, Completed,
-	// Terminating, Terminated).
-	ObsInstanceState ObsKind = iota
-
-	// ObsNodeProgress is a track reaching a node in a token state — the
-	// token-movement / node-progress signal.
-	ObsNodeProgress
-)
-
-// String returns the kind name.
-func (k ObsKind) String() string {
-	switch k {
-	case ObsInstanceState:
-		return "InstanceState"
-
-	case ObsNodeProgress:
-		return "NodeProgress"
-
-	default:
-		return "Unknown"
-	}
-}
-
-// ObsEvent is a host-observable lifecycle/token/node event (SRD-018). It carries
-// identity and state only — never payloads (the masking rule, ADR-010/011).
-type ObsEvent struct {
-	At       time.Time
-	NodeID   string
-	NodeName string
-	State    string
-	Kind     ObsKind
-}
+import "github.com/dr-dobermann/gobpm/pkg/observability"
 
 // obsReg is one registered observer sink with its cancellation id.
 type obsReg struct {
-	fn func(ObsEvent)
+	fn func(observability.ObsEvent)
 	id uint64
 }
 
 // AddObserver registers a sink on the instance's observation stream and returns
-// a cancel func that deregisters it (SRD-018). The sink MUST NOT block: it is
-// called on the execution hot path (every instance/track transition) under a
-// read lock, so the public thresher handle wraps it with a buffered, lossy,
-// separately-drained delivery. A nil sink is ignored.
-func (inst *Instance) AddObserver(fn func(ObsEvent)) func() {
+// a cancel func that deregisters it (SRD-018). The sink receives the canonical
+// observability.ObsEvent — one event type from emitter to delivery (SRD-041
+// FR-1). It MUST NOT block: it is called on the execution hot path (every
+// instance/track transition) under a read lock, so the public thresher handle
+// wraps it with a buffered, lossy, separately-drained delivery. A nil sink is
+// ignored.
+func (inst *Instance) AddObserver(fn func(observability.ObsEvent)) func() {
 	if fn == nil {
 		return func() {}
 	}
@@ -66,8 +31,8 @@ func (inst *Instance) AddObserver(fn func(ObsEvent)) func() {
 }
 
 // removeObserver drops the sink registered under id. It takes the write lock, so
-// it fences any in-flight notify (which holds the read lock for the whole
-// fan-out): once it returns, the removed sink is never called again — letting
+// it fences any in-flight fan-out (which holds the read lock for the whole
+// dispatch): once it returns, the removed sink is never called again — letting
 // the handle safely tear down its buffered channel.
 func (inst *Instance) removeObserver(id uint64) {
 	inst.obsMu.Lock()
@@ -82,26 +47,60 @@ func (inst *Instance) removeObserver(id uint64) {
 	}
 }
 
-// notify fans an event out to every registered sink under the read lock. The
-// sinks are non-blocking, so the lock is held only briefly; holding it across
-// the fan-out is what lets removeObserver guarantee no sink call is in flight.
-// With no observers it returns immediately — the event (and its timestamp) is
-// built only when someone is listening, keeping the execution hot path free.
-func (inst *Instance) notify(kind ObsKind, nodeID, nodeName, state string) {
+// observe is the single emission point for an instance-scope observable event
+// (SRD-041 FR-4). It stamps the event's timestamp and instance_id, fans it out
+// to the instance's local handle observers (the v.1 path — built only when
+// someone listens, preserving the notify hot-path guard, NFR-1), and forwards it
+// to the engine sink, which writes the operator-log echo and fans out to the
+// engine-scope observers. The engine fan-out/echo runs off the obsMu lock, so a
+// slow producer never stalls the local dispatch.
+func (inst *Instance) observe(ev observability.ObsEvent) {
 	inst.obsMu.RLock()
-	defer inst.obsMu.RUnlock()
+	hasLocal := len(inst.observers) > 0
+	inst.obsMu.RUnlock()
 
-	if len(inst.observers) == 0 {
+	// The engine sink is reached through the embedded runtime; a bare Instance
+	// (constructed without New — the isolated unit tests) has none.
+	var sink observability.ObsSink
+	if inst.EngineRuntime != nil {
+		sink = inst.ObservationSink()
+	}
+
+	// The hot-path guard (NFR-1): with no local observer AND no engine sink,
+	// nobody listens and nothing echoes, so skip building the event entirely —
+	// and never touch the (possibly absent) runtime.
+	if !hasLocal && sink == nil {
 		return
 	}
 
-	ev := ObsEvent{
-		At:       inst.now(),
-		NodeID:   nodeID,
-		NodeName: nodeName,
-		State:    state,
-		Kind:     kind,
+	if ev.At.IsZero() {
+		ev.At = inst.now()
 	}
+
+	if ev.Details == nil {
+		ev.Details = map[string]string{}
+	}
+
+	if _, ok := ev.Details[observability.AttrInstanceID]; !ok {
+		ev.Details[observability.AttrInstanceID] = inst.ID()
+	}
+
+	if hasLocal {
+		inst.fanoutLocal(ev)
+	}
+
+	if sink != nil {
+		sink.Emit(ev)
+	}
+}
+
+// fanoutLocal dispatches ev to the instance's local observers under the read
+// lock. Holding the lock across the dispatch is what lets removeObserver
+// guarantee no sink call is in flight. With no observers it returns at once — the
+// local path costs only the empty check when nobody is listening.
+func (inst *Instance) fanoutLocal(ev observability.ObsEvent) {
+	inst.obsMu.RLock()
+	defer inst.obsMu.RUnlock()
 
 	for _, r := range inst.observers {
 		r.fn(ev)

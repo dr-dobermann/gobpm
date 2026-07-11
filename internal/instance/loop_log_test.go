@@ -58,9 +58,16 @@ func TestLoopEventLogging(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, inst.Run(t.Context()))
-	require.Eventually(t,
-		func() bool { return inst.State() == Completed },
-		2*time.Second, 5*time.Millisecond)
+
+	// Wait on Done, not on State(): setState stores the state atomically and
+	// only then echoes the transition to the logger, so a State()-based wait
+	// would read buf concurrently with that echo write. Done closes after the
+	// loop fully returns (past the final echo), establishing happens-before.
+	select {
+	case <-inst.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("instance did not complete")
+	}
 
 	out := buf.String()
 	require.Contains(t, out, "track event")

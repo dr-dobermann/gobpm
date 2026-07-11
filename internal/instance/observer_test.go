@@ -11,6 +11,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,14 +27,7 @@ func TestTokenStateString(t *testing.T) {
 	}
 }
 
-// TestObsKindString covers the observation-kind names, including the default.
-func TestObsKindString(t *testing.T) {
-	require.Equal(t, "InstanceState", instance.ObsInstanceState.String())
-	require.Equal(t, "NodeProgress", instance.ObsNodeProgress.String())
-	require.Equal(t, "Unknown", instance.ObsKind(9).String())
-}
-
-// TestInstanceObservers covers AddObserver (nil + real), the notify fan-out
+// TestInstanceObservers covers AddObserver (nil + real), the observe fan-out
 // (via a real run), and removeObserver (cancel, plus a second cancel hitting the
 // not-found path) within the instance package — they are otherwise exercised
 // only cross-package through the thresher handle.
@@ -53,10 +47,10 @@ func TestInstanceObservers(t *testing.T) {
 
 	var (
 		mu  sync.Mutex
-		got []instance.ObsEvent
+		got []observability.ObsEvent
 	)
 
-	cancel := inst.AddObserver(func(ev instance.ObsEvent) {
+	cancel := inst.AddObserver(func(ev observability.ObsEvent) {
 		mu.Lock()
 		got = append(got, ev)
 		mu.Unlock()
@@ -73,9 +67,21 @@ func TestInstanceObservers(t *testing.T) {
 	}
 
 	mu.Lock()
-	n := len(got)
-	mu.Unlock()
-	require.Positive(t, n, "the observer should receive events")
+	defer mu.Unlock()
+	require.Positive(t, len(got), "the observer should receive events")
+
+	// observe() stamps every event with a timestamp and the instance id, and
+	// emits the canonical kinds.
+	for _, ev := range got {
+		require.False(t, ev.At.IsZero(), "event timestamp must be stamped")
+		require.Equal(t, inst.ID(), ev.Details[observability.AttrInstanceID],
+			"instance_id must be stamped into details")
+		require.Contains(t,
+			[]observability.Kind{
+				observability.KindInstanceState,
+				observability.KindNodeProgress,
+			}, ev.Kind)
+	}
 
 	// First cancel removes the sink; the second hits removeObserver's
 	// not-found path.
