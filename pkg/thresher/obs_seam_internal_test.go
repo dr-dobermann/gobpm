@@ -6,49 +6,22 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
-// T-1: the public EventKind vocabulary equals the canonical observability.Kind
-// values (EventKind is a type alias), so the delivered public event and the
-// internal observable event share one vocabulary with no conversion.
-func TestEventKindAliasesObservabilityKinds(t *testing.T) {
-	pairs := map[EventKind]observability.Kind{
-		EventInstanceState:    observability.KindInstanceState,
-		EventNodeProgress:     observability.KindNodeProgress,
-		EventEngineState:      observability.KindEngineState,
-		EventHubState:         observability.KindHubState,
-		EventProcessLifecycle: observability.KindProcessLifecycle,
-		EventGatewayDecision:  observability.KindGatewayDecision,
-		EventFlow:             observability.KindEventFlow,
-		EventCorrelation:      observability.KindCorrelation,
-		EventJobState:         observability.KindJobState,
-		EventTaskState:        observability.KindTaskState,
-		EventBoundary:         observability.KindBoundary,
-		EventFault:            observability.KindFault,
-		EventDataChange:       observability.KindDataChange,
-	}
+type countingReporter struct{ n int }
 
-	for got, want := range pairs {
-		if string(got) != string(want) {
-			t.Errorf("EventKind %q != observability.Kind %q", got, want)
-		}
-	}
-}
+func (c *countingReporter) Report(observability.Fact) { c.n++ }
 
-type countingSink struct{ n int }
-
-func (c *countingSink) Emit(observability.ObsEvent) { c.n++ }
-
-// The engine config's default ObservationSink is echo-only (never nil); an
-// explicit sink overrides it.
-func TestThresherConfigObservationSink(t *testing.T) {
+// TestThresherConfigReporter: the engine config's default Reporter is echo-only
+// (never nil); an explicit reporter overrides it.
+func TestThresherConfigReporter(t *testing.T) {
 	c := defaultConfig()
-	if c.ObservationSink() == nil {
-		t.Fatal("defaultConfig().ObservationSink() = nil, want echo-only")
+	if c.Reporter() == nil {
+		t.Fatal("defaultConfig().Reporter() = nil, want echo-only")
 	}
 
-	cs := &countingSink{}
-	c.obsSink = cs
+	cr := &countingReporter{}
+	c.reporter = cr
 
-	if got := c.ObservationSink(); got != cs {
-		t.Errorf("ObservationSink() = %v, want the explicit sink %v", got, cs)
+	if got := c.Reporter(); got != cr {
+		t.Errorf("Reporter() = %v, want the explicit reporter %v", got, cr)
 	}
 }

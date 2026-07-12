@@ -47,10 +47,10 @@ func TestInstanceObservers(t *testing.T) {
 
 	var (
 		mu  sync.Mutex
-		got []observability.ObsEvent
+		got []observability.Fact
 	)
 
-	cancel := inst.AddObserver(func(ev observability.ObsEvent) {
+	cancel := inst.AddObserver(func(ev observability.Fact) {
 		mu.Lock()
 		got = append(got, ev)
 		mu.Unlock()

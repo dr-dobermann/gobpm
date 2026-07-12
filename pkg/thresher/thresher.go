@@ -159,7 +159,7 @@ type Thresher struct {
 	taskDist interactor.TaskDistributor
 	keyLocks *keyLockManager
 	// producer is the engine's single observable-event sink (SRD-041): it backs
-	// t.cfg.obsSink (so every instance/hub/dispatcher emits through it) and the
+	// t.cfg.reporter (so every instance/hub/dispatcher emits through it) and the
 	// engine-scope Observe registry.
 	producer *producer
 	id       string
@@ -208,17 +208,17 @@ func New(id string, opts ...Option) (*Thresher, error) {
 
 	// The single observable-event producer (SRD-041 FR-4): bound to the
 	// configured logger, with the visibility capabilities asserted once against
-	// the authorizer. Installed as the engine's ObservationSink so every
+	// the authorizer. Installed as the engine's Reporter so every
 	// instance/hub/dispatcher emits through it and Thresher.Observe registers on
 	// it. Replaces the echo-only default the config carries pre-assembly.
 	t.producer = newProducer(cfg.Logger(), cfg.AuthorizationProvider())
-	t.cfg.obsSink = t.producer
+	t.cfg.reporter = t.producer
 
 	// Bind the producer to the dispatcher (when it accepts one) so the
 	// dispatcher's job-lifecycle events land on the same seam (SRD-041 §3.2). A
 	// dispatcher without the binder simply does not emit.
-	if ob, ok := cfg.WorkerDispatcher().(tasks.ObservationSinkBinder); ok {
-		ob.BindObservationSink(t.producer)
+	if ob, ok := cfg.WorkerDispatcher().(tasks.ReporterBinder); ok {
+		ob.BindReporter(t.producer)
 	}
 
 	// Bind the engine as the worker dispatcher's completion sink (when it accepts

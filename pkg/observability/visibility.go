@@ -7,7 +7,7 @@ package observability
 // pass-through (the ADR default), and no per-event assertion is paid. ok=false
 // suppresses the log record entirely.
 type LogRedactor interface {
-	RedactLog(ev ObsEvent) (ObsEvent, bool)
+	RedactLog(ev Fact) (Fact, bool)
 }
 
 // ObservationFilter is an optional capability an AuthorizationProvider MAY
@@ -17,5 +17,5 @@ type LogRedactor interface {
 // policy decides what it means). ok=false denies delivery to that recipient: a
 // policy denial, distinct from a counted buffer drop.
 type ObservationFilter interface {
-	FilterObservation(observer any, ev ObsEvent) (ObsEvent, bool)
+	FilterObservation(observer any, ev Fact) (Fact, bool)
 }

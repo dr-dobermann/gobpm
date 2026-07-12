@@ -38,7 +38,7 @@ type thresherConfig struct {
 	authz                 auth.AuthorizationProvider
 	workerRetryPolicy     tasks.RetryPolicy
 	taskDist              interactor.TaskDistributor
-	obsSink               observability.ObsSink
+	reporter               observability.Reporter
 	workerTrustDefault    tasks.TrustMode
 	suppressBanner        bool
 	suppressStartupConfig bool
@@ -292,15 +292,15 @@ func (c *thresherConfig) AuthorizationProvider() auth.AuthorizationProvider {
 
 func (c *thresherConfig) WorkerDispatcher() tasks.WorkerDispatcher { return c.dispatcher }
 
-// ObservationSink returns the engine's observable-event sink (ADR-013 v.2 §2.7).
+// Reporter returns the engine's observable-event sink (ADR-013 v.2 §2.7).
 // Absent an explicit sink, it returns an echo-only producer bound to the
 // configured logger — never nil, preserving the visible-by-default posture.
-func (c *thresherConfig) ObservationSink() observability.ObsSink {
-	if c.obsSink != nil {
-		return c.obsSink
+func (c *thresherConfig) Reporter() observability.Reporter {
+	if c.reporter != nil {
+		return c.reporter
 	}
 
-	return observability.NewEchoSink(c.logger)
+	return observability.NewEchoReporter(c.logger)
 }
 
 func (c *thresherConfig) WorkerErrorMapper() tasks.ErrorMapper { return c.workerErrorMapper }

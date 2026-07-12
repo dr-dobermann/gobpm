@@ -13,12 +13,12 @@ import (
 // bindingDispatcher is a capDispatcher that also records the startup binder calls,
 // so a test can assert the engine wires the dispatcher (SRD-038 §3.4, SRD-041
 // §3.2): the completion sink (SinkBinder), the expression engine
-// (ExpressionEngineBinder), and the observation sink (ObservationSinkBinder).
+// (ExpressionEngineBinder), and the observation sink (ReporterBinder).
 type bindingDispatcher struct {
 	capDispatcher
 	sink      tasks.JobCompletionSink
 	exprBound expression.Engine
-	obsSink   observability.ObsSink
+	reporter   observability.Reporter
 }
 
 func (d *bindingDispatcher) BindSink(s tasks.JobCompletionSink) { d.sink = s }
@@ -27,15 +27,15 @@ func (d *bindingDispatcher) BindExpressionEngine(ee expression.Engine) {
 	d.exprBound = ee
 }
 
-func (d *bindingDispatcher) BindObservationSink(s observability.ObsSink) {
-	d.obsSink = s
+func (d *bindingDispatcher) BindReporter(s observability.Reporter) {
+	d.reporter = s
 }
 
 // TestThresherBindsExpressionEngineToDispatcher covers §3.4: at startup the engine
 // binds its expression engine onto the dispatcher (ExpressionEngineBinder), so the
 // dispatcher can run a Job's ErrorMapper when it classifies a raw fault. It also
 // covers SRD-041 §3.2: the engine binds its observation sink onto the dispatcher
-// (ObservationSinkBinder), so the dispatcher's job-lifecycle events land on the
+// (ReporterBinder), so the dispatcher's job-lifecycle events land on the
 // one seam.
 func TestThresherBindsExpressionEngineToDispatcher(t *testing.T) {
 	disp := &bindingDispatcher{}
@@ -46,6 +46,6 @@ func TestThresherBindsExpressionEngineToDispatcher(t *testing.T) {
 	require.NotNil(t, disp.exprBound,
 		"the dispatcher received the engine's expression engine")
 	require.NotNil(t, disp.sink, "the dispatcher received the completion sink")
-	require.NotNil(t, disp.obsSink,
+	require.NotNil(t, disp.reporter,
 		"the dispatcher received the engine's observation sink")
 }

@@ -104,7 +104,7 @@ func (ls *loopState) armBoundaries(t *track, node flow.Node) {
 
 			// The boundary now guards the activity's execution window (SRD-041
 			// §3.4).
-			ls.inst.observe(observability.ObsEvent{
+			ls.inst.report(observability.Fact{
 				Kind:     observability.KindBoundary,
 				Phase:    observability.PhaseArmed,
 				NodeID:   bev.ID(),
@@ -137,7 +137,7 @@ func (ls *loopState) disarmBoundaries(trackID string) {
 
 		// The activity's window closed — the boundary no longer guards it
 		// (SRD-041 §3.4).
-		ls.inst.observe(observability.ObsEvent{
+		ls.inst.report(observability.Fact{
 			Kind:     observability.KindBoundary,
 			Phase:    observability.PhaseDisarmed,
 			NodeID:   w.boundary.ID(),
@@ -181,7 +181,7 @@ func (ls *loopState) fireBoundary(ctx context.Context, ev trackEvent) {
 
 	// The boundary fired and continued the instance on its outgoing flow
 	// (SRD-041 §3.4).
-	ls.inst.observe(observability.ObsEvent{
+	ls.inst.report(observability.Fact{
 		Kind:     observability.KindBoundary,
 		Phase:    observability.PhaseFired,
 		NodeID:   ev.node.ID(),
@@ -225,7 +225,7 @@ func (ls *loopState) matchErrorBoundary(ctx context.Context, t *track) bool {
 				}
 
 				// The boundary caught the thrown fault (SRD-041 §3.4).
-				ls.inst.observe(observability.ObsEvent{
+				ls.inst.report(observability.Fact{
 					Kind:     observability.KindFault,
 					Phase:    observability.PhaseCaught,
 					NodeID:   bev.ID(),
@@ -244,7 +244,7 @@ func (ls *loopState) matchErrorBoundary(ctx context.Context, t *track) bool {
 	// A thrown BpmnError with no matching boundary escapes the activity —
 	// Uncaught (SRD-041 §3.4); the caller faults the instance, whose separate
 	// InstanceState/Failed record carries the operator-facing Error echo.
-	ls.inst.observe(observability.ObsEvent{
+	ls.inst.report(observability.Fact{
 		Kind:    observability.KindFault,
 		Phase:   observability.PhaseUncaught,
 		Details: map[string]string{observability.AttrError: be.Code},

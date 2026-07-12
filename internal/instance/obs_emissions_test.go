@@ -23,10 +23,10 @@ import (
 // obsRecorder captures every observable event an instance emits.
 type obsRecorder struct {
 	mu     sync.Mutex
-	events []observability.ObsEvent
+	events []observability.Fact
 }
 
-func (r *obsRecorder) record(ev observability.ObsEvent) {
+func (r *obsRecorder) record(ev observability.Fact) {
 	r.mu.Lock()
 	r.events = append(r.events, ev)
 	r.mu.Unlock()

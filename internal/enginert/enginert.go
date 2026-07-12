@@ -40,7 +40,7 @@ type Runtime struct {
 	dispatcher         tasks.WorkerDispatcher
 	workerErrorMapper  tasks.ErrorMapper
 	workerRetryPolicy  tasks.RetryPolicy
-	obsSink            observability.ObsSink
+	reporter            observability.Reporter
 	workerTrustDefault tasks.TrustMode
 }
 
@@ -133,22 +133,22 @@ func (r *Runtime) AuthorizationProvider() auth.AuthorizationProvider { return r.
 // WorkerDispatcher returns the configured worker dispatcher.
 func (r *Runtime) WorkerDispatcher() tasks.WorkerDispatcher { return r.dispatcher }
 
-// ObservationSink returns the engine's observable-event sink (ADR-013 v.2 §2.7).
+// Reporter returns the engine's observable-event sink (ADR-013 v.2 §2.7).
 // Absent an explicit sink, it returns an echo-only producer bound to the current
 // logger, so the result is never nil and the visible-by-default posture holds.
-func (r *Runtime) ObservationSink() observability.ObsSink {
-	if r.obsSink != nil {
-		return r.obsSink
+func (r *Runtime) Reporter() observability.Reporter {
+	if r.reporter != nil {
+		return r.reporter
 	}
 
-	return observability.NewEchoSink(r.logger)
+	return observability.NewEchoReporter(r.logger)
 }
 
-// WithObservationSink overrides the observable-event sink and returns the Runtime
+// WithReporter overrides the observable-event sink and returns the Runtime
 // for chaining. A nil sink is ignored (the echo-only default is kept).
-func (r *Runtime) WithObservationSink(s observability.ObsSink) *Runtime {
+func (r *Runtime) WithReporter(s observability.Reporter) *Runtime {
 	if s != nil {
-		r.obsSink = s
+		r.reporter = s
 	}
 
 	return r

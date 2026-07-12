@@ -51,7 +51,7 @@ func (inst *Instance) State() State {
 // atomic, so no lock is needed.
 func (inst *Instance) setState(newState State) {
 	inst.state.Store(uint32(newState))
-	inst.observe(observability.ObsEvent{
+	inst.report(observability.Fact{
 		Kind:  observability.KindInstanceState,
 		Phase: observability.Phase(newState.String()),
 	})

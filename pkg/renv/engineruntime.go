@@ -31,12 +31,12 @@ type EngineRuntime interface {
 	AuthorizationProvider() auth.AuthorizationProvider
 	WorkerDispatcher() tasks.WorkerDispatcher
 
-	// ObservationSink returns the engine's observable-event sink (ADR-013 v.2
+	// Reporter returns the engine's observable-event sink (ADR-013 v.2
 	// §2.7): the single producer that writes the operator-log echo and fans
-	// every ObsEvent out to the registered observers. Never nil — absent an
+	// every Fact out to the registered observers. Never nil — absent an
 	// explicit sink, an echo-only producer bound to Logger() is returned, so
 	// the visible-by-default posture holds and node emitters can always emit.
-	ObservationSink() observability.ObsSink
+	Reporter() observability.Reporter
 
 	// WorkerErrorMapper is the engine-wide default ErrorMapper applied to a
 	// worker-dispatched ServiceTask's raw fault when the task carries no

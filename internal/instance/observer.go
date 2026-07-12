@@ -4,18 +4,18 @@ import "github.com/dr-dobermann/gobpm/pkg/observability"
 
 // obsReg is one registered observer sink with its cancellation id.
 type obsReg struct {
-	fn func(observability.ObsEvent)
+	fn func(observability.Fact)
 	id uint64
 }
 
 // AddObserver registers a sink on the instance's observation stream and returns
 // a cancel func that deregisters it (SRD-018). The sink receives the canonical
-// observability.ObsEvent — one event type from emitter to delivery (SRD-041
+// observability.Fact — one event type from emitter to delivery (SRD-041
 // FR-1). It MUST NOT block: it is called on the execution hot path (every
 // instance/track transition) under a read lock, so the public thresher handle
 // wraps it with a buffered, lossy, separately-drained delivery. A nil sink is
 // ignored.
-func (inst *Instance) AddObserver(fn func(observability.ObsEvent)) func() {
+func (inst *Instance) AddObserver(fn func(observability.Fact)) func() {
 	if fn == nil {
 		return func() {}
 	}
@@ -54,16 +54,16 @@ func (inst *Instance) removeObserver(id uint64) {
 // to the engine sink, which writes the operator-log echo and fans out to the
 // engine-scope observers. The engine fan-out/echo runs off the obsMu lock, so a
 // slow producer never stalls the local dispatch.
-func (inst *Instance) observe(ev observability.ObsEvent) {
+func (inst *Instance) report(ev observability.Fact) {
 	inst.obsMu.RLock()
 	hasLocal := len(inst.observers) > 0
 	inst.obsMu.RUnlock()
 
 	// The engine sink is reached through the embedded runtime; a bare Instance
 	// (constructed without New — the isolated unit tests) has none.
-	var sink observability.ObsSink
+	var sink observability.Reporter
 	if inst.EngineRuntime != nil {
-		sink = inst.ObservationSink()
+		sink = inst.Reporter()
 	}
 
 	// The hot-path guard (NFR-1): with no local observer AND no engine sink,
@@ -93,7 +93,7 @@ func (inst *Instance) observe(ev observability.ObsEvent) {
 	}
 
 	if sink != nil {
-		sink.Emit(ev)
+		sink.Report(ev)
 	}
 }
 
@@ -101,7 +101,7 @@ func (inst *Instance) observe(ev observability.ObsEvent) {
 // lock. Holding the lock across the dispatch is what lets removeObserver
 // guarantee no sink call is in flight. With no observers it returns at once — the
 // local path costs only the empty check when nobody is listening.
-func (inst *Instance) fanoutLocal(ev observability.ObsEvent) {
+func (inst *Instance) fanoutLocal(ev observability.Fact) {
 	inst.obsMu.RLock()
 	defer inst.obsMu.RUnlock()
 

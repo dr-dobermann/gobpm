@@ -100,7 +100,7 @@ const (
 
 // The canonical detail-attribute keys (ADR-022 v.1 §2.5 vocabulary, ADR-013 v.2
 // §2.9). Untyped named string constants: one set of keys serves both an
-// ObsEvent's Details map and a slog echo's key/value args — so the observer
+// Fact's Details map and a slog echo's key/value args — so the observer
 // stream and the operator log correlate on the same names.
 const (
 	AttrInstanceID        = "instance_id"
@@ -123,7 +123,7 @@ const (
 	AttrChosenFlows       = "chosen_flows"
 )
 
-// ObsEvent is the canonical observable engine event (ADR-013 v.2 §2.6/§2.9): a
+// Fact is the canonical observable engine event (ADR-013 v.2 §2.6/§2.9): a
 // failure or a major-object lifecycle transition. It is the ONE event type
 // every emitter produces — engine, event hub, dispatcher, instance loop, and
 // pkg/model nodes — so there is no cross-package mapping between an internal and
@@ -132,7 +132,7 @@ const (
 // It carries identity, phase and timing only — never process payload values
 // (the masking rule, ADR-010/011). Kind-specific identifiers live in Details,
 // keyed by the Attr* vocabulary above.
-type ObsEvent struct {
+type Fact struct {
 	At       time.Time
 	Details  map[string]string
 	Kind     Kind
@@ -141,15 +141,15 @@ type ObsEvent struct {
 	NodeName string
 }
 
-// ObsSink is the single producer behind every observable event (ADR-013 v.2
-// §2.7): its Emit writes the operator-log echo AND fans the event out to the
-// registered observers. Emit MUST be non-blocking for the caller — it runs on
+// Reporter is the single producer behind every observable event (ADR-013 v.2
+// §2.7): its Report writes the operator-log echo AND fans the event out to the
+// registered observers. Report MUST be non-blocking for the caller — it runs on
 // the execution hot path — so a slow observer drops events rather than stalling
 // the engine, and the log echo is a plain synchronous logger call.
 //
-// The engine's default sink is echo-only (NewEchoSink) — never a silent no-op,
+// The engine's default sink is echo-only (NewEchoReporter) — never a silent no-op,
 // so the visible-by-default posture (ADR-022 §2.6) holds even before any
 // observer registers.
-type ObsSink interface {
-	Emit(ev ObsEvent)
+type Reporter interface {
+	Report(ev Fact)
 }

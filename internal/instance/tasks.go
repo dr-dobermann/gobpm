@@ -165,7 +165,7 @@ func (ls *loopState) handleTaskRequest(ctx context.Context, req taskRequest) {
 
 	if req.kind == reqTake {
 		// The actor took the task for work (SRD-041 §3.4).
-		ls.inst.observe(observability.ObsEvent{
+		ls.inst.report(observability.Fact{
 			Kind:     observability.KindTaskState,
 			Phase:    observability.PhaseTaken,
 			NodeID:   entry.node.ID(),
@@ -225,7 +225,7 @@ func (ls *loopState) completeTask(
 	// The actor completed the task; the parked track resumes (SRD-041 §3.4).
 	// The following withdrawTask additionally emits Withdrawn — the distributor
 	// retraction is a distinct fact from the lifecycle completion.
-	ls.inst.observe(observability.ObsEvent{
+	ls.inst.report(observability.Fact{
 		Kind:     observability.KindTaskState,
 		Phase:    observability.PhaseCompleted,
 		NodeID:   entry.node.ID(),
@@ -262,7 +262,7 @@ func (ls *loopState) addTask(
 	}
 
 	// The task is parked and announced to the distributor (SRD-041 §3.4).
-	inst.observe(observability.ObsEvent{
+	inst.report(observability.Fact{
 		Kind:     observability.KindTaskState,
 		Phase:    observability.PhaseAnnounced,
 		NodeID:   node.ID(),
@@ -338,7 +338,7 @@ func (inst *Instance) withdrawTask(ctx context.Context, taskID string) {
 
 	// The task was retracted from the distributor (SRD-041 §3.4) — on completion,
 	// cancellation, or instance teardown.
-	inst.observe(observability.ObsEvent{
+	inst.report(observability.Fact{
 		Kind:    observability.KindTaskState,
 		Phase:   observability.PhaseWithdrawn,
 		Details: map[string]string{observability.AttrTaskID: taskID},

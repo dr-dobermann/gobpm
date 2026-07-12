@@ -54,7 +54,7 @@ func (inst *Instance) guardEval(ctx context.Context) exec.GuardEval {
 // reaches the host only after StartProcess), so it reaches the engine sink +
 // echo.
 func (inst *Instance) announceCreated() {
-	inst.observe(observability.ObsEvent{
+	inst.report(observability.Fact{
 		Kind:  observability.KindInstanceState,
 		Phase: observability.PhaseCreated,
 	})
@@ -72,7 +72,7 @@ func (inst *Instance) fail(err error) {
 	// Logger().Error call — one producer, two channels (SRD-041 FR-4). Failed is
 	// phase-only: the State enum is untouched, so State()/WaitCompletion still
 	// report Terminated.
-	inst.observe(observability.ObsEvent{
+	inst.report(observability.Fact{
 		Kind:    observability.KindInstanceState,
 		Phase:   observability.PhaseFailed,
 		Details: map[string]string{observability.AttrError: err.Error()},

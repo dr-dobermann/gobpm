@@ -27,7 +27,7 @@ kinds emitted from **two** `notify()` sites (`internal/instance/lifecycle.go:53`
 ## 1. Background & current state (verified against the code)
 
 - **Internal event side** (`internal/instance/observer.go`): `ObsKind` is a
-  2-value `uint8` enum (`ObsInstanceState`, `ObsNodeProgress`); `ObsEvent` is
+  2-value `uint8` enum (`InstanceState`, `NodeProgress`); `Fact` is
   `{At, NodeID, NodeName, State string, Kind}` — no details map, no instance
   id (added later by the public wrapper). `notify(kind, nodeID, nodeName,
   state)` fans out under `obsMu` read-lock; it builds the event only when
@@ -40,13 +40,13 @@ kinds emitted from **two** `notify()` sites (`internal/instance/lifecycle.go:53`
   goroutine + drop counter (`observerBuffer = 64`); `eventKind()` maps
   internal→public and **already falls back to `k.String()`** for unknown
   kinds — new internal kinds auto-map.
-- **Emission gaps**: per the gap matrix — instance states emit ObsEvents but
+- **Emission gaps**: per the gap matrix — instance states emit Facts but
   no log (`setState`, `lifecycle.go:51-53`); `Created` bypasses `notify`
   (`instance.go:163` raw `state.Store`); node progress collapses `trackState`
   to a 3-value token projection (`token.go:95-117` via `track.record`,
   `track.go:236`); everything engine-side (thresher states, hub, process
   registration, the whole `localdispatcher` job lifecycle), correlation,
-  user tasks, boundaries, and faults emit **no** ObsEvent; gateway decisions,
+  user tasks, boundaries, and faults emit **no** Fact; gateway decisions,
   task-taken, boundary arm/disarm, and boundary-caught faults
   (`track.go:648-658` `discardOrFail` + `boundary_watch.go:177-208`
   `matchErrorBoundary`) are silent on **both** channels.
@@ -75,22 +75,22 @@ kinds emitted from **two** `notify()` sites (`internal/instance/lifecycle.go:53`
 - **FR-1 — the canonical vocabulary, public, one event type.** The 13 ADR-013
   §2.6 kinds and their phase sets exist as public string constants
   (`thresher.EventKind` extends; kind/phase strings defined once beside the
-  canonical event). The internal `instance.ObsEvent`/`ObsKind` pair is
-  **replaced** by the canonical `obs.ObsEvent` (§3.2) — one type from emitter
+  canonical event). The internal `instance.Fact`/`ObsKind` pair is
+  **replaced** by the canonical `obs.Fact` (§3.2) — one type from emitter
   to delivery; `Instance.AddObserver`'s callback signature changes accordingly
   (internal, package-private consumers only — verified: the sole external
   consumer is the handle wrapper).
-- **FR-2 — the details map.** Both the internal `ObsEvent` and the public
+- **FR-2 — the details map.** Both the internal `Fact` and the public
   `Event` gain `Details map[string]string`; keys come from the ADR-022 §2.5
   canonical vocabulary (`instance_id`, `node_id`, `job_id`, `task_id`,
   `correlation_key`/`correlation_value`, `error`, …). Masking holds: ids,
   names, states, codes — never payload values.
-- **FR-3 — the sink seam.** A minimal public sink contract (an
-  `Emit(Event)`-style single-method interface) joins the engine extension
+- **FR-3 — the Reporter seam.** A minimal public sink contract (an
+  `Report(Fact)`-style single-method interface) joins the engine extension
   set: `EngineRuntime` gains an accessor for it (the `Logger()` pattern), so
   the hub, the dispatcher, and — via `RuntimeEnvironment` — every node reach
   the same producer the instance uses.
-- **FR-4 — one producer, two channels.** The sink's `Emit` is THE producer:
+- **FR-4 — one producer, two channels.** The sink's `Report` is THE producer:
   it (a) writes the operator-log echo at the kind/phase-mapped ADR-022 level
   (with the event's details as the log attributes), and (b) fans out to the
   engine-scope observers — after the §2.11 visibility checks. Instance-scope
@@ -113,7 +113,7 @@ kinds emitted from **two** `notify()` sites (`internal/instance/lifecycle.go:53`
   announced/taken/completed/withdrawn, boundary armed/fired/disarmed, and
   faults Thrown/Caught/Uncaught (closing the silent boundary-caught path).
 - **FR-7 — data changes.** The dormant `data.UpdateCallback` becomes the
-  `ObsDataChange` source: instance-committed values get a callback that emits
+  `DataChange` source: instance-committed values get a callback that emits
   (element name/id + change type, never the value) to the observer stream
   only — **no log echo** (the flood guard).
 - **FR-8 — visibility capabilities.** Two optional interfaces (working names
@@ -136,12 +136,12 @@ kinds emitted from **two** `notify()` sites (`internal/instance/lifecycle.go:53`
 - **NFR-2 — no new races.** Emission points ride their existing execution
   contexts (the instance loop, the thresher's locked sections, the
   waiter/dispatcher goroutines that already log there) — except
-  `ObsDataChange`, whose values fan-out runs on its own goroutine
-  (`sendVariableUpdates`/`sendArrayUpdates`), so the sink's `Emit` MUST be
+  `DataChange`, whose values fan-out runs on its own goroutine
+  (`sendVariableUpdates`/`sendArrayUpdates`), so the sink's `Report` MUST be
   safe to call from arbitrary goroutines (it is: the echo is a logger call;
   the fan-out is the existing lock-guarded non-blocking send). `-race` clean.
 - **NFR-3 — ADR-022 conformance.** Echo levels follow §2.4 (hot-path kinds at
-  `Debug`; `ObsDataChange` echoes nothing); attribute keys follow §2.5; no
+  `Debug`; `DataChange` echoes nothing); attribute keys follow §2.5; no
   log-and-return regressions.
 - **NFR-4 — coverage.** Diff-coverage ≥95% (aim 100%) per `make ci`; every
   new emission path exercised.
@@ -171,15 +171,15 @@ EventDataChange      EventKind = "DataChange"      // Value_Added/Updated/Delete
 existing `EventInstanceState`/`EventNodeProgress` stay; `EventTokenMoved`
 stays reserved.
 
-### 3.2 The sink seam (`pkg/observability` + `pkg/renv`)
+### 3.2 the Reporter seam (`pkg/observability` + `pkg/renv`)
 
 ```go
 // pkg/observability — beside Logger/Tracer/MetricsRecorder.
-// ObsSink receives every observable engine event (ADR-013 v.2 §2.7): the
+// Reporter receives every observable engine event (ADR-013 v.2 §2.7): the
 // single producer behind it writes the log echo and fans out to observers.
-// Emit must be non-blocking for the caller.
-type ObsSink interface {
-	Emit(ev ObsEvent)
+// Report must be non-blocking for the caller.
+type Reporter interface {
+	Report(ev Fact)
 }
 ```
 
@@ -189,7 +189,7 @@ vocabulary is discoverable): `type Kind string` (the 13 §2.6 kinds as typed
 consts) and `type Phase string` (the per-kind phases as typed consts).
 
 ```go
-type ObsEvent struct {
+type Fact struct {
 	At       time.Time
 	Kind     Kind
 	Phase    Phase
@@ -207,10 +207,10 @@ a **type alias** of `observability.Kind` (`type EventKind = observability.Kind`)
 so the public kind constants are the same values with no conversion, and the
 existing `EventInstanceState`/`EventNodeProgress` consts keep working. So
 `internal/instance`, the hub, the dispatcher, and
-`pkg/model` nodes all emit one type (the internal `ObsEvent`/`ObsKind` pair is
+`pkg/model` nodes all emit one type (the internal `Fact`/`ObsKind` pair is
 replaced — FR-1); `thresher.Event` remains the delivered public shape
 (constructed from it, `InstanceID` promoted from details for compatibility).
-`EngineRuntime` gains `ObservationSink() observability.ObsSink`; the internal
+`EngineRuntime` gains `Reporter() observability.Reporter`; the internal
 emitters (the instance loop, the hub, the dispatcher) reach the sink through it.
 The one node-level emission — a gateway's branch decision — is emitted by the
 track at its node-execution site (§3.4), not from inside `Exec`, so a gateway's
@@ -227,8 +227,8 @@ a true no-op sink exists only as an explicit opt-out.
 
 **The dispatcher binder.** `localdispatcher.Dispatcher` holds no runtime — it
 receives capabilities via the optional binder pattern (`tasks.LoggerBinder`
-et al.). A new optional `tasks.ObservationSinkBinder{BindObservationSink(
-observability.ObsSink)}` joins that set; the Thresher binds it at startup
+et al.). A new optional `tasks.ReporterBinder{BindReporter(
+observability.Reporter)}` joins that set; the Thresher binds it at startup
 exactly like the logger. A third-party dispatcher without it simply does not
 emit (the optional-capability pattern).
 
@@ -254,7 +254,7 @@ either, and denied ≠ dropped in both scopes.
 retries emits once:
 
 ```go
-sink.Emit(obs.ObsEvent{
+sink.Report(obs.Fact{
     Kind: "JobState", Phase: "RetriesExhausted",
     Details: map[string]string{
         "instance_id": iid, "job_id": jid, "topic": tp,
@@ -292,13 +292,13 @@ stream. One call, two channels, one vocabulary.
 // LogRedactor — optional capability on the AuthorizationProvider: transform
 // or suppress the log echo of an observable event (ADR-013 v.2 §2.11).
 type LogRedactor interface {
-	RedactLog(ev ObsEvent) (ObsEvent, bool) // ok=false suppresses the record
+	RedactLog(ev Fact) (Fact, bool) // ok=false suppresses the record
 }
 
 // ObservationFilter — optional capability: per-recipient visibility of an
 // observable event. ok=false denies delivery (not a counted drop).
 type ObservationFilter interface {
-	FilterObservation(observer any, ev ObsEvent) (ObsEvent, bool)
+	FilterObservation(observer any, ev Fact) (Fact, bool)
 }
 ```
 
@@ -312,7 +312,7 @@ neither — pass-through by default, per the ADR.
   registry): the hub already holds the runtime, nodes reach it for free
   through `RuntimeEnvironment`, and the accessor pattern (`Logger()`) is the
   established seam. The dispatcher is the one component holding *no* runtime
-  — it gets the sink via the optional `ObservationSinkBinder` (§3.2),
+  — it gets the sink via the optional `ReporterBinder` (§3.2),
   mirroring its existing `LoggerBinder`. `enginert.Default()` stays usable in
   tests because its default sink is the **echo-only producer** (§3.2), never
   a silent no-op — the relocated fault echo and every Info lifecycle record
@@ -320,14 +320,14 @@ neither — pass-through by default, per the ADR.
   through every constructor (churn), or hub/dispatcher events emitted by the
   Thresher on their behalf (loses in-context details).
 - **Why one canonical event type in `pkg/observability`**: three shapes
-  (internal ObsEvent / public Event / a new engine event) would need N×N
+  (internal Fact / public Event / a new engine event) would need N×N
   mapping; ADR-012 puts shared public contracts in `pkg/*`. The thin
   `thresher.Event` wrapper survives for API compatibility only.
 - **Why `Instance.fail`'s Error log moves into the producer**: FR-4's one
   producer would otherwise double-report the fault (the `Uncaught` echo + the
   existing direct log) — the echo *is* the record; content (level, keys,
   error message) is preserved verbatim.
-- **Risk — public interface extension.** Adding `ObservationSink()` to
+- **Risk — public interface extension.** Adding `Reporter()` to
   `EngineRuntime` breaks third-party *implementers* of the interface (none
   known; embedders consume it). Flagged in §5; mockrenv regenerates.
 - **Risk — emission volume in tests.** Existing log-capture tests assert
@@ -338,9 +338,9 @@ neither — pass-through by default, per the ADR.
 ## 5. Public API surface
 
 Additive: `thresher.Event.Details`, eleven `EventKind` consts,
-`Thresher.Observe`, `observability.ObsEvent`/`ObsSink`/`LogRedactor`/
-`ObservationFilter`, `tasks.ObservationSinkBinder`,
-`EngineRuntime.ObservationSink()` (**the one breaking change for external
+`Thresher.Observe`, `observability.Fact`/`Reporter`/`LogRedactor`/
+`ObservationFilter`, `tasks.ReporterBinder`,
+`EngineRuntime.Reporter()` (**the one breaking change for external
 `EngineRuntime` implementers** — none known; documented in the changelog at
 release). No removals; `InstanceHandle.Observe` keeps its signature and
 delivery contract. **One behavior change on an existing kind**: the
@@ -356,7 +356,7 @@ and the token projection remains available on the handle's token view.
 |---|---|---|
 | T-1 | taxonomy round-trip | every internal kind maps to its public string; unknown-kind fallback intact |
 | T-2 | engine-scope registry | `Thresher.Observe` receives engine kinds AND a launched instance's events with `instance_id`; drop counter + cancel semantics match the handle's |
-| T-3 | producer echo | a captured logger shows one record per emitted event at the §2.6 level with §2.5 keys; `ObsDataChange` echoes nothing |
+| T-3 | producer echo | a captured logger shows one record per emitted event at the §2.6 level with §2.5 keys; `DataChange` echoes nothing |
 | T-4 | emission completeness | a worked **two-process scenario** (correlation needs a message partner: a catcher process + a thrower/message source) exercising a service task w/ worker + retry, a user task, a gateway decision, a boundary-caught error, and message correlation drives the engine-scope observer; the seen (kind, phase) set covers every implemented catalog row — the FR-6 canary. Every ingredient has a landed example to crib from (service-task-worker, usertask, gateway-routing, boundary-events, inter-instance-correlation) |
 | T-5 | un-collapsed node phases | the stream distinguishes Entered/Executing/Completed/Failed (was 3-value) |
 | T-6 | fault triple | Thrown+Caught on a boundary-caught error (instance completes, no Uncaught); Thrown+Uncaught on an uncaught one |
@@ -369,11 +369,11 @@ and the token projection remains available on the handle's token view.
 
 | # | Scope |
 |---|---|
-| **M1** | The contracts: `obs.ObsEvent`/`ObsSink` + vocabulary/levels table, `EngineRuntime.ObservationSink()` (+enginert/thresherConfig **echo-only default sink**, mocks regen), `tasks.ObservationSinkBinder`, visibility capability interfaces (asserted, pass-through), `thresher.Event.Details` + kinds. T-1, T-8-partial. |
+| **M1** | The contracts: `obs.Fact`/`Reporter` + vocabulary/levels table, `EngineRuntime.Reporter()` (+enginert/thresherConfig **echo-only default sink**, mocks regen), `tasks.ReporterBinder`, visibility capability interfaces (asserted, pass-through), `thresher.Event.Details` + kinds. T-1, T-8-partial. |
 | **M2** | The producer + engine-scope registry: `Thresher.Observe`, echo writing, filters wired, instance-event relay; `Instance.observe()` replaces `notify` internals (existing kinds only). T-2, T-3, T-9, T-10. |
 | **M3** | Instance-layer emissions: `Created`+`Failed`, un-collapsed `NodeProgress`, gateway decisions, correlation, boundary, task states, the fault triple (incl. `fail()` echo relocation). T-5, T-6. |
 | **M4** | Engine-layer emissions: engine/hub states, process lifecycle, the job lifecycle in `localdispatcher`. |
-| **M5** | `ObsDataChange` via `UpdateCallback` wiring at scope commit. T-7. |
+| **M5** | `DataChange` via `UpdateCallback` wiring at scope commit. T-7. |
 | **M6** | The completeness canary (T-4), examples touch-up if warranted, ADR-013 v.2 flip to Accepted + RU twin catch-up, SAD row update, docs sync. |
 
 ## 8. Cross-doc
@@ -392,7 +392,7 @@ and the token projection remains available on the handle's token view.
       completeness canary covers every implemented catalog row.
 - [ ] Engine-scope `Observe` + instance relay live; handle behavior unchanged
       (T-10 green).
-- [ ] Echo levels/keys conform to ADR-022 (§2.4/§2.5); `ObsDataChange` has no
+- [ ] Echo levels/keys conform to ADR-022 (§2.4/§2.5); `DataChange` has no
       log echo; no log-and-return regressions.
 - [ ] Visibility capabilities asserted at wiring; pass-through default
       verified; denied ≠ dropped.

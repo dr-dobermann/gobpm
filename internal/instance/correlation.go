@@ -53,7 +53,7 @@ func (c *correlator) associate(name, value string) bool {
 
 	// A new conversation key was learned (SRD-041 §3.4). Emitted off c.m so the
 	// sink's echo/fan-out never runs under the correlator lock.
-	c.inst.observe(observability.ObsEvent{
+	c.inst.report(observability.Fact{
 		Kind:  observability.KindCorrelation,
 		Phase: observability.PhaseKeyAssociated,
 		Details: map[string]string{
@@ -171,7 +171,7 @@ func (c *correlator) validateAndAssociate(
 			// The message belongs to a different conversation — dropped. The
 			// producer echoes this at Debug, replacing the former direct log
 			// (SRD-041 §3.4).
-			c.inst.observe(observability.ObsEvent{
+			c.inst.report(observability.Fact{
 				Kind:  observability.KindCorrelation,
 				Phase: observability.PhaseMismatched,
 				Details: map[string]string{
@@ -195,7 +195,7 @@ func (c *correlator) validateAndAssociate(
 	// The message correlated to this instance's conversation (no mismatch, at
 	// least one declared key derived): announce Matched (SRD-041 §3.4).
 	if len(derived) != 0 {
-		c.inst.observe(observability.ObsEvent{
+		c.inst.report(observability.Fact{
 			Kind:    observability.KindCorrelation,
 			Phase:   observability.PhaseMatched,
 			Details: map[string]string{observability.AttrEventDefinitionID: eDef.ID()},

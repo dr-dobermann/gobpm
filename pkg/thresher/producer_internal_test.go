@@ -42,23 +42,23 @@ type capAuthz struct {
 	denyObserve bool
 }
 
-func (a capAuthz) RedactLog(ev observability.ObsEvent) (observability.ObsEvent, bool) {
+func (a capAuthz) RedactLog(ev observability.Fact) (observability.Fact, bool) {
 	return ev, !a.suppressLog
 }
 
-func (a capAuthz) FilterObservation(_ any, ev observability.ObsEvent) (observability.ObsEvent, bool) {
+func (a capAuthz) FilterObservation(_ any, ev observability.Fact) (observability.Fact, bool) {
 	return ev, !a.denyObserve
 }
 
-// recObserver records delivered events.
+// recObserver records delivered Facts.
 type recObserver struct {
 	mu  sync.Mutex
-	got []Event
+	got []observability.Fact
 }
 
-func (o *recObserver) OnEvent(ev Event) {
+func (o *recObserver) OnFact(f observability.Fact) {
 	o.mu.Lock()
-	o.got = append(o.got, ev)
+	o.got = append(o.got, f)
 	o.mu.Unlock()
 }
 
@@ -69,8 +69,8 @@ func (o *recObserver) count() int {
 	return len(o.got)
 }
 
-func lifecycleEvent() observability.ObsEvent {
-	return observability.ObsEvent{
+func lifecycleEvent() observability.Fact {
+	return observability.Fact{
 		Kind:  observability.KindInstanceState,
 		Phase: observability.PhaseActive,
 		Details: map[string]string{
@@ -79,13 +79,13 @@ func lifecycleEvent() observability.ObsEvent {
 	}
 }
 
-// TestProducerEchoesWithNoObservers (T-3/T-9): with no engine observers, Emit
+// TestProducerEchoesWithNoObservers (T-3/T-9): with no engine observers, Report
 // still writes the operator-log echo (visible-by-default) and delivers to no one.
 func TestProducerEchoesWithNoObservers(t *testing.T) {
 	log := &recLogger{}
 	p := newProducer(log, allowall.New())
 
-	p.Emit(lifecycleEvent())
+	p.Report(lifecycleEvent())
 
 	require.Equal(t, 1, log.count(), "the echo fires even with no observers")
 }
@@ -95,7 +95,7 @@ func TestProducerDataChangeDoesNotEcho(t *testing.T) {
 	log := &recLogger{}
 	p := newProducer(log, allowall.New())
 
-	p.Emit(observability.ObsEvent{
+	p.Report(observability.Fact{
 		Kind:  observability.KindDataChange,
 		Phase: observability.PhaseValueUpdated,
 	})
@@ -103,25 +103,25 @@ func TestProducerDataChangeDoesNotEcho(t *testing.T) {
 	require.Zero(t, log.count(), "DataChange is observer-stream only")
 }
 
-// TestProducerFanoutDelivers (T-2): a subscribed observer receives the event as
-// a public Event with the phase projected onto State and instance_id promoted.
+// TestProducerFanoutDelivers (T-2): a subscribed observer receives the canonical
+// Fact — kind, phase, and instance_id in Details.
 func TestProducerFanoutDelivers(t *testing.T) {
 	p := newProducer(&recLogger{}, allowall.New())
 
 	o := &recObserver{}
 	sub := p.subscribe(o)
 
-	p.Emit(lifecycleEvent())
+	p.Report(lifecycleEvent())
 
 	sub.Cancel() // drains
 
 	require.Equal(t, 1, o.count())
 	o.mu.Lock()
-	ev := o.got[0]
+	f := o.got[0]
 	o.mu.Unlock()
-	require.Equal(t, EventInstanceState, ev.Kind)
-	require.Equal(t, "Active", ev.State)
-	require.Equal(t, "inst-1", ev.InstanceID)
+	require.Equal(t, observability.KindInstanceState, f.Kind)
+	require.Equal(t, observability.PhaseActive, f.Phase)
+	require.Equal(t, "inst-1", f.Details[observability.AttrInstanceID])
 }
 
 // TestProducerLogRedactorSuppresses (T-8): a suppressing LogRedactor drops the
@@ -136,7 +136,7 @@ func TestProducerLogRedactorSuppresses(t *testing.T) {
 	o := &recObserver{}
 	sub := p.subscribe(o)
 
-	p.Emit(lifecycleEvent())
+	p.Report(lifecycleEvent())
 
 	sub.Cancel()
 
@@ -156,7 +156,7 @@ func TestProducerObservationFilterDenies(t *testing.T) {
 	o := &recObserver{}
 	sub := p.subscribe(o)
 
-	p.Emit(lifecycleEvent())
+	p.Report(lifecycleEvent())
 
 	require.Equal(t, 1, log.count(), "the echo is not affected by the observer filter")
 	require.Zero(t, o.count(), "the filter denied delivery")
@@ -176,7 +176,7 @@ func TestProducerDropsWhenBufferFull(t *testing.T) {
 	// One event unblocks into the drain (which then blocks); the rest overflow
 	// the buffer and are dropped.
 	for range observerBuffer + 10 {
-		p.Emit(lifecycleEvent())
+		p.Report(lifecycleEvent())
 	}
 
 	require.Positive(t, sub.Dropped())
@@ -185,7 +185,7 @@ func TestProducerDropsWhenBufferFull(t *testing.T) {
 	sub.Cancel()
 }
 
-// blockingRecObserver blocks in OnEvent until release is closed.
+// blockingRecObserver blocks in OnFact until release is closed.
 type blockingRecObserver struct{ release chan struct{} }
 
-func (b *blockingRecObserver) OnEvent(Event) { <-b.release }
+func (b *blockingRecObserver) OnFact(observability.Fact) { <-b.release }

@@ -38,14 +38,14 @@ func argMap(args []any) map[string]string {
 func TestEchoWritesOneRecordAtMappedLevel(t *testing.T) {
 	tests := []struct {
 		name      string
-		ev        ObsEvent
+		ev        Fact
 		wantLevel string
 		wantMsg   string
 	}{
-		{"lifecycle info", ObsEvent{Kind: KindEngineState, Phase: PhaseStarted}, "INFO", "EngineState Started"},
-		{"flow debug", ObsEvent{Kind: KindNodeProgress, Phase: PhaseEntered}, "DEBUG", "NodeProgress Entered"},
-		{"job warn", ObsEvent{Kind: KindJobState, Phase: PhaseRetriesExhausted}, "WARN", "JobState RetriesExhausted"},
-		{"fault error", ObsEvent{Kind: KindFault, Phase: PhaseUncaught}, "ERROR", "Fault Uncaught"},
+		{"lifecycle info", Fact{Kind: KindEngineState, Phase: PhaseStarted}, "INFO", "EngineState Started"},
+		{"flow debug", Fact{Kind: KindNodeProgress, Phase: PhaseEntered}, "DEBUG", "NodeProgress Entered"},
+		{"job warn", Fact{Kind: KindJobState, Phase: PhaseRetriesExhausted}, "WARN", "JobState RetriesExhausted"},
+		{"fault error", Fact{Kind: KindFault, Phase: PhaseUncaught}, "ERROR", "Fault Uncaught"},
 	}
 
 	for _, tt := range tests {
@@ -68,7 +68,7 @@ func TestEchoWritesOneRecordAtMappedLevel(t *testing.T) {
 
 func TestEchoFlattensIdentityAndDetails(t *testing.T) {
 	cl := &captureLogger{}
-	Echo(cl, ObsEvent{
+	Echo(cl, Fact{
 		Kind: KindJobState, Phase: PhaseRetriesExhausted,
 		NodeID: "n1", NodeName: "send",
 		Details: map[string]string{AttrJobID: "j1", AttrTopic: "orders"},
@@ -89,7 +89,7 @@ func TestEchoFlattensIdentityAndDetails(t *testing.T) {
 
 func TestEchoOmitsEmptyIdentity(t *testing.T) {
 	cl := &captureLogger{}
-	Echo(cl, ObsEvent{Kind: KindEngineState, Phase: PhaseStarted})
+	Echo(cl, Fact{Kind: KindEngineState, Phase: PhaseStarted})
 
 	if n := len(cl.records[0].args); n != 0 {
 		t.Errorf("got %d args for a bare event, want 0", n)
@@ -98,7 +98,7 @@ func TestEchoOmitsEmptyIdentity(t *testing.T) {
 
 func TestEchoMessageIsKindOnlyWhenPhaseless(t *testing.T) {
 	cl := &captureLogger{}
-	Echo(cl, ObsEvent{Kind: KindEngineState})
+	Echo(cl, Fact{Kind: KindEngineState})
 
 	if cl.records[0].msg != "EngineState" {
 		t.Errorf("msg = %q, want %q", cl.records[0].msg, "EngineState")
@@ -107,7 +107,7 @@ func TestEchoMessageIsKindOnlyWhenPhaseless(t *testing.T) {
 
 func TestEchoSkipsDataChange(t *testing.T) {
 	cl := &captureLogger{}
-	Echo(cl, ObsEvent{Kind: KindDataChange, Phase: PhaseValueUpdated})
+	Echo(cl, Fact{Kind: KindDataChange, Phase: PhaseValueUpdated})
 
 	if len(cl.records) != 0 {
 		t.Errorf("data change echoed %d records, want 0", len(cl.records))
@@ -116,22 +116,22 @@ func TestEchoSkipsDataChange(t *testing.T) {
 
 func TestEchoNilLoggerIsNoOp(t *testing.T) {
 	// Must not panic and must write nothing.
-	Echo(nil, ObsEvent{Kind: KindEngineState, Phase: PhaseStarted})
+	Echo(nil, Fact{Kind: KindEngineState, Phase: PhaseStarted})
 }
 
-func TestNewEchoSinkNilLoggerFallsBackToDefault(t *testing.T) {
-	s := NewEchoSink(nil)
+func TestNewEchoReporterNilLoggerFallsBackToDefault(t *testing.T) {
+	s := NewEchoReporter(nil)
 	if s == nil {
-		t.Fatal("NewEchoSink(nil) = nil")
+		t.Fatal("NewEchoReporter(nil) = nil")
 	}
 
-	// Backed by slog.Default(); Emit must not panic.
-	s.Emit(ObsEvent{Kind: KindEngineState, Phase: PhaseStarted})
+	// Backed by slog.Default(); Report must not panic.
+	s.Report(Fact{Kind: KindEngineState, Phase: PhaseStarted})
 }
 
 func TestEchoSinkEmitWritesToLogger(t *testing.T) {
 	cl := &captureLogger{}
-	NewEchoSink(cl).Emit(ObsEvent{Kind: KindEngineState, Phase: PhaseStarted})
+	NewEchoReporter(cl).Report(Fact{Kind: KindEngineState, Phase: PhaseStarted})
 
 	if len(cl.records) != 1 || cl.records[0].level != "INFO" {
 		t.Fatalf("expected one INFO record, got %+v", cl.records)

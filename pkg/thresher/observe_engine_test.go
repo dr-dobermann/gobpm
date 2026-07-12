@@ -21,8 +21,8 @@ type filterAuthz struct {
 }
 
 func (a filterAuthz) FilterObservation(
-	_ any, ev observability.ObsEvent,
-) (observability.ObsEvent, bool) {
+	_ any, ev observability.Fact,
+) (observability.Fact, bool) {
 	return ev, !a.deny
 }
 
@@ -78,8 +78,8 @@ func TestEngineObserveReceivesInstanceEvents(t *testing.T) {
 	require.NotEmpty(t, c.events)
 
 	for _, e := range c.events {
-		require.Equal(t, h.ID(), e.InstanceID)
-		require.Equal(t, h.ID(), e.Details[observability.AttrInstanceID])
+		require.Equal(t, h.ID(), e.Details[observability.AttrInstanceID],
+			"every delivered Fact carries its instance_id in Details")
 	}
 }
 

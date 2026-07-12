@@ -239,7 +239,7 @@ func (t *track) record(state trackState) {
 	// observing. The phase is the un-collapsed track state (SRD-041 FR-6), not
 	// the 3-value token projection — that projection stays on the handle's token
 	// view (Tokens()/History()).
-	t.instance.observe(observability.ObsEvent{
+	t.instance.report(observability.Fact{
 		Kind:     observability.KindNodeProgress,
 		Phase:    nodePhaseFor(state),
 		NodeID:   node.ID(),
@@ -698,7 +698,7 @@ func (t *track) discardOrFail(ctx context.Context, err error) {
 	var be *events.BpmnError
 	if errors.As(err, &be) {
 		node := t.currentStep().node
-		t.instance.observe(observability.ObsEvent{
+		t.instance.report(observability.Fact{
 			Kind:     observability.KindFault,
 			Phase:    observability.PhaseThrown,
 			NodeID:   node.ID(),
@@ -943,7 +943,7 @@ func (t *track) announceGatewayDecision(
 		ids = append(ids, cf.ID())
 	}
 
-	t.instance.observe(observability.ObsEvent{
+	t.instance.report(observability.Fact{
 		Kind:     observability.KindGatewayDecision,
 		Phase:    observability.PhaseBranchesChosen,
 		NodeID:   node.ID(),

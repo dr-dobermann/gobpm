@@ -242,19 +242,19 @@ level the single producer (§2.7) writes, per the ADR-022 v.1 §2.4 semantics.
 
 | Kind | Object | Phases (open set; ⏳ = reserved slot) | Scope | Log echo |
 |---|---|---|---|---|
-| `ObsEngineState` | Thresher | Starting, Started, Paused, Stopping, Stopped (⏳Resumed as a distinct phase — resuming re-emits Started meanwhile) | engine | Info |
-| `ObsHubState` | EventHub | Started, Stopped, ⏳Paused/Resumed | engine | Info |
-| `ObsProcessLifecycle` | process definition | Registered, Unregistered, VersionSuperseded | engine | Info |
-| `ObsInstanceState` | instance | Created, Active, Terminating, Completed, Terminated, Failed, ⏳Suspended/Resumed | instance | Info (Failed → Error) |
-| `ObsNodeProgress` | node on a track | Entered, Executing, Completed, Failed, Canceled, Merged, Parked (BPMN §13.3.2-aligned, un-collapsed — §2.10) | instance | Debug |
-| `ObsGatewayDecision` | gateway | BranchesChosen (the taken flow(s) in details) | instance | Debug |
-| `ObsEventFlow` | event definition | Registered, Fired, Delivered, Dropped, Unregistered | engine | Debug |
-| `ObsCorrelation` | conversation | KeyAssociated, Matched, Mismatched | instance | Debug |
-| `ObsJobState` | worker job | Enqueued, Locked, Completed, TechnicalFault, BusinessError, RetryScheduled, RetriesExhausted, LockReclaimed, ⏳Incident | engine | Debug (RetriesExhausted, LockReclaimed → Warn) |
-| `ObsTaskState` | user task | Announced, Taken, Completed, Withdrawn | both | Info |
-| `ObsBoundary` | boundary event | Armed, Fired, Disarmed | instance | Debug |
-| `ObsFault` | BPMN error / fault | Thrown, Caught, Uncaught | both | Debug (Thrown, Caught — a designed path is expected behavior) / Error (Uncaught — the instance fault) |
-| `ObsDataChange` | data element | Added, Updated, Deleted (the existing change-kind vocabulary) | instance | **none** — observer-stream only (§2.10 volume guard) |
+| `EngineState` | Thresher | Starting, Started, Paused, Stopping, Stopped (⏳Resumed as a distinct phase — resuming re-emits Started meanwhile) | engine | Info |
+| `HubState` | EventHub | Started, Stopped, ⏳Paused/Resumed | engine | Info |
+| `ProcessLifecycle` | process definition | Registered, Unregistered, VersionSuperseded | engine | Info |
+| `InstanceState` | instance | Created, Active, Terminating, Completed, Terminated, Failed, ⏳Suspended/Resumed | instance | Info (Failed → Error) |
+| `NodeProgress` | node on a track | Entered, Executing, Completed, Failed, Canceled, Merged, Parked (BPMN §13.3.2-aligned, un-collapsed — §2.10) | instance | Debug |
+| `GatewayDecision` | gateway | BranchesChosen (the taken flow(s) in details) | instance | Debug |
+| `EventFlow` | event definition | Registered, Fired, Delivered, Dropped, Unregistered | engine | Debug |
+| `Correlation` | conversation | KeyAssociated, Matched, Mismatched | instance | Debug |
+| `JobState` | worker job | Enqueued, Locked, Completed, TechnicalFault, BusinessError, RetryScheduled, RetriesExhausted, LockReclaimed, ⏳Incident | engine | Debug (RetriesExhausted, LockReclaimed → Warn) |
+| `TaskState` | user task | Announced, Taken, Completed, Withdrawn | both | Info |
+| `Boundary` | boundary event | Armed, Fired, Disarmed | instance | Debug |
+| `Fault` | BPMN error / fault | Thrown, Caught, Uncaught | both | Debug (Thrown, Caught — a designed path is expected behavior) / Error (Uncaught — the instance fault) |
+| `DataChange` | data element | Added, Updated, Deleted (the existing change-kind vocabulary) | instance | **none** — observer-stream only (§2.10 volume guard) |
 
 The table IS the listener contract: a listener implementation subscribes to
 kinds and switches on phases; both axes grow additively. The **emission
@@ -263,29 +263,71 @@ emitted — an unemitted catalog transition is a defect of the same class as a
 silently discarded error (ADR-022 §2.6: accidental silence is worse than
 noise).
 
-### 2.7 One producer, two channels
+### 2.7 One Reporter, two channels
 
 v.1 emitted observer events and (since ADR-022) operator logs **independently**
 — which is exactly how the two half-views of §1.2 diverged. v.2 unifies the
-**producer**, not the channels:
+**Reporter**, not the channels:
 
-- Every catalog transition is emitted by **one call** — conceptually
-  `Observe(event)` on the runtime seam — which **internally** (a) writes the
-  operator-log echo at the kind's §2.6 level, with the canonical ADR-022 §2.5
-  attribute keys, and (b) hands the event to the observer registries of its
-  scope (§2.8) under the v.1 async lossy delivery contract.
+- The record is a **`Fact`** (§2.7a names the vocabulary). Every catalog
+  transition is emitted by **one call** — `Report(fact)` on the runtime's
+  `Reporter` — which **internally** (a) writes the operator-log echo at the
+  kind's §2.6 level, with the canonical ADR-022 §2.5 attribute keys, and (b)
+  hands the Fact to the observer registries of its scope (§2.8) under the v.1
+  async lossy delivery contract.
 - **One call site per transition** means the log and the observer stream can
   never drift apart again: completeness is enforced at a single seam, and a
   reviewer checks *one* emission per catalog row, not two.
 - Downstream, the channels **stay separate** exactly as ADR-022 §2.7 requires
   — the log synchronous and reliable for operators, the observer stream
   best-effort, lossy, and non-blocking for programmatic listeners. v.2
-  refines that rule to: *separate channels, single producer*.
-- **Not everything is an observable event.** Low-level diagnostics that are
-  not catalog transitions (a retry backoff computation, a subscription-extend
-  failure, config detail) remain plain `Logger()` calls under ADR-022
-  discipline. `Observe()` replaces the log-plus-notify *pair* only where the
-  catalog speaks.
+  refines that rule to: *separate channels, single Reporter*.
+
+### 2.7a The reporting policy — Fact vs diagnostic, one non-nil Reporter
+
+The terminology is deliberate: BPMN "Event" is load-bearing domain vocabulary
+(Start/End/Boundary events, Message/Timer/Signal/Error triggers), so the
+observability record is a **`Fact`**, never an "event". The canonical names:
+
+- **`Fact`** — the one observation record (identity + `Kind` + `Phase` +
+  `Details`; masked, never payload), from emitter to delivery. There is no
+  second "public event" projection.
+- **`Reporter`** — the joiner behind `Report(Fact)`: it echoes the Fact to the
+  operator log AND fans it out to the registered observers. The default is
+  echo-only; the engine's richer Reporter adds the observer registries.
+- **`Observer` / `OnFact(Fact)`** — the ONE interface a host implements to
+  watch the engine; a host registers it and never constructs a Reporter.
+  `Observer`, `Fact`, and the `Kind`/`Phase` vocabulary are canonical in
+  `pkg/observability`.
+
+**The boundary rule — a report is a Fact iff it names a `(Kind, Phase)` in the
+§2.6 catalog** (a lifecycle transition or failure of a first-class engine/domain
+object). Everything else is a **diagnostic**. This is a checklist, not a
+judgment call:
+
+1. A catalog fact is emitted through the **one Reporter**, never `Logger()`d
+   directly. The Reporter echoes it (level per the §2.6 table) and fans it out.
+2. **The emitter never chooses the echo level** — the `kind+phase` table does
+   (an unclassified kind surfaces loudly). Diagnostics are logged at their site;
+   being logged *is* their purpose.
+3. Diagnostics use `Logger()` only and never fabricate a `Kind`. They are
+   free-form, may carry rich errors/stacks, and target a human debugging the
+   *engine* — not a process-monitoring listener (a retry backoff calc, a
+   subscription-extend failure, the startup banner, an infra-loop error).
+4. **Bias to Facts.** If a consumer would plausibly *subscribe* to it, it is a
+   Fact — grow the §2.6 catalog rather than leave it a diagnostic.
+5. Diagnostics are a small, enumerable set per module; if that set grows,
+   re-check whether an item should be promoted to the catalog.
+
+**The single-non-nil-Reporter invariant.** Every module that reports (Thresher,
+Instance, EventHub, the dispatcher) holds exactly **one** `Reporter`, and it is
+**never nil** — a module reaches it through the runtime (`EngineRuntime.Reporter()`
+returns a non-nil echo-only default when no richer Reporter is installed) or, for
+a component that holds no runtime (the dispatcher), a non-nil default set at
+construction that the engine overrides at wiring. A module NEVER decides "log or
+observe" per call and never falls back between a sink and a logger; it holds a
+Reporter and calls `Report`. `Logger()` remains a separate accessor, retained
+strictly for the diagnostics of rule 3.
 
 ### 2.8 Two observer scopes — instance and engine
 
@@ -294,7 +336,7 @@ v.1's registry is per-instance (`AddObserver` on the handle) — right for
 or worker-job events, which belong to no instance. v.2 adds the missing scope:
 
 - **Instance scope** (exists): observers registered on an `InstanceHandle`
-  receive that instance's events — `ObsInstanceState`, `ObsNodeProgress`,
+  receive that instance's events — `InstanceState`, `NodeProgress`,
   gateway/correlation/boundary/task/fault/data events of that instance.
 - **Engine scope** (new): observers registered on the engine receive
   **everything** — the engine-scope kinds natively (engine, hub, process,
@@ -319,7 +361,7 @@ flows, a correlation key name, an error code. Two rules:
   dashboard correlate on the same names — and the §2.7 producer can write the
   log echo directly from the event's details.
 - **Masking holds**: ids, names, states, codes — **never payload values**
-  (ADR-010/011). `ObsDataChange` reports *that* a named element changed and
+  (ADR-010/011). `DataChange` reports *that* a named element changed and
   how (added/updated/deleted), never what it now contains; a listener that
   needs the value reads it through the read-only data reader, visibly.
 
@@ -328,19 +370,19 @@ flows, a correlation key name, an error code. Two rules:
 Three defects of the landed minimum become contract-level requirements:
 
 - **Un-collapse node progress.** The landed node event projects everything
-  onto a three-value token state; §2.6's `ObsNodeProgress` phases carry the
+  onto a three-value token state; §2.6's `NodeProgress` phases carry the
   real, BPMN-named execution phase (entered/executing/completed/failed/
   canceled/merged/parked). The token *projection* remains available on the
   handle's token view — it is the collapse into the *event stream* that goes.
 - **Faults are first-class events.** A BPMN error caught at a boundary is a
-  designed, expected path — but it must be *visible* (`ObsFault: Caught`,
-  Debug echo), not silent as today; an uncaught fault is `ObsFault: Uncaught`
+  designed, expected path — but it must be *visible* (`Fault: Caught`,
+  Debug echo), not silent as today; an uncaught fault is `Fault: Uncaught`
   with the `Error` echo (the existing instance-fault record becomes this
   kind's log echo). `Thrown` completes the triple so a listener can follow an
   error from raise to disposition.
 - **Data changes flow through the dormant callback.** The data plane's
   existing change-notification mechanism (added/updated/deleted, async
-  fan-out) becomes the `ObsDataChange` source — wired to the observer stream
+  fan-out) becomes the `DataChange` source — wired to the observer stream
   only. **No log echo**: at the measured hot-path volume (roughly ten writes
   per node execution) even `Debug` would drown flow tracing; the stream's
   lossy contract is the correct transport for high-frequency data ticks, and
@@ -442,7 +484,7 @@ names and signatures are confirmed by the wiring SRD.
   logs.
 - **(v.2) Cost: an engine-level registry + one emission per catalog row.**
   The per-event work is bounded (a map of ids + a non-blocking send); the
-  hot-frequency kind (`ObsDataChange`) deliberately skips the log echo, and
+  hot-frequency kind (`DataChange`) deliberately skips the log echo, and
   the emission sites are exactly the places the error-and-logging remediation
   already visited — well-known, recently-touched code.
 
@@ -560,5 +602,5 @@ Advisory, not gating — for the implementing SRD(s):
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.2 | 2026-07-11 | Ruslan Gabitov | Draft (flips to Accepted with its wiring SRD; v.1 remains the accepted contract meanwhile). **Observability completeness — one event seam, engine-wide.** v.1's landed form was deliberately minimal (two observer-event kinds, instance scope only); a two-channel completeness audit showed the observer stream and the ADR-022 operator logs each covering a different half of the engine, with some transitions (gateway decisions, task-taken, boundary arm/disarm, boundary-**caught** faults) silent on both. v.2 adds: the **canonical observable-event taxonomy** (§2.6 — 13 kinds across engine/hub/process/instance/node/gateway/event/correlation/job/task/boundary/fault/data, each with an open phase set, a scope, a log-echo level, and ⏳ reserved slots for pause/resume/incident/dehydration) with the **emission-completeness rule** (an unemitted catalog transition is a defect); the **single producer** — one `Observe(event)`-style call per transition that writes the log echo AND feeds the observer stream, refining ADR-022 §2.7 to *separate channels, single producer* (rejects the two-independent-emissions "mirroring rule" that let the channels drift); the **engine-scope observer registry** (receives everything, incl. all instances' events — one consistent view of gobpm) alongside v.1's instance scope; the **details map** keyed by the ADR-022 §2.5 canonical attribute vocabulary (one vocabulary across both channels; masking intact — ids/names/codes, never payload values); and three **corrections to the landed minimum** — un-collapsed node-progress phases (the 3-value token projection stays on the handle, not in the stream), first-class `ObsFault` (Thrown/Caught/Uncaught — a boundary-caught error becomes visible), and `ObsDataChange` wired from the dormant data change-callback, observer-stream-only (no log echo at ~10 writes/node). Adds the **visibility-policy seam** (§2.11): optional capabilities on the authorization extension — log redaction (working name `LogRedactor`) and per-recipient observation filtering (`ObservationFilter`), discovered by type assertion at wiring; unimplemented ⇒ pass-through (events reach the log/observers as-is, zero cost); the policy model (identities/tenants/classifications) deferred to the multi-tenancy/IAM work on the same extension. Non-goals updated (god-object split landed; OTel bridge + the policy model deferred); references re-pinned (ADR-001 v.5→v.6, ADR-006 v.1→v.2, ADR-022 v.1 added). Conception; the taxonomy wiring rides the accompanying SRD. |
+| v.2 | 2026-07-11 | Ruslan Gabitov | Draft (flips to Accepted with its wiring SRD; v.1 remains the accepted contract meanwhile). **Observability completeness — one event seam, engine-wide.** v.1's landed form was deliberately minimal (two observer-event kinds, instance scope only); a two-channel completeness audit showed the observer stream and the ADR-022 operator logs each covering a different half of the engine, with some transitions (gateway decisions, task-taken, boundary arm/disarm, boundary-**caught** faults) silent on both. v.2 adds: the **canonical observable-event taxonomy** (§2.6 — 13 kinds across engine/hub/process/instance/node/gateway/event/correlation/job/task/boundary/fault/data, each with an open phase set, a scope, a log-echo level, and ⏳ reserved slots for pause/resume/incident/dehydration) with the **emission-completeness rule** (an unemitted catalog transition is a defect); the **single producer** — one `Report(fact)`-style call per transition that writes the log echo AND feeds the observer stream, refining ADR-022 §2.7 to *separate channels, single producer* (rejects the two-independent-emissions "mirroring rule" that let the channels drift); the **engine-scope observer registry** (receives everything, incl. all instances' events — one consistent view of gobpm) alongside v.1's instance scope; the **details map** keyed by the ADR-022 §2.5 canonical attribute vocabulary (one vocabulary across both channels; masking intact — ids/names/codes, never payload values); and three **corrections to the landed minimum** — un-collapsed node-progress phases (the 3-value token projection stays on the handle, not in the stream), first-class `Fault` (Thrown/Caught/Uncaught — a boundary-caught error becomes visible), and `DataChange` wired from the dormant data change-callback, observer-stream-only (no log echo at ~10 writes/node). Adds the **visibility-policy seam** (§2.11): optional capabilities on the authorization extension — log redaction (working name `LogRedactor`) and per-recipient observation filtering (`ObservationFilter`), discovered by type assertion at wiring; unimplemented ⇒ pass-through (events reach the log/observers as-is, zero cost); the policy model (identities/tenants/classifications) deferred to the multi-tenancy/IAM work on the same extension. Non-goals updated (god-object split landed; OTel bridge + the policy model deferred); references re-pinned (ADR-001 v.5→v.6, ADR-006 v.1→v.2, ADR-022 v.1 added). Conception; the taxonomy wiring rides the accompanying SRD. |
 | v.1 | 2026-06-18 | Ruslan Gabitov | Accepted. Fixes audit 2.2 by building the observation-**and-control** mechanism: a public `InstanceHandle` (state, token movement, node execution progress, read-only data via the public reader (ADR-011 v.5), `WaitCompletion`, `Cancel` now / `Suspend`·`Resume` reserved), **one lifecycle channel that nodes/tasks publish progress into** (the seam future node/task work plugs into), and the engine lifecycle (`Shutdown`, `UnregisterProcess`, fixing the snapshots leak). Reconciles the unsettled-state concern: the **mechanism** is the stable contract while the **state/node vocabulary is named per the BPMN standard but kept an open set** — align names now, extend additively as `Failing`/`Paused`/`Compensating` subsystems land (no public-API churn; consumers forward-compatible). Observers are read-only over data/flow (no mutating listeners — hidden control, ADR-011); lifecycle control is coarse, explicit, engine-mediated. **Async delivery** (stdlib): best-effort lossy per-observer buffered channel + drain goroutine + non-blocking send + drop counter — the track never blocks on an observer; only terminal completion is a guaranteed, blockable signal (a closed `done` channel via `WaitCompletion`). Phased core: deferred lifecycle states/subsystems, fine-grained step control, waiter-shutdown mechanics (2.5 → ADR-006), persistence/history, and the Instance god-object split (2.3) are out of scope. Refines ADR-002 v.2; siblings ADR-001 v.5, ADR-006 v.1 (Accepted), ADR-010 v.2, ADR-011 v.5, ADR-012 v.1, ADR-014 v.1. Accepted at v.1 with pin/standard-claim corrections at acceptance: ADR-002 v.1→v.2; activity-lifecycle §13.2.2→§13.3.2 (the KB attributes it to §13.3.2, p428–429). Conception; implementation rides the SRD. |

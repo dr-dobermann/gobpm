@@ -196,13 +196,13 @@ type ExpressionEngineBinder interface {
 	BindExpressionEngine(ee expression.Engine)
 }
 
-// ObservationSinkBinder is an optional dispatcher capability: the engine binds
+// ReporterBinder is an optional dispatcher capability: the engine binds
 // its observable-event sink (ADR-013 v.2 §2.7) at startup so the dispatcher can
 // emit JobState events (enqueue/lock/report/retry/exhaust/reclaim) onto the one
 // engine-wide seam. A third-party dispatcher that does not implement it simply
 // does not emit — the optional-capability pattern.
-type ObservationSinkBinder interface {
-	BindObservationSink(sink observability.ObsSink)
+type ReporterBinder interface {
+	BindReporter(sink observability.Reporter)
 }
 
 // WorkerConfig is implemented by a node whose worker outcome the engine
