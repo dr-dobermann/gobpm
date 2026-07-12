@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -58,13 +59,18 @@ type Dispatcher struct {
 	clk        clock.Clock
 	sink       tasks.JobCompletionSink
 	logger     observability.Logger
-	exprEngine expression.Engine // classifies a raw fault's ErrorMapper (SRD-038)
+	reporter   observability.Reporter // the engine's observation seam (SRD-041)
+	exprEngine expression.Engine      // classifies a raw fault's ErrorMapper (SRD-038)
 	byID       map[tasks.JobID]*jobEntry
 	byTopic    map[tasks.Topic][]*jobEntry
 	workers    map[tasks.Topic]WorkerFunc
 	wake       chan struct{}
 	maxLock    time.Duration
 	mu         sync.Mutex
+	// reporterBound is true once the engine installs its shared Reporter via
+	// BindReporter; while false the reporter is the echo-only default and
+	// BindLogger rebuilds it so job echoes follow the bound logger.
+	reporterBound bool
 }
 
 // New returns an in-memory dispatcher whose locks are capped at maxLock
@@ -82,12 +88,16 @@ func New(clk clock.Clock, maxLock time.Duration) *Dispatcher {
 		clk: clk,
 		// Observability is visible by default (project policy: accidental silence
 		// is the worse bug); slog.Default() satisfies observability.Logger.
-		logger:  slog.Default(),
-		byID:    map[tasks.JobID]*jobEntry{},
-		byTopic: map[tasks.Topic][]*jobEntry{},
-		workers: map[tasks.Topic]WorkerFunc{},
-		wake:    make(chan struct{}, 1),
-		maxLock: maxLock,
+		logger: slog.Default(),
+		// The single-non-nil-Reporter invariant (ADR-013 v.2 §2.7a): the
+		// dispatcher always holds a Reporter. Default is echo-only; the engine
+		// overrides it with the shared producer via BindReporter at startup.
+		reporter: observability.NewEchoReporter(slog.Default()),
+		byID:     map[tasks.JobID]*jobEntry{},
+		byTopic:  map[tasks.Topic][]*jobEntry{},
+		workers:  map[tasks.Topic]WorkerFunc{},
+		wake:     make(chan struct{}, 1),
+		maxLock:  maxLock,
 	}
 }
 
@@ -113,6 +123,60 @@ func (d *Dispatcher) BindLogger(logger observability.Logger) {
 	defer d.mu.Unlock()
 
 	d.logger = logger
+
+	// While no richer Reporter is installed, the reporter is the echo-only
+	// default — rebuild it so job-lifecycle echoes use the embedder's logger, not
+	// the slog.Default() captured in New (the non-nil-Reporter invariant holds
+	// throughout). Once BindReporter installs the engine producer, that owns the
+	// echo and this leaves it alone.
+	if !d.reporterBound {
+		d.reporter = observability.NewEchoReporter(logger)
+	}
+}
+
+// BindReporter installs the engine's shared Reporter at startup
+// (tasks.ReporterBinder, ADR-013 v.2 §3.2), so the dispatcher's JobState facts
+// land on the one engine seam (echo + observers). A nil reporter is ignored —
+// the echo-only default set in New is kept (the non-nil-Reporter invariant; a
+// standalone dispatcher still echoes its job lifecycle).
+func (d *Dispatcher) BindReporter(reporter observability.Reporter) {
+	if reporter == nil {
+		return
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.reporter = reporter
+	d.reporterBound = true
+}
+
+// reportFact announces a JobState fact through the dispatcher's Reporter (the
+// seam echoes it at the §2.6 level and fans it out). It reads d.reporter under
+// d.mu, so callers already holding d.mu use reportFactLocked. Job-lifecycle facts
+// are the catalog record — the emitter never also Logger()s them (ADR-013 v.2
+// §2.7a). (Distinct from report(), which delivers a completion outcome to the
+// JobCompletionSink.)
+func (d *Dispatcher) reportFact(f observability.Fact) {
+	d.mu.Lock()
+	reporter := d.reporter
+	d.mu.Unlock()
+
+	reporter.Report(f)
+}
+
+// reportFactLocked is reportFact for callers already holding d.mu.
+func (d *Dispatcher) reportFactLocked(f observability.Fact) {
+	d.reporter.Report(f)
+}
+
+// jobFact builds a JobState fact for phase with the given details.
+func jobFact(phase observability.Phase, details map[string]string) observability.Fact {
+	return observability.Fact{
+		Kind:    observability.KindJobState,
+		Phase:   phase,
+		Details: details,
+	}
 }
 
 // BindExpressionEngine sets the engine the dispatcher uses to run a Job's
@@ -153,12 +217,12 @@ func (d *Dispatcher) Enqueue(_ context.Context, job tasks.Job) error {
 	d.byID[job.ID] = e
 	d.byTopic[job.Topic] = append(d.byTopic[job.Topic], e)
 	d.broadcastLocked()
-
-	logger := d.logger
 	d.mu.Unlock()
 
-	logger.Debug("job enqueued",
-		"job_id", string(job.ID), "topic", string(job.Topic))
+	d.reportFact(jobFact(observability.PhaseEnqueued, map[string]string{
+		observability.AttrJobID: string(job.ID),
+		observability.AttrTopic: string(job.Topic),
+	}))
 
 	return nil
 }
@@ -176,14 +240,15 @@ func (d *Dispatcher) FetchAndLock(
 		d.mu.Lock()
 		lj, gate, ok := d.lockNext(workerID, topics, lockDuration)
 		wake := d.wake
-		logger := d.logger
 		now := d.clk.Now()
 		d.mu.Unlock()
 
 		if ok {
-			logger.Debug("job fetched and locked",
-				"worker_id", string(workerID), "job_id", string(lj.ID),
-				"topic", string(lj.Topic), "deadline", lj.Deadline)
+			d.reportFact(jobFact(observability.PhaseLocked, map[string]string{
+				observability.AttrWorkerID: string(workerID),
+				observability.AttrJobID:    string(lj.ID),
+				observability.AttrTopic:    string(lj.Topic),
+			}))
 
 			return []tasks.LockedJob{lj}, nil
 		}
@@ -236,9 +301,13 @@ func (d *Dispatcher) lockNext(
 				// reaching here with a holder means the lock expired (the guard
 				// above continued otherwise) — reclaim it for crash recovery. A
 				// worker that missed its deadline is degradation someone should
-				// see, not mere flow tracing (ADR-022 v.1 §2.4): Warn.
-				d.logger.Warn("expired job lock reclaimed",
-					"job_id", string(e.job.ID), "worker_id", string(e.workerID))
+				// see, not mere flow tracing (ADR-022 v.1 §2.4): LockReclaimed
+				// echoes at Warn (the level table). Under d.mu → reportFactLocked.
+				d.reportFactLocked(jobFact(observability.PhaseLockReclaimed,
+					map[string]string{
+						observability.AttrJobID:    string(e.job.ID),
+						observability.AttrWorkerID: string(e.workerID),
+					}))
 			}
 
 			e.workerID = workerID
@@ -402,7 +471,7 @@ func (d *Dispatcher) Fail(
 	}
 
 	// Technical fault — consult the retry policy (SRD-038 §3.4, FR-7/FR-8).
-	return d.retryOrExhaust(ctx, jobID, workerID, policy, fault, logger)
+	return d.retryOrExhaust(ctx, jobID, workerID, policy, fault)
 }
 
 // retryOrExhaust applies the job's RetryPolicy to a technical fault: while it
@@ -416,7 +485,6 @@ func (d *Dispatcher) retryOrExhaust(
 	workerID tasks.WorkerID,
 	policy *tasks.Policy,
 	fault tasks.Fault,
-	logger observability.Logger,
 ) error {
 	d.mu.Lock()
 
@@ -436,8 +504,11 @@ func (d *Dispatcher) retryOrExhaust(
 		d.broadcastLocked()
 		d.mu.Unlock()
 
-		logger.Debug("job retry scheduled",
-			"job_id", string(jobID), "attempt", attempt, "backoff", backoff)
+		d.reportFact(jobFact(observability.PhaseRetryScheduled, map[string]string{
+			observability.AttrJobID:    string(jobID),
+			observability.AttrAttempts: strconv.Itoa(attempt),
+			observability.AttrBackoff:  backoff.String(),
+		}))
 
 		return nil
 	}
@@ -445,8 +516,13 @@ func (d *Dispatcher) retryOrExhaust(
 	topic := e.job.Topic
 	d.mu.Unlock()
 
-	logger.Warn("job retries exhausted",
-		"job_id", string(jobID), "topic", string(topic), "attempts", attempt)
+	// RetriesExhausted echoes at Warn (the level table) — a job giving up is
+	// degradation an operator should see (ADR-022 v.1 §2.4).
+	d.reportFact(jobFact(observability.PhaseRetriesExhausted, map[string]string{
+		observability.AttrJobID:    string(jobID),
+		observability.AttrTopic:    string(topic),
+		observability.AttrAttempts: strconv.Itoa(attempt),
+	}))
 
 	return d.report(ctx, jobID, workerID, tasks.NewWorkerFault(jobID, fault))
 }
@@ -527,15 +603,27 @@ func (d *Dispatcher) report(
 	}
 
 	d.remove(e)
-
-	logger := d.logger
 	d.mu.Unlock()
 
-	logger.Debug("job outcome reported",
-		"job_id", string(jobID), "worker_id", string(workerID),
-		"kind", outcome.Kind().String())
+	// The terminal JobState: the outcome kind maps to the phase (Completed for a
+	// success, BusinessError for a worker-declared BPMN error / status,
+	// TechnicalFault for a raw fault). One emission at the single delivery point
+	// (SRD-041 §3.4).
+	d.reportFact(jobFact(outcomePhase[outcome.Kind()], map[string]string{
+		observability.AttrJobID:    string(jobID),
+		observability.AttrWorkerID: string(workerID),
+	}))
 
 	return sink.ReportJobCompletion(ctx, outcome)
+}
+
+// outcomePhase maps a worker outcome kind to its terminal JobState phase — a data
+// table, not a switch.
+var outcomePhase = map[tasks.OutcomeKind]observability.Phase{
+	tasks.OutcomeComplete:  observability.PhaseCompleted,
+	tasks.OutcomeBpmnError: observability.PhaseBusinessError,
+	tasks.OutcomeStatus:    observability.PhaseBusinessError,
+	tasks.OutcomeFault:     observability.PhaseTechnicalFault,
 }
 
 // heldEntry returns the entry for jobID iff workerID holds its unexpired lock.
@@ -775,4 +863,5 @@ var (
 	_ tasks.SinkBinder             = (*Dispatcher)(nil)
 	_ tasks.LoggerBinder           = (*Dispatcher)(nil)
 	_ tasks.ExpressionEngineBinder = (*Dispatcher)(nil)
+	_ tasks.ReporterBinder         = (*Dispatcher)(nil)
 )

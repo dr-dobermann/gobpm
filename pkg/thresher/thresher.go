@@ -37,6 +37,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -50,6 +51,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/interactor"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
@@ -333,8 +335,47 @@ func (t *Thresher) UpdateState(ns State) error {
 	}
 
 	t.state.Store(uint32(ns))
+	t.reportEngineState(ns)
 
 	return nil
+}
+
+// enginePhase maps a Thresher state to its observable phase (SRD-041 §3.4). A
+// transient or absent state (Invalid, NotStarted — including the Run rollback)
+// has no phase and does not report.
+var enginePhase = map[State]observability.Phase{
+	Starting: observability.PhaseStarting,
+	Started:  observability.PhaseStarted,
+	Paused:   observability.PhasePaused,
+	Stopping: observability.PhaseStopping,
+	Stopped:  observability.PhaseStopped,
+}
+
+// reportEngineState announces a Thresher lifecycle transition through the engine
+// Reporter (SRD-041 §3.4): EngineState carries only the phase, no node/instance.
+func (t *Thresher) reportEngineState(s State) {
+	phase, ok := enginePhase[s]
+	if !ok {
+		return
+	}
+
+	t.producer.Report(observability.Fact{
+		Kind:  observability.KindEngineState,
+		Phase: phase,
+	})
+}
+
+// reportProcessLifecycle announces a process-registration transition through the
+// engine Reporter (SRD-041 §3.4): the process id and version travel in details.
+func (t *Thresher) reportProcessLifecycle(
+	phase observability.Phase,
+	details map[string]string,
+) {
+	t.producer.Report(observability.Fact{
+		Kind:    observability.KindProcessLifecycle,
+		Phase:   phase,
+		Details: details,
+	})
 }
 
 // Run starts Thresher event queue processing.
@@ -356,10 +397,17 @@ func (t *Thresher) Run(ctx context.Context) error {
 			errs.C(errorClass, errs.InvalidState))
 	}
 
+	t.reportEngineState(Starting)
+
 	// Derive the engine's own cancellable context: Shutdown cancels it to
 	// cascade-terminate every instance (launched under t.ctx) and unblock the
 	// hub Run, without touching the caller's ctx (SRD-019). The caller canceling
 	// their ctx still propagates here.
+	// engineCancel is stored on the Thresher and called by Shutdown (and both Run
+	// rollbacks) — the engine context lives for the engine's lifetime (SRD-019),
+	// so gosec's "cancel not called in this function" heuristic is a false
+	// positive here.
+	//nolint:gosec // G118: engineCancel escapes to a field, called cross-method
 	t.ctx, t.engineCancel = context.WithCancel(ctx)
 	runCtx := t.ctx
 
@@ -371,8 +419,10 @@ func (t *Thresher) Run(ctx context.Context) error {
 	// in a goroutine guarded only by a 1ms sleep, which is not a memory
 	// barrier under the Go memory model).
 	if err := t.eventHub.Start(t.ctx); err != nil {
-		// The start failed: roll the claim back to NotStarted so a retry stays
-		// possible (preserving the pre-transitional-state behavior).
+		// The start failed: cancel the engine context we just derived (it is
+		// otherwise abandoned — a retry Run reassigns t.ctx/engineCancel) and roll
+		// the claim back to NotStarted so a retry stays possible.
+		t.engineCancel()
 		t.state.Store(uint32(NotStarted))
 
 		return errs.New(
@@ -398,6 +448,7 @@ func (t *Thresher) Run(ctx context.Context) error {
 
 	// Publish readiness: the hub is up and accepting.
 	t.state.Store(uint32(Started))
+	t.reportEngineState(Started)
 
 	// Register the persistent instance-starters for processes registered before
 	// Run (the hub only accepts registrations once Started; SRD-015 FR-2).
@@ -440,6 +491,7 @@ func (t *Thresher) Shutdown(ctx context.Context) error {
 
 	case NotStarted:
 		t.state.Store(uint32(Stopped))
+		t.reportEngineState(Stopped)
 
 		return nil
 
@@ -455,6 +507,8 @@ func (t *Thresher) Shutdown(ctx context.Context) error {
 			return nil
 		}
 
+		t.reportEngineState(Stopping)
+
 	default: // Invalid — unreachable in the current lifecycle.
 		return errs.New(
 			errs.M("couldn't shut down thresher from state %q", st),
@@ -463,7 +517,10 @@ func (t *Thresher) Shutdown(ctx context.Context) error {
 
 	// Teardown is claimed (Stopping). Publish the terminal Stopped once complete,
 	// on every exit path below (including the ctx-deadline path).
-	defer t.state.Store(uint32(Stopped))
+	defer func() {
+		t.state.Store(uint32(Stopped))
+		t.reportEngineState(Stopped)
+	}()
 
 	t.m.Lock()
 	regs := make([]instanceReg, 0, len(t.instances))
@@ -637,6 +694,17 @@ func (t *Thresher) RegisterProcess(
 
 	reg, prevLatest := t.appendVersionLocked(s, starters, rc.manualStart)
 
+	// The registry now holds a new latest version; if it displaced one, that
+	// prior latest is superseded (its auto-start stops — ADR-019 §2.5). A
+	// registry fact, independent of whether the hub is wired yet (SRD-041 §3.4).
+	if prevLatest != nil {
+		t.reportProcessLifecycle(observability.PhaseVersionSuperseded,
+			map[string]string{
+				observability.AttrProcessID: s.ProcessID,
+				observability.AttrVersion:   strconv.Itoa(prevLatest.version),
+			})
+	}
+
 	// Touch the EventHub OUTSIDE t.m: the hub path is independent of t.m, and
 	// holding the engine lock across an engine-subsystem call is the deadlock
 	// class FIX-002 RC2 warns about. Before Run the hub isn't started yet, so
@@ -655,6 +723,12 @@ func (t *Thresher) RegisterProcess(
 			return nil, err
 		}
 	}
+
+	t.reportProcessLifecycle(observability.PhaseRegistered,
+		map[string]string{
+			observability.AttrProcessID: reg.key,
+			observability.AttrVersion:   strconv.Itoa(reg.version),
+		})
 
 	return reg, nil
 }
@@ -693,6 +767,14 @@ func (t *Thresher) UnregisterVersion(reg *ProcessRegistration) error {
 				reg.id, reg.key, reg.version),
 			errs.C(errorClass, errs.ObjectNotFound))
 	}
+
+	// The version is out of the registry (the unregister fact); the hub teardown
+	// below is its consequence (SRD-041 §3.4).
+	t.reportProcessLifecycle(observability.PhaseUnregistered,
+		map[string]string{
+			observability.AttrProcessID: reg.key,
+			observability.AttrVersion:   strconv.Itoa(reg.version),
+		})
 
 	// Maintain the hub subscriptions OUTSIDE t.m. Only the latest version's
 	// starters are live (latest-supersedes), so removing a superseded version
@@ -742,6 +824,10 @@ func (t *Thresher) UnregisterProcess(key string) error {
 			errs.M("no registered version for process key %q", key),
 			errs.C(errorClass, errs.ObjectNotFound))
 	}
+
+	// Every version of the process is out of the registry (SRD-041 §3.4).
+	t.reportProcessLifecycle(observability.PhaseUnregistered,
+		map[string]string{observability.AttrProcessID: key})
 
 	if t.State() == Started {
 		return t.unregisterStarters(liveStarters)

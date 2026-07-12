@@ -20,6 +20,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
 
@@ -113,6 +114,11 @@ func (eh *EventHub) Start(ctx context.Context) error {
 
 	eh.setState(hubStarted)
 	eh.ctx = ctx
+
+	eh.rt.Reporter().Report(observability.Fact{
+		Kind:  observability.KindHubState,
+		Phase: observability.PhaseStarted,
+	})
 
 	return nil
 }
@@ -300,6 +306,11 @@ func (eh *EventHub) Shutdown(ctx context.Context) error {
 	}
 
 	eh.setState(hubStopped)
+
+	eh.rt.Reporter().Report(observability.Fact{
+		Kind:  observability.KindHubState,
+		Phase: observability.PhaseStopped,
+	})
 
 	ws := make([]eventproc.EventWaiter, 0, len(eh.waiters))
 	for _, w := range eh.waiters {

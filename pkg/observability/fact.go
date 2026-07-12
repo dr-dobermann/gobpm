@@ -121,6 +121,9 @@ const (
 	AttrCorrelationValue  = "correlation_value"
 	AttrError             = "error"
 	AttrChosenFlows       = "chosen_flows"
+	AttrVersion           = "version"
+	AttrAttempts          = "attempts"
+	AttrBackoff           = "backoff"
 )
 
 // Fact is the canonical observable engine event (ADR-013 v.2 §2.6/§2.9): a
