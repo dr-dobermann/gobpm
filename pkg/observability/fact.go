@@ -10,8 +10,9 @@ import "time"
 type Kind string
 
 // The canonical observable-event kinds — one per major object class. These
-// string values are the single source of truth; thresher.EventKind is a type
-// alias of Kind, so the public constants carry the same values.
+// string values are the single source of truth for the observability
+// vocabulary — engine, event hub, dispatcher, and instance loop all emit Facts
+// carrying one of these kinds; there is no separate public alias to keep in sync.
 const (
 	KindEngineState      Kind = "EngineState"      // Thresher lifecycle
 	KindHubState         Kind = "HubState"         // EventHub lifecycle
