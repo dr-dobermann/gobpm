@@ -254,7 +254,7 @@ level the single producer (§2.7) writes, per the ADR-022 v.1 §2.4 semantics.
 | `TaskState` | user task | Announced, Taken, Completed, Withdrawn | both | Info |
 | `Boundary` | boundary event | Armed, Fired, Disarmed | instance | Debug |
 | `Fault` | BPMN error / fault | Thrown, Caught, Uncaught | both | Debug (Thrown, Caught — a designed path is expected behavior) / Error (Uncaught — the instance fault) |
-| `DataChange` | data element | Added, Updated, Deleted (the existing change-kind vocabulary) | instance | **none** — observer-stream only (§2.10 volume guard) |
+| `DataChange` ⏳ | data element | Value_Added, Value_Updated, Value_Deleted (the existing change-kind vocabulary) | instance | **none** — observer-stream only (§2.10 volume guard) |
 
 The table IS the listener contract: a listener implementation subscribes to
 kinds and switches on phases; both axes grow additively. The **emission
@@ -380,13 +380,21 @@ Three defects of the landed minimum become contract-level requirements:
   with the `Error` echo (the existing instance-fault record becomes this
   kind's log echo). `Thrown` completes the triple so a listener can follow an
   error from raise to disposition.
-- **Data changes flow through the dormant callback.** The data plane's
-  existing change-notification mechanism (added/updated/deleted, async
-  fan-out) becomes the `DataChange` source — wired to the observer stream
-  only. **No log echo**: at the measured hot-path volume (roughly ten writes
-  per node execution) even `Debug` would drown flow tracing; the stream's
-  lossy contract is the correct transport for high-frequency data ticks, and
-  the ADR-022 hot-path corollary stays intact.
+- **Data changes are observable — ⏳ deferred to the data-plane redesign.**
+  `DataChange` is a named kind in the taxonomy (a listener contract keeps the
+  row), but its **emission is deferred**. The intended source was the data
+  plane's existing `Value` change-notification callback (added/updated/deleted,
+  async fan-out) — but the execution model is **frame-clone-then-replace**: a
+  node works on a cloned frame copy and the frame commit *replaces* the
+  container-scope value object (`Scope.Commit`: `vv[name] = d`), so a callback
+  registered on the original value is bypassed and observes few or none of the
+  real changes. Rather than wire a mechanism against a data plane that is about
+  to be redesigned, `DataChange` observability is designed **together with** the
+  structural-data + mapping rework (ADR-011) — the change-notification mechanism
+  it depends on is itself part of that redesign. When it lands it is
+  observer-stream only, **no log echo** (at the hot-path volume — roughly ten
+  writes per node — even `Debug` would drown flow tracing; the lossy stream is
+  the right transport, and the ADR-022 hot-path corollary stays intact).
 
 ### 2.11 Visibility policy — hide-by-policy at the delivery edge
 

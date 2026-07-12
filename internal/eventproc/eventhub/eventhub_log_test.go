@@ -13,11 +13,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestEventFlowLogging verifies the hub emits a Debug line at each matter point
-// of the event path — register → waiter service → broadcast → deliver — when the
-// configured logger is at Debug level (off at the default level, so normal runs
-// stay quiet). This is the observability a developer turns on to watch the whole
-// subscribe→fire→deliver flow.
+// TestEventFlowLogging verifies the hub reports EventFlow facts at each matter
+// point of the event path — register → deliver — echoed at Debug (off at the
+// default level, so normal runs stay quiet), alongside the waiter-level Debug
+// diagnostics. This is the observability a developer turns on to watch the whole
+// subscribe→fire→deliver flow (SRD-041 §3.4).
 func TestEventFlowLogging(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf,
@@ -37,19 +37,18 @@ func TestEventFlowLogging(t *testing.T) {
 
 	out := buf.String()
 	for _, want := range []string{
-		"event registered (new waiter)",
-		"signal waiter serviced",
-		"signal broadcast",
-		"signal waiter delivering",
+		"EventFlow Registered",     // the new waiter registered
+		"signal waiter serviced",   // waiter-level diagnostic (kept a log)
+		"EventFlow Delivered",      // the signal reached its catcher(s)
+		"signal waiter delivering", // waiter-level diagnostic (kept a log)
 	} {
 		require.Contains(t, out, want)
 	}
 }
 
-// TestEventLifecycleLogging covers the remaining matter-point Debug lines: a
-// second processor added to an existing waiter, both unregister branches
-// (processor removed but waiter kept, then the last removal stopping the
-// waiter), and propagation to no registered waiter (a logged no-op).
+// TestEventLifecycleLogging covers the remaining EventFlow matter points: a
+// second processor added to an existing waiter (Registered), both unregister
+// branches (Unregistered), and propagation to no registered waiter (Dropped).
 func TestEventLifecycleLogging(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf,
@@ -79,10 +78,9 @@ func TestEventLifecycleLogging(t *testing.T) {
 
 	out := buf.String()
 	for _, want := range []string{
-		"event registered (added to existing waiter)",
-		"event propagated with no registered waiter",
-		"event unregistered (processor removed, waiter kept)",
-		"event unregistered (waiter stopped)",
+		"EventFlow Registered",   // ep2 added to the existing waiter
+		"EventFlow Dropped",      // propagated to no registered waiter
+		"EventFlow Unregistered", // both unregister branches report it
 	} {
 		require.Contains(t, out, want)
 	}

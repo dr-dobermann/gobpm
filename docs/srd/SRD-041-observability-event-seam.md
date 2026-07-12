@@ -112,10 +112,14 @@ kinds emitted from **two** `notify()` sites (`internal/instance/lifecycle.go:53`
   (enqueued…retries-exhausted/lock-reclaimed), user-task
   announced/taken/completed/withdrawn, boundary armed/fired/disarmed, and
   faults Thrown/Caught/Uncaught (closing the silent boundary-caught path).
-- **FR-7 — data changes.** The dormant `data.UpdateCallback` becomes the
-  `DataChange` source: instance-committed values get a callback that emits
-  (element name/id + change type, never the value) to the observer stream
-  only — **no log echo** (the flood guard).
+- **FR-7 — data changes — ⏳ DEFERRED to the ADR-011 data-plane redesign.**
+  The intended source was the dormant `data.UpdateCallback`, but the execution
+  model is frame-clone-then-replace (`Scope.Commit` replaces the container value
+  object), so a callback registered on the original value observes few/none of
+  the real node-driven changes. The change-notification mechanism is itself part
+  of the structural-data + mapping rework, so `DataChange` emission is designed
+  with it. `KindDataChange` + the `Value_Added/Updated/Deleted` phases + the
+  no-log-echo rule are already landed (vocabulary ready); only the wiring waits.
 - **FR-8 — visibility capabilities.** Two optional interfaces (working names
   `LogRedactor`, `ObservationFilter`) are defined publicly and asserted
   against the configured `AuthorizationProvider` **once at wiring**;
@@ -373,7 +377,7 @@ and the token projection remains available on the handle's token view.
 | **M2** | The producer + engine-scope registry: `Thresher.Observe`, echo writing, filters wired, instance-event relay; `Instance.observe()` replaces `notify` internals (existing kinds only). T-2, T-3, T-9, T-10. |
 | **M3** | Instance-layer emissions: `Created`+`Failed`, un-collapsed `NodeProgress`, gateway decisions, correlation, boundary, task states, the fault triple (incl. `fail()` echo relocation). T-5, T-6. |
 | **M4** | Engine-layer emissions: engine/hub states, process lifecycle, the job lifecycle in `localdispatcher`. |
-| **M5** | `DataChange` via `UpdateCallback` wiring at scope commit. T-7. |
+| ~~**M5**~~ | ⏳ **Deferred** — `DataChange` emission moves to the ADR-011 data-plane redesign (FR-7; the callback mechanism doesn't fit frame-clone-then-replace). T-7 deferred with it. |
 | **M6** | The completeness canary (T-4), examples touch-up if warranted, ADR-013 v.2 flip to Accepted + RU twin catch-up, SAD row update, docs sync. |
 
 ## 8. Cross-doc
