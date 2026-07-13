@@ -7,7 +7,7 @@
 | Date | 2026-07-10 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-002 v.2](ADR-002-extension-architecture.md) (the observability extensions and the visible-by-default posture), [SAD-001 v.1](SAD-001-vision-and-architecture.md) (library-first: the embedder owns the process, the engine owes it diagnosability) |
-| Siblings | [ADR-013 v.1](ADR-013-instance-observability.md) (the host observation stream — a separate channel from operator logs) |
+| Siblings | [ADR-013 v.2](ADR-013-instance-observability.md) (the host observation stream — a separate channel from operator logs) |
 
 gobpm users must get **comprehensive information about every error and every
 important event** in the engine. This ADR is the single contract for how an
@@ -176,8 +176,8 @@ than accidental noise: noise is annoying, silence is undiagnosable.
 
 ### 2.7 Logs and the observation stream stay separate channels
 
-Operator logs (this policy) and the host observation stream (ADR-013 v.1)
-serve different readers and stay decoupled: `ObsEvent`s are the embedder's
+Operator logs (this policy) and the host observation stream (ADR-013 v.2)
+serve different readers and stay decoupled: `Fact`s are the embedder's
 programmatic feed (lossy-by-design, per-observer), logs are the operator's
 narrative. An event may legitimately appear on both — as data on the stream,
 as a record in the log — but neither replaces the other, and log volume
@@ -237,7 +237,7 @@ decisions never assume "the observer saw it".
   slog handler; production embedders should use a JSON handler so the
   canonical keys (§2.5) drive alerting and correlation directly.
 - **Cross-channel correlation**: `instance_id` is the join key across logs,
-  the ObsEvent stream (ADR-013 v.1), and any future tracing export — dashboards
+  the Fact stream (ADR-013 v.2), and any future tracing export — dashboards
   should treat it as the primary index.
 - **Future**: when the Incident concept lands (deferred from the service-task
   work), incidents become the `Error`-level anchor records and today's
@@ -270,7 +270,7 @@ decisions never assume "the observer saw it".
 
 - ADR-002 v.2 — extension architecture: the `observability.Logger` seam and
   the visible-by-default startup posture this policy generalizes.
-- ADR-013 v.1 — instance observability: the host observation stream §2.7
+- ADR-013 v.2 — instance observability: the host observation stream §2.7
   keeps distinct from operator logs.
 - SAD-001 v.1 — library-first vision: the embedder-owns-the-process premise
   behind "the public API edge returns, never logs".
