@@ -24,7 +24,13 @@ COVER_BASE ?= origin/master
 # (FIX-020) and `func (X) mappedOutcome() {}` (SRD-037 MappedOutcome). The marker
 # is never invoked — it only makes the type satisfy the sealed interface at
 # compile time. An empty, never-called marker body is structurally uncoverable.
-COVER_EXCLUDE ?= \.(logger|Logger\(\))\.(Debug|Info|Warn|Error)\(,func \(.*\) Option\(\) \{\},func \(.*\) mappedOutcome\(\) \{\}
+#
+# Fourth regex: empty-body no-op Lock/Unlock — `func (X) Lock() {}` (SRD-042
+# scalarLeaf, an immutable path-read leaf). Even when called, an empty function
+# body registers no coverage counter (a Go tooling limitation), so it is
+# structurally uncoverable — like the markers above. Non-empty Lock/Unlock (the
+# real mutex-backed ones) do NOT match the `\{\}` pattern and stay in the gate.
+COVER_EXCLUDE ?= \.(logger|Logger\(\))\.(Debug|Info|Warn|Error)\(,func \(.*\) Option\(\) \{\},func \(.*\) mappedOutcome\(\) \{\},func \(.*\) (Lock|Unlock)\(\) \{\}
 
 # All Go modules in the monorepo (each with its own go.mod).
 # Discovered dynamically so adding a new module needs no Makefile edit.
