@@ -85,6 +85,28 @@ type Collection interface {
 	Delete(ctx context.Context, index any) error
 }
 
+// Record is the optional structural capability of a Value (ADR-011 v.6
+// §2.9.1): a string-keyed, heterogeneous, insertion-ordered set of fields. A
+// Value that implements Record is navigable by ".field" path steps; a value's
+// kind (scalar / list / record) is discovered by type assertion, exactly as
+// with Collection — a scalar implements neither and is a path leaf.
+type Record interface {
+	Value
+
+	// Keys lists the field names in insertion order.
+	Keys() []string
+
+	// Field returns the named field's value, or a classified
+	// errs.ObjectNotFound error when the field is absent.
+	Field(ctx context.Context, name string) (Value, error)
+
+	// SetField sets (adds or replaces) the named field. The implementation
+	// enforces its own shape: the dynamic values.Record accepts new fields; a
+	// typed adapter (S4) rejects unknown names. The name must be CheckName-legal
+	// so a field is always addressable by a structural path.
+	SetField(ctx context.Context, name string, v Value) error
+}
+
 // ChangeType classifies a committed data change. It is the commit-diff's
 // change-kind vocabulary (ADR-011 v.6 §2.9.4, wired in the S3 slice): each
 // diff entry is a (path, ChangeType) pair. The string values are mirrored by
