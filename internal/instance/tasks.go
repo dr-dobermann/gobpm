@@ -9,6 +9,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 // distributorTimeout bounds every TaskDistributor call (Distribute/Withdraw): it
@@ -163,6 +164,15 @@ func (ls *loopState) handleTaskRequest(ctx context.Context, req taskRequest) {
 	}
 
 	if req.kind == reqTake {
+		// The actor took the task for work (SRD-041 §3.4).
+		ls.inst.report(observability.Fact{
+			Kind:     observability.KindTaskState,
+			Phase:    observability.PhaseTaken,
+			NodeID:   entry.node.ID(),
+			NodeName: entry.node.Name(),
+			Details:  map[string]string{observability.AttrTaskID: req.taskID},
+		})
+
 		req.reply <- taskReply{view: ls.inst.buildTaskView(req.taskID, entry.node)}
 
 		return
@@ -212,6 +222,17 @@ func (ls *loopState) completeTask(
 	delete(ls.tasks, req.taskID)
 	entry.track.evtCh <- interactor.NewTaskCompletion(req.outputs)
 
+	// The actor completed the task; the parked track resumes (SRD-041 §3.4).
+	// The following withdrawTask additionally emits Withdrawn — the distributor
+	// retraction is a distinct fact from the lifecycle completion.
+	ls.inst.report(observability.Fact{
+		Kind:     observability.KindTaskState,
+		Phase:    observability.PhaseCompleted,
+		NodeID:   entry.node.ID(),
+		NodeName: entry.node.Name(),
+		Details:  map[string]string{observability.AttrTaskID: req.taskID},
+	})
+
 	ls.inst.withdrawTask(ctx, req.taskID)
 
 	req.reply <- taskReply{}
@@ -239,6 +260,15 @@ func (ls *loopState) addTask(
 		inst.Logger().Warn("user task distribute failed",
 			"instance_id", inst.ID(), "task_id", taskID, "error", err.Error())
 	}
+
+	// The task is parked and announced to the distributor (SRD-041 §3.4).
+	inst.report(observability.Fact{
+		Kind:     observability.KindTaskState,
+		Phase:    observability.PhaseAnnounced,
+		NodeID:   node.ID(),
+		NodeName: node.Name(),
+		Details:  map[string]string{observability.AttrTaskID: taskID},
+	})
 }
 
 // recordBornWaiter registers a track that begins already parked (a wait node or
@@ -305,6 +335,14 @@ func (inst *Instance) withdrawTask(ctx context.Context, taskID string) {
 		inst.Logger().Warn("user task withdraw failed",
 			"instance_id", inst.ID(), "task_id", taskID, "error", err.Error())
 	}
+
+	// The task was retracted from the distributor (SRD-041 §3.4) — on completion,
+	// cancellation, or instance teardown.
+	inst.report(observability.Fact{
+		Kind:    observability.KindTaskState,
+		Phase:   observability.PhaseWithdrawn,
+		Details: map[string]string{observability.AttrTaskID: taskID},
+	})
 }
 
 // buildTaskInfo builds the pre-authorization announcement for a parked UserTask:

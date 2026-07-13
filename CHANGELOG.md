@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Engine-wide observability — the observable-event seam (ADR-013 v.2 / SRD-041).**
+  Every failure and major-object lifecycle transition now emits one
+  `observability.Fact` through a single `Reporter` that both echoes to the
+  operator log (levels per ADR-022) and fans out to observers. 12 of the 13
+  catalog kinds emit: engine and hub state, process registration, instance
+  lifecycle, un-collapsed node progress, gateway decisions, event flow,
+  correlation, the worker-job lifecycle, user tasks, boundaries, and the fault
+  triple (Thrown/Caught/Uncaught — the previously silent boundary-caught path is
+  now visible). A new **engine-scope** registry, `Thresher.Observe(o)`, watches
+  every instance plus engine-level facts through one stream (the instance-scoped
+  `InstanceHandle.Observe` remains). An optional visibility seam
+  (`LogRedactor` / `ObservationFilter` on the authorization extension) can redact
+  or filter per recipient; unimplemented ⇒ pass-through. `DataChange` (the 13th
+  kind) is deferred to the ADR-011 data-plane rework — its vocabulary is present,
+  its wiring lands with that work.
+
+### Changed
+
+- **BREAKING (pre-1.0): the observation surface is one canonical type.**
+  `thresher.Event`, `thresher.EventKind`, and `Observer.OnEvent` are removed;
+  `thresher.Observer` is now a type alias of `observability.Observer`, so an
+  observer implements `OnFact(observability.Fact)` and `InstanceHandle.Observe` /
+  `Thresher.Observe` deliver an `observability.Fact` directly (identity + `Kind` +
+  `Phase` + a masked `Details` map; `instance_id` moved into `Details`). Delivery
+  semantics are unchanged (buffered, lossy, drop-counted, panic-recovered).
+  `EngineRuntime` gains a `Reporter()` accessor (external implementers must add
+  it; none known).
+
 ## [v0.8.0-rc.1] - 2026-07-10
 
 Completes the **Core Task Types** epic (#78): Service Task, User Task, and

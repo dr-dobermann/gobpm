@@ -3,77 +3,49 @@ package thresher
 import (
 	"sync"
 	"sync/atomic"
-	"time"
 
-	"github.com/dr-dobermann/gobpm/internal/instance"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
-// observerBuffer is the per-observer event-channel depth. A slower observer
-// than this many buffered events drops the excess (Subscription.Dropped) rather
-// than blocking the engine (ADR-013 §2.2; the buffer size is an SRD-018 choice).
+// observerBuffer is the per-observer Fact-channel depth. A slower observer than
+// this many buffered Facts drops the excess (Subscription.Dropped) rather than
+// blocking the engine (ADR-013 §2.2; the buffer size is an SRD-018 choice).
 const observerBuffer = 64
 
-// EventKind classifies an observation event. It is an OPEN vocabulary: a host
-// must tolerate unknown values, since kinds are added additively (ADR-013 §2.4).
-type EventKind string
+// Observer is the canonical observation receiver — a type alias of
+// observability.Observer (ADR-013 v.2 §2.8). A host implements it once (OnFact)
+// and registers it on an instance handle (InstanceHandle.Observe) or the engine
+// (Thresher.Observe); the alias keeps the historical thresher.Observer spelling.
+// The event vocabulary is observability.Kind / KindXxx — there is one canonical
+// Fact type from emitter to delivery (no thresher-specific projection).
+type Observer = observability.Observer
 
-const (
-	// EventInstanceState is an instance lifecycle transition.
-	EventInstanceState EventKind = "InstanceState"
-
-	// EventNodeProgress is a token reaching a node in a given state.
-	EventNodeProgress EventKind = "NodeProgress"
-
-	// EventTokenMoved is reserved for a future distinct token-movement event.
-	EventTokenMoved EventKind = "TokenMoved"
-)
-
-// Event is one observation event delivered to an Observer. It carries identity,
-// state and timing only — never process payloads (the masking rule).
-type Event struct {
-	At         time.Time
-	Kind       EventKind
-	InstanceID string
-	NodeID     string
-	NodeName   string
-	State      string
-}
-
-// Observer receives observation events. OnEvent is called from a per-observer
-// drain goroutine, never on the engine's execution path; it MAY block without
-// stalling the engine (the engine drops events past the buffer instead), and a
-// panic in it is recovered.
-type Observer interface {
-	OnEvent(Event)
-}
-
-// Subscription is a live observer registration on an instance's event stream.
+// Subscription is a live observer registration on a Fact stream.
 type Subscription struct {
 	cancel  func()
 	dropped *atomic.Uint64
 }
 
-// Dropped reports how many events were dropped because the observer fell behind
+// Dropped reports how many Facts were dropped because the observer fell behind
 // the buffer (SRD-018 FR-9). Best-effort, monotonic.
 func (s *Subscription) Dropped() uint64 {
 	return s.dropped.Load()
 }
 
-// Cancel deregisters the observer and drains any buffered events, then stops the
+// Cancel deregisters the observer and drains any buffered Facts, then stops the
 // drain goroutine. Idempotent.
 func (s *Subscription) Cancel() {
 	s.cancel()
 }
 
-// Observe registers o on the instance's lifecycle/token/node event stream
-// (SRD-018, ADR-013 §2.2). Delivery is best-effort and lossy: events are
-// buffered per observer and drained by one goroutine; if the observer is slower
-// than the buffer, the excess is dropped (Subscription.Dropped) and the engine
-// never blocks. A panicking OnEvent is recovered. Cancel the returned
-// Subscription to stop observing.
+// Observe registers o on the instance's Fact stream (SRD-018, ADR-013 §2.8).
+// Delivery is best-effort and lossy: Facts are buffered per observer and drained
+// by one goroutine; if the observer is slower than the buffer, the excess is
+// dropped (Subscription.Dropped) and the engine never blocks. A panicking OnFact
+// is recovered. Cancel the returned Subscription to stop observing. The delivered
+// Fact already carries instance_id in its Details (stamped by the instance).
 func (h *InstanceHandle) Observe(o Observer) *Subscription {
-	id := h.inst.ID()
-	ch := make(chan Event, observerBuffer)
+	ch := make(chan observability.Fact, observerBuffer)
 	done := make(chan struct{})
 
 	var dropped atomic.Uint64
@@ -81,23 +53,28 @@ func (h *InstanceHandle) Observe(o Observer) *Subscription {
 	go func() {
 		defer close(done)
 
-		for ev := range ch {
-			deliver(o, ev)
+		for f := range ch {
+			deliver(o, f)
 		}
 	}()
 
-	cancelReg := h.inst.AddObserver(func(ie instance.ObsEvent) {
-		ev := Event{
-			At:         ie.At,
-			Kind:       eventKind(ie.Kind),
-			InstanceID: id,
-			NodeID:     ie.NodeID,
-			NodeName:   ie.NodeName,
-			State:      ie.State,
+	// The instance-scope visibility filter (ADR-013 §2.11): the policy is
+	// per-recipient with no scope carve-out, so it gates handle observers too.
+	// Asserted once here at registration; absent ⇒ pass-through.
+	filter, _ := h.inst.AuthorizationProvider().(observability.ObservationFilter)
+
+	cancelReg := h.inst.AddObserver(func(f observability.Fact) {
+		if filter != nil {
+			filtered, ok := filter.FilterObservation(o, f)
+			if !ok {
+				return // policy-denied — not a counted drop
+			}
+
+			f = filtered
 		}
 
 		select {
-		case ch <- ev:
+		case ch <- f:
 		default:
 			dropped.Add(1)
 		}
@@ -111,8 +88,8 @@ func (h *InstanceHandle) Observe(o Observer) *Subscription {
 			once.Do(func() {
 				// Deregister first: AddObserver's cancel takes the instance's
 				// observer write-lock, which fences any in-flight fan-out, so no
-				// sink send is in progress once it returns — making close(ch)
-				// safe (no send-on-closed-channel). Then drain to completion.
+				// send is in progress once it returns — making close(ch) safe (no
+				// send-on-closed-channel). Then drain to completion.
 				cancelReg()
 				close(ch)
 				<-done
@@ -123,22 +100,8 @@ func (h *InstanceHandle) Observe(o Observer) *Subscription {
 
 // deliver calls the observer, containing any panic so one bad observer cannot
 // crash the drain goroutine or affect others (ADR-013 §5).
-func deliver(o Observer, ev Event) {
+func deliver(o Observer, f observability.Fact) {
 	defer func() { _ = recover() }()
 
-	o.OnEvent(ev)
-}
-
-// eventKind maps the internal observation kind to the public open vocabulary.
-func eventKind(k instance.ObsKind) EventKind {
-	switch k {
-	case instance.ObsInstanceState:
-		return EventInstanceState
-
-	case instance.ObsNodeProgress:
-		return EventNodeProgress
-
-	default:
-		return EventKind(k.String())
-	}
+	o.OnFact(f)
 }

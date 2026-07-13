@@ -25,10 +25,3 @@ func TestTokenStateMapping(t *testing.T) {
 	}
 }
 
-// TestEventKindMapping covers the internal-to-public observation-kind mapping,
-// including the default for an unknown kind.
-func TestEventKindMapping(t *testing.T) {
-	require.Equal(t, EventInstanceState, eventKind(instance.ObsInstanceState))
-	require.Equal(t, EventNodeProgress, eventKind(instance.ObsNodeProgress))
-	require.Equal(t, EventKind("Unknown"), eventKind(instance.ObsKind(99)))
-}

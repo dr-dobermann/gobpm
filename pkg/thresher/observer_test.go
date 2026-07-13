@@ -11,6 +11,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 	"github.com/stretchr/testify/require"
 )
@@ -18,10 +19,10 @@ import (
 // collector records every event it receives (concurrency-safe).
 type collector struct {
 	mu     sync.Mutex
-	events []thresher.Event
+	events []observability.Fact
 }
 
-func (c *collector) OnEvent(ev thresher.Event) {
+func (c *collector) OnFact(ev observability.Fact) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.events = append(c.events, ev)
@@ -32,7 +33,8 @@ func (c *collector) sawCompleted() bool {
 	defer c.mu.Unlock()
 
 	for _, e := range c.events {
-		if e.Kind == thresher.EventInstanceState && e.State == "Completed" {
+		if e.Kind == observability.KindInstanceState &&
+			e.Phase == observability.PhaseCompleted {
 			return true
 		}
 	}
@@ -45,7 +47,7 @@ func (c *collector) sawNodeProgress() bool {
 	defer c.mu.Unlock()
 
 	for _, e := range c.events {
-		if e.Kind == thresher.EventNodeProgress {
+		if e.Kind == observability.KindNodeProgress {
 			return true
 		}
 	}
@@ -53,15 +55,15 @@ func (c *collector) sawNodeProgress() bool {
 	return false
 }
 
-// blockingObserver blocks in OnEvent until release is closed.
+// blockingObserver blocks in OnFact until release is closed.
 type blockingObserver struct{ release chan struct{} }
 
-func (b *blockingObserver) OnEvent(thresher.Event) { <-b.release }
+func (b *blockingObserver) OnFact(observability.Fact) { <-b.release }
 
 // panicObserver panics on every event.
 type panicObserver struct{}
 
-func (panicObserver) OnEvent(thresher.Event) { panic("observer boom") }
+func (panicObserver) OnFact(observability.Fact) { panic("observer boom") }
 
 // chainProcess builds start -> task0(sleep firstSleep) -> task1..N-1 -> end. The
 // first task's sleep gives a late observer time to register; the remaining fast

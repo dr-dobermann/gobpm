@@ -124,20 +124,26 @@ await the finish. To follow progress as it happens, subscribe an observer to the
 instance's lifecycle / token / node event stream:
 
 ```go
-// an Observer is any type with OnEvent(thresher.Event):
+// an Observer is any type with OnFact(observability.Fact):
 type logger struct{}
 
-func (logger) OnEvent(ev thresher.Event) {
-    fmt.Printf("  • %s %s %s\n", ev.Kind, ev.NodeName, ev.State)
+func (logger) OnFact(f observability.Fact) {
+    fmt.Printf("  • %s %s %s\n", f.Kind, f.Phase, f.NodeName)
 }
 
 sub := inst.Observe(logger{})
 defer sub.Cancel() // deregister + drain; sub.Dropped() counts any overflow
 ```
 
-Delivery is best-effort and lossy — a slow observer drops events rather than
+A `Fact` carries a `Kind` (EngineState, NodeProgress, JobState, Fault, …), a
+`Phase`, node identity, and a masked `Details` map (ids/names/codes, never
+payload). The same `Observe` exists on the engine itself —
+`Thresher.Observe(...)` — to watch **every** instance plus engine-level facts
+(process registration, hub and engine lifecycle) through one stream.
+
+Delivery is best-effort and lossy — a slow observer drops facts rather than
 blocking the engine — so the **completion** signal from `WaitCompletion` is the
-one guaranteed, never-dropped event.
+one guaranteed, never-dropped signal.
 
 A complete, runnable
 version (with error handling and waiting for the task to run) lives in

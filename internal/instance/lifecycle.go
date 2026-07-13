@@ -2,10 +2,11 @@ package instance
 
 import (
 	"context"
-
-	"golang.org/x/exp/maps"
+	"maps"
+	"slices"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 // State represents the process instance state.
@@ -50,7 +51,10 @@ func (inst *Instance) State() State {
 // atomic, so no lock is needed.
 func (inst *Instance) setState(newState State) {
 	inst.state.Store(uint32(newState))
-	inst.notify(ObsInstanceState, "", "", newState.String())
+	inst.report(observability.Fact{
+		Kind:  observability.KindInstanceState,
+		Phase: observability.Phase(newState.String()),
+	})
 }
 
 // LastErr returns the fatal error that stopped the instance (e.g. a fork
@@ -98,7 +102,7 @@ func (inst *Instance) Run(
 
 	// initial tracks were built by createTracks() during New; hand them to the
 	// loop, which becomes the sole owner of lifecycle state from here on.
-	initial := maps.Values(inst.tracks)
+	initial := slices.Collect(maps.Values(inst.tracks))
 
 	go inst.loop(inst.ctx, initial)
 

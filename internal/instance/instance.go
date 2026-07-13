@@ -161,6 +161,7 @@ func New(
 		td:                  td,
 	}
 	inst.state.Store(uint32(Created))
+	inst.announceCreated()
 	// The correlator back-pointer refers to the same heap object New returns —
 	// inst escapes via &inst below (the instanceScope loader takes it the same way).
 	inst.corr = correlator{inst: &inst, keys: map[string]string{}}

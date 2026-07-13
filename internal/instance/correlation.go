@@ -9,6 +9,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/msgflow"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 // correlator owns the instance's conversation keys and the message-correlation
@@ -41,13 +42,25 @@ func (c *correlator) associate(name, value string) bool {
 	}
 
 	c.m.Lock()
-	defer c.m.Unlock()
-
 	if _, ok := c.keys[name]; ok {
+		c.m.Unlock()
+
 		return false
 	}
 
 	c.keys[name] = value
+	c.m.Unlock()
+
+	// A new conversation key was learned (SRD-041 §3.4). Emitted off c.m so the
+	// sink's echo/fan-out never runs under the correlator lock.
+	c.inst.report(observability.Fact{
+		Kind:  observability.KindCorrelation,
+		Phase: observability.PhaseKeyAssociated,
+		Details: map[string]string{
+			observability.AttrCorrelationKey:   name,
+			observability.AttrCorrelationValue: value,
+		},
+	})
 
 	return true
 }
@@ -155,8 +168,17 @@ func (c *correlator) validateAndAssociate(
 		}
 
 		if held, isHeld := c.held(key.Name); isHeld && held != v {
-			c.inst.Logger().Debug("correlation key mismatch — message dropped",
-				"instance_id", c.inst.ID(), "correlation_key", key.Name)
+			// The message belongs to a different conversation — dropped. The
+			// producer echoes this at Debug, replacing the former direct log
+			// (SRD-041 §3.4).
+			c.inst.report(observability.Fact{
+				Kind:  observability.KindCorrelation,
+				Phase: observability.PhaseMismatched,
+				Details: map[string]string{
+					observability.AttrCorrelationKey:   key.Name,
+					observability.AttrCorrelationValue: v,
+				},
+			})
 
 			return true
 		}
@@ -168,6 +190,16 @@ func (c *correlator) validateAndAssociate(
 		if c.associate(name, v) {
 			c.extendReceivers(v)
 		}
+	}
+
+	// The message correlated to this instance's conversation (no mismatch, at
+	// least one declared key derived): announce Matched (SRD-041 §3.4).
+	if len(derived) != 0 {
+		c.inst.report(observability.Fact{
+			Kind:    observability.KindCorrelation,
+			Phase:   observability.PhaseMatched,
+			Details: map[string]string{observability.AttrEventDefinitionID: eDef.ID()},
+		})
 	}
 
 	return false

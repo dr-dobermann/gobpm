@@ -2,10 +2,10 @@ package activities
 
 import (
 	"errors"
+	"maps"
 	"reflect"
+	"slices"
 	"strings"
-
-	"golang.org/x/exp/maps"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -103,7 +103,7 @@ func newActivity(
 // boundaries onto this cloned host (SRD-029 M3a). Copying the model boundaries
 // here would leak shared nodes into the instance.
 func (a *activity) clone() (activity, error) {
-	props, err := data.CloneProperties(maps.Values(a.properties))
+	props, err := data.CloneProperties(slices.Collect(maps.Values(a.properties)))
 	if err != nil {
 		return activity{}, err
 	}
@@ -129,13 +129,13 @@ func (a *activity) clone() (activity, error) {
 
 // Roles returns list of ResourceRoles of the activity.
 func (a *activity) Roles() []*hi.ResourceRole {
-	return maps.Values(a.roles)
+	return slices.Collect(maps.Values(a.roles))
 }
 
 // Properties implements an data.PropertyOwner interface and returns
 // copy of the Activity properties.
 func (a *activity) Properties() []*data.Property {
-	return maps.Values(a.properties)
+	return slices.Collect(maps.Values(a.properties))
 }
 
 // SetDefaultFlow sets default flow from the Activity.

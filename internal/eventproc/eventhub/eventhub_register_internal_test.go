@@ -201,6 +201,8 @@ func TestWaiterFired(t *testing.T) {
 		t.Run("terminal "+st.String()+" removed", func(t *testing.T) {
 			w := mockeventproc.NewMockEventWaiter(t)
 			w.EXPECT().State().Return(st)
+			// WaiterFired reports an EventFlow/Fired fact carrying the waiter id.
+			w.EXPECT().ID().Return("term").Maybe()
 			// WaiterFired now drops a removed waiter from the signal index; a
 			// non-signal definition makes that a no-op (SRD-027 FR-6).
 			w.EXPECT().EventDefinition().Return(nil)
@@ -221,6 +223,7 @@ func TestWaiterFired(t *testing.T) {
 	t.Run("running waiter kept", func(t *testing.T) {
 		w := mockeventproc.NewMockEventWaiter(t)
 		w.EXPECT().State().Return(eventproc.WSRunned)
+		w.EXPECT().ID().Return("run").Maybe() // reported on the EventFlow/Fired fact
 
 		hub.m.Lock()
 		hub.waiters["run"] = w

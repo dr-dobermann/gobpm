@@ -221,8 +221,14 @@ func TestHistoryIncludesMerged(t *testing.T) {
 	defer c()
 
 	state, err := h.WaitCompletion(ctx)
-	require.NoError(t, err)
-	require.Equal(t, thresher.StateCompleted, state)
+	// Self-diagnosing on failure: a parallel fork/join instance ending non-
+	// Completed (or with an error) points at a join-synchronization issue —
+	// dump the terminal state + fault + the recorded history so a rare failure
+	// is actionable, not a bare "want Completed" (fix-on-sight: a flake without
+	// evidence can't be fixed).
+	require.NoErrorf(t, err, "instance faulted: state=%v history=%+v", state, h.History())
+	require.Equalf(t, thresher.StateCompleted, state,
+		"instance did not complete: err=%v history=%+v", err, h.History())
 
 	require.Empty(t, h.Tokens(), "no active tokens after completion")
 

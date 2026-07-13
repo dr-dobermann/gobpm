@@ -20,6 +20,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
 
@@ -95,6 +96,21 @@ func (eh *EventHub) setState(s hubState) {
 	eh.state.Store(uint32(s))
 }
 
+// reportEventFlow announces an event-definition's flow through the hub
+// (SRD-041 §3.4 EventFlow): registration, delivery, drop, or unregistration.
+// The event_definition_id (and waiter/signal identity, where the caller has it)
+// travels in details; the hub's failure logs stay Logger() diagnostics.
+func (eh *EventHub) reportEventFlow(
+	phase observability.Phase,
+	details map[string]string,
+) {
+	eh.rt.Reporter().Report(observability.Fact{
+		Kind:    observability.KindEventFlow,
+		Phase:   phase,
+		Details: details,
+	})
+}
+
 // Start performs synchronous initialization of the EventHub: records the
 // context that subsequent Run / RegisterEvent / UnregisterEvent /
 // PropagateEvent calls will observe, and flips the started flag.
@@ -113,6 +129,11 @@ func (eh *EventHub) Start(ctx context.Context) error {
 
 	eh.setState(hubStarted)
 	eh.ctx = ctx
+
+	eh.rt.Reporter().Report(observability.Fact{
+		Kind:  observability.KindHubState,
+		Phase: observability.PhaseStarted,
+	})
 
 	return nil
 }
@@ -240,11 +261,10 @@ func (eh *EventHub) registerWaiter(
 				errs.D("event_processor_id", ep.ID()))
 		}
 
-		eh.rt.Logger().Debug("event registered (added to existing waiter)",
-			"event_processor_id", ep.ID(),
-			"event_definition_id", eDef.ID(),
-			"event_definition_type", string(eDef.Type()),
-			"waiter_id", w.ID())
+		eh.reportEventFlow(observability.PhaseRegistered, map[string]string{
+			observability.AttrEventDefinitionID: eDef.ID(),
+			observability.AttrWaiterID:          w.ID(),
+		})
 
 		return nil
 	}
@@ -277,11 +297,10 @@ func (eh *EventHub) registerWaiter(
 		eh.signalIdx[name] = append(eh.signalIdx[name], w)
 	}
 
-	eh.rt.Logger().Debug("event registered (new waiter)",
-		"event_processor_id", ep.ID(),
-		"event_definition_id", eDef.ID(),
-		"event_definition_type", string(eDef.Type()),
-		"waiter_id", w.ID())
+	eh.reportEventFlow(observability.PhaseRegistered, map[string]string{
+		observability.AttrEventDefinitionID: eDef.ID(),
+		observability.AttrWaiterID:          w.ID(),
+	})
 
 	return nil
 }
@@ -300,6 +319,11 @@ func (eh *EventHub) Shutdown(ctx context.Context) error {
 	}
 
 	eh.setState(hubStopped)
+
+	eh.rt.Reporter().Report(observability.Fact{
+		Kind:  observability.KindHubState,
+		Phase: observability.PhaseStopped,
+	})
 
 	ws := make([]eventproc.EventWaiter, 0, len(eh.waiters))
 	for _, w := range eh.waiters {
@@ -407,18 +431,18 @@ func (eh *EventHub) UnregisterEvent(
 			}
 		}
 
-		eh.rt.Logger().Debug("event unregistered (waiter stopped)",
-			"event_processor_id", ep.ID(),
-			"event_definition_id", eDefID,
-			"waiter_id", w.ID())
+		eh.reportEventFlow(observability.PhaseUnregistered, map[string]string{
+			observability.AttrEventDefinitionID: eDefID,
+			observability.AttrWaiterID:          w.ID(),
+		})
 
 		return eh.RemoveWaiter(w.EventDefinition().ID())
 	}
 
-	eh.rt.Logger().Debug("event unregistered (processor removed, waiter kept)",
-		"event_processor_id", ep.ID(),
-		"event_definition_id", eDefID,
-		"waiter_id", w.ID())
+	eh.reportEventFlow(observability.PhaseUnregistered, map[string]string{
+		observability.AttrEventDefinitionID: eDefID,
+		observability.AttrWaiterID:          w.ID(),
+	})
 
 	return nil
 }
@@ -461,10 +485,9 @@ func (eh *EventHub) PropagateEvent(
 		// not an error. A signal thrown with no live catcher is simply not
 		// caught (BPMN §10.5.1); the hub is a live dispatcher, not a store, so
 		// there is nothing to buffer and nothing to fail.
-		eh.rt.Logger().Debug(
-			"event propagated with no registered waiter; ignored (no-op)",
-			"event_definition_id", eDef.ID(),
-			"event_definition_type", string(eDef.Type()))
+		eh.reportEventFlow(observability.PhaseDropped, map[string]string{
+			observability.AttrEventDefinitionID: eDef.ID(),
+		})
 
 		return nil
 	}
@@ -478,6 +501,11 @@ func (eh *EventHub) PropagateEvent(
 			errs.D("event_definition_type", string(eDef.Type())),
 			errs.E(err))
 	}
+
+	// A message routed to its waiter is observed downstream as the receiving
+	// instance's Correlation fact (match/mismatch) — not as a hub EventFlow, so
+	// one delivery is not double-recorded. EventFlow/Delivered is reserved for a
+	// signal broadcast (below), which has no single instance to correlate.
 
 	if len(w.EventProcessors()) == 0 {
 		return eh.RemoveWaiter(eDef.ID())
@@ -507,16 +535,16 @@ func (eh *EventHub) broadcastSignal(eDef flow.EventDefinition) error {
 	eh.m.RUnlock()
 
 	if len(targets) == 0 {
-		eh.rt.Logger().Debug(
-			"signal thrown with no catcher in reach; ignored (no-op)",
-			"signal", name)
+		eh.reportEventFlow(observability.PhaseDropped, map[string]string{
+			observability.AttrSignal: name,
+		})
 
 		return nil
 	}
 
-	eh.rt.Logger().Debug("signal broadcast",
-		"signal", name,
-		"catchers", len(targets))
+	eh.reportEventFlow(observability.PhaseDelivered, map[string]string{
+		observability.AttrSignal: name,
+	})
 
 	// Fan out off the lock: each delivery resumes a catcher's track, which
 	// self-unregisters (track.ProcessEvent) — that removal needs eh.m. Process
@@ -653,6 +681,11 @@ func (eh *EventHub) WaiterFired(eDefID string) error {
 			errs.C(errorClass, errs.ObjectNotFound),
 			errs.D("event_definition_id", eDefID))
 	}
+
+	eh.reportEventFlow(observability.PhaseFired, map[string]string{
+		observability.AttrEventDefinitionID: eDefID,
+		observability.AttrWaiterID:          w.ID(),
+	})
 
 	switch w.State() {
 	case eventproc.WSEnded, eventproc.WSFailed:

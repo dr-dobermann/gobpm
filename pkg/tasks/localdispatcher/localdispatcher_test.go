@@ -386,8 +386,10 @@ func TestLocalDispatcherReportStatus(t *testing.T) {
 	require.Equal(t, "NOT_FOUND", sink.last().StatusValue().Get(ctx))
 }
 
-// TestLocalDispatcherBindLogger: a bound logger is used for lifecycle logging; a
-// nil logger is ignored (the default is kept).
+// TestLocalDispatcherBindLogger: a bound logger receives the job-lifecycle echo
+// (a JobState fact echoed by the dispatcher's echo-only default Reporter, which
+// BindLogger rebuilds to use the bound logger); a nil logger is ignored (the
+// default is kept).
 func TestLocalDispatcherBindLogger(t *testing.T) {
 	lg := &spyLogger{}
 	d := localdispatcher.New(clocktest.New(base), time.Minute)
@@ -395,6 +397,6 @@ func TestLocalDispatcherBindLogger(t *testing.T) {
 	d.BindLogger(lg)  // now uses lg
 
 	require.NoError(t, d.Enqueue(context.Background(), newJob("j1", "charge")))
-	require.True(t, lg.has("job enqueued"),
-		"the bound logger receives the lifecycle log")
+	require.True(t, lg.has("JobState Enqueued"),
+		"the bound logger receives the job-lifecycle echo")
 }
