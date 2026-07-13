@@ -120,18 +120,20 @@ fmt.Println("done:", state) // "Completed"
 `StartProcess` возвращает read-only **`InstanceHandle`** — ваше окно в выполняющийся инстанс: `State()`, живой снимок `Tokens()`, полную `History()` (каждый трек, включая слитые), read-only `Data()` и `WaitCompletion(ctx)` для ожидания завершения. Чтобы следить за прогрессом по мере его развития, подпишите наблюдателя на поток событий жизненного цикла / токенов / узлов инстанса:
 
 ```go
-// an Observer is any type with OnEvent(thresher.Event):
+// an Observer is any type with OnFact(observability.Fact):
 type logger struct{}
 
-func (logger) OnEvent(ev thresher.Event) {
-    fmt.Printf("  • %s %s %s\n", ev.Kind, ev.NodeName, ev.State)
+func (logger) OnFact(f observability.Fact) {
+    fmt.Printf("  • %s %s %s\n", f.Kind, f.Phase, f.NodeName)
 }
 
 sub := inst.Observe(logger{})
 defer sub.Cancel() // deregister + drain; sub.Dropped() counts any overflow
 ```
 
-Доставка — best-effort и с потерями: медленный наблюдатель отбрасывает события, а не блокирует движок — поэтому сигнал **завершения** от `WaitCompletion` — единственное гарантированное, никогда не теряемое событие.
+`Fact` несёт `Kind` (EngineState, NodeProgress, JobState, Fault, …), `Phase`, идентичность узла и маскированную мапу `Details` (id/имена/коды, никогда payload). Тот же `Observe` есть и у самого движка — `Thresher.Observe(...)` — чтобы одним потоком следить за **всеми** инстансами плюс фактами уровня движка (регистрация процессов, жизненный цикл hub'а и движка).
+
+Доставка — best-effort и с потерями: медленный наблюдатель отбрасывает факты, а не блокирует движок — поэтому сигнал **завершения** от `WaitCompletion` — единственный гарантированный, никогда не теряемый сигнал.
 
 Полная, запускаемая версия (с обработкой ошибок и ожиданием выполнения задачи) лежит в [`examples/basic-process/`](examples/basic-process/); см. также [`examples/parallel-gateway/`](examples/parallel-gateway/) (конкурентные ветви), [`examples/process-data/`](examples/process-data/) (данные процесса через задачу) и таймер-примеры [`examples/simple-timer/`](examples/simple-timer/) · [`examples/timer-event/`](examples/timer-event/).
 
