@@ -2,7 +2,6 @@ package data
 
 import (
 	"context"
-	"time"
 )
 
 // Value interface provides methods for data manipulation and locking.
@@ -86,27 +85,11 @@ type Collection interface {
 	Delete(ctx context.Context, index any) error
 }
 
-// Updater is an interface for Values, which allows track its-own update events.
-// It doesn't provide ability to read updated/new value due to security issues.
-// Everyone who has access to value could read it in appropriate way.
-type Updater interface {
-	// Register registers single Value's updating event callback function.
-	// If registration failed error returned.
-	Register(regName string, updFunc UpdateCallback) error
-
-	// Unregister deletes previously made registration.
-	Unregister(regName string)
-}
-
-// UpdateCallback represents a function that will be called as soon as Value changed.
-// Due to there is no any warranty about right order of the
-// Value updates notification, time of update is provided.
-// if you got any notification after the one you're already process, just
-// ignore them.
-// If data was changed in the collection, then index will be filled.
-type UpdateCallback func(when time.Time, changeType ChangeType, index any)
-
-// ChangeType indicates the type of Value's change.
+// ChangeType classifies a committed data change. It is the commit-diff's
+// change-kind vocabulary (ADR-011 v.6 §2.9.4, wired in the S3 slice): each
+// diff entry is a (path, ChangeType) pair. The string values are mirrored by
+// the observability DataChange phases (ADR-013 v.2), so the wire names stay
+// aligned across both.
 type ChangeType string
 
 const (

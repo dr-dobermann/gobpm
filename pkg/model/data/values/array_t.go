@@ -2,7 +2,6 @@ package values
 
 import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/data"
 )
 
 // In this file is a collection of typed methods of Array[T]
@@ -46,8 +45,6 @@ func (a *Array[T]) UpdateT(value T) error {
 	}
 
 	a.elements[a.index] = value
-
-	a.notify(data.ValueUpdated, a.index)
 
 	return nil
 }
@@ -112,8 +109,6 @@ func (a *Array[T]) AddT(value T) error {
 		a.index = 0
 	}
 
-	a.notify(data.ValueAdded, len(a.elements)-1)
-
 	return nil
 }
 
@@ -143,8 +138,6 @@ func (a *Array[T]) InsertT(value T, index int) error {
 	a.elements = append(a.elements[:index],
 		append([]T{value}, a.elements[index:]...)...)
 
-	a.notify(data.ValueAdded, index)
-
 	return nil
 }
 
@@ -168,8 +161,6 @@ func (a *Array[T]) DeleteT(index int) error {
 	if a.index >= len(a.elements) {
 		a.index = len(a.elements) - 1
 	}
-
-	a.notify(data.ValueDeleted, index)
 
 	return nil
 }

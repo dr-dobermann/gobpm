@@ -3,9 +3,7 @@ package values_test
 import (
 	"context"
 	"io"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
@@ -219,50 +217,6 @@ func TestArray(t *testing.T) {
 			require.Equal(t, 100, a.Get(context.Background()))
 		})
 
-	t.Run("update_check",
-		func(t *testing.T) {
-			// Array.notify spawns a goroutine per callback invocation, so
-			// concurrent mutations (Add / UpdateT / Insert / DeleteT) lead
-			// to concurrent callbacks. The counter must be race-safe; a
-			// plain int races between the callback goroutines and between
-			// each callback goroutine and this test goroutine reading the
-			// final tally.
-			var chCount atomic.Int64
-			updateCounter := func(counter *atomic.Int64) data.UpdateCallback {
-				return func(
-					when time.Time,
-					chType data.ChangeType,
-					index any,
-				) {
-					t.Log("value updated[", index, "]: ", chType, " at: ", when)
-					counter.Add(1)
-				}
-			}
-
-			ctx := context.Background()
-
-			a := values.NewArray[int]()
-			require.NoError(t, a.Register("a_tracker", updateCounter(&chCount)))
-			require.Error(t, a.Register("a_tracker", updateCounter(&chCount)))
-			require.Error(t, a.Register("some", nil))
-			require.Error(t, a.Register("    ", updateCounter(&chCount)))
-
-			require.NoError(t, a.Add(ctx, 10))
-			require.NoError(t, a.UpdateT(42))
-			require.NoError(t, a.Insert(ctx, 100, 0))
-
-			require.NoError(t, a.DeleteT(1))
-
-			time.Sleep(1 * time.Second)
-
-			require.Equal(t, int64(4), chCount.Load())
-
-			a.Unregister("a_tracker")
-
-			require.NoError(t, a.Update(ctx, 20))
-
-			require.Equal(t, int64(4), chCount.Load())
-		})
 }
 
 func TestVariable(t *testing.T) {
@@ -322,44 +276,6 @@ func TestVariable(t *testing.T) {
 			require.Equal(t, "meaning of life", nv.Get(ctx).(test_struct).string_v)
 		})
 
-	t.Run("update check",
-		func(t *testing.T) {
-			// Variable.notify spawns a goroutine per callback invocation
-			// (see Array test for the same rationale); use atomic.Int64
-			// to keep the test counter race-safe.
-			var chCount atomic.Int64
-			updateCounter := func(counter *atomic.Int64) data.UpdateCallback {
-				return func(
-					when time.Time,
-					chType data.ChangeType,
-					index any,
-				) {
-					t.Log("value updated: ", chType, " at: ", when)
-					counter.Add(1)
-				}
-			}
-
-			ctx := context.Background()
-
-			v := values.NewVariable[int](42)
-			require.NoError(t, v.Register("a_tracker", updateCounter(&chCount)))
-			require.Error(t, v.Register("a_tracker", updateCounter(&chCount)))
-			require.Error(t, v.Register("tracker", nil))
-			require.Error(t, v.Register("  ", updateCounter(&chCount)))
-
-			require.NoError(t, v.Update(ctx, 10))
-			require.NoError(t, v.UpdateT(15))
-
-			time.Sleep(1 * time.Second)
-
-			require.Equal(t, int64(2), chCount.Load())
-
-			v.Unregister("a_tracker")
-
-			require.NoError(t, v.Update(ctx, 20))
-
-			require.Equal(t, int64(2), chCount.Load())
-		})
 }
 
 // TestArrayInsertAtEnd covers FIX-014 1.1: Insert accepts the append position
@@ -401,27 +317,44 @@ func TestArrayCloneKeepsCursor(t *testing.T) {
 	require.Equal(t, 2, clone.Index())
 }
 
-// TestArrayDeleteLastNotifies covers FIX-014 1.3: deleting the final element
-// (which empties the collection) still fires the ValueDeleted callback, where
-// the old early return skipped it. notify dispatches asynchronously, so the
-// callback is observed over a channel.
-func TestArrayDeleteLastNotifies(t *testing.T) {
+// TestArrayUpdate covers Update/UpdateT branches: a type-mismatched value is
+// rejected on a non-empty array; UpdateT replaces the cursor element; UpdateT
+// on an empty array errors.
+func TestArrayUpdate(t *testing.T) {
+	ctx := context.Background()
+
+	a := values.NewArray[int](1, 2)
+	require.Error(t, a.Update(ctx, "not an int"))
+
+	require.NoError(t, a.Update(ctx, 10))
+	require.Equal(t, 10, a.GetT())
+
+	require.NoError(t, a.UpdateT(42))
+	require.Equal(t, 42, a.GetT())
+
+	e := values.NewArray[int]()
+	require.Error(t, e.UpdateT(7))
+}
+
+// TestArrayDeleteLastStaysUsable covers the surviving FIX-014 1.3 invariant:
+// deleting the final element (which empties the collection) re-seats the
+// cursor (Index == -1) instead of leaving it dangling, and the collection
+// stays fully usable — a subsequent Add re-establishes the cursor and the
+// element is readable. (The callback half of the original test left with the
+// Updater machinery — SRD-042 FR-7; change observation returns as the S3
+// commit-diff.)
+func TestArrayDeleteLastStaysUsable(t *testing.T) {
 	ctx := context.Background()
 	a := values.NewArray[int](42)
 
-	got := make(chan data.ChangeType, 1)
-	require.NoError(t, a.Register("watch",
-		func(_ time.Time, ct data.ChangeType, _ any) {
-			got <- ct
-		}))
-
 	require.NoError(t, a.Delete(ctx, 0))
 	require.Equal(t, 0, a.Count())
+	require.Equal(t, -1, a.Index())
 
-	select {
-	case ct := <-got:
-		require.Equal(t, data.ValueDeleted, ct)
-	case <-time.After(2 * time.Second):
-		t.Fatal("ValueDeleted not fired when deleting the last element")
-	}
+	require.NoError(t, a.Add(ctx, 7))
+	require.Equal(t, 0, a.Index())
+
+	v, err := a.GetAt(ctx, 0)
+	require.NoError(t, err)
+	require.Equal(t, 7, v)
 }
