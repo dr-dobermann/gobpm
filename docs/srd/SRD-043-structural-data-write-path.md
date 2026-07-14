@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft v.1 |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-14 |
 | Owner | Ruslan Gabitov |
@@ -241,17 +241,49 @@ writes — a target sub-path mechanism on associations, a separate slice.
 
 ## 9. Definition of Done
 
-- [ ] FR-1..FR-6 wired; every §6 test exists and is green.
-- [ ] `Collection.SetAt` is cursor-free and atomic (T-2); no list grows by hole.
-- [ ] Whole-value output mapping regression-proven (T-4); commit path untouched.
-- [ ] `make ci` green; diff-coverage ≥95% (aim 100%); full `-race`; example smoke
+- [x] FR-1..FR-6 wired; every §6 test exists and is green.
+- [x] `Collection.SetAt` is cursor-free and atomic (T-2); no list grows by hole.
+- [x] Whole-value output mapping regression-proven (T-4); commit path untouched.
+- [x] `make ci` green; diff-coverage ≥95% (aim 100%); full `-race`; example smoke
       exits 0.
-- [ ] SRD-043 flipped to Accepted; roadmap S2 note. ADR-011 v.6 unchanged.
-- [ ] §10 filled with milestone SHAs and deltas.
+- [x] SRD-043 flipped to Accepted; roadmap S2 note. ADR-011 v.6 unchanged.
+- [x] §10 filled with milestone SHAs and deltas.
 
 ## 10. Implementation summary
 
-> ⚠️ TODO: filled after landing.
+Landed on `feat/structural-write-path` in three milestones.
+
+### 10.1 Milestones
+
+| # | Commit | Scope | Tests |
+|---|---|---|---|
+| doc | `e134e51` | this SRD | — |
+| M1 | `2b2a334` | `Collection.SetAt` (interface + `Array.SetAt`/`SetAtT` + shared `setAt` core), `data.ParsePath`, and `values.SetPath` + `walkToParent` + auto-vivify | `TestSetPath`, `TestArraySetAt`, `TestParsePath` |
+| M2 | `0e3d2c0` | `ApplyOutputMapping` assembly-by-head (`groupByHead` / `assembleHead` / `evalRule` / `outputDatum`) | `TestOutputMappingAssembly`, `TestOutputMappingPlainUnchanged` |
+| M3 | `26b1be7` | the `structural-output-mapping` worked example + README/index wiring | example smoke (T-5) |
+
+All touched functions at 100% coverage; `make ci` green at each milestone
+(final: diff-coverage 100% of 213 lines, `-race` clean, lint 0, vuln 0).
+
+### 10.2 Deltas vs the §3 draft
+
+- **`SetPath` lives in `values`, not `data`** (§3.1 named it `data.SetPath`).
+  Auto-vivify constructs concrete `values.Record` / `values.Array`, and `data`
+  cannot import `values`. The `Collection.SetAt` *interface* stays in `data`;
+  the write helper that builds concrete containers is in `values`.
+- **`data.ParsePath` added** as the write-side path parser (§3.1 leaned on
+  `SplitPath`). Unlike `SplitPath` (a NAME head + steps for a `Source.Find`),
+  the leading segment of a `SetPath` path is itself a step — a field **or** an
+  index — because the root may be a record or a list (`"items[0].price"` vs
+  `"[0].total"`).
+- **No Collection mock regen** (§7 M1 said "+ mock regen"): no `Collection`
+  mock exists in `generated/`, so the `SetAt` addition needed none.
+- **Below-head path via substring** (§3.3): the per-head relative path is
+  `strings.TrimPrefix(r.Var[len(head):], ".")`, not a re-stringify of
+  `SplitPath`'s steps — same result, no tokenizer round-trip.
+- **M1 cleanup folded into M2**: `values.vivify` uses `MustRecord()`
+  (zero-field, non-panicking) instead of `r, _ := NewRecord()`, dropping a
+  silent error-discard.
 
 ## Open questions
 
