@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft v.1 |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-13 |
 | Owner | Ruslan Gabitov |
@@ -437,7 +437,45 @@ instead of failing the exact-name lookup. `ChangeType` is unchanged.
 
 ## 10. Implementation summary
 
-> ⚠️ TODO: filled after landing.
+Landed on `feat/structural-data` (off master), atop ADR-011 v.6 (`03e9d56`):
+
+| Stage | Commit | Scope |
+|---|---|---|
+| doc | `fb3a200` | this SRD |
+| M1 | `541eabe` | FR-6 name reservation (`.`/`[`/`]`) + FR-7 the `Updater` deletion |
+| M2 | `556a56a` | FR-1 `data.Record` + FR-2 `values.Record` (+`F`) |
+| M3 | `5124dff` | FR-3 `SplitPath`/`WalkSteps`/`NewPathData` + FR-5 `SchemaAt`/`Walk` |
+| M4 | `4330577` | FR-4 the seam integration — `data.ResolvePath` wired into `frame.GetData`, `Association.Find`, the fault source |
+| M5 | `40cc913` | FR-8 the `structural-data` example + smoke (T-10) |
+| M5+ | `c60e884` | the `service-task-worker` example: structural **output mapping** on a worker (a structured body, nested-path rules) |
+
+### Deltas vs the draft
+
+1. **The `Updater` deletion undercounted `notify` sites (§3.6).** The draft
+   inventoried the `notify` calls in `variable.go`/`array.go` but missed **5**
+   more in the typed variants (`variable_t.go` ×1, `array_t.go` ×4) — the
+   deletion touched those too. Zero non-test consumers remained (as claimed);
+   the removal is complete.
+2. **`data.ResolvePath` — a shared resolver (not in the draft).** §3.5 described
+   the walk inline per Source; implementation extracted it into one public
+   `data.ResolvePath(ctx, name, resolveHead)` that all three Sources drive with
+   their own head-lookup, so the split/walk/wrap logic lives once (the SRD's
+   "one resolver" intent, made literal). `frame.GetData`'s head resolution moved
+   to a `resolveHead` helper, keeping the plain path byte-identical.
+3. **`values.F` field-literal helper** added (§3.2/§5) for concise record
+   construction, per the review.
+4. **T-5 landed as a real end-to-end thresher test** (not a lighter stand-in):
+   `TestExclusiveRoutingOnStructuralPath` runs an exclusive gateway routing on
+   `order.total > 100` through the full runtime; the M5 example is the runnable
+   twin.
+5. **`scalarLeaf` no-op `Lock`/`Unlock` COVER_EXCLUDE.** Empty-body methods
+   register no coverage counter (a Go tooling limit) — added to the Makefile
+   exclude beside the existing `Option()`/`mappedOutcome()` markers; the `\{\}`
+   guard keeps real mutex-backed `Lock`/`Unlock` in the gate.
+
+Gate: `make ci` green at every milestone — diff-coverage ≥95% (touched
+functions at 100%), full `-race` suite, lint 0, 0 vulns; the two examples smoke
+to exit 0.
 
 ## Open questions
 
