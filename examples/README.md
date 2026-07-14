@@ -1,222 +1,80 @@
-# GoBPM Examples
+# GoBPM examples
 
-This directory contains working examples demonstrating how to use the GoBPM library.
-
-## 📋 Available Examples
-
-### Basic Process (`basic-process/`)
-Demonstrates the fundamental concepts of creating a simple BPMN process:
-- Creating a BPM engine (Thresher)
-- Building a process with Start Event → Service Task → End Event
-- Creating and registering process snapshots
-- Starting and executing processes
-
-**Key concepts:**
-- Process creation and element addition
-- Sequence flow linking
-- Service task with operations
-- Process lifecycle management
+Runnable programs demonstrating the engine. Each example is its own Go module
+(its own `go.mod` with a `replace` onto the repo root), so run it from its own
+directory:
 
 ```bash
-cd basic-process && go run main.go
+cd <example> && go run .
 ```
 
-### Timer Events (`timer-event/`)
-Shows how to work with timer-based events in BPMN processes:
-- Creating timer expressions with FormalExpression
-- Timer event definitions and start events
-- Time-based process triggering
+Every example builds in CI; the list below is grouped by concern.
 
-**Key concepts:**
-- Timer event definitions with timeDate
-- FormalExpression using goexpr
-- Timer-triggered process execution
+## Basics
 
-```bash
-cd timer-event && go run main.go
-```
+| Example | Demonstrates |
+|---|---|
+| [`basic-process/`](basic-process/) | The fundamentals: engine → process (start → service task → end) → register → run. |
+| [`process-data/`](process-data/) | Process data through a task — a property and an engine runtime variable read via the `DataReader`. |
 
-### Simple Timer (`simple-timer/`)
-A minimal example focusing on timer functionality:
-- Simplified timer setup
-- Basic timer start event
-- Minimal process structure
+## Gateways
 
-**Key concepts:**
-- Minimal timer implementation
-- Timer start events
-- Basic process flow
+| Example | Demonstrates |
+|---|---|
+| [`parallel-gateway/`](parallel-gateway/) | Parallel (AND) split into concurrent branches + a synchronizing join. |
+| [`gateway-routing/`](gateway-routing/) | Exclusive (XOR) data-based routing — first-true condition, else the default flow. |
+| [`inclusive-join/`](inclusive-join/) | Inclusive (OR) split — every true branch forks — and the OR-join. |
+| [`complex-gateway/`](complex-gateway/) | Complex gateway: an activation-threshold join (fire once N of M arrive). |
+| [`event-based-gateway/`](event-based-gateway/) | Mid-flow deferred choice — the first of several events to fire wins; the rest are dropped. |
+| [`event-based-parallel-start/`](event-based-parallel-start/) | A process **started** by an event gateway — two correlated messages, one instance. |
 
-```bash
-cd simple-timer && go run main.go
-```
+## Structural data
 
-### Definition Versioning (`versioning/`)
-Demonstrates Camunda-style definition versioning (ADR-019 / SRD-031.A): one
-process **key** carries many **versions**, addressable by latest, by number, or
-by the registration handle.
+| Example | Demonstrates |
+|---|---|
+| [`structural-data/`](structural-data/) | Reaching **into** a record value by path — a service task reads `order.items[0].price`, a gateway routes on `order.total` (ADR-011 v.6 §2.9). |
 
-**Key concepts:**
-- Registering under the same key yields versions `v1`, `v2`, … of one definition
-- `StartLatest(key)`, `StartVersion(key, n)`, `StartProcess(reg)` start modes
-- `Registrations(key)` enumeration and **promote-on-removal** on unregister
+## Service workers
 
-```bash
-cd versioning && go run .
-```
+| Example | Demonstrates |
+|---|---|
+| [`service-task-worker/`](service-task-worker/) | External worker (fetch-and-lock) with in-process retry, trust modes, a Business Status / Business Error verdict, and **structural output mapping** (nested fields extracted from a structured worker body). |
+| [`usertask/`](usertask/) | User task — a human-completed wait node gated by Camunda-style assignee / candidate authorization. |
 
-## 🚀 Running Examples
+## Messages & correlation
 
-### Prerequisites
-1. Go 1.21+ installed
-2. GoBPM dependencies available (run from project root)
+| Example | Demonstrates |
+|---|---|
+| [`message-send-receive/`](message-send-receive/) | A SendTask publishes to the broker; a ReceiveTask waits and binds the payload. |
+| [`message-intermediate-events/`](message-intermediate-events/) | Throw / catch intermediate message events. |
+| [`inter-instance-correlation/`](inter-instance-correlation/) | A message **instantiates** a handler process and **correlates** by a key derived from the payload (one instance per distinct order). |
+| [`conversation-routing/`](conversation-routing/) | A follow-up message **routes back** to the specific handler instance whose conversation it belongs to; two conversations stay isolated. |
 
-### Build and Run
-```bash
-# From examples directory
-cd examples
+## Signals
 
-# Run basic process example
-cd basic-process && go run main.go && cd ..
+| Example | Demonstrates |
+|---|---|
+| [`signal-broadcast/`](signal-broadcast/) | One throw reaches **every** waiting catcher in reach (broadcast, no correlation). |
+| [`signal-start/`](signal-start/) | A broadcast signal **instantiates** processes whose start trigger is a signal. |
 
-# Run timer event example  
-cd timer-event && go run main.go && cd ..
+## Timers, boundaries & termination
 
-# Run simple timer example
-cd simple-timer && go run main.go && cd ..
-```
+| Example | Demonstrates |
+|---|---|
+| [`simple-timer/`](simple-timer/) | A minimal timer start event. |
+| [`timer-event/`](timer-event/) | Timer event definitions with a `timeDate` expression. |
+| [`boundary-events/`](boundary-events/) | An interrupting timer boundary as a timeout — it fires before a long task finishes, cancels it, and routes onto the exception flow. |
+| [`terminate-end-event/`](terminate-end-event/) | A Terminate End Event ends the whole instance mid-flight — it settles `Terminated`, not `Completed`. |
 
-### Build All Examples
-```bash
-# From examples directory
-cd examples
+## Lifecycle
 
-# Build each example
-cd basic-process && go build -o basic-process main.go && cd ..
-cd timer-event && go build -o timer-event main.go && cd ..
-cd simple-timer && go build -o simple-timer main.go && cd ..
-```
+| Example | Demonstrates |
+|---|---|
+| [`versioning/`](versioning/) | Camunda-style definition versioning — one key, many versions; start by latest, by number, or by handle; promote-on-removal. |
 
-## 📚 Example Breakdown
+---
 
-### Common Patterns
-
-All examples follow these patterns:
-
-```go
-// 1. Create BPM engine
-engine := thresher.New()
-
-// 2. Create process
-proc, err := process.New("process-name")
-
-// 3. Create BPMN elements (events, tasks, gateways)
-startEvent, err := events.NewStartEvent("start")
-endEvent, err := events.NewEndEvent("end")
-
-// 4. Add elements to process
-proc.Add(startEvent)
-proc.Add(endEvent)
-
-// 5. Link elements with sequence flows
-flow.Link(startEvent, endEvent)
-
-// 6. Register the process — returns a (key, version) registration handle
-reg, err := engine.RegisterProcess(proc)
-
-// 7. Start engine
-ctx := context.Background()
-engine.Run(ctx)
-
-// 8. Launch an instance — by handle, or by StartLatest(proc.ID())
-engine.StartProcess(reg)
-```
-
-### Error Handling
-
-Examples demonstrate proper error handling:
-- Checking all function returns for errors
-- Using `log.Fatal()` for critical errors
-- Graceful error messages
-
-### Resource Management
-
-Examples show proper resource management:
-- Context usage for cancellation
-- Proper process lifecycle
-- Clean shutdown patterns
-
-## 🔧 Troubleshooting
-
-### Common Issues
-
-1. **Import Errors**
-   ```
-   cannot find package "github.com/dr-dobermann/gobpm/..."
-   ```
-   **Solution**: Run examples from project root or ensure proper Go module setup
-
-2. **Build Errors**
-   ```
-   undefined: events.NewStartEvent
-   ```
-   **Solution**: Check import statements match exact package names
-
-3. **Runtime Errors**
-   ```
-   Failed to start engine: thresher isn't started
-   ```
-   **Solution**: Ensure proper engine startup sequence (Run before StartProcess)
-
-### Getting Help
-
-- Check [main documentation](../README.md)
-- Review [component docs](../README_INDEX.md)  
-- Examine test files for additional usage patterns
-- See [EventHub documentation](../internal/eventproc/eventhub/README.md) for event handling
-
-## 🧪 Testing Examples
-
-You can verify examples work correctly:
-
-```bash
-# Test compilation of all examples
-cd examples
-for dir in */; do
-    if [ -f "$dir/main.go" ]; then
-        echo "Testing $dir..."
-        cd "$dir" && go build main.go && echo "✅ $dir compiled successfully" || echo "❌ $dir failed"
-        rm -f main 2>/dev/null
-        cd ..
-    fi
-done
-echo "✅ All examples tested"
-```
-
-## 📈 Next Steps
-
-After running these examples, explore:
-
-1. **[Process Documentation](../pkg/model/process/)** - Advanced process features
-2. **[Activity Types](../pkg/model/activities/)** - Different task types
-3. **[Event Types](../pkg/model/events/)** - Various BPMN events
-4. **[Data Handling](../pkg/model/data/)** - Process variables and expressions
-5. **[Testing Patterns](../pkg/thresher/)** - How to test your processes
-
-## 🤝 Contributing Examples
-
-To add new examples:
-
-1. Create a new `.go` file with descriptive name
-2. Follow existing pattern and error handling
-3. Add documentation section to this README
-4. Test compilation and execution
-5. Submit PR with working example
-
-Good example topics:
-- Gateway usage (exclusive, parallel)
-- Data flow and variables
-- Error handling and boundary events
-- Sub-processes
-- Message events
-- Integration patterns
+Prerequisites: a recent Go toolchain (see the repo `go.mod`). Some examples
+(worker, structural-data) also print the engine's observability facts as they
+run. New to the engine? Start with [`basic-process/`](basic-process/), then the
+[project README](../README.md).
