@@ -2,7 +2,6 @@ package data
 
 import (
 	"context"
-	"time"
 )
 
 // Value interface provides methods for data manipulation and locking.
@@ -86,27 +85,33 @@ type Collection interface {
 	Delete(ctx context.Context, index any) error
 }
 
-// Updater is an interface for Values, which allows track its-own update events.
-// It doesn't provide ability to read updated/new value due to security issues.
-// Everyone who has access to value could read it in appropriate way.
-type Updater interface {
-	// Register registers single Value's updating event callback function.
-	// If registration failed error returned.
-	Register(regName string, updFunc UpdateCallback) error
+// Record is the optional structural capability of a Value (ADR-011 v.6
+// §2.9.1): a string-keyed, heterogeneous, insertion-ordered set of fields. A
+// Value that implements Record is navigable by ".field" path steps; a value's
+// kind (scalar / list / record) is discovered by type assertion, exactly as
+// with Collection — a scalar implements neither and is a path leaf.
+type Record interface {
+	Value
 
-	// Unregister deletes previously made registration.
-	Unregister(regName string)
+	// Keys lists the field names in insertion order.
+	Keys() []string
+
+	// Field returns the named field's value, or a classified
+	// errs.ObjectNotFound error when the field is absent.
+	Field(ctx context.Context, name string) (Value, error)
+
+	// SetField sets (adds or replaces) the named field. The implementation
+	// enforces its own shape: the dynamic values.Record accepts new fields; a
+	// typed adapter (S4) rejects unknown names. The name must be CheckName-legal
+	// so a field is always addressable by a structural path.
+	SetField(ctx context.Context, name string, v Value) error
 }
 
-// UpdateCallback represents a function that will be called as soon as Value changed.
-// Due to there is no any warranty about right order of the
-// Value updates notification, time of update is provided.
-// if you got any notification after the one you're already process, just
-// ignore them.
-// If data was changed in the collection, then index will be filled.
-type UpdateCallback func(when time.Time, changeType ChangeType, index any)
-
-// ChangeType indicates the type of Value's change.
+// ChangeType classifies a committed data change. It is the commit-diff's
+// change-kind vocabulary (ADR-011 v.6 §2.9.4, wired in the S3 slice): each
+// diff entry is a (path, ChangeType) pair. The string values are mirrored by
+// the observability DataChange phases (ADR-013 v.2), so the wire names stay
+// aligned across both.
 type ChangeType string
 
 const (

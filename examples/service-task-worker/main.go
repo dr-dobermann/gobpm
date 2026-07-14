@@ -118,9 +118,16 @@ func outcome(ctx context.Context, h *thresher.InstanceHandle) string {
 		return "payment-failed (Business Error caught by the boundary)"
 	}
 
+	// reservationId and warehouseZone were extracted from the worker's
+	// structured {reservationId, warehouse:{zone}} body by structural output
+	// mapping (body.reservationId, body.warehouse.zone).
 	rid := ""
 	if r, rerr := dr.GetData("reservationId"); rerr == nil {
 		rid = fmt.Sprintf(", reservationId=%v", r.Value().Get(ctx))
+
+		if z, zerr := dr.GetData("warehouseZone"); zerr == nil {
+			rid += fmt.Sprintf(", warehouseZone=%v", z.Value().Get(ctx))
+		}
 	}
 
 	if s, _ := status.Value().Get(ctx).(string); s == "AUTHORIZED" {

@@ -135,27 +135,31 @@ func newFaultSource(f Fault) *faultSource {
 }
 
 // Find resolves "code" (the fault code as a string datum) and "body" (the fault
-// body item); any other name is an ObjectNotFound error.
-func (s *faultSource) Find(_ context.Context, name string) (data.Data, error) {
-	switch name {
-	case "code":
-		return data.MustParameter("code",
-			data.MustItemAwareElement(
-				data.MustItemDefinition(values.NewVariable(s.code)),
-				data.ReadyDataState)), nil
+// body item); any other head is an ObjectNotFound error. A structural name
+// ("body.items[0].price") navigates into the resolved head (ADR-011 v.6
+// §2.9.2); a plain name returns the head datum unchanged.
+func (s *faultSource) Find(ctx context.Context, name string) (data.Data, error) {
+	return data.ResolvePath(ctx, name, func(head string) (data.Data, error) {
+		switch head {
+		case "code":
+			return data.MustParameter("code",
+				data.MustItemAwareElement(
+					data.MustItemDefinition(values.NewVariable(s.code)),
+					data.ReadyDataState)), nil
 
-	case "body":
-		if s.body == nil {
-			return nil, errs.New(
-				errs.M("faultSource: the fault carries no body"),
-				errs.C(errorClass, errs.ObjectNotFound))
+		case "body":
+			if s.body == nil {
+				return nil, errs.New(
+					errs.M("faultSource: the fault carries no body"),
+					errs.C(errorClass, errs.ObjectNotFound))
+			}
+
+			return data.MustParameter("body",
+				data.MustItemAwareElement(s.body, data.ReadyDataState)), nil
 		}
 
-		return data.MustParameter("body",
-			data.MustItemAwareElement(s.body, data.ReadyDataState)), nil
-	}
-
-	return nil, errs.New(
-		errs.M("faultSource: no datum %q (only code, body)", name),
-		errs.C(errorClass, errs.ObjectNotFound))
+		return nil, errs.New(
+			errs.M("faultSource: no datum %q (only code, body)", head),
+			errs.C(errorClass, errs.ObjectNotFound))
+	})
 }

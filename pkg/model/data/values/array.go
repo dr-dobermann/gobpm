@@ -4,9 +4,7 @@ import (
 	"context"
 	"io"
 	"reflect"
-	"strings"
 	"sync"
-	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -14,19 +12,17 @@ import (
 
 // Array is a implementation of the data.Collection and data.Value interfaces.
 type Array[T any] struct {
-	evtUpdaters map[string]data.UpdateCallback
-	elements    []T
-	index       int
-	lock        sync.Mutex
+	elements []T
+	index    int
+	lock     sync.Mutex
 }
 
 // NewArray creates a new Array of T type, fill it with values and
 // returns its pointer
 func NewArray[T any](values ...T) *Array[T] {
 	a := Array[T]{
-		elements:    make([]T, len(values)),
-		index:       -1,
-		evtUpdaters: make(map[string]data.UpdateCallback),
+		elements: make([]T, len(values)),
+		index:    -1,
 	}
 
 	if len(values) > 0 {
@@ -81,8 +77,6 @@ func (a *Array[T]) Update(_ context.Context, value any) error {
 	}
 
 	a.elements[a.index] = v
-
-	a.notify(data.ValueUpdated, a.index)
 
 	return nil
 }
@@ -220,10 +214,6 @@ func (a *Array[T]) Clear() {
 	a.lock.Lock()
 	defer a.lock.Unlock()
 
-	for i := range a.elements {
-		a.notify(data.ValueDeleted, i)
-	}
-
 	a.elements = []T{}
 	a.index = -1
 }
@@ -244,8 +234,6 @@ func (a *Array[T]) Add(_ context.Context, value any) error {
 	if a.index < 0 {
 		a.index = 0
 	}
-
-	a.notify(data.ValueAdded, len(a.elements)-1)
 
 	return nil
 }
@@ -308,8 +296,6 @@ func (a *Array[T]) Insert(_ context.Context, value, index any) error {
 		a.index = 0
 	}
 
-	a.notify(data.ValueAdded, idx)
-
 	return nil
 }
 
@@ -329,16 +315,13 @@ func (a *Array[T]) Delete(_ context.Context, index any) error {
 
 	a.elements = append(a.elements[:idx], a.elements[idx+1:]...)
 
-	// Re-seat the cursor, then notify on every successful delete — including the
-	// one that empties the collection (which previously returned early without
-	// firing the ValueDeleted callback).
+	// Re-seat the cursor on every successful delete — including the one that
+	// empties the collection — so the collection stays usable (FIX-014 1.3).
 	if len(a.elements) == 0 {
 		a.index = -1
 	} else if a.index >= len(a.elements) {
 		a.index = len(a.elements) - 1
 	}
-
-	a.notify(data.ValueDeleted, index)
 
 	return nil
 }
@@ -388,79 +371,9 @@ func checkValue[T any](value any) (T, error) {
 }
 
 // *****************************************************************************
-// data.Updater interface
-
-// Register registers single Value's updating event callback function.
-func (a *Array[T]) Register(regName string, updFn data.UpdateCallback) error {
-	if updFn == nil {
-		return errs.New(
-			errs.M("empty update function"),
-			errs.C(errorClass, errs.InvalidParameter))
-	}
-
-	regName = strings.Trim(regName, " ")
-	if regName == "" {
-		return errs.New(
-			errs.M("registration name couldn't be empty"),
-			errs.C(errorClass, errs.InvalidParameter))
-	}
-
-	a.lock.Lock()
-	defer a.lock.Unlock()
-
-	if _, ok := a.evtUpdaters[regName]; ok {
-		return errs.New(
-			errs.M("registration "+regName+" alreday exists"),
-			errs.C(errorClass, errs.DuplicateObject))
-	}
-
-	a.evtUpdaters[regName] = updFn
-
-	return nil
-}
-
-// Unregister deletes previously made registration.
-func (a *Array[T]) Unregister(regName string) {
-	a.lock.Lock()
-	defer a.lock.Unlock()
-
-	delete(a.evtUpdaters, regName)
-}
-
-// notify prepares a list of updaters to call them after
-// Value has changed.
-func (a *Array[T]) notify(chgType data.ChangeType, idx any) {
-	upff := make([]data.UpdateCallback, 0, len(a.evtUpdaters))
-
-	for _, f := range a.evtUpdaters {
-		upff = append(upff, f)
-	}
-
-	if len(upff) > 0 {
-		go sendArrayUpdates(time.Now(), chgType, idx, upff)
-	}
-}
-
-// calls all the registered at the moment callbacks
-// to inform that value changed.
-// Due to there is no restriction for the time of processing every
-// notification, sendUpdates runs as goroutine.
-func sendArrayUpdates(when time.Time,
-	chgType data.ChangeType,
-	idx any,
-	funcs []data.UpdateCallback,
-) {
-	for _, f := range funcs {
-		f(when, chgType, idx)
-	}
-}
-
-// *****************************************************************************
-// check implementation of data.Value, data.Collection and data.Updater
-// interfaces.
+// check implementation of the data.Value and data.Collection interfaces.
 var (
 	arrayInterfaceChecker *Array[int]
 	_                     data.Collection = arrayInterfaceChecker
 	_                     data.Value      = arrayInterfaceChecker
-	_                     data.Updater    = arrayInterfaceChecker
 )

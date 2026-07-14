@@ -3,10 +3,10 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.5 |
+| Version | v.6 |
 | Date | 2026-06-13 |
 | Owner | Ruslan Gabitov |
-| Refines | [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) |
+| Refines | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md) |
 
 > **Scope.** This decides the engine's **model-layer data-flow semantics** — *what*
 > is evaluated when data crosses an activity or event: the `ItemDefinition` /
@@ -72,37 +72,35 @@ into and out of activities and events.
 
 ### 1.2 What the engine has today
 
-ADR-010 already decided the runtime data plane: per-instance container scopes,
-the execution frame, copy/commit semantics, per-execution parameter instances.
-The **model layer** that those frames evaluate, however, is partial and uneven:
+ADR-010 decided the runtime data plane (per-instance container scopes, the
+execution frame, copy/commit semantics, per-execution parameter instances), and
+this ADR's own v.1–v.5 landings built the **model layer** on top of it. As of v.6
+that layer is settled:
 
-- The item-aware **types exist** — `ItemDefinition`, `ItemAwareElement` with a
-  first-class state (`Undefined` / `Unavailable` / `Ready`), `Parameter`, `Set`,
-  `DataAssociation`, `Property`, `DataObject`. State *tracking* and *per-association*
-  availability checks are present.
-- **Input-set selection does not exist.** There is no ordered evaluation of
-  `InputSet`s, no first-available selection, no `optionalInputRefs` /
-  `whileExecutingInputRefs` distinction, no `OutputSet` selection, and no IORule
-  check. A single structural validity check ("are this set's default parameters
-  Ready?") stands in for the whole §10.4.2 algorithm.
-- **The model-layer shapes have accreted problems.** The `IoSpec`↔`Parameter`↔`Set`
-  graph is a large, two-sided, mutually-referential structure that must keep
-  invariants across types in step. The collection value type embeds a
-  change-notification callback system that fires asynchronously in goroutines —
-  inside a model whose evaluation the standard requires to be synchronous. Event
-  construction routes through eight adapter interfaces resolved by runtime type
-  assertion, so a mismatched trigger/event pairing surfaces at run time rather
-  than compile time. The process container is freely mutable and unvalidated, so a
-  malformed graph (a flow to a missing node, a mistyped element) is caught late,
-  deep in execution, or not at all. Two outright defects exist (a
-  collection key-listing that returns a double-length half-nil slice; a parameter
-  removal on a value receiver that mutates a copy).
-- **In-process service code is data-starved.** A `ServiceTask`'s operation runs a
-  Go functor, but the functor receives only its operation's input message item —
-  not the per-execution environment. The environment can already read process
-  properties by name; the functor simply is never handed a reader. So service
-  code cannot read a process property or a runtime variable by name, even though
-  the data plane exposes exactly that.
+- The item-aware **model is in place** — `ItemDefinition` / `ItemAwareElement` with
+  the closed three-value state (`Undefined` / `Unavailable` / `Ready`),
+  `Parameter`, `DataAssociation`, `Property`, `DataObject`. There is **no** reified
+  `Set` type — the `IoSpec` owns its `DataInput` / `DataOutput` parameters directly
+  (v.2), with required / optional / while-executing as per-parameter attributes.
+- **Single-set evaluation works.** One `InputSet` / one `OutputSet` per activity
+  with a real required-availability check and association execution; availability
+  gates the start but never waits (§2.3). Ordered multiple-set selection and the
+  IORule pairing remain a deliberate non-goal (§2.8).
+- **The model layer was cleaned up** (v.1–v.5) — a single-ownership I/O graph,
+  set-evaluation separated from storage, value-vs-notification separated,
+  compile-time-checked event construction, `Process.Validate()` at registration,
+  and the two earlier defects gone.
+- **In-process service code reads data.** The polymorphic `Operation` (§2.6, v.5):
+  an in-process Go operation composes a narrow public reader over process
+  properties + runtime variables (by name, or `SOURCE/addr` per ADR-010 §2.7) with
+  optional message I/O; an external message operation stays message-only.
+
+What the layer **cannot** do — the gap v.6 closes — is reach *into* a value. An
+`ItemDefinition`'s structure is **opaque**: a value is flat — a scalar
+(`Variable`) or a homogeneous list (`Array`), with no record kind and no
+engine-visible shape — so mapping, associations, expressions, and conditions can
+address a *whole* value but not `order.items[0].price`, and cannot build a nested
+output (§2.9).
 
 ### 1.3 Why now
 
@@ -110,9 +108,13 @@ The Parallel gateway and the data plane (ADR-005, ADR-010) made concurrent,
 data-carrying execution real. The model layer is now the limiting factor:
 element-completion work (more task and event types), data-driven gateways, and a
 genuinely useful service API all stand on a settled data-flow conception. ADR-010
-deferred this layer explicitly; this ADR settles it. Per our standing principle —
-an earlier document supports the work, it does not cage it — where the model
-conflicts with this conception, the code is fixed during implementation.
+deferred this layer explicitly; this ADR settles it. **(v.6)** With that layer now
+settled, the limiting factor becomes *structural* reach-in — expressions,
+conditional / gateway conditions, and rich input/output mappings all need to see
+*into* values, which the opaque structure cannot support; §2.9 settles that. Per
+our standing principle — an earlier document supports the work, it does not cage
+it — where the model conflicts with this conception, the code is fixed during
+implementation.
 
 ## 2. Decision
 
@@ -128,6 +130,11 @@ are sufficient for selection and association gating; gobpm does **not** introduc
 domain `DataState` values (Draft/Approved/…) — those are a modelling concern a
 process expresses with its own data, not an engine primitive. The state set is
 closed by decision; a future need reopens it here, not ad hoc.
+
+**(v.6)** The `structure` an `ItemDefinition` types is no longer opaque: §2.9
+makes it a navigable `scalar｜list｜record` composition the engine can address
+by path. The state model here and the set semantics (§2.2/§2.3) are untouched —
+v.6 refines *what a value's shape is*, not *when it is selected or committed*.
 
 ### 2.2 One input set and one output set per activity
 
@@ -375,6 +382,211 @@ target shapes (the implementing SRD does the file-level work):
   observability ADR.
 - **Data-driven gateways and conditional events** (control flow reacting to data)
   — element-completion work; they consume this model but are not decided here.
+  **(v.6)** §2.9.4's committed changed-path seam is the substrate a conditional
+  event subscribes to (re-evaluate its `condition` when a referenced variable
+  changes); the events themselves remain element-completion work.
+- **(v.6) Hot-path reflection.** Reflection on the execution path stays
+  rejected. The *bounded* exception §2.9.5 grants — building a type's structural
+  adapter **once at registration**, cached, codegen-replaceable per type — is the
+  full extent; per-access reflective navigation is not implemented.
+- **(v.6) A full schema / type system.** Shape is investigated by traversing the
+  value graph (§2.9.1) for navigation and owner-enforced write-checking; there
+  is no stored schema artifact, no XSD validator, no constraint language, no
+  coercion engine — and resolving `import` / `structureRef` to an external XSD
+  is not decided here.
+- **(v.6) The structure of foreign provider data.** A `SOURCE/addr` provider
+  (ADR-010 §2.7) keeps its address space opaque; engine-native structural
+  navigation is for engine-managed values only (§2.9.2).
+
+### 2.9 Structural data: navigable values (v.6)
+
+v.1's §2.1 kept `ItemDefinition.structure` **opaque** — one whole `Value` the
+engine reads and writes entire. That was enough while activities exchanged whole
+scalars and homogeneous lists. Service-task and mapping work exposed the gap:
+mapping and conditions can address a **whole** value but cannot reach *into* it —
+no `order.items[0].price`, no assembling a nested output. v.6 closes it by making
+structure first-class, and does so **on the standard's own terms**:
+`ItemDefinition.structureRef` is defined as "the concrete data structure
+(typically an XSD complex type or element)" (§8.4.10, Table 8.47) — BPMN data is
+*meant* to be structured; gobpm had simply kept the structure opaque. This
+extends §2.1 (the item model) without reopening §2.2/§2.3 (set cardinality and
+the no-wait rule are untouched).
+
+#### 2.9.1 The value model — `Record` joins `Collection` on the `Value` family
+
+Structure is expressed **the Go way — as optional capability interfaces on the
+existing `Value`**, not as a parallel node-tree type system. The engine already
+has this pattern: `Collection` is the optional list capability discovered by type
+assertion. v.6 mirrors it with **one new capability**:
+
+- **scalar** — a `Value` implementing neither capability (today's `Variable`);
+  a path step into it is a clean resolution error;
+- **list** — a `Value` implementing `Collection` (today's `Array`, reused
+  verbatim; the standard's `isCollection` / an XSD `maxOccurs > 1`);
+- **record** — a `Value` implementing the new **`Record`** capability: ordered
+  field names (`Keys`), field read (`Field`), structural field write
+  (`SetField`) — an XSD complex type's element set.
+
+A node's *kind* is **which capability it implements** (one type assertion); a
+leaf's type is the existing `Value.Type()`. Nesting composes to **any depth**
+because a field's value may itself be a `Record` or `Collection`. One new
+concrete type ships — a generic, insertion-ordered **`values.Record`** — for
+dynamic, engine-assembled data; native Go objects satisfy the same capability
+through adapters (§2.9.5), so both navigate identically and nest inside each
+other.
+
+**The schema is not a stored artifact — it is the value graph itself.** Shape
+is investigated by *traversing* the same capabilities (small free helpers: a
+one-level "fields and their kinds at this path" and a full-descent walk), so
+there is no separate schema type to declare or keep in sync; a typed value
+answers its shape from its Go type even before it holds data. An
+**under-specified** item — `itemSubjectRef` omitted, which the standard
+explicitly permits (§10.4.1: "MAY be omitted if the modeler doesn't want to
+specify structure") — stays a dynamic, opaque scalar, exactly as today.
+Navigation is method dispatch over these interfaces — the execution hot path
+performs **no reflection** (§2.9.5 bounds where reflection may run).
+
+#### 2.9.2 Path addressing lives in the data-access seam, not in mapping
+
+Reach-in is `order.items[0].price`: `.field` descends into a **record**, `[i]`
+indexes a **list**. Crucially this is a property of **data access** — the
+`data.Source` / scope resolver — **not** of the mapping code. So **every**
+consumer navigates through the one resolver: input mapping, output mapping,
+expressions, and **sequence-flow / gateway conditions**
+(`ConditionalEventDefinition.condition` and a flow's `conditionExpression` read
+structural paths the same way). `Source.Find(ctx, "order.items[0].price")`
+returns the addressed leaf or subtree; a gateway condition `order.total > 100`
+resolves through the identical path walk.
+
+**Reconciliation with ADR-010 v.2 §2.7 (addressable access).** ADR-010 already
+owns address-based access to **foreign** data via pluggable providers: the
+leading `SOURCE/` split (on the first `/`) selects a provider and hands it an
+**opaque** address. That is unchanged. Structural addressing operates in a
+**different layer with different characters**: a plain name resolves to a value
+as today, then `.`/`[]` walk *into* the **engine-managed** value the engine can
+see. `/` is the **provider seam** (external data, structure opaque to the engine,
+the provider parses its own address); `.`/`[]` is **structural navigation**
+(engine-managed data, structure engine-visible). They compose without clashing —
+`BUSINESS/order.items[0].price` still rides to a provider verbatim, while a
+process-local `order` value is walked natively.
+
+#### 2.9.3 Read and write both flow through the path
+
+The path resolves on **both** sides. Read: address a leaf or subtree. Write:
+`WithOutputMapping` (and a `DataOutputAssociation`) MAY target a nested field —
+set `order.items[0].price`, or **assemble** a record/list output — closing the
+write-gap (today mapping and associations replace **whole** values only). The
+write walks to the **parent** and mutates through its capability (`SetField` /
+the collection's index write), so the owner enforces its own shape: a **typed**
+value rejects an unknown field or a type clash *by construction* (its `SetField`
+knows only its real fields); a **dynamic** `values.Record` is permissive and
+accepts assembled fields. Missing intermediate records on the path are created
+when the target permits it; a violating write is an **error**, never a silent
+coercion — the same fail-loud posture as §2.2's "never silently produce
+nothing".
+
+#### 2.9.4 Change notification by commit-diff — the Conditional-Event substrate
+
+"Which data changed" is answered at **commit**, not by a value callback. At
+`Scope.Commit` the scope **diffs** the committed value graph against its prior
+and produces a **committed changed-path set**, exposed as an internal seam. This is
+the reopening the §2.7 maintenance rule anticipated ("a change that needs an
+in-value callback reopens the relevant decision here") — and it decides
+**against** an in-value callback, keeping §2.7's value-vs-notification separation
+intact: the value never embeds notification; the **scope** detects change at the
+commit boundary.
+
+Rationale, over a per-`Value` subscription:
+
+- **Correct visibility boundary.** §10.4.2 wires data copies into the
+  activity-lifecycle transitions (input associations on Ready→Active, output on
+  Completing→Completed), so a committed variable change lands at an activity
+  boundary — which is exactly commit. A subscription on a `Value` fires on
+  transient, mid-activity frame writes — not a committed variable change.
+- **Robust to the execution model.** Frame-clone-then-replace (ADR-010) drops a
+  value's callbacks on clone and replaces the whole datum on commit, so an
+  in-value subscription is fragile by construction; the scope owns commit, so the
+  diff is authoritative.
+- **One signal, many consumers.** The changed-path set feeds **DataChange
+  observability now** — v.6 finally wires the deferred `KindDataChange` facts
+  (one `Value_Added` / `Value_Updated` / `Value_Deleted` per changed path, per
+  ADR-013 v.2) — and makes **Conditional Events cheap later**: a
+  `ConditionalEventDefinition.condition` fires when its condition becomes true,
+  which this engine evaluates on change of the variables it references — exactly
+  the changed-path set. v.6 builds the seam and the DataChange consumer; the
+  conditional-event
+  consumer stays element-completion work (§2.8), now with a substrate waiting for
+  it. The data plane never names its consumers.
+
+**The dormant in-value subscription mechanism is removed.** The existing
+`Updater` / `UpdateCallback` machinery (per-value registrations with an async
+per-value fan-out) has zero consumers, cannot survive the engine's own
+clone/commit cycle, and is superseded by this decision — it is deleted with the
+first slice that reshapes the value types, per the stale-interface rule.
+**`ChangeType` (`Value_Added/Updated/Deleted`) is retained and retargeted** as
+the commit-diff's change-kind vocabulary — each diff entry is a
+`(path, ChangeType)` pair — keeping the wire names the ADR-013 v.2 phases
+already mirror.
+
+#### 2.9.5 Go interop: native objects behind a per-type adapter, resolved once
+
+A host's **own Go struct participates directly** — no conversion, no
+to/from-tree codec: the object satisfies the `Record`/`Collection` capabilities
+and the engine navigates the **live value**. How a type answers those
+capabilities is a per-type **structural adapter**, resolved **once** through a
+type→adapter registry (the `encoding/json` type-cache pattern) and cached; the
+resolver, writes, diff, and conditions only ever see the capability interfaces
+and never know which adapter kind answers. Three tiers, freely **mixed and
+nested** (a reflection-backed record may contain a generated one):
+
+- **dynamic** — `values.Record`/`values.Array` need no adapter at all: the
+  zero-setup path for engine-assembled data, any depth, no boilerplate;
+- **reflection adapter (the standard for native structs, S4)** — built **once at
+  registration** by walking the Go type, then cached; field access thereafter is
+  a cached accessor call. Zero boilerplate, no build step — and **no per-access
+  reflection**: this is a deliberate, *bounded* relaxation of the engine's
+  anti-reflection stance — reflection may run **once per type, at registration,
+  off the execution path**, and nowhere else (an engine choice to record in
+  SAD-001's engine-choices scope at landing);
+- **codegen adapter (the per-type upgrade)** — a `go:generate` tool emits the
+  same adapter as static code (a small per-type accessor table) from the same
+  struct tags; its generated registration pre-empts the reflection builder for
+  that type. Fully compiler-checked (a renamed field fails the build, not the
+  run), zero reflection anywhere. Adopting it later requires **no engine or
+  consumer change** — a type upgrades tier by adding the generate directive;
+  hand-writing the same adapter remains the escape hatch.
+
+**Struct tags configure the adapter build, never the runtime.** `gobpm:"..."`
+tags reconcile Go naming with process naming (`ID` → `id`), exclude fields, and
+carry per-field options; both the reflection builder (at registration) and the
+generator (at build) read them — the hot path reads only the cached adapter.
+The standard-vs-upgrade split is deliberate: registration-time reflection gives
+frictionless adoption; codegen gives compile-time field checking and a
+reflection-free binary — a per-type choice, driven by need, on one seam.
+
+#### 2.9.6 Phasing — conception now, implemented in slices
+
+This section decides the **whole** structural model; the implementation lands
+**incrementally** (the ADR-005 pattern — decide once, build in slices), each a
+conformance-preserving increment landed by its own SRD:
+
+- **S1 — the value model + read-path addressing.** The `Record` capability and
+  the dynamic `values.Record`; the shape-by-traversal helpers; path resolution in
+  the data-access seam; **conditions, expressions, and mapping reads** navigate
+  structural paths (the §2.9.2 acceptance criterion). The dormant
+  `Updater`/`UpdateCallback` machinery is deleted here (§2.9.4 — the value types
+  are being reshaped anyway); `ChangeType` is kept for S3.
+- **S2 — write-path.** Nested set / build in output mapping and associations,
+  owner-enforced shape checks (§2.9.3).
+- **S3 — commit-diff + DataChange wiring.** The changed-path seam (§2.9.4),
+  emitting `(path, ChangeType)`, and its first consumer — the `KindDataChange`
+  facts deferred by ADR-013 v.2.
+- **S4 — native-struct interop.** The structural-adapter contract + type→adapter
+  registry, the registration-time reflection builder, and the `gobpm:"..."` tag
+  vocabulary (§2.9.5). The codegen generator is an **additive follow-up** on the
+  same seam — it requires no engine change and may land with S4 or after it.
+
+ADR-011 v.6 is **Accepted** once S1 proves the model; S2–S4 refine against it.
 
 ## 3. Consequences
 
@@ -403,10 +615,26 @@ target shapes (the implementing SRD does the file-level work):
   SRD(s) stage this and keep `make ci` green per step. The reader API adds a
   parameter to the service-implementation signature — a public surface change the
   layering ADR later places.
+- **(v.6) Data becomes navigable end to end.** One path resolver in the
+  data-access seam serves reads, writes, conditions, and expressions — reaching
+  `order.items[0].price` is uniform, with no per-consumer special-casing;
+  whole-value mapping remains the degenerate (empty-path) case.
+- **(v.6) The deferred DataChange facts get a home.** Commit-diff (§2.9.4) is the
+  signal ADR-013 v.2 reserved `KindDataChange` for; wiring it needs no in-value
+  callback, and the same seam later makes conditional events cheap.
+- **(v.6) Cost: a new capability, a resolver, a diff, and an adapter seam.** The
+  `Record` capability + `values.Record`, path resolution, commit-diff, and the
+  adapter registry with its reflection builder (later the codegen generator) are
+  real new surface, landed in slices S1–S4 (§2.9.6) each keeping `make ci` green.
+  The execution hot path stays reflection-free; the bounded registration-time
+  exception (§2.9.5) is the one deliberate relaxation, recorded as an engine
+  choice.
 - **Maintenance rule.** Data state stays the closed three-value set (§2.1);
   availability gates selection but never waits (§2.3); a value type never embeds
-  notification (§2.7). A change that needs a new data state, a data wait, or an
-  in-value callback reopens the relevant decision here, it does not work around it.
+  notification (§2.7). A change that needs a new data state or a data wait reopens
+  the relevant decision here, it does not work around it. **(v.6) The in-value
+  callback question was reopened and decided:** change is detected by commit-diff
+  at the scope (§2.9.4), so the value *still* embeds no notification.
 
 ## 4. Alternatives considered
 
@@ -457,6 +685,39 @@ target shapes (the implementing SRD does the file-level work):
   Rejected: the standard makes domain state values a modelling concern, not an
   engine one; three states suffice for selection and gating, and an open set adds
   surface with no execution semantics behind it.
+- **(v.6) Provider-only reach-in** (extend ADR-010's opaque address space). Realize
+  `order.items[0].price` entirely as a provider concern — a structural/JSONPath
+  provider under `SOURCE/addr`, plus a write-side on the provider contract.
+  Rejected: it leaves structure **opaque to the engine**, so conditions and
+  expressions can be neither shape-validated nor optimized, change-notification and
+  codegen have no first-class home, and every structural feature would live inside
+  each provider. Providers stay right for **foreign** data (§2.9.2); engine-managed
+  data earns a first-class tree.
+- **(v.6) A parallel node-tree type system** (a `Node` union — scalar/list/record
+  — beside `Value`, plus a stored `Schema` and a `ToTree/FromTree` codec). The
+  first-draft shape. Rejected as cumbersome and un-Go: two type systems with
+  adapters between them, a schema to declare and keep in sync, and a conversion
+  codec per native type. The chosen model extends the existing `Value` family
+  with one capability interface (`Record`, mirroring the existing `Collection`),
+  derives shape by traversal, and navigates native objects live (§2.9.1/§2.9.5).
+- **(v.6) Per-access reflective navigation** (struct tags + `reflect` on every
+  read/write). The zero-boilerplate, no-codegen path. Rejected: it erases static
+  typing and puts `reflect` on the engine's hottest path. Its *bounded* cousin —
+  reflect **once at registration** into a cached adapter — is adopted instead
+  (§2.9.5): same zero boilerplate, no per-access reflection.
+- **(v.6) Codegen as the only native-struct path.** Fully static and
+  reflection-free, but it makes a build step the price of admission — needless
+  adoption friction when a registration-time-built adapter serves the same seam.
+  Kept instead as the **per-type upgrade** (compile-time field checking, a
+  reflection-free binary) on the same registry, adoptable later with no engine
+  change (§2.9.5).
+- **(v.6) Change notification by per-`Value` subscription** (the Camunda model).
+  Register a callback on the value object, fire on change. Rejected for *this*
+  execution model (§2.9.4): frame-clone-then-replace drops callbacks on clone and
+  swaps the whole datum on commit, so the subscription is fragile, and it fires on
+  transient frame writes rather than committed variable changes. Commit-diff is
+  both more robust here and better aligned with §10.4.2's boundary-scoped
+  data-copy semantics.
 
 ## 5. Enterprise-readiness recommendations
 
@@ -487,29 +748,47 @@ Advisory, not gating — conventions the landing SRD(s) and later work should fo
 
 - None. The one-set scope (multiple I/O sets a non-goal), the availability/no-wait
   semantics, the service reader shape, the data-state closed set, and the model-layer
-  target shapes are all decided above. The exact reader interface signature and the
-  model-layer refactor sequencing are implementation concerns for the landing SRD(s),
-  not open conception questions.
+  target shapes are all decided above. **(v.6)** The `Record` capability model,
+  the path-addressing syntax and its ADR-010 reconciliation, commit-diff change
+  detection (with the `Updater` removal), and the adapter-registry interop
+  (reflection-standard, codegen-upgrade, dynamic zero-setup) are likewise decided
+  (§2.9). The exact `Record`/adapter signatures, the path parser, the traversal
+  helpers, the diff algorithm, the tag vocabulary, and the refactor sequencing
+  are implementation concerns for the landing SRD(s), not open conception
+  questions.
 
 ## 7. References
 
 - [SAD-001 v.1 Vision & Architecture](SAD-001-vision-and-architecture.md) — §14
   Conformance & Compliance Scope; §14.1 registers the two intentional BPMN
   deviations this ADR decides (the no-wait rule §2.3, the single-set rule §2.8).
-- [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) — the two-layer
+- [ADR-001 v.6 Execution Model](ADR-001-execution-model.md) — the two-layer
   runtime and lifecycle this data flow is synchronous to; the data side it refines.
 - [ADR-010 v.2 Process Data Model](ADR-010-process-data-model.md) — **where** data
   lives and the runtime contract (container scopes, the data plane, execution
   frames, copy/commit). §2.6 deferred the model-layer semantics decided here; this
-  ADR is its sibling continuation.
-- [ADR-002 v.1 Extension Architecture](ADR-002-extension-architecture.md) — the
+  ADR is its sibling continuation. **(v.6)** §2.7 addressable access is the seam the
+  structural path walk (§2.9.2) extends, and frame-clone-then-replace is why
+  change-detection is commit-diff (§2.9.4).
+- [ADR-013 v.2 Instance Observability](ADR-013-instance-observability.md) — **(v.6)**
+  the `KindDataChange` facts §2.9.4's commit-diff wires; ADR-013 v.2 landed the
+  vocabulary and deferred the emission to this data-plane rework.
+- [ADR-006 v.2 Events & Subscriptions](ADR-006-events-and-subscriptions.md) —
+  **(v.6)** conditional events, the future consumer of §2.9.4's committed
+  changed-path seam (`ConditionalEventDefinition.condition` re-evaluated on a
+  referenced-variable change); decided there, not here.
+- [ADR-002 v.2 Extension Architecture](ADR-002-extension-architecture.md) — the
   `ExpressionEngine` the transformation/assignment association shapes evaluate
   through.
-- BPMN 2.0 §8.4.10 (ItemDefinition), §10.4 (Items and Data), §10.4.2 (Execution
-  Semantics for Data), §13.3.2 (data binding in the Activity Lifecycle) — the
-  item-aware model, set selection, association semantics, and IORule this ADR
-  encodes (and, for the data wait, deliberately deviates from); digested in the
-  project's spec KB (`docs/bpmn-spec/semantics/data.md`).
+- BPMN 2.0 §8.4.10 (ItemDefinition, incl. `structureRef` = "the concrete data
+  structure, typically an XSD complex type" — the standard basis for §2.9's
+  record/list/scalar tree), §10.4 (Items and Data), §10.4.1 (`itemSubjectRef` MAY
+  be omitted — the under-specified/opaque path), §10.4.2 (Execution Semantics for
+  Data — the commit-boundary change semantics), §13.3.2 (data binding), and
+  `ConditionalEventDefinition.condition` (the future consumer of §2.9.4) — the
+  item-aware model, structure, association semantics, and IORule this ADR encodes
+  (and, for the data wait, deliberately deviates from); digested in the project's
+  spec KB (`docs/bpmn-spec/semantics/data.md`, `elements/data.md`).
 - Architecture audit 2026-06-11 (`docs/audit/architecture-audit-2026-06-11.md`) —
   the model-layer findings this ADR's §2.7 remediates (1.6 data items; 3.1 I/O-spec
   complexity and the collection notification coupling; 3.2 event-option adapters;
@@ -523,6 +802,7 @@ Advisory, not gating — conventions the landing SRD(s) and later work should fo
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.6 | 2026-07-13 | Ruslan Gabitov | **Accepted** (v.6 conception; S1 — the read path — landed by the accompanying wiring SRD, proving the model per §2.9.6; S2–S4 are future slices). Added §2.9 **structural data — navigable values**, closing the "can address a whole value but not reach *into* it" gap that service-task/mapping work exposed. Grounded in the standard's own `ItemDefinition.structureRef` ("the concrete data structure, typically an XSD complex type", §8.4.10). **The value model is the Go way** (§2.9.1): the existing `Value` family gains one capability interface — **`Record`** (ordered `Keys`/`Field`/`SetField`), mirroring the existing `Collection`; kind = which capability a value implements; nesting composes to any depth; one new concrete `values.Record` for dynamic data; **shape is derived by traversing the value graph** (no stored schema artifact); under-specified items stay opaque scalars per §10.4.1. **Path addressing** (`order.items[0].price`) lives in the **data-access seam** (§2.9.2) — one resolver serves mapping, expressions, and **gateway/flow conditions**; reconciled with ADR-010 v.2 §2.7 (`/` selects a provider, foreign+opaque; `.`/`[]` walk engine-managed values). **Read and write** both flow through the path (§2.9.3, owner-enforced shape: typed values reject by construction, dynamic records are permissive). **Change detection is commit-diff** (§2.9.4 — the scope diffs committed values into a `(path, ChangeType)` set), chosen over a per-`Value` subscription (fragile under frame-clone-then-replace; commit is the activity boundary §10.4.2's data copies land on); it homes the `KindDataChange` facts ADR-013 v.2 deferred, is the future substrate for conditional events (ADR-006), and **deletes the dormant `Updater`/`UpdateCallback` machinery** (zero consumers; `ChangeType` retargeted as the diff vocabulary). **Native-struct interop rides a per-type adapter registry** (§2.9.5): dynamic values need no adapter; the **registration-time reflection builder is the standard** (reflect once per type, cached, off the execution path — a deliberate *bounded* relaxation of the anti-reflection stance, to be recorded as an engine choice in SAD-001); the **codegen generator is the per-type upgrade** on the same seam (compile-checked, reflection-free, adoptable later with no engine change); `gobpm:"..."` struct tags configure the adapter build only. Hot-path reflection stays rejected. Phased **S1–S4** (§2.9.6 — Accepted once S1 proves the model). Honors §2.7's value-vs-notification separation and leaves §2.2/§2.3 untouched. Also refreshed §1.2 to the post-v.5 current state (per the current-state-freshness review rule). Amends §1.2/§1.3/§2.1/§2.8/§3/§4/§6/§7; adds refs ADR-013 v.2, ADR-006 v.2. Lands via the structural-data SRD(s). |
 | v.5 | 2026-06-14 | Ruslan Gabitov | Refined §2.6 to split the kinds by **execution locus**, not by data-access method. The earlier "the Go kind is message-free, the message kind cannot reach scope" framing restricted in-process code gratuitously. New shape: an **external message operation** (`Implementor`, out-of-process) is message-only **by locus** (it cannot receive an in-process reader — the decoupled, conformant path); an **in-process Go operation** receives the reader **and** its optional bound input message, may declare an optional output message, and returns its result — message-based and reader-based access **compose**, the author's choice. The preserved boundary: ambient scope access is confined to in-process code. The node-level message-handling seam (`MessageProducer`/`MessageConsumer` for `SendTask`/`ReceiveTask`/throw-catch events) is deferred to the executor SRD. Amends §2.6/§3/§4. Lands via SRD-011. |
 | v.4 | 2026-06-13 | Ruslan Gabitov | Aligned §2.6 to the data-source access model: the Go reader is the public face of the data-plane's addressable read interface ([ADR-010 v.2 §2.7](ADR-010-process-data-model.md)) — default scope by plain name, named sources by `SOURCE/var`, discovery via `GetSources`/`List`. Runtime variables are read via the explicit `RUNTIME/<var>` path (a named data source), **not** "by name with the reader hiding the reserved addressing" (dropped) — so engine runtime vars never intersect a process's own `STATE`/`INSTANCE`. No special accessor is needed. Lands via SRD-010 (data plane) + SRD-011 (service reader). Amends §2.6. |
 | v.3 | 2026-06-13 | Ruslan Gabitov | Reshaped §2.6: the `Operation` is **polymorphic**, not "a reader handed to every operation." Grounding the standard — an Operation is a pure message-in/message-out contract (`inMessageRef`/`outMessageRef`/`errorRef`), and `implementationRef` leaves the mechanism engine-defined — gobpm makes `Operation` an interface with two kinds: a **message operation** (canonical, decoupled, message-only) and a **Go operation** (gobpm-native: the in-process functor receives a narrow public read-only data reader over process properties + runtime-vars-by-name and **returns its result**, no message ceremony). This keeps the canonical model pure and confines ambient read access to the explicit Go kind (a standard-sanctioned `implementationRef` mechanism), instead of contaminating every operation. The Go operation is registered as a deliberate extension in SAD-001 v.1 §14.1. Lands via the service-reader SRD. Amends §2.6/§3/§4. |

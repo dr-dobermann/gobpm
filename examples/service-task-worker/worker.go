@@ -15,8 +15,10 @@ import (
 
 // reserveWorker is the reserve-stock handler: a flaky inventory service that
 // times out on a job's first two attempts (a plain technical error) and succeeds
-// on the third, returning a {reservationId} body. Under WorkerTrusted the pool
-// retries the timeouts in-process; the engine only ever sees the success.
+// on the third, returning a STRUCTURED receipt body — {reservationId,
+// warehouse:{id, zone}} — that the task's output mapping extracts nested fields
+// from by path (ADR-011 v.6 §2.9). Under WorkerTrusted the pool retries the
+// timeouts in-process; the engine only ever sees the success.
 func reserveWorker() localdispatcher.WorkerFunc {
 	var (
 		mu      sync.Mutex
@@ -41,9 +43,16 @@ func reserveWorker() localdispatcher.WorkerFunc {
 		rid := fmt.Sprintf("R-%d", 1000+lastRID)
 		mu.Unlock()
 
-		fmt.Printf("  reserve attempt %d: reserved (reservationId=%s)\n", n, rid)
+		fmt.Printf("  reserve attempt %d: reserved (reservationId=%s, zone=A-3)\n", n, rid)
 
-		return data.MustItemDefinition(values.NewVariable(rid),
+		receipt := values.MustRecord(
+			values.F("reservationId", values.NewVariable(rid)),
+			values.F("warehouse", values.MustRecord(
+				values.F("id", values.NewVariable("WH-1")),
+				values.F("zone", values.NewVariable("A-3")))),
+		)
+
+		return data.MustItemDefinition(receipt,
 			foundation.WithID("body")), nil
 	}
 }

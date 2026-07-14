@@ -15,7 +15,11 @@ func TestCheckName(t *testing.T) {
 	}{
 		{"plain name", "order", false},
 		{"empty name", "", false},
-		{"dotted address (no separator)", "order.items.price", false},
+		{"underscored name", "order_total", false},
+		{"dotted path as a name", "order.items.price", true},
+		{"single dot", "a.b", true},
+		{"index bracket open", "items[0", true},
+		{"index bracket close", "items0]", true},
 		{"single separator", "a/b", true},
 		{"leading separator", "/b", true},
 		{"source-qualified name", "RUNTIME/STATE", true},

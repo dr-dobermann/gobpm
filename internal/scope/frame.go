@@ -1,6 +1,7 @@
 package scope
 
 import (
+	"context"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -188,6 +189,17 @@ func (f *Frame) GetData(name string) (data.Data, error) {
 		return f.plane.GetSource(source, addr)
 	}
 
+	// A structural name ("order.items[0].price") resolves its head against the
+	// default scope, then walks the remaining steps into that value (ADR-011
+	// v.6 §2.9.2). A plain name has no steps and resolveHead returns it as
+	// today — the default-scope path is byte-identical to before.
+	return data.ResolvePath(context.Background(), name, f.resolveHead)
+}
+
+// resolveHead resolves a plain data name against the default scope: frame-first
+// (inputs, properties, puts), then the container scopes from the frame's
+// attachment point up to the plane's root.
+func (f *Frame) resolveHead(name string) (data.Data, error) {
 	if d, ok := f.lookup(func(d data.Data) bool {
 		return d.Name() == name
 	}); ok {

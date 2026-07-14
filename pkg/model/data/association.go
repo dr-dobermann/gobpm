@@ -285,21 +285,25 @@ func (a *Association) calculate(ctx context.Context) error {
 
 // --------------------------- Source interface -------------------------------
 
-// Find looks for source with ItemDefinition's Id equal to name.
-// It returns only sources with Ready state.
-func (a *Association) Find(_ context.Context, name string) (Data, error) {
-	src, ok := a.sources[name]
-	if !ok {
-		return nil, fmt.Errorf("no source #%s", name)
-	}
+// Find looks for the source whose ItemDefinition Id equals the name's head and
+// returns it (only when Ready), navigating any structural steps into it
+// (ADR-011 v.6 §2.9.2). A plain name returns the source unchanged.
+func (a *Association) Find(ctx context.Context, name string) (Data, error) {
+	return ResolvePath(ctx, name, func(head string) (Data, error) {
+		src, ok := a.sources[head]
+		if !ok {
+			return nil, fmt.Errorf("no source #%s", head)
+		}
 
-	if src.dataState.name != ReadyDataState.name {
-		return nil,
-			fmt.Errorf("source #%s isn't in Ready state (actual state is %s)",
-				src.subject.ID(), src.dataState.name)
-	}
+		if src.dataState.name != ReadyDataState.name {
+			return nil,
+				fmt.Errorf(
+					"source #%s isn't in Ready state (actual state is %s)",
+					src.subject.ID(), src.dataState.name)
+		}
 
-	return src, nil
+		return src, nil
+	})
 }
 
 // -----------------------------------------------------------------------------
