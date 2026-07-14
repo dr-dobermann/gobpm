@@ -12,7 +12,7 @@ outcome and the "the Instance takes only final results" principle.
 | Dispatch a `ServiceTask` to an external worker | `WithWorker("reserve")` / `("authorize")` | SRD-036 |
 | **`WorkerTrusted`** default — the worker runs its policy in-process and reports a verdict | no `WithWorkerTrust` set → resolves to `WorkerTrusted` | SRD-039 M9/M10 |
 | **In-process retry** of a transient technical fault (backoff, holding the lock, no re-enqueue) | `reserve` worker fails twice then succeeds; `WithRetryPolicy(FixedDelay(3, 300ms))` | SRD-038 / SRD-039 M10 |
-| **Output mapping** — shape the worker's raw body into a named output variable, off the track | `reserve` worker returns `{reservationId}`; `WithOutputMapping` → `reservationId` | SRD-037 / SRD-039 M8 |
+| **Structural output mapping** — extract **nested** fields from the worker's structured body by path, off the track | `reserve` worker returns `{reservationId, warehouse:{id, zone}}`; `WithOutputMapping` reads `body.reservationId` → `reservationId` and `body.warehouse.zone` → `warehouseZone` | SRD-037 / SRD-039 M8 · ADR-011 v.6 §2.9 / SRD-042 |
 | **State, not errors** — a Business **Status** the worker reports instead of throwing | `authorize` worker returns `WorkerError{Status: "AUTHORIZED"/"DECLINED"}`; `WithStatus("paymentStatus")` | SRD-037 §2.6 |
 | Route on the status (non-interrupting) | exclusive gateway on `paymentStatus` | — |
 | **Business Error** — an interrupting fault caught by an Error boundary | `authorize` worker returns `WorkerError{BpmnErrorCode: "PaymentGatewayDown"}` | SRD-037 FR-4 / ADR-018 |
@@ -27,7 +27,7 @@ happen in the worker, off the track.
 
 ```mermaid
 flowchart LR
-    start((start)) --> reserve[reserve-stock<br/>worker: retry ×2 then map reservationId]
+    start((start)) --> reserve[reserve-stock<br/>worker: retry ×2 then map body.reservationId + body.warehouse.zone]
     reserve --> authorize[authorize-payment<br/>worker: Business Status or Business Error]
     authorize --> gw{paymentStatus}
     gw -->|AUTHORIZED| shipped((shipped))
@@ -38,9 +38,11 @@ flowchart LR
 - **reserve-stock** (`WithWorker`, `WithOutputMapping`, `WithRetryPolicy`): the
   worker simulates a flaky inventory service — it fails transiently on the first
   two attempts (a plain technical error) and succeeds on the third, returning a
-  `{reservationId}` body. Under `WorkerTrusted` the pool worker **retries
-  in-process** (300 ms backoff, holding its lock) and then **maps** the body into
-  the `reservationId` output — the Instance only ever receives the successful,
+  **structured** `{reservationId, warehouse:{id, zone}}` receipt body. Under
+  `WorkerTrusted` the pool worker **retries in-process** (300 ms backoff, holding
+  its lock) and then the output mapping **reaches into the structured body by
+  path** — `body.reservationId` → `reservationId` and `body.warehouse.zone` →
+  `warehouseZone` (ADR-011 v.6 §2.9) — so the Instance receives the successful,
   already-shaped completion.
 - **authorize-payment** (`WithWorker`, `WithStatus`, Error boundary): the worker
   inspects the order amount and reports a **verdict**:
@@ -71,21 +73,21 @@ reserve-stock retrying + mapping):
 order-normal (amount 50):
   reserve attempt 1: inventory timeout — worker retries in-process…
   reserve attempt 2: inventory timeout — worker retries in-process…
-  reserve attempt 3: reserved (reservationId=R-1001)
+  reserve attempt 3: reserved (reservationId=R-1001, zone=A-3)
   authorize: AUTHORIZED (Business Status)
-  ✓ completed (Completed) → shipped [paymentStatus=AUTHORIZED, reservationId=R-1001]
+  ✓ completed (Completed) → shipped [paymentStatus=AUTHORIZED, reservationId=R-1001, warehouseZone=A-3]
 
 order-over-limit (amount 5000):
   reserve attempt 1: inventory timeout — worker retries in-process…
   reserve attempt 2: inventory timeout — worker retries in-process…
-  reserve attempt 3: reserved (reservationId=R-1002)
+  reserve attempt 3: reserved (reservationId=R-1002, zone=A-3)
   authorize: DECLINED (Business Status)
-  ✓ completed (Completed) → held [paymentStatus=DECLINED, reservationId=R-1002]
+  ✓ completed (Completed) → held [paymentStatus=DECLINED, reservationId=R-1002, warehouseZone=A-3]
 
 order-gateway-down (amount -1):
   reserve attempt 1: inventory timeout — worker retries in-process…
   reserve attempt 2: inventory timeout — worker retries in-process…
-  reserve attempt 3: reserved (reservationId=R-1003)
+  reserve attempt 3: reserved (reservationId=R-1003, zone=A-3)
   authorize: PaymentGatewayDown (Business Error) → boundary
   ✓ completed (Completed) → payment-failed (Business Error caught by the boundary)
 ```

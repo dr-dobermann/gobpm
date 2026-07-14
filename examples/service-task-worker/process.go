@@ -162,8 +162,11 @@ func reserveTask() (*activities.ServiceTask, error) {
 	st, err := activities.NewServiceTask("reserve-stock",
 		service.MustOperation("reserve-op", nil, nil, nil),
 		activities.WithWorker("reserve"),
-		activities.WithOutputMapping(tasks.OutputRule{
-			Path: bodyValue(), Var: "reservationId"}),
+		activities.WithOutputMapping(
+			tasks.OutputRule{Path: bodyPath("body.reservationId"),
+				Var: "reservationId"},
+			tasks.OutputRule{Path: bodyPath("body.warehouse.zone"),
+				Var: "warehouseZone"}),
 		activities.WithRetryPolicy(tasks.FixedDelay(3, 300*time.Millisecond)),
 		activities.WithoutParams())
 	if err != nil {
@@ -194,16 +197,20 @@ func authorizeTask() (*activities.ServiceTask, error) {
 }
 
 // bodyValue returns a rule Path that reads the worker response body's value.
-func bodyValue() data.FormalExpression {
+// bodyPath extracts a value from the worker's response body by a structural
+// path ("body.warehouse.zone") — the output mapping reaches INTO the structured
+// body through the same resolver conditions and expressions use (ADR-011 v.6
+// §2.9.2).
+func bodyPath(path string) data.FormalExpression {
 	return goexpr.Must(nil,
 		data.MustItemDefinition(values.NewVariable("")),
 		func(ctx context.Context, ds data.Source) (data.Value, error) {
-			b, err := ds.Find(ctx, "body")
+			d, err := ds.Find(ctx, path)
 			if err != nil {
 				return nil, err
 			}
 
-			return values.NewVariable(b.Value().Get(ctx)), nil
+			return values.NewVariable(d.Value().Get(ctx)), nil
 		})
 }
 
