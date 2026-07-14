@@ -973,7 +973,11 @@ func (t *track) finalizeNodeExecution(
 		return err
 	}
 
-	return f.Commit()
+	// The changed-path set is the activity-boundary change signal; it becomes
+	// per-path DataChange facts in the M3 emission slice (SRD-044 FR-4).
+	_, err := f.Commit()
+
+	return err
 }
 
 // checkFlows processes a node's outgoing flows. The track continues on the

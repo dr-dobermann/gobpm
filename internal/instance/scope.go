@@ -65,7 +65,11 @@ func (sc *instanceScope) load(
 		dd = append(dd, p)
 	}
 
-	return sc.plane.Commit(sc.root, dd...)
+	// A birth-init commit is initial state, not a change — its changed-path
+	// set is dropped, no DataChange facts (SRD-044 §4.4).
+	_, err = sc.plane.Commit(sc.root, dd...)
+
+	return err
 }
 
 // openFrame opens a fresh execution frame at the data plane's open root scope for
@@ -97,5 +101,9 @@ func (sc *instanceScope) bindEventPayload(eDef flow.EventDefinition) error {
 
 	// Commit returns a self-classifying errs error (container/writable/name
 	// checks); pass it through rather than re-wrapping at this internal seam.
-	return sc.plane.Commit(sc.root, dd...)
+	// A birth-init commit is initial state, not a change — its changed-path
+	// set is dropped, no DataChange facts (SRD-044 §4.4).
+	_, err := sc.plane.Commit(sc.root, dd...)
+
+	return err
 }

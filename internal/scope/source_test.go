@@ -66,8 +66,8 @@ func TestDiscovery(t *testing.T) {
 		p, err := New(root, &stubSupplier{t: t})
 		require.NoError(t, err)
 
-		require.NoError(t, p.Commit(p.Root(), testData(t, "b", 1)))
-		require.NoError(t, p.Commit(p.Root(), testData(t, "a", 2)))
+		require.NoError(t, errOf(p.Commit(p.Root(), testData(t, "b", 1))))
+		require.NoError(t, errOf(p.Commit(p.Root(), testData(t, "a", 2))))
 
 		// default scope, sorted
 		names, err := p.List("")

@@ -180,7 +180,7 @@ func TestFrameInstantiation(t *testing.T) {
 		require.Error(t, err)
 
 		// ...and not committed either.
-		require.NoError(t, f.Commit())
+		require.NoError(t, errOf(f.Commit()))
 		_, err = pl.GetData(pl.Root(), "cnt")
 		require.Error(t, err)
 	})
@@ -189,8 +189,8 @@ func TestFrameInstantiation(t *testing.T) {
 func TestFrameResolution(t *testing.T) {
 	pl, f := newTestFrame(t)
 
-	require.NoError(t, pl.Commit(pl.Root(), testData(t, "x", "container")))
-	require.NoError(t, pl.Commit(pl.Root(), testData(t, "only-up", 5)))
+	require.NoError(t, errOf(pl.Commit(pl.Root(), testData(t, "x", "container"))))
+	require.NoError(t, errOf(pl.Commit(pl.Root(), testData(t, "only-up", 5))))
 
 	t.Run("frame input shadows container data", func(t *testing.T) {
 		require.NoError(t,
@@ -210,7 +210,7 @@ func TestFrameResolution(t *testing.T) {
 
 	t.Run("id lookup: frame first, then container", func(t *testing.T) {
 		up := testData(t, "by-id", 3)
-		require.NoError(t, pl.Commit(pl.Root(), up))
+		require.NoError(t, errOf(pl.Commit(pl.Root(), up)))
 
 		d, err := f.GetDataByID(up.ItemDefinition().ID())
 		require.NoError(t, err)
@@ -274,7 +274,7 @@ func TestFrameSourceResolution(t *testing.T) {
 	f, err := NewFrame("track-1", "node-1", pl.Root(), pl)
 	require.NoError(t, err)
 
-	require.NoError(t, pl.Commit(pl.Root(), testData(t, "x", "container")))
+	require.NoError(t, errOf(pl.Commit(pl.Root(), testData(t, "x", "container"))))
 
 	t.Run("path-qualified name resolves via the source", func(t *testing.T) {
 		d, err := f.GetData(RuntimeVarsSegment + PathSeparator + "alive")
@@ -298,7 +298,7 @@ func TestFrameSourceResolution(t *testing.T) {
 		// independent — the plain name reads the default scope, the qualified
 		// name reads the source (NFR-2).
 		require.NoError(t,
-			pl.Commit(pl.Root(), testData(t, "alive", "user-owned")))
+			errOf(pl.Commit(pl.Root(), testData(t, "alive", "user-owned"))))
 
 		user, err := f.GetData("alive")
 		require.NoError(t, err)
@@ -320,8 +320,8 @@ func TestFrameDiscovery(t *testing.T) {
 	sub := mustPath(t, "/proc/sub")
 	require.NoError(t, pl.OpenScope(sub))
 
-	require.NoError(t, pl.Commit(pl.Root(), testData(t, "root-var", 1)))
-	require.NoError(t, pl.Commit(sub, testData(t, "sub-var", 2)))
+	require.NoError(t, errOf(pl.Commit(pl.Root(), testData(t, "root-var", 1))))
+	require.NoError(t, errOf(pl.Commit(sub, testData(t, "sub-var", 2))))
 
 	f, err := NewFrame("track-1", "node-1", sub, pl)
 	require.NoError(t, err)
@@ -351,7 +351,7 @@ func TestFrameCommitAndDiscard(t *testing.T) {
 			f.InstantiateOutputs([]*data.Parameter{testParam(t, "out", 1)}))
 		require.NoError(t, f.Put(testData(t, "result", "done")))
 
-		require.NoError(t, f.Commit())
+		require.NoError(t, errOf(f.Commit()))
 
 		for _, n := range []string{"out", "result"} {
 			_, err := pl.GetData(pl.Root(), n)
@@ -370,8 +370,8 @@ func TestFrameCommitAndDiscard(t *testing.T) {
 	t.Run("sealed after commit", func(t *testing.T) {
 		_, f := newTestFrame(t)
 
-		require.NoError(t, f.Commit())
-		require.Error(t, f.Commit())
+		require.NoError(t, errOf(f.Commit()))
+		require.Error(t, errOf(f.Commit()))
 		require.Error(t, f.Put(testData(t, "late", 1)))
 		require.Error(t,
 			f.InstantiateInputs([]*data.Parameter{testParam(t, "x", 1)}))
@@ -387,7 +387,7 @@ func TestFrameCommitAndDiscard(t *testing.T) {
 		f.Discard()
 		f.Discard() // idempotent
 
-		require.Error(t, f.Commit(), "no commit after discard")
+		require.Error(t, errOf(f.Commit()), "no commit after discard")
 
 		_, err := pl.GetData(pl.Root(), "ghost")
 		require.Error(t, err, "discarded data must not reach the container")
@@ -407,6 +407,6 @@ func TestFrameCommitAndDiscard(t *testing.T) {
 
 		// the target scope disappears before the commit.
 		require.NoError(t, pl.CloseScope(child))
-		require.Error(t, f.Commit())
+		require.Error(t, errOf(f.Commit()))
 	})
 }

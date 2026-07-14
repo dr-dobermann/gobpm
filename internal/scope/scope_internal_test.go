@@ -10,6 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// errOf discards Commit's changed-path set, adapting the two-value return to
+// the error-only require idiom of the pre-SRD-044 assertions.
+func errOf(_ []data.Change, err error) error { return err }
+
 // testData builds a named data.Data item carrying val.
 func testData(t *testing.T, name string, val any) data.Data {
 	t.Helper()
@@ -71,7 +75,7 @@ func TestPlaneCommitAndGet(t *testing.T) {
 	require.NoError(t, p.OpenScope(child))
 
 	x := testData(t, "x", 42)
-	require.NoError(t, p.Commit(root, x))
+	require.NoError(t, errOf(p.Commit(root, x)))
 
 	t.Run("get by name from root", func(t *testing.T) {
 		d, err := p.GetData(root, "x")
@@ -87,7 +91,7 @@ func TestPlaneCommitAndGet(t *testing.T) {
 
 	t.Run("child data shadows nothing upward", func(t *testing.T) {
 		y := testData(t, "y", "child-only")
-		require.NoError(t, p.Commit(child, y))
+		require.NoError(t, errOf(p.Commit(child, y)))
 
 		// visible from the child...
 		_, err := p.GetData(child, "y")
@@ -114,7 +118,7 @@ func TestPlaneCommitAndGet(t *testing.T) {
 
 	t.Run("batch is applied wholly", func(t *testing.T) {
 		a, b := testData(t, "a", 1), testData(t, "b", 2)
-		require.NoError(t, p.Commit(root, a, b))
+		require.NoError(t, errOf(p.Commit(root, a, b)))
 
 		for _, n := range []string{"a", "b"} {
 			_, err := p.GetData(root, n)
@@ -123,7 +127,7 @@ func TestPlaneCommitAndGet(t *testing.T) {
 	})
 
 	t.Run("empty batch is a no-op", func(t *testing.T) {
-		require.NoError(t, p.Commit(root))
+		require.NoError(t, errOf(p.Commit(root)))
 	})
 }
 
@@ -135,7 +139,7 @@ func TestPlaneCommitValidation(t *testing.T) {
 
 	t.Run("nil data rejected, nothing applied", func(t *testing.T) {
 		ok := testData(t, "ok", 1)
-		require.Error(t, p.Commit(root, ok, nil))
+		require.Error(t, errOf(p.Commit(root, ok, nil)))
 
 		// all-or-nothing: the valid head of the batch was not applied.
 		_, err := p.GetData(root, "ok")
@@ -147,22 +151,22 @@ func TestPlaneCommitValidation(t *testing.T) {
 		// item can only reach Commit through a misbehaving data.Data
 		// implementation — modeled by the stub.
 		require.Error(t,
-			p.Commit(root, unnamedData{Data: testData(t, "stub", 1)}))
+			errOf(p.Commit(root, unnamedData{Data: testData(t, "stub", 1)})))
 	})
 
 	t.Run("unopened scope rejected", func(t *testing.T) {
 		require.Error(t,
-			p.Commit(mustPath(t, "/proc/ghost"), testData(t, "x", 1)))
+			errOf(p.Commit(mustPath(t, "/proc/ghost"), testData(t, "x", 1))))
 	})
 
 	t.Run("path outside the plane rejected", func(t *testing.T) {
-		require.Error(t, p.Commit(mustPath(t, "/other"), testData(t, "x", 1)))
+		require.Error(t, errOf(p.Commit(mustPath(t, "/other"), testData(t, "x", 1))))
 		_, err := p.GetData(mustPath(t, "/other"), "x")
 		require.Error(t, err)
 	})
 
 	t.Run("invalid path rejected", func(t *testing.T) {
-		require.Error(t, p.Commit(DataPath("proc"), testData(t, "x", 1)))
+		require.Error(t, errOf(p.Commit(DataPath("proc"), testData(t, "x", 1))))
 	})
 
 	t.Run("empty lookup args rejected", func(t *testing.T) {
@@ -181,7 +185,7 @@ func TestPlaneCommitValidation(t *testing.T) {
 	})
 
 	t.Run("nil ItemDefinition is skipped by id lookup", func(t *testing.T) {
-		require.NoError(t, p.Commit(root, noIDData{testData(t, "noid", 1)}))
+		require.NoError(t, errOf(p.Commit(root, noIDData{testData(t, "noid", 1)})))
 
 		_, err := p.GetDataByID(root, "any-id-at-all")
 		require.Error(t, err)
@@ -232,7 +236,7 @@ func TestPlaneOpenClose(t *testing.T) {
 	})
 
 	t.Run("close drops the scope data", func(t *testing.T) {
-		require.NoError(t, p.Commit(child, testData(t, "gone", 1)))
+		require.NoError(t, errOf(p.Commit(child, testData(t, "gone", 1))))
 		require.NoError(t, p.CloseScope(child))
 
 		_, err := p.GetData(root, "gone")
@@ -254,7 +258,7 @@ func TestPlaneRootDataPath(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, p.OpenScope(mustPath(t, "/any")))
-	require.NoError(t, p.Commit(mustPath(t, "/any"), testData(t, "x", 1)))
+	require.NoError(t, errOf(p.Commit(mustPath(t, "/any"), testData(t, "x", 1))))
 
 	d, err := p.GetData(mustPath(t, "/any"), "x")
 	require.NoError(t, err)
@@ -277,7 +281,7 @@ func TestPlaneConcurrent(t *testing.T) {
 	require.NoError(t, err)
 
 	seed := testData(t, "seed", 0)
-	require.NoError(t, p.Commit(root, seed))
+	require.NoError(t, errOf(p.Commit(root, seed)))
 
 	// items are pre-built serially: the engine's id generator isn't safe
 	// for concurrent construction, and this test targets the PLANE's
@@ -297,7 +301,7 @@ func TestPlaneConcurrent(t *testing.T) {
 	for w := range writers {
 		wg.Go(func() {
 			for i := range iterations {
-				errCh <- p.Commit(root, batches[w][i])
+				errCh <- errOf(p.Commit(root, batches[w][i]))
 			}
 		})
 	}
