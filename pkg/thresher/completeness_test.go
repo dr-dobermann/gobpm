@@ -282,12 +282,11 @@ func workerProcess(t *testing.T, id, topic string) *process.Process {
 
 // TestEngineScopeEmissionCompleteness (SRD-041 T-4, the "emission completeness"
 // canary): one engine-scope observer, registered before Run, must see facts
-// covering ALL 12 landed observability catalog kinds across a set of focused
+// covering ALL 13 observability catalog kinds across a set of focused
 // sub-scenarios launched under it. The observer sees every instance under the
 // engine, so the union of what the sub-scenarios emit is what we assert.
-//
-// KindDataChange is the sole ⏳-deferred 13th kind (ADR-011 data-plane, no
-// data-element change facts yet) — intentionally excluded, not asserted.
+// KindDataChange — deferred by SRD-041 — is wired by SRD-044 (the ADR-011
+// v.6 §2.9.4 commit-diff) and asserted like the rest.
 func TestEngineScopeEmissionCompleteness(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
@@ -326,5 +325,5 @@ func TestEngineScopeEmissionCompleteness(t *testing.T) {
 
 	sub.Cancel() // drains the buffered facts before we assert
 
-	assertAll12Kinds(t, c)
+	assertAll13Kinds(t, c)
 }

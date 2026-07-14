@@ -217,22 +217,28 @@ func (p *Scope) GetDataByID(from DataPath, id string) (data.Data, error) {
 // The whole batch is validated before anything is applied, and the
 // application happens under one critical section — other plane users observe
 // either none or all of the batch (ADR-010 §2.3). An empty batch is a no-op.
-func (p *Scope) Commit(at DataPath, dd ...data.Data) error {
+//
+// Commit returns the committed changed-path set (ADR-011 v.6 §2.9.4, SRD-044):
+// per committed name, the prior committed value graph is diffed against the
+// incoming one into (path, ChangeType) entries — a first commit of a name is
+// one Value_Added at its root. An unchanged re-commit contributes nothing; the
+// scope produces the set, its consumers decide what it means.
+func (p *Scope) Commit(at DataPath, dd ...data.Data) ([]data.Change, error) {
 	if err := p.checkContained("Commit", at); err != nil {
-		return err
+		return nil, err
 	}
 
 	if err := p.checkWritable("Commit", at); err != nil {
-		return err
+		return nil, err
 	}
 
 	names, err := batchNames("Commit", dd)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if len(dd) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	p.m.Lock()
@@ -240,16 +246,26 @@ func (p *Scope) Commit(at DataPath, dd ...data.Data) error {
 
 	vv, ok := p.scopes[at]
 	if !ok {
-		return errs.New(
+		return nil, errs.New(
 			errs.M("Commit: container scope %q isn't open", at),
 			errs.C(errorClass, errs.ObjectNotFound))
 	}
 
+	var changes []data.Change
+
 	for i, d := range dd {
+		var prior data.Value
+		if pd, ok := vv[names[i]]; ok {
+			prior = pd.Value()
+		}
+
 		vv[names[i]] = d
+
+		changes = append(changes,
+			data.DiffValues(names[i], prior, d.Value())...)
 	}
 
-	return nil
+	return changes, nil
 }
 
 // OpenScope opens a child container scope at path. The parent scope must

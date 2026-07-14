@@ -250,10 +250,12 @@ func (f *Frame) GetDataByID(id string) (data.Data, error) {
 
 // Commit flushes the frame's outputs and puts into the container scope as
 // one atomic Scope batch and seals the frame. A frame commits at most once
-// and never after Discard (ADR-010 §2.3).
-func (f *Frame) Commit() error {
+// and never after Discard (ADR-010 §2.3). It returns the scope's committed
+// changed-path set (ADR-011 v.6 §2.9.4, SRD-044) — the activity-boundary
+// change signal its track caller turns into DataChange facts.
+func (f *Frame) Commit() ([]data.Change, error) {
 	if err := f.checkOpen("Commit"); err != nil {
-		return err
+		return nil, err
 	}
 
 	batch := make([]data.Data, 0, len(f.outputs)+len(f.puts))
@@ -266,8 +268,9 @@ func (f *Frame) Commit() error {
 		batch = append(batch, p)
 	}
 
-	if err := f.plane.Commit(f.at, batch...); err != nil {
-		return errs.New(
+	changes, err := f.plane.Commit(f.at, batch...)
+	if err != nil {
+		return nil, errs.New(
 			errs.M("Commit: frame of node %q on track %q failed to commit",
 				f.nodeID, f.trackID),
 			errs.C(errorClass, errs.OperationFailed),
@@ -276,7 +279,7 @@ func (f *Frame) Commit() error {
 
 	f.state = frameCommitted
 
-	return nil
+	return changes, nil
 }
 
 // Discard seals the frame leaving the container scope untouched — the

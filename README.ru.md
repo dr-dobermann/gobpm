@@ -62,6 +62,15 @@ Process model ──> Snapshot ──> Engine (Thresher) ──> Instance (orche
 go get github.com/dr-dobermann/gobpm
 ```
 
+Фрагмент ниже строит и запускает вот такой процесс — стартовое событие, один
+`ServiceTask`, исполняющий ваш Go-функтор, и завершающее событие:
+
+```mermaid
+flowchart LR
+    s((start)) --> work["ServiceTask «work» — функтор greet читает user_name + RUNTIME/STARTED_AT"]
+    work --> e((end))
+```
+
 ```go
 // Start -> ServiceTask -> End  (errors elided for brevity)
 engine, _ := thresher.New("demo-engine")
@@ -147,7 +156,7 @@ defer sub.Cancel() // deregister + drain; sub.Dropped() counts any overflow
 
 По аварийному завершению процесса см. [`examples/terminate-end-event/`](examples/terminate-end-event/) — **Terminate End Event** на одной из веток параллельного процесса: ветка проверки на мошенничество доходит до него и завершает весь экземпляр, отменяя незаконченный платёж на середине списания — экземпляр оказывается в состоянии `Terminated`, а не `Completed`.
 
-По структурным данным (доступ *внутрь* значения по пути) см. [`examples/structural-data/`](examples/structural-data/) — свойство-**запись** `order` `{id, total, items:[{sku, price}]}`, где service task читает `order.items[0].price` через `DataReader`, а исключающий шлюз маршрутизирует по `order.total` — оба по пути через единый шов доступа к данным (ADR-011 v.6 §2.9); пример [`examples/service-task-worker/`](examples/service-task-worker/) добавляет структурный **output mapping** — worker возвращает структурированное тело, а правила маппинга извлекают вложенные поля (`body.warehouse.zone`). И наоборот, [`examples/structural-output-mapping/`](examples/structural-output-mapping/) показывает путь записи — worker возвращает **плоское** тело, а правила маппинга с общей головой `order` **собирают** одну вложенную запись (со списком `items`, созданным авто-vivify) и читают её обратно по пути (SRD-043).
+По структурным данным (доступ *внутрь* значения по пути) см. [`examples/structural-data/`](examples/structural-data/) — свойство-**запись** `order` `{id, total, items:[{sku, price}]}`, где service task читает `order.items[0].price` через `DataReader`, а исключающий шлюз маршрутизирует по `order.total` — оба по пути через единый шов доступа к данным (ADR-011 v.6 §2.9); пример [`examples/service-task-worker/`](examples/service-task-worker/) добавляет структурный **output mapping** — worker возвращает структурированное тело, а правила маппинга извлекают вложенные поля (`body.warehouse.zone`). И наоборот, [`examples/structural-output-mapping/`](examples/structural-output-mapping/) показывает путь записи — worker возвращает **плоское** тело, а правила маппинга с общей головой `order` **собирают** одну вложенную запись (со списком `items`, созданным авто-vivify) и читают её обратно по пути (SRD-043). Трио замыкает [`examples/data-change/`](examples/data-change/) — обнаружение изменений через commit-diff: наблюдатель получает по одному факту `DataChange` на каждый изменённый путь при коммитах узлов (SRD-044).
 
 ### Логирование при старте
 

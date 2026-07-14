@@ -47,7 +47,7 @@ func TestPlaneRuntimeVars(t *testing.T) {
 		p, err := New(root, &stubSupplier{t: t})
 		require.NoError(t, err)
 
-		require.Error(t, p.Commit(rtPath, testData(t, "x", 1)))
+		require.Error(t, errOf(p.Commit(rtPath, testData(t, "x", 1))))
 		require.Error(t, p.OpenScope(rtPath))
 	})
 
@@ -56,7 +56,7 @@ func TestPlaneRuntimeVars(t *testing.T) {
 			p, err := New(root, nil)
 			require.NoError(t, err)
 
-			require.Error(t, p.Commit(rtPath, testData(t, "x", 1)))
+			require.Error(t, errOf(p.Commit(rtPath, testData(t, "x", 1))))
 			require.Error(t, p.OpenScope(rtPath))
 
 			// nothing is served either — the lookup falls through to the
@@ -71,7 +71,7 @@ func TestPlaneRuntimeVars(t *testing.T) {
 			require.NoError(t, err)
 
 			sub := mustPath(t, "/proc/"+RuntimeVarsSegment+"/deep")
-			require.Error(t, p.Commit(sub, testData(t, "x", 1)))
+			require.Error(t, errOf(p.Commit(sub, testData(t, "x", 1))))
 			require.Error(t, p.OpenScope(sub))
 		})
 }

@@ -204,10 +204,12 @@ func runUserTaskScenario(
 	require.Equal(t, thresher.StateCompleted, state)
 }
 
-// assertAll12Kinds asserts the collector saw every one of the 12 landed
-// catalog kinds, and — for the richer ones — a representative (kind, phase)
-// pair, so the canary proves real coverage, not mere kind presence.
-func assertAll12Kinds(t *testing.T, c *collector) {
+// assertAll13Kinds asserts the collector saw every one of the 13 catalog
+// kinds, and — for the richer ones — a representative (kind, phase) pair, so
+// the canary proves real coverage, not mere kind presence. DataChange (the
+// 13th, wired by SRD-044) rides the UserTask scenario's completion output —
+// a committed "result" datum surfaces as one Value_Added changed path.
+func assertAll13Kinds(t *testing.T, c *collector) {
 	t.Helper()
 
 	seen := c.kinds()
@@ -225,6 +227,7 @@ func assertAll12Kinds(t *testing.T, c *collector) {
 		observability.KindTaskState,
 		observability.KindBoundary,
 		observability.KindFault,
+		observability.KindDataChange,
 	} {
 		require.Truef(t, seen[k],
 			"engine-scope observer never saw a %s fact", k)
@@ -250,4 +253,7 @@ func assertAll12Kinds(t *testing.T, c *collector) {
 	require.True(t, c.sawKindPhase(
 		observability.KindTaskState, observability.PhaseCompleted),
 		"TaskState/Completed missing")
+	require.True(t, c.sawKindPhase(
+		observability.KindDataChange, observability.PhaseValueAdded),
+		"DataChange/Value_Added missing")
 }

@@ -60,6 +60,15 @@ Dependencies flow downward only; lower layers know nothing of higher ones.
 go get github.com/dr-dobermann/gobpm
 ```
 
+The snippet below builds and runs this process — a start event, one
+`ServiceTask` executing your Go functor, and an end event:
+
+```mermaid
+flowchart LR
+    s((start)) --> work["ServiceTask «work» — the greet functor reads user_name + RUNTIME/STARTED_AT"]
+    work --> e((end))
+```
+
 ```go
 // Start -> ServiceTask -> End  (errors elided for brevity)
 engine, _ := thresher.New("demo-engine")
@@ -208,7 +217,9 @@ rules extract nested fields (`body.warehouse.zone`). Conversely,
 [`examples/structural-output-mapping/`](examples/structural-output-mapping/) shows
 the write path — a worker returns a **flat** body and mapping rules sharing the
 head `order` **assemble** one nested record (with an auto-vivified `items` list),
-read back by path (SRD-043).
+read back by path (SRD-043). [`examples/data-change/`](examples/data-change/)
+closes the trio: commit-diff change detection — an observer receives one
+`DataChange` fact per changed path as nodes commit (SRD-044).
 
 ### Startup logging
 
