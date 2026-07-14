@@ -62,6 +62,15 @@ Process model ──> Snapshot ──> Engine (Thresher) ──> Instance (orche
 go get github.com/dr-dobermann/gobpm
 ```
 
+Фрагмент ниже строит и запускает вот такой процесс — стартовое событие, один
+`ServiceTask`, исполняющий ваш Go-функтор, и завершающее событие:
+
+```mermaid
+flowchart LR
+    s((start)) --> work["ServiceTask «work» — функтор greet читает user_name + RUNTIME/STARTED_AT"]
+    work --> e((end))
+```
+
 ```go
 // Start -> ServiceTask -> End  (errors elided for brevity)
 engine, _ := thresher.New("demo-engine")

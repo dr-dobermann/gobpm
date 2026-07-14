@@ -20,7 +20,7 @@ A downstream service task then reads `order.items[1].price` back through the sam
 flowchart LR
     start((start)) --> quote["quote — assemble order.* from a flat body"]
     quote --> read["read order.items[1].price"]
-    read --> end((end))
+    read --> e((end))
 ```
 
 `worker.go` is the flat-body handler, `process.go` builds the model, `main.go`

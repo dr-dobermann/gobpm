@@ -60,6 +60,15 @@ Dependencies flow downward only; lower layers know nothing of higher ones.
 go get github.com/dr-dobermann/gobpm
 ```
 
+The snippet below builds and runs this process — a start event, one
+`ServiceTask` executing your Go functor, and an end event:
+
+```mermaid
+flowchart LR
+    s((start)) --> work["ServiceTask «work» — the greet functor reads user_name + RUNTIME/STARTED_AT"]
+    work --> e((end))
+```
+
 ```go
 // Start -> ServiceTask -> End  (errors elided for brevity)
 engine, _ := thresher.New("demo-engine")
