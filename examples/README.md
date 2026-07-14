@@ -33,6 +33,7 @@ Every example builds in CI; the list below is grouped by concern.
 | Example | Demonstrates |
 |---|---|
 | [`structural-data/`](structural-data/) | Reaching **into** a record value by path — a service task reads `order.items[0].price`, a gateway routes on `order.total` (ADR-011 v.6 §2.9). |
+| [`structural-output-mapping/`](structural-output-mapping/) | Assembling a nested value **out of** a flat worker body — output-mapping rules sharing the head `order` build one record with an auto-vivified `items` list, read back by path (ADR-011 v.6 §2.9.5 / SRD-043). |
 
 ## Service workers
 

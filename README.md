@@ -204,7 +204,11 @@ property `{id, total, items:[{sku, price}]}` where a service task reads
 `order.total`, both by path through the one data-access seam (ADR-011 v.6 §2.9);
 the [`examples/service-task-worker/`](examples/service-task-worker/) example adds
 structural **output mapping** — a worker returns a structured body and mapping
-rules extract nested fields (`body.warehouse.zone`).
+rules extract nested fields (`body.warehouse.zone`). Conversely,
+[`examples/structural-output-mapping/`](examples/structural-output-mapping/) shows
+the write path — a worker returns a **flat** body and mapping rules sharing the
+head `order` **assemble** one nested record (with an auto-vivified `items` list),
+read back by path (SRD-043).
 
 ### Startup logging
 
