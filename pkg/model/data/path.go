@@ -144,6 +144,45 @@ func ResolvePath(
 	return NewPathData(name, leaf), nil
 }
 
+// ParsePath parses a root-relative structural path into its full step list.
+// Unlike SplitPath (which splits a NAME head from its steps for a Source.Find),
+// the leading segment here is itself a step — a field or an index — because the
+// root value may be a record OR a list ("items[0].price" vs "[0].total"). An
+// empty path returns nil. It is the write-side (SetPath) counterpart of
+// SplitPath (ADR-011 v.6 §2.9.3).
+func ParsePath(path string) ([]Step, error) {
+	if path == "" {
+		return nil, nil
+	}
+
+	// A path that starts with '[' is a leading index step — SplitPath rejects
+	// an empty head, so tokenize the whole path directly.
+	if path[0] == '[' {
+		var steps []Step
+
+		rest := path
+		for rest != "" {
+			step, r, err := nextStep(rest, path)
+			if err != nil {
+				return nil, err
+			}
+
+			steps = append(steps, step)
+			rest = r
+		}
+
+		return steps, nil
+	}
+
+	// A leading name: SplitPath gives (head, steps); the head is the first field.
+	head, steps, err := SplitPath(path)
+	if err != nil {
+		return nil, err
+	}
+
+	return append([]Step{{Field: head}}, steps...), nil
+}
+
 // WalkSteps folds steps over v: a field step asserts Record and calls Field; an
 // index step asserts Collection and calls GetAt. A Collection element that is
 // not itself a Value is a read-only scalar leaf — a further step into it is a

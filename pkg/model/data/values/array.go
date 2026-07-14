@@ -260,6 +260,49 @@ func (a *Array[T]) GetAt(_ context.Context, index any) (any, error) {
 	return a.elements[idx], nil
 }
 
+// SetAt sets the element at index (data.Collection): an index in [0, len)
+// replaces, index == len appends (seating the cursor if the collection was
+// empty, as Add does), index > len (or negative) is an OutOfRangeError. It does
+// not move the iteration cursor.
+func (a *Array[T]) SetAt(_ context.Context, index, value any) error {
+	v, err := checkValue[T](value)
+	if err != nil {
+		return err
+	}
+
+	idx, err := checkValue[int](index)
+	if err != nil {
+		return err
+	}
+
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
+	return a.setAt(idx, v)
+}
+
+// setAt is the locked core shared by SetAt and SetAtT.
+func (a *Array[T]) setAt(idx int, v T) error {
+	switch {
+	case idx >= 0 && idx < len(a.elements):
+		a.elements[idx] = v
+
+	case idx == len(a.elements):
+		a.elements = append(a.elements, v)
+		if a.index < 0 {
+			a.index = 0
+		}
+
+	default:
+		return errs.New(
+			errs.M("set index %d is out of range (len: %d)",
+				idx, len(a.elements)),
+			errs.C(errorClass, errs.OutOfRangeError))
+	}
+
+	return nil
+}
+
 // Insert adds new value at index.
 func (a *Array[T]) Insert(_ context.Context, value, index any) error {
 	a.lock.Lock()

@@ -78,6 +78,12 @@ type Collection interface {
 	// or returns error on failure.
 	GetAt(ctx context.Context, index any) (any, error)
 
+	// SetAt sets the element at index — the atomic, cursor-free counterpart of
+	// GetAt (ADR-011 v.6 §2.9.3, the collection's index write). An index in
+	// [0, len) replaces; index == len appends; index > len is an error. It does
+	// not move the iteration cursor (unlike GoTo+Update).
+	SetAt(ctx context.Context, index, value any) error
+
 	// Insert adds new value at index.
 	Insert(ctx context.Context, value any, index any) error
 

@@ -126,6 +126,14 @@ func (a *Array[T]) GetAtT(index int) (T, error) {
 	return a.elements[index], nil
 }
 
+// SetAtT is a typed version of SetAt.
+func (a *Array[T]) SetAtT(index int, value T) error {
+	a.lock.Lock()
+	defer a.lock.Unlock()
+
+	return a.setAt(index, value)
+}
+
 // InsertT is a typed version of Insert.
 func (a *Array[T]) InsertT(value T, index int) error {
 	a.lock.Lock()
