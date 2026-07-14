@@ -129,9 +129,7 @@ func setLast(
 // following field step needs a record, a following index step needs a list.
 func vivify(next data.Step) data.Value {
 	if next.Field != "" {
-		r, _ := NewRecord() // no fields → never errors
-
-		return r
+		return MustRecord() // zero fields → never errors
 	}
 
 	return NewArray[data.Value]()
