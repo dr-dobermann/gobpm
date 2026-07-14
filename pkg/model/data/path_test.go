@@ -226,6 +226,49 @@ func TestTraversalErrorPropagation(t *testing.T) {
 	require.ErrorIs(t, err, errTest)
 }
 
+// TestResolvePath covers the shared Source.Find resolver directly: plain
+// pass-through, structural walk, and every error branch incl. a non-Ready head.
+func TestResolvePath(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	o := order(t)
+
+	readyHead := func(string) (data.Data, error) {
+		return data.NewPathData("order", o), nil // Ready by construction
+	}
+
+	// plain name → the head unchanged.
+	d, err := data.ResolvePath(ctx, "order", readyHead)
+	require.NoError(t, err)
+	require.Equal(t, "order", d.Name())
+
+	// structural → the walked leaf.
+	d, err = data.ResolvePath(ctx, "order.total", readyHead)
+	require.NoError(t, err)
+	require.Equal(t, 150, d.Value().Get(ctx))
+
+	// resolveHead error propagates.
+	_, err = data.ResolvePath(ctx, "x.y",
+		func(string) (data.Data, error) { return nil, errTest })
+	require.ErrorIs(t, err, errTest)
+
+	// SplitPath error (malformed) and WalkSteps error (bad field).
+	_, err = data.ResolvePath(ctx, "a..b", readyHead)
+	require.Error(t, err)
+	_, err = data.ResolvePath(ctx, "order.nope", readyHead)
+	require.Error(t, err)
+
+	// a non-Ready head cannot be navigated.
+	notReady := func(string) (data.Data, error) {
+		return data.MustParameter("order",
+			data.MustItemAwareElement(
+				data.MustItemDefinition(o), data.UnavailableDataState)), nil
+	}
+	_, err = data.ResolvePath(ctx, "order.total", notReady)
+	require.Error(t, err)
+}
+
 // TestSchemaAtAndWalk covers shape-by-traversal (SRD-042 T-7).
 func TestSchemaAtAndWalk(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())

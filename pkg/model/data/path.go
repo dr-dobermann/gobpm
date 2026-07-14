@@ -104,6 +104,46 @@ func pathErr(format string, args ...any) error {
 		errs.C(errorClass, errs.InvalidParameter))
 }
 
+// ResolvePath resolves a possibly-structural name for a Source.Find: it splits
+// the name, resolves the head through resolveHead (the Source's own exact
+// lookup), and — when the name carries structural steps — walks them into the
+// head's value, returning the leaf as a path-named Data. A plain name (no
+// steps) returns the head Data unchanged, so a Source's existing behavior is
+// preserved. A head that is not Ready cannot be navigated (structural reads run
+// only over usable data).
+func ResolvePath(
+	ctx context.Context,
+	name string,
+	resolveHead func(head string) (Data, error),
+) (Data, error) {
+	head, steps, err := SplitPath(name)
+	if err != nil {
+		return nil, err
+	}
+
+	d, err := resolveHead(head)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(steps) == 0 {
+		return d, nil
+	}
+
+	if d.State().Name() != ReadyDataState.Name() {
+		return nil, errs.New(
+			errs.M("cannot navigate %q: %q is not in Ready state", name, head),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	leaf, err := WalkSteps(ctx, d.Value(), steps)
+	if err != nil {
+		return nil, err
+	}
+
+	return NewPathData(name, leaf), nil
+}
+
 // WalkSteps folds steps over v: a field step asserts Record and calls Field; an
 // index step asserts Collection and calls GetAt. A Collection element that is
 // not itself a Value is a read-only scalar leaf — a further step into it is a
