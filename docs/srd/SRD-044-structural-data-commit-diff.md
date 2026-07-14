@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft v.1 |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-14 |
 | Owner | Ruslan Gabitov |
@@ -283,21 +283,51 @@ No **public** surface changes beyond `pkg/model/data` and `pkg/observability`
 
 ## 9. Definition of Done
 
-- [ ] FR-1..FR-6 wired; every §6 test exists and is green.
-- [ ] `DiffValues` covers every §3.1 rule; a new/removed subtree is one change at
+- [x] FR-1..FR-6 wired; every §6 test exists and is green.
+- [x] `DiffValues` covers every §3.1 rule; a new/removed subtree is one change at
       its root; unchanged commit → no changes, no allocation.
-- [ ] DataChange facts emit at activity-boundary commits only; birth-init emits
+- [x] DataChange facts emit at activity-boundary commits only; birth-init emits
       none; `KindDataChange` stays no-echo.
-- [ ] The completeness canary asserts the 13th kind; no kind remains deferred.
-- [ ] `make ci` green; diff-coverage ≥95% (aim 100%); full `-race`; example smoke
+- [x] The completeness canary asserts the 13th kind; no kind remains deferred.
+- [x] `make ci` green; diff-coverage ≥95% (aim 100%); full `-race`; example smoke
       exits 0.
-- [ ] SRD-044 flipped to Accepted; roadmap + SAD-001 S3 note. ADR-011 v.6
+- [x] SRD-044 flipped to Accepted; roadmap + SAD-001 S3 note. ADR-011 v.6
       unchanged.
-- [ ] §10 filled with milestone SHAs and deltas.
+- [x] §10 filled with milestone SHAs and deltas.
 
 ## 10. Implementation summary
 
-> ⚠️ TODO: filled after landing.
+Landed on `feat/structural-commit-diff` in four milestones.
+
+### 10.1 Milestones
+
+| # | Commit | Scope | Tests |
+|---|---|---|---|
+| doc | `be8b022` | this SRD | — |
+| M1 | `0300bfd` | `data.Change` + `data.DiffValues` (the pure diff engine) | `TestDiffValues` |
+| M2 | `a12dddf` | `Scope.Commit`/`Frame.Commit` → `([]data.Change, error)`; birth-init sites drop the set | `TestCommitReturnsDiff`, `TestFrameCommitPropagatesDiff` |
+| M3 | `cd33d51` | `AttrDataPath`, the `dataChangePhase` table, `track.reportDataChanges`; canary asserts 13 kinds | `TestDataChangeFactsEmitted`, `assertAll13Kinds` |
+| M4 | (this) | the `data-change` worked example + README/index wiring; §10; Accepted flip | example smoke (T-6) |
+
+All touched functions at 100% coverage; `make ci` green at each milestone.
+
+### 10.2 Deltas vs the §3 draft
+
+- **No new canary scenario.** §6 T-5 anticipated giving a scenario a
+  data-committing bit; the UserTask scenario's completion output (`result`)
+  already commits through its track frame, so the 13th kind surfaced with no
+  scenario change — only the assertion upgraded (`assertAll13Kinds` + the
+  representative `DataChange/Value_Added`).
+- **Branchless emission at the track.** `finalizeNodeExecution` reports before
+  returning `Frame.Commit`'s error (`changes, err := f.Commit();
+  t.reportDataChanges(...); return err`) — a failed commit returns a nil set,
+  so the report is naturally a no-op; no untestable error branch.
+- **Node attribution is Name-first.** A node's `ID()` is engine-generated
+  (numeric); the human-readable attribution in a fact is `NodeName` — T-4
+  asserts the name and only non-emptiness of the id.
+- **The pre-existing error-only Commit assertions** in the scope package were
+  adapted via one `errOf` helper rather than rewritten (every original
+  assertion intact).
 
 ## Open questions
 
