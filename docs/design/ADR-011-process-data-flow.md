@@ -397,6 +397,19 @@ target shapes (the implementing SRD does the file-level work):
 - **(v.6) The structure of foreign provider data.** A `SOURCE/addr` provider
   (ADR-010 §2.7) keeps its address space opaque; engine-native structural
   navigation is for engine-managed values only (§2.9.2).
+- **A map / dictionary value kind (recognized future extension, not now).** The
+  decided kind set is `scalar｜list｜record` (§2.9.1). A **map** — homogeneous
+  values under **data** keys (arbitrary strings, not identifier field-names),
+  addressed `["key"]` — is a genuinely *distinct* kind from a record (a record's
+  keys are its schema; a map's keys are data) and an *additive* one: the
+  capability-interface model admits a `data.Map` capability beside `Record` /
+  `Collection`, and the path grammar admits a `["key"]` step, without disturbing
+  anything landed. It is **out of scope until a concrete driver arrives** —
+  Go-`map[K]V` interop (the S4 adapter tier, where a map field cannot be a record)
+  or a process that genuinely holds a data-keyed dictionary — at which point it
+  lands as its own small slice, not folded into S1–S4. BPMN's own model does not
+  need it (XSD is record + list; a map is programming-language convenience), so it
+  is not a conformance gap.
 
 ### 2.9 Structural data: navigable values (v.6)
 
@@ -426,6 +439,11 @@ assertion. v.6 mirrors it with **one new capability**:
 - **record** — a `Value` implementing the new **`Record`** capability: ordered
   field names (`Keys`), field read (`Field`), structural field write
   (`SetField`) — an XSD complex type's element set.
+
+The kind set is these three. A **data-keyed map** (homogeneous values under
+arbitrary-string keys, `["key"]` addressing) is a recognized *additive* future
+kind — a `data.Map` capability alongside `Record`/`Collection` — deferred until a
+concrete driver arrives (§2.8).
 
 A node's *kind* is **which capability it implements** (one type assertion); a
 leaf's type is the existing `Value.Type()`. Nesting composes to **any depth**

@@ -344,3 +344,42 @@ func TestSchemaAtAndWalk(t *testing.T) {
 		require.Equal(t, "scalar", seen[".tags[0]"])
 	})
 }
+
+// TestParsePath covers the write-side path parser (SRD-043 T-1): the leading
+// segment is itself a step — a field OR an index — and an empty path is nil.
+func TestParsePath(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		steps   []data.Step
+		wantErr bool
+	}{
+		{"empty", "", nil, false},
+		{"leading field", "order", []data.Step{{Field: "order"}}, false},
+		{"field then field", "order.total",
+			[]data.Step{{Field: "order"}, {Field: "total"}}, false},
+		{"field index field", "items[0].price",
+			[]data.Step{{Field: "items"}, {Index: 0}, {Field: "price"}}, false},
+		{"leading index", "[0].total",
+			[]data.Step{{Index: 0}, {Field: "total"}}, false},
+		{"leading index only", "[2]", []data.Step{{Index: 2}}, false},
+
+		{"double dot", "a..b", nil, true},
+		{"unclosed leading index", "[0", nil, true},
+		{"non-numeric leading index", "[x]", nil, true},
+		{"stray segment after index", "a[0]b", nil, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			steps, err := data.ParsePath(tt.path)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, tt.steps, steps)
+		})
+	}
+}
