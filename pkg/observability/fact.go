@@ -125,6 +125,7 @@ const (
 	AttrVersion           = "version"
 	AttrAttempts          = "attempts"
 	AttrBackoff           = "backoff"
+	AttrDataPath          = "data_path"
 )
 
 // Fact is the canonical observable engine event (ADR-013 v.2 §2.6/§2.9): a

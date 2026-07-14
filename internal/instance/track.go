@@ -973,9 +973,11 @@ func (t *track) finalizeNodeExecution(
 		return err
 	}
 
-	// The changed-path set is the activity-boundary change signal; it becomes
-	// per-path DataChange facts in the M3 emission slice (SRD-044 FR-4).
-	_, err := f.Commit()
+	// The changed-path set is the activity-boundary change signal — one
+	// DataChange fact per changed path (SRD-044 FR-4). A failed Commit
+	// returns a nil set, so the report is naturally a no-op then.
+	changes, err := f.Commit()
+	t.reportDataChanges(step.node, changes)
 
 	return err
 }
