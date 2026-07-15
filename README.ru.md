@@ -156,7 +156,7 @@ defer sub.Cancel() // deregister + drain; sub.Dropped() counts any overflow
 
 По аварийному завершению процесса см. [`examples/terminate-end-event/`](examples/terminate-end-event/) — **Terminate End Event** на одной из веток параллельного процесса: ветка проверки на мошенничество доходит до него и завершает весь экземпляр, отменяя незаконченный платёж на середине списания — экземпляр оказывается в состоянии `Terminated`, а не `Completed`.
 
-По структурным данным (доступ *внутрь* значения по пути) см. [`examples/structural-data/`](examples/structural-data/) — свойство-**запись** `order` `{id, total, items:[{sku, price}]}`, где service task читает `order.items[0].price` через `DataReader`, а исключающий шлюз маршрутизирует по `order.total` — оба по пути через единый шов доступа к данным (ADR-011 v.6 §2.9); пример [`examples/service-task-worker/`](examples/service-task-worker/) добавляет структурный **output mapping** — worker возвращает структурированное тело, а правила маппинга извлекают вложенные поля (`body.warehouse.zone`). И наоборот, [`examples/structural-output-mapping/`](examples/structural-output-mapping/) показывает путь записи — worker возвращает **плоское** тело, а правила маппинга с общей головой `order` **собирают** одну вложенную запись (со списком `items`, созданным авто-vivify) и читают её обратно по пути (SRD-043). Трио замыкает [`examples/data-change/`](examples/data-change/) — обнаружение изменений через commit-diff: наблюдатель получает по одному факту `DataChange` на каждый изменённый путь при коммитах узлов (SRD-044).
+Данные процесса полностью **структурны**: значения навигируемы по пути (`order.items[0].price`) во всех швах — условиях, выражениях, маппингах, сервисном коде — записываемы и собираемы той же грамматикой, изменения детектируются по-путно при коммите, а **собственные Go-структуры** хоста участвуют вживую через `adapters.Wrap` (обёртка, не конвертация). Полное руководство — модель значений, три яруса, чтение/запись/наблюдение, теги `gobpm:"..."` — в [**docs/guides/data.md**](docs/guides/data.md) (EN), с четырьмя запускаемыми примерами.
 
 ### Логирование при старте
 
@@ -199,6 +199,7 @@ make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (r
 ## Документация
 
 - [Vision & Architecture (SAD-001)](docs/design/SAD-001-vision-and-architecture.md) и [ADR'ы](docs/design/) — концепция
+- [Работа с данными процесса](docs/guides/data.md) — руководство по структурным данным (пути, ярусы, нативные структуры, наблюдение изменений; EN)
 - [Development Roadmap](docs/analytics/gobpm%20Development%20Roadmap.md) — workstream'ы + вехи
 - [Conformance scope](docs/bpmn-spec/conformance.md) и [BPMN 2.0 reference KB](docs/bpmn-spec/)
 - [Documentation Index](README_INDEX.md) · [API Reference](https://pkg.go.dev/github.com/dr-dobermann/gobpm) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)

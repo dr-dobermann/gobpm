@@ -5,6 +5,7 @@ This file provides an organized index to all documentation throughout the GoBPM 
 ## 📋 Quick Links
 
 - **[Main README](README.md)**: Project overview and getting started
+- **[Working with process data](docs/guides/data.md)**: The structural-data guide — paths, tiers, native structs, change observation
 - **[Contributing Guidelines](CONTRIBUTING.md)**: How to contribute to the project
 - **[Changelog](CHANGELOG.md)**: Project history and release notes
 
