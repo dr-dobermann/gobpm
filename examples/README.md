@@ -35,6 +35,7 @@ Every example builds in CI; the list below is grouped by concern.
 | [`structural-data/`](structural-data/) | Reaching **into** a record value by path — a service task reads `order.items[0].price`, a gateway routes on `order.total` (ADR-011 v.6 §2.9). |
 | [`structural-output-mapping/`](structural-output-mapping/) | Assembling a nested value **out of** a flat worker body — output-mapping rules sharing the head `order` build one record with an auto-vivified `items` list, read back by path (ADR-011 v.6 §2.9.5 / SRD-043). |
 | [`data-change/`](data-change/) | Observing **which data changed** — commit-diff at the activity boundary surfaces one `DataChange` fact per changed path: a first commit is one `Value_Added` at the root, a nested re-commit one `Value_Updated` at the leaf (ADR-011 v.6 §2.9.4 / SRD-044). |
+| [`native-structs/`](native-structs/) | The host's **own Go struct as process data** — `adapters.Wrap` returns a live view (wrap, not convert): `gobpm:"..."` tags, a host-side `SetPath` writing into the live struct, a gateway routing on `order.total`, and DataChange facts over wrapped commits (ADR-011 v.6 §2.9.5 / SRD-045). |
 
 ## Service workers
 

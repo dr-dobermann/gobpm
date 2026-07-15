@@ -218,8 +218,12 @@ rules extract nested fields (`body.warehouse.zone`). Conversely,
 the write path — a worker returns a **flat** body and mapping rules sharing the
 head `order` **assemble** one nested record (with an auto-vivified `items` list),
 read back by path (SRD-043). [`examples/data-change/`](examples/data-change/)
-closes the trio: commit-diff change detection — an observer receives one
-`DataChange` fact per changed path as nodes commit (SRD-044).
+adds commit-diff change detection — an observer receives one
+`DataChange` fact per changed path as nodes commit (SRD-044). And
+[`examples/native-structs/`](examples/native-structs/) completes the quartet:
+the host's **own Go struct** participates directly — `adapters.Wrap` returns a
+live view (wrap, not convert) with `gobpm:"..."` tags, navigable by every seam
+(SRD-045).
 
 ### Startup logging
 
