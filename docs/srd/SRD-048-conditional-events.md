@@ -2,12 +2,12 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-15 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-006 v.3](../design/ADR-006-events-and-subscriptions.md) §2.7 (conditional events — status-based triggering by commit-diff); GitHub issue #89 |
-| Upstream | [ADR-011 v.6](../design/ADR-011-structured-process-data.md) §2.9.4 (the commit-diff change signal this rides), [ADR-018 v.1](../design/ADR-018-boundary-events.md) §2.7 (the boundary-trigger deferral this closes for Conditional), [ADR-005 v.4](../design/ADR-005-gateways-and-joins.md) (event-based-gateway arms), [ADR-001 v.6](../design/ADR-001-execution-model.md) (the single-writer loop the registry lives on), [ADR-013 v.2](../design/ADR-013-observability.md) (fact kinds the new signals reuse) |
+| Upstream | [ADR-011 v.6](../design/ADR-011-structured-process-data.md) §2.9.4 (the commit-diff change signal this rides), [ADR-018 v.1](../design/ADR-018-boundary-events-and-activity-interruption.md) §2.7 (the boundary-trigger deferral this closes for Conditional), [ADR-005 v.4](../design/ADR-005-gateways-and-joins.md) (event-based-gateway arms), [ADR-001 v.6](../design/ADR-001-execution-model.md) (the single-writer loop the registry lives on), [ADR-013 v.2](../design/ADR-013-observability.md) (fact kinds the new signals reuse) |
 | Refines | — |
 
 Note on numbering: SRD-047 is reserved for the structural-data maps slice
@@ -465,7 +465,7 @@ ADR-005 arm note).
 - Implements [ADR-006 v.3](../design/ADR-006-events-and-subscriptions.md)
   §2.7 — every §2 requirement realizes a §2.7 clause (traced inline
   above).
-- Closes the Conditional row of [ADR-018 v.1](../design/ADR-018-boundary-events.md)
+- Closes the Conditional row of [ADR-018 v.1](../design/ADR-018-boundary-events-and-activity-interruption.md)
   §2.7's deferred boundary triggers.
 - Rides [ADR-011 v.6](../design/ADR-011-structured-process-data.md) §2.9.4
   commit-diff and [ADR-005 v.4](../design/ADR-005-gateways-and-joins.md)
@@ -490,8 +490,60 @@ ADR-005 arm note).
 
 ## §10 Implementation summary
 
-> ⚠️ TODO: fill after landing (stage commits, deltas vs draft, empirical
-> findings).
+### §10.1 Milestones by commit (branch `feat/conditional-events`)
+
+| Stage | Commit | Scope | Tests |
+|---|---|---|---|
+| doc | `39f2bef` | SRD-048 + the ADR-006 §2.7 wording alignment ("rejected at model validation") | — |
+| M1 | `9e853e8` | `data.DependencyLister` + `data.PathsOverlap` + `goexpr.WithDependencies`/`Dependencies()` + the bool gate | TestPathsOverlap, TestWithDependencies, TestConditionalDefinitionBoolGate |
+| M2 | `986ec83` | `Process.Validate` placement gate + startTriggers comment + boundary allow-list + EBG arms | TestStartConditionalRejected, boundary rows, the flipped EBG accept case |
+| M3 | `46d3454` | `Snapshot.HasConditionals` (+ `Clone` copy) + `evDataCommit` + `condWatch` registry + the catch flavor | TestCondDue, ArmTimeFire, EdgeRule, DependencyFiltering, MultiFireVoiding, eval-failure cases, emit gates, snapshot flags |
+| M4 | `75a05e3` | Boundary flavor (loop-owned `boundaryWatch`, interrupting + non-interrupting) + EBG-arm tests + the spawn cancel-order fix | TestConditionalBoundary{ArmTimeInterrupting, InterruptingSweep, NonInterrupting, ArmEvalFailure}, TestEBGConditionalArm{Wins, Loses} |
+| M5 | `f0dc475` | Thresher e2e + `examples/conditional-events/` + guide + changelog + tracker row + README sync + the fork-into-catch deadlock fix | TestConditionalEventsE2E |
+
+Every milestone landed with `make ci` green; final diff-coverage 97.9% of
+379 changed lines (min 95%).
+
+### §10.2 Deltas vs the draft
+
+- **FR-4 was redesigned during the doc review** (before approval, reflected
+  above): the rejection moved from the StartEvent construction surface to
+  the `Process.Validate` placement seam, keeping construction legal for the
+  future event-sub-process start (owner's catch).
+- **§3.3 `condWatch` shape**: the draft carried `boundary bool +
+  interrupting bool`; landed with `boundary bool` only — the interrupting
+  discrimination lives where it always did, in `fireBoundary` reading the
+  model's `CancelActivity()`, so duplicating it on the watch was dropped.
+- **Boundary lifecycle reuse**: instead of a parallel conditional-boundary
+  lifecycle, a conditional def gets a regular `boundaryWatch` entry marked
+  `loopOwned` (no hub registration; disarm skips the hub unregister), so
+  `armedFor` and the disarm path govern both flavors unchanged.
+- **`clearConds` is keyed by trackID**, not the pointer — the disarm sites
+  carry the id.
+
+### §10.3 Empirical findings
+
+- **Fork-into-catch loop deadlock (fixed in M5).** Building a fork-born
+  track directly on a catch node emitted `evWaiting` from the loop
+  goroutine (`spawnForks → newTrack → checkNodeType`), deadlocking the loop
+  on its own channel; pre-existing for every catch trigger, first exposed
+  by this SRD's e2e process shape. Fixed by an `atConstruction` flag:
+  construction never emits — `spawn`'s `recordBornWaiter` records
+  born-parked tracks; only the mid-run path (the track's own goroutine)
+  emits.
+- **`Snapshot.Clone` silently dropped the new flag.** The first
+  `HasConditionals` implementation set the field in `New` but not in
+  `Clone`'s literal — and the instance runs on the clone, so the commit
+  signal was silently disabled (a hung test caught it). Pinned by
+  `TestSnapshotHasConditionals` asserting the flag on the clone.
+
+### §10.4 Backlog (out of SRD-048 scope)
+
+- **Fork-born Message catch with a broker-buffered message**: the
+  synchronous waiter fire at registration (`MessageWaiter` draining on
+  RegisterEvent) can also run on the loop goroutine for a fork-born track
+  — the evDeliver sibling of the fixed evWaiting deadlock. Needs its own
+  FIX (likely: move fork-born hub registration to the spawn path).
 
 ## Open questions
 

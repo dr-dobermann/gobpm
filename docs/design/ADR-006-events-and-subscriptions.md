@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.3 |
 | Date | 2026-07-15 |
 | Owner | Ruslan Gabitov |
@@ -262,6 +262,12 @@ This single-ownership model is what `TimeWaiter`, ADR-014's `MessageWaiter`, and
 any future waiter obey, and it is the mechanics ADR-013's `Thresher.Shutdown`
 drives.
 
+**(v.3)** Conditional subscriptions are the **deliberate exception** to this
+sole-hub pattern: their trigger source is the instance's own data commits, so
+they are owned by the instance loop, never registered as hub waiters — §2.7
+Ownership. Every externally-triggered wait (message, timer, signal) stays
+hub-owned as above.
+
 ### 2.6 Error events: throw, propagation, and catch
 
 §2.2 fixes that an Error boundary is *always interrupting* and that Error uses the
@@ -398,7 +404,8 @@ catch-only by the standard's tables; already rejected at configuration.
 
   - the expression contract is one optional capability,
     `Dependencies() []string` — the data paths the expression reads.
-    **Absent or empty → the engine assumes it may read anything**;
+    **Absent, or nil/empty at runtime → the engine assumes it may read
+    anything** (the fail-safe direction);
   - on every non-empty commit, an armed conditional **re-evaluates** when it
     has no dependency statement, or when the commit's changed-path set
     **intersects** its declared dependencies (segment-boundary prefix match:
@@ -412,9 +419,11 @@ catch-only by the standard's tables; already rejected at configuration.
     (the expression-layer workstream) implements the same capability
     **structurally** — exact and error-free — and a conservative
     compile-time source analyzer on the codegen seam may derive it for
-    functors, both failing toward re-evaluation, never toward a miss. An
-    explicitly **empty** declaration is rejected at construction ("depends
-    on nothing" would mean *never* re-evaluate — the degenerate trap).
+    functors, both failing toward re-evaluation, never toward a miss.
+    **Declaring** constructors reject an explicitly empty statement
+    ("depends on nothing" would mean *never* re-evaluate — the degenerate
+    trap); should a runtime list still come back empty, the engine treats
+    it as absent — fail-safe, per the first bullet.
 
 - **Multi-fire ordering — one commit, one snapshot, arming order.** A single
   commit may satisfy several armed conditions at once — including an
@@ -556,7 +565,7 @@ questions.
   signal; ADR-011 anticipated conditional events as that seam's future consumer.
 - **(v.3)** [ADR-005 v.4 Gateways & Joins](ADR-005-gateways-and-joins.md) — its
   §2.12 Event-Based Gateway whose deferred Conditional arms §2.7 opens.
-- **(v.3)** [ADR-018 v.1 Boundary Events](ADR-018-boundary-events.md) — the
+- **(v.3)** [ADR-018 v.1 Boundary Events](ADR-018-boundary-events-and-activity-interruption.md) — the
   boundary arm/disarm machinery §2.7's conditional boundary rides; its §2.7
   deferred list names Conditional — at this amendment's landing that row gains
   a "decided in ADR-006 v.3" annotation (a sync note, not an ADR-018 re-decision).
