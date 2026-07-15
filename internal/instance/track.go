@@ -376,7 +376,7 @@ func newTrack(
 	// transitions), so it uses the running clock; before Run, Token() returns
 	// the zero projection. checkNodeType below may add a WaitForEvent entry
 	// for event-start nodes.
-	if err := t.checkNodeType(start); err != nil {
+	if err := t.checkNodeType(start, true); err != nil {
 		return nil, err
 	}
 
@@ -384,8 +384,13 @@ func newTrack(
 }
 
 // checkNodeType determines if node awaits for event or human interaction
-// and updates track state on positive comparison.
-func (t *track) checkNodeType(node flow.Node) error {
+// and updates track state on positive comparison. atConstruction marks the
+// newTrack call: it may run ON THE LOOP GOROUTINE (spawnForks builds a
+// fork-born track there), where emitting evWaiting would deadlock the loop
+// on its own channel — the born-parked track is recorded by spawn's
+// recordBornWaiter instead (SRD-027 FR-5). Only the mid-run path (the
+// track's own goroutine) emits.
+func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 	// A UserTask is a human-interaction wait node (SRD-034): it parks for a human
 	// Complete, not for a hub-delivered event. Recognize it before the event-node
 	// path (it is not a flow.EventNode) and park it without any hub registration.
@@ -439,9 +444,11 @@ func (t *track) checkNodeType(node flow.Node) error {
 	// event (dispatched by the loop as evDeliver) can never reach the loop before the
 	// track is recorded as parked-and-undelivered (SRD-027 FR-5). The emit carries the
 	// Message catch-definition IDs so the loop can index them → this track (FR-8). Gated
-	// on Active: at construction (New, before the loop runs) the loop records the track
-	// via spawn instead, and emitting here would block on the not-yet-draining inst.events.
-	if t.instance.State() == Active {
+	// on Active AND on a mid-run call: at construction the loop records the track via
+	// spawn's recordBornWaiter instead — for a pre-loop track the events channel is not
+	// yet draining, and for a fork-born track checkNodeType runs ON the loop goroutine,
+	// where this emit would deadlock the loop on its own channel.
+	if !atConstruction && t.instance.State() == Active {
 		t.instance.emit(trackEvent{
 			kind:      evWaiting,
 			track:     t,
@@ -1040,7 +1047,7 @@ func (t *track) checkFlows(flows []*flow.SequenceFlow) error {
 	// ReceiveTask reached from an upstream node) must be classified here too —
 	// otherwise it would execute without registering its event or parking the
 	// track. checkNodeType is a no-op for non-event nodes.
-	if err := t.checkNodeType(nextStep.node); err != nil {
+	if err := t.checkNodeType(nextStep.node, false); err != nil {
 		return err
 	}
 
