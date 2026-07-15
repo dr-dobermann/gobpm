@@ -235,3 +235,27 @@ The Data Objects, Events, and `correlationKeys` described by a scope can be:
 - Data visibility within scopes: [data.md](data.md)
 - Event Sub-Process structural rules: [sub-processes.md](sub-processes.md)
 - Structural attributes per event type: [../elements/events.md](../elements/events.md), [../elements/event-definitions.md](../elements/event-definitions.md)
+
+## Appendix: Conditional-event clauses (verbatim, BPMN 2.0 v2.0.2 PDF)
+
+Added 2026-07-15 (verified verbatim against the spec PDF via the BPMN
+notebook) — the normative Conditional wording the tables above summarize:
+
+- **Table 10.84 (§10.5.2, Start Event types), the Conditional row:**
+  > "This type of event is triggered when a condition such as 'S&P 500
+  > changes by more than 10% since opening,' or 'Temperature above 300C'
+  > become true. **The condition Expression for the Event MUST become false
+  > and then true before the Event can be triggered again.** **The Condition
+  > Expression of a Conditional Start Event MUST NOT refer to the data
+  > context or instance attribute of the Process** (as the Process instance
+  > has not yet been created). Instead, it MAY refer to static Process
+  > attributes and states of entities in the environment. The specification
+  > of mechanisms to access such states is out of scope of the standard."
+- **Tables 10.89 (Intermediate, normal flow, p.251) and 10.90 (Intermediate,
+  boundary, p.254), the Conditional rows:**
+  > "This type of Event is triggered when a condition becomes true. A
+  > condition is a type of Expression."
+- **§10.5.1 (implicit throw):**
+  > "Timer and Conditional triggers are implicitly thrown. When they are
+  > activated they wait for a time based or status based condition
+  > respectively to trigger the catch Event."
