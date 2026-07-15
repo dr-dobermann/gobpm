@@ -91,3 +91,10 @@ func TestWrapValidation(t *testing.T) {
 
 // ctxb is a shorthand for the background context used across the tests.
 func ctxb() context.Context { return context.Background() }
+
+// wrapOf wraps ptr and asserts success — a typed shorthand for seam tests.
+func wrapOf(t *testing.T, ptr any) (data.Value, error) {
+	t.Helper()
+
+	return adapters.Wrap(ptr)
+}
