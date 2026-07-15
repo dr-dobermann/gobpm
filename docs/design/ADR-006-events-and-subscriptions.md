@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.2 |
-| Date | 2026-06-27 |
+| Version | v.3 |
+| Date | 2026-07-15 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md) |
 
@@ -14,8 +14,8 @@
 > external trigger reaches a running instance (§2.1), the BPMN nodes that
 > *trigger* cancellation — Terminate End Event and boundary interruption (§2.2),
 > the wait-node subscription model (§2.3), the in-memory delivery contract (§2.4),
-> and the waiter lifecycle (§2.5). Implementation rides the events-workstream
-> SRD(s); some parts (boundary interruption, Error/Escalation propagation) are
+> the waiter lifecycle (§2.5), Error events (§2.6), and Conditional events
+> (§2.7). Implementation rides the events-workstream SRD(s); some parts are
 > conception ahead of code, exactly as ADR-005 decides Inclusive/Complex joins
 > ahead of their implementation.
 
@@ -262,6 +262,12 @@ This single-ownership model is what `TimeWaiter`, ADR-014's `MessageWaiter`, and
 any future waiter obey, and it is the mechanics ADR-013's `Thresher.Shutdown`
 drives.
 
+**(v.3)** Conditional subscriptions are the **deliberate exception** to this
+sole-hub pattern: their trigger source is the instance's own data commits, so
+they are owned by the instance loop, never registered as hub waiters — §2.7
+Ownership. Every externally-triggered wait (message, timer, signal) stays
+hub-owned as above.
+
 ### 2.6 Error events: throw, propagation, and catch
 
 §2.2 fixes that an Error boundary is *always interrupting* and that Error uses the
@@ -342,12 +348,121 @@ flowchart TD
   M -->|no match in any scope| F[unresolved Error: log + instance faults]
 ```
 
+### 2.7 Conditional events: status-based triggering by commit-diff
+
+A Conditional event is **implicitly thrown** — "Timer and Conditional triggers
+are implicitly thrown. When they are activated they wait for a time based or
+status based condition respectively to trigger the catch Event" (§10.5.1). Its
+trigger is a **boolean `Expression`** (`ConditionalEventDefinition.condition`,
+a `0..1` child per the metamodel): "This type of Event is triggered when a
+condition becomes true. A condition is a type of Expression" (Tables
+10.89/10.90).
+
+#### Positions
+
+| Position | Decision |
+|---|---|
+| **Intermediate Catch** (in-flow wait) | **In scope.** The catch parks like any wait node (§2.3 in-flow row: subscribe on arrival, consume on fire). |
+| **Boundary** — interrupting and non-interrupting (Table 10.90; non-interrupting explicitly permitted for Conditional, `events.md`) | **In scope.** Arm on the guarded activity's entry, disarm on its exit (§2.3 boundary row — Conditional was already listed there); interrupting fires cancel the activity per §2.2, non-interrupting fires fork per §2.2 and may **re-fire** on a fresh false→true edge (the Table 10.84 edge rule, below). |
+| **Event-Based Gateway arm** | **In scope.** The gateway's deferred choice ([ADR-005 v.4 §2.12](ADR-005-gateways-and-joins.md)) admits Conditional arms — "the 'Events following' are intermediate catching events: Message, Timer, Signal, Conditional" (`gateways.md`). A conditional arm is armed like a catch when the token reaches the gateway; the first fire among all arms wins the race and disarms the rest. This closes the arms deferral ADR-005 v.4 §2.12 recorded. |
+| **Start Event (top-level)** | **Not supported — an engine choice, indefinitely.** Table 10.84 (§10.5.2): the condition "**MUST NOT refer to the data context or instance attribute of the Process** (as the Process instance has not yet been created). Instead, it MAY refer to **static Process attributes and states of entities in the environment**. The specification of mechanisms to access such states is **out of scope of the standard**." The engine has **no** static-process-attribute or environment-entity surface — a conformant top-level start condition would have nothing legal to reference; reference engines reduce it to an explicit evaluate-API with caller-supplied data (Camunda 7's condition evaluation; Camunda 8's staged gRPC evaluation). A Conditional trigger on a **top-level** Start Event is therefore **rejected at model validation** (the process-level placement check, run at registration before any instance) — fail-fast, not the silent never-fires the permissive allow-list would produce; the event's *construction* surface stays legal, since the same Start Event serves the event-sub-process home below. Should a real host need appear, the evaluate-API is the named shape; nothing here precludes it. |
+| **Event Sub-Process start** | **The planned home for a Conditional start** — lands **with Sub-Processes** (`sub-processes.md` lists Conditional among event-sub-process start types). Unlike the top-level case, an event sub-process runs **inside a live instance**: its start condition legally references the **enclosing scope's data** (§10.4.3), evaluated by the same commit-diff re-evaluation this section decides — no new data surface needed. Decision recorded now; implementation rides the Sub-Process workstream. |
+
+An End Event (or any throw position) cannot carry a Conditional trigger —
+catch-only by the standard's tables; already rejected at configuration.
+
+#### Evaluation semantics
+
+- **Data context.** A catch/boundary/arm condition evaluates over the
+  **instance's data scope** — the same context gateway conditions and
+  expressions use (§10.4.3: "all elements accessible from the enclosing
+  element … MUST be made available"). Nothing new is exposed.
+- **When: at arm, then on every committed change.** The condition is evaluated
+  **once when the subscription arms** — a condition already true fires
+  immediately (the standard defines no first-evaluation timing; firing on true
+  at subscription is the reference-engine behavior and avoids a wait that can
+  never end) — and thereafter **re-evaluated when the instance's committed
+  data changes**. The change signal is the **commit-diff seam**
+  (ADR-011 v.6 §2.9.4): a frame commit at the activity boundary produces the
+  committed changed-path set; a non-empty set triggers re-evaluation. This is
+  the visibility rule already decided for data: a mid-activity write is not a
+  committed change and MUST NOT fire a conditional.
+- **The edge rule (normative).** "The condition Expression for the Event MUST
+  become **false and then true** before the Event can be triggered again"
+  (Table 10.84 wording, mirrored for the catch positions). Triggering is
+  **edge-based, not level-based**: each armed subscription carries its last
+  observed value; a fire requires a false→true transition (the arm-time
+  evaluation seeds the state, and an arm-time `true` is the permitted first
+  trigger). A non-interrupting boundary that fired re-arms and needs a fresh
+  false→true edge to fire again.
+- **Granularity — safe by default, filtered by the expression's own
+  dependency statement.** A wrong dependency set means a silent missed
+  wake-up, so nothing is ever *inferred*: runtime read-tracing is rejected
+  (an opaque functor takes data-dependent paths and can bypass the data
+  source entirely — e.g. a captured live wrapped struct), and there is **no
+  processing mode** at any level — the rule is uniform, per subscription:
+
+  - the expression contract is one optional capability,
+    `Dependencies() []string` — the data paths the expression reads.
+    **Absent, or nil/empty at runtime → the engine assumes it may read
+    anything** (the fail-safe direction);
+  - on every non-empty commit, an armed conditional **re-evaluates** when it
+    has no dependency statement, or when the commit's changed-path set
+    **intersects** its declared dependencies (segment-boundary prefix match:
+    a change at `order` affects a dependency on `order.total`, and vice
+    versa); otherwise it is skipped;
+  - a **missing** statement therefore costs only performance, never
+    correctness — the safe fallback is built into the rule, which is why no
+    process-level mode or completeness validation is needed. A **wrong**
+    statement is the author's contract (declared next to the expression's
+    logic, visible in the model); a declarative introspectable expression
+    (the expression-layer workstream) implements the same capability
+    **structurally** — exact and error-free — and a conservative
+    compile-time source analyzer on the codegen seam may derive it for
+    functors, both failing toward re-evaluation, never toward a miss.
+    **Declaring** constructors reject an explicitly empty statement
+    ("depends on nothing" would mean *never* re-evaluate — the degenerate
+    trap); should a runtime list still come back empty, the engine treats
+    it as absent — fail-safe, per the first bullet.
+
+- **Multi-fire ordering — one commit, one snapshot, arming order.** A single
+  commit may satisfy several armed conditions at once — including an
+  interrupting boundary whose fire cancels the track hosting another armed
+  subscription. The rule: the pass evaluates **every** armed subscription
+  against the same committed state (a fire commits no data, so one snapshot
+  serves the whole pass), collects the fires, and **applies them in arming
+  order**; applying a fire that disarms a later-collected subscription (an
+  interrupting cancellation, a resolved gateway race) **voids** that
+  delivery — the subscription no longer exists. Deterministic, and free of
+  evaluation-order dependence.
+
+#### Ownership — loop-local, not hub
+
+Conditional subscriptions are **owned by the instance loop**, not the
+engine-wide hub — deliberately breaking the §2.5 "sole-hub waiter" pattern for
+this one kind: a conditional's trigger source is the **instance's own
+commits**, which already arrive at the loop as track events; there is no
+external or engine-wide trigger to route, so a hub registration would add a
+cross-component round-trip for a purely loop-internal signal. The loop keeps
+the armed set (catch parks, boundary watches, gateway arms), re-evaluates on
+the commit signal, and delivers a fire through the §2.1 inbound edge exactly
+like any other event — the single-writer discipline ([ADR-001 v.6 §4](ADR-001-execution-model.md)) holds
+throughout. Timer stays hub-owned (the clock is an engine-wide source);
+Conditional is loop-owned (the data plane is instance-scoped). The §2.4
+delivery contract is unchanged: subscribe-before-publish holds by
+construction (the subscription arms before any commit can re-evaluate it).
+
 ## 3. Consequences
 
 - **Event delivery is a contract, not an accident.** Callers know: a present
   waiter is guaranteed delivery; a thrown-into-the-void signal is a no-op;
   messages are broker-buffered; nothing is durable. The "lost event" ambiguity is
   gone.
+- **Data-driven waiting is expressible without polling (v.3).** A process
+  reacts to its own committed state ("credit limit exceeded", "stock below
+  threshold") through Conditional catches, boundaries, and gateway arms — the
+  §2.9.4 commit-diff substrate makes the re-evaluation exact and cheap, with
+  no hidden mid-activity firing.
 - **The inbound edge is a single serialized owner.** External signals join track
   events in the one loop goroutine (§2.1), so adding event delivery, termination,
   and boundary interruption needs **no new locks** on instance state — it extends
@@ -430,7 +545,7 @@ questions.
 
 ## 7. References
 
-- [ADR-001 v.5 Execution Model](ADR-001-execution-model.md) — the runtime core,
+- [ADR-001 v.6 Execution Model](ADR-001-execution-model.md) — the runtime core,
   the single-mutator event loop, and the generic cancellation cascade this refines
   (event triggers feed it).
 - [ADR-002 v.2 Extension Architecture](ADR-002-extension-architecture.md) — the
@@ -439,12 +554,21 @@ questions.
   wait-release built on §2.1 delivery and §2.5 waiter lifecycle.
 - [ADR-009 v.1 Per-Instance Node Graph](ADR-009-per-instance-node-graph.md) — the
   per-instance clone that gives each catch its own subscription identity (§2.1).
-- [ADR-013 v.1 Instance Observability & Control](ADR-013-instance-observability.md)
+- [ADR-013 v.2 Instance Observability & Control](ADR-013-instance-observability.md)
   — its `Thresher.Shutdown(ctx)` consumes §2.5's waiter shutdown; its lifecycle
   channel can observe waiters (§5).
 - [ADR-014 v.1 Message Handling](ADR-014-message-handling.md) — its `MessageWaiter`
   obeys §2.4/§2.5; the broker owns the pre-subscribe message buffering §2.4 defers
   to it.
+- **(v.3)** [ADR-011 v.6 Process Data Flow](ADR-011-process-data-flow.md) — its
+  §2.9.4 commit-diff (the committed changed-path set) is §2.7's re-evaluation
+  signal; ADR-011 anticipated conditional events as that seam's future consumer.
+- **(v.3)** [ADR-005 v.4 Gateways & Joins](ADR-005-gateways-and-joins.md) — its
+  §2.12 Event-Based Gateway whose deferred Conditional arms §2.7 opens.
+- **(v.3)** [ADR-018 v.1 Boundary Events](ADR-018-boundary-events-and-activity-interruption.md) — the
+  boundary arm/disarm machinery §2.7's conditional boundary rides; its §2.7
+  deferred list names Conditional — at this amendment's landing that row gains
+  a "decided in ADR-006 v.3" annotation (a sync note, not an ADR-018 re-decision).
 - [docs/bpmn-spec/semantics/event-handling.md](../bpmn-spec/semantics/event-handling.md)
   — §10.5.1 resolution strategies, §10.5.6 boundary/handler rules, §10.5.7 scopes:
   grounds §2.1/§2.2.
@@ -468,5 +592,6 @@ questions.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.3 | 2026-07-15 | Ruslan Gabitov | Added **§2.7 "Conditional events: status-based triggering by commit-diff"** — the Conditional conception the taxonomy rows named but never decided. **Positions:** Intermediate Catch + Boundary (interrupting/non-interrupting, Tables 10.89/10.90) + **Event-Based Gateway arms** (closing the ADR-005 §2.12 arms deferral; `gateways.md` lists Conditional among the gateway's catching events) in scope; **top-level Conditional Start not supported indefinitely** — an engine choice grounded in Table 10.84's verbatim prohibition ("MUST NOT refer to the data context or instance attribute of the Process … MAY refer to static Process attributes and states of entities in the environment", access mechanisms "out of scope of the standard") + the engine having no such surface (reference engines reduce it to an explicit evaluate-API); **Event Sub-Process start is the planned Conditional-start home** (inside a live instance the condition legally reads the enclosing scope per §10.4.3) — decided now, lands with Sub-Processes. **Evaluation:** instance-scope data context (§10.4.3); evaluated at arm (an arm-time true fires — reference-engine behavior) then re-evaluated on **committed** data change only — the ADR-011 v.6 §2.9.4 commit-diff seam is the change signal (mid-activity writes never fire a conditional); the normative **false→true edge rule** (Table 10.84: "MUST become false and then true before the Event can be triggered again") realized as per-subscription edge state, governing non-interrupting boundary re-fires; opaque-expression granularity = re-evaluate all armed conditionals per non-empty commit by default, with an OPT-IN declared watched-paths filter settled as ONE uniform per-subscription rule with NO processing modes at any level: the expression carries an optional `Dependencies() []string` capability (`data.DependencyLister`; goexpr authors declare via `WithDependencies`, declarative expressions implement it structurally, a conservative codegen source analyzer may derive it) — absent/nil → the CE re-evaluates on every non-empty commit (the safe fallback: a missing statement costs performance, never correctness — which is why no mode or completeness validation exists); non-empty → re-evaluate only when the commit-diff intersects (segment-prefix); explicitly-empty rejected at construction (the never-fire trap); runtime read-tracing rejected (opaque closures take data-dependent paths and can bypass the data source via captured live structs → silently incomplete inferred sets); multi-fire ordering: one commit → one snapshot → evaluate per the rule, apply fires in arming order, a disarming fire voids later-collected deliveries. **Ownership:** conditional subscriptions are **loop-local** — a deliberate exception to §2.5's sole-hub pattern (the trigger source is the instance's own commits; timer stays hub-owned as a clock-driven engine-wide source); delivery through the §2.1 inbound edge, single-writer preserved, §2.4 subscribe-before-publish holds by construction. Added the §3 data-driven-waiting consequence. Standard-grounded against the BPMN 2.0 PDF (Tables 10.84/10.89/10.90, §10.5.1, §10.4.3 — verified verbatim via the spec notebook; the verified clauses added to `event-handling.md`'s appendix so future reviews ground in-repo) and `docs/bpmn-spec/` (`gateways.md`, `sub-processes.md`, `events.md`). §7 refreshed at the bump moment: stale pins ADR-001 v.5→v.6 and ADR-013 v.1→v.2 corrected; ADR-011 v.6 / ADR-005 v.4 / ADR-018 v.1 references added (the ADR-018 §2.7 deferred row gains a decided-here annotation at landing). §2.5 clarified: Conditional is the deliberate loop-owned exception to the sole-hub pattern. Conception; the accompanying SRD implements. |
 | v.2 | 2026-06-27 | Ruslan Gabitov | Added **§2.6 "Error events: throw, propagation, and catch"** — the detailed Error *event* model §2.2 named but left at engine-note depth: the `Error`/`ErrorEventDefinition` object (`errorRef`→`errorCode`/`structureRef`, valid only at End / Boundary / Event-Sub-Process-Start positions per `conformance.md`); the two **throw** sources (Error End Event throwing its `Error`, §10.5.6/`end-events.md`; and an activity raising an interrupting error → `Active→Failing`, `tasks.md`/`activity-lifecycle.md`) and that the throw is **critical** (§10.5.1) with no Error Intermediate Throw Event; **propagation** as the scope-chain walk to the innermost enclosing catcher matching `errorRef` (§10.5.1/§10.5.7), matching **per Event Declaration**; **catch** at an always-interrupting Error Boundary (activity→`Failing`, token on the exception flow, cancel-after-flow per §10.5.6 §7; Error Event Sub-Process catch deferred with Sub-Processes); **unmatched→instance fault** as the engine choice for the spec's "unresolved Error"; and an **engine note** on the single-scope reality before Sub-Processes (no scope to climb to → an activity's error is caught only by a boundary on that same activity, and an Error End Event always resolves to an instance fault) cross-referencing [SAD-001 v.1 §15.3]. Fixed the §2.2 engine-note citation `§11`→`§10.5.7` and pointed it at §2.6. Refines pin updated ADR-001 v.5→v.6. Standard-grounded against `docs/bpmn-spec/` (§10.5.1/§10.5.6/§10.5.7, `event-definitions.md`/`tasks.md`/`end-events.md`/`conformance.md`/`activity-lifecycle.md`). No code/behaviour change — conception only. |
 | v.1 | 2026-06-18 | Ruslan Gabitov | Accepted. Event-delivery & event-triggered-cancellation conception relocated from ADR-001 and authored in full: §2.1 external-signal delivery (single serialized inbound edge, per-instance subscription identity, publication/direct/propagation/implicit reach per §10.5.1), §2.2 cancellation-trigger nodes (Terminate End Event §13.5.6 over ADR-001's cascade; interrupting/non-interrupting boundary §10.5.6/§13.5.3; Error/Escalation propagation + handler multiplicity as engine notes), §2.3 wait-node subscription **lifecycle** (subscribe/unsubscribe per subscriber kind — in-flow on arrival/consume, non-compensation boundary on activity entry/exit, compensation boundary armed on `Completed` until enclosing scope finishes; §13.5.2/§13.5.3/§13.5.5; release mechanics delegated to ADR-007, compensation *handling* + the optional off-by-default `compensate-on-terminate` extension delegated to a future Compensation ADR; terminate runs **no** compensation by default per §13.5.6), §2.4 in-memory delivery contract (subscribe-before-publish, no-waiter no-op, broker-buffered messages, non-durable; remediates audit 2.4), §2.5 sole-hub waiter lifecycle (`WaitGroup`-synchronized shutdown, no self-removal, no leak on `Stop` error, single-lock registry; remediates audit 2.5). Standard-grounded against `docs/bpmn-spec/` (§10.5.1/§10.5.6/§10.5.7, §13.5.2/§13.5.3/§13.5.6). Refines ADR-001 v.5; siblings ADR-002 v.2, ADR-007 v.1, ADR-009 v.1, ADR-013 v.1, ADR-014 v.1. Conception; implementation rides the events-workstream SRD(s). |

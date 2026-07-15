@@ -154,6 +154,8 @@ defer sub.Cancel() // deregister + drain; sub.Dropped() counts any overflow
 
 По граничным событиям (прерывание activity) см. [`examples/boundary-events/`](examples/boundary-events/) — **прерывающая таймер-граница** как таймаут на долгой задаче: 2-секундная граница срабатывает раньше, чем закончится ~4-секундная activity, отменяет её и направляет токен на exception-flow границы.
 
+По условным событиям (**ожидание, управляемое данными** — ветка освобождается закоммиченными данными самого процесса, без опроса) см. [`examples/conditional-events/`](examples/conditional-events/) — промежуточный условный catch паркует ветку, пока коммит соседней задачи не переключит его условие из false в true; условные триггеры также охраняют активности как **граничные события** и участвуют в гонке как **дуги event-based-шлюза**. Руководство — [**docs/guides/conditional-events.md**](docs/guides/conditional-events.md) (EN).
+
 По аварийному завершению процесса см. [`examples/terminate-end-event/`](examples/terminate-end-event/) — **Terminate End Event** на одной из веток параллельного процесса: ветка проверки на мошенничество доходит до него и завершает весь экземпляр, отменяя незаконченный платёж на середине списания — экземпляр оказывается в состоянии `Terminated`, а не `Completed`.
 
 Данные процесса полностью **структурны**: значения навигируемы по пути (`order.items[0].price`) во всех швах — условиях, выражениях, маппингах, сервисном коде — записываемы и собираемы той же грамматикой, изменения детектируются по-путно при коммите, а **собственные Go-структуры** хоста участвуют вживую через `adapters.Wrap` (обёртка, не конвертация). Полное руководство — модель значений, три яруса, чтение/запись/наблюдение, теги `gobpm:"..."` — в [**docs/guides/data.md**](docs/guides/data.md) (EN), с четырьмя запускаемыми примерами.
@@ -200,8 +202,9 @@ make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (r
 
 - [Vision & Architecture (SAD-001)](docs/design/SAD-001-vision-and-architecture.md) и [ADR'ы](docs/design/) — концепция
 - [Работа с данными процесса](docs/guides/data.md) — руководство по структурным данным (пути, ярусы, нативные структуры, наблюдение изменений; EN)
+- [Условные события](docs/guides/conditional-events.md) — ожидание, управляемое данными: позиции, правило фронта false→true, декларации зависимостей (EN)
 - [Development Roadmap](docs/analytics/gobpm%20Development%20Roadmap.md) — workstream'ы + вехи
-- [Conformance scope](docs/bpmn-spec/conformance.md) и [BPMN 2.0 reference KB](docs/bpmn-spec/)
+- [Conformance scope](docs/bpmn-spec/conformance.md) и [BPMN 2.0 reference KB](docs/bpmn-spec/) · [Conformance status](docs/design/conformance-status.md) — что реализовано и что осталось, с привязкой к issues (EN)
 - [Documentation Index](README_INDEX.md) · [API Reference](https://pkg.go.dev/github.com/dr-dobermann/gobpm) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
 
 ## Лицензия

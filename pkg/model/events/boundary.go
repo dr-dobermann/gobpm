@@ -7,15 +7,18 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/set"
 )
 
-// boundaryTriggers are the event triggers a boundary event may carry in 0.1.0
-// (SRD-029 FR-2). Timer/Message/Signal may be interrupting or non-interrupting;
-// Error is always interrupting (BPMN §10.5.6). Conditional/Escalation/Cancel/
-// Compensation/Multiple are deferred (ADR-018 v.1 §2.7).
+// boundaryTriggers are the event triggers a boundary event may carry
+// (SRD-029 FR-2). Timer/Message/Signal/Conditional may be interrupting or
+// non-interrupting (Conditional decided in ADR-006 v.3 §2.7 — a
+// non-interrupting one may re-fire on a fresh false→true edge); Error is
+// always interrupting (BPMN §10.5.6). Escalation/Cancel/Compensation/
+// Multiple stay deferred (ADR-018 v.1 §2.7).
 var boundaryTriggers = set.New[flow.EventTrigger](
 	flow.TriggerTimer,
 	flow.TriggerMessage,
 	flow.TriggerSignal,
 	flow.TriggerError,
+	flow.TriggerConditional,
 )
 
 // boundaryHost is the activity-side capability BoundTo needs: it both lists the

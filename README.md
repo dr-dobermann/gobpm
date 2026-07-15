@@ -200,6 +200,14 @@ boundary** as a timeout on a long-running task: the 2s boundary fires before the
 ~4s activity finishes, cancels it, and routes the token onto the boundary's
 exception flow.
 
+For conditional events (**data-driven waiting** — a wait released by the
+process's own committed data, no polling), see
+[`examples/conditional-events/`](examples/conditional-events/) — an
+intermediate conditional catch parks a branch until a sibling task's commit
+flips its condition false→true; conditional triggers also guard activities as
+**boundary events** and race as **event-based-gateway arms**. The guide is
+[**docs/guides/conditional-events.md**](docs/guides/conditional-events.md).
+
 For abnormal process termination, see
 [`examples/terminate-end-event/`](examples/terminate-end-event/) — a **Terminate
 End Event** on one branch of a parallel process: the fraud-check branch reaches it
@@ -260,8 +268,9 @@ make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (r
 
 - [Vision & Architecture (SAD-001)](docs/design/SAD-001-vision-and-architecture.md) and [ADRs](docs/design/) — the conception
 - [Working with process data](docs/guides/data.md) — the structural-data guide (paths, tiers, native structs, change observation)
+- [Conditional events](docs/guides/conditional-events.md) — data-driven waiting: positions, the false→true edge rule, dependency declarations
 - [Development Roadmap](docs/analytics/gobpm%20Development%20Roadmap.md) — workstreams + milestones
-- [Conformance scope](docs/bpmn-spec/conformance.md) and [BPMN 2.0 reference KB](docs/bpmn-spec/)
+- [Conformance scope](docs/bpmn-spec/conformance.md) and [BPMN 2.0 reference KB](docs/bpmn-spec/) · [Conformance status](docs/design/conformance-status.md) — what's implemented vs what remains, mapped to issues
 - [Documentation Index](README_INDEX.md) · [API Reference](https://pkg.go.dev/github.com/dr-dobermann/gobpm) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
 
 ## License

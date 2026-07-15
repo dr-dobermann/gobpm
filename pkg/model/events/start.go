@@ -18,6 +18,9 @@ import (
 
 var startTriggers = set.New[flow.EventTrigger](
 	flow.TriggerCompensation, // only for in-line Sub-Processes
+	// only for event Sub-Processes (ADR-006 v.3 §2.7): a top-level
+	// placement is rejected by process validation — Table 10.84 forbids a
+	// top-level start condition to reference process data.
 	flow.TriggerConditional,
 	flow.TriggerError,      // only for in-line Sub-Processes
 	flow.TriggerEscalation, // only for in-line Sub-Processes

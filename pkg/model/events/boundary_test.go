@@ -1,6 +1,7 @@
 package events_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -8,6 +9,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -75,6 +77,24 @@ func (*fakeActivity) ActivityType() flow.ActivityType {
 	return flow.TaskActivity
 }
 
+// conditionalDef builds a bool conditional event definition for boundary
+// tests (Conditional joined boundaryTriggers with SRD-048, ADR-006 v.3
+// §2.7).
+func conditionalDef(t *testing.T) flow.EventDefinition {
+	t.Helper()
+
+	cond := goexpr.Must(nil,
+		data.MustItemDefinition(values.NewVariable(false)),
+		func(_ context.Context, _ data.Source) (data.Value, error) {
+			return values.NewVariable(true), nil
+		})
+
+	ced, err := events.NewConditionalEventDefinition(cond)
+	require.NoError(t, err)
+
+	return ced
+}
+
 func escalationDef(t *testing.T) flow.EventDefinition {
 	t.Helper()
 
@@ -96,6 +116,7 @@ func TestNewBoundaryEventValidation(t *testing.T) {
 	sig := signalDef(t, "s1")
 	errd := errorDef(t, "E1")
 	esc := escalationDef(t)
+	cnd := conditionalDef(t)
 
 	tests := []struct {
 		name    string
@@ -109,6 +130,8 @@ func TestNewBoundaryEventValidation(t *testing.T) {
 		{"trigger not allowed on a boundary (escalation)", host, esc, true, true},
 		{"error boundary cannot be non-interrupting", host, errd, false, true},
 		{"valid interrupting signal boundary", host, sig, true, false},
+		{"valid interrupting conditional boundary", host, cnd, true, false},
+		{"valid non-interrupting conditional boundary", host, cnd, false, false},
 	}
 
 	for _, tt := range tests {

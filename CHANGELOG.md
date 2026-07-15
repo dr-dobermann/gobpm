@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Conditional events (SRD-048, ADR-006 v.3 §2.7 — closes #89).**
+  Data-driven waiting without polling: a conditional event's boolean
+  condition over process data is evaluated at arm and re-evaluated on every
+  **committed** data change (the SRD-044 commit-diff is the trigger signal),
+  firing on the normative **false→true edge** (BPMN Table 10.84). Supported
+  positions: **intermediate catch** (including **event-based-gateway arms**
+  — the arms deferral of ADR-005 v.4 §2.12 closes), and **boundary events**
+  — interrupting (cancels the guarded activity onto its exception flow) and
+  non-interrupting (fires in parallel; re-fires only on a fresh edge). An
+  expression may declare its read paths (`goexpr.WithDependencies`,
+  `data.DependencyLister`): declared subscriptions re-evaluate only on
+  overlapping commits (`data.PathsOverlap` — segment-prefix); undeclared
+  ones re-evaluate on every non-empty commit (safe, just unfiltered). A
+  **top-level conditional Start Event is rejected** at `Process.Validate` —
+  Table 10.84 forbids its condition to reference process data; the
+  conditional start arrives with event Sub-Processes.
+  `NewConditionalEventDefinition` now requires a boolean-typed condition.
+  Subscriptions are instance-loop-owned (no hub waiter); a conditional-free
+  process pays nothing. New example `examples/conditional-events/`, guide
+  `docs/guides/conditional-events.md`.
+
+### Fixed
+
+- **Fork-into-catch deadlock.** Building a fork-born track directly on a
+  catch/wait node emitted `evWaiting` from the instance-loop goroutine
+  (spawnForks → newTrack → checkNodeType), deadlocking the loop on its own
+  channel. Construction-time classification no longer emits — the loop's
+  spawn path records born-parked tracks — so a sequence flow may now fork
+  straight into an event node.
+
 - **Activity-outgoing conditional and default flows (SRD-046, closes #51).**
   A task's completion now honors the BPMN sequence-flow rule: an
   unconditional outgoing flow always fires, a **conditional** flow fires only

@@ -25,8 +25,9 @@
 > **OR-join** (§2.10) и шлюз **Complex** (§2.11 — activation-driven threshold join)
 > все реализованы (вместе с сопровождающими SRD). Шлюз **Event-Based** (§2.12) —
 > gate-as-router deferred choice — реализован для формы **Exclusive mid-flow**
-> (через SRD-024); Parallel-инстанциатор (correlation-gated) и Conditional-arm'ы
-> остаются отложенными (§2.12.7). Отложенное из §4 остаётся.
+> (через SRD-024); Parallel-инстанциатор (correlation-gated) остаётся отложенным
+> (§2.12.7); Conditional-arm'ы приземлились позже — решены в
+> [ADR-006 v.3 §2.7](ADR-006-events-and-subscriptions.md). Отложенное из §4 остаётся.
 
 ## 1. Контекст
 
@@ -788,7 +789,9 @@ activation-правило Complex-шлюза (§2.11), перенесённое 
 - **Гейтится на waiter** — **Conditional**-arm'ы: у conditional-события ещё нет
   waiter'а (оно должно переоцениваться при изменении данных, а не срабатывать один
   раз), поэтому это валидный arm в модели, но он не arm-абелен, пока этот waiter не
-  приземлится.
+  приземлится. *Приземлились позже — решены в
+  [ADR-006 v.3 §2.7](ADR-006-events-and-subscriptions.md): loop-owned (без
+  hub-waiter'а), переоценка по commit-diff.*
 
 ## 3. Следствия
 
@@ -826,11 +829,13 @@ activation-правило Complex-шлюза (§2.11), перенесённое 
   и она ошибается лишь в сторону более долгого ожидания.
 - **Под-части Event-Based gateway.** Сам шлюз **решён в §2.12** (gate-as-router
   deferred choice). Producer `TokenWithdrawn`, который этот пункт когда-то
-  предвосхищал, **упразднён** — нет arm-токенов для withdraw (§2.12.1). Две
-  под-части остаются отложенными: **Parallel-инстанциатор**, которому нужна
+  предвосхищал, **упразднён** — нет arm-токенов для withdraw (§2.12.1). Одна
+  под-часть остаётся отложенной: **Parallel-инстанциатор**, которому нужна
   same-instance корреляция последующих триггеров
-  ([ADR-016](ADR-016-message-correlation.ru.md)); и **Conditional**-arm'ы, которым
-  нужен переоценивающийся conditional-waiter, которого у движка ещё нет (§2.12.7).
+  ([ADR-016](ADR-016-message-correlation.ru.md)). **Conditional**-arm'ы
+  приземлились позже — решены в
+  [ADR-006 v.3 §2.7](ADR-006-events-and-subscriptions.md): loop-owned,
+  переоценка по commit-diff, без hub-waiter'а (§2.12.7).
 - **Циклы и избыточные токены (единственная cross-cutting отсрочка).** Эта концепция
   ограничена **ацикличными, single-pass** join'ами — Parallel, OR **и Complex**
   одинаково: каждый входящий flow помечается один раз, и join срабатывает, когда его

@@ -426,3 +426,48 @@ func TestSnapshotNewClonesGraph(t *testing.T) {
 	require.NotSame(t, s.Nodes[start.ID()], clone.Nodes[start.ID()],
 		"Clone must clone the snapshot's node, not share it")
 }
+
+// TestSnapshotHasConditionals — New precomputes the flag (SRD-048 FR-10) and
+// Clone carries it (a Clone that drops it silently disables the commit
+// signal — the 2026-07-15 regression).
+func TestSnapshotHasConditionals(t *testing.T) {
+	_ = data.CreateDefaultStates()
+
+	p, err := process.New("cond-flag")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	cond := goexpr.Must(nil,
+		data.MustItemDefinition(values.NewVariable(false)),
+		func(context.Context, data.Source) (data.Value, error) {
+			return values.NewVariable(true), nil
+		})
+
+	ced, err := events.NewConditionalEventDefinition(cond)
+	require.NoError(t, err)
+
+	catch, err := events.NewIntermediateCatchEvent("catch", ced)
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, catch, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	_, err = flow.Link(start, catch)
+	require.NoError(t, err)
+	_, err = flow.Link(catch, end)
+	require.NoError(t, err)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+	require.True(t, s.HasConditionals)
+
+	clone, err := s.Clone()
+	require.NoError(t, err)
+	require.True(t, clone.HasConditionals)
+}

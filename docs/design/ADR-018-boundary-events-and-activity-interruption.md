@@ -170,7 +170,7 @@ cancellation applied to a composite host).
 | **Message** | ✅ | interrupting + non-interrupting |
 | **Signal** | ✅ | interrupting + non-interrupting |
 | **Error** | ✅ | interrupting only (always) |
-| Conditional | ❌ deferred | — (no conditional waiter yet) |
+| Conditional | ✅ landed later | decided in [ADR-006 v.3 §2.7](ADR-006-events-and-subscriptions.md) — loop-owned commit-diff re-evaluation, interrupting + non-interrupting |
 | Escalation | ❌ deferred | — |
 | Cancel | ❌ deferred | — (Transaction sub-process only) |
 | Compensation | ❌ deferred | — (needs the compensation machinery) |

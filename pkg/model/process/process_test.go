@@ -1,10 +1,12 @@
 package process_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
@@ -343,4 +345,64 @@ func TestProcessElementsNodesRemove(t *testing.T) {
 	require.NoError(t, p.Remove(f))
 	require.NoError(t, p.Remove(start))
 	require.Len(t, p.Elements(), 1)
+}
+
+// TestStartConditionalRejected — the SRD-048 top-level placement gate
+// (ADR-006 v.3 §2.7): a Conditional trigger on a Start Event of a
+// top-level Process fails Validate (Table 10.84 — the condition may not
+// reference process data), while the StartEvent itself stays
+// constructible with it (the future event-sub-process surface).
+func TestStartConditionalRejected(t *testing.T) {
+	data.CreateDefaultStates()
+
+	cond := goexpr.Must(nil,
+		data.MustItemDefinition(values.NewVariable(false)),
+		func(_ context.Context, _ data.Source) (data.Value, error) {
+			return values.NewVariable(true), nil
+		})
+
+	// construction is legal — the rejection is placement-scoped.
+	start, err := events.NewStartEvent("conditional start",
+		events.WithConditionalTrigger(
+			events.MustConditionalEventDefinition(cond)))
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	p, err := process.New("top-level with conditional start")
+	require.NoError(t, err)
+	require.NoError(t, p.Add(start))
+	require.NoError(t, p.Add(end))
+
+	_, err = flow.Link(start, end)
+	require.NoError(t, err)
+
+	err = p.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "top-level Start Event")
+	require.Contains(t, err.Error(), start.ID())
+
+	// the same graph with a non-conditional trigger validates — the
+	// placement gate skips non-conditional start definitions.
+	sig, err := events.NewSignal("go", data.MustItemDefinition(
+		values.NewVariable(1)))
+	require.NoError(t, err)
+
+	plain, err := events.NewStartEvent("signal start",
+		events.WithSignalTrigger(events.MustSignalEventDefinition(sig)))
+	require.NoError(t, err)
+
+	p2, err := process.New("top-level plain start")
+	require.NoError(t, err)
+	require.NoError(t, p2.Add(plain))
+
+	end2, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+	require.NoError(t, p2.Add(end2))
+
+	_, err = flow.Link(plain, end2)
+	require.NoError(t, err)
+
+	require.NoError(t, p2.Validate())
 }

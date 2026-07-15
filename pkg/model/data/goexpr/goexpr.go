@@ -27,6 +27,9 @@ type GExpression struct {
 	src     data.Source
 	result  *data.ItemDefinition
 	gexFunc GExpFunc
+	// deps are the read paths declared via WithDependencies, or nil when
+	// the expression declared nothing (data.DependencyLister).
+	deps []string
 	data.Expression
 	evaluated bool
 }
@@ -45,6 +48,7 @@ type GExpression struct {
 // Available options are:
 //   - foundation.WithID
 //   - foundation.WithDoc
+//   - goexpr.WithDependencies
 func New(
 	ds data.Source,
 	res *data.ItemDefinition,
@@ -60,7 +64,22 @@ func New(
 				errs.D("gfunc_is_nil", strconv.FormatBool(gfunc == nil)))
 	}
 
-	exp, err := data.NewExpression(opts...)
+	// goexpr-local options apply to the GExpression below; every other
+	// option forwards to the embedded data.Expression unchanged.
+	gexOpts := make([]GExpOption, 0, len(opts))
+	expOpts := make([]options.Option, 0, len(opts))
+
+	for _, o := range opts {
+		switch opt := o.(type) {
+		case GExpOption:
+			gexOpts = append(gexOpts, opt)
+
+		default:
+			expOpts = append(expOpts, o)
+		}
+	}
+
+	exp, err := data.NewExpression(expOpts...)
 	if err != nil {
 		return nil,
 			errs.New(
@@ -69,13 +88,20 @@ func New(
 				errs.E(err))
 	}
 
-	return &GExpression{
-			Expression: *exp,
-			src:        ds,
-			result:     res,
-			gexFunc:    gfunc,
-		},
-		nil
+	ge := &GExpression{
+		Expression: *exp,
+		src:        ds,
+		result:     res,
+		gexFunc:    gfunc,
+	}
+
+	for _, o := range gexOpts {
+		if err := o(ge); err != nil {
+			return nil, err
+		}
+	}
+
+	return ge, nil
 }
 
 // Must tries to create a GExpression variabla and panics on failure.
@@ -179,8 +205,17 @@ func (ge *GExpression) IsEvaluated() bool {
 
 // ----------------------------------------------------------------------------
 
+// Dependencies implements data.DependencyLister: the read paths declared
+// via WithDependencies, or nil when the expression declared nothing (= may
+// read anything — its conditional subscription re-evaluates on every
+// non-empty commit, ADR-006 v.3 §2.7).
+func (ge *GExpression) Dependencies() []string {
+	return ge.deps
+}
+
 // ----------------------------------------------------------------------------
 // interface check
 var (
 	_ data.FormalExpression = (*GExpression)(nil)
+	_ data.DependencyLister = (*GExpression)(nil)
 )

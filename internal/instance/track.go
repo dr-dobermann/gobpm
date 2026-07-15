@@ -201,6 +201,12 @@ type track struct {
 	// fired message resolves back to it; spawn reads them for a track that starts parked
 	// before the loop drains events. Construction-immutable, so the loop reads it lock-free.
 	msgDefIDs []string
+	// condDefs are the Conditional catch definitions this track parks on, set by
+	// checkNodeType alongside msgDefIDs (SRD-048 FR-7): never hub-registered — the
+	// loop arms them in its conditional registry (via the evWaiting emit mid-run,
+	// or recordBornWaiter for a track that starts parked). Construction-immutable,
+	// so the loop reads it lock-free.
+	condDefs []*events.ConditionalEventDefinition
 	m         sync.RWMutex
 	state     trackState
 	stopIt    atomic.Bool
@@ -370,7 +376,7 @@ func newTrack(
 	// transitions), so it uses the running clock; before Run, Token() returns
 	// the zero projection. checkNodeType below may add a WaitForEvent entry
 	// for event-start nodes.
-	if err := t.checkNodeType(start); err != nil {
+	if err := t.checkNodeType(start, true); err != nil {
 		return nil, err
 	}
 
@@ -378,8 +384,13 @@ func newTrack(
 }
 
 // checkNodeType determines if node awaits for event or human interaction
-// and updates track state on positive comparison.
-func (t *track) checkNodeType(node flow.Node) error {
+// and updates track state on positive comparison. atConstruction marks the
+// newTrack call: it may run ON THE LOOP GOROUTINE (spawnForks builds a
+// fork-born track there), where emitting evWaiting would deadlock the loop
+// on its own channel — the born-parked track is recorded by spawn's
+// recordBornWaiter instead (SRD-027 FR-5). Only the mid-run path (the
+// track's own goroutine) emits.
+func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 	// A UserTask is a human-interaction wait node (SRD-034): it parks for a human
 	// Complete, not for a hub-delivered event. Recognize it before the event-node
 	// path (it is not a flow.EventNode) and park it without any hub registration.
@@ -417,8 +428,10 @@ func (t *track) checkNodeType(node flow.Node) error {
 
 	// Record the Message catch-definition ids so the loop can index them → this track
 	// (SRD-027 FR-8): carried in the evWaiting emit below for a mid-run wait, and read by
-	// spawn for a track that starts parked before the loop drains events.
+	// spawn for a track that starts parked before the loop drains events. Conditional
+	// definitions are recorded the same way (SRD-048 FR-7) — the loop arms them itself.
 	t.msgDefIDs = messageDefIDs(defs)
+	t.condDefs = conditionalDefs(defs)
 
 	// Declare the wait BEFORE registering: a waiter may deliver an event
 	// synchronously on registration (a MessageWaiter draining a message the
@@ -431,20 +444,29 @@ func (t *track) checkNodeType(node flow.Node) error {
 	// event (dispatched by the loop as evDeliver) can never reach the loop before the
 	// track is recorded as parked-and-undelivered (SRD-027 FR-5). The emit carries the
 	// Message catch-definition IDs so the loop can index them → this track (FR-8). Gated
-	// on Active: at construction (New, before the loop runs) the loop records the track
-	// via spawn instead, and emitting here would block on the not-yet-draining inst.events.
-	if t.instance.State() == Active {
+	// on Active AND on a mid-run call: at construction the loop records the track via
+	// spawn's recordBornWaiter instead — for a pre-loop track the events channel is not
+	// yet draining, and for a fork-born track checkNodeType runs ON the loop goroutine,
+	// where this emit would deadlock the loop on its own channel.
+	if !atConstruction && t.instance.State() == Active {
 		t.instance.emit(trackEvent{
 			kind:      evWaiting,
 			track:     t,
 			msgDefIDs: t.msgDefIDs,
+			condDefs:  t.condDefs,
 		})
 	}
 
 	// Per-trigger registration is the one place the hybrid boundary is chosen (SRD-027
 	// FR-8 / §3.7): a Message catch registers the Instance (it owns correlation), every
-	// other trigger registers the track.
+	// other trigger registers the track. A Conditional catch registers NOTHING — its
+	// trigger source is the instance's own commits, so the subscription is loop-owned,
+	// carried on the evWaiting emit above (SRD-048 FR-7, ADR-006 v.3 §2.7).
 	for _, d := range defs {
+		if d.Type() == flow.TriggerConditional {
+			continue
+		}
+
 		proc := eventproc.EventProcessor(t)
 		if d.Type() == flow.TriggerMessage {
 			proc = t.instance
@@ -978,6 +1000,7 @@ func (t *track) finalizeNodeExecution(
 	// returns a nil set, so the report is naturally a no-op then.
 	changes, err := f.Commit()
 	t.reportDataChanges(step.node, changes)
+	t.signalDataCommit(step.node, changes)
 
 	return err
 }
@@ -1024,7 +1047,7 @@ func (t *track) checkFlows(flows []*flow.SequenceFlow) error {
 	// ReceiveTask reached from an upstream node) must be classified here too —
 	// otherwise it would execute without registering its event or parking the
 	// track. checkNodeType is a no-op for non-event nodes.
-	if err := t.checkNodeType(nextStep.node); err != nil {
+	if err := t.checkNodeType(nextStep.node, false); err != nil {
 		return err
 	}
 

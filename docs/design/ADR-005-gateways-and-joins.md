@@ -24,8 +24,9 @@
 > activation-driven threshold join) are all implemented (with the accompanying SRDs).
 > The **Event-Based** gateway (§2.12) — the gate-as-router deferred choice — is
 > implemented for the **Exclusive mid-flow** form (via SRD-024); the Parallel
-> instantiator (correlation-gated) and Conditional arms remain deferred (§2.12.7). The
-> deferrals in §4 remain.
+> instantiator (correlation-gated) remains deferred (§2.12.7); Conditional arms
+> landed later — decided in [ADR-006 v.3 §2.7](ADR-006-events-and-subscriptions.md).
+> The deferrals in §4 remain.
 
 ## 1. Context
 
@@ -758,7 +759,9 @@ The decided model above is complete. Implementation is sliced by dependency read
   semantics is verified (§2.12.3 — §10.6.6 / §13.2).
 - **Gated on a waiter** — **Conditional** arms: the conditional event has no waiter yet
   (it must re-evaluate on data change, not fire once), so it is a valid arm in the model
-  but not armable until that waiter lands.
+  but not armable until that waiter lands. *Landed later — decided in
+  [ADR-006 v.3 §2.7](ADR-006-events-and-subscriptions.md): loop-owned (no hub
+  waiter), re-evaluated on the commit-diff.*
 
 ## 3. Consequences
 
@@ -796,11 +799,12 @@ The decided model above is complete. Implementation is sliced by dependency read
   implemented — rarely material, and it only ever errs toward waiting longer.
 - **Event-Based gateway sub-parts.** The gateway itself is **decided in §2.12** (the
   gate-as-router deferred choice). The `TokenWithdrawn` producer this bullet once
-  anticipated is **retired** — there are no arm tokens to withdraw (§2.12.1). Two
-  sub-parts stay deferred: the **Parallel instantiator**, which needs same-instance
-  correlation of subsequent triggers ([ADR-016](ADR-016-message-correlation.md)); and
-  **Conditional arms**, which need a re-evaluating conditional waiter the engine does
-  not yet have (§2.12.7).
+  anticipated is **retired** — there are no arm tokens to withdraw (§2.12.1). One
+  sub-part stays deferred: the **Parallel instantiator**, which needs same-instance
+  correlation of subsequent triggers ([ADR-016](ADR-016-message-correlation.md)).
+  **Conditional arms** landed later — decided in
+  [ADR-006 v.3 §2.7](ADR-006-events-and-subscriptions.md): loop-owned,
+  re-evaluated on the commit-diff, no hub waiter (§2.12.7).
 - **Loops & excess tokens (the one cross-cutting deferral).** This conception scopes
   to **acyclic, single-pass** joins — Parallel, OR, **and Complex** alike: each
   incoming flow is marked once and the join fires when its completion rule is met over
