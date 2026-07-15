@@ -347,6 +347,43 @@ func TestSchemaAtAndWalk(t *testing.T) {
 
 // TestParsePath covers the write-side path parser (SRD-043 T-1): the leading
 // segment is itself a step — a field OR an index — and an empty path is nil.
+func TestPathsOverlap(t *testing.T) {
+	tests := []struct {
+		name    string
+		a, b    string
+		overlap bool
+		wantErr bool
+	}{
+		{"equal plain", "order", "order", true, false},
+		{"equal structural", "order.items[0]", "order.items[0]", true, false},
+		{"prefix forward", "order", "order.items[0].price", true, false},
+		{"prefix backward", "order.items[0].price", "order", true, false},
+		{"sibling names", "order", "orders", false, false},
+		{"diverging field", "order.total", "order.items", false, false},
+		{"diverging index", "items[0]", "items[1]", false, false},
+		{"index vs field", "items[0]", "items.count", false, false},
+		{"leading index prefix", "[0]", "[0].total", true, false},
+
+		{"empty a", "", "order", false, true},
+		{"empty b", "order", "", false, true},
+		{"malformed a", "a..b", "order", false, true},
+		{"malformed b", "order", "a[0]b", false, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ov, err := data.PathsOverlap(tt.a, tt.b)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, tt.overlap, ov)
+		})
+	}
+}
+
 func TestParsePath(t *testing.T) {
 	tests := []struct {
 		name    string

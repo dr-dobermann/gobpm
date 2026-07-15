@@ -183,6 +183,50 @@ func ParsePath(path string) ([]Step, error) {
 	return append([]Step{{Field: head}}, steps...), nil
 }
 
+// PathsOverlap reports whether two structural paths address overlapping data:
+// they are equal, or one is a segment-boundary prefix of the other ("order"
+// overlaps "order.items[0].price" in both directions; "order" and "orders"
+// do not). It is the intersection semantics of a dependency declaration
+// (DependencyLister, ADR-006 v.3 §2.7): a change at a path affects every
+// dependency on the path, its ancestors, and its descendants. A malformed
+// or empty path is a classified error — callers on the conditional sweep
+// fail toward re-evaluation, never toward a silent skip.
+func PathsOverlap(a, b string) (bool, error) {
+	as, err := overlapSteps(a)
+	if err != nil {
+		return false, err
+	}
+
+	bs, err := overlapSteps(b)
+	if err != nil {
+		return false, err
+	}
+
+	short := as
+	if len(bs) < len(as) {
+		short = bs
+	}
+
+	for i := range short {
+		if as[i] != bs[i] {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
+// overlapSteps parses one PathsOverlap argument into its full step list,
+// rejecting the empty path (a Step is comparable, so prefix matching is a
+// plain element-wise ==).
+func overlapSteps(path string) ([]Step, error) {
+	if path == "" {
+		return nil, pathErr("an empty path isn't allowed")
+	}
+
+	return ParsePath(path)
+}
+
 // WalkSteps folds steps over v: a field step asserts Record and calls Field; an
 // index step asserts Collection and calls GetAt. A Collection element that is
 // not itself a Value is a read-only scalar leaf — a further step into it is a

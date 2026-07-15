@@ -19,7 +19,8 @@ func (*ConditionalEventDefinition) Type() flow.EventTrigger {
 }
 
 // NewConditionalEventDefinition creates a new ConditionalEventDefinition
-// if condition isn't nil. Otherwise it returns error.
+// if condition isn't nil and evaluates to a boolean. Otherwise it returns
+// error.
 func NewConditionalEventDefinition(
 	condition data.FormalExpression,
 	baseOpts ...options.Option,
@@ -29,6 +30,19 @@ func NewConditionalEventDefinition(
 			errs.New(
 				errs.M("condition couldn't be empty"),
 				errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	// A conditional event fires on a status becoming true (BPMN Table
+	// 10.84), so a non-boolean condition is meaningless — rejected at model
+	// build, before it could reach the runtime (the TimerEventDefinition
+	// ResultType idiom).
+	if rt := condition.ResultType(); rt != "bool" {
+		return nil,
+			errs.New(
+				errs.M("condition expression result isn't boolean"),
+				errs.C(errorClass, errs.InvalidObject),
+				errs.D("expected_type", "bool"),
+				errs.D("expr_type", rt))
 	}
 
 	d, err := newDefinition(baseOpts...)
