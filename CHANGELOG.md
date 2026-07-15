@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Structural process data — navigable values end to end (ADR-011 v.6,
+  SRD-042…045).** Process data is no longer opaque: a value can be a **record**
+  (`data.Record` — ordered named fields, beside the existing `Collection`
+  list capability), nested to any depth, and **addressed by path** —
+  `order.items[0].price` — through the one data-access seam serving gateway
+  conditions, expressions, mappings, and in-process service code (the
+  `SOURCE/addr` provider split still runs first). Landed in four slices:
+  - **Read** (SRD-042): the `Record` capability + the dynamic `values.Record`;
+    shape-by-traversal helpers (`SchemaAt`/`Walk`); path resolution wired into
+    the resolver, associations, and the fault source.
+  - **Write** (SRD-043): `values.SetPath` sets a value at a path (dynamic
+    targets auto-vivify missing intermediates; typed targets reject);
+    `Collection.SetAt` — the atomic, cursor-free indexed write; output-mapping
+    rules sharing a `Var` head **assemble one nested value** instead of flat
+    variables.
+  - **Change detection** (SRD-044): at each activity-boundary commit the scope
+    **diffs** the committed value graph into `(path, ChangeType)` entries, and
+    the track emits one `DataChange` observability fact per changed path
+    (observer-only, never echoed) — the 13th catalog kind now emits; all 13
+    are asserted by the completeness canary.
+  - **Native structs** (SRD-045): `adapters.Wrap(&order)` makes the host's
+    **own Go struct** a live navigable value — wrap, not convert — with
+    `gobpm:"..."` tags (rename, `-` exclusion) and `adapters.Register[T]`
+    (a custom adapter factory for types you can't modify; the codegen
+    generator's future seam). Reflection is **bounded**: once per type, at
+    the first `Wrap`, cached — never on the execution path (registered as an
+    engine choice in SAD-001 §6).
+
+  Four runnable examples (`structural-data`, `structural-output-mapping`,
+  `data-change`, `native-structs`) and the process-data guide
+  ([docs/guides/data.md](docs/guides/data.md)).
+
 - **Engine-wide observability — the observable-event seam (ADR-013 v.2 / SRD-041).**
   Every failure and major-object lifecycle transition now emits one
   `observability.Fact` through a single `Reporter` that both echoes to the
@@ -22,10 +54,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `InstanceHandle.Observe` remains). An optional visibility seam
   (`LogRedactor` / `ObservationFilter` on the authorization extension) can redact
   or filter per recipient; unimplemented ⇒ pass-through. `DataChange` (the 13th
-  kind) is deferred to the ADR-011 data-plane rework — its vocabulary is present,
-  its wiring lands with that work.
+  kind) was deferred here and landed with the structural-data work above
+  (SRD-044) — all 13 kinds emit in this release.
 
 ### Changed
+
+- **BREAKING (pre-1.0): the `data.Collection` interface gains `SetAt`.**
+  `SetAt(ctx, index, value) — the atomic, cursor-free indexed write ([0, len)
+  replaces, == len appends, past-len errors)` — external `Collection`
+  implementers must add it (none known besides the in-repo `values.Array` and
+  the new adapter views). `Scope.Commit`/`Frame.Commit` (internal) now return
+  the committed changed-path set alongside the error.
+
+- **BREAKING (pre-1.0): the dormant in-value subscription machinery is
+  removed.** `data.Updater`/`UpdateCallback` (zero consumers, incompatible
+  with the engine's clone/commit execution model) are deleted per ADR-011
+  v.6 §2.9.4; change detection is the scope's commit-diff. `data.ChangeType`
+  (`Value_Added/Updated/Deleted`) is retained, retargeted as the diff
+  vocabulary.
 
 - **BREAKING (pre-1.0): the observation surface is one canonical type.**
   `thresher.Event`, `thresher.EventKind`, and `Observer.OnEvent` are removed;
