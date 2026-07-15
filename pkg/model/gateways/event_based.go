@@ -428,12 +428,13 @@ func (g *EventBasedGateway) validateArm(
 		switch d.Type() {
 		case flow.TriggerMessage:
 			msgTrigger = true
-		case flow.TriggerTimer, flow.TriggerSignal:
-			// supported in this slice
+		case flow.TriggerTimer, flow.TriggerSignal, flow.TriggerConditional:
+			// supported: Timer/Signal since the ADR-005 slice, Conditional
+			// per ADR-006 v.3 §2.7 (armed like a catch; first fire wins)
 		default:
 			ee = append(ee, errs.New(
 				errs.M("event-based gateway: unsupported arm trigger "+
-					"(only Message/Timer/Signal)"),
+					"(only Message/Timer/Signal/Conditional)"),
 				errs.C(errorClass, errs.InvalidParameter),
 				errs.D("gateway_id", g.ID()),
 				errs.D("arm_id", arm.ID()),

@@ -253,6 +253,35 @@ func (p *Process) Validate() error {
 		}
 	}
 
+	// Placement check, deliberately here and not on the node (ADR-006 v.3
+	// §2.7): a Process is the TOP-LEVEL container, and a top-level Start
+	// Event may not carry a Conditional trigger — BPMN Table 10.84 forbids
+	// its condition to reference process data, and the engine exposes no
+	// legal static-attribute surface. The StartEvent itself stays
+	// constructible with it (context-free), because the same type is the
+	// future event-sub-process start, where the condition legally reads the
+	// enclosing scope (§10.4.3).
+	for _, n := range p.nodes {
+		en, ok := n.(flow.EventNode)
+		if !ok || en.EventClass() != flow.StartEventClass {
+			continue
+		}
+
+		for _, d := range en.Definitions() {
+			if d.Type() != flow.TriggerConditional {
+				continue
+			}
+
+			ee = append(ee, errs.New(
+				errs.M("a Conditional trigger isn't supported on a "+
+					"top-level Start Event (it arrives with event "+
+					"Sub-Processes)"),
+				errs.C(errorClass, errs.InvalidObject),
+				errs.D("start_event_id", en.ID()),
+				errs.D("start_event_name", en.Name())))
+		}
+	}
+
 	if len(ee) > 0 {
 		return errors.Join(ee...)
 	}

@@ -353,7 +353,9 @@ func TestEventBasedGatewayValidate(t *testing.T) {
 		require.ErrorContains(t, g.Validate(), "must not carry a condition")
 	})
 
-	t.Run("unsupported trigger (conditional arm)", func(t *testing.T) {
+	t.Run("conditional arm accepted", func(t *testing.T) {
+		// Conditional joined the supported arm triggers with SRD-048
+		// (ADR-006 v.3 §2.7) — the former rejection case flipped.
 		g, err := gateways.NewEventBasedGateway()
 		require.NoError(t, err)
 
@@ -365,7 +367,7 @@ func TestEventBasedGatewayValidate(t *testing.T) {
 
 		ebLink(t, g, signalArm(t, "a"))
 		ebLink(t, g, cond)
-		require.ErrorContains(t, g.Validate(), "unsupported arm trigger")
+		require.NoError(t, g.Validate())
 	})
 
 	t.Run("message catch + receive task rejected", func(t *testing.T) {
