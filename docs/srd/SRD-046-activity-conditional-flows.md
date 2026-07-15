@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft v.1 |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-15 |
 | Owner | Ruslan Gabitov |
@@ -282,15 +282,38 @@ registration is a separate, smaller follow-up if wanted.
 
 ## 9. Definition of Done
 
-- [ ] FR-1..FR-6 wired; every §6 test exists and is green.
-- [ ] Zero changes in `internal/` and `pkg/model/gateways` (NFR-1).
-- [ ] `make ci` green; diff-coverage ≥95% (aim 100%); full `-race`.
-- [ ] SRD-046 flipped to Accepted; changelog entry; issue #51 closed by the PR.
-- [ ] §10 filled with milestone SHAs and deltas.
+- [x] FR-1..FR-6 wired; every §6 test exists and is green.
+- [x] Zero changes in `internal/` and `pkg/model/gateways` (NFR-1).
+- [x] `make ci` green; diff-coverage ≥95% (aim 100%); full `-race`.
+- [x] SRD-046 flipped to Accepted; changelog entry; issue #51 closed by the PR.
+- [x] §10 filled with milestone SHAs and deltas.
 
 ## 10. Implementation summary
 
-> ⚠️ TODO: filled after landing.
+Landed on `feat/activity-conditional-flows` in three milestones.
+
+### 10.1 Milestones
+
+| # | Commit | Scope | Tests |
+|---|---|---|---|
+| doc | `2f77a48` | this SRD | — |
+| M1 | `0065425` | `selectOutgoing` + `checkCondition` (`flowselect.go`), `SetDefaultFlow` hardening + typo fix + `DefaultFlow()` | `TestSelectOutgoing`, `TestSetDefaultFlowHardening` |
+| M2 | `bdb5aa0` | the 8 Exec sites wired; `bindOutput` gains `ctx`; ManualTask/UserTask discarded params named | `TestActivityConditionalFlowsE2E` |
+| M3 | (this) | changelog `[Unreleased]`; §10; Accepted flip | `make ci` (T-4) |
+
+All touched functions at 100% coverage; `make ci` green at each milestone
+(M2: diff-coverage 100% of 70 changed lines).
+
+### 10.2 Deltas vs the §3 draft
+
+- **`bindOutput` gained a `ctx` parameter.** The grounding said all 8 sites
+  had `ctx` in scope; `bindOutput(re, res)` itself did not — its caller
+  (`execWorkerOutcome`) did, so the context is threaded one level (an
+  internal-method signature change).
+- **Two discarded parameters became used.** `ManualTask.Exec(_, _)` and
+  `UserTask.Exec(_, re)` now name `ctx`/`re` — the selection needs them.
+- Everything else landed exactly per the §3 model (by-ID default, the
+  short-circuit, the classified errors, the gateway-idiom duplication).
 
 ## Open questions
 

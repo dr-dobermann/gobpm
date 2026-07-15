@@ -5,6 +5,23 @@ All notable changes to the GoBPM project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Activity-outgoing conditional and default flows (SRD-046, closes #51).**
+  A task's completion now honors the BPMN sequence-flow rule: an
+  unconditional outgoing flow always fires, a **conditional** flow fires only
+  when its condition is true, and the activity's **default** flow fires only
+  when no conditional fired. Previously conditions and defaults on
+  task-outgoing flows were model-accepted but **silently ignored** (all flows
+  forked unconditionally); `SetDefaultFlow` now also rejects a flow carrying
+  a condition (the gateway rule), and a `DefaultFlow()` getter is added.
+  Selecting nothing (all conditions false, no default) faults the instance
+  with a classified error — an explicit engine choice mirroring the gateway
+  exception (Camunda-7-aligned). Single-outgoing-flow activities are
+  untouched (a short-circuit keeps the common case cost-free).
+
 ## [v0.8.1-rc.1] - 2026-07-15
 
 The **substrate** release: with the Core Task Types epic complete
