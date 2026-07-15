@@ -5,7 +5,14 @@ All notable changes to the GoBPM project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [v0.8.1-rc.1] - 2026-07-15
+
+The **substrate** release: with the Core Task Types epic complete
+(v0.8.0-rc.1), this cycle paid down the platform underneath it — the Instance
+internals refactor, the error-propagation & logging policy, engine-wide
+observability (all 13 catalog kinds emit), and the complete **structural
+process data** conception (S1–S4): navigable, writable, change-detected
+values, up to the host's own Go structs participating live.
 
 ### Added
 
@@ -59,6 +66,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Error propagation & logging policy (ADR-022 / FIX-022).** Every error is
+  handled **exactly once** — logged XOR returned, never both; fail-fast vs
+  best-effort is decided by the called function's actual failure surface; log
+  attributes use one canonical snake_case vocabulary; silence is opt-out. A
+  repo-wide sweep removed every silent `_ =` error discard from production
+  code (the one documented console carve-out remains).
+
+- **Instance internals refactored (SRD-040) — behavior-preserving.** The
+  1661-line `instance.go` split one-concern-per-file; the event loop's state
+  moved into a loop-constructed `loopState` (structural confinement — never
+  an `Instance` field); correlation keys extracted into a `correlator`. The
+  public surface is byte-identical; zero `pkg/thresher` edits.
+
 - **BREAKING (pre-1.0): the `data.Collection` interface gains `SetAt`.**
   `SetAt(ctx, index, value) — the atomic, cursor-free indexed write ([0, len)
   replaces, == len appends, past-len errors)` — external `Collection`
@@ -82,6 +102,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   semantics are unchanged (buffered, lossy, drop-counted, panic-recovered).
   `EngineRuntime` gains a `Reporter()` accessor (external implementers must add
   it; none known).
+
+### Fixed
+
+- **The PR-CI event-gate readiness race (FIX-021).** A test could observe a
+  token parked before the instance's event waiters were registered and fire
+  an event into the void. Fixed at both test levels: a registration-counter
+  harness in the instance tests, and a `SignalCatchers` probe on the hub
+  (counting catchers, not waiters — a same-id catch joins the existing
+  waiter). Also pins the CI-parity `TEST_CPUS=4` budget in `test-all`.
 
 ## [v0.8.0-rc.1] - 2026-07-10
 

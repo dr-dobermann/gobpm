@@ -9,7 +9,7 @@
 
 **GoBPM** is a native Go BPMN 2.0 engine. It is designed to embed directly into a Go application as a minimal, dependency-light **library** — and to scale up to a standalone process **server** through additive runtime components, without forcing library users to ship what they don't need.
 
-> **Status:** v0.8.0-rc.1 — active development, not yet production-ready.
+> **Status:** v0.8.1-rc.1 — active development, not yet production-ready.
 
 The vision, scope, and architecture are defined in [SAD-001](docs/design/SAD-001-vision-and-architecture.md) and its ADRs; the delivery plan is the [Development Roadmap](docs/analytics/gobpm%20Development%20Roadmap.md).
 
