@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft v.1 |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-14 |
 | Owner | Ruslan Gabitov |
@@ -409,19 +409,56 @@ is recorded as the additive follow-up.
 
 ## 9. Definition of Done
 
-- [ ] FR-1..FR-7 wired; every §6 test exists and is green.
-- [ ] Zero changes outside `pkg/model/data/adapters` + example/docs (FR-6).
-- [ ] Reflection isolated to the new package; per-access = cached-index
+- [x] FR-1..FR-7 wired; every §6 test exists and is green.
+- [x] Zero changes outside `pkg/model/data/adapters` + example/docs (FR-6).
+- [x] Reflection isolated to the new package; per-access = cached-index
       accessor only (NFR-1).
-- [ ] `make ci` green; diff-coverage ≥95% (aim 100%); full `-race`; example
+- [x] `make ci` green; diff-coverage ≥95% (aim 100%); full `-race`; example
       smoke exits 0.
-- [ ] SRD-045 flipped to Accepted; SAD-001 §14 engine-choice row + registry
-      row + roadmap synced. ADR-011 v.6 unchanged.
-- [ ] §10 filled with milestone SHAs and deltas.
+- [x] SRD-045 flipped to Accepted; SAD-001 §6 engine-choice registration (§14
+      proved BPMN-scope — recorded in the Performance quality attribute) +
+      registry row + roadmap synced. ADR-011 v.6 unchanged.
+- [x] §10 filled with milestone SHAs and deltas.
 
 ## 10. Implementation summary
 
-> ⚠️ TODO: filled after landing.
+Landed on `feat/structural-adapters` in three milestones (the §7 four-slot
+plan refolded — see §10.2).
+
+### 10.1 Milestones
+
+| # | Commit | Scope | Tests |
+|---|---|---|---|
+| doc | `5bf3b67` | this SRD | — |
+| M1 | `082e8dc` | the whole package core (FR-1..FR-5): `Wrap`/`MustWrap`/`Register[T]`, the registry, the builder + tags, `structRecord`, `sliceCollection`, `fieldLeaf`, `coerce` | T-1, T-2, T-2a, T-3, T-4, T-5, T-6 (+ an edge-case sweep) |
+| M2 | `5ba484c` | the seam proof (FR-6) — tests only, zero production edits | T-7, T-8 |
+| M3 | (this) | `examples/native-structs` + README/index wiring; §10; Accepted flip; SAD-001 §14 engine-choice sync | T-9 |
+
+Package coverage 100.0%; `make ci` green at each milestone.
+
+### 10.2 Deltas vs the §3/§7 draft
+
+- **Milestones refolded 4→3 (approved at the plan gate).** §7 split M1
+  (reads) / M2 (writes+views), but Go interfaces force every view type to
+  carry its full method set to compile — `Wrap` returns `structRecord`, whose
+  `Field` returns the collection/leaf views. The honest smallest compilable
+  unit is the whole package, so M1 = FR-1..FR-5, M2 = seam proof, M3 =
+  example + closure. FRs and tests unchanged.
+- **Build-time name validation added.** The builder rejects a path-illegal
+  tag name (`data.CheckName` — `gobpm:"a.b"` would break the path grammar)
+  and two fields mapping to one process name — fail-fast at the type walk,
+  not at first navigation.
+- **Tag parsed as "name before the first comma"** (the standard Go tag
+  convention) — so the §4.8 future options extend the vocabulary without a
+  breaking re-parse; today anything after a comma is ignored.
+- **Clone refinement: passthrough fields clone via their own `Clone`.** The
+  §4.4 rule named slices (fresh backing) and pointers (shared); a
+  passthrough `data.Value` field is neither — cloning it through its own
+  contract (as `values.Record.Clone` does for its fields) keeps frame-clone
+  isolation across mixed tiers.
+- **T-8 lives in `pkg/thresher`** (per §6's own placement): a new test file
+  outside the package — FR-6's "zero changes outside `adapters`" holds for
+  production code; tests are additive.
 
 ## Open questions
 
