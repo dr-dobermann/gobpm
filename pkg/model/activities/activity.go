@@ -138,8 +138,11 @@ func (a *activity) Properties() []*data.Property {
 	return slices.Collect(maps.Values(a.properties))
 }
 
-// SetDefaultFlow sets default flow from the Activity.
-// If the flowId is empty, then default flow cleared for Activity.
+// SetDefaultFlow sets default flow from the Activity — the flow taken when no
+// conditional outgoing flow fires (SRD-046). The flow must be one of the
+// activity's outgoing flows and must NOT carry a condition (the BPMN rule the
+// gateway's UpdateDefaultFlow enforces too). If the flowId is empty, then
+// default flow cleared for Activity.
 func (a *activity) SetDefaultFlow(flowID string) error {
 	flowID = strings.TrimSpace(flowID)
 
@@ -150,16 +153,31 @@ func (a *activity) SetDefaultFlow(flowID string) error {
 	}
 
 	for _, o := range a.Outgoing() {
-		if o.ID() == flowID {
-			a.defaultFlow = o
-
-			return nil
+		if o.ID() != flowID {
+			continue
 		}
+
+		if o.Condition() != nil {
+			return errs.New(
+				errs.M("default flow %q must not carry a condition", flowID),
+				errs.C(errorClass, errs.InvalidParameter),
+				errs.D("activity_name", a.Name()))
+		}
+
+		a.defaultFlow = o
+
+		return nil
 	}
 
 	return errs.New(
-		errs.M("flow %q dosn't existed in activity %q", flowID, a.Name()),
+		errs.M("flow %q doesn't exist in activity %q", flowID, a.Name()),
 		errs.C(errorClass, errs.InvalidParameter))
+}
+
+// DefaultFlow returns the activity's default outgoing flow, or nil when none
+// is set (the gateway-getter symmetry, SRD-046).
+func (a *activity) DefaultFlow() *flow.SequenceFlow {
+	return a.defaultFlow
 }
 
 // BoundaryEvents returns list of events bounded to the acitvity.

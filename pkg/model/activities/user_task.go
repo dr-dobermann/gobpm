@@ -193,7 +193,7 @@ func (ut *UserTask) TaskType() flow.TaskType {
 // and resumed only on an authorized, validated Complete (ADR-020 §2.1, §2.4). So
 // Exec is reached exactly once, after acceptance; it never blocks.
 func (ut *UserTask) Exec(
-	_ context.Context,
+	ctx context.Context,
 	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
 	if len(ut.completedOutputs) > 0 {
@@ -207,7 +207,7 @@ func (ut *UserTask) Exec(
 		}
 	}
 
-	return ut.Outgoing(), nil
+	return ut.selectOutgoing(ctx, re)
 }
 
 // ------------------ eventproc.EventProcessor interface ----------------------

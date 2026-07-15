@@ -266,7 +266,7 @@ func (st *ServiceTask) Exec(
 		}
 	}
 
-	return st.Outgoing(), nil
+	return st.selectOutgoing(ctx, re)
 }
 
 // execOperation runs op honoring st.timeout. With no timeout (the default) the
@@ -372,7 +372,7 @@ func (st *ServiceTask) execWorkerOutcome(
 		return nil, st.technicalFault(wo.Fault())
 
 	default: // OutcomeComplete
-		return st.bindOutput(re, wo.Output())
+		return st.bindOutput(ctx, re, wo.Output())
 	}
 }
 
@@ -381,11 +381,12 @@ func (st *ServiceTask) execWorkerOutcome(
 // the worker under WorkerTrusted) before it reached the track (SRD-039 M8), so the
 // track only commits it — no WithOutputMapping runs here anymore.
 func (st *ServiceTask) bindOutput(
+	ctx context.Context,
 	re renv.RuntimeEnvironment,
 	res []data.Data,
 ) ([]*flow.SequenceFlow, error) {
 	if len(res) == 0 {
-		return st.Outgoing(), nil
+		return st.selectOutgoing(ctx, re)
 	}
 
 	if err := re.Put(res...); err != nil {
@@ -397,7 +398,7 @@ func (st *ServiceTask) bindOutput(
 				errs.D("service_task_id", st.ID()))
 	}
 
-	return st.Outgoing(), nil
+	return st.selectOutgoing(ctx, re)
 }
 
 // raiseBpmnError returns a *events.BpmnError as the resume error, so the track
@@ -467,7 +468,7 @@ func (st *ServiceTask) writeStatus(
 				errs.D("service_task_id", st.ID()))
 	}
 
-	return st.Outgoing(), nil
+	return st.selectOutgoing(ctx, re)
 }
 
 // technicalFault wraps a raw fault as the terminal ServiceTask failure — the
