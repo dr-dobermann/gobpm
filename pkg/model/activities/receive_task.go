@@ -197,7 +197,7 @@ func (rt *ReceiveTask) Exec(
 				errs.D("receive_task_id", rt.ID()))
 	}
 
-	return rt.Outgoing(), nil
+	return rt.selectOutgoing(ctx, re)
 }
 
 var (

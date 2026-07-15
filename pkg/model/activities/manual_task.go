@@ -66,10 +66,10 @@ func (mt *ManualTask) TaskType() flow.TaskType {
 // Exec is a no-op pass-through: a Manual Task is never executed by an IT system
 // (BPMN §13.1), so it binds nothing and advances straight to its outgoing flows.
 func (mt *ManualTask) Exec(
-	_ context.Context,
-	_ renv.RuntimeEnvironment,
+	ctx context.Context,
+	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
-	return mt.Outgoing(), nil
+	return mt.selectOutgoing(ctx, re)
 }
 
 // ----------------------------------------------------------------------------

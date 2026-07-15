@@ -144,7 +144,7 @@ func (st *SendTask) Exec(
 				errs.D("send_task_id", st.ID()))
 	}
 
-	return st.Outgoing(), nil
+	return st.selectOutgoing(ctx, re)
 }
 
 var (
