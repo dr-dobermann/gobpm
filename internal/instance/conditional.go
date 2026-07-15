@@ -23,6 +23,12 @@ type condWatch struct {
 	def   *events.ConditionalEventDefinition
 	deps  []string
 	last  bool
+	// boundary marks the flavor (SRD-048 FR-15): false — track is the parked
+	// catch/EBG track and node its event node; true — track is the HOST
+	// activity track and node the guarding flow.BoundaryEvent. A boundary
+	// fire goes through fireBoundary (host cancel + exception flow for an
+	// interrupting one); a catch fire through dispatchToParked.
+	boundary bool
 }
 
 // conditionalDefs filters the Conditional definitions out of a catch node's
@@ -137,6 +143,40 @@ func (ls *loopState) armConditionals(ctx context.Context, t *track) {
 			return // delivered — the track's remaining entries are gone
 		}
 	}
+}
+
+// armCondBoundary arms one conditional boundary subscription (SRD-048
+// FR-15): the entry joins the registry in arming order and is arm-time
+// evaluated — already-true fires immediately through fireBoundary (whose
+// armedFor guard reads the just-stored watch list). Returns false when the
+// evaluation failed and the instance is stopping. Runs on the loop
+// goroutine.
+func (ls *loopState) armCondBoundary(
+	ctx context.Context,
+	bw *boundaryWatch,
+) bool {
+	w := &condWatch{
+		track:    bw.host,
+		node:     bw.boundary,
+		def:      bw.def.(*events.ConditionalEventDefinition),
+		boundary: true,
+	}
+	w.deps = condDeps(w.def)
+
+	ls.conds = append(ls.conds, w)
+
+	val, ok := ls.evalCondWatch(ctx, w)
+	if !ok {
+		return false
+	}
+
+	w.last = val
+
+	if val {
+		ls.fireCondWatch(ctx, w)
+	}
+
+	return true
 }
 
 // sweepConditionals re-evaluates the armed conditionals against one committed
@@ -257,6 +297,23 @@ func (ls *loopState) evalCondition(
 // conditional entries via flipNotParked → clearConds. Runs on the loop
 // goroutine.
 func (ls *loopState) fireCondWatch(ctx context.Context, w *condWatch) {
+	if w.boundary {
+		// fireBoundary owns the boundary fire end-to-end (SRD-029 semantics):
+		// the armedFor race guard, the outgoing-flow fork, the KindBoundary
+		// Fired fact, and — for an interrupting one — the host cancel +
+		// disarm (which clears this entry via disarmBoundaries → clearConds).
+		// A non-interrupting entry stays armed with last=true, so a re-fire
+		// needs a fresh false→true edge (SRD-048 FR-15).
+		ls.fireBoundary(ctx, trackEvent{
+			kind:  evBoundary,
+			track: w.track,
+			node:  w.node,
+			eDef:  w.def,
+		})
+
+		return
+	}
+
 	ls.inst.report(observability.Fact{
 		Kind:     observability.KindEventFlow,
 		Phase:    observability.PhaseFired,
@@ -288,11 +345,12 @@ func (ls *loopState) condArmed(w *condWatch) bool {
 	return false
 }
 
-// clearConds removes every armed conditional belonging to tr — on delivery
-// (via flipNotParked), on track end/failure, and on instance teardown its
-// subscriptions must not outlive the parked episode (SRD-048 FR-8). Runs on
-// the loop goroutine.
-func (ls *loopState) clearConds(tr *track) {
+// clearConds removes every armed conditional belonging to track trackID —
+// a delivered catch (via flipNotParked), a closed activity window (via
+// disarmBoundaries), a track end/failure: a subscription must not outlive
+// its episode (SRD-048 FR-8/FR-15). Keyed by id — the disarm sites carry
+// the id, not always the pointer. Runs on the loop goroutine.
+func (ls *loopState) clearConds(trackID string) {
 	if len(ls.conds) == 0 {
 		return
 	}
@@ -300,7 +358,7 @@ func (ls *loopState) clearConds(tr *track) {
 	kept := ls.conds[:0]
 
 	for _, w := range ls.conds {
-		if w.track != tr {
+		if w.track.ID() != trackID {
 			kept = append(kept, w)
 		}
 	}

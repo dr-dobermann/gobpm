@@ -21,6 +21,12 @@ type boundaryWatch struct {
 	host     *track
 	boundary flow.BoundaryEvent
 	def      flow.EventDefinition
+	// loopOwned marks a watch with no hub registration — a Conditional
+	// boundary (SRD-048 FR-15): its trigger source is the instance's own
+	// commits, so it is armed as a condWatch in the loop's conditional
+	// registry instead. It still lives in ls.watchers so armedFor and the
+	// disarm lifecycle govern it, but disarm skips the hub unregister.
+	loopOwned bool
 }
 
 // ID returns the watch's hub identity, unique per (host track, boundary,
@@ -63,7 +69,11 @@ type boundaryHoster interface {
 // the instance (fail+stopAll), mirroring spawnForks' build-failure handling.
 // fireBoundary discriminates interrupting vs non-interrupting on fire. Called only
 // from the loop goroutine.
-func (ls *loopState) armBoundaries(t *track, node flow.Node) {
+func (ls *loopState) armBoundaries(
+	ctx context.Context,
+	t *track,
+	node flow.Node,
+) {
 	host, ok := node.(boundaryHoster)
 	if !ok {
 		return
@@ -86,6 +96,19 @@ func (ls *loopState) armBoundaries(t *track, node flow.Node) {
 			}
 
 			w := &boundaryWatch{host: t, boundary: bev, def: d}
+
+			// A Conditional boundary is loop-owned (SRD-048 FR-15): no hub
+			// registration — its condWatch is armed below, once the watch list
+			// is in ls.watchers (armedFor must see it if the arm-time
+			// evaluation fires immediately).
+			if d.Type() == flow.TriggerConditional {
+				w.loopOwned = true
+				ws = append(ws, w)
+
+				ls.reportBoundaryPhase(w, observability.PhaseArmed)
+
+				continue
+			}
 
 			if err := ls.inst.RegisterEvent(w, d); err != nil {
 				werr := errs.New(
@@ -117,6 +140,30 @@ func (ls *loopState) armBoundaries(t *track, node flow.Node) {
 	if len(ws) > 0 {
 		ls.watchers[t.ID()] = ws
 	}
+
+	// Arm the conditional boundary subscriptions AFTER the watch list landed
+	// in ls.watchers: an arm-time-true fire goes through fireBoundary, whose
+	// armedFor guard reads that list (SRD-048 FR-9/FR-15).
+	for _, w := range ws {
+		if w.loopOwned && !ls.armCondBoundary(ctx, w) {
+			return // evaluation failure — the instance is stopping
+		}
+	}
+}
+
+// reportBoundaryPhase emits one KindBoundary fact for a watch — the shared
+// shape of the arm/disarm/fire reports (SRD-041 §3.4).
+func (ls *loopState) reportBoundaryPhase(
+	w *boundaryWatch,
+	phase observability.Phase,
+) {
+	ls.inst.report(observability.Fact{
+		Kind:     observability.KindBoundary,
+		Phase:    phase,
+		NodeID:   w.boundary.ID(),
+		NodeName: w.boundary.Name(),
+		Details:  map[string]string{observability.AttrEventDefinitionID: w.def.ID()},
+	})
 }
 
 // disarmBoundaries unregisters every watch armed for track trackID and drops its
@@ -126,6 +173,14 @@ func (ls *loopState) armBoundaries(t *track, node flow.Node) {
 // Called only from the loop goroutine.
 func (ls *loopState) disarmBoundaries(trackID string) {
 	for _, w := range ls.watchers[trackID] {
+		// A loop-owned (Conditional) watch has no hub entry — its condWatch
+		// is cleared below (SRD-048 FR-15).
+		if w.loopOwned {
+			ls.reportBoundaryPhase(w, observability.PhaseDisarmed)
+
+			continue
+		}
+
 		// The hub owns the waiter's lifecycle; a miss (waiter/processor already
 		// gone) is the expected idempotent case, not a fault — best-effort
 		// (ADR-022 v.1 §2.3(2)): log at Debug with its error and move on.
@@ -147,6 +202,7 @@ func (ls *loopState) disarmBoundaries(trackID string) {
 	}
 
 	delete(ls.watchers, trackID)
+	ls.clearConds(trackID)
 }
 
 // fireBoundary applies a boundary fire on the loop goroutine. The loop is the

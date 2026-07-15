@@ -427,8 +427,8 @@ func TestConditionalCoverageEdges(t *testing.T) {
 
 		// repeated teardown — the second call hits the empty early return.
 		ls.stopping = false
-		ls.clearConds(tr)
-		ls.clearConds(tr)
+		ls.clearConds(tr.ID())
+		ls.clearConds(tr.ID())
 		require.Empty(t, ls.conds)
 	})
 
@@ -535,8 +535,299 @@ func TestClearCondsKeepsOtherTracks(t *testing.T) {
 	other := &track{}
 	ls.conds = append(ls.conds, &condWatch{track: other})
 
-	ls.clearConds(tr)
+	ls.clearConds(tr.ID())
 
 	require.Len(t, ls.conds, 1)
 	require.Same(t, other, ls.conds[0].track)
+}
+
+// condBoundaryHarness builds the guarded-host instance with an extra
+// Conditional boundary (SRD-048 M4): the base interrupting signal boundary
+// stays hub-registered (the recordingProducer sees it), the conditional one
+// is loop-owned. Returns the seeded loopState and the bare host track (with
+// a cancellable ctx, so an interrupting fire is observable).
+func condBoundaryHarness(
+	t *testing.T,
+	val *bool,
+	evals *int,
+	interrupting bool,
+) (*Instance, *track, *loopState, context.CancelFunc) {
+	t.Helper()
+
+	ep := &recordingProducer{}
+
+	inst, host, _, _, _ := guardedHostInstance(t, ep,
+		func(h flow.ActivityNode, p *process.Process) {
+			ced := mustCondDef(t, condExpr(t, val, evals))
+
+			be, err := events.NewBoundaryEvent("bndCond", h, ced, interrupting)
+			require.NoError(t, err)
+
+			exc, err := events.NewEndEvent("excCond")
+			require.NoError(t, err)
+
+			require.NoError(t, p.Add(be))
+			require.NoError(t, p.Add(exc))
+			_, err = flow.Link(be, exc)
+			require.NoError(t, err)
+		})
+	inst.tracks = map[string]*track{}
+	require.True(t, inst.s.HasConditionals,
+		"a conditional boundary must flip the snapshot flag")
+
+	tr := bareTrack(t, inst, host)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	tr.ctx = ctx
+	tr.cancel = cancel
+
+	return inst, tr, newLoopState(inst), cancel
+}
+
+// TestConditionalBoundaryArmTimeInterrupting — an interrupting Conditional
+// boundary whose condition is already true at arm fires during arming: the
+// exception flow forks, the host is cancelled, the watches and the cond
+// entry are torn down (SRD-048 FR-9/FR-15).
+func TestConditionalBoundaryArmTimeInterrupting(t *testing.T) {
+	val, evals := true, 0
+	inst, tr, ls, cancel := condBoundaryHarness(t, &val, &evals, true)
+	defer cancel()
+
+	before := trackIDSet(inst)
+
+	ls.armBoundaries(t.Context(), tr, tr.currentStep().node)
+
+	require.Equal(t, 1, evals)
+	require.Error(t, tr.ctx.Err(), "the host is cancelled on the arm-time fire")
+	require.NotContains(t, ls.watchers, tr.ID())
+	require.Empty(t, ls.conds)
+
+	forked := newTrackIDs(before, inst)
+	require.Len(t, forked, 1, "the exception flow spawned one track")
+	drainUntilEnd(t, inst, forked[0])
+}
+
+// TestConditionalBoundaryInterruptingSweep — armed at false, a commit sweep
+// flipping the condition true fires the interrupting boundary: exception
+// fork + host cancel + teardown (SRD-048 FR-11/FR-15).
+func TestConditionalBoundaryInterruptingSweep(t *testing.T) {
+	val, evals := false, 0
+	inst, tr, ls, cancel := condBoundaryHarness(t, &val, &evals, true)
+	defer cancel()
+
+	ls.armBoundaries(t.Context(), tr, tr.currentStep().node)
+	require.Len(t, ls.watchers[tr.ID()], 2,
+		"the signal watch (hub) and the conditional watch (loop) are armed")
+	require.Len(t, ls.conds, 1)
+	require.NoError(t, tr.ctx.Err())
+
+	before := trackIDSet(inst)
+
+	val = true
+	ls.sweepConditionals(t.Context(),
+		[]data.Change{{Path: "x", Type: data.ValueUpdated}})
+
+	require.Error(t, tr.ctx.Err(), "the host is cancelled on the sweep fire")
+	require.NotContains(t, ls.watchers, tr.ID())
+	require.Empty(t, ls.conds, "disarm cleared the conditional entry")
+
+	forked := newTrackIDs(before, inst)
+	require.Len(t, forked, 1)
+	drainUntilEnd(t, inst, forked[0])
+}
+
+// TestConditionalBoundaryNonInterrupting — a non-interrupting fire forks a
+// parallel track, leaves the host running and the entry armed with
+// last=true; a re-fire needs a fresh false→true edge (Table 10.84,
+// SRD-048 FR-15).
+func TestConditionalBoundaryNonInterrupting(t *testing.T) {
+	val, evals := false, 0
+	inst, tr, ls, cancel := condBoundaryHarness(t, &val, &evals, false)
+	defer cancel()
+
+	ctx := t.Context()
+	changes := []data.Change{{Path: "x", Type: data.ValueUpdated}}
+
+	ls.armBoundaries(ctx, tr, tr.currentStep().node)
+	require.Len(t, ls.conds, 1)
+
+	// first edge — fires, host runs on, entry stays armed.
+	before := trackIDSet(inst)
+	val = true
+	ls.sweepConditionals(ctx, changes)
+
+	require.NoError(t, tr.ctx.Err(), "a non-interrupting fire keeps the host")
+	require.Contains(t, ls.watchers, tr.ID(), "the watch list stays armed")
+	require.Len(t, ls.conds, 1, "the entry stays armed")
+	require.True(t, ls.conds[0].last)
+
+	forked := newTrackIDs(before, inst)
+	require.Len(t, forked, 1, "the parallel flow spawned one track")
+	drainUntilEnd(t, inst, forked[0])
+
+	// staying true — no edge, no second fork.
+	before = trackIDSet(inst)
+	ls.sweepConditionals(ctx, changes)
+	require.Empty(t, newTrackIDs(before, inst))
+
+	// false re-arms; the next true is a fresh edge and fires again.
+	val = false
+	ls.sweepConditionals(ctx, changes)
+	require.False(t, ls.conds[0].last)
+
+	before = trackIDSet(inst)
+	val = true
+	ls.sweepConditionals(ctx, changes)
+
+	forked = newTrackIDs(before, inst)
+	require.Len(t, forked, 1, "a fresh false→true edge re-fires")
+	drainUntilEnd(t, inst, forked[0])
+}
+
+// ebCondGateInstance builds start → event-based gate → {conditional arm,
+// signal arm} and parks a track at the gate: the gateway's Definitions()
+// union puts the conditional def in t.condDefs (loop-armed) and the signal
+// def on the hub path (SRD-048 FR-14).
+func ebCondGateInstance(
+	t *testing.T,
+	val *bool,
+	evals *int,
+) (*Instance, *track, *loopState, flow.EventDefinition, flow.EventDefinition) {
+	t.Helper()
+
+	_ = data.CreateDefaultStates()
+
+	p, err := process.New("srd048-ebg")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	gate, err := gateways.NewEventBasedGateway(
+		gateways.WithDirection(gateways.Diverging))
+	require.NoError(t, err)
+
+	ced := mustCondDef(t, condExpr(t, val, evals))
+	condArm, err := events.NewIntermediateCatchEvent("arm-cond", ced)
+	require.NoError(t, err)
+	condEnd, err := events.NewEndEvent("end-cond")
+	require.NoError(t, err)
+
+	sigArm, sigEnd, sigDef := ebSignalArm(t, "race")
+
+	for _, e := range []flow.Element{start, gate, condArm, condEnd, sigArm, sigEnd} {
+		require.NoError(t, p.Add(e))
+	}
+
+	link(t, start, gate)
+	link(t, gate, condArm)
+	link(t, condArm, condEnd)
+	link(t, gate, sigArm)
+	link(t, sigArm, sigEnd)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	ep := mockeventproc.NewMockEventProducer(t)
+	ep.EXPECT().RegisterEvent(mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	inst, err := New(s, scope.EmptyDataPath, enginert.Default(), ep, nil)
+	require.NoError(t, err)
+	inst.tracks = map[string]*track{}
+
+	gateNode := s.Nodes[gate.ID()]
+	require.NotNil(t, gateNode)
+
+	tr, err := newTrack(gateNode, inst, nil)
+	require.NoError(t, err)
+	require.True(t, tr.inState(TrackWaitForEvent))
+	require.Len(t, tr.condDefs, 1,
+		"the gateway's Definitions() union surfaces the conditional arm")
+
+	ls := newLoopState(inst)
+	ls.position[tr.ID()] = gateNode
+	ls.waiting[tr.ID()] = struct{}{}
+
+	return inst, tr, ls, ced, sigDef
+}
+
+// TestEBGConditionalArmWins — the conditional arm's fire wins the deferred
+// choice: the def is delivered and the flip drops any later arm delivery
+// (SRD-048 FR-14).
+func TestEBGConditionalArmWins(t *testing.T) {
+	val, evals := false, 0
+	_, tr, ls, ced, sigDef := ebCondGateInstance(t, &val, &evals)
+	ctx := t.Context()
+
+	ls.armConditionals(ctx, tr)
+
+	val = true
+	ls.sweepConditionals(ctx,
+		[]data.Change{{Path: "x", Type: data.ValueUpdated}})
+
+	got := <-tr.evtCh
+	require.Equal(t, ced.ID(), got.ID())
+
+	// the losing signal arm's later delivery is dropped by the flip.
+	ls.dispatchToParked(ctx, trackEvent{kind: evDeliver, track: tr, eDef: sigDef})
+	require.Empty(t, tr.evtCh)
+}
+
+// TestEBGConditionalArmLoses — the signal arm delivers first: the flip tears
+// the conditional entry down, and a later condition flip fires nothing
+// (SRD-048 FR-14).
+func TestEBGConditionalArmLoses(t *testing.T) {
+	val, evals := false, 0
+	_, tr, ls, _, sigDef := ebCondGateInstance(t, &val, &evals)
+	ctx := t.Context()
+
+	ls.armConditionals(ctx, tr)
+	require.Len(t, ls.conds, 1)
+
+	ls.dispatchToParked(ctx, trackEvent{kind: evDeliver, track: tr, eDef: sigDef})
+
+	got := <-tr.evtCh
+	require.Equal(t, sigDef.ID(), got.ID())
+	require.Empty(t, ls.conds, "the flip tore the conditional entry down")
+
+	val = true
+	ls.sweepConditionals(ctx,
+		[]data.Change{{Path: "x", Type: data.ValueUpdated}})
+	require.Empty(t, tr.evtCh, "the losing conditional fires nothing")
+}
+
+// TestConditionalBoundaryArmEvalFailure — an erroring condition at boundary
+// arm-time fails the instance and aborts arming (SRD-048 FR-13/FR-15).
+func TestConditionalBoundaryArmEvalFailure(t *testing.T) {
+	ep := &recordingProducer{}
+
+	inst, host, _, _, _ := guardedHostInstance(t, ep,
+		func(h flow.ActivityNode, p *process.Process) {
+			bad := goexpr.Must(nil,
+				data.MustItemDefinition(values.NewVariable(false)),
+				func(_ context.Context, _ data.Source) (data.Value, error) {
+					return nil, fmt.Errorf("boom")
+				})
+
+			be, err := events.NewBoundaryEvent("bndBad", h,
+				mustCondDef(t, bad), true)
+			require.NoError(t, err)
+
+			exc, err := events.NewEndEvent("excBad")
+			require.NoError(t, err)
+
+			require.NoError(t, p.Add(be))
+			require.NoError(t, p.Add(exc))
+			_, err = flow.Link(be, exc)
+			require.NoError(t, err)
+		})
+	inst.tracks = map[string]*track{}
+
+	tr := bareTrack(t, inst, host)
+	ls := newLoopState(inst)
+
+	ls.armBoundaries(t.Context(), tr, host)
+
+	require.True(t, ls.stopping)
+	require.Error(t, inst.LastErr())
 }

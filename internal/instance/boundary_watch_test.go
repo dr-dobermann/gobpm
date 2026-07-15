@@ -217,7 +217,7 @@ func TestArmDisarmBoundaryWatch(t *testing.T) {
 	tr := bareTrack(t, inst, host)
 	ls := newLoopState(inst)
 
-	ls.armBoundaries(tr, host)
+	ls.armBoundaries(t.Context(), tr, host)
 
 	require.Len(t, ls.watchers[tr.ID()], 2,
 		"both the interrupting and non-interrupting boundaries are armed")
@@ -254,7 +254,7 @@ func TestDisarmBoundariesUnregisterErrorIsLogged(t *testing.T) {
 
 	tr := bareTrack(t, inst, host)
 	ls := newLoopState(inst)
-	ls.armBoundaries(tr, host)
+	ls.armBoundaries(t.Context(), tr, host)
 	require.NotEmpty(t, ls.watchers[tr.ID()], "the boundary armed")
 
 	ls.disarmBoundaries(tr.ID()) // UnregisterEvent errors → the Debug branch
@@ -278,7 +278,7 @@ func TestFireBoundaryInterrupts(t *testing.T) {
 	tr.cancel = cancel
 
 	ls := newLoopState(inst)
-	ls.armBoundaries(tr, host)
+	ls.armBoundaries(t.Context(), tr, host)
 	require.Len(t, ls.watchers[tr.ID()], 1)
 
 	before := trackIDSet(inst)
@@ -314,7 +314,7 @@ func TestFireBoundaryRaceDropped(t *testing.T) {
 	tr.cancel = cancel
 
 	ls := newLoopState(inst)
-	ls.armBoundaries(tr, host)
+	ls.armBoundaries(t.Context(), tr, host)
 
 	// the host completed first — its watch is gone before the fire is applied.
 	ls.disarmBoundaries(tr.ID())
@@ -372,7 +372,7 @@ func TestNonInterruptingBoundaryFires(t *testing.T) {
 	tr.cancel = cancel
 
 	ls := newLoopState(inst)
-	ls.armBoundaries(tr, host)
+	ls.armBoundaries(t.Context(), tr, host)
 	require.Len(t, ls.watchers[tr.ID()], 2, "both boundaries arm")
 
 	// fire fires beN and returns the continuation tracks it spawned; each
@@ -419,7 +419,7 @@ func TestArmBoundaryRegisterFailureFaults(t *testing.T) {
 	tr := bareTrack(t, inst, host)
 	ls := newLoopState(inst)
 
-	ls.armBoundaries(tr, host)
+	ls.armBoundaries(t.Context(), tr, host)
 
 	require.True(t, ls.stopping, "an arm failure stops the instance")
 	require.Equal(t, Terminating, inst.State())
@@ -436,7 +436,7 @@ func TestArmBoundariesSkipsNonActivity(t *testing.T) {
 	tr := bareTrack(t, inst, excEndA) // an end event, not an activity
 	ls := newLoopState(inst)
 
-	ls.armBoundaries(tr, excEndA)
+	ls.armBoundaries(t.Context(), tr, excEndA)
 
 	require.Empty(t, ls.watchers, "a non-activity node arms nothing")
 	require.Empty(t, ep.registeredDefs())

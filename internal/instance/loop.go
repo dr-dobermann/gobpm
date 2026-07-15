@@ -156,19 +156,21 @@ func (ls *loopState) spawn(ctx context.Context, t *track) {
 	// SRD-034). Mid-run waits emit evWaiting from checkNodeType instead.
 	ls.recordBornWaiter(ctx, t)
 
-	// Arm any interrupting boundary guarding the track's initial node — on the
-	// loop goroutine, before its run goroutine starts — so the watcher exists
-	// before the activity can complete or fire (SRD-029 FR-5). Subsequent moves
-	// arm via evMoved. A non-activity initial node (a StartEvent) is a no-op.
-	ls.armBoundaries(t, t.currentStep().node)
-
 	// Per-track cancellable context, derived here on the loop goroutine so
 	// t.cancel is loop-owned — the loop is the sole caller that interrupts a
 	// single track for an interrupting boundary (SRD-029 FR-4). inst.ctx stays
 	// the parent, so instance terminate (inst.cancel) still cascades to every
-	// track (NFR-4).
+	// track (NFR-4). Set BEFORE armBoundaries: an arm-time-true interrupting
+	// Conditional boundary fires during arming and cancels the host at once
+	// (SRD-048 FR-9/FR-15).
 	tctx, cancel := context.WithCancel(ctx)
 	t.cancel = cancel
+
+	// Arm any interrupting boundary guarding the track's initial node — on the
+	// loop goroutine, before its run goroutine starts — so the watcher exists
+	// before the activity can complete or fire (SRD-029 FR-5). Subsequent moves
+	// arm via evMoved. A non-activity initial node (a StartEvent) is a no-op.
+	ls.armBoundaries(ctx, t, t.currentStep().node)
 
 	// run the track and report back to the loop. A track that reached a
 	// synchronizing join without completing it ends its goroutine in
@@ -242,7 +244,7 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		ls.disarmBoundaries(ev.track.ID())
 		ls.position[ev.track.ID()] = ev.node
 		delete(ls.parked, ev.track.ID())
-		ls.armBoundaries(ev.track, ev.node)
+		ls.armBoundaries(ctx, ev.track, ev.node)
 
 	case evEnded:
 		ls.active--
@@ -379,7 +381,7 @@ func (ls *loopState) dispatchToParked(ctx context.Context, ev trackEvent) {
 func (ls *loopState) flipNotParked(tr *track) {
 	delete(ls.waiting, tr.ID())
 	ls.clearMsgIdx(tr)
-	ls.clearConds(tr)
+	ls.clearConds(tr.ID())
 }
 
 // clearMsgIdx removes every msgEDef→track entry pointing at tr, so a fired message can no
