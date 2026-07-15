@@ -54,6 +54,12 @@ type loopState struct {
 	// enqueues the job), read by a worker's jobReq to resume the track, and cleared
 	// when the job completes or its track ends.
 	jobs map[wtasks.JobID]*track
+	// conds is the loop-owned armed-conditional registry (SRD-048 FR-8): a SLICE,
+	// because arming order is the multi-fire contract (fires from one commit apply
+	// in arming order — ADR-006 v.3 §2.7). Armed by evWaiting / recordBornWaiter,
+	// swept on evDataCommit, torn down when the owning track flips out of waiting,
+	// ends, or fails (flipNotParked → clearConds).
+	conds []*condWatch
 
 	// active counts the tracks whose run goroutine has not yet reported a
 	// terminal event; the loop exits when it returns to zero.
@@ -214,6 +220,7 @@ func (ls *loopState) stopAll() {
 func (ls *loopState) drop() {
 	clear(ls.waiting)
 	clear(ls.msgIdx)
+	ls.conds = nil
 	clear(ls.position)
 	clear(ls.parked)
 	ls.withdrawAllTasks()
@@ -274,7 +281,7 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		ls.applyFailed(ctx, ev)
 
 	case evWaiting:
-		ls.onWaiting(ev)
+		ls.onWaiting(ctx, ev)
 
 	case evTaskWaiting:
 		// a UserTask parked as a human task — register + announce it (SRD-034).
@@ -287,6 +294,12 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 
 	case evDeliver:
 		ls.dispatchToParked(ctx, ev)
+
+	case evDataCommit:
+		// a node's frame commit changed data — sweep the armed conditionals:
+		// re-evaluate the due ones, fire on false→true edges in arming order
+		// (SRD-048 FR-11).
+		ls.sweepConditionals(ctx, ev.changes)
 
 	case evBoundary:
 		// an interrupting boundary fired over its guarded activity — cancel the host
@@ -307,7 +320,7 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 // indexes its Message catch defs → track (SRD-027 FR-4/FR-5/FR-8). Skipped during
 // shutdown: a parked track is then woken by its closed evtCh, not an evDeliver, and
 // recording it would risk a send on the closed channel. Runs on the loop goroutine.
-func (ls *loopState) onWaiting(ev trackEvent) {
+func (ls *loopState) onWaiting(ctx context.Context, ev trackEvent) {
 	if ls.stopping {
 		return
 	}
@@ -317,6 +330,11 @@ func (ls *loopState) onWaiting(ev trackEvent) {
 	for _, id := range ev.msgDefIDs {
 		ls.msgIdx[id] = ev.track
 	}
+
+	// arm the track's conditional subscriptions AFTER it is recorded parked,
+	// so an arm-time fire can deliver through the normal parked-dispatch
+	// contract (SRD-048 FR-9).
+	ls.armConditionals(ctx, ev.track)
 }
 
 // dispatchToParked sends a fired event to its parked-and-undelivered track. The target is
@@ -354,12 +372,14 @@ func (ls *loopState) dispatchToParked(ctx context.Context, ev trackEvent) {
 	tr.evtCh <- ev.eDef
 }
 
-// flipNotParked removes tr from the parked set and clears its message-index entries — the
-// atomic flip that makes deferred choice single-winner (SRD-027 FR-4/§3.4): a later event for
-// tr finds it absent and is dropped. Also used on track end so no entry outlives its track.
+// flipNotParked removes tr from the parked set and clears its message-index and
+// armed-conditional entries — the atomic flip that makes deferred choice
+// single-winner (SRD-027 FR-4/§3.4, SRD-048 FR-14): a later event for tr finds
+// it absent and is dropped. Also used on track end so no entry outlives its track.
 func (ls *loopState) flipNotParked(tr *track) {
 	delete(ls.waiting, tr.ID())
 	ls.clearMsgIdx(tr)
+	ls.clearConds(tr)
 }
 
 // clearMsgIdx removes every msgEDef→track entry pointing at tr, so a fired message can no
@@ -380,21 +400,25 @@ func (ls *loopState) clearPosition(tr *track) {
 	delete(ls.parked, tr.ID())
 }
 
-// eventTrackID returns the subject track's id for logging, or "<none>" for a track-less
+// noneLabel marks an absent subject (a track-less event, a nil node) in log
+// and fact attributes.
+const noneLabel = "<none>"
+
+// eventTrackID returns the subject track's id for logging, or noneLabel for a track-less
 // Message evDeliver (its target is resolved later via msgIdx — SRD-027 FR-8).
 func eventTrackID(ev trackEvent) string {
 	if ev.track == nil {
-		return "<none>"
+		return noneLabel
 	}
 
 	return ev.track.ID()
 }
 
-// nodeIDOf returns n.ID(), or "<none>" for a nil node — a defensive guard for log lines that
+// nodeIDOf returns n.ID(), or noneLabel for a nil node — a defensive guard for log lines that
 // read the loop-owned position map, where a miss yields a nil flow.Node (SRD-028 FR-5).
 func nodeIDOf(n flow.Node) string {
 	if n == nil {
-		return "<none>"
+		return noneLabel
 	}
 
 	return n.ID()

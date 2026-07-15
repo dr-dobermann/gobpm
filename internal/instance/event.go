@@ -1,6 +1,10 @@
 package instance
 
-import "github.com/dr-dobermann/gobpm/pkg/model/flow"
+import (
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+)
 
 // trackEvent is a message a track sends to the Instance event loop, which is
 // the sole owner of instance lifecycle state. Tracks never mutate that state
@@ -39,7 +43,16 @@ type trackEvent struct {
 	// The loop enters them into its msgEDef→track index so a fired message resolves
 	// back to this track (SRD-027 FR-5/FR-8). Empty for a Signal/Timer-only wait.
 	msgDefIDs []string
-	kind      trackEventKind
+	// condDefs, for evWaiting, are the track's Conditional catch definitions
+	// (SRD-048 FR-7): never hub-registered — the loop arms them in its own
+	// conditional registry (arming order preserved) and evaluates them on the
+	// commit-diff signal. Empty for a non-conditional wait.
+	condDefs []*events.ConditionalEventDefinition
+	// changes, for evDataCommit, is the committed changed-path set a node's
+	// frame commit produced (SRD-044 seam, SRD-048 FR-10); ev.node carries the
+	// committing node. The loop sweeps its armed conditionals against it.
+	changes []data.Change
+	kind    trackEventKind
 }
 
 // trackEventKind enumerates the track→loop event kinds.
@@ -61,6 +74,7 @@ var trackEventKindNames = [...]string{
 	evTerminate:   "terminate",
 	evTaskWaiting: "taskWaiting",
 	evJobWaiting:  "jobWaiting",
+	evDataCommit:  "dataCommit",
 }
 
 // String returns the lower-case event-kind name for logging.
@@ -131,4 +145,11 @@ const (
 	// report arrives later via a jobReq and resumes the track (ADR-021, SRD-036). It is the
 	// external-worker peer of evTaskWaiting — the ServiceTask registers no hub waiter.
 	evJobWaiting
+	// evDataCommit: a node's frame commit produced a non-empty changed-path set (ev.changes;
+	// ev.node the committing node, ev.track the committing track). Emitted only when the
+	// snapshot precomputed HasConditionals, so a conditional-free process never pays for it
+	// (SRD-048 FR-10/NFR-1). The loop sweeps its armed conditionals: re-evaluate those whose
+	// dependency statement is absent or overlaps the diff, fire on a false→true edge, apply
+	// fires in arming order (ADR-006 v.3 §2.7).
+	evDataCommit
 )

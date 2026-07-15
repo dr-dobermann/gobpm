@@ -33,6 +33,12 @@ type Snapshot struct {
 	// persistent instance-starter at registration instead of re-scanning the
 	// node graph. Engine-agnostic descriptors only; immutable, shared by Clone.
 	InstantiatingStarts []InstantiatingStart
+	// HasConditionals reports whether any node carries a Conditional event
+	// definition (catch, boundary, or event-based-gateway arm), precomputed
+	// once by New (SRD-048): a track emits the commit-diff signal to the
+	// instance loop only when true, so a conditional-free process never pays
+	// for it. Immutable, shared by Clone.
+	HasConditionals bool
 }
 
 // New creates a new snapshot from the Process p and returns its
@@ -157,8 +163,30 @@ func New(
 	// instantiating start triggers once and store them, so registration wraps the
 	// descriptors into starters instead of re-walking the node graph.
 	s.InstantiatingStarts = discoverInstantiatingStarts(s.Nodes)
+	s.HasConditionals = hasConditionals(s.Nodes)
 
 	return &s, nil
+}
+
+// hasConditionals reports whether any event node — an intermediate catch, a
+// boundary event, or an event-based-gateway arm (all process nodes) — carries
+// a Conditional definition (SRD-048). One pass at snapshot build; the flag
+// gates the per-commit evDataCommit emit.
+func hasConditionals(nodes map[string]flow.Node) bool {
+	for _, n := range nodes {
+		en, ok := n.(flow.EventNode)
+		if !ok {
+			continue
+		}
+
+		for _, d := range en.Definitions() {
+			if d.Type() == flow.TriggerConditional {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // correlationKeys extracts the process's declared correlation keys — the Key of
@@ -229,6 +257,7 @@ func (s *Snapshot) Clone() (*Snapshot, error) {
 		Properties:          props,
 		CorrelationKeys:     s.CorrelationKeys,
 		InstantiatingStarts: s.InstantiatingStarts,
+		HasConditionals:     s.HasConditionals,
 	}
 
 	// Clone every node (its immutable configuration shared by reference, its

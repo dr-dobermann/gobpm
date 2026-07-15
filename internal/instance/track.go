@@ -201,6 +201,12 @@ type track struct {
 	// fired message resolves back to it; spawn reads them for a track that starts parked
 	// before the loop drains events. Construction-immutable, so the loop reads it lock-free.
 	msgDefIDs []string
+	// condDefs are the Conditional catch definitions this track parks on, set by
+	// checkNodeType alongside msgDefIDs (SRD-048 FR-7): never hub-registered — the
+	// loop arms them in its conditional registry (via the evWaiting emit mid-run,
+	// or recordBornWaiter for a track that starts parked). Construction-immutable,
+	// so the loop reads it lock-free.
+	condDefs []*events.ConditionalEventDefinition
 	m         sync.RWMutex
 	state     trackState
 	stopIt    atomic.Bool
@@ -417,8 +423,10 @@ func (t *track) checkNodeType(node flow.Node) error {
 
 	// Record the Message catch-definition ids so the loop can index them → this track
 	// (SRD-027 FR-8): carried in the evWaiting emit below for a mid-run wait, and read by
-	// spawn for a track that starts parked before the loop drains events.
+	// spawn for a track that starts parked before the loop drains events. Conditional
+	// definitions are recorded the same way (SRD-048 FR-7) — the loop arms them itself.
 	t.msgDefIDs = messageDefIDs(defs)
+	t.condDefs = conditionalDefs(defs)
 
 	// Declare the wait BEFORE registering: a waiter may deliver an event
 	// synchronously on registration (a MessageWaiter draining a message the
@@ -438,13 +446,20 @@ func (t *track) checkNodeType(node flow.Node) error {
 			kind:      evWaiting,
 			track:     t,
 			msgDefIDs: t.msgDefIDs,
+			condDefs:  t.condDefs,
 		})
 	}
 
 	// Per-trigger registration is the one place the hybrid boundary is chosen (SRD-027
 	// FR-8 / §3.7): a Message catch registers the Instance (it owns correlation), every
-	// other trigger registers the track.
+	// other trigger registers the track. A Conditional catch registers NOTHING — its
+	// trigger source is the instance's own commits, so the subscription is loop-owned,
+	// carried on the evWaiting emit above (SRD-048 FR-7, ADR-006 v.3 §2.7).
 	for _, d := range defs {
+		if d.Type() == flow.TriggerConditional {
+			continue
+		}
+
 		proc := eventproc.EventProcessor(t)
 		if d.Type() == flow.TriggerMessage {
 			proc = t.instance
@@ -978,6 +993,7 @@ func (t *track) finalizeNodeExecution(
 	// returns a nil set, so the report is naturally a no-op then.
 	changes, err := f.Commit()
 	t.reportDataChanges(step.node, changes)
+	t.signalDataCommit(step.node, changes)
 
 	return err
 }

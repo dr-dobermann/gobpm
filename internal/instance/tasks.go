@@ -287,6 +287,11 @@ func (ls *loopState) recordBornWaiter(ctx context.Context, t *track) {
 		ls.msgIdx[id] = t
 	}
 
+	// arm any conditional subscriptions of a born-parked track — the spawn-path
+	// twin of onWaiting's arming (SRD-048 FR-7/FR-9); condDefs is
+	// construction-immutable, so this read is safe pre-run.
+	ls.armConditionals(ctx, t)
+
 	ls.addTask(ctx, t.taskID, t, t.currentStep().node)
 }
 

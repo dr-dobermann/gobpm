@@ -93,7 +93,7 @@ func TestOnWaitingStoppingDrops(t *testing.T) {
 	ls := newLoopState(newBareLoopInstance())
 	ls.stopping = true
 
-	ls.onWaiting(trackEvent{})
+	ls.onWaiting(t.Context(), trackEvent{})
 
 	require.Empty(t, ls.waiting)
 	require.Empty(t, ls.msgIdx)
