@@ -206,24 +206,14 @@ End Event** on one branch of a parallel process: the fraud-check branch reaches 
 and ends the whole instance, cancelling the in-flight payment mid-charge — the
 instance settles `Terminated`, not `Completed`.
 
-For structural data (reaching *into* a value by path), see
-[`examples/structural-data/`](examples/structural-data/) — an `order` **record**
-property `{id, total, items:[{sku, price}]}` where a service task reads
-`order.items[0].price` through the `DataReader` and an exclusive gateway routes on
-`order.total`, both by path through the one data-access seam (ADR-011 v.6 §2.9);
-the [`examples/service-task-worker/`](examples/service-task-worker/) example adds
-structural **output mapping** — a worker returns a structured body and mapping
-rules extract nested fields (`body.warehouse.zone`). Conversely,
-[`examples/structural-output-mapping/`](examples/structural-output-mapping/) shows
-the write path — a worker returns a **flat** body and mapping rules sharing the
-head `order` **assemble** one nested record (with an auto-vivified `items` list),
-read back by path (SRD-043). [`examples/data-change/`](examples/data-change/)
-adds commit-diff change detection — an observer receives one
-`DataChange` fact per changed path as nodes commit (SRD-044). And
-[`examples/native-structs/`](examples/native-structs/) completes the quartet:
-the host's **own Go struct** participates directly — `adapters.Wrap` returns a
-live view (wrap, not convert) with `gobpm:"..."` tags, navigable by every seam
-(SRD-045).
+Process data is fully **structural**: values are navigable by path
+(`order.items[0].price`) in every seam — conditions, expressions, mappings,
+service code — writable and assemblable by the same grammar, change-detected
+per path at commit, and your **own Go structs participate live** via
+`adapters.Wrap` (wrap, not convert). The complete guide — the value model,
+the three tiers, reading/writing/observing, `gobpm:"..."` tags — is
+[**docs/guides/data.md**](docs/guides/data.md), with four runnable examples
+linked from it.
 
 ### Startup logging
 
@@ -269,6 +259,7 @@ make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (r
 ## Documentation
 
 - [Vision & Architecture (SAD-001)](docs/design/SAD-001-vision-and-architecture.md) and [ADRs](docs/design/) — the conception
+- [Working with process data](docs/guides/data.md) — the structural-data guide (paths, tiers, native structs, change observation)
 - [Development Roadmap](docs/analytics/gobpm%20Development%20Roadmap.md) — workstreams + milestones
 - [Conformance scope](docs/bpmn-spec/conformance.md) and [BPMN 2.0 reference KB](docs/bpmn-spec/)
 - [Documentation Index](README_INDEX.md) · [API Reference](https://pkg.go.dev/github.com/dr-dobermann/gobpm) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
