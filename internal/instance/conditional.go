@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
@@ -243,7 +244,7 @@ func (ls *loopState) evalCondWatch(
 	ctx context.Context,
 	w *condWatch,
 ) (val, ok bool) {
-	res, err := ls.evalCondition(ctx, w.def)
+	res, err := ls.evalCondition(ctx, w.def, w.track.scopePath)
 	if err != nil {
 		ls.inst.fail(errs.New(
 			errs.M("conditional evaluation failed"),
@@ -266,8 +267,9 @@ func (ls *loopState) evalCondWatch(
 func (ls *loopState) evalCondition(
 	ctx context.Context,
 	def *events.ConditionalEventDefinition,
+	at scope.DataPath,
 ) (bool, error) {
-	frame, err := ls.inst.sc.openFrame("cond-eval", def.ID())
+	frame, err := ls.inst.sc.openFrameAt("cond-eval", def.ID(), at)
 	if err != nil {
 		return false, err
 	}

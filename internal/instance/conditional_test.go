@@ -406,7 +406,7 @@ func TestConditionalCoverageEdges(t *testing.T) {
 		me.EXPECT().Evaluate(mock.Anything, mock.Anything).
 			Return(values.NewVariable(42), nil)
 
-		_, err := ls.evalCondition(t.Context(), def)
+		_, err := ls.evalCondition(t.Context(), def, ls.inst.sc.root)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "non-boolean")
 	})

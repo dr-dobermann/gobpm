@@ -177,6 +177,7 @@ func bareTrack(t *testing.T, inst *Instance, node flow.Node) *track {
 		steps:       []*stepInfo{{node: node, state: StepCreated}},
 		state:       TrackReady,
 		evtCh:       make(chan flow.EventDefinition, eventBufferDepth),
+		scopePath:   inst.sc.root,
 	}
 }
 

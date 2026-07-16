@@ -80,7 +80,18 @@ func (sc *instanceScope) load(
 func (sc *instanceScope) openFrame(
 	trackID, nodeID string,
 ) (*scope.Frame, error) {
-	return scope.NewFrame(trackID, nodeID, sc.plane.Root(), sc.plane)
+	return sc.openFrameAt(trackID, nodeID, sc.plane.Root())
+}
+
+// openFrameAt opens an execution frame at a specific container scope — a
+// track executing inside a sub-process resolves and commits at ITS scope
+// (SRD-049 FR-7): reads walk child → parent (§10.4/§10.5.7), Put-produced
+// locals land in the child scope and die with it at close.
+func (sc *instanceScope) openFrameAt(
+	trackID, nodeID string,
+	at scope.DataPath,
+) (*scope.Frame, error) {
+	return scope.NewFrame(trackID, nodeID, at, sc.plane)
 }
 
 // bindEventPayload binds the payload carried by a born-from-event start into the

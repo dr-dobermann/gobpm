@@ -195,7 +195,13 @@ type track struct {
 	// the loop goroutine (sequentially, before the run goroutine starts) so a task
 	// parked at construction is registered. Empty for a non-UserTask wait.
 	taskID string
-	steps  []*stepInfo
+	// scopePath is the container scope this track executes in (SRD-049 FR-7):
+	// the instance root for top-level tracks, a child path for tracks seeded
+	// inside a sub-process. Inherited from the spawning track on a fork (a
+	// fork stays in its scope); set by the loop pre-spawn for scope seeds.
+	// Construction-immutable, so both goroutines read it lock-free.
+	scopePath scope.DataPath
+	steps     []*stepInfo
 	// msgDefIDs are the ids of the Message catch definitions this track parks on, set by
 	// checkNodeType at construction (SRD-027 FR-8). The loop indexes them → this track so a
 	// fired message resolves back to it; spawn reads them for a track that starts parked
@@ -207,7 +213,7 @@ type track struct {
 	// or recordBornWaiter for a track that starts parked). Construction-immutable,
 	// so the loop reads it lock-free.
 	condDefs []*events.ConditionalEventDefinition
-	m         sync.RWMutex
+	m        sync.RWMutex
 	state     trackState
 	stopIt    atomic.Bool
 }
@@ -370,6 +376,11 @@ func newTrack(
 
 	if prevTrack != nil {
 		t.prev = append(t.prev, append(prevTrack.prev, prevTrack.ID())...)
+		// a fork stays in its spawning track's scope (SRD-049 FR-7); scope
+		// seeds get their child path from the loop pre-spawn.
+		t.scopePath = prevTrack.scopePath
+	} else {
+		t.scopePath = inst.sc.root
 	}
 
 	// History is recorded once the track runs (per-node visits + state
@@ -396,6 +407,15 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 	// path (it is not a flow.EventNode) and park it without any hub registration.
 	if _, ok := node.(interactor.HumanTask); ok {
 		return t.parkHumanTask(node)
+	}
+
+	// A composite (an embedded Sub-Process — an activity that contains its
+	// own graph) is a wait node too (SRD-049 FR-8): the host parks while the
+	// loop opens the child scope, seeds the inner tracks, and resumes the
+	// host with a synthetic completion when the scope drains. Recognized by
+	// the container capability, keeping the runtime model-agnostic.
+	if _, ok := node.(scopeHost); ok {
+		return t.parkScopeHost(node, atConstruction)
 	}
 
 	// A ServiceTask marked WithWorker is an external-worker wait node (SRD-036): it
@@ -481,6 +501,25 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 				errs.D("event_definition_id", d.ID()),
 				errs.E(err))
 		}
+	}
+
+	return nil
+}
+
+// parkScopeHost parks the track on a composite node (SRD-049 FR-8): the
+// host waits on evtCh for the scope-drain completion. Mid-run the loop is
+// told via evScopeOpen; at construction (incl. a fork born ON a composite,
+// which runs on the loop goroutine — the SRD-048 deadlock rule) the spawn
+// path opens the scope via recordBornWaiter instead.
+func (t *track) parkScopeHost(node flow.Node, atConstruction bool) error {
+	t.updateState(TrackWaitForEvent)
+
+	if !atConstruction && t.instance.State() == Active {
+		t.instance.emit(trackEvent{
+			kind:  evScopeOpen,
+			track: t,
+			node:  node,
+		})
 	}
 
 	return nil
@@ -861,10 +900,12 @@ func (t *track) executeNode(
 		return nil,
 			errs.New(
 				errs.M("node doesn't provide exec.NodeExecutor interface"),
-				errs.C(errorClass, errs.TypeCastingError))
+				errs.C(errorClass, errs.TypeCastingError),
+				errs.D("node_id", step.node.ID()),
+				errs.D("node_name", step.node.Name()))
 	}
 
-	f, err := t.instance.sc.openFrame(t.ID(), step.node.ID())
+	f, err := t.instance.sc.openFrameAt(t.ID(), step.node.ID(), t.scopePath)
 	if err != nil {
 		return nil,
 			errs.New(
@@ -1089,6 +1130,12 @@ func (t *track) unregisterEvent(n flow.Node) error {
 	}
 
 	for _, eDef := range en.Definitions() {
+		// a Conditional definition was never hub-registered (SRD-048 FR-7 —
+		// loop-owned); unregistering it would be a guaranteed miss.
+		if eDef.Type() == flow.TriggerConditional {
+			continue
+		}
+
 		if err := t.instance.UnregisterEvent(t, eDef.ID()); err != nil {
 			return errs.New(
 				errs.M("failed to unregister event"),

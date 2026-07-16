@@ -1,11 +1,13 @@
 package activities
 
 import (
+	"context"
 	"errors"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
+	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
 
 // SubProcess is the embedded Sub-Process (ADR-023 §2.2): an activity in
@@ -42,6 +44,13 @@ func NewSubProcess(
 // ActivityType returns the SubProcess activity type.
 func (sp *SubProcess) ActivityType() flow.ActivityType {
 	return flow.SubProcessActivity
+}
+
+// Node returns the SubProcess itself — the concrete-type override every
+// node provides (the embedded activity base would otherwise surface,
+// stripping the container and executor capabilities from flow targets).
+func (sp *SubProcess) Node() flow.Node {
+	return sp
 }
 
 // Add adds a flow element into the Sub-Process's inner graph, binding it
@@ -201,6 +210,36 @@ func (sp *SubProcess) Clone() (flow.Node, error) {
 		ElementsContainer: inner,
 		activity:          a,
 	}, nil
+}
+
+// ProcessEvent accepts the scope-completion delivery that resumes the
+// parked host track (SRD-049 FR-9): the engine loop is the only producer
+// for a composite — the delivery itself IS the completion signal, so
+// nothing binds here. Implements eventproc's EventProcessor surface the
+// track's deliver dispatches to.
+func (sp *SubProcess) ProcessEvent(
+	_ context.Context,
+	eDef flow.EventDefinition,
+) error {
+	if eDef == nil {
+		return errs.New(
+			errs.M("a nil event definition isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed),
+			errs.D("subprocess_id", sp.ID()))
+	}
+
+	return nil
+}
+
+// Exec runs after the scope drained and the host resumed (SRD-049 FR-9):
+// the inner work is done, so the composite's execution is exactly the
+// standard activity completion — select the outgoing flows (conditional /
+// default rules included).
+func (sp *SubProcess) Exec(
+	ctx context.Context,
+	re renv.RuntimeEnvironment,
+) ([]*flow.SequenceFlow, error) {
+	return sp.selectOutgoing(ctx, re)
 }
 
 // interface checks
