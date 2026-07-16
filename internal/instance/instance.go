@@ -22,6 +22,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/interactor"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	engrenv "github.com/dr-dobermann/gobpm/pkg/renv"
@@ -48,6 +49,11 @@ type Instance struct {
 	s                   *snapshot.Snapshot
 	tracks              map[string]*track
 	loopDone            chan struct{}
+	// parentInstanceID/callNodeID are the call linkage (SRD-050): when set,
+	// report stamps them on every fact so a child instance's trace stitches
+	// back to its caller's Call Activity node. Empty for a top-level instance.
+	parentInstanceID string
+	callNodeID       string
 	foundation.BaseElement
 	observers  []obsReg
 	trackCount atomic.Int64
@@ -64,6 +70,15 @@ type newConfig struct {
 	bornStartID  string
 	convKeyName  string
 	convKeyValue string
+	// parentInstanceID/callNodeID are the call linkage stamped on every fact a
+	// child instance emits (SRD-050 FR-4); empty for a top-level instance.
+	parentInstanceID string
+	callNodeID       string
+	// rootData is committed into the root scope at construction — the Call
+	// Activity's inputs (SRD-050), the same injection point as an event
+	// payload (bindEventPayload). Kept last so its len/cap fall outside the
+	// GC pointer scan (fieldalignment).
+	rootData []data.Data
 }
 
 // newOption tunes New. Born-from-event is the only option and is exposed
@@ -77,6 +92,26 @@ func withBornEvent(startNodeID string, eDef flow.EventDefinition) newOption {
 	return func(c *newConfig) {
 		c.bornStartID = startNodeID
 		c.bornEvent = eDef
+	}
+}
+
+// withRootData seeds data into the new instance's root scope at construction —
+// the Call Activity's inputs (SRD-050 FR-4), committed at the same point as an
+// event payload (bindEventPayload). Exposed publicly via NewChild. An empty
+// slice is a no-op.
+func withRootData(dd []data.Data) newOption {
+	return func(c *newConfig) {
+		c.rootData = dd
+	}
+}
+
+// withCallLinkage stamps the call linkage (SRD-050 FR-4) onto every fact the
+// instance emits, stitching a child's trace back to its caller. Exposed via
+// NewChild. Empty ids leave the instance top-level (unstamped).
+func withCallLinkage(parentInstanceID, callNodeID string) newOption {
+	return func(c *newConfig) {
+		c.parentInstanceID = parentInstanceID
+		c.callNodeID = callNodeID
 	}
 }
 
@@ -159,6 +194,8 @@ func New(
 		loopDone:            make(chan struct{}),
 		parentEventProducer: ep,
 		td:                  td,
+		parentInstanceID:    cfg.parentInstanceID,
+		callNodeID:          cfg.callNodeID,
 	}
 	inst.state.Store(uint32(Created))
 	inst.announceCreated()
@@ -176,24 +213,11 @@ func New(
 			errs.D("process_id", s.ProcessID))
 	}
 
-	// Born-from-event: bind the payload and resolve the fired start node so
-	// createTracks seeds from its outgoing flows instead of parking it.
-	var bornStart flow.Node
-	if cfg.bornStartID != "" {
-		bs, ok := inst.s.Nodes[cfg.bornStartID]
-		if !ok {
-			return nil, errs.New(
-				errs.M("born-from-event start node %q not found in snapshot",
-					cfg.bornStartID),
-				errs.C(errorClass, errs.ObjectNotFound),
-				errs.D("process_id", inst.s.ProcessID))
-		}
-
-		bornStart = bs
-
-		if err := inst.sc.bindEventPayload(cfg.bornEvent); err != nil {
-			return nil, err
-		}
+	// Seed the initial root data: the born-from-event payload (resolving the
+	// fired start node) and/or the Call Activity inputs (SRD-050).
+	bornStart, serr := inst.seedInitialData(&cfg)
+	if serr != nil {
+		return nil, serr
 	}
 
 	// Seed the conversation key BEFORE createTracks (SRD-017 §4.5): createTracks
@@ -211,6 +235,39 @@ func New(
 	inst.trackCount.Store(int64(len(inst.tracks)))
 
 	return &inst, nil
+}
+
+// seedInitialData commits the instance's construction-time root data and returns
+// the resolved born-from-event start node (nil for a normally-seeded instance).
+// Two sources, both at the root scope: a born-from-event payload (SRD-015 — its
+// start node resolved so createTracks seeds from its outgoing flows instead of
+// parking it) and the Call Activity inputs (SRD-050 — bindRootData no-ops when
+// empty). A child is never also born-from-event, so the two never overlap.
+func (inst *Instance) seedInitialData(cfg *newConfig) (flow.Node, error) {
+	var bornStart flow.Node
+
+	if cfg.bornStartID != "" {
+		bs, ok := inst.s.Nodes[cfg.bornStartID]
+		if !ok {
+			return nil, errs.New(
+				errs.M("born-from-event start node %q not found in snapshot",
+					cfg.bornStartID),
+				errs.C(errorClass, errs.ObjectNotFound),
+				errs.D("process_id", inst.s.ProcessID))
+		}
+
+		bornStart = bs
+
+		if err := inst.sc.bindEventPayload(cfg.bornEvent); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := inst.sc.bindRootData(cfg.rootData); err != nil {
+		return nil, err
+	}
+
+	return bornStart, nil
 }
 
 // NewFromEvent creates an Instance born from an event-triggered start (SRD-015):
@@ -247,6 +304,41 @@ func NewFromEvent(
 	return New(s, parentRoot, er, ep, td,
 		withBornEvent(startNodeID, eDef),
 		withConversationKey(keyName, keyValue))
+}
+
+// NewChild creates an instance launched by a Call Activity (SRD-050 FR-4): a
+// CHILD instance rooted at the top (scope.EmptyDataPath — the isolation
+// contract, no scope walk-up to the caller), seeded with the caller-resolved
+// inputs (already cloned across the boundary) and stamped with the call linkage
+// so its facts stitch back to the caller. It mirrors NewFromEvent's role as the
+// public wrapper over the private options; the thresher's InvokeProcess uses it.
+// A nil snapshot, an empty parent instance id, or an empty call node id is
+// rejected — the linkage is the contract that makes a child's trace attributable.
+func NewChild(
+	s *snapshot.Snapshot,
+	er engrenv.EngineRuntime,
+	ep eventproc.EventProducer,
+	td interactor.TaskDistributor,
+	rootData []data.Data,
+	parentInstanceID, callNodeID string,
+) (*Instance, error) {
+	parentInstanceID = strings.TrimSpace(parentInstanceID)
+	if parentInstanceID == "" {
+		return nil, errs.New(
+			errs.M("NewChild: empty parent instance id isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	callNodeID = strings.TrimSpace(callNodeID)
+	if callNodeID == "" {
+		return nil, errs.New(
+			errs.M("NewChild: empty call activity node id isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	return New(s, scope.EmptyDataPath, er, ep, td,
+		withRootData(rootData),
+		withCallLinkage(parentInstanceID, callNodeID))
 }
 
 // emit delivers a track event to the loop. It never blocks forever: once the

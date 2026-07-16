@@ -90,12 +90,17 @@ The code today:
 
   with `ProcessCall{Key string; Version int; Inputs []data.Data;
   ParentInstanceID, CallNodeID string}` and `ChildProcess` exposing
-  `ID() string`, `Done() <-chan struct{}`, `Failed() (error, bool)` (the
-  terminal error, if abnormal), `Outputs(names []string) ([]data.Data,
-  error)` (read the child's root data by name after completion) and
-  `Terminate()`. `Instance.New` gains the invoker the way it carries the
-  `TaskDistributor` (nil = calls fail fast with a classified
-  no-invoker-configured error — a library embedder without a thresher).
+  `ID() string`, `Version() int` (the RESOLVED 1-based version bound — the
+  audit point FR-10 records for a latest-at-launch call), `Done()
+  <-chan struct{}`, `Failed() error` (the terminal fault, or nil on a
+  normal/cancelled end), `Outputs(names []string) ([]data.Data, error)`
+  (read the child's root data by name after completion) and `Terminate()`.
+  `Instance.New` gains the invoker the way it carries the `TaskDistributor`
+  (nil = calls fail fast with a classified no-invoker-configured error — a
+  library embedder without a thresher). *(M2 refinement: `Version()` was
+  added — the resolved version is otherwise unreachable through the
+  interface for a version-0 call, which FR-10 needs; `Failed()` dropped its
+  redundant `bool` — `err != nil` is the fault signal.)*
 - **FR-4 — The thresher implements it.** `Thresher.InvokeProcess`:
   resolve per FR-3 through the existing lookup paths
   (`latestSnapshotLocked` / the version scan — ADR-019 gap handling);

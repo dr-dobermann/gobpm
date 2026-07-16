@@ -131,6 +131,11 @@ const (
 	AttrBackoff           = "backoff"
 	AttrDataPath          = "data_path"
 	AttrScopePath         = "scope_path"
+
+	// Call-activity linkage (SRD-050): stamped on every fact a CHILD instance
+	// emits, stitching its trace back to the caller across the reuse boundary.
+	AttrParentInstanceID   = "parent_instance_id"
+	AttrCallActivityNodeID = "call_activity_node_id"
 )
 
 // Fact is the canonical observable engine event (ADR-013 v.2 §2.6/§2.9): a

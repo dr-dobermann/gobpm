@@ -151,6 +151,16 @@ func TestNewFromEventSeedError(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestNewFromEventUnknownStart covers seedInitialData's born-start resolution
+// guard: a start node id absent from the snapshot fails construction.
+func TestNewFromEventUnknownStart(t *testing.T) {
+	s, _, firedDef := msgStartSnapshot(t, "x")
+
+	_, err := NewFromEvent(s, scope.EmptyDataPath, enginert.Default(),
+		failEventProducer{}, nil, "no-such-start", firedDef, "", "")
+	require.Error(t, err)
+}
+
 // TestNewFromEventBuildError covers NewFromEvent's build-error wrap: a snapshot
 // with a blank process name makes the shared construction fail.
 func TestNewFromEventBuildError(t *testing.T) {
