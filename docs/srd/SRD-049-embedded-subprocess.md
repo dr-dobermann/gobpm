@@ -238,11 +238,17 @@ snapshot, the scope-aware loop (open/seed/park/drain/close), scope-cancel
 // sequence flows, Add/Remove dispatch by element type, and the
 // flow-endpoint validation shared by every container level (ADR-023 §2.2).
 type ElementsContainer struct {
-	nodes map[string]flow.Node
-	flows map[string]*flow.SequenceFlow
-	foundation.BaseElement
+	nodes map[string]Node
+	flows map[string]*SequenceFlow
 }
 ```
+
+The core carries **no element identity** — the embedding owner (a
+Process, a SubProcess) provides `foundation.BaseObject`, avoiding
+ambiguous identity selectors when `SubProcess` embeds both the activity
+base and the core; together the owner and the core satisfy
+`flow.Container`. `Add` delegates as `AddElement(owner, e)` so elements
+bind to the OWNER and the same-container rule confines nested graphs.
 
 `Add`/`Remove`/`Elements` mirror `Process.Add` (`process.go:175-209`,
 `308-330`); `ValidateFlows()` mirrors the endpoint loop
