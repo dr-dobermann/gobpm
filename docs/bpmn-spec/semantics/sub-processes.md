@@ -21,6 +21,12 @@ A Sub-Process is instantiated when reached by a Sequence Flow `token`. Two struc
 
 If the Sub-Process has no incoming sequence flows but contains `Start Event`s targeted by sequence flows _from outside_ — those external Start Events instantiate the Sub-Process when reached by a token. Multiple such Start Events are alternatives — each one creates its own instance.
 
+**Engine notes:** this §13.3.4 paragraph (verbatim in the appendix below)
+self-contradicts the connection rules — Table 7.2 (p.29) and §7.6.1 (p.40)
+both state a Sequence Flow cannot cross a Sub-Process boundary — and is
+implemented by no reference engine. gobpm rejects boundary-crossing flows
+unconditionally (ADR-023 §2.2, documented engine choice).
+
 ### Completion
 
 A Sub-Process instance completes when:
@@ -126,3 +132,65 @@ The execution semantics of the Transaction Sub-Process itself follow the plain S
 - Compensation in Sub-Processes: [compensation.md](compensation.md)
 - Multi-instance / Loop wrappers on Sub-Processes: [multi-instance.md](multi-instance.md)
 - Cancel End Event: [end-events.md](end-events.md)
+
+---
+
+## Appendix: Sub-Process start clauses (verbatim, BPMN 2.0 v2.0.2 PDF)
+
+Verified against the specification PDF via the spec notebook (2026-07-16),
+so reviews ground in-repo.
+
+**§13.3.4 (p.430) — instantiation:**
+
+> "A Sub-Process is instantiated when it is reached by a Sequence Flow
+> token. The Sub-Process has either a unique empty Start Event, which gets
+> a token upon instantiation, or it has no Start Event but Activities and
+> Gateways without incoming Sequence Flows. In the latter case all such
+> Activities and Gateways get a token. A Sub-Process MUST not have any
+> non-empty Start Events."
+
+> "If the Sub-Process does not have incoming Sequence Flows but Start
+> Events that are target of Sequence Flows from outside the Sub-Process,
+> the Sub-Process is instantiated when one of these Start Events is reached
+> by a token. Multiple such Start Events are alternative, i.e., each such
+> Start Event that is reached by a token generates a new instance."
+> *(Contradicts §7.6.1/Table 7.2 — see the Engine notes above.)*
+
+**§10.5.2 (p.241) — Start Events for Sub-Processes:**
+
+> "There is only one type of Start Event for Sub-Processes in BPMN (see
+> Figure 10.82): None."
+
+**Table 10.85 (p.241) — Sub-Process Start Event Types:**
+
+> "None: The None Start Event is used for all Sub-Processes, either
+> embedded or called (reusable). Other types of triggers are not used for a
+> Sub-Process, since the flow of the Process (a token) from the parent
+> Process is the trigger of the Sub-Process. If the Sub-Process is called
+> (reusable) and has multiple Start Events, some of the other Start Events
+> MAY have triggers, but these Start Events would not be used in the
+> context of a Sub-Process. When the other Start Events are triggered, they
+> would instantiate top-level Processes."
+
+**§10.5.2 (p.241) — Event Sub-Process start:**
+
+> "An Event Sub-Process MUST have a single Start Event." — with the
+> boundary-event trigger set: "Message, Timer, Escalation, Error,
+> Compensation, Conditional, Signal, Multiple, and Parallel."
+
+**§13.3.4 (p.431) — Call Activity:**
+
+> "If a global Process is called through a Call Activity, then the Call
+> Activity has the same instantiation and termination semantics as a
+> Sub-Process. However, in contrast to a Sub-Process, the global Process
+> that is called MAY also have non-empty Start Events. These non-empty
+> Start Events are alternative to the empty Start Event and hence they are
+> ignored when the Process is called from another Process."
+
+**Table 7.2 (p.29) / §7.6.1 (p.40) — the boundary rule:**
+
+> "Note that Sequence Flows cannot cross the boundary of a Sub-Process."
+
+> "Note that if a Sub-Process has been expanded within a Diagram, the
+> objects within the Sub-Process cannot be connected to objects outside of
+> the Sub-Process, nor can Sequence Flows cross a Pool boundary."
