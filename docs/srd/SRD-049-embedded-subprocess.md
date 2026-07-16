@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-16 |
 | Owner | Ruslan Gabitov |
@@ -465,8 +465,74 @@ sync, PR handover.
 
 ## §10 Implementation summary
 
-> ⚠️ TODO: fill after landing (stage commits, deltas vs draft, empirical
-> findings).
+### §10.1 Milestones by commit (branch `feat/sub-processes`)
+
+| Stage | Commit | Scope |
+|---|---|---|
+| doc | `29f4b28` | SRD-049 (after ADR-023 `dc02515` and the extract appendix) |
+| M1 | `a2d88f8` | `flow/container.go` (interface move + `ElementsContainer`) + `SubProcess` + shape validation |
+| M2 | `e7d63c9` | `WireClonedGraph` moved to flow (snapshot delegates) + `CloneGraph` + `SubProcess.Clone` |
+| M3 | `895ec13` | `walkNodesDeep` + deep `hasConditionals`; instantiating starts pinned top-level |
+| M4 | `38e93f5` | `scopePath`, frames-at-path, `evScopeOpen`, the scope registry, open/seed/park/drain/close/resume, `KindScope` |
+| M5+fix | `d2f2c9c` | `cancelScope`, `evScopeTerminate`, the error scope-chain — plus the folded conditional lost-wake-up FIX (below) |
+| M6 | `d10482b` | thresher e2e, `examples/embedded-subprocess/`, `docs/guides/composition.md`, changelog, tracker, READMEs |
+
+Every milestone landed `make ci` green; the branch-final diff-coverage:
+96.9% of 715 changed lines (min 95%).
+
+### §10.2 Deltas vs the draft
+
+- **§3.2 said "Exec is never reached" — wrong.** The host resumes via the
+  synthetic completion, and the composite node then executes normally:
+  `SubProcess.Exec` runs the standard outgoing selection, and
+  `ProcessEvent` accepts the completion delivery (the UserTask post-
+  completion shape). Both landed in M4.
+- **`SubProcess.Node()` override added** (the ServiceTask convention):
+  without it, flow targets unwrap to the embedded activity base —
+  stripping the executor/container capabilities. Found by the first
+  failing M4 run; the concrete-type override is now part of the
+  composite's required surface.
+- **FR-1 landed as the concern file** (owner direction during review):
+  `container.go` holds the moved `Container` interface, the core, and the
+  shared wiring helper together; the §3.1 identity-embed correction
+  (the core carries no `BaseElement`) landed with M1.
+- **`clearConds` keyed by trackID** (the disarm sites carry the id), and
+  `apply`'s wait/deliver plane extracted into `applyWaitPlane` (gocyclo).
+- **Fixes found on sight** (M4): `unregisterEvent` skips Conditional
+  definitions (never hub-registered — SRD-048 symmetry); `KindScope`
+  joined the observability echo-level table (an absent kind echoes at
+  Error); `executeNode`'s NodeExecutor error names the node.
+- §6's `TestScopeDrainResumesHost` landed folded into
+  `TestScopeOpenSeedsNoneStart`/`...FlowlessNodes` (the drain-resume
+  assert is their outer-task check).
+
+### §10.3 Empirical findings
+
+- **The conditional lost-wake-up flake (fixed in M5, pre-existing on
+  master from the SRD-048 merge).** A track walking onto a conditional
+  catch as its continuation node armed the subscription (`evWaiting`) and
+  then its `evMoved`-driven boundary disarm tore the fresh watch down
+  (`disarmBoundaries`' unconditional `clearConds`); the later commit
+  swept an empty registry — a silently lost wake-up, the instance hung
+  Active (~1 in 4-8 under race; fork-born catches unaffected, making the
+  per-instance clone's flow-map iteration order the flake selector).
+  Root-caused from a recorded fact/log trail (the Registered fact's stale
+  node proved arm-before-move). Fix: the disarm is boundary-flavor-scoped
+  (`clearCondBoundaries`); the arm also uses the wait node carried on the
+  emit for correct fact attribution. Pinned deterministically by
+  `TestConditionalSurvivesMove`; the e2e passes ×25 under race.
+- **The M1 `make ci` red was a process error, not a code error**: the
+  gate ran against a tree still being edited (the recorded concurrent-ci
+  pitfall) — re-run clean on the frozen commit.
+
+### §10.4 Backlog (out of SRD-049 scope)
+
+- **`Process` migration onto `flow.ElementsContainer`** — the recorded
+  FR-1 deferral (no churn in this change-set).
+- The Call Activity slice (ADR-023 §2.7) — the next SRD; #85 remains
+  open for it.
+- The fork-born Message-catch synchronous-fire corner (SRD-048 §10.4)
+  remains queued.
 
 ## Open questions
 
