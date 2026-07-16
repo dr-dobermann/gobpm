@@ -134,7 +134,7 @@ func (inst *Instance) enqueueJob(
 	}
 	defer frame.Discard()
 
-	input, err := ew.BindJobInput(ctx, newExecEnv(inst, frame))
+	input, err := ew.BindJobInput(ctx, newExecEnv(inst, frame, nil))
 	if err != nil {
 		return err
 	}

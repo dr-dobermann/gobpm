@@ -27,7 +27,7 @@ func (inst *Instance) guardEval(ctx context.Context) exec.GuardEval {
 					errs.E(err))
 		}
 
-		res, err := inst.ExpressionEngine().Evaluate(ctx, cond, newExecEnv(inst, f))
+		res, err := inst.ExpressionEngine().Evaluate(ctx, cond, newExecEnv(inst, f, nil))
 		if err != nil {
 			return false,
 				errs.New(

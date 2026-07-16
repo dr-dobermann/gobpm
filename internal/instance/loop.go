@@ -307,6 +307,11 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		// completion-vs-fire race (SRD-029 FR-5/FR-8).
 		ls.fireBoundary(ctx, ev)
 
+	case evScopeTerminate:
+		// a Terminate End Event inside a sub-process — only its enclosing
+		// scope dies; the parent continues (§13.5.6, SRD-049 FR-11).
+		ls.terminateScope(ctx, ev.track.scopePath)
+
 	case evTerminate:
 		// a Terminate End Event was reached — abnormally terminate the instance (SRD-030
 		// FR-1). stopAll sets stopping, tears down parked/between-node tracks, and cancels
@@ -366,8 +371,10 @@ func (ls *loopState) onWaiting(ctx context.Context, ev trackEvent) {
 
 	// arm the track's conditional subscriptions AFTER it is recorded parked,
 	// so an arm-time fire can deliver through the normal parked-dispatch
-	// contract (SRD-048 FR-9).
-	ls.armConditionals(ctx, ev.track)
+	// contract (SRD-048 FR-9). The subscribed node rides the emit — the
+	// loop-owned position may still hold the previous node here (evWaiting
+	// precedes evMoved).
+	ls.armConditionalsAt(ctx, ev.track, ev.node)
 }
 
 // dispatchToParked sends a fired event to its parked-and-undelivered track. The target is
@@ -558,7 +565,9 @@ func (ls *loopState) applyParked(ev trackEvent) {
 // the track is cleared from the loop-owned views and its boundaries disarmed.
 // Called only from apply.
 func (ls *loopState) applyFailed(ctx context.Context, ev trackEvent) {
-	if !ls.matchErrorBoundary(ctx, ev.track) {
+	if !ls.matchErrorBoundary(ctx, ev.track) &&
+		!ls.matchErrorScopeChain(ctx, ev.track) {
+		ls.reportUncaught(ev.track)
 		ls.failFromTrack(ev.track)
 	}
 

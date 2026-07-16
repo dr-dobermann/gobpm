@@ -15,14 +15,35 @@ type execEnv struct {
 	*Instance
 
 	frame *scope.Frame
+	// track is the executing track (nil for transient evaluation frames):
+	// the scoped Terminate routes by ITS scope path (SRD-049 FR-11).
+	track *track
 }
 
-// newExecEnv builds the environment of one node execution.
-func newExecEnv(inst *Instance, f *scope.Frame) *execEnv {
+// newExecEnv builds the environment of one node execution. t may be nil
+// for transient (non-track) frames — Terminate then falls back to the
+// instance-level semantics.
+func newExecEnv(inst *Instance, f *scope.Frame, t *track) *execEnv {
 	return &execEnv{
 		Instance: inst,
 		frame:    f,
+		track:    t,
 	}
+}
+
+// Terminate overrides the instance-level Terminate with the scoped
+// semantics (BPMN §13.5.6, ADR-023 §2.5): a Terminate End Event reached
+// INSIDE a sub-process terminates only its enclosing scope — the loop
+// discards that scope's tokens and the parent continues; at the root (or
+// from a track-less frame) it keeps the whole-instance behavior.
+func (e *execEnv) Terminate() {
+	if e.track == nil || e.track.scopePath == e.sc.root {
+		e.Instance.Terminate()
+
+		return
+	}
+
+	e.emit(trackEvent{kind: evScopeTerminate, track: e.track})
 }
 
 // GetData resolves name frame-first, then through the container scopes.

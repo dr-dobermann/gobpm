@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"slices"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -238,6 +239,17 @@ func (ls *loopState) completeScope(
 
 	ls.reportScope(observability.PhaseCompleted, entry.node, path)
 
+	ls.resumeScopeHost(ctx, path, entry)
+}
+
+// resumeScopeHost resumes a closed scope's parked host with the synthetic
+// completion and reopens the scope for a queued re-entry host (§4.4). Runs
+// on the loop goroutine.
+func (ls *loopState) resumeScopeHost(
+	ctx context.Context,
+	path scope.DataPath,
+	entry *scopeEntry,
+) {
 	// resume the parked host through the standard parked-dispatch contract.
 	ls.dispatchToParked(ctx, trackEvent{
 		kind:  evDeliver,
@@ -259,6 +271,82 @@ func (ls *loopState) completeScope(
 			}
 		}
 	}
+}
+
+// underScope reports whether p is path itself or a descendant of it.
+func underScope(p, path scope.DataPath) bool {
+	return p == path ||
+		len(p) > len(path) && string(p[:len(path)]) == string(path) &&
+			p[len(path)] == '/'
+}
+
+// cancelScope abandons a scope as a unit (ADR-023 §2.5): every live track
+// under path (descendant scopes included) is stopped and its context
+// canceled — a parked inner track wakes through ctx.Done, a running one
+// hits the discard checkpoint — and its loop-registry state is cleared;
+// the subtree's data-plane scopes close deepest-first and their entries
+// drop, each reported with phase. The HOST is untouched — callers decide
+// its fate (resume for a scoped Terminate, cancellation for an
+// interrupting boundary, the exception flow for an error catch). Runs on
+// the loop goroutine.
+func (ls *loopState) cancelScope(path scope.DataPath, phase observability.Phase) {
+	if _, ok := ls.scopes[path]; !ok {
+		return // already closed/canceled — a late signal is benign.
+	}
+
+	// stop the subtree's tracks and clear their loop state.
+	for _, t := range ls.inst.tracks {
+		if !underScope(t.scopePath, path) {
+			continue
+		}
+
+		t.stop()
+		t.cancel()
+		ls.flipNotParked(t)
+		ls.disarmBoundaries(t.ID())
+	}
+
+	// close deepest-first: collect the subtree entries, longest path first.
+	sub := []scope.DataPath{}
+
+	for p := range ls.scopes {
+		if underScope(p, path) {
+			sub = append(sub, p)
+		}
+	}
+
+	slices.SortFunc(sub, func(a, b scope.DataPath) int {
+		return len(b) - len(a)
+	})
+
+	for _, p := range sub {
+		entry := ls.scopes[p]
+		delete(ls.scopes, p)
+
+		// best-effort close: the subtree is being abandoned; a close error
+		// here cannot be acted on beyond logging (ADR-022 §2.3(2)).
+		if err := ls.inst.sc.plane.CloseScope(p); err != nil {
+			ls.inst.Logger().Debug("canceled-scope close failed",
+				"scope_path", string(p), "error", err.Error())
+		}
+
+		ls.reportScope(phase, entry.node, p)
+	}
+}
+
+// terminateScope realizes the scoped Terminate End Event (§13.5.6, SRD-049
+// FR-11): the enclosing scope's tokens are discarded, the scope closes, and
+// the parked host resumes — the composite completes abnormally-but-locally
+// and the parent continues on its outgoing. A late signal for an
+// already-closed scope is a benign no-op. Runs on the loop goroutine.
+func (ls *loopState) terminateScope(ctx context.Context, path scope.DataPath) {
+	entry, ok := ls.scopes[path]
+	if !ok {
+		return
+	}
+
+	ls.cancelScope(path, observability.PhaseTerminated)
+	ls.resumeScopeHost(ctx, path, entry)
 }
 
 // reportScope emits one scope-lifecycle fact (SRD-049 FR-13).

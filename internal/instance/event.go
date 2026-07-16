@@ -76,6 +76,7 @@ var trackEventKindNames = [...]string{
 	evJobWaiting:  "jobWaiting",
 	evDataCommit:  "dataCommit",
 	evScopeOpen:   "scopeOpen",
+	evScopeTerminate: "scopeTerminate",
 }
 
 // String returns the lower-case event-kind name for logging.
@@ -158,4 +159,9 @@ const (
 	// resumes the host with a synthetic completion when the scope drains (SRD-049 FR-8/9).
 	// Emitted mid-run only; a born-parked composite is opened by the spawn path instead.
 	evScopeOpen
+	// evScopeTerminate: a Terminate End Event was reached INSIDE a sub-process (ev.track is
+	// the terminating track; its scope path names the dying scope). The loop cancels only
+	// that scope's tracks, closes it, and resumes the parked host — the parent continues
+	// (BPMN §13.5.6, SRD-049 FR-11). A root-scope Terminate keeps evTerminate/stopAll.
+	evScopeTerminate
 )

@@ -10,6 +10,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
 	"github.com/dr-dobermann/gobpm/internal/enginert"
+	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
@@ -61,7 +62,10 @@ func runInstance(t *testing.T, p *process.Process) *Instance {
 	s, err := snapshot.New(p)
 	require.NoError(t, err)
 
-	ep := mockeventproc.NewMockEventProducer(t)
+	// the tolerant producer: hub registrations (a ReceiveTask, a boundary
+	// watch) succeed silently — these tests assert loop behavior, not hub
+	// traffic.
+	ep := &capturingProducer{procs: map[string]eventproc.EventProcessor{}}
 
 	inst, err := New(s, scope.EmptyDataPath, enginert.Default(), ep, nil)
 	require.NoError(t, err)
@@ -547,6 +551,55 @@ func TestScopeRuntimeDirect(t *testing.T) {
 		for _, e := range ls.scopes {
 			require.Same(t, host2, e.host)
 		}
+	})
+
+	t.Run("two queued hosts carry over reopens", func(t *testing.T) {
+		inst, ls, host, node := build(t)
+		ctx := t.Context()
+
+		ls.onScopeOpen(ctx, host, node)
+
+		h2, err := newTrack(node, inst, nil)
+		require.NoError(t, err)
+		h3, err := newTrack(node, inst, nil)
+		require.NoError(t, err)
+
+		ls.onScopeOpen(ctx, h2, node)
+		ls.onScopeOpen(ctx, h3, node)
+
+		var path scope.DataPath
+		var entry *scopeEntry
+		for p, e := range ls.scopes {
+			path, entry = p, e
+		}
+		require.Len(t, entry.queue, 2)
+
+		entry.active = 0
+		ls.completeScope(ctx, path, entry)
+
+		// h2 reopened; h3 carried into the fresh entry's queue.
+		fresh, ok := ls.scopes[path]
+		require.True(t, ok)
+		require.Same(t, h2, fresh.host)
+		require.Len(t, fresh.queue, 1)
+		require.Same(t, h3, fresh.queue[0])
+	})
+
+	t.Run("born-parked composite opens from spawn", func(t *testing.T) {
+		_, ls, host, _ := build(t)
+
+		// spawn runs recordBornWaiter, which opens the scope for a track
+		// born parked ON a composite (a fork straight into a sub-process).
+		ls.spawn(t.Context(), host)
+
+		require.Len(t, ls.scopes, 1)
+	})
+
+	t.Run("late scope terminate is a no-op", func(t *testing.T) {
+		_, ls, host, _ := build(t)
+
+		ls.terminateScope(t.Context(), host.scopePath) // nothing open
+		require.False(t, ls.stopping)
 	})
 
 	t.Run("close failure faults", func(t *testing.T) {

@@ -537,3 +537,47 @@ func goexprBool(t *testing.T) data.FormalExpression {
 
 	return c
 }
+
+// TestSubProcessRuntimeSurface — the execution-facing methods in their home
+// package: ProcessEvent accepts the completion (nil rejected), Exec selects
+// the outgoing flows, Node returns the concrete type.
+func TestSubProcessRuntimeSurface(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	sp := noneStartSP(t, "surface")
+
+	t.Run("Node returns the SubProcess itself", func(t *testing.T) {
+		require.Same(t, sp, sp.Node())
+	})
+
+	t.Run("ProcessEvent accepts a completion, rejects nil", func(t *testing.T) {
+		require.Error(t, sp.ProcessEvent(t.Context(), nil))
+
+		sig, err := events.NewSignal("sd",
+			data.MustItemDefinition(values.NewVariable(1)))
+		require.NoError(t, err)
+		sdef, err := events.NewSignalEventDefinition(sig)
+		require.NoError(t, err)
+		require.NoError(t, sp.ProcessEvent(t.Context(), sdef))
+	})
+
+	t.Run("Exec selects the single outgoing", func(t *testing.T) {
+		// give the composite one outgoing inside a wrapper container: the
+		// single-flow short-circuit needs no runtime environment.
+		owner, err := activities.NewSubProcess("wrapper")
+		require.NoError(t, err)
+
+		inner := noneStartSP(t, "exec-inner")
+		next := spTask(t, "next")
+		require.NoError(t, owner.Add(inner))
+		require.NoError(t, owner.Add(next))
+
+		f, err := flow.Link(inner, next)
+		require.NoError(t, err)
+
+		out, err := inner.Exec(t.Context(), nil)
+		require.NoError(t, err)
+		require.Len(t, out, 1)
+		require.Equal(t, f.ID(), out[0].ID())
+	})
+}

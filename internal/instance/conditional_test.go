@@ -831,3 +831,35 @@ func TestConditionalBoundaryArmEvalFailure(t *testing.T) {
 	require.True(t, ls.stopping)
 	require.Error(t, inst.LastErr())
 }
+
+// TestConditionalSurvivesMove — the lost-wake-up regression
+// (TestConditionalEventsE2E flake): a track that walks onto a conditional
+// catch emits evWaiting (arming the watch) and THEN evMoved — whose
+// boundary disarm must NOT tear the fresh catch subscription down. The
+// deterministic pin of the map-order-selected interleaving.
+func TestConditionalSurvivesMove(t *testing.T) {
+	val, evals := false, 0
+	def := mustCondDef(t, condExpr(t, &val, &evals))
+
+	_, tr, ls := condInstance(t, def)
+	ctx := t.Context()
+
+	catchNode := ls.position[tr.ID()]
+
+	// the failing interleaving: arm (evWaiting) then the same track's
+	// evMoved-driven boundary disarm.
+	ls.armConditionalsAt(ctx, tr, catchNode)
+	require.Len(t, ls.conds, 1)
+
+	ls.disarmBoundaries(tr.ID())
+	require.Len(t, ls.conds, 1,
+		"the boundary disarm must not kill a catch subscription")
+
+	// the commit now finds the armed watch and fires it.
+	val = true
+	ls.sweepConditionals(ctx,
+		[]data.Change{{Path: "x", Type: data.ValueUpdated}})
+
+	got := <-tr.evtCh
+	require.Equal(t, def.ID(), got.ID())
+}

@@ -27,7 +27,7 @@ func TestExecEnv(t *testing.T) {
 		inst.sc.plane.Root(), inst.sc.plane)
 	require.NoError(t, err)
 
-	env := newExecEnv(inst, f)
+	env := newExecEnv(inst, f, nil)
 
 	ctx := context.Background()
 

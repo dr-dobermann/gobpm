@@ -111,10 +111,23 @@ func (t *track) signalDataCommit(node flow.Node, changes []data.Change) {
 // loop-owned position view, never from the track cross-goroutine. Runs on the
 // loop goroutine.
 func (ls *loopState) armConditionals(ctx context.Context, t *track) {
+	ls.armConditionalsAt(ctx, t, ls.position[t.ID()])
+}
+
+// armConditionalsAt is armConditionals with an explicit subscribed node —
+// the evWaiting emit precedes the track's evMoved, so the loop-owned
+// position may still hold the PREVIOUS node at arm time; onWaiting passes
+// the carried wait node instead (the fact-attribution fix of the
+// TestConditionalEventsE2E investigation).
+func (ls *loopState) armConditionalsAt(
+	ctx context.Context,
+	t *track,
+	node flow.Node,
+) {
 	for _, def := range t.condDefs {
 		w := &condWatch{
 			track: t,
-			node:  ls.position[t.ID()],
+			node:  node,
 			def:   def,
 			deps:  condDeps(def),
 		}
@@ -276,7 +289,7 @@ func (ls *loopState) evalCondition(
 	defer frame.Discard()
 
 	res, err := ls.inst.ExpressionEngine().Evaluate(
-		ctx, def.Condition(), newExecEnv(ls.inst, frame))
+		ctx, def.Condition(), newExecEnv(ls.inst, frame, nil))
 	if err != nil {
 		return false, err
 	}
@@ -345,6 +358,33 @@ func (ls *loopState) condArmed(w *condWatch) bool {
 	}
 
 	return false
+}
+
+// clearCondBoundaries removes only the BOUNDARY-flavored conditional
+// entries of trackID — the disarmBoundaries companion. The disarm fires on
+// evMoved, which checkFlows emits AFTER the evWaiting that may have just
+// armed a CATCH subscription for the same track's parked episode; clearing
+// all flavors there silently killed that fresh watch and lost its wake-up
+// (the TestConditionalEventsE2E flake). Catch entries are torn down by
+// their own lifecycle (flipNotParked on delivery/end/fail → clearConds).
+func (ls *loopState) clearCondBoundaries(trackID string) {
+	if len(ls.conds) == 0 {
+		return
+	}
+
+	kept := ls.conds[:0]
+
+	for _, w := range ls.conds {
+		if !w.boundary || w.track.ID() != trackID {
+			kept = append(kept, w)
+		}
+	}
+
+	for i := len(kept); i < len(ls.conds); i++ {
+		ls.conds[i] = nil
+	}
+
+	ls.conds = kept
 }
 
 // clearConds removes every armed conditional belonging to track trackID —

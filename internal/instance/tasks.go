@@ -194,7 +194,7 @@ func (inst *Instance) authorizeTask(
 	}
 	defer frame.Discard()
 
-	return ht.Authorize(ctx, actor, newExecEnv(inst, frame),
+	return ht.Authorize(ctx, actor, newExecEnv(inst, frame, nil),
 		inst.ExpressionEngine())
 }
 

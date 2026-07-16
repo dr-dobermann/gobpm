@@ -472,6 +472,7 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 		t.instance.emit(trackEvent{
 			kind:      evWaiting,
 			track:     t,
+			node:      en,
 			msgDefIDs: t.msgDefIDs,
 			condDefs:  t.condDefs,
 		})
@@ -971,7 +972,7 @@ func (t *track) executeNodeCore(
 ) ([]*flow.SequenceFlow, error) {
 	step.state = StepExecuting
 
-	nexts, err := ne.Exec(ctx, newExecEnv(t.instance, f))
+	nexts, err := ne.Exec(ctx, newExecEnv(t.instance, f, t))
 	if err != nil {
 		return nil, err
 	}
