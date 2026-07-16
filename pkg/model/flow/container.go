@@ -217,3 +217,121 @@ func (c *ElementsContainer) ValidateFlows() error {
 
 	return nil
 }
+
+// WireClonedGraph completes a freshly cloned node set into a runnable
+// graph: it relinks the flow graph between the clones, remaps each
+// gateway's default flow onto its cloned edge, and rebinds each boundary
+// event onto its cloned host activity. One wiring implementation serves
+// every container level — the snapshot's top-level graph and a
+// Sub-Process's inner graph (CloneGraph) alike. clonedNodes is the
+// already-cloned node set (mutated in place for the default-flow and
+// boundary rebinds); srcNodes and srcFlows are the originals the clones
+// were made from. It returns the cloned flow set.
+func WireClonedGraph(
+	clonedNodes map[string]Node,
+	srcNodes map[string]Node,
+	srcFlows map[string]*SequenceFlow,
+) (map[string]*SequenceFlow, error) {
+	clonedFlows := make(map[string]*SequenceFlow, len(srcFlows))
+
+	// 1. relink the flow graph between the cloned nodes.
+	for id, f := range srcFlows {
+		src, ok := clonedNodes[f.Source().ID()].(SequenceSource)
+		if !ok {
+			return nil, errs.New(
+				errs.M("cloned source %q isn't a sequence source",
+					f.Source().ID()),
+				errs.C(errorClass, errs.TypeCastingError))
+		}
+
+		trg, ok := clonedNodes[f.Target().ID()].(SequenceTarget)
+		if !ok {
+			return nil, errs.New(
+				errs.M("cloned target %q isn't a sequence target",
+					f.Target().ID()),
+				errs.C(errorClass, errs.TypeCastingError))
+		}
+
+		// src and trg are cloned graph nodes and f is a valid edge, so the
+		// edge can always be rebuilt; use the panicking form.
+		clonedFlows[id] = MustCloneFlow(f, src, trg)
+	}
+
+	// 2. remap each gateway's default flow onto its cloned edge.
+	for _, n := range clonedNodes {
+		dfh, ok := n.(DefaultFlowHolder)
+		if !ok {
+			continue
+		}
+
+		df := dfh.DefaultFlow()
+		if df == nil {
+			continue
+		}
+
+		// the default flow is one of this node's outgoing flows by
+		// construction, so the remap onto its clone cannot fail.
+		dfh.MustUpdateDefaultFlow(clonedFlows[df.ID()])
+	}
+
+	// 3. rebind each boundary event onto its cloned host activity. The cloned
+	//    activities start with no boundaries (the clone contract leaves them
+	//    for this step), so re-attaching the cloned boundary points BOTH
+	//    cross-references (host→boundary and boundary→host) at the cloned
+	//    nodes — a boundary fire then acts on this graph, not the shared
+	//    source (SRD-029 M3a). Iterating the originals gives the host mapping
+	//    via the boundary's AttachedTo.
+	for id, n := range srcNodes {
+		origBE, ok := n.(BoundaryEvent)
+		if !ok {
+			continue
+		}
+
+		// The clones are cloned from valid nodes — a BoundaryEvent's clone is
+		// a BoundaryEvent and its host's clone an ActivityNode — so, as with
+		// the flow relink above, these casts cannot fail (panicking form).
+		cloneBE := clonedNodes[id].(BoundaryEvent)
+		cloneHost := clonedNodes[origBE.AttachedTo().ID()].(ActivityNode)
+
+		// The cloned host starts with no boundaries, so the already-validated
+		// binding re-attaches without a multiplicity conflict; an error here
+		// can only mean a corrupt clone.
+		if err := cloneBE.BoundTo(cloneHost); err != nil {
+			return nil, errs.New(
+				errs.M("rebind boundary %q to its cloned host failed", id),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err))
+		}
+	}
+
+	return clonedFlows, nil
+}
+
+// CloneGraph returns a deep per-instance copy of the core's graph: every
+// node cloned via its own Clone (a nested container recurses naturally),
+// the flows relinked, defaults remapped and boundaries rebound between the
+// clones (WireClonedGraph). The cloned elements carry no container
+// back-reference — the Clone contract; containment matters at build time,
+// and a cloned graph exists to be executed, not edited.
+func (c *ElementsContainer) CloneGraph() (ElementsContainer, error) {
+	cloned := make(map[string]Node, len(c.nodes))
+
+	for id, n := range c.nodes {
+		cn, err := n.Clone()
+		if err != nil {
+			return ElementsContainer{}, errs.New(
+				errs.M("couldn't clone node %q", id),
+				errs.C(errorClass, errs.BulidingFailed),
+				errs.E(err))
+		}
+
+		cloned[id] = cn
+	}
+
+	flows, err := WireClonedGraph(cloned, c.nodes, c.flows)
+	if err != nil {
+		return ElementsContainer{}, err
+	}
+
+	return ElementsContainer{nodes: cloned, flows: flows}, nil
+}

@@ -3,10 +3,13 @@ package flow_test
 import (
 	"testing"
 
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
 	"github.com/stretchr/testify/require"
 )
 
@@ -200,5 +203,137 @@ func TestElementsContainerDefensive(t *testing.T) {
 		// a flow bound to o cannot be added to another owner.
 		o2 := newStubOwner(t)
 		require.Error(t, o2.Add(f))
+	})
+}
+
+// TestCloneGraph — the shared wiring in its home package: relink, default
+// remap, boundary rebind, node-clone error propagation.
+func TestCloneGraph(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	t.Run("relink and rebind", func(t *testing.T) {
+		sp, err := activities.NewSubProcess("wiring")
+		require.NoError(t, err)
+
+		s, e := node(t, "s", true), node(t, "e", false)
+		require.NoError(t, sp.Add(s))
+		require.NoError(t, sp.Add(e))
+
+		f, err := flow.Link(s.(flow.SequenceSource), e.(flow.SequenceTarget))
+		require.NoError(t, err)
+		require.NotNil(t, f)
+
+		core := sp.ElementsContainer
+		cloned, err := core.CloneGraph()
+		require.NoError(t, err)
+
+		require.Len(t, cloned.Nodes(), 2)
+		require.Len(t, cloned.Flows(), 1)
+
+		cf := cloned.Flows()[0]
+		require.Equal(t, f.ID(), cf.ID())
+		require.NotSame(t, f, cf)
+		require.NotSame(t, s, cf.Source().Node(),
+			"the cloned edge must reference the CLONED source")
+	})
+
+	t.Run("boundary rebind through the helper", func(t *testing.T) {
+		sp, err := activities.NewSubProcess("wiring-bnd")
+		require.NoError(t, err)
+
+		host, err := activities.NewSubProcess("host") // any activity works
+		require.NoError(t, err)
+		inner, err := events.NewStartEvent("h-start")
+		require.NoError(t, err)
+		require.NoError(t, host.Add(inner))
+		hEnd, err := events.NewEndEvent("h-end")
+		require.NoError(t, err)
+		require.NoError(t, host.Add(hEnd))
+		_, err = flow.Link(inner, hEnd)
+		require.NoError(t, err)
+
+		require.NoError(t, sp.Add(host))
+
+		sig, err := events.NewSignal("w-sig",
+			data.MustItemDefinition(values.NewVariable(1)))
+		require.NoError(t, err)
+		sdef, err := events.NewSignalEventDefinition(sig)
+		require.NoError(t, err)
+
+		be, err := events.NewBoundaryEvent("w-bnd", host, sdef, true)
+		require.NoError(t, err)
+		require.NoError(t, sp.Add(be))
+
+		cloned, err := sp.ElementsContainer.CloneGraph()
+		require.NoError(t, err)
+
+		var cbe flow.BoundaryEvent
+		var chost flow.ActivityNode
+		for _, n := range cloned.Nodes() {
+			if b, ok := n.(flow.BoundaryEvent); ok {
+				cbe = b
+			} else if a, ok := n.(flow.ActivityNode); ok {
+				chost = a
+			}
+		}
+		require.NotNil(t, cbe)
+		require.NotNil(t, chost)
+		require.Same(t, chost, cbe.AttachedTo())
+	})
+
+	t.Run("default flow remapped", func(t *testing.T) {
+		sp, err := activities.NewSubProcess("wiring-df")
+		require.NoError(t, err)
+
+		gw, err := gateways.NewExclusiveGateway()
+		require.NoError(t, err)
+		e1 := node(t, "e1", false)
+		e2 := node(t, "e2", false)
+
+		for _, el := range []flow.Element{gw, e1, e2} {
+			require.NoError(t, sp.Add(el))
+		}
+
+		_, err = flow.Link(gw, e1.(flow.SequenceTarget))
+		require.NoError(t, err)
+		df, err := flow.Link(gw, e2.(flow.SequenceTarget))
+		require.NoError(t, err)
+		require.NoError(t, gw.UpdateDefaultFlow(df))
+
+		cloned, err := sp.ElementsContainer.CloneGraph()
+		require.NoError(t, err)
+
+		var ch flow.DefaultFlowHolder
+		for _, n := range cloned.Nodes() {
+			if h, ok := n.(flow.DefaultFlowHolder); ok && h.DefaultFlow() != nil {
+				ch = h
+			}
+		}
+		require.NotNil(t, ch)
+		require.Equal(t, df.ID(), ch.DefaultFlow().ID())
+		require.NotSame(t, df, ch.DefaultFlow())
+	})
+
+	t.Run("node clone failure propagates", func(t *testing.T) {
+		sp, err := activities.NewSubProcess("wiring-bad")
+		require.NoError(t, err)
+
+		// a value-less property (a bare zero struct — FIX-017/018) makes an
+		// inner node's Clone fail; the wrap must surface it.
+		bad, err := activities.NewSubProcess("bad-inner",
+			data.WithProperties(&data.Property{}))
+		require.NoError(t, err)
+		require.NoError(t, sp.Add(bad))
+
+		_, err = sp.ElementsContainer.CloneGraph()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "couldn't clone node")
+
+		// an empty core clones to an empty core.
+		empty, err := activities.NewSubProcess("empty-core")
+		require.NoError(t, err)
+		cloned, err := empty.ElementsContainer.CloneGraph()
+		require.NoError(t, err)
+		require.Empty(t, cloned.Nodes())
 	})
 }

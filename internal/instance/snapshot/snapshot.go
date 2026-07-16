@@ -152,7 +152,7 @@ func New(
 	// Wire the cloned graph the same way Clone does — relink flows between the
 	// clones, remap default flows, rebind boundary events — so the snapshot is
 	// born isolated in a single pass over the definition (SRD-031.A §3.3).
-	flows, err := wireClonedGraph(s.Nodes, srcNodes, srcFlows)
+	flows, err := flow.WireClonedGraph(s.Nodes, srcNodes, srcFlows)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +272,7 @@ func (s *Snapshot) Clone() (*Snapshot, error) {
 		clone.Nodes[id] = cn
 	}
 
-	flows, err := wireClonedGraph(clone.Nodes, s.Nodes, s.Flows)
+	flows, err := flow.WireClonedGraph(clone.Nodes, s.Nodes, s.Flows)
 	if err != nil {
 		return nil, err
 	}
@@ -282,90 +282,3 @@ func (s *Snapshot) Clone() (*Snapshot, error) {
 	return &clone, nil
 }
 
-// wireClonedGraph completes a freshly cloned node set into a runnable graph: it
-// relinks the flow graph between the clones, remaps each gateway's default flow
-// onto its cloned edge, and rebinds each boundary event onto its cloned host
-// activity. It is shared by Snapshot.New (cloning from the process definition)
-// and Clone (cloning from the snapshot) — the node-cloning loop differs by
-// source, the wiring does not. clonedNodes is the already-cloned node set
-// (mutated in place for the default-flow and boundary rebinds); srcNodes and
-// srcFlows are the originals the clones were made from. It returns the cloned
-// flow set.
-func wireClonedGraph(
-	clonedNodes map[string]flow.Node,
-	srcNodes map[string]flow.Node,
-	srcFlows map[string]*flow.SequenceFlow,
-) (map[string]*flow.SequenceFlow, error) {
-	clonedFlows := make(map[string]*flow.SequenceFlow, len(srcFlows))
-
-	// 1. relink the flow graph between the cloned nodes.
-	for id, f := range srcFlows {
-		src, ok := clonedNodes[f.Source().ID()].(flow.SequenceSource)
-		if !ok {
-			return nil, errs.New(
-				errs.M("cloned source %q isn't a sequence source",
-					f.Source().ID()),
-				errs.C(errorClass, errs.TypeCastingError))
-		}
-
-		trg, ok := clonedNodes[f.Target().ID()].(flow.SequenceTarget)
-		if !ok {
-			return nil, errs.New(
-				errs.M("cloned target %q isn't a sequence target",
-					f.Target().ID()),
-				errs.C(errorClass, errs.TypeCastingError))
-		}
-
-		// src and trg are cloned graph nodes and f is a valid edge, so the
-		// edge can always be rebuilt; use the panicking form.
-		clonedFlows[id] = flow.MustCloneFlow(f, src, trg)
-	}
-
-	// 2. remap each gateway's default flow onto its cloned edge.
-	for _, n := range clonedNodes {
-		dfh, ok := n.(flow.DefaultFlowHolder)
-		if !ok {
-			continue
-		}
-
-		df := dfh.DefaultFlow()
-		if df == nil {
-			continue
-		}
-
-		// the default flow is one of this node's outgoing flows by
-		// construction, so the remap onto its clone cannot fail.
-		dfh.MustUpdateDefaultFlow(clonedFlows[df.ID()])
-	}
-
-	// 3. rebind each boundary event onto its cloned host activity. The cloned
-	//    activities start with no boundaries (activity.clone leaves them for this
-	//    step), so re-attaching the cloned boundary points BOTH cross-references
-	//    (host→boundary and boundary→host) at the cloned nodes — a boundary fire
-	//    then acts on this graph, not the shared source (SRD-029 M3a). Iterating
-	//    the originals gives the host mapping via the boundary's AttachedTo.
-	for id, n := range srcNodes {
-		origBE, ok := n.(flow.BoundaryEvent)
-		if !ok {
-			continue
-		}
-
-		// The clones are cloned from valid nodes — a BoundaryEvent's clone is a
-		// BoundaryEvent and its host's clone an ActivityNode — so, as with the
-		// flow relink above, these casts cannot fail (panicking form).
-		cloneBE := clonedNodes[id].(flow.BoundaryEvent)
-		cloneHost := clonedNodes[origBE.AttachedTo().ID()].(flow.ActivityNode)
-
-		// The cloned host starts with no boundaries (activity.clone), so the
-		// already-validated binding re-attaches without a multiplicity conflict;
-		// an error here can only mean a corrupt clone.
-		if err := cloneBE.BoundTo(cloneHost); err != nil {
-			return nil, errs.New(
-				errs.M("rebind boundary %q to its cloned host failed", id),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.E(err))
-		}
-	}
-
-	return clonedFlows, nil
-}

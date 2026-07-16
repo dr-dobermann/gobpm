@@ -8,7 +8,9 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
@@ -238,10 +240,159 @@ func TestSubProcessContainment(t *testing.T) {
 		require.Equal(t, be.ID(), sp.BoundaryEvents()[0].ID())
 	})
 
-	t.Run("clone not yet implemented", func(t *testing.T) {
-		_, err := noneStartSP(t, "clone").Clone()
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "isn't implemented yet")
+}
+
+// nodeByName finds an inner node by name.
+func nodeByName(t *testing.T, sp *activities.SubProcess, name string) flow.Node {
+	t.Helper()
+
+	for _, n := range sp.Nodes() {
+		if n.Name() == name {
+			return n
+		}
+	}
+
+	t.Fatalf("inner node %q not found", name)
+
+	return nil
+}
+
+// TestSubProcessClone — the FR-4 deep clone: disjoint inner graphs, flow
+// endpoints on the CLONED nodes, the inner gateway default remapped, the
+// inner boundary rebound to its cloned host, and a nested sub-process
+// disjoint too (recursion). The Clone-drop bug class pin.
+func TestSubProcessClone(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	// outer: start → task(+boundary→exc) → gw{cond→endA, default→endB},
+	// plus a nested inner sub-process on the gw's conditional path target.
+	sp, err := activities.NewSubProcess("clone-src")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+	task := spTask(t, "guarded")
+	gw, err := gateways.NewExclusiveGateway()
+	require.NoError(t, err)
+	nested := noneStartSP(t, "nested")
+	endB, err := events.NewEndEvent("endB")
+	require.NoError(t, err)
+	exc, err := events.NewEndEvent("exc")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, task, gw, nested, endB, exc} {
+		require.NoError(t, sp.Add(e))
+	}
+
+	// the boundary on the inner task.
+	sig, err := events.NewSignal("cl-sig",
+		data.MustItemDefinition(values.NewVariable(1)))
+	require.NoError(t, err)
+	sdef, err := events.NewSignalEventDefinition(sig)
+	require.NoError(t, err)
+	be, err := events.NewBoundaryEvent("bnd", task, sdef, true)
+	require.NoError(t, err)
+	require.NoError(t, sp.Add(be))
+	_, err = flow.Link(be, exc)
+	require.NoError(t, err)
+
+	_, err = flow.Link(start, task)
+	require.NoError(t, err)
+	_, err = flow.Link(task, gw)
+	require.NoError(t, err)
+
+	cond := goexprBool(t)
+	_, err = flow.Link(gw, nested, flow.WithCondition(cond))
+	require.NoError(t, err)
+
+	df, err := flow.Link(gw, endB)
+	require.NoError(t, err)
+	require.NoError(t, gw.UpdateDefaultFlow(df))
+
+	require.NoError(t, sp.Validate())
+
+	cn, err := sp.Clone()
+	require.NoError(t, err)
+
+	csp, ok := cn.(*activities.SubProcess)
+	require.True(t, ok)
+
+	t.Run("disjoint inner nodes and flows", func(t *testing.T) {
+		require.Len(t, csp.Nodes(), len(sp.Nodes()))
+		require.Len(t, csp.Flows(), len(sp.Flows()))
+
+		src := map[flow.Node]bool{}
+		for _, n := range sp.Nodes() {
+			src[n] = true
+		}
+		for _, n := range csp.Nodes() {
+			require.False(t, src[n], "cloned node %q is shared", n.Name())
+		}
+	})
+
+	t.Run("flow endpoints reference cloned nodes", func(t *testing.T) {
+		ct := nodeByName(t, csp, "guarded")
+		found := false
+		for _, f := range csp.Flows() {
+			if f.Target().ID() == ct.ID() {
+				require.Same(t, ct, f.Target().Node())
+				found = true
+			}
+		}
+		require.True(t, found)
+	})
+
+	t.Run("default flow remapped", func(t *testing.T) {
+		var cgw flow.DefaultFlowHolder
+		for _, n := range csp.Nodes() {
+			if h, ok := n.(flow.DefaultFlowHolder); ok && h.DefaultFlow() != nil {
+				cgw = h
+			}
+		}
+		require.NotNil(t, cgw)
+		require.Equal(t, df.ID(), cgw.DefaultFlow().ID())
+		require.NotSame(t, df, cgw.DefaultFlow(),
+			"the default must point at the CLONED edge")
+	})
+
+	t.Run("boundary rebound to cloned host", func(t *testing.T) {
+		cbe := nodeByName(t, csp, "bnd").(flow.BoundaryEvent)
+		chost := nodeByName(t, csp, "guarded").(flow.ActivityNode)
+		require.Same(t, chost, cbe.AttachedTo())
+
+		bes := chost.(interface{ BoundaryEvents() []flow.EventNode }).BoundaryEvents()
+		require.Len(t, bes, 1)
+		require.Same(t, cbe, bes[0])
+	})
+
+	t.Run("nested sub-process disjoint", func(t *testing.T) {
+		cNested := nodeByName(t, csp, "nested").(*activities.SubProcess)
+		srcNested := nodeByName(t, sp, "nested").(*activities.SubProcess)
+		require.NotSame(t, srcNested, cNested)
+
+		srcInner := map[flow.Node]bool{}
+		for _, n := range srcNested.Nodes() {
+			srcInner[n] = true
+		}
+		require.NotEmpty(t, srcInner)
+		for _, n := range cNested.Nodes() {
+			require.False(t, srcInner[n],
+				"nested inner node %q is shared", n.Name())
+		}
+	})
+
+	t.Run("two clones disjoint from each other", func(t *testing.T) {
+		cn2, err := sp.Clone()
+		require.NoError(t, err)
+		csp2 := cn2.(*activities.SubProcess)
+
+		first := map[flow.Node]bool{}
+		for _, n := range csp.Nodes() {
+			first[n] = true
+		}
+		for _, n := range csp2.Nodes() {
+			require.False(t, first[n])
+		}
 	})
 }
 
@@ -331,4 +482,58 @@ func TestSubProcessDefensive(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "outside the Sub-Process")
 	})
+}
+
+// TestSubProcessCloneFailures — the error-wrap branches: a value-less
+// property (the only remaining value-less source, a bare zero struct —
+// FIX-017/018) breaks the activity-config clone; the same on an INNER node
+// breaks the inner-graph clone.
+func TestSubProcessCloneFailures(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	t.Run("activity clone failure propagates", func(t *testing.T) {
+		sp, err := activities.NewSubProcess("bad-own-prop",
+			data.WithProperties(&data.Property{}))
+		require.NoError(t, err)
+		require.NoError(t, sp.Add(spTask(t, "entry")))
+
+		_, err = sp.Clone()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "couldn't clone sub-process")
+	})
+
+	t.Run("inner clone failure propagates", func(t *testing.T) {
+		sp, err := activities.NewSubProcess("bad-inner")
+		require.NoError(t, err)
+
+		op, err := gooper.New("bad-op",
+			func(_ context.Context, _ service.DataReader,
+				_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+				return nil, nil
+			})
+		require.NoError(t, err)
+
+		bad, err := activities.NewServiceTask("bad-task", op,
+			activities.WithoutParams(), data.WithProperties(&data.Property{}))
+		require.NoError(t, err)
+		require.NoError(t, sp.Add(bad))
+
+		_, err = sp.Clone()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "inner graph")
+	})
+}
+
+// goexprBool builds a constant-true bool condition for gateway edges.
+func goexprBool(t *testing.T) data.FormalExpression {
+	t.Helper()
+
+	c, err := goexpr.New(nil,
+		data.MustItemDefinition(values.NewVariable(false)),
+		func(_ context.Context, _ data.Source) (data.Value, error) {
+			return values.NewVariable(true), nil
+		})
+	require.NoError(t, err)
+
+	return c
 }

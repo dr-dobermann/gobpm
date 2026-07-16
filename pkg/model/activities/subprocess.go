@@ -172,14 +172,35 @@ func (sp *SubProcess) shapeErr(format string, args ...any) error {
 		errs.D("subprocess_name", sp.Name()))
 }
 
-// Clone implements flow.Node. The inner-graph deep clone lands with the
-// next milestone of the accompanying SRD; until then a Sub-Process cannot
-// be snapshotted.
+// Clone implements flow.Node: the activity base clones per the shared
+// contract (config by reference, per-instance state fresh, the host's own
+// boundary events left for the enclosing graph's rebind), and the inner
+// graph deep-clones through the container core — every inner node via its
+// own Clone (a nested Sub-Process recurses), inner flows relinked, inner
+// defaults remapped and inner boundaries rebound between the clones
+// (flow.WireClonedGraph, one wiring implementation for every level).
 func (sp *SubProcess) Clone() (flow.Node, error) {
-	return nil, errs.New(
-		errs.M("SubProcess cloning isn't implemented yet"),
-		errs.C(errorClass, errs.OperationFailed),
-		errs.D("subprocess_id", sp.ID()))
+	a, err := sp.clone()
+	if err != nil {
+		return nil, errs.New(
+			errs.M("couldn't clone sub-process %q", sp.ID()),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.E(err))
+	}
+
+	inner, err := sp.CloneGraph()
+	if err != nil {
+		return nil, errs.New(
+			errs.M("couldn't clone the inner graph of sub-process %q",
+				sp.ID()),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.E(err))
+	}
+
+	return &SubProcess{
+		ElementsContainer: inner,
+		activity:          a,
+	}, nil
 }
 
 // interface checks
