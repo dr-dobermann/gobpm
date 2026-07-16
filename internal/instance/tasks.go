@@ -194,7 +194,7 @@ func (inst *Instance) authorizeTask(
 	}
 	defer frame.Discard()
 
-	return ht.Authorize(ctx, actor, newExecEnv(inst, frame),
+	return ht.Authorize(ctx, actor, newExecEnv(inst, frame, nil),
 		inst.ExpressionEngine())
 }
 
@@ -292,7 +292,16 @@ func (ls *loopState) recordBornWaiter(ctx context.Context, t *track) {
 	// construction-immutable, so this read is safe pre-run.
 	ls.armConditionals(ctx, t)
 
-	ls.addTask(ctx, t.taskID, t, t.currentStep().node)
+	// a track born parked ON a composite (a fork straight into a sub-process,
+	// or an initial node that is one) opens its scope from the spawn path —
+	// the twin of the mid-run evScopeOpen (SRD-049 FR-8; construction never
+	// emits, the SRD-048 deadlock rule).
+	node := t.currentStep().node
+	if _, isComposite := node.(scopeHost); isComposite {
+		ls.onScopeOpen(ctx, t, node)
+	}
+
+	ls.addTask(ctx, t.taskID, t, node)
 }
 
 // onTaskWaiting records a parked UserTask and announces it to the distributor,

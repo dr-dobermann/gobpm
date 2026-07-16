@@ -202,7 +202,7 @@ func (ls *loopState) disarmBoundaries(trackID string) {
 	}
 
 	delete(ls.watchers, trackID)
-	ls.clearConds(trackID)
+	ls.clearCondBoundaries(trackID)
 }
 
 // fireBoundary applies a boundary fire on the loop goroutine. The loop is the
@@ -245,9 +245,31 @@ func (ls *loopState) fireBoundary(ctx context.Context, ev trackEvent) {
 	})
 
 	if be.CancelActivity() {
+		// a composite host's open child scope dies with it (ADR-023 §2.5):
+		// cancel the subtree before the host, so the inner tracks stop and
+		// the scope closes as a unit.
+		ls.cancelHostScope(ev.track)
+
 		ev.track.cancel()
 		ls.disarmBoundaries(hostID)
 	}
+}
+
+// cancelHostScope cancels the open child scope of a composite host, if
+// any — the interrupting-fire and error-catch companion (SRD-049 FR-10).
+// Runs on the loop goroutine.
+func (ls *loopState) cancelHostScope(host *track) {
+	node, ok := ls.position[host.ID()].(scopeHost)
+	if !ok {
+		return
+	}
+
+	child, err := host.scopePath.Append(scopeSegment(node))
+	if err != nil {
+		return // an unopenable path can't hold an open scope.
+	}
+
+	ls.cancelScope(child, observability.PhaseCanceled)
 }
 
 // matchErrorBoundary handles the Error-catch path on the loop goroutine (SRD-029
@@ -297,16 +319,96 @@ func (ls *loopState) matchErrorBoundary(ctx context.Context, t *track) bool {
 		}
 	}
 
-	// A thrown BpmnError with no matching boundary escapes the activity —
-	// Uncaught (SRD-041 §3.4); the caller faults the instance, whose separate
-	// InstanceState/Failed record carries the operator-facing Error echo.
+	return false
+}
+
+// reportUncaught emits the Uncaught fault fact once the WHOLE catch chain —
+// the failing activity's own boundary and every enclosing composite's
+// (SRD-049 FR-12) — missed; the caller faults the instance, whose separate
+// InstanceState/Failed record carries the operator-facing Error echo. An
+// untyped failure carries no code detail.
+func (ls *loopState) reportUncaught(t *track) {
+	details := map[string]string{}
+
+	var be *events.BpmnError
+	if errors.As(t.lastErr, &be) {
+		details[observability.AttrError] = be.Code
+	}
+
 	ls.inst.report(observability.Fact{
 		Kind:    observability.KindFault,
 		Phase:   observability.PhaseUncaught,
-		Details: map[string]string{observability.AttrError: be.Code},
+		Details: details,
 	})
+}
 
-	return false
+// matchErrorScopeChain walks the failing track's enclosing composites,
+// innermost first (§10.5.1/§10.5.7 — the innermost enclosing catcher;
+// ADR-023 §2.6): at each open scope, an Error boundary on the composite
+// host whose errorRef code matches catches — the scope cancels as a unit
+// and the exception flow continues in the HOST's context (the host itself
+// is canceled: the exception routing replaces its continuation). Fired
+// directly rather than through fireBoundary — an Error boundary is never
+// armed as a watch (SRD-029 §4.4), so armedFor cannot guard it. Returns
+// false when the chain misses up to the root. Runs on the loop goroutine.
+func (ls *loopState) matchErrorScopeChain(ctx context.Context, t *track) bool {
+	var be *events.BpmnError
+	if !errors.As(t.lastErr, &be) {
+		return false
+	}
+
+	for path := t.scopePath; ; {
+		entry, ok := ls.scopes[path]
+		if !ok {
+			return false // above every open scope — the root reached.
+		}
+
+		if bev := errorBoundaryOn(entry.node, be.Code); bev != nil {
+			ls.inst.report(observability.Fact{
+				Kind:     observability.KindFault,
+				Phase:    observability.PhaseCaught,
+				NodeID:   bev.ID(),
+				NodeName: bev.Name(),
+				Details:  map[string]string{observability.AttrError: be.Code},
+			})
+
+			ls.cancelScope(path, observability.PhaseCanceled)
+
+			// the exception flow replaces the host's continuation.
+			ls.spawnForks(ctx,
+				trackEvent{track: entry.host, flows: bev.Outgoing()})
+			entry.host.cancel()
+			ls.flipNotParked(entry.host)
+			ls.disarmBoundaries(entry.host.ID())
+
+			return true
+		}
+
+		path = entry.parent
+	}
+}
+
+// errorBoundaryOn returns the node's Error boundary whose errorRef code
+// matches, or nil — the code-matching scan matchErrorBoundary uses, shared
+// with the scope-chain walk.
+func errorBoundaryOn(node flow.Node, code string) flow.BoundaryEvent {
+	host, ok := node.(boundaryHoster)
+	if !ok {
+		return nil
+	}
+
+	for _, en := range host.BoundaryEvents() {
+		bev := en.(flow.BoundaryEvent)
+
+		for _, d := range bev.Definitions() {
+			if eed, ok := d.(*events.ErrorEventDefinition); ok &&
+				eed.Error().ErrorCode() == code {
+				return bev
+			}
+		}
+	}
+
+	return nil
 }
 
 // armedFor reports whether node is still among the watches armed for a host —

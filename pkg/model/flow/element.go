@@ -65,26 +65,8 @@ type Element interface {
 	Unbind() error
 }
 
-// ============================================================================
-//                               Container
-// ============================================================================
-
-// Container is an abstract super class for BPMN diagrams (or
-// views) and defines the superset of elements that are contained in those
-// diagrams. Basically, a ElementsContainer contains BaseElements, which
-// are Events, Gateways, Sequence Flows, Activities, and Choreography
-// Activities.
-//
-// There are four (4) types of ElementsContainers: Process, Sub-Process,
-// Choreography, and Sub-Choreography.
-type Container interface {
-	foundation.BaseObject
-
-	Add(Element) error
-	Remove(Element) error
-
-	Elements() []Element
-}
+// The Container interface and its embeddable ElementsContainer core live
+// in container.go (the container concern's home).
 
 // ============================================================================
 //                               BaseElement

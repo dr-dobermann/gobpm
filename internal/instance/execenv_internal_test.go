@@ -48,7 +48,7 @@ func TestExecEnvDataSurface(t *testing.T) {
 	require.NoError(t, err)
 
 	// the embedded *Instance is unused by the data-surface methods.
-	ee := newExecEnv(&Instance{}, f)
+	ee := newExecEnv(&Instance{}, f, nil)
 
 	t.Run("discovery delegates to the frame", func(t *testing.T) {
 		require.Equal(t,

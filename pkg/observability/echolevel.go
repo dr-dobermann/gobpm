@@ -12,6 +12,7 @@ var kindLevel = map[Kind]slog.Level{
 	KindProcessLifecycle: slog.LevelInfo,
 	KindInstanceState:    slog.LevelInfo,
 	KindTaskState:        slog.LevelInfo,
+	KindScope:            slog.LevelInfo,
 	KindNodeProgress:     slog.LevelDebug,
 	KindGatewayDecision:  slog.LevelDebug,
 	KindEventFlow:        slog.LevelDebug,

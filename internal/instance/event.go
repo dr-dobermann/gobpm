@@ -75,6 +75,8 @@ var trackEventKindNames = [...]string{
 	evTaskWaiting: "taskWaiting",
 	evJobWaiting:  "jobWaiting",
 	evDataCommit:  "dataCommit",
+	evScopeOpen:   "scopeOpen",
+	evScopeTerminate: "scopeTerminate",
 }
 
 // String returns the lower-case event-kind name for logging.
@@ -152,4 +154,14 @@ const (
 	// dependency statement is absent or overlaps the diff, fire on a false→true edge, apply
 	// fires in arming order (ADR-006 v.3 §2.7).
 	evDataCommit
+	// evScopeOpen: a track parked on a composite node (an embedded Sub-Process; ev.node).
+	// The loop opens the child scope, seeds the inner tracks per the validated shape, and
+	// resumes the host with a synthetic completion when the scope drains (SRD-049 FR-8/9).
+	// Emitted mid-run only; a born-parked composite is opened by the spawn path instead.
+	evScopeOpen
+	// evScopeTerminate: a Terminate End Event was reached INSIDE a sub-process (ev.track is
+	// the terminating track; its scope path names the dying scope). The loop cancels only
+	// that scope's tracks, closes it, and resumes the parked host — the parent continues
+	// (BPMN §13.5.6, SRD-049 FR-11). A root-scope Terminate keeps evTerminate/stopAll.
+	evScopeTerminate
 )

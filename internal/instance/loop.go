@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -54,6 +55,12 @@ type loopState struct {
 	// enqueues the job), read by a worker's jobReq to resume the track, and cleared
 	// when the job completes or its track ends.
 	jobs map[wtasks.JobID]*track
+	// scopes is the loop-owned nested-scope registry (SRD-049 FR-9): open
+	// child path → its entry (parked host, composite node, drain counter,
+	// re-entry queue). Opened on evScopeOpen / a born-parked composite,
+	// drained by the terminal-event accounting, closed + host-resumed at
+	// zero.
+	scopes map[scope.DataPath]*scopeEntry
 	// conds is the loop-owned armed-conditional registry (SRD-048 FR-8): a SLICE,
 	// because arming order is the multi-fire contract (fires from one commit apply
 	// in arming order — ADR-006 v.3 §2.7). Armed by evWaiting / recordBornWaiter,
@@ -80,6 +87,7 @@ func newLoopState(inst *Instance) *loopState {
 		watchers: map[string][]*boundaryWatch{},
 		tasks:    map[string]taskEntry{},
 		jobs:     map[wtasks.JobID]*track{},
+		scopes:   map[scope.DataPath]*scopeEntry{},
 	}
 }
 
@@ -143,6 +151,7 @@ func (ls *loopState) spawn(ctx context.Context, t *track) {
 	ls.inst.tracks[t.ID()] = t
 	ls.inst.addToSnap(t)
 	ls.active++
+	ls.incScope(t)
 
 	// Seed the track's initial position on the loop goroutine, BEFORE its run goroutine
 	// starts (the `go` below). The track has no other goroutine yet, so this read is
@@ -223,6 +232,7 @@ func (ls *loopState) drop() {
 	clear(ls.waiting)
 	clear(ls.msgIdx)
 	ls.conds = nil
+	clear(ls.scopes)
 	clear(ls.position)
 	clear(ls.parked)
 	ls.withdrawAllTasks()
@@ -248,6 +258,7 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 
 	case evEnded:
 		ls.active--
+		ls.decScope(ctx, ev.track)
 		ls.flipNotParked(ev.track)
 		ls.clearPosition(ev.track)
 		// a track that ended while owning a parked UserTask (canceled by an
@@ -270,6 +281,7 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		// Its token is still Alive at the join, so it STAYS in position (not in parked —
 		// AwaitingMerge is a Parallel join, not the AwaitSync reachability park). SRD-028 FR-6.
 		ls.active--
+		ls.decScope(ctx, ev.track)
 		ls.clearMsgIdx(ev.track)
 
 	case evMerged:
@@ -282,6 +294,38 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 	case evFailed:
 		ls.applyFailed(ctx, ev)
 
+	case evWaiting, evTaskWaiting, evJobWaiting, evDeliver, evScopeOpen,
+		evDataCommit:
+		// the wait/deliver plane — parks, deliveries, and the signals that
+		// re-evaluate or resume them; sub-dispatched to keep apply under the
+		// complexity limit (the applyParked precedent).
+		ls.applyWaitPlane(ctx, ev)
+
+	case evBoundary:
+		// an interrupting boundary fired over its guarded activity — cancel the host
+		// track and continue on the boundary's exception flow, the loop arbitrating the
+		// completion-vs-fire race (SRD-029 FR-5/FR-8).
+		ls.fireBoundary(ctx, ev)
+
+	case evScopeTerminate:
+		// a Terminate End Event inside a sub-process — only its enclosing
+		// scope dies; the parent continues (§13.5.6, SRD-049 FR-11).
+		ls.terminateScope(ctx, ev.track.scopePath)
+
+	case evTerminate:
+		// a Terminate End Event was reached — abnormally terminate the instance (SRD-030
+		// FR-1). stopAll sets stopping, tears down parked/between-node tracks, and cancels
+		// each track's context to interrupt a running activity. It does NOT touch active:
+		// the terminate track's own evEnded (FIFO-after this event) accounts for it.
+		ls.stopAll()
+	}
+}
+
+// applyWaitPlane dispatches the wait/deliver-plane events (parks,
+// deliveries, the commit signal, the scope open) — the apply sub-switch.
+// Called only by apply, on the loop goroutine.
+func (ls *loopState) applyWaitPlane(ctx context.Context, ev trackEvent) {
+	switch ev.kind {
 	case evWaiting:
 		ls.onWaiting(ctx, ev)
 
@@ -297,24 +341,16 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 	case evDeliver:
 		ls.dispatchToParked(ctx, ev)
 
+	case evScopeOpen:
+		// a track parked on a composite — open its child scope and seed the
+		// inner tracks (SRD-049 FR-8).
+		ls.onScopeOpen(ctx, ev.track, ev.node)
+
 	case evDataCommit:
 		// a node's frame commit changed data — sweep the armed conditionals:
 		// re-evaluate the due ones, fire on false→true edges in arming order
 		// (SRD-048 FR-11).
 		ls.sweepConditionals(ctx, ev.changes)
-
-	case evBoundary:
-		// an interrupting boundary fired over its guarded activity — cancel the host
-		// track and continue on the boundary's exception flow, the loop arbitrating the
-		// completion-vs-fire race (SRD-029 FR-5/FR-8).
-		ls.fireBoundary(ctx, ev)
-
-	case evTerminate:
-		// a Terminate End Event was reached — abnormally terminate the instance (SRD-030
-		// FR-1). stopAll sets stopping, tears down parked/between-node tracks, and cancels
-		// each track's context to interrupt a running activity. It does NOT touch active:
-		// the terminate track's own evEnded (FIFO-after this event) accounts for it.
-		ls.stopAll()
 	}
 }
 
@@ -335,8 +371,10 @@ func (ls *loopState) onWaiting(ctx context.Context, ev trackEvent) {
 
 	// arm the track's conditional subscriptions AFTER it is recorded parked,
 	// so an arm-time fire can deliver through the normal parked-dispatch
-	// contract (SRD-048 FR-9).
-	ls.armConditionals(ctx, ev.track)
+	// contract (SRD-048 FR-9). The subscribed node rides the emit — the
+	// loop-owned position may still hold the previous node here (evWaiting
+	// precedes evMoved).
+	ls.armConditionalsAt(ctx, ev.track, ev.node)
 }
 
 // dispatchToParked sends a fired event to its parked-and-undelivered track. The target is
@@ -527,11 +565,14 @@ func (ls *loopState) applyParked(ev trackEvent) {
 // the track is cleared from the loop-owned views and its boundaries disarmed.
 // Called only from apply.
 func (ls *loopState) applyFailed(ctx context.Context, ev trackEvent) {
-	if !ls.matchErrorBoundary(ctx, ev.track) {
+	if !ls.matchErrorBoundary(ctx, ev.track) &&
+		!ls.matchErrorScopeChain(ctx, ev.track) {
+		ls.reportUncaught(ev.track)
 		ls.failFromTrack(ev.track)
 	}
 
 	ls.active--
+	ls.decScope(ctx, ev.track)
 	ls.flipNotParked(ev.track)
 	ls.clearPosition(ev.track)
 	ls.disarmBoundaries(ev.track.ID())

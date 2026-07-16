@@ -27,6 +27,7 @@ const (
 	KindBoundary         Kind = "Boundary"         // boundary-event arm/fire/disarm
 	KindFault            Kind = "Fault"            // BPMN error / fault
 	KindDataChange       Kind = "DataChange"       // data-element change (observer-only)
+	KindScope            Kind = "Scope"            // nested-scope lifecycle (SRD-049)
 )
 
 // Phase names the transition within a Kind (ADR-013 v.2 §2.6). Open and
@@ -69,6 +70,9 @@ const (
 	PhaseFired     Phase = "Fired" // EventFlow / Boundary
 	PhaseDelivered Phase = "Delivered"
 	PhaseDropped   Phase = "Dropped"
+
+	PhaseOpened Phase = "Opened" // Scope (its other phases reuse
+	// Completed/Terminated/Canceled)
 
 	PhaseKeyAssociated Phase = "KeyAssociated" // Correlation
 	PhaseMatched       Phase = "Matched"
@@ -126,6 +130,7 @@ const (
 	AttrAttempts          = "attempts"
 	AttrBackoff           = "backoff"
 	AttrDataPath          = "data_path"
+	AttrScopePath         = "scope_path"
 )
 
 // Fact is the canonical observable engine event (ADR-013 v.2 §2.6/§2.9): a
