@@ -337,3 +337,81 @@ func TestCloneGraph(t *testing.T) {
 		require.Empty(t, cloned.Nodes())
 	})
 }
+
+// TestWireClonedGraphDefensive — the corrupt-clone branches, forced by
+// calling the exported helper directly with crafted maps: a "clone" that
+// lost the SequenceSource/Target capability, and a boundary rebind onto a
+// host that already carries the binding (the multiplicity conflict).
+func TestWireClonedGraphDefensive(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	// a valid s→e edge as the wiring source.
+	build := func(t *testing.T) (flow.Node, flow.Node, *flow.SequenceFlow) {
+		t.Helper()
+
+		o := newStubOwner(t)
+		s, e := node(t, "s", true), node(t, "e", false)
+		require.NoError(t, o.Add(s))
+		require.NoError(t, o.Add(e))
+
+		f, err := flow.Link(s.(flow.SequenceSource), e.(flow.SequenceTarget))
+		require.NoError(t, err)
+
+		return s, e, f
+	}
+
+	t.Run("cloned source lost the capability", func(t *testing.T) {
+		s, e, f := build(t)
+
+		// an EndEvent supports no outgoing flows — as the "clone" of the
+		// source it fails the SequenceSource cast.
+		notASource := node(t, "fake", false)
+
+		_, err := flow.WireClonedGraph(
+			map[string]flow.Node{s.ID(): notASource, e.ID(): e},
+			map[string]flow.Node{s.ID(): s, e.ID(): e},
+			map[string]*flow.SequenceFlow{f.ID(): f})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "isn't a sequence source")
+	})
+
+	t.Run("cloned target lost the capability", func(t *testing.T) {
+		s, e, f := build(t)
+
+		// a StartEvent accepts no incoming flows — as the "clone" of the
+		// target it fails the SequenceTarget cast.
+		notATarget := node(t, "fake", true)
+
+		_, err := flow.WireClonedGraph(
+			map[string]flow.Node{s.ID(): s, e.ID(): notATarget},
+			map[string]flow.Node{s.ID(): s, e.ID(): e},
+			map[string]*flow.SequenceFlow{f.ID(): f})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "isn't a sequence target")
+	})
+
+	t.Run("boundary rebind conflict surfaces", func(t *testing.T) {
+		host, err := activities.NewSubProcess("bh")
+		require.NoError(t, err)
+		require.NoError(t, host.Add(node(t, "hs", true)))
+
+		sig, err := events.NewSignal("d-sig",
+			data.MustItemDefinition(values.NewVariable(1)))
+		require.NoError(t, err)
+		sdef, err := events.NewSignalEventDefinition(sig)
+		require.NoError(t, err)
+
+		be, err := events.NewBoundaryEvent("d-bnd", host, sdef, true)
+		require.NoError(t, err)
+
+		// passing the ORIGINALS as "clones" re-attaches the boundary onto a
+		// host that already carries it — the multiplicity conflict the
+		// rebind wrap must surface.
+		nodes := map[string]flow.Node{host.ID(): host, be.ID(): be}
+
+		_, err = flow.WireClonedGraph(nodes, nodes,
+			map[string]*flow.SequenceFlow{})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "rebind boundary")
+	})
+}

@@ -169,24 +169,62 @@ func New(
 }
 
 // hasConditionals reports whether any event node — an intermediate catch, a
-// boundary event, or an event-based-gateway arm (all process nodes) — carries
-// a Conditional definition (SRD-048). One pass at snapshot build; the flag
-// gates the per-commit evDataCommit emit.
+// boundary event, or an event-based-gateway arm — carries a Conditional
+// definition at ANY nesting depth (SRD-048; deep per SRD-049 FR-5: an inner
+// conditional must arm too). One walk at snapshot build; the flag gates the
+// per-commit evDataCommit emit.
 func hasConditionals(nodes map[string]flow.Node) bool {
-	for _, n := range nodes {
+	found := false
+
+	walkNodesDeep(nodes, func(n flow.Node) bool {
 		en, ok := n.(flow.EventNode)
 		if !ok {
-			continue
+			return true
 		}
 
 		for _, d := range en.Definitions() {
 			if d.Type() == flow.TriggerConditional {
-				return true
+				found = true
+
+				return false
+			}
+		}
+
+		return true
+	})
+
+	return found
+}
+
+// nodeLister is the container capability the deep walk descends through —
+// the ElementsContainer surface a composite node (a Sub-Process) embeds.
+type nodeLister interface {
+	Nodes() []flow.Node
+}
+
+// walkNodesDeep visits every node of the graph and, recursively, of every
+// nested container (SRD-049 FR-5). visit returning false stops the walk.
+func walkNodesDeep(nodes map[string]flow.Node, visit func(flow.Node) bool) bool {
+	for _, n := range nodes {
+		if !visit(n) {
+			return false
+		}
+
+		if nl, ok := n.(nodeLister); ok {
+			inner := nl.Nodes()
+			m := make(map[string]flow.Node, len(inner))
+
+			for _, in := range inner {
+				m[in.ID()] = in
+			}
+
+			if !walkNodesDeep(m, visit) {
+				return false
 			}
 		}
 	}
 
-	return false
+	return true
 }
 
 // correlationKeys extracts the process's declared correlation keys — the Key of
