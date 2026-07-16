@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Embedded Sub-Process (SRD-049, ADR-023 v.1 — the first slice of the
+  composition keystone #85).** A Sub-Process is an activity in its
+  parent's graph AND a container of its own inner graph
+  (`activities.NewSubProcess` + `Add`/`flow.Link` inside; the exported
+  `flow.ElementsContainer` core and the shared graph-clone wiring back
+  it). It executes as a **nested scope inside the same instance**: the
+  host token parks, the inner flow seeds per the validated BPMN §13.3.4
+  shapes (exactly one None Start Event, XOR flow-less-node seeding —
+  everything else rejected at registration), and the composite completes
+  when the scope **drains** (no tokens remain). Data follows §10.5.7:
+  inner reads walk up to the parent, inner locals die with the scope.
+  Interruption is scope-wide: a boundary event on the composite cancels
+  the whole scope onto its exception flow; a **Terminate End Event
+  inside** terminates only its enclosing scope (§13.5.6 — the parent
+  continues); an **Error walks the scope chain** to the innermost
+  enclosing catcher (an Error End Event inside becomes catchable by
+  enclosing composites). Nesting is unbounded; conditional events inside
+  a sub-process evaluate at their own scope. New `Scope` observability
+  kind (Opened/Completed/Terminated/Canceled + the scope path). New
+  example `examples/embedded-subprocess/`, guide
+  `docs/guides/composition.md`. The Call Activity is the next slice.
+
+### Fixed
+
+- **Conditional catch lost its wake-up after a same-track move.** A track
+  walking onto a conditional catch as its continuation node armed the
+  subscription (evWaiting) and then its evMoved-driven boundary disarm
+  tore the fresh watch down (the unconditional clearConds in
+  disarmBoundaries) — the later data commit swept an empty registry and
+  the instance hung (the TestConditionalEventsE2E flake, ~1 in 4-8 under
+  race; fork-born catches were unaffected, making the per-instance
+  clone's flow-map order the selector). The disarm is now
+  boundary-flavor-scoped; the subscription's fact attribution also names
+  the wait node instead of the stale previous position.
+
 - **Conditional events (SRD-048, ADR-006 v.3 §2.7 — closes #89).**
   Data-driven waiting without polling: a conditional event's boolean
   condition over process data is evaluated at arm and re-evaluated on every

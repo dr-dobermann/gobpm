@@ -54,6 +54,7 @@ examples/versioning/versioning
 examples/service-task-worker/service-task-worker
 examples/structural-data/structural-data
 examples/conditional-events/conditional-events
+examples/embedded-subprocess/embedded-subprocess
 examples/structural-output-mapping/structural-output-mapping
 examples/data-change/data-change
 examples/native-structs/native-structs

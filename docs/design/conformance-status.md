@@ -4,7 +4,7 @@
 |---|---|
 | Type | **Continuously-current tracker** (not an SRD/ADR — updated as elements land, in the landing PR) |
 | Scope authority | [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) — Common Executable Subclass + the ComplexGateway extension |
-| Last verified | 2026-07-15, post-SRD-048 (conditional events landed on feat/conditional-events) |
+| Last verified | 2026-07-16, post-SRD-049 (embedded Sub-Process landed on feat/sub-processes; Call Activity is the open #85 remainder) |
 | Owner | Ruslan Gabitov |
 
 Status vocabulary: ✅ **executed** (model type + engine semantics + tests) ·
@@ -16,7 +16,7 @@ Status vocabulary: ✅ **executed** (model type + engine semantics + tests) ·
 | Family | Elements | Landed via |
 |---|---|---|
 | Process container | `Process` (executable, versioned registration) | core; ADR-019 |
-| Activities | `ServiceTask` (in-process + external workers), `UserTask`, `ManualTask`, `SendTask`, `ReceiveTask`, the abstract `Task` base | ADR-021/SRD-035…039; ADR-020/SRD-034; SRD-013/014 |
+| Activities | `ServiceTask` (in-process + external workers), `UserTask`, `ManualTask`, `SendTask`, `ReceiveTask`, the abstract `Task` base, **`SubProcess` (embedded)** — nested scope in the instance: §13.3.4 shapes + drain, §10.5.7 data visibility, scoped Terminate (§13.5.6), boundary-on-composite, the Error scope-chain | ADR-021/SRD-035…039; ADR-020/SRD-034; SRD-013/014; ADR-023/SRD-049 |
 | Gateways — **all five** | `Exclusive`, `Parallel`, `Inclusive` (incl. the OR-join), `EventBased` (incl. Exclusive/Parallel instantiating starts), `Complex` (the declared extension) | SRD-005, SRD-021/022, SRD-023, SRD-024/025 |
 | Events (positions) | `StartEvent`, `EndEvent`, `IntermediateCatchEvent`, `IntermediateThrowEvent`, `BoundaryEvent` (interrupting + non-interrupting) | ADR-006; ADR-018/SRD-029 |
 | Event definitions | `Message` (incl. instantiation + correlation), `Timer` (in-memory), `Signal` (throw/catch/broadcast/start), `Error` (end + boundary), `Terminate`, `Conditional` (catch + boundary + EBG arms; top-level start = registered fail-fast rejection 📐, the start position arrives with event Sub-Processes) | ADR-014/015/016, SRD-013…017, SRD-026, SRD-029, SRD-030, ADR-006 v.3/SRD-048 |
@@ -33,20 +33,19 @@ Ordered by the recommended implementation sequence (rationale in §4).
 
 | # | Gap | Status | Issue | Notes |
 |---|---|---|---|---|
-| 1 | `SubProcess` (embedded) — token-scope container, scoped data/events | ❌ | [#85](https://github.com/dr-dobermann/gobpm/issues/85) | The structural keystone: unblocks rows 2–4, 11 |
-| 2 | `CallActivity` + `CallableElement` I/O + `InputOutputBinding` + `GlobalTask` variants | ❌ | [#85](https://github.com/dr-dobermann/gobpm/issues/85) | Boundary events on CallActivity explicitly in scope (§10.5.4) |
-| 3 | Event Sub-Process (`SubProcess` with `triggeredByEvent=true`) | ❌ | [#91](https://github.com/dr-dobermann/gobpm/issues/91) | Needs row 1; Error-start lives here |
-| 4 | `Transaction` + `CancelEventDefinition` execution | ❌ / 🟡 | [#91](https://github.com/dr-dobermann/gobpm/issues/91) | Needs rows 1 + 9 (compensation) |
-| 5 | `StandardLoopCharacteristics` execution + `MultiInstanceLoopCharacteristics` + `ComplexBehaviorDefinition` + `completionQuantity` | 🟡 / ❌ | [#88](https://github.com/dr-dobermann/gobpm/issues/88) | The second structural pillar; `completionQuantity` deferral noted in SRD-046 NFR-4 |
-| 6 | `ScriptTask` execution | 🟡 model-only | [#87](https://github.com/dr-dobermann/gobpm/issues/87) | Can ride the Expression Layer epic ([#74](https://github.com/dr-dobermann/gobpm/issues/74)) |
-| 7 | `BusinessRuleTask` (DMN) execution | 🟡 model-only | [#87](https://github.com/dr-dobermann/gobpm/issues/87) | Needs a rule-engine extension seam (the ADR-002 pattern) |
-| 8 | `EscalationEventDefinition` execution | 🟡 type exists | [#90](https://github.com/dr-dobermann/gobpm/issues/90) | Signal (same epic) already landed |
-| 9 | `CompensateEventDefinition` execution + compensation `Association` semantics | 🟡 type exists | [#90](https://github.com/dr-dobermann/gobpm/issues/90) | The `Association` type exists (`pkg/model/artifacts`); semantics deferred |
-| 10 | `LinkEventDefinition` execution | 🟡 type exists | [#90](https://github.com/dr-dobermann/gobpm/issues/90) | The hub `SubscriptionKey()` matching generalization was deferred to exactly this landing |
-| 11 | Boundary-on-SubProcess/CallActivity + Error **scope-chain propagation** | ❌ | [#79](https://github.com/dr-dobermann/gobpm/issues/79) | Explicitly deferred from ADR-018 to 0.2.0; needs row 1 |
-| 12 | `DataObject` execution semantics + `DataObjectReference` + `DataStore`/`DataStoreReference` | 🟡 / ❌ | [#82](https://github.com/dr-dobermann/gobpm/issues/82) | The `DataObject` model exists (`pkg/model/data_objects`) |
-| 13 | Timer durability + hydration (in-memory works today) | 🟡 | [#84](https://github.com/dr-dobermann/gobpm/issues/84) | Rides the persistence work (ADR-007/009) |
-| 14 | `AdHocSubProcess` | ❌ | [#92](https://github.com/dr-dobermann/gobpm/issues/92) | Needs row 1 |
+| 1 | `CallActivity` + `CallableElement` I/O + `InputOutputBinding` + `GlobalTask` variants | ❌ | [#85](https://github.com/dr-dobermann/gobpm/issues/85) | Boundary events on CallActivity explicitly in scope (§10.5.4) |
+| 2 | Event Sub-Process (`SubProcess` with `triggeredByEvent=true`) | ❌ | [#91](https://github.com/dr-dobermann/gobpm/issues/91) | Rides the landed scope model (#85 slice 1); Error-start lives here |
+| 3 | `Transaction` + `CancelEventDefinition` execution | ❌ / 🟡 | [#91](https://github.com/dr-dobermann/gobpm/issues/91) | Needs the landed scope model + row 8 (compensation) |
+| 4 | `StandardLoopCharacteristics` execution + `MultiInstanceLoopCharacteristics` + `ComplexBehaviorDefinition` + `completionQuantity` | 🟡 / ❌ | [#88](https://github.com/dr-dobermann/gobpm/issues/88) | The second structural pillar; `completionQuantity` deferral noted in SRD-046 NFR-4 |
+| 5 | `ScriptTask` execution | 🟡 model-only | [#87](https://github.com/dr-dobermann/gobpm/issues/87) | Can ride the Expression Layer epic ([#74](https://github.com/dr-dobermann/gobpm/issues/74)) |
+| 6 | `BusinessRuleTask` (DMN) execution | 🟡 model-only | [#87](https://github.com/dr-dobermann/gobpm/issues/87) | Needs a rule-engine extension seam (the ADR-002 pattern) |
+| 7 | `EscalationEventDefinition` execution | 🟡 type exists | [#90](https://github.com/dr-dobermann/gobpm/issues/90) | Signal (same epic) already landed |
+| 8 | `CompensateEventDefinition` execution + compensation `Association` semantics | 🟡 type exists | [#90](https://github.com/dr-dobermann/gobpm/issues/90) | The `Association` type exists (`pkg/model/artifacts`); semantics deferred |
+| 9 | `LinkEventDefinition` execution | 🟡 type exists | [#90](https://github.com/dr-dobermann/gobpm/issues/90) | The hub `SubscriptionKey()` matching generalization was deferred to exactly this landing |
+| 10 | Boundary-on-SubProcess/CallActivity + Error **scope-chain propagation** | ❌ | [#79](https://github.com/dr-dobermann/gobpm/issues/79) | Explicitly deferred from ADR-018 to 0.2.0; the scope-chain LANDED for Error (SRD-049); boundary-on-CallActivity rides slice 2 |
+| 11 | `DataObject` execution semantics + `DataObjectReference` + `DataStore`/`DataStoreReference` | 🟡 / ❌ | [#82](https://github.com/dr-dobermann/gobpm/issues/82) | The `DataObject` model exists (`pkg/model/data_objects`) |
+| 12 | Timer durability + hydration (in-memory works today) | 🟡 | [#84](https://github.com/dr-dobermann/gobpm/issues/84) | Rides the persistence work (ADR-007/009) |
+| 13 | `AdHocSubProcess` | ❌ | [#92](https://github.com/dr-dobermann/gobpm/issues/92) | Rides the landed scope model |
 
 ## 3. Small items — decide, don't (necessarily) build
 
@@ -74,8 +73,9 @@ the vendor `Extension*` model types.
 ## 5. Recommended order (rationale)
 
 1. ~~#89 Conditional events~~ — **landed** (SRD-048, ADR-006 v.3 §2.7).
-2. **#85 Sub-Process + Call Activity** — the keystone: four other rows
-   (3, 4, 11, 14) are blocked behind the token-scope container.
+2. **#85 Sub-Process + Call Activity** — the keystone: the embedded
+   Sub-Process (the token-scope container) **landed** (SRD-049); the
+   **Call Activity slice remains** and is next.
 3. **#88 loops/multi-instance** — the second structural pillar.
 4. **#87 Script/DMN tasks** — Script with the expression layer (#74), DMN
    behind an extension seam.
