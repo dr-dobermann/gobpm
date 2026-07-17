@@ -4,7 +4,42 @@ import (
 	"context"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 )
+
+// callOutcomeTrigger is the internal trigger of the call-completion delivery —
+// not a BPMN trigger; it never leaves the engine.
+const callOutcomeTrigger flow.EventTrigger = "gobpm:call-outcome"
+
+// CallOutcome is the synthetic completion the instance loop delivers to a parked
+// Call Activity track when its child instance ends (the job/scope completion
+// idiom). It carries the terminal fault (nil on a normal completion — the
+// declared outputs are already committed into the caller scope by the loop
+// before delivery); a non-nil err is returned by CallActivity.Exec so the
+// caller track faults and the §2.6 error chain catches it at the node
+// (SRD-050 FR-7/FR-8). Implements flow.EventDefinition so it rides the parked
+// track's event channel exactly like a WorkerOutcome.
+type CallOutcome struct {
+	err error
+	foundation.BaseElement
+}
+
+// NewCallOutcome mints a call-completion carrying err (nil = a normal
+// completion, the caller track then just selects its outgoing flows).
+func NewCallOutcome(err error) *CallOutcome {
+	return &CallOutcome{BaseElement: *foundation.MustBaseElement(), err: err}
+}
+
+// Err returns the child's terminal fault, or nil on a normal completion.
+func (o *CallOutcome) Err() error { return o.err }
+
+// Type returns the internal call-completion trigger.
+func (o *CallOutcome) Type() flow.EventTrigger { return callOutcomeTrigger }
+
+// GetItemsList returns no payload — the outputs are committed into the caller
+// scope loop-side before delivery, so the outcome itself carries only the fault.
+func (o *CallOutcome) GetItemsList() []*data.ItemDefinition { return nil }
 
 // ProcessInvoker launches a registered process as a CHILD instance on behalf of
 // a Call Activity (ADR-023 v.1 §2.7): the reuse boundary. It is implemented by

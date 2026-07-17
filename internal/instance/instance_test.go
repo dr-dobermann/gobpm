@@ -57,19 +57,19 @@ func TestNewChildValidation(t *testing.T) {
 	ep := mockeventproc.NewMockEventProducer(t)
 
 	t.Run("empty parent instance id is rejected", func(t *testing.T) {
-		_, err := instance.NewChild(s, enginert.Default(), ep, nil, nil,
+		_, err := instance.NewChild(s, enginert.Default(), ep, nil, nil, nil,
 			"  ", "call-1")
 		require.Error(t, err)
 	})
 
 	t.Run("empty call node id is rejected", func(t *testing.T) {
-		_, err := instance.NewChild(s, enginert.Default(), ep, nil, nil,
+		_, err := instance.NewChild(s, enginert.Default(), ep, nil, nil, nil,
 			"parent-1", "")
 		require.Error(t, err)
 	})
 
 	t.Run("nil snapshot propagates New's guard", func(t *testing.T) {
-		_, err := instance.NewChild(nil, enginert.Default(), ep, nil, nil,
+		_, err := instance.NewChild(nil, enginert.Default(), ep, nil, nil, nil,
 			"parent-1", "call-1")
 		require.Error(t, err)
 	})
@@ -81,7 +81,7 @@ func TestNewChildValidation(t *testing.T) {
 					foundation.WithID("order")),
 				data.ReadyDataState))
 
-		inst, err := instance.NewChild(s, enginert.Default(), ep, nil,
+		inst, err := instance.NewChild(s, enginert.Default(), ep, nil, nil,
 			[]data.Data{in}, "parent-1", "call-1")
 		require.NoError(t, err)
 		require.NotNil(t, inst)

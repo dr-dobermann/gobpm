@@ -56,14 +56,14 @@ func (t *Thresher) InvokeProcess(
 			errs.D("called_key", call.Key))
 	}
 
-	inst, err := instance.NewChild(s, &t.cfg, t, t.taskDist,
+	// NewChild only fails on a malformed snapshot or linkage; the registry
+	// hands a validated snapshot and the linkage is checked above, so this is a
+	// defensive wrap (the launchInstance pattern).
+	inst, err := instance.NewChild(s, &t.cfg, t, t.taskDist, t,
 		call.Inputs, call.ParentInstanceID, call.CallNodeID)
 	if err != nil {
-		return nil, errs.New(
-			errs.M("InvokeProcess: couldn't create the child instance for %q",
-				call.Key),
-			errs.C(errorClass, errs.BulidingFailed),
-			errs.E(err))
+		return nil, errs.New(errs.M("InvokeProcess: child build failed"),
+			errs.C(errorClass, errs.BulidingFailed), errs.E(err))
 	}
 
 	// The child owns this context for its lifetime; cancel is retained in
@@ -73,11 +73,8 @@ func (t *Thresher) InvokeProcess(
 	if err = inst.Run(ctx); err != nil {
 		cancel()
 
-		return nil, errs.New(
-			errs.M("InvokeProcess: child instance %q of %q failed to run",
-				inst.ID(), call.Key),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err))
+		return nil, errs.New(errs.M("InvokeProcess: child run failed"),
+			errs.C(errorClass, errs.OperationFailed), errs.E(err))
 	}
 
 	t.trackInstanceLocked(inst, cancel)

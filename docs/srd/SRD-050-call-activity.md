@@ -227,10 +227,26 @@ type CallActivity struct {
 
 - `trackEvent`: kind `evCallWaiting` (+ names row).
 - `Instance`: the `callReq chan callRequest` channel (the `jobReq` twin;
-  drained in the loop select) + the invoker reference from `New`.
+  drained in the loop select) + the invoker reference. *(M3 refinement:
+  the invoker rides an exported `instance.WithInvoker` New option, not a
+  positional `New` parameter — `New` has ~113 call sites, and the option
+  matches the existing `withBornEvent`/`withRootData` shape; the engine
+  passes `WithInvoker(t)` at its three construction sites, `NewFromEvent`
+  gained an option tail. A nil invoker still fails the call fast.)*
 - `loopState`: `calls map[string]*callEntry{track *track; node flow.Node;
-  child exec.ChildProcess}` (keyed by an engine-minted call id);
-  `cleanupCall` hooked beside `cleanupJob`.
+  child exec.ChildProcess}` keyed by the **child instance id** (the child
+  handle already carries a unique id — no separate call id to mint);
+  `cleanupCall` hooked beside `cleanupJob`, and `drop()` terminates every
+  in-flight child (a child runs under the engine's context, not the
+  parent's, so a terminating parent does not auto-cancel it).
+- The completion/fault the loop delivers is `exec.CallOutcome` (a
+  `flow.EventDefinition` carrying an optional `err`): `CallActivity.Exec`
+  returns `err` when set (→ the track faults, `matchErrorBoundary` catches
+  at the node) else selects the outgoing flows. The delivery MUST ride the
+  parked track's `evtCh` — the loop cannot synthesize an `evFailed` for a
+  parked track (`matchErrorBoundary` reads `t.lastErr`, set only by the
+  track's own `run()`), so the fault flows through the node, the
+  `ServiceTask`/`WorkerOutcome` pattern.
 - `observability`: `KindCall` + `AttrParentInstanceID`,
   `AttrCallActivityNodeID`, `AttrCalledKey`, `AttrCalledVersion`,
   `AttrChildInstanceID`; the echo table gains `KindCall: Info`.

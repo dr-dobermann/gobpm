@@ -20,3 +20,13 @@ func TestCallActivityValidateDefensive(t *testing.T) {
 		require.Error(t, ca.Validate())
 	})
 }
+
+// TestCallActivityParamNamesNilIoSpec — the nil-IoSpec guard, unreachable via
+// NewCallActivity (which always builds an IoSpec) but exercised for a
+// hand-built node.
+func TestCallActivityParamNamesNilIoSpec(t *testing.T) {
+	ca := &CallActivity{} // no IoSpec
+
+	require.Nil(t, ca.CallInputs())
+	require.Nil(t, ca.CallOutputs())
+}

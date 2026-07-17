@@ -28,6 +28,7 @@ const (
 	KindFault            Kind = "Fault"            // BPMN error / fault
 	KindDataChange       Kind = "DataChange"       // data-element change (observer-only)
 	KindScope            Kind = "Scope"            // nested-scope lifecycle (SRD-049)
+	KindCall             Kind = "Call"             // call-activity lifecycle (SRD-050)
 )
 
 // Phase names the transition within a Kind (ADR-013 v.2 §2.6). Open and
@@ -136,6 +137,13 @@ const (
 	// emits, stitching its trace back to the caller across the reuse boundary.
 	AttrParentInstanceID   = "parent_instance_id"
 	AttrCallActivityNodeID = "call_activity_node_id"
+
+	// Call-activity facts (SRD-050 FR-10): emitted by the caller — the called
+	// process key, the RESOLVED version bound (the latest-at-launch audit
+	// point), and the launched child instance id.
+	AttrCalledKey       = "called_key"
+	AttrCalledVersion   = "called_version"
+	AttrChildInstanceID = "child_instance_id"
 )
 
 // Fact is the canonical observable engine event (ADR-013 v.2 §2.6/§2.9): a

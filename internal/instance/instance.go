@@ -21,6 +21,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/interactor"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -41,6 +42,8 @@ type Instance struct {
 	events              chan trackEvent
 	taskReq             chan taskRequest
 	jobReq              chan jobRequest
+	callReq             chan callRequest
+	invoker             exec.ProcessInvoker
 	sc                  instanceScope
 	corr                correlator
 	now                 func() time.Time
@@ -74,6 +77,10 @@ type newConfig struct {
 	// child instance emits (SRD-050 FR-4); empty for a top-level instance.
 	parentInstanceID string
 	callNodeID       string
+	// invoker launches child instances for the Call Activities this instance
+	// runs (SRD-050 FR-3); nil for a library embedder without a thresher — a
+	// call then fails fast with a classified no-invoker error.
+	invoker exec.ProcessInvoker
 	// rootData is committed into the root scope at construction — the Call
 	// Activity's inputs (SRD-050), the same injection point as an event
 	// payload (bindEventPayload). Kept last so its len/cap fall outside the
@@ -81,9 +88,15 @@ type newConfig struct {
 	rootData []data.Data
 }
 
-// newOption tunes New. Born-from-event is the only option and is exposed
-// publicly via NewFromEvent rather than the bare option.
+// newOption tunes New. The born-event / conversation-key options are exposed
+// publicly via NewFromEvent rather than the bare option; WithInvoker is the one
+// option the engine passes directly, via the exported Option alias below.
 type newOption func(*newConfig)
+
+// Option is the exported handle for a New option the engine passes across the
+// package boundary (WithInvoker). It aliases the internal option type so the
+// public constructors keep a single option shape.
+type Option = newOption
 
 // withBornEvent makes New build a born-from-event instance: the instantiating
 // start node (startNodeID) is treated as already fired (its payload is bound,
@@ -112,6 +125,18 @@ func withCallLinkage(parentInstanceID, callNodeID string) newOption {
 	return func(c *newConfig) {
 		c.parentInstanceID = parentInstanceID
 		c.callNodeID = callNodeID
+	}
+}
+
+// WithInvoker sets the ProcessInvoker the instance uses to launch child
+// instances for its Call Activities (SRD-050 FR-3). The engine (thresher) passes
+// itself; left unset (nil), a Call Activity fails fast with a classified
+// no-invoker error (a library embedder without a thresher). It is the one New
+// option the engine passes across the package boundary — the born-event and
+// conversation-key options ride their dedicated constructors.
+func WithInvoker(inv exec.ProcessInvoker) Option {
+	return func(c *newConfig) {
+		c.invoker = inv
 	}
 }
 
@@ -191,6 +216,8 @@ func New(
 		events:              make(chan trackEvent),
 		taskReq:             make(chan taskRequest),
 		jobReq:              make(chan jobRequest),
+		callReq:             make(chan callRequest),
+		invoker:             cfg.invoker,
 		loopDone:            make(chan struct{}),
 		parentEventProducer: ep,
 		td:                  td,
@@ -287,6 +314,7 @@ func NewFromEvent(
 	startNodeID string,
 	eDef flow.EventDefinition,
 	keyName, keyValue string,
+	opts ...newOption,
 ) (*Instance, error) {
 	startNodeID = strings.TrimSpace(startNodeID)
 	if startNodeID == "" {
@@ -301,9 +329,14 @@ func NewFromEvent(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
+	// The born-event and conversation-key options are fixed for this path; any
+	// extra options (WithInvoker) are appended, so a call-bearing auto-started
+	// process can itself launch child instances.
 	return New(s, parentRoot, er, ep, td,
-		withBornEvent(startNodeID, eDef),
-		withConversationKey(keyName, keyValue))
+		append([]newOption{
+			withBornEvent(startNodeID, eDef),
+			withConversationKey(keyName, keyValue),
+		}, opts...)...)
 }
 
 // NewChild creates an instance launched by a Call Activity (SRD-050 FR-4): a
@@ -319,6 +352,7 @@ func NewChild(
 	er engrenv.EngineRuntime,
 	ep eventproc.EventProducer,
 	td interactor.TaskDistributor,
+	inv exec.ProcessInvoker,
 	rootData []data.Data,
 	parentInstanceID, callNodeID string,
 ) (*Instance, error) {
@@ -338,7 +372,8 @@ func NewChild(
 
 	return New(s, scope.EmptyDataPath, er, ep, td,
 		withRootData(rootData),
-		withCallLinkage(parentInstanceID, callNodeID))
+		withCallLinkage(parentInstanceID, callNodeID),
+		WithInvoker(inv))
 }
 
 // emit delivers a track event to the loop. It never blocks forever: once the

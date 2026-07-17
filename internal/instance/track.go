@@ -418,6 +418,15 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 		return t.parkScopeHost(node, atConstruction)
 	}
 
+	// A Call Activity is a child-instance wait node (SRD-050): the host parks
+	// while the loop launches a separate process instance and resumes it with a
+	// synthetic completion when the child ends. Recognized by the call
+	// capability (CalledKey), keeping the runtime model-agnostic — before the
+	// external-worker path (a CallActivity is not an ExternalWorker).
+	if _, ok := node.(interface{ CalledKey() string }); ok {
+		return t.parkCallActivity(node, atConstruction)
+	}
+
 	// A ServiceTask marked WithWorker is an external-worker wait node (SRD-036): it
 	// parks for a worker's report, not a hub-delivered event. Recognize it before
 	// the event-node path (it is not a flow.EventNode) and park it. An unmarked
@@ -518,6 +527,25 @@ func (t *track) parkScopeHost(node flow.Node, atConstruction bool) error {
 	if !atConstruction && t.instance.State() == Active {
 		t.instance.emit(trackEvent{
 			kind:  evScopeOpen,
+			track: t,
+			node:  node,
+		})
+	}
+
+	return nil
+}
+
+// parkCallActivity parks the track on a Call Activity (SRD-050 FR-5): the host
+// waits on evtCh for the child instance's completion. Mid-run the loop is told
+// via evCallWaiting; at construction (a fork born ON a Call Activity, which runs
+// on the loop goroutine — the SRD-048 deadlock rule) the spawn path launches the
+// call via recordBornWaiter instead. Mirrors parkScopeHost.
+func (t *track) parkCallActivity(node flow.Node, atConstruction bool) error {
+	t.updateState(TrackWaitForEvent)
+
+	if !atConstruction && t.instance.State() == Active {
+		t.instance.emit(trackEvent{
+			kind:  evCallWaiting,
 			track: t,
 			node:  node,
 		})

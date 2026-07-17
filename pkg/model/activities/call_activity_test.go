@@ -3,11 +3,14 @@ package activities_test
 import (
 	"testing"
 
+	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/stretchr/testify/require"
 )
@@ -64,6 +67,45 @@ func TestCallActivityModel(t *testing.T) {
 	})
 }
 
+func TestCallActivityDeclaredIO(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	param := func(name string) *data.Parameter {
+		return data.MustParameter(name,
+			data.MustItemAwareElement(
+				data.MustItemDefinition(values.NewVariable(0),
+					foundation.WithID(name)),
+				data.ReadyDataState))
+	}
+
+	t.Run("declared input and output names", func(t *testing.T) {
+		ca, err := activities.NewCallActivity("call", "billing",
+			activities.WithParameters(data.Input, param("seed")),
+			activities.WithParameters(data.Output, param("result")))
+		require.NoError(t, err)
+
+		require.Equal(t, []string{"seed"}, ca.CallInputs())
+		require.Equal(t, []string{"result"}, ca.CallOutputs())
+	})
+
+	t.Run("empty IoSpec yields empty lists", func(t *testing.T) {
+		ca, err := activities.NewCallActivity("call", "billing",
+			activities.WithoutParams())
+		require.NoError(t, err)
+
+		require.Empty(t, ca.CallInputs())
+		require.Empty(t, ca.CallOutputs())
+	})
+
+	t.Run("absent IoSpec yields empty lists", func(t *testing.T) {
+		ca, err := activities.NewCallActivity("call", "billing")
+		require.NoError(t, err)
+
+		require.Empty(t, ca.CallInputs())
+		require.Empty(t, ca.CallOutputs())
+	})
+}
+
 func TestCallActivityValidate(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
@@ -75,21 +117,25 @@ func TestCallActivityValidate(t *testing.T) {
 func TestCallActivityRuntimeSurface(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
-	t.Run("ProcessEvent accepts a completion, rejects nil", func(t *testing.T) {
+	t.Run("ProcessEvent accepts a call-outcome, rejects others", func(t *testing.T) {
 		ca, err := activities.NewCallActivity("call", "billing")
 		require.NoError(t, err)
 
-		require.Error(t, ca.ProcessEvent(t.Context(), nil))
+		require.Error(t, ca.ProcessEvent(t.Context(), nil), "nil rejected")
 
 		sig, err := events.NewSignal("cd",
 			data.MustItemDefinition(values.NewVariable(1)))
 		require.NoError(t, err)
 		sdef, err := events.NewSignalEventDefinition(sig)
 		require.NoError(t, err)
-		require.NoError(t, ca.ProcessEvent(t.Context(), sdef))
+		require.Error(t, ca.ProcessEvent(t.Context(), sdef),
+			"only a call-outcome resumes a Call Activity")
+
+		require.NoError(t,
+			ca.ProcessEvent(t.Context(), exec.NewCallOutcome(nil)))
 	})
 
-	t.Run("Exec selects the single outgoing", func(t *testing.T) {
+	t.Run("Exec selects the single outgoing on a clean completion", func(t *testing.T) {
 		owner, err := activities.NewSubProcess("wrapper")
 		require.NoError(t, err)
 
@@ -103,10 +149,26 @@ func TestCallActivityRuntimeSurface(t *testing.T) {
 		f, err := flow.Link(ca, next)
 		require.NoError(t, err)
 
+		require.NoError(t,
+			ca.ProcessEvent(t.Context(), exec.NewCallOutcome(nil)))
+
 		out, err := ca.Exec(t.Context(), nil)
 		require.NoError(t, err)
 		require.Len(t, out, 1)
 		require.Equal(t, f.ID(), out[0].ID())
+	})
+
+	t.Run("Exec returns the child fault", func(t *testing.T) {
+		ca, err := activities.NewCallActivity("call", "billing")
+		require.NoError(t, err)
+
+		boom := errs.New(errs.M("child faulted"))
+		require.NoError(t,
+			ca.ProcessEvent(t.Context(), exec.NewCallOutcome(boom)))
+
+		_, err = ca.Exec(t.Context(), nil)
+		require.ErrorIs(t, err, boom,
+			"a child fault propagates so the caller track faults")
 	})
 
 	t.Run("clone failure propagates", func(t *testing.T) {

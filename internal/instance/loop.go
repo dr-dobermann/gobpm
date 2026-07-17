@@ -55,6 +55,12 @@ type loopState struct {
 	// enqueues the job), read by a worker's jobReq to resume the track, and cleared
 	// when the job completes or its track ends.
 	jobs map[wtasks.JobID]*track
+	// calls is the loop-owned in-flight Call Activity registry (SRD-050 FR-6):
+	// child instance id → the parked caller track, its CallActivity node, and
+	// the child handle. Populated on evCallWaiting (when the loop launches the
+	// child), read by the watcher's callReq to resume the track, and cleared
+	// when the call completes or its caller track ends.
+	calls map[string]*callEntry
 	// scopes is the loop-owned nested-scope registry (SRD-049 FR-9): open
 	// child path → its entry (parked host, composite node, drain counter,
 	// re-entry queue). Opened on evScopeOpen / a born-parked composite,
@@ -87,6 +93,7 @@ func newLoopState(inst *Instance) *loopState {
 		watchers: map[string][]*boundaryWatch{},
 		tasks:    map[string]taskEntry{},
 		jobs:     map[wtasks.JobID]*track{},
+		calls:    map[string]*callEntry{},
 		scopes:   map[scope.DataPath]*scopeEntry{},
 	}
 }
@@ -139,6 +146,12 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 			// Serviced on the loop goroutine so the job→track resolution and the
 			// resume stay single-writer, mirroring taskReq (SRD-036 §4.5).
 			ls.handleJobCompletion(req)
+
+		case req := <-inst.callReq:
+			// A watcher's report that a Call Activity's child instance ended.
+			// Serviced on the loop goroutine so the output binding and the resume
+			// stay single-writer, mirroring jobReq (SRD-050 FR-7).
+			ls.handleCallCompletion(req)
 		}
 	}
 
@@ -237,6 +250,14 @@ func (ls *loopState) drop() {
 	clear(ls.parked)
 	ls.withdrawAllTasks()
 	clear(ls.jobs)
+	// terminate every in-flight Call Activity's child before dropping the
+	// registry: a child instance runs under the engine's context (not the
+	// parent's), so a terminating parent does NOT auto-cancel it — the cascade
+	// is explicit (SRD-050 FR-9).
+	for _, entry := range ls.calls {
+		entry.child.Terminate()
+	}
+	clear(ls.calls)
 }
 
 // apply applies one track→loop event to the loop-owned state on the loop
@@ -269,6 +290,10 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		// (the enqueued job is left for the dispatcher to expire — the engine has
 		// no withdraw yet; a late report finds no track and is dropped). SRD-036.
 		ls.cleanupJob(ev.track)
+		// a track that ended while owning an in-flight Call Activity terminates
+		// its child (the cascade — the child ends with the caller) and drops the
+		// entry; a late watcher report then finds no entry and is dropped (SRD-050).
+		ls.cleanupCall(ev.track)
 		// the track's run() returned — its activity window (if any) is over, so
 		// tear down the boundaries that guarded it (SRD-029 FR-6).
 		ls.disarmBoundaries(ev.track.ID())
@@ -294,8 +319,8 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 	case evFailed:
 		ls.applyFailed(ctx, ev)
 
-	case evWaiting, evTaskWaiting, evJobWaiting, evDeliver, evScopeOpen,
-		evDataCommit:
+	case evWaiting, evTaskWaiting, evJobWaiting, evCallWaiting, evDeliver,
+		evScopeOpen, evDataCommit:
 		// the wait/deliver plane — parks, deliveries, and the signals that
 		// re-evaluate or resume them; sub-dispatched to keep apply under the
 		// complexity limit (the applyParked precedent).
@@ -337,6 +362,12 @@ func (ls *loopState) applyWaitPlane(ctx context.Context, ev trackEvent) {
 		// a worker-dispatched ServiceTask parked — bind its input, enqueue the job,
 		// and record it so the worker's report can resume it (SRD-036).
 		ls.onJobWaiting(ctx, ev)
+
+	case evCallWaiting:
+		// a Call Activity parked — resolve its inputs at the caller's scope,
+		// launch the child instance, and record it so the watcher's completion
+		// report can resume the track (SRD-050).
+		ls.onCallWaiting(ctx, ev)
 
 	case evDeliver:
 		ls.dispatchToParked(ctx, ev)

@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/exec"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
@@ -19,6 +21,10 @@ import (
 // version pinned via WithCalledVersion.
 type CallActivity struct {
 	calledKey string
+
+	// outcome stashes the child's completion (set by ProcessEvent on resume,
+	// read by Exec — the ServiceTask worker-outcome idiom).
+	outcome *exec.CallOutcome
 
 	activity
 
@@ -141,30 +147,79 @@ func (ca *CallActivity) Validate() error {
 	return nil
 }
 
-// ProcessEvent accepts the call-completion delivery that resumes the
-// parked caller track (the composite precedent): the engine loop is the
-// only producer, so the delivery itself is the signal.
+// CallInputs returns the names of the declared Input parameters — the call
+// contract's inputs the loop resolves at the caller's scope and hands the child
+// (SRD-050 §10.4 direct mapping, by name). Empty when the activity declares no
+// IoSpec (a call that passes no data).
+func (ca *CallActivity) CallInputs() []string {
+	return ca.paramNames(data.Input)
+}
+
+// CallOutputs returns the names of the declared Output parameters — the call
+// contract's return values the loop reads from the completed child and commits
+// into the caller's scope (SRD-050 §10.4, by name).
+func (ca *CallActivity) CallOutputs() []string {
+	return ca.paramNames(data.Output)
+}
+
+// paramNames lists the declared parameter names of one direction, or nil when
+// the activity has no IoSpec.
+func (ca *CallActivity) paramNames(dir data.Direction) []string {
+	if ca.IoSpec == nil {
+		return nil
+	}
+
+	var pp []*data.Parameter
+	if dir == data.Input {
+		pp = ca.IoSpec.InputSet()
+	} else {
+		pp = ca.IoSpec.OutputSet()
+	}
+
+	names := make([]string, 0, len(pp))
+	for _, p := range pp {
+		names = append(names, p.Name())
+	}
+
+	return names
+}
+
+// ProcessEvent stashes the call-completion the instance loop delivers to the
+// parked caller track when the child ends (the ServiceTask worker-outcome
+// idiom): the engine loop is the only producer. Exec reads it on resume.
 func (ca *CallActivity) ProcessEvent(
 	_ context.Context,
 	eDef flow.EventDefinition,
 ) error {
-	if eDef == nil {
+	co, ok := eDef.(*exec.CallOutcome)
+	if !ok {
 		return errs.New(
-			errs.M("a nil event definition isn't allowed"),
-			errs.C(errorClass, errs.EmptyNotAllowed),
+			errs.M("call activity %q expects a call-outcome event", ca.ID()),
+			errs.C(errorClass, errs.InvalidParameter),
 			errs.D("call_activity_id", ca.ID()))
 	}
+
+	ca.outcome = co
 
 	return nil
 }
 
-// Exec runs after the child completed and the caller resumed: the outputs
-// are already bound into the caller's scope by the loop, so the execution
-// is the standard activity completion — select the outgoing flows.
+// Exec runs after the child ended and the caller resumed. On a normal
+// completion the outputs are already committed into the caller's scope by the
+// loop, so the execution is the standard activity completion — select the
+// outgoing flows. On a child fault the stashed outcome carries the terminal
+// error: return it so the caller track faults and the §2.6 error chain catches
+// it at THIS node (a typed BpmnError → an Error boundary; otherwise uncaught).
 func (ca *CallActivity) Exec(
 	ctx context.Context,
 	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
+	if ca.outcome != nil {
+		if err := ca.outcome.Err(); err != nil {
+			return nil, err
+		}
+	}
+
 	return ca.selectOutgoing(ctx, re)
 }
 

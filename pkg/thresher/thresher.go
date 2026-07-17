@@ -977,7 +977,7 @@ func (t *Thresher) launchInstanceFromEvent(
 	// directly off the born start subscribes keyed to it (SRD-017 §4.5).
 	inst, err := instance.NewFromEvent(
 		s, scope.EmptyDataPath, &t.cfg, t, t.taskDist, startNode.ID(), eDef,
-		keyName, keyVal)
+		keyName, keyVal, instance.WithInvoker(t))
 	if err != nil {
 		return errs.New(
 			errs.M("couldn't create an event-born Instance for process %q",
@@ -1123,7 +1123,8 @@ func (t *Thresher) Instance(instanceID string) (*InstanceHandle, bool) {
 // launchInstance creates a new Instance from the Snapshot s, runs it, appends it
 // to the running instances of the Thresher, and returns its read-only handle.
 func (t *Thresher) launchInstance(s *snapshot.Snapshot) (*InstanceHandle, error) {
-	inst, err := instance.New(s, scope.EmptyDataPath, &t.cfg, t, t.taskDist)
+	inst, err := instance.New(s, scope.EmptyDataPath, &t.cfg, t, t.taskDist,
+		instance.WithInvoker(t))
 	if err != nil {
 		return nil, errs.New(
 			errs.M("couldn't create an Instance for process %q",
