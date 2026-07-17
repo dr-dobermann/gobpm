@@ -122,6 +122,10 @@ func (ls *loopState) onScopeOpen(ctx context.Context, host *track, node flow.Nod
 	ls.reportScope(observability.PhaseOpened, node, child)
 
 	ls.seedScope(ctx, sh, child)
+
+	// arm the scope's Event Sub-Process handlers while it is open (SRD-052
+	// FR-5) — the boundary-watch pattern at scope granularity.
+	ls.armScopeHandlers(ctx, sh.Nodes(), child)
 }
 
 // seedScope spawns the inner entry tracks per the ADR-023 §2.3 validated
@@ -253,6 +257,10 @@ func (ls *loopState) completeScope(
 
 	delete(ls.scopes, path)
 
+	// the scope's window closed — its Event Sub-Process handlers no longer
+	// guard anything (SRD-052 FR-5).
+	ls.disarmScopeHandlers(path)
+
 	ls.reportScope(observability.PhaseCompleted, entry.node, path)
 
 	ls.resumeScopeHost(ctx, path, entry)
@@ -338,6 +346,10 @@ func (ls *loopState) cancelScope(path scope.DataPath, phase observability.Phase)
 	for _, p := range sub {
 		entry := ls.scopes[p]
 		delete(ls.scopes, p)
+
+		// the canceled scope's Event Sub-Process handlers no longer guard it
+		// (SRD-052 FR-5).
+		ls.disarmScopeHandlers(p)
 
 		// best-effort close: the subtree is being abandoned; a close error
 		// here cannot be acted on beyond logging (ADR-022 §2.3(2)).

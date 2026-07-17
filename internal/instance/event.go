@@ -76,8 +76,9 @@ var trackEventKindNames = [...]string{
 	evJobWaiting:  "jobWaiting",
 	evDataCommit:  "dataCommit",
 	evScopeOpen:   "scopeOpen",
-	evScopeTerminate: "scopeTerminate",
-	evCallWaiting:    "callWaiting",
+	evScopeTerminate:   "scopeTerminate",
+	evCallWaiting:      "callWaiting",
+	evScopeHandlerFire: "scopeHandlerFire",
 }
 
 // String returns the lower-case event-kind name for logging.
@@ -172,4 +173,10 @@ const (
 	// §2.7, SRD-050 FR-5/FR-6). It is the child-instance peer of evJobWaiting — a Call
 	// Activity registers no hub waiter and parks for a whole child instance, not one job.
 	evCallWaiting
+	// evScopeHandlerFire: a scope-armed Event Sub-Process handler's trigger fired
+	// (ev.node is the event-sub node, ev.eDef the fired definition). Emitted by a
+	// scopeHandlerWatch off the hub goroutine (or the loop-local conditional sweep).
+	// The loop cancels the enclosing scope and runs the handler in it — the
+	// scope-level peer of evBoundary (ADR-023 v.2 §2.10, SRD-052 FR-5/FR-7).
+	evScopeHandlerFire
 )

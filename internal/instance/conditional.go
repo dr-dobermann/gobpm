@@ -22,8 +22,14 @@ type condWatch struct {
 	track *track
 	node  flow.Node
 	def   *events.ConditionalEventDefinition
-	deps  []string
-	last  bool
+	// handler / handlerPath mark the third flavor (SRD-052 FR-9): a
+	// Conditional-start Event Sub-Process handler. When handler is non-nil the
+	// fire emits evScopeHandlerFire (the scope-handler path), and
+	// clearCondScopeHandlers(handlerPath) tears it down with its scope.
+	handler     flow.Node
+	handlerPath scope.DataPath
+	deps        []string
+	last        bool
 	// boundary marks the flavor (SRD-048 FR-15): false — track is the parked
 	// catch/EBG track and node its event node; true — track is the HOST
 	// activity track and node the guarding flow.BoundaryEvent. A boundary
@@ -193,6 +199,54 @@ func (ls *loopState) armCondBoundary(
 	return true
 }
 
+// armCondScopeHandler arms one Conditional-start Event Sub-Process handler
+// (SRD-052 FR-9): the conditional START ADR-006 v.3 deferred to here. It joins
+// the conditional registry like a boundary and is arm-time evaluated — an
+// already-true condition fires the handler immediately. Runs on the loop
+// goroutine.
+func (ls *loopState) armCondScopeHandler(
+	ctx context.Context,
+	sw *scopeHandlerWatch,
+) {
+	w := &condWatch{
+		node:        sw.start,
+		def:         sw.def.(*events.ConditionalEventDefinition),
+		handler:     sw.handler,
+		handlerPath: sw.path,
+	}
+	w.deps = condDeps(w.def)
+
+	ls.conds = append(ls.conds, w)
+
+	val, ok := ls.evalCondWatch(ctx, w)
+	if !ok {
+		return
+	}
+
+	w.last = val
+
+	if val {
+		ls.fireCondWatch(ctx, w)
+	}
+}
+
+// clearCondScopeHandlers drops every Conditional-start subscription armed for
+// the scope path — the scope-handler twin of clearCondBoundaries, called when
+// the scope disarms (SRD-052 FR-9).
+func (ls *loopState) clearCondScopeHandlers(path scope.DataPath) {
+	kept := ls.conds[:0]
+
+	for _, w := range ls.conds {
+		if w.handler != nil && w.handlerPath == path {
+			continue
+		}
+
+		kept = append(kept, w)
+	}
+
+	ls.conds = kept
+}
+
 // sweepConditionals re-evaluates the armed conditionals against one committed
 // change set — the uniform per-subscription rule with the false→true edge
 // (SRD-048 FR-11, ADR-006 v.3 §2.7). One commit, one sweep: every due
@@ -257,7 +311,15 @@ func (ls *loopState) evalCondWatch(
 	ctx context.Context,
 	w *condWatch,
 ) (val, ok bool) {
-	res, err := ls.evalCondition(ctx, w.def, w.track.scopePath)
+	// A scope-handler (Conditional-start) watch has no track — it evaluates at
+	// the scope it guards; a catch/boundary watch evaluates at its track's
+	// scope (SRD-052 FR-9).
+	at := w.handlerPath
+	if w.handler == nil {
+		at = w.track.scopePath
+	}
+
+	res, err := ls.evalCondition(ctx, w.def, at)
 	if err != nil {
 		ls.inst.fail(errs.New(
 			errs.M("conditional evaluation failed"),
@@ -312,6 +374,21 @@ func (ls *loopState) evalCondition(
 // conditional entries via flipNotParked → clearConds. Runs on the loop
 // goroutine.
 func (ls *loopState) fireCondWatch(ctx context.Context, w *condWatch) {
+	if w.handler != nil {
+		// a Conditional-start Event Sub-Process handler fired (SRD-052 FR-9):
+		// run the scope-handler fire path DIRECTLY on the loop goroutine (the
+		// peer of fireBoundary), never emit — an arm-time-true edge fires
+		// during loop init, before the event channel is drained, so an emit
+		// would deadlock (the hub path emits; this loop-local path does not).
+		ls.fireScopeHandler(ctx, trackEvent{
+			kind: evScopeHandlerFire,
+			node: w.handler,
+			eDef: w.def,
+		})
+
+		return
+	}
+
 	if w.boundary {
 		// fireBoundary owns the boundary fire end-to-end (SRD-029 semantics):
 		// the armedFor race guard, the outgoing-flow fork, the KindBoundary
@@ -400,7 +477,10 @@ func (ls *loopState) clearConds(trackID string) {
 	kept := ls.conds[:0]
 
 	for _, w := range ls.conds {
-		if w.track.ID() != trackID {
+		// a scope-handler (Conditional-start) watch has no track — it is keyed
+		// by scope, cleared via clearCondScopeHandlers, never by a track end
+		// (SRD-052 FR-9).
+		if w.handler != nil || w.track.ID() != trackID {
 			kept = append(kept, w)
 		}
 	}
