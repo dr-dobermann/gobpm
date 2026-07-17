@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Call Activity (SRD-050, ADR-023 v.1 — the second slice of the
+  composition keystone #85, which it closes).** A Call Activity invokes a
+  **separately registered process as its own child instance** — the reuse
+  boundary, in contrast to the embedded Sub-Process's nested scope
+  (`activities.NewCallActivity(name, calledKey, …)`;
+  `activities.WithCalledVersion` pins a version). The caller's token parks
+  while the loop launches the callee through the engine's registry —
+  **latest-at-launch** by default (ADR-019) or the pinned version; the
+  declared **Input** parameters are resolved at the caller's scope and
+  **cloned across the boundary** (an isolated child data plane, no
+  walk-up); on completion the declared **Output** parameters are read by
+  name and **committed back** into the caller's scope. A child `BpmnError`
+  faults the caller **at the Call Activity node**, catchable by an Error
+  boundary (an untyped termination faults the instance); the child
+  **terminates with the caller** (the cancel cascade). The launch seam is
+  a new `exec.ProcessInvoker` capability (implemented by the thresher, kept
+  off the node-execution surface); the caller instance receives it via
+  `instance.WithInvoker`. New `Call` observability kind
+  (Started/Completed/Failed/Terminated + called key, resolved version,
+  child instance id); every child fact carries `parent_instance_id` +
+  `call_activity_node_id`. New example `examples/call-activity/`, the
+  Call Activity section of `docs/guides/composition.md`. Closes epic #85.
+
 - **Embedded Sub-Process (SRD-049, ADR-023 v.1 — the first slice of the
   composition keystone #85).** A Sub-Process is an activity in its
   parent's graph AND a container of its own inner graph
