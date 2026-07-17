@@ -66,7 +66,10 @@ func TestNewStartEvent(t *testing.T) {
 			require.NotEqual(t, "", se.ID())
 			require.Equal(t, "NoneTrigger", se.Name())
 			require.Equal(t, 0, len(se.Triggers()))
-			require.False(t, se.IsInterrupting())
+			// interrupting defaults to true (BPMN §13.5.4) — the flag only
+			// matters for an event-sub-process start; on a None start it is
+			// irrelevant (SRD-052).
+			require.True(t, se.IsInterrupting())
 			require.False(t, se.IsParallelMultiple())
 
 			require.Equal(t, 0, len(se.Definitions()))
@@ -108,6 +111,18 @@ func TestNewStartEvent(t *testing.T) {
 			require.True(t, se.IsInterrupting())
 			require.Equal(t, flow.TriggerMessage, triggers[0])
 			require.Equal(t, 1, len(se.Definitions()))
+		})
+
+	t.Run("non-interrupting flips the interrupting default",
+		func(t *testing.T) {
+			se, err := events.NewStartEvent("noninterrupting",
+				events.WithMessageTrigger(
+					events.MustMessageEventDefinition(msg, nil)),
+				events.WithNonInterrupting(),
+			)
+
+			require.NoError(t, err)
+			require.False(t, se.IsInterrupting())
 		})
 
 	t.Run("message and signal event",

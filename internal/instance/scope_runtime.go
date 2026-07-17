@@ -171,6 +171,13 @@ func scopeSeeds(sh scopeHost) []flow.Node {
 	var flowless []flow.Node
 
 	for _, n := range sh.Nodes() {
+		// an Event Sub-Process is a scope-armed handler, not an entry
+		// (ADR-023 v.2 §2.10): it is armed when the scope opens, never seeded
+		// (SRD-052 FR-3).
+		if isEventSubHandler(n) {
+			continue
+		}
+
 		if en, ok := n.(flow.EventNode); ok &&
 			en.EventClass() == flow.StartEventClass {
 			return []flow.Node{n}
@@ -186,6 +193,15 @@ func scopeSeeds(sh scopeHost) []flow.Node {
 	}
 
 	return flowless
+}
+
+// isEventSubHandler reports whether node is an Event Sub-Process — a
+// scope-armed handler skipped by every entry-seeding path (the top-level
+// createTracks and the scope-open scopeSeeds), armed instead (SRD-052).
+func isEventSubHandler(node flow.Node) bool {
+	h, ok := node.(interface{ IsEventSubProcess() bool })
+
+	return ok && h.IsEventSubProcess()
 }
 
 // incScope counts a spawned track into its scope's drain accounting; root

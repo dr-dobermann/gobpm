@@ -129,10 +129,27 @@ func WithParallel() options.Option {
 	return startOption(f)
 }
 
-// WithInterrupting sets interrurpting flag in startConfig.
+// WithInterrupting marks an event sub-process Start Event as interrupting —
+// the default (§13.5.4), so this option is explicit documentation; use
+// WithNonInterrupting for the other variant.
 func WithInterrupting() options.Option {
 	f := func(cfg *startConfig) error {
 		cfg.interrurpting = true
+
+		return nil
+	}
+
+	return startOption(f)
+}
+
+// WithNonInterrupting marks an event sub-process Start Event as
+// non-interrupting: the handler runs concurrently with the parent rather than
+// canceling its scope (BPMN §13.5.4). Interrupting is the default; this flips
+// it. (Error starts are always interrupting — §10.5.6 — so this must not be
+// used with an Error trigger.)
+func WithNonInterrupting() options.Option {
+	f := func(cfg *startConfig) error {
+		cfg.interrurpting = false
 
 		return nil
 	}

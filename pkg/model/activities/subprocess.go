@@ -20,17 +20,38 @@ import (
 type SubProcess struct {
 	flow.ElementsContainer
 	activity
+	// triggered marks an Event Sub-Process (triggeredByEvent, BPMN §13.5.4):
+	// a scope-armed handler entered by its triggered start, not a token
+	// (ADR-023 v.2 §2.10, SRD-052). A plain (embedded) Sub-Process leaves it
+	// false and keeps the §2.3 None-start / flow-less shape.
+	triggered bool
 }
 
 // NewSubProcess creates an empty embedded Sub-Process. Inner elements are
 // added afterwards via Add; the shape rules are enforced by Validate at
 // process validation (registration), not at construction — a container is
-// legitimately built element by element.
+// legitimately built element by element. WithTriggeredByEvent makes it an
+// Event Sub-Process instead.
 func NewSubProcess(
 	name string,
 	opts ...options.Option,
 ) (*SubProcess, error) {
-	a, err := newActivity(name, opts...)
+	cfg := subProcessConfig{}
+	actOpts := make([]options.Option, 0, len(opts))
+
+	for _, o := range opts {
+		switch opt := o.(type) {
+		case SubProcessOption:
+			if err := opt(&cfg); err != nil {
+				return nil, err
+			}
+
+		default:
+			actOpts = append(actOpts, o)
+		}
+	}
+
+	a, err := newActivity(name, actOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -38,7 +59,16 @@ func NewSubProcess(
 	return &SubProcess{
 		ElementsContainer: flow.NewElementsContainer(),
 		activity:          *a,
+		triggered:         cfg.triggered,
 	}, nil
+}
+
+// IsEventSubProcess reports whether this Sub-Process is an Event Sub-Process
+// (triggeredByEvent) — a scope-armed handler, not a flow-reached activity
+// (ADR-023 v.2 §2.10). The runtime uses it to skip the handler from entry
+// seeding and arm it instead (SRD-052).
+func (sp *SubProcess) IsEventSubProcess() bool {
+	return sp.triggered
 }
 
 // ActivityType returns the SubProcess activity type.
@@ -85,29 +115,12 @@ func (sp *SubProcess) Validate() error {
 		ee = append(ee, err)
 	}
 
-	noneStarts, triggeredStarts, flowless := sp.classifyEntries(&ee)
+	noneStarts, triggeredStarts, flowless, nonIntr := sp.classifyEntries(&ee)
 
-	switch {
-	case triggeredStarts > 0:
-		ee = append(ee, sp.shapeErr(
-			"a triggered Start Event isn't allowed in an embedded "+
-				"Sub-Process (BPMN §13.3.4; event sub-processes and "+
-				"top-level processes own triggered starts)"))
-
-	case noneStarts > 1:
-		ee = append(ee, sp.shapeErr(
-			"an embedded Sub-Process has at most a unique None Start "+
-				"Event (BPMN §13.3.4)"))
-
-	case noneStarts == 1 && flowless > 0:
-		ee = append(ee, sp.shapeErr(
-			"a None Start Event and flow-less inner nodes can't be "+
-				"mixed — the §13.3.4 shapes are exclusive alternatives"))
-
-	case noneStarts == 0 && flowless == 0:
-		ee = append(ee, sp.shapeErr(
-			"an embedded Sub-Process needs an entry: one None Start "+
-				"Event or at least one flow-less activity/gateway"))
+	if sp.triggered {
+		sp.validateEventSubShape(&ee, noneStarts, triggeredStarts, nonIntr)
+	} else {
+		sp.validateEmbeddedShape(&ee, noneStarts, triggeredStarts, flowless)
 	}
 
 	if len(ee) > 0 {
@@ -117,30 +130,100 @@ func (sp *SubProcess) Validate() error {
 	return nil
 }
 
+// validateEmbeddedShape enforces the embedded Sub-Process entry shape (ADR-023
+// §2.3, BPMN §13.3.4): a unique None Start Event XOR at least one flow-less
+// inner node; a triggered start is not allowed (it belongs to an event
+// sub-process or a top-level process).
+func (sp *SubProcess) validateEmbeddedShape(
+	ee *[]error, noneStarts, triggeredStarts, flowless int,
+) {
+	switch {
+	case triggeredStarts > 0:
+		*ee = append(*ee, sp.shapeErr(
+			"a triggered Start Event isn't allowed in an embedded "+
+				"Sub-Process (BPMN §13.3.4; event sub-processes and "+
+				"top-level processes own triggered starts)"))
+
+	case noneStarts > 1:
+		*ee = append(*ee, sp.shapeErr(
+			"an embedded Sub-Process has at most a unique None Start "+
+				"Event (BPMN §13.3.4)"))
+
+	case noneStarts == 1 && flowless > 0:
+		*ee = append(*ee, sp.shapeErr(
+			"a None Start Event and flow-less inner nodes can't be "+
+				"mixed — the §13.3.4 shapes are exclusive alternatives"))
+
+	case noneStarts == 0 && flowless == 0:
+		*ee = append(*ee, sp.shapeErr(
+			"an embedded Sub-Process needs an entry: one None Start "+
+				"Event or at least one flow-less activity/gateway"))
+	}
+}
+
+// validateEventSubShape enforces the Event Sub-Process entry shape (ADR-023
+// v.2 §2.10, BPMN §13.5.4/§10.5.2): exactly one triggered Start Event, no None
+// start. This slice (SRD-052) requires the triggered start to be interrupting;
+// a non-interrupting start is rejected until the next slice relaxes it.
+func (sp *SubProcess) validateEventSubShape(
+	ee *[]error, noneStarts, triggeredStarts, nonIntr int,
+) {
+	switch {
+	case triggeredStarts != 1:
+		*ee = append(*ee, sp.shapeErr(
+			"an event sub-process needs exactly one triggered Start Event "+
+				"(BPMN §10.5.2), got %d", triggeredStarts))
+
+	case noneStarts > 0:
+		*ee = append(*ee, sp.shapeErr(
+			"an event sub-process has no None Start Event — it is entered "+
+				"by its triggered start (BPMN §13.5.4)"))
+
+	case nonIntr > 0:
+		*ee = append(*ee, sp.shapeErr(
+			"a non-interrupting event sub-process start isn't supported yet "+
+				"(SRD-052 interrupting slice); it lands in a later slice"))
+	}
+}
+
 // classifyEntries scans the inner nodes, counting the entry-shape
 // participants, checking inner boundary hosting, and running the inner
 // per-node Validate hooks; violations append to ee.
 func (sp *SubProcess) classifyEntries(
 	ee *[]error,
-) (noneStarts, triggeredStarts, flowless int) {
+) (noneStarts, triggeredStarts, flowless, nonInterruptingTriggered int) {
 	for _, n := range sp.Nodes() {
-		if be, ok := n.(flow.BoundaryEvent); ok {
+		switch {
+		case isEventSubProcess(n):
+			// An inner Event Sub-Process is a scope-armed handler, not an
+			// entry (ADR-023 v.2 §2.10): it is skipped from the entry shape
+			// (so it never counts as a flow-less seed and breaks the parent's
+			// §13.3.4 shape) and armed at runtime instead. Its own inner
+			// graph is still validated by the per-node hook below.
+
+		case isBoundaryEvent(n):
 			// A boundary event has no incoming flow by nature — it is not
 			// an entry. Its host must be an inner node.
+			be := n.(flow.BoundaryEvent)
 			if !sp.contains(be.AttachedTo()) {
 				*ee = append(*ee, sp.shapeErr(
 					"boundary event %q is attached to a node outside the "+
 						"Sub-Process", n.ID()))
 			}
-		} else if en, ok := n.(flow.EventNode); ok &&
-			en.EventClass() == flow.StartEventClass {
+
+		case isStartEvent(n):
+			en := n.(flow.EventNode)
 			if len(en.Definitions()) == 0 {
 				noneStarts++
 			} else {
 				triggeredStarts++
+				if si, ok := n.(interface{ IsInterrupting() bool }); ok &&
+					!si.IsInterrupting() {
+					nonInterruptingTriggered++
+				}
 			}
-		} else if len(n.Incoming()) == 0 &&
-			n.NodeType() != flow.EventNodeType {
+
+		case len(n.Incoming()) == 0 && n.NodeType() != flow.EventNodeType:
 			// activities and gateways without incoming flows are the
 			// no-start entry shape (§13.3.4); events are not.
 			flowless++
@@ -153,7 +236,29 @@ func (sp *SubProcess) classifyEntries(
 		}
 	}
 
-	return noneStarts, triggeredStarts, flowless
+	return noneStarts, triggeredStarts, flowless, nonInterruptingTriggered
+}
+
+// isEventSubProcess reports whether n is an Event Sub-Process (a scope-armed
+// handler, skipped from entry seeding — ADR-023 v.2 §2.10).
+func isEventSubProcess(n flow.Node) bool {
+	h, ok := n.(interface{ IsEventSubProcess() bool })
+
+	return ok && h.IsEventSubProcess()
+}
+
+// isBoundaryEvent reports whether n is a boundary event.
+func isBoundaryEvent(n flow.Node) bool {
+	_, ok := n.(flow.BoundaryEvent)
+
+	return ok
+}
+
+// isStartEvent reports whether n is a Start Event node.
+func isStartEvent(n flow.Node) bool {
+	en, ok := n.(flow.EventNode)
+
+	return ok && en.EventClass() == flow.StartEventClass
 }
 
 // contains reports whether node is one of the Sub-Process's inner nodes.
@@ -209,6 +314,7 @@ func (sp *SubProcess) Clone() (flow.Node, error) {
 	return &SubProcess{
 		ElementsContainer: inner,
 		activity:          a,
+		triggered:         sp.triggered,
 	}, nil
 }
 

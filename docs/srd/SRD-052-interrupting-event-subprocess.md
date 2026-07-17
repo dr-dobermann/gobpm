@@ -69,13 +69,17 @@ The code today (evidence-first):
 - **FR-2 — the triggered start's kind & interruption are read from the
   model.** The event sub-process's single start carries exactly one trigger
   definition (Message/Timer/Signal/Error/Conditional) and its
-  `IsInterrupting()` selects the variant. Validate rejects a triggered start
-  with zero or multiple trigger definitions. **This slice validates the
-  start as interrupting** — a non-interrupting event-sub start is **rejected
-  at validation** with a clear "non-interrupting event sub-processes land in
-  a later slice" error, so the model never expresses runtime-unsupported
-  behaviour; slice 2 relaxes this validation (forward-only). Error is always
-  interrupting (§10.5.6), so an Error start needs no interrupting flag.
+  `IsInterrupting()` selects the variant. **Interrupting is the default**
+  (BPMN §13.5.4 / Camunda-aligned): `NewStartEvent` defaults the flag to
+  true and `events.WithNonInterrupting()` flips it (the redundant
+  `WithInterrupting()` stays as explicit documentation). The flag is read
+  only for an event-sub start — on a None start it is irrelevant. Validate
+  rejects a triggered start with zero or multiple trigger definitions.
+  **This slice validates the start as interrupting** — a non-interrupting
+  event-sub start (`WithNonInterrupting`) is **rejected at validation** with
+  a clear "lands in a later slice" error, so the model never expresses
+  runtime-unsupported behaviour; slice 2 relaxes this forward-only. Error is
+  always interrupting (§10.5.6).
 
 ### Functional — not-an-entry-node
 
