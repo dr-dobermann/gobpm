@@ -2,9 +2,9 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
-| Date | 2026-07-16 |
+| Date | 2026-07-16 (accepted 2026-07-17) |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-023 v.1](../design/ADR-023-sub-process-and-call-activity.md) §2.7 (the Call Activity slice — completes epic #85; the embedded slice landed with the prior SRD) |
 | Upstream | [ADR-019 v.1](../design/ADR-019-definition-versioning-and-registry.md) (the registry the call resolves against: latest-at-launch / pinned versions), [ADR-001 v.6](../design/ADR-001-execution-model.md) (the loop owns the call protocol), [ADR-010 v.2](../design/ADR-010-process-data-model.md) (the isolated child data plane; root binding), [ADR-021 v.1](../design/ADR-021-service-task-execution-model.md) (the async park/resume + fault-classification idioms the caller reuses), [ADR-013 v.2](../design/ADR-013-observability.md) (the linkage attributes) |
@@ -333,12 +333,20 @@ missing key/version is a classified error), `TestInvokeProcessInputs`
 carry the parent attrs).
 
 Runtime (M3, `internal/instance`, a fake invoker): the park + launch
-(`TestCallParksAndLaunches`), completion + output binding
-(`TestCallCompletionBindsOutputs`), the missing-output contract error,
-child `BpmnError` → the Error boundary on the CallActivity catches
-(`TestCallChildErrorCaught`), untyped child termination → instance fault,
-the cascade (`TestCallCascadeOnTrackCancel`, `...OnScopeCancel`,
-`...OnStopAll`), nil-invoker fail-fast, the late-report drop.
+(`TestCallParksAndLaunches`), input cloning (`TestCallInputsClonedToChild`),
+completion + output binding (`TestCallCompletionBindsOutputs`), the
+missing-output contract error (`TestCallMissingOutputFaults`), child
+`BpmnError` → the Error boundary on the CallActivity catches
+(`TestCallChildErrorCaught`), untyped child termination → instance fault
+(`TestCallUntypedTerminationFaults`), the cascade
+(`TestCallCascadeOnInstanceCancel` — the instance-cancel path;
+`TestCleanupCallTerminatesOwnedChild` the per-track `cleanupCall`; `drop()`
+covers the stopAll teardown), nil-invoker fail-fast
+(`TestCallNoInvokerFailsFast`), the launch-failure and missing-input faults
+(`TestCallInvokerErrorFaults`, `TestCallMissingInputFaults`), the loop-side
+guards (`TestOnCallWaitingGuards`), the boundary-crossing clone errors
+(`TestCloneNamedErrors`, `TestCallOutputCloneFaults`), and the late-report
+drop (`TestCallLateReportDropped`).
 
 E2E (M4, `pkg/thresher`): `TestCallActivityE2E` — a registered callee +
 a caller with I/O round-trip; the pinned-version case; the child-error
@@ -374,18 +382,57 @@ handover closing #85.
 
 ## §9 Definition of Done
 
-- [ ] All FR/NFR wired and traced to §6 tests.
-- [ ] `make ci` green per milestone (frozen tree); diff-coverage ≥95%;
-      touched files 100% (min 80%).
-- [ ] Example runs to completion (exit 0), binary gitignored.
-- [ ] Conformance tracker: the CallActivity row flips; **#85 closes**.
-- [ ] Changelog `[Unreleased]` before the PR description.
-- [ ] `/check-srd` PASS; §10 filled; SRD Accepted; ADR-023 Accepted + RU
+- [x] All FR/NFR wired and traced to §6 tests.
+- [x] `make ci` green per milestone (frozen tree); diff-coverage ≥95%
+      (96.1% of 485 lines at M4); touched files 100% (min 80%).
+- [x] Example runs to completion (exit 0), binary gitignored.
+- [x] Conformance tracker: the CallActivity row flips; **#85 closes**.
+- [x] Changelog `[Unreleased]` before the PR description.
+- [x] `/check-srd` PASS; §10 filled; SRD Accepted; ADR-023 Accepted + RU
       twin; linked docs synced.
 
 ## §10 Implementation summary
 
-> ⚠️ TODO: fill after landing.
+Landed on `feat/call-activity` (rebased onto master `dd487d9`), five commits:
+
+| Stage | Commit | Scope |
+|---|---|---|
+| Doc | `9550a23` | this SRD (371 lines) |
+| M1 | `0170d43` | `activities.CallActivity` model node + validation + runtime surface (FR-1/2) + tests (3 files) |
+| M2 | `8dca409` | `exec.ProcessInvoker`/`ProcessCall`/`ChildProcess` seam; `Thresher.InvokeProcess` + `resolveCallLocked` + `childProcess`; `instance.NewChild` + `withRootData`/`withCallLinkage`/`WithInvoker`; the child-fact linkage stamp (FR-3/4) + tests (11 files) |
+| M3 | `d3d4786` | the caller loop protocol — `calls.go` (`onCallWaiting`/`handleCallCompletion`/`cleanupCall`/`watchCall`/`reportCall`), `evCallWaiting`, `callReq` + `calls` map, `exec.CallOutcome`, `checkNodeType` classification, `KindCall` (FR-5..10) + tests (18 files) |
+| M4 | `2e6d797` | thresher e2e + `examples/call-activity/` + composition guide + changelog + tracker (#85 closes) + READMEs (FR-11) (14 files) |
+
+**Verification.** `make ci` green at M4 — diff-coverage **96.1 % of 485
+changed lines** (≥95 %), lint 0, `-race`, govulncheck clean; the example
+runs to completion (exit 0), binary gitignored.
+
+### §10.1 Empirical findings — where reality diverged from the draft
+
+- **Invoker threading = an option, not a positional `New` param (§3.3
+  refinement).** `instance.New` has ~113 call sites; a positional invoker
+  param was untenable, so the engine passes an exported `instance.WithInvoker`
+  New option (the `withBornEvent`/`withRootData` shape). `NewFromEvent` gained
+  an option tail; the thresher passes `WithInvoker(t)` at its three
+  construction sites.
+- **The fault MUST ride `evtCh` through the node.** The loop cannot
+  synthesize an `evFailed` for a parked track — `matchErrorBoundary` reads
+  `t.lastErr`, set only by the track's own `run()`. So a child fault is
+  delivered as an `exec.CallOutcome` that `CallActivity.Exec` returns (the
+  `ServiceTask`/`WorkerOutcome` pattern), which produces the `evFailed` the
+  boundary matcher catches at the node (FR-8).
+- **`ChildProcess.Version()` was added (FR-3 refinement).** FR-10 records the
+  *resolved* version; for a latest-at-launch (version-0) call that number is
+  otherwise unreachable through the interface. `Failed()` dropped its
+  redundant `bool` (a non-nil error is the fault signal).
+- **`drop()` terminates in-flight children explicitly (FR-9).** A child runs
+  under the engine's context, not the parent's, so a terminating parent does
+  not auto-cancel it; instance teardown iterates `calls` and calls
+  `child.Terminate()` before clearing the registry.
+- **Child output path.** A ServiceTask's returned `ItemDefinition` (with an
+  explicit id) commits to the child root by that id, so `ChildProcess.Outputs`
+  reads it by name — the e2e round-trip (`subtotal` → child → `total`)
+  confirms the full data path.
 
 ## Open questions
 
