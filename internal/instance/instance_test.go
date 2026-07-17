@@ -44,6 +44,55 @@ func TestInstIvalidParams(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestNewChildValidation (SRD-050 M2): NewChild rejects the shapes that would
+// leave a child instance's trace unattributable — a missing parent instance id
+// or call node id — and propagates New's nil-snapshot guard. A well-formed call
+// builds a rooted, linkage-stamped child.
+func TestNewChildValidation(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	s, err := getSnapshot("new_child_validation")
+	require.NoError(t, err)
+
+	ep := mockeventproc.NewMockEventProducer(t)
+
+	t.Run("empty parent instance id is rejected", func(t *testing.T) {
+		_, err := instance.NewChild(s, enginert.Default(), ep, nil, nil, nil,
+			"  ", "call-1")
+		require.Error(t, err)
+	})
+
+	t.Run("empty call node id is rejected", func(t *testing.T) {
+		_, err := instance.NewChild(s, enginert.Default(), ep, nil, nil, nil,
+			"parent-1", "")
+		require.Error(t, err)
+	})
+
+	t.Run("nil snapshot propagates New's guard", func(t *testing.T) {
+		_, err := instance.NewChild(nil, enginert.Default(), ep, nil, nil, nil,
+			"parent-1", "call-1")
+		require.Error(t, err)
+	})
+
+	t.Run("a well-formed call builds the child", func(t *testing.T) {
+		in := data.MustParameter("order",
+			data.MustItemAwareElement(
+				data.MustItemDefinition(values.NewVariable(7),
+					foundation.WithID("order")),
+				data.ReadyDataState))
+
+		inst, err := instance.NewChild(s, enginert.Default(), ep, nil, nil,
+			[]data.Data{in}, "parent-1", "call-1")
+		require.NoError(t, err)
+		require.NotNil(t, inst)
+
+		got, err := inst.DataReader().GetData("order")
+		require.NoError(t, err)
+		require.Equal(t, 7, got.Value().Get(context.Background()),
+			"the seeded input lands in the child's root scope")
+	})
+}
+
 func TestMonitoring(t *testing.T) {
 	s, err := getSnapshot("monitoring")
 	require.NoError(t, err)

@@ -88,6 +88,14 @@ func (inst *Instance) report(ev observability.Fact) {
 		ev.Details[observability.AttrInstanceID] = inst.ID()
 	}
 
+	// Call linkage (SRD-050 FR-4): a child instance stamps its caller's ids on
+	// every fact so the trace stitches across the reuse boundary. Empty for a
+	// top-level instance — the stamp then adds nothing.
+	if inst.parentInstanceID != "" {
+		ev.Details[observability.AttrParentInstanceID] = inst.parentInstanceID
+		ev.Details[observability.AttrCallActivityNodeID] = inst.callNodeID
+	}
+
 	if hasLocal {
 		inst.fanoutLocal(ev)
 	}

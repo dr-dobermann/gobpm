@@ -200,12 +200,16 @@ boundary** as a timeout on a long-running task: the 2s boundary fires before the
 ~4s activity finishes, cancels it, and routes the token onto the boundary's
 exception flow.
 
-For composition (an **embedded Sub-Process** — a nested scope inside the
-instance: the inner flow reads the parent's data through the walk-up, its
-locals die with the scope, the parent resumes when the scope drains, and
-boundary/Terminate/Error act on the scope as a unit), see
-[`examples/embedded-subprocess/`](examples/embedded-subprocess/); the guide is
-[**docs/guides/composition.md**](docs/guides/composition.md).
+For composition, see [**docs/guides/composition.md**](docs/guides/composition.md).
+An **embedded Sub-Process** is a nested scope inside the instance (the inner
+flow reads the parent's data through the walk-up, its locals die with the
+scope, the parent resumes when the scope drains, and boundary/Terminate/Error
+act on the scope as a unit) —
+[`examples/embedded-subprocess/`](examples/embedded-subprocess/). A **Call
+Activity** invokes a separately registered process as an isolated **child
+instance** — the reuse boundary: declared I/O cloned across the boundary,
+latest-at-launch or pinned versioning, the output committed back —
+[`examples/call-activity/`](examples/call-activity/).
 
 For conditional events (**data-driven waiting** — a wait released by the
 process's own committed data, no polling), see
@@ -276,7 +280,7 @@ make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (r
 - [Vision & Architecture (SAD-001)](docs/design/SAD-001-vision-and-architecture.md) and [ADRs](docs/design/) — the conception
 - [Working with process data](docs/guides/data.md) — the structural-data guide (paths, tiers, native structs, change observation)
 - [Conditional events](docs/guides/conditional-events.md) — data-driven waiting: positions, the false→true edge rule, dependency declarations
-- [Composition](docs/guides/composition.md) — embedded sub-processes: scopes, the §13.3.4 shapes, data visibility, scope-wide interruption
+- [Composition](docs/guides/composition.md) — sub-processes (nested scopes) & call activities (child-instance reuse boundary): the §13.3.4 shapes, data visibility/isolation, versioning, scope-wide interruption
 - [Development Roadmap](docs/analytics/gobpm%20Development%20Roadmap.md) — workstreams + milestones
 - [Conformance scope](docs/bpmn-spec/conformance.md) and [BPMN 2.0 reference KB](docs/bpmn-spec/) · [Conformance status](docs/design/conformance-status.md) — what's implemented vs what remains, mapped to issues
 - [Documentation Index](README_INDEX.md) · [API Reference](https://pkg.go.dev/github.com/dr-dobermann/gobpm) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)

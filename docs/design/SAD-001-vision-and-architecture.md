@@ -434,12 +434,14 @@ The three highest-frequency gaps that opened 0.1.0 have all landed: **boundary e
 ([ADR-018 v.1](ADR-018-boundary-events-and-activity-interruption.md), SRD-029) — Timer-boundary first,
 then Message/Signal/Error on the same infrastructure; **error handling** — Error End Event (throw) +
 Error Boundary Event (catch) with `ErrorEventDefinition`/BpmnError propagation (epic #79; cross-scope
-and Sub-Process propagation deferred with #85 to 0.2.0); and the **Terminate End Event**
+and Sub-Process propagation deferred with #85 to 0.2.0 — the **Error scope-chain** has since landed
+there with the embedded Sub-Process, SRD-049, and boundary-on-CallActivity with SRD-050;
+boundary-on-SubProcess remains the #79 remainder); and the **Terminate End Event**
 (SRD-030) — abnormal whole-instance termination on the loop's native event lane, completing the
 instance-termination story in the runtime ([ADR-001 v.6](ADR-001-execution-model.md) §4.6,
 [ADR-006 v.2](ADR-006-events-and-subscriptions.md) §2.2).
 
-**Deferred to 0.2.0:** Embedded **Sub-Process** and **Call Activity** (#85) — high value for reuse/structure, but a self-contained increment 0.1.0 does not block on.
+**Deferred to 0.2.0:** Embedded **Sub-Process** and **Call Activity** (#85) — high value for reuse/structure, but a self-contained increment 0.1.0 does not block on. *(Both have since landed in the 0.2.x line — the embedded Sub-Process as a nested scope, [ADR-023 v.1](ADR-023-sub-process-and-call-activity.md)/SRD-049; the Call Activity as a child instance, SRD-050 — closing #85.)*
 
 **Deferred to later releases** (tracked as epics, ordered by frequency, not spec order): Script & Business-Rule/DMN tasks (#87), Multi-Instance / Loop (#88), Conditional events (#89), Compensation / Escalation / Cancel / Link events (#90), Transaction & Event Sub-Process (#91), Ad-hoc Sub-Process (#92), Data Objects / Data Store (#82), Timer persistence & hydration (#84), Observability / Event Core (#76), Fault Tolerance — incidents/retry/DLQ (#80), and the platform epics (versioning #94, migration #95, multi-tenancy/IAM #73, forms #75, expression layer #74, admin tools #96). **Manual Task** is deliberately deprioritised — the engine treats it as a pass-through (no token block), so it carries near-zero execution value.
 

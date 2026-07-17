@@ -2,13 +2,15 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
-| Date | 2026-07-16 |
+| Date | 2026-07-16 (accepted 2026-07-17) |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md), [ADR-010 v.2 Process Data Model](ADR-010-process-data-model.md) §2.2, [ADR-018 v.1 Boundary Events & Activity Interruption](ADR-018-boundary-events-and-activity-interruption.md) §2.2/§2.6, [ADR-006 v.3 Events & Subscriptions](ADR-006-events-and-subscriptions.md) §2.6, [ADR-019 v.1 Definition Versioning](ADR-019-definition-versioning-and-registry.md), [SAD-001 v.1](SAD-001-vision-and-architecture.md) §15.3 |
 
-> **Draft** — the structural keystone of 0.2.0. Decides how gobpm executes
+> **Accepted** — the structural keystone of 0.2.0, now fully landed: the
+> embedded Sub-Process by SRD-049 and the Call Activity by SRD-050 (epic
+> #85 closed). Decides how gobpm executes
 > **composition**: the **embedded Sub-Process** (§2.2–§2.6) as a **nested
 > execution scope inside the same instance** — one loop, one single writer,
 > a scope *tree* where today there is one flat scope — and the **Call
@@ -442,3 +444,4 @@ None.
 | Version | Date | Author | Change |
 |---|---|---|---|
 | v.1 | 2026-07-16 | Ruslan Gabitov | Draft conception. Decides composition on ONE concept — the **execution scope** (§10.5.7 token/data/event context) as a tree inside the instance: the **embedded Sub-Process** is a container-node opening a child scope in the SAME instance (one loop, single writer preserved; tracks carry scope paths), with **validated instantiation shapes** (unique None start XOR no-start/flow-less seeding — §13.3.4 verified verbatim; triggered/mixed/multiple starts rejected at process validation), **drain-completion** (no tokens remain), **scope-cancel as the unit of interruption** (boundary-on-composite via the unchanged ADR-018 mechanism; **scoped Terminate** per §13.5.6), and the **Error scope-chain walk** realizing ADR-006 v.2 §2.6 (activity boundary → enclosing composites → instance fault; the Error End Event becomes catchable by enclosing scopes). The **Call Activity** is the reuse boundary: a **child instance** of a registry-resolved callable (ADR-019; **latest-at-launch default**, pinned option), async park/resume for the caller, the standard's **direct I/O mapping** (no explicit associations), isolated child data plane, and a **terminate cascade** on caller cancel (standard-silent, engine choice). Rejects the §13.3.4 boundary-crossing-start paragraph as self-contradictory with §7.6.1/Table 7.2 (engine choice, documented). §2.8 shapes the model for what rides it: event sub-processes (#91 — scope-armed handlers incl. the ADR-006 v.3 conditional start), Transaction, Ad-Hoc, MI-per-scope, Escalation chain. Alternatives rejected: child-instance-per-embedded, Call-Activity graph inlining, flattening, engine-global scopes. Standard-grounded against the BPMN 2.0 PDF (start-semantics clauses verified verbatim via the spec notebook) and `docs/bpmn-spec/`. Implementation sliced by the accompanying SRDs (embedded first, Call Activity second); epic #85. |
+| v.1 | 2026-07-17 | Ruslan Gabitov | **Accepted** — both slices landed: the embedded Sub-Process (SRD-049) and the Call Activity (SRD-050); epic #85 closed. Status flip only, no conception change (no version bump). |

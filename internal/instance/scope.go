@@ -118,3 +118,19 @@ func (sc *instanceScope) bindEventPayload(eDef flow.EventDefinition) error {
 
 	return err
 }
+
+// bindRootData commits the caller-resolved Call Activity inputs into the
+// instance root scope at construction (SRD-050 FR-4): each datum becomes a Ready
+// root datum a child node reads by name, the call contract's inputs. Like
+// bindEventPayload it is a birth-init commit (initial state, no DataChange
+// facts). The data crossed the call boundary already cloned (the isolation
+// contract — no live sharing with the caller's scope).
+func (sc *instanceScope) bindRootData(dd []data.Data) error {
+	if len(dd) == 0 {
+		return nil
+	}
+
+	_, err := sc.plane.Commit(sc.root, dd...)
+
+	return err
+}

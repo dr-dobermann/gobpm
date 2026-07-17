@@ -170,6 +170,40 @@ func (t *Thresher) latestSnapshotLocked(key string) *snapshot.Snapshot {
 	return nil
 }
 
+// resolveCallLocked resolves a Call Activity binding to a snapshot AND its
+// resolved 1-based version (SRD-050): version 0 binds latest-at-launch (the last
+// element, ascending order), else the pinned version (scanned by NUMBER, gap-safe
+// like snapshotForVersionLocked). ok is false when no matching registration
+// exists — the caller turns that into a classified call-resolution error. The
+// resolved version is returned because a latest-at-launch call must record which
+// concrete version it actually bound (the KindCall audit point, ADR-023 §6).
+func (t *Thresher) resolveCallLocked(
+	key string,
+	version int,
+) (s *snapshot.Snapshot, resolved int, ok bool) {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	regs := t.registrations[key]
+	if len(regs) == 0 {
+		return nil, 0, false
+	}
+
+	if version == 0 {
+		last := regs[len(regs)-1]
+
+		return last.snapshot, last.version, true
+	}
+
+	for _, r := range regs {
+		if r.version == version {
+			return r.snapshot, r.version, true
+		}
+	}
+
+	return nil, 0, false
+}
+
 // snapshotForVersionLocked returns the snapshot of the specific version of key,
 // or nil if no such version is registered. It scans by version NUMBER (not slice
 // position) since removals can leave gaps (v1, v3, …).

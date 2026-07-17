@@ -301,6 +301,14 @@ func (ls *loopState) recordBornWaiter(ctx context.Context, t *track) {
 		ls.onScopeOpen(ctx, t, node)
 	}
 
+	// a track born parked ON a Call Activity (a fork straight onto one, or an
+	// initial node that is one) launches its child from the spawn path — the
+	// twin of the mid-run evCallWaiting (SRD-050 FR-5; construction never emits,
+	// the SRD-048 deadlock rule).
+	if _, isCall := node.(callActivity); isCall {
+		ls.onCallWaiting(ctx, trackEvent{track: t, node: node})
+	}
+
 	ls.addTask(ctx, t.taskID, t, node)
 }
 

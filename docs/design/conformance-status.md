@@ -4,7 +4,7 @@
 |---|---|
 | Type | **Continuously-current tracker** (not an SRD/ADR — updated as elements land, in the landing PR) |
 | Scope authority | [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) — Common Executable Subclass + the ComplexGateway extension |
-| Last verified | 2026-07-16, post-SRD-049 (embedded Sub-Process landed on feat/sub-processes; Call Activity is the open #85 remainder) |
+| Last verified | 2026-07-17, post-SRD-050 (Call Activity landed — #85 composition keystone CLOSED: embedded Sub-Process SRD-049 + Call Activity SRD-050) |
 | Owner | Ruslan Gabitov |
 
 Status vocabulary: ✅ **executed** (model type + engine semantics + tests) ·
@@ -33,7 +33,7 @@ Ordered by the recommended implementation sequence (rationale in §4).
 
 | # | Gap | Status | Issue | Notes |
 |---|---|---|---|---|
-| 1 | `CallActivity` + `CallableElement` I/O + `InputOutputBinding` + `GlobalTask` variants | ❌ | [#85](https://github.com/dr-dobermann/gobpm/issues/85) | Boundary events on CallActivity explicitly in scope (§10.5.4) |
+| 1 | `CallActivity` + `CallableElement` I/O + `InputOutputBinding` + `GlobalTask` variants | ✅ | [#85](https://github.com/dr-dobermann/gobpm/issues/85) | **Landed SRD-050** (child instance via the ADR-019 registry; latest-at-launch + `WithCalledVersion`; by-name I/O cloned across the boundary; child-error catch at the node; cancel cascade; `Call` facts). Boundary events on CallActivity landed here too (§10.5.4 — a CallActivity is an activity, the boundary machinery consumes it). `GlobalTask` variants remain out of scope. **Closes #85.** |
 | 2 | Event Sub-Process (`SubProcess` with `triggeredByEvent=true`) | ❌ | [#91](https://github.com/dr-dobermann/gobpm/issues/91) | Rides the landed scope model (#85 slice 1); Error-start lives here |
 | 3 | `Transaction` + `CancelEventDefinition` execution | ❌ / 🟡 | [#91](https://github.com/dr-dobermann/gobpm/issues/91) | Needs the landed scope model + row 8 (compensation) |
 | 4 | `StandardLoopCharacteristics` execution + `MultiInstanceLoopCharacteristics` + `ComplexBehaviorDefinition` + `completionQuantity` | 🟡 / ❌ | [#88](https://github.com/dr-dobermann/gobpm/issues/88) | The second structural pillar; `completionQuantity` deferral noted in SRD-046 NFR-4 |
@@ -42,7 +42,7 @@ Ordered by the recommended implementation sequence (rationale in §4).
 | 7 | `EscalationEventDefinition` execution | 🟡 type exists | [#90](https://github.com/dr-dobermann/gobpm/issues/90) | Signal (same epic) already landed |
 | 8 | `CompensateEventDefinition` execution + compensation `Association` semantics | 🟡 type exists | [#90](https://github.com/dr-dobermann/gobpm/issues/90) | The `Association` type exists (`pkg/model/artifacts`); semantics deferred |
 | 9 | `LinkEventDefinition` execution | 🟡 type exists | [#90](https://github.com/dr-dobermann/gobpm/issues/90) | The hub `SubscriptionKey()` matching generalization was deferred to exactly this landing |
-| 10 | Boundary-on-SubProcess/CallActivity + Error **scope-chain propagation** | ❌ | [#79](https://github.com/dr-dobermann/gobpm/issues/79) | Explicitly deferred from ADR-018 to 0.2.0; the scope-chain LANDED for Error (SRD-049); boundary-on-CallActivity rides slice 2 |
+| 10 | Boundary-on-SubProcess/CallActivity + Error **scope-chain propagation** | 🟡 | [#79](https://github.com/dr-dobermann/gobpm/issues/79) | Error scope-chain LANDED (SRD-049); **boundary-on-CallActivity LANDED (SRD-050** — the base activity's boundary machinery consumes it, Error boundary catch verified e2e); boundary-on-SubProcess + the broader propagation matrix remain for #79 |
 | 11 | `DataObject` execution semantics + `DataObjectReference` + `DataStore`/`DataStoreReference` | 🟡 / ❌ | [#82](https://github.com/dr-dobermann/gobpm/issues/82) | The `DataObject` model exists (`pkg/model/data_objects`) |
 | 12 | Timer durability + hydration (in-memory works today) | 🟡 | [#84](https://github.com/dr-dobermann/gobpm/issues/84) | Rides the persistence work (ADR-007/009) |
 | 13 | `AdHocSubProcess` | ❌ | [#92](https://github.com/dr-dobermann/gobpm/issues/92) | Rides the landed scope model |
@@ -73,10 +73,10 @@ the vendor `Extension*` model types.
 ## 5. Recommended order (rationale)
 
 1. ~~#89 Conditional events~~ — **landed** (SRD-048, ADR-006 v.3 §2.7).
-2. **#85 Sub-Process + Call Activity** — the keystone: the embedded
-   Sub-Process (the token-scope container) **landed** (SRD-049); the
-   **Call Activity slice remains** and is next.
-3. **#88 loops/multi-instance** — the second structural pillar.
+2. ~~#85 Sub-Process + Call Activity~~ — the keystone, **CLOSED**: the
+   embedded Sub-Process (the token-scope container) **landed** (SRD-049)
+   and the Call Activity (the reuse boundary) **landed** (SRD-050).
+3. **#88 loops/multi-instance** — the second structural pillar, now next.
 4. **#87 Script/DMN tasks** — Script with the expression layer (#74), DMN
    behind an extension seam.
 5. **#90 Escalation/Compensate/Link** — completes the event catalog

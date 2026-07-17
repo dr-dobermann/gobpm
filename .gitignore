@@ -58,3 +58,4 @@ examples/embedded-subprocess/embedded-subprocess
 examples/structural-output-mapping/structural-output-mapping
 examples/data-change/data-change
 examples/native-structs/native-structs
+examples/call-activity/call-activity

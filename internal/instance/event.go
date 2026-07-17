@@ -77,6 +77,7 @@ var trackEventKindNames = [...]string{
 	evDataCommit:  "dataCommit",
 	evScopeOpen:   "scopeOpen",
 	evScopeTerminate: "scopeTerminate",
+	evCallWaiting:    "callWaiting",
 }
 
 // String returns the lower-case event-kind name for logging.
@@ -164,4 +165,11 @@ const (
 	// that scope's tracks, closes it, and resumes the parked host — the parent continues
 	// (BPMN §13.5.6, SRD-049 FR-11). A root-scope Terminate keeps evTerminate/stopAll.
 	evScopeTerminate
+	// evCallWaiting: a track reached a Call Activity and parked it (ev.node is the
+	// CallActivity). The loop resolves the declared inputs at the caller's scope, launches
+	// the child instance through the ProcessInvoker, records the call → track, and starts a
+	// watcher that reports the child's completion via a callReq to resume the track (ADR-023
+	// §2.7, SRD-050 FR-5/FR-6). It is the child-instance peer of evJobWaiting — a Call
+	// Activity registers no hub waiter and parks for a whole child instance, not one job.
+	evCallWaiting
 )

@@ -154,7 +154,7 @@ defer sub.Cancel() // deregister + drain; sub.Dropped() counts any overflow
 
 По граничным событиям (прерывание activity) см. [`examples/boundary-events/`](examples/boundary-events/) — **прерывающая таймер-граница** как таймаут на долгой задаче: 2-секундная граница срабатывает раньше, чем закончится ~4-секундная activity, отменяет её и направляет токен на exception-flow границы.
 
-По композиции (**встроенный Sub-Process** — вложенная область в том же экземпляре: внутренний поток читает данные родителя через walk-up, его локальные данные умирают вместе с областью, родитель возобновляется, когда область осушается, а boundary/Terminate/Error действуют на область как на единое целое) см. [`examples/embedded-subprocess/`](examples/embedded-subprocess/); руководство — [**docs/guides/composition.md**](docs/guides/composition.md) (EN).
+По композиции см. руководство [**docs/guides/composition.md**](docs/guides/composition.md) (EN). **Встроенный Sub-Process** — вложенная область в том же экземпляре: внутренний поток читает данные родителя через walk-up, его локальные данные умирают вместе с областью, родитель возобновляется, когда область осушается, а boundary/Terminate/Error действуют на область как на единое целое ([`examples/embedded-subprocess/`](examples/embedded-subprocess/)). **Call Activity** запускает отдельно зарегистрированный процесс как изолированный **дочерний экземпляр** — граница переиспользования: объявленные вход/выход клонируются через границу, версия latest-at-launch или закреплённая, выход коммитится обратно ([`examples/call-activity/`](examples/call-activity/)).
 
 По условным событиям (**ожидание, управляемое данными** — ветка освобождается закоммиченными данными самого процесса, без опроса) см. [`examples/conditional-events/`](examples/conditional-events/) — промежуточный условный catch паркует ветку, пока коммит соседней задачи не переключит его условие из false в true; условные триггеры также охраняют активности как **граничные события** и участвуют в гонке как **дуги event-based-шлюза**. Руководство — [**docs/guides/conditional-events.md**](docs/guides/conditional-events.md) (EN).
 
@@ -205,7 +205,7 @@ make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (r
 - [Vision & Architecture (SAD-001)](docs/design/SAD-001-vision-and-architecture.md) и [ADR'ы](docs/design/) — концепция
 - [Работа с данными процесса](docs/guides/data.md) — руководство по структурным данным (пути, ярусы, нативные структуры, наблюдение изменений; EN)
 - [Условные события](docs/guides/conditional-events.md) — ожидание, управляемое данными: позиции, правило фронта false→true, декларации зависимостей (EN)
-- [Композиция](docs/guides/composition.md) — встроенные sub-process'ы: области, формы §13.3.4, видимость данных, прерывание области целиком (EN)
+- [Композиция](docs/guides/composition.md) — sub-process'ы (вложенные области) и call activity (граница переиспользования через дочерний экземпляр): формы §13.3.4, видимость/изоляция данных, версионирование, прерывание области целиком (EN)
 - [Development Roadmap](docs/analytics/gobpm%20Development%20Roadmap.md) — workstream'ы + вехи
 - [Conformance scope](docs/bpmn-spec/conformance.md) и [BPMN 2.0 reference KB](docs/bpmn-spec/) · [Conformance status](docs/design/conformance-status.md) — что реализовано и что осталось, с привязкой к issues (EN)
 - [Documentation Index](README_INDEX.md) · [API Reference](https://pkg.go.dev/github.com/dr-dobermann/gobpm) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
