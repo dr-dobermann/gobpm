@@ -1,7 +1,7 @@
 # FIX-025 «Automate the go-install dev-tool pin updates»
 
 **Type:** FIX (one-shot; not rewritten after landing).
-**Status:** Draft v.1 (2026-07-18, branch `fix/automate-tool-pin-updates`, not yet implemented).
+**Status:** Accepted v.1 (2026-07-18, branch `fix/automate-tool-pin-updates`, implemented — `make ci` green).
 **Date:** 2026-07-18.
 **Author:** Ruslan Gabitov.
 **Branch:** `fix/automate-tool-pin-updates`.
@@ -97,7 +97,30 @@ GitHub Actions to create and approve pull requests"** to be enabled. Without it,
 
 ## §8 Implementation summary
 
-> ⚠️ TODO: fill AFTER landing.
+### §8.1 Stages by commit (branch `fix/automate-tool-pin-updates`)
+| Stage | Commit | Scope |
+|---|---|---|
+| Doc | `0197fc7` | FIX-025 (this document) |
+| Impl | `f4ffcb7` | `scripts/check-tool-pins.sh` + `.github/workflows/tool-pins.yml` |
+
+`make ci` green (non-Go change; `diff-coverage 100% of 0 lines — PASS`).
+
+### §8.2 Empirical findings vs the §3 draft
+
+- **All four tools resolve via goproxy — no GitHub API.** The draft routed
+  golangci-lint through the GitHub releases API; in practice its module
+  `github.com/golangci/golangci-lint/v2` resolves on `proxy.golang.org/@latest`
+  like the rest, so all four use one datasource. The GitHub API also
+  pretty-prints JSON (`"tag_name": "…"` with a space) that a naive grep missed,
+  and is rate-limited unauthenticated — two reasons goproxy is cleaner.
+- **The check is already actionable.** Run against current pins it found
+  **mockery v3.5.0 → v3.7.1** and **golangci-lint v2.11.4 → v2.12.2** — so the
+  first post-merge run will open a real bump PR (govulncheck/covercheck current).
+  FIX-025 lands the *automation* only; the pins were reverted so the bumps ride
+  the Action, not this doc.
+
+### §8.3 Backlog
+- None.
 
 ## Open questions
 
