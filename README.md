@@ -209,7 +209,12 @@ act on the scope as a unit) —
 Activity** invokes a separately registered process as an isolated **child
 instance** — the reuse boundary: declared I/O cloned across the boundary,
 latest-at-launch or pinned versioning, the output committed back —
-[`examples/call-activity/`](examples/call-activity/).
+[`examples/call-activity/`](examples/call-activity/). An **Event Sub-Process**
+(`triggeredByEvent`) is a scope-armed handler: armed while its enclosing scope
+is open, an interrupting one fires a **cancel-and-run** — it cancels the
+scope's work, runs in the parent's data context, and absorbs the event so the
+parent resumes on its normal flow —
+[`examples/event-subprocess/`](examples/event-subprocess/).
 
 For conditional events (**data-driven waiting** — a wait released by the
 process's own committed data, no polling), see

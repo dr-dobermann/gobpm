@@ -61,6 +61,19 @@ type loopState struct {
 	// child), read by the watcher's callReq to resume the track, and cleared
 	// when the call completes or its caller track ends.
 	calls map[string]*callEntry
+	// scopeHandlers is the loop-owned Event Sub-Process registry (SRD-052 FR-5):
+	// a scope path → the handlers armed while that scope is open (the
+	// boundary-watch pattern at scope granularity). Armed on scope open
+	// (armScopeHandlers), torn down on scope drain/cancel (disarmScopeHandlers).
+	scopeHandlers map[scope.DataPath][]*scopeHandlerWatch
+	// scopeInterrupted is the loop-owned shared interrupting budget (SRD-052
+	// FR-6): a scope path → whether an interrupting handler has already fired in
+	// it. The FIRST interrupting fire — an event sub-process (fireScopeHandler)
+	// OR a boundary event on the scope host (fireBoundary via cancelHostScope) —
+	// flips the scope, and every later interrupting fire in the same scope is
+	// suppressed. Keyed by the composite's INNER scope path, the one both
+	// constructs reference, so the two cooperate rather than double-fire (NFR-1).
+	scopeInterrupted map[scope.DataPath]bool
 	// scopes is the loop-owned nested-scope registry (SRD-049 FR-9): open
 	// child path → its entry (parked host, composite node, drain counter,
 	// re-entry queue). Opened on evScopeOpen / a born-parked composite,
@@ -85,16 +98,18 @@ type loopState struct {
 // newLoopState builds the loop's empty registry state over its instance.
 func newLoopState(inst *Instance) *loopState {
 	return &loopState{
-		inst:     inst,
-		waiting:  map[string]struct{}{},
-		msgIdx:   map[string]*track{},
-		position: map[string]flow.Node{},
-		parked:   map[string]flow.Node{},
-		watchers: map[string][]*boundaryWatch{},
-		tasks:    map[string]taskEntry{},
-		jobs:     map[wtasks.JobID]*track{},
-		calls:    map[string]*callEntry{},
-		scopes:   map[scope.DataPath]*scopeEntry{},
+		inst:             inst,
+		waiting:          map[string]struct{}{},
+		msgIdx:           map[string]*track{},
+		position:         map[string]flow.Node{},
+		parked:           map[string]flow.Node{},
+		watchers:         map[string][]*boundaryWatch{},
+		tasks:            map[string]taskEntry{},
+		jobs:             map[wtasks.JobID]*track{},
+		calls:            map[string]*callEntry{},
+		scopeHandlers:    map[scope.DataPath][]*scopeHandlerWatch{},
+		scopeInterrupted: map[scope.DataPath]bool{},
+		scopes:           map[scope.DataPath]*scopeEntry{},
 	}
 }
 
@@ -110,6 +125,10 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	for _, t := range initial {
 		ls.spawn(ctx, t)
 	}
+
+	// arm the process's top-level Event Sub-Process handlers at the instance
+	// root scope — they guard the whole instance's window (SRD-052 FR-5).
+	ls.armScopeHandlers(ctx, rootNodes(inst), inst.sc.root)
 
 	if ls.active == 0 {
 		inst.setState(Completed)
@@ -154,6 +173,11 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 			ls.handleCallCompletion(req)
 		}
 	}
+
+	// the main flow is done — disarm any still-armed Event Sub-Process handlers
+	// (a normal completion never runs drop, so root-scope handlers are torn
+	// down here; idempotent if a terminate already dropped them). SRD-052 FR-5.
+	ls.disarmAllScopeHandlers()
 
 	inst.settleFinalState(ls.stopping)
 }
@@ -246,6 +270,7 @@ func (ls *loopState) drop() {
 	clear(ls.msgIdx)
 	ls.conds = nil
 	clear(ls.scopes)
+	clear(ls.scopeInterrupted)
 	clear(ls.position)
 	clear(ls.parked)
 	ls.withdrawAllTasks()
@@ -258,6 +283,9 @@ func (ls *loopState) drop() {
 		entry.child.Terminate()
 	}
 	clear(ls.calls)
+	// unregister every armed Event Sub-Process handler's hub waiter — the
+	// instance is terminating (SRD-052 FR-5).
+	ls.disarmAllScopeHandlers()
 }
 
 // apply applies one track→loop event to the loop-owned state on the loop
@@ -331,6 +359,11 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		// track and continue on the boundary's exception flow, the loop arbitrating the
 		// completion-vs-fire race (SRD-029 FR-5/FR-8).
 		ls.fireBoundary(ctx, ev)
+
+	case evScopeHandlerFire:
+		// a scope-armed Event Sub-Process handler's trigger fired — the
+		// scope-level peer of evBoundary (ADR-023 v.2 §2.10, SRD-052 FR-7).
+		ls.fireScopeHandler(ctx, ev)
 
 	case evScopeTerminate:
 		// a Terminate End Event inside a sub-process — only its enclosing

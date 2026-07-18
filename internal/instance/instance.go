@@ -400,6 +400,13 @@ func (inst *Instance) createTracks(
 			continue
 		}
 
+		// a top-level Event Sub-Process is a scope-armed handler, not an
+		// entry (ADR-023 v.2 §2.10): it is armed at the instance root scope,
+		// never seeded as an initial track (SRD-052 FR-3).
+		if isEventSubHandler(n) {
+			continue
+		}
+
 		_, boundaryEvent := n.(flow.BoundaryEvent)
 		if len(n.Incoming()) != 0 ||
 			n.NodeType() == flow.GatewayNodeType ||

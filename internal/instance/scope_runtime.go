@@ -122,6 +122,10 @@ func (ls *loopState) onScopeOpen(ctx context.Context, host *track, node flow.Nod
 	ls.reportScope(observability.PhaseOpened, node, child)
 
 	ls.seedScope(ctx, sh, child)
+
+	// arm the scope's Event Sub-Process handlers while it is open (SRD-052
+	// FR-5) — the boundary-watch pattern at scope granularity.
+	ls.armScopeHandlers(ctx, sh.Nodes(), child)
 }
 
 // seedScope spawns the inner entry tracks per the ADR-023 §2.3 validated
@@ -134,7 +138,13 @@ func (ls *loopState) seedScope(
 	sh scopeHost,
 	child scope.DataPath,
 ) {
+	// An Event Sub-Process scope is entered by its FIRED triggered start, not
+	// seeded normally: seed from the start's outgoing targets (the start
+	// treated as fired), so the handler's inner flow runs (SRD-052 FR-7).
 	seeds := scopeSeeds(sh)
+	if isEventSubHandler(sh) {
+		seeds = handlerSeeds(sh)
+	}
 
 	for _, n := range seeds {
 		nt, err := newTrack(n, ls.inst, nil)
@@ -171,6 +181,13 @@ func scopeSeeds(sh scopeHost) []flow.Node {
 	var flowless []flow.Node
 
 	for _, n := range sh.Nodes() {
+		// an Event Sub-Process is a scope-armed handler, not an entry
+		// (ADR-023 v.2 §2.10): it is armed when the scope opens, never seeded
+		// (SRD-052 FR-3).
+		if isEventSubHandler(n) {
+			continue
+		}
+
 		if en, ok := n.(flow.EventNode); ok &&
 			en.EventClass() == flow.StartEventClass {
 			return []flow.Node{n}
@@ -186,6 +203,15 @@ func scopeSeeds(sh scopeHost) []flow.Node {
 	}
 
 	return flowless
+}
+
+// isEventSubHandler reports whether node is an Event Sub-Process — a
+// scope-armed handler skipped by every entry-seeding path (the top-level
+// createTracks and the scope-open scopeSeeds), armed instead (SRD-052).
+func isEventSubHandler(node flow.Node) bool {
+	h, ok := node.(interface{ IsEventSubProcess() bool })
+
+	return ok && h.IsEventSubProcess()
 }
 
 // incScope counts a spawned track into its scope's drain accounting; root
@@ -236,6 +262,10 @@ func (ls *loopState) completeScope(
 	}
 
 	delete(ls.scopes, path)
+
+	// the scope's window closed — its Event Sub-Process handlers no longer
+	// guard anything (SRD-052 FR-5).
+	ls.disarmScopeHandlers(path)
 
 	ls.reportScope(observability.PhaseCompleted, entry.node, path)
 
@@ -322,6 +352,10 @@ func (ls *loopState) cancelScope(path scope.DataPath, phase observability.Phase)
 	for _, p := range sub {
 		entry := ls.scopes[p]
 		delete(ls.scopes, p)
+
+		// the canceled scope's Event Sub-Process handlers no longer guard it
+		// (SRD-052 FR-5).
+		ls.disarmScopeHandlers(p)
 
 		// best-effort close: the subtree is being abandoned; a close error
 		// here cannot be acted on beyond logging (ADR-022 §2.3(2)).

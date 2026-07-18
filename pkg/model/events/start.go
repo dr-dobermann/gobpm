@@ -56,10 +56,12 @@ func NewStartEvent(
 	startEventOptions ...options.Option,
 ) (*StartEvent, error) {
 	sc := startConfig{
-		name:          name,
-		props:         map[string]*data.Property{},
-		parallel:      false,
-		interrurpting: false,
+		name:  name,
+		props: map[string]*data.Property{},
+		// interrupting defaults to true — the BPMN default for an event
+		// sub-process start (§13.5.4); WithNonInterrupting flips it. The flag
+		// applies only to event-sub-process starts (SRD-052).
+		interrurpting: true,
 		baseOpts:      []options.Option{},
 		defs:          []flow.EventDefinition{},
 		dataOutputs:   make(map[string]*data.Parameter),

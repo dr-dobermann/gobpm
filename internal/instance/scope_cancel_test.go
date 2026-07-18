@@ -147,6 +147,30 @@ func (c *capturingProducer) watch() eventproc.EventProcessor {
 	return nil
 }
 
+// scopeWatch returns a captured Event Sub-Process handler watch, if any — the
+// scope-level peer of watch() (SRD-052).
+func (c *capturingProducer) scopeWatch() *scopeHandlerWatch {
+	c.m.Lock()
+	defer c.m.Unlock()
+
+	for _, pr := range c.procs {
+		if w, ok := pr.(*scopeHandlerWatch); ok {
+			return w
+		}
+	}
+
+	return nil
+}
+
+// numProcs returns how many processors are currently registered — a test waits
+// on it to know a nested scope's inner waiters have all armed.
+func (c *capturingProducer) numProcs() int {
+	c.m.Lock()
+	defer c.m.Unlock()
+
+	return len(c.procs)
+}
+
 func (c *capturingProducer) UnregisterEvent(
 	_ eventproc.EventProcessor, _ string,
 ) error {

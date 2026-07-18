@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Event Sub-Process — interrupting (SRD-052, ADR-023 v.2 §2.10 — #91).** A
+  `SubProcess` marked `triggeredByEvent` (`activities.WithTriggeredByEvent()`)
+  is a **scope-armed handler**, not a token target: it is armed while its
+  enclosing scope is open and fires when its single triggered start catches an
+  event — the boundary-event pattern lifted from an activity's window to a
+  scope's window. Triggers: **Message / Timer / Signal / Conditional** (armed
+  as the scope's subscription; the Conditional start is ADR-006 v.3's deferred
+  piece, now landed) and **Error** (caught on the §2.6 scope chain at the
+  throw site, innermost catcher first). The interrupting variant (the default,
+  BPMN §13.5.4; `events.WithNonInterrupting()` flips a start) fires a
+  **cancel-and-run**: it cancels the enclosing scope's sibling tracks (the
+  data plane stays open, so the handler runs in the parent's data context),
+  runs its own flow in a fresh child scope seeded from the triggered start,
+  and — reaching its End without re-throwing — **absorbs** the event so the
+  parent resumes on its normal flow. A scope allows **one** interrupting fire:
+  an event sub-process and a boundary event on the composite share the budget,
+  so they cooperate rather than double-fire. Handler `Armed` / `Fired` /
+  `Disarmed` facts (Boundary-kind, carrying a scope path) sit next to the
+  scope cancel/complete facts. Non-interrupting handlers and Transaction
+  boundaries remain deferred (#90). See
+  [`examples/event-subprocess/`](examples/event-subprocess/) and
+  [`docs/guides/composition.md`](docs/guides/composition.md).
+
 - **Call Activity (SRD-050, ADR-023 v.1 — the second slice of the
   composition keystone #85, which it closes).** A Call Activity invokes a
   **separately registered process as its own child instance** — the reuse

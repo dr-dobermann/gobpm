@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -231,6 +232,16 @@ func (ls *loopState) fireBoundary(ctx context.Context, ev trackEvent) {
 	// cannot fail — use the panicking form to avoid an unreachable error branch.
 	be := ev.node.(flow.BoundaryEvent)
 
+	// shared interrupting budget (SRD-052 FR-6): an interrupting boundary on a
+	// composite competes with the composite's Event Sub-Processes for the ONE
+	// interruption its scope allows. If an event-sub already interrupted that
+	// scope, this boundary fire is suppressed — the two cooperate rather than
+	// double-fire (NFR-1).
+	child, composite := ls.hostChildScope(ev.track)
+	if be.CancelActivity() && composite && ls.scopeInterrupted[child] {
+		return
+	}
+
 	// both kinds spawn a token on the boundary's outgoing (exception / parallel) flow.
 	ls.spawnForks(ctx,
 		trackEvent{track: ev.track, flows: ev.node.Outgoing()})
@@ -245,6 +256,12 @@ func (ls *loopState) fireBoundary(ctx context.Context, ev trackEvent) {
 	})
 
 	if be.CancelActivity() {
+		// spend the scope's interrupting budget, so a later event-sub fire in
+		// the same scope is suppressed (SRD-052 FR-6).
+		if composite {
+			ls.scopeInterrupted[child] = true
+		}
+
 		// a composite host's open child scope dies with it (ADR-023 §2.5):
 		// cancel the subtree before the host, so the inner tracks stop and
 		// the scope closes as a unit.
@@ -255,18 +272,30 @@ func (ls *loopState) fireBoundary(ctx context.Context, ev trackEvent) {
 	}
 }
 
-// cancelHostScope cancels the open child scope of a composite host, if
-// any — the interrupting-fire and error-catch companion (SRD-049 FR-10).
-// Runs on the loop goroutine.
-func (ls *loopState) cancelHostScope(host *track) {
+// hostChildScope returns the open child-scope path of a composite host and
+// whether the host is a composite at all — the scope path both the interrupting
+// boundary (the shared budget, SRD-052 FR-6) and cancelHostScope reference.
+func (ls *loopState) hostChildScope(host *track) (scope.DataPath, bool) {
 	node, ok := ls.position[host.ID()].(scopeHost)
 	if !ok {
-		return
+		return "", false
 	}
 
 	child, err := host.scopePath.Append(scopeSegment(node))
 	if err != nil {
-		return // an unopenable path can't hold an open scope.
+		return "", false // an unopenable path can't hold an open scope.
+	}
+
+	return child, true
+}
+
+// cancelHostScope cancels the open child scope of a composite host, if
+// any — the interrupting-fire and error-catch companion (SRD-049 FR-10).
+// Runs on the loop goroutine.
+func (ls *loopState) cancelHostScope(host *track) {
+	child, ok := ls.hostChildScope(host)
+	if !ok {
+		return
 	}
 
 	ls.cancelScope(child, observability.PhaseCanceled)
@@ -363,6 +392,26 @@ func (ls *loopState) matchErrorScopeChain(ctx context.Context, t *track) bool {
 			return false // above every open scope — the root reached.
 		}
 
+		// an event-sub Error handler INSIDE this scope catches before the Error
+		// boundary ON the scope host (§10.5.6 precedence — the inline handler is
+		// the more inner catcher): it absorbs the fault and the scope runs the
+		// handler (SRD-052 FR-8/FR-9). Skipped once the scope is already
+		// interrupted (its budget is spent).
+		if w := ls.errorHandlerAt(path, be.Code); w != nil &&
+			!ls.scopeInterrupted[path] {
+			ls.inst.report(observability.Fact{
+				Kind:     observability.KindFault,
+				Phase:    observability.PhaseCaught,
+				NodeID:   w.handler.ID(),
+				NodeName: w.handler.Name(),
+				Details:  map[string]string{observability.AttrError: be.Code},
+			})
+			ls.reportHandler(w, observability.PhaseFired)
+			ls.runScopeHandler(ctx, w, nil)
+
+			return true
+		}
+
 		if bev := errorBoundaryOn(entry.node, be.Code); bev != nil {
 			ls.inst.report(observability.Fact{
 				Kind:     observability.KindFault,
@@ -386,6 +435,25 @@ func (ls *loopState) matchErrorScopeChain(ctx context.Context, t *track) bool {
 
 		path = entry.parent
 	}
+}
+
+// errorHandlerAt returns the armed event-sub Error handler at path whose
+// triggered start's errorRef code matches, or nil — the scope-chain peer of
+// errorBoundaryOn (SRD-052 FR-8). An Error handler is armed with no hub waiter
+// (armScopeHandlers), so like the Error boundary it is resolved here, at the
+// throw site, not delivered.
+func (ls *loopState) errorHandlerAt(
+	path scope.DataPath,
+	code string,
+) *scopeHandlerWatch {
+	for _, w := range ls.scopeHandlers[path] {
+		if eed, ok := w.def.(*events.ErrorEventDefinition); ok &&
+			eed.Error().ErrorCode() == code {
+			return w
+		}
+	}
+
+	return nil
 }
 
 // errorBoundaryOn returns the node's Error boundary whose errorRef code
