@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.9.0] - 2026-07-18
+
 ### Added
 
 - **Event Sub-Process — non-interrupting (SRD-053, ADR-023 v.2 §2.10 — #91,
