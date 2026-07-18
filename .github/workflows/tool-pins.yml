@@ -1,0 +1,42 @@
+name: Tool pin updates
+
+# Weekly (and on-demand) check for newer releases of the go-install dev-tool
+# pins that live in the Makefile + check.yml — the niche Dependabot can't cover
+# (FIX-025). On drift it opens a PR bumping both files, which then rides normal
+# CI so a breaking tool update surfaces in the PR, not on trunk.
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays, 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Check for newer tool pins
+        id: check
+        run: bash scripts/check-tool-pins.sh
+
+      # Requires: Settings → Actions → General → "Allow GitHub Actions to create
+      # and approve pull requests" (see FIX-025 §3.3).
+      - name: Open a bump PR
+        if: steps.check.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branch="chore/tool-pins-$(date +%Y%m%d%H%M)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "chore: bump pinned dev-tool versions"
+          git push -u origin "$branch"
+          gh pr create \
+            --title "chore: bump pinned dev-tool versions" \
+            --body-file /tmp/pin-notes.md
