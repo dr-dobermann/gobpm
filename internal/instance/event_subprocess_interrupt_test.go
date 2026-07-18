@@ -273,6 +273,27 @@ func openInstance(t *testing.T) (*Instance, *loopState) {
 // guards fault the instance rather than proceed — an unopenable enclosing path,
 // a payload that cannot bind (its scope is not open), and a handler node that is
 // not a NodeExecutor.
+// TestOnScopeOpenAppendError (defensive): a host whose scope path cannot take a
+// child segment faults the instance rather than opening a corrupt scope.
+func TestOnScopeOpenAppendError(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	inst, ls := openInstance(t)
+	sp, err := activities.NewSubProcess("comp")
+	require.NoError(t, err)
+
+	// EmptyDataPath.Append fails ("should start from /"), before any scope opens.
+	host := &track{
+		BaseElement: *foundation.MustBaseElement(),
+		scopePath:   scope.EmptyDataPath,
+	}
+
+	ls.onScopeOpen(t.Context(), host, sp)
+
+	require.True(t, ls.stopping)
+	require.Error(t, inst.LastErr())
+}
+
 func TestRunScopeHandlerErrorPaths(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
