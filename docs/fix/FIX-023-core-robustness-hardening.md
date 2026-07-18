@@ -1,7 +1,7 @@
 # FIX-023 «Core robustness — errs panic-config removal, depguard enforcement, reproducible test build»
 
 **Type:** FIX (one-shot; not rewritten after landing).
-**Status:** Draft v.1 (2026-07-18, branch `fix/core-robustness-hardening`, not yet implemented).
+**Status:** Accepted v.1 (2026-07-18, branch `fix/core-robustness-hardening`, implemented — `make ci` green).
 **Date:** 2026-07-18.
 **Author:** Ruslan Gabitov.
 **Branch:** `fix/core-robustness-hardening` (three independent hygiene fixes landed as one themed change-set).
@@ -334,24 +334,57 @@ only one touching git-tracked file inventory.
 
 ## §7 Related
 
-- No upstream ADR/SAD (self-contained tooling/hygiene).
+- **[ADR-003 v.1](../design/ADR-003-module-layout.md)** §CI mandates that
+  `golangci-lint depguard` enforce the import-direction rules "from day 1".
+  Symptom B is precisely that this enforcement was configured but never
+  switched on; M2 realizes ADR-003's requirement.
+- Otherwise self-contained tooling/hygiene — no other upstream ADR/SAD.
 - Aligns with the project rules: audit/remove stale interfaces; no speculative
-  universality; never lower the coverage gate.
+  universality; never lower the coverage gate (generated code excluded from the
+  denominator, not the threshold lowered).
 
 ---
 
 ## §8 Implementation summary (stage-by-stage actual landings + deltas vs draft)
 
-> ⚠️ TODO: fill AFTER landing.
-
 ### §8.1 Stages by commit (branch `fix/core-robustness-hardening`)
 | Stage | Commit | Scope | Tests |
 |---|---|---|---|
+| Doc | `eee6b5e` | FIX-023 (this document) | — |
+| M1 | `fbf1311` | errs: remove `dontPanic`/`panicHook` + 5 config funcs + `PanicHandler` type; `Panic(v)=panic(v)`; drop `fmt`/`os` imports (−94 net) | `TestPanic` reduced; `TestDontPanic`/`TestHasPanicHandler` deleted; `-race` clean, `Panic` 100% |
+| M2 | `7875611` | enable `- depguard`; `internal/lintcfg` guard test | `TestDepguardEnabled` (fails when depguard removed — verified) |
+| M3 | `45e6dca` | commit `generated/` (14 files); `.gitattributes`; Makefile decouple + `mock-check` + coverprofile filter; covercheck v0.2.0 `-exclude-paths`; workflow bump + `mock-check` step | `mock-check`, clean-checkout `go test ./...` compiles |
+
+Gate at M3: `make ci` green — `diff-coverage: 100.0% of 0 changed coverable
+lines — PASS` (generated/ excluded), `coverage.txt` 0 generated lines, lint 0
+(depguard on), `-race`, govulncheck clean, all modules.
 
 ### §8.2 Empirical findings — where reality diverged from the §3 draft
 
+- **Confirming depguard "bites" needed a cycle-free forbidden import.** The
+  first probe (a `pkg/model` file importing `internal/scope`) failed
+  **typecheck** with an import cycle *before* depguard could evaluate. The
+  `io/ioutil` deny rule — stdlib, no cycle — cleanly demonstrated the denial
+  (`not allowed from list 'deny_deprecated'`). A blank `import _` also had to
+  become a named+used import to get past revive's blank-import rule first.
+
+- **The diff-gate reads "0 changed coverable lines".** The branch's coverable
+  delta is essentially nil — M1 is deletions + a one-line wrapper (already
+  covered), M2/M3 are config + generated (excluded) + test files — so the gate
+  is vacuously 100%. The point that mattered was the *absence* of ~1774
+  generated uncovered lines, which `-exclude-paths` delivered.
+
+- **Lazy Makefile substitution.** The coverprofile filter uses shell-time
+  `$$($(GO) list …)`, not parse-time `$(shell …)`, so `go list` runs only when
+  the target does, not on every `make` invocation.
+
 ### §8.3 Backlog (out of FIX-023 scope)
+
+- A stronger depguard self-test (a linted forbidden-import fixture asserting a
+  non-zero exit) was considered and left out — the config-assertion guard test
+  covers the actual regression (depguard dropped from `enable`) at far lower
+  cost.
 
 ## Open questions
 
-None (the Symptom-C policy call is surfaced in §3.1 for the approval gate).
+None.
