@@ -23,6 +23,10 @@ type scopeHandlerWatch struct {
 	def       flow.EventDefinition // the start's trigger definition
 	path      scope.DataPath       // the enclosing scope this handler guards
 	loopOwned bool                 // Conditional — armed via a condWatch, not the hub
+	// interrupting is the triggered start's isInterrupting (SRD-053): an
+	// interrupting fire runs cancel-and-run; a non-interrupting fire forks a
+	// concurrent handler instance and leaves the watch armed.
+	interrupting bool
 }
 
 // ID returns the hub-waiter id for this handler (its start node id).
@@ -76,8 +80,17 @@ func (ls *loopState) armScopeHandlers(
 			continue
 		}
 
+		// the triggered start's mode drives the fire (SRD-053); default
+		// interrupting if the node somehow doesn't expose it (unreachable for a
+		// validated StartEvent).
+		interrupting := true
+		if si, ok := start.(interface{ IsInterrupting() bool }); ok {
+			interrupting = si.IsInterrupting()
+		}
+
 		w := &scopeHandlerWatch{
 			inst: ls.inst, handler: n, start: start, def: def, path: path,
+			interrupting: interrupting,
 		}
 
 		// A Conditional or Error start is not a hub waiter: the Conditional is

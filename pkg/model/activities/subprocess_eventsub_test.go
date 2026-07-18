@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
@@ -33,6 +34,38 @@ func sigStart(t *testing.T, name string, itr bool) *events.StartEvent {
 	require.NoError(t, err)
 
 	return start
+}
+
+// errEventSubNI builds an Event Sub-Process with a NON-interrupting Error start
+// — an invalid combination (Error is interrupting-only, BPMN §10.5.6), used to
+// assert the SRD-053 validation gate.
+func errEventSubNI(t *testing.T, name, code string) *activities.SubProcess {
+	t.Helper()
+
+	sp, err := activities.NewSubProcess(name, activities.WithTriggeredByEvent())
+	require.NoError(t, err)
+
+	bpErr, err := bpmncommon.NewError(name+"-err", code, nil)
+	require.NoError(t, err)
+	eed, err := events.NewErrorEventDefinition(bpErr)
+	require.NoError(t, err)
+	start, err := events.NewStartEvent(name+"-start",
+		events.WithErrorTrigger(eed), events.WithNonInterrupting())
+	require.NoError(t, err)
+
+	task := spTask(t, name+"-task")
+	end, err := events.NewEndEvent(name + "-end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, task, end} {
+		require.NoError(t, sp.Add(e))
+	}
+	_, err = flow.Link(start, task)
+	require.NoError(t, err)
+	_, err = flow.Link(task, end)
+	require.NoError(t, err)
+
+	return sp
 }
 
 // eventSub builds an Event Sub-Process: [signal start] → task → end. The start
@@ -72,11 +105,16 @@ func TestEventSubProcessValidate(t *testing.T) {
 		require.False(t, noneStartSP(t, "plain").IsEventSubProcess())
 	})
 
-	t.Run("non-interrupting start rejected (this slice)", func(t *testing.T) {
+	t.Run("non-interrupting (non-Error) start validates (SRD-053)", func(t *testing.T) {
 		es := eventSub(t, "nonintr", false)
-		err := es.Validate()
+		require.NoError(t, es.Validate())
+		require.True(t, es.IsEventSubProcess())
+	})
+
+	t.Run("non-interrupting Error start rejected (Error is interrupting-only)", func(t *testing.T) {
+		err := errEventSubNI(t, "nierr", "E_X").Validate()
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "non-interrupting")
+		require.Contains(t, err.Error(), "must be interrupting")
 	})
 
 	t.Run("a None start is not a triggered start", func(t *testing.T) {
