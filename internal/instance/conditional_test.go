@@ -376,7 +376,6 @@ func TestEvDataCommitKindName(t *testing.T) {
 	require.Equal(t, "dataCommit", evDataCommit.String())
 }
 
-
 // TestConditionalCoverageEdges — the small defensive branches of the SRD-048
 // machinery: a non-DependencyLister expression declares nothing; a non-bool
 // evaluation result is a classified error; a stopping/empty sweep and a

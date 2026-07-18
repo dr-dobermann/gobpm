@@ -207,12 +207,7 @@ type track struct {
 	// path (and get serialized by the re-entry queue). Empty for every normal
 	// composite — scopeSegment(node) is used then. Construction-set by the loop.
 	scopeSeg string
-	// bornPayload is a trigger payload bound into this track's OWN child scope
-	// when it opens (SRD-053): a non-interrupting handler instance reads its own
-	// event data, isolated from concurrent instances. nil for every other track
-	// (the interrupting handler binds at the enclosing scope instead).
-	bornPayload flow.EventDefinition
-	steps       []*stepInfo
+	steps    []*stepInfo
 	// msgDefIDs are the ids of the Message catch definitions this track parks on, set by
 	// checkNodeType at construction (SRD-027 FR-8). The loop indexes them → this track so a
 	// fired message resolves back to it; spawn reads them for a track that starts parked

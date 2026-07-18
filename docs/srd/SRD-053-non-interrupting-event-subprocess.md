@@ -65,13 +65,14 @@ stays armed → multi-shot). A colliding scope path **queues** (serialises) —
   the shared budget, disarm); a **non-interrupting** fire runs a new
   concurrent-run that **spawns the handler without** touching the scope's sibling
   tracks, the interrupting budget (untouched), or the watch (left armed).
-- **FR-4 — a concurrent instance per fire (unique scope + per-instance
-  payload).** Each non-interrupting fire opens the handler in its **own unique
-  child scope** (`E/sp-<handler>-<n>`, not the shared `E/sp-<handler>`), so two
-  concurrent fires run side-by-side instead of the second **queueing** behind the
-  first. That fire's trigger **payload is bound into its own child scope** (not
-  the shared enclosing scope, which concurrent fires would race on) — each
-  instance reads its own event data.
+- **FR-4 — a concurrent instance per fire (unique scope).** Each
+  non-interrupting fire opens the handler in its **own unique child scope**
+  (`E/sp-<handler>-<n>`, not the shared `E/sp-<handler>`), so two concurrent
+  fires run side-by-side instead of the second **queueing** behind the first. The
+  fire's trigger **payload is bound into the enclosing scope** (as the
+  interrupting handler binds it), read by the handler's inner nodes via walk-up
+  — concurrent instances share this binding; per-instance payload isolation is a
+  deferred refinement (§4.3).
 - **FR-5 — multi-shot.** The non-interrupting watch is **not** disarmed on fire:
   it stays armed and fires again on the next trigger (Message/Signal/Timer via the
   hub's retained waiter; the conditional start on the next false→true edge),
@@ -119,23 +120,20 @@ definition kind). Every other non-interrupting trigger is accepted.
 
 - `scopeHandlerWatch`: `+ interrupting bool` (set in `armScopeHandlers` from
   `start.IsInterrupting()`).
-- `track`: `+ scopeSeg string` (an optional scope-segment override) and
-  `+ bornPayload flow.EventDefinition` (a per-instance payload to bind at the
-  child scope) — both zero for every existing spawn, so nothing changes for
-  non-handler tracks.
+- `track`: `+ scopeSeg string` (an optional scope-segment override) — zero for
+  every existing spawn, so nothing changes for non-handler tracks.
 - `loopState`: `+ handlerSeq int` (a loop-owned monotonic counter minting the
   per-fire unique segment).
 - `fireScopeHandler`: branch on `w.interrupting`; the non-interrupting arm calls
   `runNonInterruptingHandler`.
-- `runNonInterruptingHandler` (new): spawn the handler track with
-  `scopeSeg = scopeSegment(w.handler) + "-" + handlerSeq++` and
-  `bornPayload = ev.eDef`; `incScope`/`spawn` as usual; **no** budget, **no**
-  `interruptScopeSiblings`, **no** `disarmScopeHandlers`.
+- `runNonInterruptingHandler` (new): bind the payload at the enclosing scope
+  (`bindEventPayloadAt(w.path, …)`, as `runScopeHandler` does), then spawn the
+  handler track with `scopeSeg = scopeSegment(w.handler) + "-" + handlerSeq++`;
+  `incScope`/`spawn` as usual; **no** budget, **no** `interruptScopeSiblings`,
+  **no** `disarmScopeHandlers`.
 - `onScopeOpen` (`scope_runtime.go:88`): derive the child segment as
-  `scopeSegment(node)` unless the host track carries a `scopeSeg` override; after
-  opening the child scope, bind `host.bornPayload` into it if set (the
-  per-instance payload; interrupting keeps binding at the enclosing scope,
-  unchanged).
+  `scopeSegment(node)` unless the host track carries a `scopeSeg` override — so a
+  non-interrupting handler instance opens a unique child scope.
 
 ## §4 Analysis
 
@@ -158,14 +156,19 @@ and the second would serialise behind the first — violating the standard's
 side-by-side; a monotonic loop-owned counter guarantees uniqueness without
 per-node bookkeeping.
 
-### §4.3 Why the payload binds at the child scope
-The interrupting handler binds the trigger payload at the **enclosing** scope
-(one instance, read by walk-up). Concurrent non-interrupting instances each have
-their **own** payload; binding at the shared enclosing scope would let a later
-fire overwrite an earlier instance's data. Binding at each instance's **own child
-scope** isolates them — the handler's inner nodes read their own event data
-directly. The interrupting binding is left as-is (no regression), so only the
-non-interrupting path threads `bornPayload` through `onScopeOpen`.
+### §4.3 Payload binding — enclosing scope, per-instance isolation deferred
+The trigger payload is bound at the **enclosing** scope, exactly as the
+interrupting handler binds it (`runScopeHandler`), read by the handler's inner
+nodes via walk-up. Concurrent non-interrupting instances therefore **share** the
+enclosing binding: two fires with distinct payloads would see the later one
+(last-writer-wins), and the payload item is visible to the scope's still-running
+sibling work by name. This is acceptable for the common case (a fixed-shape
+trigger; the item name is distinct from process data) and keeps the fire path
+symmetric with the interrupting handler. **Per-instance payload isolation** —
+binding each fire's payload into its own child scope — is a **deferred
+refinement**: it was prototyped but introduced an unreachable commit-error guard
+in `onScopeOpen` (the freshly-opened child scope never rejects the commit), so it
+is left for a follow-up that needs concurrent distinct-payload handlers.
 
 ### §4.4 Error stays interrupting-only
 BPMN §10.5.6 makes an Error event sub-process always interrupting (an unhandled
@@ -195,7 +198,7 @@ E2E (`pkg/thresher`): `TestNonInterruptingEventSubProcessE2E`.
 | # | Scope |
 |---|---|
 | M1 | The model — relax `validateEventSubShape` (accept non-interrupting, reject non-interrupting Error) + the `interrupting` flag armed on the watch (FR-1, FR-2) + tests |
-| M2 | The non-interrupting runtime — `fireScopeHandler` branch, `runNonInterruptingHandler`, the unique per-fire scope + per-instance payload (`scopeSeg`/`bornPayload`/`handlerSeq` + `onScopeOpen`), multi-shot, drain interplay, observability (FR-3..7) + tests |
+| M2 | The non-interrupting runtime — `fireScopeHandler` branch, `runNonInterruptingHandler`, the unique per-fire scope (`scopeSeg`/`handlerSeq` + `onScopeOpen`), enclosing-scope payload bind, multi-shot, drain interplay, observability (FR-3..7) + tests |
 | M3 | Thresher e2e + `examples/` + guide + changelog + tracker row 2 → ✅ + READMEs (FR-8) |
 
 Post-M3: `/check-srd`, §10 fill, SRD Accepted, sync linked docs (ADR-023 v.2 is

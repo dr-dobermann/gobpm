@@ -240,10 +240,22 @@ func (ls *loopState) runNonInterruptingHandler(
 		return
 	}
 
+	// bind the trigger payload into the enclosing scope, read by the handler's
+	// inner nodes via walk-up (as the interrupting handler does). Concurrent
+	// non-interrupting instances share this binding; per-instance payload
+	// isolation is a deferred refinement (SRD-053 §4.3).
+	if payload != nil {
+		if err := ls.inst.sc.bindEventPayloadAt(w.path, payload); err != nil {
+			ls.inst.fail(err)
+			ls.stopAll()
+
+			return
+		}
+	}
+
 	ls.handlerSeq++
 	ht.scopePath = w.path
 	ht.scopeSeg = scopeSegment(w.handler) + "-" + strconv.Itoa(ls.handlerSeq)
-	ht.bornPayload = payload
 	ls.inst.trackCount.Add(1)
 	ls.spawn(ctx, ht)
 }

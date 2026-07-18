@@ -157,22 +157,41 @@ func TestNonInterruptingMultiFire(t *testing.T) {
 		"concurrent instances get unique scope paths, not one queued path")
 }
 
-// TestRunNonInterruptingHandlerNewTrackError (SRD-053 FR-3): a handler node that
-// is not a NodeExecutor faults the instance rather than spawning silently.
-func TestRunNonInterruptingHandlerNewTrackError(t *testing.T) {
+// TestRunNonInterruptingHandlerErrorPaths (SRD-053 FR-3): the concurrent-run's
+// defensive guards fault the instance — a payload that cannot bind (its
+// enclosing scope is not open) and a handler node that is not a NodeExecutor.
+func TestRunNonInterruptingHandlerErrorPaths(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
-	inst, ls := openInstance(t)
-	bn, err := flow.NewBaseNode("plain")
-	require.NoError(t, err)
-	w := &scopeHandlerWatch{
-		inst: inst, handler: nonExecNode{bn}, path: inst.sc.root,
-	}
+	t.Run("payload bind failure faults", func(t *testing.T) {
+		inst, ls := openInstance(t)
+		es := nonIntrSigEventSub(t, "e", &atomic.Int32{})
+		_, def, ok := triggeredStartOf(es) // the signal def carries an item
+		require.True(t, ok)
 
-	ls.runNonInterruptingHandler(t.Context(), w, nil)
+		unopened, err := inst.sc.root.Append("never-opened")
+		require.NoError(t, err)
+		w := &scopeHandlerWatch{inst: inst, handler: es, path: unopened}
 
-	require.True(t, ls.stopping)
-	require.Error(t, inst.LastErr())
+		ls.runNonInterruptingHandler(t.Context(), w, def)
+
+		require.True(t, ls.stopping)
+		require.Error(t, inst.LastErr())
+	})
+
+	t.Run("non-executor handler faults", func(t *testing.T) {
+		inst, ls := openInstance(t)
+		bn, err := flow.NewBaseNode("plain")
+		require.NoError(t, err)
+		w := &scopeHandlerWatch{
+			inst: inst, handler: nonExecNode{bn}, path: inst.sc.root,
+		}
+
+		ls.runNonInterruptingHandler(t.Context(), w, nil)
+
+		require.True(t, ls.stopping)
+		require.Error(t, inst.LastErr())
+	})
 }
 
 // distinctHandlerScopes returns the distinct scope paths a handler node's scope

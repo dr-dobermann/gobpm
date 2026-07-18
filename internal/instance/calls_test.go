@@ -28,25 +28,25 @@ import (
 // the test (pre-closed for an instant completion, closed by Terminate for the
 // cascade). Failed/Outputs are scripted.
 type fakeChild struct {
-	id       string
-	version  int
-	err      error
-	outputs  map[string]data.Data
-	outErr   error
-	mu       sync.Mutex
-	done     chan struct{}
-	closed   bool
-	killed   bool
+	id      string
+	version int
+	err     error
+	outputs map[string]data.Data
+	outErr  error
+	mu      sync.Mutex
+	done    chan struct{}
+	closed  bool
+	killed  bool
 }
 
 func newFakeChild(id string, version int) *fakeChild {
 	return &fakeChild{id: id, version: version, done: make(chan struct{})}
 }
 
-func (c *fakeChild) ID() string             { return c.id }
-func (c *fakeChild) Version() int           { return c.version }
-func (c *fakeChild) Done() <-chan struct{}  { return c.done }
-func (c *fakeChild) Failed() error          { return c.err }
+func (c *fakeChild) ID() string            { return c.id }
+func (c *fakeChild) Version() int          { return c.version }
+func (c *fakeChild) Done() <-chan struct{} { return c.done }
+func (c *fakeChild) Failed() error         { return c.err }
 
 func (c *fakeChild) finish() {
 	c.mu.Lock()

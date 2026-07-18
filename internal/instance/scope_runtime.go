@@ -130,19 +130,6 @@ func (ls *loopState) onScopeOpen(ctx context.Context, host *track, node flow.Nod
 
 	ls.reportScope(observability.PhaseOpened, node, child)
 
-	// a non-interrupting handler instance binds its OWN trigger payload into its
-	// own child scope (SRD-053 FR-4) — isolated from concurrent instances, read
-	// by its inner nodes directly; before seeding so the seeds observe it. The
-	// interrupting handler binds at the enclosing scope instead (unchanged).
-	if host.bornPayload != nil {
-		if err := ls.inst.sc.bindEventPayloadAt(child, host.bornPayload); err != nil {
-			ls.inst.fail(err)
-			ls.stopAll()
-
-			return
-		}
-	}
-
 	ls.seedScope(ctx, sh, child)
 
 	// arm the scope's Event Sub-Process handlers while it is open (SRD-052
