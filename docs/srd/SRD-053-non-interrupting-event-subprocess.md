@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-18 |
 | Owner | Ruslan Gabitov |
@@ -227,7 +227,40 @@ already Accepted and unchanged — this slice adds no conception), PR handover.
 
 ## §10 Implementation summary
 
-> ⚠️ TODO: fill after landing.
+### §10.1 Stages by commit (branch `feat/non-interrupting-event-subprocess`)
+| Stage | Commit | Scope |
+|---|---|---|
+| Doc | `110013a` | SRD-053 (this document) |
+| M1 | `b41d7fb` | model — relax `validateEventSubShape` (accept non-interrupting, reject non-interrupting Error); the `interrupting` flag on the watch |
+| M2 | `53977ab` | runtime — `fireScopeHandler` branch, `runNonInterruptingHandler`, `scopeSeg`/`handlerSeq`, multi-shot, drain |
+| M3 | `2b302ee` | front door — thresher e2e, guide, changelog, tracker row 2 → ✅, READMEs |
+| cov | `d842e70` | white-box for the onScopeOpen append guard |
+| refactor | `5ecfb8a` | payload binds at the enclosing scope (see §10.2) |
+
+`make ci` green — diff-coverage **100.0%** of 53 changed lines, lint 0
+(depguard), `-race`, govulncheck clean, all modules.
+
+### §10.2 Empirical findings vs the draft
+
+- **Payload binding moved from the child scope to the enclosing scope.** The
+  draft (§4.3, v.1 as approved) bound each fire's payload into the handler
+  instance's own child scope for per-instance isolation. In practice that
+  binding sits in `onScopeOpen` right after `OpenScope`, where the commit
+  **cannot fail** (a freshly-opened child scope), so its error guard was an
+  unreachable, uncoverable branch that also complicated `onScopeOpen` for every
+  composite. Binding at the **enclosing** scope — symmetric with the
+  interrupting handler — removed the guard (both bind-error paths are now
+  covered identically) at the cost of per-instance payload isolation, which is
+  a **documented deferred refinement** (§4.3). No test exercised payload
+  *reading*, so behaviour is unchanged for this slice.
+
+- **Interrupting white-box tests needed `interrupting: true`.** The M2 fire
+  branch reads the watch's mode; the SRD-052 white-box watches defaulted to the
+  zero value (false) and had to opt in to keep testing the interrupting guards.
+
+### §10.3 Backlog
+- Per-instance payload isolation (bind each concurrent non-interrupting fire's
+  payload into its own child scope) — for concurrent distinct-payload handlers.
 
 ## Open questions
 
