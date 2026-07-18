@@ -99,6 +99,18 @@ func (sc *instanceScope) openFrameAt(
 // as a Ready datum keyed by its item id (the msgflow.Bind shape, at root), so a
 // downstream node reading that item observes the message payload (SRD-015 §4.4).
 func (sc *instanceScope) bindEventPayload(eDef flow.EventDefinition) error {
+	return sc.bindEventPayloadAt(sc.root, eDef)
+}
+
+// bindEventPayloadAt binds a fired event's payload into the scope at path — the
+// generalization behind bindEventPayload (root) and the Event Sub-Process fire
+// (the handler's enclosing scope, SRD-052 FR-7): the handler's inner nodes read
+// the trigger's data by walking up from their own scope. An event with no items
+// binds nothing.
+func (sc *instanceScope) bindEventPayloadAt(
+	path scope.DataPath,
+	eDef flow.EventDefinition,
+) error {
 	items := eDef.GetItemsList()
 	if len(items) == 0 {
 		return nil
@@ -114,7 +126,7 @@ func (sc *instanceScope) bindEventPayload(eDef flow.EventDefinition) error {
 	// checks); pass it through rather than re-wrapping at this internal seam.
 	// A birth-init commit is initial state, not a change — its changed-path
 	// set is dropped, no DataChange facts (SRD-044 §4.4).
-	_, err := sc.plane.Commit(sc.root, dd...)
+	_, err := sc.plane.Commit(path, dd...)
 
 	return err
 }

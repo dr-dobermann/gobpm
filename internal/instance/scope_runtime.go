@@ -138,7 +138,13 @@ func (ls *loopState) seedScope(
 	sh scopeHost,
 	child scope.DataPath,
 ) {
+	// An Event Sub-Process scope is entered by its FIRED triggered start, not
+	// seeded normally: seed from the start's outgoing targets (the start
+	// treated as fired), so the handler's inner flow runs (SRD-052 FR-7).
 	seeds := scopeSeeds(sh)
+	if isEventSubHandler(sh) {
+		seeds = handlerSeeds(sh)
+	}
 
 	for _, n := range seeds {
 		nt, err := newTrack(n, ls.inst, nil)

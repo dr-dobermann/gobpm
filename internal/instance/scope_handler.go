@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"slices"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -17,11 +18,11 @@ import (
 // armed on the loop and fires through the conditional sweep instead.
 type scopeHandlerWatch struct {
 	inst      *Instance
-	handler   flow.Node          // the event-sub SubProcess node
-	start     flow.EventNode     // its single triggered start
+	handler   flow.Node            // the event-sub SubProcess node
+	start     flow.EventNode       // its single triggered start
 	def       flow.EventDefinition // the start's trigger definition
-	path      scope.DataPath     // the enclosing scope this handler guards
-	loopOwned bool               // Conditional — armed via a condWatch, not the hub
+	path      scope.DataPath       // the enclosing scope this handler guards
+	loopOwned bool                 // Conditional — armed via a condWatch, not the hub
 }
 
 // ID returns the hub-waiter id for this handler (its start node id).
@@ -165,19 +166,154 @@ func (ls *loopState) reportHandler(
 	})
 }
 
-// fireScopeHandler applies a scope-handler fire on the loop goroutine (SRD-052
-// FR-7). This slice (M2) records the fire; the interrupting cancel-and-run —
-// the shared budget, cancelScope, and running the handler in the scope — is the
-// next milestone (M3).
-func (ls *loopState) fireScopeHandler(_ context.Context, ev trackEvent) {
+// fireScopeHandler applies an interrupting Event Sub-Process fire on the loop
+// goroutine (SRD-052 FR-7) — the scope-level peer of fireBoundary. A late fire
+// whose handler already disarmed (its scope closed, the budget spent) is void,
+// the armedFor race guard one scope up. Otherwise it arbitrates the fire against
+// the scope's shared interrupting budget (FR-6) and runs the cancel-and-run.
+func (ls *loopState) fireScopeHandler(ctx context.Context, ev trackEvent) {
+	if ls.stopping {
+		return
+	}
+
 	w := ls.handlerWatchFor(ev.node)
 	if w == nil {
-		// the handler already disarmed (its scope closed / the budget spent) —
-		// a late fire is void.
+		return
+	}
+
+	if ls.scopeInterrupted[w.path] {
+		// an interrupting handler (event-sub or boundary) already fired in this
+		// scope — the budget is spent, this fire is suppressed (FR-6).
 		return
 	}
 
 	ls.reportHandler(w, observability.PhaseFired)
+	ls.runScopeHandler(ctx, w, ev.eDef)
+}
+
+// runScopeHandler executes the interrupting cancel-and-run for a fired handler
+// (SRD-052 FR-7), shared by the trigger-fire path (fireScopeHandler) and the
+// Error-chain catch (matchErrorScopeChain, FR-8). It spends the scope's
+// interrupting budget, binds the trigger's payload into the enclosing scope (the
+// handler reads it by walk-up), spawns the handler as a track in that scope
+// BEFORE canceling the siblings — so the enclosing scope's drain counter never
+// prematurely hits zero — then closes the scope's remaining handlers. Runs on
+// the loop goroutine.
+func (ls *loopState) runScopeHandler(
+	ctx context.Context,
+	w *scopeHandlerWatch,
+	payload flow.EventDefinition,
+) {
+	ls.scopeInterrupted[w.path] = true
+
+	// the handler's own child scope (E/sp-handler): kept out of the sibling
+	// cancel. spawn opens it synchronously for a born-parked composite, so it
+	// can already be open by the time interruptScopeSiblings runs.
+	childPrefix, err := w.path.Append(scopeSegment(w.handler))
+	if err != nil {
+		ls.inst.fail(err)
+		ls.stopAll()
+
+		return
+	}
+
+	// bind the trigger's payload into the enclosing scope, so the handler's
+	// inner nodes observe the event data by walking up from their own child
+	// scope (FR-7; one scope down from a born-from-event instance's root bind).
+	if payload != nil {
+		if err = ls.inst.sc.bindEventPayloadAt(w.path, payload); err != nil {
+			ls.inst.fail(err)
+			ls.stopAll()
+
+			return
+		}
+	}
+
+	// spawn the handler as a track in the enclosing scope; it parks as a
+	// scopeHost and opens its own child scope (onScopeOpen → seedScope →
+	// handlerSeeds, the triggered start treated as fired). spawn's incScope
+	// counts it into the enclosing scope before the canceled siblings decrement
+	// it, so the scope stays open until the handler itself drains.
+	ht, err := newTrack(w.handler, ls.inst, nil)
+	if err != nil {
+		ls.inst.fail(errs.New(
+			errs.M("couldn't start event sub-process %q", w.handler.ID()),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.E(err)))
+		ls.stopAll()
+
+		return
+	}
+
+	ht.scopePath = w.path
+	ls.inst.trackCount.Add(1)
+	ls.spawn(ctx, ht)
+
+	// cancel the enclosing scope's other tracks — its data plane STAYS OPEN, so
+	// the handler runs in the parent's data context (FR-7 step 1); the handler
+	// track and its own child scope are kept.
+	ls.interruptScopeSiblings(w.path, ht.ID(), childPrefix)
+
+	// the scope is interrupted — its other handlers no longer guard it, and the
+	// fired handler's own waiter is one-shot (FR-6).
+	ls.disarmScopeHandlers(w.path)
+}
+
+// interruptScopeSiblings stops every live track under path except the handler
+// track keepID and its own child subtree keepPrefix, and closes the nested
+// scopes among the canceled siblings — leaving the enclosing scope's own data
+// plane and entry (and the handler's freshly-opened scope) intact (SRD-052
+// FR-7). It mirrors cancelScope but preserves the scope itself: the handler runs
+// on in it, and the stopped siblings decrement the scope's drain counter through
+// their own evEnded (each goroutine returns and emits it), so the scope
+// completes only once the handler also drains. A canceled nested track's later
+// evEnded finds its entry already gone and no-ops, so no stray host-resume
+// fires. Runs on the loop goroutine.
+func (ls *loopState) interruptScopeSiblings(
+	path scope.DataPath,
+	keepID string,
+	keepPrefix scope.DataPath,
+) {
+	for _, t := range ls.inst.tracks {
+		if t.ID() == keepID || underScope(t.scopePath, keepPrefix) ||
+			!underScope(t.scopePath, path) {
+			continue
+		}
+
+		t.stop()
+		t.cancel()
+		ls.flipNotParked(t)
+		ls.disarmBoundaries(t.ID())
+	}
+
+	// close the nested scopes STRICTLY under path (the siblings' own
+	// composites), deepest-first; path itself and the handler's own child
+	// scope (keepPrefix) are preserved.
+	sub := []scope.DataPath{}
+
+	for p := range ls.scopes {
+		if len(p) > len(path) && underScope(p, path) &&
+			!underScope(p, keepPrefix) {
+			sub = append(sub, p)
+		}
+	}
+
+	slices.SortFunc(sub, func(a, b scope.DataPath) int {
+		return len(b) - len(a)
+	})
+
+	for _, p := range sub {
+		entry := ls.scopes[p]
+		delete(ls.scopes, p)
+		ls.disarmScopeHandlers(p)
+
+		if err := ls.inst.sc.plane.CloseScope(p); err != nil {
+			ls.inst.Logger().Debug("interrupted-scope close failed",
+				"scope_path", string(p), "error", err.Error())
+		}
+
+		ls.reportScope(observability.PhaseCanceled, entry.node, p)
+	}
 }
 
 // handlerWatchFor finds the armed watch for an event-sub node across every open
@@ -215,6 +351,24 @@ func rootNodes(inst *Instance) []flow.Node {
 	}
 
 	return nodes
+}
+
+// handlerSeeds returns the seed nodes for an Event Sub-Process scope: the
+// targets of its triggered start's outgoing flows — the start is treated as
+// already fired, so its successors run (SRD-052 FR-7). Empty when the start has
+// no outgoing (a degenerate handler).
+func handlerSeeds(sh scopeHost) []flow.Node {
+	start, _, ok := triggeredStartOf(sh)
+	if !ok {
+		return nil
+	}
+
+	targets := make([]flow.Node, 0, len(start.Outgoing()))
+	for _, f := range start.Outgoing() {
+		targets = append(targets, f.Target().Node())
+	}
+
+	return targets
 }
 
 // triggeredStartOf returns the single triggered Start Event of an event

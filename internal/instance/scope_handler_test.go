@@ -317,10 +317,14 @@ func TestTriggeredStartOfEdgeCases(t *testing.T) {
 	require.NoError(t, err)
 	_, _, ok = triggeredStartOf(empty)
 	require.False(t, ok, "an empty container has no triggered start")
+
+	require.Nil(t, handlerSeeds(empty),
+		"an event-sub with no triggered start seeds nothing")
 }
 
 // TestApplyRoutesScopeHandlerFire (SRD-052 FR-7): the loop's apply routes an
-// evScopeHandlerFire to fireScopeHandler.
+// evScopeHandlerFire to fireScopeHandler — checked through the stopping guard,
+// which returns before the cancel-and-run touches instance state.
 func TestApplyRoutesScopeHandlerFire(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
@@ -335,44 +339,52 @@ func TestApplyRoutesScopeHandlerFire(t *testing.T) {
 	ls.scopeHandlers[scope.EmptyDataPath] = []*scopeHandlerWatch{{
 		inst: inst, handler: es, start: start, def: def, path: scope.EmptyDataPath,
 	}}
+	ls.stopping = true // the fire is dropped while terminating (no state touched)
 
-	ls.apply(t.Context(), trackEvent{kind: evScopeHandlerFire, node: es})
-	require.True(t, rec.handlerPhases()[observability.PhaseFired])
+	require.NotPanics(t, func() {
+		ls.apply(t.Context(), trackEvent{kind: evScopeHandlerFire, node: es})
+	})
+	require.False(t, rec.handlerPhases()[observability.PhaseFired],
+		"a fire while stopping is dropped")
 }
 
-// TestScopeHandlerFirePlaceholder (SRD-052 M2): fireScopeHandler records a fire
-// for an armed handler and is a no-op for an unarmed one (the late-fire drop) —
-// the seam M3 fills with cancel-and-run.
-func TestScopeHandlerFirePlaceholder(t *testing.T) {
+// TestScopeHandlerFireGuards (SRD-052 FR-6/FR-7): fireScopeHandler's early
+// returns — a fire for an unarmed handler (the late-fire drop) and a fire whose
+// scope budget is already spent — are benign no-ops that never reach the
+// cancel-and-run (the happy path is covered by the interrupt e2e tests).
+func TestScopeHandlerFireGuards(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
 	es := sigEventSub(t, "fire", &atomic.Int32{})
-	start, _, ok := triggeredStartOf(es)
+	start, def, ok := triggeredStartOf(es)
 	require.True(t, ok)
 
-	ls := newLoopState(&Instance{})
 	rec := &obsRecorder{}
 	inst := &Instance{}
 	inst.observers = []obsReg{{fn: rec.record, id: 1}}
-	ls.inst = inst
+	ls := newLoopState(inst)
 
 	w := &scopeHandlerWatch{
-		inst: inst, handler: es, start: start,
-		def: start.Definitions()[0], path: scope.EmptyDataPath,
+		inst: inst, handler: es, start: start, def: def,
+		path: scope.EmptyDataPath,
 	}
 	ls.scopeHandlers[scope.EmptyDataPath] = []*scopeHandlerWatch{w}
 
-	ls.fireScopeHandler(t.Context(), trackEvent{
-		kind: evScopeHandlerFire, node: es,
-	})
-	require.True(t, rec.handlerPhases()[observability.PhaseFired],
-		"an armed handler's fire is recorded")
-
-	// an unarmed handler (unknown node) is a benign no-op.
+	// unarmed node (unknown to handlerWatchFor) — a benign no-op.
 	other := sigEventSub(t, "other", &atomic.Int32{})
 	require.NotPanics(t, func() {
 		ls.fireScopeHandler(t.Context(), trackEvent{
 			kind: evScopeHandlerFire, node: other,
 		})
 	})
+
+	// the scope's budget is already spent — the fire is suppressed (FR-6).
+	ls.scopeInterrupted[scope.EmptyDataPath] = true
+	require.NotPanics(t, func() {
+		ls.fireScopeHandler(t.Context(), trackEvent{
+			kind: evScopeHandlerFire, node: es,
+		})
+	})
+	require.False(t, rec.handlerPhases()[observability.PhaseFired],
+		"neither guarded fire reaches the report")
 }
