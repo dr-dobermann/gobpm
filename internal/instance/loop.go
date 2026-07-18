@@ -87,6 +87,11 @@ type loopState struct {
 	// ends, or fails (flipNotParked → clearConds).
 	conds []*condWatch
 
+	// handlerSeq mints a unique child-scope segment for each non-interrupting
+	// Event Sub-Process fire (SRD-053), so concurrent handler instances of the
+	// same node open distinct scopes instead of queueing behind one path.
+	// Monotonic, loop-owned.
+	handlerSeq int
 	// active counts the tracks whose run goroutine has not yet reported a
 	// terminal event; the loop exits when it returns to zero.
 	active int

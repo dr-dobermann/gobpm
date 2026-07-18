@@ -336,7 +336,7 @@ func TestSharedInterruptingBudget(t *testing.T) {
 		ls := newLoopState(inst)
 		ls.scopeHandlers[scope.EmptyDataPath] = []*scopeHandlerWatch{{
 			inst: inst, handler: es, start: start, def: def,
-			path: scope.EmptyDataPath,
+			path: scope.EmptyDataPath, interrupting: true,
 		}}
 		ls.scopeInterrupted[scope.EmptyDataPath] = true // a prior fire spent it
 

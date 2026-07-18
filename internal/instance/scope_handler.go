@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"slices"
+	"strconv"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -194,6 +195,16 @@ func (ls *loopState) fireScopeHandler(ctx context.Context, ev trackEvent) {
 		return
 	}
 
+	// non-interrupting: fork a concurrent handler instance and leave the watch
+	// armed to fire again — no budget, no sibling-cancel, no disarm (SRD-053
+	// FR-3/FR-5), the scope-level twin of a non-interrupting boundary.
+	if !w.interrupting {
+		ls.reportHandler(w, observability.PhaseFired)
+		ls.runNonInterruptingHandler(ctx, w, ev.eDef)
+
+		return
+	}
+
 	if ls.scopeInterrupted[w.path] {
 		// an interrupting handler (event-sub or boundary) already fired in this
 		// scope — the budget is spent, this fire is suppressed (FR-6).
@@ -202,6 +213,39 @@ func (ls *loopState) fireScopeHandler(ctx context.Context, ev trackEvent) {
 
 	ls.reportHandler(w, observability.PhaseFired)
 	ls.runScopeHandler(ctx, w, ev.eDef)
+}
+
+// runNonInterruptingHandler forks a concurrent handler instance for a
+// non-interrupting fire (SRD-053 FR-3/FR-4): it spawns the handler as a track in
+// the enclosing scope with a UNIQUE child-scope segment (so concurrent fires of
+// the same handler open distinct scopes instead of serializing through the
+// re-entry queue) and that fire's own payload bound into its own scope — and it
+// does NOT touch the scope's sibling tracks, the interrupting budget, or the
+// watch (which stays armed, multi-shot). The enclosing scope's drain accounting
+// holds it open until every live handler instance also drains (FR-6). Runs on
+// the loop goroutine.
+func (ls *loopState) runNonInterruptingHandler(
+	ctx context.Context,
+	w *scopeHandlerWatch,
+	payload flow.EventDefinition,
+) {
+	ht, err := newTrack(w.handler, ls.inst, nil)
+	if err != nil {
+		ls.inst.fail(errs.New(
+			errs.M("couldn't start event sub-process %q", w.handler.ID()),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.E(err)))
+		ls.stopAll()
+
+		return
+	}
+
+	ls.handlerSeq++
+	ht.scopePath = w.path
+	ht.scopeSeg = scopeSegment(w.handler) + "-" + strconv.Itoa(ls.handlerSeq)
+	ht.bornPayload = payload
+	ls.inst.trackCount.Add(1)
+	ls.spawn(ctx, ht)
 }
 
 // runScopeHandler executes the interrupting cancel-and-run for a fired handler
