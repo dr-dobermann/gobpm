@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-17 |
 | Owner | Ruslan Gabitov |
@@ -248,13 +248,19 @@ Model: `TestEventSubProcessValidate` (triggered start required+unique when
 flagged; rejected when unflagged; None+triggered mix rejected),
 `TestEventSubProcessClone`.
 Snapshot: `TestEventSubStartNotInstantiator`.
-Runtime (`internal/instance`, fakes): `TestScopeHandlerArmDisarm`,
-`TestInterruptingTimerCancelsScope`, `TestInterruptingMessageHandler`,
-`TestErrorEventSubCatchesOnChain`, `TestConditionalStartHandler`
+Runtime (`internal/instance`, fakes): `TestRootHandlerArmedAndDisarmed` /
+`TestScopeHandlerArmedOnOpenDisarmedOnDrain` (arm/disarm at the root and on
+scope open/drain), `TestInterruptingSignalCancelsScope` (the hub-fire
+cancel-and-run — Message/Timer/Signal share the RegisterEvent path),
+`TestInterruptingHandlerCancelsNestedScope`, `TestErrorEventSubCatchesOnChain`,
+`TestConditionalStartHandlerCancelsScope` / `TestConditionalStartHandlerFires`
 (the false→true start), `TestSharedInterruptingBudget` (boundary + event-sub
-compete, one fires), `TestAbsorbSuppressesBoundary`, `TestHandlerFreeScopeArmsNothing`.
-E2E (`pkg/thresher`): `TestEventSubProcessE2E` (an interrupting handler
-catches a timer inside a scope, cancels it, runs the handler, resumes),
+compete, one fires — both fire paths), `TestRunScopeHandlerErrorPaths`,
+`TestHandlerFreeScopeArmsNothing`. Absorb is asserted implicitly by every
+cancel-and-run test: the parent resumes on its normal flow and the instance
+completes.
+E2E (`pkg/thresher`): `TestEventSubProcessE2E` (an interrupting **Timer**
+handler catches inside a scope, cancels it, runs the handler, resumes),
 `TestEventSubConditionalStartE2E`.
 
 ## §7 Milestones
@@ -277,21 +283,57 @@ that flip, handled with the ADR, not here), PR handover.
 - Rides [ADR-018 v.1](../design/ADR-018-boundary-events-and-activity-interruption.md)
   boundary-watch arming; [ADR-006 v.3](../design/ADR-006-events-and-subscriptions.md)
   §2.6 (Error chain) / §2.7 (conditional edge + start); [ADR-001 v.6](../design/ADR-001-execution-model.md)
-  loop ownership; extends [ADR-013 v.2](../design/ADR-013-observability.md)
+  loop ownership; extends [ADR-013 v.2](../design/ADR-013-instance-observability.md)
   with the scope-handler fact.
 
 ## §9 Definition of Done
 
-- [ ] FR-1..11 wired and traced to §6 tests.
-- [ ] `make ci` green per milestone; diff-coverage ≥95%; touched files 100% (min 80%).
-- [ ] Example runs to completion (exit 0), binary gitignored.
-- [ ] Conformance tracker row 2 updated (interrupting landed).
-- [ ] Changelog `[Unreleased]`.
-- [ ] `/check-srd` PASS; §10 filled; SRD Accepted; linked docs synced.
+- [x] FR-1..11 wired and traced to §6 tests.
+- [x] `make ci` green per milestone; diff-coverage ≥95%; touched files 100% (min 80%).
+- [x] Example runs to completion (exit 0), binary gitignored.
+- [x] Conformance tracker row 2 updated (interrupting landed).
+- [x] Changelog `[Unreleased]`.
+- [x] `/check-srd` PASS; §10 filled; SRD Accepted; linked docs synced.
 
 ## §10 Implementation summary
 
-> ⚠️ TODO: fill after landing.
+Landed on `feat/event-subprocess` in four milestones behind the doc + ADR
+commits.
+
+### §10.1 Stages by commit
+
+| Stage | Commit | Scope |
+|---|---|---|
+| ADR | `c0053c2` | ADR-023 v.1→v.2 (§2.10 Event Sub-Process; Status → Draft) |
+| Doc | `c9230bb` | SRD-052 (this document) |
+| M1 | `46f0c34` | Model — `triggered` field, `WithTriggeredByEvent`, `IsEventSubProcess`, `validateEventSubShape`, the default-interrupting flip (`WithNonInterrupting`), and the not-an-entry-node exclusion from every seeding path (FR-1..4) |
+| M2 | `67fc7fd` | Scope-handler arming — `scopeHandlerWatch`, `armScopeHandlers`/`disarmScopeHandlers`, the per-kind waiters (Message/Signal/Timer via the hub, the Conditional start loop-local, Error via the chain), the `scopeHandlers` registry, `evScopeHandlerFire` (FR-5) |
+| M3 | `9535e0c` | Interrupting runtime — the shared `scopeInterrupted` budget, `runScopeHandler`/`interruptScopeSiblings` cancel-and-run, `bindEventPayloadAt`, the Error-chain catch (`errorHandlerAt` + `matchErrorScopeChain`), absorb, observability (FR-6..10) |
+| M4 | `2b825df` | Front door — thresher e2e (`TestEventSubProcessE2E`, `TestEventSubConditionalStartE2E`), `examples/event-subprocess/`, composition-guide section, changelog, tracker row 2 → 🟡, READMEs (FR-11) |
+
+Gate at M4: `make ci` green — diff-coverage **96.4%** of 466 changed lines
+(min 95%), `golangci-lint` 0 issues, `-race`, govulncheck clean, across all
+modules.
+
+### §10.2 Empirical findings vs the §3 draft
+
+- **The handler's scope opens synchronously.** `spawn` opens a born-parked
+  composite's scope inside the same loop turn (via `recordBornWaiter`), so by
+  the time `interruptScopeSiblings` runs, the handler's own child scope
+  already exists and had to be excluded from the sibling cancel by its path
+  prefix (else it was closed as a "nested sibling" and the instance hung).
+  Not anticipated in §3; the fix is the `keepPrefix` argument.
+
+- **Scope accounting self-heals through `evEnded`.** Cancelled sibling tracks
+  decrement the enclosing scope's drain counter via their own `evEnded` (each
+  goroutine returns and emits it), so `runScopeHandler` only has to spawn the
+  handler *before* cancelling the siblings — no manual counter fix-up — and
+  the scope completes exactly when the handler drains.
+
+- **The shared budget also guards the boundary path.** `fireBoundary` had to
+  consult and set `scopeInterrupted` keyed by the composite's inner scope
+  (via `hostChildScope`), not just `fireScopeHandler` — the two constructs
+  reference the same scope path, which is what lets them cooperate (FR-6).
 
 ## Open questions
 
