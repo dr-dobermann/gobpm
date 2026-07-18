@@ -16,7 +16,7 @@ Here are some important resources:
 
 ## Cross-module development
 
-`gobpm` is a multi-module monorepo (per [ADR-003](doc/design/ADR-003-module-layout.md)):
+`gobpm` is a multi-module monorepo (per [ADR-003](docs/design/ADR-003-module-layout.md)):
 the core library at the repo root, the `runtime/` submodule, each `adapters/*`
 its own module, and each example its own module.
 
@@ -42,14 +42,14 @@ Before pushing, run `make ci` locally. It runs the same checks GitHub Actions ru
   * `make build-all` — builds every module
   * `make test-all` — runs `go test -race` on every module; core also generates
     `coverage.txt` for Codecov
-  * `make vuln` — runs `govulncheck` against the core module
+  * `make vuln` — runs `govulncheck` against all modules
 
 The CI workflow (`.github/workflows/check.yml`) calls these same Makefile targets
 so there is no drift between local and CI behavior.
 
 ## Submitting changes
 
-Please send a [GitHub Pull Request to opengovernment](https://github.com/dr-dobermann/gobpm/compare) with a clear list of what you've done (read more about [pull requests](http://help.github.com/pull-requests/)). We can always use more test coverage. Please follow our coding conventions (below) and make sure all of your commits are atomic (one feature per commit).
+Please send a [GitHub Pull Request to gobpm](https://github.com/dr-dobermann/gobpm/compare) with a clear list of what you've done (read more about [pull requests](http://help.github.com/pull-requests/)). We can always use more test coverage. Please follow our coding conventions (below) and make sure all of your commits are atomic (one feature per commit).
 
 Always write a clear log message for your commits. One-line messages are fine for small changes, but bigger changes should look like this:
 
