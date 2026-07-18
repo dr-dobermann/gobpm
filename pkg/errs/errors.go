@@ -22,8 +22,6 @@ package errs
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
-	"os"
 	"strings"
 )
 
@@ -184,68 +182,12 @@ func (ae ApplicationError) MarshalJSON() ([]byte, error) {
 
 // -----------------------------------------------------------------------------
 
-// PanicHandler registered for handling panic situation of goBpm.
-// If registered handler returns true, then panic is fired according
-// to dontPanic settings.
-// if return is false, panic ignored as it already handled by
-// PanicHandler.
-type PanicHandler func(v any) bool
-
-var (
-	// flag which prevents panic on unhandled errors.
-	// if set to true then error just printed to stderr.
-	dontPanic bool
-
-	// panicHandler to handle panic situation.
-	panicHook PanicHandler
-)
-
-// SetDontPanic sets current behavior of panic.
-func SetDontPanic(dp bool) {
-	dontPanic = dp
-}
-
-// DontPanic return current setup of panic behavior
-func DontPanic() bool {
-	return dontPanic
-}
-
-// Panic write unhandled error into the Stderr or panic dending of the
-// dontPanic settings.
+// Panic raises v as a runtime panic — the single chokepoint the library's
+// Must* constructors and invariant guards route through (~33 call sites). It is
+// a thin, uniform indirection over the builtin, kept so those sites read the
+// same way and so a future diagnostic hook has one place to attach. It carries
+// no configurable behavior: a host that must not crash on a library panic
+// recovers at its own boundary.
 func Panic(v any) {
-	if panicHook != nil {
-		if unhandled := panicHook(v); !unhandled {
-			return
-		}
-	}
-	if dontPanic {
-		fmt.Fprintln(os.Stderr, v)
-
-		return
-	}
-
 	panic(v)
-}
-
-// RegisterPanicHandler registers new PanicHandler.
-func RegisterPanicHandler(newHandler PanicHandler) error {
-	if newHandler == nil {
-		return New(
-			M("empty handler"),
-			C(EmptyNotAllowed))
-	}
-
-	panicHook = newHandler
-
-	return nil
-}
-
-// DropPanicHandler unregisters panic handler.
-func DropPanicHandler() {
-	panicHook = nil
-}
-
-// HasPanicHandler checks if panicHandler is set.
-func HasPanicHandler() bool {
-	return panicHook != nil
 }

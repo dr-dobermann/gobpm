@@ -9,23 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestPanic covers the panic wrapper — the single chokepoint the Must*
+// constructors route through (the configurability was removed in FIX-023).
 func TestPanic(t *testing.T) {
-	require.Error(t, errs.RegisterPanicHandler(nil))
-
-	handlerCreator := func(unhandled bool) errs.PanicHandler {
-		return func(v any) bool {
-			fmt.Println("panic handled: ", v)
-			return unhandled
-		}
-	}
-
-	require.NoError(t, errs.RegisterPanicHandler(handlerCreator(true)))
-	require.Panics(t, func() { errs.Panic("panic unhandled") })
-
-	errs.DropPanicHandler()
-
-	require.NoError(t, errs.RegisterPanicHandler(handlerCreator(false)))
-	require.NotPanics(t, func() { errs.Panic("panic handled") })
+	require.Panics(t, func() { errs.Panic("boom") })
 }
 
 func TestJson(t *testing.T) {
@@ -40,17 +27,6 @@ func TestJson(t *testing.T) {
 	jsBytes, err := ae.JSON()
 	require.NoError(t, err)
 	require.Equal(t, testJson, string(jsBytes))
-}
-
-func TestDontPanic(t *testing.T) {
-	errs.DropPanicHandler()
-
-	require.False(t, errs.DontPanic())
-	require.Panics(t, func() { errs.Panic("should panic") })
-
-	errs.SetDontPanic(true)
-	require.True(t, errs.DontPanic())
-	require.NotPanics(t, func() { errs.Panic("don't panic") })
 }
 
 func TestErrors(t *testing.T) {
