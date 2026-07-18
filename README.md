@@ -266,7 +266,7 @@ make build        # build to ./bin/
 make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (run after `make test-all`)
 ```
 
-`make ci` is the contract: green locally ⇒ green on CI. The Go toolchain is pinned (`go.mod` → `go1.25.11`) so local and CI scan the identical standard library.
+`make ci` is the contract: green locally ⇒ green on CI. The Go toolchain is pinned (`go.mod` → `go1.25.12`) so local and CI scan the identical standard library.
 
 ### How we work
 
@@ -277,7 +277,7 @@ make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (r
 
 ### Requirements
 
-- Go (toolchain pinned to `go1.25.11` via `go.mod`; `GOTOOLCHAIN=auto` fetches it automatically)
+- Go (toolchain pinned to `go1.25.12` via `go.mod`; `GOTOOLCHAIN=auto` fetches it automatically)
 - Dev tools via `make tools`: [mockery v3](https://github.com/vektra/mockery), [golangci-lint v2](https://golangci-lint.run/), [govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck)
 
 ## Documentation

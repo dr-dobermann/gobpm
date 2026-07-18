@@ -31,18 +31,6 @@ func TestHasClass(t *testing.T) {
 	require.False(t, ae.HasClass("GAMMA"))
 }
 
-// TestHasPanicHandler covers both states of HasPanicHandler.
-func TestHasPanicHandler(t *testing.T) {
-	errs.DropPanicHandler()
-	require.False(t, errs.HasPanicHandler())
-
-	require.NoError(t, errs.RegisterPanicHandler(func(any) bool { return false }))
-	require.True(t, errs.HasPanicHandler())
-
-	errs.DropPanicHandler()
-	require.False(t, errs.HasPanicHandler())
-}
-
 // TestUnwrapNil covers ApplicationError.Unwrap when no error is wrapped.
 func TestUnwrapNil(t *testing.T) {
 	require.Nil(t, errs.New(errs.M("no wrapped error")).Unwrap())

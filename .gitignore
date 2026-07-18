@@ -16,7 +16,8 @@ coverage.*
 # Dependency directories (remove the comment below to include it)
 # vendor/
 bin/
-generated/*
+# generated/ mocks are committed (FIX-023) so `go test ./...` works on a clean
+# checkout; regenerate with `make gen_mock_files`. `make mock-check` guards drift.
 
 # Editor / app artifacts
 **/.obsidian/

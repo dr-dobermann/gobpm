@@ -49,8 +49,8 @@ MODULES := $(shell /usr/bin/find . -name go.mod -not -path './.git/*' -exec dirn
 
 MOCKERY_VERSION     := v3.5.0
 GOLANGCI_VERSION    := v2.11.4
-GOVULNCHECK_VERSION := latest
-COVERCHECK_VERSION  := v0.1.2
+GOVULNCHECK_VERSION := v1.6.0
+COVERCHECK_VERSION  := v0.2.0
 
 define require-tool
 @command -v $(1) >/dev/null 2>&1 || { echo "ERROR: '$(1)' not found in PATH. Run 'make tools' (installs CI-pinned versions) or: $(2)"; exit 1; }
@@ -68,8 +68,10 @@ tools:
 # Single-module targets (operate on the core module at repo root)
 # ---------------------------------------------------------------------------
 
+# VERSION (= `.version`, line 2) is stamped into the thresher build-info var so
+# the startup banner reports the release, not the empty dev sentinel (FIX-024).
 build:
-	${GO} build -o ./bin/ "./..."
+	${GO} build -ldflags "-X github.com/dr-dobermann/gobpm/pkg/thresher.version=$(VERSION)" -o ./bin/ "./..."
 
 update_modules:
 	@go get -u ./...
@@ -88,12 +90,16 @@ lint_all:
 	golangci-lint run --timeout=10m ./...
 .PHONY: lint_all
 
-test: gen_mock_files
-	go test -v -count=1 -cover ./...
+# Mocks are committed under generated/ (FIX-023), so `go test` runs directly —
+# no mockery pre-step. Regenerate with `make gen_mock_files` when an interface
+# changes. The `grep -v /generated/` keeps the generated packages (no tests,
+# always 0%) out of the coverage numbers.
+test:
+	$(GO) test -v -count=1 -cover $$($(GO) list ./... | grep -v '/generated/')
 .PHONY: test
 
-test_coverage: gen_mock_files
-	go test -v -count=1 -coverprofile=c.out ./...
+test_coverage:
+	$(GO) test -v -count=1 -coverprofile=c.out $$($(GO) list ./... | grep -v '/generated/')
 	go tool cover -html=c.out
 	rm c.out
 .PHONY: test_coverage
@@ -107,12 +113,27 @@ clear:
 	rm -rf ./bin/
 .PHONY: clear
 
+# Regenerate the committed mocks (FIX-023) — run when a mocked interface
+# changes, then commit generated/. No `go mod tidy`: committed mocks add no
+# deps (testify is already required), and tidy-check-all guards go.mod/go.sum
+# separately, so tidy stays off the mock path (it was mutating the tree).
 gen_mock_files:
 	$(call require-tool,mockery,$(GO) install github.com/vektra/mockery/v3@$(MOCKERY_VERSION))
 	rm -rf generated/
 	mockery
-	go mod tidy
 .PHONY: gen_mock_files
+
+# CI drift-guard: regenerate the mocks and fail if the committed tree differs
+# from what the current interfaces produce (a changed interface not regenerated
+# + committed). Deterministic output + a pinned mockery make git diff a reliable
+# signal.
+mock-check:
+	$(call require-tool,mockery,$(GO) install github.com/vektra/mockery/v3@$(MOCKERY_VERSION))
+	rm -rf generated/
+	mockery
+	@git diff --exit-code -- generated/ || \
+		{ echo "ERROR: committed mocks are stale — run 'make gen_mock_files' and commit generated/."; exit 1; }
+.PHONY: mock-check
 
 # ---------------------------------------------------------------------------
 # Multi-module targets (iterate over every module in the monorepo)
@@ -136,11 +157,11 @@ build-all:
 # use the host default, or set another number to experiment.
 TEST_CPUS ?= 4
 
-test-all: gen_mock_files
+test-all:
 	@set -e; for dir in $(MODULES); do \
 		echo "::group::test $$dir (TEST_CPUS=$(TEST_CPUS))"; \
 		if [ "$$dir" = "." ]; then \
-			(cd $$dir && GOMAXPROCS=$(TEST_CPUS) $(GO) test -race -count=1 -coverprofile=coverage.txt ./...) || exit 1; \
+			(cd $$dir && GOMAXPROCS=$(TEST_CPUS) $(GO) test -race -count=1 -coverprofile=coverage.txt $$($(GO) list ./... | grep -v '/generated/')) || exit 1; \
 		else \
 			(cd $$dir && GOMAXPROCS=$(TEST_CPUS) $(GO) test -race -count=1 ./...) || exit 1; \
 		fi; \
@@ -157,7 +178,7 @@ lint-all-modules:
 	done
 .PHONY: lint-all-modules
 
-tidy-check-all: gen_mock_files
+tidy-check-all:
 	@set -e; for dir in $(MODULES); do \
 		echo "::group::tidy $$dir"; \
 		(cd $$dir && $(GO) mod tidy) || exit 1; \
@@ -177,6 +198,31 @@ vuln:
 	done
 .PHONY: vuln
 
+# consumer-smoke proves gobpm is cleanly consumable via `go get` (FIX-024): a
+# throwaway external module builds against it and must NOT pull test-only deps
+# (testify) or the committed mocks (generated/mock*) into its dependency
+# closure. Guards "flawless go get" against regressions — a root replace, a mock
+# import leaking onto a non-test path, an accidental testify import in library
+# code — any of which would surface here.
+consumer-smoke:
+	@set -e; \
+	tmp=$$(mktemp -d); \
+	trap 'rm -rf "$$tmp"' EXIT; \
+	cd "$$tmp"; \
+	$(GO) mod init gobpm.consumer.smoke >/dev/null; \
+	$(GO) mod edit -replace github.com/dr-dobermann/gobpm=$(CURDIR); \
+	$(GO) mod edit -require github.com/dr-dobermann/gobpm@v0.0.0; \
+	printf 'package main\nimport _ "github.com/dr-dobermann/gobpm/pkg/thresher"\nfunc main() {}\n' > main.go; \
+	$(GO) mod tidy >/dev/null 2>&1; \
+	$(GO) build ./...; \
+	leak=$$($(GO) list -deps . | grep -E 'stretchr/testify|/generated/mock' || true); \
+	if [ -n "$$leak" ]; then \
+		echo "ERROR: test-only deps leaked into a consumer's build closure:"; \
+		echo "$$leak"; exit 1; \
+	fi; \
+	echo "consumer-smoke: an external module builds against gobpm with no testify/mock leak ✓"
+.PHONY: consumer-smoke
+
 # Diff-coverage gate: fail when the lines this change adds/modifies are covered
 # below COVER_MIN. Consumes the coverage.txt that test-all produces (root
 # module) — run `make test-all` first, or use `make ci` which orders them.
@@ -184,12 +230,14 @@ vuln:
 cover-check:
 	$(call require-tool,covercheck,$(GO) install github.com/dr-dobermann/covercheck/cmd/covercheck@$(COVERCHECK_VERSION))
 	covercheck -min $(COVER_MIN) -base $(COVER_BASE) \
-		-exclude-lines '$(COVER_EXCLUDE)' -profiles coverage.txt
+		-exclude-lines '$(COVER_EXCLUDE)' \
+		-exclude-paths '^generated/' \
+		-profiles coverage.txt
 .PHONY: cover-check
 
 # Umbrella target that runs the full local-equivalent of CI.
 # Use this before pushing to catch regressions before GitHub runs them.
 # test-all writes coverage.txt; cover-check consumes it (single test run).
-ci: tidy-check-all lint-all-modules build-all test-all cover-check vuln
+ci: mock-check tidy-check-all lint-all-modules build-all consumer-smoke test-all cover-check vuln
 .PHONY: ci
 

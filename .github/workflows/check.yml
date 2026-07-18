@@ -17,13 +17,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      # Actions pinned to a commit SHA (not a moving major tag) for a
+      # reproducible supply-chain; the trailing comment names the release so
+      # dependabot (github-actions ecosystem) can bump SHA + comment together.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           # Full history so the diff-coverage gate can resolve the merge-base
           # with the base branch (base...HEAD).
           fetch-depth: 0
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           # Pinned to the exact patch the go.mod `toolchain` directive
           # requires, so CI and local runs scan the identical stdlib. A
@@ -38,14 +41,21 @@ jobs:
       - name: Install tools
         run: |
           go install github.com/vektra/mockery/v3@v3.5.0
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
+          # install.sh fetched from the PINNED version tag, not master, so the
+          # installer script itself is immutable (reproducible supply-chain).
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.11.4/install.sh \
             | sh -s -- -b "$(go env GOPATH)/bin" v2.11.4
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          go install github.com/dr-dobermann/covercheck/cmd/covercheck@v0.1.2
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          go install github.com/dr-dobermann/covercheck/cmd/covercheck@v0.2.0
 
       # All subsequent checks call into Makefile targets so that running
       # `make ci` locally matches what CI runs. This is the project's
       # "no local/CI drift" rule (see Makefile ci umbrella target).
+
+      # The mocks are committed (FIX-023); this fails if they drift from the
+      # interfaces (a changed interface not regenerated + committed).
+      - name: Verify committed mocks are current
+        run: make mock-check
 
       - name: Verify all modules tidy
         run: make tidy-check-all
@@ -55,6 +65,11 @@ jobs:
 
       - name: Build all modules
         run: make build-all
+
+      # Library-consumption guard (FIX-024): an external module must build
+      # against gobpm with no test-only (testify) / mock dep leak.
+      - name: Consumer-consumption smoke
+        run: make consumer-smoke
 
       - name: Test all modules with race detector
         run: make test-all

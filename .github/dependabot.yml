@@ -8,7 +8,13 @@ updates:
       prefix: "ci"
       include: "scope"
   - package-ecosystem: "gomod"
-    directory: "/"
+    # The root plus the two non-example production modules (FIX-024). The 28
+    # examples use a local `replace` and near-zero deps, so they are excluded
+    # to avoid flooding the PR queue; add one here if an example grows real deps.
+    directories:
+      - "/"
+      - "/runtime"
+      - "/adapters/sqlite"
     schedule:
       interval: "weekly"
     commit-message:
