@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Event Sub-Process — non-interrupting (SRD-053, ADR-023 v.2 §2.10 — #91,
+  completing the type).** A non-interrupting triggered start
+  (`events.WithNonInterrupting()`, any trigger except Error — Error is
+  interrupting-only, rejected at validation) **forks** instead of cancelling:
+  each fire spawns a handler instance in its **own** fresh child scope, binds
+  that fire's payload there, and leaves the watch armed — so it fires **again**
+  on the next trigger, unlimited concurrent instances, side-by-side (unique
+  scope paths, not serialized). The scope's sibling work is **not** cancelled;
+  the enclosing sub-process completes only once its own work and every live
+  handler instance drain. The shared interrupting budget is untouched (a
+  non-interrupting fire never spends it), and the interrupting path (SRD-052) is
+  unchanged. See [`docs/guides/composition.md`](docs/guides/composition.md).
+
 - **Event Sub-Process — interrupting (SRD-052, ADR-023 v.2 §2.10 — #91).** A
   `SubProcess` marked `triggeredByEvent` (`activities.WithTriggeredByEvent()`)
   is a **scope-armed handler**, not a token target: it is armed while its

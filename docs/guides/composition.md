@@ -88,9 +88,17 @@ flips it) fires a **cancel-and-run**:
   completes and the parent resumes on its **normal** flow. A handler that
   re-throws re-enters the throw path so a boundary fires after.
 
+A **non-interrupting** handler (`WithNonInterrupting()`, any trigger except
+Error — Error is interrupting-only) instead **forks**: on each fire it spawns a
+handler instance in its own fresh child scope **without** cancelling the scope,
+and the watch stays armed, so it fires **again** on the next trigger — unlimited
+concurrent instances. The enclosing sub-process completes only once its own work
+**and every live handler instance** have drained.
+
 A scope allows **one** interrupting fire: the first — an event sub-process
 **or** a boundary event on the composite — spends the budget and suppresses
 the rest, so the two constructs cooperate rather than double-fire.
+Non-interrupting fires don't touch that budget.
 
 Handler lifecycle is observable through `Boundary`-kind facts carrying a scope
 path (`Armed` / `Fired` / `Disarmed`), next to the `Scope` cancel/complete

@@ -213,7 +213,9 @@ latest-at-launch or pinned versioning, the output committed back —
 (`triggeredByEvent`) is a scope-armed handler: armed while its enclosing scope
 is open, an interrupting one fires a **cancel-and-run** — it cancels the
 scope's work, runs in the parent's data context, and absorbs the event so the
-parent resumes on its normal flow —
+parent resumes on its normal flow; a **non-interrupting** one instead **forks**
+— it spawns a concurrent handler instance per fire without cancelling, unlimited
+—
 [`examples/event-subprocess/`](examples/event-subprocess/).
 
 For conditional events (**data-driven waiting** — a wait released by the
