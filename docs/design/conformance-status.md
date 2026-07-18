@@ -4,7 +4,7 @@
 |---|---|
 | Type | **Continuously-current tracker** (not an SRD/ADR — updated as elements land, in the landing PR) |
 | Scope authority | [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) — Common Executable Subclass + the ComplexGateway extension |
-| Last verified | 2026-07-17, post-SRD-050 (Call Activity landed — #85 composition keystone CLOSED: embedded Sub-Process SRD-049 + Call Activity SRD-050) |
+| Last verified | 2026-07-18, post-SRD-052 (interrupting Event Sub-Process landed — #91 row 2 🟡; Call Activity SRD-050 + embedded Sub-Process SRD-049 before it) |
 | Owner | Ruslan Gabitov |
 
 Status vocabulary: ✅ **executed** (model type + engine semantics + tests) ·
@@ -34,7 +34,7 @@ Ordered by the recommended implementation sequence (rationale in §4).
 | # | Gap | Status | Issue | Notes |
 |---|---|---|---|---|
 | 1 | `CallActivity` + `CallableElement` I/O + `InputOutputBinding` + `GlobalTask` variants | ✅ | [#85](https://github.com/dr-dobermann/gobpm/issues/85) | **Landed SRD-050** (child instance via the ADR-019 registry; latest-at-launch + `WithCalledVersion`; by-name I/O cloned across the boundary; child-error catch at the node; cancel cascade; `Call` facts). Boundary events on CallActivity landed here too (§10.5.4 — a CallActivity is an activity, the boundary machinery consumes it). `GlobalTask` variants remain out of scope. **Closes #85.** |
-| 2 | Event Sub-Process (`SubProcess` with `triggeredByEvent=true`) | ❌ | [#91](https://github.com/dr-dobermann/gobpm/issues/91) | Rides the landed scope model (#85 slice 1); Error-start lives here |
+| 2 | Event Sub-Process (`SubProcess` with `triggeredByEvent=true`) | 🟡 | [#91](https://github.com/dr-dobermann/gobpm/issues/91) | **Interrupting landed (SRD-052)** — scope-armed handler (Message/Timer/Signal/Conditional-start + Error on the scope chain), cancel-and-run, absorb, the shared interrupting budget with boundary events, handler facts. Non-interrupting handlers + Transaction (row 3) remain (#90) |
 | 3 | `Transaction` + `CancelEventDefinition` execution | ❌ / 🟡 | [#91](https://github.com/dr-dobermann/gobpm/issues/91) | Needs the landed scope model + row 8 (compensation) |
 | 4 | `StandardLoopCharacteristics` execution + `MultiInstanceLoopCharacteristics` + `ComplexBehaviorDefinition` + `completionQuantity` | 🟡 / ❌ | [#88](https://github.com/dr-dobermann/gobpm/issues/88) | The second structural pillar; `completionQuantity` deferral noted in SRD-046 NFR-4 |
 | 5 | `ScriptTask` execution | 🟡 model-only | [#87](https://github.com/dr-dobermann/gobpm/issues/87) | Can ride the Expression Layer epic ([#74](https://github.com/dr-dobermann/gobpm/issues/74)) |

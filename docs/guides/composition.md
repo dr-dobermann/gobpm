@@ -56,6 +56,50 @@ composite node also emits the usual `NodeProgress` facts.
 an order flow with the fulfillment fragment as a sub-process: walk-up
 reads, scoped locals, the drain-resume ordering, and the scope facts.
 
+# Event Sub-Process — a scope-armed handler
+
+An **Event Sub-Process** is a `SubProcess` marked `triggeredByEvent` that
+lives *inside* another scope (ADR-023 v.2 §2.10, SRD-052). It is not entered
+by a token — it is **armed** while its enclosing scope is open and fires when
+its single triggered start catches an event: the boundary-event pattern lifted
+from an activity's window to a **scope's** window.
+
+```go
+onTimeout, _ := activities.NewSubProcess("payment-timeout",
+    activities.WithTriggeredByEvent())
+start, _ := events.NewStartEvent("timeout-fired",
+    events.WithTimerTrigger(timeoutTimer())) // interrupting is the default
+// onTimeout.Add(start, …); the handler lives among its scope's inner nodes
+```
+
+The triggered start carries the handler's trigger: a **Message**, **Timer**,
+**Signal**, or **Conditional** start (armed as the enclosing scope's own
+subscription), or an **Error** start (caught on the scope chain at the throw
+site, alongside the composite's Error boundary — innermost catcher wins).
+
+An **interrupting** handler (the default — BPMN §13.5.4; `WithNonInterrupting`
+flips it) fires a **cancel-and-run**:
+
+- it **cancels** the enclosing scope's sibling tracks, but the scope's data
+  plane **stays open** — so the handler runs in the parent's data context;
+- it **runs its own flow** in a fresh child scope seeded from the triggered
+  start (treated as fired, its payload bound);
+- reaching its End without re-throwing, it **absorbs** the event: the scope
+  completes and the parent resumes on its **normal** flow. A handler that
+  re-throws re-enters the throw path so a boundary fires after.
+
+A scope allows **one** interrupting fire: the first — an event sub-process
+**or** a boundary event on the composite — spends the budget and suppresses
+the rest, so the two constructs cooperate rather than double-fire.
+
+Handler lifecycle is observable through `Boundary`-kind facts carrying a scope
+path (`Armed` / `Fired` / `Disarmed`), next to the `Scope` cancel/complete
+facts.
+
+[`examples/event-subprocess/`](../../examples/event-subprocess/) — a checkout
+whose payment wait is interrupted by a Timer handler that releases the hold
+and lets the parent continue.
+
 # Call Activity — a child instance (the reuse boundary)
 
 Where the embedded Sub-Process runs *inside* the instance, a **Call
