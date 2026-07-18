@@ -49,7 +49,7 @@ MODULES := $(shell /usr/bin/find . -name go.mod -not -path './.git/*' -exec dirn
 
 MOCKERY_VERSION     := v3.5.0
 GOLANGCI_VERSION    := v2.11.4
-GOVULNCHECK_VERSION := latest
+GOVULNCHECK_VERSION := v1.6.0
 COVERCHECK_VERSION  := v0.2.0
 
 define require-tool
@@ -198,6 +198,31 @@ vuln:
 	done
 .PHONY: vuln
 
+# consumer-smoke proves gobpm is cleanly consumable via `go get` (FIX-024): a
+# throwaway external module builds against it and must NOT pull test-only deps
+# (testify) or the committed mocks (generated/mock*) into its dependency
+# closure. Guards "flawless go get" against regressions — a root replace, a mock
+# import leaking onto a non-test path, an accidental testify import in library
+# code — any of which would surface here.
+consumer-smoke:
+	@set -e; \
+	tmp=$$(mktemp -d); \
+	trap 'rm -rf "$$tmp"' EXIT; \
+	cd "$$tmp"; \
+	$(GO) mod init gobpm.consumer.smoke >/dev/null; \
+	$(GO) mod edit -replace github.com/dr-dobermann/gobpm=$(CURDIR); \
+	$(GO) mod edit -require github.com/dr-dobermann/gobpm@v0.0.0; \
+	printf 'package main\nimport _ "github.com/dr-dobermann/gobpm/pkg/thresher"\nfunc main() {}\n' > main.go; \
+	$(GO) mod tidy >/dev/null 2>&1; \
+	$(GO) build ./...; \
+	leak=$$($(GO) list -deps . | grep -E 'stretchr/testify|/generated/mock' || true); \
+	if [ -n "$$leak" ]; then \
+		echo "ERROR: test-only deps leaked into a consumer's build closure:"; \
+		echo "$$leak"; exit 1; \
+	fi; \
+	echo "consumer-smoke: an external module builds against gobpm with no testify/mock leak ✓"
+.PHONY: consumer-smoke
+
 # Diff-coverage gate: fail when the lines this change adds/modifies are covered
 # below COVER_MIN. Consumes the coverage.txt that test-all produces (root
 # module) — run `make test-all` first, or use `make ci` which orders them.
@@ -213,6 +238,6 @@ cover-check:
 # Umbrella target that runs the full local-equivalent of CI.
 # Use this before pushing to catch regressions before GitHub runs them.
 # test-all writes coverage.txt; cover-check consumes it (single test run).
-ci: mock-check tidy-check-all lint-all-modules build-all test-all cover-check vuln
+ci: mock-check tidy-check-all lint-all-modules build-all consumer-smoke test-all cover-check vuln
 .PHONY: ci
 
