@@ -1,7 +1,7 @@
 # FIX-024 «Release metadata, CI supply-chain, docs & library-consumption hygiene»
 
 **Type:** FIX (one-shot; not rewritten after landing).
-**Status:** Draft v.1 (2026-07-18, branch `fix/core-robustness-hardening`, not yet implemented).
+**Status:** Accepted v.1 (2026-07-18, branch `fix/core-robustness-hardening`, implemented — `make ci` green).
 **Date:** 2026-07-18.
 **Author:** Ruslan Gabitov.
 **Branch:** `fix/core-robustness-hardening` (folded into the FIX-023 branch — one
@@ -217,16 +217,37 @@ target makes it permanent.)
 
 ## §8 Implementation summary
 
-> ⚠️ TODO: fill AFTER landing.
-
-### §8.1 Stages by commit
+### §8.1 Stages by commit (branch `fix/core-robustness-hardening`)
 | Stage | Commit | Scope | Tests |
 |---|---|---|---|
+| Doc | `7895ff0` | FIX-024 (this document) | — |
+| M1 | `2e9eaca` | version single-source — `buildinfo.go` `version=""`, `make build` ldflags from `.version` | `TestVersionSentinelEmpty`, `TestDotVersionIsSemver` |
+| M2 | `868a44a` | CI supply-chain pins (checkout/setup-go SHA, golangci install.sh from tag, govulncheck@v1.6.0) + `consumer-smoke` target/CI step | `make consumer-smoke` |
+| M3 | `eec3cd8` | dependabot `directories: [/, /runtime, /adapters/sqlite]` | — |
+| M4 | `1526579` | README/ru `1.25.11→.12`, CONTRIBUTING `docs/`+"all modules"+drop "opengovernment", new `SECURITY.md` | grep-verified |
 
-### §8.2 Empirical findings
+Gate: `make ci` green — `consumer-smoke` clean (no testify/mock leak),
+`diff-coverage 100% of 0 changed coverable lines — PASS`, govulncheck (v1.6.0)
+clean, all modules.
 
-### §8.3 Backlog
-- Renovate/regex-manager for the go-install tool pins (deferred).
+### §8.2 Empirical findings — where reality diverged from the §3 draft
+
+- **Actions SHA resolution needs `/commits/<tag>`.** The `git/ref/tags/<tag>`
+  endpoint returns the tag object's SHA (which for an annotated tag is *not*
+  the commit); `/repos/<r>/commits/<tag>` derefs to the actual commit — the SHA
+  a pin must use. Resolved `checkout` → `9c091bb…` (v7.0.0),
+  `setup-go` → `924ae3a…` (v6).
+- **The `consumer-smoke` guard confirmed FIX-023 stays clean.** With the mocks
+  committed, an external module still builds with testify/`generated/mock*`
+  pruned from its closure — the guard now protects that permanently.
+- **Diff-gate vacuous again.** FIX-024's coverable delta is ~nil (a `var`
+  emptied + config/docs/tests), so `cover-check` reads "0 changed coverable
+  lines — PASS"; the value is the supply-chain/library guards, not coverage.
+
+### §8.3 Backlog (out of FIX-024 scope)
+- Renovate/regex-manager for the go-install tool pins (mockery/golangci/
+  govulncheck/covercheck in Makefile+workflow) — deferred; dual-maintained by
+  hand for now.
 
 ## Open questions
 
