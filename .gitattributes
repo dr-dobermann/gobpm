@@ -1,0 +1,5 @@
+# Committed mockery mocks (FIX-023): mark them generated so GitHub collapses
+# them in PR diffs, drops them from language stats, and de-emphasizes them in
+# blame. Regenerate with `make gen_mock_files`; drift is guarded by `make
+# mock-check`.
+generated/** linguist-generated=true
