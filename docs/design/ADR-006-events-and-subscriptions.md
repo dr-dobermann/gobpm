@@ -283,7 +283,8 @@ carries an optional `errorRef` (0..1) to an `Error`, which carries an `errorCode
 optional `structureRef` (the error payload's `ItemDefinition`). An Error event
 definition is valid at **three positions only** (`conformance.md`): an **End
 Event** (throw), a **Boundary Event** (catch — always interrupting), and an
-**Event Sub-Process Start Event** (catch — deferred with Sub-Processes).
+**Event Sub-Process Start Event** (catch — landed with the interrupting Event
+Sub-Process, ADR-023 v.2 §2.10).
 
 **Throw — two sources.**
 - An **Error End Event** ends its path by throwing its associated `Error`
@@ -318,7 +319,9 @@ is cancelled **after** the boundary's outgoing flow is followed (the §10.5.6 §
 interrupting-handler runtime order). *How* the running activity is interrupted is
 fixed by the boundary workstream that refines §2.2 — ADR-006 owns only the event
 model. The second standard catch path — an **Error Event Sub-Process** start
-(`conformance.md`: event-sub-process only) — lands with Sub-Processes.
+(`conformance.md`: event-sub-process only) — landed with the Event
+Sub-Process (ADR-023 v.2 §2.10): the scope-chain walk considers a scope's
+event-sub Error handler alongside the composite's Error boundary.
 
 **Unmatched — the instance faults (engine choice).** If no catcher matches anywhere
 in the scope chain, the Error is **unresolved** (§10.5.1). The standard does **not**
@@ -366,7 +369,7 @@ condition becomes true. A condition is a type of Expression" (Tables
 | **Boundary** — interrupting and non-interrupting (Table 10.90; non-interrupting explicitly permitted for Conditional, `events.md`) | **In scope.** Arm on the guarded activity's entry, disarm on its exit (§2.3 boundary row — Conditional was already listed there); interrupting fires cancel the activity per §2.2, non-interrupting fires fork per §2.2 and may **re-fire** on a fresh false→true edge (the Table 10.84 edge rule, below). |
 | **Event-Based Gateway arm** | **In scope.** The gateway's deferred choice ([ADR-005 v.4 §2.12](ADR-005-gateways-and-joins.md)) admits Conditional arms — "the 'Events following' are intermediate catching events: Message, Timer, Signal, Conditional" (`gateways.md`). A conditional arm is armed like a catch when the token reaches the gateway; the first fire among all arms wins the race and disarms the rest. This closes the arms deferral ADR-005 v.4 §2.12 recorded. |
 | **Start Event (top-level)** | **Not supported — an engine choice, indefinitely.** Table 10.84 (§10.5.2): the condition "**MUST NOT refer to the data context or instance attribute of the Process** (as the Process instance has not yet been created). Instead, it MAY refer to **static Process attributes and states of entities in the environment**. The specification of mechanisms to access such states is **out of scope of the standard**." The engine has **no** static-process-attribute or environment-entity surface — a conformant top-level start condition would have nothing legal to reference; reference engines reduce it to an explicit evaluate-API with caller-supplied data (Camunda 7's condition evaluation; Camunda 8's staged gRPC evaluation). A Conditional trigger on a **top-level** Start Event is therefore **rejected at model validation** (the process-level placement check, run at registration before any instance) — fail-fast, not the silent never-fires the permissive allow-list would produce; the event's *construction* surface stays legal, since the same Start Event serves the event-sub-process home below. Should a real host need appear, the evaluate-API is the named shape; nothing here precludes it. |
-| **Event Sub-Process start** | **The planned home for a Conditional start** — lands **with Sub-Processes** (`sub-processes.md` lists Conditional among event-sub-process start types). Unlike the top-level case, an event sub-process runs **inside a live instance**: its start condition legally references the **enclosing scope's data** (§10.4.3), evaluated by the same commit-diff re-evaluation this section decides — no new data surface needed. Decision recorded now; implementation rides the Sub-Process workstream. |
+| **Event Sub-Process start** | **The home for a Conditional start — landed** (ADR-023 v.2 §2.10; `sub-processes.md` lists Conditional among event-sub-process start types). Unlike the top-level case, an event sub-process runs **inside a live instance**: its start condition legally references the **enclosing scope's data** (§10.4.3), evaluated by the same commit-diff re-evaluation this section decides — no new data surface needed. The conditional start is armed loop-local as the scope's own subscription and fires on the false→true edge (or at arm time). |
 
 An End Event (or any throw position) cannot carry a Conditional trigger —
 catch-only by the standard's tables; already rejected at configuration.
