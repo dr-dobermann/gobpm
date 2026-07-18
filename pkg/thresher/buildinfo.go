@@ -2,10 +2,15 @@ package thresher
 
 import "runtime/debug"
 
-// version is the engine's semantic version. It may be overridden at build time
-// with -ldflags "-X github.com/dr-dobermann/gobpm/pkg/thresher.version=v1.2.3".
-// When left empty the toolchain-embedded module version is used instead.
-var version = "v0.8.0-rc.1"
+// version is the engine's semantic version. It is intentionally EMPTY: the
+// single source of truth is the `.version` file, stamped in at build time via
+// -ldflags "-X github.com/dr-dobermann/gobpm/pkg/thresher.version=$(cat
+// .version)" (the Makefile `build` target + the release pipeline). Left empty
+// for a plain `go build` or `go install module@vX`, the toolchain-embedded
+// module version (debug.BuildInfo) is used instead — so a consumed release
+// always reports the module version it was built from, never a hardcoded
+// literal that drifts from `.version`.
+var version = ""
 
 // banner is the engine wordmark printed at startup, one log record per line. A
 // raw literal keeps the backslashes literal; the lone backtick on line 3 is

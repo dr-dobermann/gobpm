@@ -68,8 +68,10 @@ tools:
 # Single-module targets (operate on the core module at repo root)
 # ---------------------------------------------------------------------------
 
+# VERSION (= `.version`, line 2) is stamped into the thresher build-info var so
+# the startup banner reports the release, not the empty dev sentinel (FIX-024).
 build:
-	${GO} build -o ./bin/ "./..."
+	${GO} build -ldflags "-X github.com/dr-dobermann/gobpm/pkg/thresher.version=$(VERSION)" -o ./bin/ "./..."
 
 update_modules:
 	@go get -u ./...
