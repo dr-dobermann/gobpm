@@ -201,7 +201,13 @@ type track struct {
 	// fork stays in its scope); set by the loop pre-spawn for scope seeds.
 	// Construction-immutable, so both goroutines read it lock-free.
 	scopePath scope.DataPath
-	steps     []*stepInfo
+	// scopeSeg overrides the child-scope segment a scopeHost opens under
+	// (SRD-053): a non-interrupting Event Sub-Process handler gets a UNIQUE
+	// segment per fire, so concurrent handler instances don't collide on one
+	// path (and get serialized by the re-entry queue). Empty for every normal
+	// composite — scopeSegment(node) is used then. Construction-set by the loop.
+	scopeSeg string
+	steps    []*stepInfo
 	// msgDefIDs are the ids of the Message catch definitions this track parks on, set by
 	// checkNodeType at construction (SRD-027 FR-8). The loop indexes them → this track so a
 	// fired message resolves back to it; spawn reads them for a track that starts parked
@@ -214,8 +220,8 @@ type track struct {
 	// so the loop reads it lock-free.
 	condDefs []*events.ConditionalEventDefinition
 	m        sync.RWMutex
-	state     trackState
-	stopIt    atomic.Bool
+	state    trackState
+	stopIt   atomic.Bool
 }
 
 // record appends a track-state transition to the history, copy-on-write, and

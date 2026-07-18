@@ -115,10 +115,10 @@ func (sp *SubProcess) Validate() error {
 		ee = append(ee, err)
 	}
 
-	noneStarts, triggeredStarts, flowless, nonIntr := sp.classifyEntries(&ee)
+	noneStarts, triggeredStarts, flowless, nonIntrErr := sp.classifyEntries(&ee)
 
 	if sp.triggered {
-		sp.validateEventSubShape(&ee, noneStarts, triggeredStarts, nonIntr)
+		sp.validateEventSubShape(&ee, noneStarts, triggeredStarts, nonIntrErr)
 	} else {
 		sp.validateEmbeddedShape(&ee, noneStarts, triggeredStarts, flowless)
 	}
@@ -163,10 +163,11 @@ func (sp *SubProcess) validateEmbeddedShape(
 
 // validateEventSubShape enforces the Event Sub-Process entry shape (ADR-023
 // v.2 §2.10, BPMN §13.5.4/§10.5.2): exactly one triggered Start Event, no None
-// start. This slice (SRD-052) requires the triggered start to be interrupting;
-// a non-interrupting start is rejected until the next slice relaxes it.
+// start. Both interrupting and non-interrupting triggered starts are accepted
+// (SRD-052 interrupting + SRD-053 non-interrupting); the only trigger-mode
+// restriction is that an Error start must be interrupting (BPMN §10.5.6).
 func (sp *SubProcess) validateEventSubShape(
-	ee *[]error, noneStarts, triggeredStarts, nonIntr int,
+	ee *[]error, noneStarts, triggeredStarts, nonIntrError int,
 ) {
 	switch {
 	case triggeredStarts != 1:
@@ -179,10 +180,10 @@ func (sp *SubProcess) validateEventSubShape(
 			"an event sub-process has no None Start Event — it is entered "+
 				"by its triggered start (BPMN §13.5.4)"))
 
-	case nonIntr > 0:
+	case nonIntrError > 0:
 		*ee = append(*ee, sp.shapeErr(
-			"a non-interrupting event sub-process start isn't supported yet "+
-				"(SRD-052 interrupting slice); it lands in a later slice"))
+			"an Error event sub-process start must be interrupting "+
+				"(BPMN §10.5.6); a non-interrupting Error start is invalid"))
 	}
 }
 
@@ -191,7 +192,7 @@ func (sp *SubProcess) validateEventSubShape(
 // per-node Validate hooks; violations append to ee.
 func (sp *SubProcess) classifyEntries(
 	ee *[]error,
-) (noneStarts, triggeredStarts, flowless, nonInterruptingTriggered int) {
+) (noneStarts, triggeredStarts, flowless, nonInterruptingError int) {
 	for _, n := range sp.Nodes() {
 		switch {
 		case isEventSubProcess(n):
@@ -213,13 +214,17 @@ func (sp *SubProcess) classifyEntries(
 
 		case isStartEvent(n):
 			en := n.(flow.EventNode)
-			if len(en.Definitions()) == 0 {
+			defs := en.Definitions()
+			if len(defs) == 0 {
 				noneStarts++
 			} else {
 				triggeredStarts++
+				// A non-interrupting triggered start is allowed (SRD-053)
+				// EXCEPT an Error start, which is always interrupting (BPMN
+				// §10.5.6) — only that case is still rejected.
 				if si, ok := n.(interface{ IsInterrupting() bool }); ok &&
-					!si.IsInterrupting() {
-					nonInterruptingTriggered++
+					!si.IsInterrupting() && defs[0].Type() == flow.TriggerError {
+					nonInterruptingError++
 				}
 			}
 
@@ -236,7 +241,7 @@ func (sp *SubProcess) classifyEntries(
 		}
 	}
 
-	return noneStarts, triggeredStarts, flowless, nonInterruptingTriggered
+	return noneStarts, triggeredStarts, flowless, nonInterruptingError
 }
 
 // isEventSubProcess reports whether n is an Event Sub-Process (a scope-armed

@@ -85,7 +85,16 @@ func (ls *loopState) onScopeOpen(ctx context.Context, host *track, node flow.Nod
 		return
 	}
 
-	child, err := host.scopePath.Append(scopeSegment(node))
+	// a host may override the child segment (SRD-053): a non-interrupting
+	// Event Sub-Process handler carries a unique per-fire segment so concurrent
+	// instances of the same node open distinct scopes; every normal composite
+	// uses scopeSegment(node).
+	seg := scopeSegment(node)
+	if host.scopeSeg != "" {
+		seg = host.scopeSeg
+	}
+
+	child, err := host.scopePath.Append(seg)
 	if err != nil {
 		ls.inst.fail(err)
 		ls.stopAll()

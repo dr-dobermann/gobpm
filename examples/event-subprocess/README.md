@@ -20,9 +20,12 @@ fires it:
 - **absorbs** the event — reaching its End without re-throwing, so the parent
   resumes on its **normal** flow (`notify`) rather than a boundary path.
 
-The interrupting handler is default (BPMN §13.5.4); `WithNonInterrupting`
-flips it. A handler can also be triggered by Message, Signal, Error (caught on
-the scope chain), or a Conditional start.
+The interrupting handler is default (BPMN §13.5.4); `WithNonInterrupting()`
+makes it **fork** instead — each fire spawns a concurrent handler instance in
+its own child scope **without** cancelling the scope, and it re-fires unlimited
+(the scope completes once its own work and every handler instance drain). A
+handler can also be triggered by Message, Signal, Error (caught on the scope
+chain, interrupting-only), or a Conditional start.
 
 ```mermaid
 flowchart LR

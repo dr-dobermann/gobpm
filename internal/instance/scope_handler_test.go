@@ -366,7 +366,7 @@ func TestScopeHandlerFireGuards(t *testing.T) {
 
 	w := &scopeHandlerWatch{
 		inst: inst, handler: es, start: start, def: def,
-		path: scope.EmptyDataPath,
+		path: scope.EmptyDataPath, interrupting: true,
 	}
 	ls.scopeHandlers[scope.EmptyDataPath] = []*scopeHandlerWatch{w}
 
