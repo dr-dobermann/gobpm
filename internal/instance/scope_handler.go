@@ -381,7 +381,8 @@ func (ls *loopState) interruptScopeSiblings(
 				"scope_path", string(p), "error", err.Error())
 		}
 
-		ls.reportScope(observability.PhaseCanceled, entry.node, p)
+		ls.reportScope(observability.PhaseCanceled, entry.node, p,
+			scopeLoopCounter(entry.node, entry.host))
 	}
 }
 

@@ -185,6 +185,20 @@ func (sp *SubProcess) validateEventSubShape(
 			"an Error event sub-process start must be interrupting "+
 				"(BPMN §10.5.6); a non-interrupting Error start is invalid"))
 	}
+
+	// SRD-054 FR-3a: an Event Sub-Process is instantiated by its event trigger,
+	// not reached by a control-flow token, so it has no token-driven activation
+	// to iterate — loop/multi-instance characteristics are meaningless on it. Its
+	// multiplicity already comes from the trigger (a non-interrupting start fires
+	// repeatedly). Rejected as a well-formedness rule (ADR-025 §2.2; the spec
+	// object model places loopCharacteristics on Activity but the event-sub
+	// semantics make it inapplicable).
+	if sp.loopCharacteristics != nil {
+		*ee = append(*ee, sp.shapeErr(
+			"an event sub-process must not carry loop or multi-instance "+
+				"characteristics — it is instantiated by its event trigger, "+
+				"not iterated (ADR-025 §2.2)"))
+	}
 }
 
 // classifyEntries scans the inner nodes, counting the entry-shape

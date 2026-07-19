@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -41,12 +42,20 @@ func TestActivity(t *testing.T) {
 
 	t.Run("full options without parameters",
 		func(t *testing.T) {
+			stdLoop, err := NewStandardLoop(
+				goexpr.Must(nil,
+					data.MustItemDefinition(values.NewVariable(true)),
+					func(_ context.Context, _ data.Source) (data.Value, error) {
+						return values.NewVariable(true), nil
+					}))
+			require.NoError(t, err)
+
 			a, err := newActivity(
 				"test activity",
 				WithCompensation(),
 				WithCompletionQuantity(5),
 				WithStartQuantity(2),
-				WithLoop(&LoopCharacteristics{}),
+				WithLoop(stdLoop),
 				data.WithProperties(prop, prop),
 				WithRoles(rRole, rRole),
 				foundation.WithID("test id"),

@@ -10,7 +10,7 @@ import (
 
 type (
 	activityConfig struct {
-		loop             *LoopCharacteristics
+		loop             LoopCharacteristics
 		roles            map[string]*hi.ResourceRole
 		props            map[string]*data.Property
 		dataAssociations map[data.Direction][]*data.Association
@@ -107,8 +107,11 @@ func WithCompensation() ActivityOption {
 	return ActivityOption(f)
 }
 
-// WithLoop adds loop characteristics to the Activity.
-func WithLoop(lc *LoopCharacteristics) ActivityOption {
+// WithLoop attaches loop/multi-instance characteristics to the Activity, making
+// it iterate (ADR-025). Build the characteristics with NewStandardLoop (or, when
+// it lands, the Multi-Instance constructor). An activity holds a single marker —
+// a later WithLoop replaces an earlier one.
+func WithLoop(lc LoopCharacteristics) ActivityOption {
 	f := func(cfg *activityConfig) error {
 		if lc == nil {
 			return errs.New(

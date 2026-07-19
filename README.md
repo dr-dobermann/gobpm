@@ -4,7 +4,6 @@
 ![GitHub Tag](https://img.shields.io/github/v/tag/dr-dobermann/gobpm)
 ![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/dr-dobermann/gobpm)
 [![codecov](https://codecov.io/github/dr-dobermann/gobpm/graph/badge.svg?token=ENKOTEL4VN)](https://codecov.io/github/dr-dobermann/gobpm)
-[![Go Report Card](https://goreportcard.com/badge/github.com/dr-dobermann/gobpm)](https://goreportcard.com/report/github.com/dr-dobermann/gobpm)
 [![Go Reference](https://pkg.go.dev/badge/github.com/dr-dobermann/gobpm.svg)](https://pkg.go.dev/github.com/dr-dobermann/gobpm)
 
 **GoBPM** is a native Go BPMN 2.0 engine. It is designed to embed directly into a Go application as a minimal, dependency-light **library** — and to scale up to a standalone process **server** through additive runtime components, without forcing library users to ship what they don't need.
@@ -218,6 +217,13 @@ parent resumes on its normal flow; a **non-interrupting** one instead **forks**
 —
 [`examples/event-subprocess/`](examples/event-subprocess/).
 
+Any activity can carry **iteration**
+([**docs/guides/iteration.md**](docs/guides/iteration.md)): a **Standard Loop**
+(§13.3.6) marked `WithLoop` re-runs it while a boolean condition holds — a leaf
+Task in place, a composite by re-opening its child scope per iteration —
+exposing a 0-based `loopCounter` to the condition and the activity each pass
+([`examples/standard-loop/`](examples/standard-loop/)).
+
 For conditional events (**data-driven waiting** — a wait released by the
 process's own committed data, no polling), see
 [`examples/conditional-events/`](examples/conditional-events/) — an
@@ -289,6 +295,7 @@ make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (r
 - [Vision & Architecture (SAD-001)](docs/design/SAD-001-vision-and-architecture.md) and [ADRs](docs/design/) — the conception
 - [Working with process data](docs/guides/data.md) — the structural-data guide (paths, tiers, native structs, change observation)
 - [Conditional events](docs/guides/conditional-events.md) — data-driven waiting: positions, the false→true edge rule, dependency declarations
+- [Activity iteration](docs/guides/iteration.md) — Standard Loop: loopCondition / testBefore / loopMaximum, loopCounter, leaf-in-place vs. composite scope re-entry
 - [Composition](docs/guides/composition.md) — sub-processes (nested scopes) & call activities (child-instance reuse boundary): the §13.3.4 shapes, data visibility/isolation, versioning, scope-wide interruption
 - [Development Roadmap](docs/analytics/gobpm%20Development%20Roadmap.md) — workstreams + milestones
 - [Conformance scope](docs/bpmn-spec/conformance.md) and [BPMN 2.0 reference KB](docs/bpmn-spec/) · [Conformance status](docs/design/conformance-status.md) — what's implemented vs what remains, mapped to issues

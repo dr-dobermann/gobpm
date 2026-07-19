@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Standard Loop (SRD-054, ADR-025 — #88).** An activity marked `WithLoop`
+  with `StandardLoopCharacteristics` (`loopCondition`, `testBefore`,
+  `loopMaximum`) re-runs while its condition holds — a leaf Task **in place**, a
+  composite (Sub-Process / Call Activity) by **re-opening its child scope** per
+  iteration. A 0-based `loopCounter` is published each pass to the condition and
+  the activity, and iteration scope facts carry it. An Event Sub-Process rejects
+  any loop/multi-instance marker (it is instantiated by its trigger, not
+  iterated). New `examples/standard-loop/` and `docs/guides/iteration.md`.
+  `LoopCharacteristics` changed from a struct to a sealed interface (breaking, on
+  a previously unused stub).
+
 ## [v0.9.0] - 2026-07-18
 
 ### Added
