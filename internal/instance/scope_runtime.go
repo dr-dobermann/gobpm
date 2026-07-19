@@ -110,36 +110,30 @@ func (ls *loopState) onScopeOpen(ctx context.Context, host *track, node flow.Nod
 		return
 	}
 
-	// SRD-054 M3: a looped composite publishes its iteration ordinal to the
-	// enclosing scope on the first pass (the re-entry seam publishes it on the
-	// later passes), so the body — reached through the child scope's walk-up —
-	// and the loop condition resolve it. A pre-tested loop whose condition is
-	// false at its first pass runs zero iterations: resume the host without
-	// opening the body scope at all.
-	if sl := standardLoopOf(node); sl != nil && host.loopCounter == 0 {
-		if !ls.bindLoopCounterOrFail(host.scopePath, 0) {
+	// SRD-054 / SRD-055: a looped composite (Standard Loop or Multi-Instance)
+	// prepares its first pass through the compositeIterator seam — publishing
+	// the iteration ordinal and any per-pass data the body resolves by scope
+	// walk-up. firstOpen reports open=false for zero iterations (a pre-tested
+	// loop already false, or a zero-count Multi-Instance): resume the host
+	// without opening the body scope at all.
+	if it := compositeIteratorOf(node); it != nil && host.loopCounter == 0 {
+		open, err := it.firstOpen(ctx, ls, host, node)
+		if err != nil {
+			ls.inst.fail(err)
+			ls.stopAll()
+
 			return
 		}
 
-		if sl.TestBefore() {
-			cont, err := host.evalLoopCond(ctx, node, sl)
-			if err != nil {
-				ls.inst.fail(err)
-				ls.stopAll()
+		if !open {
+			ls.waiting[host.ID()] = struct{}{}
+			ls.dispatchToParked(ctx, trackEvent{
+				kind:  evDeliver,
+				track: host,
+				eDef:  newScopeDone(),
+			})
 
-				return
-			}
-
-			if !cont {
-				ls.waiting[host.ID()] = struct{}{}
-				ls.dispatchToParked(ctx, trackEvent{
-					kind:  evDeliver,
-					track: host,
-					eDef:  newScopeDone(),
-				})
-
-				return
-			}
+			return
 		}
 	}
 
@@ -325,42 +319,26 @@ func (ls *loopState) resumeScopeHost(
 	path scope.DataPath,
 	entry *scopeEntry,
 ) {
-	// SRD-054 M3: a looped composite re-opens its child scope for another pass
-	// while the loop condition holds and the maximum is not reached — the
-	// sequential re-entry the leaf loop performs in place — instead of resuming
-	// the host. When the loop finishes, fall through to the normal resume.
-	if sl := standardLoopOf(entry.node); sl != nil {
-		entry.host.loopCounter++
+	// SRD-054 / SRD-055: a looped composite re-opens its child scope for another
+	// pass through the compositeIterator seam — the sequential re-entry the leaf
+	// loop performs in place — instead of resuming the host. afterDrain reports
+	// reopen=false when the iteration finishes (loop condition false / maximum
+	// reached, or the Multi-Instance count exhausted); then fall through to the
+	// normal resume.
+	if it := compositeIteratorOf(entry.node); it != nil {
+		reopen, err := it.afterDrain(ctx, ls, entry.host, entry.node)
+		if err != nil {
+			ls.inst.fail(err)
+			ls.stopAll()
 
-		reachedMax := false
-		if m, ok := sl.LoopMaximum(); ok && entry.host.loopCounter >= m {
-			reachedMax = true
+			return
 		}
 
-		if !reachedMax {
-			if !ls.bindLoopCounterOrFail(
-				entry.host.scopePath, entry.host.loopCounter) {
-				return
-			}
+		if reopen {
+			ls.onScopeOpen(ctx, entry.host, entry.node)
 
-			cont, err := entry.host.evalLoopCond(ctx, entry.node, sl)
-			if err != nil {
-				ls.inst.fail(err)
-				ls.stopAll()
-
-				return
-			}
-
-			if cont {
-				ls.onScopeOpen(ctx, entry.host, entry.node)
-
-				return
-			}
+			return
 		}
-
-		// the loop finished — reset the ordinal so a later re-entry of this same
-		// host starts a fresh loop.
-		entry.host.loopCounter = 0
 	}
 
 	// resume the parked host through the standard parked-dispatch contract.
@@ -503,19 +481,4 @@ func scopeLoopCounter(node flow.Node, host *track) int {
 	}
 
 	return -1
-}
-
-// bindLoopCounterOrFail publishes a looped composite's iteration ordinal at path
-// and, on the (defensive) commit error, fails the instance and stops the loop.
-// It returns false when the caller must abandon its current step — the single
-// error site both composite loop hooks share.
-func (ls *loopState) bindLoopCounterOrFail(path scope.DataPath, counter int) bool {
-	if err := ls.inst.sc.bindLoopCounterAt(path, counter); err != nil {
-		ls.inst.fail(err)
-		ls.stopAll()
-
-		return false
-	}
-
-	return true
 }

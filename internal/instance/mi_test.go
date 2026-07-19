@@ -1,0 +1,295 @@
+package instance
+
+import (
+	"context"
+	"sync/atomic"
+	"testing"
+
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+
+	"github.com/dr-dobermann/gobpm/generated/mockdata"
+	"github.com/dr-dobermann/gobpm/internal/enginert"
+	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
+	"github.com/dr-dobermann/gobpm/internal/scope"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/dr-dobermann/gobpm/pkg/model/process"
+)
+
+// cardExpr builds an integer loopCardinality expression that evaluates to n
+// (ResultType "int", as NewMultiInstance requires).
+func cardExpr(t *testing.T, n int) data.FormalExpression {
+	t.Helper()
+
+	return goexpr.Must(nil,
+		data.MustItemDefinition(values.NewVariable(0)),
+		func(_ context.Context, _ data.Source) (data.Value, error) {
+			return values.NewVariable(n), nil
+		})
+}
+
+// cardExprBoom is an integer cardinality expression whose evaluation errors.
+func cardExprBoom(t *testing.T) data.FormalExpression {
+	t.Helper()
+
+	return goexpr.Must(nil,
+		data.MustItemDefinition(values.NewVariable(0)),
+		func(_ context.Context, _ data.Source) (data.Value, error) {
+			return nil, errs.New(errs.M("cardinality boom"),
+				errs.C(errorClass, errs.OperationFailed))
+		})
+}
+
+// cardExprLyingInt declares an int result but evaluates to a non-integer — the
+// runtime non-integer the model-layer type check cannot catch. A mock is used
+// because goexpr coerces/rejects a mismatched literal before it reaches the
+// caller.
+func cardExprLyingInt(t *testing.T) data.FormalExpression {
+	t.Helper()
+
+	me := mockdata.NewMockFormalExpression(t)
+	me.EXPECT().ResultType().Return("int")
+	me.EXPECT().Language().Return("mock").Maybe()
+	me.EXPECT().Evaluate(mock.Anything, mock.Anything).
+		Return(values.NewVariable("not-an-int"), nil)
+
+	return me
+}
+
+// miSubProcessInstance builds start -> body(SubProcess, Multi-Instance mi) ->
+// end, where the body is b-start -> work(counting op) -> b-end. Optional
+// process properties seed the root scope (e.g. an input collection).
+func miSubProcessInstance(
+	t *testing.T, count *atomic.Int32,
+	mi *activities.MultiInstanceLoopCharacteristics,
+	props ...*data.Property,
+) *Instance {
+	t.Helper()
+
+	_ = data.CreateDefaultStates()
+
+	p, err := process.New("mi-sp", data.WithProperties(props...))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	body, err := activities.NewSubProcess("body", activities.WithLoop(mi))
+	require.NoError(t, err)
+
+	bStart, err := events.NewStartEvent("b-start")
+	require.NoError(t, err)
+	work, err := activities.NewServiceTask("work", countOp(t, count),
+		activities.WithoutParams())
+	require.NoError(t, err)
+	bEnd, err := events.NewEndEvent("b-end")
+	require.NoError(t, err)
+	for _, e := range []flow.Element{bStart, work, bEnd} {
+		require.NoError(t, body.Add(e))
+	}
+	_, err = flow.Link(bStart, work)
+	require.NoError(t, err)
+	_, err = flow.Link(work, bEnd)
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, body, end} {
+		require.NoError(t, p.Add(e))
+	}
+	_, err = flow.Link(start, body)
+	require.NoError(t, err)
+	_, err = flow.Link(body, end)
+	require.NoError(t, err)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	inst, err := New(s, scope.EmptyDataPath, enginert.Default(),
+		&recordingProducer{}, nil)
+	require.NoError(t, err)
+
+	return inst
+}
+
+// mustSeqMI builds a valid sequential Multi-Instance from the given options.
+func mustSeqMI(
+	t *testing.T, opts ...activities.MultiInstanceOption,
+) *activities.MultiInstanceLoopCharacteristics {
+	t.Helper()
+
+	mi, err := activities.NewMultiInstance(
+		append([]activities.MultiInstanceOption{
+			activities.WithSequential()}, opts...)...)
+	require.NoError(t, err)
+
+	return mi
+}
+
+// TestMultiInstanceRunsNSequentially: a cardinality-driven sequential
+// Multi-Instance re-opens the body scope exactly N times (§13.3.7).
+func TestMultiInstanceRunsNSequentially(t *testing.T) {
+	var count atomic.Int32
+
+	mi := mustSeqMI(t, activities.WithCardinality(cardExpr(t, 3)))
+
+	inst := miSubProcessInstance(t, &count, mi)
+	runToDone(t, inst)
+
+	require.Equal(t, Completed, inst.State())
+	require.Equal(t, int32(3), count.Load(),
+		"the body runs once per Multi-Instance instance")
+}
+
+// TestMultiInstanceZeroCardinality: a zero count runs no instances, yet the
+// host resumes and the instance completes.
+func TestMultiInstanceZeroCardinality(t *testing.T) {
+	var count atomic.Int32
+
+	mi := mustSeqMI(t, activities.WithCardinality(cardExpr(t, 0)))
+
+	inst := miSubProcessInstance(t, &count, mi)
+	runToDone(t, inst)
+
+	require.Equal(t, Completed, inst.State(),
+		"the host resumes without opening the body scope")
+	require.Equal(t, int32(0), count.Load())
+}
+
+// TestMultiInstanceCardinalityFromCollection: the count is the size of the
+// loopDataInputRef collection when no loopCardinality is given.
+func TestMultiInstanceCardinalityFromCollection(t *testing.T) {
+	var count atomic.Int32
+
+	mi := mustSeqMI(t, activities.WithInputCollection("items", "item"))
+
+	items := data.MustProperty("items",
+		data.MustItemDefinition(values.NewArray(10, 20, 30, 40),
+			foundation.WithID("items")),
+		data.ReadyDataState)
+
+	inst := miSubProcessInstance(t, &count, mi, items)
+	runToDone(t, inst)
+
+	require.Equal(t, Completed, inst.State())
+	require.Equal(t, int32(4), count.Load(),
+		"the body runs once per collection element")
+}
+
+// TestParallelMultiInstanceRejected: a parallel Multi-Instance faults at
+// activation until SRD-056 — the honest gap gate.
+func TestParallelMultiInstanceRejected(t *testing.T) {
+	var count atomic.Int32
+
+	mi, err := activities.NewMultiInstance(
+		activities.WithCardinality(cardExpr(t, 3)))
+	require.NoError(t, err)
+
+	inst := miSubProcessInstance(t, &count, mi)
+	runToDone(t, inst)
+
+	require.NotEqual(t, Completed, inst.State(),
+		"a parallel Multi-Instance is not yet executable")
+	require.Equal(t, int32(0), count.Load())
+}
+
+// TestMultiInstanceCardinalityEvalError: a cardinality expression that errors on
+// evaluation faults the instance before any instance runs.
+func TestMultiInstanceCardinalityEvalError(t *testing.T) {
+	var count atomic.Int32
+
+	mi := mustSeqMI(t, activities.WithCardinality(cardExprBoom(t)))
+
+	inst := miSubProcessInstance(t, &count, mi)
+	runToDone(t, inst)
+
+	require.NotEqual(t, Completed, inst.State(),
+		"a cardinality evaluation error faults the instance")
+	require.Equal(t, int32(0), count.Load())
+}
+
+// TestMultiInstanceNonIntCardinality: a cardinality that evaluates to a
+// non-integer value (a lying expression the model check cannot catch) faults.
+func TestMultiInstanceNonIntCardinality(t *testing.T) {
+	var count atomic.Int32
+
+	mi := mustSeqMI(t, activities.WithCardinality(cardExprLyingInt(t)))
+
+	inst := miSubProcessInstance(t, &count, mi)
+	runToDone(t, inst)
+
+	require.NotEqual(t, Completed, inst.State(),
+		"a non-integer cardinality result faults the instance")
+	require.Equal(t, int32(0), count.Load())
+}
+
+// TestMultiInstanceNonCollectionRef: a loopDataInputRef naming a non-collection
+// datum faults the instance.
+func TestMultiInstanceNonCollectionRef(t *testing.T) {
+	var count atomic.Int32
+
+	mi := mustSeqMI(t, activities.WithInputCollection("items", "item"))
+
+	notACollection := data.MustProperty("items",
+		data.MustItemDefinition(values.NewVariable(5),
+			foundation.WithID("items")),
+		data.ReadyDataState)
+
+	inst := miSubProcessInstance(t, &count, mi, notACollection)
+	runToDone(t, inst)
+
+	require.NotEqual(t, Completed, inst.State(),
+		"a non-collection loopDataInputRef faults the instance")
+	require.Equal(t, int32(0), count.Load())
+}
+
+// TestMultiInstanceMissingCollectionRef: a loopDataInputRef naming an absent
+// datum faults the instance.
+func TestMultiInstanceMissingCollectionRef(t *testing.T) {
+	var count atomic.Int32
+
+	mi := mustSeqMI(t, activities.WithInputCollection("absent", "item"))
+
+	inst := miSubProcessInstance(t, &count, mi)
+	runToDone(t, inst)
+
+	require.NotEqual(t, Completed, inst.State(),
+		"a missing loopDataInputRef faults the instance")
+	require.Equal(t, int32(0), count.Load())
+}
+
+// TestCompositeIteratorDispatch: compositeIteratorOf resolves the iteration
+// strategy by marker — Standard Loop, Multi-Instance, none (a non-looped
+// activity), or none (a node that carries no loop characteristics at all).
+func TestCompositeIteratorDispatch(t *testing.T) {
+	sl, err := activities.NewStandardLoop(loopCondLt(t, 1))
+	require.NoError(t, err)
+	slNode, err := activities.NewSubProcess("sl", activities.WithLoop(sl))
+	require.NoError(t, err)
+
+	miNode, err := activities.NewSubProcess("mi",
+		activities.WithLoop(mustSeqMI(t, activities.WithCardinality(
+			cardExpr(t, 1)))))
+	require.NoError(t, err)
+
+	plainNode, err := activities.NewSubProcess("plain")
+	require.NoError(t, err)
+
+	// a non-activity node carries no LoopCharacteristics() method at all — the
+	// detectors' first type-assertion returns nil.
+	evNode, err := events.NewStartEvent("ev")
+	require.NoError(t, err)
+
+	require.IsType(t, standardLoopIterator{}, compositeIteratorOf(slNode))
+	require.IsType(t, miIterator{}, compositeIteratorOf(miNode))
+	require.Nil(t, compositeIteratorOf(plainNode))
+	require.Nil(t, compositeIteratorOf(evNode))
+}
