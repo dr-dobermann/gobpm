@@ -19,7 +19,7 @@ import (
 // types.
 type activity struct {
 	flow.BaseNode
-	loopCharacteristics *LoopCharacteristics
+	loopCharacteristics LoopCharacteristics
 	roles               map[string]*hi.ResourceRole
 	defaultFlow         *flow.SequenceFlow
 	properties          map[string]*data.Property
@@ -136,6 +136,13 @@ func (a *activity) Roles() []*hi.ResourceRole {
 // copy of the Activity properties.
 func (a *activity) Properties() []*data.Property {
 	return slices.Collect(maps.Values(a.properties))
+}
+
+// LoopCharacteristics returns the activity's loop/multi-instance marker, or nil
+// when the activity runs exactly once (ADR-025). The runtime reads it to decide
+// whether — and how — to iterate the activity.
+func (a *activity) LoopCharacteristics() LoopCharacteristics {
+	return a.loopCharacteristics
 }
 
 // SetDefaultFlow sets default flow from the Activity — the flow taken when no
