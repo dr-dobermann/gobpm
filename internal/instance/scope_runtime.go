@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"slices"
+	"strconv"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -109,6 +110,39 @@ func (ls *loopState) onScopeOpen(ctx context.Context, host *track, node flow.Nod
 		return
 	}
 
+	// SRD-054 M3: a looped composite publishes its iteration ordinal to the
+	// enclosing scope on the first pass (the re-entry seam publishes it on the
+	// later passes), so the body — reached through the child scope's walk-up —
+	// and the loop condition resolve it. A pre-tested loop whose condition is
+	// false at its first pass runs zero iterations: resume the host without
+	// opening the body scope at all.
+	if sl := standardLoopOf(node); sl != nil && host.loopCounter == 0 {
+		if !ls.bindLoopCounterOrFail(host.scopePath, 0) {
+			return
+		}
+
+		if sl.TestBefore() {
+			cont, err := host.evalLoopCond(ctx, node, sl)
+			if err != nil {
+				ls.inst.fail(err)
+				ls.stopAll()
+
+				return
+			}
+
+			if !cont {
+				ls.waiting[host.ID()] = struct{}{}
+				ls.dispatchToParked(ctx, trackEvent{
+					kind:  evDeliver,
+					track: host,
+					eDef:  newScopeDone(),
+				})
+
+				return
+			}
+		}
+	}
+
 	if err := ls.inst.sc.plane.OpenScope(child); err != nil {
 		ls.inst.fail(errs.New(
 			errs.M("couldn't open scope %q for sub-process %q",
@@ -128,7 +162,8 @@ func (ls *loopState) onScopeOpen(ctx context.Context, host *track, node flow.Nod
 	entry := &scopeEntry{host: host, node: node, parent: host.scopePath}
 	ls.scopes[child] = entry
 
-	ls.reportScope(observability.PhaseOpened, node, child)
+	ls.reportScope(observability.PhaseOpened, node, child,
+		scopeLoopCounter(node, host))
 
 	ls.seedScope(ctx, sh, child)
 
@@ -276,7 +311,8 @@ func (ls *loopState) completeScope(
 	// guard anything (SRD-052 FR-5).
 	ls.disarmScopeHandlers(path)
 
-	ls.reportScope(observability.PhaseCompleted, entry.node, path)
+	ls.reportScope(observability.PhaseCompleted, entry.node, path,
+		scopeLoopCounter(entry.node, entry.host))
 
 	ls.resumeScopeHost(ctx, path, entry)
 }
@@ -289,6 +325,44 @@ func (ls *loopState) resumeScopeHost(
 	path scope.DataPath,
 	entry *scopeEntry,
 ) {
+	// SRD-054 M3: a looped composite re-opens its child scope for another pass
+	// while the loop condition holds and the maximum is not reached — the
+	// sequential re-entry the leaf loop performs in place — instead of resuming
+	// the host. When the loop finishes, fall through to the normal resume.
+	if sl := standardLoopOf(entry.node); sl != nil {
+		entry.host.loopCounter++
+
+		reachedMax := false
+		if m, ok := sl.LoopMaximum(); ok && entry.host.loopCounter >= m {
+			reachedMax = true
+		}
+
+		if !reachedMax {
+			if !ls.bindLoopCounterOrFail(
+				entry.host.scopePath, entry.host.loopCounter) {
+				return
+			}
+
+			cont, err := entry.host.evalLoopCond(ctx, entry.node, sl)
+			if err != nil {
+				ls.inst.fail(err)
+				ls.stopAll()
+
+				return
+			}
+
+			if cont {
+				ls.onScopeOpen(ctx, entry.host, entry.node)
+
+				return
+			}
+		}
+
+		// the loop finished — reset the ordinal so a later re-entry of this same
+		// host starts a fresh loop.
+		entry.host.loopCounter = 0
+	}
+
 	// resume the parked host through the standard parked-dispatch contract.
 	ls.dispatchToParked(ctx, trackEvent{
 		kind:  evDeliver,
@@ -373,7 +447,8 @@ func (ls *loopState) cancelScope(path scope.DataPath, phase observability.Phase)
 				"scope_path", string(p), "error", err.Error())
 		}
 
-		ls.reportScope(phase, entry.node, p)
+		ls.reportScope(phase, entry.node, p,
+			scopeLoopCounter(entry.node, entry.host))
 	}
 }
 
@@ -397,14 +472,50 @@ func (ls *loopState) reportScope(
 	phase observability.Phase,
 	node flow.Node,
 	path scope.DataPath,
+	loopCounter int,
 ) {
+	details := map[string]string{
+		observability.AttrScopePath: string(path),
+	}
+
+	// a looped composite carries its iteration ordinal so each Standard-Loop
+	// pass is individually observable (SRD-054 FR-11); a non-looped scope passes
+	// -1 to omit it.
+	if loopCounter >= 0 {
+		details[observability.AttrLoopCounter] = strconv.Itoa(loopCounter)
+	}
+
 	ls.inst.report(observability.Fact{
 		Kind:     observability.KindScope,
 		Phase:    phase,
 		NodeID:   node.ID(),
 		NodeName: node.Name(),
-		Details: map[string]string{
-			observability.AttrScopePath: string(path),
-		},
+		Details:  details,
 	})
+}
+
+// scopeLoopCounter returns the host's Standard-Loop iteration ordinal for a
+// looped composite, or -1 when the node is not looped (so its scope facts omit
+// the attribute).
+func scopeLoopCounter(node flow.Node, host *track) int {
+	if standardLoopOf(node) != nil {
+		return host.loopCounter
+	}
+
+	return -1
+}
+
+// bindLoopCounterOrFail publishes a looped composite's iteration ordinal at path
+// and, on the (defensive) commit error, fails the instance and stops the loop.
+// It returns false when the caller must abandon its current step — the single
+// error site both composite loop hooks share.
+func (ls *loopState) bindLoopCounterOrFail(path scope.DataPath, counter int) bool {
+	if err := ls.inst.sc.bindLoopCounterAt(path, counter); err != nil {
+		ls.inst.fail(err)
+		ls.stopAll()
+
+		return false
+	}
+
+	return true
 }

@@ -133,6 +133,11 @@ const (
 	AttrDataPath          = "data_path"
 	AttrScopePath         = "scope_path"
 
+	// AttrLoopCounter (SRD-054): the 0-based iteration ordinal a looped composite
+	// activity's scope carries, so each Standard-Loop pass is individually
+	// observable on its scope facts.
+	AttrLoopCounter = "loop_counter"
+
 	// Call-activity linkage (SRD-050): stamped on every fact a CHILD instance
 	// emits, stitching its trace back to the caller across the reuse boundary.
 	AttrParentInstanceID   = "parent_instance_id"

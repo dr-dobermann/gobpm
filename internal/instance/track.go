@@ -220,8 +220,14 @@ type track struct {
 	// so the loop reads it lock-free.
 	condDefs []*events.ConditionalEventDefinition
 	m        sync.RWMutex
-	state    trackState
-	stopIt   atomic.Bool
+	// loopCounter is the 0-based Standard-Loop iteration ordinal for a looped
+	// composite host, persisted across the per-iteration scope re-opens the
+	// re-entry seam drives (SRD-054 M3). Loop-owned — read and written only on
+	// the loop goroutine (onScopeOpen / resumeScopeHost); zero and inert for a
+	// non-looped host.
+	loopCounter int
+	state       trackState
+	stopIt      atomic.Bool
 }
 
 // record appends a track-state transition to the history, copy-on-write, and

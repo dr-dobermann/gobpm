@@ -22,6 +22,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 // SRD-054 M2 — the leaf-Task Standard Loop seam in the run loop: standardLoopOf
@@ -294,4 +295,187 @@ func TestEvalLoopCondNonBool(t *testing.T) {
 	_, err = tr.evalLoopCond(context.Background(), node, sl)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "non-boolean")
+}
+
+// loopedSubProcessInstance builds start -> body(SubProcess, loop sl) -> end,
+// where the body is b-start -> work(counting op) -> b-end.
+func loopedSubProcessInstance(
+	t *testing.T, count *atomic.Int32,
+	sl *activities.StandardLoopCharacteristics,
+) *Instance {
+	t.Helper()
+
+	_ = data.CreateDefaultStates()
+
+	p, err := process.New("std-loop-sp")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	body, err := activities.NewSubProcess("body", activities.WithLoop(sl))
+	require.NoError(t, err)
+
+	bStart, err := events.NewStartEvent("b-start")
+	require.NoError(t, err)
+	work, err := activities.NewServiceTask("work", countOp(t, count),
+		activities.WithoutParams())
+	require.NoError(t, err)
+	bEnd, err := events.NewEndEvent("b-end")
+	require.NoError(t, err)
+	for _, e := range []flow.Element{bStart, work, bEnd} {
+		require.NoError(t, body.Add(e))
+	}
+	_, err = flow.Link(bStart, work)
+	require.NoError(t, err)
+	_, err = flow.Link(work, bEnd)
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, body, end} {
+		require.NoError(t, p.Add(e))
+	}
+	_, err = flow.Link(start, body)
+	require.NoError(t, err)
+	_, err = flow.Link(body, end)
+	require.NoError(t, err)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	inst, err := New(s, scope.EmptyDataPath, enginert.Default(),
+		&recordingProducer{}, nil)
+	require.NoError(t, err)
+
+	return inst
+}
+
+// TestLoopedSubProcessReopensPerIteration: a looped Sub-Process re-opens its
+// child scope once per loop pass, running its body each time.
+func TestLoopedSubProcessReopensPerIteration(t *testing.T) {
+	var count atomic.Int32
+
+	sl, err := activities.NewStandardLoop(loopCondLt(t, 3))
+	require.NoError(t, err)
+
+	inst := loopedSubProcessInstance(t, &count, sl)
+	runToDone(t, inst)
+
+	require.Equal(t, Completed, inst.State())
+	require.Equal(t, int32(3), count.Load(),
+		"the sub-process body runs once per loop iteration")
+}
+
+// TestLoopedSubProcessPreTestedZero: a pre-tested composite loop false at entry
+// never opens the body scope, yet the host resumes and the instance completes.
+func TestLoopedSubProcessPreTestedZero(t *testing.T) {
+	var count atomic.Int32
+
+	sl, err := activities.NewStandardLoop(loopCondLt(t, 0),
+		activities.WithTestBefore())
+	require.NoError(t, err)
+
+	inst := loopedSubProcessInstance(t, &count, sl)
+	runToDone(t, inst)
+
+	require.Equal(t, Completed, inst.State(),
+		"the host resumes without opening the body scope")
+	require.Equal(t, int32(0), count.Load())
+}
+
+// TestLoopedSubProcessMaximumCaps: loopMaximum caps a looped Sub-Process.
+func TestLoopedSubProcessMaximumCaps(t *testing.T) {
+	var count atomic.Int32
+
+	sl, err := activities.NewStandardLoop(loopCondLt(t, 1000),
+		activities.WithLoopMaximum(2))
+	require.NoError(t, err)
+
+	inst := loopedSubProcessInstance(t, &count, sl)
+	runToDone(t, inst)
+
+	require.Equal(t, Completed, inst.State())
+	require.Equal(t, int32(2), count.Load())
+}
+
+// TestLoopedSubProcessEmitsIterationFacts (FR-11): each loop pass emits a scope
+// Opened fact carrying its 0-based loopCounter.
+func TestLoopedSubProcessEmitsIterationFacts(t *testing.T) {
+	var count atomic.Int32
+
+	sl, err := activities.NewStandardLoop(loopCondLt(t, 3))
+	require.NoError(t, err)
+
+	inst := loopedSubProcessInstance(t, &count, sl)
+
+	rec := &obsRecorder{}
+	inst.AddObserver(rec.record)
+
+	runToDone(t, inst)
+
+	seen := map[string]bool{}
+	rec.mu.Lock()
+	for _, e := range rec.events {
+		if e.Kind == observability.KindScope &&
+			e.Phase == observability.PhaseOpened {
+			if lc, ok := e.Details[observability.AttrLoopCounter]; ok {
+				seen[lc] = true
+			}
+		}
+	}
+	rec.mu.Unlock()
+
+	require.True(t, seen["0"] && seen["1"] && seen["2"],
+		"each Standard-Loop pass emits a scope-Opened fact with its ordinal")
+}
+
+// TestLoopedSubProcessPreTestedConditionError: a pre-tested composite condition
+// that errors faults the instance before the body scope opens.
+func TestLoopedSubProcessPreTestedConditionError(t *testing.T) {
+	var count atomic.Int32
+
+	sl, err := activities.NewStandardLoop(loopCondBoom(t),
+		activities.WithTestBefore())
+	require.NoError(t, err)
+
+	inst := loopedSubProcessInstance(t, &count, sl)
+	runToDone(t, inst)
+
+	require.NotEqual(t, Completed, inst.State(),
+		"a pre-tested condition error faults before the body opens")
+	require.Equal(t, int32(0), count.Load())
+}
+
+// TestLoopedSubProcessConditionErrorFaults: a post-tested composite condition
+// that errors on re-entry faults the instance after the first pass.
+func TestLoopedSubProcessConditionErrorFaults(t *testing.T) {
+	var count atomic.Int32
+
+	sl, err := activities.NewStandardLoop(loopCondBoom(t))
+	require.NoError(t, err)
+
+	inst := loopedSubProcessInstance(t, &count, sl)
+	runToDone(t, inst)
+
+	require.NotEqual(t, Completed, inst.State(),
+		"a re-entry condition error faults after the first pass")
+}
+
+// TestEvalLoopCondFrameError covers evalLoopCond's defensive frame-open error:
+// a track pinned to a non-existent scope path cannot open its eval frame.
+func TestEvalLoopCondFrameError(t *testing.T) {
+	sl, err := activities.NewStandardLoop(loopCondLt(t, 1))
+	require.NoError(t, err)
+
+	inst := loopedTaskInstance(t, new(atomic.Int32), sl)
+	node := findNode(t, inst.s, "work")
+
+	tr, err := newTrack(node, inst, nil)
+	require.NoError(t, err)
+	tr.scopePath = scope.DataPath("/does/not/exist")
+
+	_, err = tr.evalLoopCond(context.Background(), node, sl)
+	require.Error(t, err)
 }
