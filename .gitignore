@@ -61,3 +61,4 @@ examples/data-change/data-change
 examples/native-structs/native-structs
 examples/call-activity/call-activity
 examples/event-subprocess/event-subprocess
+examples/standard-loop/standard-loop

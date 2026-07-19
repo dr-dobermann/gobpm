@@ -156,6 +156,13 @@ defer sub.Cancel() // deregister + drain; sub.Dropped() counts any overflow
 
 По композиции см. руководство [**docs/guides/composition.md**](docs/guides/composition.md) (EN). **Встроенный Sub-Process** — вложенная область в том же экземпляре: внутренний поток читает данные родителя через walk-up, его локальные данные умирают вместе с областью, родитель возобновляется, когда область осушается, а boundary/Terminate/Error действуют на область как на единое целое ([`examples/embedded-subprocess/`](examples/embedded-subprocess/)). **Call Activity** запускает отдельно зарегистрированный процесс как изолированный **дочерний экземпляр** — граница переиспользования: объявленные вход/выход клонируются через границу, версия latest-at-launch или закреплённая, выход коммитится обратно ([`examples/call-activity/`](examples/call-activity/)). **Event Sub-Process** (`triggeredByEvent`) — обработчик, вооружённый на область: он вооружается, пока его объемлющая область открыта, и прерывающий вариант при срабатывании выполняет **cancel-and-run** — отменяет работу области, выполняется в контексте данных родителя и поглощает событие, так что родитель продолжается по своему обычному потоку; **непрерывающий** вариант вместо этого **форкается** — на каждое срабатывание порождает конкурентный экземпляр обработчика без отмены области, неограниченно ([`examples/event-subprocess/`](examples/event-subprocess/)).
 
+Любая активность может нести **итерацию**
+([**docs/guides/iteration.md**](docs/guides/iteration.md) (EN)): **Standard Loop**
+(§13.3.6), помеченный `WithLoop`, повторяет её, пока булево условие истинно —
+листовую Task на месте, композит — переоткрывая свою дочернюю область на каждой
+итерации — предоставляя 0-based `loopCounter` условию и активности на каждом
+проходе ([`examples/standard-loop/`](examples/standard-loop/)).
+
 По условным событиям (**ожидание, управляемое данными** — ветка освобождается закоммиченными данными самого процесса, без опроса) см. [`examples/conditional-events/`](examples/conditional-events/) — промежуточный условный catch паркует ветку, пока коммит соседней задачи не переключит его условие из false в true; условные триггеры также охраняют активности как **граничные события** и участвуют в гонке как **дуги event-based-шлюза**. Руководство — [**docs/guides/conditional-events.md**](docs/guides/conditional-events.md) (EN).
 
 По аварийному завершению процесса см. [`examples/terminate-end-event/`](examples/terminate-end-event/) — **Terminate End Event** на одной из веток параллельного процесса: ветка проверки на мошенничество доходит до него и завершает весь экземпляр, отменяя незаконченный платёж на середине списания — экземпляр оказывается в состоянии `Terminated`, а не `Completed`.
@@ -206,6 +213,7 @@ make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (r
 - [Работа с данными процесса](docs/guides/data.md) — руководство по структурным данным (пути, ярусы, нативные структуры, наблюдение изменений; EN)
 - [Условные события](docs/guides/conditional-events.md) — ожидание, управляемое данными: позиции, правило фронта false→true, декларации зависимостей (EN)
 - [Композиция](docs/guides/composition.md) — sub-process'ы (вложенные области) и call activity (граница переиспользования через дочерний экземпляр): формы §13.3.4, видимость/изоляция данных, версионирование, прерывание области целиком (EN)
+- [Итерация активностей](docs/guides/iteration.md) — Standard Loop: loopCondition / testBefore / loopMaximum, loopCounter, лист на месте против переоткрытия области композита (EN)
 - [Development Roadmap](docs/analytics/gobpm%20Development%20Roadmap.md) — workstream'ы + вехи
 - [Conformance scope](docs/bpmn-spec/conformance.md) и [BPMN 2.0 reference KB](docs/bpmn-spec/) · [Conformance status](docs/design/conformance-status.md) — что реализовано и что осталось, с привязкой к issues (EN)
 - [Documentation Index](README_INDEX.md) · [API Reference](https://pkg.go.dev/github.com/dr-dobermann/gobpm) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
