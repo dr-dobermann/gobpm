@@ -109,5 +109,12 @@ func classifyType(t reflect.Type) fieldInfo {
 		return fieldInfo{kind: kindCollection, goType: t}
 	}
 
+	// A string-keyed map is the map kind (SRD-047 §4.8); every other key type
+	// stays an opaque leaf (ADR-011 v.7 §2.8 — no key stringification). The
+	// map view re-derives its element kind from the live field.
+	if t.Kind() == reflect.Map && t.Key().Kind() == reflect.String {
+		return fieldInfo{kind: kindMap, goType: t}
+	}
+
 	return fieldInfo{kind: kindLeaf, goType: t}
 }

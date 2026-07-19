@@ -692,6 +692,12 @@ serves it through a cached adapter over the **live** map — wrap, not convert �
 exactly as structs and slices already ride `Record` / `Collection`. Non-string
 key types stay opaque leaves (§2.8). This narrows S4's deliberate "map field is
 an opaque leaf" fallback to the shapes that genuinely cannot carry a path key.
+One **engine note**: a host language's map value may not be *addressable* (Go's
+is not), so for a native map the write contract is **entry-level** — the whole
+value under a key is replaced or removed, live — while a *composite* value read
+out of a native map is a navigable **snapshot** (a deep write into it fails
+loud rather than mutating a detached copy). The dynamic `values.Map` has no such
+limit; this bounds only the native-interop tier, and the landing SRD records it.
 
 **Standard grounding.** BPMN's own data model needs no dictionary kind —
 `ItemDefinition.structureRef` points at "the concrete data structure, typically

@@ -81,6 +81,9 @@ func (r *structRecord) Field(_ context.Context, name string) (data.Value, error)
 	case kindCollection:
 		return newSliceCollection(fld, r.mu), nil
 
+	case kindMap:
+		return newMapValue(fld, r.mu), nil
+
 	default: // kindLeaf
 		return &fieldLeaf{fld: fld, mu: r.mu, typ: fi.goType.String()}, nil
 	}

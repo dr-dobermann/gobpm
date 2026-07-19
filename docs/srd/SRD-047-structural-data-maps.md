@@ -163,11 +163,10 @@ changes shape (ADR-011 v.7 §2.9.6, S5).
   `kindMap`; any other key type keeps falling to `kindLeaf` (ADR-011 v.7
   §2.8 — no key stringification). A new `mapValue` view (file
   `adapters/mapvalue.go`) implements `data.Map` over the **live** Go map —
-  wrap, not convert — mirroring `sliceCollection`'s mechanics: element kind
-  classified once from the map's element type, entries served through the
-  same element-view dispatch, writes coerced through the existing `coerce`,
-  `DeleteEntry` via `reflect.Value.SetMapIndex` with the zero `Value`,
-  `Keys` sorted, locking and `Clone` per `sliceCollection`'s contract.
+  wrap, not convert: `Keys` sorted, `SetEntry` coerced through the existing
+  `coerce` and written via `reflect.Value.SetMapIndex` (allocating a nil
+  map on first write), `DeleteEntry` via `SetMapIndex` with the zero
+  `Value`, locking and `Clone` (detached) per `sliceCollection`'s contract.
   `structRecord.Field` dispatches `kindMap` to the view. **Top-level wrap**:
   `Wrap(&m)` for `m map[string]V` returns the standalone `mapValue` (the
   "process genuinely holds a dictionary" driver), branching before the
@@ -176,6 +175,25 @@ changes shape (ADR-011 v.7 §2.9.6, S5).
   (`structrecord_test.go:68-75`) **flips** into the navigability test; the
   opaque-leaf behavior is re-pinned on a non-string-keyed fixture
   (`map[int]V`).
+
+  **The write contract is entry-level (Go maps are not addressable).**
+  Unlike a slice element (`s.slice.Index(i)` is addressable, so
+  `sliceCollection` hands out live sub-views that write through), a map
+  value read via `reflect.Value.MapIndex` is **never addressable** — there
+  is no pointer into a Go map. So the adapter map's write path is
+  **entry-level**: `SetEntry` / `DeleteEntry` replace or remove a whole
+  value, live (the idiomatic Go copy-modify-restore). A **scalar / leaf**
+  or **passthrough (`data.Value`)** element is served live — the scalar
+  round-trips through `SetEntry`, the passthrough IS the stored mutable
+  value. A **composite** element (a struct, `*struct`, slice, or nested
+  map value) is served as a **read-navigable frozen snapshot** (`freeze`,
+  `adapters/frozen.go`): its read methods work over a materialized copy,
+  its mutators — `SetField` / `SetAt` / `Update` / … — return a classified
+  error (`"a native map value isn't addressable; re-upsert the whole entry
+  via SetEntry"`), so a deep `SetPath` into a composite map entry **fails
+  loud** instead of silently writing to a detached copy. This is a recorded
+  engine choice (see §4.8); a future slice may make `map[string]*struct`
+  deep-write-through without changing this seam.
 
 ### 2.2 Non-functional
 
@@ -369,6 +387,32 @@ carrier struct. *Alternative — `Register`-only (no built-in lift):* leaves the
 common `map[string]V` case as boilerplate and the S4 test's "recognized
 future" unrealized — the slice's whole driver. Rejected.
 
+**The write contract is entry-level, because Go maps are not addressable.**
+`reflect.Value.MapIndex` returns a **non-addressable** value — there is no
+pointer into a Go map, unlike a slice element (`Index(i)` is addressable,
+which is exactly why `sliceCollection` hands out live, write-through
+sub-views). So a deep write into a composite map value
+(`SetPath(root, cfg.limits["k"].field, v)`) *cannot* mutate the live map — it
+would write to a detached copy. Rather than lose that write silently (against
+the §2.9.3 fail-loud posture), the adapter map's contract is: **whole-entry
+writes** (`SetEntry` / `DeleteEntry`) are live for every element kind (the
+idiomatic Go copy-modify-restore); a **scalar / leaf** or **passthrough**
+entry is fully live (the scalar round-trips, the passthrough `data.Value` is
+the stored mutable object); a **composite** entry (struct, `*struct`, slice,
+nested map) is a **read-navigable frozen snapshot** (`freeze`,
+`adapters/frozen.go`) whose mutators error loud. *Alternative — write-back
+views (a composite view carrying a closure that re-`SetMapIndex`es the
+modified copy):* propagates deep writes, but adds a mechanism neither
+`structRecord` nor `sliceCollection` has, with partial-mutation and
+concurrency edges; deferred as an additive follow-up (the seam does not
+change). *Alternative — `map[string]*struct` deep-write-through (the
+pointer's pointee IS addressable):* correct for that one shape, but a
+"sometimes live, sometimes frozen" rule per element type is less predictable
+than one uniform entry-level contract; also deferred. The uniform
+frozen-composite rule is the fail-loud, predictable choice — a recorded
+engine choice, like the bounded-reflection one (SAD-001 §6), noted at
+landing (§8).
+
 ### 4.9 A `Map` is not a `Collection` — no cursor
 
 `Collection` carries a stateful iteration cursor (`Rewind`/`GoTo`/`Next`/
@@ -398,7 +442,7 @@ facts, condition routing on a map path), not to change those layers.
 | `data.DiffValues` | `diffMaps` + kind-change probes | additive (map inputs were scalar-compared before) |
 | `values.Map[T]`, `NewMap`, `MustMap`, `map_t.go` helpers | new | additive |
 | `values.SetPath` | key-step descend/vivify/set | additive |
-| `adapters` | `kindMap`, `mapValue`, top-level map `Wrap` | behavior change **by design**: string-keyed map fields become navigable (was opaque leaf; SRD-045 §4.5's "recognized future" realized); non-string keys unchanged |
+| `adapters` | `kindMap`, `mapValue`, `freeze` (frozen composite views), top-level map `Wrap` | behavior change **by design**: string-keyed map fields become navigable (was opaque leaf; SRD-045 §4.5's "recognized future" realized); write contract is entry-level (§4.8 — Go maps aren't addressable); non-string keys unchanged |
 | observability | none | map paths are just paths |
 
 ## 6. Test scenarios
@@ -412,7 +456,7 @@ facts, condition routing on a map path), not to change those layers.
 | T-5 | `TestDiffMaps` (`data/diff_test.go`) | FR-7: per-key Added/Updated/Deleted; sorted, deterministic output order; nested map-in-record/record-in-map recursion; kind-change map↔record/list/scalar → single `ValueUpdated`; escaped keys in paths |
 | T-6 | scope commit with a map (`internal/scope/structural_test.go` or `diff_commit_test.go`) | FR-7: a map mutation through frame commit yields the per-entry change set |
 | T-7 | map `DataChange` facts (`pkg/thresher/datachange_test.go`) | FR-7/§4.10: one `KindDataChange` fact per changed map path, correct phases |
-| T-8 | `TestStructMapField` + registry/edge tests (`adapters/*_test.go`) | FR-8: string-keyed field navigable (read/upsert/delete on the **live** map); named-string key type; `map[int]V` stays opaque leaf (re-pinned); nested struct-values and map-of-slices; top-level `Wrap(&m)`; `Clone`; the flipped SRD-045 sub-test |
+| T-8 | `TestStructMapField` + registry/edge tests (`adapters/*_test.go`) | FR-8: string-keyed field navigable (read + `SetEntry`/`DeleteEntry` on the **live** map); named-string key type; `map[int]V` stays opaque leaf (re-pinned); a composite (struct-valued) map entry reads navigably but a deep write **errors loud** (frozen snapshot, §4.8); scalar/passthrough entries write live; top-level `Wrap(&m)`; `Clone`; the flipped SRD-045 sub-test |
 | T-9 | condition on a map path (`pkg/thresher/structural_routing_test.go`) | §4.10: a sequence-flow/gateway condition reading `m["k"]` routes correctly |
 | T-10 | examples smoke (step 13a) | the extended runnable examples exit 0 under timeout with expected output |
 

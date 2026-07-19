@@ -20,6 +20,8 @@ const (
 	kindRecord fieldKind = "record"
 	// kindCollection — a slice field: a live collection view.
 	kindCollection fieldKind = "collection"
+	// kindMap — a string-keyed map field: a live data.Map view (SRD-047 §4.8).
+	kindMap fieldKind = "map"
 	// kindLeaf — anything else: a writable opaque scalar leaf (§4.5).
 	kindLeaf fieldKind = "leaf"
 )

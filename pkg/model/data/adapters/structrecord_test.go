@@ -65,13 +65,23 @@ func TestStructRecordRead(t *testing.T) {
 		require.Equal(t, "expedite", note.Get(ctxb()))
 	})
 
-	t.Run("map field — opaque leaf, not navigable", func(t *testing.T) {
+	t.Run("string-keyed map field — a live navigable data.Map", func(t *testing.T) {
+		// SRD-047 flips SRD-045's "map field — opaque leaf" pin: a
+		// map[string]int field is now the map kind, navigable over the live map.
 		meta, err := r.Field(ctxb(), "meta")
 		require.NoError(t, err)
 
-		_, isRec := meta.(data.Record)
-		require.False(t, isRec)
-		require.Equal(t, map[string]int{"weight": 3}, meta.Get(ctxb()))
+		m, isMap := meta.(data.Map)
+		require.True(t, isMap)
+		require.Equal(t, []string{"weight"}, m.Keys())
+
+		v, err := m.Entry(ctxb(), "weight")
+		require.NoError(t, err)
+		require.Equal(t, 3, v)
+
+		// a write goes through to the LIVE struct field
+		require.NoError(t, m.SetEntry(ctxb(), "height", 7))
+		require.Equal(t, 7, o.Meta["height"])
 	})
 
 	t.Run("excluded and unexported are unknown", func(t *testing.T) {
