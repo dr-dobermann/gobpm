@@ -88,6 +88,49 @@ func TestCommitReturnsDiff(t *testing.T) {
 	})
 }
 
+// fxData builds the "fx" fixture — a data-keyed rates map — for the map
+// commit-diff (SRD-047 T-6).
+func fxData(t *testing.T, entries map[string]float64) data.Data {
+	t.Helper()
+
+	return structData(t, "fx", values.MustMap(entries))
+}
+
+// TestCommitReturnsMapDiff (SRD-047 T-6): a committed map yields per-entry
+// changes through Scope.Commit, riding the existing []Change seam unchanged.
+func TestCommitReturnsMapDiff(t *testing.T) {
+	root := mustPath(t, "/proc")
+
+	p, err := New(root, nil)
+	require.NoError(t, err)
+
+	t.Run("first commit — one Added at the root", func(t *testing.T) {
+		changes, err := p.Commit(root,
+			fxData(t, map[string]float64{"EUR": 1.08, "GBP": 1.27}))
+		require.NoError(t, err)
+		require.Equal(t,
+			[]data.Change{{Path: "fx", Type: data.ValueAdded}}, changes)
+	})
+
+	t.Run("re-commit — per-entry Added/Updated/Deleted, sorted", func(t *testing.T) {
+		changes, err := p.Commit(root,
+			fxData(t, map[string]float64{"EUR": 1.09, "JPY": 161}))
+		require.NoError(t, err)
+		require.Equal(t, []data.Change{
+			{Path: `fx["EUR"]`, Type: data.ValueUpdated},
+			{Path: `fx["JPY"]`, Type: data.ValueAdded},
+			{Path: `fx["GBP"]`, Type: data.ValueDeleted},
+		}, changes)
+	})
+
+	t.Run("unchanged re-commit — empty", func(t *testing.T) {
+		changes, err := p.Commit(root,
+			fxData(t, map[string]float64{"EUR": 1.09, "JPY": 161}))
+		require.NoError(t, err)
+		require.Empty(t, changes)
+	})
+}
+
 // TestFrameCommitPropagatesDiff (SRD-044 T-3): Frame.Commit surfaces the
 // scope's changed-path set to its track caller.
 func TestFrameCommitPropagatesDiff(t *testing.T) {

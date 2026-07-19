@@ -7,9 +7,10 @@ import (
 )
 
 // Change is one entry of a commit-diff: a data path and how it changed
-// (ADR-011 v.6 §2.9.4). Path is rooted at the committed name and uses the
-// structural grammar ("order", "order.items[0].price"); Type is the retargeted
-// ChangeType vocabulary the observability DataChange phases mirror.
+// (ADR-011 v.7 §2.9.4). Path is rooted at the committed name and uses the
+// structural grammar ("order", "order.items[0].price", `order.rates["EUR"]`);
+// Type is the retargeted ChangeType vocabulary the observability DataChange
+// phases mirror.
 type Change struct {
 	Path string
 	Type ChangeType
@@ -79,9 +80,18 @@ func diffInto(changes *[]Change, path string, oldV, newV any) {
 		return
 	}
 
-	// A kind change (scalar↔record↔list) is one Updated at this node — the
+	oldMap, oldIsMap := oldV.(Map)
+	newMap, newIsMap := newV.(Map)
+
+	if oldIsMap && newIsMap {
+		diffMaps(changes, path, oldMap, newMap)
+
+		return
+	}
+
+	// A kind change (scalar↔record↔list↔map) is one Updated at this node — the
 	// shapes aren't comparable, so there is no descent.
-	if oldIsRec != newIsRec || oldIsCol != newIsCol {
+	if oldIsRec != newIsRec || oldIsCol != newIsCol || oldIsMap != newIsMap {
 		*changes = append(*changes, Change{Path: path, Type: ValueUpdated})
 
 		return
@@ -123,6 +133,47 @@ func diffRecords(changes *[]Change, path string, oldV, newV Record) {
 // fieldOrNil reads a record field, normalizing a missing field to nil.
 func fieldOrNil(ctx context.Context, r Record, key string) any {
 	v, err := r.Field(ctx, key)
+	if err != nil {
+		return nil
+	}
+
+	return v
+}
+
+// diffMaps descends into two maps over the union of their keys — new-side keys
+// first, then old-only keys (deletions) — each in sorted key order, so the
+// output is deterministic over Go's randomized map iteration (Keys() sorts).
+// A map entry may be a raw Go value (not a data.Value), so entries flow into
+// diffInto as any, mirroring diffCollections.
+func diffMaps(changes *[]Change, path string, oldV, newV Map) {
+	ctx := context.Background()
+
+	oldKeys := map[string]bool{}
+	for _, k := range oldV.Keys() {
+		oldKeys[k] = true
+	}
+
+	for _, k := range newV.Keys() { // sorted
+		ov := entryOrNil(ctx, oldV, k)
+		nv := entryOrNil(ctx, newV, k)
+
+		diffInto(changes, path+KeyLabel(k), ov, nv)
+		delete(oldKeys, k)
+	}
+
+	// old-only keys, in the old map's sorted order: deletions.
+	for _, k := range oldV.Keys() {
+		if !oldKeys[k] {
+			continue
+		}
+
+		diffInto(changes, path+KeyLabel(k), entryOrNil(ctx, oldV, k), nil)
+	}
+}
+
+// entryOrNil reads a map entry, normalizing a missing entry to nil.
+func entryOrNil(ctx context.Context, m Map, key string) any {
+	v, err := m.Entry(ctx, key)
 	if err != nil {
 		return nil
 	}

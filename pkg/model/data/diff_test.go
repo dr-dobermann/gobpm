@@ -23,8 +23,18 @@ func orderV(total int, prices []int, tags ...string) data.Value {
 	)
 }
 
+// fxRec wraps a float64 map as {fx: <map>} — the map diff fixture.
+func fxRec(entries map[string]float64) data.Value {
+	return values.MustRecord(values.F("fx", values.MustMap(entries)))
+}
+
+// mRec wraps a Value map as {m: <map>} — for nested/escaped-key map cases.
+func mRec(entries map[string]data.Value) data.Value {
+	return values.MustRecord(values.F("m", values.MustMap(entries)))
+}
+
 // TestDiffValues covers every §3.1 recursion rule of the commit-diff
-// (SRD-044 T-1).
+// (SRD-044 T-1) plus the map kind (SRD-047 T-5).
 func TestDiffValues(t *testing.T) {
 	tests := []struct {
 		name string
@@ -89,6 +99,56 @@ func TestDiffValues(t *testing.T) {
 		{"plain scalar roots differ", values.NewVariable(5),
 			values.NewVariable(6),
 			[]data.Change{{Path: "order", Type: data.ValueUpdated}}},
+
+		// ---- map cases (SRD-047 T-5) ----
+		{"map entry updated",
+			fxRec(map[string]float64{"EUR": 1.08}),
+			fxRec(map[string]float64{"EUR": 1.09}),
+			[]data.Change{{Path: `order.fx["EUR"]`, Type: data.ValueUpdated}}},
+		{"map entries added and deleted, sorted deterministic order",
+			fxRec(map[string]float64{"EUR": 1.08, "GBP": 1.27}),
+			fxRec(map[string]float64{"EUR": 1.09, "JPY": 161}),
+			[]data.Change{
+				// new-side sorted (EUR updated, JPY added), then old-only (GBP)
+				{Path: `order.fx["EUR"]`, Type: data.ValueUpdated},
+				{Path: `order.fx["JPY"]`, Type: data.ValueAdded},
+				{Path: `order.fx["GBP"]`, Type: data.ValueDeleted}}},
+		{"whole map added — one change at its root",
+			values.MustRecord(values.F("a", values.NewVariable(1))),
+			values.MustRecord(
+				values.F("a", values.NewVariable(1)),
+				values.F("fx", values.MustMap(
+					map[string]float64{"EUR": 1.08}))),
+			[]data.Change{{Path: "order.fx", Type: data.ValueAdded}}},
+		{"record inside a map entry — leaf-granular recursion",
+			mRec(map[string]data.Value{
+				"spot": values.MustRecord(values.F("bid",
+					values.NewVariable(1)))}),
+			mRec(map[string]data.Value{
+				"spot": values.MustRecord(values.F("bid",
+					values.NewVariable(2)))}),
+			[]data.Change{
+				{Path: `order.m["spot"].bid`, Type: data.ValueUpdated}}},
+		{"escaped key in the emitted path",
+			mRec(map[string]data.Value{`a"b`: values.NewVariable(1)}),
+			mRec(map[string]data.Value{`a"b`: values.NewVariable(2)}),
+			[]data.Change{
+				{Path: `order.m["a\"b"]`, Type: data.ValueUpdated}}},
+		{"kind change map→record — one Updated, no descent",
+			values.MustRecord(values.F("a",
+				values.MustMap(map[string]float64{"EUR": 1.08}))),
+			values.MustRecord(values.F("a",
+				values.MustRecord(values.F("x", values.NewVariable(2))))),
+			[]data.Change{{Path: "order.a", Type: data.ValueUpdated}}},
+		{"kind change map→scalar — one Updated, no descent",
+			values.MustRecord(values.F("a",
+				values.MustMap(map[string]float64{"EUR": 1.08}))),
+			values.MustRecord(values.F("a", values.NewVariable(1))),
+			[]data.Change{{Path: "order.a", Type: data.ValueUpdated}}},
+		{"unchanged map → nil",
+			fxRec(map[string]float64{"EUR": 1.08, "GBP": 1.27}),
+			fxRec(map[string]float64{"EUR": 1.08, "GBP": 1.27}),
+			nil},
 	}
 
 	for _, tt := range tests {

@@ -40,6 +40,28 @@ func receiptTask(t *testing.T, id string, sum int) *activities.ServiceTask {
 	return st
 }
 
+// ratesTask builds an in-process task named id whose operation returns a
+// data-keyed rates map under the item id "rates" — the map-kind counterpart of
+// receiptTask, so its frame commit is an observable map data change.
+func ratesTask(t *testing.T, id string, rates map[string]float64,
+) *activities.ServiceTask {
+	t.Helper()
+
+	op, err := gooper.New(id,
+		func(_ context.Context, _ service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			return data.MustItemDefinition(
+				values.MustMap(rates),
+				foundation.WithID("rates")), nil
+		})
+	require.NoError(t, err)
+
+	st, err := activities.NewServiceTask(id, op, activities.WithoutParams())
+	require.NoError(t, err)
+
+	return st
+}
+
 // dataChanges filters the collector's facts down to the DataChange kind.
 func dataChanges(c *collector) []observability.Fact {
 	c.mu.Lock()
@@ -136,4 +158,77 @@ func TestDataChangeFactsEmitted(t *testing.T) {
 	for _, f := range got {
 		require.NotEqual(t, "note", f.Details[observability.AttrDataPath])
 	}
+}
+
+// TestMapDataChangeFactsEmitted (SRD-047 T-7): a node committing a map output,
+// then a node re-committing a changed entry, emit KindDataChange facts carrying
+// map paths — the fact seam rides the existing ChangeType vocabulary unchanged.
+func TestMapDataChangeFactsEmitted(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	// produce (rates={EUR:1.08}) → reprice (rates={EUR:1.09,GBP:1.27}).
+	proc, err := process.New("dc-map-proc")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	produce := ratesTask(t, "produce", map[string]float64{"EUR": 1.08})
+	reprice := ratesTask(t, "reprice",
+		map[string]float64{"EUR": 1.09, "GBP": 1.27})
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, produce, reprice, end} {
+		require.NoError(t, proc.Add(e))
+	}
+
+	link(t, start, produce)
+	link(t, produce, reprice)
+	link(t, reprice, end)
+
+	th, err := thresher.New("dc-map-engine")
+	require.NoError(t, err)
+
+	c := &collector{}
+	sub := th.Observe(c)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	require.NoError(t, th.Run(ctx))
+
+	_, err = th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	h, err := th.StartLatest(proc.ID())
+	require.NoError(t, err)
+
+	wctx, wcancel := context.WithTimeout(ctx, 5*time.Second)
+	defer wcancel()
+
+	state, err := h.WaitCompletion(wctx)
+	require.NoError(t, err)
+	require.Equal(t, thresher.StateCompleted, state)
+
+	require.NoError(t, th.Shutdown(context.Background()))
+	sub.Cancel()
+
+	got := dataChanges(c)
+	require.Len(t, got, 3)
+
+	// produce: the first commit of "rates" — one Added at its root.
+	require.Equal(t, observability.PhaseValueAdded, got[0].Phase)
+	require.Equal(t, "rates", got[0].Details[observability.AttrDataPath])
+	require.Equal(t, "produce", got[0].NodeName)
+
+	// reprice: EUR updated then GBP added — sorted, per-entry, map-keyed paths.
+	require.Equal(t, observability.PhaseValueUpdated, got[1].Phase)
+	require.Equal(t, `rates["EUR"]`, got[1].Details[observability.AttrDataPath])
+	require.Equal(t, "reprice", got[1].NodeName)
+
+	require.Equal(t, observability.PhaseValueAdded, got[2].Phase)
+	require.Equal(t, `rates["GBP"]`, got[2].Details[observability.AttrDataPath])
+	require.Equal(t, "reprice", got[2].NodeName)
 }
