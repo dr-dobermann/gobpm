@@ -103,6 +103,91 @@ func TestSetPath(t *testing.T) {
 	})
 }
 
+// TestMapSetPath covers the key step on the write walk (SRD-047 M3, T-4/FR-6):
+// upsert an entry, vivify a missing map through a following key step, and the
+// classified mis-step errors.
+func TestMapSetPath(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+
+	t.Run("upsert an existing and a new entry", func(t *testing.T) {
+		root := values.MustRecord(values.F("fx",
+			values.MustMap(map[string]data.Value{
+				"EUR": values.NewVariable(1.08),
+			})))
+
+		// replace an existing entry
+		require.NoError(t, values.SetPath(ctx, root, `fx["EUR"]`,
+			values.NewVariable(1.09)))
+		// add a new one — keys are data
+		require.NoError(t, values.SetPath(ctx, root, `fx["GBP"]`,
+			values.NewVariable(1.27)))
+
+		fx, err := root.Field(ctx, "fx")
+		require.NoError(t, err)
+		require.Equal(t, []string{"EUR", "GBP"}, fx.(data.Map).Keys())
+	})
+
+	t.Run("vivify a map through a following key step", func(t *testing.T) {
+		root := values.MustRecord()
+
+		// "quotes" is missing; the following ["EUR"] step vivifies a map,
+		// then ".bid" vivifies a record inside it, then the leaf is set.
+		require.NoError(t, values.SetPath(ctx, root, `quotes["EUR"].bid`,
+			values.NewVariable(107)))
+
+		require.Equal(t, 107, readInt(t, root,
+			data.Step{Field: "quotes"}, data.Step{Key: "EUR"},
+			data.Step{Field: "bid"}))
+
+		// a second write descends the now-existing ["EUR"] entry rather than
+		// re-vivifying it, so both fields coexist in the same record.
+		require.NoError(t, values.SetPath(ctx, root, `quotes["EUR"].ask`,
+			values.NewVariable(108)))
+		require.Equal(t, 108, readInt(t, root,
+			data.Step{Field: "quotes"}, data.Step{Key: "EUR"},
+			data.Step{Field: "ask"}))
+		require.Equal(t, 107, readInt(t, root,
+			data.Step{Field: "quotes"}, data.Step{Key: "EUR"},
+			data.Step{Field: "bid"}))
+	})
+
+	t.Run("set at a top-level dynamic map root", func(t *testing.T) {
+		root := values.MustMap[data.Value](nil)
+
+		require.NoError(t, values.SetPath(ctx, root, `["k"]`,
+			values.NewVariable(5)))
+		require.Equal(t, 5, readInt(t, root, data.Step{Key: "k"}))
+	})
+
+	t.Run("a raw (non-Value) entry is not navigable for a deeper write",
+		func(t *testing.T) {
+			root := values.MustRecord(values.F("m",
+				values.MustMap(map[string]int{"k": 1})))
+
+			err := values.SetPath(ctx, root, `m["k"].deeper`,
+				values.NewVariable(2))
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "navigable entry")
+		})
+
+	t.Run("a key step into a non-map is notWritable", func(t *testing.T) {
+		root := values.MustRecord(values.F("total", values.NewVariable(1)))
+
+		// last-step key into a scalar → setLast's map guard
+		err := values.SetPath(ctx, root, `total["k"]`, values.NewVariable(2))
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "a map")
+
+		// intermediate key into a scalar → descendOrVivify's map guard
+		err = values.SetPath(ctx, root, `total["k"].deep`,
+			values.NewVariable(3))
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "a map")
+	})
+}
+
 // TestArraySetAt covers the atomic indexed set (SRD-043 T-2): set, append,
 // out-of-range, type-mismatch, and the cursor-free guarantee.
 func TestArraySetAt(t *testing.T) {
