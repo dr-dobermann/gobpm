@@ -233,13 +233,15 @@ and ends the whole instance, cancelling the in-flight payment mid-charge — the
 instance settles `Terminated`, not `Completed`.
 
 Process data is fully **structural**: values are navigable by path
-(`order.items[0].price`) in every seam — conditions, expressions, mappings,
-service code — writable and assemblable by the same grammar, change-detected
-per path at commit, and your **own Go structs participate live** via
-`adapters.Wrap` (wrap, not convert). The complete guide — the value model,
-the three tiers, reading/writing/observing, `gobpm:"..."` tags — is
-[**docs/guides/data.md**](docs/guides/data.md), with four runnable examples
-linked from it.
+(`order.items[0].price`, `rates["EUR"]`) in every seam — conditions,
+expressions, mappings, service code — writable and assemblable by the same
+grammar, change-detected per path at commit, and your **own Go structs
+participate live** via `adapters.Wrap` (wrap, not convert). The value kinds
+are scalar, list, record, and **map** — a data-keyed dictionary you grow
+key-by-key, with sorted enumeration and a `["key"]` path step. The complete
+guide — the value model, the tiers, reading/writing/observing,
+`gobpm:"..."` tags — is [**docs/guides/data.md**](docs/guides/data.md), with
+runnable examples linked from it.
 
 ### Startup logging
 

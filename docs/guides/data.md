@@ -1,10 +1,10 @@
 # Working with process data
 
 How a gobpm process reads, writes, assembles, and observes **structured data**
-(ADR-011 v.6 §2.9, landed by SRD-042…045). This is the conceptual map; the
-[examples](#worked-examples) are the runnable walk-throughs.
+(ADR-011 v.7 §2.9, landed by SRD-042…045 and SRD-047). This is the conceptual
+map; the [examples](#worked-examples) are the runnable walk-throughs.
 
-## The value model — one interface, three capabilities
+## The value model — one interface, four capabilities
 
 Every process value implements `data.Value` (`Get`/`Update`/`Lock`/`Unlock`/
 `Type`/`Clone`). Structure is expressed by **capabilities** on top of it:
@@ -14,10 +14,21 @@ Every process value implements `data.Value` (`Get`/`Update`/`Lock`/`Unlock`/
 | *(none)* | a scalar | whole-value only |
 | `data.Collection` | an ordered list | `[i]` |
 | `data.Record` | named fields, ordered | `.field` |
+| `data.Map` | a data-keyed dictionary | `["key"]` |
 
-A value's *kind* is which capability it implements; nesting composes to any
-depth. Shape is discovered by **traversing the value** (`data.SchemaAt`,
-`data.Walk`) — there is no stored schema artifact.
+A value's *kind* is which capability it implements (at most one); nesting
+composes to any depth. Shape is discovered by **traversing the value**
+(`data.SchemaAt`, `data.Walk`) — there is no stored schema artifact.
+
+**Record vs map.** A `Record`'s keys are its *schema* — a fixed set of named
+fields, in insertion order. A `Map`'s keys are *data* — arbitrary run-time
+strings you grow key-by-key (`values.MustMap(map[string]T{…})`,
+`SetEntry`/`DeleteEntry`), enumerated in **sorted** order (deterministic over
+Go's randomized iteration), addressed `rates["EUR"]`. A native `map[string]V`
+struct field participates live through `adapters.Wrap`; because a Go map value
+is not addressable, native-map writes are **entry-level** (`SetEntry` replaces
+a whole value) — a composite entry reads navigably but a deep write into it
+errors loud rather than silently writing to a detached copy.
 
 ## The three tiers
 
@@ -41,7 +52,8 @@ mappings, and in-process service code:
 d, err := ds.Find(ctx, "order.items[0].price")
 ```
 
-- `.field` descends into a record, `[i]` into a list;
+- `.field` descends into a record, `[i]` into a list, `["key"]` into a map
+  (a bare number is a list index, a quoted string a map key: `[0]` vs `["0"]`);
 - the head (`order`) resolves like any plain name — properties, task outputs;
 - `SOURCE/addr` (the `/` provider split, e.g. `RUNTIME/STARTED_AT`) still runs
   **first**: `/` selects a provider, `.`/`[]` walk engine-managed values;
@@ -52,8 +64,9 @@ d, err := ds.Find(ctx, "order.items[0].price")
 
 - **`values.SetPath(ctx, root, "items[0].price", v)`** sets a value at a path.
   On a **dynamic** target, missing intermediates auto-vivify (`.field` → a
-  record, `[i]` → a list; an index appends only at `len` — no holes). A
-  **typed** target (a wrapped struct) rejects unknown names and type clashes.
+  record, `["key"]` → a map, `[i]` → a list; an index appends only at `len` —
+  no holes). A **typed** target (a wrapped struct) rejects unknown names and
+  type clashes; a map upserts the key (keys are data).
 - **`Collection.SetAt(ctx, i, v)`** is the atomic indexed write: `[0,len)`
   replaces, `==len` appends, past-`len` errors. It never moves the iteration
   cursor.
@@ -139,6 +152,7 @@ v := adapters.MustWrap(&order)     // a LIVE data.Record view
 | [`examples/structural-output-mapping/`](../../examples/structural-output-mapping/) | **assembling** a nested value from a flat worker body |
 | [`examples/data-change/`](../../examples/data-change/) | observing per-path `DataChange` facts |
 | [`examples/native-structs/`](../../examples/native-structs/) | the host's own struct as live process data |
+| [`examples/maps/`](../../examples/maps/) | the **map kind** — a dynamic and a native dictionary navigated by `["key"]`; per-entry map `DataChange` facts |
 
 Design background: [ADR-011](../design/ADR-011-process-data-flow.md) (the
 conception), [ADR-010](../design/ADR-010-process-data-model.md) (the data
