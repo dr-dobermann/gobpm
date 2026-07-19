@@ -2,13 +2,13 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-18 |
 | Owner | Ruslan Gabitov |
 | Refines | [SAD-001 v.1](SAD-001-vision-and-architecture.md) §5 / §15.3, [ADR-023 v.2](ADR-023-sub-process-and-call-activity.md) (the execution-scope model this reuses), [ADR-018 v.1](ADR-018-boundary-events-and-activity-interruption.md) (boundary catch for thrown behavior events), [ADR-006 v.3](ADR-006-events-and-subscriptions.md) (event throwing/catching) |
 
-> **Draft** — decides how an activity marked with *loop characteristics* runs
+> **Accepted** — decides how an activity marked with *loop characteristics* runs
 > **more than once**: BPMN's Standard Loop (a condition-driven sequential loop)
 > and Multi-Instance (a cardinality-driven fan-out, sequential or parallel, over
 > a data collection). It is prescriptive and grounded in the BPMN 2.0 object

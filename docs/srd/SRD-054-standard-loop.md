@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-19 |
 | Owner | Ruslan Gabitov |
@@ -280,24 +280,26 @@ covers Multi-Instance for free when SRD-055/056 land.
 
 | Test | Level | Asserts (FR) |
 |---|---|---|
-| `TestStandardLoopBuildAndAccessors` | model | FR-1 fields/accessors round-trip |
+| `TestStandardLoopBuildAndAccessors` | model | FR-1 fields/accessors + unset-option defaults |
 | `TestStandardLoopRejectsNilCondition` | model | FR-2 nil `loopCondition` rejected |
 | `TestStandardLoopRejectsNonBoolCondition` | model | FR-2 non-bool `ResultType` rejected |
 | `TestStandardLoopMaximumMustBePositive` | model | FR-2 `loopMaximum ≤ 0` rejected |
-| `TestActivityRejectsLoopPlusMultiInstance` | model | FR-3 exclusivity (uses an MI stub) |
+| `TestActivityLoopMarkerIsSingle` | model | FR-3 one marker per activity — a later `WithLoop` replaces |
 | `TestEventSubProcessRejectsLoop` | model | FR-3a event sub-process rejects any loop/MI |
-| `TestStandardLoopPostTestedRunsOnceThenTests` | instance | FR-4/FR-5 do…while |
-| `TestStandardLoopPreTestedZeroIterations` | instance | FR-5 while, zero passes |
+| `TestStandardLoopRunsWhileConditionHolds` | instance | FR-4/FR-5/FR-10 post-tested runs while `loopCounter < 3` |
+| `TestStandardLoopPreTestedZeroIterations` | instance | FR-5/FR-7 pre-tested zero passes, flow proceeds once |
 | `TestStandardLoopMaximumCaps` | instance | FR-6 cap on an always-true condition |
-| `TestStandardLoopPreTestedWithMaximum` | instance | FR-5×FR-6 pre-tested loop honours the cap |
-| `TestStandardLoopEmitsSingleOutgoingFlow` | instance | FR-7 one outgoing flow at exit |
-| `TestStandardLoopFreshFramePerIteration` | instance | FR-4 per-pass frame isolation |
-| `TestStandardLoopCounterVisibleToCondition` | instance | FR-10 counter drives the condition |
-| `TestStandardLoopCounterVisibleToInnerActivity` | instance | FR-10 inner reads counter |
-| `TestLoopedSubProcessReopensScopePerIteration` | instance | FR-8 composite re-entry |
-| `TestLoopedSubProcessBoundaryArmedOnce` | instance | FR-9 boundary spans the loop |
-| `TestStandardLoopEmitsIterationFacts` | instance | FR-11 observability facts |
-| `TestStandardLoopE2E` | thresher | FR-4–FR-7 leaf loop end-to-end |
+| `TestStandardLoopOf` | instance | loop capability detection (looped vs. plain node) |
+| `TestStandardLoopConditionErrorFaults` | instance | pre-tested condition error faults the instance |
+| `TestStandardLoopNonBoolConditionFaults` / `TestEvalLoopCondNonBool` | instance | non-bool runtime result rejected (via fault + direct) |
+| `TestStandardLoopBodyErrorFaults` | instance | a body error propagates out of the loop |
+| `TestEvalLoopCondFrameError` | instance | evalLoopCond frame-open guard |
+| `TestLoopedSubProcessReopensPerIteration` | instance | FR-8 composite re-opens its scope per pass |
+| `TestLoopedSubProcessPreTestedZero` | instance | FR-8 pre-tested composite zero iterations, host resumes |
+| `TestLoopedSubProcessMaximumCaps` | instance | FR-6 composite cap |
+| `TestLoopedSubProcessEmitsIterationFacts` | instance | FR-11 scope facts carry `loopCounter` (0/1/2) |
+| `TestLoopedSubProcessPreTestedConditionError` / `…ConditionErrorFaults` | instance | composite pre/post condition-error faults |
+| `TestStandardLoopLeafE2E` | thresher | FR-4–FR-7/FR-10 leaf loop end-to-end |
 | `TestStandardLoopSubProcessE2E` | thresher | FR-8 looped Sub-Process end-to-end |
 
 ## §7 Milestones
@@ -333,17 +335,47 @@ covers Multi-Instance for free when SRD-055/056 land.
 
 ## §10 Implementation summary
 
-> ⚠️ TODO: fill AFTER landing — stage commits, empirical deltas vs this draft,
-> backlog.
-
 ### §10.1 Stages by commit (branch `feat/standard-loop`)
 
 | Stage | Commit | Scope | Tests |
 |---|---|---|---|
+| M1 | `18393b0` | Model + validation: `LoopCharacteristics` interface, `StandardLoopCharacteristics`, `NewStandardLoop` + `WithTestBefore`/`WithLoopMaximum`, `activity` field/accessor, FR-3a event-sub guard | 6 model |
+| M2 | `c6bfe62` | Leaf in-place seam: `internal/instance/std_loop.go` (`executeStep`/`runStandardLoop`/`evalLoopCond`, `standardLoopOf`), `bindLoopCounterAt` | 9 instance + 1 thresher e2e |
+| M3 | `ffd78bc` | Composite scope re-entry: `resumeScopeHost` re-open + `onScopeOpen` pre-tested-zero, `track.loopCounter`, `bindLoopCounterOrFail`, `reportScope`+`AttrLoopCounter` | 7 instance |
+| M4 | `b75539f` | e2e, `examples/standard-loop/`, `docs/guides/iteration.md`, CHANGELOG, tracker, READMEs EN+RU | 1 thresher e2e |
 
 ### §10.2 Empirical findings vs the draft
 
+- **Leaf loop factored into its own file.** §3.3 sketched the wrapper inline in
+  `track.go` `run()`; it landed as `internal/instance/std_loop.go`
+  (`executeStep`/`runStandardLoop`) called from `run()` — same behaviour, cleaner
+  separation.
+- **Single test-site.** `runStandardLoop` uses one condition-test position
+  (`TestBefore() || loopCounter > 0`) for both pre- and post-tested loops, rather
+  than the two the §2.3 prose implies — fewer branches, one bind per pass.
+- **`loopCounter` binding.** Published to the enclosing scope via
+  `bindLoopCounterAt` (both condition and inner activity resolve it by walk-up),
+  not a frame `Put`; the composite's two bind sites were consolidated into
+  `bindLoopCounterOrFail`.
+- **Untriggerable defensive wraps.** `bindLoopCounterAt` → `plane.Commit` does
+  **not** fail on a non-existent path (it lazily accepts), so its error wrap is
+  dead-defensive (accepted, the `evalCondition` class). covercheck counts *source
+  lines* per uncovered block, which drove the single-bind + helper consolidation
+  to keep the diff-coverage gate green (95.2% of 229).
+- **Non-bool guard.** `evalLoopCond`'s non-boolean-result branch is unreachable
+  through `goexpr` (it enforces the declared result type at `Evaluate`), so it is
+  covered directly with a mock `FormalExpression`.
+- **FR-9 (boundary arms once)** has no dedicated named test — it rests on the
+  host-parks-once / leaf-stays-on-node structural argument; a dedicated
+  boundary-across-iterations test is a §10.3 follow-up.
+
 ### §10.3 Backlog
+
+- **Multi-Instance** — the rest of ADR-025: SRD-055 (sequential) and SRD-056
+  (parallel + `behavior`/`ComplexBehaviorDefinition`), which will exercise the
+  same scope substrate.
+- A **boundary-arms-once-across-iterations** regression test (FR-9), currently
+  covered only structurally.
 
 ## Open questions
 
