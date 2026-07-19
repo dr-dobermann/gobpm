@@ -77,7 +77,7 @@ func NewStandardLoop(
 			errs.C(errorClass, errs.InvalidParameter, errs.EmptyNotAllowed))
 	}
 
-	if loopCondition.ResultType() != "bool" {
+	if loopCondition.ResultType() != resultTypeBool {
 		return nil, errs.New(
 			errs.M("NewStandardLoop: loopCondition must be a boolean "+
 				"expression, got %q", loopCondition.ResultType()),
