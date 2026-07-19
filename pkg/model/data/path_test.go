@@ -345,6 +345,144 @@ func TestSchemaAtAndWalk(t *testing.T) {
 	})
 }
 
+// TestMapPathGrammar covers the `["key"]` map-key step in the path grammar
+// (SRD-047 M2, T-2/FR-4): parsing, escapes, the list/map bracket
+// disambiguation, the malformed grid, and PathsOverlap over key steps.
+func TestMapPathGrammar(t *testing.T) {
+	t.Run("SplitPath parses key steps", func(t *testing.T) {
+		head, steps, err := data.SplitPath(`fx["EUR"]`)
+		require.NoError(t, err)
+		require.Equal(t, "fx", head)
+		require.Equal(t, []data.Step{{Key: "EUR"}}, steps)
+
+		head, steps, err = data.SplitPath(`m["k"].f[0]["x"]`)
+		require.NoError(t, err)
+		require.Equal(t, "m", head)
+		require.Equal(t, []data.Step{
+			{Key: "k"}, {Field: "f"}, {Index: 0}, {Key: "x"},
+		}, steps)
+	})
+
+	t.Run("escapes and syntax characters inside a quoted key",
+		func(t *testing.T) {
+			_, steps, err := data.SplitPath(`m["a\"b"]`)
+			require.NoError(t, err)
+			require.Equal(t, []data.Step{{Key: `a"b`}}, steps)
+
+			_, steps, err = data.SplitPath(`m["a\\b"]`)
+			require.NoError(t, err)
+			require.Equal(t, []data.Step{{Key: `a\b`}}, steps)
+
+			// '.', '[', ']' are plain characters inside the quotes
+			_, steps, err = data.SplitPath(`m["a[0].b]"]`)
+			require.NoError(t, err)
+			require.Equal(t, []data.Step{{Key: "a[0].b]"}}, steps)
+
+			// non-ASCII keys ride verbatim
+			_, steps, err = data.SplitPath(`m["ключ"]`)
+			require.NoError(t, err)
+			require.Equal(t, []data.Step{{Key: "ключ"}}, steps)
+		})
+
+	t.Run("bracket disambiguation: bare number vs quoted string",
+		func(t *testing.T) {
+			_, steps, err := data.SplitPath(`m[0]`)
+			require.NoError(t, err)
+			require.Equal(t, []data.Step{{Index: 0}}, steps)
+
+			_, steps, err = data.SplitPath(`m["0"]`)
+			require.NoError(t, err)
+			require.Equal(t, []data.Step{{Key: "0"}}, steps)
+		})
+
+	t.Run("malformed key steps are classified errors", func(t *testing.T) {
+		for _, path := range []string{
+			`m["k`,      // unclosed quote
+			`m["k"`,     // missing ']'
+			`m["k"x]`,   // garbage between quote and ']'
+			`m[""]`,     // empty key
+			`m["a\nb"]`, // unknown escape
+			`m["a\`,     // dangling backslash
+			`m["`,       // nothing after the quote
+		} {
+			_, _, err := data.SplitPath(path)
+			require.Error(t, err, "path %q must not parse", path)
+		}
+	})
+
+	t.Run("ParsePath accepts a leading key step", func(t *testing.T) {
+		steps, err := data.ParsePath(`["k"].price`)
+		require.NoError(t, err)
+		require.Equal(t,
+			[]data.Step{{Key: "k"}, {Field: "price"}}, steps)
+	})
+
+	t.Run("PathsOverlap over key steps", func(t *testing.T) {
+		overlaps, err := data.PathsOverlap(`m["a"]`, `m["a"].b`)
+		require.NoError(t, err)
+		require.True(t, overlaps)
+
+		overlaps, err = data.PathsOverlap(`m["a"]`, `m["b"]`)
+		require.NoError(t, err)
+		require.False(t, overlaps)
+
+		// a map key never overlaps a list index — distinct step kinds
+		overlaps, err = data.PathsOverlap(`m["0"]`, `m[0]`)
+		require.NoError(t, err)
+		require.False(t, overlaps)
+	})
+}
+
+// TestMapWalkSteps covers the key step on the read walk (SRD-047 M2,
+// T-3/FR-5): descent into a Map, scalarLeaf wrapping of raw entries, and the
+// classified mis-step errors.
+func TestMapWalkSteps(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	fx := values.MustMap(map[string]float64{"EUR": 1.08, "GBP": 1.27})
+	nested := values.MustMap(map[string]data.Value{
+		"spot": values.MustRecord(values.F("bid", values.NewVariable(1.07))),
+	})
+	root := values.MustRecord(values.F("fx", fx), values.F("q", nested))
+
+	t.Run("a raw map entry reads as a scalar leaf", func(t *testing.T) {
+		_, steps, err := data.SplitPath(`fx["EUR"]`)
+		require.NoError(t, err)
+
+		leaf, err := data.WalkSteps(ctx, fx, steps)
+		require.NoError(t, err)
+		require.Equal(t, 1.08, leaf.Get(ctx))
+	})
+
+	t.Run("a Value entry keeps navigating", func(t *testing.T) {
+		steps, err := data.ParsePath(`q["spot"].bid`)
+		require.NoError(t, err)
+
+		leaf, err := data.WalkSteps(ctx, root, steps)
+		require.NoError(t, err)
+		require.Equal(t, 1.07, leaf.Get(ctx))
+	})
+
+	t.Run("a missing key is ObjectNotFound", func(t *testing.T) {
+		steps, err := data.ParsePath(`fx["JPY"]`)
+		require.NoError(t, err)
+
+		_, err = data.WalkSteps(ctx, root, steps)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "JPY")
+	})
+
+	t.Run("a key step into a non-map is notNavigable", func(t *testing.T) {
+		steps, err := data.ParsePath(`fx["EUR"]["deep"]`)
+		require.NoError(t, err)
+
+		_, err = data.WalkSteps(ctx, root, steps)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "is not a map")
+	})
+}
+
 // TestMapShape covers the map kind on the shape surfaces (SRD-047 M1, FR-3):
 // kindOf via infoFor, the SchemaAt `["*"]` slot, KeyLabel escaping, and
 // Walk's sorted, deterministic map descent.
