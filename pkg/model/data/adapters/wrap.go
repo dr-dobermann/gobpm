@@ -35,6 +35,14 @@ func Wrap(ptr any) (data.Value, error) {
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
+	// A pointer to a string-keyed map wraps as a standalone data.Map — the
+	// "process genuinely holds a dictionary" driver (SRD-047 §4.8). rv.Elem()
+	// is the settable map (a nil map allocates on first SetEntry).
+	if elem := rv.Type().Elem(); elem.Kind() == reflect.Map &&
+		elem.Key().Kind() == reflect.String {
+		return newMapValue(rv.Elem(), &sync.Mutex{}), nil
+	}
+
 	ta, err := adapterFor(rv.Type().Elem())
 	if err != nil {
 		return nil, err

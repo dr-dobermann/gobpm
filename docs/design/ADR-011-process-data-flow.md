@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.6 |
-| Date | 2026-06-13 |
+| Version | v.7 |
+| Date | 2026-07-19 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md) |
 
@@ -95,12 +95,21 @@ that layer is settled:
   properties + runtime variables (by name, or `SOURCE/addr` per ADR-010 §2.7) with
   optional message I/O; an external message operation stays message-only.
 
-What the layer **cannot** do — the gap v.6 closes — is reach *into* a value. An
-`ItemDefinition`'s structure is **opaque**: a value is flat — a scalar
-(`Variable`) or a homogeneous list (`Array`), with no record kind and no
-engine-visible shape — so mapping, associations, expressions, and conditions can
-address a *whole* value but not `order.items[0].price`, and cannot build a nested
-output (§2.9).
+What the layer **could not** do as of v.6 — the gap §2.9 closed — was reach
+*into* a value. An `ItemDefinition`'s structure was **opaque**: a value was flat
+— a scalar (`Variable`) or a homogeneous list (`Array`), with no record kind and
+no engine-visible shape — so mapping, associations, expressions, and conditions
+could address a *whole* value but not `order.items[0].price`, and could not
+build a nested output (§2.9).
+
+**(v.7)** The structural slices S1–S4 have since landed: values are navigable
+(`Record` beside `Collection`), writable through paths, change-detected by
+commit-diff, and native Go structs participate through cached adapters. What the
+kind set still lacks is a **data-keyed dictionary**: `scalar｜list｜record` has no
+kind whose keys are *data* rather than schema, so a process cannot hold a
+dictionary it grows key-by-key, and a native `map[string]V` struct field
+participates only as an opaque, non-navigable scalar leaf (the S4 builder's
+deliberate fallback). §2.9.7 closes that.
 
 ### 1.3 Why now
 
@@ -111,7 +120,12 @@ genuinely useful service API all stand on a settled data-flow conception. ADR-01
 deferred this layer explicitly; this ADR settles it. **(v.6)** With that layer now
 settled, the limiting factor becomes *structural* reach-in — expressions,
 conditional / gateway conditions, and rich input/output mappings all need to see
-*into* values, which the opaque structure cannot support; §2.9 settles that. Per
+*into* values, which the opaque structure cannot support; §2.9 settles that.
+**(v.7)** The concrete driver §2.8 said the map kind waits for has arrived:
+processes genuinely hold data-keyed dictionaries (accumulating results under
+run-time keys), and the landed S4 adapter tier makes the `map[string]V` gap
+visible in practice — a native map field is the one common Go shape the engine
+cannot navigate; §2.9.7 settles that. Per
 our standing principle — an earlier document supports the work, it does not cage
 it — where the model conflicts with this conception, the code is fixed during
 implementation.
@@ -397,19 +411,17 @@ target shapes (the implementing SRD does the file-level work):
 - **(v.6) The structure of foreign provider data.** A `SOURCE/addr` provider
   (ADR-010 §2.7) keeps its address space opaque; engine-native structural
   navigation is for engine-managed values only (§2.9.2).
-- **A map / dictionary value kind (recognized future extension, not now).** The
-  decided kind set is `scalar｜list｜record` (§2.9.1). A **map** — homogeneous
-  values under **data** keys (arbitrary strings, not identifier field-names),
-  addressed `["key"]` — is a genuinely *distinct* kind from a record (a record's
-  keys are its schema; a map's keys are data) and an *additive* one: the
-  capability-interface model admits a `data.Map` capability beside `Record` /
-  `Collection`, and the path grammar admits a `["key"]` step, without disturbing
-  anything landed. It is **out of scope until a concrete driver arrives** —
-  Go-`map[K]V` interop (the S4 adapter tier, where a map field cannot be a record)
-  or a process that genuinely holds a data-keyed dictionary — at which point it
-  lands as its own small slice, not folded into S1–S4. BPMN's own model does not
-  need it (XSD is record + list; a map is programming-language convenience), so it
-  is not a conformance gap.
+- **(v.7) Non-string-keyed native maps.** The map kind (§2.9.7) makes
+  `map[string]V` struct fields navigable; a Go map with any **other** key type
+  (`map[int]V`, `map[K]V` over a comparable struct, …) stays what it is today —
+  an opaque, whole-value scalar leaf in the adapter tier. Key **stringification**
+  is rejected: it is a silent coercion (against §2.9.3's fail-loud posture),
+  format-ambiguous (`1` vs `01`, negative numbers, composite keys), and
+  irreversible on the write path. A type that needs a non-string-keyed map
+  navigable lifts itself per-type through the custom-adapter hook (§2.9.5's
+  registry), not through an engine-wide coercion rule. *(The map kind itself,
+  deferred here through v.6 "until a concrete driver arrives", is decided in
+  §2.9.7 — the driver arrived: see §1.3.)*
 
 ### 2.9 Structural data: navigable values (v.6)
 
@@ -438,20 +450,28 @@ assertion. v.6 mirrors it with **one new capability**:
   verbatim; the standard's `isCollection` / an XSD `maxOccurs > 1`);
 - **record** — a `Value` implementing the new **`Record`** capability: ordered
   field names (`Keys`), field read (`Field`), structural field write
-  (`SetField`) — an XSD complex type's element set.
+  (`SetField`) — an XSD complex type's element set;
+- **map (v.7)** — a `Value` implementing the **`Map`** capability: homogeneous
+  values under **data** keys — arbitrary strings, not identifier field-names —
+  with deterministic key enumeration, entry read/write, and first-class entry
+  **deletion** (§2.9.7). A genuinely distinct kind from a record: a record's
+  keys are its *schema*; a map's keys are *data*.
 
-The kind set is these three. A **data-keyed map** (homogeneous values under
-arbitrary-string keys, `["key"]` addressing) is a recognized *additive* future
-kind — a `data.Map` capability alongside `Record`/`Collection` — deferred until a
-concrete driver arrives (§2.8).
+The kind set is these four, and it is closed until a decision here reopens it.
 
 A node's *kind* is **which capability it implements** (one type assertion); a
+`Value` must implement **at most one** structural capability — kind probes test
+in one documented, fixed order, and the model does not define a value that is
+simultaneously a record and a map. A
 leaf's type is the existing `Value.Type()`. Nesting composes to **any depth**
 because a field's value may itself be a `Record` or `Collection`. One new
-concrete type ships — a generic, insertion-ordered **`values.Record`** — for
+concrete type ships — an insertion-ordered **`values.Record`** — for
 dynamic, engine-assembled data; native Go objects satisfy the same capability
 through adapters (§2.9.5), so both navigate identically and nest inside each
-other.
+other. **(v.7)** The map kind ships its own dynamic concrete — a generic
+**`values.Map[T]`** mirroring `Array[T]`: homogeneity is enforced by the type
+parameter, and `Map[any]` is the zero-setup dictionary for engine-assembled
+data (§2.9.7).
 
 **The schema is not a stored artifact — it is the value graph itself.** Shape
 is investigated by *traversing* the same capabilities (small free helpers: a
@@ -467,7 +487,11 @@ performs **no reflection** (§2.9.5 bounds where reflection may run).
 #### 2.9.2 Path addressing lives in the data-access seam, not in mapping
 
 Reach-in is `order.items[0].price`: `.field` descends into a **record**, `[i]`
-indexes a **list**. Crucially this is a property of **data access** — the
+indexes a **list**, and **(v.7)** `["key"]` — a double-quoted,
+backslash-escapable string in brackets — selects a **map** entry
+(`rates["EUR"].value`). The bracket forms do not collide: a bare number is a
+list index, a quoted string is a map key (`[0]` indexes a list; `["0"]`
+addresses the map key `"0"`). Crucially this is a property of **data access** — the
 `data.Source` / scope resolver — **not** of the mapping code. So **every**
 consumer navigates through the one resolver: input mapping, output mapping,
 expressions, and **sequence-flow / gateway conditions**
@@ -498,8 +522,14 @@ write walks to the **parent** and mutates through its capability (`SetField` /
 the collection's index write), so the owner enforces its own shape: a **typed**
 value rejects an unknown field or a type clash *by construction* (its `SetField`
 knows only its real fields); a **dynamic** `values.Record` is permissive and
-accepts assembled fields. Missing intermediate records on the path are created
-when the target permits it; a violating write is an **error**, never a silent
+accepts assembled fields. **(v.7)** A **map** write is permissive on the *key*
+by definition — keys are data, so `SetPath` on `rates["EUR"]` upserts the entry
+— while the *value* side stays owner-enforced (a typed `values.Map[T]` or an
+adapted `map[string]V` rejects a value-type clash). Missing intermediate
+records on the path are created
+when the target permits it — **(v.7)** a step followed by `["key"]` vivifies an
+empty dynamic map, exactly as a following `.field` vivifies a record and a
+following `[i]` a list; a violating write is an **error**, never a silent
 coercion — the same fail-loud posture as §2.2's "never silently produce
 nothing".
 
@@ -603,8 +633,79 @@ conformance-preserving increment landed by its own SRD:
   registry, the registration-time reflection builder, and the `gobpm:"..."` tag
   vocabulary (§2.9.5). The codegen generator is an **additive follow-up** on the
   same seam — it requires no engine change and may land with S4 or after it.
+- **(v.7) S5 — the map kind.** The `Map` capability and the dynamic
+  `values.Map[T]`; the `["key"]` path step on read, write, and vivify; the
+  per-entry commit-diff walk; the adapter tier's `map[string]V` lift (§2.9.7).
+  Additive over S1–S4 — no landed surface changes shape; the S4 "map field is
+  an opaque leaf" fallback narrows to non-string-keyed maps (§2.8).
 
 ADR-011 v.6 is **Accepted** once S1 proves the model; S2–S4 refine against it.
+**(v.7)** S1–S4 have landed; S5 rides the same pattern — one conception here,
+landed whole by the accompanying maps SRD.
+
+#### 2.9.7 The map kind — homogeneous values under data keys (v.7)
+
+v.6 recognized the map as a distinct, additive future kind and parked it in
+§2.8 pending a concrete driver; the driver arrived (§1.3), and this section
+decides it. **A map is a dictionary whose keys are *data*** — arbitrary strings
+produced at run time — where a record's keys are its *schema*. That one
+difference drives every choice below.
+
+**The capability.** `data.Map` joins `Record` / `Collection` as the fourth kind
+(§2.9.1): key enumeration (`Keys`), entry read, entry upsert, and entry
+**delete** — deletion is first-class *because* keys are data (a record never
+loses a schema field at run time; a map legitimately loses an entry). Values
+are **homogeneous** — one value shape under all keys, the Go-map contract —
+and may themselves be records, lists, or maps: nesting composes as everywhere
+else.
+
+**Determinism over Go's randomized iteration.** Go map iteration order is
+deliberately random; the engine's enumeration surfaces must not be. Every
+surface that enumerates map entries — `Keys`, the shape/walk helpers, and above
+all the commit-diff — enumerates in **sorted key order**. A map has no
+insertion order worth preserving (unlike `values.Record`, whose order is its
+schema's); sorting is the one canonical order that is stable across clones,
+commits, and process restarts, so diffs, `DataChange` facts, and walk output
+are reproducible.
+
+**Whole-value semantics follow the homogeneous kinds.** The dynamic
+`values.Map[T]` mirrors `Array[T]` (§2.9.1): `Get` snapshots to a
+`map[string]T`; `Update` **replaces** the entry set with the given one —
+`Get`/`Update` round-trip, and a replace can express deletion. The
+merge-on-`Update` posture of `values.Record` does *not* transfer: a record
+merges because unknown keys are schema violations to reject; a map has no
+unknown keys, so "merge" would silently become an upsert that can never
+remove — surgery belongs to the entry operations, wholesale replacement to
+`Update`.
+
+**Path, write, and diff.** `["key"]` is the map step in the one path grammar
+(§2.9.2) — read, write (upsert + vivify, §2.9.3), and conditions all walk it
+through the same resolver. The commit-diff (§2.9.4) walks a map like a record
+— per entry, union of old and new keys, emitting `(path, ChangeType)` with
+`Value_Added` / `Value_Updated` / `Value_Deleted` per key — so map changes
+feed `KindDataChange` facts and the conditional-event substrate with no new
+vocabulary.
+
+**Native `map[string]V` participates through the same adapter seam** (§2.9.5):
+the reflection builder classifies a string-keyed map field as the map kind and
+serves it through a cached adapter over the **live** map — wrap, not convert —
+exactly as structs and slices already ride `Record` / `Collection`. Non-string
+key types stay opaque leaves (§2.8). This narrows S4's deliberate "map field is
+an opaque leaf" fallback to the shapes that genuinely cannot carry a path key.
+One **engine note**: a host language's map value may not be *addressable* (Go's
+is not), so for a native map the write contract is **entry-level** — the whole
+value under a key is replaced or removed, live — while a *composite* value read
+out of a native map is a navigable **snapshot** (a deep write into it fails
+loud rather than mutating a detached copy). The dynamic `values.Map` has no such
+limit; this bounds only the native-interop tier, and the landing SRD records it.
+
+**Standard grounding.** BPMN's own data model needs no dictionary kind —
+`ItemDefinition.structureRef` points at "the concrete data structure, typically
+an XSD complex type or element" (§8.4.10, Table 8.47), and XSD composes records
+and lists; the standard is silent on data-keyed dictionaries. The map kind is
+therefore an **engine choice** — a Go-interop and modelling convenience, not a
+conformance item — recorded as such, like the other deliberate engine choices,
+in SAD-001's engine-choices scope at landing.
 
 ## 3. Consequences
 
@@ -647,6 +748,16 @@ ADR-011 v.6 is **Accepted** once S1 proves the model; S2–S4 refine against it.
   The execution hot path stays reflection-free; the bounded registration-time
   exception (§2.9.5) is the one deliberate relaxation, recorded as an engine
   choice.
+- **(v.7) The kind set is complete for Go-shaped data.** With the map kind
+  (§2.9.7), every common Go data shape — scalar, slice, struct, string-keyed
+  map, nested any way — participates in paths, conditions, mappings, writes,
+  and change detection; the one deliberate residue is the non-string-keyed
+  native map (§2.8), liftable per-type via the custom-adapter hook.
+- **(v.7) Cost: a fourth kind threads through every kind-probe surface.** The
+  path grammar gains the quoted-key step; the kind classifier, shape/walk
+  helpers, write walker with its vivify rule, commit-diff, and the adapter
+  builder each gain one map arm — additive at each seam (no landed surface
+  changes shape), landed as slice S5 (§2.9.6) keeping `make ci` green.
 - **Maintenance rule.** Data state stays the closed three-value set (§2.1);
   availability gates selection but never waits (§2.3); a value type never embeds
   notification (§2.7). A change that needs a new data state or a data wait reopens
@@ -773,7 +884,12 @@ Advisory, not gating — conventions the landing SRD(s) and later work should fo
   (§2.9). The exact `Record`/adapter signatures, the path parser, the traversal
   helpers, the diff algorithm, the tag vocabulary, and the refactor sequencing
   are implementation concerns for the landing SRD(s), not open conception
-  questions.
+  questions. **(v.7)** The map kind is likewise decided (§2.9.7): the capability
+  shape, sorted enumeration, replace-on-`Update`, the `["key"]` grammar with its
+  list/map bracket disambiguation, first-class deletion, and the
+  `map[string]V`-only adapter lift (no key stringification, §2.8). The exact
+  `Map` signatures, the quoted-step lexer, and the diff/vivify mechanics are the
+  landing SRD's concern.
 
 ## 7. References
 
@@ -820,6 +936,7 @@ Advisory, not gating — conventions the landing SRD(s) and later work should fo
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.7 | 2026-07-19 | Ruslan Gabitov | **Accepted** (landed whole via SRD-047 — the S5 slice; five milestones, `make ci` green, diff-coverage 98.9%). Added §2.9.7 — the **map kind**, un-deferring the §2.8 "map / dictionary value kind" non-goal now that its stated driver arrived (processes holding data-keyed dictionaries; the landed S4 adapter tier leaving `map[string]V` fields opaque). The kind set becomes `scalar｜list｜record｜map` (§2.9.1): **`data.Map`** is the fourth capability — homogeneous values under **data** keys (a record's keys are schema; a map's keys are data), with key enumeration, entry read/upsert, and **first-class deletion** (keys are data, so entries legitimately disappear). **Determinism over Go's randomized iteration:** every enumeration surface (Keys, walk/shape helpers, commit-diff) uses **sorted key order** — the one order stable across clones/commits/restarts. Dynamic concrete: generic **`values.Map[T]`** mirroring `Array[T]` (homogeneity by type parameter; `Map[any]` for assembled data); whole-value `Update` **replaces** the entry set (the `values.Record` merge rationale does not transfer — a map has no unknown keys to reject, and merge could never delete). Path grammar gains the **`["key"]`** step (double-quoted, backslash-escapable) with bracket disambiguation — bare number = list index, quoted string = map key; write upserts and a following `["key"]` step vivifies an empty dynamic map (§2.9.2/§2.9.3). Commit-diff walks maps per entry (union of keys) emitting the existing `ChangeType` vocabulary (§2.9.4). Adapter tier lifts **`map[string]V`** fields to navigable maps over the live value; **non-string-keyed maps stay opaque leaves** — key stringification rejected as silent, format-ambiguous, irreversible coercion (new §2.8 non-goal; per-type custom adapter is the lift). Standard grounding: BPMN/XSD is record+list and silent on dictionaries (§8.4.10) — the map kind is a recorded **engine choice**, not a conformance item. Phasing gains **S5** (§2.9.6), additive over landed S1–S4. Amends §1.2/§1.3/§2.8/§2.9.1/§2.9.2/§2.9.3/§2.9.6/§3/§6; adds §2.9.7. Lands via the accompanying maps SRD. |
 | v.6 | 2026-07-13 | Ruslan Gabitov | **Accepted** (v.6 conception; S1 — the read path — landed by the accompanying wiring SRD, proving the model per §2.9.6; S2–S4 are future slices). Added §2.9 **structural data — navigable values**, closing the "can address a whole value but not reach *into* it" gap that service-task/mapping work exposed. Grounded in the standard's own `ItemDefinition.structureRef` ("the concrete data structure, typically an XSD complex type", §8.4.10). **The value model is the Go way** (§2.9.1): the existing `Value` family gains one capability interface — **`Record`** (ordered `Keys`/`Field`/`SetField`), mirroring the existing `Collection`; kind = which capability a value implements; nesting composes to any depth; one new concrete `values.Record` for dynamic data; **shape is derived by traversing the value graph** (no stored schema artifact); under-specified items stay opaque scalars per §10.4.1. **Path addressing** (`order.items[0].price`) lives in the **data-access seam** (§2.9.2) — one resolver serves mapping, expressions, and **gateway/flow conditions**; reconciled with ADR-010 v.2 §2.7 (`/` selects a provider, foreign+opaque; `.`/`[]` walk engine-managed values). **Read and write** both flow through the path (§2.9.3, owner-enforced shape: typed values reject by construction, dynamic records are permissive). **Change detection is commit-diff** (§2.9.4 — the scope diffs committed values into a `(path, ChangeType)` set), chosen over a per-`Value` subscription (fragile under frame-clone-then-replace; commit is the activity boundary §10.4.2's data copies land on); it homes the `KindDataChange` facts ADR-013 v.2 deferred, is the future substrate for conditional events (ADR-006), and **deletes the dormant `Updater`/`UpdateCallback` machinery** (zero consumers; `ChangeType` retargeted as the diff vocabulary). **Native-struct interop rides a per-type adapter registry** (§2.9.5): dynamic values need no adapter; the **registration-time reflection builder is the standard** (reflect once per type, cached, off the execution path — a deliberate *bounded* relaxation of the anti-reflection stance, to be recorded as an engine choice in SAD-001); the **codegen generator is the per-type upgrade** on the same seam (compile-checked, reflection-free, adoptable later with no engine change); `gobpm:"..."` struct tags configure the adapter build only. Hot-path reflection stays rejected. Phased **S1–S4** (§2.9.6 — Accepted once S1 proves the model). Honors §2.7's value-vs-notification separation and leaves §2.2/§2.3 untouched. Also refreshed §1.2 to the post-v.5 current state (per the current-state-freshness review rule). Amends §1.2/§1.3/§2.1/§2.8/§3/§4/§6/§7; adds refs ADR-013 v.2, ADR-006 v.2. Lands via the structural-data SRD(s). |
 | v.5 | 2026-06-14 | Ruslan Gabitov | Refined §2.6 to split the kinds by **execution locus**, not by data-access method. The earlier "the Go kind is message-free, the message kind cannot reach scope" framing restricted in-process code gratuitously. New shape: an **external message operation** (`Implementor`, out-of-process) is message-only **by locus** (it cannot receive an in-process reader — the decoupled, conformant path); an **in-process Go operation** receives the reader **and** its optional bound input message, may declare an optional output message, and returns its result — message-based and reader-based access **compose**, the author's choice. The preserved boundary: ambient scope access is confined to in-process code. The node-level message-handling seam (`MessageProducer`/`MessageConsumer` for `SendTask`/`ReceiveTask`/throw-catch events) is deferred to the executor SRD. Amends §2.6/§3/§4. Lands via SRD-011. |
 | v.4 | 2026-06-13 | Ruslan Gabitov | Aligned §2.6 to the data-source access model: the Go reader is the public face of the data-plane's addressable read interface ([ADR-010 v.2 §2.7](ADR-010-process-data-model.md)) — default scope by plain name, named sources by `SOURCE/var`, discovery via `GetSources`/`List`. Runtime variables are read via the explicit `RUNTIME/<var>` path (a named data source), **not** "by name with the reader hiding the reserved addressing" (dropped) — so engine runtime vars never intersect a process's own `STATE`/`INSTANCE`. No special accessor is needed. Lands via SRD-010 (data plane) + SRD-011 (service reader). Amends §2.6. |

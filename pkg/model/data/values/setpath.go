@@ -82,6 +82,29 @@ func descendOrVivify(
 		return child, rec.SetField(ctx, step.Field, child)
 	}
 
+	if step.Key != "" {
+		m, ok := cur.(data.Map)
+		if !ok {
+			return nil, notWritable(data.KeyLabel(step.Key), "a map", cur)
+		}
+
+		if raw, err := m.Entry(ctx, step.Key); err == nil {
+			child, ok := raw.(data.Value)
+			if !ok {
+				return nil, notWritable(data.KeyLabel(step.Key),
+					"a navigable entry", cur)
+			}
+
+			return child, nil
+		}
+
+		// missing → vivify and upsert; a typed map that rejects the value
+		// surfaces its own error (walkToParent discards the child then).
+		child := vivify(next)
+
+		return child, m.SetEntry(ctx, step.Key, child)
+	}
+
 	col, ok := cur.(data.Collection)
 	if !ok {
 		return nil, notWritable(indexLabel(step.Index), "a list", cur)
@@ -117,6 +140,15 @@ func setLast(
 		return rec.SetField(ctx, last.Field, v)
 	}
 
+	if last.Key != "" {
+		m, ok := parent.(data.Map)
+		if !ok {
+			return notWritable(data.KeyLabel(last.Key), "a map", parent)
+		}
+
+		return m.SetEntry(ctx, last.Key, v)
+	}
+
 	col, ok := parent.(data.Collection)
 	if !ok {
 		return notWritable(indexLabel(last.Index), "a list", parent)
@@ -126,13 +158,19 @@ func setLast(
 }
 
 // vivify builds a fresh empty dynamic container for a missing intermediate: a
-// following field step needs a record, a following index step needs a list.
+// following field step needs a record, a following key step needs a map, a
+// following index step needs a list.
 func vivify(next data.Step) data.Value {
-	if next.Field != "" {
+	switch {
+	case next.Field != "":
 		return MustRecord() // zero fields → never errors
-	}
 
-	return NewArray[data.Value]()
+	case next.Key != "":
+		return MustMap[data.Value](nil) // zero entries → never errors
+
+	default:
+		return NewArray[data.Value]()
+	}
 }
 
 func indexLabel(i int) string {

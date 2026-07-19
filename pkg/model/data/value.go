@@ -113,6 +113,36 @@ type Record interface {
 	SetField(ctx context.Context, name string, v Value) error
 }
 
+// Map is the optional dictionary capability of a Value (ADR-011 v.7 §2.9.7):
+// homogeneous values under data keys. Where a Record's keys are its schema, a
+// Map's keys are data — arbitrary NON-EMPTY strings produced at run time — so
+// entry writes are permissive on the key and deletion is first-class. A Value
+// implementing Map is navigable by `["key"]` path steps; kind discovery is
+// type assertion, and a Value implements at most one structural capability
+// (Record / Collection / Map).
+type Map interface {
+	Value
+
+	// Keys lists all entry keys in ascending (sorted) order — the
+	// deterministic enumeration over Go's randomized map iteration.
+	Keys() []string
+
+	// Entry returns the value stored under key, or a classified
+	// errs.ObjectNotFound error when the entry is absent. Like
+	// Collection.GetAt, the result may be a raw Go value — path walks wrap
+	// it read-only (scalarLeaf).
+	Entry(ctx context.Context, key string) (any, error)
+
+	// SetEntry upserts the entry under key — a map is permissive on the key
+	// by definition (keys are data); the value side is owner-enforced. An
+	// empty key is a classified error.
+	SetEntry(ctx context.Context, key string, value any) error
+
+	// DeleteEntry removes the entry under key, or returns a classified
+	// errs.ObjectNotFound error when it is absent (fail-loud, like Entry).
+	DeleteEntry(ctx context.Context, key string) error
+}
+
 // ChangeType classifies a committed data change. It is the commit-diff's
 // change-kind vocabulary (ADR-011 v.6 §2.9.4, wired in the S3 slice): each
 // diff entry is a (path, ChangeType) pair. The string values are mirrored by

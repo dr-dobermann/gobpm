@@ -15,11 +15,15 @@ import (
 // (CheckName, SRD-042 FR-6), so a path splits unambiguously.
 const structuralChars = ".["
 
-// Step is one navigation step of a structural path (ADR-011 v.6 §2.9.2): a
-// field step (Field set) descends into a Record; an index step (Field empty,
-// Index >= 0) descends into a Collection.
+// Step is one navigation step of a structural path (ADR-011 v.7 §2.9.2): a
+// field step (Field set) descends into a Record; a key step (Key set, the
+// `["key"]` form) descends into a Map; an index step (both empty, Index >= 0)
+// descends into a Collection. The discrimination is unambiguous — an empty
+// field name is CheckName-illegal and an empty map key is rejected by the
+// lexer — and Step stays comparable (PathsOverlap matches steps with ==).
 type Step struct {
 	Field string
+	Key   string
 	Index int
 }
 
@@ -27,6 +31,11 @@ type Step struct {
 // Field — an empty field name is CheckName-illegal, so the discriminator is
 // unambiguous).
 func (s Step) isField() bool { return s.Field != "" }
+
+// isKey reports whether the step is a map-key step (a non-key step has an
+// empty Key — an empty map key is not parseable, so the discriminator is
+// unambiguous).
+func (s Step) isKey() bool { return s.Key != "" }
 
 // SplitPath splits a structural path "order.items[0].price" into its head name
 // ("order") and its navigation steps ([.items, [0], .price]). A path with no
@@ -80,6 +89,12 @@ func nextStep(rest, path string) (Step, string, error) {
 		return Step{Field: name}, rest, nil
 
 	case '[':
+		// A leading quote is a map-key step `["key"]`; a bare number is a
+		// list-index step `[i]` (SRD-047 §4.3 — the forms do not collide).
+		if len(rest) > 1 && rest[1] == '"' {
+			return keyStep(rest, path)
+		}
+
 		j := strings.IndexByte(rest, ']')
 		if j < 0 {
 			return Step{}, "", pathErr("unclosed index in %q", path)
@@ -96,6 +111,66 @@ func nextStep(rest, path string) (Step, string, error) {
 		return Step{}, "", pathErr("unexpected character %q in %q",
 			string(rest[0]), path)
 	}
+}
+
+// keyStep consumes one `["key"]` map-key step from the front of rest (rest
+// starts with `["`). The key is scanned byte-wise inside the quotes — safe
+// for UTF-8, since both escapable bytes are ASCII — with exactly two escapes,
+// `\"` and `\\`; any other backslash sequence, an unclosed quote, an empty
+// key, or a missing closing `]` is a classified error (SRD-047 §4.3).
+func keyStep(rest, path string) (Step, string, error) {
+	var b strings.Builder
+
+	i := 2 // past `["`
+	for ; i < len(rest); i++ {
+		c := rest[i]
+
+		if c == '\\' {
+			i++
+			if i >= len(rest) || (rest[i] != '"' && rest[i] != '\\') {
+				return Step{}, "", pathErr("bad escape in a map key in %q",
+					path)
+			}
+
+			b.WriteByte(rest[i])
+
+			continue
+		}
+
+		if c == '"' {
+			break
+		}
+
+		b.WriteByte(c)
+	}
+
+	if i >= len(rest) {
+		return Step{}, "", pathErr("unclosed map key in %q", path)
+	}
+
+	if i+1 >= len(rest) || rest[i+1] != ']' {
+		return Step{}, "", pathErr("missing ']' after a map key in %q", path)
+	}
+
+	key := b.String()
+	if key == "" {
+		return Step{}, "", pathErr("an empty map key in %q", path)
+	}
+
+	return Step{Key: key}, rest[i+2:], nil
+}
+
+// keyEscaper escapes the two characters that collide with the `["key"]` path
+// syntax; every other character rides verbatim (SRD-047 §4.3).
+var keyEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+
+// KeyLabel renders a map key as its canonical escaped path-step form —
+// `["key"]` with `\` and `"` backslash-escaped — the exact form the path
+// lexer parses back. It is the map counterpart of the "[i]" index label,
+// shared by shape walks, diff paths, and error texts. Note: an empty key
+// renders `[""]`, which is not a parseable step (map keys are non-empty).
+func KeyLabel(key string) string {
+	return `["` + keyEscaper.Replace(key) + `"]`
 }
 
 func pathErr(format string, args ...any) error {
@@ -227,10 +302,11 @@ func overlapSteps(path string) ([]Step, error) {
 	return ParsePath(path)
 }
 
-// WalkSteps folds steps over v: a field step asserts Record and calls Field; an
-// index step asserts Collection and calls GetAt. A Collection element that is
-// not itself a Value is a read-only scalar leaf — a further step into it is a
-// classified error. Every mis-step names the walked prefix and the actual kind.
+// WalkSteps folds steps over v: a field step asserts Record and calls Field; a
+// key step asserts Map and calls Entry; an index step asserts Collection and
+// calls GetAt. A Collection element or Map entry that is not itself a Value is
+// a read-only scalar leaf — a further step into it is a classified error.
+// Every mis-step names the walked prefix and the actual kind.
 func WalkSteps(ctx context.Context, v Value, steps []Step) (Value, error) {
 	cur := v
 	walked := ""
@@ -248,6 +324,22 @@ func WalkSteps(ctx context.Context, v Value, steps []Step) (Value, error) {
 			}
 
 			cur, walked = next, walked+"."+s.Field
+
+			continue
+		}
+
+		if s.isKey() {
+			m, ok := cur.(Map)
+			if !ok {
+				return nil, notNavigable(walked, "a map", KeyLabel(s.Key), cur)
+			}
+
+			raw, err := m.Entry(ctx, s.Key)
+			if err != nil {
+				return nil, err
+			}
+
+			cur, walked = asValue(raw), walked+KeyLabel(s.Key)
 
 			continue
 		}

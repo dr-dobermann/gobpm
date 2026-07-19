@@ -6,8 +6,8 @@ import (
 )
 
 // FieldInfo describes one field or element at a level of a value's shape
-// (ADR-011 v.6 §2.9.1). Kind is "scalar" | "list" | "record"; Type carries the
-// Go type name for a scalar only.
+// (ADR-011 v.7 §2.9.1). Kind is "scalar" | "list" | "record" | "map"; Type
+// carries the Go type name for a scalar only.
 type FieldInfo struct {
 	Name string
 	Kind string
@@ -15,13 +15,18 @@ type FieldInfo struct {
 }
 
 // kindOf reports a value's structural kind by capability assertion: a Record
-// has fields, a Collection is a list, anything else is a scalar leaf.
+// has fields, a Collection is a list, a Map is a data-keyed dictionary,
+// anything else is a scalar leaf. The probe order (Record, Collection, Map)
+// is fixed and documented; a Value implements at most one structural
+// capability (ADR-011 v.7 §2.9.1), so the order never decides a kind.
 func kindOf(v Value) string {
 	switch v.(type) {
 	case Record:
 		return "record"
 	case Collection:
 		return "list"
+	case Map:
+		return "map"
 	default:
 		return "scalar"
 	}
@@ -77,6 +82,22 @@ func SchemaAt(ctx context.Context, v Value, path string) ([]FieldInfo, error) {
 
 		return []FieldInfo{fi}, nil
 
+	case Map:
+		// One homogeneous element slot — the map counterpart of the list's
+		// "[]" (a slot label, not an addressable key): a map's keys are data,
+		// so its shape is the value shape, taken from the sorted-first entry.
+		fi := FieldInfo{Name: `["*"]`, Kind: "unknown"}
+		if keys := n.Keys(); len(keys) > 0 {
+			e, err := n.Entry(ctx, keys[0])
+			if err != nil {
+				return nil, err
+			}
+
+			fi = infoFor(`["*"]`, asValue(e))
+		}
+
+		return []FieldInfo{fi}, nil
+
 	default:
 		return []FieldInfo{infoFor("", node)}, nil
 	}
@@ -127,6 +148,22 @@ func walkChildren(
 			child := asValue(e)
 			childPath := path + "[" + strconv.Itoa(i) + "]"
 			visit(childPath, infoFor("["+strconv.Itoa(i)+"]", child))
+
+			if err := walkChildren(ctx, childPath, child, visit); err != nil {
+				return err
+			}
+		}
+
+	case Map:
+		for _, k := range n.Keys() { // sorted — deterministic walk output
+			e, err := n.Entry(ctx, k)
+			if err != nil {
+				return err
+			}
+
+			child := asValue(e)
+			childPath := path + KeyLabel(k)
+			visit(childPath, infoFor(KeyLabel(k), child))
 
 			if err := walkChildren(ctx, childPath, child, visit); err != nil {
 				return err
