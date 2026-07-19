@@ -57,6 +57,101 @@ func orderTotalCond(t *testing.T, pred func(int) bool) data.FormalExpression {
 	return c
 }
 
+// ratesRoutingProcess carries an "order" record property holding a data-keyed
+// rates map — the fixture for map-path gateway routing (SRD-047 T-9).
+func ratesRoutingProcess(t *testing.T, id string, eur float64) *process.Process {
+	t.Helper()
+
+	proc, err := process.New(id,
+		data.WithProperties(
+			data.MustProperty("order",
+				data.MustItemDefinition(
+					values.MustRecord(
+						values.F("rates",
+							values.MustMap(map[string]float64{"EUR": eur}))),
+					foundation.WithID("order")),
+				data.ReadyDataState)))
+	require.NoError(t, err)
+
+	return proc
+}
+
+// eurRateCond builds a bool condition over the map path order.rates["EUR"] —
+// the ["key"] step riding the same data-access resolver conditions already use
+// (SRD-047 §4.10; conditions gain map reads with zero consumer change).
+func eurRateCond(t *testing.T, pred func(float64) bool) data.FormalExpression {
+	t.Helper()
+
+	c, err := goexpr.New(
+		nil,
+		data.MustItemDefinition(values.NewVariable(false)),
+		func(ctx context.Context, ds data.Source) (data.Value, error) {
+			v, err := ds.Find(ctx, `order.rates["EUR"]`)
+			if err != nil {
+				return nil, err
+			}
+
+			a, _ := v.Value().Get(ctx).(float64)
+
+			return values.NewVariable(pred(a)), nil
+		})
+	require.NoError(t, err)
+
+	return c
+}
+
+// TestExclusiveRoutingOnMapPath (SRD-047 T-9): an exclusive gateway routes on a
+// condition reading a MAP path (order.rates["EUR"] > 1.1) end-to-end — the
+// ["key"] step resolves through the identical seam records/lists use, the
+// gateway unchanged.
+func TestExclusiveRoutingOnMapPath(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	rec := make(chan string, 4)
+	proc := ratesRoutingProcess(t, "map-xor", 1.20) // 1.20 > 1.1 → premium
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+	xor, err := gateways.NewExclusiveGateway()
+	require.NoError(t, err)
+	premium := recordTask(t, "premium", rec)
+	standard := recordTask(t, "standard", rec)
+	endP, err := events.NewEndEvent("end-premium")
+	require.NoError(t, err)
+	endS, err := events.NewEndEvent("end-standard")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{
+		start, xor, premium, standard, endP, endS,
+	} {
+		require.NoError(t, proc.Add(e))
+	}
+
+	link(t, start, xor)
+	_, err = flow.Link(xor, premium,
+		flow.WithCondition(eurRateCond(t, func(a float64) bool { return a > 1.1 })))
+	require.NoError(t, err)
+	df, err := flow.Link(xor, standard)
+	require.NoError(t, err)
+	require.NoError(t, xor.UpdateDefaultFlow(df))
+	link(t, premium, endP)
+	link(t, standard, endS)
+
+	th, cancel := runEngine(t, proc)
+	defer cancel()
+
+	h, err := th.StartLatest(proc.ID())
+	require.NoError(t, err)
+
+	ctx, cc := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cc()
+	st, err := h.WaitCompletion(ctx)
+	require.NoError(t, err)
+	require.Equal(t, thresher.StateCompleted, st)
+
+	require.Equal(t, []string{"premium"}, drain(rec))
+}
+
 // TestExclusiveRoutingOnStructuralPath (SRD-042 T-5): an exclusive gateway
 // routes on a condition that reads a structural path (order.total > 100)
 // end-to-end through the real runtime seam — the gateway itself is unchanged.
