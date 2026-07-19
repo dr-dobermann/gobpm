@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-19 |
 | Owner | Ruslan Gabitov |
@@ -453,7 +453,7 @@ facts, condition routing on a map path), not to change those layers.
 | T-2 | `TestMapPathGrammar` (`data/path_test.go`) | FR-4: `["key"]` parse; `\"`/`\\` escapes; `]`/`[`/`.` inside quotes; errors — unclosed quote, unknown escape, empty key, missing `]`; `[0]` vs `["0"]`; `ParsePath` leading `["k"]`; `PathsOverlap` with key steps |
 | T-3 | `TestMapWalkSteps` (`data/path_test.go`) | FR-5: read `m["k"]` and nested `m["k"].f[0]`; raw entry → `scalarLeaf`; `notNavigable` "a map" text; missing key → `ObjectNotFound` |
 | T-4 | `TestMapSetPath` (`values/setpath_test.go`) | FR-6: upsert leaf; vivify `a.b["k"].c` chain (map created by the following key step); raw-entry `notWritable`; wrong-kind `notWritable` "a map" |
-| T-5 | `TestDiffMaps` (`data/diff_test.go`) | FR-7: per-key Added/Updated/Deleted; sorted, deterministic output order; nested map-in-record/record-in-map recursion; kind-change map↔record/list/scalar → single `ValueUpdated`; escaped keys in paths |
+| T-5 | map cases in `TestDiffValues` (`data/diff_test.go`) | FR-7: per-key Added/Updated/Deleted; sorted, deterministic output order; nested map-in-record/record-in-map recursion; kind-change map↔record/list/scalar → single `ValueUpdated`; escaped keys in paths (added to the existing SRD-044 diff table, its idiom) |
 | T-6 | scope commit with a map (`internal/scope/structural_test.go` or `diff_commit_test.go`) | FR-7: a map mutation through frame commit yields the per-entry change set |
 | T-7 | map `DataChange` facts (`pkg/thresher/datachange_test.go`) | FR-7/§4.10: one `KindDataChange` fact per changed map path, correct phases |
 | T-8 | `TestStructMapField` + registry/edge tests (`adapters/*_test.go`) | FR-8: string-keyed field navigable (read + `SetEntry`/`DeleteEntry` on the **live** map); named-string key type; `map[int]V` stays opaque leaf (re-pinned); a composite (struct-valued) map entry reads navigably but a deep write **errors loud** (frozen snapshot, §4.8); scalar/passthrough entries write live; top-level `Wrap(&m)`; `Clone`; the flipped SRD-045 sub-test |
@@ -496,24 +496,71 @@ Each milestone is one commit, `make ci` green:
 
 ## 9. Definition of Done
 
-- [ ] All FR-1…FR-8 implemented; every §6 test exists and passes.
-- [ ] `make ci` green (tidy, lint, build, race tests, diff-coverage ≥95%,
-      govulncheck); every touched function ≥80% (target 100%) per
-      `go tool cover -func`.
-- [ ] The SRD-045 opaque-leaf sub-test flipped; the opaque behavior re-pinned
-      on a non-string-keyed fixture.
-- [ ] Runnable examples extended and smoked (exit 0 under timeout, expected
-      output observed; built example binaries gitignored).
-- [ ] Deterministic enumeration demonstrated (a test asserts sorted order on
-      a multi-entry map, not incidental order).
-- [ ] ADR-011 v.7 flipped to Accepted; SAD-001 + README (and translated
-      twins) synced; this SRD's §10 filled with files/lines, test results,
-      and milestone SHAs.
+- [x] All FR-1…FR-8 implemented; every §6 test exists and passes (634 tests
+      green across the 6 touched packages).
+- [x] `make ci` green (tidy, lint, build, race tests, diff-coverage ≥95%,
+      govulncheck); diff-coverage **98.9%** of 537 changed lines; every
+      touched function ≥80% (most 100%) per `go tool cover -func`.
+- [x] The SRD-045 opaque-leaf sub-test flipped (→ "string-keyed map field — a
+      live navigable data.Map"); the opaque behavior re-pinned on a
+      non-string-keyed `map[int]string`/`map[int]V` fixture.
+- [x] A runnable example (`examples/maps/`) demonstrates both tiers and a map
+      DataChange path; smoked exit 0 with expected output; its built binary
+      (`mapexample`) is gitignored; the sibling structural examples still
+      smoke exit 0.
+- [x] Deterministic enumeration demonstrated (`TestMapValue` "Keys is sorted
+      regardless of insertion order"; `TestMapShape` sorted `Walk`;
+      `TestDiffValues` "sorted deterministic order").
+- [x] ADR-011 v.7 flipped to Accepted; this SRD's §10 filled. SAD-001 +
+      README sync is the sync-linked-docs commit that follows this landing.
 
 ## 10. Implementation summary
 
-*Filled at landing: touched files/lines per milestone, verification results,
-milestone commit SHAs.*
+Landed on `feat/srd-047-map-data`, five milestone commits, each `make ci`
+green. The kind threaded through every seam as one additive arm — no landed
+S1–S4 surface changed shape.
+
+| Milestone | Commit | Touched | Tests |
+|---|---|---|---|
+| Doc — ADR-011 v.7 bump | `97d2907` | `ADR-011-process-data-flow{,.ru}.md` | — |
+| Doc — SRD-047 | `91db2af` | `SRD-047-structural-data-maps.md` | — |
+| M1 — capability + `values.Map[T]` + kind surfaces | `166fc99` | `value.go`, `path.go` (`KeyLabel`), `shape.go`, `values/map.go`+`map_t.go` | `TestMapValue`, `TestMapShape` (T-1) |
+| M2 — read path | `3145372` | `path.go` (`Step.Key`, `keyStep`, `WalkSteps` arm) | `TestMapPathGrammar`, `TestMapWalkSteps` (T-2/3) |
+| M3 — write path | `ac74176` | `values/setpath.go` (key arm + `vivify`) | `TestMapSetPath` (T-4) |
+| M4 — commit-diff | `5feb436` | `diff.go` (`diffMaps` + kind guard) | `TestDiffValues` map cases, `TestCommitReturnsMapDiff`, `TestMapDataChangeFactsEmitted` (T-5/6/7) |
+| M5 — adapter lift + example | `6a64439` | `adapters/{builder,typeadapter,structrecord,wrap,mapvalue,frozen}.go`, `examples/maps/` | `TestStructMapField`, `TestMapValueWholeValue`, `TestFrozenCompositeEntries`, `TestMapCoverageEdges`, `TestMapCustomValue`, `TestWrapBareMap` (T-8) |
+| Audit — T-9 close | *(this landing commit)* | `pkg/thresher/structural_routing_test.go` | `TestExclusiveRoutingOnMapPath` (T-9) |
+
+**Verification (V-results).**
+- **V-1 build/lint:** `make ci` green across all modules.
+- **V-2 tests:** 634 pass across `pkg/model/data`, `…/values`, `…/adapters`,
+  `internal/scope`, `pkg/thresher` (+`goexpr`).
+- **V-3 diff-coverage:** 98.9% of 537 changed lines (min 95%) — PASS; per-file
+  100% except `mapvalue.go` 98.7% (an `adapterFor`-error defensive arm) and
+  `shape.go` 85.2% (the `Entry`-error arms mirroring the landed collection
+  arms); `frozenCollection.Clear` is an executed empty-body no-op (a frozen
+  `Clear` cannot signal via its errorless signature).
+- **V-4 smoke:** `examples/maps/` runs exit 0, printing sorted dynamic-map
+  keys, a `["EUR"]` read, a live native-map `SetEntry`, and per-entry
+  DataChange facts (`rates["EUR"]` updated, `rates["JPY"]` added,
+  `rates["GBP"]` deleted); `native-structs`, `data-change`, `structural-data`
+  still exit 0.
+
+**Deviations from the plan.**
+- **Example (§7 M5).** The plan proposed extending `examples/native-structs/`
+  and `examples/data-change/`; instead a **dedicated `examples/maps/`** was
+  created (the "apply forward, don't rewrite existing examples" house rule),
+  with `main.go`/`demo.go`/`process.go`/`observer.go` (entry split by concern
+  per the ≤80-line rule). Its module is `mapexample` (not `maps` — that name
+  collides with the stdlib `maps` package the code imports).
+- **Write contract (§4.8), decided mid-M5.** Go map values are not addressable
+  (`reflect.MapIndex` is never addressable), so the adapter map is
+  **entry-level**: `SetEntry`/`DeleteEntry` are live; a composite entry is a
+  read-navigable frozen snapshot whose deep write errors loud. Recorded as an
+  engine choice in ADR-011 v.7 §2.9.7 and this doc §4.8 (both amended while
+  Draft).
+- **T-5 location.** Map diff cases were added to the existing `TestDiffValues`
+  table (the SRD-044 idiom), not a standalone `TestDiffMaps` — §6 amended.
 
 ## Open questions
 
