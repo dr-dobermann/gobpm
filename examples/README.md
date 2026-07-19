@@ -40,6 +40,7 @@ Every example builds in CI; the list below is grouped by concern.
 | [`event-subprocess/`](event-subprocess/) | **Composition — an interrupting Event Sub-Process** — a payment wait guarded by a `triggeredByEvent` Timer handler: armed while the scope is open, on fire it cancels the blocked wait, runs in the parent's data context, and absorbs the event so the parent resumes on its normal flow (ADR-023 v.2 / SRD-052). |
 | [`conditional-events/`](conditional-events/) | **Data-driven waiting without polling** — an intermediate conditional catch parks a branch until a sibling task's committed change flips its condition false→true; `goexpr.WithDependencies` narrows re-evaluation to overlapping commits (ADR-006 v.3 §2.7 / SRD-048). |
 | [`native-structs/`](native-structs/) | The host's **own Go struct as process data** — `adapters.Wrap` returns a live view (wrap, not convert): `gobpm:"..."` tags, a host-side `SetPath` writing into the live struct, a gateway routing on `order.total`, and DataChange facts over wrapped commits (ADR-011 v.6 §2.9.5 / SRD-045). |
+| [`standard-loop/`](standard-loop/) | **Iteration — a Standard Loop** (§13.3.6) — a Service Task marked `WithLoop` re-runs while its condition holds, reading the engine-published 0-based `loopCounter` each pass; the same marker loops a Sub-Process by re-opening its child scope per iteration, and `WithTestBefore()` / `WithLoopMaximum(n)` select a pre-tested loop and cap the count (ADR-025 / SRD-054). |
 
 ## Service workers
 

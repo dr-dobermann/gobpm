@@ -135,3 +135,46 @@ func TestStandardLoopLeafE2E(t *testing.T) {
 		require.Equal(t, int32(2), count.Load())
 	})
 }
+
+// TestStandardLoopSubProcessE2E (SRD-054 M3/M4): a looped Sub-Process re-opens
+// its body scope once per iteration through the public engine surface.
+func TestStandardLoopSubProcessE2E(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	var count atomic.Int32
+
+	sl, err := activities.NewStandardLoop(loopCounterLt(t, 3))
+	require.NoError(t, err)
+
+	body, err := activities.NewSubProcess("body", activities.WithLoop(sl))
+	require.NoError(t, err)
+
+	bStart, err := events.NewStartEvent("b-start")
+	require.NoError(t, err)
+
+	op, err := gooper.New("work",
+		func(_ context.Context, _ service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			count.Add(1)
+
+			return nil, nil
+		})
+	require.NoError(t, err)
+	work, err := activities.NewServiceTask("work", op, activities.WithoutParams())
+	require.NoError(t, err)
+
+	bEnd, err := events.NewEndEvent("b-end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{bStart, work, bEnd} {
+		require.NoError(t, body.Add(e))
+	}
+	link(t, bStart, work)
+	link(t, work, bEnd)
+
+	proc := wrapBody(t, "std-loop-sp-e2e", body)
+
+	require.NoError(t, runFlows(t, proc))
+	require.Equal(t, int32(3), count.Load(),
+		"the looped sub-process body runs once per iteration")
+}
