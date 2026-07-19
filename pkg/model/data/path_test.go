@@ -345,6 +345,81 @@ func TestSchemaAtAndWalk(t *testing.T) {
 	})
 }
 
+// TestMapShape covers the map kind on the shape surfaces (SRD-047 M1, FR-3):
+// kindOf via infoFor, the SchemaAt `["*"]` slot, KeyLabel escaping, and
+// Walk's sorted, deterministic map descent.
+func TestMapShape(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+
+	t.Run("KeyLabel renders the canonical escaped step", func(t *testing.T) {
+		require.Equal(t, `["EUR"]`, data.KeyLabel("EUR"))
+		require.Equal(t, `["a\"b"]`, data.KeyLabel(`a"b`))
+		require.Equal(t, `["a\\b"]`, data.KeyLabel(`a\b`))
+		require.Equal(t, `["a[0].b"]`, data.KeyLabel("a[0].b"))
+	})
+
+	t.Run("a map's kind is \"map\"", func(t *testing.T) {
+		root := values.MustRecord(
+			values.F("fx", values.MustMap(map[string]float64{"EUR": 1.08})))
+
+		fis, err := data.SchemaAt(ctx, root, "")
+		require.NoError(t, err)
+		require.Equal(t,
+			[]data.FieldInfo{{Name: "fx", Kind: "map"}}, fis)
+	})
+
+	t.Run("SchemaAt into a map reports the [\"*\"] slot from the sorted-first"+
+		" entry", func(t *testing.T) {
+		root := values.MustRecord(
+			values.F("fx", values.MustMap(map[string]float64{
+				"USD": 1.0, "EUR": 1.08,
+			})))
+
+		fis, err := data.SchemaAt(ctx, root, "fx")
+		require.NoError(t, err)
+		require.Equal(t, []data.FieldInfo{
+			{Name: `["*"]`, Kind: "scalar", Type: "float64"},
+		}, fis)
+	})
+
+	t.Run("SchemaAt of an empty map has an unknown slot", func(t *testing.T) {
+		root := values.MustRecord(values.F("m", values.MustMap[int](nil)))
+
+		fis, err := data.SchemaAt(ctx, root, "m")
+		require.NoError(t, err)
+		require.Equal(t,
+			[]data.FieldInfo{{Name: `["*"]`, Kind: "unknown"}}, fis)
+	})
+
+	t.Run("Walk descends map entries sorted with [\"key\"] paths",
+		func(t *testing.T) {
+			nested := values.MustMap(map[string]data.Value{
+				"b": values.MustRecord(
+					values.F("price", values.NewVariable(7))),
+				"a": values.NewVariable("x"),
+			})
+			root := values.MustRecord(values.F("m", nested))
+
+			var order []string
+
+			kinds := map[string]string{}
+			require.NoError(t, data.Walk(ctx, root,
+				func(path string, fi data.FieldInfo) {
+					order = append(order, path)
+					kinds[path] = fi.Kind
+				}))
+
+			require.Equal(t, []string{
+				"", ".m", `.m["a"]`, `.m["b"]`, `.m["b"].price`,
+			}, order)
+			require.Equal(t, "map", kinds[".m"])
+			require.Equal(t, "scalar", kinds[`.m["a"]`])
+			require.Equal(t, "record", kinds[`.m["b"]`])
+		})
+}
+
 // TestParsePath covers the write-side path parser (SRD-043 T-1): the leading
 // segment is itself a step — a field OR an index — and an empty path is nil.
 func TestPathsOverlap(t *testing.T) {

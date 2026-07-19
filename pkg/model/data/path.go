@@ -98,6 +98,19 @@ func nextStep(rest, path string) (Step, string, error) {
 	}
 }
 
+// keyEscaper escapes the two characters that collide with the `["key"]` path
+// syntax; every other character rides verbatim (SRD-047 §4.3).
+var keyEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+
+// KeyLabel renders a map key as its canonical escaped path-step form —
+// `["key"]` with `\` and `"` backslash-escaped — the exact form the path
+// lexer parses back. It is the map counterpart of the "[i]" index label,
+// shared by shape walks, diff paths, and error texts. Note: an empty key
+// renders `[""]`, which is not a parseable step (map keys are non-empty).
+func KeyLabel(key string) string {
+	return `["` + keyEscaper.Replace(key) + `"]`
+}
+
 func pathErr(format string, args ...any) error {
 	return errs.New(
 		errs.M(format, args...),
