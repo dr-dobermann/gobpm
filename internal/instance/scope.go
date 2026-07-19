@@ -5,6 +5,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
@@ -127,6 +128,24 @@ func (sc *instanceScope) bindEventPayloadAt(
 	// A birth-init commit is initial state, not a change — its changed-path
 	// set is dropped, no DataChange facts (SRD-044 §4.4).
 	_, err := sc.plane.Commit(path, dd...)
+
+	return err
+}
+
+// bindLoopCounterAt publishes the current 0-based Standard-Loop iteration
+// ordinal as a `loopCounter` datum at path (SRD-054 FR-10), so the loop
+// condition and the inner activity resolve it by name via scope walk-up. The
+// changed-path set is dropped — an engine-maintained iteration counter is not a
+// modeled data change, so it raises no DataChange facts.
+func (sc *instanceScope) bindLoopCounterAt(
+	path scope.DataPath, counter int,
+) error {
+	datum := data.MustParameter("loopCounter",
+		data.MustItemAwareElement(
+			data.MustItemDefinition(values.NewVariable(counter)),
+			data.ReadyDataState))
+
+	_, err := sc.plane.Commit(path, datum)
 
 	return err
 }

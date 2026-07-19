@@ -753,7 +753,7 @@ func (t *track) run(
 			return
 		}
 
-		nextFlows, err := t.executeNode(ctx, step)
+		nextFlows, err := t.executeStep(ctx, step)
 		if err != nil {
 			t.discardOrFail(ctx, err)
 
