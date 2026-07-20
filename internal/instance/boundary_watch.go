@@ -91,8 +91,11 @@ func (ls *loopState) armBoundaries(
 			// An Error boundary is not a waiting catch — an error is not a published
 			// trigger that arrives on the hub. It is matched against the failing
 			// activity in the loop's evFailed handling (matchErrorBoundary, FR-9), so
-			// it is never armed as a hub waiter (SRD-029 §4.4).
-			if d.Type() == flow.TriggerError {
+			// it is never armed as a hub waiter (SRD-029 §4.4). An Escalation
+			// boundary is the same: an escalation is not a hub-published trigger but
+			// climbs the throwing execution's scope chain, resolved at the throw site
+			// by matchEscalationScopeChain (SRD-058 FR-2/FR-5).
+			if d.Type() == flow.TriggerError || d.Type() == flow.TriggerEscalation {
 				continue
 			}
 

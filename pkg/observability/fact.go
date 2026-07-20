@@ -26,6 +26,7 @@ const (
 	KindTaskState        Kind = "TaskState"        // user-task lifecycle
 	KindBoundary         Kind = "Boundary"         // boundary-event arm/fire/disarm
 	KindFault            Kind = "Fault"            // BPMN error / fault
+	KindEscalation       Kind = "Escalation"       // escalation throw/catch (non-fault, SRD-058)
 	KindDataChange       Kind = "DataChange"       // data-element change (observer-only)
 	KindScope            Kind = "Scope"            // nested-scope lifecycle (SRD-049)
 	KindCall             Kind = "Call"             // call-activity lifecycle (SRD-050)
@@ -95,9 +96,13 @@ const (
 	PhaseArmed    Phase = "Armed" // Boundary
 	PhaseDisarmed Phase = "Disarmed"
 
-	PhaseThrown   Phase = "Thrown" // Fault
+	PhaseThrown   Phase = "Thrown" // Fault / Escalation
 	PhaseCaught   Phase = "Caught"
 	PhaseUncaught Phase = "Uncaught"
+	// PhaseUnresolved: an escalation reached the scope-chain root with no
+	// matching catcher (SRD-058 FR-4). Non-fault — the escalation analog of the
+	// fault's Uncaught, but execution continues; logged, never silently dropped.
+	PhaseUnresolved Phase = "Unresolved" // Escalation
 
 	PhaseValueAdded   Phase = "Value_Added" // DataChange (= data.ChangeType)
 	PhaseValueUpdated Phase = "Value_Updated"
@@ -126,6 +131,7 @@ const (
 	AttrCorrelationKey    = "correlation_key"
 	AttrCorrelationValue  = "correlation_value"
 	AttrError             = "error"
+	AttrEscalation        = "escalation"
 	AttrChosenFlows       = "chosen_flows"
 	AttrVersion           = "version"
 	AttrAttempts          = "attempts"

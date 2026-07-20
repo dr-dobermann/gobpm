@@ -370,6 +370,12 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		// scope-level peer of evBoundary (ADR-023 v.2 §2.10, SRD-052 FR-7).
 		ls.fireScopeHandler(ctx, ev)
 
+	case evEscalate:
+		// an escalation throw raised a non-critical escalation — walk the
+		// throwing track's scope chain to the innermost matching catcher; the
+		// throwing token is not torn down here (SRD-058 FR-1/FR-2).
+		ls.applyEscalate(ctx, ev)
+
 	case evScopeTerminate:
 		// a Terminate End Event inside a sub-process — only its enclosing
 		// scope dies; the parent continues (§13.5.6, SRD-049 FR-11).

@@ -21,6 +21,7 @@ var kindLevel = map[Kind]slog.Level{
 	KindBoundary:         slog.LevelDebug,
 	KindJobState:         slog.LevelDebug,
 	KindFault:            slog.LevelDebug,
+	KindEscalation:       slog.LevelDebug,
 }
 
 // kindNoEcho lists kinds that never reach the operator log — the observer stream
@@ -44,6 +45,10 @@ var phaseOverride = map[phaseKey]slog.Level{
 	{KindFault, PhaseUncaught}:            slog.LevelError,
 	{KindJobState, PhaseRetriesExhausted}: slog.LevelWarn,
 	{KindJobState, PhaseLockReclaimed}:    slog.LevelWarn,
+	// An unresolved escalation is not a fault, but it is a likely modeling
+	// mistake (a throw with no reachable catcher) — surface it at Warn so it is
+	// logged, never silently dropped (SRD-058 FR-4).
+	{KindEscalation, PhaseUnresolved}: slog.LevelWarn,
 }
 
 // loggable reports whether an event of this kind is echoed to the operator log
