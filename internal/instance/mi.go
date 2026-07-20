@@ -142,10 +142,24 @@ func (it miIterator) beforeClose(
 // publishes the assembled output collection once (the visibility barrier) and
 // the activity completes.
 func (it miIterator) afterDrain(
-	ctx context.Context, _ *loopState, host *track, node flow.Node,
+	ctx context.Context, ls *loopState, host *track, node flow.Node,
 ) (bool, error) {
 	st := host.miState
 	st.completed++
+
+	// publish the §2.9 attributes at the host scope (parallel does this per drain
+	// via bindParallelCounters; sequential publishes them only on the next pass,
+	// so a behavior throw at the last completion needs them here) and throw the
+	// behavior event before the host resumes (SRD-056.B FR-6/FR-7).
+	if err := ls.bindMICounters(
+		host.scopePath, st.numberOfInstances, 1, st.completed, 0); err != nil {
+		return false, err
+	}
+
+	if err := ls.throwMIBehavior(
+		ctx, it.mi, host, node, st.completed); err != nil {
+		return false, err
+	}
 
 	done := st.completed >= st.numberOfInstances
 	if !done && it.mi.CompletionCondition() != nil {
@@ -183,30 +197,39 @@ func (it miIterator) afterDrain(
 func (it miIterator) evalCompletion(
 	ctx context.Context, host *track, node flow.Node,
 ) (bool, error) {
-	frame, err := host.instance.sc.openFrameAt(
-		"mi-completion", node.ID(), host.scopePath)
+	return evalBoolAtHost(
+		ctx, host, "mi-completion", node.ID(), it.mi.CompletionCondition())
+}
+
+// evalBoolAtHost evaluates a boolean expression against a transient frame at the
+// host scope, where the loopCounter and the §2.9 attributes are published (the
+// shape completionCondition and a Complex behavior condition share). A
+// non-boolean result is a modeling error surfaced to the caller.
+func evalBoolAtHost(
+	ctx context.Context, host *track, label, nodeID string,
+	expr data.FormalExpression,
+) (bool, error) {
+	frame, err := host.instance.sc.openFrameAt(label, nodeID, host.scopePath)
 	if err != nil {
 		return false, err
 	}
 	defer frame.Discard()
 
 	res, err := host.instance.ExpressionEngine().Evaluate(
-		ctx, it.mi.CompletionCondition(),
-		newExecEnv(host.instance, frame, nil))
+		ctx, expr, newExecEnv(host.instance, frame, nil))
 	if err != nil {
 		return false, err
 	}
 
-	met, ok := res.Get(ctx).(bool)
+	b, ok := res.Get(ctx).(bool)
 	if !ok {
 		return false, errs.New(
-			errs.M("Multi-Instance completionCondition evaluated to a "+
-				"non-boolean value"),
+			errs.M("Multi-Instance expression evaluated to a non-boolean value"),
 			errs.C(errorClass, errs.TypeCastingError),
-			errs.D("node_id", node.ID()))
+			errs.D("node_id", nodeID))
 	}
 
-	return met, nil
+	return b, nil
 }
 
 // publishOutput commits the staged output collection at the host scope under the

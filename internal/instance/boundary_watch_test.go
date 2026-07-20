@@ -35,12 +35,14 @@ var errRegRejected = errors.New("registration rejected")
 // track (see the failEventProducer note in message_flow_test.go). regErr, when set,
 // fails every registration to exercise the arm-failure fault path.
 type recordingProducer struct {
-	mu       sync.Mutex
-	watch    *boundaryWatch
-	regIDs   []string
-	unreg    []string
-	regErr   error
-	unregErr error
+	mu           sync.Mutex
+	watch        *boundaryWatch
+	regIDs       []string
+	unreg        []string
+	propagated   []flow.EventDefinition
+	regErr       error
+	unregErr     error
+	propagateErr error
 }
 
 func (r *recordingProducer) RegisterEvent(
@@ -73,9 +75,23 @@ func (r *recordingProducer) UnregisterEvent(
 }
 
 func (r *recordingProducer) PropagateEvent(
-	context.Context, flow.EventDefinition,
+	_ context.Context, d flow.EventDefinition,
 ) error {
-	return nil
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.propagated = append(r.propagated, d)
+
+	return r.propagateErr
+}
+
+// propagatedDefs returns a copy of the event definitions the host propagated,
+// so a Multi-Instance behavior test can count and identify the thrown events.
+func (r *recordingProducer) propagatedDefs() []flow.EventDefinition {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return append([]flow.EventDefinition(nil), r.propagated...)
 }
 
 // capturedWatch returns the last registered boundaryWatch (nil until a boundary arms).

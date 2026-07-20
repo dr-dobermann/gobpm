@@ -107,6 +107,21 @@ func miSubProcessInstanceOp(
 ) *Instance {
 	t.Helper()
 
+	inst, _ := miBehaviorInstance(t, op, mi, props...)
+
+	return inst
+}
+
+// miBehaviorInstance is miSubProcessInstanceOp returning the recording event
+// producer too, so a Multi-Instance behavior test can count the behavior events
+// the host throws (SRD-056.B).
+func miBehaviorInstance(
+	t *testing.T, op service.Operation,
+	mi *activities.MultiInstanceLoopCharacteristics,
+	props ...*data.Property,
+) (*Instance, *recordingProducer) {
+	t.Helper()
+
 	_ = data.CreateDefaultStates()
 
 	p, err := process.New("mi-sp", data.WithProperties(props...))
@@ -147,11 +162,11 @@ func miSubProcessInstanceOp(
 	s, err := snapshot.New(p)
 	require.NoError(t, err)
 
-	inst, err := New(s, scope.EmptyDataPath, enginert.Default(),
-		&recordingProducer{}, nil)
+	prod := &recordingProducer{}
+	inst, err := New(s, scope.EmptyDataPath, enginert.Default(), prod, nil)
 	require.NoError(t, err)
 
-	return inst
+	return inst, prod
 }
 
 // mustSeqMI builds a valid sequential Multi-Instance from the given options.

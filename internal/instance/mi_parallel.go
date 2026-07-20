@@ -196,6 +196,13 @@ func (ls *loopState) parallelInstanceDrained(
 		return err
 	}
 
+	// throw the behavior event (if any) before the host resumes (SRD-056.B
+	// FR-6), so its boundary fire is enqueued while the host boundary is armed.
+	if err := ls.throwMIBehavior(
+		ctx, grp.mi, grp.host, grp.node, grp.completed); err != nil {
+		return err
+	}
+
 	done := len(grp.open) == 0
 
 	// completionCondition true → the activity is done now: cancel the still-open
@@ -238,23 +245,11 @@ func (ls *loopState) parallelInstanceDrained(
 
 // bindParallelCounters publishes the §2.9 runtime attributes at the host scope:
 // the frozen instance count, the still-running count, and the completed /
-// terminated counts as they progress (SRD-056.A FR-9).
+// terminated counts as they progress (SRD-056.A FR-9) — the parallel shape's
+// call into the shared bindMICounters.
 func (ls *loopState) bindParallelCounters(grp *miGroup) error {
-	binds := []miBinding{
-		{name: "numberOfInstances", value: grp.n},
-		{name: "numberOfActiveInstances", value: len(grp.open)},
-		{name: "numberOfCompletedInstances", value: grp.completed},
-		{name: "numberOfTerminatedInstances", value: grp.terminated},
-	}
-
-	for _, b := range binds {
-		if err := ls.inst.sc.bindDataItemAt(
-			grp.host.scopePath, b.name, b.value); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return ls.bindMICounters(grp.host.scopePath,
+		grp.n, len(grp.open), grp.completed, grp.terminated)
 }
 
 // cancelOpenInstances cancels every still-open instance scope of the group as a
