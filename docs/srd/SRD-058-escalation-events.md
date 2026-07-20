@@ -2,11 +2,11 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-20 |
 | Owner | Ruslan Gabitov |
-| Implements | [ADR-006 v.4](../design/ADR-006-events-and-subscriptions.md) §2.2/§2.6 (propagation strategy — climb the scope chain to the innermost catcher; Escalation is **non-critical**, unresolved = **non-fault**, which this SRD realizes as *logged, not silently dropped* — §4.5), [ADR-018 v.1](../design/ADR-018-boundary-events-and-activity-interruption.md) (Escalation boundary — interrupting + **non-interrupting**), [ADR-023 v.1](../design/ADR-023-sub-process-and-call-activity.md) §2.6 (the scope-chain walk Escalation reuses); GitHub epic #90 |
+| Implements | [ADR-006 v.4](../design/ADR-006-events-and-subscriptions.md) §2.2/§2.6 (propagation strategy — climb the scope chain to the innermost catcher; Escalation is **non-critical**, unresolved = **non-fault**, which this SRD realizes as *logged, not silently dropped* — §4.5), [ADR-018 v.1](../design/ADR-018-boundary-events-and-activity-interruption.md) (Escalation boundary — interrupting + **non-interrupting**), [ADR-023 v.2](../design/ADR-023-sub-process-and-call-activity.md) §2.6 (the scope-chain walk Escalation reuses); GitHub epic #90 |
 | Upstream | [ADR-001 v.6](../design/ADR-001-execution-model.md) §4 (the single-writer loop the propagation runs on), [ADR-009 v.1](../design/ADR-009-per-instance-node-graph.md) (per-instance scope tree), [ADR-013 v.2](../design/ADR-013-instance-observability.md) (the fact kinds reused) |
 | Refines | SRD-029 (boundary events + the `matchErrorBoundary` pattern), SRD-049 (the scope tree + `matchErrorScopeChain` chain walk), SRD-052 (event-sub-process handler arming + `errorHandlerAt`) — by number, sideways. No new ADR: the conception is already decided in ADR-006 §2.2/§2.6, ADR-018, ADR-023 §2.6. |
 
@@ -314,7 +314,7 @@ ADR-018/ADR-023 Escalation deferral rows annotated "landed here").
 - Implements **ADR-006 v.4 §2.2/§2.6** (propagation; non-critical; unresolved
   non-fault — realized as logged, §4.5),
   **ADR-018 v.1** (Escalation boundary — interrupting + non-interrupting),
-  **ADR-023 v.1 §2.6** (the scope-chain walk). **No new ADR** — the conception is
+  **ADR-023 v.2 §2.6** (the scope-chain walk). **No new ADR** — the conception is
   decided; this SRD lands it (the ADR-018/ADR-023 "Escalation deferred to #90"
   rows are annotated "landed via this SRD" at sync).
 - Upstream: **ADR-001 v.6 §4**, **ADR-009 v.1**, **ADR-013 v.2**.
@@ -336,8 +336,24 @@ ADR-018/ADR-023 Escalation deferral rows annotated "landed here").
 
 ## §10 Implementation summary
 
-*Filled at landing: touched files/lines per milestone, verification results,
-milestone commit SHAs, deltas vs this draft.*
+Landed on `feat/escalation-events`. The §7 milestone table's **M2** was split
+into **M2a** (throw seam + Boundary catch) and **M2b** (event-sub-process start
+catch) for reviewability — actual sequence M1 · M2a · M2b · M3.
+
+| Milestone | Commit | Scope |
+|---|---|---|
+| SRD | `f26ce2e` | the document (Draft) |
+| M1 | `e7ff623` | FR-5 `boundaryTriggers += TriggerEscalation`; FR-7 `NewEscalationEventDefintion`→`…Definition` + `Must…` twin; `boundary_test` escalation case flipped rejected→accepted |
+| M2a | `d019a27` | FR-1 throw seam — `Escalate(code)` on `renv.RuntimeEnvironment`, `execEnv.Escalate`, `evEscalate`/`escCode`, `emitDefinition` reroute; FR-2/3/4 boundary catch — `escalation_watch.go` (`matchEscalationScopeChain`, `catchEscalationBoundary`, `escalationBoundaryOn`, `escalationMatches`, `reportUnresolvedEscalation`), Escalation excluded from hub boundary-arming; `KindEscalation`/`PhaseUnresolved`/`AttrEscalation` |
+| (doc) | `a62cfbd` | SRD open-question resolution (`KindEscalation`) + split note |
+| M2b | `3f239a9` | FR-6 event-sub-process start catch — `armScopeHandlers` fold, `escalationHandlerAt`, `catchEscalationHandler` (interrupting/non-interrupting + budget-aware), handler-before-boundary precedence |
+| M3 | `767a6aa` | NFR-5 `reportEscalationThrown` (Thrown fact); T-8 thresher e2e; `examples/escalation-events/` |
+
+**Files:** `internal/instance/{escalation_watch.go (new), event.go, execenv.go, loop.go, boundary_watch.go, scope_handler.go}`, `pkg/model/events/{escalation.go, boundary.go, event.go}`, `pkg/renv/runtimeenvironment.go`, `pkg/observability/{fact.go, echolevel.go}`, `generated/mockrenv/`, tests in `internal/instance/escalation_watch_test.go` + `pkg/model/events/{escalation,boundary,end}_test.go` + `pkg/thresher/escalation_test.go`, `examples/escalation-events/`.
+
+**Verification:** `make ci` green (mock-check, tidy, lint, build, race tests, diff-coverage **100% of the changed lines** (min 95%), govulncheck); every touched/new function ≥95% (the escalation helpers 100%); `examples/escalation-events/` smoked exit 0.
+
+**Deltas vs draft:** (a) M2 split into M2a/M2b; (b) the §3.5/§4.5 open question resolved to a dedicated `KindEscalation` (not `KindFault`+attribute); (c) T-2..T-6 landed as **instance-level** tests (the SRD §6 location) with T-8 the thresher e2e — no behavioural deltas.
 
 ## Open questions
 
