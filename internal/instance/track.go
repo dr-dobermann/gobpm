@@ -157,77 +157,27 @@ type stepInfo struct {
 // track processed single line of the process from start noed or
 // from fork of sequence flow.
 type track struct {
-	ctx context.Context
-	// cancel cancels THIS track's context only (a child of the instance context),
-	// so the loop can interrupt a single guarded track for an interrupting
-	// boundary without touching its siblings (SRD-029 FR-4). Loop-owned: derived
-	// and stored by the loop's spawn, called only by the loop. nil until spawned.
-	cancel   context.CancelFunc
-	lastErr  error
-	instance *Instance
-	foundation.BaseElement
-	// prev is the lineage of this track: the ids of the ancestor tracks it
-	// descends from (forks) or absorbed (synchronizing-join merges). Ids, not
-	// pointers, so a survivor does not retain the merged-away (dead) tracks.
-	prev []string
-	// hist is the append-only list of track-state transitions (SRD-001 M3).
-	// It is written only by this track's goroutine via record() and published
-	// copy-on-write, so token projection / path history / timing are derived
-	// from it lock-free by any reader.
-	hist atomic.Pointer[[]stepUpdate]
-	// mergedInto is the survivor track id this track was absorbed into at a
-	// synchronizing join. The loop is the sole writer (the absorbed track's own
-	// goroutine has already returned); path() readers are concurrent, so it is
-	// atomic like hist. nil until merged. SRD-022 FR-8.
+	lastErr    error
+	ctx        context.Context
+	hist       atomic.Pointer[[]stepUpdate]
+	instance   *Instance
+	cancel     context.CancelFunc
+	miState    *miState
 	mergedInto atomic.Pointer[string]
-	// parkCh resumes a track blocked at a reachability join (OR-join): the track
-	// suspends its goroutine on it and the loop signals once it has decided the
-	// track's fate (survivor → proceed, merged → return). Buffered(1) so the
-	// loop never blocks on the signal. SRD-022.
-	parkCh chan struct{}
-	// evtCh delivers a fired event to this track while it is parked in TrackWaitForEvent
-	// (SRD-027 FR-1). The per-instance loop is the SOLE sender and sole closer; the track
-	// only receives. Buffered to one slot (eventBufferDepth) so the loop never blocks on the
-	// send — with flip-on-dispatch the loop delivers at most one event per parked episode.
-	evtCh chan flow.EventDefinition
-	// taskID is the engine-minted id of a UserTask this track parks on as a human
-	// task (SRD-034). Set once by checkNodeType before parking; read by spawn on
-	// the loop goroutine (sequentially, before the run goroutine starts) so a task
-	// parked at construction is registered. Empty for a non-UserTask wait.
-	taskID string
-	// scopePath is the container scope this track executes in (SRD-049 FR-7):
-	// the instance root for top-level tracks, a child path for tracks seeded
-	// inside a sub-process. Inherited from the spawning track on a fork (a
-	// fork stays in its scope); set by the loop pre-spawn for scope seeds.
-	// Construction-immutable, so both goroutines read it lock-free.
-	scopePath scope.DataPath
-	// scopeSeg overrides the child-scope segment a scopeHost opens under
-	// (SRD-053): a non-interrupting Event Sub-Process handler gets a UNIQUE
-	// segment per fire, so concurrent handler instances don't collide on one
-	// path (and get serialized by the re-entry queue). Empty for every normal
-	// composite — scopeSegment(node) is used then. Construction-set by the loop.
-	scopeSeg string
-	steps    []*stepInfo
-	// msgDefIDs are the ids of the Message catch definitions this track parks on, set by
-	// checkNodeType at construction (SRD-027 FR-8). The loop indexes them → this track so a
-	// fired message resolves back to it; spawn reads them for a track that starts parked
-	// before the loop drains events. Construction-immutable, so the loop reads it lock-free.
-	msgDefIDs []string
-	// condDefs are the Conditional catch definitions this track parks on, set by
-	// checkNodeType alongside msgDefIDs (SRD-048 FR-7): never hub-registered — the
-	// loop arms them in its conditional registry (via the evWaiting emit mid-run,
-	// or recordBornWaiter for a track that starts parked). Construction-immutable,
-	// so the loop reads it lock-free.
-	condDefs []*events.ConditionalEventDefinition
-	m        sync.RWMutex
-	// loopCounter is the 0-based Standard-Loop iteration ordinal for a looped
-	// composite host, persisted across the per-iteration scope re-opens the
-	// re-entry seam drives (SRD-054 M3). Loop-owned — read and written only on
-	// the loop goroutine (onScopeOpen / resumeScopeHost); zero and inert for a
-	// non-looped host.
+	parkCh     chan struct{}
+	evtCh      chan flow.EventDefinition
+	taskID     string
+	scopePath  scope.DataPath
+	scopeSeg   string
+	foundation.BaseElement
+	prev        []string
+	msgDefIDs   []string
+	condDefs    []*events.ConditionalEventDefinition
+	steps       []*stepInfo
 	loopCounter int
-	state       trackState
+	m           sync.RWMutex
 	stopIt      atomic.Bool
+	state       trackState
 }
 
 // record appends a track-state transition to the history, copy-on-write, and

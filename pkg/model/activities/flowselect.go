@@ -82,7 +82,7 @@ func (a *activity) checkCondition(
 	cond data.FormalExpression,
 	of *flow.SequenceFlow,
 ) (bool, error) {
-	if cond.ResultType() != "bool" {
+	if cond.ResultType() != resultTypeBool {
 		return false, errs.New(
 			errs.M("invalid condition expression type"),
 			errs.C(errorClass, errs.TypeCastingError),
