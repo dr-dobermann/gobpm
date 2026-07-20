@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -291,6 +292,43 @@ func TestParallelMultiInstanceRuntimeAttributes(t *testing.T) {
 	require.Equal(t, Completed, inst.State())
 	require.Equal(t, int32(3), count.Load(),
 		"the never-true condition lets all instances run")
+}
+
+// TestParallelMultiInstanceBoundaryInterruptsAll (FR-10): an interrupting
+// boundary firing on a parallel-MI host tears down ALL N instance scopes (not
+// just the default segment), and drops the group.
+func TestParallelMultiInstanceBoundaryInterruptsAll(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	mi := mustParallelMI(t, activities.WithCardinality(cardExpr(t, 3)))
+	inst := miSubProcessInstance(t, new(atomic.Int32), mi)
+	inst.tracks = map[string]*track{}
+	ls := newLoopState(inst)
+	node := findNode(t, inst.s, "body")
+
+	host, err := newTrack(node, inst, nil)
+	require.NoError(t, err)
+
+	// simulate a fan-out with three in-flight instances: open their scopes and
+	// register the group.
+	grp := &miGroup{host: host, node: node, open: map[scope.DataPath]int{}}
+	for i := 0; i < 3; i++ {
+		child, err := host.scopePath.Append(
+			scopeSegment(node) + "-" + strconv.Itoa(i))
+		require.NoError(t, err)
+		require.NoError(t, inst.sc.plane.OpenScope(child))
+
+		ls.scopes[child] = &scopeEntry{
+			host: host, node: node, group: grp, ordinal: i,
+		}
+		grp.open[child] = i
+	}
+	ls.miGroups[host.ID()] = grp
+
+	ls.cancelHostScope(host)
+
+	require.Empty(t, ls.scopes, "all N parallel instance scopes are canceled")
+	require.NotContains(t, ls.miGroups, host.ID(), "the group is dropped")
 }
 
 // TestParallelMultiInstanceNonBoolCompletion: a completionCondition that

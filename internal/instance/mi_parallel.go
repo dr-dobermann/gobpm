@@ -257,10 +257,9 @@ func (ls *loopState) bindParallelCounters(grp *miGroup) error {
 	return nil
 }
 
-// cancelRemainingInstances tears down the group's still-open instance scopes as
-// a unit (a completionCondition fired, §2.7) and counts them terminated. Each
-// canceled instance keeps its pre-run output slot (its nil).
-func (ls *loopState) cancelRemainingInstances(grp *miGroup) {
+// cancelOpenInstances cancels every still-open instance scope of the group as a
+// unit (ADR-018 mechanism) and clears the open set, returning the count.
+func (ls *loopState) cancelOpenInstances(grp *miGroup) int {
 	paths := make([]scope.DataPath, 0, len(grp.open))
 	for p := range grp.open {
 		paths = append(paths, p)
@@ -268,8 +267,26 @@ func (ls *loopState) cancelRemainingInstances(grp *miGroup) {
 
 	for _, p := range paths {
 		ls.cancelScope(p, observability.PhaseCanceled)
-		grp.terminated++
 	}
 
 	grp.open = map[scope.DataPath]int{}
+
+	return len(paths)
+}
+
+// cancelRemainingInstances tears down the group's still-open instance scopes
+// because a completionCondition fired (§2.7) and counts them terminated. Each
+// canceled instance keeps its pre-run output slot (its nil).
+func (ls *loopState) cancelRemainingInstances(grp *miGroup) {
+	grp.terminated += ls.cancelOpenInstances(grp)
+}
+
+// cancelParallelGroup tears down all of a parallel Multi-Instance's open
+// instance scopes and drops the group — the companion for an interrupting
+// boundary firing on the fanned-out host (SRD-056.A FR-10). Unlike a
+// completionCondition (which completes the activity), the host is itself being
+// canceled, so the group is abandoned rather than resumed.
+func (ls *loopState) cancelParallelGroup(grp *miGroup) {
+	ls.cancelOpenInstances(grp)
+	delete(ls.miGroups, grp.host.ID())
 }
