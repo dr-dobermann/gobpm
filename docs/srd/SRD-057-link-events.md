@@ -240,6 +240,18 @@ return append([]*flow.SequenceFlow{}, ite.Outgoing()...), nil
 `Outgoing()` is the target catch's own downstream, so the token advances past
 the (bypassed) catch.
 
+### §3.6 Link nodes are not process entries (`internal/instance/instance.go`)
+
+The instance seeds an initial track at every **no-incoming** non-gateway/
+non-boundary node (start events, instantiating tasks). A Link **catch** has no
+incoming flow **by design** — so, without a guard, it would be wrongly seeded as
+an entry and try to register a (nonexistent) waiter. The entry-node discovery
+therefore skips any `flow.LinkEventNode` with a non-empty `LinkName()`: a catch
+(target) is reached only via the redirect, and a throw (source) is reached
+through its own incoming flow — neither is a process entry. This is the one
+`internal/instance` touch (the runner `track.go` is unchanged, NFR-1); it
+surfaced from the M3 e2e smoke, not the model layer.
+
 ## §4 Analysis & decisions
 
 ### §4.1 Pair by name at the container, not by object reference

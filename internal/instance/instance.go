@@ -389,28 +389,37 @@ func (inst *Instance) emit(ev trackEvent) {
 }
 
 // createTrack creates all initial tracks of the Instance.
+// seedableEntry reports whether n should seed an initial track: a no-incoming,
+// non-gateway, non-boundary node that is not the already-fired born start
+// (SRD-015 §4.4), not a scope-armed Event Sub-Process handler (ADR-023 v.2
+// §2.10 / SRD-052 FR-3), and not a Link event node — a Link catch (target) has
+// no incoming by design but is reached only via the redirect, and a Link throw
+// (source) is reached through its own incoming flow (ADR-006 v.4 §2.8).
+func seedableEntry(n, bornStart flow.Node) bool {
+	if bornStart != nil && n.ID() == bornStart.ID() {
+		return false
+	}
+
+	if isEventSubHandler(n) {
+		return false
+	}
+
+	if ln, ok := n.(flow.LinkEventNode); ok && ln.LinkName() != "" {
+		return false
+	}
+
+	if _, boundary := n.(flow.BoundaryEvent); boundary {
+		return false
+	}
+
+	return len(n.Incoming()) == 0 && n.NodeType() != flow.GatewayNodeType
+}
+
 func (inst *Instance) createTracks(
 	bornStart flow.Node, bornEvent flow.EventDefinition,
 ) error {
 	for _, n := range inst.s.Nodes {
-		// born-from-event: the instantiating start node is already fired, so it
-		// is not seeded as a track (it would otherwise park as a waiter); its
-		// outgoing targets are seeded below instead (SRD-015 §4.4).
-		if bornStart != nil && n.ID() == bornStart.ID() {
-			continue
-		}
-
-		// a top-level Event Sub-Process is a scope-armed handler, not an
-		// entry (ADR-023 v.2 §2.10): it is armed at the instance root scope,
-		// never seeded as an initial track (SRD-052 FR-3).
-		if isEventSubHandler(n) {
-			continue
-		}
-
-		_, boundaryEvent := n.(flow.BoundaryEvent)
-		if len(n.Incoming()) != 0 ||
-			n.NodeType() == flow.GatewayNodeType ||
-			boundaryEvent {
+		if !seedableEntry(n, bornStart) {
 			continue
 		}
 
