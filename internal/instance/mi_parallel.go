@@ -21,6 +21,7 @@ import (
 type miGroup struct {
 	host       *track
 	node       flow.Node
+	mi         multiInstance
 	collection data.Collection    // nil for a cardinality-driven Multi-Instance
 	staging    *values.Array[any] // pre-sized to N; nil when no output is assembled
 	open       map[scope.DataPath]int
@@ -28,6 +29,8 @@ type miGroup struct {
 	outputRef  string
 	outputItem string
 	n          int
+	completed  int
+	terminated int
 }
 
 // fanOutParallelMI opens all N instance scopes of a parallel Multi-Instance host
@@ -67,6 +70,7 @@ func (ls *loopState) fanOutParallelMI(
 	grp := &miGroup{
 		host:       host,
 		node:       node,
+		mi:         mi,
 		collection: col,
 		open:       make(map[scope.DataPath]int, n),
 		inputItem:  mi.InputDataItem(),
@@ -184,8 +188,33 @@ func (ls *loopState) parallelInstanceDrained(
 ) error {
 	grp := entry.group
 	delete(grp.open, path)
+	grp.completed++
 
-	if len(grp.open) > 0 {
+	// publish the running §2.9 attributes at the host scope for the
+	// completionCondition (and the body) to resolve by name.
+	if err := ls.bindParallelCounters(grp); err != nil {
+		return err
+	}
+
+	done := len(grp.open) == 0
+
+	// completionCondition true → the activity is done now: cancel the still-open
+	// instances as a unit (§2.7).
+	if !done && grp.mi.CompletionCondition() != nil {
+		met, err := miIterator{mi: grp.mi}.
+			evalCompletion(ctx, grp.host, grp.node)
+		if err != nil {
+			return err
+		}
+
+		if met {
+			ls.cancelRemainingInstances(grp)
+
+			done = true
+		}
+	}
+
+	if !done {
 		return nil
 	}
 
@@ -205,4 +234,42 @@ func (ls *loopState) parallelInstanceDrained(
 	})
 
 	return nil
+}
+
+// bindParallelCounters publishes the §2.9 runtime attributes at the host scope:
+// the frozen instance count, the still-running count, and the completed /
+// terminated counts as they progress (SRD-056.A FR-9).
+func (ls *loopState) bindParallelCounters(grp *miGroup) error {
+	binds := []miBinding{
+		{name: "numberOfInstances", value: grp.n},
+		{name: "numberOfActiveInstances", value: len(grp.open)},
+		{name: "numberOfCompletedInstances", value: grp.completed},
+		{name: "numberOfTerminatedInstances", value: grp.terminated},
+	}
+
+	for _, b := range binds {
+		if err := ls.inst.sc.bindDataItemAt(
+			grp.host.scopePath, b.name, b.value); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// cancelRemainingInstances tears down the group's still-open instance scopes as
+// a unit (a completionCondition fired, §2.7) and counts them terminated. Each
+// canceled instance keeps its pre-run output slot (its nil).
+func (ls *loopState) cancelRemainingInstances(grp *miGroup) {
+	paths := make([]scope.DataPath, 0, len(grp.open))
+	for p := range grp.open {
+		paths = append(paths, p)
+	}
+
+	for _, p := range paths {
+		ls.cancelScope(p, observability.PhaseCanceled)
+		grp.terminated++
+	}
+
+	grp.open = map[scope.DataPath]int{}
 }

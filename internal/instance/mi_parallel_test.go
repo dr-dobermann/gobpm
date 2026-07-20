@@ -5,18 +5,41 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/dr-dobermann/gobpm/generated/mockdata"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
+
+// attrAtLeast builds the boolean completionCondition "<attr> >= n" over a
+// §2.9 runtime attribute published at the host scope.
+func attrAtLeast(t *testing.T, attr string, n int) data.FormalExpression {
+	t.Helper()
+
+	return goexpr.Must(nil,
+		data.MustItemDefinition(values.NewVariable(false)),
+		func(ctx context.Context, ds data.Source) (data.Value, error) {
+			d, err := ds.Find(ctx, attr)
+			if err != nil {
+				return nil, err
+			}
+
+			v, _ := d.Value().Get(ctx).(int)
+
+			return values.NewVariable(v >= n), nil
+		})
+}
 
 // mustParallelMI builds a valid PARALLEL Multi-Instance — NewMultiInstance
 // without WithSequential (parallel is the §13.3.7 default).
@@ -193,6 +216,103 @@ func TestParallelMultiInstanceOutputItemMissing(t *testing.T) {
 
 	require.NotEqual(t, Completed, inst.State(),
 		"a missing outputDataItem faults the instance")
+}
+
+// TestParallelMultiInstanceCompletionCancelsRemainder (FR-8): once the
+// completionCondition holds, the still-running instances are canceled as a
+// unit. Bodies block per-instance so the truncation is deterministic (parallel
+// instant bodies would all complete first).
+func TestParallelMultiInstanceCompletionCancelsRemainder(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	const total = 5
+
+	gates := make([]chan struct{}, total)
+	for i := range gates {
+		gates[i] = make(chan struct{})
+	}
+
+	var canceled atomic.Int32
+
+	op, err := gooper.New("wait",
+		func(ctx context.Context, r service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			d, err := r.GetData("loopCounter")
+			if err != nil {
+				return nil, err
+			}
+
+			i, _ := d.Value().Get(ctx).(int)
+
+			select {
+			case <-gates[i]: // released → completes normally
+			case <-ctx.Done(): // canceled by the completionCondition
+				canceled.Add(1)
+			}
+
+			return nil, nil
+		})
+	require.NoError(t, err)
+
+	mi := mustParallelMI(t,
+		activities.WithCardinality(cardExpr(t, total)),
+		activities.WithCompletionCondition(
+			attrAtLeast(t, "numberOfCompletedInstances", 2)))
+
+	// release exactly two instances; the other three must be canceled — they
+	// never see their gate, so a completing run proves cancellation.
+	close(gates[0])
+	close(gates[1])
+
+	inst := miSubProcessInstanceOp(t, op, mi)
+	runToDone(t, inst)
+
+	require.Equal(t, Completed, inst.State())
+	require.Eventually(t, func() bool { return canceled.Load() == total-2 },
+		2*time.Second, 5*time.Millisecond,
+		"the three not-yet-completed instances are canceled")
+}
+
+// TestParallelMultiInstanceRuntimeAttributes (FR-9): the §2.9 attributes are
+// published at the host scope and readable by the completionCondition — a
+// never-true condition over numberOfInstances runs every instance (and a
+// missing attribute would fault the evaluation).
+func TestParallelMultiInstanceRuntimeAttributes(t *testing.T) {
+	var count atomic.Int32
+
+	mi := mustParallelMI(t,
+		activities.WithCardinality(cardExpr(t, 3)),
+		activities.WithCompletionCondition(
+			attrAtLeast(t, "numberOfInstances", 100)))
+
+	inst := miSubProcessInstance(t, &count, mi)
+	runToDone(t, inst)
+
+	require.Equal(t, Completed, inst.State())
+	require.Equal(t, int32(3), count.Load(),
+		"the never-true condition lets all instances run")
+}
+
+// TestParallelMultiInstanceNonBoolCompletion: a completionCondition that
+// evaluates to a non-boolean value faults the instance.
+func TestParallelMultiInstanceNonBoolCompletion(t *testing.T) {
+	var count atomic.Int32
+
+	me := mockdata.NewMockFormalExpression(t)
+	me.EXPECT().ResultType().Return("bool")
+	me.EXPECT().Language().Return("mock").Maybe()
+	me.EXPECT().Evaluate(mock.Anything, mock.Anything).
+		Return(values.NewVariable(42), nil).Maybe()
+
+	mi := mustParallelMI(t,
+		activities.WithCardinality(cardExpr(t, 3)),
+		activities.WithCompletionCondition(me))
+
+	inst := miSubProcessInstance(t, &count, mi)
+	runToDone(t, inst)
+
+	require.NotEqual(t, Completed, inst.State(),
+		"a non-boolean completionCondition faults the instance")
 }
 
 // TestParallelMultiInstanceInputGetAtError covers the per-instance split's
