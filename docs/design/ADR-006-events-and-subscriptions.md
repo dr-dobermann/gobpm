@@ -2,9 +2,9 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
-| Version | v.3 |
-| Date | 2026-07-15 |
+| Status | Draft |
+| Version | v.4 |
+| Date | 2026-07-20 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md) |
 
@@ -14,8 +14,9 @@
 > external trigger reaches a running instance (§2.1), the BPMN nodes that
 > *trigger* cancellation — Terminate End Event and boundary interruption (§2.2),
 > the wait-node subscription model (§2.3), the in-memory delivery contract (§2.4),
-> the waiter lifecycle (§2.5), Error events (§2.6), and Conditional events
-> (§2.7). Implementation rides the events-workstream SRD(s); some parts are
+> the waiter lifecycle (§2.5), Error events (§2.6), Conditional events (§2.7),
+> and Link events (§2.8 — intra-process GOTO by static name-pairing, the one
+> "event" that is not a subscription). Implementation rides the events-workstream SRD(s); some parts are
 > conception ahead of code, exactly as ADR-005 decides Inclusive/Complex joins
 > ahead of their implementation.
 
@@ -455,8 +456,97 @@ Conditional is loop-owned (the data plane is instance-scoped). The §2.4
 delivery contract is unchanged: subscribe-before-publish holds by
 construction (the subscription arms before any commit can re-evaluate it).
 
+### 2.8 Link events: intra-process GOTO by static name-pairing
+
+A Link event is a **connector between two sections of the same Process level** —
+"a paired Link Event can be used as an Off-Page Connector … [or] as generic
+'Go To' objects within the Process level. There can be multiple source Link
+Events, but there can only be one target Link Event" (§10.5.1). The **source**
+is an Intermediate **Throw** (filled marker); the **target** an Intermediate
+**Catch** (unfilled marker), paired by `name` (`LinkEventDefinition`:
+`name [0..1]`, `target: LinkEventDefinition [0..1]`, `source: LinkEventDefinition
+[0..*]` — the metamodel, `elements/event-definitions.md`; the many-sources /
+one-target cardinality is normative).
+
+**Link is not a wait node — it is flow redirection.** Every other catch in this
+ADR (Message, Timer, Signal, Conditional §2.7) *waits* for a trigger and lives in
+the §2.3 subscription table. A Link catch does **not**: it is the **entry point**
+of a flow segment, with no incoming sequence flow, activated only by its paired
+throw; the Link throw is the **exit** of a segment, with no outgoing sequence
+flow, that hands control across. There is no external or data trigger, no timing,
+no race — the pairing is **statically known**. So Link neither subscribes nor
+parks; reaching the source **redirects** the token to the target's outgoing
+flow. This makes it the simplest event kind here: not even loop-local
+*subscription* (§2.7's Conditional), just loop-local *resolution*.
+
+#### Positions
+
+| Position | Decision |
+|---|---|
+| **Intermediate Throw** (source) | **In scope.** The redirect origin; has incoming flow, no outgoing flow — reaching it hands to the paired target. |
+| **Intermediate Catch** (target) | **In scope.** The redirect destination; has outgoing flow, no incoming flow — a flow entry point, not a §2.3 waiter. |
+| **Boundary** | **Rejected — invalid by the standard.** "Link | NO (only in normal flow)" (`semantics/event-handling.md`; also ADR-018 "None and Link are invalid on a boundary"). A Link trigger on a boundary is refused at model validation. |
+| **Start / End** | **Rejected.** Link is catch/throw **intermediate only** ("only in normal flow", above; `conformance.md` lists it solely as IntermediateCatch/IntermediateThrow). A Link trigger on a Start or End event is refused at model validation. |
+| **Event-Based Gateway arm** | **Rejected.** A gateway arm is a *catching event that waits for a trigger* ([ADR-005 v.4 §2.12](ADR-005-gateways-and-joins.md) admits Message/Timer/Signal/Conditional); a Link catch does not wait, so it cannot be an arm — already excluded there. |
+
+#### Pairing & scope — static, per-container, validated at registration
+
+- **By name, within one flow-elements container.** Pairing is resolved inside a
+  single Process level: a Process, or a Sub-Process / Event Sub-Process scope. A
+  source **MUST NOT** pair across levels — "they cannot link a parent Process
+  with a Sub-Process" (§10.5.1). Each container has its own Link namespace.
+- **Many sources → one target.** For a given name in a container: **exactly one**
+  target (catch) and **one or more** sources (throws). This is validated
+  **at registration** (before any instance), fail-fast:
+  - a name with **no target** but ≥1 source → error (a throw into the void — the
+    deterministic, always-wrong case, unlike a signal broadcast with no
+    listener);
+  - a name with **two or more targets** → error (ambiguous destination);
+  - a source **or** target whose paired counterpart is in a **different**
+    container level → error (cross-level link).
+- **Resolution is a snapshot artifact.** Because pairing is static, the
+  name→target resolution is computed **once** when the process definition is
+  converted to its launch snapshot (the immutable template every instance
+  clones), not per-instance and not per-fire. The runtime carries a resolved
+  edge, not a name to look up.
+
+#### Execution — loop-local token redirect
+
+Reaching a Link **source** (throw) on a track resolves to its statically-paired
+**target** (catch) and continues the flow from the **target's outgoing sequence
+flow(s)** — a single hand-off on the instance's own event loop, synchronous,
+within the same instance and container. It does **not** propagate through the
+`EventHub` (§2.4) — there is no external delivery to route — and it registers no
+waiter (§2.5). The single-writer discipline ([ADR-001 v.6 §4](ADR-001-execution-model.md))
+holds: the redirect is applied by the one loop goroutine, exactly like following
+any sequence flow. Link's canonical use is **on-page loops**, so the redirect is
+**re-entrant** by construction — a target reached, flowed, and re-thrown resumes
+cleanly, the token accounting following the normal per-track lifecycle with no
+residue.
+
+#### Engine notes
+
+- **Link does not ride the subscription machinery — and does not motivate a
+  `SubscriptionKey()` generalization.** SRD-020/026 deferred unifying name-keyed
+  matching "until Link lands, the second name-keyed event." That premise is now
+  **retired**: Link is a static redirect, not a runtime name-matched
+  subscription, so **Signal remains the only** name-keyed hub subscription and
+  the generalization stays unjustified (one consumer). The `docs/backlog.md`
+  item is re-scoped accordingly.
+- **The Link throw diverges from the generic throw path.** The existing
+  intermediate-throw `Exec` emits its definitions through the producer and then
+  returns its outgoing flows; a Link throw has **no** outgoing flow and emits
+  **no** hub event — it yields the resolved target's outgoing flows instead. The
+  landing SRD gives Link its own throw/redirect handling rather than routing it
+  through `PropagateEvent`.
+
 ## 3. Consequences
 
+- **Link events express intra-process GOTO without a subscription (v.4).** On-page
+  loops and off-page connectors resolve as a static, validated name-pairing and a
+  loop-local token redirect — no hub round-trip, no waiter, no timing race — the
+  simplest event kind, decided against the wait-node model it superficially
+  resembles.
 - **Event delivery is a contract, not an accident.** Callers know: a present
   waiter is guaranteed delivery; a thrown-into-the-void signal is a no-op;
   messages are broker-buffered; nothing is durable. The "lost event" ambiguity is
@@ -540,7 +630,9 @@ Advisory, not gating — for the implementing SRD(s):
 None. The delivery contract (§2.4), the waiter lifecycle (§2.5), the inbound
 delivery edge and per-instance subscription identity (§2.1), the
 cancellation-trigger nodes (§2.2 — Terminate + interrupting/non-interrupting
-boundary), and the wait-node subscription model (§2.3) are decided as conception.
+boundary), the wait-node subscription model (§2.3), Conditional events (§2.7),
+and Link events (§2.8 — static intra-container pairing, loop-local redirect, not
+a subscription) are decided as conception.
 The in-memory wait-release mechanics are delegated to ADR-007, durable
 rehydration to the persistence ADR, and scope-chain Error/Escalation propagation
 lands with the sub-process/boundary workstream — these are delegations, not open
@@ -595,6 +687,7 @@ questions.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.4 | 2026-07-20 | Ruslan Gabitov | **Draft.** Added **§2.8 "Link events: intra-process GOTO by static name-pairing"** — the Link conception the taxonomy rows named but never decided. **Key decision: Link is not a wait node.** Unlike every other catch in this ADR (Message/Timer/Signal/Conditional §2.7), a Link catch does not subscribe or park — it is a flow **entry point** (no incoming sequence flow, activated only by its paired throw), and a Link throw is a flow **exit** (no outgoing sequence flow) that **redirects** the token. **Positions:** Intermediate Throw (source) + Intermediate Catch (target) only; Boundary **rejected** (`event-handling.md` "Link | NO (only in normal flow)"; ADR-018), Start/End **rejected** (intermediate-only, `conformance.md`), Event-Based-Gateway arm **rejected** (an arm waits; Link does not — already excluded by ADR-005 v.4 §2.12). **Pairing:** by `name` within **one flow-elements container** (Process / Sub-Process level — "cannot link a parent Process with a Sub-Process", §10.5.1); **many sources → one target** (metamodel `source [0..*]` / `target [0..1]`, `event-definitions.md`); validated **at registration** fail-fast (no-target-with-sources, ≥2-targets, and cross-level pairing all errors); resolution is a **snapshot artifact** (computed once at definition→snapshot conversion, the runtime carries a resolved edge, not a name lookup). **Execution:** reaching the source redirects to the target's outgoing flow(s) — one synchronous hand-off on the instance loop, no `EventHub` propagation (§2.4), no waiter (§2.5), single-writer preserved (ADR-001 v.6 §4); re-entrant for on-page loops. **Engine notes:** Link **retires the `SubscriptionKey()` generalization premise** (SRD-020/026 deferred it "until Link — the second name-keyed event"; Link is a static redirect, not a name-matched subscription, so Signal stays the only one — `docs/backlog.md` re-scoped); the Link throw **diverges from the generic throw path** (no outgoing flow, no hub emit — its own redirect handling, not `PropagateEvent`). Added the §3 GOTO-without-subscription consequence; §2.8 listed in the scope blurb + §6. Standard-grounded against `docs/bpmn-spec/` (§10.5.1, `event-definitions.md` LinkEventDefinition cardinality, `semantics/event-handling.md` boundary-invalid, `conformance.md` positions). Conception; the accompanying SRD-055 implements. |
 | v.3 | 2026-07-15 | Ruslan Gabitov | Added **§2.7 "Conditional events: status-based triggering by commit-diff"** — the Conditional conception the taxonomy rows named but never decided. **Positions:** Intermediate Catch + Boundary (interrupting/non-interrupting, Tables 10.89/10.90) + **Event-Based Gateway arms** (closing the ADR-005 §2.12 arms deferral; `gateways.md` lists Conditional among the gateway's catching events) in scope; **top-level Conditional Start not supported indefinitely** — an engine choice grounded in Table 10.84's verbatim prohibition ("MUST NOT refer to the data context or instance attribute of the Process … MAY refer to static Process attributes and states of entities in the environment", access mechanisms "out of scope of the standard") + the engine having no such surface (reference engines reduce it to an explicit evaluate-API); **Event Sub-Process start is the planned Conditional-start home** (inside a live instance the condition legally reads the enclosing scope per §10.4.3) — decided now, lands with Sub-Processes. **Evaluation:** instance-scope data context (§10.4.3); evaluated at arm (an arm-time true fires — reference-engine behavior) then re-evaluated on **committed** data change only — the ADR-011 v.6 §2.9.4 commit-diff seam is the change signal (mid-activity writes never fire a conditional); the normative **false→true edge rule** (Table 10.84: "MUST become false and then true before the Event can be triggered again") realized as per-subscription edge state, governing non-interrupting boundary re-fires; opaque-expression granularity = re-evaluate all armed conditionals per non-empty commit by default, with an OPT-IN declared watched-paths filter settled as ONE uniform per-subscription rule with NO processing modes at any level: the expression carries an optional `Dependencies() []string` capability (`data.DependencyLister`; goexpr authors declare via `WithDependencies`, declarative expressions implement it structurally, a conservative codegen source analyzer may derive it) — absent/nil → the CE re-evaluates on every non-empty commit (the safe fallback: a missing statement costs performance, never correctness — which is why no mode or completeness validation exists); non-empty → re-evaluate only when the commit-diff intersects (segment-prefix); explicitly-empty rejected at construction (the never-fire trap); runtime read-tracing rejected (opaque closures take data-dependent paths and can bypass the data source via captured live structs → silently incomplete inferred sets); multi-fire ordering: one commit → one snapshot → evaluate per the rule, apply fires in arming order, a disarming fire voids later-collected deliveries. **Ownership:** conditional subscriptions are **loop-local** — a deliberate exception to §2.5's sole-hub pattern (the trigger source is the instance's own commits; timer stays hub-owned as a clock-driven engine-wide source); delivery through the §2.1 inbound edge, single-writer preserved, §2.4 subscribe-before-publish holds by construction. Added the §3 data-driven-waiting consequence. Standard-grounded against the BPMN 2.0 PDF (Tables 10.84/10.89/10.90, §10.5.1, §10.4.3 — verified verbatim via the spec notebook; the verified clauses added to `event-handling.md`'s appendix so future reviews ground in-repo) and `docs/bpmn-spec/` (`gateways.md`, `sub-processes.md`, `events.md`). §7 refreshed at the bump moment: stale pins ADR-001 v.5→v.6 and ADR-013 v.1→v.2 corrected; ADR-011 v.6 / ADR-005 v.4 / ADR-018 v.1 references added (the ADR-018 §2.7 deferred row gains a decided-here annotation at landing). §2.5 clarified: Conditional is the deliberate loop-owned exception to the sole-hub pattern. Conception; the accompanying SRD implements. |
 | v.2 | 2026-06-27 | Ruslan Gabitov | Added **§2.6 "Error events: throw, propagation, and catch"** — the detailed Error *event* model §2.2 named but left at engine-note depth: the `Error`/`ErrorEventDefinition` object (`errorRef`→`errorCode`/`structureRef`, valid only at End / Boundary / Event-Sub-Process-Start positions per `conformance.md`); the two **throw** sources (Error End Event throwing its `Error`, §10.5.6/`end-events.md`; and an activity raising an interrupting error → `Active→Failing`, `tasks.md`/`activity-lifecycle.md`) and that the throw is **critical** (§10.5.1) with no Error Intermediate Throw Event; **propagation** as the scope-chain walk to the innermost enclosing catcher matching `errorRef` (§10.5.1/§10.5.7), matching **per Event Declaration**; **catch** at an always-interrupting Error Boundary (activity→`Failing`, token on the exception flow, cancel-after-flow per §10.5.6 §7; Error Event Sub-Process catch deferred with Sub-Processes); **unmatched→instance fault** as the engine choice for the spec's "unresolved Error"; and an **engine note** on the single-scope reality before Sub-Processes (no scope to climb to → an activity's error is caught only by a boundary on that same activity, and an Error End Event always resolves to an instance fault) cross-referencing [SAD-001 v.1 §15.3]. Fixed the §2.2 engine-note citation `§11`→`§10.5.7` and pointed it at §2.6. Refines pin updated ADR-001 v.5→v.6. Standard-grounded against `docs/bpmn-spec/` (§10.5.1/§10.5.6/§10.5.7, `event-definitions.md`/`tasks.md`/`end-events.md`/`conformance.md`/`activity-lifecycle.md`). No code/behaviour change — conception only. |
 | v.1 | 2026-06-18 | Ruslan Gabitov | Accepted. Event-delivery & event-triggered-cancellation conception relocated from ADR-001 and authored in full: §2.1 external-signal delivery (single serialized inbound edge, per-instance subscription identity, publication/direct/propagation/implicit reach per §10.5.1), §2.2 cancellation-trigger nodes (Terminate End Event §13.5.6 over ADR-001's cascade; interrupting/non-interrupting boundary §10.5.6/§13.5.3; Error/Escalation propagation + handler multiplicity as engine notes), §2.3 wait-node subscription **lifecycle** (subscribe/unsubscribe per subscriber kind — in-flow on arrival/consume, non-compensation boundary on activity entry/exit, compensation boundary armed on `Completed` until enclosing scope finishes; §13.5.2/§13.5.3/§13.5.5; release mechanics delegated to ADR-007, compensation *handling* + the optional off-by-default `compensate-on-terminate` extension delegated to a future Compensation ADR; terminate runs **no** compensation by default per §13.5.6), §2.4 in-memory delivery contract (subscribe-before-publish, no-waiter no-op, broker-buffered messages, non-durable; remediates audit 2.4), §2.5 sole-hub waiter lifecycle (`WaitGroup`-synchronized shutdown, no self-removal, no leak on `Stop` error, single-lock registry; remediates audit 2.5). Standard-grounded against `docs/bpmn-spec/` (§10.5.1/§10.5.6/§10.5.7, §13.5.2/§13.5.3/§13.5.6). Refines ADR-001 v.5; siblings ADR-002 v.2, ADR-007 v.1, ADR-009 v.1, ADR-013 v.1, ADR-014 v.1. Conception; implementation rides the events-workstream SRD(s). |
