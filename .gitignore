@@ -63,3 +63,4 @@ examples/call-activity/call-activity
 examples/event-subprocess/event-subprocess
 examples/maps/mapexample
 examples/standard-loop/standard-loop
+examples/multi-instance-sequential/multi-instance-sequential
