@@ -193,6 +193,14 @@ For signal events (broadcast, no correlation), see
 **instantiates** processes whose start trigger is a signal (one broadcast → one
 instance per signal-start declaration).
 
+For Link events (an intra-process **GOTO**), see
+[`examples/link-events/`](examples/link-events/) — a source Intermediate Throw
+hands the token to the same-name target Intermediate Catch within one Process
+level (static name-pairing, resolved at snapshot build, validated at
+registration — not a wait, no broadcast). The example is an **on-page loop**:
+two Link sources (an initial jump + a back-edge) redirect through one catch into
+the work task, until a data condition exits.
+
 For boundary events (interrupting an activity), see
 [`examples/boundary-events/`](examples/boundary-events/) — an **interrupting timer
 boundary** as a timeout on a long-running task: the 2s boundary fires before the

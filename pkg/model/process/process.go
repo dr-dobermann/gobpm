@@ -12,6 +12,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
@@ -280,6 +281,14 @@ func (p *Process) Validate() error {
 				errs.D("start_event_id", en.ID()),
 				errs.D("start_event_name", en.Name())))
 		}
+	}
+
+	// Link pairing (ADR-006 v.4 §2.8, SRD-057 §3.3): every Link name in this
+	// top-level container must have exactly one target catch and ≥1 source
+	// throw. A nested Sub-Process validates its own Link namespace via its own
+	// Validate hook (above), so this pass is single-level by construction.
+	if err := events.ValidateLinkPairing(p.Nodes()); err != nil {
+		ee = append(ee, err)
 	}
 
 	if len(ee) > 0 {

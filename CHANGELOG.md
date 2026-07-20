@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Link events (SRD-057, ADR-006 v.4 §2.8 — #90).** An intra-process GOTO: a
+  source Intermediate **Throw** hands the token to the same-name target
+  Intermediate **Catch** within one Process level. It is **not** a wait node —
+  the throw **redirects** (no broadcast, no correlation, no subscription). Pairing
+  is by name, resolved once at graph-wiring time (`WireClonedGraph`, so nested
+  Sub-Process links resolve for free, per instance) and validated **fail-fast at
+  registration** (exactly one target and ≥1 source per name; boundary/start/end
+  reject Link). New `examples/link-events/` (an on-page loop). `LinkEventDefinition`
+  reshaped from an unwired stub to the event-definition skeleton. Retires the
+  deferred `SubscriptionKey()` generalization (Link is a static redirect, not a
+  name-matched subscription).
+
 - **Standard Loop (SRD-054, ADR-025 — #88).** An activity marked `WithLoop`
   with `StandardLoopCharacteristics` (`loopCondition`, `testBefore`,
   `loopMaximum`) re-runs while its condition holds — a leaf Task **in place**, a

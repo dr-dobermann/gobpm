@@ -259,3 +259,27 @@ notebook) — the normative Conditional wording the tables above summarize:
   > "Timer and Conditional triggers are implicitly thrown. When they are
   > activated they wait for a time based or status based condition
   > respectively to trigger the catch Event."
+
+## Appendix: Link-event clauses (verbatim, BPMN 2.0 §10.5.1)
+
+Added 2026-07-20 — the normative Link-event wording behind ADR-006 §2.8. This
+text is carried verbatim in the vendored model's `pkg/model/events/link.go`
+doc comment (lifted from the BPMN 2.0 spec, §10.5.1 Link Events concept):
+
+> "A Link Event is a mechanism for connecting two sections of a Process. Link
+> Events can be used to create looping situations or to avoid long Sequence
+> Flow lines. **The use of Link Events is limited to a single Process level**
+> (i.e., they cannot link a parent Process with a Sub-Process). Paired Link
+> Events can also be used as 'Off-Page Connectors' for printing a Process
+> across multiple pages. They can also be used as generic 'Go To' objects
+> within the Process level. **There can be multiple source Link Events, but
+> there can only be one target Link Event.** When used to 'catch' from the
+> source Link, the Event marker will be unfilled. When used to 'throw' to the
+> target Link, the Event marker will be filled."
+
+Metamodel (`elements/event-definitions.md`, LinkEventDefinition):
+`name: String [0..1]`, `target: LinkEventDefinition [0..1]`,
+`source: LinkEventDefinition [0..*]` — the many-sources / one-target cardinality
+is normative. Positions (`conformance.md`): IntermediateCatch (target) +
+IntermediateThrow (source) only; boundary is invalid (the "Link | NO (only in
+normal flow)" row above).

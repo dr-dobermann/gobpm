@@ -1,19 +1,73 @@
 package events
 
-// LinkEventDefinition is a mechanism for connecting two sections of a Process. Link
-// Events can be used to create looping situations or to avoid long Sequence
-// Flow lines. The use of Link Events is limited to a single Process level
-// (i.e., they cannot link a parent Process with a Sub-Process).
-//
-// Paired Link Events can also be used as “Off-Page Connectors” for printing
-// a Process across multiple pages. They can also be used as generic “Go To”
-// objects within the Process level. There can be multiple source Link Events,
-// but there can only be one target Link Event. When used to “catch” from the
-// source Link, the Event marker will be unfilled. When used to “throw” to the
-// target Link, the Event marker will be filled.
+import (
+	"strings"
+
+	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
+)
+
+// LinkEventDefinition is the intra-process GOTO connector (ADR-006 v.4 §2.8):
+// a source Intermediate Throw event hands control to the same-name target
+// Intermediate Catch event within one Process level. It is not a wait node —
+// the throw redirects the token to the target's outgoing flow. Pairing is by
+// name, resolved statically at snapshot build (SRD-057), so the definition
+// carries only the name — the metamodel's source/target refs are not modeled
+// (gobpm pairs by name at the container).
 type LinkEventDefinition struct {
-	Target *LinkEventDefinition
-	Name   string
+	name string
 	definition
-	Sources []*LinkEventDefinition
 }
+
+// NewLinkEventDefinition builds a Link event definition with a required
+// non-empty name — the key that pairs a throw source to its catch target
+// within a container. An empty name is a classified error.
+func NewLinkEventDefinition(
+	name string,
+	baseOpts ...options.Option,
+) (*LinkEventDefinition, error) {
+	name = strings.TrimSpace(name)
+
+	if err := errs.CheckStr(
+		name, "a Link event requires a name", errorClass); err != nil {
+		return nil, err
+	}
+
+	d, err := newDefinition(baseOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	return &LinkEventDefinition{
+		definition: *d,
+		name:       name,
+	}, nil
+}
+
+// MustLinkEventDefinition is NewLinkEventDefinition that panics on error — for
+// tests and static process construction.
+func MustLinkEventDefinition(
+	name string,
+	baseOpts ...options.Option,
+) *LinkEventDefinition {
+	led, err := NewLinkEventDefinition(name, baseOpts...)
+	if err != nil {
+		errs.Panic(err)
+	}
+
+	return led
+}
+
+// Type returns the LinkEventDefinition's trigger — flow.TriggerLink.
+func (*LinkEventDefinition) Type() flow.EventTrigger {
+	return flow.TriggerLink
+}
+
+// Name returns the Link's pairing key.
+func (l *LinkEventDefinition) Name() string {
+	return l.name
+}
+
+// compile-time conformance to flow.EventDefinition.
+var _ flow.EventDefinition = (*LinkEventDefinition)(nil)
