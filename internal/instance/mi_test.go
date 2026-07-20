@@ -24,6 +24,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 // cardExpr builds an integer loopCardinality expression that evaluates to n
@@ -259,12 +260,12 @@ func TestMultiInstanceInputItemVisible(t *testing.T) {
 }
 
 // TestMultiInstanceRuntimeCounters: each instance sees the §13.3.7 runtime
-// attributes — loopCounter, numberOfInstances, numberOfCompletedInstances —
-// progressing per pass.
+// attributes — loopCounter, numberOfInstances, numberOfActiveInstances (always
+// 1 while an instance runs), numberOfCompletedInstances — progressing per pass.
 func TestMultiInstanceRuntimeCounters(t *testing.T) {
 	var (
 		mu   sync.Mutex
-		rows [][3]int
+		rows [][4]int
 	)
 
 	op, err := gooper.New("read-counters",
@@ -289,13 +290,17 @@ func TestMultiInstanceRuntimeCounters(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
+			na, err := read("numberOfActiveInstances")
+			if err != nil {
+				return nil, err
+			}
 			nc, err := read("numberOfCompletedInstances")
 			if err != nil {
 				return nil, err
 			}
 
 			mu.Lock()
-			rows = append(rows, [3]int{lc, ni, nc})
+			rows = append(rows, [4]int{lc, ni, na, nc})
 			mu.Unlock()
 
 			return nil, nil
@@ -308,8 +313,9 @@ func TestMultiInstanceRuntimeCounters(t *testing.T) {
 	runToDone(t, inst)
 
 	require.Equal(t, Completed, inst.State())
-	require.Equal(t, [][3]int{{0, 3, 0}, {1, 3, 1}, {2, 3, 2}}, rows,
-		"loopCounter / numberOfInstances / numberOfCompletedInstances per pass")
+	require.Equal(t, [][4]int{{0, 3, 1, 0}, {1, 3, 1, 1}, {2, 3, 1, 2}}, rows,
+		"loopCounter / numberOfInstances / numberOfActiveInstances / "+
+			"numberOfCompletedInstances per pass")
 }
 
 // TestParallelMultiInstanceRejected: a parallel Multi-Instance faults at
@@ -430,6 +436,83 @@ func TestMultiInstanceAssemblesOutput(t *testing.T) {
 	require.True(t, ok, "loopDataOutputRef is a collection")
 	require.Equal(t, []any{0, 1, 4}, col.GetAll(context.Background()),
 		"each instance's output assembled in order")
+}
+
+// TestMultiInstanceOutputUnpublishedMidRun (FR-10): the assembled output
+// collection is not visible in any scope during the run — it publishes once, at
+// completion (the visibility barrier).
+func TestMultiInstanceOutputUnpublishedMidRun(t *testing.T) {
+	var (
+		mu         sync.Mutex
+		midRunSeen bool
+	)
+
+	op, err := gooper.New("emit-out",
+		func(ctx context.Context, r service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			d, err := r.GetData("loopCounter")
+			if err != nil {
+				return nil, err
+			}
+
+			lc, _ := d.Value().Get(ctx).(int)
+
+			// mid-run the output collection must not resolve by name.
+			if _, e := r.GetData("squares"); e == nil {
+				mu.Lock()
+				midRunSeen = true
+				mu.Unlock()
+			}
+
+			return data.MustItemDefinition(
+				values.NewVariable(lc*lc), foundation.WithID("out")), nil
+		})
+	require.NoError(t, err)
+
+	mi := mustSeqMI(t,
+		activities.WithCardinality(cardExpr(t, 3)),
+		activities.WithOutputCollection("squares", "out"))
+
+	inst := miSubProcessInstanceOp(t, op, mi)
+	runToDone(t, inst)
+
+	require.Equal(t, Completed, inst.State())
+	require.False(t, midRunSeen,
+		"the output collection is invisible until completion (the barrier)")
+
+	_, err = inst.DataReader().GetData("squares")
+	require.NoError(t, err, "the output collection is published at completion")
+}
+
+// TestMultiInstanceEmitsIterationFacts (FR-13): each instance's scope-Opened
+// fact carries its 0-based loopCounter, so MI passes are individually
+// observable.
+func TestMultiInstanceEmitsIterationFacts(t *testing.T) {
+	var count atomic.Int32
+
+	mi := mustSeqMI(t, activities.WithCardinality(cardExpr(t, 3)))
+
+	inst := miSubProcessInstance(t, &count, mi)
+
+	rec := &obsRecorder{}
+	inst.AddObserver(rec.record)
+
+	runToDone(t, inst)
+
+	seen := map[string]bool{}
+	rec.mu.Lock()
+	for _, e := range rec.events {
+		if e.Kind == observability.KindScope &&
+			e.Phase == observability.PhaseOpened {
+			if lc, ok := e.Details[observability.AttrLoopCounter]; ok {
+				seen[lc] = true
+			}
+		}
+	}
+	rec.mu.Unlock()
+
+	require.True(t, seen["0"] && seen["1"] && seen["2"],
+		"each Multi-Instance pass emits a scope-Opened fact with its ordinal")
 }
 
 // TestMultiInstanceCompletionConditionTruncates: a completionCondition that

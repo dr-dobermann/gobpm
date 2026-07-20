@@ -487,7 +487,9 @@ func (ls *loopState) reportScope(
 // looped composite, or -1 when the node is not looped (so its scope facts omit
 // the attribute).
 func scopeLoopCounter(node flow.Node, host *track) int {
-	if standardLoopOf(node) != nil {
+	// any composite iterator (Standard Loop or Multi-Instance) publishes its
+	// pass ordinal to the iteration scope facts (SRD-054 FR-11, SRD-055 FR-13).
+	if compositeIteratorOf(node) != nil {
 		return host.loopCounter
 	}
 
