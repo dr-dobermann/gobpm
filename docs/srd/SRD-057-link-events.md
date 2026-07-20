@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-20 |
 | Owner | Ruslan Gabitov |
@@ -369,19 +369,50 @@ Accepted + RU twin**, sync linked docs (roadmap C6 row, epic #90, the
 
 ## §9 Definition of Done
 
-- [ ] FR-1…FR-6 implemented; every §6 test exists and passes.
-- [ ] `make ci` green; touched functions ≥80% (aim 100%) diff-coverage.
-- [ ] `internal/instance/track.go` unchanged (NFR-1); no new waiter/hub path.
-- [ ] `examples/link-events/` runs exit 0 under timeout with expected output;
-      its built binary gitignored.
-- [ ] An on-page-loop e2e proves re-entrancy (T-6), not just a single hop.
-- [ ] ADR-006 v.4 flipped to Accepted (+ RU twin); §10 filled; roadmap /
-      conformance-tracker / epic #90 synced.
+- [x] FR-1…FR-6 implemented; every §6 test exists and passes.
+- [x] `make ci` green; diff-coverage **100%** of 151 changed lines (min 95%);
+      touched functions 100%.
+- [x] `internal/instance/track.go` unchanged (NFR-1); no new waiter/hub path
+      (the one `internal/instance` touch is the §3.6 entry-node guard).
+- [x] `examples/link-events/` runs exit 0 with the expected output; its built
+      binary gitignored.
+- [x] An on-page-loop e2e proves re-entrancy (`TestLinkOnPageLoop`), not just a
+      single hop.
+- [x] ADR-006 v.4 flipped to Accepted (+ RU twin at landing); §10 filled;
+      roadmap / conformance-tracker / epic #90 synced (sync-linked-docs commit).
 
 ## §10 Implementation summary
 
-*Filled at landing: touched files/lines per milestone, verification results,
-milestone commit SHAs, deltas vs this draft.*
+Landed on `feat/link-events`, three milestone commits, each `make ci` green.
+
+| Milestone | Commit | Touched | Tests |
+|---|---|---|---|
+| Doc — SRD-057 | `2d6a901` | `SRD-057-link-events.md` | — |
+| M1 — model + positions + validation | `28dd709` | `events/link.go` (rewrite), `events/link_pairing.go` (new), `intermediate_{throw,catch}.go` (allow-lists), `process/process.go` + `activities/subprocess.go` (`Validate` wiring) | `TestLinkEventDefinition`, `TestLinkEventPositions`, `TestValidateLinkPairing`, `TestProcess/SubProcessValidatesLinkPairing` |
+| M2 — graph-wiring resolution + throw redirect | `57b5e5f` | `flow/link.go` (new — `LinkEventNode`/`LinkSource`/`resolveLinkEdges`), `flow/container.go` (`WireClonedGraph` step 4), `events/intermediate_{throw,catch}.go` (`linkTarget`, redirect, predicates) | `TestLinkThrowRedirect`, `TestSnapshotResolvesLinkEdge`, `TestSnapshotCloneIsolatesLinkEdge` |
+| M3 — e2e + example + doc sync | `cbd65e7` | `instance/instance.go` (`seedableEntry` — §3.6), `flow/link_test.go`, `thresher/link_test.go`, `examples/link-events/`, CHANGELOG/README/conformance-status | `TestLinkThrowToCatch`, `TestLinkOnPageLoop`, `TestResolveLinkEdges` |
+
+**Verification (V-results).**
+- **V-1 build/lint:** `make ci` green across all modules.
+- **V-2 tests:** the §6 suite passes across `events`, `flow`, `process`,
+  `activities`, `internal/instance{,/snapshot}`, `thresher`.
+- **V-3 diff-coverage:** 100% of 151 changed coverable lines (min 95%) — PASS;
+  every touched function 100%.
+- **V-4 smoke:** `examples/link-events/` runs exit 0 (three "iteration N
+  (reached via the Link redirect)" lines, then Completed).
+
+**Deltas vs the draft.**
+- **§3.4 refinement (M2).** The static resolution rides `WireClonedGraph`'s new
+  step-4 `resolveLinkEdges` (two `flow` capability interfaces the events nodes
+  implement) instead of a snapshot-stored `LinkTargets` map — the map is
+  top-level only and cannot reach a nested Sub-Process without a `flow`→`events`
+  cycle, whereas `WireClonedGraph` runs at every container level. Same ADR-006
+  §2.8 semantics (static resolution, loop-local redirect, catch bypass).
+- **§3.6 finding (M3).** The e2e smoke surfaced that the Link catch (no incoming
+  by design) was wrongly seeded as a process entry; fixed in
+  `instance.seedableEntry` (`track.go` untouched, NFR-1 holds).
+- **NFR-1 scope.** The one `internal/instance` touch is the entry-node guard;
+  the runner (`track.go`) is unchanged.
 
 ## Open questions
 
