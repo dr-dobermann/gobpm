@@ -160,7 +160,11 @@ defer sub.Cancel() // deregister + drain; sub.Dropped() counts any overflow
 (§13.3.6), помеченный `WithLoop`, повторяет её, пока булево условие истинно —
 листовую Task на месте, композит — переоткрывая свою дочернюю область на каждой
 итерации — предоставляя 0-based `loopCounter` условию и активности на каждом
-проходе ([`examples/standard-loop/`](examples/standard-loop/)).
+проходе ([`examples/standard-loop/`](examples/standard-loop/)). **Последовательный
+Multi-Instance** (§13.3.7) вместо этого выполняет активность по разу на каждый
+элемент коллекции (или фиксированное число раз), привязывая каждый элемент по
+имени и собирая выходы экземпляров в выходную коллекцию
+([`examples/multi-instance-sequential/`](examples/multi-instance-sequential/)).
 
 По условным событиям (**ожидание, управляемое данными** — ветка освобождается закоммиченными данными самого процесса, без опроса) см. [`examples/conditional-events/`](examples/conditional-events/) — промежуточный условный catch паркует ветку, пока коммит соседней задачи не переключит его условие из false в true; условные триггеры также охраняют активности как **граничные события** и участвуют в гонке как **дуги event-based-шлюза**. Руководство — [**docs/guides/conditional-events.md**](docs/guides/conditional-events.md) (EN).
 
@@ -212,7 +216,7 @@ make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (r
 - [Работа с данными процесса](docs/guides/data.md) — руководство по структурным данным (пути, ярусы, нативные структуры, наблюдение изменений; EN)
 - [Условные события](docs/guides/conditional-events.md) — ожидание, управляемое данными: позиции, правило фронта false→true, декларации зависимостей (EN)
 - [Композиция](docs/guides/composition.md) — sub-process'ы (вложенные области) и call activity (граница переиспользования через дочерний экземпляр): формы §13.3.4, видимость/изоляция данных, версионирование, прерывание области целиком (EN)
-- [Итерация активностей](docs/guides/iteration.md) — Standard Loop: loopCondition / testBefore / loopMaximum, loopCounter, лист на месте против переоткрытия области композита (EN)
+- [Итерация активностей](docs/guides/iteration.md) — Standard Loop + последовательный Multi-Instance: loopCondition / testBefore / loopMaximum, кардинальность / развёртка по коллекции / completionCondition, loopCounter и numberOf*-атрибуты, лист на месте против переоткрытия области композита (EN)
 - [Development Roadmap](docs/analytics/gobpm%20Development%20Roadmap.md) — workstream'ы + вехи
 - [Conformance scope](docs/bpmn-spec/conformance.md) и [BPMN 2.0 reference KB](docs/bpmn-spec/) · [Conformance status](docs/design/conformance-status.md) — что реализовано и что осталось, с привязкой к issues (EN)
 - [Documentation Index](README_INDEX.md) · [API Reference](https://pkg.go.dev/github.com/dr-dobermann/gobpm) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)

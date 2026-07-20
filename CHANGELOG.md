@@ -31,6 +31,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   iterated). New `examples/standard-loop/` and `docs/guides/iteration.md`.
   `LoopCharacteristics` changed from a struct to a sealed interface (breaking, on
   a previously unused stub).
+- **Multi-Instance — sequential (SRD-055, ADR-025 — #88).** An activity marked
+  `WithLoop` with `MultiInstanceLoopCharacteristics` runs a fixed number of
+  times, decided once at activation from an integer `loopCardinality` **or** the
+  size of the input collection (`loopDataInputRef`). Each instance sees its
+  collection element bound by name (`inputDataItem`) and publishes the
+  `loopCounter` / `numberOfInstances` / `numberOfActiveInstances` /
+  `numberOfCompletedInstances` runtime attributes; a `completionCondition` stops
+  launching the remaining instances early, and per-instance outputs
+  (`outputDataItem`) are assembled — in order — into an output collection
+  (`loopDataOutputRef`) published once at completion (the visibility barrier).
+  Sequential only — parallel Multi-Instance follows (SRD-056). New
+  `examples/multi-instance-sequential/`.
 
 ## [v0.9.0] - 2026-07-18
 

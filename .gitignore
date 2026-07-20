@@ -64,3 +64,4 @@ examples/event-subprocess/event-subprocess
 examples/maps/mapexample
 examples/standard-loop/standard-loop
 examples/link-events/link-events
+examples/multi-instance-sequential/multi-instance-sequential
