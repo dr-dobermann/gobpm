@@ -5,14 +5,14 @@
 | **Status** | Scoping (pre-SRD) |
 | **Date** | 2026-07-20 |
 | **Author** | dr-dobermann |
-| **Feeds** | a new **ADR-006 §2.8** (Link semantics) + **SRD-055** (the landing) |
+| **Feeds** | a new **ADR-006 §2.8** (Link semantics) + **SRD-057** (the landing) |
 | **Tracks** | GitHub epic **#90** (Compensation / Escalation / Cancel / Link events) |
 | **Conformance** | `docs/bpmn-spec/conformance.md:61` — `LinkEventDefinition` (IntermediateCatch = target, IntermediateThrow = source) |
 
 This is a **scoping brief**, not a spec. It captures the ground truth (what
 exists, what's missing, the closest patterns) so the SRD/ADR authoring can start
 evidence-first. It is a Living analytics artifact (EN-only), superseded once
-ADR-006 §2.8 + SRD-055 are Accepted.
+ADR-006 §2.8 + SRD-057 are Accepted.
 
 ## 1. What Link events are
 
@@ -83,7 +83,7 @@ synchronously within one instance's own track set).
 | **Runtime resume** | `internal/instance/conditional.go` (SRD-048's **loop-local** path — bypasses the EventHub entirely) as the primary template, cross-referenced with the **passive name-matched** shape of `internal/eventproc/eventhub/waiters/signal.go:21-30,44-100` | Link is synchronous, intra-process, name-keyed, no external source — like a signal in matching but like Conditional in *staying inside the instance loop* |
 | **Doc** | `docs/srd/SRD-048-conditional-events.md` section skeleton (§1 Background → §10 Impl-summary; M-per-commit milestones; §9 DoD) | the most recent event SRD; Conditional is the nearest lifecycle sibling |
 
-## 5. Recommended design direction (to be decided in ADR-006 §2.8 / SRD-055)
+## 5. Recommended design direction (to be decided in ADR-006 §2.8 / SRD-057)
 
 The scout's finding is decisive: **do NOT route Link through the EventHub's
 cross-instance broadcast** (that is signal's semantics, and it is exactly what
@@ -115,7 +115,7 @@ Open questions to settle in the SRD:
    re-entrant (a target caught, flowed, and re-thrown) without token leaks.
 5. **`SubscriptionKey()` generalization** — Link is the **second** name-keyed
    event type after Signal; SRD-020/026 deferred the polymorphic
-   `SubscriptionKey()` unification *until Link lands*. Decide whether SRD-055
+   `SubscriptionKey()` unification *until Link lands*. Decide whether SRD-057
    also lands that generalization or leaves it as a follow-up (see
    `docs/backlog.md` "Event-matching generalization").
 
@@ -138,8 +138,8 @@ Open questions to settle in the SRD:
 ## 7. Doc & tracking hooks
 
 - **ADR-006 §2.8** — Link's intra-process semantics (its next free section;
-  §2.7 is Conditional). Author concept-first, standard-grounded, before SRD-055.
-- **SRD-055** — the landing (next free SRD number; 054 = Standard Loop is the
+  §2.7 is Conditional). Author concept-first, standard-grounded, before SRD-057.
+- **SRD-057** — the landing (next free SRD number; 054 = Standard Loop is the
   current max). Mirror SRD-048's skeleton.
 - **Epic #90** — tick the Link item on landing (`SAD-001:447`,
   `conformance-status.md:82`).
