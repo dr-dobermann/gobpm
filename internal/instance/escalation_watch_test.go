@@ -245,8 +245,11 @@ func TestEscalationUnresolvedLogsNoFault(t *testing.T) {
 	require.NoError(t, inst.LastErr())
 	require.EqualValues(t, 1, after.Load(),
 		"execution continues past the unresolved throw")
-	require.True(t,
-		rec.phasesOf(observability.KindEscalation)[observability.PhaseUnresolved],
+
+	phases := rec.phasesOf(observability.KindEscalation)
+	require.True(t, phases[observability.PhaseThrown],
+		"the throw emits a Thrown fact (NFR-5)")
+	require.True(t, phases[observability.PhaseUnresolved],
 		"an unresolved escalation is logged (KindEscalation/Unresolved)")
 }
 

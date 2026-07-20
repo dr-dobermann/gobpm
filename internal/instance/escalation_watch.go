@@ -17,9 +17,30 @@ import (
 // Escalation End Event) on its own, and only an interrupting catcher cancels
 // its scope. Runs on the loop goroutine.
 func (ls *loopState) applyEscalate(ctx context.Context, ev trackEvent) {
+	ls.reportEscalationThrown(ev)
+
 	if !ls.matchEscalationScopeChain(ctx, ev.track, ev.escCode) {
 		ls.reportUnresolvedEscalation(ev)
 	}
+}
+
+// reportEscalationThrown emits the Thrown fact at the throw site — the throwing
+// node (the loop's position for ev.track) plus the code — the escalation peer of
+// the fault's KindFault/Thrown (track.go). It opens the Thrown → Caught /
+// Unresolved triple (NFR-5).
+func (ls *loopState) reportEscalationThrown(ev trackEvent) {
+	f := observability.Fact{
+		Kind:    observability.KindEscalation,
+		Phase:   observability.PhaseThrown,
+		Details: map[string]string{observability.AttrEscalation: ev.escCode},
+	}
+
+	if node := ls.position[ev.track.ID()]; node != nil {
+		f.NodeID = node.ID()
+		f.NodeName = node.Name()
+	}
+
+	ls.inst.report(f)
 }
 
 // matchEscalationScopeChain walks the throwing track's enclosing composites,
