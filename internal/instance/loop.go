@@ -80,6 +80,12 @@ type loopState struct {
 	// drained by the terminal-event accounting, closed + host-resumed at
 	// zero.
 	scopes map[scope.DataPath]*scopeEntry
+	// miGroups is the loop-owned parallel Multi-Instance registry (SRD-056.A): a
+	// host track id → the miGroup coordinating its N concurrent instance scopes.
+	// A parallel MI host fans out N scopes at once (sharing this one host) and
+	// resumes only when the group's last instance drains — the N-of-N barrier the
+	// per-scope scopeEntry model cannot express alone.
+	miGroups map[string]*miGroup
 	// conds is the loop-owned armed-conditional registry (SRD-048 FR-8): a SLICE,
 	// because arming order is the multi-fire contract (fires from one commit apply
 	// in arming order — ADR-006 v.3 §2.7). Armed by evWaiting / recordBornWaiter,
@@ -115,6 +121,7 @@ func newLoopState(inst *Instance) *loopState {
 		scopeHandlers:    map[scope.DataPath][]*scopeHandlerWatch{},
 		scopeInterrupted: map[scope.DataPath]bool{},
 		scopes:           map[scope.DataPath]*scopeEntry{},
+		miGroups:         map[string]*miGroup{},
 	}
 }
 
