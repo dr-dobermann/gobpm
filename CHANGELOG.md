@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Escalation events (SRD-058, ADR-006 v.4 §2.2/§2.6 · ADR-018 · ADR-023 v.2 §2.6 — #90).**
+  Error's **non-critical** twin: a throw (Escalation **Intermediate Throw** or
+  **End Event**) raises a non-fault escalation that climbs the throwing
+  execution's **scope chain** to the innermost matching catcher — an **Escalation
+  boundary** (interrupting *or* non-interrupting) or an **event-sub-process
+  Escalation start** (the inline handler wins over the boundary, §10.5.6) —
+  matched by escalation **code** (empty code = catch-all). Unlike an Error, the
+  throw **continues** its token (or ends normally) and never faults; an
+  **unresolved** escalation (no reachable catcher) is **logged** (a
+  `KindEscalation`/`Unresolved` fact at Warn) and execution continues — never
+  silently dropped. Reuses the landed Error propagation machinery
+  (`matchErrorScopeChain`) with three deltas: non-critical throw,
+  logged-not-faulted miss, non-interrupting-capable catch. Adds `Escalate(code)`
+  to `renv.RuntimeEnvironment` (the peer of `Terminate`), a new `KindEscalation`
+  observability kind (Thrown/Caught/Unresolved), and `examples/escalation-events/`.
+  Fixes the `NewEscalationEventDefintion` typo → `NewEscalationEventDefinition`
+  (**breaking**, on a pre-1.0 constructor) and adds a `MustEscalationEventDefinition`
+  twin. Only **Compensation** now remains of epic #90's four events.
+
 - **Link events (SRD-057, ADR-006 v.4 §2.8 — #90).** An intra-process GOTO: a
   source Intermediate **Throw** hands the token to the same-name target
   Intermediate **Catch** within one Process level. It is **not** a wait node —

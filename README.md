@@ -207,6 +207,14 @@ boundary** as a timeout on a long-running task: the 2s boundary fires before the
 ~4s activity finishes, cancels it, and routes the token onto the boundary's
 exception flow.
 
+For escalation events (a **non-critical** signal up the scope chain), see
+[`examples/escalation-events/`](examples/escalation-events/) — a sub-process
+raises an `OVER_BUDGET` escalation that an **interrupting Escalation boundary**
+catches by code and routes to a manager. Unlike an Error, an escalation does not
+fault the instance: it climbs to the innermost matching catcher (boundary or
+event-sub-process start, interrupting or non-interrupting), and an **unresolved**
+one is logged, never silently dropped.
+
 For composition, see [**docs/guides/composition.md**](docs/guides/composition.md).
 An **embedded Sub-Process** is a nested scope inside the instance (the inner
 flow reads the parent's data through the walk-up, its locals die with the
