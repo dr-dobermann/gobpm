@@ -666,6 +666,17 @@ func (te *throwEvent) emitDefinition(
 		return msgflow.Send(ctx, re, med.Message(), nil)
 	}
 
+	if eed, ok := ed.(*EscalationEventDefinition); ok {
+		// An escalation is not a broker broadcast: it climbs the throwing
+		// execution's scope chain to the innermost matching catcher (BPMN
+		// §10.5.6, ADR-006 §2.6, SRD-058 FR-1). The runtime resolves it — the
+		// throwing token continues (Intermediate Throw) or ends normally (End
+		// Event); it is never routed through the event hub.
+		re.Escalate(eed.Escalation().Code())
+
+		return nil
+	}
+
 	return te.emitEvent(re, re.EventProducer(), ed)
 }
 

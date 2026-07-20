@@ -171,7 +171,7 @@ cancellation applied to a composite host).
 | **Signal** | ✅ | interrupting + non-interrupting |
 | **Error** | ✅ | interrupting only (always) |
 | Conditional | ✅ landed later | decided in [ADR-006 v.3 §2.7](ADR-006-events-and-subscriptions.md) — loop-owned commit-diff re-evaluation, interrupting + non-interrupting |
-| Escalation | ❌ deferred | — |
+| Escalation | ✅ landed later | interrupting + non-interrupting — landed via the accompanying SRD under #90, resolved at the throw site by the scope-chain walk (the peer of the Error walk), not a hub-armed boundary |
 | Cancel | ❌ deferred | — (Transaction sub-process only) |
 | Compensation | ❌ deferred | — (needs the compensation machinery) |
 | Multiple / Parallel-Multiple | ❌ deferred | — |

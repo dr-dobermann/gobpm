@@ -43,4 +43,13 @@ type RuntimeEnvironment interface {
 	// observes Done() and exits canceled and the instance settles Terminated.
 	// Idempotent.
 	Terminate()
+
+	// Escalate raises a non-critical escalation with the given code (an
+	// Escalation Intermediate Throw or End Event, BPMN §10.5.6, ADR-006 §2.6):
+	// the engine walks the throwing execution's scope chain to the innermost
+	// matching Escalation catcher (a boundary or an event-sub-process start).
+	// Unlike Terminate the throwing token is NOT torn down — it continues (throw)
+	// or ends normally (end) — and an unresolved escalation is logged, never a
+	// fault (SRD-058 FR-1/FR-4). An empty code catches at a catch-all handler.
+	Escalate(code string)
 }

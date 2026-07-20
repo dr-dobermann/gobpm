@@ -62,7 +62,7 @@ func TestNewEndEvent(t *testing.T) {
 			foundation.WithID("escalation_item")))
 	require.NoError(t, err)
 
-	escEd, err := events.NewEscalationEventDefintion(esc)
+	escEd, err := events.NewEscalationEventDefinition(esc)
 	require.NoError(t, err)
 
 	t.Run("empty trigger list end event",
@@ -138,6 +138,10 @@ func TestNewEndEvent(t *testing.T) {
 			// the message trigger is now published to the broker (SRD-014),
 			// not propagated through the event bus.
 			mre.EXPECT().MessageBroker().Return(membroker.New()).Maybe()
+			// the escalation trigger climbs the scope chain via the runtime, not
+			// the event bus (SRD-058 FR-1): it calls Escalate with its code, so
+			// it no longer resolves its item through GetDataByID.
+			mre.EXPECT().Escalate("test_escalation_code").Return()
 			mre.EXPECT().GetDataByID(mock.Anything).
 				RunAndReturn(
 					func(s string) (data.Data, error) {

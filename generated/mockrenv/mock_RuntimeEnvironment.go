@@ -138,6 +138,46 @@ func (_c *MockRuntimeEnvironment_Clock_Call) RunAndReturn(run func() clock.Clock
 	return _c
 }
 
+// Escalate provides a mock function for the type MockRuntimeEnvironment
+func (_mock *MockRuntimeEnvironment) Escalate(code string) {
+	_mock.Called(code)
+	return
+}
+
+// MockRuntimeEnvironment_Escalate_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Escalate'
+type MockRuntimeEnvironment_Escalate_Call struct {
+	*mock.Call
+}
+
+// Escalate is a helper method to define mock.On call
+//   - code string
+func (_e *MockRuntimeEnvironment_Expecter) Escalate(code interface{}) *MockRuntimeEnvironment_Escalate_Call {
+	return &MockRuntimeEnvironment_Escalate_Call{Call: _e.mock.On("Escalate", code)}
+}
+
+func (_c *MockRuntimeEnvironment_Escalate_Call) Run(run func(code string)) *MockRuntimeEnvironment_Escalate_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRuntimeEnvironment_Escalate_Call) Return() *MockRuntimeEnvironment_Escalate_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockRuntimeEnvironment_Escalate_Call) RunAndReturn(run func(code string)) *MockRuntimeEnvironment_Escalate_Call {
+	_c.Run(run)
+	return _c
+}
+
 // EventProducer provides a mock function for the type MockRuntimeEnvironment
 func (_mock *MockRuntimeEnvironment) EventProducer() eventproc.EventProducer {
 	ret := _mock.Called()

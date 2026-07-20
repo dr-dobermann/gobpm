@@ -32,6 +32,12 @@ type trackEvent struct {
 	// evJobWaiting it carries the engine-minted JobID of a parked worker-dispatched
 	// ServiceTask instead, and ev.node the ServiceTask (SRD-036 §4.3).
 	taskID string
+	// escCode, for evEscalate, is the code of the escalation an escalation throw
+	// (Intermediate Throw or End) raised on ev.track. The loop walks the track's
+	// scope chain to the innermost matching catcher (SRD-058 FR-2). Unlike a
+	// fault, the throwing token is not torn down here — it continues (or ends)
+	// on its own; only an interrupting catcher cancels its scope.
+	escCode string
 	// flows, for evFork, are the extra outgoing flows (beyond the one the
 	// parent continues on) that the loop builds a new track for.
 	flows []*flow.SequenceFlow
@@ -79,6 +85,7 @@ var trackEventKindNames = [...]string{
 	evScopeTerminate:   "scopeTerminate",
 	evCallWaiting:      "callWaiting",
 	evScopeHandlerFire: "scopeHandlerFire",
+	evEscalate:         "escalate",
 }
 
 // String returns the lower-case event-kind name for logging.
@@ -179,4 +186,15 @@ const (
 	// The loop cancels the enclosing scope and runs the handler in it — the
 	// scope-level peer of evBoundary (ADR-023 v.2 §2.10, SRD-052 FR-5/FR-7).
 	evScopeHandlerFire
+	// evEscalate: an escalation throw (Escalation Intermediate Throw or End
+	// Event) raised a non-critical escalation on ev.track (ev.escCode is the
+	// code). Emitted from the throwing node's Exec via renv.Escalate, BEFORE the
+	// throwing track's own evMoved/evEnded, so FIFO lets the loop resolve the
+	// escalation first. The loop walks ev.track's scope chain to the innermost
+	// matching catcher — an Escalation boundary or event-sub-process start
+	// (SRD-058 FR-2). Unlike evFailed it does NOT tear down the throwing track:
+	// the token continues (Intermediate Throw) or ends normally (End Event) on
+	// its own; only an interrupting catcher cancels its scope. Unmatched at the
+	// root, it is logged (not faulted, never silently dropped — FR-4).
+	evEscalate
 )

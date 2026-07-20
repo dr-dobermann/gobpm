@@ -46,6 +46,21 @@ func (e *execEnv) Terminate() {
 	e.emit(trackEvent{kind: evScopeTerminate, track: e.track})
 }
 
+// Escalate raises a non-critical escalation on the executing track (an
+// Escalation Intermediate Throw or End Event, BPMN §10.5.6, ADR-006 §2.6): it
+// hands the loop an evEscalate carrying the escalation code, and the loop walks
+// the track's scope chain to the innermost matching catcher (SRD-058 FR-2).
+// Unlike Terminate the throwing token is not torn down — the loop only resolves
+// (or logs) the escalation; the token continues or ends on its own. A track-less
+// frame has no scope to escalate from, so it is a no-op.
+func (e *execEnv) Escalate(code string) {
+	if e.track == nil {
+		return
+	}
+
+	e.emit(trackEvent{kind: evEscalate, track: e.track, escCode: code})
+}
+
 // GetData resolves name frame-first, then through the container scopes.
 func (e *execEnv) GetData(name string) (data.Data, error) {
 	return e.frame.GetData(name)

@@ -59,7 +59,7 @@ func TestEscalationDefinition(t *testing.T) {
 	t.Run(
 		"empty escalation",
 		func(t *testing.T) {
-			_, err := events.NewEscalationEventDefintion(nil)
+			_, err := events.NewEscalationEventDefinition(nil)
 			require.Error(t, err)
 		})
 
@@ -67,7 +67,7 @@ func TestEscalationDefinition(t *testing.T) {
 		"normal",
 		func(t *testing.T) {
 			iDef := data.MustItemDefinition(values.NewVariable(42))
-			ed, err := events.NewEscalationEventDefintion(
+			ed, err := events.NewEscalationEventDefinition(
 				events.MustEscalation("test", "code", iDef))
 			require.NoError(t, err)
 			require.NotEmpty(t, ed)
@@ -88,7 +88,7 @@ func TestEscalationDefinition(t *testing.T) {
 				values.NewVariable(42),
 				foundation.WithID("42"))
 
-			ed, err := events.NewEscalationEventDefintion(
+			ed, err := events.NewEscalationEventDefinition(
 				events.MustEscalation("test", "code", iDef))
 			require.NoError(t, err)
 
@@ -110,7 +110,7 @@ func TestEscalationDefinition(t *testing.T) {
 
 			iDef := data.MustItemDefinition(values.NewVariable(42))
 
-			ed, err := events.NewEscalationEventDefintion(
+			ed, err := events.NewEscalationEventDefinition(
 				events.MustEscalation("test", "code", iDef))
 			require.NoError(t, err)
 
@@ -128,5 +128,26 @@ func TestEscalationDefinition(t *testing.T) {
 			require.Equal(t, 1, len(iDefs))
 			require.Equal(t, 100, iDefs[0].Structure().Get(ctx))
 			require.Equal(t, iDef.ID(), iDefs[0].ID())
+		})
+}
+
+func TestMustEscalationEventDefinition(t *testing.T) {
+	t.Run(
+		"normal",
+		func(t *testing.T) {
+			esc := events.MustEscalation("test", "code",
+				data.MustItemDefinition(values.NewVariable(42)))
+
+			ed := events.MustEscalationEventDefinition(esc)
+			require.NotNil(t, ed)
+			require.Equal(t, flow.TriggerEscalation, ed.Type())
+		})
+
+	t.Run(
+		"panics on nil escalation",
+		func(t *testing.T) {
+			require.Panics(t, func() {
+				_ = events.MustEscalationEventDefinition(nil)
+			})
 		})
 }

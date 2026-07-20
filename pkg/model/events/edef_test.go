@@ -129,11 +129,11 @@ func TestErrorDefinitions(t *testing.T) {
 			// test EscalationErrorDefinition
 			//
 			// empty params
-			_, err = events.NewEscalationEventDefintion(nil)
+			_, err = events.NewEscalationEventDefinition(nil)
 			require.Error(t, err)
 
 			// normal params
-			eed, err := events.NewEscalationEventDefintion(e)
+			eed, err := events.NewEscalationEventDefinition(e)
 			require.NoError(t, err)
 			require.NotEmpty(t, eed)
 			require.Equal(t, e.ID(), eed.Escalation().ID())
@@ -309,7 +309,7 @@ func TestEventDefClonerSatisfied(t *testing.T) {
 			data.MustItemDefinition(values.NewVariable(0),
 				foundation.WithID("esc_item")))
 		require.NoError(t, err)
-		eed, err := events.NewEscalationEventDefintion(esc)
+		eed, err := events.NewEscalationEventDefinition(esc)
 		require.NoError(t, err)
 
 		var cloner flow.EventDefCloner = eed
