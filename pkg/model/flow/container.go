@@ -304,6 +304,13 @@ func WireClonedGraph(
 		}
 	}
 
+	// 4. resolve Link edges: pair each Link throw source to its same-name catch
+	//    target within this cloned node set and record the resolved target on
+	//    the throw (ADR-006 v.4 §2.8, SRD-057). Confined to this container level
+	//    — the "single Process level" rule — because WireClonedGraph runs per
+	//    level (top-level snapshot and each Sub-Process inner graph).
+	resolveLinkEdges(clonedNodes)
+
 	return clonedFlows, nil
 }
 

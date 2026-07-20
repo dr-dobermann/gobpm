@@ -30,6 +30,12 @@ var intermediateThrowTriggers = set.New(
 // other kind internally) and continues. For a message trigger it is the
 // event-shaped peer of a SendTask (ADR-014 v.1).
 type IntermediateThrowEvent struct {
+	// linkTarget is the resolved target catch node for a Link throw, set by the
+	// graph wiring (flow.resolveLinkEdges) at snapshot build / per-instance
+	// clone. A Link throw's Exec redirects the token to its outgoing flows
+	// (ADR-006 v.4 §2.8); nil for every non-Link throw.
+	linkTarget flow.Node
+
 	throwEvent
 }
 
@@ -82,6 +88,24 @@ func (ite *IntermediateThrowEvent) Node() flow.Node {
 	return ite
 }
 
+// LinkName returns the Link pairing name when this throw carries a Link
+// definition, or "" otherwise. Implements flow.LinkEventNode.
+func (ite *IntermediateThrowEvent) LinkName() string {
+	name, _ := linkDefName(ite)
+
+	return name
+}
+
+// IsLinkSource reports that an intermediate throw is a Link source (the redirect
+// origin). Implements flow.LinkEventNode.
+func (*IntermediateThrowEvent) IsLinkSource() bool { return true }
+
+// SetLinkTarget records the resolved target catch node — set by the graph
+// wiring (flow.resolveLinkEdges). Implements flow.LinkSource.
+func (ite *IntermediateThrowEvent) SetLinkTarget(target flow.Node) {
+	ite.linkTarget = target
+}
+
 // Clone returns a per-instance copy of the event.
 func (ite *IntermediateThrowEvent) Clone() (flow.Node, error) {
 	te, err := ite.clone()
@@ -116,6 +140,21 @@ func (ite *IntermediateThrowEvent) Exec(
 	ctx context.Context,
 	re renv.RuntimeEnvironment,
 ) ([]*flow.SequenceFlow, error) {
+	// A Link throw redirects, it does not emit (ADR-006 v.4 §2.8): hand the
+	// token to the paired target catch's outgoing flows (resolved statically by
+	// the graph wiring). No hub event, and the throw has no outgoing flow of
+	// its own — the target catch is bypassed as a pure flow label.
+	if name, ok := linkDefName(ite); ok {
+		if ite.linkTarget == nil {
+			return nil, errs.New(
+				errs.M("IntermediateThrowEvent %q[%s]: Link %q has no resolved "+
+					"target catch", ite.Name(), ite.ID(), name),
+				errs.C(errorClass, errs.InvalidObject))
+		}
+
+		return append([]*flow.SequenceFlow{}, ite.linkTarget.Outgoing()...), nil
+	}
+
 	ers := []error{}
 
 	for _, ed := range ite.definitions {
@@ -141,6 +180,7 @@ var (
 	_ flow.SequenceTarget     = (*IntermediateThrowEvent)(nil)
 	_ flow.Node               = (*IntermediateThrowEvent)(nil)
 	_ flow.EventNode          = (*IntermediateThrowEvent)(nil)
+	_ flow.LinkSource         = (*IntermediateThrowEvent)(nil)
 	_ exec.NodeExecutor       = (*IntermediateThrowEvent)(nil)
 	_ msgflow.MessageProducer = (*IntermediateThrowEvent)(nil)
 )

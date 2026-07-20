@@ -70,6 +70,18 @@ func NewIntermediateCatchEvent(
 	return &IntermediateCatchEvent{catchEvent: *ce}, nil
 }
 
+// LinkName returns the Link pairing name when this catch carries a Link
+// definition, or "" otherwise. Implements flow.LinkEventNode.
+func (ice *IntermediateCatchEvent) LinkName() string {
+	name, _ := linkDefName(ice)
+
+	return name
+}
+
+// IsLinkSource reports that an intermediate catch is a Link target, not a
+// source. Implements flow.LinkEventNode.
+func (*IntermediateCatchEvent) IsLinkSource() bool { return false }
+
 // Node returns the event as a flow.Node.
 func (ice *IntermediateCatchEvent) Node() flow.Node {
 	return ice
@@ -118,6 +130,7 @@ var (
 	_ flow.SequenceTarget      = (*IntermediateCatchEvent)(nil)
 	_ flow.Node                = (*IntermediateCatchEvent)(nil)
 	_ flow.EventNode           = (*IntermediateCatchEvent)(nil)
+	_ flow.LinkEventNode       = (*IntermediateCatchEvent)(nil)
 	_ exec.NodeExecutor        = (*IntermediateCatchEvent)(nil)
 	_ exec.NodeDataProducer    = (*IntermediateCatchEvent)(nil)
 	_ eventproc.EventProcessor = (*IntermediateCatchEvent)(nil)

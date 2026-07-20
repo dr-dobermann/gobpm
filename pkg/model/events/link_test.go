@@ -1,8 +1,10 @@
 package events_test
 
 import (
+	"context"
 	"testing"
 
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -154,5 +156,60 @@ func TestValidateLinkPairing(t *testing.T) {
 			start, sigThrow,
 			linkThrow(t, "s1", "L"), linkCatch(t, "t1", "L"),
 		}))
+	})
+}
+
+// TestLinkThrowRedirect covers the Link throw's Exec redirect and the
+// flow.LinkEventNode/LinkSource surface (SRD-057 M2, FR-5).
+func TestLinkThrowRedirect(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+
+	t.Run("Exec returns the resolved target catch's outgoing flows",
+		func(t *testing.T) {
+			cat, err := events.NewIntermediateCatchEvent(
+				"cat", events.MustLinkEventDefinition("go"))
+			require.NoError(t, err)
+
+			end, err := events.NewEndEvent("end")
+			require.NoError(t, err)
+
+			f, err := flow.Link(cat, end) // the catch's downstream
+			require.NoError(t, err)
+
+			thr, err := events.NewIntermediateThrowEvent(
+				"thr", events.MustLinkEventDefinition("go"))
+			require.NoError(t, err)
+
+			thr.SetLinkTarget(cat) // what the graph wiring does
+
+			got, err := thr.Exec(ctx, nil) // the Link path never touches renv
+			require.NoError(t, err)
+			require.Equal(t, []*flow.SequenceFlow{f}, got)
+		})
+
+	t.Run("an unresolved Link throw Exec errs", func(t *testing.T) {
+		thr, err := events.NewIntermediateThrowEvent(
+			"thr", events.MustLinkEventDefinition("x"))
+		require.NoError(t, err)
+
+		_, err = thr.Exec(ctx, nil)
+		require.ErrorContains(t, err, "no resolved target")
+	})
+
+	t.Run("Link node predicates on throw and catch", func(t *testing.T) {
+		thr := linkThrow(t, "t", "n")
+		cat := linkCatch(t, "c", "n")
+
+		require.Equal(t, "n", thr.(flow.LinkEventNode).LinkName())
+		require.True(t, thr.(flow.LinkEventNode).IsLinkSource())
+		require.Equal(t, "n", cat.(flow.LinkEventNode).LinkName())
+		require.False(t, cat.(flow.LinkEventNode).IsLinkSource())
+
+		// a non-Link throw has no link name
+		sig, err := events.NewIntermediateThrowEvent("sig", signalDef(t, "s"))
+		require.NoError(t, err)
+		require.Equal(t, "", sig.LinkName())
 	})
 }

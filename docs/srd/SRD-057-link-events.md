@@ -84,24 +84,30 @@ never independently reached).
     container, so a cross-level pair surfaces as "no target"/"no source" on each
     side).
 
-- **FR-4 — static throw→target resolution in the snapshot**
-  (`internal/instance/snapshot/snapshot.go`). `snapshot.New` precomputes, per
-  container, a `LinkTargets map[string]string` (Link-throw-node-ID → target-
-  catch-node-ID) in the node pass (`snapshot.go:95-135`, alongside the
-  `hasConditionals`/`discoverInstantiatingStarts` precompute at `:165-166`) —
-  using a **non-recursive** per-container walk (not `walkNodesDeep`, which
-  recurses). The map is immutable, **shared by reference in `Clone`**
-  (`snapshot.go:296-298`, the `HasConditionals` precedent).
+- **FR-4 — static throw→target resolution at graph-wiring time**
+  (`pkg/model/flow/`). Rather than a snapshot-stored `LinkTargets` map (the
+  original sketch — top-level only, and it cannot reach a nested Sub-Process
+  without a `flow`→`events` cycle), the resolution rides the **one wiring
+  implementation for every level**: `flow.WireClonedGraph` gains a step 4,
+  `resolveLinkEdges(clonedNodes)` (`flow/link.go`), that pairs each Link throw
+  source to its same-name catch target **within that container's node set** and
+  records the resolved target on the throw. `WireClonedGraph` runs at the
+  top-level snapshot (`snapshot.New`/`Clone`) **and** inside each Sub-Process
+  inner-graph clone (`ElementsContainer.CloneGraph`), so nested-container Links
+  resolve **for free**, confined to their level, per instance. Two small `flow`
+  capability interfaces carry it: `LinkEventNode { LinkName() string;
+  IsLinkSource() bool }` (throw + catch) and `LinkSource { LinkEventNode;
+  SetLinkTarget(Node) }` (throw), implemented by the events nodes — so `flow`
+  needs no dependency on `events`.
 
 - **FR-5 — the Link throw redirects to its target's outgoing flows.** A Link
-  throw's `Exec` (`intermediate_throw.go:114-136`) resolves its target catch
-  node (the per-instance clone, via `LinkTargets` + the instance's cloned
-  `Nodes` map) and returns **the target catch's `Outgoing()`** instead of
-  emitting any definition or returning its own (empty) outgoing set. It emits
-  **no** hub event (no `emitDefinition`/`PropagateEvent`) — the ADR-006 §2.8
-  divergence from the generic throw path. The resolved target reference is wired
-  onto the throw clone during `Clone` (alongside `WireClonedGraph`,
-  `snapshot.go:147-160`), exactly as sequence flows are re-linked between clones.
+  throw's `Exec` (`intermediate_throw.go`) returns **the resolved target catch's
+  `Outgoing()`** (via the `linkTarget flow.Node` field `resolveLinkEdges` set at
+  wiring) instead of emitting any definition or returning its own (empty)
+  outgoing set. It emits **no** hub event (no `emitDefinition`/`PropagateEvent`)
+  — the ADR-006 §2.8 divergence from the generic throw path. An unresolved Link
+  throw (no target — impossible past registration validation) fails loud rather
+  than nil-deref.
 
 - **FR-6 — the redirect is re-entrant (on-page loops).** Link's canonical use
   is a loop back to an earlier point. Reaching a target, flowing, and reaching
@@ -189,33 +195,50 @@ exactly-one-target-and-≥1-source. `Process.Validate` calls it over `p.Nodes()`
 (after the existing L264-283 placement check); `SubProcess.Validate` calls it
 over its container's `Nodes()` — each call is naturally single-level.
 
-### §3.4 `snapshot.Snapshot` delta (`internal/instance/snapshot/snapshot.go`)
+### §3.4 Graph-wiring resolution (`pkg/model/flow/link.go` + `container.go`)
 
 ```go
-// LinkTargets maps a Link-throw node ID to its resolved target Link-catch
-// node ID, precomputed once by New per container (§3.4). Immutable; shared by
-// Clone — the HasConditionals precedent (snapshot.go:296-298).
-LinkTargets map[string]string
+// pkg/model/flow/link.go — the events nodes implement these, so flow needs no
+// dependency on events.
+type LinkEventNode interface {
+	Node
+	LinkName() string   // "" when the node carries no Link definition
+	IsLinkSource() bool // true = throw source, false = catch target
+}
+
+type LinkSource interface {
+	LinkEventNode
+	SetLinkTarget(target Node)
+}
+
+// resolveLinkEdges pairs each Link throw to its same-name catch within a node
+// set and records the target. Runs as WireClonedGraph step 4, so it fires at
+// every container level (top-level snapshot + each Sub-Process inner graph).
+func resolveLinkEdges(nodes map[string]Node) { /* bucket by name; SetLinkTarget */ }
 ```
 
-`New` fills it in the node pass (`:95-135`); `Clone` (`:284-321`) shares the map
-by reference and, in the wiring pass, sets each Link-throw clone's resolved
-target to the cloned catch node (`s.Nodes[LinkTargets[throwID]]`), alongside
-`WireClonedGraph`.
+`WireClonedGraph` calls `resolveLinkEdges(clonedNodes)` after its flow/default/
+boundary rewiring (`container.go`), so `snapshot.New`, `snapshot.Clone`, and
+`ElementsContainer.CloneGraph` all pick it up with **no snapshot-struct field**
+and **no per-caller change**.
 
 ### §3.5 Link throw redirect (`intermediate_throw.go` `Exec`)
 
 ```go
 // in Exec: a Link throw redirects instead of emitting.
-if ite.isLinkThrow() {            // its definition Type() == flow.TriggerLink
-	return ite.linkTarget.Outgoing(), nil   // the resolved target catch's flows
+if name, ok := linkDefName(ite); ok { // carries a LinkEventDefinition
+	if ite.linkTarget == nil {         // unresolved — fail loud, no nil-deref
+		return nil, errs.New(errs.M("… Link %q has no resolved target catch", name), …)
+	}
+	return append([]*flow.SequenceFlow{}, ite.linkTarget.Outgoing()...), nil
 }
 // … existing emit-definitions path for non-Link throws …
 return append([]*flow.SequenceFlow{}, ite.Outgoing()...), nil
 ```
 
-`ite.linkTarget flow.Node` is set at clone time (§3.4); `Outgoing()` is the
-target catch's own downstream, so the token advances past the (bypassed) catch.
+`ite.linkTarget flow.Node` is set by `resolveLinkEdges` at wiring time (§3.4);
+`Outgoing()` is the target catch's own downstream, so the token advances past
+the (bypassed) catch.
 
 ## §4 Analysis & decisions
 
@@ -306,9 +329,10 @@ shape — Link is model + static resolution, no waiter):
   allow-lists), FR-3 (`Process.Validate` + `SubProcess.Validate` pairing check);
   tests T-1, T-2, T-3. `feat(events,process): Link event definition, positions,
   pairing validation`.
-- **M2 — snapshot resolution + throw redirect.** FR-4 (`Snapshot.LinkTargets` +
-  `Clone` wiring), FR-5 (Link throw `Exec` redirect), FR-6 (re-entrant); tests
-  T-4, T-5. `feat(instance): static Link resolution and throw redirect`.
+- **M2 — graph-wiring resolution + throw redirect.** FR-4 (`flow.LinkSource`/
+  `LinkEventNode` + `resolveLinkEdges` as `WireClonedGraph` step 4), FR-5 (Link
+  throw `Exec` redirect), FR-6 (re-entrant); tests T-4, T-5.
+  `feat(flow,events): static Link resolution at graph wiring + throw redirect`.
 - **M3 — e2e + example + doc sync.** T-6 (`pkg/thresher/link_test.go`), T-7
   (`examples/link-events/`), changelog, conformance-tracker row, README + data/
   events guide sync. `feat: Link events — e2e, example, front-door sync`.
