@@ -42,10 +42,22 @@ func multiInstanceOf(node flow.Node) multiInstance {
 }
 
 // miState is a sequential Multi-Instance host's loop-owned iteration state
-// (SRD-055): the instance count fixed at activation. Read and written only on
-// the loop goroutine; nil for a non-MI host.
+// (SRD-055): the instance count fixed at activation, the input collection (nil
+// for a cardinality-driven Multi-Instance), the per-instance item name, and the
+// running count of completed instances. Read and written only on the loop
+// goroutine; nil for a non-MI host.
 type miState struct {
+	collection        data.Collection
+	inputItem         string
 	numberOfInstances int
+	completed         int
+}
+
+// miBinding is one named per-pass datum a Multi-Instance publishes at the host
+// scope for the body to resolve by name.
+type miBinding struct {
+	value any
+	name  string
 }
 
 // miIterator is the composite-iteration strategy for a Multi-Instance activity:
@@ -61,7 +73,7 @@ type miIterator struct {
 // instances) or an error; a parallel Multi-Instance is rejected here until
 // SRD-056.
 func (it miIterator) firstOpen(
-	ctx context.Context, ls *loopState, host *track, node flow.Node,
+	ctx context.Context, _ *loopState, host *track, node flow.Node,
 ) (bool, error) {
 	if !it.mi.IsSequential() {
 		return false, errs.New(
@@ -70,88 +82,137 @@ func (it miIterator) firstOpen(
 			errs.D("node_id", node.ID()))
 	}
 
-	n, err := it.resolveCardinality(ctx, host, node)
+	n, col, err := it.resolveActivation(ctx, host, node)
 	if err != nil {
 		return false, err
 	}
 
-	host.miState = &miState{numberOfInstances: n}
-
-	if err := ls.inst.sc.bindLoopCounterAt(host.scopePath, 0); err != nil {
-		return false, err
+	host.miState = &miState{
+		collection:        col,
+		inputItem:         it.mi.InputDataItem(),
+		numberOfInstances: n,
 	}
 
 	// N <= 0 runs zero instances — resume the host without opening a scope.
-	return n > 0, nil
-}
-
-// afterDrain advances to the next instance while the count is not reached,
-// re-opening the child scope for another pass; otherwise the activity completes.
-func (it miIterator) afterDrain(
-	_ context.Context, ls *loopState, host *track, _ flow.Node,
-) (bool, error) {
-	host.loopCounter++
-
-	if host.loopCounter >= host.miState.numberOfInstances {
-		host.loopCounter = 0
-		host.miState = nil
-
+	if n <= 0 {
 		return false, nil
 	}
 
-	if err := ls.inst.sc.bindLoopCounterAt(
-		host.scopePath, host.loopCounter); err != nil {
+	if err := it.bindInstance(ctx, host, 0); err != nil {
 		return false, err
 	}
 
 	return true, nil
 }
 
-// resolveCardinality computes the instance count once (§13.3.7): the integer
+// afterDrain advances to the next instance while the count is not reached,
+// re-opening the child scope for another pass; otherwise the activity completes.
+func (it miIterator) afterDrain(
+	ctx context.Context, _ *loopState, host *track, _ flow.Node,
+) (bool, error) {
+	st := host.miState
+	st.completed++
+	host.loopCounter++
+
+	if host.loopCounter >= st.numberOfInstances {
+		host.loopCounter = 0
+		host.miState = nil
+
+		return false, nil
+	}
+
+	if err := it.bindInstance(ctx, host, host.loopCounter); err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+// resolveActivation computes the instance count once (§13.3.7): the integer
 // loopCardinality expression when present, otherwise the size of the
-// loopDataInputRef collection.
-func (it miIterator) resolveCardinality(
+// loopDataInputRef collection. The collection is returned (nil for a
+// cardinality-driven Multi-Instance) so the per-instance item split reuses it
+// without a second lookup.
+func (it miIterator) resolveActivation(
 	ctx context.Context, host *track, node flow.Node,
-) (int, error) {
+) (int, data.Collection, error) {
 	if expr := it.mi.LoopCardinality(); expr != nil {
 		frame, err := host.instance.sc.openFrameAt(
 			"mi-card", node.ID(), host.scopePath)
 		if err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 		defer frame.Discard()
 
 		res, err := host.instance.ExpressionEngine().Evaluate(
 			ctx, expr, newExecEnv(host.instance, frame, nil))
 		if err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 
 		n, ok := res.Get(ctx).(int)
 		if !ok {
-			return 0, errs.New(
+			return 0, nil, errs.New(
 				errs.M("Multi-Instance cardinality evaluated to a "+
 					"non-integer value"),
 				errs.C(errorClass, errs.TypeCastingError),
 				errs.D("node_id", node.ID()))
 		}
 
-		return n, nil
+		return n, nil, nil
 	}
 
 	d, err := host.instance.sc.plane.GetData(
 		host.scopePath, it.mi.LoopDataInputRef())
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 
 	col, ok := d.Value().(data.Collection)
 	if !ok {
-		return 0, errs.New(
+		return 0, nil, errs.New(
 			errs.M("Multi-Instance loopDataInputRef %q is not a collection",
 				it.mi.LoopDataInputRef()),
 			errs.C(errorClass, errs.TypeCastingError))
 	}
 
-	return col.Count(), nil
+	return col.Count(), col, nil
+}
+
+// bindInstance publishes instance i's per-pass data at the host (enclosing)
+// scope, where the body resolves it by name via walk-up (SRD-055): the 0-based
+// loopCounter, the §13.3.7 runtime attributes, and — when the Multi-Instance is
+// collection-driven — the per-instance item split from element i. Binding at
+// the enclosing scope is safe for a sequential Multi-Instance (one instance
+// runs at a time, each pass rebinds before opening) and mirrors the loopCounter
+// and the Event-Sub-Process payload precedent.
+func (it miIterator) bindInstance(
+	ctx context.Context, host *track, i int,
+) error {
+	st := host.miState
+
+	binds := []miBinding{
+		{name: "loopCounter", value: i},
+		{name: "numberOfInstances", value: st.numberOfInstances},
+		{name: "numberOfActiveInstances", value: 1},
+		{name: "numberOfCompletedInstances", value: st.completed},
+	}
+
+	if st.collection != nil {
+		elem, err := st.collection.GetAt(ctx, i)
+		if err != nil {
+			return err
+		}
+
+		binds = append(binds, miBinding{name: st.inputItem, value: elem})
+	}
+
+	for _, b := range binds {
+		if err := host.instance.sc.bindDataItemAt(
+			host.scopePath, b.name, b.value); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

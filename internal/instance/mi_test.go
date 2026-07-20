@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -21,6 +22,8 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
+	"github.com/dr-dobermann/gobpm/pkg/model/service"
+	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
 )
 
 // cardExpr builds an integer loopCardinality expression that evaluates to n
@@ -73,6 +76,18 @@ func miSubProcessInstance(
 ) *Instance {
 	t.Helper()
 
+	return miSubProcessInstanceOp(t, countOp(t, count), mi, props...)
+}
+
+// miSubProcessInstanceOp is miSubProcessInstance with an explicit body operation
+// (to read the per-instance item / runtime attributes the host publishes).
+func miSubProcessInstanceOp(
+	t *testing.T, op service.Operation,
+	mi *activities.MultiInstanceLoopCharacteristics,
+	props ...*data.Property,
+) *Instance {
+	t.Helper()
+
 	_ = data.CreateDefaultStates()
 
 	p, err := process.New("mi-sp", data.WithProperties(props...))
@@ -86,7 +101,7 @@ func miSubProcessInstance(
 
 	bStart, err := events.NewStartEvent("b-start")
 	require.NoError(t, err)
-	work, err := activities.NewServiceTask("work", countOp(t, count),
+	work, err := activities.NewServiceTask("work", op,
 		activities.WithoutParams())
 	require.NoError(t, err)
 	bEnd, err := events.NewEndEvent("b-end")
@@ -169,6 +184,8 @@ func TestMultiInstanceZeroCardinality(t *testing.T) {
 func TestMultiInstanceCardinalityFromCollection(t *testing.T) {
 	var count atomic.Int32
 
+	require.NoError(t, data.CreateDefaultStates())
+
 	mi := mustSeqMI(t, activities.WithInputCollection("items", "item"))
 
 	items := data.MustProperty("items",
@@ -182,6 +199,99 @@ func TestMultiInstanceCardinalityFromCollection(t *testing.T) {
 	require.Equal(t, Completed, inst.State())
 	require.Equal(t, int32(4), count.Load(),
 		"the body runs once per collection element")
+}
+
+// TestMultiInstanceInputItemVisible: each instance sees its collection element
+// bound as the inputDataItem name, in order (§13.3.7 data-input mediator).
+func TestMultiInstanceInputItemVisible(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		seen []any
+	)
+
+	op, err := gooper.New("read-item",
+		func(ctx context.Context, r service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			d, err := r.GetData("item")
+			if err != nil {
+				return nil, err
+			}
+
+			mu.Lock()
+			seen = append(seen, d.Value().Get(ctx))
+			mu.Unlock()
+
+			return nil, nil
+		})
+	require.NoError(t, err)
+	require.NoError(t, data.CreateDefaultStates())
+
+	mi := mustSeqMI(t, activities.WithInputCollection("items", "item"))
+	items := data.MustProperty("items",
+		data.MustItemDefinition(values.NewArray(10, 20, 30),
+			foundation.WithID("items")),
+		data.ReadyDataState)
+
+	inst := miSubProcessInstanceOp(t, op, mi, items)
+	runToDone(t, inst)
+
+	require.Equal(t, Completed, inst.State())
+	require.Equal(t, []any{10, 20, 30}, seen,
+		"each instance sees its collection element as `item`")
+}
+
+// TestMultiInstanceRuntimeCounters: each instance sees the §13.3.7 runtime
+// attributes — loopCounter, numberOfInstances, numberOfCompletedInstances —
+// progressing per pass.
+func TestMultiInstanceRuntimeCounters(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		rows [][3]int
+	)
+
+	op, err := gooper.New("read-counters",
+		func(ctx context.Context, r service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			read := func(name string) (int, error) {
+				d, rerr := r.GetData(name)
+				if rerr != nil {
+					return 0, rerr
+				}
+
+				n, _ := d.Value().Get(ctx).(int)
+
+				return n, nil
+			}
+
+			lc, err := read("loopCounter")
+			if err != nil {
+				return nil, err
+			}
+			ni, err := read("numberOfInstances")
+			if err != nil {
+				return nil, err
+			}
+			nc, err := read("numberOfCompletedInstances")
+			if err != nil {
+				return nil, err
+			}
+
+			mu.Lock()
+			rows = append(rows, [3]int{lc, ni, nc})
+			mu.Unlock()
+
+			return nil, nil
+		})
+	require.NoError(t, err)
+
+	mi := mustSeqMI(t, activities.WithCardinality(cardExpr(t, 3)))
+
+	inst := miSubProcessInstanceOp(t, op, mi)
+	runToDone(t, inst)
+
+	require.Equal(t, Completed, inst.State())
+	require.Equal(t, [][3]int{{0, 3, 0}, {1, 3, 1}, {2, 3, 2}}, rows,
+		"loopCounter / numberOfInstances / numberOfCompletedInstances per pass")
 }
 
 // TestParallelMultiInstanceRejected: a parallel Multi-Instance faults at
@@ -236,6 +346,8 @@ func TestMultiInstanceNonIntCardinality(t *testing.T) {
 func TestMultiInstanceNonCollectionRef(t *testing.T) {
 	var count atomic.Int32
 
+	require.NoError(t, data.CreateDefaultStates())
+
 	mi := mustSeqMI(t, activities.WithInputCollection("items", "item"))
 
 	notACollection := data.MustProperty("items",
@@ -264,6 +376,24 @@ func TestMultiInstanceMissingCollectionRef(t *testing.T) {
 	require.NotEqual(t, Completed, inst.State(),
 		"a missing loopDataInputRef faults the instance")
 	require.Equal(t, int32(0), count.Load())
+}
+
+// TestMIResolveActivationFrameError covers resolveActivation's defensive
+// frame-open error: a track pinned to a non-existent scope path cannot open the
+// cardinality evaluation frame.
+func TestMIResolveActivationFrameError(t *testing.T) {
+	mi := mustSeqMI(t, activities.WithCardinality(cardExpr(t, 1)))
+
+	inst := miSubProcessInstance(t, new(atomic.Int32), mi)
+	node := findNode(t, inst.s, "body")
+
+	tr, err := newTrack(node, inst, nil)
+	require.NoError(t, err)
+	tr.scopePath = scope.DataPath("/does/not/exist")
+
+	_, _, err = miIterator{mi: mi}.resolveActivation(
+		context.Background(), tr, node)
+	require.Error(t, err)
 }
 
 // TestCompositeIteratorDispatch: compositeIteratorOf resolves the iteration

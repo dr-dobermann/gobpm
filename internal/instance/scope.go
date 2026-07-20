@@ -132,22 +132,33 @@ func (sc *instanceScope) bindEventPayloadAt(
 	return err
 }
 
-// bindLoopCounterAt publishes the current 0-based Standard-Loop iteration
-// ordinal as a `loopCounter` datum at path (SRD-054 FR-10), so the loop
-// condition and the inner activity resolve it by name via scope walk-up. The
-// changed-path set is dropped — an engine-maintained iteration counter is not a
-// modeled data change, so it raises no DataChange facts.
-func (sc *instanceScope) bindLoopCounterAt(
-	path scope.DataPath, counter int,
+// bindDataItemAt publishes a named datum at path as a Ready parameter that the
+// scope — and its descendants, by walk-up — resolve by name. It is the
+// mechanism a looped or Multi-Instance host uses to publish its per-pass data:
+// the loopCounter, a Multi-Instance per-instance item, and the numberOf*
+// runtime attributes (SRD-054 FR-10, SRD-055). Like the loop counter these are
+// engine-maintained values, not modeled data changes, so the changed-path set
+// is dropped and no DataChange facts are raised.
+func (sc *instanceScope) bindDataItemAt(
+	path scope.DataPath, name string, value any,
 ) error {
-	datum := data.MustParameter("loopCounter",
+	datum := data.MustParameter(name,
 		data.MustItemAwareElement(
-			data.MustItemDefinition(values.NewVariable(counter)),
+			data.MustItemDefinition(values.NewVariable(value)),
 			data.ReadyDataState))
 
 	_, err := sc.plane.Commit(path, datum)
 
 	return err
+}
+
+// bindLoopCounterAt publishes the current 0-based Standard-Loop iteration
+// ordinal as a `loopCounter` datum at path (SRD-054 FR-10), so the loop
+// condition and the inner activity resolve it by name via scope walk-up.
+func (sc *instanceScope) bindLoopCounterAt(
+	path scope.DataPath, counter int,
+) error {
+	return sc.bindDataItemAt(path, "loopCounter", counter)
 }
 
 // bindRootData commits the caller-resolved Call Activity inputs into the
