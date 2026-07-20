@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -148,6 +149,13 @@ func (it standardLoopIterator) firstOpen(
 	}
 
 	return true, nil
+}
+
+// beforeClose does nothing for a Standard Loop — it assembles no output.
+func (standardLoopIterator) beforeClose(
+	context.Context, *track, scope.DataPath,
+) error {
+	return nil
 }
 
 // afterDrain advances the ordinal and re-opens the scope while the loop maximum

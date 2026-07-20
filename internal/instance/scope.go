@@ -142,9 +142,19 @@ func (sc *instanceScope) bindEventPayloadAt(
 func (sc *instanceScope) bindDataItemAt(
 	path scope.DataPath, name string, value any,
 ) error {
+	return sc.bindValueAt(path, name, values.NewVariable(value))
+}
+
+// bindValueAt commits a data.Value verbatim as a named Ready datum at path — the
+// counterpart of bindDataItemAt for a value that is already a data.Value (a
+// Multi-Instance publishes its assembled output collection through it, so the
+// datum's value IS the collection rather than a Variable wrapping it).
+func (sc *instanceScope) bindValueAt(
+	path scope.DataPath, name string, value data.Value,
+) error {
 	datum := data.MustParameter(name,
 		data.MustItemAwareElement(
-			data.MustItemDefinition(values.NewVariable(value)),
+			data.MustItemDefinition(value),
 			data.ReadyDataState))
 
 	_, err := sc.plane.Commit(path, datum)

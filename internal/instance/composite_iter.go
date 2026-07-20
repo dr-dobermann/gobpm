@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
@@ -16,6 +17,12 @@ type compositeIterator interface {
 	// opens at all. open=false means zero iterations — the host resumes without
 	// opening a scope. A non-nil error aborts the instance.
 	firstOpen(ctx context.Context, ls *loopState, host *track, node flow.Node) (open bool, err error)
+
+	// beforeClose runs just before the drained child scope closes — the last
+	// point its data is readable. A Multi-Instance captures the per-instance
+	// output here; a Standard Loop does nothing. A non-nil error aborts the
+	// instance.
+	beforeClose(ctx context.Context, host *track, childPath scope.DataPath) error
 
 	// afterDrain runs when the child scope drains; reopen=true re-opens it for
 	// another pass, false completes the activity. A non-nil error aborts the

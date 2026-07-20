@@ -3,9 +3,11 @@ package instance
 import (
 	"context"
 
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
@@ -43,12 +45,17 @@ func multiInstanceOf(node flow.Node) multiInstance {
 
 // miState is a sequential Multi-Instance host's loop-owned iteration state
 // (SRD-055): the instance count fixed at activation, the input collection (nil
-// for a cardinality-driven Multi-Instance), the per-instance item name, and the
-// running count of completed instances. Read and written only on the loop
-// goroutine; nil for a non-MI host.
+// for a cardinality-driven Multi-Instance), the per-instance item name, the
+// private output staging collection assembled across instances (nil when the
+// activity assembles no output), the output ref/item names, and the running
+// count of completed instances. Read and written only on the loop goroutine;
+// nil for a non-MI host.
 type miState struct {
 	collection        data.Collection
+	staging           *values.Array[any]
 	inputItem         string
+	outputRef         string
+	outputItem        string
 	numberOfInstances int
 	completed         int
 }
@@ -90,7 +97,15 @@ func (it miIterator) firstOpen(
 	host.miState = &miState{
 		collection:        col,
 		inputItem:         it.mi.InputDataItem(),
+		outputRef:         it.mi.LoopDataOutputRef(),
+		outputItem:        it.mi.OutputDataItem(),
 		numberOfInstances: n,
+	}
+
+	// an output-assembling Multi-Instance stages each instance's item privately
+	// and publishes the collection once, at completion (the visibility barrier).
+	if host.miState.outputRef != "" {
+		host.miState.staging = values.NewArray[any]()
 	}
 
 	// N <= 0 runs zero instances — resume the host without opening a scope.
@@ -105,27 +120,109 @@ func (it miIterator) firstOpen(
 	return true, nil
 }
 
-// afterDrain advances to the next instance while the count is not reached,
-// re-opening the child scope for another pass; otherwise the activity completes.
+// beforeClose captures the just-completed instance's output item from the
+// draining child scope into the private staging collection (SRD-055), keyed by
+// the instance ordinal. A no-op when the Multi-Instance assembles no output.
+func (it miIterator) beforeClose(
+	ctx context.Context, host *track, childPath scope.DataPath,
+) error {
+	st := host.miState
+	if st == nil || st.staging == nil {
+		return nil
+	}
+
+	d, err := host.instance.sc.plane.GetData(childPath, st.outputItem)
+	if err != nil {
+		return err
+	}
+
+	return st.staging.SetAt(ctx, host.loopCounter, d.Value().Get(ctx))
+}
+
+// afterDrain advances to the next instance while the count is not reached and
+// the completionCondition (if any) does not stop launching; otherwise it
+// publishes the assembled output collection once (the visibility barrier) and
+// the activity completes.
 func (it miIterator) afterDrain(
-	ctx context.Context, _ *loopState, host *track, _ flow.Node,
+	ctx context.Context, _ *loopState, host *track, node flow.Node,
 ) (bool, error) {
 	st := host.miState
 	st.completed++
-	host.loopCounter++
 
-	if host.loopCounter >= st.numberOfInstances {
+	done := st.completed >= st.numberOfInstances
+	if !done && it.mi.CompletionCondition() != nil {
+		met, err := it.evalCompletion(ctx, host, node)
+		if err != nil {
+			return false, err
+		}
+
+		done = met
+	}
+
+	if done {
+		if err := it.publishOutput(host); err != nil {
+			return false, err
+		}
+
 		host.loopCounter = 0
 		host.miState = nil
 
 		return false, nil
 	}
 
+	host.loopCounter++
+
 	if err := it.bindInstance(ctx, host, host.loopCounter); err != nil {
 		return false, err
 	}
 
 	return true, nil
+}
+
+// evalCompletion evaluates the boolean completionCondition at the host scope
+// (where the runtime attributes are published), the evalLoopCond-shaped path. A
+// non-boolean result is a modeling error surfaced to the caller.
+func (it miIterator) evalCompletion(
+	ctx context.Context, host *track, node flow.Node,
+) (bool, error) {
+	frame, err := host.instance.sc.openFrameAt(
+		"mi-completion", node.ID(), host.scopePath)
+	if err != nil {
+		return false, err
+	}
+	defer frame.Discard()
+
+	res, err := host.instance.ExpressionEngine().Evaluate(
+		ctx, it.mi.CompletionCondition(),
+		newExecEnv(host.instance, frame, nil))
+	if err != nil {
+		return false, err
+	}
+
+	met, ok := res.Get(ctx).(bool)
+	if !ok {
+		return false, errs.New(
+			errs.M("Multi-Instance completionCondition evaluated to a "+
+				"non-boolean value"),
+			errs.C(errorClass, errs.TypeCastingError),
+			errs.D("node_id", node.ID()))
+	}
+
+	return met, nil
+}
+
+// publishOutput commits the staged output collection at the host scope under the
+// loopDataOutputRef name — the single visibility barrier that makes the assembled
+// result readable only once every instance has contributed. A no-op when the
+// activity assembles no output.
+func (it miIterator) publishOutput(host *track) error {
+	st := host.miState
+	if st.staging == nil {
+		return nil
+	}
+
+	return host.instance.sc.bindValueAt(
+		host.scopePath, st.outputRef, st.staging)
 }
 
 // resolveActivation computes the instance count once (§13.3.7): the integer

@@ -287,6 +287,17 @@ func (ls *loopState) completeScope(
 	path scope.DataPath,
 	entry *scopeEntry,
 ) {
+	// SRD-055: a Multi-Instance captures the draining instance's output item
+	// before the child scope closes — the last point its data is readable.
+	if it := compositeIteratorOf(entry.node); it != nil {
+		if err := it.beforeClose(ctx, entry.host, path); err != nil {
+			ls.inst.fail(err)
+			ls.stopAll()
+
+			return
+		}
+	}
+
 	if err := ls.inst.sc.plane.CloseScope(path); err != nil {
 		// a child scope still open below — a corrupt tree; fail loudly, the
 		// invariant-violation class.

@@ -66,6 +66,24 @@ func cardExprLyingInt(t *testing.T) data.FormalExpression {
 	return me
 }
 
+// loopCounterAtLeast builds the boolean completionCondition "loopCounter >= n".
+func loopCounterAtLeast(t *testing.T, n int) data.FormalExpression {
+	t.Helper()
+
+	return goexpr.Must(nil,
+		data.MustItemDefinition(values.NewVariable(false)),
+		func(ctx context.Context, ds data.Source) (data.Value, error) {
+			d, err := ds.Find(ctx, "loopCounter")
+			if err != nil {
+				return nil, err
+			}
+
+			v, _ := d.Value().Get(ctx).(int)
+
+			return values.NewVariable(v >= n), nil
+		})
+}
+
 // miSubProcessInstance builds start -> body(SubProcess, Multi-Instance mi) ->
 // end, where the body is b-start -> work(counting op) -> b-end. Optional
 // process properties seed the root scope (e.g. an input collection).
@@ -376,6 +394,116 @@ func TestMultiInstanceMissingCollectionRef(t *testing.T) {
 	require.NotEqual(t, Completed, inst.State(),
 		"a missing loopDataInputRef faults the instance")
 	require.Equal(t, int32(0), count.Load())
+}
+
+// TestMultiInstanceAssemblesOutput: an output-collecting Multi-Instance stages
+// each instance's output item and publishes the assembled collection once, at
+// completion (§13.3.7 output mediator + visibility barrier).
+func TestMultiInstanceAssemblesOutput(t *testing.T) {
+	op, err := gooper.New("emit-out",
+		func(ctx context.Context, r service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			d, err := r.GetData("loopCounter")
+			if err != nil {
+				return nil, err
+			}
+
+			lc, _ := d.Value().Get(ctx).(int)
+
+			return data.MustItemDefinition(
+				values.NewVariable(lc*lc), foundation.WithID("out")), nil
+		})
+	require.NoError(t, err)
+
+	mi := mustSeqMI(t,
+		activities.WithCardinality(cardExpr(t, 3)),
+		activities.WithOutputCollection("squares", "out"))
+
+	inst := miSubProcessInstanceOp(t, op, mi)
+	runToDone(t, inst)
+
+	require.Equal(t, Completed, inst.State())
+
+	d, err := inst.DataReader().GetData("squares")
+	require.NoError(t, err)
+	col, ok := d.Value().(data.Collection)
+	require.True(t, ok, "loopDataOutputRef is a collection")
+	require.Equal(t, []any{0, 1, 4}, col.GetAll(context.Background()),
+		"each instance's output assembled in order")
+}
+
+// TestMultiInstanceCompletionConditionTruncates: a completionCondition that
+// holds after an instance stops launching the remaining instances (§13.3.7).
+func TestMultiInstanceCompletionConditionTruncates(t *testing.T) {
+	var count atomic.Int32
+
+	mi := mustSeqMI(t,
+		activities.WithCardinality(cardExpr(t, 5)),
+		activities.WithCompletionCondition(loopCounterAtLeast(t, 1)))
+
+	inst := miSubProcessInstance(t, &count, mi)
+	runToDone(t, inst)
+
+	require.Equal(t, Completed, inst.State())
+	require.Equal(t, int32(2), count.Load(),
+		"completionCondition stops launching after the second instance")
+}
+
+// TestMultiInstanceNonBoolCompletion: a completionCondition that evaluates to a
+// non-boolean value faults the instance.
+func TestMultiInstanceNonBoolCompletion(t *testing.T) {
+	var count atomic.Int32
+
+	me := mockdata.NewMockFormalExpression(t)
+	me.EXPECT().ResultType().Return("bool")
+	me.EXPECT().Language().Return("mock").Maybe()
+	me.EXPECT().Evaluate(mock.Anything, mock.Anything).
+		Return(values.NewVariable(42), nil)
+
+	mi := mustSeqMI(t,
+		activities.WithCardinality(cardExpr(t, 3)),
+		activities.WithCompletionCondition(me))
+
+	inst := miSubProcessInstance(t, &count, mi)
+	runToDone(t, inst)
+
+	require.NotEqual(t, Completed, inst.State(),
+		"a non-boolean completionCondition faults the instance")
+}
+
+// TestMultiInstanceOutputItemMissing: an output-collecting Multi-Instance whose
+// body never produces the outputDataItem faults when the item is captured.
+func TestMultiInstanceOutputItemMissing(t *testing.T) {
+	var count atomic.Int32
+
+	mi := mustSeqMI(t,
+		activities.WithCardinality(cardExpr(t, 3)),
+		activities.WithOutputCollection("coll", "missing_out"))
+
+	inst := miSubProcessInstance(t, &count, mi)
+	runToDone(t, inst)
+
+	require.NotEqual(t, Completed, inst.State(),
+		"a missing outputDataItem faults the instance")
+}
+
+// TestMIEvalCompletionFrameError covers evalCompletion's defensive frame-open
+// error: a track pinned to a non-existent scope path cannot open the completion
+// evaluation frame.
+func TestMIEvalCompletionFrameError(t *testing.T) {
+	mi := mustSeqMI(t, activities.WithCardinality(cardExpr(t, 1)),
+		activities.WithCompletionCondition(loopCounterAtLeast(t, 0)))
+
+	inst := miSubProcessInstance(t, new(atomic.Int32), mi)
+	node := findNode(t, inst.s, "body")
+
+	tr, err := newTrack(node, inst, nil)
+	require.NoError(t, err)
+	tr.scopePath = scope.DataPath("/does/not/exist")
+
+	_, err = miIterator{mi: mi}.evalCompletion(
+		context.Background(), tr, node)
+	require.Error(t, err)
 }
 
 // TestMIResolveActivationFrameError covers resolveActivation's defensive
