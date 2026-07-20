@@ -28,11 +28,17 @@ type scopeHost interface {
 // parallel sibling arrived while the scope is open, §4.4 of the
 // accompanying SRD) reopens the scope after the close.
 type scopeEntry struct {
-	host   *track
-	node   flow.Node
-	parent scope.DataPath
-	queue  []*track
-	active int
+	host *track
+	// group is the parallel Multi-Instance group this scope is an instance of
+	// (SRD-056.A), nil for every serial scope; ordinal is the instance's 0-based
+	// index. When set, the scope's drain decrements the group barrier instead of
+	// resuming the host through the serial re-entry.
+	group   *miGroup
+	node    flow.Node
+	parent  scope.DataPath
+	queue   []*track
+	active  int
+	ordinal int
 }
 
 // scopeDoneTrigger is the internal trigger of the scope-completion
@@ -82,6 +88,16 @@ func (ls *loopState) onScopeOpen(ctx context.Context, host *track, node flow.Nod
 			errs.M("scope open for a non-composite node %q", node.ID()),
 			errs.C(errorClass, errs.TypeCastingError)))
 		ls.stopAll()
+
+		return
+	}
+
+	// a parallel Multi-Instance host fans out ALL its instances at once, each in
+	// a distinct scope, and completes only when the last drains (SRD-056.A) — a
+	// different control flow from the serial re-entry below, so it dispatches
+	// here before the single-scope path.
+	if mi := multiInstanceOf(node); mi != nil && !mi.IsSequential() {
+		ls.fanOutParallelMI(ctx, host, node, sh)
 
 		return
 	}
@@ -287,10 +303,22 @@ func (ls *loopState) completeScope(
 	path scope.DataPath,
 	entry *scopeEntry,
 ) {
-	// SRD-055: a Multi-Instance captures the draining instance's output item
-	// before the child scope closes — the last point its data is readable.
+	// SRD-055: a sequential Multi-Instance captures the draining instance's
+	// output item before the child scope closes — the last point its data is
+	// readable.
 	if it := compositeIteratorOf(entry.node); it != nil {
 		if err := it.beforeClose(ctx, entry.host, path); err != nil {
+			ls.inst.fail(err)
+			ls.stopAll()
+
+			return
+		}
+	}
+
+	// SRD-056.A: a PARALLEL Multi-Instance instance captures its output the same
+	// way (its group is off the serial compositeIterator, so it runs here).
+	if entry.group != nil {
+		if err := ls.captureParallelOutput(ctx, entry, path); err != nil {
 			ls.inst.fail(err)
 			ls.stopAll()
 
@@ -316,8 +344,27 @@ func (ls *loopState) completeScope(
 	// guard anything (SRD-052 FR-5).
 	ls.disarmScopeHandlers(path)
 
-	ls.reportScope(observability.PhaseCompleted, entry.node, path,
-		scopeLoopCounter(entry.node, entry.host))
+	// a parallel Multi-Instance instance carries its ordinal on the entry, not on
+	// the shared host.loopCounter (SRD-056.A FR-11); a serial scope reads it via
+	// scopeLoopCounter as before.
+	ordinal := scopeLoopCounter(entry.node, entry.host)
+	if entry.group != nil {
+		ordinal = entry.ordinal
+	}
+
+	ls.reportScope(observability.PhaseCompleted, entry.node, path, ordinal)
+
+	// a parallel Multi-Instance instance drains into its group's N-of-N barrier;
+	// the shared host resumes only when the last instance completes (SRD-056.A),
+	// not through the serial re-entry.
+	if entry.group != nil {
+		if err := ls.parallelInstanceDrained(ctx, path, entry); err != nil {
+			ls.inst.fail(err)
+			ls.stopAll()
+		}
+
+		return
+	}
 
 	ls.resumeScopeHost(ctx, path, entry)
 }

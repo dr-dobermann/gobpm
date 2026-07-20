@@ -318,22 +318,8 @@ func TestMultiInstanceRuntimeCounters(t *testing.T) {
 			"numberOfCompletedInstances per pass")
 }
 
-// TestParallelMultiInstanceRejected: a parallel Multi-Instance faults at
-// activation until SRD-056 — the honest gap gate.
-func TestParallelMultiInstanceRejected(t *testing.T) {
-	var count atomic.Int32
-
-	mi, err := activities.NewMultiInstance(
-		activities.WithCardinality(cardExpr(t, 3)))
-	require.NoError(t, err)
-
-	inst := miSubProcessInstance(t, &count, mi)
-	runToDone(t, inst)
-
-	require.NotEqual(t, Completed, inst.State(),
-		"a parallel Multi-Instance is not yet executable")
-	require.Equal(t, int32(0), count.Load())
-}
+// (SRD-055's parallel-rejected gap gate was removed in SRD-056.A, which
+// implements parallel Multi-Instance — see mi_parallel_test.go.)
 
 // TestMultiInstanceCardinalityEvalError: a cardinality expression that errors on
 // evaluation faults the instance before any instance runs.

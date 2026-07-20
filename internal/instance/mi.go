@@ -77,18 +77,12 @@ type miIterator struct {
 
 // firstOpen resolves the instance count once at activation, freezes it on the
 // host, and publishes the 0-based ordinal. It returns open=false (zero
-// instances) or an error; a parallel Multi-Instance is rejected here until
-// SRD-056.
+// instances) or an error. Only a sequential Multi-Instance reaches this path —
+// compositeIteratorOf excludes a parallel MI, which the parallel driver owns
+// (SRD-056.A).
 func (it miIterator) firstOpen(
 	ctx context.Context, _ *loopState, host *track, node flow.Node,
 ) (bool, error) {
-	if !it.mi.IsSequential() {
-		return false, errs.New(
-			errs.M("parallel Multi-Instance is not yet implemented (SRD-056)"),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.D("node_id", node.ID()))
-	}
-
 	n, col, err := it.resolveActivation(ctx, host, node)
 	if err != nil {
 		return false, err

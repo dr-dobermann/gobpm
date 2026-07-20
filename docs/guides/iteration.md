@@ -2,9 +2,9 @@
 
 An activity marked with **loop characteristics** runs more than once without
 being duplicated in the diagram (BPMN §13.3, ADR-025). gobpm implements the
-**Standard Loop** (§13.3.6) — a sequential, condition-driven loop — and the
-**sequential Multi-Instance** (§13.3.7) — a fixed collection fan-out; parallel
-Multi-Instance follows (SRD-056).
+**Standard Loop** (§13.3.6) — a sequential, condition-driven loop — and
+**Multi-Instance** (§13.3.7) — a fixed collection fan-out, **sequential or
+parallel**.
 
 ## Attaching a loop
 
@@ -50,21 +50,27 @@ The marker works on any activity, but the execution mechanism fits the kind
 An **Event Sub-Process cannot** carry loop characteristics — it is instantiated
 by its event trigger, not reached by a token and iterated.
 
-## Multi-Instance (sequential)
+## Multi-Instance
 
-A **Multi-Instance** activity (§13.3.7, SRD-055) runs a *fixed* number of times,
-decided once at activation — the collection fan-out counterpart of the
-condition-driven Standard Loop. gobpm executes the **sequential** shape (one
-instance after another); parallel Multi-Instance follows (SRD-056).
+A **Multi-Instance** activity (§13.3.7) runs a *fixed* number of times, decided
+once at activation — the collection fan-out counterpart of the condition-driven
+Standard Loop. It is **sequential** (SRD-055) or **parallel** (SRD-056.A).
 
 ```go
 mi, _ := activities.NewMultiInstance(
-    activities.WithSequential(),                          // sequential (required today)
+    activities.WithSequential(),                          // omit for parallel (the default)
     activities.WithInputCollection("amounts", "amount"),  // count = len(amounts)
     activities.WithOutputCollection("taxed", "withTax"),  // assemble each output
     activities.WithCompletionCondition(cond))             // optional: stop early
 sub, _ := activities.NewSubProcess("orders", activities.WithLoop(mi))
 ```
+
+- **Sequential vs. parallel** — `WithSequential()` runs the instances one after
+  another (instance *i+1* opens only after *i* drains). Without it the
+  Multi-Instance is **parallel** (the §13.3.7 default): all N instances start at
+  activation and run concurrently, each in a **distinct scope**, the activity
+  completing when the last drains. `numberOfActiveInstances` is `> 1` for
+  parallel.
 
 - **Cardinality** — the instance count is fixed at activation from either an
   integer **`WithCardinality(expr)`** *or* the size of the input collection
@@ -74,14 +80,20 @@ sub, _ := activities.NewSubProcess("orders", activities.WithLoop(mi))
   instance's `item` output is assembled — in order — into the output collection,
   published **once** at completion (never visible mid-run — the visibility
   barrier).
-- **Runtime attributes** — each pass publishes `loopCounter`,
-  `numberOfInstances`, `numberOfActiveInstances`, and
-  `numberOfCompletedInstances`, readable by name like `loopCounter`.
-- **`completionCondition`** — a boolean re-evaluated after each instance; `true`
-  stops launching the remaining instances.
+  For parallel each instance binds its item in its **own** scope; positional
+  assembly (output slot = input ordinal) keeps the output deterministic despite
+  nondeterministic completion order.
+- **Runtime attributes** — each instance publishes `loopCounter`,
+  `numberOfInstances`, `numberOfActiveInstances`, `numberOfCompletedInstances`,
+  and (parallel) `numberOfTerminatedInstances`, readable by name.
+- **`completionCondition`** — a boolean re-evaluated after each instance
+  completes; `true` finishes the activity now. For **sequential** that means
+  *stop launching* the rest; for **parallel** the still-running instances are
+  **canceled** (their scopes torn down, counted `numberOfTerminatedInstances`;
+  each keeps its pre-run output slot).
 
-Like the Standard Loop, a Multi-Instance composite re-opens its child scope per
-instance, and an Event Sub-Process cannot carry it.
+Like the Standard Loop, a Multi-Instance composite re-opens (sequential) or
+opens (parallel) child scopes, and an Event Sub-Process cannot carry it.
 
 ## Examples
 
@@ -90,3 +102,6 @@ instance, and an Event Sub-Process cannot carry it.
 - [`examples/multi-instance-sequential/`](../../examples/multi-instance-sequential/)
   — a sequential Multi-Instance Sub-Process that taxes each amount in a
   collection and assembles the results.
+- [`examples/multi-instance-parallel/`](../../examples/multi-instance-parallel/)
+  — a parallel Multi-Instance review panel: reviewers score a proposal
+  concurrently, and the scores assemble in reviewer order.

@@ -60,8 +60,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   launching the remaining instances early, and per-instance outputs
   (`outputDataItem`) are assembled — in order — into an output collection
   (`loopDataOutputRef`) published once at completion (the visibility barrier).
-  Sequential only — parallel Multi-Instance follows (SRD-056). New
-  `examples/multi-instance-sequential/`.
+  New `examples/multi-instance-sequential/`.
+- **Multi-Instance — parallel (SRD-056.A, ADR-025 — #88).** A Multi-Instance
+  *without* `WithSequential` runs all N instances **concurrently, each in a
+  distinct scope**, completing when the last drains. Each instance binds its
+  input item in its own scope and assembles its output positionally (slot =
+  ordinal), so the output collection is deterministic despite nondeterministic
+  completion order. The `completionCondition` now performs a real **cancellation**
+  of the still-running instances (counted `numberOfTerminatedInstances`);
+  `numberOfActiveInstances` reflects the running count. An interrupting boundary
+  (or scoped Terminate) on a parallel Multi-Instance tears down all N instances.
+  Behavior events (`ComplexBehaviorDefinition`) follow (SRD-056.B). New
+  `examples/multi-instance-parallel/`.
 
 ## [v0.9.0] - 2026-07-18
 
