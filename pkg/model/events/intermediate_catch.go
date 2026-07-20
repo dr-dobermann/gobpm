@@ -20,6 +20,7 @@ var intermediateCatchTriggers = set.New[flow.EventTrigger](
 	flow.TriggerMessage,
 	flow.TriggerSignal,
 	flow.TriggerTimer,
+	flow.TriggerLink,
 )
 
 // IntermediateCatchEvent is a mid-flow catch event: it waits for its event

@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
@@ -121,6 +122,13 @@ func (sp *SubProcess) Validate() error {
 		sp.validateEventSubShape(&ee, noneStarts, triggeredStarts, nonIntrErr)
 	} else {
 		sp.validateEmbeddedShape(&ee, noneStarts, triggeredStarts, flowless)
+	}
+
+	// Link pairing (ADR-006 v.4 §2.8, SRD-057 §3.3): this Sub-Process level has
+	// its own Link namespace — validated over its own nodes only, so a Link
+	// never pairs across the parent/sub-process boundary.
+	if err := events.ValidateLinkPairing(sp.Nodes()); err != nil {
+		ee = append(ee, err)
 	}
 
 	if len(ee) > 0 {

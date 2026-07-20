@@ -22,6 +22,7 @@ var intermediateThrowTriggers = set.New(
 	flow.TriggerEscalation,
 	flow.TriggerMessage,
 	flow.TriggerSignal,
+	flow.TriggerLink,
 )
 
 // IntermediateThrowEvent is a mid-flow throw event: on execution it emits its
