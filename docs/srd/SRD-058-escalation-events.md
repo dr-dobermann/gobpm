@@ -341,11 +341,17 @@ milestone commit SHAs, deltas vs this draft.*
 
 ## Open questions
 
-- **`KindEscalation` vs `KindFault`+attribute** (§3.5/§4.5) — a new observability
-  kind or an escalation attribute on the existing fault kind? Resolve during M3
-  against ADR-013 v.2's taxonomy (a non-fault propagation arguably wants its own
-  kind; a fault-adjacent one reuses the seam). Not a conception blocker — the
-  §6 behaviour is unaffected.
+- **`KindEscalation` vs `KindFault`+attribute** (§3.5/§4.5) — *resolved (M2a):* a
+  dedicated **`KindEscalation`** kind (phases Thrown/Caught/Unresolved, an
+  `escalation` attribute). Escalation is explicitly **not** a fault (ADR-006
+  §2.6, ADR-013 v.2 taxonomy), so tagging it `KindFault` would misclassify it;
+  a distinct kind keeps the fault stream fault-only.
+
+*Implementation note (M2a):* milestone M2 was split into **M2a** (throw seam +
+Boundary catch, both interrupting and non-interrupting + unresolved-log) and
+**M2b** (event-sub-process Escalation start catch), for smaller reviewable
+commits; the §7 milestone table describes the pre-split plan and is reconciled
+in §10 at landing.
 
 ## Document History
 
