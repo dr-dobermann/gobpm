@@ -39,7 +39,12 @@ func compositeIteratorOf(node flow.Node) compositeIterator {
 		return standardLoopIterator{sl: sl}
 	}
 
-	if mi := multiInstanceOf(node); mi != nil {
+	// only a SEQUENTIAL Multi-Instance rides the serial seam. A parallel MI has a
+	// different control flow (open N scopes, complete on the last) driven off this
+	// path entirely (SRD-056.A), so it returns nil here — keeping every
+	// serial-seam site (onScopeOpen / resumeScopeHost / scopeLoopCounter) clear of
+	// it.
+	if mi := multiInstanceOf(node); mi != nil && mi.IsSequential() {
 		return miIterator{mi: mi}
 	}
 

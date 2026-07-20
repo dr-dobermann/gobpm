@@ -65,3 +65,4 @@ examples/maps/mapexample
 examples/standard-loop/standard-loop
 examples/link-events/link-events
 examples/multi-instance-sequential/multi-instance-sequential
+examples/multi-instance-parallel/multi-instance-parallel

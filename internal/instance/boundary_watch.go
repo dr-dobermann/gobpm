@@ -293,6 +293,15 @@ func (ls *loopState) hostChildScope(host *track) (scope.DataPath, bool) {
 // any — the interrupting-fire and error-catch companion (SRD-049 FR-10).
 // Runs on the loop goroutine.
 func (ls *loopState) cancelHostScope(host *track) {
+	// a parallel Multi-Instance host has N distinct instance scopes, not the
+	// single default sp-<id> segment hostChildScope computes — tear down all of
+	// them (SRD-056.A FR-10).
+	if grp, ok := ls.miGroups[host.ID()]; ok {
+		ls.cancelParallelGroup(grp)
+
+		return
+	}
+
 	child, ok := ls.hostChildScope(host)
 	if !ok {
 		return
