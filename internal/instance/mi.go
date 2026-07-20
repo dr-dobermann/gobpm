@@ -23,6 +23,10 @@ type multiInstance interface {
 	LoopDataOutputRef() string
 	InputDataItem() string
 	OutputDataItem() string
+	Behavior() activities.MultiInstanceBehavior
+	NoneBehaviorEvent() flow.EventDefinition
+	OneBehaviorEvent() flow.EventDefinition
+	ComplexBehavior() []*activities.ComplexBehaviorDefinition
 }
 
 // multiInstanceOf reports the node's Multi-Instance characteristics, or nil when
