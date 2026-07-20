@@ -6,6 +6,8 @@ import (
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
@@ -14,13 +16,18 @@ import (
 // scopes (SRD-056.A): the shared host, the node, the frozen instance count, and
 // the set of still-open instance paths (path → 0-based ordinal). It is the
 // N-of-N barrier the per-scope scopeEntry model cannot express — the host
-// resumes only when the last instance drains. Loop-goroutine-owned; M2/M3 extend
-// it with the output staging and the completed / terminated counters.
+// resumes only when the last instance drains. Loop-goroutine-owned; M3 extends it
+// with the completed / terminated counters and the completionCondition.
 type miGroup struct {
-	host *track
-	node flow.Node
-	open map[scope.DataPath]int
-	n    int
+	host       *track
+	node       flow.Node
+	collection data.Collection    // nil for a cardinality-driven Multi-Instance
+	staging    *values.Array[any] // pre-sized to N; nil when no output is assembled
+	open       map[scope.DataPath]int
+	inputItem  string
+	outputRef  string
+	outputItem string
+	n          int
 }
 
 // fanOutParallelMI opens all N instance scopes of a parallel Multi-Instance host
@@ -33,8 +40,9 @@ type miGroup struct {
 func (ls *loopState) fanOutParallelMI(
 	ctx context.Context, host *track, node flow.Node, sh scopeHost,
 ) {
-	n, _, err := miIterator{mi: multiInstanceOf(node)}.
-		resolveActivation(ctx, host, node)
+	mi := multiInstanceOf(node)
+
+	n, col, err := miIterator{mi: mi}.resolveActivation(ctx, host, node)
 	if err != nil {
 		ls.inst.fail(err)
 		ls.stopAll()
@@ -57,11 +65,23 @@ func (ls *loopState) fanOutParallelMI(
 	}
 
 	grp := &miGroup{
-		host: host,
-		node: node,
-		open: make(map[scope.DataPath]int, n),
-		n:    n,
+		host:       host,
+		node:       node,
+		collection: col,
+		open:       make(map[scope.DataPath]int, n),
+		inputItem:  mi.InputDataItem(),
+		outputRef:  mi.LoopDataOutputRef(),
+		outputItem: mi.OutputDataItem(),
+		n:          n,
 	}
+
+	// an output-assembling Multi-Instance stages into a slice PRE-SIZED to N, so
+	// an instance completing out of order writes its slot by ordinal (SetAt is a
+	// replace, not an append); a canceled slot keeps its pre-run nil (§2.7).
+	if grp.outputRef != "" {
+		grp.staging = values.NewArray[any](make([]any, n)...)
+	}
+
 	ls.miGroups[host.ID()] = grp
 
 	for i := 0; i < n; i++ {
@@ -107,24 +127,73 @@ func (ls *loopState) openParallelInstance(
 
 	ls.reportScope(observability.PhaseOpened, node, child, i)
 
+	// bind instance i's per-pass data at its OWN scope (concurrency-safe, unlike
+	// the sequential slice's host-scope bind): the 0-based loopCounter and, when
+	// collection-driven, the split input item. Bound before the body is seeded so
+	// it reads them by name.
+	binds := []miBinding{{name: "loopCounter", value: i}}
+	if grp.collection != nil {
+		elem, err := grp.collection.GetAt(ctx, i)
+		if err != nil {
+			return err
+		}
+
+		binds = append(binds, miBinding{name: grp.inputItem, value: elem})
+	}
+
+	for _, b := range binds {
+		if err := ls.inst.sc.bindDataItemAt(child, b.name, b.value); err != nil {
+			return err
+		}
+	}
+
 	ls.seedScope(ctx, sh, child)
 	ls.armScopeHandlers(ctx, sh.Nodes(), child)
 
 	return nil
 }
 
+// captureParallelOutput reads a completing instance's output item from its
+// draining child scope into the group's private staging slot (keyed by the
+// instance ordinal, so out-of-order completion still lands positionally). A
+// no-op when the activity assembles no output. Runs on the loop goroutine from
+// completeScope, before the child scope closes.
+func (ls *loopState) captureParallelOutput(
+	ctx context.Context, entry *scopeEntry, path scope.DataPath,
+) error {
+	grp := entry.group
+	if grp.staging == nil {
+		return nil
+	}
+
+	d, err := ls.inst.sc.plane.GetData(path, grp.outputItem)
+	if err != nil {
+		return err
+	}
+
+	return grp.staging.SetAt(ctx, entry.ordinal, d.Value().Get(ctx))
+}
+
 // parallelInstanceDrained records one instance scope of a parallel
-// Multi-Instance as drained; when the group's last instance completes it resumes
-// the shared host with the synthetic completion and drops the group (SRD-056.A).
-// Runs on the loop goroutine (from completeScope).
+// Multi-Instance as drained; when the group's last instance completes it
+// publishes the assembled output collection once (the visibility barrier),
+// resumes the shared host, and drops the group (SRD-056.A). It returns an error
+// the caller faults on. Runs on the loop goroutine (from completeScope).
 func (ls *loopState) parallelInstanceDrained(
 	ctx context.Context, path scope.DataPath, entry *scopeEntry,
-) {
+) error {
 	grp := entry.group
 	delete(grp.open, path)
 
 	if len(grp.open) > 0 {
-		return
+		return nil
+	}
+
+	if grp.staging != nil {
+		if err := ls.inst.sc.bindValueAt(
+			grp.host.scopePath, grp.outputRef, grp.staging); err != nil {
+			return err
+		}
 	}
 
 	delete(ls.miGroups, grp.host.ID())
@@ -134,4 +203,6 @@ func (ls *loopState) parallelInstanceDrained(
 		track: grp.host,
 		eDef:  newScopeDone(),
 	})
+
+	return nil
 }

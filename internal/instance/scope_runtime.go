@@ -303,10 +303,22 @@ func (ls *loopState) completeScope(
 	path scope.DataPath,
 	entry *scopeEntry,
 ) {
-	// SRD-055: a Multi-Instance captures the draining instance's output item
-	// before the child scope closes — the last point its data is readable.
+	// SRD-055: a sequential Multi-Instance captures the draining instance's
+	// output item before the child scope closes — the last point its data is
+	// readable.
 	if it := compositeIteratorOf(entry.node); it != nil {
 		if err := it.beforeClose(ctx, entry.host, path); err != nil {
+			ls.inst.fail(err)
+			ls.stopAll()
+
+			return
+		}
+	}
+
+	// SRD-056.A: a PARALLEL Multi-Instance instance captures its output the same
+	// way (its group is off the serial compositeIterator, so it runs here).
+	if entry.group != nil {
+		if err := ls.captureParallelOutput(ctx, entry, path); err != nil {
 			ls.inst.fail(err)
 			ls.stopAll()
 
@@ -346,7 +358,10 @@ func (ls *loopState) completeScope(
 	// the shared host resumes only when the last instance completes (SRD-056.A),
 	// not through the serial re-entry.
 	if entry.group != nil {
-		ls.parallelInstanceDrained(ctx, path, entry)
+		if err := ls.parallelInstanceDrained(ctx, path, entry); err != nil {
+			ls.inst.fail(err)
+			ls.stopAll()
+		}
 
 		return
 	}
