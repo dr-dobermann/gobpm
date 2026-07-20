@@ -2,9 +2,9 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
-| Date | 2026-07-19 |
+| Date | 2026-07-20 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-025 v.1](../design/ADR-025-activity-iteration-loop-and-multi-instance.md) §2.4–§2.7, §2.9 (the Multi-Instance model; the **sequential** slice — §2.8 `behavior` deferred to SRD-056; epic #88) |
 | Upstream | [ADR-011 v.7](../design/ADR-011-process-data-flow.md) (the structural `data.Collection` — `Count`/`GetAt`/`SetAt` — the split/assemble mediator rides), [ADR-010 v.2](../design/ADR-010-process-data-model.md) (name-based data-plane resolution), [ADR-023 v.2](../design/ADR-023-sub-process-and-call-activity.md) (the composite child-scope re-entry seam this reuses), [ADR-013 v.2](../design/ADR-013-instance-observability.md) (iteration facts), [ADR-001 v.6](../design/ADR-001-execution-model.md) (the loop owns node execution) |
@@ -92,9 +92,12 @@ MI); MI compensation → the future Transaction work (ADR-025 §2.10).
 ### Functional — the data mediator
 
 - **FR-8 — split in.** Before instance *i* runs, the engine binds `inputDataItem`
-  = element *i* of the `loopDataInputRef` collection into the instance's **child
-  scope** (a new `bindDataItemAt`, modeled on `bindLoopCounterAt`); the body reads
-  it by name, exactly like `loopCounter`.
+  = element *i* of the `loopDataInputRef` collection at the **host (enclosing)
+  scope** — exactly where `loopCounter` binds (a new `bindDataItemAt`, modeled on
+  `bindLoopCounterAt`); the body reads it by name via scope walk-up. Binding at
+  the enclosing scope is safe for a sequential MI (one instance at a time, each
+  pass rebinds before opening) and mirrors the Event-Sub-Process payload
+  precedent.
 - **FR-9 — assemble out.** When instance *i* drains, the engine reads its
   `outputDataItem` from the child scope and writes it into slot *i* of a
   **private staging** output collection (a host-held `values.Array`, via
@@ -179,12 +182,16 @@ level and the XOR is enforced in the constructor body (FR-2).
 
 ### §3.2 Runtime deltas (`internal/instance/`)
 
-- **`compositeIterator`** (interface) + the dispatch in `scope_runtime.go`:
-  `firstPass(host)` (bind ordinal / bind input item; report a zero-iteration skip)
-  and `nextPass(host) (reopen bool)` (advance, test the terminal condition, bind
-  next input / assemble prior output). `standardLoopOf` and `multiInstanceOf`
-  return strategies; the `onScopeOpen`/`resumeScopeHost` blocks collapse to one
-  `compositeIteratorOf(node)` dispatch.
+- **`compositeIterator`** (interface) + the dispatch in `scope_runtime.go`. As
+  landed the seam has **three** per-pass hooks (the output capture needs a point
+  before the child scope closes): `firstOpen(host)` (resolve N once, bind the
+  first instance; report a zero-iteration skip), `beforeClose(host, childPath)`
+  (capture the draining instance's output item — a no-op for Standard Loop), and
+  `afterDrain(host) (reopen bool)` (advance, test the terminal condition +
+  `completionCondition`, bind the next instance / publish the output).
+  `standardLoopOf` and `multiInstanceOf` return strategies; the
+  `onScopeOpen`/`resumeScopeHost` blocks collapse to one `compositeIteratorOf(node)`
+  dispatch.
 - **`mi.go`** — `multiInstanceOf` + the MI strategy: cardinality resolution, the
   input split, the output staging + assemble, `completionCondition`, the `miState`.
 - **`scope.go`** — `bindDataItemAt(path, name string, value any) error` (the
@@ -244,25 +251,29 @@ collection mutates mid-run.
 
 ## §6 Test scenarios
 
+Landed test names (reconciled to the implementation at Accepted).
+
 | Test | Level | Asserts (FR) |
 |---|---|---|
 | `TestMultiInstanceBuildAndAccessors` | model | FR-1 fields/accessors |
-| `TestMultiInstanceRejectsBothCardinalityAndCollection` | model | FR-2 XOR |
+| `TestMultiInstanceRejectsBothCardinalityAndCollection` / `…RejectsNoCardinalitySource` | model | FR-2 XOR (both / neither) |
 | `TestMultiInstanceRejectsNonIntCardinality` | model | FR-2 `loopCardinality` result-type |
 | `TestMultiInstanceRejectsNonBoolCompletion` | model | FR-2 `completionCondition` result-type |
 | `TestMultiInstanceRequiresInputItemForCollection` | model | FR-2 collection needs `inputDataItem` |
+| `TestMultiInstanceOptionGuards` | model | FR-2 option nil-guards |
 | `TestEventSubProcessRejectsMultiInstance` | model | FR-3 inherited event-sub rejection |
-| `TestMultiInstanceOf` / `TestCompositeIteratorDispatch` | instance | FR-4/FR-5 detector + shared seam |
-| `TestMultiInstanceCardinalityFromExpression` | instance | FR-6 N from `loopCardinality` |
+| `TestCompositeIteratorDispatch` | instance | FR-4/FR-5 detector + shared seam |
+| `TestMultiInstanceRunsNSequentially` | instance | FR-6 (N from `loopCardinality`) + FR-7 (runs N times, one at a time) |
 | `TestMultiInstanceCardinalityFromCollection` | instance | FR-6 N from `Count()` |
-| `TestMultiInstanceZeroCardinalityCompletes` | instance | FR-6 N ≤ 0 → zero instances |
-| `TestMultiInstanceRunsNSequentially` | instance | FR-7 body runs N times, one at a time |
-| `TestMultiInstanceInputItemVisibleToBody` | instance | FR-8 element *i* bound + read |
-| `TestMultiInstanceAssemblesOutputInOrder` | instance | FR-9 output slots = input ordinals |
-| `TestMultiInstanceOutputUnpublishedMidRun` | instance | FR-10 barrier — no partial reads |
-| `TestMultiInstanceCompletionConditionTruncates` | instance | FR-11 early stop, output length = completed |
-| `TestMultiInstanceRuntimeAttributes` | instance | FR-12 `numberOf*` visible to the condition, incl. `numberOfActiveInstances` = 1 while an instance runs, 0 at the boundary |
+| `TestMultiInstanceZeroCardinality` | instance | FR-6 N ≤ 0 → zero instances |
+| `TestMultiInstanceNonIntCardinality` / `…CardinalityEvalError` / `…NonCollectionRef` / `…MissingCollectionRef` | instance | FR-6 cardinality error paths |
+| `TestMultiInstanceInputItemVisible` | instance | FR-8 element *i* bound + read |
+| `TestMultiInstanceAssemblesOutput` / `…OutputItemMissing` | instance | FR-9 output slots = input ordinals (+ missing-item fault) |
+| `TestMultiInstanceOutputUnpublishedMidRun` | instance | FR-10 barrier — invisible mid-run, published at completion |
+| `TestMultiInstanceCompletionConditionTruncates` / `…NonBoolCompletion` | instance | FR-11 early stop (+ non-bool fault) |
+| `TestMultiInstanceRuntimeCounters` | instance | FR-12 `loopCounter`/`numberOfInstances`/`numberOfActiveInstances` (=1)/`numberOfCompletedInstances` per pass |
 | `TestMultiInstanceEmitsIterationFacts` | instance | FR-13 scope facts carry the ordinal |
+| `TestParallelMultiInstanceRejected` | instance | parallel-MI gap gate (→ SRD-056) |
 | `TestMultiInstanceSequentialE2E` | thresher | FR-6–FR-11 end-to-end over a collection |
 
 ## §7 Milestones
@@ -298,17 +309,51 @@ collection mutates mid-run.
 
 ## §10 Implementation summary
 
-> ⚠️ TODO: fill AFTER landing — stage commits, empirical deltas vs this draft,
-> backlog.
+Landed on branch `feat/mi-sequential`; `make ci` green at every milestone
+(lint 0, `-race`, govulncheck clean, all modules), diff-coverage ≥95% touched.
 
 ### §10.1 Stages by commit (branch `feat/mi-sequential`)
 
 | Stage | Commit | Scope | Tests |
 |---|---|---|---|
+| SRD | `4c4ff03` | this document (Draft) | — |
+| M1 | `c5a60a9` | MI model + validation (`multiinstance.go`; `resultTypeBool`/`resultTypeInt` consts) | 8 model |
+| M2 | `cf87e86` | shared `compositeIterator` seam + cardinality (`composite_iter.go`, `mi.go`, `std_loop.go` strategy, `scope_runtime.go` dispatch; `bindLoopCounterOrFail` removed) | 9 instance |
+| M3 | `791ff3a` | per-instance input data + `numberOf*` counters (`bindDataItemAt`, `resolveActivation`, `bindInstance`, `track.miState`) | +2 instance |
+| M4 | `6ea63b1` | output assembly + `completionCondition` (`beforeClose`, `publishOutput`, `evalCompletion`, `bindValueAt`) | +5 instance |
+| M5-A | `aa1e37b` | thresher e2e + `examples/multi-instance-sequential/` + docs (guide/CHANGELOG/tracker/READMEs) | +1 e2e |
+| Canaries | `8caf37e` | FR-10/12/13 canaries + `scopeLoopCounter` MI fix | +2 instance |
 
 ### §10.2 Empirical findings vs the draft
 
+- **Cardinality folded into M2.** The §7 plan put cardinality resolution in M3;
+  it landed in M2 (both sources), so M2 already runs an MI N times. M3 became the
+  input-data mediator + counters, M4 the output + completion — each milestone
+  independently runnable.
+- **Three seam hooks, not two.** §3.2 sketched `firstPass`/`nextPass`. Output
+  capture must read the child scope **before** `CloseScope` (`completeScope`
+  closes it before `resumeScopeHost`), so a third hook `beforeClose(host,
+  childPath)` was added (a no-op for Standard Loop). Reconciled in §3.2.
+- **Per-instance data at the host (enclosing) scope, not the child.** "Exactly
+  like `loopCounter`" resolves to `host.scopePath`; the body reads via walk-up.
+  Mirrors the SRD-053 payload-at-enclosing precedent (a child-scope commit-error
+  guard is uncoverable). Reconciled in FR-8.
+- **FR-13 gap caught at `/check-srd`.** `scopeLoopCounter` recognized only a
+  Standard Loop, so MI scope facts carried no ordinal; fixed to gate on the
+  shared `compositeIterator` (`8caf37e`).
+- **`bindLoopCounterAt` generalized.** M3 routed it through the new
+  `bindDataItemAt` (`loopCounter` is now a `Variable[any]`); M4 split
+  `bindValueAt` (commits a `data.Value` verbatim) for the output collection.
+- **Residual uncovered lines** are untriggerable-defensive (`bindDataItemAt` /
+  `openFrameAt` error returns — `bindLoopCounterAt` lazy-creates, so it never
+  fails; the `evalLoopCond`-class), the same class SRD-054 shipped.
+
 ### §10.3 Backlog
+
+- Parallel Multi-Instance + `behavior`/`ComplexBehaviorDefinition` + the voting
+  use-case example → **SRD-056**.
+- `completionQuantity` → deferred (SRD-046 NFR-4).
+- MI compensation → future Transaction work (ADR-025 §2.10).
 
 ## Open questions
 
