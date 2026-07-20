@@ -31,7 +31,7 @@ Supporting discipline already in force:
 
 This is a **Living** document: workstreams below are updated as they advance, unlike one-shot SRDs.
 
-## 2. Current state (baseline as of 2026-06-12)
+## 2. Current state (baseline refreshed 2026-07-20)
 
 Grounded in the code, not aspiration.
 
@@ -45,6 +45,7 @@ Grounded in the code, not aspiration.
 - **Event processing.** `EventHub` with the synchronous `Start` / blocking `Run` split (FIX-001, Accepted); event registration / propagation / waiter management. **Timer** waiter implemented. Race-clean under `-race` stress.
 - **Scope.** The data plane: hierarchical container-scope tree with atomic operations, walk-up lookup and shadowing, plus per-execution frames (`internal/scope`, ADR-010).
 - **Model elements.** Start/End events; **Exclusive** gateway (conditions, default flow); **Parallel (AND)** gateway (split + node-owned synchronizing join, ADR-005/SRD-005); **Service** and **User** tasks; sequence flow (conditions, default); data objects, item definitions, properties, I/O specification, data associations, `FormalExpression` + Go-native evaluator; service/operation; correlation *structures*; message/resource.
+- **Structural data — navigable values (ADR-011 v.7 §2.9, Accepted; SRD-042→045 + SRD-047).** The `Value` family carries **four kinds** — scalar, list (`Collection`), record (`Record`), and **map** (`Map`, the data-keyed dictionary). Values are navigable by path in every seam (`order.items[0].price`, `rates["EUR"]`) — conditions, expressions, mappings, service code — writable/assemblable by the same grammar (`SetPath`), change-detected per path at commit (the DataChange facts), and a host's **own Go structs and `map[string]V` fields participate live** via `adapters.Wrap` (wrap, not convert). Landed as five slices: S1 read · S2 write · S3 commit-diff · S4 native-struct adapters · **S5 the map kind (SRD-047 — sorted enumeration, first-class delete, `["key"]` step, native-map lift; the map kind is a recorded engine choice, SAD-001 §14.2).** The complete guide is `docs/guides/data.md`; six runnable examples (`structural-data`, `structural-output-mapping`, `data-change`, `native-structs`, **`maps`**).
 - **Module skeleton.** Multi-module monorepo: core (root), `runtime/` (stub binary), `adapters/sqlite/` (doc-only scaffold), `examples/*` (working).
 
 ### 2.2 Stubbed or missing
@@ -52,7 +53,7 @@ Grounded in the code, not aspiration.
 - **Production extension adapters (per-adapter ADRs, ADR-002 §9):** only the bundled in-memory defaults exist (SRD-004). No production adapters yet — postgres `Repository`, OTel `Tracer`/`MetricsRecorder`, OIDC/Casbin `AuthorizationProvider`, FEEL `ExpressionEngine`, real message brokers — each deferred to its own ADR.
 - **Module layout (ADR-003):** the `pkg/` subpackage catalogue and the 12 migration steps are not started; `runtime/` and `adapters/sqlite/` are scaffolds with no real code.
 - **Persistence & rehydration (P0 per SAD §10/§13):** runtime-state *ownership* is now decided (per-instance node graph, ADR-009), but **durable** persistence is missing — no `Repository`, no checkpointing, no long-wait token release, no restart recovery. Execution is in-memory and ephemeral.
-- **BPMN elements:** Inclusive / Complex / Event-Based gateways; Manual / Script / Business-Rule tasks; Call Activity, (Embedded/Transaction/Event/Ad-hoc) Sub-Process; Escalation/Conditional/Compensation/Link event behavior; multi-instance & loop execution — all absent or skeleton. (**Send / Receive tasks, Message throw/catch + start events, and Signal events** — throw/catch/broadcast + signal-start instantiation — **have landed** — SRD-013/014/015/026; the **Terminate End Event** has landed — SRD-030.)
+- **BPMN elements — remaining gap (2026-07-20).** *Landed since the 2026-06-12 baseline:* **Inclusive** (OR) + **Complex** + **Event-Based** gateways (SRD-021/022/023/024/025); **Manual task**; **Boundary events** interrupting + non-interrupting (SRD-029) with the **Error path** (`BpmnError`); **Embedded Sub-Process** (SRD-049) + **Call Activity** (SRD-050) + **Event Sub-Process** interrupting + non-interrupting (SRD-052/053); **Conditional events** (SRD-048); **Standard Loop** (SRD-054); **structural data incl. the map kind** (SRD-042→045+047); **definition versioning** (SRD-031.A). *Still absent or skeleton:* **Script task** (model stub only, no runtime) and **Business-Rule task** (DMN via external engine, non-goal N2); **Multi-Instance** loop characteristics (sequential/parallel); **Transaction** and **Ad-Hoc** Sub-Process; **Compensation / Escalation / Link** event behavior (Link has a bare model stub `pkg/model/events/link.go` — no constructor/`Type()`/runtime, and is absent from the throw/catch trigger allow-lists — see the **Link events kickoff brief**, `docs/analytics/link-events-kickoff.md`). (Earlier landings: Send/Receive tasks, Message throw/catch + start events, Signal events — SRD-013/014/015/026; Terminate End Event — SRD-030.)
 - **Messaging runtime:** Send/Receive tasks + Message throw/catch events (SRD-013/014, ADR-014 Accepted), **Message-Start event-triggered instantiation + key-based correlation** (SRD-015, ADR-015/016 Accepted — phase-2a/2b), **conversation-token threading** (SRD-017 — phase-2c), and the **Event-Based-gateway start** (Exclusive-start + Parallel-start instantiators, SRD-025, ADR-005 v.4 §2.12.4) have landed. Deferred: context-based/predicate correlation (phase-3), durable subscriptions.
 - **Fault tolerance:** no Incident / Retry / DLQ.
 - **Runtime overlay (ADR-004):** no server, API, tenancy, AuthN/Z wiring, diagnostics, health checks.
@@ -156,6 +157,10 @@ Milestones are demonstrable capability checkpoints cutting across the workstream
 - [docs/bpmn-spec/](../bpmn-spec/) — BPMN 2.0 normative reference KB.
 
 ## Changes
+
+### 2026-07-20
+
+- **Current-state refresh (§2).** Marked the **structural-data workstream complete** through the **map kind** (S5, SRD-047 — ADR-011 now Accepted v.7): §2.1 gains a "Structural data — navigable values" entry (four value kinds: scalar/list/record/**map**). Rewrote the §2.2 BPMN-element gap to reality — Inclusive/Complex/Event-Based gateways, Manual task, Boundary + Event Sub-Process, Embedded Sub-Process, Call Activity, Conditional events, and Standard Loop have all landed since the 2026-06-12 baseline; the genuine remaining executable-conformance gap is Script/Business-Rule tasks, Multi-Instance, Transaction/Ad-Hoc Sub-Process, and the Compensation/Escalation/**Link** events (plus the P0 durable-persistence layer). Positioned **Link events** as the next element pickup with a scoping brief at `docs/analytics/link-events-kickoff.md`.
 
 ### 2026-06-06
 

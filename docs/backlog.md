@@ -32,8 +32,12 @@ implemented), and leaves this list.
 
 - **Event-matching generalization** — unify EventHub subscription matching via a
   polymorphic `SubscriptionKey()` (replacing the isolated signal name-scan). Its
-  trigger is met — **Link events have landed** (`pkg/model/events/link.go`) — so
-  the pass is now due.
+  intended trigger is **Link events landing** — Link being the second name-keyed
+  event type, at which point the abstraction pays off (deferred there by
+  SRD-020/026). NOTE (2026-07-20): Link has **not** landed — `pkg/model/events/link.go`
+  is a bare, unwired struct stub (no constructor/`Type()`/runtime, absent from the
+  throw/catch trigger allow-lists). This pass is due **with** the Link
+  implementation, not before — see `docs/analytics/link-events-kickoff.md`.
 - **Optioned-constructor doc-comment audit** — sweep every `New*` constructor whose
   doc comment enumerates its available options and reconcile each list with the
   options actually accepted. Surfaced by `NewUserTask`'s list going stale when the
