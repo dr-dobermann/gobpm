@@ -98,9 +98,9 @@ var (
 	_ flow.EventDefCloner  = (*EscalationEventDefinition)(nil)
 )
 
-// NewEscalationEventDefintion creates a new EscalationEventDefintion and
+// NewEscalationEventDefinition creates a new EscalationEventDefinition and
 // returns its pointer.
-func NewEscalationEventDefintion(
+func NewEscalationEventDefinition(
 	escalation *Escalation,
 	baseOpts ...options.Option,
 ) (*EscalationEventDefinition, error) {
@@ -120,6 +120,20 @@ func NewEscalationEventDefintion(
 		definition: *d,
 		escalation: escalation,
 	}, nil
+}
+
+// MustEscalationEventDefinition tries to create a new
+// EscalationEventDefinition. If error occurred, it fires panic.
+func MustEscalationEventDefinition(
+	escalation *Escalation,
+	baseOpts ...options.Option,
+) *EscalationEventDefinition {
+	eed, err := NewEscalationEventDefinition(escalation, baseOpts...)
+	if err != nil {
+		errs.Panic(err.Error())
+	}
+
+	return eed
 }
 
 // Escalation returns the EscalationEventDefinition's internal escalation
@@ -192,7 +206,7 @@ func (eed *EscalationEventDefinition) CloneEventDefinition(
 				errs.E(err))
 	}
 
-	ned, err := NewEscalationEventDefintion(ne, foundation.WithID(eed.ID()))
+	ned, err := NewEscalationEventDefinition(ne, foundation.WithID(eed.ID()))
 	if err != nil {
 		return nil,
 			errs.New(

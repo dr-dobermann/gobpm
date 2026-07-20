@@ -62,7 +62,7 @@ func TestNewEndEvent(t *testing.T) {
 			foundation.WithID("escalation_item")))
 	require.NoError(t, err)
 
-	escEd, err := events.NewEscalationEventDefintion(esc)
+	escEd, err := events.NewEscalationEventDefinition(esc)
 	require.NoError(t, err)
 
 	t.Run("empty trigger list end event",

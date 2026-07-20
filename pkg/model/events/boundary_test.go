@@ -102,7 +102,7 @@ func escalationDef(t *testing.T) flow.EventDefinition {
 		data.MustItemDefinition(values.NewVariable(1)))
 	require.NoError(t, err)
 
-	eed, err := events.NewEscalationEventDefintion(esc)
+	eed, err := events.NewEscalationEventDefinition(esc)
 	require.NoError(t, err)
 
 	return eed
@@ -127,11 +127,12 @@ func TestNewBoundaryEventValidation(t *testing.T) {
 	}{
 		{"nil host", nil, sig, true, true},
 		{"nil definition", host, nil, true, true},
-		{"trigger not allowed on a boundary (escalation)", host, esc, true, true},
 		{"error boundary cannot be non-interrupting", host, errd, false, true},
 		{"valid interrupting signal boundary", host, sig, true, false},
 		{"valid interrupting conditional boundary", host, cnd, true, false},
 		{"valid non-interrupting conditional boundary", host, cnd, false, false},
+		{"valid interrupting escalation boundary", host, esc, true, false},
+		{"valid non-interrupting escalation boundary", host, esc, false, false},
 	}
 
 	for _, tt := range tests {

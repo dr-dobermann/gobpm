@@ -51,7 +51,7 @@ func TestNewStartEvent(t *testing.T) {
 			values.NewVariable[int](100)))
 	require.NoError(t, err)
 
-	escEd, err := events.NewEscalationEventDefintion(esc)
+	escEd, err := events.NewEscalationEventDefinition(esc)
 	require.NoError(t, err)
 
 	t.Run("empty definitions list",

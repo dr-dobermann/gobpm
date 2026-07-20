@@ -8,17 +8,19 @@ import (
 )
 
 // boundaryTriggers are the event triggers a boundary event may carry
-// (SRD-029 FR-2). Timer/Message/Signal/Conditional may be interrupting or
-// non-interrupting (Conditional decided in ADR-006 v.3 §2.7 — a
-// non-interrupting one may re-fire on a fresh false→true edge); Error is
-// always interrupting (BPMN §10.5.6). Escalation/Cancel/Compensation/
-// Multiple stay deferred (ADR-018 v.1 §2.7).
+// (SRD-029 FR-2). Timer/Message/Signal/Conditional/Escalation may be
+// interrupting or non-interrupting (Conditional decided in ADR-006 v.3 §2.7 — a
+// non-interrupting one may re-fire on a fresh false→true edge; Escalation is
+// non-interrupting-capable per ADR-018 v.1, landed in SRD-058); Error is
+// always interrupting (BPMN §10.5.6). Cancel/Compensation/Multiple stay
+// deferred (ADR-018 v.1 §2.7).
 var boundaryTriggers = set.New[flow.EventTrigger](
 	flow.TriggerTimer,
 	flow.TriggerMessage,
 	flow.TriggerSignal,
 	flow.TriggerError,
 	flow.TriggerConditional,
+	flow.TriggerEscalation,
 )
 
 // boundaryHost is the activity-side capability BoundTo needs: it both lists the
