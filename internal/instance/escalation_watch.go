@@ -44,6 +44,13 @@ func (ls *loopState) matchEscalationScopeChain(
 			return false // above every open scope — the root reached.
 		}
 
+		// an event-sub Escalation handler INSIDE this scope catches before the
+		// Escalation boundary ON the scope host (§10.5.6 precedence — the inline
+		// handler is the more inner catcher), mirroring matchErrorScopeChain.
+		if ls.catchEscalationHandler(ctx, path, code) {
+			return true
+		}
+
 		if bev := escalationBoundaryOn(entry.node, code); bev != nil {
 			ls.catchEscalationBoundary(ctx, path, entry, bev, code)
 
@@ -52,6 +59,62 @@ func (ls *loopState) matchEscalationScopeChain(
 
 		path = entry.parent
 	}
+}
+
+// catchEscalationHandler fires the event-sub Escalation handler armed at path,
+// if one matches the code, and reports whether it caught (SRD-058 FR-6). A
+// non-interrupting handler always catches — it forks a concurrent handler and
+// the scope runs on. An interrupting handler catches unless the scope's
+// interrupting budget is already spent (§10.5.6), in which case the escalation
+// keeps propagating outward. It is a non-fault catch — runScopeHandler /
+// runNonInterruptingHandler are the same dispatch fireScopeHandler uses.
+func (ls *loopState) catchEscalationHandler(
+	ctx context.Context,
+	path scope.DataPath,
+	code string,
+) bool {
+	w := ls.escalationHandlerAt(path, code)
+	if w == nil {
+		return false
+	}
+
+	if w.interrupting && ls.scopeInterrupted[path] {
+		return false // budget spent — propagate to an outer catcher.
+	}
+
+	ls.inst.report(observability.Fact{
+		Kind:     observability.KindEscalation,
+		Phase:    observability.PhaseCaught,
+		NodeID:   w.handler.ID(),
+		NodeName: w.handler.Name(),
+		Details:  map[string]string{observability.AttrEscalation: code},
+	})
+	ls.reportHandler(w, observability.PhaseFired)
+
+	if w.interrupting {
+		ls.runScopeHandler(ctx, w, nil)
+	} else {
+		ls.runNonInterruptingHandler(ctx, w, nil)
+	}
+
+	return true
+}
+
+// escalationHandlerAt returns the armed event-sub Escalation handler at path
+// whose start's escalationRef catches the code (exact or catch-all, §4.3), or
+// nil — the scope-chain peer of escalationBoundaryOn, mirroring errorHandlerAt.
+func (ls *loopState) escalationHandlerAt(
+	path scope.DataPath,
+	code string,
+) *scopeHandlerWatch {
+	for _, w := range ls.scopeHandlers[path] {
+		if eed, ok := w.def.(*events.EscalationEventDefinition); ok &&
+			escalationMatches(eed, code) {
+			return w
+		}
+	}
+
+	return nil
 }
 
 // catchEscalationBoundary fires a matched Escalation boundary. Non-interrupting
