@@ -2,7 +2,7 @@
 
 | Property | Value |
 | :---- | :---- |
-| **Status** | Scoping (pre-SRD) |
+| **Status** | Superseded — **landed** (ADR-006 v.4 §2.8 + SRD-057, Accepted 2026-07-20) |
 | **Date** | 2026-07-20 |
 | **Author** | dr-dobermann |
 | **Feeds** | a new **ADR-006 §2.8** (Link semantics) + **SRD-057** (the landing) |

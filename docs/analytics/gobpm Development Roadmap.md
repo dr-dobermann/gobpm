@@ -53,7 +53,7 @@ Grounded in the code, not aspiration.
 - **Production extension adapters (per-adapter ADRs, ADR-002 §9):** only the bundled in-memory defaults exist (SRD-004). No production adapters yet — postgres `Repository`, OTel `Tracer`/`MetricsRecorder`, OIDC/Casbin `AuthorizationProvider`, FEEL `ExpressionEngine`, real message brokers — each deferred to its own ADR.
 - **Module layout (ADR-003):** the `pkg/` subpackage catalogue and the 12 migration steps are not started; `runtime/` and `adapters/sqlite/` are scaffolds with no real code.
 - **Persistence & rehydration (P0 per SAD §10/§13):** runtime-state *ownership* is now decided (per-instance node graph, ADR-009), but **durable** persistence is missing — no `Repository`, no checkpointing, no long-wait token release, no restart recovery. Execution is in-memory and ephemeral.
-- **BPMN elements — remaining gap (2026-07-20).** *Landed since the 2026-06-12 baseline:* **Inclusive** (OR) + **Complex** + **Event-Based** gateways (SRD-021/022/023/024/025); **Manual task**; **Boundary events** interrupting + non-interrupting (SRD-029) with the **Error path** (`BpmnError`); **Embedded Sub-Process** (SRD-049) + **Call Activity** (SRD-050) + **Event Sub-Process** interrupting + non-interrupting (SRD-052/053); **Conditional events** (SRD-048); **Standard Loop** (SRD-054); **structural data incl. the map kind** (SRD-042→045+047); **definition versioning** (SRD-031.A). *Still absent or skeleton:* **Script task** (model stub only, no runtime) and **Business-Rule task** (DMN via external engine, non-goal N2); **Multi-Instance** loop characteristics (sequential/parallel); **Transaction** and **Ad-Hoc** Sub-Process; **Compensation / Escalation / Link** event behavior (Link has a bare model stub `pkg/model/events/link.go` — no constructor/`Type()`/runtime, and is absent from the throw/catch trigger allow-lists — see the **Link events kickoff brief**, `docs/analytics/link-events-kickoff.md`). (Earlier landings: Send/Receive tasks, Message throw/catch + start events, Signal events — SRD-013/014/015/026; Terminate End Event — SRD-030.)
+- **BPMN elements — remaining gap (2026-07-20).** *Landed since the 2026-06-12 baseline:* **Inclusive** (OR) + **Complex** + **Event-Based** gateways (SRD-021/022/023/024/025); **Manual task**; **Boundary events** interrupting + non-interrupting (SRD-029) with the **Error path** (`BpmnError`); **Embedded Sub-Process** (SRD-049) + **Call Activity** (SRD-050) + **Event Sub-Process** interrupting + non-interrupting (SRD-052/053); **Conditional events** (SRD-048); **Standard Loop** (SRD-054); **Link events** (SRD-057, ADR-006 v.4 §2.8 — intra-process GOTO by static name-pairing); **structural data incl. the map kind** (SRD-042→045+047); **definition versioning** (SRD-031.A). *Still absent or skeleton:* **Script task** (model stub only, no runtime) and **Business-Rule task** (DMN via external engine, non-goal N2); **Multi-Instance** loop characteristics (sequential/parallel); **Transaction** and **Ad-Hoc** Sub-Process; **Compensation / Escalation** event behavior (#90 — the remaining two of the epic's four). (Earlier landings: Send/Receive tasks, Message throw/catch + start events, Signal events — SRD-013/014/015/026; Terminate End Event — SRD-030.)
 - **Messaging runtime:** Send/Receive tasks + Message throw/catch events (SRD-013/014, ADR-014 Accepted), **Message-Start event-triggered instantiation + key-based correlation** (SRD-015, ADR-015/016 Accepted — phase-2a/2b), **conversation-token threading** (SRD-017 — phase-2c), and the **Event-Based-gateway start** (Exclusive-start + Parallel-start instantiators, SRD-025, ADR-005 v.4 §2.12.4) have landed. Deferred: context-based/predicate correlation (phase-3), durable subscriptions.
 - **Fault tolerance:** no Incident / Retry / DLQ.
 - **Runtime overlay (ADR-004):** no server, API, tenancy, AuthN/Z wiring, diagnostics, health checks.
@@ -157,6 +157,15 @@ Milestones are demonstrable capability checkpoints cutting across the workstream
 - [docs/bpmn-spec/](../bpmn-spec/) — BPMN 2.0 normative reference KB.
 
 ## Changes
+
+### 2026-07-20 (b)
+
+- **Link events landed (SRD-057, ADR-006 v.4 §2.8 — #90).** Intra-process GOTO
+  by static name-pairing (throw source → same-name catch target within one
+  Process level); resolved at graph wiring, validated fail-fast at registration,
+  the throw redirects (no hub/waiter), the catch is a bypassed flow label. §2.2
+  moves Link to *landed*; C6 now needs only Compensation/Escalation of the #90
+  set. The kickoff brief is superseded.
 
 ### 2026-07-20
 
