@@ -52,4 +52,14 @@ type RuntimeEnvironment interface {
 	// or ends normally (end) — and an unresolved escalation is logged, never a
 	// fault (SRD-058 FR-1/FR-4). An empty code catches at a catch-all handler.
 	Escalate(code string)
+
+	// Compensate triggers compensation of completed work (a Compensation
+	// Intermediate Throw or End Event, BPMN §13.5.5, ADR-026): the engine
+	// resolves directly against the completion ledger — activityRef names one
+	// completed activity, an empty ref compensates the throw's enclosing scope
+	// in reverse completion order. With wait=true (the spec default) the
+	// throwing token parks until every invoked handler completes; wait=false
+	// is fire-and-forget. Unresolved compensation is logged, never a fault
+	// (SRD-059 FR-5/FR-8).
+	Compensate(activityRef string, wait bool)
 }

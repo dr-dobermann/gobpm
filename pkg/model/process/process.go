@@ -291,6 +291,11 @@ func (p *Process) Validate() error {
 		ee = append(ee, err)
 	}
 
+	// A compensation handler lives outside the normal flow (SRD-059 FR-2).
+	if err := activities.ValidateCompensationPlacement(p.Nodes()); err != nil {
+		ee = append(ee, err)
+	}
+
 	if len(ee) > 0 {
 		return errors.Join(ee...)
 	}

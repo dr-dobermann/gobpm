@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Compensation events (SRD-059, ADR-026 v.1 — #90, closing the epic).**
+  Undoing work that already **completed successfully** — the saga pattern in
+  BPMN form. Each open scope keeps a **completion ledger**: compensable
+  completions (activities guarded by a **Compensation boundary** linked to an
+  `isForCompensation` handler, or a Sub-Process with a compensation **Event
+  Sub-Process**) enter it in completion order with a **data snapshot** captured
+  at that instant; child ledgers fold into the parent at scope completion and
+  discard when the enclosing scope finishes (never a live subscription —
+  ADR-006 §2.3's eligibility window made structural). A throw Compensation
+  Event (Intermediate Throw / End) resolves **directly** against the ledger:
+  `activityRef`-targeted or scope-wide in **reverse completion order**,
+  handlers run sequentially; `waitForCompletion` (default) parks the throwing
+  token until the sweep drains. A handler reads the **snapshot** its activity
+  completed with (writes go live); a handler failure faults through the Error
+  chain (`Compensating → Failed`); an unresolved throw is **logged**, never
+  silent, never a fault. New `KindCompensation` observability (Thrown/Eligible/
+  Folded/Compensating/Compensated/Discarded/Unresolved — the ledger's audit
+  log), `Compensate(ref, wait)` on `renv.RuntimeEnvironment`, the
+  `NewCompensationBoundaryEvent` constructor with its typed handler link, and
+  `examples/compensation-events/` (a trip-booking saga). Recursive default
+  compensation, the error-driven auto-sweep, `compensate-on-terminate`,
+  Transaction/Cancel and Call-Activity compensation stay designed-for/out of
+  scope per ADR-026. **Closes the #90 events epic** — Signal, Link, Escalation
+  and Compensation all landed.
+
 - **Escalation events (SRD-058, ADR-006 v.4 §2.2/§2.6 · ADR-018 · ADR-023 v.2 §2.6 — #90).**
   Error's **non-critical** twin: a throw (Escalation **Intermediate Throw** or
   **End Event**) raises a non-fault escalation that climbs the throwing

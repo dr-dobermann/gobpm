@@ -187,6 +187,13 @@ func (a *activity) DefaultFlow() *flow.SequenceFlow {
 	return a.defaultFlow
 }
 
+// ForCompensation reports whether the activity is a compensation handler
+// (isForCompensation, set by WithCompensation): it lives outside the normal
+// flow and runs only when compensation is thrown (ADR-026 §2.3, SRD-059 FR-2).
+func (a *activity) ForCompensation() bool {
+	return a.isForCompensation
+}
+
 // BoundaryEvents returns list of events bounded to the acitvity.
 func (a *activity) BoundaryEvents() []flow.EventNode {
 	return append([]flow.EventNode{}, a.boundaryEvents...)

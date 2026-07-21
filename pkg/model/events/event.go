@@ -677,7 +677,67 @@ func (te *throwEvent) emitDefinition(
 		return nil
 	}
 
+	if ced, ok := ed.(*CompensationEventDefinition); ok {
+		// Compensation resolves directly against the engine's completion
+		// ledger (BPMN §13.5.5, ADR-026, SRD-059 FR-5) — never the hub. A
+		// wait-for-completion definition is owned entirely by the PARK path
+		// (the track parked on this throw before Exec and the runtime already
+		// swept; see CompensationWaitRef), so it is a no-op here; a
+		// fire-and-forget one triggers inline and the token continues.
+		if ced.WaitForCompletion() {
+			return nil
+		}
+
+		re.Compensate(compensationRefOf(ced), false)
+
+		return nil
+	}
+
 	return te.emitEvent(re, re.EventProducer(), ed)
+}
+
+// compensationRefOf extracts the definition's activityRef id ("" = the
+// default target context — compensate the enclosing scope, §13.5.5).
+func compensationRefOf(ced *CompensationEventDefinition) string {
+	if a := ced.Activity(); a != nil {
+		return a.ID()
+	}
+
+	return ""
+}
+
+// CompensationWaitRef reports whether this throw carries a wait-for-completion
+// Compensation definition, and its activityRef ("" = scope-wide). The engine
+// treats such a throw as a WAIT NODE (SRD-059 FR-5): it parks the track,
+// triggers the sweep, and resumes the token when every invoked handler
+// completes — so Exec (emitDefinition) deliberately no-ops on the definition.
+func (te *throwEvent) CompensationWaitRef() (string, bool) {
+	for _, ed := range te.definitions {
+		if ced, ok := ed.(*CompensationEventDefinition); ok &&
+			ced.WaitForCompletion() {
+			return compensationRefOf(ced), true
+		}
+	}
+
+	return "", false
+}
+
+// ProcessEvent accepts the compensation-completion delivery that resumes a
+// track parked on a wait-for-completion Compensation throw (SRD-059 FR-5):
+// the engine loop is the only producer for a parked throw — the delivery
+// itself IS the completion signal, so nothing binds here (the SubProcess
+// ProcessEvent precedent). Implements eventproc's EventProcessor surface.
+func (te *throwEvent) ProcessEvent(
+	_ context.Context,
+	eDef flow.EventDefinition,
+) error {
+	if eDef == nil {
+		return errs.New(
+			errs.M("a nil event definition isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	return nil
 }
 
 func (te *throwEvent) emitEvent(

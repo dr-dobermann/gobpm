@@ -17,7 +17,10 @@ import (
 type CompensationEventDefinition struct {
 	activity flow.ActivityNode
 	definition
-	waitForCompensation bool
+	// waitForCompletion carries the spec's waitForCompletion attribute
+	// (§10.4.5, default true): true — the throwing token parks until the
+	// triggered compensation completes; false — fire-and-forget (SRD-059 FR-5).
+	waitForCompletion bool
 }
 
 // Type implements the Definition interface.
@@ -26,10 +29,12 @@ func (*CompensationEventDefinition) Type() flow.EventTrigger {
 }
 
 // NewCompensationEventDefinition creates a new CompensationEventDefinition
-// and reterns its pointer.
+// and returns its pointer. A nil activity is legal on a THROW definition — it
+// means the spec's default target context (§13.5.5: compensate the throw's
+// enclosing scope, scope-wide).
 func NewCompensationEventDefinition(
 	activity flow.ActivityNode,
-	wait4compensation bool,
+	waitForCompletion bool,
 	baseOpts ...options.Option,
 ) (*CompensationEventDefinition, error) {
 	d, err := newDefinition(baseOpts...)
@@ -38,8 +43,22 @@ func NewCompensationEventDefinition(
 	}
 
 	return &CompensationEventDefinition{
-		definition:          *d,
-		activity:            activity,
-		waitForCompensation: wait4compensation,
+		definition:        *d,
+		activity:          activity,
+		waitForCompletion: waitForCompletion,
 	}, nil
+}
+
+// Activity returns the referenced activity (the spec's activityRef) — the
+// specific activity a throw compensates, or nil for the default target
+// context (scope-wide compensation).
+func (ced *CompensationEventDefinition) Activity() flow.ActivityNode {
+	return ced.activity
+}
+
+// WaitForCompletion reports whether a throw carrying this definition waits
+// for the triggered compensation to complete before continuing (§10.4.5,
+// default true).
+func (ced *CompensationEventDefinition) WaitForCompletion() bool {
+	return ced.waitForCompletion
 }

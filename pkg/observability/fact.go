@@ -27,6 +27,7 @@ const (
 	KindBoundary         Kind = "Boundary"         // boundary-event arm/fire/disarm
 	KindFault            Kind = "Fault"            // BPMN error / fault
 	KindEscalation       Kind = "Escalation"       // escalation throw/catch (non-fault, SRD-058)
+	KindCompensation     Kind = "Compensation"     // completion-ledger lifecycle + compensation runs (ADR-026, SRD-059)
 	KindDataChange       Kind = "DataChange"       // data-element change (observer-only)
 	KindScope            Kind = "Scope"            // nested-scope lifecycle (SRD-049)
 	KindCall             Kind = "Call"             // call-activity lifecycle (SRD-050)
@@ -102,7 +103,23 @@ const (
 	// PhaseUnresolved: an escalation reached the scope-chain root with no
 	// matching catcher (SRD-058 FR-4). Non-fault — the escalation analog of the
 	// fault's Uncaught, but execution continues; logged, never silently dropped.
-	PhaseUnresolved Phase = "Unresolved" // Escalation
+	PhaseUnresolved Phase = "Unresolved" // Escalation / Compensation
+
+	// The completion-ledger lifecycle (ADR-026 §2.7, SRD-059 NFR-3): an entry is
+	// recorded Eligible at its activity's Completed, Folded when a completed
+	// child scope's ledger reparents into the enclosing scope's, and Discarded
+	// when the enclosing scope finishes with the entry never compensated — the
+	// normal end of the eligibility window. The observer stream is the ledger's
+	// audit log: recorded → folded* → consumed | discarded.
+	PhaseEligible  Phase = "Eligible" // Compensation
+	PhaseFolded    Phase = "Folded"
+	PhaseDiscarded Phase = "Discarded"
+	// Compensating/Compensated fill the ADR-013 v.2 reserved slots (SRD-059
+	// FR-6): a handler invocation opens Compensating and closes Compensated —
+	// or the activity-side `Compensating → Failed` when the handler itself
+	// fails (a real Error-chain fault).
+	PhaseCompensating Phase = "Compensating"
+	PhaseCompensated  Phase = "Compensated"
 
 	PhaseValueAdded   Phase = "Value_Added" // DataChange (= data.ChangeType)
 	PhaseValueUpdated Phase = "Value_Updated"
@@ -132,6 +149,9 @@ const (
 	AttrCorrelationValue  = "correlation_value"
 	AttrError             = "error"
 	AttrEscalation        = "escalation"
+	// AttrOrdinal (SRD-059): a completion-ledger entry's 0-based completion
+	// order within its scope — the reverse-compensation order's authority.
+	AttrOrdinal = "ordinal"
 	AttrChosenFlows       = "chosen_flows"
 	AttrVersion           = "version"
 	AttrAttempts          = "attempts"

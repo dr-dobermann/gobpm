@@ -394,9 +394,11 @@ func (inst *Instance) emit(ev trackEvent) {
 // seedableEntry reports whether n should seed an initial track: a no-incoming,
 // non-gateway, non-boundary node that is not the already-fired born start
 // (SRD-015 §4.4), not a scope-armed Event Sub-Process handler (ADR-023 v.2
-// §2.10 / SRD-052 FR-3), and not a Link event node — a Link catch (target) has
+// §2.10 / SRD-052 FR-3), not a Link event node — a Link catch (target) has
 // no incoming by design but is reached only via the redirect, and a Link throw
-// (source) is reached through its own incoming flow (ADR-006 v.4 §2.8).
+// (source) is reached through its own incoming flow (ADR-006 v.4 §2.8) — and
+// not a compensation handler, which is flow-less by design and runs only when
+// compensation is thrown (ADR-026 §2.3, SRD-059 FR-2).
 func seedableEntry(n, bornStart flow.Node) bool {
 	if bornStart != nil && n.ID() == bornStart.ID() {
 		return false
@@ -411,6 +413,11 @@ func seedableEntry(n, bornStart flow.Node) bool {
 	}
 
 	if _, boundary := n.(flow.BoundaryEvent); boundary {
+		return false
+	}
+
+	if c, ok := n.(interface{ ForCompensation() bool }); ok &&
+		c.ForCompensation() {
 		return false
 	}
 

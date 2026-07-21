@@ -215,6 +215,15 @@ fault the instance: it climbs to the innermost matching catcher (boundary or
 event-sub-process start, interrupting or non-interrupting), and an **unresolved**
 one is logged, never silently dropped.
 
+For compensation events (undoing **completed** work — the saga pattern), see
+[`examples/compensation-events/`](examples/compensation-events/) — a
+trip-booking saga: each booking carries a **Compensation boundary** linked to
+its `isForCompensation` undo handler; completed bookings enter the engine's
+**completion ledger** with a data snapshot each, and a Compensation End Event
+undoes them in **reverse completion order**, waiting for the handlers. Only
+completed work compensates (presumed abort); a handler reads the snapshot its
+activity completed with; an unresolved throw is logged, never a fault.
+
 For composition, see [**docs/guides/composition.md**](docs/guides/composition.md).
 An **embedded Sub-Process** is a nested scope inside the instance (the inner
 flow reads the parent's data through the walk-up, its locals die with the

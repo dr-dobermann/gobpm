@@ -138,6 +138,52 @@ func (_c *MockRuntimeEnvironment_Clock_Call) RunAndReturn(run func() clock.Clock
 	return _c
 }
 
+// Compensate provides a mock function for the type MockRuntimeEnvironment
+func (_mock *MockRuntimeEnvironment) Compensate(activityRef string, wait bool) {
+	_mock.Called(activityRef, wait)
+	return
+}
+
+// MockRuntimeEnvironment_Compensate_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Compensate'
+type MockRuntimeEnvironment_Compensate_Call struct {
+	*mock.Call
+}
+
+// Compensate is a helper method to define mock.On call
+//   - activityRef string
+//   - wait bool
+func (_e *MockRuntimeEnvironment_Expecter) Compensate(activityRef interface{}, wait interface{}) *MockRuntimeEnvironment_Compensate_Call {
+	return &MockRuntimeEnvironment_Compensate_Call{Call: _e.mock.On("Compensate", activityRef, wait)}
+}
+
+func (_c *MockRuntimeEnvironment_Compensate_Call) Run(run func(activityRef string, wait bool)) *MockRuntimeEnvironment_Compensate_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 bool
+		if args[1] != nil {
+			arg1 = args[1].(bool)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockRuntimeEnvironment_Compensate_Call) Return() *MockRuntimeEnvironment_Compensate_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockRuntimeEnvironment_Compensate_Call) RunAndReturn(run func(activityRef string, wait bool)) *MockRuntimeEnvironment_Compensate_Call {
+	_c.Run(run)
+	return _c
+}
+
 // Escalate provides a mock function for the type MockRuntimeEnvironment
 func (_mock *MockRuntimeEnvironment) Escalate(code string) {
 	_mock.Called(code)

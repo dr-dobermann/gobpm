@@ -142,6 +142,24 @@ func (ls *loopState) onScopeOpen(ctx context.Context, host *track, node flow.Nod
 	// onTaskWaiting discipline); idempotent for the born-parked path.
 	ls.waiting[host.ID()] = struct{}{}
 
+	// a compensation event-sub handler's fresh child scope is seeded with the
+	// ledger entry's snapshot (SRD-059 FR-4): reads inside the handler resolve
+	// child-first, so the snapshot shadows the live parent data; the handler's
+	// local writes die with this scope (an ADR-026 §2.5 engine note).
+	if host.compScopeSeed != nil {
+		if _, err := ls.inst.sc.plane.Commit(
+			child, host.compScopeSeed...); err != nil {
+			ls.inst.fail(errs.New(
+				errs.M("couldn't seed compensation snapshot into %q",
+					string(child)),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err)))
+			ls.stopAll()
+
+			return
+		}
+	}
+
 	entry := &scopeEntry{host: host, node: node, parent: host.scopePath}
 	ls.scopes[child] = entry
 
@@ -298,6 +316,11 @@ func (ls *loopState) completeScope(
 		}
 	}
 
+	// SRD-059 FR-3/FR-7: a completing composite enters the parent's completion
+	// ledger (its own handler and/or its folded child ledger) — recorded here,
+	// while the scope's data is still readable and its handlers still armed.
+	ls.recordScopeCompletion(path, entry)
+
 	if err := ls.inst.sc.plane.CloseScope(path); err != nil {
 		// a child scope still open below — a corrupt tree; fail loudly, the
 		// invariant-violation class.
@@ -407,6 +430,11 @@ func (ls *loopState) cancelScope(path scope.DataPath, phase observability.Phase)
 	if _, ok := ls.scopes[path]; !ok {
 		return // already closed/canceled — a late signal is benign.
 	}
+
+	// a canceled scope's eligibility window closes with it: its completion
+	// ledger (and every ledger under it) discards — the canceled work's
+	// completed activities are no longer compensable (SRD-059 FR-3).
+	ls.discardLedgers(path)
 
 	// stop the subtree's tracks and clear their loop state.
 	for _, t := range ls.inst.tracks {

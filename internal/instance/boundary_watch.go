@@ -94,8 +94,13 @@ func (ls *loopState) armBoundaries(
 			// it is never armed as a hub waiter (SRD-029 §4.4). An Escalation
 			// boundary is the same: an escalation is not a hub-published trigger but
 			// climbs the throwing execution's scope chain, resolved at the throw site
-			// by matchEscalationScopeChain (SRD-058 FR-2/FR-5).
-			if d.Type() == flow.TriggerError || d.Type() == flow.TriggerEscalation {
+			// by matchEscalationScopeChain (SRD-058 FR-2/FR-5). A Compensation
+			// boundary is not even a live subscription (ADR-006 §2.3) — it becomes
+			// ELIGIBLE at the activity's completion, recorded into the completion
+			// ledger and resolved at throw time (SRD-059 FR-3).
+			if d.Type() == flow.TriggerError ||
+				d.Type() == flow.TriggerEscalation ||
+				d.Type() == flow.TriggerCompensation {
 				continue
 			}
 

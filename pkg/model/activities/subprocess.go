@@ -131,6 +131,11 @@ func (sp *SubProcess) Validate() error {
 		ee = append(ee, err)
 	}
 
+	// A compensation handler lives outside the normal flow (SRD-059 FR-2).
+	if err := ValidateCompensationPlacement(sp.Nodes()); err != nil {
+		ee = append(ee, err)
+	}
+
 	if len(ee) > 0 {
 		return errors.Join(ee...)
 	}
@@ -250,6 +255,11 @@ func (sp *SubProcess) classifyEntries(
 				}
 			}
 
+		case isCompensationHandler(n):
+			// A compensation handler lives outside the normal flow (SRD-059
+			// FR-2): flow-less by design, it is neither an entry seed nor a
+			// shape participant — it runs only when compensation is thrown.
+
 		case len(n.Incoming()) == 0 && n.NodeType() != flow.EventNodeType:
 			// activities and gateways without incoming flows are the
 			// no-start entry shape (§13.3.4); events are not.
@@ -286,6 +296,14 @@ func isStartEvent(n flow.Node) bool {
 	en, ok := n.(flow.EventNode)
 
 	return ok && en.EventClass() == flow.StartEventClass
+}
+
+// isCompensationHandler reports whether n is an isForCompensation activity —
+// a compensation handler outside the normal flow (SRD-059 FR-2).
+func isCompensationHandler(n flow.Node) bool {
+	c, ok := n.(interface{ ForCompensation() bool })
+
+	return ok && c.ForCompensation()
 }
 
 // contains reports whether node is one of the Sub-Process's inner nodes.
