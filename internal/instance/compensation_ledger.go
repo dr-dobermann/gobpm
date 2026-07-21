@@ -117,13 +117,14 @@ func (ls *loopState) recordLeafCompletion(ev trackEvent, departed flow.Node) {
 // is readable): the Sub-Process becomes the parent scope's entry when it has
 // its own handler (a Compensation boundary or a compensation Event
 // Sub-Process, FR-7) or when its child ledger is non-empty (folded entries
-// stay addressable by a targeted throw). MI/loop composite scopes are skipped —
-// their compensation rides the ADR-025 §2.10 deferral.
+// stay addressable by a targeted throw). MI/loop composite scopes are skipped
+// (entry.group for parallel MI, drivesOwnIteration for the ADR-025 v.2
+// off-loop iterators) — their compensation rides the ADR-025 §2.10 deferral.
 func (ls *loopState) recordScopeCompletion(
 	path scope.DataPath,
 	entry *scopeEntry,
 ) {
-	if entry.group != nil || compositeIteratorOf(entry.node) != nil {
+	if entry.group != nil || drivesOwnIteration(entry.node) {
 		return
 	}
 

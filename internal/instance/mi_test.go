@@ -593,30 +593,38 @@ func TestMIResolveActivationFrameError(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestCompositeIteratorDispatch: compositeIteratorOf resolves the iteration
-// strategy by marker — Standard Loop, Multi-Instance, none (a non-looped
-// activity), or none (a node that carries no loop characteristics at all).
-func TestCompositeIteratorDispatch(t *testing.T) {
+// TestDrivesOwnIteration: a looped composite drives its own off-loop iteration —
+// a Standard Loop or a SEQUENTIAL Multi-Instance (ADR-025 v.2 §2.12); a parallel
+// MI parks and fans out, and a plain composite / non-activity node do not iterate.
+func TestDrivesOwnIteration(t *testing.T) {
 	sl, err := activities.NewStandardLoop(loopCondLt(t, 1))
 	require.NoError(t, err)
 	slNode, err := activities.NewSubProcess("sl", activities.WithLoop(sl))
 	require.NoError(t, err)
 
-	miNode, err := activities.NewSubProcess("mi",
+	seqNode, err := activities.NewSubProcess("seq",
 		activities.WithLoop(mustSeqMI(t, activities.WithCardinality(
+			cardExpr(t, 1)))))
+	require.NoError(t, err)
+
+	parNode, err := activities.NewSubProcess("par",
+		activities.WithLoop(mustParallelMI(t, activities.WithCardinality(
 			cardExpr(t, 1)))))
 	require.NoError(t, err)
 
 	plainNode, err := activities.NewSubProcess("plain")
 	require.NoError(t, err)
 
-	// a non-activity node carries no LoopCharacteristics() method at all — the
-	// detectors' first type-assertion returns nil.
+	// a non-activity node carries no LoopCharacteristics() method at all.
 	evNode, err := events.NewStartEvent("ev")
 	require.NoError(t, err)
 
-	require.IsType(t, standardLoopIterator{}, compositeIteratorOf(slNode))
-	require.IsType(t, miIterator{}, compositeIteratorOf(miNode))
-	require.Nil(t, compositeIteratorOf(plainNode))
-	require.Nil(t, compositeIteratorOf(evNode))
+	require.True(t, drivesOwnIteration(slNode),
+		"a Standard Loop composite self-drives")
+	require.True(t, drivesOwnIteration(seqNode),
+		"a sequential Multi-Instance composite self-drives")
+	require.False(t, drivesOwnIteration(parNode),
+		"a parallel Multi-Instance parks and fans out")
+	require.False(t, drivesOwnIteration(plainNode))
+	require.False(t, drivesOwnIteration(evNode))
 }

@@ -473,11 +473,12 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 
 // checkActivityWaitKind classifies the non-event wait nodes (done=true when
 // the node was recognized and handled): a UserTask parks for a human Complete
-// (SRD-034); a composite parks while the loop opens its child scope (SRD-049
-// FR-8); a Call Activity parks for its child instance (SRD-050); a ServiceTask
-// marked WithWorker parks for the worker's report (SRD-036 — checked after the
-// call capability, a CallActivity is not an ExternalWorker). Each is
-// recognized by capability, keeping the runtime model-agnostic.
+// (SRD-034); a composite enters through enterComposite (SRD-049 FR-8 park, or
+// the ADR-025 v.2 off-loop iteration); a Call Activity parks for its child
+// instance (SRD-050); a ServiceTask marked WithWorker parks for the worker's
+// report (SRD-036 — checked after the call capability, a CallActivity is not
+// an ExternalWorker). Each is recognized by capability, keeping the runtime
+// model-agnostic.
 func (t *track) checkActivityWaitKind(
 	node flow.Node,
 	atConstruction bool,
@@ -487,7 +488,7 @@ func (t *track) checkActivityWaitKind(
 	}
 
 	if _, ok := node.(scopeHost); ok {
-		return true, t.parkScopeHost(node, atConstruction)
+		return true, t.enterComposite(node, atConstruction)
 	}
 
 	if _, ok := node.(interface{ CalledKey() string }); ok {
@@ -522,6 +523,20 @@ func (t *track) checkThrowNode(
 	}
 
 	return true, nil
+}
+
+// enterComposite routes a composite host reached by a token: a composite that
+// drives its own iteration off the loop (a Standard-Loop or a sequential
+// Multi-Instance composite, ADR-025 v.2 §2.12) must NOT park — run() reaches it and
+// executeStep routes it to runCompositeLoop / runMISequential; every other
+// composite (plain Sub-Process, parallel Multi-Instance) parks for the loop-driven
+// scope re-entry.
+func (t *track) enterComposite(node flow.Node, atConstruction bool) error {
+	if drivesOwnIteration(node) {
+		return nil
+	}
+
+	return t.parkScopeHost(node, atConstruction)
 }
 
 // parkScopeHost parks the track on a composite node (SRD-049 FR-8): the
