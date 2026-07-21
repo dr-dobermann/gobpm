@@ -309,6 +309,21 @@ func (ls *loopState) recordBornWaiter(ctx context.Context, t *track) {
 		ls.onCallWaiting(ctx, trackEvent{track: t, node: node})
 	}
 
+	// a track born parked ON a wait-for-completion Compensation throw (a fork
+	// straight onto one — e.g. an exception flow leading directly to it)
+	// starts its sweep from the spawn path — the twin of the mid-run
+	// evCompensate (SRD-059 FR-5; construction never emits).
+	if tw, ok := node.(interface{ CompensationWaitRef() (string, bool) }); ok {
+		if ref, wait := tw.CompensationWaitRef(); wait {
+			ls.applyCompensate(ctx, trackEvent{
+				track:    t,
+				node:     node,
+				compRef:  ref,
+				compWait: true,
+			})
+		}
+	}
+
 	ls.addTask(ctx, t.taskID, t, node)
 }
 

@@ -308,7 +308,7 @@ func TestAppendLedgerEntrySnapshotFailure(t *testing.T) {
 
 	ls.appendLedgerEntry(outside, &ledgerEntry{
 		activityID: "x", activityName: "x",
-	})
+	}, nil)
 
 	require.True(t, ls.stopping)
 	require.Error(t, inst.LastErr())

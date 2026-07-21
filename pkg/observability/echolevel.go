@@ -50,6 +50,9 @@ var phaseOverride = map[phaseKey]slog.Level{
 	// mistake (a throw with no reachable catcher) — surface it at Warn so it is
 	// logged, never silently dropped (SRD-058 FR-4).
 	{KindEscalation, PhaseUnresolved}: slog.LevelWarn,
+	// Same rule for a compensation throw that resolved to nothing (SRD-059
+	// FR-8): logged at Warn, never a fault, never silent.
+	{KindCompensation, PhaseUnresolved}: slog.LevelWarn,
 }
 
 // loggable reports whether an event of this kind is echoed to the operator log

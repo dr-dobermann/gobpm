@@ -50,6 +50,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/interactor"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -170,14 +171,30 @@ type track struct {
 	scopePath  scope.DataPath
 	scopeSeg   string
 	foundation.BaseElement
-	prev        []string
-	msgDefIDs   []string
-	condDefs    []*events.ConditionalEventDefinition
-	steps       []*stepInfo
-	loopCounter int
-	m           sync.RWMutex
-	stopIt      atomic.Bool
-	state       trackState
+	prev      []string
+	msgDefIDs []string
+	condDefs  []*events.ConditionalEventDefinition
+	steps     []*stepInfo
+	// compWaitRef holds the target ref of the wait-for-completion Compensation
+	// throw this track is parked on (SRD-059 FR-5); informational.
+	compWaitRef string
+	// pendingCompensate is the evCompensate a parkCompensationThrow deferred:
+	// checkFlows emits it AFTER its evMoved, so the predecessor's ledger entry
+	// (on that evMoved) is applied before the sweep resolves (SRD-059 FR-6).
+	pendingCompensate *trackEvent
+	// compFrameSeed, on a compensation-handler track, is the ledger entry's
+	// data snapshot: seeded into each frame's INPUTS so reads are
+	// snapshot-first while Put/outputs still commit to the live scope
+	// (SRD-059 FR-4, ADR-026 §2.5). Set by the loop before spawn.
+	compFrameSeed []data.Data
+	// compScopeSeed, on a compensation event-sub handler host, is the snapshot
+	// committed into the handler's fresh child scope at open (shadowing
+	// reads). Set by the loop before spawn.
+	compScopeSeed []data.Data
+	loopCounter   int
+	m             sync.RWMutex
+	stopIt        atomic.Bool
+	state         trackState
 }
 
 // record appends a track-state transition to the history, copy-on-write, and
@@ -364,39 +381,18 @@ func newTrack(
 // recordBornWaiter instead (SRD-027 FR-5). Only the mid-run path (the
 // track's own goroutine) emits.
 func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
-	// A UserTask is a human-interaction wait node (SRD-034): it parks for a human
-	// Complete, not for a hub-delivered event. Recognize it before the event-node
-	// path (it is not a flow.EventNode) and park it without any hub registration.
-	if _, ok := node.(interactor.HumanTask); ok {
-		return t.parkHumanTask(node)
+	// Non-event wait nodes (human task / composite / call / worker) park via
+	// their capability, dispatched in checkActivityWaitKind.
+	if done, err := t.checkActivityWaitKind(node, atConstruction); done {
+		return err
 	}
 
-	// A composite (an embedded Sub-Process — an activity that contains its
-	// own graph) is a wait node too (SRD-049 FR-8): the host parks while the
-	// loop opens the child scope, seeds the inner tracks, and resumes the
-	// host with a synthetic completion when the scope drains. Recognized by
-	// the container capability, keeping the runtime model-agnostic.
-	if _, ok := node.(scopeHost); ok {
-		return t.parkScopeHost(node, atConstruction)
-	}
-
-	// A Call Activity is a child-instance wait node (SRD-050): the host parks
-	// while the loop launches a separate process instance and resumes it with a
-	// synthetic completion when the child ends. Recognized by the call
-	// capability (CalledKey), keeping the runtime model-agnostic — before the
-	// external-worker path (a CallActivity is not an ExternalWorker).
-	if _, ok := node.(interface{ CalledKey() string }); ok {
-		return t.parkCallActivity(node, atConstruction)
-	}
-
-	// A ServiceTask marked WithWorker is an external-worker wait node (SRD-036): it
-	// parks for a worker's report, not a hub-delivered event. Recognize it before
-	// the event-node path (it is not a flow.EventNode) and park it. An unmarked
-	// ServiceTask (WorkerTopic ok == false) runs in-process and falls through.
-	if ew, ok := node.(tasks.ExternalWorker); ok {
-		if _, isWorker := ew.WorkerTopic(); isWorker {
-			return t.parkServiceTask(node)
-		}
+	// A throw event (EndEvent, IntermediateThrowEvent) emits its definitions
+	// in Exec and must not be parked as a waiter for the event it is about to
+	// throw — with ONE exception: a wait-for-completion Compensation throw IS
+	// a wait node (SRD-059 FR-5). Dispatched in checkThrowNode.
+	if done, err := t.checkThrowNode(node, atConstruction); done {
+		return err
 	}
 
 	en, ok := node.(flow.EventNode)
@@ -404,10 +400,7 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 		return nil
 	}
 
-	// Only a node that can PROCESS a fired event waits for one. A throw event
-	// (EndEvent, IntermediateThrowEvent) is a flow.EventNode but not an
-	// eventproc.EventProcessor — it emits its definitions in Exec and must not
-	// be parked as a waiter for the message it is about to throw.
+	// Only a node that can PROCESS a fired event waits for one.
 	if _, ok := node.(eventproc.EventProcessor); !ok {
 		return nil
 	}
@@ -478,6 +471,59 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 	return nil
 }
 
+// checkActivityWaitKind classifies the non-event wait nodes (done=true when
+// the node was recognized and handled): a UserTask parks for a human Complete
+// (SRD-034); a composite parks while the loop opens its child scope (SRD-049
+// FR-8); a Call Activity parks for its child instance (SRD-050); a ServiceTask
+// marked WithWorker parks for the worker's report (SRD-036 — checked after the
+// call capability, a CallActivity is not an ExternalWorker). Each is
+// recognized by capability, keeping the runtime model-agnostic.
+func (t *track) checkActivityWaitKind(
+	node flow.Node,
+	atConstruction bool,
+) (bool, error) {
+	if _, ok := node.(interactor.HumanTask); ok {
+		return true, t.parkHumanTask(node)
+	}
+
+	if _, ok := node.(scopeHost); ok {
+		return true, t.parkScopeHost(node, atConstruction)
+	}
+
+	if _, ok := node.(interface{ CalledKey() string }); ok {
+		return true, t.parkCallActivity(node, atConstruction)
+	}
+
+	if ew, ok := node.(tasks.ExternalWorker); ok {
+		if _, isWorker := ew.WorkerTopic(); isWorker {
+			return true, t.parkServiceTask(node)
+		}
+	}
+
+	return false, nil
+}
+
+// checkThrowNode classifies a throw event (only throwEvent carries the
+// CompensationWaitRef capability): a wait-for-completion Compensation throw
+// parks as a wait node (SRD-059 FR-5); every other throw never parks — it
+// emits its definitions in Exec (done=true, no error). done=false for a
+// non-throw node.
+func (t *track) checkThrowNode(
+	node flow.Node,
+	atConstruction bool,
+) (bool, error) {
+	tw, ok := node.(interface{ CompensationWaitRef() (string, bool) })
+	if !ok {
+		return false, nil
+	}
+
+	if ref, wait := tw.CompensationWaitRef(); wait {
+		return true, t.parkCompensationThrow(node, ref, atConstruction)
+	}
+
+	return true, nil
+}
+
 // parkScopeHost parks the track on a composite node (SRD-049 FR-8): the
 // host waits on evtCh for the scope-drain completion. Mid-run the loop is
 // told via evScopeOpen; at construction (incl. a fork born ON a composite,
@@ -492,6 +538,37 @@ func (t *track) parkScopeHost(node flow.Node, atConstruction bool) error {
 			track: t,
 			node:  node,
 		})
+	}
+
+	return nil
+}
+
+// parkCompensationThrow parks the track on a wait-for-completion Compensation
+// throw (SRD-059 FR-5): the thrower waits on evtCh until the loop's sweep
+// drains and delivers the completion sentinel. Mid-run the loop is told via
+// evCompensate; at construction (a fork born ON the throw, which runs on the
+// loop goroutine — the SRD-048 deadlock rule) the spawn path starts the sweep
+// via recordBornWaiter instead. Mirrors parkScopeHost.
+func (t *track) parkCompensationThrow(
+	node flow.Node,
+	ref string,
+	atConstruction bool,
+) error {
+	t.compWaitRef = ref
+	t.updateState(TrackWaitForEvent)
+
+	if !atConstruction && t.instance.State() == Active {
+		// DEFERRED: checkFlows emits this AFTER its evMoved, so the ledger
+		// entry of the just-completed predecessor (carried on that evMoved)
+		// lands before the sweep resolves — FIFO makes the completion visible
+		// to its own downstream throw (SRD-059 FR-6).
+		t.pendingCompensate = &trackEvent{
+			kind:     evCompensate,
+			track:    t,
+			node:     node,
+			compRef:  ref,
+			compWait: true,
+		}
 	}
 
 	return nil
@@ -908,6 +985,16 @@ func (t *track) executeNode(
 
 	defer f.Discard()
 
+	// A compensation-handler track reads the ledger entry's snapshot, not the
+	// current scope (SRD-059 FR-4, ADR-026 §2.5): the snapshot params are
+	// seeded as frame INPUTS — resolved frame-first on reads, and never
+	// committed (Commit pushes only outputs and puts, so writes go live).
+	if t.compFrameSeed != nil {
+		if serr := seedFrameInputs(f, t.compFrameSeed); serr != nil {
+			return nil, serr
+		}
+	}
+
 	if perr := t.prepareNodeExecution(ctx, step, f); perr != nil {
 		return nil, perr
 	}
@@ -1067,6 +1154,31 @@ func (t *track) checkFlows(flows []*flow.SequenceFlow) error {
 		state:  StepCreated,
 	}
 
+	// SRD-059 FR-4: a leaf with a Compensation boundary snapshots its visible
+	// data HERE, on the track goroutine right after its own commit — the
+	// loop's ledger append runs later, and by then a downstream node may have
+	// already committed newer values (commits bypass the loop). The capture is
+	// carried on the evMoved emit below.
+	var compSnap []data.Data
+
+	t.m.RLock()
+	completed := t.steps[len(t.steps)-1].node
+	t.m.RUnlock()
+
+	if !opensChildScope(completed) &&
+		compensationBoundaryHandlerOf(completed) != nil {
+		snap, serr := t.instance.sc.plane.SnapshotAt(t.scopePath)
+		if serr != nil {
+			return errs.New(
+				errs.M("couldn't snapshot %q for the compensation ledger",
+					completed.Name()),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(serr))
+		}
+
+		compSnap = snap
+	}
+
 	// Guard the append: checkNodeType below may register a mid-flow event whose
 	// waiter fires synchronously (a broker-buffered message) and reads t.steps
 	// from its own goroutine via ProcessEvent -> updateState -> record.
@@ -1091,7 +1203,21 @@ func (t *track) checkFlows(flows []*flow.SequenceFlow) error {
 	// that registration would widen the window in which a fired event finds no subscriber and
 	// is lost. The position view does not need the move before evWaiting (a join recheck is
 	// triggered by a death/park, never by a move).
-	t.instance.emit(trackEvent{kind: evMoved, track: t, node: nextStep.node})
+	t.instance.emit(trackEvent{
+		kind:         evMoved,
+		track:        t,
+		node:         nextStep.node,
+		compSnapshot: compSnap,
+	})
+
+	// a wait-for-completion Compensation throw parked in checkNodeType above:
+	// its deferred evCompensate goes out now, AFTER the evMoved that ledgers
+	// the predecessor (SRD-059 FR-6).
+	if t.pendingCompensate != nil {
+		ev := *t.pendingCompensate
+		t.pendingCompensate = nil
+		t.instance.emit(ev)
+	}
 
 	// the remaining flows fork: build a fresh slice (don't mutate the caller's)
 	// and hand it to the loop, which constructs the new tracks. The track never

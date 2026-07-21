@@ -61,6 +61,27 @@ func (e *execEnv) Escalate(code string) {
 	e.emit(trackEvent{kind: evEscalate, track: e.track, escCode: code})
 }
 
+// Compensate triggers compensation of completed work (a Compensation throw,
+// BPMN §13.5.5, ADR-026, SRD-059 FR-5): it hands the loop an evCompensate
+// carrying the target ref ("" = the enclosing scope, reverse completion
+// order) and the wait flag; the loop resolves it directly against the
+// completion ledger. Used by the fire-and-forget path (wait=false) — a
+// wait-for-completion throw parks instead (parkCompensationThrow) and its
+// evCompensate is emitted by the park. A track-less frame has no scope to
+// compensate from, so it is a no-op.
+func (e *execEnv) Compensate(activityRef string, wait bool) {
+	if e.track == nil {
+		return
+	}
+
+	e.emit(trackEvent{
+		kind:     evCompensate,
+		track:    e.track,
+		compRef:  activityRef,
+		compWait: wait,
+	})
+}
+
 // GetData resolves name frame-first, then through the container scopes.
 func (e *execEnv) GetData(name string) (data.Data, error) {
 	return e.frame.GetData(name)

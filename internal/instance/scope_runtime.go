@@ -169,6 +169,24 @@ func (ls *loopState) onScopeOpen(ctx context.Context, host *track, node flow.Nod
 	// onTaskWaiting discipline); idempotent for the born-parked path.
 	ls.waiting[host.ID()] = struct{}{}
 
+	// a compensation event-sub handler's fresh child scope is seeded with the
+	// ledger entry's snapshot (SRD-059 FR-4): reads inside the handler resolve
+	// child-first, so the snapshot shadows the live parent data; the handler's
+	// local writes die with this scope (an ADR-026 §2.5 engine note).
+	if host.compScopeSeed != nil {
+		if _, err := ls.inst.sc.plane.Commit(
+			child, host.compScopeSeed...); err != nil {
+			ls.inst.fail(errs.New(
+				errs.M("couldn't seed compensation snapshot into %q",
+					string(child)),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err)))
+			ls.stopAll()
+
+			return
+		}
+	}
+
 	entry := &scopeEntry{host: host, node: node, parent: host.scopePath}
 	ls.scopes[child] = entry
 

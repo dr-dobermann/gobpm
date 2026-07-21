@@ -90,8 +90,11 @@ func opensChildScope(node flow.Node) bool {
 // recordLeafCompletion appends a ledger entry for a departed leaf activity
 // with a Compensation boundary (the evMoved hook: moving off a node is its
 // successful completion — a failed node arrives as evFailed and a canceled one
-// never moves, so this hook is inherently the presumed-abort filter).
-func (ls *loopState) recordLeafCompletion(t *track, departed flow.Node) {
+// never moves, so this hook is inherently the presumed-abort filter). The
+// snapshot arrives ON the event — captured by the track at the completion
+// itself (FR-4), because a downstream node may commit newer values before this
+// hook runs.
+func (ls *loopState) recordLeafCompletion(ev trackEvent, departed flow.Node) {
 	if opensChildScope(departed) {
 		return
 	}
@@ -101,12 +104,12 @@ func (ls *loopState) recordLeafCompletion(t *track, departed flow.Node) {
 		return
 	}
 
-	ls.appendLedgerEntry(t.scopePath, &ledgerEntry{
+	ls.appendLedgerEntry(ev.track.scopePath, &ledgerEntry{
 		activityID:   departed.ID(),
 		activityName: departed.Name(),
 		handlerID:    h.ID(),
 		handlerName:  h.Name(),
-	})
+	}, ev.compSnapshot)
 }
 
 // recordScopeCompletion ledgers a completing composite scope (the
@@ -144,7 +147,7 @@ func (ls *loopState) recordScopeCompletion(
 		return // not compensable, nothing folded — no entry.
 	}
 
-	ls.appendLedgerEntry(entry.parent, le)
+	ls.appendLedgerEntry(entry.parent, le, nil)
 
 	if len(child) > 0 {
 		ls.inst.report(observability.Fact{
@@ -175,21 +178,32 @@ func (ls *loopState) compensationHandlerAt(
 	return nil
 }
 
-// appendLedgerEntry snapshots the visible data at path, assigns the completion
-// ordinal, appends the entry, and reports it Eligible (NFR-3). A snapshot
-// failure is an invariant violation — the entry's future handler could not be
+// appendLedgerEntry assigns the completion ordinal, appends the entry, and
+// reports it Eligible (NFR-3). snap is the track-captured snapshot for a leaf
+// (FR-4 — captured at the completion itself); nil for a composite, whose
+// snapshot is captured here on the loop (safe: completeScope runs before the
+// host resumes, so nothing races the child's drained data). A capture failure
+// is an invariant violation — the entry's future handler could not be
 // guaranteed its read surface — so it fails the instance loudly.
-func (ls *loopState) appendLedgerEntry(path scope.DataPath, le *ledgerEntry) {
-	snap, err := ls.inst.sc.plane.SnapshotAt(path)
-	if err != nil {
-		ls.inst.fail(errs.New(
-			errs.M("couldn't snapshot %q for the compensation ledger at %q",
-				le.activityName, string(path)),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err)))
-		ls.stopAll()
+func (ls *loopState) appendLedgerEntry(
+	path scope.DataPath,
+	le *ledgerEntry,
+	snap []data.Data,
+) {
+	if snap == nil {
+		captured, err := ls.inst.sc.plane.SnapshotAt(path)
+		if err != nil {
+			ls.inst.fail(errs.New(
+				errs.M("couldn't snapshot %q for the compensation ledger at %q",
+					le.activityName, string(path)),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err)))
+			ls.stopAll()
 
-		return
+			return
+		}
+
+		snap = captured
 	}
 
 	le.snapshot = snap

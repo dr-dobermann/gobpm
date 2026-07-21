@@ -8,6 +8,8 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
+	"github.com/dr-dobermann/gobpm/generated/mockrenv"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/stretchr/testify/require"
 )
@@ -50,6 +52,99 @@ func TestCompensationDefinitionGetters(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, ced.Activity())
 	require.False(t, ced.WaitForCompletion())
+}
+
+// TestCompensationThrowSurface (FR-5, SRD-059 M3): the throw-side model
+// surface — CompensationWaitRef classifies a wait-for-completion throw,
+// ProcessEvent consumes the loop's completion sentinel, and Exec routes a
+// fire-and-forget definition to renv.Compensate (never the hub) while a
+// wait definition is owned by the park path (no emission from Exec).
+func TestCompensationThrowSurface(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	target := compTask(t, "target-ts", false)
+
+	t.Run("CompensationWaitRef", func(t *testing.T) {
+		cedWait, err := events.NewCompensationEventDefinition(target, true)
+		require.NoError(t, err)
+		it, err := events.NewIntermediateThrowEvent("t-wait", cedWait)
+		require.NoError(t, err)
+
+		ref, wait := it.CompensationWaitRef()
+		require.True(t, wait)
+		require.Equal(t, target.ID(), ref)
+
+		cedFF, err := events.NewCompensationEventDefinition(nil, false)
+		require.NoError(t, err)
+		itFF, err := events.NewIntermediateThrowEvent("t-ff", cedFF)
+		require.NoError(t, err)
+
+		ref, wait = itFF.CompensationWaitRef()
+		require.False(t, wait)
+		require.Empty(t, ref)
+
+		// a wait definition with no activityRef = scope-wide ("").
+		cedScope, err := events.NewCompensationEventDefinition(nil, true)
+		require.NoError(t, err)
+		itScope, err := events.NewIntermediateThrowEvent("t-scope", cedScope)
+		require.NoError(t, err)
+
+		ref, wait = itScope.CompensationWaitRef()
+		require.True(t, wait)
+		require.Empty(t, ref)
+
+		// a non-compensation throw is a throw with no wait ref.
+		esc, err := events.NewIntermediateThrowEvent("t-esc",
+			escDefForThrow(t))
+		require.NoError(t, err)
+		_, wait = esc.CompensationWaitRef()
+		require.False(t, wait)
+	})
+
+	t.Run("ProcessEvent consumes the sentinel", func(t *testing.T) {
+		ced, err := events.NewCompensationEventDefinition(nil, true)
+		require.NoError(t, err)
+		it, err := events.NewIntermediateThrowEvent("t-pe", ced)
+		require.NoError(t, err)
+
+		require.Error(t, it.ProcessEvent(t.Context(), nil))
+		require.NoError(t, it.ProcessEvent(t.Context(), ced))
+	})
+
+	t.Run("Exec: fire-and-forget calls Compensate; wait is park-owned",
+		func(t *testing.T) {
+			cedFF, err := events.NewCompensationEventDefinition(target, false)
+			require.NoError(t, err)
+			itFF, err := events.NewIntermediateThrowEvent("x-ff", cedFF)
+			require.NoError(t, err)
+
+			mre := mockrenv.NewMockRuntimeEnvironment(t)
+			mre.EXPECT().Compensate(target.ID(), false).Return()
+
+			_, err = itFF.Exec(t.Context(), mre)
+			require.NoError(t, err)
+
+			cedW, err := events.NewCompensationEventDefinition(nil, true)
+			require.NoError(t, err)
+			itW, err := events.NewIntermediateThrowEvent("x-w", cedW)
+			require.NoError(t, err)
+
+			// no Compensate expectation: the wait definition is a no-op in
+			// Exec — the park path owns it.
+			mre2 := mockrenv.NewMockRuntimeEnvironment(t)
+			_, err = itW.Exec(t.Context(), mre2)
+			require.NoError(t, err)
+		})
+}
+
+// escDefForThrow builds a minimal escalation definition for the non-comp
+// throw case.
+func escDefForThrow(t *testing.T) *events.EscalationEventDefinition {
+	t.Helper()
+
+	return events.MustEscalationEventDefinition(
+		events.MustEscalation("e-ts", "E-TS",
+			data.MustItemDefinition(values.NewVariable(1))))
 }
 
 // TestCompensationBoundary (FR-1/FR-2): the dedicated constructor builds an

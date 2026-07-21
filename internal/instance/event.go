@@ -10,55 +10,20 @@ import (
 // the sole owner of instance lifecycle state. Tracks never mutate that state
 // directly — they emit these and loop() applies them in order.
 type trackEvent struct {
-	// track is the subject: the forking parent for evFork, the ended track for
-	// evEnded, the awaiting track for evAwaiting, the surviving (completing)
-	// track for evMerged.
-	track *track
-	// node carries a node for three kinds: for evMoved the node the track just advanced onto
-	// (the loop sets position), for evParked the join node the track suspended on (the loop sets
-	// parked), and for evBoundary the fired boundary node guarding ev.track's activity (the loop
-	// continues on its exception flow). Carried in the event so the loop never infers it from a
-	// cross-goroutine read of the track's currentStep (ADR-017 Rule 2, SRD-028 FR-2/FR-3).
-	node flow.Node
-	// eDef, for evDeliver, is the fired event definition the loop dispatches to the
-	// subject track's evtCh (SRD-027 FR-2). For a Message evDeliver (track == nil,
-	// emitted by Instance.ProcessEvent) the loop resolves the target track from its
-	// id via the msgEDef→track index (FR-8).
-	eDef flow.EventDefinition
-	// taskID, for evTaskWaiting, is the engine-minted id of a parked UserTask. The
-	// loop records taskID → {track, node} so Take/Complete route back to it, and
-	// announces the task to the TaskDistributor (ADR-020, SRD-034). ev.node carries
-	// the UserTask node (built into a TaskInfo/TaskView by the loop). For
-	// evJobWaiting it carries the engine-minted JobID of a parked worker-dispatched
-	// ServiceTask instead, and ev.node the ServiceTask (SRD-036 §4.3).
-	taskID string
-	// escCode, for evEscalate, is the code of the escalation an escalation throw
-	// (Intermediate Throw or End) raised on ev.track. The loop walks the track's
-	// scope chain to the innermost matching catcher (SRD-058 FR-2). Unlike a
-	// fault, the throwing token is not torn down here — it continues (or ends)
-	// on its own; only an interrupting catcher cancels its scope.
-	escCode string
-	// flows, for evFork, are the extra outgoing flows (beyond the one the
-	// parent continues on) that the loop builds a new track for.
-	flows []*flow.SequenceFlow
-	// mergedIDs, for evMerged, are the ids of the previously-awaiting tracks the
-	// surviving track absorbed at a synchronizing join. Ids, not pointers: the
-	// loop resolves them against inst.tracks (which it owns) to flip their state.
-	mergedIDs []string
-	// msgDefIDs, for evWaiting, are the ids of the track's Message catch definitions.
-	// The loop enters them into its msgEDef→track index so a fired message resolves
-	// back to this track (SRD-027 FR-5/FR-8). Empty for a Signal/Timer-only wait.
-	msgDefIDs []string
-	// condDefs, for evWaiting, are the track's Conditional catch definitions
-	// (SRD-048 FR-7): never hub-registered — the loop arms them in its own
-	// conditional registry (arming order preserved) and evaluates them on the
-	// commit-diff signal. Empty for a non-conditional wait.
-	condDefs []*events.ConditionalEventDefinition
-	// changes, for evDataCommit, is the committed changed-path set a node's
-	// frame commit produced (SRD-044 seam, SRD-048 FR-10); ev.node carries the
-	// committing node. The loop sweeps its armed conditionals against it.
-	changes []data.Change
-	kind    trackEventKind
+	node         flow.Node
+	eDef         flow.EventDefinition
+	track        *track
+	taskID       string
+	escCode      string
+	compRef      string
+	mergedIDs    []string
+	compSnapshot []data.Data
+	flows        []*flow.SequenceFlow
+	msgDefIDs    []string
+	condDefs     []*events.ConditionalEventDefinition
+	changes      []data.Change
+	compWait     bool
+	kind         trackEventKind
 }
 
 // trackEventKind enumerates the track→loop event kinds.
@@ -86,6 +51,7 @@ var trackEventKindNames = [...]string{
 	evCallWaiting:      "callWaiting",
 	evScopeHandlerFire: "scopeHandlerFire",
 	evEscalate:         "escalate",
+	evCompensate:       "compensate",
 }
 
 // String returns the lower-case event-kind name for logging.
@@ -197,4 +163,12 @@ const (
 	// its own; only an interrupting catcher cancels its scope. Unmatched at the
 	// root, it is logged (not faulted, never silently dropped — FR-4).
 	evEscalate
+	// evCompensate: a Compensation throw asked for compensation of completed
+	// work (ev.compRef targets one activity, "" the enclosing scope; SRD-059
+	// FR-5/FR-6). Emitted by the wait-throw's park (compWait=true — ev.track
+	// is parked and the loop resumes it when the sweep drains) or by
+	// renv.Compensate for a fire-and-forget throw (compWait=false). The loop
+	// resolves it directly against the completion ledger — reverse completion
+	// order, sequential handlers; unresolved is logged, never a fault (FR-8).
+	evCompensate
 )

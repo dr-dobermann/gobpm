@@ -114,6 +114,12 @@ const (
 	PhaseEligible  Phase = "Eligible" // Compensation
 	PhaseFolded    Phase = "Folded"
 	PhaseDiscarded Phase = "Discarded"
+	// Compensating/Compensated fill the ADR-013 v.2 reserved slots (SRD-059
+	// FR-6): a handler invocation opens Compensating and closes Compensated —
+	// or the activity-side `Compensating → Failed` when the handler itself
+	// fails (a real Error-chain fault).
+	PhaseCompensating Phase = "Compensating"
+	PhaseCompensated  Phase = "Compensated"
 
 	PhaseValueAdded   Phase = "Value_Added" // DataChange (= data.ChangeType)
 	PhaseValueUpdated Phase = "Value_Updated"
