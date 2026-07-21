@@ -12,8 +12,10 @@ import (
 // interrupting or non-interrupting (Conditional decided in ADR-006 v.3 §2.7 — a
 // non-interrupting one may re-fire on a fresh false→true edge; Escalation is
 // non-interrupting-capable per ADR-018 v.1, landed in SRD-058); Error is
-// always interrupting (BPMN §10.5.6). Cancel/Compensation/Multiple stay
-// deferred (ADR-018 v.1 §2.7).
+// always interrupting (BPMN §10.5.6). Compensation (ADR-026, SRD-059) is
+// built ONLY through NewCompensationBoundaryEvent — it needs its handler link,
+// and cancelActivity does not apply to it. Cancel/Multiple stay deferred
+// (ADR-018 v.1 §2.7).
 var boundaryTriggers = set.New[flow.EventTrigger](
 	flow.TriggerTimer,
 	flow.TriggerMessage,
@@ -21,6 +23,7 @@ var boundaryTriggers = set.New[flow.EventTrigger](
 	flow.TriggerError,
 	flow.TriggerConditional,
 	flow.TriggerEscalation,
+	flow.TriggerCompensation,
 )
 
 // boundaryHost is the activity-side capability BoundTo needs: it both lists the
@@ -44,6 +47,10 @@ type boundaryHost interface {
 // type hierarchy (SRD-029 §4.1).
 type BoundaryEvent struct {
 	attachedTo flow.ActivityNode
+	// compensationHandler is the isForCompensation activity a Compensation
+	// boundary routes to — the typed realization of the spec's Association
+	// link (ADR-026 §2.3, SRD-059 FR-2). Nil for every other trigger.
+	compensationHandler flow.ActivityNode
 	catchEvent
 	cancelActivity bool
 }
@@ -92,6 +99,17 @@ func NewBoundaryEvent(
 				errs.C(errorClass, errs.InvalidParameter))
 	}
 
+	// A Compensation boundary needs its handler link and takes no
+	// cancelActivity choice — it is built only through the dedicated
+	// constructor (ADR-026 §2.3, SRD-059 FR-2).
+	if def.Type() == flow.TriggerCompensation {
+		return nil,
+			errs.New(
+				errs.M("NewBoundaryEvent: a Compensation boundary requires its "+
+					"handler link; use NewCompensationBoundaryEvent"),
+				errs.C(errorClass, errs.InvalidParameter))
+	}
+
 	ce, err := newCatchEvent(name, nil,
 		[]flow.EventDefinition{def}, false, baseOpts...)
 	if err != nil {
@@ -112,6 +130,86 @@ func NewBoundaryEvent(
 	}
 
 	return b, nil
+}
+
+// compensable is the narrow capability the compensation-handler validation
+// needs (the boundaryHost idiom — no flow.ActivityNode widening): the
+// activities package's ForCompensation getter.
+type compensable interface {
+	ForCompensation() bool
+}
+
+// NewCompensationBoundaryEvent builds a Compensation boundary on host routing
+// to handler — the typed link realizing the spec's Association (ADR-026 §2.3,
+// SRD-059 FR-2). It validates every parameter: a non-nil host, definition and
+// handler, and the handler must be marked isForCompensation (it lives outside
+// the normal flow and runs only when compensation is thrown). cancelActivity
+// does not apply to a Compensation boundary (there is nothing to interrupt —
+// the guarded activity already completed), so no flag is taken; the stored
+// value stays the spec default (true).
+func NewCompensationBoundaryEvent(
+	name string,
+	host flow.ActivityNode,
+	def *CompensationEventDefinition,
+	handler flow.ActivityNode,
+	baseOpts ...options.Option,
+) (*BoundaryEvent, error) {
+	if host == nil {
+		return nil,
+			errs.New(
+				errs.M("NewCompensationBoundaryEvent: a nil host activity "+
+					"isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if def == nil {
+		return nil,
+			errs.New(
+				errs.M("NewCompensationBoundaryEvent: a nil event definition "+
+					"isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if handler == nil {
+		return nil,
+			errs.New(
+				errs.M("NewCompensationBoundaryEvent: a nil compensation "+
+					"handler isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if c, ok := handler.(compensable); !ok || !c.ForCompensation() {
+		return nil,
+			errs.New(
+				errs.M("NewCompensationBoundaryEvent: handler %q must be "+
+					"marked isForCompensation (activities.WithCompensation)",
+					handler.Name()),
+				errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	ce, err := newCatchEvent(name, nil,
+		[]flow.EventDefinition{def}, false, baseOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	b := &BoundaryEvent{
+		catchEvent:          *ce,
+		cancelActivity:      true, // the spec default; the flag does not apply
+		compensationHandler: handler,
+	}
+
+	if err := b.BoundTo(host); err != nil {
+		return nil, err
+	}
+
+	return b, nil
+}
+
+// CompensationHandler returns the isForCompensation activity a Compensation
+// boundary routes to (nil for every other trigger).
+func (b *BoundaryEvent) CompensationHandler() flow.ActivityNode {
+	return b.compensationHandler
 }
 
 // BoundTo attaches the boundary event to host, enforcing multiplicity: at most
@@ -207,9 +305,10 @@ func (b *BoundaryEvent) Clone() (flow.Node, error) {
 	}
 
 	return &BoundaryEvent{
-		catchEvent:     ce,
-		attachedTo:     b.attachedTo,
-		cancelActivity: b.cancelActivity,
+		catchEvent:          ce,
+		attachedTo:          b.attachedTo,
+		cancelActivity:      b.cancelActivity,
+		compensationHandler: b.compensationHandler,
 	}, nil
 }
 
