@@ -43,13 +43,17 @@ func multiInstanceOf(node flow.Node) multiInstance {
 	return mi
 }
 
-// miState is a sequential Multi-Instance host's loop-owned iteration state
-// (SRD-055): the instance count fixed at activation, the input collection (nil
-// for a cardinality-driven Multi-Instance), the per-instance item name, the
-// private output staging collection assembled across instances (nil when the
-// activity assembles no output), the output ref/item names, and the running
-// count of completed instances. Read and written only on the loop goroutine;
-// nil for a non-MI host.
+// miState is a sequential Multi-Instance host's iteration state (SRD-055): the
+// instance count fixed at activation, the input collection (nil for a
+// cardinality-driven Multi-Instance), the per-instance item name, the private
+// output staging collection assembled across instances (nil when the activity
+// assembles no output), the output ref/item names, and the running count of
+// completed instances. Owned by the host RUNNER goroutine (runMISequential drives
+// it off the loop, ADR-025 v.2 §2.12), with ONE deliberate cross-goroutine field:
+// `staging` receives a per-pass `SetAt` from the loop (captureSequentialOutput /
+// the beforeClose capture, which must read the child scope before it closes) —
+// fenced by the scopeDone-on-evtCh edge and safe because MI is sequential (one
+// slot in flight, the publish read after the last drain). nil for a non-MI host.
 type miState struct {
 	collection        data.Collection
 	staging           *values.Array[any]
@@ -306,4 +310,108 @@ func (it miIterator) bindInstance(
 	}
 
 	return nil
+}
+
+// drivesOwnIteration reports whether a looped composite drives its OWN iteration
+// off the loop (the iteration decorator, ADR-025 v.2 §2.12): a Standard-Loop
+// composite (runCompositeLoop) or a SEQUENTIAL Multi-Instance composite
+// (runMISequential). A parallel Multi-Instance (fan-out driver) and a plain
+// composite do NOT — they park for the loop-driven scope re-entry.
+func drivesOwnIteration(node flow.Node) bool {
+	if standardLoopOf(node) != nil {
+		return true
+	}
+
+	mi := multiInstanceOf(node)
+
+	return mi != nil && mi.IsSequential()
+}
+
+// runMISequential drives a sequential Multi-Instance composite from the host's own
+// runner goroutine — the off-loop iteration decorator (SRD-055, ADR-025 v.2
+// §2.12), the count-driven sibling of runCompositeLoop. It resolves N once, then
+// for each instance splits the input datum off the loop, requests the child scope
+// (scopeRoundtrip), parks for the drain (awaitScopeDrained — during which the loop
+// captures the instance's output before the scope closes, §4.2), advances the
+// completion count, and stops early when the completionCondition holds. On exit it
+// publishes the assembled output once (the visibility barrier) and follows the
+// composite's single outgoing flow. It reuses the miIterator's resolveActivation /
+// bindInstance / evalCompletion / publishOutput, only relocating the control off
+// the loop.
+func (t *track) runMISequential(
+	ctx context.Context, step *stepInfo, mi multiInstance,
+) ([]*flow.SequenceFlow, error) {
+	it := miIterator{mi: mi}
+
+	n, col, err := it.resolveActivation(ctx, t, step.node)
+	if err != nil {
+		return nil, err
+	}
+
+	t.miState = &miState{
+		collection:        col,
+		inputItem:         mi.InputDataItem(),
+		outputRef:         mi.LoopDataOutputRef(),
+		outputItem:        mi.OutputDataItem(),
+		numberOfInstances: n,
+	}
+
+	// an output-assembling Multi-Instance stages each instance's item privately and
+	// publishes the collection once, at completion (the visibility barrier).
+	if t.miState.outputRef != "" {
+		t.miState.staging = values.NewArray[any]()
+	}
+
+	// N <= 0 runs zero instances — follow the outgoing flow once, no scope, no
+	// publish (staging is unallocated).
+	if n <= 0 {
+		t.miState = nil
+
+		return t.executeNode(ctx, step)
+	}
+
+	for i := 0; i < n; i++ {
+		t.loopCounter = i
+
+		// split the per-instance data at the host scope BEFORE the open, off the
+		// loop (loopCounter=i, numberOf* attrs, inputItem=collection[i]); the seeded
+		// body reads them by walk-up.
+		if err := it.bindInstance(ctx, t, i); err != nil {
+			return nil, err
+		}
+
+		if _, err := t.instance.scopeRoundtrip(ctx,
+			scopeRequest{host: t, node: step.node}); err != nil {
+			return nil, err
+		}
+
+		if err := t.awaitScopeDrained(ctx); err != nil {
+			return nil, err
+		}
+
+		// advance the completion count, then test the completionCondition against
+		// the attributes bound at THIS pass's start (not rebound) — the exact value
+		// the loop-driven afterDrain exposed (§4.3). completed >= n stops via the
+		// loop's natural exit; a true condition stops early ("stop launching").
+		t.miState.completed++
+		if t.miState.completed < n && mi.CompletionCondition() != nil {
+			met, err := it.evalCompletion(ctx, t, step.node)
+			if err != nil {
+				return nil, err
+			}
+
+			if met {
+				break
+			}
+		}
+	}
+
+	if err := it.publishOutput(t); err != nil {
+		return nil, err
+	}
+
+	t.miState = nil
+	t.loopCounter = 0
+
+	return t.executeNode(ctx, step)
 }

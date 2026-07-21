@@ -377,12 +377,12 @@ func (ls *loopState) resumeScopeHost(
 	path scope.DataPath,
 	entry *scopeEntry,
 ) {
-	// SRD-054 §2.12: a looped Standard-Loop composite drives its own re-entry off
-	// the loop (the decorator). The loop does not decide reopen here — it just
-	// delivers the drain to the parked decorator (runCompositeLoop), which tests
-	// the condition and requests the next pass. Only the other composites
-	// (Multi-Instance) still use the loop-driven afterDrain seam below.
-	if standardLoopOf(entry.node) != nil {
+	// ADR-025 v.2 §2.12: a composite that drives its own iteration off the loop (a
+	// Standard-Loop or a sequential Multi-Instance composite) decides re-entry
+	// itself — the loop just delivers the drain to the parked decorator
+	// (runCompositeLoop / runMISequential), which tests its condition and requests
+	// the next pass. Only a parallel Multi-Instance still uses the loop-driven seam.
+	if drivesOwnIteration(entry.node) {
 		ls.dispatchToParked(ctx, trackEvent{
 			kind:  evDeliver,
 			track: entry.host,
@@ -548,10 +548,10 @@ func (ls *loopState) reportScope(
 // looped composite, or -1 when the node is not looped (so its scope facts omit
 // the attribute).
 func scopeLoopCounter(node flow.Node, host *track) int {
-	// a looped composite publishes its pass ordinal to the iteration scope facts
-	// (SRD-054 FR-11, SRD-055 FR-13): a Standard Loop (decorator-driven, §2.12) or
-	// a sequential Multi-Instance (seam-driven, compositeIteratorOf).
-	if standardLoopOf(node) != nil || compositeIteratorOf(node) != nil {
+	// a looped composite that drives its own iteration publishes its pass ordinal
+	// to the iteration scope facts (SRD-054 FR-11, SRD-055 FR-13): a Standard Loop
+	// or a sequential Multi-Instance (both decorator-driven, §2.12).
+	if drivesOwnIteration(node) {
 		return host.loopCounter
 	}
 
