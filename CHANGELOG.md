@@ -76,14 +76,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Composite loop execution → off-loop iteration decorator (ADR-025 v.2 §2.12,
-  SRD-054).** Internal rework, behavior-preserving: a looped **composite**
-  activity (Sub-Process / Call Activity) now drives its own iteration from the
-  host's runner goroutine — requesting scope open/close from the single-writer
-  loop via a request/response protocol — instead of loop-goroutine-driven scope
-  re-entry. Standard Loop semantics are unchanged; the rework makes the
-  Multi-Instance behavior throw (§2.8) implementable with a deterministic
-  boundary catch (the loop-goroutine model self-deadlocked on it). Standard Loop
-  is re-landed on the decorator; sequential/parallel Multi-Instance follow.
+  SRD-054 / SRD-055).** Internal rework, behavior-preserving: a looped
+  **composite** activity (Sub-Process / Call Activity) now drives its own
+  iteration from the host's runner goroutine — requesting scope open/close from
+  the single-writer loop via a request/response protocol — instead of
+  loop-goroutine-driven scope re-entry. Semantics are unchanged; the rework makes
+  the Multi-Instance behavior throw (§2.8) implementable with a deterministic
+  boundary catch (the loop-goroutine model self-deadlocked on it). **Standard
+  Loop** and **sequential Multi-Instance** are re-landed on the decorator (the
+  latter keeps only its output capture loop-side, before the child scope closes);
+  parallel Multi-Instance follows. The old `compositeIterator` seam is removed.
 
 ## [v0.9.0] - 2026-07-18
 

@@ -478,13 +478,14 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 	return nil
 }
 
-// enterComposite routes a composite host reached by a token: a looped
-// Standard-Loop composite drives its own iteration off the loop (the decorator,
-// SRD-054 §2.12) and must NOT park — run() reaches it and executeStep routes it to
-// runCompositeLoop; every other composite (plain Sub-Process, Multi-Instance)
-// parks for the loop-driven scope re-entry.
+// enterComposite routes a composite host reached by a token: a composite that
+// drives its own iteration off the loop (a Standard-Loop or a sequential
+// Multi-Instance composite, ADR-025 v.2 §2.12) must NOT park — run() reaches it and
+// executeStep routes it to runCompositeLoop / runMISequential; every other
+// composite (plain Sub-Process, parallel Multi-Instance) parks for the loop-driven
+// scope re-entry.
 func (t *track) enterComposite(node flow.Node, atConstruction bool) error {
-	if standardLoopOf(node) != nil {
+	if drivesOwnIteration(node) {
 		return nil
 	}
 
