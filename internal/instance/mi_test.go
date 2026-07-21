@@ -593,9 +593,10 @@ func TestMIResolveActivationFrameError(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestCompositeIteratorDispatch: compositeIteratorOf resolves the iteration
-// strategy by marker — Standard Loop, Multi-Instance, none (a non-looped
-// activity), or none (a node that carries no loop characteristics at all).
+// TestCompositeIteratorDispatch: compositeIteratorOf resolves the loop-driven
+// iteration strategy by marker — sequential Multi-Instance rides the seam;
+// Standard Loop is decorator-driven (§2.12) so it returns nil, as do a non-looped
+// activity and a node that carries no loop characteristics at all.
 func TestCompositeIteratorDispatch(t *testing.T) {
 	sl, err := activities.NewStandardLoop(loopCondLt(t, 1))
 	require.NoError(t, err)
@@ -615,7 +616,8 @@ func TestCompositeIteratorDispatch(t *testing.T) {
 	evNode, err := events.NewStartEvent("ev")
 	require.NoError(t, err)
 
-	require.IsType(t, standardLoopIterator{}, compositeIteratorOf(slNode))
+	require.Nil(t, compositeIteratorOf(slNode),
+		"a Standard Loop is decorator-driven, not on the serial seam")
 	require.IsType(t, miIterator{}, compositeIteratorOf(miNode))
 	require.Nil(t, compositeIteratorOf(plainNode))
 	require.Nil(t, compositeIteratorOf(evNode))

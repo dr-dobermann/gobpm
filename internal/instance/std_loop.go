@@ -3,7 +3,6 @@ package instance
 import (
 	"context"
 
-	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -123,78 +122,6 @@ func (t *track) runStandardLoop(
 	}
 
 	return nextFlows, nil
-}
-
-// standardLoopIterator is the composite-iteration strategy for a Standard Loop:
-// it re-opens the host's child scope while loopCondition holds and loopMaximum
-// is not reached (ADR-025 §2.2, composite mechanism). It wraps the same
-// bindLoopCounterAt / evalLoopCond / reachedMax logic the leaf loop runs in
-// place, behind the compositeIterator seam.
-type standardLoopIterator struct {
-	sl standardLoop
-}
-
-// firstOpen publishes the 0-based ordinal and, for a pre-tested (while) loop,
-// short-circuits to zero iterations when the condition is already false.
-func (it standardLoopIterator) firstOpen(
-	ctx context.Context, ls *loopState, host *track, node flow.Node,
-) (bool, error) {
-	if err := ls.inst.sc.bindLoopCounterAt(host.scopePath, 0); err != nil {
-		return false, err
-	}
-
-	if it.sl.TestBefore() {
-		cont, err := host.evalLoopCond(ctx, node, it.sl)
-		if err != nil {
-			return false, err
-		}
-
-		if !cont {
-			return false, nil
-		}
-	}
-
-	return true, nil
-}
-
-// beforeClose does nothing for a Standard Loop — it assembles no output.
-func (standardLoopIterator) beforeClose(
-	context.Context, *track, scope.DataPath,
-) error {
-	return nil
-}
-
-// afterDrain advances the ordinal and re-opens the scope while the loop maximum
-// is not reached and loopCondition still holds; otherwise the loop finishes and
-// the ordinal resets for a later re-entry of the same host.
-func (it standardLoopIterator) afterDrain(
-	ctx context.Context, ls *loopState, host *track, node flow.Node,
-) (bool, error) {
-	host.loopCounter++
-
-	if m, ok := it.sl.LoopMaximum(); ok && host.loopCounter >= m {
-		host.loopCounter = 0
-
-		return false, nil
-	}
-
-	if err := ls.inst.sc.bindLoopCounterAt(
-		host.scopePath, host.loopCounter); err != nil {
-		return false, err
-	}
-
-	cont, err := host.evalLoopCond(ctx, node, it.sl)
-	if err != nil {
-		return false, err
-	}
-
-	if cont {
-		return true, nil
-	}
-
-	host.loopCounter = 0
-
-	return false, nil
 }
 
 // evalLoopCond evaluates the loop's boolean loopCondition against a transient
