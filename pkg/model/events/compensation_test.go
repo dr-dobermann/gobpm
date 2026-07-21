@@ -106,6 +106,29 @@ func TestCompensationBoundary(t *testing.T) {
 		require.Error(t, err)
 	})
 
+	t.Run("catch-event build error propagates", func(t *testing.T) {
+		// options.WithName is not a valid base option for an event node — the
+		// embedded catch-event build fails (the escalation-test precedent).
+		_, err := events.NewCompensationBoundaryEvent(
+			"c-bnd", compTask(t, "host-bo", false), ced,
+			compTask(t, "undo-bo", true),
+			options.WithName("not a base option"))
+		require.Error(t, err)
+	})
+
+	t.Run("multiplicity: one interrupting per declaration", func(t *testing.T) {
+		host := compTask(t, "host-mult", false)
+
+		_, err := events.NewCompensationBoundaryEvent(
+			"c-bnd-1", host, ced, compTask(t, "undo-m1", true))
+		require.NoError(t, err)
+
+		// the same declaration (same definition) re-attached — BoundTo rejects.
+		_, err = events.NewCompensationBoundaryEvent(
+			"c-bnd-2", host, ced, compTask(t, "undo-m2", true))
+		require.Error(t, err)
+	})
+
 	t.Run("generic constructor rejects the trigger", func(t *testing.T) {
 		_, err := events.NewBoundaryEvent(
 			"c-bnd", compTask(t, "host-gen", false), ced, true)

@@ -22,6 +22,7 @@ var kindLevel = map[Kind]slog.Level{
 	KindJobState:         slog.LevelDebug,
 	KindFault:            slog.LevelDebug,
 	KindEscalation:       slog.LevelDebug,
+	KindCompensation:     slog.LevelDebug,
 }
 
 // kindNoEcho lists kinds that never reach the operator log — the observer stream

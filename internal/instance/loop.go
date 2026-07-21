@@ -86,6 +86,13 @@ type loopState struct {
 	// resumes only when the group's last instance drains — the N-of-N barrier the
 	// per-scope scopeEntry model cannot express alone.
 	miGroups map[string]*miGroup
+	// ledgers is the per-scope compensation completion ledger (ADR-026 §2.1,
+	// SRD-059 FR-3): completion-ordered compensable entries with their data
+	// snapshots, keyed by the scope path they completed in (the root path
+	// included — it has no scopeEntry but its completions ledger the same way).
+	// Loop-owned; folded child→parent at completeScope, discarded when the
+	// enclosing scope finishes or cancels.
+	ledgers map[scope.DataPath][]*ledgerEntry
 	// conds is the loop-owned armed-conditional registry (SRD-048 FR-8): a SLICE,
 	// because arming order is the multi-fire contract (fires from one commit apply
 	// in arming order — ADR-006 v.3 §2.7). Armed by evWaiting / recordBornWaiter,
@@ -122,6 +129,7 @@ func newLoopState(inst *Instance) *loopState {
 		scopeInterrupted: map[scope.DataPath]bool{},
 		scopes:           map[scope.DataPath]*scopeEntry{},
 		miGroups:         map[string]*miGroup{},
+		ledgers:          map[scope.DataPath][]*ledgerEntry{},
 	}
 }
 
@@ -190,6 +198,11 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	// (a normal completion never runs drop, so root-scope handlers are torn
 	// down here; idempotent if a terminate already dropped them). SRD-052 FR-5.
 	ls.disarmAllScopeHandlers()
+
+	// the enclosing scope of every remaining ledger — the instance itself — is
+	// finishing: the eligibility window closes, remaining entries discard
+	// (ADR-006 §2.3, SRD-059 FR-3/NFR-3).
+	ls.discardLedgers(inst.sc.root)
 
 	inst.settleFinalState(ls.stopping)
 }
@@ -312,6 +325,12 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		// clear any parked-at-join record (moving ⟹ not parked anymore). SRD-028 FR-2.
 		// The track left its previous node, so tear down any boundaries that guarded it
 		// there and arm those guarding the new node (SRD-029 FR-5/FR-6).
+		// Moving off a node is its successful completion — if it is a leaf with
+		// a Compensation boundary, it enters the completion ledger (SRD-059
+		// FR-3; a failed node arrives as evFailed, so only successes ledger).
+		if departed := ls.position[ev.track.ID()]; departed != nil {
+			ls.recordLeafCompletion(ev.track, departed)
+		}
 		ls.disarmBoundaries(ev.track.ID())
 		ls.position[ev.track.ID()] = ev.node
 		delete(ls.parked, ev.track.ID())

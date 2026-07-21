@@ -104,6 +104,60 @@ func (p *Scope) GetData(from DataPath, name string) (data.Data, error) {
 		})
 }
 
+// SnapshotAt returns value-copies of every scope datum visible from `from`
+// (the walk-up surface), for the compensation completion ledger (ADR-026 §2.5,
+// SRD-059 FR-4): a handler later reads the world as the completed activity saw
+// it, immune to subsequent scope mutation. Runtime-source variables are not
+// snapshotted — they are engine-owned, not scope state.
+func (p *Scope) SnapshotAt(from DataPath) ([]data.Data, error) {
+	if err := p.checkContained("SnapshotAt", from); err != nil {
+		return nil, err
+	}
+
+	names := p.namesFrom(from)
+	snap := make([]data.Data, 0, len(names))
+
+	for _, n := range names {
+		d, err := p.GetData(from, n)
+		if err != nil {
+			return nil, errs.New(
+				errs.M("SnapshotAt: couldn't read %q at %q", n, string(from)),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err))
+		}
+
+		c, ok := d.(interface {
+			Clone() (*data.ItemAwareElement, error)
+		})
+		if !ok {
+			return nil, errs.New(
+				errs.M("SnapshotAt: datum %q at %q isn't clonable",
+					n, string(from)),
+				errs.C(errorClass, errs.InvalidObject))
+		}
+
+		iae, err := c.Clone()
+		if err != nil {
+			return nil, errs.New(
+				errs.M("SnapshotAt: couldn't clone %q at %q", n, string(from)),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err))
+		}
+
+		cp, err := data.NewParameter(d.Name(), iae)
+		if err != nil {
+			return nil, errs.New(
+				errs.M("SnapshotAt: couldn't wrap %q at %q", n, string(from)),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err))
+		}
+
+		snap = append(snap, cp)
+	}
+
+	return snap, nil
+}
+
 // GetSource resolves addr at the named source, dispatching addr verbatim to
 // the provider (its own address space). It never traverses the container tree
 // — a source owns its names (ADR-010 v.2 §2.7). An unknown source is an error.

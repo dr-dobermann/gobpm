@@ -326,6 +326,11 @@ func (ls *loopState) completeScope(
 		}
 	}
 
+	// SRD-059 FR-3/FR-7: a completing composite enters the parent's completion
+	// ledger (its own handler and/or its folded child ledger) — recorded here,
+	// while the scope's data is still readable and its handlers still armed.
+	ls.recordScopeCompletion(path, entry)
+
 	if err := ls.inst.sc.plane.CloseScope(path); err != nil {
 		// a child scope still open below — a corrupt tree; fail loudly, the
 		// invariant-violation class.
@@ -442,6 +447,11 @@ func (ls *loopState) cancelScope(path scope.DataPath, phase observability.Phase)
 	if _, ok := ls.scopes[path]; !ok {
 		return // already closed/canceled — a late signal is benign.
 	}
+
+	// a canceled scope's eligibility window closes with it: its completion
+	// ledger (and every ledger under it) discards — the canceled work's
+	// completed activities are no longer compensable (SRD-059 FR-3).
+	ls.discardLedgers(path)
 
 	// stop the subtree's tracks and clear their loop state.
 	for _, t := range ls.inst.tracks {

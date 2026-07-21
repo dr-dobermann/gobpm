@@ -94,17 +94,21 @@ func (ls *loopState) armScopeHandlers(
 			interrupting: interrupting,
 		}
 
-		// A Conditional, Error, or Escalation start is not a hub waiter: the
-		// Conditional is loop-owned (armed as a condWatch below); an Error is
-		// caught by the §2.6 scope-chain walk at the throw site
-		// (matchErrorScopeChain), and an Escalation likewise
-		// (matchEscalationScopeChain, SRD-058 FR-6) — never hub-armed.
+		// A Conditional, Error, Escalation, or Compensation start is not a hub
+		// waiter: the Conditional is loop-owned (armed as a condWatch below);
+		// an Error is caught by the §2.6 scope-chain walk at the throw site
+		// (matchErrorScopeChain), an Escalation likewise
+		// (matchEscalationScopeChain, SRD-058 FR-6), and a Compensation start
+		// is its enclosing Sub-Process's own compensation handler — recorded
+		// into the parent's completion ledger at scope completion
+		// (recordScopeCompletion, SRD-059 FR-7) — never hub-armed.
 		switch def.Type() {
 		case flow.TriggerConditional:
 			w.loopOwned = true
 
-		case flow.TriggerError, flow.TriggerEscalation:
-			// no waiter — the scope-chain walk catches it at the throw site.
+		case flow.TriggerError, flow.TriggerEscalation,
+			flow.TriggerCompensation:
+			// no waiter — resolved at the throw site / at scope completion.
 			ws = append(ws, w)
 			ls.reportHandler(w, observability.PhaseArmed)
 
