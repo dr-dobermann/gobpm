@@ -12,95 +12,280 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
-// miGroup coordinates a parallel Multi-Instance activity's N concurrent instance
-// scopes (SRD-056.A): the shared host, the node, the frozen instance count, and
-// the set of still-open instance paths (path → 0-based ordinal). It is the
-// N-of-N barrier the per-scope scopeEntry model cannot express — the host
-// resumes only when the last instance drains. Loop-goroutine-owned; M3 extends it
-// with the completed / terminated counters and the completionCondition.
+// miGroup is the loop-owned barrier substrate for a parallel Multi-Instance
+// activity's N concurrent instance scopes (SRD-056.A): the shared host, the node,
+// the input collection (nil for a cardinality-driven MI), the pre-sized staging
+// collection, the still-open instance paths (path → 0-based ordinal), the output
+// names, the frozen N, and the count of drains that arrived while the host runner
+// was busy and could not be delivered yet. It is the N-of-N barrier the per-scope
+// scopeEntry model cannot express. Loop-goroutine-owned; the off-loop decorator
+// (runMIParallel) drives the counting / completion / cancellation policy and reads
+// no group field mid-flight — it counts delivered drains locally and learns the
+// terminated count from the scopeComplete reply.
 type miGroup struct {
 	host       *track
 	node       flow.Node
-	mi         multiInstance
-	collection data.Collection    // nil for a cardinality-driven Multi-Instance
-	staging    *values.Array[any] // pre-sized to N; nil when no output is assembled
+	collection data.Collection
+	staging    *values.Array[any]
 	open       map[scope.DataPath]int
 	inputItem  string
 	outputRef  string
 	outputItem string
 	n          int
-	completed  int
-	terminated int
+	pending    int
 }
 
-// fanOutParallelMI opens all N instance scopes of a parallel Multi-Instance host
-// at activation, each at a distinct segment `sp-<id>-i`, and parks the host once
-// for the whole group (ADR-025 §2.5). N is fixed here (`resolveActivation`,
-// reused). Because it runs to completion on the loop goroutine, every instance
-// is registered in the group before any drain is processed — so a fast instance
-// cannot resume the host before the fan-out finishes. N ≤ 0 completes the
-// activity with zero instances.
-func (ls *loopState) fanOutParallelMI(
-	ctx context.Context, host *track, node flow.Node, sh scopeHost,
-) {
-	mi := multiInstanceOf(node)
-
-	n, col, err := miIterator{mi: mi}.resolveActivation(ctx, host, node)
+// runMIParallel drives a parallel Multi-Instance composite from the host's own
+// runner goroutine — the off-loop iteration decorator (SRD-056.A, ADR-025 v.2
+// §2.12), the fan-out-then-await-all sibling of runMISequential. It resolves N once
+// off the loop, asks the loop to fan out N distinct instance scopes (scopeFanOut),
+// then runs the N-of-N barrier: each delivered drain advances the completed count,
+// binds the §2.9 attributes, and evaluates the completionCondition; a true condition
+// asks the loop to cancel the remainder (scopeComplete cancel), otherwise the runner
+// re-arms (scopeReArm) for the next drain and completes when all N have drained. The
+// loop performs the single-writer mutations — open N, capture each output before its
+// scope closes, cancel, publish — and delivers the concurrent drains one at a time
+// through the cap-1 re-arm handshake (§4.2). On exit it follows the composite's
+// single outgoing flow once.
+func (t *track) runMIParallel(
+	ctx context.Context, step *stepInfo, mi multiInstance,
+) ([]*flow.SequenceFlow, error) {
+	n, col, err := miIterator{mi: mi}.resolveActivation(ctx, t, step.node)
 	if err != nil {
-		ls.inst.fail(err)
-		ls.stopAll()
-
-		return
+		return nil, err
 	}
 
-	// the host parks once for the whole fan-out; it resumes when the group's
-	// last instance drains (or immediately, with zero instances).
-	ls.waiting[host.ID()] = struct{}{}
-
+	// N <= 0 runs zero instances — follow the outgoing flow once, no fan-out, no
+	// group, no publish.
 	if n <= 0 {
-		ls.dispatchToParked(ctx, trackEvent{
-			kind:  evDeliver,
-			track: host,
-			eDef:  newScopeDone(),
+		return t.executeNode(ctx, step)
+	}
+
+	// ask the loop to open all N instance scopes and build the group barrier; it
+	// marks the host waiting before replying, so the first drain dispatches.
+	if _, err := t.instance.scopeRoundtrip(ctx, scopeRequest{
+		op: scopeFanOut, host: t, node: step.node, n: n, col: col,
+	}); err != nil {
+		return nil, err
+	}
+
+	for completed := 0; ; {
+		if err := t.awaitScopeDrained(ctx); err != nil {
+			return nil, err
+		}
+
+		completed++
+
+		done, err := t.parallelBarrierStep(ctx, step, mi, n, completed)
+		if err != nil {
+			return nil, err
+		}
+
+		if done {
+			break
+		}
+	}
+
+	return t.executeNode(ctx, step)
+}
+
+// parallelBarrierStep processes one delivered instance drain of a parallel
+// Multi-Instance's N-of-N barrier (SRD-056.A): it binds the §2.9 attributes off the
+// loop, evaluates the completionCondition, and drives the loop-side finalize/re-arm.
+// It reports done when the activity completes — the completionCondition fired (the
+// loop cancels the remainder + publishes) or all N have drained (the loop publishes)
+// — otherwise it re-arms for the next drain.
+func (t *track) parallelBarrierStep(
+	ctx context.Context, step *stepInfo, mi multiInstance, n, completed int,
+) (bool, error) {
+	// the delivered count is authoritative (delivery is 1:1 with completion, in
+	// order), so the condition and the body see the running §2.9 attributes.
+	if err := t.bindMICounters(n, completed, 0); err != nil {
+		return false, err
+	}
+
+	// completionCondition true → the activity is done now: ask the loop to cancel
+	// the still-open instances, publish, and drop the group (§4.5).
+	if completed < n && mi.CompletionCondition() != nil {
+		met, err := miIterator{mi: mi}.evalCompletion(ctx, t, step.node)
+		if err != nil {
+			return false, err
+		}
+
+		if met {
+			r, err := t.instance.scopeExchange(ctx, scopeRequest{
+				op: scopeComplete, host: t, node: step.node, cancel: true,
+			})
+			if err != nil {
+				return false, err
+			}
+
+			return true, t.bindMICounters(n, completed, r.terminated)
+		}
+	}
+
+	// all N drained with no early completion — publish and drop the group.
+	if completed == n {
+		_, err := t.instance.scopeRoundtrip(ctx, scopeRequest{
+			op: scopeComplete, host: t, node: step.node,
 		})
 
+		return true, err
+	}
+
+	// re-arm for the next drain: the loop re-marks the host waiting and delivers
+	// the next queued drain, if any (§4.2).
+	_, err := t.instance.scopeRoundtrip(ctx, scopeRequest{
+		op: scopeReArm, host: t, node: step.node,
+	})
+
+	return false, err
+}
+
+// bindMICounters publishes the §2.9 runtime attributes at the host scope off the
+// loop (SRD-056.A FR-12) — the frozen instance count, the still-running count
+// (n − completed − terminated), and the completed / terminated counts. Called by
+// the decorator after each delivered drain, before it evaluates the
+// completionCondition. A mutex-safe plane write, like the sequential slice's
+// off-loop binds.
+func (t *track) bindMICounters(n, completed, terminated int) error {
+	binds := []miBinding{
+		{name: "numberOfInstances", value: n},
+		{name: "numberOfActiveInstances", value: n - completed - terminated},
+		{name: "numberOfCompletedInstances", value: completed},
+		{name: "numberOfTerminatedInstances", value: terminated},
+	}
+
+	for _, b := range binds {
+		if err := t.instance.sc.bindDataItemAt(
+			t.scopePath, b.name, b.value); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// handleFanOut opens all N instance scopes of a parallel Multi-Instance on the loop
+// goroutine, builds the loop-owned group barrier, marks the host waiting for the
+// whole group, and replies to the decorator (SRD-056.A FR-3). Because it runs to
+// completion before the loop processes any drain, every instance is registered
+// before the first drain — so a fast instance cannot resume the host before the
+// fan-out finishes (§4.6). A partial-open error leaves cleanup to the runner's fault
+// (stopAll cancels the subtree).
+func (ls *loopState) handleFanOut(ctx context.Context, req scopeRequest) {
+	sh, ok := req.node.(scopeHost)
+	if !ok {
+		// checkNodeType only routes scopeHost nodes to the decorator; a mismatch
+		// is a corrupt graph.
+		req.reply <- scopeReply{err: errs.New(
+			errs.M("scope fan-out requested for a non-composite node %q",
+				req.node.ID()),
+			errs.C(errorClass, errs.TypeCastingError))}
+
 		return
 	}
 
+	mi := multiInstanceOf(req.node)
+
+	// the host parks once for the whole fan-out; it resumes as each instance
+	// drains, delivered one at a time via the re-arm handshake.
+	ls.waiting[req.host.ID()] = struct{}{}
+
 	grp := &miGroup{
-		host:       host,
-		node:       node,
-		mi:         mi,
-		collection: col,
-		open:       make(map[scope.DataPath]int, n),
+		host:       req.host,
+		node:       req.node,
+		collection: req.col,
+		open:       make(map[scope.DataPath]int, req.n),
 		inputItem:  mi.InputDataItem(),
 		outputRef:  mi.LoopDataOutputRef(),
 		outputItem: mi.OutputDataItem(),
-		n:          n,
+		n:          req.n,
 	}
 
-	// an output-assembling Multi-Instance stages into a slice PRE-SIZED to N, so
-	// an instance completing out of order writes its slot by ordinal (SetAt is a
+	// an output-assembling Multi-Instance stages into a slice PRE-SIZED to N, so an
+	// instance completing out of order writes its slot by ordinal (SetAt is a
 	// replace, not an append); a canceled slot keeps its pre-run nil (§2.7).
 	if grp.outputRef != "" {
-		grp.staging = values.NewArray[any](make([]any, n)...)
+		grp.staging = values.NewArray[any](make([]any, req.n)...)
 	}
 
-	ls.miGroups[host.ID()] = grp
+	ls.miGroups[req.host.ID()] = grp
 
-	for i := 0; i < n; i++ {
-		if err := ls.openParallelInstance(ctx, grp, host, node, sh, i); err != nil {
-			ls.inst.fail(err)
-			ls.stopAll()
+	for i := 0; i < req.n; i++ {
+		if err := ls.openParallelInstance(
+			ctx, grp, req.host, req.node, sh, i); err != nil {
+			req.reply <- scopeReply{err: err}
 
 			return
 		}
 	}
+
+	req.reply <- scopeReply{}
+}
+
+// handleReArm re-marks the host waiting and delivers the next queued drain, if any
+// accumulated while the runner was busy (SRD-056.A FR-6) — the handshake step that
+// serializes N concurrent drains onto the cap-1 park. If the group is already gone
+// (a boundary tore it down), it just replies so the runner unblocks. Runs on the
+// loop goroutine.
+func (ls *loopState) handleReArm(ctx context.Context, req scopeRequest) {
+	grp, ok := ls.miGroups[req.host.ID()]
+	if !ok {
+		req.reply <- scopeReply{}
+
+		return
+	}
+
+	ls.waiting[req.host.ID()] = struct{}{}
+
+	if grp.pending > 0 {
+		grp.pending--
+		ls.dispatchToParked(ctx, trackEvent{
+			kind:  evDeliver,
+			track: req.host,
+			eDef:  newScopeDone(),
+		})
+	}
+
+	req.reply <- scopeReply{}
+}
+
+// handleComplete finalizes a parallel Multi-Instance group (SRD-056.A FR-10/FR-11):
+// when the request carries cancel it tears down every still-open instance scope as a
+// unit (a completionCondition fired, §4.5) and reports the terminated count; it then
+// publishes the assembled staging collection once at the host scope (the visibility
+// barrier) and drops the group. Runs on the loop goroutine.
+func (ls *loopState) handleComplete(req scopeRequest) {
+	grp, ok := ls.miGroups[req.host.ID()]
+	if !ok {
+		req.reply <- scopeReply{}
+
+		return
+	}
+
+	terminated := 0
+	if req.cancel {
+		terminated = ls.cancelOpenInstances(grp)
+	}
+
+	if grp.staging != nil {
+		if err := ls.inst.sc.bindValueAt(
+			grp.host.scopePath, grp.outputRef, grp.staging); err != nil {
+			req.reply <- scopeReply{err: err}
+
+			return
+		}
+	}
+
+	delete(ls.miGroups, req.host.ID())
+
+	req.reply <- scopeReply{terminated: terminated}
 }
 
 // openParallelInstance opens instance i's distinct scope (segment `sp-<id>-i`),
 // registers it in the group, publishes its Opened fact with its OWN ordinal
-// (FR-11, not the shared host.loopCounter), and seeds + arms the inner tracks.
+// (FR-14, not the shared host.loopCounter), and seeds + arms the inner tracks.
 // It returns an error the caller faults on.
 func (ls *loopState) openParallelInstance(
 	ctx context.Context, grp *miGroup, host *track, node flow.Node,
@@ -178,85 +363,6 @@ func (ls *loopState) captureParallelOutput(
 	return grp.staging.SetAt(ctx, entry.ordinal, d.Value().Get(ctx))
 }
 
-// parallelInstanceDrained records one instance scope of a parallel
-// Multi-Instance as drained; when the group's last instance completes it
-// publishes the assembled output collection once (the visibility barrier),
-// resumes the shared host, and drops the group (SRD-056.A). It returns an error
-// the caller faults on. Runs on the loop goroutine (from completeScope).
-func (ls *loopState) parallelInstanceDrained(
-	ctx context.Context, path scope.DataPath, entry *scopeEntry,
-) error {
-	grp := entry.group
-	delete(grp.open, path)
-	grp.completed++
-
-	// publish the running §2.9 attributes at the host scope for the
-	// completionCondition (and the body) to resolve by name.
-	if err := ls.bindParallelCounters(grp); err != nil {
-		return err
-	}
-
-	done := len(grp.open) == 0
-
-	// completionCondition true → the activity is done now: cancel the still-open
-	// instances as a unit (§2.7).
-	if !done && grp.mi.CompletionCondition() != nil {
-		met, err := miIterator{mi: grp.mi}.
-			evalCompletion(ctx, grp.host, grp.node)
-		if err != nil {
-			return err
-		}
-
-		if met {
-			ls.cancelRemainingInstances(grp)
-
-			done = true
-		}
-	}
-
-	if !done {
-		return nil
-	}
-
-	if grp.staging != nil {
-		if err := ls.inst.sc.bindValueAt(
-			grp.host.scopePath, grp.outputRef, grp.staging); err != nil {
-			return err
-		}
-	}
-
-	delete(ls.miGroups, grp.host.ID())
-
-	ls.dispatchToParked(ctx, trackEvent{
-		kind:  evDeliver,
-		track: grp.host,
-		eDef:  newScopeDone(),
-	})
-
-	return nil
-}
-
-// bindParallelCounters publishes the §2.9 runtime attributes at the host scope:
-// the frozen instance count, the still-running count, and the completed /
-// terminated counts as they progress (SRD-056.A FR-9).
-func (ls *loopState) bindParallelCounters(grp *miGroup) error {
-	binds := []miBinding{
-		{name: "numberOfInstances", value: grp.n},
-		{name: "numberOfActiveInstances", value: len(grp.open)},
-		{name: "numberOfCompletedInstances", value: grp.completed},
-		{name: "numberOfTerminatedInstances", value: grp.terminated},
-	}
-
-	for _, b := range binds {
-		if err := ls.inst.sc.bindDataItemAt(
-			grp.host.scopePath, b.name, b.value); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 // cancelOpenInstances cancels every still-open instance scope of the group as a
 // unit (ADR-018 mechanism) and clears the open set, returning the count.
 func (ls *loopState) cancelOpenInstances(grp *miGroup) int {
@@ -274,16 +380,9 @@ func (ls *loopState) cancelOpenInstances(grp *miGroup) int {
 	return len(paths)
 }
 
-// cancelRemainingInstances tears down the group's still-open instance scopes
-// because a completionCondition fired (§2.7) and counts them terminated. Each
-// canceled instance keeps its pre-run output slot (its nil).
-func (ls *loopState) cancelRemainingInstances(grp *miGroup) {
-	grp.terminated += ls.cancelOpenInstances(grp)
-}
-
 // cancelParallelGroup tears down all of a parallel Multi-Instance's open
 // instance scopes and drops the group — the companion for an interrupting
-// boundary firing on the fanned-out host (SRD-056.A FR-10). Unlike a
+// boundary firing on the fanned-out host (SRD-056.A FR-13). Unlike a
 // completionCondition (which completes the activity), the host is itself being
 // canceled, so the group is abandoned rather than resumed.
 func (ls *loopState) cancelParallelGroup(grp *miGroup) {

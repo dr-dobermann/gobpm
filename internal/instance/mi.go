@@ -237,17 +237,16 @@ func (it miIterator) bindInstance(
 
 // drivesOwnIteration reports whether a looped composite drives its OWN iteration
 // off the loop (the iteration decorator, ADR-025 v.2 §2.12): a Standard-Loop
-// composite (runCompositeLoop) or a SEQUENTIAL Multi-Instance composite
-// (runMISequential). A parallel Multi-Instance (fan-out driver) and a plain
-// composite do NOT — they park for the loop-driven scope re-entry.
+// composite (runCompositeLoop) or ANY Multi-Instance composite — sequential
+// (runMISequential, await-each) or parallel (runMIParallel, fan-out-then-await-all).
+// A plain (non-looped) composite does NOT — it parks for the loop-driven scope
+// re-entry.
 func drivesOwnIteration(node flow.Node) bool {
 	if standardLoopOf(node) != nil {
 		return true
 	}
 
-	mi := multiInstanceOf(node)
-
-	return mi != nil && mi.IsSequential()
+	return multiInstanceOf(node) != nil
 }
 
 // runMISequential drives a sequential Multi-Instance composite from the host's own
@@ -304,7 +303,7 @@ func (t *track) runMISequential(
 		}
 
 		if _, err := t.instance.scopeRoundtrip(ctx,
-			scopeRequest{host: t, node: step.node}); err != nil {
+			scopeRequest{op: scopeOpen, host: t, node: step.node}); err != nil {
 			return nil, err
 		}
 
