@@ -2,380 +2,345 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
-| Version | v.1 |
-| Date | 2026-07-19 |
+| Status | Draft |
+| Date | 2026-07-21 |
 | Owner | Ruslan Gabitov |
-| Implements | [ADR-025 v.1](../design/ADR-025-activity-iteration-loop-and-multi-instance.md) §2.2–§2.3 (the Standard Loop slice of the activity-iteration model; epic #88) |
-| Upstream | [ADR-010 v.2](../design/ADR-010-process-data-model.md) (the execution frame = per-execution data boundary that isolates each iteration), [ADR-023 v.2](../design/ADR-023-sub-process-and-call-activity.md) (the composite child-scope re-entry seam), [ADR-018 v.1](../design/ADR-018-boundary-events-and-activity-interruption.md) (a boundary event arms once and guards the whole loop), [ADR-001 v.6](../design/ADR-001-execution-model.md) (the loop owns node execution) |
+| Implements | [ADR-025 v.2](../design/ADR-025-activity-iteration-loop-and-multi-instance.md) §2.2–§2.3 (the Standard Loop slice), §2.12 (composite iteration as an off-loop decorator); epic #88 |
+| Upstream | [ADR-017 v.1](../design/ADR-017-channel-based-event-processing.md) (the single-writer loop the decorator requests scope operations from), [ADR-010 v.2](../design/ADR-010-process-data-model.md) (the execution frame that isolates each leaf iteration), [ADR-023 v.2](../design/ADR-023-sub-process-and-call-activity.md) (the composite child-scope open/drain/close lifecycle), [ADR-018 v.1](../design/ADR-018-boundary-events-and-activity-interruption.md) (a boundary arms once and guards the whole loop), [ADR-001 v.6](../design/ADR-001-execution-model.md) (the loop owns node execution) |
 | Refines | — |
 
 ## §1 Background
 
-Every activity in gobpm runs **exactly once** per token that reaches it. BPMN
-2.0 §13.3.6 lets an activity carry `StandardLoopCharacteristics` — a structured
-`while`/`until` loop that re-runs the inner activity **sequentially** while a
-boolean `loopCondition` holds. ADR-025 §2.1–§2.3 decided the conception; this SRD
-lands the **first, smallest** slice of the epic (#88): Standard Loop, on both a
-leaf **Task** and a **composite** (Sub-Process / Call Activity), before the two
-Multi-Instance slices (SRD-055 sequential, SRD-056 parallel) follow.
+BPMN 2.0 §13.3.6 lets an activity carry `StandardLoopCharacteristics` — a
+structured `while`/`until` loop that re-runs the inner activity **sequentially**
+while a boolean `loopCondition` holds. This SRD lands Standard Loop on **both** a
+leaf **Task** and a **composite** (Sub-Process / Call Activity).
 
-The model already carries a **wired-but-empty** hook. Audit of every existing
-loop artifact: the empty `LoopCharacteristics` struct
-(`pkg/model/activities/loop.go:3-5`); its wiring — `WithLoop(lc
-*LoopCharacteristics)` (`activity_options.go:110-125`), `activityConfig.loop`
-(`:13`, `:61`), `activity.loopCharacteristics` (`activity.go:22`), the
-by-reference clone (`activity.go:117`); one test usage
-`WithLoop(&LoopCharacteristics{})` (`activity_test.go:49`); and doc-comment
-mentions of `WithLoop` in `service_task.go:71` / `user_task.go:80`. No execution
-consumes any of it today. **Decision: accommodate, not remove** — the wiring is
-exactly the seam this SRD builds on, so the empty struct becomes the sealed
-interface (FR-1) and the rest is reused unchanged; the only follow-on is updating
-the `activity_test.go:49` empty-struct usage to a real `StandardLoop` (M1).
+**This is the first slice of the ADR-025 v.2 decorator re-landing** (§2.12). The
+prior landing drove composite iteration *control* — resolve the continuation,
+re-open the scope — **on the per-instance loop goroutine**, via a
+loop-side `compositeIterator` seam (`firstOpen`/`afterDrain`) called from
+`onScopeOpen`/`resumeScopeHost`. ADR-025 v.2 §2.12 decided that control belongs on
+the **activity's own off-loop execution** — an *iteration decorator* — which
+**requests** scope operations from the single-writer loop rather than performing
+them. Standard Loop is the simplest composite iteration, so it is the slice that
+introduces the decorator engine (the request/response scope protocol); the
+sequential-MI, parallel-MI, and behavior slices re-land on it afterward.
 
-ADR-025 §2.2 (as amended) chose the iteration **mechanism by activity kind**:
+**The leaf-Task loop is unchanged** — it already runs in place on the task's own
+runner goroutine (a bounded `for` around `executeNode`), which is off the loop
+goroutine and needs no protocol. §2.12's scope is composite activities only.
 
-- a **leaf Task** iterates **in place** — re-executed once per pass, each pass in
-  a fresh execution frame (the frame is already the per-execution isolation
-  boundary, ADR-010);
-- a **composite** iterates by **re-opening its child scope per iteration** — the
-  ADR-023 nested-scope re-entry seam it already runs for its body.
+This SRD **deletes and reuses** the SRD-054 slot: its prior (loop-goroutine-driven
+composite) content is replaced in place with the decorator design; the model and
+leaf-Task requirements below are the landed reality, restated so the document is
+self-sufficient.
 
-Both follow the activity's single outgoing flow **once**, at loop exit, and both
-let a boundary event on the looped activity arm **once** and guard every
+ADR-025 §2.2 chose the iteration **mechanism by activity kind**: a leaf Task
+iterates **in place** (fresh frame per pass, ADR-010); a composite iterates by
+**re-opening its child scope per iteration** (the ADR-023 open/drain/close
+lifecycle). §2.12 fixes *who drives* the composite mechanism — the decorator, off
+the loop. Both kinds follow the activity's single outgoing flow **once**, at loop
+exit, and let a boundary event on the looped activity arm **once** and guard every
 iteration.
 
 ## §2 Requirements
 
-### Functional — the model
+### Functional — the model (landed, unchanged)
 
-- **FR-1 — `StandardLoopCharacteristics` type.** `LoopCharacteristics` becomes a
-  sealed marker interface; `StandardLoopCharacteristics` is a concrete
-  implementation carrying `loopCondition` (a `data.FormalExpression`, the same
-  boolean-expression type gateways evaluate — `gateway.go:224`), `testBefore`
-  (bool, default `false`), and an optional `loopMaximum` (`*int`, nil =
-  unbounded). It embeds `foundation.BaseElement` (§13.3.6 `→ BaseElement`).
-- **FR-2 — construction validates all inputs.** A `NewStandardLoop(loopCondition,
-  opts…)` constructor rejects a nil `loopCondition`, a `loopCondition` whose
-  `ResultType() != "bool"`, and a `loopMaximum ≤ 0` — at construction, with a
-  self-identifying error (per the validate-public-params rule). `WithLoop` accepts
-  any `LoopCharacteristics` (interface) and keeps its existing nil guard.
-- **FR-3 — `Activity.Validate` cross-check.** Validation rejects an activity
-  carrying **both** a Standard-Loop and a Multi-Instance characteristic
-  (ADR-025 §2.1 "at most one").
+- **FR-1 — `StandardLoopCharacteristics` type.** `LoopCharacteristics` is a sealed
+  marker interface; `StandardLoopCharacteristics` carries `loopCondition` (a
+  `data.FormalExpression`, bool), `testBefore` (bool, default `false`), and an
+  optional `loopMaximum` (`*int`, nil = unbounded); it embeds
+  `foundation.BaseElement`.
+- **FR-2 — construction validates all inputs.** `NewStandardLoop(loopCondition,
+  opts…)` rejects a nil `loopCondition`, a non-`bool` `ResultType()`, and a
+  `loopMaximum ≤ 0`, at construction, with a self-identifying error.
+- **FR-3 — `Activity.Validate` cross-check.** An activity carrying **both** a
+  Standard-Loop and a Multi-Instance characteristic is rejected (ADR-025 §2.1).
 - **FR-3a — an Event Sub-Process rejects iteration.** A `triggeredByEvent`
-  `SubProcess` carrying **any** `LoopCharacteristics` (Standard Loop or
-  Multi-Instance) fails validation. An Event Sub-Process is *instantiated by an
-  event, not by control flow* (`sub-processes.md §13.5.4`); it has no
-  token-driven activation to iterate, and its multiplicity already comes from its
-  trigger (a non-interrupting start fires multiple times). Because the marker
-  implements the shared `LoopCharacteristics` interface, this one guard covers
-  both Standard Loop (this SRD) and future Multi-Instance. **Engine
-  well-formedness rule** — the spec extract is *silent* on an explicit
-  prohibition (the object model places `loopCharacteristics` on `Activity`, so a
-  `SubProcess` may carry it in the schema); gobpm rejects it as semantically
-  meaningless for an event-instantiated handler.
+  `SubProcess` carrying any `LoopCharacteristics` fails validation (an
+  event-instantiated handler has no token-driven activation to iterate).
 
-### Functional — leaf-Task execution (in place)
+### Functional — leaf-Task execution, in place (landed, unchanged)
 
-- **FR-4 — in-place re-execution.** A leaf activity (a `NodeExecutor` that is not
-  a park-node — not a `scopeHost` / Call Activity / external worker / user task)
-  carrying `StandardLoopCharacteristics` is re-executed once per pass; each pass
-  opens a **fresh execution frame** (`executeNode` → `openFrameAt` +
-  `defer Discard`, `track.go:943-953`), so iterations are isolated with no new
-  construct.
-- **FR-5 — `testBefore` semantics.** `false` (default) → **post-tested**
-  (`do…while`): run once, then test `loopCondition`; loop continues while true.
-  `true` → **pre-tested** (`while`): test before each run, so **zero iterations**
-  are possible.
-- **FR-6 — `loopMaximum` cap.** When set, at most `loopMaximum` iterations run
-  regardless of the condition.
-- **FR-7 — single outgoing flow at exit.** The engine follows the activity's
-  outgoing sequence flow **once**, only after the loop terminates (`executeNode`
-  returns `nexts`; `checkFlows` follows them — `track.go:756-763` — is called once
-  after the loop breaks).
+- **FR-4 — in-place re-execution.** A leaf activity carrying
+  `StandardLoopCharacteristics` is re-executed once per pass; each pass opens a
+  **fresh execution frame**, so iterations are isolated with no new construct.
+- **FR-5 — `testBefore` semantics.** `false` (default) → post-tested (`do…while`);
+  `true` → pre-tested (`while`, zero iterations possible).
+- **FR-6 — `loopMaximum` cap.** At most `loopMaximum` iterations run when set.
+- **FR-7 — single outgoing flow at exit.** The activity's outgoing flow is
+  followed **once**, after the loop terminates.
 
-### Functional — composite execution (scope per iteration)
+### Functional — composite execution, the off-loop decorator (reworked)
 
-- **FR-8 — composite re-entry.** A composite (`scopeHost`) carrying
-  `StandardLoopCharacteristics` re-opens its child scope per iteration: on scope
-  drain, if `loopCondition` still holds and `loopMaximum` is not reached, the host
-  is re-queued for another open via the existing re-entry seam
-  (`resumeScopeHost` / `scopeEntry.queue`, `scope_runtime.go:287-313`) instead of
-  receiving its terminal `scopeDone`; when the loop finishes, `scopeDone` is
-  delivered as today so the composite follows its single outgoing flow once.
-- **FR-9 — boundary arms once.** A boundary event on the looped activity arms
-  once and guards all iterations (the host stays on the node across passes; no
-  `evMoved` is emitted until loop exit, so `armBoundaries` fires once —
-  `loop.go` boundary (dis)arm on `evMoved`).
+- **FR-8 — the composite host drives its own iteration off the loop.** A looped
+  composite activity iterates on its **own runner goroutine** (a new
+  `runCompositeLoop`, invoked from `executeStep` before the park path, mirroring
+  how `runStandardLoop` intercepts a leaf loop). Per pass the decorator: (a)
+  **requests** a scope-open and blocks for the loop's acknowledgement; (b) **parks
+  for drain** — the inner scope drains and the loop delivers `scopeDone` on the
+  host's `evtCh` (the existing mechanism); (c) evaluates the continuation
+  (`loopCounter`++, `loopMaximum`, `loopCondition` with `testBefore`) **off the
+  loop**; (d) repeats, or completes and follows the outgoing flow **once**. The
+  host no longer *parks for control* between passes — only for each pass's drain.
+- **FR-8a — the request/response scope protocol.** The decorator never mutates
+  loop-owned state (scopes, positions, arming) directly. It sends a `scopeRequest`
+  on a new loop-serviced `scopeReq` channel and blocks on a per-request buffered
+  reply channel; the loop performs the mutation on its own goroutine and replies.
+  For Standard Loop the only roundtrip is **`reqOpenScope`** (open the child scope,
+  seed the inner tracks, arm the scope handlers, reply with the opened path).
+  **Scope close stays on the existing drain path** (`completeScope`), so no
+  close-roundtrip is needed and there is no double-close. The protocol clones the
+  existing `taskReq`/`taskRoundtrip` (and `callReq`) pattern verbatim.
+- **FR-9 — boundary arms once.** A boundary event on the looped composite arms
+  **once** and guards every iteration: the host still **parks** between passes and
+  emits no `evMoved`/`evEnded` until loop exit, so `armBoundaries` fires once (on
+  arrival) and `disarmBoundaries` once (at exit) — unchanged from today.
 
-### Functional — `loopCounter`, observability & front door
+### Functional — `loopCounter`, observability & front door (landed, unchanged)
 
 - **FR-10 — `loopCounter`.** A 0-based per-iteration ordinal is published so the
-  `loopCondition` **and** the inner activity's expressions read it by name
-  (through `execEnv.Find` → frame-first resolution). It is read-only and
-  engine-maintained; each iteration sees its own value (never a stale sibling's).
-- **FR-11 — observability.** Emit an iteration Fact per pass (loop enter / each
-  iteration with `loopCounter` / loop exit) through the ADR-013 v.2 observability
-  reporter (observer-only; echo policy per the kind→level map).
-- **FR-12 — front door.** A runnable `examples/standard-loop/`, the composition/
-  iteration guide, `CHANGELOG.md`, the conformance tracker row, and the READMEs
-  (EN + RU) reflect the new capability.
+  `loopCondition` and the inner activity's expressions read it by name; read-only,
+  engine-maintained, each iteration sees its own value.
+- **FR-11 — observability.** An iteration Fact per pass (loop enter / each
+  iteration with `loopCounter` / loop exit) through the ADR-013 v.2 reporter.
+- **FR-12 — front door.** `examples/standard-loop/`, the iteration guide,
+  `CHANGELOG.md`, the conformance tracker row, and the READMEs (EN + RU) reflect
+  the capability (already landed; the decorator rework does not change the
+  user-visible behavior, so these need no user-facing change beyond a CHANGELOG
+  note).
 
 ### Non-functional
 
-- **NFR-1 — no new event kinds for the leaf path.** The leaf-Task loop is a
-  bounded `for` around `executeNode` in `run()`; it introduces no `trackEvent`
-  kind and no loop-goroutine round-trip.
-- **NFR-2 — reuse the expression mechanism.** `loopCondition` is evaluated
-  through the existing `ExpressionEngine().Evaluate(ctx, cond, env)` + `bool`
-  assertion path (`gateway.go:236-247`) — no new evaluator.
-- **NFR-3 — breaking-change budget.** Turning the empty `LoopCharacteristics`
-  struct into an interface is a public-API break, permitted pre-1.0 (v0.9.0): the
-  type is an unused stub with zero consumers. Recorded in `CHANGELOG.md` as a
-  breaking note.
-- **NFR-4 — coverage.** Every file this SRD creates/updates finishes at ≥95%
+- **NFR-1 — no new event kinds for the leaf path.** The leaf loop stays a bounded
+  `for` around `executeNode`; no `trackEvent` kind, no loop round-trip.
+- **NFR-2 — reuse the expression mechanism.** `loopCondition` is evaluated through
+  the existing `ExpressionEngine().Evaluate` + `bool` path via a transient frame
+  (`evalLoopCond`), which already runs **off** the loop goroutine — the decorator
+  needs no loop coordination to test the condition.
+- **NFR-3 — the single-writer invariant is preserved (ADR-017 v.1).** The loop
+  remains the sole writer of `ls.scopes`, the data plane, `ls.waiting`, positions,
+  and boundary/handler arming. The decorator only *requests* mutations; those
+  methods stay reachable only from loop-goroutine code. No lock, no shared mutable
+  state.
+- **NFR-4 — deadlock-free by construction.** The decorator blocks only on channels
+  the **loop** writes (the reply channel, `evtCh`), both buffered and both honoring
+  `ctx.Done()` / `inst.loopDone`; the loop never blocks on the decorator (the reply
+  send is to a cap-1 buffer). The wait graph is a DAG (decorator→loop), never a
+  cycle.
+- **NFR-5 — the existing suites are the safety net.** The landed Standard-Loop
+  tests (leaf + composite, unit + thresher e2e + the example smoke) stay **green
+  throughout** the rework; behavior is unchanged, only the composite execution
+  mechanism moves.
+- **NFR-6 — coverage.** Every file this SRD creates/updates finishes at ≥95%
   diff-coverage (aim 100%), delivered with the change; `make ci` green.
 
 ## §3 Models
 
-### §3.1 `pkg/model/activities/loop.go` — the type family
+### §3.1 Model type family (`pkg/model/activities/loop.go`) — landed, unchanged
 
-`LoopCharacteristics` turns from an empty struct into a sealed marker; the
-concrete Standard-Loop type + its constructor live here (one-entity-per-file: the
-MI type arrives in its own file under SRD-055/056):
+`LoopCharacteristics` is a sealed marker interface; `StandardLoopCharacteristics`
+(embedding `foundation.BaseElement`) carries `loopCondition` / `testBefore` /
+`loopMaximum`, built by `NewStandardLoop(loopCondition, opts…)` with the FR-2
+guards and the `WithTestBefore()` / `WithLoopMaximum(n)` options. Accessors
+`LoopCondition()` / `TestBefore()` / `LoopMaximum() (int, bool)` expose them to the
+runtime. `Activity.Validate` carries the loop⊕MI-exclusivity guard (FR-3);
+`subprocess.go`'s event-sub validator carries FR-3a. **No model change in this
+SRD** — the decorator rework is runtime-only.
 
-```go
-// LoopCharacteristics marks an activity as iterating; the concrete kind
-// (Standard Loop or Multi-Instance) selects the mechanism (ADR-025 §2.2).
-type LoopCharacteristics interface {
-    loopKind() loopKind // sealed discriminator — implemented only in this package
-}
+### §3.2 Runtime deltas (`internal/instance/`) — the decorator engine
 
-// StandardLoopCharacteristics is a sequential while/until loop (BPMN §13.3.6).
-type StandardLoopCharacteristics struct {
-    foundation.BaseElement
-    loopCondition data.FormalExpression // continue-while-true test (must be bool)
-    testBefore    bool                  // false = post-tested (do…while), true = pre-tested (while)
-    loopMaximum   *int                  // optional cap; nil = unbounded
-}
+- **`scope_decorator.go` (new) — the protocol types + the runner.**
+  ```go
+  type scopeRequest struct {
+      host  *track
+      node  flow.Node
+      n     int                // the pass ordinal — bound as loopCounter on open
+      reply chan scopeReply
+  }
+  type scopeReply struct {
+      scopePath scope.DataPath // opened child path
+      err       error
+  }
+  ```
+  A single request shape (open) is all Standard Loop needs — the scope close stays
+  on the drain path (§4.3), and there is no separate counter-bind roundtrip: the
+  loop binds `loopCounter = n` when it opens the scope (§4.6). No request-kind enum
+  is needed yet; the sequential/parallel-MI slices add kinds as they need them.
+  `(*track).runCompositeLoop(ctx, step, sl) ([]*flow.SequenceFlow, error)` — the
+  off-loop await-each driver (FR-8): the decorator tracks the pass in its own local
+  `pass` counter (no `host.loopCounter` mutation); for each pass, pre-test if
+  `testBefore` (reuse `evalLoopCond` + `loopMaximum`), `requestScope{n: pass}`
+  (**one** roundtrip — the loop opens the scope and binds `loopCounter = pass`),
+  then `awaitScopeDrained` (park on `evtCh` for `scopeDone`), then post-test; on
+  exit return the composite's outgoing flows once. `requestScope` clones
+  `taskRoundtrip` (send on `inst.scopeReq`, block on the cap-1 reply, select on
+  `ctx`/`loopDone`).
 
-func NewStandardLoop(
-    loopCondition data.FormalExpression, opts ...StandardLoopOption,
-) (*StandardLoopCharacteristics, error) { /* nil + bool-type + loopMaximum>0 guards */ }
-```
+- **`instance.go` — the request channel.** `scopeReq chan scopeRequest` added
+  beside `taskReq`/`jobReq`/`callReq` and initialized in the constructor.
 
-`StandardLoopOption` closures (project option style — the house `WithXxx`
-convention, self-naming, reject bad input): `WithTestBefore()`,
-`WithLoopMaximum(n int)`. Accessors `LoopCondition()`, `TestBefore()`,
-`LoopMaximum() (int, bool)` expose the fields to the runtime.
+- **`loop.go` — the loop-side handler.** A `case req := <-inst.scopeReq:` arm in
+  the loop `select`, dispatching to `handleScopeRequest` (loop goroutine), which
+  `OpenScope`s the child, records the `scopeEntry`, marks the host `waiting`,
+  **binds `loopCounter = req.n` at the host scope** (readable after the child
+  closes, §4.6), `seedScope`s the inner tracks, `armScopeHandlers`, and replies
+  with the opened path. This is the exact single-writer shape of
+  `handleTaskRequest`.
 
-### §3.2 `activity.go` / `activity_options.go` — field + validation deltas
+- **`scope_runtime.go` — the seam removals.** The looped-composite branches driven
+  from the loop are removed: the `firstOpen` short-circuit in `onScopeOpen` and the
+  `afterDrain`/reopen branch in `resumeScopeHost` (which always falls through to
+  `dispatchToParked(scopeDone)` now). `completeScope` still closes the drained scope
+  (the close stays here, FR-8a). A **plain** (non-looped) composite Sub-Process
+  keeps the current `evScopeOpen`→`onScopeOpen`→`resumeScopeHost` path unchanged.
 
-- `activity.loopCharacteristics` (`activity.go:22`) and the `WithLoop` parameter
-  (`activity_options.go:111`) change type `*LoopCharacteristics` →
-  `LoopCharacteristics` (interface). `WithLoop`'s nil guard
-  (`activity_options.go:113-117`) and the by-reference clone (`activity.go:117`)
-  are unchanged.
-- `activityConfig.Validate` / `Activity.Validate` gains the loop+MI-exclusivity
-  guard (FR-3). Field-level guards (nil condition, bool type, positive maximum)
-  live in `NewStandardLoop` (FR-2).
-- **`subprocess.go` — `validateEventSubShape`** (`subprocess.go:164`) gains the
-  FR-3a guard: a `triggeredByEvent` `SubProcess` (already the event-sub entry-shape
-  validator) rejects a non-nil `loopCharacteristics`. This is the natural home —
-  it already enforces the event-sub well-formedness rules (ADR-023 v.2 §2.10).
-
-### §3.3 Runtime deltas (`internal/instance/`)
-
-- **`track.go` — the leaf loop wrapper.** In `run()` around the `executeNode`
-  call (`track.go:756`), a bounded loop drives re-execution when `step.node`
-  carries `StandardLoopCharacteristics` and is not a park-node
-  (`checkNodeType` classes, `track.go:410-457`): pre-test (if `testBefore`),
-  publish `loopCounter` into the execution frame, `executeNode`, increment,
-  `loopMaximum` check, post-test (if not `testBefore`); `checkFlows(nexts)` runs
-  **once** after the loop.
-- **`scope_runtime.go` — the composite re-entry hook.** In `resumeScopeHost` /
-  `completeScope` (`scope_runtime.go:256-313`): if the drained host carries
-  `StandardLoopCharacteristics` and the loop continues, re-queue via
-  `entry.queue` → `onScopeOpen` and commit the next `loopCounter` into the fresh
-  child scope; otherwise deliver `scopeDone` as today.
-- **`loopCounter` datum** — built like a runtime variable
-  (`values.NewVariable(n)` → item definition → parameter `loopCounter`), published
-  **per iteration** into the leaf frame (`frame.Put`) or the composite child scope
-  (`Scope.Commit`); never routed through the instance-global `RuntimeVar` subtree
-  (siblings must not see a stale counter).
+- **`std_loop.go` — relocate, don't duplicate.** The Standard-Loop continuation
+  logic (`evalLoopCond`, `loopMaximum`, `testBefore`) is reused by
+  `runCompositeLoop`; the loop-side `standardLoopIterator.firstOpen`/`afterDrain`
+  callbacks are removed. **Leaf `runStandardLoop` is untouched.**
 
 ## §4 Analysis
 
-### §4.1 The hybrid mechanism realizes ADR-025 §2.2
+### §4.1 The decorator realizes ADR-025 v.2 §2.12
 
-The parent ADR §2.2 prescribes **isolation-by-frame for a leaf, isolation-by-scope
-for a composite**. Grounding confirms both are cheap:
+§2.12 prescribes that composite iteration control runs on the activity's own
+off-loop execution, requesting scope operations from the single-writer loop.
+`runCompositeLoop` runs on the host's runner goroutine (where every node's `Exec`
+already runs); it drives the loop with ordinary control flow (an await-each `for`)
+and touches loop-owned state only through `scopeReq`. This is the locus §2.12
+dictates — the SRD realizes the ADR, it does not deviate.
 
-- `executeNode` already opens a **fresh frame per call** and `defer f.Discard()`s
-  it (`track.go:943-953`), commits on success (`finalizeNodeExecution`,
-  `track.go:978`), and — crucially — **returns `nexts` without following them**
-  (the run loop's `checkFlows` follows them, `track.go:756-763`). So a `for`
-  around `executeNode` re-runs the same node N times, each pass isolated by its
-  own frame, and emits the outgoing flow exactly once. No new machinery (FR-4,
-  FR-7; NFR-1).
-- A composite is *not* run by `executeNode`; it **parks** as a `scopeHost` and
-  its body runs in a child scope drained through `resumeScopeHost`
-  (`scope_runtime.go:287-313`). The loop is a re-queue on that existing seam
-  (FR-8). Forcing a scope onto a leaf Task instead was rejected in ADR-025 §2.2
-  (a Task is not a scope container).
+### §4.2 The protocol clones an existing pattern (FR-8a)
 
-### §4.2 `loopCondition` reuses the existing evaluator (NFR-2)
+The engine already round-trips a runner→loop request and blocks for a
+single-writer reply: `taskReq`/`taskRoundtrip` (UserTask distribution) and
+`callReq`/`callRequest` (Call Activity completion). `scopeReq` is the same shape —
+a request channel serviced in the loop `select`, a per-request cap-1 reply channel,
+the caller selecting on `ctx.Done()`/`loopDone`. No new synchronization primitive
+is invented; the decorator reuses the proven roundtrip.
 
-The boolean test reuses the exact gateway path: `cond.ResultType() != "bool"`
-guard, `re.ExpressionEngine().Evaluate(ctx, cond, re)`, `res.Get(ctx).(bool)`
-(`gateway.go:227-247`). Standard Loop needs no new evaluator — only a
-`data.FormalExpression` field and a call to that same path at each pass/drain,
-against the iteration's frame/scope environment.
+### §4.3 Only `reqOpenScope`; the scope close stays on the drain path
 
-### §4.3 `loopCounter` publication (FR-10)
+A pass opens a scope, the inner graph runs, the scope drains (inner tracks
+`decScope` → `completeScope`), and the host resumes. The **drain and close already
+happen on the loop** in `completeScope`; the decorator learns of the drain via the
+existing `scopeDone` delivery. So the decorator needs no `reqCloseScope` — adding
+one would double-close (the drain path already closed the scope). The only
+mutation the decorator must *initiate* is the **open** (there is no drain-path
+trigger for it), hence a single `reqOpenScope` roundtrip (plus a `reqBindCounter`
+for the loop-owned counter write). This is the minimal correct protocol.
 
-Per-node execution data lives in the **frame** (frame-first resolution via
-`execEnv.Find`); scope-durable data is committed to the plane. For the leaf path
-`loopCounter` is `Put` into the per-iteration execution frame before
-`executeNodeCore`; for the composite path it is `Scope.Commit`ed into the fresh
-child scope at re-open (alongside how the existing scope seeds bind data). It is
-read-only and engine-maintained; publishing it per iteration (not once, globally)
-guarantees each iteration reads its own ordinal.
+### §4.4 Deadlock-freedom (NFR-4)
 
-### §4.4 Boundary events arm once across iterations (FR-9)
+The decorator waits on: (i) the reply channel — written only by the loop, cap-1
+buffered; (ii) `evtCh` for `scopeDone` — written only by the loop via
+`dispatchToParked` (the buffered slot guarantees the loop's send never blocks).
+Both waits select on `ctx.Done()` and `inst.loopDone`, so a terminate/interrupt
+unblocks the decorator. The loop, in `handleScopeRequest`, never blocks on the
+decorator (its reply send is non-blocking into the cap-1 buffer). The wait graph
+is therefore a DAG rooted at the decorator pointing to the loop — no cycle, no
+self-emit-on-the-loop-goroutine (the class of bug §2.12 removes). The loop's own
+`emit` into `inst.events` remains guarded by `<-inst.loopDone`.
 
-For the leaf path the track stays on the same `step.node` for every pass and
-emits no `evMoved` until the loop exits, so `armBoundaries` fires **once**; for
-the composite path the host parks once. Either way a boundary timer/message spans
-the whole loop — the desired BPMN semantics (a per-iteration re-arm would reset a
-timer every pass, which is wrong).
+### §4.5 Boundary arms once across iterations (FR-9)
 
-### §4.5 `testBefore` / `loopMaximum` edge cases
+A boundary arms on `evMoved` onto the composite and disarms on `evEnded`. Because
+the looped host **parks** on `evtCh` for each pass's drain and stays on the same
+step (no `evMoved`/`evEnded` mid-loop), `armBoundaries` fires once on arrival and
+`disarmBoundaries` once when `runCompositeLoop` returns the outgoing flows at loop
+exit — the desired BPMN semantic (a boundary timer spans the whole loop),
+unchanged from the prior landing.
 
-Pre-tested with an initially-false condition → **zero** executions, straight to
-the outgoing flow (FR-5). `loopMaximum` is checked after each pass, bounding even
-an always-true condition (FR-6); `loopMaximum ≤ 0` is rejected at construction
-(a zero/negative cap is a modelling error, not "run zero times" — use a
-pre-tested false condition for that).
+### §4.6 The continuation test runs off the loop; `loopCounter` binds at the host scope (NFR-2)
 
-### §4.6 An Event Sub-Process excludes iteration (FR-3a)
+`evalLoopCond` evaluates `loopCondition` against a transient read-only frame
+(`openFrameAt` + `Discard`); it performs no loop-owned mutation and already runs on
+the runner goroutine. The decorator calls it directly between passes — no protocol
+roundtrip for the test. `loopMaximum` and `testBefore` are plain arithmetic/branch
+on the decorator.
 
-`LoopCharacteristics` is placed on `Activity` in the BPMN object model, so a
-`SubProcess` may syntactically carry it. But an Event Sub-Process is defined by
-the standard as *event-instantiated, not control-flow-reached*
-(`sub-processes.md §13.5.4`), and iteration characteristics govern how a
-**token-activated** activity re-executes — a concept that does not apply to a
-handler fired by its trigger. An event sub-process that needs to run more than
-once uses a **non-interrupting** start (which fires multiple times, §13.5.4), not
-a loop marker. gobpm therefore rejects any `LoopCharacteristics` on a
-`triggeredByEvent` sub-process as a well-formedness rule. The rule is stated as
-an **engine choice**: the extract does not enumerate an explicit prohibition
-(silence is not a mandate), but the event-sub semantics make the marker
-meaningless, so validation surfaces it early rather than letting the runtime
-ignore it. Because the guard tests the shared `LoopCharacteristics` interface, it
-covers Multi-Instance for free when SRD-055/056 land.
+`loopCounter` must be bound at the **host** scope, not (only) the child: a
+post-tested loop evaluates `loopCondition` *after* the pass's child scope has
+drained and closed, so a counter bound only in the child would be gone by the test.
+The loop binds `loopCounter = req.n` at the host scope as part of `reqOpenScope`
+(§3.2) — the enclosing scope the child's inner tracks resolve by walk-up during the
+pass, and which survives the child close for the decorator's continuation test.
+This matches where the prior landing bound it; only the driver moves off the loop.
+
+### §4.7 Scope guard — Standard-Loop composite only
+
+`runCompositeLoop` is entered only for a **looped composite Standard Loop**
+(`standardLoopOf(node) != nil` and the node is a `scopeHost`). A **plain**
+(non-looped) composite keeps `parkScopeHost` → `onScopeOpen` → single resume; the
+**Multi-Instance** seam (`mi.go`, `mi_parallel.go`) is untouched by this SRD and
+re-lands on the decorator in the sequential/parallel slices. This bounds the blast
+radius to the one path the decorator proves.
 
 ## §6 Test scenarios
 
-| Test | Level | Asserts (FR) |
+| Test | Level | Covers |
 |---|---|---|
-| `TestStandardLoopBuildAndAccessors` | model | FR-1 fields/accessors + unset-option defaults |
-| `TestStandardLoopRejectsNilCondition` | model | FR-2 nil `loopCondition` rejected |
-| `TestStandardLoopRejectsNonBoolCondition` | model | FR-2 non-bool `ResultType` rejected |
-| `TestStandardLoopMaximumMustBePositive` | model | FR-2 `loopMaximum ≤ 0` rejected |
-| `TestActivityLoopMarkerIsSingle` | model | FR-3 one marker per activity — a later `WithLoop` replaces |
-| `TestEventSubProcessRejectsLoop` | model | FR-3a event sub-process rejects any loop/MI |
-| `TestStandardLoopRunsWhileConditionHolds` | instance | FR-4/FR-5/FR-10 post-tested runs while `loopCounter < 3` |
-| `TestStandardLoopPreTestedZeroIterations` | instance | FR-5/FR-7 pre-tested zero passes, flow proceeds once |
-| `TestStandardLoopMaximumCaps` | instance | FR-6 cap on an always-true condition |
-| `TestStandardLoopOf` | instance | loop capability detection (looped vs. plain node) |
-| `TestStandardLoopConditionErrorFaults` | instance | pre-tested condition error faults the instance |
-| `TestStandardLoopNonBoolConditionFaults` / `TestEvalLoopCondNonBool` | instance | non-bool runtime result rejected (via fault + direct) |
-| `TestStandardLoopBodyErrorFaults` | instance | a body error propagates out of the loop |
-| `TestEvalLoopCondFrameError` | instance | evalLoopCond frame-open guard |
-| `TestLoopedSubProcessReopensPerIteration` | instance | FR-8 composite re-opens its scope per pass |
-| `TestLoopedSubProcessPreTestedZero` | instance | FR-8 pre-tested composite zero iterations, host resumes |
-| `TestLoopedSubProcessMaximumCaps` | instance | FR-6 composite cap |
-| `TestLoopedSubProcessEmitsIterationFacts` | instance | FR-11 scope facts carry `loopCounter` (0/1/2) |
-| `TestLoopedSubProcessPreTestedConditionError` / `…ConditionErrorFaults` | instance | composite pre/post condition-error faults |
-| `TestStandardLoopLeafE2E` | thresher | FR-4–FR-7/FR-10 leaf loop end-to-end |
-| `TestStandardLoopSubProcessE2E` | thresher | FR-8 looped Sub-Process end-to-end |
+| `TestScopeRequestRoundtripOpens` | instance | FR-8a — `handleScopeRequest(reqOpenScope)` opens the scope, seeds tracks, arms handlers, replies with the path (mirrors the `handleTaskRequest` unit tests) |
+| `TestScopeRequestBindCounter` | instance | FR-8a — `reqBindCounter` binds `loopCounter` at the host path on the loop goroutine |
+| `TestScopeRequestUnblocksOnTerminate` | instance | NFR-4 — a pending roundtrip returns on `ctx`/`loopDone` cancel, no goroutine leak |
+| `TestLoopedSubProcessReopensPerIteration` | instance | FR-8 — the decorator re-opens the child scope N times (existing test, stays green) |
+| `TestLoopedSubProcessPreTestedZero` | instance | FR-5/FR-8 — a pre-tested false condition runs zero passes (existing, green) |
+| `TestLoopedSubProcessMaximumCaps` | instance | FR-6/FR-8 — `loopMaximum` caps composite passes (existing, green) |
+| `TestLoopedSubProcessEmitsIterationFacts` | instance | FR-11 — one iteration Fact per pass (existing, green) |
+| `TestLoopedSubProcessBoundarySpansIterations` | instance | FR-9 — a boundary on a looped composite arms once and fires across ≥2 passes |
+| `TestLoopedSubProcessInterruptMidIteration` | instance | NFR-4 — an interrupting boundary / terminate mid-pass unblocks the decorator and tears the inner scope down |
+| `TestStandardLoopSubProcessE2E` | thresher | FR-8/FR-10 end-to-end through the public engine (existing, green) |
+| `TestStandardLoopLeafE2E` | thresher | FR-4–FR-7 leaf loop unchanged (existing, green) |
+| `examples/standard-loop` smoke | example | FR-12 — runs to completion, exits 0 (existing) |
+
+The leaf-path unit tests (`TestStandardLoopRunsWhileConditionHolds`, …) must be
+**untouched** — the leaf path does not change.
 
 ## §7 Milestones
 
-| M | Scope | Files | Tests |
-|---|---|---|---|
-| **M1** | Model + validation | `activities/loop.go` (interface + `StandardLoopCharacteristics` + `NewStandardLoop` + options), `activity.go:22`, `activity_options.go` (`WithLoop` type, `Validate` exclusivity), `subprocess.go` (`validateEventSubShape` FR-3a guard), `activity_test.go:49` (empty-struct usage → real `StandardLoop`) | the 6 model tests |
-| **M2** | Leaf-Task in-place seam + `loopCounter` (leaf) | `internal/instance/track.go` (loop wrapper in `run()`, frame `Put`) | post/pre-tested, maximum, single-flow, fresh-frame, counter-visibility |
-| **M3** | Composite scope re-entry + `loopCounter` (scope) + observability | `internal/instance/scope_runtime.go` (re-entry hook, `Scope.Commit`), the iteration Fact | looped-subprocess re-open, boundary-armed-once, iteration facts |
-| **M4** | e2e + example + docs | `pkg/thresher/standard_loop_test.go`, `examples/standard-loop/`, guide, CHANGELOG, tracker, READMEs EN+RU | the two e2e tests |
+| # | Scope | Files |
+|---|---|---|
+| **M1** | The request/response scope protocol: `scopeReq` channel, `scopeRequest`/`scopeReply` types, the `scopeReq` `select` arm + `handleScopeRequest` (loop goroutine), unit-tested in isolation like `handleTaskRequest`. No behavior change yet (nothing calls it). | `scope_decorator.go` (new), `instance.go`, `loop.go` |
+| **M2** | `runCompositeLoop` + `requestScope`/`awaitScopeDrained`; wire the `executeStep` interception gated on a looped composite Standard Loop; reuse `evalLoopCond`/`loopMaximum`. The existing composite-loop tests + e2e go green on the decorator. | `scope_decorator.go`, `track.go`, `std_loop.go` |
+| **M3** | Remove the loop-side composite-loop seam (`onScopeOpen` `firstOpen` short-circuit, `resumeScopeHost` `afterDrain`/reopen branch, `standardLoopIterator` callbacks); confirm the whole suite + `examples/standard-loop` green; CHANGELOG note; update ADR-025 cross-refs / conformance tracker. | `scope_runtime.go`, `std_loop.go`, `composite_iter.go`, docs |
 
 ## §8 Cross-doc
 
-- **Implements** ADR-025 v.1 §2.2–§2.3 (upward; the Standard-Loop slice).
-- **Upstream** ADR-010 v.2 (frame isolation), ADR-023 v.2 (composite re-entry),
-  ADR-018 v.1 (boundary arming), ADR-001 v.6 (loop-owned execution) — all
-  up/sideways, version-pinned.
-- No downward references. This SRD is referenced by no higher-hierarchy doc.
+- **Implements** [ADR-025 v.2](../design/ADR-025-activity-iteration-loop-and-multi-instance.md) §2.2–§2.3 (Standard Loop), §2.12 (the off-loop decorator).
+- **Upstream** [ADR-017 v.1](../design/ADR-017-channel-based-event-processing.md) (single-writer loop), [ADR-023 v.2](../design/ADR-023-sub-process-and-call-activity.md) (scope lifecycle), [ADR-018 v.1](../design/ADR-018-boundary-events-and-activity-interruption.md) (boundary arm-once), [ADR-010 v.2](../design/ADR-010-process-data-model.md) (leaf frame), [ADR-001 v.6](../design/ADR-001-execution-model.md).
+- Direction: SRD → ADR only (up), all version-pinned. No downward reference.
 
 ## §9 Definition of Done
 
-- FR-1…FR-12 wired and covered by the §6 tests; the two e2e tests green.
-- `make ci` green (tidy, lint 0, `-race`, diff-coverage ≥95% on touched files
-  per NFR-4, govulncheck clean, all modules).
-- `examples/standard-loop/` runs to completion under a timeout (its built binary
-  gitignored, not staged).
-- ADR-025 flipped Draft → Accepted (the branch lands the conception + this first
-  slice, per the ADR-023/SRD-049 precedent) + its RU twin refreshed.
-- Conformance tracker row 4 (`StandardLoopCharacteristics`) advanced; CHANGELOG
-  `[Unreleased]` entry (with the breaking `LoopCharacteristics` note); README
-  EN+RU capability paragraph; iteration guide.
-- `/check-srd` PASS.
+- FR-1…FR-12 wired; FR-8/FR-8a via `runCompositeLoop` + the `scopeReq` protocol;
+  FR-4–FR-7 leaf path unchanged.
+- §6 tests exist and pass; the landed composite + leaf + e2e suites stay green
+  (NFR-5); `examples/standard-loop` runs and exits 0.
+- The loop-side composite-loop seam is removed (M3); a plain composite and the MI
+  seam are unaffected.
+- Single-writer invariant preserved (NFR-3): no decorator-side mutation of
+  loop-owned state; deadlock-freedom argued (NFR-4) and exercised by the
+  terminate/interrupt tests.
+- `make ci` green (tidy · lint · build · `-race` · diff-coverage ≥95% on touched
+  files · govulncheck); CHANGELOG `[Unreleased]` notes the internal rework.
+- `/check-srd` PASS before flipping status; ADR-025 v.2 stays Draft until the whole
+  re-landing completes (owner: flip after implementation).
 
 ## §10 Implementation summary
 
-### §10.1 Stages by commit (branch `feat/standard-loop`)
+> ⚠️ TODO: fill AFTER landing — stage commits + empirical findings vs this draft.
+
+### §10.1 Stages by commit (branch `feat/loop-mi-decorator-engine`)
 
 | Stage | Commit | Scope | Tests |
 |---|---|---|---|
-| M1 | `18393b0` | Model + validation: `LoopCharacteristics` interface, `StandardLoopCharacteristics`, `NewStandardLoop` + `WithTestBefore`/`WithLoopMaximum`, `activity` field/accessor, FR-3a event-sub guard | 6 model |
-| M2 | `c6bfe62` | Leaf in-place seam: `internal/instance/std_loop.go` (`executeStep`/`runStandardLoop`/`evalLoopCond`, `standardLoopOf`), `bindLoopCounterAt` | 9 instance + 1 thresher e2e |
-| M3 | `ffd78bc` | Composite scope re-entry: `resumeScopeHost` re-open + `onScopeOpen` pre-tested-zero, `track.loopCounter`, `bindLoopCounterOrFail`, `reportScope`+`AttrLoopCounter` | 7 instance |
-| M4 | `b75539f` | e2e, `examples/standard-loop/`, `docs/guides/iteration.md`, CHANGELOG, tracker, READMEs EN+RU | 1 thresher e2e |
 
 ### §10.2 Empirical findings vs the draft
 
-- **Leaf loop factored into its own file.** §3.3 sketched the wrapper inline in
-  `track.go` `run()`; it landed as `internal/instance/std_loop.go`
-  (`executeStep`/`runStandardLoop`) called from `run()` — same behaviour, cleaner
-  separation.
-- **Single test-site.** `runStandardLoop` uses one condition-test position
-  (`TestBefore() || loopCounter > 0`) for both pre- and post-tested loops, rather
-  than the two the §2.3 prose implies — fewer branches, one bind per pass.
-- **`loopCounter` binding.** Published to the enclosing scope via
-  `bindLoopCounterAt` (both condition and inner activity resolve it by walk-up),
-  not a frame `Put`; the composite's two bind sites were consolidated into
-  `bindLoopCounterOrFail`.
-- **Untriggerable defensive wraps.** `bindLoopCounterAt` → `plane.Commit` does
-  **not** fail on a non-existent path (it lazily accepts), so its error wrap is
-  dead-defensive (accepted, the `evalCondition` class). covercheck counts *source
-  lines* per uncovered block, which drove the single-bind + helper consolidation
-  to keep the diff-coverage gate green (95.2% of 229).
-- **Non-bool guard.** `evalLoopCond`'s non-boolean-result branch is unreachable
-  through `goexpr` (it enforces the declared result type at `Evaluate`), so it is
-  covered directly with a mock `FormalExpression`.
-- **FR-9 (boundary arms once)** has no dedicated named test — it rests on the
-  host-parks-once / leaf-stays-on-node structural argument; a dedicated
-  boundary-across-iterations test is a §10.3 follow-up.
-
 ### §10.3 Backlog
-
-- **Multi-Instance** — the rest of ADR-025: SRD-055 (sequential) and SRD-056
-  (parallel + `behavior`/`ComplexBehaviorDefinition`), which will exercise the
-  same scope substrate.
-- A **boundary-arms-once-across-iterations** regression test (FR-9), currently
-  covered only structurally.
 
 ## Open questions
 
