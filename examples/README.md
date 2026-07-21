@@ -76,6 +76,14 @@ Every example builds in CI; the list below is grouped by concern.
 | [`boundary-events/`](boundary-events/) | An interrupting timer boundary as a timeout — it fires before a long task finishes, cancels it, and routes onto the exception flow. |
 | [`terminate-end-event/`](terminate-end-event/) | A Terminate End Event ends the whole instance mid-flight — it settles `Terminated`, not `Completed`. |
 
+## Links, escalation & compensation
+
+| Example | Demonstrates |
+|---|---|
+| [`link-events/`](link-events/) | **Link events — an intra-process GOTO** — a source Intermediate Throw hands the token to the same-name target Intermediate Catch within one Process level (static name-pairing, no wait, no broadcast); shown as an on-page loop with a back-edge (ADR-006 v.4 §2.8 / SRD-057). |
+| [`escalation-events/`](escalation-events/) | **Escalation — a non-critical signal up the scope chain** — a sub-process raises `OVER_BUDGET`, an interrupting Escalation boundary catches it by code and routes to a manager; unlike an Error it never faults, and an unresolved escalation is logged, not dropped (ADR-006 v.4 §2.2/§2.6 / SRD-058). |
+| [`compensation-events/`](compensation-events/) | **Compensation — undoing completed work (the saga pattern)** — a trip-booking saga: guarded bookings enter the completion ledger with data snapshots, and a Compensation End Event undoes them in **reverse completion order**, waiting for the handlers (ADR-026 / SRD-059). |
+
 ## Lifecycle
 
 | Example | Demonstrates |

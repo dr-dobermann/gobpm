@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-21 |
 | Owner | Ruslan Gabitov |
@@ -296,8 +296,41 @@ Each milestone one commit, `make ci` green:
 
 ## §10 Implementation summary
 
-*Filled at landing: touched files/lines per milestone, verification results,
-milestone commit SHAs, deltas vs this draft.*
+Landed on `feat/compensation-events`; master (the ADR-025 v.2 off-loop
+iteration refactor) merged mid-stream.
+
+| Milestone | Commit | Scope |
+|---|---|---|
+| ADR | `ae25102` | ADR-026 v.1 (Draft) |
+| SRD | `af3b2cf` | this document (Draft) |
+| M1 | `eafc711` | FR-1/FR-2 model + validation: getters, `waitForCompletion` alignment, `TriggerCompensation` in `boundaryTriggers`, `NewCompensationBoundaryEvent` + typed handler link + Clone carry, `ForCompensation()`, `ValidateCompensationPlacement` in both containers, entry-seeding exclusions |
+| M2 | `3e25f34` | FR-3/FR-4/FR-7(record): the loop-owned `ledgers` map, `recordLeafCompletion` (evMoved) + `recordScopeCompletion` (completeScope, fold) + `discardLedgers` (complete/cancel/loop-exit), `scope.SnapshotAt`, `KindCompensation` `Eligible/Folded/Discarded` |
+| M3 | `a660f97` | FR-5/FR-6/FR-8: `Compensate(ref, wait)` on `renv`, `evCompensate`, the wait-throw as a wait node (`CompensationWaitRef` capability, `parkCompensationThrow`, deferred emit, sentinel resume), `compensation_watch.go` sweep (targeted incl. folded / scope-wide reverse, sequential; abort→Error chain), frame-inputs + child-scope-seed read surfaces, `Thrown/Compensating/Compensated/Unresolved` |
+| merge | `45c9917` | origin/master (ADR-025 v.2 off-loop decorator) — `compositeIteratorOf`→`drivesOwnIteration` in the MI/loop skip, `enterComposite` folded into the wait-kind dispatch |
+| M4 | `696a3e0` | T-10 thresher e2e; `examples/compensation-events/`; CHANGELOG / conformance row 8 / README(+ru) / roadmap sync; the e2e-caught fixes (Compensation excluded from hub boundary-arming; `finishSweep` stopping guard) |
+
+**Verification:** `make ci` green post-commit — diff-coverage **95.3% of 697
+changed lines** (min 95%), race tests, govulncheck clean; every touched/new
+function ≥80% (most 100%); `examples/compensation-events/` smoked exit 0 with
+the reverse order observable.
+
+**Deltas vs this draft (behavior unchanged):**
+- §3.1's `WithCompensationHandler` option sketch landed as the dedicated
+  **`NewCompensationBoundaryEvent`** constructor (no `BoundaryOption` plumbing
+  exists; validate-all-params in one place).
+- §3.2's `scopeEntry.ledger` field landed as the loop-state **`ledgers` map**
+  keyed by scope path — the root scope (which has no `scopeEntry`) ledgers
+  uniformly.
+- FR-4 refinement: a **leaf's snapshot is captured on the track goroutine** at
+  the completion itself and carried on `evMoved` — a downstream node's commit
+  otherwise races the loop's append (caught by T-2).
+- FR-5 refinement: the wait-throw's `evCompensate` is **deferred until after
+  its `evMoved`**, so the just-completed predecessor's ledger entry is applied
+  before the sweep resolves (FIFO).
+- The M4 e2e surfaced two fixes the instance-level tolerant hub masked:
+  Compensation joined the Error/Escalation exclusion in `armBoundaries`
+  (ADR-006 §2.3 — not a live subscription), and `finishSweep` drops the
+  resume on a stopping instance.
 
 ## Open questions
 
