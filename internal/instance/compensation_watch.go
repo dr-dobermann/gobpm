@@ -300,9 +300,11 @@ func (ls *loopState) compensationTrackEnded(
 
 // finishSweep resumes a wait-for-completion thrower once the sweep has
 // drained (or resolved to nothing / aborted): the loop delivers the
-// completion sentinel through the standard parked-dispatch contract.
+// completion sentinel through the standard parked-dispatch contract. On a
+// stopping instance the resume is dropped — the teardown already closed the
+// parked tracks' channels (the fireScopeHandler stopping discipline).
 func (ls *loopState) finishSweep(ctx context.Context, sweep *compSweep) {
-	if !sweep.wait || sweep.thrower == nil {
+	if ls.stopping || !sweep.wait || sweep.thrower == nil {
 		return
 	}
 

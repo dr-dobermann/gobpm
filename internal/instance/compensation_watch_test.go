@@ -7,8 +7,10 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
@@ -518,4 +520,96 @@ func TestCompensationNodeByIDNested(t *testing.T) {
 
 	_, ok = ls.compensationNodeByID("missing-nb")
 	require.False(t, ok, "a miss across composites")
+}
+
+// TestCompensateForkBornThrow: a fork born directly ON a wait-for-completion
+// Compensation throw (a task with two outgoing flows, one leading straight to
+// the throw) starts its sweep from the spawn path — the recordBornWaiter twin
+// of the mid-run evCompensate (SRD-059 FR-5).
+func TestCompensateForkBornThrow(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	var aRan, undoRan, after1, after2 atomic.Int32
+
+	p, err := process.New("comp-fork-born")
+	require.NoError(t, err)
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+	a := hitTask(t, "A", &aRan, "", 0)
+	fork := hitTask(t, "fork", &after1, "", 0)
+	throw := compThrow(t, "throw", a, true)
+	afterT := hitTask(t, "afterT", &after2, "", 0)
+	end1, err := events.NewEndEvent("end1")
+	require.NoError(t, err)
+	end2, err := events.NewEndEvent("end2")
+	require.NoError(t, err)
+
+	undoA := readingHandler(t, "undoA", "", nil, &atomic.Int64{}, &atomic.Int64{})
+	ced, err := events.NewCompensationEventDefinition(nil, true)
+	require.NoError(t, err)
+	bnd, err := events.NewCompensationBoundaryEvent("comp-undoA", a, ced, undoA)
+	require.NoError(t, err)
+	_ = undoRan
+
+	for _, e := range []flow.Element{
+		start, a, fork, throw, afterT, end1, end2, bnd, undoA,
+	} {
+		require.NoError(t, p.Add(e))
+	}
+	// fork has TWO outgoing: end1 (continues on the fork's own track) and the
+	// throw (a fork-born track starting ON the throw).
+	linkAll(t, [2]flow.Element{start, a}, [2]flow.Element{a, fork},
+		[2]flow.Element{fork, end1}, [2]flow.Element{fork, throw},
+		[2]flow.Element{throw, afterT}, [2]flow.Element{afterT, end2})
+
+	inst, rec := observeInstance(t, p)
+
+	require.Equal(t, Completed, inst.State())
+	require.NoError(t, inst.LastErr())
+	require.EqualValues(t, 1, after2.Load(),
+		"the fork-born thrower resumed and continued")
+	require.Len(t, compFacts(rec, observability.PhaseCompensated), 1,
+		"the born throw's sweep ran the handler")
+}
+
+// TestSeedFrameInputsRejectsNonParameter (white-box): a snapshot datum that is
+// not a *data.Parameter is an invariant violation the seed surfaces.
+func TestSeedFrameInputsRejectsNonParameter(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	inst, _ := openInstance(t)
+
+	f, err := inst.sc.openFrameAt("t-x", "n-x", inst.sc.root)
+	require.NoError(t, err)
+
+	err = seedFrameInputs(f, []data.Data{
+		data.MustItemAwareElement(
+			data.MustItemDefinition(values.NewVariable(1)),
+			data.ReadyDataState),
+	})
+	require.Error(t, err)
+}
+
+// TestOnScopeOpenSeedCommitFailure (white-box): a compensation snapshot that
+// cannot commit into the handler's fresh child scope is an invariant
+// violation — fail loud (the TestOnScopeOpenAppendError shape).
+func TestOnScopeOpenSeedCommitFailure(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	inst, ls := openInstance(t)
+
+	sp, err := activities.NewSubProcess("seed-fail")
+	require.NoError(t, err)
+
+	host := &track{
+		BaseElement: *foundation.MustBaseElement(),
+		scopePath:   inst.sc.root,
+		// a zero-value Parameter has no value — the plane's Commit rejects it.
+		compScopeSeed: []data.Data{&data.Parameter{}},
+	}
+
+	ls.onScopeOpen(t.Context(), host, sp)
+
+	require.True(t, ls.stopping)
+	require.Error(t, inst.LastErr())
 }
