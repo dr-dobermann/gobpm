@@ -79,102 +79,25 @@ type miIterator struct {
 	mi multiInstance
 }
 
-// firstOpen resolves the instance count once at activation, freezes it on the
-// host, and publishes the 0-based ordinal. It returns open=false (zero
-// instances) or an error. Only a sequential Multi-Instance reaches this path —
-// compositeIteratorOf excludes a parallel MI, which the parallel driver owns
-// (SRD-056.A).
-func (it miIterator) firstOpen(
-	ctx context.Context, _ *loopState, host *track, node flow.Node,
-) (bool, error) {
-	n, col, err := it.resolveActivation(ctx, host, node)
-	if err != nil {
-		return false, err
-	}
-
-	host.miState = &miState{
-		collection:        col,
-		inputItem:         it.mi.InputDataItem(),
-		outputRef:         it.mi.LoopDataOutputRef(),
-		outputItem:        it.mi.OutputDataItem(),
-		numberOfInstances: n,
-	}
-
-	// an output-assembling Multi-Instance stages each instance's item privately
-	// and publishes the collection once, at completion (the visibility barrier).
-	if host.miState.outputRef != "" {
-		host.miState.staging = values.NewArray[any]()
-	}
-
-	// N <= 0 runs zero instances — resume the host without opening a scope.
-	if n <= 0 {
-		return false, nil
-	}
-
-	if err := it.bindInstance(ctx, host, 0); err != nil {
-		return false, err
-	}
-
-	return true, nil
-}
-
-// beforeClose captures the just-completed instance's output item from the
-// draining child scope into the private staging collection (SRD-055), keyed by
-// the instance ordinal. A no-op when the Multi-Instance assembles no output.
-func (it miIterator) beforeClose(
-	ctx context.Context, host *track, childPath scope.DataPath,
+// captureSequentialOutput reads a draining sequential-MI instance's output item
+// from its child scope into the private staging collection (SRD-055 FR-9), keyed
+// by the instance ordinal — the one loop-side step of the off-loop decorator, run
+// from completeScope before the child scope closes (§4.2). A no-op for a non-MI
+// scope or a Multi-Instance that assembles no output. Runs on the loop goroutine.
+func (ls *loopState) captureSequentialOutput(
+	ctx context.Context, entry *scopeEntry, childPath scope.DataPath,
 ) error {
-	st := host.miState
+	st := entry.host.miState
 	if st == nil || st.staging == nil {
 		return nil
 	}
 
-	d, err := host.instance.sc.plane.GetData(childPath, st.outputItem)
+	d, err := ls.inst.sc.plane.GetData(childPath, st.outputItem)
 	if err != nil {
 		return err
 	}
 
-	return st.staging.SetAt(ctx, host.loopCounter, d.Value().Get(ctx))
-}
-
-// afterDrain advances to the next instance while the count is not reached and
-// the completionCondition (if any) does not stop launching; otherwise it
-// publishes the assembled output collection once (the visibility barrier) and
-// the activity completes.
-func (it miIterator) afterDrain(
-	ctx context.Context, _ *loopState, host *track, node flow.Node,
-) (bool, error) {
-	st := host.miState
-	st.completed++
-
-	done := st.completed >= st.numberOfInstances
-	if !done && it.mi.CompletionCondition() != nil {
-		met, err := it.evalCompletion(ctx, host, node)
-		if err != nil {
-			return false, err
-		}
-
-		done = met
-	}
-
-	if done {
-		if err := it.publishOutput(host); err != nil {
-			return false, err
-		}
-
-		host.loopCounter = 0
-		host.miState = nil
-
-		return false, nil
-	}
-
-	host.loopCounter++
-
-	if err := it.bindInstance(ctx, host, host.loopCounter); err != nil {
-		return false, err
-	}
-
-	return true, nil
+	return st.staging.SetAt(ctx, entry.host.loopCounter, d.Value().Get(ctx))
 }
 
 // evalCompletion evaluates the boolean completionCondition at the host scope
