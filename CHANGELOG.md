@@ -73,6 +73,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Behavior events (`ComplexBehaviorDefinition`) follow (SRD-056.B). New
   `examples/multi-instance-parallel/`.
 
+### Changed
+
+- **Composite loop execution → off-loop iteration decorator (ADR-025 v.2 §2.12,
+  SRD-054).** Internal rework, behavior-preserving: a looped **composite**
+  activity (Sub-Process / Call Activity) now drives its own iteration from the
+  host's runner goroutine — requesting scope open/close from the single-writer
+  loop via a request/response protocol — instead of loop-goroutine-driven scope
+  re-entry. Standard Loop semantics are unchanged; the rework makes the
+  Multi-Instance behavior throw (§2.8) implementable with a deterministic
+  boundary catch (the loop-goroutine model self-deadlocked on it). Standard Loop
+  is re-landed on the decorator; sequential/parallel Multi-Instance follow.
+
 ## [v0.9.0] - 2026-07-18
 
 ### Added

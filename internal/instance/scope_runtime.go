@@ -377,12 +377,26 @@ func (ls *loopState) resumeScopeHost(
 	path scope.DataPath,
 	entry *scopeEntry,
 ) {
-	// SRD-054 / SRD-055: a looped composite re-opens its child scope for another
+	// SRD-054 §2.12: a looped Standard-Loop composite drives its own re-entry off
+	// the loop (the decorator). The loop does not decide reopen here — it just
+	// delivers the drain to the parked decorator (runCompositeLoop), which tests
+	// the condition and requests the next pass. Only the other composites
+	// (Multi-Instance) still use the loop-driven afterDrain seam below.
+	if standardLoopOf(entry.node) != nil {
+		ls.dispatchToParked(ctx, trackEvent{
+			kind:  evDeliver,
+			track: entry.host,
+			eDef:  newScopeDone(),
+		})
+
+		return
+	}
+
+	// SRD-055: a sequential Multi-Instance re-opens its child scope for another
 	// pass through the compositeIterator seam — the sequential re-entry the leaf
 	// loop performs in place — instead of resuming the host. afterDrain reports
-	// reopen=false when the iteration finishes (loop condition false / maximum
-	// reached, or the Multi-Instance count exhausted); then fall through to the
-	// normal resume.
+	// reopen=false when the iteration finishes (the Multi-Instance count
+	// exhausted); then fall through to the normal resume.
 	if it := compositeIteratorOf(entry.node); it != nil {
 		reopen, err := it.afterDrain(ctx, ls, entry.host, entry.node)
 		if err != nil {
@@ -534,9 +548,10 @@ func (ls *loopState) reportScope(
 // looped composite, or -1 when the node is not looped (so its scope facts omit
 // the attribute).
 func scopeLoopCounter(node flow.Node, host *track) int {
-	// any composite iterator (Standard Loop or Multi-Instance) publishes its
-	// pass ordinal to the iteration scope facts (SRD-054 FR-11, SRD-055 FR-13).
-	if compositeIteratorOf(node) != nil {
+	// a looped composite publishes its pass ordinal to the iteration scope facts
+	// (SRD-054 FR-11, SRD-055 FR-13): a Standard Loop (decorator-driven, §2.12) or
+	// a sequential Multi-Instance (seam-driven, compositeIteratorOf).
+	if standardLoopOf(node) != nil || compositeIteratorOf(node) != nil {
 		return host.loopCounter
 	}
 

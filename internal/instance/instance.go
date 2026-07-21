@@ -43,6 +43,7 @@ type Instance struct {
 	taskReq             chan taskRequest
 	jobReq              chan jobRequest
 	callReq             chan callRequest
+	scopeReq            chan scopeRequest
 	invoker             exec.ProcessInvoker
 	sc                  instanceScope
 	corr                correlator
@@ -217,6 +218,7 @@ func New(
 		taskReq:             make(chan taskRequest),
 		jobReq:              make(chan jobRequest),
 		callReq:             make(chan callRequest),
+		scopeReq:            make(chan scopeRequest),
 		invoker:             cfg.invoker,
 		loopDone:            make(chan struct{}),
 		parentEventProducer: ep,

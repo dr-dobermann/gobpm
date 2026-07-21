@@ -2,19 +2,29 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
-| Version | v.1 |
-| Date | 2026-07-18 |
+| Status | Draft |
+| Version | v.2 |
+| Date | 2026-07-21 |
 | Owner | Ruslan Gabitov |
-| Refines | [SAD-001 v.1](SAD-001-vision-and-architecture.md) §5 / §15.3, [ADR-023 v.2](ADR-023-sub-process-and-call-activity.md) (the execution-scope model this reuses), [ADR-018 v.1](ADR-018-boundary-events-and-activity-interruption.md) (boundary catch for thrown behavior events), [ADR-006 v.3](ADR-006-events-and-subscriptions.md) (event throwing/catching) |
+| Refines | [SAD-001 v.1](SAD-001-vision-and-architecture.md) §5 / §15.3, [ADR-023 v.2](ADR-023-sub-process-and-call-activity.md) (the execution-scope model this reuses), [ADR-018 v.1](ADR-018-boundary-events-and-activity-interruption.md) (boundary catch for thrown behavior events), [ADR-017 v.1](ADR-017-channel-based-event-processing.md) (the single-writer execution model §2.12 extends), [ADR-006 v.3](ADR-006-events-and-subscriptions.md) (event throwing/catching) |
 
-> **Accepted** — decides how an activity marked with *loop characteristics* runs
+> **Draft (v.2)** — decides how an activity marked with *loop characteristics* runs
 > **more than once**: BPMN's Standard Loop (a condition-driven sequential loop)
 > and Multi-Instance (a cardinality-driven fan-out, sequential or parallel, over
 > a data collection). It is prescriptive and grounded in the BPMN 2.0 object
 > model (§13.3.6–§13.3.7); the accompanying SRDs land it incrementally on the
 > existing execution-scope substrate. Names of code symbols are deliberately
 > absent — that grounding belongs to the SRDs.
+>
+> **v.2** adds §2.12: a **composite** looped activity iterates on the activity's
+> own (off-loop) execution — an *iteration decorator* — rather than under control
+> code run on the per-instance loop goroutine. This makes the §2.8 behavior throw
+> an ordinary off-loop emit with a deterministic boundary catch (the v.1 landing
+> could not implement it correctly), while keeping [ADR-017 v.1](ADR-017-channel-based-event-processing.md)'s
+> single-writer invariant intact. The §2.1–§2.11 semantics are unchanged; only
+> *who drives* composite iteration moves. The SRDs that landed the
+> loop-goroutine-driven composite model are superseded and deleted when the
+> decorator re-landing completes.
 
 ---
 
@@ -124,6 +134,10 @@ Isolation-by-frame for leaves and isolation-by-scope for composites is one
 uniform *principle* (per-iteration isolation) realized by two mechanisms, not two
 competing models.
 
+This subsection fixes the *mechanism*; **who drives it** for a composite activity
+— the activity's own off-loop execution, not the per-instance loop goroutine — is
+§2.12.
+
 ### 2.3 Standard Loop — a sequential condition-driven loop
 
 A Standard-Loop activity runs its inner activity repeatedly **in sequence**,
@@ -174,6 +188,10 @@ are alternative cardinality sources, not composable).
 
 Both shapes expose per-instance **`loopCounter`** (0-based ordinal) and the
 aggregate runtime attributes of §2.9 to the activity's expressions.
+
+For a composite activity these two shapes are the decorator's two driving
+strategies — await-each (sequential) and fan-out-then-await-all (parallel) — run
+on the activity's own execution (§2.12).
 
 ### 2.6 Data flow — split in, assemble out
 
@@ -245,6 +263,10 @@ The thrown events implicitly carry the Multi-Instance activity's runtime
 attributes (§2.9), so a boundary handler can read how far the activity has
 progressed.
 
+This subsection fixes *what* is thrown and *when*; the throw **executes** as an
+ordinary off-loop emit issued by the iteration decorator before it completes the
+activity (§2.12), which is what makes the boundary catch deterministic.
+
 ### 2.9 Instance runtime attributes (engine convention)
 
 The standard states that a Multi-Instance activity's *runtime attributes* are
@@ -290,6 +312,78 @@ extends this one.
   choice; the spec lists both attributes without forbidding both, but a
   well-formed MI activity uses exactly one source.
 - **Runtime-attribute set** (§2.9) is an engine convention pending a KB extension.
+
+### 2.12 Composite iteration runs off the loop — the iteration decorator (v.2)
+
+§2.2 fixes the *mechanism* (a composite activity re-opens its child scope per
+iteration); this subsection fixes *who drives it*. **A composite looped activity
+iterates on the activity's own execution — an off-loop *iteration decorator* —
+not under control code run on the per-instance loop goroutine.**
+
+**Why this is decided here.** The engine's execution model
+([ADR-017 v.1](ADR-017-channel-based-event-processing.md)) has a **single-writer
+loop goroutine** that owns all execution-lifecycle state (open scopes, token
+positions, the parallel instance barrier), while a node's *work* runs **off** it,
+on a per-token runner goroutine that reports state transitions back as events.
+The v.1 landing drove the iteration *control* — resolve the count, split data,
+evaluate the completion condition, decide re-entry, and (§2.8) **throw behavior
+events** — **on the loop goroutine**, splitting control and work across the
+goroutine boundary the wrong way. The §2.8 behavior throw is the proof: throwing
+an event means handing it to the loop's ordered inbound channel, but issued *from*
+the loop goroutine that hand-off self-deadlocks (the loop is the channel's only
+reader and is busy inside the throw); made fire-and-forget it instead drops the
+catch nondeterministically, because the throw and its boundary catch become
+separate loop steps the activity's own completion can race between. Both are
+symptoms of one structural fact: **the v.1 control was not the decorator BPMN
+describes** (§13.3.6–§13.3.7 frame loop characteristics as a wrapper *around the
+activity*, whose control belongs to the activity's execution).
+
+**The decision.**
+
+- **The activity's runner drives the iteration.** The composite host's own
+  (off-loop) execution resolves the count/condition, opens each instance, awaits
+  each completion, evaluates the completion condition, assembles output (§2.6),
+  throws behavior events (§2.8), and then completes the activity and follows its
+  outgoing flow. The host **no longer parks** while the loop drives iteration on
+  its behalf — its runner *is* the driver. Parking returns to its BPMN meaning
+  (waiting for an external event).
+- **The loop stays the single writer; the decorator *requests* scope
+  operations.** Running off-loop, the decorator must not mutate loop-owned state
+  directly (that would reintroduce the cross-goroutine races
+  [ADR-017 v.1](ADR-017-channel-based-event-processing.md) removed). It uses a
+  **request/response** protocol over the existing event channel: it requests an
+  operation (open an instance scope, close a drained one, bind a per-instance
+  datum), the loop performs the mutation on its own goroutine and acknowledges on
+  the decorator's inbound channel, and the decorator — blocked on that
+  acknowledgement — resumes. Strictly ordered, no shared mutable state, no lock:
+  the single-writer invariant is **preserved and extended**, not relaxed.
+- **Sequential and parallel are two driving strategies** (§2.5): await-each, or
+  fan-out-then-await-all with the N-of-N barrier — ordinary control flow on the
+  decorator's goroutine rather than callbacks re-entered by the loop.
+- **Behavior events become ordinary off-loop throws** (§2.8). The decorator emits
+  by the same path any activity uses, and can **block until the throw is
+  accepted** before completing the activity — so the boundary catch is ordered
+  *before* completion by construction, on a boundary that is still armed. The v.1
+  deadlock and nondeterministic drop are **structurally impossible** on this
+  model.
+
+**Scope.** This governs **composite** activities (Sub-Process, Call Activity) —
+the only activities that carry boundaries and throw behavior events. A **leaf-task
+loop already** runs in place on the task's own runner (§2.2); it is already off
+the loop goroutine and is **unchanged**.
+
+**Semantics are unchanged.** Everything §2.1–§2.11 decides — count fixed once
+(§2.4), split-in/assemble-out with the visibility barrier (§2.6), the completion
+condition (§2.7), the runtime attributes (§2.9) — is preserved verbatim. This
+subsection changes only **where that control runs** (on the decorator, off the
+loop), not **what it computes**. The re-open-a-child-scope mechanism of §2.2
+stands; the decorator merely *requests* each open/close rather than the loop
+performing it inline.
+
+**Engine note.** The request/response scope protocol is an engine mechanism, not
+a BPMN concept — BPMN is silent on the engine's goroutine model; the protocol
+exists solely to reconcile off-loop control with the single-writer invariant, and
+is invisible to a modeler.
 
 ---
 
@@ -337,6 +431,26 @@ engine convention explicitly rather than asserting a spec mandate.
   Rejected: it is a first-class BPMN marker in the conformance scope and changes
   the diagram's meaning (a marked activity vs. an explicit cycle).
 
+For the §2.12 execution model (v.2), the rejected alternatives were:
+
+- **Keep control on the loop; move only the behavior throw off-loop.** Special-case
+  the §2.8 throw onto a transient goroutine, or fire its boundary inline, leaving
+  iteration loop-driven. Rejected: it treats the symptom, not the structural
+  mismatch — control stays on the wrong goroutine — and it needs bespoke
+  inline-fire machinery to order the catch before completion. It does not
+  generalize: every future control-side emit re-hits the same wall.
+- **Relax the single-writer invariant.** Let the off-loop decorator open/close
+  scopes and update positions directly under a lock. Rejected: it reintroduces the
+  cross-goroutine mutation of lifecycle state that
+  [ADR-017 v.1](ADR-017-channel-based-event-processing.md) removed, and a lock over
+  the position/scope maps is a strictly worse synchronization than goroutine
+  confinement.
+- **Fire-and-forget async throw (keep the v.1 model).** Emit the behavior event
+  from a transient goroutine and let the catch land whenever. Rejected: empirically
+  nondeterministic — the catch is a later loop step that races the activity's
+  completion, dropping behavior events on both the sequential and parallel shapes.
+  A correctness gap, not a style choice.
+
 ---
 
 ## 5. Consequences
@@ -354,6 +468,19 @@ engine convention explicitly rather than asserting a spec mandate.
   the proven ADR-023 open/drain/close lifecycle rather than inventing new
   accounting. `Complex` behavior is the least-used, highest-complexity surface;
   it lands last, after the sequential and parallel cores are proven.
+- **v.2 rework (§2.12).** Moving composite iteration onto the off-loop decorator
+  **re-lands** the composite Standard Loop and Multi-Instance execution paths; the
+  element SRDs that landed the loop-goroutine-driven composite model are
+  **deleted and reused** — each is rewritten in place on the decorator (its old
+  content deleted, its number reused), rather than marked Obsolete or renumbered,
+  which keeps the element→SRD mapping stable and the doc-set consistent with the
+  code — and the conformance tracker is updated to the new landing. It adds one off-loop↔loop **coordination surface** (the scope
+  request/response protocol) — historically where races appear; mitigated by the
+  strict request/response discipline (the loop stays sole writer, no shared
+  state), by re-landing **incrementally** (Standard Loop, then sequential, then
+  parallel) with the existing loop / MI / boundary suites as the green-throughout
+  safety net, and by leaving **leaf-task loops untouched**, which bounds the blast
+  radius to composite iteration.
 
 ---
 
@@ -397,6 +524,25 @@ existing execution-scope substrate:
 Compensation (§2.10) is out of this rollout; it rides the future Transaction /
 compensation work.
 
+**v.2 re-landing (§2.12).** The three slices above landed on the
+loop-goroutine-driven composite model; v.2 re-lands them on the off-loop
+decorator, smallest-first, each its own SRD and PR:
+
+1. **Decorator engine + composite Standard Loop** — the request/response scope
+   protocol, proven by re-landing the simplest composite iteration, green against
+   the existing suites.
+2. **Sequential Multi-Instance** on the decorator.
+3. **Parallel Multi-Instance** on the decorator — the fan-out-then-await-all
+   strategy with the N-of-N barrier expressed as decorator control flow.
+4. **Multi-Instance behavior** (§2.8) on the decorator — a straightforward
+   off-loop throw with a deterministic boundary catch.
+5. **Retire the old seam** — remove the loop-goroutine-driven composite-iterator
+   seam and update the conformance tracker to the new landing.
+
+Each slice **deletes and reuses** its element's SRD — rewriting it in place on the
+decorator (old content deleted, its number reused) rather than marking it Obsolete
+or minting a new number — so the element→SRD mapping stays stable.
+
 ---
 
 ## 8. References
@@ -423,3 +569,4 @@ None.
 | Version | Date | Author | Change |
 |---|---|---|---|
 | v.1 | 2026-07-19 | Ruslan Gabitov | Initial draft — Standard Loop & Multi-Instance iteration model: per-iteration isolation by a mechanism fitting the activity kind (in-place fresh-frame for a leaf Task, per-iteration child scope for a composite, distinct per-instance scope for parallel MI), cardinality (expression \| collection), sequential/parallel sequencing, split/assemble data mediator with visibility barrier, completion condition, full `behavior` event-throwing (All/None/One/Complex), engine-convention runtime attributes; MI compensation deferred to the future Transaction work. |
+| v.2 | 2026-07-21 | Ruslan Gabitov | Added §2.12 — composite iteration runs on the activity's own off-loop execution (an *iteration decorator*), not under control code on the per-instance loop goroutine; the decorator requests scope operations from the single-writer loop via a request/response protocol (ADR-017 v.1 invariant preserved), sequential/parallel become its two driving strategies, and the §2.8 behavior throw becomes an ordinary off-loop emit with a deterministic boundary catch (unimplementable correctly on the v.1 model). Semantics §2.1–§2.11 unchanged; only *who drives* composite iteration moves. Forward-pointers added to §2.2/§2.5/§2.8; execution-model alternatives added to §4; v.2 rework consequences/rollout added to §5/§7. Leaf-task loops unchanged. The SRDs that landed the loop-goroutine-driven composite model are superseded and deleted when the re-landing completes. |
