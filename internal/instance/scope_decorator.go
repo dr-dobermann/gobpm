@@ -5,28 +5,62 @@ import (
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
+// scopeOp is the operation a scopeRequest asks the single-writer loop to perform
+// for an off-loop iteration decorator (ADR-025 v.2 §2.12). scopeOpen is the
+// serial open (Standard Loop / sequential MI, one child scope per pass); the
+// remaining ops drive a PARALLEL Multi-Instance's fan-out-then-await-all barrier
+// (SRD-056.A), whose N concurrent drains the cap-1 runner park cannot take at
+// once — so the loop delivers them one at a time through the re-arm handshake.
+type scopeOp int
+
+const (
+	// scopeOpen opens one child scope for a serial pass and parks the host for
+	// its drain (Standard Loop, sequential MI).
+	scopeOpen scopeOp = iota
+	// scopeFanOut opens all N instance scopes of a parallel Multi-Instance,
+	// builds the loop-owned group barrier, and marks the host waiting.
+	scopeFanOut
+	// scopeReArm re-marks the host waiting and delivers the next queued drain —
+	// the handshake step that serializes N concurrent drains onto the cap-1 park.
+	scopeReArm
+	// scopeComplete finalizes the group: optionally cancels the still-open
+	// instances (a completionCondition fired), publishes the assembled output,
+	// and drops the group.
+	scopeComplete
+)
+
 // scopeRequest is a looped composite's off-loop iteration decorator asking the
-// single-writer loop to open the child scope for one pass (SRD-054 §2.12 / FR-8a):
-// host is the composite host track, node is the composite node, and reply carries
-// the loop's verdict (the opened path) back to the decorator's runner goroutine.
-// The pass ordinal is bound as loopCounter by the decorator itself, off the loop
-// (§4.6) — a plane write, mutex-safe like the leaf loop's bind — so it is set
-// before the continuation test reads it and before the scope opens.
+// single-writer loop to perform a scope operation (op) for one iteration step
+// (SRD-054 §2.12 / FR-8a; SRD-056.A for the parallel ops): host is the composite
+// host track, node is the composite node, and reply carries the loop's verdict
+// back to the decorator's runner goroutine. For a serial open the pass ordinal is
+// bound as loopCounter by the decorator itself, off the loop (§4.6) — a plane
+// write, mutex-safe like the leaf loop's bind — so it is set before the
+// continuation test reads it and before the scope opens. n / col carry a parallel
+// fan-out's instance count and input collection; cancel asks scopeComplete to tear
+// down the still-open instances first.
 type scopeRequest struct {
-	host  *track
-	node  flow.Node
-	reply chan scopeReply
+	col    data.Collection
+	host   *track
+	node   flow.Node
+	reply  chan scopeReply
+	op     scopeOp
+	n      int
+	cancel bool
 }
 
-// scopeReply is the loop's answer to a scopeRequest: the opened child path, or an
-// error the decorator faults on.
+// scopeReply is the loop's answer to a scopeRequest: the opened child path (open),
+// the count of instances torn down (scopeComplete with cancel), or an error the
+// decorator faults on.
 type scopeReply struct {
-	err       error
-	scopePath scope.DataPath
+	err        error
+	scopePath  scope.DataPath
+	terminated int
 }
 
 // scopeRoundtrip hands req to the loop and blocks for the reply, honoring ctx and
@@ -38,39 +72,70 @@ func (inst *Instance) scopeRoundtrip(
 	ctx context.Context,
 	req scopeRequest,
 ) (scope.DataPath, error) {
+	r, err := inst.scopeExchange(ctx, req)
+
+	return r.scopePath, err
+}
+
+// scopeExchange is scopeRoundtrip's full-reply form: it hands req to the loop and
+// returns the whole scopeReply, so a caller that needs a field other than the
+// opened path (a parallel scopeComplete reads the terminated count) can read it.
+// scopeRoundtrip is the thin path-only wrapper.
+func (inst *Instance) scopeExchange(
+	ctx context.Context,
+	req scopeRequest,
+) (scopeReply, error) {
 	req.reply = make(chan scopeReply, 1)
 
 	select {
 	case inst.scopeReq <- req:
 	case <-inst.loopDone:
-		return "", errs.New(
+		return scopeReply{}, errs.New(
 			errs.M("instance %q is not running", inst.ID()),
 			errs.C(errorClass, errs.InvalidState))
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return scopeReply{}, ctx.Err()
 	}
 
 	select {
 	case r := <-req.reply:
-		return r.scopePath, r.err
+		return r, r.err
 	case <-inst.loopDone:
-		return "", errs.New(
+		return scopeReply{}, errs.New(
 			errs.M("instance %q stopped before scope reply", inst.ID()),
 			errs.C(errorClass, errs.InvalidState))
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return scopeReply{}, ctx.Err()
 	}
 }
 
-// handleScopeRequest opens one pass's child scope on the loop goroutine and replies
-// to the decorator (SRD-054 FR-8a). It is the loop-side half of the scope protocol,
-// mirroring handleTaskRequest: it performs the single-writer mutations the off-loop
-// decorator must not do — open the data-plane child scope, register the entry, mark
-// the host parked-for-drain, seed the inner tracks, and arm the scope handlers. The
-// pass ordinal is already bound as loopCounter by the decorator (off the loop, §4.6)
-// before this request, so the seeded body reads it by walk-up. Scope close stays on
-// the existing drain path (completeScope), so no close request is needed here (§4.3).
+// handleScopeRequest is the loop-side half of the scope protocol (mirroring
+// handleTaskRequest): it runs on the loop goroutine and dispatches the decorator's
+// request to the single-writer mutation it names. scopeOpen serves the serial
+// drivers (Standard Loop, sequential MI); scopeFanOut / scopeReArm / scopeComplete
+// serve a parallel Multi-Instance's off-loop barrier (SRD-056.A).
 func (ls *loopState) handleScopeRequest(ctx context.Context, req scopeRequest) {
+	switch req.op {
+	case scopeFanOut:
+		ls.handleFanOut(ctx, req)
+	case scopeReArm:
+		ls.handleReArm(ctx, req)
+	case scopeComplete:
+		ls.handleComplete(req)
+	default:
+		ls.handleScopeOpen(ctx, req)
+	}
+}
+
+// handleScopeOpen opens one pass's child scope on the loop goroutine and replies
+// to the decorator (SRD-054 FR-8a). It performs the single-writer mutations the
+// off-loop decorator must not do — open the data-plane child scope, register the
+// entry, mark the host parked-for-drain, seed the inner tracks, and arm the scope
+// handlers. The pass ordinal is already bound as loopCounter by the decorator (off
+// the loop, §4.6) before this request, so the seeded body reads it by walk-up. Scope
+// close stays on the existing drain path (completeScope), so no close request is
+// needed here (§4.3).
+func (ls *loopState) handleScopeOpen(ctx context.Context, req scopeRequest) {
 	sh, ok := req.node.(scopeHost)
 	if !ok {
 		// checkNodeType only routes scopeHost nodes to the decorator; a mismatch
@@ -156,7 +221,7 @@ func (t *track) runCompositeLoop(
 		// acknowledgement (single-writer), then park for the scope's drain — the
 		// loop delivers scopeDone on evtCh, as for any composite host.
 		if _, err := t.instance.scopeRoundtrip(ctx,
-			scopeRequest{host: t, node: step.node}); err != nil {
+			scopeRequest{op: scopeOpen, host: t, node: step.node}); err != nil {
 			return nil, err
 		}
 

@@ -385,7 +385,8 @@ func TestParallelMultiInstanceInputGetAtError(t *testing.T) {
 }
 
 // TestParallelMultiInstancePublishError covers the completion publish's error:
-// committing the assembled collection at an unopened host scope fails.
+// committing the assembled collection at an unopened host scope fails when the
+// decorator asks the loop to finalize the group (scopeComplete).
 func TestParallelMultiInstancePublishError(t *testing.T) {
 	var count atomic.Int32
 
@@ -405,13 +406,14 @@ func TestParallelMultiInstancePublishError(t *testing.T) {
 		host:      host,
 		node:      node,
 		staging:   values.NewArray[any](nil), // non-nil → publish is attempted
-		open:      map[scope.DataPath]int{},  // empty → this drain is the last
+		open:      map[scope.DataPath]int{},  // empty → nothing to cancel
 		outputRef: "res",
 	}
-	entry := &scopeEntry{group: grp, ordinal: 0}
+	ls.miGroups[host.ID()] = grp
 
-	err = ls.parallelInstanceDrained(t.Context(), scope.DataPath("/x"), entry)
-	require.Error(t, err)
+	reply := make(chan scopeReply, 1)
+	ls.handleComplete(scopeRequest{host: host, node: node, reply: reply})
+	require.Error(t, (<-reply).err)
 }
 
 // TestParallelMultiInstanceCardinalityError: a cardinality that errors on
@@ -431,15 +433,14 @@ func TestParallelMultiInstanceCardinalityError(t *testing.T) {
 
 // TestParallelMultiInstanceOpenScopeError covers the fan-out's defensive
 // data-plane open failure: pre-opening instance 0's child path makes its
-// OpenScope duplicate, faulting the instance (mirrors the onScopeOpen white-box).
+// OpenScope duplicate, so the fan-out handler replies an error the decorator
+// faults on.
 func TestParallelMultiInstanceOpenScopeError(t *testing.T) {
 	var count atomic.Int32
 
 	mi := mustParallelMI(t, activities.WithCardinality(cardExpr(t, 2)))
 
 	inst := miSubProcessInstance(t, &count, mi)
-	// no tracks are spawned in this white-box; clear the birth tracks so the
-	// fault path's stopAll has no un-spawned (nil-cancel) track to touch.
 	inst.tracks = map[string]*track{}
 	ls := newLoopState(inst)
 	node := findNode(t, inst.s, "body")
@@ -451,10 +452,10 @@ func TestParallelMultiInstanceOpenScopeError(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, inst.sc.plane.OpenScope(child))
 
-	ls.fanOutParallelMI(t.Context(), host, node, node.(scopeHost))
-
-	require.True(t, ls.stopping)
-	require.Error(t, inst.LastErr())
+	reply := make(chan scopeReply, 1)
+	ls.handleFanOut(t.Context(),
+		scopeRequest{host: host, node: node, n: 2, reply: reply})
+	require.Error(t, (<-reply).err)
 }
 
 // TestParallelMultiInstanceSequentialStillWorks: the parallel dispatch leaves the
@@ -469,4 +470,73 @@ func TestParallelMultiInstanceSequentialStillWorks(t *testing.T) {
 
 	require.Equal(t, Completed, inst.State())
 	require.Equal(t, int32(3), count.Load())
+}
+
+// TestParallelBarrierStepBindError: the per-drain §2.9 attribute bind at an unopened
+// host scope faults the barrier step (covering bindMICounters' error path too).
+func TestParallelBarrierStepBindError(t *testing.T) {
+	_, node, host := miParFixture(t)
+	host.scopePath = scope.DataPath("/does/not/exist") // bindDataItemAt fails
+
+	_, err := host.parallelBarrierStep(
+		t.Context(), &stepInfo{node: node}, multiInstanceOf(node), 3, 1)
+	require.Error(t, err)
+}
+
+// TestParallelBarrierStepCompleteError: a true completionCondition drives the
+// scopeComplete roundtrip, which faults on a stopped instance (loopDone closed).
+func TestParallelBarrierStepCompleteError(t *testing.T) {
+	var count atomic.Int32
+
+	mi := mustParallelMI(t, activities.WithCardinality(cardExpr(t, 3)),
+		activities.WithCompletionCondition(attrAtLeast(t, "numberOfInstances", 1)))
+
+	inst := miSubProcessInstance(t, &count, mi)
+	inst.tracks = map[string]*track{}
+	node := findNode(t, inst.s, "body")
+
+	host, err := newTrack(node, inst, nil)
+	require.NoError(t, err)
+	close(inst.loopDone) // the scopeComplete roundtrip returns not-running
+
+	_, err = host.parallelBarrierStep(
+		t.Context(), &stepInfo{node: node}, mi, 3, 1)
+	require.Error(t, err)
+}
+
+// TestHandleReArmGroupGone: re-arming a group already torn down (e.g. by an
+// interrupting boundary) just replies so the runner unblocks — no error.
+func TestHandleReArmGroupGone(t *testing.T) {
+	inst, node, host := miParFixture(t)
+	ls := newLoopState(inst)
+
+	reply := make(chan scopeReply, 1)
+	ls.handleReArm(t.Context(),
+		scopeRequest{op: scopeReArm, host: host, node: node, reply: reply})
+	require.NoError(t, (<-reply).err)
+}
+
+// TestHandleCompleteGroupGone: completing a group already torn down just replies —
+// no error, nothing to publish or cancel.
+func TestHandleCompleteGroupGone(t *testing.T) {
+	inst, node, host := miParFixture(t)
+	ls := newLoopState(inst)
+
+	reply := make(chan scopeReply, 1)
+	ls.handleComplete(
+		scopeRequest{op: scopeComplete, host: host, node: node, reply: reply})
+	require.NoError(t, (<-reply).err)
+}
+
+// TestHandleFanOutNonComposite: a fan-out for a node that is not a composite is a
+// corrupt-graph error surfaced to the decorator.
+func TestHandleFanOutNonComposite(t *testing.T) {
+	inst, _, host := miParFixture(t)
+	ls := newLoopState(inst)
+	leaf := findNode(t, inst.s, "start") // a StartEvent is not a scopeHost
+
+	reply := make(chan scopeReply, 1)
+	ls.handleFanOut(t.Context(),
+		scopeRequest{op: scopeFanOut, host: host, node: leaf, n: 1, reply: reply})
+	require.Error(t, (<-reply).err)
 }

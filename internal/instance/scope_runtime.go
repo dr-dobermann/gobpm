@@ -92,16 +92,6 @@ func (ls *loopState) onScopeOpen(ctx context.Context, host *track, node flow.Nod
 		return
 	}
 
-	// a parallel Multi-Instance host fans out ALL its instances at once, each in
-	// a distinct scope, and completes only when the last drains (SRD-056.A) — a
-	// different control flow from the serial re-entry below, so it dispatches
-	// here before the single-scope path.
-	if mi := multiInstanceOf(node); mi != nil && !mi.IsSequential() {
-		ls.fanOutParallelMI(ctx, host, node, sh)
-
-		return
-	}
-
 	// a host may override the child segment (SRD-053): a non-interrupting
 	// Event Sub-Process handler carries a unique per-fire segment so concurrent
 	// instances of the same node open distinct scopes; every normal composite
@@ -349,13 +339,23 @@ func (ls *loopState) completeScope(
 
 	ls.reportScope(observability.PhaseCompleted, entry.node, path, ordinal)
 
-	// a parallel Multi-Instance instance drains into its group's N-of-N barrier;
-	// the shared host resumes only when the last instance completes (SRD-056.A),
-	// not through the serial re-entry.
+	// a parallel Multi-Instance instance drains into its group's N-of-N barrier
+	// (SRD-056.A): the off-loop decorator (runMIParallel) owns the counting and the
+	// completion policy, so the loop only removes the instance from the open set and
+	// delivers the drain to the parked runner — one at a time, queueing any that
+	// arrive while the runner is busy (the cap-1 handshake, §4.2).
 	if entry.group != nil {
-		if err := ls.parallelInstanceDrained(ctx, path, entry); err != nil {
-			ls.inst.fail(err)
-			ls.stopAll()
+		grp := entry.group
+		delete(grp.open, path)
+
+		if _, waiting := ls.waiting[grp.host.ID()]; waiting {
+			ls.dispatchToParked(ctx, trackEvent{
+				kind:  evDeliver,
+				track: grp.host,
+				eDef:  newScopeDone(),
+			})
+		} else {
+			grp.pending++
 		}
 
 		return
@@ -476,8 +476,15 @@ func (ls *loopState) cancelScope(path scope.DataPath, phase observability.Phase)
 				"scope_path", string(p), "error", err.Error())
 		}
 
-		ls.reportScope(phase, entry.node, p,
-			scopeLoopCounter(entry.node, entry.host))
+		// a parallel Multi-Instance instance reports its OWN ordinal (SRD-056.A
+		// FR-14), not the shared host.loopCounter that scopeLoopCounter surfaces
+		// now that a parallel MI self-drives.
+		ord := scopeLoopCounter(entry.node, entry.host)
+		if entry.group != nil {
+			ord = entry.ordinal
+		}
+
+		ls.reportScope(phase, entry.node, p, ord)
 	}
 }
 

@@ -623,8 +623,8 @@ func TestDrivesOwnIteration(t *testing.T) {
 		"a Standard Loop composite self-drives")
 	require.True(t, drivesOwnIteration(seqNode),
 		"a sequential Multi-Instance composite self-drives")
-	require.False(t, drivesOwnIteration(parNode),
-		"a parallel Multi-Instance parks and fans out")
+	require.True(t, drivesOwnIteration(parNode),
+		"a parallel Multi-Instance composite self-drives (fan-out-then-await-all)")
 	require.False(t, drivesOwnIteration(plainNode))
 	require.False(t, drivesOwnIteration(evNode))
 }

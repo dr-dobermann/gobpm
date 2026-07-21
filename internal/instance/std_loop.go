@@ -56,12 +56,16 @@ func (t *track) executeStep(
 		return t.runStandardLoop(ctx, step, sl)
 	}
 
-	// a sequential Multi-Instance composite drives itself off the loop via its own
-	// count-driven decorator (SRD-055 §2.12); a parallel MI parks and fans out
-	// through onScopeOpen (SRD-056.A), so it is not routed here.
-	if mi := multiInstanceOf(step.node); mi != nil && mi.IsSequential() {
+	// a Multi-Instance composite drives itself off the loop via its own decorator
+	// (ADR-025 v.2 §2.12): sequential await-each (runMISequential, SRD-055) or
+	// parallel fan-out-then-await-all (runMIParallel, SRD-056.A).
+	if mi := multiInstanceOf(step.node); mi != nil {
 		if _, ok := step.node.(scopeHost); ok {
-			return t.runMISequential(ctx, step, mi)
+			if mi.IsSequential() {
+				return t.runMISequential(ctx, step, mi)
+			}
+
+			return t.runMIParallel(ctx, step, mi)
 		}
 	}
 
