@@ -377,16 +377,7 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 	// host with a synthetic completion when the scope drains. Recognized by
 	// the container capability, keeping the runtime model-agnostic.
 	if _, ok := node.(scopeHost); ok {
-		// A looped Standard-Loop composite drives its own iteration off the loop
-		// (the decorator, SRD-054 §2.12): it must NOT park for loop-driven control
-		// — run() reaches it and executeStep routes it to runCompositeLoop. Every
-		// other composite (plain Sub-Process, Multi-Instance) still parks for the
-		// loop-driven scope re-entry.
-		if standardLoopOf(node) != nil {
-			return nil
-		}
-
-		return t.parkScopeHost(node, atConstruction)
+		return t.enterComposite(node, atConstruction)
 	}
 
 	// A Call Activity is a child-instance wait node (SRD-050): the host parks
@@ -485,6 +476,19 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 	}
 
 	return nil
+}
+
+// enterComposite routes a composite host reached by a token: a looped
+// Standard-Loop composite drives its own iteration off the loop (the decorator,
+// SRD-054 §2.12) and must NOT park — run() reaches it and executeStep routes it to
+// runCompositeLoop; every other composite (plain Sub-Process, Multi-Instance)
+// parks for the loop-driven scope re-entry.
+func (t *track) enterComposite(node flow.Node, atConstruction bool) error {
+	if standardLoopOf(node) != nil {
+		return nil
+	}
+
+	return t.parkScopeHost(node, atConstruction)
 }
 
 // parkScopeHost parks the track on a composite node (SRD-049 FR-8): the
