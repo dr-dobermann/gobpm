@@ -48,6 +48,12 @@ func (t *track) executeStep(
 	ctx context.Context, step *stepInfo,
 ) ([]*flow.SequenceFlow, error) {
 	if sl := standardLoopOf(step.node); sl != nil {
+		// a composite (scopeHost) Standard Loop iterates off the loop via the
+		// scope decorator (SRD-054 §2.12); a leaf Task iterates in place.
+		if _, ok := step.node.(scopeHost); ok {
+			return t.runCompositeLoop(ctx, step, sl)
+		}
+
 		return t.runStandardLoop(ctx, step, sl)
 	}
 

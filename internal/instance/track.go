@@ -377,6 +377,15 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 	// host with a synthetic completion when the scope drains. Recognized by
 	// the container capability, keeping the runtime model-agnostic.
 	if _, ok := node.(scopeHost); ok {
+		// A looped Standard-Loop composite drives its own iteration off the loop
+		// (the decorator, SRD-054 §2.12): it must NOT park for loop-driven control
+		// — run() reaches it and executeStep routes it to runCompositeLoop. Every
+		// other composite (plain Sub-Process, Multi-Instance) still parks for the
+		// loop-driven scope re-entry.
+		if standardLoopOf(node) != nil {
+			return nil
+		}
+
 		return t.parkScopeHost(node, atConstruction)
 	}
 

@@ -183,6 +183,12 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 			// Serviced on the loop goroutine so the output binding and the resume
 			// stay single-writer, mirroring jobReq (SRD-050 FR-7).
 			ls.handleCallCompletion(req)
+
+		case req := <-inst.scopeReq:
+			// A looped composite's off-loop iteration decorator asking to open the
+			// child scope for a pass; serviced on the loop goroutine so OpenScope /
+			// seed / arm stay single-writer, mirroring taskReq (SRD-054 FR-8a).
+			ls.handleScopeRequest(ctx, req)
 		}
 	}
 

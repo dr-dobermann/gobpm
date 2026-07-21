@@ -157,27 +157,27 @@ SRD** — the decorator rework is runtime-only.
   type scopeRequest struct {
       host  *track
       node  flow.Node
-      n     int                // the pass ordinal — bound as loopCounter on open
       reply chan scopeReply
   }
   type scopeReply struct {
-      scopePath scope.DataPath // opened child path
       err       error
+      scopePath scope.DataPath // opened child path
   }
   ```
   A single request shape (open) is all Standard Loop needs — the scope close stays
-  on the drain path (§4.3), and there is no separate counter-bind roundtrip: the
-  loop binds `loopCounter = n` when it opens the scope (§4.6). No request-kind enum
-  is needed yet; the sequential/parallel-MI slices add kinds as they need them.
+  on the drain path (§4.3), and there is no counter-bind roundtrip: the decorator
+  binds `loopCounter` itself off the loop (§4.6). No request-kind enum is needed
+  yet; the sequential/parallel-MI slices add kinds as they need them.
   `(*track).runCompositeLoop(ctx, step, sl) ([]*flow.SequenceFlow, error)` — the
-  off-loop await-each driver (FR-8): the decorator tracks the pass in its own local
-  `pass` counter (no `host.loopCounter` mutation); for each pass, pre-test if
-  `testBefore` (reuse `evalLoopCond` + `loopMaximum`), `requestScope{n: pass}`
-  (**one** roundtrip — the loop opens the scope and binds `loopCounter = pass`),
-  then `awaitScopeDrained` (park on `evtCh` for `scopeDone`), then post-test; on
-  exit return the composite's outgoing flows once. `requestScope` clones
-  `taskRoundtrip` (send on `inst.scopeReq`, block on the cap-1 reply, select on
-  `ctx`/`loopDone`).
+  off-loop await-each driver (FR-8): for each pass it sets `t.loopCounter = pass`
+  and `bindLoopCounterAt(t.scopePath, pass)` (off the loop, like the leaf), pre-
+  tests if `testBefore` (reuse `evalLoopCond`), `requestScope{}` (**one**
+  open-roundtrip), `awaitScopeDrained` (park on `evtCh` for `scopeDone`), then the
+  `loopMaximum` cap; on exit it calls `executeNode` once so the composite selects
+  its single outgoing flow (`SubProcess.Exec` → `selectOutgoing`). `requestScope`
+  clones `taskRoundtrip` (send on `inst.scopeReq`, block on the cap-1 reply, select
+  on `ctx`/`loopDone`); `awaitScopeDrained` mirrors `run()`'s `evtCh` park (honors
+  `ctx`/channel-close for interrupt/terminate).
 
 - **`instance.go` — the request channel.** `scopeReq chan scopeRequest` added
   beside `taskReq`/`jobReq`/`callReq` and initialized in the constructor.
@@ -185,22 +185,31 @@ SRD** — the decorator rework is runtime-only.
 - **`loop.go` — the loop-side handler.** A `case req := <-inst.scopeReq:` arm in
   the loop `select`, dispatching to `handleScopeRequest` (loop goroutine), which
   `OpenScope`s the child, records the `scopeEntry`, marks the host `waiting`,
-  **binds `loopCounter = req.n` at the host scope** (readable after the child
-  closes, §4.6), `seedScope`s the inner tracks, `armScopeHandlers`, and replies
-  with the opened path. This is the exact single-writer shape of
-  `handleTaskRequest`.
+  `seedScope`s the inner tracks, `armScopeHandlers`, and replies with the opened
+  path — the exact single-writer shape of `handleTaskRequest`. (The counter is
+  already bound by the decorator, §4.6.)
 
-- **`scope_runtime.go` — the seam removals.** The looped-composite branches driven
-  from the loop are removed: the `firstOpen` short-circuit in `onScopeOpen` and the
-  `afterDrain`/reopen branch in `resumeScopeHost` (which always falls through to
-  `dispatchToParked(scopeDone)` now). `completeScope` still closes the drained scope
-  (the close stays here, FR-8a). A **plain** (non-looped) composite Sub-Process
-  keeps the current `evScopeOpen`→`onScopeOpen`→`resumeScopeHost` path unchanged.
+- **`track.go` — the interception (checkNodeType).** A `scopeHost` node that also
+  carries `standardLoopOf(node) != nil` **does not park** (`return nil`) — it
+  drives itself via `runCompositeLoop`. Every other composite (plain, Multi-
+  Instance) still `parkScopeHost`s for the loop-driven scope. Leaf loops and
+  non-composites are untouched.
 
-- **`std_loop.go` — relocate, don't duplicate.** The Standard-Loop continuation
+- **`std_loop.go` — the executeStep route.** `executeStep` routes a
+  `standardLoopOf(node) != nil` node that is a `scopeHost` to `runCompositeLoop`
+  and a leaf to `runStandardLoop` (unchanged). The Standard-Loop continuation
   logic (`evalLoopCond`, `loopMaximum`, `testBefore`) is reused by
-  `runCompositeLoop`; the loop-side `standardLoopIterator.firstOpen`/`afterDrain`
-  callbacks are removed. **Leaf `runStandardLoop` is untouched.**
+  `runCompositeLoop`. **Leaf `runStandardLoop` is untouched.**
+
+- **`scope_runtime.go` — the drain delivers to the decorator.** `resumeScopeHost`
+  gains a top guard: for a `standardLoopOf(entry.node) != nil` composite it just
+  `dispatchToParked(scopeDone)` (no `afterDrain` — the decorator drives re-entry),
+  before the Multi-Instance `compositeIterator`/`afterDrain` seam. `completeScope`
+  still closes the drained scope (FR-8a). The old-seam removal (the `onScopeOpen`
+  `firstOpen` short-circuit, the `standardLoopIterator` callbacks — now dead for a
+  Standard-Loop composite) is **M2** (kept live here only for sequential MI until
+  it re-lands). A **plain** (non-looped) composite keeps the current
+  `evScopeOpen`→`onScopeOpen`→`resumeScopeHost` path unchanged.
 
 ## §4 Analysis
 
@@ -265,10 +274,16 @@ on the decorator.
 `loopCounter` must be bound at the **host** scope, not (only) the child: a
 post-tested loop evaluates `loopCondition` *after* the pass's child scope has
 drained and closed, so a counter bound only in the child would be gone by the test.
-The loop binds `loopCounter = req.n` at the host scope as part of `reqOpenScope`
-(§3.2) — the enclosing scope the child's inner tracks resolve by walk-up during the
-pass, and which survives the child close for the decorator's continuation test.
-This matches where the prior landing bound it; only the driver moves off the loop.
+The **decorator binds it itself, off the loop** — `runCompositeLoop` calls
+`bindLoopCounterAt(host.scopePath, pass)` at the top of each pass, exactly as the
+leaf `runStandardLoop` does. This is a data-plane write (mutex-protected), not a
+scope-lifecycle mutation, so it is safe off the loop; and it *must* be off the loop
+because the continuation test reads `loopCounter` **before** the scope-open request
+(the bind→test→open order, matching `runStandardLoop`). Only the scope-lifecycle
+operations (open / seed / arm) go through the `reqOpenScope` roundtrip; the counter
+bind does not. This is where the design refined during implementation from "the
+loop binds on open" to "the decorator binds off-loop," keeping the leaf and
+composite loops symmetric.
 
 ### §4.7 Scope guard — Standard-Loop composite only
 
@@ -303,9 +318,14 @@ The leaf-path unit tests (`TestStandardLoopRunsWhileConditionHolds`, …) must b
 
 | # | Scope | Files |
 |---|---|---|
-| **M1** | The request/response scope protocol: `scopeReq` channel, `scopeRequest`/`scopeReply` types, the `scopeReq` `select` arm + `handleScopeRequest` (loop goroutine), unit-tested in isolation like `handleTaskRequest`. No behavior change yet (nothing calls it). | `scope_decorator.go` (new), `instance.go`, `loop.go` |
-| **M2** | `runCompositeLoop` + `requestScope`/`awaitScopeDrained`; wire the `executeStep` interception gated on a looped composite Standard Loop; reuse `evalLoopCond`/`loopMaximum`. The existing composite-loop tests + e2e go green on the decorator. | `scope_decorator.go`, `track.go`, `std_loop.go` |
-| **M3** | Remove the loop-side composite-loop seam (`onScopeOpen` `firstOpen` short-circuit, `resumeScopeHost` `afterDrain`/reopen branch, `standardLoopIterator` callbacks); confirm the whole suite + `examples/standard-loop` green; CHANGELOG note; update ADR-025 cross-refs / conformance tracker. | `scope_runtime.go`, `std_loop.go`, `composite_iter.go`, docs |
+| **M1** | The **protocol + the decorator runner, together** (folded — the protocol has no production caller until the runner, so landing it alone leaves the loop-side `scopeReq` arm uncoverable): the `scopeReq` channel, `scopeRequest`/`scopeReply` types, the `scopeReq` `select` arm + `handleScopeRequest` (loop goroutine); **plus** `runCompositeLoop` + `requestScope`/`awaitScopeDrained` on `track`, wiring the interception gated on a looped composite Standard Loop (reusing `evalLoopCond`/`loopMaximum`). The existing composite-loop tests + e2e go green on the decorator end-to-end, which exercises the whole protocol. | `scope_decorator.go` (new), `instance.go`, `loop.go`, `track.go`, `std_loop.go` |
+| **M2** | Remove the loop-side composite-loop seam (`onScopeOpen` `firstOpen` short-circuit, `resumeScopeHost` `afterDrain`/reopen branch, `standardLoopIterator` callbacks); confirm the whole suite + `examples/standard-loop` green; CHANGELOG note; update ADR-025 cross-refs / conformance tracker. | `scope_runtime.go`, `std_loop.go`, `composite_iter.go`, docs |
+
+> **Milestone fold note:** the original M1 (protocol only) / M2 (runner) split was
+> merged because the protocol plumbing has no production caller until the runner,
+> so an M1-only landing leaves the loop-side `scopeReq` arm at 0% coverage. Landing
+> them together lets the existing `TestLoopedSubProcess*` suite exercise the whole
+> protocol end-to-end. The old-seam removal (now M2) stays separate.
 
 ## §8 Cross-doc
 
