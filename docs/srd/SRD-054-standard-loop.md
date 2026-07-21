@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-07-21 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-025 v.2](../design/ADR-025-activity-iteration-loop-and-multi-instance.md) §2.2–§2.3 (the Standard Loop slice), §2.12 (composite iteration as an off-loop decorator); epic #88 |
@@ -351,16 +351,39 @@ The leaf-path unit tests (`TestStandardLoopRunsWhileConditionHolds`, …) must b
 
 ## §10 Implementation summary
 
-> ⚠️ TODO: fill AFTER landing — stage commits + empirical findings vs this draft.
-
 ### §10.1 Stages by commit (branch `feat/loop-mi-decorator-engine`)
 
 | Stage | Commit | Scope | Tests |
 |---|---|---|---|
+| M1+M2 (folded) | `13d4de4` | the scope protocol (`scopeReq` channel, `scopeRoundtrip`, `handleScopeRequest`) + the runner (`runCompositeLoop`, `awaitScopeDrained`); `checkNodeType` carve-out (a looped SL composite no longer parks); `executeStep` route; `resumeScopeHost` decorator-bypass | `TestLoopedSubProcess*` (integration), `scope_decorator_test.go` (roundtrip 4 paths / handler / runner-err / await-cancel), thresher `TestStandardLoopSubProcessE2E` |
+| M2 (seam removal) | `7d0d804` | remove `standardLoopIterator` + the SL branch of `compositeIteratorOf`; `scopeLoopCounter` recognizes the decorator-driven SL; CHANGELOG | full loop / MI / boundary suites + e2e stay green |
+
+Doc: ADR-025 v.2 `33e7913`, SRD-054 (this doc) `c495579`.
 
 ### §10.2 Empirical findings vs the draft
 
+- **M1/M2 fold.** The draft split M1 (protocol) / M2 (runner); the protocol has
+  **no production caller until the runner**, so an M1-only landing left the
+  `loop.go` `scopeReq` arm at 0 % coverage (measured 80.3 % FAIL). Folded into one
+  milestone; the old M3 (seam removal) became M2.
+- **Off-loop counter bind.** The draft had the loop bind `loopCounter` on
+  `reqOpenScope`; implementation moved it into `runCompositeLoop` (off the loop,
+  like the leaf `runStandardLoop`) because the pre-test eval must read `loopCounter`
+  **before** the open request, and `bindLoopCounterAt` is a plane-mutex-safe data
+  write, not a scope-lifecycle mutation. `scopeRequest.n` was dropped.
+- **`scopeLoopCounter` regression caught in M2.** Removing the SL branch from
+  `compositeIteratorOf` silently dropped `loopCounter` from SL iteration facts
+  (`scopeLoopCounter` gated on `compositeIteratorOf`); `TestLoopedSubProcessEmitsIterationFacts`
+  caught it, fixed to also recognize `standardLoopOf`.
+
 ### §10.3 Backlog
+
+- One defensive line uncovered (`runCompositeLoop`'s `awaitScopeDrained`-error
+  return — the mid-loop interrupt/terminate path); hard to trigger deterministically
+  without a racy interrupt, accepted at 98.4 % diff-coverage (the `awaitScopeDrained`
+  cancel/close branches themselves are covered white-box).
+- Sequential Multi-Instance still rides the `compositeIterator`/`afterDrain` seam;
+  it re-lands on the decorator in the next slice (SRD-055).
 
 ## Open questions
 
