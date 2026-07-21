@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-07-21 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-025 v.2](../design/ADR-025-activity-iteration-loop-and-multi-instance.md) §2.4–§2.7, §2.9 (the Multi-Instance model — the **sequential** slice; §2.8 `behavior` → SRD-056.B), §2.12 (composite iteration as an off-loop decorator); epic #88 |
@@ -293,16 +293,39 @@ output collection, errors) stay identical.
 
 ## §10 Implementation summary
 
-> ⚠️ TODO: fill AFTER landing — stage commits + empirical findings vs this draft.
-
 ### §10.1 Stages by commit (branch `feat/mi-sequential-decorator`)
 
 | Stage | Commit | Scope | Tests |
 |---|---|---|---|
+| doc | `a944451` | SRD-055 rewritten (delete-and-reuse) for the off-loop decorator | — |
+| M1 | `a43c882` | `runMISequential` + `drivesOwnIteration` (`mi.go`); `executeStep` routing (`std_loop.go`); `enterComposite` not-park (`track.go`); relocate `beforeClose` → `captureSequentialOutput`, generalize the `resumeScopeHost` guard + `scopeLoopCounter` (`scope_runtime.go`); `TestRunMISequential{RequestError,BindError,DrainError}` + `miState` doc | 3 new white-box + landed `TestMultiInstance*` + e2e green |
+| M2 | `a63e4f4` | remove the dead seam — `composite_iter.go` (interface + `compositeIteratorOf`), `miIterator.firstOpen`/`afterDrain`, the `onScopeOpen`/`resumeScopeHost` MI branches; `TestCompositeIteratorDispatch` → `TestDrivesOwnIteration` | rewrote 1 dispatch test; `make ci` diff-coverage 97.7% |
 
 ### §10.2 Empirical findings vs the draft
 
+- **The capture stayed exactly where §4.2 predicted.** `captureSequentialOutput`
+  lives loop-side in `completeScope` (before `CloseScope`), symmetric with parallel
+  MI's `captureParallelOutput` — no surprise; the `scopeDone`-on-`evtCh` fence held
+  and `-race` on the assembly e2e is clean.
+- **No fold step was needed (unlike SRD-054).** SRD-054's protocol landed with no
+  caller until its runner arrived; here M1's `runMISequential` **is** the runner, so
+  the routing and the driver landed together — the seam went unreachable at M1 and was
+  deleted at M2, no intermediate dead-caller stage.
+- **The `bindInstance` fail-fast guard is reachable only past the property clone.**
+  A broken input collection seeded as a process **property** is deep-copied by the
+  snapshot→instance clone (its overridden `GetAt` is lost), so the guard never fired
+  from a property fixture. `TestRunMISequentialBindError` injects the broken collection
+  straight into the running scope via `sc.bindValueAt` (the data plane returns data by
+  reference, no clone) to exercise the `col.GetAt(i)`-error path white-box — confirming
+  the guard is a real fail-fast, not unreachable defense.
+
 ### §10.3 Backlog
+
+- **Parallel MI on the decorator (SRD-056.A re-land)** and **`behavior` (SRD-056.B)**
+  are the remaining ADR-025 v.2 §2.12 slices; ADR-025 v.2 flips Accepted when they land.
+- One shadowed `publishOutput`-error return remains uncovered (97.7%, above the 95%
+  gate) — a defensive propagation behind the already-covered `staging == nil` no-op;
+  no white-box hook worth a fixture.
 
 ## Open questions
 
