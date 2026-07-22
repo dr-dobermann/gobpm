@@ -97,6 +97,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (or scoped Terminate) on a parallel Multi-Instance tears down all N instances.
   Behavior events (`ComplexBehaviorDefinition`) follow (SRD-056.B). New
   `examples/multi-instance-parallel/`.
+- **Multi-Instance — `behavior` (SRD-056.B, ADR-025 — #88, completing the MI
+  feature).** A Multi-Instance can throw a **boundary-catchable** event as its
+  instances complete (`WithBehavior`): `All` (default, no throw), `None` (every
+  completion), `One` (the first), or `Complex` (`WithComplexBehavior` — each
+  `NewComplexBehaviorDefinition(condition, ImplicitThrowEvent)` throws when its
+  boolean condition holds; one completion may throw several). The events carry the
+  §2.9 runtime attributes and are caught by a boundary on the Multi-Instance
+  activity — interrupting or **non-interrupting** (a progress notification, e.g.
+  *quorum-reached*). New `events.ImplicitThrowEvent` and
+  `activities.MultiInstanceBehavior` / `ComplexBehaviorDefinition`; new
+  `examples/multi-instance-behavior/`. Only `completionQuantity` remains deferred
+  of the Multi-Instance surface.
 
 ### Changed
 

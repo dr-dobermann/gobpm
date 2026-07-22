@@ -95,6 +95,34 @@ sub, _ := activities.NewSubProcess("orders", activities.WithLoop(mi))
 Like the Standard Loop, a Multi-Instance composite re-opens (sequential) or
 opens (parallel) child scopes, and an Event Sub-Process cannot carry it.
 
+### `behavior` — throwing events as instances complete
+
+A Multi-Instance can throw a **boundary-catchable** event as its instances complete
+(§13.3.7, SRD-056.B), so a model reacts to progress. `WithBehavior` selects the mode:
+
+- **`BehaviorAll`** (the default) — no event is thrown (zero cost).
+- **`BehaviorNone`** (`WithNoneBehaviorEvent(def)`) — throws on **every** completion.
+- **`BehaviorOne`** (`WithOneBehaviorEvent(def)`) — throws once, on the **first**.
+- **`BehaviorComplex`** (`WithComplexBehavior(defs…)`) — each
+  `NewComplexBehaviorDefinition(condition, event)` is evaluated on every completion;
+  each whose boolean `condition` holds throws its `ImplicitThrowEvent` (one
+  completion may throw several).
+
+```go
+quorum, _ := events.NewImplicitThrowEvent("quorum", signalDef)
+cbd, _ := activities.NewComplexBehaviorDefinition(completedAtLeast(2), quorum)
+mi, _ := activities.NewMultiInstance(
+    activities.WithInputCollection("reviewers", "reviewer"),
+    activities.WithBehavior(activities.BehaviorComplex),
+    activities.WithComplexBehavior(cbd))
+```
+
+The events carry the current runtime attributes (§2.9) and are caught by a boundary
+event on the Multi-Instance activity — interrupting (cancels the activity) or
+**non-interrupting** (a progress notification, the activity continues). The throw
+runs on the activity's own off-loop execution, before it completes, so the boundary
+catch is ordered ahead of completion on a still-armed boundary.
+
 ## Examples
 
 - [`examples/standard-loop/`](../../examples/standard-loop/) — a Service Task
@@ -105,3 +133,6 @@ opens (parallel) child scopes, and an Event Sub-Process cannot carry it.
 - [`examples/multi-instance-parallel/`](../../examples/multi-instance-parallel/)
   — a parallel Multi-Instance review panel: reviewers score a proposal
   concurrently, and the scores assemble in reviewer order.
+- [`examples/multi-instance-behavior/`](../../examples/multi-instance-behavior/)
+  — a Complex `behavior` throws a *quorum-reached* signal caught by a
+  non-interrupting boundary as the votes cross the quorum.

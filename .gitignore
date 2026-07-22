@@ -67,4 +67,5 @@ examples/link-events/link-events
 examples/multi-instance-sequential/multi-instance-sequential
 examples/escalation-events/escalation-events
 examples/multi-instance-parallel/multi-instance-parallel
+examples/multi-instance-behavior/multi-instance-behavior
 examples/compensation-events/compensation-events
