@@ -67,6 +67,14 @@ make tag
 tidy-check → lint → build → race tests → **diff-coverage gate** → govulncheck, across
 all modules. Run it before pushing — if it's green, CI is green.
 
+On GitHub the same set is split into two parallel jobs for PR speed: the
+REQUIRED `check` job runs the core gate (`make ci-core` — the non-example
+modules), and the non-blocking `examples` job sweeps the ~35 `examples/*`
+modules (`make ci-examples` — tidy+lint+build; they carry no tests, and the
+core govulncheck already covers their `replace ../..` dependency graph).
+Locally `make ci` still runs BOTH halves — the full gate stays obligatory
+before every push.
+
 The **diff-coverage gate** (`make cover-check`, SRD-002) fails when the lines a change
 adds/modifies are covered below `COVER_MIN` (95% now, rising toward 100). It judges
 only changed lines — reusing the `coverage.txt` `test-all` writes — so the untouched-code

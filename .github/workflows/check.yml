@@ -49,7 +49,9 @@ jobs:
           go install github.com/dr-dobermann/covercheck/cmd/covercheck@v0.2.0
 
       # All subsequent checks call into Makefile targets so that running
-      # `make ci` locally matches what CI runs. This is the project's
+      # `make ci` locally matches what CI runs (this REQUIRED job = the
+      # `ci-core` half; the parallel `examples` job below = the `ci-examples`
+      # half; local `make ci` runs both). This is the project's
       # "no local/CI drift" rule (see Makefile ci umbrella target).
 
       # The mocks are committed (FIX-023); this fails if they drift from the
@@ -57,22 +59,22 @@ jobs:
       - name: Verify committed mocks are current
         run: make mock-check
 
-      - name: Verify all modules tidy
-        run: make tidy-check-all
+      - name: Verify core modules tidy
+        run: make tidy-check-core
 
-      - name: Lint all modules (ADR-003 import-direction rules enforced)
-        run: make lint-all-modules
+      - name: Lint core modules (ADR-003 import-direction rules enforced)
+        run: make lint-core
 
-      - name: Build all modules
-        run: make build-all
+      - name: Build core modules
+        run: make build-core
 
       # Library-consumption guard (FIX-024): an external module must build
       # against gobpm with no test-only (testify) / mock dep leak.
       - name: Consumer-consumption smoke
         run: make consumer-smoke
 
-      - name: Test all modules with race detector
-        run: make test-all
+      - name: Test core modules with race detector
+        run: make test-core
 
       # Diff-coverage gate (SRD-002): reuses the coverage.txt that test-all just
       # wrote (no second test run); same `make cover-check` / COVER_MIN the
@@ -82,10 +84,39 @@ jobs:
           git fetch --no-tags origin master
           make cover-check COVER_BASE=origin/master
 
-      - name: Vulnerability scan (core)
-        run: make vuln
+      # Core modules only: every example consumes the library through
+      # `replace ../..`, so this scan already covers their shared graph —
+      # the per-example rescan added minutes for no new signal.
+      - name: Vulnerability scan
+        run: make vuln-core
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  # The examples sweep (tidy + lint + build over the ~35 examples/* modules) —
+  # split out of the required job because it dominated PR wall time while the
+  # examples carry no tests and share the library's dependency graph. Runs in
+  # PARALLEL on every PR and on master pushes (the post-merge safety net). It
+  # fails honestly (no continue-on-error) so breakage is visible, but it is
+  # NOT in the branch-protection required checks — a red here never blocks a
+  # merge. Locally, `make ci` still runs this via its `ci-examples` half.
+  examples:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.25.12'
+          cache: true
+
+      - name: Install tools
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.11.4/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin" v2.11.4
+
+      - name: Examples sweep (tidy + lint + build)
+        run: make ci-examples

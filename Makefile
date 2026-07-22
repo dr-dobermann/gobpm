@@ -38,6 +38,15 @@ COVER_EXCLUDE ?= \.(logger|Logger\(\))\.(Debug|Info|Warn|Error)\(,func \(.*\) Op
 # Discovered dynamically so adding a new module needs no Makefile edit.
 MODULES := $(shell /usr/bin/find . -name go.mod -not -path './.git/*' -exec dirname {} \;)
 
+# CORE vs EXAMPLES split: the examples/* modules (~35 of ~38) dominate a full
+# multi-module sweep, yet carry no tests and share the library's dependency
+# graph through `replace ../..`. CI runs the core gate as the REQUIRED job and
+# the examples sweep as a parallel, non-blocking job; `make ci` locally still
+# runs BOTH (the full pre-push gate stays obligatory on dev). The loops below
+# iterate $(MODULES), so a sub-make with MODULES="…" scopes any of them.
+CORE_MODULES    := $(filter-out ./examples/%,$(MODULES))
+EXAMPLE_MODULES := $(filter ./examples/%,$(MODULES))
+
 # ---------------------------------------------------------------------------
 # Tooling — versions are the single source of truth, mirrored by the
 # "Install tools" step in .github/workflows/check.yml. `make tools` installs
@@ -237,9 +246,47 @@ cover-check:
 		-profiles coverage.txt
 .PHONY: cover-check
 
-# Umbrella target that runs the full local-equivalent of CI.
+# Core-scoped aliases — the REQUIRED CI job's steps (one target per workflow
+# step, so the per-step log groups and timings survive the split). Each scopes
+# the shared loop to the non-example modules via the MODULES override.
+tidy-check-core:
+	@$(MAKE) tidy-check-all MODULES="$(CORE_MODULES)"
+.PHONY: tidy-check-core
+
+lint-core:
+	@$(MAKE) lint-all-modules MODULES="$(CORE_MODULES)"
+.PHONY: lint-core
+
+build-core:
+	@$(MAKE) build-all MODULES="$(CORE_MODULES)"
+.PHONY: build-core
+
+test-core:
+	@$(MAKE) test-all MODULES="$(CORE_MODULES)"
+.PHONY: test-core
+
+vuln-core:
+	@$(MAKE) vuln MODULES="$(CORE_MODULES)"
+.PHONY: vuln-core
+
+# The examples sweep: tidy + lint + build over every examples/* module. No
+# per-example test loop (the examples carry no tests — `go build` already
+# compiles them) and no per-example govulncheck (each example consumes the
+# library through `replace ../..`, so the core `vuln` scan already covers the
+# shared dependency graph; scanning it 35 more times added minutes of CI for
+# no new signal). Runs as CI's parallel non-blocking job AND inside the local
+# `make ci`.
+ci-examples:
+	@$(MAKE) tidy-check-all lint-all-modules build-all MODULES="$(EXAMPLE_MODULES)"
+.PHONY: ci-examples
+
+# The core gate — everything the REQUIRED CI job runs, in the same order.
+ci-core: mock-check tidy-check-core lint-core build-core consumer-smoke test-core cover-check vuln-core
+.PHONY: ci-core
+
+# Umbrella target that runs the full local-equivalent of CI (BOTH CI jobs).
 # Use this before pushing to catch regressions before GitHub runs them.
-# test-all writes coverage.txt; cover-check consumes it (single test run).
-ci: mock-check tidy-check-all lint-all-modules build-all consumer-smoke test-all cover-check vuln
+# test-core writes coverage.txt; cover-check consumes it (single test run).
+ci: ci-core ci-examples
 .PHONY: ci
 
