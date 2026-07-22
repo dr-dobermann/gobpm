@@ -104,6 +104,12 @@ func (t *track) parallelBarrierStep(
 		return false, err
 	}
 
+	// SRD-056.B: throw the behavior event for this completion (off the loop, before
+	// the activity completes) — the §2.9 counts are already current above.
+	if err := t.throwMIBehavior(ctx, mi, step.node, completed); err != nil {
+		return false, err
+	}
+
 	// completionCondition true → the activity is done now: ask the loop to cancel
 	// the still-open instances, publish, and drop the group (§4.5).
 	if completed < n && mi.CompletionCondition() != nil {

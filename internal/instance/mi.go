@@ -105,35 +105,43 @@ func (ls *loopState) captureSequentialOutput(
 }
 
 // evalCompletion evaluates the boolean completionCondition at the host scope
-// (where the runtime attributes are published), the evalLoopCond-shaped path. A
-// non-boolean result is a modeling error surfaced to the caller.
+// (where the runtime attributes are published). A non-boolean result is a modeling
+// error surfaced to the caller.
 func (it miIterator) evalCompletion(
 	ctx context.Context, host *track, node flow.Node,
 ) (bool, error) {
-	frame, err := host.instance.sc.openFrameAt(
-		"mi-completion", node.ID(), host.scopePath)
+	return host.evalBoolAtHost(
+		ctx, "completionCondition", node.ID(), it.mi.CompletionCondition())
+}
+
+// evalBoolAtHost evaluates a boolean expression against a transient frame at the
+// host scope (where the §2.9 attributes are published) — the shape shared by the
+// completionCondition and a Complex behavior condition (SRD-056.B). `what` names
+// the expression in a non-boolean error; a non-boolean result is a modeling error.
+func (t *track) evalBoolAtHost(
+	ctx context.Context, what, nodeID string, expr data.FormalExpression,
+) (bool, error) {
+	frame, err := t.instance.sc.openFrameAt(what, nodeID, t.scopePath)
 	if err != nil {
 		return false, err
 	}
 	defer frame.Discard()
 
-	res, err := host.instance.ExpressionEngine().Evaluate(
-		ctx, it.mi.CompletionCondition(),
-		newExecEnv(host.instance, frame, nil))
+	res, err := t.instance.ExpressionEngine().Evaluate(
+		ctx, expr, newExecEnv(t.instance, frame, nil))
 	if err != nil {
 		return false, err
 	}
 
-	met, ok := res.Get(ctx).(bool)
+	b, ok := res.Get(ctx).(bool)
 	if !ok {
 		return false, errs.New(
-			errs.M("Multi-Instance completionCondition evaluated to a "+
-				"non-boolean value"),
+			errs.M("Multi-Instance %s evaluated to a non-boolean value", what),
 			errs.C(errorClass, errs.TypeCastingError),
-			errs.D("node_id", node.ID()))
+			errs.D("node_id", nodeID))
 	}
 
-	return met, nil
+	return b, nil
 }
 
 // publishOutput commits the staged output collection at the host scope under the
@@ -317,18 +325,35 @@ func (t *track) runMISequential(
 
 		// advance the completion count, then test the completionCondition against
 		// the attributes bound at THIS pass's start (not rebound) — the exact value
-		// the loop-driven afterDrain exposed (§4.3). completed >= n stops via the
-		// loop's natural exit; a true condition stops early ("stop launching").
+		// SRD-055 exposed. completed >= n stops via the loop's natural exit; a true
+		// condition stops early ("stop launching"). Capture the decision before the
+		// behavior rebind so the condition keeps its pass-start counts.
 		t.miState.completed++
+
+		stop := false
 		if t.miState.completed < n && mi.CompletionCondition() != nil {
 			met, err := it.evalCompletion(ctx, t, step.node)
 			if err != nil {
 				return nil, err
 			}
 
-			if met {
-				break
-			}
+			stop = met
+		}
+
+		// SRD-056.B: the behavior event carries the CURRENT §2.9 counts, so
+		// republish the post-drain counts (sequential binds them at pass start),
+		// then throw before the activity completes (FR-6/FR-7).
+		if err := t.bindMICounters(n, t.miState.completed, 0); err != nil {
+			return nil, err
+		}
+
+		if err := t.throwMIBehavior(
+			ctx, mi, step.node, t.miState.completed); err != nil {
+			return nil, err
+		}
+
+		if stop {
+			break
 		}
 	}
 
