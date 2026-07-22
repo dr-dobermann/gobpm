@@ -8,6 +8,13 @@ start → split ─┬─ fraud-check ──> terminate-end   (kills the instanc
                └─ process-payment ──> payment-done
 ```
 
+```mermaid
+flowchart LR
+    s((start)) --> g{split}
+    g --> f[fraud-check] --> t(("terminate-order (Terminate)"))
+    g --> p[process-payment] --> pd((payment-done))
+```
+
 The fraud check finishes first and reaches a Terminate End Event: the engine
 terminates the whole instance, cancelling the in-flight payment mid-charge. The
 instance settles in `Terminated` (not `Completed`).

@@ -8,6 +8,16 @@ distinct scopes**, completing when the last drains.
 start → panel [Multi-Instance over reviewers, parallel] → end
 ```
 
+```mermaid
+flowchart LR
+    start((start)) --> panel
+    subgraph panel["panel — Sub-Process, parallel Multi-Instance over reviewers"]
+        pStart((p-start)) --> score[score]
+        score --> pEnd((p-end))
+    end
+    panel --> theEnd((end))
+```
+
 `panel` is a Sub-Process marked with a **parallel** Multi-Instance (no
 `WithSequential`). One instance per reviewer runs at the same time; each sees its
 `reviewer` name in its own scope and assembles its `score` — positionally, by

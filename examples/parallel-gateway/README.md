@@ -10,6 +10,14 @@ start ─> split ─┬─> worker-a ─┬─> join ─> end
                 └─> worker-b ─┘
 ```
 
+```mermaid
+flowchart LR
+    s((start)) --> sp{split}
+    sp --> a[worker-a] --> j{join}
+    sp --> b[worker-b] --> j
+    j --> e((end))
+```
+
 Each worker is a `ServiceTask` whose operation prints when it runs, so the
 output shows both branches executing before the join lets a single token reach
 the End.

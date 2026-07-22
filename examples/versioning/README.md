@@ -4,6 +4,17 @@ Demonstrates Camunda-style definition versioning (ADR-019 / SRD-031.A): one
 process **key** carries many **versions**, and each version can be addressed by
 latest, by number, or by the registration handle.
 
+```mermaid
+flowchart LR
+    start((start)) --> greet[greet]
+    greet --> theEnd((end))
+```
+
+The graph itself is trivial — the point is that this same `greeter` process is
+built and registered **twice** under the same key (its process id), producing
+versions `1` and `2` of one definition; only the label the `greet` task prints
+differs between the builds.
+
 ## What it demonstrates
 
 - Registering a process twice under the **same key** (the process id) yields

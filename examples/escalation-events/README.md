@@ -11,6 +11,18 @@ start → [review-order] ──────────────────�
              └─> [notify-manager] ──────────> end-escalated
 ```
 
+```mermaid
+flowchart LR
+    start((start)) --> review
+    subgraph review["review-order — Sub-Process"]
+        subStart((sub-start)) --> raise(("raise-over-budget<br>Escalation End"))
+    end
+    review --> approved((end-approved))
+    review -.- boundary(("over-budget<br>escalation boundary, interrupting"))
+    boundary --> notify[notify-manager]
+    notify --> escalated((end-escalated))
+```
+
 The `review-order` sub-process reaches an **Escalation End Event** that raises
 `OVER_BUDGET`. Unlike an Error End Event, this does **not** fault the instance:
 the escalation climbs the scope chain to the innermost matching catcher. Here an
@@ -26,7 +38,8 @@ silently dropped and never a fault.
 ## Run
 
 ```bash
-go run ./examples/escalation-events/
+cd examples/escalation-events
+go run .
 ```
 
 Expected: the interrupting boundary fires (`Scope Canceled review-order`),
