@@ -2,13 +2,16 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
-| Version | v.2 |
-| Date | 2026-07-16 (v.1 accepted 2026-07-17; v.2 accepted 2026-07-18) |
+| Status | Draft |
+| Version | v.3 |
+| Date | 2026-07-16 (v.1 accepted 2026-07-17; v.2 accepted 2026-07-18; v.3 drafted 2026-07-22) |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md), [ADR-010 v.2 Process Data Model](ADR-010-process-data-model.md) §2.2, [ADR-018 v.1 Boundary Events & Activity Interruption](ADR-018-boundary-events-and-activity-interruption.md) §2.2/§2.6, [ADR-006 v.3 Events & Subscriptions](ADR-006-events-and-subscriptions.md) §2.6/§2.7, [ADR-019 v.1 Definition Versioning](ADR-019-definition-versioning-and-registry.md), [SAD-001 v.1](SAD-001-vision-and-architecture.md) §15.3 |
 
-> **Accepted (v.2)** — extends the accepted v.1 with the **Event Sub-Process**
+> **Draft (v.3)** — a documentation-only bump over the accepted v.2: §2.3 firms
+> the `startQuantity`/`completionQuantity` note into a deliberate non-goal
+> (→ SAD-001 §4 N8); the execution-model conception (§2.1–§2.10) is unchanged.
+> v.2 extended the accepted v.1 with the **Event Sub-Process**
 > decision (§2.10), promoting it from the v.1 "designed-for" seam (§2.8) to a
 > full conception; the interrupting slice has landed (the accompanying SRD). The v.1 keystone stays as accepted: the **embedded
 > Sub-Process** (§2.2–§2.6) as a **nested execution scope inside the same
@@ -154,8 +157,11 @@ start):
 
 The generic activity rules are untouched: multiple incoming flows on the
 composite = the implicit exclusive merge (each arriving token is an
-independent instantiation, §13.3.1); `startQuantity`/`completionQuantity`
-stay in their existing deferral.
+independent instantiation, §13.3.1); `startQuantity`/`completionQuantity` ≠ 1
+are a **deliberate non-goal** (see [SAD-001 v.1](SAD-001-vision-and-architecture.md)
+§4 N8) — implicit token multiplication/join with no diagram notation makes
+behaviour opaque, Camunda does not support them, and an explicit Parallel
+Gateway covers the intent visibly. The runtime honours the default 1.
 
 ### 2.4 Scope lifecycle — open, drain, close
 
@@ -554,3 +560,4 @@ None.
 | v.1 | 2026-07-17 | Ruslan Gabitov | **Accepted** — both slices landed (the embedded Sub-Process and the Call Activity, via the accompanying SRDs); epic #85 closed. Status flip only, no conception change (no version bump). |
 | v.2 | 2026-07-17 | Ruslan Gabitov | **Draft** — adds §2.10 **Event Sub-Process**, promoting the §2.8 seam to a full conception (epic #91): a `triggeredByEvent` handler **armed while its enclosing scope is open** (the boundary-watch pattern lifted from an activity window to a scope window), reusing the per-kind trigger machinery (hub Message/Signal, Timer, the ADR-006 v.3 **conditional start** landing here, the §2.6 Error walk); an **interrupting** start cancels its scope's sibling tracks (§2.5) and runs the handler in the parent's data context (Error→Failing / non-error→Terminating realized by cancellation path + observability, no new token state); the **interrupting budget is one per Event Declaration, shared with boundary events** (§10.5.6), enforced by a per-scope interrupting-arm registry; **absorb vs re-throw** (§10.5.6) gives terminal-vs-decorator control. **Non-interrupting** decided (concurrent handler spawn, unlimited, Error excluded) but implementation sliced second. **Transaction/compensation + the Escalation trigger stay out of scope** — they need #90; §2.8 keeps them as designed-for. §2.8 event-sub bullet updated to point at §2.10; §3 grounding + §4 alternatives + Engine-notes extended. v.1 keystone (§2.1–§2.7) unchanged and stays accepted. Standard-grounded against §13.5.4 / §10.5.2 / §10.5.6 / §10.4.3. Implementation by the accompanying SRD (interrupting first). |
 | v.2 | 2026-07-18 | Ruslan Gabitov | **Accepted** — the interrupting Event Sub-Process landed (the accompanying SRD): the scope-armed handler, the cancel-and-run, the shared interrupting budget with boundary events, the Error scope-chain catch, and absorb. Non-interrupting handlers and Transaction/compensation remain sliced (#90). Status flip only, no conception change (no version bump). |
+| v.3 | 2026-07-22 | Ruslan Gabitov | **Draft** — §2.3 note firmed: `startQuantity`/`completionQuantity` ≠ 1 recharacterized from "existing deferral" to a **deliberate non-goal** (→ SAD-001 v.1 §4 N8) — implicit token multiplication/join with no diagram notation is opaque, Camunda does not support them, and an explicit Parallel Gateway covers the intent visibly; the runtime honours the default 1. Documentation-only; no execution-model change (§2.1–§2.10 unchanged). RU twin syncs at re-Accept. |

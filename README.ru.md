@@ -171,7 +171,11 @@ defer sub.Cancel() // deregister + drain; sub.Dropped() counts any overflow
 ([`examples/multi-instance-sequential/`](examples/multi-instance-sequential/)) или
 **параллельно**, все экземпляры сразу в отдельных областях, с `completionCondition`,
 отменяющим остаток
-([`examples/multi-instance-parallel/`](examples/multi-instance-parallel/)).
+([`examples/multi-instance-parallel/`](examples/multi-instance-parallel/)). Атрибут
+`behavior` у Multi-Instance дополнительно может **бросать событие, перехватываемое на
+границе** активности по мере завершения экземпляров — например, сигнал *quorum-reached*,
+перехватываемый непрерывающей границей
+([`examples/multi-instance-behavior/`](examples/multi-instance-behavior/)).
 
 По условным событиям (**ожидание, управляемое данными** — ветка освобождается закоммиченными данными самого процесса, без опроса) см. [`examples/conditional-events/`](examples/conditional-events/) — промежуточный условный catch паркует ветку, пока коммит соседней задачи не переключит его условие из false в true; условные триггеры также охраняют активности как **граничные события** и участвуют в гонке как **дуги event-based-шлюза**. Руководство — [**docs/guides/conditional-events.md**](docs/guides/conditional-events.md) (EN).
 

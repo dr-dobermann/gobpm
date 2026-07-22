@@ -254,7 +254,10 @@ into an output collection — **sequentially**
 ([`examples/multi-instance-sequential/`](examples/multi-instance-sequential/)) or
 **in parallel**, all instances at once in distinct scopes with a
 `completionCondition` that cancels the remainder
-([`examples/multi-instance-parallel/`](examples/multi-instance-parallel/)).
+([`examples/multi-instance-parallel/`](examples/multi-instance-parallel/)). A
+Multi-Instance `behavior` can additionally throw a **boundary-catchable** event as
+instances complete — e.g. a *quorum-reached* signal caught by a non-interrupting
+boundary ([`examples/multi-instance-behavior/`](examples/multi-instance-behavior/)).
 
 For conditional events (**data-driven waiting** — a wait released by the
 process's own committed data, no polling), see
