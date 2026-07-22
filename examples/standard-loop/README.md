@@ -7,6 +7,12 @@ Demonstrates a BPMN **Standard Loop** (§13.3.6, SRD-054): an activity marked
 start → work [loopCounter < 3] → end
 ```
 
+```mermaid
+flowchart LR
+    start((start)) --> work["work<br>Standard Loop: loopCounter #lt; 3, post-tested"]
+    work --> theEnd((end))
+```
+
 `work` is a Service Task carrying a post-tested (`do…while`) Standard Loop. Each
 pass reads the engine-published 0-based `loopCounter` and prints it; the loop
 stops when `loopCounter < 3` is false, so the body runs three times

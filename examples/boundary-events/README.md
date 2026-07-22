@@ -9,6 +9,15 @@ start → [process-payment] ───────────────> end-p
              └─> [cancel-order] ─────────> end-cancelled
 ```
 
+```mermaid
+flowchart LR
+    start((start)) --> payment[process-payment]
+    payment --> endPaid((end-paid))
+    payment -.- timeout(("payment-timeout<br>timer 2s, interrupting"))
+    timeout --> cancel[cancel-order]
+    cancel --> endCancelled((end-cancelled))
+```
+
 A 2s timer boundary attached to a ~4s payment ServiceTask fires first: the engine
 cancels the payment track, the activity's context-honouring op returns early, its
 result is discarded by the interruption checkpoint, and a token is routed onto the

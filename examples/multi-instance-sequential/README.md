@@ -8,6 +8,16 @@ collection — the instances running one after another.
 start → orders [Multi-Instance over amounts, sequential] → end
 ```
 
+```mermaid
+flowchart LR
+    start((start)) --> orders
+    subgraph orders["orders — Sub-Process, sequential Multi-Instance over amounts"]
+        bStart((b-start)) --> tax[tax]
+        tax --> bEnd((b-end))
+    end
+    orders --> theEnd((end))
+```
+
 `orders` is a Sub-Process marked with a sequential Multi-Instance. Its instance
 count is fixed at activation from the `amounts` collection (`100, 250, 80`); each
 instance sees its element bound as `amount`, applies 20% tax, and its `withTax`

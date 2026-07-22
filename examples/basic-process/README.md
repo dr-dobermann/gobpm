@@ -2,6 +2,11 @@
 
 This example demonstrates the fundamental concepts of creating a simple BPMN process using GoBPM.
 
+```mermaid
+flowchart LR
+    s((start)) --> w["work (greet Go functor)"] --> e((end))
+```
+
 ## What it demonstrates
 
 - Creating a BPM engine (Thresher)
