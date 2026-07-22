@@ -2,6 +2,11 @@
 
 This example shows how to work with timer-based events in BPMN processes using GoBPM.
 
+```mermaid
+flowchart LR
+    t(("timer-start (fires in 5s)")) --> h["handle-timeout (ServiceTask)"] --> e((end))
+```
+
 ## What it demonstrates
 
 - Creating timer expressions with FormalExpression

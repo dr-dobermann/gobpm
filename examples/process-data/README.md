@@ -10,6 +10,17 @@ start ─> split ─┬─> greet-a ─> end-a    (result-a DataObject)
                 └─> greet-b ─> end-b    (result-b DataObject)
 ```
 
+```mermaid
+flowchart LR
+    start((start)) --> split{"split<br>parallel, diverging"}
+    split --> greetA[greet-a]
+    split --> greetB[greet-b]
+    greetA --> endA((end-a))
+    greetB --> endB((end-b))
+    greetA -.-> resultA[/"greet-a-result DataObject"/]
+    greetB -.-> resultB[/"greet-b-result DataObject"/]
+```
+
 The data path per branch: `user_name` property → container scope → the
 frame's container walk → the operation's input message → the Go functor →
 the frame (node-produced put) → the output instance → the output

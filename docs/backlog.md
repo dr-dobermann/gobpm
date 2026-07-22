@@ -26,6 +26,16 @@ the data-layer clone precondition. Governing: **ADR-010**.
 
 ## Planned work / deferred
 
+- **Generated true-BPMN example diagrams (rides ADR-024)** — the example READMEs
+  carry hand-written mermaid *approximations* of BPMN (no event icons, no
+  attached-boundary notation — mermaid has no BPMN diagram type; added
+  2026-07-22). Once the ADR-024 model→BPMN-XML exporter lands, add a make/CI
+  step that runs each example's own process definition through the exporter +
+  `bpmn-to-image` → true-notation SVGs that regenerate from the code and can
+  never drift. Optional interim: a mermaid v11 "BPMN-ish" shape convention
+  (`dbl-circ` ends, `diam` gateways, `subproc` frames + a classDef palette) —
+  pilot one example against GitHub's renderer first.
+
 Genuinely un-homed items — not yet tracked in an ADR/SRD, the roadmap, or the
 audit-backlog. Each graduates out into an ADR/SRD (when designed) or a FIX (when
 implemented), and leaves this list.

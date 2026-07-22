@@ -2,6 +2,11 @@
 
 A minimal example focusing on timer functionality with the simplest possible implementation.
 
+```mermaid
+flowchart LR
+    t(("timer-start (fires in 3s)")) --> e((end))
+```
+
 ## What it demonstrates
 
 - Minimal timer setup with timeDate
