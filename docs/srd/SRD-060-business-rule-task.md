@@ -2,13 +2,13 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-22 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-027 v.1](../design/ADR-027-business-rule-task-and-rule-engine-seam.md) (the whole conception: the `rules.Engine` seam, decision-by-reference, the batteries-included registry, call/complete/commit semantics) |
 | Upstream | [ADR-002 v.2](../design/ADR-002-extension-architecture.md) §4.1/§4.2 (the five-point extension wiring), [ADR-012 v.1](../design/ADR-012-execution-layering.md) (`exec.NodeExecutor`), [SAD-001 v.1](../design/SAD-001-vision-and-architecture.md) N2 |
-| Refines | SRD-004 (the extension-skeleton precedent for adding an engine service), SRD-011 (the in-process operation/read-surface idiom this mirrors) — sideways |
+| Refines | SRD-004 v.1 (the extension-skeleton precedent for adding an engine service), SRD-011 v.1 (the in-process operation/read-surface idiom this mirrors) — sideways |
 
 Lands ADR-027 v.1: the `rules.Engine` extension point with the in-core
 `gorules` decision registry, and the Business Rule Task executing against it.
@@ -231,7 +231,47 @@ Wiring points (FR-3, verified): `options.go:28` (config struct), `:326`
 
 ## §10 Implementation summary
 
-*Filled at landing.*
+Landed on `feat/business-rule-task` in four implementation commits (plus the
+doc commits `5a3a6ff` ADR-027 / `f98ff0d` this SRD / `b86e722` the DMN-minimal
+amendment):
+
+- **M1 `813bbbb` — the seam + the default.** `pkg/rules/rules.go` (the
+  package; reshaped to `Row`/`[]Row`/`Deployer` by the amendment in M2's
+  commit), `pkg/rules/gorules/gorules.go` + tests (T-1). Coverage 100%.
+- **M2 `5ce5bb1` — the task + the five-point wiring.**
+  `pkg/model/flow/activity.go` (the enum), `pkg/renv/engineruntime.go`
+  (`RuleEngine()`), `pkg/thresher/options.go` (field/default/option/
+  accessor), `pkg/thresher/thresher.go` (startup line),
+  `internal/enginert/enginert.go` (the second implementor),
+  `pkg/model/activities/brule_task.go` (the full task: constructor,
+  `DecisionRef`, `Clone`, `Exec` = evaluate → fold commit →
+  `selectOutgoing`, via the error-returning constructors — no `Must*` in
+  library paths), mocks regen; T-2…T-4 incl. the white-box clone-error
+  forge.
+- **M3 `28f6d66` — FR-6 + e2e + example + doc sync.**
+  `pkg/observability` (`KindRules`, `PhaseEvaluated`, the decision attr
+  keys, echo levels with `Failed`@Warn); the task's fact emission;
+  **`internal/instance/execenv.go` `Reporter()` override** — node-emitted
+  facts now route through the instance's single emission point
+  (instance_id stamp + handle-observer fan-out) instead of the raw engine
+  sink; `pkg/thresher/business_rule_task_test.go` (T-5 both lanes, T-6
+  boundary catch, zero-config fail-loud — `Rules` facts asserted in the
+  observer stream); `examples/business-rule-task/` (T-7, smoked exit 0);
+  CHANGELOG / conformance row 6 / examples index / README+ru / roadmap.
+- **`290efb6`** — the in-package white-box test for the `execEnv` Reporter
+  override (its only prior exercise was cross-package).
+
+**Verification:** post-commit `make ci` exit 0; **diff-coverage 98.2% of 221
+changed coverable lines** (min 95; every touched file ≥96.8%, most 100%);
+full `-race` suite green; golangci-lint 0 issues; the example smoked exit 0
+with the decision visibly routing the flow.
+
+**Engine notes recorded en route:** the 1×1 fold commits under the output
+name (so decision-driven conditions read a plain scalar); a multi-row/
+multi-output result commits as `values.Array` of `values.Map` rows under the
+decision reference (the SRD-047 values); `commitResult`'s two uncovered
+branches are defensive constructor guards unreachable with a non-nil item
+and Ready state.
 
 ## Open questions
 
@@ -241,4 +281,5 @@ Wiring points (FR-3, verified): `options.go:28` (config struct), `:326`
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.1 (Accepted) | 2026-07-24 | Ruslan Gabitov | Landed and accepted — §10 filled (milestones `813bbbb`/`5ce5bb1`/`28f6d66` + `290efb6`); SRD-004/SRD-011 refs pinned to v.1; conformance row 6 flipped. |
 | v.1 | 2026-07-22 | Ruslan Gabitov | Initial draft — lands ADR-027 v.1: `pkg/rules` (`Engine` + `DecisionFunc`), the bounded `gorules` registry default (`##GoRules`, fail-loud unknown refs), the five-point thresher/renv wiring (`WithRuleEngine`, `RuleEngine()` accessor, startup printout), and the Business Rule Task rebuilt to the house pattern (enum entry, `NewBusinessRuleTask(name, decisionRef)`, Exec = evaluate → Put → selectOutgoing; the dead exported `Implementation` field removed). Three milestones. **DMN-minimal amendment** (same MR, pre-approval-of-M2): `Evaluate` returns `[]Row` (list of records), the task-side 1×1 scalar fold with row-list commit via the SRD-047 map/array values, the `Deployer` capability declared, `DecisionFunc` row-out; the Rule interface + Decision Table model deferred to the follow-up SRD per ADR-027 §2.4. **FR-6 added** (M3): `KindRules` decision-observability facts (`Evaluated`/`Failed`) emitted by the task, carrying `decision_ref`/`implementation`/`row_count`/`result_variable` — the §4.3 implementation-kind reporting made concrete. |

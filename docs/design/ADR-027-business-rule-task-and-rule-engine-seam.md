@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-22 |
 | Owner | Ruslan Gabitov |
@@ -245,4 +245,5 @@ the other GlobalTask variants.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.1 (Accepted) | 2026-07-24 | Ruslan Gabitov | Accepted with the accompanying SRD's landing: the seam, the gorules default, the task semantics and the DMN-minimal component contract are in the engine; the Decision Table conception (the Rule behavior interface under a data-declared table) remains the named follow-up. |
 | v.1 | 2026-07-22 | Ruslan Gabitov | Draft conception. The Business Rule Task executes the standard's minimal clause (§13.3.3 — call on activation, complete on return) against a **pluggable Business Rule Engine seam** in the ADR-002 shape: a one-method, industry-tight `rules.Engine` interface (evaluate a **decision reference** against the read-only data surface → one structured result item), wired through the five-point extension pattern (config field, default, injection option, runtime accessor, startup printout). **Batteries included**: the in-core default is a bounded Go **decision registry** (named Go decision functions — useful, testable, zero external deps); any DMN/rules service replaces it wholesale behind the same interface (SAD-001 N2 keeps DMN external). Decision addressing by opaque ref and the single-result shape are explicit engine choices (the base metamodel is silent). Result commit rides the ordinary frame path; failures ride the ordinary fault machinery. Script Engine decided pluggable as well (same interface-plus-default shape); its conception deferred to the script/expression workstream, with this seam as the template. **DMN-minimal component contract**: Evaluate returns the decision result rows (a list of records) with the task-side 1×1 scalar fold; deployment is a Deployer capability beside the seam (the task never deploys); a rule is decided to be a behavior interface (match + yield) under a data-declared table, its declaration deferred to the table-engine conception. Standard-grounded against the vendored extract (§13.3.3, §10.2.5 model, the `##`-hint convention). Implementation rides the accompanying SRD. |
