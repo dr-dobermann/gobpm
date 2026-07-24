@@ -141,7 +141,9 @@ func NewBoundaryEvent(
 	}
 
 	if med, ok := def.(*MessageEventDefinition); ok {
-		ce.addMessagePayloadOutput(med)
+		if err := ce.addMessagePayloadOutput(med); err != nil {
+			return nil, err
+		}
 	}
 
 	b := &BoundaryEvent{

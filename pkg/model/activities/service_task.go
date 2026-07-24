@@ -186,10 +186,15 @@ func (st *ServiceTask) Clone() (flow.Node, error) {
 		return nil, err
 	}
 
+	op, err := st.operation.Clone()
+	if err != nil {
+		return nil, err
+	}
+
 	return &ServiceTask{
 		task:            t,
 		implementation:  st.implementation,
-		operation:       st.operation.Clone(),
+		operation:       op,
 		timeout:         st.timeout,
 		workerTopic:     st.workerTopic,
 		errorMapper:     st.errorMapper,
@@ -236,7 +241,10 @@ func (st *ServiceTask) Exec(
 		return st.execWorkerOutcome(ctx, re)
 	}
 
-	op := st.operation.Clone()
+	op, err := st.operation.Clone()
+	if err != nil {
+		return nil, err
+	}
 
 	// The operation is kind-agnostic here: a message operation binds its input
 	// from scope and produces its output message; a Go operation reads through

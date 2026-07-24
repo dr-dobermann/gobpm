@@ -52,8 +52,9 @@ type Operation interface {
 	// Errors returns the error classes the operation may return.
 	Errors() []string
 
-	// Clone returns a per-instance copy of the operation.
-	Clone() Operation
+	// Clone returns a per-instance copy of the operation, or an error when
+	// a carried element cannot be rebuilt (FIX-026 — never panics).
+	Clone() (Operation, error)
 
 	// Execute runs the operation against the per-execution reader r and returns
 	// the item to commit as the activity's output (nil if the operation
@@ -147,28 +148,48 @@ func MustOperation(
 // the implementation, the error-class set, the name and the id — is shared by
 // reference, while the incoming and outgoing messages get fresh per-instance
 // carriers (via Message.Clone) so the exec-time mutation of their item values is
-// not shared across concurrent instances. Cloning a valid Operation cannot
-// produce an invalid one, so the helper does not error (mirroring Message.Clone
-// and data.Value.Clone).
-func (o *messageOperation) Clone() Operation {
-	var inMsg, outMsg *bpmncommon.Message
+// not shared across concurrent instances. It errors instead of panicking when a
+// carrier cannot be rebuilt (FIX-026).
+func (o *messageOperation) Clone() (Operation, error) {
+	var (
+		inMsg, outMsg *bpmncommon.Message
+		err           error
+	)
 
 	if o.inMessage != nil {
-		inMsg = o.inMessage.Clone()
+		if inMsg, err = o.inMessage.Clone(); err != nil {
+			return nil, cloneErr("in", o.name, err)
+		}
 	}
 
 	if o.outMessage != nil {
-		outMsg = o.outMessage.Clone()
+		if outMsg, err = o.outMessage.Clone(); err != nil {
+			return nil, cloneErr("out", o.name, err)
+		}
+	}
+
+	be, err := foundation.NewBaseElement(foundation.WithID(o.ID()))
+	if err != nil {
+		return nil, cloneErr("base", o.name, err)
 	}
 
 	return &messageOperation{
-		BaseElement:    *foundation.MustBaseElement(foundation.WithID(o.ID())),
+		BaseElement:    *be,
 		name:           o.name,
 		inMessage:      inMsg,
 		outMessage:     outMsg,
 		errors:         o.errors,
 		implementation: o.implementation,
-	}
+	}, nil
+}
+
+// cloneErr classifies an operation-clone rebuild failure.
+func cloneErr(part, opName string, err error) error {
+	return errs.New(
+		errs.M("couldn't rebuild cloned operation (%s)", part),
+		errs.C(errorClass, errs.OperationFailed),
+		errs.E(err),
+		errs.D("operation_name", opName))
 }
 
 // Name returns the name of the Operation.

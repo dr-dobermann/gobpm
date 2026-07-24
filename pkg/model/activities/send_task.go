@@ -108,10 +108,15 @@ func (st *SendTask) Clone() (flow.Node, error) {
 		return nil, err
 	}
 
+	msg, err := st.message.Clone()
+	if err != nil {
+		return nil, err
+	}
+
 	return &SendTask{
 		task:           t,
 		implementation: st.implementation,
-		message:        st.message.Clone(),
+		message:        msg,
 		correlationKey: st.correlationKey,
 	}, nil
 }

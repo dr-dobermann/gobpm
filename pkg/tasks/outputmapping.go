@@ -124,7 +124,12 @@ func assembleHead(
 			return nil, false, err
 		}
 
-		return outputDatum(head, v), true, nil
+		d, err := outputDatum(head, v)
+		if err != nil {
+			return nil, false, err
+		}
+
+		return d, true, nil
 	}
 
 	rec := values.MustRecord() // zero fields → never errors
@@ -155,7 +160,12 @@ func assembleHead(
 		return nil, false, nil
 	}
 
-	return outputDatum(head, rec), true, nil
+	d, err := outputDatum(head, rec)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return d, true, nil
 }
 
 // evalRule evaluates one rule's Path over the body source. ok is false when an
@@ -182,9 +192,32 @@ func evalRule(
 	return v, true, nil
 }
 
-// outputDatum wraps an assembled value as a Ready, named output datum.
-func outputDatum(name string, v data.Value) data.Data {
-	return data.MustParameter(name,
-		data.MustItemAwareElement(
-			data.MustItemDefinition(v), data.ReadyDataState))
+// outputDatum wraps an assembled value as a Ready, named output datum. It
+// errors instead of panicking on a bad name (FIX-026 — mapped output names
+// come from worker-supplied policy data).
+func outputDatum(name string, v data.Value) (data.Data, error) {
+	item, err := data.NewItemDefinition(v)
+	if err != nil {
+		return nil, wrapOutputDatum(name, err)
+	}
+
+	iae, err := data.NewItemAwareElement(item, data.ReadyDataState)
+	if err != nil {
+		return nil, wrapOutputDatum(name, err)
+	}
+
+	datum, err := data.NewParameter(name, iae)
+	if err != nil {
+		return nil, wrapOutputDatum(name, err)
+	}
+
+	return datum, nil
+}
+
+// wrapOutputDatum classifies an output-datum build failure.
+func wrapOutputDatum(name string, err error) error {
+	return errs.New(
+		errs.M("couldn't build mapped output datum %q", name),
+		errs.C(errorClass, errs.OperationFailed),
+		errs.E(err))
 }

@@ -131,7 +131,8 @@ func TestNewPathData(t *testing.T) {
 		[]data.Step{{Field: "items"}, {Index: 0}, {Field: "price"}})
 	require.NoError(t, err)
 
-	d := data.NewPathData("order.items[0].price", leaf)
+	d, err := data.NewPathData("order.items[0].price", leaf)
+	require.NoError(t, err)
 	require.Equal(t, "order.items[0].price", d.Name())
 	require.Equal(t, "order.items[0].price", d.ID())
 	require.Equal(t, 50, d.Value().Get(ctx))
@@ -235,7 +236,7 @@ func TestResolvePath(t *testing.T) {
 	o := order(t)
 
 	readyHead := func(string) (data.Data, error) {
-		return data.NewPathData("order", o), nil // Ready by construction
+		return data.NewPathData("order", o) // Ready by construction
 	}
 
 	// plain name → the head unchanged.
@@ -632,4 +633,14 @@ func TestParsePath(t *testing.T) {
 			require.Equal(t, tt.steps, steps)
 		})
 	}
+}
+
+// TestNewPathDataNilValue covers FIX-026 §4.1.6: the public constructor
+// rejects a nil value with an error instead of the pre-fix Must* panic.
+func TestNewPathDataNilValue(t *testing.T) {
+	require.NotPanics(t, func() {
+		_, err := data.NewPathData("order", nil)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "nil Value")
+	})
 }

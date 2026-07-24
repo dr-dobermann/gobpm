@@ -76,10 +76,9 @@ func MustMessage(
 // runtime mutation of the item's value on one instance does not leak into
 // another. A Message with a nil item is cloned as-is (fresh shell, no item).
 //
-// Cloning a valid Message cannot produce an invalid one — item id, kind and the
-// cloned structure all originate from an already-valid item — so the helper uses
-// the Must form, mirroring data.Value.Clone, which likewise does not error.
-func (m *Message) Clone() *Message {
+// It returns an error instead of panicking when the item rebuild fails
+// (FIX-026 — the Must* twins are for tests/fixtures, not library paths).
+func (m *Message) Clone() (*Message, error) {
 	var item *data.ItemDefinition
 
 	if m.item != nil {
@@ -88,10 +87,20 @@ func (m *Message) Clone() *Message {
 			structure = m.item.Structure().Clone()
 		}
 
-		item = data.MustItemDefinition(
+		cloned, err := data.NewItemDefinition(
 			structure,
 			data.WithKind(m.item.Kind()),
 			foundation.WithID(m.item.ID()))
+		if err != nil {
+			return nil, errs.New(
+				errs.M("couldn't rebuild cloned message item"),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err),
+				errs.D("message_name", m.name),
+				errs.D("item_id", m.item.ID()))
+		}
+
+		item = cloned
 	}
 
 	return &Message{
@@ -102,7 +111,7 @@ func (m *Message) Clone() *Message {
 		BaseElement: m.BaseElement,
 		name:        m.name,
 		item:        item,
-	}
+	}, nil
 }
 
 // Name returns Mesaage name.

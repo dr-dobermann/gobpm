@@ -300,10 +300,9 @@ func (ce *catchEvent) ProcessEvent(
 
 // addMessagePayloadOutput registers a data output for med's message item, so a
 // received payload has an output to land in (and flow through associations).
-// Mirrors the message dataOutput a start event gets via WithMessageTrigger. A
-// MessageEventDefinition always carries a message with an item (NewMessage
-// invariant), so the Must* construction can't fail with valid input.
-func (ce *catchEvent) addMessagePayloadOutput(med *MessageEventDefinition) {
+// Mirrors the message dataOutput a start event gets via WithMessageTrigger.
+// It errors instead of panicking when the output cannot be built (FIX-026).
+func (ce *catchEvent) addMessagePayloadOutput(med *MessageEventDefinition) error {
 	item := med.Message().Item()
 
 	ds := data.ReadyDataState
@@ -311,10 +310,31 @@ func (ce *catchEvent) addMessagePayloadOutput(med *MessageEventDefinition) {
 		ds = data.UndefinedSrcState
 	}
 
-	ce.dataOutputs[item.ID()] = data.MustParameter(
+	wrap := func(err error) error {
+		return errs.New(
+			errs.M("couldn't build message payload output"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err),
+			errs.D("message_name", med.Message().Name()),
+			errs.D("item_id", item.ID()))
+	}
+
+	iae, err := data.NewItemAwareElement(item, ds)
+	if err != nil {
+		return wrap(err)
+	}
+
+	output, err := data.NewParameter(
 		fmt.Sprintf("message %q(%s) output",
 			med.Message().Name(), med.Message().ID()),
-		data.MustItemAwareElement(item, ds))
+		iae)
+	if err != nil {
+		return wrap(err)
+	}
+
+	ce.dataOutputs[item.ID()] = output
+
+	return nil
 }
 
 // NewCatchEvent creates a new catchEvent and returns its pointer.

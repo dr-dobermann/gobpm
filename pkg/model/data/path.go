@@ -216,7 +216,7 @@ func ResolvePath(
 		return nil, err
 	}
 
-	return NewPathData(name, leaf), nil
+	return NewPathData(name, leaf)
 }
 
 // ParsePath parses a root-relative structural path into its full step list.
@@ -426,8 +426,26 @@ type pathData struct {
 
 // NewPathData wraps a path-resolution leaf as a read-only Data named by the
 // full path (state Ready), for a Source.Find result over a structural path.
-func NewPathData(path string, v Value) Data {
-	return pathData{path: path, v: v, idef: MustItemDefinition(v)}
+// A nil value is rejected with an error (FIX-026 — public APIs validate,
+// never defer a panic).
+func NewPathData(path string, v Value) (Data, error) {
+	if v == nil {
+		return nil, errs.New(
+			errs.M("NewPathData: a nil Value isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed),
+			errs.D("path", path))
+	}
+
+	idef, err := NewItemDefinition(v)
+	if err != nil {
+		return nil, errs.New(
+			errs.M("NewPathData: couldn't build the leaf item"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err),
+			errs.D("path", path))
+	}
+
+	return pathData{path: path, v: v, idef: idef}, nil
 }
 
 // ID returns the path.

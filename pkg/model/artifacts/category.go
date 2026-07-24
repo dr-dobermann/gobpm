@@ -1,6 +1,7 @@
 package artifacts
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -25,22 +26,61 @@ type Category struct {
 	foundation.BaseElement
 }
 
-// NewCategory creates a new Category and returns its pointer
-func NewCategory(name string, baseOpts ...options.Option) *Category {
+// NewCategory creates a new Category and returns its pointer, or an error on
+// an invalid option (FIX-026 — caller options are validated, never a
+// deferred panic).
+func NewCategory(
+	name string,
+	baseOpts ...options.Option,
+) (*Category, error) {
 	if name == "" {
 		name = unspecifiedCategory
 	}
 
+	be, err := foundation.NewBaseElement(baseOpts...)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Category{
-		BaseElement:    *foundation.MustBaseElement(baseOpts...),
+		BaseElement:    *be,
 		name:           name,
 		categoryValues: map[string]*CategoryValue{},
+	}, nil
+}
+
+// MustCategory is the panic-on-error NewCategory twin for tests and static
+// process construction.
+func MustCategory(name string, baseOpts ...options.Option) *Category {
+	c, err := NewCategory(name, baseOpts...)
+	if err != nil {
+		errs.Panic(err)
+
+		return nil
 	}
+
+	return c
 }
 
 // Name returns the Category name.
 func (c *Category) Name() string {
 	return c.name
+}
+
+// MustCategoryValue is the panic-on-error NewCategoryValue twin for tests
+// and static process construction.
+func MustCategoryValue(
+	value string,
+	baseOpts ...options.Option,
+) *CategoryValue {
+	cv, err := NewCategoryValue(value, baseOpts...)
+	if err != nil {
+		errs.Panic(err)
+
+		return nil
+	}
+
+	return cv
 }
 
 // AddCategoryValues adds CategoryValues from the list into the Category and
@@ -105,16 +145,21 @@ type CategoryValue struct {
 func NewCategoryValue(
 	value string,
 	baseOpts ...options.Option,
-) *CategoryValue {
+) (*CategoryValue, error) {
 	if value == "" {
 		value = undefinedCategoryValue
 	}
 
+	be, err := foundation.NewBaseElement(baseOpts...)
+	if err != nil {
+		return nil, err
+	}
+
 	return &CategoryValue{
-		BaseElement:         *foundation.MustBaseElement(baseOpts...),
+		BaseElement:         *be,
 		Value:               value,
 		categorizedElements: map[string]flow.Element{},
-	}
+	}, nil
 }
 
 // Category returns category the CategoryValue binded to.

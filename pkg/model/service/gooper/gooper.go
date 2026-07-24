@@ -126,26 +126,48 @@ func (g *goOperation) Errors() []string {
 
 // Clone returns a per-instance copy: the functor and error set are shared by
 // reference, the id is preserved, and the messages get fresh carriers so
-// exec-time mutation isn't shared across concurrent instances.
-func (g *goOperation) Clone() service.Operation {
-	var inMsg, outMsg *bpmncommon.Message
+// exec-time mutation isn't shared across concurrent instances. It errors
+// instead of panicking when a carrier cannot be rebuilt (FIX-026).
+func (g *goOperation) Clone() (service.Operation, error) {
+	var (
+		inMsg, outMsg *bpmncommon.Message
+		err           error
+	)
 
 	if g.inMessage != nil {
-		inMsg = g.inMessage.Clone()
+		if inMsg, err = g.inMessage.Clone(); err != nil {
+			return nil, cloneWrap("in", g.name, err)
+		}
 	}
 
 	if g.outMessage != nil {
-		outMsg = g.outMessage.Clone()
+		if outMsg, err = g.outMessage.Clone(); err != nil {
+			return nil, cloneWrap("out", g.name, err)
+		}
+	}
+
+	be, err := foundation.NewBaseElement(foundation.WithID(g.ID()))
+	if err != nil {
+		return nil, cloneWrap("base", g.name, err)
 	}
 
 	return &goOperation{
-		BaseElement: *foundation.MustBaseElement(foundation.WithID(g.ID())),
+		BaseElement: *be,
 		name:        g.name,
 		f:           g.f,
 		inMessage:   inMsg,
 		outMessage:  outMsg,
 		errors:      g.errors,
-	}
+	}, nil
+}
+
+// cloneWrap classifies a Go-operation clone rebuild failure.
+func cloneWrap(part, opName string, err error) error {
+	return errs.New(
+		errs.M("couldn't rebuild cloned Go operation (%s)", part),
+		errs.C(errorClass, errs.OperationFailed),
+		errs.E(err),
+		errs.D("operation_name", opName))
 }
 
 // Execute binds the optional input message from scope, runs the functor with

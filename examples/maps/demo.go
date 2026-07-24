@@ -26,7 +26,7 @@ func mapDemos() error {
 
 	eur, err := data.ResolvePath(ctx, `fx["EUR"]`,
 		func(string) (data.Data, error) {
-			return data.NewPathData("fx", fx), nil
+			return data.NewPathData("fx", fx)
 		})
 	if err != nil {
 		return fmt.Errorf("resolve fx[\"EUR\"]: %w", err)

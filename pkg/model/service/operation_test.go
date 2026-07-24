@@ -240,7 +240,8 @@ func TestOperation(t *testing.T) {
 
 			o := service.MustOperation("clone me", localIn, localOut, &exctr{})
 
-			clone := o.Clone()
+			clone, err := o.Clone()
+			require.NoError(t, err)
 
 			// identity preserved, independent object.
 			require.NotSame(t, o, clone)
@@ -264,7 +265,8 @@ func TestOperation(t *testing.T) {
 		func(t *testing.T) {
 			o := service.MustOperation("empty clone", nil, nil, &exctr{})
 
-			clone := o.Clone()
+			clone, err := o.Clone()
+			require.NoError(t, err)
 			require.Equal(t, o.ID(), clone.ID())
 
 			result, err := clone.Execute(context.Background(), nil)
