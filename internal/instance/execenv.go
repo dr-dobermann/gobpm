@@ -82,6 +82,22 @@ func (e *execEnv) Compensate(activityRef string, wait bool) {
 	})
 }
 
+// Cancel aborts the Transaction Sub-Process enclosing this execution (a Cancel
+// End Event, BPMN §10.7, ADR-028 §2.3): it hands the loop an evTransactionCancel
+// carrying the aborting track, and the loop compensates the Transaction scope,
+// terminates its residual tracks, and exits through the Cancel boundary (SRD-061
+// FR-4/FR-5). Unlike Terminate there is no root check — a Cancel End Event is
+// legal only inside a Transaction (model validation), so it never targets the
+// instance root. A track-less frame has no Transaction to abort, so it is a
+// no-op.
+func (e *execEnv) Cancel() {
+	if e.track == nil {
+		return
+	}
+
+	e.emit(trackEvent{kind: evTransactionCancel, track: e.track})
+}
+
 // GetData resolves name frame-first, then through the container scopes.
 func (e *execEnv) GetData(name string) (data.Data, error) {
 	return e.frame.GetData(name)

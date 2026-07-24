@@ -52,6 +52,7 @@ var trackEventKindNames = [...]string{
 	evScopeHandlerFire: "scopeHandlerFire",
 	evEscalate:         "escalate",
 	evCompensate:       "compensate",
+	evTransactionCancel: "transactionCancel",
 }
 
 // String returns the lower-case event-kind name for logging.
@@ -171,4 +172,10 @@ const (
 	// resolves it directly against the completion ledger — reverse completion
 	// order, sequential handlers; unresolved is logged, never a fault (FR-8).
 	evCompensate
+	// evTransactionCancel: a Cancel End Event was reached inside a Transaction
+	// Sub-Process (ev.track is the aborting track). The loop aborts the enclosing
+	// Transaction scope — compensate completed activities, terminate residuals,
+	// exit via the Cancel boundary (BPMN §10.7, ADR-028 §2.3, SRD-061 FR-5).
+	// Resolved loop-locally, never through the hub; mirrors evScopeTerminate.
+	evTransactionCancel
 )

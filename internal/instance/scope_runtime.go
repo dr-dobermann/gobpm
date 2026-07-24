@@ -39,6 +39,11 @@ type scopeEntry struct {
 	queue   []*track
 	active  int
 	ordinal int
+	// aborting marks a Transaction scope whose Cancel abort is in flight
+	// (SRD-061 FR-5): a residual track draining to zero mid-sweep must NOT
+	// resume the host normally — finalizeTransaction owns the teardown, driven
+	// off the compensation sweep's own completion.
+	aborting bool
 }
 
 // scopeDoneTrigger is the internal trigger of the scope-completion
@@ -270,6 +275,13 @@ func (ls *loopState) decScope(ctx context.Context, t *track) {
 	entry.active--
 
 	if entry.active > 0 {
+		return
+	}
+
+	// a Transaction abort in flight drives its own teardown (finalizeTransaction
+	// off the compensation sweep); a residual draining to zero here must not
+	// resume the host normally (SRD-061 FR-5).
+	if entry.aborting {
 		return
 	}
 

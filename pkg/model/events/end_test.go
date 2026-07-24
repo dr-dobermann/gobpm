@@ -23,9 +23,6 @@ func TestNewEndEvent(t *testing.T) {
 	// create default DataSet
 	require.NoError(t, data.CreateDefaultStates())
 
-	cancEd, err := events.NewCancelEventDefinition()
-	require.NoError(t, err)
-
 	msg := bpmncommon.MustMessage(
 		"message",
 		data.MustItemDefinition(
@@ -98,8 +95,11 @@ func TestNewEndEvent(t *testing.T) {
 
 	t.Run("all triggers end event",
 		func(t *testing.T) {
+			// Cancel and Terminate are excluded: each WINS over co-located
+			// triggers (emit nothing, short-circuit Exec — ADR-028 §2.3,
+			// SRD-030 FR-3), so they are covered by their own *Wins tests, not
+			// this all-emitting kitchen sink.
 			ee, err := events.NewEndEvent("all triggers end_event",
-				events.WithCancelTrigger(cancEd),
 				events.WithCompensationTrigger(compEd),
 				events.WithErrorTrigger(eed),
 				events.WithEscalationTrigger(escEd),
@@ -114,15 +114,14 @@ func TestNewEndEvent(t *testing.T) {
 			triggers := ee.Triggers()
 			t.Log(triggers)
 
-			require.True(t, ee.HasTrigger(flow.TriggerCancel))
 			require.True(t, ee.HasTrigger(flow.TriggerCompensation))
 			require.True(t, ee.HasTrigger(flow.TriggerError))
 			require.True(t, ee.HasTrigger(flow.TriggerEscalation))
 			require.True(t, ee.HasTrigger(flow.TriggerMessage))
 			require.True(t, ee.HasTrigger(flow.TriggerSignal))
 
-			require.Equal(t, 6, len(triggers))
-			require.Equal(t, 6, len(ee.Definitions()))
+			require.Equal(t, 5, len(triggers))
+			require.Equal(t, 5, len(ee.Definitions()))
 
 			mep := mockeventproc.NewMockEventProducer(t)
 			mep.EXPECT().
@@ -207,6 +206,37 @@ func TestEndEventTerminateWins(t *testing.T) {
 
 	mre := mockrenv.NewMockRuntimeEnvironment(t)
 	mre.EXPECT().Terminate().Return()
+
+	flows, err := ee.Exec(context.Background(), mre)
+	require.NoError(t, err)
+	require.Empty(t, flows)
+}
+
+// TestEndEventCancelWins covers the Cancel End Event branch of Exec (ADR-028
+// §2.3, SRD-061 FR-4): a Cancel trigger aborts the enclosing Transaction and
+// performs NO other end-event behavior — it calls renv.Cancel(), emits NOTHING
+// (the strict mock fails on any EventProducer/PropagateEvent call), and returns
+// no flows and no error.
+func TestEndEventCancelWins(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	cancEd, err := events.NewCancelEventDefinition()
+	require.NoError(t, err)
+
+	// a co-located message trigger that must NOT be emitted
+	msg := bpmncommon.MustMessage("m",
+		data.MustItemDefinition(values.NewVariable(1),
+			foundation.WithID("cancel_msg_item")))
+	msgEd, err := events.NewMessageEventDefinition(msg, nil)
+	require.NoError(t, err)
+
+	ee, err := events.NewEndEvent("cancel end_event",
+		events.WithMessageTrigger(msgEd),
+		events.WithCancelTrigger(cancEd))
+	require.NoError(t, err)
+
+	mre := mockrenv.NewMockRuntimeEnvironment(t)
+	mre.EXPECT().Cancel().Return()
 
 	flows, err := ee.Exec(context.Background(), mre)
 	require.NoError(t, err)
