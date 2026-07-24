@@ -167,3 +167,52 @@ the boundary.
 [`examples/call-activity/`](../../examples/call-activity/) — a `checkout`
 process reusing a `tax-calc` child: the input crosses in cloned, the child
 computes, the output crosses back, and the Call facts trace both sides.
+
+# Transaction Sub-Process — atomic abort on Cancel
+
+A **Transaction Sub-Process** is a `SubProcess` marked `WithTransaction()`
+(ADR-028, SRD-061) — the ACID-style all-or-nothing unit (§10.7). It runs like
+any embedded Sub-Process, but reaching a **Cancel End Event** inside it aborts
+the whole scope.
+
+```go
+booking, _ := activities.NewSubProcess("booking", activities.WithTransaction())
+// … Add: start → reserve → charge → cancel-booking (a Cancel End Event),
+//     with a Compensation boundary on reserve and charge …
+
+cancelBnd, _ := events.NewBoundaryEvent("cancel-bnd", booking, cancelDef, true)
+// cancelBnd → notify-customer → …
+```
+
+Reaching the **Cancel End Event** aborts the Transaction in a fixed,
+load-bearing order:
+
+1. **compensate** the completed activities — the scope-wide compensation sweep
+   (see the compensation guide), **reverse completion order**, run to
+   completion as an **ACID-like barrier**;
+2. **terminate** any activities still running;
+3. **leave** through the Transaction's interrupting **Cancel boundary** onto its
+   outgoing flow.
+
+The order is load-bearing: compensation runs **before** the scope teardown,
+because the teardown discards the very completion ledger the sweep consumes.
+
+The rules (all validated at registration):
+
+- A **Cancel End Event** is legal **only** directly inside a Transaction; a
+  **Cancel boundary** is legal **only** on a Transaction, and is always
+  interrupting. A **nested** Transaction is rejected.
+- A Cancel End Event **wins** and emits nothing (like a Terminate End Event).
+- **Cancel is a direct-resolution event** — resolved loop-locally, never through
+  the event bus (the Cancel boundary is a model-declared exit, not a hub
+  waiter). A Transaction with **no** Cancel boundary ends there: the host is
+  torn down and no token continues (unlike a scoped Terminate — the Transaction
+  did not complete). Camunda-aligned.
+
+The abort is observable through the `Scope` `Canceled` fact at teardown and the
+`Compensation` sweep facts.
+
+[`examples/transaction-sub-process/`](../../examples/transaction-sub-process/) —
+a booking Transaction that reserves and charges (both compensable), then a
+Cancel End aborts it: the card is refunded before the seat is released, and
+control leaves via the Cancel boundary to notify the customer.

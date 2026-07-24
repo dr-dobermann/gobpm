@@ -98,9 +98,14 @@ func (ls *loopState) armBoundaries(
 			// boundary is not even a live subscription (ADR-006 §2.3) — it becomes
 			// ELIGIBLE at the activity's completion, recorded into the completion
 			// ledger and resolved at throw time (SRD-059 FR-3).
+			// A Cancel boundary is the same class: Cancel is a direct-resolution
+			// event, not a hub-published trigger — it is a model-declared
+			// Transaction exit the abort routes to via finalizeTransaction /
+			// cancelBoundaryOn (ADR-028 §2.4, SRD-061 FR-6), never a hub waiter.
 			if d.Type() == flow.TriggerError ||
 				d.Type() == flow.TriggerEscalation ||
-				d.Type() == flow.TriggerCompensation {
+				d.Type() == flow.TriggerCompensation ||
+				d.Type() == flow.TriggerCancel {
 				continue
 			}
 

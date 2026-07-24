@@ -26,6 +26,11 @@ type SubProcess struct {
 	// (ADR-023 v.2 §2.10, SRD-052). A plain (embedded) Sub-Process leaves it
 	// false and keeps the §2.3 None-start / flow-less shape.
 	triggered bool
+	// isTransaction marks a Transaction Sub-Process (BPMN §10.7, ADR-028 §2.1):
+	// plain Sub-Process semantics plus the Cancel abort. It only permits Cancel
+	// (End + boundary) and names the scope a cancel aborts; mutually exclusive
+	// with triggered.
+	isTransaction bool
 }
 
 // NewSubProcess creates an empty embedded Sub-Process. Inner elements are
@@ -52,6 +57,14 @@ func NewSubProcess(
 		}
 	}
 
+	if cfg.triggered && cfg.isTransaction {
+		return nil, errs.New(
+			errs.M("NewSubProcess: WithTransaction and WithTriggeredByEvent are "+
+				"mutually exclusive — an Event Sub-Process handler is not a "+
+				"Transaction (ADR-028 §2.6)"),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
 	a, err := newActivity(name, actOpts...)
 	if err != nil {
 		return nil, err
@@ -61,6 +74,7 @@ func NewSubProcess(
 		ElementsContainer: flow.NewElementsContainer(),
 		activity:          *a,
 		triggered:         cfg.triggered,
+		isTransaction:     cfg.isTransaction,
 	}, nil
 }
 
@@ -70,6 +84,13 @@ func NewSubProcess(
 // seeding and arm it instead (SRD-052).
 func (sp *SubProcess) IsEventSubProcess() bool {
 	return sp.triggered
+}
+
+// IsTransaction reports whether this Sub-Process is a Transaction Sub-Process
+// (BPMN §10.7, ADR-028 §2.1). The runtime uses it to resolve a Cancel abort to
+// this scope; the model uses it to gate Cancel End/boundary placement (§2.6).
+func (sp *SubProcess) IsTransaction() bool {
+	return sp.isTransaction
 }
 
 // ActivityType returns the SubProcess activity type.
@@ -136,11 +157,38 @@ func (sp *SubProcess) Validate() error {
 		ee = append(ee, err)
 	}
 
+	// Transaction shape rules (ADR-028 §2.6/§2.8): a Cancel End Event is legal
+	// only directly inside a Transaction (the shared, container-agnostic rule);
+	// a nested Transaction is out of scope.
+	if err := events.ValidateCancelEndPlacement(
+		sp.Nodes(), sp.isTransaction); err != nil {
+		ee = append(ee, err)
+	}
+
+	sp.validateTransactionRules(&ee)
+
 	if len(ee) > 0 {
 		return errors.Join(ee...)
 	}
 
 	return nil
+}
+
+// validateTransactionRules enforces the no-nested-Transaction rule (ADR-028 §2.8):
+// a Transaction directly inside a Transaction is out of scope. Checked against
+// this container's DIRECT children; a Transaction inside a plain Sub-Process (or
+// at the top level) is legal.
+func (sp *SubProcess) validateTransactionRules(ee *[]error) {
+	if !sp.isTransaction {
+		return
+	}
+
+	for _, n := range sp.Nodes() {
+		if t, ok := n.(interface{ IsTransaction() bool }); ok && t.IsTransaction() {
+			*ee = append(*ee, sp.shapeErr(
+				"a nested Transaction Sub-Process isn't supported (ADR-028 §2.8)"))
+		}
+	}
 }
 
 // validateEmbeddedShape enforces the embedded Sub-Process entry shape (ADR-023
@@ -360,6 +408,7 @@ func (sp *SubProcess) Clone() (flow.Node, error) {
 		ElementsContainer: inner,
 		activity:          a,
 		triggered:         sp.triggered,
+		isTransaction:     sp.isTransaction,
 	}, nil
 }
 

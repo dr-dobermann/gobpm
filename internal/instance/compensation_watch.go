@@ -46,6 +46,10 @@ func (*compensationDone) ID() string { return "gobpm-compensation-done" }
 // fire-and-forget throw), and the scope context handlers spawn in.
 type compSweep struct {
 	thrower *track
+	// txHost tags a Transaction-abort sweep (SRD-061 FR-5): when set, the sweep
+	// drives finalizeTransaction (terminate residuals, exit via the Cancel
+	// boundary) once it drains, instead of resuming a parked compensation thrower.
+	txHost  *track
 	path    scope.DataPath
 	queue   []*ledgerEntry
 	wait    bool
@@ -304,6 +308,18 @@ func (ls *loopState) compensationTrackEnded(
 // stopping instance the resume is dropped — the teardown already closed the
 // parked tracks' channels (the fireScopeHandler stopping discipline).
 func (ls *loopState) finishSweep(ctx context.Context, sweep *compSweep) {
+	// a Transaction-abort sweep: the ACID-like compensation barrier drained, so
+	// finalize the abort — terminate the residual tracks and exit via the Cancel
+	// boundary (SRD-061 FR-5 steps 2–3). Skipped while stopping: a tearing-down
+	// instance abandons the exit.
+	if sweep.txHost != nil {
+		if !ls.stopping {
+			ls.finalizeTransaction(ctx, sweep)
+		}
+
+		return
+	}
+
 	if ls.stopping || !sweep.wait || sweep.thrower == nil {
 		return
 	}
