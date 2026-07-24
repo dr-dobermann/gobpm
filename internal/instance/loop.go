@@ -420,10 +420,11 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		// ledger (SRD-059 FR-5/FR-6); neither tears down the throwing track.
 		ls.applyThrowPropagation(ctx, ev)
 
-	case evScopeTerminate:
-		// a Terminate End Event inside a sub-process — only its enclosing
-		// scope dies; the parent continues (§13.5.6, SRD-049 FR-11).
-		ls.terminateScope(ctx, ev.track.scopePath)
+	case evScopeTerminate, evTransactionCancel:
+		// an end event inside a sub-process resolved loop-locally — sub-dispatched
+		// to keep apply under the complexity limit (the applyThrowPropagation
+		// precedent).
+		ls.applyScopeAbort(ctx, ev)
 
 	case evTerminate:
 		// a Terminate End Event was reached — abnormally terminate the instance (SRD-030
@@ -431,6 +432,22 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		// each track's context to interrupt a running activity. It does NOT touch active:
 		// the terminate track's own evEnded (FIFO-after this event) accounts for it.
 		ls.stopAll()
+	}
+}
+
+// applyScopeAbort dispatches the scope-local end-event resolutions: a scoped
+// Terminate kills only its own scope while the parent continues (§13.5.6,
+// SRD-049 FR-11); a Transaction Cancel aborts its enclosing Transaction —
+// compensate the completed activities, terminate the residuals, exit via the
+// Cancel boundary (ADR-028 §2.3, SRD-061 FR-5). Called only by apply, on the
+// loop goroutine.
+func (ls *loopState) applyScopeAbort(ctx context.Context, ev trackEvent) {
+	switch ev.kind {
+	case evScopeTerminate:
+		ls.terminateScope(ctx, ev.track.scopePath)
+
+	case evTransactionCancel:
+		ls.cancelTransaction(ctx, ev.track)
 	}
 }
 

@@ -62,4 +62,12 @@ type RuntimeEnvironment interface {
 	// is fire-and-forget. Unresolved compensation is logged, never a fault
 	// (SRD-059 FR-5/FR-8).
 	Compensate(activityRef string, wait bool)
+
+	// Cancel aborts the enclosing Transaction Sub-Process (a Cancel End Event,
+	// BPMN §10.7, ADR-028 §2.3): the engine compensates the Transaction scope's
+	// completed activities in reverse completion order, terminates the ones still
+	// running, and hands control out through the Transaction's Cancel boundary.
+	// A Cancel End Event is legal only directly inside a Transaction (enforced at
+	// model validation), so there is always exactly one Transaction to abort.
+	Cancel()
 }

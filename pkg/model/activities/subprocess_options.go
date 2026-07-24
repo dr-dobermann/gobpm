@@ -2,7 +2,8 @@ package activities
 
 // subProcessConfig collects the SubProcess-specific construction options.
 type subProcessConfig struct {
-	triggered bool
+	triggered     bool
+	isTransaction bool
 }
 
 // SubProcessOption is a SubProcess-specific construction option. NewSubProcess
@@ -23,6 +24,21 @@ func (SubProcessOption) Option() {}
 func WithTriggeredByEvent() SubProcessOption {
 	return SubProcessOption(func(cfg *subProcessConfig) error {
 		cfg.triggered = true
+
+		return nil
+	})
+}
+
+// WithTransaction marks the SubProcess as a Transaction Sub-Process (BPMN §10.7,
+// ADR-028 §2.1): a plain embedded Sub-Process in every respect except that
+// reaching a Cancel End Event inside it triggers an ACID-like abort — compensate
+// its completed inner activities, terminate the running ones, and leave through
+// its Cancel boundary. The marker only permits Cancel (End + boundary) and names
+// the scope a cancel aborts; it is mutually exclusive with WithTriggeredByEvent
+// (a handler is not a transaction).
+func WithTransaction() SubProcessOption {
+	return SubProcessOption(func(cfg *subProcessConfig) error {
+		cfg.isTransaction = true
 
 		return nil
 	})

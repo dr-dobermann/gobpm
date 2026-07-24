@@ -154,6 +154,19 @@ func (ee *EndEvent) Exec(
 		}
 	}
 
+	// A Cancel End Event aborts the enclosing Transaction Sub-Process and performs
+	// NO other end-event behavior (BPMN §10.7, ADR-028 §2.3): like Terminate it is
+	// checked before the emit loop and emits no definition. Model validation
+	// guarantees a Cancel End Event lies only inside a Transaction, so re.Cancel
+	// always resolves to a Transaction to abort.
+	for _, ed := range ee.definitions {
+		if _, ok := ed.(*CancelEventDefinition); ok {
+			re.Cancel()
+
+			return []*flow.SequenceFlow{}, nil
+		}
+	}
+
 	// An Error End Event ends the process in error (BPMN §10.5.6). In 0.1.0's single
 	// scope there is no enclosing Sub-Process to catch the thrown error, so it
 	// resolves to an instance fault carrying the errorCode (SRD-029 FR-10, ADR-006

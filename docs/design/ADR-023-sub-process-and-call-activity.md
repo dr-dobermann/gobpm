@@ -293,9 +293,9 @@ Decided here as **seams**, implemented by their own workstreams:
   container armed while its enclosing scope is open, promoted from this seam
   to a full conception. The seam was correct; §2.10 fixes the budget,
   precedence, and lifecycle it deferred.
-- **Transaction** (#91): a sub-process variant whose Cancel End / Cancel
-  boundary ride scope-cancel plus compensation — nothing in this model
-  precludes it.
+- **Transaction** (#91) — **landed** ([ADR-028](ADR-028-transaction-sub-process.md)):
+  a sub-process variant whose Cancel End / Cancel boundary ride scope-cancel plus
+  compensation — nothing in this model precluded it.
 - **Ad-Hoc** (#92): a container whose inner enablement is selection-driven
   rather than flow-driven — it reuses the scope (data/lifecycle/cancel) and
   replaces only the token-seeding rule.

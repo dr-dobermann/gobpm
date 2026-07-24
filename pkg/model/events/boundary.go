@@ -14,8 +14,9 @@ import (
 // non-interrupting-capable per ADR-018 v.1, landed in SRD-058); Error is
 // always interrupting (BPMN §10.5.6). Compensation (ADR-026, SRD-059) is
 // built ONLY through NewCompensationBoundaryEvent — it needs its handler link,
-// and cancelActivity does not apply to it. Cancel/Multiple stay deferred
-// (ADR-018 v.1 §2.7).
+// and cancelActivity does not apply to it. Cancel is allowed ONLY on a
+// Transaction Sub-Process and always interrupting (ADR-028 §2.4, un-defers
+// ADR-018 v.1 §2.7 narrowly). Multiple stays deferred.
 var boundaryTriggers = set.New[flow.EventTrigger](
 	flow.TriggerTimer,
 	flow.TriggerMessage,
@@ -24,6 +25,7 @@ var boundaryTriggers = set.New[flow.EventTrigger](
 	flow.TriggerConditional,
 	flow.TriggerEscalation,
 	flow.TriggerCompensation,
+	flow.TriggerCancel,
 )
 
 // boundaryHost is the activity-side capability BoundTo needs: it both lists the
@@ -97,6 +99,28 @@ func NewBoundaryEvent(
 				errs.M("NewBoundaryEvent: an Error boundary is always "+
 					"interrupting; cancelActivity=false isn't allowed"),
 				errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	// A Cancel boundary is legal ONLY on a Transaction Sub-Process and is always
+	// interrupting (ADR-028 §2.4, BPMN §10.7 / event-handling: Cancel "only on
+	// Transaction Sub-Process", cancelActivity "always true").
+	if def.Type() == flow.TriggerCancel {
+		if !cancelActivity {
+			return nil,
+				errs.New(
+					errs.M("NewBoundaryEvent: a Cancel boundary is always "+
+						"interrupting; cancelActivity=false isn't allowed"),
+					errs.C(errorClass, errs.InvalidParameter))
+		}
+
+		if t, ok := host.(interface{ IsTransaction() bool }); !ok ||
+			!t.IsTransaction() {
+			return nil,
+				errs.New(
+					errs.M("NewBoundaryEvent: a Cancel boundary attaches only to "+
+						"a Transaction Sub-Process (ADR-028 §2.4)"),
+					errs.C(errorClass, errs.InvalidParameter))
+		}
 	}
 
 	// A Compensation boundary needs its handler link and takes no

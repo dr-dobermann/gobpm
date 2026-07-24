@@ -92,6 +92,39 @@ func (_c *MockRuntimeEnvironment_AuthorizationProvider_Call) RunAndReturn(run fu
 	return _c
 }
 
+// Cancel provides a mock function for the type MockRuntimeEnvironment
+func (_mock *MockRuntimeEnvironment) Cancel() {
+	_mock.Called()
+	return
+}
+
+// MockRuntimeEnvironment_Cancel_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Cancel'
+type MockRuntimeEnvironment_Cancel_Call struct {
+	*mock.Call
+}
+
+// Cancel is a helper method to define mock.On call
+func (_e *MockRuntimeEnvironment_Expecter) Cancel() *MockRuntimeEnvironment_Cancel_Call {
+	return &MockRuntimeEnvironment_Cancel_Call{Call: _e.mock.On("Cancel")}
+}
+
+func (_c *MockRuntimeEnvironment_Cancel_Call) Run(run func()) *MockRuntimeEnvironment_Cancel_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockRuntimeEnvironment_Cancel_Call) Return() *MockRuntimeEnvironment_Cancel_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockRuntimeEnvironment_Cancel_Call) RunAndReturn(run func()) *MockRuntimeEnvironment_Cancel_Call {
+	_c.Run(run)
+	return _c
+}
+
 // Clock provides a mock function for the type MockRuntimeEnvironment
 func (_mock *MockRuntimeEnvironment) Clock() clock.Clock {
 	ret := _mock.Called()

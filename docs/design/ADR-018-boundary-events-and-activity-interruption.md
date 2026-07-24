@@ -172,7 +172,7 @@ cancellation applied to a composite host).
 | **Error** | ✅ | interrupting only (always) |
 | Conditional | ✅ landed later | decided in [ADR-006 v.3 §2.7](ADR-006-events-and-subscriptions.md) — loop-owned commit-diff re-evaluation, interrupting + non-interrupting |
 | Escalation | ✅ landed later | interrupting + non-interrupting — landed via the accompanying SRD under #90, resolved at the throw site by the scope-chain walk (the peer of the Error walk), not a hub-armed boundary |
-| Cancel | ❌ deferred | — (Transaction sub-process only) |
+| Cancel | ✅ landed later | un-deferred by [ADR-028](ADR-028-transaction-sub-process.md) — the Transaction Sub-Process abort (§10.7): always-interrupting, a **model-declared exit** resolved loop-locally at the abort site, not a hub-armed boundary (the peer of the Error/Escalation direct-resolution class) |
 | Compensation | ❌ deferred | — (needs the compensation machinery) |
 | Multiple / Parallel-Multiple | ❌ deferred | — |
 
