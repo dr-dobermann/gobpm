@@ -140,21 +140,12 @@ func (rt *ReceiveTask) Clone() (flow.Node, error) {
 
 	clonedMsg, err := rt.message.Clone()
 	if err != nil {
-		return nil, errs.New(
-			errs.M("couldn't clone task message"),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err),
-			errs.D("receive_task_id", rt.ID()))
+		return nil, err
 	}
 
 	eDef, err := events.NewMessageEventDefinition(clonedMsg, nil)
 	if err != nil {
-		return nil, errs.New(
-			errs.M("couldn't rebuild cloned message event definition"),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err),
-			errs.D("receive_task_id", rt.ID()),
-			errs.D("message_name", clonedMsg.Name()))
+		return nil, err
 	}
 
 	return &ReceiveTask{

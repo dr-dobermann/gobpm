@@ -11,6 +11,17 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
 
+// datumErr classifies a runtime datum build failure at path (FIX-026 —
+// commit paths fail with an error, never panic).
+func datumErr(what, name string, path scope.DataPath, err error) error {
+	return errs.New(
+		errs.M("couldn't build %s datum", what),
+		errs.C(errorClass, errs.OperationFailed),
+		errs.E(err),
+		errs.D("datum_name", name),
+		errs.D("data_path", string(path)))
+}
+
 // instanceScope owns an instance's data-plane wiring: the scope tree rooted at
 // the process scope (plane), the root container data path commits target (root),
 // and the read-only observe reader host observation reads through (reader). It
@@ -121,24 +132,9 @@ func (sc *instanceScope) bindEventPayloadAt(
 	dd := make([]data.Data, 0, len(items))
 
 	for _, item := range items {
-		iae, err := data.NewItemAwareElement(item, data.ReadyDataState)
+		datum, err := data.ReadyParameter(item.ID(), item)
 		if err != nil {
-			return errs.New(
-				errs.M("couldn't wrap event payload item"),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.E(err),
-				errs.D("item_id", item.ID()),
-				errs.D("data_path", string(path)))
-		}
-
-		datum, err := data.NewParameter(item.ID(), iae)
-		if err != nil {
-			return errs.New(
-				errs.M("couldn't build event payload datum"),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.E(err),
-				errs.D("item_id", item.ID()),
-				errs.D("data_path", string(path)))
+			return datumErr("event payload", item.ID(), path, err)
 		}
 
 		dd = append(dd, datum)
@@ -173,34 +169,9 @@ func (sc *instanceScope) bindDataItemAt(
 func (sc *instanceScope) bindValueAt(
 	path scope.DataPath, name string, value data.Value,
 ) error {
-	item, err := data.NewItemDefinition(value)
+	datum, err := data.ReadyValueParameter(name, value)
 	if err != nil {
-		return errs.New(
-			errs.M("couldn't build datum item"),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err),
-			errs.D("datum_name", name),
-			errs.D("data_path", string(path)))
-	}
-
-	iae, err := data.NewItemAwareElement(item, data.ReadyDataState)
-	if err != nil {
-		return errs.New(
-			errs.M("couldn't wrap datum value"),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err),
-			errs.D("datum_name", name),
-			errs.D("data_path", string(path)))
-	}
-
-	datum, err := data.NewParameter(name, iae)
-	if err != nil {
-		return errs.New(
-			errs.M("couldn't build datum"),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err),
-			errs.D("datum_name", name),
-			errs.D("data_path", string(path)))
+		return datumErr("value", name, path, err)
 	}
 
 	_, err = sc.plane.Commit(path, datum)

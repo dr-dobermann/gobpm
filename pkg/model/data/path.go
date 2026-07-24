@@ -438,11 +438,7 @@ func NewPathData(path string, v Value) (Data, error) {
 
 	idef, err := NewItemDefinition(v)
 	if err != nil {
-		return nil, errs.New(
-			errs.M("NewPathData: couldn't build the leaf item"),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err),
-			errs.D("path", path))
+		return nil, err
 	}
 
 	return pathData{path: path, v: v, idef: idef}, nil

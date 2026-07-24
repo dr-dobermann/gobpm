@@ -22,6 +22,6 @@ func TestBindValueAtBadName(t *testing.T) {
 		err := inst.sc.bindValueAt(
 			host.scopePath, "", values.NewVariable(1))
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "couldn't build datum")
+		require.Contains(t, err.Error(), "couldn't build value datum")
 	})
 }

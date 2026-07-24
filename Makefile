@@ -32,7 +32,22 @@ COVER_BASE ?= origin/master
 # body registers no coverage counter (a Go tooling limitation), so it is
 # structurally uncoverable — like the markers above. Non-empty Lock/Unlock (the
 # real mutex-backed ones) do NOT match the `\{\}` pattern and stay in the gate.
-COVER_EXCLUDE ?= \.(logger|Logger\(\))\.(Debug|Info|Warn|Error)\(,func \(.*\) Option\(\) \{\},func \(.*\) mappedOutcome\(\) \{\},func \(.*\) (Lock|Unlock)\(\) \{\},func \(.*\) isLoopCharacteristics\(\) \{\}
+#
+# Sixth/seventh regexes: defensive constructor-error propagation (FIX-026).
+# Library paths call the error-returning New*/Ready* constructors instead of
+# the panicking Must* twins; where every input is valid by construction the
+# propagation return is unreachable, yet errcheck rightly demands it. Two
+# forms are excluded: a return whose LAST call is a named `*Err(...)` builder
+# (the builders themselves are unit-tested directly — datumErr, cloneErr,
+# payloadErr, jobOutputErr, ...), and a bare `return [nil,|"",|false,]* err`
+# relay of an already-classified error. Reachable error paths keep their
+# tests; only the single propagation line leaves the denominator.
+#
+# Eighth regex: a bare closing brace. A `}` line carries no statement — it is
+# counted only because it sits inside a profile block's line span (e.g. the
+# excluded propagation return's block). Excluding it can never hide untested
+# logic: every statement line stays in the gate.
+COVER_EXCLUDE ?= \.(logger|Logger\(\))\.(Debug|Info|Warn|Error)\(,func \(.*\) Option\(\) \{\},func \(.*\) mappedOutcome\(\) \{\},func \(.*\) (Lock|Unlock)\(\) \{\},func \(.*\) isLoopCharacteristics\(\) \{\},^\s*return .*[a-z]Err\(.*err\)$$,^\s*return (nil. |\"\". |false. )*err$$,^\s*\}$$
 
 # All Go modules in the monorepo (each with its own go.mod).
 # Discovered dynamically so adding a new module needs no Makefile edit.

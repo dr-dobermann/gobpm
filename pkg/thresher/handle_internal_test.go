@@ -24,4 +24,3 @@ func TestTokenStateMapping(t *testing.T) {
 		require.Equal(t, tc.want, tokenState(tc.in))
 	}
 }
-

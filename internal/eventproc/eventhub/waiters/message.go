@@ -364,35 +364,25 @@ func (mw *messageWaiter) deliver(
 func (mw *messageWaiter) fireDefinition(
 	env messaging.Envelope,
 ) (flow.EventDefinition, error) {
-	datum, err := payloadDatum(mw.eDef.Message().Item().ID(), env.Payload)
+	itemID := mw.eDef.Message().Item().ID()
+
+	datum, err := data.ReadyValueParameter(itemID,
+		values.NewVariable(env.Payload), foundation.WithID(itemID))
 	if err != nil {
-		return nil, errs.New(
-			errs.M("couldn't build payload datum"),
-			errs.C(MessageWaiterError, errs.OperationFailed),
-			errs.E(err),
-			errs.D("message_name", mw.eDef.Message().Name()))
+		return nil, payloadErr(mw.eDef.Message().Name(), err)
 	}
 
 	return mw.eDef.CloneEventDefinition([]data.Data{datum})
 }
 
-// payloadDatum wraps a broker payload as a Ready datum for the message item
-// addressed by itemID, through the error-returning constructors (FIX-026 —
-// a bad id fails the delivery, never panics the hub).
-func payloadDatum(itemID string, payload any) (data.Data, error) {
-	item, err := data.NewItemDefinition(
-		values.NewVariable(payload),
-		foundation.WithID(itemID))
-	if err != nil {
-		return nil, err
-	}
-
-	iae, err := data.NewItemAwareElement(item, data.ReadyDataState)
-	if err != nil {
-		return nil, err
-	}
-
-	return data.NewParameter(itemID, iae)
+// payloadErr classifies a payload datum build failure (FIX-026 — a bad
+// message item fails the delivery, never panics the hub).
+func payloadErr(msgName string, err error) error {
+	return errs.New(
+		errs.M("couldn't build payload datum"),
+		errs.C(MessageWaiterError, errs.OperationFailed),
+		errs.E(err),
+		errs.D("message_name", msgName))
 }
 
 // Stop terminates the delivery goroutine of a running waiter.

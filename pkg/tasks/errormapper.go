@@ -134,23 +134,8 @@ func newFaultSource(f Fault) *faultSource {
 	return &faultSource{code: f.Code, body: f.Body}
 }
 
-// faultDatum wraps item as a Ready datum named name for the fault source.
-func faultDatum(name string, item *data.ItemDefinition) (data.Data, error) {
-	iae, err := data.NewItemAwareElement(item, data.ReadyDataState)
-	if err != nil {
-		return nil, wrapFaultDatum(name, err)
-	}
-
-	datum, err := data.NewParameter(name, iae)
-	if err != nil {
-		return nil, wrapFaultDatum(name, err)
-	}
-
-	return datum, nil
-}
-
-// wrapFaultDatum classifies a fault-source datum build failure.
-func wrapFaultDatum(name string, err error) error {
+// faultDatumErr classifies a fault-source datum build failure.
+func faultDatumErr(name string, err error) error {
 	return errs.New(
 		errs.M("faultSource: couldn't build %q datum", name),
 		errs.C(errorClass, errs.OperationFailed),
@@ -165,12 +150,13 @@ func (s *faultSource) Find(ctx context.Context, name string) (data.Data, error) 
 	return data.ResolvePath(ctx, name, func(head string) (data.Data, error) {
 		switch head {
 		case "code":
-			item, err := data.NewItemDefinition(values.NewVariable(s.code))
+			d, err := data.ReadyValueParameter("code",
+				values.NewVariable(s.code))
 			if err != nil {
-				return nil, wrapFaultDatum("code", err)
+				return nil, faultDatumErr("code", err)
 			}
 
-			return faultDatum("code", item)
+			return d, nil
 
 		case "body":
 			if s.body == nil {
@@ -179,7 +165,12 @@ func (s *faultSource) Find(ctx context.Context, name string) (data.Data, error) 
 					errs.C(errorClass, errs.ObjectNotFound))
 			}
 
-			return faultDatum("body", s.body)
+			d, err := data.ReadyParameter("body", s.body)
+			if err != nil {
+				return nil, faultDatumErr("body", err)
+			}
+
+			return d, nil
 		}
 
 		return nil, errs.New(

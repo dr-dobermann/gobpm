@@ -411,21 +411,19 @@ func mapOutput(
 		return tasks.ApplyOutputMapping(ctx, ee, policy.OutputMapping, output)
 	}
 
-	iae, err := data.NewItemAwareElement(output, data.ReadyDataState)
+	datum, err := data.ReadyParameter(output.ID(), output)
 	if err != nil {
-		return nil, fmt.Errorf(
-			"localdispatcher: couldn't wrap job output %q: %w",
-			output.ID(), err)
-	}
-
-	datum, err := data.NewParameter(output.ID(), iae)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"localdispatcher: couldn't build job output datum %q: %w",
-			output.ID(), err)
+		return nil, jobOutputErr(output.ID(), err)
 	}
 
 	return []data.Data{datum}, nil
+}
+
+// jobOutputErr classifies a job output datum build failure (FIX-026).
+func jobOutputErr(outputID string, err error) error {
+	return fmt.Errorf(
+		"localdispatcher: couldn't build job output datum %q: %w",
+		outputID, err)
 }
 
 // ReportBpmnError reports a worker-declared Business Error and removes the job.

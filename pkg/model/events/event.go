@@ -310,18 +310,9 @@ func (ce *catchEvent) addMessagePayloadOutput(med *MessageEventDefinition) error
 		ds = data.UndefinedSrcState
 	}
 
-	wrap := func(err error) error {
-		return errs.New(
-			errs.M("couldn't build message payload output"),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err),
-			errs.D("message_name", med.Message().Name()),
-			errs.D("item_id", item.ID()))
-	}
-
 	iae, err := data.NewItemAwareElement(item, ds)
 	if err != nil {
-		return wrap(err)
+		return msgOutputErr(med, err)
 	}
 
 	output, err := data.NewParameter(
@@ -329,12 +320,21 @@ func (ce *catchEvent) addMessagePayloadOutput(med *MessageEventDefinition) error
 			med.Message().Name(), med.Message().ID()),
 		iae)
 	if err != nil {
-		return wrap(err)
+		return msgOutputErr(med, err)
 	}
 
 	ce.dataOutputs[item.ID()] = output
 
 	return nil
+}
+
+// msgOutputErr classifies a message payload output build failure (FIX-026).
+func msgOutputErr(med *MessageEventDefinition, err error) error {
+	return errs.New(
+		errs.M("couldn't build message payload output"),
+		errs.C(errorClass, errs.OperationFailed),
+		errs.E(err),
+		errs.D("message_name", med.Message().Name()))
 }
 
 // NewCatchEvent creates a new catchEvent and returns its pointer.

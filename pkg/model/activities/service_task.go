@@ -256,49 +256,28 @@ func (st *ServiceTask) Exec(
 	}
 
 	if out != nil {
-		wrap := func(msg string, err error) error {
-			return errs.New(
-				errs.M(msg),
-				errs.C(errorClass),
-				errs.E(err),
-				errs.D("service_task_name", st.Name()),
-				errs.D("service_task_id", st.ID()),
-				errs.D("operation_id", st.operation.ID()))
-		}
-
-		iae, err := data.NewItemAwareElement(out, data.ReadyDataState)
+		res, err := data.ReadyParameter(out.ID(), out)
 		if err != nil {
-			return nil, wrap("couldn't wrap operation result", err)
-		}
-
-		res, err := data.NewParameter(out.ID(), iae)
-		if err != nil {
-			return nil, wrap("couldn't build operation result parameter", err)
+			return nil, st.commitErr("build operation result", err)
 		}
 
 		if err := re.Put(res); err != nil {
-			return nil, wrap("couldn't commit operation result", err)
+			return nil, st.commitErr("commit operation result", err)
 		}
 	}
 
 	return st.selectOutgoing(ctx, re)
 }
 
-// statusParameter wraps a status value as a Ready parameter named name,
-// through the error-returning constructors (FIX-026 — a bad name/value fails
-// the task, never panics the track).
-func statusParameter(name string, value data.Value) (*data.Parameter, error) {
-	item, err := data.NewItemDefinition(value)
-	if err != nil {
-		return nil, err
-	}
-
-	iae, err := data.NewItemAwareElement(item, data.ReadyDataState)
-	if err != nil {
-		return nil, err
-	}
-
-	return data.NewParameter(name, iae)
+// commitErr classifies a result/status commit failure with the task's
+// identity (FIX-026 — commit paths fail the task, never panic the track).
+func (st *ServiceTask) commitErr(what string, err error) error {
+	return errs.New(
+		errs.M("couldn't %s", what),
+		errs.C(errorClass),
+		errs.E(err),
+		errs.D("service_task_name", st.Name()),
+		errs.D("service_task_id", st.ID()))
 }
 
 // execOperation runs op honoring st.timeout. With no timeout (the default) the
@@ -487,15 +466,9 @@ func (st *ServiceTask) writeStatus(
 		}
 	}
 
-	res, err := statusParameter(st.statusVar, value)
+	res, err := data.ReadyValueParameter(st.statusVar, value)
 	if err != nil {
-		return nil, errs.New(
-			errs.M("couldn't build status parameter"),
-			errs.C(errorClass),
-			errs.E(err),
-			errs.D("service_task_name", st.Name()),
-			errs.D("service_task_id", st.ID()),
-			errs.D("status_var", st.statusVar))
+		return nil, st.commitErr("build status parameter", err)
 	}
 
 	if err := re.Put(res); err != nil {

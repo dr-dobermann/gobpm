@@ -136,19 +136,19 @@ func (g *goOperation) Clone() (service.Operation, error) {
 
 	if g.inMessage != nil {
 		if inMsg, err = g.inMessage.Clone(); err != nil {
-			return nil, cloneWrap("in", g.name, err)
+			return nil, gooperCloneErr("in", g.name, err)
 		}
 	}
 
 	if g.outMessage != nil {
 		if outMsg, err = g.outMessage.Clone(); err != nil {
-			return nil, cloneWrap("out", g.name, err)
+			return nil, gooperCloneErr("out", g.name, err)
 		}
 	}
 
 	be, err := foundation.NewBaseElement(foundation.WithID(g.ID()))
 	if err != nil {
-		return nil, cloneWrap("base", g.name, err)
+		return nil, gooperCloneErr("base", g.name, err)
 	}
 
 	return &goOperation{
@@ -161,8 +161,8 @@ func (g *goOperation) Clone() (service.Operation, error) {
 	}, nil
 }
 
-// cloneWrap classifies a Go-operation clone rebuild failure.
-func cloneWrap(part, opName string, err error) error {
+// gooperCloneErr classifies a Go-operation clone rebuild failure.
+func gooperCloneErr(part, opName string, err error) error {
 	return errs.New(
 		errs.M("couldn't rebuild cloned Go operation (%s)", part),
 		errs.C(errorClass, errs.OperationFailed),

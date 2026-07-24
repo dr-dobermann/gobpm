@@ -66,6 +66,15 @@ func CaptureItem(eDef flow.EventDefinition) *data.ItemDefinition {
 	return nil
 }
 
+// bindDatumErr classifies a Bind payload datum build failure (FIX-026).
+func bindDatumErr(itemID string, err error) error {
+	return errs.New(
+		errs.M("msgflow.Bind: couldn't build payload datum"),
+		errs.C(errorClass, errs.OperationFailed),
+		errs.E(err),
+		errs.D("item_id", itemID))
+}
+
 // Bind binds a captured message payload item into the execution scope as a
 // Ready datum (re.Put); the node's UploadData then pushes it through the output
 // associations. A nil item is a no-op (a payload-less trigger). A message
@@ -85,22 +94,9 @@ func Bind(
 		return nil
 	}
 
-	iae, err := data.NewItemAwareElement(item, data.ReadyDataState)
+	res, err := data.ReadyParameter(item.ID(), item)
 	if err != nil {
-		return errs.New(
-			errs.M("msgflow.Bind: couldn't wrap payload item"),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err),
-			errs.D("item_id", item.ID()))
-	}
-
-	res, err := data.NewParameter(item.ID(), iae)
-	if err != nil {
-		return errs.New(
-			errs.M("msgflow.Bind: couldn't build payload datum"),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err),
-			errs.D("item_id", item.ID()))
+		return bindDatumErr(item.ID(), err)
 	}
 
 	if err := re.Put(res); err != nil {

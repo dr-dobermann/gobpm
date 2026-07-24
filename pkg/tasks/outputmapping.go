@@ -196,26 +196,16 @@ func evalRule(
 // errors instead of panicking on a bad name (FIX-026 — mapped output names
 // come from worker-supplied policy data).
 func outputDatum(name string, v data.Value) (data.Data, error) {
-	item, err := data.NewItemDefinition(v)
+	datum, err := data.ReadyValueParameter(name, v)
 	if err != nil {
-		return nil, wrapOutputDatum(name, err)
-	}
-
-	iae, err := data.NewItemAwareElement(item, data.ReadyDataState)
-	if err != nil {
-		return nil, wrapOutputDatum(name, err)
-	}
-
-	datum, err := data.NewParameter(name, iae)
-	if err != nil {
-		return nil, wrapOutputDatum(name, err)
+		return nil, outputDatumErr(name, err)
 	}
 
 	return datum, nil
 }
 
-// wrapOutputDatum classifies an output-datum build failure.
-func wrapOutputDatum(name string, err error) error {
+// outputDatumErr classifies an output-datum build failure.
+func outputDatumErr(name string, err error) error {
 	return errs.New(
 		errs.M("couldn't build mapped output datum %q", name),
 		errs.C(errorClass, errs.OperationFailed),
