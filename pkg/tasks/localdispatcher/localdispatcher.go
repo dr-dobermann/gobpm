@@ -8,6 +8,7 @@ package localdispatcher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"sync"
@@ -410,8 +411,21 @@ func mapOutput(
 		return tasks.ApplyOutputMapping(ctx, ee, policy.OutputMapping, output)
 	}
 
-	return []data.Data{data.MustParameter(output.ID(),
-		data.MustItemAwareElement(output, data.ReadyDataState))}, nil
+	iae, err := data.NewItemAwareElement(output, data.ReadyDataState)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"localdispatcher: couldn't wrap job output %q: %w",
+			output.ID(), err)
+	}
+
+	datum, err := data.NewParameter(output.ID(), iae)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"localdispatcher: couldn't build job output datum %q: %w",
+			output.ID(), err)
+	}
+
+	return []data.Data{datum}, nil
 }
 
 // ReportBpmnError reports a worker-declared Business Error and removes the job.

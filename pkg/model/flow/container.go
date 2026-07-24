@@ -252,9 +252,16 @@ func WireClonedGraph(
 				errs.C(errorClass, errs.TypeCastingError))
 		}
 
-		// src and trg are cloned graph nodes and f is a valid edge, so the
-		// edge can always be rebuilt; use the panicking form.
-		clonedFlows[id] = MustCloneFlow(f, src, trg)
+		cf, err := CloneFlow(f, src, trg)
+		if err != nil {
+			return nil, errs.New(
+				errs.M("couldn't rebuild cloned flow"),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err),
+				errs.D("flow_id", id))
+		}
+
+		clonedFlows[id] = cf
 	}
 
 	// 2. remap each gateway's default flow onto its cloned edge.
@@ -269,9 +276,14 @@ func WireClonedGraph(
 			continue
 		}
 
-		// the default flow is one of this node's outgoing flows by
-		// construction, so the remap onto its clone cannot fail.
-		dfh.MustUpdateDefaultFlow(clonedFlows[df.ID()])
+		if err := dfh.UpdateDefaultFlow(clonedFlows[df.ID()]); err != nil {
+			return nil, errs.New(
+				errs.M("couldn't remap default flow onto its clone"),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err),
+				errs.D("node_id", n.ID()),
+				errs.D("flow_id", df.ID()))
+		}
 	}
 
 	// 3. rebind each boundary event onto its cloned host activity. The cloned

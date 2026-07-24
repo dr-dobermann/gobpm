@@ -248,25 +248,49 @@ func (st *ServiceTask) Exec(
 	}
 
 	if out != nil {
-		// Must-constructors: out is non-nil (guarded) and its id is
-		// engine-generated and non-empty — a failure here is a programming
-		// error, not an input condition.
-		res := data.MustParameter(out.ID(),
-			data.MustItemAwareElement(out, data.ReadyDataState))
+		wrap := func(msg string, err error) error {
+			return errs.New(
+				errs.M(msg),
+				errs.C(errorClass),
+				errs.E(err),
+				errs.D("service_task_name", st.Name()),
+				errs.D("service_task_id", st.ID()),
+				errs.D("operation_id", st.operation.ID()))
+		}
+
+		iae, err := data.NewItemAwareElement(out, data.ReadyDataState)
+		if err != nil {
+			return nil, wrap("couldn't wrap operation result", err)
+		}
+
+		res, err := data.NewParameter(out.ID(), iae)
+		if err != nil {
+			return nil, wrap("couldn't build operation result parameter", err)
+		}
 
 		if err := re.Put(res); err != nil {
-			return nil,
-				errs.New(
-					errs.M("couldn't commit operation result"),
-					errs.C(errorClass),
-					errs.E(err),
-					errs.D("service_task_name", st.Name()),
-					errs.D("service_task_id", st.ID()),
-					errs.D("operation_id", st.operation.ID()))
+			return nil, wrap("couldn't commit operation result", err)
 		}
 	}
 
 	return st.selectOutgoing(ctx, re)
+}
+
+// statusParameter wraps a status value as a Ready parameter named name,
+// through the error-returning constructors (FIX-026 — a bad name/value fails
+// the task, never panics the track).
+func statusParameter(name string, value data.Value) (*data.Parameter, error) {
+	item, err := data.NewItemDefinition(value)
+	if err != nil {
+		return nil, err
+	}
+
+	iae, err := data.NewItemAwareElement(item, data.ReadyDataState)
+	if err != nil {
+		return nil, err
+	}
+
+	return data.NewParameter(name, iae)
 }
 
 // execOperation runs op honoring st.timeout. With no timeout (the default) the
@@ -455,9 +479,16 @@ func (st *ServiceTask) writeStatus(
 		}
 	}
 
-	res := data.MustParameter(st.statusVar,
-		data.MustItemAwareElement(
-			data.MustItemDefinition(value), data.ReadyDataState))
+	res, err := statusParameter(st.statusVar, value)
+	if err != nil {
+		return nil, errs.New(
+			errs.M("couldn't build status parameter"),
+			errs.C(errorClass),
+			errs.E(err),
+			errs.D("service_task_name", st.Name()),
+			errs.D("service_task_id", st.ID()),
+			errs.D("status_var", st.statusVar))
+	}
 
 	if err := re.Put(res); err != nil {
 		return nil,

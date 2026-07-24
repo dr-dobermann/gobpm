@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -118,9 +119,29 @@ func (sc *instanceScope) bindEventPayloadAt(
 	}
 
 	dd := make([]data.Data, 0, len(items))
+
 	for _, item := range items {
-		dd = append(dd, data.MustParameter(item.ID(),
-			data.MustItemAwareElement(item, data.ReadyDataState)))
+		iae, err := data.NewItemAwareElement(item, data.ReadyDataState)
+		if err != nil {
+			return errs.New(
+				errs.M("couldn't wrap event payload item"),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err),
+				errs.D("item_id", item.ID()),
+				errs.D("data_path", string(path)))
+		}
+
+		datum, err := data.NewParameter(item.ID(), iae)
+		if err != nil {
+			return errs.New(
+				errs.M("couldn't build event payload datum"),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err),
+				errs.D("item_id", item.ID()),
+				errs.D("data_path", string(path)))
+		}
+
+		dd = append(dd, datum)
 	}
 
 	// Commit returns a self-classifying errs error (container/writable/name
@@ -152,12 +173,37 @@ func (sc *instanceScope) bindDataItemAt(
 func (sc *instanceScope) bindValueAt(
 	path scope.DataPath, name string, value data.Value,
 ) error {
-	datum := data.MustParameter(name,
-		data.MustItemAwareElement(
-			data.MustItemDefinition(value),
-			data.ReadyDataState))
+	item, err := data.NewItemDefinition(value)
+	if err != nil {
+		return errs.New(
+			errs.M("couldn't build datum item"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err),
+			errs.D("datum_name", name),
+			errs.D("data_path", string(path)))
+	}
 
-	_, err := sc.plane.Commit(path, datum)
+	iae, err := data.NewItemAwareElement(item, data.ReadyDataState)
+	if err != nil {
+		return errs.New(
+			errs.M("couldn't wrap datum value"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err),
+			errs.D("datum_name", name),
+			errs.D("data_path", string(path)))
+	}
+
+	datum, err := data.NewParameter(name, iae)
+	if err != nil {
+		return errs.New(
+			errs.M("couldn't build datum"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err),
+			errs.D("datum_name", name),
+			errs.D("data_path", string(path)))
+	}
+
+	_, err = sc.plane.Commit(path, datum)
 
 	return err
 }

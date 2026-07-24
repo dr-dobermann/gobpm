@@ -85,8 +85,23 @@ func Bind(
 		return nil
 	}
 
-	res := data.MustParameter(item.ID(),
-		data.MustItemAwareElement(item, data.ReadyDataState))
+	iae, err := data.NewItemAwareElement(item, data.ReadyDataState)
+	if err != nil {
+		return errs.New(
+			errs.M("msgflow.Bind: couldn't wrap payload item"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err),
+			errs.D("item_id", item.ID()))
+	}
+
+	res, err := data.NewParameter(item.ID(), iae)
+	if err != nil {
+		return errs.New(
+			errs.M("msgflow.Bind: couldn't build payload datum"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err),
+			errs.D("item_id", item.ID()))
+	}
 
 	if err := re.Put(res); err != nil {
 		return errs.New(
