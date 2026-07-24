@@ -23,6 +23,8 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 	"github.com/dr-dobermann/gobpm/pkg/repository"
 	"github.com/dr-dobermann/gobpm/pkg/repository/memrepo"
+	"github.com/dr-dobermann/gobpm/pkg/rules"
+	"github.com/dr-dobermann/gobpm/pkg/rules/gorules"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 	"github.com/dr-dobermann/gobpm/pkg/tasks/localdispatcher"
 )
@@ -30,6 +32,7 @@ import (
 // Runtime is a concrete renv.EngineRuntime backed by the bundled defaults.
 type Runtime struct {
 	expr               expression.Engine
+	ruleEng            rules.Engine
 	tracer             observability.Tracer
 	metrics            observability.MetricsRecorder
 	clk                clock.Clock
@@ -40,7 +43,7 @@ type Runtime struct {
 	dispatcher         tasks.WorkerDispatcher
 	workerErrorMapper  tasks.ErrorMapper
 	workerRetryPolicy  tasks.RetryPolicy
-	reporter            observability.Reporter
+	reporter           observability.Reporter
 	workerTrustDefault tasks.TrustMode
 }
 
@@ -56,6 +59,7 @@ func Default() *Runtime {
 		expr:       goexpr.New(),
 		authz:      allowall.New(),
 		dispatcher: localdispatcher.New(nil, 0),
+		ruleEng:    gorules.New(),
 	}
 }
 
@@ -81,6 +85,16 @@ func (r *Runtime) WithClock(c clock.Clock) *Runtime {
 func (r *Runtime) WithExpressionEngine(e expression.Engine) *Runtime {
 	if e != nil {
 		r.expr = e
+	}
+
+	return r
+}
+
+// WithRuleEngine overrides the Business Rule Engine and returns the Runtime. A
+// nil engine is ignored (the bundled default is kept).
+func (r *Runtime) WithRuleEngine(e rules.Engine) *Runtime {
+	if e != nil {
+		r.ruleEng = e
 	}
 
 	return r
@@ -126,6 +140,9 @@ func (r *Runtime) MessageBroker() messaging.MessageBroker { return r.broker }
 
 // ExpressionEngine returns the configured expression engine.
 func (r *Runtime) ExpressionEngine() expression.Engine { return r.expr }
+
+// RuleEngine returns the configured Business Rule Engine.
+func (r *Runtime) RuleEngine() rules.Engine { return r.ruleEng }
 
 // AuthorizationProvider returns the configured authorization provider.
 func (r *Runtime) AuthorizationProvider() auth.AuthorizationProvider { return r.authz }

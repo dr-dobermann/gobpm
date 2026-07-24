@@ -14,6 +14,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/observability/noop"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 	"github.com/dr-dobermann/gobpm/pkg/repository/memrepo"
+	"github.com/dr-dobermann/gobpm/pkg/rules/gorules"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 	"github.com/dr-dobermann/gobpm/pkg/tasks/localdispatcher"
 )
@@ -26,7 +27,7 @@ func TestConfigSatisfiesEngineRuntime(t *testing.T) {
 	if er.Logger() == nil || er.Tracer() == nil || er.MetricsRecorder() == nil ||
 		er.Clock() == nil || er.Repository() == nil || er.MessageBroker() == nil ||
 		er.ExpressionEngine() == nil || er.AuthorizationProvider() == nil ||
-		er.WorkerDispatcher() == nil {
+		er.WorkerDispatcher() == nil || er.RuleEngine() == nil {
 		t.Fatal("thresherConfig does not expose every extension as EngineRuntime")
 	}
 }
@@ -36,7 +37,7 @@ func TestDefaultConfigWiresEveryExtension(t *testing.T) {
 
 	if c.logger == nil || c.tracer == nil || c.metrics == nil || c.clock == nil ||
 		c.repository == nil || c.msgBroker == nil || c.exprEngine == nil ||
-		c.authz == nil || c.dispatcher == nil {
+		c.authz == nil || c.dispatcher == nil || c.ruleEngine == nil {
 		t.Fatalf("defaultConfig left an extension nil: %+v", c)
 	}
 }
@@ -53,6 +54,7 @@ func TestEveryOptionOverridesItsDefault(t *testing.T) {
 	ee := goexpr.New()
 	az := allowall.New()
 	wd := localdispatcher.New(nil, 0)
+	rle := gorules.New()
 
 	wem, werr := tasks.NewRuleMapper(tasks.Rule{Code: "1", Yield: tasks.Technical{}})
 	if werr != nil {
@@ -66,6 +68,7 @@ func TestEveryOptionOverridesItsDefault(t *testing.T) {
 		WithLogger(lg), WithTracer(tr), WithMetricsRecorder(mr), WithClock(ck),
 		WithRepository(rp), WithMessageBroker(mb), WithExpressionEngine(ee),
 		WithAuthorizationProvider(az), WithWorkerDispatcher(wd),
+		WithRuleEngine(rle),
 		WithWorkerErrorMapper(wem), WithWorkerRetryPolicy(wrp),
 		WithWorkerTrustDefault(wtd),
 	} {
@@ -76,7 +79,7 @@ func TestEveryOptionOverridesItsDefault(t *testing.T) {
 
 	if c.logger != lg || c.tracer != tr || c.metrics != mr || c.clock != ck ||
 		c.repository != rp || c.msgBroker != mb || c.exprEngine != ee ||
-		c.authz != az || c.dispatcher != wd ||
+		c.authz != az || c.dispatcher != wd || c.ruleEngine != rle ||
 		c.WorkerErrorMapper() != wem || c.WorkerRetryPolicy() != wrp ||
 		c.WorkerTrustDefault() != wtd {
 		t.Fatal("a WithXxx option did not override its field")
@@ -107,6 +110,14 @@ func TestNilOptionValueRejected(t *testing.T) {
 
 	if c.logger != defaultLogger {
 		t.Fatal("WithLogger(nil) erased the default instead of rejecting")
+	}
+
+	if err := WithRuleEngine(nil)(&c); err == nil {
+		t.Fatal("WithRuleEngine(nil) should return an error")
+	}
+
+	if c.ruleEngine == nil {
+		t.Fatal("WithRuleEngine(nil) erased the default instead of rejecting")
 	}
 
 	// And New surfaces it.
@@ -159,7 +170,7 @@ func TestStartupConfigLog(t *testing.T) {
 		"version:", "last commit:", "thresher id:", "configuration:",
 		"repository:", "logger:", "tracer:", "metricsRecorder:", "clock:",
 		"messageBroker:", "expressionEngine:", "authorizationProvider:",
-		"workerDispatcher:",
+		"workerDispatcher:", "ruleEngine:",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("startup log missing line %q (got %v)", want, msgs)

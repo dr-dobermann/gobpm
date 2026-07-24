@@ -23,6 +23,7 @@ var kindLevel = map[Kind]slog.Level{
 	KindFault:            slog.LevelDebug,
 	KindEscalation:       slog.LevelDebug,
 	KindCompensation:     slog.LevelDebug,
+	KindRules:            slog.LevelDebug,
 }
 
 // kindNoEcho lists kinds that never reach the operator log — the observer stream
@@ -50,6 +51,9 @@ var phaseOverride = map[phaseKey]slog.Level{
 	// mistake (a throw with no reachable catcher) — surface it at Warn so it is
 	// logged, never silently dropped (SRD-058 FR-4).
 	{KindEscalation, PhaseUnresolved}: slog.LevelWarn,
+	// A decision-evaluation failure is operator-relevant context for the fault
+	// that follows it (SRD-060 FR-6).
+	{KindRules, PhaseFailed}: slog.LevelWarn,
 	// Same rule for a compensation throw that resolved to nothing (SRD-059
 	// FR-8): logged at Warn, never a fault, never silent.
 	{KindCompensation, PhaseUnresolved}: slog.LevelWarn,

@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Business Rule Task on the pluggable rule-engine seam (SRD-060, ADR-027
+  v.1 — the BRT half of #87).** The last model-only conformance task type
+  gains execution. A new engine service — the **Business Rule Engine** —
+  in the ADR-002 shape: the one-method `rules.Engine` seam (evaluate a
+  **decision reference** against the read-only data surface → the decision
+  **result rows**, the DMN-universal list-of-records shape) with the
+  **batteries-included `gorules` registry** (`##GoRules`): named Go decision
+  functions, bounded by construction, unknown references fail loud. Wired
+  through the five-point pattern (`thresher.WithRuleEngine`,
+  `renv.EngineRuntime.RuleEngine()`, the startup-config line); any DMN or
+  external rules service swaps in wholesale without touching the model. The
+  task itself (`activities.NewBusinessRuleTask(name, decisionRef)`) realizes
+  the standard's §13.3.3 clause — call on activation, complete on return —
+  committing the result with the **fold**: a 1-row/1-output result becomes a
+  scalar named by its output (decision-driven gateway conditions with zero
+  ceremony); anything else an array of row-maps under the decision
+  reference. Failures ride the ordinary fault machinery (Error boundaries
+  catch decision `BpmnError`s). New **`Rules` observability facts**
+  (`Evaluated`/`Failed`) carry the decision reference, the engine kind, and
+  the result shape — and node-emitted facts now reach the instance's handle
+  observers (the `execEnv` Reporter override). The `rules.Deployer`
+  capability (the deploy half of the minimal DMN component API) is declared;
+  the Decision Table model rides a follow-up SRD.
+  See `examples/business-rule-task/`.
+
 - **Transaction Sub-Process (SRD-061, ADR-028 — #91).** A Sub-Process variant
   (`WithTransaction()`) that aborts atomically on a **Cancel End Event** — the
   ACID-style all-or-nothing unit. Reaching a Cancel End inside a Transaction

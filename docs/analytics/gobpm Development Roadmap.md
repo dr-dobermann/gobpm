@@ -105,7 +105,7 @@ Fill the Common Executable Subclass + ComplexGateway per `conformance.md`, in de
 - **C2 Errors & fault tolerance.** `BpmnError` contract; Boundary Error events with hierarchical resolution; Incident / Retry / DLQ (depends on WS-B3 persistence).
 - **C3 Messaging & timers.** Message correlation engine (structures exist); Message Start/Catch/Throw; Signal events; timer **persistence + hydration** (waiter exists; hydration depends on WS-B3); **Event-Based** gateway.
 - **C4 Structure & reuse.** Embedded Sub-Process (new scope level); Call Activity (variable mapping); Receive / Send tasks.
-- **C5 Business logic & iteration.** Script Task (internal engine); Business Rule Task (DMN via external engine, per non-goal N2); Standard Loop and Multi-Instance (sequential/parallel) with per-branch scope isolation; Conditional events (reactive on scope-data change).
+- **C5 Business logic & iteration.** Script Task (internal engine); Standard Loop, Multi-Instance (sequential/parallel, per-branch scope isolation) and Conditional events already done. (Business Rule Task done — the pluggable rule-engine seam + the in-core `gorules` registry, DMN stays external per non-goal N2; ADR-027 / SRD-060.)
 - **C6 Full conformance.** **Inclusive** (OR) and **Complex** gateway (extension; two-phase activation/reset, deadlock detection); Compensation, Escalation, Link events; Transaction and Event Sub-Process; Ad-Hoc Sub-Process.
 
 *Output:* full BPMN 2.0 Process Execution Conformance (Common Executable + ComplexGateway), validated by the conformance suite.

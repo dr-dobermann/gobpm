@@ -5,6 +5,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
 
@@ -29,6 +30,22 @@ func newExecEnv(inst *Instance, f *scope.Frame, t *track) *execEnv {
 		frame:    f,
 		track:    t,
 	}
+}
+
+// reporterFunc adapts a function to observability.Reporter.
+type reporterFunc func(observability.Fact)
+
+func (f reporterFunc) Report(ev observability.Fact) { f(ev) }
+
+// Reporter overrides the embedded engine-level reporter with the instance's
+// single emission point (SRD-041 FR-4): a node-side fact (e.g. the Business
+// Rule Task's KindRules audit, SRD-060 FR-6) gets the instance_id stamp and
+// the handle observers' local fan-out IN ADDITION to the engine echo/fan-out
+// — exactly what every internal emitter gets. Without this override a node
+// would reach the raw engine sink and its facts would silently skip the
+// instance's own observers.
+func (e *execEnv) Reporter() observability.Reporter {
+	return reporterFunc(e.report)
 }
 
 // Terminate overrides the instance-level Terminate with the scoped

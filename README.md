@@ -224,6 +224,17 @@ undoes them in **reverse completion order**, waiting for the handlers. Only
 completed work compensates (presumed abort); a handler reads the snapshot its
 activity completed with; an unresolved throw is logged, never a fault.
 
+For business decisions, see
+[`examples/business-rule-task/`](examples/business-rule-task/) — a **Business
+Rule Task** evaluates a named decision on the pluggable **Business Rule
+Engine** (the batteries-included `gorules` Go decision registry by default;
+swap in a DMN or any rules service with `thresher.WithRuleEngine` — the model
+is untouched). The decision reads process data through the ordinary walk-up
+and its result commits back as process data — a 1-row/1-output result folds
+to a scalar, so the task's own conditional flows route on the outcome; an
+unknown decision reference fails loud, and every evaluation emits a `Rules`
+observability fact.
+
 For composition, see [**docs/guides/composition.md**](docs/guides/composition.md).
 An **embedded Sub-Process** is a nested scope inside the instance (the inner
 flow reads the parent's data through the walk-up, its locals die with the
