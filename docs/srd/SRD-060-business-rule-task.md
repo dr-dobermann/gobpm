@@ -96,6 +96,19 @@ workstream per ADR-027 §2.5).
   no `Must*` in library paths) + `re.Put`; finish with
   `selectOutgoing(ctx, re)` (conditional/default flow rules apply).
 
+- **FR-6 — decision observability.** A new fact kind `KindRules` emitted
+  by the task through `re.Reporter()` (the compensation-ledger precedent —
+  a new runtime concern gets its own audit trail):
+  - **`Evaluated`** (echo Debug) after a successful evaluate+commit —
+    details: `decision_ref`, `implementation` (the engine's `##`-kind —
+    discharging §4.3's "reported in observability" promise), `row_count`,
+    `result_variable` (empty when nothing committed). Never payload values
+    (the masking rule).
+  - **`Failed`** (echo Warn) before returning an evaluation error —
+    details: `decision_ref`, `implementation`, `error`. The error still
+    rides the ordinary fault machinery unchanged (`KindFault` reports the
+    task failure); this fact adds the decision-level context.
+
 ### §2.2 Non-functional
 
 - **NFR-1 — validate-all-params** on every new public surface (constructor,
@@ -181,8 +194,8 @@ Wiring points (FR-3, verified): `options.go:28` (config struct), `:326`
 | T-2 | task model (`pkg/model/activities`) | FR-4: constructor validation (empty name/ref), `DecisionRef()`, `TaskType()`, `Clone` carries the ref, asserts compile |
 | T-3 | `Exec` against mock renv (`pkg/model/activities`) | FR-5: `Evaluate` called with the ref; 1×1 result `Put` as a scalar Ready parameter; a multi-row/multi-output result `Put` as the row list under the decision ref; an empty result commits nothing; an engine error fails the Exec |
 | T-4 | wiring (`pkg/thresher`) | FR-3: the default engine is `gorules`; `WithRuleEngine` overrides; `WithRuleEngine(nil)` rejected |
-| T-5 | e2e (`pkg/thresher`) | full path: a BRT evaluates a registered decision, the result routes an XOR downstream; instance completes |
-| T-6 | fault path (`pkg/thresher` or instance) | FR-5: a decision returning `BpmnError` is caught by an Error boundary on the BRT |
+| T-5 | e2e (`pkg/thresher`) | full path: a BRT evaluates a registered decision, the result routes conditional flows downstream; instance completes; the `Rules/Evaluated` fact observed with `decision_ref`/`implementation` details (FR-6) |
+| T-6 | fault path (`pkg/thresher` or instance) | FR-5: a decision returning `BpmnError` is caught by an Error boundary on the BRT; the `Rules/Failed` fact observed (FR-6) |
 | T-7 | example (`examples/business-rule-task/`) | smoked exit 0; the decision result visibly drives the flow |
 
 ## §7 Milestones
@@ -191,7 +204,8 @@ Wiring points (FR-3, verified): `options.go:28` (config struct), `:326`
   `feat(rules): the rule-engine seam and the gorules registry`.
 - **M2 — the task + wiring.** FR-3, FR-4, FR-5; mocks regen; T-2…T-4.
   `feat(activities): Business Rule Task on the rule-engine seam`.
-- **M3 — e2e + example + doc sync.** T-5…T-7; `examples/business-rule-task/`
+- **M3 — decision observability + e2e + example + doc sync.** FR-6;
+  T-5…T-7; `examples/business-rule-task/`
   (+ index row), CHANGELOG, conformance row 6 → ✅, README(+ru), roadmap,
   issue #87 checkbox tick at handover.
   `feat: Business Rule Task — e2e, example, doc sync`.
@@ -227,4 +241,4 @@ Wiring points (FR-3, verified): `options.go:28` (config struct), `:326`
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-07-22 | Ruslan Gabitov | Initial draft — lands ADR-027 v.1: `pkg/rules` (`Engine` + `DecisionFunc`), the bounded `gorules` registry default (`##GoRules`, fail-loud unknown refs), the five-point thresher/renv wiring (`WithRuleEngine`, `RuleEngine()` accessor, startup printout), and the Business Rule Task rebuilt to the house pattern (enum entry, `NewBusinessRuleTask(name, decisionRef)`, Exec = evaluate → Put → selectOutgoing; the dead exported `Implementation` field removed). Three milestones. **DMN-minimal amendment** (same MR, pre-approval-of-M2): `Evaluate` returns `[]Row` (list of records), the task-side 1×1 scalar fold with row-list commit via the SRD-047 map/array values, the `Deployer` capability declared, `DecisionFunc` row-out; the Rule interface + Decision Table model deferred to the follow-up SRD per ADR-027 §2.4. |
+| v.1 | 2026-07-22 | Ruslan Gabitov | Initial draft — lands ADR-027 v.1: `pkg/rules` (`Engine` + `DecisionFunc`), the bounded `gorules` registry default (`##GoRules`, fail-loud unknown refs), the five-point thresher/renv wiring (`WithRuleEngine`, `RuleEngine()` accessor, startup printout), and the Business Rule Task rebuilt to the house pattern (enum entry, `NewBusinessRuleTask(name, decisionRef)`, Exec = evaluate → Put → selectOutgoing; the dead exported `Implementation` field removed). Three milestones. **DMN-minimal amendment** (same MR, pre-approval-of-M2): `Evaluate` returns `[]Row` (list of records), the task-side 1×1 scalar fold with row-list commit via the SRD-047 map/array values, the `Deployer` capability declared, `DecisionFunc` row-out; the Rule interface + Decision Table model deferred to the follow-up SRD per ADR-027 §2.4. **FR-6 added** (M3): `KindRules` decision-observability facts (`Evaluated`/`Failed`) emitted by the task, carrying `decision_ref`/`implementation`/`row_count`/`result_variable` — the §4.3 implementation-kind reporting made concrete. |

@@ -2,6 +2,7 @@ package activities
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -11,6 +12,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 	"github.com/dr-dobermann/gobpm/pkg/rules"
 )
@@ -109,28 +111,64 @@ func (bt *BusinessRuleTask) Exec(
 			errs.D("business_rule_task_id", bt.ID()))
 	}
 
-	rows, err := re.RuleEngine().Evaluate(ctx, bt.decisionRef, re)
+	eng := re.RuleEngine()
+
+	rows, err := eng.Evaluate(ctx, bt.decisionRef, re)
 	if err != nil {
+		bt.reportDecision(re, observability.PhaseFailed, map[string]string{
+			observability.AttrDecisionRef:    bt.decisionRef,
+			observability.AttrImplementation: eng.Type(),
+			observability.AttrError:          err.Error(),
+		})
+
 		return nil, err
 	}
 
+	resultVar := ""
+
 	if len(rows) > 0 {
-		if err := bt.commitResult(rows, re); err != nil {
+		resultVar, err = bt.commitResult(rows, re)
+		if err != nil {
 			return nil, err
 		}
 	}
 
+	bt.reportDecision(re, observability.PhaseEvaluated, map[string]string{
+		observability.AttrDecisionRef:    bt.decisionRef,
+		observability.AttrImplementation: eng.Type(),
+		observability.AttrRowCount:       strconv.Itoa(len(rows)),
+		observability.AttrResultVariable: resultVar,
+	})
+
 	return bt.selectOutgoing(ctx, re)
+}
+
+// reportDecision announces a KindRules fact (SRD-060 FR-6): the decision-level
+// audit record — reference, engine kind, result shape — names and counts only,
+// never payload values (the masking rule).
+func (bt *BusinessRuleTask) reportDecision(
+	re renv.RuntimeEnvironment,
+	phase observability.Phase,
+	details map[string]string,
+) {
+	re.Reporter().Report(observability.Fact{
+		Kind:     observability.KindRules,
+		Phase:    phase,
+		NodeID:   bt.ID(),
+		NodeName: bt.Name(),
+		Details:  details,
+	})
 }
 
 // commitResult commits the decision result rows to process data through the
 // execution frame with the ADR-027 §2.3 fold: exactly one row with exactly
 // one output commits as a scalar named by that output; anything else commits
-// as an array of row-maps named by the decision reference.
+// as an array of row-maps named by the decision reference. It returns the
+// committed variable's name for the Evaluated fact.
 func (bt *BusinessRuleTask) commitResult(
 	rows []rules.Row,
 	re renv.RuntimeEnvironment,
-) error {
+) (string, error) {
 	wrap := func(msg string, err error) error {
 		return errs.New(
 			errs.M(msg),
@@ -143,29 +181,29 @@ func (bt *BusinessRuleTask) commitResult(
 
 	name, value, err := foldResult(bt.decisionRef, rows)
 	if err != nil {
-		return wrap("couldn't fold decision result", err)
+		return "", wrap("couldn't fold decision result", err)
 	}
 
 	item, err := data.NewItemDefinition(value, foundation.WithID(name))
 	if err != nil {
-		return wrap("couldn't build decision result item", err)
+		return "", wrap("couldn't build decision result item", err)
 	}
 
 	iae, err := data.NewItemAwareElement(item, data.ReadyDataState)
 	if err != nil {
-		return wrap("couldn't wrap decision result", err)
+		return "", wrap("couldn't wrap decision result", err)
 	}
 
 	res, err := data.NewParameter(name, iae)
 	if err != nil {
-		return wrap("couldn't build decision result parameter", err)
+		return "", wrap("couldn't build decision result parameter", err)
 	}
 
 	if err := re.Put(res); err != nil {
-		return wrap("couldn't commit decision result", err)
+		return "", wrap("couldn't commit decision result", err)
 	}
 
-	return nil
+	return name, nil
 }
 
 // foldResult picks the committed variable's name and value: a 1-row/1-output

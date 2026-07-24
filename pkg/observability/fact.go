@@ -28,6 +28,7 @@ const (
 	KindFault            Kind = "Fault"            // BPMN error / fault
 	KindEscalation       Kind = "Escalation"       // escalation throw/catch (non-fault, SRD-058)
 	KindCompensation     Kind = "Compensation"     // completion-ledger lifecycle + compensation runs (ADR-026, SRD-059)
+	KindRules            Kind = "Rules"            // decision evaluation on the Business Rule Engine (SRD-060)
 	KindDataChange       Kind = "DataChange"       // data-element change (observer-only)
 	KindScope            Kind = "Scope"            // nested-scope lifecycle (SRD-049)
 	KindCall             Kind = "Call"             // call-activity lifecycle (SRD-050)
@@ -121,6 +122,11 @@ const (
 	PhaseCompensating Phase = "Compensating"
 	PhaseCompensated  Phase = "Compensated"
 
+	// PhaseEvaluated: a Business Rule Task's decision call returned and its
+	// result committed (SRD-060 FR-6). Failure reuses PhaseFailed with the
+	// decision-level details; the task failure itself still rides KindFault.
+	PhaseEvaluated Phase = "Evaluated" // Rules
+
 	PhaseValueAdded   Phase = "Value_Added" // DataChange (= data.ChangeType)
 	PhaseValueUpdated Phase = "Value_Updated"
 	PhaseValueDeleted Phase = "Value_Deleted"
@@ -149,15 +155,21 @@ const (
 	AttrCorrelationValue  = "correlation_value"
 	AttrError             = "error"
 	AttrEscalation        = "escalation"
+	// Decision evaluation on the Business Rule Engine (SRD-060 FR-6). Names
+	// and counts only — never decision payload values (the masking rule).
+	AttrDecisionRef    = "decision_ref"
+	AttrImplementation = "implementation"
+	AttrRowCount       = "row_count"
+	AttrResultVariable = "result_variable"
 	// AttrOrdinal (SRD-059): a completion-ledger entry's 0-based completion
 	// order within its scope — the reverse-compensation order's authority.
-	AttrOrdinal = "ordinal"
-	AttrChosenFlows       = "chosen_flows"
-	AttrVersion           = "version"
-	AttrAttempts          = "attempts"
-	AttrBackoff           = "backoff"
-	AttrDataPath          = "data_path"
-	AttrScopePath         = "scope_path"
+	AttrOrdinal     = "ordinal"
+	AttrChosenFlows = "chosen_flows"
+	AttrVersion     = "version"
+	AttrAttempts    = "attempts"
+	AttrBackoff     = "backoff"
+	AttrDataPath    = "data_path"
+	AttrScopePath   = "scope_path"
 
 	// AttrLoopCounter (SRD-054): the 0-based iteration ordinal a looped composite
 	// activity's scope carries, so each Standard-Loop pass is individually

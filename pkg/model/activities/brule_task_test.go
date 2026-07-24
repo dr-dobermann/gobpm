@@ -15,6 +15,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/rules"
 	"github.com/dr-dobermann/gobpm/pkg/rules/gorules"
 )
@@ -67,6 +68,15 @@ func TestBusinessRuleTaskDefinition(t *testing.T) {
 		})
 }
 
+// factSink collects reported facts for assertions.
+type factSink struct {
+	facts []observability.Fact
+}
+
+func (fs *factSink) Report(f observability.Fact) {
+	fs.facts = append(fs.facts, f)
+}
+
 func TestBusinessRuleTaskExec(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
@@ -100,8 +110,10 @@ func TestBusinessRuleTaskExec(t *testing.T) {
 					}, nil
 				})
 
+			sink := &factSink{}
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 			re.EXPECT().RuleEngine().Return(eng)
+			re.EXPECT().Reporter().Return(sink)
 			re.EXPECT().Put(mock.MatchedBy(func(dd []data.Data) bool {
 				return len(dd) == 1 &&
 					dd[0].Name() == "discount_pct" &&
@@ -111,6 +123,20 @@ func TestBusinessRuleTaskExec(t *testing.T) {
 			flows, err := newBRT(t, "discount").Exec(ctx, re)
 			require.NoError(t, err)
 			require.Empty(t, flows)
+
+			// the FR-6 Evaluated fact carries the decision-level details.
+			require.Len(t, sink.facts, 1)
+			f := sink.facts[0]
+			require.Equal(t, observability.KindRules, f.Kind)
+			require.Equal(t, observability.PhaseEvaluated, f.Phase)
+			require.Equal(t, "check", f.NodeName)
+			require.Equal(t, "discount",
+				f.Details[observability.AttrDecisionRef])
+			require.Equal(t, gorules.GoRulesType,
+				f.Details[observability.AttrImplementation])
+			require.Equal(t, "1", f.Details[observability.AttrRowCount])
+			require.Equal(t, "discount_pct",
+				f.Details[observability.AttrResultVariable])
 		})
 
 	t.Run("a multi-output row commits as a row list under the decision ref",
@@ -126,8 +152,10 @@ func TestBusinessRuleTaskExec(t *testing.T) {
 					}, nil
 				})
 
+			sink := &factSink{}
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 			re.EXPECT().RuleEngine().Return(eng)
+			re.EXPECT().Reporter().Return(sink)
 			re.EXPECT().Put(mock.MatchedBy(func(dd []data.Data) bool {
 				if len(dd) != 1 || dd[0].Name() != "route" {
 					return false
@@ -140,6 +168,9 @@ func TestBusinessRuleTaskExec(t *testing.T) {
 
 			_, err := newBRT(t, "route").Exec(ctx, re)
 			require.NoError(t, err)
+			require.Len(t, sink.facts, 1)
+			require.Equal(t, "route",
+				sink.facts[0].Details[observability.AttrResultVariable])
 		})
 
 	t.Run("an empty result commits nothing",
@@ -152,12 +183,19 @@ func TestBusinessRuleTaskExec(t *testing.T) {
 					return nil, nil
 				})
 
+			sink := &factSink{}
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 			re.EXPECT().RuleEngine().Return(eng)
+			re.EXPECT().Reporter().Return(sink)
 			// no Put expectation: the strict mock fails the test on any call.
 
 			_, err := newBRT(t, "silent").Exec(ctx, re)
 			require.NoError(t, err)
+			require.Len(t, sink.facts, 1)
+			require.Equal(t, "0",
+				sink.facts[0].Details[observability.AttrRowCount])
+			require.Empty(t,
+				sink.facts[0].Details[observability.AttrResultVariable])
 		})
 
 	t.Run("an empty output name fails the commit",
@@ -199,14 +237,24 @@ func TestBusinessRuleTaskExec(t *testing.T) {
 			require.Contains(t, err.Error(), "couldn't fold decision result")
 		})
 
-	t.Run("engine error fails the task",
+	t.Run("engine error fails the task and reports the Failed fact",
 		func(t *testing.T) {
+			sink := &factSink{}
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 			re.EXPECT().RuleEngine().Return(gorules.New())
+			re.EXPECT().Reporter().Return(sink)
 
 			_, err := newBRT(t, "unknown").Exec(ctx, re)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "unknown")
+
+			require.Len(t, sink.facts, 1)
+			f := sink.facts[0]
+			require.Equal(t, observability.KindRules, f.Kind)
+			require.Equal(t, observability.PhaseFailed, f.Phase)
+			require.Equal(t, "unknown",
+				f.Details[observability.AttrDecisionRef])
+			require.NotEmpty(t, f.Details[observability.AttrError])
 		})
 
 	t.Run("commit failure is wrapped with the task identity",
