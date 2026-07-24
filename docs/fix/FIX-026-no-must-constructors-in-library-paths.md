@@ -1,7 +1,7 @@
 # FIX-026 «Library runtime paths call panicking Must* constructors — a caller error becomes an engine crash»
 
 **Type:** FIX (one-shot hardening; not rewritten after landing).
-**Status:** Draft v.1 (2026-07-24, branch `fix/no-must-in-library`, not yet implemented).
+**Status:** Accepted v.1 (landed 2026-07-24, branch `fix/no-must-in-library`).
 **Date:** 2026-07-24.
 **Author:** Ruslan Gabitov.
 **Branch:** `fix/no-must-in-library` (what the fix does: no Must* in library code).
@@ -344,24 +344,58 @@ None — single-repo.
 
 ## §8 Implementation summary (stage-by-stage actual landings + deltas vs draft)
 
-> ⚠️ TODO: fill AFTER landing; records the implementation history and
-> empirical findings vs the §3 draft.
-
 ### §8.1 Stages by commit (branch `fix/no-must-in-library`)
 
 | Stage | Commit | Scope | Tests |
 |---|---|---|---|
-| 1 | `<sha>` | §3.2.1-§3.2.9 local conversions | §4.1.1-§4.1.4 |
-| 2 | `<sha>` | §3.2.10-§3.2.15 signature work | §4.1.5-§4.1.7 |
-| 3 | `<sha>` | §3.2.16-§3.2.18 consolidation + guard test + gate patterns + changelog | §4.1.8 |
+| 0 | `81b02fb` | this document (Draft) | — |
+| 1 | `ec9238a` | §3.2.1-§3.2.9 local conversions | statusParameter/payloadDatum/faultDatum/bindValueAt error-path tests (first cut; superseded by Stage 3's helper tests) |
+| 2 | `a929d6c` | §3.2.10-§3.2.15 signature work (Operation.Clone, Message.Clone, addMessagePayloadOutput, NewPathData, outputDatum, artifacts/callable constructors; MustCategory/MustCategoryValue fixture twins) | §4.1.5-§4.1.7 |
+| 3 | `723a74b` | §3.2.16-§3.2.18 consolidation (data.ReadyParameter / ReadyValueParameter + per-package `*Err` classifiers), the muststyle guard test, the three COVER_EXCLUDE patterns, CHANGELOG | §4.1.8 + the helper/classifier suites |
+
+**Verification:** post-commit `make ci` exit 0; **diff-coverage 100.0% of
+230 changed coverable lines** (min 95); full `-race` suite green;
+golangci-lint 0 issues; key examples smoked exit 0 (maps,
+service-task-worker, compensation-events, message-send-receive,
+conversation-routing). Final residue grep: exactly the two Must\* API
+definitions (`Gateway.MustUpdateDefaultFlow`, `gorules.MustRegister`) plus
+sanctioned argless literals — the guard test pins it.
 
 ### §8.2 Empirical findings — where reality diverged from the §3 draft
 
-*TODO.*
+- **The gate measures the committed diff, not the working tree.**
+  covercheck reads changed-line text from `git diff <base>` of the
+  committed state while the profile reflects the working tree — pre-commit
+  exclusion checks silently no-op for uncommitted renames. Cost one
+  diagnosis loop; the authoritative measurement is always post-commit.
+- **Inlined wrap blocks are gate-hostile.** The §3 draft's per-site
+  multi-line `errs.New` wraps put every never-executing wrap body into the
+  changed-uncovered set (56.9% at the first Stage-3 gate). The consolidation
+  (§3.2 amendment) — shared tested helpers + tested `*Err` classifiers +
+  single-line propagation — is the pattern future conversions should start
+  from.
+- **`NewItemDefinition(nil)` is legal** (a nil-structure item is the
+  UndefinedSrcState case), so several "nil value" error branches assumed by
+  the draft are unreachable; the reachable validation lives in
+  `NewPathData` (explicit nil guard) and name validation (`NewParameter`).
+- **Unreachable-defensive branches (recorded, per the §4.1 note):**
+  `operation.Clone`/`gooperCloneErr` propagation, `send_task.Clone`,
+  `addMessagePayloadOutput`, `fireDefinition`, `ReceiveTask.Clone` — their
+  triggers require an invalid `Message`/item, unconstructible through the
+  public constructors. Their error CONSTRUCTION is covered via the
+  classifier tests; the propagation returns are excluded by the documented
+  gate patterns.
+- **`pkg/thresher/observer.go:104`'s `recover()`** guards user-supplied
+  observer callbacks, not library Must\* panics — no behavioral coupling
+  to this fix.
 
 ### §8.3 Backlog (out of FIX-026 scope)
 
-*TODO.*
+- The pre-existing sub-80% `Clone` coverage class (`ManualTask.Clone` 75%
+  et al.) predates this fix and stays as-is.
+- Promote-to-ADR: the "library constructor contract" (validate-all-params +
+  no-Must + the fixture-twin convention) once a second constructor-
+  discipline rule accrues (§7).
 
 ## §9 Open questions
 
