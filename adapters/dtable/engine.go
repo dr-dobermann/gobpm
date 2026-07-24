@@ -15,8 +15,9 @@ import (
 // their decision name. Register write-locks (setup time); Evaluate
 // read-locks, so concurrent tracks evaluate freely.
 type Engine struct {
-	tables map[string]*Table
-	mu     sync.RWMutex
+	decoder Decoder
+	tables  map[string]*Table
+	mu      sync.RWMutex
 }
 
 // interface check
