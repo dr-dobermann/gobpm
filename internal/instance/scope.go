@@ -4,11 +4,23 @@ import (
 	"fmt"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
+
+// datumErr classifies a runtime datum build failure at path (FIX-026 —
+// commit paths fail with an error, never panic).
+func datumErr(what, name string, path scope.DataPath, err error) error {
+	return errs.New(
+		errs.M("couldn't build %s datum", what),
+		errs.C(errorClass, errs.OperationFailed),
+		errs.E(err),
+		errs.D("datum_name", name),
+		errs.D("data_path", string(path)))
+}
 
 // instanceScope owns an instance's data-plane wiring: the scope tree rooted at
 // the process scope (plane), the root container data path commits target (root),
@@ -118,9 +130,14 @@ func (sc *instanceScope) bindEventPayloadAt(
 	}
 
 	dd := make([]data.Data, 0, len(items))
+
 	for _, item := range items {
-		dd = append(dd, data.MustParameter(item.ID(),
-			data.MustItemAwareElement(item, data.ReadyDataState)))
+		datum, err := data.ReadyParameter(item.ID(), item)
+		if err != nil {
+			return datumErr("event payload", item.ID(), path, err)
+		}
+
+		dd = append(dd, datum)
 	}
 
 	// Commit returns a self-classifying errs error (container/writable/name
@@ -152,12 +169,12 @@ func (sc *instanceScope) bindDataItemAt(
 func (sc *instanceScope) bindValueAt(
 	path scope.DataPath, name string, value data.Value,
 ) error {
-	datum := data.MustParameter(name,
-		data.MustItemAwareElement(
-			data.MustItemDefinition(value),
-			data.ReadyDataState))
+	datum, err := data.ReadyValueParameter(name, value)
+	if err != nil {
+		return datumErr("value", name, path, err)
+	}
 
-	_, err := sc.plane.Commit(path, datum)
+	_, err = sc.plane.Commit(path, datum)
 
 	return err
 }

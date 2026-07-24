@@ -360,22 +360,29 @@ func (mw *messageWaiter) deliver(
 
 // fireDefinition builds the event definition delivered to the processors: the
 // broker payload is reconstructed as a typed, Ready datum for the message's
-// item (ADR-014 v.1 §2.6) and woven into a cloned definition. Phase-1 messages
-// always carry an item (bpmncommon.NewMessage invariant); the datum building
-// uses the Must* constructors as ServiceTask.Exec does on its result path.
+// item (ADR-014 v.1 §2.6) and woven into a cloned definition.
 func (mw *messageWaiter) fireDefinition(
 	env messaging.Envelope,
 ) (flow.EventDefinition, error) {
-	item := mw.eDef.Message().Item()
+	itemID := mw.eDef.Message().Item().ID()
 
-	datum := data.MustParameter(item.ID(),
-		data.MustItemAwareElement(
-			data.MustItemDefinition(
-				values.NewVariable(env.Payload),
-				foundation.WithID(item.ID())),
-			data.ReadyDataState))
+	datum, err := data.ReadyValueParameter(itemID,
+		values.NewVariable(env.Payload), foundation.WithID(itemID))
+	if err != nil {
+		return nil, payloadErr(mw.eDef.Message().Name(), err)
+	}
 
 	return mw.eDef.CloneEventDefinition([]data.Data{datum})
+}
+
+// payloadErr classifies a payload datum build failure (FIX-026 — a bad
+// message item fails the delivery, never panics the hub).
+func payloadErr(msgName string, err error) error {
+	return errs.New(
+		errs.M("couldn't build payload datum"),
+		errs.C(MessageWaiterError, errs.OperationFailed),
+		errs.E(err),
+		errs.D("message_name", msgName))
 }
 
 // Stop terminates the delivery goroutine of a running waiter.

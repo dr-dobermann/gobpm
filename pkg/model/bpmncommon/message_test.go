@@ -18,7 +18,10 @@ func TestMessageCloneKeepsDocs(t *testing.T) {
 		data.MustItemDefinition(values.NewVariable(map[string]any{})),
 		foundation.WithDoc("an order message", "text/plain"))
 
-	docs := m.Clone().Docs()
+	clone, err := m.Clone()
+	require.NoError(t, err)
+
+	docs := clone.Docs()
 	require.Len(t, docs, 1)
 	require.Equal(t, "an order message", docs[0].Text())
 }
@@ -68,7 +71,8 @@ func TestMessageClone(t *testing.T) {
 			m := bpmncommon.MustMessage("msg",
 				data.MustItemDefinition(values.NewVariable(7)))
 
-			clone := m.Clone()
+			clone, err := m.Clone()
+			require.NoError(t, err)
 
 			// identity preserved, independent objects.
 			require.NotSame(t, m, clone)
@@ -88,7 +92,8 @@ func TestMessageClone(t *testing.T) {
 			m := bpmncommon.MustMessage("msg",
 				data.MustItemDefinition(nil))
 
-			clone := m.Clone()
+			clone, err := m.Clone()
+			require.NoError(t, err)
 
 			require.Equal(t, m.Item().ID(), clone.Item().ID())
 			require.NotSame(t, m.Item(), clone.Item())

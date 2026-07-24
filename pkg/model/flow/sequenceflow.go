@@ -34,7 +34,6 @@ type (
 
 		DefaultFlow() *SequenceFlow
 		UpdateDefaultFlow(f *SequenceFlow) error
-		MustUpdateDefaultFlow(f *SequenceFlow)
 	}
 )
 

@@ -138,14 +138,22 @@ func (rt *ReceiveTask) Clone() (flow.Node, error) {
 		return nil, err
 	}
 
-	clonedMsg := rt.message.Clone()
+	clonedMsg, err := rt.message.Clone()
+	if err != nil {
+		return nil, err
+	}
+
+	eDef, err := events.NewMessageEventDefinition(clonedMsg, nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return &ReceiveTask{
 		task:           t,
 		implementation: rt.implementation,
 		instantiate:    rt.instantiate,
 		message:        clonedMsg,
-		eDef:           events.MustMessageEventDefinition(clonedMsg, nil),
+		eDef:           eDef,
 	}, nil
 }
 

@@ -134,6 +134,14 @@ func newFaultSource(f Fault) *faultSource {
 	return &faultSource{code: f.Code, body: f.Body}
 }
 
+// faultDatumErr classifies a fault-source datum build failure.
+func faultDatumErr(name string, err error) error {
+	return errs.New(
+		errs.M("faultSource: couldn't build %q datum", name),
+		errs.C(errorClass, errs.OperationFailed),
+		errs.E(err))
+}
+
 // Find resolves "code" (the fault code as a string datum) and "body" (the fault
 // body item); any other head is an ObjectNotFound error. A structural name
 // ("body.items[0].price") navigates into the resolved head (ADR-011 v.6
@@ -142,10 +150,13 @@ func (s *faultSource) Find(ctx context.Context, name string) (data.Data, error) 
 	return data.ResolvePath(ctx, name, func(head string) (data.Data, error) {
 		switch head {
 		case "code":
-			return data.MustParameter("code",
-				data.MustItemAwareElement(
-					data.MustItemDefinition(values.NewVariable(s.code)),
-					data.ReadyDataState)), nil
+			d, err := data.ReadyValueParameter("code",
+				values.NewVariable(s.code))
+			if err != nil {
+				return nil, faultDatumErr("code", err)
+			}
+
+			return d, nil
 
 		case "body":
 			if s.body == nil {
@@ -154,8 +165,12 @@ func (s *faultSource) Find(ctx context.Context, name string) (data.Data, error) 
 					errs.C(errorClass, errs.ObjectNotFound))
 			}
 
-			return data.MustParameter("body",
-				data.MustItemAwareElement(s.body, data.ReadyDataState)), nil
+			d, err := data.ReadyParameter("body", s.body)
+			if err != nil {
+				return nil, faultDatumErr("body", err)
+			}
+
+			return d, nil
 		}
 
 		return nil, errs.New(

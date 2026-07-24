@@ -186,10 +186,15 @@ func (st *ServiceTask) Clone() (flow.Node, error) {
 		return nil, err
 	}
 
+	op, err := st.operation.Clone()
+	if err != nil {
+		return nil, err
+	}
+
 	return &ServiceTask{
 		task:            t,
 		implementation:  st.implementation,
-		operation:       st.operation.Clone(),
+		operation:       op,
 		timeout:         st.timeout,
 		workerTopic:     st.workerTopic,
 		errorMapper:     st.errorMapper,
@@ -236,7 +241,10 @@ func (st *ServiceTask) Exec(
 		return st.execWorkerOutcome(ctx, re)
 	}
 
-	op := st.operation.Clone()
+	op, err := st.operation.Clone()
+	if err != nil {
+		return nil, err
+	}
 
 	// The operation is kind-agnostic here: a message operation binds its input
 	// from scope and produces its output message; a Go operation reads through
@@ -248,25 +256,28 @@ func (st *ServiceTask) Exec(
 	}
 
 	if out != nil {
-		// Must-constructors: out is non-nil (guarded) and its id is
-		// engine-generated and non-empty — a failure here is a programming
-		// error, not an input condition.
-		res := data.MustParameter(out.ID(),
-			data.MustItemAwareElement(out, data.ReadyDataState))
+		res, err := data.ReadyParameter(out.ID(), out)
+		if err != nil {
+			return nil, st.commitErr("build operation result", err)
+		}
 
 		if err := re.Put(res); err != nil {
-			return nil,
-				errs.New(
-					errs.M("couldn't commit operation result"),
-					errs.C(errorClass),
-					errs.E(err),
-					errs.D("service_task_name", st.Name()),
-					errs.D("service_task_id", st.ID()),
-					errs.D("operation_id", st.operation.ID()))
+			return nil, st.commitErr("commit operation result", err)
 		}
 	}
 
 	return st.selectOutgoing(ctx, re)
+}
+
+// commitErr classifies a result/status commit failure with the task's
+// identity (FIX-026 — commit paths fail the task, never panic the track).
+func (st *ServiceTask) commitErr(what string, err error) error {
+	return errs.New(
+		errs.M("couldn't %s", what),
+		errs.C(errorClass),
+		errs.E(err),
+		errs.D("service_task_name", st.Name()),
+		errs.D("service_task_id", st.ID()))
 }
 
 // execOperation runs op honoring st.timeout. With no timeout (the default) the
@@ -455,9 +466,10 @@ func (st *ServiceTask) writeStatus(
 		}
 	}
 
-	res := data.MustParameter(st.statusVar,
-		data.MustItemAwareElement(
-			data.MustItemDefinition(value), data.ReadyDataState))
+	res, err := data.ReadyValueParameter(st.statusVar, value)
+	if err != nil {
+		return nil, st.commitErr("build status parameter", err)
+	}
 
 	if err := re.Put(res); err != nil {
 		return nil,

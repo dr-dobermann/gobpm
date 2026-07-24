@@ -69,13 +69,15 @@ func DeriveKey(
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
+	datum, err := data.ReadyValueParameter(item.ID(),
+		values.NewVariable(payload), foundation.WithID(item.ID()))
+	if err != nil {
+		return "", false, deriveErr(item.ID(), err)
+	}
+
 	src := payloadSource{
-		name: item.ID(),
-		datum: data.MustParameter(item.ID(),
-			data.MustItemAwareElement(
-				data.MustItemDefinition(values.NewVariable(payload),
-					foundation.WithID(item.ID())),
-				data.ReadyDataState)),
+		name:  item.ID(),
+		datum: datum,
 	}
 
 	parts := make([]string, 0, len(key.Properties))
@@ -136,6 +138,15 @@ func MissingKeyProperties(
 	}
 
 	return missing
+}
+
+// deriveErr classifies a DeriveKey payload datum build failure (FIX-026).
+func deriveErr(itemID string, err error) error {
+	return errs.New(
+		errs.M("DeriveKey: couldn't build payload datum"),
+		errs.C(errorClass, errs.OperationFailed),
+		errs.E(err),
+		errs.D("item_id", itemID))
 }
 
 // retrievalExprFor returns prop's retrieval expression whose MessageRef matches

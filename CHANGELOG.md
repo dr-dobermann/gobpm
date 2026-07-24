@@ -172,6 +172,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   drains one at a time onto the runner's cap-1 park). The old
   `compositeIterator` / loop-side `parallelInstanceDrained` seams are removed.
 
+### Changed
+
+- **No `Must*` constructors in library runtime paths (FIX-026).** Every
+  fallible `Must*` call site in `pkg/`/`internal/` non-test code now uses the
+  error-returning `New*` constructors with classified wraps — a bad runtime
+  input (an operation result, a broker payload, a mapped output name, a
+  caller option) fails the operation through the ordinary fault machinery
+  instead of panicking the engine. Signature changes for embedders:
+  `bpmncommon.Message.Clone()` → `(*Message, error)`,
+  `service.Operation.Clone()` → `(Operation, error)`, `data.NewPathData` →
+  `(Data, error)`, `artifacts.NewCategory`/`NewCategoryValue` and
+  `bpmncommon.NewCallableElement` → `(X, error)` (caller options are now
+  validated); `MustUpdateDefaultFlow` left the `flow.DefaultFlowHolder`
+  interface (the concrete `Gateway` method remains);
+  `artifacts.MustCategory`/`MustCategoryValue` added as fixture twins.
+  Tests and examples keep `Must*` by design; a repo-local guard test
+  (`internal/lintcfg`) now fails the build on any new `Must*` call site in
+  library code (the two provably-infallible argless literals
+  `MustBaseElement()`/`MustRecord()` stay sanctioned).
+
 ## [v0.9.0] - 2026-07-18
 
 ### Added

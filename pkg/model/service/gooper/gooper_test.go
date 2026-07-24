@@ -149,7 +149,8 @@ func TestGoOperation(t *testing.T) {
 			gooper.WithOutMessage(out))
 		require.NoError(t, err)
 
-		clone := op.Clone()
+		clone, err := op.Clone()
+		require.NoError(t, err)
 		require.NotSame(t, op, clone)
 		require.Equal(t, op.ID(), clone.ID())
 

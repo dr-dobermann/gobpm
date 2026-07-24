@@ -76,9 +76,12 @@ func NewGroup(
 		BaseElement: *be,
 	}
 
-	g.CategoryValue = NewCategoryValue(
-		categoryName,
-		foundation.WithID(g.ID()))
+	cv, err := NewCategoryValue(categoryName, foundation.WithID(g.ID()))
+	if err != nil {
+		return nil, err
+	}
+
+	g.CategoryValue = cv
 
 	return &g, nil
 }

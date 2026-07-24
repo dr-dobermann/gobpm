@@ -8,6 +8,7 @@ package localdispatcher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"sync"
@@ -410,8 +411,19 @@ func mapOutput(
 		return tasks.ApplyOutputMapping(ctx, ee, policy.OutputMapping, output)
 	}
 
-	return []data.Data{data.MustParameter(output.ID(),
-		data.MustItemAwareElement(output, data.ReadyDataState))}, nil
+	datum, err := data.ReadyParameter(output.ID(), output)
+	if err != nil {
+		return nil, jobOutputErr(output.ID(), err)
+	}
+
+	return []data.Data{datum}, nil
+}
+
+// jobOutputErr classifies a job output datum build failure (FIX-026).
+func jobOutputErr(outputID string, err error) error {
+	return fmt.Errorf(
+		"localdispatcher: couldn't build job output datum %q: %w",
+		outputID, err)
 }
 
 // ReportBpmnError reports a worker-declared Business Error and removes the job.

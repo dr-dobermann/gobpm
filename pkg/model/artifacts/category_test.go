@@ -11,7 +11,8 @@ import (
 func TestCategory(t *testing.T) {
 	t.Run("new category",
 		func(t *testing.T) {
-			c := artifacts.NewCategory("normal_category")
+			c, err := artifacts.NewCategory("normal_category")
+			require.NoError(t, err)
 
 			require.NotEmpty(t, c)
 
@@ -21,28 +22,29 @@ func TestCategory(t *testing.T) {
 		})
 
 	t.Run("new category with empty name", func(t *testing.T) {
-		c := artifacts.NewCategory("")
+		c, err := artifacts.NewCategory("")
+		require.NoError(t, err)
 		require.NotNil(t, c)
 		require.Equal(t, "UNSPECIFIED_CATEGORY", c.Name())
 	})
 
 	t.Run("add category value",
 		func(t *testing.T) {
-			c := artifacts.NewCategory("empty category")
+			c := artifacts.MustCategory("empty category")
 
 			require.Equal(t, 2, c.AddCategoryValues(
-				artifacts.NewCategoryValue("one"),
+				artifacts.MustCategoryValue("one"),
 				nil,
-				artifacts.NewCategoryValue("two"),
+				artifacts.MustCategoryValue("two"),
 			))
 			require.Equal(t, 2, len(c.CategoryValues()))
 		})
 
 	t.Run("remove category values",
 		func(t *testing.T) {
-			c := artifacts.NewCategory("test category")
-			cv1 := artifacts.NewCategoryValue("value1")
-			cv2 := artifacts.NewCategoryValue("value2")
+			c := artifacts.MustCategory("test category")
+			cv1 := artifacts.MustCategoryValue("value1")
+			cv2 := artifacts.MustCategoryValue("value2")
 
 			// Add values first
 			c.AddCategoryValues(cv1, cv2)
@@ -69,7 +71,7 @@ func TestCategory(t *testing.T) {
 
 func TestCategoryValue(t *testing.T) {
 	t.Run("new category value", func(t *testing.T) {
-		cv := artifacts.NewCategoryValue("test-value")
+		cv := artifacts.MustCategoryValue("test-value")
 		require.NotNil(t, cv)
 		require.Equal(t, "test-value", cv.Value)
 		require.NotEmpty(t, cv.ID())
@@ -78,14 +80,14 @@ func TestCategoryValue(t *testing.T) {
 	})
 
 	t.Run("empty category value", func(t *testing.T) {
-		cv := artifacts.NewCategoryValue("")
+		cv := artifacts.MustCategoryValue("")
 		require.NotNil(t, cv)
 		require.Equal(t, "UNDEFINED_CATEGORY_VALUE", cv.Value)
 	})
 
 	t.Run("category binding", func(t *testing.T) {
-		c := artifacts.NewCategory("test-category")
-		cv := artifacts.NewCategoryValue("test-value")
+		c := artifacts.MustCategory("test-category")
+		cv := artifacts.MustCategoryValue("test-value")
 
 		require.Nil(t, cv.Category())
 
@@ -96,7 +98,7 @@ func TestCategoryValue(t *testing.T) {
 	})
 
 	t.Run("flow elements management", func(t *testing.T) {
-		cv := artifacts.NewCategoryValue("test-value")
+		cv := artifacts.MustCategoryValue("test-value")
 
 		// Initially empty
 		require.Empty(t, cv.BaseElements())
@@ -140,7 +142,7 @@ func TestCategoryValue(t *testing.T) {
 	})
 
 	t.Run("flow elements edge cases", func(t *testing.T) {
-		cv := artifacts.NewCategoryValue("test-value")
+		cv := artifacts.MustCategoryValue("test-value")
 
 		// Test adding to nil categorizedElements (should initialize)
 		fe1 := mockflow.NewMockElement(t)
@@ -150,7 +152,7 @@ func TestCategoryValue(t *testing.T) {
 		require.Equal(t, 1, added)
 
 		// Test removing from empty map
-		cv2 := artifacts.NewCategoryValue("empty-value")
+		cv2 := artifacts.MustCategoryValue("empty-value")
 		removed := cv2.RemoveBaseElement("nonexistent")
 		require.Equal(t, 0, removed)
 
