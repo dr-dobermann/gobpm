@@ -145,20 +145,38 @@ appears.
 The no-match outcome itself stays DMN-shaped (§2.4): when rules don't
 match, the result is empty — never an implicit error.
 
-### 2.6 Deploy — not this engine's operation
+### 2.6 Deploy — mechanics owned by the engine, the format pluggable
 
-`rules.Deployer` (deploy a serialized definition) is **not implemented by
-this adapter**: its rules are Go functors, which no definition artifact can
-carry. Tables are **registered programmatically** — built in Go next to the
-process model, the same authoring mode as every gobpm artifact
-(programmatic construction is the SAD-001 posture; XML interchange rides
-its own workstream).
+Deployment decomposes into two layers, and the functor constraint blocks
+only one of them:
 
-The Deployer capability remains exactly where ADR-027 §2.1 put it — on the
-seam, awaiting an engine whose rules are data all the way down (a DMN-XML
-or JSON-table adapter). A named-functor hybrid (a serialized table wiring
-*registered* Go conditions by name) is a conceivable future increment of
-this adapter; it is noted, not decided.
+- **Deployment mechanics** — ingest a definition artifact, validate it,
+  build an executable table, cache it under its decision name — are
+  format-agnostic. The engine owns them and **implements
+  `rules.Deployer`** honestly.
+- **The definition format** — the artifact → table translation — is a
+  **pluggable Decoder seam** on the engine (a `WithDecoder` option; the
+  ADR-002 interface-plus-option shape one level down). With no decoder
+  configured, `Deploy` fails loud; a future DMN-XML or alternative-format
+  decoder plugs in without touching the engine.
+
+The **batteries decoder** is the named-functor hybrid, now decided: a JSON
+artifact carrying **structure only** — table name, hit policy, the rule
+grid — where each condition cell **references a Go-registered functor by
+name** and outputs are JSON literals (or a named yield functor for
+computed rows). Go carries all **behavior**: the embedder registers a
+condition vocabulary next to the process model — the exact `gooper` mode,
+artifacts addressing named Go code. Operations teams re-wire *which rules,
+in what order, under which policy* by redeploying the artifact; every
+predicate stays compiled, reviewable Go. No expression language enters: an
+unresolved name is a classified deploy-time error, never an interpreted
+fallback.
+
+**Redeploy semantics:** `Deploy` of an existing decision name **replaces**
+the table (deployment is a lifecycle operation — redeploy-updates is the
+industry posture); programmatic `Register` keeps **rejecting duplicates**
+(construction-time wiring, where a duplicate is a bug). Both are explicit
+contract.
 
 
 ### 2.7 Engine notes (deviations & choices)
@@ -189,22 +207,21 @@ this adapter; it is noted, not decided.
 - **In-core package (`pkg/rules/dtable`).** Rejected — §2.1: unavoidable
   weight for every embedder; the adapter tier is the designated home; the
   external-proof value is lost.
-- **A serialized table format now (JSON conditions with an operator
-  vocabulary).** Rejected for this conception: it reintroduces a parsed
-  expression language through the back door — a second thing to validate,
-  version, and document — while the embedder audience of a Go library
-  authors in Go. When interchange matters, it arrives as a
-  definition-carrying engine implementing `Deployer` (§2.5), not as a
-  bolt-on format here.
+- **A serialized condition language (JSON operators / comparison
+  mini-grammar).** Rejected: it reintroduces an interpreted expression
+  language through the back door — a second thing to validate, version,
+  and document. The accepted §2.6 shape is strictly narrower: artifacts
+  carry *structure* (grid, policy, names); every condition remains a
+  named, compiled Go functor. An unresolved name fails deployment loud.
 - **Conditions as `data.FormalExpression` (the expression-layer seam).**
   Rejected for now: couples the adapter to the expression workstream's
   in-flight evolution (Script Engine, #74) and buys nothing over functors
   for Go-authored tables. A future rule kind can adapt expressions to the
   Rule contract without touching the table (§2.3).
-- **Implementing `Deployer` with functor rules** (deploy as a no-op or a
-  registration alias). Rejected — a deploy that cannot ingest a definition
-  is a lie against the component contract; better to not claim the
-  capability (§2.5).
+- **No `Deployer` at all** (the first draft's position: functors aren't
+  deserializable, so don't claim the capability). Superseded by the §2.6
+  decomposition — the mechanics/format split lets the engine claim the
+  capability honestly while the functor decision stands untouched.
 
 ## 5. Consequences
 
@@ -218,14 +235,13 @@ second kind, paving the deployable engine's path.
 it up automatically); five policy semantics to test precisely; embedders
 wanting serialized rules still wait for the deployable adapter.
 
-**Follow-ups this conception sets up:** a definition-carrying engine
-implementing `rules.Deployer` (DMN-XML or JSON tables — possibly reusing
-this adapter's policy machinery); Collect aggregation operators if demand
-appears; the named-functor hybrid noted in §2.6; a table-wide
-absent-tolerance option if per-cell `IfPresent` proves noisy (§2.5).
+**Follow-ups this conception sets up:** a DMN-XML Decoder plugging into
+the §2.6 seam (reusing this engine's mechanics wholesale); Collect
+aggregation operators if demand appears; a table-wide absent-tolerance
+option if per-cell `IfPresent` proves noisy (§2.5).
 
 ## Document History
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-07-24 | Ruslan Gabitov | Draft conception. The ADR-027 table tier lands as **`adapters/dtable`** — a pluggable adapter module (the core's default battery stays `gorules`; the adapter is the seam's external proof) with **Go functors as rule expressions** (conditions and computed outputs read the same `service.DataReader` the gooper/gorules functors do; DMN's input-expression layer is deliberately subsumed; condition constructors keep tables declarative). The table is data (name, hit policy, ordered rules); a rule is the ADR-027 behavior contract, functor-backed as its first kind. All five hit policies with DMN semantics (Unique contradiction and Any disagreement are classified errors; no-match = empty result; Collect aggregations deferred). **Missing input fails loud by default** (an absent datum is a classified evaluation error naming decision/rule/datum — a deliberate deviation from DMN's null-tolerant fall-through, per the fail-loud house rule) with per-condition `IfPresent` opting into the DMN no-match semantics; `Any()` matches like DMN's `-`. **Deploy is explicitly not this engine's operation** — functor rules aren't deserializable; `rules.Deployer` stays on the seam for a future definition-carrying adapter. Implementation rides the accompanying SRD. |
+| v.1 | 2026-07-24 | Ruslan Gabitov | Draft conception. The ADR-027 table tier lands as **`adapters/dtable`** — a pluggable adapter module (the core's default battery stays `gorules`; the adapter is the seam's external proof) with **Go functors as rule expressions** (conditions and computed outputs read the same `service.DataReader` the gooper/gorules functors do; DMN's input-expression layer is deliberately subsumed; condition constructors keep tables declarative). The table is data (name, hit policy, ordered rules); a rule is the ADR-027 behavior contract, functor-backed as its first kind. All five hit policies with DMN semantics (Unique contradiction and Any disagreement are classified errors; no-match = empty result; Collect aggregations deferred). **Missing input fails loud by default** (an absent datum is a classified evaluation error naming decision/rule/datum — a deliberate deviation from DMN's null-tolerant fall-through, per the fail-loud house rule) with per-condition `IfPresent` opting into the DMN no-match semantics; `Any()` matches like DMN's `-`. **Deploy decomposed and claimed**: the engine owns the deployment mechanics and implements `rules.Deployer`; the definition format is a pluggable **Decoder seam** (`WithDecoder`; no decoder → loud failure); the batteries decoder is structure-only JSON wiring **named Go-registered functors** (behavior stays compiled Go; no condition language in artifacts; unresolved names fail deploy). Deploy replaces an existing decision, programmatic Register rejects duplicates. Implementation rides the accompanying SRD. |
