@@ -45,19 +45,29 @@ workstream per ADR-027 §2.5).
 ### §2.1 Functional
 
 - **FR-1 — the `rules` package.** New `pkg/rules`:
+  - `rules.Row` — one decision result record: `map[string]data.Value`
+    (output name → value), the DMN-universal row shape.
   - `rules.Engine` — the seam (ADR-027 §2.1): `Type() string` (the
     `##`-kind) and `Evaluate(ctx, decisionRef string,
-    r service.DataReader) (*data.ItemDefinition, error)`.
+    r service.DataReader) ([]Row, error)` — single-hit policies yield one
+    row, multi-hit many; empty/nil = no committable result.
+  - `rules.Deployer` — the component contract's second operation
+    (ADR-027 §2.1): `Deploy(ctx, definition []byte) error`, implemented by
+    engines that ingest external decision definitions (the task never
+    deploys; the table-driven engine implementing it rides the follow-up
+    SRD).
   - `rules.DecisionFunc` — the registered-decision shape:
-    `func(ctx, r service.DataReader) (*data.ItemDefinition, error)` (the
-    `gooper.OpFunctor` idiom minus the input message).
+    `func(ctx, r service.DataReader) (Row, error)` (the `gooper.OpFunctor`
+    idiom minus the input message; a nil row with a nil error = no
+    result).
 - **FR-2 — the in-core default: `pkg/rules/gorules`.** A bounded decision
   registry implementing `rules.Engine` (`Type() = "##GoRules"`):
   `New(...)` + `Register(name string, d DecisionFunc) error` validating a
   non-empty name, a non-nil functor, and rejecting duplicates; `Evaluate` of
   an unregistered name is a **classified error** (fail loud — ADR-027 §2.4);
-  registration-only growth (bounded by construction). A `MustRegister`
-  panic-twin for fixture building.
+  registration-only growth (bounded by construction). A function registry is
+  a single implicit hit: a non-nil row wraps as a one-row result, a nil row
+  as an empty one. A `MustRegister` panic-twin for fixture building.
 - **FR-3 — five-point wiring.** `thresherConfig` gains `ruleEngine
   rules.Engine`; `defaultConfig()` sets `gorules.New()`; a nil-guarded
   `WithRuleEngine(e rules.Engine)` option; `renv.EngineRuntime` gains
@@ -74,14 +84,17 @@ workstream per ADR-027 §2.5).
   `DecisionRef()` getter, `Node()/Clone()/TaskType()`, and the three
   interface asserts (`flow.Node`, `flow.Task`, `exec.NodeExecutor`).
 - **FR-5 — execution (ADR-027 §2.3).** `Exec(ctx, re)`: nil-guard `re`;
-  `out, err := re.RuleEngine().Evaluate(ctx, brt.decisionRef, re)` (the
+  `rows, err := re.RuleEngine().Evaluate(ctx, brt.decisionRef, re)` (the
   `RuntimeEnvironment` satisfies `service.DataReader` structurally — the
   ServiceTask precedent); an error returns as the task's failure (the
   ordinary fault path — a typed `BpmnError` from a decision travels the
-  Error machinery unchanged); a non-nil result wraps as a Ready
-  `data.Parameter` under the item's ID and commits via `re.Put` (the
-  `service_task.go:250-267` shape — the result-variable mapping); finish
-  with `selectOutgoing(ctx, re)` (conditional/default flow rules apply).
+  Error machinery unchanged); a non-empty result commits with the **fold**:
+  exactly one row with exactly one output → a scalar Ready `data.Parameter`
+  named by that output; anything else → the rows as a `values.Array` of
+  `values.Map`s under the decision reference. Commit via the error-returning
+  constructors (`NewItemDefinition`/`NewItemAwareElement`/`NewParameter` —
+  no `Must*` in library paths) + `re.Put`; finish with
+  `selectOutgoing(ctx, re)` (conditional/default flow rules apply).
 
 ### §2.2 Non-functional
 
@@ -96,18 +109,28 @@ workstream per ADR-027 §2.5).
 
 ```go
 // pkg/rules/rules.go (FR-1)
+
+// Row is one decision result record: output name -> value.
+type Row map[string]data.Value
+
 type Engine interface {
 	// Type names the engine kind for the task's implementation attribute
 	// and the startup printout ("##GoRules", "##DMN", …).
 	Type() string
 	// Evaluate resolves decisionRef and evaluates it against the read-only
-	// process-data surface, returning one structured result item.
+	// process-data surface, returning the decision result rows.
 	Evaluate(ctx context.Context, decisionRef string,
-		r service.DataReader) (*data.ItemDefinition, error)
+		r service.DataReader) ([]Row, error)
+}
+
+// Deployer is the component contract's ingestion half; the table-driven
+// engine implementing it rides the follow-up SRD.
+type Deployer interface {
+	Deploy(ctx context.Context, definition []byte) error
 }
 
 type DecisionFunc func(ctx context.Context,
-	r service.DataReader) (*data.ItemDefinition, error)
+	r service.DataReader) (Row, error)
 
 // pkg/rules/gorules/gorules.go (FR-2)
 func New() *Registry
@@ -136,13 +159,15 @@ Wiring points (FR-3, verified): `options.go:28` (config struct), `:326`
   inherited, not reinvented. *Alternative — an explicit input-mapping layer:*
   rejected for the first landing; the ioSpec/data-association machinery the
   activity already carries covers declared I/O.
-- **§4.2 Result naming = the item's ID.** The decision returns an
-  `*data.ItemDefinition` whose ID is the variable name (the service-task
-  result idiom — `service_task.go:254` builds the parameter from
-  `out.ID()`); a nil result with a nil error is legal (a decision with
-  side conclusions only — nothing commits). *Alternative — a `resultVariable`
-  attribute on the task:* deferred; the item-ID convention is the engine-wide
-  norm and keeps the seam one-method.
+- **§4.2 Result commit = the fold.** A 1-row/1-output result commits as a
+  scalar named by the output (so a plain decision drives an XOR condition
+  with zero ceremony); any other non-empty result commits as
+  `values.Array[data.Value]` of `values.Map[data.Value]` rows (the SRD-047
+  map/collection values — rows are first-class data) under the decision
+  reference. An empty result commits nothing. *Alternative — a
+  `resultVariable` attribute + explicit mapping mode on the task
+  (the Camunda shape):* deferred; the fold covers the common cases and a
+  result-variable option can be added compatibly later.
 - **§4.3 The dead `Implementation` field goes.** The stub's exported field
   was never constructible or read; ADR-027 §2.2 makes the implementation
   kind execution-time information (`re.RuleEngine().Type()`), reported in
@@ -152,9 +177,9 @@ Wiring points (FR-3, verified): `options.go:28` (config struct), `:326`
 
 | # | Test | Verifies |
 |---|---|---|
-| T-1 | `gorules` unit (`pkg/rules/gorules`) | FR-2: register/evaluate roundtrip; empty name, nil functor, duplicate rejected; unknown ref → classified error; `Type()` |
+| T-1 | `gorules` unit (`pkg/rules/gorules`) | FR-2: register/evaluate roundtrip (one-row result); nil row → empty result; empty name, nil functor, duplicate rejected; unknown ref → classified error; `Type()` |
 | T-2 | task model (`pkg/model/activities`) | FR-4: constructor validation (empty name/ref), `DecisionRef()`, `TaskType()`, `Clone` carries the ref, asserts compile |
-| T-3 | `Exec` against mock renv (`pkg/model/activities`) | FR-5: `Evaluate` called with the ref; result `Put` as a Ready parameter; a nil result commits nothing; an engine error fails the Exec |
+| T-3 | `Exec` against mock renv (`pkg/model/activities`) | FR-5: `Evaluate` called with the ref; 1×1 result `Put` as a scalar Ready parameter; a multi-row/multi-output result `Put` as the row list under the decision ref; an empty result commits nothing; an engine error fails the Exec |
 | T-4 | wiring (`pkg/thresher`) | FR-3: the default engine is `gorules`; `WithRuleEngine` overrides; `WithRuleEngine(nil)` rejected |
 | T-5 | e2e (`pkg/thresher`) | full path: a BRT evaluates a registered decision, the result routes an XOR downstream; instance completes |
 | T-6 | fault path (`pkg/thresher` or instance) | FR-5: a decision returning `BpmnError` is caught by an Error boundary on the BRT |
@@ -202,4 +227,4 @@ Wiring points (FR-3, verified): `options.go:28` (config struct), `:326`
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-07-22 | Ruslan Gabitov | Initial draft — lands ADR-027 v.1: `pkg/rules` (`Engine` + `DecisionFunc`), the bounded `gorules` registry default (`##GoRules`, fail-loud unknown refs), the five-point thresher/renv wiring (`WithRuleEngine`, `RuleEngine()` accessor, startup printout), and the Business Rule Task rebuilt to the house pattern (enum entry, `NewBusinessRuleTask(name, decisionRef)`, Exec = evaluate → Put → selectOutgoing; the dead exported `Implementation` field removed). Three milestones. |
+| v.1 | 2026-07-22 | Ruslan Gabitov | Initial draft — lands ADR-027 v.1: `pkg/rules` (`Engine` + `DecisionFunc`), the bounded `gorules` registry default (`##GoRules`, fail-loud unknown refs), the five-point thresher/renv wiring (`WithRuleEngine`, `RuleEngine()` accessor, startup printout), and the Business Rule Task rebuilt to the house pattern (enum entry, `NewBusinessRuleTask(name, decisionRef)`, Exec = evaluate → Put → selectOutgoing; the dead exported `Implementation` field removed). Three milestones. **DMN-minimal amendment** (same MR, pre-approval-of-M2): `Evaluate` returns `[]Row` (list of records), the task-side 1×1 scalar fold with row-list commit via the SRD-047 map/array values, the `Deployer` capability declared, `DecisionFunc` row-out; the Rule interface + Decision Table model deferred to the follow-up SRD per ADR-027 §2.4. |

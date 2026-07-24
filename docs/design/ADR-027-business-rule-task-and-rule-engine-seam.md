@@ -54,9 +54,10 @@ A new engine-level extension point, the **Business Rule Engine**:
 - **Interface**: a single evaluation method — *evaluate the named decision
   against the process-data context, return the decision result*. The input
   surface is the engine's read-only data reader (the same walk-up surface an
-  in-process Go operation receives); the output is **one structured result
-  value** (a single item — the engine's structural values, records/lists/
-  maps, carry arbitrarily shaped decision outputs). The engine also names its
+  in-process Go operation receives); the output is **the decision
+  result rows** — a list of records (output name → value), the DMN-universal
+  result shape: single-hit policies yield one row, multi-hit policies (Rule
+  Order, Collect) yield many. The engine also names its
   kind (the `##`-convention type string) for the task's `implementation`
   attribute and the startup-config printout.
 - **Placement**: a top-level engine-service package (the `WorkerDispatcher`
@@ -70,11 +71,19 @@ A new engine-level extension point, the **Business Rule Engine**:
   surface nodes already receive, and the startup-config line that makes the
   chosen engine operator-visible.
 
-*Why one method:* every extension precedent that aged well here is a thin,
-single-purpose interface (expression evaluation, clock, broker). A wide
-DMN-flavored surface (decision tables, hit policies, model management) would
-bake one vendor's model into the seam — exactly what N2 forbids. Deployment,
-versioning, and hit policies live behind the engine.
+*Why one evaluation method:* every extension precedent that aged well here
+is a thin, single-purpose interface (expression evaluation, clock, broker). A
+wide DMN-flavored surface (decision tables, hit policies, model management)
+would bake one vendor's model into the seam — exactly what N2 forbids.
+Versioning and hit policies live behind the engine.
+
+*The two-operation component contract.* The minimal DMN-engine component API
+is two operations — *deploy* (ingest and validate a decision definition,
+cache its executable form) and *evaluate*. The task-facing seam carries only
+evaluation — a task never deploys; deployment is the embedder's platform
+operation. It is honored as a sibling **Deployer capability** (deploy a
+definition artifact into the engine) that deployable engines implement
+beside the seam.
 
 ### 2.2 Decision addressing — a reference string, resolved by the engine
 
@@ -98,11 +107,15 @@ Exactly the standard's clause, realized on the existing task machinery:
   reference and the read surface. The call is synchronous from the token's
   point of view — the task's token waits exactly as it does for an
   in-process service operation.
-- **On return**: the result value is committed to process data through the
-  execution frame (the node-result path every task uses) — the result item's
-  name addresses the variable, so downstream nodes and gateway conditions
-  read it by the ordinary data walk-up. This is the result-variable mapping:
-  no special mapper, the frame commit *is* the mapping.
+- **On return**: the decision result rows are committed to process data
+  through the execution frame (the node-result path every task uses) with a
+  **fold**: exactly one row with exactly one output commits as a scalar
+  named by that output; any other non-empty result commits as a list of
+  row-records named by the decision reference. An empty result commits
+  nothing. Downstream nodes and gateway conditions read the outcome by the
+  ordinary data walk-up: no special mapper, the frame commit *is* the
+  result mapping (the standard is silent on the rule output's shape; the
+  fold is an engine choice, mirroring mainstream engines' result-mapping).
 - **On failure**: an evaluation error fails the task through the ordinary
   fault path — a typed business error travels the Error machinery (boundary,
   scope chain) like any activity failure; an unknown decision reference is a
@@ -114,8 +127,9 @@ Exactly the standard's clause, realized on the existing task machinery:
 ### 2.4 Batteries included — the in-core default engine
 
 The bundled default is a **decision registry**: the embedder registers named
-decisions as Go functions (the read-surface-in, structured-value-out shape —
-the "gooper of rules"). Properties:
+decisions as Go functions (the read-surface-in, row-out shape — the "gooper
+of rules"). A function registry is a single implicit hit: a decision yields
+at most one row. Properties:
 
 - **Small and bounded**: a static map populated only by explicit
   registration — no growth at runtime, satisfying ADR-002's bounded-default
@@ -128,8 +142,18 @@ the "gooper of rules"). Properties:
   makes the Business Rule Task testable and example-able with zero external
   dependencies.
 - **Replaceable wholesale**: an embedder wires a DMN adapter (or any rules
-  service client) through the same one-method interface; the task and the
+  service client) through the same evaluation interface; the task and the
   model are untouched by the swap.
+
+The **table-shaped tier** — the minimal Decision Table model: hit policies
+(Unique, First, Any, Rule Order, Collect), input expressions, output names,
+and rules — is deferred to its own conception. One thing about it is decided
+here: **a rule is a behavior contract, not a data row** — an interface
+(*match against the input context, yield outputs*), so rule kinds (Go
+predicates first; compiled definition rows once deployment lands) swap
+freely, while the table that holds them stays declarative data. The seam
+already accommodates that tier: its result shape is rows, and the component
+contract (deploy + evaluate) names the ingestion half.
 
 ### 2.5 Script Task — the Script Engine will be pluggable too; conception deferred
 
@@ -150,7 +174,9 @@ seam is its template.
 |---|---|---|
 | Decision reference on the task | the base metamodel defines no decision binding (only `implementation`) | an opaque `decisionRef` string resolved by the configured engine — the vendor-extension slot made explicit (§2.2) |
 | `implementation` value | a free string hint (`##WebService`, `##Unspecified`) | the configured engine's `##`-kind, reported at execution (§2.2) |
-| Result shape | silent (the rule's output is unspecified) | one structured result item committed to process data under its name (§2.3) |
+| Result shape | silent (the rule's output is unspecified) | a list of records (rows), the DMN-universal shape; the task folds a 1-row/1-output result to a scalar, else commits the row list under the decision reference (§2.3) |
+| Deployment | the DMN component API implies deploy of decision models | a Deployer capability beside the seam; the task never deploys (§2.1) |
+| Rule representation | DMN models rules as table rows (data) | a behavior contract — an interface (match + yield); the enclosing table stays data; declaration rides the table-engine conception (§2.4) |
 | Rule-engine binding | open ("typical wiring is to DMN") | the pluggable `rules.Engine` seam; DMN stays external per SAD-001 N2 (§2.1) |
 | Default engine | — | the in-core Go decision registry, batteries included (§2.4) |
 
@@ -181,9 +207,18 @@ seam is its template.
   default philosophy. Fail-loud lives one level down instead: an
   *unregistered decision* is a classified error.
 - **A DMN-shaped wide interface** (decision tables, hit policies, model
-  deployment on the seam). Rejected — bakes one vendor model into a permanent
+  management on the seam). Rejected — bakes one vendor model into a permanent
   engine surface; N2 keeps DMN external, and everything beyond
-  evaluate-by-reference belongs behind the adapter.
+  evaluate-by-reference belongs behind the adapter. The minimal two-operation
+  component API (deploy + evaluate) is honored instead by the capability
+  split: evaluation on the task-facing seam, deployment on the optional
+  Deployer contract (§2.1).
+- **Rules as data structs at the model level.** Rejected for the conception:
+  a rule's condition encoding is the part that keeps changing (Go predicates,
+  compiled definition rows, expression-layer conditions); freezing it as a
+  struct bakes one encoding in. A rule is an interface (match + yield); the
+  *table* stays data (§2.4) — the same polymorphism that keeps the
+  ServiceTask's Operation open.
 - **Placing the seam under `pkg/model`** (the `expression` precedent).
   Rejected: expression evaluation interprets a BPMN-modeled artifact
   (`FormalExpression`); a business rule is deliberately *not* modeled by the
@@ -210,4 +245,4 @@ the other GlobalTask variants.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-07-22 | Ruslan Gabitov | Draft conception. The Business Rule Task executes the standard's minimal clause (§13.3.3 — call on activation, complete on return) against a **pluggable Business Rule Engine seam** in the ADR-002 shape: a one-method, industry-tight `rules.Engine` interface (evaluate a **decision reference** against the read-only data surface → one structured result item), wired through the five-point extension pattern (config field, default, injection option, runtime accessor, startup printout). **Batteries included**: the in-core default is a bounded Go **decision registry** (named Go decision functions — useful, testable, zero external deps); any DMN/rules service replaces it wholesale behind the same interface (SAD-001 N2 keeps DMN external). Decision addressing by opaque ref and the single-result shape are explicit engine choices (the base metamodel is silent). Result commit rides the ordinary frame path; failures ride the ordinary fault machinery. Script Engine decided pluggable as well (same interface-plus-default shape); its conception deferred to the script/expression workstream, with this seam as the template. Standard-grounded against the vendored extract (§13.3.3, §10.2.5 model, the `##`-hint convention). Implementation rides the accompanying SRD. |
+| v.1 | 2026-07-22 | Ruslan Gabitov | Draft conception. The Business Rule Task executes the standard's minimal clause (§13.3.3 — call on activation, complete on return) against a **pluggable Business Rule Engine seam** in the ADR-002 shape: a one-method, industry-tight `rules.Engine` interface (evaluate a **decision reference** against the read-only data surface → one structured result item), wired through the five-point extension pattern (config field, default, injection option, runtime accessor, startup printout). **Batteries included**: the in-core default is a bounded Go **decision registry** (named Go decision functions — useful, testable, zero external deps); any DMN/rules service replaces it wholesale behind the same interface (SAD-001 N2 keeps DMN external). Decision addressing by opaque ref and the single-result shape are explicit engine choices (the base metamodel is silent). Result commit rides the ordinary frame path; failures ride the ordinary fault machinery. Script Engine decided pluggable as well (same interface-plus-default shape); its conception deferred to the script/expression workstream, with this seam as the template. **DMN-minimal component contract**: Evaluate returns the decision result rows (a list of records) with the task-side 1×1 scalar fold; deployment is a Deployer capability beside the seam (the task never deploys); a rule is decided to be a behavior interface (match + yield) under a data-declared table, its declaration deferred to the table-engine conception. Standard-grounded against the vendored extract (§13.3.3, §10.2.5 model, the `##`-hint convention). Implementation rides the accompanying SRD. |
