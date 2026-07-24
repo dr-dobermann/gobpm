@@ -24,6 +24,10 @@ type ActivityNode interface {
 type TaskType string
 
 const (
+	// BusinessRuleTask represents a BPMN business rule task: it calls a
+	// decision on the configured Business Rule Engine and commits the result
+	// to process data.
+	BusinessRuleTask TaskType = "BusinessRuleTask"
 	// ReceiveTask represents a BPMN receive task.
 	ReceiveTask TaskType = "ReceiveTask"
 	// ScriptTask represents a BPMN script task.

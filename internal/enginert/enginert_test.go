@@ -7,6 +7,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/clock/clocktest"
 	"github.com/dr-dobermann/gobpm/pkg/model/expression/goexpr"
+	"github.com/dr-dobermann/gobpm/pkg/rules/gorules"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 	"github.com/dr-dobermann/gobpm/pkg/tasks/localdispatcher"
 )
@@ -17,7 +18,7 @@ func TestDefaultPopulatesEveryExtension(t *testing.T) {
 	if r.Logger() == nil || r.Tracer() == nil || r.MetricsRecorder() == nil ||
 		r.Clock() == nil || r.Repository() == nil || r.MessageBroker() == nil ||
 		r.ExpressionEngine() == nil || r.AuthorizationProvider() == nil ||
-		r.WorkerDispatcher() == nil {
+		r.WorkerDispatcher() == nil || r.RuleEngine() == nil {
 		t.Fatal("Default left an extension nil")
 	}
 }
@@ -39,10 +40,12 @@ func TestDefaultRuntimeWorkerDispatcherIsJobStore(t *testing.T) {
 func TestOverrides(t *testing.T) {
 	c := clocktest.New(time.Unix(0, 0))
 	e := goexpr.New()
+	re := gorules.New()
 
 	l := slog.Default()
 
-	r := Default().WithClock(c).WithExpressionEngine(e).WithLogger(l)
+	r := Default().WithClock(c).WithExpressionEngine(e).WithLogger(l).
+		WithRuleEngine(re)
 
 	if r.Clock() != c {
 		t.Fatal("WithClock was not applied")
@@ -54,6 +57,14 @@ func TestOverrides(t *testing.T) {
 
 	if r.Logger() != l {
 		t.Fatal("WithLogger was not applied")
+	}
+
+	if r.RuleEngine() != re {
+		t.Fatal("WithRuleEngine was not applied")
+	}
+
+	if Default().WithRuleEngine(nil).RuleEngine() == nil {
+		t.Fatal("a nil rule engine should be ignored (default kept)")
 	}
 }
 

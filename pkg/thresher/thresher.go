@@ -305,6 +305,7 @@ func (t *Thresher) logStartupConfig() {
 		module("expressionEngine", t.cfg.exprEngine)
 		module("authorizationProvider", t.cfg.authz)
 		module("workerDispatcher", t.cfg.dispatcher)
+		module("ruleEngine", t.cfg.ruleEngine)
 
 		printed = true
 	}

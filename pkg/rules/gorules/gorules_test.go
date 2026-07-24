@@ -9,7 +9,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
-	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/rules"
 	"github.com/dr-dobermann/gobpm/pkg/rules/gorules"
@@ -56,7 +55,7 @@ func readyData(name string, v any) data.Data {
 func doubler(
 	_ context.Context,
 	r service.DataReader,
-) (*data.ItemDefinition, error) {
+) (rules.Row, error) {
 	d, err := r.GetData("in")
 	if err != nil {
 		return nil, err
@@ -67,9 +66,7 @@ func doubler(
 		return nil, errs.New(errs.M("not an int"))
 	}
 
-	return data.MustItemDefinition(
-		values.NewVariable(v*2),
-		foundation.WithID("result")), nil
+	return rules.Row{"result": values.NewVariable(v * 2)}, nil
 }
 
 func TestRegister(t *testing.T) {
@@ -124,15 +121,16 @@ func TestType(t *testing.T) {
 func TestEvaluate(t *testing.T) {
 	reg := gorules.New().MustRegister("double", doubler)
 
-	t.Run("roundtrip",
+	t.Run("roundtrip yields a one-row result",
 		func(t *testing.T) {
-			out, err := reg.Evaluate(
+			rows, err := reg.Evaluate(
 				context.Background(), "double",
 				stubReader{readyData("in", 21)})
 			require.NoError(t, err)
-			require.NotNil(t, out)
-			require.Equal(t, "result", out.ID())
-			require.Equal(t, 42, out.Structure().Get(context.Background()))
+			require.Len(t, rows, 1)
+			require.Len(t, rows[0], 1)
+			require.Equal(t, 42,
+				rows[0]["result"].Get(context.Background()))
 		})
 
 	t.Run("empty reference rejected",
@@ -165,7 +163,7 @@ func TestEvaluate(t *testing.T) {
 					func(
 						_ context.Context,
 						_ service.DataReader,
-					) (*data.ItemDefinition, error) {
+					) (rules.Row, error) {
 						return nil, errs.New(errs.M("inner failure"))
 					})
 
@@ -177,22 +175,22 @@ func TestEvaluate(t *testing.T) {
 			require.Contains(t, err.Error(), "boom")
 		})
 
-	t.Run("nil result with nil error is legal",
+	t.Run("nil row with nil error is an empty result",
 		func(t *testing.T) {
 			silent := gorules.New().
 				MustRegister("silent",
 					func(
 						_ context.Context,
 						_ service.DataReader,
-					) (*data.ItemDefinition, error) {
+					) (rules.Row, error) {
 						return nil, nil
 					})
 
-			out, err := silent.Evaluate(
+			rows, err := silent.Evaluate(
 				context.Background(), "silent",
 				stubReader{readyData("in", 1)})
 			require.NoError(t, err)
-			require.Nil(t, out)
+			require.Empty(t, rows)
 		})
 }
 

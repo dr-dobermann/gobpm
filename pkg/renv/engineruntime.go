@@ -13,6 +13,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/expression"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/repository"
+	"github.com/dr-dobermann/gobpm/pkg/rules"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
@@ -30,6 +31,11 @@ type EngineRuntime interface {
 	ExpressionEngine() expression.Engine
 	AuthorizationProvider() auth.AuthorizationProvider
 	WorkerDispatcher() tasks.WorkerDispatcher
+
+	// RuleEngine returns the configured Business Rule Engine the Business
+	// Rule Task evaluates its decisions on (ADR-027 v.1 §2.1). Never nil —
+	// absent an override, the bundled gorules decision registry is wired.
+	RuleEngine() rules.Engine
 
 	// Reporter returns the engine's observable-event sink (ADR-013 v.2
 	// §2.7): the single producer that writes the operator-log echo and fans

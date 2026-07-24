@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/rules"
 )
@@ -94,12 +93,14 @@ func (reg *Registry) Type() string {
 }
 
 // Evaluate runs the decision registered under decisionRef against the data
-// reader. An unregistered reference is a classified error.
+// reader. A function registry is a single implicit hit: a non-nil row wraps
+// as a one-row result, a nil row as an empty one. An unregistered reference
+// is a classified error.
 func (reg *Registry) Evaluate(
 	ctx context.Context,
 	decisionRef string,
 	r service.DataReader,
-) (*data.ItemDefinition, error) {
+) ([]rules.Row, error) {
 	if decisionRef == "" {
 		return nil, errs.New(
 			errs.M("Evaluate: an empty decision reference isn't allowed"),
@@ -124,7 +125,7 @@ func (reg *Registry) Evaluate(
 			errs.D("decision_ref", decisionRef))
 	}
 
-	out, err := d(ctx, r)
+	row, err := d(ctx, r)
 	if err != nil {
 		return nil, errs.New(
 			errs.M("decision evaluation failed"),
@@ -133,5 +134,9 @@ func (reg *Registry) Evaluate(
 			errs.D("decision_ref", decisionRef))
 	}
 
-	return out, nil
+	if row == nil {
+		return nil, nil
+	}
+
+	return []rules.Row{row}, nil
 }

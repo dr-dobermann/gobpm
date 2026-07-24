@@ -19,6 +19,8 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 	"github.com/dr-dobermann/gobpm/pkg/repository"
 	"github.com/dr-dobermann/gobpm/pkg/repository/memrepo"
+	"github.com/dr-dobermann/gobpm/pkg/rules"
+	"github.com/dr-dobermann/gobpm/pkg/rules/gorules"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 	"github.com/dr-dobermann/gobpm/pkg/tasks/localdispatcher"
 )
@@ -34,11 +36,12 @@ type thresherConfig struct {
 	msgBroker             messaging.MessageBroker
 	tracer                observability.Tracer
 	exprEngine            expression.Engine
+	ruleEngine            rules.Engine
 	logger                observability.Logger
 	authz                 auth.AuthorizationProvider
 	workerRetryPolicy     tasks.RetryPolicy
 	taskDist              interactor.TaskDistributor
-	reporter               observability.Reporter
+	reporter              observability.Reporter
 	workerTrustDefault    tasks.TrustMode
 	suppressBanner        bool
 	suppressStartupConfig bool
@@ -201,6 +204,22 @@ func WithWorkerDispatcher(d tasks.WorkerDispatcher) Option {
 	}
 }
 
+// WithRuleEngine sets the Business Rule Engine the Business Rule Task
+// evaluates its decisions on (default: the in-core gorules decision registry).
+func WithRuleEngine(e rules.Engine) Option {
+	return func(c *thresherConfig) error {
+		if e == nil {
+			return errs.New(
+				errs.M("WithRuleEngine: a nil rules.Engine isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		c.ruleEngine = e
+
+		return nil
+	}
+}
+
 // WithWorkerErrorMapper sets the engine-wide default ErrorMapper applied to a
 // worker-dispatched ServiceTask's raw fault when it carries no per-service
 // activities.WithErrorMapper (SRD-037 FR-3, two-level config).
@@ -285,6 +304,7 @@ func (c *thresherConfig) Clock() clock.Clock                             { retur
 func (c *thresherConfig) Repository() repository.Repository              { return c.repository }
 func (c *thresherConfig) MessageBroker() messaging.MessageBroker         { return c.msgBroker }
 func (c *thresherConfig) ExpressionEngine() expression.Engine            { return c.exprEngine }
+func (c *thresherConfig) RuleEngine() rules.Engine                       { return c.ruleEngine }
 
 func (c *thresherConfig) AuthorizationProvider() auth.AuthorizationProvider {
 	return c.authz
@@ -326,6 +346,7 @@ func defaultConfig() thresherConfig {
 		exprEngine: goexpr.New(),
 		authz:      allowall.New(),
 		dispatcher: localdispatcher.New(nil, 0),
+		ruleEngine: gorules.New(),
 		taskDist:   interactor.NopDistributor(),
 	}
 }
