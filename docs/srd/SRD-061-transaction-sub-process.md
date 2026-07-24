@@ -2,11 +2,11 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-07-23 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-028 v.1](../design/ADR-028-transaction-sub-process.md) §2.1–§2.9 (the Transaction variant + the loop-local Cancel abort); epic #91 |
-| Upstream | [ADR-026 v.1](../design/ADR-026-compensation-events.md) §2.2/§2.4 (the completion ledger + reverse-order sweep the abort consumes in wait mode), [ADR-023 v.3](../design/ADR-023-sub-process-and-call-activity.md) §2.5 (the scope-wide cancel + `terminateScope` loop-local resolution this mirrors), [ADR-018 v.1](../design/ADR-018-boundary-events-and-activity-interruption.md) §2.7 (the Cancel boundary trigger this un-defers), [ADR-006 v.4](../design/ADR-006-events-and-subscriptions.md) (the `CancelEventDefinition` + direct-resolution class), [ADR-013 v.2](../design/ADR-013-instance-observability.md) (the `Cancelling`/`Cancelled` phases), [ADR-001 v.6](../design/ADR-001-execution-model.md) §4 (the single-writer loop) |
+| Upstream | [ADR-026 v.1](../design/ADR-026-compensation-events.md) §2.2/§2.4 (the completion ledger + reverse-order sweep the abort consumes in wait mode), [ADR-023 v.3](../design/ADR-023-sub-process-and-call-activity.md) §2.5 (the scope-wide cancel + `terminateScope` loop-local resolution this mirrors), [ADR-018 v.1](../design/ADR-018-boundary-events-and-activity-interruption.md) §2.7 (the Cancel boundary trigger this un-defers), [ADR-006 v.4](../design/ADR-006-events-and-subscriptions.md) (the `CancelEventDefinition` + direct-resolution class), [ADR-013 v.2](../design/ADR-013-instance-observability.md) (the `KindScope`/`PhaseCanceled` fact the abort reports; the phase set is open), [ADR-001 v.6](../design/ADR-001-execution-model.md) §4 (the single-writer loop) |
 | Refines | — |
 | Related | SRD-059 (compensation ledger + sweep this reuses), SRD-049 (scoped Terminate — the loop-local End-event resolution this mirrors), SRD-052 (the Event Sub-Process marker + shape-rule pattern) |
 
@@ -79,27 +79,35 @@ ADR-026 §2.9 follow-up, orthogonal to Transaction).
 - **FR-5 — the abort sequence (order is load-bearing).** The loop handler aborts
   the Transaction scope in order (ADR-028 §2.3):
   1. **Compensate completed** — start the ADR-026 scope-wide sweep in **wait
-     mode** over the Transaction scope's ledger (reverse completion order); the
-     aborting track **parks** until `finishSweep` resumes it — so every
+     mode** over the Transaction scope's ledger (reverse completion order),
+     tagged with the Transaction host (`compSweep.txHost`). The Transaction
+     scope is flagged **aborting** so a residual track draining to zero
+     mid-sweep does not resume the host normally (`decScope`) — the finalize
+     owns the teardown, driven off the sweep's own completion, so every
      compensation handler runs **before** the abort proceeds (the ACID-like
      barrier).
-  2. **Terminate running** — `cancelScope(transactionPath, PhaseCancelling)` tears
-     down the residual live tracks under the Transaction scope. This runs
-     **after** the sweep, so the sweep's ledger is intact when consumed and the
-     residual (never-completed) tracks are simply terminated.
-  3. **Leave via the Cancel boundary** — the Transaction host resumes on the
-     Cancel boundary's outgoing flow; the Transaction scope closes, reported
-     `Cancelled`.
+  2. **Terminate running** — when the sweep drains, `finishSweep` routes to
+     `finalizeTransaction`, which calls `cancelScope(transactionPath,
+     PhaseCanceled)` to tear down the residual live tracks under the Transaction
+     scope. This runs **after** the sweep, so the sweep's ledger is intact when
+     consumed and the residual (never-completed) tracks are simply terminated.
+  3. **Leave via the Cancel boundary** — the Transaction **host** is routed onto
+     the Cancel boundary's outgoing flow (`cancelBoundaryOn`); the Transaction
+     scope closes, reported `Canceled`.
 - **FR-6 — the Cancel boundary is a model-declared exit, not a hub waiter.** The
   Cancel boundary is **not** armed as a hub subscription (ADR-028 §2.4). The abort
   handler routes the host onto the boundary's single outgoing flow directly
   (the boundary supplies the exit path; the loop drives it). A Transaction with
-  **no** Cancel boundary aborts to no outgoing token — the parent continues past
-  it (the boundary-less scoped-Terminate shape, SRD-049 FR-11).
-- **FR-7 — observability.** The abort reports the Transaction scope
-  `Cancelling` → `Cancelled` (ADR-013 v.2 phases); each compensation runs through
-  the existing `KindCompensation` facts (SRD-059); the terminated residual tracks
-  report `Cancelled`.
+  **no** Cancel boundary aborts to no outgoing token — the host is torn down and
+  no token continues; the instance settles if no other work remains. Unlike a
+  scoped Terminate, the host does **not** resume on its normal outgoing (the
+  Transaction did not complete) — Camunda-aligned.
+- **FR-7 — observability.** The abort reports the Transaction scope `Canceled`
+  (`KindScope`/`PhaseCanceled`, at teardown — consistent with every sibling
+  scope-cancel); each compensation runs through the existing `KindCompensation`
+  facts (SRD-059), whose `Thrown` fact marks the abort's start. No new phase
+  constant — the existing `PhaseCanceled` covers it (ADR-013 v.2 keeps the
+  scope-phase set open), so no observability-contract bump.
 
 ### Non-functional
 
@@ -139,18 +147,28 @@ ADR-026 §2.9 follow-up, orthogonal to Transaction).
 ### §3.2 Runtime deltas (`internal/instance/`)
 
 - **`event.go`** — a new `evTransactionCancel` track-event kind (sibling of
-  `evScopeTerminate`), carrying the aborting track + the Transaction scope path.
-- **`transaction.go` (new)** — the abort handler: `cancelTransaction(ctx, track,
-  txPath)` — resolve the Transaction scope, start the wait-mode sweep
-  (`applyCompensate`-shaped, ref="" scope-wide), park the track; on the sweep's
-  `finishSweep` resume, `cancelScope(txPath, PhaseCancelling)` then route the host
-  onto its Cancel boundary's outgoing (or none). Plus `enclosingTransaction(track)`
-  — walk the scope tree up to the nearest `IsTransaction` host.
-- **`end.go` execution / the loop's End-event handling** — a Cancel End Event
-  emits `evTransactionCancel` instead of the normal end-of-track completion, the
-  way a scoped Terminate emits `evScopeTerminate`.
-- **`cancelScope`** — reused as-is for the terminate-running step; a `PhaseCancelling`
-  observability phase distinguishes the transaction teardown.
+  `evScopeTerminate`), carrying the aborting track (its `scopePath` is the
+  Transaction scope, since a Cancel End Event lies directly in it).
+- **`pkg/renv` + `execenv.go`** — `Cancel()` on `RuntimeEnvironment`; `execEnv.Cancel`
+  emits `evTransactionCancel` (no root check — a Cancel End is Transaction-scoped).
+- **`end.go`** — `EndEvent.Exec` dispatches a Cancel trigger to `re.Cancel()`,
+  checked before the emit loop (a Cancel End wins and emits nothing, like
+  Terminate).
+- **`transaction.go` (new)** — `cancelTransaction(ctx, t)` resolves the
+  Transaction scope from `t.scopePath`, flags it **aborting**, and starts the
+  wait-mode `collectCompensation(path, "")` sweep tagged with `txHost`;
+  `finalizeTransaction(ctx, sweep)` (driven by `finishSweep` when the sweep
+  drains) `cancelScope`s the residuals then routes the host onto the Cancel
+  boundary's outgoing; `cancelBoundaryOn(node)` finds that boundary.
+- **`compensation_watch.go`** — `compSweep.txHost`; `finishSweep` routes a
+  txHost-tagged sweep to `finalizeTransaction` instead of resuming a thrower.
+- **`scope_runtime.go`** — `scopeEntry.aborting`; `decScope` returns without
+  completing an aborting scope.
+- **`loop.go`** — `applyScopeAbort` dispatches `evScopeTerminate` /
+  `evTransactionCancel` (one grouped case, keeping `apply` under the gocyclo
+  limit).
+- **`boundary_watch.go`** — `armBoundaries` skips `TriggerCancel` from hub
+  registration (the Error/Escalation/Compensation direct-resolution class).
 
 ## §4 Analysis
 
@@ -246,20 +264,49 @@ the diagram (the abort's exit is visible and routable), not as a runtime waiter.
 - Conformance tracker row 3 advanced (Transaction ✅; `CancelEventDefinition`
   execution ✅); CHANGELOG `[Unreleased]`; guide note; README EN+RU.
 - `/check-srd` PASS. ADR-028 flips **Accepted** with this landing; ADR-018 §2.7 /
-  ADR-023 §2.9 link-annotated.
+  ADR-023 §2.8 link-annotated.
 
 ## §10 Implementation summary
-
-> ⚠️ TODO: fill AFTER landing — stage commits, empirical deltas vs this draft, backlog.
 
 ### §10.1 Stages by commit (branch `feat/transaction-subprocess`)
 
 | Stage | Commit | Scope | Tests |
 |---|---|---|---|
+| M1 (model) | `580c9e5` | `WithTransaction()`/`IsTransaction()`; Cancel End + Cancel-boundary shape rules; validation (Cancel-only-in-Transaction, Cancel-boundary-only-on-Transaction, no nested Transaction) | `TestTransactionMarkerAndShapeRules`, `TestValidateCancelEndPlacement`, `TestCancelBoundaryRules`, `TestProcessRejectsTopLevelCancelEnd` |
+| M2 (runtime) | `be51edd` | `renv.Cancel` + `end.go` Cancel dispatch; `evTransactionCancel`; `execEnv.Cancel`; `applyScopeAbort`; `transaction.go` (`cancelTransaction` / `finalizeTransaction` / `cancelBoundaryOn`); `compSweep.txHost`; `scopeEntry.aborting` + `decScope` guard; `armBoundaries` Cancel-skip | `TestTransactionCancelAbort` / `…NoBoundary` / `…NoCompensation` / `…AbortGuards`; `TestEndEventCancelWins` |
+| M3 (e2e + example) | `b165c3a` | thresher e2e; `examples/transaction-sub-process/` | `TestTransactionCancelE2E` |
+
+`make ci` green on the landing: diff-coverage 99.0% of 193 changed lines (min
+95%), `-race` clean, govulncheck clean, all modules.
 
 ### §10.2 Empirical findings vs the draft
 
+- **The abort holds the scope, not the aborting track.** The draft (FR-5) parked
+  the aborting Cancel-End track and resumed it via `finishSweep`. Empirically the
+  aborting track lives *inside* the doomed scope — `cancelScope` tears it down, so
+  resuming it is meaningless; the **host** is the continuation. Implemented as a
+  `scopeEntry.aborting` flag: `decScope` returns without completing an aborting
+  scope, so a residual draining to zero mid-sweep cannot resume the host normally,
+  and `finalizeTransaction` (driven off the sweep) owns the teardown + host
+  routing. Same behavior, cleaner mechanism, single-writer preserved.
+- **No `enclosingTransaction` walk-up.** A Cancel End Event lies *directly* in the
+  Transaction scope (validated), so `cancelTransaction` resolves it as
+  `t.scopePath` — no scope-tree walk.
+- **No-boundary shape is Camunda-aligned, not scoped-Terminate.** The draft (FR-6)
+  said the parent "continues past" a boundary-less Transaction. Empirically the
+  host is torn down with **no** continuation (the Transaction did not complete, so
+  it does not resume on its normal outgoing) — corrected in FR-6.
+- **No new observability phase (Option A).** The abort reuses `KindScope` /
+  `PhaseCanceled` (every sibling cancel already emits it) + the `KindCompensation`
+  sweep facts — avoiding an ADR-013 flip.
+
 ### §10.3 Backlog
+
+- **Deep (recursive) scope compensation on abort** — `collectCompensation` is
+  single-level (exact scope), so a Transaction containing nested sub-processes
+  compensates one level; recursive descent is the ADR-026 §2.9 follow-up.
+- `store` / `image` transaction outcomes, nested Transactions, and error-driven
+  presumed-abort auto-compensation stay designed-for, out of scope per ADR-028.
 
 ## Open questions
 

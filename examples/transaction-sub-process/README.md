@@ -15,18 +15,16 @@ booking = start → [reserve-seat] → [charge-card] → cancel-booking (Cancel 
 ```mermaid
 flowchart LR
     start((start)) --> booking[booking Transaction]
-    booking --> end((end))
-    booking -.->|cancel-bnd ⚡| notify[notify-customer]
+    booking --> done((end))
+    booking -.->|cancel-bnd| notify[notify-customer]
     notify --> cxEnd((cx-end))
-    subgraph booking
-        sStart((s-start)) --> reserve[reserve-seat]
-        reserve --> charge[charge-card]
-        charge --> cancelBooking(("cancel-booking<br>Cancel End"))
-        reserve -.- compReserve((comp-reserve))
-        compReserve -.-> release["release-seat<br>isForCompensation"]
-        charge -.- compCharge((comp-charge))
-        compCharge -.-> refund["refund-card<br>isForCompensation"]
-    end
+    sStart((s-start)) --> reserve[reserve-seat]
+    reserve --> charge[charge-card]
+    charge --> cancelBooking(("cancel-booking<br>Cancel End"))
+    reserve -.- compReserve((comp-reserve))
+    compReserve -.-> release["release-seat<br>isForCompensation"]
+    charge -.- compCharge((comp-charge))
+    compCharge -.-> refund["refund-card<br>isForCompensation"]
 ```
 
 `reserve-seat` and `charge-card` complete and enter the Transaction scope's

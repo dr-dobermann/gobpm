@@ -240,7 +240,13 @@ scope's work, runs in the parent's data context, and absorbs the event so the
 parent resumes on its normal flow; a **non-interrupting** one instead **forks**
 — it spawns a concurrent handler instance per fire without cancelling, unlimited
 —
-[`examples/event-subprocess/`](examples/event-subprocess/).
+[`examples/event-subprocess/`](examples/event-subprocess/). A **Transaction
+Sub-Process** (`WithTransaction`) is a Sub-Process variant that aborts
+atomically on a **Cancel End Event** — it compensates the completed activities
+(reverse completion order, as an ACID-like barrier), terminates the rest, and
+hands control out through its interrupting **Cancel boundary** (a Transaction
+with no Cancel boundary ends there) —
+[`examples/transaction-sub-process/`](examples/transaction-sub-process/).
 
 Any activity can carry **iteration**
 ([**docs/guides/iteration.md**](docs/guides/iteration.md)): a **Standard Loop**

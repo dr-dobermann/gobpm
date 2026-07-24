@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Transaction Sub-Process (SRD-061, ADR-028 — #91).** A Sub-Process variant
+  (`WithTransaction()`) that aborts atomically on a **Cancel End Event** — the
+  ACID-style all-or-nothing unit. Reaching a Cancel End inside a Transaction
+  aborts it in a fixed, load-bearing order (ADR-028 §2.3): **compensate** the
+  completed activities (the ADR-026 scope-wide sweep, reverse completion order,
+  as an ACID-like barrier), **terminate** the ones still running, then **leave**
+  through the Transaction's interrupting **Cancel boundary** — a Transaction
+  with no Cancel boundary ends there (Camunda-aligned). The order is enforced by
+  the ledger-survival rule: the teardown discards the very completion ledger the
+  sweep consumes, so the sweep runs first. Cancel is a **direct-resolution
+  event**: the loop resolves it loop-locally, never through the EventHub
+  (mirroring the scoped Terminate). A Cancel End Event and a Cancel boundary are
+  legal **only** on a Transaction (validated at registration); a nested
+  Transaction is rejected. New `Cancel()` on `renv.RuntimeEnvironment`,
+  `WithTransaction()` / `IsTransaction()`, the Cancel boundary (always
+  interrupting — un-defers ADR-018 §2.7), and `examples/transaction-sub-process/`
+  (a booking saga that cancels). Observability reuses `KindScope`/`Canceled` +
+  the `KindCompensation` sweep facts (no new phase). Deep (recursive) scope
+  compensation, `store`/`image`, and Ad-Hoc stay out of scope per ADR-028.
+
 - **Compensation events (SRD-059, ADR-026 v.1 — #90, closing the epic).**
   Undoing work that already **completed successfully** — the saga pattern in
   BPMN form. Each open scope keeps a **completion ledger**: compensable
