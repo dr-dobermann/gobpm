@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-25 |
 | Owner | Ruslan Gabitov |
@@ -201,7 +201,36 @@ block in `pkg/renv/engineruntime.go`, the builder/accessor pair in
 
 ## §10 Implementation summary
 
-*Filled at landing.*
+Landed on `feat/script-task` in three milestones (after the doc commits
+`a322c39` ADR-031 / `1fb9836` this SRD):
+
+- **M1 `b309789` — `pkg/script`.** The Engine contract (`##`-kind,
+  enumerable `Formats()`, `Execute` → `Outputs`) and the Registry router
+  (case-normalized claim map; loud duplicate-claim errors naming both
+  kinds; `##None` empty default with the wire-an-adapter message;
+  unclaimed formats listing the claims; `EngineFor` for fact
+  attribution). Coverage 100.0%.
+- **M2 `089cefe` — the task + wiring + facts.** `KindScript` +
+  `PhaseExecuted` + the format/count attrs (Failed@Warn);
+  `EngineRuntime.ScriptEngine()`; the repeatable `WithScriptEngine` with
+  the registry built (and conflicts surfacing) in `thresher.New`; the
+  startup routing table; `enginert.WithScriptRegistry`; the rebuilt
+  `ScriptTask` (required name/format/script; sorted per-name commits via
+  `ReadyValueParameter`; routed-kind fact attribution). Alignment
+  housekeeping the new field surfaced (thresherConfig/Thresher order, a
+  stale nolint dropped).
+- **M3 `144ad95` — e2e + seam doc sync.** Two-engine live routing
+  (case-insensitive), unclaimed-format and `##None` faults surfaced
+  through `WaitCompletion`, fact attribution per format; CHANGELOG;
+  conformance row 5 → "seam landed" (the flip rides SRD-065).
+
+**Verification:** post-commit `make ci` exit 0; **diff-coverage 98.6% of
+211 changed coverable lines** (min 95; `script_task.go`/`registry.go`/
+`options.go`/`thresher.go` all 100%); full `-race` suite green;
+golangci-lint 0 issues; 0 `Must*` calls in the new library code (the
+muststyle guard covers `pkg/script`).
+
+**Delta vs draft:** none — the landed shapes match §3.
 
 ## Open questions
 
@@ -211,4 +240,5 @@ block in `pkg/renv/engineruntime.go`, the builder/accessor pair in
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.1 (Accepted) | 2026-07-25 | Ruslan Gabitov | Landed and accepted — §10 filled (M1 `b309789`, M2 `089cefe`, M3 `144ad95`); ADR-031 flips with SRD-065's landing. |
 | v.1 | 2026-07-25 | Ruslan Gabitov | Initial draft — lands ADR-031's core half: `pkg/script` (`Engine` with enumerable `Formats()`, `Outputs`, the `Registry` router — loud claim conflicts, `##None` empty default, unclaimed-format errors listing the claims), the registry-shaped five-point wiring (repeatable `WithScriptEngine`, conflicts surfacing in `thresher.New`, per-format startup routing lines, `enginert.WithScriptRegistry`), the ScriptTask rebuilt (required name/format/script, per-name sorted output commits via `ReadyValueParameter`), and `KindScript` facts (`Executed`/`Failed`, format/kind/count details). Three milestones; the Lua interpreter, the example, and the row-5 flip ride SRD-065. |
