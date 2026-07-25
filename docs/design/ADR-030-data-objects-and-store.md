@@ -48,14 +48,13 @@ flowchart TB
 - A **SubProcess-level** DataObject is seeded into the **child scope when that scope opens** and disposed when it **closes** (the open/close the engine already drives).
 - **Accessibility** follows the scope tree — parent + descendants via walk-up — matching §10.4.1's "parent + siblings + their children."
 
-### 2.3 Additive coexistence with DataAssociations
+### 2.3 DataObject data flow unifies through the scope
 
-Scope-residence is **added alongside** the existing object-to-object association flow; it does **not** replace it. A DataObject may be:
+A DataObject's data flow goes through the **scope data plane, keyed by the DataObject's name** — the same plane every other value uses — not a side-channel into the object. A task's DataAssociation to a DataObject writes its output to `scope[DataObjectName]` (through the execution frame), and every reader — an expression, another association, the instance handle — resolves it **by name** through the walk-up. This is exactly §10.4.2's model: a DataAssociation targets "item-aware elements accessible in the current **scope**," which is a named scope entry, not a detached object. It retires the object **side-channel** (the task writing straight into the DataObject's item-aware element) and the unused `DataObject.Update()`.
 
-- **(a) referenced by name** in expressions and by-name data references — now possible because it is scope-resident (new); and/or
-- **(b) wired by an explicit DataAssociation** to activity I/O — the shipped mechanism (unchanged).
+Routing through scope is what makes per-instance isolation **free**: the scope is already per-instance, so a cloned DataObject seeded into it needs **no** association-retargeting.
 
-Both satisfy §10.4.1's "item-aware elements accessible in the current scope." No shipped API is broken; this is a **composition**, not a reshape.
+> **Refinement (Draft, from implementation).** An earlier framing kept the object side-channel *and* added scope-residence ("additive coexistence"). Building it showed that keeping the side-channel forces a per-instance **association-retargeting** step (an `Association` target-setter + node association-accessors + a clone-time wiring pass) for no real gain — per-instance cloning changes the read path regardless, so "don't touch the write path" buys little. Routing through scope is simpler, removes dead code, and is closer to the standard. See §4.2.
 
 ### 2.4 DataState stays on the DataObject (engine choice)
 
@@ -120,7 +119,7 @@ All claims verified against [docs/bpmn-spec/semantics/data.md](../bpmn-spec/sema
 |---|---|
 | **Keep DataObjects association-only** (status quo) | Fails §10.4.1 scope-visibility — an expression or by-name reference can't reach a DataObject; only a hand-wired object association can. The scope substrate already exists; not using it is an artificial gap. |
 | **Model DataObject as a subtype of `Property`** | Conflates the **visible** DataObject with the **hidden** Property (§10.4.1 draws the distinction deliberately); different diagram semantics. They **share** the scope mechanism without sharing a type. |
-| **Refactor DataAssociations to reference-by-scope-name only** | Breaks the shipped, exercised object-wired association API. Additive coexistence (§2.3) keeps both and is the safer, composition-first path. |
+| **Keep the object side-channel + retarget associations per instance** | Implementation showed this needs new machinery — an `Association` target-setter, node association-accessors, and a clone-time retarget pass — for no real gain: per-instance cloning changes the read path regardless, so the "don't touch the write path" benefit is largely illusory. Routing DataObject flow through scope (§2.3) is simpler, removes the dead `Update()`, and matches §10.4.2. |
 | **Implement the Data Store durably now** | Durable persistence is the deferred Persistence & State workstream; an in-memory port unblocks the element immediately and makes the durable driver a drop-in adapter. |
 | **Implement `DataObjectReference`** | Diagram-motivated, no execution capability gobpm lacks; documented as a SAD-001 §14.1 deviation with translation rules instead. |
 
