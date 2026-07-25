@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/dr-dobermann/gobpm/pkg/datastore"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 )
@@ -29,10 +30,24 @@ type Frame struct {
 	outputs map[string]*data.Parameter
 	props   map[string]data.Data
 	puts    map[string]data.Data
+	stores  datastore.Registry
 	at      DataPath
 	trackID string
 	nodeID  string
 	state   frameState
+}
+
+// SetDataStores wires the engine-global Data Store registry the frame's node
+// reaches through a DataStoreReference association (SRD-064 FR-4). The instance
+// sets it on every execution frame; a transient evaluation frame leaves it nil.
+func (f *Frame) SetDataStores(stores datastore.Registry) {
+	f.stores = stores
+}
+
+// DataStores returns the engine-global Data Store registry wired on the frame
+// (nil for a transient evaluation frame).
+func (f *Frame) DataStores() datastore.Registry {
+	return f.stores
 }
 
 // NewFrame creates the execution frame of node nodeID executed by track

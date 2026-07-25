@@ -66,3 +66,26 @@ func TestAssociationNames(t *testing.T) {
 	require.Equal(t, "target-do", a.TargetName())
 	require.Equal(t, []string{"source-a"}, a.SourceNames())
 }
+
+// TestAssociationDataStoreRef covers the engine-store binding on an association
+// (SRD-064 FR-4): WithDataStoreRef sets it, DataStoreRef() reports it, and an
+// ordinary association reports empty.
+func TestAssociationDataStoreRef(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	src := func(id string) *data.ItemAwareElement {
+		return data.MustItemAwareElement(
+			data.MustItemDefinition(values.NewVariable(0),
+				foundation.WithID(id)),
+			data.ReadyDataState)
+	}
+
+	bound, err := data.NewAssociation(src("t"),
+		data.WithSource(src("s")), data.WithDataStoreRef("orders"))
+	require.NoError(t, err)
+	require.Equal(t, "orders", bound.DataStoreRef())
+
+	plain, err := data.NewAssociation(src("t2"), data.WithSource(src("s2")))
+	require.NoError(t, err)
+	require.Empty(t, plain.DataStoreRef())
+}

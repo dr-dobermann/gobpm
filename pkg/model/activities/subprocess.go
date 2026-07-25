@@ -6,6 +6,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
+	datastores "github.com/dr-dobermann/gobpm/pkg/model/data_stores"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -27,6 +28,10 @@ type SubProcess struct {
 	// ElementsContainer (which holds only nodes and flows) and name-keyed, like a
 	// Process's Data Objects.
 	dataObjects map[string]*dataobjects.DataObject
+	// dataStoreRefs are the SubProcess-level Data Store References (SRD-064
+	// FR-3): flow-scope handles to engine-global stores. Not seeded into scope
+	// (their data lives in the engine registry) — kept for containment only.
+	dataStoreRefs map[string]*datastores.DataStoreReference
 	activity
 	// triggered marks an Event Sub-Process (triggeredByEvent, BPMN §13.5.4):
 	// a scope-armed handler entered by its triggered start, not a token
@@ -83,6 +88,7 @@ func NewSubProcess(
 		triggered:         cfg.triggered,
 		isTransaction:     cfg.isTransaction,
 		dataObjects:       map[string]*dataobjects.DataObject{},
+		dataStoreRefs:     map[string]*datastores.DataStoreReference{},
 	}, nil
 }
 
@@ -136,7 +142,48 @@ func (sp *SubProcess) Add(e flow.Element) error {
 		return sp.addDataObject(do)
 	}
 
+	if e.EType() == flow.DataStoreReferenceElement {
+		r, ok := e.(*datastores.DataStoreReference)
+		if !ok {
+			return errs.New(
+				errs.M("element %q reports DataStoreReferenceElement type but "+
+					"is not a *datastores.DataStoreReference", e.ID()),
+				errs.C(errorClass, errs.TypeCastingError))
+		}
+
+		return sp.addDataStoreRef(r)
+	}
+
 	return sp.AddElement(sp, e)
+}
+
+// addDataStoreRef registers a Data Store Reference on the Sub-Process (SRD-064
+// FR-3). A reference is a flow-scope handle to an engine-global store — NOT
+// seeded into scope — so its name need only be unique among the Sub-Process's
+// references.
+func (sp *SubProcess) addDataStoreRef(r *datastores.DataStoreReference) error {
+	name := r.Name()
+	if _, ok := sp.dataStoreRefs[name]; ok {
+		return errs.New(
+			errs.M("data store reference %q(%s) already registered in "+
+				"sub-process %q", name, r.ID(), sp.Name()),
+			errs.C(errorClass, errs.DuplicateObject))
+	}
+
+	sp.dataStoreRefs[name] = r
+
+	return r.BindTo(sp)
+}
+
+// DataStoreReferences returns the Sub-Process-level Data Store References
+// (SRD-064 FR-3).
+func (sp *SubProcess) DataStoreReferences() []*datastores.DataStoreReference {
+	dd := make([]*datastores.DataStoreReference, 0, len(sp.dataStoreRefs))
+	for _, r := range sp.dataStoreRefs {
+		dd = append(dd, r)
+	}
+
+	return dd
 }
 
 // addDataObject registers a Data Object on the Sub-Process (SRD-063 FR-4). A
@@ -480,10 +527,18 @@ func (sp *SubProcess) Clone() (flow.Node, error) {
 		triggered:         sp.triggered,
 		isTransaction:     sp.isTransaction,
 		dataObjects:       make(map[string]*dataobjects.DataObject, len(dobjs)),
+		dataStoreRefs: make(
+			map[string]*datastores.DataStoreReference, len(sp.dataStoreRefs)),
 	}
 
 	for _, do := range dobjs {
 		clone.dataObjects[do.Name()] = do
+	}
+
+	// Data Store References are engine-global (shared across instances), so the
+	// clone carries the SAME references, not copies (SRD-064 FR-3).
+	for name, r := range sp.dataStoreRefs {
+		clone.dataStoreRefs[name] = r
 	}
 
 	return clone, nil

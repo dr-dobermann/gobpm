@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
+	"github.com/dr-dobermann/gobpm/pkg/datastore"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
@@ -32,9 +33,10 @@ func datumErr(what, name string, path scope.DataPath, err error) error {
 // (RuntimeVar / RuntimeVarNames), passed into load, so instanceScope holds no
 // back-reference to the Instance.
 type instanceScope struct {
-	plane  *scope.Scope
-	reader service.DataReader
-	root   scope.DataPath
+	plane      *scope.Scope
+	reader     service.DataReader
+	dataStores datastore.Registry
+	root       scope.DataPath
 }
 
 // load builds the data plane rooted under parentRoot and commits the process
@@ -46,8 +48,11 @@ func (sc *instanceScope) load(
 	processName string,
 	props []*data.Property,
 	dobjs []*dataobjects.DataObject,
+	stores datastore.Registry,
 	supplier scope.RuntimeVarsSupplier,
 ) error {
+	sc.dataStores = stores
+
 	root := parentRoot
 	if root == scope.EmptyDataPath {
 		root = scope.RootDataPath
@@ -113,7 +118,16 @@ func (sc *instanceScope) openFrameAt(
 	trackID, nodeID string,
 	at scope.DataPath,
 ) (*scope.Frame, error) {
-	return scope.NewFrame(trackID, nodeID, at, sc.plane)
+	f, err := scope.NewFrame(trackID, nodeID, at, sc.plane)
+	if err != nil {
+		return nil, err
+	}
+
+	// wire the engine-global Data Store registry so a DataStoreReference
+	// association resolves its store at read/write (SRD-064 FR-4).
+	f.SetDataStores(sc.dataStores)
+
+	return f, nil
 }
 
 // bindEventPayload binds the payload carried by a born-from-event start into the

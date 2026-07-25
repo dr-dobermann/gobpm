@@ -3,6 +3,7 @@ package exec
 import (
 	"context"
 
+	"github.com/dr-dobermann/gobpm/pkg/datastore"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
@@ -50,6 +51,13 @@ type Frame interface {
 	// GetData returns the data resolved by name, frame-first then walking the
 	// container scopes (SRD-063 FR-5 resolves a DataObject by its scope name).
 	GetData(name string) (data.Data, error)
+
+	// DataStores returns the engine-global Data Store registry a
+	// DataStoreReference association resolves its store from (SRD-064 FR-4). It
+	// is shared across instances; a nil registry means none is wired for this
+	// frame (a transient evaluation frame), and a store-backed association fails
+	// fast rather than dereferencing it.
+	DataStores() datastore.Registry
 }
 
 // NodeDataConsumer is implemented by nodes that consume data: LoadData

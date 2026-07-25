@@ -13,6 +13,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
+	datastores "github.com/dr-dobermann/gobpm/pkg/model/data_stores"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -30,12 +31,13 @@ const errorClass = "PROCESS_ERRORS"
 // by a single person. Low-level Processes can be grouped together to achieve a
 // common business goal.
 type Process struct {
-	properties  map[string]*data.Property
-	roles       map[string]*hi.ResourceRole
-	nodes       map[string]flow.Node
-	flows       map[string]*flow.SequenceFlow
-	dataObjects map[string]*dataobjects.DataObject
-	name        string
+	properties    map[string]*data.Property
+	roles         map[string]*hi.ResourceRole
+	nodes         map[string]flow.Node
+	flows         map[string]*flow.SequenceFlow
+	dataObjects   map[string]*dataobjects.DataObject
+	dataStoreRefs map[string]*datastores.DataStoreReference
+	name          string
 	foundation.BaseElement
 	CorrelationSubscriptions []*bpmncommon.CorrelationSubscription
 }
@@ -132,6 +134,30 @@ func (p *Process) addDataObject(do *dataobjects.DataObject) error {
 	p.dataObjects[name] = do
 
 	return do.BindTo(p)
+}
+
+// DataStoreReferences returns the Process-level Data Store References
+// (SRD-064 FR-3).
+func (p *Process) DataStoreReferences() []*datastores.DataStoreReference {
+	return slices.Collect(maps.Values(p.dataStoreRefs))
+}
+
+// addDataStoreRef registers a Data Store Reference on the Process (SRD-064
+// FR-3). A reference is a flow-scope handle to an engine-global store — it is
+// NOT seeded into scope (its data lives in the engine registry), so its name
+// need only be unique among the Process's references.
+func (p *Process) addDataStoreRef(r *datastores.DataStoreReference) error {
+	name := r.Name()
+	if _, ok := p.dataStoreRefs[name]; ok {
+		return errs.New(
+			errs.M("data store reference %q(%s) already registered in process",
+				name, r.ID()),
+			errs.C(errorClass, errs.DuplicateObject))
+	}
+
+	p.dataStoreRefs[name] = r
+
+	return r.BindTo(p)
 }
 
 // addNode adds non-empty unique BaseNode n to the process p.
@@ -245,6 +271,17 @@ func (p *Process) Add(e flow.Element) error {
 		}
 
 		return p.addDataObject(do)
+
+	case flow.DataStoreReferenceElement:
+		r, ok := e.(*datastores.DataStoreReference)
+		if !ok {
+			return errs.New(
+				errs.M("element %q reports DataStoreReferenceElement type but is not a *datastores.DataStoreReference",
+					e.ID()),
+				errs.C(errorClass, errs.TypeCastingError))
+		}
+
+		return p.addDataStoreRef(r)
 	}
 
 	return errs.New(

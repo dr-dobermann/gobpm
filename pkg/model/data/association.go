@@ -68,7 +68,17 @@ type Association struct {
 	transformation FormalExpression
 	sources        map[string]*ItemAwareElement
 	target         *ItemAwareElement
+	dataStoreRef   string
 	foundation.BaseElement
+}
+
+// DataStoreRef returns the engine Data Store id when the Association is backed
+// by a DataStoreReference (SRD-064 FR-4) — the task reroute resolves that store
+// from the engine registry and reads/writes it by the association's item name.
+// Empty for a scope-backed (DataObject / activity-I/O) association, which routes
+// through per-instance scope.
+func (a *Association) DataStoreRef() string {
+	return a.dataStoreRef
 }
 
 // TargetName returns the name of the association's target item-aware element —

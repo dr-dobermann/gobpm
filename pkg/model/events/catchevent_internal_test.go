@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/dr-dobermann/gobpm/pkg/datastore"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
@@ -59,6 +60,7 @@ func (f *fakeFrame) Inputs() []*data.Parameter                    { return nil }
 func (f *fakeFrame) Outputs() []*data.Parameter                   { return f.outs }
 func (f *fakeFrame) GetDataByID(string) (data.Data, error)        { return nil, nil }
 func (f *fakeFrame) GetData(string) (data.Data, error)            { return nil, nil }
+func (f *fakeFrame) DataStores() datastore.Registry               { return nil }
 
 // TestCatchEventUploadDataBindsReceived verifies the WS-C3 bind: when a payload
 // was captured, UploadData carries the runtime value into the matching output

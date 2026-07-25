@@ -234,7 +234,7 @@ func New(
 
 	if err := inst.sc.load(
 		parentRoot, inst.s.ProcessName, inst.s.Properties,
-		inst.s.DataObjects, &inst); err != nil {
+		inst.s.DataObjects, inst.DataStores(), &inst); err != nil {
 		return nil, errs.New(
 			errs.M("couldn't load process'es properties into Instance scope"),
 			errs.E(err),

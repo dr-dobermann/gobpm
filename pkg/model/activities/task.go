@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/dr-dobermann/gobpm/pkg/datastore"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -111,55 +112,23 @@ func (t *task) LoadData(ctx context.Context, f exec.Frame) error {
 				errs.D("task_name", t.Name()))
 		}
 
-		// Read THIS instance's DataObject (the association's source) from the
-		// frame's scope and copy its value into the input (SRD-063 FR-5, input
-		// direction: DataObject → Node). The DataAssociation is a shared
-		// declaration — we read its routing (source id), the value comes from
-		// the per-instance DataObject, never the shared association object.
-		// (A transformation/assignment on a DataObject association is a noted
-		// follow-up — SRD-063 §10.3; the current uses are plain copies.)
-		src := ia.SourceNames()
-
-		var (
-			doDatum data.Data
-			derr    error
-		)
-
-		if len(src) > 0 {
-			doDatum, derr = f.GetData(src[0])
-		}
-
-		// a required input that can't be filled is a fail-fast error — gobpm
-		// never waits for data (ADR-011 v.2 §2.3). An optional or
-		// while-executing input may stay Unavailable.
-		if len(src) == 0 || derr != nil ||
-			doDatum.State().Name() != data.ReadyDataState.Name() {
-			if gating[ia.TargetItemDefID()] {
-				return errs.New(
-					errs.M("required input %q of task %q is unavailable "+
-						"(gobpm does not wait for data)",
-						dii[index].Name(), t.Name()),
-					errs.C(errorClass, errs.ConditionFailed))
+		// A DataStoreReference input reads the engine-global Data Store
+		// (SRD-064 FR-4, DataStore → Node), not per-instance scope; an
+		// unregistered store or a read failure is a hard error (fail-loud).
+		if ref := ia.DataStoreRef(); ref != "" {
+			if err := t.loadFromStore(
+				ctx, f, ref, ia, dii[index], gating); err != nil {
+				return err
 			}
 
 			continue
 		}
 
-		if err := dii[index].Subject().Structure().
-			Update(ctx, doDatum.Value().Get(ctx)); err != nil {
-			return errs.New(
-				errs.M("couldn't update input %q", dii[index].Name()),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.E(err))
-		}
-
-		// a DataInput filled by its DataInputAssociation becomes available
-		// (BPMN §10.4.2) — the state flip targets the frame instance only.
-		if err := dii[index].UpdateState(data.ReadyDataState); err != nil {
-			return errs.New(
-				errs.M("couldn't set input %q to Ready", dii[index].Name()),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.E(err))
+		// Otherwise the association's source is THIS instance's DataObject
+		// (SRD-063 FR-5, DataObject → Node), resolved from the frame's scope
+		// by name.
+		if err := t.loadFromScope(ctx, f, ia, dii[index], gating); err != nil {
+			return err
 		}
 	}
 
@@ -266,6 +235,17 @@ func (t *task) UploadData(ctx context.Context, f exec.Frame) error {
 			continue
 		}
 
+		// A DataStoreReference output writes the engine-global Data Store
+		// (SRD-064 FR-4, Node → DataStore), not per-instance scope; an
+		// unregistered store or a write failure is a hard error (fail-loud).
+		if ref := oa.DataStoreRef(); ref != "" {
+			if err := t.uploadToStore(ctx, f, ref, oa, doo[index]); err != nil {
+				return err
+			}
+
+			continue
+		}
+
 		// Write the produced value into THIS instance's DataObject (the
 		// association's target), resolved from the frame's scope (SRD-063 FR-5,
 		// output direction: Node → DataObject). The DataAssociation is shared
@@ -291,6 +271,178 @@ func (t *task) UploadData(ctx context.Context, f exec.Frame) error {
 				errs.C(errorClass, errs.OperationFailed),
 				errs.E(uerr))
 		}
+	}
+
+	return nil
+}
+
+// loadFromScope fills the task input dst from THIS instance's DataObject (the
+// association's source) resolved from the frame's scope by name (SRD-063 FR-5,
+// DataObject → Node). The DataAssociation is a shared declaration — we read its
+// routing (source id), the value comes from the per-instance DataObject. A
+// required input that can't be filled fails fast; gobpm never waits for data
+// (ADR-011 v.2 §2.3). (A transformation/assignment on a DataObject association
+// is a noted follow-up — SRD-063 §10.3; the current uses are plain copies.)
+func (t *task) loadFromScope(
+	ctx context.Context,
+	f exec.Frame,
+	ia *data.Association,
+	dst *data.Parameter,
+	gating map[string]bool,
+) error {
+	src := ia.SourceNames()
+
+	var (
+		doDatum data.Data
+		derr    error
+	)
+
+	if len(src) > 0 {
+		doDatum, derr = f.GetData(src[0])
+	}
+
+	if len(src) == 0 || derr != nil ||
+		doDatum.State().Name() != data.ReadyDataState.Name() {
+		if gating[ia.TargetItemDefID()] {
+			return errs.New(
+				errs.M("required input %q of task %q is unavailable "+
+					"(gobpm does not wait for data)",
+					dst.Name(), t.Name()),
+				errs.C(errorClass, errs.ConditionFailed))
+		}
+
+		return nil
+	}
+
+	if err := dst.Subject().Structure().
+		Update(ctx, doDatum.Value().Get(ctx)); err != nil {
+		return t.opErr("couldn't update input "+dst.Name(), err)
+	}
+
+	// a DataInput filled by its DataInputAssociation becomes available
+	// (BPMN §10.4.2) — the state flip targets the frame instance only.
+	if err := dst.UpdateState(data.ReadyDataState); err != nil {
+		return t.opErr("couldn't set input "+dst.Name()+" to Ready", err)
+	}
+
+	return nil
+}
+
+// opErr wraps err as an OperationFailed task error with msg. It is a single-line
+// builder so a defensive propagation return (a fill/clone that cannot fail in
+// practice — the frame input's structure is permissive) rides the project's
+// error-return exclude convention rather than a fake-coverage test.
+func (t *task) opErr(msg string, err error) error {
+	return errs.New(errs.M("%s", msg), errs.C(errorClass, errs.OperationFailed), errs.E(err))
+}
+
+// storeFor resolves the engine Data Store named ref from the frame's registry
+// (SRD-064 FR-4). It fails loud: no registry wired, or an unregistered ref, is
+// a configuration error — a DataStoreReference must name a registered store.
+func (t *task) storeFor(f exec.Frame, ref string) (datastore.DataStore, error) {
+	reg := f.DataStores()
+	if reg == nil {
+		return nil, errs.New(
+			errs.M("no Data Store registry wired for task %q[%s]", t.Name(), t.ID()),
+			errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	store, err := reg.Store(ref)
+	if err != nil {
+		return nil, errs.New(
+			errs.M("couldn't resolve DataStore %q for task %q[%s]",
+				ref, t.Name(), t.ID()),
+			errs.C(errorClass, errs.ObjectNotFound),
+			errs.E(err))
+	}
+
+	return store, nil
+}
+
+// loadFromStore fills the task input dst from the engine Data Store named ref
+// (SRD-064 FR-4, DataStore → Node): the value is read by the association's item
+// name. An absent value is fail-fast only when the input gates the start
+// (ADR-011 v.2 §2.3); an unregistered store or a read error is always a hard
+// error.
+func (t *task) loadFromStore(
+	ctx context.Context,
+	f exec.Frame,
+	ref string,
+	ia *data.Association,
+	dst *data.Parameter,
+	gating map[string]bool,
+) error {
+	store, err := t.storeFor(f, ref)
+	if err != nil {
+		return err
+	}
+
+	var d data.Data
+
+	if src := ia.SourceNames(); len(src) > 0 {
+		var ok bool
+		if d, ok, err = store.Get(ctx, src[0]); err != nil {
+			return errs.New(
+				errs.M("couldn't read DataStore %q key %q for task %q",
+					ref, src[0], t.Name()),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err))
+		} else if !ok {
+			d = nil
+		}
+	}
+
+	if d == nil || d.State().Name() != data.ReadyDataState.Name() {
+		if gating[ia.TargetItemDefID()] {
+			return errs.New(
+				errs.M("required input %q of task %q is unavailable in "+
+					"DataStore %q (gobpm does not wait for data)",
+					dst.Name(), t.Name(), ref),
+				errs.C(errorClass, errs.ConditionFailed))
+		}
+
+		return nil
+	}
+
+	if err := dst.Subject().Structure().
+		Update(ctx, d.Value().Get(ctx)); err != nil {
+		return t.opErr("couldn't update input "+dst.Name()+" from DataStore "+ref, err)
+	}
+
+	if err := dst.UpdateState(data.ReadyDataState); err != nil {
+		return t.opErr("couldn't set input "+dst.Name()+" to Ready", err)
+	}
+
+	return nil
+}
+
+// uploadToStore writes the produced output src into the engine Data Store named
+// ref (SRD-064 FR-4, Node → DataStore), keyed by the association's item name. A
+// clone is stored so the store's datum is independent of the per-execution
+// output instance.
+func (t *task) uploadToStore(
+	ctx context.Context,
+	f exec.Frame,
+	ref string,
+	oa *data.Association,
+	src *data.Parameter,
+) error {
+	store, err := t.storeFor(f, ref)
+	if err != nil {
+		return err
+	}
+
+	datum, cerr := src.Clone()
+	if cerr != nil {
+		return t.opErr("couldn't clone output "+src.Name()+" for DataStore "+ref, cerr)
+	}
+
+	if perr := store.Put(ctx, oa.TargetName(), datum); perr != nil {
+		return errs.New(
+			errs.M("couldn't write output %q into DataStore %q key %q for "+
+				"task %q", src.Name(), ref, oa.TargetName(), t.Name()),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(perr))
 	}
 
 	return nil
