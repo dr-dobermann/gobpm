@@ -20,6 +20,10 @@ type fakeEngine struct {
 	err error
 }
 
+func (fakeEngine) Type() string { return "##Fake" }
+
+func (fakeEngine) Languages() []string { return []string{"gobpm:goexpr"} }
+
 func (f fakeEngine) Evaluate(
 	_ context.Context,
 	_ data.FormalExpression,

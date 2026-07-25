@@ -19,6 +19,16 @@ import (
 // evaluation signature so the default is a thin pass-through and adapters can
 // intercept at one point.
 type Engine interface {
+	// Type names the engine kind in the "##"-hint convention ("##GoExpr",
+	// "##Lite", "##FEEL", ...) for the startup config.
+	Type() string
+
+	// Languages returns the expression-language URIs this engine
+	// evaluates — an enumerable claim (never empty for a real engine,
+	// matched case-insensitively), so the Registry can detect conflicts
+	// and print the routing table (ADR-032 §2.1).
+	Languages() []string
+
 	// Evaluate evaluates expr against src and returns the result.
 	Evaluate(ctx context.Context, expr data.FormalExpression, src data.Source) (data.Value, error)
 }
