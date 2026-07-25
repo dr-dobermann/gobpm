@@ -8,6 +8,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/clock/clocktest"
 	"github.com/dr-dobermann/gobpm/pkg/model/expression/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/rules/gorules"
+	"github.com/dr-dobermann/gobpm/pkg/script"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 	"github.com/dr-dobermann/gobpm/pkg/tasks/localdispatcher"
 )
@@ -18,7 +19,8 @@ func TestDefaultPopulatesEveryExtension(t *testing.T) {
 	if r.Logger() == nil || r.Tracer() == nil || r.MetricsRecorder() == nil ||
 		r.Clock() == nil || r.Repository() == nil || r.MessageBroker() == nil ||
 		r.ExpressionEngine() == nil || r.AuthorizationProvider() == nil ||
-		r.WorkerDispatcher() == nil || r.RuleEngine() == nil {
+		r.WorkerDispatcher() == nil || r.RuleEngine() == nil ||
+		r.ScriptEngine() == nil {
 		t.Fatal("Default left an extension nil")
 	}
 }
@@ -65,6 +67,19 @@ func TestOverrides(t *testing.T) {
 
 	if Default().WithRuleEngine(nil).RuleEngine() == nil {
 		t.Fatal("a nil rule engine should be ignored (default kept)")
+	}
+
+	sreg, err := script.NewRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if Default().WithScriptRegistry(sreg).ScriptEngine() != sreg {
+		t.Fatal("WithScriptRegistry was not applied")
+	}
+
+	if Default().WithScriptRegistry(nil).ScriptEngine() == nil {
+		t.Fatal("a nil script registry should be ignored (default kept)")
 	}
 }
 

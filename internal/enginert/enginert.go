@@ -7,6 +7,7 @@
 package enginert
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"log/slog"
 
 	"github.com/dr-dobermann/gobpm/pkg/auth"
@@ -25,6 +26,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/repository/memrepo"
 	"github.com/dr-dobermann/gobpm/pkg/rules"
 	"github.com/dr-dobermann/gobpm/pkg/rules/gorules"
+	"github.com/dr-dobermann/gobpm/pkg/script"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 	"github.com/dr-dobermann/gobpm/pkg/tasks/localdispatcher"
 )
@@ -33,6 +35,7 @@ import (
 type Runtime struct {
 	expr               expression.Engine
 	ruleEng            rules.Engine
+	scriptReg          *script.Registry
 	tracer             observability.Tracer
 	metrics            observability.MetricsRecorder
 	clk                clock.Clock
@@ -60,7 +63,21 @@ func Default() *Runtime {
 		authz:      allowall.New(),
 		dispatcher: localdispatcher.New(nil, 0),
 		ruleEng:    gorules.New(),
+		scriptReg:  emptyScriptRegistry(),
 	}
+}
+
+// emptyScriptRegistry builds the ##None default; NewRegistry with no
+// engines cannot fail.
+func emptyScriptRegistry() *script.Registry {
+	reg, err := script.NewRegistry()
+	if err != nil {
+		errs.Panic(err)
+
+		return nil
+	}
+
+	return reg
 }
 
 // The override setters below all guard against a nil argument by keeping the
@@ -95,6 +112,18 @@ func (r *Runtime) WithExpressionEngine(e expression.Engine) *Runtime {
 func (r *Runtime) WithRuleEngine(e rules.Engine) *Runtime {
 	if e != nil {
 		r.ruleEng = e
+	}
+
+	return r
+}
+
+// WithScriptRegistry overrides the script-engine registry and returns the
+// Runtime. A nil registry is ignored (the empty default is kept). The
+// caller builds the registry with script.NewRegistry — the single
+// conflict authority, where duplicate format claims fail loud.
+func (r *Runtime) WithScriptRegistry(reg *script.Registry) *Runtime {
+	if reg != nil {
+		r.scriptReg = reg
 	}
 
 	return r
@@ -143,6 +172,9 @@ func (r *Runtime) ExpressionEngine() expression.Engine { return r.expr }
 
 // RuleEngine returns the configured Business Rule Engine.
 func (r *Runtime) RuleEngine() rules.Engine { return r.ruleEng }
+
+// ScriptEngine returns the configured script-engine routing surface.
+func (r *Runtime) ScriptEngine() script.Engine { return r.scriptReg }
 
 // AuthorizationProvider returns the configured authorization provider.
 func (r *Runtime) AuthorizationProvider() auth.AuthorizationProvider { return r.authz }

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dr-dobermann/gobpm/pkg/model/service"
+
 	"github.com/dr-dobermann/gobpm/pkg/auth/allowall"
 	"github.com/dr-dobermann/gobpm/pkg/clock/syscl"
 	"github.com/dr-dobermann/gobpm/pkg/messaging/membroker"
@@ -15,6 +17,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 	"github.com/dr-dobermann/gobpm/pkg/repository/memrepo"
 	"github.com/dr-dobermann/gobpm/pkg/rules/gorules"
+	"github.com/dr-dobermann/gobpm/pkg/script"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 	"github.com/dr-dobermann/gobpm/pkg/tasks/localdispatcher"
 )
@@ -27,7 +30,8 @@ func TestConfigSatisfiesEngineRuntime(t *testing.T) {
 	if er.Logger() == nil || er.Tracer() == nil || er.MetricsRecorder() == nil ||
 		er.Clock() == nil || er.Repository() == nil || er.MessageBroker() == nil ||
 		er.ExpressionEngine() == nil || er.AuthorizationProvider() == nil ||
-		er.WorkerDispatcher() == nil || er.RuleEngine() == nil {
+		er.WorkerDispatcher() == nil || er.RuleEngine() == nil ||
+		er.ScriptEngine() == nil {
 		t.Fatal("thresherConfig does not expose every extension as EngineRuntime")
 	}
 }
@@ -97,6 +101,77 @@ func TestLastWriteWins(t *testing.T) {
 	if c.repository != last {
 		t.Fatal("last WithRepository should win")
 	}
+}
+
+func TestScriptEngineWiring(t *testing.T) {
+	fake := &fakeScriptEngine{kind: "##A", formats: []string{"text/x-a"}}
+	other := &fakeScriptEngine{kind: "##B", formats: []string{"text/x-b"}}
+
+	t.Run("default is the empty ##None registry",
+		func(t *testing.T) {
+			eng, err := New("se-none")
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+
+			if eng.cfg.scriptRegistry.Type() != script.NoneType {
+				t.Fatalf("default script registry = %q, want ##None",
+					eng.cfg.scriptRegistry.Type())
+			}
+		})
+
+	t.Run("WithScriptEngine is repeatable and both register",
+		func(t *testing.T) {
+			eng, err := New("se-two",
+				WithScriptEngine(fake), WithScriptEngine(other))
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+
+			if got := eng.cfg.scriptRegistry.Type(); got != "##A+##B" {
+				t.Fatalf("registry kinds = %q, want ##A+##B", got)
+			}
+		})
+
+	t.Run("a claim conflict fails New loud",
+		func(t *testing.T) {
+			clash := &fakeScriptEngine{kind: "##C",
+				formats: []string{"TEXT/X-A"}}
+
+			_, err := New("se-clash",
+				WithScriptEngine(fake), WithScriptEngine(clash))
+			if err == nil {
+				t.Fatal("New must fail on a duplicate format claim")
+			}
+
+			if !strings.Contains(err.Error(), "##A") ||
+				!strings.Contains(err.Error(), "##C") {
+				t.Fatalf("the conflict error must name both kinds: %v", err)
+			}
+		})
+
+	t.Run("WithScriptEngine(nil) rejected",
+		func(t *testing.T) {
+			if _, err := New("se-nil", WithScriptEngine(nil)); err == nil {
+				t.Fatal("WithScriptEngine(nil) must be rejected")
+			}
+		})
+}
+
+// fakeScriptEngine is a minimal script.Engine for wiring tests.
+type fakeScriptEngine struct {
+	kind    string
+	formats []string
+}
+
+func (f *fakeScriptEngine) Type() string { return f.kind }
+
+func (f *fakeScriptEngine) Formats() []string { return f.formats }
+
+func (f *fakeScriptEngine) Execute(
+	_ context.Context, _, _ string, _ service.DataReader,
+) (script.Outputs, error) {
+	return nil, nil
 }
 
 func TestNilOptionValueRejected(t *testing.T) {
@@ -170,7 +245,7 @@ func TestStartupConfigLog(t *testing.T) {
 		"version:", "last commit:", "thresher id:", "configuration:",
 		"repository:", "logger:", "tracer:", "metricsRecorder:", "clock:",
 		"messageBroker:", "expressionEngine:", "authorizationProvider:",
-		"workerDispatcher:", "ruleEngine:",
+		"workerDispatcher:", "ruleEngine:", "scriptEngine",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("startup log missing line %q (got %v)", want, msgs)

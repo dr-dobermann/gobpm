@@ -16,6 +16,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/repository"
 	"github.com/dr-dobermann/gobpm/pkg/rules"
+	"github.com/dr-dobermann/gobpm/pkg/script"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 	mock "github.com/stretchr/testify/mock"
 )
@@ -1026,6 +1027,52 @@ func (_c *MockRuntimeEnvironment_RuleEngine_Call) Return(engine rules.Engine) *M
 }
 
 func (_c *MockRuntimeEnvironment_RuleEngine_Call) RunAndReturn(run func() rules.Engine) *MockRuntimeEnvironment_RuleEngine_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ScriptEngine provides a mock function for the type MockRuntimeEnvironment
+func (_mock *MockRuntimeEnvironment) ScriptEngine() script.Engine {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for ScriptEngine")
+	}
+
+	var r0 script.Engine
+	if returnFunc, ok := ret.Get(0).(func() script.Engine); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(script.Engine)
+		}
+	}
+	return r0
+}
+
+// MockRuntimeEnvironment_ScriptEngine_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ScriptEngine'
+type MockRuntimeEnvironment_ScriptEngine_Call struct {
+	*mock.Call
+}
+
+// ScriptEngine is a helper method to define mock.On call
+func (_e *MockRuntimeEnvironment_Expecter) ScriptEngine() *MockRuntimeEnvironment_ScriptEngine_Call {
+	return &MockRuntimeEnvironment_ScriptEngine_Call{Call: _e.mock.On("ScriptEngine")}
+}
+
+func (_c *MockRuntimeEnvironment_ScriptEngine_Call) Run(run func()) *MockRuntimeEnvironment_ScriptEngine_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockRuntimeEnvironment_ScriptEngine_Call) Return(engine script.Engine) *MockRuntimeEnvironment_ScriptEngine_Call {
+	_c.Call.Return(engine)
+	return _c
+}
+
+func (_c *MockRuntimeEnvironment_ScriptEngine_Call) RunAndReturn(run func() script.Engine) *MockRuntimeEnvironment_ScriptEngine_Call {
 	_c.Call.Return(run)
 	return _c
 }

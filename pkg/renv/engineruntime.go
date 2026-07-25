@@ -14,6 +14,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/repository"
 	"github.com/dr-dobermann/gobpm/pkg/rules"
+	"github.com/dr-dobermann/gobpm/pkg/script"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
@@ -36,6 +37,13 @@ type EngineRuntime interface {
 	// Rule Task evaluates its decisions on (ADR-027 v.1 §2.1). Never nil —
 	// absent an override, the bundled gorules decision registry is wired.
 	RuleEngine() rules.Engine
+
+	// ScriptEngine returns the script-engine routing surface the Script
+	// Task executes on (ADR-031 §2.1): the format-routed registry of every
+	// engine registered via WithScriptEngine. Never nil — with no
+	// registrations it is the empty "##None" registry, whose execution
+	// fails loud with the wire-an-adapter message.
+	ScriptEngine() script.Engine
 
 	// Reporter returns the engine's observable-event sink (ADR-013 v.2
 	// §2.7): the single producer that writes the operator-log echo and fans
