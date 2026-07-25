@@ -218,6 +218,64 @@ func TestTaskDataErrorPaths(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, 99, got.Value().Get(ctx))
 		})
+
+	t.Run("output association to an unseeded DataObject fails UploadData",
+		func(t *testing.T) {
+			tsk := newIOTask(t, "in-x", "out-x", 1, 0)
+			pl, err := scope.New(scope.RootDataPath, nil)
+			require.NoError(t, err)
+			f, err := scope.NewFrame("track-t", tsk.ID(), pl.Root(), pl)
+			require.NoError(t, err)
+
+			sink, err := dataobjects.New("sink",
+				data.MustItemDefinition(values.NewVariable(0),
+					foundation.WithID("out-x")),
+				data.ReadyDataState)
+			require.NoError(t, err)
+			require.NoError(t,
+				sink.AssociateSource(tsk, []string{"out-x"}, nil))
+
+			// the DataObject is NOT committed into scope, so resolving it by
+			// name from the frame fails (SRD-063 FR-5).
+			require.NoError(t, tsk.LoadData(ctx, f))
+			require.NoError(t, f.Put(data.MustParameter("res",
+				data.MustItemAwareElement(
+					data.MustItemDefinition(values.NewVariable(99),
+						foundation.WithID("out-x")),
+					data.ReadyDataState))))
+
+			require.Error(t, tsk.UploadData(ctx, f))
+		})
+
+	t.Run("type-mismatched output DataObject fails UploadData",
+		func(t *testing.T) {
+			tsk := newIOTask(t, "in-x", "out-x", 1, 0)
+			pl, err := scope.New(scope.RootDataPath, nil)
+			require.NoError(t, err)
+			f, err := scope.NewFrame("track-t", tsk.ID(), pl.Root(), pl)
+			require.NoError(t, err)
+
+			// the DataObject holds a string; the produced output is an int, so
+			// the by-name write into the DataObject fails on the type check.
+			sink, err := dataobjects.New("sink",
+				data.MustItemDefinition(values.NewVariable("str"),
+					foundation.WithID("out-x")),
+				data.ReadyDataState)
+			require.NoError(t, err)
+			require.NoError(t,
+				sink.AssociateSource(tsk, []string{"out-x"}, nil))
+			_, err = pl.Commit(pl.Root(), sink)
+			require.NoError(t, err)
+
+			require.NoError(t, tsk.LoadData(ctx, f))
+			require.NoError(t, f.Put(data.MustParameter("res",
+				data.MustItemAwareElement(
+					data.MustItemDefinition(values.NewVariable(99),
+						foundation.WithID("out-x")),
+					data.ReadyDataState))))
+
+			require.Error(t, tsk.UploadData(ctx, f))
+		})
 }
 
 // TestTaskStartGate covers the SRD-009 start-gate in task.LoadData: a required

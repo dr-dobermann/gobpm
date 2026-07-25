@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -20,6 +21,12 @@ import (
 // rule confines inner flows to this container).
 type SubProcess struct {
 	flow.ElementsContainer
+	// dataObjects are the SubProcess-level Data Objects (§10.4.1, SRD-063
+	// FR-4): scope-resident named containers seeded into the SubProcess's child
+	// scope when it opens and disposed when it closes. Kept out of the
+	// ElementsContainer (which holds only nodes and flows) and name-keyed, like a
+	// Process's Data Objects.
+	dataObjects map[string]*dataobjects.DataObject
 	activity
 	// triggered marks an Event Sub-Process (triggeredByEvent, BPMN §13.5.4):
 	// a scope-armed handler entered by its triggered start, not a token
@@ -75,6 +82,7 @@ func NewSubProcess(
 		activity:          *a,
 		triggered:         cfg.triggered,
 		isTransaction:     cfg.isTransaction,
+		dataObjects:       map[string]*dataobjects.DataObject{},
 	}, nil
 }
 
@@ -106,9 +114,56 @@ func (sp *SubProcess) Node() flow.Node {
 }
 
 // Add adds a flow element into the Sub-Process's inner graph, binding it
-// to the Sub-Process as its container (flow.Container).
+// to the Sub-Process as its container (flow.Container). A Data Object is
+// stored off-graph as a SubProcess-level named container (SRD-063 FR-4);
+// everything else (nodes, sequence flows) goes into the ElementsContainer.
 func (sp *SubProcess) Add(e flow.Element) error {
+	if e == nil {
+		return errs.New(
+			errs.M("flow element couldn't be empty"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if e.EType() == flow.DataObjectElement {
+		do, ok := e.(*dataobjects.DataObject)
+		if !ok {
+			return errs.New(
+				errs.M("element %q reports DataObjectElement type but is not "+
+					"a *dataobjects.DataObject", e.ID()),
+				errs.C(errorClass, errs.TypeCastingError))
+		}
+
+		return sp.addDataObject(do)
+	}
+
 	return sp.AddElement(sp, e)
+}
+
+// addDataObject registers a Data Object on the Sub-Process (SRD-063 FR-4). A
+// DataObject is a scope-resident named container (ADR-030 §2.1), so its name
+// must be unique among the Sub-Process's Data Objects (one scope name-space).
+func (sp *SubProcess) addDataObject(do *dataobjects.DataObject) error {
+	name := do.Name()
+	if _, ok := sp.dataObjects[name]; ok {
+		return errs.New(
+			errs.M("data object %q(%s) already registered in sub-process %q",
+				name, do.ID(), sp.Name()),
+			errs.C(errorClass, errs.DuplicateObject))
+	}
+
+	sp.dataObjects[name] = do
+
+	return do.BindTo(sp)
+}
+
+// DataObjects returns the Sub-Process-level Data Objects (SRD-063 FR-4).
+func (sp *SubProcess) DataObjects() []*dataobjects.DataObject {
+	dd := make([]*dataobjects.DataObject, 0, len(sp.dataObjects))
+	for _, do := range sp.dataObjects {
+		dd = append(dd, do)
+	}
+
+	return dd
 }
 
 // Remove removes a flow element from the Sub-Process's inner graph
@@ -404,12 +459,34 @@ func (sp *SubProcess) Clone() (flow.Node, error) {
 			errs.E(err))
 	}
 
-	return &SubProcess{
+	// deep-clone the SubProcess-level Data Objects so each instance owns its
+	// own copy (SRD-063 FR-4, the per-instance isolation Properties/Process
+	// Data Objects already have). Like the Process-level snapshot clone, the
+	// container back-pointer is left as the clone carries it (immaterial to
+	// by-name scope resolution — the runtime resolves a DataObject by its scope
+	// name, not through its container).
+	dobjs, err := dataobjects.CloneDataObjects(sp.DataObjects())
+	if err != nil {
+		return nil, errs.New(
+			errs.M("couldn't clone the data objects of sub-process %q",
+				sp.ID()),
+			errs.C(errorClass, errs.BulidingFailed),
+			errs.E(err))
+	}
+
+	clone := &SubProcess{
 		ElementsContainer: inner,
 		activity:          a,
 		triggered:         sp.triggered,
 		isTransaction:     sp.isTransaction,
-	}, nil
+		dataObjects:       make(map[string]*dataobjects.DataObject, len(dobjs)),
+	}
+
+	for _, do := range dobjs {
+		clone.dataObjects[do.Name()] = do
+	}
+
+	return clone, nil
 }
 
 // ProcessEvent accepts the scope-completion delivery that resumes the
