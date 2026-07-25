@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-25 |
 | Owner | Ruslan Gabitov |
@@ -222,4 +222,5 @@ conventions.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.1 (Accepted) | 2026-07-25 | Ruslan Gabitov | Accepted with both landing SRDs: the multi-engine seam, registry routing, the ScriptTask semantics and the `##None` default landed first (the seam SRD); the Lua batteries adapter (`adapters/lua`) completed the conception (its SRD). Starlark remains the noted sibling. |
 | v.1 | 2026-07-25 | Ruslan Gabitov | Draft conception, fulfilling ADR-027 §2.5. The Script Engine seam: format-routed (the standard's `scriptFormat` MIME hint validates against the engine's format predicate; unsupported = loud classified error), executing an opaque script body against the read surface and returning **named outputs committed per-name** (no fold — scripts set variables). **Multiple script engines register in one gobpm engine** (repeatable `WithScriptEngine`): the core folds their enumerable `Formats()` claims into a format→engine routing map — claim conflicts are loud construction-time errors, the startup config prints the routing table, and an unclaimed format errors listing what IS registered. The default is the loud empty registry, shown as `##None` (stdlib-light core; a Go-functor default would duplicate gooper dishonestly). **Lua (`gopher-lua`, pure Go) is the batteries adapter** — real CPython rejected outright (cgo), Starlark recorded as the future Python-dialect sibling. Adapter conception: lazy fail-loud `data` table with a `has()` probe, table-return results, sandbox-by-default (safe libs only, context-honoring). A `Script` observability kind mirrors the rule engine's facts. Implementation rides the accompanying SRDs (the seam+task, then the Lua adapter). |

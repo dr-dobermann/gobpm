@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-25 |
 | Owner | Ruslan Gabitov |
@@ -186,7 +186,35 @@ return {
 
 ## §10 Implementation summary
 
-*Filled at landing.*
+Landed on `feat/script-task` in two milestones (after the doc commit
+`7767004`):
+
+- **M1 `6ac39d8` — the adapter.** `adapters/lua` over `gopher-lua`
+  v1.1.2: the stateless `##Lua` engine (fresh context-bound `LState`
+  per execution — the isolation proof in T-1), the sandbox
+  (base/table/string/math, load family removed, `io`/`os` absent,
+  `print` the recorded side-channel), the lazy fail-loud `data` table
+  (+`has()`, read-only enforcement), the two-way bridge (float64
+  numbers documented; nested structures both ways; loud unmappables),
+  table-return outputs, VM-message error surfacing, the
+  deadline-aborts-a-hung-script proof. 21 tests `-race`, module
+  coverage 92.7% (residuals: defensive lib-open + unreachable nil-arm
+  branches).
+- **M2 `4064e16` — e2e + example + doc sync.** The worked Lua script
+  routed live beside a stub `##Fake` engine (two `WithScriptEngine`
+  calls — the multi-engine mechanism exercised with a real
+  interpreter); the float64 output driving a conditional flow; fact
+  attribution per format; the `has()`-fallthrough path with no datum
+  declared. `examples/script-task/` (embedded recompile-free
+  `order.lua`; smoked exit 0). CHANGELOG; conformance **row 5 → ✅**;
+  README+ru; roadmap WS-E; examples index.
+
+**Verification:** post-commit `make ci` exit 0 with both new modules
+(adapter + example) in every loop incl. govulncheck over the
+`gopher-lua` dependency; 0 `Must*` calls in the adapter's non-test
+code.
+
+**Delta vs draft:** none — the landed shapes match §3.
 
 ## Open questions
 
@@ -196,4 +224,5 @@ return {
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.1 (Accepted) | 2026-07-25 | Ruslan Gabitov | Landed and accepted — §10 filled (M1 `6ac39d8`, M2 `4064e16`); row 5 flipped; ADR-031 accepted with this landing; #87 closes with the PR. |
 | v.1 | 2026-07-25 | Ruslan Gabitov | Initial draft — lands ADR-031 §2.4: `adapters/lua` over pure-Go `gopher-lua` (`##Lua`; `text/x-lua`, `application/x-lua`, `lua`). A fresh context-bound `LState` per execution; the sandbox (base/table/string/math with the load-family removed, `io`/`os` never loaded, `print` the one recorded side-channel); the lazy fail-loud `data` table (`__index` through the reader, absence raises, `has()` probes, `__newindex` rejected); the two-way value bridge with loud unmappable errors and float64 numbers documented; table-return → `script.Outputs`. e2e beside a stub engine (live multi-engine routing with a real interpreter), `examples/script-task` with an embedded `.lua`, the conformance row-5 flip, ADR-031 acceptance and the #87 closure. Two milestones. |
