@@ -144,6 +144,42 @@ v := adapters.MustWrap(&order)     // a LIVE data.Record view
 | a third-party type you can't modify | `adapters.Register` |
 | a hot type needing reflection-free access | the codegen follow-up (rides `Register`) |
 
+## Data Objects — named containers in scope
+
+A **`DataObject`** (BPMN §10.4.1) is a diagram-visible, **named** container that
+lives in the instance's scope tree — the same place a `Property` lives, resolved
+by the same walk-up. Register one on the container that owns it:
+
+```go
+do, _ := dataobjects.New("order-total",
+    data.MustItemDefinition(values.NewVariable(0), foundation.WithID("total")),
+    data.ReadyDataState)
+proc.Add(do)        // a Process-level object → seeded into the root scope
+// sub.Add(do)      // a SubProcess-level object → seeded into the child scope
+                    //   when it opens, disposed when it closes
+```
+
+Each instance gets its **own copy** (cloned from the snapshot), so concurrent
+instances never share DataObject state. Read one **by name** — inside an
+operation through the data reader, or from outside via the instance handle:
+
+```go
+d, _ := reader.GetData("order-total")   // service.DataReader, or handle.Data()
+total := d.Value().Get(ctx)
+```
+
+A **`DataAssociation`** binds a DataObject to a task in either direction, and the
+value always flows through the per-instance scope (never the shared association):
+
+- **output** (`do.AssociateSource(task, []string{"<item-id>"}, nil)`) — the
+  task's produced output is written into the DataObject (Node → DataObject);
+- **input** (`do.AssociateTarget(task, nil)`) — the DataObject's value fills a
+  task input (DataObject → Node).
+
+`DataObjectReference` (the per-appearance alias) is a deliberate
+non-implementation — see [SAD-001 §14.1](../design/SAD-001-vision-and-architecture.md)
+for the collapse-to-DataObject translation rules.
+
 ## Worked examples
 
 | Example | Shows |
@@ -153,7 +189,9 @@ v := adapters.MustWrap(&order)     // a LIVE data.Record view
 | [`examples/data-change/`](../../examples/data-change/) | observing per-path `DataChange` facts |
 | [`examples/native-structs/`](../../examples/native-structs/) | the host's own struct as live process data |
 | [`examples/maps/`](../../examples/maps/) | the **map kind** — a dynamic and a native dictionary navigated by `["key"]`; per-entry map `DataChange` facts |
+| [`examples/process-data/`](../../examples/process-data/) | a **DataObject** per branch: a task writes its result into the scope-resident object, read back by name from the instance handle |
 
 Design background: [ADR-011](../design/ADR-011-process-data-flow.md) (the
 conception), [ADR-010](../design/ADR-010-process-data-model.md) (the data
-plane it runs on).
+plane it runs on), [ADR-030](../design/ADR-030-data-objects-and-store.md)
+(the DataObject scope integration).

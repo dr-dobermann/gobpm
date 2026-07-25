@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-07-25 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-030 v.1](../design/ADR-030-data-objects-and-store.md) §2.1–§2.4 (the DataObject as a scope-resident named container, parent-tied lifecycle, additive coexistence, DataState-on-object) |
@@ -26,7 +26,7 @@ The gap (ADR-030 §1, §2.1) is **scope-residence**. §10.4.1 makes a `DataObjec
   - **Output (Node → DataObject):** `task.UploadData` writes the produced output value into the per-instance DataObject (resolved from the frame), not into the association's shared target IAE.
   - **Input (DataObject → Node):** `task.LoadData` fills the task's DataInput from the per-instance DataObject's scope value.
 
-  This **retires** the object side-channel and the unused `DataObject.Update()`. Per-instance isolation is **free** (the scope is per-instance), so no association-retargeting. Since `dataAssociations` are DO↔Node bindings only (declared I/O uses the `InputOutputSpecification` + frame), the Source/Target types classify the association — no extra attribute. `examples/process-data` keeps its process definition but updates its **read** to the instance's data by name.
+  This **retires** the object side-channel and the unused `DataObject.Update()`. Per-instance isolation is **free** (the scope is per-instance), so no association-retargeting. Since `dataAssociations` are DO↔Node bindings only (declared I/O uses the `InputOutputSpecification` + frame), the Source/Target types classify the association — no extra attribute. `examples/process-data` now **registers** its result Data Objects on the process (so each instance seeds them) and **reads** them back by name from the instance handle — its observable result is unchanged (NFR-1).
 - **FR-6 — DataState stays on the DataObject (engine choice, ADR-030 §2.4).** A `DataObject` retains its single `DataState` (`State()` / `UpdateState`, readiness qualifier); the standard's per-appearance state belongs to the deferred `DataObjectReference` (SAD-001 §14.1). No change to the readiness lifecycle.
 - **FR-7 — validation.** A value-less DataObject is rejected at snapshot/registration (the existing SAD-001 §14.1 item-aware deviation — an `ItemDefinition`'s structure is its value). A DataObject whose name collides with a Property or another DataObject in the same container is rejected (one name-space per scope).
 
@@ -62,21 +62,24 @@ A `DataObject` and a `Property` differ in **visibility** (diagram-visible vs. hi
 Today a task writes its DataObject output **straight into the DataObject's item-aware element** (`task.UploadData`), a side-channel that bypasses the scope plane; the object is **not** snapshot-carried or per-instance cloned, so one instance works but concurrent instances would share the object — a latent gap the single-instance `process-data` example never exposes. Two ways to close it once DataObjects are cloned per instance (FR-2):
 
 - **(rejected) keep the side-channel + retarget on clone** — re-point each cloned task's association at its cloned DataObject. This needs new machinery (an `Association` target-setter, node association-accessors, a clone-time wiring pass) for little gain: per-instance cloning changes the example's **read** regardless, so "don't touch the write path" buys little.
-- **(chosen) route through scope** — the task writes its output to `scope[DataObjectName]` (the frame-commit path all outputs already use); reads resolve by name. The **scope is already per-instance**, so isolation is free — no retargeting. It also retires the dead `Update()` and is closer to §10.4.2 (associations target scope-accessible elements). The cost is touching one shipped write path, covered by the example smoke + the `TestDataObjectAssociationAndScopeAgree` canary.
+- **(chosen) route through scope** — the task writes its output to `scope[DataObjectName]` (the frame-commit path all outputs already use); reads resolve by name. The **scope is already per-instance**, so isolation is free — no retargeting. It also retires the dead `Update()` and is closer to §10.4.2 (associations target scope-accessible elements). The cost is touching one shipped write path, covered by the example smoke + the `TestDataObjectScopeE2E` canary (producer writes → consumer reads one agreed value).
 
 ## §6 Tests
 
 | Test | Level | Covers |
 |---|---|---|
-| `TestProcessRegistersDataObject` | model | FR-1 — `Add` accepts a DataObject, duplicate name rejected, `DataObjects()` returns it |
-| `TestSubProcessRegistersDataObject` | model | FR-1 — same on SubProcess |
-| `TestSnapshotClonesDataObjects` | instance | FR-2 — snapshot carries DataObjects; two clones own private copies |
-| `TestDataObjectResolvedByNameInRootScope` | instance | FR-3 — a Process DataObject seeded at start is read by name via a frame walk-up |
-| `TestSubProcessDataObjectScopedAndDisposed` | instance | FR-4 — a SubProcess DataObject is visible inside the scope and gone after it closes |
-| `TestDataObjectAssociationAndScopeAgree` | instance | FR-5 — a task output association fills the object the scope resolves by name (one value) |
-| `TestDataObjectPerInstanceIsolation` | instance/`-race` | NFR-2 — two instances don't share DataObject state |
-| `TestDataObjectScopeE2E` | thresher | the full path through the public engine |
-| `examples/process-data` (existing) | example | NFR-1 — the shipped object-wired flow is unbroken |
+| `TestProcessRegistersDataObject` | model (`process`) | FR-1 — `Add` accepts a DataObject, duplicate name rejected, `DataObjects()` returns it |
+| `TestSubProcessDataObjects` | model (`activities`) | FR-1 — same on SubProcess (register/list, duplicate reject, DataObjectElement type-mismatch guard) + FR-2 SubProcess clone-isolation |
+| `TestSnapshotClonesDataObjects` | instance (`snapshot`) | FR-2 — snapshot carries DataObjects; two clones own private copies |
+| `TestCloneDataObjects` / `TestDataObjectClone` | model (`data_objects`) | FR-2 — the deep cloner (happy / nil / nil-value failure) |
+| `TestProcessDataObjectSeeding` | instance | FR-3 — a Process DataObject seeded at start is read by name via a frame walk-up |
+| `TestSubProcessDataObjectSeeding` | instance | FR-4 — a SubProcess DataObject seeded at scope-open is read by name inside the scope (disposal at close is the existing `completeScope`/`cancelScope` teardown — the seeded object lives in the child scope that is dropped) |
+| `TestSeedDataObjects` | instance | FR-4 — the seed helper: non-host no-op + Commit-failure wrapped, not dropped |
+| `TestDataObjectScopeE2E` / `TestSubProcessDataObjectE2E` | thresher | FR-5 — a task output association fills the object the scope resolves by name (producer writes → consumer reads one agreed value), Process-level and SubProcess-level, through the public engine |
+| `TestTaskDataErrorPaths` (DataObject cases) | model (`activities`) | FR-5 — the reroute error paths: unseeded-object resolve failure, type-mismatched write |
+| `TestItemAwareElementName` / `TestAssociationNames` | model (`data`) | FR-5 — the by-name resolution surface: `Name`/`SetName`/clone-carry, `TargetName`/`SourceNames` |
+| `TestSubProcessDataObjects` clone subtest + `TestSnapshotClonesDataObjects` | model/`-race` | NFR-2 — two instances don't share DataObject state |
+| `examples/process-data` | example | NFR-1 — the observable branch results are unchanged |
 
 ## §7 Milestones
 
@@ -86,14 +89,34 @@ Today a task writes its DataObject output **straight into the DataObject's item-
 
 ## §9 Definition of Done
 
-- FR-1…FR-7 wired and covered by §6; `examples/process-data` unchanged (NFR-1); the SRD-007…011 suites green.
+- FR-1…FR-7 wired and covered by §6; `examples/process-data` behaves identically (NFR-1) — it registers its result Data Objects and reads them back by name; the SRD-007…011 suites green.
 - `make ci` green (diff-coverage ≥95% touched; `-race`; govulncheck; all modules).
 - Conformance tracker row 11 advanced (DataObject scope integration ✅); CHANGELOG `[Unreleased]`; data guide note; README EN+RU.
 - `/check-srd` PASS. ADR-030 stays Draft until SRD-064 (Data Store) also lands, then flips Accepted with the full data-element set.
 
 ## §10 Implementation summary
 
-> ⚠️ TODO: fill AFTER landing — stage commits, empirical deltas vs this draft, backlog.
+Landed on branch `feat/dataobject-scope-and-datastore` in three stages.
+
+### §10.1 Stages by commit
+
+| Stage | Commit | Scope | Tests |
+|---|---|---|---|
+| M1 | `3c35208` | FR-1/FR-2 Process-level — `Process.dataObjects` + `Add`→`addDataObject` + `DataObjects()`; `DataObject.Clone`/`CloneDataObjects`/`EType`; `Snapshot.DataObjects` + per-instance re-clone (`cloneProcessData` extracted for gocyclo) | model + snapshot clone (happy/nil/error) |
+| M2a | `ab2dfc0` | FR-3/FR-5 — root-scope seed in `instanceScope.load`; bidirectional scope routing in `task.LoadData`/`UploadData` resolved **by name**; `ItemAwareElement` gains a real `name` (Option B) + `SetName`; `Association.TargetName`/`SourceNames`; `Frame.GetData(name)`; `examples/process-data` registers + reads by name | activities I/O + error paths, data-binding accessors, thresher e2e `TestDataObjectScopeE2E` |
+| M2b | `7f89ffc` | FR-4 — `SubProcess.dataObjects` + `Add`/`DataObjects`/`Clone`; `onScopeOpen` seeds via the `seedDataObjects` helper; per-instance isolation | activities Add/dup/mismatch/clone, instance seeding (sub-process + process + helper), thresher e2e `TestSubProcessDataObjectE2E` |
+
+### §10.2 Deltas vs the draft
+
+- **FR-5 resolves by name, not by id (Option B).** A DataObject and its bound param share one `ItemDefinition` id (§10.4.2 type-match), so `GetDataByID` is ambiguous. Resolved: the `ItemAwareElement` carries a real optional `name` (a DataObject names its IAE after itself); `Name()` falls back to the id when unset (backward-compatible, caller-audited — no site depends on the old id return). Associations expose `TargetName()`/`SourceNames()`; the reroute resolves the per-instance DataObject via `Frame.GetData(name)`.
+- **FR-4 needed the full SubProcess plumbing, not just the seed.** `flow.ElementsContainer` accepts only nodes and sequence flows, so the embedded Sub-Process could not hold a DataObject at all — M2b adds the store/Add/Clone/accessor (mirroring Process). Seeding was extracted to a testable `seedDataObjects` helper (the compensation-seed seam analogue).
+- **FR-7 is satisfied by existing machinery.** The name-collision guard lives in `addDataObject` (Process + SubProcess); a value-less DataObject is rejected at snapshot (its `Clone` fails on the nil value) — no dedicated validator was added.
+- **`examples/process-data`'s process definition did change** (it now registers the result Data Objects); the draft's "keeps its definition" was corrected. Its observable result is unchanged (NFR-1).
+
+### §10.3 Backlog (out of scope)
+
+- A **transformation/assignment** on a DataObject association (§4.2) — the current uses are plain value copies; a mapping expression on the association is a follow-up.
+- The **`DataStore` port** (ADR-030 §2.5/§2.6) → **SRD-064**; ADR-030 flips `Accepted` when it lands (this SRD's §9 gate).
 
 ## Open questions
 

@@ -85,6 +85,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   engine's kind and the output count. The batteries **Lua interpreter
   (`adapters/lua`), the example and the conformance row-5 flip ride
   SRD-065**.
+- **Data Objects as scope-resident named containers (SRD-063, ADR-030
+  v.1 — the `DataObject` half of #82).** A BPMN `DataObject` (§10.4.1)
+  becomes a **per-instance scope variable** instead of an
+  association-wired object. It can be registered on a **`Process`** or an
+  embedded **`SubProcess`** (`proc.Add(do)` / `sub.Add(do)`, name-keyed,
+  duplicate-name guarded), is **seeded into the matching scope** at start
+  (a Process-level object into the root scope, a SubProcess-level object
+  into the child scope when it opens, disposed when it closes), and is
+  **resolved by name** through the walk-up — the same substrate a
+  `Property` already uses. Its **DataAssociations flow through scope in
+  both directions**: a task's DataOutputAssociation writes the produced
+  value into the per-instance DataObject (Node → DataObject), a
+  DataInputAssociation fills a task input from it (DataObject → Node); the
+  association is a shared declaration and the value lives per-instance, so
+  concurrent instances stay isolated with no association retargeting.
+  Read a DataObject from outside the engine by name via the instance
+  handle's data reader. `examples/process-data/` now registers its result
+  Data Objects and reads them back by name. `DataObjectReference` stays a
+  deliberate non-implementation (SAD-001 §14.1, with the BPMN-translation
+  rules recorded there); the `DataStore` port rides a follow-up SRD.
 
 - **The Decision Table rule engine — `adapters/dtable` (SRD-062, ADR-029
   v.1; the first shipped adapter module).** A pluggable out-of-core
