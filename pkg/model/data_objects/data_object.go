@@ -175,6 +175,51 @@ func (do *DataObject) AssociateTarget(
 	return nil
 }
 
+// Clone returns a deep copy of the DataObject for per-instance isolation
+// (SRD-063 FR-2). The item-aware value is copied fresh, so no two instances
+// share DataObject state; the identity (name/ID) is preserved so the snapshot
+// wiring can match the clone to the original. The data associations are left
+// empty — they are re-established against the cloned nodes by the snapshot's
+// wiring pass, exactly as a node clones then re-wires its flows.
+func (do *DataObject) Clone() (*DataObject, error) {
+	iae, err := do.ItemAwareElement.Clone()
+	if err != nil {
+		return nil, errs.New(
+			errs.M("couldn't clone DataObject %q item-aware element", do.Name()),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
+	return &DataObject{
+		BaseElement:      do.BaseElement,
+		ItemAwareElement: *iae,
+		outgoing:         map[string]*data.Association{},
+	}, nil
+}
+
+// CloneDataObjects deep-copies a slice of DataObjects for per-instance isolation
+// (the data.CloneProperties peer). A nil slice clones to nil.
+func CloneDataObjects(dos []*DataObject) ([]*DataObject, error) {
+	if dos == nil {
+		return nil, nil
+	}
+
+	cloned := make([]*DataObject, len(dos))
+	for i, do := range dos {
+		c, err := do.Clone()
+		if err != nil {
+			return nil, errs.New(
+				errs.M("couldn't clone data object %q", do.Name()),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err))
+		}
+
+		cloned[i] = c
+	}
+
+	return cloned, nil
+}
+
 // ------------------ Element interface ----------------------------------------
 
 // Name returns the DataObject name.
@@ -182,8 +227,10 @@ func (do *DataObject) Name() string {
 	return do.BaseElement.Name()
 }
 
-// Type returns the element type of the DataObject.
-func (do *DataObject) Type() flow.ElementType {
+// EType returns the element type of the DataObject (flow.Element). It MUST
+// override the panicking BaseElement.EType so a DataObject can be added to a
+// Process/SubProcess container (SRD-063 FR-1).
+func (do *DataObject) EType() flow.ElementType {
 	return flow.DataObjectElement
 }
 

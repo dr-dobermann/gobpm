@@ -12,6 +12,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -29,11 +30,12 @@ const errorClass = "PROCESS_ERRORS"
 // by a single person. Low-level Processes can be grouped together to achieve a
 // common business goal.
 type Process struct {
-	properties map[string]*data.Property
-	roles      map[string]*hi.ResourceRole
-	nodes      map[string]flow.Node
-	flows      map[string]*flow.SequenceFlow
-	name       string
+	properties  map[string]*data.Property
+	roles       map[string]*hi.ResourceRole
+	nodes       map[string]flow.Node
+	flows       map[string]*flow.SequenceFlow
+	dataObjects map[string]*dataobjects.DataObject
+	name        string
 	foundation.BaseElement
 	CorrelationSubscriptions []*bpmncommon.CorrelationSubscription
 }
@@ -100,6 +102,36 @@ func (p *Process) Name() string {
 // Properties returns the Process properties.
 func (p *Process) Properties() []*data.Property {
 	return slices.Collect(maps.Values(p.properties))
+}
+
+// DataObjects returns the Process-level Data Objects (SRD-063 FR-1).
+func (p *Process) DataObjects() []*dataobjects.DataObject {
+	return slices.Collect(maps.Values(p.dataObjects))
+}
+
+// addDataObject registers a Data Object on the Process (SRD-063 FR-1). A
+// DataObject is a scope-resident named container (ADR-030 §2.1), so its name
+// must be unique among the Process's Data Objects and must not collide with a
+// Property — they share one scope name-space.
+func (p *Process) addDataObject(do *dataobjects.DataObject) error {
+	name := do.Name()
+	if _, ok := p.dataObjects[name]; ok {
+		return errs.New(
+			errs.M("data object %q(%s) already registered in process",
+				name, do.ID()),
+			errs.C(errorClass, errs.DuplicateObject))
+	}
+
+	if _, ok := p.properties[name]; ok {
+		return errs.New(
+			errs.M("data object name %q collides with a process property",
+				name),
+			errs.C(errorClass, errs.DuplicateObject))
+	}
+
+	p.dataObjects[name] = do
+
+	return do.BindTo(p)
 }
 
 // addNode adds non-empty unique BaseNode n to the process p.
@@ -202,6 +234,17 @@ func (p *Process) Add(e flow.Element) error {
 		}
 
 		return p.addFlow(f)
+
+	case flow.DataObjectElement:
+		do, ok := e.(*dataobjects.DataObject)
+		if !ok {
+			return errs.New(
+				errs.M("element %q reports DataObjectElement type but is not a *dataobjects.DataObject",
+					e.ID()),
+				errs.C(errorClass, errs.TypeCastingError))
+		}
+
+		return p.addDataObject(do)
 	}
 
 	return errs.New(

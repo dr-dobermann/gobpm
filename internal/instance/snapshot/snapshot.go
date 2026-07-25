@@ -5,6 +5,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -22,6 +23,11 @@ type Snapshot struct {
 	Nodes       map[string]flow.Node
 	Flows       map[string]*flow.SequenceFlow
 	Properties  []*data.Property
+	// DataObjects are the Process-level Data Objects, cloned per instance so no
+	// two instances share DataObject state (SRD-063 FR-2). Seeded into the root
+	// scope at instance start; their task associations are re-pointed at these
+	// clones by wireClonedDataObjects.
+	DataObjects []*dataobjects.DataObject
 	// CorrelationKeys are the process's declared correlation keys (the Key of
 	// each CorrelationSubscription). An in-instance receiver derives them from
 	// an incoming message's payload to grow the instance's conversation key-set
@@ -39,6 +45,28 @@ type Snapshot struct {
 	// instance loop only when true, so a conditional-free process never pays
 	// for it. Immutable, shared by Clone.
 	HasConditionals bool
+}
+
+// cloneProcessData deep-copies a process's properties and data objects for the
+// snapshot template (FIX-016; SRD-063 FR-2), so the frozen snapshot owns private
+// instances a later process edit can't reach.
+func cloneProcessData(
+	p *process.Process,
+) ([]*data.Property, []*dataobjects.DataObject, error) {
+	// CloneProperties / CloneDataObjects already wrap with per-element context,
+	// so propagate as-is (these failures are defensive — a value-less element is
+	// rejected at construction).
+	props, err := data.CloneProperties(p.Properties())
+	if err != nil {
+		return nil, nil, err
+	}
+
+	dobjs, err := dataobjects.CloneDataObjects(p.DataObjects())
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return props, dobjs, nil
 }
 
 // New creates a new snapshot from the Process p and returns its
@@ -61,16 +89,13 @@ func New(
 		return nil, err
 	}
 
-	// Clone the process properties into the snapshot so the frozen template owns
-	// private property objects — like the node graph cloned below — and a process
-	// edit after registration can't reach the registered version (FIX-016,
-	// ADR-019 §2.3).
-	props, err := data.CloneProperties(p.Properties())
+	// Clone the process properties and data objects into the snapshot so the
+	// frozen template owns private instances — like the node graph cloned below
+	// — and a process edit after registration can't reach the registered version
+	// (FIX-016, ADR-019 §2.3; SRD-063 FR-2 for data objects).
+	props, dobjs, err := cloneProcessData(p)
 	if err != nil {
-		return nil, errs.New(
-			errs.M("couldn't clone process properties into snapshot"),
-			errs.C(errorClass, errs.BulidingFailed),
-			errs.E(err))
+		return nil, err
 	}
 
 	s := Snapshot{
@@ -79,6 +104,7 @@ func New(
 		ProcessName: p.Name(),
 		Nodes:       map[string]flow.Node{},
 		Properties:  props,
+		DataObjects: dobjs,
 	}
 
 	s.CorrelationKeys = correlationKeys(p)
@@ -287,12 +313,18 @@ func (s *Snapshot) Clone() (*Snapshot, error) {
 		return nil, err
 	}
 
+	dobjs, err := dataobjects.CloneDataObjects(s.DataObjects)
+	if err != nil {
+		return nil, err
+	}
+
 	clone := Snapshot{
 		ID:                  *foundation.NewID(),
 		ProcessID:           s.ProcessID,
 		ProcessName:         s.ProcessName,
 		Nodes:               make(map[string]flow.Node, len(s.Nodes)),
 		Properties:          props,
+		DataObjects:         dobjs,
 		CorrelationKeys:     s.CorrelationKeys,
 		InstantiatingStarts: s.InstantiatingStarts,
 		HasConditionals:     s.HasConditionals,

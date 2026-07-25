@@ -58,7 +58,7 @@ func TestNew(t *testing.T) {
 			require.NoError(t, err)
 
 			require.Equal(t, name, do.Name())
-			require.Equal(t, flow.DataObjectElement, do.Type())
+			require.Equal(t, flow.DataObjectElement, do.EType())
 			require.Empty(t, do.Docs())
 			require.Equal(t, "normalDO", do.ID())
 
