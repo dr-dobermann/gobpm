@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-24 |
 | Owner | Ruslan Gabitov |
@@ -217,12 +217,16 @@ STRING values follow the DMN table-notation names.)
   layer or declares its own kind. Promoting the interface into the core is
   a compatible later move if a second engine wants it (noted in ADR-029
   follow-ups).
-- **§4.2 Absent-vs-failed reads.** The runtime reader reports a missing
-  datum as an error (there is no absent-sentinel in `service.DataReader`),
-  so `IfPresent` treats **any failed read inside its wrapped condition** as
-  no-match — documented on the combinator. This is deliberately coarse:
-  distinguishing "not found" from other read failures would couple the
-  adapter to internal error classes across the module boundary.
+- **§4.2 Absent-vs-failed reads** *(amended at landing — the
+  implementation is stricter than this draft's "any failed read" plan)*:
+  the adapter marks its own datum-read failures with the exported
+  **`dtable.ErrAbsent`** (joined into the classified error), and
+  `IfPresent` converts **only that class** into a no-match — a type
+  mismatch or a failing `Pred` stays loud even under `IfPresent`
+  (tolerance covers absence, not broken conditions). A custom `Pred`
+  opts its own reads into the same tolerance via
+  `errors.Join(dtable.ErrAbsent, cause)`. No internal error classes cross
+  the module boundary — the marker is the adapter's own.
 - **§4.3 `Any`-policy equality.** Matched rows are compared by their
   extracted values (`Value().Get(ctx)` per key, `reflect.DeepEqual`) — Row
   holds `data.Value` interfaces whose identities differ even when values
@@ -297,7 +301,38 @@ STRING values follow the DMN table-notation names.)
 
 ## §10 Implementation summary
 
-*Filled at landing.*
+Landed on `feat/dtable-adapter` in three milestones (after the doc commits
+`4e53499` ADR-029 / `dde3efd` the Deploy-decomposition amendment /
+`a1e0f87` this SRD):
+
+- **M1 `f2734ef` — the evaluation half.** `adapters/dtable` module:
+  `condition.go` (the vocabulary over one shared ordered-compare core;
+  `ErrAbsent` + `IfPresent`; loud type mismatches), `rule.go` (the `Rule`
+  contract + the functor kind via `R(...).Then/ThenF`), `table.go` (the
+  data table, five policies), `engine.go` (the RWMutex registry,
+  `##DTable`, the policy dispatch map; `New(opts)` reserving the Option
+  seam). T-1…T-4 incl. the First short-circuit probe. Coverage 98.8%.
+- **M2 `0983022` — Deploy + the JSON decoder.** `deploy.go` (the `Decoder`
+  seam, `WithDecoder`, `Deploy` with replace semantics vs `Register`'s
+  duplicate rejection; the `rules.Deployer` assert), `vocabulary.go`,
+  `jsondecoder.go` (structure-only artifacts; the full malformation
+  matrix classified). T-4a/T-4b. Coverage 99.6%.
+- **M3 `66642f9` — e2e + example + doc sync.** The adapter's e2e drives
+  the Business Rule Task through `thresher.WithRuleEngine` with a
+  DEPLOYED table (both lanes; `implementation=##DTable` in the
+  `Rules/Evaluated` fact; the missing-datum loud failure);
+  `examples/decision-table/` (embedded artifact, three profiles →
+  25/15/5%); CHANGELOG / examples index / README+ru / roadmap WS-E
+  first-landed-adapter note.
+
+**Verification:** root `make ci` exit 0 with both new modules in every
+loop; module coverage 99.6% `-race` (only `Evaluate` 96.6% — one
+defensive branch); golangci-lint (root config) 0 issues; the example
+smoked exit 0; 0 `Must*` calls in the adapter's non-test code.
+
+**Delta vs draft (one):** §4.2 landed stricter than planned — the
+`ErrAbsent` marker narrows `IfPresent` tolerance to genuine absence
+(amended in §4.2 above).
 
 ## Open questions
 
@@ -307,4 +342,5 @@ STRING values follow the DMN table-notation names.)
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.1 (Accepted) | 2026-07-25 | Ruslan Gabitov | Landed and accepted — §10 filled (M1 `f2734ef`, M2 `0983022`, M3 `66642f9`); §4.2 amended to the landed, stricter `ErrAbsent`-marked `IfPresent` semantics. |
 | v.1 | 2026-07-24 | Ruslan Gabitov | Initial draft — lands ADR-029 v.1: the `adapters/dtable` module (first out-of-core `rules.Engine`): the `Rule` contract + functor kind (`R(...).Then/ThenF`), the condition vocabulary (`Eq/NE/GT/GE/LT/LE/Between/In/Any/Pred` + `IfPresent`), fail-loud missing input with engine-side decision/rule wrapping, the data-declared five-policy dispatch (`Unique/First/Any/RuleOrder/Collect`, DMN semantics, no-match = empty), the table-registry engine (`##DTable`) implementing `rules.Deployer` through the pluggable **Decoder seam** with the **named-functor JSON batteries decoder** (structure-only artifacts over a Go-registered `Vocabulary`; Deploy replaces / Register rejects), e2e through the Business Rule Task, and `examples/decision-table/` (deploying its table from an embedded artifact). Three milestones. |

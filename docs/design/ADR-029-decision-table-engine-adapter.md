@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-24 |
 | Owner | Ruslan Gabitov |
@@ -244,4 +244,5 @@ option if per-cell `IfPresent` proves noisy (§2.5).
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.1 (Accepted) | 2026-07-25 | Ruslan Gabitov | Accepted with the accompanying SRD's landing: the adapter module, the functor rules with the condition vocabulary, all five hit policies, the fail-loud/`IfPresent` missing-input split, and the Decoder-seam Deploy with the named-functor JSON batteries decoder are all in the engine as conceived. |
 | v.1 | 2026-07-24 | Ruslan Gabitov | Draft conception. The ADR-027 table tier lands as **`adapters/dtable`** — a pluggable adapter module (the core's default battery stays `gorules`; the adapter is the seam's external proof) with **Go functors as rule expressions** (conditions and computed outputs read the same `service.DataReader` the gooper/gorules functors do; DMN's input-expression layer is deliberately subsumed; condition constructors keep tables declarative). The table is data (name, hit policy, ordered rules); a rule is the ADR-027 behavior contract, functor-backed as its first kind. All five hit policies with DMN semantics (Unique contradiction and Any disagreement are classified errors; no-match = empty result; Collect aggregations deferred). **Missing input fails loud by default** (an absent datum is a classified evaluation error naming decision/rule/datum — a deliberate deviation from DMN's null-tolerant fall-through, per the fail-loud house rule) with per-condition `IfPresent` opting into the DMN no-match semantics; `Any()` matches like DMN's `-`. **Deploy decomposed and claimed**: the engine owns the deployment mechanics and implements `rules.Deployer`; the definition format is a pluggable **Decoder seam** (`WithDecoder`; no decoder → loud failure); the batteries decoder is structure-only JSON wiring **named Go-registered functors** (behavior stays compiled Go; no condition language in artifacts; unresolved names fail deploy). Deploy replaces an existing decision, programmatic Register rejects duplicates. Implementation rides the accompanying SRD. |
