@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The Script Engine seam (multi-engine) and the Script Task (SRD-064,
+  ADR-031 v.1 — the seam half; #87).** The last silent conformance task
+  type gains execution on a **pluggable, multi-engine Script Engine seam**:
+  `pkg/script` defines the engine contract (`##`-kind, **enumerable
+  `Formats()` claims**, `Execute(format, script, DataReader)` → named
+  outputs) and the core **Registry router** — registered engines fold into
+  a format→engine map at construction, a duplicate claim **fails
+  `thresher.New` loud naming both kinds**, and the startup config prints
+  the routing table. `WithScriptEngine` is **repeatable** — several
+  interpreters coexist in one gobpm engine, routed by the standard's own
+  `scriptFormat` MIME hint; an unclaimed format errors listing the
+  registered claims, and the zero-config `##None` default tells the
+  operator exactly what to wire. The rebuilt `ScriptTask`
+  (`NewScriptTask(name, format, script)`) runs its body on the routed
+  engine and commits the script's **named outputs per-name** (sorted,
+  deterministic) — a script sets variables, no result fold. New `Script`
+  observability facts (`Executed`/`Failed`) carry the format, the routed
+  engine's kind and the output count. The batteries **Lua interpreter
+  (`adapters/lua`), the example and the conformance row-5 flip ride
+  SRD-065**.
+
 - **The Decision Table rule engine — `adapters/dtable` (SRD-062, ADR-029
   v.1; the first shipped adapter module).** A pluggable out-of-core
   `rules.Engine` evaluating DMN-shaped decision tables with **Go functors
