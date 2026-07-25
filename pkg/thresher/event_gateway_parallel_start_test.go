@@ -11,6 +11,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/messaging/membroker"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	dgexpr "github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
@@ -273,6 +274,9 @@ func nilValueKey(t *testing.T) *bpmncommon.CorrelationKey {
 	t.Helper()
 
 	expr := mockdata.NewMockFormalExpression(t)
+	// the registry routes by language (ADR-032) — claim the battery's so
+	// the delegate engine reaches Evaluate.
+	expr.EXPECT().Language().Return(dgexpr.Language).Maybe()
 	expr.EXPECT().Evaluate(mock.Anything, mock.Anything).
 		Return(values.NewVariable[any](nil), nil)
 

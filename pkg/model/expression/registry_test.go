@@ -114,6 +114,13 @@ func TestRegistryConstruction(t *testing.T) {
 			require.Equal(t, "##GoExpr+##Lite", reg.Type())
 			require.Equal(t,
 				[]string{"gobpm:goexpr", "gobpm:lite"}, reg.Languages())
+
+			e, ok := reg.EngineFor(" GOBPM:LITE ")
+			require.True(t, ok)
+			require.Same(t, lite, e)
+
+			_, ok = reg.EngineFor("urn:juel")
+			require.False(t, ok)
 		})
 }
 

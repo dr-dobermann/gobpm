@@ -12,7 +12,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/messaging"
 	"github.com/dr-dobermann/gobpm/pkg/messaging/membroker"
 	"github.com/dr-dobermann/gobpm/pkg/model/expression"
-	"github.com/dr-dobermann/gobpm/pkg/model/expression/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/observability/memmetrics"
 	"github.com/dr-dobermann/gobpm/pkg/observability/noop"
@@ -29,7 +28,8 @@ import (
 // thresherConfig holds the resolved engine-level extensions (ADR-002 §4.3).
 // EventHub is NOT here — it stays internal and the Thresher builds it itself.
 type thresherConfig struct {
-	exprEngine            expression.Engine
+	exprEngines           []expression.Engine
+	exprRegistry          *expression.Registry
 	logger                observability.Logger
 	workerErrorMapper     tasks.ErrorMapper
 	ruleEngine            rules.Engine
@@ -46,6 +46,7 @@ type thresherConfig struct {
 	scriptRegistry        *script.Registry
 	scriptEngines         []script.Engine
 	workerTrustDefault    tasks.TrustMode
+	noDefaultExprEngines  bool
 	suppressBanner        bool
 	suppressStartupConfig bool
 }
@@ -162,7 +163,13 @@ func WithTaskDistributor(d interactor.TaskDistributor) Option {
 	}
 }
 
-// WithExpressionEngine sets the expression engine (default: Go-native).
+// WithExpressionEngine registers an expression engine (ADR-032 §2.1). The
+// option is REPEATABLE — each call registers another engine; the language
+// claims fold into the routing registry at New, where a duplicate claim
+// fails construction loud. The batteries (goexpr — and lite, when it
+// lands) are prepended by default; suppress them with
+// WithoutDefaultExpressionEngines. (Pre-1.0 semantic change: the old
+// replace-wholesale meaning is retired — registration composes.)
 func WithExpressionEngine(e expression.Engine) Option {
 	return func(c *thresherConfig) error {
 		if e == nil {
@@ -171,7 +178,20 @@ func WithExpressionEngine(e expression.Engine) Option {
 				errs.C(errorClass, errs.EmptyNotAllowed))
 		}
 
-		c.exprEngine = e
+		c.exprEngines = append(c.exprEngines, e)
+
+		return nil
+	}
+}
+
+// WithoutDefaultExpressionEngines starts the expression registry EMPTY:
+// no batteries are prepended, every engine registers explicitly — the
+// "remove it from the runtime if unused" posture (ADR-032 §2.1). A model
+// evaluating an expression whose language nobody claims then fails loud
+// with the registered claims listed.
+func WithoutDefaultExpressionEngines() Option {
+	return func(c *thresherConfig) error {
+		c.noDefaultExprEngines = true
 
 		return nil
 	}
@@ -325,7 +345,7 @@ func (c *thresherConfig) MetricsRecorder() observability.MetricsRecorder { retur
 func (c *thresherConfig) Clock() clock.Clock                             { return c.clock }
 func (c *thresherConfig) Repository() repository.Repository              { return c.repository }
 func (c *thresherConfig) MessageBroker() messaging.MessageBroker         { return c.msgBroker }
-func (c *thresherConfig) ExpressionEngine() expression.Engine            { return c.exprEngine }
+func (c *thresherConfig) ExpressionEngine() expression.Engine            { return c.exprRegistry }
 func (c *thresherConfig) RuleEngine() rules.Engine                       { return c.ruleEngine }
 func (c *thresherConfig) ScriptEngine() script.Engine                    { return c.scriptRegistry }
 
@@ -366,7 +386,6 @@ func defaultConfig() thresherConfig {
 		clock:      syscl.New(),
 		repository: memrepo.New(),
 		msgBroker:  membroker.New(),
-		exprEngine: goexpr.New(),
 		authz:      allowall.New(),
 		dispatcher: localdispatcher.New(nil, 0),
 		ruleEngine: gorules.New(),

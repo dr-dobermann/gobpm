@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Language-routed expression engines and the text expression kind
+  (SRD-066, ADR-032 v.1 — the routing half; part of #74).** The expression
+  seam becomes **multi-engine**: `expression.Engine` widens with the
+  `##`-kind and **enumerable `Languages()` claims**, and the new
+  `expression.Registry` folds registered engines into a language→engine
+  routing map at construction — the Registry is itself an `Engine`, so
+  every runtime consumer (conditions, timers, multi-instance, correlation,
+  the worker dispatcher's expression binder) is untouched however many
+  engines are wired. `WithExpressionEngine` is **repeatable** (several
+  evaluators coexist, routed by each expression's language URI); a
+  duplicate language claim **fails `thresher.New` loud naming both
+  kinds**; an unclaimed language errors listing the registered claims;
+  `WithoutDefaultExpressionEngines()` opts out of the batteries for a
+  fully explicit runtime (`##None`). The startup config prints the
+  expression routing table. New `data.NewTextExpression(language, body)`
+  carries **source-text expressions** (the standard's textual
+  FormalExpression) for routed engines to interpret via the
+  `data.BodyHolder` capability — with `WithResultType` declaring the
+  result type (conditions require `"bool"`); the functor kind
+  (`gobpm:goexpr`) keeps working unchanged as the routed default.
+
 - **The Lua Script Engine — `adapters/lua` (SRD-065; completes ADR-031 and
   closes #87 together with the seam and the BRT landings).** The batteries
   interpreter behind the Script Engine seam, over pure-Go `gopher-lua`

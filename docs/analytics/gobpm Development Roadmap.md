@@ -123,7 +123,7 @@ The standalone `gobpm-server`, built additively on WS-B interfaces and WS-C engi
 Production implementations of the extension interfaces, each in its own `adapters/*` module, scheduled when its first consumer materialises. Each: implement the public interface, pass the conformance helper suite, declare cluster compatibility (`ClusterAware`).
 
 - **Landed:** `adapters/dtable/` (the Decision Table rule engine — the first shipped adapter; ADR-029 / SRD-062); `adapters/lua/` (the Lua Script Engine — pure-Go gopher-lua behind the multi-engine script seam; ADR-031 / SRD-065).
-- `adapters/postgres/` (Repository), `adapters/otel/` (Tracer/MetricsRecorder), `adapters/oidc|jwt|mtls/` (AuthN), `adapters/casbin/` (AuthorizationProvider), `adapters/feel/` (ExpressionEngine), `adapters/redis|nats-broker/` (MessageBroker). The existing `adapters/sqlite/` scaffold becomes a Repository adapter.
+- `adapters/postgres/` (Repository), `adapters/otel/` (Tracer/MetricsRecorder), `adapters/oidc|jwt|mtls/` (AuthN), `adapters/casbin/` (AuthorizationProvider), `adapters/feel/` (ExpressionEngine — the seam now hosts engines side by side: the ADR-032 language registry routes each expression by its language URI, so FEEL plugs in beside the built-ins), `adapters/redis|nats-broker/` (MessageBroker). The existing `adapters/sqlite/` scaffold becomes a Repository adapter.
 
 ### WS-F — Distribution & scale (future)
 

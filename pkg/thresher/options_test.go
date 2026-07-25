@@ -6,12 +6,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
+	"github.com/dr-dobermann/gobpm/pkg/model/expression"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 
 	"github.com/dr-dobermann/gobpm/pkg/auth/allowall"
 	"github.com/dr-dobermann/gobpm/pkg/clock/syscl"
 	"github.com/dr-dobermann/gobpm/pkg/messaging/membroker"
-	"github.com/dr-dobermann/gobpm/pkg/model/expression/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/observability/memmetrics"
 	"github.com/dr-dobermann/gobpm/pkg/observability/noop"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
@@ -40,7 +42,7 @@ func TestDefaultConfigWiresEveryExtension(t *testing.T) {
 	c := defaultConfig()
 
 	if c.logger == nil || c.tracer == nil || c.metrics == nil || c.clock == nil ||
-		c.repository == nil || c.msgBroker == nil || c.exprEngine == nil ||
+		c.repository == nil || c.msgBroker == nil ||
 		c.authz == nil || c.dispatcher == nil || c.ruleEngine == nil {
 		t.Fatalf("defaultConfig left an extension nil: %+v", c)
 	}
@@ -55,7 +57,6 @@ func TestEveryOptionOverridesItsDefault(t *testing.T) {
 	ck := syscl.New()
 	rp := memrepo.New()
 	mb := membroker.New()
-	ee := goexpr.New()
 	az := allowall.New()
 	wd := localdispatcher.New(nil, 0)
 	rle := gorules.New()
@@ -70,7 +71,7 @@ func TestEveryOptionOverridesItsDefault(t *testing.T) {
 
 	for _, o := range []Option{
 		WithLogger(lg), WithTracer(tr), WithMetricsRecorder(mr), WithClock(ck),
-		WithRepository(rp), WithMessageBroker(mb), WithExpressionEngine(ee),
+		WithRepository(rp), WithMessageBroker(mb),
 		WithAuthorizationProvider(az), WithWorkerDispatcher(wd),
 		WithRuleEngine(rle),
 		WithWorkerErrorMapper(wem), WithWorkerRetryPolicy(wrp),
@@ -82,7 +83,7 @@ func TestEveryOptionOverridesItsDefault(t *testing.T) {
 	}
 
 	if c.logger != lg || c.tracer != tr || c.metrics != mr || c.clock != ck ||
-		c.repository != rp || c.msgBroker != mb || c.exprEngine != ee ||
+		c.repository != rp || c.msgBroker != mb ||
 		c.authz != az || c.dispatcher != wd || c.ruleEngine != rle ||
 		c.WorkerErrorMapper() != wem || c.WorkerRetryPolicy() != wrp ||
 		c.WorkerTrustDefault() != wtd {
@@ -174,6 +175,88 @@ func (f *fakeScriptEngine) Execute(
 	return nil, nil
 }
 
+func TestExpressionEngineWiring(t *testing.T) {
+	fake := &fakeExprEngine{kind: "##XTest",
+		languages: []string{"x-test:expr"}}
+
+	t.Run("zero-config is the goexpr battery",
+		func(t *testing.T) {
+			eng, err := New("ee-default")
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+
+			if eng.cfg.exprRegistry.Type() != "##GoExpr" {
+				t.Fatalf("default expression registry = %q, want ##GoExpr",
+					eng.cfg.exprRegistry.Type())
+			}
+		})
+
+	t.Run("WithExpressionEngine is repeatable and registers beside the battery",
+		func(t *testing.T) {
+			eng, err := New("ee-two", WithExpressionEngine(fake))
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+
+			if got := eng.cfg.exprRegistry.Type(); got != "##GoExpr+##XTest" {
+				t.Fatalf("registry kinds = %q, want ##GoExpr+##XTest", got)
+			}
+		})
+
+	t.Run("a claim on the battery language fails New loud",
+		func(t *testing.T) {
+			clash := &fakeExprEngine{kind: "##Clash",
+				languages: []string{"GOBPM:GOEXPR"}}
+
+			_, err := New("ee-clash", WithExpressionEngine(clash))
+			if err == nil {
+				t.Fatal("New must fail on a duplicate language claim")
+			}
+
+			if !strings.Contains(err.Error(), "##GoExpr") ||
+				!strings.Contains(err.Error(), "##Clash") {
+				t.Fatalf("the conflict error must name both kinds: %v", err)
+			}
+		})
+
+	t.Run("WithoutDefaultExpressionEngines empties the registry",
+		func(t *testing.T) {
+			eng, err := New("ee-none", WithoutDefaultExpressionEngines())
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+
+			if eng.cfg.exprRegistry.Type() != expression.NoneType {
+				t.Fatalf("opted-out registry = %q, want ##None",
+					eng.cfg.exprRegistry.Type())
+			}
+		})
+
+	t.Run("WithExpressionEngine(nil) rejected",
+		func(t *testing.T) {
+			if _, err := New("ee-nil", WithExpressionEngine(nil)); err == nil {
+				t.Fatal("WithExpressionEngine(nil) must be rejected")
+			}
+		})
+}
+
+// fakeExprEngine is a minimal expression.Engine for wiring tests.
+type fakeExprEngine struct {
+	kind      string
+	languages []string
+}
+
+func (f *fakeExprEngine) Type() string { return f.kind }
+
+func (f *fakeExprEngine) Languages() []string { return f.languages }
+
+func (f *fakeExprEngine) Evaluate(
+	_ context.Context, _ data.FormalExpression, _ data.Source,
+) (data.Value, error) {
+	return values.NewVariable(f.kind), nil
+}
+
 func TestNilOptionValueRejected(t *testing.T) {
 	c := defaultConfig()
 	defaultLogger := c.logger
@@ -246,6 +329,7 @@ func TestStartupConfigLog(t *testing.T) {
 		"repository:", "logger:", "tracer:", "metricsRecorder:", "clock:",
 		"messageBroker:", "expressionEngine:", "authorizationProvider:",
 		"workerDispatcher:", "ruleEngine:", "scriptEngine",
+		"expressionEngine", "exprLanguage gobpm:goexpr: ##GoExpr",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("startup log missing line %q (got %v)", want, msgs)

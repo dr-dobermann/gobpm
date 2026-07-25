@@ -107,6 +107,14 @@ func (reg *Registry) Languages() []string {
 	return append([]string{}, reg.languages...)
 }
 
+// EngineFor resolves the engine answering language (normalized) — the
+// startup routing table prints through it.
+func (reg *Registry) EngineFor(language string) (Engine, bool) {
+	e, ok := reg.byLanguage[normalize(language)]
+
+	return e, ok
+}
+
 // Evaluate routes expr to the engine claiming its Language(). A nil or
 // language-less expression, the empty registry and an unclaimed language
 // are classified errors — the latter lists the languages actually

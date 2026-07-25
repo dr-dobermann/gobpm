@@ -16,6 +16,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
+	dgexpr "github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -278,6 +279,7 @@ func TestEvalLoopCondNonBool(t *testing.T) {
 	_ = data.CreateDefaultStates()
 
 	me := mockdata.NewMockFormalExpression(t)
+	me.EXPECT().Language().Return(dgexpr.Language).Maybe()
 	me.EXPECT().ResultType().Return("bool")
 	me.EXPECT().Language().Return("mock").Maybe()
 	me.EXPECT().Evaluate(mock.Anything, mock.Anything).

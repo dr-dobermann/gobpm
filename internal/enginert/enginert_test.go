@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/clock/clocktest"
+	"github.com/dr-dobermann/gobpm/pkg/model/expression"
 	"github.com/dr-dobermann/gobpm/pkg/model/expression/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/rules/gorules"
 	"github.com/dr-dobermann/gobpm/pkg/script"
@@ -41,20 +42,29 @@ func TestDefaultRuntimeWorkerDispatcherIsJobStore(t *testing.T) {
 
 func TestOverrides(t *testing.T) {
 	c := clocktest.New(time.Unix(0, 0))
-	e := goexpr.New()
+
+	ereg, err := expression.NewRegistry(goexpr.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	re := gorules.New()
 
 	l := slog.Default()
 
-	r := Default().WithClock(c).WithExpressionEngine(e).WithLogger(l).
+	r := Default().WithClock(c).WithExpressionRegistry(ereg).WithLogger(l).
 		WithRuleEngine(re)
 
 	if r.Clock() != c {
 		t.Fatal("WithClock was not applied")
 	}
 
-	if r.ExpressionEngine() != e {
-		t.Fatal("WithExpressionEngine was not applied")
+	if r.ExpressionEngine() != ereg {
+		t.Fatal("WithExpressionRegistry was not applied")
+	}
+
+	if Default().WithExpressionRegistry(nil).ExpressionEngine() == nil {
+		t.Fatal("a nil expression registry should be ignored (default kept)")
 	}
 
 	if r.Logger() != l {

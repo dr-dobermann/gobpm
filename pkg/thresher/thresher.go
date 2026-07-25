@@ -49,6 +49,8 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/interactor"
+	"github.com/dr-dobermann/gobpm/pkg/model/expression"
+	"github.com/dr-dobermann/gobpm/pkg/model/expression/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
@@ -198,6 +200,26 @@ func New(id string, opts ...Option) (*Thresher, error) {
 
 	cfg.scriptRegistry = reg
 
+	// the expression registry (ADR-032 §2.1): the batteries prepend unless
+	// suppressed, user engines append — a user engine claiming a battery
+	// language conflicts loudly instead of silently shadowing it.
+	exprEngines := cfg.exprEngines
+	if !cfg.noDefaultExprEngines {
+		exprEngines = append(
+			[]expression.Engine{goexpr.New()}, exprEngines...)
+	}
+
+	exprReg, err := expression.NewRegistry(exprEngines...)
+	if err != nil {
+		return nil,
+			errs.New(
+				errs.M("couldn't build the expression-engine registry"),
+				errs.C(errorClass, errs.InvalidParameter),
+				errs.E(err))
+	}
+
+	cfg.exprRegistry = exprReg
+
 	id = strings.TrimSpace(id)
 	if id == "" {
 		id = defaultThresherID
@@ -314,7 +336,17 @@ func (t *Thresher) logStartupConfig() {
 		module("metricsRecorder", t.cfg.metrics)
 		module("clock", t.cfg.clock)
 		module("messageBroker", t.cfg.msgBroker)
-		module("expressionEngine", t.cfg.exprEngine)
+		module("expressionEngine", t.cfg.exprRegistry)
+		log.Info(fmt.Sprintf("  %-22s %s", "expressionEngines:",
+			t.cfg.exprRegistry.Type()))
+
+		// the expression-language routing table (ADR-032 §2.1).
+		for _, lang := range t.cfg.exprRegistry.Languages() {
+			if e, ok := t.cfg.exprRegistry.EngineFor(lang); ok {
+				log.Info(fmt.Sprintf("  exprLanguage %s: %s",
+					lang, e.Type()))
+			}
+		}
 		module("authorizationProvider", t.cfg.authz)
 		module("workerDispatcher", t.cfg.dispatcher)
 		module("ruleEngine", t.cfg.ruleEngine)
