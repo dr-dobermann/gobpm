@@ -7,6 +7,8 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/auth/allowall"
 	"github.com/dr-dobermann/gobpm/pkg/clock"
 	"github.com/dr-dobermann/gobpm/pkg/clock/syscl"
+	"github.com/dr-dobermann/gobpm/pkg/datastore"
+	"github.com/dr-dobermann/gobpm/pkg/datastore/memstore"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/interactor"
 	"github.com/dr-dobermann/gobpm/pkg/messaging"
@@ -40,6 +42,7 @@ type thresherConfig struct {
 	dispatcher            tasks.WorkerDispatcher
 	reporter              observability.Reporter
 	metrics               observability.MetricsRecorder
+	dataStores            *memstore.Registry
 	authz                 auth.AuthorizationProvider
 	workerRetryPolicy     tasks.RetryPolicy
 	taskDist              interactor.TaskDistributor
@@ -262,6 +265,17 @@ func WithScriptEngine(e script.Engine) Option {
 	}
 }
 
+// WithDataStore registers the engine-global Data Store a DataStoreReference
+// with dataStoreRef=ref reads and writes (BPMN §10.4.1, ADR-030 §2.5). Each
+// store outlives every instance and is shared across them; call it once per
+// distinct store. A store may be any datastore.DataStore — the in-memory
+// memstore, or a durable adapter. Registering an already-used ref replaces it.
+func WithDataStore(ref string, store datastore.DataStore) Option {
+	return func(c *thresherConfig) error {
+		return c.dataStores.Register(ref, store)
+	}
+}
+
 // WithWorkerErrorMapper sets the engine-wide default ErrorMapper applied to a
 // worker-dispatched ServiceTask's raw fault when it carries no per-service
 // activities.WithErrorMapper (SRD-037 FR-3, two-level config).
@@ -348,6 +362,7 @@ func (c *thresherConfig) MessageBroker() messaging.MessageBroker         { retur
 func (c *thresherConfig) ExpressionEngine() expression.Engine            { return c.exprRegistry }
 func (c *thresherConfig) RuleEngine() rules.Engine                       { return c.ruleEngine }
 func (c *thresherConfig) ScriptEngine() script.Engine                    { return c.scriptRegistry }
+func (c *thresherConfig) DataStores() datastore.Registry                 { return c.dataStores }
 
 func (c *thresherConfig) AuthorizationProvider() auth.AuthorizationProvider {
 	return c.authz
@@ -389,6 +404,7 @@ func defaultConfig() thresherConfig {
 		authz:      allowall.New(),
 		dispatcher: localdispatcher.New(nil, 0),
 		ruleEngine: gorules.New(),
+		dataStores: memstore.NewRegistry(),
 		taskDist:   interactor.NopDistributor(),
 	}
 }

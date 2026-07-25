@@ -9,6 +9,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/auth"
 	"github.com/dr-dobermann/gobpm/pkg/clock"
+	"github.com/dr-dobermann/gobpm/pkg/datastore"
 	"github.com/dr-dobermann/gobpm/pkg/eventproc"
 	"github.com/dr-dobermann/gobpm/pkg/messaging"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -216,6 +217,52 @@ func (_c *MockRuntimeEnvironment_Compensate_Call) Return() *MockRuntimeEnvironme
 
 func (_c *MockRuntimeEnvironment_Compensate_Call) RunAndReturn(run func(activityRef string, wait bool)) *MockRuntimeEnvironment_Compensate_Call {
 	_c.Run(run)
+	return _c
+}
+
+// DataStores provides a mock function for the type MockRuntimeEnvironment
+func (_mock *MockRuntimeEnvironment) DataStores() datastore.Registry {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for DataStores")
+	}
+
+	var r0 datastore.Registry
+	if returnFunc, ok := ret.Get(0).(func() datastore.Registry); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(datastore.Registry)
+		}
+	}
+	return r0
+}
+
+// MockRuntimeEnvironment_DataStores_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DataStores'
+type MockRuntimeEnvironment_DataStores_Call struct {
+	*mock.Call
+}
+
+// DataStores is a helper method to define mock.On call
+func (_e *MockRuntimeEnvironment_Expecter) DataStores() *MockRuntimeEnvironment_DataStores_Call {
+	return &MockRuntimeEnvironment_DataStores_Call{Call: _e.mock.On("DataStores")}
+}
+
+func (_c *MockRuntimeEnvironment_DataStores_Call) Run(run func()) *MockRuntimeEnvironment_DataStores_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockRuntimeEnvironment_DataStores_Call) Return(registry datastore.Registry) *MockRuntimeEnvironment_DataStores_Call {
+	_c.Call.Return(registry)
+	return _c
+}
+
+func (_c *MockRuntimeEnvironment_DataStores_Call) RunAndReturn(run func() datastore.Registry) *MockRuntimeEnvironment_DataStores_Call {
+	_c.Call.Return(run)
 	return _c
 }
 
