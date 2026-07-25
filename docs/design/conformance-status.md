@@ -76,9 +76,12 @@ the vendor `Extension*` model types.
 2. ~~#85 Sub-Process + Call Activity~~ — the keystone, **CLOSED**: the
    embedded Sub-Process (the token-scope container) **landed** (SRD-049)
    and the Call Activity (the reuse boundary) **landed** (SRD-050).
-3. **#88 loops/multi-instance** — the second structural pillar, now next.
-4. **#87 Script/DMN tasks** — Script with the expression layer (#74), DMN
-   behind an extension seam.
+3. ~~#88 loops/multi-instance~~ — **landed** (ADR-025; SRD-054/055/056.A/
+   056.B — see row 4).
+4. ~~#87 Script/DMN tasks~~ — **landed** (rows 5–6: ADR-027/ADR-031 with
+   their SRDs); the expression layer (~~#74~~) **landed** too — ADR-032
+   language-routed engines, the `gobpm:lite` text battery beside
+   `goexpr` (SRD-066/067).
 5. **#90 Escalation/Compensate/Link** — completes the event catalog
    (+ Cancel ✅ landed with #91, SRD-061).
 6. **#82 data objects/stores**, **#84 timer durability** — with the

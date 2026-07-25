@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-25 |
 | Owner | Ruslan Gabitov |
@@ -215,16 +215,39 @@ lane fires.
 
 ## §9 Definition of Done
 
-- [ ] FR-1…FR-7 implemented; every §6 test exists and passes.
-- [ ] `make ci` green; diff-coverage ≥95% (aim 100%); touched functions
+- [x] FR-1…FR-7 implemented; every §6 test exists and passes.
+- [x] `make ci` green; diff-coverage ≥95% (aim 100%); touched functions
       ≥80%; no new `go.mod` dependency.
-- [ ] The example runs (T-8); READMEs/examples index synced; CHANGELOG
+- [x] The example runs (T-8); READMEs/examples index synced; CHANGELOG
       synced.
-- [ ] §10 filled; ADR-032 flipped Accepted; linked docs synced.
+- [x] §10 filled; ADR-032 flipped Accepted; linked docs synced.
 
 ## §10 Implementation summary
 
-*Filled at landing.*
+Landed on `feat/expression-layer` in two milestones, as planned:
+
+| Milestone | Commit | Scope |
+|---|---|---|
+| M1 | `909ed60` | FR-1…FR-5: `pkg/model/expression/lite` — lexer/parser/evaluator, the `##Lite` engine with result-type enforcement, `Expr`/`Cond`; T-1…T-5 incl. all ten ADR-032 §2.3 rows verbatim (package coverage 97.1%) |
+| M2 | `3b379ba` | FR-6/FR-7: `goexpr`+`lite` batteries in both builders, T-6/T-7, `examples/expression-routing` (three sites, two engines — the widened FR-7 scope), README/index/CHANGELOG sync |
+
+- **Verification**: post-M2 `make ci` exit 0; diff-coverage **98.2% of
+  763 changed lines** (min 95%) — `lite.go`/`registry.go`/wiring at
+  100%, `eval.go` 96.2%, `lexer.go` 99.4%, `parser.go` 99.2%; no new
+  `go.mod` dependency (NFR-1); no Reporter calls in `lite` (NFR-3);
+  T-8 smoke exit 0 with all three sites firing.
+- **Deltas vs the draft**: (1) FR-7 widened at the owner's M2-gate
+  direction from a lite-only routing demo to the **three-site
+  mixed-engine** example (task flows with lite beside a `goexpr`
+  functor, the XOR gateway with a lite `time()` branch, the
+  lite-computed UserTask assignee via `WithAssigneeExpr`) — FR-7/T-8
+  amended pre-landing in the same branch. (2) Engine note surfaced by
+  T-3: a bare **array** reference reads the collection cursor's
+  current element (the `Array.Get` contract), while **maps/records**
+  snapshot to Go maps and are loud non-operands — the tests document
+  both behaviors.
+- **Closure**: with SRD-066 this completes ADR-032 v.1 (flipped
+  Accepted) and closes **#74**.
 
 ## Open questions
 

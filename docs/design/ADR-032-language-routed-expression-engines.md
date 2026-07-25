@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-25 |
 | Owner | Ruslan Gabitov |
@@ -252,4 +252,5 @@ interchange; richer lite builtins only if demand proves them.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.1 (Accepted) | 2026-07-25 | Ruslan Gabitov | Accepted with both landing SRDs: the widened engine contract, the language registry (itself an `Engine` — every consumer untouched), the repeatable/opt-out wiring and the text kind landed first (SRD-066); the `gobpm:lite` stdlib evaluator with the `goexpr`+`lite` batteries default and the three-site mixed-engine example completed the conception (SRD-067). `adapters/feel` remains the noted follow-up. |
 | v.1 | 2026-07-25 | Ruslan Gabitov | Draft conception, completing the Expression Layer epic's design. **Multiple expression engines register simultaneously** (repeatable `WithExpressionEngine`; enumerable `Languages()` claims folded into a core routing registry — duplicate claims loud, unclaimed/empty languages loud with the claims listed; zero-config = `goexpr` + `lite`, so functor expressions keep working untouched). **Two evaluation loci**: the functor kind self-evaluates (its engine stays the delegate), the new **text kind** (required language + body, a `Body()` capability) refuses self-evaluation — the routed engine interprets. **`gobpm:lite`** is the stdlib-only in-core text battery covering the full value model — numeric-family promotion to float64 (documented; cross-family stays loud), strings, booleans, **time** (ordering + the `time()` RFC3339 builtin), arrays/records/maps through the SRD-042 path resolver, `has`/`len`/`time` builtins only — with worked §2.3 examples per kind. There is no registry-level default engine — each expression routes by its own language; `lite.Expr(body)` makes lite the default *text* language by construction; `WithoutDefaultExpressionEngines()` empties the zero-config registry (the batteries are removable from routing — physically extracting the stdlib-only goexpr into an adapter is rejected, §4). FEEL/JUEL remain adapters. No per-evaluation facts (the hot-path flood guard); the registry is startup-visible. Implementation rides the accompanying SRDs (routing + the text kind, then the lite evaluator). |
