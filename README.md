@@ -233,7 +233,12 @@ is untouched). The decision reads process data through the ordinary walk-up
 and its result commits back as process data — a 1-row/1-output result folds
 to a scalar, so the task's own conditional flows route on the outcome; an
 unknown decision reference fails loud, and every evaluation emits a `Rules`
-observability fact.
+observability fact. For table-driven decisions, the **`adapters/dtable`**
+module (the first out-of-core rule engine) evaluates DMN-shaped decision
+tables — five hit policies, Go-functor conditions — and **deploys
+structure-only JSON grids** over named Go behavior through its pluggable
+Decoder seam: see
+[`examples/decision-table/`](examples/decision-table/).
 
 For composition, see [**docs/guides/composition.md**](docs/guides/composition.md).
 An **embedded Sub-Process** is a nested scope inside the instance (the inner
