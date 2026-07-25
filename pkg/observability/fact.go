@@ -29,6 +29,7 @@ const (
 	KindEscalation       Kind = "Escalation"       // escalation throw/catch (non-fault, SRD-058)
 	KindCompensation     Kind = "Compensation"     // completion-ledger lifecycle + compensation runs (ADR-026, SRD-059)
 	KindRules            Kind = "Rules"            // decision evaluation on the Business Rule Engine (SRD-060)
+	KindScript           Kind = "Script"           // script execution on the Script Engine (SRD-064)
 	KindDataChange       Kind = "DataChange"       // data-element change (observer-only)
 	KindScope            Kind = "Scope"            // nested-scope lifecycle (SRD-049)
 	KindCall             Kind = "Call"             // call-activity lifecycle (SRD-050)
@@ -127,6 +128,11 @@ const (
 	// decision-level details; the task failure itself still rides KindFault.
 	PhaseEvaluated Phase = "Evaluated" // Rules
 
+	// PhaseExecuted: a Script Task's script returned and its outputs
+	// committed (SRD-064 FR-5). Failure reuses PhaseFailed with the
+	// script-level details; the task failure itself still rides KindFault.
+	PhaseExecuted Phase = "Executed" // Script
+
 	PhaseValueAdded   Phase = "Value_Added" // DataChange (= data.ChangeType)
 	PhaseValueUpdated Phase = "Value_Updated"
 	PhaseValueDeleted Phase = "Value_Deleted"
@@ -161,6 +167,10 @@ const (
 	AttrImplementation = "implementation"
 	AttrRowCount       = "row_count"
 	AttrResultVariable = "result_variable"
+	// Script execution on the Script Engine (SRD-064 FR-5). The format and
+	// count only — never script source or output values (the masking rule).
+	AttrScriptFormat = "script_format"
+	AttrOutputCount  = "output_count"
 	// AttrOrdinal (SRD-059): a completion-ledger entry's 0-based completion
 	// order within its scope — the reverse-compensation order's authority.
 	AttrOrdinal     = "ordinal"

@@ -24,3 +24,20 @@ func TestBusinessRuleTaskCloneError(t *testing.T) {
 	_, err := bt.Clone()
 	require.Error(t, err)
 }
+
+// TestScriptTaskCloneError covers ScriptTask.Clone's error branch the same
+// way (SRD-064; the zero-value Property forge).
+func TestScriptTaskCloneError(t *testing.T) {
+	st := &ScriptTask{
+		scriptFormat: "text/x-lua",
+		script:       "return {}",
+		task: task{
+			activity: activity{
+				properties: map[string]*data.Property{"bad": {}},
+			},
+		},
+	}
+
+	_, err := st.Clone()
+	require.Error(t, err)
+}

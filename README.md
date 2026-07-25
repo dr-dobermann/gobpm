@@ -224,6 +224,15 @@ undoes them in **reverse completion order**, waiting for the handlers. Only
 completed work compensates (presumed abort); a handler reads the snapshot its
 activity completed with; an unresolved throw is logged, never a fault.
 
+For scripting, see [`examples/script-task/`](examples/script-task/) — a
+**Script Task** runs an embedded Lua file on the pluggable **Script Engine
+seam**: engines register with the repeatable `WithScriptEngine` (several
+interpreters coexist, routed by the task's own `scriptFormat` MIME hint;
+format-claim conflicts are rejected loudly at construction), and the
+batteries `adapters/lua` interpreter executes each script on a fresh,
+sandboxed, context-bound VM — lazy fail-loud `data` reads with a `has()`
+probe, outputs returned as a table and committed as named process data.
+
 For business decisions, see
 [`examples/business-rule-task/`](examples/business-rule-task/) — a **Business
 Rule Task** evaluates a named decision on the pluggable **Business Rule

@@ -52,6 +52,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
+	"github.com/dr-dobermann/gobpm/pkg/script"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
@@ -148,7 +149,6 @@ type instanceReg struct {
 type Thresher struct {
 	ctx           context.Context
 	engineCancel  context.CancelFunc
-	cfg           thresherConfig
 	eventHub      eventproc.EventHub
 	registrations map[string][]*ProcessRegistration
 	nextVersion   map[string]int
@@ -165,6 +165,7 @@ type Thresher struct {
 	// engine-scope Observe registry.
 	producer *producer
 	id       string
+	cfg      thresherConfig
 	m        sync.Mutex
 	state    atomic.Uint32 // a State; lock-free, NEVER accessed under m
 }
@@ -185,6 +186,17 @@ func New(id string, opts ...Option) (*Thresher, error) {
 					errs.E(err))
 		}
 	}
+
+	reg, err := script.NewRegistry(cfg.scriptEngines...)
+	if err != nil {
+		return nil,
+			errs.New(
+				errs.M("couldn't build the script-engine registry"),
+				errs.C(errorClass, errs.InvalidParameter),
+				errs.E(err))
+	}
+
+	cfg.scriptRegistry = reg
 
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -306,6 +318,17 @@ func (t *Thresher) logStartupConfig() {
 		module("authorizationProvider", t.cfg.authz)
 		module("workerDispatcher", t.cfg.dispatcher)
 		module("ruleEngine", t.cfg.ruleEngine)
+		module("scriptEngine", t.cfg.scriptRegistry)
+		log.Info(fmt.Sprintf("  %-22s %s", "scriptEngines:",
+			t.cfg.scriptRegistry.Type()))
+
+		// the script-format routing table (ADR-031 §2.1): which engine
+		// answers which scriptFormat.
+		for _, f := range t.cfg.scriptRegistry.Formats() {
+			if e, ok := t.cfg.scriptRegistry.EngineFor(f); ok {
+				log.Info(fmt.Sprintf("  scriptFormat %s: %s", f, e.Type()))
+			}
+		}
 
 		printed = true
 	}
@@ -405,10 +428,7 @@ func (t *Thresher) Run(ctx context.Context) error {
 	// hub Run, without touching the caller's ctx (SRD-019). The caller canceling
 	// their ctx still propagates here.
 	// engineCancel is stored on the Thresher and called by Shutdown (and both Run
-	// rollbacks) — the engine context lives for the engine's lifetime (SRD-019),
-	// so gosec's "cancel not called in this function" heuristic is a false
-	// positive here.
-	//nolint:gosec // G118: engineCancel escapes to a field, called cross-method
+	// rollbacks) — the engine context lives for the engine's lifetime (SRD-019).
 	t.ctx, t.engineCancel = context.WithCancel(ctx)
 	runCtx := t.ctx
 

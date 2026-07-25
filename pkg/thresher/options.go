@@ -21,6 +21,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/repository/memrepo"
 	"github.com/dr-dobermann/gobpm/pkg/rules"
 	"github.com/dr-dobermann/gobpm/pkg/rules/gorules"
+	"github.com/dr-dobermann/gobpm/pkg/script"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 	"github.com/dr-dobermann/gobpm/pkg/tasks/localdispatcher"
 )
@@ -28,20 +29,22 @@ import (
 // thresherConfig holds the resolved engine-level extensions (ADR-002 §4.3).
 // EventHub is NOT here — it stays internal and the Thresher builds it itself.
 type thresherConfig struct {
-	dispatcher            tasks.WorkerDispatcher
+	exprEngine            expression.Engine
+	logger                observability.Logger
 	workerErrorMapper     tasks.ErrorMapper
-	metrics               observability.MetricsRecorder
+	ruleEngine            rules.Engine
 	clock                 clock.Clock
 	repository            repository.Repository
 	msgBroker             messaging.MessageBroker
 	tracer                observability.Tracer
-	exprEngine            expression.Engine
-	ruleEngine            rules.Engine
-	logger                observability.Logger
+	dispatcher            tasks.WorkerDispatcher
+	reporter              observability.Reporter
+	metrics               observability.MetricsRecorder
 	authz                 auth.AuthorizationProvider
 	workerRetryPolicy     tasks.RetryPolicy
 	taskDist              interactor.TaskDistributor
-	reporter              observability.Reporter
+	scriptRegistry        *script.Registry
+	scriptEngines         []script.Engine
 	workerTrustDefault    tasks.TrustMode
 	suppressBanner        bool
 	suppressStartupConfig bool
@@ -220,6 +223,25 @@ func WithRuleEngine(e rules.Engine) Option {
 	}
 }
 
+// WithScriptEngine registers a script engine for the Script Task
+// (ADR-031 §2.1). The option is REPEATABLE — each call registers another
+// engine; the format claims fold into the routing registry at New, where a
+// duplicate claim fails construction loud. Default: no engines (the
+// "##None" registry — Script Tasks fail with a wire-an-adapter error).
+func WithScriptEngine(e script.Engine) Option {
+	return func(c *thresherConfig) error {
+		if e == nil {
+			return errs.New(
+				errs.M("WithScriptEngine: a nil script.Engine isn't allowed"),
+				errs.C(errorClass, errs.EmptyNotAllowed))
+		}
+
+		c.scriptEngines = append(c.scriptEngines, e)
+
+		return nil
+	}
+}
+
 // WithWorkerErrorMapper sets the engine-wide default ErrorMapper applied to a
 // worker-dispatched ServiceTask's raw fault when it carries no per-service
 // activities.WithErrorMapper (SRD-037 FR-3, two-level config).
@@ -305,6 +327,7 @@ func (c *thresherConfig) Repository() repository.Repository              { retur
 func (c *thresherConfig) MessageBroker() messaging.MessageBroker         { return c.msgBroker }
 func (c *thresherConfig) ExpressionEngine() expression.Engine            { return c.exprEngine }
 func (c *thresherConfig) RuleEngine() rules.Engine                       { return c.ruleEngine }
+func (c *thresherConfig) ScriptEngine() script.Engine                    { return c.scriptRegistry }
 
 func (c *thresherConfig) AuthorizationProvider() auth.AuthorizationProvider {
 	return c.authz
