@@ -1,0 +1,98 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/dr-dobermann/gobpm/adapters/dtable"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/thresher"
+)
+
+func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
+	fmt.Print(`
+  decision-table:
+    a JSON decision table (embedded artifact) deployed onto the pluggable
+    adapters/dtable engine; the Business Rule Task evaluates it per order.
+
+    start → [classify (BRT: "discount")] → [report] → end
+
+`)
+
+	if err := data.CreateDefaultStates(); err != nil {
+		return fmt.Errorf("init data states: %w", err)
+	}
+
+	ruleEngine, err := buildEngine()
+	if err != nil {
+		return err
+	}
+
+	for _, order := range []struct {
+		tier  string
+		total int
+	}{
+		{tier: "vip", total: 500},
+		{tier: "retail", total: 150},
+		{tier: "retail", total: 40},
+	} {
+		fmt.Printf("\norder: tier=%s total=%d\n", order.tier, order.total)
+
+		if err := runOrder(ruleEngine, order.total, order.tier); err != nil {
+			return err
+		}
+	}
+
+	fmt.Print("\n✓ decision-table completed: three orders classified by the " +
+		"deployed FIRST-policy table (vip+big 25%, big 15%, default 5%)\n")
+
+	return nil
+}
+
+// runOrder runs one process instance for an order profile against the
+// shared, already-deployed rule engine.
+func runOrder(ruleEngine *dtable.Engine, total int, tier string) error {
+	engine, err := thresher.New(
+		fmt.Sprintf("decision-table-%s-%d", tier, total),
+		thresher.WithoutBanner(),
+		thresher.WithoutStartupConfig(),
+		thresher.WithRuleEngine(ruleEngine))
+	if err != nil {
+		return fmt.Errorf("create engine: %w", err)
+	}
+
+	proc, err := buildProcess(total, tier)
+	if err != nil {
+		return fmt.Errorf("build process: %w", err)
+	}
+
+	if _, err := engine.RegisterProcess(proc); err != nil {
+		return fmt.Errorf("register process: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if err := engine.Run(ctx); err != nil {
+		return fmt.Errorf("run engine: %w", err)
+	}
+
+	h, err := engine.StartLatest(proc.ID())
+	if err != nil {
+		return fmt.Errorf("start process: %w", err)
+	}
+
+	if _, err := h.WaitCompletion(ctx); err != nil {
+		return fmt.Errorf("waiting for completion: %w", err)
+	}
+
+	return nil
+}

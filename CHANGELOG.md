@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The Decision Table rule engine — `adapters/dtable` (SRD-062, ADR-029
+  v.1; the first shipped adapter module).** A pluggable out-of-core
+  `rules.Engine` evaluating DMN-shaped decision tables with **Go functors
+  as the rule expressions**: the declarative condition vocabulary
+  (`Eq/NE/GT/GE/LT/LE/Between/In/Any/Pred` — type mismatches fail loud,
+  never a silent false), the `Rule` behavior contract (match + yield) under
+  a data-declared `Table`, and **all five DMN hit policies** (Unique
+  contradiction and Any disagreement are classified errors; First
+  short-circuits; no match = an empty result the task commits nothing on).
+  **Missing input fails loud by default** — a deliberate deviation from
+  DMN's null-tolerant fall-through — with per-condition `IfPresent` opting
+  into the DMN no-match semantics. The engine also implements
+  **`rules.Deployer`** through a pluggable **Decoder seam**
+  (`WithDecoder`): the batteries `JSONDecoder` deploys **structure-only
+  artifacts** (grid, policy, names) over a `Vocabulary` of named Go
+  functors — behavior stays compiled Go, unresolved names fail deploy, a
+  redeploy **replaces** the decision while programmatic `Register` keeps
+  rejecting duplicates. Proven e2e through the Business Rule Task
+  (`##DTable` in the `Rules` facts); see `examples/decision-table/` — a
+  deployed FIRST-policy discount grid classifying three order profiles.
+
 - **Business Rule Task on the pluggable rule-engine seam (SRD-060, ADR-027
   v.1 — the BRT half of #87).** The last model-only conformance task type
   gains execution. A new engine service — the **Business Rule Engine** —

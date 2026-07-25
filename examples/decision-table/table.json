@@ -1,0 +1,9 @@
+{
+  "name": "discount",
+  "hitPolicy": "FIRST",
+  "rules": [
+    {"when": ["vip", "big-order"], "then": {"discount_pct": 25}},
+    {"when": ["big-order"], "then": {"discount_pct": 15}},
+    {"when": [], "thenFn": "default-discount"}
+  ]
+}

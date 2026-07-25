@@ -52,6 +52,7 @@ Every example builds in CI; the list below is grouped by concern.
 | [`service-task-worker/`](service-task-worker/) | External worker (fetch-and-lock) with in-process retry, trust modes, a Business Status / Business Error verdict, and **structural output mapping** (nested fields extracted from a structured worker body). |
 | [`usertask/`](usertask/) | User task — a human-completed wait node gated by Camunda-style assignee / candidate authorization. |
 | [`business-rule-task/`](business-rule-task/) | **Business Rule Task on the pluggable rule-engine seam** — the task evaluates a named decision on the configured engine (here the batteries-included `gorules` Go registry, `##GoRules`), the 1×1 result fold commits the outcome as a scalar, and the task's conditional flows route on it; any DMN/rules service swaps in via `WithRuleEngine` without touching the model (ADR-027 / SRD-060). |
+| [`decision-table/`](decision-table/) | **A deployed JSON decision table on the `adapters/dtable` engine** — the first out-of-core Business Rule Engine: an embedded artifact (structure only — grid, FIRST hit policy, names) deploys through the pluggable Decoder seam over a `Vocabulary` of named Go functors; the BRT evaluates it per order (vip+big 25% / big 15% / fallthrough 5%). Behavior stays compiled Go; redeploying the artifact re-wires the rules (ADR-029 / SRD-062). |
 
 ## Messages & correlation
 
