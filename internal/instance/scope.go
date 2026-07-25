@@ -7,6 +7,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
+	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
@@ -44,6 +45,7 @@ func (sc *instanceScope) load(
 	parentRoot scope.DataPath,
 	processName string,
 	props []*data.Property,
+	dobjs []*dataobjects.DataObject,
 	supplier scope.RuntimeVarsSupplier,
 ) error {
 	root := parentRoot
@@ -73,9 +75,16 @@ func (sc *instanceScope) load(
 
 	sc.reader = reader
 
-	dd := make([]data.Data, 0, len(props))
+	// Seed the process Properties and the Process-level Data Objects into the
+	// root scope: a DataObject is a scope-resident named container (SRD-063
+	// FR-3), resolvable by name via the walk-up exactly like a Property.
+	dd := make([]data.Data, 0, len(props)+len(dobjs))
 	for _, p := range props {
 		dd = append(dd, p)
+	}
+
+	for _, do := range dobjs {
+		dd = append(dd, do)
 	}
 
 	// A birth-init commit is initial state, not a change — its changed-path

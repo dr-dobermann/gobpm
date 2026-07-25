@@ -233,7 +233,8 @@ func New(
 	inst.corr = correlator{inst: &inst, keys: map[string]string{}}
 
 	if err := inst.sc.load(
-		parentRoot, inst.s.ProcessName, inst.s.Properties, &inst); err != nil {
+		parentRoot, inst.s.ProcessName, inst.s.Properties,
+		inst.s.DataObjects, &inst); err != nil {
 		return nil, errs.New(
 			errs.M("couldn't load process'es properties into Instance scope"),
 			errs.E(err),

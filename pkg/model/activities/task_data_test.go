@@ -178,18 +178,28 @@ func TestTaskDataErrorPaths(t *testing.T) {
 			require.Error(t, tsk.UploadData(ctx, f))
 		})
 
-	t.Run("produced data drives the output to the association target",
+	t.Run("produced data drives the output to the DataObject in scope",
 		func(t *testing.T) {
 			tsk := newIOTask(t, "in-x", "out-x", 1, 0)
-			f := newFrameFor(t, tsk.ID())
+
+			// a real data plane + frame, so the DataObject can be seeded into
+			// scope — the task writes to it by name (SRD-063 FR-5).
+			pl, err := scope.New(scope.RootDataPath, nil)
+			require.NoError(t, err)
+			f, err := scope.NewFrame("track-t", tsk.ID(), pl.Root(), pl)
+			require.NoError(t, err)
 
 			sink, err := dataobjects.New("sink",
 				data.MustItemDefinition(values.NewVariable(0),
 					foundation.WithID("out-x")),
-				nil)
+				data.ReadyDataState)
 			require.NoError(t, err)
 			require.NoError(t,
 				sink.AssociateSource(tsk, []string{"out-x"}, nil))
+
+			// seed the DataObject into the root scope (as the instance does).
+			_, err = pl.Commit(pl.Root(), sink)
+			require.NoError(t, err)
 
 			require.NoError(t, tsk.LoadData(ctx, f))
 
@@ -202,7 +212,11 @@ func TestTaskDataErrorPaths(t *testing.T) {
 					data.ReadyDataState))))
 
 			require.NoError(t, tsk.UploadData(ctx, f))
-			require.Equal(t, 99, sink.Subject().Structure().Get(ctx))
+
+			// the DataObject in scope (resolved by name) got the produced value.
+			got, err := f.GetData("sink")
+			require.NoError(t, err)
+			require.Equal(t, 99, got.Value().Get(ctx))
 		})
 }
 

@@ -121,15 +121,18 @@ func TestTaskData(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, outDO.AssociateSource(task, []string{"y"}, nil))
 
+			// seed both DataObjects into the root scope (as the instance does):
+			// LoadData reads the input DataObject by name and UploadData writes
+			// the output DataObject by name (SRD-063 FR-5).
+			_, err = pl.Commit(pl.Root(), inpDO, outDO)
+			require.NoError(t, err)
+
 			require.NoError(t, task.LoadData(context.Background(), f))
 
 			ctx := context.Background()
 
-			// the FRAME input instance got the association value. (The
-			// association evaluation itself still writes its target — the
-			// definition's IAE — as before: association mechanics are the
-			// data-flow ADR's domain, SRD-007 §2.6. The per-frame guarantee
-			// covers frame writes and is proven in the scope package tests.)
+			// the FRAME input instance got the value from the input DataObject,
+			// resolved by name from scope (SRD-063 FR-5).
 			in, err := f.GetDataByID("y")
 			require.NoError(t, err)
 			require.Equal(t, 23.02, in.Value().Get(ctx))

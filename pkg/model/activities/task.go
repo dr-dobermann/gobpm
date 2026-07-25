@@ -111,24 +111,42 @@ func (t *task) LoadData(ctx context.Context, f exec.Frame) error {
 				errs.D("task_name", t.Name()))
 		}
 
-		v, err := ia.Value(ctx)
-		if err != nil {
-			// a required input that can't be filled is a fail-fast error —
-			// gobpm never waits for data (ADR-011 v.2 §2.3). An optional or
-			// while-executing input may stay Unavailable.
+		// Read THIS instance's DataObject (the association's source) from the
+		// frame's scope and copy its value into the input (SRD-063 FR-5, input
+		// direction: DataObject → Node). The DataAssociation is a shared
+		// declaration — we read its routing (source id), the value comes from
+		// the per-instance DataObject, never the shared association object.
+		// (A transformation/assignment on a DataObject association is a noted
+		// follow-up — SRD-063 §10.3; the current uses are plain copies.)
+		src := ia.SourceNames()
+
+		var (
+			doDatum data.Data
+			derr    error
+		)
+
+		if len(src) > 0 {
+			doDatum, derr = f.GetData(src[0])
+		}
+
+		// a required input that can't be filled is a fail-fast error — gobpm
+		// never waits for data (ADR-011 v.2 §2.3). An optional or
+		// while-executing input may stay Unavailable.
+		if len(src) == 0 || derr != nil ||
+			doDatum.State().Name() != data.ReadyDataState.Name() {
 			if gating[ia.TargetItemDefID()] {
 				return errs.New(
 					errs.M("required input %q of task %q is unavailable "+
 						"(gobpm does not wait for data)",
 						dii[index].Name(), t.Name()),
-					errs.C(errorClass, errs.ConditionFailed),
-					errs.E(err))
+					errs.C(errorClass, errs.ConditionFailed))
 			}
 
 			continue
 		}
 
-		if err := dii[index].Subject().Structure().Update(ctx, v.Structure().Get(ctx)); err != nil {
+		if err := dii[index].Subject().Structure().
+			Update(ctx, doDatum.Value().Get(ctx)); err != nil {
 			return errs.New(
 				errs.M("couldn't update input %q", dii[index].Name()),
 				errs.C(errorClass, errs.OperationFailed),
@@ -248,17 +266,30 @@ func (t *task) UploadData(ctx context.Context, f exec.Frame) error {
 			continue
 		}
 
-		if err := oa.UpdateSource(
-			ctx,
-			doo[index].ItemDefinition(),
-			data.Recalculate,
-		); err != nil {
+		// Write the produced value into THIS instance's DataObject (the
+		// association's target), resolved from the frame's scope (SRD-063 FR-5,
+		// output direction: Node → DataObject). The DataAssociation is shared
+		// across instances, so we never mutate it — we read its routing (target
+		// id) and update the per-instance DataObject in place (scope holds it by
+		// reference, so the write is visible to by-name reads). (Transformation/
+		// assignment is a noted follow-up — SRD-063 §10.3.)
+		doDatum, gerr := f.GetData(oa.TargetName())
+		if gerr != nil {
 			return errs.New(
-				errs.M("couldn't update association's %q source %q for "+
-					"task %q[%s]", oa.ID(), doo[index].ItemDefinition().ID(),
-					t.Name(), t.ID()),
+				errs.M("couldn't resolve DataObject %q for task %q[%s] "+
+					"output association %q", oa.TargetName(),
+					t.Name(), t.ID(), oa.ID()),
+				errs.C(errorClass, errs.ObjectNotFound),
+				errs.E(gerr))
+		}
+
+		if uerr := doDatum.Value().Update(
+			ctx, doo[index].Value().Get(ctx)); uerr != nil {
+			return errs.New(
+				errs.M("couldn't update DataObject %q value for task %q[%s]",
+					oa.TargetName(), t.Name(), t.ID()),
 				errs.C(errorClass, errs.OperationFailed),
-				errs.E(err))
+				errs.E(uerr))
 		}
 	}
 

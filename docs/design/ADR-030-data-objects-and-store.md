@@ -48,13 +48,18 @@ flowchart TB
 - A **SubProcess-level** DataObject is seeded into the **child scope when that scope opens** and disposed when it **closes** (the open/close the engine already drives).
 - **Accessibility** follows the scope tree — parent + descendants via walk-up — matching §10.4.1's "parent + siblings + their children."
 
-### 2.3 DataObject data flow unifies through the scope
+### 2.3 DataObject data flow unifies through the scope (both directions)
 
-A DataObject's data flow goes through the **scope data plane, keyed by the DataObject's name** — the same plane every other value uses — not a side-channel into the object. A task's DataAssociation to a DataObject writes its output to `scope[DataObjectName]` (through the execution frame), and every reader — an expression, another association, the instance handle — resolves it **by name** through the walk-up. This is exactly §10.4.2's model: a DataAssociation targets "item-aware elements accessible in the current **scope**," which is a named scope entry, not a detached object. It retires the object **side-channel** (the task writing straight into the DataObject's item-aware element) and the unused `DataObject.Update()`.
+A DataObject is a **scope-resident named variable** (per instance). Its data flows through the scope data plane — the same plane every other value uses, resolved by name via the walk-up — **in both directions** a DataAssociation can bind it (§10.4.1, §10.4.2):
 
-Routing through scope is what makes per-instance isolation **free**: the scope is already per-instance, so a cloned DataObject seeded into it needs **no** association-retargeting.
+- **DataOutputAssociation (Node → DataObject):** a task's DataOutput is the *source*, the DataObject the *target* (`sourceRef` a DataOutput, `targetRef` the DataObject). At the activity's output step the produced value is written into the DataObject's **per-instance scope entry**.
+- **DataInputAssociation (DataObject → Node):** the DataObject is the *source*, a task's DataInput the *target* (`sourceRef` the DataObject, `targetRef` a DataInput). At the activity's input step the DataObject's **per-instance scope value** fills the input.
 
-> **Refinement (Draft, from implementation).** An earlier framing kept the object side-channel *and* added scope-residence ("additive coexistence"). Building it showed that keeping the side-channel forces a per-instance **association-retargeting** step (an `Association` target-setter + node association-accessors + a clone-time wiring pass) for no real gain — per-instance cloning changes the read path regardless, so "don't touch the write path" buys little. Routing through scope is simpler, removes dead code, and is closer to the standard. See §4.2.
+Either way the value lives in the **per-instance scope**, never in a shared object — so concurrent instances are isolated by the scope being per-instance, with **no** per-instance association retargeting. This is exactly §10.4.2's model: a DataAssociation's `sourceRef`/`targetRef` are "item-aware elements accessible in the current **scope**." It retires the object **side-channel** (the association mutating a shared DataObject object) and the unused `DataObject.Update()`.
+
+The **DataAssociation object itself is a shared declaration** — it names the Node↔DataObject binding and the direction; the runtime *reads* it and reads/writes the **per-instance** DataObject resolved from the frame's scope (never mutating the shared association). gobpm uses a DataAssociation **only** for a Node↔DataObject binding — declared activity I/O flows through the `InputOutputSpecification` + frame, not associations — so the **Source/Target types** (activity param vs DataObject) fully classify it, enforced by validation; no extra "is-DataObject" attribute is needed.
+
+> **Refinement (Draft, from implementation).** An earlier framing kept the object side-channel *and* added scope-residence ("additive coexistence"), then a "route the write through scope" variant that handled only the output direction. Building it (with the owner) settled the model above: a DataObject is a per-instance **scope variable**, DataAssociations are **shared bidirectional declarations** (DO as target for outputs, source for inputs), and the runtime resolves the per-instance DataObject from the frame's scope in both directions. This removes the per-instance association-retargeting a shared-object side-channel would force, removes the dead `Update()`, and is the closest to §10.4.2. See §4.2.
 
 ### 2.4 DataState stays on the DataObject (engine choice)
 

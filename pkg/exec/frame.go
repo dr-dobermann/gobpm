@@ -46,6 +46,10 @@ type Frame interface {
 	// GetDataByID returns the data whose ItemDefinition id is id, resolving
 	// frame-first then walking the container scopes.
 	GetDataByID(id string) (data.Data, error)
+
+	// GetData returns the data resolved by name, frame-first then walking the
+	// container scopes (SRD-063 FR-5 resolves a DataObject by its scope name).
+	GetData(name string) (data.Data, error)
 }
 
 // NodeDataConsumer is implemented by nodes that consume data: LoadData

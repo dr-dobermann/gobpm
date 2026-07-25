@@ -64,6 +64,12 @@ func New(
 			fmt.Errorf("ItemAwareElement building failed: %w", err)
 	}
 
+	// Name the IAE after the DataObject so an association bound to it exposes the
+	// DataObject's scope name (SRD-063 FR-5) — the runtime resolves the
+	// per-instance DataObject in scope by this name, not by the ItemDefinition id
+	// it shares with the activity param (§10.4.2 source/target type-match).
+	iae.SetName(name)
+
 	fe, err := flow.NewBaseElement(name, baseOpts...)
 	if err != nil {
 		return nil,

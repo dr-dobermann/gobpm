@@ -170,6 +170,10 @@ func (idef *ItemDefinition) String() string {
 // and DataOutputs.
 type ItemAwareElement struct {
 	subject   *ItemDefinition
+	// name is an optional human/scope name for the element. When set (e.g. a
+	// DataObject names its IAE after itself, SRD-063 FR-5) Name() returns it;
+	// otherwise Name() falls back to the ItemDefinition id, as before.
+	name      string
 	dataState SrcState
 	foundation.BaseElement
 }
@@ -325,12 +329,19 @@ func (iae *ItemAwareElement) Clone() (*ItemAwareElement, error) {
 				"couldn't clone ItemAwareElement with nil ItemDefinition's value")
 	}
 
-	return NewIAE(
+	clone, err := NewIAE(
 		WithIDefinition(
 			iae.subject.structure.Clone(),
 			foundation.WithID(iae.subject.ID())),
 		WithState(&iae.dataState),
 		foundation.WithID(iae.ID()))
+	if err != nil {
+		return nil, err
+	}
+
+	clone.name = iae.name
+
+	return clone, nil
 }
 
 // ----------------- data.Data interface --------------------------------------
@@ -351,13 +362,26 @@ func (iae *ItemAwareElement) ItemDefinition() *ItemDefinition {
 
 // ------------------- foundation.Namer interface -----------------------------
 
-// Name returns the name of the ItemAwareElement.
+// Name returns the name of the ItemAwareElement: its explicit name when set
+// (SRD-063 FR-5), otherwise the ItemDefinition id (its historical value), or the
+// element id if there is no subject.
 func (iae *ItemAwareElement) Name() string {
+	if iae.name != "" {
+		return iae.name
+	}
+
 	if iae.subject != nil {
 		return iae.subject.ID()
 	}
 
 	return iae.ID()
+}
+
+// SetName sets the ItemAwareElement's explicit name (SRD-063 FR-5): a DataObject
+// names its IAE after itself so the runtime resolves the per-instance DataObject
+// in scope by name, not by the ItemDefinition id it shares with its bound param.
+func (iae *ItemAwareElement) SetName(name string) {
+	iae.name = name
 }
 
 // ----------------------------------------------------------------------------

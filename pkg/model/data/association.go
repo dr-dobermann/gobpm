@@ -71,6 +71,26 @@ type Association struct {
 	foundation.BaseElement
 }
 
+// TargetName returns the name of the association's target item-aware element —
+// for a DataObject output association (Node → DataObject) this is the
+// DataObject's scope name, by which the runtime resolves the per-instance
+// DataObject (SRD-063 FR-5).
+func (a *Association) TargetName() string {
+	return a.target.Name()
+}
+
+// SourceNames returns the names of the association's source item-aware elements
+// — for a DataObject input association (DataObject → Node) the single source is
+// the DataObject, so its scope name is returned (SRD-063 FR-5).
+func (a *Association) SourceNames() []string {
+	names := make([]string, 0, len(a.sources))
+	for _, s := range a.sources {
+		names = append(names, s.Name())
+	}
+
+	return names
+}
+
 // NewAssociation creates a new data Association with the specified target.
 func NewAssociation(
 	target *ItemAwareElement,
