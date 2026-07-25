@@ -96,45 +96,25 @@ Priority levels: **P0** = mandatory for v.1.0; **P1** = required before public r
 
 ## 7. System Context
 
-```
-                                    ┌──────────────────────────┐
-                                    │     BPMN 2.0 model       │
-                                    │  (in-memory Go objects   │
-                                    │   or parsed BPMN XML)    │
-                                    └────────────┬─────────────┘
-                                                 │ registers
-                                                 v
-   ┌──────────────────────────────────────────────────────────────────┐
-   │                       goBpm core library                         │
-   │                                                                  │
-   │   Engine ─── Snapshot ─── Orchestrator ─── Tokens                │
-   │      │                                                           │
-   │      ├── Extension interfaces (Repository, EventHub, Logger,     │
-   │      │    Tracer, MetricsRecorder, ExpressionEngine, ...)        │
-   │      │                                                           │
-   │      └── Default in-memory / no-op implementations               │
-   └────────────┬──────────────────────────────────┬──────────────────┘
-                │ imported by                      │ imported by
-                v                                  v
-   ┌─────────────────────────────┐    ┌─────────────────────────────┐
-   │     Host Go application      │    │       gobpm-runtime         │
-   │     (embedded library use)   │    │   ┌────────────────────┐    │
-   │                              │    │   │  HTTP / gRPC API   │    │
-   │   import gobpm               │    │   │  Tenancy           │    │
-   │   engine := thresher.New(id) │    │   │  AuthN / AuthZ     │    │
-   │   engine.Run(ctx)            │    │   │  Diagnostics       │    │
-   │                              │    │   │  Profiling         │    │
-   └─────────────────────────────┘    │   │  Observability     │    │
-                                       │   └────────────────────┘    │
-                                       └────────────┬────────────────┘
-                                                    │ imports
-                                                    v
-                                       ┌─────────────────────────────┐
-                                       │   Adapter modules           │
-                                       │   (postgres, otel, oidc,    │
-                                       │    casbin, redis-broker,    │
-                                       │    ...)                     │
-                                       └─────────────────────────────┘
+```mermaid
+flowchart TB
+    model["BPMN 2.0 model<br>in-memory Go objects or parsed BPMN XML"]
+
+    subgraph core["goBpm core library"]
+        engine["Engine · Snapshot · Orchestrator · Tokens"]
+        ext["Extension interfaces:<br>Repository, EventHub, Logger, Tracer,<br>MetricsRecorder, ExpressionEngine, …"]
+        defs["Default in-memory / no-op implementations"]
+    end
+
+    host["Host Go application — embedded library use:<br>import gobpm, create and run the engine"]
+    runtime["gobpm-runtime:<br>HTTP/gRPC API, Tenancy, AuthN/AuthZ,<br>Diagnostics, Profiling, Observability"]
+    adapters["Adapter modules:<br>postgres, otel, oidc, casbin, redis-broker, …"]
+
+    model -->|registers into| core
+    host -->|imports| core
+    runtime -->|imports| core
+    runtime -->|imports| adapters
+    adapters -->|implement core interfaces| core
 ```
 
 Dependency direction is **always from outside in**: runtime imports core; adapters provide implementations of core interfaces; host applications import core directly. Core depends on nothing outside its own module.
@@ -143,26 +123,16 @@ Dependency direction is **always from outside in**: runtime imports core; adapte
 
 ### 8.1 Layer model (within `core`)
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  Public API           thresher.Thresher, thresher.New(...),     │
-│  pkg/                 pkg/model/* (BPMN element constructors),  │
-│                       extension interfaces                       │
-├─────────────────────────────────────────────────────────────────┤
-│  Instance lifecycle   internal/instance/, internal/runner/,      │
-│                       internal/exec/  — Orchestrator + Token     │
-├─────────────────────────────────────────────────────────────────┤
-│  Event processing     internal/eventproc/  — EventHub, waiters   │
-├─────────────────────────────────────────────────────────────────┤
-│  Scope                internal/scope/  — hierarchical data       │
-├─────────────────────────────────────────────────────────────────┤
-│  Snapshot             internal/instance/snapshot/  — immutable   │
-│                       process definitions, the execution input   │
-├─────────────────────────────────────────────────────────────────┤
-│  Model                pkg/model/  — BPMN element types           │
-│                       (Activity, Event, Gateway, Flow, Data, ...) │
-└─────────────────────────────────────────────────────────────────┘
-```
+Layers are ordered **top (highest) → bottom (lowest)**:
+
+| Layer | Package(s) | Contents |
+|---|---|---|
+| **Public API** | `pkg/` | `thresher.Thresher`, `thresher.New(...)`, `pkg/model/*` (BPMN element constructors), extension interfaces |
+| **Instance lifecycle** | `internal/instance/`, `internal/runner/`, `internal/exec/` | Orchestrator + Token |
+| **Event processing** | `internal/eventproc/` | EventHub, waiters |
+| **Scope** | `internal/scope/` | hierarchical data |
+| **Snapshot** | `internal/instance/snapshot/` | immutable process definitions, the execution input |
+| **Model** | `pkg/model/` | BPMN element types (Activity, Event, Gateway, Flow, Data, ...) |
 
 Dependencies flow **downward only**. Higher layers depend on lower; lower layers know nothing of higher.
 
@@ -381,6 +351,7 @@ Some normative behaviours of the standard are **intentionally not implemented** 
 | **Data-availability wait** (§10.4.2) — an activity whose input data is unavailable *waits* until it becomes available. | **Not implemented.** A data wait is a hidden synchronization: a token sits and waits on a condition absent from the diagram. gobpm treats an unavailable *required* input as an **error/incident**, never a wait. A process that must pause until data is present models that with a catch event or a gateway — visible on the diagram. |
 | **Multiple input/output sets + data-driven selection** (§10.4.2) — an activity may declare several `InputSet`/`OutputSet`s; the engine selects, in declaration order, the first whose data is available, with an IORule pairing inputs to outputs. | **Not implemented.** Selecting a set by which data happens to be available is hidden, non-diagram branching — the same hazard as the data wait — and the feature is near-unused in practice (tooling barely exposes it; engines barely implement it). gobpm models **one `InputSet` and one `OutputSet`** per activity; genuine alternative input/output modes are modelled with gateways or boundary events. The optional/required and while-executing distinctions are kept *within* the single set, so nothing practical is lost; the model is shaped so multi-set selection can be added as an extension if a real demand ever appears. |
 | **Underspecified item-aware element** — BPMN makes an `ItemAwareElement`'s `itemSubjectRef`/structure optional (`0..1`), so a Property / DataObject MAY be declared with no structure and filled at runtime. | **Not supported.** In gobpm an `ItemDefinition`'s structure *is* its value — an immutable, typed `Variable[T]` bound at construction with no setter to install a value where none exists. A value-less item-aware element therefore can never be filled, so **a process declaring one cannot be executed**; it is rejected at snapshot/registration rather than admitted as a dead placeholder. The "declare empty, fill at runtime" intent is expressed with a **typed-zero value** (`NewVariable(0)` / `""`). |
+| **`DataObjectReference`** (§10.4.1) — a visual pointer to a `DataObject`; the same object may appear at multiple diagram points, each reference carrying its own `dataState`. | **Not implemented as a distinct element — collapsed into the referenced `DataObject`** (ADR-030). Both of its purposes are diagram-motivated: *avoiding spaghetti wiring* (one object drawn in many places) has no meaning in a programmatic model, and *per-appearance `dataState`* is engine-defined (state-value semantics are §10.4.1 out-of-scope) and unused by gobpm's readiness-only `DataState`. Execution is identical to the `DataObject` (data flows into/out of the underlying object), so the indirection would add API surface without capability. **BPMN→model translation rules (for the future XML parser, N7):** (1) a `dataObjectReference` maps to its `dataObjectRef` target `DataObject`; (2) a `dataInput`/`dataOutputAssociation` whose `sourceRef`/`targetRef` is a `dataObjectReference` **retargets** to that `DataObject`; (3) multiple references to one object all collapse to the single `DataObject`; (4) a reference's `dataState` is **not preserved** (gobpm's `DataObject` carries one readiness state) — a model needing the same data in divergent states at different points is the deferred `DataObjectReference` feature, revisited on concrete demand. |
 
 These deviations are conformance-relevant (the two data-flow rows are part of §10.4.2) and are recorded here so a reader coming from another engine is not surprised; this section is the authoritative register of intentional gobpm non-implementations of the standard.
 
