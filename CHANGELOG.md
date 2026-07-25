@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The Lua Script Engine — `adapters/lua` (SRD-065; completes ADR-031 and
+  closes #87 together with the seam and the BRT landings).** The batteries
+  interpreter behind the Script Engine seam, over pure-Go `gopher-lua`
+  (no cgo — static builds intact): `##Lua` claiming `text/x-lua` /
+  `application/x-lua` / `lua`. Every execution runs on a **fresh,
+  context-bound, sandboxed `LState`** (base/table/string/math only, the
+  load family removed, `io`/`os` never loaded; cancellation/deadline
+  aborts a hung script). Scripts read process data **lazily** through the
+  read-only `data` table — an absent datum **raises naming it** (the
+  fail-loud house rule over Lua's nil idiom; `has(name)` probes optional
+  data) — and produce outputs by **returning a table** of named values
+  (numbers land as `float64`, Lua's single number type). Proven e2e with
+  a real Lua script routed **beside a second engine** in one gobpm engine;
+  see `examples/script-task/` — an embedded, recompile-free `order.lua`
+  classifying three order profiles.
+
 - **The Script Engine seam (multi-engine) and the Script Task (SRD-064,
   ADR-031 v.1 — the seam half; #87).** The last silent conformance task
   type gains execution on a **pluggable, multi-engine Script Engine seam**:
