@@ -51,6 +51,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/interactor"
 	"github.com/dr-dobermann/gobpm/pkg/model/expression"
 	"github.com/dr-dobermann/gobpm/pkg/model/expression/goexpr"
+	"github.com/dr-dobermann/gobpm/pkg/model/expression/lite"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
@@ -206,7 +207,7 @@ func New(id string, opts ...Option) (*Thresher, error) {
 	exprEngines := cfg.exprEngines
 	if !cfg.noDefaultExprEngines {
 		exprEngines = append(
-			[]expression.Engine{goexpr.New()}, exprEngines...)
+			[]expression.Engine{goexpr.New(), lite.New()}, exprEngines...)
 	}
 
 	exprReg, err := expression.NewRegistry(exprEngines...)

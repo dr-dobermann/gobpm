@@ -11,6 +11,7 @@ import (
 	dgexpr "github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	"github.com/dr-dobermann/gobpm/pkg/model/expression/lite"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
@@ -174,6 +175,84 @@ func TestMixedLanguageExpressions(t *testing.T) {
 		"the text condition (x-test:expr via the registered engine) must pass")
 	require.Positive(t, xt.evals.Load(),
 		"the text engine must have evaluated")
+}
+
+// TestLiteConditionsE2E covers SRD-067 T-7: a lite.Cond text condition
+// and a functor condition route side by side in one process with ZERO
+// extra registration — the batteries registry carries both languages.
+func TestLiteConditionsE2E(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	proc, err := process.New("lite-mixed",
+		data.WithProperties(
+			data.MustProperty("total",
+				data.MustItemDefinition(values.NewVariable(150),
+					foundation.WithID("total")),
+				data.ReadyDataState),
+			data.MustProperty("tier",
+				data.MustItemDefinition(values.NewVariable("gold"),
+					foundation.WithID("tier")),
+				data.ReadyDataState)))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	route := laneTask(t, "route", &atomic.Bool{})
+
+	var hitLite, hitFunctor atomic.Bool
+
+	lLane := laneTask(t, "lite-lane", &hitLite)
+	fLane := laneTask(t, "functor-lane", &hitFunctor)
+
+	endL, err := events.NewEndEvent("end-l")
+	require.NoError(t, err)
+	endF, err := events.NewEndEvent("end-f")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{
+		start, route, lLane, fLane, endL, endF,
+	} {
+		require.NoError(t, proc.Add(e))
+	}
+
+	link(t, start, route)
+
+	liteCond, err := lite.Cond(`total > 100 and tier == "gold"`)
+	require.NoError(t, err)
+
+	_, err = flow.Link(route, lLane, flow.WithCondition(liteCond))
+	require.NoError(t, err)
+
+	_, err = flow.Link(route, fLane, flow.WithCondition(functorGt(t, 100)))
+	require.NoError(t, err)
+
+	link(t, lLane, endL)
+	link(t, fLane, endF)
+
+	th, err := thresher.New("test-lite-mixed", thresher.WithoutBanner())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, th.Run(ctx))
+
+	_, err = th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	h, err := th.StartLatest(proc.ID())
+	require.NoError(t, err)
+
+	wctx, wcancel := context.WithTimeout(ctx, 5*time.Second)
+	defer wcancel()
+
+	_, werr := h.WaitCompletion(wctx)
+	require.NoError(t, werr)
+
+	require.True(t, hitLite.Load(),
+		"the lite text condition must route through the battery")
+	require.True(t, hitFunctor.Load(),
+		"the functor condition must keep working beside lite")
 }
 
 // TestOptedOutRegistryFaultsFunctorConditions: with the batteries

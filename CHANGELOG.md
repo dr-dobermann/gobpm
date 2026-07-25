@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The `gobpm:lite` text-expression evaluator (SRD-067; completes
+  ADR-032 and closes #74 together with the routing half).** The
+  stdlib-only battery behind the expression seam: `##Lite` claims
+  `gobpm:lite` in the **zero-config registry beside `goexpr`** — out of
+  the box a model mixes functor and text expressions freely. The
+  language: float64-unified numbers (an int datum compares with `100`
+  naturally), strings, booleans, `nil`, and **times** with a `time()`
+  RFC3339 builtin; **structural paths** (`order.customer.tier`,
+  `items[0]`, `rates["EUR"]`) ride the engine's own resolver; cross-kind
+  comparisons and missing data **fail loud** (`has()` is the explicit
+  existence probe; `len()` counts elements, keys or runes);
+  `and`/`or` short-circuit. The engine **enforces a declared result
+  type** on the produced value, and `lite.Cond(body)` mints a condition
+  with the `bool` declaration the condition paths require
+  (`lite.Expr(body)` for plain text expressions). See
+  `examples/expression-routing/` — one process mixing lite and goexpr
+  across task flows, an XOR gateway and a UserTask whose **assignee is
+  computed by a lite string expression**.
+
 - **Language-routed expression engines and the text expression kind
   (SRD-066, ADR-032 v.1 — the routing half; part of #74).** The expression
   seam becomes **multi-engine**: `expression.Engine` widens with the

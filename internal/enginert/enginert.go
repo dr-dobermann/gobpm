@@ -18,6 +18,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/messaging/membroker"
 	"github.com/dr-dobermann/gobpm/pkg/model/expression"
 	"github.com/dr-dobermann/gobpm/pkg/model/expression/goexpr"
+	"github.com/dr-dobermann/gobpm/pkg/model/expression/lite"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/observability/memmetrics"
 	"github.com/dr-dobermann/gobpm/pkg/observability/noop"
@@ -67,10 +68,10 @@ func Default() *Runtime {
 	}
 }
 
-// defaultExprRegistry builds the goexpr-only default; NewRegistry over
-// the battery cannot fail.
+// defaultExprRegistry builds the batteries default (goexpr + lite);
+// NewRegistry over the batteries cannot fail.
 func defaultExprRegistry() *expression.Registry {
-	reg, err := expression.NewRegistry(goexpr.New())
+	reg, err := expression.NewRegistry(goexpr.New(), lite.New())
 	if err != nil {
 		errs.Panic(err)
 

@@ -108,10 +108,15 @@ model mixes functor and text expressions freely.
   `exprLanguage gobpm:lite: ##Lite`);
   `WithoutDefaultExpressionEngines()` removes both. SRD-066's T-4
   assertions update to the widened default (`##GoExpr+##Lite`).
-- **FR-7 — the example.** `examples/expression-lite/`: one process
-  routing on lite text conditions over the value kinds (a record path, a
-  map key with `has`, a time comparison), split per the >80-line rule;
-  the examples index and both READMEs gain the entry.
+- **FR-7 — the example.** `examples/expression-routing/`: one process
+  showing the expression layer at **three consumer sites with two
+  engines mixed** (per the owner's direction at the M2 gate) — a task's
+  outgoing flows carrying a lite text condition (record path) beside a
+  `goexpr` functor (map key), an exclusive gateway branching on a lite
+  `time()` comparison with a default flow, and a UserTask whose
+  **assignee is computed by a lite string expression**
+  (`WithAssigneeExpr`); split per the >80-line rule; the examples index
+  and both READMEs gain the entry.
 
 ### §2.2 Non-functional
 
@@ -190,7 +195,7 @@ lane fires.
 | T-5 | the engine surface (`lite`) | FR-4: `##Lite`/claims; non-`BodyHolder` expression loud; declared-`bool` + string result loud (the mismatch guard); nil/missing params rejected |
 | T-6 | wiring (`pkg/thresher`, `internal/enginert`) | FR-6: zero-config `##GoExpr+##Lite` + both routing lines; opt-out removes both (SRD-066 T-4 updated) |
 | T-7 | e2e (`pkg/thresher`) | a process with a `lite.Cond` text condition and a functor condition side by side, zero extra registration — both lanes route and fire (the ADR's "mixes freely" promise) |
-| T-8 | example smoke | FR-7: `timeout 20 go run ./examples/expression-lite/` exits 0 with the expected route observed |
+| T-8 | example smoke | FR-7: `timeout 25 go run .` in `examples/expression-routing/` exits 0 — all three sites fire (both intake lanes, the urgent gateway branch, the lite-assigned approval completed by the matching actor) |
 
 ## §7 Milestones
 

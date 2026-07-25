@@ -186,8 +186,8 @@ func TestExpressionEngineWiring(t *testing.T) {
 				t.Fatalf("New: %v", err)
 			}
 
-			if eng.cfg.exprRegistry.Type() != "##GoExpr" {
-				t.Fatalf("default expression registry = %q, want ##GoExpr",
+			if eng.cfg.exprRegistry.Type() != "##GoExpr+##Lite" {
+				t.Fatalf("default expression registry = %q, want ##GoExpr+##Lite",
 					eng.cfg.exprRegistry.Type())
 			}
 		})
@@ -199,8 +199,8 @@ func TestExpressionEngineWiring(t *testing.T) {
 				t.Fatalf("New: %v", err)
 			}
 
-			if got := eng.cfg.exprRegistry.Type(); got != "##GoExpr+##XTest" {
-				t.Fatalf("registry kinds = %q, want ##GoExpr+##XTest", got)
+			if got := eng.cfg.exprRegistry.Type(); got != "##GoExpr+##Lite+##XTest" {
+				t.Fatalf("registry kinds = %q, want ##GoExpr+##Lite+##XTest", got)
 			}
 		})
 
@@ -330,6 +330,7 @@ func TestStartupConfigLog(t *testing.T) {
 		"messageBroker:", "expressionEngine:", "authorizationProvider:",
 		"workerDispatcher:", "ruleEngine:", "scriptEngine",
 		"expressionEngine", "exprLanguage gobpm:goexpr: ##GoExpr",
+		"exprLanguage gobpm:lite: ##Lite",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("startup log missing line %q (got %v)", want, msgs)
