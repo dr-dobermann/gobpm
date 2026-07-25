@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-25 |
 | Owner | Ruslan Gabitov |
@@ -178,16 +178,40 @@ the builder/accessor pair in `internal/enginert/enginert.go`.
 
 ## §9 Definition of Done
 
-- [ ] FR-1…FR-5 implemented; every §6 test exists and passes.
-- [ ] `make ci` green; diff-coverage ≥95% (aim 100%); touched functions
-      ≥80%.
-- [ ] The zero-config functor path is regression-locked (the full suite,
+- [x] FR-1…FR-5 implemented; every §6 test exists and passes.
+- [x] `make ci` green; diff-coverage ≥95% (aim 100%); touched functions
+      ≥80% (one deferred defensive branch — §10).
+- [x] The zero-config functor path is regression-locked (the full suite,
       unchanged consumer files) and the opt-out faults loud (T-4).
-- [ ] §10 filled; CHANGELOG synced.
+- [x] §10 filled; CHANGELOG synced.
 
 ## §10 Implementation summary
 
-*Filled at landing.*
+Landed on `feat/expression-layer` in two milestones, as planned:
+
+| Milestone | Commit | Scope |
+|---|---|---|
+| M1 | `05b2796` | FR-1/FR-2/FR-4: the widened `Engine` (`Type`/`Languages`), `expression.Registry` (+`goexpr` claiming `gobpm:goexpr` via the exported `dgexpr.Language`), `data.TextExpression` + `BodyHolder`; T-1…T-3 |
+| M2 | `675a693` | FR-3/FR-5: repeatable `WithExpressionEngine` + `WithoutDefaultExpressionEngines`, registry build in `thresher.New` (conflicts fail `New`), startup routing lines, `enginert.WithExpressionRegistry`, `Registry.EngineFor`; T-4/T-5; CHANGELOG + roadmap sync |
+
+- **Verification**: `make ci` green post-M2 (2340 tests / 63 packages;
+  lint 0 issues); diff-coverage **96.2% of 183 changed lines** (min 95%)
+  — `text_expression.go`, `goexpr.go`, `options.go`, `thresher.go` at
+  100%, `registry.go` 94.6%. Touched functions ≥80% except
+  `enginert.defaultExprRegistry` (60% — the impossible-error panic
+  branch on `NewRegistry(goexpr.New())`, deferred as
+  unreachable-defensive).
+- **Deltas vs the draft**: none structural. Two engine notes surfaced by
+  T-5: (1) the condition paths (`activities/flowselect.go`,
+  `gateways/gateway.go`) require `ResultType() == "bool"` **before**
+  evaluation, so a text condition must declare
+  `WithResultType("bool")` — the option is load-bearing, not
+  decorative; (2) mock `FormalExpression`s in runtime tests must stub
+  `Language()` — the registry routes before evaluating, which is
+  itself a regression lock on the routing step.
+- **FR-5 proof**: no runtime-consumer file changed; the full suite
+  passed with only test-double adjustments (`Language()` stubs, two
+  fake engines widened).
 
 ## Open questions
 
