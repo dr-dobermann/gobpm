@@ -4,6 +4,7 @@ This file provides an organized index to all documentation throughout the GoBPM 
 
 ## 📋 Quick Links
 
+- **[User Guides — how to build and run processes](docs/guides/index.md)**: Task-oriented guides covering concepts and every BPMN element, each backed by a runnable program
 - **[Main README](README.md)**: Project overview and getting started
 - **[Working with process data](docs/guides/data.md)**: The structural-data guide — paths, tiers, native structs, change observation
 - **[Contributing Guidelines](CONTRIBUTING.md)**: How to contribute to the project
@@ -24,12 +25,10 @@ This file provides an organized index to all documentation throughout the GoBPM 
   - Event-driven communication patterns
   - Asynchronous processing architecture
 
-- **[Event Processing Guide](docs/EVENT_PROCESSING_GUIDE.md)**: Comprehensive event system guide
-  - **NEW**: Detailed architecture and implementation patterns
-  - Event propagation vs generation patterns
-  - Timer waiter behavior and limitations
-  - Testing strategies and common pitfalls
-  - Performance optimization techniques
+- **Event User Guides ([docs/guides/events/](docs/guides/events/))**: Task-oriented guides for every BPMN event type, each backed by a runnable program
+  - [Start and end events](docs/guides/events/start-and-end.md), [Timer](docs/guides/events/timer.md), [Message](docs/guides/events/message.md), [Signal](docs/guides/events/signal.md)
+  - [Conditional](docs/guides/events/conditional.md), [Error](docs/guides/events/error.md), [Escalation](docs/guides/events/escalation.md), [Terminate](docs/guides/events/terminate.md)
+  - [Link](docs/guides/events/link.md), [Compensation](docs/guides/events/compensation.md), [Boundary events](docs/guides/events/boundary.md), [Event sub-processes](docs/guides/events/event-subprocess.md)
 
 - **[EventHub](internal/eventproc/eventhub/README.md)**: Central event distribution system
   - Event registration and propagation
@@ -86,7 +85,7 @@ This file provides an organized index to all documentation throughout the GoBPM 
   - Base element implementations
   - Common interfaces
 
-- **[Common Elements](pkg/model/common/)**: Shared BPMN components
+- **[Common Elements](pkg/model/bpmncommon/)**: Shared BPMN components
   - Messages, errors, signals
   - Resource definitions
 
@@ -99,7 +98,7 @@ This file provides an organized index to all documentation throughout the GoBPM 
   - Error chaining and wrapping
 
 ### Monitoring and Observability
-- **[Monitor](pkg/monitor/)**: Process monitoring and logging
+- **[Observability](pkg/observability/)**: Process monitoring and logging
   - Execution tracking
   - Performance metrics
   - Debug information
@@ -140,20 +139,21 @@ This file provides an organized index to all documentation throughout the GoBPM 
 
 ### Internal Packages (`internal/`)
 Private implementation details, not exposed to external users:
+- **enginert/**: Engine runtime components
 - **eventproc/**: Event processing implementation
 - **instance/**: Process instance management
-- **exec/**: Execution engine components
-- **runner/**: Process runner implementations
 - **scope/**: Data scope management
-- **interactor/**: Human interaction handling
-- **renv/**: Runtime environment interfaces
+- **lintcfg/**: Lint configuration
 
 ### Public Packages (`pkg/`)
 Public API exposed to users of the library:
 - **model/**: BPMN model implementations
 - **errs/**: Error handling utilities
-- **monitor/**: Monitoring and observability
+- **observability/**: Monitoring and observability
 - **thresher/**: Main BPM engine
+- **exec/**: Execution engine components
+- **interactor/**: Human interaction handling
+- **renv/**: Runtime environment interfaces
 - **set/**: Data structure utilities
 
 ## 🔄 Development Workflow

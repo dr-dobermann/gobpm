@@ -117,13 +117,24 @@ func run() error {
 		return fmt.Errorf("bind result object: %w", err)
 	}
 
-	// confirm: a trailing ServiceTask that signals completion once the receive
-	// has resumed, so main can read the DataObject without racing the engine.
+	// confirm: a trailing ServiceTask that reads the received-order DataObject
+	// from the per-instance scope by name (via its DataReader) and signals
+	// completion — so main reads the value without racing the engine and
+	// without touching the shared model object (SRD-063: a DataObject's value
+	// lives in the per-instance scope, not on the definition object).
 	done := make(chan struct{})
 
+	var received string
+
 	confirmOp, err := gooper.New("confirm-op",
-		func(_ context.Context, _ service.DataReader,
+		func(ctx context.Context, r service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			d, derr := r.GetData("received-order")
+			if derr != nil {
+				return nil, fmt.Errorf("read received-order: %w", derr)
+			}
+
+			received, _ = d.Value().Get(ctx).(string)
 			close(done)
 
 			return nil, nil
@@ -143,7 +154,7 @@ func run() error {
 		return fmt.Errorf("create end: %w", err)
 	}
 
-	for _, e := range []flow.Element{start, send, receive, confirm, end} {
+	for _, e := range []flow.Element{start, send, receive, confirm, end, receivedDO} {
 		if err := proc.Add(e); err != nil {
 			return fmt.Errorf("add element: %w", err)
 		}
@@ -178,16 +189,12 @@ func run() error {
 		return fmt.Errorf("timed out waiting for the message round-trip")
 	}
 
-	// brief grace for the receive producer stage to commit into the DataObject.
-	time.Sleep(200 * time.Millisecond)
-
-	got, ok := receivedDO.Subject().Structure().Get(context.Background()).(string)
-	if !ok || got != orderID {
-		return fmt.Errorf("received-order: want %q, got %v", orderID, got)
+	if received != orderID {
+		return fmt.Errorf("received-order: want %q, got %q", orderID, received)
 	}
 
 	fmt.Printf("  ✓ send-order published %q\n", orderID)
-	fmt.Printf("  ✓ receive-order bound it into received-order = %q\n", got)
+	fmt.Printf("  ✓ receive-order bound it into received-order = %q\n", received)
 	fmt.Println("✓ message-demo completed: the message travelled the broker " +
 		"from the SendTask to the ReceiveTask")
 

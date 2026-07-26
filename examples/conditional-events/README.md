@@ -44,4 +44,4 @@ go run .
 Conditional triggers also work on **boundary events** (interrupting and
 non-interrupting) and **event-based-gateway arms**; a top-level conditional
 Start Event is rejected at process validation (BPMN Table 10.84). See
-[`docs/guides/conditional-events.md`](../../docs/guides/conditional-events.md).
+[`docs/guides/events/conditional.md`](../../docs/guides/events/conditional.md).
