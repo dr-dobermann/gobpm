@@ -15,7 +15,8 @@ Every example builds in CI; the list below is grouped by concern.
 | Example | Demonstrates |
 |---|---|
 | [`basic-process/`](basic-process/) | The fundamentals: engine → process (start → service task → end) → register → run. |
-| [`process-data/`](process-data/) | Process data through a task — a property and an engine runtime variable read via the `DataReader`. |
+| [`process-data/`](process-data/) | Process data through a task — a property and an engine runtime variable read via the `DataReader`, plus a per-branch **`DataObject`** (a scope-resident named container, read back by name). |
+| [`data-store/`](data-store/) | The engine-global **Data Store** (`DataStoreReference` + `thresher.WithDataStore`) — a value one instance writes outlives it and is read by a *separate* instance through the shared store. |
 
 ## Gateways
 

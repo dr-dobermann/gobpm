@@ -21,7 +21,7 @@ func TestDefaultPopulatesEveryExtension(t *testing.T) {
 		r.Clock() == nil || r.Repository() == nil || r.MessageBroker() == nil ||
 		r.ExpressionEngine() == nil || r.AuthorizationProvider() == nil ||
 		r.WorkerDispatcher() == nil || r.RuleEngine() == nil ||
-		r.ScriptEngine() == nil {
+		r.ScriptEngine() == nil || r.DataStores() == nil {
 		t.Fatal("Default left an extension nil")
 	}
 }

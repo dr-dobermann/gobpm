@@ -77,7 +77,8 @@ type (
 		trg   *ItemAwareElement
 		src   []*ItemAwareElement
 
-		baseOptions []options.Option
+		dataStoreRef string
+		baseOptions  []options.Option
 	}
 
 	asscOption func(cfg *asscConfig) error
@@ -101,6 +102,7 @@ func (aCfg *asscConfig) newAssociation() (*Association, error) {
 		transformation: aCfg.trans,
 		sources:        map[string]*ItemAwareElement{},
 		target:         aCfg.trg,
+		dataStoreRef:   aCfg.dataStoreRef,
 	}
 
 	for _, iae := range aCfg.src {
@@ -122,6 +124,21 @@ func WithTransformation(fe FormalExpression) options.Option {
 		}
 
 		cfg.trans = fe
+
+		return nil
+	}
+
+	return asscOption(f)
+}
+
+// WithDataStoreRef marks the Association as engine-store-backed (SRD-068 FR-4):
+// a DataStoreReference sets its dataStoreRef so the task reroute resolves that
+// store from the engine registry and reads/writes it (by the association's item
+// name) instead of per-instance scope. It is empty on an ordinary (DataObject /
+// activity-I/O) association.
+func WithDataStoreRef(ref string) options.Option {
+	f := func(cfg *asscConfig) error {
+		cfg.dataStoreRef = ref
 
 		return nil
 	}

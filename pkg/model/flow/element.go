@@ -20,6 +20,10 @@ const (
 	InvalidElement ElementType = "INVALID_ELEMENT_TYPE"
 	// DataObjectElement represents a data object element type.
 	DataObjectElement ElementType = "DataObject"
+	// DataStoreReferenceElement represents a data store reference element type
+	// (BPMN §10.4.1, ADR-030 §2.6) — a flow-scope handle to the engine-global
+	// Data Store.
+	DataStoreReferenceElement ElementType = "DataStoreReference"
 	// NodeElement represents a node element type.
 	NodeElement ElementType = "Node"
 	// SequenceBaseElement represents a sequence flow element type.

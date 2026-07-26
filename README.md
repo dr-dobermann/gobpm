@@ -159,7 +159,11 @@ version (with error handling and waiting for the task to run) lives in
 [`examples/parallel-gateway/`](examples/parallel-gateway/) (concurrent
 branches),
 [`examples/process-data/`](examples/process-data/) (process data through the
-task), and the timer examples
+task, plus a **DataObject** per branch — a scope-resident named container each
+task writes to and is read back by name),
+[`examples/data-store/`](examples/data-store/) (an engine-global **DataStore** —
+a value one instance writes is read by a *separate* instance through a shared
+`DataStoreReference`), and the timer examples
 [`examples/simple-timer/`](examples/simple-timer/) ·
 [`examples/timer-event/`](examples/timer-event/).
 

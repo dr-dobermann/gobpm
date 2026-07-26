@@ -99,6 +99,23 @@ entries, and each becomes a `DataChange` observability fact —
 Values embed **no** notification — change detection is the scope's job, so it
 survives the engine's clone/commit execution model.
 
+### Data Object and Data Store movements
+
+A value moving through a task's **data associations** is observable too, and
+independently of the commit-diff above: a Data Object write is an in-place
+update and a Data Store access never touches scope, so neither surfaces as a
+`DataChange`. The reroute emits one fact per movement instead —
+
+- a per-instance **Data Object** read/write → `KindDataObject`
+  (`PhaseRead` inbound, `PhaseWritten` outbound); **observer-only**, like
+  `DataChange` (the same per-node-write flood guard);
+- an engine-global **Data Store** read/write → `KindDataStore` (same phases),
+  which **also echoes** to the operator log at Debug — a shared-store access is
+  operationally significant, not per-instance churn;
+- the item name is `f.Details[observability.AttrDataName]`; a Data Store fact
+  additionally carries its store ref in `f.Details[observability.AttrDataStore]`.
+  Names only — never the moved value (the masking rule).
+
 ## Native structs
 
 ```go
@@ -144,6 +161,76 @@ v := adapters.MustWrap(&order)     // a LIVE data.Record view
 | a third-party type you can't modify | `adapters.Register` |
 | a hot type needing reflection-free access | the codegen follow-up (rides `Register`) |
 
+## Data Objects — named containers in scope
+
+A **`DataObject`** (BPMN §10.4.1) is a diagram-visible, **named** container that
+lives in the instance's scope tree — the same place a `Property` lives, resolved
+by the same walk-up. Register one on the container that owns it:
+
+```go
+do, _ := dataobjects.New("order-total",
+    data.MustItemDefinition(values.NewVariable(0), foundation.WithID("total")),
+    data.ReadyDataState)
+proc.Add(do)        // a Process-level object → seeded into the root scope
+// sub.Add(do)      // a SubProcess-level object → seeded into the child scope
+                    //   when it opens, disposed when it closes
+```
+
+Each instance gets its **own copy** (cloned from the snapshot), so concurrent
+instances never share DataObject state. Read one **by name** — inside an
+operation through the data reader, or from outside via the instance handle:
+
+```go
+d, _ := reader.GetData("order-total")   // service.DataReader, or handle.Data()
+total := d.Value().Get(ctx)
+```
+
+A **`DataAssociation`** binds a DataObject to a task in either direction, and the
+value always flows through the per-instance scope (never the shared association):
+
+- **output** (`do.AssociateSource(task, []string{"<item-id>"}, nil)`) — the
+  task's produced output is written into the DataObject (Node → DataObject);
+- **input** (`do.AssociateTarget(task, nil)`) — the DataObject's value fills a
+  task input (DataObject → Node).
+
+`DataObjectReference` (the per-appearance alias) is a deliberate
+non-implementation — see [SAD-001 §14.1](../design/SAD-001-vision-and-architecture.md)
+for the collapse-to-DataObject translation rules.
+
+## Data Stores — data that outlives the instance
+
+Where a `DataObject` is per-instance, a **Data Store** (BPMN §10.4.1) is
+**engine-global**: it outlives every instance and is shared across them. It is
+modeled as an **infrastructure port** — an interface with an in-memory default,
+registered on the engine like `Repository`/`MessageBroker` — so durability is
+later a swappable adapter, not a reshape. Register one per `dataStoreRef`:
+
+```go
+eng, _ := thresher.New("engine",
+    thresher.WithDataStore("orders", memstore.New()))  // call once per store
+```
+
+Registration is **fail-loud**: a `DataStoreReference` naming an unregistered
+store is a configuration error, not a silent auto-provision.
+
+A **`DataStoreReference`** is the flow-scope handle — it participates in
+`DataAssociation`s **exactly like a `DataObject`**, so the task wiring is
+identical, but its I/O routes to the engine-global store (the association carries
+the `dataStoreRef`, and the reroute resolves the store from the engine registry,
+keyed by the reference's name):
+
+```go
+ref, _ := datastores.New("counter", "orders",   // name, dataStoreRef
+    data.MustItemDefinition(values.NewVariable(0), foundation.WithID("cnt")),
+    data.ReadyDataState)
+ref.AssociateSource(writerTask, []string{"cnt"}, nil) // Node → DataStore
+ref.AssociateTarget(readerTask, nil)                  // DataStore → Node
+```
+
+A value one instance writes is read by a later instance through a reference to
+the same store. `capacity` is advisory in the in-memory adapter (a write past it
+is accepted); a durable adapter may enforce it.
+
 ## Worked examples
 
 | Example | Shows |
@@ -153,7 +240,10 @@ v := adapters.MustWrap(&order)     // a LIVE data.Record view
 | [`examples/data-change/`](../../examples/data-change/) | observing per-path `DataChange` facts |
 | [`examples/native-structs/`](../../examples/native-structs/) | the host's own struct as live process data |
 | [`examples/maps/`](../../examples/maps/) | the **map kind** — a dynamic and a native dictionary navigated by `["key"]`; per-entry map `DataChange` facts |
+| [`examples/process-data/`](../../examples/process-data/) | a **DataObject** per branch: a task writes its result into the scope-resident object, read back by name from the instance handle |
+| [`examples/data-store/`](../../examples/data-store/) | an engine-global **DataStore**: a writer instance stores a value a *separate* reader instance reads back through a `DataStoreReference` to the same store |
 
 Design background: [ADR-011](../design/ADR-011-process-data-flow.md) (the
 conception), [ADR-010](../design/ADR-010-process-data-model.md) (the data
-plane it runs on).
+plane it runs on), [ADR-030](../design/ADR-030-data-objects-and-store.md)
+(the DataObject scope integration).

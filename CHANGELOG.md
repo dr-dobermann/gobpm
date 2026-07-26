@@ -100,6 +100,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   engine's kind and the output count. The batteries **Lua interpreter
   (`adapters/lua`), the example and the conformance row-5 flip ride
   SRD-065**.
+- **The engine-global Data Store + Data Store Reference (SRD-068, ADR-030
+  v.1 — the `DataStore` half of #82).** BPMN §10.4.1 data that **outlives a
+  Process instance** and is **shared across instances**: modeled as an
+  **engine-level infrastructure port** (not a per-instance element), like
+  `Repository`/`MessageBroker` (SAD-001 G4). A new `pkg/datastore` defines the
+  `DataStore` interface (`Get`/`Put` by name + `Capacity`/`IsUnlimited`) and a
+  **`Registry`** resolving a store by its `dataStoreRef` — each store with its
+  own capacity/backing, so a Process may reference many (registration is
+  **fail-loud**: an unknown ref is a configuration error, not a silent
+  auto-provision). The default in-memory adapters live in
+  `pkg/datastore/memstore`. Register a store with
+  `thresher.WithDataStore("orders", memstore.New())`; the runtime reaches it via
+  `renv.EngineRuntime.DataStores()` (never nil). A **`DataStoreReference`**
+  (`pkg/model/data_stores`) is the flow-scope handle: it participates in
+  `DataAssociation`s exactly like a `DataObject` (add it to a `Process`/
+  `SubProcess`, `AssociateSource`/`AssociateTarget`), but its I/O routes to the
+  engine-global store — the association carries the `dataStoreRef`, on which the
+  task reroute branches (store vs per-instance scope). `capacity` is advisory in
+  the in-memory adapter; durability is a swappable adapter (the future
+  Persistence & State workstream). Every store access emits a
+  **`KindDataStore`** observability fact (`PhaseRead`/`PhaseWritten`, carrying
+  the store ref and key), echoed to the operator log at Debug — a shared-store
+  access is operationally significant. See `examples/data-store/` — a writer
+  instance stores a value a *separate* reader instance reads back.
+
+- **Data Objects as scope-resident named containers (SRD-063, ADR-030
+  v.1 — the `DataObject` half of #82).** A BPMN `DataObject` (§10.4.1)
+  becomes a **per-instance scope variable** instead of an
+  association-wired object. It can be registered on a **`Process`** or an
+  embedded **`SubProcess`** (`proc.Add(do)` / `sub.Add(do)`, name-keyed,
+  duplicate-name guarded), is **seeded into the matching scope** at start
+  (a Process-level object into the root scope, a SubProcess-level object
+  into the child scope when it opens, disposed when it closes), and is
+  **resolved by name** through the walk-up — the same substrate a
+  `Property` already uses. Its **DataAssociations flow through scope in
+  both directions**: a task's DataOutputAssociation writes the produced
+  value into the per-instance DataObject (Node → DataObject), a
+  DataInputAssociation fills a task input from it (DataObject → Node); the
+  association is a shared declaration and the value lives per-instance, so
+  concurrent instances stay isolated with no association retargeting.
+  Read a DataObject from outside the engine by name via the instance
+  handle's data reader. `examples/process-data/` now registers its result
+  Data Objects and reads them back by name. `DataObjectReference` stays a
+  deliberate non-implementation (SAD-001 §14.1, with the BPMN-translation
+  rules recorded there); the `DataStore` port rides a follow-up SRD.
 
 - **The Decision Table rule engine — `adapters/dtable` (SRD-062, ADR-029
   v.1; the first shipped adapter module).** A pluggable out-of-core

@@ -4,9 +4,11 @@ import (
 	"fmt"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
+	"github.com/dr-dobermann/gobpm/pkg/datastore"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
+	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
@@ -31,9 +33,10 @@ func datumErr(what, name string, path scope.DataPath, err error) error {
 // (RuntimeVar / RuntimeVarNames), passed into load, so instanceScope holds no
 // back-reference to the Instance.
 type instanceScope struct {
-	plane  *scope.Scope
-	reader service.DataReader
-	root   scope.DataPath
+	plane      *scope.Scope
+	reader     service.DataReader
+	dataStores datastore.Registry
+	root       scope.DataPath
 }
 
 // load builds the data plane rooted under parentRoot and commits the process
@@ -44,8 +47,12 @@ func (sc *instanceScope) load(
 	parentRoot scope.DataPath,
 	processName string,
 	props []*data.Property,
+	dobjs []*dataobjects.DataObject,
+	stores datastore.Registry,
 	supplier scope.RuntimeVarsSupplier,
 ) error {
+	sc.dataStores = stores
+
 	root := parentRoot
 	if root == scope.EmptyDataPath {
 		root = scope.RootDataPath
@@ -73,9 +80,16 @@ func (sc *instanceScope) load(
 
 	sc.reader = reader
 
-	dd := make([]data.Data, 0, len(props))
+	// Seed the process Properties and the Process-level Data Objects into the
+	// root scope: a DataObject is a scope-resident named container (SRD-063
+	// FR-3), resolvable by name via the walk-up exactly like a Property.
+	dd := make([]data.Data, 0, len(props)+len(dobjs))
 	for _, p := range props {
 		dd = append(dd, p)
+	}
+
+	for _, do := range dobjs {
+		dd = append(dd, do)
 	}
 
 	// A birth-init commit is initial state, not a change — its changed-path
@@ -104,7 +118,16 @@ func (sc *instanceScope) openFrameAt(
 	trackID, nodeID string,
 	at scope.DataPath,
 ) (*scope.Frame, error) {
-	return scope.NewFrame(trackID, nodeID, at, sc.plane)
+	f, err := scope.NewFrame(trackID, nodeID, at, sc.plane)
+	if err != nil {
+		return nil, err
+	}
+
+	// wire the engine-global Data Store registry so a DataStoreReference
+	// association resolves its store at read/write (SRD-068 FR-4).
+	f.SetDataStores(sc.dataStores)
+
+	return f, nil
 }
 
 // bindEventPayload binds the payload carried by a born-from-event start into the

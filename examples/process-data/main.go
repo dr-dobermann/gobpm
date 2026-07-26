@@ -96,7 +96,12 @@ func run() error {
 		return fmt.Errorf("create end-b: %w", err)
 	}
 
-	for _, e := range []flow.Element{start, split, greetA, greetB, endA, endB} {
+	// Register the DataObjects on the Process too, so each instance seeds them
+	// into its own scope and the branch results flow into the per-instance
+	// objects (SRD-063).
+	for _, e := range []flow.Element{
+		start, split, greetA, greetB, endA, endB, resultA, resultB,
+	} {
 		if err := proc.Add(e); err != nil {
 			return fmt.Errorf("add element: %w", err)
 		}
@@ -123,7 +128,8 @@ func run() error {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
-	if _, err := engine.StartLatest(proc.ID()); err != nil {
+	h, err := engine.StartLatest(proc.ID())
+	if err != nil {
 		return fmt.Errorf("start process: %w", err)
 	}
 
@@ -150,7 +156,14 @@ func run() error {
 		{resultA, "Hello, dr.Dobermann!"},
 		{resultB, "Welcome, dr.Dobermann!"},
 	} {
-		got, ok := res.do.Subject().Structure().Get(bg).(string)
+		// read the result from THIS instance's scope, by the DataObject's name,
+		// through the instance handle's data reader (SRD-063).
+		d, err := h.Data().GetData(res.do.Name())
+		if err != nil {
+			return fmt.Errorf("read data object %q: %w", res.do.Name(), err)
+		}
+
+		got, ok := d.Value().Get(bg).(string)
 		if !ok || got != res.want {
 			return fmt.Errorf("data object %q: want %q, got %v",
 				res.do.Name(), res.want, got)
@@ -160,7 +173,8 @@ func run() error {
 	}
 
 	fmt.Println("✓ data-demo completed: the property fed both branches " +
-		"through their frames; each result reached its DataObject")
+		"through their frames; each result reached its per-instance DataObject " +
+		"in scope, read back by name")
 
 	return nil
 }

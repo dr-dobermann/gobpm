@@ -9,6 +9,7 @@ package renv
 import (
 	"github.com/dr-dobermann/gobpm/pkg/auth"
 	"github.com/dr-dobermann/gobpm/pkg/clock"
+	"github.com/dr-dobermann/gobpm/pkg/datastore"
 	"github.com/dr-dobermann/gobpm/pkg/messaging"
 	"github.com/dr-dobermann/gobpm/pkg/model/expression"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
@@ -44,6 +45,13 @@ type EngineRuntime interface {
 	// registrations it is the empty "##None" registry, whose execution
 	// fails loud with the wire-an-adapter message.
 	ScriptEngine() script.Engine
+	// DataStores returns the engine-global Data Store registry a
+	// DataStoreReference resolves its store from by dataStoreRef (BPMN §10.4.1,
+	// ADR-030 §2.5). Each store outlives every instance and is shared across
+	// them; a process may reference many distinct stores. Never nil — absent an
+	// override, an empty in-memory registry is wired (an unregistered ref then
+	// fails loud).
+	DataStores() datastore.Registry
 
 	// Reporter returns the engine's observable-event sink (ADR-013 v.2
 	// §2.7): the single producer that writes the operator-log echo and fans

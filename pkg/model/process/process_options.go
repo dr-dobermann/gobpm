@@ -4,6 +4,8 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
+	datastores "github.com/dr-dobermann/gobpm/pkg/model/data_stores"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
@@ -83,6 +85,8 @@ func (pc *processConfig) newProcess() (*Process, error) {
 		CorrelationSubscriptions: []*bpmncommon.CorrelationSubscription{},
 		nodes:                    map[string]flow.Node{},
 		flows:                    map[string]*flow.SequenceFlow{},
+		dataObjects:              map[string]*dataobjects.DataObject{},
+		dataStoreRefs:            map[string]*datastores.DataStoreReference{},
 	}
 
 	return &p, nil

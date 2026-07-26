@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/dr-dobermann/gobpm/pkg/datastore"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 )
@@ -24,15 +25,62 @@ const (
 // A frame is owned by exactly one execution — it is NOT safe for concurrent
 // use; cross-track serialization happens in the Scope, never in frames.
 type Frame struct {
-	plane   *Scope
-	inputs  map[string]*data.Parameter
-	outputs map[string]*data.Parameter
-	props   map[string]data.Data
-	puts    map[string]data.Data
-	at      DataPath
-	trackID string
-	nodeID  string
-	state   frameState
+	stores    datastore.Registry
+	plane     *Scope
+	inputs    map[string]*data.Parameter
+	outputs   map[string]*data.Parameter
+	props     map[string]data.Data
+	puts      map[string]data.Data
+	at        DataPath
+	trackID   string
+	nodeID    string
+	movements []DataMovement
+	state     frameState
+}
+
+// DataMovement records one value moving through a task's data associations for
+// observability (SRD-063 / SRD-068): the reroute notes each Data Object or Data
+// Store read/write on the frame, and the track reports them as KindDataObject /
+// KindDataStore facts after the node's data phases. Names only — never the moved
+// value (the masking rule).
+type DataMovement struct {
+	Name        string // item name: the Data Object scope name or Data Store key
+	StoreRef    string // the resolved dataStoreRef (engine Data Store only)
+	EngineStore bool   // engine Data Store (true) vs per-instance Data Object
+	Write       bool   // value written out (true) vs value read in (false)
+}
+
+// RecordDataMovement notes a Data Object / Data Store read or write for
+// observability (SRD-063 / SRD-068). engineStore distinguishes the engine-global
+// Data Store from a per-instance Data Object; write distinguishes an outbound
+// (Node → data) from an inbound (data → Node) movement. storeRef is empty for a
+// Data Object.
+func (f *Frame) RecordDataMovement(engineStore, write bool, name, storeRef string) {
+	f.movements = append(f.movements, DataMovement{
+		Name:        name,
+		StoreRef:    storeRef,
+		EngineStore: engineStore,
+		Write:       write,
+	})
+}
+
+// DataMovements returns the Data Object / Data Store movements recorded on the
+// frame during its data phases (SRD-063 / SRD-068), in occurrence order.
+func (f *Frame) DataMovements() []DataMovement {
+	return f.movements
+}
+
+// SetDataStores wires the engine-global Data Store registry the frame's node
+// reaches through a DataStoreReference association (SRD-068 FR-4). The instance
+// sets it on every execution frame; a transient evaluation frame leaves it nil.
+func (f *Frame) SetDataStores(stores datastore.Registry) {
+	f.stores = stores
+}
+
+// DataStores returns the engine-global Data Store registry wired on the frame
+// (nil for a transient evaluation frame).
+func (f *Frame) DataStores() datastore.Registry {
+	return f.stores
 }
 
 // NewFrame creates the execution frame of node nodeID executed by track

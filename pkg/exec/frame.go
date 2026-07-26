@@ -3,6 +3,7 @@ package exec
 import (
 	"context"
 
+	"github.com/dr-dobermann/gobpm/pkg/datastore"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
@@ -46,6 +47,24 @@ type Frame interface {
 	// GetDataByID returns the data whose ItemDefinition id is id, resolving
 	// frame-first then walking the container scopes.
 	GetDataByID(id string) (data.Data, error)
+
+	// GetData returns the data resolved by name, frame-first then walking the
+	// container scopes (SRD-063 FR-5 resolves a DataObject by its scope name).
+	GetData(name string) (data.Data, error)
+
+	// DataStores returns the engine-global Data Store registry a
+	// DataStoreReference association resolves its store from (SRD-068 FR-4). It
+	// is shared across instances; a nil registry means none is wired for this
+	// frame (a transient evaluation frame), and a store-backed association fails
+	// fast rather than dereferencing it.
+	DataStores() datastore.Registry
+
+	// RecordDataMovement notes a Data Object / Data Store read or write for
+	// observability (SRD-063 / SRD-068): the reroute records each movement and
+	// the track reports them as KindDataObject / KindDataStore facts after the
+	// node's data phases. engineStore selects Data Store vs Data Object, write
+	// selects outbound vs inbound; storeRef is empty for a Data Object.
+	RecordDataMovement(engineStore, write bool, name, storeRef string)
 }
 
 // NodeDataConsumer is implemented by nodes that consume data: LoadData

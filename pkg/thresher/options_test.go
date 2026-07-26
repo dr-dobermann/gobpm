@@ -13,6 +13,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/auth/allowall"
 	"github.com/dr-dobermann/gobpm/pkg/clock/syscl"
+	"github.com/dr-dobermann/gobpm/pkg/datastore/memstore"
 	"github.com/dr-dobermann/gobpm/pkg/messaging/membroker"
 	"github.com/dr-dobermann/gobpm/pkg/observability/memmetrics"
 	"github.com/dr-dobermann/gobpm/pkg/observability/noop"
@@ -33,7 +34,7 @@ func TestConfigSatisfiesEngineRuntime(t *testing.T) {
 		er.Clock() == nil || er.Repository() == nil || er.MessageBroker() == nil ||
 		er.ExpressionEngine() == nil || er.AuthorizationProvider() == nil ||
 		er.WorkerDispatcher() == nil || er.RuleEngine() == nil ||
-		er.ScriptEngine() == nil {
+		er.ScriptEngine() == nil || er.DataStores() == nil {
 		t.Fatal("thresherConfig does not expose every extension as EngineRuntime")
 	}
 }
@@ -43,7 +44,8 @@ func TestDefaultConfigWiresEveryExtension(t *testing.T) {
 
 	if c.logger == nil || c.tracer == nil || c.metrics == nil || c.clock == nil ||
 		c.repository == nil || c.msgBroker == nil ||
-		c.authz == nil || c.dispatcher == nil || c.ruleEngine == nil {
+		c.authz == nil || c.dispatcher == nil || c.ruleEngine == nil ||
+		c.dataStores == nil {
 		t.Fatalf("defaultConfig left an extension nil: %+v", c)
 	}
 }
@@ -60,6 +62,7 @@ func TestEveryOptionOverridesItsDefault(t *testing.T) {
 	az := allowall.New()
 	wd := localdispatcher.New(nil, 0)
 	rle := gorules.New()
+	ds := memstore.New()
 
 	wem, werr := tasks.NewRuleMapper(tasks.Rule{Code: "1", Yield: tasks.Technical{}})
 	if werr != nil {
@@ -72,6 +75,7 @@ func TestEveryOptionOverridesItsDefault(t *testing.T) {
 	for _, o := range []Option{
 		WithLogger(lg), WithTracer(tr), WithMetricsRecorder(mr), WithClock(ck),
 		WithRepository(rp), WithMessageBroker(mb),
+		WithDataStore("test-store", ds),
 		WithAuthorizationProvider(az), WithWorkerDispatcher(wd),
 		WithRuleEngine(rle),
 		WithWorkerErrorMapper(wem), WithWorkerRetryPolicy(wrp),
@@ -88,6 +92,12 @@ func TestEveryOptionOverridesItsDefault(t *testing.T) {
 		c.WorkerErrorMapper() != wem || c.WorkerRetryPolicy() != wrp ||
 		c.WorkerTrustDefault() != wtd {
 		t.Fatal("a WithXxx option did not override its field")
+	}
+
+	// WithDataStore registers the store under its ref in the registry.
+	if got, err := c.dataStores.Store("test-store"); err != nil || got != ds {
+		t.Fatalf("WithDataStore did not register the store: got %v, err %v",
+			got, err)
 	}
 }
 
@@ -276,6 +286,14 @@ func TestNilOptionValueRejected(t *testing.T) {
 
 	if c.ruleEngine == nil {
 		t.Fatal("WithRuleEngine(nil) erased the default instead of rejecting")
+	}
+
+	if err := WithDataStore("bad", nil)(&c); err == nil {
+		t.Fatal("WithDataStore(_, nil) should return an error")
+	}
+
+	if c.dataStores == nil {
+		t.Fatal("WithDataStore(_, nil) erased the registry instead of rejecting")
 	}
 
 	// And New surfaces it.

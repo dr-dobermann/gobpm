@@ -37,6 +37,7 @@ examples/parallel-gateway/parallel-gateway
 examples/simple-timer/simple-timer
 examples/timer-event/timer-event
 examples/process-data/process-data
+examples/data-store/data-store
 examples/message-send-receive/message-send-receive
 examples/message-intermediate-events/message-intermediate-events
 examples/inter-instance-correlation/inter-instance-correlation

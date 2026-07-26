@@ -14,6 +14,8 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/auth/allowall"
 	"github.com/dr-dobermann/gobpm/pkg/clock"
 	"github.com/dr-dobermann/gobpm/pkg/clock/syscl"
+	"github.com/dr-dobermann/gobpm/pkg/datastore"
+	"github.com/dr-dobermann/gobpm/pkg/datastore/memstore"
 	"github.com/dr-dobermann/gobpm/pkg/messaging"
 	"github.com/dr-dobermann/gobpm/pkg/messaging/membroker"
 	"github.com/dr-dobermann/gobpm/pkg/model/expression"
@@ -37,6 +39,7 @@ type Runtime struct {
 	exprReg            *expression.Registry
 	ruleEng            rules.Engine
 	scriptReg          *script.Registry
+	dataStores         *memstore.Registry
 	tracer             observability.Tracer
 	metrics            observability.MetricsRecorder
 	clk                clock.Clock
@@ -65,6 +68,7 @@ func Default() *Runtime {
 		dispatcher: localdispatcher.New(nil, 0),
 		ruleEng:    gorules.New(),
 		scriptReg:  emptyScriptRegistry(),
+		dataStores: memstore.NewRegistry(),
 	}
 }
 
@@ -198,6 +202,8 @@ func (r *Runtime) RuleEngine() rules.Engine { return r.ruleEng }
 
 // ScriptEngine returns the configured script-engine routing surface.
 func (r *Runtime) ScriptEngine() script.Engine { return r.scriptReg }
+// DataStores returns the configured engine-global Data Store registry.
+func (r *Runtime) DataStores() datastore.Registry { return r.dataStores }
 
 // AuthorizationProvider returns the configured authorization provider.
 func (r *Runtime) AuthorizationProvider() auth.AuthorizationProvider { return r.authz }

@@ -1134,6 +1134,7 @@ func (t *track) finalizeNodeExecution(
 	// returns a nil set, so the report is naturally a no-op then.
 	changes, err := f.Commit()
 	t.reportDataChanges(step.node, changes)
+	t.reportDataMovements(step.node, f)
 	t.signalDataCommit(step.node, changes)
 
 	return err

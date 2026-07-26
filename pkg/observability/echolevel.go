@@ -25,6 +25,10 @@ var kindLevel = map[Kind]slog.Level{
 	KindCompensation:     slog.LevelDebug,
 	KindRules:            slog.LevelDebug,
 	KindScript:           slog.LevelDebug,
+	// A Data Store access is engine-global shared state — operationally
+	// significant enough to log (unlike the observer-only per-instance
+	// KindDataObject below), but flow-level, so Debug (SRD-068).
+	KindDataStore: slog.LevelDebug,
 }
 
 // kindNoEcho lists kinds that never reach the operator log — the observer stream
@@ -32,6 +36,10 @@ var kindLevel = map[Kind]slog.Level{
 // would drown flow tracing even at Debug (the §2.10 flood guard).
 var kindNoEcho = map[Kind]bool{
 	KindDataChange: true,
+	// KindDataObject is per-instance Data Object churn (SRD-063) — same
+	// ~per-node-write volume as KindDataChange, so it too would drown flow
+	// tracing; the observer stream carries it alone.
+	KindDataObject: true,
 }
 
 // phaseKey addresses a per-phase override within a kind.

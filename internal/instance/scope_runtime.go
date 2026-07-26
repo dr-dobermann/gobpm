@@ -8,6 +8,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
@@ -21,6 +22,49 @@ type scopeHost interface {
 	flow.ActivityNode
 
 	Nodes() []flow.Node
+}
+
+// dataObjectHost is the capability assert for a composite that carries
+// SubProcess-level Data Objects (§10.4.1, SRD-063 FR-4): they seed the child
+// scope when it opens. Kept a local assert so the runtime stays free of the
+// model package (the scopeHost idiom).
+type dataObjectHost interface {
+	DataObjects() []*dataobjects.DataObject
+}
+
+// seedDataObjects commits a composite host's SubProcess-level Data Objects into
+// its freshly-opened child scope (SRD-063 FR-4): each becomes a scope-resident
+// named container, resolvable by walk-up within the sub-process and disposed
+// when the scope closes (completeScope/cancelScope drop the scope's data). A
+// birth-init commit — initial state, no DataChange facts (SRD-044 §4.4). A node
+// that carries no Data Objects (or is not a dataObjectHost) is a no-op.
+func seedDataObjects(
+	plane *scope.Scope, node flow.Node, child scope.DataPath,
+) error {
+	doHost, ok := node.(dataObjectHost)
+	if !ok {
+		return nil
+	}
+
+	dobjs := doHost.DataObjects()
+	if len(dobjs) == 0 {
+		return nil
+	}
+
+	dd := make([]data.Data, 0, len(dobjs))
+	for _, do := range dobjs {
+		dd = append(dd, do)
+	}
+
+	if _, err := plane.Commit(child, dd...); err != nil {
+		return errs.New(
+			errs.M("couldn't seed sub-process data objects into %q",
+				string(child)),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
+	return nil
 }
 
 // scopeEntry is one open nested scope, loop-owned (SRD-049 FR-9): the
@@ -153,6 +197,15 @@ func (ls *loopState) onScopeOpen(ctx context.Context, host *track, node flow.Nod
 
 			return
 		}
+	}
+
+	// SubProcess-level Data Objects seed the freshly-opened child scope
+	// (SRD-063 FR-4).
+	if err := seedDataObjects(ls.inst.sc.plane, node, child); err != nil {
+		ls.inst.fail(err)
+		ls.stopAll()
+
+		return
 	}
 
 	entry := &scopeEntry{host: host, node: node, parent: host.scopePath}
