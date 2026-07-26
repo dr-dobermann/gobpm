@@ -43,4 +43,4 @@ go run .
   ✓ completed (Completed)
 ```
 
-See [`docs/guides/composition.md`](../../docs/guides/composition.md).
+See [`docs/guides/subprocesses/index.md`](../../docs/guides/subprocesses/index.md).

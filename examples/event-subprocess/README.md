@@ -58,4 +58,4 @@ go run .
   ✓ completed (Completed)
 ```
 
-See [`docs/guides/composition.md`](../../docs/guides/composition.md).
+See [`docs/guides/events/event-subprocess.md`](../../docs/guides/events/event-subprocess.md).

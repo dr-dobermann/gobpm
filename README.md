@@ -262,7 +262,7 @@ structure-only JSON grids** over named Go behavior through its pluggable
 Decoder seam: see
 [`examples/decision-table/`](examples/decision-table/).
 
-For composition, see [**docs/guides/composition.md**](docs/guides/composition.md).
+For composition, see [**docs/guides/subprocesses/index.md**](docs/guides/subprocesses/index.md).
 An **embedded Sub-Process** is a nested scope inside the instance (the inner
 flow reads the parent's data through the walk-up, its locals die with the
 scope, the parent resumes when the scope drains, and boundary/Terminate/Error
@@ -287,7 +287,7 @@ with no Cancel boundary ends there) —
 [`examples/transaction-sub-process/`](examples/transaction-sub-process/).
 
 Any activity can carry **iteration**
-([**docs/guides/iteration.md**](docs/guides/iteration.md)): a **Standard Loop**
+([**docs/guides/iteration/index.md**](docs/guides/iteration/index.md)): a **Standard Loop**
 (§13.3.6) marked `WithLoop` re-runs it while a boolean condition holds — a leaf
 Task in place, a composite by re-opening its child scope per iteration —
 exposing a 0-based `loopCounter` to the condition and the activity each pass
@@ -309,7 +309,7 @@ process's own committed data, no polling), see
 intermediate conditional catch parks a branch until a sibling task's commit
 flips its condition false→true; conditional triggers also guard activities as
 **boundary events** and race as **event-based-gateway arms**. The guide is
-[**docs/guides/conditional-events.md**](docs/guides/conditional-events.md).
+[**docs/guides/events/conditional.md**](docs/guides/events/conditional.md).
 
 For abnormal process termination, see
 [`examples/terminate-end-event/`](examples/terminate-end-event/) — a **Terminate
@@ -325,7 +325,7 @@ participate live** via `adapters.Wrap` (wrap, not convert). The value kinds
 are scalar, list, record, and **map** — a data-keyed dictionary you grow
 key-by-key, with sorted enumeration and a `["key"]` path step. The complete
 guide — the value model, the tiers, reading/writing/observing,
-`gobpm:"..."` tags — is [**docs/guides/data.md**](docs/guides/data.md), with
+`gobpm:"..."` tags — is [**docs/guides/data/overview.md**](docs/guides/data/overview.md), with
 runnable examples linked from it.
 
 ### Startup logging
@@ -372,10 +372,11 @@ make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (r
 ## Documentation
 
 - [Vision & Architecture (SAD-001)](docs/design/SAD-001-vision-and-architecture.md) and [ADRs](docs/design/) — the conception
-- [Working with process data](docs/guides/data.md) — the structural-data guide (paths, tiers, native structs, change observation)
-- [Conditional events](docs/guides/conditional-events.md) — data-driven waiting: positions, the false→true edge rule, dependency declarations
-- [Activity iteration](docs/guides/iteration.md) — Standard Loop + Multi-Instance (sequential & parallel): loopCondition / testBefore / loopMaximum, cardinality / collection fan-out / completionCondition (stop vs. cancel), loopCounter & numberOf* attributes, leaf-in-place vs. composite / concurrent scopes
-- [Composition](docs/guides/composition.md) — sub-processes (nested scopes) & call activities (child-instance reuse boundary): the §13.3.4 shapes, data visibility/isolation, versioning, scope-wide interruption
+- [User Guides](docs/guides/index.md) — build and run processes, every BPMN element, with runnable code
+- [Working with process data](docs/guides/data/overview.md) — the structural-data guide (paths, tiers, native structs, change observation)
+- [Conditional events](docs/guides/events/conditional.md) — data-driven waiting: positions, the false→true edge rule, dependency declarations
+- [Activity iteration](docs/guides/iteration/index.md) — Standard Loop + Multi-Instance (sequential & parallel): loopCondition / testBefore / loopMaximum, cardinality / collection fan-out / completionCondition (stop vs. cancel), loopCounter & numberOf* attributes, leaf-in-place vs. composite / concurrent scopes
+- [Composition](docs/guides/subprocesses/index.md) — sub-processes (nested scopes) & call activities (child-instance reuse boundary): the §13.3.4 shapes, data visibility/isolation, versioning, scope-wide interruption
 - [Development Roadmap](docs/analytics/gobpm%20Development%20Roadmap.md) — workstreams + milestones
 - [Conformance scope](docs/bpmn-spec/conformance.md) and [BPMN 2.0 reference KB](docs/bpmn-spec/) · [Conformance status](docs/design/conformance-status.md) — what's implemented vs what remains, mapped to issues
 - [Documentation Index](README_INDEX.md) · [API Reference](https://pkg.go.dev/github.com/dr-dobermann/gobpm) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
