@@ -58,10 +58,33 @@ func TestDataStoreReferenceAssociations(t *testing.T) {
 		return r
 	}
 
+	// xform is a real FormalExpression to drive the optional-transformation
+	// branch of both associate paths.
+	xform := func(t *testing.T) data.FormalExpression {
+		t.Helper()
+
+		te, err := data.NewTextExpression("gobpm:lite", "in")
+		require.NoError(t, err)
+
+		return te
+	}
+
 	t.Run("associate source (output)", func(t *testing.T) {
 		require.NoError(t,
 			newRef("total", "out-x").AssociateSource(
 				ioTask(t, "in-x", "out-x"), []string{"out-x"}, nil))
+	})
+
+	t.Run("associate source with transformation", func(t *testing.T) {
+		require.NoError(t,
+			newRef("total", "out-x").AssociateSource(
+				ioTask(t, "in-x", "out-x"), []string{"out-x"}, xform(t)))
+	})
+
+	t.Run("associate target with transformation", func(t *testing.T) {
+		require.NoError(t,
+			newRef("seed", "in-y").AssociateTarget(
+				ioTask(t, "in-y", "out-y"), xform(t)))
 	})
 
 	t.Run("associate source: nil node", func(t *testing.T) {

@@ -26,11 +26,17 @@ func TestDataStoreReferenceModel(t *testing.T) {
 		require.Equal(t, "order-total", r.Name())
 		require.Equal(t, "orders", r.DataStoreRef())
 		require.Equal(t, flow.DataStoreReferenceElement, r.EType())
+		require.NotEmpty(t, r.ID())
 		require.Empty(t, r.Docs())
 	})
 
 	t.Run("empty name rejected", func(t *testing.T) {
 		_, err := datastores.New("", "orders", idef(), data.ReadyDataState)
+		require.Error(t, err)
+	})
+
+	t.Run("reserved char in name rejected", func(t *testing.T) {
+		_, err := datastores.New("bad.name", "orders", idef(), data.ReadyDataState)
 		require.Error(t, err)
 	})
 
