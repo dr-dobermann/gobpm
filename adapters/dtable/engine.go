@@ -8,6 +8,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/rules"
 )
 
@@ -17,11 +18,15 @@ import (
 type Engine struct {
 	decoder Decoder
 	tables  map[string]*Table
+	sink    observability.Reporter
 	mu      sync.RWMutex
 }
 
-// interface check
-var _ rules.Engine = (*Engine)(nil)
+// interface checks
+var (
+	_ rules.Engine         = (*Engine)(nil)
+	_ rules.ReporterBinder = (*Engine)(nil)
+)
 
 // Option configures the Engine at construction (the Decoder seam arrives
 // through it).
@@ -69,7 +74,51 @@ func (e *Engine) Register(t *Table) error {
 
 	e.tables[t.name] = t
 
+	// The registrar audit (SRD-069 FR-5): names and counts only,
+	// successes only, silent while unbound.
+	e.reportTable(observability.PhaseRegistered, t, nil)
+
 	return nil
+}
+
+// reportTable emits one registrar fact for t when a sink is bound; extra
+// details merge over the standard name/kind/count set. Callers hold e.mu.
+func (e *Engine) reportTable(
+	phase observability.Phase, t *Table, extra map[string]string,
+) {
+	if e.sink == nil {
+		return
+	}
+
+	details := map[string]string{
+		observability.AttrDecisionRef:    t.name,
+		observability.AttrImplementation: DTableType,
+		observability.AttrRuleCount:      strconv.Itoa(len(t.rules)),
+	}
+
+	for k, v := range extra {
+		details[k] = v
+	}
+
+	e.sink.Report(observability.Fact{
+		Kind:    observability.KindRules,
+		Phase:   phase,
+		Details: details,
+	})
+}
+
+// BindReporter binds the engine's observable-event sink (SRD-069 FR-3) —
+// the registrar surfaces emit KindRules facts once bound. A nil sink is
+// ignored, keeping the current silence.
+func (e *Engine) BindReporter(sink observability.Reporter) {
+	if sink == nil {
+		return
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	e.sink = sink
 }
 
 // MustRegister is the panic-on-error Register twin for tests and static

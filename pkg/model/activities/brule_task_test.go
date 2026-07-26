@@ -124,9 +124,19 @@ func TestBusinessRuleTaskExec(t *testing.T) {
 			require.NoError(t, err)
 			require.Empty(t, flows)
 
-			// the FR-6 Evaluated fact carries the decision-level details.
-			require.Len(t, sink.facts, 1)
-			f := sink.facts[0]
+			// the SRD-069 pair: Invoked opens, Evaluated closes.
+			require.Len(t, sink.facts, 2)
+
+			inv := sink.facts[0]
+			require.Equal(t, observability.KindRules, inv.Kind)
+			require.Equal(t, observability.PhaseInvoked, inv.Phase)
+			require.Equal(t, "discount",
+				inv.Details[observability.AttrDecisionRef])
+			require.Equal(t, gorules.GoRulesType,
+				inv.Details[observability.AttrImplementation])
+			require.Empty(t, inv.Details[observability.AttrStage])
+
+			f := sink.facts[1]
 			require.Equal(t, observability.KindRules, f.Kind)
 			require.Equal(t, observability.PhaseEvaluated, f.Phase)
 			require.Equal(t, "check", f.NodeName)
@@ -168,9 +178,9 @@ func TestBusinessRuleTaskExec(t *testing.T) {
 
 			_, err := newBRT(t, "route").Exec(ctx, re)
 			require.NoError(t, err)
-			require.Len(t, sink.facts, 1)
+			require.Len(t, sink.facts, 2)
 			require.Equal(t, "route",
-				sink.facts[0].Details[observability.AttrResultVariable])
+				sink.facts[1].Details[observability.AttrResultVariable])
 		})
 
 	t.Run("an empty result commits nothing",
@@ -191,11 +201,11 @@ func TestBusinessRuleTaskExec(t *testing.T) {
 
 			_, err := newBRT(t, "silent").Exec(ctx, re)
 			require.NoError(t, err)
-			require.Len(t, sink.facts, 1)
+			require.Len(t, sink.facts, 2)
 			require.Equal(t, "0",
-				sink.facts[0].Details[observability.AttrRowCount])
+				sink.facts[1].Details[observability.AttrRowCount])
 			require.Empty(t,
-				sink.facts[0].Details[observability.AttrResultVariable])
+				sink.facts[1].Details[observability.AttrResultVariable])
 		})
 
 	t.Run("an empty output name fails the commit",
@@ -208,12 +218,20 @@ func TestBusinessRuleTaskExec(t *testing.T) {
 					return rules.Row{"": values.NewVariable(1)}, nil
 				})
 
+			sink := &factSink{}
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 			re.EXPECT().RuleEngine().Return(eng)
+			re.EXPECT().Reporter().Return(sink)
 
 			_, err := newBRT(t, "anon").Exec(ctx, re)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "anon")
+
+			// the pair closes on the commit stage (SRD-069 FR-2).
+			require.Len(t, sink.facts, 2)
+			require.Equal(t, observability.PhaseFailed, sink.facts[1].Phase)
+			require.Equal(t, "commit",
+				sink.facts[1].Details[observability.AttrStage])
 		})
 
 	t.Run("an empty output name in a multi-output row fails the fold",
@@ -229,12 +247,16 @@ func TestBusinessRuleTaskExec(t *testing.T) {
 					}, nil
 				})
 
+			sink := &factSink{}
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 			re.EXPECT().RuleEngine().Return(eng)
+			re.EXPECT().Reporter().Return(sink)
 
 			_, err := newBRT(t, "anon2").Exec(ctx, re)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "couldn't fold decision result")
+			require.Equal(t, "commit",
+				sink.facts[1].Details[observability.AttrStage])
 		})
 
 	t.Run("engine error fails the task and reports the Failed fact",
@@ -248,12 +270,16 @@ func TestBusinessRuleTaskExec(t *testing.T) {
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "unknown")
 
-			require.Len(t, sink.facts, 1)
-			f := sink.facts[0]
+			require.Len(t, sink.facts, 2)
+			require.Equal(t, observability.PhaseInvoked, sink.facts[0].Phase)
+
+			f := sink.facts[1]
 			require.Equal(t, observability.KindRules, f.Kind)
 			require.Equal(t, observability.PhaseFailed, f.Phase)
 			require.Equal(t, "unknown",
 				f.Details[observability.AttrDecisionRef])
+			require.Equal(t, "engine",
+				f.Details[observability.AttrStage])
 			require.NotEmpty(t, f.Details[observability.AttrError])
 		})
 
@@ -269,8 +295,10 @@ func TestBusinessRuleTaskExec(t *testing.T) {
 					}, nil
 				})
 
+			sink := &factSink{}
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 			re.EXPECT().RuleEngine().Return(eng)
+			re.EXPECT().Reporter().Return(sink)
 			re.EXPECT().Put(mock.Anything).
 				Return(errs.New(errs.M("scope rejected the parameter")))
 
@@ -278,5 +306,7 @@ func TestBusinessRuleTaskExec(t *testing.T) {
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "couldn't commit decision result")
 			require.Contains(t, err.Error(), "check")
+			require.Equal(t, "commit",
+				sink.facts[1].Details[observability.AttrStage])
 		})
 }

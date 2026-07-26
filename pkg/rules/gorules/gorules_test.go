@@ -10,6 +10,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/rules"
 	"github.com/dr-dobermann/gobpm/pkg/rules/gorules"
 )
@@ -196,3 +197,66 @@ func TestEvaluate(t *testing.T) {
 
 // compile-time seam check: the registry is a rules.Engine.
 var _ rules.Engine = (*gorules.Registry)(nil)
+
+// factSink collects reported facts for the registrar-audit assertions.
+type factSink struct {
+	facts []observability.Fact
+}
+
+func (fs *factSink) Report(f observability.Fact) {
+	fs.facts = append(fs.facts, f)
+}
+
+// TestRegistrarFacts covers SRD-069 T-3: bound registration emits the
+// Registered audit fact; unbound and nil-sink registries stay silent; a
+// rejected duplicate emits nothing.
+func TestRegistrarFacts(t *testing.T) {
+	noop := func(
+		_ context.Context, _ service.DataReader,
+	) (rules.Row, error) {
+		return nil, nil
+	}
+
+	t.Run("unbound registration is silent",
+		func(t *testing.T) {
+			reg := gorules.New()
+			require.NoError(t, reg.Register("quiet", noop))
+		})
+
+	t.Run("a nil sink is ignored",
+		func(t *testing.T) {
+			reg := gorules.New()
+			reg.BindReporter(nil)
+			require.NoError(t, reg.Register("still-quiet", noop))
+		})
+
+	t.Run("bound registration emits Registered with names only",
+		func(t *testing.T) {
+			sink := &factSink{}
+
+			reg := gorules.New()
+			reg.BindReporter(sink)
+			require.NoError(t, reg.Register("discount", noop))
+
+			require.Len(t, sink.facts, 1)
+			f := sink.facts[0]
+			require.Equal(t, observability.KindRules, f.Kind)
+			require.Equal(t, observability.PhaseRegistered, f.Phase)
+			require.Equal(t, "discount",
+				f.Details[observability.AttrDecisionRef])
+			require.Equal(t, gorules.GoRulesType,
+				f.Details[observability.AttrImplementation])
+		})
+
+	t.Run("a rejected duplicate emits nothing",
+		func(t *testing.T) {
+			sink := &factSink{}
+
+			reg := gorules.New()
+			reg.BindReporter(sink)
+			require.NoError(t, reg.Register("once", noop))
+			require.Error(t, reg.Register("once", noop))
+
+			require.Len(t, sink.facts, 1, "only the success is audited")
+		})
+}

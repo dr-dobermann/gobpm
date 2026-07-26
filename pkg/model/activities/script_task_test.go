@@ -155,9 +155,19 @@ func TestScriptTaskExec(t *testing.T) {
 			require.Equal(t, "text/x-fake", eng.gotFmt)
 			require.Equal(t, "out = total * 2", eng.gotBody)
 
-			// the FR-5 Executed fact.
-			require.Len(t, sink.facts, 1)
-			f := sink.facts[0]
+			// the SRD-069 pair: Invoked opens, Executed closes.
+			require.Len(t, sink.facts, 2)
+
+			inv := sink.facts[0]
+			require.Equal(t, observability.KindScript, inv.Kind)
+			require.Equal(t, observability.PhaseInvoked, inv.Phase)
+			require.Equal(t, "text/x-fake",
+				inv.Details[observability.AttrScriptFormat])
+			require.Equal(t, "##Fake",
+				inv.Details[observability.AttrImplementation])
+			require.Empty(t, inv.Details[observability.AttrStage])
+
+			f := sink.facts[1]
 			require.Equal(t, observability.KindScript, f.Kind)
 			require.Equal(t, observability.PhaseExecuted, f.Phase)
 			require.Equal(t, "text/x-fake",
@@ -185,9 +195,12 @@ func TestScriptTaskExec(t *testing.T) {
 			_, err = newST(t).Exec(ctx, re)
 			require.NoError(t, err)
 
-			require.Equal(t, "##Fake",
-				sink.facts[0].Details[observability.AttrImplementation],
-				"the fact must name the ROUTED engine, not the aggregate")
+			require.Len(t, sink.facts, 2)
+			for _, f := range sink.facts {
+				require.Equal(t, "##Fake",
+					f.Details[observability.AttrImplementation],
+					"the facts must name the ROUTED engine, not the aggregate")
+			}
 		})
 
 	t.Run("empty outputs commit nothing",
@@ -203,8 +216,9 @@ func TestScriptTaskExec(t *testing.T) {
 
 			_, err := newST(t).Exec(ctx, re)
 			require.NoError(t, err)
+			require.Len(t, sink.facts, 2)
 			require.Equal(t, "0",
-				sink.facts[0].Details[observability.AttrOutputCount])
+				sink.facts[1].Details[observability.AttrOutputCount])
 		})
 
 	t.Run("engine error fails the task and reports the Failed fact",
@@ -222,9 +236,13 @@ func TestScriptTaskExec(t *testing.T) {
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "syntax error")
 
-			require.Len(t, sink.facts, 1)
-			f := sink.facts[0]
+			require.Len(t, sink.facts, 2)
+			require.Equal(t, observability.PhaseInvoked, sink.facts[0].Phase)
+
+			f := sink.facts[1]
 			require.Equal(t, observability.PhaseFailed, f.Phase)
+			require.Equal(t, "engine",
+				f.Details[observability.AttrStage])
 			require.NotEmpty(t, f.Details[observability.AttrError])
 		})
 
@@ -234,8 +252,10 @@ func TestScriptTaskExec(t *testing.T) {
 				formats: []string{"text/x-fake"},
 				outs:    script.Outputs{"x": values.NewVariable(1)}}
 
+			sink := &factSink{}
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 			re.EXPECT().ScriptEngine().Return(eng)
+			re.EXPECT().Reporter().Return(sink)
 			re.EXPECT().Put(mock.Anything).
 				Return(errs.New(errs.M("scope rejected the parameter")))
 
@@ -243,6 +263,12 @@ func TestScriptTaskExec(t *testing.T) {
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "couldn't commit script output")
 			require.Contains(t, err.Error(), "calc")
+
+			// the pair closes on the commit stage (SRD-069 FR-2).
+			require.Len(t, sink.facts, 2)
+			require.Equal(t, observability.PhaseFailed, sink.facts[1].Phase)
+			require.Equal(t, "commit",
+				sink.facts[1].Details[observability.AttrStage])
 		})
 
 	t.Run("a bad output name fails the commit loud",
@@ -251,11 +277,15 @@ func TestScriptTaskExec(t *testing.T) {
 				formats: []string{"text/x-fake"},
 				outs:    script.Outputs{"": values.NewVariable(1)}}
 
+			sink := &factSink{}
 			re := mockrenv.NewMockRuntimeEnvironment(t)
 			re.EXPECT().ScriptEngine().Return(eng)
+			re.EXPECT().Reporter().Return(sink)
 
 			_, err := newST(t).Exec(ctx, re)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "couldn't commit script output")
+			require.Equal(t, "commit",
+				sink.facts[1].Details[observability.AttrStage])
 		})
 }

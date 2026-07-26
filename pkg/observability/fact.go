@@ -123,6 +123,17 @@ const (
 	PhaseCompensating Phase = "Compensating"
 	PhaseCompensated  Phase = "Compensated"
 
+	// PhaseDeployed: a decision definition landed on a LIVE rule engine
+	// through its deploy surface (SRD-069 FR-5) — a runtime governance
+	// milestone (the ProcessLifecycle analog), echoed at Info.
+	PhaseDeployed Phase = "Deployed" // Rules
+
+	// PhaseInvoked: a Business Rule / Script Task's engine call opens
+	// (SRD-069 FR-1) — the start mark that pairs with Evaluated/Executed
+	// (or Failed), making engine-call latency derivable and a hung engine
+	// attributable. One fact per task execution, never per evaluation.
+	PhaseInvoked Phase = "Invoked" // Rules / Script
+
 	// PhaseEvaluated: a Business Rule Task's decision call returned and its
 	// result committed (SRD-060 FR-6). Failure reuses PhaseFailed with the
 	// decision-level details; the task failure itself still rides KindFault.
@@ -171,6 +182,13 @@ const (
 	// count only — never script source or output values (the masking rule).
 	AttrScriptFormat = "script_format"
 	AttrOutputCount  = "output_count"
+	// AttrStage (SRD-069 FR-2) qualifies a Rules/Script Failed fact: the
+	// engine call itself failed ("engine") or the call succeeded and the
+	// result commit failed ("commit") — every Invoked closes either way.
+	AttrStage = "stage"
+	// AttrRuleCount (SRD-069 FR-5): a registered/deployed decision
+	// table's rule count — a count, never rule bodies (the masking rule).
+	AttrRuleCount = "rule_count"
 	// AttrOrdinal (SRD-059): a completion-ledger entry's 0-based completion
 	// order within its scope — the reverse-compensation order's authority.
 	AttrOrdinal     = "ordinal"

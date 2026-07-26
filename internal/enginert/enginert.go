@@ -124,10 +124,17 @@ func (r *Runtime) WithExpressionRegistry(reg *expression.Registry) *Runtime {
 }
 
 // WithRuleEngine overrides the Business Rule Engine and returns the Runtime. A
-// nil engine is ignored (the bundled default is kept).
+// nil engine is ignored (the bundled default is kept). An engine with the
+// registrar-audit capability gets the runtime's sink bound at set time
+// (SRD-069 FR-3) — apply WithReporter first when a custom sink should
+// receive the registrar facts.
 func (r *Runtime) WithRuleEngine(e rules.Engine) *Runtime {
 	if e != nil {
 		r.ruleEng = e
+
+		if rb, ok := e.(rules.ReporterBinder); ok {
+			rb.BindReporter(r.Reporter())
+		}
 	}
 
 	return r

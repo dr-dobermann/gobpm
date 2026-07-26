@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Rules/Script invocation facts and the registrar audit (SRD-069).**
+  The decision/script observability stream becomes a closed ledger:
+  the new **`Invoked`** phase opens every Business Rule / Script Task
+  engine call (engine-call latency derivable, a hung engine
+  attributable), and every opening now **closes** — commit-stage
+  failures, previously silent on the stream, emit `Failed` with the
+  new `stage` attr (`engine` | `commit`). The **registrar surfaces**
+  gain their audit through the optional `rules.ReporterBinder`
+  capability (bound automatically by `thresher.New`): `gorules` and
+  `adapters/dtable` registration emit `Registered` (names and counts
+  only), and a runtime `dtable` **`Deploy` emits `Deployed` at Info**
+  — the decision-governance milestone, flagged `replaced` when it
+  overwrote a live table. Unbound engines stay silent; engine
+  internals deliberately stay off the stream (Tracer territory).
+
 - **The `gobpm:lite` text-expression evaluator (SRD-067; completes
   ADR-032 and closes #74 together with the routing half).** The
   stdlib-only battery behind the expression seam: `##Lite` claims
