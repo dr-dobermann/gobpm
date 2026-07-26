@@ -15,7 +15,9 @@ import (
 const (
 	errorClass = "GOBPM_EXPRESSION_ERRORS"
 
-	language = "gobpm:goexpr"
+	// Language is the functor kind's expression-language URI — the claim
+	// the goexpr engine registers in the expression registry (ADR-032).
+	Language = "gobpm:goexpr"
 )
 
 // GExpFunc incapsulated the functional logic of the GoBpmExpression.
@@ -125,7 +127,7 @@ func Must(
 
 // Language returns the FormalExpression language in URI format.
 func (ge *GExpression) Language() string {
-	return language
+	return Language
 }
 
 // Evaluate evaluate the expression and returns its result.

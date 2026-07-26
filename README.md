@@ -233,6 +233,15 @@ batteries `adapters/lua` interpreter executes each script on a fresh,
 sandboxed, context-bound VM — lazy fail-loud `data` reads with a `has()`
 probe, outputs returned as a table and committed as named process data.
 
+For expressions, see
+[`examples/expression-routing/`](examples/expression-routing/) — the
+**language-routed expression layer** hosts several engines side by side
+(the repeatable `WithExpressionEngine`; claim conflicts fail construction
+loud): out of the box `gobpm:lite` **text conditions** — record paths, a
+map probe with `has()`, a `time()` comparison — mix freely with `goexpr`
+Go functors across task flows, an XOR gateway and even a UserTask whose
+assignee is computed by a lite string expression.
+
 For business decisions, see
 [`examples/business-rule-task/`](examples/business-rule-task/) — a **Business
 Rule Task** evaluates a named decision on the pluggable **Business Rule

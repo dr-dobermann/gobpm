@@ -15,6 +15,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
+	dgexpr "github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -385,6 +386,7 @@ func TestConditionalCoverageEdges(t *testing.T) {
 
 	t.Run("condDeps without the capability", func(t *testing.T) {
 		me := mockdata.NewMockFormalExpression(t)
+		me.EXPECT().Language().Return(dgexpr.Language).Maybe()
 		me.EXPECT().ResultType().Return("bool").Once()
 
 		def := mustCondDef(t, me)
@@ -393,6 +395,7 @@ func TestConditionalCoverageEdges(t *testing.T) {
 
 	t.Run("non-bool evaluation result is an error", func(t *testing.T) {
 		me := mockdata.NewMockFormalExpression(t)
+		me.EXPECT().Language().Return(dgexpr.Language).Maybe()
 		me.EXPECT().ResultType().Return("bool")
 
 		def := mustCondDef(t, me)

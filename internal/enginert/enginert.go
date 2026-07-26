@@ -18,6 +18,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/messaging/membroker"
 	"github.com/dr-dobermann/gobpm/pkg/model/expression"
 	"github.com/dr-dobermann/gobpm/pkg/model/expression/goexpr"
+	"github.com/dr-dobermann/gobpm/pkg/model/expression/lite"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/observability/memmetrics"
 	"github.com/dr-dobermann/gobpm/pkg/observability/noop"
@@ -33,7 +34,7 @@ import (
 
 // Runtime is a concrete renv.EngineRuntime backed by the bundled defaults.
 type Runtime struct {
-	expr               expression.Engine
+	exprReg            *expression.Registry
 	ruleEng            rules.Engine
 	scriptReg          *script.Registry
 	tracer             observability.Tracer
@@ -59,12 +60,25 @@ func Default() *Runtime {
 		clk:        syscl.New(),
 		repo:       memrepo.New(),
 		broker:     membroker.New(),
-		expr:       goexpr.New(),
+		exprReg:    defaultExprRegistry(),
 		authz:      allowall.New(),
 		dispatcher: localdispatcher.New(nil, 0),
 		ruleEng:    gorules.New(),
 		scriptReg:  emptyScriptRegistry(),
 	}
+}
+
+// defaultExprRegistry builds the batteries default (goexpr + lite);
+// NewRegistry over the batteries cannot fail.
+func defaultExprRegistry() *expression.Registry {
+	reg, err := expression.NewRegistry(goexpr.New(), lite.New())
+	if err != nil {
+		errs.Panic(err)
+
+		return nil
+	}
+
+	return reg
 }
 
 // emptyScriptRegistry builds the ##None default; NewRegistry with no
@@ -97,11 +111,13 @@ func (r *Runtime) WithClock(c clock.Clock) *Runtime {
 	return r
 }
 
-// WithExpressionEngine overrides the expression engine and returns the Runtime. A
-// nil engine is ignored (the bundled default is kept).
-func (r *Runtime) WithExpressionEngine(e expression.Engine) *Runtime {
-	if e != nil {
-		r.expr = e
+// WithExpressionRegistry overrides the expression-engine registry and
+// returns the Runtime. A nil registry is ignored (the goexpr default is
+// kept). The caller builds the registry with expression.NewRegistry — the
+// single conflict authority, where duplicate language claims fail loud.
+func (r *Runtime) WithExpressionRegistry(reg *expression.Registry) *Runtime {
+	if reg != nil {
+		r.exprReg = reg
 	}
 
 	return r
@@ -167,8 +183,8 @@ func (r *Runtime) Repository() repository.Repository { return r.repo }
 // MessageBroker returns the configured message broker.
 func (r *Runtime) MessageBroker() messaging.MessageBroker { return r.broker }
 
-// ExpressionEngine returns the configured expression engine.
-func (r *Runtime) ExpressionEngine() expression.Engine { return r.expr }
+// ExpressionEngine returns the configured expression routing surface.
+func (r *Runtime) ExpressionEngine() expression.Engine { return r.exprReg }
 
 // RuleEngine returns the configured Business Rule Engine.
 func (r *Runtime) RuleEngine() rules.Engine { return r.ruleEng }
