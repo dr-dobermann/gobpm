@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-26 |
 | Owner | Ruslan Gabitov |
@@ -198,16 +198,32 @@ the pair still closes.
 
 ## §9 Definition of Done
 
-- [ ] FR-1…FR-6 implemented; every §6 test exists and passes.
-- [ ] `make ci` green (core) + the dtable module suite green;
+- [x] FR-1…FR-6 implemented; every §6 test exists and passes.
+- [x] `make ci` green (core) + the dtable module suite green;
       diff-coverage ≥95% (aim 100%); touched functions ≥80%.
-- [ ] Masking/volume audit: no new detail carries a body/source/value;
+- [x] Masking/volume audit: no new detail carries a body/source/value;
       no per-evaluation fact added.
-- [ ] §10 filled; CHANGELOG synced.
+- [x] §10 filled; CHANGELOG synced.
 
 ## §10 Implementation summary
 
-*Filled at landing.*
+Landed on `feat/rules-script-observability` in two milestones, as
+planned:
+
+| Milestone | Commit | Scope |
+|---|---|---|
+| M1 | `a1f9336` | FR-1/FR-2: `PhaseInvoked` + `AttrStage`, both task `Exec` paths open and close the pair (commit failures included); T-1/T-2 |
+| M2 | `93f99ef` | FR-3…FR-6: `rules.ReporterBinder` + the `thresher.New`/`enginert` binds, gorules/dtable `Registered`, dtable `Deployed{replaced}` at Info, `AttrRuleCount`; T-3…T-5; CHANGELOG |
+
+- **Verification**: post-M2 `make ci` exit 0; diff-coverage **100.0% of
+  55 changed lines**; the dtable module suite green with every touched
+  function at 100%; the decision-table example smokes exit 0 (it
+  deploys pre-`New` — unbound, silent, the §4.3 posture demonstrated).
+- **Deltas vs the draft**: none — the plan landed as written. One
+  emphasis note: gorules emits under its registration write-lock
+  (Report is contractually non-blocking, `fact.go` Reporter doc);
+  dtable emits inside the deploy critical section for the same reason —
+  the `replaced` probe and the emission stay atomic with the swap.
 
 ## Open questions
 
