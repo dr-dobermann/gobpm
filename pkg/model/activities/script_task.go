@@ -129,11 +129,17 @@ func (st *ScriptTask) Exec(
 
 	eng := re.ScriptEngine()
 
+	st.reportScript(re, observability.PhaseInvoked, map[string]string{
+		observability.AttrScriptFormat:   st.scriptFormat,
+		observability.AttrImplementation: st.routedKind(eng),
+	})
+
 	outs, err := eng.Execute(ctx, st.scriptFormat, st.script, re)
 	if err != nil {
 		st.reportScript(re, observability.PhaseFailed, map[string]string{
 			observability.AttrScriptFormat:   st.scriptFormat,
 			observability.AttrImplementation: st.routedKind(eng),
+			observability.AttrStage:          "engine",
 			observability.AttrError:          err.Error(),
 		})
 
@@ -142,6 +148,16 @@ func (st *ScriptTask) Exec(
 
 	for _, name := range sortedNames(outs) {
 		if err := st.commitOutput(name, outs[name], re); err != nil {
+			// The pair still closes: the script ran, its output commit
+			// did not (SRD-069 FR-2).
+			st.reportScript(re, observability.PhaseFailed,
+				map[string]string{
+					observability.AttrScriptFormat:   st.scriptFormat,
+					observability.AttrImplementation: st.routedKind(eng),
+					observability.AttrStage:          "commit",
+					observability.AttrError:          err.Error(),
+				})
+
 			return nil, err
 		}
 	}
