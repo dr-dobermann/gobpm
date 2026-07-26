@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-07-25 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-030 v.1](../design/ADR-030-data-objects-and-store.md) §2.5–§2.6 (the `DataStore` as an engine-level infrastructure port with a default in-memory adapter; the `DataStoreReference` as a flow-scope handle whose I/O routes to the engine-global store) |

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-24 |
 | Owner | Ruslan Gabitov |
@@ -72,6 +72,8 @@ The **DataAssociation object itself is a shared declaration** — it names the N
 - an **interface** — read/write item-aware data by name, with the §10.4.1 `capacity` / `isUnlimited` attributes;
 - a **default in-memory adapter**, registered on the engine (a `WithDataStore(…)`-style option), **mirroring `Repository` / `MessageBroker`** (SAD-001 G4 — "every infrastructure concern behind an interface, default in-memory");
 - **engine-global**: a DataStore **outlives every instance** within the running engine and is **shared across instances** (§10.4.1's "outlives the Process instance").
+
+Because §10.4.1 lets a Process reference **many** DataStores (each a Definitions-level root element with its own `capacity`), the port is a **registry of named stores** resolved by the `DataStoreReference`'s `dataStoreRef` — each store its own adapter/capacity/backing. Resolution is **fail-loud**: a reference to an unregistered store is a configuration error, not a silent auto-provision (the bounded-defaults, fail-on-unknown posture the engine takes elsewhere).
 
 **Durability is a swappable adapter behind the interface** — the future Persistence & State workstream. In-memory today satisfies "outlives the instance" *within the process*, not across restart; the seam makes the durable upgrade additive, not a reshape.
 
