@@ -63,6 +63,9 @@ var phaseOverride = map[phaseKey]slog.Level{
 	// A decision-evaluation failure is operator-relevant context for the fault
 	// that follows it (SRD-060 FR-6).
 	{KindRules, PhaseFailed}: slog.LevelWarn,
+	// A runtime deploy is a governance milestone — the ProcessLifecycle
+	// analog on the rules seam (SRD-069 FR-6).
+	{KindRules, PhaseDeployed}: slog.LevelInfo,
 	// A script-execution failure — same posture (SRD-064 FR-5).
 	{KindScript, PhaseFailed}: slog.LevelWarn,
 	// Same rule for a compensation throw that resolved to nothing (SRD-059

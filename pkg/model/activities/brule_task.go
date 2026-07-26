@@ -113,11 +113,17 @@ func (bt *BusinessRuleTask) Exec(
 
 	eng := re.RuleEngine()
 
+	bt.reportDecision(re, observability.PhaseInvoked, map[string]string{
+		observability.AttrDecisionRef:    bt.decisionRef,
+		observability.AttrImplementation: eng.Type(),
+	})
+
 	rows, err := eng.Evaluate(ctx, bt.decisionRef, re)
 	if err != nil {
 		bt.reportDecision(re, observability.PhaseFailed, map[string]string{
 			observability.AttrDecisionRef:    bt.decisionRef,
 			observability.AttrImplementation: eng.Type(),
+			observability.AttrStage:          "engine",
 			observability.AttrError:          err.Error(),
 		})
 
@@ -129,6 +135,16 @@ func (bt *BusinessRuleTask) Exec(
 	if len(rows) > 0 {
 		resultVar, err = bt.commitResult(rows, re)
 		if err != nil {
+			// The pair still closes: the engine call succeeded, the
+			// result commit did not (SRD-069 FR-2).
+			bt.reportDecision(re, observability.PhaseFailed,
+				map[string]string{
+					observability.AttrDecisionRef:    bt.decisionRef,
+					observability.AttrImplementation: eng.Type(),
+					observability.AttrStage:          "commit",
+					observability.AttrError:          err.Error(),
+				})
+
 			return nil, err
 		}
 	}

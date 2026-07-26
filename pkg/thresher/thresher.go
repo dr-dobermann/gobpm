@@ -55,6 +55,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
+	"github.com/dr-dobermann/gobpm/pkg/rules"
 	"github.com/dr-dobermann/gobpm/pkg/script"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
@@ -279,6 +280,14 @@ func New(id string, opts ...Option) (*Thresher, error) {
 	// ExpressionEngineBinder.
 	if eb, ok := cfg.WorkerDispatcher().(tasks.ExpressionEngineBinder); ok {
 		eb.BindExpressionEngine(cfg.ExpressionEngine())
+	}
+
+	// Bind the sink into the rule engine's registrar surfaces (SRD-069
+	// FR-3): once bound, register/deploy calls on the live engine emit
+	// their KindRules audit facts. An engine without the capability
+	// simply doesn't emit.
+	if rb, ok := cfg.RuleEngine().(rules.ReporterBinder); ok {
+		rb.BindReporter(t.producer)
 	}
 
 	// The EventHub receives the engine's resolved runtime (&t.cfg implements

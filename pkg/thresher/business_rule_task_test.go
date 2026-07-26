@@ -207,6 +207,13 @@ func TestBusinessRuleTaskE2E(t *testing.T) {
 			require.True(t, big.Load(), "the big-discount lane must run")
 			require.False(t, small.Load(), "the default lane must not run")
 
+			// the SRD-069 pair opens on the observe stream too.
+			inv, ok := rulesFact(facts, observability.PhaseInvoked)
+			require.True(t, ok, "the Rules/Invoked fact must be observed")
+			require.Equal(t, "discount",
+				inv.Details[observability.AttrDecisionRef])
+			require.Empty(t, inv.Details[observability.AttrStage])
+
 			f, ok := rulesFact(facts, observability.PhaseEvaluated)
 			require.True(t, ok, "the Rules/Evaluated fact must be observed")
 			require.Equal(t, "discount",
@@ -327,4 +334,35 @@ func TestBusinessRuleTaskZeroConfig(t *testing.T) {
 	require.Equal(t, gorules.GoRulesType,
 		f.Details[observability.AttrImplementation],
 		"the bundled default registry answered the call")
+}
+
+// binderEngine is a rules.Engine implementing the SRD-069 ReporterBinder
+// capability — it records the sink the engine binds at New.
+type binderEngine struct {
+	sink observability.Reporter
+}
+
+func (be *binderEngine) Type() string { return "##Binder" }
+
+func (be *binderEngine) Evaluate(
+	_ context.Context, _ string, _ service.DataReader,
+) ([]rules.Row, error) {
+	return nil, nil
+}
+
+func (be *binderEngine) BindReporter(sink observability.Reporter) {
+	be.sink = sink
+}
+
+// TestRuleEngineReporterBinding covers SRD-069 T-5's wiring half: New binds
+// its producer into a rule engine that implements rules.ReporterBinder.
+func TestRuleEngineReporterBinding(t *testing.T) {
+	be := &binderEngine{}
+
+	_, err := thresher.New("test-binder-wiring",
+		thresher.WithoutBanner(), thresher.WithRuleEngine(be))
+	require.NoError(t, err)
+
+	require.NotNil(t, be.sink,
+		"New must bind the observable-event sink into the capable engine")
 }

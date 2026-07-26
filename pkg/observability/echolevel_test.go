@@ -40,6 +40,9 @@ func TestEchoLevel(t *testing.T) {
 		{"caught fault stays debug", KindFault, PhaseCaught, slog.LevelDebug},
 		{"retries exhausted warns", KindJobState, PhaseRetriesExhausted, slog.LevelWarn},
 		{"lock reclaimed warns", KindJobState, PhaseLockReclaimed, slog.LevelWarn},
+		{"rules failure warns", KindRules, PhaseFailed, slog.LevelWarn},
+		{"runtime deploy is an info milestone", KindRules, PhaseDeployed, slog.LevelInfo},
+		{"rules invocation stays debug", KindRules, PhaseInvoked, slog.LevelDebug},
 		{"ordinary job phase stays debug", KindJobState, PhaseEnqueued, slog.LevelDebug},
 		{"unclassified kind surfaces at error", Kind("Mystery"), Phase("X"), slog.LevelError},
 	}

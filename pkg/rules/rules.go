@@ -13,6 +13,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 // Row is one decision result record — output name → value — the
@@ -50,6 +51,17 @@ type Engine interface {
 // operation.
 type Deployer interface {
 	Deploy(ctx context.Context, definition []byte) error
+}
+
+// ReporterBinder is an optional rule-engine capability (SRD-069 FR-3, the
+// tasks.ReporterBinder shape): the engine binds its observable-event sink
+// at startup so the rule engine's registrar surfaces (register/deploy) can
+// emit KindRules audit facts. An engine that doesn't implement it simply
+// doesn't emit — and an implementing engine emits nothing while unbound
+// (pre-startup registrations are construction-time wiring, not runtime
+// governance).
+type ReporterBinder interface {
+	BindReporter(sink observability.Reporter)
 }
 
 // DecisionFunc is an in-process decision body for registry-style engines:
