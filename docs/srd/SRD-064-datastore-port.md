@@ -141,7 +141,29 @@ SRD-063 routes DataObject I/O through per-instance scope. A DataStoreReference m
 
 ## §10 Implementation summary
 
-> ⚠️ TODO: fill AFTER landing — stage commits, empirical deltas vs this draft, backlog.
+Landed on branch `feat/dataobject-scope-and-datastore` (with SRD-063).
+
+### §10.1 Stages by commit
+
+| Stage | Commit | Scope | Tests |
+|---|---|---|---|
+| doc | `690e367` | SRD-064 revised single-port → registry (this doc) | — |
+| M1 | `8c28c64` | FR-1/FR-2/FR-5 — `datastore.DataStore` + `Registry`; `memstore.Store` + `Registry`; `WithDataStore(ref, store)`; `EngineRuntime.DataStores()` + default empty registry (thresher + enginert); mock regen | `datastore/memstore` (store + registry), thresher options |
+| M2 | `0847f5b` | FR-3/FR-4 — `DataStoreReference` + `Process`/`SubProcess` containment; `flow.DataStoreReferenceElement`; `Association.dataStoreRef` + `WithDataStoreRef`; `Frame.DataStores()` threaded from renv; task reroute (`storeFor`/`loadFromStore`/`uploadToStore`, `loadFromScope` extracted) | reference model + associations, containment, task store round-trip + fail-loud |
+| M3 | _(this landing)_ | FR-6 e2e + `examples/data-store` + docs; `/check-srd`; flips | `TestDataStoreSharedAcrossInstances` |
+
+### §10.2 Deltas vs the draft
+
+- **Registry, not a single port.** The original draft modeled one global store keyed by `dataStoreRef:name`. Confirming §10.4.1's unbounded multiplicity (a Process may reference many stores) drove a **registry of named stores** (each its own capacity/backing), resolved fail-loud. The association carries the **`dataStoreRef`** (not a combined key) — the reroute resolves the store from the registry and keys by the reference's item name.
+- **The association carries the routing, not a per-endpoint type switch.** `Association.DataStoreRef()` (empty → scope, non-empty → registry) lets the reroute branch without the owning element; this is why the store binding rides the `Association`.
+- **FR-3 containment is metadata.** A `DataStoreReference` is registrable on a `Process`/`SubProcess` (BPMN containment) but **not** seeded into scope and **not** per-instance cloned (it is engine-global) — the functional binding is the DataAssociation.
+- **Defensive fill/clone error branches** in the task reroute (an input `Structure().Update` type-mismatch, a `Clone` of a value-less output) are not reachable through the frame (the input structure is permissive), so they ride the project's single-line `opErr` exclude convention rather than fake-coverage tests.
+
+### §10.3 Backlog (out of scope)
+
+- **Durable Data Store adapter** — the swappable-behind-the-interface upgrade (the future Persistence & State workstream); the in-memory adapter satisfies "outlives the instance" within one engine run, not across restart.
+- **A custom `Registry`** option (`WithDataStoreRegistry`) — today `WithDataStore` populates the default in-memory registry; a fully custom (e.g. durable) registry is a follow-up.
+- **`capacity` enforcement** — advisory in-memory (§FR-5); a durable adapter may enforce it.
 
 ## Open questions
 

@@ -180,6 +180,40 @@ value always flows through the per-instance scope (never the shared association)
 non-implementation — see [SAD-001 §14.1](../design/SAD-001-vision-and-architecture.md)
 for the collapse-to-DataObject translation rules.
 
+## Data Stores — data that outlives the instance
+
+Where a `DataObject` is per-instance, a **Data Store** (BPMN §10.4.1) is
+**engine-global**: it outlives every instance and is shared across them. It is
+modeled as an **infrastructure port** — an interface with an in-memory default,
+registered on the engine like `Repository`/`MessageBroker` — so durability is
+later a swappable adapter, not a reshape. Register one per `dataStoreRef`:
+
+```go
+eng, _ := thresher.New("engine",
+    thresher.WithDataStore("orders", memstore.New()))  // call once per store
+```
+
+Registration is **fail-loud**: a `DataStoreReference` naming an unregistered
+store is a configuration error, not a silent auto-provision.
+
+A **`DataStoreReference`** is the flow-scope handle — it participates in
+`DataAssociation`s **exactly like a `DataObject`**, so the task wiring is
+identical, but its I/O routes to the engine-global store (the association carries
+the `dataStoreRef`, and the reroute resolves the store from the engine registry,
+keyed by the reference's name):
+
+```go
+ref, _ := datastores.New("counter", "orders",   // name, dataStoreRef
+    data.MustItemDefinition(values.NewVariable(0), foundation.WithID("cnt")),
+    data.ReadyDataState)
+ref.AssociateSource(writerTask, []string{"cnt"}, nil) // Node → DataStore
+ref.AssociateTarget(readerTask, nil)                  // DataStore → Node
+```
+
+A value one instance writes is read by a later instance through a reference to
+the same store. `capacity` is advisory in the in-memory adapter (a write past it
+is accepted); a durable adapter may enforce it.
+
 ## Worked examples
 
 | Example | Shows |
@@ -190,6 +224,7 @@ for the collapse-to-DataObject translation rules.
 | [`examples/native-structs/`](../../examples/native-structs/) | the host's own struct as live process data |
 | [`examples/maps/`](../../examples/maps/) | the **map kind** — a dynamic and a native dictionary navigated by `["key"]`; per-entry map `DataChange` facts |
 | [`examples/process-data/`](../../examples/process-data/) | a **DataObject** per branch: a task writes its result into the scope-resident object, read back by name from the instance handle |
+| [`examples/data-store/`](../../examples/data-store/) | an engine-global **DataStore**: a writer instance stores a value a *separate* reader instance reads back through a `DataStoreReference` to the same store |
 
 Design background: [ADR-011](../design/ADR-011-process-data-flow.md) (the
 conception), [ADR-010](../design/ADR-010-process-data-model.md) (the data
