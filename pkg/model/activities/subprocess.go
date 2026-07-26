@@ -28,7 +28,7 @@ type SubProcess struct {
 	// ElementsContainer (which holds only nodes and flows) and name-keyed, like a
 	// Process's Data Objects.
 	dataObjects map[string]*dataobjects.DataObject
-	// dataStoreRefs are the SubProcess-level Data Store References (SRD-064
+	// dataStoreRefs are the SubProcess-level Data Store References (SRD-068
 	// FR-3): flow-scope handles to engine-global stores. Not seeded into scope
 	// (their data lives in the engine registry) — kept for containment only.
 	dataStoreRefs map[string]*datastores.DataStoreReference
@@ -157,7 +157,7 @@ func (sp *SubProcess) Add(e flow.Element) error {
 	return sp.AddElement(sp, e)
 }
 
-// addDataStoreRef registers a Data Store Reference on the Sub-Process (SRD-064
+// addDataStoreRef registers a Data Store Reference on the Sub-Process (SRD-068
 // FR-3). A reference is a flow-scope handle to an engine-global store — NOT
 // seeded into scope — so its name need only be unique among the Sub-Process's
 // references.
@@ -176,7 +176,7 @@ func (sp *SubProcess) addDataStoreRef(r *datastores.DataStoreReference) error {
 }
 
 // DataStoreReferences returns the Sub-Process-level Data Store References
-// (SRD-064 FR-3).
+// (SRD-068 FR-3).
 func (sp *SubProcess) DataStoreReferences() []*datastores.DataStoreReference {
 	dd := make([]*datastores.DataStoreReference, 0, len(sp.dataStoreRefs))
 	for _, r := range sp.dataStoreRefs {
@@ -536,7 +536,7 @@ func (sp *SubProcess) Clone() (flow.Node, error) {
 	}
 
 	// Data Store References are engine-global (shared across instances), so the
-	// clone carries the SAME references, not copies (SRD-064 FR-3).
+	// clone carries the SAME references, not copies (SRD-068 FR-3).
 	for name, r := range sp.dataStoreRefs {
 		clone.dataStoreRefs[name] = r
 	}

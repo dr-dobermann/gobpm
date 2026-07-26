@@ -22,7 +22,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 )
 
-// TestDataStoreSharedAcrossInstances (SRD-064 FR-6): two processes share one
+// TestDataStoreSharedAcrossInstances (SRD-068 FR-6): two processes share one
 // engine-global DataStore — a writer instance stores a value into a
 // DataStoreReference, and a separate reader instance reads it back through a
 // reference to the same store, both wired via WithDataStore.

@@ -10,7 +10,7 @@ import (
 // Registry is the default in-memory datastore.Registry: a set of named
 // DataStores registered up front (each with its own capacity/backing). An
 // unregistered ref is an error — a DataStoreReference to an unknown store is a
-// configuration mistake, not a silent auto-provision (SRD-064 FR-2).
+// configuration mistake, not a silent auto-provision (SRD-068 FR-2).
 type Registry struct {
 	stores map[string]datastore.DataStore
 	mu     sync.RWMutex
@@ -46,7 +46,7 @@ func (r *Registry) Register(ref string, store datastore.DataStore) error {
 }
 
 // Store returns the DataStore registered under ref, or an error if none is
-// registered (fail-loud, SRD-064 FR-2).
+// registered (fail-loud, SRD-068 FR-2).
 func (r *Registry) Store(ref string) (datastore.DataStore, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

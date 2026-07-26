@@ -113,7 +113,7 @@ func (t *task) LoadData(ctx context.Context, f exec.Frame) error {
 		}
 
 		// A DataStoreReference input reads the engine-global Data Store
-		// (SRD-064 FR-4, DataStore → Node), not per-instance scope; an
+		// (SRD-068 FR-4, DataStore → Node), not per-instance scope; an
 		// unregistered store or a read failure is a hard error (fail-loud).
 		if ref := ia.DataStoreRef(); ref != "" {
 			if err := t.loadFromStore(
@@ -236,7 +236,7 @@ func (t *task) UploadData(ctx context.Context, f exec.Frame) error {
 		}
 
 		// A DataStoreReference output writes the engine-global Data Store
-		// (SRD-064 FR-4, Node → DataStore), not per-instance scope; an
+		// (SRD-068 FR-4, Node → DataStore), not per-instance scope; an
 		// unregistered store or a write failure is a hard error (fail-loud).
 		if ref := oa.DataStoreRef(); ref != "" {
 			if err := t.uploadToStore(ctx, f, ref, oa, doo[index]); err != nil {
@@ -337,7 +337,7 @@ func (t *task) opErr(msg string, err error) error {
 }
 
 // storeFor resolves the engine Data Store named ref from the frame's registry
-// (SRD-064 FR-4). It fails loud: no registry wired, or an unregistered ref, is
+// (SRD-068 FR-4). It fails loud: no registry wired, or an unregistered ref, is
 // a configuration error — a DataStoreReference must name a registered store.
 func (t *task) storeFor(f exec.Frame, ref string) (datastore.DataStore, error) {
 	reg := f.DataStores()
@@ -360,7 +360,7 @@ func (t *task) storeFor(f exec.Frame, ref string) (datastore.DataStore, error) {
 }
 
 // loadFromStore fills the task input dst from the engine Data Store named ref
-// (SRD-064 FR-4, DataStore → Node): the value is read by the association's item
+// (SRD-068 FR-4, DataStore → Node): the value is read by the association's item
 // name. An absent value is fail-fast only when the input gates the start
 // (ADR-011 v.2 §2.3); an unregistered store or a read error is always a hard
 // error.
@@ -417,7 +417,7 @@ func (t *task) loadFromStore(
 }
 
 // uploadToStore writes the produced output src into the engine Data Store named
-// ref (SRD-064 FR-4, Node → DataStore), keyed by the association's item name. A
+// ref (SRD-068 FR-4, Node → DataStore), keyed by the association's item name. A
 // clone is stored so the store's datum is independent of the per-execution
 // output instance.
 func (t *task) uploadToStore(

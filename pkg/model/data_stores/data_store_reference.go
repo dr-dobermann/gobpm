@@ -86,7 +86,7 @@ func New(
 }
 
 // DataStoreRef is the id of the engine Data Store this reference targets
-// (SRD-064 FR-4): the task reroute resolves it from the engine registry, then
+// (SRD-068 FR-4): the task reroute resolves it from the engine registry, then
 // reads/writes the store by this reference's Name().
 func (r *DataStoreReference) DataStoreRef() string {
 	return r.dataStoreRef
@@ -104,7 +104,7 @@ func (r *DataStoreReference) ID() string {
 }
 
 // EType returns the element type so a DataStoreReference can be added to a
-// Process/SubProcess container (SRD-064 FR-3).
+// Process/SubProcess container (SRD-068 FR-3).
 func (r *DataStoreReference) EType() flow.ElementType {
 	return flow.DataStoreReferenceElement
 }
@@ -117,7 +117,7 @@ func (r *DataStoreReference) Docs() []*foundation.Documentation {
 // AssociateSource binds Node n's output (by source id) into this reference —
 // the produced value is written to the engine Data Store (Node → DataStore).
 // The association carries this reference's dataStoreRef so the task reroute writes
-// the store instead of scope (SRD-064 FR-4).
+// the store instead of scope (SRD-068 FR-4).
 func (r *DataStoreReference) AssociateSource(
 	n flow.AssociationSource,
 	sourceIDs []string,
@@ -169,7 +169,7 @@ func (r *DataStoreReference) AssociateSource(
 
 // AssociateTarget binds this reference as a source into Node n's input — the
 // store value fills the input (DataStore → Node). The association carries this
-// reference's dataStoreRef so the task reroute reads the store (SRD-064 FR-4).
+// reference's dataStoreRef so the task reroute reads the store (SRD-068 FR-4).
 func (r *DataStoreReference) AssociateTarget(
 	n flow.AssociationTarget,
 	transformation data.FormalExpression,

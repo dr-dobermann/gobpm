@@ -1,6 +1,6 @@
 # data-store
 
-The engine-global **Data Store** (BPMN §10.4.1, ADR-030 / SRD-064): data that
+The engine-global **Data Store** (BPMN §10.4.1, ADR-030 / SRD-068): data that
 **outlives a Process instance** and is **shared across instances** within the
 running engine.
 

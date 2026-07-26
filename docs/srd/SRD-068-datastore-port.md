@@ -1,4 +1,4 @@
-# SRD-064 — Data Store port + Data Store Reference
+# SRD-068 — Data Store port + Data Store Reference
 
 | Field | Value |
 |---|---|
@@ -130,7 +130,7 @@ SRD-063 routes DataObject I/O through per-instance scope. A DataStoreReference m
 
 - **M1 — the port + registry.** FR-1/FR-2/FR-5: `pkg/datastore` (`DataStore` + `Registry`) + `memstore` (`Store` + `Registry`); `WithDataStore(ref, store)`; `EngineRuntime.DataStores()` + default empty in-memory registry (thresher + enginert). Port/registry + option tests.
 - **M2 — the reference + routing.** FR-3/FR-4: `DataStoreReference` element + `Process`/`SubProcess` containment; `flow.DataStoreReferenceElement`; `Association.dataStoreRef` + `WithDataStoreRef`; `Frame.DataStores()` threaded from renv; the task reroute (`storeFor`/`loadFromStore`/`uploadToStore`). Model + containment + activities routing tests.
-- **M3 — e2e + example + docs.** FR-6 thresher e2e (shared store across instances); `examples/data-store`; CHANGELOG, data guide, conformance row 11, README EN+RU. `/check-srd`, then flip SRD-064 **and** ADR-030 → Accepted (the full data-element set; ADR-030 gets its RU twin at acceptance).
+- **M3 — e2e + example + docs.** FR-6 thresher e2e (shared store across instances); `examples/data-store`; CHANGELOG, data guide, conformance row 11, README EN+RU. `/check-srd`, then flip SRD-068 **and** ADR-030 → Accepted (the full data-element set; ADR-030 gets its RU twin at acceptance).
 
 ## §9 Definition of Done
 
@@ -147,10 +147,10 @@ Landed on branch `feat/dataobject-scope-and-datastore` (with SRD-063).
 
 | Stage | Commit | Scope | Tests |
 |---|---|---|---|
-| doc | `690e367` | SRD-064 revised single-port → registry (this doc) | — |
-| M1 | `8c28c64` | FR-1/FR-2/FR-5 — `datastore.DataStore` + `Registry`; `memstore.Store` + `Registry`; `WithDataStore(ref, store)`; `EngineRuntime.DataStores()` + default empty registry (thresher + enginert); mock regen | `datastore/memstore` (store + registry), thresher options |
-| M2 | `0847f5b` | FR-3/FR-4 — `DataStoreReference` + `Process`/`SubProcess` containment; `flow.DataStoreReferenceElement`; `Association.dataStoreRef` + `WithDataStoreRef`; `Frame.DataStores()` threaded from renv; task reroute (`storeFor`/`loadFromStore`/`uploadToStore`, `loadFromScope` extracted) | reference model + associations, containment, task store round-trip + fail-loud |
-| M3 | _(this landing)_ | FR-6 e2e + `examples/data-store` + docs; `/check-srd`; flips | `TestDataStoreSharedAcrossInstances` |
+| doc | `36bd087` | SRD-068 revised single-port → registry (this doc) | — |
+| M1 | `243930f` | FR-1/FR-2/FR-5 — `datastore.DataStore` + `Registry`; `memstore.Store` + `Registry`; `WithDataStore(ref, store)`; `EngineRuntime.DataStores()` + default empty registry (thresher + enginert); mock regen | `datastore/memstore` (store + registry), thresher options |
+| M2 | `c714137` | FR-3/FR-4 — `DataStoreReference` + `Process`/`SubProcess` containment; `flow.DataStoreReferenceElement`; `Association.dataStoreRef` + `WithDataStoreRef`; `Frame.DataStores()` threaded from renv; task reroute (`storeFor`/`loadFromStore`/`uploadToStore`, `loadFromScope` extracted) | reference model + associations, containment, task store round-trip + fail-loud |
+| M3 | `0b3ead1` | FR-6 e2e + `examples/data-store` + docs; `/check-srd`; flips | `TestDataStoreSharedAcrossInstances` |
 
 ### §10.2 Deltas vs the draft
 

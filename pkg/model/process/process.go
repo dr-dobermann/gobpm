@@ -137,12 +137,12 @@ func (p *Process) addDataObject(do *dataobjects.DataObject) error {
 }
 
 // DataStoreReferences returns the Process-level Data Store References
-// (SRD-064 FR-3).
+// (SRD-068 FR-3).
 func (p *Process) DataStoreReferences() []*datastores.DataStoreReference {
 	return slices.Collect(maps.Values(p.dataStoreRefs))
 }
 
-// addDataStoreRef registers a Data Store Reference on the Process (SRD-064
+// addDataStoreRef registers a Data Store Reference on the Process (SRD-068
 // FR-3). A reference is a flow-scope handle to an engine-global store — it is
 // NOT seeded into scope (its data lives in the engine registry), so its name
 // need only be unique among the Process's references.

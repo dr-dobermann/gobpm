@@ -1,5 +1,5 @@
 // Command data-store demonstrates the engine-global Data Store (BPMN §10.4.1,
-// ADR-030 / SRD-064): a value one process instance writes into a
+// ADR-030 / SRD-068): a value one process instance writes into a
 // DataStoreReference outlives that instance and is read by a *separate*
 // instance through a reference to the same store — the store is shared across
 // instances within the running engine, wired via thresher.WithDataStore.

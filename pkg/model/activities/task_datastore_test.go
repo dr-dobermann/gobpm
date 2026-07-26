@@ -57,7 +57,7 @@ func storeRef(
 	return r
 }
 
-// TestTaskDataStoreRouting covers the DataStoreReference reroute (SRD-064 FR-4):
+// TestTaskDataStoreRouting covers the DataStoreReference reroute (SRD-068 FR-4):
 // a task output association writes the engine-global store, an input reads it,
 // and an unresolvable store fails loud.
 func TestTaskDataStoreRouting(t *testing.T) {

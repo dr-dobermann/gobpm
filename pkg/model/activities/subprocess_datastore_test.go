@@ -27,7 +27,7 @@ func (fakeDSElement) BindTo(flow.Container) error { return nil }
 func (fakeDSElement) Unbind() error               { return nil }
 
 // TestSubProcessDataStoreReferences covers the SubProcess-level Data Store
-// Reference containment (SRD-064 FR-3): register/list, the duplicate-name and
+// Reference containment (SRD-068 FR-3): register/list, the duplicate-name and
 // type-mismatch guards, and that Clone carries the (shared) references.
 func TestSubProcessDataStoreReferences(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())

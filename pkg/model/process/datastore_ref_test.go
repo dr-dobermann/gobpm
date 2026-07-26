@@ -15,7 +15,7 @@ import (
 
 // TestProcessRegistersDataStoreReference: a DataStoreReference is registered on
 // the Process via Add (containment only — not seeded into scope), exposed by
-// DataStoreReferences(), with a unique name (SRD-064 FR-3).
+// DataStoreReferences(), with a unique name (SRD-068 FR-3).
 func TestProcessRegistersDataStoreReference(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 

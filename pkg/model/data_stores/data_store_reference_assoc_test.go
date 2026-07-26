@@ -43,7 +43,7 @@ func ioTask(t *testing.T, inID, outID string) *activities.ServiceTask {
 }
 
 // TestDataStoreReferenceAssociations covers AssociateSource/AssociateTarget
-// (SRD-064 FR-3/FR-4): the association a reference builds carries its
+// (SRD-068 FR-3/FR-4): the association a reference builds carries its
 // dataStoreRef and binds to the node.
 func TestDataStoreReferenceAssociations(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())

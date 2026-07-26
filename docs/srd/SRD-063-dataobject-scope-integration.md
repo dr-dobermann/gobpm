@@ -92,7 +92,7 @@ Today a task writes its DataObject output **straight into the DataObject's item-
 - FR-1…FR-7 wired and covered by §6; `examples/process-data` behaves identically (NFR-1) — it registers its result Data Objects and reads them back by name; the SRD-007…011 suites green.
 - `make ci` green (diff-coverage ≥95% touched; `-race`; govulncheck; all modules).
 - Conformance tracker row 11 advanced (DataObject scope integration ✅); CHANGELOG `[Unreleased]`; data guide note; README EN+RU.
-- `/check-srd` PASS. ADR-030 stays Draft until SRD-064 (Data Store) also lands, then flips Accepted with the full data-element set.
+- `/check-srd` PASS. ADR-030 stays Draft until SRD-068 (Data Store) also lands, then flips Accepted with the full data-element set.
 
 ## §10 Implementation summary
 
@@ -116,7 +116,7 @@ Landed on branch `feat/dataobject-scope-and-datastore` in three stages.
 ### §10.3 Backlog (out of scope)
 
 - A **transformation/assignment** on a DataObject association (§4.2) — the current uses are plain value copies; a mapping expression on the association is a follow-up.
-- The **`DataStore` port** (ADR-030 §2.5/§2.6) → **SRD-064**; ADR-030 flips `Accepted` when it lands (this SRD's §9 gate).
+- The **`DataStore` port** (ADR-030 §2.5/§2.6) → **SRD-068**; ADR-030 flips `Accepted` when it lands (this SRD's §9 gate).
 
 ## Open questions
 

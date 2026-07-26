@@ -68,7 +68,7 @@ func TestAssociationNames(t *testing.T) {
 }
 
 // TestAssociationDataStoreRef covers the engine-store binding on an association
-// (SRD-064 FR-4): WithDataStoreRef sets it, DataStoreRef() reports it, and an
+// (SRD-068 FR-4): WithDataStoreRef sets it, DataStoreRef() reports it, and an
 // ordinary association reports empty.
 func TestAssociationDataStoreRef(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())

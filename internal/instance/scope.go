@@ -124,7 +124,7 @@ func (sc *instanceScope) openFrameAt(
 	}
 
 	// wire the engine-global Data Store registry so a DataStoreReference
-	// association resolves its store at read/write (SRD-064 FR-4).
+	// association resolves its store at read/write (SRD-068 FR-4).
 	f.SetDataStores(sc.dataStores)
 
 	return f, nil

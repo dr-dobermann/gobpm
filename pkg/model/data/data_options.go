@@ -131,7 +131,7 @@ func WithTransformation(fe FormalExpression) options.Option {
 	return asscOption(f)
 }
 
-// WithDataStoreRef marks the Association as engine-store-backed (SRD-064 FR-4):
+// WithDataStoreRef marks the Association as engine-store-backed (SRD-068 FR-4):
 // a DataStoreReference sets its dataStoreRef so the task reroute resolves that
 // store from the engine registry and reads/writes it (by the association's item
 // name) instead of per-instance scope. It is empty on an ordinary (DataObject /

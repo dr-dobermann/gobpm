@@ -53,7 +53,7 @@ type Frame interface {
 	GetData(name string) (data.Data, error)
 
 	// DataStores returns the engine-global Data Store registry a
-	// DataStoreReference association resolves its store from (SRD-064 FR-4). It
+	// DataStoreReference association resolves its store from (SRD-068 FR-4). It
 	// is shared across instances; a nil registry means none is wired for this
 	// frame (a transient evaluation frame), and a store-backed association fails
 	// fast rather than dereferencing it.

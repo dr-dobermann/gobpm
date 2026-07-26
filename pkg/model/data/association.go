@@ -73,7 +73,7 @@ type Association struct {
 }
 
 // DataStoreRef returns the engine Data Store id when the Association is backed
-// by a DataStoreReference (SRD-064 FR-4) — the task reroute resolves that store
+// by a DataStoreReference (SRD-068 FR-4) — the task reroute resolves that store
 // from the engine registry and reads/writes it by the association's item name.
 // Empty for a scope-backed (DataObject / activity-I/O) association, which routes
 // through per-instance scope.

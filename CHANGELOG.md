@@ -85,7 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   engine's kind and the output count. The batteries **Lua interpreter
   (`adapters/lua`), the example and the conformance row-5 flip ride
   SRD-065**.
-- **The engine-global Data Store + Data Store Reference (SRD-064, ADR-030
+- **The engine-global Data Store + Data Store Reference (SRD-068, ADR-030
   v.1 — the `DataStore` half of #82).** BPMN §10.4.1 data that **outlives a
   Process instance** and is **shared across instances**: modeled as an
   **engine-level infrastructure port** (not a per-instance element), like

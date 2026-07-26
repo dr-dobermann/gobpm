@@ -8,7 +8,7 @@ import (
 )
 
 // TestFrameDataStores covers the Data Store registry wiring on a frame
-// (SRD-064 FR-4): nil until set, then the registry SetDataStores wired.
+// (SRD-068 FR-4): nil until set, then the registry SetDataStores wired.
 func TestFrameDataStores(t *testing.T) {
 	pl, err := New(RootDataPath, nil)
 	require.NoError(t, err)

@@ -38,7 +38,7 @@ type Frame struct {
 }
 
 // SetDataStores wires the engine-global Data Store registry the frame's node
-// reaches through a DataStoreReference association (SRD-064 FR-4). The instance
+// reaches through a DataStoreReference association (SRD-068 FR-4). The instance
 // sets it on every execution frame; a transient evaluation frame leaves it nil.
 func (f *Frame) SetDataStores(stores datastore.Registry) {
 	f.stores = stores
