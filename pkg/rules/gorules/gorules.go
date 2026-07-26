@@ -12,6 +12,7 @@ import (
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/rules"
 )
 
@@ -28,11 +29,15 @@ const (
 // Evaluate read-locks, so concurrent tracks evaluate freely.
 type Registry struct {
 	decisions map[string]rules.DecisionFunc
+	sink      observability.Reporter
 	mu        sync.RWMutex
 }
 
-// interface check
-var _ rules.Engine = (*Registry)(nil)
+// interface checks
+var (
+	_ rules.Engine         = (*Registry)(nil)
+	_ rules.ReporterBinder = (*Registry)(nil)
+)
 
 // New creates an empty decision registry.
 func New() *Registry {
@@ -69,7 +74,34 @@ func (reg *Registry) Register(name string, d rules.DecisionFunc) error {
 
 	reg.decisions[name] = d
 
+	// The registrar audit (SRD-069 FR-4): names only, successes only,
+	// silent while unbound.
+	if reg.sink != nil {
+		reg.sink.Report(observability.Fact{
+			Kind:  observability.KindRules,
+			Phase: observability.PhaseRegistered,
+			Details: map[string]string{
+				observability.AttrDecisionRef:    name,
+				observability.AttrImplementation: GoRulesType,
+			},
+		})
+	}
+
 	return nil
+}
+
+// BindReporter binds the engine's observable-event sink (SRD-069 FR-3) —
+// the registrar surfaces emit KindRules facts once bound. A nil sink is
+// ignored, keeping the current silence.
+func (reg *Registry) BindReporter(sink observability.Reporter) {
+	if sink == nil {
+		return
+	}
+
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+
+	reg.sink = sink
 }
 
 // MustRegister is the panic-on-error Register twin for fixture and example

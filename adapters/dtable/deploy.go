@@ -2,8 +2,10 @@ package dtable
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/rules"
 )
 
@@ -64,7 +66,14 @@ func (e *Engine) Deploy(_ context.Context, definition []byte) error {
 	}
 
 	e.mu.Lock()
+	_, replaced := e.tables[t.name]
 	e.tables[t.name] = t
+	// The deploy audit (SRD-069 FR-5): a definition landed on a LIVE
+	// engine — the runtime governance milestone, flagged when it
+	// overwrote a served decision.
+	e.reportTable(observability.PhaseDeployed, t, map[string]string{
+		"replaced": strconv.FormatBool(replaced),
+	})
 	e.mu.Unlock()
 
 	return nil
