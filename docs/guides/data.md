@@ -99,6 +99,23 @@ entries, and each becomes a `DataChange` observability fact —
 Values embed **no** notification — change detection is the scope's job, so it
 survives the engine's clone/commit execution model.
 
+### Data Object and Data Store movements
+
+A value moving through a task's **data associations** is observable too, and
+independently of the commit-diff above: a Data Object write is an in-place
+update and a Data Store access never touches scope, so neither surfaces as a
+`DataChange`. The reroute emits one fact per movement instead —
+
+- a per-instance **Data Object** read/write → `KindDataObject`
+  (`PhaseRead` inbound, `PhaseWritten` outbound); **observer-only**, like
+  `DataChange` (the same per-node-write flood guard);
+- an engine-global **Data Store** read/write → `KindDataStore` (same phases),
+  which **also echoes** to the operator log at Debug — a shared-store access is
+  operationally significant, not per-instance churn;
+- the item name is `f.Details[observability.AttrDataName]`; a Data Store fact
+  additionally carries its store ref in `f.Details[observability.AttrDataStore]`.
+  Names only — never the moved value (the masking rule).
+
 ## Native structs
 
 ```go

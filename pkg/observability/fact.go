@@ -33,6 +33,8 @@ const (
 	KindDataChange       Kind = "DataChange"       // data-element change (observer-only)
 	KindScope            Kind = "Scope"            // nested-scope lifecycle (SRD-049)
 	KindCall             Kind = "Call"             // call-activity lifecycle (SRD-050)
+	KindDataObject       Kind = "DataObject"       // per-instance Data Object read/write (observer-only, SRD-063)
+	KindDataStore        Kind = "DataStore"        // engine-global Data Store read/write (SRD-068)
 )
 
 // Phase names the transition within a Kind (ADR-013 v.2 §2.6). Open and
@@ -136,6 +138,13 @@ const (
 	PhaseValueAdded   Phase = "Value_Added" // DataChange (= data.ChangeType)
 	PhaseValueUpdated Phase = "Value_Updated"
 	PhaseValueDeleted Phase = "Value_Deleted"
+
+	// A Data Object / Data Store data movement through a task's data
+	// associations (SRD-063 / SRD-068): PhaseRead is the value flowing INTO the
+	// node (DataObject/DataStore → Node), PhaseWritten is the produced value
+	// flowing OUT (Node → DataObject/DataStore).
+	PhaseRead    Phase = "Read"    // DataObject / DataStore
+	PhaseWritten Phase = "Written" // DataObject / DataStore
 )
 
 // The canonical detail-attribute keys (ADR-022 v.1 §2.5 vocabulary, ADR-013 v.2
@@ -180,6 +189,13 @@ const (
 	AttrBackoff     = "backoff"
 	AttrDataPath    = "data_path"
 	AttrScopePath   = "scope_path"
+
+	// A Data Object / Data Store movement (SRD-063 / SRD-068). AttrDataName is
+	// the association's item name (the Data Object's scope name, or the Data
+	// Store key); AttrDataStore is the resolved dataStoreRef (engine store only).
+	// Names only — never the moved value (the masking rule).
+	AttrDataName  = "data_name"
+	AttrDataStore = "data_store"
 
 	// AttrLoopCounter (SRD-054): the 0-based iteration ordinal a looped composite
 	// activity's scope carries, so each Standard-Loop pass is individually

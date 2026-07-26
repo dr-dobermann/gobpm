@@ -271,6 +271,11 @@ func (t *task) UploadData(ctx context.Context, f exec.Frame) error {
 				errs.C(errorClass, errs.OperationFailed),
 				errs.E(uerr))
 		}
+
+		// SRD-063: the produced value was written into a per-instance Data
+		// Object (observability). The in-place update bypasses the frame
+		// commit-diff, so this is its only fact.
+		f.RecordDataMovement(false, true, oa.TargetName(), "")
 	}
 
 	return nil
@@ -324,6 +329,9 @@ func (t *task) loadFromScope(
 	if err := dst.UpdateState(data.ReadyDataState); err != nil {
 		return t.opErr("couldn't set input "+dst.Name()+" to Ready", err)
 	}
+
+	// SRD-063: a per-instance Data Object was read into the node (observability).
+	f.RecordDataMovement(false, false, src[0], "")
 
 	return nil
 }
@@ -413,6 +421,10 @@ func (t *task) loadFromStore(
 		return t.opErr("couldn't set input "+dst.Name()+" to Ready", err)
 	}
 
+	// SRD-068: a value was read from the engine Data Store into the node
+	// (observability). A Ready d implies the association named a store key.
+	f.RecordDataMovement(true, false, ia.SourceNames()[0], ref)
+
 	return nil
 }
 
@@ -444,6 +456,10 @@ func (t *task) uploadToStore(
 			errs.C(errorClass, errs.OperationFailed),
 			errs.E(perr))
 	}
+
+	// SRD-068: the produced value was written into the engine Data Store
+	// (observability), keyed by the association's target name.
+	f.RecordDataMovement(true, true, oa.TargetName(), ref)
 
 	return nil
 }

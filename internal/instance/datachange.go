@@ -1,6 +1,7 @@
 package instance
 
 import (
+	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
@@ -30,6 +31,43 @@ func (t *track) reportDataChanges(node flow.Node, changes []data.Change) {
 			Details: map[string]string{
 				observability.AttrDataPath: c.Path,
 			},
+		})
+	}
+}
+
+// dataMovementKind selects the fact kind by the movement's target: a
+// per-instance Data Object (SRD-063) or the engine-global Data Store (SRD-068).
+var dataMovementKind = map[bool]observability.Kind{
+	false: observability.KindDataObject,
+	true:  observability.KindDataStore,
+}
+
+// dataMovementPhase selects the fact phase by direction: a read (data → Node) or
+// a write (Node → data).
+var dataMovementPhase = map[bool]observability.Phase{
+	false: observability.PhaseRead,
+	true:  observability.PhaseWritten,
+}
+
+// reportDataMovements publishes one fact per Data Object / Data Store read or
+// write the node's data phases recorded on its frame (SRD-063 / SRD-068). These
+// movements bypass the frame commit-diff (a Data Object write is an in-place
+// update; a Data Store access never touches scope), so this is their only
+// observability. KindDataObject is observer-only (the kindNoEcho flood guard,
+// like KindDataChange); KindDataStore also echoes to the operator log.
+func (t *track) reportDataMovements(node flow.Node, f *scope.Frame) {
+	for _, m := range f.DataMovements() {
+		details := map[string]string{observability.AttrDataName: m.Name}
+		if m.EngineStore {
+			details[observability.AttrDataStore] = m.StoreRef
+		}
+
+		t.instance.report(observability.Fact{
+			Kind:     dataMovementKind[m.EngineStore],
+			Phase:    dataMovementPhase[m.Write],
+			NodeID:   node.ID(),
+			NodeName: node.Name(),
+			Details:  details,
 		})
 	}
 }

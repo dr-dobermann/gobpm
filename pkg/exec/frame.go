@@ -58,6 +58,13 @@ type Frame interface {
 	// frame (a transient evaluation frame), and a store-backed association fails
 	// fast rather than dereferencing it.
 	DataStores() datastore.Registry
+
+	// RecordDataMovement notes a Data Object / Data Store read or write for
+	// observability (SRD-063 / SRD-068): the reroute records each movement and
+	// the track reports them as KindDataObject / KindDataStore facts after the
+	// node's data phases. engineStore selects Data Store vs Data Object, write
+	// selects outbound vs inbound; storeRef is empty for a Data Object.
+	RecordDataMovement(engineStore, write bool, name, storeRef string)
 }
 
 // NodeDataConsumer is implemented by nodes that consume data: LoadData

@@ -104,7 +104,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   engine-global store — the association carries the `dataStoreRef`, on which the
   task reroute branches (store vs per-instance scope). `capacity` is advisory in
   the in-memory adapter; durability is a swappable adapter (the future
-  Persistence & State workstream). See `examples/data-store/` — a writer
+  Persistence & State workstream). Every store access emits a
+  **`KindDataStore`** observability fact (`PhaseRead`/`PhaseWritten`, carrying
+  the store ref and key), echoed to the operator log at Debug — a shared-store
+  access is operationally significant. See `examples/data-store/` — a writer
   instance stores a value a *separate* reader instance reads back.
 
 - **Data Objects as scope-resident named containers (SRD-063, ADR-030
