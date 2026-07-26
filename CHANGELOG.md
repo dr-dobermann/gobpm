@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **User guides (`docs/guides/`) — portable-Markdown manuals for every BPMN
+  element.** A user-facing guide set (the counterpart to `docs/design/`):
+  getting-started, core concepts, and one page per element/feature (tasks,
+  gateways, events, sub-processes, iteration, data, operating), each grounded in
+  a runnable example with real captured output. Generator-agnostic Markdown
+  (minimal frontmatter, relative links, plain mermaid), ready for web
+  publishing; `docs/guides/CONTRIBUTING.md` records the authoring standard.
+
 - **Rules/Script invocation facts and the registrar audit (SRD-069).**
   The decision/script observability stream becomes a closed ledger:
   the new **`Invoked`** phase opens every Business Rule / Script Task
@@ -349,6 +357,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`internal/lintcfg`) now fails the build on any new `Must*` call site in
   library code (the two provably-infallible argless literals
   `MustBaseElement()`/`MustRecord()` stay sanctioned).
+
+### Fixed
+
+- **`examples/message-send-receive`** — the example bound a task output into a
+  `received-order` DataObject but never registered it, so after DataObjects
+  became scope-resident (SRD-063) the instance failed at the output association
+  (`OBJECT_NOT_FOUND`). It now registers the object and reads it from
+  per-instance scope by name (via the trailing task's `DataReader`); runs green
+  end-to-end.
 
 ## [v0.9.0] - 2026-07-18
 
