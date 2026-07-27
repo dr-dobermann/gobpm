@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-26 |
 | Owner | Ruslan Gabitov |
@@ -346,4 +346,5 @@ finalized); then suspend/resume and the engine pause.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.1 (Accepted) | 2026-07-27 | Ruslan Gabitov | Accepted with the first landing slice (the accompanying checkpoint/recovery SRD): the checkpoint document, the grown Repository (CAS + lease), consistent-cut capture, restart recovery with re-enter semantics and the recorded-deadline timers — all proven live, incl. the §2.8 fencing (a zombie engine's saves rejected) and the ADR-005-style incremental plan: dehydration/wake-on-trigger and suspend/resume ride the remaining slices. One §2.8 sharpening surfaced by the landing: deployment parity covers ELEMENT IDENTITY too — recovery requires stable node ids across engines (pinned ids or a serialized model). |
 | v.1 | 2026-07-26 | Ruslan Gabitov | Initial draft — the deferred Persistence & State conception: one checkpoint document per instance (identity + pinned version, status incl. `Suspended`, scope-tree data, the track table, per-node wait descriptors, the completion ledger; armed/routing state derived at hydration, never stored; schema-versioned, loud on unserializable values); the loop's consistent-cut checkpoint at the normative lifecycle transitions with a pluggable write mode; exactly-once state / at-least-once effects (correlation dedup, job-queue reclaim, idempotent re-announce); dehydration as the durable half of ADR-007's model (one model, two residency levels); wake-on-trigger hydration = single-instance recovery, per-wait-kind semantics (overdue timers fire once, tasks re-announce, subscriptions re-register); suspend/resume as status over the same machinery, engine pause filling the reserved observability slots; the Repository grows CAS + `Suspended` + opaque schema-versioned payloads. Event sourcing, persist-everything and hydration-before-durability rejected. The storage composition rule: the Repository is the checkpoint port only — one narrow port per storage consumer, the backend handle user-owned and shared at construction (no universal Repository, no db-driver seam in core — both named rejected alternatives), namespaced schemas with per-module migrations and the optional `Migrator` capability. Cluster-safe sharing (§2.8): per-instance ownership leases with CAS fencing, claim-first wake, lease-expiry orphan recovery, loud deployment-parity refusals — safety here, work distribution deferred to ADR-008. Implementation rides the accompanying SRDs. |

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-26 |
 | Owner | Ruslan Gabitov |
@@ -286,16 +286,48 @@ past at recovery: the timer fires immediately, once.
 
 ## §9 Definition of Done
 
-- [ ] FR-1…FR-8 implemented; every §6 test exists and passes.
-- [ ] `make ci` green; diff-coverage ≥95% (aim 100%); touched
+- [x] FR-1…FR-8 implemented; every §6 test exists and passes.
+- [x] `make ci` green; diff-coverage ≥95% (aim 100%); touched
       functions ≥80%.
-- [ ] The example runs (crash/recover trace, exit 0); READMEs/examples
-      index/CHANGELOG synced.
-- [ ] §10 filled.
+- [x] The example runs (crash/recover trace, exit 0); READMEs/examples
+      index/CHANGELOG synced (+ the new `docs/guides/persistence.md`).
+- [x] §10 filled.
 
 ## §10 Implementation summary
 
-*Filled at landing.*
+Landed on `feat/persistence-state` in four milestones, as planned:
+
+| Milestone | Commit | Scope |
+|---|---|---|
+| M1 | `d0acad5` | FR-2: the canonical value codec (tagged JSON, typed composite rebuilders); T-1 |
+| M2 | `9c855b4` | FR-1/FR-3/FR-5: the version pin, the Schema-1 document, `errs.ConcurrentUpdate`, the grown Repository + memrepo (CAS, lease, copies); T-3 + the schema/pin halves |
+| M3 | `006932e` | FR-4/FR-8: loop-side consistent-cut capture (`WithCheckpointing`), `scope.OpenPaths/OwnData`, `waiters.TimerPlan` + the park-time stash, defer-don't-die, `CheckpointDeferred`/`Recovered` phases; T-2 |
+| M4 | `7e13c69` | FR-6/FR-7: `instance.Restore` (re-enter semantics), the `waiters.DeadlineHinter` seam, `WithRepository`-armed checkpointing + `WithLeaseTTL`, restart recovery in `Run` with CAS claims; T-4…T-7; the example, the persistence guide, README/CHANGELOG sync |
+
+- **Verification**: post-M4 `make ci` exit 0 (incl. `-race`);
+  diff-coverage **95.1% of 932 changed lines** (min 95%); the
+  `examples/restart-recovery` smoke exit 0.
+- **Deltas vs the draft — engine notes**:
+  1. **Stable element ids are part of deployment parity.** Recovery
+     resolves recorded node ids against the recovering engine's
+     registration; models built from the same source WITHOUT pinned
+     ids (`foundation.WithID` / a serialized model) mint different ids
+     and recovery refuses loud. Recorded in the tests, the example and
+     the guide; the BPMN-XML workstream supplies persistent ids
+     naturally.
+  2. **The timer hint replaces parsing entirely** (not just the
+     computed deadline): a past absolute Time would fail the parse
+     validation, so a hinted waiter never parses.
+  3. **The stash rides before the wait declaration**: `evWaiting` lets
+     the loop checkpoint immediately, so the descriptor must exist
+     before the emit (an ordering race caught under `-race`).
+  4. **Capture reads ride the track mutex** (both sides): the loop
+     captures while a track goroutine may be mid-arming.
+  5. The checkpoint arms only under an EXPLICIT `WithRepository`
+     (`repoSet`) — the zero-config default stays volatile with zero
+     overhead, sharpening FR-4's arming story.
+- **Scope note**: ledger `folded` nesting flattens into sibling records
+  (full folded fidelity rides SRD-071+), as §4 planned.
 
 ## Open questions
 
