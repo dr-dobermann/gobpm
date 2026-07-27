@@ -11,12 +11,16 @@
 | Refines | [SRD-070 v.1](SRD-070-instance-checkpoint-and-restart-recovery.md) (the checkpoint/Restore this reuses as the hydration source) — sideways |
 
 Lands ADR-007's in-memory dehydration/wake mechanism on SRD-070's
-checkpoint: the `TrackDehydrated` state, the fully-idle detector that
+checkpoint: the `TrackDehydrated` state, the **`Dehydratable`
+capability** the wait node declares, the fully-idle detector that
 releases an instance's goroutines, wake-on-trigger via hydration + a
-continuation fork, and an engine-level wait-holder per kind (timer →
-closes #84; message/signal; human task). Holders roll out independently
-(ADR-007 §2.4), so the tree is shippable after the timer holder — the
-message and human-task holders stack on top with no broken intermediate.
+direct-fire continuation fork, **the holder as the registered
+`EventProcessor` (a set-per-track, so the Event-Based Gateway fits)**,
+and an engine-level holder per kind (timer → closes #84; message/signal;
+EBG; human task). Eligibility (`Dehydratable`) and holders both roll out
+independently (ADR-007 §2.4), so the tree is shippable after the timer
+holder — message/signal, EBG, and human-task stack on top with no broken
+intermediate.
 
 ## §1 Background (grounded)
 
@@ -79,31 +83,57 @@ message and human-task holders stack on top with no broken intermediate.
   released-not-ended (retained as a live record, `liveTrackStates` gains
   `TrackDehydrated`). No hub unregistration — the subscription stays on
   the holder (FR-3).
+- **FR-1a — the `Dehydratable` capability.** A new optional wait-node
+  capability `Dehydratable(ctx, re) bool` (the runtime idiom — an
+  opt-in interface like `DeadlineHinter`). The loop consults the parked
+  track's node at park time; a node not implementing it is
+  non-dehydratable (resident). Implementations: a **Timer** catch node
+  returns true iff its stashed deadline exceeds an engine threshold
+  (`WithDehydrationThreshold`, a sensible default — a sub-threshold wait
+  isn't worth checkpoint+hydrate); a **UserTask** returns true; a
+  **worker ServiceTask** returns false (active work); an
+  **Event-Based Gateway** returns **true unconditionally, ignoring its
+  arm events' policies** (the EBG is the wait node, always a pure wait
+  race — FR-3a). A single-definition catch answers from its definition.
 - **FR-2 — the fully-idle detector + loop release.** After the loop
-  applies a checkpoint transition, if **every** live track is in the
-  dehydratable-parked set (Message/Signal/Timer/UserTask waits — FR-9
-  lists what each holder covers) AND the SRD-070 capture guards are
-  clear (`calls`/`miGroups`/`sweeps` empty) AND the instance is
-  checkpoint-armed (`cpOwner != ""`), the loop **dehydrates**: flip each
-  such track to `TrackDehydrated`, take the SRD-070 consistent-cut
-  checkpoint, set the instance state to the new **`Dehydrated`**, and
-  **exit the loop** (close `loopDone`) — distinct from
-  Completed/Terminated (a new loop-exit reason, guarded so
-  `settleFinalState` is NOT called). A wait kind without a holder keeps
-  the instance resident (never dehydrates a wait it can't wake).
-- **FR-3 — the holder is the `EventProcessor`.** A dehydratable wait
-  registers its **holder** with the trigger source (the hub, or the
-  engine timer service), tagged with `(instance id, track id, wait
-  descriptor)` — **not** the track and **not** the instance object. The
-  holder is the permanent subscriber, so a trigger never reaches a
-  released instance's `emit` (closing the `loopDone`-drop at the root,
-  `instance.go:429-434`). On a trigger the holder forks on residency:
-  **resident + parked** → resume the live parked track (today's
-  `evtCh` path, reached through the holder); **dehydrated** → wake
-  (FR-4). Correlation for a Message holder moves onto the holder — it
-  carries the checkpoint's conversation keys and gates
-  `validateAndAssociate` itself, so a mismatched-key message never wakes
-  the instance.
+  applies a checkpoint transition, if **every** live track is parked on
+  a `Dehydratable` wait whose kind(s) are held (FR-6/7/8) AND the
+  SRD-070 capture guards are clear (`calls`/`miGroups`/`sweeps` empty)
+  AND the instance is checkpoint-armed (`cpOwner != ""`), the loop
+  **dehydrates**: flip each such track to `TrackDehydrated`, take the
+  SRD-070 consistent-cut checkpoint, set the instance state to the new
+  **`Dehydrated`**, and **exit the loop** (close `loopDone`) — distinct
+  from Completed/Terminated (a new loop-exit reason, guarded so
+  `settleFinalState` is NOT called). A non-`Dehydratable` node, or a
+  `Dehydratable` wait whose kind has no holder yet, keeps the instance
+  resident (never dehydrates a wait it can't wake — the runtime guard,
+  logged).
+- **FR-3 — the holder is the `EventProcessor`; a track holds a holder
+  set.** Each armed wait registers its **holder** with the trigger
+  source (the hub, or the engine timer service), tagged with
+  `(instance id, track id, wait descriptor)` — **not** the track and
+  **not** the instance object. A dehydrated track holds a **set** of
+  arm-holders (one per armed wait — the singleton for a plain catch, the
+  multi-arm set for an EBG, FR-3a). The holder is the permanent
+  subscriber, so a trigger never reaches a released instance's `emit`
+  (closing the `loopDone`-drop at the root, `instance.go:429-434`). On a
+  trigger the holder forks on residency: **resident + parked** → resume
+  the live parked track (today's `evtCh` path, reached through the
+  holder); **dehydrated** → wake (FR-4). Correlation for a Message
+  holder moves onto the holder — it carries the checkpoint's
+  conversation keys and gates `validateAndAssociate` itself, so a
+  mismatched-key message never wakes the instance.
+- **FR-3a — the Event-Based Gateway.** An EBG track arms several
+  catch-events and races them (first-fires-wins, losers `Withdrawn`).
+  It is `Dehydratable` unconditionally (FR-1a) and dehydrates as a track
+  with a **holder set** (one arm-holder per armed catch), released only
+  once **every arm-kind has a holder** (the runtime guard — an all-timer
+  EBG at M3, a message-armed EBG at M4). On the winning arm's trigger,
+  the wake fires that arm's node (FR-4) and **withdraws the sibling
+  arm-holders** (releases their deadlines / subscriptions) — the same
+  `Withdrawn` the resident EBG performs. The armed-arm set rides the
+  checkpoint (the record already carries `msgDefIDs`; extended to the
+  full armed-wait set).
 - **FR-4 — wake = hydrate + a direct-fire continuation fork.** When the
   holder receives a trigger for a **dehydrated** instance it: (a)
   `Hydrate`s — rebuilds the instance from its checkpoint (the SRD-070
@@ -153,17 +183,27 @@ message and human-task holders stack on top with no broken intermediate.
   (it stays registered in `t.instances` with a dehydrated marker).
 - **FR-9 — worker jobs keep the instance resident.** A `parkServiceTask`
   wait (external worker job in flight) is active work, not a passive
-  wait (ADR-007 §2.4): its instance does **not** dehydrate until the job
-  reports. The idle detector (FR-2) treats a job-parked track as
-  non-dehydratable.
+  wait (ADR-007 §2.4): its node's `Dehydratable` returns false (FR-1a),
+  so the idle detector never releases a job-parked track — the instance
+  stays resident until the job reports.
 
 ### §2.3 Functional — observability
 
-- **FR-10 — residency facts.** `KindInstanceState` gains **`Dehydrated`**
-  (Info — the instance released its goroutines; details: parked-track
-  count, wait kinds) and **`Hydrated`** (Info — woken; details: the
-  trigger kind, live-track count). Lifecycle volume (one per residency
-  transition), masking-clean (ADR-013 v.2).
+- **FR-10 — residency facts.** `KindInstanceState` gains two open
+  phases (ADR-007 §2.7, ADR-013 v.2 taxonomy): **`Dehydrated`** (Info —
+  the instance released its goroutines; details: the parked wait kinds +
+  count, and — key to the whole feature — that it now holds **zero
+  goroutines**) and **`Hydrated`** (Info — a holder woke it; details:
+  the **waking trigger kind** (timer/message/signal/task), the woken
+  track, and whether the wake **continued** the flow or **completed**
+  the instance). One fact per residency transition — never per
+  checkpoint (the checkpoint rides an already-observable transition) nor
+  per still-armed arm. Echo level Info (a lifecycle milestone, the
+  `ProcessLifecycle` analog); both ride the existing observer stream +
+  operator-log echo, masking-clean (names/counts, never payload). A
+  dehydrated instance's tokens still project their wait positions
+  through the retained `TrackDehydrated` records, so `Tokens()`/history
+  stay meaningful across the cycle.
 
 ### §2.4 Non-functional
 
@@ -188,6 +228,14 @@ message and human-task holders stack on top with no broken intermediate.
 // internal/instance — the new track state + event
 TrackDehydrated trackState // goroutine-terminal, flow-live
 evDehydrated    trackEventKind
+
+// pkg/model/flow (or the node packages) — the eligibility capability (FR-1a)
+type Dehydratable interface {
+    // Dehydratable reports whether this wait node releases the instance's
+    // goroutines when parked here. Data-driven: a Timer weighs its deadline;
+    // an EBG returns true unconditionally; a worker ServiceTask false.
+    Dehydratable(ctx context.Context, re renv.RuntimeEnvironment) bool
+}
 
 // internal/instance/lifecycle — the new instance state
 Dehydrated State // released; not terminal
@@ -270,6 +318,19 @@ has no more waits it completes; if it hits another wait it re-dehydrates.
   first `Hydrate` transitions the registry entry to "hydrating," the
   second observes it and delivers into the (soon-)resident loop via the
   normal path.
+- **§4.7 EBG — the wait node is the gateway (ADR-007 §2.4).** A track's
+  wait is not always one arm: an EBG arms a set and races them. The
+  `Dehydratable` decision lives on the *wait node*, so the EBG (the
+  gateway) decides — unconditional true — and its arm events' own
+  policies are ignored. The holder becomes a **set per track** (§FR-3),
+  a strict generalization that degenerates to a singleton for every
+  non-EBG wait, so the core wake path is written once. The one
+  EBG-specific step is **withdraw-siblings on wake** — the winning arm's
+  holder wakes, the fork fires it, the losing arm-holders are released —
+  which mirrors the resident EBG's existing `Withdrawn`. The
+  holder-existence guard applies per arm, so an EBG dehydrates only when
+  every arm-kind is held (§4.5's incremental rollout, at the arm
+  granularity).
 
 ## §6 Test scenarios
 
@@ -284,7 +345,8 @@ has no more waits it completes; if it hits another wait it re-dehydrates.
 | T-7 | re-dehydration + oscillation (`pkg/thresher`) | FR-5: an instance with two sequential timer waits dehydrates, wakes, re-dehydrates; lineage bounded across cycles |
 | T-8 | no-lost-trigger race (`pkg/thresher`, `-race`) | NFR-1/§4.6: a trigger during the cut aborts that cycle's dehydration; concurrent timer+message wake hydrates once |
 | T-9 | crash-while-dehydrated recovery (`pkg/thresher`) | §4.2: an abandoned dehydrated instance is reclaimed by restart recovery after lease lapse (the SRD-070 path, unchanged) |
-| T-10 | facts (`pkg/thresher`) | FR-10: `Dehydrated`/`Hydrated` at Info with details |
+| T-10 | facts (`pkg/thresher`) | FR-10: `Dehydrated`/`Hydrated` at Info with details (trigger kind, wait kinds, continued-vs-completed) |
+| T-EBG | event-based gateway (`pkg/thresher`) | FR-1a/FR-3a: an EBG with a timer + message arm dehydrates (unconditional `Dehydratable`, holder set); the message arm firing wakes+continues and the timer arm-holder is withdrawn; a not-yet-held arm keeps it resident |
 | T-11 | example smoke | the dehydration example runs, exit 0, observably dehydrates+wakes |
 
 ## §7 Milestones
@@ -292,21 +354,32 @@ has no more waits it completes; if it hits another wait it re-dehydrates.
 Sliced so the tree is green and correct at each; timer-first is shippable
 (ADR-007 §2.4 — un-held kinds stay resident).
 
-- **M1 — `TrackDehydrated` + `evDehydrated` + run-exit.** FR-1; T-1.
+- **M1 — `TrackDehydrated` + `evDehydrated` + run-exit + the
+  `Dehydratable` capability.** FR-1/FR-1a; T-1.
   `feat(instance): the TrackDehydrated state and goroutine release (SRD-071 M1)`.
-- **M2 — the idle detector + loop release + the instance `Dehydrated` state.** FR-2; T-2 (with a test-driven manual hydrate).
+- **M2 — the idle detector (via `Dehydratable`) + loop release + the
+  instance `Dehydrated` state.** FR-2; T-2 (with a test-driven manual
+  hydrate).
   `feat(instance): the fully-idle detector releases the loop (SRD-071 M2)`.
-- **M3 — the continuation-fork wake (Restore-with-trigger) + the engine dehydrated registry + `Hydrate` + the timer service + facts.** FR-3/FR-4/FR-5/FR-6/FR-10; T-3/T-4/T-7/T-8/T-9/T-10. **Closes #84; shippable here.**
+- **M3 — the continuation-fork wake (Restore-with-trigger) + the engine
+  dehydrated registry + `Hydrate` + the holder set + the timer service +
+  facts.** FR-3/FR-4/FR-5/FR-6/FR-10; T-3/T-4/T-7/T-8/T-9/T-10.
+  **Closes #84; shippable here** (timer instances dehydrate; all else
+  resident).
   `feat(thresher): the engine timer service and wake-on-trigger (SRD-071 M3)`.
 - **M4 — the message/signal holder.** FR-7; T-5.
   `feat(thresher): message/signal wake for dehydrated instances (SRD-071 M4)`.
-- **M5 — the human-task holder.** FR-8; T-6.
-  `feat(thresher): human-task wake for dehydrated instances (SRD-071 M5)`.
-- **M6 — e2e + example + docs.** T-11; the `examples/dehydration` (an
+- **M5 — the Event-Based Gateway (holder set + withdraw-siblings on
+  wake).** FR-3a; T-EBG. (After M4 — an EBG's message arms need the
+  message holder.)
+  `feat(thresher): event-based-gateway dehydration (SRD-071 M5)`.
+- **M6 — the human-task holder.** FR-8; T-6.
+  `feat(thresher): human-task wake for dehydrated instances (SRD-071 M6)`.
+- **M7 — e2e + example + docs.** T-11; the `examples/dehydration` (an
   instance dehydrating on a timer, waking, with a goroutine-count
   observation); the persistence guide gains a dehydration section;
   CHANGELOG; conformance-status #84 closed.
-  `feat(thresher): dehydration example and docs (SRD-071 M6)`.
+  `feat(thresher): dehydration example and docs (SRD-071 M7)`.
 
 ## §8 Cross-doc
 
@@ -320,7 +393,8 @@ Sliced so the tree is green and correct at each; timer-first is shippable
 
 ## §9 Definition of Done
 
-- [ ] FR-1…FR-10 implemented; every §6 test exists and passes.
+- [ ] FR-1/FR-1a/FR-2…FR-3a…FR-10 implemented; every §6 test (incl.
+      T-EBG) exists and passes.
 - [ ] `make ci` green incl. `-race`; diff-coverage ≥95% (aim 100%);
       touched functions ≥80%.
 - [ ] A dehydrated instance holds **zero goroutines** (T-4 assertion).
@@ -342,4 +416,4 @@ Sliced so the tree is green and correct at each; timer-first is shippable
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.1 | 2026-07-27 | Ruslan Gabitov | Initial draft — implements ADR-007 v.2's in-memory dehydration/wake mechanism on SRD-070's checkpoint: the `TrackDehydrated` goroutine-terminal state, the fully-idle detector (reusing the capture guards) that releases the loop, the engine dehydrated registry + `Hydrate` reusing `Restore` (one hydration path, trigger-present continues / trigger-absent re-arms), the continuation-fork wake with bounded lineage (§4.1), and a wait-holder per kind rolled out independently — timer (engine service, closes #84), message/signal (retained id-keyed subscription), human task (distributor completion) — with worker jobs staying resident. Residency facts. Single-engine scope; multi-node wake deferred to ADR-008 (§4.2). Six milestones, timer-first shippable. |
+| v.1 | 2026-07-27 | Ruslan Gabitov | Initial draft — implements ADR-007 v.2 on SRD-070's checkpoint: the `TrackDehydrated` goroutine-terminal state, the **`Dehydratable` capability** the wait node declares (data-driven — Timer weighs its deadline, worker false, **EBG true unconditionally ignoring its arms**), the fully-idle detector (`Dehydratable` + holder-existence guard, reusing the capture guards) that releases the loop, the engine dehydrated registry + `Hydrate` reusing `Restore` (one hydration path, trigger-present continues / trigger-absent re-arms), the direct-fire continuation fork with bounded lineage (§4.1), **the holder as the registered `EventProcessor` in a set-per-track** (singleton for a plain wait, multi-arm for an EBG with withdraw-siblings-on-wake), and a wait-holder per kind rolled out independently — timer (engine service, closes #84), message/signal (id-keyed subscription), EBG, human task (distributor completion) — worker jobs stay resident. Residency facts (`Dehydrated`/`Hydrated` at Info). Single-engine scope; multi-node wake deferred to ADR-008 (§4.2). Seven milestones, timer-first shippable. |
