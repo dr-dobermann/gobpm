@@ -34,6 +34,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   next slices. The zero-config engine stays exactly as before:
   volatile, zero overhead. See `examples/restart-recovery`.
 
+- **Developer manual (`docs/guides/`) — a comprehensive, `go doc`-grounded
+  reference for embedding gobpm.** The counterpart to `docs/design/` (which
+  records how/why the engine was built), organized in seven parts:
+  getting-started, architecture & runtime (the `BaseElement → Thresher` entity
+  stack, process execution, event processing, scope), the value & data model,
+  the element reference (taxonomy + a page per element — constructor, option
+  families, the interfaces you implement, methods & behavior), controlling
+  processes & instances, **extending gobpm** (a page per seam: custom ID
+  generator, Value type, Operation, expression/rule/script engine, data store,
+  repository, message broker, clock, observability, worker dispatcher, task
+  distributor, authorization), and reference. Deep-but-readable, pure
+  generator-agnostic Markdown; every page grounded in the public API and a
+  runnable example. `docs/guides/CONTRIBUTING.md` records the authoring standard.
+
 - **Rules/Script invocation facts and the registrar audit (SRD-069).**
   The decision/script observability stream becomes a closed ledger:
   the new **`Invoked`** phase opens every Business Rule / Script Task
@@ -374,6 +388,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`internal/lintcfg`) now fails the build on any new `Must*` call site in
   library code (the two provably-infallible argless literals
   `MustBaseElement()`/`MustRecord()` stay sanctioned).
+
+### Fixed
+
+- **`examples/message-send-receive`** — the example bound a task output into a
+  `received-order` DataObject but never registered it, so after DataObjects
+  became scope-resident (SRD-063) the instance failed at the output association
+  (`OBJECT_NOT_FOUND`). It now registers the object and reads it from
+  per-instance scope by name (via the trailing task's `DataReader`); runs green
+  end-to-end.
 
 ## [v0.9.0] - 2026-07-18
 

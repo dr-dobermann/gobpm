@@ -290,7 +290,7 @@ past at recovery: the timer fires immediately, once.
 - [x] `make ci` green; diff-coverage ≥95% (aim 100%); touched
       functions ≥80%.
 - [x] The example runs (crash/recover trace, exit 0); READMEs/examples
-      index/CHANGELOG synced (+ the new `docs/guides/persistence.md`).
+      index/CHANGELOG synced (+ the new `docs/guides/operating/persistence.md`, refitted into the developer manual at the master merge; `extending/repository.md` synced to the grown contract).
 - [x] §10 filled.
 
 ## §10 Implementation summary

@@ -1,7 +1,12 @@
-# Persistence — checkpoints, recovery & the shared store
+---
+title: Persistence & recovery
+description: Instance checkpoints, restart recovery, and safely sharing one store between engines.
+---
 
-How a gobpm instance becomes durable (ADR-033, first slice landed by
-SRD-070): with an **explicitly configured repository**, every instance
+# Persistence & recovery
+
+How a gobpm instance becomes durable (ADR-033): with an **explicitly
+configured repository**, every instance
 writes a **consistent-cut checkpoint** at its observable lifecycle
 transitions, a crashed engine's instances are **recovered on restart**
 (or by another engine sharing the store), and concurrent engines are
@@ -99,4 +104,10 @@ degradation is operator-visible. Full-fidelity capture of those
 constructs, goroutine-releasing dehydration and wake-on-trigger, and
 the operator suspend/resume surface are the following ADR-033 slices.
 
-See it live: [`examples/restart-recovery/`](../../examples/restart-recovery/).
+## See also
+
+- Runnable example: [`examples/restart-recovery/`](../../../examples/restart-recovery/)
+- The seam: [Custom repository](../extending/repository.md)
+- Related: [Instance lifecycle](instance-lifecycle.md) · [Observability in practice](observability.md)
+- Design: [ADR-033 — Persistence & State](../../design/ADR-033-persistence-and-state.md)
+- Full API: `go doc github.com/dr-dobermann/gobpm/pkg/repository`
