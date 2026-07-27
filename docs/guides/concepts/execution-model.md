@@ -1,28 +1,31 @@
 ---
 title: Process, instance, track, token
-description: How a process definition becomes running work: instances, tracks, and tokens.
+description: How a definition becomes running work: instances, tracks, and tokens.
 ---
 
 # Process, instance, track, token
 
-A **process** is a definition you build once; running it produces an
-**instance**, and inside that instance the work advances as **tokens** carried
-along **tracks**. Understanding these four words is enough to reason about why
-branches run concurrently and where a process waits. This page grounds them in a
-parallel-gateway process that forks two branches and rejoins them. Full program:
+Four words describe everything the engine does at runtime. A **process** is a
+definition you build once; running it produces an **instance**; inside that
+instance control advances as **tokens** carried along **tracks**. Get these
+straight and you can reason about why branches run concurrently, where a process
+waits, and what a running instance will let you observe.
+
+This page explains the runtime *behavior* and the **public contract** you touch
+to observe it — the `thresher.InstanceHandle` window and its projection types.
+The instance machinery itself lives in `internal/instance` and is not an API you
+call; its rationale is [ADR-001 — execution model](../../design/ADR-001-execution-model.md).
+The worked run is a parallel-gateway process:
 [`examples/parallel-gateway/`](../../../examples/parallel-gateway/).
 
-## What it is
+## The four terms
 
-- **Process** — the static model: flow nodes (events, tasks, gateways) wired by
-  sequence flows. It never runs; it is registered as a launch template.
-- **Instance** — one live execution of that definition. Each `StartLatest` clones
-  the template and gives you an independent run with its own data and state.
-- **Token** — the moving "here is where control is" marker. It enters at a start
-  event and flows node → node along the sequence flows.
-- **Track** — the goroutine that carries a token. A diverging parallel gateway
-  spawns a track per outgoing branch, so the branches run *concurrently*; a
-  converging gateway waits for every inbound track before a single token leaves.
+| Term | What it is | Lifetime |
+|---|---|---|
+| **Process** | The static model — flow nodes (events, tasks, gateways) wired by sequence flows. It never runs; you register it as a launch template. | Built once, registered, reused. |
+| **Instance** | One live execution of that definition. Each start clones the template into an independent run with its own data and state. | Created → runs → Completed / Terminated. |
+| **Token** | The "here is where control is" marker. It enters at a start event and flows node → node along the sequence flows. In gobpm a token is a *derived projection* of a track's position, not a stored object. | Alive while its track advances; Consumed when merged or ended. |
+| **Track** | The goroutine that carries a token. A diverging parallel gateway spawns one track per outgoing branch, so branches run *concurrently*; a converging gateway waits for every inbound track before one token leaves. | One per active branch. |
 
 ```mermaid
 flowchart LR
@@ -36,53 +39,57 @@ One token starts at `start`. The diverging `split` forks it into two tracks —
 `worker-a` and `worker-b` run at the same time. The converging `join` blocks
 until both tracks arrive, then lets one token continue to `end`.
 
-## Build it
+## From definition to running work
 
-The fork and join are two `ParallelGateway` nodes with opposite directions. The
-branches between them are ordinary service tasks:
-
-```go
-split, _ := gateways.NewParallelGateway(
-    gateways.WithDirection(gateways.Diverging))
-
-workerA, _ := newWorker("worker-a", done)
-workerB, _ := newWorker("worker-b", done)
-
-join, _ := gateways.NewParallelGateway(
-    gateways.WithDirection(gateways.Converging))
-```
-
-Add every node to the process, then wire the sequence flows that shape the
-fork/join:
+Registering a process snapshots it into an immutable launch template; a start
+call clones that template into one instance and hands back a **handle**:
 
 ```go
-for _, e := range []flow.Element{start, split, workerA, workerB, join, end} {
-    proc.Add(e)
-}
-
-// start ─> split ─┬─> worker-a ─┬─> join ─> end
-//                 └─> worker-b ─┘
-for _, l := range [][2]flow.Element{
-    {start, split},
-    {split, workerA}, {split, workerB},
-    {workerA, join}, {workerB, join},
-    {join, end},
-} {
-    link(l[0], l[1])
-}
+reg, _ := engine.RegisterProcess(proc) // definition → immutable launch template
+engine.Run(ctx)                        // engine goroutine comes up
+h, _ := engine.StartLatest(proc.ID())  // one instance; its tracks start running
 ```
 
-Each worker's operation is a plain Go functor; it prints when its track runs, so
-the output makes concurrency visible:
+- `RegisterProcess` validates the model and freezes it as a snapshot. The
+  snapshot is a *launch template*, not a durable checkpoint — instance tracks,
+  scopes, and history are not stored in it (durable persistence is future work;
+  see the snapshot notes in [ADR-001](../../design/ADR-001-execution-model.md)).
+- Each start clones the snapshot into a fresh instance with its own node graph,
+  data plane, and state. Call a start method again for a second, fully
+  independent instance.
+- The three start entry points differ only in *which* registered version they
+  launch:
 
-```go
-op, _ := gooper.New(name+"-op",
-    func(_ context.Context, _ service.DataReader, _ *data.ItemDefinition) (*data.ItemDefinition, error) {
-        fmt.Printf("  ▶ %s executed\n", name)
-        done <- name
-        return nil, nil
-    })
-```
+| Method | Launches |
+|---|---|
+| `StartLatest(key string) (*InstanceHandle, error)` | the latest registered version of `key`. |
+| `StartVersion(key string, version int) (*InstanceHandle, error)` | a specific pinned version. |
+| `StartProcess(reg *ProcessRegistration) (*InstanceHandle, error)` | the exact registration you hold. |
+
+Each returns an `*InstanceHandle` — your read-only window onto that run. See
+[Registering & versioning](../operating/registering-and-versioning.md).
+
+## How tracks and tokens move
+
+Inside the instance the four terms come to life:
+
+- The instance begins with a **single track** carrying **one token** out of the
+  start event.
+- Reaching a **diverging** gateway the instance forks: **one new track per
+  outgoing branch**. Each track is its own goroutine, so the branches execute
+  concurrently — the order they interleave in is not fixed.
+- A **converging** gateway is a barrier: it counts inbound tracks and holds
+  until *every* branch has arrived. Only then does one token pass onward — the
+  branch tokens are **merged, not duplicated**. The absorbed track records a
+  merge edge to the survivor (visible in the token history's `MergedInto`).
+- When the last token reaches an end event, the instance transitions
+  `Created → Active → Completed`.
+
+> A wait node (an event catch, a User Task, an external-worker Service Task)
+> **parks** its track rather than blocking a goroutine — the token sits in the
+> `WaitForEvent` state until the awaited thing arrives, then the track resumes.
+> This is why an idle instance holds no busy goroutines. See
+> [How events are processed](events-and-hub.md).
 
 ## Run it
 
@@ -94,55 +101,95 @@ After the engine's startup banner, both branches run, the join synchronizes, and
 the instance completes:
 
 ```
-2026/07/26 20:18:43 INFO InstanceState Created instance_id=373513594881132422
-2026/07/26 20:18:43 INFO InstanceState Active instance_id=373513594881132422
+2026/07/27 09:15:11 INFO InstanceState Created instance_id=4674360034859073246
+2026/07/27 09:15:11 INFO InstanceState Active instance_id=4674360034859073246
   ▶ worker-a executed
   ▶ worker-b executed
-2026/07/26 20:18:43 INFO InstanceState Completed instance_id=373513594881132422
+2026/07/27 09:15:11 INFO InstanceState Completed instance_id=4674360034859073246
 ✓ parallel-demo completed: split forked both branches, join synchronized, one token reached End
 ```
 
-## How it works
+The `InstanceState` log lines are the same lifecycle values the handle reports —
+`Created → Active → Completed`.
 
-Registering the process snapshots it into an immutable launch template;
-`StartLatest` clones that template into one instance and returns a handle:
+## The instance contract: `InstanceHandle`
+
+You never touch the internal instance object. Every start method returns a
+`thresher.InstanceHandle` — a read-only window that exposes observation only, so
+a host cannot corrupt a running instance. The members you reach for most:
+
+| Member | Role |
+|---|---|
+| `State() InstanceState` | the current lifecycle state, read lock-free. |
+| `WaitCompletion(ctx) (InstanceState, error)` | block until the instance finishes (or `ctx` ends); returns the terminal state. |
+| `Cancel(ctx) (InstanceState, error)` | request cancellation; tracks are torn down, ending in `Terminated`. |
+| `Tokens() []TokenView` | live positions — where every token currently sits. |
+
+The full surface:
+
+| Member | Role |
+|---|---|
+| `ID() string` | the instance id. |
+| `Data() service.DataReader` | read the instance's data plane by name. |
+| `History() []TokenPath` | every track's recorded path, including finished (Consumed) tracks, with fork lineage and per-step timings. |
+| `Observe(o Observer) *Subscription` | subscribe to this instance's facts (state changes, data changes, node visits). |
+| `Suspend(ctx) error` / `Resume(ctx) error` | pause / resume the run. |
+
+> `InstanceHandle` wraps the internal instance **by reference** — it stays live
+> as the instance runs, so `State()` and `Tokens()` reflect the current moment,
+> not a snapshot taken at start.
+
+## The lifecycle vocabulary: `InstanceState`
+
+`InstanceState` is a `string`-typed, **open** vocabulary — consumers must
+tolerate unknown values, because the set grows additively as new subsystems land
+(no breaking change). The values today:
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `StateCreated` | `"Created"` | cloned, not yet running. |
+| `StateActive` | `"Active"` | running its tracks. |
+| `StateCompleted` | `"Completed"` | all tracks ended normally. |
+| `StateTerminating` | `"Terminating"` | tearing tracks down after a cancel. |
+| `StateTerminated` | `"Terminated"` | finished via cancellation. |
+
+## The token projections: `TokenView`, `TokenPath`
+
+A token is a *derived projection* of a track's control-flow position, not a
+stored object. Two flat views expose it:
+
+`Tokens()` returns the live positions:
 
 ```go
-engine.RegisterProcess(proc)          // definition → immutable launch template
-engine.Run(ctx)                       // engine goroutine comes up
-engine.StartLatest(proc.ID())         // one instance; its tracks start running
+type TokenView struct {
+    NodeID   string
+    NodeName string
+    State    TokenState // Alive | WaitForEvent | Consumed | Invalid
+}
 ```
 
-- The instance walks its own copy of the node graph. It begins with a single
-  **track** carrying one **token** out of `start`.
-- Reaching the **diverging** gateway, the instance forks: one **new track per
-  outgoing branch**. That is why `worker-a` and `worker-b` execute concurrently —
-  each runs on its own goroutine (the order they print in is not fixed).
-- The **converging** gateway is a barrier: it counts inbound tracks and holds
-  until *every* branch has arrived. Only then does a single token pass to `end` —
-  the branch tokens are merged, not duplicated.
-- When the last token reaches the end event, the instance transitions
-  `Created → Active → Completed` (visible in the `InstanceState` log lines).
+`History()` returns each track's full recorded path:
 
-> **Note:** The two branches share the instance's data plane but run on separate
-> tracks. Because their functors here only print and signal a channel, they are
-> independent; if branches wrote the same data path you would need to design for
-> that concurrency (see the data-plane guide).
+```go
+type TokenPath struct {
+    TrackID    string
+    ParentID   string      // the track this one forked from
+    MergedInto string      // survivor track it was absorbed into at a join ("" if none)
+    Terminal   TokenState
+    Steps      []StepVisit // NodeID/NodeName/State/At per visited node
+}
+```
 
-## Options & variations
-
-- **Direction** — `gateways.WithDirection(gateways.Diverging)` forks;
-  `Converging` synchronizes. A gateway with one direction only does that job; use
-  a matched pair to fork-then-join.
-- **Branch count** — add more `{split, workerN}` / `{workerN, join}` links and the
-  fork/join scales; the join still waits for all of them.
-- **Many instances** — call `StartLatest` again for a second, fully independent
-  instance; each has its own tracks, tokens, and data.
-- **Other joins** — a parallel join waits for *all* branches. Exclusive routes
-  *one*, inclusive waits for the branches it actually activated. The token model
-  is the same; only the gating differs.
+`TokenState` is the projected value — `Alive` (advancing), `WaitForEvent`
+(parked at a wait node), `Consumed` (merged at a join or ended), or `Invalid`.
+`ParentID` and `MergedInto` together record the fork/merge lineage: a diverging
+gateway sets a child's `ParentID`; a converging gateway sets the absorbed
+track's `MergedInto` to the survivor.
 
 ## See also
 
 - Full example: [`examples/parallel-gateway/`](../../../examples/parallel-gateway/)
-- Related: [Parallel (AND) gateway](../gateways/parallel.md) · [The engine (Thresher)](engine.md) · [Your first process](../getting-started/first-process.md)
+- Related: [How events are processed](events-and-hub.md) · [Scope & the data plane](scope-and-data.md) · [The engine (Thresher)](engine.md) · [Parallel (AND) gateway](../gateways/parallel.md)
+- In practice: [Registering & versioning](../operating/registering-and-versioning.md)
+- Design: [ADR-001 — execution model](../../design/ADR-001-execution-model.md)
+- Full API: `go doc github.com/dr-dobermann/gobpm/pkg/thresher`

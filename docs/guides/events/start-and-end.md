@@ -5,40 +5,114 @@ description: How instances begin and finish.
 
 # Start & End events
 
-Every process needs a way in and a way out. A **start event** marks where an
-instance begins; an **end event** marks where a branch of it finishes. In their
-plainest form — a bare start and a bare end — they carry no trigger and simply
-bracket the flow. This page builds that plain pair, then shows the two most
-common variations: an end that ends the *whole* instance at once, and the
-triggers you can attach. Primary example:
-[`examples/basic-process/`](../../../examples/basic-process/).
+Every process needs a way in and a way out. A **start event** is the
+instantiation point — the engine emits a token from it when an instance begins.
+An **end event** is a completion point — when a token arrives, that branch is
+done. In their plainest form both are one-line constructors that carry no
+trigger and simply bracket the flow; each also accepts trigger options to react
+to (start) or emit (end) a BPMN event. This page is the developer reference:
+the two types, their constructors, every option, and their runtime behavior.
 
-## What it is
+## Taxonomy
 
-A start event has no incoming sequence flow; the engine emits a token from it
-when the instance starts. An end event has no outgoing flow; when a token
-arrives, that branch is done. A process completes normally once *all* of its
-tokens have reached end events.
+| | |
+|---|---|
+| BPMN category | Event → **Start Event** (§10.5.2) · **End Event** (§10.5.6) |
+| Package | `github.com/dr-dobermann/gobpm/pkg/model/events` |
+| Type | `events.StartEvent` · `events.EndEvent` |
+| Embeds | `StartEvent` embeds a catch `Event`; `EndEvent` embeds a throw `Event` (both carry `flow.BaseNode`, `Definitions`, `Triggers`, `Properties`) |
+| Implements | both: `flow.Node`, `flow.EventNode` (`EventClass`, `Definitions`), `exec.NodeExecutor` (`Exec`) · start also `flow.SequenceSource`, `exec.NodeDataProducer` · end also `flow.SequenceTarget`, `exec.NodeDataConsumer` |
+| The work | start: emit a token on the outgoing flows · end: consume the token, emit/terminate on any trigger |
 
-```mermaid
-flowchart LR
-    start((start)) --> work["work<br/>(your step)"] --> done((end))
+Where they sit in the event family: [Events taxonomy](index.md).
+
+## Constructors
+
+```go
+func NewStartEvent(name string, startEventOptions ...options.Option) (*StartEvent, error)
+func NewEndEvent(name string, endEventOptions ...options.Option)     (*EndEvent, error)
 ```
+
+| Parameter | Meaning |
+|---|---|
+| `name` | the event's diagram name (and default id source). |
+| `startEventOptions` / `endEventOptions` | zero or more options (below) — a bare start/end takes none. |
+
+Both return an error — never panic — on an invalid combination (for example a
+trigger the event class does not accept: an end event rejects a timer/conditional
+trigger, a start event rejects a `Cancel`/`Terminate` trigger).
+
+## Options
+
+A plain start and a plain end need **no options at all** — the pair below is the
+whole common surface:
+
+| Option | When you reach for it |
+|---|---|
+| *(none)* | a bare start/end that just brackets the flow. |
+| `WithTerminateTrigger(ted)` | end that tears down the **whole** instance, not just its branch. |
+| `foundation.WithID(id)` | pin a stable id instead of deriving one from the name. |
+
+The full set groups by which event accepts it. **Shared** options (both events)
+come from `foundation` and `data`:
+
+| Shared option | Effect |
+|---|---|
+| `foundation.WithID(id string)` | set a stable id. |
+| `foundation.WithDoc(text, format string)` | attach documentation. |
+| `data.WithProperties(props ...*data.Property)` | declare event-local properties. |
+
+**Start-event trigger options** — the start reacts to the trigger. Accepted
+triggers (`startTriggers`): Message, Signal, Timer, Conditional, Error,
+Escalation, Compensation. A `Cancel` or `Terminate` trigger is rejected:
+
+| Start trigger option | Effect |
+|---|---|
+| `WithMessageTrigger(med)` | instantiate on an incoming message. |
+| `WithSignalTrigger(sed)` | instantiate on a broadcast signal. |
+| `WithTimerTrigger(ted)` | instantiate on a timer (date/cycle/duration). |
+| `WithConditionalTrigger(ced)` | start on a data condition (event sub-process). |
+| `WithErrorTrigger(eed)` · `WithEscalationTrigger(eed)` · `WithCompensationTrigger(ced)` | event-sub-process / in-line sub-process starts. |
+
+**Start-event configuration options** — shape a start that already carries a
+trigger; they do not add a trigger:
+
+| Start config option | Effect |
+|---|---|
+| `WithParallel()` | mark a multiple start "parallel" (all triggers must fire to instantiate). |
+| `WithInterrupting()` | event-sub-process start interrupts its parent scope — the default (§13.5.4), explicit documentation. |
+| `WithNonInterrupting()` | event-sub-process start runs concurrently with the parent; not valid with an Error trigger (§10.5.6). |
+| `WithCorrelationKey(key)` | the `bpmncommon.CorrelationKey` an instantiating message start correlates on — see [Correlation & conversations](../operating/correlation.md). |
+
+**End-event trigger options** — the end **emits** (or acts on) the trigger.
+Accepted triggers (`endTriggers`): Terminate, Cancel, Error, Escalation,
+Message, Signal, Compensation:
+
+| End trigger option | Effect |
+|---|---|
+| `WithTerminateTrigger(ted)` | terminate the whole instance; the instance settles `Terminated`. |
+| `WithErrorTrigger(eed)` | end the process in error, faulting the instance with the error code (§10.5.6). |
+| `WithCancelTrigger(ced)` | abort the enclosing Transaction Sub-Process (§10.7) — valid only inside a transaction. |
+| `WithEscalationTrigger(eed)` · `WithMessageTrigger(med)` · `WithSignalTrigger(sed)` · `WithCompensationTrigger(ced)` | throw the corresponding event as the branch ends. |
+
+> Each trigger has its own guide with the definition constructor and semantics —
+> see [Message](message.md), [Signal](signal.md), [Timer](timer.md),
+> [Error](error.md), [Escalation](escalation.md), [Conditional](conditional.md),
+> [Terminate](terminate.md), [Compensation](compensation.md).
+
+For the complete, always-current signatures run
+`go doc github.com/dr-dobermann/gobpm/pkg/model/events`.
 
 ## Build it
 
-Both are one-line constructors — a name, and (optionally) trigger options. The
-plain pair takes no options at all:
+Both constructors are one line; wire them into the process like any other flow
+node — the start feeds the first node, the last node feeds the end:
 
 ```go
 start, err := events.NewStartEvent("start")
 // ...
 end, err := events.NewEndEvent("end")
-```
-
-Add them to the process like any other flow node, then wire the flow through:
-
-```go
+// ...
 for _, e := range []flow.Element{start, task, end} {
     proc.Add(e)
 }
@@ -46,29 +120,7 @@ flow.Link(start, task)
 flow.Link(task, end)
 ```
 
-That is the whole contract: the start feeds the first node, the last node feeds
-the end.
-
-## Run it
-
-```bash
-cd examples/basic-process && go run .
-```
-
-After the engine's startup banner and config dump, the instance starts at the
-start event, runs the task, and settles at the end event as `Completed`:
-
-```
-2026/07/26 20:19:43 INFO InstanceState Created instance_id=6586177629480081713
-2026/07/26 20:19:43 INFO InstanceState Active instance_id=6586177629480081713
-  ▶ hello, dr.Dobermann (instance started at 2026-07-26 20:19:43.30 …)
-2026/07/26 20:19:43 INFO InstanceState Completed instance_id=6586177629480081713
-✓ basic-process completed (Completed): start → service task (read property + RUNTIME var) → end
-```
-
-## How it works
-
-The engine drives the whole lifecycle around these two events:
+The engine drives the full lifecycle around the pair:
 
 ```go
 engine.RegisterProcess(proc)           // definition → launch template
@@ -77,27 +129,24 @@ h, _ := engine.StartLatest(proc.ID())  // instance emits a token from the start
 state, _ := h.WaitCompletion(ctx)      // returns when tokens reach the ends
 ```
 
-- **Start** is the instantiation point. `StartLatest` launches an instance of the
-  newest registered version and places a token on the start event's outgoing
-  flow; execution proceeds from there.
-- **End** is a completion point, not the instance's death. Each token that
-  reaches an end event ends *its own* branch. The instance settles once *every*
-  live token has reached an end event — that terminal state is what
-  `WaitCompletion` returns (`Completed` for the normal case).
-- A process may hold **several** end events (one per branch); reaching one end
-  does not disturb the others. To tear the whole instance down from a single
-  branch, you need a *terminate* trigger — see below.
+## Run it
 
-> **Note:** A plain end event ends only the branch that reached it. If other
-> branches are still running, the instance keeps going until they too reach an
-> end.
+From [`examples/basic-process/`](../../../examples/basic-process/) — start →
+service task → end. After the startup banner and config dump the instance starts
+at the start event, runs the task, and settles at the end event as `Completed`:
 
-## Options & variations
+```
+2026/07/27 09:17:46 INFO InstanceState Created instance_id=4817251568700577704
+2026/07/27 09:17:46 INFO InstanceState Active instance_id=4817251568700577704
+  ▶ hello, dr.Dobermann (instance started at 2026-07-27 09:17:46.86 …)
+2026/07/27 09:17:46 INFO InstanceState Completed instance_id=4817251568700577704
+✓ basic-process completed (Completed): start → service task (read property + RUNTIME var) → end
+```
 
 **Terminate end event — end the whole instance at once.** Attach a terminate
-trigger to an end event and reaching it tears down the entire instance,
-cancelling any in-flight branches (the running operations' contexts are
-cancelled). The instance settles in `Terminated`, not `Completed`:
+trigger and reaching that end tears down the entire instance, cancelling any
+in-flight branches (their operation contexts are cancelled). The instance
+settles `Terminated`, not `Completed`:
 
 ```go
 termEd, _ := events.NewTerminateEventDefinition()
@@ -105,8 +154,8 @@ terminate, _ := events.NewEndEvent("terminate-order",
     events.WithTerminateTrigger(termEd))
 ```
 
-See the full walkthrough in [`examples/terminate-end-event/`](../../../examples/terminate-end-event/),
-where one branch flags fraud and terminates the instance mid-payment:
+From [`examples/terminate-end-event/`](../../../examples/terminate-end-event/) —
+one branch flags fraud and terminates the instance mid-payment:
 
 ```
   ⚠ fraud-check: fraudulent order detected — terminating the process
@@ -114,20 +163,38 @@ where one branch flags fraud and terminates the instance mid-payment:
   ✗ process-payment: interrupted before it finished
 ```
 
-**Other triggers.** A bare start/end carries no trigger, but both accept
-trigger options to react to (start) or emit (end) an event. Start events take
-`WithMessageTrigger`, `WithSignalTrigger`, `WithTimerTrigger`,
-`WithConditionalTrigger`; end events take `WithErrorTrigger`,
-`WithEscalationTrigger`, `WithMessageTrigger`, `WithSignalTrigger`,
-`WithCancelTrigger`, `WithCompensationTrigger`. Each trigger has its own guide —
-see below.
+## Methods & runtime behavior
 
-**Identity & docs.** Both constructors also accept `foundation.WithID(...)` for
-a stable id and `foundation.WithDoc(...)` for documentation, like every model
-element.
+The engine drives both through these — you rarely call them directly:
+
+| Method | Role |
+|---|---|
+| `Exec(ctx, re) ([]*flow.SequenceFlow, error)` | start: return the outgoing flows (emit the token). End: consume the token; emit its triggers, or `Terminate`/`Cancel`/fault on Terminate/Cancel/Error. |
+| `EventClass()` | `flow.StartEventClass` / `flow.EndEventClass`. |
+| `Definitions()` / `Triggers()` | inspect the event's trigger definitions. |
+| `Clone()` | per-instance copy (config shared by reference, fresh flows). |
+| `SupportOutgoingFlow` (start) / `AcceptIncomingFlow` (end) | flow-wiring guards — start takes no incoming, end takes no outgoing. |
+| `IsInterrupting()` (start) | whether an event-sub-process start interrupts its parent. |
+
+Behavior worth knowing:
+
+- **Start** has no incoming sequence flow; `StartLatest` places a token on its
+  outgoing flow and execution proceeds. A trigger start (message/signal/timer)
+  instantiates when its trigger fires.
+- **End** is a completion point, not the instance's death. Each token that
+  reaches a plain end ends *its own* branch; a process may hold **several** end
+  events and settles `Completed` once *every* live token has reached one. A
+  `Terminate` end tears the whole instance down at once (`re.Terminate()`); a
+  `Cancel` end aborts the enclosing Transaction; an `Error` end faults the
+  instance with the error code. Terminate/Cancel are checked before the emit
+  loop, so they win over a co-located trigger.
+
+> A plain end event ends only the branch that reached it. If other branches are
+> still running, the instance keeps going until they too reach an end.
 
 ## See also
 
-- Full example: [`examples/basic-process/`](../../../examples/basic-process/) · [`examples/terminate-end-event/`](../../../examples/terminate-end-event/)
-- Next: [Your first process](../getting-started/first-process.md) · [Terminate](terminate.md)
-- Triggers: [Message](message.md) · [Signal](signal.md) · [Timer](timer.md)
+- Examples: [`examples/basic-process/`](../../../examples/basic-process/) · [`examples/terminate-end-event/`](../../../examples/terminate-end-event/)
+- Related guides: [Your first process](../getting-started/first-process.md) · [Terminate](terminate.md) · [Boundary events](boundary.md) · [Event sub-processes](event-subprocess.md) · [Correlation & conversations](../operating/correlation.md)
+- Design: [ADR-006 — events and subscriptions](../../design/ADR-006-events-and-subscriptions.md) · [ADR-016 — message correlation](../../design/ADR-016-message-correlation.md)
+- Full API: `go doc github.com/dr-dobermann/gobpm/pkg/model/events`

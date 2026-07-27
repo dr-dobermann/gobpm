@@ -5,24 +5,20 @@ description: Route messages to the right instance by correlation key.
 
 # Correlation & conversations
 
-When many instances of the same process are alive at once, a message must reach
-*exactly one* of them — the instance whose business object (an order, a claim, a
-ticket) the message belongs to. gobpm does this with a **correlation key**: a
-value derived from the message payload that both sides agree on, so the engine
-either instantiates a fresh handler for a new key or routes a follow-up back to
-the running instance that owns it. Primary example:
-[`examples/inter-instance-correlation/`](../../../examples/inter-instance-correlation/).
+When many instances of the same process are alive at once, an incoming message
+must reach *exactly one* of them — the instance whose business object (an order,
+a claim, a ticket) the message belongs to. gobpm resolves this with a
+**correlation key**: a value both sides derive from the message payload. On that
+key the engine either **instantiates** a fresh handler (a keyed message *start*
+event) or **routes** a follow-up back to the running instance that already owns
+the key (a keyed in-instance *receiver*). A sequence of keyed messages threaded
+through one instance is a **conversation**.
 
-## What it is
-
-A **correlation key** is a named set of properties, each extracting a value from
-a message payload. The producer stamps the key onto the envelope; the consumer
-derives the same key from the same payload. Because they match, the engine can:
-
-- **instantiate** one handler per distinct key (a keyed message *start* event —
-  no instance exists until its trigger arrives), and
-- **route** a later message back to the specific running instance that carries
-  that key (a keyed in-instance *receiver*).
+This is a runtime page: it explains the observable routing behavior and the
+public contracts you assemble to declare a key. The internal correlation table
+and its create-or-route-or-join decision live in
+[ADR-016](../../design/ADR-016-message-correlation.md); event-triggered
+instantiation lives in [ADR-015](../../design/ADR-015-event-triggered-instantiation.md).
 
 ```mermaid
 flowchart LR
@@ -39,23 +35,76 @@ flowchart LR
 Two distinct order keys ⇒ two handler instances, disambiguated by the `orderId`
 both sides derive from the payload.
 
-## Build it
+## The routing model
 
-The key is the shared contract. It reads one `orderId` property out of the
-`order placed` payload — a `CorrelationPropertyRetrievalExpression` over the
-message, wrapped in a `CorrelationProperty`, wrapped in a `CorrelationKey`:
+The broker matches subscribers by message **name** first; the correlation key
+then disambiguates *which* instance among same-named subscribers. Given a name
+match, the key drives one of three outcomes:
+
+| Situation | Outcome |
+|---|---|
+| Keyed message start event, no instance owns the key yet | **Instantiate** — the engine spawns one handler for that key (event-triggered, not `StartLatest`). |
+| Keyed message start event, an instance already owns the key | **Join** — delivered to the existing owner (see ADR-016). |
+| Keyed in-instance receiver (`ReceiveTask` / intermediate catch) | **Route** — delivered to the running instance that seeded the key; never a sibling. |
+| No key (only a name) | **Wildcard** — any same-named subscription matches. |
+
+A distinct message *name* per interaction needs no key at all — the key only
+earns its keep when instances of the *same* named message compete.
+
+## The correlation contracts
+
+A key is assembled bottom-up from three `bpmncommon` types. Each carries its
+`foundation.BaseElement` identity and rejects empty/nil inputs at construction.
+
+| Type | Role |
+|---|---|
+| `CorrelationPropertyRetrievalExpression` | binds one extraction expression (`data.FormalExpression`) to the `Message` it reads from. |
+| `CorrelationProperty` | a named, typed **partial key** — one or more retrieval expressions that extract its value per message. |
+| `CorrelationKey` | the composite key — a `Name` plus a slice of `CorrelationProperty` partial keys. |
+
+Their constructors:
 
 ```go
-path := goexpr.Must(nil,
-    data.MustItemDefinition(values.NewVariable("")),
-    func(ctx context.Context, ds data.Source) (data.Value, error) {
-        d, err := ds.Find(ctx, itemID)
-        if err != nil {
-            return nil, fmt.Errorf("read %q from payload: %w", itemID, err)
-        }
-        return values.NewVariable(fmt.Sprint(d.Value().Get(ctx))), nil
-    })
+func NewCorrelationPropertyRetrievalExpression(
+    messagePath data.FormalExpression,
+    messageRef *Message,
+    baseOpts ...options.Option,
+) (*CorrelationPropertyRetrievalExpression, error)
 
+func NewCorrelationProperty(
+    name, pType string,
+    exprs []CorrelationPropertyRetrievalExpression,
+    baseOpts ...options.Option,
+) (*CorrelationProperty, error)
+
+func NewCorrelationKey(
+    name string,
+    props []CorrelationProperty,
+    baseOpts ...options.Option,
+) (*CorrelationKey, error)
+```
+
+| Constructor | Rejects |
+|---|---|
+| `NewCorrelationPropertyRetrievalExpression` | a nil `messagePath` or nil `messageRef`. |
+| `NewCorrelationProperty` | a blank name or an empty expression set. |
+| `NewCorrelationKey` | a blank name or an empty property set. |
+
+The key is then declared on both sides with a `WithCorrelationKey` option — one
+per side, from the package that owns each end:
+
+| Option | Side | Behavior |
+|---|---|---|
+| `activities.WithCorrelationKey(key *bpmncommon.CorrelationKey) SndTaskOption` | producer (`SendTask`) | derive the key from the outgoing payload and stamp it onto the published `Envelope`. A nil key is a no-op (name-match only). |
+| `events.WithCorrelationKey(key *bpmncommon.CorrelationKey) options.Option` | consumer (message start event) | the engine derives an incoming message's key from it to decide create-or-route-or-join. A nil key is rejected. |
+
+## Build it
+
+The key is the shared contract. It reads one `orderId` out of the `order placed`
+payload — a retrieval expression over the message, wrapped in a property,
+wrapped in a key:
+
+```go
 re, _ := bpmncommon.NewCorrelationPropertyRetrievalExpression(path, msgRef)
 prop, _ := bpmncommon.NewCorrelationProperty("orderId", "string",
     []bpmncommon.CorrelationPropertyRetrievalExpression{*re})
@@ -64,7 +113,7 @@ key, _ := bpmncommon.NewCorrelationKey("orderKey",
 ```
 
 **Producer side** — each `SendTask` stamps the key derived from *its* payload
-onto the outgoing envelope with `WithCorrelationKey`:
+onto the outgoing envelope:
 
 ```go
 send, _ := activities.NewSendTask("send-"+id,
@@ -75,8 +124,9 @@ send, _ := activities.NewSendTask("send-"+id,
     activities.WithCorrelationKey(key))
 ```
 
-**Consumer side** — the message *start* event carries the same key. The engine
-instantiates one handler per distinct key; no `StartLatest` call is made for it:
+**Consumer side** — the message *start* event carries the same key. No
+`StartLatest` call is made for it; the engine auto-instantiates one handler per
+distinct key:
 
 ```go
 start, _ := events.NewStartEvent("order-received",
@@ -89,7 +139,7 @@ start, _ := events.NewStartEvent("order-received",
 ```
 
 Only the producer is started explicitly; the handler is registered and left for
-the engine to auto-instantiate:
+the engine to instantiate:
 
 ```go
 engine.RegisterProcess(consumer)          // keyed start → auto-instantiated
@@ -98,13 +148,19 @@ engine.Run(ctx)
 engine.StartLatest(producer.ID())         // only the source is started
 ```
 
+> Both sides build the key from the **same payload item** with the **same
+> retrieval expression**, so their derived values coincide — that match is what
+> pairs a message to a key. The payload item *id* may differ by side (the
+> producer binds `order_ORD-1`, the consumer reads `order_in`); only the
+> *derived value* must be identical.
+
 ## Run it
 
 ```bash
 cd examples/inter-instance-correlation && go run .
 ```
 
-After the engine's startup banner, each order spawns its own handler:
+Each order spawns its own handler, routed by the key:
 
 ```
   ✓ order "ORD-1" instantiated its own handler instance
@@ -112,59 +168,62 @@ After the engine's startup banner, each order spawns its own handler:
 ✓ inter-instance correlation: 2 orders ⇒ 2 handler instances, routed by key
 ```
 
-## How it works
+## Conversations — threading a follow-up
 
-- Both sides build the key from the **same payload item** with the **same
-  retrieval expression**, so their derived values coincide. That match is what
-  lets the engine pair a message to a key.
-- A **keyed message start event** instantiates: when a `order placed` arrives
-  and no instance yet owns its key, the engine spawns one — one instance per
-  distinct key. This is *event-triggered instantiation*, not `StartLatest`.
-- A **keyed in-instance receiver** (a `ReceiveTask` or intermediate catch)
-  routes: a follow-up message carrying the same key is delivered to the running
-  instance that seeded it — never to a sibling. This is how a **conversation**
-  stays isolated; see `conversation-routing` below.
-- The correlation `path` runs against the message payload (a `data.Source`),
-  reading the item by id (`ds.Find(ctx, itemID)`). Keep the item id consistent
-  between producer and consumer.
+A conversation threads a *second* keyed message back to the instance a *first*
+one started. The key is seeded once, on the message start; a later message
+carrying the same key routes to that instance's in-instance receiver — and the
+receiver does **not** re-declare the key. The running instance already owns it,
+so a plain `ReceiveTask` picks up the routed message:
 
-> **Note:** the payload item id differs by side by design — the producer binds
-> its outgoing item (`order_ORD-1`), the consumer reads its incoming item
-> (`order_in`) — but the *derived value* is identical, and that value is the key.
+```go
+await, _ := activities.NewReceiveTask("await-payment",
+    bpmncommon.MustMessage(paymentMsg, data.MustItemDefinition(
+        values.NewVariable(""), foundation.WithID(payItem))),
+    activities.WithoutParams())
+```
 
-## Options & variations
+The driver publishes both messages straight to the broker. `messaging.Envelope`
+carries the routing value in its `CorrelationKey` field (a `string`; empty means
+"no key"):
 
-- **Follow-up routing (conversations).** To thread a *second* message back to
-  the instance a *first* one started, seed the key on the message start, then
-  subscribe an in-instance receiver keyed to the same conversation.
-  [`conversation-routing`](../../../examples/conversation-routing/) publishes
-  `payment received` after `order placed`; each payment routes to its own
-  order's handler with no cross-talk:
+```go
+broker.Publish(ctx, messaging.Envelope{
+    Name: paymentMsg, Payload: o, CorrelationKey: o})
+```
 
-  ```go
-  broker.Publish(ctx, messaging.Envelope{
-      Name: paymentMsg, Payload: o, CorrelationKey: o})
-  ```
+[`conversation-routing`](../../../examples/conversation-routing/) runs two
+conversations (`ORD-1`, `ORD-2`) concurrently; each payment routes back to its
+originating handler with no cross-talk:
 
-- **Publishing straight to the broker.** Instead of a `SendTask`, you can hand
-  the engine a `membroker` and publish envelopes directly — the
-  `CorrelationKey` field on the `messaging.Envelope` carries the routing value:
+```
+handler reported order/payment: ORD-1/ORD-1
+handler reported order/payment: ORD-2/ORD-2
+OK: each payment routed to its originating handler conversation
+```
+
+## Variations
+
+- **Publish straight to the broker.** Instead of a `SendTask`, hand the engine a
+  `membroker` and publish envelopes yourself — the `Envelope.CorrelationKey`
+  field is the routing value:
 
   ```go
   broker := membroker.New()
   engine, _ := thresher.New("demo", thresher.WithMessageBroker(broker))
   ```
 
-- **Multi-property keys.** A `CorrelationKey` takes a slice of
-  `CorrelationProperty`; add more than one when a single business object needs
-  several fields (e.g. `tenantId` + `orderId`) to be unambiguous.
+- **Multi-property keys.** `CorrelationKey.Properties` is a slice — add more than
+  one `CorrelationProperty` when a single business object needs several fields
+  (e.g. `tenantId` + `orderId`) to be unambiguous.
 
-- **Same message name, different key.** The broker matches subscribers by
-  message *name* first (`messageName`); the correlation key then disambiguates
-  *which* instance among same-named subscribers. Distinct names don't need a key.
+- **Same name, different key.** With the same message name across competing
+  instances, the key is what disambiguates *which* one receives it. Distinct
+  names don't need a key.
 
 ## See also
 
-- Full example: [`examples/inter-instance-correlation/`](../../../examples/inter-instance-correlation/)
-- Follow-up routing: [`examples/conversation-routing/`](../../../examples/conversation-routing/)
-- Related: [Message](../events/message.md) · [Process, instance, track, token](../concepts/execution-model.md) · [Definition versioning](versioning.md)
+- Examples: [`examples/inter-instance-correlation/`](../../../examples/inter-instance-correlation/) · [`examples/conversation-routing/`](../../../examples/conversation-routing/)
+- Related guides: [Message](../events/message.md) · [Send / Receive Task](../tasks/send-receive-task.md) · [How events are processed](../concepts/event-processing.md) · [Definition versioning](versioning.md)
+- Design: [ADR-016 — Message correlation](../../design/ADR-016-message-correlation.md) · [ADR-015 — Event-triggered instantiation](../../design/ADR-015-event-triggered-instantiation.md)
+- Full API: `go doc github.com/dr-dobermann/gobpm/pkg/model/bpmncommon`

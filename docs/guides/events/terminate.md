@@ -5,60 +5,105 @@ description: End a whole instance or scope at once.
 
 # Terminate end event
 
-A normal end event just consumes its own token. A **terminate end event** ends
-the whole enclosing scope the moment a single token reaches it: every other
-in-flight branch is cancelled and the instance settles in `Terminated` instead
-of `Completed`. Reach for it when one branch discovers there is no point
-continuing — a fraud hit, a hard business rule, an unrecoverable input. Full
-program: [`examples/terminate-end-event/`](../../../examples/terminate-end-event/).
+A plain end event consumes the one token that reaches it and lets the other
+branches run on. A **terminate end event** carries a *terminate trigger*: the
+instant one token arrives, the engine tears down the whole enclosing scope —
+every other in-flight branch is cancelled and the instance settles in
+`Terminated` instead of `Completed`. Reach for it when one branch decides there
+is no point continuing: a fraud hit, a hard business rule, an unrecoverable
+input. It is an ordinary `EndEvent` plus a `TerminateEventDefinition` trigger —
+this page is the developer reference for building and running one.
 
-## What it is
+## Taxonomy
 
-An ordinary end event carries an extra **terminate trigger**. The engine treats
-it specially: instead of retiring one token and waiting for the rest, it tears
-down the entire scope at once. Here two branches run in parallel; the fraud
-branch reaches the terminate end event and takes the payment branch down with
-it, mid-charge.
+| | |
+|---|---|
+| BPMN category | Event → End Event → **Terminate** trigger (§13.5.6 / `TerminateEventDefinition`) |
+| Package | `github.com/dr-dobermann/gobpm/pkg/model/events` |
+| Type | `events.EndEvent` carrying an `events.TerminateEventDefinition` |
+| Trigger | `flow.TriggerTerminate` (`"Terminate"`) — returned by `TerminateEventDefinition.Type()` |
+| Inherits | the end-event attributes (`BaseElement` id/documentation/extensions) |
+| The work | collapse the enclosing scope — cancel sibling tracks, settle the instance `Terminated` |
 
-```mermaid
-flowchart LR
-    s((start)) --> g{split}
-    g --> f[fraud-check] --> t(("terminate-order<br/>(Terminate)"))
-    g --> p[process-payment] --> pd((payment-done))
+Where it sits in the event family: [Events taxonomy](index.md).
+
+## Constructor
+
+There is no dedicated `NewTerminateEndEvent`. You build a normal end event and
+attach a terminate trigger. Two calls:
+
+```go
+func NewTerminateEventDefinition(
+    baseOpts ...options.Option,
+) (*TerminateEventDefinition, error)
+
+func NewEndEvent(
+    name string,
+    endEventOptions ...options.Option,
+) (*EndEvent, error)
 ```
+
+| Parameter | Meaning |
+|---|---|
+| `baseOpts` | zero or more base-element options for the definition (`foundation.WithID`, `foundation.WithDoc`). |
+| `name` | the end event's diagram name (and default id source). |
+| `endEventOptions` | end-event options — pass `WithTerminateTrigger(ted)` to make it a terminate. |
+
+Both return an error, never panic, on an invalid argument or option combination.
+
+## Options
+
+The terminate is one option on an otherwise plain end event:
+
+| Option | When you reach for it |
+|---|---|
+| `WithTerminateTrigger(ted)` | turn the end event into a terminate — the only thing that distinguishes it from a plain end event. |
+
+```go
+func WithTerminateTrigger(
+    ted *TerminateEventDefinition,
+) options.Option
+```
+
+`WithTerminateTrigger` adds the `TerminateEventDefinition` into the end event's
+config. Drop it and you are left with a plain end event that only consumes its
+own token. An end event accepts the other end-event trigger options too —
+`WithErrorTrigger`, `WithEscalationTrigger`, `WithCancelTrigger`,
+`WithCompensationTrigger`, `WithSignalTrigger`, `WithMessageTrigger` (see
+[Start & End](start-and-end.md)); terminate is the one that collapses the scope.
+
+> The trigger definition needs no arguments of its own —
+> `NewTerminateEventDefinition()` with no base options is the usual call. Its
+> behavior is entirely in *what the engine does* when the token arrives.
+
+For the complete, always-current signatures run
+`go doc github.com/dr-dobermann/gobpm/pkg/model/events`.
 
 ## Build it
 
-A terminate end event is a plain end event plus a terminate trigger. Build the
-trigger with `NewTerminateEventDefinition`, then attach it with
-`WithTerminateTrigger`:
+Build the trigger, then attach it to an end event with `WithTerminateTrigger`.
+The rest of the process is ordinary — a diverging parallel gateway splits into
+two branches; the fraud branch ends at the terminate event, the payment branch
+at a normal end event (from `examples/terminate-end-event/process.go`):
 
 ```go
 termEd, err := events.NewTerminateEventDefinition()
 // ...
 terminate, err := events.NewEndEvent("terminate-order",
     events.WithTerminateTrigger(termEd))
-```
+// ...
+paymentDone, err := events.NewEndEvent("payment-done") // a plain end event
 
-The rest of the process is ordinary. A diverging parallel gateway splits into
-the two branches; the fraud branch ends at the terminate event, the payment
-branch at a normal end event:
-
-```go
 split, _ := gateways.NewParallelGateway(gateways.WithDirection(gateways.Diverging))
-fraudCheck, _ := serviceTask("fraud-check", fraudCheckOp)
-payment, _ := serviceTask("process-payment", paymentOp)
-paymentDone, _ := events.NewEndEvent("payment-done")
-
 flow.Link(start, split)
 flow.Link(split, fraudCheck)
-flow.Link(fraudCheck, terminate)
+flow.Link(fraudCheck, terminate)   // this branch collapses the instance
 flow.Link(split, payment)
-flow.Link(payment, paymentDone)
+flow.Link(payment, paymentDone)    // this branch is cancelled mid-charge
 ```
 
 The payment operation is long-running and **honors its context** — that is what
-lets the engine cancel it when the terminate fires:
+lets the engine cancel it when the terminate fires (from `handlers.go`):
 
 ```go
 select {
@@ -78,53 +123,63 @@ cd examples/terminate-end-event && go run .
 ```
 
 The payment branch starts charging; the fraud branch fires the terminate; the
-payment is cancelled before it can finish, and the instance settles in
+payment context is cancelled before it can finish, and the instance settles in
 `Terminated`:
 
 ```
-  → process-payment: charging the card (takes ~3s)...
   ⚠ fraud-check: fraudulent order detected — terminating the process
+  → process-payment: charging the card (takes ~3s)...
+InstanceState Terminating instance_id=…
   ✗ process-payment: interrupted before it finished
+InstanceState Terminated instance_id=…
 
-✓ terminate-end-event finished (Terminated): the fraud branch hit a Terminate End Event and ended the whole instance before the payment completed
+✓ terminate-end-event finished (Terminated): the fraud branch hit a Terminate
+  End Event and ended the whole instance before the payment completed
 ```
 
-> **Note:** the two branches run concurrently, so `fraud-check` and
-> `process-payment` may print in either order. What is deterministic is the
-> outcome: the payment is interrupted and the instance ends `Terminated`.
+> The two branches run concurrently, so `fraud-check` and `process-payment` may
+> print in either order. What is deterministic is the outcome: the payment is
+> interrupted and the instance ends `Terminated`.
 
-## How it works
+## Methods & runtime behavior
 
-- One token reaching the terminate end event is enough. The engine flips the
-  instance to `Terminating`, cancels the context of every other active track,
-  then settles the instance in `Terminated`.
+The engine drives the end event; you rarely call these directly. The two that
+matter for a terminate:
+
+| Method | Role |
+|---|---|
+| `EndEvent.Exec(ctx, re) ([]*flow.SequenceFlow, error)` | consume the arriving token; a terminate trigger makes it collapse the scope instead of retiring one token. |
+| `TerminateEventDefinition.Type() flow.EventTrigger` | reports `flow.TriggerTerminate` — how the engine recognises the trigger. |
+
+Behavior worth knowing:
+
+- **One token is enough.** The moment a token reaches the terminate end event,
+  the engine flips the instance to `thresher.StateTerminating`, cancels the
+  `context.Context` of every other active track, then settles the instance in
+  `thresher.StateTerminated`. It does **not** wait for the other branches to
+  finish.
 - **Terminated is not Completed.** A normal instance that finishes all branches
-  ends `Completed`; a terminate collapses it to `Terminated`. Read the terminal
-  state from the handle to tell them apart:
+  ends `thresher.StateCompleted`; a terminate collapses it to
+  `thresher.StateTerminated`. Read the terminal state from the handle to tell
+  them apart:
 
   ```go
-  state, _ := h.WaitCompletion(ctx)
-  // state == Terminated after a terminate end event
+  state, _ := h.WaitCompletion(ctx) // blocks to a terminal state
+  // state == thresher.StateTerminated after a terminate end event
   ```
-- Cancellation is **cooperative**. The engine cancels each track's
-  `context.Context`; a long-running operation must select on `ctx.Done()` to
-  actually stop. An operation that ignores its context runs to completion — its
-  side effects still land — even though the instance is already terminating.
 
-## Options & variations
-
+- **Cancellation is cooperative.** The engine cancels each track's context; a
+  long-running operation must `select` on `ctx.Done()` to actually stop. An
+  operation that ignores its context runs to completion — its side effects still
+  land — even though the instance is already terminating.
 - **Scope reach.** A terminate ends the scope it lives in. At the top level of a
   process that is the whole instance; inside an embedded sub-process it ends that
-  sub-process's scope, and the outer process continues from the sub-process's
-  outgoing flow.
-- **No trigger needed to construct it.** `WithTerminateTrigger` is the only thing
-  that turns an end event into a terminate; drop it and you get a plain end event
-  that just consumes its own token.
-- **Pair it with a decision.** Terminate is usually downstream of a gateway or a
-  guard — the "abandon everything" arm of an exclusive/parallel split, not the
-  happy path.
+  sub-process's scope and the outer process continues from the sub-process's
+  outgoing flow. See [Embedded Sub-Process](../subprocesses/embedded.md).
 
 ## See also
 
-- Full example: [`examples/terminate-end-event/`](../../../examples/terminate-end-event/)
-- Related: [Start & End](start-and-end.md) · [Parallel (AND)](../gateways/parallel.md) · [Exclusive (XOR)](../gateways/exclusive.md)
+- Examples: `examples/terminate-end-event/`
+- Related guides: [Start & End](start-and-end.md) · [Parallel (AND)](../gateways/parallel.md) · [Exclusive (XOR)](../gateways/exclusive.md) · [Instance lifecycle](../operating/instance-lifecycle.md)
+- Design: [ADR-001 — Execution model](../../design/ADR-001-execution-model.md)
+- Full API: `go doc github.com/dr-dobermann/gobpm/pkg/model/events`

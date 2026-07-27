@@ -1,42 +1,103 @@
 ---
 title: Inclusive gateway (OR)
-description: Fork every true branch and merge them at the OR-join.
+description: Every-true split and the OR-join.
 ---
 
 # Inclusive gateway (OR)
 
 An **inclusive (OR) gateway** forks *every* branch whose condition is true — not
-exactly one (that's the exclusive XOR) and not all of them unconditionally
-(that's the parallel AND). The converging OR-join then waits for exactly that
-subset of branches before continuing once. Reach for it when several conditions
-can independently hold at the same time. Full program:
-[`examples/inclusive-join/`](../../../examples/inclusive-join/).
+exactly one (that's the exclusive XOR) and not all unconditionally (that's the
+parallel AND). Diverging, it activates the *true subset* of its outgoing flows.
+Converging, it is the **OR-join**: it waits for exactly that subset — no more,
+no less — then continues once. Reach for it when several conditions can hold at
+the same time and you must re-synchronize only the branches that actually ran.
+This page is the developer reference — the type, its constructor, the direction
+option, the join contract it implements, and its runtime behavior.
 
-## What it is
+## Taxonomy
 
-Two inclusive gateways bracket a set of conditional branches: a **diverging**
-split and a **converging** join. At the split, each outgoing sequence flow
-carries a condition; every branch that evaluates true is activated. The join
-knows how many branches the split lit up and merges exactly those, firing once
-downstream.
+| | |
+|---|---|
+| BPMN category | Gateway → **Inclusive (OR) gateway** (§13.3.3) |
+| Package | `github.com/dr-dobermann/gobpm/pkg/model/gateways` |
+| Type | `gateways.InclusiveGateway` |
+| Embeds | `gateways.Gateway` (which embeds `flow.BaseNode`) — direction, default flow, flow-slot checks |
+| Implements | `flow.Node`; `exec.NodeExecutor` (`Exec`); when converging, `exec.ReachabilityJoin` (`Arrive`, `Recheck`, `IsTrailing`) |
+| The work | route a token by the *true subset* of outgoing conditions (split) or reachability-merge the active branches (join) |
 
-```mermaid
-flowchart LR
-    s((start)) --> split{OR-split}
-    split -->|amount over 1000| mr[manager-review] --> join{OR-join}
-    split -->|amount over 500| fc[fraud-check] --> join
-    split -->|amount under 100| ft[fast-track] --> join
-    join --> finalize --> e((end))
+Where it sits in the gateway family: [Gateways taxonomy](index.md).
+
+## Constructor
+
+```go
+func NewInclusiveGateway(opts ...options.Option) (*InclusiveGateway, error)
 ```
 
-With `amount = 1500`, both `> 1000` and `> 500` are true, so `manager-review`
-and `fraud-check` fork; `fast-track` (`< 100`) is never taken, and the join does
-not wait on it.
+| Parameter | Meaning |
+|---|---|
+| `opts` | zero or more options — see below. The one that matters is `WithDirection`, which decides split vs join. |
+
+It returns an error — never panics — on an invalid option (e.g. an unknown
+gateway direction). A gateway with no direction option is `Unspecified`; give
+the split `Diverging` and the join `Converging` explicitly.
+
+## Options
+
+Most inclusive gateways need only one option — the direction:
+
+| Option | When you reach for it |
+|---|---|
+| `WithDirection(Diverging)` | the OR-**split** — forks every branch whose condition is true. |
+| `WithDirection(Converging)` | the OR-**join** — merges exactly the branches the split lit up. |
+
+`NewInclusiveGateway` accepts these option families (from `go doc`):
+
+| Option | Effect |
+|---|---|
+| `gateways.WithDirection(dir GDirection)` | set the gateway direction — `Diverging`, `Converging`, or `Unspecified` (`GDirection` values). |
+| `foundation.WithID(id string)` | set an explicit element id (otherwise derived). |
+| `foundation.WithDoc(...)` | attach documentation. |
+| `options.WithName(name string)` | set the diagram name. |
+
+> Conditions live on the **outgoing sequence flows**, not on the gateway.
+> Attach each split branch's guard with `flow.WithCondition` when you `flow.Link`
+> it — see [Sequence flows](../foundation/flows.md) and
+> [Expressions](../data/expressions.md). The default flow (taken when no
+> condition is true) is registered with the gateway's `UpdateDefaultFlow`, the
+> same pattern as the [Exclusive gateway](exclusive.md).
+
+For the complete, always-current signatures run
+`go doc github.com/dr-dobermann/gobpm/pkg/model/gateways`.
+
+## The ReachabilityJoin contract
+
+A converging `InclusiveGateway` is an `exec.ReachabilityJoin` — a
+`SynchronizingJoin` whose completion is **non-local**: it fires only when no
+live token can still reach an un-marked incoming flow. The engine drives it;
+you never call these yourself:
+
+```go
+type ReachabilityJoin interface {
+    SynchronizingJoin // Arrive(incomingFlowID, arrivingTrackID) (complete bool, merged []string)
+    Recheck(fc FlowChecker) (complete bool, survivor string, merged []string)
+    IsTrailing(arrivingTrackID string) bool
+}
+```
+
+| Member | Role |
+|---|---|
+| `Arrive(flowID, trackID)` | record a token arriving on `flowID`; report count-only completion (every incoming flow marked) and the merged track ids. |
+| `Recheck(fc)` | re-prune now-unreachable incoming flows via the loop's `exec.FlowChecker` and fire without a new arrival — this is what lets an OR-join stop waiting on a branch that was never taken. |
+| `IsTrailing(trackID)` | report a late arrival that reached the join after a reachability fire, so the loop consumes rather than parks it. |
+
+The join owns its per-instance arrival state under its own mutex (ADR-005
+§2.4 / ADR-009); the instance loop supplies reachability and re-checks the join
+when a token parks at it and on every token death.
 
 ## Build it
 
-Create the two gateways with opposite directions — one `Diverging`, one
-`Converging`:
+Create the two gateways with opposite directions — one `Diverging` split, one
+`Converging` join — then wire the diamond:
 
 ```go
 split, err := gateways.NewInclusiveGateway(
@@ -46,8 +107,9 @@ join, err := gateways.NewInclusiveGateway(
     gateways.WithDirection(gateways.Converging))
 ```
 
-Each split branch is a sequence flow with a condition; branches into the join
-carry none. `flow.WithCondition` attaches the guard:
+Each split branch is a sequence flow carrying a condition; branches into the
+join carry none. `flow.WithCondition` attaches the guard, and a condition is a
+`data.FormalExpression` over process data (here it reads the `amount` property):
 
 ```go
 links := []struct {
@@ -78,23 +140,13 @@ for _, l := range links {
 }
 ```
 
-A condition is a `data.FormalExpression` over process data. Here it reads the
-`amount` property and returns a bool:
-
-```go
-func amountCond(pred func(a int) bool) data.FormalExpression {
-    return goexpr.Must(
-        nil,
-        data.MustItemDefinition(values.NewVariable(false)),
-        func(ctx context.Context, ds data.Source) (data.Value, error) {
-            v, err := ds.Find(ctx, "amount")
-            if err != nil {
-                return nil, err
-            }
-            a, _ := v.Value().Get(ctx).(int)
-            return values.NewVariable(pred(a)), nil
-        })
-}
+```mermaid
+flowchart LR
+    s((start)) --> split{OR-split}
+    split -->|amount over 1000| mr[manager-review] --> join{OR-join}
+    split -->|amount over 500| fc[fraud-check] --> join
+    split -->|amount under 100| ft[fast-track] --> join
+    join --> finalize --> e((end))
 ```
 
 ## Run it
@@ -103,8 +155,10 @@ func amountCond(pred func(a int) bool) data.FormalExpression {
 cd examples/inclusive-join && go run .
 ```
 
-After the engine's startup banner, the two true branches run and the join fires
-once (branch print order varies — the active branches run concurrently):
+With `amount = 1500`, both `> 1000` and `> 500` are true, so `manager-review`
+and `fraud-check` fork; `fast-track` (`< 100`) is never taken, and the join does
+not wait on it. After the engine banner, the two active branches run
+concurrently (print order varies) and the join fires once:
 
 ```
 order amount = 1500
@@ -114,35 +168,39 @@ order amount = 1500
 ✓ inclusive-join completed (Completed): the OR-join merged the active branches and fired once
 ```
 
-## How it works
+## Methods & runtime behavior
 
-- **Split** — the diverging gateway evaluates every outgoing condition and
-  activates the *true subset*. With `amount = 1500` that is two branches; a
-  single-true amount would behave like XOR, an all-true amount like AND.
-- **Join** — the converging gateway synchronizes exactly the branches the split
-  lit up. It does not wait for the whole diagram, only for the tokens that are
-  actually in flight, then continues **once** to `finalize`.
-- **Unreachable branches don't stall** — `fast-track` (`< 100`) is never taken.
-  The engine determines it is unreachable for this run and the join ignores it,
-  rather than blocking forever on a branch that will never arrive.
+The engine drives the gateway through these — you rarely call them directly:
 
-> **Note:** The split and join must both be inclusive gateways with matching
-> direction (`Diverging` / `Converging`). The join derives which branches to
-> await from the split's decision — pairing an OR-join with a different split
-> type breaks that accounting.
+| Method | Role |
+|---|---|
+| `Exec(ctx, re) ([]*flow.SequenceFlow, error)` | diverging: return the true-subset of outgoing flows; converging: route the survivor's post-merge continuation. |
+| `Arrive` / `Recheck` / `IsTrailing` | the OR-join synchronization contract (above). |
+| `Direction()` / `DefaultFlow()` / `UpdateDefaultFlow(f)` | inspect the direction, read/register the default flow (via the embedded `Gateway`). |
+| `Node()` / `NodeType()` / `Clone()` | flow-node introspection and per-instance cloning. |
 
-## Options and variations
+Behavior worth knowing:
 
-- **Direction** — `gateways.WithDirection(gateways.Diverging)` for the split,
-  `gateways.Converging` for the join. A single inclusive gateway can also mix
-  incoming and outgoing flows, but the split/join pair is the clear form.
-- **Default flow** — as with the exclusive gateway, a branch can be marked the
-  default to take when no condition is true, avoiding a dead-ended token. See
-  [Exclusive (XOR)](exclusive.md) for the default-flow pattern.
-- **Condition language** — the example uses `goexpr` (native Go predicates). Any
-  `data.FormalExpression` works; see [Expressions](../data/expressions.md).
+- **Split — the true subset.** The diverging gateway evaluates every outgoing
+  condition and activates exactly those that are true. A single-true run behaves
+  like XOR, an all-true run like AND; the OR gateway spans that whole range.
+- **Join — reachability, not a fixed count.** Completion is *count-only* on
+  `Arrive` (every incoming flow already marked) **or** *reachability-based* on
+  `Recheck` — the join fires as soon as no live token can still reach an
+  un-marked incoming flow. That is why a never-taken branch (`fast-track` here)
+  does not stall it: the engine finds it unreachable and the join stops awaiting
+  it, rather than blocking forever.
+- **Fire once.** However many branches merge, the join promotes one survivor
+  track and continues a single token downstream to `finalize`.
+- **Pair the types.** The join derives which branches to await from the split's
+  decision; pairing an OR-join with a different split type breaks that
+  accounting. Keep the split/join both inclusive with matching direction.
 
 ## See also
 
-- Full example: [`examples/inclusive-join/`](../../../examples/inclusive-join/)
-- Related: [Exclusive (XOR)](exclusive.md) · [Parallel (AND)](parallel.md) · [Expressions](../data/expressions.md)
+- Examples: `examples/inclusive-join/`
+- Related guides: [Exclusive (XOR)](exclusive.md) · [Parallel (AND)](parallel.md) · [Complex](complex.md) · [Sequence flows](../foundation/flows.md) · [Expressions](../data/expressions.md)
+- Design: [ADR-005 — Gateways and joins](../../design/ADR-005-gateways-and-joins.md) (§2.9 split, §2.10 OR-join)
+- Full API: `go doc github.com/dr-dobermann/gobpm/pkg/model/gateways`
+</content>
+</invoke>
