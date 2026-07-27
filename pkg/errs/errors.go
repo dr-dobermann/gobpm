@@ -48,6 +48,11 @@ const (
 	DuplicateObject = "DUPLICATE_OBJECT_ERROR"
 	// OperationFailed represents an operation failure error code.
 	OperationFailed = "OPERATION_FAILED"
+	// ConcurrentUpdate signals a compare-and-set conflict: the record
+	// changed under the writer (SRD-070 FR-5) — the fencing vocabulary the
+	// multi-engine locking checks match on (ADR-033 §2.8).
+	ConcurrentUpdate = "CONCURRENT_UPDATE"
+
 	// ConditionFailed represents a condition failure error code.
 	ConditionFailed = "CONDITION_FAILED"
 	// ObjectNotFound represents an object not found error code.

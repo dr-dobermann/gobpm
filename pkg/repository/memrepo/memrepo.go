@@ -10,10 +10,14 @@ import (
 	"log/slog"
 	"sort"
 	"sync"
+	"time"
 
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/repository"
 )
+
+const errorClass = "MEMREPO"
 
 // DefaultMaxTerminal is the default cap on retained terminal records.
 const DefaultMaxTerminal = 1024
@@ -55,11 +59,29 @@ func New(opts ...Option) *Repo {
 	return r
 }
 
-// Save stores or replaces the record under its ID.
+// Save stores the record under its ID with compare-and-set semantics
+// (SRD-070 FR-5): rec.RecVersion must equal the stored version (0
+// creates); the stored version increments on success. A mismatch fails
+// with errs.ConcurrentUpdate — the fencing every adapter mirrors.
 func (r *Repo) Save(_ context.Context, rec repository.InstanceRecord) error {
+	if rec.ID == "" {
+		return errs.New(
+			errs.M("Save: a record needs an ID"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	if cur, ok := r.records[rec.ID]; ok && cur.RecVersion != rec.RecVersion {
+		return errs.New(
+			errs.M("Save: the record changed under the writer"),
+			errs.C(errorClass, errs.ConcurrentUpdate),
+			errs.D("id", rec.ID))
+	}
+
+	rec.RecVersion++
+	rec.Payload = append([]byte(nil), rec.Payload...)
 	r.records[rec.ID] = rec
 
 	if rec.Status.IsTerminal() {
@@ -73,12 +95,16 @@ func (r *Repo) Save(_ context.Context, rec repository.InstanceRecord) error {
 	return nil
 }
 
-// Load returns the record for id; the bool is false when none exists.
+// Load returns a value copy of the record for id; the bool is false
+// when none exists.
 func (r *Repo) Load(_ context.Context, id string) (repository.InstanceRecord, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	rec, ok := r.records[id]
+	if ok {
+		rec.Payload = append([]byte(nil), rec.Payload...)
+	}
 
 	return rec, ok, nil
 }
@@ -98,14 +124,17 @@ func (r *Repo) Delete(_ context.Context, id string) error {
 	return nil
 }
 
-// ListInFlight returns the IDs of all Active instances, sorted for determinism.
-func (r *Repo) ListInFlight(_ context.Context) ([]string, error) {
+// ListInFlight returns the IDs of the CLAIMABLE in-flight instances —
+// Active with no live lease at now — sorted for determinism (the
+// ADR-033 §2.8 recovery listing; Suspended records refuse triggers and
+// never list).
+func (r *Repo) ListInFlight(_ context.Context, now time.Time) ([]string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	ids := make([]string, 0, len(r.records))
 	for id, rec := range r.records {
-		if rec.Status == repository.StatusActive {
+		if rec.Status == repository.StatusActive && rec.Lease.Expired(now) {
 			ids = append(ids, id)
 		}
 	}
