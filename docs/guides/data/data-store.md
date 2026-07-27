@@ -5,48 +5,130 @@ description: Engine-global storage shared across instances.
 
 # Data Store
 
-A **Data Store** is storage that outlives any single process instance and is
-shared across every instance in the running engine. Reach for it when a value
-must survive the instance that produced it — a counter, a cache, a hand-off
-between two otherwise unrelated processes. Full program:
-[`examples/data-store/`](../../../examples/data-store/).
+A **Data Store** is item-aware storage that outlives any single process
+instance and is shared across every instance in the running engine. Reach for it
+when a value must survive the instance that produced it — a counter, a cache, a
+hand-off between two otherwise unrelated processes. There are two halves: the
+engine-side **store** (`datastore.DataStore`, registered on the `Thresher`) and
+the flow-side **reference** (`data_stores.DataStoreReference`, an
+`ItemAwareElement` a task associates with, just like a Data Object). This page
+is the data-model reference — the interfaces, the reference type, and the real
+construction/read/write calls.
 
-## What it is
+## Taxonomy
 
-A `DataObject` lives inside one instance's scope and dies with it. A **Data
-Store** does not: it is registered on the engine under a name, and processes
-reach it through a `DataStoreReference`. One instance writes; a *separate*
-instance — even from a different process — reads the same value back.
+| | |
+|---|---|
+| BPMN category | Data → **Data Store** / **DataStoreReference** (§10.4.1) |
+| Store port | `github.com/dr-dobermann/gobpm/pkg/datastore` — `DataStore`, `Registry` |
+| Default adapter | `github.com/dr-dobermann/gobpm/pkg/datastore/memstore` — `Store`, `Registry` |
+| Flow reference | `github.com/dr-dobermann/gobpm/pkg/model/data_stores` — `DataStoreReference` |
+| Embeds | `data.ItemAwareElement`, `flow.BaseElement` |
+| Registered via | `thresher.WithDataStore(ref, store)` |
+| Contrast | a [Data Object](data-objects.md) is per-instance, scope-resident, and dies with the instance |
 
-```mermaid
-flowchart LR
-    subgraph writer[writer instance]
-        w["writer task"]
-    end
-    subgraph reader[reader instance]
-        r["reader task"]
-    end
-    w -- DataOutputAssociation --> store[("Data Store<br/>shared")]
-    store -- DataInputAssociation --> r
+## The store port
+
+The engine holds each store behind the `datastore.DataStore` interface —
+item-aware data addressed by an opaque name. The default adapter is the
+in-memory `memstore`; a durable adapter is a swap-in behind this same interface.
+
+```go
+type DataStore interface {
+    Get(ctx context.Context, name string) (data.Data, bool, error)
+    Put(ctx context.Context, name string, d data.Data) error
+    Capacity() int
+    IsUnlimited() bool
+}
 ```
 
-The store is registered once on the `Thresher`; both processes name the same
-`storeRef`, so the reference resolves to one shared backing store.
+| Member | Role |
+|---|---|
+| `Get(ctx, name)` | fetch the datum under `name`; the `bool` is `false` when none exists. |
+| `Put(ctx, name, d)` | store (or replace) `d` under `name`. |
+| `Capacity()` | nominal item capacity (§10.4.1) — advisory in `memstore`, a durable adapter may enforce it. |
+| `IsUnlimited()` | whether the store has no capacity bound. |
+
+A `Registry` resolves a store by its reference id. An unregistered ref is an
+error — fail-loud, since a reference to an unknown store is a configuration
+mistake, not a silent auto-provision:
+
+```go
+type Registry interface {
+    Store(ref string) (DataStore, error)
+}
+```
+
+> You rarely call `Get`/`Put`/`Store` yourself — the engine reroutes a task's
+> data associations to the named store for you. You implement this interface
+> only to supply a custom backing (see [Custom Data Store](../extending/data-store.md)).
+
+## The default adapter (memstore)
+
+`memstore` is the non-durable, concurrency-safe in-memory store:
+
+| Symbol | Signature | Role |
+|---|---|---|
+| `memstore.New` | `New(opts ...Option) *Store` | build an in-memory store. |
+| `memstore.WithCapacity` | `WithCapacity(n int) Option` | set a nominal (advisory) capacity. |
+| `memstore.Unlimited` | `const Unlimited = 0` | the default: no capacity bound. |
+| `memstore.NewRegistry` | `NewRegistry() *Registry` | a registry of named stores, registered up front. |
+
+`memstore.Store` implements the full `datastore.DataStore` interface
+(`Get`/`Put`/`Capacity`/`IsUnlimited`); its capacity is advisory — a `Put` past
+a nominal capacity is not rejected.
+
+## The flow reference
+
+A task never names a store directly; it associates with a `DataStoreReference`,
+a flow-scope `ItemAwareElement` that carries a `dataStoreRef`. Data flowing
+into/out of the reference flows into/out of the engine store named by that ref,
+keyed by the reference's `Name()`.
+
+```go
+func New(
+    name, dataStoreRef string,
+    idef *data.ItemDefinition,
+    state *data.SrcState,
+    baseOpts ...options.Option,
+) (*DataStoreReference, error)
+```
+
+| Parameter | Meaning |
+|---|---|
+| `name` | the reference name — also the **key** the value is stored under in the engine store. |
+| `dataStoreRef` | the store's registration id; two references with the same `dataStoreRef` point at one backing store. |
+| `idef` | the item definition (the value's shape). |
+| `state` | the initial `data.SrcState` (e.g. `data.ReadyDataState`). |
+| `baseOpts` | base-element options (id, docs). |
+
+The reference wires to a node through one of two association methods — the only
+difference between a writer and a reader:
+
+| Method | Direction | Effect |
+|---|---|---|
+| `AssociateSource(n, sourceIDs, transformation)` | Node → DataStore | binds node `n`'s output (by source id) **into** the store — a `DataOutputAssociation`. |
+| `AssociateTarget(n, transformation)` | DataStore → Node | binds the store **into** node `n`'s input — a `DataInputAssociation`. |
+
+Both take an optional `data.FormalExpression` transformation (`nil` for a
+straight copy). Introspection: `DataStoreRef()`, `Name()`, `ID()`, `EType()`.
 
 ## Build it
 
-Register an in-memory store on the engine under a ref (here `"shared"`):
+Register one in-memory store on the engine under a ref (here `"shared"`); call
+`WithDataStore` once per distinct store. Registering an already-used ref
+replaces the previous store.
 
 ```go
 eng, err := thresher.New("data-store-demo",
-    thresher.WithDataStore(storeRef, memstore.New()))
+    thresher.WithDataStore("shared", memstore.New()))
 ```
 
-The **writer** task carries an output parameter; a `DataStoreReference` binds
-that output to the store (Node → DataStore) via `AssociateSource`:
+The **writer** task carries an output parameter; a reference to `"shared"`,
+named `"counter"`, binds that output into the store via `AssociateSource`:
 
 ```go
-ref, err := datastores.New("counter", storeRef, idef(), data.ReadyDataState)
+ref, err := datastores.New("counter", "shared", idef(), data.ReadyDataState)
 if err != nil {
     return nil, err
 }
@@ -55,11 +137,12 @@ if err := ref.AssociateSource(writer, []string{itemID}, nil); err != nil {
 }
 ```
 
-The **reader** task, in its own process, references the *same* `storeRef` and
-binds the store to its input (DataStore → Node) via `AssociateTarget`:
+The **reader** task, in its own process, names the *same* `"shared"` store and
+binds it to its input via `AssociateTarget`. Built the same way — only the
+association direction differs:
 
 ```go
-ref, err := datastores.New("counter", storeRef, idef(), data.ReadyDataState)
+ref, err := datastores.New("counter", "shared", idef(), data.ReadyDataState)
 if err != nil {
     return nil, err
 }
@@ -68,8 +151,7 @@ if err := ref.AssociateTarget(reader, nil); err != nil {
 }
 ```
 
-Both references are built the same way; only the association direction differs.
-Inside the reader's Go function, the value arrives by id like any other input:
+Inside the reader's Go function the value arrives by id, like any other input:
 
 ```go
 d, err := r.GetDataByID(itemID)
@@ -87,8 +169,8 @@ if v, ok := d.Value().Get(ctx).(int); ok {
 cd examples/data-store && go run .
 ```
 
-After the engine banner, the writer instance completes, then the reader
-instance reads back what the writer left in the store:
+The writer instance completes, then a *separate* reader instance — launched
+after the writer is done — reads back what the writer left in the store:
 
 ```
 ✓ writer instance stored 42 in DataStore "shared" key "counter"
@@ -96,41 +178,29 @@ instance reads back what the writer left in the store:
 ✓ data-store demo: the value outlived the writer instance and crossed into the reader through the engine-global store
 ```
 
-## How it works
+## Runtime behavior
 
-The engine holds the store; instances only hold references to it.
-
-- **`thresher.WithDataStore(ref, store)`** registers one store under `ref`. Call
-  it once per distinct store; the store outlives every instance and is shared
-  across them. A store is any `datastore.DataStore` — the in-memory `memstore`,
-  or a durable adapter.
-- **`datastores.New(name, storeRef, idef, state)`** builds a
-  `DataStoreReference`. Two references with the same `storeRef` point at the
-  same backing store, so a value written through one is visible through the
-  other — across instances and across processes.
-- **`AssociateSource(node, items, …)`** wires a node's output *into* the store
-  (a `DataOutputAssociation`); **`AssociateTarget(node, …)`** wires the store
-  *into* a node's input (a `DataInputAssociation`).
-- The reader runs in a **different instance** than the writer, launched after
-  the writer completes — yet it still sees `42`. That is the whole point: the
-  value crossed the instance boundary through the engine-global store.
-
-> **Note:** A `DataStoreReference` is *not* a per-instance `DataObject`. If you
-> only need data to live for one instance's lifetime, use a Data Object or a
-> process property — they are scoped and die with the instance.
-
-## Options & variations
-
-- **Backing store.** `memstore.New()` is in-memory and non-durable; swap in any
-  `datastore.DataStore` implementation (for example a durable adapter) under the
-  same ref without touching process code.
-- **Replacing a store.** Registering an already-used `ref` replaces the previous
-  store — useful in tests, deliberate in production.
-- **Direction.** A single reference does one direction per association; use
-  `AssociateSource` to write and `AssociateTarget` to read. A process can hold
-  both against the same store if it needs read-modify-write.
+- **Cross-instance, cross-process.** The reader runs in a *different* instance
+  than the writer — from a different process — yet sees `42`. The value crossed
+  the instance boundary through the engine-global store. That is the whole
+  point; a Data Object cannot do this.
+- **Name is the key.** The reference's `Name()` (`"counter"`) is the store key;
+  the `dataStoreRef` (`"shared"`) selects the backing store. Distinct
+  `dataStoreRef`s never share state.
+- **Fail-loud resolution.** A `DataStoreReference` whose `dataStoreRef` was never
+  registered on the engine is a configuration error, not a silent no-op — the
+  registry rejects the unknown ref.
+- **Not per-instance.** A `DataStoreReference` is *not* a `DataObject`. If you
+  only need data for one instance's lifetime, use a [Data Object](data-objects.md)
+  or a process property — they are scoped and die with the instance.
+- **Swappable backing.** `memstore.New()` is in-memory and non-durable; a
+  durable adapter behind the same `datastore.DataStore` interface swaps in under
+  the same ref without touching process code — see [Custom Data Store](../extending/data-store.md).
 
 ## See also
 
-- Full example: [`examples/data-store/`](../../../examples/data-store/)
-- Related: [Overview](overview.md) · [Native Go structs](native-structs.md) · Compare with per-instance data in [`examples/process-data/`](../../../examples/process-data/)
+- Example: [`examples/data-store/`](../../../examples/data-store/)
+- Related guides: [Data Objects](data-objects.md) · [Item definitions & item-aware elements](item-definitions.md) · [The value model](value-model.md)
+- Extend it: [Custom Data Store](../extending/data-store.md)
+- Design: [ADR-030 — Data Objects and Store](../../design/ADR-030-data-objects-and-store.md)
+- Full API: `go doc github.com/dr-dobermann/gobpm/pkg/datastore` · `go doc github.com/dr-dobermann/gobpm/pkg/model/data_stores`

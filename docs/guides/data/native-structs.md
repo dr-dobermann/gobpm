@@ -5,30 +5,56 @@ description: Wrap your own Go types as live process data.
 
 # Native Go structs
 
-When your host application already has its own domain types — an `Order`, a
-`Receipt` — you don't have to translate them into a parallel process model.
-`adapters.Wrap` returns a **live** `Record` view over your struct: the engine
-reads and writes it by path, straight into the original object. Full program:
-[`native-structs`](../../../examples/native-structs/).
+When your host application already owns its domain types — an `Order`, a
+`Receipt` — you don't translate them into a parallel process model. `adapters.Wrap`
+returns a **live** `data.Value` view over your struct that satisfies `data.Record`:
+the engine reads it, writes it, walks it by path, and diffs it — every access
+landing on the real Go field, with no copy to keep in sync. This is the one place
+the engine's anti-reflection stance is deliberately relaxed, and the relaxation is
+bounded — reflection walks a type once, at its first `Wrap`, off the execution path.
 
-## What it is
+## Taxonomy
 
-A native-struct adapter *wraps*, it does not *convert*. The wrapped value is a
-`data.Value` the engine treats as an ordinary structural record, but every path
-access lands on the real Go field. Struct tags reconcile Go naming with process
-naming: `gobpm:"total"` exposes `Total` as `total`, and `gobpm:"-"` hides a
-field from the process entirely.
+| | |
+|---|---|
+| BPMN category | data value adapter (ADR-011 v.6 §2.9.5) — an engine extension, not a BPMN element |
+| Package | `github.com/dr-dobermann/gobpm/pkg/model/data/adapters` |
+| Produces | a `data.Value` that also satisfies `data.Record` — a live view over a `*struct` |
+| Consumed by | every data seam unchanged: path walks, `values.SetPath`, `DiffValues`, conditions, mappings |
+| The work | wrap a host `*struct` so it participates as process data — *wrap, not convert* |
 
-```mermaid
-flowchart LR
-    s((start)) --> quote["quote<br/>commit wrapped Receipt"]
-    quote --> reprice["reprice<br/>commit wrapped Receipt"]
-    reprice --> xor{"order.total > 100"}
-    xor -->|true| premium((premium))
-    xor -->|default| standard((standard))
+Where it sits: this completes the structural-data quartet — see
+[Reading & writing by path](structural.md) for the record/list/map seam it plugs into.
+
+## Construction
+
+Three functions build or register an adapter. `Wrap` is the workhorse:
+
+```go
+func Wrap(ptr any) (data.Value, error)
+func MustWrap(ptr any) data.Value
+func Register[T any](build func(v *T) data.Value) error
 ```
 
-## Build it
+| Function | Meaning |
+|---|---|
+| `Wrap(ptr)` | wrap a live `*struct` as a navigable `data.Value` (satisfying `data.Record`). Returns a classified error on a nil, non-pointer, pointer-to-non-struct (unregistered), or nil-pointer argument. |
+| `MustWrap(ptr)` | the panic-on-error twin of `Wrap` (the `values.MustRecord` idiom) — for a type you control. |
+| `Register[T](build)` | install a custom adapter factory for `T`, pre-empting the reflection builder — the `Marshaler`-analog seam for types you can't tag. |
+
+> `MustWrap` panics on a type it can't adapt (for example a non-struct). Use
+> `Wrap` and check the error when the pointer comes from outside your control.
+
+## How a struct maps to process data
+
+The `gobpm:"..."` struct tag reconciles Go naming with process naming, and it is
+the whole contract:
+
+| Tag form | Effect |
+|---|---|
+| `gobpm:"total"` | expose field `Total` under the process path segment `total`. |
+| `gobpm:"-"` | hide the field from the process entirely — invisible to conditions, mappings, and the commit-diff. |
+| nested struct / `[]T` | surfaces as a live sub-record / list — `order.items.0.price` resolves into the slice element. |
 
 Tag your host types so the engine knows the process-facing names:
 
@@ -46,8 +72,35 @@ type Item struct {
 }
 ```
 
-Wrap a live instance and hand it to the process as a property. The wrapped
-value goes in wherever a `data.Value` is expected:
+## The Record contract
+
+The value `Wrap` returns satisfies `data.Record` — the optional structural
+capability of a `data.Value`. That's what makes it navigable by `.field` path steps:
+
+```go
+type Record interface {
+    Value
+
+    // Keys lists the field names in insertion order.
+    Keys() []string
+
+    // Field returns the named field's value, or a classified
+    // errs.ObjectNotFound error when the field is absent.
+    Field(ctx context.Context, name string) (Value, error)
+
+    // SetField sets (adds or replaces) the named field.
+    SetField(ctx context.Context, name string, v Value) error
+}
+```
+
+You never implement `Record` yourself for a native struct — the adapter does it.
+A typed adapter rejects unknown field names on `SetField` (its shape is fixed by
+the Go type), unlike the permissive dynamic `values.Record`.
+
+## Build it
+
+Wrap a live instance and hand it to the process as a property. The wrapped value
+goes wherever a `data.Value` is expected:
 
 ```go
 order := &Order{ID: "A-1", Total: 90,
@@ -63,7 +116,7 @@ proc, err := process.New("native-structs",
             data.ReadyDataState)))
 ```
 
-Because the view is live, a host-side write through it lands on the struct:
+Because the view is live, a host-side structural write lands on the real struct:
 
 ```go
 values.SetPath(context.Background(), wrapped,
@@ -71,8 +124,8 @@ values.SetPath(context.Background(), wrapped,
 // order.Total is now 150 — the write went through the view.
 ```
 
-The gateway condition reaches into the same struct by path — no engine change,
-just the ordinary data seam:
+A gateway condition reaches into the same struct by path — no engine change,
+just the ordinary `data.Source` seam:
 
 ```go
 d, err := ds.Find(ctx, "order.total")
@@ -83,8 +136,8 @@ total, _ := d.Value().Get(ctx).(int)
 return values.NewVariable(total > 100), nil
 ```
 
-A task can commit a wrapped host type as its output, and the commit-diff treats
-it as an ordinary record:
+A task commits a wrapped host type as its output, and the commit-diff treats it
+as an ordinary record:
 
 ```go
 return data.MustItemDefinition(
@@ -111,39 +164,27 @@ the commit-diff reports a `DataChange` fact per changed path:
   ✓ completed (Completed)
 ```
 
-## How it works
+## Behavior worth knowing
 
-- **Wrap, not convert.** `adapters.Wrap(&order)` returns a `Record` view backed
-  by the pointer. Reads and writes by path (`values.SetPath`, `ds.Find`) go
-  through the view into the real fields — there is no copy to keep in sync.
-- **Tags map names.** The `gobpm:"..."` tag is the field's process-facing path
-  segment; `gobpm:"-"` removes a field from the process surface (`Secret` above
-  is invisible to conditions, mappings, and the commit-diff).
-- **Nested types surface as sub-records.** `Items []Item` becomes a live list of
-  sub-records, so `order.items.0.price` resolves into the slice element.
-- **Reflection runs once per type.** The first `Wrap` of a given type reflects
-  its layout and caches a per-type accessor; every later access is a cached
-  index lookup, not a fresh reflect call.
+| Aspect | What happens |
+|---|---|
+| Wrap, not convert | `Wrap(&order)` returns a `Record` view backed by the pointer; reads/writes by path go through it into the real fields — no copy to reconcile. |
+| Reflection is once per type | the first `Wrap` of a type reflects its layout and caches a per-type accessor (the `encoding/json` type-cache pattern); every later access is a cached-index lookup, not a fresh reflect call — hot-path reflection stays out. |
+| Committing wrapped outputs | returning a wrapped struct from a task is how its per-path changes reach the commit-diff and surface as `DataChange` facts (the `receipt` lines above). |
+| Concurrency | after `Wrap`, access the value through the adapter (guarded by the root mutex). A host that mutates the struct directly, concurrently with process evaluation, owns that synchronization itself. |
 
-> **Note:** `adapters.MustWrap` panics on a type it can't adapt (for example a
-> non-struct). Use `adapters.Wrap` and check the error when the type comes from
-> outside your control.
+## Variations
 
-## Options & variations
-
-- **A type you can't tag.** If you can't add `gobpm` tags to a third-party type,
-  register an adapter for it with `adapters.Register[T]` — the marshaler-analog
-  seam — and it wraps like a tagged one.
+- **A type you can't tag.** For a third-party type you can't add `gobpm` tags to
+  — or `time.Time`, a map type — register an adapter with `adapters.Register[T]`,
+  the `Marshaler`-analog seam. Registration is init-time by convention; a later
+  `Register` replaces the cache entry for future wraps only.
 - **A type that is already a value.** A type that implements `data.Value` itself
-  participates as-is; no wrapping needed.
-- **Committing wrapped outputs.** Returning a wrapped struct from a task is how
-  its per-path changes reach the commit-diff and surface as `DataChange` facts —
-  see the `receipt` lines in the run above.
+  participates as-is — the passthrough kind, no wrapping needed.
 
 ## See also
 
-- Full example: [`native-structs`](../../../examples/native-structs/)
-- Related: [Structural data](structural.md) — reading and writing records, lists,
-  and maps by path.
-- Related: [Data overview](overview.md) — the value model and how data is
-  resolved by name.
+- Example: [`native-structs`](../../../examples/native-structs/)
+- Related guides: [Reading & writing by path](structural.md) · [Data overview](overview.md) · [Expressions](expressions.md)
+- Design: [ADR-011 — process data flow](../../design/ADR-011-process-data-flow.md)
+- Full API: `go doc github.com/dr-dobermann/gobpm/pkg/model/data/adapters`

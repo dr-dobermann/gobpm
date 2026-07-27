@@ -1,46 +1,130 @@
 ---
 title: Business Rule Task
-description: Evaluate a decision table to route or compute.
+description: Evaluate a decision table.
 ---
 
 # Business Rule Task
 
-A **Business Rule Task** hands a named decision to a pluggable rule engine,
-takes back one result, and commits it to process data — so a downstream
-condition or task can read the answer with zero ceremony. Reach for it when a
-"which rate / which tier / which route" choice belongs in a rules artifact, not
-scattered across `if`-branches. Full example:
-[`examples/business-rule-task/`](../../../examples/business-rule-task/).
+A Business Rule Task hands a named **decision** to the engine's configured
+Business Rule Engine, takes back the result, and commits it to process data — so
+a downstream condition or task reads the answer with zero ceremony. Reach for it
+when a "which rate / which tier / which route" choice belongs in a rules
+artifact, not scattered across `if`-branches. This page is the developer
+reference — the type, its constructor, the options it accepts, the rule-engine
+contract behind it, and its runtime behavior.
 
-## What it is
+The decision reference is **opaque to the task**: the engine wired at Thresher
+construction resolves it — a registered name for the in-core `gorules` registry,
+a DMN decision id/key for an external engine — so the same model runs under
+whichever engine the embedder chose.
 
-One flow node that names a **decision** (`"discount"`) on the engine's
-configured **rule engine**. The engine evaluates that decision against process
-data and yields a result row; the task folds a single-row / single-output
-result into a scalar process variable. Here the committed `discount_pct` then
-drives an exclusive split.
+## Taxonomy
 
-```mermaid
-flowchart LR
-    start((start)) --> classify["classify<br/>Business Rule Task<br/>decision: discount"]
-    classify -->|"discount_pct > 10"| big[apply-big-discount]
-    classify -->|default| small[apply-small-discount]
-    big --> endB((end-big))
-    small --> endS((end-small))
+| | |
+|---|---|
+| BPMN category | Activity → Task → **Business Rule Task** (§13.3.3) |
+| Package | `github.com/dr-dobermann/gobpm/pkg/model/activities` |
+| Type | `activities.BusinessRuleTask` |
+| Inherits | the `Activity` attributes and associations — I/O sets, boundary events, loop characteristics, compensation |
+| Implements | `flow.Node`, `exec.NodeExecutor` (`Exec`), `flow.ActivityNode` (`ActivityType`, `AddBoundaryEvent`), `LoadData`/`UploadData` |
+| The work | a decision *reference* evaluated on the configured `rules.Engine` |
+
+Where it sits in the activity family: [Activities taxonomy](index.md).
+
+## Constructor
+
+```go
+func NewBusinessRuleTask(
+    name, decisionRef string,
+    opts ...options.Option,
+) (*BusinessRuleTask, error)
 ```
+
+| Parameter | Meaning |
+|---|---|
+| `name` | the task's diagram name (and default id source). |
+| `decisionRef` | the decision to evaluate (e.g. `"discount"`) — resolved by the configured engine, never by the task. |
+| `opts` | zero or more foundation/activity options (below). |
+
+Unlike the Service Task, the work is **not** passed to the constructor — the task
+binds only the reference, and the engine supplies the logic at run time. It
+returns an error, never panics, on an invalid combination.
+
+## Options
+
+The Business Rule Task takes no rule-specific options — most tasks are the bare
+constructor. The options it does accept are the shared **activity options** (any
+activity carries them):
+
+| Option | When you reach for it |
+|---|---|
+| `WithParameters(dir, params…)` | declare typed `data.Input` / `data.Output` associations. |
+| `WithoutParams()` | declare no parameters (the decision reads process data by name). |
+| `WithCompensation()` | mark the task a compensation handler (armed, off the normal flow). |
+
+The full activity-option family:
+
+| Activity option | Effect |
+|---|---|
+| `WithParameters(dir data.Direction, params ...*data.Parameter)` | declare typed inputs/outputs. |
+| `WithoutParams()` | declare no parameters. |
+| `WithCompensation()` | mark the task a compensation handler (armed, off the normal flow). |
+| `WithLoop(lc)` / `WithMultyInstance()` | repeat the activity — see [Standard Loop](../iteration/standard-loop.md), [Multi-Instance](../iteration/multi-instance.md). |
+| `WithStartQuantity(n)` / `WithCompletionQuantity(n)` | BPMN token quantities (default 1). |
+
+> Boundary events are attached with the method `AddBoundaryEvent`, not a
+> constructor option — see [Boundary events](../events/boundary.md).
+
+For the complete, always-current signatures run
+`go doc github.com/dr-dobermann/gobpm/pkg/model/activities`.
+
+## The rule-engine contract
+
+The task itself is a thin caller — the pluggable half you configure (or
+implement) is the `rules.Engine`, wired with `thresher.WithRuleEngine`. The
+default is the in-core `gorules` registry; a DMN or table adapter plugs in behind
+the same interface:
+
+```go
+type Engine interface {
+    // Type names the engine kind ("##GoRules", "##DMN", …).
+    Type() string
+    // Evaluate resolves decisionRef and evaluates it against the read-only
+    // process-data surface, returning the result rows (nil/empty when the
+    // decision produces no committable result). An unknown ref is an error.
+    Evaluate(
+        ctx context.Context,
+        decisionRef string,
+        r service.DataReader,
+    ) ([]Row, error)
+}
+
+type Row map[string]data.Value
+```
+
+You rarely implement `Engine` directly — the batteries-included `gorules`
+registry lets you register a decision as a plain Go function:
+
+```go
+type DecisionFunc func(ctx context.Context, r service.DataReader) (Row, error)
+```
+
+An engine that ingests external artifacts (a DMN adapter, the table engine) also
+implements `rules.Deployer` (`Deploy(ctx, definition []byte) error`); an engine
+that emits audit facts implements the optional `rules.ReporterBinder`. See
+[Custom rule engine](../extending/rule-engine.md).
 
 ## Build it
 
-The task itself is one line — a name and the decision reference. It carries no
-inline logic:
+The task is one line — a name and the decision reference. It carries no inline
+logic:
 
 ```go
 classify, err := activities.NewBusinessRuleTask("classify", "discount")
 ```
 
-The decision lives on the **rule engine**. The batteries-included choice is the
-`gorules` registry: register the decision by name as a plain Go function that
-reads process data and returns one `rules.Row`:
+The decision lives on the rule engine. Register it by name on a `gorules`
+registry — a function that reads process data and returns one `rules.Row`:
 
 ```go
 reg := gorules.New()
@@ -61,8 +145,8 @@ err := reg.Register("discount",
     })
 ```
 
-Plug the engine into the Thresher and wire the flows. The condition reads the
-committed `discount_pct` like any other property:
+Plug the engine into the Thresher and wire the flows. The outgoing condition
+reads the committed `discount_pct` like any other property:
 
 ```go
 engine, _ := thresher.New("business-rule-task-engine",
@@ -73,6 +157,10 @@ flow.Link(classify, big, flow.WithCondition(cond)) // discount_pct > 10
 sf, _ := flow.Link(classify, small)
 classify.SetDefaultFlow(sf.ID())                   // fallback lane
 ```
+
+> Call `data.CreateDefaultStates()` once before building data-carrying elements
+> — it registers the standard data states the properties and committed result
+> rely on.
 
 ## Run it
 
@@ -87,64 +175,67 @@ conditional flow routes to the big-discount lane:
   [decision discount] total=250 -> discount_pct=15
   [apply-big-discount] wholesale rate applied
 
-✓ business-rule-task completed (Completed): the pluggable rule engine (##GoRules) evaluated "discount" for a 250 order, the task committed discount_pct=15, and the conditional flow routed to apply-big-discount
+✓ business-rule-task completed (Completed): the pluggable rule engine
+  (##GoRules) evaluated "discount" for a 250 order, the task committed
+  discount_pct=15, and the conditional flow routed to apply-big-discount
 ```
 
-## How it works
+## Methods & runtime behavior
 
-The task is a thin caller over a **pluggable rule-engine seam** — the model
-element never knows which engine is behind it.
+The engine drives the task through these — you rarely call them directly:
 
-- **Lookup by name.** `NewBusinessRuleTask(name, decision)` binds only the
-  decision *reference*. At run time the task asks the configured rule engine to
-  evaluate that reference against the instance's data.
-- **1-row / 1-output fold.** When the decision yields exactly one row with one
-  output, the task commits it as a **scalar** process variable named by that
-  output key (`discount_pct`). No output mapping to declare.
-- **Data by name.** The decision reads inputs (`total`) through the ordinary
-  process-data walk-up, and the committed result is readable the same way — so
-  a `goexpr` condition on the outgoing flow can compare `discount_pct > 10`
-  directly.
+| Method | Role |
+|---|---|
+| `Exec(ctx, re) ([]*flow.SequenceFlow, error)` | evaluate the decision on the configured engine and commit the result rows; return the outgoing flows. |
+| `LoadData` / `UploadData` | bind declared inputs before, commit outputs after. |
+| `DecisionRef() string` | the decision reference the task evaluates. |
+| `AddBoundaryEvent(be)` / `BoundaryEvents()` | attach / inspect boundary events. |
+| `ActivityType()` / `TaskType()` | introspection. |
+| `ForCompensation()` | whether the task is a compensation handler. |
+
+Behavior worth knowing:
+
+- **Call, complete, commit.** `Exec` calls the engine with the decision
+  reference, then commits the returned rows and completes on return (ADR-027
+  §2.3). An **empty result commits nothing** — the task still completes.
+- **1-row / 1-output fold.** A decision that yields exactly one row with one
+  output commits it as a **scalar** process variable named by that output key —
+  no output mapping to declare. The example's `discount_pct` is then readable by
+  a `goexpr` condition directly.
+- **Data by name.** The runtime environment satisfies `service.DataReader`
+  structurally, so the decision reads exactly what an in-process Go operation
+  reads — the ordinary process-data walk-up.
 - **Fails loud.** An unknown decision reference surfaces a classified error
-  through the normal fault machinery, not a silent no-op. Every evaluation also
-  emits a `Rules` observability fact carrying the decision reference, the engine
-  kind, and the result shape.
+  through the normal fault machinery, not a silent no-op.
 
-> **Note:** Run `data.CreateDefaultStates()` once before building
-> data-carrying elements — it registers the standard data states the properties
-> and committed result rely on.
+## Swap the engine, keep the model
 
-## Options & variations
+The same `NewBusinessRuleTask("classify", "discount")` runs on any engine passed
+to `thresher.WithRuleEngine(...)`. The `decision-table` example moves from the
+in-core registry to a JSON **decision table** (`adapters/dtable`) where
+**structure is data** and **behavior stays compiled Go** — conditions and yields
+registered by name in a `Vocabulary`:
 
-- **Swap the engine, keep the model.** The same
-  `NewBusinessRuleTask("classify", "discount")` runs on any engine passed to
-  `thresher.WithRuleEngine(...)`. Move from the in-core `gorules` registry to a
-  JSON **decision table** (`adapters/dtable`) — or a future DMN adapter —
-  without touching the process.
-- **Decision tables (structure as data).** The `decision-table` example deploys
-  a JSON grid where **structure is data** and **behavior stays compiled Go**:
-  the rules reference conditions and yields registered by name in a
-  `Vocabulary`.
+```go
+vocab := dtable.NewVocabulary()
+vocab.MustAddCondition("big-order", dtable.GT("total", 100)).
+    MustAddYield("wholesale", func(context.Context, service.DataReader) (rules.Row, error) {
+        return rules.Row{"discount_pct": values.NewVariable(15)}, nil
+    })
 
-  ```go
-  vocab := dtable.NewVocabulary()
-  vocab.AddCondition("vip", dtable.Eq("tier", "vip"))
-  vocab.AddCondition("big-order", dtable.GT("total", 100))
-  vocab.AddYield("default-discount", func(context.Context, service.DataReader) (rules.Row, error) {
-      return rules.Row{"discount_pct": values.NewVariable(float64(5))}, nil
-  })
+dec, _ := dtable.NewJSONDecoder(vocab)
+engine, _ := dtable.New(dtable.WithDecoder(dec))
+engine.Deploy(context.Background(), tableJSON) // structure only; a redeploy replaces
+```
 
-  dec, _ := dtable.NewJSONDecoder(vocab)
-  engine, _ := dtable.New(dtable.WithDecoder(dec))
-  engine.Deploy(context.Background(), tableJSON)
-  ```
-
-  The embedded artifact carries only the rule grid, the **FIRST** hit policy,
-  and the names; re-ordering rules or moving a threshold is a redeploy, and an
-  unresolved name fails the deploy loud.
+The embedded artifact carries only the rule grid, the hit policy, and the names;
+re-ordering rules or moving a threshold is a redeploy, and an unresolved name
+fails the deploy loud. See [Custom rule engine](../extending/rule-engine.md) and
+[ADR-029](../../design/ADR-029-decision-table-engine-adapter.md).
 
 ## See also
 
-- Full example: [`examples/business-rule-task/`](../../../examples/business-rule-task/)
-- Decision table adapter: [`examples/decision-table/`](../../../examples/decision-table/)
-- Related: [Script Task](script-task.md) · [Exclusive (XOR) gateway](../gateways/exclusive.md) · [Expressions](../data/expressions.md)
+- Examples: `examples/business-rule-task/` (registry) · `examples/decision-table/` (table adapter)
+- Related guides: [Service Task](service-task.md) · [Script Task](script-task.md) · [Exclusive gateway](../gateways/exclusive.md) · [Expressions](../data/expressions.md) · [Custom rule engine](../extending/rule-engine.md)
+- Design: [ADR-027 — Business Rule Task & rule-engine seam](../../design/ADR-027-business-rule-task-and-rule-engine-seam.md) · [ADR-029 — Decision Table engine adapter](../../design/ADR-029-decision-table-engine-adapter.md)
+- Full API: `go doc github.com/dr-dobermann/gobpm/pkg/model/activities` · `go doc github.com/dr-dobermann/gobpm/pkg/rules`

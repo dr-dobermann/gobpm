@@ -1,39 +1,90 @@
 ---
 title: Exclusive gateway (XOR)
-description: First-true data-based routing with a default flow.
+description: First-true routing with a default flow.
 ---
 
 # Exclusive gateway (XOR)
 
-An **exclusive gateway** sends a token down exactly **one** outgoing flow. It
-evaluates each branch's condition and takes the **first true** one; if none is
-true it takes the **default flow**. Reach for it when a single data value
-decides which of several mutually exclusive paths a process should follow. Full
-program: [`examples/gateway-routing/`](../../../examples/gateway-routing/).
+An **exclusive gateway** sends a token down exactly **one** outgoing flow. On a
+diverging split it evaluates each branch's condition in order and takes the
+**first true** one; if none is true it takes the **default flow**. Reach for it
+when a single data value decides which of several mutually exclusive paths a
+process should follow. This page is the developer reference — the type, its
+constructor, options, how it decides, and its runtime behavior.
 
-## What it is
+## Taxonomy
 
-One split node with several outgoing flows. Every non-default flow carries a
-**condition** (a boolean expression over process data); one flow is marked the
-**default**. At runtime the gateway checks the conditions in order and routes
-the token to the first flow whose condition is true — the default flow is taken
-only when every condition is false.
+| | |
+|---|---|
+| BPMN category | Gateway → **Exclusive Gateway** (§13.3.2) — data-based XOR decision |
+| Package | `github.com/dr-dobermann/gobpm/pkg/model/gateways` |
+| Type | `gateways.ExclusiveGateway` (embeds `gateways.Gateway`) |
+| Inherits | the `Gateway` attributes — direction, default flow, the shared flow-condition machinery |
+| Implements | `flow.Node`, `exec.NodeExecutor` (`Exec`), `Clone` |
+| The work | pick the **first** outgoing flow whose condition is true, else the **default** flow |
 
-```mermaid
-flowchart LR
-    s((start)) --> xor{XOR}
-    xor -->|amount greater than 1000| mr[manager-review] --> er((end-review))
-    xor -->|default| aa[auto-approve] --> ea((end-approve))
+Where it sits in the gateway family: [Gateways taxonomy](index.md).
+
+## Constructor
+
+```go
+func NewExclusiveGateway(opts ...options.Option) (*ExclusiveGateway, error)
 ```
 
-The example routes an order by its `amount`: over 1000 goes to manager review,
-otherwise it auto-approves. The demo runs with `amount = 2500`, so it takes the
-manager-review branch.
+| Parameter | Meaning |
+|---|---|
+| `opts` | zero or more gateway options (below) — an exclusive gateway needs none for the common case. |
+
+It returns an error — never panics — if an option rejects (for example an
+invalid direction). The routing itself (conditions, default) is configured on
+the **outgoing flows**, not the constructor.
+
+## Options
+
+Most exclusive gateways need **no options at all** — you construct the gateway
+and then configure routing on the flows leaving it:
+
+| Option | When you reach for it |
+|---|---|
+| *(none)* | the common case — the split has explicit incoming/outgoing flows and its conditions live on the flows. |
+| `WithDirection(dir)` | pin the gateway's direction (`Diverging` to split, `Converging` to merge) instead of leaving it `Unspecified`. |
+
+The full option set — all four accepted by `NewExclusiveGateway`:
+
+| Gateway option | Effect |
+|---|---|
+| `foundation.WithID(id string)` | set an explicit element id (otherwise derived). |
+| `foundation.WithDoc(doc, format)` | attach documentation. |
+| `options.WithName(name string)` | set the gateway's diagram name. |
+| `gateways.WithDirection(dir GDirection)` | set direction — one of `Unspecified` (default), `Converging`, `Diverging`, `Mixed`. |
+
+> Routing is **flow-level**, not gateway-level. A branch's condition is set with
+> `flow.WithCondition` on the `flow.Link` call; the fall-through branch is
+> nominated as the default with the gateway's `UpdateDefaultFlow` method — see
+> [Sequence flows](../foundation/flows.md).
+
+For the complete, always-current signatures run
+`go doc github.com/dr-dobermann/gobpm/pkg/model/gateways`.
+
+## Routing configuration
+
+An exclusive split is configured through the flows that leave it, not through
+constructor options. Two pieces make it route:
+
+| Piece | Call | Role |
+|---|---|---|
+| Branch condition | `flow.Link(xor, target, flow.WithCondition(expr))` | a boolean `data.FormalExpression` over process data — the branch is taken when it evaluates true. |
+| Default flow | `xor.UpdateDefaultFlow(df)` | nominate one **conditionless** outgoing flow as the fall-through, taken only when no condition matched. |
+
+`UpdateDefaultFlow` validates: the flow must be one of the gateway's actual
+outgoing flows (else `there is no outgoing flow #…`), and it must **not** carry a
+condition (else `default flow shouldn't have a condition expression`). Passing
+`nil` clears the default.
 
 ## Build it
 
-Give the process a property for the condition to read, then create the gateway
-and the two branch tasks:
+Give the process a property for the condition to read, then create the gateway.
+No options are needed — the routing lives on the flows:
 
 ```go
 proc, err := process.New("order-routing",
@@ -68,7 +119,8 @@ if err := xor.UpdateDefaultFlow(df); err != nil {
 ```
 
 The condition is a `data.FormalExpression` that reads a named value from the
-data source and returns a boolean:
+data source and returns a boolean — `ds.Find(ctx, "amount")` resolves the
+process property **by name**, the same way a task reads data:
 
 ```go
 func amountGt1000() data.FormalExpression {
@@ -94,8 +146,8 @@ func amountGt1000() data.FormalExpression {
 cd examples/gateway-routing && go run .
 ```
 
-After the engine's startup banner, the gateway picks the branch and the
-instance completes:
+The demo runs with `amount = 2500`, so the gateway takes the manager-review
+branch and the instance completes:
 
 ```
 order amount = 2500
@@ -103,36 +155,41 @@ order amount = 2500
 ✓ gateway-routing completed (Completed): the exclusive gateway chose the branch by data
 ```
 
-## How it works
+Set `amount` at or below 1000 in `main.go` and the token falls through to the
+auto-approve (default) branch instead.
 
-- The gateway evaluates its conditional flows and takes the **first true**
-  one — exactly one token leaves the gateway, never more.
-- Each condition is evaluated against the instance's data plane; `ds.Find(ctx,
-  "amount")` resolves the process property **by name**, the same way a task
-  reads data.
-- If no condition is true, the **default flow** is taken. The default flow
-  itself has no condition — it is the explicit fall-through you register with
-  `UpdateDefaultFlow`.
-- Order matters when two conditions could both be true: the first true flow in
-  evaluation order wins, and the rest are skipped.
+## Methods & runtime behavior
 
-> **Note:** Always register a default flow. Without one, an input that matches
-> no condition leaves the token with nowhere to go — the default is the
-> guaranteed exit that keeps the gateway total over its inputs.
+The engine drives the gateway through these — you configure routing, then rarely
+call them directly:
 
-## Options & variations
+| Method | Role |
+|---|---|
+| `Exec(ctx, re) ([]*flow.SequenceFlow, error)` | evaluate the outgoing flows and return the **single** chosen flow (or the default). |
+| `UpdateDefaultFlow(f)` / `MustUpdateDefaultFlow(f)` | nominate (or clear) the conditionless fall-through flow; the `Must*` form panics on an invalid flow. |
+| `DefaultFlow()` | the currently registered default flow, or `nil`. |
+| `Direction()` | the gateway's `GDirection`. |
+| `Clone()` | per-instance copy — direction and default flow are shared by reference as immutable configuration. |
 
-- **Change the routing value.** The demo hard-codes `amount = 2500` in
-  `main.go`; set it at or below 1000 and the token falls through to the
-  auto-approve (default) branch instead.
-- **More branches.** Add further `flow.Link(xor, …, flow.WithCondition(…))`
-  flows; each gets its own condition and they are evaluated in order, first-true
-  wins, default last.
-- **Expression style.** The condition here is a Go functor via `goexpr`. For a
-  string expression evaluated by the engine, see
-  [Expressions](../data/expressions.md).
+How `Exec` decides (ADR-005 §2.8):
+
+- With **one or zero** outgoing flows the gateway is a pass-through — the
+  incoming token flows straight on; no conditions are evaluated.
+- Otherwise it walks the outgoing flows in order and takes the **first** flow
+  whose condition evaluates true — exactly one token leaves the gateway, never
+  more. The remaining flows are skipped even if they would also match.
+- The **default flow** is never condition-tested and is selected only when no
+  other flow matched. A non-default flow **without** a condition is never
+  selected.
+- If no condition matched **and** there is no default flow, `Exec` returns a
+  `no available outgoing flow` error — an unroutable token is a modeling error,
+  so always register a default.
+- Each condition is a boolean expression evaluated against the instance's data
+  plane through the engine's expression engine; a non-bool result is an error.
 
 ## See also
 
-- Full example: [`examples/gateway-routing/`](../../../examples/gateway-routing/)
-- Related: [Parallel (AND)](parallel.md) · [Inclusive (OR)](inclusive.md) · [Expressions](../data/expressions.md)
+- Examples: `examples/gateway-routing/`
+- Related guides: [Parallel (AND)](parallel.md) · [Inclusive (OR)](inclusive.md) · [Complex](complex.md) · [Event-based](event-based.md) · [Sequence flows](../foundation/flows.md) · [Expressions](../data/expressions.md)
+- Design: [ADR-005 — Gateways and joins](../../design/ADR-005-gateways-and-joins.md)
+- Full API: `go doc github.com/dr-dobermann/gobpm/pkg/model/gateways`
