@@ -460,3 +460,40 @@ func (tw *timeWaiter) Done() <-chan struct{} {
 }
 
 var _ eventproc.EventWaiter = (*timeWaiter)(nil)
+
+// TimerPlan computes a timer definition's firing plan without arming a
+// waiter (SRD-070 FR-3): the absolute deadline the FIRST firing lands
+// on and the remaining cycle count. The checkpoint records it at
+// park time so a restored Duration timer re-arms at the ORIGINAL
+// deadline instead of restarting (SRD-070 §4.2).
+func TimerPlan(
+	eDefI flow.EventDefinition,
+	ep eventproc.EventProcessor,
+	rt renv.EngineRuntime,
+) (time.Time, int, error) {
+	if eDefI == nil || rt == nil {
+		return time.Time{}, 0, errs.New(
+			errs.M("TimerPlan: a nil EventDefinition or EngineRuntime "+
+				"isn't allowed"),
+			errs.C(TimerWaiterError, errs.EmptyNotAllowed))
+	}
+
+	eDef, ok := eDefI.(*events.TimerEventDefinition)
+	if !ok {
+		return time.Time{}, 0, errs.New(
+			errs.M("TimerPlan: not a TimerEventDefinition"),
+			errs.C(TimerWaiterError, errs.TypeCastingError))
+	}
+
+	tw := timeWaiter{rt: rt}
+	if err := tw.parseEDef(eDef, ep); err != nil {
+		return time.Time{}, 0, err
+	}
+
+	deadline := tw.next
+	if deadline.IsZero() {
+		deadline = rt.Clock().Now().Add(tw.duration)
+	}
+
+	return deadline, tw.cyclesLeft, nil
+}

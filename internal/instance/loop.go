@@ -160,6 +160,10 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 		return
 	}
 
+	// The activation checkpoint (SRD-070 FR-4): the instance's first
+	// durable record — created-and-running with its seeded data.
+	ls.checkpointNow(ctx)
+
 	done := ctx.Done()
 	for ls.active > 0 {
 		select {
@@ -178,6 +182,7 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 				"track_id", eventTrackID(ev))
 
 			ls.apply(ctx, ev)
+			ls.maybeCheckpoint(ctx, ev.kind)
 
 		case req := <-inst.taskReq:
 			// A human acting on a parked UserTask (Take/Complete). Serviced on the
@@ -216,6 +221,12 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	ls.discardLedgers(inst.sc.root)
 
 	inst.settleFinalState(ls.stopping)
+
+	// The terminal checkpoint (SRD-070 FR-4): the record flips to its
+	// terminal status. WithoutCancel: a Terminate arrives BY canceling
+	// ctx, and the terminal record is the one write that must not be
+	// lost to that cancellation.
+	ls.checkpointNow(context.WithoutCancel(ctx))
 }
 
 // spawn registers a track, adds it to the read snapshot, counts it active, and

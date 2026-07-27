@@ -91,3 +91,63 @@ func TestNewWaiter(t *testing.T) {
 	_, err = waiters.CreateWaiter(mockHub, ep, condEDef, enginert.Default())
 	requireClass(err, errs.ObjectNotFound)
 }
+
+// TestTimerPlan (SRD-070 FR-3): the checkpoint's park-time deadline
+// computation — absolute for a Time expression, now+duration for a
+// Duration one, loud on bad input.
+func TestTimerPlan(t *testing.T) {
+	ep := mockeventproc.NewMockEventProcessor(t)
+	rt := enginert.Default()
+
+	t.Run("a Time expression pins its absolute deadline",
+		func(t *testing.T) {
+			when := time.Now().Add(2 * time.Hour).Truncate(time.Second)
+
+			eDef := events.MustTimerEventDefinition(
+				goexpr.Must(nil,
+					data.MustItemDefinition(values.NewVariable(time.Now())),
+					func(_ context.Context, _ data.Source) (data.Value, error) {
+						return values.NewVariable(when), nil
+					}), nil, nil)
+
+			deadline, cycles, err := waiters.TimerPlan(eDef, ep, rt)
+			require.NoError(t, err)
+			require.True(t, when.Equal(deadline))
+			require.Zero(t, cycles)
+		})
+
+	t.Run("a Cycle+Duration pair lands relative to now",
+		func(t *testing.T) {
+			eDef := events.MustTimerEventDefinition(nil,
+				goexpr.Must(nil,
+					data.MustItemDefinition(values.NewVariable(int(0))),
+					func(_ context.Context, _ data.Source) (data.Value, error) {
+						return values.NewVariable(2), nil
+					}),
+				goexpr.Must(nil,
+					data.MustItemDefinition(values.NewVariable(time.Duration(0))),
+					func(_ context.Context, _ data.Source) (data.Value, error) {
+						return values.NewVariable(30 * time.Minute), nil
+					}))
+
+			before := rt.Clock().Now()
+
+			deadline, cycles, err := waiters.TimerPlan(eDef, ep, rt)
+			require.NoError(t, err)
+			require.WithinDuration(t,
+				before.Add(30*time.Minute), deadline, 2*time.Second)
+			require.Equal(t, 2, cycles)
+		})
+
+	t.Run("nil inputs and a foreign definition are loud",
+		func(t *testing.T) {
+			_, _, err := waiters.TimerPlan(nil, ep, rt)
+			require.Error(t, err)
+
+			sig := events.MustSignalEventDefinition(&events.Signal{
+				BaseElement: *foundation.MustBaseElement(),
+			})
+			_, _, err = waiters.TimerPlan(sig, ep, rt)
+			require.Error(t, err)
+		})
+}

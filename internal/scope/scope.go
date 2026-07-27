@@ -126,36 +126,98 @@ func (p *Scope) SnapshotAt(from DataPath) ([]data.Data, error) {
 				errs.E(err))
 		}
 
-		c, ok := d.(interface {
-			Clone() (*data.ItemAwareElement, error)
-		})
-		if !ok {
-			return nil, errs.New(
-				errs.M("SnapshotAt: datum %q at %q isn't clonable",
-					n, string(from)),
-				errs.C(errorClass, errs.InvalidObject))
-		}
-
-		iae, err := c.Clone()
+		cp, err := cloneDatum("SnapshotAt", from, d)
 		if err != nil {
-			return nil, errs.New(
-				errs.M("SnapshotAt: couldn't clone %q at %q", n, string(from)),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.E(err))
-		}
-
-		cp, err := data.NewParameter(d.Name(), iae)
-		if err != nil {
-			return nil, errs.New(
-				errs.M("SnapshotAt: couldn't wrap %q at %q", n, string(from)),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.E(err))
+			return nil, err
 		}
 
 		snap = append(snap, cp)
 	}
 
 	return snap, nil
+}
+
+// cloneDatum value-copies one scope datum as a named parameter — the
+// shared body of SnapshotAt and OwnData.
+func cloneDatum(op string, at DataPath, d data.Data) (data.Data, error) {
+	c, ok := d.(interface {
+		Clone() (*data.ItemAwareElement, error)
+	})
+	if !ok {
+		return nil, errs.New(
+			errs.M("%s: datum %q at %q isn't clonable",
+				op, d.Name(), string(at)),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	iae, err := c.Clone()
+	if err != nil {
+		return nil, errs.New(
+			errs.M("%s: couldn't clone %q at %q", op, d.Name(), string(at)),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
+	cp, err := data.NewParameter(d.Name(), iae)
+	if err != nil {
+		return nil, errs.New(
+			errs.M("%s: couldn't wrap %q at %q", op, d.Name(), string(at)),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
+	return cp, nil
+}
+
+// OpenPaths lists every open scope path in sorted order — the
+// checkpoint capture's enumeration surface (SRD-070 FR-4): each scope
+// records exactly once, with its OWN data (no walk-up duplication).
+func (p *Scope) OpenPaths() []DataPath {
+	p.m.Lock()
+	defer p.m.Unlock()
+
+	paths := make([]DataPath, 0, len(p.scopes))
+	for dp := range p.scopes {
+		paths = append(paths, dp)
+	}
+
+	sort.Slice(paths, func(i, j int) bool { return paths[i] < paths[j] })
+
+	return paths
+}
+
+// OwnData value-copies the data committed DIRECTLY at path (never the
+// walk-up view — SnapshotAt owns that), sorted by name for determinism.
+func (p *Scope) OwnData(path DataPath) ([]data.Data, error) {
+	p.m.Lock()
+	defer p.m.Unlock()
+
+	book, ok := p.scopes[path]
+	if !ok {
+		return nil, errs.New(
+			errs.M("OwnData: scope %q isn't open", string(path)),
+			errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	names := make([]string, 0, len(book))
+	for n := range book {
+		names = append(names, n)
+	}
+
+	sort.Strings(names)
+
+	out := make([]data.Data, 0, len(names))
+
+	for _, n := range names {
+		cp, err := cloneDatum("OwnData", path, book[n])
+		if err != nil {
+			return nil, err
+		}
+
+		out = append(out, cp)
+	}
+
+	return out, nil
 }
 
 // GetSource resolves addr at the named source, dispatching addr verbatim to

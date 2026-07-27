@@ -58,12 +58,22 @@ type Instance struct {
 	// back to its caller's Call Activity node. Empty for a top-level instance.
 	parentInstanceID string
 	callNodeID       string
+	// cpOwner arms checkpointing (SRD-070 FR-4); its int-sized siblings
+	// (cpTTL/cpRecVersion/cpIncarnation) sit at the struct tail, outside
+	// the GC pointer scan (fieldalignment).
+	cpOwner string
 	foundation.BaseElement
 	observers  []obsReg
 	trackCount atomic.Int64
 	obsMu      sync.RWMutex
 	obsID      uint64
 	state      atomic.Uint32
+	// The checkpoint cursors (SRD-070 FR-4): the lease TTL, the CAS
+	// record version, the lease fencing incarnation (grows on reclaim,
+	// SRD-071+). Non-pointer tail — see cpOwner above.
+	cpTTL         time.Duration
+	cpRecVersion  int64
+	cpIncarnation int64
 }
 
 // newConfig holds the optional parameters of New. Its zero value builds a
@@ -78,6 +88,10 @@ type newConfig struct {
 	// child instance emits (SRD-050 FR-4); empty for a top-level instance.
 	parentInstanceID string
 	callNodeID       string
+	// cpOwner arms consistent-cut checkpointing (SRD-070 FR-4): the
+	// lease owner (engine id). Empty = volatile instance (today's
+	// default). cpTTL sits at the struct tail (fieldalignment).
+	cpOwner string
 	// invoker launches child instances for the Call Activities this instance
 	// runs (SRD-050 FR-3); nil for a library embedder without a thresher — a
 	// call then fails fast with a classified no-invoker error.
@@ -87,6 +101,8 @@ type newConfig struct {
 	// payload (bindEventPayload). Kept last so its len/cap fall outside the
 	// GC pointer scan (fieldalignment).
 	rootData []data.Data
+	// cpTTL is the checkpoint lease's validity window (SRD-070 FR-4).
+	cpTTL time.Duration
 }
 
 // newOption tunes New. The born-event / conversation-key options are exposed
@@ -225,6 +241,8 @@ func New(
 		td:                  td,
 		parentInstanceID:    cfg.parentInstanceID,
 		callNodeID:          cfg.callNodeID,
+		cpOwner:             cfg.cpOwner,
+		cpTTL:               cfg.cpTTL,
 	}
 	inst.state.Store(uint32(Created))
 	inst.announceCreated()

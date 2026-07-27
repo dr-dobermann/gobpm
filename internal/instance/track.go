@@ -44,8 +44,10 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
+	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub/waiters"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
@@ -190,7 +192,12 @@ type track struct {
 	// compScopeSeed, on a compensation event-sub handler host, is the snapshot
 	// committed into the handler's fresh child scope at open (shadowing
 	// reads). Set by the loop before spawn.
+	// timerDeadline pins a parked timer wait for the checkpoint
+	// (SRD-070 FR-3) — recorded at arming, zero otherwise (timerCycles
+	// rides below the slices for fieldalignment).
+	timerDeadline time.Time
 	compScopeSeed []data.Data
+	timerCycles   int
 	loopCounter   int
 	m             sync.RWMutex
 	stopIt        atomic.Bool
@@ -455,6 +462,17 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 		proc := eventproc.EventProcessor(t)
 		if d.Type() == flow.TriggerMessage {
 			proc = t.instance
+		}
+
+		// A timer wait records its firing plan for the checkpoint
+		// (SRD-070 FR-3): the ABSOLUTE deadline captured at arming is the
+		// restore authority — re-evaluating a Duration would restart it.
+		if d.Type() == flow.TriggerTimer {
+			deadline, cycles, err := waiters.TimerPlan(d, proc, t.instance)
+			if err == nil {
+				t.timerDeadline = deadline
+				t.timerCycles = cycles
+			}
 		}
 
 		if err := t.instance.RegisterEvent(proc, d); err != nil {

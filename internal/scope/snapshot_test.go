@@ -111,3 +111,47 @@ type failingCloneDatum struct {
 func (d *failingCloneDatum) Clone() (*data.ItemAwareElement, error) {
 	return nil, errors.New("forged clone failure")
 }
+
+// TestOwnDataAndOpenPaths (SRD-070 FR-4): the checkpoint capture's
+// enumeration surface — per-scope OWN data, no walk-up duplication.
+func TestOwnDataAndOpenPaths(t *testing.T) {
+	ctx := context.Background()
+	root := mustPath(t, "/proc")
+
+	p, err := New(root, nil)
+	require.NoError(t, err)
+
+	_, err = p.Commit(root, structData(t, "x", values.NewVariable(1)))
+	require.NoError(t, err)
+
+	child := mustPath(t, "/proc/sub")
+	require.NoError(t, p.OpenScope(child))
+
+	_, err = p.Commit(child, structData(t, "y", values.NewVariable(2)))
+	require.NoError(t, err)
+
+	t.Run("OpenPaths lists every open scope, sorted",
+		func(t *testing.T) {
+			paths := p.OpenPaths()
+			require.Equal(t, []DataPath{root, child}, paths)
+		})
+
+	t.Run("OwnData carries only the scope's own book",
+		func(t *testing.T) {
+			own, err := p.OwnData(child)
+			require.NoError(t, err)
+			require.Len(t, own, 1, "y only — x is the parent's")
+			require.Equal(t, "y", own[0].Name())
+
+			// value copy: later mutation is invisible.
+			_, err = p.Commit(child, structData(t, "y", values.NewVariable(9)))
+			require.NoError(t, err)
+			require.Equal(t, 2, own[0].Value().Get(ctx))
+		})
+
+	t.Run("an unopened path is loud",
+		func(t *testing.T) {
+			_, err := p.OwnData(mustPath(t, "/proc/ghost"))
+			require.Error(t, err)
+		})
+}
