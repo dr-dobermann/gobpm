@@ -176,6 +176,6 @@ Replacing the generator is an extension seam — see
 
 ## See also
 
-- Related guides: [The entity stack](../concepts/entities.md) · [Sequence flows & associations](flows.md) · [Custom ID generator](../extending/id-generator.md)
+- Related guides: [The entity stack](../concepts/entities.md) · [Sequence flows](flows.md) · [Data associations](data-associations.md) · [Custom ID generator](../extending/id-generator.md)
 - Design: [SAD-001 — vision & architecture](../../design/SAD-001-vision-and-architecture.md)
 - Full API: `go doc github.com/dr-dobermann/gobpm/pkg/model/foundation`

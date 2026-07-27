@@ -22,7 +22,7 @@ condition and default-flow mechanics that make a gateway route, and the shared
 | Edge type | `flow.SequenceFlow` (embeds `flow.BaseElement`) |
 | Constructor | `flow.Link(src, trg, opts…)` — also `CloneFlow` / `MustCloneFlow` for snapshot cloning |
 | Endpoints | a `flow.SequenceSource` (outgoing) → a `flow.SequenceTarget` (incoming) |
-| Data association | `data.Association` — moves a value along a data edge |
+| Data association | `data.Association` — moves a value along a data edge ([Data associations](data-associations.md)) |
 | Artifact association | `artifacts.Association` — ties an annotation/artifact to a flow object |
 
 Only Gateways, Activities, and Events can be sequence-flow endpoints — they are
@@ -203,48 +203,49 @@ type SequenceTarget interface {
 }
 ```
 
+## Runtime — how a token traverses the graph
+
+At build time a sequence flow is just an edge; at run time it carries a
+**token**. After a node finishes executing, the engine reads its `Outgoing()`
+edges and moves the token forward — and this is where the mechanics get
+interesting:
+
+- **One outgoing flow** → the token continues on the **same track** to the next
+  node; no new goroutine.
+- **Several outgoing flows** → the token **splits**. The **first** edge stays on
+  the current track (its next step); each remaining edge **forks a new track**
+  (one per edge), run concurrently. A **cyclic** edge back to the node itself is
+  preferred as the first (continuing) edge, so a self-loop stays on its own track
+  instead of spawning one.
+- **No outgoing flow** → the track **ends** and its token is consumed.
+
+Which edges actually receive a token depends on the node:
+
+- a plain node (activity/event) with several outgoing edges is an **implicit
+  parallel split** — every edge is taken;
+- a **gateway** filters first — an [Exclusive](../gateways/exclusive.md) gateway
+  takes the first true edge (then its default), an
+  [Inclusive](../gateways/inclusive.md) every true edge, a
+  [Parallel](../gateways/parallel.md) all of them.
+
+Condition evaluation is declaration-ordered (the `Outgoing()` slice above), so
+the exclusive first-true rule is deterministic. Forked tracks re-converge at a
+**synchronizing join** — see [Process, instance, track,
+token](../concepts/execution-model.md) and the gateway pages.
+
 ## Associations
 
-A **sequence flow orders execution**; an **association does not**. There are two
-distinct association types, in two packages — don't confuse them:
+A **sequence flow orders execution**; an **association does not**. Two distinct
+association types live in two packages — don't confuse them:
 
 | Type | Package | Purpose |
 |---|---|---|
-| `data.Association` | `pkg/model/data` | a **data association** — moves an item's value into a node's input or out of its output. |
-| `artifacts.Association` | `pkg/model/artifacts` | a **visual association** (BPMN Artifact) — ties a text annotation or artifact to a flow object; carries no runtime value. |
-
-Data associations are how a node consumes/produces named data; the source and
-target sides are declared by the `flow.AssociationSource` / `AssociationTarget`
-contracts a node implements:
-
-```go
-type AssociationSource interface {
-    Node
-    Outputs() []*data.ItemAwareElement
-    BindOutgoing(oa *data.Association) error
-}
-
-type AssociationTarget interface {
-    Node
-    Inputs() []*data.ItemAwareElement
-    BindIncoming(ia *data.Association) error
-}
-```
-
-A `data.Association` is built with `data.NewAssociation(target, opts…)` and
-resolves its value through `Value(ctx)` / `Find(ctx, name)`. The data plane —
-item definitions, item-aware elements, and how associations move values — is
-covered on its own pages: [Item definitions & item-aware
-elements](../data/item-definitions.md) and [Reading & writing by
-path](../data/structural.md).
-
-The `artifacts.Association` is a plain struct (`Source`, `Target`, `Direction`)
-used for diagram-level annotations and to point a compensation activity at what
-it compensates; it does not participate in token flow.
+| `data.Association` | `pkg/model/data` | a **data association** — moves an item's value into a node's input or out of its output. Covered in full on **[Data associations](data-associations.md)**. |
+| `artifacts.Association` | `pkg/model/artifacts` | a **visual association** (BPMN Artifact) — a plain `Source`/`Target`/`Direction` struct that ties a text annotation to a flow object, or points a compensation activity at what it compensates. Carries **no** runtime value and does not participate in token flow. |
 
 ## See also
 
 - Examples: `examples/gateway-routing/` (conditions + default flow)
-- Related guides: [Foundation elements](index.md) · [Exclusive gateway](../gateways/exclusive.md) · [Item definitions](../data/item-definitions.md)
-- Design: [ADR-005 — gateways & joins](../../design/ADR-005-gateways-and-joins.md)
+- Related guides: [Data associations](data-associations.md) · [Foundation elements](index.md) · [Process, instance, track, token](../concepts/execution-model.md) · [Exclusive gateway](../gateways/exclusive.md)
+- Design: [ADR-005 — gateways & joins](../../design/ADR-005-gateways-and-joins.md) · [ADR-001 — execution model](../../design/ADR-001-execution-model.md)
 - Full API: `go doc github.com/dr-dobermann/gobpm/pkg/model/flow`

@@ -45,7 +45,8 @@ New here? Start with **[Your first process](getting-started/first-process.md)**.
 ## Part 4 — Element reference
 
 - [Foundation elements](foundation/index.md) — `BaseElement`, `Documentation`, `Identifyer`, the shared attributes every element carries. *(`pkg/model/foundation`)*
-- [Sequence flows & associations](foundation/flows.md) — connecting nodes; `flow.Link`, conditions, defaults. *(`pkg/model/flow`)*
+- [Sequence flows](foundation/flows.md) — connecting nodes; `flow.Link`, conditions, defaults, and how a token traverses/splits at runtime. *(`pkg/model/flow`)*
+- [Data associations](foundation/data-associations.md) — the data edge; `AssociateSource`/`AssociateTarget`, source/target routing, transformations. *(`pkg/model/data`)*
 
 **Tasks** — [Activities taxonomy](tasks/index.md) *(`pkg/model/activities`)*
 - [Service Task](tasks/service-task.md) *(`service-task-worker`)* · [User Task](tasks/user-task.md) *(`usertask`)* · [Script Task](tasks/script-task.md) *(`script-task`)* · [Business Rule Task](tasks/business-rule-task.md) *(`business-rule-task`)* · [Send / Receive Task](tasks/send-receive-task.md) *(`message-send-receive`)* · [Manual Task](tasks/manual-task.md)
