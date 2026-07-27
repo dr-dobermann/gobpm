@@ -1,45 +1,56 @@
 # Authoring the gobpm user guides
 
-These guides teach **how to use gobpm** — the counterpart to `docs/design/`
-(SAD/ADR/SRD), which records *how and why the code was built*. A guide is
-usage-first: a developer should be able to read it, copy the code, run it, and
-see the result. Keep design rationale in `docs/design/`; link to it only when a
-reader genuinely needs the "why".
+These guides are the **developer manual + reference** for gobpm — the counterpart
+to `docs/design/` (SAD/ADR/SRD, which record *how and why the code was built*).
+The audience is **software developers embedding the engine**. A page must give
+the real API surface — taxonomy, constructor, options, the interfaces you
+implement, methods, behavior — grounded in `go doc`, not narrated from an
+example. Usage (a minimal build + real run) is secondary, not the whole page.
 
 This file is the authoring standard, **not** a published page.
 
-## Portable Markdown (web-publishing ready)
+## Depth: deep, but readable
 
-The guides are plain, generator-agnostic Markdown so they drop into MkDocs,
-Docusaurus, Hugo, or plain GitHub without rewrites:
+Cover the element completely, but keep every page skimmable in ~30 seconds:
 
-- **Frontmatter** — minimal, universal YAML only:
-  ```yaml
-  ---
-  title: Service Task
-  description: Run your own Go code as a step in a process.
-  ---
-  ```
-  No generator-specific keys (`weight`, `sidebar_position`, `layout`).
-- **Ordering** — reading order lives in the curated nav lists in each
-  `index.md`, not in frontmatter. (A generator's sidebar is configured from
-  those lists later.)
-- **One H1 per page**, matching the frontmatter `title`. Sections are `##`+.
-- **Links** — relative, to the `.md` file (`../gateways/exclusive.md`,
-  `../../examples/basic-process/`). Never Obsidian `[[wikilinks]]`.
-- **Diagrams** — fenced ` ```mermaid ` blocks (avoid special characters in node
-  labels; quote a label that needs them: `["a (b)"]`).
-- **Admonitions** — plain blockquotes, portable across generators:
-  > **Note:** …  /  > **Warning:** …  /  > **Tip:** …
+- **Curate, then complete.** Lead each catalog (options, methods) with a short
+  "what most people use" table, then the full table(s). Essential first so a
+  reader can stop early.
+- **Tables, not prose, for catalogs** — options, methods, interface members go
+  in scannable tables.
+- **Don't mirror godoc — point to it.** End with
+  `go doc github.com/dr-dobermann/gobpm/pkg/<pkg>` for the exhaustive,
+  always-current symbol list (prefer it over pkg.go.dev, which lags master).
+- **Concentrate on public packages/interfaces** (`pkg/…`). Describe `internal/…`
+  only as observable behavior, never as an API to call.
 
-  Do **not** use `!!! note` (MkDocs) or `:::note` (Docusaurus) syntax.
-- **Code** — fenced ` ```go ` / ` ```bash `; snippets are **real lines copied
-  from a runnable `examples/<name>/`**, never invented. Show the essential
-  lines, then point to the full example.
+## Pure, raw-readable Markdown
 
-## Page template
+The raw `.md` must read cleanly. The body is Markdown only:
 
-Every element/feature guide follows this shape (drop sections that don't apply):
+- **No embedded HTML** — no `<details>`, no `<br>` walls, no inline tags. Depth
+  comes from curation + ordering, not collapsibles.
+- **HTML / YAML / config / JSON appears ONLY inside a fenced code block** (masked
+  as a quotation) — never raw in the body.
+- **The one metadata exception** is a minimal YAML **frontmatter** block at the
+  very top (delimited by `---`): `title` and `description` only. No
+  generator-specific keys.
+- **Links** relative, to the `.md` (`../events/boundary.md`) or repo paths
+  (`../../design/ADR-021-….md`). Never Obsidian `[[wikilinks]]`.
+- **Diagrams** as fenced ` ```mermaid ` (quote a label with special chars).
+- **Admonitions** as a plain blockquote lead — `> Boundary events are …` — no
+  `!!! note` / `:::note` directives.
+- **Reading order** lives in each `index.md` nav list, not in frontmatter.
+
+## Grounding rule
+
+Every symbol, signature, option, and interface member is verified with
+`go doc pkg.Type` / `go doc pkg.Func` before it goes on the page. Every code
+snippet is real lines from a runnable `examples/<name>/` or the package source;
+every "Run it" block is real captured output (skip the banner/config dump). No
+invented APIs; if something isn't there, say so.
+
+## Page template — element / feature reference
 
 ```markdown
 ---
@@ -49,43 +60,55 @@ description: <One sentence — what the reader can do after this page.>
 
 # <Title>
 
-<1–2 sentences, user framing: what this element does and when you reach for it.>
+<Lead sentence(s): what it is and when a developer reaches for it.>
 
-## What it is
+## Taxonomy
 
-<Concept at the user's level — a short paragraph, plus a mermaid diagram when it
-clarifies the flow. Not the ADR depth.>
+<Table: BPMN category · package · type · inherits/embeds · implements · the work.
+Link the family taxonomy index.>
 
-## Build it
+## Constructor
 
-<The minimal Go to construct it, copied from the example — the key lines only.>
+<The exact signature in a fenced go block + a parameter table + the error/panic
+contract.>
 
-## Run it
+## Options
 
-```bash
-cd examples/<name> && go run .
-```
+<A short "most uses need only these" table, then the full option table(s)
+grouped by their typed family (e.g. ActivityOption vs SrvTaskOption). End with
+the go doc pointer.>
 
-<The expected output, in a fenced block.>
+## The <X> contract   (when the developer implements an interface)
 
-## How it works
+<The interface in a fenced go block + which members you implement and why.>
 
-<The mechanics a user must understand to use it correctly — gating, ordering,
-data flow, gotchas. Still usage-level.>
+## <Usage: Build it / Run it, or execution modes>
 
-## Options & variations
+<Minimal real code from examples/<name> + real captured output. Secondary to
+the reference above — keep it tight.>
 
-<Common knobs and their effect.>
+## Methods & runtime behavior
+
+<Curated method table + the behavior a developer must know (gating, parking,
+ordering, gotchas).>
 
 ## See also
 
-- Full example: [`examples/<name>/`](../../examples/<name>/)
-- Related: [<guide>](<relative-path>) · Design: [ADR-NNN](../design/…) *(only if useful)*
+- Examples: `examples/<name>/`
+- Related guides: …
+- Design: [ADR-NNN — title](../../design/ADR-NNN-….md)
+- Full API: `go doc github.com/dr-dobermann/gobpm/pkg/<pkg>`
 ```
 
-## Grounding rule
+## Other page shapes
 
-Every claim and every code snippet is backed by a real artifact: the runnable
-`examples/<name>/` for code, `docs/reference/`/the source for behavior. If an
-example doesn't exist for a capability, say so and show the smallest real
-snippet from the tests or package — do not fabricate an API.
+- **Taxonomy page** (per family: activities, events, gateways) — the class tree,
+  a table of every member with its one-line role + link, and the shared
+  attributes/options. A mermaid tree helps.
+- **Concept / runtime page** (Part 2) — how a thing works at the developer's
+  level (the engine, execution, event processing, scope). Explain observable
+  behavior + the public contracts (`renv`, `exec`, handles); link `docs/design/`
+  for the internal rationale rather than restating it.
+- **Extension page** (Part 6, "add your own X") — the seam interface (fenced),
+  the registration call (`foundation.SetGenerator`, `adapters.Register`,
+  `thresher.WithXxx`), a minimal real implementation, and how the engine uses it.
