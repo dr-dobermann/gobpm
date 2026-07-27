@@ -414,7 +414,7 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		ls.applyFailed(ctx, ev)
 
 	case evWaiting, evTaskWaiting, evJobWaiting, evCallWaiting, evDeliver,
-		evScopeOpen, evDataCommit:
+		evScopeOpen, evDataCommit, evDehydrated:
 		// the wait/deliver plane — parks, deliveries, and the signals that
 		// re-evaluate or resume them; sub-dispatched to keep apply under the
 		// complexity limit (the applyParked precedent).
@@ -473,6 +473,11 @@ func (ls *loopState) applyScopeAbort(ctx context.Context, ev trackEvent) {
 // Called only by apply, on the loop goroutine.
 func (ls *loopState) applyWaitPlane(ctx context.Context, ev trackEvent) {
 	switch ev.kind {
+	case evDehydrated:
+		// a track's long-wait goroutine was released (SRD-071 FR-1):
+		// account it out, retain its wait record.
+		ls.applyDehydrated(ev.track)
+
 	case evWaiting:
 		ls.onWaiting(ctx, ev)
 
@@ -623,6 +628,9 @@ func nodeIDOf(n flow.Node) string {
 // evEnded.
 func trackEndKind(t *track) trackEventKind {
 	switch {
+	case t.inState(TrackDehydrated):
+		return evDehydrated
+
 	case t.inState(TrackAwaitingMerge):
 		return evAwaiting
 
@@ -877,4 +885,23 @@ func (ls *loopState) fireOrJoin(survivorID string, merged []string) {
 	ls.applyMerged(trackEvent{track: survivor, mergedIDs: merged})
 
 	survivor.parkCh <- struct{}{}
+}
+
+// applyDehydrated accounts a track that returned in TrackDehydrated (SRD-071
+// FR-1): its long-wait goroutine was released. It decrements the active count
+// like any terminal event, but — unlike evEnded/evAwaiting — RETAINS every
+// piece of the track's bookkeeping (position, waiting/msgIdx registries, scope
+// counter): the wait is held externally and a trigger re-materializes the track
+// as a continuation fork. The goroutine is gone; the record stays. The track
+// argument is the released track (M2's loop-release reads it).
+func (ls *loopState) applyDehydrated(_ *track) {
+	ls.active--
+}
+
+// dehydrateTrack releases a parked track's goroutine (SRD-071 FR-2): it closes
+// the track's dehydrateCh, which the parked run() select observes to exit in
+// TrackDehydrated. Called only on the loop goroutine. The track record and its
+// wait registries are left intact; the goroutine's return emits evDehydrated.
+func (ls *loopState) dehydrateTrack(t *track) {
+	close(t.dehydrateCh)
 }

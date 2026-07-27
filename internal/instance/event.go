@@ -53,6 +53,7 @@ var trackEventKindNames = [...]string{
 	evEscalate:          "escalate",
 	evCompensate:        "compensate",
 	evTransactionCancel: "transactionCancel",
+	evDehydrated:        "dehydrated",
 }
 
 // String returns the lower-case event-kind name for logging.
@@ -178,4 +179,9 @@ const (
 	// exit via the Cancel boundary (BPMN §10.7, ADR-028 §2.3, SRD-061 FR-5).
 	// Resolved loop-locally, never through the hub; mirrors evScopeTerminate.
 	evTransactionCancel
+	// evDehydrated: a track's run() returned in TrackDehydrated — its long-wait
+	// goroutine was released (SRD-071 FR-1). Decrements ls.active like the other
+	// terminal events, but the track is RETAINED as a live record (its wait is
+	// held externally), not torn down.
+	evDehydrated
 )

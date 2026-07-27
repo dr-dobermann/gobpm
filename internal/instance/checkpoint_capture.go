@@ -54,6 +54,9 @@ var liveTrackStates = map[trackState]bool{
 	// the join node re-delivers it.
 	TrackAwaitingMerge: true,
 	TrackAwaitSync:     true,
+	// A dehydrated track is a live record whose wait is held externally
+	// (SRD-071) — persisted so the checkpoint IS the hydration source.
+	TrackDehydrated: true,
 }
 
 // maybeCheckpoint captures and saves the instance's document after an

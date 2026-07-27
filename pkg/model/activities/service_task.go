@@ -560,3 +560,11 @@ var (
 	_ eventproc.EventProcessor = (*ServiceTask)(nil)
 	_ tasks.ExternalWorker     = (*ServiceTask)(nil)
 )
+
+// Dehydratable reports that a ServiceTask does NOT release the instance's
+// goroutines (ADR-007 v.2 §2.4): an external-worker job is active work in
+// flight (ADR-021's fetch-and-lock queue owns it), not a passive wait, and an
+// in-process operation never parks — so the instance stays resident either way.
+func (st *ServiceTask) Dehydratable(context.Context, renv.RuntimeEnvironment) bool {
+	return false
+}

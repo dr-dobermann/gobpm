@@ -97,6 +97,14 @@ const (
 	TrackCanceled
 	// TrackFailed represents a track that has failed
 	TrackFailed
+
+	// TrackDehydrated represents a track whose long wait was externalized and
+	// whose goroutine has RETURNED (ADR-007 v.2 §2.1) — terminal for the
+	// goroutine, NOT for the flow: the wait outlives the goroutine as the loop's
+	// bookkeeping and the checkpoint record, and a trigger re-materializes it as
+	// a continuation fork. Retained as a live record (like TrackAwaitingMerge);
+	// its token projects Alive at the wait node.
+	TrackDehydrated
 )
 
 // String returns the human-readable name of the track state.
@@ -113,6 +121,7 @@ func (t trackState) String() string {
 		"TrackEnded",
 		"TrackCanceled",
 		"TrackFailed",
+		"TrackDehydrated",
 	}[t]
 }
 
@@ -160,18 +169,19 @@ type stepInfo struct {
 // track processed single line of the process from start noed or
 // from fork of sequence flow.
 type track struct {
-	lastErr    error
-	ctx        context.Context
-	hist       atomic.Pointer[[]stepUpdate]
-	instance   *Instance
-	cancel     context.CancelFunc
-	miState    *miState
-	mergedInto atomic.Pointer[string]
-	parkCh     chan struct{}
-	evtCh      chan flow.EventDefinition
-	taskID     string
-	scopePath  scope.DataPath
-	scopeSeg   string
+	lastErr     error
+	ctx         context.Context
+	hist        atomic.Pointer[[]stepUpdate]
+	instance    *Instance
+	cancel      context.CancelFunc
+	miState     *miState
+	mergedInto  atomic.Pointer[string]
+	parkCh      chan struct{}
+	dehydrateCh chan struct{} // closed by the loop to release a parked wait's goroutine (SRD-071)
+	evtCh       chan flow.EventDefinition
+	taskID      string
+	scopePath   scope.DataPath
+	scopeSeg    string
 	foundation.BaseElement
 	prev      []string
 	msgDefIDs []string
@@ -357,10 +367,11 @@ func newTrack(
 				state: StepCreated,
 			},
 		},
-		state:    TrackReady,
-		instance: inst,
-		parkCh:   make(chan struct{}, 1),
-		evtCh:    make(chan flow.EventDefinition, eventBufferDepth),
+		state:       TrackReady,
+		instance:    inst,
+		parkCh:      make(chan struct{}, 1),
+		dehydrateCh: make(chan struct{}),
+		evtCh:       make(chan flow.EventDefinition, eventBufferDepth),
 	}
 
 	if prevTrack != nil {
@@ -476,7 +487,6 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 		if d.Type() == flow.TriggerMessage {
 			proc = t.instance
 		}
-
 
 		if err := t.instance.RegisterEvent(proc, d); err != nil {
 			return errs.New(
@@ -768,6 +778,48 @@ func (t *track) stop() {
 
 // run start execution loop of the track which ends by ctx's cancel or
 // when there is no outgoing flows from the processing nodes.
+// awaitTrigger parks the track on its event channel until a trigger arrives, the
+// loop releases it (dehydration, SRD-071), the loop closes evtCh on stop, or the
+// context is canceled. Zero CPU while parked (SRD-027 FR-1): the loop is the sole
+// sender and sole closer, so a delivered event is applied on this goroutine. It
+// returns true to continue the run loop (event delivered), false when the
+// goroutine must return — setting the terminal state (Canceled / Dehydrated /
+// Failed) accordingly.
+func (t *track) awaitTrigger(ctx context.Context) (proceed bool) {
+	select {
+	case <-ctx.Done():
+		t.updateState(TrackCanceled)
+		t.lastErr = ctx.Err()
+
+		return false
+
+	case <-t.dehydrateCh:
+		// the loop released this wait's goroutine (SRD-071 FR-1): the wait is
+		// externalized to its holder; exit terminal for the goroutine, retained
+		// as a TrackDehydrated record.
+		t.updateState(TrackDehydrated)
+
+		return false
+
+	case eDef, ok := <-t.evtCh:
+		if !ok {
+			// the loop closed evtCh on stop — terminate like a cancellation.
+			t.updateState(TrackCanceled)
+
+			return false
+		}
+
+		if err := t.deliver(ctx, eDef); err != nil {
+			t.lastErr = err
+			t.updateState(TrackFailed)
+
+			return false
+		}
+
+		return true
+	}
+}
+
 func (t *track) run(
 	ctx context.Context,
 ) {
@@ -785,32 +837,8 @@ func (t *track) run(
 		}
 
 		if t.inState(TrackWaitForEvent) {
-			// Park on evtCh instead of busy-waiting (SRD-027 FR-1): the per-instance
-			// loop is the SOLE sender and sole closer, so a delivered event is applied
-			// on the track's OWN goroutine here — no foreign-goroutine mutation, no
-			// event mutex. Zero CPU until the loop dispatches a fired event (already
-			// past any correlation gate, §3.4) or closes evtCh on stop (FR-7).
-			select {
-			case <-ctx.Done():
-				t.updateState(TrackCanceled)
-				t.lastErr = ctx.Err()
-
+			if !t.awaitTrigger(ctx) {
 				return
-
-			case eDef, ok := <-t.evtCh:
-				if !ok {
-					// the loop closed evtCh on stop — terminate like a cancellation.
-					t.updateState(TrackCanceled)
-
-					return
-				}
-
-				if err := t.deliver(ctx, eDef); err != nil {
-					t.lastErr = err
-					t.updateState(TrackFailed)
-
-					return
-				}
 			}
 
 			continue

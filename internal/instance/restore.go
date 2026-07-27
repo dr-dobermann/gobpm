@@ -235,6 +235,7 @@ func restoredTrack(
 		state:       TrackReady,
 		instance:    inst,
 		parkCh:      make(chan struct{}, 1),
+		dehydrateCh: make(chan struct{}),
 		evtCh:       make(chan flow.EventDefinition, eventBufferDepth),
 		scopePath:   scope.DataPath(rec.ScopePath),
 		scopeSeg:    rec.ScopeSeg,

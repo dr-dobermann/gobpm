@@ -244,3 +244,10 @@ var (
 	_ interactor.HumanTask     = (*UserTask)(nil)
 	_ eventproc.EventProcessor = (*UserTask)(nil)
 )
+
+// Dehydratable reports that a parked UserTask releases the instance's
+// goroutines (ADR-007 v.2 §2.4): a human task is a passive wait, often for
+// hours or days, and its holder (the task distributor) can wake the instance.
+func (ut *UserTask) Dehydratable(context.Context, renv.RuntimeEnvironment) bool {
+	return true
+}
