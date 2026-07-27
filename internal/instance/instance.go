@@ -62,6 +62,11 @@ type Instance struct {
 	// (cpTTL/cpRecVersion/cpIncarnation) sit at the struct tail, outside
 	// the GC pointer scan (fieldalignment).
 	cpOwner string
+	// waitHeld reports whether a parked track's wait has an engine-level holder
+	// that can wake a released instance (SRD-071 FR-2). nil (the default, and
+	// production until a holder is wired) means "nothing held" — the instance
+	// never dehydrates a wait it cannot wake. The engine sets it as holders land.
+	waitHeld func(*track) bool
 	// restoredLedgers is the checkpoint-rebuilt compensation ledger the
 	// loop adopts at start (SRD-070 FR-6); nil for a fresh instance.
 	restoredLedgers map[scope.DataPath][]*ledgerEntry

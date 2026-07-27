@@ -28,6 +28,11 @@ const (
 	Terminating
 	// Terminated is an instance that finished via cancellation.
 	Terminated
+	// Dehydrated is an instance that released ALL its goroutines while every
+	// track is parked on a held, dehydratable wait (ADR-007 v.2, SRD-071). NOT
+	// terminal — a trigger hydrates it back to Active; its checkpoint is the
+	// hydration source.
+	Dehydrated
 )
 
 // String returns the human-readable name of the instance state.
@@ -38,6 +43,7 @@ func (s State) String() string {
 		"Completed",
 		"Terminating",
 		"Terminated",
+		"Dehydrated",
 	}[s]
 }
 

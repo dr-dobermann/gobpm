@@ -252,6 +252,10 @@ var persistedStatusMap = map[State]repository.Status{
 	Completed:   repository.StatusCompleted,
 	Terminating: repository.StatusTerminated,
 	Terminated:  repository.StatusTerminated,
+	// a dehydrated instance is in-flight, not terminal and not
+	// operator-suspended — recovery claims it as an active record and wakes
+	// it from its checkpoint (SRD-071 FR-2).
+	Dehydrated: repository.StatusActive,
 }
 
 func persistedStatus(s State) repository.Status {

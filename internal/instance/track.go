@@ -763,6 +763,14 @@ func (t *track) updateState(newState trackState) {
 	}
 }
 
+// currentState returns the track's state under the read lock.
+func (t *track) currentState() trackState {
+	t.m.RLock()
+	defer t.m.RUnlock()
+
+	return t.state
+}
+
 // currentStep returns current step of the track.
 func (t *track) currentStep() *stepInfo {
 	t.m.RLock()
