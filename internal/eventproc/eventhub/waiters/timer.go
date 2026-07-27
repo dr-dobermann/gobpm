@@ -38,7 +38,11 @@ type timeWaiter struct {
 	state      eventproc.EventWaiterState
 	cyclesLeft int
 	duration   time.Duration
-	m          sync.Mutex
+	// hinted marks a restored waiter (SRD-070 FR-6): next/cyclesLeft
+	// came from the checkpoint's recorded plan, not re-evaluation — an
+	// overdue deadline fires once, immediately.
+	hinted bool
+	m      sync.Mutex
 }
 
 // NewTimeWaiter creates a new timer event defined by eDef. rt is the engine
@@ -79,12 +83,27 @@ func NewTimeWaiter(
 		processors: []eventproc.EventProcessor{ep},
 	}
 
-	if err := tw.parseEDef(eDef, ep); err != nil {
-		return nil,
-			errs.New(
-				errs.M("TimerEventDefinition parsing failed"),
-				errs.C(TimerWaiterError, errs.OperationFailed),
-				errs.E(err))
+	// A restored track hints the RECORDED firing plan (SRD-070 FR-6):
+	// the checkpoint's absolute deadline REPLACES expression parsing — a
+	// re-evaluated Duration would restart, a past absolute Time would be
+	// rejected by the parse validation, and an overdue deadline must
+	// fire once, immediately.
+	if h, isHinter := ep.(DeadlineHinter); isHinter {
+		if deadline, cycles, hintOK := h.TimerDeadlineHint(eDef.ID()); hintOK {
+			tw.next = deadline
+			tw.cyclesLeft = cycles
+			tw.hinted = true
+		}
+	}
+
+	if !tw.hinted {
+		if err := tw.parseEDef(eDef, ep); err != nil {
+			return nil,
+				errs.New(
+					errs.M("TimerEventDefinition parsing failed"),
+					errs.C(TimerWaiterError, errs.OperationFailed),
+					errs.E(err))
+		}
 	}
 
 	tw.state = eventproc.WSReady
@@ -261,7 +280,16 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 		// source the validation at parseEDef used), not the wall clock, so a
 		// substituted clock governs the wait — see runTimerService.
 		tw.duration = tw.next.Sub(tw.rt.Clock().Now())
-		tw.cyclesLeft = 0
+
+		// A hinted (restored) waiter keeps its recorded cycle count; an
+		// overdue recorded deadline collapses to one immediate firing.
+		if tw.hinted {
+			if tw.duration <= 0 {
+				tw.duration = time.Millisecond
+			}
+		} else {
+			tw.cyclesLeft = 0
+		}
 	}
 
 	if tw.duration <= 0 {
@@ -460,3 +488,49 @@ func (tw *timeWaiter) Done() <-chan struct{} {
 }
 
 var _ eventproc.EventWaiter = (*timeWaiter)(nil)
+
+// TimerPlan computes a timer definition's firing plan without arming a
+// waiter (SRD-070 FR-3): the absolute deadline the FIRST firing lands
+// on and the remaining cycle count. The checkpoint records it at
+// park time so a restored Duration timer re-arms at the ORIGINAL
+// deadline instead of restarting (SRD-070 §4.2).
+func TimerPlan(
+	eDefI flow.EventDefinition,
+	ep eventproc.EventProcessor,
+	rt renv.EngineRuntime,
+) (time.Time, int, error) {
+	if eDefI == nil || rt == nil {
+		return time.Time{}, 0, errs.New(
+			errs.M("TimerPlan: a nil EventDefinition or EngineRuntime "+
+				"isn't allowed"),
+			errs.C(TimerWaiterError, errs.EmptyNotAllowed))
+	}
+
+	eDef, ok := eDefI.(*events.TimerEventDefinition)
+	if !ok {
+		return time.Time{}, 0, errs.New(
+			errs.M("TimerPlan: not a TimerEventDefinition"),
+			errs.C(TimerWaiterError, errs.TypeCastingError))
+	}
+
+	tw := timeWaiter{rt: rt}
+	if err := tw.parseEDef(eDef, ep); err != nil {
+		return time.Time{}, 0, err
+	}
+
+	deadline := tw.next
+	if deadline.IsZero() {
+		deadline = rt.Clock().Now().Add(tw.duration)
+	}
+
+	return deadline, tw.cyclesLeft, nil
+}
+
+// DeadlineHinter is an optional EventProcessor capability (SRD-070
+// FR-6): a RESTORED track hints the checkpoint-recorded firing plan for
+// its timer definition, and the waiter arms at that absolute deadline
+// instead of re-evaluating the expressions. ok=false means "no hint —
+// evaluate normally" (every non-restored processor).
+type DeadlineHinter interface {
+	TimerDeadlineHint(eDefID string) (deadline time.Time, cyclesLeft int, ok bool)
+}

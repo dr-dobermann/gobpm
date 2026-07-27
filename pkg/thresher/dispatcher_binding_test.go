@@ -18,7 +18,7 @@ type bindingDispatcher struct {
 	capDispatcher
 	sink      tasks.JobCompletionSink
 	exprBound expression.Engine
-	reporter   observability.Reporter
+	reporter  observability.Reporter
 }
 
 func (d *bindingDispatcher) BindSink(s tasks.JobCompletionSink) { d.sink = s }

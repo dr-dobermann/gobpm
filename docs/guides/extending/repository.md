@@ -1,184 +1,124 @@
 ---
 title: Custom repository
-description: Back process registration with your own store.
+description: Back instance checkpoints with your own store — CAS, leases, recovery.
 ---
 
 # Custom repository
 
-The **repository** is the engine's persistence slot for process-instance
-state — the record of each running (and recently finished) instance. gobpm ships
-with an in-memory default; implement `repository.Repository` and hand it to the
-engine when you want instance state to live somewhere durable (a database, a
-key-value store) so in-flight instances survive a restart.
+The **repository** is the engine's **instance-checkpoint port** (ADR-033):
+the durable record of every running (and recently finished) instance.
+gobpm ships an in-memory default; implement `repository.Repository` and
+hand it to the engine when instance state must **survive a restart** —
+configuring one *arms checkpointing*: every instance then writes a
+consistent-cut checkpoint at its lifecycle transitions, and `Run`
+recovers what the store says is unfinished (see
+[Persistence & recovery](../operating/persistence.md)).
 
-> This is the *minimal* skeleton contract — enough to run today's in-memory
-> BPMN. Durable serialization, versioning/CAS, transactions, history and inbox
-> are deliberately out of scope here; they belong to the dedicated Persistence &
-> State ADR (see the package doc). Treat this page as the seam, not a
-> production storage design.
+> One port among peers, deliberately narrow (ADR-033 §2.7): the
+> repository holds instance checkpoints ONLY. Other storage-backed
+> modules (a Data Store, an AuthZ plugin) define their own ports and
+> share the user-owned backend handle — never this interface.
 
 ## The Repository contract
 
-`repository.Repository` is four methods — a keyed CRUD over `InstanceRecord`
-plus a rehydration listing:
+`repository.Repository` is four methods — a compare-and-set store over
+`InstanceRecord` plus the recovery listing:
 
 ```go
 type Repository interface {
-    // Save stores (or replaces) the record under its ID.
+    // Save stores the record under its ID iff rec.RecVersion matches the
+    // stored version (0 creates). The stored RecVersion increments on
+    // success; a mismatch fails with errs.ConcurrentUpdate.
     Save(ctx context.Context, rec InstanceRecord) error
     // Load returns the record for id; the bool is false when none exists.
     Load(ctx context.Context, id string) (InstanceRecord, bool, error)
     // Delete removes the record for id (a no-op if it is absent).
     Delete(ctx context.Context, id string) error
-    // ListInFlight returns the IDs of all non-terminal (Active) instances, for
-    // rehydration after a restart.
-    ListInFlight(ctx context.Context) ([]string, error)
+    // ListInFlight returns the IDs of the CLAIMABLE in-flight instances:
+    // non-terminal, not suspended, and with no live lease at now.
+    ListInFlight(ctx context.Context, now time.Time) ([]string, error)
 }
 ```
 
 | Method | Implement it to |
 |---|---|
-| `Save` | store or replace one record by its `ID` (upsert). |
-| `Load` | fetch by id; return `false` (not an error) when absent. |
+| `Save` | **compare-and-set** upsert: accept only when `rec.RecVersion` equals the stored version (0 creates); increment the stored version on success; reject a mismatch with an `errs.ConcurrentUpdate`-classified error — the split-brain fencing every adapter implements identically. |
+| `Load` | fetch a **value copy** by id; return `false` (not an error) when absent. |
 | `Delete` | remove by id; a no-op when the id is unknown — do not error. |
-| `ListInFlight` | list the ids of every `StatusActive` record, so a restart can find what to resume. |
+| `ListInFlight` | list only the **claimable** records: `StatusActive` with an expired-or-absent lease at `now` (`rec.Lease.Expired(now)`). Suspended and live-leased records never list. |
 
 ## The record
 
-The unit you persist is `repository.InstanceRecord`:
-
 ```go
+type Lease struct {
+    Expiry      time.Time
+    Owner       string
+    Incarnation int64
+}
+
 type InstanceRecord struct {
-    State  any
-    ID     string
-    Status Status
+    ID         string
+    Payload    []byte // the schema-versioned checkpoint document, opaque
+    Lease      Lease
+    RecVersion int64  // the CAS version
+    Status     Status
 }
 ```
 
 | Field | Meaning |
 |---|---|
 | `ID` | the instance id — your primary key. |
-| `State` | the engine's instance snapshot, **opaque** to the repository. The in-memory default stores it by reference; a durable adapter owns its own serialization (that model is the Persistence & State ADR's, not this contract's). |
-| `Status` | lifecycle status — `StatusActive`, `StatusCompleted`, or `StatusTerminated`. |
-
-`Status` mirrors the runtime instance lifecycle. `StatusActive` is in-flight;
-the two terminal states satisfy `Status.IsTerminal()`:
-
-| Constant | State |
-|---|---|
-| `StatusActive` | in-flight (what `ListInFlight` returns). |
-| `StatusCompleted` | finished normally. |
-| `StatusTerminated` | canceled / terminated. |
+| `Payload` | the engine's **schema-versioned checkpoint document**, opaque bytes. The serialization model is the engine's; the storage's job is bytes. Store and return **copies** — never alias the caller's slice. |
+| `Lease` | the **ownership claim** (ADR-033 §2.8): the engine running the instance, its fencing incarnation, and the claim's expiry. A zero lease means "unowned"; `Lease.Expired(now)` reports whether it still holds. |
+| `RecVersion` | the compare-and-set version — see `Save`. |
+| `Status` | `StatusActive`, `StatusSuspended` (in-flight, refuses triggers — reserved for the suspend/resume slice), or terminal `StatusCompleted` / `StatusTerminated` (`Status.IsTerminal()`). |
 
 ## Registering it
 
-Pass your repository to the engine with `thresher.WithRepository`:
-
 ```go
-func WithRepository(r repository.Repository) Option
-```
-
-```go
-eng, err := thresher.New("engine",
-    thresher.WithRepository(myStore),
+eng, err := thresher.New("engine-A",
+    thresher.WithRepository(myStore),          // arms checkpointing + recovery
+    thresher.WithLeaseTTL(30*time.Second),     // the ownership window (default 30s)
 )
 ```
 
-The default, when you pass no option, is the in-memory store —
-`thresher.WithRepository(r repository.Repository) Option` documents it as
-"in-memory, non-durable".
+**Configuring a repository changes engine behavior**: it is the signal
+that this store is the state of record, so instances checkpoint into it
+and `Run` recovers claimable records. The zero-config default (no
+`WithRepository`) keeps the in-memory `memrepo` as a dormant slot —
+volatile, zero overhead.
 
-## A minimal implementation
+## Implementation notes for a durable adapter
 
-A map-backed store guarded by a mutex satisfies the whole contract. Note the
-two contract subtleties baked in: `Load` returns `false` (not an error) on a
-miss, and `Delete` is a silent no-op on an unknown id.
-
-```go
-type MemStore struct {
-    mu   sync.RWMutex
-    recs map[string]repository.InstanceRecord
-}
-
-func NewMemStore() *MemStore {
-    return &MemStore{recs: map[string]repository.InstanceRecord{}}
-}
-
-func (s *MemStore) Save(_ context.Context, rec repository.InstanceRecord) error {
-    s.mu.Lock()
-    defer s.mu.Unlock()
-    s.recs[rec.ID] = rec
-    return nil
-}
-
-func (s *MemStore) Load(_ context.Context, id string) (repository.InstanceRecord, bool, error) {
-    s.mu.RLock()
-    defer s.mu.RUnlock()
-    rec, ok := s.recs[id]
-    return rec, ok, nil
-}
-
-func (s *MemStore) Delete(_ context.Context, id string) error {
-    s.mu.Lock()
-    defer s.mu.Unlock()
-    delete(s.recs, id) // no-op when absent
-    return nil
-}
-
-func (s *MemStore) ListInFlight(_ context.Context) ([]string, error) {
-    s.mu.RLock()
-    defer s.mu.RUnlock()
-    var ids []string
-    for id, rec := range s.recs {
-        if rec.Status == repository.StatusActive {
-            ids = append(ids, id)
-        }
-    }
-    return ids, nil
-}
-```
-
-## The reference implementation
-
-The built-in default lives in the `repository/memrepo` sibling package. It is
-the store the engine uses when you pass no `WithRepository`, and the model to
-copy for a real adapter. Beyond the bare contract it adds a
-**bounded-in-memory** discipline: active instances are retained unconditionally
-(their count is real load), while terminal records are capped — the oldest are
-evicted past `memrepo.DefaultMaxTerminal` (1024) so lookup history cannot grow
-unbounded.
-
-```go
-func New(opts ...Option) *Repo
-```
-
-Its options mirror what a durable adapter typically wants to tune:
-
-| Option | Effect |
-|---|---|
-| `memrepo.WithLogger(l observability.Logger)` | route the eviction warning through your logger (default `slog.Default()`). |
-| `memrepo.WithMaxTerminal(n int)` | change the terminal-record cap. |
+- **CAS must be atomic** in your store's terms (a transaction, a
+  conditional update, an `UPDATE … WHERE rec_version = ?`); the
+  in-memory reference (`repository/memrepo`) shows the exact accept /
+  increment / reject semantics to mirror, including the
+  `errs.ConcurrentUpdate` class the engine's fencing matches on.
+- **Copy payloads both ways** — `memrepo` value-copies on `Save` and
+  `Load`; a durable adapter gets this for free by serializing.
+- **Respect the lease filter in `ListInFlight`** — returning a record
+  another engine holds makes two engines run one instance; the CAS
+  fencing protects the state, but the losing engine wastes the work.
+- `memrepo`'s extras worth mirroring: terminal records are capped
+  (`memrepo.WithMaxTerminal`, default 1024, oldest evicted;
+  `memrepo.WithLogger` routes the eviction warning) while active
+  records are retained unconditionally.
 
 ## How the engine uses it
 
-The engine holds one repository for its lifetime and exposes it through the
-runtime. Conceptually the store is the **write-behind of the instance
-lifecycle**: as an instance is created and advances it is `Save`d under its id;
-on a terminal outcome its `Status` flips to `StatusCompleted` /
-`StatusTerminated`; `Load` fetches a record by id; and after a restart
-`ListInFlight` enumerates the `StatusActive` ids so the engine knows what to
-resume.
-
-> Reach for a custom repository when instance state must **outlive the
-> process** — durable persistence and restart-time rehydration. If everything
-> you run is in-process and ephemeral, the default `memrepo` is enough; you do
-> not need this seam. The wiring that turns `Save`/`Load`/`ListInFlight` into
-> full durable recovery is owned by the Persistence & State ADR and is future
-> work on top of this skeleton — see [ADR-001 — execution model](../../design/ADR-001-execution-model.md).
+The full trace lives in [Persistence & recovery](../operating/persistence.md):
+the instance loop `Save`s a consistent-cut document after each
+observable transition (renewing its lease), a terminal outcome flips
+the status, and a starting engine `ListInFlight`s + claims (CAS,
+incarnation+1) + `Load`s + restores. A save from an engine whose lease
+was reclaimed fails with `ConcurrentUpdate` — the zombie sees a
+`CheckpointDeferred` warning and never corrupts the new owner's state.
 
 ## See also
 
 - Reference implementation: `repository/memrepo`
-- Related guides: [Custom Data Store](data-store.md) · [The engine (Thresher)](../concepts/engine.md)
-- Design: [ADR-001 — execution model](../../design/ADR-001-execution-model.md)
+- Operating guide: [Persistence & recovery](../operating/persistence.md)
+- Related: [Custom Data Store](data-store.md) · [The engine (Thresher)](../concepts/engine.md)
+- Design: [ADR-033 — Persistence & State](../../design/ADR-033-persistence-and-state.md)
 - Full API: `go doc github.com/dr-dobermann/gobpm/pkg/repository`

@@ -38,6 +38,9 @@ func (t *Thresher) appendVersionLocked(
 	// reuse a still-live version number. The counter resets only when the key is
 	// fully unregistered (removeKeyLocked / full removeVersionLocked).
 	t.nextVersion[s.ProcessID]++
+	// The snapshot carries its registered version (SRD-070 FR-1) — every
+	// instance clone inherits it, so checkpoints can pin what they ran.
+	s.Version = t.nextVersion[s.ProcessID]
 	reg = &ProcessRegistration{
 		key:      s.ProcessID,
 		version:  t.nextVersion[s.ProcessID],

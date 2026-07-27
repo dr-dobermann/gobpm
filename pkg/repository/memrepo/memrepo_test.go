@@ -1,10 +1,14 @@
 package memrepo
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"strconv"
 	"testing"
+	"time"
 
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/repository"
 )
 
@@ -16,7 +20,28 @@ func (l *capLogger) Warn(string, ...any)  { l.warns++ }
 func (l *capLogger) Error(string, ...any) {}
 
 func rec(id string, st repository.Status) repository.InstanceRecord {
-	return repository.InstanceRecord{State: id, ID: id, Status: st}
+	return repository.InstanceRecord{Payload: []byte(id), ID: id, Status: st}
+}
+
+// resave loads the current version and saves the record over it (the
+// CAS-correct overwrite the tests use).
+func resave(t *testing.T, r *Repo, nr repository.InstanceRecord) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	cur, ok, err := r.Load(ctx, nr.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ok {
+		nr.RecVersion = cur.RecVersion
+	}
+
+	if err := r.Save(ctx, nr); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestSaveLoadDelete(t *testing.T) {
@@ -50,7 +75,7 @@ func TestListInFlightOnlyActiveSorted(t *testing.T) {
 	_ = r.Save(ctx, rec("a", repository.StatusActive))
 	_ = r.Save(ctx, rec("c", repository.StatusCompleted))
 
-	ids, _ := r.ListInFlight(ctx)
+	ids, _ := r.ListInFlight(ctx, time.Now())
 	if len(ids) != 2 || ids[0] != "a" || ids[1] != "b" {
 		t.Fatalf("in-flight = %v, want [a b]", ids)
 	}
@@ -86,7 +111,7 @@ func TestReSaveTerminalNotDoubleTracked(t *testing.T) {
 	ctx := context.Background()
 
 	_ = r.Save(ctx, rec("t1", repository.StatusCompleted))
-	_ = r.Save(ctx, rec("t1", repository.StatusCompleted)) // re-save: still one series
+	resave(t, r, rec("t1", repository.StatusCompleted)) // re-save: still one series
 	_ = r.Save(ctx, rec("t2", repository.StatusCompleted)) // now two -> evict t1
 
 	if _, ok, _ := r.Load(ctx, "t1"); ok {
@@ -144,5 +169,119 @@ func TestRemoveFirst(t *testing.T) {
 	same := removeFirst([]string{"a"}, "x") // absent -> unchanged
 	if len(same) != 1 || same[0] != "a" {
 		t.Fatalf("removeFirst(absent) = %v, want [a]", same)
+	}
+}
+
+func TestCASAndLease(t *testing.T) {
+	r := New()
+	ctx := context.Background()
+	now := time.Now()
+
+	// create at version 0; the store bumps to 1.
+	first := rec("i", repository.StatusActive)
+	first.Lease = repository.Lease{
+		Owner: "engine-A", Incarnation: 1, Expiry: now.Add(time.Minute),
+	}
+
+	if err := r.Save(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, _ := r.Load(ctx, "i")
+	if !ok || got.RecVersion != 1 {
+		t.Fatalf("RecVersion = %d, want 1", got.RecVersion)
+	}
+
+	if got.Lease.Owner != "engine-A" || got.Lease.Incarnation != 1 {
+		t.Fatalf("lease didn't round-trip: %+v", got.Lease)
+	}
+
+	// a stale writer (still at version 0) is fenced.
+	stale := rec("i", repository.StatusActive)
+
+	err := r.Save(ctx, stale)
+	if err == nil {
+		t.Fatal("a stale save must be rejected")
+	}
+
+	var ae *errs.ApplicationError
+	if !errors.As(err, &ae) || !ae.HasClass(errs.ConcurrentUpdate) {
+		t.Fatalf("want a ConcurrentUpdate-classified error, got %v", err)
+	}
+
+	// the current writer succeeds and the version advances.
+	got.Status = repository.StatusActive
+	if err := r.Save(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+
+	got2, _, _ := r.Load(ctx, "i")
+	if got2.RecVersion != 2 {
+		t.Fatalf("RecVersion = %d, want 2", got2.RecVersion)
+	}
+}
+
+func TestListInFlightHonorsLeases(t *testing.T) {
+	r := New()
+	ctx := context.Background()
+	now := time.Now()
+
+	held := rec("held", repository.StatusActive)
+	held.Lease = repository.Lease{
+		Owner: "engine-A", Incarnation: 1, Expiry: now.Add(time.Minute),
+	}
+
+	lapsed := rec("lapsed", repository.StatusActive)
+	lapsed.Lease = repository.Lease{
+		Owner: "engine-B", Incarnation: 1, Expiry: now.Add(-time.Minute),
+	}
+
+	free := rec("free", repository.StatusActive)
+	susp := rec("susp", repository.StatusSuspended)
+
+	for _, x := range []repository.InstanceRecord{held, lapsed, free, susp} {
+		if err := r.Save(ctx, x); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ids, _ := r.ListInFlight(ctx, now)
+	if len(ids) != 2 || ids[0] != "free" || ids[1] != "lapsed" {
+		t.Fatalf("claimable = %v, want [free lapsed]", ids)
+	}
+}
+
+func TestPayloadIsCopied(t *testing.T) {
+	r := New()
+	ctx := context.Background()
+
+	orig := rec("c", repository.StatusActive)
+	orig.Payload = []byte("checkpoint")
+
+	if err := r.Save(ctx, orig); err != nil {
+		t.Fatal(err)
+	}
+
+	orig.Payload[0] = 'X' // mutating the caller's slice must not leak in
+
+	got, _, _ := r.Load(ctx, "c")
+	if !bytes.Equal(got.Payload, []byte("checkpoint")) {
+		t.Fatalf("stored payload mutated: %q", got.Payload)
+	}
+
+	got.Payload[0] = 'Y' // mutating the loaded copy must not leak back
+
+	again, _, _ := r.Load(ctx, "c")
+	if !bytes.Equal(again.Payload, []byte("checkpoint")) {
+		t.Fatalf("loaded copy leaked back: %q", again.Payload)
+	}
+}
+
+func TestSaveValidation(t *testing.T) {
+	r := New()
+
+	if err := r.Save(context.Background(),
+		repository.InstanceRecord{}); err == nil {
+		t.Fatal("an ID-less record must be rejected")
 	}
 }

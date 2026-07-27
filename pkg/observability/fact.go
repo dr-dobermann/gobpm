@@ -146,6 +146,17 @@ const (
 	// script-level details; the task failure itself still rides KindFault.
 	PhaseExecuted Phase = "Executed" // Script
 
+	// PhaseRecovered: an instance was rebuilt from its checkpoint and
+	// resumed (SRD-070 FR-8) — the recovery milestone, echoed at Info.
+	PhaseRecovered Phase = "Recovered" // InstanceState
+
+	// PhaseCheckpointDeferred: a checkpoint could not be captured or
+	// saved (an in-flight construct the document doesn't cover yet, an
+	// uncodable payload, a failed save) — the instance keeps running on
+	// volatile state until the next transition retries (SRD-070 FR-4).
+	// Echoed at Warn: durability is off and the operator must see it.
+	PhaseCheckpointDeferred Phase = "CheckpointDeferred" // InstanceState
+
 	PhaseValueAdded   Phase = "Value_Added" // DataChange (= data.ChangeType)
 	PhaseValueUpdated Phase = "Value_Updated"
 	PhaseValueDeleted Phase = "Value_Deleted"

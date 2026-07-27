@@ -39,6 +39,13 @@ type Snapshot struct {
 	// persistent instance-starter at registration instead of re-scanning the
 	// node graph. Engine-agnostic descriptors only; immutable, shared by Clone.
 	InstantiatingStarts []InstantiatingStart
+	// Version is the registered process version this snapshot belongs to
+	// (SRD-070 FR-1): the thresher stamps it at registration, clones carry
+	// it, and a checkpoint pins (ProcessID, Version) so recovery re-clones
+	// exactly the version the instance started from. Zero means
+	// "unregistered" (a snapshot built outside the registry).
+	Version int
+
 	// HasConditionals reports whether any node carries a Conditional event
 	// definition (catch, boundary, or event-based-gateway arm), precomputed
 	// once by New (SRD-048): a track emits the commit-diff signal to the
@@ -328,6 +335,7 @@ func (s *Snapshot) Clone() (*Snapshot, error) {
 		CorrelationKeys:     s.CorrelationKeys,
 		InstantiatingStarts: s.InstantiatingStarts,
 		HasConditionals:     s.HasConditionals,
+		Version:             s.Version,
 	}
 
 	// Clone every node (its immutable configuration shared by reference, its
@@ -351,4 +359,3 @@ func (s *Snapshot) Clone() (*Snapshot, error) {
 
 	return &clone, nil
 }
-

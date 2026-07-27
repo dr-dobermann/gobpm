@@ -228,6 +228,17 @@ undoes them in **reverse completion order**, waiting for the handlers. Only
 completed work compensates (presumed abort); a handler reads the snapshot its
 activity completed with; an unresolved throw is logged, never a fault.
 
+For durability, see [`examples/restart-recovery/`](examples/restart-recovery/)
+— **instance checkpoints and restart recovery** (the first Persistence &
+State slice): with an explicitly configured repository every instance
+writes consistent-cut checkpoints at its lifecycle transitions, a crashed
+engine's instances are claimed and restored by the next engine over the
+same store (timers re-arm at their RECORDED deadlines — overdue fires
+once; tasks re-announce; subscriptions re-register), and ownership leases
+with CAS fencing keep zombie engines from ever corrupting state. The
+zero-config engine stays volatile at zero overhead. The guide:
+[**docs/guides/operating/persistence.md**](docs/guides/operating/persistence.md).
+
 For scripting, see [`examples/script-task/`](examples/script-task/) — a
 **Script Task** runs an embedded Lua file on the pluggable **Script Engine
 seam**: engines register with the repeatable `WithScriptEngine` (several
@@ -377,6 +388,7 @@ make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (r
 - [Conditional events](docs/guides/events/conditional.md) — data-driven waiting: positions, the false→true edge rule, dependency declarations
 - [Activity iteration](docs/guides/iteration/index.md) — Standard Loop + Multi-Instance (sequential & parallel): loopCondition / testBefore / loopMaximum, cardinality / collection fan-out / completionCondition (stop vs. cancel), loopCounter & numberOf* attributes, leaf-in-place vs. composite / concurrent scopes
 - [Composition](docs/guides/subprocesses/index.md) — sub-processes (nested scopes) & call activities (child-instance reuse boundary): the §13.3.4 shapes, data visibility/isolation, versioning, scope-wide interruption
+- [Persistence & recovery](docs/guides/operating/persistence.md) — instance checkpoints & restart recovery: arming with `WithRepository`, per-wait recovery semantics (overdue timers fire once), ownership leases + CAS fencing for shared stores, stable element ids as the deployment-parity contract
 - [Development Roadmap](docs/analytics/gobpm%20Development%20Roadmap.md) — workstreams + milestones
 - [Conformance scope](docs/bpmn-spec/conformance.md) and [BPMN 2.0 reference KB](docs/bpmn-spec/) · [Conformance status](docs/design/conformance-status.md) — what's implemented vs what remains, mapped to issues
 - [Documentation Index](README_INDEX.md) · [API Reference](https://pkg.go.dev/github.com/dr-dobermann/gobpm) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)

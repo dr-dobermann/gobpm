@@ -2,6 +2,7 @@ package thresher
 
 import (
 	"log/slog"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/auth"
 	"github.com/dr-dobermann/gobpm/pkg/auth/allowall"
@@ -52,6 +53,8 @@ type thresherConfig struct {
 	noDefaultExprEngines  bool
 	suppressBanner        bool
 	suppressStartupConfig bool
+	repoSet               bool
+	leaseTTL              time.Duration
 }
 
 // Option overrides one engine-level extension at thresher.New. An Option may
@@ -119,7 +122,12 @@ func WithClock(ck clock.Clock) Option {
 	}
 }
 
-// WithRepository sets the repository (default: in-memory, non-durable).
+// WithRepository sets the repository AND arms checkpointing (SRD-070
+// FR-7): an explicitly configured repository is meant to hold the state
+// of record, so every instance checkpoints into it and Run recovers the
+// claimable in-flight instances at start. The zero-config default
+// (memrepo, unconfigured) stays volatile — today's behavior, zero
+// overhead.
 func WithRepository(r repository.Repository) Option {
 	return func(c *thresherConfig) error {
 		if r == nil {
@@ -127,6 +135,8 @@ func WithRepository(r repository.Repository) Option {
 				errs.M("WithRepository: a nil Repository isn't allowed"),
 				errs.C(errorClass, errs.EmptyNotAllowed))
 		}
+
+		c.repoSet = true
 
 		c.repository = r
 
@@ -358,11 +368,32 @@ func (c *thresherConfig) Tracer() observability.Tracer                   { retur
 func (c *thresherConfig) MetricsRecorder() observability.MetricsRecorder { return c.metrics }
 func (c *thresherConfig) Clock() clock.Clock                             { return c.clock }
 func (c *thresherConfig) Repository() repository.Repository              { return c.repository }
-func (c *thresherConfig) MessageBroker() messaging.MessageBroker         { return c.msgBroker }
-func (c *thresherConfig) ExpressionEngine() expression.Engine            { return c.exprRegistry }
-func (c *thresherConfig) RuleEngine() rules.Engine                       { return c.ruleEngine }
-func (c *thresherConfig) ScriptEngine() script.Engine                    { return c.scriptRegistry }
-func (c *thresherConfig) DataStores() datastore.Registry                 { return c.dataStores }
+
+// DefaultLeaseTTL is the default instance-ownership lease window
+// (ADR-033 §2.8) an armed engine stamps on every checkpoint.
+const DefaultLeaseTTL = 30 * time.Second
+
+// WithLeaseTTL tunes the ownership-lease window (SRD-070 FR-7): how
+// long a crashed engine's instances stay unclaimable before recovery
+// may take them. Non-positive values are rejected.
+func WithLeaseTTL(d time.Duration) Option {
+	return func(c *thresherConfig) error {
+		if d <= 0 {
+			return errs.New(
+				errs.M("WithLeaseTTL: the lease window must be positive"),
+				errs.C(errorClass, errs.InvalidParameter))
+		}
+
+		c.leaseTTL = d
+
+		return nil
+	}
+}
+func (c *thresherConfig) MessageBroker() messaging.MessageBroker { return c.msgBroker }
+func (c *thresherConfig) ExpressionEngine() expression.Engine    { return c.exprRegistry }
+func (c *thresherConfig) RuleEngine() rules.Engine               { return c.ruleEngine }
+func (c *thresherConfig) ScriptEngine() script.Engine            { return c.scriptRegistry }
+func (c *thresherConfig) DataStores() datastore.Registry         { return c.dataStores }
 
 func (c *thresherConfig) AuthorizationProvider() auth.AuthorizationProvider {
 	return c.authz
@@ -400,6 +431,7 @@ func defaultConfig() thresherConfig {
 		metrics:    memmetrics.New(),
 		clock:      syscl.New(),
 		repository: memrepo.New(),
+		leaseTTL:   DefaultLeaseTTL,
 		msgBroker:  membroker.New(),
 		authz:      allowall.New(),
 		dispatcher: localdispatcher.New(nil, 0),

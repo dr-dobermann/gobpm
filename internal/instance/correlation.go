@@ -253,3 +253,36 @@ func (c *correlator) extendReceivers(value string) {
 		}
 	}
 }
+
+// snapshotKeys copies the conversation key-set for the checkpoint
+// (SRD-070 FR-3); nil when no key is associated yet.
+func (c *correlator) snapshotKeys() map[string]string {
+	c.m.Lock()
+	defer c.m.Unlock()
+
+	if len(c.keys) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(c.keys))
+	for k, v := range c.keys {
+		out[k] = v
+	}
+
+	return out
+}
+
+// restoreKeys adopts a checkpoint's recorded conversation key-set
+// (SRD-070 FR-6).
+func (c *correlator) restoreKeys(keys map[string]string) {
+	if len(keys) == 0 {
+		return
+	}
+
+	c.m.Lock()
+	defer c.m.Unlock()
+
+	for k, v := range keys {
+		c.keys[k] = v
+	}
+}

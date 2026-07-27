@@ -58,10 +58,10 @@ func TestReportDataMovements(t *testing.T) {
 	f, err := scope.NewFrame("tr", "node", pl.Root(), pl)
 	require.NoError(t, err)
 
-	f.RecordDataMovement(false, false, "order", "")  // Data Object read
-	f.RecordDataMovement(false, true, "result", "")  // Data Object write
-	f.RecordDataMovement(true, false, "cust", "kv")  // Data Store read
-	f.RecordDataMovement(true, true, "total", "kv")  // Data Store write
+	f.RecordDataMovement(false, false, "order", "") // Data Object read
+	f.RecordDataMovement(false, true, "result", "") // Data Object write
+	f.RecordDataMovement(true, false, "cust", "kv") // Data Store read
+	f.RecordDataMovement(true, true, "total", "kv") // Data Store write
 
 	tr.reportDataMovements(start, f)
 

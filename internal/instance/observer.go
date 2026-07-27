@@ -117,3 +117,10 @@ func (inst *Instance) fanoutLocal(ev observability.Fact) {
 		r.fn(ev)
 	}
 }
+
+// Report emits one instance-scoped fact through the standard emission
+// point (SRD-070 FR-7: the engine announces Recovered on the restored
+// instance's own stream, stamped like every other instance fact).
+func (inst *Instance) Report(ev observability.Fact) {
+	inst.report(ev)
+}

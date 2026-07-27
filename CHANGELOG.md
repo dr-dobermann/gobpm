@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Instance checkpoints, save/restore and restart recovery (SRD-070 —
+  the first ADR-033 Persistence & State slice).** With an explicitly
+  configured repository (`thresher.WithRepository`), every instance
+  writes a **consistent-cut checkpoint** at its observable lifecycle
+  transitions (activation, node completion, wait parks, scope opens,
+  the terminal — the loop is the single writer, so every cut is
+  consistent by construction). The Schema-1 document pins the
+  **registered process version**, records the scope tree's data
+  (canonical tagged-JSON codec over the value model; uncodable
+  payloads fail loud), conversation keys, the compensation ledger and
+  the live tracks with their **timer deadline descriptors**. The
+  Repository contract grows CAS record versions and **per-instance
+  ownership leases** (`WithLeaseTTL`) — the ADR-033 §2.8 cluster-safe
+  fencing: a zombie engine's saves are rejected, never overwriting the
+  new owner. **Restart recovery** in `Run` claims expired-lease
+  records and restores with **re-enter-the-node semantics**
+  (subscriptions re-register, tasks re-announce, jobs re-enqueue —
+  at-least-once effects); a restored timer re-arms at the RECORDED
+  absolute deadline (a Duration never restarts) and an **overdue
+  timer fires once, immediately**. In-flight Call/MI/compensation
+  constructs defer the checkpoint loudly (`CheckpointDeferred` at
+  Warn) instead of writing torn documents — full fidelity rides the
+  next slices. The zero-config engine stays exactly as before:
+  volatile, zero overhead. See `examples/restart-recovery`.
+
 - **Developer manual (`docs/guides/`) — a comprehensive, `go doc`-grounded
   reference for embedding gobpm.** The counterpart to `docs/design/` (which
   records how/why the engine was built), organized in seven parts:

@@ -58,12 +58,35 @@ type Instance struct {
 	// back to its caller's Call Activity node. Empty for a top-level instance.
 	parentInstanceID string
 	callNodeID       string
+	// cpOwner arms checkpointing (SRD-070 FR-4); its int-sized siblings
+	// (cpTTL/cpRecVersion/cpIncarnation) sit at the struct tail, outside
+	// the GC pointer scan (fieldalignment).
+	cpOwner string
+	// restoredLedgers is the checkpoint-rebuilt compensation ledger the
+	// loop adopts at start (SRD-070 FR-6); nil for a fresh instance.
+	restoredLedgers map[scope.DataPath][]*ledgerEntry
 	foundation.BaseElement
 	observers  []obsReg
 	trackCount atomic.Int64
 	obsMu      sync.RWMutex
 	obsID      uint64
 	state      atomic.Uint32
+	// The checkpoint cursors (SRD-070 FR-4): the lease TTL, the CAS
+	// record version, the lease fencing incarnation (grows on reclaim,
+	// SRD-071+). Non-pointer tail — see cpOwner above.
+	cpTTL         time.Duration
+	cpRecVersion  int64
+	cpIncarnation int64
+}
+
+// newInstanceIdentity mints the instance's BaseElement — a restored
+// instance keeps its recorded identity (SRD-070 FR-6).
+func newInstanceIdentity(restoredID string) (*foundation.BaseElement, error) {
+	if restoredID == "" {
+		return foundation.NewBaseElement()
+	}
+
+	return foundation.NewBaseElement(foundation.WithID(restoredID))
 }
 
 // newConfig holds the optional parameters of New. Its zero value builds a
@@ -78,15 +101,26 @@ type newConfig struct {
 	// child instance emits (SRD-050 FR-4); empty for a top-level instance.
 	parentInstanceID string
 	callNodeID       string
+	// cpOwner arms consistent-cut checkpointing (SRD-070 FR-4): the
+	// lease owner (engine id). Empty = volatile instance (today's
+	// default); restoredID keeps a restored instance's identity
+	// (SRD-070 FR-6). The int-sized checkpoint cursors sit at the tail.
+	cpOwner    string
+	restoredID string
 	// invoker launches child instances for the Call Activities this instance
 	// runs (SRD-050 FR-3); nil for a library embedder without a thresher — a
 	// call then fails fast with a classified no-invoker error.
 	invoker exec.ProcessInvoker
 	// rootData is committed into the root scope at construction — the Call
 	// Activity's inputs (SRD-050), the same injection point as an event
-	// payload (bindEventPayload). Kept last so its len/cap fall outside the
-	// GC pointer scan (fieldalignment).
-	rootData []data.Data
+	// payload (bindEventPayload). Its len/cap and the checkpoint cursors
+	// below fall outside the GC pointer scan (fieldalignment): cpTTL is
+	// the lease's validity window, cpRecVersion/cpIncarnation seed the
+	// restored fencing chain (SRD-070 FR-7).
+	rootData      []data.Data
+	cpTTL         time.Duration
+	cpRecVersion  int64
+	cpIncarnation int64
 }
 
 // newOption tunes New. The born-event / conversation-key options are exposed
@@ -203,7 +237,7 @@ func New(
 				errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	be, err := foundation.NewBaseElement()
+	be, err := newInstanceIdentity(cfg.restoredID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create base element: %w", err)
 	}
@@ -225,6 +259,10 @@ func New(
 		td:                  td,
 		parentInstanceID:    cfg.parentInstanceID,
 		callNodeID:          cfg.callNodeID,
+		cpOwner:             cfg.cpOwner,
+		cpTTL:               cfg.cpTTL,
+		cpRecVersion:        cfg.cpRecVersion,
+		cpIncarnation:       cfg.cpIncarnation,
 	}
 	inst.state.Store(uint32(Created))
 	inst.announceCreated()
@@ -256,8 +294,12 @@ func New(
 	// present first.
 	inst.corr.associate(cfg.convKeyName, cfg.convKeyValue)
 
-	if err := inst.createTracks(bornStart, cfg.bornEvent); err != nil {
-		return nil, err
+	// A restored instance rebuilds its track table from the checkpoint
+	// (SRD-070 FR-6) — start seeding would double-run the entry nodes.
+	if cfg.restoredID == "" {
+		if err := inst.createTracks(bornStart, cfg.bornEvent); err != nil {
+			return nil, err
+		}
 	}
 
 	// TracksCount reflects all tracks created (initial + forks); seed it with

@@ -13,3 +13,4 @@ messages to the right instance, and dispatching work to external workers.
 - [Definition versioning](versioning.md) — register versions, latest vs pinned. *(`versioning`)*
 - [Correlation & conversations](correlation.md) — route messages to the right instance. *(`inter-instance-correlation`, `conversation-routing`)*
 - [External workers](external-workers.md) — fetch-and-lock job execution. *(`service-task-worker`)*
+- [Persistence & recovery](persistence.md) — checkpoints, restart recovery, leases & fencing for shared stores. *(`restart-recovery`)*

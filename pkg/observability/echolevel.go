@@ -66,6 +66,9 @@ var phaseOverride = map[phaseKey]slog.Level{
 	// A runtime deploy is a governance milestone — the ProcessLifecycle
 	// analog on the rules seam (SRD-069 FR-6).
 	{KindRules, PhaseDeployed}: slog.LevelInfo,
+	// A deferred checkpoint means durability is OFF while the instance
+	// runs — operator-relevant degradation (SRD-070 FR-4/FR-8).
+	{KindInstanceState, PhaseCheckpointDeferred}: slog.LevelWarn,
 	// A script-execution failure — same posture (SRD-064 FR-5).
 	{KindScript, PhaseFailed}: slog.LevelWarn,
 	// Same rule for a compensation throw that resolved to nothing (SRD-059

@@ -72,6 +72,7 @@ New here? Start with **[Your first process](getting-started/first-process.md)**.
 - [Correlation & conversations](operating/correlation.md) — route messages to the right instance. *(`inter-instance-correlation`, `conversation-routing`)*
 - [External workers](operating/external-workers.md) — fetch-and-lock job execution. *(`service-task-worker`)*
 - [Human tasks](operating/human-tasks.md) — the task distributor: list, assign, complete. *(`usertask`)*
+- [Persistence & recovery](operating/persistence.md) — instance checkpoints, restart recovery, and safely sharing one store between engines. *(`restart-recovery`)*
 
 ## Part 6 — Extending gobpm
 
