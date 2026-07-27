@@ -9,13 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **User guides (`docs/guides/`) — portable-Markdown manuals for every BPMN
-  element.** A user-facing guide set (the counterpart to `docs/design/`):
-  getting-started, core concepts, and one page per element/feature (tasks,
-  gateways, events, sub-processes, iteration, data, operating), each grounded in
-  a runnable example with real captured output. Generator-agnostic Markdown
-  (minimal frontmatter, relative links, plain mermaid), ready for web
-  publishing; `docs/guides/CONTRIBUTING.md` records the authoring standard.
+- **Developer manual (`docs/guides/`) — a comprehensive, `go doc`-grounded
+  reference for embedding gobpm.** The counterpart to `docs/design/` (which
+  records how/why the engine was built), organized in seven parts:
+  getting-started, architecture & runtime (the `BaseElement → Thresher` entity
+  stack, process execution, event processing, scope), the value & data model,
+  the element reference (taxonomy + a page per element — constructor, option
+  families, the interfaces you implement, methods & behavior), controlling
+  processes & instances, **extending gobpm** (a page per seam: custom ID
+  generator, Value type, Operation, expression/rule/script engine, data store,
+  repository, message broker, clock, observability, worker dispatcher, task
+  distributor, authorization), and reference. Deep-but-readable, pure
+  generator-agnostic Markdown; every page grounded in the public API and a
+  runnable example. `docs/guides/CONTRIBUTING.md` records the authoring standard.
 
 - **Rules/Script invocation facts and the registrar audit (SRD-069).**
   The decision/script observability stream becomes a closed ledger:
