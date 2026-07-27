@@ -147,6 +147,12 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 
 	ls := newLoopState(inst)
 
+	// A restored instance adopts its checkpoint-rebuilt compensation
+	// ledger (SRD-070 FR-6) — compensability survives the restart.
+	if inst.restoredLedgers != nil {
+		ls.ledgers = inst.restoredLedgers
+	}
+
 	for _, t := range initial {
 		ls.spawn(ctx, t)
 	}

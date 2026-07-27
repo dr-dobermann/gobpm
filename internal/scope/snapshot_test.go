@@ -155,3 +155,21 @@ func TestOwnDataAndOpenPaths(t *testing.T) {
 			require.Error(t, err)
 		})
 }
+
+// brokenDatum lacks the Clone capability — the cloneDatum guard.
+type brokenDatum struct{ data.Data }
+
+func (brokenDatum) Name() string { return "broken" }
+
+func TestOwnDataUnclonable(t *testing.T) {
+	root := mustPath(t, "/proc")
+
+	p, err := New(root, nil)
+	require.NoError(t, err)
+
+	p.scopes[root]["broken"] = brokenDatum{}
+
+	_, err = p.OwnData(root)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "isn't clonable")
+}

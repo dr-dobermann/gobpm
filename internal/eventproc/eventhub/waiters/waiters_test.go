@@ -17,6 +17,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -149,5 +150,83 @@ func TestTimerPlan(t *testing.T) {
 			})
 			_, _, err = waiters.TimerPlan(sig, ep, rt)
 			require.Error(t, err)
+		})
+}
+
+// hintingEP is an EventProcessor carrying a recorded timer plan — the
+// restored-track shape (SRD-070 FR-6).
+type hintingEP struct {
+	*mockeventproc.MockEventProcessor
+	deadline time.Time
+	cycles   int
+}
+
+func (h *hintingEP) TimerDeadlineHint(string) (time.Time, int, bool) {
+	return h.deadline, h.cycles, true
+}
+
+// TestHintedWaiter: a hinted waiter arms at the RECORDED plan (no
+// re-evaluation — even a past absolute Time builds), and an overdue
+// hint clamps to one immediate firing.
+func TestHintedWaiter(t *testing.T) {
+	t.Run("a future hint arms without parsing",
+		func(t *testing.T) {
+			ep := &hintingEP{
+				MockEventProcessor: mockeventproc.NewMockEventProcessor(t),
+				deadline:           time.Now().Add(time.Hour),
+			}
+
+			mockHub := mockeventproc.NewMockEventHub(t)
+
+			// the definition's own Time is in the PAST — parseEDef would
+			// reject it; the hint must bypass parsing entirely.
+			pastDef := events.MustTimerEventDefinition(
+				goexpr.Must(nil,
+					data.MustItemDefinition(values.NewVariable(time.Now())),
+					func(_ context.Context, _ data.Source) (data.Value, error) {
+						return values.NewVariable(
+							time.Now().Add(-time.Hour)), nil
+					}), nil, nil)
+
+			w, err := waiters.NewTimeWaiter(mockHub, ep, pastDef, "h1",
+				enginert.Default())
+			require.NoError(t, err)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			require.NoError(t, w.Service(ctx),
+				"a future hinted deadline must arm")
+		})
+
+	t.Run("an overdue hint fires immediately, once",
+		func(t *testing.T) {
+			mep := mockeventproc.NewMockEventProcessor(t)
+			mep.EXPECT().ProcessEvent(mock.Anything, mock.Anything).
+				Return(nil).Maybe()
+
+			ep := &hintingEP{
+				MockEventProcessor: mep,
+				deadline:           time.Now().Add(-time.Hour), // overdue
+			}
+
+			mockHub := mockeventproc.NewMockEventHub(t)
+			mockHub.EXPECT().PropagateEvent(mock.Anything, mock.Anything).
+				Return(nil).Maybe()
+			mockHub.EXPECT().UnregisterEvent(mock.Anything, mock.Anything).
+				Return(nil).Maybe()
+			mockHub.EXPECT().WaiterFired(mock.Anything).Return(nil).Maybe()
+
+			w, err := waiters.NewTimeWaiter(mockHub, ep,
+				timerEDef(t), "h2", enginert.Default())
+			require.NoError(t, err)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			require.NoError(t, w.Service(ctx),
+				"an overdue hint clamps to an immediate firing")
+
+			time.Sleep(50 * time.Millisecond) // let the single fire happen
 		})
 }

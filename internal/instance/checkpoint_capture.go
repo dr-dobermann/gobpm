@@ -207,21 +207,22 @@ func ledgerRecords(
 	return out, nil
 }
 
-// trackRecord captures one live track; live=false skips it.
+// trackRecord captures one live track; live=false skips it. Every read
+// rides the track mutex: the capture runs on the loop goroutine while
+// the track's own goroutine may be mid-arming (writes guarded on its
+// side too).
 func trackRecord(t *track) (checkpoint.TrackRecord, bool) {
 	t.m.RLock()
-	state := t.state
-	node := t.steps[len(t.steps)-1].node
-	t.m.RUnlock()
+	defer t.m.RUnlock()
 
-	if !liveTrackStates[state] {
+	if !liveTrackStates[t.state] {
 		return checkpoint.TrackRecord{}, false
 	}
 
 	rec := checkpoint.TrackRecord{
 		ID:          t.ID(),
-		State:       state.String(),
-		NodeID:      node.ID(),
+		State:       t.state.String(),
+		NodeID:      t.steps[len(t.steps)-1].node.ID(),
 		ScopePath:   string(t.scopePath),
 		ScopeSeg:    t.scopeSeg,
 		TaskID:      t.taskID,
@@ -230,7 +231,7 @@ func trackRecord(t *track) (checkpoint.TrackRecord, bool) {
 		LoopCounter: t.loopCounter,
 	}
 
-	if state == TrackWaitForEvent && !t.timerDeadline.IsZero() {
+	if t.state == TrackWaitForEvent && !t.timerDeadline.IsZero() {
 		rec.Timer = &checkpoint.TimerDescriptor{
 			Deadline:   t.timerDeadline,
 			CyclesLeft: t.timerCycles,
@@ -265,7 +266,7 @@ func (inst *Instance) reportCheckpointDeferred(reason string) {
 		Kind:  observability.KindInstanceState,
 		Phase: observability.PhaseCheckpointDeferred,
 		Details: map[string]string{
-			"reason": reason,
+			"reason":                    reason,
 			observability.AttrProcessID: inst.s.ProcessID,
 			observability.AttrVersion:   strconv.Itoa(inst.s.Version),
 		},

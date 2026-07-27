@@ -103,3 +103,19 @@ func TestDocumentValidation(t *testing.T) {
 			require.Contains(t, err.Error(), "names no instance/process")
 		})
 }
+
+// TestMarshalInvalidRawMessage: an invalid embedded RawMessage makes
+// the document serialization itself fail — the loud relay.
+func TestMarshalInvalidRawMessage(t *testing.T) {
+	d := &checkpoint.Document{
+		InstanceID: "i",
+		ProcessID:  "p",
+		Scopes: []checkpoint.ScopeRecord{
+			{Path: "/p", Data: []byte("{oops")},
+		},
+	}
+
+	_, err := d.Marshal()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "serialization failed")
+}

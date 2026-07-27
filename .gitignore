@@ -71,6 +71,7 @@ examples/business-rule-task/business-rule-task
 examples/decision-table/decision-table
 examples/script-task/script-task
 examples/expression-routing/expression-routing
+examples/restart-recovery/restart-recovery
 examples/multi-instance-parallel/multi-instance-parallel
 examples/multi-instance-behavior/multi-instance-behavior
 examples/compensation-events/compensation-events

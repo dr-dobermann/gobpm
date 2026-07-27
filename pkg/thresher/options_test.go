@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
@@ -468,5 +469,23 @@ func TestWithWorkerTrustDefaultRejectsInvalid(t *testing.T) {
 	c := defaultConfig()
 	if err := WithWorkerTrustDefault(tasks.TrustMode(99))(&c); err == nil {
 		t.Fatal("an invalid trust mode should be rejected")
+	}
+}
+
+// TestWithLeaseTTL covers the lease-window option (SRD-070 FR-7).
+func TestWithLeaseTTL(t *testing.T) {
+	if _, err := New("ttl-bad", WithoutBanner(),
+		WithLeaseTTL(0)); err == nil {
+		t.Fatal("a non-positive lease window must be rejected")
+	}
+
+	eng, err := New("ttl-ok", WithoutBanner(),
+		WithLeaseTTL(5*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if eng.cfg.leaseTTL != 5*time.Second {
+		t.Fatalf("leaseTTL = %v, want 5s", eng.cfg.leaseTTL)
 	}
 }

@@ -359,4 +359,3 @@ func (s *Snapshot) Clone() (*Snapshot, error) {
 
 	return &clone, nil
 }
-

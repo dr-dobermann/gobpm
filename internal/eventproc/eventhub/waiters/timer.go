@@ -38,7 +38,11 @@ type timeWaiter struct {
 	state      eventproc.EventWaiterState
 	cyclesLeft int
 	duration   time.Duration
-	m          sync.Mutex
+	// hinted marks a restored waiter (SRD-070 FR-6): next/cyclesLeft
+	// came from the checkpoint's recorded plan, not re-evaluation — an
+	// overdue deadline fires once, immediately.
+	hinted bool
+	m      sync.Mutex
 }
 
 // NewTimeWaiter creates a new timer event defined by eDef. rt is the engine
@@ -79,12 +83,27 @@ func NewTimeWaiter(
 		processors: []eventproc.EventProcessor{ep},
 	}
 
-	if err := tw.parseEDef(eDef, ep); err != nil {
-		return nil,
-			errs.New(
-				errs.M("TimerEventDefinition parsing failed"),
-				errs.C(TimerWaiterError, errs.OperationFailed),
-				errs.E(err))
+	// A restored track hints the RECORDED firing plan (SRD-070 FR-6):
+	// the checkpoint's absolute deadline REPLACES expression parsing — a
+	// re-evaluated Duration would restart, a past absolute Time would be
+	// rejected by the parse validation, and an overdue deadline must
+	// fire once, immediately.
+	if h, isHinter := ep.(DeadlineHinter); isHinter {
+		if deadline, cycles, hintOK := h.TimerDeadlineHint(eDef.ID()); hintOK {
+			tw.next = deadline
+			tw.cyclesLeft = cycles
+			tw.hinted = true
+		}
+	}
+
+	if !tw.hinted {
+		if err := tw.parseEDef(eDef, ep); err != nil {
+			return nil,
+				errs.New(
+					errs.M("TimerEventDefinition parsing failed"),
+					errs.C(TimerWaiterError, errs.OperationFailed),
+					errs.E(err))
+		}
 	}
 
 	tw.state = eventproc.WSReady
@@ -261,7 +280,16 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 		// source the validation at parseEDef used), not the wall clock, so a
 		// substituted clock governs the wait — see runTimerService.
 		tw.duration = tw.next.Sub(tw.rt.Clock().Now())
-		tw.cyclesLeft = 0
+
+		// A hinted (restored) waiter keeps its recorded cycle count; an
+		// overdue recorded deadline collapses to one immediate firing.
+		if tw.hinted {
+			if tw.duration <= 0 {
+				tw.duration = time.Millisecond
+			}
+		} else {
+			tw.cyclesLeft = 0
+		}
 	}
 
 	if tw.duration <= 0 {
@@ -496,4 +524,13 @@ func TimerPlan(
 	}
 
 	return deadline, tw.cyclesLeft, nil
+}
+
+// DeadlineHinter is an optional EventProcessor capability (SRD-070
+// FR-6): a RESTORED track hints the checkpoint-recorded firing plan for
+// its timer definition, and the waiter arms at that absolute deadline
+// instead of re-evaluating the expressions. ok=false means "no hint —
+// evaluate normally" (every non-restored processor).
+type DeadlineHinter interface {
+	TimerDeadlineHint(eDefID string) (deadline time.Time, cyclesLeft int, ok bool)
 }

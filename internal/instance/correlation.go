@@ -271,3 +271,18 @@ func (c *correlator) snapshotKeys() map[string]string {
 
 	return out
 }
+
+// restoreKeys adopts a checkpoint's recorded conversation key-set
+// (SRD-070 FR-6).
+func (c *correlator) restoreKeys(keys map[string]string) {
+	if len(keys) == 0 {
+		return
+	}
+
+	c.m.Lock()
+	defer c.m.Unlock()
+
+	for k, v := range keys {
+		c.keys[k] = v
+	}
+}

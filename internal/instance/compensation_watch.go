@@ -49,10 +49,10 @@ type compSweep struct {
 	// txHost tags a Transaction-abort sweep (SRD-061 FR-5): when set, the sweep
 	// drives finalizeTransaction (terminate residuals, exit via the Cancel
 	// boundary) once it drains, instead of resuming a parked compensation thrower.
-	txHost  *track
-	path    scope.DataPath
-	queue   []*ledgerEntry
-	wait    bool
+	txHost *track
+	path   scope.DataPath
+	queue  []*ledgerEntry
+	wait   bool
 }
 
 // applyCompensate resolves a Compensation throw (SRD-059 FR-6): report Thrown,

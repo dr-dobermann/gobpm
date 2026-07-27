@@ -194,13 +194,16 @@ type track struct {
 	// reads). Set by the loop before spawn.
 	// timerDeadline pins a parked timer wait for the checkpoint
 	// (SRD-070 FR-3) — recorded at arming, zero otherwise (timerCycles
-	// rides below the slices for fieldalignment).
+	// rides below the slices for fieldalignment). timerHinted marks a
+	// RESTORED plan: the DeadlineHinter capability then overrides the
+	// waiter's re-evaluation (SRD-070 FR-6).
 	timerDeadline time.Time
 	compScopeSeed []data.Data
 	timerCycles   int
 	loopCounter   int
 	m             sync.RWMutex
 	stopIt        atomic.Bool
+	timerHinted   bool
 	state         trackState
 }
 
@@ -421,8 +424,18 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 	// (SRD-027 FR-8): carried in the evWaiting emit below for a mid-run wait, and read by
 	// spawn for a track that starts parked before the loop drains events. Conditional
 	// definitions are recorded the same way (SRD-048 FR-7) — the loop arms them itself.
+	t.m.Lock()
 	t.msgDefIDs = messageDefIDs(defs)
 	t.condDefs = conditionalDefs(defs)
+	t.m.Unlock()
+
+	// Stash the timer plan BEFORE the wait is declared (SRD-070 FR-3):
+	// the evWaiting emit below lets the loop checkpoint immediately, and
+	// the captured record must already carry the deadline descriptor —
+	// stashing after the emit races the capture (caught under -race).
+	for _, d := range defs {
+		t.stashTimerPlan(d, t)
+	}
 
 	// Declare the wait BEFORE registering: a waiter may deliver an event
 	// synchronously on registration (a MessageWaiter draining a message the
@@ -464,16 +477,6 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 			proc = t.instance
 		}
 
-		// A timer wait records its firing plan for the checkpoint
-		// (SRD-070 FR-3): the ABSOLUTE deadline captured at arming is the
-		// restore authority — re-evaluating a Duration would restart it.
-		if d.Type() == flow.TriggerTimer {
-			deadline, cycles, err := waiters.TimerPlan(d, proc, t.instance)
-			if err == nil {
-				t.timerDeadline = deadline
-				t.timerCycles = cycles
-			}
-		}
 
 		if err := t.instance.RegisterEvent(proc, d); err != nil {
 			return errs.New(
@@ -487,6 +490,31 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 	}
 
 	return nil
+}
+
+// stashTimerPlan records a timer wait's firing plan for the checkpoint
+// (SRD-070 FR-3): the ABSOLUTE deadline captured at arming is the
+// restore authority — re-evaluating a Duration would restart it. A
+// non-timer definition or an unevaluable plan stashes nothing (the
+// checkpoint simply carries no descriptor).
+func (t *track) stashTimerPlan(
+	d flow.EventDefinition, proc eventproc.EventProcessor,
+) {
+	if d == nil || d.Type() != flow.TriggerTimer {
+		return
+	}
+
+	deadline, cycles, err := waiters.TimerPlan(d, proc, t.instance)
+	if err != nil {
+		return
+	}
+
+	// Under the track mutex: the checkpoint capture (the loop goroutine)
+	// reads these while this track's goroutine arms (SRD-070 FR-4).
+	t.m.Lock()
+	t.timerDeadline = deadline
+	t.timerCycles = cycles
+	t.m.Unlock()
 }
 
 // checkActivityWaitKind classifies the non-event wait nodes (done=true when
@@ -634,7 +662,9 @@ func (t *track) parkCallActivity(node flow.Node, atConstruction bool) error {
 // path). The UserTask registers NO hub waiter — completion arrives via Complete,
 // delivered to evtCh as a synthetic event, not fired through the hub.
 func (t *track) parkHumanTask(node flow.Node) error {
+	t.m.Lock()
 	t.taskID = foundation.GenerateID()
+	t.m.Unlock()
 
 	t.updateState(TrackWaitForEvent)
 

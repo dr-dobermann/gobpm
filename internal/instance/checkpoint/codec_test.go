@@ -331,3 +331,53 @@ func TestDecodeEdgeCases(t *testing.T) {
 			require.Error(t, err)
 		})
 }
+
+// TestDecodeRecordFieldError: a broken scalar inside a record field
+// relays its parse error through the record decode.
+func TestDecodeRecordFieldError(t *testing.T) {
+	_, err := checkpoint.DecodeData(ctx,
+		[]byte(`[{"name":"r","state":"Ready","value":{"kind":"record",`+
+			`"fields":[{"name":"n","value":{"kind":"int","value":"zzz"}}]}}]`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "doesn't parse")
+}
+
+// TestCompositeEncodeRelays: an uncodable payload nested inside each
+// composite relays loud with its element context.
+func TestCompositeEncodeRelays(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	t.Run("inside an array",
+		func(t *testing.T) {
+			_, err := checkpoint.EncodeData(ctx, "/p", []data.Data{
+				mkDatum(t, "arr", values.NewArray[any](make(chan int))),
+			})
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "arr[0]")
+		})
+
+	t.Run("inside a map",
+		func(t *testing.T) {
+			m, err := values.NewMap(map[string]any{"x": make(chan int)})
+			require.NoError(t, err)
+
+			_, err = checkpoint.EncodeData(ctx, "/p", []data.Data{
+				mkDatum(t, "mp", m),
+			})
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "mp[x]")
+		})
+
+	t.Run("inside a record",
+		func(t *testing.T) {
+			r, err := values.NewRecord(
+				values.F("hot", values.NewVariable(make(chan int))))
+			require.NoError(t, err)
+
+			_, err = checkpoint.EncodeData(ctx, "/p", []data.Data{
+				mkDatum(t, "rec", r),
+			})
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "rec.hot")
+		})
+}

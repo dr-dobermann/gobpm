@@ -532,6 +532,14 @@ func (t *Thresher) Run(ctx context.Context) error {
 			errs.E(err))
 	}
 
+	// Restart recovery (SRD-070 FR-7): with an explicitly configured
+	// Repository, claim and rehydrate the claimable in-flight instances.
+	// Every failure is per-instance and loud — recovery never blocks the
+	// start (an empty/fresh store recovers nothing).
+	if t.cfg.repoSet {
+		t.recoverInstances(runCtx)
+	}
+
 	return nil
 }
 
@@ -1186,8 +1194,17 @@ func (t *Thresher) Instance(instanceID string) (*InstanceHandle, bool) {
 // launchInstance creates a new Instance from the Snapshot s, runs it, appends it
 // to the running instances of the Thresher, and returns its read-only handle.
 func (t *Thresher) launchInstance(s *snapshot.Snapshot) (*InstanceHandle, error) {
+	opts := []instance.Option{instance.WithInvoker(t)}
+	// An explicitly configured Repository is the state of record: every
+	// instance checkpoints into it under this engine's lease (SRD-070
+	// FR-4/FR-7). The zero-config default stays volatile.
+	if t.cfg.repoSet {
+		opts = append(opts,
+			instance.WithCheckpointing(t.id, t.cfg.leaseTTL))
+	}
+
 	inst, err := instance.New(s, scope.EmptyDataPath, &t.cfg, t, t.taskDist,
-		instance.WithInvoker(t))
+		opts...)
 	if err != nil {
 		return nil, errs.New(
 			errs.M("couldn't create an Instance for process %q",

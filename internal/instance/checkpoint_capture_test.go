@@ -12,7 +12,10 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/scope"
+	"github.com/stretchr/testify/mock"
+
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -20,6 +23,10 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/repository"
 )
+
+// lastCondSnapshot shares parkAndInspect's template with the restore
+// tests (stable node ids — the deployment-parity requirement).
+var lastCondSnapshot *snapshot.Snapshot
 
 // cpSink collects reported facts for the degradation assertions.
 type cpSink struct {
@@ -57,6 +64,7 @@ func parkAndInspect(t *testing.T) (
 
 	s := condSnapshot(t, def)
 	s.Version = 7 // the FR-1 pin a registration would stamp
+	lastCondSnapshot = s
 
 	ep := mockeventproc.NewMockEventProducer(t)
 	rt := enginert.Default()
@@ -327,5 +335,412 @@ func TestCaptureArms(t *testing.T) {
 			require.Equal(t, repository.StatusActive, persistedStatus(State(99)))
 			require.Equal(t, repository.StatusCompleted,
 				persistedStatus(Completed))
+		})
+}
+
+// TestRestore covers SRD-070 T-4: the captured document rebuilds an
+// equal instance — scopes, data, keys, the parked track — and the
+// guards are loud.
+func TestRestore(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	rt, inst, doc, cancel := parkAndInspect(t)
+	cancel() // the source instance is done serving
+
+	t.Run("the document rebuilds the instance",
+		func(t *testing.T) {
+			// the pinned version must match the snapshot exactly.
+			s2 := condSnapshotFor(t, doc)
+
+			ep := mockeventproc.NewMockEventProducer(t)
+			ep.EXPECT().
+				RegisterEvent(mock.Anything, mock.Anything).
+				Return(nil).
+				Maybe()
+
+			restored, err := Restore(doc, s2, scope.EmptyDataPath,
+				enginert.Default(), ep, nil,
+				WithCheckpointCursor(5, 2))
+			require.NoError(t, err)
+
+			require.Equal(t, inst.ID(), restored.ID(),
+				"the recorded identity survives")
+			require.Equal(t, int64(5), restored.cpRecVersion)
+			require.Equal(t, int64(2), restored.cpIncarnation)
+			require.Len(t, restored.tracks, 1,
+				"the live parked track rebuilt")
+
+			for _, tr := range restored.tracks {
+				require.Equal(t, doc.Tracks[0].NodeID,
+					tr.currentStep().node.ID(),
+					"the track re-enters its recorded node")
+			}
+
+			_ = rt
+		})
+
+	t.Run("a version mismatch is loud",
+		func(t *testing.T) {
+			s2 := condSnapshotFor(t, doc)
+			s2.Version = doc.Version + 1
+
+			ep := mockeventproc.NewMockEventProducer(t)
+
+			_, err := Restore(doc, s2, scope.EmptyDataPath,
+				enginert.Default(), ep, nil)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "pinned version")
+		})
+
+	t.Run("a nil document is loud",
+		func(t *testing.T) {
+			_, err := Restore(nil, nil, scope.EmptyDataPath,
+				enginert.Default(), nil, nil)
+			require.Error(t, err)
+		})
+
+	t.Run("a recorded node missing from the version is loud",
+		func(t *testing.T) {
+			s2 := condSnapshotFor(t, doc)
+
+			broken := *doc
+			broken.Tracks = append([]checkpoint.TrackRecord{},
+				doc.Tracks...)
+			broken.Tracks[0].NodeID = "no-such-node"
+
+			ep := mockeventproc.NewMockEventProducer(t)
+
+			_, err := Restore(&broken, s2, scope.EmptyDataPath,
+				enginert.Default(), ep, nil)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "isn't in the pinned")
+		})
+
+	t.Run("restored ledgers rebuild with their snapshots",
+		func(t *testing.T) {
+			s2 := condSnapshotFor(t, doc)
+
+			withLedger := *doc
+
+			enc, err := checkpoint.EncodeData(context.Background(), "/x",
+				[]data.Data{mustParam(t, "saved", 7)})
+			require.NoError(t, err)
+
+			withLedger.Ledgers = []checkpoint.LedgerRecord{{
+				ScopePath:  string(scope.RootDataPath),
+				ActivityID: "book",
+				Ordinal:    0,
+				Snapshot:   enc,
+			}}
+			withLedger.Tracks = nil
+
+			ep := mockeventproc.NewMockEventProducer(t)
+
+			restored, err := Restore(&withLedger, s2, scope.EmptyDataPath,
+				enginert.Default(), ep, nil)
+			require.NoError(t, err)
+			require.Len(t,
+				restored.restoredLedgers[scope.RootDataPath], 1)
+			require.Equal(t, "saved",
+				restored.restoredLedgers[scope.RootDataPath][0].
+					snapshot[0].Name())
+
+			// run it: the loop ADOPTS the restored ledger (and, with no
+			// tracks, completes at once) — the adoption line is load-
+			// bearing for post-restart compensability.
+			runCtx, runCancel := context.WithCancel(context.Background())
+			defer runCancel()
+
+			require.NoError(t, restored.Run(runCtx))
+			require.Eventually(t, func() bool {
+				return restored.State() == Completed
+			}, 2*time.Second, 5*time.Millisecond)
+		})
+}
+
+// condSnapshotFor rebuilds the conditional snapshot carrying the
+// document's pinned version (the same-definition contract; node ids
+// differ per build, so the rebuild REUSES the source instance's
+// snapshot template via Clone semantics — here the simplest equivalent:
+// the recorded node must exist, so we clone from the parked instance's
+// own template).
+func condSnapshotFor(
+	t *testing.T, doc *checkpoint.Document,
+) *snapshot.Snapshot {
+	t.Helper()
+
+	s := lastCondSnapshot
+	require.NotNil(t, s, "parkAndInspect must have built the snapshot")
+
+	c, err := s.Clone()
+	require.NoError(t, err)
+
+	c.Version = doc.Version
+
+	return c
+}
+
+// mustParam wraps an int as a Ready parameter.
+func mustParam(t *testing.T, name string, v int) data.Data {
+	t.Helper()
+
+	p, err := data.ReadyValueParameter(name, values.NewVariable(v))
+	require.NoError(t, err)
+
+	return p
+}
+
+// TestRestoreArms lifts the remaining restore branches: child scopes,
+// the reopen guard, and the timer descriptor → hint wiring.
+func TestRestoreArms(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	_, _, doc, cancel := parkAndInspect(t)
+	cancel()
+
+	t.Run("a child scope reopens with its data",
+		func(t *testing.T) {
+			s2 := condSnapshotFor(t, doc)
+
+			enc, err := checkpoint.EncodeData(context.Background(), "/c",
+				[]data.Data{mustParam(t, "childD", 3)})
+			require.NoError(t, err)
+
+			withChild := *doc
+			withChild.Tracks = nil
+			withChild.Scopes = append(
+				append([]checkpoint.ScopeRecord{}, doc.Scopes...),
+				checkpoint.ScopeRecord{
+					Path: doc.Scopes[0].Path + "/sp-x",
+					Data: enc,
+				})
+
+			ep := mockeventproc.NewMockEventProducer(t)
+
+			restored, err := Restore(&withChild, s2, scope.EmptyDataPath,
+				enginert.Default(), ep, nil)
+			require.NoError(t, err)
+
+			child := scope.DataPath(doc.Scopes[0].Path + "/sp-x")
+			own, err := restored.sc.plane.OwnData(child)
+			require.NoError(t, err)
+			require.Len(t, own, 1)
+			require.Equal(t, "childD", own[0].Name())
+		})
+
+	t.Run("an orphan scope path is loud",
+		func(t *testing.T) {
+			s2 := condSnapshotFor(t, doc)
+
+			broken := *doc
+			broken.Tracks = nil
+			broken.Scopes = append(
+				append([]checkpoint.ScopeRecord{}, doc.Scopes...),
+				checkpoint.ScopeRecord{Path: "/elsewhere/deep"})
+
+			ep := mockeventproc.NewMockEventProducer(t)
+
+			_, err := Restore(&broken, s2, scope.EmptyDataPath,
+				enginert.Default(), ep, nil)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "reopen")
+		})
+
+	t.Run("a timer descriptor becomes the deadline hint",
+		func(t *testing.T) {
+			s2 := condSnapshotFor(t, doc)
+
+			when := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+
+			withTimer := *doc
+			withTimer.Tracks = append([]checkpoint.TrackRecord{},
+				doc.Tracks...)
+			withTimer.Tracks[0].Timer = &checkpoint.TimerDescriptor{
+				Deadline:   when,
+				CyclesLeft: 3,
+			}
+
+			ep := mockeventproc.NewMockEventProducer(t)
+			ep.EXPECT().
+				RegisterEvent(mock.Anything, mock.Anything).
+				Return(nil).
+				Maybe()
+
+			restored, err := Restore(&withTimer, s2, scope.EmptyDataPath,
+				enginert.Default(), ep, nil)
+			require.NoError(t, err)
+
+			for _, tr := range restored.tracks {
+				deadline, cycles, ok := tr.TimerDeadlineHint("any")
+				require.True(t, ok, "a restored timer track must hint")
+				require.True(t, when.Equal(deadline))
+				require.Equal(t, 3, cycles)
+			}
+		})
+
+	t.Run("a fresh track hints nothing",
+		func(t *testing.T) {
+			tr := &track{}
+			_, _, ok := tr.TimerDeadlineHint("any")
+			require.False(t, ok)
+		})
+}
+
+// TestStashTimerPlan covers the park-time hook directly: a timer def
+// stashes its plan, everything else stashes nothing.
+func TestStashTimerPlan(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	when := time.Now().Add(time.Hour).Truncate(time.Second)
+
+	timeExpr, err := goexpr.New(nil,
+		data.MustItemDefinition(values.NewVariable(time.Time{})),
+		func(_ context.Context, _ data.Source) (data.Value, error) {
+			return values.NewVariable(when), nil
+		})
+	require.NoError(t, err)
+
+	tDef, err := events.NewTimerEventDefinition(timeExpr, nil, nil)
+	require.NoError(t, err)
+
+	tr := &track{instance: &Instance{EngineRuntime: enginert.Default()}}
+	tr.instance.now = tr.instance.Clock().Now
+
+	tr.stashTimerPlan(tDef, nil)
+	require.True(t, when.Equal(tr.timerDeadline),
+		"the absolute plan must stash at arming")
+
+	fresh := &track{}
+	fresh.stashTimerPlan(nil, nil)
+	require.True(t, fresh.timerDeadline.IsZero(),
+		"a nil definition stashes nothing")
+}
+
+// TestInstanceReportExported: the exported Report wrapper reaches the
+// standard emission point.
+func TestInstanceReportExported(t *testing.T) {
+	sink := &cpSink{}
+	rt := enginert.Default().WithReporter(sink)
+
+	inst := &Instance{EngineRuntime: rt}
+	inst.Report(observability.Fact{
+		Kind:  observability.KindInstanceState,
+		Phase: observability.PhaseRecovered,
+	})
+
+	require.True(t, sink.has(observability.PhaseRecovered))
+}
+
+// TestRestoreDataArms: garbage scope data and empty records exercise
+// the remaining restore relays.
+func TestRestoreDataArms(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	_, _, doc, cancel := parkAndInspect(t)
+	cancel()
+
+	t.Run("garbage scope data is loud",
+		func(t *testing.T) {
+			s2 := condSnapshotFor(t, doc)
+
+			broken := *doc
+			broken.Tracks = nil
+			broken.Scopes = []checkpoint.ScopeRecord{{
+				Path: doc.Scopes[0].Path,
+				Data: []byte("not json"),
+			}}
+
+			ep := mockeventproc.NewMockEventProducer(t)
+
+			_, err := Restore(&broken, s2, scope.EmptyDataPath,
+				enginert.Default(), ep, nil)
+			require.Error(t, err)
+		})
+
+	t.Run("an empty scope record just reopens",
+		func(t *testing.T) {
+			s2 := condSnapshotFor(t, doc)
+
+			slim := *doc
+			slim.Tracks = nil
+			slim.Scopes = []checkpoint.ScopeRecord{
+				{Path: doc.Scopes[0].Path},
+				{Path: doc.Scopes[0].Path + "/sp-empty"},
+			}
+
+			ep := mockeventproc.NewMockEventProducer(t)
+
+			restored, err := Restore(&slim, s2, scope.EmptyDataPath,
+				enginert.Default(), ep, nil)
+			require.NoError(t, err)
+
+			_, err = restored.sc.plane.OwnData(
+				scope.DataPath(doc.Scopes[0].Path + "/sp-empty"))
+			require.NoError(t, err)
+		})
+
+	t.Run("garbage ledger snapshot is loud",
+		func(t *testing.T) {
+			s2 := condSnapshotFor(t, doc)
+
+			broken := *doc
+			broken.Tracks = nil
+			broken.Ledgers = []checkpoint.LedgerRecord{{
+				ScopePath:  doc.Scopes[0].Path,
+				ActivityID: "x",
+				Snapshot:   []byte("boom"),
+			}}
+
+			ep := mockeventproc.NewMockEventProducer(t)
+
+			_, err := Restore(&broken, s2, scope.EmptyDataPath,
+				enginert.Default(), ep, nil)
+			require.Error(t, err)
+		})
+}
+
+// TestRestoreKeysAndLedgerEncodeArms: the conversation-key restore and
+// the capture-side ledger encode guard.
+func TestRestoreKeysAndLedgerEncodeArms(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	t.Run("conversation keys restore",
+		func(t *testing.T) {
+			c := &correlator{keys: map[string]string{}}
+			c.restoreKeys(map[string]string{"orderID": "42"})
+			c.restoreKeys(nil) // the empty guard
+
+			require.Equal(t, "42", c.keys["orderID"])
+		})
+
+	t.Run("an unencodable ledger snapshot defers the capture",
+		func(t *testing.T) {
+			val := false
+			evals := 0
+
+			def, err := events.NewConditionalEventDefinition(
+				condExpr(t, &val, &evals))
+			require.NoError(t, err)
+
+			rt := enginert.Default()
+			ep := mockeventproc.NewMockEventProducer(t)
+
+			inst, err := New(condSnapshot(t, def), scope.EmptyDataPath,
+				rt, ep, nil,
+				WithCheckpointing("engine-A", time.Minute))
+			require.NoError(t, err)
+
+			bad, err := data.ReadyValueParameter("hot",
+				values.NewVariable(make(chan int)))
+			require.NoError(t, err)
+
+			ls := newLoopState(inst)
+			ls.ledgers[inst.sc.root] = []*ledgerEntry{{
+				activityID: "x",
+				snapshot:   []data.Data{bad},
+			}}
+
+			_, reason := ls.captureDocument(context.Background())
+			require.Contains(t, reason, "ledger encode:")
 		})
 }
