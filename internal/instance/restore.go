@@ -370,6 +370,9 @@ func restoredTrack(
 		scopePath:   scope.DataPath(rec.ScopePath),
 		scopeSeg:    rec.ScopeSeg,
 		loopCounter: rec.LoopCounter,
+		// the recorded human-task id: parkHumanTask REUSES it rather than
+		// minting, so the id a human holds survives rehydration (SRD-071 FR-8).
+		taskID: rec.TaskID,
 	}
 
 	if rec.Timer != nil {

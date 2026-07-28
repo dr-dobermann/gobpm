@@ -408,6 +408,7 @@ func TestRestoreWithPendingTriggerGuards(t *testing.T) {
 type fakeHolders struct {
 	held     map[string]time.Time
 	subs     map[string]bool
+	tasks    map[string]string
 	released map[string]int
 	decline  bool
 }
@@ -416,6 +417,7 @@ func newFakeHolders() *fakeHolders {
 	return &fakeHolders{
 		held:     map[string]time.Time{},
 		subs:     map[string]bool{},
+		tasks:    map[string]string{},
 		released: map[string]int{},
 	}
 }
@@ -445,6 +447,16 @@ func (f *fakeHolders) HoldSubscription(
 	}
 
 	f.subs[instanceID+"|"+trackID+"|"+eDef.ID()] = true
+
+	return nil
+}
+
+func (f *fakeHolders) HoldTask(instanceID, trackID, taskID string) error {
+	if f.decline {
+		return errors.New("declined")
+	}
+
+	f.tasks[instanceID+"|"+trackID] = taskID
 
 	return nil
 }

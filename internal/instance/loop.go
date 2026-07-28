@@ -951,7 +951,8 @@ func (ls *loopState) dehydrateTrack(t *track) {
 // join-parked track, or an in-flight call/MI/sweep keeps the instance resident.
 func (ls *loopState) maybeDehydrate(ctx context.Context) {
 	inst := ls.inst
-	if inst.cpOwner == "" || ls.dehydrating || ls.stopping {
+	if inst.cpOwner == "" || ls.dehydrating || ls.stopping ||
+		inst.pinnedResident() {
 		return
 	}
 
@@ -983,6 +984,17 @@ func (ls *loopState) dehydratableParked(ctx context.Context) []*track {
 	for _, t := range inst.tracks {
 		switch {
 		case t.inState(TrackWaitForEvent):
+			// A track already DISPATCHED to is not idle, even though its state
+			// still reads WaitForEvent: the flip to Ready happens on the track's
+			// own goroutine when it consumes the event. dispatchToParked clears
+			// the waiting entry BEFORE the send, so this is the loop-owned
+			// "a trigger is already on its way" signal. Releasing here would
+			// leave the track selecting between a closed dehydrateCh and a full
+			// evtCh — and a lost trigger every time the former won.
+			if _, stillParked := ls.waiting[t.ID()]; !stillParked {
+				return nil
+			}
+
 			if !ls.waitReleasable(ctx, t) {
 				return nil
 			}

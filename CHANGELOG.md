@@ -49,8 +49,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one binds its payload and records the keys it derives), and an
   **Event-Based Gateway** releases when EVERY arm it races is holdable —
   it is one wait node owning a SET of holds, and the winning arm's trigger
-  withdraws the losers exactly as a resident gateway does. A human-task
-  wait stays resident until its holder lands. An
+  withdraws the losers exactly as a resident gateway does, and a **human
+  task** releases too — the task keeps living in the distributor's inbox,
+  so a `Take`/`Complete` hydrates the instance and proceeds normally,
+  under **the task id the human is holding** (a rehydrated task is no
+  longer re-issued under a fresh id — this also makes a task reference
+  survive a restart) and with the instance pinned resident for the
+  duration of the action, so a caller never observes dehydration. An
   external-worker task never releases (a job in flight is active work) and
   a conditional catch never does either (its trigger is the instance's own
   data — nothing external could wake it). No wait is ever released without

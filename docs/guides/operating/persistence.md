@@ -58,7 +58,7 @@ arming code re-registers whatever the wait needs. Per wait kind:
 | Wait | On recovery |
 |---|---|
 | **Timer** | re-arms at the **recorded** deadline — a Duration never restarts; an **overdue deadline fires once, immediately** (missed cycle repetitions collapse into one catch-up firing) |
-| **Human task** | re-announced to the distributor under a fresh task id |
+| **Human task** | re-announced to the distributor under its **recorded task id** — a reference a human or UI is holding survives the restart |
 | **Worker job** | re-enqueued to the dispatcher |
 | **Message / signal** | the subscription re-registers; messages that arrived while down were never accepted — the sender's retry redelivers (correlation dedups) |
 | **Conditional** | re-arming re-runs the initial evaluation — a condition that turned true during the downtime fires right away |
@@ -136,8 +136,14 @@ from, so nothing ever releases). What releases today:
   the losing arms' holds are withdrawn, exactly as a resident gateway
   withdraws its losers. One unholdable arm (a conditional) keeps the
   whole gateway resident.
-- **Everything else** — resident. A human task declares itself
-  dehydratable but has no holder yet; an **external-worker** task never
+- **A human task** — released. The task keeps living in the
+  distributor's inbox, which is exactly why the instance need not: a
+  `Take` or `Complete` on it hydrates the instance and then proceeds
+  normally. The task keeps **the id the human is holding** — a
+  rehydrated task is never re-issued under a new one — and the instance
+  is held in memory for the duration of the action, so a caller never
+  sees dehydration at all.
+- **Everything else** — resident. An **external-worker** task never
   releases (a job in flight is active work, not a passive wait); a
   **conditional** catch never releases — its trigger is the instance's
   own data, so there would be nothing external to wake it. An instance
@@ -159,8 +165,8 @@ multi-instance group** or **compensation sweep** defers its checkpoint
 (the `CheckpointDeferred` fact at Warn) and runs on volatile state until
 the next capturable transition — execution is never blocked, and the
 degradation is operator-visible. Full-fidelity capture of those
-constructs, dehydration for the human-task wait, and the operator
-suspend/resume surface are the following ADR-033 slices.
+constructs and the operator suspend/resume surface are the following
+ADR-033 slices.
 
 ## See also
 

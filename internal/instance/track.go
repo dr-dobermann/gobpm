@@ -608,6 +608,20 @@ func (t *track) holdTimer(d flow.EventDefinition) bool {
 	return true
 }
 
+// holdTask hands a parked human task to the engine's durable holders (SRD-071
+// FR-8): the task already lives in the distributor's inbox independent of the
+// instance's residency, so the hold only has to tell the engine WHICH track the
+// task belongs to — an action on it then wakes that instance. Returns false (the
+// wait stays resident) without a holder registry.
+func (t *track) holdTask(flow.Node) bool {
+	inst := t.instance
+	if inst.waitHolders == nil {
+		return false
+	}
+
+	return inst.waitHolders.HoldTask(inst.ID(), t.ID(), t.taskID) == nil
+}
+
 // holdableSubscriptions are the triggers whose hub subscription the engine can
 // hold on a released instance's behalf (SRD-071 FR-7). A Conditional is absent
 // by construction — it never reaches here (its subscription is loop-owned).
@@ -810,10 +824,22 @@ func (t *track) parkCallActivity(node flow.Node, atConstruction bool) error {
 // delivered to evtCh as a synthetic event, not fired through the hub.
 func (t *track) parkHumanTask(node flow.Node) error {
 	t.m.Lock()
-	t.taskID = foundation.GenerateID()
+	// A RESTORED track carries its recorded task id (SRD-071 FR-8): the task
+	// outlives the instance's residency in the distributor's inbox, so the id a
+	// human (or a UI) is holding must survive rehydration — minting a fresh one
+	// would silently invalidate the reference they are about to act on. A fresh
+	// park mints.
+	if t.taskID == "" {
+		t.taskID = foundation.GenerateID()
+	}
 	t.m.Unlock()
 
 	t.updateState(TrackWaitForEvent)
+
+	// hand the task to the engine's holder, so an action on it can wake a
+	// released instance (SRD-071 FR-3/FR-8). Declined (no registry) → the wait
+	// simply stays resident.
+	t.held.Store(t.holdTask(node))
 
 	if t.instance.State() == Active {
 		t.instance.emit(trackEvent{

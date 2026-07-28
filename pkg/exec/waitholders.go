@@ -52,6 +52,15 @@ type WaitHolders interface {
 		convKeys []string,
 	) error
 
+	// HoldTask registers a parked human task against the ENGINE, keyed to
+	// (instanceID, trackID). Unlike a timer or a subscription there is nothing
+	// to subscribe: the task already lives in the distributor's inbox
+	// independent of the instance's residency (ADR-020). The hold only records
+	// WHICH track the task belongs to, so a Take/Complete on it can wake a
+	// released instance. An error means the hold was NOT taken and the caller
+	// must keep the wait resident.
+	HoldTask(instanceID, trackID, taskID string) error
+
 	// ReleaseWaits withdraws EVERY hold taken for a track — its deadline, its
 	// subscriptions, or the whole set an Event-Based Gateway armed. Called when
 	// the wait fires, when the instance tears down, and (the EBG case) when one

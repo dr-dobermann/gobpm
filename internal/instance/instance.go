@@ -78,7 +78,13 @@ type Instance struct {
 	trackCount atomic.Int64
 	obsMu      sync.RWMutex
 	obsID      uint64
-	state      atomic.Uint32
+	// dehydrationPins suppresses release while a synchronous interaction is in
+	// flight (SRD-071 FR-8). A human task is IDLE by definition, so an instance
+	// hydrated to service a Take/Complete would release again before the action
+	// could land — the action would never win. The engine pins it across the
+	// call; the loop's detector honors the pin.
+	dehydrationPins atomic.Int32
+	state           atomic.Uint32
 	// The checkpoint cursors (SRD-070 FR-4): the lease TTL, the CAS
 	// record version, the lease fencing incarnation (grows on reclaim,
 	// SRD-071+). Non-pointer tail — see cpOwner above.
@@ -123,6 +129,34 @@ func validatedTemplate(
 	}
 
 	return clone, nil
+}
+
+// PinResident suppresses dehydration until the matching UnpinResident, so a
+// synchronous interaction (a human-task Take/Complete, SRD-071 FR-8) is
+// guaranteed a live loop to run against. Pins nest.
+func (inst *Instance) PinResident() {
+	inst.dehydrationPins.Add(1)
+}
+
+// UnpinResident releases one PinResident. The instance may then release its
+// goroutines again at the next idle moment.
+func (inst *Instance) UnpinResident() {
+	inst.dehydrationPins.Add(-1)
+}
+
+// pinnedResident reports whether an interaction is holding the instance in
+// memory.
+func (inst *Instance) pinnedResident() bool {
+	return inst.dehydrationPins.Load() > 0
+}
+
+// WithResidentPin builds the instance already pinned (SRD-071 FR-8): the engine
+// rebuilds an instance to service a task action, and the rebuild must not
+// release again before the action arrives. The engine unpins when it is done.
+func WithResidentPin() Option {
+	return func(cfg *newConfig) {
+		cfg.residentPin = true
+	}
 }
 
 // wireWaitHeld points the idle detector's "is this wait wakeable?" gate at each
@@ -183,6 +217,8 @@ type newConfig struct {
 	cpTTL         time.Duration
 	cpRecVersion  int64
 	cpIncarnation int64
+	// residentPin starts the instance pinned against dehydration (SRD-071 FR-8).
+	residentPin bool
 }
 
 // newOption tunes New. The born-event / conversation-key options are exposed
@@ -312,6 +348,11 @@ func New(
 		cpIncarnation:       cfg.cpIncarnation,
 	}
 	inst.state.Store(uint32(Created))
+
+	if cfg.residentPin {
+		inst.PinResident()
+	}
+
 	inst.wireWaitHeld()
 	inst.announceCreated()
 	// The correlator back-pointer refers to the same heap object New returns —

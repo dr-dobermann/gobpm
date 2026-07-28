@@ -182,12 +182,16 @@ type Thresher struct {
 	// behalf (SRD-071 FR-7) — one per armed message/signal wait, so a track may
 	// own several (the Event-Based Gateway set). Guarded by subMu, distinct
 	// from m: the hub is touched on release, never under an engine lock.
-	subs   map[subKey]*subHolder
-	cfg    thresherConfig
-	m      sync.Mutex
-	wakeMu sync.Mutex
-	subMu  sync.Mutex
-	state  atomic.Uint32 // a State; lock-free, NEVER accessed under m
+	subs map[subKey]*subHolder
+	// taskTracks maps a HELD human task → the track it parks (SRD-071 FR-8), so
+	// an action on the task can wake its released instance. Guarded by m,
+	// alongside the taskID → instanceID routing map.
+	taskTracks map[string]taskHold
+	cfg        thresherConfig
+	m          sync.Mutex
+	wakeMu     sync.Mutex
+	subMu      sync.Mutex
+	state      atomic.Uint32 // a State; lock-free, NEVER accessed under m
 }
 
 // New creates a new empty Thresher in NotStarted state. Engine-level extensions
@@ -254,6 +258,7 @@ func New(id string, opts ...Option) (*Thresher, error) {
 		keyLocks:      newKeyLockManager(),
 		waking:        map[string]bool{},
 		subs:          map[subKey]*subHolder{},
+		taskTracks:    map[string]taskHold{},
 	}
 	t.state.Store(uint32(NotStarted))
 

@@ -97,7 +97,9 @@ func (t *Thresher) wakeInstance(
 // re-claim (incarnation+1) fences a zombie writer exactly as restart recovery
 // does (ADR-033 §2.8).
 func (t *Thresher) rebuildAndContinue(
-	instanceID string, pending *instance.PendingTrigger,
+	instanceID string,
+	pending *instance.PendingTrigger,
+	extra ...instance.Option,
 ) error {
 	ctx := t.ctx
 
@@ -117,22 +119,29 @@ func (t *Thresher) rebuildAndContinue(
 			"(process "+doc.ProcessID+" v"+strconv.Itoa(doc.Version)+")", nil)
 	}
 
-	// The woken wait is over, so every hold the DEHYDRATED track owned goes —
-	// keyed to its RECORDED id, because the continuation fork about to replace
-	// it is a fresh track (SRD-071 FR-3a). For an Event-Based Gateway this is
-	// the withdraw-the-losing-siblings step: the winning arm fires and its
-	// racing arms release their deadlines and subscriptions. For a single-arm
-	// wait it stops the holder outliving the wait it stood for and waking an
-	// instance that has long moved on.
-	t.ReleaseWaits(instanceID, pending.TrackID)
+	// A TRIGGERED wake ends the woken wait, so every hold the DEHYDRATED track
+	// owned goes — keyed to its RECORDED id, because the continuation fork
+	// about to replace it is a fresh track (SRD-071 FR-3a). For an Event-Based
+	// Gateway this is the withdraw-the-losing-siblings step: the winning arm
+	// fires and its racing arms release their deadlines and subscriptions. For
+	// a single-arm wait it stops the holder outliving the wait it stood for.
+	//
+	// A trigger-ABSENT hydration (a human task action, FR-8) is NOT the end of
+	// the wait — the track re-enters its node and re-parks, re-taking its holds
+	// — so nothing is withdrawn here.
+	if pending != nil {
+		t.ReleaseWaits(instanceID, pending.TrackID)
+	}
 
-	inst, err := instance.Restore(doc, s, scope.EmptyDataPath, &t.cfg, t,
-		t.taskDist,
-		pending,
+	opts := append([]instance.Option{
 		instance.WithInvoker(t),
 		instance.WithWaitHolders(t),
 		instance.WithCheckpointing(t.id, t.cfg.leaseTTL),
-		instance.WithCheckpointCursor(rec.RecVersion, rec.Lease.Incarnation))
+		instance.WithCheckpointCursor(rec.RecVersion, rec.Lease.Incarnation),
+	}, extra...)
+
+	inst, err := instance.Restore(doc, s, scope.EmptyDataPath, &t.cfg, t,
+		t.taskDist, pending, opts...)
 	if err != nil {
 		return wakeErr("the instance doesn't rebuild", err)
 	}
@@ -152,11 +161,21 @@ func (t *Thresher) rebuildAndContinue(
 		Details: map[string]string{
 			observability.AttrProcessID: doc.ProcessID,
 			observability.AttrVersion:   strconv.Itoa(doc.Version),
-			"trigger":                   string(pending.EDef.Type()),
+			"trigger":                   wakeTriggerLabel(pending),
 		},
 	})
 
 	return nil
+}
+
+// wakeTriggerLabel names what woke the instance — the trigger's kind, or the
+// trigger-absent hydration a human task action performs (SRD-071 FR-8).
+func wakeTriggerLabel(pending *instance.PendingTrigger) string {
+	if pending == nil || pending.EDef == nil {
+		return "TaskAction"
+	}
+
+	return string(pending.EDef.Type())
 }
 
 // wakeClaimAttempts bounds the CAS retry below — a couple of rounds absorb the
