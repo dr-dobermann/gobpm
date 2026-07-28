@@ -213,8 +213,22 @@ type track struct {
 	loopCounter   int
 	m             sync.RWMutex
 	stopIt        atomic.Bool
+	// held is set at arm time when this track's wait registered an engine-level
+	// holder that can wake a released instance (SRD-071 FR-3): a dehydratable
+	// timer whose deadline the engine timer service accepted. It gates the idle
+	// detector — an unheld wait keeps the instance resident (no wait releases
+	// without something that can wake it). atomic: the loop's detector reads it
+	// across goroutines from the arming track.
+	held          atomic.Bool
 	timerHinted   bool
-	state         trackState
+	// woken marks a continuation-fork track spawned to WAKE a dehydrated wait
+	// (SRD-071 FR-4): it re-enters the wait node with the trigger already
+	// present in evtCh and fires through it, so it must NOT be re-armed as a
+	// waiter — recordBornWaiter skips it. Its persisted prev inherits the
+	// dehydrated track's lineage without appending it (bounded across cycles,
+	// §4.1).
+	woken bool
+	state trackState
 }
 
 // record appends a track-state transition to the history, copy-on-write, and
@@ -483,6 +497,16 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 			continue
 		}
 
+		// A dehydratable timer registers its ABSOLUTE deadline with the engine
+		// timer service instead of an in-hub waiter (SRD-071 FR-3/FR-6): the
+		// durable holder outlives a released instance and wakes it, and no hub
+		// goroutine lingers while dehydrated. holdTimer returns false (no holder,
+		// or a sub-threshold deadline not worth releasing for) → fall through to
+		// the in-hub waiter, today's behavior.
+		if d.Type() == flow.TriggerTimer && t.holdTimer(d) {
+			continue
+		}
+
 		proc := eventproc.EventProcessor(t)
 		if d.Type() == flow.TriggerMessage {
 			proc = t.instance
@@ -500,6 +524,56 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 	}
 
 	return nil
+}
+
+// dehydrationTimerThreshold is the minimum remaining time a timer wait must
+// carry to be worth releasing the instance's goroutines for (ADR-007 v.2 §2.4):
+// a short wait is not worth a checkpoint + hydrate round-trip, so it stays
+// resident on an in-hub waiter. A deadline farther out than this dehydrates.
+const dehydrationTimerThreshold = time.Hour
+
+// holdTimer tries to register a dehydratable timer's deadline with the engine
+// timer service (SRD-071 FR-3/FR-6): the durable holder that fires it even
+// after the instance releases its goroutines. It returns true only when the
+// deadline was handed off — no in-hub waiter is then created for it, and the
+// track is marked held so the idle detector may release the instance. It
+// returns false (keep the in-hub waiter) when there is no holder, the deadline
+// was not stashed, it is within the threshold (too short to be worth it), or
+// the holder declined — never losing the timer.
+func (t *track) holdTimer(d flow.EventDefinition) bool {
+	inst := t.instance
+	if inst.waitHolders == nil {
+		return false
+	}
+
+	t.m.RLock()
+	deadline, cycles := t.timerDeadline, t.timerCycles
+	t.m.RUnlock()
+
+	// M3 releases only one-shot timers (cyclesLeft == 0 — a bare Time/Duration
+	// timer). A repeating timer (cyclesLeft > 0) would lose its later cycles to
+	// the fire-once wake, so it stays resident on its in-hub waiter until a
+	// cyclic-aware holder lands.
+	if cycles > 0 {
+		return false
+	}
+
+	if deadline.IsZero() ||
+		deadline.Before(inst.now().Add(dehydrationTimerThreshold)) {
+		return false
+	}
+
+	if err := inst.waitHolders.HoldTimer(
+		inst.ID(), t.ID(), d, deadline, cycles); err != nil {
+		// the holder declined — keep the wait resident on an in-hub waiter
+		// rather than lose the timer (SRD-071 FR-3, the never-a-lost-trigger
+		// invariant).
+		return false
+	}
+
+	t.held.Store(true)
+
+	return true
 }
 
 // stashTimerPlan records a timer wait's firing plan for the checkpoint
@@ -1446,6 +1520,14 @@ func (t *track) deliver(
 
 	if err := ep.ProcessEvent(ctx, eDef); err != nil {
 		return err
+	}
+
+	// A wait held by an engine-level holder rather than a hub waiter (a
+	// dehydratable timer, SRD-071 FR-3) withdraws its hold here: the wait fired,
+	// so the deadline must not outlive it — a stale hold would wake a later
+	// dehydration cycle spuriously. Idempotent for an already-fired hold.
+	if t.held.Swap(false) && t.instance.waitHolders != nil {
+		t.instance.waitHolders.ReleaseTimer(t.instance.ID(), t.ID())
 	}
 
 	// A UserTask (human task) parked without a hub waiter (parkHumanTask) — there

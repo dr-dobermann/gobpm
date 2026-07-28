@@ -223,10 +223,12 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	}
 
 	// Dehydration exit (SRD-071 FR-2): the loop released every goroutine while
-	// idle — the instance is not finishing, it is parking. Set Dehydrated and
-	// take the consistent-cut checkpoint (its tracks are now TrackDehydrated,
-	// the hydration source); do NOT disarm handlers, discard ledgers, or settle
-	// a terminal state — a trigger hydrates it back.
+	// idle — the instance is not finishing, it is parking. Set Dehydrated —
+	// which emits the KindInstanceState/Dehydrated fact at Info (FR-10, the
+	// wake counterpart Hydrated rides the engine's wake) — and take the
+	// consistent-cut checkpoint (its tracks are now TrackDehydrated, the
+	// hydration source); do NOT disarm handlers, discard ledgers, or settle a
+	// terminal state — a trigger hydrates it back.
 	if ls.dehydrating {
 		inst.setState(Dehydrated)
 		ls.checkpointNow(ctx)
@@ -313,6 +315,12 @@ func (ls *loopState) stopAll() {
 	ls.inst.setState(Terminating)
 
 	for _, t := range ls.inst.tracks {
+		// withdraw any engine-level hold this wait registered (SRD-071 FR-3):
+		// the instance is finishing, so its deadlines must not outlive it.
+		if t.held.Swap(false) && ls.inst.waitHolders != nil {
+			ls.inst.waitHolders.ReleaseTimer(ls.inst.ID(), t.ID())
+		}
+
 		t.stop()
 		// Cancel the track context so a running ctx-honoring activity (a ServiceTask
 		// blocked in Exec) is interrupted — stopIt is only checked between nodes, not

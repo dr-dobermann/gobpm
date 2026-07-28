@@ -281,6 +281,14 @@ func (ls *loopState) recordBornWaiter(ctx context.Context, t *track) {
 		return
 	}
 
+	// a continuation-fork wake (SRD-071 FR-4) re-enters the wait node with its
+	// trigger already in evtCh: it fires through, it does not wait — so it is
+	// never registered as a waiter (no hub re-registration, no ls.waiting, no
+	// conditional re-arm). run() reads the preloaded trigger and delivers.
+	if t.woken {
+		return
+	}
+
 	ls.waiting[t.ID()] = struct{}{}
 
 	for _, id := range t.msgDefIDs {

@@ -169,9 +169,19 @@ type Thresher struct {
 	// engine-scope Observe registry.
 	producer *producer
 	id       string
-	cfg      thresherConfig
-	m        sync.Mutex
-	state    atomic.Uint32 // a State; lock-free, NEVER accessed under m
+	// timerSvc is the engine-level durable timer holder (SRD-071 FR-6): a
+	// dehydratable timer registers its deadline here at arm and the service
+	// wakes the released instance on fire. nil until Run when a Repository is
+	// configured (a volatile engine holds nothing). Implements exec.WaitHolders.
+	timerSvc *timerService
+	// waking latches per-instance wakes so concurrent triggers hydrate an
+	// instance exactly once (single-flight, SRD-071 §4.6). Guarded by wakeMu,
+	// distinct from m.
+	waking map[string]bool
+	cfg    thresherConfig
+	m      sync.Mutex
+	wakeMu sync.Mutex
+	state  atomic.Uint32 // a State; lock-free, NEVER accessed under m
 }
 
 // New creates a new empty Thresher in NotStarted state. Engine-level extensions
@@ -236,6 +246,7 @@ func New(id string, opts ...Option) (*Thresher, error) {
 		seenKeys:      map[string]struct{}{},
 		tasks:         map[string]string{},
 		keyLocks:      newKeyLockManager(),
+		waking:        map[string]bool{},
 	}
 	t.state.Store(uint32(NotStarted))
 
@@ -530,6 +541,16 @@ func (t *Thresher) Run(ctx context.Context) error {
 			errs.M("couldn't register instance-starters at startup"),
 			errs.C(errorClass, errs.OperationFailed),
 			errs.E(err))
+	}
+
+	// The engine timer service (SRD-071 FR-6, closes #84): the durable holder
+	// a dehydratable timer hands its deadline to, so a released instance still
+	// fires. Started BEFORE recovery — a recovered instance re-arms its timers
+	// through this seam. Only with a Repository: without one there is no
+	// checkpoint to wake from, so nothing dehydrates and nothing needs holding.
+	if t.cfg.repoSet {
+		t.timerSvc = newTimerService(t.cfg.Clock(), t.hydrateFromTimer)
+		go t.timerSvc.run(runCtx)
 	}
 
 	// Restart recovery (SRD-070 FR-7): with an explicitly configured
@@ -1200,7 +1221,10 @@ func (t *Thresher) launchInstance(s *snapshot.Snapshot) (*InstanceHandle, error)
 	// FR-4/FR-7). The zero-config default stays volatile.
 	if t.cfg.repoSet {
 		opts = append(opts,
-			instance.WithCheckpointing(t.id, t.cfg.leaseTTL))
+			instance.WithCheckpointing(t.id, t.cfg.leaseTTL),
+			// the durable wait holders a dehydratable wait registers with
+			// (SRD-071 FR-3) — only meaningful alongside checkpointing.
+			instance.WithWaitHolders(t))
 	}
 
 	inst, err := instance.New(s, scope.EmptyDataPath, &t.cfg, t, t.taskDist,

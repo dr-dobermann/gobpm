@@ -94,6 +94,49 @@ Several engines MAY share one repository (ADR-033 §2.8). The rules:
   persistent ids). Two engines building a model from the same source
   *without* pinned ids mint different ids, and recovery refuses, loud.
 
+## Dehydration: a long wait costs no goroutines
+
+An instance waiting on a **long timer** does not need to stay in memory.
+When every one of its live tracks is parked on a wait that is both
+*dehydratable* and *held* by an engine-level holder, the instance
+**dehydrates**: it takes a final consistent-cut checkpoint, releases
+**all** its goroutines (the loop and every parked track) and leaves —
+its checkpoint becomes the wake source. A thousand instances waiting on
+a two-day timer cost a thousand rows and **zero goroutines**.
+
+The engine's **timer service** holds the deadline on the released
+instance's behalf. When the deadline arrives it rebuilds the instance
+from its checkpoint and continues the woken wait — the timer node fires
+*through*, with its trigger already in hand, straight to the outgoing
+flow. Two `KindInstanceState` facts make the cycle observable at Info:
+`Dehydrated` when it releases, `Hydrated` when a trigger brings it back.
+An instance oscillates freely: park, release, wake, continue, release
+again — each cycle costs one checkpoint and one rebuild, and the
+recorded track lineage never grows.
+
+Dehydration arms itself; there is nothing to configure beyond
+`WithRepository` (without a repository there is no checkpoint to wake
+from, so nothing ever releases). What releases today:
+
+- **A one-shot timer more than an hour out** — released. A shorter one
+  is not worth a checkpoint-and-rebuild round trip, so it keeps its
+  in-memory waiter and the instance stays resident. A **repeating**
+  timer also stays resident.
+- **Everything else** — resident. A message/signal wait, a human task
+  and an Event-Based Gateway declare themselves dehydratable but have no
+  holder yet; an **external-worker** task never releases (a job in
+  flight is active work, not a passive wait). An instance releases only
+  when *every* live track qualifies, so one resident wait keeps the
+  whole instance in memory. No wait is ever released without something
+  that can wake it — a trigger is never lost.
+
+A dehydrated instance has no loop to renew its lease, so the lease
+lapses; that is deliberate and harmless on a single engine (the
+in-memory holder owns the wake), and after a crash it is exactly what
+lets restart recovery reclaim the instance. A second engine claiming a
+lapsed-lease dehydrated instance is multi-node coordination — a later
+slice.
+
 ## Current limits (the next slices)
 
 An instance with an in-flight **Call Activity**, **parallel
@@ -101,8 +144,9 @@ multi-instance group** or **compensation sweep** defers its checkpoint
 (the `CheckpointDeferred` fact at Warn) and runs on volatile state until
 the next capturable transition — execution is never blocked, and the
 degradation is operator-visible. Full-fidelity capture of those
-constructs, goroutine-releasing dehydration and wake-on-trigger, and
-the operator suspend/resume surface are the following ADR-033 slices.
+constructs, dehydration for the remaining wait kinds (message/signal,
+human task, Event-Based Gateway), and the operator suspend/resume
+surface are the following ADR-033 slices.
 
 ## See also
 

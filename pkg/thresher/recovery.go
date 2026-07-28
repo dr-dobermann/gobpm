@@ -77,9 +77,13 @@ func (t *Thresher) recoverOne(ctx context.Context, id string) error {
 			") — register it before Run", nil)
 	}
 
+	// cold restart: no pending trigger — the recorded waits re-ARM (a timer
+	// re-arms at its recorded deadline). Wake-on-trigger passes a PendingTrigger.
 	inst, err := instance.Restore(doc, s, scope.EmptyDataPath, &t.cfg, t,
 		t.taskDist,
+		nil,
 		instance.WithInvoker(t),
+		instance.WithWaitHolders(t),
 		instance.WithCheckpointing(t.id, t.cfg.leaseTTL),
 		instance.WithCheckpointCursor(rec.RecVersion, rec.Lease.Incarnation))
 	if err != nil {

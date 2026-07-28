@@ -45,6 +45,7 @@ type Instance struct {
 	callReq             chan callRequest
 	scopeReq            chan scopeRequest
 	invoker             exec.ProcessInvoker
+	waitHolders         exec.WaitHolders
 	sc                  instanceScope
 	corr                correlator
 	now                 func() time.Time
@@ -64,8 +65,10 @@ type Instance struct {
 	cpOwner string
 	// waitHeld reports whether a parked track's wait has an engine-level holder
 	// that can wake a released instance (SRD-071 FR-2). nil (the default, and
-	// production until a holder is wired) means "nothing held" — the instance
-	// never dehydrates a wait it cannot wake. The engine sets it as holders land.
+	// production without an injected WaitHolders) means "nothing held" — the
+	// instance never dehydrates a wait it cannot wake. When WithWaitHolders is
+	// set, New wires this to read each track's `held` flag (set at arm time when
+	// a holder accepted the wait). Tests may inject their own predicate.
 	waitHeld func(*track) bool
 	// restoredLedgers is the checkpoint-rebuilt compensation ledger the
 	// loop adopts at start (SRD-070 FR-6); nil for a fresh instance.
@@ -82,6 +85,56 @@ type Instance struct {
 	cpTTL         time.Duration
 	cpRecVersion  int64
 	cpIncarnation int64
+}
+
+// validatedTemplate checks New's required collaborators and returns the
+// instance's PRIVATE clone of the node graph: concurrent instances of one
+// process never share a node (ADR-009), the passed snapshot staying the shared
+// immutable template.
+func validatedTemplate(
+	s *snapshot.Snapshot,
+	er engrenv.EngineRuntime,
+	ep eventproc.EventProducer,
+) (*snapshot.Snapshot, error) {
+	if s == nil {
+		return nil, errs.New(
+			errs.M("no snapshot is given"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if er == nil {
+		return nil, errs.New(
+			errs.M("empty engine runtime"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if ep == nil {
+		return nil, errs.New(
+			errs.M("empty parent event producer"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	clone, err := s.Clone()
+	if err != nil {
+		return nil, errs.New(
+			errs.M("snapshot clone for instance failed"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
+	return clone, nil
+}
+
+// wireWaitHeld points the idle detector's "is this wait wakeable?" gate at each
+// track's arm-time `held` flag (SRD-071 FR-2/FR-3): with a durable holder
+// registry a wait releases only if its holder accepted it. Without holders the
+// predicate stays nil and no wait ever releases.
+func (inst *Instance) wireWaitHeld() {
+	if inst.waitHolders == nil {
+		return
+	}
+
+	inst.waitHeld = func(t *track) bool { return t.held.Load() }
 }
 
 // newInstanceIdentity mints the instance's BaseElement — a restored
@@ -116,6 +169,10 @@ type newConfig struct {
 	// runs (SRD-050 FR-3); nil for a library embedder without a thresher — a
 	// call then fails fast with a classified no-invoker error.
 	invoker exec.ProcessInvoker
+	// waitHolders is the engine's durable wait-holder registry (SRD-071 FR-3):
+	// a dehydratable timer registers its deadline here at arm time. nil for a
+	// library embedder or a volatile instance — every wait then stays resident.
+	waitHolders exec.WaitHolders
 	// rootData is committed into the root scope at construction — the Call
 	// Activity's inputs (SRD-050), the same injection point as an event
 	// payload (bindEventPayload). Its len/cap and the checkpoint cursors
@@ -180,6 +237,17 @@ func WithInvoker(inv exec.ProcessInvoker) Option {
 	}
 }
 
+// WithWaitHolders sets the engine's durable wait-holder registry (SRD-071 FR-3):
+// a dehydratable timer registers its deadline with it at arm time so the engine
+// can wake the instance after it releases its goroutines. The engine (thresher)
+// passes itself; left unset (nil), every wait stays resident and no instance
+// ever dehydrates (a library embedder without a thresher, or checkpointing off).
+func WithWaitHolders(wh exec.WaitHolders) Option {
+	return func(c *newConfig) {
+		c.waitHolders = wh
+	}
+}
+
 // withConversationKey seeds the new instance's conversation key (SRD-017 §4.5)
 // before createTracks runs, so an in-instance receiver reached directly off the
 // born start subscribes keyed to it (createTracks parks receivers during
@@ -210,36 +278,9 @@ func New(
 		o(&cfg)
 	}
 
-	if s == nil {
-		return nil,
-			errs.New(
-				errs.M("no snapshot is given"),
-				errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
-	// Each Instance owns a private clone of the node graph so concurrent
-	// instances of the same process never share a node (ADR-009); the snapshot
-	// passed in stays the shared immutable template.
-	s, err := s.Clone()
+	s, err := validatedTemplate(s, er, ep)
 	if err != nil {
-		return nil, errs.New(
-			errs.M("snapshot clone for instance failed"),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err))
-	}
-
-	if er == nil {
-		return nil,
-			errs.New(
-				errs.M("empty engine runtime"),
-				errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
-	if ep == nil {
-		return nil,
-			errs.New(
-				errs.M("empty parent event producer"),
-				errs.C(errorClass, errs.EmptyNotAllowed))
+		return nil, err
 	}
 
 	be, err := newInstanceIdentity(cfg.restoredID)
@@ -259,6 +300,7 @@ func New(
 		callReq:             make(chan callRequest),
 		scopeReq:            make(chan scopeRequest),
 		invoker:             cfg.invoker,
+		waitHolders:         cfg.waitHolders,
 		loopDone:            make(chan struct{}),
 		parentEventProducer: ep,
 		td:                  td,
@@ -270,6 +312,7 @@ func New(
 		cpIncarnation:       cfg.cpIncarnation,
 	}
 	inst.state.Store(uint32(Created))
+	inst.wireWaitHeld()
 	inst.announceCreated()
 	// The correlator back-pointer refers to the same heap object New returns —
 	// inst escapes via &inst below (the instanceScope loader takes it the same way).

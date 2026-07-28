@@ -14,6 +14,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/interactor"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	engrenv "github.com/dr-dobermann/gobpm/pkg/renv"
@@ -30,6 +31,28 @@ func WithCheckpointCursor(recVersion, incarnation int64) Option {
 	}
 }
 
+// PendingTrigger carries a trigger that accompanies a hydration, turning
+// a cold RE-ENTER into a wake-on-trigger CONTINUATION (ADR-007 v.2 §2.3,
+// SRD-071 FR-4). The single discriminator of Restore's two modes:
+//   - pending == nil — cold restart (SRD-070): the woken wait re-ARMS
+//     (subscriptions re-register, a timer re-arms at its recorded deadline).
+//   - pending != nil — wake: the named track re-enters its wait node with
+//     the trigger already in hand and FIRES THROUGH it, never re-arming, as
+//     a continuation fork (its persisted prev inherits the dehydrated
+//     track's lineage without appending it — bounded across cycles, §4.1).
+type PendingTrigger struct {
+	// TrackID is the dehydrated track being woken (its recorded node is the
+	// wait node the continuation fork re-enters).
+	TrackID string
+	// EDef is the trigger (a timer/message/signal definition, or a synthetic
+	// completion event for a human task); nil means trigger-absent.
+	EDef flow.EventDefinition
+	// Data is prepared node input — a task's completion outputs — committed
+	// into the woken track's scope before it fires; nil for a timer (a
+	// message binds its payload through the node's ProcessEvent).
+	Data []data.Data
+}
+
 // Restore rebuilds an instance from its checkpoint document over a
 // fresh clone of the PINNED process version (SRD-070 FR-6): the
 // recorded scopes reopen and their data recommits, conversation keys
@@ -38,6 +61,11 @@ func WithCheckpointCursor(recVersion, incarnation int64) Option {
 // re-register, tasks re-announce, jobs re-enqueue (the ADR-033 §2.3
 // at-least-once effects); a recorded timer re-arms at its RECORDED
 // deadline through the DeadlineHinter seam.
+//
+// A non-nil pending turns the RE-ENTER into a wake-on-trigger CONTINUATION
+// for the named track (ADR-007 v.2 §2.3, SRD-071 FR-4): it fires through
+// the wait node with the trigger in hand instead of re-arming, while its
+// still-waiting siblings re-arm normally.
 func Restore(
 	doc *checkpoint.Document,
 	s *snapshot.Snapshot,
@@ -45,6 +73,7 @@ func Restore(
 	er engrenv.EngineRuntime,
 	ep eventproc.EventProducer,
 	td interactor.TaskDistributor,
+	pending *PendingTrigger,
 	opts ...Option,
 ) (*Instance, error) {
 	if doc == nil {
@@ -82,7 +111,7 @@ func Restore(
 		return nil, err
 	}
 
-	if err := inst.restoreTracks(doc); err != nil {
+	if err := inst.restoreTracks(doc, pending); err != nil {
 		return nil, err
 	}
 
@@ -184,8 +213,12 @@ func (inst *Instance) restoreLedgers(
 }
 
 // restoreTracks rebuilds the live tracks at their recorded nodes for
-// the loop to spawn — the re-enter respawn.
-func (inst *Instance) restoreTracks(doc *checkpoint.Document) error {
+// the loop to spawn — the re-enter respawn. When pending names a track,
+// that one becomes a wake-on-trigger continuation fork (fires through its
+// wait node) while its siblings re-arm normally (SRD-071 FR-4).
+func (inst *Instance) restoreTracks(
+	doc *checkpoint.Document, pending *PendingTrigger,
+) error {
 	for i := range doc.Tracks {
 		rec := &doc.Tracks[i]
 
@@ -199,7 +232,17 @@ func (inst *Instance) restoreTracks(doc *checkpoint.Document) error {
 				errs.D("track_id", rec.ID))
 		}
 
-		t, err := restoredTrack(node, inst, rec)
+		var (
+			t   *track
+			err error
+		)
+
+		if pending != nil && rec.ID == pending.TrackID {
+			t, err = inst.continuationTrack(node, rec, pending)
+		} else {
+			t, err = restoredTrack(node, inst, rec)
+		}
+
 		if err != nil {
 			return err
 		}
@@ -211,6 +254,72 @@ func (inst *Instance) restoreTracks(doc *checkpoint.Document) error {
 	inst.trackCount.Store(int64(len(inst.tracks)))
 
 	return nil
+}
+
+// continuationTrack builds the wake-on-trigger continuation fork for a
+// dehydrated wait (ADR-007 v.2 §2.3, SRD-071 FR-4): a FRESH track re-entering
+// the recorded wait node with the trigger already loaded in evtCh. It is NOT
+// re-armed — recordBornWaiter skips a woken track — so run() reads the
+// preloaded trigger and fires straight through the node to the outgoing flow.
+// Its persisted prev INHERITS the dehydrated track's lineage without appending
+// the dehydrated track id, so repeated dehydrate/wake cycles do not grow it
+// (§4.1). Prepared node input (a task's outputs) is committed into the track's
+// scope before it fires; a message binds its own payload in the node's
+// ProcessEvent, a timer has none.
+func (inst *Instance) continuationTrack(
+	node flow.Node,
+	rec *checkpoint.TrackRecord,
+	pending *PendingTrigger,
+) (*track, error) {
+	be, err := foundation.NewBaseElement()
+	if err != nil {
+		return nil, errs.New(
+			errs.M("Restore: couldn't mint the continuation-fork identity"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.D("woken_track_id", rec.ID),
+			errs.E(err))
+	}
+
+	t := track{
+		BaseElement: *be,
+		prev:        append([]string{}, rec.Prev...),
+		steps: []*stepInfo{
+			{node: node, state: StepCreated},
+		},
+		state:       TrackWaitForEvent,
+		woken:       true,
+		instance:    inst,
+		parkCh:      make(chan struct{}, 1),
+		dehydrateCh: make(chan struct{}),
+		evtCh:       make(chan flow.EventDefinition, eventBufferDepth),
+		scopePath:   scope.DataPath(rec.ScopePath),
+		scopeSeg:    rec.ScopeSeg,
+		loopCounter: rec.LoopCounter,
+	}
+
+	if len(pending.Data) > 0 {
+		if _, err := inst.sc.plane.Commit(
+			t.scopePath, pending.Data...); err != nil {
+			return nil, errs.New(
+				errs.M("Restore: couldn't commit the trigger's prepared input"),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.D("woken_track_id", rec.ID),
+				errs.E(err))
+		}
+	}
+
+	if pending.EDef == nil {
+		return nil, errs.New(
+			errs.M("Restore: a wake needs a trigger definition"),
+			errs.C(errorClass, errs.EmptyNotAllowed),
+			errs.D("woken_track_id", rec.ID))
+	}
+
+	// preload the trigger: run() enters awaitTrigger, reads it, and fires the
+	// node through deliver() — the exact resident fire path, minus the wait.
+	t.evtCh <- pending.EDef
+
+	return &t, nil
 }
 
 // restoredTrack builds one track at its recorded position.

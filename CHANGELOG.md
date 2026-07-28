@@ -18,6 +18,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a silent zero value. ADR-034 also records why the `Value` interface
   family stays dynamic and confines generics to the edges (generic
   constructors, `T`-suffix accessors, registration-time adapters).
+
+- **Instance dehydration & wake-on-trigger — a long timer wait now costs
+  ZERO goroutines (SRD-071, finalizing ADR-007; closes the timer-durability
+  gap).** When every live track of a checkpointed instance is parked on a
+  wait that is both *dehydratable* and *held* by an engine-level holder,
+  the instance **dehydrates**: it takes a final consistent-cut checkpoint,
+  releases **all** its goroutines — the loop and every parked track — and
+  leaves, its checkpoint becoming the wake source. A new engine-level
+  **timer service** holds the absolute deadline on the released instance's
+  behalf (one goroutine for the whole engine, replacing the per-waiter
+  goroutine for released timers) and, at the deadline, rebuilds the
+  instance and **continues** the woken wait: a continuation fork re-enters
+  the wait node with the trigger already in hand and fires *through* it to
+  the outgoing flow — never re-arming. The sharpest invariant:
+  **trigger-present continues, trigger-absent re-arms**, so wake-on-trigger
+  and cold restart recovery share one `Restore` path and differ only by
+  whether a trigger accompanies the hydration. An instance oscillates
+  freely (park → release → wake → continue → release) with the recorded
+  track lineage bounded across cycles, and concurrent triggers hydrate it
+  exactly once. Two `KindInstanceState` facts make it observable at Info:
+  `Dehydrated` and `Hydrated`. Eligibility is a capability the element
+  declares (`Dehydratable`), so it stays data-driven and rolls out
+  element-by-element: today a **one-shot timer more than an hour out**
+  releases (a shorter or repeating one keeps its in-memory waiter), while
+  message/signal, human-task and Event-Based-Gateway waits stay resident
+  until their holders land, and an external-worker task never releases (a
+  job in flight is active work). No wait is ever released without something
+  that can wake it — a trigger is never lost. The zero-config engine is
+  untouched: without `WithRepository` nothing dehydrates.
 - **Instance checkpoints, save/restore and restart recovery (SRD-070 —
   the first ADR-033 Persistence & State slice).** With an explicitly
   configured repository (`thresher.WithRepository`), every instance

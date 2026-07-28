@@ -72,6 +72,25 @@ func NewIntermediateCatchEvent(
 	return &IntermediateCatchEvent{catchEvent: *ce}, nil
 }
 
+// Dehydratable reports whether parking on this catch releases the instance's
+// goroutines (SRD-071 FR-1a, the renv.Dehydratable capability). At M3 only a
+// TIMER catch is holdable — the engine timer service is its durable wake source
+// (FR-6); a message/signal/conditional catch has no holder yet and stays
+// resident until M4. The deadline-threshold half of the decision (a short timer
+// is not worth a checkpoint round-trip, ADR-007 v.2 §2.4) is applied at arm time
+// from the recorded absolute deadline, where the value is known.
+func (ice *IntermediateCatchEvent) Dehydratable(
+	_ context.Context, _ renv.RuntimeEnvironment,
+) bool {
+	for _, d := range ice.Definitions() {
+		if d.Type() == flow.TriggerTimer {
+			return true
+		}
+	}
+
+	return false
+}
+
 // LinkName returns the Link pairing name when this catch carries a Link
 // definition, or "" otherwise. Implements flow.LinkEventNode.
 func (ice *IntermediateCatchEvent) LinkName() string {

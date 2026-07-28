@@ -157,6 +157,15 @@ const (
 	// Echoed at Warn: durability is off and the operator must see it.
 	PhaseCheckpointDeferred Phase = "CheckpointDeferred" // InstanceState
 
+	// PhaseDehydrated: a fully-idle instance released ALL its goroutines
+	// while every track parked on a held, dehydratable wait (SRD-071
+	// FR-2/FR-10) — the loop exited, its checkpoint is the wake source.
+	// PhaseHydrated: a trigger woke it — rebuilt from the checkpoint, the
+	// woken wait continued (SRD-071 FR-4). Both InstanceState, echoed at
+	// Info (the kind default) — normal-operation milestones, not degradation.
+	PhaseDehydrated Phase = "Dehydrated" // InstanceState
+	PhaseHydrated   Phase = "Hydrated"
+
 	PhaseValueAdded   Phase = "Value_Added" // DataChange (= data.ChangeType)
 	PhaseValueUpdated Phase = "Value_Updated"
 	PhaseValueDeleted Phase = "Value_Deleted"

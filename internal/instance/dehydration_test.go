@@ -2,9 +2,11 @@ package instance
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/dr-dobermann/gobpm/generated/mockeventproc"
@@ -14,6 +16,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -315,4 +318,347 @@ func TestDehydrationLoopTail(t *testing.T) {
 // TestDehydratedStateString: the new lifecycle state renders.
 func TestDehydratedStateString(t *testing.T) {
 	require.Equal(t, "Dehydrated", Dehydrated.String())
+}
+
+// TestRestoreWithPendingTrigger covers SRD-071 T-3 (FR-4): Restore with a
+// PendingTrigger turns the named track's cold RE-ENTER into a wake — a fresh
+// continuation fork that re-enters the wait node with the trigger already in
+// hand, is NOT registered as a waiter, and whose persisted lineage inherits the
+// dehydrated track's prev WITHOUT appending it (§4.1, bounded across cycles).
+func TestRestoreWithPendingTrigger(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	rt, inst, doc, cancel := parkAndInspect(t)
+	cancel()
+
+	_ = rt
+	_ = inst
+
+	require.Len(t, doc.Tracks, 1)
+
+	// a recorded fork lineage the continuation must inherit verbatim.
+	woken := doc.Tracks[0]
+	woken.Prev = []string{"fork-a", "fork-b"}
+
+	withPending := *doc
+	withPending.Tracks = []checkpoint.TrackRecord{woken}
+
+	s2 := condSnapshotFor(t, doc)
+
+	ep := mockeventproc.NewMockEventProducer(t)
+	// the continuation fork must NOT re-register: an unexpected RegisterEvent
+	// fails the test, which IS the no-re-arm assertion.
+
+	trigger := &events.SignalEventDefinition{}
+
+	restored, err := Restore(&withPending, s2, scope.EmptyDataPath,
+		enginert.Default(), ep, nil,
+		&PendingTrigger{TrackID: woken.ID, EDef: trigger})
+	require.NoError(t, err)
+
+	require.Len(t, restored.tracks, 1, "the woken track rebuilt")
+
+	for _, tr := range restored.tracks {
+		require.NotEqual(t, woken.ID, tr.ID(),
+			"the wake is a FRESH continuation fork, not the dehydrated track")
+		require.True(t, tr.woken,
+			"a continuation fork is marked woken (skips waiter registration)")
+		require.Equal(t, []string{"fork-a", "fork-b"}, tr.prev,
+			"the fork inherits the dehydrated track's lineage WITHOUT "+
+				"appending it (§4.1)")
+		require.Equal(t, woken.NodeID, tr.currentStep().node.ID(),
+			"it re-enters the recorded WAIT node")
+		require.True(t, tr.inState(TrackWaitForEvent),
+			"it starts parked so run() reads the preloaded trigger")
+
+		select {
+		case got := <-tr.evtCh:
+			require.Same(t, trigger, got,
+				"the trigger is preloaded — run() fires the node through it")
+		default:
+			t.Fatal("the continuation fork carries no preloaded trigger")
+		}
+	}
+}
+
+// TestRestoreWithPendingTriggerGuards: a wake without a trigger definition is
+// loud (a wake is trigger-PRESENT by definition — trigger-absent is the cold
+// restart path).
+func TestRestoreWithPendingTriggerGuards(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	_, _, doc, cancel := parkAndInspect(t)
+	cancel()
+
+	s2 := condSnapshotFor(t, doc)
+	ep := mockeventproc.NewMockEventProducer(t)
+
+	_, err := Restore(doc, s2, scope.EmptyDataPath,
+		enginert.Default(), ep, nil,
+		&PendingTrigger{TrackID: doc.Tracks[0].ID})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "needs a trigger")
+}
+
+// fakeHolders records HoldTimer/ReleaseTimer calls and can decline a hold.
+type fakeHolders struct {
+	held     map[string]time.Time
+	released map[string]int
+	decline  bool
+}
+
+func newFakeHolders() *fakeHolders {
+	return &fakeHolders{
+		held:     map[string]time.Time{},
+		released: map[string]int{},
+	}
+}
+
+func (f *fakeHolders) HoldTimer(
+	instanceID, trackID string,
+	_ flow.EventDefinition,
+	deadline time.Time,
+	_ int,
+) error {
+	if f.decline {
+		return errors.New("declined")
+	}
+
+	f.held[instanceID+"|"+trackID] = deadline
+
+	return nil
+}
+
+func (f *fakeHolders) ReleaseTimer(instanceID, trackID string) {
+	f.released[instanceID+"|"+trackID]++
+}
+
+// timerTrack builds a track parked on a timer catch whose deadline is `in` from
+// the instance's now, with holders injected. It returns the instance, the track
+// and the holder spy.
+func timerTrack(
+	t *testing.T, in time.Duration, cycles int, opts ...Option,
+) (*Instance, *track, *fakeHolders) {
+	t.Helper()
+	require.NoError(t, data.CreateDefaultStates())
+
+	holders := newFakeHolders()
+
+	p, err := process.New("dehy-timer-unit")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	rt := enginert.Default()
+	when := rt.Clock().Now().Add(in)
+
+	texpr, err := goexpr.New(nil,
+		data.MustItemDefinition(values.NewVariable(time.Time{})),
+		func(_ context.Context, _ data.Source) (data.Value, error) {
+			return values.NewVariable(when), nil
+		})
+	require.NoError(t, err)
+
+	def, err := events.NewTimerEventDefinition(texpr, nil, nil)
+	require.NoError(t, err)
+
+	catch, err := events.NewIntermediateCatchEvent("timer-catch", def)
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, catch, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	link(t, start, catch)
+	link(t, catch, end)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	ep := mockeventproc.NewMockEventProducer(t)
+	ep.EXPECT().RegisterEvent(mock.Anything, mock.Anything).
+		Return(nil).Maybe()
+
+	all := append([]Option{
+		WithCheckpointing("engine-A", time.Minute),
+		WithWaitHolders(holders),
+	}, opts...)
+
+	inst, err := New(s, scope.EmptyDataPath, rt, ep, nil, all...)
+	require.NoError(t, err)
+	inst.tracks = map[string]*track{}
+
+	node := findNode(t, inst.s, "timer-catch")
+
+	tr, err := newTrack(node, inst, nil)
+	require.NoError(t, err)
+
+	// a cyclic plan is stashed post-hoc: TimerPlan derives cycles from the
+	// definition, and this fixture drives the cycles branch directly.
+	if cycles > 0 {
+		tr.m.Lock()
+		tr.timerCycles = cycles
+		tr.m.Unlock()
+	}
+
+	inst.tracks[tr.ID()] = tr
+
+	return inst, tr, holders
+}
+
+// TestHoldTimerAcceptsLongOneShot covers SRD-071 FR-3/FR-6: a long one-shot
+// timer hands its ABSOLUTE deadline to the engine holder at arm time and marks
+// the track held — the idle detector's wakeability gate.
+func TestHoldTimerAcceptsLongOneShot(t *testing.T) {
+	inst, tr, holders := timerTrack(t, 3*time.Hour, 0)
+
+	require.True(t, tr.held.Load(),
+		"a held wait marks its track wakeable")
+	require.Contains(t, holders.held, inst.ID()+"|"+tr.ID(),
+		"the deadline is registered with the engine holder")
+}
+
+// TestHoldTimerDeclines covers the fall-back-to-resident cases: no holder
+// registry, a sub-threshold deadline, a cyclic timer, and a holder that
+// declines — each keeps the wait resident on its in-hub waiter, never losing
+// the timer.
+func TestHoldTimerDeclines(t *testing.T) {
+	t.Run("no holder registry", func(t *testing.T) {
+		require.NoError(t, data.CreateDefaultStates())
+
+		inst, tr, _ := timerTrack(t, 3*time.Hour, 0)
+		inst.waitHolders = nil
+		tr.held.Store(false)
+
+		require.False(t, tr.holdTimer(nil),
+			"without a registry nothing can be held")
+	})
+
+	t.Run("a sub-threshold deadline", func(t *testing.T) {
+		_, tr, holders := timerTrack(t, 5*time.Minute, 0)
+
+		require.False(t, tr.held.Load(),
+			"a short timer is not worth a hydrate round-trip")
+		require.Empty(t, holders.held)
+	})
+
+	t.Run("a cyclic timer", func(t *testing.T) {
+		_, tr, _ := timerTrack(t, 3*time.Hour, 0)
+
+		tr.m.Lock()
+		tr.timerCycles = 3
+		tr.m.Unlock()
+		tr.held.Store(false)
+
+		require.False(t, tr.holdTimer(nil),
+			"a repeating timer would lose its later cycles to a fire-once wake")
+	})
+
+	t.Run("a zero deadline", func(t *testing.T) {
+		_, tr, _ := timerTrack(t, 3*time.Hour, 0)
+
+		tr.m.Lock()
+		tr.timerDeadline = time.Time{}
+		tr.m.Unlock()
+		tr.held.Store(false)
+
+		require.False(t, tr.holdTimer(nil), "an unstashed plan holds nothing")
+	})
+
+	t.Run("the holder declines", func(t *testing.T) {
+		_, tr, holders := timerTrack(t, 3*time.Hour, 0)
+
+		holders.decline = true
+		tr.held.Store(false)
+
+		require.False(t, tr.holdTimer(nil),
+			"a declined hold keeps the wait resident, never lost")
+	})
+}
+
+// TestHeldWaitReleasesOnTeardown covers the withdraw paths (SRD-071 FR-3): a
+// held deadline must not outlive its instance — stopAll withdraws it.
+func TestHeldWaitReleasesOnTeardown(t *testing.T) {
+	inst, tr, holders := timerTrack(t, 3*time.Hour, 0)
+	require.True(t, tr.held.Load())
+
+	// spawn normally seeds the per-track cancel; this track was built directly.
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	tr.ctx = ctx
+	tr.cancel = cancel
+
+	ls := newLoopState(inst)
+	ls.stopAll()
+
+	require.Equal(t, 1, holders.released[inst.ID()+"|"+tr.ID()],
+		"teardown withdraws the held deadline")
+	require.False(t, tr.held.Load(), "the withdraw is one-shot")
+}
+
+// TestWakeParkedTrack covers SRD-071 FR-3's resident fork: a holder's trigger
+// for a RESIDENT instance delivers into the live parked track via evDeliver; a
+// nil trigger is loud and an unknown/stale track id is a no-op.
+func TestWakeParkedTrack(t *testing.T) {
+	val := false
+	evals := 0
+
+	def, err := events.NewConditionalEventDefinition(condExpr(t, &val, &evals))
+	require.NoError(t, err)
+
+	inst, tr, _ := condInstance(t, def)
+	inst.addToSnap(tr)
+
+	t.Run("a nil trigger is loud", func(t *testing.T) {
+		require.Error(t, inst.WakeParkedTrack(tr.ID(), nil))
+	})
+
+	t.Run("an unknown track is a stale no-op", func(t *testing.T) {
+		require.NoError(t, inst.WakeParkedTrack("no-such-track", def))
+	})
+
+	t.Run("the parked track receives the trigger", func(t *testing.T) {
+		got := make(chan trackEvent, 1)
+		go func() { got <- <-inst.events }()
+
+		require.NoError(t, inst.WakeParkedTrack(tr.ID(), def))
+
+		ev := <-got
+		require.Equal(t, evDeliver, ev.kind)
+		require.Same(t, tr, ev.track)
+		require.Equal(t, def.ID(), ev.eDef.ID())
+	})
+}
+
+// TestWakeParkedTrackNoSnapshot: an instance with no track snapshot yet
+// (nothing spawned) drops the stale trigger instead of panicking.
+func TestWakeParkedTrackNoSnapshot(t *testing.T) {
+	val := false
+	evals := 0
+
+	def, err := events.NewConditionalEventDefinition(condExpr(t, &val, &evals))
+	require.NoError(t, err)
+
+	inst, _, _ := condInstance(t, def)
+	inst.tracksSnap.Store(nil)
+
+	require.NoError(t, inst.WakeParkedTrack("any", def))
+}
+
+// TestDehydratableParkedRetainsReleased covers the detector's already-released
+// branch: a track flipped TrackDehydrated by a PRIOR pass is a retained record,
+// not a disqualifier and not re-released.
+func TestDehydratableParkedRetainsReleased(t *testing.T) {
+	inst, tr, ls := userTaskArmed(t)
+	inst.waitHeld = held
+
+	tr.updateState(TrackDehydrated)
+
+	require.Nil(t, ls.dehydratableParked(context.Background()),
+		"an instance with nothing left to release does not re-dehydrate")
 }
