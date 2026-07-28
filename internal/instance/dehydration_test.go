@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -403,6 +404,7 @@ func TestRestoreWithPendingTriggerGuards(t *testing.T) {
 // fakeHolders records HoldTimer/ReleaseTimer calls and can decline a hold.
 type fakeHolders struct {
 	held     map[string]time.Time
+	subs     map[string]bool
 	released map[string]int
 	decline  bool
 }
@@ -410,6 +412,7 @@ type fakeHolders struct {
 func newFakeHolders() *fakeHolders {
 	return &fakeHolders{
 		held:     map[string]time.Time{},
+		subs:     map[string]bool{},
 		released: map[string]int{},
 	}
 }
@@ -429,8 +432,28 @@ func (f *fakeHolders) HoldTimer(
 	return nil
 }
 
-func (f *fakeHolders) ReleaseTimer(instanceID, trackID string) {
+func (f *fakeHolders) HoldSubscription(
+	instanceID, trackID string,
+	eDef flow.EventDefinition,
+	_ []string,
+) error {
+	if f.decline {
+		return errors.New("declined")
+	}
+
+	f.subs[instanceID+"|"+trackID+"|"+eDef.ID()] = true
+
+	return nil
+}
+
+func (f *fakeHolders) ReleaseWaits(instanceID, trackID string) {
 	f.released[instanceID+"|"+trackID]++
+
+	for k := range f.subs {
+		if strings.HasPrefix(k, instanceID+"|"+trackID+"|") {
+			delete(f.subs, k)
+		}
+	}
 }
 
 // timerTrack builds a track parked on a timer catch whose deadline is `in` from
@@ -615,18 +638,23 @@ func TestWakeParkedTrack(t *testing.T) {
 	inst.addToSnap(tr)
 
 	t.Run("a nil trigger is loud", func(t *testing.T) {
-		require.Error(t, inst.WakeParkedTrack(tr.ID(), nil))
+		_, err := inst.WakeParkedTrack(tr.ID(), nil)
+		require.Error(t, err)
 	})
 
 	t.Run("an unknown track is a stale no-op", func(t *testing.T) {
-		require.NoError(t, inst.WakeParkedTrack("no-such-track", def))
+		delivered, err := inst.WakeParkedTrack("no-such-track", def)
+		require.NoError(t, err)
+		require.True(t, delivered, "a stale fire is benignly dropped")
 	})
 
 	t.Run("the parked track receives the trigger", func(t *testing.T) {
 		got := make(chan trackEvent, 1)
 		go func() { got <- <-inst.events }()
 
-		require.NoError(t, inst.WakeParkedTrack(tr.ID(), def))
+		delivered, err := inst.WakeParkedTrack(tr.ID(), def)
+		require.NoError(t, err)
+		require.True(t, delivered)
 
 		ev := <-got
 		require.Equal(t, evDeliver, ev.kind)
@@ -647,7 +675,9 @@ func TestWakeParkedTrackNoSnapshot(t *testing.T) {
 	inst, _, _ := condInstance(t, def)
 	inst.tracksSnap.Store(nil)
 
-	require.NoError(t, inst.WakeParkedTrack("any", def))
+	delivered, err := inst.WakeParkedTrack("any", def)
+	require.NoError(t, err)
+	require.True(t, delivered)
 }
 
 // TestDehydratableParkedRetainsReleased covers the detector's already-released
@@ -661,4 +691,169 @@ func TestDehydratableParkedRetainsReleased(t *testing.T) {
 
 	require.Nil(t, ls.dehydratableParked(context.Background()),
 		"an instance with nothing left to release does not re-dehydrate")
+}
+
+// TestOfferReportsAReleasedLoop covers the no-lost-trigger rule (SRD-071
+// NFR-1/§4.6): a delivery offered to an instance whose loop has GONE reports
+// that it was not taken, so the engine wakes the instance from its checkpoint
+// instead of dropping the trigger.
+func TestOfferReportsAReleasedLoop(t *testing.T) {
+	val := false
+	evals := 0
+
+	def, err := events.NewConditionalEventDefinition(condExpr(t, &val, &evals))
+	require.NoError(t, err)
+
+	inst, tr, _ := condInstance(t, def)
+	inst.addToSnap(tr)
+
+	// the loop has exited (the dehydration tail closes loopDone).
+	close(inst.loopDone)
+
+	delivered, err := inst.WakeParkedTrack(tr.ID(), def)
+	require.NoError(t, err)
+	require.False(t, delivered,
+		"a released loop must report the trigger as NOT taken")
+
+	// the message shape reports the same way (it routes track-less).
+	require.False(t, inst.offer(trackEvent{kind: evDeliver, eDef: def}))
+}
+
+// TestWokenForkRunsThrough covers the continuation fork END TO END inside the
+// instance (SRD-071 FR-4): a Restore carrying a PendingTrigger — with prepared
+// node input — runs the woken track through its wait node without re-arming and
+// on to completion. It exercises the spawn path's woken guard: the fork is
+// never registered as a waiter, so nothing waits for a trigger already in hand.
+func TestWokenForkRunsThrough(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	_, _, doc, cancel := parkAndInspect(t)
+	cancel()
+
+	require.Len(t, doc.Tracks, 1)
+
+	s2 := condSnapshotFor(t, doc)
+
+	ep := mockeventproc.NewMockEventProducer(t)
+	ep.EXPECT().RegisterEvent(mock.Anything, mock.Anything).
+		Return(nil).Maybe()
+	ep.EXPECT().UnregisterEvent(mock.Anything, mock.Anything).
+		Return(nil).Maybe()
+
+	val := true
+	evals := 0
+
+	trigger, err := events.NewConditionalEventDefinition(
+		condExpr(t, &val, &evals))
+	require.NoError(t, err)
+
+	restored, err := Restore(doc, s2, scope.EmptyDataPath,
+		enginert.Default(), ep, nil,
+		&PendingTrigger{
+			TrackID: doc.Tracks[0].ID,
+			EDef:    trigger,
+			Data:    []data.Data{mustParam(t, "woken", 1)},
+		})
+	require.NoError(t, err)
+
+	// the prepared input landed in the woken track's scope before it fired.
+	own, err := restored.sc.plane.OwnData(restored.sc.root)
+	require.NoError(t, err)
+
+	var seeded bool
+
+	for _, d := range own {
+		if d.Name() == "woken" {
+			seeded = true
+		}
+	}
+
+	require.True(t, seeded, "the trigger's prepared input is committed")
+
+	runCtx, runCancel := context.WithCancel(context.Background())
+	defer runCancel()
+
+	require.NoError(t, restored.Run(runCtx))
+
+	require.Eventually(t, func() bool {
+		return restored.State() == Completed
+	}, 3*time.Second, 5*time.Millisecond,
+		"the continuation fork must fire through its wait node and finish")
+}
+
+// TestContinuationTrackInputFailureIsLoud covers the wake's prepared-input
+// guard (SRD-071 FR-4): input that cannot be committed fails the wake loudly
+// rather than firing the woken node against a half-seeded scope.
+func TestContinuationTrackInputFailureIsLoud(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	_, _, doc, cancel := parkAndInspect(t)
+	cancel()
+
+	s2 := condSnapshotFor(t, doc)
+	ep := mockeventproc.NewMockEventProducer(t)
+
+	val := true
+	evals := 0
+
+	trigger, err := events.NewConditionalEventDefinition(
+		condExpr(t, &val, &evals))
+	require.NoError(t, err)
+
+	// the woken track records a scope that the restore never reopened, so its
+	// prepared input has nowhere to land.
+	broken := *doc
+	broken.Tracks = append([]checkpoint.TrackRecord{}, doc.Tracks...)
+	broken.Tracks[0].ScopePath = "/no/such/scope"
+
+	_, err = Restore(&broken, s2, scope.EmptyDataPath,
+		enginert.Default(), ep, nil,
+		&PendingTrigger{
+			TrackID: broken.Tracks[0].ID,
+			EDef:    trigger,
+			Data:    []data.Data{mustParam(t, "orphan", 1)},
+		})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "prepared input")
+}
+
+// TestValidatedTemplateGuards covers New's collaborator guards, which the
+// SRD-071 refactor moved into validatedTemplate: each missing dependency is a
+// classified error, never a nil-dereference later.
+func TestValidatedTemplateGuards(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	s := userTaskSnapshot(t)
+	ep := mockeventproc.NewMockEventProducer(t)
+
+	t.Run("a nil snapshot", func(t *testing.T) {
+		_, err := New(nil, scope.EmptyDataPath, enginert.Default(), ep, nil)
+		require.Error(t, err)
+	})
+
+	t.Run("a nil engine runtime", func(t *testing.T) {
+		_, err := New(s, scope.EmptyDataPath, nil, ep, nil)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "engine runtime")
+	})
+
+	t.Run("a nil event producer", func(t *testing.T) {
+		_, err := New(s, scope.EmptyDataPath, enginert.Default(), nil, nil)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "event producer")
+	})
+}
+
+// TestWireWaitHeldWithoutHolders: without an injected holder registry the
+// wakeability gate stays nil, so nothing ever dehydrates (the safe default).
+func TestWireWaitHeldWithoutHolders(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	inst, err := New(userTaskSnapshot(t), scope.EmptyDataPath,
+		enginert.Default(), mockeventproc.NewMockEventProducer(t), nil,
+		WithCheckpointing("engine-A", time.Minute))
+	require.NoError(t, err)
+
+	require.Nil(t, inst.waitHeld,
+		"no holder registry means no wait is ever releasable")
 }

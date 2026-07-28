@@ -178,9 +178,15 @@ type Thresher struct {
 	// instance exactly once (single-flight, SRD-071 §4.6). Guarded by wakeMu,
 	// distinct from m.
 	waking map[string]bool
+	// subs are the hub subscriptions the engine holds on released instances'
+	// behalf (SRD-071 FR-7) — one per armed message/signal wait, so a track may
+	// own several (the Event-Based Gateway set). Guarded by subMu, distinct
+	// from m: the hub is touched on release, never under an engine lock.
+	subs   map[subKey]*subHolder
 	cfg    thresherConfig
 	m      sync.Mutex
 	wakeMu sync.Mutex
+	subMu  sync.Mutex
 	state  atomic.Uint32 // a State; lock-free, NEVER accessed under m
 }
 
@@ -247,6 +253,7 @@ func New(id string, opts ...Option) (*Thresher, error) {
 		tasks:         map[string]string{},
 		keyLocks:      newKeyLockManager(),
 		waking:        map[string]bool{},
+		subs:          map[subKey]*subHolder{},
 	}
 	t.state.Store(uint32(NotStarted))
 
@@ -1069,7 +1076,7 @@ func (t *Thresher) launchInstanceFromEvent(
 	// directly off the born start subscribes keyed to it (SRD-017 §4.5).
 	inst, err := instance.NewFromEvent(
 		s, scope.EmptyDataPath, &t.cfg, t, t.taskDist, startNode.ID(), eDef,
-		keyName, keyVal, instance.WithInvoker(t))
+		keyName, keyVal, t.instanceOptions()...)
 	if err != nil {
 		return errs.New(
 			errs.M("couldn't create an event-born Instance for process %q",
@@ -1212,23 +1219,34 @@ func (t *Thresher) Instance(instanceID string) (*InstanceHandle, bool) {
 	return reg.handle, true
 }
 
-// launchInstance creates a new Instance from the Snapshot s, runs it, appends it
-// to the running instances of the Thresher, and returns its read-only handle.
-func (t *Thresher) launchInstance(s *snapshot.Snapshot) (*InstanceHandle, error) {
+// instanceOptions are the engine-supplied options EVERY instance this engine
+// launches receives — however it was born (a plain start, an event-triggered
+// start, a Call Activity child). Keeping them in one place is what stops a
+// launch path from silently missing durability: an event-born instance once
+// went un-checkpointed because its call site listed the options separately.
+//
+// An explicitly configured Repository is the state of record: the instance
+// checkpoints into it under this engine's lease (SRD-070 FR-4/FR-7) and its
+// dehydratable waits register with the engine's durable holders (SRD-071 FR-3),
+// so it can release its goroutines and be woken. The zero-config default stays
+// volatile and always-resident.
+func (t *Thresher) instanceOptions() []instance.Option {
 	opts := []instance.Option{instance.WithInvoker(t)}
-	// An explicitly configured Repository is the state of record: every
-	// instance checkpoints into it under this engine's lease (SRD-070
-	// FR-4/FR-7). The zero-config default stays volatile.
+
 	if t.cfg.repoSet {
 		opts = append(opts,
 			instance.WithCheckpointing(t.id, t.cfg.leaseTTL),
-			// the durable wait holders a dehydratable wait registers with
-			// (SRD-071 FR-3) — only meaningful alongside checkpointing.
 			instance.WithWaitHolders(t))
 	}
 
+	return opts
+}
+
+// launchInstance creates a new Instance from the Snapshot s, runs it, appends it
+// to the running instances of the Thresher, and returns its read-only handle.
+func (t *Thresher) launchInstance(s *snapshot.Snapshot) (*InstanceHandle, error) {
 	inst, err := instance.New(s, scope.EmptyDataPath, &t.cfg, t, t.taskDist,
-		opts...)
+		t.instanceOptions()...)
 	if err != nil {
 		return nil, errs.New(
 			errs.M("couldn't create an Instance for process %q",

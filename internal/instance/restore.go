@@ -31,6 +31,11 @@ func WithCheckpointCursor(recVersion, incarnation int64) Option {
 	}
 }
 
+// CorrelationDropClass marks a wake refused because its message belongs to
+// another conversation (ADR-016) — a BENIGN outcome the engine logs and moves
+// on from, never an instance failure.
+const CorrelationDropClass = "WAKE_CORRELATION_DROP"
+
 // PendingTrigger carries a trigger that accompanies a hydration, turning
 // a cold RE-ENTER into a wake-on-trigger CONTINUATION (ADR-007 v.2 §2.3,
 // SRD-071 FR-4). The single discriminator of Restore's two modes:
@@ -313,6 +318,22 @@ func (inst *Instance) continuationTrack(
 			errs.M("Restore: a wake needs a trigger definition"),
 			errs.C(errorClass, errs.EmptyNotAllowed),
 			errs.D("woken_track_id", rec.ID))
+	}
+
+	// A woken MESSAGE runs the same correlation rule a resident delivery does
+	// (ADR-016) — the continuation fork bypasses the loop's dispatch gate, so
+	// it is applied here instead, on the rebuilt instance: the conversation
+	// keys this message derives are ASSOCIATED (a first message joins the
+	// conversation), and a mismatch refuses the wake. The engine's holder-side
+	// gate is the cheap early-out that avoids rebuilding for a foreign
+	// conversation; this is the authoritative decision.
+	if pending.EDef.Type() == flow.TriggerMessage &&
+		inst.corr.validateAndAssociate(context.Background(), pending.EDef) {
+		return nil, errs.New(
+			errs.M("Restore: the trigger belongs to another conversation"),
+			errs.C(errorClass, CorrelationDropClass),
+			errs.D("woken_track_id", rec.ID),
+			errs.D("event_definition_id", pending.EDef.ID()))
 	}
 
 	// preload the trigger: run() enters awaitTrigger, reads it, and fires the

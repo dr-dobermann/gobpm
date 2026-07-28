@@ -32,9 +32,30 @@ type WaitHolders interface {
 		cycles int,
 	) error
 
-	// ReleaseTimer withdraws a held timer, keyed to (instanceID, trackID): the
-	// wait completed on wake, the instance terminated, or a sibling arm won an
-	// Event-Based Gateway race. Idempotent — a withdraw of an unknown hold is a
-	// no-op.
-	ReleaseTimer(instanceID, trackID string)
+	// HoldSubscription registers a message/signal wait's hub subscription
+	// against the ENGINE rather than the instance, keyed to
+	// (instanceID, trackID): the subscription outlives the instance's
+	// goroutines, so a trigger arriving at a released instance reaches the
+	// holder and wakes it.
+	//
+	// convKeys are the instance's conversation key VALUES at arm time — what
+	// the instance's own registration would have contributed, so the holder
+	// subscribes to exactly the same conversation (ADR-016). A foreign
+	// conversation is therefore filtered by the broker and never wakes the
+	// instance; an empty slice subscribes wildcard, as an un-keyed wait does.
+	//
+	// An error means the hold was NOT taken and the caller must keep the wait
+	// resident (registering its own subscription) rather than lose the trigger.
+	HoldSubscription(
+		instanceID, trackID string,
+		eDef flow.EventDefinition,
+		convKeys []string,
+	) error
+
+	// ReleaseWaits withdraws EVERY hold taken for a track — its deadline, its
+	// subscriptions, or the whole set an Event-Based Gateway armed. Called when
+	// the wait fires, when the instance tears down, and (the EBG case) when one
+	// arm wins and its siblings must be released. Idempotent: withdrawing
+	// unknown holds is a no-op.
+	ReleaseWaits(instanceID, trackID string)
 }

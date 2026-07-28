@@ -509,6 +509,16 @@ func TestDehydratedCrashRecovery(t *testing.T) {
 	}, 3*time.Second, 10*time.Millisecond,
 		"engine-2 must reclaim the abandoned DEHYDRATED instance")
 
+	// Let the reclaimed instance SETTLE before moving time: it re-arms its
+	// timer at the recorded deadline and, being idle again, re-dehydrates.
+	// Advancing mid-recovery would race the track's own registration — not
+	// what this trace is about (§4.2 is the reclaim, not the arming window).
+	require.Eventually(t, func() bool {
+		return countFacts(fw2, observability.KindInstanceState,
+			observability.PhaseDehydrated) == 1
+	}, 3*time.Second, 10*time.Millisecond,
+		"the reclaimed instance must settle back into dehydration")
+
 	// the recovered instance re-armed its timer at the RECORDED deadline.
 	clk.Advance(3 * time.Hour)
 

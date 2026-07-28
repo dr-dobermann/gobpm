@@ -118,17 +118,27 @@ Dehydration arms itself; there is nothing to configure beyond
 `WithRepository` (without a repository there is no checkpoint to wake
 from, so nothing ever releases). What releases today:
 
-- **A one-shot timer more than an hour out** — released. A shorter one
-  is not worth a checkpoint-and-rebuild round trip, so it keeps its
-  in-memory waiter and the instance stays resident. A **repeating**
-  timer also stays resident.
-- **Everything else** — resident. A message/signal wait, a human task
-  and an Event-Based Gateway declare themselves dehydratable but have no
-  holder yet; an **external-worker** task never releases (a job in
-  flight is active work, not a passive wait). An instance releases only
-  when *every* live track qualifies, so one resident wait keeps the
-  whole instance in memory. No wait is ever released without something
-  that can wake it — a trigger is never lost.
+- **A one-shot timer more than an hour out** — released, its deadline
+  held by the engine's timer service. A shorter one is not worth a
+  checkpoint-and-rebuild round trip, so it keeps its in-memory waiter
+  and the instance stays resident. A **repeating** timer also stays
+  resident.
+- **A message or signal catch** — released. A receive is a pure wait,
+  arbitrarily long and entirely externally driven, so there is no
+  threshold. The engine takes over the subscription, **keyed to the
+  instance's conversation**: a message for a different conversation is
+  filtered exactly as it would be for a resident instance, and never
+  wakes it. On the wake the message's payload binds normally, and the
+  conversation keys it derives are recorded.
+- **Everything else** — resident. A human task and an Event-Based
+  Gateway declare themselves dehydratable but have no holder yet; an
+  **external-worker** task never releases (a job in flight is active
+  work, not a passive wait); a **conditional** catch never releases —
+  its trigger is the instance's own data, so there would be nothing
+  external to wake it. An instance releases only when *every* live
+  track qualifies, so one resident wait keeps the whole instance in
+  memory. No wait is ever released without something that can wake it —
+  a trigger is never lost.
 
 A dehydrated instance has no loop to renew its lease, so the lease
 lapses; that is deliberate and harmless on a single engine (the
@@ -144,9 +154,9 @@ multi-instance group** or **compensation sweep** defers its checkpoint
 (the `CheckpointDeferred` fact at Warn) and runs on volatile state until
 the next capturable transition — execution is never blocked, and the
 degradation is operator-visible. Full-fidelity capture of those
-constructs, dehydration for the remaining wait kinds (message/signal,
-human task, Event-Based Gateway), and the operator suspend/resume
-surface are the following ADR-033 slices.
+constructs, dehydration for the remaining wait kinds (human task,
+Event-Based Gateway), and the operator suspend/resume surface are the
+following ADR-033 slices.
 
 ## See also
 

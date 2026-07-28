@@ -175,6 +175,14 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	// durable record — created-and-running with its seeded data.
 	ls.checkpointNow(ctx)
 
+	// An instance can be fully idle the moment it starts: every initial track
+	// BORN parked on a held, dehydratable wait (an event-born instance whose
+	// fired start leads straight to a catch; a UserTask as the entry node). No
+	// event will ever arrive to trigger the post-event check below — the loop
+	// would simply block forever holding goroutines it does not need — so the
+	// detector runs once here too (SRD-071 FR-2).
+	ls.maybeDehydrate(ctx)
+
 	done := ctx.Done()
 	for ls.active > 0 {
 		select {
@@ -315,10 +323,11 @@ func (ls *loopState) stopAll() {
 	ls.inst.setState(Terminating)
 
 	for _, t := range ls.inst.tracks {
-		// withdraw any engine-level hold this wait registered (SRD-071 FR-3):
-		// the instance is finishing, so its deadlines must not outlive it.
+		// withdraw any engine-level holds this wait registered (SRD-071 FR-3):
+		// the instance is finishing, so neither its deadlines nor its
+		// subscriptions may outlive it.
 		if t.held.Swap(false) && ls.inst.waitHolders != nil {
-			ls.inst.waitHolders.ReleaseTimer(ls.inst.ID(), t.ID())
+			ls.inst.waitHolders.ReleaseWaits(ls.inst.ID(), t.ID())
 		}
 
 		t.stop()

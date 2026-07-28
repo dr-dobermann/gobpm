@@ -42,11 +42,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declares (`Dehydratable`), so it stays data-driven and rolls out
   element-by-element: today a **one-shot timer more than an hour out**
   releases (a shorter or repeating one keeps its in-memory waiter), while
-  message/signal, human-task and Event-Based-Gateway waits stay resident
-  until their holders land, and an external-worker task never releases (a
-  job in flight is active work). No wait is ever released without something
-  that can wake it — a trigger is never lost. The zero-config engine is
-  untouched: without `WithRepository` nothing dehydrates.
+  a **message or signal catch** releases unconditionally (a receive is a
+  pure wait — the engine takes over its subscription, **keyed to the
+  instance's conversation**, so a foreign conversation is filtered exactly
+  as it is for a resident instance and never wakes it, while a correlated
+  one binds its payload and records the keys it derives), and human-task
+  and Event-Based-Gateway waits stay resident until their holders land. An
+  external-worker task never releases (a job in flight is active work) and
+  a conditional catch never does either (its trigger is the instance's own
+  data — nothing external could wake it). No wait is ever released without
+  something that can wake it, and a trigger racing the release is retried
+  against the checkpoint rather than dropped — a trigger is never lost. The
+  zero-config engine is untouched: without `WithRepository` nothing
+  dehydrates.
+
+  Two durability gaps closed along the way: an **event-born instance**
+  (one started by a message or signal) was never checkpointed at all —
+  every launch path now shares one set of engine options — and a wake that
+  raced the instance's own final checkpoint could lose its trigger.
+
 - **Instance checkpoints, save/restore and restart recovery (SRD-070 —
   the first ADR-033 Persistence & State slice).** With an explicitly
   configured repository (`thresher.WithRepository`), every instance

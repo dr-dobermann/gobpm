@@ -43,14 +43,6 @@ func (t *Thresher) HoldTimer(
 	return nil
 }
 
-// ReleaseTimer implements exec.WaitHolders: withdraw a held timer. Idempotent —
-// a withdraw of an unknown hold is a no-op.
-func (t *Thresher) ReleaseTimer(instanceID, trackID string) {
-	if t.timerSvc != nil {
-		t.timerSvc.release(instanceID, trackID)
-	}
-}
-
 // hydrateFromTimer is the timer service's wake callback (SRD-071 FR-4): a held
 // deadline fired, so continue the instance with the timer as its pending
 // trigger. A failure is per-instance and loud — it never crashes the service.
@@ -70,11 +62,22 @@ func (t *Thresher) hydrateFromTimer(
 func (t *Thresher) wakeInstance(
 	instanceID string, pending *instance.PendingTrigger,
 ) error {
+	// Still resident? Deliver into the live loop (today's path, reached through
+	// the holder instead of a hub waiter). The instance may release its
+	// goroutines between this check and the delivery, so the delivery itself
+	// reports whether the loop took it; if it did not, fall through and wake the
+	// instance from its checkpoint — the trigger is never lost to that race
+	// (SRD-071 NFR-1).
 	if inst, err := t.instanceByID(instanceID); err == nil &&
 		inst.State() != instance.Dehydrated {
-		// still resident — deliver into the live loop (today's path, reached
-		// through the holder instead of a hub waiter).
-		return inst.WakeParkedTrack(pending.TrackID, pending.EDef)
+		delivered, err := inst.WakeParkedTrack(pending.TrackID, pending.EDef)
+		if err != nil {
+			return err
+		}
+
+		if delivered {
+			return nil
+		}
 	}
 
 	if !t.claimWake(instanceID) {
@@ -96,26 +99,12 @@ func (t *Thresher) wakeInstance(
 func (t *Thresher) rebuildAndContinue(
 	instanceID string, pending *instance.PendingTrigger,
 ) error {
-	repo := t.cfg.Repository()
 	ctx := t.ctx
-	now := t.cfg.Clock().Now()
 
-	rec, ok, err := repo.Load(ctx, instanceID)
-	if err != nil || !ok {
-		return wakeErr("the checkpoint vanished before the wake", err)
+	rec, err := t.claimForWake(ctx, instanceID)
+	if err != nil {
+		return err
 	}
-
-	rec.Lease = repository.Lease{
-		Owner:       t.id,
-		Incarnation: rec.Lease.Incarnation + 1,
-		Expiry:      now.Add(t.cfg.leaseTTL),
-	}
-
-	if saveErr := repo.Save(ctx, rec); saveErr != nil {
-		return nil //nolint:nilerr // a lost claim race is the normal outcome
-	}
-
-	rec.RecVersion++
 
 	doc, err := checkpoint.Unmarshal(rec.Payload)
 	if err != nil {
@@ -159,6 +148,56 @@ func (t *Thresher) rebuildAndContinue(
 	})
 
 	return nil
+}
+
+// wakeClaimAttempts bounds the CAS retry below — a couple of rounds absorb the
+// dehydration write; more would mean something else is fighting for the record.
+const wakeClaimAttempts = 3
+
+// claimForWake takes ownership of a dehydrated instance's record so it can be
+// rebuilt: load it, re-claim it under a HIGHER incarnation (the fencing token
+// every later save carries, ADR-033 §2.8), and return the claimed record with
+// its version advanced past the claim.
+//
+// It RETRIES a lost CAS. Unlike restart recovery — where losing the race means
+// another engine legitimately took the instance and dropping out is correct —
+// the wake path races the instance's OWN final dehydration checkpoint: the loop
+// writes version N+1 between our load at N and our save. Treating that as
+// "someone else won" would silently swallow the trigger, leaving a dehydrated
+// instance nothing will ever wake again (a stuck instance, not a lost message).
+// Re-reading and re-claiming resolves it.
+func (t *Thresher) claimForWake(
+	ctx context.Context, instanceID string,
+) (repository.InstanceRecord, error) {
+	repo := t.cfg.Repository()
+
+	var lastErr error
+
+	for range wakeClaimAttempts {
+		rec, ok, err := repo.Load(ctx, instanceID)
+		if err != nil || !ok {
+			return rec, wakeErr("the checkpoint vanished before the wake", err)
+		}
+
+		rec.Lease = repository.Lease{
+			Owner:       t.id,
+			Incarnation: rec.Lease.Incarnation + 1,
+			Expiry:      t.cfg.Clock().Now().Add(t.cfg.leaseTTL),
+		}
+
+		if err := repo.Save(ctx, rec); err != nil {
+			lastErr = err
+
+			continue // the record moved under us — re-read and re-claim
+		}
+
+		rec.RecVersion++ // Save advanced the stored version; continue from it
+
+		return rec, nil
+	}
+
+	return repository.InstanceRecord{},
+		wakeErr("couldn't claim the record for the wake", lastErr)
 }
 
 // claimWake latches an instance's wake, returning false when one is already in

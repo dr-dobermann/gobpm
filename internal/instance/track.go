@@ -57,6 +57,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
+	"github.com/dr-dobermann/gobpm/pkg/set"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
@@ -219,8 +220,8 @@ type track struct {
 	// detector — an unheld wait keeps the instance resident (no wait releases
 	// without something that can wake it). atomic: the loop's detector reads it
 	// across goroutines from the arming track.
-	held          atomic.Bool
-	timerHinted   bool
+	held        atomic.Bool
+	timerHinted bool
 	// woken marks a continuation-fork track spawned to WAKE a dehydrated wait
 	// (SRD-071 FR-4): it re-enters the wait node with the trigger already
 	// present in evtCh and fires through it, so it must NOT be re-armed as a
@@ -487,23 +488,20 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 		})
 	}
 
-	// Per-trigger registration is the one place the hybrid boundary is chosen (SRD-027
-	// FR-8 / §3.7): a Message catch registers the Instance (it owns correlation), every
-	// other trigger registers the track. A Conditional catch registers NOTHING — its
-	// trigger source is the instance's own commits, so the subscription is loop-owned,
-	// carried on the evWaiting emit above (SRD-048 FR-7, ADR-006 v.3 §2.7).
-	for _, d := range defs {
-		if d.Type() == flow.TriggerConditional {
-			continue
-		}
+	return t.armWaiters(en, defs)
+}
 
-		// A dehydratable timer registers its ABSOLUTE deadline with the engine
-		// timer service instead of an in-hub waiter (SRD-071 FR-3/FR-6): the
-		// durable holder outlives a released instance and wakes it, and no hub
-		// goroutine lingers while dehydrated. holdTimer returns false (no holder,
-		// or a sub-threshold deadline not worth releasing for) → fall through to
-		// the in-hub waiter, today's behavior.
-		if d.Type() == flow.TriggerTimer && t.holdTimer(d) {
+// armWaiters subscribes the node's definitions. Per-trigger registration is the
+// one place the hybrid boundary is chosen (SRD-027 FR-8 / §3.7): a Message
+// catch registers the Instance (it owns correlation), every other trigger
+// registers the track. A Conditional catch registers NOTHING — its trigger
+// source is the instance's own commits, so the subscription is loop-owned,
+// carried on the evWaiting emit (SRD-048 FR-7, ADR-006 v.3 §2.7). A wait the
+// ENGINE can hold is handed over instead, so it survives dehydration
+// (SRD-071 FR-3).
+func (t *track) armWaiters(en flow.EventNode, defs []flow.EventDefinition) error {
+	for _, d := range defs {
+		if d.Type() == flow.TriggerConditional || t.holdWait(d) {
 			continue
 		}
 
@@ -524,6 +522,24 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 	}
 
 	return nil
+}
+
+// holdWait offers a definition to the engine's durable holders (SRD-071 FR-3),
+// reporting whether one took it — in which case NO in-hub waiter is created for
+// it and the instance may later release its goroutines. A timer hands over its
+// absolute deadline (FR-6), a message/signal its hub subscription (FR-7).
+// Declining (no registry, a sub-threshold or repeating timer) falls through to
+// the in-hub waiter — today's behavior, never a lost trigger.
+func (t *track) holdWait(d flow.EventDefinition) bool {
+	switch {
+	case d.Type() == flow.TriggerTimer:
+		return t.holdTimer(d)
+
+	case holdableSubscriptions.Has(d.Type()):
+		return t.holdSubscription(d)
+	}
+
+	return false
 }
 
 // dehydrationTimerThreshold is the minimum remaining time a timer wait must
@@ -568,6 +584,39 @@ func (t *track) holdTimer(d flow.EventDefinition) bool {
 		// the holder declined — keep the wait resident on an in-hub waiter
 		// rather than lose the timer (SRD-071 FR-3, the never-a-lost-trigger
 		// invariant).
+		return false
+	}
+
+	t.held.Store(true)
+
+	return true
+}
+
+// holdableSubscriptions are the triggers whose hub subscription the engine can
+// hold on a released instance's behalf (SRD-071 FR-7). A Conditional is absent
+// by construction — it never reaches here (its subscription is loop-owned).
+var holdableSubscriptions = set.New[flow.EventTrigger](
+	flow.TriggerMessage,
+	flow.TriggerSignal,
+)
+
+// holdSubscription tries to hand a message/signal wait's hub subscription to
+// the engine holder (SRD-071 FR-3/FR-7) — the durable subscriber that survives
+// the instance's release. It returns true only when the holder took it, in
+// which case the instance registers NO subscription of its own and the track is
+// marked held so the idle detector may release the instance. It returns false
+// (register as before, stay resident) when there is no holder registry or the
+// holder declined — never losing the trigger.
+func (t *track) holdSubscription(d flow.EventDefinition) bool {
+	inst := t.instance
+	if inst.waitHolders == nil {
+		return false
+	}
+
+	// the conversation keys the instance's OWN registration would contribute
+	// (SRD-017 §4.3): the holder must subscribe to the same conversation.
+	if err := inst.waitHolders.HoldSubscription(
+		inst.ID(), t.ID(), d, inst.CorrelationKeys()); err != nil {
 		return false
 	}
 
@@ -1522,12 +1571,13 @@ func (t *track) deliver(
 		return err
 	}
 
-	// A wait held by an engine-level holder rather than a hub waiter (a
-	// dehydratable timer, SRD-071 FR-3) withdraws its hold here: the wait fired,
-	// so the deadline must not outlive it — a stale hold would wake a later
-	// dehydration cycle spuriously. Idempotent for an already-fired hold.
+	// A wait held by an engine-level holder rather than a hub waiter (SRD-071
+	// FR-3) withdraws its holds here: the wait fired, so neither its deadline
+	// nor its subscriptions may outlive it — a stale hold would wake a later
+	// dehydration cycle spuriously. For an Event-Based Gateway this is also the
+	// withdraw-the-losing-siblings step: the whole set goes at once.
 	if t.held.Swap(false) && t.instance.waitHolders != nil {
-		t.instance.waitHolders.ReleaseTimer(t.instance.ID(), t.ID())
+		t.instance.waitHolders.ReleaseWaits(t.instance.ID(), t.ID())
 	}
 
 	// A UserTask (human task) parked without a hub waiter (parkHumanTask) — there
