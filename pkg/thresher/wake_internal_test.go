@@ -9,8 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dr-dobermann/gobpm/internal/instance"
+
 	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/pkg/clock/clocktest"
+	gerrs "github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
@@ -542,4 +544,120 @@ func shortTimerProcess(t *testing.T, key string) *process.Process {
 	require.NoError(t, err)
 
 	return p
+}
+
+// TestWakeWithdrawsTheTracksHolds covers SRD-071 FR-3a's withdraw-siblings
+// step at the level where it is actually observable — the engine's holder
+// registry. A track holding a SET (an Event-Based Gateway's arms: a deadline
+// plus a subscription) must have ALL of them withdrawn when its wait is woken,
+// keyed to the DEHYDRATED track's id — the continuation fork replacing it is a
+// fresh track, so nothing else would ever release them. A leaked hold outlives
+// the wait it stood for and wakes an instance that has long moved on.
+func TestWakeWithdrawsTheTracksHolds(t *testing.T) {
+	th, cancel := armedWakeEngine(t, "engine-withdraw")
+	defer cancel()
+
+	const (
+		instID  = "i-ebg"
+		trackID = "t-gate"
+	)
+
+	// the gateway's armed set: a timer arm and a message arm.
+	require.NoError(t, th.HoldTimer(instID, trackID,
+		wakeTimerDef(t), wakeEpoch.Add(4*time.Hour), 0))
+	require.NoError(t, th.HoldSubscription(instID, trackID,
+		wakeMessageDef(t, "cancel"), nil))
+
+	require.Equal(t, 1, len(th.subs), "the message arm is held")
+
+	_, armed := th.timerSvc.nearest()
+	require.True(t, armed, "the timer arm is held")
+
+	// waking the track ends its wait — the whole set goes, winners and losers.
+	th.ReleaseWaits(instID, trackID)
+
+	th.subMu.Lock()
+	require.Empty(t, th.subs,
+		"the losing message arm's subscription is withdrawn")
+	th.subMu.Unlock()
+
+	_, stillArmed := th.timerSvc.nearest()
+	require.False(t, stillArmed,
+		"the losing timer arm's deadline is withdrawn")
+}
+
+// TestHoldSubscriptionGuards covers the decline paths (SRD-071 FR-3): a nil
+// definition and a volatile engine both refuse the hold, so the caller keeps
+// the wait resident rather than stranding it.
+func TestHoldSubscriptionGuards(t *testing.T) {
+	t.Run("a nil definition", func(t *testing.T) {
+		th, cancel := armedWakeEngine(t, "engine-nildef")
+		defer cancel()
+
+		require.Error(t, th.HoldSubscription("i-1", "t-1", nil, nil))
+	})
+
+	t.Run("a volatile engine holds nothing", func(t *testing.T) {
+		th, err := New("engine-volatile",
+			WithoutBanner(), WithoutStartupConfig())
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		require.NoError(t, th.Run(ctx))
+
+		err = th.HoldSubscription("i-1", "t-1",
+			wakeSignalDef(t, "vol-sig"), nil)
+		require.Error(t, err, "no checkpoint to wake from — decline")
+		require.Contains(t, err.Error(), "no checkpoints")
+	})
+
+	t.Run("an unregisterable hold releases quietly", func(t *testing.T) {
+		th, cancel := armedWakeEngine(t, "engine-unreg")
+		defer cancel()
+
+		require.NoError(t, th.HoldSubscription("i-1", "t-1",
+			wakeSignalDef(t, "unreg-sig"), nil))
+
+		// tearing the hub down first makes the withdraw fail — ReleaseWaits
+		// must absorb it (the hold is gone from the registry regardless).
+		require.NoError(t, th.Shutdown(context.Background()))
+
+		th.ReleaseWaits("i-1", "t-1")
+
+		th.subMu.Lock()
+		require.Empty(t, th.subs)
+		th.subMu.Unlock()
+	})
+}
+
+// TestWakeFromSubscriptionDropsAForeignConversation covers the benign-drop
+// branch (ADR-016): a wake refused because the trigger belongs to another
+// conversation is logged and dropped, NOT reported as an engine failure.
+func TestWakeFromSubscriptionDropsAForeignConversation(t *testing.T) {
+	th, cancel := armedWakeEngine(t, "engine-drop")
+	defer cancel()
+
+	sink := &wakeFactSink{}
+	sub := th.Observe(sink)
+
+	defer sub.Cancel()
+
+	h := &subHolder{instanceID: "i-drop", trackID: "t-1", th: th}
+
+	// a correlation-classed failure must not surface as a wake failure.
+	th.reportDropOrFailure(h, wakeSignalDef(t, "drop-sig"),
+		gerrs.New(
+			gerrs.M("the trigger belongs to another conversation"),
+			gerrs.C(correlationDropClass)))
+
+	require.Never(t, sink.sawFailed, 200*time.Millisecond, 20*time.Millisecond,
+		"a foreign conversation is a benign drop, not a failure")
+
+	// anything else still reports.
+	th.reportDropOrFailure(h, wakeSignalDef(t, "drop-sig"),
+		wakeErr("something broke", nil))
+
+	require.Eventually(t, sink.sawFailed, 2*time.Second, 10*time.Millisecond,
+		"a real wake failure stays loud")
 }

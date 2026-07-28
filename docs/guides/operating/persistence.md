@@ -130,15 +130,20 @@ from, so nothing ever releases). What releases today:
   filtered exactly as it would be for a resident instance, and never
   wakes it. On the wake the message's payload binds normally, and the
   conversation keys it derives are recorded.
-- **Everything else** — resident. A human task and an Event-Based
-  Gateway declare themselves dehydratable but have no holder yet; an
-  **external-worker** task never releases (a job in flight is active
-  work, not a passive wait); a **conditional** catch never releases —
-  its trigger is the instance's own data, so there would be nothing
-  external to wake it. An instance releases only when *every* live
-  track qualifies, so one resident wait keeps the whole instance in
-  memory. No wait is ever released without something that can wake it —
-  a trigger is never lost.
+- **An Event-Based Gateway** — released when **every arm** it races is
+  itself holdable, since the gateway is one wait node holding a *set* of
+  subscriptions. When a trigger arrives the winning arm continues and
+  the losing arms' holds are withdrawn, exactly as a resident gateway
+  withdraws its losers. One unholdable arm (a conditional) keeps the
+  whole gateway resident.
+- **Everything else** — resident. A human task declares itself
+  dehydratable but has no holder yet; an **external-worker** task never
+  releases (a job in flight is active work, not a passive wait); a
+  **conditional** catch never releases — its trigger is the instance's
+  own data, so there would be nothing external to wake it. An instance
+  releases only when *every* live track qualifies, so one resident wait
+  keeps the whole instance in memory. No wait is ever released without
+  something that can wake it — a trigger is never lost.
 
 A dehydrated instance has no loop to renew its lease, so the lease
 lapses; that is deliberate and harmless on a single engine (the
@@ -154,9 +159,8 @@ multi-instance group** or **compensation sweep** defers its checkpoint
 (the `CheckpointDeferred` fact at Warn) and runs on volatile state until
 the next capturable transition — execution is never blocked, and the
 degradation is operator-visible. Full-fidelity capture of those
-constructs, dehydration for the remaining wait kinds (human task,
-Event-Based Gateway), and the operator suspend/resume surface are the
-following ADR-033 slices.
+constructs, dehydration for the human-task wait, and the operator
+suspend/resume surface are the following ADR-033 slices.
 
 ## See also
 

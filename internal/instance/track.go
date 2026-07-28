@@ -500,8 +500,23 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 // ENGINE can hold is handed over instead, so it survives dehydration
 // (SRD-071 FR-3).
 func (t *track) armWaiters(en flow.EventNode, defs []flow.EventDefinition) error {
+	// A node may arm SEVERAL waits at once — an Event-Based Gateway races its
+	// arms, so Definitions() is their union (SRD-071 FR-3a). The track counts as
+	// held only if EVERY one of them found a holder: releasing the instance
+	// while a single arm still depends on an in-process waiter would strand that
+	// arm — it could never fire again (ADR-007 v.2 §2.4, the per-arm guard). A
+	// conditional arm is never holdable at all (its trigger is the instance's own
+	// data), so an EBG carrying one always stays resident.
+	allHeld := true
+
 	for _, d := range defs {
-		if d.Type() == flow.TriggerConditional || t.holdWait(d) {
+		if t.holdWait(d) {
+			continue
+		}
+
+		allHeld = false
+
+		if d.Type() == flow.TriggerConditional {
 			continue
 		}
 
@@ -521,15 +536,18 @@ func (t *track) armWaiters(en flow.EventNode, defs []flow.EventDefinition) error
 		}
 	}
 
+	t.held.Store(allHeld && len(defs) > 0)
+
 	return nil
 }
 
 // holdWait offers a definition to the engine's durable holders (SRD-071 FR-3),
 // reporting whether one took it — in which case NO in-hub waiter is created for
-// it and the instance may later release its goroutines. A timer hands over its
-// absolute deadline (FR-6), a message/signal its hub subscription (FR-7).
-// Declining (no registry, a sub-threshold or repeating timer) falls through to
-// the in-hub waiter — today's behavior, never a lost trigger.
+// it. A timer hands over its absolute deadline (FR-6), a message/signal its hub
+// subscription (FR-7). Declining (no registry, a sub-threshold or repeating
+// timer, a conditional) falls through to the in-hub waiter — today's behavior,
+// never a lost trigger. Whether the TRACK counts as held is armWaiters' call:
+// every one of its waits must be held, not just this one.
 func (t *track) holdWait(d flow.EventDefinition) bool {
 	switch {
 	case d.Type() == flow.TriggerTimer:
@@ -587,8 +605,6 @@ func (t *track) holdTimer(d flow.EventDefinition) bool {
 		return false
 	}
 
-	t.held.Store(true)
-
 	return true
 }
 
@@ -619,8 +635,6 @@ func (t *track) holdSubscription(d flow.EventDefinition) bool {
 		inst.ID(), t.ID(), d, inst.CorrelationKeys()); err != nil {
 		return false
 	}
-
-	t.held.Store(true)
 
 	return true
 }

@@ -117,6 +117,15 @@ func (t *Thresher) rebuildAndContinue(
 			"(process "+doc.ProcessID+" v"+strconv.Itoa(doc.Version)+")", nil)
 	}
 
+	// The woken wait is over, so every hold the DEHYDRATED track owned goes —
+	// keyed to its RECORDED id, because the continuation fork about to replace
+	// it is a fresh track (SRD-071 FR-3a). For an Event-Based Gateway this is
+	// the withdraw-the-losing-siblings step: the winning arm fires and its
+	// racing arms release their deadlines and subscriptions. For a single-arm
+	// wait it stops the holder outliving the wait it stood for and waking an
+	// instance that has long moved on.
+	t.ReleaseWaits(instanceID, pending.TrackID)
+
 	inst, err := instance.Restore(doc, s, scope.EmptyDataPath, &t.cfg, t,
 		t.taskDist,
 		pending,

@@ -46,8 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pure wait — the engine takes over its subscription, **keyed to the
   instance's conversation**, so a foreign conversation is filtered exactly
   as it is for a resident instance and never wakes it, while a correlated
-  one binds its payload and records the keys it derives), and human-task
-  and Event-Based-Gateway waits stay resident until their holders land. An
+  one binds its payload and records the keys it derives), and an
+  **Event-Based Gateway** releases when EVERY arm it races is holdable —
+  it is one wait node owning a SET of holds, and the winning arm's trigger
+  withdraws the losers exactly as a resident gateway does. A human-task
+  wait stays resident until its holder lands. An
   external-worker task never releases (a job in flight is active work) and
   a conditional catch never does either (its trigger is the instance's own
   data — nothing external could wake it). No wait is ever released without

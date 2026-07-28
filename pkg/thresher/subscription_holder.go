@@ -145,7 +145,16 @@ func (t *Thresher) wakeFromSubscription(
 ) {
 	pending := &instance.PendingTrigger{TrackID: h.trackID, EDef: eDef}
 
-	err := t.wakeInstance(h.instanceID, pending)
+	t.reportDropOrFailure(h, eDef, t.wakeInstance(h.instanceID, pending))
+}
+
+// reportDropOrFailure classifies a wake's outcome: nothing to say on success, a
+// Debug line when the trigger simply belonged to ANOTHER conversation (a benign
+// drop — the instance stays dehydrated, exactly as a resident one would drop
+// the message and stay parked), and the loud operator fact for everything else.
+func (t *Thresher) reportDropOrFailure(
+	h *subHolder, eDef flow.EventDefinition, err error,
+) {
 	if err == nil {
 		return
 	}

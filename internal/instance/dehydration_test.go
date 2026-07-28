@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -16,11 +17,13 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/repository"
 )
@@ -856,4 +859,229 @@ func TestWireWaitHeldWithoutHolders(t *testing.T) {
 
 	require.Nil(t, inst.waitHeld,
 		"no holder registry means no wait is ever releasable")
+}
+
+// signalTrack builds a track parked on a SIGNAL catch with holders injected —
+// the subscription-hold counterpart of timerTrack.
+func signalTrack(t *testing.T) (*Instance, *track, *fakeHolders) {
+	t.Helper()
+	require.NoError(t, data.CreateDefaultStates())
+
+	holders := newFakeHolders()
+
+	p, err := process.New("dehy-sig-unit")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	sig, err := events.NewSignal("unit-go", nil)
+	require.NoError(t, err)
+
+	def, err := events.NewSignalEventDefinition(sig)
+	require.NoError(t, err)
+
+	catch, err := events.NewIntermediateCatchEvent("sig-catch", def)
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, catch, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	link(t, start, catch)
+	link(t, catch, end)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	ep := mockeventproc.NewMockEventProducer(t)
+	ep.EXPECT().RegisterEvent(mock.Anything, mock.Anything).
+		Return(nil).Maybe()
+
+	inst, err := New(s, scope.EmptyDataPath, enginert.Default(), ep, nil,
+		WithCheckpointing("engine-A", time.Minute),
+		WithWaitHolders(holders))
+	require.NoError(t, err)
+	inst.tracks = map[string]*track{}
+
+	tr, err := newTrack(findNode(t, inst.s, "sig-catch"), inst, nil)
+	require.NoError(t, err)
+
+	inst.tracks[tr.ID()] = tr
+
+	return inst, tr, holders
+}
+
+// TestHoldSubscription covers SRD-071 FR-7's arm-time handover: a signal wait
+// registers its subscription with the ENGINE instead of the hub, marking the
+// track held; without a registry, or when the holder declines, the wait stays
+// resident on its own subscription — never lost.
+func TestHoldSubscription(t *testing.T) {
+	t.Run("the engine takes the subscription", func(t *testing.T) {
+		inst, tr, holders := signalTrack(t)
+
+		require.True(t, tr.held.Load(),
+			"a held subscription makes the wait releasable")
+		require.Len(t, holders.subs, 1,
+			"the engine holds the subscription, not the instance")
+
+		// the withdraw drops it again.
+		inst.waitHolders.ReleaseWaits(inst.ID(), tr.ID())
+		require.Empty(t, holders.subs)
+	})
+
+	t.Run("no registry declines", func(t *testing.T) {
+		inst, tr, _ := signalTrack(t)
+		inst.waitHolders = nil
+
+		require.False(t, tr.holdSubscription(nil),
+			"without a registry nothing can be held")
+	})
+
+	t.Run("a declining holder keeps the wait resident", func(t *testing.T) {
+		_, tr, holders := signalTrack(t)
+
+		holders.decline = true
+
+		require.False(t, tr.holdSubscription(
+			tr.currentStep().node.(flow.EventNode).Definitions()[0]),
+			"a declined hold falls back to the instance's own subscription")
+	})
+}
+
+// TestWakeParkedTrackRoutesMessagesTrackless covers the correlation-preserving
+// shape (SRD-071 FR-7): a MESSAGE delivery must reach the loop track-LESS, so
+// the loop's own correlation gate (which keys on exactly that) still runs.
+func TestWakeParkedTrackRoutesMessagesTrackless(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	inst, tr, _ := signalTrack(t)
+	inst.addToSnap(tr)
+	inst.setState(Active)
+
+	msg := events.MustMessageEventDefinition(
+		bpmncommon.MustMessage("route-me", data.MustItemDefinition(
+			values.NewVariable(""))), nil)
+
+	got := make(chan trackEvent, 1)
+	go func() { got <- <-inst.events }()
+
+	delivered, err := inst.WakeParkedTrack(tr.ID(), msg)
+	require.NoError(t, err)
+	require.True(t, delivered)
+
+	ev := <-got
+	require.Equal(t, evDeliver, ev.kind)
+	require.Nil(t, ev.track,
+		"a message routes track-less so the loop's correlation gate applies")
+	require.Equal(t, msg.ID(), ev.eDef.ID())
+}
+
+// TestWakeRefusesAForeignConversation covers the wake's authoritative
+// correlation rule (SRD-071 FR-7, ADR-016): the continuation fork bypasses the
+// loop's dispatch gate, so the REBUILT instance applies the rule itself — a
+// message whose derived key contradicts the recorded conversation refuses the
+// wake (classified as a benign drop) instead of firing the woken node.
+func TestWakeRefusesAForeignConversation(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	msgName := "payment received"
+
+	// the correlation key reads the order id out of the message payload.
+	keyExpr, err := goexpr.New(nil,
+		data.MustItemDefinition(values.NewVariable("")),
+		func(ctx context.Context, ds data.Source) (data.Value, error) {
+			d, err := ds.Find(ctx, "pay_in")
+			if err != nil {
+				return nil, err
+			}
+
+			return values.NewVariable(
+				fmt.Sprint(d.Value().Get(ctx))), nil
+		})
+	require.NoError(t, err)
+
+	msg := bpmncommon.MustMessage(msgName, data.MustItemDefinition(
+		values.NewVariable(""), foundation.WithID("pay_in")))
+
+	re, err := bpmncommon.NewCorrelationPropertyRetrievalExpression(
+		keyExpr, msg)
+	require.NoError(t, err)
+
+	prop, err := bpmncommon.NewCorrelationProperty("orderId", "string",
+		[]bpmncommon.CorrelationPropertyRetrievalExpression{*re})
+	require.NoError(t, err)
+
+	corrKey, err := bpmncommon.NewCorrelationKey("orderKey",
+		[]bpmncommon.CorrelationProperty{*prop})
+	require.NoError(t, err)
+
+	p, err := process.New("dehy-corr")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start",
+		events.WithMessageTrigger(events.MustMessageEventDefinition(msg, nil)),
+		events.WithCorrelationKey(corrKey))
+	require.NoError(t, err)
+
+	catch, err := events.NewIntermediateCatchEvent("await",
+		events.MustMessageEventDefinition(msg, nil))
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, catch, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	link(t, start, catch)
+	link(t, catch, end)
+
+	// the process-level subscription is what publishes the key to the snapshot
+	// (a start event's key seeds the born instance; the DECLARED key is what
+	// validateAndAssociate rules on).
+	p.CorrelationSubscriptions = []*bpmncommon.CorrelationSubscription{
+		{Key: corrKey},
+	}
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+	require.NotEmpty(t, s.CorrelationKeys,
+		"the process must declare its conversation key")
+
+	catchNode := findNode(t, s, "await")
+
+	// the recorded instance is mid-conversation with ORD-1.
+	doc := &checkpoint.Document{
+		InstanceID: "corr-inst",
+		ProcessID:  s.ProcessID,
+		Version:    s.Version,
+		Status:     "Active",
+		ConvKeys:   map[string]string{"orderKey": "ORD-1"},
+		Tracks: []checkpoint.TrackRecord{{
+			ID:     "trk-1",
+			State:  TrackDehydrated.String(),
+			NodeID: catchNode.ID(),
+		}},
+	}
+
+	// the arriving message belongs to ORD-9 — another conversation.
+	foreign := events.MustMessageEventDefinition(
+		bpmncommon.MustMessage(msgName, data.MustItemDefinition(
+			values.NewVariable("ORD-9"), foundation.WithID("pay_in"))), nil)
+
+	ep := mockeventproc.NewMockEventProducer(t)
+	ep.EXPECT().RegisterEvent(mock.Anything, mock.Anything).
+		Return(nil).Maybe()
+
+	_, err = Restore(doc, s, scope.EmptyDataPath,
+		enginert.Default(), ep, nil,
+		&PendingTrigger{TrackID: "trk-1", EDef: foreign})
+
+	require.Error(t, err, "a foreign conversation must not wake the instance")
+	require.Contains(t, err.Error(), "another conversation")
 }
