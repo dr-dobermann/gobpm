@@ -187,11 +187,15 @@ type Thresher struct {
 	// an action on the task can wake its released instance. Guarded by m,
 	// alongside the taskID → instanceID routing map.
 	taskTracks map[string]taskHold
-	cfg        thresherConfig
-	m          sync.Mutex
-	wakeMu     sync.Mutex
-	subMu      sync.Mutex
-	state      atomic.Uint32 // a State; lock-free, NEVER accessed under m
+	// settled holds the per-instance-ID TERMINAL signal (SRD-071): closed only
+	// when the instance genuinely finishes, and shared with every rebuild, so a
+	// WaitCompletion survives dehydration cycles. Guarded by m.
+	settled map[string]chan struct{}
+	cfg     thresherConfig
+	m       sync.Mutex
+	wakeMu  sync.Mutex
+	subMu   sync.Mutex
+	state   atomic.Uint32 // a State; lock-free, NEVER accessed under m
 }
 
 // New creates a new empty Thresher in NotStarted state. Engine-level extensions
@@ -259,6 +263,7 @@ func New(id string, opts ...Option) (*Thresher, error) {
 		waking:        map[string]bool{},
 		subs:          map[subKey]*subHolder{},
 		taskTracks:    map[string]taskHold{},
+		settled:       map[string]chan struct{}{},
 	}
 	t.state.Store(uint32(NotStarted))
 
@@ -1079,9 +1084,11 @@ func (t *Thresher) launchInstanceFromEvent(
 	// The conversation key (keyName/keyVal) is seeded inside NewFromEvent BEFORE
 	// createTracks parks any receiver, so an in-instance receiver reached
 	// directly off the born start subscribes keyed to it (SRD-017 §4.5).
+	settled := make(chan struct{})
+
 	inst, err := instance.NewFromEvent(
 		s, scope.EmptyDataPath, &t.cfg, t, t.taskDist, startNode.ID(), eDef,
-		keyName, keyVal, t.instanceOptions()...)
+		keyName, keyVal, t.instanceOptions(settled)...)
 	if err != nil {
 		return errs.New(
 			errs.M("couldn't create an event-born Instance for process %q",
@@ -1108,7 +1115,7 @@ func (t *Thresher) launchInstanceFromEvent(
 	// An event-born instance is tracked with its read-only handle just like a
 	// StartProcess one, so the SRD-019 discovery API (Instances -> Instance(id))
 	// returns a usable handle for it instead of a nil that panics on observation.
-	t.trackInstanceLocked(inst, cancel)
+	t.trackInstanceLocked(inst, cancel, settled)
 
 	return nil
 }
@@ -1235,8 +1242,11 @@ func (t *Thresher) Instance(instanceID string) (*InstanceHandle, bool) {
 // dehydratable waits register with the engine's durable holders (SRD-071 FR-3),
 // so it can release its goroutines and be woken. The zero-config default stays
 // volatile and always-resident.
-func (t *Thresher) instanceOptions() []instance.Option {
-	opts := []instance.Option{instance.WithInvoker(t)}
+func (t *Thresher) instanceOptions(settled chan struct{}) []instance.Option {
+	opts := []instance.Option{
+		instance.WithInvoker(t),
+		instance.WithSettledSignal(settled),
+	}
 
 	if t.cfg.repoSet {
 		opts = append(opts,
@@ -1250,8 +1260,10 @@ func (t *Thresher) instanceOptions() []instance.Option {
 // launchInstance creates a new Instance from the Snapshot s, runs it, appends it
 // to the running instances of the Thresher, and returns its read-only handle.
 func (t *Thresher) launchInstance(s *snapshot.Snapshot) (*InstanceHandle, error) {
+	settled := make(chan struct{})
+
 	inst, err := instance.New(s, scope.EmptyDataPath, &t.cfg, t, t.taskDist,
-		t.instanceOptions()...)
+		t.instanceOptions(settled)...)
 	if err != nil {
 		return nil, errs.New(
 			errs.M("couldn't create an Instance for process %q",
@@ -1275,7 +1287,7 @@ func (t *Thresher) launchInstance(s *snapshot.Snapshot) (*InstanceHandle, error)
 			errs.E(err))
 	}
 
-	return t.trackInstanceLocked(inst, cancel), nil
+	return t.trackInstanceLocked(inst, cancel, settled), nil
 }
 
 // =============================================================================

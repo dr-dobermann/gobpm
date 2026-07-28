@@ -2,12 +2,18 @@ package instance
 
 import (
 	"context"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
+	"github.com/dr-dobermann/gobpm/pkg/set"
+
 	// aliased: the loop's human-task registry field is named `tasks`, which would
 	// otherwise shadow the package name where the job map type is referenced.
 	wtasks "github.com/dr-dobermann/gobpm/pkg/tasks"
@@ -238,7 +244,7 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	// hydration source); do NOT disarm handlers, discard ledgers, or settle a
 	// terminal state — a trigger hydrates it back.
 	if ls.dehydrating {
-		inst.setState(Dehydrated)
+		inst.setStateDetailed(Dehydrated, ls.dehydrationDetails())
 		ls.checkpointNow(ctx)
 
 		return
@@ -255,6 +261,12 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	ls.discardLedgers(inst.sc.root)
 
 	inst.settleFinalState(ls.stopping)
+
+	// The instance is genuinely FINISHED — release anyone waiting on
+	// completion. The dehydration exit above deliberately skips this: a
+	// released instance has not finished, it has merely stopped occupying
+	// goroutines (SRD-071).
+	inst.markSettled()
 
 	// The terminal checkpoint (SRD-070 FR-4): the record flips to its
 	// terminal status. WithoutCancel: a Terminate arrives BY canceling
@@ -972,6 +984,57 @@ func (ls *loopState) maybeDehydrate(ctx context.Context) {
 	}
 }
 
+// dehydrationDetails describes the residency transition for the operator
+// (SRD-071 FR-10, ADR-007 v.2 §2.7): WHAT the instance is waiting on and how
+// many waits, plus the point of the whole feature — it now holds zero
+// goroutines. "How many of my instances are dehydrated, and on what" is the
+// question this fact exists to answer, so counting transitions is not enough.
+// Names and counts only, never payload.
+func (ls *loopState) dehydrationDetails() map[string]string {
+	kinds := set.New[string]()
+	waits := 0
+
+	for _, t := range ls.inst.tracks {
+		if !t.inState(TrackDehydrated) {
+			continue
+		}
+
+		waits++
+
+		kinds.Add(waitKindOf(t.currentStep().node))
+	}
+
+	names := kinds.All()
+	sort.Strings(names)
+
+	return map[string]string{
+		"wait_kinds": strings.Join(names, ","),
+		"waits":      strconv.Itoa(waits),
+		"goroutines": "0",
+	}
+}
+
+// waitKindOf names the kind of wait a node parks on, for the residency facts.
+// A node's own trigger names it where there is one; everything else falls back
+// to the node's Go type, which reads well enough for an operator (UserTask,
+// EventBasedGateway, …).
+func waitKindOf(node flow.Node) string {
+	if en, ok := node.(flow.EventNode); ok {
+		kinds := set.New[string]()
+		for _, d := range en.Definitions() {
+			kinds.Add(string(d.Type()))
+		}
+
+		if names := kinds.All(); len(names) > 0 {
+			sort.Strings(names)
+
+			return strings.Join(names, "+")
+		}
+	}
+
+	return strings.TrimPrefix(fmt.Sprintf("%T", node), "*")
+}
+
 // dehydratableParked returns the parked tracks to release when the instance is
 // fully idle, or nil if it is not: every live track must be a held, dehydratable
 // TrackWaitForEvent (an executing/join-parked track, or an un-held/
@@ -1026,13 +1089,30 @@ func (ls *loopState) dehydratableParked(ctx context.Context) []*track {
 func (ls *loopState) waitReleasable(ctx context.Context, t *track) bool {
 	node := t.currentStep().node
 
-	// the current M2 implementors (UserTask, EBG, ServiceTask) decide from
-	// element data alone and ignore re; the data-driven timer decision that
-	// needs it threads a real environment here in M3.
+	// the current implementors (UserTask, catches, EBG, ServiceTask) decide
+	// from element data alone and ignore re; a data-driven decision that needs
+	// it would thread a real environment here.
 	d, ok := node.(renv.Dehydratable)
 	if !ok || !d.Dehydratable(ctx, nil) {
 		return false
 	}
 
-	return ls.inst.waitHeld != nil && ls.inst.waitHeld(t)
+	if ls.inst.waitHeld != nil && ls.inst.waitHeld(t) {
+		return true
+	}
+
+	// The element SAYS it may be released but nothing can wake it (ADR-007 v.2
+	// §2.4). Staying resident is the safe answer — never a lost trigger — but
+	// it is silent by nature: the instance simply never releases, and an
+	// operator has no way to tell a deliberate choice from a missing holder.
+	// So say so, once per park, naming the node.
+	ls.inst.Logger().Debug(
+		"a dehydratable wait has no holder — the instance stays resident",
+		"instance_id", ls.inst.ID(),
+		"track_id", t.ID(),
+		"node_id", node.ID(),
+		"node_name", node.Name(),
+		"wait_kind", waitKindOf(node))
+
+	return false
 }

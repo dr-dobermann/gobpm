@@ -56,10 +56,21 @@ func (inst *Instance) State() State {
 // owner of lifecycle state) and from Run(); State() readers see it via the
 // atomic, so no lock is needed.
 func (inst *Instance) setState(newState State) {
+	inst.setStateDetailed(newState, nil)
+}
+
+// setStateDetailed is setState for a transition that carries detail — the
+// residency transitions (SRD-071 FR-10) are lifecycle facts an operator groups
+// and counts by, so their payload rides the state change itself rather than a
+// second fact for the same transition.
+func (inst *Instance) setStateDetailed(
+	newState State, details map[string]string,
+) {
 	inst.state.Store(uint32(newState))
 	inst.report(observability.Fact{
-		Kind:  observability.KindInstanceState,
-		Phase: observability.Phase(newState.String()),
+		Kind:    observability.KindInstanceState,
+		Phase:   observability.Phase(newState.String()),
+		Details: details,
 	})
 }
 

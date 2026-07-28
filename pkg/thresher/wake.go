@@ -134,6 +134,7 @@ func (t *Thresher) rebuildAndContinue(
 	}
 
 	opts := append([]instance.Option{
+		instance.WithSettledSignal(t.settledFor(instanceID)),
 		instance.WithInvoker(t),
 		instance.WithWaitHolders(t),
 		instance.WithCheckpointing(t.id, t.cfg.leaseTTL),
@@ -153,7 +154,7 @@ func (t *Thresher) rebuildAndContinue(
 		return wakeErr("the rebuilt instance doesn't run", err)
 	}
 
-	t.trackInstanceLocked(inst, cancel)
+	t.trackInstanceLocked(inst, cancel, t.settledFor(instanceID))
 
 	inst.Report(observability.Fact{
 		Kind:  observability.KindInstanceState,
@@ -162,10 +163,46 @@ func (t *Thresher) rebuildAndContinue(
 			observability.AttrProcessID: doc.ProcessID,
 			observability.AttrVersion:   strconv.Itoa(doc.Version),
 			"trigger":                   wakeTriggerLabel(pending),
+			observability.AttrTrackID:   wokenTrackID(pending),
+			"outcome":                   wakeOutcome(inst),
 		},
 	})
 
 	return nil
+}
+
+// wokenTrackID names the wait the trigger woke, or "all" for a trigger-absent
+// hydration, which re-enters every recorded track rather than one (SRD-071
+// FR-10).
+func wokenTrackID(pending *instance.PendingTrigger) string {
+	if pending == nil {
+		return "all"
+	}
+
+	return pending.TrackID
+}
+
+// wakeOutcome reports whether the wake CONTINUED the flow or finished the
+// instance outright (SRD-071 FR-10) — the difference between "this trigger
+// moved it along" and "this trigger was the last thing it was waiting for",
+// which is what an operator reading a residency trace wants to know.
+//
+// Sampled WITHOUT blocking: this runs on the waking goroutine — the engine's
+// single timer service, in the common case — so waiting for the instance to
+// settle would serialize every other pending wake behind it. An instance that
+// finishes a moment after this reads "continued", and its own Completed fact
+// lands immediately after; nothing is lost, and the fast path stays fast.
+func wakeOutcome(inst *instance.Instance) string {
+	switch inst.State() {
+	case instance.Completed:
+		return "completed"
+
+	case instance.Terminated, instance.Terminating:
+		return "terminated"
+
+	default:
+		return "continued"
+	}
 }
 
 // wakeTriggerLabel names what woke the instance — the trigger's kind, or the

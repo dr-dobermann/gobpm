@@ -38,7 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   freely (park → release → wake → continue → release) with the recorded
   track lineage bounded across cycles, and concurrent triggers hydrate it
   exactly once. Two `KindInstanceState` facts make it observable at Info:
-  `Dehydrated` and `Hydrated`. Eligibility is a capability the element
+  **`Dehydrated`** (the wait kinds it parked on, how many, and
+  `goroutines=0`) and **`Hydrated`** (the waking trigger, the woken wait,
+  and whether the wake continued the flow or completed the instance).
+  Residency is visible through the public API too: `StateDehydrated` names
+  the non-terminal state, `WaitCompletion` keeps blocking across
+  dehydration cycles rather than mistaking a release for completion, and a
+  handle taken before a release follows the instance through its rebuild. Eligibility is a capability the element
   declares (`Dehydratable`), so it stays data-driven and rolls out
   element-by-element: today a **one-shot timer more than an hour out**
   releases (a shorter or repeating one keeps its in-memory waiter), while

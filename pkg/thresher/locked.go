@@ -229,14 +229,52 @@ func (t *Thresher) snapshotForVersionLocked(
 // trackInstanceLocked records a launched instance with its cancel func and a
 // fresh read-only handle in the instances map, returning the handle. Shared by
 // launchInstance and launchInstanceFromEvent.
+// handleForLocked returns the handle for an instance id, minting one (with its
+// per-ID terminal signal) on first sight. Caller holds t.m.
+func (t *Thresher) handleForLocked(
+	instanceID string, settled chan struct{},
+) *InstanceHandle {
+	if reg, ok := t.instances[instanceID]; ok && reg.handle != nil {
+		return reg.handle
+	}
+
+	t.settled[instanceID] = settled
+
+	return &InstanceHandle{settled: settled}
+}
+
+// settledFor returns the per-instance-ID terminal signal, creating it if this
+// is the first time the engine touches the id. The SAME channel is handed to
+// every rebuild, so a host waiting for completion is not woken by a mere
+// dehydration (SRD-071).
+func (t *Thresher) settledFor(instanceID string) chan struct{} {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	if ch, ok := t.settled[instanceID]; ok {
+		return ch
+	}
+
+	ch := make(chan struct{})
+	t.settled[instanceID] = ch
+
+	return ch
+}
+
 func (t *Thresher) trackInstanceLocked(
 	inst *instance.Instance,
 	cancel context.CancelFunc,
+	settled chan struct{},
 ) *InstanceHandle {
-	h := &InstanceHandle{inst: inst}
-
 	t.m.Lock()
 	defer t.m.Unlock()
+
+	// A REBUILT instance keeps the handle callers already hold (SRD-071): the
+	// instance's identity outlives its object, so the handle is re-pointed at
+	// the new one rather than replaced — otherwise every reference taken before
+	// a dehydration would answer for a dead object forever.
+	h := t.handleForLocked(inst.ID(), settled)
+	h.adopt(inst)
 
 	t.instances[inst.ID()] = instanceReg{
 		stop:   cancel,

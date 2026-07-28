@@ -82,6 +82,7 @@ func (t *Thresher) recoverOne(ctx context.Context, id string) error {
 	inst, err := instance.Restore(doc, s, scope.EmptyDataPath, &t.cfg, t,
 		t.taskDist,
 		nil,
+		instance.WithSettledSignal(t.settledFor(id)),
 		instance.WithInvoker(t),
 		instance.WithWaitHolders(t),
 		instance.WithCheckpointing(t.id, t.cfg.leaseTTL),
@@ -97,7 +98,7 @@ func (t *Thresher) recoverOne(ctx context.Context, id string) error {
 		return recoveryErr("the restored instance doesn't run", err)
 	}
 
-	t.trackInstanceLocked(inst, cancel)
+	t.trackInstanceLocked(inst, cancel, t.settledFor(id))
 
 	inst.Report(observability.Fact{
 		Kind:  observability.KindInstanceState,

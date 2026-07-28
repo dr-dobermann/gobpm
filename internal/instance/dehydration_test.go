@@ -16,6 +16,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/scope"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -1096,4 +1097,195 @@ func TestWakeRefusesAForeignConversation(t *testing.T) {
 
 	require.Error(t, err, "a foreign conversation must not wake the instance")
 	require.Contains(t, err.Error(), "another conversation")
+}
+
+// TestResidentPinSuppressesRelease covers the pin (SRD-071 FR-8): a parked
+// human task is IDLE by definition, so an instance hydrated to service an
+// action would release again before the action landed. The pin suspends that
+// until the interaction is done; pins nest.
+func TestResidentPinSuppressesRelease(t *testing.T) {
+	inst, tr, ls := userTaskArmed(t)
+	inst.waitHeld = held
+
+	inst.PinResident()
+
+	ls.maybeDehydrate(context.Background())
+	require.False(t, ls.dehydrating,
+		"a pinned instance must not release while an action is in flight")
+
+	select {
+	case <-tr.dehydrateCh:
+		t.Fatal("a pinned instance released a track")
+	default:
+	}
+
+	// pins nest — one Unpin is not enough to clear two Pins.
+	inst.PinResident()
+	inst.UnpinResident()
+
+	ls.maybeDehydrate(context.Background())
+	require.False(t, ls.dehydrating, "the outer pin still holds it")
+
+	inst.UnpinResident()
+	require.False(t, inst.pinnedResident())
+
+	ls.maybeDehydrate(context.Background())
+	require.True(t, ls.dehydrating, "the last unpin lets it release")
+}
+
+// TestWithResidentPinStartsPinned: the rebuild option leaves the instance
+// pinned from birth, closing the window between Run and the action's arrival.
+func TestWithResidentPinStartsPinned(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	inst, err := New(userTaskSnapshot(t), scope.EmptyDataPath,
+		enginert.Default(), mockeventproc.NewMockEventProducer(t), &failDist{},
+		WithResidentPin())
+	require.NoError(t, err)
+
+	require.True(t, inst.pinnedResident(),
+		"a rebuild for an action must not be releasable before it arrives")
+}
+
+// TestSettledSignalOnlyOnTerminal covers the completion contract (SRD-071):
+// the terminal signal is closed when the instance FINISHES — never when it
+// merely releases its goroutines — and closing is idempotent across the
+// rebuilds that share one channel.
+func TestSettledSignalOnlyOnTerminal(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ch := make(chan struct{})
+
+	inst, err := New(userTaskSnapshot(t), scope.EmptyDataPath,
+		enginert.Default(), mockeventproc.NewMockEventProducer(t), &failDist{},
+		WithSettledSignal(ch))
+	require.NoError(t, err)
+
+	select {
+	case <-ch:
+		t.Fatal("a fresh instance has not settled")
+	default:
+	}
+
+	inst.markSettled()
+
+	select {
+	case <-ch:
+	default:
+		t.Fatal("a terminal instance must release its waiters")
+	}
+
+	// a later incarnation sharing the channel must not double-close.
+	require.NotPanics(t, inst.markSettled)
+
+	// an instance nobody waits on has no channel — still safe.
+	bare := &Instance{}
+	require.NotPanics(t, bare.markSettled)
+}
+
+// TestDehydrationDetails covers the residency fact's payload (SRD-071 FR-10):
+// the wait kinds the instance is parked on, how many, and the zero-goroutine
+// claim that is the point of the whole feature.
+func TestDehydrationDetails(t *testing.T) {
+	inst, tr, ls := userTaskArmed(t)
+	inst.waitHeld = held
+
+	tr.updateState(TrackDehydrated)
+
+	d := ls.dehydrationDetails()
+	require.Equal(t, "1", d["waits"])
+	require.Equal(t, "0", d["goroutines"])
+	require.Equal(t, "activities.UserTask", d["wait_kinds"],
+		"a non-event wait names its element type")
+}
+
+// TestWaitKindOf: an event node names itself by its TRIGGERS (an Event-Based
+// Gateway by the union of its arms'), anything else by its element type.
+func TestWaitKindOf(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	_, tr, _ := signalTrack(t)
+	require.Equal(t, "Signal", waitKindOf(tr.currentStep().node))
+
+	_, ut, _ := userTaskArmed(t)
+	require.Equal(t, "activities.UserTask", waitKindOf(ut.currentStep().node))
+}
+
+// TestTaskActionRefusedWhileReleasing covers the task-action race (SRD-071
+// FR-8): once the loop has committed to releasing, a Take/Complete must be
+// REFUSED with the retry class — completing here would post the outcome into
+// an evtCh nobody reads and lose it, while returning success to the caller.
+func TestTaskActionRefusedWhileReleasing(t *testing.T) {
+	inst, _, ls := userTaskArmed(t)
+	ls.dehydrating = true
+
+	reply := make(chan taskReply, 1)
+	ls.handleTaskRequest(context.Background(), taskRequest{
+		kind:   reqComplete,
+		taskID: "any",
+		actor:  stubActor{id: "operator"},
+		reply:  reply,
+	})
+
+	r := <-reply
+	require.Error(t, r.err)
+
+	var ae *errs.ApplicationError
+	require.ErrorAs(t, r.err, &ae)
+	require.True(t, ae.HasClass(TaskRetryClass),
+		"the engine must be told to hydrate and replay, not to fail the action")
+
+	_ = inst
+}
+
+// TestHoldTaskWiresRealPredicate covers the human-task hold end to end inside
+// the instance (SRD-071 FR-8) AND the production wakeability gate: with a
+// holder registry injected, parking a UserTask hands the task to the engine and
+// the detector's own wired predicate — not a test stub — reads the resulting
+// held flag.
+func TestHoldTaskWiresRealPredicate(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	holders := newFakeHolders()
+
+	inst, err := New(userTaskSnapshot(t), scope.EmptyDataPath,
+		enginert.Default(), mockeventproc.NewMockEventProducer(t), &failDist{},
+		WithCheckpointing("engine-A", time.Minute),
+		WithWaitHolders(holders))
+	require.NoError(t, err)
+	inst.tracks = map[string]*track{}
+
+	require.NotNil(t, inst.waitHeld,
+		"a holder registry wires the production wakeability gate")
+
+	node := findNode(t, inst.s, "ut")
+
+	tr, err := newTrack(node, inst, nil)
+	require.NoError(t, err)
+
+	require.True(t, tr.held.Load(),
+		"parking a UserTask hands it to the engine's holder")
+	require.Len(t, holders.tasks, 1)
+
+	inst.tracks[tr.ID()] = tr
+
+	ls := newLoopState(inst)
+	ls.position[tr.ID()] = node
+	ls.waiting[tr.ID()] = struct{}{}
+	ls.active = 1
+
+	// the REAL predicate (not the `held` stub) decides here.
+	ls.maybeDehydrate(context.Background())
+	require.True(t, ls.dehydrating,
+		"the wired predicate reads the track's arm-time hold")
+}
+
+// TestHoldTaskDeclinedStaysResident: without a registry the task is not held,
+// so the instance keeps its goroutines.
+func TestHoldTaskDeclinedStaysResident(t *testing.T) {
+	_, tr, _ := userTaskArmed(t)
+
+	require.False(t, tr.held.Load(),
+		"no holder registry — the wait stays resident")
+	require.False(t, tr.holdTask(tr.currentStep().node))
 }

@@ -661,3 +661,208 @@ func TestWakeFromSubscriptionDropsAForeignConversation(t *testing.T) {
 	require.Eventually(t, sink.sawFailed, 2*time.Second, 10*time.Millisecond,
 		"a real wake failure stays loud")
 }
+
+// TestHoldTaskGuards covers the human-task hold (SRD-071 FR-8): a volatile
+// engine declines it (no checkpoint to wake from), an armed one records which
+// TRACK the task parks so an action can wake that instance, and ReleaseWaits
+// clears it with the rest of the track's holds.
+func TestHoldTaskGuards(t *testing.T) {
+	t.Run("a volatile engine holds nothing", func(t *testing.T) {
+		th, err := New("engine-voltask",
+			WithoutBanner(), WithoutStartupConfig())
+		require.NoError(t, err)
+
+		err = th.HoldTask("i-1", "t-1", "task-1")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "no checkpoints")
+	})
+
+	t.Run("an armed engine records the track", func(t *testing.T) {
+		th, cancel := armedWakeEngine(t, "engine-task")
+		defer cancel()
+
+		require.NoError(t, th.HoldTask("i-1", "t-1", "task-1"))
+
+		th.m.Lock()
+		hold, ok := th.taskTracks["task-1"]
+		th.m.Unlock()
+
+		require.True(t, ok)
+		require.Equal(t, "i-1", hold.instanceID)
+		require.Equal(t, "t-1", hold.trackID)
+	})
+}
+
+// TestRetryAfterHydration classifies the replay signal: only the engine's own
+// "I am releasing" refusal asks for a replay — a real action failure does not.
+func TestRetryAfterHydration(t *testing.T) {
+	require.False(t, retryAfterHydration(nil))
+	require.False(t, retryAfterHydration(wakeErr("something broke", nil)))
+
+	require.True(t, retryAfterHydration(gerrs.New(
+		gerrs.M("releasing"),
+		gerrs.C(errorClass, instance.TaskRetryClass))))
+}
+
+// TestSettledForIsPerInstanceID: the terminal signal is owned per instance ID
+// and handed to every rebuild, which is what lets a WaitCompletion survive a
+// dehydration cycle (SRD-071).
+func TestSettledForIsPerInstanceID(t *testing.T) {
+	th, cancel := armedWakeEngine(t, "engine-settled")
+	defer cancel()
+
+	first := th.settledFor("i-1")
+	require.NotNil(t, first)
+	require.Equal(t, first, th.settledFor("i-1"),
+		"a rebuild must inherit the SAME signal, not a fresh one")
+
+	require.NotEqual(t, first, th.settledFor("i-2"),
+		"different instances settle independently")
+}
+
+// TestWakeOutcomeLabels: the residency fact reports what the wake led to.
+func TestWakeOutcomeLabels(t *testing.T) {
+	require.Equal(t, "TaskAction", wakeTriggerLabel(nil))
+	require.Equal(t, "all", wokenTrackID(nil))
+	require.Equal(t, "t-1", wokenTrackID(&instance.PendingTrigger{
+		TrackID: "t-1"}))
+}
+
+// TestHydrateForTaskDefersToAnInFlightWake: with a wake already latched for an
+// instance, a task action does not start a second rebuild — it lets the
+// in-flight one finish and replays against the result (§4.6).
+func TestHydrateForTaskDefersToAnInFlightWake(t *testing.T) {
+	th, cancel := armedWakeEngine(t, "engine-taskwake")
+	defer cancel()
+
+	require.True(t, th.claimWake("i-1"))
+	defer th.releaseWake("i-1")
+
+	require.NoError(t, th.hydrateForTask("i-1"),
+		"a concurrent wake is deferred to, not duplicated")
+}
+
+// TestRebuildRefusesABrokenRecord: a checkpoint whose recorded node is not in
+// the pinned process version fails the REBUILD loudly (the wake reports rather
+// than resurrecting an instance onto a node that no longer exists).
+func TestRebuildRefusesABrokenRecord(t *testing.T) {
+	th, cancel := armedWakeEngine(t, "engine-brokennode")
+	defer cancel()
+
+	p := shortTimerProcess(t, "wake-brokennode")
+
+	reg, err := th.RegisterProcess(p)
+	require.NoError(t, err)
+
+	doc := &checkpoint.Document{
+		InstanceID: "broken-node",
+		ProcessID:  p.ID(),
+		Version:    reg.Version(),
+		Status:     "Active",
+		Tracks: []checkpoint.TrackRecord{{
+			ID:     "t-1",
+			State:  "TrackDehydrated",
+			NodeID: "a-node-this-version-never-had",
+		}},
+	}
+
+	payload, err := doc.Marshal()
+	require.NoError(t, err)
+
+	require.NoError(t, th.cfg.Repository().Save(context.Background(),
+		repository.InstanceRecord{
+			ID: "broken-node", Status: repository.StatusActive,
+			Payload: payload}))
+
+	err = th.rebuildAndContinue("broken-node", &instance.PendingTrigger{
+		TrackID: "t-1", EDef: wakeSignalDef(t, "broken-sig")})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "doesn't rebuild")
+}
+
+// TestWakeOutcomeReadsTerminalStates: the residency fact distinguishes a wake
+// that CONTINUED the flow from one that finished the instance (SRD-071 FR-10).
+func TestWakeOutcomeReadsTerminalStates(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	th, cancel := armedWakeEngine(t, "engine-outcome")
+	defer cancel()
+
+	p := shortTimerProcess(t, "wake-outcome")
+
+	_, err := th.RegisterProcess(p)
+	require.NoError(t, err)
+
+	h, err := th.StartLatest(p.ID())
+	require.NoError(t, err)
+
+	inst, err := th.instanceByID(h.ID())
+	require.NoError(t, err)
+
+	// still running — the wake would report a continuation.
+	require.Equal(t, "continued", wakeOutcome(inst))
+
+	// once it settles, the outcome names the terminal state rather than
+	// claiming the flow carried on. Which terminal it is depends on whether
+	// the cancel or the flow won — both are "not continued", which is the
+	// distinction the fact exists to draw.
+	inst.Cancel()
+
+	select {
+	case <-inst.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("the instance did not settle")
+	}
+
+	require.Eventually(t, func() bool {
+		return wakeOutcome(inst) != "continued"
+	}, 3*time.Second, 10*time.Millisecond,
+		"a settled instance must not be reported as continuing")
+}
+
+// retryActor is a minimal hi.Actor for the task-action traces.
+type retryActor struct{ id string }
+
+func (a retryActor) UserID() string   { return a.id }
+func (a retryActor) Groups() []string { return nil }
+
+// TestTaskActionRetryExhausts covers the hydrate-and-replay loop (SRD-071
+// FR-8): when an action keeps being refused because the instance has no live
+// loop, the engine retries a bounded number of times and then reports — it
+// neither spins forever nor returns success for work that never happened.
+func TestTaskActionRetryExhausts(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	th, cancel := armedWakeEngine(t, "engine-retry")
+	defer cancel()
+
+	p := shortTimerProcess(t, "retry-proc")
+
+	_, err := th.RegisterProcess(p)
+	require.NoError(t, err)
+
+	h, err := th.StartLatest(p.ID())
+	require.NoError(t, err)
+
+	inst, err := th.instanceByID(h.ID())
+	require.NoError(t, err)
+
+	// drive it terminal: its loop is gone, so every task action it is asked to
+	// service is refused with the retry class.
+	inst.Cancel()
+
+	select {
+	case <-inst.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("the instance did not stop")
+	}
+
+	// point a task at that finished instance — the shape a task action hits
+	// when the instance it belongs to has no loop left to run against.
+	th.registerTask("ghost-task", h.ID())
+
+	_, err = th.Take(context.Background(), "ghost-task",
+		retryActor{id: "operator"})
+	require.Error(t, err,
+		"a task action that can never be serviced must report, not hang")
+}

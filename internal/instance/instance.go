@@ -54,6 +54,14 @@ type Instance struct {
 	s                   *snapshot.Snapshot
 	tracks              map[string]*track
 	loopDone            chan struct{}
+	// settled is closed when the instance reaches a TERMINAL state — and only
+	// then. loopDone closes on EVERY loop exit, dehydration included, so it
+	// cannot answer "has this instance finished?" any more (SRD-071): a
+	// released instance has no loop but is very much still in flight. The
+	// engine owns this channel per instance ID and hands the SAME one to each
+	// rebuild, so a caller waiting on it waits across dehydration cycles.
+	// nil for an instance nobody is waiting on.
+	settled chan struct{}
 	// parentInstanceID/callNodeID are the call linkage (SRD-050): when set,
 	// report stamps them on every fact so a child instance's trace stitches
 	// back to its caller's Call Activity node. Empty for a top-level instance.
@@ -150,6 +158,31 @@ func (inst *Instance) pinnedResident() bool {
 	return inst.dehydrationPins.Load() > 0
 }
 
+// WithSettledSignal gives the instance the channel to close when it reaches a
+// TERMINAL state (SRD-071). The engine owns it per instance ID and passes the
+// same channel to every rebuild, so a host waiting for completion is not woken
+// by a mere dehydration — which releases the loop without finishing anything.
+func WithSettledSignal(ch chan struct{}) Option {
+	return func(cfg *newConfig) {
+		cfg.settled = ch
+	}
+}
+
+// markSettled closes the terminal signal exactly once. Called only from the
+// loop's TERMINAL exit — never from the dehydration exit.
+func (inst *Instance) markSettled() {
+	if inst.settled == nil {
+		return
+	}
+
+	select {
+	case <-inst.settled:
+		// already closed by an earlier incarnation — nothing to do.
+	default:
+		close(inst.settled)
+	}
+}
+
 // WithResidentPin builds the instance already pinned (SRD-071 FR-8): the engine
 // rebuilds an instance to service a task action, and the rebuild must not
 // release again before the action arrives. The engine unpins when it is done.
@@ -207,6 +240,8 @@ type newConfig struct {
 	// a dehydratable timer registers its deadline here at arm time. nil for a
 	// library embedder or a volatile instance — every wait then stays resident.
 	waitHolders exec.WaitHolders
+	// settled is the engine's per-instance-ID terminal signal (SRD-071).
+	settled chan struct{}
 	// rootData is committed into the root scope at construction — the Call
 	// Activity's inputs (SRD-050), the same injection point as an event
 	// payload (bindEventPayload). Its len/cap and the checkpoint cursors
@@ -337,6 +372,7 @@ func New(
 		scopeReq:            make(chan scopeRequest),
 		invoker:             cfg.invoker,
 		waitHolders:         cfg.waitHolders,
+		settled:             cfg.settled,
 		loopDone:            make(chan struct{}),
 		parentEventProducer: ep,
 		td:                  td,
@@ -489,6 +525,7 @@ func NewChild(
 	inv exec.ProcessInvoker,
 	rootData []data.Data,
 	parentInstanceID, callNodeID string,
+	opts ...Option,
 ) (*Instance, error) {
 	parentInstanceID = strings.TrimSpace(parentInstanceID)
 	if parentInstanceID == "" {
@@ -505,9 +542,11 @@ func NewChild(
 	}
 
 	return New(s, scope.EmptyDataPath, er, ep, td,
-		withRootData(rootData),
-		withCallLinkage(parentInstanceID, callNodeID),
-		WithInvoker(inv))
+		append([]Option{
+			withRootData(rootData),
+			withCallLinkage(parentInstanceID, callNodeID),
+			WithInvoker(inv),
+		}, opts...)...)
 }
 
 // emit delivers a track event to the loop. It never blocks forever: once the

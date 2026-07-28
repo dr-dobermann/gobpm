@@ -317,6 +317,22 @@ func TestDehydrationShortTimerStaysResident(t *testing.T) {
 		"a resident short timer must still fire")
 }
 
+// factDetails returns the Details of the FIRST fact matching kind/phase.
+func factDetails(
+	fw *factWatch, k observability.Kind, p observability.Phase,
+) map[string]string {
+	fw.mu.Lock()
+	defer fw.mu.Unlock()
+
+	for _, f := range fw.facts {
+		if f.Kind == k && f.Phase == p {
+			return f.Details
+		}
+	}
+
+	return nil
+}
+
 // countFacts counts the facts matching kind/phase.
 func countFacts(
 	fw *factWatch, k observability.Kind, p observability.Phase,
@@ -625,4 +641,63 @@ func countingTimerProc(
 	link(t, lane, end)
 
 	return p
+}
+
+// TestResidencyFactDetails covers SRD-071 T-10 (FR-10, ADR-007 v.2 §2.7): the
+// two residency facts must carry the detail an operator groups and counts by —
+// "how many of my instances are dehydrated, and on WHAT" is the question they
+// exist to answer, so a bare transition is not enough.
+func TestResidencyFactDetails(t *testing.T) {
+	repo := memrepo.New()
+	deadline := dehydrationEpoch.Add(2 * time.Hour)
+
+	var hit atomic.Bool
+
+	p := longTimerProc(t, "dehy-facts", deadline, &hit)
+
+	th, fw, clk, cancel := bootDehydrationEngine(t, "engine-F", repo, p)
+	defer cancel()
+
+	_, err := th.StartLatest(p.ID())
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		return fw.saw(observability.KindInstanceState,
+			observability.PhaseDehydrated)
+	}, 3*time.Second, 10*time.Millisecond)
+
+	// Dehydrated: what it is waiting on, how many waits, and the whole point —
+	// zero goroutines.
+	dd := factDetails(fw, observability.KindInstanceState,
+		observability.PhaseDehydrated)
+	require.NotEmpty(t, dd, "the Dehydrated fact must carry detail")
+	require.Equal(t, "Timer", dd["wait_kinds"],
+		"the released wait's kind is named")
+	require.Equal(t, "1", dd["waits"])
+	require.Equal(t, "0", dd["goroutines"],
+		"the released instance holds no goroutines — the point of the feature")
+
+	// exactly one fact per residency transition, never a duplicate.
+	require.Equal(t, 1, countFacts(fw, observability.KindInstanceState,
+		observability.PhaseDehydrated))
+
+	clk.Advance(3 * time.Hour)
+
+	require.Eventually(t, hit.Load, 3*time.Second, 10*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		return fw.saw(observability.KindInstanceState,
+			observability.PhaseHydrated)
+	}, 3*time.Second, 10*time.Millisecond)
+
+	// Hydrated: what woke it, which wait, and whether it continued or finished.
+	hd := factDetails(fw, observability.KindInstanceState,
+		observability.PhaseHydrated)
+	require.NotEmpty(t, hd, "the Hydrated fact must carry detail")
+	require.Equal(t, "Timer", hd["trigger"], "the waking trigger is named")
+	require.NotEmpty(t, hd[observability.AttrTrackID],
+		"the woken wait is identified")
+	require.Contains(t, []string{"continued", "completed", "terminated"},
+		hd["outcome"], "the wake reports what it led to")
+	require.Equal(t, p.ID(), hd[observability.AttrProcessID])
 }

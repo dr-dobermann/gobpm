@@ -109,7 +109,11 @@ instance's behalf. When the deadline arrives it rebuilds the instance
 from its checkpoint and continues the woken wait — the timer node fires
 *through*, with its trigger already in hand, straight to the outgoing
 flow. Two `KindInstanceState` facts make the cycle observable at Info:
-`Dehydrated` when it releases, `Hydrated` when a trigger brings it back.
+`Dehydrated` when it releases — carrying the **wait kinds** it is parked
+on, how many, and the `goroutines=0` that is the point of the whole
+feature — and `Hydrated` when a trigger brings it back, carrying the
+**trigger kind**, the woken wait, and whether the wake **continued** the
+flow or **completed** the instance.
 An instance oscillates freely: park, release, wake, continue, release
 again — each cycle costs one checkpoint and one rebuild, and the
 recorded track lineage never grows.
@@ -150,6 +154,12 @@ from, so nothing ever releases). What releases today:
   releases only when *every* live track qualifies, so one resident wait
   keeps the whole instance in memory. No wait is ever released without
   something that can wake it — a trigger is never lost.
+
+A dehydrated instance is still **in flight**, and the API says so: the
+handle reports `StateDehydrated` (non-terminal), `WaitCompletion` keeps
+blocking across as many dehydration cycles as the instance goes through,
+and a handle taken before a release keeps speaking for the instance after
+it is rebuilt.
 
 A dehydrated instance has no loop to renew its lease, so the lease
 lapses; that is deliberate and harmless on a single engine (the
