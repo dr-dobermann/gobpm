@@ -145,6 +145,7 @@ grows additively as new subsystems land:
 | `StateCompleted` | reached a normal end (terminal). |
 | `StateTerminating` | tearing down after a cancel / terminate-end. |
 | `StateTerminated` | stopped before normal completion (terminal). |
+| `StateDehydrated` | idle with **no goroutines**, waiting on held waits (not terminal — a trigger rebuilds it). |
 
 ## See also
 

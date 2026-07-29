@@ -195,6 +195,7 @@ The engine drives the task through these — you rarely call them directly:
 | `ValidateOutputs(outputs)` | reject a completion missing a `required: true` output. |
 | `Assignments()` / `Renderers()` / `Outputs()` | inspect the declared triad, forms, and expected outputs. |
 | `AddBoundaryEvent(be)` / `BoundaryEvents()` | attach / inspect boundary events. |
+| `Dehydratable(ctx, re) bool` | reports `true` — a parked human task lets the whole instance release its goroutines (the task keeps living in the distributor's inbox). |
 
 Behavior worth knowing: a User Task is a **wait node**. It parks on the same
 event channel as catch events — the track goroutine is released, not held —

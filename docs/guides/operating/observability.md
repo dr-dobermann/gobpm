@@ -152,7 +152,7 @@ kinds you will reach for most:
 
 | Kind | What it reports |
 |---|---|
-| `KindInstanceState` | instance lifecycle (Created / Active / Completed / …). |
+| `KindInstanceState` | instance lifecycle (Created / Active / **Dehydrated** / **Hydrated** / Completed / …). |
 | `KindNodeProgress` | a track's node execution phase. |
 | `KindDataChange` | a data-element change (**observer-only**). |
 | `KindFault` | a BPMN error / fault. |

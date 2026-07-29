@@ -115,6 +115,13 @@ incarnation+1) + `Load`s + restores. A save from an engine whose lease
 was reclaimed fails with `ConcurrentUpdate` — the zombie sees a
 `CheckpointDeferred` warning and never corrupts the new owner's state.
 
+The same port is what makes **dehydration** possible: an instance idle on held
+waits releases its goroutines and is rebuilt from its checkpoint when a trigger
+arrives. One consequence matters to an adapter author: a dehydrated instance has
+no loop, so **its lease lapses by design** — the record stays in-flight and will
+list as claimable. That is intended, not a leak; restart recovery reclaims it if
+the engine that owned it died, and a live engine keeps waking it from memory.
+
 ## See also
 
 - Reference implementation: `repository/memrepo`

@@ -141,7 +141,7 @@ tolerate unknown values. Some of the kinds you filter on:
 | `Kind` | Emitted for |
 |---|---|
 | `KindEngineState` / `KindHubState` | engine and event-hub lifecycle |
-| `KindInstanceState` | instance Created / Active / Completed |
+| `KindInstanceState` | instance Created / Active / Dehydrated / Hydrated / Completed |
 | `KindNodeProgress` | node execution progress |
 | `KindGatewayDecision` | branches a gateway chose |
 | `KindFault` | a failure |

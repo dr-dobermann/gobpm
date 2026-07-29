@@ -164,11 +164,17 @@ The engine drives the task through these — you rarely call them directly:
 | `AddBoundaryEvent(be)` / `BoundaryEvents()` | attach / inspect boundary events. |
 | `ActivityType()` / `Implementation()` | introspection. |
 | `ForCompensation()` | whether the task is a compensation handler. |
+| `Dehydratable(ctx, re) bool` | reports `false` — a worker job is active work in flight, not a passive wait, so it never releases the instance. |
 
 Behavior worth knowing: an in-process operation runs on the track goroutine
 unless `WithTimeout` moves it to a cancellable sub-goroutine; a worker task
 **parks** (releases its goroutine) until the dispatcher reports the job; a task
 with an error boundary interrupts on a matching fault.
+
+Unlike a parked User Task, a worker task never **dehydrates** the instance: the
+dispatcher's job lock is active work, not an engine-held wake source, so the
+instance stays resident until the worker reports
+([Persistence & recovery](../operating/persistence.md)).
 
 ## See also
 

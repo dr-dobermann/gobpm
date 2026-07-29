@@ -180,6 +180,7 @@ The engine drives the gate through these — you rarely call them directly:
 | `Definitions() []flow.EventDefinition` | the event definitions the gate subscribes to (its arms). |
 | `Instantiate()` / `ParallelStart()` | whether the gate is a start instantiator, and whether its start policy is parallel. |
 | `CorrelationKey()` | the declared correlation key (instantiating parallel form), or nil. |
+| `Dehydratable(ctx, re) bool` | reports `true` — but the gate releases the instance only when **every** arm it races is itself holdable (one conditional arm keeps the whole gate resident). |
 
 Behavior worth knowing:
 

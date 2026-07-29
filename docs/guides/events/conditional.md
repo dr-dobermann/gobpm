@@ -178,6 +178,11 @@ Behavior worth knowing:
   armed conditional against it — plus once at arm time, so an already-true
   condition fires immediately. Mid-activity writes never fire a conditional;
   only committed changes do.
+- **A conditional catch never dehydrates.** Its trigger source is the
+  instance's own commit-diff, so releasing the instance would destroy the very
+  thing that fires it — an armed conditional keeps the instance resident, and
+  an Event-Based Gateway carrying a conditional arm stays resident with it
+  ([Persistence & recovery](../operating/persistence.md)).
 - Conditional subscriptions are **owned by the instance loop**, the deliberate
   exception to the general event-hub subscription path — their trigger source is
   the instance's own data plane, so no cross-goroutine publish is involved.

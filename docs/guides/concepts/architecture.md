@@ -77,8 +77,8 @@ Two properties matter to a developer:
   existing one — see [Registering & versioning](../operating/registering-and-versioning.md).
 - **A launch template, not a persistence mechanism.** The snapshot is *not*
   durable state: instance tracks, scopes, and history are not stored in it, and
-  it is not a recovery/rehydration format. Durable persistence remains future
-  work (ADR-009).
+  it is not a recovery format. That is the Repository's checkpoint document —
+  see [Persistence & recovery](../operating/persistence.md).
 
 You never call `snapshot`; you receive a `ProcessRegistration` — a read-only
 receipt for one registered `(key, version)` — and address launches with it.
@@ -118,7 +118,7 @@ cannot corrupt a running instance":
 | `Observe(o Observer) *Subscription` | subscribe to this instance's facts |
 
 `InstanceState` is the standard-named, **open** lifecycle vocabulary
-(`StateCreated`, `StateActive`, `StateCompleted`, `StateTerminating`,
+(`StateCreated`, `StateActive`, `StateDehydrated`, `StateCompleted`, `StateTerminating`,
 `StateTerminated`) — it grows additively, so consumers must tolerate unknown
 values. See [Instance lifecycle](../operating/instance-lifecycle.md) for the full
 handle workflow.

@@ -198,8 +198,12 @@ Behavior worth knowing:
 - **Name is the route.** The broker matches subscribers by the message name; the
   per-side item IDs (`order_out`, `order_in`) name only local data.
 - **The catch side parks.** A catch event (like a ReceiveTask) subscribes a
-  MessageWaiter and holds its track goroutine until the message arrives, then
-  binds the payload before emitting its outgoing flows.
+  MessageWaiter and parks its track until the message arrives, then binds the
+  payload before emitting its outgoing flows. With a repository configured the
+  instance goes further and **dehydrates**: the engine takes over the
+  subscription — keyed to the instance's conversation — and the instance holds
+  no goroutines at all until a message wakes it
+  ([Persistence & recovery](../operating/persistence.md)).
 - **Buffered delivery.** The in-memory broker buffers a published message, so a
   throw that fires *before* the matching catch subscribes still delivers — the
   single-track ordering (throw then catch) relies on this.

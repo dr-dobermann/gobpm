@@ -42,7 +42,9 @@ minimal implementation.
 | `WithTracer(t observability.Tracer)` | the tracer | no-op |
 | `WithMetricsRecorder(m observability.MetricsRecorder)` | the metrics recorder | in-memory registry |
 | `WithClock(ck clock.Clock)` | the clock (all engine time reads through it) | system wall clock |
-| `WithRepository(r repository.Repository)` | the process/instance repository | in-memory, non-durable |
+| `WithRepository(r repository.Repository)` | the instance-checkpoint port — configuring one arms checkpointing, restart recovery **and dehydration** | in-memory, non-durable |
+| `WithLeaseTTL(d time.Duration)` | the per-instance ownership-lease window (how long a crashed engine's instances stay unclaimable) | 30s |
+| `WithWakeRetryBackoff(d time.Duration)` | pause before re-attempting a wake that failed, so a dehydrated instance self-heals once the cause clears | half the lease window |
 | `WithMessageBroker(b messaging.MessageBroker)` | the message broker | in-memory inbox |
 | `WithRuleEngine(e rules.Engine)` | the Business Rule Task's decision engine | in-core `gorules` registry |
 | `WithAuthorizationProvider(a auth.AuthorizationProvider)` | the authorization provider | allow-all |
