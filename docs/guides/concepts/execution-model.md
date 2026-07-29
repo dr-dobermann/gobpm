@@ -93,7 +93,7 @@ Inside the instance the four terms come to life:
 > This is why an idle instance holds no busy goroutines — and, with a
 > repository configured, an instance whose every track is parked on a held,
 > dehydratable wait releases **all** of them and leaves entirely, its checkpoint
-> the wake source. See [How events are processed](events-and-hub.md) and
+> the wake source. See [How events are processed](event-processing.md) and
 > [Dehydration](../operating/persistence.md).
 
 ## Run it
@@ -195,7 +195,7 @@ track's `MergedInto` to the survivor.
 ## See also
 
 - Full example: [`examples/parallel-gateway/`](../../../examples/parallel-gateway/)
-- Related: [How events are processed](events-and-hub.md) · [Scope & the data plane](scope-and-data.md) · [The engine (Thresher)](engine.md) · [Parallel (AND) gateway](../gateways/parallel.md)
+- Related: [How events are processed](event-processing.md) · [Scope & the data plane](scope-and-data.md) · [The engine (Thresher)](engine.md) · [Parallel (AND) gateway](../gateways/parallel.md)
 - In practice: [Registering & versioning](../operating/registering-and-versioning.md)
 - Design: [ADR-001 — execution model](../../design/ADR-001-execution-model.md)
 - Full API: `go doc github.com/dr-dobermann/gobpm/pkg/thresher`

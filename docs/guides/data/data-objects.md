@@ -190,6 +190,6 @@ a Data Store — only the residency differs.
 ## See also
 
 - Full example: [`examples/process-data/`](../../../examples/process-data/)
-- Related guides: [Working with data — overview](overview.md) · [Item definitions](item-definitions.md) · [Data Store](data-store.md) · [Reading & writing by path](structural.md)
+- Related guides: [Working with data — overview](index.md) · [Item definitions](item-definitions.md) · [Data Store](data-store.md) · [Reading & writing by path](structural.md)
 - Design: [ADR-030 — Data Objects & Data Store](../../design/ADR-030-data-objects-and-store.md)
 - Full API: `go doc github.com/dr-dobermann/gobpm/pkg/model/data_objects`

@@ -28,7 +28,7 @@ the three and is a path leaf; a structural value implements **at most one**.
 
 Package: `github.com/dr-dobermann/gobpm/pkg/model/data` (interfaces + path
 functions) and `github.com/dr-dobermann/gobpm/pkg/model/data/values` (the
-dynamic implementations). See [The value model](overview.md) for the tiers.
+dynamic implementations). See [The value model](value-model.md) for the tiers.
 
 ```mermaid
 flowchart LR
@@ -253,6 +253,6 @@ subtree to one `Change` at its root.
 ## See also
 
 - Examples: `examples/structural-data/` (read) · `examples/structural-output-mapping/` (assemble) · `examples/maps/` (the map kind)
-- Related guides: [Working with data — overview](overview.md) · [Native Go structs](native-structs.md) · [Data Objects](data-objects.md)
+- Related guides: [Working with data — overview](index.md) · [Native Go structs](native-structs.md) · [Data Objects](data-objects.md)
 - Design: [ADR-011 — process data flow](../../design/ADR-011-process-data-flow.md)
 - Full API: `go doc github.com/dr-dobermann/gobpm/pkg/model/data` · `go doc github.com/dr-dobermann/gobpm/pkg/model/data/values`

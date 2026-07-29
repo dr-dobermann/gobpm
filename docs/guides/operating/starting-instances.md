@@ -19,7 +19,7 @@ and what the handle gives you back.
 ## The three ways to start
 
 You always start a *registered* process (see [Definition
-versioning](versioning.md)). What differs is how you name the version to launch:
+versioning](registering-and-versioning.md)). What differs is how you name the version to launch:
 
 | Method | Names the version by | Reach for it when |
 |---|---|---|
@@ -65,7 +65,7 @@ engine-internal snapshot), and it is what `StartProcess` addresses:
 > message start event spawns instances) and for explicit `StartProcess`.
 > `RegisterProcess(p, thresher.WithManualStart())` opts out of
 > auto-instantiation — the process then starts **only** via the start methods
-> above. See [Definition versioning](versioning.md).
+> above. See [Definition versioning](registering-and-versioning.md).
 
 ## Start it
 
@@ -150,6 +150,6 @@ grows additively as new subsystems land:
 ## See also
 
 - Examples: `examples/basic-process/`
-- Related guides: [Registering & versioning](versioning.md) · [Instance lifecycle](instance-lifecycle.md) · [The engine (Thresher)](../concepts/engine.md)
+- Related guides: [Registering & versioning](registering-and-versioning.md) · [Instance lifecycle](instance-lifecycle.md) · [The engine (Thresher)](../concepts/engine.md)
 - Design: [ADR-013 — instance observability](../../design/ADR-013-instance-observability.md) · [ADR-019 — definition versioning](../../design/ADR-019-definition-versioning.md)
 - Full API: `go doc github.com/dr-dobermann/gobpm/pkg/thresher`

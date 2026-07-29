@@ -12,5 +12,5 @@ tracks and tokens, where data lives, and how events are routed.
 - [The engine (Thresher)](engine.md) — register, run, start, wait.
 - [Process, instance, track, token](execution-model.md) — how a definition becomes running work.
 - [Scope & the data plane](scope-and-data.md) — where data lives and how it's resolved by name.
-- [Events & the hub](events-and-hub.md) — how the engine routes signals, messages, timers.
+- [Events & the hub](event-processing.md) — how the engine routes signals, messages, timers.
 - [Observability](observability.md) — facts, reporters, observers, the operator log.

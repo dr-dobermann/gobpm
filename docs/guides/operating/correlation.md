@@ -224,6 +224,6 @@ OK: each payment routed to its originating handler conversation
 ## See also
 
 - Examples: [`examples/inter-instance-correlation/`](../../../examples/inter-instance-correlation/) · [`examples/conversation-routing/`](../../../examples/conversation-routing/)
-- Related guides: [Message](../events/message.md) · [Send / Receive Task](../tasks/send-receive-task.md) · [How events are processed](../concepts/event-processing.md) · [Definition versioning](versioning.md)
+- Related guides: [Message](../events/message.md) · [Send / Receive Task](../tasks/send-receive-task.md) · [How events are processed](../concepts/event-processing.md) · [Definition versioning](registering-and-versioning.md)
 - Design: [ADR-016 — Message correlation](../../design/ADR-016-message-correlation.md) · [ADR-015 — Event-triggered instantiation](../../design/ADR-015-event-triggered-instantiation.md)
 - Full API: `go doc github.com/dr-dobermann/gobpm/pkg/model/bpmncommon`
