@@ -96,9 +96,12 @@ func TestTimerServiceReleaseAndIdle(t *testing.T) {
 
 	var woke []string
 
-	ts := newTimerService(clk, func(id string, _ *instance.PendingTrigger) {
-		woke = append(woke, id)
-	})
+	ts := newTimerService(clk, DefaultWakeRetryBackoff,
+		func(id string, _ *instance.PendingTrigger) bool {
+			woke = append(woke, id)
+
+			return true
+		})
 
 	_, ok := ts.nearest()
 	require.False(t, ok, "an idle service holds nothing")
@@ -140,7 +143,8 @@ func TestTimerServiceReleaseAndIdle(t *testing.T) {
 // canceled context stops fireDue mid-batch.
 func TestTimerServiceRunStops(t *testing.T) {
 	clk := clocktest.New(wakeEpoch)
-	ts := newTimerService(clk, func(string, *instance.PendingTrigger) {})
+	ts := newTimerService(clk, DefaultWakeRetryBackoff,
+		func(string, *instance.PendingTrigger) bool { return true })
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -167,9 +171,12 @@ func TestTimerServiceRunStops(t *testing.T) {
 	// a canceled context aborts the fire batch without waking.
 	var woke int
 
-	ts2 := newTimerService(clk, func(string, *instance.PendingTrigger) {
-		woke++
-	})
+	ts2 := newTimerService(clk, DefaultWakeRetryBackoff,
+		func(string, *instance.PendingTrigger) bool {
+			woke++
+
+			return true
+		})
 	ts2.hold(timerHold{
 		instanceID: "i-9", trackID: "t-9", deadline: wakeEpoch,
 	})

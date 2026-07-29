@@ -45,13 +45,20 @@ func (t *Thresher) HoldTimer(
 
 // hydrateFromTimer is the timer service's wake callback (SRD-071 FR-4): a held
 // deadline fired, so continue the instance with the timer as its pending
-// trigger. A failure is per-instance and loud — it never crashes the service.
+// trigger. A failure is per-instance and loud — it never crashes the service —
+// and is REPORTED BACK, so the service keeps the deadline and retries it rather
+// than discarding the instance's only way back (FIX-027 §3.2.1).
 func (t *Thresher) hydrateFromTimer(
 	instanceID string, pending *instance.PendingTrigger,
-) {
-	if err := t.wakeInstance(instanceID, pending); err != nil {
+) bool {
+	err := t.wakeInstance(instanceID, pending)
+	if err != nil {
 		t.reportWakeFailure(instanceID, err)
+
+		return false
 	}
+
+	return true
 }
 
 // wakeInstance forks on residency (ADR-007 v.2 §2.4): a RESIDENT instance still
@@ -119,20 +126,6 @@ func (t *Thresher) rebuildAndContinue(
 			"(process "+doc.ProcessID+" v"+strconv.Itoa(doc.Version)+")", nil)
 	}
 
-	// A TRIGGERED wake ends the woken wait, so every hold the DEHYDRATED track
-	// owned goes — keyed to its RECORDED id, because the continuation fork
-	// about to replace it is a fresh track (SRD-071 FR-3a). For an Event-Based
-	// Gateway this is the withdraw-the-losing-siblings step: the winning arm
-	// fires and its racing arms release their deadlines and subscriptions. For
-	// a single-arm wait it stops the holder outliving the wait it stood for.
-	//
-	// A trigger-ABSENT hydration (a human task action, FR-8) is NOT the end of
-	// the wait — the track re-enters its node and re-parks, re-taking its holds
-	// — so nothing is withdrawn here.
-	if pending != nil {
-		t.ReleaseWaits(instanceID, pending.TrackID)
-	}
-
 	opts := append([]instance.Option{
 		instance.WithSettledSignal(t.settledFor(instanceID)),
 		instance.WithInvoker(t),
@@ -152,6 +145,23 @@ func (t *Thresher) rebuildAndContinue(
 		cancel()
 
 		return wakeErr("the rebuilt instance doesn't run", err)
+	}
+
+	// ONLY now — the wake has committed. A TRIGGERED wake ends the woken wait,
+	// so every hold the DEHYDRATED track owned goes, keyed to its RECORDED id
+	// (the continuation fork replacing it is a fresh track, SRD-071 FR-3a). For
+	// an Event-Based Gateway this is the withdraw-the-losing-siblings step.
+	//
+	// It sits BELOW the fallible part deliberately (FIX-027 §2.2): withdrawing
+	// first meant a Restore/Run failure took the instance's only way back with
+	// it, stranding it in the store as in-flight with nothing left to wake it.
+	// Canary: TestFailedRebuildKeepsTheSubscriptionSet.
+	//
+	// A trigger-ABSENT hydration (a human task action, FR-8) is NOT the end of
+	// the wait — the track re-enters its node and re-parks, re-taking its holds
+	// — so nothing is withdrawn for it.
+	if pending != nil {
+		t.ReleaseWaits(instanceID, pending.TrackID)
 	}
 
 	t.trackInstanceLocked(inst, cancel, t.settledFor(instanceID))

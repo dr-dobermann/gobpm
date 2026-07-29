@@ -566,7 +566,8 @@ func (t *Thresher) Run(ctx context.Context) error {
 	// through this seam. Only with a Repository: without one there is no
 	// checkpoint to wake from, so nothing dehydrates and nothing needs holding.
 	if t.cfg.repoSet {
-		t.timerSvc = newTimerService(t.cfg.Clock(), t.hydrateFromTimer)
+		t.timerSvc = newTimerService(
+			t.cfg.Clock(), t.cfg.wakeBackoff, t.hydrateFromTimer)
 		go t.timerSvc.run(runCtx)
 	}
 
