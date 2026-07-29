@@ -338,9 +338,7 @@ func (ls *loopState) stopAll() {
 		// withdraw any engine-level holds this wait registered (SRD-071 FR-3):
 		// the instance is finishing, so neither its deadlines nor its
 		// subscriptions may outlive it.
-		if t.held.Swap(false) && ls.inst.waitHolders != nil {
-			ls.inst.waitHolders.ReleaseWaits(ls.inst.ID(), t.ID())
-		}
+		t.releaseHolds()
 
 		t.stop()
 		// Cancel the track context so a running ctx-honoring activity (a ServiceTask
@@ -419,6 +417,13 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		ls.decScope(ctx, ev.track)
 		ls.flipNotParked(ev.track)
 		ls.clearPosition(ev.track)
+		// a track that ended WITHOUT its wait firing — canceled by an
+		// interrupting boundary, most often — still owns whatever that wait
+		// held, and a deadline or subscription outliving the wait it belongs to
+		// would wake a later cycle for a track that no longer exists (SRD-071
+		// FR-3b). A normal completion already released on delivery, and
+		// releaseHolds is idempotent, so this is a no-op there.
+		ev.track.releaseHolds()
 		// a track that ended while owning a parked UserTask (canceled by an
 		// interrupting boundary or instance terminate) has its task withdrawn and
 		// dropped (SRD-034). A normal completion already removed it.
@@ -783,6 +788,9 @@ func (ls *loopState) applyFailed(ctx context.Context, ev trackEvent) {
 	ls.decScope(ctx, ev.track)
 	ls.flipNotParked(ev.track)
 	ls.clearPosition(ev.track)
+	// the same withdrawal evEnded performs, for the track that failed rather
+	// than ended: its wait is over either way (SRD-071 FR-3b).
+	ev.track.releaseHolds()
 	ls.disarmBoundaries(ev.track.ID())
 }
 
@@ -1055,6 +1063,20 @@ func (ls *loopState) dehydratableParked(ctx context.Context) []*track {
 			// leave the track selecting between a closed dehydrateCh and a full
 			// evtCh — and a lost trigger every time the former won.
 			if _, stillParked := ls.waiting[t.ID()]; !stillParked {
+				return nil
+			}
+
+			// An ARMED BOUNDARY keeps the instance resident (SRD-071 FR-9a,
+			// the eligibility half). A boundary watch is not a track, so it
+			// never reaches waitReleasable — and nothing holds it: its waiter
+			// dies with the released instance, so "approve within 24h or
+			// escalate" would simply never escalate. Everything in ls.watchers
+			// needs the loop alive: a hub-armed boundary has no holder yet
+			// (M10 gives it one), and a loop-owned Conditional watch is
+			// evaluated by the loop itself. The kinds that resolve directly —
+			// Error, Escalation, Compensation, Cancel — never enter this map
+			// at all (boundary_watch.go:105-110), so they cost no residency.
+			if len(ls.watchers[t.ID()]) > 0 {
 				return nil
 			}
 

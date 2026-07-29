@@ -115,30 +115,29 @@ func (t *Thresher) Complete(
 	})
 }
 
-// HoldTask implements exec.WaitHolders (SRD-071 FR-8): record which TRACK a
-// parked human task belongs to, so an action on that task can wake a released
-// instance. Nothing is subscribed — the task itself already lives in the
-// distributor's inbox, independent of residency (ADR-020) — so the hold is pure
-// bookkeeping alongside the taskID → instanceID routing entry the distributor
-// records. Declined on a volatile engine: with no checkpoint to wake from, the
-// wait must stay resident.
-func (t *Thresher) HoldTask(instanceID, trackID, taskID string) error {
+// HoldTask implements exec.WaitHolders (SRD-071 FR-8): accept a parked human
+// task as held, so the idle detector may release its instance.
+//
+// Uniquely among the holders, this one registers NOTHING. A task already lives
+// in the distributor's inbox independent of residency (ADR-020), and an action
+// on it routes by task id through the distributor's own taskID → instanceID
+// entry — which is what hydrates the instance. So there is nothing for a hold
+// to own: the answer to "can this wait wake a released instance" is simply yes,
+// and the hold is that answer.
+//
+// It kept a taskID → track registry until SRD-071 M8. No path ever read it and
+// nothing deleted it, so it grew by one entry per human task the engine ever
+// parked; a registry nothing reads is not bookkeeping, it is a leak with a
+// comment (FR-3b).
+//
+// Declined on a volatile engine: with no checkpoint to wake from, the wait must
+// stay resident.
+func (t *Thresher) HoldTask(_, _, _ string) error {
 	if !t.cfg.repoSet {
 		return errNoHold("HoldTask: the engine holds no checkpoints")
 	}
 
-	t.m.Lock()
-	defer t.m.Unlock()
-
-	t.taskTracks[taskID] = taskHold{instanceID: instanceID, trackID: trackID}
-
 	return nil
-}
-
-// taskHold locates the parked track a held human task belongs to.
-type taskHold struct {
-	instanceID string
-	trackID    string
 }
 
 // taskActionAttempts bounds the hydrate-and-replay retry below: one extra round

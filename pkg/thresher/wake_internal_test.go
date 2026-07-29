@@ -684,19 +684,14 @@ func TestHoldTaskGuards(t *testing.T) {
 		require.Contains(t, err.Error(), "no checkpoints")
 	})
 
-	t.Run("an armed engine records the track", func(t *testing.T) {
+	// An armed engine ACCEPTS the hold and registers nothing for it: a task
+	// wakes its instance through the distributor's own routing, so the hold is
+	// the answer "yes, this wait is wakeable", not a record (SRD-071 FR-3b).
+	t.Run("an armed engine accepts the hold", func(t *testing.T) {
 		th, cancel := armedWakeEngine(t, "engine-task")
 		defer cancel()
 
 		require.NoError(t, th.HoldTask("i-1", "t-1", "task-1"))
-
-		th.m.Lock()
-		hold, ok := th.taskTracks["task-1"]
-		th.m.Unlock()
-
-		require.True(t, ok)
-		require.Equal(t, "i-1", hold.instanceID)
-		require.Equal(t, "t-1", hold.trackID)
 	})
 }
 

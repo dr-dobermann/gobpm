@@ -183,10 +183,6 @@ type Thresher struct {
 	// own several (the Event-Based Gateway set). Guarded by subMu, distinct
 	// from m: the hub is touched on release, never under an engine lock.
 	subs map[subKey]*subHolder
-	// taskTracks maps a HELD human task → the track it parks (SRD-071 FR-8), so
-	// an action on the task can wake its released instance. Guarded by m,
-	// alongside the taskID → instanceID routing map.
-	taskTracks map[string]taskHold
 	// settled holds the per-instance-ID TERMINAL signal (SRD-071): closed only
 	// when the instance genuinely finishes, and shared with every rebuild, so a
 	// WaitCompletion survives dehydration cycles. Guarded by m.
@@ -262,7 +258,6 @@ func New(id string, opts ...Option) (*Thresher, error) {
 		keyLocks:      newKeyLockManager(),
 		waking:        map[string]bool{},
 		subs:          map[subKey]*subHolder{},
-		taskTracks:    map[string]taskHold{},
 		settled:       map[string]chan struct{}{},
 	}
 	t.state.Store(uint32(NotStarted))

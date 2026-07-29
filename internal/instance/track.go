@@ -622,6 +622,25 @@ func (t *track) holdTask(flow.Node) bool {
 	return inst.waitHolders.HoldTask(inst.ID(), t.ID(), t.taskID) == nil
 }
 
+// releaseHolds withdraws every engine-level hold this track's wait registered —
+// its timer deadline, its subscriptions, the whole set an Event-Based Gateway
+// armed (SRD-071 FR-3b). It is the ONE place that withdrawal happens, and every
+// path a wait can exit by calls it: the wait fired (applyWaitPlane), the track
+// ended or failed without delivery (the loop's evEnded/evFailed — an
+// interrupting boundary canceling its host lands here), or the instance tore
+// down (stopAll). The one path that deliberately does NOT call it is
+// dehydration: there the hold is the wake source and must outlive the
+// goroutine.
+//
+// Idempotent — the flag is swapped, so a teardown following a delivery is a
+// no-op. A hold that outlives its wait is never benign: a stale deadline or
+// subscription wakes a later cycle for a wait that no longer exists.
+func (t *track) releaseHolds() {
+	if t.held.Swap(false) && t.instance.waitHolders != nil {
+		t.instance.waitHolders.ReleaseWaits(t.instance.ID(), t.ID())
+	}
+}
+
 // holdableSubscriptions are the triggers whose hub subscription the engine can
 // hold on a released instance's behalf (SRD-071 FR-7). A Conditional is absent
 // by construction — it never reaches here (its subscription is loop-owned).
@@ -1616,9 +1635,7 @@ func (t *track) deliver(
 	// nor its subscriptions may outlive it — a stale hold would wake a later
 	// dehydration cycle spuriously. For an Event-Based Gateway this is also the
 	// withdraw-the-losing-siblings step: the whole set goes at once.
-	if t.held.Swap(false) && t.instance.waitHolders != nil {
-		t.instance.waitHolders.ReleaseWaits(t.instance.ID(), t.ID())
-	}
+	t.releaseHolds()
 
 	// A UserTask (human task) parked without a hub waiter (parkHumanTask) — there
 	// is nothing to unregister. Only an event catch (flow.EventNode) is torn down

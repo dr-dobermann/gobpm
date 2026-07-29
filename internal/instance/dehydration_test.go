@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -251,6 +252,19 @@ func TestMaybeDehydrateStaysResident(t *testing.T) {
 		assertResident(t, tr, ls)
 	})
 
+	// SRD-071 FR-9a (the eligibility half): a wait guarded by an ARMED BOUNDARY
+	// keeps its instance resident. The boundary is not a track, so nothing else
+	// in this decision sees it, and nothing holds it — releasing would leave
+	// "approve within 24h or escalate" with no escalation, silently.
+	t.Run("an armed boundary guards the wait", func(t *testing.T) {
+		inst, tr, ls := userTaskArmed(t)
+		inst.waitHeld = held
+
+		ls.watchers[tr.ID()] = []*boundaryWatch{{host: tr}}
+
+		assertResident(t, tr, ls)
+	})
+
 	t.Run("a live track is still executing", func(t *testing.T) {
 		inst, parked, ls := userTaskArmed(t)
 		inst.waitHeld = held
@@ -406,12 +420,25 @@ func TestRestoreWithPendingTriggerGuards(t *testing.T) {
 }
 
 // fakeHolders records HoldTimer/ReleaseTimer calls and can decline a hold.
+//
+// The maps are written on the TRACK goroutine (a wait arms) and on the LOOP
+// goroutine (a wait is released), so a test that polls them while the instance
+// still runs must go through the accessors below rather than reading directly.
 type fakeHolders struct {
+	mu       sync.Mutex
 	held     map[string]time.Time
 	subs     map[string]bool
 	tasks    map[string]string
 	released map[string]int
 	decline  bool
+}
+
+// subCount reports how many subscriptions are currently held.
+func (f *fakeHolders) subCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return len(f.subs)
 }
 
 func newFakeHolders() *fakeHolders {
@@ -433,6 +460,9 @@ func (f *fakeHolders) HoldTimer(
 		return errors.New("declined")
 	}
 
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	f.held[instanceID+"|"+trackID] = deadline
 
 	return nil
@@ -447,6 +477,9 @@ func (f *fakeHolders) HoldSubscription(
 		return errors.New("declined")
 	}
 
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	f.subs[instanceID+"|"+trackID+"|"+eDef.ID()] = true
 
 	return nil
@@ -457,12 +490,18 @@ func (f *fakeHolders) HoldTask(instanceID, trackID, taskID string) error {
 		return errors.New("declined")
 	}
 
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	f.tasks[instanceID+"|"+trackID] = taskID
 
 	return nil
 }
 
 func (f *fakeHolders) ReleaseWaits(instanceID, trackID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	f.released[instanceID+"|"+trackID]++
 
 	for k := range f.subs {

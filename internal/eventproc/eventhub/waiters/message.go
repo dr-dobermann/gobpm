@@ -330,7 +330,22 @@ func (mw *messageWaiter) processMessageEvent(
 	// from the registry it registered into — i.e. hub-state divergence;
 	// propagate it (fail-fast, ADR-022 v.1 §2.3) so runMessageService stops the
 	// now-orphaned waiter. The normal nil lets the serve-loop continue.
-	return mw.hub.WaiterFired(mw.eDef.ID())
+	err = mw.hub.WaiterFired(mw.eDef.ID())
+
+	// …unless the DELIVERY ITSELF stopped this waiter, in which case being
+	// absent is orderly, not divergent. A SRD-071 wait-holder wakes its
+	// instance synchronously inside ProcessEvent, and the wake releases the
+	// holder's registrations — which unregisters and Stops this very waiter
+	// while it is still inside the call it is about to report. The wait it
+	// served is over and its goroutine should exit; it just must not exit
+	// claiming a failure. Reporting nil returns to the serve loop, whose
+	// closed stopCh ends it on the ordinary stopping path — the same exit it
+	// would have taken had that branch won the select.
+	if err != nil && mw.State() == eventproc.WSStopped {
+		return nil
+	}
+
+	return err
 }
 
 // deliver forwards eDef to every registered processor, returning the first
