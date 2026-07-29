@@ -593,3 +593,12 @@ var (
 	_ eventproc.EventProcessor = (*EventBasedGateway)(nil)
 	_ flow.EventNode           = (*EventBasedGateway)(nil)
 )
+
+// Dehydratable reports that an Event-Based Gateway releases the instance's
+// goroutines UNCONDITIONALLY (ADR-007 v.2 §2.4): the EBG is the wait node — a
+// pure wait race over its arm events — so it always releases and ignores its
+// arm events' own policies. On the winning arm's trigger the wake fires that
+// arm and withdraws the sibling arm-holders.
+func (g *EventBasedGateway) Dehydratable(context.Context, renv.RuntimeEnvironment) bool {
+	return true
+}

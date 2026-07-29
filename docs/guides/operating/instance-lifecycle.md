@@ -27,9 +27,14 @@ additively as deferred subsystems land):
 | `StateCompleted` | every branch reached a normal end — a terminal state. |
 | `StateTerminating` | termination requested (e.g. a Terminate End Event, or `Cancel`); the ctx-cancel cascade is unwinding in-flight work. |
 | `StateTerminated` | the instance stopped abnormally — a terminal state. |
+| `StateDehydrated` | the instance is waiting with **no goroutines** — it released them while every track was parked on a held, dehydratable wait, and its checkpoint is the wake source. **Not terminal**: a trigger rebuilds it and it returns to `StateActive`. |
 
 The two **terminal** states are `StateCompleted` and `StateTerminated`; both
 `WaitCompletion` and `Cancel` block until the instance settles into one of them.
+`StateDehydrated` is **not** one of them: an instance that released its
+goroutines has not finished anything, so `WaitCompletion` keeps blocking across
+as many dehydration/hydration cycles as the instance goes through. A handle
+taken before a release keeps speaking for the instance after it is rebuilt.
 State is read lock-free.
 
 > The vocabulary is intentionally open: `Failing` / `Paused` / `Compensating`

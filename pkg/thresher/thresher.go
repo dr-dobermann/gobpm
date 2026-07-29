@@ -169,9 +169,29 @@ type Thresher struct {
 	// engine-scope Observe registry.
 	producer *producer
 	id       string
-	cfg      thresherConfig
-	m        sync.Mutex
-	state    atomic.Uint32 // a State; lock-free, NEVER accessed under m
+	// timerSvc is the engine-level durable timer holder (SRD-071 FR-6): a
+	// dehydratable timer registers its deadline here at arm and the service
+	// wakes the released instance on fire. nil until Run when a Repository is
+	// configured (a volatile engine holds nothing). Implements exec.WaitHolders.
+	timerSvc *timerService
+	// waking latches per-instance wakes so concurrent triggers hydrate an
+	// instance exactly once (single-flight, SRD-071 §4.6). Guarded by wakeMu,
+	// distinct from m.
+	waking map[string]bool
+	// subs are the hub subscriptions the engine holds on released instances'
+	// behalf (SRD-071 FR-7) — one per armed message/signal wait, so a track may
+	// own several (the Event-Based Gateway set). Guarded by subMu, distinct
+	// from m: the hub is touched on release, never under an engine lock.
+	subs map[subKey]*subHolder
+	// settled holds the per-instance-ID TERMINAL signal (SRD-071): closed only
+	// when the instance genuinely finishes, and shared with every rebuild, so a
+	// WaitCompletion survives dehydration cycles. Guarded by m.
+	settled map[string]chan struct{}
+	cfg     thresherConfig
+	m       sync.Mutex
+	wakeMu  sync.Mutex
+	subMu   sync.Mutex
+	state   atomic.Uint32 // a State; lock-free, NEVER accessed under m
 }
 
 // New creates a new empty Thresher in NotStarted state. Engine-level extensions
@@ -236,6 +256,9 @@ func New(id string, opts ...Option) (*Thresher, error) {
 		seenKeys:      map[string]struct{}{},
 		tasks:         map[string]string{},
 		keyLocks:      newKeyLockManager(),
+		waking:        map[string]bool{},
+		subs:          map[subKey]*subHolder{},
+		settled:       map[string]chan struct{}{},
 	}
 	t.state.Store(uint32(NotStarted))
 
@@ -530,6 +553,17 @@ func (t *Thresher) Run(ctx context.Context) error {
 			errs.M("couldn't register instance-starters at startup"),
 			errs.C(errorClass, errs.OperationFailed),
 			errs.E(err))
+	}
+
+	// The engine timer service (SRD-071 FR-6, closes #84): the durable holder
+	// a dehydratable timer hands its deadline to, so a released instance still
+	// fires. Started BEFORE recovery — a recovered instance re-arms its timers
+	// through this seam. Only with a Repository: without one there is no
+	// checkpoint to wake from, so nothing dehydrates and nothing needs holding.
+	if t.cfg.repoSet {
+		t.timerSvc = newTimerService(
+			t.cfg.Clock(), t.cfg.wakeBackoff, t.hydrateFromTimer)
+		go t.timerSvc.run(runCtx)
 	}
 
 	// Restart recovery (SRD-070 FR-7): with an explicitly configured
@@ -1046,9 +1080,11 @@ func (t *Thresher) launchInstanceFromEvent(
 	// The conversation key (keyName/keyVal) is seeded inside NewFromEvent BEFORE
 	// createTracks parks any receiver, so an in-instance receiver reached
 	// directly off the born start subscribes keyed to it (SRD-017 §4.5).
+	settled := make(chan struct{})
+
 	inst, err := instance.NewFromEvent(
 		s, scope.EmptyDataPath, &t.cfg, t, t.taskDist, startNode.ID(), eDef,
-		keyName, keyVal, instance.WithInvoker(t))
+		keyName, keyVal, t.instanceOptions(settled)...)
 	if err != nil {
 		return errs.New(
 			errs.M("couldn't create an event-born Instance for process %q",
@@ -1075,7 +1111,7 @@ func (t *Thresher) launchInstanceFromEvent(
 	// An event-born instance is tracked with its read-only handle just like a
 	// StartProcess one, so the SRD-019 discovery API (Instances -> Instance(id))
 	// returns a usable handle for it instead of a nil that panics on observation.
-	t.trackInstanceLocked(inst, cancel)
+	t.trackInstanceLocked(inst, cancel, settled)
 
 	return nil
 }
@@ -1191,20 +1227,39 @@ func (t *Thresher) Instance(instanceID string) (*InstanceHandle, bool) {
 	return reg.handle, true
 }
 
+// instanceOptions are the engine-supplied options EVERY instance this engine
+// launches receives — however it was born (a plain start, an event-triggered
+// start, a Call Activity child). Keeping them in one place is what stops a
+// launch path from silently missing durability: an event-born instance once
+// went un-checkpointed because its call site listed the options separately.
+//
+// An explicitly configured Repository is the state of record: the instance
+// checkpoints into it under this engine's lease (SRD-070 FR-4/FR-7) and its
+// dehydratable waits register with the engine's durable holders (SRD-071 FR-3),
+// so it can release its goroutines and be woken. The zero-config default stays
+// volatile and always-resident.
+func (t *Thresher) instanceOptions(settled chan struct{}) []instance.Option {
+	opts := []instance.Option{
+		instance.WithInvoker(t),
+		instance.WithSettledSignal(settled),
+	}
+
+	if t.cfg.repoSet {
+		opts = append(opts,
+			instance.WithCheckpointing(t.id, t.cfg.leaseTTL),
+			instance.WithWaitHolders(t))
+	}
+
+	return opts
+}
+
 // launchInstance creates a new Instance from the Snapshot s, runs it, appends it
 // to the running instances of the Thresher, and returns its read-only handle.
 func (t *Thresher) launchInstance(s *snapshot.Snapshot) (*InstanceHandle, error) {
-	opts := []instance.Option{instance.WithInvoker(t)}
-	// An explicitly configured Repository is the state of record: every
-	// instance checkpoints into it under this engine's lease (SRD-070
-	// FR-4/FR-7). The zero-config default stays volatile.
-	if t.cfg.repoSet {
-		opts = append(opts,
-			instance.WithCheckpointing(t.id, t.cfg.leaseTTL))
-	}
+	settled := make(chan struct{})
 
 	inst, err := instance.New(s, scope.EmptyDataPath, &t.cfg, t, t.taskDist,
-		opts...)
+		t.instanceOptions(settled)...)
 	if err != nil {
 		return nil, errs.New(
 			errs.M("couldn't create an Instance for process %q",
@@ -1228,7 +1283,7 @@ func (t *Thresher) launchInstance(s *snapshot.Snapshot) (*InstanceHandle, error)
 			errs.E(err))
 	}
 
-	return t.trackInstanceLocked(inst, cancel), nil
+	return t.trackInstanceLocked(inst, cancel, settled), nil
 }
 
 // =============================================================================

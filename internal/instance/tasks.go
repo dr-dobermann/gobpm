@@ -109,6 +109,13 @@ func checkTaskArgs(taskID string, actor hi.Actor) error {
 	return nil
 }
 
+// TaskRetryClass marks a task action refused because the instance is RELEASING
+// (or has released) its goroutines rather than because the action was invalid
+// (SRD-071 FR-8). It is the engine's signal to hydrate the instance and replay
+// the action — never surfaced to the actor, whose Take/Complete simply succeeds
+// against the rebuilt instance.
+const TaskRetryClass = "TASK_RETRY_AFTER_HYDRATION"
+
 // taskRoundtrip hands req to the loop and blocks for the reply, honoring ctx and
 // instance shutdown.
 func (inst *Instance) taskRoundtrip(
@@ -122,7 +129,7 @@ func (inst *Instance) taskRoundtrip(
 	case <-inst.loopDone:
 		return interactor.TaskView{}, errs.New(
 			errs.M("instance %q is not running", inst.ID()),
-			errs.C(errorClass, errs.InvalidState))
+			errs.C(errorClass, errs.InvalidState, TaskRetryClass))
 	case <-ctx.Done():
 		return interactor.TaskView{}, ctx.Err()
 	}
@@ -133,7 +140,7 @@ func (inst *Instance) taskRoundtrip(
 	case <-inst.loopDone:
 		return interactor.TaskView{}, errs.New(
 			errs.M("instance %q stopped before task reply", inst.ID()),
-			errs.C(errorClass, errs.InvalidState))
+			errs.C(errorClass, errs.InvalidState, TaskRetryClass))
 	case <-ctx.Done():
 		return interactor.TaskView{}, ctx.Err()
 	}
@@ -144,6 +151,19 @@ func (inst *Instance) taskRoundtrip(
 // data source, and — for Complete — validates the outputs and delivers a synthetic
 // completion to the parked track. All scope access stays on this goroutine.
 func (ls *loopState) handleTaskRequest(ctx context.Context, req taskRequest) {
+	// The loop has committed to releasing its goroutines (SRD-071 FR-8): the
+	// parked track is already gone or going, so completing here would post the
+	// outcome into an evtCh nobody reads and lose it. Refuse with the retry
+	// class instead — the engine hydrates the instance and replays the action
+	// against the rebuilt one, where the task is parked again under the same id.
+	if ls.dehydrating {
+		req.reply <- taskReply{err: errs.New(
+			errs.M("instance %q is releasing its goroutines", ls.inst.ID()),
+			errs.C(errorClass, TaskRetryClass))}
+
+		return
+	}
+
 	entry, ok := ls.tasks[req.taskID]
 	if !ok {
 		req.reply <- taskReply{err: errs.New(
@@ -278,6 +298,14 @@ func (ls *loopState) addTask(
 // FR-5, SRD-034). A non-waiting track is a no-op.
 func (ls *loopState) recordBornWaiter(ctx context.Context, t *track) {
 	if !t.inState(TrackWaitForEvent) {
+		return
+	}
+
+	// a continuation-fork wake (SRD-071 FR-4) re-enters the wait node with its
+	// trigger already in evtCh: it fires through, it does not wait — so it is
+	// never registered as a waiter (no hub re-registration, no ls.waiting, no
+	// conditional re-arm). run() reads the preloaded trigger and delivers.
+	if t.woken {
 		return
 	}
 

@@ -57,6 +57,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
+	"github.com/dr-dobermann/gobpm/pkg/set"
 	"github.com/dr-dobermann/gobpm/pkg/tasks"
 )
 
@@ -97,6 +98,14 @@ const (
 	TrackCanceled
 	// TrackFailed represents a track that has failed
 	TrackFailed
+
+	// TrackDehydrated represents a track whose long wait was externalized and
+	// whose goroutine has RETURNED (ADR-007 v.2 §2.1) — terminal for the
+	// goroutine, NOT for the flow: the wait outlives the goroutine as the loop's
+	// bookkeeping and the checkpoint record, and a trigger re-materializes it as
+	// a continuation fork. Retained as a live record (like TrackAwaitingMerge);
+	// its token projects Alive at the wait node.
+	TrackDehydrated
 )
 
 // String returns the human-readable name of the track state.
@@ -113,6 +122,7 @@ func (t trackState) String() string {
 		"TrackEnded",
 		"TrackCanceled",
 		"TrackFailed",
+		"TrackDehydrated",
 	}[t]
 }
 
@@ -160,18 +170,19 @@ type stepInfo struct {
 // track processed single line of the process from start noed or
 // from fork of sequence flow.
 type track struct {
-	lastErr    error
-	ctx        context.Context
-	hist       atomic.Pointer[[]stepUpdate]
-	instance   *Instance
-	cancel     context.CancelFunc
-	miState    *miState
-	mergedInto atomic.Pointer[string]
-	parkCh     chan struct{}
-	evtCh      chan flow.EventDefinition
-	taskID     string
-	scopePath  scope.DataPath
-	scopeSeg   string
+	lastErr     error
+	ctx         context.Context
+	hist        atomic.Pointer[[]stepUpdate]
+	instance    *Instance
+	cancel      context.CancelFunc
+	miState     *miState
+	mergedInto  atomic.Pointer[string]
+	parkCh      chan struct{}
+	dehydrateCh chan struct{} // closed by the loop to release a parked wait's goroutine (SRD-071)
+	evtCh       chan flow.EventDefinition
+	taskID      string
+	scopePath   scope.DataPath
+	scopeSeg    string
 	foundation.BaseElement
 	prev      []string
 	msgDefIDs []string
@@ -203,8 +214,22 @@ type track struct {
 	loopCounter   int
 	m             sync.RWMutex
 	stopIt        atomic.Bool
-	timerHinted   bool
-	state         trackState
+	// held is set at arm time when this track's wait registered an engine-level
+	// holder that can wake a released instance (SRD-071 FR-3): a dehydratable
+	// timer whose deadline the engine timer service accepted. It gates the idle
+	// detector — an unheld wait keeps the instance resident (no wait releases
+	// without something that can wake it). atomic: the loop's detector reads it
+	// across goroutines from the arming track.
+	held        atomic.Bool
+	timerHinted bool
+	// woken marks a continuation-fork track spawned to WAKE a dehydrated wait
+	// (SRD-071 FR-4): it re-enters the wait node with the trigger already
+	// present in evtCh and fires through it, so it must NOT be re-armed as a
+	// waiter — recordBornWaiter skips it. Its persisted prev inherits the
+	// dehydrated track's lineage without appending it (bounded across cycles,
+	// §4.1).
+	woken bool
+	state trackState
 }
 
 // record appends a track-state transition to the history, copy-on-write, and
@@ -357,10 +382,11 @@ func newTrack(
 				state: StepCreated,
 			},
 		},
-		state:    TrackReady,
-		instance: inst,
-		parkCh:   make(chan struct{}, 1),
-		evtCh:    make(chan flow.EventDefinition, eventBufferDepth),
+		state:       TrackReady,
+		instance:    inst,
+		parkCh:      make(chan struct{}, 1),
+		dehydrateCh: make(chan struct{}),
+		evtCh:       make(chan flow.EventDefinition, eventBufferDepth),
 	}
 
 	if prevTrack != nil {
@@ -462,12 +488,34 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 		})
 	}
 
-	// Per-trigger registration is the one place the hybrid boundary is chosen (SRD-027
-	// FR-8 / §3.7): a Message catch registers the Instance (it owns correlation), every
-	// other trigger registers the track. A Conditional catch registers NOTHING — its
-	// trigger source is the instance's own commits, so the subscription is loop-owned,
-	// carried on the evWaiting emit above (SRD-048 FR-7, ADR-006 v.3 §2.7).
+	return t.armWaiters(en, defs)
+}
+
+// armWaiters subscribes the node's definitions. Per-trigger registration is the
+// one place the hybrid boundary is chosen (SRD-027 FR-8 / §3.7): a Message
+// catch registers the Instance (it owns correlation), every other trigger
+// registers the track. A Conditional catch registers NOTHING — its trigger
+// source is the instance's own commits, so the subscription is loop-owned,
+// carried on the evWaiting emit (SRD-048 FR-7, ADR-006 v.3 §2.7). A wait the
+// ENGINE can hold is handed over instead, so it survives dehydration
+// (SRD-071 FR-3).
+func (t *track) armWaiters(en flow.EventNode, defs []flow.EventDefinition) error {
+	// A node may arm SEVERAL waits at once — an Event-Based Gateway races its
+	// arms, so Definitions() is their union (SRD-071 FR-3a). The track counts as
+	// held only if EVERY one of them found a holder: releasing the instance
+	// while a single arm still depends on an in-process waiter would strand that
+	// arm — it could never fire again (ADR-007 v.2 §2.4, the per-arm guard). A
+	// conditional arm is never holdable at all (its trigger is the instance's own
+	// data), so an EBG carrying one always stays resident.
+	allHeld := true
+
 	for _, d := range defs {
+		if t.holdWait(d) {
+			continue
+		}
+
+		allHeld = false
+
 		if d.Type() == flow.TriggerConditional {
 			continue
 		}
@@ -476,7 +524,6 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 		if d.Type() == flow.TriggerMessage {
 			proc = t.instance
 		}
-
 
 		if err := t.instance.RegisterEvent(proc, d); err != nil {
 			return errs.New(
@@ -489,7 +536,140 @@ func (t *track) checkNodeType(node flow.Node, atConstruction bool) error {
 		}
 	}
 
+	t.held.Store(allHeld && len(defs) > 0)
+
 	return nil
+}
+
+// holdWait offers a definition to the engine's durable holders (SRD-071 FR-3),
+// reporting whether one took it — in which case NO in-hub waiter is created for
+// it. A timer hands over its absolute deadline (FR-6), a message/signal its hub
+// subscription (FR-7). Declining (no registry, a sub-threshold or repeating
+// timer, a conditional) falls through to the in-hub waiter — today's behavior,
+// never a lost trigger. Whether the TRACK counts as held is armWaiters' call:
+// every one of its waits must be held, not just this one.
+func (t *track) holdWait(d flow.EventDefinition) bool {
+	switch {
+	case d.Type() == flow.TriggerTimer:
+		return t.holdTimer(d)
+
+	case holdableSubscriptions.Has(d.Type()):
+		return t.holdSubscription(d)
+	}
+
+	return false
+}
+
+// dehydrationTimerThreshold is the minimum remaining time a timer wait must
+// carry to be worth releasing the instance's goroutines for (ADR-007 v.2 §2.4):
+// a short wait is not worth a checkpoint + hydrate round-trip, so it stays
+// resident on an in-hub waiter. A deadline farther out than this dehydrates.
+const dehydrationTimerThreshold = time.Hour
+
+// holdTimer tries to register a dehydratable timer's deadline with the engine
+// timer service (SRD-071 FR-3/FR-6): the durable holder that fires it even
+// after the instance releases its goroutines. It returns true only when the
+// deadline was handed off — no in-hub waiter is then created for it, and the
+// track is marked held so the idle detector may release the instance. It
+// returns false (keep the in-hub waiter) when there is no holder, the deadline
+// was not stashed, it is within the threshold (too short to be worth it), or
+// the holder declined — never losing the timer.
+func (t *track) holdTimer(d flow.EventDefinition) bool {
+	inst := t.instance
+	if inst.waitHolders == nil {
+		return false
+	}
+
+	t.m.RLock()
+	deadline, cycles := t.timerDeadline, t.timerCycles
+	t.m.RUnlock()
+
+	// M3 releases only one-shot timers (cyclesLeft == 0 — a bare Time/Duration
+	// timer). A repeating timer (cyclesLeft > 0) would lose its later cycles to
+	// the fire-once wake, so it stays resident on its in-hub waiter until a
+	// cyclic-aware holder lands.
+	if cycles > 0 {
+		return false
+	}
+
+	if deadline.IsZero() ||
+		deadline.Before(inst.now().Add(dehydrationTimerThreshold)) {
+		return false
+	}
+
+	if err := inst.waitHolders.HoldTimer(
+		inst.ID(), t.ID(), d, deadline, cycles, exec.WaitNode); err != nil {
+		// the holder declined — keep the wait resident on an in-hub waiter
+		// rather than lose the timer (SRD-071 FR-3, the never-a-lost-trigger
+		// invariant).
+		return false
+	}
+
+	return true
+}
+
+// holdTask hands a parked human task to the engine's durable holders (SRD-071
+// FR-8): the task already lives in the distributor's inbox independent of the
+// instance's residency, so the hold only has to tell the engine WHICH track the
+// task belongs to — an action on it then wakes that instance. Returns false (the
+// wait stays resident) without a holder registry.
+func (t *track) holdTask(flow.Node) bool {
+	inst := t.instance
+	if inst.waitHolders == nil {
+		return false
+	}
+
+	return inst.waitHolders.HoldTask(inst.ID(), t.ID(), t.taskID) == nil
+}
+
+// releaseHolds withdraws every engine-level hold this track's wait registered —
+// its timer deadline, its subscriptions, the whole set an Event-Based Gateway
+// armed (SRD-071 FR-3b). It is the ONE place that withdrawal happens, and every
+// path a wait can exit by calls it: the wait fired (applyWaitPlane), the track
+// ended or failed without delivery (the loop's evEnded/evFailed — an
+// interrupting boundary canceling its host lands here), or the instance tore
+// down (stopAll). The one path that deliberately does NOT call it is
+// dehydration: there the hold is the wake source and must outlive the
+// goroutine.
+//
+// Idempotent — the flag is swapped, so a teardown following a delivery is a
+// no-op. A hold that outlives its wait is never benign: a stale deadline or
+// subscription wakes a later cycle for a wait that no longer exists.
+func (t *track) releaseHolds() {
+	if t.held.Swap(false) && t.instance.waitHolders != nil {
+		t.instance.waitHolders.ReleaseWaits(t.instance.ID(), t.ID())
+	}
+}
+
+// holdableSubscriptions are the triggers whose hub subscription the engine can
+// hold on a released instance's behalf (SRD-071 FR-7). A Conditional is absent
+// by construction — it never reaches here (its subscription is loop-owned).
+var holdableSubscriptions = set.New[flow.EventTrigger](
+	flow.TriggerMessage,
+	flow.TriggerSignal,
+)
+
+// holdSubscription tries to hand a message/signal wait's hub subscription to
+// the engine holder (SRD-071 FR-3/FR-7) — the durable subscriber that survives
+// the instance's release. It returns true only when the holder took it, in
+// which case the instance registers NO subscription of its own and the track is
+// marked held so the idle detector may release the instance. It returns false
+// (register as before, stay resident) when there is no holder registry or the
+// holder declined — never losing the trigger.
+func (t *track) holdSubscription(d flow.EventDefinition) bool {
+	inst := t.instance
+	if inst.waitHolders == nil {
+		return false
+	}
+
+	// the conversation keys the instance's OWN registration would contribute
+	// (SRD-017 §4.3): the holder must subscribe to the same conversation.
+	if err := inst.waitHolders.HoldSubscription(
+		inst.ID(), t.ID(), d, inst.CorrelationKeys(), exec.WaitNode); err != nil {
+		return false
+	}
+
+	return true
 }
 
 // stashTimerPlan records a timer wait's firing plan for the checkpoint
@@ -663,10 +843,22 @@ func (t *track) parkCallActivity(node flow.Node, atConstruction bool) error {
 // delivered to evtCh as a synthetic event, not fired through the hub.
 func (t *track) parkHumanTask(node flow.Node) error {
 	t.m.Lock()
-	t.taskID = foundation.GenerateID()
+	// A RESTORED track carries its recorded task id (SRD-071 FR-8): the task
+	// outlives the instance's residency in the distributor's inbox, so the id a
+	// human (or a UI) is holding must survive rehydration — minting a fresh one
+	// would silently invalidate the reference they are about to act on. A fresh
+	// park mints.
+	if t.taskID == "" {
+		t.taskID = foundation.GenerateID()
+	}
 	t.m.Unlock()
 
 	t.updateState(TrackWaitForEvent)
+
+	// hand the task to the engine's holder, so an action on it can wake a
+	// released instance (SRD-071 FR-3/FR-8). Declined (no registry) → the wait
+	// simply stays resident.
+	t.held.Store(t.holdTask(node))
 
 	if t.instance.State() == Active {
 		t.instance.emit(trackEvent{
@@ -753,6 +945,14 @@ func (t *track) updateState(newState trackState) {
 	}
 }
 
+// currentState returns the track's state under the read lock.
+func (t *track) currentState() trackState {
+	t.m.RLock()
+	defer t.m.RUnlock()
+
+	return t.state
+}
+
 // currentStep returns current step of the track.
 func (t *track) currentStep() *stepInfo {
 	t.m.RLock()
@@ -768,6 +968,48 @@ func (t *track) stop() {
 
 // run start execution loop of the track which ends by ctx's cancel or
 // when there is no outgoing flows from the processing nodes.
+// awaitTrigger parks the track on its event channel until a trigger arrives, the
+// loop releases it (dehydration, SRD-071), the loop closes evtCh on stop, or the
+// context is canceled. Zero CPU while parked (SRD-027 FR-1): the loop is the sole
+// sender and sole closer, so a delivered event is applied on this goroutine. It
+// returns true to continue the run loop (event delivered), false when the
+// goroutine must return — setting the terminal state (Canceled / Dehydrated /
+// Failed) accordingly.
+func (t *track) awaitTrigger(ctx context.Context) (proceed bool) {
+	select {
+	case <-ctx.Done():
+		t.updateState(TrackCanceled)
+		t.lastErr = ctx.Err()
+
+		return false
+
+	case <-t.dehydrateCh:
+		// the loop released this wait's goroutine (SRD-071 FR-1): the wait is
+		// externalized to its holder; exit terminal for the goroutine, retained
+		// as a TrackDehydrated record.
+		t.updateState(TrackDehydrated)
+
+		return false
+
+	case eDef, ok := <-t.evtCh:
+		if !ok {
+			// the loop closed evtCh on stop — terminate like a cancellation.
+			t.updateState(TrackCanceled)
+
+			return false
+		}
+
+		if err := t.deliver(ctx, eDef); err != nil {
+			t.lastErr = err
+			t.updateState(TrackFailed)
+
+			return false
+		}
+
+		return true
+	}
+}
+
 func (t *track) run(
 	ctx context.Context,
 ) {
@@ -785,32 +1027,8 @@ func (t *track) run(
 		}
 
 		if t.inState(TrackWaitForEvent) {
-			// Park on evtCh instead of busy-waiting (SRD-027 FR-1): the per-instance
-			// loop is the SOLE sender and sole closer, so a delivered event is applied
-			// on the track's OWN goroutine here — no foreign-goroutine mutation, no
-			// event mutex. Zero CPU until the loop dispatches a fired event (already
-			// past any correlation gate, §3.4) or closes evtCh on stop (FR-7).
-			select {
-			case <-ctx.Done():
-				t.updateState(TrackCanceled)
-				t.lastErr = ctx.Err()
-
+			if !t.awaitTrigger(ctx) {
 				return
-
-			case eDef, ok := <-t.evtCh:
-				if !ok {
-					// the loop closed evtCh on stop — terminate like a cancellation.
-					t.updateState(TrackCanceled)
-
-					return
-				}
-
-				if err := t.deliver(ctx, eDef); err != nil {
-					t.lastErr = err
-					t.updateState(TrackFailed)
-
-					return
-				}
 			}
 
 			continue
@@ -1411,6 +1629,13 @@ func (t *track) deliver(
 	if err := ep.ProcessEvent(ctx, eDef); err != nil {
 		return err
 	}
+
+	// A wait held by an engine-level holder rather than a hub waiter (SRD-071
+	// FR-3) withdraws its holds here: the wait fired, so neither its deadline
+	// nor its subscriptions may outlive it — a stale hold would wake a later
+	// dehydration cycle spuriously. For an Event-Based Gateway this is also the
+	// withdraw-the-losing-siblings step: the whole set goes at once.
+	t.releaseHolds()
 
 	// A UserTask (human task) parked without a hub waiter (parkHumanTask) — there
 	// is nothing to unregister. Only an event catch (flow.EventNode) is torn down

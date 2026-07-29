@@ -127,6 +127,7 @@ one of a small, open vocabulary:
 | `StateActive` | executing. |
 | `StateCompleted` | reached an end event — the success terminal. |
 | `StateTerminating` / `StateTerminated` | a terminate-end or cancel is tearing it down / has torn it down. |
+| `StateDehydrated` | idle on held waits with **no goroutines**; a trigger rebuilds it (not terminal). |
 
 The set is **open** — treat unknown values gracefully; new states (`Failing`,
 `Paused`, …) join additively as their subsystems land.

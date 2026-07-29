@@ -72,7 +72,7 @@ New here? Start with **[Your first process](getting-started/first-process.md)**.
 - [Correlation & conversations](operating/correlation.md) — route messages to the right instance. *(`inter-instance-correlation`, `conversation-routing`)*
 - [External workers](operating/external-workers.md) — fetch-and-lock job execution. *(`service-task-worker`)*
 - [Human tasks](operating/human-tasks.md) — the task distributor: list, assign, complete. *(`usertask`)*
-- [Persistence & recovery](operating/persistence.md) — instance checkpoints, restart recovery, and safely sharing one store between engines. *(`restart-recovery`)*
+- [Persistence & recovery](operating/persistence.md) — instance checkpoints, restart recovery, dehydration (a long wait costs no goroutines), and safely sharing one store between engines. *(`restart-recovery`)*
 
 ## Part 6 — Extending gobpm
 
@@ -86,6 +86,7 @@ Each page: the seam interface, the registration call, a minimal real implementat
 - [Custom script engine](extending/script-engine.md) — `script.Engine` + `WithScriptEngine`. *(`adapters/lua`)*
 - [Custom Data Store](extending/data-store.md) — `datastore.DataStore` + `WithDataStore`.
 - [Custom repository](extending/repository.md) — `repository.Repository` + `WithRepository`.
+- [Dehydratable waits](extending/dehydratable-waits.md) — `renv.Dehydratable` + `exec.WaitHolders`.
 - [Custom message broker](extending/message-broker.md) — `messaging.MessageBroker` + `WithMessageBroker`.
 - [Custom clock](extending/clock.md) — `clock.Clock` + `WithClock`.
 - [Custom observability](extending/observability.md) — `Observer`/`Reporter`/`Logger`/`Tracer`/`MetricsRecorder`.

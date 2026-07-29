@@ -6,17 +6,19 @@ description: The task distributor — list, assign, and complete user tasks acro
 # Human tasks
 
 A [User Task](../tasks/user-task.md) is work a person does. When the engine
-reaches one it does not run code — it **parks** the track (holding the
-goroutine) and announces the task to a **task distributor** you supply, then
+reaches one it does not run code — it **parks** the track and announces the
+task to a **task distributor** you supply, then
 waits. A human, acting through the engine, later **takes** the task (reads its
 form), does the work, and **completes** it with outputs; only then does the
 track resume. This page is the runtime picture: what crosses the engine
 boundary, the public contracts (`interactor`), and how a distributor drives a
 task to completion.
 
-The internal *why* — the park-on-the-event-channel mechanics, the assignment
-triad, dehydration deferral — lives in
-[ADR-020](../../design/ADR-020-human-interaction-execution-model.md).
+The internal *why* — the park-on-the-event-channel mechanics and the assignment
+triad — lives in
+[ADR-020](../../design/ADR-020-human-interaction-execution-model.md); why a
+parked task lets the whole instance release its goroutines is in
+[Persistence & recovery](persistence.md).
 
 ## The boundary at a glance
 
@@ -153,8 +155,11 @@ task is now done) → instance completes.
 ## Behavior worth knowing
 
 - **Parking, not blocking.** A parked UserTask releases nothing of the engine's
-  scheduling — the track goroutine is held on its event channel, so a slow human
-  never starves other work.
+  scheduling — the track goroutine is released while it waits, so a slow human
+  never starves other work. With a repository configured the whole instance
+  **dehydrates**: the task keeps living in the distributor's inbox, which is
+  exactly why the instance need not, so a task pending for weeks costs zero
+  goroutines ([Persistence & recovery](persistence.md)).
 - **No data before auth.** `Distribute` gets identity and roles only; the first
   time task data materializes across the boundary is a successful `Take`.
 - **Failures are non-terminal.** A rejected `Take`/`Complete` leaves the task

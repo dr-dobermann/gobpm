@@ -13,8 +13,8 @@ The first ADR-033 slice: the **canonical value codec**, the **checkpoint
 document**, loop-side **capture at lifecycle transitions**, the
 **Repository contract growth** (CAS + lease + opaque payload), and
 **restart recovery** (re-enter-the-node semantics, overdue timers fire
-once). Dehydration/wake-on-trigger (SRD-071) and suspend/resume
-(SRD-072) build on this record.
+once). Dehydration/wake-on-trigger (SRD-071) and operator-driven
+suspend/resume build on this record.
 
 ## §1 Background (the state inventory, verified)
 
@@ -111,7 +111,7 @@ once). Dehydration/wake-on-trigger (SRD-071) and suspend/resume
 - **FR-5 — the Repository growth** (`pkg/repository`):
   `InstanceRecord` becomes `{ID, Status, Payload []byte, RecVersion
   int64, Lease{Owner string, Incarnation int64, Expiry time.Time}}`;
-  `Status` gains `StatusSuspended` (reserved for SRD-072); `Save`
+  `Status` gains `StatusSuspended` (reserved for suspend/resume); `Save`
   becomes CAS (`RecVersion` must match the stored one; mismatch is a
   classified error under a new `errs.ConcurrentUpdate` class constant
   (the CAS-conflict vocabulary the fencing checks match on)); `ListInFlight` returns
@@ -280,9 +280,13 @@ past at recovery: the timer fires immediately, once.
 
 - Implements **ADR-033 v.1** §2.1–§2.3/§2.5/§2.7–§2.9 (first slice).
 - Upstream: **ADR-001 v.6**, **ADR-013 v.2**, **ADR-017 v.1**.
-- SRD-071 (dehydration/wake-on-trigger) and SRD-072 (suspend/resume)
-  build on this record; **#84** (timer durability) closes with the
-  timer-descriptor recovery landing here + SRD-071.
+- SRD-071 (dehydration/wake-on-trigger) and operator-driven
+  suspend/resume build on this record; **#84** (timer durability) closes
+  with the timer-descriptor recovery landing here + SRD-071.
+  (Suspend/resume was written here as "SRD-072"; that number was taken by
+  typed value extraction before the doc was written, so the work is named
+  rather than numbered — the only edit made to this accepted document,
+  because the reference pointed a reader at an unrelated SRD.)
 
 ## §9 Definition of Done
 

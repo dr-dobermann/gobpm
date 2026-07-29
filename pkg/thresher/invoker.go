@@ -59,8 +59,11 @@ func (t *Thresher) InvokeProcess(
 	// NewChild only fails on a malformed snapshot or linkage; the registry
 	// hands a validated snapshot and the linkage is checked above, so this is a
 	// defensive wrap (the launchInstance pattern).
+	settled := make(chan struct{})
+
 	inst, err := instance.NewChild(s, &t.cfg, t, t.taskDist, t,
-		call.Inputs, call.ParentInstanceID, call.CallNodeID)
+		call.Inputs, call.ParentInstanceID, call.CallNodeID,
+		instance.WithSettledSignal(settled))
 	if err != nil {
 		return nil, errs.New(errs.M("InvokeProcess: child build failed"),
 			errs.C(errorClass, errs.BulidingFailed), errs.E(err))
@@ -77,7 +80,7 @@ func (t *Thresher) InvokeProcess(
 			errs.C(errorClass, errs.OperationFailed), errs.E(err))
 	}
 
-	t.trackInstanceLocked(inst, cancel)
+	t.trackInstanceLocked(inst, cancel, settled)
 
 	return &childProcess{inst: inst, version: resolved}, nil
 }

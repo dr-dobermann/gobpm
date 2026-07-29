@@ -19,6 +19,7 @@ engine uses it.
 - [Custom script engine](script-engine.md) — `script.Engine` + `WithScriptEngine`. *(`adapters/lua`)*
 - [Custom Data Store](data-store.md) — `datastore.DataStore` + `WithDataStore`.
 - [Custom repository](repository.md) — `repository.Repository` + `WithRepository`.
+- [Dehydratable waits](dehydratable-waits.md) — `renv.Dehydratable` + `exec.WaitHolders` (how a wait releases the instance, and who holds it).
 - [Custom message broker](message-broker.md) — `messaging.MessageBroker` + `WithMessageBroker`.
 - [Custom clock](clock.md) — `clock.Clock` + `WithClock`.
 - [Custom observability](observability.md) — `Observer`/`Reporter`/`Logger`/`Tracer`/`MetricsRecorder`.

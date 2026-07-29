@@ -72,6 +72,36 @@ func NewIntermediateCatchEvent(
 	return &IntermediateCatchEvent{catchEvent: *ce}, nil
 }
 
+// dehydratableCatchTriggers are the catch triggers whose waits have a durable
+// engine-level holder, so parking on them may release the instance's goroutines
+// (SRD-071 FR-6/FR-7): a TIMER (the engine timer service holds its deadline) and
+// a MESSAGE/SIGNAL (the engine holds the hub subscription). A Conditional catch
+// is excluded — its trigger source is the instance's OWN data commits, so there
+// is nothing external to hold and a released instance could never be woken.
+var dehydratableCatchTriggers = set.New[flow.EventTrigger](
+	flow.TriggerTimer,
+	flow.TriggerMessage,
+	flow.TriggerSignal,
+)
+
+// Dehydratable reports whether parking on this catch releases the instance's
+// goroutines (SRD-071 FR-1a, the renv.Dehydratable capability). A receive is a
+// pure wait — arbitrarily long and entirely externally driven — so a message or
+// signal catch releases unconditionally; a TIMER additionally weighs its
+// deadline at arm time (a short one is not worth a checkpoint + rebuild round
+// trip, ADR-007 v.2 §2.4), where the value is known.
+func (ice *IntermediateCatchEvent) Dehydratable(
+	_ context.Context, _ renv.RuntimeEnvironment,
+) bool {
+	for _, d := range ice.Definitions() {
+		if dehydratableCatchTriggers.Has(d.Type()) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // LinkName returns the Link pairing name when this catch carries a Link
 // definition, or "" otherwise. Implements flow.LinkEventNode.
 func (ice *IntermediateCatchEvent) LinkName() string {

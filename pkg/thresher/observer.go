@@ -61,9 +61,9 @@ func (h *InstanceHandle) Observe(o Observer) *Subscription {
 	// The instance-scope visibility filter (ADR-013 §2.11): the policy is
 	// per-recipient with no scope carve-out, so it gates handle observers too.
 	// Asserted once here at registration; absent ⇒ pass-through.
-	filter, _ := h.inst.AuthorizationProvider().(observability.ObservationFilter)
+	filter, _ := h.current().AuthorizationProvider().(observability.ObservationFilter)
 
-	cancelReg := h.inst.AddObserver(func(f observability.Fact) {
+	cancelReg := h.current().AddObserver(func(f observability.Fact) {
 		if filter != nil {
 			filtered, ok := filter.FilterObservation(o, f)
 			if !ok {

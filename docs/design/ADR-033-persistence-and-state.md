@@ -3,10 +3,10 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.1 |
+| Version | v.2 |
 | Date | 2026-07-26 |
 | Owner | Ruslan Gabitov |
-| Refines | [SAD-001 v.1](SAD-001-vision-and-architecture.md) §10 (save/restore as P0: "goroutines are the execution medium, persistence is the state of record"), [ADR-001 v.6](ADR-001-execution-model.md) (the runtime whose state this makes durable), [ADR-007 v.1](ADR-007-in-memory-long-waits.md) (the in-memory long-wait seed whose durable half this owns) |
+| Refines | [SAD-001 v.1](SAD-001-vision-and-architecture.md) §10 (save/restore as P0: "goroutines are the execution medium, persistence is the state of record"), [ADR-001 v.6](ADR-001-execution-model.md) (the runtime whose state this makes durable), [ADR-007 v.2](ADR-007-in-memory-long-waits.md) (the in-memory long-wait model — dehydration & wake-on-trigger — whose durable half this owns) |
 | Related | [ADR-006 v.4](ADR-006-events-and-subscriptions.md) (subscriptions), [ADR-013 v.2](ADR-013-instance-observability.md) (facts vs state), [ADR-014 v.1](ADR-014-message-handling.md) / [ADR-016 v.1](ADR-016-message-correlation.md) (correlation state), [ADR-017 v.1](ADR-017-channel-based-event-processing.md) (the loop as sole state owner), [ADR-021 v.1](ADR-021-service-task-execution-model.md) (the job queue's own durability), [ADR-023 v.3](ADR-023-sub-process-and-call-activity.md) (scopes, child instances), [ADR-025 v.2](ADR-025-activity-iteration-loop-and-multi-instance.md) (iteration state), [ADR-026 v.1](ADR-026-compensation-events.md) (the completion ledger) |
 
 This ADR is the **Persistence & State ADR** that ADR-001, ADR-007 and the
@@ -301,7 +301,7 @@ and masking rules (names and counts, never payload values).
 | Transitions are the normative persist points ("engine MUST persist state" at transitions) | the vendored extract, `state-machines/activity-lifecycle.md` (BPMN §13.3.2, Fig. 13.2) |
 | The process-level lifecycle recovery re-enters | `state-machines/process-lifecycle.md` |
 | Save/restore is P0; checkpoint-at-transition; bounded recovery | SAD-001 v.1 §10 |
-| Track state = position + state + scope data + lineage; per-node state contract; immutable shared definitions | ADR-007 v.1 §3 (relocated from ADR-001) |
+| Track state = position + state + scope data + lineage; per-node state contract; immutable shared definitions | ADR-007 v.2 §3 (relocated from ADR-001) |
 | The loop as sole owner of instance state (the consistent-cut premise) | ADR-001 v.6, ADR-017 v.1 |
 | Correlation keys / dedup-by-key on redelivery | ADR-014 v.1, ADR-016 v.1 |
 | The job queue's own durability, lock reclaim | ADR-021 v.1 §2.4/§2.7 |
@@ -346,5 +346,6 @@ finalized); then suspend/resume and the engine pause.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.2 | 2026-07-27 | Ruslan Gabitov | Pin refresh: ADR-007 authored in full and Accepted (v.2 — the in-memory dehydration & wake-on-trigger mechanism this ADR's §2.4/§2.5 delegated to), so the §Refines and §3-grounding pins move v.1 → v.2. No content change to the durable model. |
 | v.1 (Accepted) | 2026-07-27 | Ruslan Gabitov | Accepted with the first landing slice (the accompanying checkpoint/recovery SRD): the checkpoint document, the grown Repository (CAS + lease), consistent-cut capture, restart recovery with re-enter semantics and the recorded-deadline timers — all proven live, incl. the §2.8 fencing (a zombie engine's saves rejected) and the ADR-005-style incremental plan: dehydration/wake-on-trigger and suspend/resume ride the remaining slices. One §2.8 sharpening surfaced by the landing: deployment parity covers ELEMENT IDENTITY too — recovery requires stable node ids across engines (pinned ids or a serialized model). |
 | v.1 | 2026-07-26 | Ruslan Gabitov | Initial draft — the deferred Persistence & State conception: one checkpoint document per instance (identity + pinned version, status incl. `Suspended`, scope-tree data, the track table, per-node wait descriptors, the completion ledger; armed/routing state derived at hydration, never stored; schema-versioned, loud on unserializable values); the loop's consistent-cut checkpoint at the normative lifecycle transitions with a pluggable write mode; exactly-once state / at-least-once effects (correlation dedup, job-queue reclaim, idempotent re-announce); dehydration as the durable half of ADR-007's model (one model, two residency levels); wake-on-trigger hydration = single-instance recovery, per-wait-kind semantics (overdue timers fire once, tasks re-announce, subscriptions re-register); suspend/resume as status over the same machinery, engine pause filling the reserved observability slots; the Repository grows CAS + `Suspended` + opaque schema-versioned payloads. Event sourcing, persist-everything and hydration-before-durability rejected. The storage composition rule: the Repository is the checkpoint port only — one narrow port per storage consumer, the backend handle user-owned and shared at construction (no universal Repository, no db-driver seam in core — both named rejected alternatives), namespaced schemas with per-module migrations and the optional `Migrator` capability. Cluster-safe sharing (§2.8): per-instance ownership leases with CAS fencing, claim-first wake, lease-expiry orphan recovery, loud deployment-parity refusals — safety here, work distribution deferred to ADR-008. Implementation rides the accompanying SRDs. |

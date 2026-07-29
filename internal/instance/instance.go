@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
+	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -45,6 +46,7 @@ type Instance struct {
 	callReq             chan callRequest
 	scopeReq            chan scopeRequest
 	invoker             exec.ProcessInvoker
+	waitHolders         exec.WaitHolders
 	sc                  instanceScope
 	corr                correlator
 	now                 func() time.Time
@@ -53,6 +55,14 @@ type Instance struct {
 	s                   *snapshot.Snapshot
 	tracks              map[string]*track
 	loopDone            chan struct{}
+	// settled is closed when the instance reaches a TERMINAL state — and only
+	// then. loopDone closes on EVERY loop exit, dehydration included, so it
+	// cannot answer "has this instance finished?" any more (SRD-071): a
+	// released instance has no loop but is very much still in flight. The
+	// engine owns this channel per instance ID and hands the SAME one to each
+	// rebuild, so a caller waiting on it waits across dehydration cycles.
+	// nil for an instance nobody is waiting on.
+	settled chan struct{}
 	// parentInstanceID/callNodeID are the call linkage (SRD-050): when set,
 	// report stamps them on every fact so a child instance's trace stitches
 	// back to its caller's Call Activity node. Empty for a top-level instance.
@@ -62,21 +72,184 @@ type Instance struct {
 	// (cpTTL/cpRecVersion/cpIncarnation) sit at the struct tail, outside
 	// the GC pointer scan (fieldalignment).
 	cpOwner string
+	// waitHeld reports whether a parked track's wait has an engine-level holder
+	// that can wake a released instance (SRD-071 FR-2). nil (the default, and
+	// production without an injected WaitHolders) means "nothing held" — the
+	// instance never dehydrates a wait it cannot wake. When WithWaitHolders is
+	// set, New wires this to read each track's `held` flag (set at arm time when
+	// a holder accepted the wait). Tests may inject their own predicate.
+	waitHeld func(*track) bool
 	// restoredLedgers is the checkpoint-rebuilt compensation ledger the
 	// loop adopts at start (SRD-070 FR-6); nil for a fresh instance.
 	restoredLedgers map[scope.DataPath][]*ledgerEntry
+	// boundaryPlans are the armed-boundary firing plans read back from the
+	// checkpoint (SRD-071 FR-9a), consumed as the loop re-arms each boundary.
+	// Written once by restoreTracks before the loop starts and read only on
+	// the loop goroutine, so it needs no lock. Empty for a fresh instance and
+	// for one restored from a Schema-1 document.
+	boundaryPlans map[boundaryKey]checkpoint.TimerDescriptor
 	foundation.BaseElement
 	observers  []obsReg
 	trackCount atomic.Int64
 	obsMu      sync.RWMutex
 	obsID      uint64
-	state      atomic.Uint32
+	// dehydrationPins suppresses release while a synchronous interaction is in
+	// flight (SRD-071 FR-8). A human task is IDLE by definition, so an instance
+	// hydrated to service a Take/Complete would release again before the action
+	// could land — the action would never win. The engine pins it across the
+	// call; the loop's detector honors the pin.
+	dehydrationPins atomic.Int32
+	state           atomic.Uint32
 	// The checkpoint cursors (SRD-070 FR-4): the lease TTL, the CAS
 	// record version, the lease fencing incarnation (grows on reclaim,
 	// SRD-071+). Non-pointer tail — see cpOwner above.
 	cpTTL         time.Duration
 	cpRecVersion  int64
 	cpIncarnation int64
+}
+
+// validatedTemplate checks New's required collaborators and returns the
+// instance's PRIVATE clone of the node graph: concurrent instances of one
+// process never share a node (ADR-009), the passed snapshot staying the shared
+// immutable template.
+func validatedTemplate(
+	s *snapshot.Snapshot,
+	er engrenv.EngineRuntime,
+	ep eventproc.EventProducer,
+) (*snapshot.Snapshot, error) {
+	if s == nil {
+		return nil, errs.New(
+			errs.M("no snapshot is given"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if er == nil {
+		return nil, errs.New(
+			errs.M("empty engine runtime"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if ep == nil {
+		return nil, errs.New(
+			errs.M("empty parent event producer"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	clone, err := s.Clone()
+	if err != nil {
+		return nil, errs.New(
+			errs.M("snapshot clone for instance failed"),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
+	return clone, nil
+}
+
+// seedBoundaryPlans loads the recorded armed-boundary plans so the loop's
+// re-arm can pin each deadline instead of recomputing it (SRD-071 FR-9a).
+// Called by restoreTracks before the loop starts.
+func (inst *Instance) seedBoundaryPlans(rr []checkpoint.BoundaryRecord) {
+	if len(rr) == 0 {
+		return
+	}
+
+	inst.boundaryPlans = make(map[boundaryKey]checkpoint.TimerDescriptor, len(rr))
+
+	for _, r := range rr {
+		// A boundary with no timer restores nothing — it re-arms from the
+		// model like any fresh arm. Only the resolved deadline is state the
+		// model cannot reproduce.
+		if r.Timer == nil {
+			continue
+		}
+
+		inst.boundaryPlans[boundaryKey{
+			trackID:    r.HostTrack,
+			boundaryID: r.BoundaryID,
+			defIndex:   r.DefIndex,
+		}] = *r.Timer
+	}
+}
+
+// takeBoundaryPlan returns the recorded plan for one boundary arm and removes
+// it: the plan describes the ONE window the checkpoint captured, so re-entering
+// the same activity later is a new window that resolves its own deadline.
+// Loop goroutine only.
+func (inst *Instance) takeBoundaryPlan(
+	k boundaryKey,
+) (checkpoint.TimerDescriptor, bool) {
+	rec, ok := inst.boundaryPlans[k]
+	if ok {
+		delete(inst.boundaryPlans, k)
+	}
+
+	return rec, ok
+}
+
+// PinResident suppresses dehydration until the matching UnpinResident, so a
+// synchronous interaction (a human-task Take/Complete, SRD-071 FR-8) is
+// guaranteed a live loop to run against. Pins nest.
+func (inst *Instance) PinResident() {
+	inst.dehydrationPins.Add(1)
+}
+
+// UnpinResident releases one PinResident. The instance may then release its
+// goroutines again at the next idle moment.
+func (inst *Instance) UnpinResident() {
+	inst.dehydrationPins.Add(-1)
+}
+
+// pinnedResident reports whether an interaction is holding the instance in
+// memory.
+func (inst *Instance) pinnedResident() bool {
+	return inst.dehydrationPins.Load() > 0
+}
+
+// WithSettledSignal gives the instance the channel to close when it reaches a
+// TERMINAL state (SRD-071). The engine owns it per instance ID and passes the
+// same channel to every rebuild, so a host waiting for completion is not woken
+// by a mere dehydration — which releases the loop without finishing anything.
+func WithSettledSignal(ch chan struct{}) Option {
+	return func(cfg *newConfig) {
+		cfg.settled = ch
+	}
+}
+
+// markSettled closes the terminal signal exactly once. Called only from the
+// loop's TERMINAL exit — never from the dehydration exit.
+func (inst *Instance) markSettled() {
+	if inst.settled == nil {
+		return
+	}
+
+	select {
+	case <-inst.settled:
+		// already closed by an earlier incarnation — nothing to do.
+	default:
+		close(inst.settled)
+	}
+}
+
+// WithResidentPin builds the instance already pinned (SRD-071 FR-8): the engine
+// rebuilds an instance to service a task action, and the rebuild must not
+// release again before the action arrives. The engine unpins when it is done.
+func WithResidentPin() Option {
+	return func(cfg *newConfig) {
+		cfg.residentPin = true
+	}
+}
+
+// wireWaitHeld points the idle detector's "is this wait wakeable?" gate at each
+// track's arm-time `held` flag (SRD-071 FR-2/FR-3): with a durable holder
+// registry a wait releases only if its holder accepted it. Without holders the
+// predicate stays nil and no wait ever releases.
+func (inst *Instance) wireWaitHeld() {
+	if inst.waitHolders == nil {
+		return
+	}
+
+	inst.waitHeld = func(t *track) bool { return t.held.Load() }
 }
 
 // newInstanceIdentity mints the instance's BaseElement — a restored
@@ -111,6 +284,12 @@ type newConfig struct {
 	// runs (SRD-050 FR-3); nil for a library embedder without a thresher — a
 	// call then fails fast with a classified no-invoker error.
 	invoker exec.ProcessInvoker
+	// waitHolders is the engine's durable wait-holder registry (SRD-071 FR-3):
+	// a dehydratable timer registers its deadline here at arm time. nil for a
+	// library embedder or a volatile instance — every wait then stays resident.
+	waitHolders exec.WaitHolders
+	// settled is the engine's per-instance-ID terminal signal (SRD-071).
+	settled chan struct{}
 	// rootData is committed into the root scope at construction — the Call
 	// Activity's inputs (SRD-050), the same injection point as an event
 	// payload (bindEventPayload). Its len/cap and the checkpoint cursors
@@ -121,6 +300,8 @@ type newConfig struct {
 	cpTTL         time.Duration
 	cpRecVersion  int64
 	cpIncarnation int64
+	// residentPin starts the instance pinned against dehydration (SRD-071 FR-8).
+	residentPin bool
 }
 
 // newOption tunes New. The born-event / conversation-key options are exposed
@@ -175,6 +356,17 @@ func WithInvoker(inv exec.ProcessInvoker) Option {
 	}
 }
 
+// WithWaitHolders sets the engine's durable wait-holder registry (SRD-071 FR-3):
+// a dehydratable timer registers its deadline with it at arm time so the engine
+// can wake the instance after it releases its goroutines. The engine (thresher)
+// passes itself; left unset (nil), every wait stays resident and no instance
+// ever dehydrates (a library embedder without a thresher, or checkpointing off).
+func WithWaitHolders(wh exec.WaitHolders) Option {
+	return func(c *newConfig) {
+		c.waitHolders = wh
+	}
+}
+
 // withConversationKey seeds the new instance's conversation key (SRD-017 §4.5)
 // before createTracks runs, so an in-instance receiver reached directly off the
 // born start subscribes keyed to it (createTracks parks receivers during
@@ -205,36 +397,9 @@ func New(
 		o(&cfg)
 	}
 
-	if s == nil {
-		return nil,
-			errs.New(
-				errs.M("no snapshot is given"),
-				errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
-	// Each Instance owns a private clone of the node graph so concurrent
-	// instances of the same process never share a node (ADR-009); the snapshot
-	// passed in stays the shared immutable template.
-	s, err := s.Clone()
+	s, err := validatedTemplate(s, er, ep)
 	if err != nil {
-		return nil, errs.New(
-			errs.M("snapshot clone for instance failed"),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.E(err))
-	}
-
-	if er == nil {
-		return nil,
-			errs.New(
-				errs.M("empty engine runtime"),
-				errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
-	if ep == nil {
-		return nil,
-			errs.New(
-				errs.M("empty parent event producer"),
-				errs.C(errorClass, errs.EmptyNotAllowed))
+		return nil, err
 	}
 
 	be, err := newInstanceIdentity(cfg.restoredID)
@@ -254,6 +419,8 @@ func New(
 		callReq:             make(chan callRequest),
 		scopeReq:            make(chan scopeRequest),
 		invoker:             cfg.invoker,
+		waitHolders:         cfg.waitHolders,
+		settled:             cfg.settled,
 		loopDone:            make(chan struct{}),
 		parentEventProducer: ep,
 		td:                  td,
@@ -265,6 +432,12 @@ func New(
 		cpIncarnation:       cfg.cpIncarnation,
 	}
 	inst.state.Store(uint32(Created))
+
+	if cfg.residentPin {
+		inst.PinResident()
+	}
+
+	inst.wireWaitHeld()
 	inst.announceCreated()
 	// The correlator back-pointer refers to the same heap object New returns —
 	// inst escapes via &inst below (the instanceScope loader takes it the same way).
@@ -400,6 +573,7 @@ func NewChild(
 	inv exec.ProcessInvoker,
 	rootData []data.Data,
 	parentInstanceID, callNodeID string,
+	opts ...Option,
 ) (*Instance, error) {
 	parentInstanceID = strings.TrimSpace(parentInstanceID)
 	if parentInstanceID == "" {
@@ -416,9 +590,11 @@ func NewChild(
 	}
 
 	return New(s, scope.EmptyDataPath, er, ep, td,
-		withRootData(rootData),
-		withCallLinkage(parentInstanceID, callNodeID),
-		WithInvoker(inv))
+		append([]Option{
+			withRootData(rootData),
+			withCallLinkage(parentInstanceID, callNodeID),
+			WithInvoker(inv),
+		}, opts...)...)
 }
 
 // emit delivers a track event to the loop. It never blocks forever: once the

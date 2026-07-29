@@ -54,6 +54,9 @@ var liveTrackStates = map[trackState]bool{
 	// the join node re-delivers it.
 	TrackAwaitingMerge: true,
 	TrackAwaitSync:     true,
+	// A dehydrated track is a live record whose wait is held externally
+	// (SRD-071) — persisted so the checkpoint IS the hydration source.
+	TrackDehydrated: true,
 }
 
 // maybeCheckpoint captures and saves the instance's document after an
@@ -171,7 +174,47 @@ func (ls *loopState) captureDocument(
 		}
 	}
 
+	doc.Boundaries = ls.boundaryRecords()
+
 	return doc, ""
+}
+
+// boundaryRecords captures the boundary events armed over the live tracks
+// (SRD-071 FR-9a). ls.watchers is loop-owned and the capture runs on the loop,
+// so no lock is involved — unlike the track records, whose fields the tracks'
+// own goroutines write.
+//
+// A watch over a track that is no longer live is skipped: the capture writes
+// what a restore must rebuild, and a boundary whose host is gone guards
+// nothing.
+func (ls *loopState) boundaryRecords() []checkpoint.BoundaryRecord {
+	var out []checkpoint.BoundaryRecord
+
+	for trackID, ws := range ls.watchers {
+		t, live := ls.inst.tracks[trackID]
+		if !live || !liveTrackStates[t.currentState()] {
+			continue
+		}
+
+		for _, w := range ws {
+			rec := checkpoint.BoundaryRecord{
+				HostTrack:  trackID,
+				BoundaryID: w.boundary.ID(),
+				DefIndex:   w.defIndex,
+			}
+
+			if !w.deadline.IsZero() {
+				rec.Timer = &checkpoint.TimerDescriptor{
+					Deadline:   w.deadline,
+					CyclesLeft: w.cycles,
+				}
+			}
+
+			out = append(out, rec)
+		}
+	}
+
+	return out
 }
 
 // ledgerRecords flattens one scope's ledger (folded children recurse
@@ -249,6 +292,10 @@ var persistedStatusMap = map[State]repository.Status{
 	Completed:   repository.StatusCompleted,
 	Terminating: repository.StatusTerminated,
 	Terminated:  repository.StatusTerminated,
+	// a dehydrated instance is in-flight, not terminal and not
+	// operator-suspended — recovery claims it as an active record and wakes
+	// it from its checkpoint (SRD-071 FR-2).
+	Dehydrated: repository.StatusActive,
 }
 
 func persistedStatus(s State) repository.Status {

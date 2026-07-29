@@ -36,8 +36,11 @@ flowchart LR
 
 - **Enqueue + park.** When the instance reaches a `WithWorker` task the engine
   builds a `tasks.Job` (topic + the single bound input item) and `Enqueue`s it on
-  the dispatcher, then parks the task — releasing its goroutine, exactly like a
-  parked User Task. Nothing on the track blocks.
+  the dispatcher, then parks the task — releasing its goroutine, like a parked
+  User Task. Nothing on the track blocks. Unlike a User Task, though, a worker
+  task never lets the instance **dehydrate**: a job in flight is active work,
+  not a passive wait, so the instance stays resident until the worker reports
+  ([Persistence & recovery](persistence.md)).
 - **Fetch-and-lock.** A worker `FetchAndLock`s the next job for its topics; the
   job is locked to that worker until a deadline (extendable via `ExtendLock`), so
   no other worker picks it up. The worker reads its bound input via `LockedJob.Input`.

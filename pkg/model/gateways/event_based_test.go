@@ -749,3 +749,11 @@ func TestEventBasedGatewayArmForSignalByName(t *testing.T) {
 	_, ok = g.ArmFor(msgDef)
 	require.False(t, ok)
 }
+
+// TestEventBasedGatewayDehydratable covers SRD-071 FR-1a: an EBG is
+// dehydratable unconditionally (it is the wait node — a pure wait race).
+func TestEventBasedGatewayDehydratable(t *testing.T) {
+	g, err := gateways.NewEventBasedGateway()
+	require.NoError(t, err)
+	require.True(t, g.Dehydratable(context.Background(), nil))
+}

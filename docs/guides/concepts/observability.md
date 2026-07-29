@@ -87,7 +87,7 @@ watches most:
 | Kind | Emitted for |
 |---|---|
 | `KindEngineState` | Thresher lifecycle (`Starting` → `Started` → `Stopping` → `Stopped`). |
-| `KindInstanceState` | instance lifecycle (`Created`, `Active`, `Completed`, `Failed`, `Terminated`). |
+| `KindInstanceState` | instance lifecycle (`Created`, `Active`, `Dehydrated`, `Hydrated`, `Completed`, `Failed`, `Terminated`). |
 | `KindNodeProgress` | a track's node execution (`Entered`, `Executing`, `Completed`, `Parked`, `Failed`). |
 | `KindFault` | a BPMN error / fault (`Thrown`, `Caught`, `Uncaught`). |
 | `KindDataChange` | a committed data-element change — **observer-only** (never logged). |
@@ -123,6 +123,14 @@ per-kind — some phases are reused across kinds (`Completed` covers instance,
 node, job, and task; `Failed` covers instance and node). A few phase slots
 (`Paused`/`Resumed`, `Incident`) are reserved names for subsystems that have not
 landed yet, so a listener sees a stable name when they do.
+
+**`Dehydrated` / `Hydrated`** (`KindInstanceState`, Info) bracket a dehydration
+cycle and have landed. `Dehydrated` carries the wait kinds the instance parked
+on, how many, and `goroutines=0`; `Hydrated` carries the waking `trigger`
+(`Timer` / `Message` / `Signal` / `TaskAction`), the woken track, and whether
+the wake `continued` the flow or `completed` the instance. One fact per
+residency transition — never per checkpoint. See
+[Persistence & recovery](../operating/persistence.md).
 
 ## The Observer contract
 

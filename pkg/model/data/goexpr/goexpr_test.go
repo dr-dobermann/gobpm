@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/generated/mockdata"
@@ -178,4 +180,58 @@ func TestGoBpmExprErrors(t *testing.T) {
 
 	_, err = wrongResTypeGe.Evaluate(ctx, nil)
 	require.Error(t, err)
+}
+
+// TestGExpressionConcurrentEvaluate: one GExpression is shared by every
+// instance of the process that declares it (an instance clones the node graph,
+// not the expression behind it), so concurrent Evaluate must neither race nor
+// let one evaluation observe another's outcome. Each caller here computes a
+// distinct value and must get exactly its own back.
+func TestGExpressionConcurrentEvaluate(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	var seq atomic.Int64
+
+	ge := goexpr.Must(nil,
+		data.MustItemDefinition(values.NewVariable(int64(0))),
+		func(_ context.Context, _ data.Source) (data.Value, error) {
+			return values.NewVariable(seq.Add(1)), nil
+		})
+
+	const callers = 16
+
+	var (
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		seen = map[int64]bool{}
+	)
+
+	ctx := context.Background()
+
+	for range callers {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			res, err := ge.Evaluate(ctx, nil)
+			require.NoError(t, err)
+
+			got, ok := res.Get(ctx).(int64)
+			require.True(t, ok)
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			require.False(t, seen[got],
+				"each evaluation must own its result value, not alias a shared one")
+			seen[got] = true
+		}()
+	}
+
+	wg.Wait()
+
+	require.Len(t, seen, callers,
+		"every concurrent evaluation returns its own distinct result")
+	require.True(t, ge.IsEvaluated())
 }

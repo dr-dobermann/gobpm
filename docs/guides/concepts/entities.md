@@ -219,8 +219,8 @@ When you hand a `Process` to the engine, four runtime shapes appear. They live i
 
 - **Snapshot** — the `Process` is converted **once** into an immutable launch
   template: a validated, ready-to-clone node graph. It is *not* a persistence or
-  recovery mechanism; durable rehydration is future work
-  ([ADR-009](../../design/ADR-009-per-instance-node-graph.md)).
+  recovery mechanism — the durable record is the Repository's checkpoint
+  document, not the snapshot ([Persistence & recovery](../operating/persistence.md)).
 - **Instance** — each start `Clone`s the snapshot's node graph into a private,
   mutable copy. The immutable header (process id/name, properties, correlation
   keys) is shared by reference across instances; only the per-instance graph is

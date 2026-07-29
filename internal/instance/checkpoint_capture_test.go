@@ -359,7 +359,7 @@ func TestRestore(t *testing.T) {
 				Maybe()
 
 			restored, err := Restore(doc, s2, scope.EmptyDataPath,
-				enginert.Default(), ep, nil,
+				enginert.Default(), ep, nil, nil,
 				WithCheckpointCursor(5, 2))
 			require.NoError(t, err)
 
@@ -387,7 +387,7 @@ func TestRestore(t *testing.T) {
 			ep := mockeventproc.NewMockEventProducer(t)
 
 			_, err := Restore(doc, s2, scope.EmptyDataPath,
-				enginert.Default(), ep, nil)
+				enginert.Default(), ep, nil, nil)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "pinned version")
 		})
@@ -395,7 +395,7 @@ func TestRestore(t *testing.T) {
 	t.Run("a nil document is loud",
 		func(t *testing.T) {
 			_, err := Restore(nil, nil, scope.EmptyDataPath,
-				enginert.Default(), nil, nil)
+				enginert.Default(), nil, nil, nil)
 			require.Error(t, err)
 		})
 
@@ -411,7 +411,7 @@ func TestRestore(t *testing.T) {
 			ep := mockeventproc.NewMockEventProducer(t)
 
 			_, err := Restore(&broken, s2, scope.EmptyDataPath,
-				enginert.Default(), ep, nil)
+				enginert.Default(), ep, nil, nil)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "isn't in the pinned")
 		})
@@ -437,7 +437,7 @@ func TestRestore(t *testing.T) {
 			ep := mockeventproc.NewMockEventProducer(t)
 
 			restored, err := Restore(&withLedger, s2, scope.EmptyDataPath,
-				enginert.Default(), ep, nil)
+				enginert.Default(), ep, nil, nil)
 			require.NoError(t, err)
 			require.Len(t,
 				restored.restoredLedgers[scope.RootDataPath], 1)
@@ -518,7 +518,7 @@ func TestRestoreArms(t *testing.T) {
 			ep := mockeventproc.NewMockEventProducer(t)
 
 			restored, err := Restore(&withChild, s2, scope.EmptyDataPath,
-				enginert.Default(), ep, nil)
+				enginert.Default(), ep, nil, nil)
 			require.NoError(t, err)
 
 			child := scope.DataPath(doc.Scopes[0].Path + "/sp-x")
@@ -541,7 +541,7 @@ func TestRestoreArms(t *testing.T) {
 			ep := mockeventproc.NewMockEventProducer(t)
 
 			_, err := Restore(&broken, s2, scope.EmptyDataPath,
-				enginert.Default(), ep, nil)
+				enginert.Default(), ep, nil, nil)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "reopen")
 		})
@@ -567,7 +567,7 @@ func TestRestoreArms(t *testing.T) {
 				Maybe()
 
 			restored, err := Restore(&withTimer, s2, scope.EmptyDataPath,
-				enginert.Default(), ep, nil)
+				enginert.Default(), ep, nil, nil)
 			require.NoError(t, err)
 
 			for _, tr := range restored.tracks {
@@ -653,7 +653,7 @@ func TestRestoreDataArms(t *testing.T) {
 			ep := mockeventproc.NewMockEventProducer(t)
 
 			_, err := Restore(&broken, s2, scope.EmptyDataPath,
-				enginert.Default(), ep, nil)
+				enginert.Default(), ep, nil, nil)
 			require.Error(t, err)
 		})
 
@@ -671,7 +671,7 @@ func TestRestoreDataArms(t *testing.T) {
 			ep := mockeventproc.NewMockEventProducer(t)
 
 			restored, err := Restore(&slim, s2, scope.EmptyDataPath,
-				enginert.Default(), ep, nil)
+				enginert.Default(), ep, nil, nil)
 			require.NoError(t, err)
 
 			_, err = restored.sc.plane.OwnData(
@@ -694,7 +694,7 @@ func TestRestoreDataArms(t *testing.T) {
 			ep := mockeventproc.NewMockEventProducer(t)
 
 			_, err := Restore(&broken, s2, scope.EmptyDataPath,
-				enginert.Default(), ep, nil)
+				enginert.Default(), ep, nil, nil)
 			require.Error(t, err)
 		})
 }

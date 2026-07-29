@@ -178,6 +178,13 @@ waiters — without it one timer occurrence would resume them all (the timer
 analog of the message per-instance clone). A timer carries no payload, so the
 clone shares the expressions and only refreshes the id.
 
+With a repository configured, a **one-shot** timer more than an hour out does
+not keep a waiter at all: the engine's timer service holds its absolute deadline
+and the instance **dehydrates**, so a thousand instances waiting on a two-day
+timer cost zero goroutines. Shorter one-shots and any **repeating** timer keep
+their in-memory waiter and stay resident. See
+[Persistence & recovery](../operating/persistence.md).
+
 ## See also
 
 - Examples: [`examples/simple-timer/`](../../../examples/simple-timer/) (start → end) · [`examples/timer-event/`](../../../examples/timer-event/) (start → service task → end)

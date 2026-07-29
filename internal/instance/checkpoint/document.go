@@ -10,7 +10,15 @@ import (
 // CurrentSchema is the checkpoint document's wire-schema version
 // (ADR-033 §2.1: the document carries it for forward migration; an
 // unknown schema fails loud, never a guess).
-const CurrentSchema = 1
+//
+// 1 → 2 (SRD-071 FR-9a) added the armed-boundary set. The bump is ADDITIVE:
+// every Schema-1 field means what it always did, and a Schema-1 document
+// restores exactly as before — it simply carries no boundaries, which is the
+// state the engine was in when it wrote one. So this engine READS an older
+// document rather than rejecting it (see Unmarshal); only a document from a
+// FUTURE schema is refused, because that one may contain state this engine
+// would silently drop.
+const CurrentSchema = 2
 
 // Document is one instance's durable state (SRD-070 FR-3): identity +
 // the version pin, status, the scope table, conversation keys, the
@@ -31,6 +39,10 @@ type Document struct {
 	Scopes  []ScopeRecord  `json:"scopes"`
 	Ledgers []LedgerRecord `json:"ledgers,omitempty"`
 	Tracks  []TrackRecord  `json:"tracks"`
+	// Boundaries are the boundary events armed over the captured tracks
+	// (Schema 2, SRD-071 FR-9a). Absent in a Schema-1 document, which is
+	// why the field is optional rather than a migration.
+	Boundaries []BoundaryRecord `json:"boundaries,omitempty"`
 
 	Schema  int `json:"schema"`
 	Version int `json:"version"` // the FR-1 pin
@@ -73,6 +85,26 @@ type TrackRecord struct {
 	MsgDefIDs []string `json:"msg_def_ids,omitempty"`
 
 	LoopCounter int `json:"loop_counter,omitempty"`
+}
+
+// BoundaryRecord is one ARMED boundary event guarding a captured track
+// (SRD-071 FR-9a). A boundary is not a track — it has no token and no
+// lineage — so it rides its host's record set rather than becoming one.
+//
+// Re-arming reconstructs everything about a boundary from the model EXCEPT
+// when it fires: a duration-based timer re-evaluated at restore would restart
+// its clock, so the resolved deadline is what this record exists to carry.
+// Non-timer boundaries are recorded too, with no Timer: they restore nothing,
+// but the set states what was armed, which is what "release only when every
+// armed boundary is held" has to consult.
+// DefIndex, not the definition's id: ids are minted per model build, so a
+// recovering engine's model carries different ones and a recorded id would
+// never resolve. Definition order within a boundary is model order.
+type BoundaryRecord struct {
+	Timer      *TimerDescriptor `json:"timer,omitempty"`
+	HostTrack  string           `json:"host_track"`
+	BoundaryID string           `json:"boundary_id"`
+	DefIndex   int              `json:"def_index"`
 }
 
 // TimerDescriptor pins a parked timer wait.
@@ -128,10 +160,16 @@ func Unmarshal(payload []byte) (*Document, error) {
 			errs.E(err))
 	}
 
-	if d.Schema != CurrentSchema {
+	// An OLDER schema reads: every bump so far has been additive, so an old
+	// document is a new one with fields absent, and refusing it would strand
+	// every instance written before the engine was upgraded. A NEWER one is
+	// refused — it may carry state this engine does not know to restore, and
+	// silently dropping durable state is worse than failing loud. A zero
+	// schema is not "old", it is a document that never declared one.
+	if d.Schema < 1 || d.Schema > CurrentSchema {
 		return nil, errs.New(
 			errs.M("Unmarshal: unsupported checkpoint schema %d "+
-				"(this engine reads schema %d)", d.Schema, CurrentSchema),
+				"(this engine reads schema 1..%d)", d.Schema, CurrentSchema),
 			errs.C(errorClass, errs.InvalidState),
 			errs.D("instance_id", d.InstanceID))
 	}

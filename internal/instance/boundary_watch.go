@@ -3,9 +3,13 @@ package instance
 import (
 	"context"
 	"errors"
+	"time"
+
+	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub/waiters"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
@@ -22,12 +26,78 @@ type boundaryWatch struct {
 	host     *track
 	boundary flow.BoundaryEvent
 	def      flow.EventDefinition
+	// deadline/cycles pin a TIMER boundary's firing plan (SRD-071 FR-9a).
+	// Written once at arm — either resolved from the definition, or taken
+	// from the checkpoint when the arm follows a restore — and read by the
+	// capture (on the loop) and by the waiter through TimerDeadlineHint.
+	// Zero for every non-timer boundary.
+	deadline time.Time
+	cycles   int
+	// defIndex is this definition's position within its boundary event — the
+	// half of the watch's durable identity that a model rebuild reproduces
+	// (see boundaryKey).
+	defIndex int
 	// loopOwned marks a watch with no hub registration — a Conditional
 	// boundary (SRD-048 FR-15): its trigger source is the instance's own
 	// commits, so it is armed as a condWatch in the loop's conditional
 	// registry instead. It still lives in ls.watchers so armedFor and the
 	// disarm lifecycle govern it, but disarm skips the hub unregister.
 	loopOwned bool
+	// due marks a RESTORED arm whose recorded deadline has already passed:
+	// the boundary fired while the instance was away. Nothing is armed for it
+	// and nothing is held — the fire is simply run, below.
+	due bool
+	// held marks an arm the engine can wake a RELEASED instance for (SRD-071
+	// FR-9a). Its host track may only dehydrate when every boundary guarding
+	// it is held — a boundary is not a track, so nothing else in the release
+	// decision would ever see it, and an unheld one would simply never fire
+	// again.
+	held bool
+	// hinted marks the plan as RESTORED rather than freshly resolved, so the
+	// waiter pins it instead of re-evaluating. Without this a duration-based
+	// boundary — "escalate 24h from now" — would silently restart its clock
+	// on every rebuild, which is the trap SRD-070 §4.2 closed for a track's
+	// own timer and FR-9a closes here.
+	hinted bool
+}
+
+// TimerDeadlineHint implements waiters.DeadlineHinter for a boundary arm: a
+// RESTORED watch pins its recorded deadline; a freshly armed one hints nothing
+// and the waiter evaluates the definition as usual. The eDef argument is
+// ignored — a watch carries exactly one definition, and its identity is already
+// the key the hub resolved to reach this processor.
+func (w *boundaryWatch) TimerDeadlineHint(string) (time.Time, int, bool) {
+	if !w.hinted {
+		return time.Time{}, 0, false
+	}
+
+	return w.deadline, w.cycles, true
+}
+
+// boundaryKey identifies one armed boundary across a checkpoint round trip.
+// The host track and the boundary node are not enough on their own: one
+// boundary may carry several definitions, each armed as its own watch — hence
+// the definition's INDEX within its boundary.
+//
+// The index, and not the definition's id: ids are minted per model build, so
+// two engines constructing the same process from the same code hold different
+// ones, and a recovering engine would never match a recorded id. Node ids are
+// the operator's contract to pin (ADR-033 §2.8, deployment parity); definition
+// ids are not, and keying on them would silently drop the deadline of any
+// model whose author did not hand-pin them. Definition ORDER within a boundary
+// is model order — the same on both engines by construction.
+type boundaryKey struct {
+	trackID    string
+	boundaryID string
+	defIndex   int
+}
+
+func (w *boundaryWatch) key() boundaryKey {
+	return boundaryKey{
+		trackID:    w.host.ID(),
+		boundaryID: w.boundary.ID(),
+		defIndex:   w.defIndex,
+	}
 }
 
 // ID returns the watch's hub identity, unique per (host track, boundary,
@@ -54,6 +124,108 @@ func (w *boundaryWatch) ProcessEvent(
 	})
 
 	return nil
+}
+
+// planBoundary fixes a timer boundary's firing plan at arm time (SRD-071
+// FR-9a), preferring the RECORDED plan when this arm follows a restore.
+//
+// A recorded plan is consumed on use: the boundary it belongs to is being
+// re-armed exactly once, at the position the checkpoint captured. If the same
+// activity is entered again later — a loop, a retry — that is a genuinely new
+// window and its deadline is resolved afresh, which is what BPMN means by
+// entering an activity.
+//
+// A definition that resolves to nothing (a non-timer boundary, or a timer whose
+// expression cannot be evaluated yet) leaves the plan zero and hints nothing;
+// the waiter then behaves exactly as it did before this existed.
+func (ls *loopState) planBoundary(w *boundaryWatch) {
+	if rec, ok := ls.inst.takeBoundaryPlan(w.key()); ok {
+		w.deadline, w.cycles, w.hinted = rec.Deadline, rec.CyclesLeft, true
+
+		return
+	}
+
+	if w.def.Type() != flow.TriggerTimer {
+		return
+	}
+
+	deadline, cycles, err := waiters.TimerPlan(w.def, w, ls.inst)
+	if err != nil {
+		return
+	}
+
+	w.deadline, w.cycles = deadline, cycles
+}
+
+// holdBoundary offers one armed boundary to the engine's durable holders
+// (SRD-071 FR-9a), reporting whether one took it.
+//
+// The hold is keyed to the HOST TRACK, like every other wait the track owns:
+// waking the instance is all a boundary's holder has to do, because the
+// rebuilt instance re-arms the boundary at its RECORDED deadline (M9) and an
+// overdue one fires once immediately through the ordinary path. So there is no
+// second delivery route into a restored instance — hydration is the whole wake.
+//
+// A loop-owned Conditional boundary is never holdable: its trigger is the
+// instance's own data commits, so nothing outside the loop could evaluate it —
+// exactly as a Conditional catch is unholdable (holdWait).
+func (ls *loopState) holdBoundary(w *boundaryWatch) bool {
+	inst := ls.inst
+	if inst.waitHolders == nil || w.loopOwned {
+		return false
+	}
+
+	switch {
+	case w.def.Type() == flow.TriggerTimer:
+		if w.deadline.IsZero() {
+			return false
+		}
+
+		return inst.waitHolders.HoldTimer(
+			inst.ID(), w.host.ID(), w.def, w.deadline, w.cycles,
+			exec.WaitBoundary) == nil
+
+	case holdableSubscriptions.Has(w.def.Type()):
+		return inst.waitHolders.HoldSubscription(
+			inst.ID(), w.host.ID(), w.def, inst.CorrelationKeys(),
+			exec.WaitBoundary) == nil
+	}
+
+	return false
+}
+
+// releaseBoundaryHolds withdraws the engine-level holds this track's armed
+// boundaries registered, if any took one.
+func (ls *loopState) releaseBoundaryHolds(trackID string) {
+	inst := ls.inst
+	if inst.waitHolders == nil {
+		return
+	}
+
+	for _, w := range ls.watchers[trackID] {
+		if !w.held {
+			continue
+		}
+
+		w.held = false
+
+		inst.waitHolders.ReleaseWaits(inst.ID(), trackID)
+
+		return
+	}
+}
+
+// boundariesHeld reports whether every boundary armed over trackID can wake a
+// RELEASED instance (SRD-071 FR-9a). A track with no boundaries trivially
+// qualifies; one guarded by an arm no holder took keeps its instance resident.
+func (ls *loopState) boundariesHeld(trackID string) bool {
+	for _, w := range ls.watchers[trackID] {
+		if !w.held {
+			return false
+		}
+	}
+
+	return true
 }
 
 // boundaryHoster is the narrow view of an activity that carries boundary events.
@@ -87,68 +259,12 @@ func (ls *loopState) armBoundaries(
 		// cast cannot fail — use the panicking form (no unreachable error branch).
 		bev := be.(flow.BoundaryEvent)
 
-		for _, d := range bev.Definitions() {
-			// An Error boundary is not a waiting catch — an error is not a published
-			// trigger that arrives on the hub. It is matched against the failing
-			// activity in the loop's evFailed handling (matchErrorBoundary, FR-9), so
-			// it is never armed as a hub waiter (SRD-029 §4.4). An Escalation
-			// boundary is the same: an escalation is not a hub-published trigger but
-			// climbs the throwing execution's scope chain, resolved at the throw site
-			// by matchEscalationScopeChain (SRD-058 FR-2/FR-5). A Compensation
-			// boundary is not even a live subscription (ADR-006 §2.3) — it becomes
-			// ELIGIBLE at the activity's completion, recorded into the completion
-			// ledger and resolved at throw time (SRD-059 FR-3).
-			// A Cancel boundary is the same class: Cancel is a direct-resolution
-			// event, not a hub-published trigger — it is a model-declared
-			// Transaction exit the abort routes to via finalizeTransaction /
-			// cancelBoundaryOn (ADR-028 §2.4, SRD-061 FR-6), never a hub waiter.
-			if d.Type() == flow.TriggerError ||
-				d.Type() == flow.TriggerEscalation ||
-				d.Type() == flow.TriggerCompensation ||
-				d.Type() == flow.TriggerCancel {
-				continue
-			}
-
-			w := &boundaryWatch{host: t, boundary: bev, def: d}
-
-			// A Conditional boundary is loop-owned (SRD-048 FR-15): no hub
-			// registration — its condWatch is armed below, once the watch list
-			// is in ls.watchers (armedFor must see it if the arm-time
-			// evaluation fires immediately).
-			if d.Type() == flow.TriggerConditional {
-				w.loopOwned = true
-				ws = append(ws, w)
-
-				ls.reportBoundaryPhase(w, observability.PhaseArmed)
-
-				continue
-			}
-
-			if err := ls.inst.RegisterEvent(w, d); err != nil {
-				werr := errs.New(
-					errs.M("arm boundary %q on activity %q failed",
-						bev.ID(), node.ID()),
-					errs.C(errorClass, errs.OperationFailed),
-					errs.E(err))
-
-				ls.inst.fail(werr)
-				ls.stopAll()
-
-				return
-			}
-
-			ws = append(ws, w)
-
-			// The boundary now guards the activity's execution window (SRD-041
-			// §3.4).
-			ls.inst.report(observability.Fact{
-				Kind:     observability.KindBoundary,
-				Phase:    observability.PhaseArmed,
-				NodeID:   bev.ID(),
-				NodeName: bev.Name(),
-				Details:  map[string]string{observability.AttrEventDefinitionID: d.ID()},
-			})
+		armed, ok := ls.armOne(t, node, bev)
+		if !ok {
+			return // the instance is failing — armOne reported it
 		}
+
+		ws = append(ws, armed...)
 	}
 
 	if len(ws) > 0 {
@@ -163,6 +279,118 @@ func (ls *loopState) armBoundaries(
 			return // evaluation failure — the instance is stopping
 		}
 	}
+
+	// A boundary whose recorded deadline already passed fires NOW, for the
+	// same reason and by the same route as an arm-time-true conditional: the
+	// event has happened, so the token forks at the boundary with the guarded
+	// track as its parent — interrupting cancels that parent, non-interrupting
+	// leaves it running. Waiting for a re-armed waiter to notice a deadline
+	// that is already behind us would only add a window in which the instance
+	// could release again with the fire still pending (SRD-071 FR-9a).
+	for _, w := range ws {
+		if w.due {
+			ls.fireBoundary(ctx, trackEvent{
+				track: t, node: w.boundary, eDef: w.def,
+			})
+		}
+	}
+}
+
+// armOne builds the watches for ONE boundary event's definitions, reporting
+// false when a hub registration failed (the instance is then failing). Split
+// out of armBoundaries to keep each within the complexity budget.
+func (ls *loopState) armOne(
+	t *track, node flow.Node, bev flow.BoundaryEvent,
+) ([]*boundaryWatch, bool) {
+	var ws []*boundaryWatch
+
+	for di, d := range bev.Definitions() {
+		// An Error boundary is not a waiting catch — an error is not a published
+		// trigger that arrives on the hub. It is matched against the failing
+		// activity in the loop's evFailed handling (matchErrorBoundary, FR-9), so
+		// it is never armed as a hub waiter (SRD-029 §4.4). An Escalation
+		// boundary is the same: an escalation is not a hub-published trigger but
+		// climbs the throwing execution's scope chain, resolved at the throw site
+		// by matchEscalationScopeChain (SRD-058 FR-2/FR-5). A Compensation
+		// boundary is not even a live subscription (ADR-006 §2.3) — it becomes
+		// ELIGIBLE at the activity's completion, recorded into the completion
+		// ledger and resolved at throw time (SRD-059 FR-3).
+		// A Cancel boundary is the same class: Cancel is a direct-resolution
+		// event, not a hub-published trigger — it is a model-declared
+		// Transaction exit the abort routes to via finalizeTransaction /
+		// cancelBoundaryOn (ADR-028 §2.4, SRD-061 FR-6), never a hub waiter.
+		if d.Type() == flow.TriggerError ||
+			d.Type() == flow.TriggerEscalation ||
+			d.Type() == flow.TriggerCompensation ||
+			d.Type() == flow.TriggerCancel {
+			continue
+		}
+
+		w := &boundaryWatch{
+			host: t, boundary: bev, def: d, defIndex: di,
+		}
+
+		// Pin the firing plan BEFORE registering: the waiter reads the
+		// hint while it builds (SRD-071 FR-9a).
+		ls.planBoundary(w)
+
+		// A RESTORED deadline already in the past means this boundary
+		// fired while the instance was released or down. There is nothing
+		// left to wait for, so it is neither registered nor held: the
+		// fork simply runs, below, once the watch list is in place.
+		if w.hinted && !w.deadline.After(ls.inst.now()) {
+			w.due = true
+			ws = append(ws, w)
+
+			continue
+		}
+
+		// Offer the arm to the engine's durable holders. A held boundary
+		// survives its instance's release; an unheld one keeps the
+		// instance resident (dehydratableParked), so a declined hold
+		// costs residency, never a lost deadline.
+		w.held = ls.holdBoundary(w)
+
+		// A Conditional boundary is loop-owned (SRD-048 FR-15): no hub
+		// registration — its condWatch is armed below, once the watch list
+		// is in ls.watchers (armedFor must see it if the arm-time
+		// evaluation fires immediately).
+		if d.Type() == flow.TriggerConditional {
+			w.loopOwned = true
+			ws = append(ws, w)
+
+			ls.reportBoundaryPhase(w, observability.PhaseArmed)
+
+			continue
+		}
+
+		if err := ls.inst.RegisterEvent(w, d); err != nil {
+			werr := errs.New(
+				errs.M("arm boundary %q on activity %q failed",
+					bev.ID(), node.ID()),
+				errs.C(errorClass, errs.OperationFailed),
+				errs.E(err))
+
+			ls.inst.fail(werr)
+			ls.stopAll()
+
+			return nil, false
+		}
+
+		ws = append(ws, w)
+
+		// The boundary now guards the activity's execution window (SRD-041
+		// §3.4).
+		ls.inst.report(observability.Fact{
+			Kind:     observability.KindBoundary,
+			Phase:    observability.PhaseArmed,
+			NodeID:   bev.ID(),
+			NodeName: bev.Name(),
+			Details:  map[string]string{observability.AttrEventDefinitionID: d.ID()},
+		})
+	}
+
+	return ws, true
 }
 
 // reportBoundaryPhase emits one KindBoundary fact for a watch — the shared
@@ -186,6 +414,19 @@ func (ls *loopState) reportBoundaryPhase(
 // UnregisterEvent is idempotent, so a watch the hub already removed is a no-op.
 // Called only from the loop goroutine.
 func (ls *loopState) disarmBoundaries(trackID string) {
+	// The arms' engine-level holds go with them (SRD-071 FR-3b applied to
+	// boundaries): the guarded window has closed, so a deadline or
+	// subscription standing for one of these boundaries must not outlive it —
+	// a stale hold would wake a later cycle for a guard that no longer exists.
+	//
+	// ReleaseWaits is all-or-nothing per track, and that is correct here
+	// rather than merely convenient: every path that disarms — the track left
+	// the activity, ended, failed, or its scope was torn down — is a path on
+	// which the track's OWN wait is over too, and already surrendered on
+	// delivery. A non-interrupting boundary fire, the one case where the host
+	// keeps its wait, does not disarm.
+	ls.releaseBoundaryHolds(trackID)
+
 	for _, w := range ls.watchers[trackID] {
 		// A loop-owned (Conditional) watch has no hub entry — its condWatch
 		// is cleared below (SRD-048 FR-15).

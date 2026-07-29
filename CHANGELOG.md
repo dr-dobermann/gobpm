@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A failed wake no longer strands a dehydrated instance (FIX-027).** A
+  dehydrated instance has no goroutines — the engine-held wait (a timer
+  deadline, a subscription, a task hold) *is* its liveness. The engine
+  released that hold **before** attempting the wake, and a wake can fail
+  (an unregistered pinned process version, a checkpoint that will not
+  decode, a rebuild that errors). The instance was then left in the store
+  as in-flight with nothing that would ever wake it, recoverable only by
+  restarting the engine. The hold is now surrendered **only once the wake
+  commits**; a failed wake keeps it and retries after a backoff
+  (`WithWakeRetryBackoff`, defaulting to half the lease window), so the
+  instance recovers by itself as soon as the cause clears — no store scan,
+  no restart. A fired one-shot timer still fires exactly once.
+
 ### Added
 
 - **Typed value extraction — `data.As[T]` (ADR-034 Data-Layer Generics
@@ -18,6 +33,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a silent zero value. ADR-034 also records why the `Value` interface
   family stays dynamic and confines generics to the edges (generic
   constructors, `T`-suffix accessors, registration-time adapters).
+
+- **Instance dehydration & wake-on-trigger — a long timer wait now costs
+  ZERO goroutines (SRD-071, finalizing ADR-007; closes the timer-durability
+  gap).** When every live track of a checkpointed instance is parked on a
+  wait that is both *dehydratable* and *held* by an engine-level holder,
+  the instance **dehydrates**: it takes a final consistent-cut checkpoint,
+  releases **all** its goroutines — the loop and every parked track — and
+  leaves, its checkpoint becoming the wake source. A new engine-level
+  **timer service** holds the absolute deadline on the released instance's
+  behalf (one goroutine for the whole engine, replacing the per-waiter
+  goroutine for released timers) and, at the deadline, rebuilds the
+  instance and **continues** the woken wait: a continuation fork re-enters
+  the wait node with the trigger already in hand and fires *through* it to
+  the outgoing flow — never re-arming. The sharpest invariant:
+  **trigger-present continues, trigger-absent re-arms**, so wake-on-trigger
+  and cold restart recovery share one `Restore` path and differ only by
+  whether a trigger accompanies the hydration. An instance oscillates
+  freely (park → release → wake → continue → release) with the recorded
+  track lineage bounded across cycles, and concurrent triggers hydrate it
+  exactly once. Two `KindInstanceState` facts make it observable at Info:
+  **`Dehydrated`** (the wait kinds it parked on, how many, and
+  `goroutines=0`) and **`Hydrated`** (the waking trigger, the woken wait,
+  and whether the wake continued the flow or completed the instance).
+  Residency is visible through the public API too: `StateDehydrated` names
+  the non-terminal state, `WaitCompletion` keeps blocking across
+  dehydration cycles rather than mistaking a release for completion, and a
+  handle taken before a release follows the instance through its rebuild. Eligibility is a capability the element
+  declares (`Dehydratable`), so it stays data-driven and rolls out
+  element-by-element: today a **one-shot timer more than an hour out**
+  releases (a shorter or repeating one keeps its in-memory waiter), while
+  a **message or signal catch** releases unconditionally (a receive is a
+  pure wait — the engine takes over its subscription, **keyed to the
+  instance's conversation**, so a foreign conversation is filtered exactly
+  as it is for a resident instance and never wakes it, while a correlated
+  one binds its payload and records the keys it derives), and an
+  **Event-Based Gateway** releases when EVERY arm it races is holdable —
+  it is one wait node owning a SET of holds, and the winning arm's trigger
+  withdraws the losers exactly as a resident gateway does, and a **human
+  task** releases too — the task keeps living in the distributor's inbox,
+  so a `Take`/`Complete` hydrates the instance and proceeds normally,
+  under **the task id the human is holding** (a rehydrated task is no
+  longer re-issued under a fresh id — this also makes a task reference
+  survive a restart) and with the instance pinned resident for the
+  duration of the action, so a caller never observes dehydration. An
+  external-worker task never releases (a job in flight is active work) and
+  a conditional catch never does either (its trigger is the instance's own
+  data — nothing external could wake it). No wait is ever released without
+  something that can wake it, and a trigger racing the release is retried
+  against the checkpoint rather than dropped — a trigger is never lost. The
+  zero-config engine is untouched: without `WithRepository` nothing
+  dehydrates. See `examples/dehydration/` — six long waits, one per holder
+  kind, each releasing every goroutine the instance owns and coming back on
+  its trigger; the near-deadline timer stays resident on purpose, showing
+  the threshold from both sides.
+
+  **An armed boundary event is durable state too.** "Approve within 24
+  hours or escalate" is the canonical long wait, and a boundary is not a
+  track — so it was invisible to the release decision and absent from the
+  checkpoint: a released instance lost the escalation outright, and a
+  recovered one silently restarted its clock by re-evaluating the
+  definition. Now an armed boundary takes a holder of its own (the
+  instance releases only when every boundary guarding it is held, the same
+  per-arm rule an Event-Based Gateway applies to its arms), its resolved
+  deadline rides the checkpoint (Schema 2 — additive, and an older
+  document still reads), and a restore re-arms it at the RECORDED
+  deadline. A deadline already passed does not wait again: the token forks
+  at the boundary with the guarded track as its parent, interrupting
+  cancelling it, exactly as a resident boundary fires. One caveat worth
+  knowing: **pin the boundary's own id** (`foundation.WithID`) — unlike a
+  missing node id it does not refuse loudly, it just loses the recorded
+  deadline across engines.
+
+  Two smaller durability defects went with it: a wait's engine-level holds
+  now end with the wait on **every** exit path (a track cancelled by an
+  interrupting boundary kept its deadline or subscription, which could
+  wake a later cycle for a wait that no longer existed), and a track can
+  hold **more than one deadline** — an Event-Based Gateway racing two
+  timers previously kept only the second, so if the lost one was the
+  earlier deadline the gateway fired late.
+
+  Two durability gaps closed along the way: an **event-born instance**
+  (one started by a message or signal) was never checkpointed at all —
+  every launch path now shares one set of engine options — and a wake that
+  raced the instance's own final checkpoint could lose its trigger.
+
 - **Instance checkpoints, save/restore and restart recovery (SRD-070 —
   the first ADR-033 Persistence & State slice).** With an explicitly
   configured repository (`thresher.WithRepository`), every instance

@@ -94,6 +94,30 @@ func TestDocumentValidation(t *testing.T) {
 			require.Contains(t, err.Error(), "unsupported checkpoint schema")
 		})
 
+	// SRD-071 FR-9a/§4.9: the schema guard is an UPPER bound, not equality.
+	// Schema 2 added the armed-boundary set additively, so a Schema-1
+	// document written before the bump still restores — refusing it would
+	// strand every instance an older engine left in the store.
+	t.Run("an older schema still reads",
+		func(t *testing.T) {
+			doc, err := checkpoint.Unmarshal([]byte(
+				`{"schema":1,"instance_id":"i","process_id":"p",` +
+					`"status":"Active","scopes":[],"tracks":[]}`))
+			require.NoError(t, err)
+			require.Empty(t, doc.Boundaries,
+				"a Schema-1 document carries no boundaries — the state the "+
+					"engine that wrote it was in")
+		})
+
+	t.Run("a zero schema is not an old one",
+		func(t *testing.T) {
+			_, err := checkpoint.Unmarshal([]byte(
+				`{"instance_id":"i","process_id":"p",` +
+					`"status":"Active","scopes":[],"tracks":[]}`))
+			require.Error(t, err,
+				"a document that never declared a schema is not a v.1 document")
+		})
+
 	t.Run("nameless checkpoint refused",
 		func(t *testing.T) {
 			_, err := checkpoint.Unmarshal([]byte(

@@ -52,8 +52,10 @@ h, _ := engine.StartLatest(proc.ID())  // one instance; its tracks start running
 
 - `RegisterProcess` validates the model and freezes it as a snapshot. The
   snapshot is a *launch template*, not a durable checkpoint — instance tracks,
-  scopes, and history are not stored in it (durable persistence is future work;
-  see the snapshot notes in [ADR-001](../../design/ADR-001-execution-model.md)).
+  scopes, and history are not stored in it. Durability is a separate concern
+  entirely: with a repository configured, an instance checkpoints into it and
+  can be recovered or rehydrated from that record — see
+  [Persistence & recovery](../operating/persistence.md).
 - Each start clones the snapshot into a fresh instance with its own node graph,
   data plane, and state. Call a start method again for a second, fully
   independent instance.
@@ -88,8 +90,11 @@ Inside the instance the four terms come to life:
 > A wait node (an event catch, a User Task, an external-worker Service Task)
 > **parks** its track rather than blocking a goroutine — the token sits in the
 > `WaitForEvent` state until the awaited thing arrives, then the track resumes.
-> This is why an idle instance holds no busy goroutines. See
-> [How events are processed](events-and-hub.md).
+> This is why an idle instance holds no busy goroutines — and, with a
+> repository configured, an instance whose every track is parked on a held,
+> dehydratable wait releases **all** of them and leaves entirely, its checkpoint
+> the wake source. See [How events are processed](events-and-hub.md) and
+> [Dehydration](../operating/persistence.md).
 
 ## Run it
 
@@ -152,6 +157,7 @@ tolerate unknown values, because the set grows additively as new subsystems land
 | `StateCompleted` | `"Completed"` | all tracks ended normally. |
 | `StateTerminating` | `"Terminating"` | tearing tracks down after a cancel. |
 | `StateTerminated` | `"Terminated"` | finished via cancellation. |
+| `StateDehydrated` | `"Dehydrated"` | released every goroutine while idle on held, dehydratable waits — **not terminal**; a trigger rebuilds it. |
 
 ## The token projections: `TokenView`, `TokenPath`
 

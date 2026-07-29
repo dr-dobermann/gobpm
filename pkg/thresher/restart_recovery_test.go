@@ -408,6 +408,14 @@ func (ac *annCollector) Distribute(
 
 func (ac *annCollector) Withdraw(context.Context, string) error { return nil }
 
+// taskIDs returns a copy of the announced task ids.
+func (ac *annCollector) taskIDs() []string {
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+
+	return append([]string{}, ac.tasks...)
+}
+
 func (ac *annCollector) count() int {
 	ac.mu.Lock()
 	defer ac.mu.Unlock()
@@ -449,8 +457,9 @@ func utProc(t *testing.T, key string) *process.Process {
 }
 
 // TestRestartRecoveryUserTask: a parked human task recovers by
-// RE-ANNOUNCE — the new engine's distributor hears it under a fresh
-// task id (the at-least-once posture).
+// RE-ANNOUNCE — the new engine's distributor hears it under its
+// RECORDED task id (the at-least-once posture; SRD-071 FR-8 made the id
+// survive so a reference a human holds stays valid).
 func TestRestartRecoveryUserTask(t *testing.T) {
 	repo := memrepo.New()
 

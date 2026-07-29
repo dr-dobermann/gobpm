@@ -149,7 +149,9 @@ it is not an error.
 ## Behavior worth knowing
 
 - **Parking is real release, not a spin.** A waiting instance holds no CPU; the
-  track goroutine is released until delivery. This is the single-writer
+  track goroutine is released until delivery — and with a repository configured
+  a fully-idle instance releases **every** goroutine, its loop included, waking
+  from its checkpoint ([Dehydration](../operating/persistence.md)). This is the single-writer
   execution model of ADR-017 — cross-goroutine event delivery is funnelled so
   each instance still has one logical writer.
 - **The hub owns removal.** Single-shot waiters are removed after they fire;

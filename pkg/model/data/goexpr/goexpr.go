@@ -6,6 +6,7 @@ package goexpr
 import (
 	"context"
 	"strconv"
+	"sync"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -25,14 +26,24 @@ type GExpFunc func(ctx context.Context, ds data.Source) (data.Value, error)
 
 // GExpression implements the bpmncommon.FormalInterface.
 // It based on simple go function.
+//
+// Concurrency: one GExpression is SHARED by every instance of the process that
+// declares it — an instance clones the node graph (ADR-009) but not the
+// expression behind it. Evaluate is therefore concurrency-safe: it never
+// mutates the declared result, producing a FRESH value per call, and the
+// last-evaluation bookkeeping that backs Result/IsEvaluated is guarded by m.
 type GExpression struct {
 	src     data.Source
 	result  *data.ItemDefinition
 	gexFunc GExpFunc
+	// last is the value the most recent Evaluate produced — what Result
+	// returns. Guarded by m, like src and evaluated.
+	last data.Value
 	// deps are the read paths declared via WithDependencies, or nil when
 	// the expression declared nothing (data.DependencyLister).
 	deps []string
 	data.Expression
+	m         sync.Mutex
 	evaluated bool
 }
 
@@ -134,24 +145,29 @@ func (ge *GExpression) Language() string {
 // If source isn't empty it substites current ge source.
 // If expression demands external data is should check if
 // source is nil by itself.
+//
+// The returned value is FRESH per call — a clone of the declared result,
+// carrying this evaluation's outcome. The declared result itself is never
+// mutated, so concurrent instances sharing this expression neither race on it
+// nor observe each other's outcome through an aliased value.
 func (ge *GExpression) Evaluate(
 	ctx context.Context,
 	source data.Source,
 ) (data.Value, error) {
-	ge.evaluated = false
-
 	if ge.gexFunc == nil {
+		ge.m.Lock()
+		ge.evaluated = false
+		ge.m.Unlock()
+
 		return nil,
 			errs.New(
 				errs.M("gex_func is empty. GExpression wasn't created properly"),
 				errs.C(errorClass, errs.InvalidState))
 	}
 
-	if source != nil {
-		ge.src = source
-	}
+	src := ge.substituteSource(source)
 
-	res, err := ge.gexFunc(ctx, ge.src)
+	res, err := ge.gexFunc(ctx, src)
 	if err != nil {
 		return nil,
 			errs.New(
@@ -169,7 +185,10 @@ func (ge *GExpression) Evaluate(
 				errs.C(errorClass, errs.OperationFailed))
 	}
 
-	if err := ge.result.Structure().Update(ctx, res.Get(ctx)); err != nil {
+	// The clone carries the DECLARED type, so Update still enforces it — but
+	// it is this call's own value, not the shared declared one.
+	out := ge.result.Structure().Clone()
+	if err := out.Update(ctx, res.Get(ctx)); err != nil {
 		return nil,
 			errs.New(
 				errs.M("result value updating failed"),
@@ -177,14 +196,35 @@ func (ge *GExpression) Evaluate(
 				errs.E(err))
 	}
 
+	ge.m.Lock()
+	ge.last = out
 	ge.evaluated = true
+	ge.m.Unlock()
 
-	return ge.result.Structure(), nil
+	return out, nil
+}
+
+// substituteSource records a non-nil source as the expression's current one
+// (the documented substitution) and returns the source to evaluate against.
+func (ge *GExpression) substituteSource(source data.Source) data.Source {
+	ge.m.Lock()
+	defer ge.m.Unlock()
+
+	ge.evaluated = false
+
+	if source != nil {
+		ge.src = source
+	}
+
+	return ge.src
 }
 
 // Result returns evaluated result of the formal expression.
 // If there is no evaluation was made, an error returned.
 func (ge *GExpression) Result() (data.Value, error) {
+	ge.m.Lock()
+	defer ge.m.Unlock()
+
 	if !ge.evaluated {
 		return nil,
 			errs.New(
@@ -192,7 +232,7 @@ func (ge *GExpression) Result() (data.Value, error) {
 				errs.C(errorClass, errs.InvalidState))
 	}
 
-	return ge.result.Structure(), nil
+	return ge.last, nil
 }
 
 // ResultType returns name of the FormalExpression result type.
@@ -202,6 +242,9 @@ func (ge *GExpression) ResultType() string {
 
 // IsEvaluated returns true if result is ready.
 func (ge *GExpression) IsEvaluated() bool {
+	ge.m.Lock()
+	defer ge.m.Unlock()
+
 	return ge.evaluated
 }
 

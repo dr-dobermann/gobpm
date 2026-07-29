@@ -2,6 +2,7 @@ package thresher
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/instance"
@@ -22,31 +23,51 @@ var ErrNotImplemented = errs.New(
 // exposes only observation — never the instance object itself nor any mutating
 // method, so a host cannot corrupt a running instance.
 type InstanceHandle struct {
-	inst *instance.Instance
+	// inst is the instance object the handle currently speaks for. It is
+	// SWAPPED when the engine rebuilds a dehydrated instance (SRD-071): an
+	// instance's identity outlives its object, so a handle that captured the
+	// first object would answer "Dehydrated" forever while the real instance
+	// ran on and finished.
+	inst atomic.Pointer[instance.Instance]
+	// settled is the terminal signal, owned per instance ID and shared with
+	// every rebuild — closed only when the instance genuinely finishes, never
+	// when it merely releases its goroutines.
+	settled chan struct{}
+}
+
+// current returns the instance object the handle speaks for right now.
+func (h *InstanceHandle) current() *instance.Instance {
+	return h.inst.Load()
+}
+
+// adopt points the handle at a rebuilt instance (the wake path), so callers
+// holding it follow the instance across a dehydration cycle.
+func (h *InstanceHandle) adopt(inst *instance.Instance) {
+	h.inst.Store(inst)
 }
 
 // ID returns the instance id.
 func (h *InstanceHandle) ID() string {
-	return h.inst.ID()
+	return h.current().ID()
 }
 
 // State returns the instance's current lifecycle state from the standard-named,
 // open vocabulary (ADR-013 §2.4); read lock-free. Treat an unknown value
 // gracefully — the set grows additively as deferred states land.
 func (h *InstanceHandle) State() InstanceState {
-	return InstanceState(h.inst.State().String())
+	return InstanceState(h.current().State().String())
 }
 
 // Data returns a read-only reader over the instance's process properties and
 // runtime variables. Read-only by interface (service.DataReader has no mutator).
 func (h *InstanceHandle) Data() service.DataReader {
-	return h.inst.DataReader()
+	return h.current().DataReader()
 }
 
 // Tokens returns a snapshot of where execution currently is — one TokenView per
 // active track (Alive or WaitForEvent). Lock-free (copy-on-write snapshot).
 func (h *InstanceHandle) Tokens() []TokenView {
-	src := h.inst.GetTokens()
+	src := h.current().GetTokens()
 	out := make([]TokenView, 0, len(src))
 
 	for _, t := range src {
@@ -66,7 +87,7 @@ func (h *InstanceHandle) Tokens() []TokenView {
 // "including merged tokens" view; Tokens() stays the live-active snapshot.
 // Lock-free (copy-on-write).
 func (h *InstanceHandle) History() []TokenPath {
-	src := h.inst.TokenHistory()
+	src := h.current().TokenHistory()
 	out := make([]TokenPath, 0, len(src))
 
 	for _, p := range src {
@@ -95,14 +116,19 @@ func (h *InstanceHandle) History() []TokenPath {
 // WaitCompletion blocks until the instance reaches a terminal state (Completed
 // or Terminated) or ctx is done, returning the state observed and the fatal
 // error that stopped the instance (or ctx.Err() on timeout/cancel). It is
-// backed by the instance's terminal done-channel close — a guaranteed,
-// never-dropped signal (ADR-013 §2.2), unlike the lossy observation stream.
+// backed by a terminal signal close — a guaranteed, never-dropped signal
+// (ADR-013 §2.2), unlike the lossy observation stream.
+//
+// A DEHYDRATED instance does not unblock it: releasing the goroutines of an
+// instance waiting on a two-day timer finishes nothing, so the wait continues
+// across as many dehydration/hydration cycles as the instance goes through
+// (SRD-071).
 func (h *InstanceHandle) WaitCompletion(
 	ctx context.Context,
 ) (InstanceState, error) {
 	select {
-	case <-h.inst.Done():
-		return h.State(), h.inst.LastErr()
+	case <-h.settled:
+		return h.State(), h.current().LastErr()
 
 	case <-ctx.Done():
 		return h.State(), ctx.Err()
@@ -116,7 +142,7 @@ func (h *InstanceHandle) WaitCompletion(
 // second call, or Cancel of an already-terminal instance, returns the terminal
 // state at once.
 func (h *InstanceHandle) Cancel(ctx context.Context) (InstanceState, error) {
-	h.inst.Cancel()
+	h.current().Cancel()
 
 	return h.WaitCompletion(ctx)
 }
@@ -147,6 +173,12 @@ const (
 	StateCompleted   InstanceState = "Completed"
 	StateTerminating InstanceState = "Terminating"
 	StateTerminated  InstanceState = "Terminated"
+	// StateDehydrated: the instance is waiting with NO goroutines — it released
+	// them while every track was parked on a held, dehydratable wait, and its
+	// checkpoint is the wake source (SRD-071). It is IN-FLIGHT, not terminal:
+	// a trigger rebuilds it and it returns to Active, so treat it exactly as
+	// you would a running instance that happens to be idle.
+	StateDehydrated InstanceState = "Dehydrated"
 )
 
 // TokenState is the standard-named, OPEN projected token-position vocabulary.

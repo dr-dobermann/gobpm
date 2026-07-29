@@ -2,11 +2,18 @@ package instance
 
 import (
 	"context"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/renv"
+	"github.com/dr-dobermann/gobpm/pkg/set"
+
 	// aliased: the loop's human-task registry field is named `tasks`, which would
 	// otherwise shadow the package name where the job map type is referenced.
 	wtasks "github.com/dr-dobermann/gobpm/pkg/tasks"
@@ -115,6 +122,10 @@ type loopState struct {
 	// stopping is set once by stopAll: the instance is Terminating, late parks
 	// and fires are dropped, and the loop only drains the remaining track ends.
 	stopping bool
+	// dehydrating is set by maybeDehydrate once the instance is fully idle and
+	// every parked track has been released (SRD-071 FR-2): the loop tail then
+	// parks the instance (Dehydrated) instead of settling it Completed/Terminated.
+	dehydrating bool
 }
 
 // newLoopState builds the loop's empty registry state over its instance.
@@ -170,6 +181,14 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	// durable record — created-and-running with its seeded data.
 	ls.checkpointNow(ctx)
 
+	// An instance can be fully idle the moment it starts: every initial track
+	// BORN parked on a held, dehydratable wait (an event-born instance whose
+	// fired start leads straight to a catch; a UserTask as the entry node). No
+	// event will ever arrive to trigger the post-event check below — the loop
+	// would simply block forever holding goroutines it does not need — so the
+	// detector runs once here too (SRD-071 FR-2).
+	ls.maybeDehydrate(ctx)
+
 	done := ctx.Done()
 	for ls.active > 0 {
 		select {
@@ -189,6 +208,7 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 
 			ls.apply(ctx, ev)
 			ls.maybeCheckpoint(ctx, ev.kind)
+			ls.maybeDehydrate(ctx)
 
 		case req := <-inst.taskReq:
 			// A human acting on a parked UserTask (Take/Complete). Serviced on the
@@ -216,6 +236,20 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 		}
 	}
 
+	// Dehydration exit (SRD-071 FR-2): the loop released every goroutine while
+	// idle — the instance is not finishing, it is parking. Set Dehydrated —
+	// which emits the KindInstanceState/Dehydrated fact at Info (FR-10, the
+	// wake counterpart Hydrated rides the engine's wake) — and take the
+	// consistent-cut checkpoint (its tracks are now TrackDehydrated, the
+	// hydration source); do NOT disarm handlers, discard ledgers, or settle a
+	// terminal state — a trigger hydrates it back.
+	if ls.dehydrating {
+		inst.setStateDetailed(Dehydrated, ls.dehydrationDetails())
+		ls.checkpointNow(ctx)
+
+		return
+	}
+
 	// the main flow is done — disarm any still-armed Event Sub-Process handlers
 	// (a normal completion never runs drop, so root-scope handlers are torn
 	// down here; idempotent if a terminate already dropped them). SRD-052 FR-5.
@@ -227,6 +261,12 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 	ls.discardLedgers(inst.sc.root)
 
 	inst.settleFinalState(ls.stopping)
+
+	// The instance is genuinely FINISHED — release anyone waiting on
+	// completion. The dehydration exit above deliberately skips this: a
+	// released instance has not finished, it has merely stopped occupying
+	// goroutines (SRD-071).
+	inst.markSettled()
 
 	// The terminal checkpoint (SRD-070 FR-4): the record flips to its
 	// terminal status. WithoutCancel: a Terminate arrives BY canceling
@@ -295,6 +335,11 @@ func (ls *loopState) stopAll() {
 	ls.inst.setState(Terminating)
 
 	for _, t := range ls.inst.tracks {
+		// withdraw any engine-level holds this wait registered (SRD-071 FR-3):
+		// the instance is finishing, so neither its deadlines nor its
+		// subscriptions may outlive it.
+		t.releaseHolds()
+
 		t.stop()
 		// Cancel the track context so a running ctx-honoring activity (a ServiceTask
 		// blocked in Exec) is interrupted — stopIt is only checked between nodes, not
@@ -372,6 +417,13 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		ls.decScope(ctx, ev.track)
 		ls.flipNotParked(ev.track)
 		ls.clearPosition(ev.track)
+		// a track that ended WITHOUT its wait firing — canceled by an
+		// interrupting boundary, most often — still owns whatever that wait
+		// held, and a deadline or subscription outliving the wait it belongs to
+		// would wake a later cycle for a track that no longer exists (SRD-071
+		// FR-3b). A normal completion already released on delivery, and
+		// releaseHolds is idempotent, so this is a no-op there.
+		ev.track.releaseHolds()
 		// a track that ended while owning a parked UserTask (canceled by an
 		// interrupting boundary or instance terminate) has its task withdrawn and
 		// dropped (SRD-034). A normal completion already removed it.
@@ -414,7 +466,7 @@ func (ls *loopState) apply(ctx context.Context, ev trackEvent) {
 		ls.applyFailed(ctx, ev)
 
 	case evWaiting, evTaskWaiting, evJobWaiting, evCallWaiting, evDeliver,
-		evScopeOpen, evDataCommit:
+		evScopeOpen, evDataCommit, evDehydrated:
 		// the wait/deliver plane — parks, deliveries, and the signals that
 		// re-evaluate or resume them; sub-dispatched to keep apply under the
 		// complexity limit (the applyParked precedent).
@@ -473,6 +525,11 @@ func (ls *loopState) applyScopeAbort(ctx context.Context, ev trackEvent) {
 // Called only by apply, on the loop goroutine.
 func (ls *loopState) applyWaitPlane(ctx context.Context, ev trackEvent) {
 	switch ev.kind {
+	case evDehydrated:
+		// a track's long-wait goroutine was released (SRD-071 FR-1):
+		// account it out, retain its wait record.
+		ls.applyDehydrated(ev.track)
+
 	case evWaiting:
 		ls.onWaiting(ctx, ev)
 
@@ -623,6 +680,9 @@ func nodeIDOf(n flow.Node) string {
 // evEnded.
 func trackEndKind(t *track) trackEventKind {
 	switch {
+	case t.inState(TrackDehydrated):
+		return evDehydrated
+
 	case t.inState(TrackAwaitingMerge):
 		return evAwaiting
 
@@ -728,6 +788,9 @@ func (ls *loopState) applyFailed(ctx context.Context, ev trackEvent) {
 	ls.decScope(ctx, ev.track)
 	ls.flipNotParked(ev.track)
 	ls.clearPosition(ev.track)
+	// the same withdrawal evEnded performs, for the track that failed rather
+	// than ended: its wait is over either way (SRD-071 FR-3b).
+	ev.track.releaseHolds()
 	ls.disarmBoundaries(ev.track.ID())
 }
 
@@ -877,4 +940,202 @@ func (ls *loopState) fireOrJoin(survivorID string, merged []string) {
 	ls.applyMerged(trackEvent{track: survivor, mergedIDs: merged})
 
 	survivor.parkCh <- struct{}{}
+}
+
+// applyDehydrated accounts a track that returned in TrackDehydrated (SRD-071
+// FR-1): its long-wait goroutine was released. It decrements the active count
+// like any terminal event, but — unlike evEnded/evAwaiting — RETAINS every
+// piece of the track's bookkeeping (position, waiting/msgIdx registries, scope
+// counter): the wait is held externally and a trigger re-materializes the track
+// as a continuation fork. The goroutine is gone; the record stays. The track
+// argument is the released track (M2's loop-release reads it).
+func (ls *loopState) applyDehydrated(_ *track) {
+	ls.active--
+}
+
+// dehydrateTrack releases a parked track's goroutine (SRD-071 FR-2): it closes
+// the track's dehydrateCh, which the parked run() select observes to exit in
+// TrackDehydrated. Called only on the loop goroutine. The track record and its
+// wait registries are left intact; the goroutine's return emits evDehydrated.
+func (ls *loopState) dehydrateTrack(t *track) {
+	close(t.dehydrateCh)
+}
+
+// maybeDehydrate releases the instance's goroutines when it is FULLY IDLE
+// (SRD-071 FR-2): every live track is parked on a Dehydratable wait whose kind
+// has an engine holder, no short-lived internal work is outstanding, and the
+// SRD-070 capture guards are clear. It flips each parked track to
+// TrackDehydrated (releasing its goroutine); the loop drains the resulting
+// evDehydrated events to ls.active == 0 and the tail parks the instance. A
+// non-armed instance, an un-held or non-dehydratable wait, an executing or
+// join-parked track, or an in-flight call/MI/sweep keeps the instance resident.
+func (ls *loopState) maybeDehydrate(ctx context.Context) {
+	inst := ls.inst
+	if inst.cpOwner == "" || ls.dehydrating || ls.stopping ||
+		inst.pinnedResident() {
+		return
+	}
+
+	// the SRD-070 capture guards: a cut can't be taken mid-construct.
+	if len(ls.calls) > 0 || len(ls.miGroups) > 0 || len(ls.sweeps) > 0 {
+		return
+	}
+
+	parked := ls.dehydratableParked(ctx)
+	if parked == nil {
+		return // not fully idle, or nothing to release
+	}
+
+	ls.dehydrating = true
+	for _, t := range parked {
+		ls.dehydrateTrack(t)
+	}
+}
+
+// dehydrationDetails describes the residency transition for the operator
+// (SRD-071 FR-10, ADR-007 v.2 §2.7): WHAT the instance is waiting on and how
+// many waits, plus the point of the whole feature — it now holds zero
+// goroutines. "How many of my instances are dehydrated, and on what" is the
+// question this fact exists to answer, so counting transitions is not enough.
+// Names and counts only, never payload.
+func (ls *loopState) dehydrationDetails() map[string]string {
+	kinds := set.New[string]()
+	waits := 0
+
+	for _, t := range ls.inst.tracks {
+		if !t.inState(TrackDehydrated) {
+			continue
+		}
+
+		waits++
+
+		kinds.Add(waitKindOf(t.currentStep().node))
+	}
+
+	names := kinds.All()
+	sort.Strings(names)
+
+	return map[string]string{
+		"wait_kinds": strings.Join(names, ","),
+		"waits":      strconv.Itoa(waits),
+		"goroutines": "0",
+	}
+}
+
+// waitKindOf names the kind of wait a node parks on, for the residency facts.
+// A node's own trigger names it where there is one; everything else falls back
+// to the node's Go type, which reads well enough for an operator (UserTask,
+// EventBasedGateway, …).
+func waitKindOf(node flow.Node) string {
+	if en, ok := node.(flow.EventNode); ok {
+		kinds := set.New[string]()
+		for _, d := range en.Definitions() {
+			kinds.Add(string(d.Type()))
+		}
+
+		if names := kinds.All(); len(names) > 0 {
+			sort.Strings(names)
+
+			return strings.Join(names, "+")
+		}
+	}
+
+	return strings.TrimPrefix(fmt.Sprintf("%T", node), "*")
+}
+
+// dehydratableParked returns the parked tracks to release when the instance is
+// fully idle, or nil if it is not: every live track must be a held, dehydratable
+// TrackWaitForEvent (an executing/join-parked track, or an un-held/
+// non-dehydratable wait, disqualifies the whole instance).
+func (ls *loopState) dehydratableParked(ctx context.Context) []*track {
+	inst := ls.inst
+
+	var parked []*track
+
+	for _, t := range inst.tracks {
+		switch {
+		case t.inState(TrackWaitForEvent):
+			// A track already DISPATCHED to is not idle, even though its state
+			// still reads WaitForEvent: the flip to Ready happens on the track's
+			// own goroutine when it consumes the event. dispatchToParked clears
+			// the waiting entry BEFORE the send, so this is the loop-owned
+			// "a trigger is already on its way" signal. Releasing here would
+			// leave the track selecting between a closed dehydrateCh and a full
+			// evtCh — and a lost trigger every time the former won.
+			if _, stillParked := ls.waiting[t.ID()]; !stillParked {
+				return nil
+			}
+
+			// Every ARMED BOUNDARY guarding this track must be HELD (SRD-071
+			// FR-9a, the eligibility half). A boundary watch is not a track,
+			// so it never reaches waitReleasable — yet an unheld one dies with
+			// the released instance, and "approve within 24h or escalate"
+			// would simply never escalate. This is the same per-arm rule an
+			// Event-Based Gateway already applies to its arms (FR-3a), at the
+			// granularity a boundary needs. The kinds that resolve directly —
+			// Error, Escalation, Compensation, Cancel — never enter this map
+			// at all (armBoundaries skips them), so they cost no residency; a
+			// loop-owned Conditional watch is never holdable and correctly
+			// keeps its instance resident.
+			if !ls.boundariesHeld(t.ID()) {
+				return nil
+			}
+
+			if !ls.waitReleasable(ctx, t) {
+				return nil
+			}
+
+			parked = append(parked, t)
+
+		case t.inState(TrackDehydrated):
+			// already released (a partial prior pass) — retained record.
+
+		case !liveTrackStates[t.currentState()]:
+			// terminal (Ended/Merged/Canceled/Failed) — a retained record.
+
+		default:
+			// live but not a long wait (executing, or a join barrier) — the
+			// instance is doing work; stay resident.
+			return nil
+		}
+	}
+
+	if len(parked) == 0 {
+		return nil
+	}
+
+	return parked
+}
+
+// waitReleasable reports whether a parked track's wait is both eligible
+// (its node declares Dehydratable) and wakeable (an engine holder exists).
+func (ls *loopState) waitReleasable(ctx context.Context, t *track) bool {
+	node := t.currentStep().node
+
+	// the current implementors (UserTask, catches, EBG, ServiceTask) decide
+	// from element data alone and ignore re; a data-driven decision that needs
+	// it would thread a real environment here.
+	d, ok := node.(renv.Dehydratable)
+	if !ok || !d.Dehydratable(ctx, nil) {
+		return false
+	}
+
+	if ls.inst.waitHeld != nil && ls.inst.waitHeld(t) {
+		return true
+	}
+
+	// The element SAYS it may be released but nothing can wake it (ADR-007 v.2
+	// §2.4). Staying resident is the safe answer — never a lost trigger — but
+	// it is silent by nature: the instance simply never releases, and an
+	// operator has no way to tell a deliberate choice from a missing holder.
+	// So say so, once per park, naming the node.
+	ls.inst.Logger().Debug(
+		"a dehydratable wait has no holder — the instance stays resident",
+		"instance_id", ls.inst.ID(),
+		"track_id", t.ID(),
+		"node_id", node.ID(),
+		"node_name", node.Name(),
+		"wait_kind", waitKindOf(node))
+
+	return false
 }

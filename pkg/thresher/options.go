@@ -55,6 +55,7 @@ type thresherConfig struct {
 	suppressStartupConfig bool
 	repoSet               bool
 	leaseTTL              time.Duration
+	wakeBackoff           time.Duration
 }
 
 // Option overrides one engine-level extension at thresher.New. An Option may
@@ -373,6 +374,16 @@ func (c *thresherConfig) Repository() repository.Repository              { retur
 // (ADR-033 §2.8) an armed engine stamps on every checkpoint.
 const DefaultLeaseTTL = 30 * time.Second
 
+// DefaultWakeRetryBackoff is how long the engine waits before re-attempting a
+// wake that failed (FIX-027 §3.2.3). A held wait is a released instance's only
+// way back, so a failed wake keeps its hold and tries again — this is the pause
+// between attempts, which is what stops the retry becoming a spin.
+//
+// Derived from the lease window rather than picked independently: an operator
+// who lengthens the lease is describing a slower-moving deployment, and a retry
+// cadence that outpaced it would just churn.
+const DefaultWakeRetryBackoff = DefaultLeaseTTL / 2
+
 // WithLeaseTTL tunes the ownership-lease window (SRD-070 FR-7): how
 // long a crashed engine's instances stay unclaimable before recovery
 // may take them. Non-positive values are rejected.
@@ -385,6 +396,27 @@ func WithLeaseTTL(d time.Duration) Option {
 		}
 
 		c.leaseTTL = d
+
+		return nil
+	}
+}
+
+// WithWakeRetryBackoff sets the pause before a failed wake is re-attempted
+// (FIX-027). A dehydrated instance is woken by its hold; when the wake fails —
+// an unregistered pinned version, a checkpoint that will not decode — the hold
+// is KEPT and retried after this interval, so the instance self-heals once the
+// cause clears instead of being stranded until the engine restarts.
+//
+// Default: DefaultWakeRetryBackoff.
+func WithWakeRetryBackoff(d time.Duration) Option {
+	return func(c *thresherConfig) error {
+		if d <= 0 {
+			return errs.New(
+				errs.M("WithWakeRetryBackoff: the backoff must be positive"),
+				errs.C(errorClass, errs.InvalidParameter))
+		}
+
+		c.wakeBackoff = d
 
 		return nil
 	}
@@ -426,17 +458,18 @@ var _ renv.EngineRuntime = (*thresherConfig)(nil)
 // thresher.New produces a fully working engine from this (no NewDefault).
 func defaultConfig() thresherConfig {
 	return thresherConfig{
-		logger:     slog.Default(),
-		tracer:     noop.NewTracer(),
-		metrics:    memmetrics.New(),
-		clock:      syscl.New(),
-		repository: memrepo.New(),
-		leaseTTL:   DefaultLeaseTTL,
-		msgBroker:  membroker.New(),
-		authz:      allowall.New(),
-		dispatcher: localdispatcher.New(nil, 0),
-		ruleEngine: gorules.New(),
-		dataStores: memstore.NewRegistry(),
-		taskDist:   interactor.NopDistributor(),
+		logger:      slog.Default(),
+		tracer:      noop.NewTracer(),
+		metrics:     memmetrics.New(),
+		clock:       syscl.New(),
+		repository:  memrepo.New(),
+		leaseTTL:    DefaultLeaseTTL,
+		wakeBackoff: DefaultWakeRetryBackoff,
+		msgBroker:   membroker.New(),
+		authz:       allowall.New(),
+		dispatcher:  localdispatcher.New(nil, 0),
+		ruleEngine:  gorules.New(),
+		dataStores:  memstore.NewRegistry(),
+		taskDist:    interactor.NopDistributor(),
 	}
 }
