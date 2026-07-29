@@ -51,6 +51,36 @@ type Value interface {
 access. `Clone` is why an instance never shares mutable data with its snapshot
 or its siblings.
 
+## Typed extraction — `data.As`
+
+When your code holds a bare `data.Value` (a reader result, a `Record` field, a
+data association's value), extract the payload with `As` — the canonical typed
+idiom — instead of a hand assertion on `Get`:
+
+```go
+// avoid — a mismatch silently yields the zero value
+amount, _ := v.Get(ctx).(int)
+
+// prefer — a mismatch is an ordinary, self-identifying error
+amount, err := data.As[int](ctx, v)
+if err != nil {
+    return fmt.Errorf("reading order amount: %w", err)
+}
+```
+
+```go
+func As[T any](ctx context.Context, v Value) (T, error)
+```
+
+`As` rejects a nil `Value` and, on a type mismatch, returns an error naming
+both the held and the requested type (`"As: value holds string, not int"`) —
+including interface types (`data.As[fmt.Stringer]`). It asserts the payload
+`Get` returns, so on a `Collection` that is the element at the cursor, on a
+`Map` the whole `map[string]T` entry set, on a `Record` the `map[string]any`
+of field payloads. When you already hold a *concrete* generic value
+(`Variable[T]`, `Array[T]`, `Map[T]`), prefer its `T`-suffix accessors
+(`GetT`, `GetAtT`, `EntryT`) — no assertion at all.
+
 ## Collection — the list capability
 
 `Collection` extends `Value` with ordered access, an iteration cursor, and

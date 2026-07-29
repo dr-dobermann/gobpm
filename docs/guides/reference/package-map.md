@@ -47,7 +47,7 @@ you construct; `pkg/model/foundation` is the root every element embeds.
 | `pkg/model/activities` | `activities` | activity/task implementations; `ActivityOption`, `WithCompensation`, `WithMultyInstance`, loop characteristics. |
 | `pkg/model/events` | `events` | event implementations and their triggers; `WithInterrupting`, `WithCorrelationKey`, placement validators. |
 | `pkg/model/gateways` | `gateways` | gateway implementations (exclusive/parallel/inclusive/complex/event-based). |
-| `pkg/model/data` | `data` | the data model — `ItemDefinition`, `ItemAwareElement`, `Property`, `Parameter`, `DataState`, associations, paths, `FormalExpression`. |
+| `pkg/model/data` | `data` | the data model — `ItemDefinition`, `ItemAwareElement`, `Property`, `Parameter`, `DataState`, associations, paths, `FormalExpression`; typed payload extraction `As[T]` (ADR-034). |
 | `pkg/model/data/values` | `values` | the concrete `Value` kinds (`Collection`/`Record`/`Map`) and path helpers (`SetPath`, `Walk`, `DiffValues`). |
 | `pkg/model/data/adapters` | `adapters` | `Wrap(&yourStruct)` — a live `data.Record` view over a host Go struct (ADR-011 §2.9.5). |
 | `pkg/model/data/goexpr` | `goexpr` | the Go-native `FormalExpression` implementation (a Go func as the evaluation core). |

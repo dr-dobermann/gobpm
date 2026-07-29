@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Typed value extraction — `data.As[T]` (ADR-034 Data-Layer Generics
+  Policy, SRD-072).** The canonical typed idiom for reading a payload out
+  of a bare `data.Value`: `data.As[int](ctx, v)` replaces the
+  discard-prone hand assertion `v.Get(ctx).(int)`. A nil `Value` and a
+  type mismatch return classified, self-identifying errors naming both
+  the held and the requested type (interface types included), instead of
+  a silent zero value. ADR-034 also records why the `Value` interface
+  family stays dynamic and confines generics to the edges (generic
+  constructors, `T`-suffix accessors, registration-time adapters).
 - **Instance checkpoints, save/restore and restart recovery (SRD-070 —
   the first ADR-033 Persistence & State slice).** With an explicitly
   configured repository (`thresher.WithRepository`), every instance
