@@ -3,6 +3,9 @@ package instance
 import (
 	"context"
 	"errors"
+	"time"
+
+	"github.com/dr-dobermann/gobpm/internal/eventproc/eventhub/waiters"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -22,12 +25,68 @@ type boundaryWatch struct {
 	host     *track
 	boundary flow.BoundaryEvent
 	def      flow.EventDefinition
+	// deadline/cycles pin a TIMER boundary's firing plan (SRD-071 FR-9a).
+	// Written once at arm — either resolved from the definition, or taken
+	// from the checkpoint when the arm follows a restore — and read by the
+	// capture (on the loop) and by the waiter through TimerDeadlineHint.
+	// Zero for every non-timer boundary.
+	deadline time.Time
+	cycles   int
+	// defIndex is this definition's position within its boundary event — the
+	// half of the watch's durable identity that a model rebuild reproduces
+	// (see boundaryKey).
+	defIndex int
 	// loopOwned marks a watch with no hub registration — a Conditional
 	// boundary (SRD-048 FR-15): its trigger source is the instance's own
 	// commits, so it is armed as a condWatch in the loop's conditional
 	// registry instead. It still lives in ls.watchers so armedFor and the
 	// disarm lifecycle govern it, but disarm skips the hub unregister.
 	loopOwned bool
+	// hinted marks the plan as RESTORED rather than freshly resolved, so the
+	// waiter pins it instead of re-evaluating. Without this a duration-based
+	// boundary — "escalate 24h from now" — would silently restart its clock
+	// on every rebuild, which is the trap SRD-070 §4.2 closed for a track's
+	// own timer and FR-9a closes here.
+	hinted bool
+}
+
+// TimerDeadlineHint implements waiters.DeadlineHinter for a boundary arm: a
+// RESTORED watch pins its recorded deadline; a freshly armed one hints nothing
+// and the waiter evaluates the definition as usual. The eDef argument is
+// ignored — a watch carries exactly one definition, and its identity is already
+// the key the hub resolved to reach this processor.
+func (w *boundaryWatch) TimerDeadlineHint(string) (time.Time, int, bool) {
+	if !w.hinted {
+		return time.Time{}, 0, false
+	}
+
+	return w.deadline, w.cycles, true
+}
+
+// boundaryKey identifies one armed boundary across a checkpoint round trip.
+// The host track and the boundary node are not enough on their own: one
+// boundary may carry several definitions, each armed as its own watch — hence
+// the definition's INDEX within its boundary.
+//
+// The index, and not the definition's id: ids are minted per model build, so
+// two engines constructing the same process from the same code hold different
+// ones, and a recovering engine would never match a recorded id. Node ids are
+// the operator's contract to pin (ADR-033 §2.8, deployment parity); definition
+// ids are not, and keying on them would silently drop the deadline of any
+// model whose author did not hand-pin them. Definition ORDER within a boundary
+// is model order — the same on both engines by construction.
+type boundaryKey struct {
+	trackID    string
+	boundaryID string
+	defIndex   int
+}
+
+func (w *boundaryWatch) key() boundaryKey {
+	return boundaryKey{
+		trackID:    w.host.ID(),
+		boundaryID: w.boundary.ID(),
+		defIndex:   w.defIndex,
+	}
 }
 
 // ID returns the watch's hub identity, unique per (host track, boundary,
@@ -54,6 +113,37 @@ func (w *boundaryWatch) ProcessEvent(
 	})
 
 	return nil
+}
+
+// planBoundary fixes a timer boundary's firing plan at arm time (SRD-071
+// FR-9a), preferring the RECORDED plan when this arm follows a restore.
+//
+// A recorded plan is consumed on use: the boundary it belongs to is being
+// re-armed exactly once, at the position the checkpoint captured. If the same
+// activity is entered again later — a loop, a retry — that is a genuinely new
+// window and its deadline is resolved afresh, which is what BPMN means by
+// entering an activity.
+//
+// A definition that resolves to nothing (a non-timer boundary, or a timer whose
+// expression cannot be evaluated yet) leaves the plan zero and hints nothing;
+// the waiter then behaves exactly as it did before this existed.
+func (ls *loopState) planBoundary(w *boundaryWatch) {
+	if rec, ok := ls.inst.takeBoundaryPlan(w.key()); ok {
+		w.deadline, w.cycles, w.hinted = rec.Deadline, rec.CyclesLeft, true
+
+		return
+	}
+
+	if w.def.Type() != flow.TriggerTimer {
+		return
+	}
+
+	deadline, cycles, err := waiters.TimerPlan(w.def, w, ls.inst)
+	if err != nil {
+		return
+	}
+
+	w.deadline, w.cycles = deadline, cycles
 }
 
 // boundaryHoster is the narrow view of an activity that carries boundary events.
@@ -87,7 +177,7 @@ func (ls *loopState) armBoundaries(
 		// cast cannot fail — use the panicking form (no unreachable error branch).
 		bev := be.(flow.BoundaryEvent)
 
-		for _, d := range bev.Definitions() {
+		for di, d := range bev.Definitions() {
 			// An Error boundary is not a waiting catch — an error is not a published
 			// trigger that arrives on the hub. It is matched against the failing
 			// activity in the loop's evFailed handling (matchErrorBoundary, FR-9), so
@@ -109,7 +199,13 @@ func (ls *loopState) armBoundaries(
 				continue
 			}
 
-			w := &boundaryWatch{host: t, boundary: bev, def: d}
+			w := &boundaryWatch{
+				host: t, boundary: bev, def: d, defIndex: di,
+			}
+
+			// Pin the firing plan BEFORE registering: the waiter reads the
+			// hint while it builds (SRD-071 FR-9a).
+			ls.planBoundary(w)
 
 			// A Conditional boundary is loop-owned (SRD-048 FR-15): no hub
 			// registration — its condWatch is armed below, once the watch list

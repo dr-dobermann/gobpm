@@ -224,6 +224,13 @@ func (inst *Instance) restoreLedgers(
 func (inst *Instance) restoreTracks(
 	doc *checkpoint.Document, pending *PendingTrigger,
 ) error {
+	// The armed boundaries go in BEFORE the tracks: the loop arms a track's
+	// boundaries as it spawns it, and each arm looks its recorded plan up here
+	// so a duration-based deadline is restored rather than recomputed
+	// (SRD-071 FR-9a). A Schema-1 document carries none and every boundary
+	// simply re-arms fresh, which is what that document was written expecting.
+	inst.seedBoundaryPlans(doc.Boundaries)
+
 	for i := range doc.Tracks {
 		rec := &doc.Tracks[i]
 

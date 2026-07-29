@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
+	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -81,6 +82,12 @@ type Instance struct {
 	// restoredLedgers is the checkpoint-rebuilt compensation ledger the
 	// loop adopts at start (SRD-070 FR-6); nil for a fresh instance.
 	restoredLedgers map[scope.DataPath][]*ledgerEntry
+	// boundaryPlans are the armed-boundary firing plans read back from the
+	// checkpoint (SRD-071 FR-9a), consumed as the loop re-arms each boundary.
+	// Written once by restoreTracks before the loop starts and read only on
+	// the loop goroutine, so it needs no lock. Empty for a fresh instance and
+	// for one restored from a Schema-1 document.
+	boundaryPlans map[boundaryKey]checkpoint.TimerDescriptor
 	foundation.BaseElement
 	observers  []obsReg
 	trackCount atomic.Int64
@@ -137,6 +144,47 @@ func validatedTemplate(
 	}
 
 	return clone, nil
+}
+
+// seedBoundaryPlans loads the recorded armed-boundary plans so the loop's
+// re-arm can pin each deadline instead of recomputing it (SRD-071 FR-9a).
+// Called by restoreTracks before the loop starts.
+func (inst *Instance) seedBoundaryPlans(rr []checkpoint.BoundaryRecord) {
+	if len(rr) == 0 {
+		return
+	}
+
+	inst.boundaryPlans = make(map[boundaryKey]checkpoint.TimerDescriptor, len(rr))
+
+	for _, r := range rr {
+		// A boundary with no timer restores nothing — it re-arms from the
+		// model like any fresh arm. Only the resolved deadline is state the
+		// model cannot reproduce.
+		if r.Timer == nil {
+			continue
+		}
+
+		inst.boundaryPlans[boundaryKey{
+			trackID:    r.HostTrack,
+			boundaryID: r.BoundaryID,
+			defIndex:   r.DefIndex,
+		}] = *r.Timer
+	}
+}
+
+// takeBoundaryPlan returns the recorded plan for one boundary arm and removes
+// it: the plan describes the ONE window the checkpoint captured, so re-entering
+// the same activity later is a new window that resolves its own deadline.
+// Loop goroutine only.
+func (inst *Instance) takeBoundaryPlan(
+	k boundaryKey,
+) (checkpoint.TimerDescriptor, bool) {
+	rec, ok := inst.boundaryPlans[k]
+	if ok {
+		delete(inst.boundaryPlans, k)
+	}
+
+	return rec, ok
 }
 
 // PinResident suppresses dehydration until the matching UnpinResident, so a
