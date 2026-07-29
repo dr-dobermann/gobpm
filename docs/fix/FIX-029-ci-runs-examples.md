@@ -1,7 +1,7 @@
 # FIX-029 «CI builds the examples but never runs them — runtime regressions ship green»
 
 **Type:** FIX (one-shot bug-fix; not rewritten after landing).
-**Status:** Draft v.1 (2026-07-29, branch `fix/engineering-odds-and-ends`, not yet implemented).
+**Status:** Accepted (2026-07-29, branch `fix/engineering-odds-and-ends`, landed).
 **Date:** 2026-07-29.
 **Author:** Ruslan Gabitov.
 **Branch:** `fix/engineering-odds-and-ends` (shared with FIX-028 — the
@@ -185,19 +185,36 @@ belongs.
 
 ## §8 Implementation summary (stage-by-stage actual landings + deltas vs draft)
 
-> ⚠️ TODO: fill AFTER landing; records the implementation history and empirical
-> findings vs the §3 draft.
-
 ### §8.1 Stages by commit (branch `fix/engineering-odds-and-ends`)
 
 | Stage | Commit | Scope | Tests |
 |---|---|---|---|
-| 1 | `<sha>` | §3.2.1–§3.2.2 | the §4.1 gate runs |
+| doc | `6ec07dd` | this document (Draft, amended pre-implementation with the §8.2-1 finding) | — |
+| 1 | `635dc16` | §3.2.1–§3.2.2: `run-examples` + chain + workflow step name | full sweep 46/46 exit 0; both negative probes |
+
+Verification: full sweep **46/46 modules, exit 0, 33s wall** (warm cache —
+`build-all` fills it in the same job); a live hang (`time.Sleep`) is cut with
+`timeout`'s exit 124; a full deadlock (`select {}`) fails even faster —
+the Go runtime detects it (`all goroutines are asleep`, exit 2) before the
+timeout matters; `make ci` green with the run step chained in.
 
 ### §8.2 Empirical findings — where reality diverged from the §3 draft
 
-*TODO after landing (record: full-sweep wall time; any example needing a
-timeout bump or an unexpected skip).*
+1. **The drafted skip-list was unnecessary** (caught pre-implementation, at
+   the owner's prompt): `expression-routing` was assumed stdin-blocking, but
+   `go run . < /dev/null` completes with exit 0 in <20s — `consinp` degrades
+   gracefully on EOF. The Draft was amended before the code commit;
+   `EXAMPLE_RUN_SKIP` ships empty as the extension point.
+2. **The `timeout-minutes: 15 → 30` bump proved unnecessary**: the drafted
+   estimate ("single-digit minutes") assumed cold compiles, but `go run`
+   reuses the cache `build-all` just filled — the measured sweep is 33
+   seconds. The workflow keeps `timeout-minutes: 15`; §3.2.2's bump is
+   superseded by this finding.
+3. **The Go runtime beats the timeout on full deadlocks**: the §4.1 negative
+   probe planned to demonstrate exit 124 on `select {}`, but a total
+   deadlock is runtime-detected (exit 2) — only a *live* hang (a sleeping
+   goroutine, a never-firing wait) needs the timeout. Both shapes fail the
+   gate.
 
 ### §8.3 Backlog (out of FIX-029 scope)
 
