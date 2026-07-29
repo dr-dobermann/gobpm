@@ -244,11 +244,17 @@ The same switch buys **dehydration** — see
 live track sits on a long wait releases *all* of its goroutines, its loop
 included, and the checkpoint becomes the only thing that can wake it. A
 trigger — a timer deadline, a correlated message, a broadcast signal, an
-action on a parked human task, any arm of an event-based gateway — rebuilds
-the instance and continues the flow where it stopped. Ten thousand orders
-waiting three days on a payment cost ten thousand rows, not ten thousand
-running processes. A near-deadline timer stays resident on purpose: the
-round trip has to be worth more than the wait.
+action on a parked human task, any arm of an event-based gateway, **or the
+deadline of a boundary event guarding the wait** — rebuilds the instance and
+continues the flow where it stopped. Ten thousand orders waiting three days
+on a payment cost ten thousand rows, not ten thousand running processes. A
+near-deadline timer stays resident on purpose: the round trip has to be worth
+more than the wait.
+
+"Approve within 24 hours or escalate" therefore keeps both halves of its
+promise: the boundary is held and recorded alongside the task, so the
+escalation survives both the release and a restart — and fires at the
+deadline it was *originally* given, not one recomputed on the way back.
 
 For scripting, see [`examples/script-task/`](examples/script-task/) — a
 **Script Task** runs an embedded Lua file on the pluggable **Script Engine
