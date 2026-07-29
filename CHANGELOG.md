@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A failed wake no longer strands a dehydrated instance (FIX-027).** A
+  dehydrated instance has no goroutines — the engine-held wait (a timer
+  deadline, a subscription, a task hold) *is* its liveness. The engine
+  released that hold **before** attempting the wake, and a wake can fail
+  (an unregistered pinned process version, a checkpoint that will not
+  decode, a rebuild that errors). The instance was then left in the store
+  as in-flight with nothing that would ever wake it, recoverable only by
+  restarting the engine. The hold is now surrendered **only once the wake
+  commits**; a failed wake keeps it and retries after a backoff
+  (`WithWakeRetryBackoff`, defaulting to half the lease window), so the
+  instance recovers by itself as soon as the cause clears — no store scan,
+  no restart. A fired one-shot timer still fires exactly once.
+
 ### Added
 
 - **Typed value extraction — `data.As[T]` (ADR-034 Data-Layer Generics

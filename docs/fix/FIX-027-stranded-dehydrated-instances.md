@@ -1,7 +1,7 @@
 # FIX-027 «A failed wake destroys the hold that was the dehydrated instance's only way back»
 
 **Type:** FIX (one-shot defect remediation; not rewritten after landing).
-**Status:** Draft v.1 (2026-07-29, branch `feat/dehydration`, not yet implemented).
+**Status:** Accepted v.1 (landed 2026-07-29, branch `feat/dehydration`).
 **Date:** 2026-07-29.
 **Author:** Ruslan Gabitov.
 **Branch:** `feat/dehydration` — the defect was introduced by SRD-071 M3–M5 on
@@ -412,28 +412,78 @@ Single-commit revert; no migration, no persisted-format change.
 
 ## §8 Implementation summary (stage-by-stage actual landings + deltas vs draft)
 
-> ⚠️ TODO: fill AFTER landing; records the implementation history and empirical
-> findings vs the §3 draft.
-
 ### §8.1 Stages by commit (branch `feat/dehydration`)
 
 | Stage | Commit | Scope | Tests |
 |---|---|---|---|
-| 1 | `<sha>` | §3.2.1–§3.2.3 | §4.1 |
+| doc | `de0c066` | this document | — |
+| 1 | `a6f5a199` | §3.2.1 `timer_service.go` (`timerHold.firing`, mark-and-settle `fireDue`, `deferHold`, `wake` returns `bool`), §3.2.2 `wake.go` (withdraw moved below `inst.Run`; `hydrateFromTimer` returns the verdict), §3.2.3 `options.go` (`WithWakeRetryBackoff`, `DefaultWakeRetryBackoff = DefaultLeaseTTL/2`) + `thresher.go` wiring | 8 in `wake_retry_test.go` (the §4.1 table + `TestFiringHoldIsNotReentered`, `TestDefaultWakeRetryBackoff`) |
+| 2 | `72070948` | §4.1.2 only — no production change | 1 in `dehydration_starter_overlap_test.go` |
+
+**Verification at landing.** `make ci` exit 0 over three consecutive runs, then
+again at the audit — judged by the gate's own final markers rather than a
+wrapper exit code: `diff-coverage: 97.3% of 911 changed coverable lines
+(min 95%) — PASS`, five modules `No vulnerabilities found`, no aborted step in
+the log tail. Touched functions 100% (`fireDue`, `deferHold`, `newTimerService`,
+`hydrateFromTimer`, `WithWakeRetryBackoff`) except `rebuildAndContinue` at
+91.3%, whose remainder is pre-existing error branches.
+
+The §1 probe re-run against the fix inverts, which is the defect's own
+reproduction turned into proof:
+
+```
+PROBE hold armed before:                     true
+PROBE hold still armed AFTER the failed wake: true   (was: false)
+PROBE record present=true status=Active
+```
 
 ### §8.2 Empirical findings — where reality diverged from the §3 draft
 
-> ⚠️ TODO.
+**The subscription-verdict plumbing was unnecessary.** §3.2.2 planned to give
+`wakeFromSubscription` a success/failure verdict so a foreign-conversation
+message would not keep a subscription retrying. It was never written, because
+the premise was wrong: a hub subscription is **not consumed when it fires**, the
+way a timer hold is. Moving the withdraw below `inst.Run` (§3.2.2) is therefore
+sufficient on its own — a failed wake already leaves the holder subscribed, and
+the next message retries naturally with no cadence to manage.
+`TestFailedRebuildKeepsTheSubscriptionSet` pins it. The general lesson: the two
+holder kinds differ in whether firing *consumes* the hold, and only the
+consuming kind needs a retry policy.
+
+**A regression test was vacuous on the first draft — caught by inverting it.**
+`TestFailedRebuildKeepsTheSubscriptionSet` originally forced its failure with an
+unregistered pinned version. That fails at the snapshot lookup, which sits
+**above** the withdraw *even in the defective order*, so the test passed against
+the unfixed code and proved nothing. It was rewritten to pin a **registered**
+version naming a node that version never had, so `Restore` fails **below** the
+withdraw and the defect is genuinely exercised. Every §4.1 test was then checked
+against a deliberately reverted fix; all four fail there.
+
+This is worth generalizing beyond this doc: **a test written for an ordering bug
+must fail at a point that is actually past the mis-ordered step**, or it tests
+nothing. Asserting the error message alone would not have revealed it.
+
+**A message is still lost on a failed wake; the subscription is not.** The
+broker delivers a message once; if the wake then fails, that message is gone
+even though the holder survives to receive the next one. This is the existing
+at-least-once posture (ADR-016 dedups a redelivered message by key; SRD-070's
+guide already states that messages arriving while an instance is down are never
+accepted and the sender's retry redelivers), so it is unchanged by this fix
+rather than introduced by it — recorded here because the distinction between
+"the trigger is lost" and "the way back is lost" is exactly what §1 is about.
 
 ### §8.3 Backlog (out of FIX-027 scope)
 
-> ⚠️ TODO.
-
----
+- **Cross-engine orphan reclamation.** An instance dehydrated under engine A and
+  orphaned by A's crash is not picked up by an already-running engine B; it
+  waits for a restart. Deliberately out of scope (§3.1.C): that is multi-node
+  coordination, deferred by ADR-007 v.2 §5 and SRD-071 v.1 §4.2 to ADR-008.
+- **Promote-to-ADR candidate** (§7): *irreversible cleanup is ordered after the
+  fallible operation it belongs to.* One more site violating it justifies an ADR
+  rather than a third FIX.
 
 ## §9 Open questions
 
-None. The scope is the single ordering defect; the orphan-sweep idea was
+None. The scope was the single ordering defect; the orphan-sweep idea was
 considered and rejected (§3.1.C) in favour of removing the reason to scan. The
-one tunable — `wakeRetryBackoff`'s default, proposed as a fraction of `leaseTTL`
-— is settled at the approval gate.
+one tunable — `wakeRetryBackoff`'s default — landed as `DefaultLeaseTTL / 2`.

@@ -164,7 +164,11 @@ it is rebuilt.
 A dehydrated instance has no loop to renew its lease, so the lease
 lapses; that is deliberate and harmless on a single engine (the
 in-memory holder owns the wake), and after a crash it is exactly what
-lets restart recovery reclaim the instance. A second engine claiming a
+lets restart recovery reclaim the instance. That fallback is for a
+crashed engine only — a running one never loses a wake source: if a wake
+fails (say the pinned process version is not registered on this engine),
+the hold is **kept and retried**, so the instance recovers by itself once
+the cause clears. A second engine claiming a
 lapsed-lease dehydrated instance is multi-node coordination — a later
 slice.
 

@@ -293,7 +293,11 @@ has no more waits it completes; if it hits another wait it re-dehydrates.
   instance has no loop to renew its lease, so the lease lapses after
   `leaseTTL`. Single-engine (this SRD's scope): harmless — the in-memory
   holder owns the wake, and on an engine crash the lapsed lease correctly
-  lets restart recovery reclaim the checkpoint (SRD-070). A **second
+  lets restart recovery reclaim the checkpoint (SRD-070) — a fallback that
+  applies only to an engine that actually **died**. A live engine never
+  loses a hold: a wake that fails KEEPS its hold and retries it after a
+  backoff, so the instance recovers in place once the cause clears, with
+  no scan of the store and no restart. A **second
   engine** claiming a lapsed-lease dehydrated instance is multi-node
   coordination — deferred to ADR-008 (ADR-007 §5). The dehydrated
   registry is in-memory, single-engine-owned.
