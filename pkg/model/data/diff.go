@@ -4,6 +4,8 @@ import (
 	"context"
 	"reflect"
 	"strconv"
+
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 )
 
 // Change is one entry of a commit-diff: a data path and how it changed
@@ -192,12 +194,22 @@ func diffCollections(changes *[]Change, path string, oldV, newV Collection) {
 	for i := range max(oldN, newN) {
 		var ov, nv any
 
+		var err error
+
 		if i < oldN {
-			ov, _ = oldV.GetAt(ctx, i)
+			if ov, err = oldV.GetAt(ctx, i); err != nil {
+				// i is an int in [0, Count()) — GetAt cannot fail here unless
+				// the Collection contract is violated; surface the corruption
+				// loudly (FIX-028) instead of diffing the slot as nil.
+				errs.Panic(err)
+			}
 		}
 
 		if i < newN {
-			nv, _ = newV.GetAt(ctx, i)
+			if nv, err = newV.GetAt(ctx, i); err != nil {
+				// The same [0, Count()) invariant as the old side (FIX-028).
+				errs.Panic(err)
+			}
 		}
 
 		diffInto(changes, path+"["+strconv.Itoa(i)+"]", ov, nv)

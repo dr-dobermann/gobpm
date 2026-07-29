@@ -1,8 +1,10 @@
 package data_test
 
 import (
+	"context"
 	"testing"
 
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/stretchr/testify/require"
@@ -157,4 +159,34 @@ func TestDiffValues(t *testing.T) {
 			require.Equal(t, tt.want, got)
 		})
 	}
+}
+
+// brokenCollection lies about its contract: Count reports the embedded
+// array's length but GetAt always fails — the FIX-028 corrupted-implementation
+// case the walk must surface loudly instead of diffing the slot as nil.
+type brokenCollection struct {
+	*values.Array[int]
+}
+
+func (b brokenCollection) GetAt(_ context.Context, _ any) (any, error) {
+	return nil, errs.New(errs.M("broken GetAt"))
+}
+
+// TestDiffCollectionsFailFastOnBrokenGetAt is the FIX-028 §4.1 canary: a
+// Collection whose GetAt fails inside the [0, Count()) invariant panics the
+// walk instead of emitting a nil-slot diff.
+func TestDiffCollectionsFailFastOnBrokenGetAt(t *testing.T) {
+	broken := brokenCollection{Array: values.NewArray(1)}
+
+	t.Run("old side", func(t *testing.T) {
+		require.Panics(t, func() {
+			data.DiffValues("order", broken, broken)
+		})
+	})
+
+	t.Run("new side", func(t *testing.T) {
+		require.Panics(t, func() {
+			data.DiffValues("order", values.NewArray[int](), broken)
+		})
+	})
 }
