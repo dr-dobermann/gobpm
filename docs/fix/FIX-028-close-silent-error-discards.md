@@ -1,7 +1,7 @@
 # FIX-028 «Invariant-only errors silently discarded in the diff walk and task parameter access»
 
 **Type:** FIX (one-shot bug-fix; not rewritten after landing).
-**Status:** Draft v.1 (2026-07-29, branch `fix/engineering-odds-and-ends`, not yet implemented).
+**Status:** Accepted (2026-07-29, branch `fix/engineering-odds-and-ends`, landed).
 **Date:** 2026-07-29.
 **Author:** Ruslan Gabitov.
 **Branch:** `fix/engineering-odds-and-ends` (bundles the small engineering-backlog
@@ -248,18 +248,27 @@ Single-commit revert; no data or contract migration.
 
 ## §8 Implementation summary (stage-by-stage actual landings + deltas vs draft)
 
-> ⚠️ TODO: fill AFTER landing; records the implementation history and empirical
-> findings vs the §3 draft.
-
 ### §8.1 Stages by commit (branch `fix/engineering-odds-and-ends`)
 
 | Stage | Commit | Scope | Tests |
 |---|---|---|---|
-| 1 | `<sha>` | §3.2.1–§3.2.4 | 2 |
+| doc | `e291f86` | this document (Draft) | — |
+| 1 | `4bd875e` | §3.2.1–§3.2.4: both guards + both canaries | 2 (the new-side walk canary runs as two subtests) |
+
+Verification: `make ci` green; diff-coverage **100.0% of 17 changed coverable
+lines** (`task.go` 7/7, `diff.go` 10/10); touched functions `diffInto`,
+`diffCollections`, `getParams` at 100%; `conditional-events` and
+`multi-instance-sequential` examples smoke-ran to exit 0.
 
 ### §8.2 Empirical findings — where reality diverged from the §3 draft
 
-*TODO after landing.*
+**One canary covers two branches, not one.** The drafted single
+`TestDiffCollectionsFailFastOnBrokenGetAt` case panicked on the *old*-side
+guard before the new-side guard could ever execute, leaving `diffCollections`
+at 91.7% — the coverage gate caught it. The landed test runs two subtests
+(broken old side; empty old + broken new side) so both §3.2.1 guards are
+exercised. Lesson for symmetric guards: one failing fixture cannot cover both
+arms — the first panic shadows the second.
 
 ### §8.3 Backlog (out of FIX-028 scope)
 
