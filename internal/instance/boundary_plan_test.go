@@ -8,10 +8,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
+	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
 // TestBoundaryPlanRestoredNotReevaluated covers SRD-071 T-15 (FR-9a) at the
@@ -142,4 +144,158 @@ func TestHoldBoundaryDeclines(t *testing.T) {
 		require.False(t, ls.holdBoundary(&boundaryWatch{def: tdef}),
 			"there is no deadline to hand to the timer service")
 	})
+}
+
+// TestBoundaryRecordsCapture covers the capture side of SRD-071 FR-9a: the
+// armed boundaries of LIVE tracks ride the checkpoint, carrying the resolved
+// deadline that a restore must not recompute.
+func TestBoundaryRecordsCapture(t *testing.T) {
+	inst, tr, ls := userTaskArmed(t)
+
+	when := inst.now().Add(24 * time.Hour)
+
+	bev := aBoundary(t)
+
+	ls.watchers[tr.ID()] = []*boundaryWatch{
+		// a timer arm: its deadline is the whole point of the record.
+		{host: tr, boundary: bev, def: bev.Definitions()[0],
+			deadline: when, cycles: 2},
+		// a second arm with no resolved deadline: recorded, but with no
+		// timer — it re-arms from the model, so there is nothing to pin.
+		{host: tr, boundary: bev, def: bev.Definitions()[0], defIndex: 1},
+	}
+
+	recs := ls.boundaryRecords()
+	require.Len(t, recs, 2, "every armed watch of a live track is recorded")
+
+	byIndex := map[int]checkpoint.BoundaryRecord{}
+	for _, r := range recs {
+		byIndex[r.DefIndex] = r
+	}
+
+	timed := byIndex[0]
+	require.Equal(t, tr.ID(), timed.HostTrack)
+	require.Equal(t, bev.ID(), timed.BoundaryID)
+	require.NotNil(t, timed.Timer)
+	require.True(t, when.Equal(timed.Timer.Deadline))
+	require.Equal(t, 2, timed.Timer.CyclesLeft)
+
+	require.Nil(t, byIndex[1].Timer,
+		"an arm with no resolved deadline records none")
+
+	// A watch whose host is no longer live guards nothing, so it is not
+	// written: the capture records what a restore must rebuild.
+	tr.updateState(TrackEnded)
+
+	require.Empty(t, ls.boundaryRecords(),
+		"a dead track's boundaries are not captured")
+}
+
+// aBoundary builds a timer boundary over a throwaway activity — the capture
+// reads only the boundary's identity and the watch's own fields.
+func aBoundary(t *testing.T) flow.BoundaryEvent {
+	t.Helper()
+
+	host, err := activities.NewUserTask("guarded",
+		activities.WithCandidateUsers("op"),
+		activities.WithOutput("result", "string", true),
+		activities.WithoutParams())
+	require.NoError(t, err)
+
+	texpr, err := goexpr.New(nil,
+		data.MustItemDefinition(values.NewVariable(time.Time{})),
+		func(context.Context, data.Source) (data.Value, error) {
+			return values.NewVariable(time.Now().Add(time.Hour)), nil
+		})
+	require.NoError(t, err)
+
+	tdef, err := events.NewTimerEventDefinition(texpr, nil, nil)
+	require.NoError(t, err)
+
+	bev, err := events.NewBoundaryEvent("escalate", host, tdef, true)
+	require.NoError(t, err)
+
+	return bev
+}
+
+// TestPlanBoundary covers the arm-time plan (SRD-071 FR-9a): a RESTORED plan
+// wins and is marked as a hint; otherwise a timer resolves its own deadline
+// and a non-timer resolves nothing.
+func TestPlanBoundary(t *testing.T) {
+	inst, tr, ls := userTaskArmed(t)
+	bev := aBoundary(t)
+
+	t.Run("a restored plan wins and hints", func(t *testing.T) {
+		when := inst.now().Add(48 * time.Hour)
+
+		w := &boundaryWatch{host: tr, boundary: bev, def: bev.Definitions()[0]}
+
+		inst.seedBoundaryPlans([]checkpoint.BoundaryRecord{{
+			HostTrack:  tr.ID(),
+			BoundaryID: bev.ID(),
+			Timer:      &checkpoint.TimerDescriptor{Deadline: when, CyclesLeft: 1},
+		}})
+
+		ls.planBoundary(w)
+
+		require.True(t, w.hinted, "a restored arm pins its recorded deadline")
+		require.True(t, when.Equal(w.deadline))
+		require.Equal(t, 1, w.cycles)
+	})
+
+	t.Run("a fresh timer resolves its own", func(t *testing.T) {
+		w := &boundaryWatch{host: tr, boundary: bev, def: bev.Definitions()[0]}
+
+		ls.planBoundary(w)
+
+		require.False(t, w.hinted, "a freshly resolved plan is not a hint")
+		require.False(t, w.deadline.IsZero(),
+			"the definition resolves a deadline at arm time")
+	})
+
+	t.Run("a non-timer resolves nothing", func(t *testing.T) {
+		sig, err := events.NewSignal("break", nil)
+		require.NoError(t, err)
+
+		sdef, err := events.NewSignalEventDefinition(sig)
+		require.NoError(t, err)
+
+		w := &boundaryWatch{host: tr, boundary: bev, def: sdef}
+
+		ls.planBoundary(w)
+
+		require.True(t, w.deadline.IsZero(), "only a timer carries a deadline")
+	})
+}
+
+// TestHoldBoundaryTakes covers the accepted holds: a timer arm hands its
+// deadline to the engine, a signal arm its subscription. Both make the guarded
+// instance releasable (SRD-071 FR-9a).
+func TestHoldBoundaryTakes(t *testing.T) {
+	inst, tr, ls := userTaskArmed(t)
+
+	holders := newFakeHolders()
+	inst.waitHolders = holders
+
+	bev := aBoundary(t)
+
+	timed := &boundaryWatch{
+		host: tr, boundary: bev, def: bev.Definitions()[0],
+		deadline: inst.now().Add(24 * time.Hour),
+	}
+
+	require.True(t, ls.holdBoundary(timed),
+		"a timer boundary hands its deadline to the engine")
+
+	sig, err := events.NewSignal("break", nil)
+	require.NoError(t, err)
+
+	sdef, err := events.NewSignalEventDefinition(sig)
+	require.NoError(t, err)
+
+	signalled := &boundaryWatch{host: tr, boundary: bev, def: sdef, defIndex: 1}
+
+	require.True(t, ls.holdBoundary(signalled),
+		"a signal boundary hands its subscription to the engine")
+	require.Equal(t, 1, holders.subCount())
 }

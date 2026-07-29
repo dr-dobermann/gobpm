@@ -56,6 +56,10 @@ own evaluated state. The engine's own implementations:
 | Event-Based Gateway | `true` | the wait node is the *gateway*, not its arms — but see below |
 | Service Task (`WithWorker`) | `false` | a job in flight is active work, not a passive wait |
 
+A **boundary event** guarding a wait is held separately from the wait itself,
+and the instance releases only when both are held — see
+[Persistence & recovery](../operating/persistence.md).
+
 Two subtleties worth knowing if you write your own:
 
 - **The Event-Based Gateway answers for the whole race.** It reports `true`
@@ -73,13 +77,20 @@ Two subtleties worth knowing if you write your own:
 ```go
 type WaitHolders interface {
     HoldTimer(instanceID, trackID string, eDef flow.EventDefinition,
-        deadline time.Time, cycles int) error
+        deadline time.Time, cycles int, kind WaitKind) error
     HoldSubscription(instanceID, trackID string, eDef flow.EventDefinition,
-        convKeys []string) error
+        convKeys []string, kind WaitKind) error
     HoldTask(instanceID, trackID, taskID string) error
     ReleaseWaits(instanceID, trackID string)
 }
 ```
+
+`WaitKind` says what the held wait belongs to — `WaitNode` for the wait a token
+is parked on, `WaitBoundary` for a boundary event guarding the activity it sits
+on. The two wake differently: a node's trigger fires *through* that node, so it
+travels with the wake; a boundary's does not belong to the parked node at all,
+so the wake carries no trigger and the boundary fires over the guarded track
+once the instance is back.
 
 **Implemented by the engine, consumed by the instance loop** — you do not
 implement this. It is documented because it explains the guarantee: at arm time
@@ -94,7 +105,9 @@ and retries after `WithWakeRetryBackoff`, so the instance recovers by itself
 once the cause clears.
 
 `ReleaseWaits` withdraws *every* hold a track owns at once — which is also how an
-Event-Based Gateway's losing arms are released when one wins.
+Event-Based Gateway's losing arms are released when one wins. A track really can
+own several: an Event-Based Gateway holds one per arm, and a wait guarded by a
+timer boundary holds its own deadline alongside the boundary's.
 
 ## Writing a dehydratable wait node
 

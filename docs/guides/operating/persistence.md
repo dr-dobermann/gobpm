@@ -94,6 +94,24 @@ Several engines MAY share one repository (ADR-033 §2.8). The rules:
   persistent ids). Two engines building a model from the same source
   *without* pinned ids mint different ids, and recovery refuses, loud.
 
+  **A boundary event is a node, so pin its id too.** This one is easy to
+  miss, because a boundary reads as an attachment to its activity rather
+  than as a step in the flow:
+
+  ```go
+  bnd, err := events.NewBoundaryEvent("escalate", approve, timerDef, true,
+      foundation.WithID("order-escalate")) // ← as much a node id as any other
+  ```
+
+  Unlike a missing node id, this one does **not** refuse loudly. The
+  recovered instance runs; only the boundary's **recorded deadline** is
+  lost, because the recovering engine cannot match the record to a
+  boundary whose id it minted differently. The boundary then re-arms by
+  re-evaluating its definition — so "escalate 24 hours from now" quietly
+  becomes 24 hours from the *recovery*, and an instance recovered often
+  enough never escalates at all. Pin the id and the deadline survives
+  exactly.
+
 ## Dehydration: a long wait costs no goroutines
 
 An instance waiting on a **long timer** does not need to stay in memory.
@@ -147,13 +165,31 @@ from, so nothing ever releases). What releases today:
   rehydrated task is never re-issued under a new one — and the instance
   is held in memory for the duration of the action, so a caller never
   sees dehydration at all.
+- **A wait guarded by a boundary event** — released when the boundary is
+  held too. A boundary is not a track, so it is easy to forget that it
+  is also a wait: "approve within 24 hours or escalate" is *two* things
+  to wake for, and releasing the instance while only the task was held
+  would drop the escalation on the floor. So an armed boundary takes a
+  holder of its own, and the instance releases only when every boundary
+  guarding it is held — the same per-arm rule an Event-Based Gateway
+  applies to its arms.
+
+  When the boundary's deadline arrives, the rebuilt instance re-arms it
+  at its **recorded** deadline. Since that moment has already passed, it
+  does not wait again: the token forks at the boundary event with the
+  guarded track as its parent — interrupting cancels that parent (the
+  task is withdrawn), non-interrupting leaves it running — exactly as a
+  resident boundary fires. Boundary kinds that resolve directly rather
+  than waiting (Error, Escalation, Compensation, Cancel) arm nothing and
+  cost no residency.
 - **Everything else** — resident. An **external-worker** task never
   releases (a job in flight is active work, not a passive wait); a
   **conditional** catch never releases — its trigger is the instance's
-  own data, so there would be nothing external to wake it. An instance
-  releases only when *every* live track qualifies, so one resident wait
-  keeps the whole instance in memory. No wait is ever released without
-  something that can wake it — a trigger is never lost.
+  own data, so there would be nothing external to wake it, and the same
+  applies to a conditional *boundary*. An instance releases only when
+  *every* live track qualifies, so one resident wait keeps the whole
+  instance in memory. No wait is ever released without something that
+  can wake it — a trigger is never lost.
 
 A dehydrated instance is still **in flight**, and the API says so: the
 handle reports `StateDehydrated` (non-terminal), `WaitCompletion` keeps

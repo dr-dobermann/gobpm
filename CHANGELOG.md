@@ -88,6 +88,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its trigger; the near-deadline timer stays resident on purpose, showing
   the threshold from both sides.
 
+  **An armed boundary event is durable state too.** "Approve within 24
+  hours or escalate" is the canonical long wait, and a boundary is not a
+  track — so it was invisible to the release decision and absent from the
+  checkpoint: a released instance lost the escalation outright, and a
+  recovered one silently restarted its clock by re-evaluating the
+  definition. Now an armed boundary takes a holder of its own (the
+  instance releases only when every boundary guarding it is held, the same
+  per-arm rule an Event-Based Gateway applies to its arms), its resolved
+  deadline rides the checkpoint (Schema 2 — additive, and an older
+  document still reads), and a restore re-arms it at the RECORDED
+  deadline. A deadline already passed does not wait again: the token forks
+  at the boundary with the guarded track as its parent, interrupting
+  cancelling it, exactly as a resident boundary fires. One caveat worth
+  knowing: **pin the boundary's own id** (`foundation.WithID`) — unlike a
+  missing node id it does not refuse loudly, it just loses the recorded
+  deadline across engines.
+
+  Two smaller durability defects went with it: a wait's engine-level holds
+  now end with the wait on **every** exit path (a track cancelled by an
+  interrupting boundary kept its deadline or subscription, which could
+  wake a later cycle for a wait that no longer existed), and a track can
+  hold **more than one deadline** — an Event-Based Gateway racing two
+  timers previously kept only the second, so if the lost one was the
+  earlier deadline the gateway fired late.
+
   Two durability gaps closed along the way: an **event-born instance**
   (one started by a message or signal) was never checkpointed at all —
   every launch path now shares one set of engine options — and a wake that
