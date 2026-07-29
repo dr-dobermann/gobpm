@@ -83,7 +83,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   something that can wake it, and a trigger racing the release is retried
   against the checkpoint rather than dropped — a trigger is never lost. The
   zero-config engine is untouched: without `WithRepository` nothing
-  dehydrates.
+  dehydrates. See `examples/dehydration/` — six long waits, one per holder
+  kind, each releasing every goroutine the instance owns and coming back on
+  its trigger; the near-deadline timer stays resident on purpose, showing
+  the threshold from both sides.
 
   Two durability gaps closed along the way: an **event-born instance**
   (one started by a message or signal) was never checkpointed at all —

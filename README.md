@@ -239,6 +239,17 @@ with CAS fencing keep zombie engines from ever corrupting state. The
 zero-config engine stays volatile at zero overhead. The guide:
 [**docs/guides/operating/persistence.md**](docs/guides/operating/persistence.md).
 
+The same switch buys **dehydration** — see
+[`examples/dehydration/`](examples/dehydration/): an instance whose every
+live track sits on a long wait releases *all* of its goroutines, its loop
+included, and the checkpoint becomes the only thing that can wake it. A
+trigger — a timer deadline, a correlated message, a broadcast signal, an
+action on a parked human task, any arm of an event-based gateway — rebuilds
+the instance and continues the flow where it stopped. Ten thousand orders
+waiting three days on a payment cost ten thousand rows, not ten thousand
+running processes. A near-deadline timer stays resident on purpose: the
+round trip has to be worth more than the wait.
+
 For scripting, see [`examples/script-task/`](examples/script-task/) — a
 **Script Task** runs an embedded Lua file on the pluggable **Script Engine
 seam**: engines register with the repeatable `WithScriptEngine` (several
