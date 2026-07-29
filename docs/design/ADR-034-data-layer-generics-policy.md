@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-29 |
 | Owner | Ruslan Gabitov |
@@ -271,4 +271,4 @@ None.
 
 | Version | Date | Author | Changes |
 |---|---|---|---|
-| v.1 | 2026-07-29 | Ruslan Gabitov | Initial decision: the `Value` interface family stays dynamic (erasure boundary is inherent to late-bound, heterogeneous BPMN data; Go interfaces cannot carry generic methods); generics are confined to the edges under the named **T-suffix typed-twin convention** (generic constructors, `XxxT` accessors, registration-time adapters); the missing consumer edge is closed by **`data.As[T]`** — nil-guarded, self-identifying typed extraction replacing the discard-prone hand assertion. Non-goals: `Value[T]`, typed plane, codegen accessors, `MustAs`. |
+| v.1 | 2026-07-29 | Ruslan Gabitov | **Accepted** (landed via the accompanying SRD; `make ci` green, diff-coverage 100% of changed lines, the extraction helper at 100% file coverage). Initial decision: the `Value` interface family stays dynamic (erasure boundary is inherent to late-bound, heterogeneous BPMN data; Go interfaces cannot carry generic methods); generics are confined to the edges under the named **T-suffix typed-twin convention** (generic constructors, `XxxT` accessors, registration-time adapters); the missing consumer edge is closed by **`data.As[T]`** — nil-guarded, self-identifying typed extraction replacing the discard-prone hand assertion. Non-goals: `Value[T]`, typed plane, codegen accessors, `MustAs`. |

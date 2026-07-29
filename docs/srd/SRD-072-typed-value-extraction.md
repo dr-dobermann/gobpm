@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-07-29 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-034 v.1](../design/ADR-034-data-layer-generics-policy.md) §2.3 (the typed extraction edge — `data.As[T]`, nil-guarded, self-identifying) |
@@ -184,7 +184,32 @@ family's payload shape.
 
 ## §10 Implementation summary
 
-*Filled at landing.*
+### §10.1 Stages by commit
+
+| Stage | Commit | Scope |
+|---|---|---|
+| ADR-034 v.1 draft | `c670cfc` | `docs/design/ADR-034-data-layer-generics-policy.md` |
+| SRD-072 draft | `cb8c206` | this document |
+| M1 + M2 — helper, tests, docs | `7fdceff` | `pkg/model/data/as.go`, `as_test.go`, `docs/guides/data/value-model.md`, `CHANGELOG.md` |
+| M3 — landing gate + flips + ADR RU twin | *the acceptance commit* | ADR-034 → Accepted (+ `.ru.md` twin), this §10, both status flips |
+
+### §10.2 Deltas vs the draft
+
+None — the landed code matches §3 verbatim; the §6 table was extended with
+the `Map`/`Record`/cursor-element payload rows during pre-approval review
+(draft evolution, not an implementation delta).
+
+### §10.3 Backlog (out of scope)
+
+- Typed positional variants (`AsAt[T]` and kin) and any `MustAs` — each
+  waits for a concrete driver (ADR-034 v.1 §2.3 non-goals).
+- Opportunistic migration of the examples' hand assertions to `As` — per
+  ADR-034 v.1 §3, no sweep; touched examples adopt it as they are edited.
+
+Verification: `make ci` green across modules (lint 0 issues, race tests ok,
+consumer-smoke ✓, govulncheck clean); diff-coverage 100.0% of 21 changed
+coverable lines (min 95%); `as.go` at 100% file coverage; `/check-srd` PASS
+(14 🟢 / 0 🟡 / 0 🔴).
 
 ## Open questions
 
