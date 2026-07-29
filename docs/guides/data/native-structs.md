@@ -185,6 +185,6 @@ the commit-diff reports a `DataChange` fact per changed path:
 ## See also
 
 - Example: [`native-structs`](../../../examples/native-structs/)
-- Related guides: [Reading & writing by path](structural.md) · [Data overview](overview.md) · [Expressions](expressions.md)
+- Related guides: [Reading & writing by path](structural.md) · [Data overview](index.md) · [Expressions](expressions.md)
 - Design: [ADR-011 — process data flow](../../design/ADR-011-process-data-flow.md)
 - Full API: `go doc github.com/dr-dobermann/gobpm/pkg/model/data/adapters`

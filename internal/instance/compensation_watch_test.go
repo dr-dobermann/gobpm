@@ -529,7 +529,7 @@ func TestCompensationNodeByIDNested(t *testing.T) {
 func TestCompensateForkBornThrow(t *testing.T) {
 	require.NoError(t, data.CreateDefaultStates())
 
-	var aRan, undoRan, after1, after2 atomic.Int32
+	var aRan, after1, after2 atomic.Int32
 
 	p, err := process.New("comp-fork-born")
 	require.NoError(t, err)
@@ -549,7 +549,6 @@ func TestCompensateForkBornThrow(t *testing.T) {
 	require.NoError(t, err)
 	bnd, err := events.NewCompensationBoundaryEvent("comp-undoA", a, ced, undoA)
 	require.NoError(t, err)
-	_ = undoRan
 
 	for _, e := range []flow.Element{
 		start, a, fork, throw, afterT, end1, end2, bnd, undoA,

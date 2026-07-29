@@ -5,7 +5,7 @@ description: The BPMN data-typing layer in gobpm — ItemDefinition, ItemAwareEl
 
 # Item definitions & item-aware elements
 
-Below the [value model](overview.md) sits BPMN's data-typing layer: an
+Below the [value model](value-model.md) sits BPMN's data-typing layer: an
 **`ItemDefinition`** says *what shape* a datum has, an **`ItemAwareElement`**
 is the *variable* that carries a value of that shape, a **`Property`** is a
 named item-aware element attached to a process/activity/event, and a
@@ -17,7 +17,7 @@ options, and how you read and write through them.
 > These are model-build types. You wire them up when you declare process
 > properties and task parameters; at run time the engine clones them per
 > instance and the values move through scope. See
-> [Working with data — overview](overview.md) for the runtime data plane.
+> [Working with data — overview](index.md) for the runtime data plane.
 
 ## The layer at a glance
 
@@ -35,7 +35,7 @@ BPMN hats.
 
 ## ItemDefinition — the type
 
-`ItemDefinition` wraps a `Value` (see the [value model](overview.md)) as a
+`ItemDefinition` wraps a `Value` (see the [value model](value-model.md)) as a
 reusable data shape.
 
 ```go
@@ -242,6 +242,6 @@ parallel branches through their operations, and each branch returns an
 ## See also
 
 - Examples: `examples/process-data/`
-- Related guides: [Working with data — overview](overview.md) · [Reading & writing by path](structural.md) · [Data Objects](data-objects.md)
+- Related guides: [Working with data — overview](index.md) · [Reading & writing by path](structural.md) · [Data Objects](data-objects.md)
 - Design: [ADR-010 — Process data model](../../design/ADR-010-process-data-model.md) · [ADR-011 — Process data flow](../../design/ADR-011-process-data-flow.md)
 - Full API: `go doc github.com/dr-dobermann/gobpm/pkg/model/data`
