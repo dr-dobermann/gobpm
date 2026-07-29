@@ -526,7 +526,14 @@ func (t *task) BindOutgoing(oa *data.Association) error {
 // getParams returns a list of the Task parameters input or output according to
 // direction dir.
 func (t *task) getParams(dir data.Direction) []*data.ItemAwareElement {
-	params, _ := t.IoSpec.Parameters(dir)
+	params, err := t.IoSpec.Parameters(dir)
+	if err != nil {
+		// getParams is called only with the data.Input/data.Output constants
+		// (Outputs/Inputs) — Parameters cannot fail here unless the Direction
+		// constants are broken; fail loudly (FIX-028) instead of reporting a
+		// parameterless task.
+		errs.Panic(err)
+	}
 	pp := make([]*data.ItemAwareElement, 0, len(params))
 	for _, p := range params {
 		pp = append(pp, &p.ItemAwareElement)

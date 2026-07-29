@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CI now runs every example end-to-end, not just builds it (FIX-029).**
+  The examples job (and the local `make ci`) gained a `run-examples` step:
+  each of the 46 example modules executes under a timeout with stdin
+  closed, asserting exit 0 — closing the FIX-002 §5 follow-up (a
+  runtime-broken example used to ship green; it happened twice). The
+  measured full sweep costs 33 seconds on the warm build cache.
+- **Invariant-only errors are no longer silently discarded (FIX-028).**
+  The commit-diff collection walk ignored `GetAt` errors (a corrupted
+  `Collection` would silently diff a slot as nil and misfire conditional
+  events), and a task's parameter access ignored the `Parameters` error
+  (surfacing as a parameterless task copying nothing). Both branches are
+  impossible while contracts hold and now fail fast with a classified
+  panic naming the violated invariant. The FIX also closes the repo-wide
+  discard sweep: every remaining bare-discard site is either the
+  documented console carve-out or a comma-ok assertion, recorded in the
+  doc's inventory.
 - **A failed wake no longer strands a dehydrated instance (FIX-027).** A
   dehydrated instance has no goroutines — the engine-held wait (a timer
   deadline, a subscription, a task hold) *is* its liveness. The engine

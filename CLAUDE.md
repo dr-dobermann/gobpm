@@ -69,9 +69,11 @@ all modules. Run it before pushing — if it's green, CI is green.
 
 On GitHub the same set is split into two parallel jobs for PR speed: the
 REQUIRED `check` job runs the core gate (`make ci-core` — the non-example
-modules), and the non-blocking `examples` job sweeps the ~35 `examples/*`
-modules (`make ci-examples` — tidy+lint+build; they carry no tests, and the
-core govulncheck already covers their `replace ../..` dependency graph).
+modules), and the non-blocking `examples` job sweeps the `examples/*`
+modules (`make ci-examples` — tidy+lint+build **+ run**: each example
+executes end-to-end under a timeout asserting exit 0, FIX-029; they carry
+no tests, and the core govulncheck already covers their `replace ../..`
+dependency graph).
 Locally `make ci` still runs BOTH halves — the full gate stays obligatory
 before every push.
 

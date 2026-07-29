@@ -284,15 +284,36 @@ vuln-core:
 	@$(MAKE) vuln MODULES="$(CORE_MODULES)"
 .PHONY: vuln-core
 
-# The examples sweep: tidy + lint + build over every examples/* module. No
-# per-example test loop (the examples carry no tests — `go build` already
-# compiles them) and no per-example govulncheck (each example consumes the
-# library through `replace ../..`, so the core `vuln` scan already covers the
-# shared dependency graph; scanning it 35 more times added minutes of CI for
-# no new signal). Runs as CI's parallel non-blocking job AND inside the local
-# `make ci`.
+# A future example that genuinely blocks on stdin goes here (FIX-029 §5);
+# empty today — consinp degrades gracefully on EOF, and the run loop closes
+# stdin so a read gets EOF, never a terminal hang.
+EXAMPLE_RUN_SKIP :=
+# Generous per-example ceiling: the slowest (timer-driven) examples finish
+# well under it; a hang is cut at the ceiling with timeout's exit 124.
+EXAMPLE_RUN_TIMEOUT := 90s
+
+# run-examples executes every example module end-to-end (FIX-029): a runtime
+# regression — deadlock, panic, model drift — fails the gate that `go build`
+# alone kept green (the FIX-002 class). Stdout is discarded (the examples
+# narrate); stderr stays visible inside the group fold.
+run-examples:
+	@set -e; for dir in $(filter-out $(EXAMPLE_RUN_SKIP),$(EXAMPLE_MODULES)); do \
+		echo "::group::run $$dir"; \
+		(cd $$dir && timeout $(EXAMPLE_RUN_TIMEOUT) $(GO) run . < /dev/null > /dev/null) || exit 1; \
+		echo "::endgroup::"; \
+	done
+.PHONY: run-examples
+
+# The examples sweep: tidy + lint + build + run over every examples/* module.
+# No per-example test loop (the examples carry no tests — the run step
+# executes each `main` end-to-end instead, FIX-029) and no per-example
+# govulncheck (each example consumes the library through `replace ../..`, so
+# the core `vuln` scan already covers the shared dependency graph; scanning it
+# 35 more times added minutes of CI for no new signal). Runs as CI's parallel
+# non-blocking job AND inside the local `make ci`.
 ci-examples:
 	@$(MAKE) tidy-check-all lint-all-modules build-all MODULES="$(EXAMPLE_MODULES)"
+	@$(MAKE) run-examples
 .PHONY: ci-examples
 
 # The core gate — everything the REQUIRED CI job runs, in the same order.
