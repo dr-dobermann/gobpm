@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Status | Draft |
-| Version | v.1 |
-| Date | 2026-07-27 |
+| Version | v.2 |
+| Date | 2026-07-29 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-007 v.2](../design/ADR-007-in-memory-long-waits.md) (the whole mechanism) + [ADR-033 v.2](../design/ADR-033-persistence-and-state.md) §2.4/§2.5 (the durable projection, the wait-holders) |
 | Upstream | [ADR-001 v.6](../design/ADR-001-execution-model.md) §4.7, [ADR-006 v.4](../design/ADR-006-events-and-subscriptions.md), [ADR-013 v.2](../design/ADR-013-instance-observability.md), [ADR-016 v.1](../design/ADR-016-message-correlation.md), [ADR-020 v.1](../design/ADR-020-human-interaction-execution-model.md), [ADR-021 v.1](../design/ADR-021-service-task-execution-model.md) |
@@ -134,6 +134,26 @@ intermediate.
   `Withdrawn` the resident EBG performs. The armed-arm set rides the
   checkpoint (the record already carries `msgDefIDs`; extended to the
   full armed-wait set).
+- **FR-3b — a released wait withdraws EVERY registration it made, on
+  EVERY exit path (v.2).** Arming a wait creates registrations in more
+  than one place — a hub waiter (with its broker subscription), an
+  engine-level hold, a distributor routing entry — and *all* of them are
+  withdrawn when the wait ends, whichever way it ends: fired, released
+  by dehydration, cancelled by an interrupting boundary, or torn down
+  with the instance. A registration that outlives its wait is never
+  benign: a live hub waiter left behind by a release keeps consuming
+  published messages into an abandoned channel — the exact
+  message-stealing `waiters/message.go:255-258` warns about — reports a
+  fire the hub can no longer resolve (an ERROR on a fully successful
+  path), and contradicts the `goroutines=0` this feature reports. As
+  landed at v.1 only two paths withdraw (`track.go:1619` on delivery,
+  `loop.go:341` on teardown): dehydration leaves the hub waiter armed,
+  `evEnded` (`loop.go:414-425`) leaves a boundary-cancelled track's
+  holds behind, and the `taskTracks` registry (`tasks.go:133`) is
+  written and never read or deleted — an unbounded map with one entry
+  per human task the engine ever parks. FR-3b makes withdrawal total:
+  one routine owns it, every exit path calls it, and a registry nothing
+  reads is removed rather than maintained.
 - **FR-4 — wake = hydrate + a direct-fire continuation fork.** When the
   holder receives a trigger for a **dehydrated** instance it: (a)
   `Hydrate`s — rebuilds the instance from its checkpoint (the SRD-070
@@ -186,6 +206,40 @@ intermediate.
   wait (ADR-007 §2.4): its node's `Dehydratable` returns false (FR-1a),
   so the idle detector never releases a job-parked track — the instance
   stays resident until the job reports.
+
+- **FR-9a — armed boundary events are durable state (v.2).** A wait node
+  can be guarded by an **interrupting boundary event** — "approve within
+  24h or escalate" is the canonical BPMN pattern, and it is precisely the
+  long wait this feature exists to serve. At v.1 an armed boundary is
+  invisible to dehydration: `dehydratableParked` (`loop.go:1042`) walks
+  `inst.tracks` only, and a boundary watch is not a track, so the
+  instance releases and the watch's hub waiter dies with it. Probed
+  empirically on a 24h interrupting boundary timer: the instance
+  dehydrates, the clock passes the deadline by an hour, **nothing
+  fires**, and the record sits `Active` with no way back — a silently
+  lost business deadline, the worst failure this feature can produce.
+  The second half is equally wrong: nothing records a boundary's
+  deadline (the checkpoint document carries `Tracks`/`Scopes`/`Ledgers`
+  and no boundary at all), so a track respawned by *any* hydration
+  re-arms through `armBoundaries` (`loop.go:312`) and **re-evaluates**
+  the timer expression — a duration-based boundary silently restarts its
+  clock on every cycle. This is the same trap SRD-070 §4.2 already
+  closed for a track's own timer ("the recorded absolute deadline
+  overrides re-evaluation at restore — a Duration would otherwise
+  restart"); the boundary timer needs the identical treatment.
+
+  FR-9a therefore makes an armed boundary a first-class durable wait:
+  its arm is **recorded in the checkpoint** (host track, boundary node,
+  event definition, absolute deadline), it takes a **holder** like any
+  other wait so its deadline can wake a dehydrated instance, restore
+  **re-arms it at the recorded deadline** rather than re-evaluating,
+  and — the eligibility rule — an instance is released only when every
+  armed boundary is held, exactly as FR-3a already requires of an EBG's
+  arms. Only hub-armed boundary kinds are in scope: Error, Escalation,
+  Compensation and Cancel boundaries are resolved directly rather than
+  waited on (`boundary_watch.go:105-110`), so they arm nothing and hold
+  nothing. This closes the restart-recovery half of the gap as well —
+  a recovered instance's boundary deadlines stop restarting.
 
 ### §2.3 Functional — observability
 
@@ -265,6 +319,24 @@ type timerService struct { /* (instanceID,eDefID)->deadline heap; one goroutine 
 // pkg/observability
 PhaseDehydrated Phase = "Dehydrated" // InstanceState
 PhaseHydrated   Phase = "Hydrated"
+
+// internal/instance/checkpoint — the armed-boundary record (FR-9a, v.2).
+// Schema-2: a Schema-1 document simply carries none, so an instance written
+// before the bump restores exactly as it does today.
+type BoundaryRecord struct {
+    // Timer pins the arm the same way TrackRecord.Timer pins a track's own
+    // wait: the recorded ABSOLUTE deadline overrides re-evaluation at
+    // restore, so a duration-based boundary cannot restart its clock
+    // (SRD-070 §4.2, applied to the boundary).
+    Timer      *TimerDescriptor `json:"timer,omitempty"`
+    HostTrack  string           `json:"host_track"`  // the guarded track
+    BoundaryID string           `json:"boundary_id"` // the boundary node
+    EDefID     string           `json:"edef_id"`
+}
+
+// internal/instance — total withdrawal (FR-3b, v.2). One routine owns every
+// registration a wait made; every exit path calls it.
+func (t *track) withdrawWait(reason withdrawReason)
 ```
 
 Worked trace (T-timer): a process parks on a 2h timer → the wait
@@ -335,6 +407,31 @@ has no more waits it completes; if it hits another wait it re-dehydrates.
   holder-existence guard applies per arm, so an EBG dehydrates only when
   every arm-kind is held (§4.5's incremental rollout, at the arm
   granularity).
+- **§4.8 A boundary is a wait of the guarded track, not a track of its
+  own (v.2).** FR-9a could have been met by giving each armed boundary
+  its own durable identity — a pseudo-track in the checkpoint, released
+  and woken independently. Rejected: a boundary has no token and no
+  lineage, so a track record for it would be a lie the projection layer
+  (`Tokens()`, history) then has to filter back out, and two independent
+  wake paths for one activity re-open the interrupted-versus-completed
+  race the loop currently owns by construction. Decision: an armed
+  boundary is recorded and held **as part of its host track's wait
+  set** — the same generalization FR-3a already made for EBG arms,
+  which is why the eligibility rule reads identically ("released only
+  when every armed wait is held"). The wake, however, is *not* the
+  continuation fork: a boundary firing does not re-enter the guarded
+  node, it **interrupts** it. So a boundary trigger hydrates the
+  instance and is delivered to the loop's existing `fireBoundary`
+  (`boundary_watch.go:237`), which already knows how to cancel the host
+  track and route to the boundary's outgoing flow. One rebuild path, two
+  deliveries — the node's, and the boundary's.
+- **§4.9 Checkpoint Schema-2 is additive (v.2).** FR-9a adds
+  `Boundaries` to the document. A Schema-1 record decodes with none,
+  which is exactly the v.1 behaviour, so no migration is required and a
+  store written before the bump keeps restoring. The bump exists to
+  record the *intent*: a reader of a Schema-2 document may rely on the
+  boundary set being complete, while a Schema-1 document makes no such
+  promise.
 
 ## §6 Test scenarios
 
@@ -352,6 +449,10 @@ has no more waits it completes; if it hits another wait it re-dehydrates.
 | T-10 | facts (`pkg/thresher`) | FR-10: `Dehydrated`/`Hydrated` at Info with details (trigger kind, wait kinds, continued-vs-completed) |
 | T-EBG | event-based gateway (`pkg/thresher`) | FR-1a/FR-3a: an EBG with a timer + message arm dehydrates (unconditional `Dehydratable`, holder set); the message arm firing wakes+continues and the timer arm-holder is withdrawn; a not-yet-held arm keeps it resident |
 | T-11 | example smoke | the dehydration example runs, exit 0, observably dehydrates+wakes |
+| T-12 | total withdrawal (`pkg/thresher`) | FR-3b: a released message wait leaves NO armed hub waiter — the wake produces no orphaned fire (no `waiter isn't found`), and a second publish after the instance completes reaches no stale subscriber |
+| T-13 | withdrawal on boundary-cancel (`internal/instance`) | FR-3b: a track cancelled by an interrupting boundary releases its holds — its deadline/subscription is gone from the engine's registries, so it cannot wake a later cycle |
+| T-14 | a boundary survives dehydration (`pkg/thresher`) | FR-9a: an instance parked on a human task under a 24h interrupting boundary timer dehydrates, and the deadline **wakes it and fires the boundary** — the escalation path runs, the task is withdrawn (the v.1 probe's exact scenario, inverted) |
+| T-15 | a boundary deadline is recorded, not re-evaluated (`internal/instance`) | FR-9a/§4.9: a duration-based boundary re-armed by restore uses the RECORDED absolute deadline; N dehydrate/wake cycles do not move it; a Schema-1 document restores with no boundaries and behaves as v.1 |
 
 ## §7 Milestones
 
@@ -384,6 +485,33 @@ Sliced so the tree is green and correct at each; timer-first is shippable
   observation); the persistence guide gains a dehydration section;
   CHANGELOG; conformance-status #84 closed.
   `feat(thresher): dehydration example and docs (SRD-071 M7)`.
+- **M8 — total withdrawal + the boundary safety guard (v.2).** FR-3b +
+  FR-9a's eligibility half; T-12/T-13. One routine owns every
+  registration a wait made; the release and boundary-cancel paths call
+  it; the unread `taskTracks` registry goes. Ships with the eligibility
+  rule as an interim **guard**: an instance with an armed hub-registered
+  boundary stays resident. That closes the silent deadline loss
+  immediately under the SRD's own "never release a wait nothing can wake"
+  rule, at the cost of residency — which M10 gives back. Surfaced by
+  running the M7 example: every wake worked, and every message wake
+  logged an orphaned fire.
+  `fix(instance): a released wait withdraws every registration (SRD-071 M8)`.
+- **M9 — the boundary arm becomes durable (v.2).** FR-9a's durability
+  half; T-15. The checkpoint records armed boundaries (Schema-2,
+  additive) and restore re-arms them at the **recorded** deadline
+  instead of re-evaluating. No dehydration behaviour changes here — the
+  M8 guard still keeps those instances resident — but this alone fixes
+  the **restart-recovery** half of the gap, where a recovered
+  duration-based boundary silently restarts its clock today.
+  `feat(instance): boundary arms ride the checkpoint (SRD-071 M9)`.
+- **M10 — the boundary holder; dehydration re-enabled (v.2).** FR-9a's
+  liveness half; T-14. An armed boundary takes a holder like any other
+  wait, its trigger hydrates and delivers to `fireBoundary` (§4.8), and
+  the M8 guard is lifted to the real rule — released only when every
+  armed boundary is held. Last, because it consumes M8's withdrawal
+  routine, M9's recorded deadline, and the holder-set shape M5
+  generalized.
+  `feat(instance): armed boundaries survive dehydration (SRD-071 M10)`.
 
 ## §8 Cross-doc
 
@@ -405,6 +533,10 @@ Sliced so the tree is green and correct at each; timer-first is shippable
 - [ ] The zero-config engine is unchanged (NFR-3); crash-while-dehydrated
       recovers (T-9).
 - [ ] The example runs; guide/CHANGELOG/conformance-status synced.
+- [ ] A release leaves no registration behind (FR-3b): the example's own
+      run is ERROR-free, and no engine registry grows across cycles.
+- [ ] An armed boundary survives a dehydration cycle and fires at its
+      RECORDED deadline (FR-9a); a Schema-1 document still restores.
 - [ ] §10 filled.
 
 ## §10 Implementation summary
@@ -421,3 +553,4 @@ Sliced so the tree is green and correct at each; timer-first is shippable
 | Version | Date | Author | Change |
 |---|---|---|---|
 | v.1 | 2026-07-27 | Ruslan Gabitov | Initial draft — implements ADR-007 v.2 on SRD-070's checkpoint: the `TrackDehydrated` goroutine-terminal state, the **`Dehydratable` capability** the wait node declares (data-driven — Timer weighs its deadline, worker false, **EBG true unconditionally ignoring its arms**), the fully-idle detector (`Dehydratable` + holder-existence guard, reusing the capture guards) that releases the loop, the engine dehydrated registry + `Hydrate` reusing `Restore` (one hydration path, trigger-present continues / trigger-absent re-arms), the direct-fire continuation fork with bounded lineage (§4.1), **the holder as the registered `EventProcessor` in a set-per-track** (singleton for a plain wait, multi-arm for an EBG with withdraw-siblings-on-wake), and a wait-holder per kind rolled out independently — timer (engine service, closes #84), message/signal (id-keyed subscription), EBG, human task (distributor completion) — worker jobs stay resident. Residency facts (`Dehydrated`/`Hydrated` at Info). Single-engine scope; multi-node wake deferred to ADR-008 (§4.2). Seven milestones, timer-first shippable. |
+| v.2 | 2026-07-29 | Ruslan Gabitov | Two gaps found while implementing, both amended in rather than split into their own documents — the doc is still Draft, so its requirement set is open. **FR-3b — total withdrawal**: v.1 withdraws a wait's registrations on only two of its four exit paths, so a release leaves the hub waiter armed and broker-subscribed (an orphaned fire on every message wake, a goroutine outliving the `goroutines=0` the release reports, and the message-stealing `waiters/message.go:255-258` warns about), a boundary-cancelled track keeps its holds, and the `taskTracks` registry is written but never read or deleted. **FR-9a — durable armed boundaries**: an armed interrupting boundary is invisible to the release decision and absent from the checkpoint, so a dehydrated instance's boundary never fires (probed: a 24h escalation timer, the clock advanced an hour past it, nothing — the record left `Active` with no way back) and any hydration re-evaluates the deadline instead of restoring it, silently restarting a duration-based boundary — the same trap SRD-070 §4.2 closed for a track's own timer. Adds §4.8 (a boundary is a wait of its host track, not a track of its own — its wake interrupts rather than continues), §4.9 (Schema-2 is additive), T-12…T-15, and milestones M8/M9/M10 — sliced so the silent deadline loss is closed by a stay-resident guard in M8, durability lands in M9 (which alone fixes the restart-recovery half), and M10 gives residency back once boundaries are held. |
