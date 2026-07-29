@@ -2,9 +2,9 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
-| Version | v.2 |
-| Date | 2026-07-27 |
+| Status | Draft |
+| Version | v.2.1 |
+| Date | 2026-07-29 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md) §4.7 (the long-wait invariant this realizes) |
 | Related | [ADR-006 v.4 Events & Subscriptions](ADR-006-events-and-subscriptions.md) (trigger delivery), [ADR-033 v.1 Persistence & State](ADR-033-persistence-and-state.md) §2.4/§2.5 (the durable projection of this in-memory model), [ADR-013 v.2 Observability](ADR-013-instance-observability.md) (the residency facts), [ADR-020 v.1 Human Interaction](ADR-020-human-interaction-execution-model.md) / [ADR-021 v.1 Service Task](ADR-021-service-task-execution-model.md) (two of the wait-holders) |
@@ -109,6 +109,18 @@ invariant, which also refines restart recovery:
 > the wait. The single discriminator is *whether a pending trigger accompanies
 > the hydration* — the same node, the same entry, two outcomes.
 
+**A boundary's trigger is the exception that proves the rule.** It does not
+belong to the node the token is parked on, so it must NOT travel as that
+node's pending trigger: re-entering the guarded node with a boundary's trigger
+fires the wrong element. A boundary wake is therefore **trigger-absent** — the
+instance rebuilds, its waits re-arm, and the boundary re-arms at its recorded
+deadline. That deadline is already behind us (the boundary fired while the
+instance was away), so the arm does not wait again: the token **forks at the
+boundary event with the guarded track as its parent** — interrupting cancels
+that parent, non-interrupting leaves it running — which is what a boundary
+fire has always meant. The continuation fork and the boundary fork are the
+same machinery pointed at different nodes.
+
 ### 2.4 Which waits release, and who holds them
 
 **Eligibility is a capability the element declares, not a kind the runtime
@@ -138,6 +150,33 @@ holder. An element that declares itself dehydratable for a kind with no holder
 is a mistake the runtime guards — it stays resident and logs, never a lost
 trigger. A single-definition catch/receive node answers from its own definition;
 a task node answers directly.
+
+**A guarded activity has more waits than its token can see.** An interrupting
+boundary event is a wait — "approve within 24 hours **or escalate**" is two
+things to wake for, not one — but it hangs off the activity rather than
+occupying it, so nothing about the *token's* wait describes it. Releasing an
+instance whose task was held while its boundary was not would drop the
+escalation silently: the deadline passes, nothing fires, and the record stays
+in flight with no way back. A missed business deadline that produces no error
+is the worst failure this decision can cause.
+
+So an armed boundary is a **held wait in its own right**, and eligibility is
+per-wait, not per-token: an instance releases only when every wait guarding a
+track — the one it is parked on *and* every boundary over it — has a holder.
+This is the same per-arm rule the Event-Based Gateway already implies, applied
+at the granularity a boundary needs. Boundary kinds that resolve directly
+rather than waiting (Error, Escalation, Compensation, Cancel — matched at the
+throw or failure site, never subscribed) arm nothing and so cost no residency;
+a Conditional boundary is loop-owned and therefore never holdable, keeping its
+instance resident exactly as a Conditional catch does.
+
+A boundary's **deadline is durable state**, not a value to recompute. Re-arming
+reconstructs everything about a boundary from the model except *when* it fires:
+re-evaluating "24 hours from now" at restore yields 24 hours from the
+**restore**, so a duration-based escalation walks forward on every recovery and
+an instance recovered often enough never escalates. The resolved deadline is
+therefore recorded and restored — the same rule the runtime already applies to
+a track's own timer, which the boundary had escaped.
 
 **The Event-Based Gateway is the wait node, not its arms.** An EBG arms several
 catch-events on one track and races them, first-fires-wins, losers
@@ -308,5 +347,6 @@ checkpoint.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
-| v.2 (Accepted) | 2026-07-27 | Ruslan Gabitov | Authored in full as the long-wait workstream lands (the v.1 seed's promise). Decides the in-memory dehydration/wake mechanism: the terminal `TrackDehydrated` state (the track's goroutine exits), two residency levels (resident / fully-idle-dehydrated releasing the loop too), the wake as a **continuation fork** (a fresh track lineage-parented to the dehydrated one, **re-entering the wait node with the trigger present** so fire-time work — message payload binding, output mapping — runs once), and the sharpened invariant **trigger-present continues / trigger-absent re-arms** (which also refines SRD-070 restart recovery). §2.4 makes eligibility a **`Dehydratable` capability the element declares** (data-driven — a Timer stays resident below a deadline threshold, a worker ServiceTask never dehydrates; an **Event-Based Gateway is the wait node and returns true unconditionally, ignoring its arms**, holding a set of arm-holders and withdrawing the losers on wake), composing with the holder (release iff eligible AND every armed kind is held); and **the holder — not the track or instance — is the registered `EventProcessor`** (tagged with instance/track id): the permanent subscriber forks on residency (resident → resume the live track; dehydrated → hydrate + **direct-fire** the wait node from the trigger, no re-register), closing the delivery-at-a-released-loop gap at the root and moving Message correlation onto the holder. The **wait-holder** pattern per kind (engine timer service — #84; hub subscription targeting the holder, id-keyed; distributor completion), rolled out incrementally; worker jobs stay resident (active work, not a wait). One model, two residency levels with ADR-033: no new persistence model — the SRD-070 checkpoint is the hydration source. §2.7 makes residency observable (the `Dehydrated`/`Hydrated` facts at lifecycle volume). Alternatives rejected: block-the-goroutine, resume-the-same-track, start-past-the-wait, event-sourced wakeups. |
+| v.2 | 2026-07-27 | Ruslan Gabitov | Authored in full as the long-wait workstream lands (the v.1 seed's promise). Decides the in-memory dehydration/wake mechanism: the terminal `TrackDehydrated` state (the track's goroutine exits), two residency levels (resident / fully-idle-dehydrated releasing the loop too), the wake as a **continuation fork** (a fresh track lineage-parented to the dehydrated one, **re-entering the wait node with the trigger present** so fire-time work — message payload binding, output mapping — runs once), and the sharpened invariant **trigger-present continues / trigger-absent re-arms** (which also refines SRD-070 restart recovery). §2.4 makes eligibility a **`Dehydratable` capability the element declares** (data-driven — a Timer stays resident below a deadline threshold, a worker ServiceTask never dehydrates; an **Event-Based Gateway is the wait node and returns true unconditionally, ignoring its arms**, holding a set of arm-holders and withdrawing the losers on wake), composing with the holder (release iff eligible AND every armed kind is held); and **the holder — not the track or instance — is the registered `EventProcessor`** (tagged with instance/track id): the permanent subscriber forks on residency (resident → resume the live track; dehydrated → hydrate + **direct-fire** the wait node from the trigger, no re-register), closing the delivery-at-a-released-loop gap at the root and moving Message correlation onto the holder. The **wait-holder** pattern per kind (engine timer service — #84; hub subscription targeting the holder, id-keyed; distributor completion), rolled out incrementally; worker jobs stay resident (active work, not a wait). One model, two residency levels with ADR-033: no new persistence model — the SRD-070 checkpoint is the hydration source. §2.7 makes residency observable (the `Dehydrated`/`Hydrated` facts at lifecycle volume). Alternatives rejected: block-the-goroutine, resume-the-same-track, start-past-the-wait, event-sourced wakeups. |
+| v.2.1 | 2026-07-29 | Ruslan Gabitov | **Boundary events are held waits** — the concept the implementation established, recorded at the layer it belongs to. §2.4: a guarded activity carries more waits than its token can see, so eligibility is per-WAIT, not per-token — an instance releases only when the wait its token is parked on *and* every boundary guarding that track are held. Releasing with only the token's wait held drops the escalation of "approve within 24h or escalate" silently, which is the worst failure this decision can produce. Boundary kinds resolved at the throw/failure site (Error, Escalation, Compensation, Cancel) arm nothing and cost no residency; a Conditional boundary is loop-owned and never holdable. A boundary's resolved **deadline is durable state**: re-evaluating a duration at restore restarts the clock, so an instance recovered often enough never escalates — the rule already applied to a track's own timer, which the boundary had escaped. §2.3: a boundary's trigger does not belong to the parked node, so its wake is **trigger-absent** and the fire is a fork AT the boundary with the guarded track as its parent — the continuation fork and the boundary fork are one machinery pointed at different nodes. Status stays Draft until the branch merges (v.2 was marked Accepted on an unmerged branch; corrected). |
 | v.1 | 2026-06-07 | Ruslan Gabitov | Initial Draft seed — in-memory long-wait release model relocated from ADR-001 v.3 §4.7. Durable version remains with the Persistence & State ADR. Not yet implemented. |
