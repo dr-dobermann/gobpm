@@ -6,6 +6,31 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
+// WaitKind names WHAT a held wait belongs to. The set is closed by the BPMN
+// object model — a trigger either belongs to the wait a token is parked on, or
+// to a boundary event guarding the activity it sits in — so this is a named
+// constant rather than a boolean flag: `WaitBoundary` says what it means at
+// the call site, `true` does not, and no invalid combination can be expressed.
+//
+// It matters because the two wake DIFFERENTLY. A node wait's trigger fires
+// through the parked node itself, so the wake carries it as a pending trigger
+// and the woken track continues from there. A boundary's trigger belongs to
+// the boundary, not to the guarded node: the wake is trigger-ABSENT, the
+// restored boundary re-arms at its recorded deadline, and the fire that
+// follows is a fork at the boundary event with the guarded track as its parent
+// — interrupting cancels that parent, non-interrupting leaves it running —
+// which is precisely what the loop's fireBoundary produces.
+type WaitKind uint8
+
+const (
+	// WaitNode is a wait the token is parked on. The zero value: an
+	// unannotated hold behaves as it always did.
+	WaitNode WaitKind = iota
+	// WaitBoundary is a boundary event guarding the activity the token sits
+	// on (SRD-071 FR-9a).
+	WaitBoundary
+)
+
 // WaitHolders is the engine-level DURABLE holder registry a dehydratable wait
 // registers with at ARM time (ADR-007 v.2 §2.4, SRD-071 FR-3): the trigger
 // source that outlives the instance's goroutines and wakes it on fire. It is
@@ -25,11 +50,14 @@ type WaitHolders interface {
 	// woken timer node through. cycles carries a repeating timer's remaining
 	// count. An error means the hold was NOT taken — the caller must keep the
 	// wait resident (fall back to the in-hub waiter) rather than lose the timer.
+	// kind says whether the deadline belongs to the parked node or to a
+	// boundary guarding it, which decides how the wake delivers it (WaitKind).
 	HoldTimer(
 		instanceID, trackID string,
 		eDef flow.EventDefinition,
 		deadline time.Time,
 		cycles int,
+		kind WaitKind,
 	) error
 
 	// HoldSubscription registers a message/signal wait's hub subscription
@@ -50,6 +78,7 @@ type WaitHolders interface {
 		instanceID, trackID string,
 		eDef flow.EventDefinition,
 		convKeys []string,
+		kind WaitKind,
 	) error
 
 	// HoldTask registers a parked human task against the ENGINE, keyed to

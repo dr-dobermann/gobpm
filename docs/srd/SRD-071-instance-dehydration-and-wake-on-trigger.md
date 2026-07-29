@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | Draft |
-| Version | v.2.2 |
+| Version | v.2.3 |
 | Date | 2026-07-29 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-007 v.2](../design/ADR-007-in-memory-long-waits.md) (the whole mechanism) + [ADR-033 v.2](../design/ADR-033-persistence-and-state.md) §2.4/§2.5 (the durable projection, the wait-holders) |
@@ -441,11 +441,24 @@ has no more waits it completes; if it hits another wait it re-dehydrates.
   which is why the eligibility rule reads identically ("released only
   when every armed wait is held"). The wake, however, is *not* the
   continuation fork: a boundary firing does not re-enter the guarded
-  node, it **interrupts** it. So a boundary trigger hydrates the
-  instance and is delivered to the loop's existing `fireBoundary`
-  (`boundary_watch.go:237`), which already knows how to cancel the host
-  track and route to the boundary's outgoing flow. One rebuild path, two
-  deliveries — the node's, and the boundary's.
+  node, it **interrupts** it — the token forks AT the boundary event
+  with the guarded track as its parent (interrupting cancels that
+  parent, non-interrupting leaves it running), which is exactly what
+  the loop's `fireBoundary` produces.
+
+  So a boundary's hold wakes the instance **trigger-absent** (`WaitKind`
+  on the hold says which; the trigger belongs to the boundary, not to
+  the parked node, and re-entering that node with it would fire the
+  wrong element). The rebuild then re-arms the boundary at its recorded
+  deadline (FR-9a) — and since that deadline is by definition already
+  past, the arm does not register a waiter or take a hold at all: it
+  marks the watch **due** and runs the fork immediately, through the
+  same `fireBoundary` a resident fire takes. This is the arm-time-true
+  Conditional boundary's route (SRD-048 FR-9/FR-15), reused: an event
+  that has already happened fires as the watch list lands, rather than
+  arming a waiter to notice a deadline that is behind us. Waiting for
+  such a waiter would also leave a window in which the instance could
+  release again with the fire still pending.
 - **§4.9 Checkpoint Schema-2 is additive (v.2).** FR-9a adds
   `Boundaries` to the document. A Schema-1 record decodes with none,
   which is exactly the v.1 behaviour, so no migration is required and a
@@ -577,5 +590,6 @@ Sliced so the tree is green and correct at each; timer-first is shippable
 |---|---|---|---|
 | v.1 | 2026-07-27 | Ruslan Gabitov | Initial draft — implements ADR-007 v.2 on SRD-070's checkpoint: the `TrackDehydrated` goroutine-terminal state, the **`Dehydratable` capability** the wait node declares (data-driven — Timer weighs its deadline, worker false, **EBG true unconditionally ignoring its arms**), the fully-idle detector (`Dehydratable` + holder-existence guard, reusing the capture guards) that releases the loop, the engine dehydrated registry + `Hydrate` reusing `Restore` (one hydration path, trigger-present continues / trigger-absent re-arms), the direct-fire continuation fork with bounded lineage (§4.1), **the holder as the registered `EventProcessor` in a set-per-track** (singleton for a plain wait, multi-arm for an EBG with withdraw-siblings-on-wake), and a wait-holder per kind rolled out independently — timer (engine service, closes #84), message/signal (id-keyed subscription), EBG, human task (distributor completion) — worker jobs stay resident. Residency facts (`Dehydrated`/`Hydrated` at Info). Single-engine scope; multi-node wake deferred to ADR-008 (§4.2). Seven milestones, timer-first shippable. |
 | v.2 | 2026-07-29 | Ruslan Gabitov | Two gaps found while implementing, both amended in rather than split into their own documents — the doc is still Draft, so its requirement set is open. **FR-3b — a wait's registrations end with the wait**: v.1 withdraws on only two of the four paths a wait can exit by, so a boundary-cancelled track keeps its holds and the `taskTracks` registry is written but never read or deleted; plus an ordering rule at the hub, so a holder that removes itself during its own fire does not then report that fire as a failure. **FR-9a — durable armed boundaries**: an armed interrupting boundary is invisible to the release decision and absent from the checkpoint, so a dehydrated instance's boundary never fires (probed: a 24h escalation timer, the clock advanced an hour past it, nothing — the record left `Active` with no way back) and any hydration re-evaluates the deadline instead of restoring it, silently restarting a duration-based boundary — the same trap SRD-070 §4.2 closed for a track's own timer. Adds §4.8 (a boundary is a wait of its host track, not a track of its own — its wake interrupts rather than continues), §4.9 (Schema-2 is additive), T-12…T-15, and milestones M8/M9/M10 — sliced so the silent deadline loss is closed by a stay-resident guard in M8, durability lands in M9 (which alone fixes the restart-recovery half), and M10 gives residency back once boundaries are held. |
+| v.2.3 | 2026-07-29 | Ruslan Gabitov | §4.8's wake route corrected during M10, and one defect older than it folded in. The wake is **trigger-absent**, selected by a `WaitKind` carried on the HOLD (`exec.WaitNode` / `exec.WaitBoundary`) rather than on the trigger: a boundary's trigger belongs to the boundary, and re-entering the parked node with it fires the wrong element — the woken instance faulted with "couldn't use past time as a timer" until this was found. The rebuild then re-arms the boundary at its recorded deadline, which is by definition already past, so the arm registers no waiter and takes no hold: it marks the watch DUE and runs the fork at once through `fireBoundary`, reusing the arm-time-true Conditional boundary's route (SRD-048 FR-9/FR-15). Also widens the timer-hold key from `(instance, track)` to include the definition — a pre-M10 defect: an Event-Based Gateway racing TWO timers overwrote the first hold with the second, so if the lost one was the earlier deadline the gateway fired late. `WaitKind` is a named constant rather than a boolean because the set is closed by the BPMN object model and `HoldTimer(…, WaitBoundary)` says at the call site what `true` does not. |
 | v.2.2 | 2026-07-29 | Ruslan Gabitov | §3's `BoundaryRecord` keys the arm by the definition's INDEX within its boundary, not by the definition's id — corrected during M9, where the id version failed end to end. An event-definition id is minted per model build, so the recovering engine's model carries different ones and the recorded id never resolves; keying on it would silently drop the deadline of any model whose author had not hand-pinned definition ids, which is the same silent loss FR-9a exists to close. Node ids remain the operator's parity contract (ADR-033 §2.8) and a boundary event is a node, so `BoundaryID` stays. Also records that §4.9's additive-schema claim requires `Unmarshal`'s guard to become an UPPER bound (`1..CurrentSchema`) rather than equality — as written it rejected every Schema-1 document, the opposite of "nothing migrates". |
 | v.2.1 | 2026-07-29 | Ruslan Gabitov | Corrects FR-3b's first defect, which v.2 diagnosed wrongly. v.2 claimed a released instance leaves its hub waiter armed and broker-subscribed, inferring a leak from the ERROR the example logs on every message wake. It is not a leak: `armWaiters` (`track.go:512-539`) registers an in-hub waiter only for a definition **no holder took**, and for a held message wait the holder *is* the hub-registered processor (`subscription_holder.go:92`) — the instance registers nothing of its own. The actual defect is ordering: the holder wakes the instance synchronously inside its own `ProcessEvent`, the wake's `ReleaseWaits` unregisters that holder, and the hub waiter then reports a fire for a waiter already removed — `WaiterFired` answers `ObjectNotFound` and the waiter logs it as terminal. The fix is the idempotency `UnregisterEvent` already has for the same reason (`eventhub.go:401-409`), not a withdrawal. The requirement stands on its other two defects (the `evEnded` gap, the unread `taskTracks`); the "goroutine outlives `goroutines=0`" and message-stealing claims are withdrawn as unfounded, and T-12 is re-aimed at the real observable. |

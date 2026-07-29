@@ -97,10 +97,13 @@ func TestCancelledWaitReleasesItsHolds(t *testing.T) {
 	t.Cleanup(cancel)
 	require.NoError(t, inst.Run(ctx))
 
-	// the inner receive parks and its subscription is HELD.
-	require.Eventually(t, func() bool { return holders.subCount() == 1 },
+	// TWO subscriptions are held: the inner receive's own wait, and the
+	// SIGNAL BOUNDARY guarding the sub-process — a boundary takes a holder of
+	// its own since SRD-071 M10, which is what lets an instance guarded by one
+	// dehydrate at all.
+	require.Eventually(t, func() bool { return holders.subCount() == 2 },
 		3*time.Second, 5*time.Millisecond,
-		"the parked receive must hand its subscription to a holder")
+		"the parked receive and the armed boundary must both be held")
 
 	var proc eventproc.EventProcessor
 
@@ -120,8 +123,9 @@ func TestCancelledWaitReleasesItsHolds(t *testing.T) {
 	require.NoError(t, inst.LastErr())
 	require.EqualValues(t, 1, exc.Load(), "the exception flow must run")
 
-	// THE ASSERTION: the canceled wait's hold is gone. Before M8 this map
-	// still held the subscription of a track that no longer exists.
+	// THE ASSERTION: nothing is left held. Before M8 the canceled receive's
+	// subscription survived the track that owned it; the boundary's own hold
+	// goes the same way when the boundary disarms (M10).
 	require.Zero(t, holders.subCount(),
-		"a canceled wait must not leave its subscription held")
+		"neither a canceled wait nor a disarmed boundary may stay held")
 }

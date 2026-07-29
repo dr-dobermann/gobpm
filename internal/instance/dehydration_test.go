@@ -18,6 +18,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -455,6 +456,7 @@ func (f *fakeHolders) HoldTimer(
 	_ flow.EventDefinition,
 	deadline time.Time,
 	_ int,
+	_ exec.WaitKind,
 ) error {
 	if f.decline {
 		return errors.New("declined")
@@ -472,6 +474,7 @@ func (f *fakeHolders) HoldSubscription(
 	instanceID, trackID string,
 	eDef flow.EventDefinition,
 	_ []string,
+	_ exec.WaitKind,
 ) error {
 	if f.decline {
 		return errors.New("declined")

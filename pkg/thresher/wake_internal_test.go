@@ -13,6 +13,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/pkg/clock/clocktest"
 	gerrs "github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
@@ -37,11 +38,11 @@ func TestHoldTimerWithoutService(t *testing.T) {
 		WithoutBanner(), WithoutStartupConfig())
 	require.NoError(t, err)
 
-	err = th.HoldTimer("i-1", "t-1", nil, wakeEpoch.Add(time.Hour), 0)
+	err = th.HoldTimer("i-1", "t-1", nil, wakeEpoch.Add(time.Hour), 0, exec.WaitNode)
 	require.Error(t, err, "a volatile engine holds nothing")
 
 	// a subscription hold is declined for the same reason.
-	require.Error(t, th.HoldSubscription("i-1", "t-1", nil, nil))
+	require.Error(t, th.HoldSubscription("i-1", "t-1", nil, nil, exec.WaitNode))
 
 	// the paired withdraw is a no-op, never a panic.
 	th.ReleaseWaits("i-1", "t-1")
@@ -253,12 +254,12 @@ func TestHoldAndReleaseWaits(t *testing.T) {
 
 	sigA, sigB := wakeSignalDef(t, "sig-a"), wakeSignalDef(t, "sig-b")
 
-	require.NoError(t, th.HoldSubscription("i-1", "t-1", sigA, nil))
-	require.NoError(t, th.HoldSubscription("i-1", "t-1", sigB, nil))
-	require.NoError(t, th.HoldSubscription("i-1", "t-2", sigA, []string{"K"}))
+	require.NoError(t, th.HoldSubscription("i-1", "t-1", sigA, nil, exec.WaitNode))
+	require.NoError(t, th.HoldSubscription("i-1", "t-1", sigB, nil, exec.WaitNode))
+	require.NoError(t, th.HoldSubscription("i-1", "t-2", sigA, []string{"K"}, exec.WaitNode))
 
 	require.NoError(t, th.HoldTimer("i-1", "t-1",
-		wakeTimerDef(t), wakeEpoch.Add(time.Hour), 0))
+		wakeTimerDef(t), wakeEpoch.Add(time.Hour), 0, exec.WaitNode))
 
 	th.subMu.Lock()
 	require.Len(t, th.subs, 3, "each armed wait holds its own subscription")
@@ -290,7 +291,7 @@ func TestSubHolderCorrelationKeys(t *testing.T) {
 
 	eDef := wakeMessageDef(t, "payment")
 	require.NoError(t,
-		th.HoldSubscription("i-1", "t-1", eDef, []string{"ORD-1"}))
+		th.HoldSubscription("i-1", "t-1", eDef, []string{"ORD-1"}, exec.WaitNode))
 
 	th.subMu.Lock()
 	h := th.subs[subKey{"i-1", "t-1", eDef.ID()}]
@@ -309,7 +310,7 @@ func TestWakeUnknownInstanceIsLoud(t *testing.T) {
 	defer cancel()
 
 	eDef := wakeSignalDef(t, "ghost-sig")
-	require.NoError(t, th.HoldSubscription("ghost", "t-1", eDef, nil))
+	require.NoError(t, th.HoldSubscription("ghost", "t-1", eDef, nil, exec.WaitNode))
 
 	th.subMu.Lock()
 	h := th.subs[subKey{"ghost", "t-1", eDef.ID()}]
@@ -571,9 +572,9 @@ func TestWakeWithdrawsTheTracksHolds(t *testing.T) {
 
 	// the gateway's armed set: a timer arm and a message arm.
 	require.NoError(t, th.HoldTimer(instID, trackID,
-		wakeTimerDef(t), wakeEpoch.Add(4*time.Hour), 0))
+		wakeTimerDef(t), wakeEpoch.Add(4*time.Hour), 0, exec.WaitNode))
 	require.NoError(t, th.HoldSubscription(instID, trackID,
-		wakeMessageDef(t, "cancel"), nil))
+		wakeMessageDef(t, "cancel"), nil, exec.WaitNode))
 
 	require.Equal(t, 1, len(th.subs), "the message arm is held")
 
@@ -601,7 +602,7 @@ func TestHoldSubscriptionGuards(t *testing.T) {
 		th, cancel := armedWakeEngine(t, "engine-nildef")
 		defer cancel()
 
-		require.Error(t, th.HoldSubscription("i-1", "t-1", nil, nil))
+		require.Error(t, th.HoldSubscription("i-1", "t-1", nil, nil, exec.WaitNode))
 	})
 
 	t.Run("a volatile engine holds nothing", func(t *testing.T) {
@@ -614,7 +615,7 @@ func TestHoldSubscriptionGuards(t *testing.T) {
 		require.NoError(t, th.Run(ctx))
 
 		err = th.HoldSubscription("i-1", "t-1",
-			wakeSignalDef(t, "vol-sig"), nil)
+			wakeSignalDef(t, "vol-sig"), nil, exec.WaitNode)
 		require.Error(t, err, "no checkpoint to wake from — decline")
 		require.Contains(t, err.Error(), "no checkpoints")
 	})
@@ -624,7 +625,7 @@ func TestHoldSubscriptionGuards(t *testing.T) {
 		defer cancel()
 
 		require.NoError(t, th.HoldSubscription("i-1", "t-1",
-			wakeSignalDef(t, "unreg-sig"), nil))
+			wakeSignalDef(t, "unreg-sig"), nil, exec.WaitNode))
 
 		// tearing the hub down first makes the withdraw fail — ReleaseWaits
 		// must absorb it (the hold is gone from the registry regardless).
@@ -867,4 +868,47 @@ func TestTaskActionRetryExhausts(t *testing.T) {
 		retryActor{id: "operator"})
 	require.Error(t, err,
 		"a task action that can never be serviced must report, not hang")
+}
+
+// TestTwoTimerHoldsCoexist covers the widened hold key (SRD-071 M10): a track
+// can own more than one deadline — an Event-Based Gateway racing two timers
+// arms one per arm, and a wait guarded by a timer boundary holds its own
+// alongside the boundary's.
+//
+// Keyed by track alone, as it was through M3–M9, the second hold silently
+// REPLACED the first. When the lost one was the earlier deadline, the wait
+// fired late with nothing in the logs to say why.
+func TestTwoTimerHoldsCoexist(t *testing.T) {
+	th, cancel := armedWakeEngine(t, "engine-two-timers")
+	defer cancel()
+
+	early, late := wakeTimerDef(t), wakeTimerDef(t)
+
+	require.NoError(t, th.HoldTimer("i-1", "t-1", early,
+		wakeEpoch.Add(time.Minute), 0, exec.WaitNode))
+	require.NoError(t, th.HoldTimer("i-1", "t-1", late,
+		wakeEpoch.Add(time.Hour), 0, exec.WaitNode))
+
+	th.timerSvc.mu.Lock()
+	held := len(th.timerSvc.holds)
+	th.timerSvc.mu.Unlock()
+
+	require.Equal(t, 2, held,
+		"both of the track's deadlines are held, not one overwriting the other")
+
+	// the EARLIER deadline is the one the service schedules against.
+	got, ok := th.timerSvc.nearest()
+	require.True(t, ok)
+	require.True(t, wakeEpoch.Add(time.Minute).Equal(got),
+		"the nearest deadline must be the earlier of the two")
+
+	// releasing the track withdraws EVERY deadline it owns — the all-or-
+	// nothing withdrawal ReleaseWaits performs for its subscriptions too.
+	th.ReleaseWaits("i-1", "t-1")
+
+	th.timerSvc.mu.Lock()
+	remaining := len(th.timerSvc.holds)
+	th.timerSvc.mu.Unlock()
+
+	require.Zero(t, remaining, "a released track leaves no deadline behind")
 }

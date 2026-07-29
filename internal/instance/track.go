@@ -598,7 +598,7 @@ func (t *track) holdTimer(d flow.EventDefinition) bool {
 	}
 
 	if err := inst.waitHolders.HoldTimer(
-		inst.ID(), t.ID(), d, deadline, cycles); err != nil {
+		inst.ID(), t.ID(), d, deadline, cycles, exec.WaitNode); err != nil {
 		// the holder declined — keep the wait resident on an in-hub waiter
 		// rather than lose the timer (SRD-071 FR-3, the never-a-lost-trigger
 		// invariant).
@@ -665,7 +665,7 @@ func (t *track) holdSubscription(d flow.EventDefinition) bool {
 	// the conversation keys the instance's OWN registration would contribute
 	// (SRD-017 §4.3): the holder must subscribe to the same conversation.
 	if err := inst.waitHolders.HoldSubscription(
-		inst.ID(), t.ID(), d, inst.CorrelationKeys()); err != nil {
+		inst.ID(), t.ID(), d, inst.CorrelationKeys(), exec.WaitNode); err != nil {
 		return false
 	}
 

@@ -2,11 +2,13 @@ package thresher
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/pkg/clock"
+	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 )
 
@@ -19,6 +21,9 @@ type timerHold struct {
 	instanceID string
 	trackID    string
 	cycles     int
+	// kind says whether this deadline belongs to the node the track is parked
+	// on or to a boundary guarding it — the two wake differently (exec.WaitKind).
+	kind exec.WaitKind
 	// firing marks a wake in progress for this hold, so a later scan does not
 	// re-enter one that is slow or already failing (FIX-027 §3.2.1). Cleared by
 	// deferHold when the wake fails; the hold is deleted outright when it
@@ -26,9 +31,22 @@ type timerHold struct {
 	firing bool
 }
 
-// holdKey identifies a hold by the wait it stands for.
-func holdKey(instanceID, trackID string) string {
-	return instanceID + "|" + trackID
+// holdKey identifies a hold by the WAIT it stands for — the definition
+// included, not just the track.
+//
+// A track can hold more than one deadline: an Event-Based Gateway racing two
+// timers arms one per arm, and a wait guarded by a timer boundary holds its
+// own deadline alongside the boundary's (SRD-071 FR-9a). Keyed by track alone,
+// the second hold overwrote the first — and if the lost one was the earlier
+// deadline, the wait fired late with nothing to show why.
+func holdKey(instanceID, trackID, eDefID string) string {
+	return instanceID + "|" + trackID + "|" + eDefID
+}
+
+// trackPrefix matches every hold a track owns, for the all-or-nothing
+// withdrawal ReleaseWaits performs.
+func trackPrefix(instanceID, trackID string) string {
+	return instanceID + "|" + trackID + "|"
 }
 
 // timerService is the engine-level DURABLE timer holder (SRD-071 FR-6, closes
@@ -81,7 +99,7 @@ func (ts *timerService) deferHold(h timerHold, next time.Time) {
 
 	// only re-arm if this exact hold is still the registered one: a concurrent
 	// re-arm (the instance woke another way and parked again) must win.
-	k := holdKey(h.instanceID, h.trackID)
+	k := holdKey(h.instanceID, h.trackID, eDefIDOf(h.eDef))
 	if cur, ok := ts.holds[k]; ok && cur.firing {
 		cur.firing = false
 		cur.deadline = next
@@ -96,20 +114,50 @@ func (ts *timerService) deferHold(h timerHold, next time.Time) {
 // hold registers (or replaces) a deadline and re-arms the loop's nearest-timer.
 func (ts *timerService) hold(h timerHold) {
 	ts.mu.Lock()
-	ts.holds[holdKey(h.instanceID, h.trackID)] = h
+	ts.holds[holdKey(h.instanceID, h.trackID, eDefIDOf(h.eDef))] = h
 	ts.mu.Unlock()
 
 	ts.signal()
 }
 
-// release withdraws a held timer (the wait completed on wake, the instance
-// terminated, or a sibling won an EBG race). Idempotent.
-func (ts *timerService) release(instanceID, trackID string) {
+// releaseOne withdraws the single hold that just fired, leaving a track's other
+// deadlines armed — the losing arms of an Event-Based Gateway are withdrawn by
+// the instance's own ReleaseWaits when the winner is applied, not here.
+// Idempotent.
+func (ts *timerService) releaseOne(instanceID, trackID, eDefID string) {
 	ts.mu.Lock()
-	delete(ts.holds, holdKey(instanceID, trackID))
+	delete(ts.holds, holdKey(instanceID, trackID, eDefID))
 	ts.mu.Unlock()
 
 	ts.signal()
+}
+
+// release withdraws EVERY deadline a track holds (the instance terminated, the
+// wait was canceled, or a sibling won an EBG race). Idempotent.
+func (ts *timerService) release(instanceID, trackID string) {
+	prefix := trackPrefix(instanceID, trackID)
+
+	ts.mu.Lock()
+
+	for k := range ts.holds {
+		if strings.HasPrefix(k, prefix) {
+			delete(ts.holds, k)
+		}
+	}
+
+	ts.mu.Unlock()
+
+	ts.signal()
+}
+
+// eDefIDOf names a hold's definition, tolerating the nil definitions the unit
+// traces use — an unnamed hold still keys distinctly per track.
+func eDefIDOf(d flow.EventDefinition) string {
+	if d == nil {
+		return ""
+	}
+
+	return d.ID()
 }
 
 // signal coalesces a wake-the-loop notification.
@@ -197,11 +245,23 @@ func (ts *timerService) fireDue(ctx context.Context) {
 		default:
 		}
 
-		if ts.wake(h.instanceID, &instance.PendingTrigger{
-			TrackID: h.trackID,
-			EDef:    h.eDef,
-		}) {
-			ts.release(h.instanceID, h.trackID)
+		// A BOUNDARY deadline wakes the instance TRIGGER-ABSENT: the trigger
+		// belongs to the boundary, not to the node the track is parked on, so
+		// re-entering that node with it would fire the wrong element. The
+		// rebuilt instance re-arms the boundary at its RECORDED deadline
+		// (FR-9a), which is already past, and the fire that follows is the
+		// ordinary one — a fork at the boundary with the guarded track as its
+		// parent, applied by the loop's fireBoundary.
+		var pending *instance.PendingTrigger
+		if h.kind != exec.WaitBoundary {
+			pending = &instance.PendingTrigger{
+				TrackID: h.trackID,
+				EDef:    h.eDef,
+			}
+		}
+
+		if ts.wake(h.instanceID, pending) {
+			ts.releaseOne(h.instanceID, h.trackID, eDefIDOf(h.eDef))
 
 			continue
 		}

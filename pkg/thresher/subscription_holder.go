@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	gerrs "github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/exec"
 
 	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -64,6 +65,7 @@ func (t *Thresher) HoldSubscription(
 	instanceID, trackID string,
 	eDef flow.EventDefinition,
 	convKeys []string,
+	_ exec.WaitKind,
 ) error {
 	if eDef == nil {
 		return errNoHold("HoldSubscription: a nil EventDefinition isn't allowed")

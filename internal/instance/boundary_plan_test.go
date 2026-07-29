@@ -1,12 +1,17 @@
 package instance
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
+	"github.com/dr-dobermann/gobpm/pkg/model/events"
 )
 
 // TestBoundaryPlanRestoredNotReevaluated covers SRD-071 T-15 (FR-9a) at the
@@ -87,4 +92,54 @@ func TestSeedBoundaryPlansEmpty(t *testing.T) {
 
 	_, ok := inst.takeBoundaryPlan(boundaryKey{trackID: "t"})
 	require.False(t, ok, "a lookup against no plans is a plain miss")
+}
+
+// TestHoldBoundaryDeclines covers the paths on which a boundary arm takes NO
+// hold (SRD-071 FR-9a). Each one costs residency and never a lost deadline:
+// the instance simply stays in memory, where the ordinary hub waiter fires.
+func TestHoldBoundaryDeclines(t *testing.T) {
+	sig, err := events.NewSignal("break", nil)
+	require.NoError(t, err)
+
+	sdef, err := events.NewSignalEventDefinition(sig)
+	require.NoError(t, err)
+
+	t.Run("no holder registry", func(t *testing.T) {
+		ls := &loopState{inst: &Instance{}}
+
+		require.False(t, ls.holdBoundary(&boundaryWatch{def: sdef}),
+			"an engine without holders holds nothing")
+	})
+
+	t.Run("a loop-owned conditional boundary", func(t *testing.T) {
+		inst := &Instance{waitHolders: newFakeHolders()}
+		ls := &loopState{inst: inst}
+
+		// Its trigger is the instance's OWN data commits, so nothing outside
+		// the loop could ever evaluate it — the same reason a Conditional
+		// catch is unholdable.
+		require.False(t,
+			ls.holdBoundary(&boundaryWatch{def: sdef, loopOwned: true}),
+			"a loop-owned watch cannot be held by anything external")
+	})
+
+	t.Run("a timer with no resolved deadline", func(t *testing.T) {
+		inst := &Instance{waitHolders: newFakeHolders()}
+		ls := &loopState{inst: inst}
+
+		texpr, err := goexpr.New(nil,
+			data.MustItemDefinition(values.NewVariable(time.Time{})),
+			func(context.Context, data.Source) (data.Value, error) {
+				return values.NewVariable(time.Now().Add(time.Hour)), nil
+			})
+		require.NoError(t, err)
+
+		tdef, err := events.NewTimerEventDefinition(texpr, nil, nil)
+		require.NoError(t, err)
+
+		// the watch carries no resolved plan, so there is nothing to hand to
+		// the timer service.
+		require.False(t, ls.holdBoundary(&boundaryWatch{def: tdef}),
+			"there is no deadline to hand to the timer service")
+	})
 }

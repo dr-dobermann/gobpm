@@ -1066,17 +1066,18 @@ func (ls *loopState) dehydratableParked(ctx context.Context) []*track {
 				return nil
 			}
 
-			// An ARMED BOUNDARY keeps the instance resident (SRD-071 FR-9a,
-			// the eligibility half). A boundary watch is not a track, so it
-			// never reaches waitReleasable — and nothing holds it: its waiter
-			// dies with the released instance, so "approve within 24h or
-			// escalate" would simply never escalate. Everything in ls.watchers
-			// needs the loop alive: a hub-armed boundary has no holder yet
-			// (M10 gives it one), and a loop-owned Conditional watch is
-			// evaluated by the loop itself. The kinds that resolve directly —
+			// Every ARMED BOUNDARY guarding this track must be HELD (SRD-071
+			// FR-9a, the eligibility half). A boundary watch is not a track,
+			// so it never reaches waitReleasable — yet an unheld one dies with
+			// the released instance, and "approve within 24h or escalate"
+			// would simply never escalate. This is the same per-arm rule an
+			// Event-Based Gateway already applies to its arms (FR-3a), at the
+			// granularity a boundary needs. The kinds that resolve directly —
 			// Error, Escalation, Compensation, Cancel — never enter this map
-			// at all (boundary_watch.go:105-110), so they cost no residency.
-			if len(ls.watchers[t.ID()]) > 0 {
+			// at all (armBoundaries skips them), so they cost no residency; a
+			// loop-owned Conditional watch is never holdable and correctly
+			// keeps its instance resident.
+			if !ls.boundariesHeld(t.ID()) {
 				return nil
 			}
 

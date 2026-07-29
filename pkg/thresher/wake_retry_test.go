@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/dr-dobermann/gobpm/pkg/exec"
+
 	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/pkg/clock/clocktest"
@@ -77,7 +79,7 @@ func TestFailedWakeKeepsTheHold(t *testing.T) {
 	unregisteredRecord(t, th, instID)
 
 	require.NoError(t, th.HoldTimer(instID, "t-1", wakeTimerDef(t),
-		wakeEpoch.Add(time.Hour), 0))
+		wakeEpoch.Add(time.Hour), 0, exec.WaitNode))
 
 	_, armed := th.timerSvc.nearest()
 	require.True(t, armed, "the hold is armed before the wake")
@@ -118,7 +120,7 @@ func TestFailedWakeBacksOff(t *testing.T) {
 	}
 
 	require.NoError(t, th.HoldTimer(instID, "t-1", wakeTimerDef(t),
-		wakeEpoch.Add(time.Minute), 0))
+		wakeEpoch.Add(time.Minute), 0, exec.WaitNode))
 
 	clk.Advance(2 * time.Minute)
 
@@ -162,7 +164,7 @@ func TestFailedWakeRetriesAndSucceeds(t *testing.T) {
 	}
 
 	require.NoError(t, th.HoldTimer(instID, "t-1", wakeTimerDef(t),
-		wakeEpoch.Add(time.Minute), 0))
+		wakeEpoch.Add(time.Minute), 0, exec.WaitNode))
 
 	clk.Advance(2 * time.Minute)
 	th.timerSvc.fireDue(context.Background())
@@ -200,7 +202,7 @@ func TestSuccessfulWakeStillWithdraws(t *testing.T) {
 	}
 
 	require.NoError(t, th.HoldTimer("ok-inst", "t-1", wakeTimerDef(t),
-		wakeEpoch.Add(time.Minute), 0))
+		wakeEpoch.Add(time.Minute), 0, exec.WaitNode))
 
 	clk.Advance(2 * time.Minute)
 	th.timerSvc.fireDue(context.Background())
@@ -223,14 +225,16 @@ func TestFiringHoldIsNotReentered(t *testing.T) {
 	th, clk, cancel := retryEngine(t, "engine-reenter", time.Hour)
 	defer cancel()
 
-	require.NoError(t, th.HoldTimer("busy-inst", "t-1", wakeTimerDef(t),
-		wakeEpoch.Add(time.Minute), 0))
+	def := wakeTimerDef(t)
+
+	require.NoError(t, th.HoldTimer("busy-inst", "t-1", def,
+		wakeEpoch.Add(time.Minute), 0, exec.WaitNode))
 
 	clk.Advance(2 * time.Minute)
 
 	// mark it firing exactly as fireDue's scan does, then scan again.
 	th.timerSvc.mu.Lock()
-	k := holdKey("busy-inst", "t-1")
+	k := holdKey("busy-inst", "t-1", def.ID())
 	h := th.timerSvc.holds[k]
 	h.firing = true
 	th.timerSvc.holds[k] = h
@@ -323,11 +327,11 @@ func TestFailedRebuildKeepsTheSubscriptionSet(t *testing.T) {
 
 	// the gateway's armed set: a timer arm and two subscription arms.
 	require.NoError(t, th.HoldTimer(instID, trackID, wakeTimerDef(t),
-		wakeEpoch.Add(time.Hour), 0))
+		wakeEpoch.Add(time.Hour), 0, exec.WaitNode))
 	require.NoError(t, th.HoldSubscription(instID, trackID,
-		wakeMessageDef(t, "cancel"), nil))
+		wakeMessageDef(t, "cancel"), nil, exec.WaitNode))
 	require.NoError(t, th.HoldSubscription(instID, trackID,
-		wakeSignalDef(t, "abort"), nil))
+		wakeSignalDef(t, "abort"), nil, exec.WaitNode))
 
 	th.subMu.Lock()
 	before := len(th.subs)

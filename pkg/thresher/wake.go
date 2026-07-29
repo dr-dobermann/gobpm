@@ -6,6 +6,7 @@ import (
 	"time"
 
 	gerrs "github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/exec"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/repository"
@@ -25,6 +26,7 @@ func (t *Thresher) HoldTimer(
 	eDef flow.EventDefinition,
 	deadline time.Time,
 	cycles int,
+	kind exec.WaitKind,
 ) error {
 	if t.timerSvc == nil {
 		return gerrs.New(
@@ -38,6 +40,7 @@ func (t *Thresher) HoldTimer(
 		eDef:       eDef,
 		deadline:   deadline,
 		cycles:     cycles,
+		kind:       kind,
 	})
 
 	return nil
