@@ -388,7 +388,13 @@ artifact of construction order.
   needing a remote decision pre-fetches it into scope data (from an activity
   that ran earlier) and lets the Router read it there; that keeps the decision
   reproducible from the recorded data, which is what makes an ad-hoc case
-  auditable after the fact.
+  auditable after the fact. That contract is load-bearing rather than advisory:
+  a routing answer is a decision, so the engine evaluates it where it evaluates
+  its other conditions — inline, on the instance's own execution loop. A Router
+  that blocks therefore stalls every track in its instance, and one that calls
+  back into its own instance deadlocks against the channel that would serve it.
+  Neither is defended against by machinery; both are excluded by the contract,
+  which is why it belongs in the element's documentation and not only here.
 - **Operational guidance.** An Ad-Hoc scope steered by a human can stay open
   indefinitely; operators should be able to see long-open scopes, and modellers
   should be encouraged to pair one with a Timer boundary event when a business

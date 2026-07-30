@@ -87,9 +87,14 @@ substitution at one seam plus a model element:
 
 ### Non-functional
 
-- **NFR-1** — the Router runs **off the instance loop**, so a slow Router
-  degrades its own scope and never stalls the instance (the iteration-decorator
-  precedent).
+- **NFR-1** — the Router is evaluated **on the instance loop**, the position the
+  engine already gives conditional-event and instantiation conditions
+  (`internal/instance/conditional.go`, `activation.go`) — a routing answer is a
+  *decision*, not work. What keeps that safe is the §3.2 contract, not a
+  goroutine boundary: a Router must be prompt, read-only and free of blocking
+  I/O. Waiting for a human is manual selection, never a slow Router, and a
+  Router must not call back into its own instance — the request channel it
+  would use is serviced by the very loop it is running on.
 - **NFR-2** — the Router never writes: it receives a reader, and its transient
   frame is discarded, so no Router can leave scope residue.
 - **NFR-3** — **one** fork-and-continue implementation. The flow path and the
@@ -140,6 +145,11 @@ type Router interface {
 
 // State is what a routing decision may rest on.
 type State struct {
+	// Activities is the container's inner activity roster — a SET, not an
+	// order: ADR-035 v.1 §2.9 forbids routing inferred from declaration order.
+	// It is the only way to name an activity when nothing has run yet, so a
+	// Router that offers "everything not yet run" is expressible.
+	Activities []string
 	// Completed counts settled executions per inner activity id.
 	Completed map[string]int
 	// Running counts live instances per inner activity id.
@@ -148,11 +158,29 @@ type State struct {
 	Last string
 	// Data reads the Ad-Hoc scope (parent data visible by walk-up).
 	Data service.DataReader
+	// Eval evaluates an expression against this scope through the engine's
+	// language-routed expression seam (ADR-032 v.1). Non-nil for every Router
+	// the engine calls; a Router that needs no expression ignores it.
+	Eval Evaluator
+}
+
+// Evaluator is the expression seam a Router receives. A DataReader alone
+// cannot evaluate — the engine routes an expression to its language's engine —
+// so a battery Router built on a FormalExpression takes this instead of
+// calling the expression directly and bypassing the seam.
+type Evaluator interface {
+	Evaluate(ctx context.Context, expr data.FormalExpression) (data.Value, error)
 }
 ```
 
-`pkg/adhoc` imports only `pkg/model/service` (the `DataReader`, verified at
-`pkg/model/service/datareader.go:10`) and stdlib — no cycle with
+`Activities` and `Eval` were added during implementation: without a roster
+`routers.Standard()` has nothing to enumerate at scope open (both counters are
+empty), and without the seam `routers.Expression()` would have to call
+`FormalExpression.Evaluate` directly, bypassing the language routing ADR-035
+v.1 §2.9 requires.
+
+`pkg/adhoc` imports `pkg/model/service` (the `DataReader`, verified at
+`pkg/model/service/datareader.go:10`), `pkg/model/data` and stdlib — no cycle with
 `pkg/model/activities`, which imports it for the option.
 
 ### §3.3 The model element (`pkg/model/activities`)
@@ -275,6 +303,7 @@ internal `successor` refactor.
 | `TestAdHocCancelRemainingInstances` | `true` cancels live tracks at stop; `false` waits for them (FR-8) |
 | `TestAdHocCompletionConditionSugar` | the condition ends the scope through the same empty-answer path (FR-9) |
 | `TestAdHocBatteryRouters` | `Standard`, `Expression`, `Sequence` each drive their documented order (FR-10) |
+| `TestAdHocStateCarriesRosterAndEvaluator` | the Router is handed the container's activity roster and a working expression seam — the two inputs the batteries need and neither counter can supply (FR-10) |
 | `TestAdHocFacts` | `Offered` carries the candidate set; `Activated` carries `selected_by`; the terminal carries `stop_reason`; the scope's own open/close still rides `KindScope`, not duplicated (FR-12) |
 | `TestAdHocEmptyOfferEmitted` | a Router answering empty still emits `Offered` with no candidates, so "chose to stop" is distinguishable from "never asked" (FR-12) |
 | `TestAdHocDecisionReconstructable` | over a multi-step run, every `Activated` has a preceding `Offered` naming it among the candidates, and the stream ends with a reason (FR-13) |
