@@ -9,6 +9,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/adhoc"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
@@ -37,8 +38,9 @@ const (
 	adHocByRouter = "router"
 	adHocByHost   = "host"
 
-	adHocStopRouterEmpty = "router-empty"
-	adHocStopCanceled    = "canceled"
+	adHocStopRouterEmpty    = "router-empty"
+	adHocStopCompletionCond = "completion-condition"
+	adHocStopCanceled       = "canceled"
 )
 
 // adHocProgress is an Ad-Hoc scope's routing state, owned by the loop goroutine
@@ -72,13 +74,39 @@ func newAdHocProgress() *adHocProgress {
 
 // state projects the progress into the Router's view, copying the counters so a
 // Router cannot mutate engine state through the maps it is handed.
-func (p *adHocProgress) state(last string, r service.DataReader) adhoc.State {
+func (p *adHocProgress) state(
+	last string, roster []string, r service.DataReader, ev adhoc.Evaluator,
+) adhoc.State {
 	return adhoc.State{
-		Completed: copyCounts(p.completed),
-		Running:   copyCounts(p.running),
-		Last:      last,
-		Data:      r,
+		Activities: roster,
+		Completed:  copyCounts(p.completed),
+		Running:    copyCounts(p.running),
+		Last:       last,
+		Data:       r,
+		Eval:       ev,
 	}
+}
+
+// adHocEvaluator is the expression seam handed to a Router: it routes the
+// expression to the engine of its language (ADR-032) over the same transient
+// frame the Router reads through, so the decision and its expressions see one
+// snapshot.
+type adHocEvaluator struct {
+	inst  *Instance
+	frame *scope.Frame
+}
+
+func (e adHocEvaluator) Evaluate(
+	ctx context.Context, expr data.FormalExpression,
+) (data.Value, error) {
+	if expr == nil {
+		return nil, errs.New(
+			errs.M("Evaluate: a nil expression isn't allowed"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	return e.inst.ExpressionEngine().Evaluate(
+		ctx, expr, newExecEnv(e.inst, e.frame, nil))
 }
 
 func copyCounts(src map[string]int) map[string]int {
@@ -128,7 +156,7 @@ func (ls *loopState) routeAdHoc(
 	spec activities.AdHocSpec,
 	last string,
 ) {
-	nodes, err := ls.askAdHocRouter(ctx, path, entry, spec, last)
+	nodes, reason, err := ls.askAdHocRouter(ctx, path, entry, spec, last)
 	if err != nil {
 		ls.inst.fail(err)
 		ls.stopAll()
@@ -136,16 +164,17 @@ func (ls *loopState) routeAdHoc(
 		return
 	}
 
-	// Every answer is reported, the empty one included: "the Router considered
-	// the state and chose to stop" is exactly the fact an auditor needs, and
-	// suppressing it would make a terminal indistinguishable from a Router that
-	// was never asked (SRD-074 §3.6).
+	// Every answer is reported, the empty one included: "the container
+	// considered the state and chose to stop" is exactly the fact an auditor
+	// needs, and suppressing it would make a terminal indistinguishable from a
+	// decision that was never taken (SRD-074 §3.6). Which of the two stopped it
+	// — the Router or its completion condition — is the terminal's stop reason.
 	ls.reportAdHoc(observability.PhaseOffered, entry.node,
 		observability.AttrCandidates, adHocIDs(nodes))
 
 	if len(nodes) == 0 {
 		entry.adHoc.stopped = true
-		entry.adHoc.stopReason = adHocStopRouterEmpty
+		entry.adHoc.stopReason = reason
 
 		// Routing stopped while activities are still live: BPMN's
 		// cancelRemainingInstances decides whether they are cut short or
@@ -305,30 +334,56 @@ func (ls *loopState) adHocView(nodeID string) ([]string, []string, error) {
 // askAdHocRouter evaluates the Router against a transient read frame opened at
 // the Ad-Hoc scope — a consistent snapshot for the whole decision, the same
 // mechanism loop conditions and conditional events read through — and resolves
-// its answer to inner nodes.
+// its answer to inner nodes. The second result names why an EMPTY answer ended
+// routing, the container's terminal fact needing to tell a Router that stopped
+// from a completion condition that fired.
 func (ls *loopState) askAdHocRouter(
 	ctx context.Context,
 	path scope.DataPath,
 	entry *scopeEntry,
 	spec activities.AdHocSpec,
 	last string,
-) ([]flow.Node, error) {
+) ([]flow.Node, string, error) {
 	frame, err := ls.inst.sc.openFrameAt("adhoc", entry.node.ID(), path)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer frame.Discard()
 
-	ids, err := spec.Router().Next(ctx, entry.adHoc.state(last, frame))
+	ev := adHocEvaluator{inst: ls.inst, frame: frame}
+
+	// completionCondition is a decorator over the Router, never a competing
+	// mechanism (ADR-035 v.1 §2.4): evaluated after each inner completion, it
+	// answers empty when true and otherwise lets the Router decide. Not at scope
+	// open — the standard's condition governs when the container is *finished*,
+	// and a container that never started has completed nothing to judge.
+	if cc := spec.CompletionCondition(); cc != nil && last != "" {
+		done, cerr := ls.evalAdHocCompletion(ctx, ev, entry.node, cc)
+		if cerr != nil {
+			return nil, "", cerr
+		}
+
+		if done {
+			return nil, adHocStopCompletionCond, nil
+		}
+	}
+
+	roster, err := adHocRoster(entry.node)
 	if err != nil {
-		return nil, errs.New(
+		return nil, "", err
+	}
+
+	ids, err := spec.Router().Next(
+		ctx, entry.adHoc.state(last, roster, frame, ev))
+	if err != nil {
+		return nil, "", errs.New(
 			errs.M("ad-hoc router of %q failed", entry.node.Name()),
 			errs.C(errorClass, errs.OperationFailed),
 			errs.E(err))
 	}
 
 	if len(ids) == 0 {
-		return nil, nil
+		return nil, adHocStopRouterEmpty, nil
 	}
 
 	// Sequential ordering permits one live activity, so a multi-successor
@@ -336,20 +391,66 @@ func (ls *loopState) askAdHocRouter(
 	// (ADR-035 v.1 §2.5).
 	if spec.Ordering() == activities.AdHocSequential &&
 		len(ids)+entry.active > 1 {
-		return nil, errs.New(
+		return nil, "", errs.New(
 			errs.M("sequential ad-hoc %q was routed to %d activities while %d "+
 				"were live: only one may run at a time",
 				entry.node.Name(), len(ids), entry.active),
 			errs.C(errorClass, errs.InvalidState))
 	}
 
-	return resolveAdHocNodes(entry.node, ids)
+	nodes, err := resolveAdHocNodes(entry.node, ids)
+
+	return nodes, "", err
 }
 
-// resolveAdHocNodes maps the Router's answer to this container's inner nodes,
-// by id and then by name — an unresolvable id is a loud failure, never a
-// silently skipped activity.
-func resolveAdHocNodes(host flow.Node, ids []string) ([]flow.Node, error) {
+// evalAdHocCompletion evaluates the container's completionCondition over the
+// decision's frame. A non-boolean result is a modeling error surfaced to the
+// caller, as it is for a loop condition.
+func (ls *loopState) evalAdHocCompletion(
+	ctx context.Context,
+	ev adHocEvaluator,
+	node flow.Node,
+	cc data.FormalExpression,
+) (bool, error) {
+	res, err := ev.Evaluate(ctx, cc)
+	if err != nil {
+		return false, errs.New(
+			errs.M("completion condition of ad-hoc %q failed", node.Name()),
+			errs.C(errorClass, errs.OperationFailed),
+			errs.E(err))
+	}
+
+	done, err := data.As[bool](ctx, res)
+	if err != nil {
+		return false, errs.New(
+			errs.M("completion condition of ad-hoc %q is not boolean",
+				node.Name()),
+			errs.C(errorClass, errs.TypeCastingError),
+			errs.E(err))
+	}
+
+	return done, nil
+}
+
+// adHocRoster lists the container's inner activity ids — the set a Router
+// chooses from, and the only way to name an activity before anything has run.
+func adHocRoster(host flow.Node) ([]string, error) {
+	inner, err := adHocInner(host)
+	if err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, 0, len(inner))
+	for _, n := range inner {
+		ids = append(ids, n.ID())
+	}
+
+	return ids, nil
+}
+
+// adHocInner resolves the container's inner nodes through the capability its
+// host must expose; a host without one cannot answer a routing decision at all.
+func adHocInner(host flow.Node) ([]flow.Node, error) {
 	c, ok := host.(interface{ Nodes() []flow.Node })
 	if !ok {
 		return nil, errs.New(
@@ -357,7 +458,18 @@ func resolveAdHocNodes(host flow.Node, ids []string) ([]flow.Node, error) {
 			errs.C(errorClass, errs.InvalidState))
 	}
 
-	inner := c.Nodes()
+	return c.Nodes(), nil
+}
+
+// resolveAdHocNodes maps the Router's answer to this container's inner nodes,
+// by id and then by name — an unresolvable id is a loud failure, never a
+// silently skipped activity.
+func resolveAdHocNodes(host flow.Node, ids []string) ([]flow.Node, error) {
+	inner, err := adHocInner(host)
+	if err != nil {
+		return nil, err
+	}
+
 	out := make([]flow.Node, 0, len(ids))
 
 	for _, id := range ids {

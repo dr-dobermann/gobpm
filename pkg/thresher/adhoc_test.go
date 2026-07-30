@@ -143,6 +143,11 @@ func TestAdHocHandleEnabledAndActivate(t *testing.T) {
 	require.False(t, reviewed || escalated,
 		"nothing runs before the host selects")
 
+	running, err := ah.Running(ctx)
+	require.NoError(t, err)
+	require.Empty(t, running,
+		"an offer is not work in flight — the two views are distinct")
+
 	require.NoError(t, ah.Activate(ctx, enabled[0]))
 
 	require.Eventually(t, func() bool {

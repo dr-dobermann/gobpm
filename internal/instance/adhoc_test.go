@@ -13,9 +13,12 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/adhoc"
+	"github.com/dr-dobermann/gobpm/pkg/adhoc/routers"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
@@ -719,6 +722,299 @@ func TestAdHocDecisionReconstructable(t *testing.T) {
 	require.Equal(t, adHocStopRouterEmpty,
 		last.Details[observability.AttrStopReason],
 		"the trail ends with the reason routing stopped")
+}
+
+// SRD-074 M6 — the shipped batteries, the completionCondition sugar, and the
+// two State inputs neither counter can supply (FR-9, FR-10).
+
+// routerFunc adapts a plain function to the Router interface.
+type routerFunc func(context.Context, adhoc.State) ([]string, error)
+
+func (f routerFunc) Next(
+	ctx context.Context, s adhoc.State,
+) ([]string, error) {
+	return f(ctx, s)
+}
+
+// boolExpr builds an expression answering a fixed boolean — enough for a
+// completion condition, whose only contract is its truth value.
+func boolExpr(t *testing.T, v bool) data.FormalExpression {
+	t.Helper()
+
+	require.NoError(t, data.CreateDefaultStates())
+
+	e, err := goexpr.New(nil,
+		data.MustItemDefinition(values.NewVariable(false)),
+		func(context.Context, data.Source) (data.Value, error) {
+			return values.NewVariable(v), nil
+		})
+	require.NoError(t, err)
+
+	return e
+}
+
+func TestAdHocBatteryRouters(t *testing.T) {
+	t.Run("Standard runs every activity once", func(t *testing.T) {
+		var (
+			mu  sync.Mutex
+			log []string
+		)
+
+		inst := adHocInstance(t, routers.Standard(), &mu, &log)
+		runToDone(t, inst)
+
+		require.Equal(t, Completed, inst.State())
+
+		mu.Lock()
+		defer mu.Unlock()
+		require.ElementsMatch(t, []string{"a", "b", "c"}, log,
+			"the whole roster is enabled at once, each activity once")
+	})
+
+	t.Run("Sequence walks the order it was given", func(t *testing.T) {
+		var (
+			mu  sync.Mutex
+			log []string
+		)
+
+		r, err := routers.Sequence("c", "a")
+		require.NoError(t, err)
+
+		inst := adHocInstance(t, r, &mu, &log)
+		runToDone(t, inst)
+
+		require.Equal(t, Completed, inst.State())
+
+		mu.Lock()
+		defer mu.Unlock()
+		require.Equal(t, []string{"c", "a"}, log,
+			"the named order is the run order, and the unnamed activity "+
+				"never runs")
+	})
+
+	t.Run("Expression names its successors", func(t *testing.T) {
+		var (
+			mu  sync.Mutex
+			log []string
+		)
+
+		require.NoError(t, data.CreateDefaultStates())
+
+		// Answers once, then stops — the expression is asked again after the
+		// activity it named settles.
+		calls := 0
+
+		e, err := goexpr.New(nil,
+			data.MustItemDefinition(values.NewVariable([]string{})),
+			func(context.Context, data.Source) (data.Value, error) {
+				calls++
+				if calls == 1 {
+					return values.NewVariable([]string{"b"}), nil
+				}
+
+				return values.NewVariable([]string{}), nil
+			})
+		require.NoError(t, err)
+
+		r, err := routers.Expression(e)
+		require.NoError(t, err)
+
+		inst := adHocInstance(t, r, &mu, &log)
+		runToDone(t, inst)
+
+		require.Equal(t, Completed, inst.State())
+
+		mu.Lock()
+		defer mu.Unlock()
+		require.Equal(t, []string{"b"}, log,
+			"the expression's answer is routed through the engine's "+
+				"expression seam")
+	})
+}
+
+func TestAdHocCompletionConditionSugar(t *testing.T) {
+	t.Run("a true condition ends the container", func(t *testing.T) {
+		var (
+			mu  sync.Mutex
+			log []string
+		)
+
+		// The Router would keep going; the condition is what stops it, through
+		// the same empty-answer path (ADR-035 v.1 §2.4).
+		r := &scriptedRouter{turns: [][]string{{"a"}, {"b"}, {"c"}}}
+
+		inst := adHocInstance(t, r, &mu, &log,
+			activities.WithAdHocCompletion(boolExpr(t, true)))
+
+		rec := &obsRecorder{}
+		inst.AddObserver(rec.record)
+
+		runToDone(t, inst)
+		require.Equal(t, Completed, inst.State())
+
+		mu.Lock()
+		require.Equal(t, []string{"a"}, log,
+			"the condition is judged after a completion, so the first "+
+				"activity still runs and the second is never routed")
+		mu.Unlock()
+
+		facts := rec.factsOfKind(observability.KindAdHoc)
+		last := facts[len(facts)-1]
+		require.Equal(t, observability.PhaseCompleted, last.Phase)
+		require.Equal(t, adHocStopCompletionCond,
+			last.Details[observability.AttrStopReason],
+			"the terminal tells a fired condition from a Router that stopped")
+	})
+
+	t.Run("a false condition delegates to the Router", func(t *testing.T) {
+		var (
+			mu  sync.Mutex
+			log []string
+		)
+
+		r := &scriptedRouter{turns: [][]string{{"a"}, {"b"}}}
+
+		inst := adHocInstance(t, r, &mu, &log,
+			activities.WithAdHocCompletion(boolExpr(t, false)))
+		runToDone(t, inst)
+
+		require.Equal(t, Completed, inst.State())
+
+		mu.Lock()
+		defer mu.Unlock()
+		require.Equal(t, []string{"a", "b"}, log,
+			"a condition that is not met leaves succession to the Router")
+	})
+}
+
+func TestAdHocCompletionConditionFailures(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	t.Run("a non-boolean condition is a modeling error", func(t *testing.T) {
+		var (
+			mu  sync.Mutex
+			log []string
+		)
+
+		expr, err := goexpr.New(nil,
+			data.MustItemDefinition(values.NewVariable("")),
+			func(context.Context, data.Source) (data.Value, error) {
+				return values.NewVariable("perhaps"), nil
+			})
+		require.NoError(t, err)
+
+		inst := adHocInstance(t, &scriptedRouter{turns: [][]string{{"a"}}},
+			&mu, &log, activities.WithAdHocCompletion(expr))
+		runToDone(t, inst)
+
+		require.Equal(t, Terminated, inst.State(),
+			"a condition the engine cannot judge fails the instance rather "+
+				"than being read as false")
+	})
+
+	t.Run("a failing condition faults the instance", func(t *testing.T) {
+		var (
+			mu  sync.Mutex
+			log []string
+		)
+
+		expr, err := goexpr.New(nil,
+			data.MustItemDefinition(values.NewVariable(false)),
+			func(context.Context, data.Source) (data.Value, error) {
+				return nil, errs.New(errs.M("condition is unavailable"))
+			})
+		require.NoError(t, err)
+
+		inst := adHocInstance(t, &scriptedRouter{turns: [][]string{{"a"}}},
+			&mu, &log, activities.WithAdHocCompletion(expr))
+		runToDone(t, inst)
+
+		require.Equal(t, Terminated, inst.State())
+	})
+}
+
+func TestAdHocEvaluatorRejectsNilExpression(t *testing.T) {
+	// The seam is handed to host code, so it validates what it is given rather
+	// than dereferencing it.
+	_, err := adHocEvaluator{}.Evaluate(t.Context(), nil)
+	require.Error(t, err)
+
+	var ae *errs.ApplicationError
+
+	require.ErrorAs(t, err, &ae)
+	require.True(t, ae.HasClass(errs.EmptyNotAllowed))
+}
+
+func TestAdHocRosterRequiresAContainer(t *testing.T) {
+	// A roster is asked for before every routing decision; a host that holds no
+	// inner graph names itself here rather than answering an empty set.
+	end, err := events.NewEndEvent("not-a-container")
+	require.NoError(t, err)
+
+	_, err = adHocRoster(end)
+	require.Error(t, err)
+
+	var ae *errs.ApplicationError
+
+	require.ErrorAs(t, err, &ae)
+	require.True(t, ae.HasClass(errs.InvalidState))
+}
+
+func TestAdHocStateCarriesRosterAndEvaluator(t *testing.T) {
+	var (
+		mu  sync.Mutex
+		log []string
+	)
+
+	var (
+		roster []string
+		seen   string
+	)
+
+	expr := goexprString(t, "routed")
+
+	// The Router records what it was handed, then stops the container.
+	r := routerFunc(func(ctx context.Context, s adhoc.State) ([]string, error) {
+		roster = append([]string(nil), s.Activities...)
+
+		if s.Eval != nil {
+			v, err := s.Eval.Evaluate(ctx, expr)
+			if err != nil {
+				return nil, err
+			}
+
+			seen, _ = data.As[string](ctx, v)
+		}
+
+		return nil, nil
+	})
+
+	inst := adHocInstance(t, r, &mu, &log)
+	runToDone(t, inst)
+
+	require.Equal(t, Completed, inst.State())
+	require.Len(t, roster, 3,
+		"the roster names the container's activities — the only way to "+
+			"choose one before anything has run")
+	require.Equal(t, "routed", seen,
+		"the evaluator reaches the engine's expression seam, which a "+
+			"DataReader cannot")
+}
+
+// goexprString builds an expression answering a fixed string.
+func goexprString(t *testing.T, v string) data.FormalExpression {
+	t.Helper()
+
+	require.NoError(t, data.CreateDefaultStates())
+
+	e, err := goexpr.New(nil,
+		data.MustItemDefinition(values.NewVariable("")),
+		func(context.Context, data.Source) (data.Value, error) {
+			return values.NewVariable(v), nil
+		})
+	require.NoError(t, err)
+
+	return e
 }
 
 func TestAdHocResolveRejectsHostWithoutNodes(t *testing.T) {

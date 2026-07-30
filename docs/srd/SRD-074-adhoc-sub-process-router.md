@@ -145,11 +145,6 @@ type Router interface {
 
 // State is what a routing decision may rest on.
 type State struct {
-	// Activities is the container's inner activity roster — a SET, not an
-	// order: ADR-035 v.1 §2.9 forbids routing inferred from declaration order.
-	// It is the only way to name an activity when nothing has run yet, so a
-	// Router that offers "everything not yet run" is expressible.
-	Activities []string
 	// Completed counts settled executions per inner activity id.
 	Completed map[string]int
 	// Running counts live instances per inner activity id.
@@ -162,6 +157,13 @@ type State struct {
 	// language-routed expression seam (ADR-032 v.1). Non-nil for every Router
 	// the engine calls; a Router that needs no expression ignores it.
 	Eval Evaluator
+	// Activities is the container's inner activity roster — a SET, not an
+	// order: ADR-035 v.1 §2.9 forbids routing inferred from declaration order.
+	// It is the only way to name an activity when nothing has run yet, so a
+	// Router that offers "everything not yet run" is expressible. It trails the
+	// interfaces to keep the struct's pointer-scannable prefix minimal
+	// (`fieldalignment`), not because it matters least.
+	Activities []string
 }
 
 // Evaluator is the expression seam a Router receives. A DataReader alone

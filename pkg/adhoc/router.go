@@ -12,6 +12,7 @@ package adhoc
 import (
 	"context"
 
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 )
 
@@ -30,8 +31,18 @@ type Router interface {
 	Next(ctx context.Context, s State) ([]string, error)
 }
 
-// State is what a routing decision may rest on: how the container has
-// progressed so far, and the data visible to it.
+// Evaluator evaluates a BPMN expression against the container's scope. A Router
+// receives one because a DataReader cannot evaluate: the engine routes an
+// expression to the engine of its language (ADR-032), and a Router calling
+// FormalExpression.Evaluate itself would bypass that routing.
+type Evaluator interface {
+	Evaluate(
+		ctx context.Context, expr data.FormalExpression,
+	) (data.Value, error)
+}
+
+// State is what a routing decision may rest on: the container's activities,
+// how far they have progressed, and the data visible to them.
 type State struct {
 	// Completed counts settled executions per inner activity id. An activity
 	// that has never run is absent, so len(Completed) is the number of distinct
@@ -52,7 +63,22 @@ type State struct {
 	// travels the ordinary commit path and appears in the change stream.
 	Data service.DataReader
 
+	// Eval evaluates an expression against the same scope Data reads, through
+	// the engine's language-routed expression seam. The engine always supplies
+	// it; a Router that decides without expressions ignores it.
+	Eval Evaluator
+
 	// Last is the inner activity whose completion triggered this call. It is
 	// empty on the first call, when the container's scope has just opened.
 	Last string
+
+	// Activities is the container's inner activity roster — read it first when
+	// deciding, whatever its position here (it trails so the struct's
+	// pointer-scannable prefix stays minimal).
+	//
+	// It is a SET, not an order: which of them may run is the Router's answer,
+	// and routing is never inferred from the order elements were added
+	// (ADR-035 §2.9). The roster is how a Router names an activity before
+	// anything has run — at scope open both counters above are empty.
+	Activities []string
 }
