@@ -152,7 +152,7 @@ Milestones are demonstrable capability checkpoints cutting across the workstream
 | **M1** | Embedded-library MVP | WS-B1, WS-B2, WS-C1 | `gobpm.New(opts...)` clean assembly; Parallel+Exclusive gateways; Service/User/Manual tasks; None/Terminate events; working example under 20 lines (SAD G3) |
 | **M2** | Durable execution | WS-B3, WS-C2 | Checkpoint + restart recovery ✅; long-wait token release/rehydration ✅; **Incidents/Retry/DLQ + a durable Repository adapter outstanding** |
 | **M3** | Messaging, time & reuse | WS-C3, WS-C4 | Message correlation; Message/Signal/Timer events; Event-Based gateway; Sub-Process & Call Activity |
-| **M4** | Full conformance | WS-C5, WS-C6 | Script/Business-Rule tasks ✅; loops & multi-instance ✅; Inclusive/Complex gateways ✅; Compensation/Escalation/Link ✅; Transaction/Event sub-processes ✅; **Ad-Hoc Sub-Process outstanding**; conformance suite green |
+| **M4** | Full conformance ✅ | WS-C5, WS-C6 | Script/Business-Rule tasks ✅; loops & multi-instance ✅; Inclusive/Complex gateways ✅; Compensation/Escalation/Link ✅; Transaction/Event sub-processes ✅; **Ad-Hoc Sub-Process ✅** (ADR-035 / SRD-074) — the Common Executable Subclass is complete, released in v0.10.0 |
 | **M5** | Standalone runtime | WS-D, WS-E (core adapters) | `gobpm-server` over HTTP/gRPC with postgres + otel + an AuthN provider |
 | **M6** | Distribution | WS-F | Multi-node operation — when demand materialises |
 
