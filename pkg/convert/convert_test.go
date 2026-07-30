@@ -96,6 +96,20 @@ func TestConvertRegistry(t *testing.T) {
 		}
 	})
 
+	t.Run("typed nil implementation rejected", func(t *testing.T) {
+		var imp *stubImporter
+		if err := RegisterImporter("t-typed-nil-importer", imp); err == nil ||
+			!strings.Contains(err.Error(), "imp is nil") {
+			t.Errorf("RegisterImporter(typed nil): %v", err)
+		}
+
+		var exp *stubExporter
+		if err := RegisterExporter("t-typed-nil-exporter", exp); err == nil ||
+			!strings.Contains(err.Error(), "exp is nil") {
+			t.Errorf("RegisterExporter(typed nil): %v", err)
+		}
+	})
+
 	t.Run("empty format rejected", func(t *testing.T) {
 		if err := RegisterImporter("", stubImporter{}); err == nil ||
 			!strings.Contains(err.Error(), "f is empty") {

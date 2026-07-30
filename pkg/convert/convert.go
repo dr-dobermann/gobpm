@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -73,7 +74,7 @@ func register[T any](m map[Format]T, fn, arg, kind string, f Format, v T) error 
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
-	if any(v) == nil {
+	if isNil(v) {
 		return errs.New(
 			errs.M("%s: %s is nil", fn, arg),
 			errs.C(errorClass, errs.EmptyNotAllowed))
@@ -91,6 +92,25 @@ func register[T any](m map[Format]T, fn, arg, kind string, f Format, v T) error 
 	m[f] = v
 
 	return nil
+}
+
+// isNil reports both a nil interface and an interface containing a typed-nil
+// implementation. The latter would otherwise be accepted by the registry and
+// could panic when its Import or Export method is called.
+func isNil(v any) bool {
+	if v == nil {
+		return true
+	}
+
+	rv := reflect.ValueOf(v)
+
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map,
+		reflect.Pointer, reflect.Slice:
+		return rv.IsNil()
+	default:
+		return false
+	}
 }
 
 // MustRegisterImporter is RegisterImporter that panics on error.
