@@ -47,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   branch.
 - **CI now runs every example end-to-end, not just builds it (FIX-029).**
   The examples job (and the local `make ci`) gained a `run-examples` step:
-  each of the 45 example modules executes under a timeout with stdin
+  each of the 46 example modules executes under a timeout with stdin
   closed, asserting exit 0 — closing the FIX-002 §5 follow-up (a
   runtime-broken example used to ship green; it happened twice). The
   measured full sweep costs 33 seconds on the warm build cache.
