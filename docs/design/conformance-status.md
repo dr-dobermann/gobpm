@@ -17,6 +17,7 @@ Status vocabulary: ✅ **executed** (model type + engine semantics + tests) ·
 |---|---|---|
 | Process container | `Process` (executable, versioned registration) | core; ADR-019 |
 | Activities | `ServiceTask` (in-process + external workers), `UserTask`, `ManualTask`, `SendTask`, `ReceiveTask`, the abstract `Task` base, **`SubProcess` (embedded)** — nested scope in the instance: §13.3.4 shapes + drain, §10.5.7 data visibility, scoped Terminate (§13.5.6), boundary-on-composite, the Error scope-chain | ADR-021/SRD-035…039; ADR-020/SRD-034; SRD-013/014; ADR-023/SRD-049 |
+| Instance attributes | `UserTask.actualOwner` (§10.3.4.1, **Table 10.14**) — who picked/claimed a task, with the `Claim`/`Unclaim`/`Reassign` operations the standard leaves to the engine, strict owner-only completion, and a performer record readable from `RUNTIME` | ADR-020 v.2/SRD-073 |
 | Gateways — **all five** | `Exclusive`, `Parallel`, `Inclusive` (incl. the OR-join), `EventBased` (incl. Exclusive/Parallel instantiating starts), `Complex` (the declared extension) | SRD-005, SRD-021/022, SRD-023, SRD-024/025 |
 | Events (positions) | `StartEvent`, `EndEvent`, `IntermediateCatchEvent`, `IntermediateThrowEvent`, `BoundaryEvent` (interrupting + non-interrupting) | ADR-006; ADR-018/SRD-029 |
 | Event definitions | `Message` (incl. instantiation + correlation), `Timer` (in-memory), `Signal` (throw/catch/broadcast/start), `Error` (end + boundary), `Terminate`, `Conditional` (catch + boundary + EBG arms + **event-sub-process start — landed SRD-052**; top-level start = registered fail-fast rejection 📐) | ADR-014/015/016, SRD-013…017, SRD-026, SRD-029, SRD-030, ADR-006 v.3/SRD-048, ADR-023 v.2/SRD-052 |
@@ -54,6 +55,8 @@ Ordered by the recommended implementation sequence (rationale in §4).
 | `Performer`/`HumanPerformer`/`PotentialOwner`, `ResourceParameterBinding`, `ResourceAssignmentExpression` | ❌ | gobpm deliberately chose the Camunda triad (ADR-020). **Candidate for SAD-001 §14.1 registration** as an engine choice — currently an unregistered deviation |
 | `DataState` (the BPMN label element) | ❌ | gobpm's closed three-state model (ADR-010 §2.1) covers the semantics. **Candidate for §14.1 registration** |
 | `ImplicitThrowEvent` | ❌ | Spec-rare; implement trivially when a need appears, or register out |
+| `UserTask.taskPriority` (§10.3.4.1, Table 10.14) | ❌ | The other instance attribute beside `actualOwner`, which landed with ADR-020 v.2/SRD-073. A distribution and ranking concern with no bearing on ownership or execution semantics — deferred, not overlooked (ADR-020 §7). Implement when a distributor needs to sort an inbox by it |
+| Reassignment to a **group-only** nominee | ❌ | `Reassign` checks the nominee against the frozen triad, but group membership is authenticated for a *present* actor and cannot be asserted for an absent one — so a task eligible only via `candidateGroups` can be claimed by any member and reassigned to none (ADR-020 §2.5.2). Closing it needs the directory/resource-query subsystem ADR-020 §7 defers |
 | `InputSet`/`OutputSet` multiplicity | 📐 | Already registered (SAD-001 §14.1 — single set, per-parameter flags) |
 | Data-availability wait | 📐 | Already registered (§14.1 — error, never wait) |
 | Value-less item-aware elements | 📐 | Already registered (§14.1 — rejected at registration) |

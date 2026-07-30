@@ -101,7 +101,7 @@ The enablers everything downstream needs. Governed by ADR-002 and ADR-003; each 
 
 Fill the Common Executable Subclass + ComplexGateway per `conformance.md`, in dependency order. Each element: implement + tests + cross-check against `docs/bpmn-spec/`. Builds on WS-B (assembly, scope, and — for durable elements — persistence).
 
-- **C1 Core flow.** None Start/End, Terminate End; Manual Task. (Exclusive and Parallel gateways, Service/User tasks, sequence-flow conditions already done.)
+- **C1 Core flow.** None Start/End, Terminate End; Manual Task. (Exclusive and Parallel gateways, Service/User tasks, sequence-flow conditions already done.) **Human-task ownership done** — BPMN's `actualOwner` instance attribute (§10.3.4.1, Table 10.14) with `Claim`/`Unclaim`/`Reassign`, strict owner-only completion, and a performer record later nodes can route on (ADR-020 v.2 / SRD-073). Still open from that family: `taskPriority`, task **escalation** on a breached deadline, and reassignment to a group-only nominee (needs the directory subsystem).
 - **C2 Errors & fault tolerance.** `BpmnError` contract; Boundary Error events with hierarchical resolution; Incident / Retry / DLQ (depends on WS-B3 persistence).
 - **C3 Messaging & timers.** Message correlation engine (structures exist); Message Start/Catch/Throw; Signal events; timer **persistence + hydration** (waiter exists; hydration depends on WS-B3); **Event-Based** gateway.
 - **C4 Structure & reuse.** Embedded Sub-Process (new scope level); Call Activity (variable mapping); Receive / Send tasks.
@@ -115,7 +115,7 @@ Fill the Common Executable Subclass + ComplexGateway per `conformance.md`, in de
 The standalone `gobpm-server`, built additively on WS-B interfaces and WS-C engine features. Each API service group is its own SRD.
 
 - 7-phase startup + reverse-order graceful shutdown with drain.
-- API service groups: process registry; instance lifecycle; user task; diagnostics (state/token-positions/history/manual intervention); event streaming; worker dispatch; health & ops.
+- API service groups: process registry; instance lifecycle; **user task** (the inbox surface over the engine's `Take`/`Claim`/`Unclaim`/`Reassign`/`Complete` — note `Reassign` is deliberately unauthorized at the engine, so this group owns deciding who may invoke it and logging who did, ADR-020 v.2 §2.5.2); diagnostics (state/token-positions/history/manual intervention); event streaming; worker dispatch; health & ops.
 - Tenancy via `context.Context` (Repository enforces per-tenant filtering); AuthN provider chain (OIDC/JWT/mTLS, per service group); observability wiring (OTel); health checks (liveness/readiness); hierarchical YAML config.
 
 ### WS-E — Adapters
