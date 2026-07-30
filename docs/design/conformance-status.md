@@ -4,7 +4,7 @@
 |---|---|
 | Type | **Continuously-current tracker** (not an SRD/ADR — updated as elements land, in the landing PR) |
 | Scope authority | [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) — Common Executable Subclass + the ComplexGateway extension |
-| Last verified | 2026-07-30, Ad-Hoc Sub-Process landed (ADR-035 / SRD-074 — #92 row 13 ✅, the last executable element in scope); prior full re-sweep post-SRD-071/072 (Persistence & State slices — #84 row 12 ✅; #79 row 10 closed 2026-07-22; §1 caught up with the row-1…11 landings; §5 order updated) |
+| Last verified | 2026-07-30, **human-task ownership landed** (ADR-020 v.2 / SRD-073 — `actualOwner` §10.3.4.1 Table 10.14, the first *instance* attribute the engine implements; §1 Human interaction + §3 leftovers); Ad-Hoc Sub-Process landed (ADR-035 / SRD-074 — #92 row 13 ✅, the last executable element in scope); prior full re-sweep post-SRD-071/072 (Persistence & State slices — #84 row 12 ✅; #79 row 10 closed 2026-07-22; §1 caught up with the row-1…11 landings; §5 order updated) |
 | Owner | Ruslan Gabitov |
 
 Status vocabulary: ✅ **executed** (model type + engine semantics + tests) ·
