@@ -34,6 +34,10 @@ func adHocOf(node flow.Node) activities.AdHocSpec {
 type adHocProgress struct {
 	completed map[string]int
 	running   map[string]int
+	// offered are the candidates a manual container is waiting on: the Router
+	// answered, and the container now holds them until a host activates one
+	// (ADR-035 v.1 §2.6). Empty in automatic mode, where an answer runs at once.
+	offered []flow.Node
 	// stopped marks a scope whose Router has answered empty: no further routing
 	// happens, and the scope completes once its live activities drain.
 	stopped bool
@@ -86,8 +90,9 @@ func (ls *loopState) seedAdHoc(
 
 	// An empty first answer leaves no track behind, so no settle will ever
 	// drive the drain — the scope's completion has to be driven here. The
-	// drain condition is already met: nothing is live.
-	if entry.active == 0 && !ls.stopping {
+	// drain condition is already met: nothing is live. A container holding
+	// offers is NOT done: it is waiting for a selection.
+	if entry.active == 0 && len(entry.adHoc.offered) == 0 && !ls.stopping {
 		ls.completeScope(ctx, child, entry)
 	}
 }
@@ -131,9 +136,97 @@ func (ls *loopState) routeAdHoc(
 		return
 	}
 
+	// Manual selection offers the answer instead of running it: the container
+	// waits for a host to choose, and the wait costs no goroutine — the scope's
+	// host track is already parked (ADR-035 v.1 §2.6).
+	if spec.IsManual() {
+		entry.adHoc.offered = nodes
+
+		return
+	}
+
 	for _, n := range nodes {
 		ls.spawnAdHoc(ctx, path, entry, n)
 	}
+}
+
+// activateAdHoc starts one offered activity, chosen by the host. Activating
+// something that is not currently offered is a classified error, never a silent
+// no-op — a stale or mistaken choice must be visible to whoever made it. Runs on the
+// loop goroutine.
+func (ls *loopState) activateAdHoc(
+	ctx context.Context, hostNodeID, activityID string,
+) error {
+	path, entry := ls.findAdHocScope(hostNodeID)
+	if entry == nil {
+		return errs.New(
+			errs.M("no open ad-hoc scope for node %q", hostNodeID),
+			errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	idx := -1
+
+	for i, n := range entry.adHoc.offered {
+		if n.ID() == activityID || n.Name() == activityID {
+			idx = i
+
+			break
+		}
+	}
+
+	if idx < 0 {
+		return errs.New(
+			errs.M("%q is not among the activities offered by ad-hoc %q",
+				activityID, entry.node.Name()),
+			errs.C(errorClass, errs.InvalidState))
+	}
+
+	node := entry.adHoc.offered[idx]
+
+	// The whole offer is consumed: the enabled set is re-derived from the
+	// Router after this activity settles, so keeping the unchosen candidates
+	// would let a host activate against a stale view.
+	entry.adHoc.offered = nil
+
+	ls.spawnAdHoc(ctx, path, entry, node)
+
+	return nil
+}
+
+// findAdHocScope resolves the open ad-hoc scope hosted by nodeID.
+func (ls *loopState) findAdHocScope(
+	nodeID string,
+) (scope.DataPath, *scopeEntry) {
+	for p, e := range ls.scopes {
+		if e.adHoc != nil && e.node.ID() == nodeID {
+			return p, e
+		}
+	}
+
+	return "", nil
+}
+
+// adHocView reports an open ad-hoc scope's offered and running activities for
+// host inspection. Runs on the loop goroutine.
+func (ls *loopState) adHocView(nodeID string) ([]string, []string, error) {
+	_, entry := ls.findAdHocScope(nodeID)
+	if entry == nil {
+		return nil, nil, errs.New(
+			errs.M("no open ad-hoc scope for node %q", nodeID),
+			errs.C(errorClass, errs.ObjectNotFound))
+	}
+
+	offered := make([]string, 0, len(entry.adHoc.offered))
+	for _, n := range entry.adHoc.offered {
+		offered = append(offered, n.ID())
+	}
+
+	running := make([]string, 0, len(entry.adHoc.running))
+	for id := range entry.adHoc.running {
+		running = append(running, id)
+	}
+
+	return offered, running, nil
 }
 
 // askAdHocRouter evaluates the Router against a transient read frame opened at
@@ -294,5 +387,68 @@ func (ls *loopState) settleAdHoc(
 
 	ls.routeAdHoc(ctx, path, entry, spec, id)
 
-	return entry.active > 0
+	// Offers keep the container open exactly as live activities do.
+	return entry.active > 0 || len(entry.adHoc.offered) > 0
+}
+
+// ActivateAdHoc starts one activity that the ad-hoc container hosted by
+// nodeID has offered — BPMN §13.3.5's "one enabled Activity is selected for
+// execution", performed by the host rather than the engine. Activating
+// something not currently offered is a classified error: a host acting on a
+// stale view learns so instead of silently doing nothing. Serviced by the
+// instance loop.
+func (inst *Instance) ActivateAdHoc(
+	ctx context.Context, nodeID, activityID string,
+) error {
+	if nodeID == "" || activityID == "" {
+		return errs.New(
+			errs.M("ActivateAdHoc: both the container and the activity must "+
+				"be named"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	_, err := inst.taskRoundtrip(ctx, taskRequest{
+		kind:   reqActivateAdHoc,
+		nodeID: nodeID,
+		taskID: activityID,
+	})
+
+	return err
+}
+
+// AdHocView reports what the ad-hoc container hosted by nodeID currently
+// offers for selection and what it is already running — the enabled set a host
+// chooses from. Serviced by the instance loop.
+func (inst *Instance) AdHocView(
+	ctx context.Context, nodeID string,
+) (offered, running []string, err error) {
+	if nodeID == "" {
+		return nil, nil, errs.New(
+			errs.M("AdHocView: the container must be named"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	req := taskRequest{kind: reqAdHocView, nodeID: nodeID}
+	req.reply = make(chan taskReply, 1)
+
+	select {
+	case inst.taskReq <- req:
+	case <-inst.loopDone:
+		return nil, nil, errs.New(
+			errs.M("instance %q is not running", inst.ID()),
+			errs.C(errorClass, errs.InvalidState))
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	}
+
+	select {
+	case r := <-req.reply:
+		return r.offered, r.running, r.err
+	case <-inst.loopDone:
+		return nil, nil, errs.New(
+			errs.M("instance %q stopped before the ad-hoc view"),
+			errs.C(errorClass, errs.InvalidState))
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	}
 }

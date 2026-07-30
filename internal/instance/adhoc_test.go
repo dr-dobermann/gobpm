@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -364,4 +365,119 @@ func totalCounts(m map[string]int) int {
 	}
 
 	return total
+}
+
+func TestAdHocManualSelectionOffersAndActivates(t *testing.T) {
+	var (
+		mu  sync.Mutex
+		log []string
+	)
+
+	// The Router offers two candidates each round; the host picks one, and the
+	// container ends when the Router stops.
+	r := &scriptedRouter{turns: [][]string{{"a", "b"}, {"c"}}}
+
+	inst := adHocInstance(t, r, &mu, &log,
+		activities.WithAdHocManualSelection())
+
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+
+	go func() { _ = inst.Run(ctx) }()
+
+	node := adHocNodeID(t, inst)
+
+	// The container waits on the offer instead of running it.
+	offered := waitForOffer(t, ctx, inst, node, 2)
+	require.Len(t, offered, 2, "both candidates are offered, none run")
+
+	mu.Lock()
+	require.Empty(t, log, "nothing runs until the host chooses")
+	mu.Unlock()
+
+	require.NoError(t, inst.ActivateAdHoc(ctx, node, offered[0]))
+
+	// After that activity settles the Router is asked again, so a fresh offer
+	// replaces the consumed one.
+	next := waitForOffer(t, ctx, inst, node, 1)
+	require.Len(t, next, 1)
+	require.NoError(t, inst.ActivateAdHoc(ctx, node, next[0]))
+
+	require.Eventually(t, func() bool {
+		return inst.State() == Completed
+	}, 3*time.Second, 5*time.Millisecond,
+		"the container completes when the Router stops")
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, log, 2, "exactly the two activated activities ran")
+}
+
+func TestAdHocActivateRejectsUnofferedActivity(t *testing.T) {
+	var (
+		mu  sync.Mutex
+		log []string
+	)
+
+	r := &scriptedRouter{turns: [][]string{{"a"}}}
+
+	inst := adHocInstance(t, r, &mu, &log,
+		activities.WithAdHocManualSelection())
+
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+
+	go func() { _ = inst.Run(ctx) }()
+
+	node := adHocNodeID(t, inst)
+	waitForOffer(t, ctx, inst, node, 1)
+
+	err := inst.ActivateAdHoc(ctx, node, "c")
+	require.Error(t, err, "activating an unoffered activity is not a no-op")
+
+	var ae *errs.ApplicationError
+	require.ErrorAs(t, err, &ae)
+	require.True(t, ae.HasClass(errs.InvalidState))
+
+	require.Error(t, inst.ActivateAdHoc(ctx, "no-such-node", "a"),
+		"an unknown container is reported too")
+	require.Error(t, inst.ActivateAdHoc(ctx, "", "a"),
+		"both arguments are required")
+}
+
+// adHocNodeID finds the ad-hoc container's node id in the instance's graph.
+func adHocNodeID(t *testing.T, inst *Instance) string {
+	t.Helper()
+
+	for _, n := range inst.s.Nodes {
+		if adHocOf(n) != nil {
+			return n.ID()
+		}
+	}
+
+	t.Fatal("no ad-hoc container in the instance graph")
+
+	return ""
+}
+
+// waitForOffer polls the container's view until it offers want candidates.
+func waitForOffer(
+	t *testing.T, ctx context.Context, inst *Instance, node string, want int,
+) []string {
+	t.Helper()
+
+	var offered []string
+
+	require.Eventually(t, func() bool {
+		o, _, err := inst.AdHocView(ctx, node)
+		if err != nil {
+			return false
+		}
+
+		offered = o
+
+		return len(o) == want
+	}, 3*time.Second, 5*time.Millisecond, "the container never offered")
+
+	return offered
 }
