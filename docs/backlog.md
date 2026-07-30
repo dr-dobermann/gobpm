@@ -40,28 +40,35 @@ Genuinely un-homed items — not yet tracked in an ADR/SRD, the roadmap, or the
 audit-backlog. Each graduates out into an ADR/SRD (when designed) or a FIX (when
 implemented), and leaves this list.
 
-- **Event-matching generalization** — unify EventHub subscription matching via a
-  polymorphic `SubscriptionKey()` (replacing the isolated signal name-scan). Its
-  intended trigger is **Link events landing** — Link being the second name-keyed
-  event type, at which point the abstraction pays off (deferred there by
-  SRD-020/026). NOTE (2026-07-20): Link has **not** landed — `pkg/model/events/link.go`
-  is a bare, unwired struct stub (no constructor/`Type()`/runtime, absent from the
-  throw/catch trigger allow-lists). This pass is due **with** the Link
-  implementation, not before — see `docs/analytics/link-events-kickoff.md`.
 - **Optioned-constructor doc-comment audit** — sweep every `New*` constructor whose
   doc comment enumerates its available options and reconcile each list with the
   options actually accepted. Surfaced by `NewUserTask`'s list going stale when the
   triad options were added (SRD-034 M1). A comment-only correctness pass, no
   behaviour change.
+- **Discard/assertion lint guard** — one `golangci-lint` config pass adding
+  `forbidigo` (or equivalent) patterns for two idioms the codebase has decided
+  against: a bare `_ =` on an error-returning call outside the documented
+  carve-outs (FIX-028 §8.3) and a `.Get(ctx).(T)` payload assertion where
+  `data.As[T]` belongs (ADR-034 v.1 §5). Both are guidance today, enforced by
+  review only.
 ### Tracked elsewhere (not duplicated here)
+- **Event-matching generalization** — **RETIRED** (2026-07-30). The premise was
+  that Link would be the second name-keyed event type, making a polymorphic
+  `SubscriptionKey()` pay off. Link landed as a **static graph redirect**
+  (SRD-057 — resolved at `WireClonedGraph`, no hub, no waiter), so Signal
+  remains the only name-matched subscription and the abstraction has no second
+  consumer. Revisit only if a genuinely name-keyed event type appears.
 - **Error-propagation & logging policy** — **DONE**: the silent-error-discard
   remediation graduated into **ADR-022** (the policy: handle-exactly-once,
   the fail-fast-vs-best-effort discriminator, the canonical attribute
   vocabulary) + **FIX-022** (the repo-wide sweep — no bare `_ =` error
   discards in production, one record per failure, canonical keys), landed
-  2026-07-11. Follow-ups it spun off (below): the timer sentinel-error
+  2026-07-11; **FIX-028** (2026-07-29) closed the residue — the last two
+  invariant-only discards now fail fast, and its §6.1 inventory classifies
+  every remaining bare-discard site (one documented carve-out; the rest are
+  comma-ok assertions). Follow-ups it spun off: the timer sentinel-error
   refactor, an `errcheck check-blank` lint, a `gofmt`-enforcing lint (FIX-022
-  §8.3).
+  §8.3) — the lint half now tracked above as the discard/assertion guard.
 - **Instance god-object — size decomposition** (event-loop seam): the audit §2.3
   finding is **fully closed** — the data-plane half by SRD-032's `instanceScope`
   extraction, the loop-state/correlation half by **SRD-040** (`loopState` +
