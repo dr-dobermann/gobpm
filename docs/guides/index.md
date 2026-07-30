@@ -93,6 +93,7 @@ Each page: the seam interface, the registration call, a minimal real implementat
 - [Custom worker dispatcher](extending/worker-dispatcher.md) — `tasks.WorkerDispatcher` + `WithWorkerDispatcher`.
 - [Custom task distributor](extending/task-distributor.md) — `interactor.TaskDistributor` + `WithTaskDistributor`.
 - [Custom authorization](extending/authorization.md) — `auth.AuthorizationProvider` + `WithAuthorizationProvider`.
+- [Interchange converters](extending/converters.md) — `convert.Importer`/`Exporter` + `RegisterImporter`/`RegisterExporter`; BPMN 2.0 XML in/out. *(`pkg/convert/bpmn`)*
 
 ## Part 7 — Reference
 

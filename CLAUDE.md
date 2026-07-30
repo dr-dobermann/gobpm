@@ -84,25 +84,30 @@ coverage backlog never blocks a PR. The gate runs locally (`make ci`) and in CI 
 same `cmd/covercheck` binary, preserving local↔CI parity.
 
 ```bash
-# One-time per machine: install the dev tools at the versions CI pins
-# (mockery, golangci-lint, govulncheck). Versions live in the Makefile.
+# One-time per machine: install the Go dev tools at the versions CI pins
+# (mockery, golangci-lint, govulncheck, covercheck). Versions live in Makefile.
 make tools
 
 # Full pre-push gate (mirrors GitHub)
 make ci
 ```
 
+On macOS, install GNU coreutils once with `brew install coreutils`;
+`run-examples` detects its `gtimeout` command automatically. Linux already
+provides `timeout`.
+
 **Parity rules (do not break these — they exist because a silent local
 no-op once let broken code reach CI):**
 
-- **Tools fail loudly, never skip.** Every Make target that shells out to
-  a dev tool is wrapped in the `require-tool` guard, so a missing binary
-  aborts with an install hint instead of passing as a no-op. When adding a
-  CI step that calls a new binary, add a matching `require-tool` guard and
-  add the tool to the `tools` target — otherwise an absent tool silently
-  "passes" locally while failing on GitHub.
+- **Tools fail loudly, never skip or drift.** Every Make target that shells out
+  to a pinned Go dev tool is wrapped in the `require-go-tool` guard, which
+  reads the binary's embedded Go module version and requires the exact CI pin.
+  Missing or stale binaries abort with a `make tools` hint. Non-Go commands
+  use `require-command`; `run-examples` accepts GNU `timeout` on Linux or
+  Homebrew's `gtimeout` on macOS. When adding a CI tool, add the corresponding
+  guard and installation/documentation path.
 - **The Go toolchain is pinned.** Every `go.mod` carries `toolchain
-  go1.25.11` and the workflow sets `go-version: '1.25.11'`, so local and CI
+  go1.25.12` and the workflow sets `go-version: '1.25.12'`, so local and CI
   scan the identical stdlib (govulncheck reports stdlib vulnerabilities per
   toolchain patch — a bare `1.25` drifts between runs). To clear new stdlib
   vulns, bump the toolchain line in every module plus the workflow together,

@@ -2,12 +2,12 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
-| Version | v.1 |
-| Date | 2026-07-17 |
+| Status | Accepted |
+| Version | v.2 |
+| Date | 2026-07-30 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-024 v.1](../design/ADR-024-process-interchange-converters.md) §2.1–§2.8 (the converter seam + the first BPMN slice) |
-| Upstream | [ADR-002 v.2](../design/ADR-002-extension-architecture.md) (extension interfaces live in `pkg/`; the seam follows it), [ADR-019 v.1](../design/ADR-019-definition-versioning.md) (version key = process id; the id-preservation constraint), [SAD-001 v.1](../design/SAD-001-vision-and-architecture.md) §4 N7 / §5 / §9 (parser as a separate module; modeler feedback; module layout), [docs/bpmn-spec/](../bpmn-spec/) (the BPMN 2.0 KB) |
+| Upstream | [ADR-002 v.2](../design/ADR-002-extension-architecture.md) (extension interfaces live in `pkg/`; the seam follows it), [ADR-019 v.1](../design/ADR-019-definition-versioning.md) (version key = process id; the id-preservation constraint), [SAD-001 v.1](../design/SAD-001-vision-and-architecture.md) §4 N7 / §5 / §9 (parser outside the engine; modeler feedback; module layout), [docs/bpmn-spec/](../bpmn-spec/) (the BPMN 2.0 KB) |
 | Refines | — |
 
 ## §1 Background
@@ -25,8 +25,7 @@ else — which blocks the **BPMN modeler** persona
 [ADR-024 v.1](../design/ADR-024-process-interchange-converters.md) decides the
 answer: a **format-agnostic converter seam** in core (`pkg/convert` —
 `Importer`/`Exporter` + a register-by-format-key registry), and a first
-**batteries-included** BPMN 2.0 XML converter shipped as the reserved separate
-module (SAD-001 §9). This SRD lands **slice 1**: the seam, plus BPMN **import and
+**batteries-included** BPMN 2.0 XML converter. This SRD lands **slice 1**: the seam, plus BPMN **import and
 export** of the executable-core MVP subset, engine-independent, with a semantic
 round-trip and unsupported-element feedback.
 
@@ -67,13 +66,18 @@ The seams this lands on already exist:
   the offending element's tag, id, and the spec § — the SAD-001 §5 *"clear
   feedback on unsupported elements"* requirement, surfaced from `Import`.
 
-### Functional — the BPMN converter (the reserved separate module)
+### Functional — the BPMN converter (`pkg/convert/bpmn`)
 
-- **§FR-4 — Module scaffold.** A new module (SAD-001 §9 reservation; name
-  proposed `convert/` per ADR-024 Q1, pending SAD ratification) with `go.mod` +
-  `doc.go`, importing core only (dependency direction inward, SAD-001 §9.1). It
-  **self-registers** both directions via `init()` (`MustRegisterImporter`/
-  `Exporter`) so a blank import `_ "…/convert/bpmn"` turns BPMN on.
+- **§FR-4 — Converter package.** A sibling package of the seam,
+  `pkg/convert/bpmn`, in the root module. It imports core only (dependency
+  direction inward, SAD-001 §9.1) and adds no third-party dependency — the
+  parser is stdlib `encoding/xml`. It **self-registers** both directions via
+  `init()` (`MustRegisterImporter`/`Exporter`), so the blank import
+  `_ "github.com/dr-dobermann/gobpm/pkg/convert/bpmn"` turns BPMN on.
+
+  > **v.2 change.** v.1 specified a separate top-level module (the SAD-001 §9
+  > `doc-source/` reservation, renamed `convert/` by ADR-024 Q1). It shipped as
+  > a package instead — see §4.1.
 - **§FR-5 — Import.** Parse BPMN 2.0 XML (namespace
   `http://www.omg.org/spec/BPMN/20100524/MODEL`) into a `*process.Process` over
   the §FR-8 element set, via a **namespace-aware token-stream decoder**
@@ -87,6 +91,13 @@ The seams this lands on already exist:
   / `di:*` and other out-of-execution-scope foreign-namespace subtrees silently
   (SAD-001 §4 N5); an **in-`bpmn`-namespace** element the slice does not map is
   an `UnsupportedElementError` (§FR-3), not a silent drop.
+
+  **Exception — non-executable annotations.** `<bpmn:documentation>` and
+  `<bpmn:extensionElements>` are skipped silently wherever they appear, despite
+  being in the BPMN namespace. Both are universal in bpmn.io / Camunda output
+  and carry no execution semantics; erroring on them would reject essentially
+  every real modeler file whose *flow graph* is fully inside the subset. The
+  error contract therefore covers unmapped **flow elements**, not annotations.
 - **§FR-8 — Element mapping (MVP subset).** The executable-core subset
   ([docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) §2.1.3):
 
@@ -97,14 +108,15 @@ The seams this lands on already exist:
   | `<bpmn:endEvent>` (none) | `events.NewEndEvent` | §13.5.6 |
   | `<bpmn:task>` / `<bpmn:manualTask>` | `activities.NewManualTask` (no-op, §13.1) | §13.3.3 |
   | `<bpmn:userTask>` | `activities.NewUserTask` | §13.3.3 |
+  | `<bpmn:serviceTask>` (`operationRef`) | `activities.NewServiceTask` | §13.3.2 |
+  | `<bpmn:interface>` / `<bpmn:operation>` | `service.NewOperation` (catalog stub) | §10.4 |
   | `<bpmn:sequenceFlow>` (`sourceRef`/`targetRef`, `conditionExpression`) | `flow.Link(src, trg, WithCondition)` | §13.2 / §13.3.1 |
   | `<bpmn:exclusiveGateway>` (`default`) | `gateways.NewExclusiveGateway` | §13.4.2 |
   | `<bpmn:parallelGateway>` | `gateways.NewParallelGateway` | §13.4.1 |
 
-  **`serviceTask` is deferred to the next slice** (§4.6) — it requires
-  `operationRef` → `<bpmn:interface>`/`<bpmn:operation>` parsing and a new
-  `ServiceTask.Operation()` export getter, materially heavier than the
-  no-external-ref tasks above.
+  > **v.2 change.** v.1 deferred `serviceTask` to slice 2. It landed in slice 1
+  > together with the `ServiceTask.Operation()` accessor it needs for export —
+  > see §4.6.
 
 ### Functional — front door
 
@@ -116,9 +128,13 @@ The seams this lands on already exist:
 
 ### Non-functional
 
-- **§NFR-1 — Dependency budget.** `pkg/convert` is stdlib-only (no `xml`); the
-  BPMN module uses stdlib `encoding/xml` only — zero third-party deps
-  (SAD-001 §9.1).
+- **§NFR-1 — Dependency budget.** `pkg/convert` is stdlib-only and carries **no
+  serialization of its own** — no `encoding/xml`, no `encoding/json`; enforced
+  by the `convert-seam-format-agnostic` depguard rule, scoped to
+  `pkg/convert/*.go` so the format packages below it stay free to serialize.
+  `pkg/convert/bpmn` uses stdlib `encoding/xml` only. Neither adds a
+  third-party dependency, so core's "stdlib + uuid" budget (SAD-001 §9.1) is
+  untouched.
 - **§NFR-2 — Streaming.** Import/export are `io.Reader`/`io.Writer`-shaped and
   stream via `xml.Decoder`/`xml.Encoder` — no whole-file buffering mandated.
 - **§NFR-3 — Semantic round-trip.** `Import` then `Export` yields a
@@ -126,9 +142,11 @@ The seams this lands on already exist:
   conditions, gateway kinds) — **not** byte-identical XML (ADR-024 §2.8).
 - **§NFR-4 — Public-API validation.** Every exported constructor/registry
   function validates all parameters with self-identifying errors.
-- **§NFR-5 — CI parity.** The new module joins the `make ci` per-module matrix
-  (tidy, lint, build, race, diff-coverage ≥ `COVER_MIN`, govulncheck); touched
-  files meet the diff-coverage gate.
+- **§NFR-5 — CI parity.** The converter is part of the root module, so it is
+  covered by `make ci-core` (tidy, lint, build, race, govulncheck) with no
+  Makefile or workflow change — and, unlike a separate module, its code **does**
+  reach the `cover-check` diff-coverage gate (`coverage.txt` is written for the
+  root module only). Touched files meet ≥ `COVER_MIN`.
 
 ## §3 Models
 
@@ -172,47 +190,60 @@ Registry state is package-global maps keyed by `Format`, mutated only by
 `image.RegisterFormat` idiom (ADR-024 §2.2), a deliberate deviation from the
 functional-options norm because `convert` is engine-independent.
 
-### §3.2 `convert/bpmn` (the BPMN module)
+### §3.2 `pkg/convert/bpmn` (the BPMN converter)
 
-Import uses a **token-stream decoder** (not struct-unmarshal — §4.3). Export
-uses typed XML structs marshalled with `xml.Encoder`:
+No exported surface: the package is reached through the `convert` façade and
+switched on by a blank import. Import uses a **token-stream decoder** (not
+struct-unmarshal — §4.3); export uses typed XML structs marshalled with
+`xml.Encoder`:
 
 ```go
-type xmlDefinitions struct {
-	XMLName   xml.Name     `xml:"http://www.omg.org/spec/BPMN/20100524/MODEL definitions"`
-	Processes []xmlProcess `xml:"process"`
+// One element type carries every flow node; Tag picks the concrete name, and
+// the unused attributes are omitempty. A per-element struct (v.1's shape) would
+// have forced Elements into per-kind slices and lost document order on export.
+type xmlNode struct {
+	XMLName        xml.Name
+	ID             string `xml:"id,attr"`
+	Name           string `xml:"name,attr,omitempty"`
+	Direction      string `xml:"gatewayDirection,attr,omitempty"`
+	Default        string `xml:"default,attr,omitempty"`
+	Implementation string `xml:"implementation,attr,omitempty"`
+	OperationRef   string `xml:"operationRef,attr,omitempty"`
 }
 
+// Elements is []any so nodes and flows marshal each under their own tag, in
+// the order the model reports them.
 type xmlProcess struct {
-	ID            string            `xml:"id,attr"`
-	Name          string            `xml:"name,attr,omitempty"`
-	IsExecutable  bool              `xml:"isExecutable,attr"`
-	StartEvents   []xmlNode         `xml:"startEvent"`
-	EndEvents     []xmlNode         `xml:"endEvent"`
-	Tasks         []xmlNode         `xml:"task"`
-	ManualTasks   []xmlNode         `xml:"manualTask"`
-	UserTasks     []xmlNode         `xml:"userTask"`
-	ExclusiveGWs  []xmlGateway      `xml:"exclusiveGateway"`
-	ParallelGWs   []xmlNode         `xml:"parallelGateway"`
-	SequenceFlows []xmlSequenceFlow `xml:"sequenceFlow"`
+	XMLName      xml.Name `xml:"bpmn:process"`
+	ID           string   `xml:"id,attr"`
+	Name         string   `xml:"name,attr,omitempty"`
+	Elements     []any
+	IsExecutable bool `xml:"isExecutable,attr"`
 }
 
+// The condition is a child element, not an attribute: it carries chardata plus
+// its own id and language URI.
 type xmlSequenceFlow struct {
-	ID        string `xml:"id,attr"`
-	Name      string `xml:"name,attr,omitempty"`
-	SourceRef string `xml:"sourceRef,attr"`
-	TargetRef string `xml:"targetRef,attr"`
-	Condition string `xml:"conditionExpression,omitempty"`
+	XMLName   xml.Name
+	Condition *xmlCondition `xml:"bpmn:conditionExpression,omitempty"`
+	ID        string        `xml:"id,attr"`
+	Name      string        `xml:"name,attr,omitempty"`
+	SourceRef string        `xml:"sourceRef,attr"`
+	TargetRef string        `xml:"targetRef,attr"`
 }
 
 type importer struct{}
 type exporter struct{}
 
-func init() {
+func init() { //nolint:gochecknoinits // §FR-4 self-registration
 	convert.MustRegisterImporter(convert.BPMN, importer{})
 	convert.MustRegisterExporter(convert.BPMN, exporter{})
 }
 ```
+
+Field order in these structs is dictated by `govet/fieldalignment`, which the
+repo enforces; it does not affect the emitted document, because `encoding/xml`
+collects attributes in a pass of their own before writing children.
 
 ### §3.3 Import algorithm (two-pass)
 
@@ -228,11 +259,37 @@ func init() {
 
 ## §4 Analysis
 
-### §4.1 Why a separate module, engine-independent
-Inherited from ADR-024 §2.1–§2.4: SAD-001 §4 N7 mandates the parser as a
-separate module so core "accepts pre-built models"; import returns a
-`*process.Process` and the host registers it — the engine never imports the
-converter.
+### §4.1 Why a package, not a separate module
+ADR-024 §4-A chose a separate module on two grounds: SAD-001 §4 N7 ("core
+accepts pre-built models") and keeping core's "stdlib + uuid" dependency budget.
+The second ground does not survive ADR-024's own §4-D, which chose a
+**hand-rolled `encoding/xml`** parser: `encoding/xml` *is* stdlib, so the
+converter adds nothing to the budget — its `go.sum` requirement set is empty.
+What remains of N7 is a statement about **responsibility**, and that is
+preserved by direction, not by a module boundary: the converter imports the
+model, the engine never imports the converter, and `Import` returns a
+`*process.Process` the host registers itself.
+
+Against that, a module costs a `go.mod`, a `replace`, its own release tag — and,
+decisively, **invisibility to the diff-coverage gate**: `make test-all` writes
+`coverage.txt` for the root module only, so ~1 600 lines of parser would never
+have been measured. Moving it in-tree put it under the 95 % gate, which is what
+surfaced the dead `operationRef` export path (§4.6).
+
+One constraint had to be handled explicitly. `internal/lintcfg/muststyle_test.go`
+(FIX-026) fails the build on any `Must*` **call** under `pkg/`, and §FR-4's
+`init()` calls `MustRegisterImporter`/`MustRegisterExporter`. Rather than dodge
+the guard, `pkg/convert/bpmn/bpmn.go` is listed in that test's `exemptFiles`
+with the reason: the arguments are compile-time constants of the package, the
+call happens once at load time, and the only reachable failure is a duplicate
+registration — a programming error an `init()` cannot return.
+
+### §4.1a Why the seam is core and the format is not
+`pkg/convert` is engine-facing contract (ADR-002: extension interfaces live in
+`pkg/`), so it belongs in core and must stay format-agnostic — enforced by
+depguard (§NFR-1). `pkg/convert/bpmn` is one implementation of that contract;
+further formats (XPDL, a vendor dialect) become sibling packages, or
+out-of-tree packages in the user's own module, with no core change.
 
 ### §4.2 Why preserve BPMN ids
 ADR-019 keys the version lineage on the process **id**; auto-generating ids on
@@ -261,26 +318,45 @@ in-`bpmn`-scope element the slice hasn't mapped yet (inclusive gateway, timer
 event, boundary event, sub-process) is **reported**, so the modeler learns what
 the engine won't run (SAD-001 §5). The discriminator is the namespace.
 
-### §4.6 Why `serviceTask` is deferred
-`NewServiceTask` requires a non-nil `service.Operation`
-(`activities/service_task.go:84`), which in BPMN is an `operationRef` into an
-`<bpmn:interface>`/`<bpmn:operation>` under `<definitions>`. Faithful import
-therefore needs interface/operation parsing, and faithful export needs a
-`ServiceTask.Operation()` getter that **does not exist today** (the struct field
-`operation` has no exported accessor, `activities/service_task.go`). Both are the
-first work of slice 2; landing them half-done (a placeholder operation that
-can't execute) would ship a misleading feature. The no-external-ref tasks
-(`task`/`manualTask`/`userTask`) round-trip cleanly and carry the MVP.
+### §4.6 `serviceTask` — deferred in v.1, landed in v.2
+`NewServiceTask` requires a non-nil `service.Operation`, which in BPMN is an
+`operationRef` into an `<bpmn:interface>`/`<bpmn:operation>` under
+`<definitions>`. v.1 deferred the whole element because faithful export also
+needs a `ServiceTask.Operation()` accessor that did not exist.
 
-> **ADR reconciliation:** ADR-024 §2.6 lists `serviceTask` in the MVP table.
-> This SRD trims it (discovered during grounding). ADR-024 §2.6 is to be updated
-> to move `serviceTask` to "later slice" — a downstream-sync edit on the parent
-> ADR, to confirm with the owner.
+Both halves shipped in slice 1:
+
+- **Import** parses the definitions-level catalog before the process, so
+  `operationRef` resolves to a `service.Operation` built by `service.NewOperation`
+  with **no implementor** — a catalog stub the host binds after import. A
+  `serviceTask` with no `operationRef` gets a synthetic operation id
+  `<taskID>:operation`; an `operationRef` naming an unknown operation is a hard
+  import error (`ObjectNotFound`).
+- **Export** writes `operationRef` and reconstructs a single synthetic
+  `<bpmn:interface>` per process (id `<processID>-services`) holding every
+  operation the process references, so the ref resolves on re-import.
+- **`activities.ServiceTask.Operation()`** was added as a read-only accessor.
+  It is the one core API addition in this SRD.
+
+**Why the accessor could not be avoided.** The converter first shipped a
+structural workaround — `any(st).(interface{ Operation() service.Operation })` —
+so it would compile against a gobpm without the getter and light up against one
+with it. Inside the repo that assertion could never succeed, which made the
+whole `operationRef`/interface-catalog export path unreachable: exported
+documents silently lost the service binding, and `TestServiceTaskRoundTrip`
+did not notice because it only asserted the node's *type* survived. The
+diff-coverage gate (§4.1) is what exposed it. The workaround is gone; the
+round-trip test now asserts `Operation().ID()` survives.
+
+**Message bindings remain deferred.** `inMessageRef`/`outMessageRef` are parsed
+and recorded on the operation spec but not bound to `bpmncommon.Message`, and
+not re-emitted on export. That is the first work of the next slice.
 
 ### §4.7 Rejected shapes
-- **Wrapping a third-party BPMN library** — pulls DI/diagram weight the module
+- **Wrapping a third-party BPMN library** — pulls DI/diagram weight the package
   doesn't need for the executable subset; stdlib `encoding/xml` suffices
-  (ADR-024 §4-D).
+  (ADR-024 §4-D). It would also have breached core's dependency budget, which
+  the stdlib parser leaves untouched (§4.1).
 - **Struct-unmarshal import** — silently drops unknowns (§4.3).
 - **Byte-lossless round-trip** — DI is out of scope and textual losslessness is
   not a conformance requirement (ADR-024 §2.8 / §4-F).
@@ -291,11 +367,16 @@ can't execute) would ship a misleading feature. The no-external-ref tasks
 `RegisterImporter`/`RegisterExporter`, `MustRegisterImporter`/
 `MustRegisterExporter`, `Import`, `Export`, `Formats`, `UnsupportedElementError`.
 
-**New (module):** `convert/bpmn` — no exported surface beyond the `init()`
+**New (core):** `pkg/convert/bpmn` — no exported surface beyond the `init()`
 self-registration (consumers use the `convert` façade); blank-import to enable.
 
-**Unchanged:** the model constructors, `thresher.RegisterProcess`. No engine API
-change.
+**Changed (core):** `activities.ServiceTask.Operation() service.Operation` — a
+read-only accessor for the operation the task was constructed with, needed by
+export (§4.6). Additive; never nil, since `NewServiceTask` rejects a nil
+operation.
+
+**Unchanged:** the other model constructors, `thresher.RegisterProcess`. No
+engine API change.
 
 ## §6 Test scenarios
 
@@ -303,7 +384,7 @@ change.
   duplicate registration rejected; nil impl rejected; empty format rejected;
   `Import`/`Export` on an unknown format returns the enumerating error;
   `Formats()` lists registered.
-- **`TestBPMNImportMVP`** (`convert/bpmn`) — each §FR-8 element imports to the
+- **`TestBPMNImportMVP`** (`pkg/convert/bpmn`) — each §FR-8 element imports to the
   right constructor with id/name preserved; conditional + default flows attach.
 - **`TestBPMNExportMVP`** — a programmatically built process exports to XML with
   correct tags/attrs; no DI emitted.
@@ -349,12 +430,12 @@ and re-importing reproduces the same structure (NFR-3).
 | # | Scope |
 |---|---|
 | M1 | `pkg/convert` seam — Format, `Importer`/`Exporter`, registry (+`Must…`, façade, `Formats`), `UnsupportedElementError`; `TestConvertRegistry` (§FR-1..3) |
-| M2 | `convert/bpmn` module scaffold + **import** (token-stream, id-preservation, DI-skip, unsupported-element error) of §FR-8; import + preserve-id + unsupported tests (§FR-4/5/7/8) |
+| M2 | `pkg/convert/bpmn` + **import** (token-stream, id-preservation, DI-skip, unsupported-element error) of §FR-8; import + preserve-id + unsupported tests (§FR-4/5/7/8) |
 | M3 | **export** (`xml.Encoder`) of §FR-8 + semantic **round-trip** tests; the worked-example fixture (§FR-6, NFR-3) |
-| M4 | `examples/bpmn-convert/` + guide/README + changelog + tracker + CI per-module wiring + e2e (§FR-9/10, NFR-5) |
+| M4 | `examples/bpmn-convert/` + guide/README + changelog + e2e (§FR-9/10, NFR-5) |
 
 Post-M4: `/check-srd`, §10 fill, SRD-051 → Accepted, ADR-024 → Accepted, and the
-ADR-024 §2.6 reconciliation (§4.6).
+ADR-024 §4-A / §2.6 reconciliation (§4.1, §4.6).
 
 ## §8 Cross-doc
 
@@ -363,37 +444,90 @@ ADR-024 §2.6 reconciliation (§4.6).
 - **Upstream** [ADR-002 v.2](../design/ADR-002-extension-architecture.md) (seam
   idiom), [ADR-019 v.1](../design/ADR-019-definition-versioning.md) (id =
   version key), [SAD-001 v.1](../design/SAD-001-vision-and-architecture.md) §4
-  N7 / §5 / §9 (separate module, modeler feedback, layout).
+  N7 / §5 / §9 (parser outside the engine, modeler feedback, layout).
 - **Standard** [docs/bpmn-spec/](../bpmn-spec/) — conformance §2.1.3, elements,
   semantics (§ pins in §FR-8).
-- **Downstream sync (on landing):** ADR-024 §2.6 `serviceTask` trim (§4.6);
-  and — if the SAD owner ratifies Q1 — the module name rename in SAD-001 §9.
+- **Downstream sync (applied at landing):** ADR-024 §4-A re-decided to a package
+  (§4.1) and Q1 withdrawn — there is no module left to name; ADR-024 §2.6
+  `serviceTask` restored to the MVP set (§4.6); SAD-001 §9 `doc-source/`
+  reservation retired.
 - **Direction check:** SRD → ADR/SAD (up), all pins versioned. No downward ref.
 
 ## §9 Definition of Done
 
 - Every §FR wired to real code; §6 tests present and green.
-- `make ci` green across all modules **including the new `convert/bpmn`
-  module** (tidy, lint, build, race, diff-coverage ≥ `COVER_MIN` on touched
-  files, govulncheck).
-- `TestBPMNRoundTrip` and `TestBPMNImportRegisterRun` green; unsupported-element
+- `make ci` green (tidy, lint, build, race, diff-coverage ≥ `COVER_MIN` on
+  touched files, govulncheck).
+- The round-trip and import→register→run tests green; unsupported-element
   feedback and id→version tie demonstrated.
 - `examples/bpmn-convert/` runs to completion; guide/README + changelog updated.
-- Cross-doc pins consistent (§8); ADR-024 §2.6 reconciliation applied.
+- Cross-doc pins consistent (§8); the ADR-024 / SAD-001 reconciliation applied.
 
 ## §10 Implementation summary
 
-_(placeholder — filled at landing: milestones-by-commit, deltas vs this draft,
-empirical findings, backlog.)_
+Landed on `feat/bpmn-converter` (2026-07-30). The converter was first built
+out-of-tree against the published `gobpm v0.9.0` and merged in; every §FR is
+wired, `make ci-core` is green, and the example runs end to end.
 
-## Open questions
+### Deltas vs v.1
 
-1. **Worked-example fixture source.** Hand-authored (the §6 snippet) for MVP, or
-   vendor a small **MIWG** conformance fixture subset now (SAD-001 §6 names MIWG
-   as the P0 conformance tactic)? Recommend hand-authored for slice 1; MIWG as a
-   later corpus.
-2. **`conditionExpression` language.** MVP imports the expression **body** as a
-   `data.FormalExpression`; do we record the `language` attribute (XPath vs the
-   engine's expression language) now, or default it and defer language handling?
-3. **Module name (inherited ADR-024 Q1).** `convert/` pending SAD-001 §9
-   ratification; the SRD uses "the BPMN module" until then.
+| # | v.1 said | Shipped | Where |
+|---|---|---|---|
+| 1 | BPMN lives in a separate top-level module | a package, `pkg/convert/bpmn`, in the root module | §4.1 |
+| 2 | `serviceTask` deferred to slice 2 | landed in slice 1, with the `ServiceTask.Operation()` accessor | §4.6 |
+| 3 | any unmapped in-`bpmn` element errors | `documentation` / `extensionElements` skip silently | §FR-7 |
+| 4 | per-element XML structs (`StartEvents []xmlNode`, …) | one `xmlNode` + `Elements []any`, preserving document order | §3.2 |
+| 5 | `conditionExpression` as a string attribute | a child element carrying chardata + `id` + `language` | §3.2, Q2 |
+
+### Empirical findings
+
+- **The diff-coverage gate earns its keep.** Moving the parser in-tree put it
+  under `cover-check`, which immediately exposed `interfacesXML` and half of
+  `setServiceTaskAttrs` as unreachable — the dead `operationRef` export path of
+  §4.6. A separate module would have kept that invisible and shipped a
+  silently lossy round-trip.
+- **`xml.Encoder.Flush` after `Encode` is dead code.** `Encode` ends with
+  `enc.p.w.Flush()`, so a following explicit `Flush` can only ever drain an
+  empty buffer. The redundant block was removed.
+- **`UserTask` needs a placeholder output.** gobpm requires at least one output
+  resource parameter, so an imported `<userTask>` gets a synthesized optional
+  output that is **not** written back on export. Asymmetric but semantically
+  neutral; see the backlog below.
+- Diff coverage at landing: **96.3 % of 830 changed lines** (min 95 %).
+  `pkg/convert` 100 %, `pkg/convert/bpmn` 92.5 % of statements.
+
+### Test-name mapping (§6 → shipped)
+
+`TestConvertRegistry` kept its name. The BPMN cases dropped the redundant
+`BPMN` infix, since they live in `pkg/convert/bpmn`:
+`TestBPMNImportMVP` → `TestImportSubset`, `TestBPMNExportMVP` → `TestExportMVP`,
+`TestBPMNRoundTrip` → `TestRoundTrip` (+ `TestWorkedExample` for the §6
+fixture), `TestBPMNPreservesID` → `TestPreservesID`,
+`TestBPMNUnsupportedElement` → `TestImportInvalidFixtures` +
+`TestExportUnsupportedNode`, `TestBPMNImportRegisterRun` → `TestImportRegisterRun`.
+
+### Backlog (next slices)
+
+1. **Operation message binding** — `inMessageRef`/`outMessageRef` → `bpmncommon.Message`, and re-emitting them on export (§4.6).
+2. **Non-text conditions** — export currently refuses a condition with no source text (Q2); revisit when a compiled expression engine can round-trip one.
+3. **`UserTask` placeholder output** — either relax the ≥1-output rule in the model or promote the workaround to a documented rule.
+4. **`FuzzImport`** on the untrusted-XML boundary.
+5. **MIWG conformance corpus** (Q1) once the element set grows past the MVP.
+6. **Next element slices**, in ADR-024's order: message/timer intermediate events → inclusive and event-based gateways → boundary events and sub-process → send/receive tasks.
+7. **Per-module coverage profiles** so `runtime/` and `adapters/*` reach `cover-check` too — the gap this SRD sidestepped by staying in the root module (§4.1). Not converter work: tracked in [docs/backlog.md](../backlog.md) under un-homed items.
+
+## Open questions — all resolved at landing
+
+1. **Worked-example fixture source — RESOLVED: hand-authored.** The §6 snippet
+   plus eight files under `pkg/convert/bpmn/testdata/` (three valid, five
+   invalid) — the repo's first `testdata/` directory. An MIWG corpus is
+   backlog item 5: it only pays off once the element set outgrows the MVP.
+2. **`conditionExpression` language — RESOLVED: recorded.** The importer keeps
+   the `language` attribute and the expression `id` alongside the body on an
+   inert `formalExpression`, and export writes all three back, so the attribute
+   round-trips. Nothing *evaluates* it — that stays the expression engine's
+   job — but discarding it would have made the round-trip lossy for every
+   XPath-flavoured file.
+3. **Module name (inherited ADR-024 Q1) — WITHDRAWN.** There is no module to
+   name: the converter is `pkg/convert/bpmn` (§4.1). The SAD-001 §9
+   `doc-source/` reservation is retired rather than renamed.

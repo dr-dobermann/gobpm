@@ -50,7 +50,7 @@
   ответ движка на «сделай X для каждой строки заказа».
 
 Обе — ядро цели BPMN *Process Execution Conformance*
-([conformance.md](../../bpmn-spec/conformance.md), scope проекта). Массовую
+([conformance.md](../bpmn-spec/conformance.md), scope проекта). Массовую
 поэлементную обработку без них выразить невозможно.
 
 Проблема, которую решает этот ADR, — **концептуальная**, а не механическая:
@@ -63,8 +63,8 @@
 ### Объектная модель (BPMN 2.0, дословно из vendored-извлечения)
 
 Из [activities.md §StandardLoopCharacteristics / §MultiInstanceLoopCharacteristics /
-§ComplexBehaviorDefinition](../../bpmn-spec/elements/activities.md) и
-[multi-instance.md](../../bpmn-spec/semantics/multi-instance.md):
+§ComplexBehaviorDefinition](../bpmn-spec/elements/activities.md) и
+[multi-instance.md](../bpmn-spec/semantics/multi-instance.md):
 
 - `StandardLoopCharacteristics → LoopCharacteristics → BaseElement`:
   `testBefore` (Boolean, дефолт `False`), `loopCondition` (Expression),
@@ -205,7 +205,7 @@ await-each (последовательный) и fan-out-then-await-all (пар�
 ### 2.6 Поток данных — расщепить на входе, собрать на выходе
 
 Multi-Instance фундаментально является **трансформацией коллекции**
-([multi-instance.md §Data semantics](../../bpmn-spec/semantics/multi-instance.md)).
+([multi-instance.md §Data semantics](../bpmn-spec/semantics/multi-instance.md)).
 Спека называет *медиатор* split/assemble «under-specified»; этот ADR фиксирует
 конкретную конвенцию движка:
 
@@ -218,7 +218,7 @@ Multi-Instance фундаментально является **трансфор�
   позиционное соответствие со входом.
 - **Барьер видимости.** Спека **рекомендует**, чтобы коллекция
   `loopDataOutputRef` была недоступна, пока *все* экземпляры не завершатся
-  ([multi-instance.md §Data semantics](../../bpmn-spec/semantics/multi-instance.md):
+  ([multi-instance.md §Data semantics](../bpmn-spec/semantics/multi-instance.md):
   «should not be accessible» — одна лишь передача токенов не может гарантировать,
   что коллекция полностью записана). Движок **усиливает эту рекомендацию до
   гарантии**: коллекция не должна быть читаема конкурентными активностями до
@@ -250,7 +250,7 @@ under-specified медиатора спеки, выбранная ради де�
 
 `behavior` (`MultiInstanceBehavior`, дефолт `All`) управляет тем, **бросает** ли
 активность **событие** по мере завершения экземпляров
-([multi-instance.md §Event throwing](../../bpmn-spec/semantics/multi-instance.md)).
+([multi-instance.md §Event throwing](../bpmn-spec/semantics/multi-instance.md)).
 Брошенные события **перехватываемы на границе** Multi-Instance активности
 (механизм границ ADR-018), позволяя модели реагировать на прогресс:
 
@@ -264,7 +264,7 @@ under-specified медиатора спеки, выбранная ради де�
   завершение экземпляра вычисляется `condition` (FormalExpression) каждого
   определения, и каждое, которое `true`, бросает ассоциированный
   `ImplicitThrowEvent`
-  ([events.md §ImplicitThrowEvent](../../bpmn-spec/elements/events.md)). Одно
+  ([events.md §ImplicitThrowEvent](../bpmn-spec/elements/events.md)). Одно
   завершение поэтому может бросить несколько различных событий, каждое
   перехватываемое своим граничным событием — это включает потоки, зависящие от
   прогресса (например, «брось *quorum-reached*, когда пришли 3 из 5 одобрений»).
@@ -301,7 +301,7 @@ behavior-событий, но vendored-извлечение их **не пере
 BPMN §13.3.7 специфицирует, что Multi-Instance активность компенсируется только
 если завершились **все** её экземпляры, причём последовательные/loop-экземпляры
 компенсируются в **обратном** порядке, а параллельные — параллельно
-([multi-instance.md §Compensation](../../bpmn-spec/semantics/multi-instance.md)).
+([multi-instance.md §Compensation](../bpmn-spec/semantics/multi-instance.md)).
 У gobpm **пока нет субстрата компенсации** — компенсация — это работа области
 Transaction (отслеживается отдельно). Этот ADR поэтому **откладывает**
 MI-компенсацию: модель итерации спроектирована так, что per-instance области
@@ -403,14 +403,14 @@ BPMN-концепция: BPMN молчит о goroutine-модели движк�
 
 | Утверждение | Источник |
 |---|---|
-| Атрибуты и семантика Standard Loop | [multi-instance.md §Standard Loop](../../bpmn-spec/semantics/multi-instance.md); [activities.md §StandardLoopCharacteristics](../../bpmn-spec/elements/activities.md) (§13.3.6) |
-| Кардинальность MI (выражение \| коллекция), фиксирована при активации | [multi-instance.md §Cardinality](../../bpmn-spec/semantics/multi-instance.md) (§13.3.7) |
-| Секвенирование `isSequential` | [multi-instance.md §Sequencing](../../bpmn-spec/semantics/multi-instance.md); [activities.md §MultiInstanceLoopCharacteristics](../../bpmn-spec/elements/activities.md) |
-| `completionCondition` отменяет оставшиеся | [multi-instance.md §Completion](../../bpmn-spec/semantics/multi-instance.md) |
-| `behavior` = All/None/One/Complex бросание событий | [multi-instance.md §Event throwing / §ComplexBehaviorDefinition](../../bpmn-spec/semantics/multi-instance.md); [activities.md §MultiInstanceLoopCharacteristics / §ComplexBehaviorDefinition](../../bpmn-spec/elements/activities.md) |
-| `ImplicitThrowEvent` как событие complex-behavior | [events.md §ImplicitThrowEvent](../../bpmn-spec/elements/events.md) |
-| Split/assemble данных, барьер видимости вывода | [multi-instance.md §Data semantics](../../bpmn-spec/semantics/multi-instance.md) |
-| Порядок компенсации | [multi-instance.md §Compensation](../../bpmn-spec/semantics/multi-instance.md) |
+| Атрибуты и семантика Standard Loop | [multi-instance.md §Standard Loop](../bpmn-spec/semantics/multi-instance.md); [activities.md §StandardLoopCharacteristics](../bpmn-spec/elements/activities.md) (§13.3.6) |
+| Кардинальность MI (выражение \| коллекция), фиксирована при активации | [multi-instance.md §Cardinality](../bpmn-spec/semantics/multi-instance.md) (§13.3.7) |
+| Секвенирование `isSequential` | [multi-instance.md §Sequencing](../bpmn-spec/semantics/multi-instance.md); [activities.md §MultiInstanceLoopCharacteristics](../bpmn-spec/elements/activities.md) |
+| `completionCondition` отменяет оставшиеся | [multi-instance.md §Completion](../bpmn-spec/semantics/multi-instance.md) |
+| `behavior` = All/None/One/Complex бросание событий | [multi-instance.md §Event throwing / §ComplexBehaviorDefinition](../bpmn-spec/semantics/multi-instance.md); [activities.md §MultiInstanceLoopCharacteristics / §ComplexBehaviorDefinition](../bpmn-spec/elements/activities.md) |
+| `ImplicitThrowEvent` как событие complex-behavior | [events.md §ImplicitThrowEvent](../bpmn-spec/elements/events.md) |
+| Split/assemble данных, барьер видимости вывода | [multi-instance.md §Data semantics](../bpmn-spec/semantics/multi-instance.md) |
+| Порядок компенсации | [multi-instance.md §Compensation](../bpmn-spec/semantics/multi-instance.md) |
 
 Там, где извлечение молчит (набор рантайм-атрибутов MI), §2.9 помечает конвенцию
 движка явно, а не утверждает мандат спеки.
@@ -575,9 +575,9 @@ loop-горутиной композитной модели; v.2 пере-при
 - [ADR-018 v.1 — Boundary Events & Activity Interruption](ADR-018-boundary-events-and-activity-interruption.md) — граничный перехват для behavior-событий; per-instance отмена
 - [ADR-006 v.3 — Events & Subscriptions](ADR-006-events-and-subscriptions.md) — бросание/перехват событий
 - BPMN 2.0 §13.3.6 (Standard Loop), §13.3.7 (Multi-Instance); vendored-извлечение
-  [multi-instance.md](../../bpmn-spec/semantics/multi-instance.md),
-  [activities.md](../../bpmn-spec/elements/activities.md),
-  [events.md](../../bpmn-spec/elements/events.md)
+  [multi-instance.md](../bpmn-spec/semantics/multi-instance.md),
+  [activities.md](../bpmn-spec/elements/activities.md),
+  [events.md](../bpmn-spec/elements/events.md)
 
 ---
 

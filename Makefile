@@ -67,10 +67,12 @@ EXAMPLE_MODULES := $(filter ./examples/%,$(MODULES))
 # "Install tools" step in .github/workflows/check.yml. `make tools` installs
 # them locally so a developer's environment matches CI exactly.
 #
-# require-tool guards every target that shells out to one of these binaries:
+# require-go-tool guards every target that shells out to one of these binaries:
 # without it a missing tool makes the step a silent no-op (e.g. `vuln`
 # "passing" locally because govulncheck was never installed, while CI fails).
-# A missing tool must fail loudly, not be skipped.
+# Presence alone is insufficient: an older binary can accept the command name
+# but reject newer flags/config. Read the module version embedded by the Go
+# linker and require the exact CI pin.
 # ---------------------------------------------------------------------------
 
 MOCKERY_VERSION     := v3.5.0
@@ -78,13 +80,29 @@ GOLANGCI_VERSION    := v2.11.4
 GOVULNCHECK_VERSION := v1.6.0
 COVERCHECK_VERSION  := v0.2.0
 
-define require-tool
-@command -v $(1) >/dev/null 2>&1 || { echo "ERROR: '$(1)' not found in PATH. Run 'make tools' (installs CI-pinned versions) or: $(2)"; exit 1; }
+define require-go-tool
+@tool_bin="$$(command -v "$(1)" 2>/dev/null)" || { \
+	echo "ERROR: '$(1)' not found in PATH. Run 'make tools' (installs CI-pinned versions)."; \
+	exit 1; \
+}; \
+actual_version="$$($(GO) version -m "$$tool_bin" 2>/dev/null | \
+	awk '$$1 == "mod" && $$2 == "$(2)" { print $$3; exit }')"; \
+if [ "$$actual_version" != "$(3)" ]; then \
+	echo "ERROR: '$(1)' version $${actual_version:-unknown} found at $$tool_bin; CI requires $(3). Run 'make tools'."; \
+	exit 1; \
+fi
+endef
+
+define require-command
+@command -v "$(1)" >/dev/null 2>&1 || { \
+	echo "ERROR: '$(1)' not found in PATH. $(2)"; \
+	exit 1; \
+}
 endef
 
 tools:
 	$(GO) install github.com/vektra/mockery/v3@$(MOCKERY_VERSION)
-	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
+	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/$(GOLANGCI_VERSION)/install.sh \
 		| sh -s -- -b "$$($(GO) env GOPATH)/bin" $(GOLANGCI_VERSION)
 	$(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	$(GO) install github.com/dr-dobermann/covercheck/cmd/covercheck@$(COVERCHECK_VERSION)
@@ -105,14 +123,17 @@ update_modules:
 .PHONY: update_modules
 
 lint:
+	$(call require-go-tool,golangci-lint,github.com/golangci/golangci-lint/v2,$(GOLANGCI_VERSION))
 	golangci-lint run --timeout=10m cmd/... internal/... pkg/...
 .PHONY: lint
 
 lint_fix:
+	$(call require-go-tool,golangci-lint,github.com/golangci/golangci-lint/v2,$(GOLANGCI_VERSION))
 	golangci-lint run --timeout=10m --fix cmd/... internal/... pkg/...
 .PHONY: lint_fix
 
 lint_all:
+	$(call require-go-tool,golangci-lint,github.com/golangci/golangci-lint/v2,$(GOLANGCI_VERSION))
 	golangci-lint run --timeout=10m ./...
 .PHONY: lint_all
 
@@ -144,7 +165,7 @@ clear:
 # deps (testify is already required), and tidy-check-all guards go.mod/go.sum
 # separately, so tidy stays off the mock path (it was mutating the tree).
 gen_mock_files:
-	$(call require-tool,mockery,$(GO) install github.com/vektra/mockery/v3@$(MOCKERY_VERSION))
+	$(call require-go-tool,mockery,github.com/vektra/mockery/v3,$(MOCKERY_VERSION))
 	rm -rf generated/
 	mockery
 .PHONY: gen_mock_files
@@ -154,7 +175,7 @@ gen_mock_files:
 # + committed). Deterministic output + a pinned mockery make git diff a reliable
 # signal.
 mock-check:
-	$(call require-tool,mockery,$(GO) install github.com/vektra/mockery/v3@$(MOCKERY_VERSION))
+	$(call require-go-tool,mockery,github.com/vektra/mockery/v3,$(MOCKERY_VERSION))
 	rm -rf generated/
 	mockery
 	@git diff --exit-code -- generated/ || \
@@ -196,7 +217,7 @@ test-all:
 .PHONY: test-all
 
 lint-all-modules:
-	$(call require-tool,golangci-lint,see https://golangci-lint.run/welcome/install/ or run 'make tools')
+	$(call require-go-tool,golangci-lint,github.com/golangci/golangci-lint/v2,$(GOLANGCI_VERSION))
 	@set -e; for dir in $(MODULES); do \
 		echo "::group::lint $$dir"; \
 		(cd $$dir && golangci-lint run --timeout=10m --config=$(CURDIR)/.golangci.yml) || exit 1; \
@@ -216,7 +237,7 @@ tidy-check-all:
 .PHONY: tidy-check-all
 
 vuln:
-	$(call require-tool,govulncheck,$(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION))
+	$(call require-go-tool,govulncheck,golang.org/x/vuln,$(GOVULNCHECK_VERSION))
 	@set -e; for dir in $(MODULES); do \
 		echo "::group::govulncheck $$dir"; \
 		(cd $$dir && govulncheck ./...) || exit 1; \
@@ -254,7 +275,7 @@ consumer-smoke:
 # module) — run `make test-all` first, or use `make ci` which orders them.
 # Judges only changed lines, so the untouched-code backlog never blocks it.
 cover-check:
-	$(call require-tool,covercheck,$(GO) install github.com/dr-dobermann/covercheck/cmd/covercheck@$(COVERCHECK_VERSION))
+	$(call require-go-tool,covercheck,github.com/dr-dobermann/covercheck,$(COVERCHECK_VERSION))
 	covercheck -min $(COVER_MIN) -base $(COVER_BASE) \
 		-exclude-lines '$(COVER_EXCLUDE)' \
 		-exclude-paths '^generated/' \
@@ -289,17 +310,22 @@ vuln-core:
 # stdin so a read gets EOF, never a terminal hang.
 EXAMPLE_RUN_SKIP :=
 # Generous per-example ceiling: the slowest (timer-driven) examples finish
-# well under it; a hang is cut at the ceiling with timeout's exit 124.
+# well under it; a hang is cut at the ceiling with GNU timeout's exit 124.
 EXAMPLE_RUN_TIMEOUT := 90s
+# GNU coreutils installs this command as `timeout` on Linux and `gtimeout` on
+# macOS/Homebrew. Prefer the native name, then the Homebrew-prefixed fallback;
+# retain `timeout` as the final value so the guard below gives a useful error.
+EXAMPLE_TIMEOUT ?= $(shell command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || printf '%s' timeout)
 
 # run-examples executes every example module end-to-end (FIX-029): a runtime
 # regression — deadlock, panic, model drift — fails the gate that `go build`
 # alone kept green (the FIX-002 class). Stdout is discarded (the examples
 # narrate); stderr stays visible inside the group fold.
 run-examples:
+	$(call require-command,$(EXAMPLE_TIMEOUT),On macOS install GNU coreutils with 'brew install coreutils' (provides gtimeout).)
 	@set -e; for dir in $(filter-out $(EXAMPLE_RUN_SKIP),$(EXAMPLE_MODULES)); do \
 		echo "::group::run $$dir"; \
-		(cd $$dir && timeout $(EXAMPLE_RUN_TIMEOUT) $(GO) run . < /dev/null > /dev/null) || exit 1; \
+		(cd $$dir && "$(EXAMPLE_TIMEOUT)" $(EXAMPLE_RUN_TIMEOUT) $(GO) run . < /dev/null > /dev/null) || exit 1; \
 		echo "::endgroup::"; \
 	done
 .PHONY: run-examples
@@ -325,4 +351,3 @@ ci-core: mock-check tidy-check-core lint-core build-core consumer-smoke test-cor
 # test-core writes coverage.txt; cover-check consumes it (single test run).
 ci: ci-core ci-examples
 .PHONY: ci
-

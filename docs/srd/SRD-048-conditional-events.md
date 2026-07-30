@@ -7,7 +7,7 @@
 | Date | 2026-07-15 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-006 v.3](../design/ADR-006-events-and-subscriptions.md) §2.7 (conditional events — status-based triggering by commit-diff); GitHub issue #89 |
-| Upstream | [ADR-011 v.6](../design/ADR-011-structured-process-data.md) §2.9.4 (the commit-diff change signal this rides), [ADR-018 v.1](../design/ADR-018-boundary-events-and-activity-interruption.md) §2.7 (the boundary-trigger deferral this closes for Conditional), [ADR-005 v.4](../design/ADR-005-gateways-and-joins.md) (event-based-gateway arms), [ADR-001 v.6](../design/ADR-001-execution-model.md) (the single-writer loop the registry lives on), [ADR-013 v.2](../design/ADR-013-observability.md) (fact kinds the new signals reuse) |
+| Upstream | [ADR-011 v.6](../design/ADR-011-process-data-flow.md) §2.9.4 (the commit-diff change signal this rides), [ADR-018 v.1](../design/ADR-018-boundary-events-and-activity-interruption.md) §2.7 (the boundary-trigger deferral this closes for Conditional), [ADR-005 v.4](../design/ADR-005-gateways-and-joins.md) (event-based-gateway arms), [ADR-001 v.6](../design/ADR-001-execution-model.md) (the single-writer loop the registry lives on), [ADR-013 v.2](../design/ADR-013-instance-observability.md) (fact kinds the new signals reuse) |
 | Refines | — |
 
 Note on numbering: SRD-047 is reserved for the structural-data maps slice
@@ -467,11 +467,11 @@ ADR-005 arm note).
   above).
 - Closes the Conditional row of [ADR-018 v.1](../design/ADR-018-boundary-events-and-activity-interruption.md)
   §2.7's deferred boundary triggers.
-- Rides [ADR-011 v.6](../design/ADR-011-structured-process-data.md) §2.9.4
+- Rides [ADR-011 v.6](../design/ADR-011-process-data-flow.md) §2.9.4
   commit-diff and [ADR-005 v.4](../design/ADR-005-gateways-and-joins.md)
   event-based-gateway semantics; preserves
   [ADR-001 v.6](../design/ADR-001-execution-model.md) single-writer.
-- Observability shapes per [ADR-013 v.2](../design/ADR-013-observability.md)
+- Observability shapes per [ADR-013 v.2](../design/ADR-013-instance-observability.md)
   (no new kind).
 
 ## §9 Definition of Done

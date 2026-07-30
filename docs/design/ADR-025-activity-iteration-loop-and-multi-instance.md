@@ -46,7 +46,7 @@ repeatedly without duplicating the node in the diagram. Two forms exist
   engine's answer to "do X for each line item in the order".
 
 Both are core to the BPMN *Process Execution Conformance* target
-([conformance.md](../../bpmn-spec/conformance.md), the project's scope). Mass
+([conformance.md](../bpmn-spec/conformance.md), the project's scope). Mass
 per-element processing is impossible to express without them.
 
 The problem this ADR solves is **conceptual**, not mechanical: *what does it
@@ -59,8 +59,8 @@ runtime seam carries each part) are the SRDs' job.
 ### Object model (BPMN 2.0, verbatim from the vendored extract)
 
 From [activities.md §StandardLoopCharacteristics / §MultiInstanceLoopCharacteristics /
-§ComplexBehaviorDefinition](../../bpmn-spec/elements/activities.md) and
-[multi-instance.md](../../bpmn-spec/semantics/multi-instance.md):
+§ComplexBehaviorDefinition](../bpmn-spec/elements/activities.md) and
+[multi-instance.md](../bpmn-spec/semantics/multi-instance.md):
 
 - `StandardLoopCharacteristics → LoopCharacteristics → BaseElement`:
   `testBefore` (Boolean, default `False`), `loopCondition` (Expression),
@@ -196,7 +196,7 @@ on the activity's own execution (§2.12).
 ### 2.6 Data flow — split in, assemble out
 
 Multi-Instance is fundamentally a **collection transform**
-([multi-instance.md §Data semantics](../../bpmn-spec/semantics/multi-instance.md)).
+([multi-instance.md §Data semantics](../bpmn-spec/semantics/multi-instance.md)).
 The spec calls the split/assemble *mediator* "under-specified"; this ADR fixes a
 concrete engine convention:
 
@@ -209,7 +209,7 @@ concrete engine convention:
   collection, preserving positional correspondence with the input.
 - **Visibility barrier.** The spec **recommends** the `loopDataOutputRef`
   collection not be accessible until *all* instances have completed
-  ([multi-instance.md §Data semantics](../../bpmn-spec/semantics/multi-instance.md):
+  ([multi-instance.md §Data semantics](../bpmn-spec/semantics/multi-instance.md):
   "should not be accessible" — token-passing alone cannot guarantee the
   collection is fully written). The engine **strengthens this recommendation
   into a guarantee**: the collection must not be readable by concurrent
@@ -241,7 +241,7 @@ collection is still published atomically per §2.6.
 
 `behavior` (`MultiInstanceBehavior`, default `All`) governs whether the activity
 **throws an event** as instances complete
-([multi-instance.md §Event throwing](../../bpmn-spec/semantics/multi-instance.md)).
+([multi-instance.md §Event throwing](../bpmn-spec/semantics/multi-instance.md)).
 The thrown events are **catchable on the boundary** of the Multi-Instance
 activity (ADR-018 boundary mechanism), letting a model react to progress:
 
@@ -254,7 +254,7 @@ activity (ADR-018 boundary mechanism), letting a model react to progress:
   instance completion, each definition's `condition` (a FormalExpression) is
   evaluated, and each one that is `true` throws its associated
   `ImplicitThrowEvent`
-  ([events.md §ImplicitThrowEvent](../../bpmn-spec/elements/events.md)). A single
+  ([events.md §ImplicitThrowEvent](../bpmn-spec/elements/events.md)). A single
   completion can therefore throw several distinct events, each catchable by a
   different boundary event — enabling progress-dependent flows (e.g. "throw
   *quorum-reached* once 3 of 5 approvals arrive").
@@ -292,7 +292,7 @@ progress.
 BPMN §13.3.7 specifies that a Multi-Instance activity compensates only if **all**
 its instances completed, sequential/loop instances compensating in **reverse**
 order and parallel ones in parallel
-([multi-instance.md §Compensation](../../bpmn-spec/semantics/multi-instance.md)).
+([multi-instance.md §Compensation](../bpmn-spec/semantics/multi-instance.md)).
 gobpm has **no compensation substrate yet** — compensation is Transaction-scope
 work (tracked separately). This ADR therefore **defers** MI compensation: the
 iteration model is designed so per-instance scopes are individually addressable
@@ -391,14 +391,14 @@ is invisible to a modeler.
 
 | Claim | Source |
 |---|---|
-| Standard Loop attributes & semantics | [multi-instance.md §Standard Loop](../../bpmn-spec/semantics/multi-instance.md); [activities.md §StandardLoopCharacteristics](../../bpmn-spec/elements/activities.md) (§13.3.6) |
-| MI cardinality (expression \| collection), fixed at activation | [multi-instance.md §Cardinality](../../bpmn-spec/semantics/multi-instance.md) (§13.3.7) |
-| `isSequential` sequencing | [multi-instance.md §Sequencing](../../bpmn-spec/semantics/multi-instance.md); [activities.md §MultiInstanceLoopCharacteristics](../../bpmn-spec/elements/activities.md) |
-| `completionCondition` cancels remaining | [multi-instance.md §Completion](../../bpmn-spec/semantics/multi-instance.md) |
-| `behavior` = All/None/One/Complex event throwing | [multi-instance.md §Event throwing / §ComplexBehaviorDefinition](../../bpmn-spec/semantics/multi-instance.md); [activities.md §MultiInstanceLoopCharacteristics / §ComplexBehaviorDefinition](../../bpmn-spec/elements/activities.md) |
-| `ImplicitThrowEvent` as the complex-behavior event | [events.md §ImplicitThrowEvent](../../bpmn-spec/elements/events.md) |
-| Data split/assemble, output visibility barrier | [multi-instance.md §Data semantics](../../bpmn-spec/semantics/multi-instance.md) |
-| Compensation ordering | [multi-instance.md §Compensation](../../bpmn-spec/semantics/multi-instance.md) |
+| Standard Loop attributes & semantics | [multi-instance.md §Standard Loop](../bpmn-spec/semantics/multi-instance.md); [activities.md §StandardLoopCharacteristics](../bpmn-spec/elements/activities.md) (§13.3.6) |
+| MI cardinality (expression \| collection), fixed at activation | [multi-instance.md §Cardinality](../bpmn-spec/semantics/multi-instance.md) (§13.3.7) |
+| `isSequential` sequencing | [multi-instance.md §Sequencing](../bpmn-spec/semantics/multi-instance.md); [activities.md §MultiInstanceLoopCharacteristics](../bpmn-spec/elements/activities.md) |
+| `completionCondition` cancels remaining | [multi-instance.md §Completion](../bpmn-spec/semantics/multi-instance.md) |
+| `behavior` = All/None/One/Complex event throwing | [multi-instance.md §Event throwing / §ComplexBehaviorDefinition](../bpmn-spec/semantics/multi-instance.md); [activities.md §MultiInstanceLoopCharacteristics / §ComplexBehaviorDefinition](../bpmn-spec/elements/activities.md) |
+| `ImplicitThrowEvent` as the complex-behavior event | [events.md §ImplicitThrowEvent](../bpmn-spec/elements/events.md) |
+| Data split/assemble, output visibility barrier | [multi-instance.md §Data semantics](../bpmn-spec/semantics/multi-instance.md) |
+| Compensation ordering | [multi-instance.md §Compensation](../bpmn-spec/semantics/multi-instance.md) |
 
 Where the extract is silent (the MI runtime-attribute set), §2.9 marks the
 engine convention explicitly rather than asserting a spec mandate.
@@ -552,9 +552,9 @@ or minting a new number — so the element→SRD mapping stays stable.
 - [ADR-018 v.1 — Boundary Events & Activity Interruption](ADR-018-boundary-events-and-activity-interruption.md) — boundary catch for behavior events; per-instance cancellation
 - [ADR-006 v.3 — Events & Subscriptions](ADR-006-events-and-subscriptions.md) — event throwing/catching
 - BPMN 2.0 §13.3.6 (Standard Loop), §13.3.7 (Multi-Instance); vendored extract
-  [multi-instance.md](../../bpmn-spec/semantics/multi-instance.md),
-  [activities.md](../../bpmn-spec/elements/activities.md),
-  [events.md](../../bpmn-spec/elements/events.md)
+  [multi-instance.md](../bpmn-spec/semantics/multi-instance.md),
+  [activities.md](../bpmn-spec/elements/activities.md),
+  [events.md](../bpmn-spec/elements/events.md)
 
 ---
 
