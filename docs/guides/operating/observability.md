@@ -183,6 +183,7 @@ The full vocabulary, grouped by subsystem:
 | `KindDataChange` | data-element change | **no (observer-only)** |
 | `KindDataObject` | per-instance Data Object read / write | **no (observer-only)** |
 | `KindDataStore` | engine-global Data Store read / write | yes |
+| `KindAdHoc` | Ad-Hoc routing decisions — offered / activated / stopped | yes |
 
 The common `Details` keys (there are more — worker, correlation, call-activity,
 decision — see the `go doc` for the full set):

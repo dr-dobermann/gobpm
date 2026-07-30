@@ -43,6 +43,13 @@ type Evaluator interface {
 
 // State is what a routing decision may rest on: the container's activities,
 // how far they have progressed, and the data visible to them.
+//
+// Every activity here is named by its **id** — Activities, both counters and
+// Last all speak ids, because ids are unique where names are not. Next may
+// answer with a name (it resolves either way), but a Router that correlates its
+// answer with the state should use ids throughout, or the lookup silently
+// misses. Give ad-hoc activities explicit, readable ids
+// (foundation.WithID("gather-logs")) and both halves read the same.
 type State struct {
 	// Completed counts settled executions per inner activity id. An activity
 	// that has never run is absent, so len(Completed) is the number of distinct

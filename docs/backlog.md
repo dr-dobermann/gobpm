@@ -54,7 +54,7 @@ implemented), and leaves this list.
   an *error* (`if err != nil { log.Fatal(err) }`), so one that completes while
   taking the wrong branch, computing a wrong value or skipping an activity
   still exits 0 and passes the FIX-029 run-step. Add an outcome assertion to
-  each of the 44 example modules — compare the result the example claims to
+  each of the 45 example modules — compare the result the example claims to
   demonstrate and `log.Fatalf` when it differs — which turns the existing
   exit-0 gate into an outcome gate with no new CI machinery. Golden-output
   files are the wrong tool here (generated ids, timestamps and map ordering
