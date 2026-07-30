@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | Draft |
-| Version | v.1.1 |
+| Version | v.1.2 |
 | Date | 2026-07-30 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-020 v.2](../design/ADR-020-human-interaction-execution-model.md) §2.1.1, §2.4.1, §2.4.2, §2.5.1–§2.5.3, §2.7 |
@@ -532,8 +532,8 @@ frozen snapshot.
 | V1b | Empty `taskID` / nil `actor` into `Eligibility.Authorize` | NFR-6; self-identifying errors |
 | V2 | `ResolveEligibility` on static and expression-backed triads; a failing expression | FR-5; failure → empty set, authorizes nobody (§1.4) |
 | V2a | The **existing** `user_task_authz_test.go` table passes unchanged against the delegating `Authorize` | FR-5b, §4.6; the refactor is behaviour-preserving |
-| V2b | The instance-side check denies an ineligible actor even when the thresher gate is bypassed (calling `Instance.Take`/`Complete` directly) | FR-5c, §4.2; defence in depth is real, not ceremonial |
-| V2c | An expression-backed triad whose underlying data changes **after** distribution | FR-5; claim and completion both still honour the frozen set — the §4.1 correctness argument |
+| V2b | The instance-side check denies an ineligible actor even when the thresher gate is bypassed (calling `Instance.Take`/`Complete` directly) | FR-5c, §4.2; defence in depth is real, not ceremonial. **M2** — at M1 there is no gate to bypass, and the existing end-to-end already proves the instance denies an ineligible actor through the frozen snapshot (`pkg/thresher/user_task_test.go`) |
+| V2c | An expression-backed triad whose underlying data changes **after** distribution | FR-5; claim and completion both still honour the frozen set — the §4.1 correctness argument. **M2** — proving it needs a `loopState`/`taskEntry` harness whose snapshot deliberately disagrees with what the node would resolve, because no external API mutates instance data mid-park; M2 builds that harness for the ownership operations anyway, so it is written once rather than twice |
 | V2d | A declared slot that resolves to **nobody** stays `Declared` and denies, never falling through to the candidate slots | FR-5, §3.1; the distinction a flat `[]string` would have lost |
 | V2e | `DeniedEligibility()` authorizes no actor, and is **not** `Open()` | FR-5e, §4.8 |
 | V2f | An unresolvable triad denies all actors and emits `PhaseFailed` with `reason=eligibility_resolution_failed` | FR-5e, FR-8; the fail-open bypass cannot recur |
@@ -570,8 +570,8 @@ Each milestone is one commit, independently verifiable, `make ci` green.
 
 | M | Scope | Verifies |
 |---|---|---|
-| **M1** | `interactor.ResolvedSlot`/`Eligibility` + `Authorize`/`permits`/`Open`/`DeniedEligibility` (the denial's single author, `unauthorized` folded in and deleted); `ResolveEligibility` on `UserTask` with `Authorize` refactored to delegate (contract intact); resolution wired into `buildTaskInfo`, failing closed with a fact; `TaskInfo.Eligible` + `taskEntry.eligible`; the instance check reads the snapshot and `authorizeTask`'s throwaway frame retires | FR-5, FR-5a–e, V1, V1a, V1b, V2, V2a–V2f |
-| **M2** | `taskRecord` replaces `tasks map[string]string`; `Claim`/`Unclaim`/`Reassign` on `Thresher`, registry-only; the thresher's pre-hydration gate | FR-1, FR-2, FR-3a–c, NFR-1, NFR-2, NFR-6, V3–V9, V17, V18 |
+| **M1** *(landed)* | `interactor.ResolvedSlot`/`Eligibility` + `Authorize`/`permits`/`Open`/`DeniedEligibility` (the denial's single author, `unauthorized` folded in and deleted); `ResolveEligibility` on `UserTask` with `Authorize` refactored to delegate (contract intact); resolution wired into `buildTaskInfo`, failing closed with a fact; `TaskInfo.Eligible` + `taskEntry.eligible`; the instance check reads the snapshot and `authorizeTask`'s throwaway frame retires | FR-5, FR-5a–e, V1, V1a, V1b, V2, V2a–V2f |
+| **M2** | `taskRecord` replaces `tasks map[string]string`; `Claim`/`Unclaim`/`Reassign` on `Thresher`, registry-only; the thresher's pre-hydration gate; the `loopState`/`taskEntry` harness carried over from M1 for V2b/V2c | FR-1, FR-2, FR-3a–c, NFR-1, NFR-2, NFR-6, V2b, V2c, V3–V9, V17, V18 |
 | **M3** | Birth-ownership from a single resolved assignee | FR-6, V13, V14 |
 | **M4** | Strict completion + `completedBy` at root scope + the three new phases | FR-4, FR-7, FR-8, V10–V12, V15, V16 |
 | **M5** | Cancellation/teardown parity and registry-record cleanup for owned tasks | FR-9, V19, V20 |
@@ -616,7 +616,14 @@ the claim-then-complete flow reaches the feature tour.
 4. `make ci` green across modules: tidy-check, lint, build, `-race` tests,
    `make cover-check` ≥ `COVER_MIN` (95) on touched lines, govulncheck.
 5. Touched-function coverage ≥ 80% (target 100%), measured per function on the diff, not
-   as a package aggregate.
+   as a package aggregate. **One recorded exception:** `instance.resolveEligibility`'s
+   fail-closed branch (FR-5e). It is unreachable from any constructible state —
+   `openFrame` dereferences `sc.plane.Root()` before `scope.NewFrame`'s nil guard, so a nil
+   plane panics rather than erroring, and tripping `checkContained` means contorting scope
+   internals. Adding an injection seam was rejected: reshaping production code for a
+   three-line defensive branch costs more clarity than the coverage buys. The *consequence*
+   is fully covered — `DeniedEligibility()` at 100%, and V2e proves it denies every actor.
+   The function therefore lands at 62.5%; every other touched function is at 100%.
 6. Every runnable example executes end-to-end under a timeout and exits 0; built example
    binaries stay gitignored.
 7. ADR-020's Russian twin is at v.2 (M8).
@@ -650,3 +657,4 @@ None.
 |---|---|---|
 | v.1 | 2026-07-30 | Initial draft — lands ADR-020 v.2's ownership lifecycle. Splits eligibility *resolution* (once, at distribution, on the `UserTask`) from the eligibility *rule* (`Eligibility.Authorize`, a function over frozen sets that also owns the denial error), so `Claim`/`Unclaim`/`Reassign` and `Complete`'s ownership gate run from the engine-level task registry without hydrating a released instance. Because the snapshot is write-once, it is held by both `taskEntry` and the thresher record, which lets **every existing check stay exactly where it is**: `UserTask.Authorize` keeps its signature and tests (delegating to the same rule), the instance-side eligibility check remains on the instance per ADR-020 §2.4/§5, and no ADR amendment is required — the disruption is one internal refactor plus a read-only field on two structs. The thresher adds a pre-hydration gate (eligibility then ownership, in §2.4's order) so a doomed completion costs no hydration, with the instance's check retained as defence in depth. `Thresher.tasks` grows into `taskRecord{instanceID, eligible, owner}`; `completedBy` commits at root scope under `<nodeName>.completedBy`; three new `KindTaskState` phases. Eight milestones (M1 eligibility snapshot + `Authorize` refactor → M2 registry + operations + early gate → M3 birth-ownership → M4 strict completion + `completedBy` → M5 cancellation parity → M6 spec-extract coverage → M7 examples/console → M8 ADR-020 Russian twin). |
 | v.1.1 | 2026-07-30 | Corrections forced by M1's implementation, before any code commit. **§3.1 model fixed:** a flat `Assignee []string` cannot distinguish a *declared* slot from one that *resolved to nothing*, but the existing verdict gates on the slot being declared (`user_task_authz.go:75`), so a declared assignee resolving to nobody must **deny** rather than fall through to the candidate slots — hence `ResolvedSlot{Declared, IDs}` and a derived `Open()`. **FR-5d corrected:** v.1 claimed the denial error was unchanged for embedders; its class string in fact moves from `ACTIVITIES_ERRORS` to `INTERACTOR_ERRORS` now that `pkg/interactor` authors it (message, `errs.ConditionFailed` kind and `task_id`/`user_id` details are carried over verbatim). **FR-5e and §4.8 added:** resolving at distribution introduced a failure mode v.1 missed — the zero `Eligibility` reads as an *open* task, so a scope-frame failure would have been a silent authorization bypass. Resolution now fails **closed** via `DeniedEligibility()` and reports a `KindTaskState`/`PhaseFailed` fact (`reason=eligibility_resolution_failed`, `effect=denied_all_actors`). Tests V2d–V2f added to pin all three. |
+| v.1.2 | 2026-07-30 | Test-scope decisions taken during M1, recorded rather than left implicit. **V2b and V2c move to M2:** at M1 there is no thresher gate for V2b to bypass (the existing end-to-end already proves the instance denies an ineligible actor through the frozen snapshot), and V2c needs a `loopState`/`taskEntry` harness whose snapshot deliberately disagrees with the node's triad — no external API mutates instance data mid-park — which M2 builds anyway for the ownership operations. **One coverage exception recorded in §9:** `resolveEligibility`'s fail-closed branch is unreachable from a constructible state (`openFrame` dereferences `sc.plane.Root()` before `NewFrame`'s nil guard), and an injection seam was rejected as costing more clarity than the coverage buys; the consequence is covered by V2e at 100%. M1 marked landed. |

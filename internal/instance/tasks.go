@@ -50,6 +50,11 @@ type taskReply struct {
 type taskEntry struct {
 	track *track
 	node  flow.Node
+
+	// eligible is the task's triad resolved when it was distributed (ADR-020 v.2
+	// §2.7). Write-once and read-only afterwards, so the engine-level registry may
+	// hold the same value without a consistency hazard (SRD-073 FR-5a).
+	eligible interactor.Eligibility
 }
 
 // Take authorizes actor against the parked UserTask taskID and, on success,
@@ -173,11 +178,10 @@ func (ls *loopState) handleTaskRequest(ctx context.Context, req taskRequest) {
 		return
 	}
 
-	// entry.node is always a UserTask (only checkNodeType's humanTask branch
-	// registers a task), so the assertion cannot fail.
-	ht, _ := entry.node.(interactor.HumanTask)
-
-	if err := ls.inst.authorizeTask(ctx, ht, req.actor); err != nil {
+	// Eligibility was resolved once, at distribution (ADR-020 v.2 §2.7); this is a
+	// membership test over that frozen snapshot, so it needs no scope access and
+	// cannot disagree with the verdict a claim was granted under.
+	if err := entry.eligible.Authorize(req.taskID, req.actor); err != nil {
 		req.reply <- taskReply{err: err} // non-terminal — task stays parked
 
 		return
@@ -199,23 +203,6 @@ func (ls *loopState) handleTaskRequest(ctx context.Context, req taskRequest) {
 	}
 
 	ls.completeTask(ctx, req, entry)
-}
-
-// authorizeTask runs the task's Authorize over a transient root frame (a
-// data.Source resolving process variables) with the engine's expression engine.
-func (inst *Instance) authorizeTask(
-	ctx context.Context,
-	ht interactor.HumanTask,
-	actor hi.Actor,
-) error {
-	frame, err := inst.sc.openFrame("task-authz", ht.ID())
-	if err != nil {
-		return err
-	}
-	defer frame.Discard()
-
-	return ht.Authorize(ctx, actor, newExecEnv(inst, frame, nil),
-		inst.ExpressionEngine())
 }
 
 // completeTask validates the outputs and, on success, resumes the parked task by
@@ -270,13 +257,22 @@ func (ls *loopState) addTask(
 		return // not a human task — nothing to register
 	}
 
-	ls.tasks[taskID] = taskEntry{track: tr, node: node}
+	inst := ls.inst
+
+	// Resolve the triad once, here, and keep the snapshot on the registry entry:
+	// every later check reads it instead of re-resolving (ADR-020 v.2 §2.7).
+	info := inst.buildTaskInfo(ctx, taskID, node)
+
+	ls.tasks[taskID] = taskEntry{
+		track:    tr,
+		node:     node,
+		eligible: info.Eligible,
+	}
 
 	dctx, cancel := context.WithTimeout(ctx, distributorTimeout)
 	defer cancel()
 
-	inst := ls.inst
-	if err := inst.td.Distribute(dctx, inst.buildTaskInfo(taskID, node)); err != nil {
+	if err := inst.td.Distribute(dctx, info); err != nil {
 		inst.Logger().Warn("user task distribute failed",
 			"instance_id", inst.ID(), "task_id", taskID, "error", err.Error())
 	}
@@ -411,17 +407,64 @@ func (inst *Instance) withdrawTask(ctx context.Context, taskID string) {
 }
 
 // buildTaskInfo builds the pre-authorization announcement for a parked UserTask:
-// identity plus the roles that may claim it (no data).
+// identity, the roles that may claim it, and the triad resolved to identifier sets
+// (no data). Resolving here is the single resolution point of ADR-020 v.2 §2.7 —
+// this runs on the loop goroutine while the instance is still resident, which is
+// the last moment the task's expressions can read process data.
 func (inst *Instance) buildTaskInfo(
+	ctx context.Context,
 	taskID string,
 	node flow.Node,
 ) interactor.TaskInfo {
 	ht, _ := node.(interactor.HumanTask)
 
 	return interactor.TaskInfo{
-		TaskRef: inst.taskRef(taskID, node),
-		Roles:   ht.Roles(),
+		TaskRef:  inst.taskRef(taskID, node),
+		Roles:    ht.Roles(),
+		Eligible: inst.resolveEligibility(ctx, taskID, node),
 	}
+}
+
+// resolveEligibility resolves a task's triad over a transient root frame (a
+// data.Source exposing the instance's process variables) with the engine's
+// expression engine — the single resolution point of ADR-020 v.2 §2.7.
+//
+// A frame that cannot be opened fails **closed**: it returns an Eligibility that
+// authorizes nobody, never the zero value (which would read as an open task and
+// silently authorize everyone). The task then stays parked and uncompletable, which
+// is recoverable and visible; the alternative is a silent authorization bypass. The
+// failure is both logged and reported as a fact, so it is never dropped quietly.
+func (inst *Instance) resolveEligibility(
+	ctx context.Context,
+	taskID string,
+	node flow.Node,
+) interactor.Eligibility {
+	ht, _ := node.(interactor.HumanTask)
+
+	frame, err := inst.sc.openFrame("task-eligibility", ht.ID())
+	if err != nil {
+		inst.Logger().Warn("user task eligibility resolution failed",
+			"instance_id", inst.ID(), "task_id", taskID, "error", err.Error())
+
+		inst.report(observability.Fact{
+			Kind:     observability.KindTaskState,
+			Phase:    observability.PhaseFailed,
+			NodeID:   node.ID(),
+			NodeName: node.Name(),
+			Details: map[string]string{
+				observability.AttrTaskID: taskID,
+				"reason":                 "eligibility_resolution_failed",
+				"effect":                 "denied_all_actors",
+			},
+		})
+
+		return interactor.DeniedEligibility()
+	}
+
+	defer frame.Discard()
+
+	return ht.ResolveEligibility(
+		ctx, newExecEnv(inst, frame, nil), inst.ExpressionEngine())
 }
 
 // buildTaskView builds the post-authorization snapshot: the renderers and the
