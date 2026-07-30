@@ -48,6 +48,7 @@ Dependencies flow downward only; lower layers know nothing of higher ones.
 |---------|-------------|
 | `pkg/thresher/` | Engine façade — process registry and instance lifecycle |
 | `pkg/model/` | BPMN element types (activities, events, gateways, flow, data, …) |
+| `pkg/convert/` | Interchange seam — import/export a definition; `bpmn/` reads and writes BPMN 2.0 XML |
 | `pkg/errs/`, `pkg/set/` | Structured errors; utility data structures |
 | `internal/instance/` | Instance / track / token execution (+ `snapshot/`) |
 | `internal/eventproc/` | EventHub + event waiters (timer, …) |
@@ -353,7 +354,7 @@ participate live** via `adapters.Wrap` (wrap, not convert). The value kinds
 are scalar, list, record, and **map** — a data-keyed dictionary you grow
 key-by-key, with sorted enumeration and a `["key"]` path step. The complete
 guide — the value model, the tiers, reading/writing/observing,
-`gobpm:"..."` tags — is [**docs/guides/data/overview.md**](docs/guides/data/overview.md), with
+`gobpm:"..."` tags — is [**docs/guides/data/index.md**](docs/guides/data/index.md), with
 runnable examples linked from it.
 
 ### Startup logging
@@ -374,7 +375,7 @@ eng, _ := thresher.New("worker-7",
 ## Development
 
 ```bash
-make tools     # one-time: install pinned dev tools (mockery, golangci-lint, govulncheck)
+make tools     # one-time: install pinned Go dev tools
 make ci        # full pre-push gate — mirrors GitHub CI exactly (tidy, lint, build, race tests, diff-coverage, vuln scan)
 
 make test         # tests (generates mocks first)
@@ -395,16 +396,20 @@ make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (r
 ### Requirements
 
 - Go (toolchain pinned to `go1.25.12` via `go.mod`; `GOTOOLCHAIN=auto` fetches it automatically)
-- Dev tools via `make tools`: [mockery v3](https://github.com/vektra/mockery), [golangci-lint v2](https://golangci-lint.run/), [govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck)
+- Pinned Go dev tools via `make tools`: [mockery v3](https://github.com/vektra/mockery), [golangci-lint v2](https://golangci-lint.run/), [govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck), and [covercheck](https://github.com/dr-dobermann/covercheck). Make targets reject missing or stale versions instead of failing later with incompatible flags or config.
+- GNU `timeout` for the end-to-end example gate. Linux provides it as
+  `timeout`; on macOS install Homebrew coreutils once with
+  `brew install coreutils` (the Makefile automatically detects `gtimeout`).
 
 ## Documentation
 
 - [Vision & Architecture (SAD-001)](docs/design/SAD-001-vision-and-architecture.md) and [ADRs](docs/design/) — the conception
 - [User Guides](docs/guides/index.md) — build and run processes, every BPMN element, with runnable code
-- [Working with process data](docs/guides/data/overview.md) — the structural-data guide (paths, tiers, native structs, change observation)
+- [Working with process data](docs/guides/data/index.md) — the structural-data guide (paths, tiers, native structs, change observation)
 - [Conditional events](docs/guides/events/conditional.md) — data-driven waiting: positions, the false→true edge rule, dependency declarations
 - [Activity iteration](docs/guides/iteration/index.md) — Standard Loop + Multi-Instance (sequential & parallel): loopCondition / testBefore / loopMaximum, cardinality / collection fan-out / completionCondition (stop vs. cancel), loopCounter & numberOf* attributes, leaf-in-place vs. composite / concurrent scopes
 - [Composition](docs/guides/subprocesses/index.md) — sub-processes (nested scopes) & call activities (child-instance reuse boundary): the §13.3.4 shapes, data visibility/isolation, versioning, scope-wide interruption
+- [Interchange converters](docs/guides/extending/converters.md) — import and export BPMN 2.0 XML: the format-agnostic `convert` seam, blank-import registration, id preservation as the version key, unsupported-element feedback, semantic round-trip
 - [Persistence & recovery](docs/guides/operating/persistence.md) — instance checkpoints & restart recovery: arming with `WithRepository`, per-wait recovery semantics (overdue timers fire once), ownership leases + CAS fencing for shared stores, stable element ids as the deployment-parity contract
 - [Development Roadmap](docs/analytics/gobpm%20Development%20Roadmap.md) — workstreams + milestones
 - [Conformance scope](docs/bpmn-spec/conformance.md) and [BPMN 2.0 reference KB](docs/bpmn-spec/) · [Conformance status](docs/design/conformance-status.md) — what's implemented vs what remains, mapped to issues

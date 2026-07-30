@@ -7,8 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Process interchange — import and export BPMN 2.0 XML (ADR-024, SRD-051).**
+  gobpm could only ever be handed a definition built in Go, which shut out the
+  modeler persona entirely: a `.bpmn` authored in bpmn.io or Camunda had no way
+  in. Two new packages close that. `pkg/convert` is a format-agnostic seam —
+  the `Importer`/`Exporter` interfaces over `io.Reader`/`io.Writer` plus a
+  register-by-format-key registry in the `image.RegisterFormat` idiom — and
+  `pkg/convert/bpmn` is the batteries-included BPMN 2.0 implementation, turned
+  on by a blank import. `convert.Import` returns a `*process.Process` you
+  register yourself; the engine never imports a converter, so a host that wants
+  no XML gets none. Imported BPMN `id`s become the model's identity rather than
+  being regenerated, which is what makes a re-imported file land as the next
+  *version* of the same definition instead of a fresh singleton (ADR-019). The
+  supported set is the executable core — start/end events, task, manualTask,
+  userTask, serviceTask with `operationRef`, sequence flows with conditions,
+  exclusive and parallel gateways. Diagram interchange is skipped, as are
+  `documentation` and `extensionElements`; an unmapped *flow* element raises a
+  `*convert.UnsupportedElementError` naming the tag, id and spec section, so a
+  modeler is told what will not run rather than losing it silently. Round-trip
+  is semantic, not byte-identical. See
+  [the guide](docs/guides/extending/converters.md) and
+  `examples/bpmn-convert/`.
+- **`activities.ServiceTask.Operation()`** — a read-only accessor for the
+  operation a Service Task was built with. Needed by BPMN export to write
+  `operationRef` back out; additive, and never nil since `NewServiceTask`
+  rejects a nil operation.
+
 ### Fixed
 
+- **Local `make ci` now has honest macOS/tool-version preflights (FIX-030).**
+  The example runner detects Homebrew's `gtimeout` when GNU `timeout` is not
+  available and otherwise fails immediately with the exact coreutils install
+  hint. Every pinned Go dev tool is now checked by its embedded module version,
+  so an old `mockery` or `covercheck` cannot pass a presence-only guard and
+  fail later with misleading config or flag errors. The local golangci-lint
+  installer is fetched from its pinned tag instead of the moving `master`
+  branch.
 - **CI now runs every example end-to-end, not just builds it (FIX-029).**
   The examples job (and the local `make ci`) gained a `run-examples` step:
   each of the 46 example modules executes under a timeout with stdin
@@ -538,7 +574,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the enclosing sub-process completes only once its own work and every live
   handler instance drain. The shared interrupting budget is untouched (a
   non-interrupting fire never spends it), and the interrupting path (SRD-052) is
-  unchanged. See [`docs/guides/composition.md`](docs/guides/composition.md).
+  unchanged. See [`docs/guides/subprocesses/index.md`](docs/guides/subprocesses/index.md).
 
 - **Event Sub-Process — interrupting (SRD-052, ADR-023 v.2 §2.10 — #91).** A
   `SubProcess` marked `triggeredByEvent` (`activities.WithTriggeredByEvent()`)
@@ -561,7 +597,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scope cancel/complete facts. Non-interrupting handlers and Transaction
   boundaries remain deferred (#90). See
   [`examples/event-subprocess/`](examples/event-subprocess/) and
-  [`docs/guides/composition.md`](docs/guides/composition.md).
+  [`docs/guides/subprocesses/index.md`](docs/guides/subprocesses/index.md).
 
 - **Call Activity (SRD-050, ADR-023 v.1 — the second slice of the
   composition keystone #85, which it closes).** A Call Activity invokes a
@@ -584,7 +620,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (Started/Completed/Failed/Terminated + called key, resolved version,
   child instance id); every child fact carries `parent_instance_id` +
   `call_activity_node_id`. New example `examples/call-activity/`, the
-  Call Activity section of `docs/guides/composition.md`. Closes epic #85.
+  Call Activity section of `docs/guides/subprocesses/index.md`. Closes epic #85.
 
 - **Embedded Sub-Process (SRD-049, ADR-023 v.1 — the first slice of the
   composition keystone #85).** A Sub-Process is an activity in its
@@ -606,7 +642,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a sub-process evaluate at their own scope. New `Scope` observability
   kind (Opened/Completed/Terminated/Canceled + the scope path). New
   example `examples/embedded-subprocess/`, guide
-  `docs/guides/composition.md`. The Call Activity is the next slice.
+  `docs/guides/subprocesses/index.md`. The Call Activity is the next slice.
 
 ### Fixed
 
@@ -705,7 +741,7 @@ values, up to the host's own Go structs participating live.
 
   Four runnable examples (`structural-data`, `structural-output-mapping`,
   `data-change`, `native-structs`) and the process-data guide
-  ([docs/guides/data.md](docs/guides/data.md)).
+  ([docs/guides/data/index.md](docs/guides/data/index.md)).
 
 - **Engine-wide observability — the observable-event seam (ADR-013 v.2 / SRD-041).**
   Every failure and major-object lifecycle transition now emits one

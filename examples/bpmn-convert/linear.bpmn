@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  id="linear-definitions"
+                  targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="linear" name="Linear" isExecutable="true">
+    <bpmn:startEvent id="s1" name="start"/>
+    <bpmn:task id="t1" name="work"/>
+    <bpmn:endEvent id="e1" name="done"/>
+    <bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="t1"/>
+    <bpmn:sequenceFlow id="f2" sourceRef="t1" targetRef="e1"/>
+  </bpmn:process>
+</bpmn:definitions>

@@ -60,7 +60,7 @@ code). What's needed is a **diff/patch-coverage** gate — judge only the
 - **G4.** **Touched-lines scope only.** Untouched code (the aggregate backlog) is
   explicitly out of the gate; it never causes a failure.
 - **G5.** **Wired into the existing gate** (`make ci` + `check.yml`) and the tool
-  installed via `require-tool` + `make tools` (no silent skip).
+  installed via `require-go-tool` + `make tools` (no silent skip).
 - **G6.** **Excludes non-product code** from measurement: `generated/` (mocks),
   `*_test.go`, `examples/`, and any vendored/`doc.go`-only files.
 
@@ -85,7 +85,7 @@ code). What's needed is a **diff/patch-coverage** gate — judge only the
 | FR-3 | Diff scope = lines changed vs the merge-base with the base branch (`origin/master` in CI; a `BASE` override locally). | A change touching only well-covered new lines passes even if the file's overall % is low. |
 | FR-4 | Measurement excludes `generated/`, `*_test.go`, `examples/`, and non-product files. | A change to generated mocks or tests does not affect the gate. |
 | FR-5 | Wired into `make ci` and `.github/workflows/check.yml` so the protected-`master` `check` enforces it. | CI fails a PR whose changed lines fall below the floor. |
-| FR-6 | The diff-coverage tool is installed via `make tools` behind a `require-tool` guard; toolchain pinned. | Missing tool aborts with an install hint (no silent pass); local and CI use the same pinned version. |
+| FR-6 | The diff-coverage tool is installed via `make tools` behind a `require-go-tool` guard; toolchain pinned. | Missing **or stale** tool aborts with an install hint (no silent pass); local and CI use the same pinned version. |
 | FR-7 | CI checks out with enough history for a merge-base diff (`fetch-depth: 0` or equivalent). | The base diff resolves on CI, not just locally. |
 | NFR-1 | Local↔CI parity: the same `make cover-check` decides pass/fail in both. | The pass/fail does not depend on a server-only computation. |
 | NFR-2 | Deterministic & reasonably fast — reuses the profiles `test-all` already produces; no second full test run. | `make ci` wall-clock grows only by the diff computation, not a re-test. |
@@ -202,7 +202,8 @@ are excluded.
 ## 8. References
 
 - [SAD-001 v.1 §6 Quality Attributes](../design/SAD-001-vision-and-architecture.md) — the quality concern this gate serves.
-- `Makefile` (`ci`, `test-all`, `tools`, `require-tool`) and `.github/workflows/check.yml` — the gate this extends; existing Codecov upload.
+- `Makefile` (`ci`, `test-all`, `tools`, `require-go-tool`) and `.github/workflows/check.yml` — the gate this extends; existing Codecov upload.
+- [FIX-030](../fix/FIX-030-macos-ci-parity.md) — renamed the guard `require-tool` → `require-go-tool` and made it version-aware, strengthening FR-6.
 - Project convention: the touched-file coverage standard (≥80%, aim 100%) this mechanizes; the deferred aggregate-coverage backlog it deliberately does **not** block on.
 
 ## Document History
@@ -211,3 +212,4 @@ are excluded.
 |---|---|---|---|
 | v.1 | 2026-06-07 | Ruslan Gabitov | Initial Draft. Proposes a local-first diff-coverage gate (`make cover-check`) wired into `make ci` + CI, floor 70% (phased up), diff-scoped to changed lines, excluding generated/tests/examples; Codecov patch-status rejected as sole gate (breaks local parity). |
 | v.1 | 2026-06-07 | Ruslan Gabitov | **Accepted** and implemented (M1–M3, §7): DIY pure-Go helper (`internal/covercheck` + `cmd/covercheck`), `make cover-check` (`COVER_MIN=70`) in `make ci` + `check.yml`. Gate dogfoods at 84.7% PASS. `make ci` green. RU twin added (bilingual-on-Accepted). |
+| v.1 | 2026-07-30 | — | Down-ref sync from [FIX-030](../fix/FIX-030-macos-ci-parity.md): the guard behind FR-6/G5 is now `require-go-tool`, and it validates the tool's embedded module version rather than mere presence — so a stale `covercheck` fails the preflight instead of the flag parse. Naming and acceptance criteria updated in G5, FR-6 and §8; no requirement added or removed. §1.1 and §4.4 keep their original wording — they are the authoring-time snapshot and the delivery plan, not live claims. |

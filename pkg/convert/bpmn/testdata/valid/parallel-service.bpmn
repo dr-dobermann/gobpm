@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:interface id="notifications" name="Notifications">
+    <bpmn:operation id="send-email" name="sendEmail"/>
+  </bpmn:interface>
+  <bpmn:process id="parallel-service-fixture" name="Parallel service" isExecutable="true">
+    <bpmn:startEvent id="start"/>
+    <bpmn:parallelGateway id="fork" gatewayDirection="Diverging"/>
+    <bpmn:manualTask id="archive" name="Archive"/>
+    <bpmn:serviceTask id="notify" name="Notify" operationRef="send-email"/>
+    <bpmn:parallelGateway id="join" gatewayDirection="Converging"/>
+    <bpmn:endEvent id="end"/>
+    <bpmn:sequenceFlow id="to-fork" sourceRef="start" targetRef="fork"/>
+    <bpmn:sequenceFlow id="to-archive" sourceRef="fork" targetRef="archive"/>
+    <bpmn:sequenceFlow id="to-notify" sourceRef="fork" targetRef="notify"/>
+    <bpmn:sequenceFlow id="archive-to-join" sourceRef="archive" targetRef="join"/>
+    <bpmn:sequenceFlow id="notify-to-join" sourceRef="notify" targetRef="join"/>
+    <bpmn:sequenceFlow id="to-end" sourceRef="join" targetRef="end"/>
+  </bpmn:process>
+</bpmn:definitions>

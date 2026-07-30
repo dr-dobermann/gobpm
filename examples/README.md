@@ -99,6 +99,12 @@ Every example builds in CI; the list below is grouped by concern.
 |---|---|
 | [`versioning/`](versioning/) | Camunda-style definition versioning — one key, many versions; start by latest, by number, or by handle; promote-on-removal. |
 
+## Interchange
+
+| Example | Demonstrates |
+|---|---|
+| [`bpmn-convert/`](bpmn-convert/) | **BPMN 2.0 XML import & export** — a bundled `.bpmn` parsed through the `pkg/convert` seam into a live `*process.Process`, registered (the BPMN `id` becomes the ADR-019 version key), run to completion, then serialized back out. The converter itself lives in `pkg/convert/bpmn` and is switched on by a blank import (ADR-024 / SRD-051). |
+
 ---
 
 Prerequisites: a recent Go toolchain (see the repo `go.mod`). Some examples

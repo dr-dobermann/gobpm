@@ -50,6 +50,7 @@ Process model ──> Snapshot ──> Engine (Thresher) ──> Instance (orche
 |---------|-------------|
 | `pkg/thresher/` | Фасад движка — реестр процессов и жизненный цикл инстансов |
 | `pkg/model/` | Типы элементов BPMN (activities, events, gateways, flow, data, …) |
+| `pkg/convert/` | Шов обмена — импорт/экспорт определения; `bpmn/` читает и пишет BPMN 2.0 XML |
 | `pkg/errs/`, `pkg/set/` | Структурированные ошибки; вспомогательные структуры данных |
 | `internal/instance/` | Выполнение instance / track / token (+ `snapshot/`) |
 | `internal/eventproc/` | EventHub + event-waiter'ы (timer, …) |
@@ -193,7 +194,7 @@ defer sub.Cancel() // deregister + drain; sub.Dropped() counts any overflow
 
 По аварийному завершению процесса см. [`examples/terminate-end-event/`](examples/terminate-end-event/) — **Terminate End Event** на одной из веток параллельного процесса: ветка проверки на мошенничество доходит до него и завершает весь экземпляр, отменяя незаконченный платёж на середине списания — экземпляр оказывается в состоянии `Terminated`, а не `Completed`.
 
-Данные процесса полностью **структурны**: значения навигируемы по пути (`order.items[0].price`, `rates["EUR"]`) во всех швах — условиях, выражениях, маппингах, сервисном коде — записываемы и собираемы той же грамматикой, изменения детектируются по-путно при коммите, а **собственные Go-структуры** хоста участвуют вживую через `adapters.Wrap` (обёртка, не конвертация). Виды значений — скаляр, список, запись и **map** — словарь с data-ключами, растущий ключ-за-ключом, с сортированным перечислением и шагом пути `["key"]`. Полное руководство — модель значений, ярусы, чтение/запись/наблюдение, теги `gobpm:"..."` — в [**docs/guides/data/overview.md**](docs/guides/data/overview.md) (EN), с запускаемыми примерами.
+Данные процесса полностью **структурны**: значения навигируемы по пути (`order.items[0].price`, `rates["EUR"]`) во всех швах — условиях, выражениях, маппингах, сервисном коде — записываемы и собираемы той же грамматикой, изменения детектируются по-путно при коммите, а **собственные Go-структуры** хоста участвуют вживую через `adapters.Wrap` (обёртка, не конвертация). Виды значений — скаляр, список, запись и **map** — словарь с data-ключами, растущий ключ-за-ключом, с сортированным перечислением и шагом пути `["key"]`. Полное руководство — модель значений, ярусы, чтение/запись/наблюдение, теги `gobpm:"..."` — в [**docs/guides/data/index.md**](docs/guides/data/index.md) (EN), с запускаемыми примерами.
 
 ### Логирование при старте
 
@@ -210,7 +211,7 @@ eng, _ := thresher.New("worker-7",
 ## Разработка
 
 ```bash
-make tools     # one-time: install pinned dev tools (mockery, golangci-lint, govulncheck)
+make tools     # one-time: install pinned Go dev tools
 make ci        # full pre-push gate — mirrors GitHub CI exactly (tidy, lint, build, race tests, diff-coverage, vuln scan)
 
 make test         # tests (generates mocks first)
@@ -231,16 +232,20 @@ make cover-check  # diff-coverage gate — changed lines must be >= COVER_MIN (r
 ### Требования
 
 - Go (toolchain запинен на `go1.25.12` через `go.mod`; `GOTOOLCHAIN=auto` подтянет его автоматически)
-- Dev-инструменты через `make tools`: [mockery v3](https://github.com/vektra/mockery), [golangci-lint v2](https://golangci-lint.run/), [govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck)
+- Закреплённые Go dev-инструменты через `make tools`: [mockery v3](https://github.com/vektra/mockery), [golangci-lint v2](https://golangci-lint.run/), [govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck) и [covercheck](https://github.com/dr-dobermann/covercheck). Make-цели отклоняют отсутствующие и устаревшие версии до запуска несовместимых флагов или конфигурации.
+- GNU `timeout` для сквозного прогона примеров. В Linux команда называется
+  `timeout`; в macOS один раз установите Homebrew coreutils:
+  `brew install coreutils` (Makefile автоматически обнаружит `gtimeout`).
 
 ## Документация
 
 - [Vision & Architecture (SAD-001)](docs/design/SAD-001-vision-and-architecture.md) и [ADR'ы](docs/design/) — концепция
 - [Руководства пользователя](docs/guides/index.md) — построение и запуск процессов, каждый элемент BPMN, с исполняемым кодом
-- [Работа с данными процесса](docs/guides/data/overview.md) — руководство по структурным данным (пути, ярусы, нативные структуры, наблюдение изменений; EN)
+- [Работа с данными процесса](docs/guides/data/index.md) — руководство по структурным данным (пути, ярусы, нативные структуры, наблюдение изменений; EN)
 - [Условные события](docs/guides/events/conditional.md) — ожидание, управляемое данными: позиции, правило фронта false→true, декларации зависимостей (EN)
 - [Композиция](docs/guides/subprocesses/index.md) — sub-process'ы (вложенные области) и call activity (граница переиспользования через дочерний экземпляр): формы §13.3.4, видимость/изоляция данных, версионирование, прерывание области целиком (EN)
 - [Итерация активностей](docs/guides/iteration/index.md) — Standard Loop + Multi-Instance (последовательный и параллельный): loopCondition / testBefore / loopMaximum, кардинальность / развёртка по коллекции / completionCondition (остановка против отмены), loopCounter и numberOf*-атрибуты, лист на месте против композитных / конкурентных областей (EN)
+- [Конвертеры обмена](docs/guides/extending/converters.md) — импорт и экспорт BPMN 2.0 XML: формат-агностичный шов `convert`, регистрация через blank-import, сохранение `id` как ключа версии, обратная связь по неподдерживаемым элементам, семантический round-trip (EN)
 - [Development Roadmap](docs/analytics/gobpm%20Development%20Roadmap.md) — workstream'ы + вехи
 - [Conformance scope](docs/bpmn-spec/conformance.md) и [BPMN 2.0 reference KB](docs/bpmn-spec/) · [Conformance status](docs/design/conformance-status.md) — что реализовано и что осталось, с привязкой к issues (EN)
 - [Documentation Index](README_INDEX.md) · [API Reference](https://pkg.go.dev/github.com/dr-dobermann/gobpm) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)

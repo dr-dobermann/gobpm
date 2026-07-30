@@ -77,3 +77,4 @@ examples/multi-instance-parallel/multi-instance-parallel
 examples/multi-instance-behavior/multi-instance-behavior
 examples/compensation-events/compensation-events
 examples/transaction-sub-process/transaction-sub-process
+examples/bpmn-convert/bpmn-convert

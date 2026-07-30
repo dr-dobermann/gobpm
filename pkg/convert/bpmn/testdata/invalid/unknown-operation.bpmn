@@ -1,0 +1,5 @@
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:process id="unknown-operation">
+    <bpmn:serviceTask id="call" operationRef="missing-operation"/>
+  </bpmn:process>
+</bpmn:definitions>

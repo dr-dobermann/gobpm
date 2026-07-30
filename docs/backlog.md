@@ -26,13 +26,18 @@ the data-layer clone precondition. Governing: **ADR-010**.
 
 ## Planned work / deferred
 
-- **Generated true-BPMN example diagrams (rides ADR-024)** — the example READMEs
-  carry hand-written mermaid *approximations* of BPMN (no event icons, no
-  attached-boundary notation — mermaid has no BPMN diagram type; added
-  2026-07-22). Once the ADR-024 model→BPMN-XML exporter lands, add a make/CI
-  step that runs each example's own process definition through the exporter +
+- **Generated true-BPMN example diagrams (rides ADR-024) — now unblocked** — the
+  example READMEs carry hand-written mermaid *approximations* of BPMN (no event
+  icons, no attached-boundary notation — mermaid has no BPMN diagram type; added
+  2026-07-22). The exporter this waited on landed with SRD-051
+  (`convert.Export(ctx, convert.BPMN, w, p)`, 2026-07-30), so the next step is a
+  make/CI step that runs each example's own process definition through it +
   `bpmn-to-image` → true-notation SVGs that regenerate from the code and can
-  never drift. Optional interim: a mermaid v11 "BPMN-ish" shape convention
+  never drift. Caveat discovered at landing: export emits **no** Diagram
+  Interchange, so `bpmn-to-image` must auto-layout — verify that before
+  committing to the pipeline. Only examples built from the SRD-051 §FR-8 subset
+  will export; anything richer raises `UnsupportedElementError` until later
+  slices land. Optional interim: a mermaid v11 "BPMN-ish" shape convention
   (`dbl-circ` ends, `diam` gateways, `subproc` frames + a classDef palette) —
   pilot one example against GitHub's renderer first.
 
@@ -51,6 +56,56 @@ implemented), and leaves this list.
   carve-outs (FIX-028 §8.3) and a `.Get(ctx).(T)` payload assertion where
   `data.As[T]` belongs (ADR-034 v.1 §5). Both are guidance today, enforced by
   review only.
+- **Per-module coverage profiles** — `test-all` writes `coverage.txt` only for
+  the root module (`if [ "$$dir" = "." ]`), so `cover-check` measures the diff
+  in core and nowhere else. `runtime/` and `adapters/{lua,dtable}` have never
+  been diff-gated: both adapters landed *after* `COVER_MIN` went to 95 and CI
+  stayed green regardless of what they added. Fix is a Makefile/covercheck
+  change — one profile per module, all of them passed to `-profiles` — and it
+  benefits four modules, so it does not belong to any single SRD. Surfaced by
+  SRD-051, which sidestepped it by keeping the BPMN converter in the root
+  module (SRD-051 v.2 §4.1); recorded here so the general gap is not mistaken
+  for closed.
+- **`TestFailedWakeRetriesAndSucceeds` is flaky** (`pkg/thresher`) — observed
+  failing once inside a full `GOMAXPROCS=4 go test -race ./...` sweep on
+  2026-07-30, then not reproduced in ~50 targeted runs (`-count=30 -race`
+  focused, `-count=20` on a clean tree) nor in a repeat full-suite run. The
+  test drives the FIX-027 wake-retry backoff, so a load-sensitive timing
+  assumption is the obvious suspect, but nothing is proven — a one-off
+  observation, not a diagnosis. Worth a deliberate reproduction attempt under
+  CPU contention before it bites in CI; graduates to a FIX once the cause is
+  actually identified.
+- **A pre-canceled instance can settle `Completed` instead of `Terminated`**
+  (`internal/instance/TestTerminatedOnPreCanceledContext`) — observed in a full
+  `make test` run on 2026-07-30 and reproduced with
+  `GOMAXPROCS=8 go test ./internal/instance
+  -run '^TestTerminatedOnPreCanceledContext$' -count=2000` (also approximately
+  1 failure per 1000 ordinary targeted runs). This is an ordering race, not a
+  data race: `loop` spawns the initial track before selecting between the
+  already-closed `ctx.Done()` and the track's ready `evEnded`. Go gives ready
+  `select` cases no priority; if `evEnded` wins for the last active track,
+  `active` reaches zero while `stopping` remains false, so final settlement
+  chooses `Completed`. The test's comment claiming deterministic cancellation
+  precedence is therefore false. The fix must give the instance-loop context
+  precedence before terminal-event accounting (not merely increase the test
+  timeout, and not inspect a per-track context, which boundary events may
+  legitimately cancel), then update the regression test to await `Instance.Done()`
+  and assert exact `Terminated`. This predates and is independent of the BPMN
+  converter changes.
+- **No automated Markdown link check** — nothing in `make ci` or
+  `check.yml` validates relative documentation links, which is how the 78 dead
+  cross-references [FIX-031](fix/FIX-031-documentation-link-rot.md) swept up
+  accumulated unnoticed across several refactors. Two of the three causes there
+  (a retired doc, a renamed ADR) are exactly what a checker catches for free,
+  and both READMEs and the SAD were among the casualties. Adopt one
+  (`lychee`, `markdown-link-check`, or ~20 lines of Go/Python in `cmd/`) and
+  wire it into the docs half of the gate. Two requirements fall out of the
+  sweep: it must **ignore fenced and inline code** — Go generic signatures like
+  `` `values.NewArray[T](vals…)` `` match a naive link regex, and there are
+  eight such matches today (FIX-031 §4.1) — and it must **percent-decode**
+  hrefs, or every correct link to `gobpm Development Roadmap.md` reports as
+  broken. Open question for whoever takes it: blocking, or advisory like the
+  Codecov patch status.
 ### Tracked elsewhere (not duplicated here)
 - **Event-matching generalization** — **RETIRED** (2026-07-30). The premise was
   that Link would be the second name-keyed event type, making a polymorphic

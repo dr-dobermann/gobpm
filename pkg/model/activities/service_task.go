@@ -168,6 +168,17 @@ func (st *ServiceTask) Implementation() string {
 	return st.implementation
 }
 
+// Operation returns the Operation the ServiceTask invokes. It is never nil:
+// NewServiceTask rejects a nil operation, so every constructed task carries
+// one.
+//
+// Read-only accessor for consumers that must reconstruct the task's service
+// binding without executing it — notably BPMN export, which writes the
+// operation id back as operationRef (SRD-051 §FR-6).
+func (st *ServiceTask) Operation() service.Operation {
+	return st.operation
+}
+
 // ------------------ flow.Node interface --------------------------------------
 
 // Node returns underlying node object.

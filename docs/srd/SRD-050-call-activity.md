@@ -7,7 +7,7 @@
 | Date | 2026-07-16 (accepted 2026-07-17) |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-023 v.1](../design/ADR-023-sub-process-and-call-activity.md) §2.7 (the Call Activity slice — completes epic #85; the embedded slice landed with the prior SRD) |
-| Upstream | [ADR-019 v.1](../design/ADR-019-definition-versioning-and-registry.md) (the registry the call resolves against: latest-at-launch / pinned versions), [ADR-001 v.6](../design/ADR-001-execution-model.md) (the loop owns the call protocol), [ADR-010 v.2](../design/ADR-010-process-data-model.md) (the isolated child data plane; root binding), [ADR-021 v.1](../design/ADR-021-service-task-execution-model.md) (the async park/resume + fault-classification idioms the caller reuses), [ADR-013 v.2](../design/ADR-013-observability.md) (the linkage attributes) |
+| Upstream | [ADR-019 v.1](../design/ADR-019-definition-versioning.md) (the registry the call resolves against: latest-at-launch / pinned versions), [ADR-001 v.6](../design/ADR-001-execution-model.md) (the loop owns the call protocol), [ADR-010 v.2](../design/ADR-010-process-data-model.md) (the isolated child data plane; root binding), [ADR-021 v.1](../design/ADR-021-service-task-execution-model.md) (the async park/resume + fault-classification idioms the caller reuses), [ADR-013 v.2](../design/ADR-013-instance-observability.md) (the linkage attributes) |
 | Refines | — |
 
 ## §1 Background
@@ -372,12 +372,12 @@ handover closing #85.
 
 - Implements [ADR-023 v.1](../design/ADR-023-sub-process-and-call-activity.md)
   §2.7 (traced per FR).
-- Rides [ADR-019 v.1](../design/ADR-019-definition-versioning-and-registry.md)
+- Rides [ADR-019 v.1](../design/ADR-019-definition-versioning.md)
   resolution; extends [ADR-001 v.6](../design/ADR-001-execution-model.md)
   loop protocol; keeps [ADR-010 v.2](../design/ADR-010-process-data-model.md)
   isolation; reuses [ADR-021 v.1](../design/ADR-021-service-task-execution-model.md)
   park/report idioms; extends
-  [ADR-013 v.2](../design/ADR-013-observability.md) with `KindCall` + the
+  [ADR-013 v.2](../design/ADR-013-instance-observability.md) with `KindCall` + the
   linkage attributes.
 
 ## §9 Definition of Done

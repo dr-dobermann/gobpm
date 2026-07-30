@@ -1,0 +1,6 @@
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:process id="duplicate-id">
+    <bpmn:startEvent id="same"/>
+    <bpmn:endEvent id="same"/>
+  </bpmn:process>
+</bpmn:definitions>

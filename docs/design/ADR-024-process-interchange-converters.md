@@ -2,20 +2,21 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
-| Version | v.1 |
-| Date | 2026-07-17 |
+| Status | Accepted |
+| Version | v.2 |
+| Date | 2026-07-30 |
 | Owner | Ruslan Gabitov |
 | Refines | [SAD-001 v.1](SAD-001-vision-and-architecture.md) §4 N7 / §5 / §9 / §14, [ADR-002 v.2 Extension Architecture](ADR-002-extension-architecture.md), [ADR-019 v.1 Definition Versioning](ADR-019-definition-versioning.md), [ADR-003 v.1 Module Layout](ADR-003-module-layout.md) |
 
-> **Draft** — decides how a process definition crosses the boundary between
+> **Accepted** — decides how a process definition crosses the boundary between
 > an **external interchange format** and gobpm's **in-memory model**, in both
 > directions, without coupling either to the engine. The decision is a
 > **format-agnostic converter seam** — two small interfaces (`Importer`,
 > `Exporter`) plus a register-by-format-key registry in core — and a first
-> **batteries-included** implementation for **BPMN 2.0 XML**, shipped as the
-> separate module SAD-001 §9 already reserves (`doc-source/`), so core stays
-> dependency-clean and "accepts pre-built models" (SAD-001 §4 N7). Import
+> **batteries-included** implementation for **BPMN 2.0 XML** in the sibling
+> package `pkg/convert/bpmn`, which adds no dependency to core because the
+> parser is stdlib `encoding/xml`, so core still "accepts pre-built models"
+> (SAD-001 §4 N7). Import
 > yields a `*process.Process`; the host registers it with the thresher itself
 > (ADR-019 versioning intact, because imported BPMN `id`s are preserved as the
 > definition's identity). Export walks the same model back to XML. The seam is
@@ -46,8 +47,9 @@ names the gap in three places:
   stakeholder authors *"BPMN 2.0 XML to be executed by goBpm"* and needs
   *"strict spec conformance; clear feedback on unsupported elements."*
 - **[SAD-001 v.1 §9](SAD-001-vision-and-architecture.md):** the module layout
-  already reserves `doc-source/ ← FUTURE — BPMN XML parser (own go.mod)` as a
-  top-level module sibling to `runtime/` and `adapters/`.
+  reserved `doc-source/ ← FUTURE — BPMN XML parser (own go.mod)` as a
+  top-level module sibling to `runtime/` and `adapters/`. *(v.2: that
+  reservation is retired — see §4-A and SAD-001 v.1.1.)*
 
 Two forces beyond the SAD shape this decision:
 
@@ -136,15 +138,14 @@ function and the offending argument. `Import`/`Export` on an unregistered
 format return a clear *"unknown format %q (registered: …)"* error, listing
 `Formats()` so the caller sees what a blank import would have provided.
 
-### 2.3 The BPMN converter is a separate, batteries-included module
+### 2.3 The BPMN converter is a separate, batteries-included package
 
-Per SAD-001 §4 N7 and §9, the BPMN 2.0 XML converter ships as the reserved
-top-level module (`doc-source/`, own `go.mod`), **not** inside core. It imports
-core (`pkg/convert` for the interfaces, `pkg/model/*` to build/read the model),
-holds **all** `encoding/xml` code, and self-registers:
+The BPMN 2.0 XML converter ships as `pkg/convert/bpmn`, a sibling package of
+the seam. It imports core (`pkg/convert` for the interfaces, `pkg/model/*` to
+build/read the model), holds **all** `encoding/xml` code, and self-registers:
 
 ```go
-// package bpmn  (the reserved doc-source/ module)
+// package bpmn  (github.com/dr-dobermann/gobpm/pkg/convert/bpmn)
 func init() {
 	convert.MustRegisterImporter(convert.BPMN, importer{})
 	convert.MustRegisterExporter(convert.BPMN, exporter{})
@@ -152,14 +153,23 @@ func init() {
 ```
 
 **"Batteries-included" means first-party, in-repo, zero-config after a blank
-import** — the `image`/`image/png` model: `_ "…/doc-source/bpmn"` registers
+import** — the `image`/`image/png` model: `_ ".../pkg/convert/bpmn"` registers
 both directions; `convert.Import(ctx, convert.BPMN, r)` then works. Core users
 who never import it get a clean *"unknown format"* error, never a hidden XML
 dependency. The examples and (future) `runtime/` blank-import it so the
 out-of-the-box experience is BPMN-ready.
 
+> **v.2 re-decision.** v.1 placed this in the top-level module SAD-001 §9
+> reserved as `doc-source/` (renamed `convert/` by Q1). Slice 1 shipped it as a
+> package instead — the module boundary bought nothing measurable and cost the
+> coverage gate. See §4-A and [SRD-051 v.2 §4.1](../srd/SRD-051-bpmn-converter.md).
+> The invariant the module was standing in for — *core never imports the
+> converter* — is preserved by direction, and the seam's format-agnosticism is
+> now enforced mechanically by the `convert-seam-format-agnostic` depguard rule
+> instead of by a `go.mod`.
+
 > This honours the dependency direction ([SAD-001 v.1 §9.1](SAD-001-vision-and-architecture.md):
-> the format module imports core, never the reverse) and N7's "core accepts
+> the format package imports core, never the reverse) and N7's "core accepts
 > pre-built models". Whether BPMN should instead be a *true* core default
 > (no blank import) is deferred to Open Questions — it would require revising
 > SAD-001 N7 and is a SAD decision, not an ADR one. (N7 scopes only the import
@@ -207,6 +217,8 @@ same fence the engine's own conformance target already draws:
 | `<bpmn:endEvent>` (none) | `events.NewEndEvent` | §13.5.6 |
 | `<bpmn:task>` / `<bpmn:manualTask>` | `activities.NewManualTask` (parse-but-no-op, §13.1) | §13.3.3 |
 | `<bpmn:userTask>` | `activities.NewUserTask` | §13.3.3 |
+| `<bpmn:serviceTask>` (`operationRef`) | `activities.NewServiceTask` | §13.3.2 |
+| `<bpmn:interface>` / `<bpmn:operation>` | `service.NewOperation` (catalog stub) | §10.4 |
 | `<bpmn:sequenceFlow>` (`sourceRef`/`targetRef`, `conditionExpression`) | `flow.Link(src, trg, WithCondition)` | §13.2 / §13.3.1 |
 | `<bpmn:exclusiveGateway>` (`default`) | `gateways.NewExclusiveGateway` | §13.4.2 |
 | `<bpmn:parallelGateway>` | `gateways.NewParallelGateway` | §13.4.1 |
@@ -216,12 +228,26 @@ same fence the engine's own conformance target already draws:
 `BPMNShape`/`BPMNEdge` — which is *"not part of execution conformance"*
 ([conformance.md](../bpmn-spec/conformance.md), [SAD-001 v.1 §4 N5](SAD-001-vision-and-architecture.md)).
 Also out of MVP and reported as **unsupported-element feedback** (SAD-001 §5),
-not silently dropped: **`serviceTask`** (it needs `operationRef` →
-`<bpmn:interface>`/`<bpmn:operation>` parsing and a `ServiceTask.Operation()`
-export getter that does not exist today — the first work of slice 2, per
-SRD-051 §4.6), inclusive/complex/event-based gateways, timer/message/signal/
-error events, boundary events, sub-processes, call activities, lanes,
-collaboration/choreography. Each lands in a later slice (§7).
+not silently dropped: inclusive/complex/event-based gateways,
+timer/message/signal/error events, boundary events, sub-processes, call
+activities, lanes, collaboration/choreography. Each lands in a later slice
+(§7).
+
+Two in-namespace elements are **skipped silently** rather than reported:
+`<bpmn:documentation>` and `<bpmn:extensionElements>`. Both are universal in
+bpmn.io / Camunda output and carry no execution semantics, so erroring on them
+would reject files whose flow graph is fully inside the subset. The
+unsupported-element contract therefore covers unmapped **flow elements**
+([SRD-051 v.2 §FR-7](../srd/SRD-051-bpmn-converter.md)).
+
+> **v.2 re-decision — `serviceTask` is in the MVP.** v.1 excluded it, and
+> SRD-051 v.1 §4.6 deferred it to slice 2, because export needed a
+> `ServiceTask.Operation()` accessor that did not exist. Slice 1 added that
+> accessor (one read-only method, the ADR's only core API addition) and landed
+> the element with `operationRef` resolution against a definitions-level
+> `<interface>`/`<operation>` catalog. Message bindings
+> (`inMessageRef`/`outMessageRef`) remain deferred — parsed and recorded, not
+> yet bound to `bpmncommon.Message` nor re-emitted.
 
 ### 2.7 Namespaces and unsupported-element feedback
 
@@ -295,7 +321,7 @@ than the standard requires, to serve the SAD-001 §5 feedback need).
 
 | # | Decision point | Options | Chosen — why |
 |---|---|---|---|
-| A | Home of the BPMN parser | (a) in core; (b) separate module | **(b)** — SAD-001 §4 N7 + §9 mandate a separate module so core "accepts pre-built models" and keeps its stdlib+uuid budget. (a) would drag an XML/parser surface into core against N7. |
+| A | Home of the BPMN parser | (a) a core package; (b) separate module | **(a)** *(v.2 — reversed)*. v.1 chose (b) on two grounds: N7's "core accepts pre-built models", and core's stdlib+uuid budget. The budget ground does not survive decision D below: a hand-rolled `encoding/xml` parser is stdlib, so it adds nothing to the budget. N7 is about **responsibility**, and that is preserved by import direction, not by a `go.mod` — the converter imports the model, never the reverse. Against that, (b) costs a module, a `replace`, a release tag, and — decisively — invisibility to the diff-coverage gate, which only sees the root module. Landed as `pkg/convert/bpmn`; see [SRD-051 v.2 §4.1](../srd/SRD-051-bpmn-converter.md). |
 | B | Seam wiring | (a) `thresher.WithConverter` single injected impl; (b) standalone register-by-key registry | **(b)** — the requirement is *multiple* pluggable formats; a single injected option (the `WithLogger` idiom) models one impl, not a keyed set. (b) matches `data.SourceProvider` and `image.RegisterFormat`, and keeps convert engine-independent. |
 | C | Interface shape | (a) unified `Converter{Import;Export}`; (b) split `Importer`/`Exporter` | **(b)** — a format may support one direction only; independent registration; mirrors `io.Reader`/`io.Writer`. A unified interface would force half-implementations to stub the other half. |
 | D | Parser implementation | (a) wrap a third-party Go BPMN lib; (b) hand-rolled `encoding/xml` | **(b)** — the MVP subset is small and stdlib `encoding/xml` covers it with zero deps; existing libs are DI/diagram-heavy and pull weight the module does not need. Revisitable per-format (the seam does not care). |
@@ -306,8 +332,8 @@ than the standard requires, to serve the SAD-001 §5 feedback need).
 ## 5. Consequences
 
 **Positive**
-- Core stays dependency-clean; the XML surface is quarantined in one module
-  (SAD-001 §4/§9 upheld).
+- Core stays dependency-clean; the XML surface is quarantined in one package,
+  with the seam's format-agnosticism enforced by depguard (SAD-001 §4/§9 upheld).
 - The seam is a genuine extension point: XPDL, a JSON DSL, or a vendor dialect
   is a third-party `Importer`/`Exporter` registration — no core change.
 - `convert` works with no engine — offline validation, tooling, tests.
@@ -316,13 +342,14 @@ than the standard requires, to serve the SAD-001 §5 feedback need).
 - Unsupported-element errors give the modeler the SAD-001 §5 feedback loop.
 
 **Negative / costs**
-- BPMN is not a *literal* core default — a host must add the module dependency
-  and a blank import to get it (the image-model trade-off).
+- BPMN is not a *literal* core default — a host must add a blank import to get
+  it (the image-model trade-off).
 - No DI round-trip — a file's diagram layout is lost on import→export. Acceptable
   for an execution engine; called out for anyone expecting a modeler-grade
   round-trip.
-- A new top-level module (`doc-source/`) enters CI's per-module matrix (tidy,
-  lint, race, coverage, govulncheck).
+- The converter rides the root module's existing CI, adding no module to the
+  per-module matrix — but its ~1 600 lines now count toward the `cover-check`
+  diff gate, so every later element slice must clear `COVER_MIN` too.
 
 ## 6. Enterprise-readiness recommendations
 
@@ -343,12 +370,11 @@ than the standard requires, to serve the SAD-001 §5 feedback need).
 
 ## 7. Rollout plan
 
-- **Slice 1 — SRD-051 (this ADR's landing).** `pkg/convert` seam + registry;
-  the `doc-source/` module scaffold (go.mod + doc.go, per SAD-001 §9.2
-  "scaffold upfront"); BPMN **import + export** of the §2.6 MVP subset;
-  unsupported-element feedback; semantic round-trip test corpus; a
-  `examples/bpmn-convert/` example; README/guide + changelog + CI per-module
-  wiring.
+- **Slice 1 — SRD-051 (this ADR's landing). Done.** `pkg/convert` seam +
+  registry; `pkg/convert/bpmn` with BPMN **import + export** of the §2.6 MVP
+  subset (including `serviceTask`); unsupported-element feedback; semantic
+  round-trip test corpus; the `examples/bpmn-convert/` example; README/guide +
+  changelog.
 - **Slice 2+ (own SRDs).** Gateways (inclusive/complex/event-based); events
   (timer/message/signal/error) + boundary events; sub-process & call activity
   (composes with ADR-023); lanes (parse-and-preserve); extension-element
@@ -361,7 +387,7 @@ than the standard requires, to serve the SAD-001 §5 feedback need).
 - [SAD-001 v.1](SAD-001-vision-and-architecture.md) §4 N5/N7, §5, §9/§9.1/§9.2, §14 — parser-as-separate-module, modeler feedback, module layout, conformance scope.
 - [ADR-002 v.2](ADR-002-extension-architecture.md) — interfaces + compile-time wiring; the extension idiom the seam follows.
 - [ADR-019 v.1](ADR-019-definition-versioning.md) — version key = process id; the identity-preservation constraint (§2.5).
-- [ADR-003 v.1](ADR-003-module-layout.md) — module boundaries and import-direction rules for the new `doc-source/` module.
+- [ADR-003 v.1](ADR-003-module-layout.md) — module boundaries and import-direction rules; the converter stays inside the root module (§4-A).
 
 > **Note — Draft parents.** SAD-001 v.1 and ADR-003 v.1 are themselves **Draft**;
 > their prescriptions may shift before Accepted, so these pins track a moving
@@ -381,14 +407,13 @@ than the standard requires, to serve the SAD-001 §5 feedback need).
 
 ## Decisions (resolved open questions)
 
-- **Q1 — Module name: DECIDED (proposed, pending SAD-001 §9 ratification).**
-  Rename the reserved `doc-source/` module → **`convert/`** to reflect the now-
-  bidirectional seam (`io/` rejected — collides with the stdlib package;
-  `interchange/` longer, no gain). This is a SAD-001 §9 update (up-ref) for the
-  SAD owner to ratify; the ADR records it as **proposed** and refers to "the
-  converter module" until ratified.
+- **Q1 — Module name: WITHDRAWN in v.2.** v.1 proposed renaming the reserved
+  `doc-source/` module → `convert/`, pending SAD-001 §9 ratification. There is
+  no module to name: §4-A was reversed and the converter is the package
+  `pkg/convert/bpmn`. The SAD-001 §9 `doc-source/` reservation is **retired**
+  rather than renamed — a SAD-001 §9 update (up-ref) applied at landing.
 - **Q2 — Batteries-included: DECIDED.** Ship BPMN as **blank-import**
-  (`_ "…/convert/bpmn"`, image-style) — the only path that keeps core dependency-
+  (`_ ".../pkg/convert/bpmn"`, image-style) — it keeps core dependency-
   clean (SAD-001 §9.1) without amending N7. A *true* core default is a clean
   additive follow-up (revise N7 + a thin core default) if ever wanted; deferring
   costs nothing now.
@@ -409,3 +434,4 @@ than the standard requires, to serve the SAD-001 §5 feedback need).
 | Version | Date | Change |
 |---|---|---|
 | v.1 | 2026-07-17 | Initial draft — converter seam (`pkg/convert`), BPMN as the batteries-included separate-module converter, MVP element subset, semantic round-trip. |
+| v.2 | 2026-07-30 | Accepted on the SRD-051 slice-1 landing. §4-A reversed: the converter is the package `pkg/convert/bpmn`, not a top-level module — the stdlib parser costs core no dependency, and a module would have stayed invisible to the diff-coverage gate (§2.3). Q1 (module rename) withdrawn; the SAD-001 §9 `doc-source/` reservation retired. §2.6: `serviceTask` restored to the MVP set with the new `ServiceTask.Operation()` accessor, and the `documentation`/`extensionElements` silent-skip carve-out recorded. |

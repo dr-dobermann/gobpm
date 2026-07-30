@@ -66,6 +66,19 @@ linters:
           deny:
             - pkg: "github.com/dr-dobermann/gobpm/adapters"
               desc: "adapters MUST NOT import other adapters (ADR-003 §4.4); user composes shared resources at construction time"
+        # pkg/convert contains only format-neutral interfaces and the registry.
+        # Match direct files only: subpackages such as pkg/convert/bpmn own
+        # their serialization implementation.
+        convert-seam-format-agnostic:
+          files:
+            - "**/pkg/convert/*.go"
+          deny:
+            - pkg: "encoding/xml"
+              desc: "XML serialization belongs in a format-specific converter package (SRD-051 §NFR-1)"
+            - pkg: "encoding/json"
+              desc: "JSON serialization belongs in a format-specific converter package"
+    goconst:
+      ignore-tests: true
     funlen:
       lines: 100
       statements: 50
