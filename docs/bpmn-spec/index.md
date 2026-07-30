@@ -14,10 +14,12 @@ Reference extracted from OMG BPMN 2.0 spec, scoped to **Process Execution Confor
 | [conformance.md](conformance.md) | In/out element list per §2.1.2 |
 | [elements/](elements/) | Structural metamodel — attributes, associations, type hierarchy. 11 files by category |
 | [state-machines/](state-machines/) | Activity + Process lifecycles from §13 |
-| [semantics/](semantics/) | Token-flow, per-task behavior, sub-process variants, MI/Loop, compensation, events, end-events, data, correlation, event-handling |
+| [semantics/](semantics/) | Token-flow, per-task behavior, sub-process variants, MI/Loop, compensation, events, end-events, data, correlation, event-handling, **instance attributes** |
 | [scripts/](scripts/) | `gen.py` regenerates `elements/*.md` from cached `bpmn-moddle.json` |
 
 Snapshot, not continuously updated. Regenerate `elements/` via `python3 scripts/gen.py` after updating `scripts/bpmn-moddle.json`. State-machines and semantics are authored from the spec PDF — manual update only.
+
+> **`elements/` covers model attributes only.** bpmn-moddle models the XML metamodel, so the generator can emit nothing about **instance attributes** — the runtime facts (e.g. a UserTask's `actualOwner`) that no XML definition carries. Checking `elements/` for one and finding nothing is not evidence the standard lacks it; see [semantics/instance-attributes.md](semantics/instance-attributes.md).
 
 ## Gaps
 

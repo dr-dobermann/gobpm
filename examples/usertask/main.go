@@ -32,7 +32,8 @@ func run() error {
     start → (approve: UserTask) → end
               │  candidateUsers: operator
               │  output: decision (string)
-              └─ console driver: Take → render form → Complete
+              └─ console driver: Take → Claim → render form → Complete
+                 (claiming is required: only the holder may complete)
 
 `)
 

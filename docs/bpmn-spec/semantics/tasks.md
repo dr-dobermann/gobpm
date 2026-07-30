@@ -40,7 +40,7 @@ Per-task-type execution rules. All tasks share the activity lifecycle ([../state
 - Upon activation: the User Task is **distributed** to the assigned person or group of people (per `HumanPerformer` / `PotentialOwner` / `Performer` / `Rendering` — see [../elements/human-interaction.md](../elements/human-interaction.md)).
 - When the work has been done: the User Task **completes**.
 
-**Engine notes:** distribution mechanism is implementation-defined. The spec does not mandate a specific task list / inbox structure.
+**Engine notes:** distribution mechanism is implementation-defined. The spec does not mandate a specific task list / inbox structure. A UserTask also carries **instance attributes** — `actualOwner` (who picked/claimed it) and `taskPriority` — which the generated element pages cannot show; see [instance-attributes.md](instance-attributes.md).
 
 ## ManualTask
 

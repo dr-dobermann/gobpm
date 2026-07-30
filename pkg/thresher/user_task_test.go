@@ -191,15 +191,24 @@ func TestUserTaskCancelWhileParked(t *testing.T) {
 		2*time.Second, 10*time.Millisecond)
 	taskID := cap.taskID()
 
+	// Hold the task before cancelling it: the process must still win. Ownership is
+	// exclusivity against other ACTORS, never against the process (ADR-020 v.2
+	// §2.1.1) — "claimed" wrongly suggests a right to finish the work.
+	require.NoError(t, th.Claim(ctx, taskID, utActor{id: "alice"}))
+
 	cctx, cc := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cc()
 	state, err := h.Cancel(cctx)
 	require.NoError(t, err)
 	require.Equal(t, thresher.StateTerminated, state)
 
-	// the parked task was withdrawn — no longer completable.
-	require.Error(t,
-		th.Complete(context.Background(), taskID, utActor{id: "alice"}, nil))
+	// the parked task was withdrawn — no longer completable, and no longer held:
+	// its holder cannot complete it, reclaim it, release it or hand it on.
+	alice := utActor{id: "alice"}
+	require.Error(t, th.Complete(context.Background(), taskID, alice, nil))
+	require.Error(t, th.Claim(context.Background(), taskID, alice))
+	require.Error(t, th.Unclaim(context.Background(), taskID, alice))
+	require.Error(t, th.Reassign(context.Background(), taskID, "bob"))
 }
 
 // TestThresherTakeCompleteUnknownTask covers routing of an unknown task id.

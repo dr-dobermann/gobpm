@@ -1,11 +1,13 @@
 package instance
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,3 +58,73 @@ type failActor struct {
 
 func (a failActor) UserID() string   { return a.id }
 func (a failActor) Groups() []string { return a.groups }
+
+// TestRuntimeVarCompletedBy covers the performer register's exposure through the
+// reserved RUNTIME subtree (ADR-020 v.2 §2.4.2): one map-valued variable, node name →
+// the user who completed that task, so the runtime name set stays closed as tasks
+// complete.
+func TestRuntimeVarCompletedBy(t *testing.T) {
+	// The runtime-var builders wrap values in an ItemAwareElement, which needs the
+	// default data states the engine installs at startup.
+	require.NoError(t, data.CreateDefaultStates())
+
+	ctx := context.Background()
+	inst := &Instance{
+		EngineRuntime: enginert.Default(),
+		performers:    newPerformers(),
+	}
+
+	t.Run("empty register reads as an empty map", func(t *testing.T) {
+		d, err := inst.RuntimeVar(CompletedBy)
+		require.NoError(t, err)
+
+		m, ok := d.Value().Get(ctx).(map[string]string)
+		require.True(t, ok, "the register must read as a string map")
+		require.Empty(t, m)
+	})
+
+	t.Run("records are readable by node name", func(t *testing.T) {
+		inst.performers.record("approve", "alice")
+		inst.performers.record("countersign", "bob")
+
+		d, err := inst.RuntimeVar(CompletedBy)
+		require.NoError(t, err)
+
+		m, _ := d.Value().Get(ctx).(map[string]string)
+		require.Equal(t, "alice", m["approve"])
+		require.Equal(t, "bob", m["countersign"])
+	})
+
+	t.Run("a later completion overwrites its node's entry", func(t *testing.T) {
+		// A looped or multi-instance task completes more than once; the register
+		// names the LAST completer.
+		inst.performers.record("approve", "carol")
+
+		d, err := inst.RuntimeVar(CompletedBy)
+		require.NoError(t, err)
+
+		m, _ := d.Value().Get(ctx).(map[string]string)
+		require.Equal(t, "carol", m["approve"])
+	})
+
+	t.Run("restore adopts a checkpoint's records", func(t *testing.T) {
+		// Without this the register would be lost on every hydrate — and a human
+		// task is the wait most likely to dehydrate.
+		fresh := &Instance{
+			EngineRuntime: enginert.Default(),
+			performers:    newPerformers(),
+		}
+		fresh.performers.restore(map[string]string{"approve": "dave"})
+
+		d, err := fresh.RuntimeVar(CompletedBy)
+		require.NoError(t, err)
+
+		m, _ := d.Value().Get(ctx).(map[string]string)
+		require.Equal(t, "dave", m["approve"])
+	})
+
+	t.Run("an empty register snapshots as nil, not an empty map", func(t *testing.T) {
+		require.Nil(t, newPerformers().snapshot(),
+			"an empty map must not reach the checkpoint wire")
+	})
+}
