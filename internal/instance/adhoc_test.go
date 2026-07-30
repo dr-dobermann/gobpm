@@ -481,3 +481,67 @@ func waitForOffer(
 
 	return offered
 }
+
+func TestAdHocViewGuards(t *testing.T) {
+	var (
+		mu  sync.Mutex
+		log []string
+	)
+
+	inst := adHocInstance(t, &scriptedRouter{}, &mu, &log)
+
+	ctx := t.Context()
+
+	_, _, err := inst.AdHocView(ctx, "")
+	require.Error(t, err, "the container must be named")
+
+	var ae *errs.ApplicationError
+
+	require.ErrorAs(t, err, &ae)
+	require.True(t, ae.HasClass(errs.EmptyNotAllowed))
+
+	// A finished instance answers rather than blocking: its loop is gone, so
+	// the request can never be serviced.
+	runToDone(t, inst)
+
+	_, _, err = inst.AdHocView(ctx, "anything")
+	require.Error(t, err, "a stopped instance reports instead of hanging")
+
+	require.Error(t, inst.ActivateAdHoc(ctx, "anything", "a"),
+		"an activation against a stopped instance reports too")
+}
+
+func TestAdHocViewCancelledContext(t *testing.T) {
+	var (
+		mu  sync.Mutex
+		log []string
+	)
+
+	inst := adHocInstance(t, &scriptedRouter{}, &mu, &log)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	// A caller that gave up gets its own context's error, not a hang: the
+	// request is never posted.
+	_, _, err := inst.AdHocView(ctx, "triage")
+	require.ErrorIs(t, err, context.Canceled)
+
+	require.ErrorIs(t, inst.ActivateAdHoc(ctx, "triage", "a"),
+		context.Canceled)
+}
+
+func TestAdHocResolveRejectsHostWithoutNodes(t *testing.T) {
+	// A container that holds no inner graph cannot answer a routing decision;
+	// the failure names the host rather than silently routing nowhere.
+	end, err := events.NewEndEvent("not-a-container")
+	require.NoError(t, err)
+
+	_, err = resolveAdHocNodes(end, []string{"a"})
+	require.Error(t, err)
+
+	var ae *errs.ApplicationError
+
+	require.ErrorAs(t, err, &ae)
+	require.True(t, ae.HasClass(errs.InvalidState))
+}
