@@ -53,8 +53,13 @@ Base: `origin/master` @ `41c5d0d`. **Not pushed** — no remote contains HEAD.
 | `836eaa1` | **M2** — claim/unclaim/reassign, served without hydration |
 | `e1b00ab` | **M4** — the performer register, served through RUNTIME |
 
-Docs are at **ADR-020 v.2.3** and **SRD-073 v.1.6**; both still `Draft` by explicit
-instruction — they flip to Accepted at the PR handover, once all code lands.
+Docs are at **ADR-020 v.2** and **SRD-073 v.1**, both still `Draft` — they flip to Accepted at
+the PR handover, once all code lands.
+
+**Versioning rule learned here:** a doc that has not been accepted is simply *edited* — no
+version bump per change. ADR-020 v.1 was accepted, so v.2 is a real bump; SRD-073 has never
+been accepted, so it stays v.1 however many times it changes. Intra-draft version churn was
+collapsed away before the flip.
 
 ---
 
@@ -155,7 +160,7 @@ flip **both** docs to Accepted → generate the PR description file → hand ove
   patch** — this cost ~400 lines of uncommitted work in this session. Use
   `rtk proxy git diff` when redirecting, and verify saved artifacts before destructive steps.
 - **Doc versioning:** bump the version and add a Document History row for every change;
-  cross-doc references carry version pins (`ADR-020 v.2.3`); references go up or sideways
+  cross-doc references carry version pins (`ADR-020 v.2`); references go up or sideways
   only — an ADR must never cite an SRD.
 - **ADRs get a Russian twin**; recent SRDs and FIXes don't.
 - **Status flips at the PR handover**, never mid-implementation.

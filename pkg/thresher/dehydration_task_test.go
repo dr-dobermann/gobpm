@@ -77,8 +77,10 @@ func TestDehydrationUserTaskWake(t *testing.T) {
 				data.ReadyDataState)),
 	}
 
-	// Claiming a task on a DEHYDRATED instance must not hydrate it — ownership is
-	// a registry mutation (ADR-020 v.2 §2.1.1); only Complete hydrates.
+	// Claim before completing — strict completion (ADR-020 v.2 §2.4.1). Note the
+	// instance is ALREADY hydrated here, by the Take above; the no-hydration
+	// property of a claim is asserted in TestDehydrationUserTaskCompleteWithoutTake,
+	// where the instance is still released.
 	require.NoError(t, th.Claim(context.Background(), taskID,
 		utActor{id: "operator"}))
 
@@ -125,8 +127,16 @@ func TestDehydrationUserTaskCompleteWithoutTake(t *testing.T) {
 				data.ReadyDataState)),
 	}
 
+	// Claiming a RELEASED instance's task must not wake it: ownership lives beside
+	// the task, not inside the instance, so the operation is a registry mutation
+	// (ADR-020 v.2 §2.1.1, SRD-073 NFR-2). This is the property that justifies
+	// serving ownership at the engine level at all.
 	require.NoError(t, th.Claim(context.Background(), taskID,
 		utActor{id: "operator"}))
+
+	require.False(t,
+		fw.saw(observability.KindInstanceState, observability.PhaseHydrated),
+		"claiming must not hydrate a released instance")
 
 	require.NoError(t, th.Complete(context.Background(), taskID,
 		utActor{id: "operator"}, out),
