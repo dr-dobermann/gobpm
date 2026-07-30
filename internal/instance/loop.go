@@ -718,8 +718,8 @@ func (ls *loopState) failFromTrack(t *track) {
 // A build error is recorded and triggers stopAll. Called only from the loop
 // goroutine.
 func (ls *loopState) spawnForks(ctx context.Context, ev trackEvent) {
-	for _, f := range ev.flows {
-		nt, err := newTrack(f.Target().Node(), ls.inst, ev.track)
+	for _, s := range ev.succs {
+		nt, err := newTrack(s.node, ls.inst, ev.track)
 		if err != nil {
 			// A fork target that can't be built is a genuine instance fault —
 			// route it through fail() (the single logging fault boundary,
@@ -731,9 +731,10 @@ func (ls *loopState) spawnForks(ctx context.Context, ev trackEvent) {
 			return
 		}
 
-		// the new track reached its node via flow f; record it so a
-		// synchronizing-join target knows the arriving incoming flow.
-		nt.steps[0].inFlow = f
+		// the new track reached its node via a sequence flow; record it so a
+		// synchronizing-join target knows the arriving incoming flow. A
+		// Router-chosen successor carries none and leaves it nil (SRD-074 §3.1).
+		nt.steps[0].inFlow = s.inFlow
 
 		ls.inst.trackCount.Add(1)
 		ls.spawn(ctx, nt)

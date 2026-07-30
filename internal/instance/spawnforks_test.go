@@ -55,7 +55,7 @@ func TestSpawnForks(t *testing.T) {
 		ls.stopping = true
 
 		before := trackIDSet(inst)
-		ls.spawnForks(t.Context(), trackEvent{flows: []*flow.SequenceFlow{fValid}})
+		ls.spawnForks(t.Context(), trackEvent{succs: succsOf([]*flow.SequenceFlow{fValid})})
 
 		forked := newTrackIDs(before, inst)
 		require.Len(t, forked, 1)
@@ -77,7 +77,7 @@ func TestSpawnForks(t *testing.T) {
 		ls := newLoopState(inst)
 
 		before := trackIDSet(inst)
-		ls.spawnForks(t.Context(), trackEvent{flows: []*flow.SequenceFlow{fBad}})
+		ls.spawnForks(t.Context(), trackEvent{succs: succsOf([]*flow.SequenceFlow{fBad})})
 
 		require.True(t, ls.stopping, "a build error must trigger stopAll")
 		require.Equal(t, Terminating, inst.State())

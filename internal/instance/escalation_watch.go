@@ -162,7 +162,7 @@ func (ls *loopState) catchEscalationBoundary(
 		// non-interrupting: a parallel token on the boundary's outgoing; the
 		// host scope is left running.
 		ls.spawnForks(ctx,
-			trackEvent{track: entry.host, flows: bev.Outgoing()})
+			trackEvent{track: entry.host, succs: succsOf(bev.Outgoing())})
 
 		return
 	}
@@ -171,7 +171,7 @@ func (ls *loopState) catchEscalationBoundary(
 	// the host's continuation (the host is canceled).
 	ls.cancelScope(path, observability.PhaseCanceled)
 	ls.spawnForks(ctx,
-		trackEvent{track: entry.host, flows: bev.Outgoing()})
+		trackEvent{track: entry.host, succs: succsOf(bev.Outgoing())})
 	entry.host.cancel()
 	ls.flipNotParked(entry.host)
 	ls.disarmBoundaries(entry.host.ID())
