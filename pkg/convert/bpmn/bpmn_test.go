@@ -888,7 +888,7 @@ func TestFormalExpressionContract(t *testing.T) {
 	if e.Body() != "approved" || e.ID() != "condition-1" || e.Language() != "urn:test" {
 		t.Errorf("expression identity = %q/%q/%q", e.ID(), e.Language(), e.Body())
 	}
-	if e.Docs() != nil || e.ResultType() != "bool" || e.IsEvaluated() {
+	if e.Docs() != nil || e.ResultType() != typeBool || e.IsEvaluated() {
 		t.Errorf("expression metadata = docs %v, type %q, evaluated %v",
 			e.Docs(), e.ResultType(), e.IsEvaluated())
 	}

@@ -337,7 +337,7 @@ func (p *parser) parseNode(asm *assembly, se xml.StartElement) error {
 		node, err = activities.NewUserTask(name,
 			foundation.WithID(id),
 			activities.WithoutParams(),
-			activities.WithOutput("result", "bool", false))
+			activities.WithOutput("result", typeBool, false))
 
 	case tagServiceTask:
 		node, err = p.parseServiceTask(asm, se, id, name)

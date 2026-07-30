@@ -7,6 +7,11 @@ const nsBPMN = "http://www.omg.org/spec/BPMN/20100524/MODEL"
 
 const errorClass = "BPMN_CONVERT_ERRORS"
 
+// typeBool is the gobpm type name for a boolean. Shared so the condition
+// contract (a sequence-flow condition is boolean by definition, BPMN §13.2)
+// and the userTask placeholder output cannot drift apart.
+const typeBool = "bool"
+
 // Local element names of the SRD-051 §FR-8 MVP subset (and annotations the
 // importer skips). Shared by the importer and exporter so tag spelling cannot
 // drift between directions.

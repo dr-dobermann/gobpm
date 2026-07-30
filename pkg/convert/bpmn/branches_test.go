@@ -292,7 +292,7 @@ var _ data.FormalExpression = bodylessCondition{}
 func (bodylessCondition) ID() string                        { return "compiled-1" }
 func (bodylessCondition) Docs() []*foundation.Documentation { return nil }
 func (bodylessCondition) Language() string                  { return "urn:compiled" }
-func (bodylessCondition) ResultType() string                { return "bool" }
+func (bodylessCondition) ResultType() string                { return typeBool }
 func (bodylessCondition) IsEvaluated() bool                 { return false }
 
 func (bodylessCondition) Evaluate(context.Context, data.Source) (data.Value, error) {

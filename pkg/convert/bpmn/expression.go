@@ -59,7 +59,7 @@ func (e *formalExpression) Result() (data.Value, error) {
 
 // ResultType implements data.FormalExpression. Sequence-flow conditions are
 // boolean by definition (BPMN §13.2), and gateways require "bool".
-func (*formalExpression) ResultType() string { return "bool" }
+func (*formalExpression) ResultType() string { return typeBool }
 
 // IsEvaluated implements data.FormalExpression.
 func (*formalExpression) IsEvaluated() bool { return false }

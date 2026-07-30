@@ -77,6 +77,8 @@ linters:
               desc: "XML serialization belongs in a format-specific converter package (SRD-051 §NFR-1)"
             - pkg: "encoding/json"
               desc: "JSON serialization belongs in a format-specific converter package"
+    goconst:
+      ignore-tests: true
     funlen:
       lines: 100
       statements: 50
