@@ -29,6 +29,11 @@ var kindLevel = map[Kind]slog.Level{
 	// significant enough to log (unlike the observer-only per-instance
 	// KindDataObject below), but flow-level, so Debug (SRD-068).
 	KindDataStore: slog.LevelDebug,
+	// An ad-hoc routing decision — which activities were offered, which was
+	// chosen and by whom, why the container stopped — is a human-steered
+	// milestone, so it echoes at Info beside KindScope and KindTaskState rather
+	// than at flow-tracing Debug (SRD-074 §3.6).
+	KindAdHoc: slog.LevelInfo,
 }
 
 // kindNoEcho lists kinds that never reach the operator log — the observer stream

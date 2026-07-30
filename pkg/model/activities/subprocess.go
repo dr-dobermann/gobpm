@@ -32,6 +32,12 @@ type SubProcess struct {
 	// FR-3): flow-scope handles to engine-global stores. Not seeded into scope
 	// (their data lives in the engine registry) — kept for containment only.
 	dataStoreRefs map[string]*datastores.DataStoreReference
+	// adHoc marks an Ad-Hoc Sub-Process (BPMN §13.3.5, ADR-035 v.1) and holds
+	// its routing configuration: nil on every other variant. Its inner
+	// activities carry no fixed order — the Router replaces sequence-flow
+	// succession inside the container. Mutually exclusive with triggered and
+	// isTransaction.
+	adHoc *adHocSpec
 	activity
 	// triggered marks an Event Sub-Process (triggeredByEvent, BPMN §13.5.4):
 	// a scope-armed handler entered by its triggered start, not a token
@@ -77,6 +83,17 @@ func NewSubProcess(
 			errs.C(errorClass, errs.InvalidParameter))
 	}
 
+	// The three variants name three different entry contracts — a token, a
+	// trigger, and a Router — so no Sub-Process can be two of them at once
+	// (ADR-035 v.1 §2.1).
+	if cfg.adHoc != nil && (cfg.triggered || cfg.isTransaction) {
+		return nil, errs.New(
+			errs.M("NewSubProcess: WithAdHoc is mutually exclusive with "+
+				"WithTriggeredByEvent and WithTransaction — an ad-hoc container "+
+				"is entered by routing, not by a trigger or a token"),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
 	a, err := newActivity(name, actOpts...)
 	if err != nil {
 		return nil, err
@@ -87,6 +104,7 @@ func NewSubProcess(
 		activity:          *a,
 		triggered:         cfg.triggered,
 		isTransaction:     cfg.isTransaction,
+		adHoc:             cfg.adHoc,
 		dataObjects:       map[string]*dataobjects.DataObject{},
 		dataStoreRefs:     map[string]*datastores.DataStoreReference{},
 	}, nil
@@ -98,6 +116,27 @@ func NewSubProcess(
 // seeding and arm it instead (SRD-052).
 func (sp *SubProcess) IsEventSubProcess() bool {
 	return sp.triggered
+}
+
+// IsAdHoc reports whether this Sub-Process is an Ad-Hoc Sub-Process (BPMN
+// §13.3.5, ADR-035 v.1) — a container whose inner activities are ordered by a
+// Router rather than by sequence flows. The runtime uses it to route succession
+// through the Router; validation uses it to apply the ad-hoc containment rules.
+func (sp *SubProcess) IsAdHoc() bool {
+	return sp.adHoc != nil
+}
+
+// AdHoc returns the container's routing configuration, or nil when this
+// Sub-Process is not ad-hoc. It is how the runtime reaches the Router and the
+// ordering rules without the model exposing its internals.
+func (sp *SubProcess) AdHoc() AdHocSpec {
+	if sp.adHoc == nil {
+		// A typed nil inside a non-nil interface would defeat every == nil
+		// check at the call site, so an absent spec is returned as a true nil.
+		return nil
+	}
+
+	return sp.adHoc
 }
 
 // IsTransaction reports whether this Sub-Process is a Transaction Sub-Process
@@ -241,9 +280,17 @@ func (sp *SubProcess) Validate() error {
 
 	noneStarts, triggeredStarts, flowless, nonIntrErr := sp.classifyEntries(&ee)
 
-	if sp.triggered {
+	switch {
+	case sp.triggered:
 		sp.validateEventSubShape(&ee, noneStarts, triggeredStarts, nonIntrErr)
-	} else {
+
+	case sp.adHoc != nil:
+		// An ad-hoc container has no entry shape to check: its activities are
+		// deliberately flow-less and there is no start event to reach them
+		// (ADR-035 v.1 §2.8). What it does have is a containment rule.
+		sp.validateAdHocShape(&ee)
+
+	default:
 		sp.validateEmbeddedShape(&ee, noneStarts, triggeredStarts, flowless)
 	}
 
@@ -526,6 +573,11 @@ func (sp *SubProcess) Clone() (flow.Node, error) {
 		activity:          a,
 		triggered:         sp.triggered,
 		isTransaction:     sp.isTransaction,
+		// The Ad-Hoc spec is immutable configuration (the Router and its
+		// rules), so every instance shares the one the modeler built — like
+		// the Data Store References below, and unlike the Data Objects, which
+		// hold per-instance state and are deep-cloned.
+		adHoc: sp.adHoc,
 		dataObjects:       make(map[string]*dataobjects.DataObject, len(dobjs)),
 		dataStoreRefs: make(
 			map[string]*datastores.DataStoreReference, len(sp.dataStoreRefs)),

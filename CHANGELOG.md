@@ -76,6 +76,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Ad-Hoc Sub-Process — execution order decided at runtime (ADR-035,
+  SRD-074; closes #92).** An embedded Sub-Process marked
+  `WithAdHoc(router)` holds activities with **no sequence flows** between
+  them: what runs next is answered by a host-supplied **Router**, which
+  replaces sequence-flow succession inside the container. It is consulted
+  when the scope opens — its first answer is the standard's *initially
+  enabled* set — and again after each inner activity settles, seeing what
+  has completed, what is running, and the case's own data through a
+  transient read frame. An empty answer ends the asking track; the
+  container completes when its scope **drains**, so completion is
+  inherited from the existing scope machinery rather than built anew, and
+  a container joins a fork without a join gateway by answering empty while
+  a sibling still runs.
+
+  `parallel` ordering is the default (the metamodel declares none and
+  Camunda 7 does not implement the element) with `AdHocSequential`
+  available; `WithAdHocManualSelection()` **offers** the Router's answer
+  instead of running it, so a host picks through
+  `InstanceHandle.AdHoc(nodeID)` — `Enabled` / `Running` / `Activate`,
+  where activating an unoffered activity is a classified error rather
+  than a silent no-op. `WithAdHocCompletion(expr)` keeps the standard's
+  `completionCondition` as a decorator over the Router, and is the one
+  trigger `cancelRemainingInstances` hangs off, per §13.3.5.
+
+  Batteries ship in `pkg/adhoc/routers` — `Standard()` (each activity
+  once, the conformance shape), `Expression(expr)` (successors named by a
+  BPMN expression, routed through the language-routed engine) and
+  `Sequence(ids…)` — but **no Router is applied by default**, and never by
+  declaration order: a container missing its Router is rejected at
+  registration instead of running in a silently arbitrary order. Inner
+  containment is validated to leaf Tasks and plain embedded
+  Sub-Processes. Routing decisions ride a new `KindAdHoc` fact kind
+  (`Offered` / `Activated` / terminal, carrying `candidates`,
+  `selected_by` and `stop_reason`), so a case's routing is
+  reconstructible from the stream alone.
+
 - **Typed value extraction — `data.As[T]` (ADR-034 Data-Layer Generics
   Policy, SRD-072).** The canonical typed idiom for reading a payload out
   of a bare `data.Value`: `data.As[int](ctx, v)` replaces the

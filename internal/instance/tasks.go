@@ -25,15 +25,24 @@ const (
 	reqTake taskReqKind = iota
 	// reqComplete authorizes, validates the outputs, then resumes the task.
 	reqComplete
+	// reqActivateAdHoc starts one activity an ad-hoc container has offered
+	// (SRD-074 §3.5). It carries no actor authorization of its own — the engine
+	// front door authorizes before routing here, as it does for a task action.
+	reqActivateAdHoc
+	// reqAdHocView reports an ad-hoc container's offered and running activities.
+	reqAdHocView
 )
 
 // taskRequest is a Take/Complete operation handed to the instance loop so it runs
 // on the single-writer goroutine (ADR-020 §2.4, SRD-034 §4.1). The caller blocks
 // on reply for the synchronous verdict.
 type taskRequest struct {
-	actor   hi.Actor
-	reply   chan taskReply
-	taskID  string
+	actor  hi.Actor
+	reply  chan taskReply
+	taskID string
+	// nodeID names the ad-hoc container an activation or view targets; unused
+	// by the task requests, which route by taskID.
+	nodeID  string
 	outputs []data.Data
 	kind    taskReqKind
 }
@@ -42,6 +51,9 @@ type taskRequest struct {
 type taskReply struct {
 	err  error
 	view interactor.TaskView
+	// offered and running answer an ad-hoc view request (SRD-074 §3.5).
+	offered []string
+	running []string
 }
 
 // taskEntry is the loop-owned registry value for a parked UserTask: its track and
@@ -160,6 +172,22 @@ func (ls *loopState) handleTaskRequest(ctx context.Context, req taskRequest) {
 		req.reply <- taskReply{err: errs.New(
 			errs.M("instance %q is releasing its goroutines", ls.inst.ID()),
 			errs.C(errorClass, TaskRetryClass))}
+
+		return
+	}
+
+	// The ad-hoc requests route by container node, not by task id, so they are
+	// serviced before the task registry lookup below.
+	switch req.kind {
+	case reqActivateAdHoc:
+		req.reply <- taskReply{
+			err: ls.activateAdHoc(ctx, req.nodeID, req.taskID)}
+
+		return
+
+	case reqAdHocView:
+		offered, running, err := ls.adHocView(req.nodeID)
+		req.reply <- taskReply{offered: offered, running: running, err: err}
 
 		return
 	}

@@ -313,7 +313,16 @@ atomically on a **Cancel End Event** — it compensates the completed activities
 (reverse completion order, as an ACID-like barrier), terminates the rest, and
 hands control out through its interrupting **Cancel boundary** (a Transaction
 with no Cancel boundary ends there) —
-[`examples/transaction-sub-process/`](examples/transaction-sub-process/).
+[`examples/transaction-sub-process/`](examples/transaction-sub-process/). An
+**Ad-Hoc Sub-Process** (`WithAdHoc`) is a Sub-Process variant whose inner
+activities carry **no sequence flows**: what runs next is answered at runtime by
+a host-supplied **Router** — consulted when the scope opens and after each inner
+activity settles, reading the case's own data — so the container expresses work
+whose order is not knowable in advance. An empty answer ends the asking track
+and the container finishes when its scope drains; `WithAdHocManualSelection()`
+offers the enabled set for a **human** to pick from, and ready-made Routers ship
+in `pkg/adhoc/routers` —
+[`examples/adhoc-subprocess/`](examples/adhoc-subprocess/).
 
 Any activity can carry **iteration**
 ([**docs/guides/iteration/index.md**](docs/guides/iteration/index.md)): a **Standard Loop**

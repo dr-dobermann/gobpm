@@ -87,7 +87,7 @@ func TestSpawnForksFaultRoutesThroughFail(t *testing.T) {
 	require.NoError(t, err)
 
 	ls := newLoopState(inst)
-	ls.spawnForks(t.Context(), trackEvent{flows: []*flow.SequenceFlow{fBad}})
+	ls.spawnForks(t.Context(), trackEvent{succs: succsOf([]*flow.SequenceFlow{fBad})})
 
 	require.True(t, ls.stopping, "a build fault stops the instance")
 	require.Error(t, inst.LastErr(), "the fault is recorded")
