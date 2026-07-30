@@ -50,18 +50,22 @@ const (
 type adHocProgress struct {
 	completed map[string]int
 	running   map[string]int
-	// stopReason records WHY routing ended, for the container's terminal fact —
-	// the audit half of the decision trail (SRD-074 FR-13). Empty while routing
-	// continues, and for a container cut short from outside, which never stopped
-	// its own routing. Declared before offered to keep the pointer-scannable
-	// prefix minimal (fieldalignment).
+	// stopReason records WHY the container stopped producing work, for its
+	// terminal fact — the audit half of the decision trail (SRD-074 FR-13). It
+	// is rewritten at each empty answer and read when the scope finally drains,
+	// so the terminal carries the reason that actually ended the container.
+	// Empty for one cut short from outside, which never stopped on its own.
+	// Declared before offered to keep the pointer-scannable prefix minimal
+	// (fieldalignment).
 	stopReason string
 	// offered are the candidates a manual container is waiting on: the Router
 	// answered, and the container now holds them until a host activates one
 	// (ADR-035 v.1 §2.6). Empty in automatic mode, where an answer runs at once.
 	offered []flow.Node
-	// stopped marks a scope whose Router has answered empty: no further routing
-	// happens, and the scope completes once its live activities drain.
+	// stopped marks a container whose completion condition has fired — the
+	// standard's completion trigger. No further routing happens, and the scope
+	// completes once its live activities drain or are canceled. An empty Router
+	// answer does NOT set it: that ends one track, not the container.
 	stopped bool
 }
 
@@ -146,9 +150,10 @@ func (ls *loopState) seedAdHoc(
 }
 
 // routeAdHoc asks the container's Router for the activities to run next and
-// spawns a track for each. An empty answer stops routing: the scope then
-// completes as soon as its live activities drain — completion is the drain, not
-// a separate mechanism (ADR-035 v.1 §2.3). Runs on the loop goroutine.
+// spawns a track for each. An empty answer produces no work, so the asking
+// track simply ends; the container completes when its scope drains — completion
+// is the drain, not a separate mechanism (ADR-035 v.1 §2.3). Only the
+// completion condition stops routing outright. Runs on the loop goroutine.
 func (ls *loopState) routeAdHoc(
 	ctx context.Context,
 	path scope.DataPath,
@@ -173,18 +178,32 @@ func (ls *loopState) routeAdHoc(
 		observability.AttrCandidates, adHocIDs(nodes))
 
 	if len(nodes) == 0 {
-		entry.adHoc.stopped = true
+		// The reason is recorded whichever way the answer came out empty; if the
+		// container drains now, it is the terminal's explanation.
 		entry.adHoc.stopReason = reason
 
-		// Routing stopped while activities are still live: BPMN's
-		// cancelRemainingInstances decides whether they are cut short or
-		// awaited. Waiting needs no action — the scope completes when they
-		// drain through decScope.
+		if reason != adHocStopCompletionCond {
+			// An empty ROUTER answer ends only the asking track (ADR-035 v.1
+			// §2.2). Sibling activities keep running and the Router is consulted
+			// again as each of them settles — §13.3.5's "the enabled set is
+			// updated" after every completion. A momentarily empty enabled set
+			// is not completion; the container completes when its scope drains,
+			// which is the same event seen one level up.
+			return
+		}
+
+		// The completion condition is the standard's ONE completion trigger, and
+		// the only thing cancelRemainingInstances hangs off (§13.3.5): true ends
+		// the container, canceling the live instances by default and waiting for
+		// them when the modeler asked to. Waiting needs no action — the scope
+		// completes when they drain through decScope.
+		entry.adHoc.stopped = true
+
 		if entry.active > 0 && spec.CancelsRemaining() {
 			// cancelScope leaves the host's fate to its caller (a boundary
 			// resumes through the exception flow, a scoped Terminate resumes
-			// directly). An ad-hoc container COMPLETES when routing stops, so
-			// the host is resumed here — otherwise it would stay parked with
+			// directly). An ad-hoc container COMPLETES when its condition fires,
+			// so the host is resumed here — otherwise it would stay parked with
 			// nothing left to wake it.
 			ls.cancelScope(path, observability.PhaseCanceled)
 			ls.resumeScopeHost(ctx, path, entry)
@@ -566,8 +585,10 @@ func (ls *loopState) settleAdHoc(
 
 	entry.adHoc.completed[id]++
 
-	// A stopped container runs no further routing; it is only waiting for its
-	// live activities to drain.
+	// A container whose completion condition fired runs no further routing; it
+	// is only waiting for its live activities to drain. Every other settle
+	// consults the Router again, however the previous one answered — an empty
+	// answer ended that track, not the container.
 	if entry.adHoc.stopped {
 		return entry.active > 0
 	}

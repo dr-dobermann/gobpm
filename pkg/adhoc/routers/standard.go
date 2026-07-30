@@ -19,6 +19,11 @@ type standard struct{}
 // same set is offered for a host to choose from. It is therefore NOT usable
 // with sequential ordering, which permits one live activity and reports a
 // multi-successor answer as a modeling error — use Sequence for that.
+//
+// While its forked activities are in flight it answers empty, since none of
+// them is available to start again. That ends only the asking track: the
+// container keeps running and asks again at each completion, so the fork
+// finishes normally.
 func Standard() adhoc.Router {
 	return standard{}
 }

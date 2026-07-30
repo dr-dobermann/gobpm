@@ -218,12 +218,29 @@ Selection is addressed through a **per-scope control handle** (an instance may
 hold several Ad-Hoc scopes, including nested ones): it exposes the enabled set,
 the running instances, and the act of activating one.
 
-### 2.7 `cancelRemainingInstances` governs the live tracks at stop
+### 2.7 `cancelRemainingInstances` governs the live tracks when the condition fires
 
-When the Router answers empty while inner instances are still live, the
-metamodel's default (`true`) **cancels** them through the engine's existing
-interrupting-cancellation path; `false` lets the scope **wait** for them to
-complete or terminate before it drains. The standard's default is kept.
+The standard attaches `cancelRemainingInstances` to exactly one trigger — the
+`completionCondition` evaluating true:
+
+> `true`: Ad-Hoc Sub-Process completes. If `cancelRemainingInstances=true`
+> (default): running inner Activity instances are **canceled**. If
+> `cancelRemainingInstances=false`: Ad-Hoc Sub-Process waits for remaining
+> instances to complete or terminate. (§13.3.5)
+
+gobpm keeps it there. When the condition fires with inner instances still live,
+the metamodel's default (`true`) cancels them through the engine's existing
+interrupting-cancellation path; `false` lets the scope wait for them to complete
+or terminate before it drains. The standard's default is kept.
+
+An empty **Router** answer is a different event and carries no cancellation. It
+ends the asking track (§2.2), leaving its siblings to run and the enabled set to
+be recomputed at each of their completions — "after each completion of an inner
+Activity … the enabled set is updated" — and the container finishes when its
+scope drains (§2.3). The two must not be conflated: a momentarily empty enabled
+set would otherwise cancel work the model never asked to cancel, and the
+standard-shaped Router (§2.9) answers empty precisely while its forked
+activities are still in flight.
 
 ### 2.8 Containment is validated at registration, and admitted in two steps
 

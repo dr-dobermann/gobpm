@@ -64,7 +64,11 @@ substitution at one seam plus a model element:
   the enabled set, the running activities, and `Activate`. Activating an id
   that is not currently enabled is a classified error, never a silent no-op.
 - **FR-8** — `cancelRemainingInstances` (default **true**, per the metamodel)
-  cancels live inner tracks when the Router stops; `false` waits for them.
+  cancels the live inner tracks when the **completion condition** fires — the
+  standard's one trigger for it (§13.3.5) — and `false` waits for them. An empty
+  Router answer is not that trigger: it ends the asking track (FR-3) and cancels
+  nothing, leaving the enabled set to be recomputed at each sibling's
+  completion.
 - **FR-9** — `WithAdHocCompletion(expr)` is Router sugar: evaluate after each
   settle, answer empty when true, else delegate to the wrapped Router.
 - **FR-10** — batteries: `routers.Standard()` (the flow-less activities, each
@@ -302,7 +306,8 @@ internal `successor` refactor.
 | `TestAdHocParallelForksAndRepeats` | a multi-successor answer forks; the same activity named twice yields two concurrent instances (FR-5) |
 | `TestAdHocSequentialRejectsMultiple` | `sequential` + two successors → classified error (FR-5) |
 | `TestAdHocManualSelectionParksAndActivates` | manual mode parks with the enabled set, `Activate` resumes onto the choice, an unknown id errors (FR-6, FR-7) |
-| `TestAdHocCancelRemainingInstances` | `true` cancels live tracks at stop; `false` waits for them (FR-8) |
+| `TestAdHocEmptyAnswerEndsOnlyTheAskingTrack` | a sibling still in flight when the Router answers empty survives and completes — a momentarily empty enabled set is not completion (FR-3, FR-8) |
+| `TestAdHocCompletionConditionCancelsRemaining` / `…WaitsWhenAsked` | the fired condition cancels the live tracks by default and waits for them at `false` (FR-8) |
 | `TestAdHocCompletionConditionSugar` | the condition ends the scope through the same empty-answer path (FR-9) |
 | `TestAdHocBatteryRouters` | `Standard`, `Expression`, `Sequence` each drive their documented order (FR-10) |
 | `TestAdHocStateCarriesRosterAndEvaluator` | the Router is handed the container's activity roster and a working expression seam — the two inputs the batteries need and neither counter can supply (FR-10) |

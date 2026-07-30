@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -312,40 +313,190 @@ func TestAdHocResolvesByID(t *testing.T) {
 	require.Equal(t, []string{"a"}, log, "an id-named activity runs")
 }
 
-func TestAdHocWaitsForRemainingWhenAsked(t *testing.T) {
+func TestAdHocEmptyAnswerEndsOnlyTheAskingTrack(t *testing.T) {
 	var (
-		mu  sync.Mutex
-		log []string
+		mu      sync.Mutex
+		log     []string
+		release = make(chan struct{})
 	)
 
-	// Two activities start together; the Router stops after the first settles,
-	// so the second is awaited rather than cut short.
-	r := &scriptedRouter{turns: [][]string{{"a", "b"}}}
+	// Two activities start together and the Router answers empty as soon as the
+	// quick one settles — while the slow one is still running. That empty answer
+	// ends the asking track only: §13.3.5 recomputes the enabled set after each
+	// completion, so a momentarily empty set is not completion, and the slow
+	// activity must be left alone to finish.
+	r := &scriptedRouter{turns: [][]string{{"quick", "slow"}}}
 
-	inst := adHocInstance(t, r, &mu, &log,
-		activities.WithAdHocCancelRemaining(false))
-	runToDone(t, inst)
+	inst := pairAdHocInstance(t, r, release, &mu, &log)
 
-	require.Equal(t, Completed, inst.State())
-	require.Len(t, log, 2,
-		"a stopped container still lets its live activities finish")
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+
+	go func() { _ = inst.Run(ctx) }()
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+
+		return slices.Contains(log, "quick")
+	}, 3*time.Second, 5*time.Millisecond, "the quick activity never ran")
+
+	// Under a per-container reading the slow track would already be canceled
+	// here and would never record anything after the release.
+	close(release)
+
+	require.Eventually(t, func() bool {
+		return inst.State() == Completed
+	}, 3*time.Second, 5*time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.ElementsMatch(t, []string{"quick", "slow"}, log,
+		"the sibling survived its neighbour's empty answer and completed")
 }
 
-func TestAdHocCancelsRemainingByDefault(t *testing.T) {
+func TestAdHocCompletionConditionCancelsRemaining(t *testing.T) {
 	var (
-		mu  sync.Mutex
-		log []string
+		mu      sync.Mutex
+		log     []string
+		release = make(chan struct{})
 	)
 
-	// The metamodel's cancelRemainingInstances default is true, so a stop with
-	// live activities cuts them short instead of waiting.
-	r := &scriptedRouter{turns: [][]string{{"a", "b"}}}
+	defer close(release)
 
-	inst := adHocInstance(t, r, &mu, &log)
+	// cancelRemainingInstances hangs off the completion condition, the
+	// standard's one completion trigger (§13.3.5): the condition fires when the
+	// quick activity settles, and the slow one is cut short by the metamodel
+	// default rather than awaited.
+	r := &scriptedRouter{turns: [][]string{{"quick", "slow"}}}
+
+	inst := pairAdHocInstance(t, r, release, &mu, &log,
+		activities.WithAdHocCompletion(boolExpr(t, true)))
+
+	rec := &obsRecorder{}
+	inst.AddObserver(rec.record)
+
 	runToDone(t, inst)
 
-	require.Contains(t, []State{Completed, Terminated}, inst.State(),
-		"the container settles rather than hanging on the canceled activity")
+	mu.Lock()
+	require.Equal(t, []string{"quick"}, log,
+		"the slow activity was canceled, so it recorded nothing")
+	mu.Unlock()
+
+	facts := rec.factsOfKind(observability.KindAdHoc)
+	last := facts[len(facts)-1]
+	require.Equal(t, observability.PhaseCanceled, last.Phase)
+	require.Equal(t, adHocStopCompletionCond,
+		last.Details[observability.AttrStopReason])
+}
+
+func TestAdHocCompletionConditionWaitsWhenAsked(t *testing.T) {
+	var (
+		mu      sync.Mutex
+		log     []string
+		release = make(chan struct{})
+	)
+
+	r := &scriptedRouter{turns: [][]string{{"quick", "slow"}}}
+
+	inst := pairAdHocInstance(t, r, release, &mu, &log,
+		activities.WithAdHocCompletion(boolExpr(t, true)),
+		activities.WithAdHocCancelRemaining(false))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+
+	go func() { _ = inst.Run(ctx) }()
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+
+		return slices.Contains(log, "quick")
+	}, 3*time.Second, 5*time.Millisecond)
+
+	close(release)
+
+	require.Eventually(t, func() bool {
+		return inst.State() == Completed
+	}, 3*time.Second, 5*time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.ElementsMatch(t, []string{"quick", "slow"}, log,
+		"cancelRemainingInstances=false waits for the live instances")
+}
+
+// pairAdHocInstance builds an ad-hoc container over one activity that settles
+// at once and one that blocks until release closes — the shape needed to
+// observe what happens to a sibling that is still live.
+func pairAdHocInstance(
+	t *testing.T, r adhoc.Router, release <-chan struct{},
+	mu *sync.Mutex, log *[]string, opts ...options.Option,
+) *Instance {
+	t.Helper()
+
+	_ = data.CreateDefaultStates()
+
+	p, err := process.New("adhoc-pair")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	triage, err := activities.NewSubProcess("triage",
+		append([]options.Option{activities.WithAdHoc(r)}, opts...)...)
+	require.NoError(t, err)
+
+	quick, err := activities.NewServiceTask("quick",
+		recordOp(t, "quick", mu, log), activities.WithoutParams())
+	require.NoError(t, err)
+	require.NoError(t, triage.Add(quick))
+
+	// The slow operation honors cancellation, so a canceled track releases its
+	// goroutine instead of holding the test open.
+	slowOp, err := gooper.New("slow",
+		func(ctx context.Context, _ service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			select {
+			case <-release:
+				mu.Lock()
+				defer mu.Unlock()
+
+				*log = append(*log, "slow")
+
+			case <-ctx.Done():
+			}
+
+			return nil, nil
+		})
+	require.NoError(t, err)
+
+	slow, err := activities.NewServiceTask("slow", slowOp,
+		activities.WithoutParams())
+	require.NoError(t, err)
+	require.NoError(t, triage.Add(slow))
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, triage, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	_, err = flow.Link(start, triage)
+	require.NoError(t, err)
+	_, err = flow.Link(triage, end)
+	require.NoError(t, err)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	inst, err := New(s, scope.EmptyDataPath, enginert.Default(),
+		&recordingProducer{}, nil)
+	require.NoError(t, err)
+
+	return inst
 }
 
 func TestAdHocOf(t *testing.T) {
