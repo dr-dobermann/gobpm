@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Human-task ownership — claim, unclaim, reassign (ADR-020 v.2, SRD-073).**
+  A UserTask could be offered to twenty candidates and worked by all twenty:
+  whoever submitted first won and the other nineteen discarded their effort,
+  with nothing to signal "I am doing this". BPMN already names the missing
+  piece — §10.3.4.1 Table 10.14 defines `actualOwner`, the user who
+  "picked/claimed" the task — so this is conformance work rather than
+  invention, and it is the first *instance* attribute the engine implements.
+  `Thresher` grows `Claim` / `Unclaim` / `Reassign`; completion becomes
+  **strict**, so only the holder may complete and an unclaimed task is
+  completable by nobody. `Claim` is checked (it refuses a task another actor
+  holds, and is an idempotent no-op for the holder, so claim-before-complete is
+  retry-safe); `Reassign` is deliberately **unguarded at the task level** —
+  its callers are managers and administrators, never participants — so the
+  embedder authorizes it and should log who invoked it, while the nominee is
+  still checked against the process's own triad. A task assigned to exactly one
+  person is born owned, needing no ceremonial self-claim. Ownership operations
+  are registry mutations: they never advance a token, never resist
+  cancellation, and never wake a dehydrated instance, so a claim during a
+  three-day wait costs nothing.
+
+  Completion records **who actually performed the work** in the read-only
+  `RUNTIME/COMPLETED_BY` map (node → user), carried across a hydrate on the
+  instance checkpoint, so a later task can route on it: "send it to the
+  approver's manager" becomes a process decision instead of glue code. It is
+  engine-written and cannot be forged or overwritten by the process.
+
+  The eligibility triad is now resolved **once, when the task is announced**,
+  and frozen for the task's life — an owner's right to finish work they hold
+  must not be revocable by an unrelated data change. Breaking change: an
+  embedder that completed without claiming must now claim first.
+
 - **Process interchange — import and export BPMN 2.0 XML (ADR-024, SRD-051).**
   gobpm could only ever be handed a definition built in Go, which shut out the
   modeler persona entirely: a `.bpmn` authored in bpmn.io or Camunda had no way
@@ -36,6 +67,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rejects a nil operation.
 
 ### Fixed
+
+- **An instance's start time survives dehydration.** `inst.startTime` was set
+  when an instance began and never restored, and the checkpoint carried no
+  timestamp at all — so every rebuild silently restamped it to "now" and
+  `RUNTIME/STARTED_AT` reported the age of the latest rebuild rather than of
+  the process. The interval it lost was exactly the one that mattered: a long
+  wait causes the dehydration, and the rebuild then erased the evidence that
+  the wait happened. Checkpoints written before the field existed keep the
+  previous behaviour rather than zeroing the clock.
 
 - **Local `make ci` now has honest macOS/tool-version preflights (FIX-030).**
   The example runner detects Homebrew's `gtimeout` when GNU `timeout` is not

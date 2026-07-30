@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-07-30 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-020 v.2](../design/ADR-020-human-interaction-execution-model.md) §2.1.1, §2.4.1, §2.4.2, §2.5.1–§2.5.3, §2.7 |
@@ -689,6 +689,22 @@ out of scope by §4.4: reassignment to a nominee eligible only through a **group
 | M8 | `b7cebbb` | ADR-020 Russian twin to v.2 (519 → 958 lines) | 2 files, +499/−58 |
 
 Doc commits: `6705c0b` (ADR-020 v.2), `c5e9985` + `439163f` (this SRD).
+
+### Beyond the milestones
+
+Three later commits belong to this landing but are not milestones, and the connection
+would otherwise be unrecoverable once this document freezes:
+
+| SHA | What | Why it is here |
+|---|---|---|
+| `7068cc8` | The doc-versioning rule in `CLAUDE.md`, plus the four `/check-srd` findings | This branch churned ADR-020 through v.2→v.2.3 and this SRD through v.1→v.1.8, none of them accepted by anyone. The rule that only SAD/ADR carry versions — and that a Draft is simply edited — was written because of that churn, and the versions were then collapsed. |
+| `c39e5b6` | `inst.startTime` is now carried across a hydrate | A **pre-existing defect outside this SRD's scope**, found by it: adding the performer register to the checkpoint proved that retained `Instance` fields are lost on hydrate, and `startTime` was the same trap one field over. Every rebuild silently restamped the instance's start time, so `RUNTIME/STARTED_AT` reported the age of the latest rebuild rather than of the process. |
+| `a747a77` | `TestParallelMultiInstanceCompletionCancelsRemainder` de-flaked | Master's test, surfaced when this branch merged 29 commits of master mid-flight. It counted a cancellation only from the body's `ctx.Done()` branch, so an instance canceled before its body was scheduled never counted itself — ~1 failure in 10. |
+
+The branch also merged `origin/master` (`eaf6921`) partway through, which is why the
+conformance tracker and roadmap were re-checked afterwards (`d5eba8f`): master had
+moved those same documents, and ownership belonged in its existing **Human interaction**
+row rather than the separate row this branch first added.
 
 ### Where each requirement landed
 
