@@ -143,6 +143,7 @@ func (ls *loopState) captureDocument(
 		Status:      inst.State().String(),
 		ConvKeys:    inst.corr.snapshotKeys(),
 		CompletedBy: inst.performers.snapshot(),
+		StartedAt:   inst.startedAtRFC3339(),
 	}
 
 	for _, path := range inst.sc.plane.OpenPaths() {

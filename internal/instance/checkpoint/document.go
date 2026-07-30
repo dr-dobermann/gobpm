@@ -28,6 +28,17 @@ const CurrentSchema = 2
 type Document struct {
 	ConvKeys map[string]string `json:"conv_keys,omitempty"`
 
+	// StartedAt is when the instance originally began, in RFC 3339. It rides the
+	// checkpoint because a hydrated instance is the SAME logical instance: without
+	// it, a rebuild silently restamps the start time to "now", so RUNTIME/STARTED_AT
+	// reports the age of the latest rebuild rather than of the process, and every
+	// "how long has this been running" answer is wrong by exactly the time that
+	// mattered — the long wait that caused the dehydration in the first place.
+	//
+	// Empty on a checkpoint written before this field existed; a restore then keeps
+	// whatever the rebuild set, which is the old behavior.
+	StartedAt string `json:"started_at,omitempty"`
+
 	// CompletedBy records who completed each human task — node name → user id
 	// (ADR-020 v.2 §2.4.2). It rides the checkpoint because a human task is the
 	// wait most likely to dehydrate, so without it the record would vanish exactly

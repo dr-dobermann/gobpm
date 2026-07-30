@@ -85,6 +85,11 @@ forbid every legitimate use. **Two operational consequences:**
   `Reassigned` with the old and new holder, but cannot name the *caller* — it
   never authorized one. If who-moved-this-task matters to your audit, log it on
   your side.
+- **A group-only task has no reassignable nominee.** Group membership is
+  authenticated for the person in front of you, so it cannot be asserted for an
+  absent one. A task whose only eligibility is `candidateGroups` can be *claimed*
+  by any member but cannot be *reassigned* to one — declare the individual as a
+  candidate user, or resolve the group yourself and reassign to a named member.
 - **Bulk moves are yours too.** Reassigning everything one departing employee
   holds spans many instances; the engine's surface is per task. Your inbox
   already knows which tasks exist and who holds them — loop over it.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
@@ -126,5 +127,56 @@ func TestRuntimeVarCompletedBy(t *testing.T) {
 	t.Run("an empty register snapshots as nil, not an empty map", func(t *testing.T) {
 		require.Nil(t, newPerformers().snapshot(),
 			"an empty map must not reach the checkpoint wire")
+	})
+}
+
+// TestStartedAtSurvivesRestore pins the instance's ORIGINAL start time across a
+// rebuild. A hydrated instance is the same logical instance, so restamping it to
+// "now" would make RUNTIME/STARTED_AT report the age of the latest rebuild — losing
+// exactly the interval that mattered, the long wait that caused the dehydration.
+func TestStartedAtSurvivesRestore(t *testing.T) {
+	began := time.Date(2026, 7, 30, 9, 0, 0, 0, time.UTC)
+
+	t.Run("a recorded stamp is adopted", func(t *testing.T) {
+		inst := &Instance{EngineRuntime: enginert.Default()}
+		inst.startTime = time.Now()
+
+		inst.restoreStartedAt(began.Format(time.RFC3339Nano))
+		require.True(t, inst.startTime.Equal(began))
+	})
+
+	t.Run("round-trips through the checkpoint form", func(t *testing.T) {
+		inst := &Instance{EngineRuntime: enginert.Default()}
+		inst.startTime = began
+
+		stamp := inst.startedAtRFC3339()
+		require.NotEmpty(t, stamp)
+
+		rebuilt := &Instance{EngineRuntime: enginert.Default()}
+		rebuilt.restoreStartedAt(stamp)
+		require.True(t, rebuilt.startTime.Equal(began))
+	})
+
+	t.Run("an unstarted instance records nothing", func(t *testing.T) {
+		require.Empty(t, (&Instance{}).startedAtRFC3339())
+	})
+
+	t.Run("an older checkpoint leaves the rebuild's stamp alone", func(t *testing.T) {
+		// The field is absent from checkpoints written before it existed; zeroing
+		// the clock would be worse than keeping the rebuild's own stamp.
+		inst := &Instance{EngineRuntime: enginert.Default()}
+		inst.startTime = began
+
+		inst.restoreStartedAt("")
+		require.True(t, inst.startTime.Equal(began))
+	})
+
+	t.Run("an unparsable stamp is logged, not fatal", func(t *testing.T) {
+		inst := &Instance{EngineRuntime: enginert.Default()}
+		inst.startTime = began
+
+		inst.restoreStartedAt("not-a-time")
+		require.True(t, inst.startTime.Equal(began),
+			"a corrupt stamp must not zero the clock")
 	})
 }

@@ -486,6 +486,14 @@ candidate list, and it composes with [SAD-001 v.1](SAD-001-vision-and-architectu
 choose *among* eligible actors; they may not enlarge the eligible set. The process definition stays
 authoritative over who may act — the guarantee §2.5 exists to provide — while handover becomes possible.
 
+**A consequence worth naming: a nominee eligible only through a candidate *group* cannot be nominated.**
+Group membership is authenticated by the embedder for a **present** actor (§2.6) and cannot be asserted on
+an absent person's behalf, so a task whose only eligibility is `candidateGroups` has no reassignable
+nominee — even though any present member of that group may freely claim it. This is a real capability
+gap, not an oversight: "reassign this to anyone in the reviewers group" is unavailable, and closing it
+needs the directory/resource-query subsystem §7 defers. An embedder that must reassign such a task can
+declare the individual as a candidate user, or resolve the group itself and reassign to a named member.
+
 #### 2.5.3 A single resolved assignee owns the task from distribution *(v.2)*
 
 When the triad designates **exactly one** actor, that actor becomes `actualOwner` **at distribution**,
