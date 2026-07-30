@@ -54,6 +54,26 @@ func TestServiceTaskDefinition(t *testing.T) {
 			require.Equal(t, "##unspecified", st.Implementation())
 		})
 
+	// Operation is the read-only accessor consumers such as BPMN export use
+	// to recover the service binding (SRD-051 §FR-6). It returns the very
+	// Operation the task was constructed with, and a Clone carries its own
+	// per-instance copy of it rather than the definition's.
+	t.Run("operation accessor",
+		func(t *testing.T) {
+			st, err := activities.NewServiceTask("test", op,
+				activities.WithoutParams())
+			require.NoError(t, err)
+			require.Same(t, op, st.Operation())
+
+			n, err := st.Clone()
+			require.NoError(t, err)
+
+			clone, ok := n.(*activities.ServiceTask)
+			require.True(t, ok)
+			require.NotNil(t, clone.Operation())
+			require.Equal(t, op.ID(), clone.Operation().ID())
+		})
+
 	t.Run("invalid options check",
 		func(t *testing.T) {
 			_, err := activities.NewServiceTask(

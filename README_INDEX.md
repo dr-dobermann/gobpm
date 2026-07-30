@@ -6,7 +6,8 @@ This file provides an organized index to all documentation throughout the GoBPM 
 
 - **[User Guides — how to build and run processes](docs/guides/index.md)**: Task-oriented guides covering concepts and every BPMN element, each backed by a runnable program
 - **[Main README](README.md)**: Project overview and getting started
-- **[Working with process data](docs/guides/data.md)**: The structural-data guide — paths, tiers, native structs, change observation
+- **[Working with process data](docs/guides/data/index.md)**: The structural-data guide — paths, tiers, native structs, change observation
+- **[Interchange converters](docs/guides/extending/converters.md)**: Import and export BPMN 2.0 XML through the `pkg/convert` seam
 - **[Contributing Guidelines](CONTRIBUTING.md)**: How to contribute to the project
 - **[Changelog](CHANGELOG.md)**: Project history and release notes
 

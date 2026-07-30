@@ -6,7 +6,7 @@
 | Version | v.3 |
 | Date | 2026-07-16 (v.1 accepted 2026-07-17; v.2 accepted 2026-07-18; v.3 drafted 2026-07-22) |
 | Owner | Ruslan Gabitov |
-| Refines | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md), [ADR-010 v.2 Process Data Model](ADR-010-process-data-model.md) §2.2, [ADR-018 v.1 Boundary Events & Activity Interruption](ADR-018-boundary-events-and-activity-interruption.md) §2.2/§2.6, [ADR-006 v.3 Events & Subscriptions](ADR-006-events-and-subscriptions.md) §2.6/§2.7, [ADR-019 v.1 Definition Versioning](ADR-019-definition-versioning-and-registry.md), [SAD-001 v.1](SAD-001-vision-and-architecture.md) §15.3 |
+| Refines | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md), [ADR-010 v.2 Process Data Model](ADR-010-process-data-model.md) §2.2, [ADR-018 v.1 Boundary Events & Activity Interruption](ADR-018-boundary-events-and-activity-interruption.md) §2.2/§2.6, [ADR-006 v.3 Events & Subscriptions](ADR-006-events-and-subscriptions.md) §2.6/§2.7, [ADR-019 v.1 Definition Versioning](ADR-019-definition-versioning.md), [SAD-001 v.1](SAD-001-vision-and-architecture.md) §15.3 |
 
 > **Draft (v.3)** — a documentation-only bump over the accepted v.2: §2.3 firms
 > the `startQuantity`/`completionQuantity` note into a deliberate non-goal
@@ -248,7 +248,7 @@ composition is by **reference**, not containment, so the execution unit is a
 **child instance**, not a nested scope:
 
 - **Resolution & version binding.** The `calledElement` names a registry
-  key ([ADR-019 v.1](ADR-019-definition-versioning-and-registry.md)).
+  key ([ADR-019 v.1](ADR-019-definition-versioning.md)).
   Default binding is **latest-at-launch** (the registry's "just run the
   current one" semantics, Camunda-aligned); a **pinned version** is an
   explicit option on the Call Activity. Resolution happens at **call time**
@@ -544,7 +544,7 @@ by making no ordering guarantee).
   the interruption mechanism this applies to composites.
 - [ADR-006 v.3](ADR-006-events-and-subscriptions.md) §2.6/§2.7 — the error
   propagation model realized here; the conditional start hosted by §2.8.
-- [ADR-019 v.1](ADR-019-definition-versioning-and-registry.md) — the
+- [ADR-019 v.1](ADR-019-definition-versioning.md) — the
   registry the Call Activity resolves against.
 - GitHub epics: #85 (this ADR), #91, #92, #88, #90, #79.
 

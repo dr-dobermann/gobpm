@@ -18,12 +18,33 @@ type trackEvent struct {
 	compRef      string
 	mergedIDs    []string
 	compSnapshot []data.Data
-	flows        []*flow.SequenceFlow
+	succs        []successor
 	msgDefIDs    []string
 	condDefs     []*events.ConditionalEventDefinition
 	changes      []data.Change
 	compWait     bool
 	kind         trackEventKind
+}
+
+// successor is one next step for a track: the node to run and, when the token
+// reached it over a sequence flow, that flow. inFlow is nil for a step chosen
+// without one — an Ad-Hoc Router names an activity directly (SRD-074 §3.1), so
+// there is no arrival branch to record, and a synchronizing join reading
+// inFlow correctly sees none.
+type successor struct {
+	node   flow.Node
+	inFlow *flow.SequenceFlow
+}
+
+// succsOf maps outgoing sequence flows to successors — the flow-driven half of
+// the succession seam, where every step carries the flow it arrived on.
+func succsOf(flows []*flow.SequenceFlow) []successor {
+	ss := make([]successor, 0, len(flows))
+	for _, f := range flows {
+		ss = append(ss, successor{node: f.Target().Node(), inFlow: f})
+	}
+
+	return ss
 }
 
 // trackEventKind enumerates the track→loop event kinds.

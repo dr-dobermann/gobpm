@@ -117,6 +117,7 @@ The complete catalog, by object class:
 | `KindCall` | call-activity lifecycle. |
 | `KindDataObject` | per-instance Data Object read / write (observer-only). |
 | `KindDataStore` | engine-global Data Store read / write. |
+| `KindAdHoc` | Ad-Hoc routing decisions — what was offered, what was activated and by whom, why the container stopped. |
 
 `Phase` names the transition within a kind and is likewise open, additive, and
 per-kind — some phases are reused across kinds (`Completed` covers instance,

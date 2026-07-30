@@ -35,6 +35,7 @@ const (
 	KindCall             Kind = "Call"             // call-activity lifecycle (SRD-050)
 	KindDataObject       Kind = "DataObject"       // per-instance Data Object read/write (observer-only, SRD-063)
 	KindDataStore        Kind = "DataStore"        // engine-global Data Store read/write (SRD-068)
+	KindAdHoc            Kind = "AdHoc"            // ad-hoc routing decisions (ADR-035)
 )
 
 // Phase names the transition within a Kind (ADR-013 v.2 §2.6). Open and
@@ -175,6 +176,14 @@ const (
 	PhaseDehydrated Phase = "Dehydrated" // InstanceState
 	PhaseHydrated   Phase = "Hydrated"
 
+	// An Ad-Hoc Sub-Process routing decision (ADR-035 v.1 §2.2, SRD-074 FR-12):
+	// PhaseOffered names the candidate set one Router answer produced,
+	// PhaseActivated the candidate that started and who selected it. The
+	// container's own outcome reuses Completed/Canceled — a settled container is
+	// settled however its routing ended.
+	PhaseOffered   Phase = "Offered" // AdHoc
+	PhaseActivated Phase = "Activated"
+
 	PhaseValueAdded   Phase = "Value_Added" // DataChange (= data.ChangeType)
 	PhaseValueUpdated Phase = "Value_Updated"
 	PhaseValueDeleted Phase = "Value_Deleted"
@@ -263,6 +272,17 @@ const (
 	// Call-activity facts (SRD-050 FR-10): emitted by the caller — the called
 	// process key, the RESOLVED version bound (the latest-at-launch audit
 	// point), and the launched child instance id.
+	// Ad-Hoc routing (SRD-074 §3.6). AttrCandidates is the comma-joined inner
+	// activity ids one Router answer offered — an EMPTY value is meaningful: the
+	// Router was consulted and chose to stop, which is not the same as never
+	// having been asked. AttrSelectedBy names who picked the activated activity
+	// ("router" when the answer runs at once, "host" when a host selected it from
+	// the offer), AttrStopReason why routing ended. Ids and reasons only — never
+	// the data the Router read (the masking rule).
+	AttrCandidates = "candidates"
+	AttrSelectedBy = "selected_by"
+	AttrStopReason = "stop_reason"
+
 	AttrCalledKey       = "called_key"
 	AttrCalledVersion   = "called_version"
 	AttrChildInstanceID = "child_instance_id"

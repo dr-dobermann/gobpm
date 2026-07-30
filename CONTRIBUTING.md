@@ -41,7 +41,7 @@ Before pushing, run `make ci` locally. It runs the same checks GitHub Actions ru
     import-direction rules from ADR-003 §4.4) on every module
   * `make build-all` — builds every module
   * `make test-all` — runs `go test -race` on every module; core also generates
-    `coverage.txt` for Codecov
+    `coverage.txt` for Codecov, excluding generated code and `examples/`
   * `make vuln` — runs `govulncheck` against all modules
 
 The CI workflow (`.github/workflows/check.yml`) calls these same Makefile targets

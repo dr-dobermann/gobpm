@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Status | Draft |
-| Version | v.1 |
-| Date | 2026-05-29 |
+| Version | v.1.1 |
+| Date | 2026-07-30 |
 | Owner | Ruslan Gabitov |
 | Supersedes | — |
 | Conformance scope | [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) |
@@ -61,7 +61,7 @@ Both journeys MUST work with high quality. The library MUST NOT carry runtime ba
 | N4 | Collaboration metamodel execution | `Pool`, `Participant`, `MessageFlow` at the Collaboration level are out of execution conformance. Inter-process messaging covered by Message events. |
 | N5 | Diagram Interchange (DI/DC) | Visual layout metamodel. Not part of execution conformance. |
 | N6 | BPEL mapping | Separate conformance subclass; not pursued. |
-| N7 | BPMN XML parser, as a core library concern | The parser will exist (it has to, for adoption), but it is a separate module that constructs the in-memory model the engine consumes. Core library accepts pre-built models. |
+| N7 | BPMN XML parser, as a core library concern | The parser will exist (it has to, for adoption), but it is a separate concern that constructs the in-memory model the engine consumes. Core library accepts pre-built models. **Landed** ([ADR-024 v.2](ADR-024-process-interchange-converters.md), [SRD-051 v.2](../srd/SRD-051-bpmn-converter.md)) as the package `pkg/convert/bpmn` behind the `pkg/convert` seam, bidirectional (import **and** export). It is a package rather than the `doc-source/` module §9 originally reserved: the parser is stdlib `encoding/xml`, so it costs core no dependency, and the invariant N7 protects — the engine never imports the converter — holds by import direction. The engine still only accepts pre-built models; a host blank-imports the format it wants and registers the result itself. |
 | N8 | `startQuantity` / `completionQuantity` ≠ 1 (Activity token-quantity attributes) | **Deliberate engine choice, not a gap.** These `Activity` attributes (default 1) act as an *implicit* Parallel Gateway (`completionQuantity` > 1 emits N tokens per outgoing flow) or an *implicit* AND-join (`startQuantity` > 1 waits for N tokens) — with **no diagram notation**. The token multiplication / join is invisible on the canvas, making process behaviour opaque, which is exactly why they are discouraged. Camunda 7/8 (the alignment target) does not support them (both treated as 1). gobpm keeps the default-1 behaviour; a modeller wanting parallel fan-out or a join uses an **explicit Parallel Gateway** — visible, and already supported. The model still carries the attributes (`WithStartQuantity` / `WithCompletionQuantity`) for XML round-trip fidelity; the runtime honours only the default 1. |
 
 > **Note on distribution / clustering.** Distribution is NOT a non-goal — see §13 Distribution & Scale. Task-level remote execution (ServiceTask / GlobalTask on external workers via an engine-owned fetch-and-lock job queue, ADR-021) and instance-level distribution (sticky routing per instance ID with persistence-based failover) are within the architectural envelope as additive overlays on the single-process foundation. Cluster-wide shared state (cross-node correlation, signal broadcast, shared variables) is an open question, addressable via DB-backed Repository + event broadcast — to be tackled when concrete demand materializes.
@@ -184,7 +184,6 @@ github.com/dr-dobermann/gobpm/                           ← repo root
 │   ├── oidc/              AuthN provider
 │   ├── casbin/            AuthZ policy engine
 │   └── redis-broker/      MessageBroker implementation
-├── doc-source/                                           ← FUTURE — BPMN XML parser (own go.mod)
 └── docs/                                                 ← shared documentation
     ├── design/            ← this directory
     ├── adr/, srd/
@@ -453,7 +452,6 @@ instance-termination story in the runtime ([ADR-001 v.6](ADR-001-execution-model
 
 - [docs/bpmn-spec/](../bpmn-spec/) — BPMN 2.0 Process Execution Conformance KB
 - [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) — in-scope / out-of-scope element list
-- [docs/analytics/Analysis of the gobpm project.md](../analytics/Analysis%20of%20the%20gobpm%20project.md) — prior analysis
 - [docs/analytics/gobpm Development Roadmap.md](../analytics/gobpm%20Development%20Roadmap.md) — phased roadmap
 - BPMN 2.0 specification PDF: `docs/BPMN formal-13-12-09.pdf` (OMG formal/2013-12-09, v2.0.2)
 
@@ -476,4 +474,5 @@ instance-termination story in the runtime ([ADR-001 v.6](ADR-001-execution-model
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.1.1 | 2026-07-30 | — | Down-ref update from the [ADR-024 v.2](ADR-024-process-interchange-converters.md) / [SRD-051 v.2](../srd/SRD-051-bpmn-converter.md) landing: §9 module tree — the `doc-source/` reservation is **retired**, since the BPMN converter shipped as the package `pkg/convert/bpmn` inside the root module rather than as its own module; N7 annotated with what actually landed and why a package satisfies it. Also dropped the §References link to `docs/analytics/Analysis of the gobpm project.md`, deleted as obsolete in `8159359`. No change to vision, scope, principles, or any other module boundary. |
 | v.1 | 2026-05-29 | Ruslan Gabitov | Initial draft, incorporating first review round: §1.1 document-class taxonomy; observability default = **visible** (`slog.Default()`) with explicit opt-out for low-noise environments; §9.2 scaffold modules upfront, not incrementally; §10 emphasize save/restore + recovery as P0; §11 add `WorkerDispatcher` extension; §13 new "Distribution & Scale" section flagged **preliminary, subject to refinement** (deferred for deeper discussion before SAD acceptance); N8 clustering reframed from non-goal to additive overlay; `thresher` name retained for the engine façade. |

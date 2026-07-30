@@ -7,7 +7,7 @@
 | Date | 2026-07-26 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-013 v.2](../design/ADR-013-instance-observability.md) §2.6 (the open phase taxonomy — two new phases, one reused; the masking and volume rules govern every addition) |
-| Upstream | [ADR-027 v.1](../design/ADR-027-business-rule-engine-seam.md) (the rules seam whose calls and registrars this audits), [ADR-031 v.1](../design/ADR-031-script-task-and-script-engine-seam.md) (the script seam), [ADR-029 v.1](../design/ADR-029-decision-table-engine-adapter.md) §2.6 (the deploy surface) |
+| Upstream | [ADR-027 v.1](../design/ADR-027-business-rule-task-and-rule-engine-seam.md) (the rules seam whose calls and registrars this audits), [ADR-031 v.1](../design/ADR-031-script-task-and-script-engine-seam.md) (the script seam), [ADR-029 v.1](../design/ADR-029-decision-table-engine-adapter.md) §2.6 (the deploy surface) |
 | Refines | SRD-060 v.1 (the `KindRules` outcome pair), SRD-064 v.1 (the `KindScript` outcome pair) — sideways |
 
 Closes two observability gaps found reviewing the Business Rule / Script

@@ -22,13 +22,30 @@ var sanctioned = map[string]bool{
 	"MustRecord(":      true,
 }
 
+// exemptFiles are the whole-file exemptions FIX-026 §3.1's rationale does not
+// reach: registration sites whose Must* arguments are compile-time constants
+// of their own package, called once from init(). There is no runtime input to
+// reject and no running engine to crash — the only reachable failure is a
+// duplicate registration, i.e. a programming error that must abort at load
+// time rather than be swallowed by an init() that cannot return an error.
+//
+// Keyed by slash-separated repo-relative path. Keep this map to
+// registration-only files; anything doing real work belongs under the ban.
+var exemptFiles = map[string]bool{
+	// convert.MustRegisterImporter/Exporter(convert.BPMN, …) — the
+	// image.RegisterFormat idiom (ADR-024 §2.2, SRD-051 §FR-4) that makes a
+	// blank import switch the BPMN format on.
+	"pkg/convert/bpmn/bpmn.go": true,
+}
+
 // TestNoMustCallsInLibrary guards FIX-026 §3.2.16: library runtime code
 // (pkg/ + internal/, non-test files) must not CALL panicking Must*
 // constructors — a bad runtime input has to fail with a classified error
 // through the fault machinery, never crash the engine. Defining Must* twins
 // (fixture surface) stays legal, as do the two sanctioned argless literal
-// forms above. Tests and examples are structurally out of scope (the walk
-// covers only pkg/ and internal/ and skips *_test.go).
+// forms above and the registration sites in exemptFiles. Tests and examples
+// are structurally out of scope (the walk covers only pkg/ and internal/ and
+// skips *_test.go).
 //
 // A failure names the offending path:line — convert the call to the New*
 // constructor and propagate the error (the FIX-026 reference pattern:
@@ -53,6 +70,10 @@ func TestNoMustCallsInLibrary(t *testing.T) {
 				rel, err := filepath.Rel(root, path)
 				if err != nil {
 					rel = path
+				}
+
+				if exemptFiles[filepath.ToSlash(rel)] {
+					return nil
 				}
 
 				offenders = append(offenders,

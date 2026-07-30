@@ -498,7 +498,7 @@ func (ls *loopState) fireBoundary(ctx context.Context, ev trackEvent) {
 
 	// both kinds spawn a token on the boundary's outgoing (exception / parallel) flow.
 	ls.spawnForks(ctx,
-		trackEvent{track: ev.track, flows: ev.node.Outgoing()})
+		trackEvent{track: ev.track, succs: succsOf(ev.node.Outgoing())})
 
 	// The boundary fired and continued the instance on its outgoing flow
 	// (SRD-041 §3.4).
@@ -604,7 +604,7 @@ func (ls *loopState) matchErrorBoundary(ctx context.Context, t *track) bool {
 				})
 
 				ls.spawnForks(ctx,
-					trackEvent{track: t, flows: bev.Outgoing()})
+					trackEvent{track: t, succs: succsOf(bev.Outgoing())})
 
 				return true
 			}
@@ -688,7 +688,7 @@ func (ls *loopState) matchErrorScopeChain(ctx context.Context, t *track) bool {
 
 			// the exception flow replaces the host's continuation.
 			ls.spawnForks(ctx,
-				trackEvent{track: entry.host, flows: bev.Outgoing()})
+				trackEvent{track: entry.host, succs: succsOf(bev.Outgoing())})
 			entry.host.cancel()
 			ls.flipNotParked(entry.host)
 			ls.disarmBoundaries(entry.host.ID())

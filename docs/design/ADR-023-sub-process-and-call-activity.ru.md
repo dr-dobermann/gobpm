@@ -6,7 +6,7 @@
 | Версия | v.2 |
 | Дата | 2026-07-16 (v.1 принято 2026-07-17; v.2 принято 2026-07-18) |
 | Владелец | Руслан Габитов |
-| Уточняет | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md), [ADR-010 v.2 Process Data Model](ADR-010-process-data-model.md) §2.2, [ADR-018 v.1 Boundary Events & Activity Interruption](ADR-018-boundary-events-and-activity-interruption.md) §2.2/§2.6, [ADR-006 v.3 Events & Subscriptions](ADR-006-events-and-subscriptions.md) §2.6/§2.7, [ADR-019 v.1 Definition Versioning](ADR-019-definition-versioning-and-registry.md), [SAD-001 v.1](SAD-001-vision-and-architecture.md) §15.3 |
+| Уточняет | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md), [ADR-010 v.2 Process Data Model](ADR-010-process-data-model.md) §2.2, [ADR-018 v.1 Boundary Events & Activity Interruption](ADR-018-boundary-events-and-activity-interruption.md) §2.2/§2.6, [ADR-006 v.3 Events & Subscriptions](ADR-006-events-and-subscriptions.md) §2.6/§2.7, [ADR-019 v.1 Definition Versioning](ADR-019-definition-versioning.md), [SAD-001 v.1](SAD-001-vision-and-architecture.md) §15.3 |
 
 > EN-оригинал — канонический: [ADR-023-sub-process-and-call-activity.md](ADR-023-sub-process-and-call-activity.md). Этот файл — его перевод (twin).
 
@@ -242,7 +242,7 @@ Call Activity — это граница **переиспользования** �
 выполнения — **дочерний экземпляр**, а не вложенная область:
 
 - **Разрешение и привязка версии.** `calledElement` именует ключ реестра
-  ([ADR-019 v.1](ADR-019-definition-versioning-and-registry.md)). Привязка по
+  ([ADR-019 v.1](ADR-019-definition-versioning.md)). Привязка по
   умолчанию — **latest-at-launch** (семантика реестра «просто запусти текущую»,
   выровнено с Camunda); **закреплённая версия** — явная опция на Call Activity.
   Разрешение происходит **во время вызова** — отсутствующий ключ/версия
@@ -531,7 +531,7 @@ boundary-crossing-start (§2.2); каскад caller-cancel на вызванн�
 - [ADR-006 v.3](ADR-006-events-and-subscriptions.md) §2.6/§2.7 — модель
   распространения ошибок, реализованная здесь; conditional start, хостящийся
   в §2.8.
-- [ADR-019 v.1](ADR-019-definition-versioning-and-registry.md) — реестр, против
+- [ADR-019 v.1](ADR-019-definition-versioning.md) — реестр, против
   которого разрешается Call Activity.
 - GitHub-эпики: #85 (этот ADR), #91, #92, #88, #90, #79.
 

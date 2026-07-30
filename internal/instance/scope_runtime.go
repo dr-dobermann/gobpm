@@ -77,7 +77,11 @@ type scopeEntry struct {
 	// (SRD-056.A), nil for every serial scope; ordinal is the instance's 0-based
 	// index. When set, the scope's drain decrements the group barrier instead of
 	// resuming the host through the serial re-entry.
-	group   *miGroup
+	group *miGroup
+	// adHoc is the routing state of an Ad-Hoc scope (SRD-074 §3.4), nil for
+	// every other scope: the per-activity completed/running counts the Router
+	// decides on, and whether routing has already stopped.
+	adHoc   *adHocProgress
 	node    flow.Node
 	parent  scope.DataPath
 	queue   []*track
@@ -234,6 +238,14 @@ func (ls *loopState) seedScope(
 	// An Event Sub-Process scope is entered by its FIRED triggered start, not
 	// seeded normally: seed from the start's outgoing targets (the start
 	// treated as fired), so the handler's inner flow runs (SRD-052 FR-7).
+	// An Ad-Hoc scope has no entry shape: what runs first is its Router's first
+	// answer, not a rule over flow-less nodes (ADR-035 v.1 §2.2).
+	if spec := adHocOf(sh); spec != nil {
+		ls.seedAdHoc(ctx, child, spec)
+
+		return
+	}
+
 	seeds := scopeSeeds(sh)
 	if isEventSubHandler(sh) {
 		seeds = handlerSeeds(sh)
@@ -327,6 +339,13 @@ func (ls *loopState) decScope(ctx context.Context, t *track) {
 
 	entry.active--
 
+	// An Ad-Hoc scope routes on every settle (§13.3.5 "the enabled set is
+	// updated"), which may start further activities — so the drain check comes
+	// after routing, not before it.
+	if entry.adHoc != nil && ls.settleAdHoc(ctx, t.scopePath, entry, t) {
+		return
+	}
+
 	if entry.active > 0 {
 		return
 	}
@@ -403,6 +422,7 @@ func (ls *loopState) completeScope(
 	}
 
 	ls.reportScope(observability.PhaseCompleted, entry.node, path, ordinal)
+	ls.reportAdHocSettled(entry, observability.PhaseCompleted)
 
 	// a parallel Multi-Instance instance drains into its group's N-of-N barrier
 	// (SRD-056.A): the off-loop decorator (runMIParallel) owns the counting and the
@@ -550,6 +570,12 @@ func (ls *loopState) cancelScope(path scope.DataPath, phase observability.Phase)
 		}
 
 		ls.reportScope(phase, entry.node, p, ord)
+
+		// An ad-hoc container's routing ended here however the scope was cut
+		// short — a Terminate still leaves the routing canceled, so the terminal
+		// fact reads Canceled while the scope's own fact carries the phase
+		// (SRD-074 §3.6).
+		ls.reportAdHocSettled(entry, observability.PhaseCanceled)
 	}
 }
 

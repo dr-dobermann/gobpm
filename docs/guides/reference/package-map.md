@@ -99,6 +99,13 @@ See [Part 6 — Extending gobpm](../extending/id-generator.md).
 | `pkg/model/expression` | `ExpressionEngine` | `goexpr` (Go-native) | — |
 | `pkg/tasks` | `WorkerDispatcher` | `localdispatcher` (in-process) | remote HTTP/gRPC — future (ADR-004) |
 | `pkg/model/foundation` | `IDGenerator` | built-in (`GenerateID`); replace via `SetGenerator` | — |
+| `pkg/convert` | `Importer`, `Exporter`, `Format` registry | `pkg/convert/bpmn` (BPMN 2.0 XML, both directions) — blank-import to enable | — |
+
+> `pkg/convert` is the one seam the engine never consumes: a converter turns an
+> interchange file into a `*process.Process` that **you** register, so there is
+> no `thresher.WithConverter`. It registers by format key, `image.RegisterFormat`
+> style, rather than by constructor option. See
+> [Interchange converters](../extending/converters.md).
 
 > `pkg/observability`'s `Logger` is satisfied directly by `*slog.Logger` — the
 > default engine logs to `slog.Default()`, so observability is on unless you opt

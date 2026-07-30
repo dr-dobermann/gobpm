@@ -182,7 +182,13 @@ type track struct {
 	evtCh       chan flow.EventDefinition
 	taskID      string
 	scopePath   scope.DataPath
-	scopeSeg    string
+	// adHocActivity names the inner activity this track was routed to inside an
+	// Ad-Hoc scope, empty for every other track (SRD-074 §3.4). Set pre-spawn on
+	// the loop goroutine and read after the track is terminal, so it needs no
+	// synchronization: it is how the settling loop knows which activity to count
+	// as completed.
+	adHocActivity string
+	scopeSeg      string
 	foundation.BaseElement
 	prev      []string
 	msgDefIDs []string
@@ -1412,27 +1418,37 @@ func (t *track) finalizeNodeExecution(
 // flow (each new track self-creates its own token on execution). 1:1
 // track:token holds: the parent keeps its single token, no split.
 func (t *track) checkFlows(flows []*flow.SequenceFlow) error {
-	if len(flows) == 0 {
+	return t.advance(succsOf(flows))
+}
+
+// advance applies a settled node's successors: no successor ends the track,
+// otherwise one continues it and the rest fork. It is the single implementation
+// of the continue/fork/end rules, shared by both sources of succession — a
+// node's outgoing sequence flows (checkFlows) and an Ad-Hoc Router's answer
+// (SRD-074 §3.1).
+func (t *track) advance(succs []successor) error {
+	if len(succs) == 0 {
 		t.updateState(TrackEnded)
 		return nil
 	}
 
-	// if any outgoing flow is cyclic on the current node, it becomes the
+	// if any successor is cyclic on the current node, it becomes the
 	// track's next step.
 	nextNode := 0
-	for i, f := range flows {
-		if f.Target().ID() == t.currentStep().node.ID() {
+	for i, s := range succs {
+		if s.node.ID() == t.currentStep().node.ID() {
 			nextNode = i
 			break
 		}
 	}
 
-	// the track continues on the chosen flow (it carries its single position;
-	// no token object). inFlow records that flow so a synchronizing-join target
-	// knows which incoming flow this token arrived on.
+	// the track continues onto the chosen successor (it carries its single
+	// position; no token object). inFlow records the flow it arrived on so a
+	// synchronizing-join target knows which incoming flow this token came from;
+	// it is nil for a Router-chosen activity, which arrived on no branch.
 	nextStep := stepInfo{
-		node:   flows[nextNode].Target().Node(),
-		inFlow: flows[nextNode],
+		node:   succs[nextNode].node,
+		inFlow: succs[nextNode].inFlow,
 		state:  StepCreated,
 	}
 
@@ -1501,18 +1517,18 @@ func (t *track) checkFlows(flows []*flow.SequenceFlow) error {
 		t.instance.emit(ev)
 	}
 
-	// the remaining flows fork: build a fresh slice (don't mutate the caller's)
-	// and hand it to the loop, which constructs the new tracks. The track never
-	// mutates instance state itself.
-	extras := make([]*flow.SequenceFlow, 0, len(flows)-1)
-	for i, f := range flows {
+	// the remaining successors fork: build a fresh slice (don't mutate the
+	// caller's) and hand it to the loop, which constructs the new tracks. The
+	// track never mutates instance state itself.
+	extras := make([]successor, 0, len(succs)-1)
+	for i, s := range succs {
 		if i != nextNode {
-			extras = append(extras, f)
+			extras = append(extras, s)
 		}
 	}
 
 	if len(extras) != 0 {
-		t.instance.emit(trackEvent{kind: evFork, track: t, flows: extras})
+		t.instance.emit(trackEvent{kind: evFork, track: t, succs: extras})
 	}
 
 	return nil

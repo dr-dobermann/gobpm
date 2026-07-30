@@ -7,7 +7,7 @@
 | Date | 2026-07-16 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-023 v.1](../design/ADR-023-sub-process-and-call-activity.md) §2.1–§2.6, §2.9 (the embedded slice; Call Activity is the next slice); GitHub epic #85 (part) |
-| Upstream | [ADR-001 v.6](../design/ADR-001-execution-model.md) (the single-writer loop extended with scope accounting), [ADR-010 v.2](../design/ADR-010-process-data-model.md) §2.2 (the container-scope tree activated), [ADR-018 v.1](../design/ADR-018-boundary-events-and-activity-interruption.md) (the interruption mechanism applied to composite hosts), [ADR-006 v.3](../design/ADR-006-events-and-subscriptions.md) §2.6 (the error scope-chain realized), [ADR-013 v.2](../design/ADR-013-observability.md) (the fact stream extended with a scope kind) |
+| Upstream | [ADR-001 v.6](../design/ADR-001-execution-model.md) (the single-writer loop extended with scope accounting), [ADR-010 v.2](../design/ADR-010-process-data-model.md) §2.2 (the container-scope tree activated), [ADR-018 v.1](../design/ADR-018-boundary-events-and-activity-interruption.md) (the interruption mechanism applied to composite hosts), [ADR-006 v.3](../design/ADR-006-events-and-subscriptions.md) §2.6 (the error scope-chain realized), [ADR-013 v.2](../design/ADR-013-instance-observability.md) (the fact stream extended with a scope kind) |
 | Refines | — |
 
 ## §1 Background
@@ -449,7 +449,7 @@ sync, PR handover.
   to composite hosts; realizes
   [ADR-006 v.3](../design/ADR-006-events-and-subscriptions.md) §2.6;
   activates [ADR-010 v.2](../design/ADR-010-process-data-model.md) §2.2
-  child scopes; extends [ADR-013 v.2](../design/ADR-013-observability.md)
+  child scopes; extends [ADR-013 v.2](../design/ADR-013-instance-observability.md)
   with `KindScope`.
 
 ## §9 Definition of Done

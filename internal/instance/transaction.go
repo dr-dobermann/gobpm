@@ -74,7 +74,7 @@ func (ls *loopState) finalizeTransaction(
 	ls.cancelScope(sweep.path, observability.PhaseCanceled)
 
 	if bev := cancelBoundaryOn(node); bev != nil {
-		ls.spawnForks(ctx, trackEvent{track: host, flows: bev.Outgoing()})
+		ls.spawnForks(ctx, trackEvent{track: host, succs: succsOf(bev.Outgoing())})
 	}
 
 	host.cancel()

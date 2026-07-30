@@ -16,6 +16,9 @@ whether the inner work runs **in the same instance's scope tree** or as a
   and runs an inner graph you build in place;
 - a **Transaction Sub-Process** is that same scope with ACID-like abort — a
   Cancel inside compensates completed work and unwinds it;
+- an **Ad-Hoc Sub-Process** is that same scope with no sequence flows inside:
+  what runs next is answered at runtime by a Router rather than fixed by the
+  model;
 - a **Call Activity** parks the caller's token and runs a *separately
   registered* process as its own isolated child instance.
 
@@ -47,12 +50,15 @@ classDiagram
     Activity <|-- CallActivity
     SubProcess <.. Transaction : WithTransaction()
     SubProcess <.. EventSubProcess : WithTriggeredByEvent()
+    SubProcess <.. AdHoc : WithAdHoc()
 ```
 
-`SubProcess` and `CallActivity` are the two concrete types. **Transaction** and
-**Event Sub-Process** are not separate types — they are a plain `SubProcess`
-tagged by a construction option (`WithTransaction` / `WithTriggeredByEvent`),
-reported at runtime by `IsTransaction()` / `IsEventSubProcess()`.
+`SubProcess` and `CallActivity` are the two concrete types. **Transaction**,
+**Event Sub-Process** and **Ad-Hoc** are not separate types — they are a plain
+`SubProcess` tagged by a construction option (`WithTransaction` /
+`WithTriggeredByEvent` / `WithAdHoc`), reported at runtime by `IsTransaction()`
+/ `IsEventSubProcess()` / `IsAdHoc()`. The three markers are mutually
+exclusive.
 
 ## Members
 
@@ -65,6 +71,7 @@ need transactional abort or event-triggered handling.
 | `CallActivity` | invoke a **separately registered** process as an isolated **child instance**; the caller's token parks until it finishes. | [Call Activity](call-activity.md) |
 | `SubProcess` + `WithTransaction()` | the embedded scope with **ACID-like abort**: a Cancel End Event inside compensates completed work and leaves through the Cancel boundary. | [Transaction Sub-Process](transaction.md) |
 | `SubProcess` + `WithTriggeredByEvent()` | an **Event Sub-Process**: a scope-armed handler entered only when its single triggered Start Event fires — not by a sequence flow. | [Event sub-processes](../events/event-subprocess.md) |
+| `SubProcess` + `WithAdHoc(r)` | an **Ad-Hoc Sub-Process**: inner activities with no flows between them, whose order a Router decides at runtime. | [Ad-Hoc Sub-Process](adhoc.md) |
 
 Where these sit in the wider activity family (Tasks, Sub-Process, Call
 Activity): [Activities taxonomy](../tasks/index.md).
@@ -124,6 +131,7 @@ Sub-Process needs neither:
 |---|---|
 | `WithTransaction()` | mark the scope a Transaction Sub-Process (BPMN §10.7): only Cancel End/boundary is permitted, and reaching a Cancel inside triggers the ACID-like abort. |
 | `WithTriggeredByEvent()` | mark the scope an Event Sub-Process (BPMN §13.5.4): a scope-armed handler entered by its single triggered Start Event, not by a flow. |
+| `WithAdHoc(r adhoc.Router)` | mark the scope Ad-Hoc (BPMN §13.3.5): its inner activities carry no sequence flows, and the Router answers what runs next. Refined by `WithAdHocOrdering` / `WithAdHocManualSelection` / `WithAdHocCancelRemaining` / `WithAdHocCompletion`. |
 
 Call-Activity option (`CallActivityOption`):
 
@@ -146,9 +154,9 @@ sp, _ := activities.NewSubProcess("charge", activities.WithTransaction())
 
 ## See also
 
-- Members: [Embedded Sub-Process](embedded.md) · [Call Activity](call-activity.md) · [Transaction Sub-Process](transaction.md) · [Event sub-processes](../events/event-subprocess.md)
+- Members: [Embedded Sub-Process](embedded.md) · [Call Activity](call-activity.md) · [Transaction Sub-Process](transaction.md) · [Ad-Hoc Sub-Process](adhoc.md) · [Event sub-processes](../events/event-subprocess.md)
 - Related: [Activities taxonomy](../tasks/index.md) · [Boundary events](../events/boundary.md) · [Registering & versioning](../operating/registering-and-versioning.md)
-- Design: [ADR-023 — Sub-Process & Call Activity](../../design/ADR-023-sub-process-and-call-activity.md) · [ADR-028 — Transaction Sub-Process](../../design/ADR-028-transaction-sub-process.md)
+- Design: [ADR-023 — Sub-Process & Call Activity](../../design/ADR-023-sub-process-and-call-activity.md) · [ADR-028 — Transaction Sub-Process](../../design/ADR-028-transaction-sub-process.md) · [ADR-035 — Ad-Hoc Sub-Process](../../design/ADR-035-adhoc-sub-process.md)
 - Full API: `go doc github.com/dr-dobermann/gobpm/pkg/model/activities`
 </content>
 </invoke>

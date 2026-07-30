@@ -1,0 +1,6 @@
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:process id="dangling-target">
+    <bpmn:startEvent id="start"/>
+    <bpmn:sequenceFlow id="broken" sourceRef="start" targetRef="missing"/>
+  </bpmn:process>
+</bpmn:definitions>

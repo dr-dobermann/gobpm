@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
+  <bpmn:process id="linear-fixture" name="Linear fixture" isExecutable="true">
+    <bpmn:startEvent id="start"/>
+    <bpmn:task id="work" name="Work"/>
+    <bpmn:endEvent id="end"/>
+    <bpmn:sequenceFlow id="to-work" sourceRef="start" targetRef="work"/>
+    <bpmn:sequenceFlow id="to-end" sourceRef="work" targetRef="end"/>
+  </bpmn:process>
+</bpmn:definitions>

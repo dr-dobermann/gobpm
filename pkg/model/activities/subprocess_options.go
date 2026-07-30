@@ -2,6 +2,7 @@ package activities
 
 // subProcessConfig collects the SubProcess-specific construction options.
 type subProcessConfig struct {
+	adHoc         *adHocSpec
 	triggered     bool
 	isTransaction bool
 }
