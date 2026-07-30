@@ -126,6 +126,19 @@ func (sp *SubProcess) IsAdHoc() bool {
 	return sp.adHoc != nil
 }
 
+// AdHoc returns the container's routing configuration, or nil when this
+// Sub-Process is not ad-hoc. It is how the runtime reaches the Router and the
+// ordering rules without the model exposing its internals.
+func (sp *SubProcess) AdHoc() AdHocSpec {
+	if sp.adHoc == nil {
+		// A typed nil inside a non-nil interface would defeat every == nil
+		// check at the call site, so an absent spec is returned as a true nil.
+		return nil
+	}
+
+	return sp.adHoc
+}
+
 // IsTransaction reports whether this Sub-Process is a Transaction Sub-Process
 // (BPMN §10.7, ADR-028 §2.1). The runtime uses it to resolve a Cancel abort to
 // this scope; the model uses it to gate Cancel End/boundary placement (§2.6).
@@ -560,6 +573,11 @@ func (sp *SubProcess) Clone() (flow.Node, error) {
 		activity:          a,
 		triggered:         sp.triggered,
 		isTransaction:     sp.isTransaction,
+		// The Ad-Hoc spec is immutable configuration (the Router and its
+		// rules), so every instance shares the one the modeler built — like
+		// the Data Store References below, and unlike the Data Objects, which
+		// hold per-instance state and are deep-cloned.
+		adHoc: sp.adHoc,
 		dataObjects:       make(map[string]*dataobjects.DataObject, len(dobjs)),
 		dataStoreRefs: make(
 			map[string]*datastores.DataStoreReference, len(sp.dataStoreRefs)),

@@ -24,6 +24,31 @@ const (
 	AdHocSequential AdHocOrdering = "SEQUENTIAL"
 )
 
+// AdHocSpec is the routing configuration of an Ad-Hoc Sub-Process, read by the
+// runtime through SubProcess.AdHoc. It is an interface so the configuration
+// stays immutable once the container is built: a modeler sets it with the
+// WithAdHoc* options, and the engine only reads it.
+type AdHocSpec interface {
+	// Router answers which inner activities may run next; an empty answer ends
+	// the ad-hoc work.
+	Router() adhoc.Router
+
+	// Ordering reports whether one inner activity may be live at a time or many.
+	Ordering() AdHocOrdering
+
+	// IsManual reports whether the Router's answer is offered for selection
+	// (true) or run directly (false).
+	IsManual() bool
+
+	// CancelsRemaining reports what happens to activities still running when
+	// routing stops: cancel them (true, the BPMN default) or wait for them.
+	CancelsRemaining() bool
+
+	// CompletionCondition is BPMN's completionCondition, or nil when the
+	// container ends only on an empty Router answer.
+	CompletionCondition() data.FormalExpression
+}
+
 // adHocSpec is the Ad-Hoc configuration of a SubProcess: nil on every other
 // Sub-Process variant, non-nil exactly when the container is ad-hoc.
 type adHocSpec struct {
@@ -32,6 +57,23 @@ type adHocSpec struct {
 	ordering   AdHocOrdering
 	manual     bool
 	cancelRest bool
+}
+
+// Router implements AdHocSpec.
+func (s *adHocSpec) Router() adhoc.Router { return s.router }
+
+// Ordering implements AdHocSpec.
+func (s *adHocSpec) Ordering() AdHocOrdering { return s.ordering }
+
+// IsManual implements AdHocSpec.
+func (s *adHocSpec) IsManual() bool { return s.manual }
+
+// CancelsRemaining implements AdHocSpec.
+func (s *adHocSpec) CancelsRemaining() bool { return s.cancelRest }
+
+// CompletionCondition implements AdHocSpec.
+func (s *adHocSpec) CompletionCondition() data.FormalExpression {
+	return s.completion
 }
 
 // WithAdHoc makes the SubProcess an Ad-Hoc Sub-Process (BPMN §13.3.5,

@@ -98,6 +98,24 @@ func TestAdHocOptionExclusivity(t *testing.T) {
 			activities.WithAdHocCompletion(expr))
 		require.NoError(t, err)
 		require.True(t, sp.IsAdHoc())
+
+		// The spec is what the runtime reads, so every option must be visible
+		// through it — a silently dropped option would look configured and
+		// behave otherwise.
+		spec := sp.AdHoc()
+		require.NotNil(t, spec)
+		require.Equal(t, r, spec.Router())
+		require.Equal(t, activities.AdHocSequential, spec.Ordering())
+		require.True(t, spec.IsManual())
+		require.False(t, spec.CancelsRemaining())
+		require.Equal(t, expr, spec.CompletionCondition())
+	})
+
+	t.Run("a plain Sub-Process reports a true nil spec", func(t *testing.T) {
+		sp, err := activities.NewSubProcess("plain")
+		require.NoError(t, err)
+		require.Nil(t, sp.AdHoc(),
+			"a typed nil would defeat every == nil check at the call site")
 	})
 
 	t.Run("a nil completion expression is rejected", func(t *testing.T) {
