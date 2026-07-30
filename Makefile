@@ -62,6 +62,13 @@ MODULES := $(shell /usr/bin/find . -name go.mod -not -path './.git/*' -exec dirn
 CORE_MODULES    := $(filter-out ./examples/%,$(MODULES))
 EXAMPLE_MODULES := $(filter ./examples/%,$(MODULES))
 
+# Root-module packages eligible for unit-test coverage. Generated mocks are
+# drift-checked; examples are build-checked, and standalone example modules are
+# also run end-to-end. Neither belongs in the coverage denominator. The
+# end-anchored alternative also excludes a package located directly at
+# generated/ or examples/.
+COVER_PACKAGES = $$($(GO) list ./... | grep -Ev '/(generated|examples)(/|$$)')
+
 # ---------------------------------------------------------------------------
 # Tooling — versions are the single source of truth, mirrored by the
 # "Install tools" step in .github/workflows/check.yml. `make tools` installs
@@ -139,14 +146,14 @@ lint_all:
 
 # Mocks are committed under generated/ (FIX-023), so `go test` runs directly —
 # no mockery pre-step. Regenerate with `make gen_mock_files` when an interface
-# changes. The `grep -v /generated/` keeps the generated packages (no tests,
-# always 0%) out of the coverage numbers.
+# changes. COVER_PACKAGES keeps generated packages and every examples/ package
+# out of the coverage numbers.
 test:
-	$(GO) test -v -count=1 -cover $$($(GO) list ./... | grep -v '/generated/')
+	$(GO) test -v -count=1 -cover $(COVER_PACKAGES)
 .PHONY: test
 
 test_coverage:
-	$(GO) test -v -count=1 -coverprofile=c.out $$($(GO) list ./... | grep -v '/generated/')
+	$(GO) test -v -count=1 -coverprofile=c.out $(COVER_PACKAGES)
 	go tool cover -html=c.out
 	rm c.out
 .PHONY: test_coverage
@@ -208,7 +215,7 @@ test-all:
 	@set -e; for dir in $(MODULES); do \
 		echo "::group::test $$dir (TEST_CPUS=$(TEST_CPUS))"; \
 		if [ "$$dir" = "." ]; then \
-			(cd $$dir && GOMAXPROCS=$(TEST_CPUS) $(GO) test -race -count=1 -coverprofile=coverage.txt $$($(GO) list ./... | grep -v '/generated/')) || exit 1; \
+			(cd $$dir && GOMAXPROCS=$(TEST_CPUS) $(GO) test -race -count=1 -coverprofile=coverage.txt $(COVER_PACKAGES)) || exit 1; \
 		else \
 			(cd $$dir && GOMAXPROCS=$(TEST_CPUS) $(GO) test -race -count=1 ./...) || exit 1; \
 		fi; \
@@ -278,7 +285,7 @@ cover-check:
 	$(call require-go-tool,covercheck,github.com/dr-dobermann/covercheck,$(COVERCHECK_VERSION))
 	covercheck -min $(COVER_MIN) -base $(COVER_BASE) \
 		-exclude-lines '$(COVER_EXCLUDE)' \
-		-exclude-paths '^generated/' \
+		-exclude-paths '^(generated|examples)/' \
 		-profiles coverage.txt
 .PHONY: cover-check
 
