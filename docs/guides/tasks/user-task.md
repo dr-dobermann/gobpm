@@ -165,6 +165,7 @@ driver.Bind(th)
 task available: id=6595855523137331530 node=3424710742457493363
 TaskState Announced node_name=approve task_id=6595855523137331530
 TaskState Taken     node_name=approve task_id=6595855523137331530
+TaskState Claimed   user_id=operator  task_id=6595855523137331530
 Approve? type a decision
 TaskState Completed node_name=approve task_id=6595855523137331530
 task withdrawn: id=6595855523137331530
@@ -173,8 +174,43 @@ process finished: Completed
 ```
 
 The engine announces the task (`Announced`), the driver **takes** it
-(`Taken`), renders the form, and **completes** it (`Completed`); the collected
+(`Taken`), **claims** it (`Claimed`) so no other candidate can work it in
+parallel, renders the form, and **completes** it (`Completed`); the collected
 `decision` becomes task output and the token flows to `end`.
+
+### Claiming is required
+
+A task is completable **only by its actual owner**, so an unclaimed task is
+completable by nobody — `Claim` is a step, not a courtesy:
+
+| Call | Meaning |
+|---|---|
+| `th.Claim(ctx, taskID, actor)` | take exclusive hold. Refused if someone else holds it; re-claiming your own task is a harmless no-op, so claim-before-complete is safe to retry. |
+| `th.Unclaim(ctx, taskID, actor)` | give it back to the pool. Only the holder may release. |
+| `th.Reassign(ctx, taskID, userID)` | move it to someone else, overriding the current holder. The engine does **not** check the caller — its callers are managers and administrators, not participants — so *your application decides who may do this*, and should log who did. The nominee is still checked against the task's triad. |
+
+A task assigned to exactly one person (`WithAssignee`, or an expression
+resolving to one id) is **born owned** by them — no claim needed, though
+`Unclaim` and `Reassign` still work on it.
+
+When a completion is refused, the error says which rule refused it:
+`TaskUnclaimedClass` (claim it first), `TaskNotOwnerClass` (someone else holds
+it), or a plain authorization failure (you are not a candidate at all).
+
+### Who performed the task
+
+Completion records the performer where a **later** node can read it — the
+"send it to the approver's manager" pattern. It lives in the engine's read-only
+`RUNTIME` area, keyed by node name:
+
+```
+RUNTIME/COMPLETED_BY   →   map: node name → the user who completed it
+```
+
+Read-only matters: your process can route on the record but cannot forge or
+overwrite it. It survives dehydration, so a task completed before a weekend's
+wait is still attributable afterwards. A looped task overwrites its entry each
+pass, so the map names the **last** completer.
 
 > Without a bound `TaskDistributor` a User Task still parks and is completable
 > by id, but nothing surfaces it — the default distributor is a no-op. The

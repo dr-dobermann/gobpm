@@ -14,7 +14,7 @@ the engine like the message broker or the clock. This page shows the seam, the
 registration call, a minimal implementation, and how the engine drives it.
 
 > The distributor does **not** execute the task. It only surfaces availability.
-> The human acts back through the engine's own `Take`/`Complete` entry points,
+> The human acts back through the engine's own `Take` / `Claim` / `Complete` entry points,
 > which the engine authorizes — instance data never reaches the distributor
 > before an authorized `Take` (ADR-020 §2.8).
 
@@ -86,7 +86,10 @@ front end calls back into the engine — these are the entry points a distributo
 | Entry point | Role |
 |---|---|
 | `Take(ctx, taskID, actor) (TaskView, error)` | authorize the actor, then return the authorized snapshot — renderers to build the UI plus the task's `Data`. |
-| `Complete(ctx, taskID, actor, outputs) error` | authorize, validate the outputs, and resume the parked track. |
+| `Claim(ctx, taskID, actor) error` | take exclusive hold. **Required before `Complete`** — an unclaimed task is completable by nobody. Re-claiming your own task is a no-op, so this is retry-safe. |
+| `Unclaim(ctx, taskID, actor) error` | release your hold back to the pool (holder only). |
+| `Reassign(ctx, taskID, userID) error` | move the task to someone else. The engine does not check the caller — see [Human tasks](../operating/human-tasks.md) for who should be allowed to, and why you must log it. |
+| `Complete(ctx, taskID, actor, outputs) error` | authorize, check ownership, validate the outputs, and resume the parked track. |
 
 `Take` returns a `TaskView` (`TaskRef` + `Renderers` + `Data`) — it carries data
 only *after* the acting `Actor` passes authorization, the counterpart to the
@@ -108,7 +111,7 @@ func (d *Driver) Withdraw(_ context.Context, taskID string) error
 ```
 
 Note the two-step wiring, forced by a cycle: the driver needs the engine (to call
-`Take`/`Complete`) and the engine needs the driver (via `WithTaskDistributor`).
+`Take`/`Claim`/`Complete`) and the engine needs the driver (via `WithTaskDistributor`).
 Build the driver first, pass it to the engine, then `Bind` the engine back:
 
 ```go
@@ -132,6 +135,7 @@ type Engine interface {
     Take(
         ctx context.Context, taskID string, actor hi.Actor,
     ) (interactor.TaskView, error)
+    Claim(ctx context.Context, taskID string, actor hi.Actor) error
     Complete(
         ctx context.Context, taskID string, actor hi.Actor, outputs []data.Data,
     ) error
@@ -161,7 +165,7 @@ The `Announced → Taken → Completed → Withdrawn` sequence is the contract i
 motion: `Distribute` fires the announcement, your front end drives `Take` and
 `Complete`, and the engine calls `Withdraw` once the task leaves the completable
 set. For a real deployment your `Distribute` writes to a queue or inbox and a
-separate request handler calls `Take`/`Complete` when the human acts — the
+separate request handler calls `Take`/`Claim`/`Complete` when the human acts — the
 console driver simply collapses both halves into one goroutine.
 
 ## See also

@@ -49,6 +49,9 @@ type Instance struct {
 	waitHolders         exec.WaitHolders
 	sc                  instanceScope
 	corr                correlator
+	// performers records who completed each human task, served read-only through
+	// the RUNTIME subtree and carried across a hydrate (ADR-020 v.2 §2.4.2).
+	performers *performers
 	now                 func() time.Time
 	tracksSnap          atomic.Pointer[[]*track]
 	lastErr             atomic.Pointer[error]
@@ -442,6 +445,7 @@ func New(
 	// The correlator back-pointer refers to the same heap object New returns —
 	// inst escapes via &inst below (the instanceScope loader takes it the same way).
 	inst.corr = correlator{inst: &inst, keys: map[string]string{}}
+	inst.performers = newPerformers()
 
 	if err := inst.sc.load(
 		parentRoot, inst.s.ProcessName, inst.s.Properties,

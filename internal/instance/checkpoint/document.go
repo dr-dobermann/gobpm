@@ -28,6 +28,12 @@ const CurrentSchema = 2
 type Document struct {
 	ConvKeys map[string]string `json:"conv_keys,omitempty"`
 
+	// CompletedBy records who completed each human task — node name → user id
+	// (ADR-020 v.2 §2.4.2). It rides the checkpoint because a human task is the
+	// wait most likely to dehydrate, so without it the record would vanish exactly
+	// in the case it exists for: a LATER node asking who performed an earlier task.
+	CompletedBy map[string]string `json:"completed_by,omitempty"`
+
 	InstanceID string `json:"instance_id"`
 	// ParentID/CallNodeID record child linkage informationally (a child
 	// instance is its own record; re-linking a live call is SRD-071+).

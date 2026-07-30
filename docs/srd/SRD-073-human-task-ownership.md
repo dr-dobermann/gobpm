@@ -3,10 +3,10 @@
 | Field | Value |
 |---|---|
 | Status | Draft |
-| Version | v.1.4 |
+| Version | v.1.6 |
 | Date | 2026-07-30 |
 | Owner | Ruslan Gabitov |
-| Implements | [ADR-020 v.2.1](../design/ADR-020-human-interaction-execution-model.md) §2.1.1, §2.4.1, §2.4.2, §2.5.1–§2.5.3, §2.7 |
+| Implements | [ADR-020 v.2.3](../design/ADR-020-human-interaction-execution-model.md) §2.1.1, §2.4.1, §2.4.2, §2.5.1–§2.5.3, §2.7 |
 | Upstream | [ADR-007 v.2.1](../design/ADR-007-in-memory-long-waits.md) §2.4, [ADR-011 v.7](../design/ADR-011-process-data-flow.md), [ADR-013 v.2](../design/ADR-013-instance-observability.md), [ADR-033 v.2](../design/ADR-033-persistence-and-state.md) |
 | Refines | [SRD-034 v.1](SRD-034-user-task-execution.md) (the user-task landing this extends), [SRD-071 v.2.5](SRD-071-instance-dehydration-and-wake-on-trigger.md) §FR-8 (the task-action hydrate/replay path) — sideways |
 
@@ -163,7 +163,7 @@ assume the instance is **absent**, not merely idle.
 | **FR-5d** | The **denial error has exactly one author**: `Eligibility.Authorize` (§3.1). Every caller — `UserTask.Authorize`, the instance loop, the thresher's gate — surfaces the identical error, so an embedder cannot tell which internal component refused. `UserTask.unauthorized` is folded into it and deleted (§4.7). The message and the `task_id`/`user_id` details are carried over verbatim; the **class string moves** from `ACTIVITIES_ERRORS` to `INTERACTOR_ERRORS`, since the error is now authored in `pkg/interactor` — a deliberate, documented change *(corrected in v.1.1: v.1 claimed the denial was unchanged for embedders, which overstated it)*. `errs.ConditionFailed` is unchanged, so class-kind checks are unaffected. |
 | **FR-5e** | A triad that **cannot be resolved fails closed**: `resolveEligibility` returns `DeniedEligibility()` — authorizing nobody — never the zero `Eligibility`, which would read as an *open* task and silently authorize every actor. The failure is logged **and** reported as a `KindTaskState` / `PhaseFailed` fact carrying `reason=eligibility_resolution_failed` and `effect=denied_all_actors`, so a silent authorization bypass is impossible and an operator can see why a task became uncompletable *(added in v.1.1)*. |
 | **FR-6** | Where the resolved assignee slot yields **exactly one** identifier, the task is registered already owned by it; several identifiers, or none, register unowned (ADR-020 v.2 §2.5.3). A born-owned task accepts `Unclaim` and `Reassign` like any other. |
-| **FR-7** | On accepted completion the engine commits a **write-once** `completedBy` record at the instance **root** scope, naming the acting actor, readable by later expressions and outliving the task (ADR-020 v.2 §2.4.2). It is engine-written; a caller-supplied value is never trusted. |
+| **FR-7** | On accepted completion the engine records the acting actor in the **performer register**, keyed by node name, readable by later expressions through `RUNTIME/COMPLETED_BY` and outliving the task (ADR-020 v.2 §2.4.2). It is engine-written and **read-only to the process**; a caller-supplied value is never trusted. The register is carried across a hydrate on the instance checkpoint *(v.1.6 — was a root-scope data commit)*. |
 | **FR-8** | Three new `KindTaskState` phases — `Claimed`, `Unclaimed`, `Reassigned` — carry the task id and actor; `Reassigned` carries **both** parties. A completion refused for non-ownership is observable distinctly from one refused for authorization. The eligibility-resolution failure of FR-5e is reported on the same `KindTaskState` stream. |
 | **FR-9** | Cancellation is unchanged by ownership: `cleanupTask` and `withdrawAllTasks` tear down and withdraw an owned task exactly as an unowned one, and drop its registry record (ADR-020 v.2 §2.1.1). |
 | **FR-10** | The vendored extract gains instance-attribute coverage for Table 10.14 (`actualOwner`, `taskPriority`), so the layer this SRD implements stops being invisible to a reviewer (ADR-020 v.2 §3 pin note, §7 step 5). |
@@ -173,7 +173,7 @@ assume the instance is **absent**, not merely idle.
 
 | # | Requirement |
 |---|---|
-| **NFR-1** | No new lock. **Mutable** ownership state lives in exactly one place — the thresher's task record, mutated under the existing `Thresher.m` (§1.2) — and the instance loop stays the single writer for everything it already owns. The **immutable** eligibility snapshot may be held in both places (FR-5a); write-once data has no consistency hazard, and treating it as if it did is what produced a needless relocation in an earlier draft (§4.1). |
+| **NFR-1** | **Mutable** ownership state lives in exactly one place — the thresher's task record, mutated under the existing `Thresher.m` (§1.2) — and the instance loop stays the single writer for everything it already owns. The **immutable** eligibility snapshot may be held in both places (FR-5a); write-once data has no consistency hazard. *One new lock is accepted (v.1.6):* the performer register (§3.5) guards its own map, because it is written on the loop goroutine at completion and read during expression evaluation on track goroutines. It is a short critical section over a small map, with no I/O. |
 | **NFR-2** | An ownership operation on a **dehydrated** instance completes without hydrating it — asserted by a test that dehydrates, claims, and checks residency is unchanged. |
 | **NFR-3** | Concurrent `Claim`s on one task yield exactly one winner, proven under `-race`. |
 | **NFR-4** | `make ci` green: tidy, lint, build, race tests, diff-coverage ≥ `COVER_MIN` (95, `Makefile:15`), govulncheck. |
@@ -310,19 +310,33 @@ type taskRecord struct {
 }
 ```
 
-### 3.5 The `completedBy` record
+### 3.5 The performer register
 
-Committed at `Scope.Root()` (§1.7) under a per-task name so several user tasks in one
-process do not collide, and so a later expression can name the task it means:
+Engine state on the `Instance`, served read-only through the reserved `RUNTIME` subtree
+and carried across a hydrate on the checkpoint (ADR-020 v.2 §2.4.2):
+
+```go
+// performers records who actually completed each of the instance's human tasks.
+// Guarded by its own mutex: written on the instance-loop goroutine at completion,
+// read during expression evaluation on track goroutines.
+type performers struct {
+    byNode map[string]string // node name (or id) → completer's user id
+    m      sync.Mutex
+}
+```
+
+Exposed as **one map-valued runtime variable**, so the runtime name set stays closed:
 
 ```
-<nodeName>.completedBy  →  data.Data (string, the acting actor's UserID)
+RUNTIME/COMPLETED_BY  →  values.Map[string]   // node name → user id
 ```
 
-Written once, at accepted completion, via `Scope.Commit` — never mutated, never
-actor-supplied (FR-7).
+and persisted alongside the conversation keys:
 
----
+```go
+// checkpoint.Document
+CompletedBy map[string]string `json:"completed_by,omitempty"`
+```
 
 ## §4 Analysis & decisions
 
@@ -388,18 +402,44 @@ change to a contract two other documents pin.
 existing authorization call, but it forces a hydration to learn the answer and it inverts
 §2.4's stage order relative to a pre-hydration ownership gate.
 
-### 4.3 `completedBy` naming — **chosen: `<nodeName>.completedBy` at root**
+### 4.3 Where the performer record lives — **chosen: the `RUNTIME` subtree, as a map**
 
-A per-node name keeps several user tasks distinct and reads naturally in an expression
-(`approve.completedBy`). Root scope is required because the node's scope closes at
-completion (§1.7).
+The record is **engine-published**, and that decides where it belongs. A process must be
+able to READ who performed a task; it must NOT be able to overwrite the answer, nor
+collide with it by naming a variable the same way. The reserved `RUNTIME` subtree is
+read-only by construction (`Commit` and `OpenScope` reject it — `internal/scope/runtimevars.go:8-11`),
+so it grants exactly the first power and withholds the second.
+
+`RUNTIME` already serves recorded constants rather than only live state — `STARTED_AT`
+is `inst.startTime`, retained on the Instance (`internal/instance/runtimevars.go:37`) —
+so a performer register is a new *entry*, not a new *category*.
+
+Exposed as **one map-valued variable** (node → completer), not one variable per task, so
+the supplier's name set stays closed: an open per-task namespace would force prefix
+matching in `RuntimeVar` and make `RuntimeVarNames` grow with every completion.
+
+**It must ride the checkpoint.** The register is Instance state, and the checkpoint
+persists the data plane plus a few explicit fields — `startTime` is NOT among them, so
+retained fields are otherwise lost on a hydrate. A human task is the wait most likely to
+dehydrate, so an in-memory-only register would vanish precisely in the case it exists
+for. It is therefore captured and restored alongside the conversation keys, whose
+`snapshotKeys`/`restoreKeys` pattern it mirrors (`internal/instance/correlation.go:257-287`).
+
+**Rejected — a data-plane commit at root scope** (the v.1.5 design, implemented and then
+withdrawn). It works and is durable for free, but it hands the process both powers the
+record must not grant: a modeler can overwrite the audit record, and can collide with it
+by naming an ordinary variable the same way. It also forced two accidental constraints —
+the name could not contain `.` (reserved in a data name), and the datum had to be a
+`Parameter` over an `ItemAwareElement`, because a `Property` does not satisfy the scope's
+`Clone() (*ItemAwareElement, error)` requirement and committing one silently deferred
+every subsequent checkpoint.
 
 **Rejected — a flat `completedBy`.** Collides across tasks; the last writer wins and the
 approval pattern silently reads the wrong performer.
 
-**Rejected — a structured completion record keyed by task id.** More faithful, but task
-ids are engine-generated and unknown to a modeller writing an expression, so nothing
-could reference it.
+**Rejected — keyed by task id.** More faithful to the task, but task ids are
+engine-generated and unknown to a modeler writing an expression, so nothing could
+reference it. Node name is the handle a modeler actually has.
 
 ### 4.4 Reassign takes an identity, not an `Actor` — **chosen**
 
@@ -573,7 +613,7 @@ Each milestone is one commit, independently verifiable, `make ci` green.
 | **M1** *(landed)* | `interactor.ResolvedSlot`/`Eligibility` + `Authorize`/`permits`/`Open`/`DeniedEligibility` (the denial's single author, `unauthorized` folded in and deleted); `ResolveEligibility` on `UserTask` with `Authorize` refactored to delegate (contract intact); resolution wired into `buildTaskInfo`, failing closed with a fact; `TaskInfo.Eligible` + `taskEntry.eligible`; the instance check reads the snapshot and `authorizeTask`'s throwaway frame retires | FR-5, FR-5a–e, V1, V1a, V1b, V2, V2a–V2f |
 | **M2** *(landed)* | `taskRecord` replaces `tasks map[string]string`; `Claim`/`Unclaim`/`Reassign` on `Thresher`, registry-only; the pre-hydration gate; the three ownership phases. **Absorbed M3 and FR-4** — see the note below | FR-1, FR-2, FR-3a–c, **FR-4**, **FR-6**, FR-8 (ownership phases), NFR-1, NFR-2, NFR-3, NFR-6, V2b, V2c, V3–V9, V13, V14, V17, V18 |
 | ~~**M3**~~ | ~~Birth-ownership from a single resolved assignee~~ — **landed in M2**: `registerTask` is the only place a task enters the registry, so the born-owner rule belongs to the same function and splitting it would have meant writing the record twice | FR-6, V13, V14 |
-| **M4** | `completedBy` at root scope; a completion refused for non-ownership observable distinctly from one refused for authorization | FR-7, FR-8 (remainder), V10, V15, V16 |
+| **M4** *(landed)* | `completedBy` committed at root scope by `completeTask`, keyed `<node>_completedBy`; the `TaskUnclaimedClass` / `TaskNotOwnerClass` refusal classes plus a reported `reason` per refusal | FR-7, FR-8 (remainder), V10, V15, V16 |
 | **M5** | Cancellation/teardown parity and registry-record cleanup for owned tasks | FR-9, V19, V20 |
 | **M6** | `docs/bpmn-spec/` instance-attribute coverage (Table 10.14) | FR-10 |
 | **M7** | Console distributor + `examples/usertask`, `examples/dehydration`, `examples/expression-routing` on claim-then-complete; smoke each end-to-end | FR-11 |
@@ -660,3 +700,5 @@ None.
 | v.1.2 | 2026-07-30 | Test-scope decisions taken during M1, recorded rather than left implicit. **V2b and V2c move to M2:** at M1 there is no thresher gate for V2b to bypass (the existing end-to-end already proves the instance denies an ineligible actor through the frozen snapshot), and V2c needs a `loopState`/`taskEntry` harness whose snapshot deliberately disagrees with the node's triad — no external API mutates instance data mid-park — which M2 builds anyway for the ownership operations. **One coverage exception recorded in §9:** `resolveEligibility`'s fail-closed branch is unreachable from a constructible state (`openFrame` dereferences `sc.plane.Root()` before `NewFrame`'s nil guard), and an injection seam was rejected as costing more clarity than the coverage buys; the consequence is covered by V2e at 100%. M1 marked landed. |
 | v.1.3 | 2026-07-30 | M2 reconciled with what it actually delivered. **Strict completion (FR-4) lands here, not in M4:** the pre-hydration gate *is* strict completion — there is no gate that checks ownership without enforcing it — so scheduling the two apart was a fiction. Four existing tests (`user_task_test.go`, `dehydration_task_test.go` ×2, `completeness_scenarios_test.go`) moved to claim-then-complete, which is FR-11's flow arriving early for tests. **Birth-ownership (FR-6, M3) lands here too:** `registerTask` is the only place a task enters the registry, so the born-owner rule belongs to that function; splitting it across milestones would have meant writing the record twice. M3 is struck. **FR-8's ownership phases** (`Claimed`/`Unclaimed`/`Reassigned`, plus `AttrUserID`/`AttrFromUserID`/`AttrToUserID`) land with the operations that emit them; M4 keeps `completedBy` and the refusal-distinguishability half. **V2b needed no new test:** only `Complete` is gated, so `Take` still reaches the instance's own check directly — the existing `th.Take(ctx, taskID, bob)` assertion tests it with no gate in the path. **V2c landed by a better method than specified:** instead of mutating process data mid-park (for which no API exists), a counting expression engine proves the triad is evaluated exactly ONCE, at distribution, and never again across Take/Claim/Unclaim/Claim/Complete — the evaluation count is the evidence. Also pinned: a group-only-eligible nominee cannot be reassigned to (§4.4's limitation, previously untested). |
 | v.1.4 | 2026-07-30 | **FR-3a corrected, and the correction came from running the examples** (`make ci`'s example sweep, not a unit test). `Claim` now refuses only a claim over a *different* actor's hold; re-claiming a task you already own is an idempotent no-op. The stricter "task unowned" guard broke `examples/expression-routing`, whose UserTask carries `WithAssigneeExpr` and is therefore **born owned** (FR-6) — the console driver's unconditional `Claim` was refused and the instance hung to its timeout. Claim-then-Complete is the natural embedder flow, so a guard that forbids it makes a directly-assigned task uncompletable by the very actor the process assigned it to, and makes the operation unsafe to retry. Camunda fails only on a different assignee for the same reason. Carried into [ADR-020 v.2.1](../design/ADR-020-human-interaction-execution-model.md) §2.5.2, since the guard is the ADR's contract. Also in this milestone: the reference console driver claims before rendering (so a losing racer is refused up front rather than discovering at submit time that its work is wasted), and `examples/dehydration` demonstrates that a claim leaves a released instance released. |
+| v.1.5 | 2026-07-30 | **M4 landed, and §3.5/§4.3's naming was wrong.** `<nodeName>.completedBy` cannot be committed: `.` is reserved in a data name (`data.CheckName`, alongside `[`, `]` and the path separator), so the write failed at runtime — visibly, because the record is fail-soft, which is how it was caught rather than silently losing the datum. The record is now `<nodeName>_completedBy`, with a fallback to the node id when the name is empty or itself carries a reserved character. Two semantics stated that v.1 left implicit: a looped or multi-instance UserTask overwrites the record each pass, so it names the **last** completer (the per-iteration trail is the observer stream's job); and a failed write is logged and reported but never fatal, since refusing to resume a legitimately completed task is worse than a missing audit datum. FR-8's remainder landed as `TaskUnclaimedClass` / `TaskNotOwnerClass` alongside `errs.ConditionFailed` (so existing kind checks still hold) plus a reported `reason` per refusal. Carried into [ADR-020 v.2.2](../design/ADR-020-human-interaction-execution-model.md) §2.4.2. |
+| v.1.6 | 2026-07-30 | **The performer record moves out of the data plane into the reserved read-only `RUNTIME` subtree**, as one map-valued variable (`RUNTIME/COMPLETED_BY`, node → completer) carried across a hydrate on the instance checkpoint. The record is engine-published: a process must read it and must not be able to overwrite it or collide with it, which a root-scope commit granted by construction. `RUNTIME` already serves retained constants (`STARTED_AT` is `inst.startTime`), so this is a new entry rather than a new category, and a map keeps the supplier's name set closed instead of growing one name per completed task. The checkpoint field is not optional: `startTime` shows that retained Instance fields are otherwise lost on a hydrate, and a human task is the wait most likely to dehydrate. Costs recorded honestly — a new mutex (the register is written on the loop goroutine and read during expression evaluation), which dents NFR-1's "no new lock", and a modeler-visible read of `RUNTIME/COMPLETED_BY` rather than a flat name. §3.5 and §4.3 rewritten; the v.1.5 data-plane design is kept as the rejected alternative, with the two accidental constraints it forced. |

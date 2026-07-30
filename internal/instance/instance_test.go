@@ -108,7 +108,13 @@ func TestMonitoring(t *testing.T) {
 	require.Error(t, err)
 
 	require.ElementsMatch(t,
-		[]string{instance.StartedAt, instance.CurrState, instance.TracksCount},
+		[]string{
+			instance.StartedAt, instance.CurrState, instance.TracksCount,
+			// The performer register (ADR-020 v.2 §2.4.2) — one map-valued name,
+			// deliberately not one name per completed task, so this set stays
+			// closed as human tasks complete.
+			instance.CompletedBy,
+		},
 		inst.RuntimeVarNames())
 
 	ctx := context.Background()

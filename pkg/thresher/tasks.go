@@ -167,42 +167,88 @@ func (t *Thresher) Complete(
 	})
 }
 
+// The refusal classes a completion can carry, so an embedder can tell WHY it was
+// refused without parsing a message (ADR-020 v.2 §6). They accompany
+// errs.ConditionFailed rather than replacing it, so existing kind checks still hold.
+//
+// A refusal is never terminal: the task stays parked and the actor (or another) may
+// try again once the cause is addressed.
+const (
+	// TaskUnclaimedClass marks a completion refused because the task is held by
+	// nobody — completion is strict, so claiming is a required step, not a
+	// courtesy.
+	TaskUnclaimedClass = "TASK_UNCLAIMED"
+
+	// TaskNotOwnerClass marks a completion refused because the task is held by a
+	// DIFFERENT actor. Distinct from an authorization failure: the actor may well
+	// be eligible, and would succeed if the holder released it.
+	TaskNotOwnerClass = "TASK_NOT_OWNER"
+)
+
 // gateComplete applies ADR-020 v.2 §2.4's first two stages in its own order —
-// eligibility, then ownership — over the registry alone.
+// eligibility, then ownership — over the registry alone, and reports each refusal so
+// the reason is observable and not merely returned.
 func (t *Thresher) gateComplete(taskID string, actor hi.Actor) error {
 	if err := checkTaskActor("Complete", taskID, actor); err != nil {
 		return err
 	}
 
+	reason, err := t.completeVerdict(taskID, actor)
+	if err != nil {
+		if reason != "" {
+			t.reportTaskOwnership(taskID, observability.PhaseFailed,
+				map[string]string{
+					observability.AttrUserID: actor.UserID(),
+					"reason":                 reason,
+				})
+		}
+
+		return err
+	}
+
+	return nil
+}
+
+// completeVerdict renders the pre-hydration verdict and the reason to report it
+// under. It holds the lock for the whole decision so the answer cannot be stale by
+// the time it is returned.
+func (t *Thresher) completeVerdict(
+	taskID string,
+	actor hi.Actor,
+) (string, error) {
 	t.m.Lock()
 	defer t.m.Unlock()
 
 	rec, ok := t.tasks[taskID]
 	if !ok {
-		return errUnknownTask(taskID)
+		return "", errUnknownTask(taskID)
 	}
 
 	if err := rec.eligible.Authorize(taskID, actor); err != nil {
-		return err
+		return "unauthorized", err
 	}
 
 	if rec.owner == "" {
-		return errs.New(
+		refusal := errs.New(
 			errs.M("user task %q is unowned: claim it before completing", taskID),
-			errs.C(errorClass, errs.ConditionFailed),
+			errs.C(errorClass, errs.ConditionFailed, TaskUnclaimedClass),
 			errs.D("task_id", taskID),
 			errs.D("user_id", actor.UserID()))
+
+		return "unclaimed", refusal
 	}
 
 	if rec.owner != actor.UserID() {
-		return errs.New(
+		refusal := errs.New(
 			errs.M("user task %q is held by another actor", taskID),
-			errs.C(errorClass, errs.ConditionFailed),
+			errs.C(errorClass, errs.ConditionFailed, TaskNotOwnerClass),
 			errs.D("task_id", taskID),
 			errs.D("user_id", actor.UserID()))
+
+		return "not_owner", refusal
 	}
 
-	return nil
+	return "", nil
 }
 
 // Claim makes actor the task's actual owner (the BPMN actualOwner, §10.3.4.1

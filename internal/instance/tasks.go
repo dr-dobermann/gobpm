@@ -220,6 +220,11 @@ func (ls *loopState) completeTask(
 		return
 	}
 
+	// Record WHO performed the work before resuming. It is written here, past every
+	// rejectable stage, so only an accepted completion leaves a record (ADR-020 v.2
+	// §2.4.2).
+	ls.inst.recordCompletedBy(entry.node, req.actor)
+
 	// A task in the registry is always still parked: onTaskWaiting adds it to both
 	// the registry and the waiting set, and completeTask removes it from both — all
 	// on this loop goroutine. So flip it out and deliver on its own evtCh, where the
@@ -243,6 +248,34 @@ func (ls *loopState) completeTask(
 	ls.inst.withdrawTask(ctx, req.taskID)
 
 	req.reply <- taskReply{}
+}
+
+// recordCompletedBy notes the completing actor in the instance's performer register,
+// so the record outlives the task and any later node can read who did the work — the
+// approver-is-the-performer's-manager pattern (ADR-020 v.2 §2.4.2).
+//
+// The register is served through the reserved read-only RUNTIME subtree rather than
+// committed into the data plane, because the record is engine-published: a process
+// must be able to READ who performed a task and must not be able to overwrite the
+// record, nor collide with it by naming a variable the same way. It is engine-written
+// rather than taken from the submitted outputs for the same reason — a self-reported
+// performer identity is the one field a caller must not supply.
+//
+// Recording is a guarded map write, so unlike a data-plane commit it cannot fail;
+// there is no failure mode to report here.
+func (inst *Instance) recordCompletedBy(node flow.Node, actor hi.Actor) {
+	inst.performers.record(performerKey(node), actor.UserID())
+}
+
+// performerKey names a node in the performer register. A node's name is the handle a
+// modeler writing an expression has, so it is preferred; an unnamed node falls back
+// to its id, which is unlovely but always unique and stable.
+func performerKey(node flow.Node) string {
+	if name := node.Name(); name != "" {
+		return name
+	}
+
+	return node.ID()
 }
 
 // addTask records a parked UserTask in the loop-owned registry and announces it

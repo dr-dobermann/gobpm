@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | Draft |
-| Version | v.2.1 |
+| Version | v.2.3 |
 | Date | 2026-07-30 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md), [ADR-017 v.1 Channel-Based Event Processing](ADR-017-channel-based-event-processing.md) §2, [ADR-007 v.2.1 In-Memory Long Waits](ADR-007-in-memory-long-waits.md) §2.4, [SAD-001 v.1](SAD-001-vision-and-architecture.md) §6, §10, §11 |
@@ -343,20 +343,39 @@ readable by expressions for the remainder of the instance's life.
 `actualOwner` cannot serve this purpose. It is *current* ownership and it dies with the task: a completed
 task is retired and `Withdraw`n from distribution (§2.2), so an attribute living on it is gone exactly
 when downstream nodes need it. The approval pattern of §1.4 reads the performer's identity from a node
-that has **already finished** — so the record must outlive the task, which means it belongs to the
-instance's data, not to the task.
+that has **already finished** — so the record must outlive the task.
+
+**It lives in the reserved read-only `RUNTIME` subtree, not in the process's data.** The record is
+*engine-published*: a process must be able to **read** who performed a task, and must **not** be able to
+overwrite it or collide with it by naming a variable the same way. Committing it into the data plane
+would give a modeler both powers by construction. `RUNTIME` already serves recorded facts of this
+kind — the instance's start time is a retained constant, not live state — so the register is not a new
+category of thing, only a new entry.
+
+It is exposed as **one map-valued variable**, node name → completer, rather than one variable per task.
+That keeps the runtime name set **closed**: an open per-task namespace would force prefix matching in the
+supplier and make the exposed name list grow with every completion.
+
+**The register is carried across a hydrate.** This is the part that must not be skipped: a human task is
+the wait most likely to dehydrate, so a register held only in memory would vanish precisely in the case
+it exists for — a later node asking who performed an earlier task, after a weekend's wait. It therefore
+rides the instance checkpoint alongside the conversation keys.
 
 Making it **expression-readable** is what makes it useful rather than merely auditable: the process must
 be able to route on it, which is the whole point of the pattern. The standard treats instance attributes
 as expression-accessible values, exposing them through the `getActivityInstanceAttribute` XPath binding
-(§10.4.3); gobpm's expression layer over instance data
-([ADR-011 v.7](ADR-011-process-data-flow.md)) is the equivalent surface.
+(§10.4.3); the `RUNTIME` source is the equivalent surface here.
 
-The record is written **once**, at completion, and never mutated — unlike `actualOwner`, which changes
-with every claim and reassignment. The distinction matters: a reassigned task's `completedBy` is whoever
-actually finished it, not whoever was first assigned, so the trail reflects performance rather than
-intent. It is engine-written, never actor-supplied — a self-reported performer identity is precisely the
-field that must not come from the caller (§4, v.2 alternative 7).
+Keyed by **node name**, because that is the handle a modeler writing an expression has; an unnamed node
+falls back to its id. A looped or multi-instance UserTask completes more than once and each pass
+overwrites its entry, so the record names the **last** completer — the per-iteration trail belongs to the
+observer stream (§6), not to a single data value.
+
+The record is written **once per completion** and never mutated by anything else — unlike `actualOwner`,
+which changes with every claim and reassignment. The distinction matters: a reassigned task's record is
+whoever actually finished it, not whoever was first assigned, so the trail reflects performance rather
+than intent. It is engine-written, never actor-supplied — a self-reported performer identity is precisely
+the field that must not come from the caller (§4, v.2 alternative 7).
 
 ### 2.5 Authorization model — a Camunda triad on the BPMN `ResourceRole` base
 
@@ -920,5 +939,7 @@ None.
 | Version | Date | Change |
 |---|---|---|
 | v.1 | 2026-07-02 | Initial draft — UserTask as a wait node parking on the shared `TrackWaitForEvent`/`evtCh` mechanism (goroutine held, not returned; dehydration deferred uniformly); `TaskDistributor` boundary; `Take`/`Complete` authorization-gated entry points; Camunda triad over `ResourceRole` (static + `FormalExpression`); `Actor` runtime identity; `Authorizer` + `OutputValidator` checks owned by the `UserTask`, `Instance` as orchestrator; `TaskView` return; renderer multiplicity by identity; ManualTask no-op. |
+| v.2.3 | 2026-07-30 | §2.4.2: the performer record moves from a **data-plane commit at root scope** to the reserved read-only **`RUNTIME`** subtree, as one map-valued variable (node → completer) carried across a hydrate on the instance checkpoint. The record is engine-published, so a process must be able to read it and must not be able to overwrite it or collide with it — which a root-scope commit gave away by construction. `RUNTIME` already serves retained constants (the instance start time), so this is a new entry, not a new category. A map keeps the runtime name set closed rather than growing one name per completed task. Supersedes v.2.2's `<node>_completedBy` naming entirely. |
+| v.2.2 | 2026-07-30 | §2.4.2: the `completedBy` record is keyed `<node>_completedBy`, **not** `<node>.completedBy` — `.` is reserved in a data name, so the dotted form could not be committed at all (found when the write failed at runtime). Adds the fallback for an unnamed or invalidly-named node, the last-completer semantics for a looped task, and the fail-soft rule: a failed record is logged and reported, never fatal. |
 | v.2.1 | 2026-07-30 | §2.5.2: **`Claim` is idempotent for the actor that already holds the task** — the guard now refuses only a claim over *another* actor's hold. Found by running the examples: `Claim`-then-`Complete` is the natural embedder flow, and a directly-assigned task is born owned (§2.5.3), so the stricter "task unowned" guard left such a task uncompletable by its own assignee and made the operation unsafe to retry. Camunda fails only on a *different* assignee for the same reason. |
 | v.2 | 2026-07-30 | **The ownership lifecycle** — closes the claim/unclaim deferral §7 recorded, by implementing BPMN's `actualOwner` **instance** attribute (§10.3.4.1, Table 10.14) rather than inventing an ownership concept. New: §2.5.1 `actualOwner` as runtime state distinct from the design-time triad; §2.5.2 `Claim` (checked) / `Unclaim` (owner-only) / `Reassign` (unguarded at the task level, embedder-gated, nominee still eligibility-checked); §2.5.3 birth-ownership for a single resolved assignee, releasable and reassignable; §2.4.1 strict owner-only completion as a third rejectable stage; §2.4.2 a write-once, expression-readable `completedBy` outliving the task; §2.1.1 ownership as an attribute of an `Active` activity — never an activity state, never resuming a token, never resisting cancellation, and served without hydrating a released instance. **Contract change:** §2.7's resolution timing moves from *per authorization call* to **once at distribution** (the declaration model itself is unchanged); §2.5's claim paragraph is reversed — ownership is an engine concern, not distributor bookkeeping, and `Take` sets no holder. §3 gains the instance-attribute, WS-HumanTask-directive and activity-lifecycle rows plus a pin-provenance note, and **corrects v.1's mis-attribution** of three `ResourceRole` prose quotes to the vendored extract, which contains none of them. Refreshed stale v.1 statements: dehydration is no longer "deferred" (landed in ADR-007 v.2.1) in §2.1, §5 and §7; outgoing pins ADR-006 v.2→v.4, ADR-011 v.5→v.7, ADR-013 v.1→v.2. Newly deferred: `taskPriority`, escalation, WS-HumanTask's delegate-vs-forward and suspend/resume, cross-instance bulk operations, restart-durable ownership. |

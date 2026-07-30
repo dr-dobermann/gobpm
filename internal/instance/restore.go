@@ -111,6 +111,7 @@ func Restore(
 	}
 
 	inst.corr.restoreKeys(doc.ConvKeys)
+	inst.performers.restore(doc.CompletedBy)
 
 	if err := inst.restoreLedgers(ctx, doc); err != nil {
 		return nil, err

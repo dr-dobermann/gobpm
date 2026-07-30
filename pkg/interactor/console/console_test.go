@@ -149,6 +149,19 @@ func TestDriverErrorPaths(t *testing.T) {
 		waitFor(t, buf, "take failed")
 	})
 
+	t.Run("claim fails", func(t *testing.T) {
+		// A driver that loses the race for a task must stop there — not render a
+		// form and discover at submit time that its work was wasted.
+		buf := &safeBuf{}
+		d := console.New(actor{}, buf)
+		d.Bind(&fakeEngine{
+			view:     interactor.TaskView{Renderers: []hi.Renderer{consForm(t)}},
+			claimErr: errors.New("already held"),
+		})
+		require.NoError(t, d.Distribute(context.Background(), interactor.TaskInfo{}))
+		waitFor(t, buf, "claim failed")
+	})
+
 	t.Run("render fails", func(t *testing.T) {
 		buf := &safeBuf{}
 		d := console.New(actor{}, buf)
