@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.1 |
 | Date | 2026-07-30 |
 | Owner | Ruslan Gabitov |
@@ -124,8 +124,9 @@ the same mechanism the engine already uses to evaluate loop conditions and
 conditional-event expressions. That choice is deliberate on two counts: it gives
 the Router a **consistent snapshot** for the whole decision rather than values
 that could shift under it mid-call, and it keeps the read compatible with the
-single-writer discipline even though the Router itself runs off the instance
-loop (§3). The Router **reads**; it never writes. A decision that needs to
+single-writer discipline: the Router is evaluated on the instance loop itself
+(§3), where the engine already evaluates its other conditions. The Router
+**reads**; it never writes. A decision that needs to
 record something does so by returning successors whose activities write, so
 every mutation still travels the ordinary frame-commit path and appears in the
 change stream.
@@ -275,10 +276,10 @@ interaction with Router-driven completion needs deciding), the **Transaction**
 variant (a Cancel abort inside a Router-driven container is its own question),
 and the **Call Activity** (no obstacle, simply out of the first scope).
 
-An Ad-Hoc container that declares **neither a Router nor a completion
-condition** is rejected at registration as unexecutable — an honest failure
-rather than a silent degradation into an inline Sub-Process. gobpm already
-rejects unexecutable models this way (a top-level Conditional start event).
+An Ad-Hoc container declared **without a Router** is refused where it is
+built, not left to fail later — an honest failure rather than a silent
+degradation into an inline Sub-Process. gobpm already refuses unexecutable
+models this way (a top-level Conditional start event).
 
 ### 2.9 Batteries are shipped, but **no Router is implied**
 
@@ -301,7 +302,7 @@ added to the container. Three reasons:
    behaviour is a standing engine non-goal (it is why implicit gateways and
    joins are rejected).
 2. **A default turns a modelling omission into a plausible-looking run.** With
-   no default, a container missing its Router fails at registration and the
+   no default, a container missing its Router is refused when it is built and the
    modeller learns at once; with one, the same mistake produces a process that
    runs in a silently arbitrary order — the accidental-silence class the
    engine's observability policy treats as the worse failure.
@@ -348,9 +349,13 @@ artifact of construction order.
 
 **Negative / accepted.**
 
-- A host-supplied Router is engine-adjacent code: a slow or panicking Router
-  degrades its Ad-Hoc scope. Mitigated by running it off the instance's
-  single-writer loop, as the iteration decorator already does for loops.
+- A host-supplied Router is engine-adjacent code, evaluated **on** the
+  instance's single-writer loop like the engine's other conditions, so a slow
+  Router degrades not only its own scope but every track in the instance, and
+  one that calls back into that instance deadlocks. This is governed by
+  contract rather than by machinery (§2.6: the Router decides, it does not
+  wait) — the same bargain the engine already makes with conditional-event and
+  gateway expressions.
 - The succession seam gains a second implementation (flows *or* Router).
   Accepted deliberately: one shared fork-and-continue implementation with two
   sources of successors, never two copies of the fork rules.
@@ -446,4 +451,4 @@ None.
 
 | Version | Date | Author | Changes |
 |---|---|---|---|
-| v.1 | 2026-07-30 | Ruslan Gabitov | Initial decision. Containment is admitted in two steps — first leaf Tasks and plain embedded Sub-Processes (an inner Sub-Process reuses the composite park, so a **nested Ad-Hoc container works by construction**), then sequence flows, gateways and intermediate catch events, which carry the two cases the flow-less model cannot express: **partial crystallization** (a formalized branching island inside an ad-hoc container) and **external re-entry** (the Router is consulted only at open and at settle, so it cannot react while the scope idles). Start and End events are rejected outright, the standard's containment list omitting them; Event Sub-Process, Transaction and Call Activity are deferred with stated reasons. Routers are **always explicit — no default and no inference from element declaration order** (invisible in the diagram, converts a modelling omission into a plausible-looking run, and each-once-in-order is the degraded shape). The Ad-Hoc Sub-Process is a **Sub-Process variant on the existing nested scope** (not a child instance — a child instance would sever §10.5.7 data visibility and duplicate the Call Activity). Its distinguishing mechanism is the **Router**: a host-supplied answer to "what runs next" that **replaces sequence-flow succession** inside the container, consulted at scope open and after each inner activity settles; an **empty answer ends the track**, so completion is **inherited from scope drain** rather than built anew. The Router decides on **progress state and the Ad-Hoc scope's data** (read through a transient frame at that scope — a consistent snapshot, compatible with the single-writer discipline, with parent data visible by walk-up); it reads and never writes. `completionCondition` is retained as **Router sugar** for conformance; `cancelRemainingInstances` keeps the metamodel default `true`. `ordering` defaults to **`parallel`** — a registered engine choice, the metamodel declaring no default and Camunda 7 not implementing the element — with `sequential` rejecting a multi-successor answer loudly. Human selection rides the **existing wait-node park**: automatic mode takes the Router's answer, manual mode parks with the candidates offered and resumes on the host's activation through a **per-scope control handle**; the Router itself never blocks. Containment is validated at registration, and a container with neither Router nor completion condition is **rejected as unexecutable**. Batteries: standard/flow-less, expression, and fixed-sequence Routers. Non-goals: blocking Routers, child-instance containers, quantity ≠ 1, runtime mutation of a live container. |
+| v.1 | 2026-07-30 | Ruslan Gabitov | Initial decision. Containment is admitted in two steps — first leaf Tasks and plain embedded Sub-Processes (an inner Sub-Process reuses the composite park, so a **nested Ad-Hoc container works by construction**), then sequence flows, gateways and intermediate catch events, which carry the two cases the flow-less model cannot express: **partial crystallization** (a formalized branching island inside an ad-hoc container) and **external re-entry** (the Router is consulted only at open and at settle, so it cannot react while the scope idles). Start and End events are rejected outright, the standard's containment list omitting them; Event Sub-Process, Transaction and Call Activity are deferred with stated reasons. Routers are **always explicit — no default and no inference from element declaration order** (invisible in the diagram, converts a modelling omission into a plausible-looking run, and each-once-in-order is the degraded shape). The Ad-Hoc Sub-Process is a **Sub-Process variant on the existing nested scope** (not a child instance — a child instance would sever §10.5.7 data visibility and duplicate the Call Activity). Its distinguishing mechanism is the **Router**: a host-supplied answer to "what runs next" that **replaces sequence-flow succession** inside the container, consulted at scope open and after each inner activity settles; an **empty answer ends the track**, so completion is **inherited from scope drain** rather than built anew. The Router decides on **progress state and the Ad-Hoc scope's data** (read through a transient frame at that scope — a consistent snapshot, compatible with the single-writer discipline, with parent data visible by walk-up); it reads and never writes. `completionCondition` is retained as **Router sugar** for conformance; `cancelRemainingInstances` keeps the metamodel default `true`. `ordering` defaults to **`parallel`** — a registered engine choice, the metamodel declaring no default and Camunda 7 not implementing the element — with `sequential` rejecting a multi-successor answer loudly. Human selection rides the **existing wait-node park**: automatic mode takes the Router's answer, manual mode parks with the candidates offered and resumes on the host's activation through a **per-scope control handle**; the Router itself never blocks. Containment is validated at registration, and a container built without a Router is **refused outright** — an unexecutable container never reaches the engine. Batteries: standard/flow-less, expression, and fixed-sequence Routers. Non-goals: blocking Routers, child-instance containers, quantity ≠ 1, runtime mutation of a live container. |

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-07-30 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-035 v.1](../design/ADR-035-adhoc-sub-process.md) §2.1–§2.9 (the Sub-Process variant on the existing nested scope; the Router replacing sequence-flow succession; drain-inherited completion; explicit Routers; the first containment step) |
@@ -78,7 +78,8 @@ substitution at one seam plus a model element:
   leaf Tasks and plain embedded Sub-Processes; Start/End events, sequence
   flows, gateways, intermediate events, Event Sub-Processes, Transactions and
   Call Activities are each rejected with a message naming what was found and
-  why. A container with **neither** Router nor completion condition is rejected.
+  why. A **nil** Router is rejected at construction — routing is never implied,
+  so an ad-hoc container always carries one (ADR-035 v.1 §2.9).
 - **FR-12** — observability: a new `KindAdHoc` fact kind carrying the routing
   decisions, per §3.6. The Ad-Hoc **scope's own** lifecycle keeps emitting the
   existing `KindScope` facts (a nested scope is a nested scope); `KindAdHoc`
@@ -299,13 +300,12 @@ internal `successor` refactor.
 |---|---|
 | `TestAdHocOptionExclusivity` | `WithAdHoc` + `WithTransaction`/`WithTriggeredByEvent` → classified error (FR-1) |
 | `TestAdHocValidationRejectsInnerElements` | flows, gateways, intermediate/start/end events, Event SP, Transaction, Call Activity each rejected by name (FR-11) |
-| `TestAdHocValidationRequiresRouter` | no router and no completion condition → rejected at registration (FR-11) |
-| `TestAdHocRouterDrivesSuccession` | a scripted Router runs activities in its stated order (FR-2) |
-| `TestAdHocEmptyAnswerCompletesScope` | empty answer → track ends → scope drains → the Sub-Process completes, with no new completion path (FR-3) |
-| `TestAdHocRouterReadsScopeData` | a Router branching on a value an earlier activity wrote takes the data-dependent path (FR-4) |
-| `TestAdHocParallelForksAndRepeats` | a multi-successor answer forks; the same activity named twice yields two concurrent instances (FR-5) |
-| `TestAdHocSequentialRejectsMultiple` | `sequential` + two successors → classified error (FR-5) |
-| `TestAdHocManualSelectionParksAndActivates` | manual mode parks with the enabled set, `Activate` resumes onto the choice, an unknown id errors (FR-6, FR-7) |
+| `TestAdHocRouterDrivesSuccession` | a scripted Router runs activities in its stated order, an activity repeating when named twice (FR-2, FR-5) |
+| `TestAdHocEmptyFirstAnswerCompletesScope` | empty answer → track ends → scope drains → the Sub-Process completes, with no new completion path (FR-3) |
+| `TestAdHocRouterSeesProgress` | the Router is told what settled and how the counts accumulate across calls (FR-4) |
+| `TestAdHocRouterReadsScopeData` | a Router branching on a process property read through the transient frame takes the data-dependent path (FR-4) |
+| `TestAdHocSequentialRejectsMultipleSuccessors` | `sequential` + two successors → classified error (FR-5) |
+| `TestAdHocManualSelectionOffersAndActivates` / `TestAdHocActivateRejectsUnofferedActivity` | manual mode parks with the enabled set, `Activate` resumes onto the choice, an unoffered id errors (FR-6, FR-7) |
 | `TestAdHocEmptyAnswerEndsOnlyTheAskingTrack` | a sibling still in flight when the Router answers empty survives and completes — a momentarily empty enabled set is not completion (FR-3, FR-8) |
 | `TestAdHocCompletionConditionCancelsRemaining` / `…WaitsWhenAsked` | the fired condition cancels the live tracks by default and waits for them at `false` (FR-8) |
 | `TestAdHocCompletionConditionSugar` | the condition ends the scope through the same empty-answer path (FR-9) |
@@ -315,8 +315,10 @@ internal `successor` refactor.
 | `TestAdHocEmptyOfferEmitted` | a Router answering empty still emits `Offered` with no candidates, so "chose to stop" is distinguishable from "never asked" (FR-12) |
 | `TestAdHocDecisionReconstructable` | over a multi-step run, every `Activated` has a preceding `Offered` naming it among the candidates, and the stream ends with a reason (FR-13) |
 | `TestAdHocEchoLevel` | `KindAdHoc` resolves to `slog.LevelInfo` and is absent from `kindNoEcho` (FR-12) |
-| `TestSuccessorRefactorPreservesFlowPath` | the existing gateway/boundary/escalation fork suites stay green over `successor` (NFR-3) |
-| e2e | an Ad-Hoc process through the public engine: data-driven routing, one manual activation, completion |
+| the existing gateway / boundary / escalation / MI suites | unchanged and green over the `successor` refactor — M1 adds no test of its own because the proof is that nothing else moved (NFR-3) |
+| `TestStandardRouter` / `TestSequenceRouter` / `TestExpressionRouter` | each battery's contract in isolation, including the result-type and empty-list edges (FR-10) |
+| e2e `TestAdHocHandleEnabledAndActivate` / `TestAdHocHandleRejections` | an Ad-Hoc process through the public engine: the offer, one manual activation, completion, and the handle's rejections (FR-6, FR-7) |
+| `examples/adhoc-subprocess/` | the end-to-end shape under the CI run-step: data-driven routing, a fork, an empty answer that ends one track while its sibling runs, completion |
 
 ## §7 Milestones
 
@@ -338,7 +340,7 @@ internal `successor` refactor.
 
 ## §9 Definition of Done
 
-- FR-1…FR-12 and NFR-1…NFR-4 satisfied and test-covered.
+- FR-1…FR-13 and NFR-1…NFR-4 satisfied and test-covered.
 - `make ci` green across modules; diff-coverage ≥95% on touched lines.
 - The example runs to exit 0 under the FIX-029 run-step.
 - Conformance tracker row 13 flipped in this PR; `/check-srd` PASS before the
@@ -346,7 +348,69 @@ internal `successor` refactor.
 
 ## §10 Implementation summary
 
-*Filled at landing.*
+### §10.1 Milestones as landed (branch `feat/adhoc-subprocess`)
+
+| M | Commit | Scope |
+|---|---|---|
+| — | `36289b3` / `af7a731` | ADR-035 and this SRD (Draft) |
+| M1 | `e5a06b2` | `successor{node, inFlow}`, `advance()`, `trackEvent.succs`, `spawnForks` — no behaviour change |
+| M2 | `c170154` | `pkg/adhoc`, the model element, its options, registration validation |
+| M3 | `3ff5c34` | Router consultation at scope open and settle, ordering, drain-inherited completion |
+| M4 | `1625097` / `697c2f3` | manual selection; the public `AdHocHandle` |
+| M5 | `c087e36` | the `KindAdHoc` vocabulary, its emission sites, the Info echo level |
+| M6 | `4493a00` / `8bf1b63` / `5e11bf1` / `01e75a6` | the `State` amendment, the batteries and the completion sugar, the empty-answer semantics fix, the example and the front-door sync |
+
+### §10.2 Where reality diverged from the draft
+
+**NFR-1 was wrong, and was corrected rather than implemented (`4493a00`).** It
+promised the Router runs *off* the instance loop. The engine evaluates it
+inline, where it already evaluates conditional-event and instantiation
+conditions, because a routing answer is a decision rather than work. Moving it
+off-loop would have bought new cross-goroutine machinery to defend against a
+slow or re-entrant Router — which §3.2's contract excludes outright. The
+contract is now stated as the load-bearing thing it is, here and in ADR-035 §5.
+
+**`State` could not express the batteries as first drafted (`4493a00`).**
+`routers.Standard()` enumerates "the flow-less activities, each once", but at
+scope open both counters are empty — there was no roster to enumerate. And
+`routers.Expression()` cannot evaluate through a `DataReader`; reaching past it
+to `FormalExpression.Evaluate` would have bypassed the language routing ADR-035
+§2.9 requires. Hence `Activities` and `Eval`.
+
+**ADR-035 contradicted itself on the empty answer, and the code had followed
+the wrong half (`5e11bf1`).** §2.2/§2.3 say an empty answer ends the asking
+track and the container completes on the scope drain; §2.7 said an empty answer
+with instances still live cancels them. They agree only for a container that
+never forked. §13.3.5 settles it — the enabled set is recomputed after every
+completion, and `cancelRemainingInstances` hangs off the `completionCondition`
+alone. This was not academic: `routers.Standard()` answers empty precisely
+while its fork is in flight, so under the old reading it cancelled its own
+work as soon as the first activity settled. Its test passed only because the
+operations finished faster than the settle round-trip — a latent flake. The
+replacement tests hold a sibling open on a release channel, which separates the
+two readings deterministically instead of by timing.
+
+**The Router's world is keyed by id, and writing the example proved it matters
+(`01e75a6`).** `Activities`, both counters and `Last` carry activity **ids**,
+while an answer also resolves by name. A Router written against names therefore
+reads counters that never match: the example's first draft asked for
+`close-incident` forever. Ids stay canonical — names are not unique in BPMN —
+so the asymmetry is documented on `adhoc.State`, in the guide and in the
+example, which gives its activities explicit readable ids. Worth noting that
+the `KindAdHoc` stream diagnosed the loop in one line (`candidates=2905702…`),
+which is the argument for FR-12 in miniature.
+
+**One validation branch proved unreachable and was deleted, not covered.** FR-11
+originally promised to reject "a container with neither Router nor completion
+condition". `WithAdHoc` rejects a nil Router, so that state cannot be
+constructed; the FR now describes the guard that actually exists.
+
+### §10.3 Verification
+
+`make ci` green across all five modules on `01e75a6` +  this doc's landing:
+diff-coverage **97.0 % of 574 changed lines** (min 95), 45/45 examples executed
+end-to-end under the FIX-029 run-step (the new one included), govulncheck clean
+×5. Conformance tracker row 13 flipped to ✅ in `01e75a6`, closing #92.
 
 ## Open questions
 

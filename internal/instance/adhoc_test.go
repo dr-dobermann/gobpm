@@ -22,6 +22,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
@@ -1036,6 +1037,114 @@ func TestAdHocCompletionConditionSugar(t *testing.T) {
 		require.Equal(t, []string{"a", "b"}, log,
 			"a condition that is not met leaves succession to the Router")
 	})
+}
+
+func TestAdHocRouterReadsScopeData(t *testing.T) {
+	// FR-4: the data half of the decision. The Router reads a process property
+	// through the ad-hoc scope's walk-up and routes on it — routing that could
+	// not see the case's own data would be reduced to counting activities.
+	for _, tt := range []struct {
+		severity string
+		want     string
+	}{
+		{"high", "b"},
+		{"low", "a"},
+	} {
+		t.Run(tt.severity, func(t *testing.T) {
+			var (
+				mu  sync.Mutex
+				log []string
+			)
+
+			r := routerFunc(func(
+				ctx context.Context, s adhoc.State,
+			) ([]string, error) {
+				if s.Last != "" {
+					return nil, nil
+				}
+
+				d, err := s.Data.GetData("severity")
+				if err != nil {
+					return nil, err
+				}
+
+				sev, err := data.As[string](ctx, d.Value())
+				if err != nil {
+					return nil, err
+				}
+
+				if sev == "high" {
+					return []string{"b"}, nil
+				}
+
+				return []string{"a"}, nil
+			})
+
+			inst := adHocInstanceWithSeverity(t, r, tt.severity, &mu, &log)
+			runToDone(t, inst)
+
+			require.Equal(t, Completed, inst.State())
+
+			mu.Lock()
+			defer mu.Unlock()
+			require.Equal(t, []string{tt.want}, log,
+				"the Router took the data-dependent path")
+		})
+	}
+}
+
+// adHocInstanceWithSeverity builds the a/b/c container inside a process that
+// carries a "severity" property, so a Router can route on the case's own data.
+func adHocInstanceWithSeverity(
+	t *testing.T, r adhoc.Router, severity string,
+	mu *sync.Mutex, log *[]string,
+) *Instance {
+	t.Helper()
+
+	require.NoError(t, data.CreateDefaultStates())
+
+	p, err := process.New("adhoc-data",
+		data.WithProperties(
+			data.MustProperty("severity",
+				data.MustItemDefinition(
+					values.NewVariable(severity),
+					foundation.WithID("severity")),
+				data.ReadyDataState)))
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	triage, err := activities.NewSubProcess("triage", activities.WithAdHoc(r))
+	require.NoError(t, err)
+
+	for _, name := range []string{"a", "b", "c"} {
+		task, terr := activities.NewServiceTask(name,
+			recordOp(t, name, mu, log), activities.WithoutParams())
+		require.NoError(t, terr)
+		require.NoError(t, triage.Add(task))
+	}
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, triage, end} {
+		require.NoError(t, p.Add(e))
+	}
+
+	_, err = flow.Link(start, triage)
+	require.NoError(t, err)
+	_, err = flow.Link(triage, end)
+	require.NoError(t, err)
+
+	s, err := snapshot.New(p)
+	require.NoError(t, err)
+
+	inst, err := New(s, scope.EmptyDataPath, enginert.Default(),
+		&recordingProducer{}, nil)
+	require.NoError(t, err)
+
+	return inst
 }
 
 func TestAdHocCompletionConditionFailures(t *testing.T) {
