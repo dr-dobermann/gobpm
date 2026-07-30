@@ -77,6 +77,11 @@ func TestDehydrationUserTaskWake(t *testing.T) {
 				data.ReadyDataState)),
 	}
 
+	// Claiming a task on a DEHYDRATED instance must not hydrate it — ownership is
+	// a registry mutation (ADR-020 v.2 §2.1.1); only Complete hydrates.
+	require.NoError(t, th.Claim(context.Background(), taskID,
+		utActor{id: "operator"}))
+
 	require.NoError(t, th.Complete(context.Background(), taskID,
 		utActor{id: "operator"}, out))
 
@@ -119,6 +124,9 @@ func TestDehydrationUserTaskCompleteWithoutTake(t *testing.T) {
 				data.MustItemDefinition(values.NewVariable("ok")),
 				data.ReadyDataState)),
 	}
+
+	require.NoError(t, th.Claim(context.Background(), taskID,
+		utActor{id: "operator"}))
 
 	require.NoError(t, th.Complete(context.Background(), taskID,
 		utActor{id: "operator"}, out),

@@ -22,20 +22,30 @@ type actor struct{}
 func (actor) UserID() string   { return "op" }
 func (actor) Groups() []string { return nil }
 
-// fakeEngine records the Complete outputs and returns preset Take results.
+// fakeEngine records the Complete outputs and returns preset Take/Claim results.
 type fakeEngine struct {
 	view        interactor.TaskView
 	takeErr     error
+	claimErr    error
 	completeErr error
 	mu          sync.Mutex
 	completed   []data.Data
 	completeHit bool
+	claimHit    bool
 }
 
 func (f *fakeEngine) Take(
 	context.Context, string, hi.Actor,
 ) (interactor.TaskView, error) {
 	return f.view, f.takeErr
+}
+
+func (f *fakeEngine) Claim(context.Context, string, hi.Actor) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.claimHit = true
+
+	return f.claimErr
 }
 
 func (f *fakeEngine) Complete(

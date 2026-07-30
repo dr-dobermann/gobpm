@@ -443,28 +443,45 @@ func (inst *Instance) resolveEligibility(
 
 	frame, err := inst.sc.openFrame("task-eligibility", ht.ID())
 	if err != nil {
-		inst.Logger().Warn("user task eligibility resolution failed",
-			"instance_id", inst.ID(), "task_id", taskID, "error", err.Error())
-
-		inst.report(observability.Fact{
-			Kind:     observability.KindTaskState,
-			Phase:    observability.PhaseFailed,
-			NodeID:   node.ID(),
-			NodeName: node.Name(),
-			Details: map[string]string{
-				observability.AttrTaskID: taskID,
-				"reason":                 "eligibility_resolution_failed",
-				"effect":                 "denied_all_actors",
-			},
-		})
-
-		return interactor.DeniedEligibility()
+		return inst.denyByResolutionFailure(taskID, node, err)
 	}
 
 	defer frame.Discard()
 
 	return ht.ResolveEligibility(
 		ctx, newExecEnv(inst, frame, nil), inst.ExpressionEngine())
+}
+
+// denyByResolutionFailure turns an unresolvable triad into a fail-closed verdict:
+// an Eligibility that authorizes nobody, plus a logged warning and an observable
+// fact naming the cause and its effect.
+//
+// It exists as its own function because the mapping is the security-relevant part —
+// the zero Eligibility would read as an OPEN task and silently authorize every
+// actor, so "resolution failed" must never be allowed to mean "anyone may act".
+// Naming it keeps that rule provable in isolation, independent of how a frame comes
+// to fail (FR-5e, §4.8).
+func (inst *Instance) denyByResolutionFailure(
+	taskID string,
+	node flow.Node,
+	cause error,
+) interactor.Eligibility {
+	inst.Logger().Warn("user task eligibility resolution failed",
+		"instance_id", inst.ID(), "task_id", taskID, "error", cause.Error())
+
+	inst.report(observability.Fact{
+		Kind:     observability.KindTaskState,
+		Phase:    observability.PhaseFailed,
+		NodeID:   node.ID(),
+		NodeName: node.Name(),
+		Details: map[string]string{
+			observability.AttrTaskID: taskID,
+			"reason":                 "eligibility_resolution_failed",
+			"effect":                 "denied_all_actors",
+		},
+	})
+
+	return interactor.DeniedEligibility()
 }
 
 // buildTaskView builds the post-authorization snapshot: the renderers and the

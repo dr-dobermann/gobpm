@@ -9,6 +9,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/interactor"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 // routingDistributor wraps the embedder's TaskDistributor with engine routing: on
@@ -20,12 +21,13 @@ type routingDistributor struct {
 	next interactor.TaskDistributor
 }
 
-// Distribute records the task's owning instance, then forwards the announcement.
+// Distribute records the task's owning instance and its resolved eligibility, then
+// forwards the announcement.
 func (r *routingDistributor) Distribute(
 	ctx context.Context,
 	task interactor.TaskInfo,
 ) error {
-	r.thr.registerTask(task.TaskID, task.InstanceID)
+	r.thr.registerTask(task)
 
 	return r.next.Distribute(ctx, task)
 }
@@ -40,12 +42,46 @@ func (r *routingDistributor) Withdraw(
 	return r.next.Withdraw(ctx, taskID)
 }
 
-// registerTask records that taskID lives on instanceID.
-func (t *Thresher) registerTask(taskID, instanceID string) {
+// taskRecord is the engine-level state of a parked human task: where it lives, who
+// may act on it, and who currently holds it. It outlives its instance's residency
+// (ADR-020 v.2 §2.1.1), which is what lets the ownership operations answer without
+// hydrating anything.
+//
+// eligible is written once at registration and read-only afterwards; owner is the
+// only mutable field, and every mutation happens under Thresher.m (SRD-073 NFR-1).
+type taskRecord struct {
+	instanceID string
+	// owner is the BPMN actualOwner (§10.3.4.1 Table 10.14) — a user-id literal,
+	// empty while the task is unowned.
+	owner    string
+	eligible interactor.Eligibility
+}
+
+// registerTask records a distributed task: its owning instance, the triad resolved
+// at distribution, and — when the triad names exactly one actor — that actor as the
+// initial owner, so a directly-assigned task is born owned (ADR-020 v.2 §2.5.3).
+func (t *Thresher) registerTask(task interactor.TaskInfo) {
 	t.m.Lock()
 	defer t.m.Unlock()
 
-	t.tasks[taskID] = instanceID
+	t.tasks[task.TaskID] = &taskRecord{
+		instanceID: task.InstanceID,
+		eligible:   task.Eligible,
+		owner:      bornOwner(task.Eligible),
+	}
+}
+
+// bornOwner returns the actor a task is born owned by, or "" when it is born
+// unowned. A triad designating exactly one actor has in substance already assigned
+// the task: there is no offer to accept and no competing candidate to exclude, so a
+// ceremonial self-claim would be a step that can only ever succeed (ADR-020 v.2
+// §2.5.3). Several candidates, or none, leave the task awaiting a claim.
+func bornOwner(e interactor.Eligibility) string {
+	if len(e.Assignee.IDs) == 1 {
+		return e.Assignee.IDs[0]
+	}
+
+	return ""
 }
 
 // unregisterTask drops taskID from the routing registry.
@@ -62,21 +98,28 @@ func (t *Thresher) instanceForTask(taskID string) (*instance.Instance, error) {
 	t.m.Lock()
 	defer t.m.Unlock()
 
-	instID, ok := t.tasks[taskID]
+	rec, ok := t.tasks[taskID]
 	if !ok {
-		return nil, errs.New(
-			errs.M("user task %q not found", taskID),
-			errs.C(errorClass, errs.ObjectNotFound))
+		return nil, errUnknownTask(taskID)
 	}
 
-	reg, ok := t.instances[instID]
+	reg, ok := t.instances[rec.instanceID]
 	if !ok {
 		return nil, errs.New(
-			errs.M("instance %q owning task %q not found", instID, taskID),
+			errs.M("instance %q owning task %q not found",
+				rec.instanceID, taskID),
 			errs.C(errorClass, errs.ObjectNotFound))
 	}
 
 	return reg.inst, nil
+}
+
+// errUnknownTask is the not-found verdict for a task id the registry does not hold
+// — never distributed, already completed, or withdrawn.
+func errUnknownTask(taskID string) error {
+	return errs.New(
+		errs.M("user task %q not found", taskID),
+		errs.C(errorClass, errs.ObjectNotFound))
 }
 
 // Take authorizes actor against the parked UserTask taskID and returns its
@@ -100,19 +143,282 @@ func (t *Thresher) Take(
 	return view, err
 }
 
-// Complete authorizes actor, validates outputs, and — only if both pass — binds
-// the outputs and resumes the parked UserTask taskID. An authorization or
-// validation failure is non-terminal: the task stays parked (ADR-020 §2.4). It
-// routes to the owning instance.
+// Complete authorizes actor, checks ownership, validates outputs, and — only if all
+// three pass — binds the outputs and resumes the parked UserTask taskID. Every
+// failure is non-terminal: the task stays parked (ADR-020 v.2 §2.4).
+//
+// The first two stages run here, against the registry, BEFORE the instance is
+// resolved: a wrong-actor or unowned completion is refused without hydrating a
+// released instance, which is the common case during a long human wait. The
+// instance then re-checks eligibility on the resident path (ADR-020 v.2 §2.4/§5) and
+// owns validation, binding and the resume.
 func (t *Thresher) Complete(
 	ctx context.Context,
 	taskID string,
 	actor hi.Actor,
 	outputs []data.Data,
 ) error {
+	if err := t.gateComplete(taskID, actor); err != nil {
+		return err
+	}
+
 	return t.onTaskInstance(ctx, taskID, func(inst *instance.Instance) error {
 		return inst.Complete(ctx, taskID, actor, outputs)
 	})
+}
+
+// gateComplete applies ADR-020 v.2 §2.4's first two stages in its own order —
+// eligibility, then ownership — over the registry alone.
+func (t *Thresher) gateComplete(taskID string, actor hi.Actor) error {
+	if err := checkTaskActor("Complete", taskID, actor); err != nil {
+		return err
+	}
+
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	rec, ok := t.tasks[taskID]
+	if !ok {
+		return errUnknownTask(taskID)
+	}
+
+	if err := rec.eligible.Authorize(taskID, actor); err != nil {
+		return err
+	}
+
+	if rec.owner == "" {
+		return errs.New(
+			errs.M("user task %q is unowned: claim it before completing", taskID),
+			errs.C(errorClass, errs.ConditionFailed),
+			errs.D("task_id", taskID),
+			errs.D("user_id", actor.UserID()))
+	}
+
+	if rec.owner != actor.UserID() {
+		return errs.New(
+			errs.M("user task %q is held by another actor", taskID),
+			errs.C(errorClass, errs.ConditionFailed),
+			errs.D("task_id", taskID),
+			errs.D("user_id", actor.UserID()))
+	}
+
+	return nil
+}
+
+// Claim makes actor the task's actual owner (the BPMN actualOwner, §10.3.4.1
+// Table 10.14), so that only actor may complete it (ADR-020 v.2 §2.5.2). It fails
+// if the task is already owned — a participant must not seize a colleague's work by
+// accident — or if actor is not eligible for it.
+//
+// The task stays parked and the instance is never hydrated: claiming is a registry
+// mutation, not an execution step (ADR-020 v.2 §2.1.1).
+func (t *Thresher) Claim(
+	_ context.Context,
+	taskID string,
+	actor hi.Actor,
+) error {
+	if err := checkTaskActor("Claim", taskID, actor); err != nil {
+		return err
+	}
+
+	if err := t.setOwner(taskID, actor.UserID(), claimGuard(actor)); err != nil {
+		return err
+	}
+
+	t.reportTaskOwnership(taskID, observability.PhaseClaimed, map[string]string{
+		observability.AttrUserID: actor.UserID(),
+	})
+
+	return nil
+}
+
+// Unclaim releases actor's hold, returning the task to the eligible pool so any
+// eligible actor may claim it again. Only the current owner may unclaim (ADR-020
+// v.2 §2.5.2).
+func (t *Thresher) Unclaim(
+	_ context.Context,
+	taskID string,
+	actor hi.Actor,
+) error {
+	if err := checkTaskActor("Unclaim", taskID, actor); err != nil {
+		return err
+	}
+
+	if err := t.setOwner(taskID, "", ownerOnlyGuard(actor)); err != nil {
+		return err
+	}
+
+	t.reportTaskOwnership(taskID, observability.PhaseUnclaimed, map[string]string{
+		observability.AttrUserID: actor.UserID(),
+	})
+
+	return nil
+}
+
+// Reassign moves ownership to nomineeUserID, overriding any current owner.
+//
+// It performs NO check on the caller (ADR-020 v.2 §2.5.2): its callers are managers,
+// administrators and offboarding flows, none of which is a participant in the task,
+// so gating it on the task's own triad would forbid every legitimate use.
+// Authorizing the caller is the embedder's responsibility — it owns identity and
+// organizational structure, and should log who invoked this, since the engine
+// cannot.
+//
+// It does check the NOMINEE: a task cannot be handed to someone the process says may
+// not perform it. An administrator may choose among eligible actors, never enlarge
+// the eligible set. A nominee eligible only through a candidate GROUP cannot be
+// nominated, since group membership is authenticated by the embedder for a present
+// actor and cannot be asserted for an absent one (SRD-073 §4.4).
+func (t *Thresher) Reassign(
+	_ context.Context,
+	taskID, nomineeUserID string,
+) error {
+	if err := checkTaskArgs("Reassign", taskID, nomineeUserID); err != nil {
+		return err
+	}
+
+	var from string
+
+	err := t.setOwner(taskID, nomineeUserID,
+		func(id string, rec *taskRecord) error {
+			from = rec.owner
+
+			return rec.eligible.Authorize(id, userIDActor(nomineeUserID))
+		})
+	if err != nil {
+		return err
+	}
+
+	t.reportTaskOwnership(taskID, observability.PhaseReassigned,
+		map[string]string{
+			observability.AttrFromUserID: from,
+			observability.AttrToUserID:   nomineeUserID,
+		})
+
+	return nil
+}
+
+// setOwner applies guard to the task's record and, if it passes, writes owner. The
+// registry lookup, the guard and the write happen in ONE critical section, so
+// concurrent claims on the same task cannot both succeed (SRD-073 NFR-3).
+func (t *Thresher) setOwner(
+	taskID, owner string,
+	guard func(string, *taskRecord) error,
+) error {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	rec, ok := t.tasks[taskID]
+	if !ok {
+		return errUnknownTask(taskID)
+	}
+
+	if err := guard(taskID, rec); err != nil {
+		return err
+	}
+
+	rec.owner = owner
+
+	return nil
+}
+
+// claimGuard admits an eligible actor to a task that is unowned, or that the actor
+// already holds.
+//
+// Claiming a task you already hold is a no-op success, not a failure: the guard
+// exists to stop one participant seizing ANOTHER's work, and a same-owner claim
+// takes nothing from anybody. Refusing it would also make the operation unsafe to
+// retry, and would break every embedder that claims unconditionally before
+// completing — including a directly-assigned task, which is born owned (§2.5.3) and
+// would otherwise be uncompletable by the very actor the process assigned it to.
+// Camunda draws the line the same way: its claim fails only when the existing
+// assignee is a different user.
+func claimGuard(actor hi.Actor) func(string, *taskRecord) error {
+	return func(taskID string, rec *taskRecord) error {
+		if err := rec.eligible.Authorize(taskID, actor); err != nil {
+			return err
+		}
+
+		if rec.owner != "" && rec.owner != actor.UserID() {
+			return errs.New(
+				errs.M("user task is already held by %q", rec.owner),
+				errs.C(errorClass, errs.ConditionFailed),
+				errs.D("owner", rec.owner),
+				errs.D("user_id", actor.UserID()))
+		}
+
+		return nil
+	}
+}
+
+// ownerOnlyGuard admits none but the task's current owner.
+func ownerOnlyGuard(actor hi.Actor) func(string, *taskRecord) error {
+	return func(_ string, rec *taskRecord) error {
+		if rec.owner != actor.UserID() {
+			return errs.New(
+				errs.M("only the actual owner may release a user task"),
+				errs.C(errorClass, errs.ConditionFailed),
+				errs.D("owner", rec.owner),
+				errs.D("user_id", actor.UserID()))
+		}
+
+		return nil
+	}
+}
+
+// userIDActor adapts a bare user id to an hi.Actor for an eligibility check on an
+// ABSENT actor — a reassignment nominee. It reports no groups, because group
+// membership is authenticated by the embedder for a present actor and cannot be
+// asserted on their behalf (SRD-073 §4.4).
+type userIDActor string
+
+func (u userIDActor) UserID() string   { return string(u) }
+func (u userIDActor) Groups() []string { return nil }
+
+// reportTaskOwnership emits an ownership transition on the TaskState stream. The
+// activity itself stays Active — ownership is an attribute of a parked task, not a
+// node phase (ADR-020 v.2 §2.1.1, §2.8).
+func (t *Thresher) reportTaskOwnership(
+	taskID string,
+	phase observability.Phase,
+	details map[string]string,
+) {
+	details[observability.AttrTaskID] = taskID
+
+	t.producer.Report(observability.Fact{
+		Kind:    observability.KindTaskState,
+		Phase:   phase,
+		Details: details,
+	})
+}
+
+// checkTaskActor validates the public parameters of an actor-driven task operation.
+func checkTaskActor(op, taskID string, actor hi.Actor) error {
+	if actor == nil {
+		return errs.New(
+			errs.M("%s: a nil Actor isn't allowed", op),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	return checkTaskArgs(op, taskID, actor.UserID())
+}
+
+// checkTaskArgs validates a task id and a user id.
+func checkTaskArgs(op, taskID, userID string) error {
+	if taskID == "" {
+		return errs.New(
+			errs.M("%s: an empty task id isn't allowed", op),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if userID == "" {
+		return errs.New(
+			errs.M("%s: an empty user id isn't allowed", op),
+			errs.C(errorClass, errs.EmptyNotAllowed),
+			errs.D("task_id", taskID))
+	}
+
+	return nil
 }
 
 // HoldTask implements exec.WaitHolders (SRD-071 FR-8): accept a parked human

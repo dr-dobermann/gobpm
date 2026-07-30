@@ -134,11 +134,24 @@ func TestUserTaskParkTakeComplete(t *testing.T) {
 				data.ReadyDataState)),
 	}
 
+	// Completion is strict: an unowned task is completable by nobody, however
+	// eligible the actor (ADR-020 v.2 §2.4.1).
+	require.Error(t, th.Complete(ctx, taskID, alice, output),
+		"an unclaimed task must not be completable")
+
+	// Claiming is refused for an ineligible actor and grants exclusive hold to a
+	// candidate; the task stays parked either way (ADR-020 v.2 §2.5.2).
+	require.Error(t, th.Claim(ctx, taskID, bob))
+	require.NoError(t, th.Claim(ctx, taskID, alice))
+	require.NoError(t, th.Claim(ctx, taskID, alice),
+		"re-claiming your own task is an idempotent no-op, so an embedder that "+
+			"claims before completing is safe to retry")
+
 	// Complete failures are non-terminal — the task stays parked for a retry.
 	require.Error(t, th.Complete(ctx, taskID, bob, output)) // unauthorized
 	require.Error(t, th.Complete(ctx, taskID, alice, nil))  // required output missing
 
-	// An authorized, valid completion resumes the token to the end event.
+	// The owner's valid completion resumes the token to the end event.
 	require.NoError(t, th.Complete(ctx, taskID, alice, output))
 
 	wctx, wc := context.WithTimeout(context.Background(), 3*time.Second)

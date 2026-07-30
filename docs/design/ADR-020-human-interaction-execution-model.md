@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | Draft |
-| Version | v.2 |
+| Version | v.2.1 |
 | Date | 2026-07-30 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md), [ADR-017 v.1 Channel-Based Event Processing](ADR-017-channel-based-event-processing.md) §2, [ADR-007 v.2.1 In-Memory Long Waits](ADR-007-in-memory-long-waits.md) §2.4, [SAD-001 v.1](SAD-001-vision-and-architecture.md) §6, §10, §11 |
@@ -436,15 +436,22 @@ explicit engine choice; they differ because the operations answer to different a
 
 | Operation | Guard | Effect |
 |---|---|---|
-| **Claim** | actor **eligible** (§2.5) **and** task **unowned** | actor becomes `actualOwner` |
+| **Claim** | actor **eligible** (§2.5) **and** the task **not held by someone else** | actor becomes `actualOwner`; a no-op if it already is |
 | **Unclaim** | actor **is** the current owner | task returns to unowned; any eligible actor may claim it |
 | **Reassign** | **none at the task level** — but the nominee must be **eligible** | nominee becomes `actualOwner`, replacing any existing one |
 
 **Claim is checked; Reassign is not.** The asymmetry follows established practice: Camunda draws exactly
 this line between `claim`, which "performs a check to see if the task is already assigned to a user", and
 `setAssignee`, which overrides unconditionally. A participant claiming work must not seize a colleague's
-task by accident, so `Claim` fails on an already-owned task. An administrator rescuing a stalled task must
-override precisely *because* it is owned — a guard would defeat the operation's only purpose.
+task by accident, so `Claim` fails on a task **another** actor holds. An administrator rescuing a stalled
+task must override precisely *because* it is owned — a guard would defeat the operation's only purpose.
+
+**Claim is idempotent for the actor that already holds the task.** The guard exists to stop one
+participant taking *another's* work; a same-owner claim takes nothing from anybody. Refusing it would make
+the operation unsafe to retry, and — more importantly — would break the natural embedder flow of claiming
+before every completion: a **directly-assigned** task is born owned (§2.5.3), so an unconditional claim
+would be refused and the task left uncompletable by the very actor the process assigned it to. Camunda
+draws the line the same way, failing only when the existing assignee is a different user.
 
 **Reassign is unguarded at the task level because the task cannot express its authority.** Its callers are
 the situations in §1.4 — a manager, an administrator, an offboarding process — and none is a *participant*
@@ -913,4 +920,5 @@ None.
 | Version | Date | Change |
 |---|---|---|
 | v.1 | 2026-07-02 | Initial draft — UserTask as a wait node parking on the shared `TrackWaitForEvent`/`evtCh` mechanism (goroutine held, not returned; dehydration deferred uniformly); `TaskDistributor` boundary; `Take`/`Complete` authorization-gated entry points; Camunda triad over `ResourceRole` (static + `FormalExpression`); `Actor` runtime identity; `Authorizer` + `OutputValidator` checks owned by the `UserTask`, `Instance` as orchestrator; `TaskView` return; renderer multiplicity by identity; ManualTask no-op. |
+| v.2.1 | 2026-07-30 | §2.5.2: **`Claim` is idempotent for the actor that already holds the task** — the guard now refuses only a claim over *another* actor's hold. Found by running the examples: `Claim`-then-`Complete` is the natural embedder flow, and a directly-assigned task is born owned (§2.5.3), so the stricter "task unowned" guard left such a task uncompletable by its own assignee and made the operation unsafe to retry. Camunda fails only on a *different* assignee for the same reason. |
 | v.2 | 2026-07-30 | **The ownership lifecycle** — closes the claim/unclaim deferral §7 recorded, by implementing BPMN's `actualOwner` **instance** attribute (§10.3.4.1, Table 10.14) rather than inventing an ownership concept. New: §2.5.1 `actualOwner` as runtime state distinct from the design-time triad; §2.5.2 `Claim` (checked) / `Unclaim` (owner-only) / `Reassign` (unguarded at the task level, embedder-gated, nominee still eligibility-checked); §2.5.3 birth-ownership for a single resolved assignee, releasable and reassignable; §2.4.1 strict owner-only completion as a third rejectable stage; §2.4.2 a write-once, expression-readable `completedBy` outliving the task; §2.1.1 ownership as an attribute of an `Active` activity — never an activity state, never resuming a token, never resisting cancellation, and served without hydrating a released instance. **Contract change:** §2.7's resolution timing moves from *per authorization call* to **once at distribution** (the declaration model itself is unchanged); §2.5's claim paragraph is reversed — ownership is an engine concern, not distributor bookkeeping, and `Take` sets no holder. §3 gains the instance-attribute, WS-HumanTask-directive and activity-lifecycle rows plus a pin-provenance note, and **corrects v.1's mis-attribution** of three `ResourceRole` prose quotes to the vendored extract, which contains none of them. Refreshed stale v.1 statements: dehydration is no longer "deferred" (landed in ADR-007 v.2.1) in §2.1, §5 and §7; outgoing pins ADR-006 v.2→v.4, ADR-011 v.5→v.7, ADR-013 v.1→v.2. Newly deferred: `taskPriority`, escalation, WS-HumanTask's delegate-vs-forward and suspend/resume, cross-instance bulk operations, restart-durable ownership. |

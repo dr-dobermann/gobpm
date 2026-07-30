@@ -158,10 +158,14 @@ type Thresher struct {
 	nextVersion   map[string]int
 	instances     map[string]instanceReg
 	seenKeys      map[string]struct{}
-	// tasks maps a parked UserTask id → its owning instance id, so Take/Complete
-	// route to the right instance loop (SRD-034). Guarded by m. Populated/cleared
-	// by taskDist as tasks are announced/withdrawn.
-	tasks    map[string]string
+	// tasks maps a parked UserTask id → its engine-level record: where it lives,
+	// who may act on it, and who currently holds it (SRD-034, SRD-073 FR-2).
+	// Guarded by m. Populated/cleared by taskDist as tasks are announced and
+	// withdrawn, and mutated in place by the ownership operations.
+	//
+	// It deliberately outlives its instance's residency (ADR-020 v.2 §2.1.1): a
+	// claim, release or handover during a long human wait must not hydrate anything.
+	tasks    map[string]*taskRecord
 	taskDist interactor.TaskDistributor
 	keyLocks *keyLockManager
 	// producer is the engine's single observable-event sink (SRD-041): it backs
@@ -254,7 +258,7 @@ func New(id string, opts ...Option) (*Thresher, error) {
 		nextVersion:   map[string]int{},
 		instances:     map[string]instanceReg{},
 		seenKeys:      map[string]struct{}{},
-		tasks:         map[string]string{},
+		tasks:         map[string]*taskRecord{},
 		keyLocks:      newKeyLockManager(),
 		waking:        map[string]bool{},
 		subs:          map[subKey]*subHolder{},

@@ -195,6 +195,8 @@ func runUserTaskScenario(
 				data.MustItemDefinition(values.NewVariable("ok")),
 				data.ReadyDataState)),
 	}
+	// Strict completion: the task must be claimed first (ADR-020 v.2 §2.4.1).
+	require.NoError(t, th.Claim(ctx, taskID, alice))
 	require.NoError(t, th.Complete(ctx, taskID, alice, output))
 
 	wctx, cancel := context.WithTimeout(ctx, 5*time.Second)

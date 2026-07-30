@@ -18,11 +18,13 @@ import (
 )
 
 // Engine is the slice of the engine (the Thresher) a Driver needs to act on a
-// task: authorize+read (Take) and authorize+validate+resume (Complete).
+// task: authorize+read (Take), take exclusive hold (Claim), and
+// authorize+validate+resume (Complete).
 type Engine interface {
 	Take(
 		ctx context.Context, taskID string, actor hi.Actor,
 	) (interactor.TaskView, error)
+	Claim(ctx context.Context, taskID string, actor hi.Actor) error
 	Complete(
 		ctx context.Context, taskID string, actor hi.Actor, outputs []data.Data,
 	) error
@@ -77,13 +79,25 @@ func (d *Driver) Withdraw(_ context.Context, taskID string) error {
 	return nil
 }
 
-// drive Takes the task, renders its first form to collect the outputs, and
-// Completes it. Errors (unauthorized, invalid outputs) are printed — the task
-// stays parked and a real driver would retry; here it simply reports.
+// drive Takes the task, claims it, renders its first form to collect the outputs,
+// and Completes it. Errors (unauthorized, already held, invalid outputs) are
+// printed — the task stays parked and a real driver would retry; here it simply
+// reports.
+//
+// The Claim is not optional ceremony: completion is strict, so only the task's
+// actual owner may complete it. Claiming before rendering also means a second
+// driver racing for the same task is refused up front, instead of both filling in
+// the form and one of them discovering at submit time that its work is wasted.
 func (d *Driver) drive(ctx context.Context, taskID string) {
 	view, err := d.engine.Take(ctx, taskID, d.actor)
 	if err != nil {
 		d.printf("take failed: id=%s: %v\n", taskID, err)
+
+		return
+	}
+
+	if err = d.engine.Claim(ctx, taskID, d.actor); err != nil {
+		d.printf("claim failed: id=%s: %v\n", taskID, err)
 
 		return
 	}
