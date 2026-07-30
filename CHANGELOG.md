@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.10.0] - 2026-07-30
+
+**The BPMN Common Executable Subclass is complete.** Ad-Hoc Sub-Process was the last
+executable element in scope, so every element gobpm set out to support now executes —
+see [`conformance-status.md`](docs/design/conformance-status.md), the per-element
+tracker. This release also closes the durability gap that made long-running processes
+theoretical, and adds the human-task half that made them usable.
+
+Highlights, for deciding whether to upgrade:
+
+- **Full element conformance.** Ad-Hoc Sub-Process (Router-driven succession over a
+  flow-less inner set), Transaction + Cancel, Event Sub-Processes (interrupting and
+  non-interrupting), Compensation, Escalation, Link, Multi-Instance (sequential,
+  parallel, `behavior`), Script and Business Rule tasks, Data Objects and Data Stores,
+  Inclusive and Complex gateways.
+- **Persistence & state.** Checkpoints and restart recovery, instance dehydration with
+  wake-on-trigger, durable timers, ownership leases for cluster-safe fencing. Ten
+  thousand orders waiting three days now cost ten thousand rows, not ten thousand
+  running processes.
+- **Human-task ownership.** `Claim` / `Unclaim` / `Reassign` over BPMN's `actualOwner`
+  (§10.3.4.1, Table 10.14), strict owner-only completion, and a performer record later
+  tasks can route on. A task offered to twenty candidates can no longer be worked by all
+  twenty.
+- **Process interchange.** Import and export BPMN 2.0 XML, so a `.bpmn` authored in a
+  modeller finally has a way in.
+- **Expressions and scripting.** A language-routed expression layer hosting several
+  engines side by side, plus an embedded Lua script engine.
+
+**Breaking change.** Completing a User Task now requires claiming it first — an
+unclaimed task is completable by nobody. Processes that assign a task to exactly one
+person are unaffected: such a task is born owned. See the Added section below.
+
+**Not in this release**, and the reason this is 0.10 rather than 1.0: the standalone
+`gobpm-server` runtime (HTTP/gRPC, postgres, otel, an AuthN provider) is milestone M5 and
+has not started. gobpm remains an embedded library.
+
 ### Added
 
 - **Human-task ownership — claim, unclaim, reassign (ADR-020 v.2, SRD-073).**
@@ -65,56 +101,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   operation a Service Task was built with. Needed by BPMN export to write
   `operationRef` back out; additive, and never nil since `NewServiceTask`
   rejects a nil operation.
-
-### Fixed
-
-- **An instance's start time survives dehydration.** `inst.startTime` was set
-  when an instance began and never restored, and the checkpoint carried no
-  timestamp at all — so every rebuild silently restamped it to "now" and
-  `RUNTIME/STARTED_AT` reported the age of the latest rebuild rather than of
-  the process. The interval it lost was exactly the one that mattered: a long
-  wait causes the dehydration, and the rebuild then erased the evidence that
-  the wait happened. Checkpoints written before the field existed keep the
-  previous behaviour rather than zeroing the clock.
-
-- **Local `make ci` now has honest macOS/tool-version preflights (FIX-030).**
-  The example runner detects Homebrew's `gtimeout` when GNU `timeout` is not
-  available and otherwise fails immediately with the exact coreutils install
-  hint. Every pinned Go dev tool is now checked by its embedded module version,
-  so an old `mockery` or `covercheck` cannot pass a presence-only guard and
-  fail later with misleading config or flag errors. The local golangci-lint
-  installer is fetched from its pinned tag instead of the moving `master`
-  branch.
-- **CI now runs every example end-to-end, not just builds it (FIX-029).**
-  The examples job (and the local `make ci`) gained a `run-examples` step:
-  each of the 46 example modules executes under a timeout with stdin
-  closed, asserting exit 0 — closing the FIX-002 §5 follow-up (a
-  runtime-broken example used to ship green; it happened twice). The
-  measured full sweep costs 33 seconds on the warm build cache.
-- **Invariant-only errors are no longer silently discarded (FIX-028).**
-  The commit-diff collection walk ignored `GetAt` errors (a corrupted
-  `Collection` would silently diff a slot as nil and misfire conditional
-  events), and a task's parameter access ignored the `Parameters` error
-  (surfacing as a parameterless task copying nothing). Both branches are
-  impossible while contracts hold and now fail fast with a classified
-  panic naming the violated invariant. The FIX also closes the repo-wide
-  discard sweep: every remaining bare-discard site is either the
-  documented console carve-out or a comma-ok assertion, recorded in the
-  doc's inventory.
-- **A failed wake no longer strands a dehydrated instance (FIX-027).** A
-  dehydrated instance has no goroutines — the engine-held wait (a timer
-  deadline, a subscription, a task hold) *is* its liveness. The engine
-  released that hold **before** attempting the wake, and a wake can fail
-  (an unregistered pinned process version, a checkpoint that will not
-  decode, a rebuild that errors). The instance was then left in the store
-  as in-flight with nothing that would ever wake it, recoverable only by
-  restarting the engine. The hold is now surrendered **only once the wake
-  commits**; a failed wake keeps it and retries after a backoff
-  (`WithWakeRetryBackoff`, defaulting to half the lease window), so the
-  instance recovers by itself as soon as the cause clears — no store scan,
-  no restart. A fired one-shot timer still fires exactly once.
-
-### Added
 
 - **Ad-Hoc Sub-Process — execution order decided at runtime (ADR-035,
   SRD-074; closes #92).** An embedded Sub-Process marked
@@ -606,8 +592,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   drains one at a time onto the runner's cap-1 park). The old
   `compositeIterator` / loop-side `parallelInstanceDrained` seams are removed.
 
-### Changed
-
 - **No `Must*` constructors in library runtime paths (FIX-026).** Every
   fallible `Must*` call site in `pkg/`/`internal/` non-test code now uses the
   error-returning `New*` constructors with classified wraps — a bad runtime
@@ -627,6 +611,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MustBaseElement()`/`MustRecord()` stay sanctioned).
 
 ### Fixed
+
+- **An instance's start time survives dehydration.** `inst.startTime` was set
+  when an instance began and never restored, and the checkpoint carried no
+  timestamp at all — so every rebuild silently restamped it to "now" and
+  `RUNTIME/STARTED_AT` reported the age of the latest rebuild rather than of
+  the process. The interval it lost was exactly the one that mattered: a long
+  wait causes the dehydration, and the rebuild then erased the evidence that
+  the wait happened. Checkpoints written before the field existed keep the
+  previous behaviour rather than zeroing the clock.
+
+- **Local `make ci` now has honest macOS/tool-version preflights (FIX-030).**
+  The example runner detects Homebrew's `gtimeout` when GNU `timeout` is not
+  available and otherwise fails immediately with the exact coreutils install
+  hint. Every pinned Go dev tool is now checked by its embedded module version,
+  so an old `mockery` or `covercheck` cannot pass a presence-only guard and
+  fail later with misleading config or flag errors. The local golangci-lint
+  installer is fetched from its pinned tag instead of the moving `master`
+  branch.
+- **CI now runs every example end-to-end, not just builds it (FIX-029).**
+  The examples job (and the local `make ci`) gained a `run-examples` step:
+  each of the 46 example modules executes under a timeout with stdin
+  closed, asserting exit 0 — closing the FIX-002 §5 follow-up (a
+  runtime-broken example used to ship green; it happened twice). The
+  measured full sweep costs 33 seconds on the warm build cache.
+- **Invariant-only errors are no longer silently discarded (FIX-028).**
+  The commit-diff collection walk ignored `GetAt` errors (a corrupted
+  `Collection` would silently diff a slot as nil and misfire conditional
+  events), and a task's parameter access ignored the `Parameters` error
+  (surfacing as a parameterless task copying nothing). Both branches are
+  impossible while contracts hold and now fail fast with a classified
+  panic naming the violated invariant. The FIX also closes the repo-wide
+  discard sweep: every remaining bare-discard site is either the
+  documented console carve-out or a comma-ok assertion, recorded in the
+  doc's inventory.
+- **A failed wake no longer strands a dehydrated instance (FIX-027).** A
+  dehydrated instance has no goroutines — the engine-held wait (a timer
+  deadline, a subscription, a task hold) *is* its liveness. The engine
+  released that hold **before** attempting the wake, and a wake can fail
+  (an unregistered pinned process version, a checkpoint that will not
+  decode, a rebuild that errors). The instance was then left in the store
+  as in-flight with nothing that would ever wake it, recoverable only by
+  restarting the engine. The hold is now surrendered **only once the wake
+  commits**; a failed wake keeps it and retries after a backoff
+  (`WithWakeRetryBackoff`, defaulting to half the lease window), so the
+  instance recovers by itself as soon as the cause clears — no store scan,
+  no restart. A fired one-shot timer still fires exactly once.
 
 - **`examples/message-send-receive`** — the example bound a task output into a
   `received-order` DataObject but never registered it, so after DataObjects
