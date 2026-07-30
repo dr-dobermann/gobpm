@@ -4,7 +4,7 @@
 |---|---|
 | Type | **Continuously-current tracker** (not an SRD/ADR — updated as elements land, in the landing PR) |
 | Scope authority | [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) — Common Executable Subclass + the ComplexGateway extension |
-| Last verified | 2026-07-20, post-SRD-057 (Link events landed — #90 row 9 ✅; sequential Multi-Instance SRD-055 landed via master — #88 row 4) |
+| Last verified | 2026-07-30, full re-sweep post-SRD-071/072 (Persistence & State slices landed — #84 row 12 ✅; #79 row 10 closed 2026-07-22; §1 caught up with the row-1…11 landings; §5 order updated) |
 | Owner | Ruslan Gabitov |
 
 Status vocabulary: ✅ **executed** (model type + engine semantics + tests) ·
@@ -16,12 +16,12 @@ Status vocabulary: ✅ **executed** (model type + engine semantics + tests) ·
 | Family | Elements | Landed via |
 |---|---|---|
 | Process container | `Process` (executable, versioned registration) | core; ADR-019 |
-| Activities | `ServiceTask` (in-process + external workers), `UserTask`, `ManualTask`, `SendTask`, `ReceiveTask`, the abstract `Task` base, **`SubProcess` (embedded)** — nested scope in the instance: §13.3.4 shapes + drain, §10.5.7 data visibility, scoped Terminate (§13.5.6), boundary-on-composite, the Error scope-chain | ADR-021/SRD-035…039; ADR-020/SRD-034; SRD-013/014; ADR-023/SRD-049 |
+| Activities | `ServiceTask` (in-process + external workers), `UserTask`, `ManualTask`, `SendTask`, `ReceiveTask`, `ScriptTask` (multi-engine seam + the Lua battery), `BusinessRuleTask` (rule-engine seam + `gorules` + the Decision Table adapter), the abstract `Task` base, **`SubProcess` (embedded)** — nested scope in the instance: §13.3.4 shapes + drain, §10.5.7 data visibility, scoped Terminate (§13.5.6), boundary-on-composite, the Error scope-chain — **`CallActivity`**, **Event Sub-Process** (interrupting + non-interrupting), **`Transaction`** (Cancel-driven atomic abort) | ADR-021/SRD-035…039; ADR-020/SRD-034; SRD-013/014; ADR-031/SRD-064/065; ADR-027/SRD-060, ADR-029/SRD-062; ADR-023/SRD-049/050/052/053; ADR-028/SRD-061 |
 | Gateways — **all five** | `Exclusive`, `Parallel`, `Inclusive` (incl. the OR-join), `EventBased` (incl. Exclusive/Parallel instantiating starts), `Complex` (the declared extension) | SRD-005, SRD-021/022, SRD-023, SRD-024/025 |
 | Events (positions) | `StartEvent`, `EndEvent`, `IntermediateCatchEvent`, `IntermediateThrowEvent`, `BoundaryEvent` (interrupting + non-interrupting) | ADR-006; ADR-018/SRD-029 |
-| Event definitions | `Message` (incl. instantiation + correlation), `Timer` (in-memory), `Signal` (throw/catch/broadcast/start), `Error` (end + boundary), `Terminate`, `Conditional` (catch + boundary + EBG arms + **event-sub-process start — landed SRD-052**; top-level start = registered fail-fast rejection 📐) | ADR-014/015/016, SRD-013…017, SRD-026, SRD-029, SRD-030, ADR-006 v.3/SRD-048, ADR-023 v.2/SRD-052 |
+| Event definitions | `Message` (incl. instantiation + correlation), `Timer` (durable — checkpointed deadlines + dehydration/wake), `Signal` (throw/catch/broadcast/start), `Error` (end + boundary), `Terminate`, `Conditional` (catch + boundary + EBG arms + event-sub-process start; top-level start = registered fail-fast rejection 📐), `Escalation` (throw + scope-chain catch), `Compensate` (ledger + throw-driven undo + boundary handler link), `Link` (static GOTO pairing), `Cancel` (Transaction-only end + boundary) | ADR-014/015/016, SRD-013…017, SRD-026, SRD-029, SRD-030, ADR-006 v.3/SRD-048, ADR-023 v.2/SRD-052; SRD-058/059/057/061; ADR-033/SRD-070, ADR-007 v.2.1/SRD-071 |
 | Flows | `SequenceFlow` — conditional + default honored at **gateways and activities** | ADR-005; SRD-046 (#51) |
-| Data | `ItemDefinition`, `Property`, `InputOutputSpecification` (single-set 📐), `DataInput/Output` + associations + `Assignment` shapes, structural values (record/list, path addressing, commit-diff, native structs) | ADR-010/011, SRD-007…011, SRD-042…045 |
+| Data | `ItemDefinition`, `Property`, `InputOutputSpecification` (single-set 📐), `DataInput/Output` + associations + `Assignment` shapes, structural values (record/list/**map**, path addressing, commit-diff, native structs), **`DataObject`** (per-instance scope-resident), **`DataStore`/`DataStoreReference`** (engine-global port) | ADR-010/011, SRD-007…011, SRD-042…045, SRD-047; ADR-030/SRD-063/068 |
 | Correlation | `CorrelationKey`/`Property`/`RetrievalExpression`/`Binding`/`Subscription` — key-based, multi-key conversation threading | ADR-016, SRD-015/017 |
 | Operations | `Interface`, `Operation` (polymorphic: external message kind + in-process Go kind 📐-adjacent, SAD-001 §14.2) | ADR-011 v.5, SRD-011 |
 | Human interaction | The Camunda triad (`assignee`/`candidateUsers`/`candidateGroups`), `Rendering`, `Resource`(+`Parameter`) | ADR-020/SRD-034 |
@@ -42,9 +42,9 @@ Ordered by the recommended implementation sequence (rationale in §4).
 | 7 | `EscalationEventDefinition` execution | ✅ | [#90](https://github.com/dr-dobermann/gobpm/issues/90) | **Landed SRD-058 (ADR-006 v.4 §2.2/§2.6 · ADR-018 · ADR-023 v.2 §2.6)** — Error's non-critical twin: a throw (Intermediate Throw / End Event) climbs the scope chain to the innermost catcher (Escalation boundary — interrupting **or** non-interrupting — or an event-sub-process Escalation start, inline handler winning), matched by code (empty = catch-all). The throw continues its token and never faults; an **unresolved** escalation is logged (`KindEscalation`/`Unresolved` at Warn), not silently dropped. Reuses `matchErrorScopeChain` with three deltas (non-critical throw, logged-not-faulted miss, non-interrupting catch); adds `Escalate(code)` to `renv.RuntimeEnvironment` and `KindEscalation`. **Compensation (row 8) remains under #90.** |
 | 8 | `CompensateEventDefinition` execution + compensation `Association` semantics | ✅ | [#90](https://github.com/dr-dobermann/gobpm/issues/90) | **Landed SRD-059 (ADR-026 v.1)** — the completion ledger (per-scope, completion-ordered compensable entries with data snapshots captured at `Completed`; child→parent folding; discard with the enclosing scope), throw-driven resolution (targeted / scope-wide **reverse completion order**, sequential handlers, `waitForCompletion` parks the thrower), the Compensation boundary with a **typed handler link** realizing the Association's semantics in the programmatic model (full `Association` container wiring rides the ADR-024 interchange workstream), the compensation Event Sub-Process, presumed abort, unresolved-logs-not-faults, and `KindCompensation` ledger observability. Recursive default compensation / error-driven auto-sweep / `compensate-on-terminate` are ADR-026 designed-for; Transaction-cancel rides #91. **Closes #90** — all four epic events landed |
 | 9 | `LinkEventDefinition` execution | ✅ | [#90](https://github.com/dr-dobermann/gobpm/issues/90) | **Landed SRD-057 (ADR-006 v.4 §2.8)** — intra-process GOTO by static name-pairing: throw source → same-name catch target within one Process level, resolved at `WireClonedGraph` (nested Sub-Process links free) and validated fail-fast at registration; the throw redirects (no hub, no waiter), the catch is a bypassed flow label. **Retired** the `SubscriptionKey()` generalization premise (Link is a static redirect, not a name-matched subscription — Signal stays the only one). Compensate (row 8) remains under #90 (Escalation, row 7, landed SRD-058) |
-| 10 | Boundary-on-SubProcess/CallActivity + Error **scope-chain propagation** | 🟡 | [#79](https://github.com/dr-dobermann/gobpm/issues/79) | Error scope-chain LANDED (SRD-049); **boundary-on-CallActivity LANDED (SRD-050** — the base activity's boundary machinery consumes it, Error boundary catch verified e2e); boundary-on-SubProcess + the broader propagation matrix remain for #79 |
+| 10 | Boundary-on-SubProcess/CallActivity + Error **scope-chain propagation** | ✅ | [#79](https://github.com/dr-dobermann/gobpm/issues/79) | **Complete — #79 closed 2026-07-22.** Error scope-chain landed (SRD-049); boundary-on-composite landed with the Sub-Process (SRD-049) and boundary-on-CallActivity with SRD-050 (the base activity's boundary machinery consumes both, Error catch verified e2e); Escalation reuses the same scope-chain matcher (SRD-058) |
 | 11 | `DataObject` execution semantics ✅ + `DataObjectReference` (deferred) + `DataStore`/`DataStoreReference` ✅ | ✅ | [#82](https://github.com/dr-dobermann/gobpm/issues/82) | **Data elements landed (ADR-030 v.1).** `DataObject` scope integration (**SRD-063**): a **per-instance scope-resident named container** — registered on a `Process`/`SubProcess`, seeded into the matching scope (root / child-on-open, disposed at close), resolved by name via the walk-up, with bidirectional DataAssociation flow through per-instance scope. `DataStore`/`DataStoreReference` (**SRD-068**): the **engine-global** store as an infrastructure port (ADR-030 §2.5/§2.6) — a `datastore.Registry` of named stores (`thresher.WithDataStore`, fail-loud on unknown ref, each store its own capacity/backing), and a flow-scope `DataStoreReference` whose DataAssociation I/O routes to the shared store (`capacity` advisory in-memory; durability a swappable adapter = future Persistence & State). `DataObjectReference` is a **deliberate non-implementation** (SAD-001 §14.1 + BPMN-translation rules). **Closes #82** (bar the deferred `DataObjectReference`) |
-| 12 | Timer durability + hydration (in-memory works today) | 🟡 | [#84](https://github.com/dr-dobermann/gobpm/issues/84) | Rides the persistence work (ADR-007/009) |
+| 12 | Timer durability + hydration | ✅ | [#84](https://github.com/dr-dobermann/gobpm/issues/84) | **Landed with the Persistence & State slices.** Consistent-cut checkpoints + restart recovery re-arm a restored timer at its RECORDED absolute deadline, an overdue timer fires once (ADR-033 / SRD-070); goroutine-releasing **dehydration + wake-on-trigger** makes the engine-held deadline the instance's liveness, with a failed wake retried on backoff, never stranding the instance (ADR-007 v.2.1 / SRD-071). **Closes #84** |
 | 13 | `AdHocSubProcess` | ❌ | [#92](https://github.com/dr-dobermann/gobpm/issues/92) | Rides the landed scope model |
 
 ## 3. Small items — decide, don't (necessarily) build
@@ -53,7 +53,7 @@ Ordered by the recommended implementation sequence (rationale in §4).
 |---|---|---|
 | `Performer`/`HumanPerformer`/`PotentialOwner`, `ResourceParameterBinding`, `ResourceAssignmentExpression` | ❌ | gobpm deliberately chose the Camunda triad (ADR-020). **Candidate for SAD-001 §14.1 registration** as an engine choice — currently an unregistered deviation |
 | `DataState` (the BPMN label element) | ❌ | gobpm's closed three-state model (ADR-010 §2.1) covers the semantics. **Candidate for §14.1 registration** |
-| `ImplicitThrowEvent` | ❌ | Spec-rare; implement trivially when a need appears, or register out |
+| `ImplicitThrowEvent` | ✅ | **Landed** with Multi-Instance `behavior` (SRD-056.B, row 4) — the activity-thrown, never-token-reached event carrying the behavior's EventDefinition; boundary-catchable |
 | `InputSet`/`OutputSet` multiplicity | 📐 | Already registered (SAD-001 §14.1 — single set, per-parameter flags) |
 | Data-availability wait | 📐 | Already registered (§14.1 — error, never wait) |
 | Value-less item-aware elements | 📐 | Already registered (§14.1 — rejected at registration) |
@@ -82,11 +82,14 @@ the vendor `Extension*` model types.
    their SRDs); the expression layer (~~#74~~) **landed** too — ADR-032
    language-routed engines, the `gobpm:lite` text battery beside
    `goexpr` (SRD-066/067).
-5. **#90 Escalation/Compensate/Link** — completes the event catalog
-   (+ Cancel ✅ landed with #91, SRD-061).
-6. **#82 data objects/stores**, **#84 timer durability** — with the
-   persistence workstream.
-7. In parallel, doc-only: the §3 SAD-001 §14.1 registrations (triad,
+5. ~~#90 Escalation/Compensate/Link~~ — **landed** (SRD-058/059/057;
+   + Cancel with #91, SRD-061). The event catalog is complete.
+6. ~~#82 data objects/stores~~, ~~#84 timer durability~~ — **landed**
+   (rows 11–12: ADR-030 data elements; the ADR-033/ADR-007 v.2.1
+   Persistence & State slices, SRD-070/071).
+7. **#92 Ad-Hoc Sub-Process** (row 13) — the last executable element in
+   scope; rides the landed scope model.
+8. In parallel, doc-only: the §3 SAD-001 §14.1 registrations (triad,
    DataState).
 
 ## Maintenance
