@@ -134,11 +134,24 @@ func TestUserTaskParkTakeComplete(t *testing.T) {
 				data.ReadyDataState)),
 	}
 
+	// Completion is strict: an unowned task is completable by nobody, however
+	// eligible the actor (ADR-020 v.2 §2.4.1).
+	require.Error(t, th.Complete(ctx, taskID, alice, output),
+		"an unclaimed task must not be completable")
+
+	// Claiming is refused for an ineligible actor and grants exclusive hold to a
+	// candidate; the task stays parked either way (ADR-020 v.2 §2.5.2).
+	require.Error(t, th.Claim(ctx, taskID, bob))
+	require.NoError(t, th.Claim(ctx, taskID, alice))
+	require.NoError(t, th.Claim(ctx, taskID, alice),
+		"re-claiming your own task is an idempotent no-op, so an embedder that "+
+			"claims before completing is safe to retry")
+
 	// Complete failures are non-terminal — the task stays parked for a retry.
 	require.Error(t, th.Complete(ctx, taskID, bob, output)) // unauthorized
 	require.Error(t, th.Complete(ctx, taskID, alice, nil))  // required output missing
 
-	// An authorized, valid completion resumes the token to the end event.
+	// The owner's valid completion resumes the token to the end event.
 	require.NoError(t, th.Complete(ctx, taskID, alice, output))
 
 	wctx, wc := context.WithTimeout(context.Background(), 3*time.Second)
@@ -178,15 +191,24 @@ func TestUserTaskCancelWhileParked(t *testing.T) {
 		2*time.Second, 10*time.Millisecond)
 	taskID := cap.taskID()
 
+	// Hold the task before cancelling it: the process must still win. Ownership is
+	// exclusivity against other ACTORS, never against the process (ADR-020 v.2
+	// §2.1.1) — "claimed" wrongly suggests a right to finish the work.
+	require.NoError(t, th.Claim(ctx, taskID, utActor{id: "alice"}))
+
 	cctx, cc := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cc()
 	state, err := h.Cancel(cctx)
 	require.NoError(t, err)
 	require.Equal(t, thresher.StateTerminated, state)
 
-	// the parked task was withdrawn — no longer completable.
-	require.Error(t,
-		th.Complete(context.Background(), taskID, utActor{id: "alice"}, nil))
+	// the parked task was withdrawn — no longer completable, and no longer held:
+	// its holder cannot complete it, reclaim it, release it or hand it on.
+	alice := utActor{id: "alice"}
+	require.Error(t, th.Complete(context.Background(), taskID, alice, nil))
+	require.Error(t, th.Claim(context.Background(), taskID, alice))
+	require.Error(t, th.Unclaim(context.Background(), taskID, alice))
+	require.Error(t, th.Reassign(context.Background(), taskID, "bob"))
 }
 
 // TestThresherTakeCompleteUnknownTask covers routing of an unknown task id.

@@ -24,6 +24,12 @@ type TaskRef struct {
 type TaskInfo struct {
 	TaskRef
 	Roles []*hi.ResourceRole
+
+	// Eligible is the task's assignment triad resolved when it was distributed
+	// (ADR-020 v.2 §2.7). It carries no instance data — only the identifiers that
+	// may act — so it is safe on this pre-authorization announcement, and it lets
+	// the engine authorize an actor without a resident instance (SRD-073 FR-5a).
+	Eligible Eligibility
 }
 
 // TaskView is the authorized snapshot returned by Take: the renderers to build

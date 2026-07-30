@@ -4,6 +4,7 @@ import (
 	"context"
 	"maps"
 	"slices"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
@@ -157,4 +158,34 @@ func (inst *Instance) settleFinalState(stopping bool) {
 	}
 
 	inst.setState(Completed)
+}
+
+// startedAtRFC3339 renders the instance's original start time for the checkpoint,
+// or "" when it has not started yet.
+func (inst *Instance) startedAtRFC3339() string {
+	if inst.startTime.IsZero() {
+		return ""
+	}
+
+	return inst.startTime.Format(time.RFC3339Nano)
+}
+
+// restoreStartedAt adopts the start time a checkpoint recorded, so a hydrated
+// instance reports when the PROCESS began rather than when it was last rebuilt.
+// An empty or unparsable value leaves the rebuild's own stamp in place — a
+// checkpoint written before the field existed must not zero the clock.
+func (inst *Instance) restoreStartedAt(stamp string) {
+	if stamp == "" {
+		return
+	}
+
+	t, err := time.Parse(time.RFC3339Nano, stamp)
+	if err != nil {
+		inst.Logger().Warn("checkpoint carried an unparsable start time",
+			"instance_id", inst.ID(), "started_at", stamp, "error", err.Error())
+
+		return
+	}
+
+	inst.startTime = t
 }

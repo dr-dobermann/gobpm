@@ -208,6 +208,16 @@ func (d *demo) userTask() error {
 		return errors.New("the task was never announced")
 	}
 
+	// Claiming takes exclusive hold of the task so no other candidate can work it
+	// in parallel, and completion is then the holder's alone. Note what does NOT
+	// happen here: the claim leaves the instance released. Ownership is recorded
+	// beside the task, not inside the instance, so a claim during a long human
+	// wait costs no hydration at all.
+	if err := d.eng.Claim(context.Background(), taskID,
+		actor{id: "operator"}); err != nil {
+		return err
+	}
+
 	// The caller does not know or care that the instance released: acting on
 	// the task hydrates it, and the id it holds survives the round trip.
 	decision := []data.Data{

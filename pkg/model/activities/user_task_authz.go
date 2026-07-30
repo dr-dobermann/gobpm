@@ -2,9 +2,9 @@ package activities
 
 import (
 	"context"
-	"slices"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
+	"github.com/dr-dobermann/gobpm/pkg/interactor"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/expression"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
@@ -45,6 +45,46 @@ func (ut *UserTask) Assignments() []*hi.Assignment {
 	return res
 }
 
+// ResolveEligibility resolves the task's assignment triad against src via eng into
+// a frozen interactor.Eligibility (ADR-020 v.2 §2.7). It is called once, when the
+// task is distributed and its instance is still resident; every later
+// authorization check reads that snapshot instead of re-resolving, so a candidate
+// set cannot shift under a waiting task and an owner cannot lose the ability to
+// finish work it already holds.
+//
+// Each slot records whether the model declared it, independently of what it
+// resolved to: a declared slot resolving to an empty set authorizes no one (BPMN
+// treats a failed resource query as an empty result set), while an undeclared slot
+// is absent from the verdict.
+func (ut *UserTask) ResolveEligibility(
+	ctx context.Context,
+	src data.Source,
+	eng expression.Engine,
+) interactor.Eligibility {
+	return interactor.Eligibility{
+		Assignee:        resolveSlot(ctx, ut.assignee, src, eng),
+		CandidateUsers:  resolveSlot(ctx, ut.candidateUsers, src, eng),
+		CandidateGroups: resolveSlot(ctx, ut.candidateGroups, src, eng),
+	}
+}
+
+// resolveSlot resolves one optional triad member; a nil member is undeclared.
+func resolveSlot(
+	ctx context.Context,
+	a *hi.Assignment,
+	src data.Source,
+	eng expression.Engine,
+) interactor.ResolvedSlot {
+	if a == nil {
+		return interactor.ResolvedSlot{}
+	}
+
+	return interactor.ResolvedSlot{
+		Declared: true,
+		IDs:      a.Resolve(ctx, src, eng),
+	}
+}
+
 // Authorize reports whether actor may act on the task, per ADR-020 §2.5: if an
 // assignee is declared, only a matching UserID is authorized (the restrictive
 // gate); otherwise a matching candidateUser OR an intersecting candidateGroup
@@ -52,6 +92,12 @@ func (ut *UserTask) Assignments() []*hi.Assignment {
 // failed/empty expression resolves to an empty set, i.e. denies. A nil verdict
 // means authorized; a non-nil error is a non-terminal denial (the caller keeps
 // the task parked and waits for the right actor).
+//
+// It resolves the triad and applies the verdict through interactor.Eligibility, so
+// the rule and its denial error have a single author (SRD-073 FR-5b/FR-5d). The
+// engine's own checks read a snapshot resolved at distribution; this method stays
+// as the entry point for an embedder wanting to pre-flight an actor against a task
+// (SRD-073 §4.6).
 func (ut *UserTask) Authorize(
 	ctx context.Context,
 	actor hi.Actor,
@@ -65,47 +111,7 @@ func (ut *UserTask) Authorize(
 			errs.D("task_id", ut.ID()))
 	}
 
-	// No triad declared → open (BPMN's unspecified performer).
-	if ut.assignee == nil &&
-		ut.candidateUsers == nil &&
-		ut.candidateGroups == nil {
-		return nil
-	}
-
-	if ut.assignee != nil {
-		if slices.Contains(
-			ut.assignee.Resolve(ctx, src, eng), actor.UserID()) {
-			return nil
-		}
-
-		return ut.unauthorized(actor)
-	}
-
-	if ut.candidateUsers != nil &&
-		slices.Contains(
-			ut.candidateUsers.Resolve(ctx, src, eng), actor.UserID()) {
-		return nil
-	}
-
-	if ut.candidateGroups != nil &&
-		intersects(
-			ut.candidateGroups.Resolve(ctx, src, eng), actor.Groups()) {
-		return nil
-	}
-
-	return ut.unauthorized(actor)
-}
-
-// unauthorized builds the non-terminal authorization-failure error (the task
-// stays parked; the process is unaffected). It self-identifies the task and the
-// rejected user, never the task's data.
-func (ut *UserTask) unauthorized(actor hi.Actor) error {
-	return errs.New(
-		errs.M("actor %q is not authorized for user task %q",
-			actor.UserID(), ut.ID()),
-		errs.C(errorClass, errs.ConditionFailed),
-		errs.D("task_id", ut.ID()),
-		errs.D("user_id", actor.UserID()))
+	return ut.ResolveEligibility(ctx, src, eng).Authorize(ut.ID(), actor)
 }
 
 // ValidateOutputs checks submitted outputs against the task's output spec
@@ -183,15 +189,4 @@ func checkOutputType(name, want string, d data.Data, taskID string) error {
 	}
 
 	return nil
-}
-
-// intersects reports whether any element of a is in b.
-func intersects(a, b []string) bool {
-	for _, x := range a {
-		if slices.Contains(b, x) {
-			return true
-		}
-	}
-
-	return false
 }

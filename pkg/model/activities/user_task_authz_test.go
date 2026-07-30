@@ -236,3 +236,46 @@ func TestUserTaskValidateOutputs(t *testing.T) {
 		require.Error(t, build(t).ValidateOutputs([]data.Data{nil}))
 	})
 }
+
+// TestUserTaskResolveEligibility covers the resolution half of the triad — the
+// snapshot the engine freezes at distribution (SRD-073 V2). It asserts the
+// declared-vs-resolved distinction that keeps a declared-but-empty slot denying
+// rather than falling through to the candidate slots.
+func TestUserTaskResolveEligibility(t *testing.T) {
+	ctx := t.Context()
+
+	t.Run("no triad leaves every slot undeclared and the task open", func(t *testing.T) {
+		e := newUT(t).ResolveEligibility(ctx, nil, nil)
+
+		require.False(t, e.Assignee.Declared)
+		require.False(t, e.CandidateUsers.Declared)
+		require.False(t, e.CandidateGroups.Declared)
+		require.True(t, e.Open())
+	})
+
+	t.Run("static slots resolve to their identifiers", func(t *testing.T) {
+		e := newUT(t,
+			activities.WithCandidateUsers("a", "b"),
+			activities.WithCandidateGroups("g1"),
+		).ResolveEligibility(ctx, nil, nil)
+
+		require.True(t, e.CandidateUsers.Declared)
+		require.Equal(t, []string{"a", "b"}, e.CandidateUsers.IDs)
+		require.True(t, e.CandidateGroups.Declared)
+		require.Equal(t, []string{"g1"}, e.CandidateGroups.IDs)
+		require.False(t, e.Assignee.Declared)
+		require.False(t, e.Open())
+	})
+
+	t.Run("a failed expression stays declared but resolves to nobody", func(t *testing.T) {
+		e := newUT(t,
+			activities.WithAssigneeExpr(mockdata.NewMockFormalExpression(t)),
+		).ResolveEligibility(ctx, nil, fakeEngine{err: errors.New("boom")})
+
+		require.True(t, e.Assignee.Declared,
+			"a declared slot must stay declared so it denies")
+		require.Empty(t, e.Assignee.IDs)
+		require.False(t, e.Open(), "a failed resolution is not an open task")
+		require.Error(t, e.Authorize("t1", fakeActor{id: "john"}))
+	})
+}

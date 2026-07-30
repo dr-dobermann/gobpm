@@ -22,20 +22,30 @@ type actor struct{}
 func (actor) UserID() string   { return "op" }
 func (actor) Groups() []string { return nil }
 
-// fakeEngine records the Complete outputs and returns preset Take results.
+// fakeEngine records the Complete outputs and returns preset Take/Claim results.
 type fakeEngine struct {
 	view        interactor.TaskView
 	takeErr     error
+	claimErr    error
 	completeErr error
 	mu          sync.Mutex
 	completed   []data.Data
 	completeHit bool
+	claimHit    bool
 }
 
 func (f *fakeEngine) Take(
 	context.Context, string, hi.Actor,
 ) (interactor.TaskView, error) {
 	return f.view, f.takeErr
+}
+
+func (f *fakeEngine) Claim(context.Context, string, hi.Actor) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.claimHit = true
+
+	return f.claimErr
 }
 
 func (f *fakeEngine) Complete(
@@ -137,6 +147,19 @@ func TestDriverErrorPaths(t *testing.T) {
 		d.Bind(&fakeEngine{takeErr: errors.New("nope")})
 		require.NoError(t, d.Distribute(context.Background(), interactor.TaskInfo{}))
 		waitFor(t, buf, "take failed")
+	})
+
+	t.Run("claim fails", func(t *testing.T) {
+		// A driver that loses the race for a task must stop there — not render a
+		// form and discover at submit time that its work was wasted.
+		buf := &safeBuf{}
+		d := console.New(actor{}, buf)
+		d.Bind(&fakeEngine{
+			view:     interactor.TaskView{Renderers: []hi.Renderer{consForm(t)}},
+			claimErr: errors.New("already held"),
+		})
+		require.NoError(t, d.Distribute(context.Background(), interactor.TaskInfo{}))
+		waitFor(t, buf, "claim failed")
 	})
 
 	t.Run("render fails", func(t *testing.T) {

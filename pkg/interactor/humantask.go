@@ -18,9 +18,24 @@ import (
 type HumanTask interface {
 	foundation.Identifyer
 
+	// ResolveEligibility resolves the task's assignment triad against src via eng
+	// into a frozen Eligibility (ADR-020 v.2 §2.7). The engine calls it once, when
+	// the task is distributed and its instance is still resident; every later
+	// authorization check reads that snapshot, so a candidate set cannot shift
+	// under a waiting task.
+	ResolveEligibility(
+		ctx context.Context,
+		src data.Source,
+		eng expression.Engine,
+	) Eligibility
+
 	// Authorize reports whether actor may read/complete the task, resolving the
 	// task's assignment triad against src via eng (ADR-020 §2.5). A nil error
 	// means authorized; a non-nil error is a non-terminal denial.
+	//
+	// The engine's own checks go through the distribution-time snapshot instead
+	// (ResolveEligibility above); this stays as the entry point for an embedder
+	// wanting to pre-flight an actor against a task.
 	Authorize(
 		ctx context.Context,
 		actor hi.Actor,

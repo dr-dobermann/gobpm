@@ -98,6 +98,15 @@ const (
 	PhaseAnnounced Phase = "Announced" // TaskState
 	PhaseTaken     Phase = "Taken"
 	PhaseWithdrawn Phase = "Withdrawn"
+	// The ownership lifecycle (ADR-020 v.2 §2.5.2, SRD-073 FR-8): a task acquires,
+	// releases and transfers an actualOwner without leaving the Active activity
+	// state — ownership is an attribute of a parked task, not a node phase, so
+	// these ride the TaskState stream alongside NodeProgress, never in place of it.
+	// Reassigned carries both parties; it cannot name the caller, since a
+	// reassignment is unguarded at the task level and the embedder authorizes it.
+	PhaseClaimed    Phase = "Claimed"
+	PhaseUnclaimed  Phase = "Unclaimed"
+	PhaseReassigned Phase = "Reassigned"
 
 	PhaseArmed    Phase = "Armed" // Boundary
 	PhaseDisarmed Phase = "Disarmed"
@@ -199,7 +208,13 @@ const (
 	AttrProcessID         = "process_id"
 	AttrStartNodeID       = "start_node_id"
 	AttrTaskID            = "task_id"
-	AttrJobID             = "job_id"
+	// AttrUserID names the actor a human-task fact is about — the claimer, the
+	// releaser, or the completer. AttrFromUserID/AttrToUserID name the two parties
+	// of a reassignment, which has no single subject (SRD-073 FR-8).
+	AttrUserID     = "user_id"
+	AttrFromUserID = "from_user_id"
+	AttrToUserID   = "to_user_id"
+	AttrJobID      = "job_id"
 	AttrWorkerID          = "worker_id"
 	AttrTopic             = "topic"
 	AttrEventDefinitionID = "event_definition_id"

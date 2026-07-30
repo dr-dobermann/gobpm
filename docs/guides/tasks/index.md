@@ -57,7 +57,7 @@ The steps most processes reach for first:
 | Type | Role | Page |
 |---|---|---|
 | `ServiceTask` | run your own Go code — in-process or dispatched to a worker. | [Service Task](service-task.md) |
-| `UserTask` | a human step: assign, list, complete. | [User Task](user-task.md) |
+| `UserTask` | a human step: assign, list, claim, complete. | [User Task](user-task.md) |
 | `SubProcess` | group inner flow as one collapsible step. | [Embedded Sub-Process](../subprocesses/embedded.md) |
 | `CallActivity` | invoke a separately registered process as a child. | [Call Activity](../subprocesses/call-activity.md) |
 
@@ -66,7 +66,7 @@ The steps most processes reach for first:
 | Type | Constructor | Role | Page |
 |---|---|---|---|
 | `ServiceTask` | `NewServiceTask(name, operation, opts…)` | automated work — a `service.Operation` in-process, or a worker topic. | [Service Task](service-task.md) |
-| `UserTask` | `NewUserTask(name, opts…)` | a human step gated by assignee / candidate users & groups. | [User Task](user-task.md) |
+| `UserTask` | `NewUserTask(name, opts…)` | a human step gated by assignee / candidate users & groups, then **claimed** for exclusive hold — only the holder may complete it. | [User Task](user-task.md) |
 | `ScriptTask` | `NewScriptTask(name, format, body, opts…)` | evaluate an inline script/expression body. | [Script Task](script-task.md) |
 | `BusinessRuleTask` | `NewBusinessRuleTask(name, decisionRef, opts…)` | evaluate a decision table by reference. | [Business Rule Task](business-rule-task.md) |
 | `SendTask` | `NewSendTask(name, msg, opts…)` | throw a message out of the process. | [Send / Receive Task](send-receive-task.md) |

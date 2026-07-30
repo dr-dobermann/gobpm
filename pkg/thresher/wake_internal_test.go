@@ -14,6 +14,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/clock/clocktest"
 	gerrs "github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
+	"github.com/dr-dobermann/gobpm/pkg/interactor"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
@@ -862,7 +863,9 @@ func TestTaskActionRetryExhausts(t *testing.T) {
 
 	// point a task at that finished instance — the shape a task action hits
 	// when the instance it belongs to has no loop left to run against.
-	th.registerTask("ghost-task", h.ID())
+	th.registerTask(interactor.TaskInfo{
+		TaskRef: interactor.TaskRef{TaskID: "ghost-task", InstanceID: h.ID()},
+	})
 
 	_, err = th.Take(context.Background(), "ghost-task",
 		retryActor{id: "operator"})

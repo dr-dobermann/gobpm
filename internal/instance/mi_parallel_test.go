@@ -236,6 +236,14 @@ func TestParallelMultiInstanceCompletionCancelsRemainder(t *testing.T) {
 
 	var canceled atomic.Int32
 
+	// Every body reports that it is RUNNING before it blocks. Without this, an
+	// instance canceled before its body was ever scheduled never reaches the
+	// select and so never counts itself — the assertion below then waits for a
+	// third cancellation that can never arrive. Releasing the two winners only
+	// after all five are parked is what makes the truncation deterministic, which
+	// is what this test claims to rely on.
+	entered := make(chan struct{}, total)
+
 	op, err := gooper.New("wait",
 		func(ctx context.Context, r service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
@@ -245,6 +253,8 @@ func TestParallelMultiInstanceCompletionCancelsRemainder(t *testing.T) {
 			}
 
 			i, _ := d.Value().Get(ctx).(int)
+
+			entered <- struct{}{}
 
 			select {
 			case <-gates[i]: // released → completes normally
@@ -262,9 +272,17 @@ func TestParallelMultiInstanceCompletionCancelsRemainder(t *testing.T) {
 			attrAtLeast(t, "numberOfCompletedInstances", 2)))
 
 	// release exactly two instances; the other three must be canceled — they
-	// never see their gate, so a completing run proves cancellation.
-	close(gates[0])
-	close(gates[1])
+	// never see their gate, so a completing run proves cancellation. The release
+	// waits until all five bodies are parked, so no instance can be canceled
+	// before it has started.
+	go func() {
+		for range total {
+			<-entered
+		}
+
+		close(gates[0])
+		close(gates[1])
+	}()
 
 	inst := miSubProcessInstanceOp(t, op, mi)
 	runToDone(t, inst)

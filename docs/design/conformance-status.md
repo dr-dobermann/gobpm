@@ -4,7 +4,7 @@
 |---|---|
 | Type | **Continuously-current tracker** (not an SRD/ADR — updated as elements land, in the landing PR) |
 | Scope authority | [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) — Common Executable Subclass + the ComplexGateway extension |
-| Last verified | 2026-07-30, Ad-Hoc Sub-Process landed (ADR-035 / SRD-074 — #92 row 13 ✅, the last executable element in scope); prior full re-sweep post-SRD-071/072 (Persistence & State slices — #84 row 12 ✅; #79 row 10 closed 2026-07-22; §1 caught up with the row-1…11 landings; §5 order updated) |
+| Last verified | 2026-07-30, **human-task ownership landed** (ADR-020 v.2 / SRD-073 — `actualOwner` §10.3.4.1 Table 10.14, the first *instance* attribute the engine implements; §1 Human interaction + §3 leftovers); Ad-Hoc Sub-Process landed (ADR-035 / SRD-074 — #92 row 13 ✅, the last executable element in scope); prior full re-sweep post-SRD-071/072 (Persistence & State slices — #84 row 12 ✅; #79 row 10 closed 2026-07-22; §1 caught up with the row-1…11 landings; §5 order updated) |
 | Owner | Ruslan Gabitov |
 
 Status vocabulary: ✅ **executed** (model type + engine semantics + tests) ·
@@ -24,7 +24,7 @@ Status vocabulary: ✅ **executed** (model type + engine semantics + tests) ·
 | Data | `ItemDefinition`, `Property`, `InputOutputSpecification` (single-set 📐), `DataInput/Output` + associations + `Assignment` shapes, structural values (record/list/**map**, path addressing, commit-diff, native structs), **`DataObject`** (per-instance scope-resident), **`DataStore`/`DataStoreReference`** (engine-global port) | ADR-010/011, SRD-007…011, SRD-042…045, SRD-047; ADR-030/SRD-063/068 |
 | Correlation | `CorrelationKey`/`Property`/`RetrievalExpression`/`Binding`/`Subscription` — key-based, multi-key conversation threading | ADR-016, SRD-015/017 |
 | Operations | `Interface`, `Operation` (polymorphic: external message kind + in-process Go kind 📐-adjacent, SAD-001 §14.2) | ADR-011 v.5, SRD-011 |
-| Human interaction | The Camunda triad (`assignee`/`candidateUsers`/`candidateGroups`), `Rendering`, `Resource`(+`Parameter`) | ADR-020/SRD-034 |
+| Human interaction | The Camunda triad (`assignee`/`candidateUsers`/`candidateGroups`), `Rendering`, `Resource`(+`Parameter`) — **plus the ownership half**: `UserTask.actualOwner` (§10.3.4.1, **Table 10.14** — the first *instance* attribute the engine implements, a layer the generated `elements/` pages cannot show), `Claim`/`Unclaim`/`Reassign` as the operations the standard leaves to the engine, strict owner-only completion, and a performer record later nodes route on | ADR-020 v.1/SRD-034; ADR-020 v.2/SRD-073 |
 | Foundation | `BaseElement`, `Documentation`, `Import`, `FormalExpression` | core |
 
 ## 2. Gaps — mapped to issues
@@ -54,6 +54,8 @@ Ordered by the recommended implementation sequence (rationale in §4).
 | `Performer`/`HumanPerformer`/`PotentialOwner`, `ResourceParameterBinding`, `ResourceAssignmentExpression` | ❌ | gobpm deliberately chose the Camunda triad (ADR-020). **Candidate for SAD-001 §14.1 registration** as an engine choice — currently an unregistered deviation |
 | `DataState` (the BPMN label element) | ❌ | gobpm's closed three-state model (ADR-010 §2.1) covers the semantics. **Candidate for §14.1 registration** |
 | `ImplicitThrowEvent` | ✅ | **Landed** with Multi-Instance `behavior` (SRD-056.B, row 4) — the activity-thrown, never-token-reached event carrying the behavior's EventDefinition; boundary-catchable |
+| `UserTask.taskPriority` (§10.3.4.1, Table 10.14) | ❌ | The other instance attribute beside `actualOwner`, which landed with ADR-020 v.2/SRD-073. A distribution and ranking concern with no bearing on ownership or execution semantics — deferred, not overlooked (ADR-020 §7). Implement when a distributor needs to sort an inbox by it |
+| Reassignment to a **group-only** nominee | ❌ | `Reassign` checks the nominee against the frozen triad, but group membership is authenticated for a *present* actor and cannot be asserted for an absent one — so a task eligible only via `candidateGroups` can be claimed by any member and reassigned to none (ADR-020 §2.5.2). Closing it needs the directory/resource-query subsystem ADR-020 §7 defers |
 | `InputSet`/`OutputSet` multiplicity | 📐 | Already registered (SAD-001 §14.1 — single set, per-parameter flags) |
 | Data-availability wait | 📐 | Already registered (§14.1 — error, never wait) |
 | Value-less item-aware elements | 📐 | Already registered (§14.1 — rejected at registration) |

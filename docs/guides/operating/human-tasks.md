@@ -63,6 +63,57 @@ instance). A distributor that keeps a live inbox removes the row on `Withdraw`.
 > [Custom task distributor](../extending/task-distributor.md). `NopDistributor()`
 > returns the default.
 
+## Ownership: who is working on it
+
+A parked task is offered to everyone eligible, but only one person may hold it.
+Completion is strict — **only the holder may complete** — so an unclaimed task
+is completable by nobody.
+
+| Call | Who may | Notes |
+|---|---|---|
+| `Claim(ctx, taskID, actor)` | any eligible actor, if nobody else holds it | re-claiming your own task is a no-op, so claim-before-complete is retry-safe |
+| `Unclaim(ctx, taskID, actor)` | the holder only | returns it to the pool |
+| `Reassign(ctx, taskID, userID)` | **anyone — the engine does not check** | for the operator cases below; the *nominee* is still checked against the task's triad |
+
+`Reassign` is deliberately unguarded because its callers are not participants:
+a manager assigning a responsible person, an administrator rescuing a task from
+someone on sick leave, an offboarding flow moving a departing employee's queue.
+None of them would pass the task's own candidate check, so gating on it would
+forbid every legitimate use. **Two operational consequences:**
+
+- **You decide who may reassign, and you must log it.** The engine records
+  `Reassigned` with the old and new holder, but cannot name the *caller* — it
+  never authorized one. If who-moved-this-task matters to your audit, log it on
+  your side.
+- **A group-only task has no reassignable nominee.** Group membership is
+  authenticated for the person in front of you, so it cannot be asserted for an
+  absent one. A task whose only eligibility is `candidateGroups` can be *claimed*
+  by any member but cannot be *reassigned* to one — declare the individual as a
+  candidate user, or resolve the group yourself and reassign to a named member.
+- **Bulk moves are yours too.** Reassigning everything one departing employee
+  holds spans many instances; the engine's surface is per task. Your inbox
+  already knows which tasks exist and who holds them — loop over it.
+
+These operations never touch the process: they do not advance, resume or cancel
+anything, and they do **not** wake a dehydrated instance. Only completion does.
+So a claim during a three-day wait costs nothing.
+
+Ownership does **not** survive an engine restart, and does not protect a task
+from cancellation — an interrupting boundary event still tears down a held task.
+
+## Who performed a task
+
+Completion records the performer for later nodes to route on, in the engine's
+read-only `RUNTIME` area:
+
+```
+RUNTIME/COMPLETED_BY   →   map: node name → the user who completed it
+```
+
+It is written by the engine and cannot be forged or overwritten by the process,
+and it survives dehydration. Note it names whoever actually **finished** the
+task — after a reassignment, the new holder, not the original assignee.
+
 ## What crosses the boundary
 
 Three value types travel between engine and distributor. They share an

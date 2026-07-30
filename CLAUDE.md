@@ -212,3 +212,44 @@ matches the "preserve standard taxonomy" and "ADR is prescriptive,
 standard-grounded" project rules. `/review-srd` flags an un-pinned standard-claim
 🟠 before approval.
 4. Ensure coverage with `make test_coverage`
+
+## Design docs — versioning and lifecycle
+
+**Only SAD and ADR carry a version. SRD and FIX do not.**
+
+- **SAD / ADR — continuously-current contracts.** They describe how the system
+  *should* work and are expected to outlive many landings, so they are
+  versioned: `v.1`, `v.2`, … A version bump is what records a **change of
+  contract** on an already-`Accepted` document, and the `Document History` row
+  explains what changed and why. Cross-doc references pin the version they were
+  written against (`ADR-020 v.2`, `SAD-001 v.1 §11`).
+
+- **SRD / FIX — one-shot documents.** They describe a single landing: what is
+  built now, how it is tested, when it is done. They are **not** versioned and
+  are **not** retro-edited after acceptance — an Accepted SRD/FIX is a
+  historical snapshot of the decision at that moment, and later work gets its
+  own document rather than rewriting an old one.
+
+**A document that is still `Draft` is simply edited.** No version bump per
+change, no `Document History` row per correction. Drafts churn — that is what a
+draft is for — and the churn is not a contract change because nobody has
+accepted the contract yet. Only once a doc is `Accepted` does a further change
+require a version bump (SAD/ADR) or a new document (SRD/FIX).
+
+Consequences worth stating, because they are the mistakes this rule prevents:
+
+- **Do not bump an ADR from v.2 to v.2.1 while v.2 is still `Draft`.** Fold the
+  correction into v.2 and its single history row. Intermediate versions nobody
+  accepted are noise that later readers must reconcile — and every one of them
+  becomes a stale pin in every document that referenced it.
+- **Do not version an SRD at all.** If it is `Draft`, edit it. If it is
+  `Accepted` and something changed, that is a new SRD (or a FIX), not `v.1.1`.
+- **Status flips at the PR handover**, once the work is landed and the
+  `/check-srd` audit passes — never mid-implementation, and never as a way of
+  "freezing" a document you intend to keep editing.
+
+**Existing versioned SRDs stay as they are.** Several SRDs predating this rule
+carry versions (e.g. `SRD-071 v.2.5`). They are `Accepted`, and an Accepted
+one-shot document is not retro-edited — stripping their versions would rewrite
+history for tidiness. Keep pinning them at the version they carry; the rule
+governs documents written from here on.

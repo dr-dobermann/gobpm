@@ -257,6 +257,23 @@ promise: the boundary is held and recorded alongside the task, so the
 escalation survives both the release and a restart — and fires at the
 deadline it was *originally* given, not one recomputed on the way back.
 
+For human work, see [`examples/usertask/`](examples/usertask/) — a **User
+Task** parks until a person acts, and the engine owns *who* that person is.
+Eligibility is a Camunda-style assignee / candidate-user / candidate-group
+triad, **resolved once when the task is announced** so a candidate set cannot
+shift under a task that is already waiting. On top of it sits BPMN's own
+`actualOwner` (§10.3.4.1, Table 10.14): a candidate **claims** a task to take
+exclusive hold, and only the holder may complete it — so offering one task to
+twenty people no longer means twenty people can work it in parallel and
+nineteen discard their effort. `Unclaim` returns it to the pool; `Reassign`
+moves it when the holder is on sick leave or has left, deliberately
+unguarded at the task level because the person doing it is an administrator,
+not a participant. Completion records who actually performed the work, in the
+engine's read-only `RUNTIME` area, so a later task can route on it — "send it
+to the approver's manager" is a process decision, not glue code. Claiming
+costs nothing while an instance is dehydrated: ownership lives beside the
+task, not inside the instance.
+
 For scripting, see [`examples/script-task/`](examples/script-task/) — a
 **Script Task** runs an embedded Lua file on the pluggable **Script Engine
 seam**: engines register with the repeatable `WithScriptEngine` (several

@@ -15,6 +15,16 @@ const (
 	CurrState = "STATE"
 	// TracksCount represents the tracks count variable name.
 	TracksCount = "TRACKS_CNT"
+	// CompletedBy names the performer register: a map of node name → the user who
+	// completed that human task (ADR-020 v.2 §2.4.2). Served here, under the
+	// reserved read-only RUNTIME subtree, because the record is engine-published —
+	// a process reads who performed a task but must not be able to overwrite the
+	// answer, nor collide with it by naming a variable the same way.
+	//
+	// One map rather than one variable per task, so this name set stays closed: an
+	// open per-task namespace would force prefix matching here and make
+	// RuntimeVarNames grow with every completion.
+	CompletedBy = "COMPLETED_BY"
 )
 
 // DataReader returns the instance's read-only root data reader — process
@@ -42,6 +52,15 @@ func (inst *Instance) RuntimeVar(name string) (data.Data, error) {
 	case TracksCount:
 		tc := int(inst.trackCount.Load())
 		d = values.NewVariable(tc)
+
+	case CompletedBy:
+		m, err := values.NewMap(inst.performers.snapshot())
+		if err != nil {
+			return nil,
+				fmt.Errorf("couldn't build the %q runtime variable: %w", name, err)
+		}
+
+		d = m
 
 	default:
 		return nil,
@@ -78,5 +97,5 @@ func (inst *Instance) RuntimeVar(name string) (data.Data, error) {
 // RuntimeVarNames implements scope.RuntimeVarsSupplier: it lists the runtime
 // variables the instance exposes under the RUNTIME source.
 func (inst *Instance) RuntimeVarNames() []string {
-	return []string{StartedAt, CurrState, TracksCount}
+	return []string{StartedAt, CurrState, TracksCount, CompletedBy}
 }
