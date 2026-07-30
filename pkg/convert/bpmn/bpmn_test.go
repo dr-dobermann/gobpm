@@ -671,6 +671,18 @@ const serviceTaskSample = `<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec
   </bpmn:process>
 </bpmn:definitions>`
 
+type typedImplementor struct{}
+
+func (typedImplementor) Type() string           { return "urn:test:service" }
+func (typedImplementor) ErrorClasses() []string { return nil }
+
+func (typedImplementor) Execute(
+	context.Context,
+	*data.ItemDefinition,
+) (*data.ItemDefinition, error) {
+	return nil, errors.ErrUnsupported
+}
+
 // TestServiceTaskImport covers serviceTask + interface/operation import
 // (SRD-051 §4.6). The bound Operation is a catalog stub (no Implementor) —
 // the host supplies a real implementor after import.
@@ -762,7 +774,13 @@ func TestServiceTaskExportProgrammatic(t *testing.T) {
 		t.Fatalf("process.New: %v", err)
 	}
 
-	op, err := service.NewOperation("greet", nil, nil, nil, foundation.WithID("op-1"))
+	op, err := service.NewOperation(
+		"greet",
+		nil,
+		nil,
+		typedImplementor{},
+		foundation.WithID("op-1"),
+	)
 	if err != nil {
 		t.Fatalf("NewOperation: %v", err)
 	}
@@ -810,6 +828,10 @@ func TestServiceTaskExportProgrammatic(t *testing.T) {
 
 	if !strings.Contains(xml, `operationRef="op-1"`) {
 		t.Errorf("exported XML missing operationRef:\n%s", xml)
+	}
+
+	if !strings.Contains(xml, `implementation="urn:test:service"`) {
+		t.Errorf("exported XML missing service implementation:\n%s", xml)
 	}
 
 	if !strings.Contains(xml, `<bpmn:interface`) || !strings.Contains(xml, `id="op-1"`) {

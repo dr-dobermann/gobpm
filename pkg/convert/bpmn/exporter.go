@@ -358,22 +358,16 @@ func flowXML(f *flow.SequenceFlow) (*xmlSequenceFlow, error) {
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
+	id := f.ID()
 	src := f.Source()
-	if src == nil {
-		return nil, errs.New(
-			errs.M("bpmn.Export: sequenceFlow %q has nil source", f.ID()),
-			errs.C(errorClass, errs.InvalidObject))
-	}
-
 	trg := f.Target()
-	if trg == nil {
-		return nil, errs.New(
-			errs.M("bpmn.Export: sequenceFlow %q has nil target", f.ID()),
-			errs.C(errorClass, errs.InvalidObject))
+
+	if err := validateFlowEndpoints(id, src, trg); err != nil {
+		return nil, err
 	}
 
 	xf := &xmlSequenceFlow{
-		ID:        f.ID(),
+		ID:        id,
 		Name:      f.Name(),
 		SourceRef: src.ID(),
 		TargetRef: trg.ID(),
@@ -386,8 +380,7 @@ func flowXML(f *flow.SequenceFlow) (*xmlSequenceFlow, error) {
 			// §FR-5): a compiled condition without source text cannot be
 			// serialized faithfully.
 			return nil, errs.New(
-				errs.M("bpmn.Export: condition %q of sequenceFlow %q has no source text to export",
-					c.ID(), f.ID()),
+				errs.M("bpmn.Export: condition %q of sequenceFlow %q has no source text to export", c.ID(), f.ID()),
 				errs.C(errorClass, errs.InvalidObject))
 		}
 
@@ -401,4 +394,27 @@ func flowXML(f *flow.SequenceFlow) (*xmlSequenceFlow, error) {
 	xf.XMLName = xml.Name{Local: "bpmn:" + tagSequenceFlow}
 
 	return xf, nil
+}
+
+// validateFlowEndpoints checks the endpoint invariants before flowXML
+// dereferences them. Keeping this as a pure helper makes both defensive guards
+// testable without constructing an impossible half-linked SequenceFlow.
+func validateFlowEndpoints(
+	id string,
+	src flow.SequenceSource,
+	trg flow.SequenceTarget,
+) error {
+	if src == nil {
+		return errs.New(
+			errs.M("bpmn.Export: sequenceFlow %q has nil source", id),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	if trg == nil {
+		return errs.New(
+			errs.M("bpmn.Export: sequenceFlow %q has nil target", id),
+			errs.C(errorClass, errs.InvalidObject))
+	}
+
+	return nil
 }

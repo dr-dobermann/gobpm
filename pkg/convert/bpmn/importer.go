@@ -52,6 +52,7 @@ func (importer) Import(ctx context.Context, r io.Reader) (*process.Process, erro
 	p := &parser{
 		dec:        xml.NewDecoder(r),
 		ctx:        ctx,
+		newProcess: process.New,
 		interfaces: make(map[string]string),
 		ops:        make(map[string]opSpec),
 	}
@@ -96,8 +97,9 @@ type assembly struct {
 
 // parser wraps the xml.Decoder token stream with import state.
 type parser struct {
-	dec *xml.Decoder
-	ctx context.Context
+	dec        *xml.Decoder
+	ctx        context.Context
+	newProcess func(string, ...options.Option) (*process.Process, error)
 	// definitions-level catalogs accumulate across children of <definitions>
 	// before/while the process is parsed.
 	interfaces map[string]string
@@ -227,7 +229,7 @@ func (p *parser) parseProcess(se xml.StartElement) (*assembly, error) {
 		name = id
 	}
 
-	proc, err := process.New(name, foundation.WithID(id))
+	proc, err := p.newProcess(name, foundation.WithID(id))
 	if err != nil {
 		return nil, errs.New(
 			errs.M("bpmn: couldn't create process %q", id),

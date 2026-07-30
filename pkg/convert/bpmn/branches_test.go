@@ -3,11 +3,13 @@ package bpmn
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/convert"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
@@ -19,12 +21,14 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 )
 
+const definitionsOpen = `<bpmn:definitions` +
+	` xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"` +
+	` xmlns:x="urn:example:foreign">`
+
 // wrapDefs renders a <bpmn:definitions> around body. The x: prefix gives every
 // case a foreign namespace to exercise the skip policy (SRD-051 §FR-7).
 func wrapDefs(body string) string {
-	return `<bpmn:definitions` +
-		` xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"` +
-		` xmlns:x="urn:example:foreign">` + body + `</bpmn:definitions>`
+	return definitionsOpen + body + `</bpmn:definitions>`
 }
 
 // linearProcess renders a start → task → end process, letting a case inject
@@ -173,6 +177,121 @@ func TestImportSequenceFlowChildBranches(t *testing.T) {
 	})
 }
 
+// TestImportTruncatedNestedStructures verifies that decoder failures propagate
+// from every nested parser boundary instead of being mistaken for a successful
+// partial document.
+func TestImportTruncatedNestedStructures(t *testing.T) {
+	tests := map[string]string{
+		"process": definitionsOpen +
+			`<bpmn:process id="p">`,
+		"foreign process child": definitionsOpen +
+			`<bpmn:process id="p"><x:meta>`,
+		"flow node": definitionsOpen +
+			`<bpmn:process id="p"><bpmn:task id="t" name="work">`,
+		"interface": definitionsOpen +
+			`<bpmn:interface id="i">`,
+		"operation": definitionsOpen +
+			`<bpmn:interface id="i"><bpmn:operation id="o">`,
+		"in message ref": definitionsOpen +
+			`<bpmn:interface id="i"><bpmn:operation id="o"><bpmn:inMessageRef>`,
+		"out message ref": definitionsOpen +
+			`<bpmn:interface id="i"><bpmn:operation id="o"><bpmn:outMessageRef>`,
+		"sequence flow": definitionsOpen +
+			`<bpmn:process id="p"><bpmn:sequenceFlow id="f" sourceRef="s" targetRef="e">`,
+		"foreign condition child": definitionsOpen +
+			`<bpmn:process id="p"><bpmn:sequenceFlow id="f" sourceRef="s" targetRef="e">` +
+			`<bpmn:conditionExpression>ok<x:hint>`,
+	}
+
+	for name, doc := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := (importer{}).Import(context.Background(), strings.NewReader(doc))
+			if err == nil || !strings.Contains(err.Error(), "XML syntax error") {
+				t.Fatalf("Import error = %v, want classified XML syntax error", err)
+			}
+		})
+	}
+}
+
+type errorReader struct {
+	err error
+}
+
+func (r errorReader) Read([]byte) (int, error) {
+	return 0, r.err
+}
+
+// TestImportStreamFailures covers a genuinely empty stream and context errors
+// surfaced by the reader itself.
+func TestImportStreamFailures(t *testing.T) {
+	if _, err := (importer{}).Import(
+		context.Background(),
+		strings.NewReader(""),
+	); err == nil || !strings.Contains(err.Error(), "unexpected end of XML stream") {
+		t.Fatalf("Import(empty document) = %v, want unexpected-end error", err)
+	}
+
+	for _, want := range []error{context.Canceled, context.DeadlineExceeded} {
+		_, err := (importer{}).Import(context.Background(), errorReader{err: want})
+		if !errors.Is(err, want) {
+			t.Errorf("Import(reader error %v) = %v, want preserved cause", want, err)
+		}
+	}
+}
+
+func bpmnStartElement(local, id string) xml.StartElement {
+	return xml.StartElement{
+		Name: xml.Name{Space: nsBPMN, Local: local},
+		Attr: []xml.Attr{{
+			Name:  xml.Name{Local: "id"},
+			Value: id,
+		}},
+	}
+}
+
+// TestImporterDefensiveConstructorBranches exercises guards that the public
+// token dispatcher normally makes unreachable, keeping their error wrapping
+// contract verified without malformed global state.
+func TestImporterDefensiveConstructorBranches(t *testing.T) {
+	t.Run("process constructor error", func(t *testing.T) {
+		constructorErr := errors.New("process constructor failed")
+		p := &parser{
+			newProcess: func(
+				string,
+				...options.Option,
+			) (*process.Process, error) {
+				return nil, constructorErr
+			},
+		}
+
+		proc, err := p.parseProcess(bpmnStartElement(tagProcess, "p"))
+		if proc != nil || !errors.Is(err, constructorErr) {
+			t.Fatalf("parseProcess = %v, %v; want wrapped constructor error", proc, err)
+		}
+	})
+
+	t.Run("missing node mapping", func(t *testing.T) {
+		asm := &assembly{byID: make(map[string]flow.Node)}
+
+		err := (&parser{}).parseNode(asm, bpmnStartElement("unmappedNode", "n"))
+		if err == nil || !strings.Contains(err.Error(), "no constructor mapping") {
+			t.Fatalf("parseNode error = %v, want missing-constructor error", err)
+		}
+	})
+
+	t.Run("exclusive gateway constructor error", func(t *testing.T) {
+		_, err := (&parser{}).parseGateway(
+			&assembly{},
+			bpmnStartElement(tagExclusiveGateway, ""),
+			"",
+			"",
+		)
+		if err == nil {
+			t.Fatal("parseGateway with empty id: want constructor error")
+		}
+	})
+}
+
 // TestImportGatewayBranches covers gatewayDirection validation and the pass-2
 // re-resolution of an exclusiveGateway's default attribute (SRD-051 §3.3).
 func TestImportGatewayBranches(t *testing.T) {
@@ -261,6 +380,11 @@ func TestImportSequenceFlowIdentityBranches(t *testing.T) {
 			doc:  graph(`<bpmn:sequenceFlow id="f3" sourceRef="t" targetRef="s"/>`),
 			want: "is not a sequence target",
 		},
+		"duplicate sequenceFlow id": {
+			doc: graph(
+				`<bpmn:sequenceFlow id="f1" sourceRef="s" targetRef="e"/>`),
+			want: "couldn't link sequenceFlow",
+		},
 	})
 }
 
@@ -279,6 +403,61 @@ func TestImportGatewayDefaultNotOutgoing(t *testing.T) {
 				`</bpmn:process>`),
 			want: "couldn't set default flow",
 		},
+	})
+}
+
+// TestBuildDefensiveBranches verifies pass-2 error propagation for a duplicate
+// node and for a process that fails its final model-level validation.
+func TestBuildDefensiveBranches(t *testing.T) {
+	t.Run("node add failure", func(t *testing.T) {
+		proc, err := process.New("duplicate", foundation.WithID("duplicate"))
+		if err != nil {
+			t.Fatalf("process.New: %v", err)
+		}
+
+		start, err := events.NewStartEvent("start", foundation.WithID("start"))
+		if err != nil {
+			t.Fatalf("NewStartEvent: %v", err)
+		}
+
+		got, err := build(&assembly{
+			proc:  proc,
+			nodes: []flow.Node{start, start},
+		})
+		if got != nil || err == nil || !strings.Contains(err.Error(), "couldn't add node") {
+			t.Fatalf("build = %v, %v; want node-add failure", got, err)
+		}
+	})
+
+	t.Run("process validation failure", func(t *testing.T) {
+		proc, err := process.New("invalid", foundation.WithID("invalid"))
+		if err != nil {
+			t.Fatalf("process.New: %v", err)
+		}
+
+		definition, err := events.NewConditionalEventDefinition(
+			newFormalExpression("condition", "", "true"),
+		)
+		if err != nil {
+			t.Fatalf("NewConditionalEventDefinition: %v", err)
+		}
+
+		start, err := events.NewStartEvent(
+			"conditional start",
+			foundation.WithID("start"),
+			events.WithConditionalTrigger(definition),
+		)
+		if err != nil {
+			t.Fatalf("NewStartEvent: %v", err)
+		}
+
+		got, err := build(&assembly{
+			proc:  proc,
+			nodes: []flow.Node{start},
+		})
+		if got != nil || err == nil || !strings.Contains(err.Error(), "process \"invalid\" is invalid") {
+			t.Fatalf("build = %v, %v; want process-validation failure", got, err)
+		}
 	})
 }
 
@@ -301,6 +480,55 @@ func (bodylessCondition) Evaluate(context.Context, data.Source) (data.Value, err
 
 func (bodylessCondition) Result() (data.Value, error) {
 	return nil, errors.New("not evaluated")
+}
+
+// cancelAfterContext deterministically reports cancellation from its Nth Err
+// call. buildDefinitions checks Err before every node and every flow, so this
+// makes both checkpoints testable without timing or goroutines.
+type cancelAfterContext struct {
+	remaining int
+}
+
+var _ context.Context = (*cancelAfterContext)(nil)
+
+func (*cancelAfterContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (*cancelAfterContext) Done() <-chan struct{}       { return nil }
+func (*cancelAfterContext) Value(any) any               { return nil }
+
+func (c *cancelAfterContext) Err() error {
+	c.remaining--
+	if c.remaining <= 0 {
+		return context.Canceled
+	}
+
+	return nil
+}
+
+// TestExportPerElementCancellation covers cancellation while walking nodes and
+// while walking flows, not only the Export entry check. Export builds the full
+// document before writing, so a canceled walk must also leave the writer empty.
+func TestExportPerElementCancellation(t *testing.T) {
+	p := buildProcess(t, 1)
+
+	tests := map[string]int{
+		"nodes": 3,
+		"flows": 5,
+	}
+
+	for name, cancelOnCall := range tests {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+
+			err := (exporter{}).Export(
+				&cancelAfterContext{remaining: cancelOnCall},
+				&buf,
+				p,
+			)
+			if !errors.Is(err, context.Canceled) || buf.Len() != 0 {
+				t.Fatalf("Export = %v, %q; want context.Canceled and no output", err, buf.String())
+			}
+		})
+	}
 }
 
 // buildProcess assembles start → task → end programmatically. flowOpts are
@@ -398,12 +626,34 @@ func TestExportConditionWithoutSourceText(t *testing.T) {
 	}
 }
 
-// TestFlowXMLNilFlow covers the nil-endpoint guards that keep a malformed
-// model from panicking inside the exporter.
-func TestFlowXMLNilFlow(t *testing.T) {
+// TestSetServiceTaskAttrsNilOperation covers the defensive early return for a
+// zero-value ServiceTask, before the operation map could be written.
+func TestSetServiceTaskAttrsNilOperation(t *testing.T) {
+	xn := &xmlNode{}
+	setServiceTaskAttrs(xn, &activities.ServiceTask{}, nil)
+
+	if xn.Implementation != "" || xn.OperationRef != "" {
+		t.Fatalf("zero ServiceTask attrs = %#v, want no emitted attributes", xn)
+	}
+}
+
+// TestFlowXMLNilGuards covers the nil-flow, nil-source and nil-target guards
+// that keep a malformed model from panicking inside the exporter.
+func TestFlowXMLNilGuards(t *testing.T) {
 	xf, err := flowXML(nil)
 	if xf != nil || err == nil || !strings.Contains(err.Error(), "sequenceFlow is nil") {
 		t.Fatalf("flowXML(nil) = %v, %v", xf, err)
+	}
+
+	xf, err = flowXML(&flow.SequenceFlow{})
+	if xf != nil || err == nil || !strings.Contains(err.Error(), "nil source") {
+		t.Fatalf("flowXML(zero flow) = %v, %v, want nil-source error", xf, err)
+	}
+
+	f := buildProcess(t, 0).Flows()[0]
+	err = validateFlowEndpoints(f.ID(), f.Source(), nil)
+	if err == nil || !strings.Contains(err.Error(), "nil target") {
+		t.Fatalf("validateFlowEndpoints(nil target) = %v, want nil-target error", err)
 	}
 }
 
