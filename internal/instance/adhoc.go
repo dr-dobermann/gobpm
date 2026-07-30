@@ -1,7 +1,9 @@
 package instance
 
 import (
+	"cmp"
 	"context"
+	"strings"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/adhoc"
@@ -27,6 +29,18 @@ func adHocOf(node flow.Node) activities.AdHocSpec {
 	return h.AdHoc()
 }
 
+// The values the Ad-Hoc fact vocabulary carries (SRD-074 §3.6): who selected an
+// activated activity, and why routing ended. Named constants rather than
+// literals — the audit-trail tests assert them, and a stream consumer switches
+// on them.
+const (
+	adHocByRouter = "router"
+	adHocByHost   = "host"
+
+	adHocStopRouterEmpty = "router-empty"
+	adHocStopCanceled    = "canceled"
+)
+
 // adHocProgress is an Ad-Hoc scope's routing state, owned by the loop goroutine
 // (the only writer) and handed to the Router as the progress half of its
 // decision: how many times each inner activity has settled, how many instances
@@ -34,6 +48,12 @@ func adHocOf(node flow.Node) activities.AdHocSpec {
 type adHocProgress struct {
 	completed map[string]int
 	running   map[string]int
+	// stopReason records WHY routing ended, for the container's terminal fact —
+	// the audit half of the decision trail (SRD-074 FR-13). Empty while routing
+	// continues, and for a container cut short from outside, which never stopped
+	// its own routing. Declared before offered to keep the pointer-scannable
+	// prefix minimal (fieldalignment).
+	stopReason string
 	// offered are the candidates a manual container is waiting on: the Router
 	// answered, and the container now holds them until a host activates one
 	// (ADR-035 v.1 §2.6). Empty in automatic mode, where an answer runs at once.
@@ -116,8 +136,16 @@ func (ls *loopState) routeAdHoc(
 		return
 	}
 
+	// Every answer is reported, the empty one included: "the Router considered
+	// the state and chose to stop" is exactly the fact an auditor needs, and
+	// suppressing it would make a terminal indistinguishable from a Router that
+	// was never asked (SRD-074 §3.6).
+	ls.reportAdHoc(observability.PhaseOffered, entry.node,
+		observability.AttrCandidates, adHocIDs(nodes))
+
 	if len(nodes) == 0 {
 		entry.adHoc.stopped = true
+		entry.adHoc.stopReason = adHocStopRouterEmpty
 
 		// Routing stopped while activities are still live: BPMN's
 		// cancelRemainingInstances decides whether they are cut short or
@@ -146,8 +174,53 @@ func (ls *loopState) routeAdHoc(
 	}
 
 	for _, n := range nodes {
-		ls.spawnAdHoc(ctx, path, entry, n)
+		ls.spawnAdHoc(ctx, path, entry, n, adHocByRouter)
 	}
+}
+
+// adHocIDs joins the routed activities' ids for the candidates attribute — ids
+// only, never the data the Router read (the masking rule).
+func adHocIDs(nodes []flow.Node) string {
+	ids := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		ids = append(ids, n.ID())
+	}
+
+	return strings.Join(ids, ",")
+}
+
+// reportAdHoc emits one Ad-Hoc routing fact (SRD-074 FR-12). Each moment
+// carries exactly one attribute — the candidate set, the selector, or the stop
+// reason — while the container's scope open/close keeps riding KindScope, so
+// nothing is reported twice.
+func (ls *loopState) reportAdHoc(
+	phase observability.Phase, node flow.Node, key, value string,
+) {
+	ls.inst.report(observability.Fact{
+		Kind:     observability.KindAdHoc,
+		Phase:    phase,
+		NodeID:   node.ID(),
+		NodeName: node.Name(),
+		Details:  map[string]string{key: value},
+	})
+}
+
+// reportAdHocSettled emits an Ad-Hoc container's terminal fact — the audit pair
+// to its Offered/Activated stream (SRD-074 FR-13) — naming why routing ended. A
+// no-op for a scope that is not ad-hoc, so the scope machinery calls it
+// unconditionally.
+func (ls *loopState) reportAdHocSettled(
+	entry *scopeEntry, phase observability.Phase,
+) {
+	if entry.adHoc == nil {
+		return
+	}
+
+	// A container cut short from outside — an interrupting boundary, a scoped
+	// Terminate — never stopped its own routing, so the cancellation itself is
+	// the reason.
+	ls.reportAdHoc(phase, entry.node, observability.AttrStopReason,
+		cmp.Or(entry.adHoc.stopReason, adHocStopCanceled))
 }
 
 // activateAdHoc starts one offered activity, chosen by the host. Activating
@@ -188,7 +261,7 @@ func (ls *loopState) activateAdHoc(
 	// would let a host activate against a stale view.
 	entry.adHoc.offered = nil
 
-	ls.spawnAdHoc(ctx, path, entry, node)
+	ls.spawnAdHoc(ctx, path, entry, node, adHocByHost)
 
 	return nil
 }
@@ -319,14 +392,15 @@ func findAdHocNode(inner []flow.Node, id string) flow.Node {
 }
 
 // spawnAdHoc starts one routed activity as its own track in the Ad-Hoc scope,
-// counting it live. Mirrors seedScope's pre-spawn discipline: the scope path
-// and the routed activity are set on the loop goroutine, before the track's own
-// goroutine exists.
+// counting it live, and records who selected it. Mirrors seedScope's pre-spawn
+// discipline: the scope path and the routed activity are set on the loop
+// goroutine, before the track's own goroutine exists.
 func (ls *loopState) spawnAdHoc(
 	ctx context.Context,
 	path scope.DataPath,
 	entry *scopeEntry,
 	node flow.Node,
+	by string,
 ) {
 	nt, err := newTrack(node, ls.inst, entry.host)
 	if err != nil {
@@ -343,6 +417,12 @@ func (ls *loopState) spawnAdHoc(
 	nt.adHocActivity = node.ID()
 
 	entry.adHoc.running[node.ID()]++
+
+	// Reported before the track runs, so the selection precedes the activity's
+	// own node facts in the stream and the pairing with its Offered reads in
+	// order (SRD-074 FR-13).
+	ls.reportAdHoc(observability.PhaseActivated, node,
+		observability.AttrSelectedBy, by)
 
 	ls.inst.trackCount.Add(1)
 	ls.inst.tracks[nt.ID()] = nt

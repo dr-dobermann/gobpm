@@ -422,6 +422,7 @@ func (ls *loopState) completeScope(
 	}
 
 	ls.reportScope(observability.PhaseCompleted, entry.node, path, ordinal)
+	ls.reportAdHocSettled(entry, observability.PhaseCompleted)
 
 	// a parallel Multi-Instance instance drains into its group's N-of-N barrier
 	// (SRD-056.A): the off-loop decorator (runMIParallel) owns the counting and the
@@ -569,6 +570,12 @@ func (ls *loopState) cancelScope(path scope.DataPath, phase observability.Phase)
 		}
 
 		ls.reportScope(phase, entry.node, p, ord)
+
+		// An ad-hoc container's routing ended here however the scope was cut
+		// short — a Terminate still leaves the routing canceled, so the terminal
+		// fact reads Canceled while the scope's own fact carries the phase
+		// (SRD-074 §3.6).
+		ls.reportAdHocSettled(entry, observability.PhaseCanceled)
 	}
 }
 

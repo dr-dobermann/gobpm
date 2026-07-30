@@ -26,6 +26,25 @@ func TestLoggable(t *testing.T) {
 	}
 }
 
+// TestAdHocEchoLevel pins the Ad-Hoc routing kind to the operator log at Info
+// (SRD-074 §3.6): a routing decision is a human-steered milestone, so it must
+// neither drop to flow-tracing Debug nor fall through to the unclassified-kind
+// Error, and it is never stream-only.
+func TestAdHocEchoLevel(t *testing.T) {
+	for _, phase := range []Phase{
+		PhaseOffered, PhaseActivated, PhaseCompleted, PhaseCanceled,
+	} {
+		if got := echoLevel(KindAdHoc, phase); got != slog.LevelInfo {
+			t.Errorf("echoLevel(%q, %q) = %v, want %v",
+				KindAdHoc, phase, got, slog.LevelInfo)
+		}
+	}
+
+	if !loggable(KindAdHoc) {
+		t.Error("KindAdHoc must reach the operator log, not the stream alone")
+	}
+}
+
 func TestEchoLevel(t *testing.T) {
 	tests := []struct {
 		name  string

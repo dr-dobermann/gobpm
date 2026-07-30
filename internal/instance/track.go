@@ -181,14 +181,14 @@ type track struct {
 	dehydrateCh chan struct{} // closed by the loop to release a parked wait's goroutine (SRD-071)
 	evtCh       chan flow.EventDefinition
 	taskID      string
-	scopePath scope.DataPath
+	scopePath   scope.DataPath
 	// adHocActivity names the inner activity this track was routed to inside an
 	// Ad-Hoc scope, empty for every other track (SRD-074 §3.4). Set pre-spawn on
 	// the loop goroutine and read after the track is terminal, so it needs no
 	// synchronization: it is how the settling loop knows which activity to count
 	// as completed.
 	adHocActivity string
-	scopeSeg    string
+	scopeSeg      string
 	foundation.BaseElement
 	prev      []string
 	msgDefIDs []string

@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 // SRD-074 M3 — the Ad-Hoc runtime seam: the Router answers succession at scope
@@ -529,6 +531,194 @@ func TestAdHocViewCancelledContext(t *testing.T) {
 
 	require.ErrorIs(t, inst.ActivateAdHoc(ctx, "triage", "a"),
 		context.Canceled)
+}
+
+// SRD-074 M5 — the KindAdHoc vocabulary: what was offered, what was activated
+// and by whom, and why the container stopped, all reconstructible from the
+// stream alone (FR-12, FR-13).
+
+// factsOfKind returns, in emission order, every fact recorded for one kind —
+// order is the assertion for the decision trail: an Activated must follow the
+// Offered that named it.
+func (r *obsRecorder) factsOfKind(
+	kind observability.Kind,
+) []observability.Fact {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	out := []observability.Fact{}
+
+	for _, e := range r.events {
+		if e.Kind == kind {
+			out = append(out, e)
+		}
+	}
+
+	return out
+}
+
+// byPhase groups facts by phase, keeping each group in emission order.
+func byPhase(
+	facts []observability.Fact,
+) map[observability.Phase][]observability.Fact {
+	out := map[observability.Phase][]observability.Fact{}
+	for _, f := range facts {
+		out[f.Phase] = append(out[f.Phase], f)
+	}
+
+	return out
+}
+
+func TestAdHocFacts(t *testing.T) {
+	var (
+		mu  sync.Mutex
+		log []string
+	)
+
+	// Two activities, then the empty answer: three offers, two activations, one
+	// terminal.
+	r := &scriptedRouter{turns: [][]string{{"a"}, {"b"}}}
+
+	inst := adHocInstance(t, r, &mu, &log)
+
+	rec := &obsRecorder{}
+	inst.AddObserver(rec.record)
+
+	runToDone(t, inst)
+	require.Equal(t, Completed, inst.State())
+
+	groups := byPhase(rec.factsOfKind(observability.KindAdHoc))
+	require.Len(t, groups[observability.PhaseOffered], 3,
+		"one offer per Router answer, the empty one included")
+	require.Len(t, groups[observability.PhaseActivated], 2)
+	require.Len(t, groups[observability.PhaseCompleted], 1)
+
+	container := adHocNodeID(t, inst)
+
+	for _, f := range groups[observability.PhaseOffered] {
+		require.Equal(t, container, f.NodeID,
+			"an offer is the container's decision, not an activity's")
+	}
+
+	for i, f := range groups[observability.PhaseActivated] {
+		require.Equal(t, []string{"a", "b"}[i], f.NodeName,
+			"an activation names the activity that started")
+		require.Equal(t, adHocByRouter,
+			f.Details[observability.AttrSelectedBy],
+			"an automatic container's Router is the selector")
+	}
+
+	terminal := groups[observability.PhaseCompleted][0]
+	require.Equal(t, container, terminal.NodeID)
+	require.Equal(t, adHocStopRouterEmpty,
+		terminal.Details[observability.AttrStopReason])
+
+	// The scope's own lifecycle keeps riding KindScope — the ad-hoc kind adds
+	// only what is peculiar to routing, so nothing is reported twice (FR-12).
+	scoped := rec.phasesOf(observability.KindScope)
+	require.True(t, scoped[observability.PhaseOpened])
+	require.True(t, scoped[observability.PhaseCompleted])
+	require.False(t, scoped[observability.PhaseOffered],
+		"a routing decision never rides the scope kind")
+	require.False(t, scoped[observability.PhaseActivated])
+}
+
+func TestAdHocEmptyOfferEmitted(t *testing.T) {
+	var (
+		mu  sync.Mutex
+		log []string
+	)
+
+	inst := adHocInstance(t, &scriptedRouter{}, &mu, &log)
+
+	rec := &obsRecorder{}
+	inst.AddObserver(rec.record)
+
+	runToDone(t, inst)
+	require.Equal(t, Completed, inst.State())
+
+	facts := rec.factsOfKind(observability.KindAdHoc)
+	require.Len(t, facts, 2, "the empty offer, then the terminal")
+
+	require.Equal(t, observability.PhaseOffered, facts[0].Phase)
+
+	candidates, present := facts[0].Details[observability.AttrCandidates]
+	require.True(t, present,
+		"the attribute is present-and-empty: a Router that considered the "+
+			"state and stopped is not a Router that was never asked")
+	require.Empty(t, candidates)
+
+	require.Equal(t, observability.PhaseCompleted, facts[1].Phase)
+	require.Equal(t, adHocStopRouterEmpty,
+		facts[1].Details[observability.AttrStopReason])
+}
+
+func TestAdHocDecisionReconstructable(t *testing.T) {
+	var (
+		mu  sync.Mutex
+		log []string
+	)
+
+	// A manual container over two rounds: the host is the selector, so the
+	// stream must show who chose as well as what was on offer.
+	r := &scriptedRouter{turns: [][]string{{"a", "b"}, {"c"}}}
+
+	inst := adHocInstance(t, r, &mu, &log,
+		activities.WithAdHocManualSelection())
+
+	rec := &obsRecorder{}
+	inst.AddObserver(rec.record)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+
+	go func() { _ = inst.Run(ctx) }()
+
+	node := adHocNodeID(t, inst)
+
+	first := waitForOffer(t, ctx, inst, node, 2)
+	require.NoError(t, inst.ActivateAdHoc(ctx, node, first[0]))
+
+	second := waitForOffer(t, ctx, inst, node, 1)
+	require.NoError(t, inst.ActivateAdHoc(ctx, node, second[0]))
+
+	require.Eventually(t, func() bool {
+		return inst.State() == Completed
+	}, 3*time.Second, 5*time.Millisecond)
+
+	facts := rec.factsOfKind(observability.KindAdHoc)
+	require.NotEmpty(t, facts)
+
+	var (
+		offered   []string
+		activated int
+	)
+
+	for _, f := range facts {
+		switch f.Phase {
+		case observability.PhaseOffered:
+			offered = strings.Split(
+				f.Details[observability.AttrCandidates], ",")
+
+		case observability.PhaseActivated:
+			require.Contains(t, offered, f.NodeID,
+				"every activation is preceded by an offer naming it — without "+
+					"that pairing the case is unauditable")
+			require.Equal(t, adHocByHost,
+				f.Details[observability.AttrSelectedBy],
+				"a manual container's host is the selector")
+
+			activated++
+		}
+	}
+
+	require.Equal(t, 2, activated)
+
+	last := facts[len(facts)-1]
+	require.Equal(t, observability.PhaseCompleted, last.Phase)
+	require.Equal(t, adHocStopRouterEmpty,
+		last.Details[observability.AttrStopReason],
+		"the trail ends with the reason routing stopped")
 }
 
 func TestAdHocResolveRejectsHostWithoutNodes(t *testing.T) {
