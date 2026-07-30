@@ -50,6 +50,16 @@ implemented), and leaves this list.
   options actually accepted. Surfaced by `NewUserTask`'s list going stale when the
   triad options were added (SRD-034 M1). A comment-only correctness pass, no
   behaviour change.
+- **Examples assert their own outcome** — every example currently fails only on
+  an *error* (`if err != nil { log.Fatal(err) }`), so one that completes while
+  taking the wrong branch, computing a wrong value or skipping an activity
+  still exits 0 and passes the FIX-029 run-step. Add an outcome assertion to
+  each of the 44 example modules — compare the result the example claims to
+  demonstrate and `log.Fatalf` when it differs — which turns the existing
+  exit-0 gate into an outcome gate with no new CI machinery. Golden-output
+  files are the wrong tool here (generated ids, timestamps and map ordering
+  make them brittle); a self-assertion also reads as teaching material. Needs
+  no design doc — examples work lands as plain commits.
 - **Discard/assertion lint guard** — one `golangci-lint` config pass adding
   `forbidigo` (or equivalent) patterns for two idioms the codebase has decided
   against: a bare `_ =` on an error-returning call outside the documented
