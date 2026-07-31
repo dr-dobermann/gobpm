@@ -65,22 +65,19 @@ type ServiceTask struct {
 // NewServiceTask creates a new service task named name and operation as
 // service engine with some options.
 //
-// Available options are:
-//   - activities.WithMultyInstance
-//   - activities.WithCompensation
-//   - activities.WithLoop
-//   - activities.WithStartQuantity
-//   - activities.WithCompletionQuantity
-//   - activities.WithParameters
-//   - activities.WithoutParams
-//   - activities.WithRoles
-//   - activities.WithTimeout
-//   - activities.WithWorker
-//   - activities.WithErrorMapper
-//   - activities.WithStatus
-//   - activities.WithOutputMapping
-//   - foundation.WithID
-//   - foundation.WithDoc
+// It accepts the option FAMILIES below — that is what the constructor
+// dispatches on, so an option added to one of these families is accepted here
+// whether or not it is named. The members listed are today's; the family is the
+// contract (FIX-034 §3.2.5).
+//
+//   - SrvTaskOption — WithTimeout, WithWorker, WithWorkerTrust, WithErrorMapper,
+//     WithStatus, WithOutputMapping
+//   - taskOption — WithMultyInstance
+//   - ActivityOption — WithLoop, WithCompensation, WithStartQuantity,
+//     WithCompletionQuantity, WithParameters, WithoutParams
+//   - RoleOption — WithRoles
+//   - data.PropertyOption — the process-data property options
+//   - foundation.BaseOption — WithID, WithDoc
 func NewServiceTask(
 	name string,
 	operation service.Operation,

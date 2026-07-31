@@ -117,6 +117,7 @@ func WithCorrelationKey(key *bpmncommon.CorrelationKey) EventBasedOption {
 //   - gateways.WithDirection
 //   - gateways.WithInstantiate
 //   - gateways.WithEventGatewayType
+//   - gateways.WithCorrelationKey
 func NewEventBasedGateway(opts ...options.Option) (*EventBasedGateway, error) {
 	ec := eventBasedConfig{}
 	baseOpts := make([]options.Option, 0, len(opts))

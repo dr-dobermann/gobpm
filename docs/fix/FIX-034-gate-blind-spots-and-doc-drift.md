@@ -241,10 +241,38 @@ learned from FIX-031 §4.1:
 Wired into the gate as a blocking step, and into `make tools` in the sense that
 it needs nothing: it is built from this repository.
 
-#### §3.2.5 The 15 `Available options` blocks — reconciled
+#### §3.2.5 The 15 `Available options` blocks — audited, and two shapes emerge
 
-Each list is compared against the options its constructor actually accepts, and
-corrected. Comment-only; no behaviour change.
+Each list was compared against what its constructor actually dispatches on. The
+audit found four defects and, more usefully, showed that one convention does not
+fit all of them:
+
+- **A constructor that accepts a family WHOLESALE** should document the family,
+  because an enumeration drifts the moment the family gains a member — which is
+  exactly how the Camunda triad went unlisted. `NewServiceTask` and
+  `NewUserTask` now lead with the families their type-switch names
+  (`SrvTaskOption`/`UsrTaskOption`, `taskOption`, `ActivityOption`,
+  `data.PropertyOption`, `foundation.BaseOption`), state that an option added to
+  a listed family is accepted whether or not it is named, and list today's
+  members underneath.
+- **A constructor that accepts a family but REJECTS members** must keep the
+  enumeration, because the family heading would be a lie. `NewEndEvent` is the
+  case: `endConfig` implements `setCondition` and `setTimer` solely to refuse
+  them, so its seven-trigger list is the *accepted subset* of `EventOption` and
+  is correct as it stands.
+
+The four defects fixed: `NewServiceTask` omitted `WithWorkerTrust`;
+`NewUserTask` omitted the whole `ActivityOption`, `taskOption` and
+`data.PropertyOption` families; `NewEventBasedGateway` omitted
+`WithCorrelationKey`; `NewIAE` omitted `WithIDefinition`; and `WithIAE` named
+`data.IDef` / `data.IDefinition`, neither of which exists — the functions are
+`WithIDef` / `WithIDefinition`.
+
+Verified correct and left alone: `gateways.New` and the Exclusive / Inclusive /
+Parallel constructors (`GatewayOption` has one member), `process.New`,
+`consinp.NewRenderer`, `flow.NewBaseNode`, `bpmncommon.NewMessage`,
+`goexpr.New`, and `NewItemDefinition`. Comment-only throughout; no behaviour
+change.
 
 #### §3.2.6 `docs/backlog.md` — four entries graduate out
 

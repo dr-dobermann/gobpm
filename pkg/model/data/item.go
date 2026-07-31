@@ -236,6 +236,7 @@ func MustItemAwareElement(
 //
 // Available options:
 //   - data.WithIDef
+//   - data.WithIDefinition
 //   - data.WithState
 //   - foundation.WithID
 //   - foundation.WithDoc
