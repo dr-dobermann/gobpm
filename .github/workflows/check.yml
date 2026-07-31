@@ -76,9 +76,10 @@ jobs:
       - name: Test core modules with race detector
         run: make test-core
 
-      # Diff-coverage gate (SRD-002): reuses the coverage.txt that test-all just
-      # wrote (no second test run); same `make cover-check` / COVER_MIN the
-      # local `make ci` uses, so the verdict is identical local and on CI.
+      # Diff-coverage gate (SRD-002): reuses the per-module coverage.txt files
+      # test-all just wrote (no second test run) — every core module, not only
+      # the root, since FIX-034; same `make cover-check` / COVER_MIN the local
+      # `make ci` uses, so the verdict is identical local and on CI.
       - name: Diff-coverage gate (changed lines >= COVER_MIN)
         run: |
           git fetch --no-tags origin master

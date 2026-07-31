@@ -69,6 +69,18 @@ EXAMPLE_MODULES := $(filter ./examples/%,$(MODULES))
 # generated/ or examples/.
 COVER_PACKAGES = $$($(GO) list ./... | grep -Ev '/(generated|examples)(/|$$)')
 
+# Every module writes its OWN profile (test-all), and the gate reads all of
+# them. Until FIX-034 the profile was written only in the root's special case,
+# so runtime/ and the three adapters were never diff-gated at all — two of them
+# landed after COVER_MIN reached 95 and CI stayed green regardless of what they
+# added. Derived from CORE_MODULES, so a module added tomorrow is gated the day
+# it appears rather than when someone remembers this line. Missing profiles are
+# skipped: `make cover-check` may run after a scoped test-all, and covercheck
+# would reject a path that does not exist.
+COVER_PROFILES = $$(for d in $(CORE_MODULES); do \
+		[ -f "$$d/coverage.txt" ] && printf '%s/coverage.txt,' "$$d"; \
+	done | sed 's/,$$//')
+
 # ---------------------------------------------------------------------------
 # Tooling — versions are the single source of truth, mirrored by the
 # "Install tools" step in .github/workflows/check.yml. `make tools` installs
@@ -214,11 +226,7 @@ TEST_CPUS ?= 4
 test-all:
 	@set -e; for dir in $(MODULES); do \
 		echo "::group::test $$dir (TEST_CPUS=$(TEST_CPUS))"; \
-		if [ "$$dir" = "." ]; then \
-			(cd $$dir && GOMAXPROCS=$(TEST_CPUS) $(GO) test -race -count=1 -coverprofile=coverage.txt $(COVER_PACKAGES)) || exit 1; \
-		else \
-			(cd $$dir && GOMAXPROCS=$(TEST_CPUS) $(GO) test -race -count=1 ./...) || exit 1; \
-		fi; \
+		(cd $$dir && GOMAXPROCS=$(TEST_CPUS) $(GO) test -race -count=1 -coverprofile=coverage.txt $(COVER_PACKAGES)) || exit 1; \
 		echo "::endgroup::"; \
 	done
 .PHONY: test-all
@@ -278,15 +286,15 @@ consumer-smoke:
 .PHONY: consumer-smoke
 
 # Diff-coverage gate: fail when the lines this change adds/modifies are covered
-# below COVER_MIN. Consumes the coverage.txt that test-all produces (root
-# module) — run `make test-all` first, or use `make ci` which orders them.
-# Judges only changed lines, so the untouched-code backlog never blocks it.
+# below COVER_MIN. Consumes the per-module coverage.txt files test-all produces
+# — run `make test-all` first, or use `make ci` which orders them. Judges only
+# changed lines, so the untouched-code backlog never blocks it.
 cover-check:
 	$(call require-go-tool,covercheck,github.com/dr-dobermann/covercheck,$(COVERCHECK_VERSION))
 	covercheck -min $(COVER_MIN) -base $(COVER_BASE) \
 		-exclude-lines '$(COVER_EXCLUDE)' \
 		-exclude-paths '^(generated|examples)/' \
-		-profiles coverage.txt
+		-profiles $(COVER_PROFILES)
 .PHONY: cover-check
 
 # Core-scoped aliases — the REQUIRED CI job's steps (one target per workflow
