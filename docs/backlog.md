@@ -10,9 +10,15 @@ questions to analyze, independent of any single audit. It complements:
 - **[`audit/remediation-status.md`](audit/remediation-status.md)** — per-finding
   audit disposition.
 
-This file is the durable home for the rest: deferred refactors, forward-looking
-ideas, and decisions we've flagged but not yet taken. Items graduate out of here
-into an ADR/SRD (when designed) or a FIX (when implemented).
+This file holds the **short-term** rest: work we intend to pick up soon, and
+decisions we've flagged but not yet taken. Items graduate out of here into an
+ADR/SRD (when designed) or a FIX (when implemented).
+
+**Long-term and blocked work belongs in GitHub issues, not here.** An item
+waiting on something that isn't scheduled — another subsystem, a decision not
+yet due — has no business in a working list; keeping it here splits the backlog
+across two sources and makes neither trustworthy. Move it to an issue with what
+was measured and what would unblock it, and drop it from this file.
 
 ## Open questions to analyze
 
@@ -25,21 +31,6 @@ fill-on-write (option A) is moot. FIX-016/017's clone-site rejection remains as
 the data-layer clone precondition. Governing: **ADR-010**.
 
 ## Planned work / deferred
-
-- **Generated true-BPMN example diagrams (rides ADR-024) — now unblocked** — the
-  example READMEs carry hand-written mermaid *approximations* of BPMN (no event
-  icons, no attached-boundary notation — mermaid has no BPMN diagram type; added
-  2026-07-22). The exporter this waited on landed with SRD-051
-  (`convert.Export(ctx, convert.BPMN, w, p)`, 2026-07-30), so the next step is a
-  make/CI step that runs each example's own process definition through it +
-  `bpmn-to-image` → true-notation SVGs that regenerate from the code and can
-  never drift. Caveat discovered at landing: export emits **no** Diagram
-  Interchange, so `bpmn-to-image` must auto-layout — verify that before
-  committing to the pipeline. Only examples built from the SRD-051 §FR-8 subset
-  will export; anything richer raises `UnsupportedElementError` until later
-  slices land. Optional interim: a mermaid v11 "BPMN-ish" shape convention
-  (`dbl-circ` ends, `diam` gateways, `subproc` frames + a classDef palette) —
-  pilot one example against GitHub's renderer first.
 
 Genuinely un-homed items — not yet tracked in an ADR/SRD, the roadmap, or the
 audit-backlog. Each graduates out into an ADR/SRD (when designed) or a FIX (when
@@ -92,8 +83,10 @@ implemented), and leaves this list.
   `CORE_MODULES`, so a new module is gated the day it appears. Proven by
   before/after on four deliberately uncovered lines in `adapters/lua`: the old
   invocation reported "100.0% of 0 changed coverable lines — PASS", the new one
-  "0.0% of 4 — FAIL". A residual gap is recorded separately above (`cmd/` is
-  still not measured). Original text: `test-all` writes `coverage.txt` only for
+  "0.0% of 4 — FAIL". One residual gap belongs to covercheck itself and not to
+  this repo — it does not measure files under `cmd/`, diagnosed in FIX-034 §8.3
+  and worked around by keeping command logic in ordinary packages.
+  Original text: `test-all` writes `coverage.txt` only for
   the root module (`if [ "$$dir" = "." ]`), so `cover-check` measures the diff
   in core and nowhere else. `runtime/` and `adapters/{lua,dtable}` have never
   been diff-gated: both adapters landed *after* `COVER_MIN` went to 95 and CI

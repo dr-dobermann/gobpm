@@ -3,7 +3,7 @@
 //
 // It is a thin wrapper on purpose. The checker's logic lives in
 // internal/linkcheck because the diff-coverage gate does not measure files
-// under cmd/ — proven by experiment, and recorded in docs/backlog.md — so code
+// under cmd/ — proven by experiment, and diagnosed in FIX-034 §8.3 — so code
 // left here would ship ungated. Only this entry point, which cannot be called
 // without exiting the process, stays in the blind spot.
 package main
