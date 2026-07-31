@@ -446,7 +446,9 @@ every future command here until the tool is fixed.
 `deliver` contains the panic per ADR-013 §5 but has no sink to report it to, so
 a broken observer leaves no trace — the accidental-silence class ADR-022 treats
 as the worse failure. Threading a logger through would have widened M2 beyond
-gate hardening; it wants its own small change.
+gate hardening; it wants its own small change, and now carries a `docs/backlog.md`
+entry rather than living only in this appendix, where nobody looks for open
+work.
 
 ## §9 Open questions
 

@@ -123,6 +123,17 @@ implemented), and leaves this list.
   denominator went from 131 to 238 changed lines, so ~107 lines moved from
   unmeasured to gated, and an uncovered probe in the relocated package now
   fails the gate as it should.
+- **A panicking observer is swallowed without a trace**
+  (`pkg/thresher/observer.go`) — `deliver` contains the panic so one bad
+  observer cannot crash the drain goroutine or affect the others (ADR-013 §5),
+  but it has no sink to report it to, so a broken observer leaves no evidence
+  at all. That is the accidental-silence class ADR-022 treats as the worse
+  failure: the engine keeps running and the operator never learns their
+  observer is dead. Surfaced by FIX-034 §8.3, which annotated the discard
+  rather than widening that FIX beyond gate hardening. The fix is small but not
+  free — `deliver` is a free function with no logger in scope, and `Logger()`
+  is not directly on `Instance` — so it wants its own change rather than a
+  drive-by.
 - **No automated Markdown link check** — **DONE** (2026-07-31, FIX-034 §3.2.4).
   `cmd/linkcheck` walks the repository's Markdown and fails the gate on any
   relative link that does not resolve; it is blocking, offline and built from
