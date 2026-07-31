@@ -1,4 +1,4 @@
-package main
+package linkcheck
 
 import (
 	"os"
@@ -28,7 +28,7 @@ func TestExtractSkipsWhatIsNotALink(t *testing.T) {
 		"[titled](./titled.md \"a title\")\n" +
 		"[ref]: ./reference.md\n"
 
-	got := extract(src)
+	got := mustPatterns(t).extract(src)
 
 	targets := make([]string, 0, len(got))
 	for _, l := range got {
@@ -44,7 +44,7 @@ func TestExtractSkipsWhatIsNotALink(t *testing.T) {
 }
 
 func TestExtractDecodesPercentEncodedTargets(t *testing.T) {
-	got := extract("[roadmap](docs/gobpm%20Development%20Roadmap.md)\n")
+	got := mustPatterns(t).extract("[roadmap](docs/gobpm%20Development%20Roadmap.md)\n")
 
 	require.Len(t, got, 1)
 	require.Equal(t, "docs/gobpm Development Roadmap.md", got[0].target,
@@ -52,7 +52,7 @@ func TestExtractDecodesPercentEncodedTargets(t *testing.T) {
 }
 
 func TestExtractHandlesAngleBracketTargets(t *testing.T) {
-	got := extract("[spaced](<a file.md>)\n")
+	got := mustPatterns(t).extract("[spaced](<a file.md>)\n")
 
 	require.Len(t, got, 1)
 	require.Equal(t, "a file.md", got[0].target)
@@ -70,7 +70,7 @@ func TestCheckFileResolvesRelativeToTheDocument(t *testing.T) {
 
 	require.NoError(t, os.WriteFile(doc, []byte(src), 0o600))
 
-	got := checkFile(doc, src)
+	got := mustPatterns(t).checkFile(doc, src)
 
 	require.Len(t, got, 2, "the sibling resolves; the other two do not")
 	require.Equal(t, "gone.md", got[0].target)
@@ -114,7 +114,7 @@ func TestRunExitCodes(t *testing.T) {
 	t.Run("clean tree exits 0", func(t *testing.T) {
 		var out, errOut strings.Builder
 
-		code := run([]string{"-root", dir}, &out, &errOut)
+		code := Run([]string{"-root", dir}, &out, &errOut)
 
 		require.Equal(t, 0, code)
 		require.Contains(t, out.String(), "every relative link resolves")
@@ -126,7 +126,7 @@ func TestRunExitCodes(t *testing.T) {
 
 		var out, errOut strings.Builder
 
-		code := run([]string{"-root", dir}, &out, &errOut)
+		code := Run([]string{"-root", dir}, &out, &errOut)
 
 		require.Equal(t, 1, code)
 		require.Contains(t, out.String(), "bad.md:2: dead link: missing.md",
@@ -137,7 +137,7 @@ func TestRunExitCodes(t *testing.T) {
 	t.Run("unusable root exits 2", func(t *testing.T) {
 		var out, errOut strings.Builder
 
-		code := run([]string{"-root", filepath.Join(dir, "nope")}, &out, &errOut)
+		code := Run([]string{"-root", filepath.Join(dir, "nope")}, &out, &errOut)
 
 		require.Equal(t, 2, code)
 		require.Contains(t, errOut.String(), "linkcheck:")
@@ -146,6 +146,18 @@ func TestRunExitCodes(t *testing.T) {
 	t.Run("a bad flag exits 2", func(t *testing.T) {
 		var out, errOut strings.Builder
 
-		require.Equal(t, 2, run([]string{"-nope"}, &out, &errOut))
+		require.Equal(t, 2, Run([]string{"-nope"}, &out, &errOut))
 	})
+}
+
+// mustPatterns builds the compiled matchers for a test. The constructor returns
+// an error because internal/ bans panicking Must* calls (FIX-026); the tests
+// assert it succeeds rather than assuming it.
+func mustPatterns(t *testing.T) *patterns {
+	t.Helper()
+
+	p, err := newPatterns()
+	require.NoError(t, err)
+
+	return p
 }

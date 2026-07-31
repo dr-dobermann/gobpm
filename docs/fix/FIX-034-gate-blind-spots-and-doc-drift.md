@@ -432,6 +432,16 @@ external (`github.com/dr-dobermann/covercheck`), so this wants a reproduction
 there rather than a workaround here. Recorded so the FIX does not claim a
 completeness it lacks.
 
+**Diagnosed and worked around after that note was written.** It is the `cmd/`
+**path**, not `package main`: a non-main package under `cmd/`, with a test and
+an uncovered branch, is ignored just the same, and removing the Makefile's own
+`-exclude-paths` changes nothing — so "exclude only `main.go`" is the right
+policy but is not expressible from this repository. The checker's logic
+therefore moved to `internal/linkcheck`, leaving `cmd/linkcheck/main.go` a thin
+wrapper. The gate's denominator went 131 → 238 changed lines, and an uncovered
+probe in the relocated package fails it as it should. That is the pattern for
+every future command here until the tool is fixed.
+
 **A panicking observer is still swallowed** (`pkg/thresher/observer.go`).
 `deliver` contains the panic per ADR-013 §5 but has no sink to report it to, so
 a broken observer leaves no trace — the accidental-silence class ADR-022 treats

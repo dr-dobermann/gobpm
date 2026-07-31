@@ -104,13 +104,25 @@ implemented), and leaves this list.
   module (SRD-051 v.2 §4.1); recorded here so the general gap is not mistaken
   for closed.
 - **covercheck does not measure `cmd/`** — a second coverage blind spot, found
-  while adding `cmd/linkcheck` (FIX-034 §8.3). Its files are in the git diff and
-  its blocks are in `coverage.txt`, but covercheck reports nothing for them, so
-  the package's lines never reach the denominator: the gate said PASS while
-  `go test -cover ./cmd/linkcheck/` said 74.3 %. Whether it skips `cmd/` or
-  every `package main` is unknown. The tool is external
-  (`github.com/dr-dobermann/covercheck`), so this wants a reproduction and a fix
-  there, not a workaround in the Makefile.
+  while adding the link checker (FIX-034 §8.3). Files under `cmd/` are in the
+  git diff and their blocks are in `coverage.txt`, yet covercheck reports
+  nothing for them, so their lines never reach the denominator: the gate said
+  PASS while `go test -cover` on the package said 74.3 %.
+
+  **Diagnosed by experiment: it is the `cmd/` PATH, not `package main`.** A
+  non-main package placed under `cmd/`, with a test and a deliberately
+  uncovered branch, is ignored just the same; and removing the Makefile's own
+  `-exclude-paths` changes nothing. So the desirable policy — gate a command's
+  code, exclude only its untestable `main.go` — cannot be expressed from this
+  repository's configuration. It needs a fix in the external tool
+  (`github.com/dr-dobermann/covercheck`).
+
+  **Workaround already applied, and it is the pattern for future commands:**
+  put a command's logic in an ordinary package (`internal/linkcheck`) and leave
+  `cmd/<name>/main.go` a thin wrapper. Measured before and after: the gate's
+  denominator went from 131 to 238 changed lines, so ~107 lines moved from
+  unmeasured to gated, and an uncovered probe in the relocated package now
+  fails the gate as it should.
 - **No automated Markdown link check** — **DONE** (2026-07-31, FIX-034 §3.2.4).
   `cmd/linkcheck` walks the repository's Markdown and fails the gate on any
   relative link that does not resolve; it is blocking, offline and built from
