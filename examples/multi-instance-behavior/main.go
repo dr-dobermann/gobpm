@@ -43,7 +43,10 @@ func run() error {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
-	proc, err := buildProcess()
+	// Records votes and the notification in order, so the quorum claim holds.
+	log := newRunLog()
+
+	proc, err := buildProcess(log)
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
@@ -59,6 +62,19 @@ func run() error {
 
 	if _, err := h.WaitCompletion(ctx); err != nil {
 		return fmt.Errorf("wait completion: %w", err)
+	}
+
+	// Every reviewer must vote, and the notification must not fire before the
+	// quorum is actually met — a behavior that threw on the first completion
+	// would print the same line and finish the same way. It fires once per
+	// completion at or past the threshold, so the count is not fixed; what is
+	// checkable is that it never fires early.
+	if got := log.count("vote"); got != len(reviewers) {
+		return fmt.Errorf("%d reviewers voted, want %d", got, len(reviewers))
+	}
+
+	if err := log.precede("notify", "vote", quorumSize); err != nil {
+		return fmt.Errorf("quorum: %w", err)
 	}
 
 	fmt.Print("\n  completed — the board finished; the quorum notification " +

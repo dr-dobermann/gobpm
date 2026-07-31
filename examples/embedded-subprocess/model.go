@@ -13,6 +13,10 @@ import (
 )
 
 // intValue wraps an int as a process value.
+// orderID is the property the parent declares and every step must resolve by
+// walking up the scope chain — read by both the declaration and the assertion.
+const orderID = 4711
+
 func intValue(v int) data.Value { return values.NewVariable(v) }
 
 // buildProcess assembles the order flow with the fulfillment fragment as
@@ -23,7 +27,7 @@ func intValue(v int) data.Value { return values.NewVariable(v) }
 // The fragment runs in its own scope: pick/pack read the parent's
 // order-id through the walk-up, their scratch data stays scoped, and the
 // parent resumes only when the fragment drains (BPMN §13.3.4).
-func buildProcess() (*process.Process, error) {
+func buildProcess(saw *sightings) (*process.Process, error) {
 	fulfil, err := activities.NewSubProcess("fulfil")
 	if err != nil {
 		return nil, fmt.Errorf("create sub-process: %w", err)
@@ -34,12 +38,12 @@ func buildProcess() (*process.Process, error) {
 		return nil, fmt.Errorf("create f-start: %w", err)
 	}
 
-	pick, err := step("pick", "picked", 1)
+	pick, err := step(saw, "pick", "picked", 1)
 	if err != nil {
 		return nil, err
 	}
 
-	pack, err := step("pack", "", 0)
+	pack, err := step(saw, "pack", "", 0)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +62,7 @@ func buildProcess() (*process.Process, error) {
 	proc, err := process.New("embedded-subprocess",
 		data.WithProperties(
 			data.MustProperty("order-id",
-				data.MustItemDefinition(intValue(4711),
+				data.MustItemDefinition(intValue(orderID),
 					foundation.WithID("order-id")),
 				data.ReadyDataState)))
 	if err != nil {
@@ -70,12 +74,12 @@ func buildProcess() (*process.Process, error) {
 		return nil, fmt.Errorf("create start: %w", err)
 	}
 
-	accept, err := step("accept", "", 0)
+	accept, err := step(saw, "accept", "", 0)
 	if err != nil {
 		return nil, err
 	}
 
-	notify, err := step("notify", "", 0)
+	notify, err := step(saw, "notify", "", 0)
 	if err != nil {
 		return nil, err
 	}

@@ -24,12 +24,12 @@ func taxTask() (*activities.ServiceTask, error) {
 			}
 
 			amount, _ := d.Value().Get(ctx).(int)
-			withTax := amount + amount/5 // +20%
+			taxed := withTax(amount)
 
-			fmt.Printf("    order: amount=%d → withTax=%d\n", amount, withTax)
+			fmt.Printf("    order: amount=%d → withTax=%d\n", amount, taxed)
 
 			return data.MustItemDefinition(
-				values.NewVariable(withTax), foundation.WithID("withTax")), nil
+				values.NewVariable(taxed), foundation.WithID("withTax")), nil
 		})
 	if err != nil {
 		return nil, fmt.Errorf("create tax op: %w", err)

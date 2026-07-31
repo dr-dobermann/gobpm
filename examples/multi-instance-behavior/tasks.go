@@ -14,7 +14,7 @@ import (
 
 // voteTask reads the per-instance `reviewer` name and prints the vote — the work
 // each Multi-Instance body instance performs before it completes.
-func voteTask() (*activities.ServiceTask, error) {
+func voteTask(log *runLog) (*activities.ServiceTask, error) {
 	op, err := gooper.New("vote",
 		func(ctx context.Context, r service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
@@ -24,6 +24,7 @@ func voteTask() (*activities.ServiceTask, error) {
 			}
 
 			name, _ := rv.Value().Get(ctx).(string)
+			log.mark("vote")
 			fmt.Printf("    %s votes\n", name)
 
 			return nil, nil
@@ -44,6 +45,7 @@ func voteTask() (*activities.ServiceTask, error) {
 // the quorum-reached signal (catchDef), plus its notification side-flow: boundary →
 // notify → notify-end. Non-interrupting, so the board keeps running.
 func buildNotification(
+	log *runLog,
 	board *activities.SubProcess, catchDef flow.EventDefinition,
 ) (*events.BoundaryEvent, *activities.ServiceTask, *events.EndEvent, error) {
 	boundary, err := events.NewBoundaryEvent("quorum-bnd", board, catchDef, false)
@@ -54,6 +56,7 @@ func buildNotification(
 	op, err := gooper.New("notify",
 		func(_ context.Context, _ service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			log.mark("notify")
 			fmt.Println("    → quorum reached — notifying the chair")
 
 			return nil, nil

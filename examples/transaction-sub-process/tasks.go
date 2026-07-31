@@ -13,10 +13,13 @@ import (
 )
 
 // stepTask builds a booking step that prints its action when it runs.
-func stepTask(name, msg string) (*activities.ServiceTask, error) {
+func stepTask(
+	log *runLog, name, msg string,
+) (*activities.ServiceTask, error) {
 	op, err := gooper.New(name+"-op",
 		func(_ context.Context, _ service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			log.mark(name)
 			fmt.Println(msg)
 
 			return nil, nil
@@ -35,10 +38,13 @@ func stepTask(name, msg string) (*activities.ServiceTask, error) {
 
 // undoTask builds an isForCompensation handler that prints its undo action — it
 // lives outside the normal flow and runs only when the abort sweeps the ledger.
-func undoTask(name, msg string) (*activities.ServiceTask, error) {
+func undoTask(
+	log *runLog, name, msg string,
+) (*activities.ServiceTask, error) {
 	op, err := gooper.New(name+"-op",
 		func(_ context.Context, _ service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			log.mark(name)
 			fmt.Println(msg)
 
 			return nil, nil

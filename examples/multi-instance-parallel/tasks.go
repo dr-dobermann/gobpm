@@ -31,7 +31,7 @@ func scoreTask() (*activities.ServiceTask, error) {
 
 			i, _ := lc.Value().Get(ctx).(int)
 			name, _ := rv.Value().Get(ctx).(string)
-			score := 70 + i*5
+			score := scoreFor(i)
 
 			fmt.Printf("    %s scores the proposal: %d\n", name, score)
 

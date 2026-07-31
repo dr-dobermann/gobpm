@@ -13,9 +13,14 @@ import (
 )
 
 // loopedWorkTask builds a Service Task marked with a post-tested Standard Loop
+// wantPasses is how many times the post-tested loop runs — read by the loop
+// condition and by the example's own assertion, so the check cannot drift away
+// from the behaviour it checks.
+const wantPasses = 3
+
 // (loopCounter < 3): each pass reads the engine-published loopCounter and prints
 // it, so the three iterations are visible.
-func loopedWorkTask() (*activities.ServiceTask, error) {
+func loopedWorkTask(log *runLog) (*activities.ServiceTask, error) {
 	op, err := gooper.New("work",
 		func(ctx context.Context, r service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
@@ -24,6 +29,7 @@ func loopedWorkTask() (*activities.ServiceTask, error) {
 				return nil, err
 			}
 
+			log.mark(fmt.Sprint(d.Value().Get(ctx)))
 			fmt.Printf("    iteration: loopCounter=%v\n", d.Value().Get(ctx))
 
 			return nil, nil
@@ -32,7 +38,7 @@ func loopedWorkTask() (*activities.ServiceTask, error) {
 		return nil, fmt.Errorf("create work op: %w", err)
 	}
 
-	loop, err := activities.NewStandardLoop(loopCounterBelow(3))
+	loop, err := activities.NewStandardLoop(loopCounterBelow(wantPasses))
 	if err != nil {
 		return nil, fmt.Errorf("create standard loop: %w", err)
 	}

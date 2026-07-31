@@ -10,7 +10,7 @@ import (
 
 // buildProcess assembles start → work → end, where work is a Service Task
 // marked with a post-tested Standard Loop that runs while loopCounter < 3.
-func buildProcess() (*process.Process, error) {
+func buildProcess(log *runLog) (*process.Process, error) {
 	proc, err := process.New("standard-loop")
 	if err != nil {
 		return nil, fmt.Errorf("create process: %w", err)
@@ -21,7 +21,7 @@ func buildProcess() (*process.Process, error) {
 		return nil, fmt.Errorf("create start: %w", err)
 	}
 
-	work, err := loopedWorkTask()
+	work, err := loopedWorkTask(log)
 	if err != nil {
 		return nil, err
 	}

@@ -20,7 +20,7 @@ import (
 // The triage container holds four activities and NO sequence flows between
 // them — an Ad-Hoc Sub-Process is exactly that: work whose order the model
 // declines to fix. What runs, and when, is the Router's answer.
-func buildProcess(severity string) (*process.Process, error) {
+func buildProcess(log *runLog, severity string) (*process.Process, error) {
 	proc, err := process.New("incident-triage",
 		data.WithProperties(
 			data.MustProperty("severity",
@@ -52,7 +52,7 @@ func buildProcess(severity string) (*process.Process, error) {
 		{"escalate", "paged the on-call engineer"},
 		{"close-incident", "closed the incident"},
 	} {
-		task, terr := reportTask(step.name, step.says)
+		task, terr := reportTask(log, step.name, step.says)
 		if terr != nil {
 			return nil, terr
 		}
@@ -86,10 +86,13 @@ func buildProcess(severity string) (*process.Process, error) {
 
 // reportTask builds a Service Task that announces what it did. Inside an ad-hoc
 // container the activities are ordinary tasks — only their succession differs.
-func reportTask(name, says string) (*activities.ServiceTask, error) {
+func reportTask(
+	log *runLog, name, says string,
+) (*activities.ServiceTask, error) {
 	op, err := gooper.New(name,
 		func(_ context.Context, _ service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			log.mark(name)
 			fmt.Printf("    ▶ %s: %s\n", name, says)
 
 			return nil, nil

@@ -17,7 +17,7 @@ func buildProcess() (*process.Process, error) {
 	proc, err := process.New("multi-instance-parallel",
 		data.WithProperties(data.MustProperty("reviewers",
 			data.MustItemDefinition(
-				values.NewArray("Ann", "Bob", "Cara", "Dan"),
+				values.NewArray(reviewerList()...),
 				foundation.WithID("reviewers")),
 			data.ReadyDataState)))
 	if err != nil {

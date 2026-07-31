@@ -12,13 +12,17 @@ import (
 )
 
 // buildProcess wires start → board → end and attaches a non-interrupting boundary
+// reviewers are the board members the Multi-Instance fans out over — one vote
+// each, so the example knows exactly how many votes to expect.
+var reviewers = [3]string{"Ann", "Bob", "Cara"}
+
 // to the board that catches the "quorum-reached" behavior signal and runs a
 // notification side-flow (boundary → notify → notify-end).
-func buildProcess() (*process.Process, error) {
+func buildProcess(log *runLog) (*process.Process, error) {
 	proc, err := process.New("multi-instance-behavior",
 		data.WithProperties(data.MustProperty("reviewers",
 			data.MustItemDefinition(
-				values.NewArray("Ann", "Bob", "Cara"),
+				values.NewArray(reviewers[0], reviewers[1], reviewers[2]),
 				foundation.WithID("reviewers")),
 			data.ReadyDataState)))
 	if err != nil {
@@ -30,7 +34,7 @@ func buildProcess() (*process.Process, error) {
 		return nil, fmt.Errorf("create start: %w", err)
 	}
 
-	board, catchDef, err := buildBoard()
+	board, catchDef, err := buildBoard(log)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +44,7 @@ func buildProcess() (*process.Process, error) {
 		return nil, fmt.Errorf("create end: %w", err)
 	}
 
-	boundary, notify, notifyEnd, err := buildNotification(board, catchDef)
+	boundary, notify, notifyEnd, err := buildNotification(log, board, catchDef)
 	if err != nil {
 		return nil, err
 	}
