@@ -269,9 +269,6 @@ const (
 	AttrParentInstanceID   = "parent_instance_id"
 	AttrCallActivityNodeID = "call_activity_node_id"
 
-	// Call-activity facts (SRD-050 FR-10): emitted by the caller — the called
-	// process key, the RESOLVED version bound (the latest-at-launch audit
-	// point), and the launched child instance id.
 	// Ad-Hoc routing (SRD-074 §3.6). AttrCandidates is the comma-joined inner
 	// activity ids one Router answer offered — an EMPTY value is meaningful: the
 	// Router was consulted and chose to stop, which is not the same as never
@@ -283,9 +280,18 @@ const (
 	AttrSelectedBy = "selected_by"
 	AttrStopReason = "stop_reason"
 
+	// Call-activity facts (SRD-050 FR-10): emitted by the caller — the called
+	// process key, the RESOLVED version bound (the latest-at-launch audit
+	// point), and the launched child instance id.
 	AttrCalledKey       = "called_key"
 	AttrCalledVersion   = "called_version"
 	AttrChildInstanceID = "child_instance_id"
+
+	// AttrObserverType names the concrete Go type of a host observer whose
+	// OnFact panicked (FIX-035). The type is the only handle the engine has on
+	// it: an observer is a host-supplied value the engine assigns no id, so
+	// there is nothing more specific to report it by.
+	AttrObserverType = "observer_type"
 )
 
 // Fact is the canonical observable engine event (ADR-013 v.2 §2.6/§2.9): a

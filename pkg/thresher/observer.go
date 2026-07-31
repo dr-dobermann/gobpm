@@ -1,6 +1,8 @@
 package thresher
 
 import (
+	"fmt"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 
@@ -22,14 +24,24 @@ type Observer = observability.Observer
 
 // Subscription is a live observer registration on a Fact stream.
 type Subscription struct {
-	cancel  func()
-	dropped *atomic.Uint64
+	cancel   func()
+	dropped  *atomic.Uint64
+	panicked *atomic.Uint64
 }
 
 // Dropped reports how many Facts were dropped because the observer fell behind
 // the buffer (SRD-018 FR-9). Best-effort, monotonic.
 func (s *Subscription) Dropped() uint64 {
 	return s.dropped.Load()
+}
+
+// Panicked reports how many times this observer's OnFact panicked and was
+// contained (ADR-013 v.2 §5). Best-effort, monotonic — the companion to
+// Dropped(), and the two mean different things: a non-zero Dropped means the
+// engine outran the observer, a non-zero Panicked means the observer itself is
+// broken and its Facts were never processed.
+func (s *Subscription) Panicked() uint64 {
+	return s.panicked.Load()
 }
 
 // Cancel deregisters the observer and drains any buffered Facts, then stops the
@@ -42,19 +54,26 @@ func (s *Subscription) Cancel() {
 // Delivery is best-effort and lossy: Facts are buffered per observer and drained
 // by one goroutine; if the observer is slower than the buffer, the excess is
 // dropped (Subscription.Dropped) and the engine never blocks. A panicking OnFact
-// is recovered. Cancel the returned Subscription to stop observing. The delivered
-// Fact already carries instance_id in its Details (stamped by the instance).
+// is recovered, logged and counted (Subscription.Panicked). Cancel the returned
+// Subscription to stop observing. The delivered Fact already carries instance_id
+// in its Details (stamped by the instance).
 func (h *InstanceHandle) Observe(o Observer) *Subscription {
 	ch := make(chan observability.Fact, observerBuffer)
 	done := make(chan struct{})
 
-	var dropped atomic.Uint64
+	var dropped, panicked atomic.Uint64
+
+	// The logger is engine-level and stable across an instance rebuild, so it is
+	// captured once here rather than re-read from the (swappable) instance on
+	// every delivery. It is never nil: WithLogger rejects nil and the default is
+	// slog.Default() (ADR-002 v.2's visible-by-default posture).
+	log := h.current().Logger()
 
 	go func() {
 		defer close(done)
 
 		for f := range ch {
-			deliver(o, f)
+			deliverObserved(log, o, f, &panicked)
 		}
 	}()
 
@@ -83,7 +102,8 @@ func (h *InstanceHandle) Observe(o Observer) *Subscription {
 	var once sync.Once
 
 	return &Subscription{
-		dropped: &dropped,
+		dropped:  &dropped,
+		panicked: &panicked,
 		cancel: func() {
 			once.Do(func() {
 				// Deregister first: AddObserver's cancel takes the instance's
@@ -99,13 +119,75 @@ func (h *InstanceHandle) Observe(o Observer) *Subscription {
 }
 
 // deliver calls the observer, containing any panic so one bad observer cannot
-// crash the drain goroutine or affect others (ADR-013 §5).
-func deliver(o Observer, f observability.Fact) {
-	// The panic is contained so one bad observer cannot crash the drain or
-	// affect the others (ADR-013 §5); the recovered value is deliberately
-	// dropped because deliver has no sink to report it to. Surfacing it is
-	// worth doing — see FIX-034 §8.3.
-	defer func() { _ = recover() }() //nolint:errcheck // deliberate containment
+// crash the drain goroutine or affect others (ADR-013 v.2 §5), and RETURNING
+// what it recovered so the caller can report it. A nil recovered value means
+// OnFact returned normally: since Go 1.21 a panic(nil) is recovered as a
+// non-nil *runtime.PanicNilError, and every module pins toolchain go1.25.12, so
+// nil is an unambiguous "no panic" rather than a lost one.
+//
+// The stack is captured only when wantStack is set. A broken observer panics on
+// every Fact, and debug.Stack formats the whole goroutine stack, so paying for
+// it per delivery would be a hot-path cost for information the first record
+// already carries (FIX-035 §3.1.D).
+func deliver(
+	o Observer, f observability.Fact, wantStack bool,
+) (recovered any, stack []byte) {
+	defer func() {
+		if r := recover(); r != nil {
+			recovered = r
+
+			if wantStack {
+				stack = debug.Stack()
+			}
+		}
+	}()
 
 	o.OnFact(f)
+
+	return nil, nil
+}
+
+// deliverObserved calls o.OnFact under panic containment and records any panic,
+// completing ADR-013 v.2 §5's drop-with-WARNING (the recover and the drop landed
+// with SRD-018; the warning did not, so a broken observer was indistinguishable
+// from a working one).
+//
+// The FIRST panic per subscription logs at Warn with a stack; later ones log at
+// Debug; every one increments panicked, which Subscription.Panicked() exposes.
+// Two ADR-022 v.1 §2.4 rules fix that shape: Error is reserved for failures that
+// affected ENGINE state, and a contained observer panic affects none — Warn is
+// the "degraded but continuing" level. And its hot-path corollary forbids any
+// per-event record above Debug, so bounding the Warn to one per subscription is
+// what makes the loud record legitimate at all. The counter, not the log, is the
+// authority on how often it happened.
+func deliverObserved(
+	log observability.Logger,
+	o Observer,
+	f observability.Fact,
+	panicked *atomic.Uint64,
+) {
+	first := panicked.Load() == 0
+
+	r, stack := deliver(o, f, first)
+	if r == nil {
+		return
+	}
+
+	panicked.Add(1)
+
+	// two identity pairs, plus the stack pair the Warn branch appends.
+	args := make([]any, 0, 6)
+	args = append(args,
+		observability.AttrObserverType, fmt.Sprintf("%T", o),
+		observability.AttrError, fmt.Sprint(r),
+	)
+
+	if !first {
+		log.Debug("observer panicked", args...)
+
+		return
+	}
+
+	log.Warn("observer panicked; its Facts are lost until it is fixed",
+		append(args, "stack", string(stack))...)
 }

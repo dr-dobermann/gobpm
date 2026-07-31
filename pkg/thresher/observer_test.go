@@ -3,6 +3,8 @@ package thresher_test
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -182,4 +184,146 @@ func TestObserverPanicRecovered(t *testing.T) {
 
 	require.True(t, c.sawCompleted(),
 		"a healthy observer still receives events despite a panicking peer")
+}
+
+// warnCapture is a minimal slog.Handler that counts observer-panic Warn records
+// and keeps the first one's attributes. The internal tests own the level policy
+// in detail; this exists so the END-TO-END tests can prove the record actually
+// reaches the engine-configured logger through a real Observe registration.
+type warnCapture struct {
+	first map[string]string
+	mu    sync.Mutex
+	warns int
+}
+
+func (w *warnCapture) Enabled(_ context.Context, l slog.Level) bool {
+	return l >= slog.LevelWarn
+}
+
+func (w *warnCapture) WithAttrs([]slog.Attr) slog.Handler { return w }
+
+func (w *warnCapture) WithGroup(string) slog.Handler { return w }
+
+func (w *warnCapture) Handle(_ context.Context, r slog.Record) error {
+	if !strings.HasPrefix(r.Message, "observer panicked") {
+		return nil
+	}
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.warns++
+
+	if w.first == nil {
+		w.first = map[string]string{}
+		r.Attrs(func(a slog.Attr) bool {
+			w.first[a.Key] = a.Value.String()
+
+			return true
+		})
+	}
+
+	return nil
+}
+
+func (w *warnCapture) count() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	return w.warns
+}
+
+func (w *warnCapture) attrs() map[string]string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	return w.first
+}
+
+// runEngineWithLogger mirrors runEngine with the engine's logger replaced, so a
+// test can read what the engine actually wrote.
+func runEngineWithLogger(
+	t *testing.T, proc *process.Process, log *slog.Logger,
+) (*thresher.Thresher, context.CancelFunc) {
+	t.Helper()
+
+	th, err := thresher.New("test-log-"+proc.ID(), thresher.WithLogger(log))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	require.NoError(t, th.Run(ctx))
+	_, err = th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	return th, cancel
+}
+
+// TestObserverPanicIsReported (FIX-035 §1.1): a panicking observer registered on
+// an INSTANCE HANDLE is no longer silent — the engine's own logger receives the
+// bounded Warn, and the subscription counts the panics. This is the half ADR-013
+// v.2 §5 prescribed ("drop-with-warning") and SRD-018 left unbuilt.
+func TestObserverPanicIsReported(t *testing.T) {
+	proc := linearProcess(t, "obs-panic-log", 300*time.Millisecond)
+	wc := &warnCapture{}
+	th, cancel := runEngineWithLogger(t, proc, slog.New(wc))
+
+	defer cancel()
+
+	h, err := th.StartLatest(proc.ID())
+	require.NoError(t, err)
+
+	psub := h.Observe(panicObserver{})
+
+	ctx, cc := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cc()
+
+	state, err := h.WaitCompletion(ctx)
+	require.NoError(t, err)
+	require.Equal(t, thresher.StateCompleted, state)
+
+	psub.Cancel() // drains, so every delivery has been attempted
+
+	require.Positive(t, psub.Panicked(),
+		"the subscription counts the contained panics")
+	require.Equal(t, 1, wc.count(),
+		"exactly one Warn regardless of how many Facts the instance emitted")
+
+	attrs := wc.attrs()
+	require.Equal(t, "thresher_test.panicObserver",
+		attrs[observability.AttrObserverType],
+		"the record names the host's broken type — reachable via the logger "+
+			"promoted from the embedded EngineRuntime")
+	require.Equal(t, "observer boom", attrs[observability.AttrError])
+	require.NotEmpty(t, attrs["stack"])
+}
+
+// TestObserverPanickedCounterIsPerSubscription (FIX-035 §3.2.3): Panicked() is
+// the companion to Dropped() and, like it, is scoped to ONE registration — a
+// broken observer must not make a healthy peer look broken.
+func TestObserverPanickedCounterIsPerSubscription(t *testing.T) {
+	proc := linearProcess(t, "obs-panic-count", 300*time.Millisecond)
+	th, cancel := runEngine(t, proc)
+
+	defer cancel()
+
+	h, err := th.StartLatest(proc.ID())
+	require.NoError(t, err)
+
+	psub := h.Observe(panicObserver{})
+	c := &collector{}
+	csub := h.Observe(c)
+
+	ctx, cc := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cc()
+
+	_, err = h.WaitCompletion(ctx)
+	require.NoError(t, err)
+
+	psub.Cancel()
+	csub.Cancel()
+
+	require.Positive(t, psub.Panicked(), "the broken observer is counted")
+	require.Zero(t, csub.Panicked(), "the healthy peer is not")
+	require.Zero(t, csub.Dropped(),
+		"and Panicked is a distinct signal from Dropped")
 }
