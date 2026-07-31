@@ -17,7 +17,7 @@ import (
 	_ "embed"
 	"fmt"
 	"log"
-	"os"
+	"strings"
 	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/convert"
@@ -88,11 +88,41 @@ func run() error {
 
 	fmt.Println("--- exported BPMN ---")
 
-	if err := convert.Export(ctx, convert.BPMN, os.Stdout, p); err != nil {
+	// Exported into a buffer first, so the XML can be CHECKED before it is
+	// shown. Writing straight to stdout meant an exporter that emitted an
+	// empty definitions element — or dropped the flows between the nodes —
+	// printed something plausible and exited 0.
+	var bpmn bytes.Buffer
+
+	if err := convert.Export(ctx, convert.BPMN, &bpmn, p); err != nil {
 		return fmt.Errorf("export: %w", err)
 	}
 
-	fmt.Println()
+	if err := checkExport(bpmn.String()); err != nil {
+		return fmt.Errorf("exported BPMN: %w", err)
+	}
+
+	fmt.Println(bpmn.String())
+
+	return nil
+}
+
+// checkExport requires the exported XML to carry every element of the process
+// that was built — each node by id and name, and each sequence flow with the
+// pair of nodes it connects. A round-trip of the model is the whole point of
+// the exporter, so anything missing here is a silent loss.
+func checkExport(xml string) error {
+	for _, want := range []string{
+		`<bpmn:startEvent id="s1" name="start">`,
+		`<bpmn:task id="t1" name="work">`,
+		`<bpmn:endEvent id="e1" name="done">`,
+		`<bpmn:sequenceFlow id="f1" sourceRef="s1" targetRef="t1">`,
+		`<bpmn:sequenceFlow id="f2" sourceRef="t1" targetRef="e1">`,
+	} {
+		if !strings.Contains(xml, want) {
+			return fmt.Errorf("missing %s", want)
+		}
+	}
 
 	return nil
 }
