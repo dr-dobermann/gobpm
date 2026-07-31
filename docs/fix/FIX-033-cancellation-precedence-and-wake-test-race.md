@@ -1,7 +1,7 @@
 # FIX-033 «A canceled instance can settle Completed, and the wake-retry tests race their own engine»
 
 **Type:** FIX (one-shot bug-fix; not rewritten after landing).
-**Status:** Draft (2026-07-31, branch `fix/termination-and-wake-races`, not yet implemented).
+**Status:** Accepted (2026-07-31, branch `fix/termination-and-wake-races`).
 **Date:** 2026-07-31.
 **Author:** Ruslan Gabitov.
 **Branch:** `fix/termination-and-wake-races` (both symptoms are races surfaced by the same 2026-07-30 sweep; the name covers the terminal-state race and the wake-retry test race).
@@ -309,12 +309,19 @@ th.timerSvc = newTimerService(clk, backoff, th.hydrateFromTimer)
 return th, clk, func() {}
 ```
 
-Nothing else in these tests needs a running engine: they use
+None of the five firing tests needs a running engine: they use
 `th.cfg.Repository()` (available without `Run`), `th.HoldTimer` (needs only a
 non-nil `timerSvc`, `wake.go:31`), and the service's own `fireDue` / `nearest`.
 Restart recovery is not skipped in any meaningful sense either — every test
 seeds its record *after* the harness returns, so a `Run` would have found an
 empty store.
+
+**One carve-out, found while implementing:** `TestFailedRebuildKeepsTheSubscriptionSet`
+DOES need a started engine — `HoldSubscription` rejects a thresher that has not
+started (`thresher is not started`, `INVALID_OBJECT_STATE`). It gets its own
+`startedEngine` harness. It never advances the clock past a deadline and never
+fires a hold, so a live service has nothing to race it for; the split is what
+keeps the single-firer property where it matters.
 
 #### §3.2.4 `docs/backlog.md` — both entries graduate out
 
@@ -431,16 +438,47 @@ holds the line.
 
 ## §8 Implementation summary
 
-> ⚠️ TODO: fill AFTER landing.
-
-### §8.1 Stages by commit
+### §8.1 Stages by commit (branch `fix/termination-and-wake-races`)
 
 | Stage | Commit | Scope | Tests |
 |---|---|---|---|
+| doc | `ab6e1d1` | this document | — |
+| M1 | `ba063af` | `loop.go` cancellation poll; `adr1_gate_test.go` | `TestTerminatedOnPreCanceledContext` strengthened, `TestTerminatedWhenCancelRacesPendingEvents` added |
+| M2 | `9376dd1` | `wake_retry_test.go` harness split | 5 firing tests + `startedEngine` carve-out, unchanged bodies |
+| M3 | this commit | backlog graduation, §8 | — |
 
 ### §8.2 Empirical findings — where reality diverged from the §3 draft
 
+**The A canary cannot detect the defect returning, and this was measured, not
+assumed.** With the poll removed, **2000 fork instances settled `Terminated`
+every time** — zero reproductions. Combined with the 7,200 pre-fix attempts in
+§1.1, the conclusion is that the window (tracks emitting before the loop
+reaches its first `select`) is far narrower on this hardware than the original
+1-in-1000 observation implies. The test therefore pins the post-fix guarantee —
+which IS deterministic, because the poll runs before any event can be applied —
+but it does not guard against a regression. Recorded in the test's own doc
+comment and in §4.1.2, because a canary trusted to catch something it cannot is
+worse than no canary at all.
+
+**§3.2.3's "nothing else needs a running engine" was wrong for one test.**
+`TestFailedRebuildKeepsTheSubscriptionSet` calls `HoldSubscription`, which
+rejects an unstarted thresher outright. Found by running the suite, not by
+reading it — the draft had checked `HoldTimer`'s precondition and generalised.
+Fixed by splitting the harness rather than by starting the engine for
+everyone, which would have reintroduced the second firer for the tests that
+actually fire.
+
+**Verification tooling.** The repo's `go test` is rtk-proxied and prints only a
+summary line, so a run that executed **zero** tests reports as "300 passed" —
+which it did, once, during the §1.1 reproduction, until the wrong worktree was
+noticed. Every measurement in this FIX was therefore taken with
+`rtk proxy go test … -v` and the `=== RUN` / `--- PASS` / `--- FAIL` /
+`DATA RACE` lines counted directly.
+
 ### §8.3 Backlog (out of FIX-033 scope)
+
+None. Both backlog entries this FIX diagnosed are removed by M3; no new item is
+spun off.
 
 ## §9 Open questions
 
