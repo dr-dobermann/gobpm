@@ -29,7 +29,7 @@ const (
 // Event-Based gateway: the gate has no incoming flow, so the FIRST of its two
 // correlated messages creates the instance and the other re-arms keyed to it;
 // the instance completes only once BOTH have arrived (BPMN §13.2).
-func buildProcess() (*process.Process, error) {
+func buildProcess(ran *pathSet) (*process.Process, error) {
 	proc, err := process.New("order-fulfillment")
 	if err != nil {
 		return nil, fmt.Errorf("new process: %w", err)
@@ -58,13 +58,13 @@ func buildProcess() (*process.Process, error) {
 		return nil, err
 	}
 
-	recordOrder, err := printTask("record-order",
+	recordOrder, err := printTask(ran, "record-order",
 		"  ✓ order placed   → recorded")
 	if err != nil {
 		return nil, err
 	}
 
-	recordPay, err := printTask("record-payment",
+	recordPay, err := printTask(ran, "record-payment",
 		"  ✓ payment received → recorded")
 	if err != nil {
 		return nil, err
@@ -175,10 +175,14 @@ func messageCatch(
 	return ice, nil
 }
 
-func printTask(id, msg string) (*activities.ServiceTask, error) {
+func printTask(
+	ran *pathSet, id, msg string,
+) (*activities.ServiceTask, error) {
 	op, err := gooper.New(id,
 		func(_ context.Context, _ service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			ran.mark(id)
+
 			fmt.Println(msg)
 
 			return nil, nil

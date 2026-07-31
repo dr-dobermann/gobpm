@@ -9,11 +9,16 @@ import (
 )
 
 // buildBoard builds the parallel Multi-Instance review board: one instance per
+// quorumSize is how many votes the Complex behavior waits for before throwing
+// "quorum-reached" — read by the behavior condition and by the example's own
+// assertion, so the check cannot drift from the behaviour it checks.
+const quorumSize = 2
+
 // reviewer, all voting concurrently. A Complex behavior throws a "quorum-reached"
 // signal on every completion once numberOfCompletedInstances ≥ 2. It returns the
 // board and the signal definition the boundary catches (the same signal, matched by
 // name).
-func buildBoard() (*activities.SubProcess, flow.EventDefinition, error) {
+func buildBoard(log *runLog) (*activities.SubProcess, flow.EventDefinition, error) {
 	sig, err := events.NewSignal("quorum-reached", nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create signal: %w", err)
@@ -34,7 +39,7 @@ func buildBoard() (*activities.SubProcess, flow.EventDefinition, error) {
 		return nil, nil, fmt.Errorf("create implicit throw: %w", err)
 	}
 
-	cbd, err := activities.NewComplexBehaviorDefinition(completedAtLeast(2), quorum)
+	cbd, err := activities.NewComplexBehaviorDefinition(completedAtLeast(quorumSize), quorum)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create complex behavior: %w", err)
 	}
@@ -57,7 +62,7 @@ func buildBoard() (*activities.SubProcess, flow.EventDefinition, error) {
 		return nil, nil, fmt.Errorf("create b-start: %w", err)
 	}
 
-	vote, err := voteTask()
+	vote, err := voteTask(log)
 	if err != nil {
 		return nil, nil, err
 	}

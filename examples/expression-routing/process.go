@@ -14,18 +14,18 @@ import (
 // buildProcess assembles the order flow — the expression layer at THREE
 // consumer sites, two engines mixed with zero extra registration:
 //
-//	start → [intake] ─ lite ───→ (XOR) ─ lite ────→ [urgent] → [approve] → end
-//	            │                  └─── default ──→ [standard] → end
-//	            └───── goexpr ─→ [fx-audit] → end
+//		start → [intake] ─ lite ───→ (XOR) ─ lite ────→ [urgent] → [approve] → end
+//		            │                  └─── default ──→ [standard] → end
+//		            └───── goexpr ─→ [fx-audit] → end
 //
-//   - SITE 1, task flows: intake's outgoing flows mix a gobpm:lite TEXT
-//     condition with a ##GoExpr functor condition — one selection point,
-//     each expression routed to its own engine;
-//   - SITE 2, the gateway: the XOR branches on a lite time() comparison
-//     against the deadline, with a default flow;
-//   - SITE 3, user-task authorization: approve's assignee is computed by
-//     a lite string expression (tasks.go).
-func buildProcess() (*process.Process, error) {
+//	  - SITE 1, task flows: intake's outgoing flows mix a gobpm:lite TEXT
+//	    condition with a ##GoExpr functor condition — one selection point,
+//	    each expression routed to its own engine;
+//	  - SITE 2, the gateway: the XOR branches on a lite time() comparison
+//	    against the deadline, with a default flow;
+//	  - SITE 3, user-task authorization: approve's assignee is computed by
+//	    a lite string expression (tasks.go).
+func buildProcess(ran *pathSet) (*process.Process, error) {
 	props, err := orderData()
 	if err != nil {
 		return nil, err
@@ -42,12 +42,12 @@ func buildProcess() (*process.Process, error) {
 		return nil, fmt.Errorf("start: %w", err)
 	}
 
-	intake, err := printTask("intake", "  ▶ intake: checking the order")
+	intake, err := printTask(ran, "intake", "  ▶ intake: checking the order")
 	if err != nil {
 		return nil, err
 	}
 
-	fxAudit, err := printTask("fx-audit",
+	fxAudit, err := printTask(ran, "fx-audit",
 		`  ▶ fx-audit: rates["EUR"] < 1.2 (the ##GoExpr functor lane)`)
 	if err != nil {
 		return nil, err
@@ -58,13 +58,13 @@ func buildProcess() (*process.Process, error) {
 		return nil, fmt.Errorf("gateway: %w", err)
 	}
 
-	urgent, err := printTask("urgent",
+	urgent, err := printTask(ran, "urgent",
 		"  ▶ urgent: the deadline is near (the lite time() branch)")
 	if err != nil {
 		return nil, err
 	}
 
-	standard, err := printTask("standard",
+	standard, err := printTask(ran, "standard",
 		"  ▶ standard: no rush (the gateway's default flow)")
 	if err != nil {
 		return nil, err

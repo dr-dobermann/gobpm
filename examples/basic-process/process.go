@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -16,13 +17,17 @@ import (
 )
 
 // buildProcess assembles start → work(greet) → end, with a process-level
+// userName is the property value the ServiceTask reads back — declared once
+// and read by both the process data and the check, so they cannot drift.
+const userName = "dr.Dobermann"
+
 // "user_name" property the ServiceTask reads at runtime.
 func buildProcess() (*process.Process, error) {
 	proc, err := process.New("basic-process",
 		data.WithProperties(
 			data.MustProperty("user_name",
 				data.MustItemDefinition(
-					values.NewVariable("dr.Dobermann"),
+					values.NewVariable(userName),
 					foundation.WithID("user_name")),
 				data.ReadyDataState)))
 	if err != nil {
@@ -84,8 +89,24 @@ func greetOp() (service.Operation, error) {
 				return nil, fmt.Errorf("read RUNTIME/STARTED_AT: %w", err)
 			}
 
+			// Both reads are the demonstration — a declared property and an
+			// engine-published RUNTIME variable — so both are checked. A
+			// property that resolved to nothing, or a RUNTIME var that came
+			// back zero, would print a odd-looking line and complete.
+			if got := user.Value().Get(ctx); got != userName {
+				return nil, fmt.Errorf("user_name = %v, want %q",
+					got, userName)
+			}
+
+			at, ok := started.Value().Get(ctx).(time.Time)
+			if !ok || at.IsZero() {
+				return nil, fmt.Errorf(
+					"RUNTIME/STARTED_AT = %v, want a real start time",
+					started.Value().Get(ctx))
+			}
+
 			fmt.Printf("  ▶ hello, %v (instance started at %v)\n",
-				user.Value().Get(ctx), started.Value().Get(ctx))
+				user.Value().Get(ctx), at)
 
 			return nil, nil
 		})

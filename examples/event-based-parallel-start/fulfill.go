@@ -15,7 +15,8 @@ const orderID = "ORD-7"
 // fulfill publishes the two correlated messages and waits for the event-born
 // instance (no StartProcess — the gate instantiates) to complete on both.
 func fulfill(
-	ctx context.Context, engine *thresher.Thresher, broker *membroker.Broker,
+	ctx context.Context, engine *thresher.Thresher,
+	broker *membroker.Broker, ran *pathSet,
 ) error {
 	fmt.Println("publishing 'order placed' (creates the instance)...")
 
@@ -41,6 +42,15 @@ func fulfill(
 	state, err := h.WaitCompletion(ctx)
 	if err != nil {
 		return fmt.Errorf("waiting for completion: %w", err)
+	}
+
+	// The claim is that ONE instance handled BOTH messages: if the second
+	// message had created a second instance instead of re-arming this one,
+	// this instance would still complete and the run would still exit 0.
+	if err := ran.check(
+		[]string{"record-order", "record-payment"}, nil,
+	); err != nil {
+		return fmt.Errorf("parallel instantiation: %w", err)
 	}
 
 	fmt.Printf("✓ order-fulfillment completed (%s): one instance, born by the "+

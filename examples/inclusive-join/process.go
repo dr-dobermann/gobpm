@@ -27,7 +27,7 @@ import (
 // The Inclusive split forks every branch whose condition is true (the true
 // subset); the Inclusive join waits for exactly that subset — a never-taken
 // branch is found unreachable and does not stall it — then continues once.
-func buildProcess(amount int) (*process.Process, error) {
+func buildProcess(amount int, ran *pathSet) (*process.Process, error) {
 	proc, err := process.New("order-or-diamond",
 		data.WithProperties(
 			data.MustProperty("amount",
@@ -56,22 +56,22 @@ func buildProcess(amount int) (*process.Process, error) {
 		return nil, fmt.Errorf("create OR-join: %w", err)
 	}
 
-	mgr, err := printTask("manager-review", "  ▶ amount > 1000 → manager review")
+	mgr, err := printTask(ran, "manager-review", "  ▶ amount > 1000 → manager review")
 	if err != nil {
 		return nil, err
 	}
 
-	fraud, err := printTask("fraud-check", "  ▶ amount > 500 → fraud check")
+	fraud, err := printTask(ran, "fraud-check", "  ▶ amount > 500 → fraud check")
 	if err != nil {
 		return nil, err
 	}
 
-	fast, err := printTask("fast-track", "  ▶ amount < 100 → fast-tracked")
+	fast, err := printTask(ran, "fast-track", "  ▶ amount < 100 → fast-tracked")
 	if err != nil {
 		return nil, err
 	}
 
-	finalize, err := printTask("finalize", "  ✓ branches merged → order finalized")
+	finalize, err := printTask(ran, "finalize", "  ✓ branches merged → order finalized")
 	if err != nil {
 		return nil, err
 	}
@@ -162,10 +162,14 @@ func amountCond(pred func(a int) bool) data.FormalExpression {
 }
 
 // printTask builds a ServiceTask whose Go functor prints msg.
-func printTask(name, msg string) (*activities.ServiceTask, error) {
+func printTask(
+	ran *pathSet, name, msg string,
+) (*activities.ServiceTask, error) {
 	op, err := gooper.New(name,
 		func(_ context.Context, _ service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			ran.mark(name)
+
 			fmt.Println(msg)
 
 			return nil, nil

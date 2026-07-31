@@ -59,7 +59,7 @@ func buildCallee() (*process.Process, error) {
 
 // buildCaller assembles start → checkout[calls tax-calc] → show → end, seeding
 // "subtotal" and reading the child's "total" back.
-func buildCaller(subtotal int) (*process.Process, error) {
+func buildCaller(got *seen, subtotal int) (*process.Process, error) {
 	p, err := process.New("checkout",
 		data.WithProperties(prop("subtotal", subtotal)))
 	if err != nil {
@@ -78,7 +78,7 @@ func buildCaller(subtotal int) (*process.Process, error) {
 		return nil, err
 	}
 
-	show, err := showTask()
+	show, err := showTask(got)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +88,7 @@ func buildCaller(subtotal int) (*process.Process, error) {
 
 // showTask builds the ServiceTask that prints the child's "total" the loop
 // committed into the caller's scope.
-func showTask() (*activities.ServiceTask, error) {
+func showTask(got *seen) (*activities.ServiceTask, error) {
 	op, err := gooper.New("show",
 		func(ctx context.Context, ds service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
@@ -97,7 +97,10 @@ func showTask() (*activities.ServiceTask, error) {
 				return nil, err
 			}
 
-			fmt.Printf("  ✓ caller sees total=%v\n", d.Value().Get(ctx))
+			total := d.Value().Get(ctx)
+			got.record(total)
+
+			fmt.Printf("  ✓ caller sees total=%v\n", total)
 
 			return nil, nil
 		})

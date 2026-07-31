@@ -23,7 +23,7 @@ const processKey = "greeter"
 // buildGreeter builds a trivial start → service task → end process whose task
 // prints the given release label, so the console shows WHICH version ran when a
 // version is later addressed by latest / number / handle.
-func buildGreeter(label string) (*process.Process, error) {
+func buildGreeter(ran *ranVersion, label string) (*process.Process, error) {
 	proc, err := process.New("greeter", foundation.WithID(processKey))
 	if err != nil {
 		return nil, fmt.Errorf("create process: %w", err)
@@ -34,7 +34,7 @@ func buildGreeter(label string) (*process.Process, error) {
 		return nil, fmt.Errorf("create start: %w", err)
 	}
 
-	op, err := greetOp(label)
+	op, err := greetOp(ran, label)
 	if err != nil {
 		return nil, fmt.Errorf("create operation: %w", err)
 	}
@@ -68,10 +68,11 @@ func buildGreeter(label string) (*process.Process, error) {
 
 // greetOp returns a Go operation that prints the release label of the running
 // version.
-func greetOp(label string) (service.Operation, error) {
+func greetOp(ran *ranVersion, label string) (service.Operation, error) {
 	return gooper.New("greet",
 		func(_ context.Context, _ service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			ran.record(label)
 			fmt.Printf("      ▶ [%s] hello from the greeter\n", label)
 
 			return nil, nil

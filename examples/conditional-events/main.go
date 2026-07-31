@@ -50,7 +50,10 @@ func run() error {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
-	proc, err := buildProcess()
+	// Records whether the conditional catch actually fired.
+	ran := newPathSet()
+
+	proc, err := buildProcess(ran)
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
@@ -72,6 +75,14 @@ func run() error {
 	// Cancel drains the buffered facts so the fire line lands before the
 	// final status prints.
 	sub.Cancel()
+
+	// notify sits behind the conditional catch, so it runs only if the
+	// condition observed the false→true edge. A catch that never fired would
+	// leave its branch parked — and the process would still complete through
+	// the sibling branch's end event.
+	if err := ran.check([]string{"notify"}, nil); err != nil {
+		return fmt.Errorf("conditional catch: %w", err)
+	}
 
 	fmt.Printf("  ✓ completed (%s)\n", state)
 

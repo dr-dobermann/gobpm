@@ -27,7 +27,7 @@ import (
 // activation rule [(amount<1000, 2), (amount>=1000, 3)] — two approvals suffice
 // for a small order, all three for a large — consuming any later approval as a
 // trailing token (partial-join / discriminator family, WCP-30 / WCP-9).
-func buildProcess(amount int) (*process.Process, error) {
+func buildProcess(amount int, ran *pathSet) (*process.Process, error) {
 	proc, err := process.New("order-approval",
 		data.WithProperties(
 			data.MustProperty("amount",
@@ -53,7 +53,7 @@ func buildProcess(amount int) (*process.Process, error) {
 		return nil, err
 	}
 
-	finalize, err := printTask("finalize", "  ✓ order finalized")
+	finalize, err := printTask(ran, "finalize", "  ✓ order finalized")
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func buildProcess(amount int) (*process.Process, error) {
 		return nil, fmt.Errorf("create end: %w", err)
 	}
 
-	approvers, err := approverTasks()
+	approvers, err := approverTasks(ran)
 	if err != nil {
 		return nil, err
 	}
@@ -104,11 +104,11 @@ func approvalJoin() (*gateways.ComplexGateway, error) {
 }
 
 // approverTasks builds the three parallel approver service tasks.
-func approverTasks() ([]flow.Element, error) {
+func approverTasks(ran *pathSet) ([]flow.Element, error) {
 	tasks := []flow.Element{}
 
 	for _, name := range []string{"manager", "finance", "cfo"} {
-		t, err := printTask(name, "  ▶ "+name+" approved")
+		t, err := printTask(ran, name, "  ▶ "+name+" approved")
 		if err != nil {
 			return nil, err
 		}
@@ -159,10 +159,14 @@ func amountCond(pred func(a int) bool) data.FormalExpression {
 }
 
 // printTask builds a ServiceTask whose Go functor prints msg.
-func printTask(name, msg string) (*activities.ServiceTask, error) {
+func printTask(
+	ran *pathSet, name, msg string,
+) (*activities.ServiceTask, error) {
 	op, err := gooper.New(name,
 		func(_ context.Context, _ service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			ran.mark(name)
+
 			fmt.Println(msg)
 
 			return nil, nil

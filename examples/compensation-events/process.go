@@ -17,7 +17,7 @@ import (
 // snapshot each). The Compensation End Event then compensates the whole
 // scope in REVERSE completion order — undo-flight runs before undo-hotel —
 // waiting for both handlers before the instance completes.
-func buildProcess() (*process.Process, error) {
+func buildProcess(log *runLog) (*process.Process, error) {
 	proc, err := process.New("compensation-events")
 	if err != nil {
 		return nil, fmt.Errorf("new process: %w", err)
@@ -28,22 +28,22 @@ func buildProcess() (*process.Process, error) {
 		return nil, fmt.Errorf("start: %w", err)
 	}
 
-	hotel, err := bookTask("book-hotel", "  ✓ hotel booked")
+	hotel, err := bookTask(log, "book-hotel", "  ✓ hotel booked")
 	if err != nil {
 		return nil, err
 	}
 
-	flight, err := bookTask("book-flight", "  ✓ flight booked")
+	flight, err := bookTask(log, "book-flight", "  ✓ flight booked")
 	if err != nil {
 		return nil, err
 	}
 
-	undoHotel, err := undoTask("undo-hotel", "  ↩ hotel booking canceled")
+	undoHotel, err := undoTask(log, "undo-hotel", "  ↩ hotel booking canceled")
 	if err != nil {
 		return nil, err
 	}
 
-	undoFlight, err := undoTask("undo-flight", "  ↩ flight booking canceled")
+	undoFlight, err := undoTask(log, "undo-flight", "  ↩ flight booking canceled")
 	if err != nil {
 		return nil, err
 	}

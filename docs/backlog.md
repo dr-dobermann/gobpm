@@ -50,16 +50,20 @@ implemented), and leaves this list.
   options actually accepted. Surfaced by `NewUserTask`'s list going stale when the
   triad options were added (SRD-034 M1). A comment-only correctness pass, no
   behaviour change.
-- **Examples assert their own outcome** — every example currently fails only on
-  an *error* (`if err != nil { log.Fatal(err) }`), so one that completes while
-  taking the wrong branch, computing a wrong value or skipping an activity
-  still exits 0 and passes the FIX-029 run-step. Add an outcome assertion to
-  each of the 46 example modules — compare the result the example claims to
-  demonstrate and `log.Fatalf` when it differs — which turns the existing
-  exit-0 gate into an outcome gate with no new CI machinery. Golden-output
-  files are the wrong tool here (generated ids, timestamps and map ordering
-  make them brittle); a self-assertion also reads as teaching material. Needs
-  no design doc — examples work lands as plain commits.
+- **Examples assert their own outcome** — **DONE** (2026-07-31). All 46 example
+  modules now compare the outcome they claim to demonstrate — the branch taken,
+  the execution order, the value read back, the version resolved — and fail
+  when it differs, so the existing exit-0 run-step became an outcome gate with
+  no new CI machinery. Assertions record from inside the tasks (synchronous
+  with the run) rather than from engine observers, whose facts arrive
+  asynchronously and can still be in flight when `WaitCompletion` returns;
+  the exception is `DataChange`, which is observer-only, and those examples
+  cancel the subscription first so the drain settles it. Golden-output files
+  stayed rejected for the reasons recorded here. Two examples turned out to be
+  broken and were fixed in the same work: `timer-event` faulted on every run
+  (a ServiceTask on an implementation-less operation) and `simple-timer`
+  demonstrated scheduled instantiation, which the engine deliberately does not
+  do. Landed as plain commits on `test/examples-assert-outcome`; no design doc.
 - **Discard/assertion lint guard** — one `golangci-lint` config pass adding
   `forbidigo` (or equivalent) patterns for two idioms the codebase has decided
   against: a bare `_ =` on an error-returning call outside the documented

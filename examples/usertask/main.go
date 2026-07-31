@@ -1,6 +1,7 @@
 // Command usertask demonstrates a UserTask driven from the console: the engine
-// parks the task, the console TaskDistributor Takes it, renders its form, and
-// Completes it, resuming the process to its end event.
+// parks the task, the console TaskDistributor Takes it, CLAIMS it for exclusive
+// hold, renders its form, and Completes it, resuming the process to its end
+// event. The run asserts that all three ownership phases actually happened.
 package main
 
 import (
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/interactor/console"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 )
 
@@ -54,6 +56,10 @@ func run() error {
 
 	driver.Bind(th)
 
+	// Watch the ownership lifecycle so the run can be checked, not just watched.
+	watch := newLifecycleWatch()
+	defer th.Observe(watch).Cancel()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -76,6 +82,24 @@ func run() error {
 	state, err := h.WaitCompletion(wctx)
 	if err != nil {
 		return err
+	}
+
+	if state != thresher.StateCompleted {
+		return fmt.Errorf("process finished %s, want %s",
+			state, thresher.StateCompleted)
+	}
+
+	// The point of the example is the ownership flow: the task is announced to
+	// the distributor, the driver takes exclusive hold, and only then completes.
+	// Assert all three — a driver that quietly skipped the claim would otherwise
+	// look identical from the outside.
+	if absent := watch.missing(
+		2*time.Second,
+		observability.PhaseAnnounced,
+		observability.PhaseClaimed,
+		observability.PhaseCompleted,
+	); len(absent) > 0 {
+		return fmt.Errorf("user task never reached %v", absent)
 	}
 
 	fmt.Println("process finished:", state)

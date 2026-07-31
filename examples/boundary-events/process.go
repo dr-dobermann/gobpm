@@ -23,7 +23,7 @@ import (
 // The 2s interrupting timer boundary fires before the ~4s payment finishes, so the
 // engine cancels the payment track, discards its result, and routes a token onto the
 // boundary's exception flow to cancel-order — the canonical "timeout on a long task".
-func buildProcess() (*process.Process, error) {
+func buildProcess(ran *pathSet) (*process.Process, error) {
 	proc, err := process.New("boundary-events")
 	if err != nil {
 		return nil, fmt.Errorf("new process: %w", err)
@@ -34,12 +34,12 @@ func buildProcess() (*process.Process, error) {
 		return nil, fmt.Errorf("start: %w", err)
 	}
 
-	payment, err := paymentTask()
+	payment, err := paymentTask(ran)
 	if err != nil {
 		return nil, err
 	}
 
-	cancelOrder, err := printTask("cancel-order",
+	cancelOrder, err := printTask(ran, "cancel-order",
 		"  → cancel-order: payment timed out, releasing the reservation")
 	if err != nil {
 		return nil, err

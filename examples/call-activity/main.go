@@ -23,6 +23,14 @@ func main() {
 	}
 }
 
+// The child adds 20% tax, so a caller passing subtotal must read back
+// wantTotal. Both the input and the assertion read these, so the expected
+// figure cannot drift from the one actually passed in.
+const (
+	subtotal  = 100
+	wantTotal = 120
+)
+
 func run() error {
 	fmt.Print(`
   call-activity:
@@ -56,7 +64,10 @@ func run() error {
 		return fmt.Errorf("build callee: %w", err)
 	}
 
-	caller, err := buildCaller(100)
+	// Captures what the caller read back, so the data contract is checked.
+	got := newSeen()
+
+	caller, err := buildCaller(got, subtotal)
 	if err != nil {
 		return fmt.Errorf("build caller: %w", err)
 	}
@@ -80,6 +91,14 @@ func run() error {
 	}
 
 	sub.Cancel()
+
+	// The point of a Call Activity is the data contract across the boundary:
+	// subtotal crosses in, the child computes, and total comes back. A child
+	// that computed the wrong figure — or an output mapping that never landed
+	// — would leave both processes completing normally.
+	if err := got.check(wantTotal); err != nil {
+		return fmt.Errorf("call contract: %w", err)
+	}
 
 	fmt.Printf("  ✓ completed (%s)\n", state)
 

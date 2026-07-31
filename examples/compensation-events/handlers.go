@@ -14,10 +14,13 @@ import (
 )
 
 // bookTask builds a booking step that prints its action.
-func bookTask(name, msg string) (*activities.ServiceTask, error) {
+func bookTask(
+	log *runLog, name, msg string,
+) (*activities.ServiceTask, error) {
 	op, err := gooper.New(name+"-op",
 		func(_ context.Context, _ service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			log.mark(name)
 			fmt.Println(msg)
 
 			return nil, nil
@@ -36,10 +39,13 @@ func bookTask(name, msg string) (*activities.ServiceTask, error) {
 
 // undoTask builds an isForCompensation handler that prints its undo action —
 // it lives outside the normal flow and runs only when compensation is thrown.
-func undoTask(name, msg string) (*activities.ServiceTask, error) {
+func undoTask(
+	log *runLog, name, msg string,
+) (*activities.ServiceTask, error) {
 	op, err := gooper.New(name+"-op",
 		func(_ context.Context, _ service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			log.mark(name)
 			fmt.Println(msg)
 
 			return nil, nil

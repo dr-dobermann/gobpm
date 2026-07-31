@@ -48,7 +48,10 @@ func run() error {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
-	proc, err := buildProcess()
+	// Captures what each step resolved, so the scope walk-up is checked.
+	saw := newSightings()
+
+	proc, err := buildProcess(saw)
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
@@ -68,6 +71,15 @@ func run() error {
 	}
 
 	sub.Cancel()
+
+	// Scope visibility is the demonstration: pick and pack run INSIDE the
+	// embedded sub-process and must still resolve the parent's order-id by
+	// walking up. Without this, a broken walk-up would print a shorter line
+	// and the process would complete exactly as before.
+	if err := saw.check(orderID,
+		"accept", "pick", "pack", "notify"); err != nil {
+		return fmt.Errorf("scope walk-up: %w", err)
+	}
 
 	fmt.Printf("  ✓ completed (%s)\n", state)
 

@@ -298,8 +298,14 @@ func TestRestartRecoveryOverdueTimer(t *testing.T) {
 
 // condProc builds start → conditional catch(shared val) → [lane] → end
 // with pinned ids; both engines share val through the closure.
+//
+// val is a values.Variable rather than a plain bool because the engine
+// evaluates the condition on the instance's own goroutine while the test flips
+// it from the test goroutine. Variable guards its own Get and Update with a
+// mutex, so sharing one is safe; a bare bool here was a data race that failed
+// the run under -race.
 func condProc(
-	t *testing.T, key string, val *bool, hit *atomic.Bool,
+	t *testing.T, key string, val *values.Variable[bool], hit *atomic.Bool,
 ) *process.Process {
 	t.Helper()
 
@@ -314,8 +320,13 @@ func condProc(
 
 	cond, err := goexpr.New(nil,
 		data.MustItemDefinition(values.NewVariable(false)),
-		func(_ context.Context, _ data.Source) (data.Value, error) {
-			return values.NewVariable(*val), nil
+		func(ctx context.Context, _ data.Source) (data.Value, error) {
+			on, err := data.As[bool](ctx, val)
+			if err != nil {
+				return nil, err
+			}
+
+			return values.NewVariable(on), nil
 		})
 	require.NoError(t, err)
 
@@ -348,11 +359,11 @@ func condProc(
 func TestRestartRecoveryConditional(t *testing.T) {
 	repo := memrepo.New()
 
-	val := false
+	val := values.NewVariable(false)
 
 	var hit1, hit2 atomic.Bool
 
-	p1 := condProc(t, "rr-cond", &val, &hit1)
+	p1 := condProc(t, "rr-cond", val, &hit1)
 
 	th1, _, cancel1 := bootEngine(t, "engine-1", repo,
 		80*time.Millisecond, p1)
@@ -370,11 +381,11 @@ func TestRestartRecoveryConditional(t *testing.T) {
 	}, 2*time.Second, 5*time.Millisecond)
 
 	// "during the downtime" the condition's world changes.
-	val = true
+	require.NoError(t, val.Update(context.Background(), true))
 
 	time.Sleep(120 * time.Millisecond) // the lease lapses
 
-	p2 := condProc(t, "rr-cond", &val, &hit2)
+	p2 := condProc(t, "rr-cond", val, &hit2)
 
 	_, fw2, cancel2 := bootEngine(t, "engine-2", repo, time.Minute, p2)
 	defer cancel2()

@@ -43,7 +43,10 @@ func run() error {
 		return fmt.Errorf("init data states: %w", err)
 	}
 
-	proc, err := buildProcess()
+	// Records which tasks ran, so the routing claim can be checked.
+	ran := newPathSet()
+
+	proc, err := buildProcess(ran)
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
@@ -79,6 +82,15 @@ func run() error {
 
 	if _, err := h.WaitCompletion(ctx); err != nil {
 		return fmt.Errorf("waiting for completion: %w", err)
+	}
+
+	// Each of the three expression sites has an observable consequence:
+	// the lite+goexpr task flows run intake and fx-audit, and the lite
+	// time() gateway takes the urgent arm rather than the default one.
+	if err := ran.check(
+		[]string{"intake", "fx-audit", "urgent"}, []string{"standard"},
+	); err != nil {
+		return fmt.Errorf("expression routing: %w", err)
 	}
 
 	fmt.Print("\n✓ expression-routing completed: both engines routed " +

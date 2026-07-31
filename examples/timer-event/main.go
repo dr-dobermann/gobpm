@@ -20,8 +20,14 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
+	"github.com/dr-dobermann/gobpm/pkg/model/service/gooper"
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 )
+
+// timerDelay is how long the start event's timer holds the token. The timer
+// definition and the example's own assertion both read it, so the check can
+// never drift away from the behaviour it is checking.
+const timerDelay = 5 * time.Second
 
 func main() {
 	fmt.Print(`
@@ -44,9 +50,9 @@ func main() {
 	// Create timer expression for time date (current time + 5 seconds)
 	timeExpr := goexpr.Must(
 		nil, // no data source needed for static time
-		data.MustItemDefinition(values.NewVariable(time.Now().Add(5*time.Second))),
+		data.MustItemDefinition(values.NewVariable(time.Now().Add(timerDelay))),
 		func(ctx context.Context, ds data.Source) (data.Value, error) {
-			return values.NewVariable(time.Now().Add(5 * time.Second)), nil
+			return values.NewVariable(time.Now().Add(timerDelay)), nil
 		},
 		foundation.WithID("time-plus-5s"),
 	)
@@ -69,8 +75,16 @@ func main() {
 		log.Fatal("Failed to create timer start event:", err)
 	}
 
-	// Create service operation
-	op, err := service.NewOperation("handle-timer", nil, nil, nil)
+	// Create service operation. It needs a real implementation: an operation
+	// built with a nil implementation faults the instance the moment the task
+	// runs, which is what this example did until its outcome was checked.
+	op, err := gooper.New("handle-timer",
+		func(_ context.Context, _ service.DataReader,
+			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			fmt.Println("  ▶ handle-timeout: the timer fired, handling it")
+
+			return nil, nil
+		})
 	if err != nil {
 		log.Fatal("Failed to create service operation:", err)
 	}
@@ -121,7 +135,9 @@ func main() {
 	}
 
 	// Start process execution
-	_, err = engine.StartLatest(proc.ID())
+	started := time.Now()
+
+	h, err := engine.StartLatest(proc.ID())
 	if err != nil {
 		log.Fatal("Failed to start process:", err)
 	}
@@ -131,8 +147,24 @@ func main() {
 	fmt.Println("Timer will trigger after 5 seconds...")
 	fmt.Println("Waiting up to 8s for the timer event...")
 
-	// Block until the engine context is canceled (timeout above); the 5s
-	// timer fires and the instance completes well within the window.
-	<-ctx.Done()
+	state, err := h.WaitCompletion(ctx)
+	if err != nil {
+		log.Fatal("Waiting for completion:", err)
+	}
+
+	if state != thresher.StateCompleted {
+		log.Fatalf("Instance ended %s, want Completed", state)
+	}
+
+	// The delay is the demonstration, so it is what gets checked: a timer
+	// that fired immediately — or a start event that ignored its trigger
+	// altogether — would complete the process just the same, only sooner.
+	// The earlier version of this example simply waited for the context to
+	// expire and then declared success, which no failure could have upset.
+	if waited := time.Since(started); waited < timerDelay {
+		log.Fatalf("completed after %s, want at least %s — the timer did "+
+			"not hold the token", waited.Round(time.Millisecond), timerDelay)
+	}
+
 	fmt.Println("Process completed")
 }

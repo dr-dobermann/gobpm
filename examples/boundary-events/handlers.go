@@ -15,7 +15,7 @@ import (
 // take ~4s but honours its context, so when the timer boundary fires and the engine
 // cancels the track, it returns early. Its result is then discarded by the
 // interruption checkpoint (SRD-029 §3.7) — the normal "paid" flow is never taken.
-func paymentTask() (*activities.ServiceTask, error) {
+func paymentTask(ran *pathSet) (*activities.ServiceTask, error) {
 	op, err := gooper.New("process-payment",
 		func(ctx context.Context, _ service.DataReader,
 			_ *data.ItemDefinition,
@@ -24,11 +24,13 @@ func paymentTask() (*activities.ServiceTask, error) {
 
 			select {
 			case <-time.After(4 * time.Second):
+				ran.mark("payment-charged")
 				fmt.Println("  → process-payment: charged")
 
 				return nil, nil
 
 			case <-ctx.Done():
+				ran.mark("payment-interrupted")
 				fmt.Println("  ✗ process-payment: interrupted before it finished")
 
 				return nil, ctx.Err()
@@ -49,11 +51,14 @@ func paymentTask() (*activities.ServiceTask, error) {
 
 // printTask builds a ServiceTask that prints msg when it runs — used for the
 // exception handler the boundary routes to.
-func printTask(id, msg string) (*activities.ServiceTask, error) {
+func printTask(
+	ran *pathSet, id, msg string,
+) (*activities.ServiceTask, error) {
 	op, err := gooper.New(id,
 		func(_ context.Context, _ service.DataReader,
 			_ *data.ItemDefinition,
 		) (*data.ItemDefinition, error) {
+			ran.mark(id)
 			fmt.Println(msg)
 
 			return nil, nil

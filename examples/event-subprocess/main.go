@@ -47,7 +47,10 @@ func run() error {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
-	proc, err := buildProcess()
+	// Records which steps ran, so the interruption claim is checked.
+	ran := newPathSet()
+
+	proc, err := buildProcess(ran)
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
@@ -67,6 +70,17 @@ func run() error {
 	}
 
 	sub.Cancel()
+
+	// The event sub-process is INTERRUPTING: releaseHold must run and charge
+	// must not, because the payment never arrives. Checking only that the
+	// process completed would pass even if the handler had left the scope's
+	// normal flow running and charged an unpaid order.
+	if err := ran.check(
+		[]string{"checkout", "releaseHold", "notify"},
+		[]string{"charge"},
+	); err != nil {
+		return fmt.Errorf("event sub-process interruption: %w", err)
+	}
 
 	fmt.Printf("  ✓ completed (%s)\n", state)
 

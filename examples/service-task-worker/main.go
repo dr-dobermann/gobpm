@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -25,8 +26,13 @@ func main() {
 
 // order is one scenario the demo runs.
 type order struct {
-	name   string
-	amount int
+	name string
+	// wantOutcome is the summary this order must produce. The example exists to
+	// show three DIFFERENT paths — worker success, a declined payment, and a
+	// Business Error caught by the boundary — so a run where all three took the
+	// same path must fail rather than print three lines and exit 0.
+	wantOutcome string
+	amount      int
 }
 
 func run() error {
@@ -66,9 +72,9 @@ func run() error {
 	}
 
 	for _, o := range []order{
-		{"order-normal", 50},
-		{"order-over-limit", 5000},
-		{"order-gateway-down", -1},
+		{name: "order-normal", amount: 50, wantOutcome: "shipped"},
+		{name: "order-over-limit", amount: 5000, wantOutcome: "held"},
+		{name: "order-gateway-down", amount: -1, wantOutcome: "payment-failed"},
 	} {
 		if err := runOrder(ctx, engine, o); err != nil {
 			return err
@@ -102,7 +108,14 @@ func runOrder(ctx context.Context, engine *thresher.Thresher, o order) error {
 		return fmt.Errorf("wait %s: %w", o.name, err)
 	}
 
-	fmt.Printf("  ✓ completed (%s) → %s\n", state, outcome(ctx, h))
+	got := outcome(ctx, h)
+
+	if !strings.HasPrefix(got, o.wantOutcome) {
+		return fmt.Errorf("%s finished %s → %q, want a %q outcome",
+			o.name, state, got, o.wantOutcome)
+	}
+
+	fmt.Printf("  ✓ completed (%s) → %s\n", state, got)
 
 	return nil
 }

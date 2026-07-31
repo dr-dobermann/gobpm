@@ -45,7 +45,10 @@ func run() error {
 
 	const amount = 1500 // > 1000 and > 500 → two branches fork; fast-track is not
 
-	proc, err := buildProcess(amount)
+	// Records which branch tasks ran, so the OR-join claim can be checked.
+	ran := newPathSet()
+
+	proc, err := buildProcess(amount, ran)
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
@@ -71,6 +74,20 @@ func run() error {
 	state, err := h.WaitCompletion(ctx)
 	if err != nil {
 		return fmt.Errorf("waiting for completion: %w", err)
+	}
+
+	if state != thresher.StateCompleted {
+		return fmt.Errorf("process finished %s, want %s",
+			state, thresher.StateCompleted)
+	}
+
+	// amount is 1500: > 1000 and > 500 arm two branches, < 100 arms none. The
+	// OR-join must then wait for exactly those two and run finalize once.
+	if err := ran.check(
+		[]string{"manager-review", "fraud-check", "finalize"},
+		[]string{"fast-track"},
+	); err != nil {
+		return fmt.Errorf("routing for amount=%d: %w", amount, err)
 	}
 
 	fmt.Printf("✓ inclusive-join completed (%s): the OR-join merged the active "+

@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -18,6 +19,16 @@ func main() {
 	if err := run(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// passes is the loopCounter sequence a post-tested loop must produce.
+func passes() []string {
+	p := make([]string, wantPasses)
+	for i := range p {
+		p[i] = strconv.Itoa(i)
+	}
+
+	return p
 }
 
 func run() error {
@@ -45,7 +56,10 @@ func run() error {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
-	proc, err := buildProcess()
+	// Records the counter seen on each pass, so the loop claim is checked.
+	log := newRunLog()
+
+	proc, err := buildProcess(log)
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
@@ -61,6 +75,13 @@ func run() error {
 
 	if _, err := h.WaitCompletion(ctx); err != nil {
 		return fmt.Errorf("wait completion: %w", err)
+	}
+
+	// A post-tested loop runs the body first and tests after, so it must make
+	// exactly wantPasses passes, seeing 0, 1, 2 — one short would mean it was
+	// pre-tested, one long that the condition was read a pass late.
+	if err := log.check(passes()...); err != nil {
+		return fmt.Errorf("loop passes: %w", err)
 	}
 
 	fmt.Println("  process completed — the loop ran to its condition.")

@@ -37,7 +37,10 @@ func run() error {
 		return fmt.Errorf("create engine: %w", err)
 	}
 
-	proc, err := buildProcess()
+	// Records the execution order, so the reverse-order claim is checked.
+	log := newRunLog()
+
+	proc, err := buildProcess(log)
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
@@ -61,6 +64,19 @@ func run() error {
 	state, err := h.WaitCompletion(ctx)
 	if err != nil {
 		return fmt.Errorf("waiting for completion: %w", err)
+	}
+
+	// Two orderings are being demonstrated at once: compensation undoes the
+	// completed activities in REVERSE (refund before release, mirroring
+	// reserve then charge), and only afterwards does control leave through
+	// the Cancel boundary to notify-customer. A run that notified first, or
+	// undid forwards, would execute every task and complete just the same.
+	if err := log.check(
+		"reserve-seat", "charge-card",
+		"refund-card", "release-seat",
+		"notify-customer",
+	); err != nil {
+		return fmt.Errorf("cancel ordering: %w", err)
 	}
 
 	fmt.Printf("\n✓ transaction-sub-process completed (%s): the Cancel End "+

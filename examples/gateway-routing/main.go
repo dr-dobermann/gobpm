@@ -42,7 +42,10 @@ func run() error {
 
 	const amount = 2500
 
-	proc, err := buildProcess(amount)
+	// Records which branch tasks ran, so the routing claim can be checked.
+	ran := newPathSet()
+
+	proc, err := buildProcess(amount, ran)
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
@@ -68,6 +71,19 @@ func run() error {
 	state, err := h.WaitCompletion(ctx)
 	if err != nil {
 		return fmt.Errorf("waiting for completion: %w", err)
+	}
+
+	if state != thresher.StateCompleted {
+		return fmt.Errorf("process finished %s, want %s",
+			state, thresher.StateCompleted)
+	}
+
+	// amount is 2500, so the > 1000 branch must run and the default must not.
+	if err := ran.check(
+		[]string{"manager-review"},
+		[]string{"auto-approve"},
+	); err != nil {
+		return fmt.Errorf("routing for amount=%d: %w", amount, err)
 	}
 
 	fmt.Printf("✓ gateway-routing completed (%s): the exclusive gateway chose "+

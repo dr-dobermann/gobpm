@@ -10,37 +10,40 @@ import (
 // demonstrateVersioning walks the ADR-019 versioning lifecycle on one key:
 // register two versions, address them by latest / number / handle, list them,
 // then unregister the latest and watch the previous version get promoted back
-// to "latest". Each greeter run prints its own label, so the console proves
-// which version actually executed.
+// to "latest". Each greeter run records its own label, so every start proves
+// which version actually executed rather than only stating which it expected.
 func demonstrateVersioning(
 	ctx context.Context,
 	engine *thresher.Thresher,
 ) error {
-	v1, err := register(engine, "v1")
+	// Captures the label of whichever greeter runs, so each start is checked.
+	ran := newRanVersion()
+
+	v1, err := register(ran, engine, "v1")
 	if err != nil {
 		return err
 	}
 
-	v2, err := register(engine, "v2")
+	v2, err := register(ran, engine, "v2")
 	if err != nil {
 		return err
 	}
 
 	// Latest is now v2 — StartLatest resolves the highest version number.
 	h, err := engine.StartLatest(processKey)
-	if err := startAndWait(ctx, "StartLatest        → expects v2", h, err); err != nil {
+	if err := startAndWait(ctx, ran, "StartLatest        → expects v2", "v2", h, err); err != nil {
 		return err
 	}
 
 	// Pin an older version explicitly, by number, without holding its handle.
 	h, err = engine.StartVersion(processKey, 1)
-	if err := startAndWait(ctx, "StartVersion(key,1)→ expects v1", h, err); err != nil {
+	if err := startAndWait(ctx, ran, "StartVersion(key,1)→ expects v1", "v1", h, err); err != nil {
 		return err
 	}
 
 	// Same version, addressed by the registration handle returned earlier.
 	h, err = engine.StartProcess(v1)
-	if err := startAndWait(ctx, "StartProcess(v1)   → expects v1", h, err); err != nil {
+	if err := startAndWait(ctx, ran, "StartProcess(v1)   → expects v1", "v1", h, err); err != nil {
 		return err
 	}
 
@@ -57,7 +60,7 @@ func demonstrateVersioning(
 		versionList(engine))
 
 	h, err = engine.StartLatest(processKey)
-	if err := startAndWait(ctx, "StartLatest        → expects v1 (promoted)", h, err); err != nil {
+	if err := startAndWait(ctx, ran, "StartLatest        → expects v1 (promoted)", "v1", h, err); err != nil {
 		return err
 	}
 
@@ -67,10 +70,11 @@ func demonstrateVersioning(
 // register builds a fresh greeter carrying the given release label under the
 // shared key and registers it, reporting the version the engine assigned.
 func register(
+	ran *ranVersion,
 	engine *thresher.Thresher,
 	label string,
 ) (*thresher.ProcessRegistration, error) {
-	proc, err := buildGreeter(label)
+	proc, err := buildGreeter(ran, label)
 	if err != nil {
 		return nil, fmt.Errorf("build %s: %w", label, err)
 	}
@@ -91,7 +95,9 @@ func register(
 // result straight in keeps each call site a single readable line.
 func startAndWait(
 	ctx context.Context,
+	ran *ranVersion,
 	label string,
+	want string,
 	h *thresher.InstanceHandle,
 	err error,
 ) error {
@@ -102,6 +108,14 @@ func startAndWait(
 	state, err := h.WaitCompletion(ctx)
 	if err != nil {
 		return fmt.Errorf("%s: wait completion: %w", label, err)
+	}
+
+	// The label in the console says which version was EXPECTED; this is what
+	// makes it a claim rather than a caption. Without it, an engine that
+	// resolved StartLatest to the wrong version would print "expects v2",
+	// greet from v1, and still report a completed instance.
+	if err := ran.check(want); err != nil {
+		return fmt.Errorf("%s: %w", label, err)
 	}
 
 	fmt.Printf("  %s  [instance %s]\n", label, state)

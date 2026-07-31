@@ -36,7 +36,10 @@ func run() error {
 		return fmt.Errorf("create engine: %w", err)
 	}
 
-	proc, err := buildProcess("high")
+	// Records the order the Router drove the activities in.
+	log := newRunLog()
+
+	proc, err := buildProcess(log, "high")
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
@@ -60,6 +63,19 @@ func run() error {
 	state, err := h.WaitCompletion(ctx)
 	if err != nil {
 		return fmt.Errorf("waiting for completion: %w", err)
+	}
+
+	// With severity=high the Router runs gather-logs first, then fans out to
+	// notify-customer and escalate — whose relative order is genuinely up to
+	// the scheduler — and closes only once both have settled. So the two
+	// checkable claims are the boundaries, not the middle.
+	if err := log.first("gather-logs"); err != nil {
+		return fmt.Errorf("router order: %w", err)
+	}
+
+	if err := log.last("close-incident",
+		"gather-logs", "notify-customer", "escalate"); err != nil {
+		return fmt.Errorf("router order: %w", err)
 	}
 
 	fmt.Printf("\n✓ adhoc-subprocess completed (%s): the Router drove four "+

@@ -39,7 +39,10 @@ func run() error {
 		return fmt.Errorf("create engine: %w", err)
 	}
 
-	proc, err := buildProcess()
+	// Records which tasks ran, so the routing claim can be checked.
+	ran := newPathSet()
+
+	proc, err := buildProcess(ran)
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
@@ -55,5 +58,5 @@ func run() error {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
-	return fulfill(ctx, engine, broker)
+	return fulfill(ctx, engine, broker, ran)
 }

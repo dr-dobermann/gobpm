@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Every example now asserts the outcome it demonstrates.** All 46 example
+  modules previously failed only on a returned error, so one that completed
+  down the wrong branch, computed a wrong value or skipped an activity still
+  exited 0 and passed the CI run-step. Each now compares what it claims to
+  show — the branch taken, the ordering, the value read back, the version
+  resolved — and fails when it differs, turning the existing exit-0 gate into
+  an outcome gate with no new CI machinery.
+- **`timer-event` faulted on every run.** Its ServiceTask was built on an
+  operation with no implementation, so the instance failed and terminated; the
+  example blocked on the context deadline and printed "Process completed"
+  regardless. It now has a real operation and requires a completed instance.
+- **`simple-timer` demonstrated behaviour the engine does not have.** It
+  claimed a timer Start Event instantiates a process on schedule; no instance
+  was ever created, because a timer start is deliberately not an instantiating
+  trigger and scheduled instantiation is unimplemented. It now starts the
+  instance explicitly and asserts the timer held the token for its full delay.
+
 ## [v0.10.0] - 2026-07-30
 
 **The BPMN Common Executable Subclass is complete.** Ad-Hoc Sub-Process was the last

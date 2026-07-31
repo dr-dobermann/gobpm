@@ -16,10 +16,14 @@ import (
 )
 
 // printTask builds a ServiceTask whose Go functor prints msg.
-func printTask(name, msg string) (*activities.ServiceTask, error) {
+func printTask(
+	ran *pathSet, name, msg string,
+) (*activities.ServiceTask, error) {
 	op, err := gooper.New(name,
 		func(_ context.Context, _ service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			ran.mark(name)
+
 			fmt.Println(msg)
 
 			return nil, nil

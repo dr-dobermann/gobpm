@@ -87,6 +87,16 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("watcher %d completion: %w", i+1, err)
 		}
+
+		// Broadcast means EVERY parked catcher is woken by the single throw.
+		// Both watchers reaching Completed is what proves it: a signal
+		// delivered to only one of them would leave the other parked until
+		// the context deadline.
+		if st != thresher.StateCompleted {
+			return fmt.Errorf("watcher %d ended %s, want Completed — it did "+
+				"not catch the broadcast", i+1, st)
+		}
+
 		fmt.Printf("  ✓ watcher %d completed (%s) — caught the broadcast\n", i+1, st)
 	}
 

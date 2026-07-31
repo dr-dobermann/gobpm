@@ -69,6 +69,33 @@ func run() error {
 		return fmt.Errorf("waiting for completion: %w", err)
 	}
 
+	if state != thresher.StateCompleted {
+		return fmt.Errorf("process finished %s, want %s",
+			state, thresher.StateCompleted)
+	}
+
+	// The claim below is specific — discount_pct=15 — so check it. A rule engine
+	// that returned nothing, or the wrong rate, would still complete the process.
+	pctD, err := h.Data().GetData("discount_pct")
+	if err != nil {
+		return fmt.Errorf("read discount_pct: %w", err)
+	}
+
+	// int here, though the Lua and Decision-Table examples read the same named
+	// output as float64: the committed Go type follows whichever engine produced
+	// it. data.As names the type instead of silently yielding a zero.
+	pct, err := data.As[int](ctx, pctD.Value())
+	if err != nil {
+		return fmt.Errorf("discount_pct: %w", err)
+	}
+
+	const wantPct = 15
+
+	if pct != wantPct {
+		return fmt.Errorf("rule engine committed discount_pct=%v, want %v",
+			pct, wantPct)
+	}
+
 	fmt.Printf("\n✓ business-rule-task completed (%s): the pluggable rule "+
 		"engine (##GoRules) evaluated \"discount\" for a 250 order, the task "+
 		"committed discount_pct=15, and the conditional flow routed to "+

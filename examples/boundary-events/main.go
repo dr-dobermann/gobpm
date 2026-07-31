@@ -45,7 +45,10 @@ func run() error {
 		return fmt.Errorf("create engine: %w", err)
 	}
 
-	proc, err := buildProcess()
+	// Records which tasks ran, so the interruption claim is checked.
+	ran := newPathSet()
+
+	proc, err := buildProcess(ran)
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
@@ -69,6 +72,17 @@ func run() error {
 	state, err := h.WaitCompletion(ctx)
 	if err != nil {
 		return fmt.Errorf("waiting for completion: %w", err)
+	}
+
+	// An INTERRUPTING boundary must do two things: run the exception handler
+	// and stop the host activity. Checking only the handler would pass even if
+	// the payment had gone on to charge the card after the boundary fired —
+	// the double-charge this pattern exists to prevent.
+	if err := ran.check(
+		[]string{"payment-interrupted", "cancel-order"},
+		[]string{"payment-charged"},
+	); err != nil {
+		return fmt.Errorf("boundary interruption: %w", err)
 	}
 
 	fmt.Printf("\n✓ boundary-events completed (%s): the 2s timer boundary fired "+

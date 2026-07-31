@@ -75,6 +75,14 @@ func run() error {
 		return fmt.Errorf("wait completion: %w", err)
 	}
 
+	// The Link redirect is what carries the token back to work each pass, so
+	// the iteration count IS the demonstration. A process whose Link failed to
+	// wire would run work once and still complete.
+	if count != wantIterations {
+		return fmt.Errorf("work ran %d times, want %d — the Link redirect "+
+			"did not carry the token back", count, wantIterations)
+	}
+
 	fmt.Printf("  ✓ completed (%s) after %d iterations via the Link\n",
 		state, count)
 

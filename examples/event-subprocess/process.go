@@ -17,10 +17,11 @@ import (
 )
 
 // step builds a ServiceTask that announces itself when it runs.
-func step(name string) (*activities.ServiceTask, error) {
+func step(ran *pathSet, name string) (*activities.ServiceTask, error) {
 	op, err := gooper.New(name,
 		func(_ context.Context, _ service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			ran.mark(name)
 			fmt.Printf("  %s\n", name)
 
 			return nil, nil

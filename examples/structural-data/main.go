@@ -40,7 +40,10 @@ func run() error {
 
 	const total = 150
 
-	proc, err := buildProcess(total)
+	// Records which lane the gateway took, so the routing claim is checked.
+	ran := newPathSet()
+
+	proc, err := buildProcess(ran, total)
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
@@ -66,6 +69,16 @@ func run() error {
 	state, err := h.WaitCompletion(ctx)
 	if err != nil {
 		return fmt.Errorf("waiting for completion: %w", err)
+	}
+
+	// The gateway condition reaches into the same record by path, so which
+	// lane ran is the second half of the demonstration: a path that resolved
+	// to nothing would evaluate false, take the default flow, and complete
+	// exactly as happily.
+	if err := ran.check(
+		[]string{"premium"}, []string{"standard"},
+	); err != nil {
+		return fmt.Errorf("structural routing: %w", err)
 	}
 
 	fmt.Printf("✓ structural-data completed (%s)\n", state)

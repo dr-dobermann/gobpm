@@ -16,7 +16,7 @@ import (
 //
 // reserve and charge complete and enter the completion ledger; the Cancel End
 // Event then aborts the Transaction.
-func buildTransaction() (*activities.SubProcess, error) {
+func buildTransaction(log *runLog) (*activities.SubProcess, error) {
 	tx, err := activities.NewSubProcess("booking", activities.WithTransaction())
 	if err != nil {
 		return nil, fmt.Errorf("new transaction: %w", err)
@@ -27,22 +27,22 @@ func buildTransaction() (*activities.SubProcess, error) {
 		return nil, fmt.Errorf("s-start: %w", err)
 	}
 
-	reserve, err := stepTask("reserve-seat", "  ✓ seat reserved")
+	reserve, err := stepTask(log, "reserve-seat", "  ✓ seat reserved")
 	if err != nil {
 		return nil, err
 	}
 
-	charge, err := stepTask("charge-card", "  ✓ card charged")
+	charge, err := stepTask(log, "charge-card", "  ✓ card charged")
 	if err != nil {
 		return nil, err
 	}
 
-	release, err := undoTask("release-seat", "  ↩ seat released")
+	release, err := undoTask(log, "release-seat", "  ↩ seat released")
 	if err != nil {
 		return nil, err
 	}
 
-	refund, err := undoTask("refund-card", "  ↩ card refunded")
+	refund, err := undoTask(log, "refund-card", "  ↩ card refunded")
 	if err != nil {
 		return nil, err
 	}
@@ -97,8 +97,8 @@ func buildTransaction() (*activities.SubProcess, error) {
 // The Cancel End inside the Transaction aborts it — refund-card compensates
 // before release-seat (reverse completion order) — then control leaves through
 // the interrupting Cancel boundary to notify-customer.
-func buildProcess() (*process.Process, error) {
-	tx, err := buildTransaction()
+func buildProcess(log *runLog) (*process.Process, error) {
+	tx, err := buildTransaction(log)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +113,7 @@ func buildProcess() (*process.Process, error) {
 		return nil, fmt.Errorf("cancel boundary: %w", err)
 	}
 
-	notify, err := stepTask("notify-customer",
+	notify, err := stepTask(log, "notify-customer",
 		"  ✉ customer notified: booking canceled")
 	if err != nil {
 		return nil, err
