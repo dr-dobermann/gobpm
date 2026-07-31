@@ -10,6 +10,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 const errorClass = "SNAPSHOT_ERRORS"
@@ -150,8 +151,8 @@ func New(
 					errs.New(
 						errs.M("failed to convert to EventNode"),
 						errs.C(errorClass, errs.TypeCastingError),
-						errs.D("node_id", n.ID()),
-						errs.D("node_name", n.Name()))
+						errs.D(observability.AttrNodeID, n.ID()),
+						errs.D(observability.AttrNodeName, n.Name()))
 			}
 
 			switch en.EventClass() {

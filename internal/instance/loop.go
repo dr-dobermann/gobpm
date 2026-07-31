@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"fmt"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"sort"
 	"strconv"
 	"strings"
@@ -219,9 +220,9 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 			// at INFO. Node-level detail lives in the fire/abort logs below. A Message
 			// evDeliver carries no track (FR-8), so the id is resolved defensively.
 			inst.Logger().Debug("track event",
-				"instance_id", inst.ID(),
+				observability.AttrInstanceID, inst.ID(),
 				"kind", ev.kind.String(),
-				"track_id", eventTrackID(ev))
+				observability.AttrTrackID, eventTrackID(ev))
 
 			ls.apply(ctx, ev)
 			ls.maybeCheckpoint(ctx, ev.kind)
@@ -925,7 +926,7 @@ func (ls *loopState) recheckJoin(node flow.Node) {
 				errs.New(
 					errs.M("complex gateway activation rule is unsatisfiable"),
 					errs.C(errorClass, errs.InvalidState),
-					errs.D("node_id", node.ID())))
+					errs.D(observability.AttrNodeID, node.ID())))
 			ls.stopAll()
 
 		case dec.Fired:
@@ -950,8 +951,8 @@ func (ls *loopState) fireOrJoin(survivorID string, merged []string) {
 	}
 
 	ls.inst.Logger().Debug("synchronizing join fired",
-		"instance_id", ls.inst.ID(),
-		"node_id", nodeIDOf(ls.position[survivorID]),
+		observability.AttrInstanceID, ls.inst.ID(),
+		observability.AttrNodeID, nodeIDOf(ls.position[survivorID]),
 		"survivor_track_id", survivorID,
 		"merged", len(merged))
 
@@ -1149,10 +1150,10 @@ func (ls *loopState) waitReleasable(ctx context.Context, t *track) bool {
 	// So say so, once per park, naming the node.
 	ls.inst.Logger().Debug(
 		"a dehydratable wait has no holder — the instance stays resident",
-		"instance_id", ls.inst.ID(),
-		"track_id", t.ID(),
-		"node_id", node.ID(),
-		"node_name", node.Name(),
+		observability.AttrInstanceID, ls.inst.ID(),
+		observability.AttrTrackID, t.ID(),
+		observability.AttrNodeID, node.ID(),
+		observability.AttrNodeName, node.Name(),
 		"wait_kind", waitKindOf(node))
 
 	return false

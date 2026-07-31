@@ -437,8 +437,8 @@ func (ls *loopState) disarmBoundaries(trackID string) {
 		// (ADR-022 v.1 §2.3(2)): log at Debug with its error and move on.
 		if err := ls.inst.UnregisterEvent(w, w.def.ID()); err != nil {
 			ls.inst.Logger().Debug("boundary watch disarm failed",
-				"track_id", trackID, "waiter_id", w.ID(),
-				"event_definition_id", w.def.ID(), "error", err.Error())
+				observability.AttrTrackID, trackID, observability.AttrWaiterID, w.ID(),
+				observability.AttrEventDefinitionID, w.def.ID(), observability.AttrError, err.Error())
 		}
 
 		// The activity's window closed — the boundary no longer guards it

@@ -12,6 +12,7 @@ package instance
 import (
 	"context"
 	"fmt"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -455,7 +456,7 @@ func New(
 			errs.E(err),
 			errs.C(errorClass, errs.BulidingFailed),
 			errs.D("process_name", s.ProcessName),
-			errs.D("process_id", s.ProcessID))
+			errs.D(observability.AttrProcessID, s.ProcessID))
 	}
 
 	// Seed the initial root data: the born-from-event payload (resolving the
@@ -502,7 +503,7 @@ func (inst *Instance) seedInitialData(cfg *newConfig) (flow.Node, error) {
 				errs.M("born-from-event start node %q not found in snapshot",
 					cfg.bornStartID),
 				errs.C(errorClass, errs.ObjectNotFound),
-				errs.D("process_id", inst.s.ProcessID))
+				errs.D(observability.AttrProcessID, inst.s.ProcessID))
 		}
 
 		bornStart = bs

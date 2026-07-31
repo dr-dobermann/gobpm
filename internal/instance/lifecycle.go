@@ -182,7 +182,7 @@ func (inst *Instance) restoreStartedAt(stamp string) {
 	t, err := time.Parse(time.RFC3339Nano, stamp)
 	if err != nil {
 		inst.Logger().Warn("checkpoint carried an unparsable start time",
-			"instance_id", inst.ID(), "started_at", stamp, "error", err.Error())
+			observability.AttrInstanceID, inst.ID(), "started_at", stamp, observability.AttrError, err.Error())
 
 		return
 	}

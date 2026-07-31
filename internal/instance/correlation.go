@@ -157,8 +157,8 @@ func (c *correlator) validateAndAssociate(
 			ctx, c.inst.ExpressionEngine(), key, msg, payload)
 		if err != nil {
 			c.inst.Logger().Warn("conversation key derivation failed",
-				"instance_id", c.inst.ID(), "correlation_key", key.Name,
-				"error", err.Error())
+				observability.AttrInstanceID, c.inst.ID(), observability.AttrCorrelationKey, key.Name,
+				observability.AttrError, err.Error())
 
 			continue
 		}
@@ -246,9 +246,9 @@ func (c *correlator) extendReceivers(value string) {
 				// not-yet-parked receiver; a real failure is degradation, logged
 				// with its error and the flow continues.
 				c.inst.Logger().Debug("extend receiver subscription failed",
-					"instance_id", c.inst.ID(),
-					"event_definition_id", d.ID(),
-					"error", err.Error())
+					observability.AttrInstanceID, c.inst.ID(),
+					observability.AttrEventDefinitionID, d.ID(),
+					observability.AttrError, err.Error())
 			}
 		}
 	}

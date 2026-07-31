@@ -167,3 +167,109 @@ func TestDocumentedCanonicalKeysHaveConstants(t *testing.T) {
 			"Attr* constant for them, so every call site must retype them as a "+
 			"string literal:\n  %s", strings.Join(orphans, "\n  "))
 }
+
+// TestNoLiteralAttrKeys closes the call-sites→constants direction: a key that
+// HAS an Attr* constant must be reached through it, never retyped. Before
+// FIX-035 swept them, 233 sites across 43 files hand-typed a canonical key, so
+// the vocabulary was a convention rather than something the compiler enforced —
+// and a typo in "instance_id" would surface only when someone grepped a log and
+// found nothing.
+//
+// Two exclusions are structural, not allowlists, so neither can rot:
+//
+//   - fact.go is where the constants are DECLARED, so its literals are the
+//     definitions themselves.
+//   - struct tags are skipped via ast.Field.Tag rather than by file or name.
+//     internal/instance/checkpoint/document.go carries json:"instance_id",
+//     json:"version" and json:"ordinal" — the persisted checkpoint wire format,
+//     which collides with vocabulary keys by spelling alone. Rewriting those
+//     would change stored documents; they are not log attributes.
+//
+// Test files are out of scope: a test may legitimately hardcode a key to assert
+// what a log record or a persisted document actually contains.
+func TestNoLiteralAttrKeys(t *testing.T) {
+	root := repoRoot(t)
+
+	values := map[string]string{} // literal value -> constant name
+	for name, v := range attrConstants(t, root) {
+		values[v] = name
+	}
+
+	var offenders []string
+
+	for _, dir := range []string{"pkg", "internal"} {
+		err := filepath.WalkDir(filepath.Join(root, dir),
+			func(path string, d os.DirEntry, err error) error {
+				if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
+					return err
+				}
+
+				rel, relErr := filepath.Rel(root, path)
+				if relErr != nil {
+					return relErr
+				}
+
+				rel = filepath.ToSlash(rel)
+				if strings.HasSuffix(rel, "_test.go") || rel == factFile ||
+					strings.HasPrefix(rel, "generated/") {
+					return nil
+				}
+
+				offenders = append(offenders, literalKeySites(t, path, rel, values)...)
+
+				return nil
+			})
+		require.NoError(t, err, "walking %s", dir)
+	}
+
+	require.Empty(t, offenders,
+		"these sites hand-type a key that already has an Attr* constant; use "+
+			"the constant so the vocabulary is enforced by the compiler:\n  %s",
+		strings.Join(offenders, "\n  "))
+}
+
+// literalKeySites returns every string literal in path whose value matches a
+// canonical key, skipping struct tags.
+func literalKeySites(
+	t *testing.T, path, rel string, values map[string]string,
+) []string {
+	t.Helper()
+
+	fset := token.NewFileSet()
+
+	f, err := parser.ParseFile(fset, path, nil, 0)
+	require.NoError(t, err, "parsing %s", rel)
+
+	tags := map[*ast.BasicLit]bool{}
+
+	ast.Inspect(f, func(n ast.Node) bool {
+		if fld, ok := n.(*ast.Field); ok && fld.Tag != nil {
+			tags[fld.Tag] = true
+		}
+
+		return true
+	})
+
+	var out []string
+
+	ast.Inspect(f, func(n ast.Node) bool {
+		lit, ok := n.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING || tags[lit] {
+			return true
+		}
+
+		v, uerr := strconv.Unquote(lit.Value)
+		if uerr != nil {
+			return true
+		}
+
+		if name, canonical := values[v]; canonical {
+			out = append(out, fset.Position(lit.Pos()).String()+
+				": \""+v+"\" — use observability."+name)
+		}
+
+		return true
+	})
+
+	return out
+}

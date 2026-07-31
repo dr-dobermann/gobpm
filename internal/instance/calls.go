@@ -66,7 +66,7 @@ func (ls *loopState) onCallWaiting(ctx context.Context, ev trackEvent) {
 			errs.M("call activity %q: no ProcessInvoker configured — the "+
 				"engine cannot launch a child process", ev.node.ID()),
 			errs.C(errorClass, errs.InvalidState),
-			errs.D("call_activity_node_id", ev.node.ID())))
+			errs.D(observability.AttrCallActivityNodeID, ev.node.ID())))
 
 		return
 	}

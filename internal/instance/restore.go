@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"sort"
 	"strconv"
 	"strings"
@@ -153,7 +154,7 @@ func (inst *Instance) restoreScopes(
 				return errs.New(
 					errs.M("Restore: couldn't reopen scope"),
 					errs.C(errorClass, errs.OperationFailed),
-					errs.D("scope_path", rec.Path),
+					errs.D(observability.AttrScopePath, rec.Path),
 					errs.E(err))
 			}
 		}
@@ -175,7 +176,7 @@ func (inst *Instance) restoreScopes(
 			return errs.New(
 				errs.M("Restore: couldn't recommit scope data"),
 				errs.C(errorClass, errs.OperationFailed),
-				errs.D("scope_path", rec.Path),
+				errs.D(observability.AttrScopePath, rec.Path),
 				errs.E(err))
 		}
 	}
@@ -242,8 +243,8 @@ func (inst *Instance) restoreTracks(
 				errs.M("Restore: the recorded node isn't in the pinned "+
 					"process version"),
 				errs.C(errorClass, errs.ObjectNotFound),
-				errs.D("node_id", rec.NodeID),
-				errs.D("track_id", rec.ID))
+				errs.D(observability.AttrNodeID, rec.NodeID),
+				errs.D(observability.AttrTrackID, rec.ID))
 		}
 
 		var (
@@ -342,7 +343,7 @@ func (inst *Instance) continuationTrack(
 			errs.M("Restore: the trigger belongs to another conversation"),
 			errs.C(errorClass, CorrelationDropClass),
 			errs.D("woken_track_id", rec.ID),
-			errs.D("event_definition_id", pending.EDef.ID()))
+			errs.D(observability.AttrEventDefinitionID, pending.EDef.ID()))
 	}
 
 	// preload the trigger: run() enters awaitTrigger, reads it, and fires the
@@ -361,7 +362,7 @@ func restoredTrack(
 		return nil, errs.New(
 			errs.M("Restore: couldn't rebuild track identity"),
 			errs.C(errorClass, errs.OperationFailed),
-			errs.D("track_id", rec.ID),
+			errs.D(observability.AttrTrackID, rec.ID),
 			errs.E(err))
 	}
 

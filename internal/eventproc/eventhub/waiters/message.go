@@ -3,6 +3,7 @@ package waiters
 import (
 	"context"
 	"errors"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"slices"
 	"strings"
 	"sync"
@@ -87,7 +88,7 @@ func NewMessageWaiter(
 			errs.New(
 				errs.M("not a MessageEventDefinition"),
 				errs.C(MessageWaiterError, errs.TypeCastingError),
-				errs.D("event_definition_type", string(eDefI.Type())))
+				errs.D(observability.AttrEventDefinitionType, string(eDefI.Type())))
 	}
 
 	msg := eDef.Message()
@@ -96,7 +97,7 @@ func NewMessageWaiter(
 			errs.New(
 				errs.M("MessageEventDefinition has no message"),
 				errs.C(MessageWaiterError, errs.EmptyNotAllowed),
-				errs.D("event_definition_id", eDef.ID()))
+				errs.D(observability.AttrEventDefinitionID, eDef.ID()))
 	}
 
 	id = strings.TrimSpace(id)
@@ -159,8 +160,8 @@ func (mw *messageWaiter) RemoveEventProcessor(ep eventproc.EventProcessor) error
 		return errs.New(
 			errs.M("event processor isn't registered with the waiter"),
 			errs.C(MessageWaiterError, errs.ObjectNotFound),
-			errs.D("waiter_id", mw.id),
-			errs.D("event_processor_id", ep.ID()))
+			errs.D(observability.AttrWaiterID, mw.id),
+			errs.D(observability.AttrEventProcessorID, ep.ID()))
 	}
 
 	mw.processors = slices.Delete(mw.processors, idx, idx+1)
@@ -182,8 +183,8 @@ func (mw *messageWaiter) Process(eDef flow.EventDefinition) error {
 	return errs.New(
 		errs.M("messageWaiter doesn't process propagated EventDefinitions"),
 		errs.C(MessageWaiterError, errs.InvalidState),
-		errs.D("event_definition_id", eDef.ID()),
-		errs.D("event_definition_type", string(eDef.Type())))
+		errs.D(observability.AttrEventDefinitionID, eDef.ID()),
+		errs.D(observability.AttrEventDefinitionType, string(eDef.Type())))
 }
 
 // Service subscribes the broker for the waiter's message name and starts the
@@ -225,7 +226,7 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 		return errs.New(
 			errs.M("couldn't subscribe to the message broker"),
 			errs.C(MessageWaiterError, errs.OperationFailed),
-			errs.D("message_name", mw.name),
+			errs.D(observability.AttrMessageName, mw.name),
 			errs.E(err))
 	}
 
@@ -235,7 +236,7 @@ func (mw *messageWaiter) Service(ctx context.Context) error {
 	mw.done = make(chan struct{})
 
 	mw.rt.Logger().Debug("message waiter serviced",
-		"waiter_id", mw.id, "message_name", mw.name)
+		observability.AttrWaiterID, mw.id, observability.AttrMessageName, mw.name)
 
 	go mw.runMessageService(ctx, sub)
 
@@ -259,7 +260,7 @@ func (mw *messageWaiter) runMessageService(
 	defer func() {
 		if err := sub.Unsubscribe(); err != nil {
 			mw.rt.Logger().Warn("message waiter unsubscribe failed",
-				"waiter_id", mw.id, "error", err.Error())
+				observability.AttrWaiterID, mw.id, observability.AttrError, err.Error())
 		}
 
 		close(mw.done) // signal goroutine exit for EventHub.Shutdown drain
@@ -275,7 +276,7 @@ func (mw *messageWaiter) runMessageService(
 			return
 
 		case <-mw.stopCh:
-			mw.rt.Logger().Debug("message waiter stopping", "waiter_id", mw.id)
+			mw.rt.Logger().Debug("message waiter stopping", observability.AttrWaiterID, mw.id)
 
 			return
 
@@ -292,8 +293,8 @@ func (mw *messageWaiter) runMessageService(
 				// at the goroutine top — nothing above can act on it — and stop
 				// (ADR-022 v.1 §2.3/§2.4).
 				mw.rt.Logger().Error("message waiter terminally failed",
-					"waiter_id", mw.id, "message_name", mw.name,
-					"error", err.Error())
+					observability.AttrWaiterID, mw.id, observability.AttrMessageName, mw.name,
+					observability.AttrError, err.Error())
 
 				return
 			}
@@ -361,7 +362,7 @@ func (mw *messageWaiter) deliver(
 	mw.m.Unlock()
 
 	mw.rt.Logger().Debug("message waiter delivering",
-		"waiter_id", mw.id, "message_name", mw.name,
+		observability.AttrWaiterID, mw.id, observability.AttrMessageName, mw.name,
 		"processors", len(processors))
 
 	for _, ep := range processors {
@@ -397,7 +398,7 @@ func payloadErr(msgName string, err error) error {
 		errs.M("couldn't build payload datum"),
 		errs.C(MessageWaiterError, errs.OperationFailed),
 		errs.E(err),
-		errs.D("message_name", msgName))
+		errs.D(observability.AttrMessageName, msgName))
 }
 
 // Stop terminates the delivery goroutine of a running waiter.
@@ -426,7 +427,7 @@ func (mw *messageWaiter) Stop() error {
 	if mw.sub != nil {
 		if err := mw.sub.Unsubscribe(); err != nil {
 			mw.rt.Logger().Warn("message waiter unsubscribe failed on stop",
-				"waiter_id", mw.id, "error", err.Error())
+				observability.AttrWaiterID, mw.id, observability.AttrError, err.Error())
 		}
 	}
 
