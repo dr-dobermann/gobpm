@@ -47,7 +47,10 @@ func run() error {
 		return fmt.Errorf("create engine: %w", err)
 	}
 
-	proc, err := buildProcess()
+	// Records which tasks ran, so the routing claim can be checked.
+	ran := newPathSet()
+
+	proc, err := buildProcess(ran)
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
@@ -80,6 +83,15 @@ func run() error {
 	state, err := h.WaitCompletion(ctx)
 	if err != nil {
 		return fmt.Errorf("waiting for completion: %w", err)
+	}
+
+	// The deferred choice is the whole point: the arm whose event arrived
+	// first must run and the other must NOT. Without this, a run that took
+	// the timer arm — or neither — still exits 0.
+	if err := ran.check(
+		[]string{"approved"}, []string{"timedOut"},
+	); err != nil {
+		return fmt.Errorf("deferred choice: %w", err)
 	}
 
 	fmt.Printf("✓ event-based-gateway completed (%s): the gate fired the arm "+

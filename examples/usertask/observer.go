@@ -2,6 +2,7 @@ package main
 
 import (
 	"sync"
+	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
@@ -33,8 +34,33 @@ func (w *lifecycleWatch) OnFact(f observability.Fact) {
 	w.seen[f.Phase] = true
 }
 
-// missing returns the wanted phases that never arrived.
-func (w *lifecycleWatch) missing(want ...observability.Phase) []observability.Phase {
+// missing returns the wanted phases that never arrived, waiting up to timeout
+// for them.
+//
+// The wait is not padding: observer facts are delivered ASYNCHRONOUSLY, so they
+// can still be in flight when WaitCompletion has already returned. Checking
+// immediately made this assertion fail about 1 run in 40. Anything asserted from
+// the fact stream has to allow for that; anything recorded inside a task does
+// not, because that is synchronous with the run.
+func (w *lifecycleWatch) missing(
+	timeout time.Duration, want ...observability.Phase,
+) []observability.Phase {
+	deadline := time.Now().Add(timeout)
+
+	for {
+		absent := w.absentNow(want)
+		if len(absent) == 0 || time.Now().After(deadline) {
+			return absent
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// absentNow reports which wanted phases have not been seen yet.
+func (w *lifecycleWatch) absentNow(
+	want []observability.Phase,
+) []observability.Phase {
 	w.m.Lock()
 	defer w.m.Unlock()
 

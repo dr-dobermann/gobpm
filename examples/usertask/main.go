@@ -94,6 +94,7 @@ func run() error {
 	// Assert all three — a driver that quietly skipped the claim would otherwise
 	// look identical from the outside.
 	if absent := watch.missing(
+		2*time.Second,
 		observability.PhaseAnnounced,
 		observability.PhaseClaimed,
 		observability.PhaseCompleted,

@@ -30,7 +30,7 @@ const approvalMessage = "approval"
 // The gate subscribes to BOTH arms and routes the token down whichever fires first;
 // the other subscription is dropped. The demo publishes the approval message, so the
 // approval arm wins before the timer — the timer is the self-terminating fallback.
-func buildProcess() (*process.Process, error) {
+func buildProcess(ran *pathSet) (*process.Process, error) {
 	proc, err := process.New("event-based-gateway")
 	if err != nil {
 		return nil, fmt.Errorf("new process: %w", err)
@@ -57,13 +57,13 @@ func buildProcess() (*process.Process, error) {
 		return nil, err
 	}
 
-	approved, err := printTask("approved",
+	approved, err := printTask(ran, "approved",
 		"  ✓ approval arrived first → order approved")
 	if err != nil {
 		return nil, err
 	}
 
-	timedOut, err := printTask("timedOut",
+	timedOut, err := printTask(ran, "timedOut",
 		"  ✓ 10s elapsed first → order timed out")
 	if err != nil {
 		return nil, err
@@ -143,10 +143,14 @@ func timerCatch(id string, d time.Duration) (*events.IntermediateCatchEvent, err
 }
 
 // printTask builds a ServiceTask whose Go functor prints msg when the arm runs.
-func printTask(id, msg string) (*activities.ServiceTask, error) {
+func printTask(
+	ran *pathSet, id, msg string,
+) (*activities.ServiceTask, error) {
 	op, err := gooper.New(id,
 		func(_ context.Context, _ service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			ran.mark(id)
+
 			fmt.Println(msg)
 
 			return nil, nil

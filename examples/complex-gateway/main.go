@@ -46,7 +46,10 @@ func run() error {
 
 	const amount = 500 // < 1000 → two of the three approvals are enough
 
-	proc, err := buildProcess(amount)
+	// Records which approval tasks ran, so the join claim can be checked.
+	ran := newPathSet()
+
+	proc, err := buildProcess(amount, ran)
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
@@ -72,6 +75,23 @@ func run() error {
 	state, err := h.WaitCompletion(ctx)
 	if err != nil {
 		return fmt.Errorf("waiting for completion: %w", err)
+	}
+
+	if state != thresher.StateCompleted {
+		return fmt.Errorf("process finished %s, want %s",
+			state, thresher.StateCompleted)
+	}
+
+	// The join fires on the 2nd of 3 approvals, so finalize must run — and at
+	// least two approvals must have happened. WHICH two is a race, so the count
+	// is asserted rather than the names: pinning specific approvers here would
+	// itself be a flaky assertion.
+	if err := ran.check([]string{"finalize"}, nil); err != nil {
+		return fmt.Errorf("join: %w", err)
+	}
+
+	if got := ran.ranCount("manager", "finance", "cfo"); got < 2 {
+		return fmt.Errorf("join fired after %d approvals, want at least 2", got)
 	}
 
 	fmt.Printf("✓ complex-gateway completed (%s): the join fired on the 2nd "+

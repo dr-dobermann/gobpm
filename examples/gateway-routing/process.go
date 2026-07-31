@@ -20,7 +20,7 @@ import (
 // buildProcess assembles: start → XOR{ amount > 1000 → manager-review |
 // default → auto-approve } → end. The exclusive gateway routes by the "amount"
 // property — data-based branching (ADR-005 §2.8).
-func buildProcess(amount int) (*process.Process, error) {
+func buildProcess(amount int, ran *pathSet) (*process.Process, error) {
 	proc, err := process.New("order-routing",
 		data.WithProperties(
 			data.MustProperty("amount",
@@ -42,13 +42,13 @@ func buildProcess(amount int) (*process.Process, error) {
 		return nil, fmt.Errorf("create gateway: %w", err)
 	}
 
-	review, err := printTask("manager-review",
+	review, err := printTask(ran, "manager-review",
 		"  ▶ amount > 1000 → routed to manager review")
 	if err != nil {
 		return nil, err
 	}
 
-	approve, err := printTask("auto-approve",
+	approve, err := printTask(ran, "auto-approve",
 		"  ▶ amount ≤ 1000 → auto-approved")
 	if err != nil {
 		return nil, err
@@ -116,11 +116,16 @@ func amountGt1000() data.FormalExpression {
 		})
 }
 
-// printTask builds a ServiceTask whose Go functor prints msg.
-func printTask(name, msg string) (*activities.ServiceTask, error) {
+// printTask builds a ServiceTask whose Go functor prints msg and records that it
+// ran, so main can assert which branch the gateway chose.
+func printTask(
+	ran *pathSet, name, msg string,
+) (*activities.ServiceTask, error) {
 	op, err := gooper.New(name,
 		func(_ context.Context, _ service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			ran.mark(name)
+
 			fmt.Println(msg)
 
 			return nil, nil

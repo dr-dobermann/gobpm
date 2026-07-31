@@ -113,7 +113,8 @@ func run() error {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
-	if _, err := engine.StartLatest(proc.ID()); err != nil {
+	h, err := engine.StartLatest(proc.ID())
+	if err != nil {
 		return fmt.Errorf("start process: %w", err)
 	}
 
@@ -129,8 +130,17 @@ func run() error {
 		}
 	}
 
-	// brief grace for the join to synchronize and the survivor to reach End.
-	time.Sleep(100 * time.Millisecond)
+	// Both branches ran, but that alone does not prove the join synchronized
+	// them: waiting for the instance to reach Completed does. A grace sleep
+	// here would pass even if the token never left the gateway.
+	state, err := h.WaitCompletion(ctx)
+	if err != nil {
+		return fmt.Errorf("waiting for completion: %w", err)
+	}
+
+	if state != thresher.StateCompleted {
+		return fmt.Errorf("instance ended %s, want Completed", state)
+	}
 
 	fmt.Println("✓ parallel-demo completed: split forked both branches, " +
 		"join synchronized, one token reached End")
