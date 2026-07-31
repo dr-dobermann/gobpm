@@ -45,8 +45,24 @@ func unregisteredRecord(t *testing.T, th *Thresher, instanceID string) {
 		}))
 }
 
-// retryEngine builds an armed engine on a controlled clock with an explicit
-// wake-retry backoff.
+// retryEngine builds an engine on a controlled clock with an explicit
+// wake-retry backoff, and wires the timer service the tests below drive by
+// hand.
+//
+// It deliberately does NOT call Run. Run starts timerService.run, whose own
+// loop parks on this same fake clock — so every clk.Advance would fire the due
+// holds from the service's goroutine at the same moment a test fires them
+// explicitly. Both paths call ts.wake, which in these tests is a closure over
+// the test's own counters: an unsynchronized double write, and an attempt count
+// that is legitimately one too high for assertions that pin it exactly
+// (FIX-033 §2.2, reproduced at 2 failures in 1500 runs under -race).
+//
+// Wiring the service here is the one line Run would have contributed
+// (thresher.go, the repoSet branch). Nothing else in these tests needs a
+// running engine: they reach the repository through th.cfg, and HoldTimer
+// requires only a non-nil timerSvc. Restart recovery loses nothing either —
+// every test seeds its record after this returns, so a Run would have found an
+// empty store.
 func retryEngine(
 	t *testing.T, name string, backoff time.Duration,
 ) (*Thresher, *clocktest.Clock, context.CancelFunc) {
@@ -61,10 +77,32 @@ func retryEngine(
 		WithWakeRetryBackoff(backoff))
 	require.NoError(t, err)
 
+	th.timerSvc = newTimerService(clk, backoff, th.hydrateFromTimer)
+
+	return th, clk, func() {}
+}
+
+// startedEngine is retryEngine's counterpart for the one test that needs a
+// RUNNING engine: HoldSubscription refuses a thresher that has not started.
+// That test never advances the clock past a deadline and never fires a hold, so
+// the service's own loop has nothing to race it for — the separation exists
+// precisely so the tests that DO fire by hand keep their single firer.
+func startedEngine(
+	t *testing.T, name string, backoff time.Duration,
+) (*Thresher, context.CancelFunc) {
+	t.Helper()
+
+	th, err := New(name,
+		WithoutBanner(), WithoutStartupConfig(),
+		WithRepository(memrepo.New()),
+		WithClock(clocktest.New(wakeEpoch)),
+		WithWakeRetryBackoff(backoff))
+	require.NoError(t, err)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	require.NoError(t, th.Run(ctx))
 
-	return th, clk, cancel
+	return th, cancel
 }
 
 // TestFailedWakeKeepsTheHold is the §1 probe inverted into an assertion: after
@@ -293,7 +331,7 @@ func TestDefaultWakeRetryBackoff(t *testing.T) {
 // above the withdraw even in the defective order, and would make this test
 // vacuous — as the first draft of it was.)
 func TestFailedRebuildKeepsTheSubscriptionSet(t *testing.T) {
-	th, _, cancel := retryEngine(t, "engine-keepsubs", time.Hour)
+	th, cancel := startedEngine(t, "engine-keepsubs", time.Hour)
 	defer cancel()
 
 	const (
