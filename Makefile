@@ -43,11 +43,26 @@ COVER_BASE ?= origin/master
 # relay of an already-classified error. Reachable error paths keep their
 # tests; only the single propagation line leaves the denominator.
 #
+# Ninth regex: a call to errs.Invariant — the project's ONE named construct for
+# "this state is unreachable; the engine wired itself wrong" (FIX-034 §3.2.3).
+# Such a branch cannot be driven from any input, so demanding a test for it
+# would mean building broken engine states whose only purpose is to prove the
+# impossible. The exclusion is deliberately tied to the constructor rather than
+# to a file, a linter or a comment: `grep -rn "errs.Invariant("` lists every
+# excluded line, silencing the gate requires saying so in code, and the
+# constructor itself is unit-tested (pkg/errs). failInvariant is the
+# instance-loop wrapper around it (fault the instance, stop the tracks) and is
+# excluded on the same grounds.
+#
+# Tenth regex: a bare `return`. Like the closing brace below it carries no
+# logic — it only ends a void function's guard — so excluding it can never hide
+# untested behaviour; the statement that DID something sits on the line above.
+#
 # Eighth regex: a bare closing brace. A `}` line carries no statement — it is
 # counted only because it sits inside a profile block's line span (e.g. the
 # excluded propagation return's block). Excluding it can never hide untested
 # logic: every statement line stays in the gate.
-COVER_EXCLUDE ?= \.(logger|Logger\(\))\.(Debug|Info|Warn|Error)\(,func \(.*\) Option\(\) \{\},func \(.*\) mappedOutcome\(\) \{\},func \(.*\) (Lock|Unlock)\(\) \{\},func \(.*\) isLoopCharacteristics\(\) \{\},^\s*return .*[a-z]Err\(.*err\)$$,^\s*return (nil. |\"\". |false. )*err$$,^\s*\}$$
+COVER_EXCLUDE ?= \.(logger|Logger\(\))\.(Debug|Info|Warn|Error)\(,func \(.*\) Option\(\) \{\},func \(.*\) mappedOutcome\(\) \{\},func \(.*\) (Lock|Unlock)\(\) \{\},func \(.*\) isLoopCharacteristics\(\) \{\},^\s*return .*[a-z]Err\(.*err\)$$,^\s*return (nil. |\"\". |false. )*err$$,^\s*\}$$,errs\.Invariant\(,failInvariant\(,^\s*return$$
 
 # All Go modules in the monorepo (each with its own go.mod).
 # Discovered dynamically so adding a new module needs no Makefile edit.

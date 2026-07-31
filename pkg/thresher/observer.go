@@ -101,7 +101,11 @@ func (h *InstanceHandle) Observe(o Observer) *Subscription {
 // deliver calls the observer, containing any panic so one bad observer cannot
 // crash the drain goroutine or affect others (ADR-013 §5).
 func deliver(o Observer, f observability.Fact) {
-	defer func() { _ = recover() }()
+	// The panic is contained so one bad observer cannot crash the drain or
+	// affect the others (ADR-013 §5); the recovered value is deliberately
+	// dropped because deliver has no sink to report it to. Surfacing it is
+	// worth doing — see FIX-034 §8.3.
+	defer func() { _ = recover() }() //nolint:errcheck // deliberate containment
 
 	o.OnFact(f)
 }

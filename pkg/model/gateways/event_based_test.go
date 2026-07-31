@@ -540,7 +540,7 @@ type stubTaskBoundary struct {
 	flow.BaseNode
 	foundation.BaseElement
 	defs     []flow.EventDefinition
-	boundary []flow.EventNode
+	boundary []flow.BoundaryEvent
 }
 
 func newStubTaskBoundary(t *testing.T, name string) *stubTaskBoundary {
@@ -553,8 +553,25 @@ func newStubTaskBoundary(t *testing.T, name string) *stubTaskBoundary {
 		BaseNode:    *fn,
 		BaseElement: *foundation.MustBaseElement(),
 		defs:        []flow.EventDefinition{signalDef(t, name)},
-		boundary:    []flow.EventNode{signalArm(t, name+"-be")},
+		boundary:    []flow.BoundaryEvent{stubBoundary(t, name)},
 	}
+}
+
+// stubBoundary builds a REAL boundary event for the stub to report. It used to
+// report an IntermediateCatchEvent, which is not a flow.BoundaryEvent at all —
+// the accessor's old []flow.EventNode element type simply hid that, and every
+// consumer then asserted the value back to flow.BoundaryEvent.
+func stubBoundary(t *testing.T, name string) *events.BoundaryEvent {
+	t.Helper()
+
+	host, err := activities.NewManualTask(name + "-be-host")
+	require.NoError(t, err)
+
+	be, err := events.NewBoundaryEvent(name+"-be", host, signalDef(t, name+"-be"),
+		true)
+	require.NoError(t, err)
+
+	return be
 }
 
 func (a *stubTaskBoundary) Node() flow.Node { return a }
@@ -572,7 +589,7 @@ func (a *stubTaskBoundary) ProcessEvent(context.Context, flow.EventDefinition) e
 	return nil
 }
 
-func (a *stubTaskBoundary) BoundaryEvents() []flow.EventNode { return a.boundary }
+func (a *stubTaskBoundary) BoundaryEvents() []flow.BoundaryEvent { return a.boundary }
 
 func TestEventBasedGatewayArmForSkipsNonEvent(t *testing.T) {
 	g, err := gateways.NewEventBasedGateway()

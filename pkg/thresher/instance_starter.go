@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/eventproc"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
@@ -105,9 +106,16 @@ func (s *instanceStarter) deriveKey(
 
 	// Reached only when corrKey != nil, i.e. a correlated message starter; a
 	// signal starter has corrKey == nil and returned above. So eDef is a message
-	// definition here.
+	// definition here — checked rather than assumed, because deriving a
+	// correlation key from the wrong definition would route the message to the
+	// wrong instance instead of failing.
+	med, isMessage := s.eDef.(*events.MessageEventDefinition)
+	if !isMessage {
+		return "", errs.Invariant("a correlated starter carries a %T, not a message definition", s.eDef)
+	}
+
 	key, ok, err := msgflow.DeriveKey(ctx, s.thr.cfg.ExpressionEngine(),
-		s.corrKey, s.eDef.(*events.MessageEventDefinition).Message(), payload)
+		s.corrKey, med.Message(), payload)
 	if err != nil {
 		return "", err
 	}

@@ -8,8 +8,10 @@ import (
 	"github.com/dr-dobermann/gobpm/generated/mockrenv"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
+	dgexpr "github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	exprengine "github.com/dr-dobermann/gobpm/pkg/model/expression/goexpr"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/stretchr/testify/require"
@@ -240,4 +242,38 @@ func TestSetDefaultFlowHardening(t *testing.T) {
 	t.Run("unknown flow rejected", func(t *testing.T) {
 		require.ErrorContains(t, a.SetDefaultFlow("nope"), "doesn't exist")
 	})
+}
+
+// nonBoolEngine is an expression.Engine that returns a STRING for every
+// expression, whatever the expression declares. The built-in engine type-checks
+// its result, so this is how a third-party engine's contract violation reaches
+// the condition check — the branch data.As guards (ADR-034 v.1 §5).
+type nonBoolEngine struct{}
+
+func (nonBoolEngine) Type() string       { return "##NonBool" }
+func (nonBoolEngine) Languages() []string { return []string{dgexpr.Language} }
+
+func (nonBoolEngine) Evaluate(
+	context.Context, data.FormalExpression, data.Source,
+) (data.Value, error) {
+	return values.NewVariable("not a bool"), nil
+}
+
+func TestActivityConditionRejectsANonBooleanResult(t *testing.T) {
+	re := mockrenv.NewMockRuntimeEnvironment(t)
+	re.EXPECT().ExpressionEngine().Return(nonBoolEngine{}).Maybe()
+
+	a, fls := linked(t, constCond(t, true))
+
+	_, err := a.checkCondition(context.Background(), re,
+		fls[0].Condition(), fls[0])
+	require.Error(t, err)
+
+	var ae *errs.ApplicationError
+
+	require.ErrorAs(t, err, &ae)
+	require.True(t, ae.HasClass(errs.TypeCastingError),
+		"an engine that ignores the declared result type is reported, not "+
+			"asserted into a panic")
+	require.Contains(t, err.Error(), "not boolean")
 }

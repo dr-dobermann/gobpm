@@ -48,18 +48,13 @@ func compensationBoundaryHandlerOf(node flow.Node) flow.ActivityNode {
 		return nil
 	}
 
-	for _, en := range host.BoundaryEvents() {
-		bev, ok := en.(flow.BoundaryEvent)
-		if !ok {
-			continue
-		}
-
+	for _, bev := range host.BoundaryEvents() {
 		for _, d := range bev.Definitions() {
 			if d.Type() != flow.TriggerCompensation {
 				continue
 			}
 
-			if ch, ok := en.(interface {
+			if ch, ok := bev.(interface {
 				CompensationHandler() flow.ActivityNode
 			}); ok {
 				return ch.CompensationHandler()

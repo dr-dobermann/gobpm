@@ -91,9 +91,7 @@ func cancelBoundaryOn(node flow.Node) flow.BoundaryEvent {
 		return nil
 	}
 
-	for _, en := range host.BoundaryEvents() {
-		bev := en.(flow.BoundaryEvent)
-
+	for _, bev := range host.BoundaryEvents() {
 		for _, d := range bev.Definitions() {
 			if d.Type() == flow.TriggerCancel {
 				return bev

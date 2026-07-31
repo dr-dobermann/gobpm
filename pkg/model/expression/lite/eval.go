@@ -223,19 +223,28 @@ func compare(op string, l, r any, off int) (any, error) {
 		return ordered(op, lv.Equal(rv), lv.Before(rv)), nil
 
 	default: // bool
-		rv, ok := r.(bool)
-		if !ok {
-			return nil, crossKind(op, off)
-		}
+		return compareBools(op, l, r, off)
+	}
+}
 
-		switch op {
-		case "==":
-			return l.(bool) == rv, nil
-		case "!=":
-			return l.(bool) != rv, nil
-		default:
-			return nil, evalErr("bools don't order — only == and !=", off)
-		}
+// compareBools is compare's bool arm, split out so each side's type is checked
+// without pushing compare past the complexity gate. Both operands are checked:
+// the type switch above proves nothing about l on the default arm.
+func compareBools(op string, l, r any, off int) (any, error) {
+	lv, lok := l.(bool)
+	rv, rok := r.(bool)
+
+	if !lok || !rok {
+		return nil, crossKind(op, off)
+	}
+
+	switch op {
+	case "==":
+		return lv == rv, nil
+	case "!=":
+		return lv != rv, nil
+	default:
+		return nil, evalErr("bools don't order — only == and !=", off)
 	}
 }
 

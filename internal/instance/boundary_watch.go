@@ -232,7 +232,7 @@ func (ls *loopState) boundariesHeld(trackID string) bool {
 // Only activities expose it; other nodes (events, gateways) do not, so a type
 // assertion against it is how the loop decides whether a node needs watchers.
 type boundaryHoster interface {
-	BoundaryEvents() []flow.EventNode
+	BoundaryEvents() []flow.BoundaryEvent
 }
 
 // armBoundaries registers a boundaryWatch for every boundary event guarding node
@@ -254,11 +254,7 @@ func (ls *loopState) armBoundaries(
 
 	var ws []*boundaryWatch
 
-	for _, be := range host.BoundaryEvents() {
-		// every entry was attached via AddBoundaryEvent(flow.BoundaryEvent), so the
-		// cast cannot fail — use the panicking form (no unreachable error branch).
-		bev := be.(flow.BoundaryEvent)
-
+	for _, bev := range host.BoundaryEvents() {
 		armed, ok := ls.armOne(t, node, bev)
 		if !ok {
 			return // the instance is failing — armOne reported it
@@ -482,9 +478,16 @@ func (ls *loopState) fireBoundary(ctx context.Context, ev trackEvent) {
 		return // the host already completed and disarmed — the fire lost the race.
 	}
 
-	// ev.node is the boundaryWatch's own boundary (set in ProcessEvent), so the cast
-	// cannot fail — use the panicking form to avoid an unreachable error branch.
-	be := ev.node.(flow.BoundaryEvent)
+	// ev.node is the boundaryWatch's own boundary (set in ProcessEvent). A
+	// different node here means the fire was routed to the wrong watch — the
+	// instance cannot reason about which boundary caught, so it fails rather
+	// than guessing.
+	be, ok := ev.node.(flow.BoundaryEvent)
+	if !ok {
+		ls.failInvariant("boundary fire carried a %T", ev.node)
+
+		return
+	}
 
 	// shared interrupting budget (SRD-052 FR-6): an interrupting boundary on a
 	// composite competes with the composite's Event Sub-Processes for the ONE
@@ -584,10 +587,7 @@ func (ls *loopState) matchErrorBoundary(ctx context.Context, t *track) bool {
 	// boundaries may catch, one that carries none (an end event, a gateway)
 	// cannot — the BpmnError then escapes as Uncaught below.
 	if host, ok := ls.position[t.ID()].(boundaryHoster); ok {
-		for _, en := range host.BoundaryEvents() {
-			// every entry was attached as a flow.BoundaryEvent — panicking form.
-			bev := en.(flow.BoundaryEvent)
-
+		for _, bev := range host.BoundaryEvents() {
 			for _, d := range bev.Definitions() {
 				eed, ok := d.(*events.ErrorEventDefinition)
 				if !ok || eed.Error().ErrorCode() != be.Code {
@@ -728,9 +728,7 @@ func errorBoundaryOn(node flow.Node, code string) flow.BoundaryEvent {
 		return nil
 	}
 
-	for _, en := range host.BoundaryEvents() {
-		bev := en.(flow.BoundaryEvent)
-
+	for _, bev := range host.BoundaryEvents() {
 		for _, d := range bev.Definitions() {
 			if eed, ok := d.(*events.ErrorEventDefinition); ok &&
 				eed.Error().ErrorCode() == code {

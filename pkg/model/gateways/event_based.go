@@ -456,7 +456,7 @@ func (g *EventBasedGateway) validateArm(
 	if arm.NodeType() == flow.ActivityNodeType {
 		// (e) a Receive-Task arm carries no boundary events.
 		if be, ok := arm.(interface {
-			BoundaryEvents() []flow.EventNode
+			BoundaryEvents() []flow.BoundaryEvent
 		}); ok && len(be.BoundaryEvents()) != 0 {
 			ee = append(ee, errs.New(
 				errs.M("event-based gateway: a Receive-Task arm must not "+

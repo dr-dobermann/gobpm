@@ -124,7 +124,11 @@ func (d *Driver) drive(ctx context.Context, taskID string) {
 // never fail the interaction.
 func (d *Driver) printf(format string, a ...any) {
 	// deliberate ignore (carve-out above): no logger, nothing to fall back to.
-	_, _ = fmt.Fprintf(d.w, format, a...)
+	// The one documented discard in the library (FIX-028 §6.1): this is the
+	// console driver's own prompt output, and a failed write to the user's
+	// terminal is neither actionable nor reportable anywhere the user would
+	// see it — the report would go to the same broken writer.
+	_, _ = fmt.Fprintf(d.w, format, a...) //nolint:errcheck // see above
 }
 
 // collect renders the first renderer to gather the task's outputs. A task with no

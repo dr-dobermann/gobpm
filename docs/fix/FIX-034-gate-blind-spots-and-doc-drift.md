@@ -104,8 +104,15 @@ Measured before proposing, because the cost of a guard is the debt it exposes:
 
 | Rule | Tool | Production violations today |
 |---|---|---|
-| bare `_ =` on an error call | `errcheck` `check-blank: true` | **1** — `pkg/interactor/console/console.go:127` (`_, _ = fmt.Fprintf`), which is FIX-028 §6.1's documented carve-out |
-| unchecked type assertion | `forcetypeassert` | **5** |
+| bare `_ =` on an error call | `errcheck` `check-blank: true` | **3** — `console.go:127` (FIX-028 §6.1's documented carve-out), `internal/scope/scope.go:400`, `pkg/thresher/observer.go:104` |
+| unchecked type assertion | `forcetypeassert` | **25**, across 13 files |
+
+> The assertion count was first measured as 5. That figure was golangci-lint's
+> `max-same-issues: 3` reporting cap, not the truth — three consecutive runs
+> each reported exactly five, and each a *different* five, which is what gave
+> it away. Lifting the caps reports 25. Any count taken from this linter
+> without raising `max-same-issues` / `max-issues-per-linter` is a lower bound,
+> never a total.
 
 Two nearby forms are *not* violations and must not be caught: `internal/instance/jobs.go:162`
 (`ps, _ = wc.WorkerConfig()`) discards a **bool**, not an error —
