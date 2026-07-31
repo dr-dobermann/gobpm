@@ -79,8 +79,8 @@ before every push.
 
 The **diff-coverage gate** (`make cover-check`, SRD-002) fails when the lines a change
 adds/modifies are covered below `COVER_MIN` (95% now, rising toward 100). It judges
-only changed lines — reusing the `coverage.txt` `test-all` writes — so the untouched-code
-coverage backlog never blocks a PR. The gate runs locally (`make ci`) and in CI via the
+only changed lines — reusing the per-module `coverage.txt` files `test-all` writes, one
+per core module — so the untouched-code coverage backlog never blocks a PR. The gate runs locally (`make ci`) and in CI via the
 same `cmd/covercheck` binary, preserving local↔CI parity.
 
 ```bash

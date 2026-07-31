@@ -415,3 +415,45 @@ func TestWireClonedGraphDefensive(t *testing.T) {
 		require.Contains(t, err.Error(), "rebind boundary")
 	})
 }
+
+// TestWireClonedGraphRejectsAMistypedClone drives the two guards FIX-034 added
+// where WireClonedGraph reads the clone map. A clone of a BoundaryEvent is a
+// BoundaryEvent and its host's clone an ActivityNode while Clone honours its
+// contract — so these fire only on a corrupt clone, which a hand-built map can
+// produce and a real CloneGraph cannot.
+func TestWireClonedGraphRejectsAMistypedClone(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	host, err := activities.NewManualTask("wire-host")
+	require.NoError(t, err)
+
+	sig, err := events.NewSignal("wire-sig",
+		data.MustItemDefinition(values.NewVariable(1)))
+	require.NoError(t, err)
+
+	sdef, err := events.NewSignalEventDefinition(sig)
+	require.NoError(t, err)
+
+	be, err := events.NewBoundaryEvent("wire-bnd", host, sdef, true)
+	require.NoError(t, err)
+
+	srcNodes := map[string]flow.Node{be.ID(): be, host.ID(): host}
+
+	// A stand-in that is a Node but neither a BoundaryEvent nor an ActivityNode.
+	plain, err := events.NewEndEvent("not-a-boundary")
+	require.NoError(t, err)
+
+	t.Run("the boundary's clone", func(t *testing.T) {
+		_, err := flow.WireClonedGraph(
+			map[string]flow.Node{be.ID(): plain, host.ID(): host},
+			srcNodes, nil)
+		require.ErrorContains(t, err, "is not a BoundaryEvent")
+	})
+
+	t.Run("the host's clone", func(t *testing.T) {
+		_, err := flow.WireClonedGraph(
+			map[string]flow.Node{be.ID(): be, host.ID(): plain},
+			srcNodes, nil)
+		require.ErrorContains(t, err, "is not an ActivityNode")
+	})
+}

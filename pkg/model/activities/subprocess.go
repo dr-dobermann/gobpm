@@ -418,6 +418,12 @@ func (sp *SubProcess) classifyEntries(
 	ee *[]error,
 ) (noneStarts, triggeredStarts, flowless, nonInterruptingError int) {
 	for _, n := range sp.Nodes() {
+		// Bind the two shapes once: the predicates below assert anyway, and
+		// binding here keeps the value that was proven instead of asserting a
+		// second time on the branch that already knows the answer.
+		be, isBoundary := n.(flow.BoundaryEvent)
+		en, isEvent := n.(flow.EventNode)
+
 		switch {
 		case isEventSubProcess(n):
 			// An inner Event Sub-Process is a scope-armed handler, not an
@@ -426,31 +432,20 @@ func (sp *SubProcess) classifyEntries(
 			// §13.3.4 shape) and armed at runtime instead. Its own inner
 			// graph is still validated by the per-node hook below.
 
-		case isBoundaryEvent(n):
+		case isBoundary:
 			// A boundary event has no incoming flow by nature — it is not
 			// an entry. Its host must be an inner node.
-			be := n.(flow.BoundaryEvent)
 			if !sp.contains(be.AttachedTo()) {
 				*ee = append(*ee, sp.shapeErr(
 					"boundary event %q is attached to a node outside the "+
 						"Sub-Process", n.ID()))
 			}
 
-		case isStartEvent(n):
-			en := n.(flow.EventNode)
-			defs := en.Definitions()
-			if len(defs) == 0 {
-				noneStarts++
-			} else {
-				triggeredStarts++
-				// A non-interrupting triggered start is allowed (SRD-053)
-				// EXCEPT an Error start, which is always interrupting (BPMN
-				// §10.5.6) — only that case is still rejected.
-				if si, ok := n.(interface{ IsInterrupting() bool }); ok &&
-					!si.IsInterrupting() && defs[0].Type() == flow.TriggerError {
-					nonInterruptingError++
-				}
-			}
+		case isEvent && en.EventClass() == flow.StartEventClass:
+			none, triggered, badErrStart := classifyStart(n, en)
+			noneStarts += none
+			triggeredStarts += triggered
+			nonInterruptingError += badErrStart
 
 		case isCompensationHandler(n):
 			// A compensation handler lives outside the normal flow (SRD-059
@@ -473,6 +468,28 @@ func (sp *SubProcess) classifyEntries(
 	return noneStarts, triggeredStarts, flowless, nonInterruptingError
 }
 
+// classifyStart counts one inner Start Event for the entry shape: whether it is
+// a None start, a triggered one, and whether it is the one triggered shape the
+// standard forbids — a non-interrupting Error start (BPMN §10.5.6). Split out
+// of classifyEntries to keep that switch under the complexity gate.
+func classifyStart(
+	n flow.Node, en flow.EventNode,
+) (none, triggered, nonInterruptingError int) {
+	defs := en.Definitions()
+	if len(defs) == 0 {
+		return 1, 0, 0
+	}
+
+	// A non-interrupting triggered start is allowed (SRD-053) EXCEPT an Error
+	// start, which is always interrupting — only that case is rejected.
+	if si, ok := n.(interface{ IsInterrupting() bool }); ok &&
+		!si.IsInterrupting() && defs[0].Type() == flow.TriggerError {
+		return 0, 1, 1
+	}
+
+	return 0, 1, 0
+}
+
 // isEventSubProcess reports whether n is an Event Sub-Process (a scope-armed
 // handler, skipped from entry seeding — ADR-023 v.2 §2.10).
 func isEventSubProcess(n flow.Node) bool {
@@ -481,19 +498,6 @@ func isEventSubProcess(n flow.Node) bool {
 	return ok && h.IsEventSubProcess()
 }
 
-// isBoundaryEvent reports whether n is a boundary event.
-func isBoundaryEvent(n flow.Node) bool {
-	_, ok := n.(flow.BoundaryEvent)
-
-	return ok
-}
-
-// isStartEvent reports whether n is a Start Event node.
-func isStartEvent(n flow.Node) bool {
-	en, ok := n.(flow.EventNode)
-
-	return ok && en.EventClass() == flow.StartEventClass
-}
 
 // isCompensationHandler reports whether n is an isForCompensation activity —
 // a compensation handler outside the normal flow (SRD-059 FR-2).

@@ -360,7 +360,9 @@ func TestSubProcessClone(t *testing.T) {
 		chost := nodeByName(t, csp, "guarded").(flow.ActivityNode)
 		require.Same(t, chost, cbe.AttachedTo())
 
-		bes := chost.(interface{ BoundaryEvents() []flow.EventNode }).BoundaryEvents()
+		bes := chost.(interface {
+			BoundaryEvents() []flow.BoundaryEvent
+		}).BoundaryEvents()
 		require.Len(t, bes, 1)
 		require.Same(t, cbe, bes[0])
 	})

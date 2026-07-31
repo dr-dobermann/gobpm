@@ -43,11 +43,26 @@ COVER_BASE ?= origin/master
 # relay of an already-classified error. Reachable error paths keep their
 # tests; only the single propagation line leaves the denominator.
 #
+# Ninth regex: a call to errs.Invariant — the project's ONE named construct for
+# "this state is unreachable; the engine wired itself wrong" (FIX-034 §3.2.3).
+# Such a branch cannot be driven from any input, so demanding a test for it
+# would mean building broken engine states whose only purpose is to prove the
+# impossible. The exclusion is deliberately tied to the constructor rather than
+# to a file, a linter or a comment: `grep -rn "errs.Invariant("` lists every
+# excluded line, silencing the gate requires saying so in code, and the
+# constructor itself is unit-tested (pkg/errs). failInvariant is the
+# instance-loop wrapper around it (fault the instance, stop the tracks) and is
+# excluded on the same grounds.
+#
+# Tenth regex: a bare `return`. Like the closing brace below it carries no
+# logic — it only ends a void function's guard — so excluding it can never hide
+# untested behaviour; the statement that DID something sits on the line above.
+#
 # Eighth regex: a bare closing brace. A `}` line carries no statement — it is
 # counted only because it sits inside a profile block's line span (e.g. the
 # excluded propagation return's block). Excluding it can never hide untested
 # logic: every statement line stays in the gate.
-COVER_EXCLUDE ?= \.(logger|Logger\(\))\.(Debug|Info|Warn|Error)\(,func \(.*\) Option\(\) \{\},func \(.*\) mappedOutcome\(\) \{\},func \(.*\) (Lock|Unlock)\(\) \{\},func \(.*\) isLoopCharacteristics\(\) \{\},^\s*return .*[a-z]Err\(.*err\)$$,^\s*return (nil. |\"\". |false. )*err$$,^\s*\}$$
+COVER_EXCLUDE ?= \.(logger|Logger\(\))\.(Debug|Info|Warn|Error)\(,func \(.*\) Option\(\) \{\},func \(.*\) mappedOutcome\(\) \{\},func \(.*\) (Lock|Unlock)\(\) \{\},func \(.*\) isLoopCharacteristics\(\) \{\},^\s*return .*[a-z]Err\(.*err\)$$,^\s*return (nil. |\"\". |false. )*err$$,^\s*\}$$,errs\.Invariant\(,failInvariant\(,^\s*return$$
 
 # All Go modules in the monorepo (each with its own go.mod).
 # Discovered dynamically so adding a new module needs no Makefile edit.
@@ -68,6 +83,18 @@ EXAMPLE_MODULES := $(filter ./examples/%,$(MODULES))
 # end-anchored alternative also excludes a package located directly at
 # generated/ or examples/.
 COVER_PACKAGES = $$($(GO) list ./... | grep -Ev '/(generated|examples)(/|$$)')
+
+# Every module writes its OWN profile (test-all), and the gate reads all of
+# them. Until FIX-034 the profile was written only in the root's special case,
+# so runtime/ and the three adapters were never diff-gated at all — two of them
+# landed after COVER_MIN reached 95 and CI stayed green regardless of what they
+# added. Derived from CORE_MODULES, so a module added tomorrow is gated the day
+# it appears rather than when someone remembers this line. Missing profiles are
+# skipped: `make cover-check` may run after a scoped test-all, and covercheck
+# would reject a path that does not exist.
+COVER_PROFILES = $$(for d in $(CORE_MODULES); do \
+		[ -f "$$d/coverage.txt" ] && printf '%s/coverage.txt,' "$$d"; \
+	done | sed 's/,$$//')
 
 # ---------------------------------------------------------------------------
 # Tooling — versions are the single source of truth, mirrored by the
@@ -181,6 +208,16 @@ gen_mock_files:
 # from what the current interfaces produce (a changed interface not regenerated
 # + committed). Deterministic output + a pinned mockery make git diff a reliable
 # signal.
+# Documentation link gate (FIX-034 §3.2.4): every RELATIVE Markdown link must
+# resolve to a file that exists. Blocking, because the 78 dead references
+# FIX-031 swept up accumulated precisely because nothing failed. Offline and
+# repository-local: the checker is built from this repo, so it adds no tool to
+# install and no network dependency that could redden the gate for reasons
+# unrelated to the change. External URLs are deliberately out of scope.
+link-check:
+	$(GO) run ./cmd/linkcheck -root .
+.PHONY: link-check
+
 mock-check:
 	$(call require-go-tool,mockery,github.com/vektra/mockery/v3,$(MOCKERY_VERSION))
 	rm -rf generated/
@@ -214,11 +251,7 @@ TEST_CPUS ?= 4
 test-all:
 	@set -e; for dir in $(MODULES); do \
 		echo "::group::test $$dir (TEST_CPUS=$(TEST_CPUS))"; \
-		if [ "$$dir" = "." ]; then \
-			(cd $$dir && GOMAXPROCS=$(TEST_CPUS) $(GO) test -race -count=1 -coverprofile=coverage.txt $(COVER_PACKAGES)) || exit 1; \
-		else \
-			(cd $$dir && GOMAXPROCS=$(TEST_CPUS) $(GO) test -race -count=1 ./...) || exit 1; \
-		fi; \
+		(cd $$dir && GOMAXPROCS=$(TEST_CPUS) $(GO) test -race -count=1 -coverprofile=coverage.txt $(COVER_PACKAGES)) || exit 1; \
 		echo "::endgroup::"; \
 	done
 .PHONY: test-all
@@ -278,15 +311,15 @@ consumer-smoke:
 .PHONY: consumer-smoke
 
 # Diff-coverage gate: fail when the lines this change adds/modifies are covered
-# below COVER_MIN. Consumes the coverage.txt that test-all produces (root
-# module) — run `make test-all` first, or use `make ci` which orders them.
-# Judges only changed lines, so the untouched-code backlog never blocks it.
+# below COVER_MIN. Consumes the per-module coverage.txt files test-all produces
+# — run `make test-all` first, or use `make ci` which orders them. Judges only
+# changed lines, so the untouched-code backlog never blocks it.
 cover-check:
 	$(call require-go-tool,covercheck,github.com/dr-dobermann/covercheck,$(COVERCHECK_VERSION))
 	covercheck -min $(COVER_MIN) -base $(COVER_BASE) \
 		-exclude-lines '$(COVER_EXCLUDE)' \
 		-exclude-paths '^(generated|examples)/' \
-		-profiles coverage.txt
+		-profiles $(COVER_PROFILES)
 .PHONY: cover-check
 
 # Core-scoped aliases — the REQUIRED CI job's steps (one target per workflow
@@ -350,7 +383,7 @@ ci-examples:
 .PHONY: ci-examples
 
 # The core gate — everything the REQUIRED CI job runs, in the same order.
-ci-core: mock-check tidy-check-core lint-core build-core consumer-smoke test-core cover-check vuln-core
+ci-core: mock-check link-check tidy-check-core lint-core build-core consumer-smoke test-core cover-check vuln-core
 .PHONY: ci-core
 
 # Umbrella target that runs the full local-equivalent of CI (BOTH CI jobs).

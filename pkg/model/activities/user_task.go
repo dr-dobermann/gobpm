@@ -61,18 +61,21 @@ type UserTask struct {
 
 // NewUserTask tries to create a new UserTask with name and options.
 //
-// Available options:
+// It accepts the option FAMILIES below — that is what the constructor
+// dispatches on, so an option added to one of these families is accepted here
+// whether or not it is named. The members listed are today's; the family is the
+// contract (FIX-034 §3.2.5). This block previously named only the first and
+// last families, which is how the Camunda triad options went undocumented when
+// SRD-034 added them.
 //
-//	User Task options:
-//	- WithRenderer
-//	- WithOutput
-//	- WithAssignee / WithAssigneeExpr
-//	- WithCandidateUsers / WithCandidateUsersExpr
-//	- WithCandidateGroups / WithCandidateGroupsExpr
-//
-//	foundation options:
-//	- WithID
-//	- WithDoc
+//   - UsrTaskOption — WithRenderer, WithOutput, WithAssignee / WithAssigneeExpr,
+//     WithCandidateUsers / WithCandidateUsersExpr,
+//     WithCandidateGroups / WithCandidateGroupsExpr
+//   - taskOption — WithMultyInstance
+//   - ActivityOption — WithLoop, WithCompensation, WithStartQuantity,
+//     WithCompletionQuantity, WithParameters, WithoutParams
+//   - data.PropertyOption — the process-data property options
+//   - foundation.BaseOption — WithID, WithDoc
 //
 //	activity options:
 //	- WithMultyInstance

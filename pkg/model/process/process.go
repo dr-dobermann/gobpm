@@ -397,7 +397,8 @@ func (p *Process) Elements() []flow.Element {
 	fee := make([]flow.Element, 0, len(p.nodes)+len(p.flows))
 
 	for _, n := range p.nodes {
-		fee = append(fee, n.(flow.Element))
+		// flow.Node embeds flow.Element, so no assertion is involved.
+		fee = append(fee, n)
 	}
 
 	for _, f := range p.flows {

@@ -36,7 +36,7 @@ var boundaryTriggers = set.New[flow.EventTrigger](
 type boundaryHost interface {
 	flow.ActivityNode
 
-	BoundaryEvents() []flow.EventNode
+	BoundaryEvents() []flow.BoundaryEvent
 	AddBoundaryEvent(flow.BoundaryEvent) error
 }
 
@@ -259,9 +259,8 @@ func (b *BoundaryEvent) BoundTo(host flow.ActivityNode) error {
 
 	if b.cancelActivity {
 		key := declarationKey(b)
-		for _, ex := range h.BoundaryEvents() {
-			be, ok := ex.(flow.BoundaryEvent)
-			if !ok || !be.CancelActivity() {
+		for _, be := range h.BoundaryEvents() {
+			if !be.CancelActivity() {
 				continue
 			}
 

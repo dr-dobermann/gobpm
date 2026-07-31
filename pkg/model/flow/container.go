@@ -309,11 +309,21 @@ func WireClonedGraph(
 			continue
 		}
 
-		// The clones are cloned from valid nodes — a BoundaryEvent's clone is
-		// a BoundaryEvent and its host's clone an ActivityNode — so, as with
-		// the flow relink above, these casts cannot fail (panicking form).
-		cloneBE := clonedNodes[id].(BoundaryEvent)
-		cloneHost := clonedNodes[origBE.AttachedTo().ID()].(ActivityNode)
+		// A BoundaryEvent's clone is a BoundaryEvent and its host's clone an
+		// ActivityNode, so neither check can fail while Clone honors its
+		// contract — but the function already reports a corrupt clone below,
+		// and reporting one here costs the same.
+		cloneBE, ok := clonedNodes[id].(BoundaryEvent)
+		if !ok {
+			return nil, errs.Invariant("clone of boundary event %q is not a BoundaryEvent", id)
+		}
+
+		hostID := origBE.AttachedTo().ID()
+
+		cloneHost, ok := clonedNodes[hostID].(ActivityNode)
+		if !ok {
+			return nil, errs.Invariant("clone of boundary host %q is not an ActivityNode", hostID)
+		}
 
 		// The cloned host starts with no boundaries, so the already-validated
 		// binding re-attaches without a multiplicity conflict; an error here

@@ -33,7 +33,19 @@ func Register[T any](build func(v *T) data.Value) error {
 		goType: t,
 		name:   t.String(),
 		custom: func(ptr reflect.Value) data.Value {
-			return build(ptr.Interface().(*T))
+			// The cache keys this factory by reflect.TypeFor[T](), so the only
+			// pointer that reaches it is a *T. A different type means the
+			// resolution order handed the wrong entry to the wrong factory —
+			// a broken registry, not bad user input.
+			v, ok := ptr.Interface().(*T)
+			if !ok {
+				errs.Panic(errs.New(
+					errs.M("adapters: custom factory for %s got %s",
+						t, ptr.Type()),
+					errs.C(errorClass, errs.TypeCastingError)))
+			}
+
+			return build(v)
 		},
 	})
 
@@ -46,7 +58,7 @@ func Register[T any](build func(v *T) data.Value) error {
 // winner, identical content either way.
 func adapterFor(t reflect.Type) (*typeAdapter, error) {
 	if v, ok := adapterCache.Load(t); ok {
-		return v.(*typeAdapter), nil
+		return asAdapter(t, v)
 	}
 
 	ta, err := buildAdapter(t)
@@ -56,7 +68,20 @@ func adapterFor(t reflect.Type) (*typeAdapter, error) {
 
 	actual, _ := adapterCache.LoadOrStore(t, ta)
 
-	return actual.(*typeAdapter), nil
+	return asAdapter(t, actual)
+}
+
+// asAdapter reads a cache entry. Only adapterFor and Register ever write the
+// cache and both store a *typeAdapter, so a foreign value names a corrupted
+// registry rather than a caller mistake — reported, not asserted, and checked
+// in one place so both readers stay single expressions.
+func asAdapter(t reflect.Type, v any) (*typeAdapter, error) {
+	ta, ok := v.(*typeAdapter)
+	if !ok {
+		return nil, errs.Invariant("cache entry for %s is %T, not *typeAdapter", t, v)
+	}
+
+	return ta, nil
 }
 
 // customFor reports the Register-ed factory for t, if any — consulted first
@@ -67,7 +92,10 @@ func customFor(t reflect.Type) (*typeAdapter, bool) {
 		return nil, false
 	}
 
-	ta := v.(*typeAdapter)
+	ta, err := asAdapter(t, v)
+	if err != nil {
+		return nil, false
+	}
 
 	return ta, ta.custom != nil
 }

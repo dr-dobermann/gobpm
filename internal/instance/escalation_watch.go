@@ -187,9 +187,7 @@ func escalationBoundaryOn(node flow.Node, code string) flow.BoundaryEvent {
 		return nil
 	}
 
-	for _, en := range host.BoundaryEvents() {
-		bev := en.(flow.BoundaryEvent)
-
+	for _, bev := range host.BoundaryEvents() {
 		for _, d := range bev.Definitions() {
 			if eed, ok := d.(*events.EscalationEventDefinition); ok &&
 				escalationMatches(eed, code) {

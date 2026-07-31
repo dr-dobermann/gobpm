@@ -75,7 +75,7 @@ func TestSnapshotClonesAndRebindsBoundary(t *testing.T) {
 	// the cloned host carries exactly the cloned boundary.
 	cloneTask := clone.Nodes[task.ID()]
 	bh, ok := cloneTask.(interface {
-		BoundaryEvents() []flow.EventNode
+		BoundaryEvents() []flow.BoundaryEvent
 	})
 	require.True(t, ok, "cloned host exposes BoundaryEvents()")
 

@@ -11,6 +11,9 @@ linters:
     - depguard
     - dupl
     - errcheck
+    # ADR-034 v.1 §5: an unchecked assertion panics where data.As[T] returns a
+    # classified error naming both the held and the wanted type (FIX-034 §1.2).
+    - forcetypeassert
     - funlen
     - gochecknoinits
     - gocognit
@@ -31,6 +34,10 @@ linters:
     - unused
     - whitespace
   settings:
+    errcheck:
+      # ADR-022: `_ = f()` is a discard, not handling. The one deliberate
+      # discard left in the library carries a //nolint with its reason.
+      check-blank: true
     depguard:
       rules:
         deny_deprecated:

@@ -59,6 +59,10 @@ const (
 	ObjectNotFound = "OBJECT_NOT_FOUND"
 	// InvalidState represents an invalid state error code.
 	InvalidState = "INVALID_OBJECT_STATE"
+	// BrokenInvariant marks a failure that no input can cause and no caller can
+	// recover from: an engine-internal contract was violated. Distinct from
+	// InvalidState, which a caller can provoke and should handle.
+	BrokenInvariant = "BROKEN_INVARIANT"
 )
 
 // ApplicationError represents a structured application error with classes, message, and details.
@@ -195,4 +199,24 @@ func (ae ApplicationError) MarshalJSON() ([]byte, error) {
 // recovers at its own boundary.
 func Panic(v any) {
 	panic(v)
+}
+
+// Invariant reports a violated engine-internal contract — a state the code
+// believes unreachable, such as a registry entry of the wrong type or a watch
+// armed with a definition of the wrong kind. No input produces it and no caller
+// can act on it; it means the engine wired something to itself incorrectly.
+//
+// It exists to be greppable. Its call sites are the ONLY lines the
+// diff-coverage gate excludes for unreachability (COVER_EXCLUDE in the
+// Makefile, FIX-034 §3.2.3), so `grep -rn "errs.Invariant("` lists every branch
+// the project has claimed cannot be tested — and silencing the gate requires
+// saying so in code, not in a comment.
+//
+// It returns an error rather than panicking on purpose: gobpm is a library
+// embedded in someone's binary, so a faulted instance leaves the engine serving
+// every other one, while a panic takes the host process down with it.
+func Invariant(format string, args ...any) error {
+	return New(
+		M("broken invariant: "+format, args...),
+		C(BrokenInvariant))
 }

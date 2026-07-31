@@ -30,3 +30,14 @@ func TestADRWorkedExamples(t *testing.T) {
 		wantValue(t, src, c.body, c.want)
 	}
 }
+
+// TestBoolComparison covers compare's bool arm (FIX-034 split it into
+// compareBools so both operands are checked): equality and inequality over two
+// boolean variables, which no ADR row exercises.
+func TestBoolComparison(t *testing.T) {
+	src := adrSource(t)
+
+	wantValue(t, src, "approved == blocked", false)
+	wantValue(t, src, "approved != blocked", true)
+	wantValue(t, src, "approved == approved", true)
+}

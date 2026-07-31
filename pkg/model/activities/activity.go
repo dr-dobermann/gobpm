@@ -25,7 +25,7 @@ type activity struct {
 	properties          map[string]*data.Property
 	IoSpec              *data.InputOutputSpecification
 	dataAssociations    map[data.Direction][]*data.Association
-	boundaryEvents      []flow.EventNode
+	boundaryEvents      []flow.BoundaryEvent
 	startQuantity       int
 	completionQuantity  int
 	isForCompensation   bool
@@ -195,8 +195,8 @@ func (a *activity) ForCompensation() bool {
 }
 
 // BoundaryEvents returns list of events bounded to the acitvity.
-func (a *activity) BoundaryEvents() []flow.EventNode {
-	return append([]flow.EventNode{}, a.boundaryEvents...)
+func (a *activity) BoundaryEvents() []flow.BoundaryEvent {
+	return append([]flow.BoundaryEvent{}, a.boundaryEvents...)
 }
 
 // AddBoundaryEvent attaches a boundary event to the activity. Multiplicity (at

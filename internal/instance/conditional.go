@@ -175,10 +175,18 @@ func (ls *loopState) armCondBoundary(
 	ctx context.Context,
 	bw *boundaryWatch,
 ) bool {
+	// The caller arms this only for a Conditional boundary, so the definition
+	// is a Conditional one; a mismatch means the arming path selected the wrong
+	// watch, which is a broken arm rather than a condition that is merely false.
+	cd, ok := bw.def.(*events.ConditionalEventDefinition)
+	if !ok {
+		return ls.failInvariant("conditional boundary armed with %T", bw.def)
+	}
+
 	w := &condWatch{
 		track:    bw.host,
 		node:     bw.boundary,
-		def:      bw.def.(*events.ConditionalEventDefinition),
+		def:      cd,
 		boundary: true,
 	}
 	w.deps = condDeps(w.def)
@@ -208,9 +216,17 @@ func (ls *loopState) armCondScopeHandler(
 	ctx context.Context,
 	sw *scopeHandlerWatch,
 ) {
+	// As in armCondBoundary: only a Conditional start reaches here.
+	cd, ok := sw.def.(*events.ConditionalEventDefinition)
+	if !ok {
+		ls.failInvariant("conditional handler armed with %T", sw.def)
+
+		return
+	}
+
 	w := &condWatch{
 		node:        sw.start,
-		def:         sw.def.(*events.ConditionalEventDefinition),
+		def:         cd,
 		handler:     sw.handler,
 		handlerPath: sw.path,
 	}

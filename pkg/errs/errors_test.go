@@ -106,3 +106,23 @@ func TestErrWrapping(t *testing.T) {
 	require.True(t, errors.Is(myErr, testErr))
 	require.True(t, errors.As(myErr, &asTestErr))
 }
+
+// TestInvariant covers the one construct the diff-coverage gate excludes at its
+// call sites: the constructor itself is tested here, so the exclusion never
+// hides untested code — only branches the project has explicitly claimed
+// unreachable (FIX-034 §3.2.3).
+func TestInvariant(t *testing.T) {
+	err := errs.Invariant("cache entry for %s is %T", "widget", 42)
+
+	require.Error(t, err)
+
+	var ae *errs.ApplicationError
+
+	require.ErrorAs(t, err, &ae)
+	require.True(t, ae.HasClass(errs.BrokenInvariant),
+		"an invariant failure carries its own class, not InvalidState")
+	require.Contains(t, err.Error(), "broken invariant: ",
+		"the message announces what kind of failure this is")
+	require.Contains(t, err.Error(), "cache entry for widget is int",
+		"the format arguments are applied")
+}

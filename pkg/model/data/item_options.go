@@ -196,8 +196,8 @@ type (
 // WithIAE adds ItemAwareElement to the cfg which implements IAEAdder interface
 //
 // Available options:
-//   - data.IDef
-//   - data.IDefinition
+//   - data.WithIDef
+//   - data.WithIDefinition
 //   - data.WithState
 //   - foundation.WithID
 //   - foundation.WithDoc

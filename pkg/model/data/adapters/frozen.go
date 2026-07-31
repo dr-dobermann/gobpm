@@ -62,7 +62,11 @@ func (f frozenRecord) Update(context.Context, any) error {
 func (f frozenRecord) Lock()             { f.r.Lock() }
 func (f frozenRecord) Unlock()           { f.r.Unlock() }
 func (f frozenRecord) Type() string      { return f.r.Type() }
-func (f frozenRecord) Clone() data.Value { return frozenRecord{f.r.Clone().(data.Record)} }
+// Clone freezes the clone by its own kind rather than re-asserting this one's:
+// a Record's Clone returns a Record, so the result is identical — and if some
+// implementation ever broke that contract, freeze still returns a frozen value
+// instead of panicking or silently thawing.
+func (f frozenRecord) Clone() data.Value { return freeze(f.r.Clone()) }
 
 func (f frozenRecord) Keys() []string { return f.r.Keys() }
 
@@ -92,9 +96,7 @@ func (f frozenCollection) Update(context.Context, any) error {
 func (f frozenCollection) Lock()        { f.c.Lock() }
 func (f frozenCollection) Unlock()      { f.c.Unlock() }
 func (f frozenCollection) Type() string { return f.c.Type() }
-func (f frozenCollection) Clone() data.Value {
-	return frozenCollection{f.c.Clone().(data.Collection)}
-}
+func (f frozenCollection) Clone() data.Value { return freeze(f.c.Clone()) }
 
 func (f frozenCollection) Count() int                      { return f.c.Count() }
 func (f frozenCollection) Rewind()                         { f.c.Rewind() }
@@ -149,7 +151,7 @@ func (f frozenMap) Update(context.Context, any) error {
 func (f frozenMap) Lock()             { f.m.Lock() }
 func (f frozenMap) Unlock()           { f.m.Unlock() }
 func (f frozenMap) Type() string      { return f.m.Type() }
-func (f frozenMap) Clone() data.Value { return frozenMap{f.m.Clone().(data.Map)} }
+func (f frozenMap) Clone() data.Value { return freeze(f.m.Clone()) }
 
 func (f frozenMap) Keys() []string { return f.m.Keys() }
 

@@ -100,5 +100,17 @@ func (a *activity) checkCondition(
 			errs.E(err))
 	}
 
-	return res.Get(ctx).(bool), nil
+	// A non-boolean condition is a modeling error, and data.As names both the
+	// held and the wanted type instead of panicking (ADR-034 v.1 §5).
+	val, err := data.As[bool](ctx, res)
+	if err != nil {
+		return false, errs.New(
+			errs.M("flow condition is not boolean"),
+			errs.C(errorClass, errs.TypeCastingError),
+			errs.D("outgoing_flow_id", of.ID()),
+			errs.D("activity_id", a.ID()),
+			errs.E(err))
+	}
+
+	return val, nil
 }

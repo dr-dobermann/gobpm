@@ -117,6 +117,7 @@ func WithCorrelationKey(key *bpmncommon.CorrelationKey) EventBasedOption {
 //   - gateways.WithDirection
 //   - gateways.WithInstantiate
 //   - gateways.WithEventGatewayType
+//   - gateways.WithCorrelationKey
 func NewEventBasedGateway(opts ...options.Option) (*EventBasedGateway, error) {
 	ec := eventBasedConfig{}
 	baseOpts := make([]options.Option, 0, len(opts))
@@ -456,7 +457,7 @@ func (g *EventBasedGateway) validateArm(
 	if arm.NodeType() == flow.ActivityNodeType {
 		// (e) a Receive-Task arm carries no boundary events.
 		if be, ok := arm.(interface {
-			BoundaryEvents() []flow.EventNode
+			BoundaryEvents() []flow.BoundaryEvent
 		}); ok && len(be.BoundaryEvents()) != 0 {
 			ee = append(ee, errs.New(
 				errs.M("event-based gateway: a Receive-Task arm must not "+

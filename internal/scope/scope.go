@@ -395,9 +395,13 @@ func (p *Scope) OpenScope(path DataPath) error {
 		return err
 	}
 
-	// DropTail can't fail on a path checkContained validated; if it ever
-	// did, parent would be empty and fail the parent-is-open check below.
-	parent, _ := path.DropTail()
+	// DropTail cannot fail on a path checkContained has validated — but the
+	// function already returns an error, so reporting it costs nothing and
+	// beats relying on the empty parent failing the check below.
+	parent, err := path.DropTail()
+	if err != nil {
+		return err
+	}
 
 	p.m.Lock()
 	defer p.m.Unlock()

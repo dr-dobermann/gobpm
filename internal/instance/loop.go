@@ -1157,3 +1157,14 @@ func (ls *loopState) waitReleasable(ctx context.Context, t *track) bool {
 
 	return false
 }
+
+// failInvariant faults the instance on a broken engine-internal contract and
+// stops every track. It returns false so a bool-returning caller can `return
+// ls.failInvariant(...)` in one line — the shape the diff-coverage gate excludes
+// as unreachable (FIX-034 §3.2.3).
+func (ls *loopState) failInvariant(format string, args ...any) bool {
+	ls.inst.fail(errs.Invariant(format, args...))
+	ls.stopAll()
+
+	return false
+}
