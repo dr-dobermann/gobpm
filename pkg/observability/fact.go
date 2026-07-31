@@ -218,13 +218,19 @@ const (
 	AttrWorkerID          = "worker_id"
 	AttrTopic             = "topic"
 	AttrEventDefinitionID = "event_definition_id"
-	AttrWaiterID          = "waiter_id"
-	AttrSignal            = "signal"
-	AttrMessageName       = "message_name"
-	AttrCorrelationKey    = "correlation_key"
-	AttrCorrelationValue  = "correlation_value"
-	AttrError             = "error"
-	AttrEscalation        = "escalation"
+	// AttrEventDefinitionType and AttrEventProcessorID were canonized by
+	// ADR-022 v.1 §2.5 but had no constant, so every call site retyped them as
+	// string literals — the vocabulary unenforced in the direction opposite to
+	// the unregistered keys (FIX-035 §1.2).
+	AttrEventDefinitionType = "event_definition_type"
+	AttrEventProcessorID    = "event_processor_id"
+	AttrWaiterID            = "waiter_id"
+	AttrSignal              = "signal"
+	AttrMessageName         = "message_name"
+	AttrCorrelationKey      = "correlation_key"
+	AttrCorrelationValue    = "correlation_value"
+	AttrError               = "error"
+	AttrEscalation          = "escalation"
 	// Decision evaluation on the Business Rule Engine (SRD-060 FR-6). Names
 	// and counts only — never decision payload values (the masking rule).
 	AttrDecisionRef    = "decision_ref"
