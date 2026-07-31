@@ -191,6 +191,23 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 
 	done := ctx.Done()
 	for ls.active > 0 {
+		// A cancellation the loop can ALREADY see is recorded before any
+		// further terminal-event accounting. `select` chooses uniformly among
+		// ready cases (Go spec), so a canceled — and therefore permanently
+		// ready — done can lose every turn while evEnded drives ls.active to
+		// zero; the loop would then exit with ls.stopping false and settle
+		// Completed for an instance that was torn down (ADR-001 v.6 §7,
+		// FIX-033 §2.1). Once canceled, done is nil and this costs nothing.
+		if done != nil {
+			select {
+			case <-done:
+				done = nil
+				ls.stopAll()
+
+			default:
+			}
+		}
+
 		select {
 		case <-done:
 			done = nil
