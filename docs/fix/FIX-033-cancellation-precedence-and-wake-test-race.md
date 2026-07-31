@@ -349,7 +349,19 @@ test covered — cancellation competing with events that are already queued.
 
 | Test | Setup | Assertion |
 |---|---|---|
-| `TestTerminatedWhenCancelRacesPendingEvents` | fork snapshot; cancel before `Run`; run the body `-count`-style in a loop within the test so the uniform choice is exercised many times | every iteration settles `Terminated`; never `Completed` |
+| `TestTerminatedWhenCancelRacesPendingEvents` | fork snapshot; cancel before `Run`; 200 independent rounds in-test so the uniform choice is exercised many times | every round settles `Terminated`; never `Completed` |
+
+**What this canary is and is not.** Measured during M1: with the poll removed,
+**2000 fork instances produced zero** `Completed` settlements. So the test pins
+the post-fix guarantee deterministically — the poll records the cancellation
+before any event can be applied, so the outcome no longer depends on the
+select — but it is **not** a reliable detector of the defect returning. The
+window (tracks emitting before the loop reaches its first select) is far
+narrower than the 1-in-1000 the original observation suggested. Stated here
+rather than left implied, because a canary believed to guard something it does
+not is worse than no canary: the proof of the defect is §2.1's code argument,
+and the proof of the fix is that the poll runs unconditionally before the
+blocking select.
 
 #### §4.1.3 The wake-retry suite becomes deterministic
 

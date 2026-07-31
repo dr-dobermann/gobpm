@@ -28,10 +28,14 @@ func TestStateString(t *testing.T) {
 	}
 }
 
-// TestTerminatedOnPreCanceledContext drives the cancellation-terminal branch
-// deterministically: a context canceled before Run() means the loop's first
-// select sees ctx.Done() before any track has emitted, so the instance stops
-// every track and settles in Terminated (not Completed).
+// TestTerminatedOnPreCanceledContext drives the cancellation-terminal branch: a
+// context canceled before Run() is visible to the loop from its first turn, so
+// the instance stops every track and settles in Terminated (not Completed).
+//
+// What makes it deterministic is the loop's non-blocking ctx.Done() poll
+// (FIX-033 §3.2.1), NOT any ordering between the cancellation and the tracks'
+// events — `select` gives ready cases no priority, so before that poll the
+// events arm could win every turn and the instance settled Completed.
 func TestTerminatedOnPreCanceledContext(t *testing.T) {
 	_ = data.CreateDefaultStates()
 
@@ -48,12 +52,54 @@ func TestTerminatedOnPreCanceledContext(t *testing.T) {
 
 	require.NoError(t, inst.Run(ctx))
 
-	require.Eventually(t,
-		func() bool { return inst.State() == Terminated },
-		time.Second, 5*time.Millisecond,
-		"a pre-canceled instance settles in Terminated via the cascade")
+	// Await the instance's own terminal signal and compare exactly: polling for
+	// "some terminal state" cannot tell Terminated from the Completed this
+	// defect produced.
+	<-inst.Done()
+
+	require.Equal(t, Terminated, inst.State(),
+		"a pre-canceled instance settles Terminated via the cascade")
 
 	leak()
+}
+
+// TestTerminatedWhenCancelRacesPendingEvents covers the case no test covered: a
+// cancellation competing with track events that are already queued. Each round
+// is an independent instance, so the loop's choice between the ready done arm
+// and the ready events arm is exercised many times over.
+//
+// Read what this test does and does not prove (FIX-033 §4.1.2). It pins the
+// post-fix guarantee exactly — a canceled instance settles Terminated, whatever
+// the select chooses — and it is deterministic in that direction, because the
+// loop's poll records the cancellation before any event can be applied. It is
+// NOT a reliable detector of the defect returning: with the poll removed, 2000
+// fork instances here produced zero Completed settlements, because the window
+// (tracks emitting before the loop reaches its first select) is far narrower
+// than the original 1-in-1000 observation suggested. The defect's proof is the
+// code argument in FIX-033 §2.1, not this test's hit rate.
+func TestTerminatedWhenCancelRacesPendingEvents(t *testing.T) {
+	_ = data.CreateDefaultStates()
+
+	const rounds = 200
+
+	for i := range rounds {
+		s := buildForkSnapshot(t)
+		ep := mockeventproc.NewMockEventProducer(t)
+
+		inst, err := New(s, scope.EmptyDataPath, enginert.Default(), ep, nil)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		require.NoError(t, inst.Run(ctx))
+
+		<-inst.Done()
+
+		require.Equalf(t, Terminated, inst.State(),
+			"round %d settled %s: a canceled instance must never report "+
+				"Completed", i, inst.State())
+	}
 }
 
 // TestTerminationCascade verifies ADR-001 §7 termination cascade at the runtime
