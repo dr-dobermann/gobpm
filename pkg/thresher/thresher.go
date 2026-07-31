@@ -532,7 +532,7 @@ func (t *Thresher) Run(ctx context.Context) error {
 		// must not be swallowed (FIX-013 §1.5).
 		if err := t.eventHub.Run(runCtx); err != nil &&
 			!errors.Is(err, context.Canceled) {
-			t.cfg.logger.Error("event hub run loop failed", "error", err.Error())
+			t.cfg.logger.Error("event hub run loop failed", observability.AttrError, err.Error())
 		}
 	}()
 
@@ -728,8 +728,8 @@ func (t *Thresher) PropagateEvent(
 		return errs.New(
 			errs.M("event propagation failed"),
 			errs.C(errorClass, errs.OperationFailed),
-			errs.D("event_definition_id", eDef.ID()),
-			errs.D("event_definition_type", string(eDef.Type())),
+			errs.D(observability.AttrEventDefinitionID, eDef.ID()),
+			errs.D(observability.AttrEventDefinitionType, string(eDef.Type())),
 			errs.E(err))
 	}
 
@@ -969,8 +969,8 @@ func (t *Thresher) registerStarters(starters []*instanceStarter) error {
 			return errs.New(
 				errs.M("couldn't register instance-starter subscription"),
 				errs.C(errorClass, errs.OperationFailed),
-				errs.D("process_id", st.snapshot.ProcessID),
-				errs.D("event_definition_id", st.eDef.ID()),
+				errs.D(observability.AttrProcessID, st.snapshot.ProcessID),
+				errs.D(observability.AttrEventDefinitionID, st.eDef.ID()),
 				errs.E(errors.Join(err, rollback)))
 		}
 
@@ -1004,8 +1004,8 @@ func (t *Thresher) unregisterStarters(starters []*instanceStarter) error {
 			return errs.New(
 				errs.M("couldn't unregister instance-starter subscription"),
 				errs.C(errorClass, errs.OperationFailed),
-				errs.D("process_id", st.snapshot.ProcessID),
-				errs.D("event_definition_id", st.eDef.ID()),
+				errs.D(observability.AttrProcessID, st.snapshot.ProcessID),
+				errs.D(observability.AttrEventDefinitionID, st.eDef.ID()),
 				errs.E(errors.Join(err, rollback)))
 		}
 
@@ -1039,7 +1039,7 @@ func (t *Thresher) resolveAndLaunch(
 	if key == "" {
 		t.cfg.logger.Debug(
 			"instance-starter: creating instance (no correlation key)",
-			"process_id", s.ProcessID, "start_node_id", startNode.ID())
+			observability.AttrProcessID, s.ProcessID, observability.AttrStartNodeID, startNode.ID())
 
 		return t.launchInstanceFromEvent(ctx, s, startNode, eDef, keyName, key)
 	}
@@ -1050,7 +1050,7 @@ func (t *Thresher) resolveAndLaunch(
 
 	if !t.reserveKeyLocked(nsKey) {
 		t.cfg.logger.Debug("instance-starter: joined existing instance (key seen)",
-			"process_id", s.ProcessID, "correlation_value", key)
+			observability.AttrProcessID, s.ProcessID, observability.AttrCorrelationValue, key)
 
 		return nil // an instance already exists for this key: join, no duplicate
 	}
@@ -1064,7 +1064,7 @@ func (t *Thresher) resolveAndLaunch(
 	}
 
 	t.cfg.logger.Debug("instance-starter: created new instance",
-		"process_id", s.ProcessID, "correlation_value", key)
+		observability.AttrProcessID, s.ProcessID, observability.AttrCorrelationValue, key)
 
 	return nil
 }
@@ -1094,7 +1094,7 @@ func (t *Thresher) launchInstanceFromEvent(
 			errs.M("couldn't create an event-born Instance for process %q",
 				s.ProcessID),
 			errs.C(errorClass, errs.BulidingFailed),
-			errs.D("event_definition_id", eDef.ID()),
+			errs.D(observability.AttrEventDefinitionID, eDef.ID()),
 			errs.E(err))
 	}
 

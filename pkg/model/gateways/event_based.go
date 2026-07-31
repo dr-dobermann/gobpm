@@ -4,6 +4,7 @@ package gateways
 import (
 	"context"
 	"errors"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"strconv"
 	"strings"
 
@@ -306,7 +307,7 @@ func (g *EventBasedGateway) ProcessEvent(
 			errs.M("event-based gateway: no arm owns the fired event"),
 			errs.C(errorClass, errs.InvalidParameter),
 			errs.D("gateway_id", g.ID()),
-			errs.D("event_definition_id", eDef.ID()))
+			errs.D(observability.AttrEventDefinitionID, eDef.ID()))
 	}
 
 	ep, ok := arm.(eventproc.EventProcessor)

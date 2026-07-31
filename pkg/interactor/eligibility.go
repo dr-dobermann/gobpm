@@ -1,6 +1,7 @@
 package interactor
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"slices"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -76,7 +77,7 @@ func (e Eligibility) Authorize(taskID string, actor hi.Actor) error {
 		return errs.New(
 			errs.M("Eligibility.Authorize: a nil Actor isn't allowed"),
 			errs.C(errorClass, errs.InvalidParameter),
-			errs.D("task_id", taskID))
+			errs.D(observability.AttrTaskID, taskID))
 	}
 
 	if e.permits(actor) {
@@ -87,8 +88,8 @@ func (e Eligibility) Authorize(taskID string, actor hi.Actor) error {
 		errs.M("actor %q is not authorized for user task %q",
 			actor.UserID(), taskID),
 		errs.C(errorClass, errs.ConditionFailed),
-		errs.D("task_id", taskID),
-		errs.D("user_id", actor.UserID()))
+		errs.D(observability.AttrTaskID, taskID),
+		errs.D(observability.AttrUserID, actor.UserID()))
 }
 
 // Open reports a task no triad member was declared for — authorized for any

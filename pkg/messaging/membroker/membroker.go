@@ -100,7 +100,7 @@ func (h brokerSub) AddKey(key string) error {
 	h.b.drainInboxLocked(h.sub)
 
 	h.b.logger.Debug("membroker: key added; drained buffered",
-		"correlation_value", key, "drained", before-len(h.b.inbox))
+		observability.AttrCorrelationValue, key, "drained", before-len(h.b.inbox))
 
 	return nil
 }
@@ -117,7 +117,7 @@ func (h brokerSub) Unsubscribe() error {
 		if s == h.sub {
 			h.b.subs = append(h.b.subs[:i], h.b.subs[i+1:]...)
 
-			h.b.logger.Debug("membroker: unsubscribed", "message_name", h.sub.name)
+			h.b.logger.Debug("membroker: unsubscribed", observability.AttrMessageName, h.sub.name)
 
 			break
 		}
@@ -174,7 +174,7 @@ func (b *Broker) Publish(ctx context.Context, msg messaging.Envelope) error {
 
 		if trySend(s.ch, msg) {
 			b.logger.Debug("membroker: routed (keyed)",
-				"message_name", msg.Name, "correlation_value", msg.CorrelationKey)
+				observability.AttrMessageName, msg.Name, observability.AttrCorrelationValue, msg.CorrelationKey)
 
 			return nil
 		}
@@ -182,7 +182,7 @@ func (b *Broker) Publish(ctx context.Context, msg messaging.Envelope) error {
 
 	if keyedMatched {
 		b.logger.Debug("membroker: buffered (keyed subscriber busy)",
-			"message_name", msg.Name, "correlation_value", msg.CorrelationKey)
+			observability.AttrMessageName, msg.Name, observability.AttrCorrelationValue, msg.CorrelationKey)
 		b.bufferLocked(msg)
 
 		return nil
@@ -195,14 +195,14 @@ func (b *Broker) Publish(ctx context.Context, msg messaging.Envelope) error {
 
 		if trySend(s.ch, msg) {
 			b.logger.Debug("membroker: routed (wildcard)",
-				"message_name", msg.Name, "correlation_value", msg.CorrelationKey)
+				observability.AttrMessageName, msg.Name, observability.AttrCorrelationValue, msg.CorrelationKey)
 
 			return nil
 		}
 	}
 
 	b.logger.Debug("membroker: buffered (no subscriber)",
-		"message_name", msg.Name, "correlation_value", msg.CorrelationKey)
+		observability.AttrMessageName, msg.Name, observability.AttrCorrelationValue, msg.CorrelationKey)
 	b.bufferLocked(msg)
 
 	return nil
@@ -232,7 +232,7 @@ func (b *Broker) Subscribe(
 	b.subs = append(b.subs, sub)
 
 	b.logger.Debug("membroker: subscribed",
-		"message_name", name, "keys", len(sub.keys))
+		observability.AttrMessageName, name, "keys", len(sub.keys))
 
 	return brokerSub{b: b, sub: sub}, nil
 }

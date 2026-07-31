@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/eventproc"
@@ -334,7 +335,7 @@ func msgOutputErr(med *MessageEventDefinition, err error) error {
 		errs.M("couldn't build message payload output"),
 		errs.C(errorClass, errs.OperationFailed),
 		errs.E(err),
-		errs.D("message_name", med.Message().Name()))
+		errs.D(observability.AttrMessageName, med.Message().Name()))
 }
 
 // NewCatchEvent creates a new catchEvent and returns its pointer.

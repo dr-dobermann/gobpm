@@ -2,6 +2,7 @@ package flow
 
 import (
 	"errors"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
@@ -233,7 +234,7 @@ func defaultFlowErr(nodeID, flowID string, err error) error {
 		errs.M("couldn't remap default flow onto its clone"),
 		errs.C(errorClass, errs.OperationFailed),
 		errs.E(err),
-		errs.D("node_id", nodeID),
+		errs.D(observability.AttrNodeID, nodeID),
 		errs.D("flow_id", flowID))
 }
 

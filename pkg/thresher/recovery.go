@@ -24,7 +24,7 @@ func (t *Thresher) recoverInstances(ctx context.Context) {
 	ids, err := repo.ListInFlight(ctx, t.cfg.Clock().Now())
 	if err != nil {
 		t.cfg.logger.Warn("recovery: couldn't list in-flight instances",
-			"error", err.Error())
+			observability.AttrError, err.Error())
 
 		return
 	}
@@ -131,15 +131,15 @@ func recoveryErr(msg string, cause error) error {
 // instance stays unclaimed/failed, the rest recover (SRD-070 FR-7).
 func (t *Thresher) reportRecoveryFailure(id string, err error) {
 	t.cfg.logger.Warn("recovery failed for instance",
-		"instance_id", id, "error", err.Error())
+		observability.AttrInstanceID, id, observability.AttrError, err.Error())
 
 	t.producer.Report(observability.Fact{
 		Kind:  observability.KindInstanceState,
 		Phase: observability.PhaseFailed,
 		Details: map[string]string{
-			"instance_id":           id,
-			"reason":                "recovery",
-			observability.AttrError: err.Error(),
+			observability.AttrInstanceID: id,
+			"reason":                     "recovery",
+			observability.AttrError:      err.Error(),
 		},
 	})
 }

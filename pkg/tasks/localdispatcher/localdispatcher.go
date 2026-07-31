@@ -353,7 +353,7 @@ func (d *Dispatcher) ExtendLock(
 	e.deadline = newDeadline
 
 	d.logger.Debug("job lock extended",
-		"job_id", string(jobID), "worker_id", string(workerID),
+		observability.AttrJobID, string(jobID), observability.AttrWorkerID, string(workerID),
 		"deadline", newDeadline)
 
 	return nil
@@ -571,7 +571,7 @@ func classify(
 	mapped, err := policy.ErrorMapper.Classify(ctx, ee, fault)
 	if err != nil {
 		logger.Warn("error-mapping failed; treating as a technical fault",
-			"job_id", string(jobID), "error", err.Error())
+			observability.AttrJobID, string(jobID), observability.AttrError, err.Error())
 
 		return tasks.NewWorkerFault(jobID, fault)
 	}
@@ -703,7 +703,7 @@ func (d *Dispatcher) RegisterWorker(
 	logger := d.logger
 	d.mu.Unlock()
 
-	logger.Info("registered local worker", "topic", string(topic))
+	logger.Info("registered local worker", observability.AttrTopic, string(topic))
 
 	go d.runWorker(ctx, topic, fn)
 
@@ -746,7 +746,7 @@ func (d *Dispatcher) runWorker(
 				if rerr := d.Fail(ctx, lj.ID, workerID,
 					tasks.Fault{Cause: e}); rerr != nil {
 					d.logger.Warn("local worker failed to report a job fault",
-						"topic", topic, "job_id", string(lj.ID),
+						observability.AttrTopic, topic, observability.AttrJobID, string(lj.ID),
 						"fault", e.Error(), "report_error", rerr.Error())
 				}
 
@@ -755,8 +755,8 @@ func (d *Dispatcher) runWorker(
 
 			if rerr := d.Complete(ctx, lj.ID, workerID, out); rerr != nil {
 				d.logger.Warn("local worker failed to report a job completion",
-					"topic", topic, "job_id", string(lj.ID),
-					"error", rerr.Error())
+					observability.AttrTopic, topic, observability.AttrJobID, string(lj.ID),
+					observability.AttrError, rerr.Error())
 			}
 		}
 	}
@@ -858,8 +858,8 @@ func (d *Dispatcher) reportTrusted(
 ) {
 	if err := d.report(ctx, jobID, workerID, outcome); err != nil {
 		d.logger.Warn("local trusted worker failed to report a verdict",
-			"job_id", string(jobID), "kind", outcome.Kind().String(),
-			"error", err.Error())
+			observability.AttrJobID, string(jobID), "kind", outcome.Kind().String(),
+			observability.AttrError, err.Error())
 	}
 }
 

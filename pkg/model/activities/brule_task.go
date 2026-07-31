@@ -192,7 +192,7 @@ func (bt *BusinessRuleTask) commitResult(
 			errs.E(err),
 			errs.D("business_rule_task_name", bt.Name()),
 			errs.D("business_rule_task_id", bt.ID()),
-			errs.D("decision_ref", bt.decisionRef))
+			errs.D(observability.AttrDecisionRef, bt.decisionRef))
 	}
 
 	name, value, err := foldResult(bt.decisionRef, rows)

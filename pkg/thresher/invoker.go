@@ -2,6 +2,7 @@ package thresher
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/internal/instance"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -53,7 +54,7 @@ func (t *Thresher) InvokeProcess(
 			errs.M("InvokeProcess: no registered version for called process "+
 				"%q (requested version %d)", call.Key, call.Version),
 			errs.C(errorClass, errs.ObjectNotFound),
-			errs.D("called_key", call.Key))
+			errs.D(observability.AttrCalledKey, call.Key))
 	}
 
 	// NewChild only fails on a malformed snapshot or linkage; the registry
@@ -124,7 +125,7 @@ func (c *childProcess) Outputs(names []string) ([]data.Data, error) {
 				errs.M("child instance %q has no declared output %q",
 					c.inst.ID(), name),
 				errs.C(errorClass, errs.ObjectNotFound),
-				errs.D("child_instance_id", c.inst.ID()),
+				errs.D(observability.AttrChildInstanceID, c.inst.ID()),
 				errs.E(err))
 		}
 

@@ -232,8 +232,8 @@ func (t *Thresher) completeVerdict(
 		refusal := errs.New(
 			errs.M("user task %q is unowned: claim it before completing", taskID),
 			errs.C(errorClass, errs.ConditionFailed, TaskUnclaimedClass),
-			errs.D("task_id", taskID),
-			errs.D("user_id", actor.UserID()))
+			errs.D(observability.AttrTaskID, taskID),
+			errs.D(observability.AttrUserID, actor.UserID()))
 
 		return "unclaimed", refusal
 	}
@@ -242,8 +242,8 @@ func (t *Thresher) completeVerdict(
 		refusal := errs.New(
 			errs.M("user task %q is held by another actor", taskID),
 			errs.C(errorClass, errs.ConditionFailed, TaskNotOwnerClass),
-			errs.D("task_id", taskID),
-			errs.D("user_id", actor.UserID()))
+			errs.D(observability.AttrTaskID, taskID),
+			errs.D(observability.AttrUserID, actor.UserID()))
 
 		return "not_owner", refusal
 	}
@@ -390,7 +390,7 @@ func claimGuard(actor hi.Actor) func(string, *taskRecord) error {
 				errs.M("user task is already held by %q", rec.owner),
 				errs.C(errorClass, errs.ConditionFailed),
 				errs.D("owner", rec.owner),
-				errs.D("user_id", actor.UserID()))
+				errs.D(observability.AttrUserID, actor.UserID()))
 		}
 
 		return nil
@@ -405,7 +405,7 @@ func ownerOnlyGuard(actor hi.Actor) func(string, *taskRecord) error {
 				errs.M("only the actual owner may release a user task"),
 				errs.C(errorClass, errs.ConditionFailed),
 				errs.D("owner", rec.owner),
-				errs.D("user_id", actor.UserID()))
+				errs.D(observability.AttrUserID, actor.UserID()))
 		}
 
 		return nil
@@ -461,7 +461,7 @@ func checkTaskArgs(op, taskID, userID string) error {
 		return errs.New(
 			errs.M("%s: an empty user id isn't allowed", op),
 			errs.C(errorClass, errs.EmptyNotAllowed),
-			errs.D("task_id", taskID))
+			errs.D(observability.AttrTaskID, taskID))
 	}
 
 	return nil

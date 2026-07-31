@@ -2,6 +2,7 @@ package activities
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"reflect"
 	"strings"
 
@@ -217,7 +218,7 @@ func (ut *UserTask) Exec(
 				errs.New(
 					errs.M("user task completion output binding failed"),
 					errs.C(errorClass, errs.OperationFailed),
-					errs.D("task_id", ut.ID()),
+					errs.D(observability.AttrTaskID, ut.ID()),
 					errs.E(err))
 		}
 	}
@@ -240,7 +241,7 @@ func (ut *UserTask) ProcessEvent(
 		return errs.New(
 			errs.M("user task %q expects a task-completion event", ut.ID()),
 			errs.C(errorClass, errs.TypeCastingError),
-			errs.D("task_id", ut.ID()),
+			errs.D(observability.AttrTaskID, ut.ID()),
 			errs.D("event_type", string(eDef.Type())))
 	}
 

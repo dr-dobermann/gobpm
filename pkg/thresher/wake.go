@@ -319,15 +319,15 @@ func wakeErr(msg string, cause error) error {
 // never silent, never fatal to the service.
 func (t *Thresher) reportWakeFailure(instanceID string, err error) {
 	t.cfg.logger.Warn("wake failed for instance",
-		"instance_id", instanceID, "error", err.Error())
+		observability.AttrInstanceID, instanceID, observability.AttrError, err.Error())
 
 	t.producer.Report(observability.Fact{
 		Kind:  observability.KindInstanceState,
 		Phase: observability.PhaseFailed,
 		Details: map[string]string{
-			"instance_id":           instanceID,
-			"reason":                "wake",
-			observability.AttrError: err.Error(),
+			observability.AttrInstanceID: instanceID,
+			"reason":                     "wake",
+			observability.AttrError:      err.Error(),
 		},
 	})
 }

@@ -137,8 +137,10 @@ behavior is not a warning.
 
 ### 2.5 One attribute vocabulary
 
-Log records and Fact details identify their subject with **canonical
-snake_case keys**, the same everywhere. One vocabulary serves both channels:
+Three carriers identify their subject with **canonical snake_case keys**, the
+same everywhere: an operator **log record**'s attributes, an observable
+**Fact**'s Details, and a classified **error**'s Details (`errs.D`). One
+vocabulary serves all three:
 `pkg/observability`'s `Attr*` constants ARE this table, so a key is reached
 through a constant rather than retyped at each call site.
 
