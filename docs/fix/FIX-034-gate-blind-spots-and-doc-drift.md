@@ -1,7 +1,7 @@
 # FIX-034 «The gate measures less than it claims, and three decided rules are unenforced»
 
 **Type:** FIX (one-shot bug-fix; not rewritten after landing).
-**Status:** Draft (2026-07-31, branch `fix/gate-and-doc-hardening`, not yet implemented).
+**Status:** Accepted (2026-07-31, branch `fix/gate-and-doc-hardening`).
 **Date:** 2026-07-31.
 **Author:** Ruslan Gabitov.
 **Branch:** `fix/gate-and-doc-hardening` (four gaps between what the gate and the docs promise and what they check).
@@ -276,9 +276,18 @@ change.
 
 #### §3.2.6 `docs/backlog.md` — four entries graduate out
 
-Removed: per-module coverage profiles, the discard/assertion guard, the link
-check, the constructor doc-comment audit. The **true-BPMN diagram** entry
-stays: it is blocked on later converter slices, not on this work — see §6.3.
+Marked **DONE** in place, with what was found: per-module coverage profiles,
+the discard/assertion guard, the link check, the constructor doc-comment audit.
+
+The file's header says a graduated item "leaves this list", but the convention
+actually in use is to mark it DONE with a summary — both the
+`Error-propagation & logging policy` entry and the examples outcome-gate that
+landed the same day do that, and the note is worth more than the empty space:
+it records what the item turned out to be, which is exactly what a future
+reader of a closed item wants. Matching the practice rather than the header.
+
+The **true-BPMN diagram** entry stays open: it is blocked on later converter
+slices, not on this work — see §6.3.
 
 ## §4 Verification
 
@@ -353,14 +362,62 @@ feature gated on later converter slices and wants an SRD, not this FIX.
 
 ## §8 Implementation summary
 
-> ⚠️ TODO: fill AFTER landing.
-
-### §8.1 Stages by commit
+### §8.1 Stages by commit (branch `fix/gate-and-doc-hardening`)
 
 | Stage | Commit | Scope | Tests |
 |---|---|---|---|
+| doc | `1ae8fda` | this document | — |
+| M1 | `47d291d` | per-module coverage profiles (§3.2.1) | before/after on a deliberately uncovered line |
+| M2 | `613250d` | the two guards + 25 assertion fixes + `errs.Invariant` (§3.2.2/§3.2.3) | 8 new tests; `TestInvariant`, `TestAsAdapter*`, `TestCondArming*`, `TestWireClonedGraph*`, the two non-bool engine tests, `TestBoolComparison` |
+| M3 | `8363e83` | `cmd/linkcheck` + the blocking gate step (§3.2.4) | 7 tests over the parsing rules and the three exit codes |
+| M4 | `4367543` | the option-block audit (§3.2.5) | comment-only |
+| M5 | this commit | backlog graduation, §8 (§3.2.6) | — |
 
 ### §8.2 Empirical findings — where reality diverged from the §3 draft
+
+**The assertion count was five times the estimate, and the estimate came from
+the tool itself.** §2.2 measured 5 unchecked assertions; the truth was 25 across
+13 files. Three consecutive runs each reported exactly five and each a
+*different* five — that inconsistency is what exposed golangci-lint's
+`max-same-issues: 3` cap. Any count from that linter without raising
+`max-same-issues` and `max-issues-per-linter` is a lower bound, never a total.
+The corrected numbers are in §2.2.
+
+**Ten of the 25 were deleted rather than checked, and both deletions left the
+code simpler than before this FIX started.** `BoundaryEvents()` returned
+`[]flow.EventNode` while `AddBoundaryEvent(flow.BoundaryEvent)` was its only
+writer — the type was wider than the invariant, so every consumer asserted it
+back; narrowing the accessor removed seven. The three frozen `Clone()`s now
+delegate to the package's own `freeze()`, which wraps by kind: no assertion, no
+panic, and shorter than the original.
+
+**The narrowing exposed a wrong test fixture.** `stubTaskBoundary` reported an
+`IntermediateCatchEvent` as a boundary event. It is not one; the wide element
+type hid it, and production code asserted the value back to
+`flow.BoundaryEvent` — a panic had that path ever run.
+
+**Guards believed untestable mostly were not.** The first attempt to drive them
+crashed on a hand-built `loopState`, which lacks the wiring `Run` performs. A
+*completed* instance is fully wired, and with that the two conditional arming
+guards, `failInvariant`, both clone guards and — via an engine stub returning a
+non-bool — the two `data.As` branches all became ordinary tests. Only the
+boundary-fire guard is genuinely unreachable: `boundaryWatch.boundary` is
+already typed `flow.BoundaryEvent`, so no test can hand it anything else.
+
+**The coverage gate has a second blind spot, found by this FIX's own new
+package.** See §8.3.
+
+**One convention did not fit all fifteen option blocks** — §3.2.5 records the
+split between families-accepted-wholesale and families-with-rejected-members.
+`NewEndEvent` was nearly "fixed" into being wrong.
+
+**A process note, because it cost real time.** Two measurements in this work
+were taken from runs whose exit status was never checked: `make test-core` was
+sent to `/dev/null` and only the coverage number read afterwards, while the
+tests underneath were failing — so several intermediate percentages came from a
+stale `coverage.txt`. The rule the repository already states for `make ci` —
+judge a gate by its own completion markers, never by a wrapper or a
+side-effect — applies equally to a helper invocation.
 
 ### §8.3 Backlog (out of FIX-034 scope)
 

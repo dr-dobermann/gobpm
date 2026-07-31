@@ -45,7 +45,16 @@ Genuinely un-homed items — not yet tracked in an ADR/SRD, the roadmap, or the
 audit-backlog. Each graduates out into an ADR/SRD (when designed) or a FIX (when
 implemented), and leaves this list.
 
-- **Optioned-constructor doc-comment audit** — sweep every `New*` constructor whose
+- **Optioned-constructor doc-comment audit** — **DONE** (2026-07-31, FIX-034
+  §3.2.5). The audit found four defects — `NewServiceTask` missing
+  `WithWorkerTrust`, `NewUserTask` missing three whole option families,
+  `NewEventBasedGateway` missing `WithCorrelationKey`, `NewIAE` missing
+  `WithIDefinition`, and `WithIAE` naming two functions that do not exist — and
+  showed that one convention does not fit every block: a constructor accepting a
+  family WHOLESALE documents the family (an enumeration drifts as the family
+  grows), while one that accepts a family and REJECTS members keeps its
+  enumeration, because the family heading would be a lie (`NewEndEvent` refuses
+  the Conditional and Timer triggers). Original text: sweep every `New*` constructor whose
   doc comment enumerates its available options and reconcile each list with the
   options actually accepted. Surfaced by `NewUserTask`'s list going stale when the
   triad options were added (SRD-034 M1). A comment-only correctness pass, no
@@ -64,13 +73,27 @@ implemented), and leaves this list.
   (a ServiceTask on an implementation-less operation) and `simple-timer`
   demonstrated scheduled instantiation, which the engine deliberately does not
   do. Landed as plain commits on `test/examples-assert-outcome`; no design doc.
-- **Discard/assertion lint guard** — one `golangci-lint` config pass adding
+- **Discard/assertion lint guard** — **DONE** (2026-07-31, FIX-034 §3.2.2/§3.2.3).
+  `errcheck check-blank` and `forcetypeassert` are enabled; the 25 unchecked
+  assertions they exposed are fixed (ten deleted outright by narrowing
+  `BoundaryEvents()` and delegating the frozen `Clone()`s to `freeze()`), and
+  branches no input can reach report `errs.Invariant` — the one construct the
+  coverage gate excludes, so `grep -rn "Invariant("` lists every such branch.
+  `forbidigo`, which this entry proposed, was the wrong instrument: it matches
+  text and cannot tell a comma-ok assertion from an unchecked one. Original
+  text: one `golangci-lint` config pass adding
   `forbidigo` (or equivalent) patterns for two idioms the codebase has decided
   against: a bare `_ =` on an error-returning call outside the documented
   carve-outs (FIX-028 §8.3) and a `.Get(ctx).(T)` payload assertion where
   `data.As[T]` belongs (ADR-034 v.1 §5). Both are guidance today, enforced by
   review only.
-- **Per-module coverage profiles** — `test-all` writes `coverage.txt` only for
+- **Per-module coverage profiles** — **DONE** (2026-07-31, FIX-034 §3.2.1).
+  Every module writes its own profile and `COVER_PROFILES` derives from
+  `CORE_MODULES`, so a new module is gated the day it appears. Proven by
+  before/after on four deliberately uncovered lines in `adapters/lua`: the old
+  invocation reported "100.0% of 0 changed coverable lines — PASS", the new one
+  "0.0% of 4 — FAIL". A residual gap is recorded separately above (`cmd/` is
+  still not measured). Original text: `test-all` writes `coverage.txt` only for
   the root module (`if [ "$$dir" = "." ]`), so `cover-check` measures the diff
   in core and nowhere else. `runtime/` and `adapters/{lua,dtable}` have never
   been diff-gated: both adapters landed *after* `COVER_MIN` went to 95 and CI
@@ -88,7 +111,14 @@ implemented), and leaves this list.
   every `package main` is unknown. The tool is external
   (`github.com/dr-dobermann/covercheck`), so this wants a reproduction and a fix
   there, not a workaround in the Makefile.
-- **No automated Markdown link check** — nothing in `make ci` or
+- **No automated Markdown link check** — **DONE** (2026-07-31, FIX-034 §3.2.4).
+  `cmd/linkcheck` walks the repository's Markdown and fails the gate on any
+  relative link that does not resolve; it is blocking, offline and built from
+  this repo, so no toolchain or network joins the gate. Both requirements this
+  entry recorded are tested: fenced and inline code are skipped, and hrefs are
+  percent-decoded. The open question it left — blocking or advisory — was
+  settled as blocking, because the 78 dead links accumulated precisely because
+  nothing failed. Original text: nothing in `make ci` or
   `check.yml` validates relative documentation links, which is how the 78 dead
   cross-references [FIX-031](fix/FIX-031-documentation-link-rot.md) swept up
   accumulated unnoticed across several refactors. Two of the three causes there
