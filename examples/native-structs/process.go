@@ -42,7 +42,7 @@ type Receipt struct {
 // buildProcess assembles start → quote → reprice → XOR{order.total > 100 →
 // premium | default → standard}; the condition reaches INTO the wrapped host
 // struct by path.
-func buildProcess(order data.Value) (*process.Process, error) {
+func buildProcess(ran *pathSet, order data.Value) (*process.Process, error) {
 	proc, err := process.New("native-structs",
 		data.WithProperties(
 			data.MustProperty("order",
@@ -72,12 +72,12 @@ func buildProcess(order data.Value) (*process.Process, error) {
 		return nil, fmt.Errorf("create gateway: %w", err)
 	}
 
-	premium, err := printTask("premium", "  ▶ order.total > 100 → premium lane")
+	premium, err := printTask(ran, "premium", "  ▶ order.total > 100 → premium lane")
 	if err != nil {
 		return nil, err
 	}
 
-	standard, err := printTask("standard", "  ▶ default → standard lane")
+	standard, err := printTask(ran, "standard", "  ▶ default → standard lane")
 	if err != nil {
 		return nil, err
 	}
@@ -169,10 +169,13 @@ func receiptTask(name string, sum int) (*activities.ServiceTask, error) {
 }
 
 // printTask builds a ServiceTask whose Go functor prints msg.
-func printTask(name, msg string) (*activities.ServiceTask, error) {
+func printTask(
+	ran *pathSet, name, msg string,
+) (*activities.ServiceTask, error) {
 	op, err := gooper.New(name,
 		func(_ context.Context, _ service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			ran.mark(name)
 			fmt.Println(msg)
 
 			return nil, nil

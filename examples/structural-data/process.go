@@ -33,14 +33,19 @@ func orderRecord(total int) data.Value {
 		values.F("id", values.NewVariable("A-1")),
 		values.F("total", values.NewVariable(total)),
 		values.F("items", values.NewArray[data.Value](
-			item("widget", 50), item("gadget", 100))),
+			item("widget", wantFirstPrice), item("gadget", 100))),
 	)
 }
+
+// wantFirstPrice is the price of the first item in the record — declared here
+// and read by both the record's construction and the task that reaches into it
+// by path, so the check cannot drift from the data it checks.
+const wantFirstPrice = 50
 
 // buildProcess assembles: start → read-price → XOR{ order.total > 100 → premium
 // | default → standard } → end. Both the service task and the gateway condition
 // reach INTO the order record by path (order.items[0].price, order.total).
-func buildProcess(total int) (*process.Process, error) {
+func buildProcess(ran *pathSet, total int) (*process.Process, error) {
 	proc, err := process.New("structural-data",
 		data.WithProperties(
 			data.MustProperty("order",
@@ -66,12 +71,12 @@ func buildProcess(total int) (*process.Process, error) {
 		return nil, fmt.Errorf("create gateway: %w", err)
 	}
 
-	premium, err := printTask("premium", "  ▶ order.total > 100 → premium lane")
+	premium, err := printTask(ran, "premium", "  ▶ order.total > 100 → premium lane")
 	if err != nil {
 		return nil, err
 	}
 
-	standard, err := printTask("standard", "  ▶ default → standard lane")
+	standard, err := printTask(ran, "standard", "  ▶ default → standard lane")
 	if err != nil {
 		return nil, err
 	}
@@ -150,6 +155,15 @@ func pricePrinterTask() (*activities.ServiceTask, error) {
 				return nil, fmt.Errorf("read order.items[0].price: %w", err)
 			}
 
+			// Reaching into the record by path is the demonstration, so the
+			// value that came back is checked here rather than printed and
+			// trusted: a path that resolved to the wrong element, or to a
+			// zero value, would print a plausible line and complete.
+			if got := d.Value().Get(ctx); got != wantFirstPrice {
+				return nil, fmt.Errorf(
+					"order.items[0].price = %v, want %v", got, wantFirstPrice)
+			}
+
 			fmt.Printf("  ▶ order.items[0].price = %v\n", d.Value().Get(ctx))
 
 			return nil, nil
@@ -168,10 +182,13 @@ func pricePrinterTask() (*activities.ServiceTask, error) {
 }
 
 // printTask builds a ServiceTask whose Go functor prints msg.
-func printTask(name, msg string) (*activities.ServiceTask, error) {
+func printTask(
+	ran *pathSet, name, msg string,
+) (*activities.ServiceTask, error) {
 	op, err := gooper.New(name,
 		func(_ context.Context, _ service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			ran.mark(name)
 			fmt.Println(msg)
 
 			return nil, nil

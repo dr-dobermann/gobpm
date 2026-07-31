@@ -22,7 +22,7 @@ func quoteWorker() localdispatcher.WorkerFunc {
 		body := values.MustRecord(
 			values.F("total", values.NewVariable(150)),
 			values.F("price0", values.NewVariable(50)),
-			values.F("price1", values.NewVariable(100)),
+			values.F("price1", values.NewVariable(wantPrice1)),
 		)
 
 		return data.MustItemDefinition(body, foundation.WithID("body")), nil

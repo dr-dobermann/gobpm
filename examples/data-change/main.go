@@ -41,7 +41,8 @@ func run() error {
 		return fmt.Errorf("create engine: %w", err)
 	}
 
-	sub := engine.Observe(&dataChangePrinter{})
+	changes := &dataChangePrinter{}
+	sub := engine.Observe(changes)
 	defer sub.Cancel()
 
 	if err := engine.Run(ctx); err != nil {
@@ -70,6 +71,18 @@ func run() error {
 	// Cancel drains the buffered facts so both DataChange lines land before
 	// the final status prints.
 	sub.Cancel()
+
+	// The commit-diff granularity is the whole demonstration: a whole-value
+	// first commit must surface as ONE Value_Added at the root, and a later
+	// commit touching one field as ONE Value_Updated at that field's path.
+	// A diff that reported per-field adds on the first commit, or re-reported
+	// the root on the second, would print more lines and complete identically.
+	if err := changes.check(
+		"Value_Added receipt @produce",
+		"Value_Updated receipt.sum @reprice",
+	); err != nil {
+		return fmt.Errorf("change stream: %w", err)
+	}
 
 	fmt.Printf("  ✓ completed (%s)\n", state)
 

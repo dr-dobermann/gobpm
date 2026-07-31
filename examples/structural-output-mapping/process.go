@@ -89,6 +89,10 @@ func quoteTask() (*activities.ServiceTask, error) {
 	return st, nil
 }
 
+// wantPrice1 is the second item's price the flat worker body carries — read by
+// the body it is assembled from and by the read-back that checks it landed.
+const wantPrice1 = 100
+
 // readBackTask reads the assembled order.items[1].price through the narrow
 // DataReader — proof the flat body became a navigable nested value.
 func readBackTask() (*activities.ServiceTask, error) {
@@ -98,6 +102,16 @@ func readBackTask() (*activities.ServiceTask, error) {
 			d, err := r.GetData("order.items[1].price")
 			if err != nil {
 				return nil, fmt.Errorf("read order.items[1].price: %w", err)
+			}
+
+			// The read-back IS the demonstration: a flat worker body became
+			// a navigable nested value. Printing whatever came back would
+			// pass even if the mapping had assembled the wrong shape or left
+			// the field zero, so the value is checked here, in the task that
+			// reads it.
+			if got := d.Value().Get(ctx); got != wantPrice1 {
+				return nil, fmt.Errorf(
+					"order.items[1].price = %v, want %v", got, wantPrice1)
 			}
 
 			fmt.Printf("  ▶ order.items[1].price = %v\n", d.Value().Get(ctx))

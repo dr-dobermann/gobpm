@@ -35,6 +35,10 @@ func run() error {
 		return fmt.Errorf("init data states: %w", err)
 	}
 
+	// newTotal is the value written through the view; it is above the
+	// gateway's threshold, so it also decides the lane.
+	const newTotal = 150
+
 	// The host's live object — note Secret is tagged gobpm:"-".
 	order := &Order{ID: "A-1", Total: 90,
 		Items:  []Item{{SKU: "widget", Price: 50}},
@@ -44,12 +48,21 @@ func run() error {
 
 	// A host-side structural write goes through the view INTO the live struct.
 	if err := values.SetPath(context.Background(), wrapped,
-		"total", values.NewVariable(150)); err != nil {
+		"total", values.NewVariable(newTotal)); err != nil {
 		return fmt.Errorf("set order.total: %w", err)
 	}
 
-	fmt.Printf("  SetPath(order.total=150) → the LIVE struct: o.Total == %d\n",
-		order.Total)
+	// The whole point of wrapping a native struct is that the write reaches
+	// the LIVE object, not a copy: if it did not, everything downstream would
+	// still behave — the view would hold 150 and the gateway would route on
+	// it — while the host's own struct silently kept 90.
+	if order.Total != newTotal {
+		return fmt.Errorf("SetPath left the live struct at %d, want %d",
+			order.Total, newTotal)
+	}
+
+	fmt.Printf("  SetPath(order.total=%d) → the LIVE struct: o.Total == %d\n",
+		newTotal, order.Total)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -60,14 +73,18 @@ func run() error {
 		return fmt.Errorf("create engine: %w", err)
 	}
 
-	sub := engine.Observe(&dataChangePrinter{})
+	changes := &dataChangePrinter{}
+	sub := engine.Observe(changes)
 	defer sub.Cancel()
 
 	if err := engine.Run(ctx); err != nil {
 		return fmt.Errorf("run engine: %w", err)
 	}
 
-	proc, err := buildProcess(wrapped)
+	// Records which lane ran, so the structural condition is checked.
+	ran := newPathSet()
+
+	proc, err := buildProcess(ran, wrapped)
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
@@ -87,6 +104,25 @@ func run() error {
 	}
 
 	sub.Cancel() // drain the buffered facts before the final line
+
+	// A native Go struct wrapped as process data diffs by FIELD PATH just as
+	// a record does: one Value_Added at the root when it is first committed,
+	// one Value_Updated at receipt.sum when only that field changes. Nothing
+	// about the wrapping should make the change stream coarser.
+	// The gateway condition reaches into the wrapped struct, so which lane
+	// ran proves the reach-in worked end to end.
+	if err := ran.check(
+		[]string{"premium"}, []string{"standard"},
+	); err != nil {
+		return fmt.Errorf("structural routing: %w", err)
+	}
+
+	if err := changes.check(
+		"Value_Added receipt @quote",
+		"Value_Updated receipt.sum @reprice",
+	); err != nil {
+		return fmt.Errorf("change stream: %w", err)
+	}
 
 	fmt.Printf("  ✓ completed (%s)\n", state)
 

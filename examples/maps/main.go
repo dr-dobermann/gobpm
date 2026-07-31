@@ -41,7 +41,8 @@ func run() error {
 		return fmt.Errorf("create engine: %w", err)
 	}
 
-	sub := engine.Observe(&dataChangePrinter{})
+	changes := &dataChangePrinter{}
+	sub := engine.Observe(changes)
 	defer sub.Cancel()
 
 	if err := engine.Run(ctx); err != nil {
@@ -68,6 +69,23 @@ func run() error {
 	}
 
 	sub.Cancel() // drain the buffered facts before the final line
+
+	// A map commit diffs PER KEY: the second commit updates EUR, adds JPY and
+	// deletes GBP, and each must surface as its own change at its own key
+	// path. A diff that re-reported the whole map, or missed the deletion,
+	// would complete the process exactly the same way.
+	//
+	// Checked as a set, not a sequence: the three second-commit changes are
+	// derived from a map, whose iteration order Go deliberately leaves
+	// unspecified, so asserting an order would be asserting a coincidence.
+	if err := changes.checkSet(
+		"Value_Added rates @publish",
+		`Value_Updated rates["EUR"] @reprice`,
+		`Value_Added rates["JPY"] @reprice`,
+		`Value_Deleted rates["GBP"] @reprice`,
+	); err != nil {
+		return fmt.Errorf("change stream: %w", err)
+	}
 
 	fmt.Printf("  ✓ completed (%s)\n", state)
 
