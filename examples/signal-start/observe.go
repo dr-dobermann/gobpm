@@ -31,6 +31,11 @@ func awaitAll(ctx context.Context, engine *thresher.Thresher, n int) error {
 				return fmt.Errorf("instance %s: %w", id, err)
 			}
 
+			if st != thresher.StateCompleted {
+				return fmt.Errorf("instance %s ended %s, want Completed",
+					id, st)
+			}
+
 			fmt.Printf("  ✓ instance %s completed (%s)\n", id, st)
 			done[id] = true
 		}

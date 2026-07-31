@@ -13,10 +13,11 @@ import (
 // fraudCheckOp is a quick check that flags the order as fraudulent. The branch it
 // runs on leads straight to a Terminate End Event, so the whole instance is about to
 // be torn down.
-func fraudCheckOp() (service.Operation, error) {
+func fraudCheckOp(ran *pathSet) (service.Operation, error) {
 	return gooper.New("fraud-check",
 		func(_ context.Context, _ service.DataReader, _ *data.ItemDefinition,
 		) (*data.ItemDefinition, error) {
+			ran.mark("fraud-check")
 			fmt.Println("  ⚠ fraud-check: fraudulent order detected — terminating the process")
 
 			return nil, nil
@@ -26,7 +27,7 @@ func fraudCheckOp() (service.Operation, error) {
 // paymentOp is a long-running, context-honoring charge. When the fraud branch
 // terminates the instance, this operation's context is cancelled and it abandons the
 // charge instead of completing.
-func paymentOp() (service.Operation, error) {
+func paymentOp(ran *pathSet) (service.Operation, error) {
 	return gooper.New("process-payment",
 		func(ctx context.Context, _ service.DataReader, _ *data.ItemDefinition,
 		) (*data.ItemDefinition, error) {
@@ -34,11 +35,13 @@ func paymentOp() (service.Operation, error) {
 
 			select {
 			case <-time.After(3 * time.Second):
+				ran.mark("payment-charged")
 				fmt.Println("  ✓ process-payment: charged")
 
 				return nil, nil
 
 			case <-ctx.Done():
+				ran.mark("payment-interrupted")
 				fmt.Println("  ✗ process-payment: interrupted before it finished")
 
 				return nil, ctx.Err()

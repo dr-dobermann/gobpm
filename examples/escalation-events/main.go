@@ -35,7 +35,10 @@ func run() error {
 		return fmt.Errorf("create engine: %w", err)
 	}
 
-	proc, err := buildProcess()
+	// Records which tasks ran, so the escalation routing is checked.
+	ran := newPathSet()
+
+	proc, err := buildProcess(ran)
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
@@ -59,6 +62,14 @@ func run() error {
 	state, err := h.WaitCompletion(ctx)
 	if err != nil {
 		return fmt.Errorf("waiting for completion: %w", err)
+	}
+
+	// notify-manager sits on the boundary's exception flow and is reachable
+	// ONLY through it, so its having run is what proves the escalation was
+	// caught. A sub-process that swallowed the escalation would take the
+	// normal flow to end-approved and still complete the process.
+	if err := ran.check([]string{"notify-manager"}, nil); err != nil {
+		return fmt.Errorf("escalation routing: %w", err)
 	}
 
 	fmt.Printf("\n✓ escalation-events completed (%s): review-order raised a "+

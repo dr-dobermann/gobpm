@@ -19,8 +19,8 @@ import (
 // The payment message is never sent, so the timer fires first: the handler
 // cancels the blocked wait, runs releaseHold, and — reaching its End without
 // re-throwing — absorbs the event, so the parent resumes on its normal flow.
-func buildProcess() (*process.Process, error) {
-	timeout, err := buildTimeoutHandler()
+func buildProcess(ran *pathSet) (*process.Process, error) {
+	timeout, err := buildTimeoutHandler(ran)
 	if err != nil {
 		return nil, err
 	}
@@ -38,7 +38,7 @@ func buildProcess() (*process.Process, error) {
 	if err != nil {
 		return nil, err
 	}
-	charge, err := step("charge")
+	charge, err := step(ran, "charge")
 	if err != nil {
 		return nil, err
 	}
@@ -54,12 +54,12 @@ func buildProcess() (*process.Process, error) {
 		return nil, fmt.Errorf("assemble await-payment: %w", err)
 	}
 
-	return assembleProcess(await)
+	return assembleProcess(ran, await)
 }
 
 // buildTimeoutHandler builds the interrupting Event Sub-Process:
 // timer-start → releaseHold → end.
-func buildTimeoutHandler() (*activities.SubProcess, error) {
+func buildTimeoutHandler(ran *pathSet) (*activities.SubProcess, error) {
 	timeout, err := activities.NewSubProcess("payment-timeout",
 		activities.WithTriggeredByEvent())
 	if err != nil {
@@ -71,7 +71,7 @@ func buildTimeoutHandler() (*activities.SubProcess, error) {
 	if err != nil {
 		return nil, err
 	}
-	release, err := step("releaseHold")
+	release, err := step(ran, "releaseHold")
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +90,9 @@ func buildTimeoutHandler() (*activities.SubProcess, error) {
 }
 
 // assembleProcess wires the top-level flow start → checkout → await → notify → end.
-func assembleProcess(await *activities.SubProcess) (*process.Process, error) {
+func assembleProcess(
+	ran *pathSet, await *activities.SubProcess,
+) (*process.Process, error) {
 	proc, err := process.New("event-subprocess")
 	if err != nil {
 		return nil, fmt.Errorf("create process: %w", err)
@@ -100,11 +102,11 @@ func assembleProcess(await *activities.SubProcess) (*process.Process, error) {
 	if err != nil {
 		return nil, err
 	}
-	checkout, err := step("checkout")
+	checkout, err := step(ran, "checkout")
 	if err != nil {
 		return nil, err
 	}
-	notify, err := step("notify")
+	notify, err := step(ran, "notify")
 	if err != nil {
 		return nil, err
 	}

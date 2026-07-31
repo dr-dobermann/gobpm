@@ -53,6 +53,11 @@ func workTask(count *int) (*activities.ServiceTask, error) {
 	return activities.NewServiceTask("work", op, activities.WithoutParams())
 }
 
+// wantIterations is how many times the token must pass through work before
+// the loop condition lets it out — shared by the gateway condition and the
+// example's own assertion, so the two can never disagree.
+const wantIterations = 3
+
 // loopGateway builds the exclusive gateway and the exit condition count<3. The
 // condition reads the same counter the work task advances (one track, so no
 // shared-state race) — a fresh false→true edge is not needed here; the gateway
@@ -68,7 +73,7 @@ func loopGateway(
 	cond, err := goexpr.New(nil,
 		data.MustItemDefinition(values.NewVariable(false)),
 		func(_ context.Context, _ data.Source) (data.Value, error) {
-			return values.NewVariable(*count < 3), nil
+			return values.NewVariable(*count < wantIterations), nil
 		})
 	if err != nil {
 		return nil, nil, fmt.Errorf("create loop condition: %w", err)

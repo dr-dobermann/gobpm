@@ -1,7 +1,14 @@
-// Command simple-timer demonstrates a timer Start Event: the process is
-// instantiated when its timer fires (here, 3 seconds from registration).
+// Command simple-timer demonstrates a timer Start Event: the instance is
+// started explicitly, and its timer start event holds the token until the
+// timer fires (here, 3 seconds) before releasing it into the flow.
 //
 //	(timer start — fires in 3s) ◷─> end
+//
+// A timer start does NOT instantiate the process by schedule — the engine
+// treats only message, signal and instantiating-ReceiveTask starts as
+// instantiating triggers (see internal/instance/snapshot). Scheduled
+// instantiation is not implemented; this example would silently demonstrate
+// nothing if it relied on it.
 package main
 
 import (
@@ -21,6 +28,11 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 )
+
+// timerDelay is how long the start event's timer waits before instantiating
+// the process. The timer definition and the example's own assertion both read
+// it, so the check can never drift away from the behaviour it is checking.
+const timerDelay = 3 * time.Second
 
 func main() {
 	fmt.Print(`
@@ -54,9 +66,9 @@ func main() {
 	// Create timer expression for 3 seconds from now
 	timeExpr := goexpr.Must(
 		nil,
-		data.MustItemDefinition(values.NewVariable(time.Now().Add(3*time.Second))),
+		data.MustItemDefinition(values.NewVariable(time.Now().Add(timerDelay))),
 		func(ctx context.Context, ds data.Source) (data.Value, error) {
-			return values.NewVariable(time.Now().Add(3 * time.Second)), nil
+			return values.NewVariable(time.Now().Add(timerDelay)), nil
 		},
 		foundation.WithID("timer-3s"),
 	)
@@ -99,15 +111,54 @@ func main() {
 		log.Fatal("Failed to register process:", err)
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	started := time.Now()
+
 	if err := engine.Run(ctx); err != nil {
 		log.Fatal("Failed to start engine:", err)
 	}
 
-	fmt.Printf("Timer process started. Will trigger in 3 seconds...\n")
+	fmt.Printf("Timer process started. Will fire in %s...\n", timerDelay)
 
-	// Process will auto-start when timer fires
-	// This is just for demo - in real usage you'd handle the timer event
-	time.Sleep(5 * time.Second)
-	fmt.Println("Timer should have fired by now!")
+	// The timer start event instantiates the process on its own — there is no
+	// StartProcess call and so no handle to wait on, so the instance is found
+	// through the engine. Waiting for it is the whole assertion: this example
+	// used to sleep past the deadline and print "Timer should have fired by
+	// now!", which was true whether or not it had.
+	h, err := engine.StartLatest(proc.ID())
+	if err != nil {
+		log.Fatal("Failed to start process:", err)
+	}
+
+	if err := awaitHeldByTimer(ctx, h, started); err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println("Timer fired: the token was released and the process completed")
+}
+
+// awaitHeldByTimer waits for the instance to complete and checks that it did
+// not finish sooner than the timer allows — the delay is the demonstration, so
+// it is what gets checked.
+func awaitHeldByTimer(
+	ctx context.Context, h *thresher.InstanceHandle, started time.Time,
+) error {
+	st, err := h.WaitCompletion(ctx)
+	if err != nil {
+		return fmt.Errorf("waiting for completion: %w", err)
+	}
+
+	if st != thresher.StateCompleted {
+		return fmt.Errorf("instance ended %s, want Completed", st)
+	}
+
+	if waited := time.Since(started); waited < timerDelay {
+		return fmt.Errorf("completed after %s, want at least %s — the timer "+
+			"start did not hold the token",
+			waited.Round(time.Millisecond), timerDelay)
+	}
+
+	return nil
 }

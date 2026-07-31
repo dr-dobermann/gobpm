@@ -18,7 +18,7 @@ import (
 //
 // The fraud check finishes first and reaches a Terminate End Event, which abnormally
 // terminates the whole instance — cancelling the in-flight payment mid-charge.
-func buildProcess() (*process.Process, error) {
+func buildProcess(ran *pathSet) (*process.Process, error) {
 	proc, err := process.New("terminate-end-event")
 	if err != nil {
 		return nil, fmt.Errorf("new process: %w", err)
@@ -34,12 +34,14 @@ func buildProcess() (*process.Process, error) {
 		return nil, fmt.Errorf("split: %w", err)
 	}
 
-	fraudCheck, err := serviceTask("fraud-check", fraudCheckOp)
+	fraudCheck, err := serviceTask("fraud-check",
+		func() (service.Operation, error) { return fraudCheckOp(ran) })
 	if err != nil {
 		return nil, err
 	}
 
-	payment, err := serviceTask("process-payment", paymentOp)
+	payment, err := serviceTask("process-payment",
+		func() (service.Operation, error) { return paymentOp(ran) })
 	if err != nil {
 		return nil, err
 	}

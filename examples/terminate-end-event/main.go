@@ -42,7 +42,10 @@ func run() error {
 		return fmt.Errorf("create engine: %w", err)
 	}
 
-	proc, err := buildProcess()
+	// Records which tasks ran, so the termination claim is checked.
+	ran := newPathSet()
+
+	proc, err := buildProcess(ran)
 	if err != nil {
 		return fmt.Errorf("build process: %w", err)
 	}
@@ -66,6 +69,22 @@ func run() error {
 	state, err := h.WaitCompletion(ctx)
 	if err != nil {
 		return fmt.Errorf("waiting for completion: %w", err)
+	}
+
+	// Terminate ends the whole instance, so the card must never be charged —
+	// that is the outcome this pattern exists to prevent, and checking only
+	// that the instance ended would pass even if the charge had gone through
+	// on the way out.
+	//
+	// It deliberately does NOT require that the payment reported an
+	// interruption: whether the payment task is scheduled at all before the
+	// teardown reaches it is a race, and about one run in eight it is torn
+	// down first and never runs. Not running is just as correct as being
+	// interrupted, so demanding the interruption made this assertion flaky
+	// against perfectly good behaviour.
+	if err := ran.check([]string{"fraud-check"},
+		[]string{"payment-charged"}); err != nil {
+		return fmt.Errorf("terminate teardown: %w", err)
 	}
 
 	fmt.Printf("\n✓ terminate-end-event finished (%s): the fraud branch hit a Terminate "+

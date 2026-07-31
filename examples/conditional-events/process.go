@@ -34,10 +34,11 @@ func commitTask(taskName, dataName string, value int) (*activities.ServiceTask, 
 }
 
 // notifyTask prints the released-path marker.
-func notifyTask() (*activities.ServiceTask, error) {
+func notifyTask(ran *pathSet) (*activities.ServiceTask, error) {
 	op, err := gooper.New("notify",
 		func(_ context.Context, _ service.DataReader,
 			_ *data.ItemDefinition) (*data.ItemDefinition, error) {
+			ran.mark("notify")
 			fmt.Println("  notify → the total crossed 100, shipping upgraded")
 
 			return nil, nil

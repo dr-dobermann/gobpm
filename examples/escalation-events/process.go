@@ -17,7 +17,7 @@ import (
 //	             (raise OVER_BUDGET, Escalation End Event)
 //	             ╳ (escalation boundary OVER_BUDGET, interrupting)
 //	             └─> [notify-manager] ──────────> end-escalated
-func buildProcess() (*process.Process, error) {
+func buildProcess(ran *pathSet) (*process.Process, error) {
 	proc, err := process.New("escalation-events")
 	if err != nil {
 		return nil, fmt.Errorf("new process: %w", err)
@@ -48,7 +48,7 @@ func buildProcess() (*process.Process, error) {
 		return nil, fmt.Errorf("boundary: %w", err)
 	}
 
-	notify, err := notifyManager()
+	notify, err := notifyManager(ran)
 	if err != nil {
 		return nil, err
 	}

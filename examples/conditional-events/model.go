@@ -20,7 +20,7 @@ import (
 // addItems' committed total=140 re-evaluates the condition and the
 // false→true edge releases the notify path — data-driven waiting without
 // polling.
-func buildProcess() (*process.Process, error) {
+func buildProcess(ran *pathSet) (*process.Process, error) {
 	proc, err := process.New("conditional-events",
 		data.WithProperties(
 			data.MustProperty("total",
@@ -57,7 +57,7 @@ func buildProcess() (*process.Process, error) {
 		return nil, fmt.Errorf("create watch catch: %w", err)
 	}
 
-	notify, err := notifyTask()
+	notify, err := notifyTask(ran)
 	if err != nil {
 		return nil, err
 	}
