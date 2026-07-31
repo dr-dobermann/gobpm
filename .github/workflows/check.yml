@@ -68,6 +68,11 @@ jobs:
       - name: Build core modules
         run: make build-core
 
+      # Documentation link gate (FIX-034): relative Markdown links must
+      # resolve. Offline and repo-local — no toolchain, no network.
+      - name: Documentation link check
+        run: make link-check
+
       # Library-consumption guard (FIX-024): an external module must build
       # against gobpm with no test-only (testify) / mock dep leak.
       - name: Consumer-consumption smoke

@@ -208,6 +208,16 @@ gen_mock_files:
 # from what the current interfaces produce (a changed interface not regenerated
 # + committed). Deterministic output + a pinned mockery make git diff a reliable
 # signal.
+# Documentation link gate (FIX-034 §3.2.4): every RELATIVE Markdown link must
+# resolve to a file that exists. Blocking, because the 78 dead references
+# FIX-031 swept up accumulated precisely because nothing failed. Offline and
+# repository-local: the checker is built from this repo, so it adds no tool to
+# install and no network dependency that could redden the gate for reasons
+# unrelated to the change. External URLs are deliberately out of scope.
+link-check:
+	$(GO) run ./cmd/linkcheck -root .
+.PHONY: link-check
+
 mock-check:
 	$(call require-go-tool,mockery,github.com/vektra/mockery/v3,$(MOCKERY_VERSION))
 	rm -rf generated/
@@ -373,7 +383,7 @@ ci-examples:
 .PHONY: ci-examples
 
 # The core gate — everything the REQUIRED CI job runs, in the same order.
-ci-core: mock-check tidy-check-core lint-core build-core consumer-smoke test-core cover-check vuln-core
+ci-core: mock-check link-check tidy-check-core lint-core build-core consumer-smoke test-core cover-check vuln-core
 .PHONY: ci-core
 
 # Umbrella target that runs the full local-equivalent of CI (BOTH CI jobs).

@@ -336,6 +336,23 @@ feature gated on later converter slices and wants an SRD, not this FIX.
 
 ### §8.3 Backlog (out of FIX-034 scope)
 
+**covercheck does not measure `cmd/`, so the gate has a second blind spot.**
+Found by adding `cmd/linkcheck` in M3: its files are in the git diff and its 55
+blocks are in `coverage.txt`, yet covercheck reports nothing for them — the
+package's 236 lines never enter the denominator. Measured directly,
+`go test -cover ./cmd/linkcheck/` reported **74.3 %** while the gate said PASS,
+which is exactly the failure §1.1 was written about, one directory over. Whether
+it skips `cmd/` specifically or every `package main` is unknown; the tool is
+external (`github.com/dr-dobermann/covercheck`), so this wants a reproduction
+there rather than a workaround here. Recorded so the FIX does not claim a
+completeness it lacks.
+
+**A panicking observer is still swallowed** (`pkg/thresher/observer.go`).
+`deliver` contains the panic per ADR-013 §5 but has no sink to report it to, so
+a broken observer leaves no trace — the accidental-silence class ADR-022 treats
+as the worse failure. Threading a logger through would have widened M2 beyond
+gate hardening; it wants its own small change.
+
 ## §9 Open questions
 
 None.

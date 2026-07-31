@@ -80,6 +80,14 @@ implemented), and leaves this list.
   SRD-051, which sidestepped it by keeping the BPMN converter in the root
   module (SRD-051 v.2 §4.1); recorded here so the general gap is not mistaken
   for closed.
+- **covercheck does not measure `cmd/`** — a second coverage blind spot, found
+  while adding `cmd/linkcheck` (FIX-034 §8.3). Its files are in the git diff and
+  its blocks are in `coverage.txt`, but covercheck reports nothing for them, so
+  the package's lines never reach the denominator: the gate said PASS while
+  `go test -cover ./cmd/linkcheck/` said 74.3 %. Whether it skips `cmd/` or
+  every `package main` is unknown. The tool is external
+  (`github.com/dr-dobermann/covercheck`), so this wants a reproduction and a fix
+  there, not a workaround in the Makefile.
 - **No automated Markdown link check** — nothing in `make ci` or
   `check.yml` validates relative documentation links, which is how the 78 dead
   cross-references [FIX-031](fix/FIX-031-documentation-link-rot.md) swept up
