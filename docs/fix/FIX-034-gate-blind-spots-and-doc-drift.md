@@ -442,6 +442,14 @@ wrapper. The gate's denominator went 131 → 238 changed lines, and an uncovered
 probe in the relocated package fails it as it should. That is the pattern for
 every future command here until the tool is fixed.
 
+The backlog entry that recorded this was removed once the relocation landed:
+with a command's logic in an ordinary package, nothing in this repository is
+left ungated, so the item is not open work *here*. The residual risk is that a
+future command puts logic back under `cmd/`, where it would ship unmeasured
+again — which is why `cmd/linkcheck/main.go` carries the reason it is thin, and
+why this section keeps the diagnosis. The tool-side fix belongs to covercheck's
+own repository.
+
 **A panicking observer is still swallowed** (`pkg/thresher/observer.go`).
 `deliver` contains the panic per ADR-013 §5 but has no sink to report it to, so
 a broken observer leaves no trace — the accidental-silence class ADR-022 treats
