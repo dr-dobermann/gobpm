@@ -49,7 +49,6 @@ func buildProcess(total int, tier string) (*process.Process, error) {
 		return nil, err
 	}
 
-
 	end, err := events.NewEndEvent("end")
 	if err != nil {
 		return nil, fmt.Errorf("end: %w", err)

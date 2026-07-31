@@ -59,9 +59,10 @@ func (f frozenRecord) Get(ctx context.Context) any { return f.r.Get(ctx) }
 func (f frozenRecord) Update(context.Context, any) error {
 	return frozenErr("Update")
 }
-func (f frozenRecord) Lock()             { f.r.Lock() }
-func (f frozenRecord) Unlock()           { f.r.Unlock() }
-func (f frozenRecord) Type() string      { return f.r.Type() }
+func (f frozenRecord) Lock()        { f.r.Lock() }
+func (f frozenRecord) Unlock()      { f.r.Unlock() }
+func (f frozenRecord) Type() string { return f.r.Type() }
+
 // Clone freezes the clone by its own kind rather than re-asserting this one's:
 // a Record's Clone returns a Record, so the result is identical — and if some
 // implementation ever broke that contract, freeze still returns a frozen value
@@ -93,9 +94,9 @@ func (f frozenCollection) Get(ctx context.Context) any { return f.c.Get(ctx) }
 func (f frozenCollection) Update(context.Context, any) error {
 	return frozenErr("Update")
 }
-func (f frozenCollection) Lock()        { f.c.Lock() }
-func (f frozenCollection) Unlock()      { f.c.Unlock() }
-func (f frozenCollection) Type() string { return f.c.Type() }
+func (f frozenCollection) Lock()             { f.c.Lock() }
+func (f frozenCollection) Unlock()           { f.c.Unlock() }
+func (f frozenCollection) Type() string      { return f.c.Type() }
 func (f frozenCollection) Clone() data.Value { return freeze(f.c.Clone()) }
 
 func (f frozenCollection) Count() int                      { return f.c.Count() }

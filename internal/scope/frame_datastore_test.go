@@ -36,10 +36,10 @@ func TestFrameDataMovements(t *testing.T) {
 
 	require.Empty(t, f.DataMovements())
 
-	f.RecordDataMovement(false, false, "order", "")  // Data Object read
-	f.RecordDataMovement(false, true, "result", "")  // Data Object write
-	f.RecordDataMovement(true, false, "cust", "kv")  // Data Store read
-	f.RecordDataMovement(true, true, "total", "kv")  // Data Store write
+	f.RecordDataMovement(false, false, "order", "") // Data Object read
+	f.RecordDataMovement(false, true, "result", "") // Data Object write
+	f.RecordDataMovement(true, false, "cust", "kv") // Data Store read
+	f.RecordDataMovement(true, true, "total", "kv") // Data Store write
 
 	require.Equal(t, []DataMovement{
 		{Name: "order", StoreRef: "", EngineStore: false, Write: false},

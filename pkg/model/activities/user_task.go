@@ -71,23 +71,35 @@ type UserTask struct {
 //   - UsrTaskOption — WithRenderer, WithOutput, WithAssignee / WithAssigneeExpr,
 //     WithCandidateUsers / WithCandidateUsersExpr,
 //     WithCandidateGroups / WithCandidateGroupsExpr
+//
 //   - taskOption — WithMultyInstance
+//
 //   - ActivityOption — WithLoop, WithCompensation, WithStartQuantity,
 //     WithCompletionQuantity, WithParameters, WithoutParams
+//
 //   - data.PropertyOption — the process-data property options
+//
 //   - foundation.BaseOption — WithID, WithDoc
 //
-//	activity options:
-//	- WithMultyInstance
-//	- WithCompensation
-//	- WithLoop
-//	- WithStartQuantity
-//	- WithCompletionQuantity
-//	- WithParameters
-//	- WithoutParams
+//     activity options:
 //
-//	data options:
-//	- WithProperties
+//   - WithMultyInstance
+//
+//   - WithCompensation
+//
+//   - WithLoop
+//
+//   - WithStartQuantity
+//
+//   - WithCompletionQuantity
+//
+//   - WithParameters
+//
+//   - WithoutParams
+//
+//     data options:
+//
+//   - WithProperties
 func NewUserTask(
 	name string,
 	userTaskOpts ...options.Option,

@@ -1,7 +1,5 @@
 package instance
 
-import ()
-
 // addToSnap appends a track to the lock-free tracks snapshot (copy-on-write).
 // Called only from loop() (the single writer); readers Load the snapshot.
 func (inst *Instance) addToSnap(t *track) {

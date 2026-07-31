@@ -6,12 +6,12 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/generated/mockrenv"
+	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	dgexpr "github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	exprengine "github.com/dr-dobermann/gobpm/pkg/model/expression/goexpr"
-	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/stretchr/testify/require"
@@ -250,7 +250,7 @@ func TestSetDefaultFlowHardening(t *testing.T) {
 // the condition check — the branch data.As guards (ADR-034 v.1 §5).
 type nonBoolEngine struct{}
 
-func (nonBoolEngine) Type() string       { return "##NonBool" }
+func (nonBoolEngine) Type() string        { return "##NonBool" }
 func (nonBoolEngine) Languages() []string { return []string{dgexpr.Language} }
 
 func (nonBoolEngine) Evaluate(

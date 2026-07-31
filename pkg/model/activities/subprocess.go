@@ -498,7 +498,6 @@ func isEventSubProcess(n flow.Node) bool {
 	return ok && h.IsEventSubProcess()
 }
 
-
 // isCompensationHandler reports whether n is an isForCompensation activity —
 // a compensation handler outside the normal flow (SRD-059 FR-2).
 func isCompensationHandler(n flow.Node) bool {
@@ -581,8 +580,8 @@ func (sp *SubProcess) Clone() (flow.Node, error) {
 		// rules), so every instance shares the one the modeler built — like
 		// the Data Store References below, and unlike the Data Objects, which
 		// hold per-instance state and are deep-cloned.
-		adHoc: sp.adHoc,
-		dataObjects:       make(map[string]*dataobjects.DataObject, len(dobjs)),
+		adHoc:       sp.adHoc,
+		dataObjects: make(map[string]*dataobjects.DataObject, len(dobjs)),
 		dataStoreRefs: make(
 			map[string]*datastores.DataStoreReference, len(sp.dataStoreRefs)),
 	}

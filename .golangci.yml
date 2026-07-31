@@ -162,6 +162,18 @@ linters:
       - .*\.pb\.go$
       - .*_mock\.go$
       - _test\.go
+# Formatting is a decided rule that nothing enforced: gofmt was configured in
+# neither the linter nor CI, so 16 files had drifted unnoticed — the gofmt-lint
+# follow-up FIX-022 §8.3 spun off. It runs as a formatter (not a linter) because
+# golangci-lint v2 separates the two; `golangci-lint fmt` rewrites, `run` reports.
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    generated: lax
+    paths:
+      - generated/
+
 output:
   formats:
     text:

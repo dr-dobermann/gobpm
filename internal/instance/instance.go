@@ -52,12 +52,12 @@ type Instance struct {
 	// performers records who completed each human task, served read-only through
 	// the RUNTIME subtree and carried across a hydrate (ADR-020 v.2 §2.4.2).
 	performers *performers
-	now                 func() time.Time
-	tracksSnap          atomic.Pointer[[]*track]
-	lastErr             atomic.Pointer[error]
-	s                   *snapshot.Snapshot
-	tracks              map[string]*track
-	loopDone            chan struct{}
+	now        func() time.Time
+	tracksSnap atomic.Pointer[[]*track]
+	lastErr    atomic.Pointer[error]
+	s          *snapshot.Snapshot
+	tracks     map[string]*track
+	loopDone   chan struct{}
 	// settled is closed when the instance reaches a TERMINAL state — and only
 	// then. loopDone closes on EVERY loop exit, dehydration included, so it
 	// cannot answer "has this instance finished?" any more (SRD-071): a

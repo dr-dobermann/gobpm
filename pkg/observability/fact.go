@@ -201,20 +201,20 @@ const (
 // Fact's Details map and a slog echo's key/value args — so the observer
 // stream and the operator log correlate on the same names.
 const (
-	AttrInstanceID        = "instance_id"
-	AttrTrackID           = "track_id"
-	AttrNodeID            = "node_id"
-	AttrNodeName          = "node_name"
-	AttrProcessID         = "process_id"
-	AttrStartNodeID       = "start_node_id"
-	AttrTaskID            = "task_id"
+	AttrInstanceID  = "instance_id"
+	AttrTrackID     = "track_id"
+	AttrNodeID      = "node_id"
+	AttrNodeName    = "node_name"
+	AttrProcessID   = "process_id"
+	AttrStartNodeID = "start_node_id"
+	AttrTaskID      = "task_id"
 	// AttrUserID names the actor a human-task fact is about — the claimer, the
 	// releaser, or the completer. AttrFromUserID/AttrToUserID name the two parties
 	// of a reassignment, which has no single subject (SRD-073 FR-8).
-	AttrUserID     = "user_id"
-	AttrFromUserID = "from_user_id"
-	AttrToUserID   = "to_user_id"
-	AttrJobID      = "job_id"
+	AttrUserID            = "user_id"
+	AttrFromUserID        = "from_user_id"
+	AttrToUserID          = "to_user_id"
+	AttrJobID             = "job_id"
 	AttrWorkerID          = "worker_id"
 	AttrTopic             = "topic"
 	AttrEventDefinitionID = "event_definition_id"
