@@ -62,7 +62,15 @@ COVER_BASE ?= origin/master
 # counted only because it sits inside a profile block's line span (e.g. the
 # excluded propagation return's block). Excluding it can never hide untested
 # logic: every statement line stays in the gate.
-COVER_EXCLUDE ?= \.(logger|Logger\(\))\.(Debug|Info|Warn|Error)\(,func \(.*\) Option\(\) \{\},func \(.*\) mappedOutcome\(\) \{\},func \(.*\) (Lock|Unlock)\(\) \{\},func \(.*\) isLoopCharacteristics\(\) \{\},^\s*return .*[a-z]Err\(.*err\)$$,^\s*return (nil. |\"\". |false. )*err$$,^\s*\}$$,errs\.Invariant\(,failInvariant\(,^\s*return$$
+# ^\s*observability\.Attr excludes a line that carries only vocabulary
+# attributes — a map-literal entry or the continuation of a log/Fact/errs
+# call. The patterns are matched per LINE, so an excluded construct wider
+# than 120 columns (every multi-attribute log call) was excluded only on the
+# line holding the call and counted on the rest. That under-exclusion caused
+# three red gates before it was named. It cannot hide logic: the enclosing
+# statement's own line is still measured, and a matching line is always an
+# argument or a map entry, never a condition or a unit of work.
+COVER_EXCLUDE ?= ^\s*observability\.Attr,\.(logger|Logger\(\))\.(Debug|Info|Warn|Error)\(,func \(.*\) Option\(\) \{\},func \(.*\) mappedOutcome\(\) \{\},func \(.*\) (Lock|Unlock)\(\) \{\},func \(.*\) isLoopCharacteristics\(\) \{\},^\s*return .*[a-z]Err\(.*err\)$$,^\s*return (nil. |\"\". |false. )*err$$,^\s*\}$$,errs\.Invariant\(,failInvariant\(,^\s*return$$
 
 # All Go modules in the monorepo (each with its own go.mod).
 # Discovered dynamically so adding a new module needs no Makefile edit.

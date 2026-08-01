@@ -96,8 +96,21 @@ implemented), and leaves this list.
   SRD-051, which sidestepped it by keeping the BPMN converter in the root
   module (SRD-051 v.2 §4.1); recorded here so the general gap is not mistaken
   for closed.
-- **A panicking observer is swallowed without a trace**
-  (`pkg/thresher/observer.go`) — `deliver` contains the panic so one bad
+- **A panicking observer is swallowed without a trace** — **DONE**
+  (2026-08-01, FIX-035 §1.1). `deliver` returns what it recovered instead of
+  discarding it, and `deliverObserved` reports it: the first panic per
+  subscription at `Warn` with a stack, later ones at `Debug`, every one counted
+  by the new `Subscription.Panicked()` beside the existing `Dropped()`. `Warn`
+  rather than `Error` because ADR-022 v.2 §2.4 reserves Error for failures that
+  affected engine state, and bounding the loud record to one per subscription is
+  what keeps the per-event record at `Debug`, as that section's hot-path
+  corollary requires. **Both** call sites were blind, not one — `deliver` is
+  drained by `InstanceHandle.Observe` AND by `producer.subscribe`, and only the
+  first was recorded here. This entry's stated blocker was also wrong: `Logger()`
+  IS reachable from `Instance`, promoted through the embedded
+  `renv.EngineRuntime`, and `internal/instance/loop.go` already called it — read
+  off the struct rather than the promoted method set, it deterred the fix for as
+  long as it stood. Original text: `deliver` contains the panic so one bad
   observer cannot crash the drain goroutine or affect the others (ADR-013 §5),
   but it has no sink to report it to, so a broken observer leaves no evidence
   at all. That is the accidental-silence class ADR-022 treats as the worse

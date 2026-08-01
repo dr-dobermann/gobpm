@@ -155,13 +155,14 @@ func (t *task) LoadData(ctx context.Context, f exec.Frame) error {
 // instantiateData builds the per-execution instances of the Task's data
 // definitions in the frame: inputs, outputs, and properties.
 func (t *task) instantiateData(f exec.Frame) error {
+	// Parameters only rejects a Direction that is neither data.Input nor
+	// data.Output, and both call sites here pass the constants — so this is an
+	// invariant violation, not a runtime failure, and it reports as one
+	// (FIX-034's errs.Invariant). Reporting rather than panicking keeps a
+	// faulted instance from taking down an engine that is serving others.
 	inputs, err := t.IoSpec.Parameters(data.Input)
 	if err != nil {
-		return errs.New(
-			errs.M("couldn't get task inputs"),
-			errs.C(errorClass, errs.ObjectNotFound),
-			errs.D(observability.AttrNodeName, t.Name()),
-			errs.E(err))
+		return errs.Invariant("task %q: Input rejected: %w", t.Name(), err)
 	}
 
 	if err = f.InstantiateInputs(inputs); err != nil {
@@ -174,11 +175,7 @@ func (t *task) instantiateData(f exec.Frame) error {
 
 	outputs, err := t.IoSpec.Parameters(data.Output)
 	if err != nil {
-		return errs.New(
-			errs.M("couldn't get task outputs"),
-			errs.C(errorClass, errs.ObjectNotFound),
-			errs.D(observability.AttrNodeName, t.Name()),
-			errs.E(err))
+		return errs.Invariant("task %q: Output rejected: %w", t.Name(), err)
 	}
 
 	if err := f.InstantiateOutputs(outputs); err != nil {

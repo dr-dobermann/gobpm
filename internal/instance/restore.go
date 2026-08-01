@@ -172,12 +172,13 @@ func (inst *Instance) restoreScopes(
 			continue
 		}
 
+		// Every way Commit can fail is already excluded upstream: the path was
+		// OpenScope'd immediately above (which checks containment and
+		// writability), and DecodeData's NewParameter rejects a nil item or an
+		// empty name before batchNames could. A failure here is a broken
+		// invariant, not a corrupt checkpoint.
 		if _, err := inst.sc.plane.Commit(path, dd...); err != nil {
-			return errs.New(
-				errs.M("Restore: couldn't recommit scope data"),
-				errs.C(errorClass, errs.OperationFailed),
-				errs.D(observability.AttrScopePath, rec.Path),
-				errs.E(err))
+			return errs.Invariant("scope %q: recommit failed: %w", rec.Path, err)
 		}
 	}
 
