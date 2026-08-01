@@ -121,6 +121,7 @@ MOCKERY_VERSION     := v3.5.0
 GOLANGCI_VERSION    := v2.11.4
 GOVULNCHECK_VERSION := v1.6.0
 COVERCHECK_VERSION  := v0.2.0
+LINKCHECK_VERSION   := v0.1.1
 
 define require-go-tool
 @tool_bin="$$(command -v "$(1)" 2>/dev/null)" || { \
@@ -148,6 +149,7 @@ tools:
 		| sh -s -- -b "$$($(GO) env GOPATH)/bin" $(GOLANGCI_VERSION)
 	$(GO) install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	$(GO) install github.com/dr-dobermann/covercheck/cmd/covercheck@$(COVERCHECK_VERSION)
+	$(GO) install github.com/dr-dobermann/linkcheck/cmd/linkcheck@$(LINKCHECK_VERSION)
 .PHONY: tools
 
 # ---------------------------------------------------------------------------
@@ -223,7 +225,8 @@ gen_mock_files:
 # install and no network dependency that could redden the gate for reasons
 # unrelated to the change. External URLs are deliberately out of scope.
 link-check:
-	$(GO) run ./cmd/linkcheck -root .
+	$(call require-go-tool,linkcheck,github.com/dr-dobermann/linkcheck,$(LINKCHECK_VERSION))
+	linkcheck -root .
 .PHONY: link-check
 
 mock-check:

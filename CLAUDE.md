@@ -102,10 +102,15 @@ after committing a milestone, not before.
 The **link check** (`make link-check`, FIX-034) walks every Markdown file in the
 repository and fails on any relative link that does not resolve, reporting
 `file:line`. It is blocking, because the 78 dead links FIX-031 swept up accumulated
-precisely because nothing failed. It is a small Go program in `internal/linkcheck`
-rather than an off-the-shelf checker because the parity rule requires every CI tool
-to be pinned and installed by `make tools`, and the alternatives add a non-Go
-toolchain plus a network dependency that reddens the gate for unrelated reasons.
+precisely because nothing failed. It is
+[`dr-dobermann/linkcheck`](https://github.com/dr-dobermann/linkcheck), pinned by
+`LINKCHECK_VERSION` and installed by `make tools` — the same arrangement as
+covercheck, and for the same reason: a documentation checker is not part of a BPMN
+engine, so it lives in its own repository rather than inside this module's build,
+lint and coverage sweeps. It is a small Go program rather than an off-the-shelf
+checker because the parity rule requires every CI tool to be pinned and installed
+by `make tools`, and the alternatives add a non-Go toolchain plus a network
+dependency that reddens the gate for unrelated reasons.
 External URLs are therefore out of scope, and so are fenced and inline code spans —
 a Go generic like `values.NewArray[T](vals…)` is indistinguishable from a link.
 
