@@ -105,3 +105,31 @@ func TestExecuteNodeFailureStages(t *testing.T) {
 		})
 	}
 }
+
+// TestExecuteNodeRejectsNonExecutor covers executeNode's type-assertion guard:
+// a step whose node does not implement exec.NodeExecutor cannot run, and the
+// error names the node so the process author can find it. The track is built
+// from a valid node because newTrack applies the same assertion — the guard
+// exists for a step whose node was substituted after the track was made, which
+// is why it needs its own test rather than riding the newTrack path.
+func TestExecuteNodeRejectsNonExecutor(t *testing.T) {
+	_ = data.CreateDefaultStates()
+
+	inst, err := New(buildForkSnapshot(t), scope.EmptyDataPath,
+		enginert.Default(), mockeventproc.NewMockEventProducer(t), nil)
+	require.NoError(t, err)
+
+	good, err := flow.NewBaseNode("good")
+	require.NoError(t, err)
+
+	tr, err := newTrack(&failNode{BaseNode: good}, inst, nil)
+	require.NoError(t, err)
+
+	bad, err := flow.NewBaseNode("not-an-executor")
+	require.NoError(t, err)
+
+	_, err = tr.executeNode(context.Background(),
+		&stepInfo{node: nonExecNode{bad}})
+
+	require.ErrorContains(t, err, "exec.NodeExecutor")
+}

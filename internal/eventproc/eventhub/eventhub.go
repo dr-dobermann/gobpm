@@ -413,7 +413,7 @@ func (eh *EventHub) UnregisterEvent(
 		return errs.New(
 			errs.M("couldn't remove event processor from waiter"),
 			errs.C(errorClass, errs.ObjectNotFound),
-			errs.D("event_waiter_id", w.ID()),
+			errs.D(observability.AttrWaiterID, w.ID()),
 			errs.D(observability.AttrEventProcessorID, ep.ID()),
 			errs.D(observability.AttrEventDefinitionID, eDefID),
 			errs.E(err))
@@ -426,7 +426,7 @@ func (eh *EventHub) UnregisterEvent(
 					errs.M("waiter stop failed"),
 					errs.C(errorClass, errs.OperationFailed),
 					errs.D(observability.AttrWaiterID, w.ID()),
-					errs.D("event_definition_idf", w.EventDefinition().ID()),
+					errs.D(observability.AttrEventDefinitionID, w.EventDefinition().ID()),
 					errs.D(observability.AttrEventDefinitionType, string(w.EventDefinition().Type())))
 			}
 		}

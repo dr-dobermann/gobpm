@@ -9,6 +9,8 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/enginert"
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
+	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/renv"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -100,4 +102,127 @@ func TestBroadcastSignalProcessError(t *testing.T) {
 
 	require.NoError(t, hub.broadcastSignal(def),
 		"a per-waiter Process error is logged, not propagated")
+}
+
+// The five branches below construct classified errors carrying vocabulary
+// details, and every one was uncovered before FIX-035 — the diagnostic detail a
+// user would see when registration or teardown fails was itself never
+// exercised. Reading them to write these tests found two real defects the
+// mechanical sweep could not: errs.D("event_definition_idf", …), a typo naming
+// a key nobody could ever grep for, and errs.D("event_waiter_id", …), a synonym
+// of the canonical waiter_id that ADR-022 v.2 §2.5's one-entity-one-key rule
+// forbids. Both are fixed; neither matched a canonical value, so only reading
+// the code could catch them.
+
+// TestRegisterWaiterRejectedWhenHubStopped: a shut-down hub refuses
+// registration, naming the event definition it refused (eventhub.go §registerWaiter).
+func TestRegisterWaiterRejectedWhenHubStopped(t *testing.T) {
+	hub, err := New(enginert.Default())
+	require.NoError(t, err)
+
+	def, err := events.NewTerminateEventDefinition()
+	require.NoError(t, err)
+
+	ep := mockeventproc.NewMockEventProcessor(t)
+	ep.EXPECT().ID().Return("ep-stopped").Maybe()
+
+	hub.setState(hubStopped)
+
+	err = hub.registerWaiter(ep, def,
+		func(eventproc.EventHub, eventproc.EventProcessor,
+			flow.EventDefinition, renv.EngineRuntime,
+		) (eventproc.EventWaiter, error) {
+			t.Fatal("builder must not run once the hub is stopped")
+
+			return nil, nil
+		})
+
+	require.ErrorContains(t, err, "shut down")
+}
+
+// TestRegisterWaiterBuildFailure: when the waiter builder fails, the error
+// names both the processor and the definition, so an operator can tell WHICH
+// registration failed rather than only that one did.
+func TestRegisterWaiterBuildFailure(t *testing.T) {
+	hub, err := New(enginert.Default())
+	require.NoError(t, err)
+	require.NoError(t, hub.Start(context.Background()))
+
+	def, err := events.NewTerminateEventDefinition()
+	require.NoError(t, err)
+
+	ep := mockeventproc.NewMockEventProcessor(t)
+	ep.EXPECT().ID().Return("ep-build").Maybe()
+
+	err = hub.registerWaiter(ep, def,
+		func(eventproc.EventHub, eventproc.EventProcessor,
+			flow.EventDefinition, renv.EngineRuntime,
+		) (eventproc.EventWaiter, error) {
+			return nil, errors.New("build boom")
+		})
+
+	require.ErrorContains(t, err, "building failed")
+}
+
+// TestUnregisterEventRemoveProcessorFailure: a waiter that refuses to drop its
+// processor fails the unregistration, naming waiter, processor and definition.
+func TestUnregisterEventRemoveProcessorFailure(t *testing.T) {
+	hub, err := New(enginert.Default())
+	require.NoError(t, err)
+	require.NoError(t, hub.Start(context.Background()))
+
+	def, err := events.NewTerminateEventDefinition()
+	require.NoError(t, err)
+
+	ep := mockeventproc.NewMockEventProcessor(t)
+	ep.EXPECT().ID().Return("ep-rm").Maybe()
+
+	w := mockeventproc.NewMockEventWaiter(t)
+	w.EXPECT().RemoveEventProcessor(ep).Return(errors.New("remove boom"))
+	w.EXPECT().ID().Return("w-rm").Maybe()
+
+	hub.m.Lock()
+	hub.waiters[def.ID()] = w
+	hub.m.Unlock()
+
+	require.ErrorContains(t, hub.UnregisterEvent(ep, def.ID()),
+		"couldn't remove event processor")
+}
+
+// TestUnregisterEventStopFailure: dropping the LAST processor stops the waiter,
+// and a failing Stop is reported rather than swallowed — the waiter would
+// otherwise stay running with nobody listening.
+func TestUnregisterEventStopFailure(t *testing.T) {
+	hub, err := New(enginert.Default())
+	require.NoError(t, err)
+	require.NoError(t, hub.Start(context.Background()))
+
+	def, err := events.NewTerminateEventDefinition()
+	require.NoError(t, err)
+
+	ep := mockeventproc.NewMockEventProcessor(t)
+	ep.EXPECT().ID().Return("ep-stop").Maybe()
+
+	w := mockeventproc.NewMockEventWaiter(t)
+	w.EXPECT().RemoveEventProcessor(ep).Return(nil)
+	w.EXPECT().EventProcessors().Return(nil)
+	w.EXPECT().State().Return(eventproc.WSRunned)
+	w.EXPECT().Stop().Return(errors.New("stop boom"))
+	w.EXPECT().ID().Return("w-stop").Maybe()
+	w.EXPECT().EventDefinition().Return(def).Maybe()
+
+	hub.m.Lock()
+	hub.waiters[def.ID()] = w
+	hub.m.Unlock()
+
+	require.ErrorContains(t, hub.UnregisterEvent(ep, def.ID()), "waiter stop failed")
+}
+
+// TestRemoveWaiterNotFound: removing a waiter that was never registered names
+// the definition it looked for.
+func TestRemoveWaiterNotFound(t *testing.T) {
+	hub, err := New(enginert.Default())
+	require.NoError(t, err)
+
+	require.ErrorContains(t, hub.RemoveWaiter("no-such-def"), "waiter isn't found")
 }
