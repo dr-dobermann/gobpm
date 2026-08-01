@@ -45,7 +45,7 @@ func (inst *Instance) RegisterEvent(
 			errs.M("instance is terminal, can't register events (state: %s)",
 				is),
 			errs.C(errorClass, errs.InvalidState),
-			errs.D("requester_id", proc.ID()))
+			errs.D(observability.AttrRequesterID, proc.ID()))
 	}
 
 	if inst.parentEventProducer == nil {

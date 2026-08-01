@@ -2,6 +2,7 @@ package events
 
 import (
 	"errors"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"sort"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -115,5 +116,5 @@ func linkErr(name, format string, args ...any) error {
 	return errs.New(
 		errs.M("Link %q "+format, append([]any{name}, args...)...),
 		errs.C(errorClass, errs.InvalidObject),
-		errs.D("link_name", name))
+		errs.D(observability.AttrLinkName, name))
 }

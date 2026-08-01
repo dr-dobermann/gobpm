@@ -3,6 +3,7 @@ package gateways
 import (
 	"context"
 	"errors"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"reflect"
 	"strconv"
 
@@ -229,8 +230,8 @@ func (g *Gateway) checkCondition(
 			errs.New(
 				errs.M("invalid condition expression type"),
 				errs.C(errorClass, errs.TypeCastingError),
-				errs.D("outgoing_flow_id", of.ID()),
-				errs.D("gateway_id", g.ID()))
+				errs.D(observability.AttrFlowID, of.ID()),
+				errs.D(observability.AttrNodeID, g.ID()))
 	}
 
 	res, err := re.ExpressionEngine().Evaluate(ctx, cond, re)
@@ -239,8 +240,8 @@ func (g *Gateway) checkCondition(
 			errs.New(
 				errs.M("flow condition evaluation failed"),
 				errs.C(errorClass, errs.OperationFailed),
-				errs.D("outgoing_flow_id", of.ID()),
-				errs.D("gateway_id", g.ID()),
+				errs.D(observability.AttrFlowID, of.ID()),
+				errs.D(observability.AttrNodeID, g.ID()),
 				errs.E(err))
 	}
 
@@ -251,8 +252,8 @@ func (g *Gateway) checkCondition(
 		return false, errs.New(
 			errs.M("flow condition is not boolean"),
 			errs.C(errorClass, errs.TypeCastingError),
-			errs.D("outgoing_flow_id", of.ID()),
-			errs.D("gateway_id", g.ID()),
+			errs.D(observability.AttrFlowID, of.ID()),
+			errs.D(observability.AttrNodeID, g.ID()),
 			errs.E(err))
 	}
 
@@ -304,7 +305,7 @@ func (g *Gateway) forkTrueSubset(
 					errs.M("no available outgoing flow: no condition matched and "+
 						"no default"),
 					errs.C(errorClass, errs.InvalidState),
-					errs.D("gateway_id", g.ID()))
+					errs.D(observability.AttrNodeID, g.ID()))
 		}
 
 		flows = append(flows, g.defaultFlow)

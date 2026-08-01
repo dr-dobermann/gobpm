@@ -3,6 +3,7 @@ package activities
 import (
 	"context"
 	"errors"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
@@ -527,8 +528,8 @@ func (sp *SubProcess) shapeErr(format string, args ...any) error {
 	return errs.New(
 		errs.M(format, args...),
 		errs.C(errorClass, errs.InvalidObject),
-		errs.D("subprocess_id", sp.ID()),
-		errs.D("subprocess_name", sp.Name()))
+		errs.D(observability.AttrNodeID, sp.ID()),
+		errs.D(observability.AttrNodeName, sp.Name()))
 }
 
 // Clone implements flow.Node: the activity base clones per the shared
@@ -612,7 +613,7 @@ func (sp *SubProcess) ProcessEvent(
 		return errs.New(
 			errs.M("a nil event definition isn't allowed"),
 			errs.C(errorClass, errs.EmptyNotAllowed),
-			errs.D("subprocess_id", sp.ID()))
+			errs.D(observability.AttrNodeID, sp.ID()))
 	}
 
 	return nil

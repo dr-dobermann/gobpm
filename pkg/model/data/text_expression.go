@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -147,7 +148,7 @@ func (te *TextExpression) Evaluate(context.Context, Source) (Value, error) {
 		errs.M("a text expression evaluates through the engine registry "+
 			"(language %q)", te.language),
 		errs.C(errorClass, errs.InvalidState),
-		errs.D("expression_id", te.ID()))
+		errs.D(observability.AttrExpressionID, te.ID()))
 }
 
 // Result refuses like Evaluate — the text kind holds no evaluation state.
@@ -156,7 +157,7 @@ func (te *TextExpression) Result() (Value, error) {
 		errs.M("a text expression holds no result — it evaluates through "+
 			"the engine registry"),
 		errs.C(errorClass, errs.InvalidState),
-		errs.D("expression_id", te.ID()))
+		errs.D(observability.AttrExpressionID, te.ID()))
 }
 
 // IsEvaluated always reports false — see Result.

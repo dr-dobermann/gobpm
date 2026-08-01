@@ -85,6 +85,40 @@ the doc, and canonized keys that never reached the constants. Adding
 rather than an exception to a held one; that is why this FIX reconciles the
 whole table instead of appending one row.
 
+### 1.4 Symptom D: entity keys that were never registered at all
+
+§1.2 asked whether the constants and the doc agree, and whether call sites use
+the constants. Both are now gated — and both were blind to a third case: a key
+with **no constant and no mention in the ADR** passes every check, because
+nothing asks about keys the vocabulary has never heard of.
+
+That gap is where most of the drift actually lived. Sweeping for entity-shaped
+literals — a key ending in `_id`, `_name`, `_key`, `_path` or `_ref` — found
+**45 distinct keys with no constant**, and the bulk of them name a node:
+`service_task_id`, `script_task_id`, `business_rule_task_id`, `send_task_id`,
+`receive_task_id`, `call_activity_id`, `exclusive_gateway_id`, `end_event_id`,
+`start_event_id` and `gateway_id` and `activity_id` are all `node_id`;
+`service_task_name`, `task_name`, `activity_name` and their siblings are all
+`node_name`. Each package spelled the same entity after its own local type,
+which is precisely the per-file synonym §2.5's first rule forbids. An operator
+filtering on `node_id` misses every one.
+
+The same sweep found duplicates of keys the table already carried —
+`event_type` for `event_definition_type`, `datum_name` for `data_name` — and a
+residue of genuinely new entities that had simply never been registered:
+`flow_id`, `arm_id`, `association_id`, `expression_id`, `operation_id`,
+`item_id`, `link_name`, `renderer_id`, `requester_id`, `activity_ref`, plus the
+name halves of two entities whose id half was canonical (`process_name`,
+`decision_name`).
+
+**Measured twice, because the first measurement was wrong.** The initial sweep
+used `[a-z]+_(id|name|…)`, which matches one word before the suffix, so it saw
+`activity_id` and missed `service_task_id` entirely — the single most frequent
+offender. The corrected pattern allows multiple words. That is worth recording
+because the same mistake would silently under-report any future audit of this
+kind: a regex that looks right is not a measurement until its shape is checked
+against what it must match.
+
 ### 1.3 Symptom C: half the blocking gate is undocumented
 
 `make ci-core` is the REQUIRED CI job. It runs **nine** steps:

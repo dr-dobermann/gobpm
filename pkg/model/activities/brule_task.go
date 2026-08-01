@@ -107,8 +107,8 @@ func (bt *BusinessRuleTask) Exec(
 		return nil, errs.New(
 			errs.M("BusinessRuleTask.Exec: a nil RuntimeEnvironment isn't allowed"),
 			errs.C(errorClass, errs.EmptyNotAllowed),
-			errs.D("business_rule_task_name", bt.Name()),
-			errs.D("business_rule_task_id", bt.ID()))
+			errs.D(observability.AttrNodeName, bt.Name()),
+			errs.D(observability.AttrNodeID, bt.ID()))
 	}
 
 	eng := re.RuleEngine()
@@ -190,8 +190,8 @@ func (bt *BusinessRuleTask) commitResult(
 			errs.M(msg),
 			errs.C(errorClass),
 			errs.E(err),
-			errs.D("business_rule_task_name", bt.Name()),
-			errs.D("business_rule_task_id", bt.ID()),
+			errs.D(observability.AttrNodeName, bt.Name()),
+			errs.D(observability.AttrNodeID, bt.ID()),
 			errs.D(observability.AttrDecisionRef, bt.decisionRef))
 	}
 

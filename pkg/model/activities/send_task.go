@@ -2,6 +2,7 @@ package activities
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -145,8 +146,8 @@ func (st *SendTask) Exec(
 				errs.M("send task message publication failed"),
 				errs.C(errorClass),
 				errs.E(err),
-				errs.D("send_task_name", st.Name()),
-				errs.D("send_task_id", st.ID()))
+				errs.D(observability.AttrNodeName, st.Name()),
+				errs.D(observability.AttrNodeID, st.ID()))
 	}
 
 	return st.selectOutgoing(ctx, re)

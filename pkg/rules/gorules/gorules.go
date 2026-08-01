@@ -59,7 +59,7 @@ func (reg *Registry) Register(name string, d rules.DecisionFunc) error {
 		return errs.New(
 			errs.M("Register: a nil DecisionFunc isn't allowed"),
 			errs.C(errorClass, errs.EmptyNotAllowed),
-			errs.D("decision_name", name))
+			errs.D(observability.AttrDecisionName, name))
 	}
 
 	reg.mu.Lock()
@@ -69,7 +69,7 @@ func (reg *Registry) Register(name string, d rules.DecisionFunc) error {
 		return errs.New(
 			errs.M("Register: decision is already registered"),
 			errs.C(errorClass, errs.DuplicateObject),
-			errs.D("decision_name", name))
+			errs.D(observability.AttrDecisionName, name))
 	}
 
 	reg.decisions[name] = d

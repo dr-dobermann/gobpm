@@ -953,7 +953,7 @@ func (ls *loopState) fireOrJoin(survivorID string, merged []string) {
 	ls.inst.Logger().Debug("synchronizing join fired",
 		observability.AttrInstanceID, ls.inst.ID(),
 		observability.AttrNodeID, nodeIDOf(ls.position[survivorID]),
-		"survivor_track_id", survivorID,
+		observability.AttrTrackID, survivorID,
 		"merged", len(merged))
 
 	ls.applyMerged(trackEvent{track: survivor, mergedIDs: merged})

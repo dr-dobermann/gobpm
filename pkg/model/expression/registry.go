@@ -2,6 +2,7 @@ package expression
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"sort"
 	"strings"
 
@@ -138,7 +139,7 @@ func (reg *Registry) Evaluate(
 			errs.M("Evaluate: the expression carries no language "+
 				"(programmatic expressions always name one)"),
 			errs.C(errorClass, errs.EmptyNotAllowed),
-			errs.D("expression_id", expr.ID()))
+			errs.D(observability.AttrExpressionID, expr.ID()))
 	}
 
 	if len(reg.byLanguage) == 0 {

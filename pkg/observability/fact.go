@@ -298,6 +298,29 @@ const (
 	// it: an observer is a host-supplied value the engine assigns no id, so
 	// there is nothing more specific to report it by.
 	AttrObserverType = "observer_type"
+
+	// Model elements that name a real BPMN or engine object but had no
+	// canonical key, so every call site spelled them by hand (FIX-035 §1.4).
+	// AttrAssociationSourceID is spelled in full: the bare "source_id" it
+	// replaces is meaningless away from the association it belongs to.
+	AttrFlowID              = "flow_id"
+	AttrArmID               = "arm_id"
+	AttrAssociationID       = "association_id"
+	AttrAssociationSourceID = "association_source_id"
+	AttrExpressionID        = "expression_id"
+	AttrOperationID         = "operation_id"
+	AttrOperationName       = "operation_name"
+	AttrItemID              = "item_id"
+	AttrLinkName            = "link_name"
+	AttrRendererID          = "renderer_id"
+	AttrRequesterID         = "requester_id"
+	AttrActivityRef         = "activity_ref"
+
+	// The name halves of two entities whose id half was already canonical —
+	// process_name pairs with process_id, decision_name with decision_ref,
+	// exactly as node_name pairs with node_id.
+	AttrProcessName  = "process_name"
+	AttrDecisionName = "decision_name"
 )
 
 // Fact is the canonical observable engine event (ADR-013 v.2 §2.6/§2.9): a

@@ -2,6 +2,7 @@ package activities
 
 import (
 	"errors"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"maps"
 	"reflect"
 	"slices"
@@ -168,7 +169,7 @@ func (a *activity) SetDefaultFlow(flowID string) error {
 			return errs.New(
 				errs.M("default flow %q must not carry a condition", flowID),
 				errs.C(errorClass, errs.InvalidParameter),
-				errs.D("activity_name", a.Name()))
+				errs.D(observability.AttrNodeName, a.Name()))
 		}
 
 		a.defaultFlow = o

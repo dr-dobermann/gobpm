@@ -156,14 +156,15 @@ registration is required:
 
 | Domain | Canonical keys |
 |---|---|
-| Instance / flow | `instance_id`, `track_id`, `node_id`, `node_name`, `process_id`, `start_node_id`, `scope_path`, `data_path` |
+| Instance / flow | `instance_id`, `track_id`, `node_id`, `node_name`, `process_id`, `process_name`, `start_node_id`, `scope_path`, `data_path`, `flow_id` |
 | Definition lineage | `version`, `parent_instance_id`, `child_instance_id`, `call_activity_node_id`, `called_key`, `called_version` |
 | Human / worker tasks | `task_id`, `job_id`, `worker_id`, `topic`, `user_id`, `from_user_id`, `to_user_id` |
-| Events / waiters | `event_definition_id`, `event_definition_type`, `event_processor_id`, `waiter_id`, `signal`, `message_name`, `escalation` |
+| Events / waiters | `event_definition_id`, `event_definition_type`, `event_processor_id`, `waiter_id`, `signal`, `message_name`, `escalation`, `link_name`, `arm_id`, `requester_id` |
 | Correlation | `correlation_key` (the key **name**), `correlation_value` (its derived **value**) |
-| Data | `data_name`, `data_store` |
-| Decision / script | `decision_ref`, `implementation`, `result_variable` |
+| Data | `data_name`, `data_store`, `item_id`, `association_id`, `association_source_id`, `expression_id` |
+| Decision / script | `decision_ref`, `decision_name`, `implementation`, `result_variable`, `operation_id`, `operation_name`, `renderer_id` |
 | Observation | `observer_type` |
+| Compensation | `activity_ref` (the activity a compensation targets — distinct from `node_id`, which names where the fact occurred) |
 | The error | `error` |
 
 **Descriptive attributes** — free-form by design, no registration required:
@@ -171,6 +172,12 @@ registration is required:
 `output_count`, `row_count`, `rule_count`, `script_format`, `selected_by`,
 `stage`, `stop_reason`, plus one-off counts and durations (`deadline`,
 `duration`, a `processors`/`catchers` count).
+
+A `*_type` key that reports what a validation EXPECTED or FOUND is descriptive
+even though it is entity-shaped: `option_type`, `expected_type`, `expr_type`
+and `time_type` each name a Go or BPMN type in a failure message rather than an
+object in the model. They are listed here so the distinction is not
+re-litigated the next time someone greps for entity-shaped keys.
 
 Two placements that look surprising and are deliberate: an **aggregate of ids**
 is descriptive, not canonical — `candidates` and `chosen_flows` enumerate rather

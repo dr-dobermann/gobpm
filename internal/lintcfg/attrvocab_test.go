@@ -273,3 +273,106 @@ func literalKeySites(
 
 	return out
 }
+
+// TestErrDetailKeysAreVocabulary closes the THIRD direction, the one FIX-035's
+// first pass left open: a key that has no constant and appears nowhere in the
+// ADR passes both other guards, because neither asks about keys the vocabulary
+// has never heard of. That is how 28 entity-shaped keys — activity_id and
+// gateway_id for a node, task_name for a node's name, event_type duplicating
+// event_definition_type — accumulated across packages while every registered
+// key stayed correct.
+//
+// The rule: errs.D's first argument is either an observability.Attr* selector,
+// or a literal that ADR-022 §2.5 lists as a descriptive attribute. Anything
+// else is a key nobody registered and nobody can reliably grep for.
+func TestErrDetailKeysAreVocabulary(t *testing.T) {
+	root := repoRoot(t)
+	documented := documentedKeys(t, root)
+
+	var offenders []string
+
+	for _, dir := range []string{"pkg", "internal"} {
+		err := filepath.WalkDir(filepath.Join(root, dir),
+			func(path string, d os.DirEntry, err error) error {
+				if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
+					return err
+				}
+
+				rel, rerr := filepath.Rel(root, path)
+				if rerr != nil {
+					return rerr
+				}
+
+				rel = filepath.ToSlash(rel)
+				if strings.HasSuffix(rel, "_test.go") ||
+					strings.HasPrefix(rel, "generated/") {
+					return nil
+				}
+
+				offenders = append(offenders,
+					unvocabularyDetailKeys(t, path, documented)...)
+
+				return nil
+			})
+		require.NoError(t, err, "walking %s", dir)
+	}
+
+	require.Empty(t, offenders,
+		"errs.D is called with a key that is neither an observability.Attr* "+
+			"constant nor a descriptive attribute listed in ADR-022 §2.5. Either "+
+			"use the canonical constant for the entity, or register the key:\n  %s",
+		strings.Join(offenders, "\n  "))
+}
+
+// entityShaped matches a key that NAMES something — one ending in _id, _name,
+// _key, _path or _ref. Only these must be registered: §2.5 leaves descriptive
+// attributes free-form by design, so demanding that "count" or "offset" appear
+// in the ADR would contradict the rule this guard enforces.
+var entityShaped = regexp.MustCompile(`^[a-z]+(_[a-z]+)*_(id|name|key|path|ref)$`)
+
+// unvocabularyDetailKeys reports every errs.D call in path whose first argument
+// is an entity-shaped string literal absent from the documented vocabulary.
+func unvocabularyDetailKeys(
+	t *testing.T, path string, documented map[string]bool,
+) []string {
+	t.Helper()
+
+	fset := token.NewFileSet()
+
+	f, err := parser.ParseFile(fset, path, nil, 0)
+	require.NoError(t, err, "parsing %s", path)
+
+	var out []string
+
+	ast.Inspect(f, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || len(call.Args) == 0 {
+			return true
+		}
+
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "D" {
+			return true
+		}
+
+		if pkg, ok := sel.X.(*ast.Ident); !ok || pkg.Name != "errs" {
+			return true
+		}
+
+		lit, ok := call.Args[0].(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			return true // already a constant — the good case
+		}
+
+		v, uerr := strconv.Unquote(lit.Value)
+		if uerr != nil || documented[v] || !entityShaped.MatchString(v) {
+			return true
+		}
+
+		out = append(out, fset.Position(lit.Pos()).String()+": errs.D(\""+v+"\", …)")
+
+		return true
+	})
+
+	return out
+}

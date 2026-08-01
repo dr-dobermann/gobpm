@@ -306,7 +306,7 @@ func (g *EventBasedGateway) ProcessEvent(
 		return errs.New(
 			errs.M("event-based gateway: no arm owns the fired event"),
 			errs.C(errorClass, errs.InvalidParameter),
-			errs.D("gateway_id", g.ID()),
+			errs.D(observability.AttrNodeID, g.ID()),
 			errs.D(observability.AttrEventDefinitionID, eDef.ID()))
 	}
 
@@ -315,8 +315,8 @@ func (g *EventBasedGateway) ProcessEvent(
 		return errs.New(
 			errs.M("event-based gateway: arm cannot process events"),
 			errs.C(errorClass, errs.InvalidState),
-			errs.D("gateway_id", g.ID()),
-			errs.D("arm_id", arm.ID()))
+			errs.D(observability.AttrNodeID, g.ID()),
+			errs.D(observability.AttrArmID, arm.ID()))
 	}
 
 	return ep.ProcessEvent(ctx, eDef)
@@ -336,7 +336,7 @@ func (g *EventBasedGateway) Exec(
 			errs.M("event-based gateway must not be executed; "+
 				"it waits for events and routes via ProcessEvent"),
 			errs.C(errorClass, errs.InvalidState),
-			errs.D("gateway_id", g.ID()))
+			errs.D(observability.AttrNodeID, g.ID()))
 }
 
 // Validate checks the gate's structure at registration, once its flows are linked
@@ -351,7 +351,7 @@ func (g *EventBasedGateway) Validate() error {
 		ee = append(ee, errs.New(
 			errs.M("event-based gateway needs at least two arms"),
 			errs.C(errorClass, errs.InvalidParameter),
-			errs.D("gateway_id", g.ID()),
+			errs.D(observability.AttrNodeID, g.ID()),
 			errs.D("arms", strconv.Itoa(len(out)))))
 	}
 
@@ -377,7 +377,7 @@ func (g *EventBasedGateway) Validate() error {
 			errs.M("event-based gateway: a Message catch event and a Receive Task "+
 				"cannot both be arms of one gate (BPMN §10.6.6)"),
 			errs.C(errorClass, errs.InvalidParameter),
-			errs.D("gateway_id", g.ID())))
+			errs.D(observability.AttrNodeID, g.ID())))
 	}
 
 	if len(ee) != 0 {
@@ -399,8 +399,8 @@ func (g *EventBasedGateway) validateArm(
 		ee = append(ee, errs.New(
 			errs.M("event-based gateway: an arm flow must not carry a condition"),
 			errs.C(errorClass, errs.InvalidParameter),
-			errs.D("gateway_id", g.ID()),
-			errs.D("flow_id", of.ID())))
+			errs.D(observability.AttrNodeID, g.ID()),
+			errs.D(observability.AttrFlowID, of.ID())))
 	}
 
 	arm := of.Target().Node()
@@ -412,16 +412,16 @@ func (g *EventBasedGateway) validateArm(
 			errs.M("event-based gateway: an arm must be an intermediate "+
 				"catch event or a Receive Task"),
 			errs.C(errorClass, errs.InvalidParameter),
-			errs.D("gateway_id", g.ID()),
-			errs.D("arm_id", arm.ID())))
+			errs.D(observability.AttrNodeID, g.ID()),
+			errs.D(observability.AttrArmID, arm.ID())))
 	}
 
 	if _, ok := arm.(eventproc.EventProcessor); !ok {
 		return false, false, append(ee, errs.New(
 			errs.M("event-based gateway: an arm must be able to catch its event"),
 			errs.C(errorClass, errs.InvalidParameter),
-			errs.D("gateway_id", g.ID()),
-			errs.D("arm_id", arm.ID())))
+			errs.D(observability.AttrNodeID, g.ID()),
+			errs.D(observability.AttrArmID, arm.ID())))
 	}
 
 	msgTrigger := false
@@ -438,8 +438,8 @@ func (g *EventBasedGateway) validateArm(
 				errs.M("event-based gateway: unsupported arm trigger "+
 					"(only Message/Timer/Signal/Conditional)"),
 				errs.C(errorClass, errs.InvalidParameter),
-				errs.D("gateway_id", g.ID()),
-				errs.D("arm_id", arm.ID()),
+				errs.D(observability.AttrNodeID, g.ID()),
+				errs.D(observability.AttrArmID, arm.ID()),
 				errs.D("trigger", string(d.Type()))))
 		}
 	}
@@ -450,8 +450,8 @@ func (g *EventBasedGateway) validateArm(
 			errs.M("event-based gateway: an arm must have exactly one "+
 				"incoming flow (the gate)"),
 			errs.C(errorClass, errs.InvalidParameter),
-			errs.D("gateway_id", g.ID()),
-			errs.D("arm_id", arm.ID()),
+			errs.D(observability.AttrNodeID, g.ID()),
+			errs.D(observability.AttrArmID, arm.ID()),
 			errs.D("incoming", strconv.Itoa(len(in)))))
 	}
 
@@ -464,8 +464,8 @@ func (g *EventBasedGateway) validateArm(
 				errs.M("event-based gateway: a Receive-Task arm must not "+
 					"have boundary events"),
 				errs.C(errorClass, errs.InvalidParameter),
-				errs.D("gateway_id", g.ID()),
-				errs.D("arm_id", arm.ID())))
+				errs.D(observability.AttrNodeID, g.ID()),
+				errs.D(observability.AttrArmID, arm.ID())))
 		}
 
 		return false, true, ee
@@ -479,8 +479,8 @@ func (g *EventBasedGateway) validateArm(
 			errs.M("event-based gateway: at start every arm must be message-based "+
 				"(a Message catch event or a Receive Task)"),
 			errs.C(errorClass, errs.InvalidParameter),
-			errs.D("gateway_id", g.ID()),
-			errs.D("arm_id", arm.ID())))
+			errs.D(observability.AttrNodeID, g.ID()),
+			errs.D(observability.AttrArmID, arm.ID())))
 	}
 
 	return msgTrigger, false, ee
@@ -497,7 +497,7 @@ func (g *EventBasedGateway) validateStartGate() []error {
 			errs.M("event-based gateway: an instantiating gate must have no "+
 				"incoming flow"),
 			errs.C(errorClass, errs.InvalidParameter),
-			errs.D("gateway_id", g.ID()),
+			errs.D(observability.AttrNodeID, g.ID()),
 			errs.D("incoming", strconv.Itoa(len(g.Incoming())))))
 	}
 
@@ -506,7 +506,7 @@ func (g *EventBasedGateway) validateStartGate() []error {
 			errs.M("event-based gateway: ParallelEvents requires WithInstantiate "+
 				"(a non-instantiating gate must be Exclusive, BPMN §10.6.6)"),
 			errs.C(errorClass, errs.InvalidParameter),
-			errs.D("gateway_id", g.ID())))
+			errs.D(observability.AttrNodeID, g.ID())))
 	}
 
 	ee = append(ee, g.validateParallelStartCorrelation()...)
@@ -533,7 +533,7 @@ func (g *EventBasedGateway) validateParallelStartCorrelation() []error {
 				"CorrelationKey — its arm messages MUST share the same "+
 				"correlation information (BPMN §10.6.6)"),
 			errs.C(errorClass, errs.InvalidParameter),
-			errs.D("gateway_id", g.ID()))}
+			errs.D(observability.AttrNodeID, g.ID()))}
 	}
 
 	ee := []error{}
@@ -554,8 +554,8 @@ func (g *EventBasedGateway) validateParallelStartCorrelation() []error {
 					"gate's CorrelationKey — the gate's messages MUST share "+
 					"the same correlation information (BPMN §10.6.6)"),
 				errs.C(errorClass, errs.InvalidParameter),
-				errs.D("gateway_id", g.ID()),
-				errs.D("arm_id", arm.ID()),
+				errs.D(observability.AttrNodeID, g.ID()),
+				errs.D(observability.AttrArmID, arm.ID()),
 				errs.D("message", msg.Name()),
 				errs.D("missing_properties", strings.Join(missing, ", "))))
 		}

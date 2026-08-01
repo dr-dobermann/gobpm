@@ -4,6 +4,7 @@ package consinp
 import (
 	"bufio"
 	"fmt"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"io"
 	"os"
 	"reflect"
@@ -126,7 +127,7 @@ func (cr *CRenderer) Render(_ data.Source) ([]data.Data, error) {
 			errs.New(
 				errs.M("no inputs defined"),
 				errs.C(errorClass, errs.InvalidObject),
-				errs.D("renderer_id", cr.ID()))
+				errs.D(observability.AttrRendererID, cr.ID()))
 	}
 
 	results := []data.Data{}
@@ -138,7 +139,7 @@ func (cr *CRenderer) Render(_ data.Source) ([]data.Data, error) {
 				errs.New(
 					errs.M("couldn't read input"),
 					errs.C(errorClass, errs.OperationFailed),
-					errs.D("input_name", inp.name()),
+					errs.D(observability.AttrDataName, inp.name()),
 					errs.E(err))
 		}
 

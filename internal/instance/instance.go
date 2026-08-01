@@ -455,7 +455,7 @@ func New(
 			errs.M("couldn't load process'es properties into Instance scope"),
 			errs.E(err),
 			errs.C(errorClass, errs.BulidingFailed),
-			errs.D("process_name", s.ProcessName),
+			errs.D(observability.AttrProcessName, s.ProcessName),
 			errs.D(observability.AttrProcessID, s.ProcessID))
 	}
 

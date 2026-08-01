@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"reflect"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -166,15 +167,15 @@ func (a *Association) UpdateSource(
 			errs.M("source updating failed"),
 			errs.C(errorClass, errs.OperationFailed),
 			errs.E(err),
-			errs.D("source_id", iDef.ID()),
-			errs.D("association_id", a.ID()))
+			errs.D(observability.AttrAssociationSourceID, iDef.ID()),
+			errs.D(observability.AttrAssociationID, a.ID()))
 	}
 
 	if err := a.target.UpdateState(UnavailableDataState); err != nil {
 		return errs.New(
 			errs.M("association target state update failed"),
 			errs.C(errorClass, errs.OperationFailed),
-			errs.D("association_id", a.ID()),
+			errs.D(observability.AttrAssociationID, a.ID()),
 			errs.E(err))
 	}
 
@@ -183,7 +184,7 @@ func (a *Association) UpdateSource(
 			return errs.New(
 				errs.M("association target value recalculation failed"),
 				errs.C(errorClass, errs.OperationFailed),
-				errs.D("association_id", a.ID()),
+				errs.D(observability.AttrAssociationID, a.ID()),
 				errs.E(err))
 		}
 	}
@@ -236,7 +237,7 @@ func (a *Association) Value(ctx context.Context) (*ItemDefinition, error) {
 			errs.New(
 				errs.M("target calculation failed"),
 				errs.C(errorClass, errs.OperationFailed),
-				errs.D("association_id", a.ID()),
+				errs.D(observability.AttrAssociationID, a.ID()),
 				errs.E(err))
 	}
 

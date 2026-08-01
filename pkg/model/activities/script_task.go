@@ -123,8 +123,8 @@ func (st *ScriptTask) Exec(
 		return nil, errs.New(
 			errs.M("ScriptTask.Exec: a nil RuntimeEnvironment isn't allowed"),
 			errs.C(errorClass, errs.EmptyNotAllowed),
-			errs.D("script_task_name", st.Name()),
-			errs.D("script_task_id", st.ID()))
+			errs.D(observability.AttrNodeName, st.Name()),
+			errs.D(observability.AttrNodeID, st.ID()))
 	}
 
 	eng := re.ScriptEngine()
@@ -193,8 +193,8 @@ func (st *ScriptTask) commitOutput(
 			errs.M("couldn't commit script output"),
 			errs.C(errorClass),
 			errs.E(err),
-			errs.D("script_task_name", st.Name()),
-			errs.D("script_task_id", st.ID()),
+			errs.D(observability.AttrNodeName, st.Name()),
+			errs.D(observability.AttrNodeID, st.ID()),
 			errs.D("output", name))
 	}
 

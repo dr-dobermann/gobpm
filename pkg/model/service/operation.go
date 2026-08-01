@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -189,7 +190,7 @@ func cloneErr(part, opName string, err error) error {
 		errs.M("couldn't rebuild cloned operation (%s)", part),
 		errs.C(errorClass, errs.OperationFailed),
 		errs.E(err),
-		errs.D("operation_name", opName))
+		errs.D(observability.AttrOperationName, opName))
 }
 
 // Name returns the name of the Operation.

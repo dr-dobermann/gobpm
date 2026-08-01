@@ -21,7 +21,7 @@ func datumErr(what, name string, path scope.DataPath, err error) error {
 		errs.M("couldn't build %s datum", what),
 		errs.C(errorClass, errs.OperationFailed),
 		errs.E(err),
-		errs.D("datum_name", name),
+		errs.D(observability.AttrDataName, name),
 		errs.D(observability.AttrDataPath, string(path)))
 }
 

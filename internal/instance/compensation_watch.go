@@ -70,7 +70,7 @@ func (ls *loopState) applyCompensate(ctx context.Context, ev trackEvent) {
 		observability.AttrScopePath: string(ev.track.scopePath),
 	}
 	if ev.compRef != "" {
-		details["activity_ref"] = ev.compRef
+		details[observability.AttrActivityRef] = ev.compRef
 	}
 
 	ls.inst.report(observability.Fact{
@@ -342,7 +342,7 @@ func (ls *loopState) reportUnresolvedCompensation(ev trackEvent) {
 		observability.AttrScopePath: string(ev.track.scopePath),
 	}
 	if ev.compRef != "" {
-		details["activity_ref"] = ev.compRef
+		details[observability.AttrActivityRef] = ev.compRef
 	}
 
 	ls.inst.report(observability.Fact{

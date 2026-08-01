@@ -3,6 +3,7 @@ package process
 
 import (
 	"errors"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"maps"
 	"reflect"
 	"slices"
@@ -386,8 +387,8 @@ func (p *Process) validateTopLevelStarts(ee *[]error) {
 					"top-level Start Event (it arrives with event "+
 					"Sub-Processes)"),
 				errs.C(errorClass, errs.InvalidObject),
-				errs.D("start_event_id", en.ID()),
-				errs.D("start_event_name", en.Name())))
+				errs.D(observability.AttrNodeID, en.ID()),
+				errs.D(observability.AttrNodeName, en.Name())))
 		}
 	}
 }

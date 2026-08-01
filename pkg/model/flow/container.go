@@ -225,7 +225,7 @@ func cloneFlowErr(flowID string, err error) error {
 		errs.M("couldn't rebuild cloned flow"),
 		errs.C(errorClass, errs.OperationFailed),
 		errs.E(err),
-		errs.D("flow_id", flowID))
+		errs.D(observability.AttrFlowID, flowID))
 }
 
 // defaultFlowErr classifies a default-flow remap failure (FIX-026).
@@ -235,7 +235,7 @@ func defaultFlowErr(nodeID, flowID string, err error) error {
 		errs.C(errorClass, errs.OperationFailed),
 		errs.E(err),
 		errs.D(observability.AttrNodeID, nodeID),
-		errs.D("flow_id", flowID))
+		errs.D(observability.AttrFlowID, flowID))
 }
 
 // WireClonedGraph completes a freshly cloned node set into a runnable

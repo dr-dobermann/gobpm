@@ -160,14 +160,15 @@ Details наблюдаемого **Fact**'а и Details классифициро
 
 | Домен | Канонические ключи |
 |---|---|
-| Instance / поток | `instance_id`, `track_id`, `node_id`, `node_name`, `process_id`, `start_node_id`, `scope_path`, `data_path` |
+| Instance / поток | `instance_id`, `track_id`, `node_id`, `node_name`, `process_id`, `process_name`, `start_node_id`, `scope_path`, `data_path`, `flow_id` |
 | Происхождение определения | `version`, `parent_instance_id`, `child_instance_id`, `call_activity_node_id`, `called_key`, `called_version` |
 | Человеческие / worker-задачи | `task_id`, `job_id`, `worker_id`, `topic`, `user_id`, `from_user_id`, `to_user_id` |
-| События / waiter'ы | `event_definition_id`, `event_definition_type`, `event_processor_id`, `waiter_id`, `signal`, `message_name`, `escalation` |
+| События / waiter'ы | `event_definition_id`, `event_definition_type`, `event_processor_id`, `waiter_id`, `signal`, `message_name`, `escalation`, `link_name`, `arm_id`, `requester_id` |
 | Correlation | `correlation_key` (**имя** ключа), `correlation_value` (его выведенное **значение**) |
-| Данные | `data_name`, `data_store` |
-| Decision / script | `decision_ref`, `implementation`, `result_variable` |
+| Данные | `data_name`, `data_store`, `item_id`, `association_id`, `association_source_id`, `expression_id` |
+| Decision / script | `decision_ref`, `decision_name`, `implementation`, `result_variable`, `operation_id`, `operation_name`, `renderer_id` |
 | Наблюдение | `observer_type` |
+| Компенсация | `activity_ref` (активность, которую компенсируют, — отлична от `node_id`, называющего место возникновения факта) |
 | Ошибка | `error` |
 
 **Описательные атрибуты** — свободны по форме by design, регистрация не нужна:
@@ -175,6 +176,12 @@ Details наблюдаемого **Fact**'а и Details классифициро
 `output_count`, `row_count`, `rule_count`, `script_format`, `selected_by`,
 `stage`, `stop_reason`, плюс разовые счётчики и длительности (`deadline`,
 `duration`, счётчик `processors`/`catchers`).
+
+Ключ вида `*_type`, сообщающий, что валидация ОЖИДАЛА или ОБНАРУЖИЛА, является
+описательным, несмотря на entity-подобную форму: `option_type`, `expected_type`,
+`expr_type` и `time_type` называют Go- или BPMN-тип в сообщении об ошибке, а не
+объект модели. Они перечислены здесь, чтобы это различие не пересматривали
+каждый раз, когда кто-то грепает entity-подобные ключи.
 
 Два размещения, которые выглядят неожиданно и сделаны намеренно: **агрегат из
 id** — описательный, а не канонический (`candidates` и `chosen_flows`

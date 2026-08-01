@@ -291,7 +291,7 @@ func (inst *Instance) continuationTrack(
 		return nil, errs.New(
 			errs.M("Restore: couldn't mint the continuation-fork identity"),
 			errs.C(errorClass, errs.OperationFailed),
-			errs.D("woken_track_id", rec.ID),
+			errs.D(observability.AttrTrackID, rec.ID),
 			errs.E(err))
 	}
 
@@ -318,7 +318,7 @@ func (inst *Instance) continuationTrack(
 			return nil, errs.New(
 				errs.M("Restore: couldn't commit the trigger's prepared input"),
 				errs.C(errorClass, errs.OperationFailed),
-				errs.D("woken_track_id", rec.ID),
+				errs.D(observability.AttrTrackID, rec.ID),
 				errs.E(err))
 		}
 	}
@@ -327,7 +327,7 @@ func (inst *Instance) continuationTrack(
 		return nil, errs.New(
 			errs.M("Restore: a wake needs a trigger definition"),
 			errs.C(errorClass, errs.EmptyNotAllowed),
-			errs.D("woken_track_id", rec.ID))
+			errs.D(observability.AttrTrackID, rec.ID))
 	}
 
 	// A woken MESSAGE runs the same correlation rule a resident delivery does
@@ -342,7 +342,7 @@ func (inst *Instance) continuationTrack(
 		return nil, errs.New(
 			errs.M("Restore: the trigger belongs to another conversation"),
 			errs.C(errorClass, CorrelationDropClass),
-			errs.D("woken_track_id", rec.ID),
+			errs.D(observability.AttrTrackID, rec.ID),
 			errs.D(observability.AttrEventDefinitionID, pending.EDef.ID()))
 	}
 
