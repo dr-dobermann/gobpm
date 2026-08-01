@@ -39,7 +39,8 @@ Before pushing, run `make ci` locally. It runs the same checks GitHub Actions ru
   * `make mock-check` — regenerates the mocks and fails if the result differs from
     what is committed; run `make gen_mock_files` after changing an interface
   * `make link-check` — fails on any relative link in the repository's Markdown
-    that does not resolve, reporting `file:line`
+    that does not resolve, reporting `file:line`. The checker is the pinned
+    external tool `dr-dobermann/linkcheck`; `make tools` installs it
   * `make tidy-check-all` — verifies every module's `go.mod` and `go.sum` are tidy
   * `make lint-all-modules` — runs `golangci-lint` (with the depguard
     import-direction rules from ADR-003 §4.4) and `gofmt` on every module; use
