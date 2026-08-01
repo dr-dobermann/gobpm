@@ -79,13 +79,13 @@ func EncodeData(
 		})
 	}
 
+	// node is strings, maps of node, slices of node and field structs
+	// throughout, and encodeValue builds a tree — so there is no type
+	// json.Marshal rejects and no cycle it can hit. A failure here is a broken
+	// invariant rather than an encoding error, and reports as one.
 	raw, err := json.Marshal(out)
 	if err != nil {
-		return nil, errs.New(
-			errs.M("checkpoint encoding failed"),
-			errs.C(errorClass, errs.OperationFailed),
-			errs.D(observability.AttrScopePath, scopePath),
-			errs.E(err))
+		return nil, errs.Invariant("scope %q: encoding failed: %w", scopePath, err)
 	}
 
 	return raw, nil

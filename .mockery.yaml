@@ -7,6 +7,7 @@ pkgname: "mock{{.SrcPackageName}}"
 packages:
   github.com/dr-dobermann/gobpm/pkg/exec:
     interfaces:
+      Frame:
       NodeDataConsumer:
       NodeDataProducer:
   github.com/dr-dobermann/gobpm/pkg/renv:

@@ -6,7 +6,6 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
-	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 type (
@@ -84,12 +83,12 @@ func createIOSpecs(ac *activityConfig) (*data.InputOutputSpecification, error) {
 		for _, p := range pp {
 			// AddParameter dedups by identity, so a parameter listed twice is
 			// added once.
+			// AddParameter rejects only a nil parameter or an invalid
+			// direction, and WithParameters already refuses both before a pair
+			// reaches cfg.params — so a failure here is a broken invariant
+			// rather than a runtime error, and reports as one.
 			if err := ioSpecs.AddParameter(p, d); err != nil {
-				return nil, errs.New(
-					errs.M("couldn't add parameter"),
-					errs.E(err),
-					errs.D(observability.AttrDataName, p.Name()),
-					errs.D("param_direction", string(d)))
+				return nil, errs.Invariant("param %q/%q rejected: %w", p.Name(), d, err)
 			}
 		}
 	}
