@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
@@ -161,7 +162,7 @@ func (t *track) evalLoopCond(
 		return false, errs.New(
 			errs.M("standard loop condition evaluated to a non-boolean value"),
 			errs.C(errorClass, errs.TypeCastingError),
-			errs.D("node_id", node.ID()))
+			errs.D(observability.AttrNodeID, node.ID()))
 	}
 
 	return b, nil

@@ -247,7 +247,7 @@ func (eh *EventHub) registerWaiter(
 		return errs.New(
 			errs.M("event hub is shut down; registration rejected"),
 			errs.C(errorClass, errs.InvalidState),
-			errs.D("event_definition_id", eDef.ID()))
+			errs.D(observability.AttrEventDefinitionID, eDef.ID()))
 	}
 
 	if w, ok := eh.waiters[eDef.ID()]; ok {
@@ -255,10 +255,10 @@ func (eh *EventHub) registerWaiter(
 			return errs.New(
 				errs.M("couldn't add event processor to waiter"),
 				errs.C(errorClass, errs.OperationFailed),
-				errs.D("waiter_id", w.ID()),
-				errs.D("event_definition_id", eDef.ID()),
-				errs.D("event_definition_type", string(eDef.Type())),
-				errs.D("event_processor_id", ep.ID()))
+				errs.D(observability.AttrWaiterID, w.ID()),
+				errs.D(observability.AttrEventDefinitionID, eDef.ID()),
+				errs.D(observability.AttrEventDefinitionType, string(eDef.Type())),
+				errs.D(observability.AttrEventProcessorID, ep.ID()))
 		}
 
 		eh.reportEventFlow(observability.PhaseRegistered, map[string]string{
@@ -274,8 +274,8 @@ func (eh *EventHub) registerWaiter(
 		return errs.New(
 			errs.M("eventWaiter building failed"),
 			errs.C(errorClass, errs.BulidingFailed),
-			errs.D("event_processor_id", ep.ID()),
-			errs.D("event_definition_id", eDef.ID()),
+			errs.D(observability.AttrEventProcessorID, ep.ID()),
+			errs.D(observability.AttrEventDefinitionID, eDef.ID()),
 			errs.E(err))
 	}
 
@@ -285,7 +285,7 @@ func (eh *EventHub) registerWaiter(
 		return errs.New(
 			errs.M("failed to start waiter service"),
 			errs.C(errorClass, errs.OperationFailed),
-			errs.D("waiter_id", w.ID()),
+			errs.D(observability.AttrWaiterID, w.ID()),
 			errs.E(err))
 	}
 
@@ -341,7 +341,7 @@ func (eh *EventHub) Shutdown(ctx context.Context) error {
 	for _, w := range ws {
 		if err := w.Stop(); err != nil {
 			eh.rt.Logger().Warn("event waiter Stop failed during shutdown",
-				"waiter_id", w.ID(), "error", err.Error())
+				observability.AttrWaiterID, w.ID(), observability.AttrError, err.Error())
 		}
 
 		done := w.Done()
@@ -406,16 +406,16 @@ func (eh *EventHub) UnregisterEvent(
 		return errs.New(
 			errs.M("couldn't find waiter for the event definition"),
 			errs.C(errorClass, errs.ObjectNotFound),
-			errs.D("event_definition_id", eDefID))
+			errs.D(observability.AttrEventDefinitionID, eDefID))
 	}
 
 	if err := w.RemoveEventProcessor(ep); err != nil {
 		return errs.New(
 			errs.M("couldn't remove event processor from waiter"),
 			errs.C(errorClass, errs.ObjectNotFound),
-			errs.D("event_waiter_id", w.ID()),
-			errs.D("event_processor_id", ep.ID()),
-			errs.D("event_definition_id", eDefID),
+			errs.D(observability.AttrWaiterID, w.ID()),
+			errs.D(observability.AttrEventProcessorID, ep.ID()),
+			errs.D(observability.AttrEventDefinitionID, eDefID),
 			errs.E(err))
 	}
 
@@ -425,9 +425,9 @@ func (eh *EventHub) UnregisterEvent(
 				return errs.New(
 					errs.M("waiter stop failed"),
 					errs.C(errorClass, errs.OperationFailed),
-					errs.D("waiter_id", w.ID()),
-					errs.D("event_definition_idf", w.EventDefinition().ID()),
-					errs.D("event_definition_type", string(w.EventDefinition().Type())))
+					errs.D(observability.AttrWaiterID, w.ID()),
+					errs.D(observability.AttrEventDefinitionID, w.EventDefinition().ID()),
+					errs.D(observability.AttrEventDefinitionType, string(w.EventDefinition().Type())))
 			}
 		}
 
@@ -496,9 +496,9 @@ func (eh *EventHub) PropagateEvent(
 		return errs.New(
 			errs.M("event definition processing failed"),
 			errs.C(errorClass, errs.OperationFailed),
-			errs.D("waiter_id", w.ID()),
-			errs.D("event_definition_id", eDef.ID()),
-			errs.D("event_definition_type", string(eDef.Type())),
+			errs.D(observability.AttrWaiterID, w.ID()),
+			errs.D(observability.AttrEventDefinitionID, eDef.ID()),
+			errs.D(observability.AttrEventDefinitionType, string(eDef.Type())),
 			errs.E(err))
 	}
 
@@ -527,7 +527,7 @@ func (eh *EventHub) broadcastSignal(eDef flow.EventDefinition) error {
 		return errs.New(
 			errs.M("not a signal event definition"),
 			errs.C(errorClass, errs.TypeCastingError),
-			errs.D("event_definition_id", eDef.ID()))
+			errs.D(observability.AttrEventDefinitionID, eDef.ID()))
 	}
 
 	eh.m.RLock()
@@ -555,7 +555,7 @@ func (eh *EventHub) broadcastSignal(eDef flow.EventDefinition) error {
 	for _, w := range targets {
 		if err := w.Process(eDef); err != nil {
 			eh.rt.Logger().Debug("signal waiter delivery returned an error",
-				"signal", name, "waiter_id", w.ID(), "error", err.Error())
+				observability.AttrSignal, name, observability.AttrWaiterID, w.ID(), observability.AttrError, err.Error())
 		}
 	}
 
@@ -591,7 +591,7 @@ func (eh *EventHub) RemoveWaiter(eDefID string) error {
 		return errs.New(
 			errs.M("waiter isn't found"),
 			errs.C(errorClass, errs.ObjectNotFound),
-			errs.D("event_definition_id", eDefID))
+			errs.D(observability.AttrEventDefinitionID, eDefID))
 	}
 
 	eh.removeWaiterFromIndex(w)
@@ -679,7 +679,7 @@ func (eh *EventHub) WaiterFired(eDefID string) error {
 		return errs.New(
 			errs.M("waiter isn't found"),
 			errs.C(errorClass, errs.ObjectNotFound),
-			errs.D("event_definition_id", eDefID))
+			errs.D(observability.AttrEventDefinitionID, eDefID))
 	}
 
 	eh.reportEventFlow(observability.PhaseFired, map[string]string{

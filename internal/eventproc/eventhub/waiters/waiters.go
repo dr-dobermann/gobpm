@@ -4,6 +4,7 @@ import (
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
 
@@ -73,8 +74,8 @@ func CreateWaiter(
 			errs.M("couldn't find builder for event definition of type %s",
 				eDef.Type()),
 			errs.C(errorClass, errs.ObjectNotFound),
-			errs.D("event_definition_id", eDef.ID()),
-			errs.D("event_definition_type", string(eDef.Type())))
+			errs.D(observability.AttrEventDefinitionID, eDef.ID()),
+			errs.D(observability.AttrEventDefinitionType, string(eDef.Type())))
 	}
 
 	return w, err
@@ -127,7 +128,7 @@ func CreatePersistentWaiter(
 			errs.M("only message or signal triggers can back a persistent "+
 				"instance-starter, got %s", eDef.Type()),
 			errs.C(errorClass, errs.InvalidParameter),
-			errs.D("event_definition_id", eDef.ID()),
-			errs.D("event_definition_type", string(eDef.Type())))
+			errs.D(observability.AttrEventDefinitionID, eDef.ID()),
+			errs.D(observability.AttrEventDefinitionType, string(eDef.Type())))
 	}
 }

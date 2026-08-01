@@ -3,6 +3,7 @@ package msgflow
 import (
 	"context"
 	"fmt"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -146,7 +147,7 @@ func deriveErr(itemID string, err error) error {
 		errs.M("DeriveKey: couldn't build payload datum"),
 		errs.C(errorClass, errs.OperationFailed),
 		errs.E(err),
-		errs.D("item_id", itemID))
+		errs.D(observability.AttrItemID, itemID))
 }
 
 // retrievalExprFor returns prop's retrieval expression whose MessageRef matches

@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -138,7 +139,7 @@ func (t *track) evalBoolAtHost(
 		return false, errs.New(
 			errs.M("Multi-Instance %s evaluated to a non-boolean value", what),
 			errs.C(errorClass, errs.TypeCastingError),
-			errs.D("node_id", nodeID))
+			errs.D(observability.AttrNodeID, nodeID))
 	}
 
 	return b, nil
@@ -186,7 +187,7 @@ func (it miIterator) resolveActivation(
 				errs.M("Multi-Instance cardinality evaluated to a "+
 					"non-integer value"),
 				errs.C(errorClass, errs.TypeCastingError),
-				errs.D("node_id", node.ID()))
+				errs.D(observability.AttrNodeID, node.ID()))
 		}
 
 		return n, nil, nil

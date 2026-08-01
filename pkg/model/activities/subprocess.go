@@ -3,6 +3,7 @@ package activities
 import (
 	"context"
 	"errors"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
@@ -498,7 +499,6 @@ func isEventSubProcess(n flow.Node) bool {
 	return ok && h.IsEventSubProcess()
 }
 
-
 // isCompensationHandler reports whether n is an isForCompensation activity —
 // a compensation handler outside the normal flow (SRD-059 FR-2).
 func isCompensationHandler(n flow.Node) bool {
@@ -528,8 +528,8 @@ func (sp *SubProcess) shapeErr(format string, args ...any) error {
 	return errs.New(
 		errs.M(format, args...),
 		errs.C(errorClass, errs.InvalidObject),
-		errs.D("subprocess_id", sp.ID()),
-		errs.D("subprocess_name", sp.Name()))
+		errs.D(observability.AttrNodeID, sp.ID()),
+		errs.D(observability.AttrNodeName, sp.Name()))
 }
 
 // Clone implements flow.Node: the activity base clones per the shared
@@ -581,8 +581,8 @@ func (sp *SubProcess) Clone() (flow.Node, error) {
 		// rules), so every instance shares the one the modeler built — like
 		// the Data Store References below, and unlike the Data Objects, which
 		// hold per-instance state and are deep-cloned.
-		adHoc: sp.adHoc,
-		dataObjects:       make(map[string]*dataobjects.DataObject, len(dobjs)),
+		adHoc:       sp.adHoc,
+		dataObjects: make(map[string]*dataobjects.DataObject, len(dobjs)),
 		dataStoreRefs: make(
 			map[string]*datastores.DataStoreReference, len(sp.dataStoreRefs)),
 	}
@@ -613,7 +613,7 @@ func (sp *SubProcess) ProcessEvent(
 		return errs.New(
 			errs.M("a nil event definition isn't allowed"),
 			errs.C(errorClass, errs.EmptyNotAllowed),
-			errs.D("subprocess_id", sp.ID()))
+			errs.D(observability.AttrNodeID, sp.ID()))
 	}
 
 	return nil

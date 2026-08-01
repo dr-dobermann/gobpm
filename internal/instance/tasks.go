@@ -335,7 +335,7 @@ func (ls *loopState) addTask(
 
 	if err := inst.td.Distribute(dctx, info); err != nil {
 		inst.Logger().Warn("user task distribute failed",
-			"instance_id", inst.ID(), "task_id", taskID, "error", err.Error())
+			observability.AttrInstanceID, inst.ID(), observability.AttrTaskID, taskID, observability.AttrError, err.Error())
 	}
 
 	// The task is parked and announced to the distributor (SRD-041 §3.4).
@@ -455,7 +455,7 @@ func (inst *Instance) withdrawTask(ctx context.Context, taskID string) {
 
 	if err := inst.td.Withdraw(dctx, taskID); err != nil {
 		inst.Logger().Warn("user task withdraw failed",
-			"instance_id", inst.ID(), "task_id", taskID, "error", err.Error())
+			observability.AttrInstanceID, inst.ID(), observability.AttrTaskID, taskID, observability.AttrError, err.Error())
 	}
 
 	// The task was retracted from the distributor (SRD-041 §3.4) — on completion,
@@ -528,7 +528,7 @@ func (inst *Instance) denyByResolutionFailure(
 	cause error,
 ) interactor.Eligibility {
 	inst.Logger().Warn("user task eligibility resolution failed",
-		"instance_id", inst.ID(), "task_id", taskID, "error", cause.Error())
+		observability.AttrInstanceID, inst.ID(), observability.AttrTaskID, taskID, observability.AttrError, cause.Error())
 
 	inst.report(observability.Fact{
 		Kind:     observability.KindTaskState,

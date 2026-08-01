@@ -3,6 +3,7 @@ package gateways
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
@@ -109,7 +110,7 @@ func (eg *ExclusiveGateway) Exec(
 				errs.M("no available outgoing flow: no condition matched and "+
 					"no default"),
 				errs.C(errorClass, errs.InvalidState),
-				errs.D("exclusive_gateway_id", eg.ID()))
+				errs.D(observability.AttrNodeID, eg.ID()))
 	}
 
 	return []*flow.SequenceFlow{eg.defaultFlow}, nil

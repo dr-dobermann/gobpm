@@ -63,9 +63,19 @@ make tag
 
 ### CI Parity (run before pushing)
 
-`make ci` runs the exact local-equivalent of GitHub CI (`.github/workflows/check.yml`):
-tidy-check → lint → build → race tests → **diff-coverage gate** → govulncheck, across
-all modules. Run it before pushing — if it's green, CI is green.
+`make ci` runs the exact local-equivalent of GitHub CI (`.github/workflows/check.yml`),
+across all modules. Run it before pushing — if it's green, CI is green. The REQUIRED
+half is `ci-core`, and its nine steps run in this order:
+
+mock-check → **link-check** → tidy-check → lint → build → consumer-smoke →
+race tests → **diff-coverage gate** → govulncheck
+
+Four of those are easy to meet for the first time as a red gate, so they are worth
+knowing before you push: **mock-check** regenerates the mocks and fails if the result
+differs from what is committed (run `make gen_mock_files` after changing an
+interface); **consumer-smoke** builds a throwaway module against the library, so it
+catches a break in the public API that the repo's own packages do not; and the two
+below have their own paragraphs.
 
 On GitHub the same set is split into two parallel jobs for PR speed: the
 REQUIRED `check` job runs the core gate (`make ci-core` — the non-example
@@ -82,6 +92,22 @@ adds/modifies are covered below `COVER_MIN` (95% now, rising toward 100). It jud
 only changed lines — reusing the per-module `coverage.txt` files `test-all` writes, one
 per core module — so the untouched-code coverage backlog never blocks a PR. The gate runs locally (`make ci`) and in CI via the
 same `cmd/covercheck` binary, preserving local↔CI parity.
+
+Note that covercheck is **HEAD-based**: it diffs the committed branch against
+`COVER_BASE` (`origin/master`), so uncommitted work is invisible to it. A gate run
+on a dirty tree reports only what is already committed — "100.0% of 0 changed
+coverable lines" means it measured nothing, not that everything is covered. Measure
+after committing a milestone, not before.
+
+The **link check** (`make link-check`, FIX-034) walks every Markdown file in the
+repository and fails on any relative link that does not resolve, reporting
+`file:line`. It is blocking, because the 78 dead links FIX-031 swept up accumulated
+precisely because nothing failed. It is a small Go program in `internal/linkcheck`
+rather than an off-the-shelf checker because the parity rule requires every CI tool
+to be pinned and installed by `make tools`, and the alternatives add a non-Go
+toolchain plus a network dependency that reddens the gate for unrelated reasons.
+External URLs are therefore out of scope, and so are fenced and inline code spans —
+a Go generic like `values.NewArray[T](vals…)` is indistinguishable from a link.
 
 ```bash
 # One-time per machine: install the Go dev tools at the versions CI pins

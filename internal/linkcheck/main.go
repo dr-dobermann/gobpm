@@ -139,7 +139,7 @@ func (p *patterns) checkFile(path, src string) []problem {
 
 	for _, l := range p.extract(src) {
 		if _, err := os.Stat(filepath.Join(dir, l.target)); err != nil {
-				out = append(out, problem{file: path, line: l.line, target: l.target})
+			out = append(out, problem{file: path, line: l.line, target: l.target})
 		}
 	}
 

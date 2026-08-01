@@ -2,6 +2,7 @@ package activities
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -64,8 +65,8 @@ func (a *activity) selectOutgoing(
 			errs.M("no outgoing flow selected: all conditions false and "+
 				"no default flow"),
 			errs.C(errorClass, errs.InvalidState),
-			errs.D("activity_id", a.ID()),
-			errs.D("activity_name", a.Name()))
+			errs.D(observability.AttrNodeID, a.ID()),
+			errs.D(observability.AttrNodeName, a.Name()))
 	}
 
 	return selected, nil
@@ -86,8 +87,8 @@ func (a *activity) checkCondition(
 		return false, errs.New(
 			errs.M("invalid condition expression type"),
 			errs.C(errorClass, errs.TypeCastingError),
-			errs.D("outgoing_flow_id", of.ID()),
-			errs.D("activity_id", a.ID()))
+			errs.D(observability.AttrFlowID, of.ID()),
+			errs.D(observability.AttrNodeID, a.ID()))
 	}
 
 	res, err := re.ExpressionEngine().Evaluate(ctx, cond, re)
@@ -95,8 +96,8 @@ func (a *activity) checkCondition(
 		return false, errs.New(
 			errs.M("flow condition evaluation failed"),
 			errs.C(errorClass, errs.OperationFailed),
-			errs.D("outgoing_flow_id", of.ID()),
-			errs.D("activity_id", a.ID()),
+			errs.D(observability.AttrFlowID, of.ID()),
+			errs.D(observability.AttrNodeID, a.ID()),
 			errs.E(err))
 	}
 
@@ -107,8 +108,8 @@ func (a *activity) checkCondition(
 		return false, errs.New(
 			errs.M("flow condition is not boolean"),
 			errs.C(errorClass, errs.TypeCastingError),
-			errs.D("outgoing_flow_id", of.ID()),
-			errs.D("activity_id", a.ID()),
+			errs.D(observability.AttrFlowID, of.ID()),
+			errs.D(observability.AttrNodeID, a.ID()),
 			errs.E(err))
 	}
 

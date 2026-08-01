@@ -2,6 +2,7 @@ package activities
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -201,8 +202,8 @@ func (rt *ReceiveTask) Exec(
 				errs.M("couldn't bind the received message payload"),
 				errs.C(errorClass),
 				errs.E(err),
-				errs.D("receive_task_name", rt.Name()),
-				errs.D("receive_task_id", rt.ID()))
+				errs.D(observability.AttrNodeName, rt.Name()),
+				errs.D(observability.AttrNodeID, rt.ID()))
 	}
 
 	return rt.selectOutgoing(ctx, re)

@@ -2,6 +2,7 @@ package activities
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -134,14 +135,14 @@ func (ca *CallActivity) Validate() error {
 		return errs.New(
 			errs.M("call activity %q has no called-process key", ca.Name()),
 			errs.C(errorClass, errs.InvalidObject),
-			errs.D("call_activity_id", ca.ID()))
+			errs.D(observability.AttrNodeID, ca.ID()))
 	}
 
 	if ca.calledVersion < 0 {
 		return errs.New(
 			errs.M("call activity %q has a negative version pin", ca.Name()),
 			errs.C(errorClass, errs.InvalidObject),
-			errs.D("call_activity_id", ca.ID()))
+			errs.D(observability.AttrNodeID, ca.ID()))
 	}
 
 	return nil
@@ -196,7 +197,7 @@ func (ca *CallActivity) ProcessEvent(
 		return errs.New(
 			errs.M("call activity %q expects a call-outcome event", ca.ID()),
 			errs.C(errorClass, errs.InvalidParameter),
-			errs.D("call_activity_id", ca.ID()))
+			errs.D(observability.AttrNodeID, ca.ID()))
 	}
 
 	ca.outcome = co

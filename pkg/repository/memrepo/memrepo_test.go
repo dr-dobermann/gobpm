@@ -111,7 +111,7 @@ func TestReSaveTerminalNotDoubleTracked(t *testing.T) {
 	ctx := context.Background()
 
 	_ = r.Save(ctx, rec("t1", repository.StatusCompleted))
-	resave(t, r, rec("t1", repository.StatusCompleted)) // re-save: still one series
+	resave(t, r, rec("t1", repository.StatusCompleted))    // re-save: still one series
 	_ = r.Save(ctx, rec("t2", repository.StatusCompleted)) // now two -> evict t1
 
 	if _, ok, _ := r.Load(ctx, "t1"); ok {

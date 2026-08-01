@@ -558,7 +558,7 @@ func (ls *loopState) cancelScope(path scope.DataPath, phase observability.Phase)
 		// here cannot be acted on beyond logging (ADR-022 §2.3(2)).
 		if err := ls.inst.sc.plane.CloseScope(p); err != nil {
 			ls.inst.Logger().Debug("canceled-scope close failed",
-				"scope_path", string(p), "error", err.Error())
+				observability.AttrScopePath, string(p), observability.AttrError, err.Error())
 		}
 
 		// a parallel Multi-Instance instance reports its OWN ordinal (SRD-056.A

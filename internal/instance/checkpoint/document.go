@@ -2,6 +2,7 @@ package checkpoint
 
 import (
 	"encoding/json"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -142,8 +143,8 @@ func (d *Document) Marshal() ([]byte, error) {
 		return nil, errs.New(
 			errs.M("Marshal: a Document needs instance and process ids"),
 			errs.C(errorClass, errs.EmptyNotAllowed),
-			errs.D("instance_id", d.InstanceID),
-			errs.D("process_id", d.ProcessID))
+			errs.D(observability.AttrInstanceID, d.InstanceID),
+			errs.D(observability.AttrProcessID, d.ProcessID))
 	}
 
 	d.Schema = CurrentSchema
@@ -153,7 +154,7 @@ func (d *Document) Marshal() ([]byte, error) {
 		return nil, errs.New(
 			errs.M("Marshal: document serialization failed"),
 			errs.C(errorClass, errs.OperationFailed),
-			errs.D("instance_id", d.InstanceID),
+			errs.D(observability.AttrInstanceID, d.InstanceID),
 			errs.E(err))
 	}
 
@@ -188,7 +189,7 @@ func Unmarshal(payload []byte) (*Document, error) {
 			errs.M("Unmarshal: unsupported checkpoint schema %d "+
 				"(this engine reads schema 1..%d)", d.Schema, CurrentSchema),
 			errs.C(errorClass, errs.InvalidState),
-			errs.D("instance_id", d.InstanceID))
+			errs.D(observability.AttrInstanceID, d.InstanceID))
 	}
 
 	if d.InstanceID == "" || d.ProcessID == "" {

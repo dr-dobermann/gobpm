@@ -3,6 +3,7 @@ package gateways
 import (
 	"context"
 	"errors"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"slices"
 	"strconv"
 	"sync"
@@ -445,7 +446,7 @@ func (cg *ComplexGateway) Validate() error {
 						errs.M("complex gateway required flow is not an incoming flow"),
 						errs.C(errorClass, errs.InvalidObject),
 						errs.D("triple", strconv.Itoa(i)),
-						errs.D("flow_id", req)))
+						errs.D(observability.AttrFlowID, req)))
 			}
 		}
 	}

@@ -3,6 +3,7 @@ package waiters
 import (
 	"context"
 	"errors"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"slices"
 	"strings"
 	"sync"
@@ -65,7 +66,7 @@ func NewSignalWaiter(
 			errs.New(
 				errs.M("not a SignalEventDefinition"),
 				errs.C(SignalWaiterError, errs.TypeCastingError),
-				errs.D("event_definition_type", string(eDefI.Type())))
+				errs.D(observability.AttrEventDefinitionType, string(eDefI.Type())))
 	}
 
 	sig := eDef.Signal()
@@ -74,7 +75,7 @@ func NewSignalWaiter(
 			errs.New(
 				errs.M("SignalEventDefinition has no signal"),
 				errs.C(SignalWaiterError, errs.EmptyNotAllowed),
-				errs.D("event_definition_id", eDef.ID()))
+				errs.D(observability.AttrEventDefinitionID, eDef.ID()))
 	}
 
 	id = strings.TrimSpace(id)
@@ -146,8 +147,8 @@ func (sw *signalWaiter) RemoveEventProcessor(ep eventproc.EventProcessor) error 
 		return errs.New(
 			errs.M("event processor isn't registered with the waiter"),
 			errs.C(SignalWaiterError, errs.ObjectNotFound),
-			errs.D("waiter_id", sw.id),
-			errs.D("event_processor_id", ep.ID()))
+			errs.D(observability.AttrWaiterID, sw.id),
+			errs.D(observability.AttrEventProcessorID, ep.ID()))
 	}
 
 	sw.processors = slices.Delete(sw.processors, idx, idx+1)
@@ -191,7 +192,7 @@ func (sw *signalWaiter) Service(ctx context.Context) error {
 	sw.state = eventproc.WSRunned
 
 	sw.rt.Logger().Debug("signal waiter serviced",
-		"waiter_id", sw.id, "signal", sw.name)
+		observability.AttrWaiterID, sw.id, observability.AttrSignal, sw.name)
 
 	return nil
 }
@@ -210,7 +211,7 @@ func (sw *signalWaiter) Process(eDef flow.EventDefinition) error {
 	sw.m.Unlock()
 
 	sw.rt.Logger().Debug("signal waiter delivering",
-		"waiter_id", sw.id, "signal", sw.name,
+		observability.AttrWaiterID, sw.id, observability.AttrSignal, sw.name,
 		"processors", len(processors))
 
 	for _, ep := range processors {
@@ -224,17 +225,17 @@ func (sw *signalWaiter) Process(eDef flow.EventDefinition) error {
 			// loser, or a correlation mismatch): a benign drop, not a delivery
 			// failure — broadcast reaches every catcher in range (FIX-007).
 			sw.rt.Logger().Debug("signal delivery skipped: catcher not waiting",
-				"waiter_id", sw.id, "signal", sw.name,
-				"event_processor_id", ep.ID())
+				observability.AttrWaiterID, sw.id, observability.AttrSignal, sw.name,
+				observability.AttrEventProcessorID, ep.ID())
 
 			continue
 		}
 
 		sw.rt.Logger().Warn("signal delivery to a catcher failed",
-			"waiter_id", sw.id,
-			"signal", sw.name,
-			"event_processor_id", ep.ID(),
-			"error", err.Error())
+			observability.AttrWaiterID, sw.id,
+			observability.AttrSignal, sw.name,
+			observability.AttrEventProcessorID, ep.ID(),
+			observability.AttrError, err.Error())
 	}
 
 	return nil

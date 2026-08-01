@@ -3,10 +3,10 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.1 |
-| Date | 2026-07-10 |
+| Version | v.2 |
+| Date | 2026-07-31 |
 | Owner | Ruslan Gabitov |
-| Refines | [ADR-002 v.2](ADR-002-extension-architecture.md) (the observability extensions and the visible-by-default posture), [SAD-001 v.1](SAD-001-vision-and-architecture.md) (library-first: the embedder owns the process, the engine owes it diagnosability) |
+| Refines | [ADR-002 v.2](ADR-002-extension-architecture.md) (the observability extensions and the visible-by-default posture), [SAD-001 v.1.1](SAD-001-vision-and-architecture.md) (library-first: the embedder owns the process, the engine owes it diagnosability) |
 | Siblings | [ADR-013 v.2](ADR-013-instance-observability.md) (the host observation stream — a separate channel from operator logs) |
 
 gobpm users must get **comprehensive information about every error and every
@@ -21,7 +21,7 @@ FIX brings the existing code up to it.
 
 ## 1. Context & problem
 
-gobpm is a **library** (SAD-001 v.1): the embedder's application is the
+gobpm is a **library** (SAD-001 v.1.1): the embedder's application is the
 process, so the engine's errors and logs are the embedder's *only* windows
 into engine trouble. Three problems motivate a policy:
 
@@ -137,17 +137,53 @@ behavior is not a warning.
 
 ### 2.5 One attribute vocabulary
 
-Log records identify their subject with **canonical snake_case keys**, the
-same everywhere. The vocabulary (established against the code, not from
-memory):
+Three carriers identify their subject with **canonical snake_case keys**, the
+same everywhere: an operator **log record**'s attributes, an observable
+**Fact**'s Details, and a classified **error**'s Details (`errs.D`). One
+vocabulary serves all three:
+`pkg/observability`'s `Attr*` constants ARE this table, so a key is reached
+through a constant rather than retyped at each call site.
+
+The vocabulary splits by what a key does, and the split is what decides whether
+registration is required:
+
+- a **canonical key** names *which object* the event is about — an id, a name,
+  an address, or the kind by which the engine addresses it;
+- a **descriptive attribute** characterises the *event itself* — how many, in
+  what order, for what reason, with what outcome.
+
+**Canonical keys** — every one has an `Attr*` constant:
 
 | Domain | Canonical keys |
 |---|---|
-| Instance / flow | `instance_id`, `track_id`, `node_id`, `node_name`, `process_id`, `start_node_id` |
-| Human / worker tasks | `task_id`, `job_id`, `worker_id`, `topic` |
-| Events / waiters | `event_definition_id`, `event_definition_type`, `event_processor_id`, `waiter_id`, `signal`, `message_name` |
+| Instance / flow | `instance_id`, `track_id`, `node_id`, `node_name`, `process_id`, `process_name`, `start_node_id`, `scope_path`, `data_path`, `flow_id` |
+| Definition lineage | `version`, `parent_instance_id`, `child_instance_id`, `call_activity_node_id`, `called_key`, `called_version` |
+| Human / worker tasks | `task_id`, `job_id`, `worker_id`, `topic`, `user_id`, `from_user_id`, `to_user_id` |
+| Events / waiters | `event_definition_id`, `event_definition_type`, `event_processor_id`, `waiter_id`, `signal`, `message_name`, `escalation`, `link_name`, `arm_id`, `requester_id` |
 | Correlation | `correlation_key` (the key **name**), `correlation_value` (its derived **value**) |
+| Data | `data_name`, `data_store`, `item_id`, `association_id`, `association_source_id`, `expression_id` |
+| Decision / script | `decision_ref`, `decision_name`, `implementation`, `result_variable`, `operation_id`, `operation_name`, `renderer_id` |
+| Observation | `observer_type` |
+| Compensation | `activity_ref` (the activity a compensation targets — distinct from `node_id`, which names where the fact occurred) |
 | The error | `error` |
+
+**Descriptive attributes** — free-form by design, no registration required:
+`attempts`, `backoff`, `candidates`, `chosen_flows`, `loop_counter`, `ordinal`,
+`output_count`, `row_count`, `rule_count`, `script_format`, `selected_by`,
+`stage`, `stop_reason`, plus one-off counts and durations (`deadline`,
+`duration`, a `processors`/`catchers` count).
+
+A `*_type` key that reports what a validation EXPECTED or FOUND is descriptive
+even though it is entity-shaped: `option_type`, `expected_type`, `expr_type`
+and `time_type` each name a Go or BPMN type in a failure message rather than an
+object in the model. They are listed here so the distinction is not
+re-litigated the next time someone greps for entity-shaped keys.
+
+Two placements that look surprising and are deliberate: an **aggregate of ids**
+is descriptive, not canonical — `candidates` and `chosen_flows` enumerate rather
+than reference, so they identify no single object; and **`script_format` is
+descriptive** while `topic` is canonical, because a format is a category many
+scripts share whereas a topic names one queue.
 
 Rules:
 
@@ -161,10 +197,17 @@ Rules:
 - **`correlation_key` is the key name; `correlation_value` is the derived
   value** — the two were conflated (a `key` attr held values, `correlation_key`
   held names); they are now distinct.
-- **Descriptive / count attributes are free-form** (`attempts`, `backoff`,
-  `deadline`, `cap`, `duration`, a `processors`/`catchers` count) — the
-  canon governs *entity references*, not every attribute.
-- **New entity keys join by a version bump** of this ADR, not ad hoc.
+- **Descriptive attributes are free-form** — the canon governs *entity
+  references*, not every attribute.
+- **New canonical keys join by a version bump** of this ADR, not ad hoc.
+- **Both directions are gated, not trusted.** A prose rule that only review
+  enforces decays: by v.2, 28 constants had entered the code without reaching
+  this table, and two keys the table already carried (`event_definition_type`,
+  `event_processor_id`) existed in code only as bare string literals. Two tests
+  now hold the correspondence — one asserting every `Attr*` constant appears
+  above, one asserting no string literal duplicates an `Attr*` value outside
+  its own declaration. A key that is in the code and not in this table, or in
+  this table and hand-typed at a call site, fails the build.
 
 ### 2.6 Silence is opt-out, never accidental
 
@@ -272,7 +315,7 @@ decisions never assume "the observer saw it".
   the visible-by-default startup posture this policy generalizes.
 - ADR-013 v.2 — instance observability: the host observation stream §2.7
   keeps distinct from operator logs.
-- SAD-001 v.1 — library-first vision: the embedder-owns-the-process premise
+- SAD-001 v.1.1 — library-first vision: the embedder-owns-the-process premise
   behind "the public API edge returns, never logs".
 - D. Cheney, *Don't just check errors, handle them gracefully* (GoCon 2016);
   Go blog, *Errors are values* — the handle-once principle.
@@ -286,4 +329,5 @@ None.
 
 | Version | Date | Author | Change |
 |---|---|---|---|
+| v.2 | 2026-08-01 | Ruslan Gabitov | Accepted. **The vocabulary is reconciled with the code and gated in both directions.** §2.5's registration rule ("new entity keys join by a version bump") was enforced by nothing and had not held: 28 of the 47 `Attr*` constants had entered the code without reaching the table, and two keys the table already carried — `event_definition_type`, `event_processor_id` — existed in code only as bare string literals, so the vocabulary was unenforced in BOTH directions. §2.5 now lists all 50 keys, split by an explicit criterion: a **canonical** key names which object the event is about (id, name, address, or the kind the engine addresses it by) and requires registration; a **descriptive** attribute characterises the event itself (count, order, reason, outcome) and is free-form. Two judgment calls are stated rather than left implicit — an aggregate of ids (`candidates`, `chosen_flows`) is descriptive because it enumerates rather than references, and `script_format` is descriptive where `topic` is canonical because a format is a shared category, not one queue. Adds `observer_type` (the concrete Go type of a host observer whose OnFact panicked — the only handle the engine has on a host-supplied value it assigns no id). Adds the rule that both directions are TESTED, not trusted, so a key present in code but not in this table, or in this table but hand-typed at a call site, fails the build. Outgoing pin refreshed at the bump: SAD-001 v.1 → v.1.1 (stale); ADR-002 v.2 and ADR-013 v.2 verified current. No change to §2.1–§2.4 or §2.6 — propagation, handling boundaries, levels and silence-is-opt-out are unchanged. |
 | v.1 | 2026-07-11 | Ruslan Gabitov | Accepted (authored 2026-07-10). The error-propagation and logging contract: handle-exactly-once (log XOR return); three propagation patterns (lone-call return, errors.Join, contextual wrap); the enumerated handling boundaries (goroutine tops, best-effort ops, deliberate ignores with log+comment) with the public API edge explicitly NOT a logging boundary, a **fail-fast-vs-best-effort discriminator** (judge by the failure surface — an invariant-only failure propagates, not logs — added during implementation from the WaiterFired finding), and a carve-out for logger-less components (model constructors, console driver) that propagate or comment; level discipline (Error/Warn/Info/Debug with hot-path and expected-no-op corollaries); the canonical attribute vocabulary (grounded against the code: adds `event_definition_type`/`event_processor_id`/`worker_id`/`topic`/`start_node_id`, splits `correlation_key`/`correlation_value`, frees count attributes); silence-is-opt-out; logs vs ObsEvent stream separation. Grounded in Go practice (BPMN is silent on observability). Landed by its accompanying FIX (the discard sweep + existing-log audit); Accepted after that FIX's /check-srd landing gate passed. |

@@ -9,6 +9,7 @@ package lite
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -79,7 +80,7 @@ func (e *Engine) Evaluate(
 			errs.M("Evaluate: the expression carries no text body "+
 				"(data.BodyHolder)"),
 			errs.C(errorClass, errs.InvalidObject),
-			errs.D("expression_id", expr.ID()))
+			errs.D(observability.AttrExpressionID, expr.ID()))
 	}
 
 	ast, err := parse(bh.Body())
@@ -120,7 +121,7 @@ func packResult(
 		return nil, errs.New(
 			errs.M("the expression produced no value (nil)"),
 			errs.C(errorClass, errs.InvalidState),
-			errs.D("expression_id", expr.ID()))
+			errs.D(observability.AttrExpressionID, expr.ID()))
 	}
 }
 
@@ -139,7 +140,7 @@ func checkedResult(
 			errs.C(errorClass, errs.TypeCastingError),
 			errs.D("declared", declared),
 			errs.D("produced", produced),
-			errs.D("expression_id", expr.ID()))
+			errs.D(observability.AttrExpressionID, expr.ID()))
 	}
 
 	return val, nil

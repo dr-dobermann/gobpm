@@ -2,6 +2,7 @@ package thresher_test
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -151,4 +152,35 @@ func TestEngineObserveCancelIsIdempotent(t *testing.T) {
 	sub := th.Observe(&collector{})
 	sub.Cancel()
 	sub.Cancel() // idempotent
+}
+
+// TestEngineObserverPanicIsReported (FIX-035 §1.1): the ENGINE-SCOPE stream has
+// the same containment blind spot as the instance handle — deliver has two call
+// sites, and the backlog entry that recorded this defect knew of only one. A
+// panicking engine observer is counted and reported exactly like a handle one.
+func TestEngineObserverPanicIsReported(t *testing.T) {
+	proc := linearProcess(t, "eng-obs-panic", 200*time.Millisecond)
+	wc := &warnCapture{}
+	th, cancel := runEngineWithLogger(t, proc, slog.New(wc))
+
+	defer cancel()
+
+	sub := th.Observe(panicObserver{})
+
+	h, err := th.StartLatest(proc.ID())
+	require.NoError(t, err)
+
+	ctx, cc := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cc()
+
+	_, err = h.WaitCompletion(ctx)
+	require.NoError(t, err)
+
+	sub.Cancel() // drains, so every delivery has been attempted
+
+	require.Positive(t, sub.Panicked(),
+		"the engine-scope subscription counts contained panics too")
+	require.Equal(t, 1, wc.count(), "one Warn, from producer.subscribe's drain")
+	require.Equal(t, "thresher_test.panicObserver",
+		wc.attrs()[observability.AttrObserverType])
 }

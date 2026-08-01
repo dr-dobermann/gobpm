@@ -111,13 +111,13 @@ func (p *producer) subscribe(o Observer) *Subscription {
 	ch := make(chan observability.Fact, observerBuffer)
 	done := make(chan struct{})
 
-	var dropped atomic.Uint64
+	var dropped, panicked atomic.Uint64
 
 	go func() {
 		defer close(done)
 
 		for ev := range ch {
-			deliver(o, ev)
+			deliverObserved(p.log, o, ev, &panicked)
 		}
 	}()
 
@@ -130,7 +130,8 @@ func (p *producer) subscribe(o Observer) *Subscription {
 	var once sync.Once
 
 	return &Subscription{
-		dropped: &dropped,
+		dropped:  &dropped,
+		panicked: &panicked,
 		cancel: func() {
 			once.Do(func() {
 				// Delete under the lock first: fanout holds the same lock across

@@ -2,6 +2,7 @@ package activities
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/interactor"
@@ -108,7 +109,7 @@ func (ut *UserTask) Authorize(
 		return errs.New(
 			errs.M("Authorize: a nil Actor isn't allowed"),
 			errs.C(errorClass, errs.InvalidParameter),
-			errs.D("task_id", ut.ID()))
+			errs.D(observability.AttrTaskID, ut.ID()))
 	}
 
 	return ut.ResolveEligibility(ctx, src, eng).Authorize(ut.ID(), actor)
@@ -128,7 +129,7 @@ func (ut *UserTask) ValidateOutputs(outputs []data.Data) error {
 			return errs.New(
 				errs.M("ValidateOutputs: a nil output isn't allowed"),
 				errs.C(errorClass, errs.EmptyNotAllowed),
-				errs.D("task_id", ut.ID()))
+				errs.D(observability.AttrTaskID, ut.ID()))
 		}
 
 		provided[d.Name()] = d
@@ -145,7 +146,7 @@ func (ut *UserTask) ValidateOutputs(outputs []data.Data) error {
 					errs.M("ValidateOutputs: required output %q is missing",
 						p.Name()),
 					errs.C(errorClass, errs.EmptyNotAllowed),
-					errs.D("task_id", ut.ID()),
+					errs.D(observability.AttrTaskID, ut.ID()),
 					errs.D("output", p.Name()))
 			}
 
@@ -162,7 +163,7 @@ func (ut *UserTask) ValidateOutputs(outputs []data.Data) error {
 			return errs.New(
 				errs.M("ValidateOutputs: unknown output %q", name),
 				errs.C(errorClass, errs.InvalidParameter),
-				errs.D("task_id", ut.ID()),
+				errs.D(observability.AttrTaskID, ut.ID()),
 				errs.D("output", name))
 		}
 	}
@@ -184,7 +185,7 @@ func checkOutputType(name, want string, d data.Data, taskID string) error {
 			errs.M("ValidateOutputs: output %q type mismatch: want %q, got %q",
 				name, want, got),
 			errs.C(errorClass, errs.TypeCastingError),
-			errs.D("task_id", taskID),
+			errs.D(observability.AttrTaskID, taskID),
 			errs.D("output", name))
 	}
 

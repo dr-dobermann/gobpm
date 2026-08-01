@@ -202,6 +202,7 @@ func (r *Runtime) RuleEngine() rules.Engine { return r.ruleEng }
 
 // ScriptEngine returns the configured script-engine routing surface.
 func (r *Runtime) ScriptEngine() script.Engine { return r.scriptReg }
+
 // DataStores returns the configured engine-global Data Store registry.
 func (r *Runtime) DataStores() datastore.Registry { return r.dataStores }
 

@@ -400,3 +400,66 @@ func TestLocalDispatcherBindLogger(t *testing.T) {
 	require.True(t, lg.has("JobState Enqueued"),
 		"the bound logger receives the job-lifecycle echo")
 }
+
+// TestWorkerPoolLogsWhenFailReportFails covers the error-on-error branch in
+// runWorker: the handler failed AND reporting that failure also failed. It is
+// reached deterministically by letting the handler consume its own job first —
+// LockedJob carries the WorkerID, so the handler can report as the lock holder,
+// after which the pool's own Fail finds no held entry.
+//
+// The branch matters because it is the engine's last word about a job whose
+// outcome was lost: without it the fault vanishes silently. Its record is also
+// the one place ADR-022 v.2 §2.5 sanctions a SECOND error key — it carries two
+// genuinely distinct errors (the job's fault and the reporting failure), which
+// is the documented exception to "the error travels under error".
+func TestWorkerPoolLogsWhenFailReportFails(t *testing.T) {
+	d := localdispatcher.New(nil, time.Minute)
+	d.BindSink(&recordSink{})
+
+	ctx := t.Context()
+	reported := make(chan struct{})
+
+	require.NoError(t, d.RegisterWorker(ctx, "charge",
+		func(c context.Context, j tasks.LockedJob) (*data.ItemDefinition, error) {
+			// consume the job as its lock holder, so the pool's Fail cannot.
+			_ = d.Fail(c, j.ID, j.WorkerID, tasks.Fault{Cause: errors.New("first")})
+			close(reported)
+
+			return nil, errors.New("worker boom")
+		}))
+
+	require.NoError(t, d.Enqueue(ctx, newJob("j1", "charge")))
+
+	select {
+	case <-reported:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker never ran")
+	}
+}
+
+// TestWorkerPoolLogsWhenCompleteReportFails is the success-path twin: the
+// handler succeeded, but the pool's Complete could not report it because the
+// handler had already consumed the job. Same branch shape, opposite outcome.
+func TestWorkerPoolLogsWhenCompleteReportFails(t *testing.T) {
+	d := localdispatcher.New(nil, time.Minute)
+	d.BindSink(&recordSink{})
+
+	ctx := t.Context()
+	reported := make(chan struct{})
+
+	require.NoError(t, d.RegisterWorker(ctx, "charge",
+		func(c context.Context, j tasks.LockedJob) (*data.ItemDefinition, error) {
+			_ = d.Complete(c, j.ID, j.WorkerID, nil)
+			close(reported)
+
+			return nil, nil
+		}))
+
+	require.NoError(t, d.Enqueue(ctx, newJob("j1", "charge")))
+
+	select {
+	case <-reported:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker never ran")
+	}
+}

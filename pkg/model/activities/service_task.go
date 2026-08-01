@@ -3,6 +3,7 @@ package activities
 import (
 	"context"
 	"errors"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"strings"
 	"time"
 
@@ -284,8 +285,8 @@ func (st *ServiceTask) commitErr(what string, err error) error {
 		errs.M("couldn't %s", what),
 		errs.C(errorClass),
 		errs.E(err),
-		errs.D("service_task_name", st.Name()),
-		errs.D("service_task_id", st.ID()))
+		errs.D(observability.AttrNodeName, st.Name()),
+		errs.D(observability.AttrNodeID, st.ID()))
 }
 
 // execOperation runs op honoring st.timeout. With no timeout (the default) the
@@ -342,8 +343,8 @@ func (st *ServiceTask) execOperation(
 				errs.M("service task %q timed out after %s; its operation "+
 					"goroutine may still be running", st.Name(), st.timeout),
 				errs.C(errorClass, errs.OperationFailed),
-				errs.D("service_task_name", st.Name()),
-				errs.D("service_task_id", st.ID()),
+				errs.D(observability.AttrNodeName, st.Name()),
+				errs.D(observability.AttrNodeID, st.ID()),
 				errs.D("timeout", st.timeout.String()))
 	}
 }
@@ -359,9 +360,9 @@ func (st *ServiceTask) wrapOpErr(err error) error {
 		errs.M("operation execution failed"),
 		errs.C(errorClass),
 		errs.E(err),
-		errs.D("service_task_name", st.Name()),
-		errs.D("service_task_id", st.ID()),
-		errs.D("operation_id", st.operation.ID()))
+		errs.D(observability.AttrNodeName, st.Name()),
+		errs.D(observability.AttrNodeID, st.ID()),
+		errs.D(observability.AttrOperationID, st.operation.ID()))
 }
 
 // execWorkerOutcome applies the worker's stashed terminal outcome on resume
@@ -414,7 +415,7 @@ func (st *ServiceTask) bindOutput(
 				errs.M("couldn't commit worker result"),
 				errs.C(errorClass),
 				errs.E(err),
-				errs.D("service_task_id", st.ID()))
+				errs.D(observability.AttrNodeID, st.ID()))
 	}
 
 	return st.selectOutgoing(ctx, re)
@@ -439,7 +440,7 @@ func (st *ServiceTask) raiseBpmnError(
 				errs.M("service task %q: invalid business-error code", st.Name()),
 				errs.C(errorClass, errs.OperationFailed),
 				errs.E(err),
-				errs.D("service_task_id", st.ID()))
+				errs.D(observability.AttrNodeID, st.ID()))
 	}
 
 	return nil, be
@@ -459,7 +460,7 @@ func (st *ServiceTask) writeStatus(
 			errs.New(
 				errs.M("service task %q: a Status outcome needs WithStatus", st.Name()),
 				errs.C(errorClass, errs.InvalidState),
-				errs.D("service_task_id", st.ID()))
+				errs.D(observability.AttrNodeID, st.ID()))
 	}
 
 	if !st.statusOverwrite {
@@ -469,7 +470,7 @@ func (st *ServiceTask) writeStatus(
 					errs.M("service task %q: status variable %q already exists "+
 						"(overwrite=false)", st.Name(), st.statusVar),
 					errs.C(errorClass, errs.InvalidState),
-					errs.D("service_task_id", st.ID()),
+					errs.D(observability.AttrNodeID, st.ID()),
 					errs.D("status_var", st.statusVar))
 		}
 	}
@@ -485,7 +486,7 @@ func (st *ServiceTask) writeStatus(
 				errs.M("couldn't write status variable %q", st.statusVar),
 				errs.C(errorClass),
 				errs.E(err),
-				errs.D("service_task_id", st.ID()))
+				errs.D(observability.AttrNodeID, st.ID()))
 	}
 
 	return st.selectOutgoing(ctx, re)
@@ -501,7 +502,7 @@ func (st *ServiceTask) technicalFault(fault tasks.Fault) error {
 		errs.M("service task %q worker reported a technical fault", st.Name()),
 		errs.C(errorClass, errs.OperationFailed),
 		errs.E(fault.Cause),
-		errs.D("service_task_id", st.ID()),
+		errs.D(observability.AttrNodeID, st.ID()),
 		errs.D("fault_code", fault.Code))
 }
 
@@ -551,8 +552,8 @@ func (st *ServiceTask) ProcessEvent(
 		return errs.New(
 			errs.M("service task %q expects a worker-outcome event", st.ID()),
 			errs.C(errorClass, errs.TypeCastingError),
-			errs.D("service_task_id", st.ID()),
-			errs.D("event_type", string(eDef.Type())))
+			errs.D(observability.AttrNodeID, st.ID()),
+			errs.D(observability.AttrEventDefinitionType, string(eDef.Type())))
 	}
 
 	st.outcome = wo

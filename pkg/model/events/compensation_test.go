@@ -3,13 +3,13 @@ package events_test
 import (
 	"testing"
 
+	"github.com/dr-dobermann/gobpm/generated/mockrenv"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
+	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
-	"github.com/dr-dobermann/gobpm/generated/mockrenv"
-	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/stretchr/testify/require"
 )

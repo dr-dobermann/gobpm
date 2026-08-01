@@ -2,6 +2,7 @@ package consinp
 
 import (
 	"fmt"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"io"
 	"slices"
 	"strings"
@@ -78,7 +79,7 @@ func WithIntInput(name, prompt string) options.Option {
 			return errs.New(
 				errs.M("duplicate input name"),
 				errs.C(errorClass, errs.DuplicateObject),
-				errs.D("input_name", name))
+				errs.D(observability.AttrDataName, name))
 		}
 
 		ciCfg.inputs = append(ciCfg.inputs, &intInput{
@@ -118,7 +119,7 @@ func WithStringInput(name, prompt string) options.Option {
 			return errs.New(
 				errs.M("duplicate input name"),
 				errs.C(errorClass, errs.DuplicateObject),
-				errs.D("input_name", name))
+				errs.D(observability.AttrDataName, name))
 		}
 
 		ciCfg.inputs = append(ciCfg.inputs, &stringInput{

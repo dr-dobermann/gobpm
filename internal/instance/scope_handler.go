@@ -155,8 +155,8 @@ func (ls *loopState) disarmScopeHandlers(path scope.DataPath) {
 		if !w.loopOwned {
 			if err := ls.inst.UnregisterEvent(w, w.def.ID()); err != nil {
 				ls.inst.Logger().Debug("scope handler disarm failed",
-					"scope_path", string(path), "waiter_id", w.ID(),
-					"event_definition_id", w.def.ID(), "error", err.Error())
+					observability.AttrScopePath, string(path), observability.AttrWaiterID, w.ID(),
+					observability.AttrEventDefinitionID, w.def.ID(), observability.AttrError, err.Error())
 			}
 		}
 
@@ -384,7 +384,7 @@ func (ls *loopState) interruptScopeSiblings(
 
 		if err := ls.inst.sc.plane.CloseScope(p); err != nil {
 			ls.inst.Logger().Debug("interrupted-scope close failed",
-				"scope_path", string(p), "error", err.Error())
+				observability.AttrScopePath, string(p), observability.AttrError, err.Error())
 		}
 
 		ls.reportScope(observability.PhaseCanceled, entry.node, p,

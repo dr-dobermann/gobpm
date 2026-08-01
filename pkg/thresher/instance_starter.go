@@ -2,6 +2,7 @@ package thresher
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/internal/instance/snapshot"
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -63,9 +64,9 @@ func (s *instanceStarter) ProcessEvent(
 		s.thr.cfg.logger.Debug(
 			"instance-starter: message can't populate the Parallel-start "+
 				"gate's correlation key — not instantiating (BPMN §10.6.6)",
-			"process_id", s.snapshot.ProcessID,
-			"start_node_id", s.startNode.ID(),
-			"message_name", s.messageName())
+			observability.AttrProcessID, s.snapshot.ProcessID,
+			observability.AttrStartNodeID, s.startNode.ID(),
+			observability.AttrMessageName, s.messageName())
 
 		return nil
 	}
@@ -76,10 +77,10 @@ func (s *instanceStarter) ProcessEvent(
 	}
 
 	s.thr.cfg.logger.Debug("instance-starter fired",
-		"start_node_id", s.startNode.ID(),
-		"event_definition_id", eDef.ID(),
-		"correlation_key", keyName,
-		"correlation_value", key)
+		observability.AttrStartNodeID, s.startNode.ID(),
+		observability.AttrEventDefinitionID, eDef.ID(),
+		observability.AttrCorrelationKey, keyName,
+		observability.AttrCorrelationValue, key)
 
 	return s.thr.resolveAndLaunch(
 		ctx, s.snapshot, s.startNode, eDef, keyName, key)

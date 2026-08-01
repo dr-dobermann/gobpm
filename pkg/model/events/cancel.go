@@ -3,6 +3,7 @@ package events
 
 import (
 	"errors"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
@@ -64,7 +65,7 @@ func ValidateCancelEndPlacement(nodes []flow.Node, isTransaction bool) error {
 			errs.M("a Cancel End Event is only allowed directly inside a "+
 				"Transaction Sub-Process (BPMN §10.7, ADR-028 §2.6)"),
 			errs.C(errorClass, errs.InvalidObject),
-			errs.D("end_event_id", n.ID())))
+			errs.D(observability.AttrNodeID, n.ID())))
 	}
 
 	if len(ee) > 0 {

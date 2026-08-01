@@ -2,6 +2,7 @@ package msgflow
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
@@ -72,7 +73,7 @@ func bindDatumErr(itemID string, err error) error {
 		errs.M("msgflow.Bind: couldn't build payload datum"),
 		errs.C(errorClass, errs.OperationFailed),
 		errs.E(err),
-		errs.D("item_id", itemID))
+		errs.D(observability.AttrItemID, itemID))
 }
 
 // Bind binds a captured message payload item into the execution scope as a

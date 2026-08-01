@@ -2,6 +2,7 @@ package activities
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"reflect"
 	"strings"
 
@@ -71,23 +72,35 @@ type UserTask struct {
 //   - UsrTaskOption — WithRenderer, WithOutput, WithAssignee / WithAssigneeExpr,
 //     WithCandidateUsers / WithCandidateUsersExpr,
 //     WithCandidateGroups / WithCandidateGroupsExpr
+//
 //   - taskOption — WithMultyInstance
+//
 //   - ActivityOption — WithLoop, WithCompensation, WithStartQuantity,
 //     WithCompletionQuantity, WithParameters, WithoutParams
+//
 //   - data.PropertyOption — the process-data property options
+//
 //   - foundation.BaseOption — WithID, WithDoc
 //
-//	activity options:
-//	- WithMultyInstance
-//	- WithCompensation
-//	- WithLoop
-//	- WithStartQuantity
-//	- WithCompletionQuantity
-//	- WithParameters
-//	- WithoutParams
+//     activity options:
 //
-//	data options:
-//	- WithProperties
+//   - WithMultyInstance
+//
+//   - WithCompensation
+//
+//   - WithLoop
+//
+//   - WithStartQuantity
+//
+//   - WithCompletionQuantity
+//
+//   - WithParameters
+//
+//   - WithoutParams
+//
+//     data options:
+//
+//   - WithProperties
 func NewUserTask(
 	name string,
 	userTaskOpts ...options.Option,
@@ -205,7 +218,7 @@ func (ut *UserTask) Exec(
 				errs.New(
 					errs.M("user task completion output binding failed"),
 					errs.C(errorClass, errs.OperationFailed),
-					errs.D("task_id", ut.ID()),
+					errs.D(observability.AttrTaskID, ut.ID()),
 					errs.E(err))
 		}
 	}
@@ -228,8 +241,8 @@ func (ut *UserTask) ProcessEvent(
 		return errs.New(
 			errs.M("user task %q expects a task-completion event", ut.ID()),
 			errs.C(errorClass, errs.TypeCastingError),
-			errs.D("task_id", ut.ID()),
-			errs.D("event_type", string(eDef.Type())))
+			errs.D(observability.AttrTaskID, ut.ID()),
+			errs.D(observability.AttrEventDefinitionType, string(eDef.Type())))
 	}
 
 	ut.completedOutputs = tc.Outputs()

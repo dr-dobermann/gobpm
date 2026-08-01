@@ -2,6 +2,7 @@ package activities
 
 import (
 	"errors"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"strconv"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -30,7 +31,7 @@ func ValidateCompensationPlacement(nodes []flow.Node) error {
 					"the normal flow)",
 					n.Name()),
 				errs.C(errorClass, errs.InvalidObject),
-				errs.D("activity_id", n.ID()),
+				errs.D(observability.AttrNodeID, n.ID()),
 				errs.D("incoming", strconv.Itoa(len(n.Incoming()))),
 				errs.D("outgoing", strconv.Itoa(len(n.Outgoing())))))
 		}

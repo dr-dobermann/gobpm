@@ -535,9 +535,9 @@ func (t *track) armWaiters(en flow.EventNode, defs []flow.EventDefinition) error
 			return errs.New(
 				errs.M("couldn't register event definitions"),
 				errs.C(errorClass, errs.BulidingFailed),
-				errs.D("node_id", en.ID()),
-				errs.D("node_name", en.Name()),
-				errs.D("event_definition_id", d.ID()),
+				errs.D(observability.AttrNodeID, en.ID()),
+				errs.D(observability.AttrNodeName, en.Name()),
+				errs.D(observability.AttrEventDefinitionID, d.ID()),
 				errs.E(err))
 		}
 	}
@@ -1256,8 +1256,8 @@ func (t *track) executeNode(
 			errs.New(
 				errs.M("node doesn't provide exec.NodeExecutor interface"),
 				errs.C(errorClass, errs.TypeCastingError),
-				errs.D("node_id", step.node.ID()),
-				errs.D("node_name", step.node.Name()))
+				errs.D(observability.AttrNodeID, step.node.ID()),
+				errs.D(observability.AttrNodeName, step.node.Name()))
 	}
 
 	f, err := t.instance.sc.openFrameAt(t.ID(), step.node.ID(), t.scopePath)
@@ -1555,9 +1555,9 @@ func (t *track) unregisterEvent(n flow.Node) error {
 			return errs.New(
 				errs.M("failed to unregister event"),
 				errs.C(errorClass, errs.OperationFailed),
-				errs.D("track_id", t.ID()),
-				errs.D("event_definition_id", eDef.ID()),
-				errs.D("event_definition_type", string(eDef.Type())),
+				errs.D(observability.AttrTrackID, t.ID()),
+				errs.D(observability.AttrEventDefinitionID, eDef.ID()),
+				errs.D(observability.AttrEventDefinitionType, string(eDef.Type())),
 				errs.E(err))
 		}
 	}

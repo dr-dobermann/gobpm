@@ -201,30 +201,36 @@ const (
 // Fact's Details map and a slog echo's key/value args — so the observer
 // stream and the operator log correlate on the same names.
 const (
-	AttrInstanceID        = "instance_id"
-	AttrTrackID           = "track_id"
-	AttrNodeID            = "node_id"
-	AttrNodeName          = "node_name"
-	AttrProcessID         = "process_id"
-	AttrStartNodeID       = "start_node_id"
-	AttrTaskID            = "task_id"
+	AttrInstanceID  = "instance_id"
+	AttrTrackID     = "track_id"
+	AttrNodeID      = "node_id"
+	AttrNodeName    = "node_name"
+	AttrProcessID   = "process_id"
+	AttrStartNodeID = "start_node_id"
+	AttrTaskID      = "task_id"
 	// AttrUserID names the actor a human-task fact is about — the claimer, the
 	// releaser, or the completer. AttrFromUserID/AttrToUserID name the two parties
 	// of a reassignment, which has no single subject (SRD-073 FR-8).
-	AttrUserID     = "user_id"
-	AttrFromUserID = "from_user_id"
-	AttrToUserID   = "to_user_id"
-	AttrJobID      = "job_id"
+	AttrUserID            = "user_id"
+	AttrFromUserID        = "from_user_id"
+	AttrToUserID          = "to_user_id"
+	AttrJobID             = "job_id"
 	AttrWorkerID          = "worker_id"
 	AttrTopic             = "topic"
 	AttrEventDefinitionID = "event_definition_id"
-	AttrWaiterID          = "waiter_id"
-	AttrSignal            = "signal"
-	AttrMessageName       = "message_name"
-	AttrCorrelationKey    = "correlation_key"
-	AttrCorrelationValue  = "correlation_value"
-	AttrError             = "error"
-	AttrEscalation        = "escalation"
+	// AttrEventDefinitionType and AttrEventProcessorID were canonized by
+	// ADR-022 v.1 §2.5 but had no constant, so every call site retyped them as
+	// string literals — the vocabulary unenforced in the direction opposite to
+	// the unregistered keys (FIX-035 §1.2).
+	AttrEventDefinitionType = "event_definition_type"
+	AttrEventProcessorID    = "event_processor_id"
+	AttrWaiterID            = "waiter_id"
+	AttrSignal              = "signal"
+	AttrMessageName         = "message_name"
+	AttrCorrelationKey      = "correlation_key"
+	AttrCorrelationValue    = "correlation_value"
+	AttrError               = "error"
+	AttrEscalation          = "escalation"
 	// Decision evaluation on the Business Rule Engine (SRD-060 FR-6). Names
 	// and counts only — never decision payload values (the masking rule).
 	AttrDecisionRef    = "decision_ref"
@@ -269,9 +275,6 @@ const (
 	AttrParentInstanceID   = "parent_instance_id"
 	AttrCallActivityNodeID = "call_activity_node_id"
 
-	// Call-activity facts (SRD-050 FR-10): emitted by the caller — the called
-	// process key, the RESOLVED version bound (the latest-at-launch audit
-	// point), and the launched child instance id.
 	// Ad-Hoc routing (SRD-074 §3.6). AttrCandidates is the comma-joined inner
 	// activity ids one Router answer offered — an EMPTY value is meaningful: the
 	// Router was consulted and chose to stop, which is not the same as never
@@ -283,9 +286,41 @@ const (
 	AttrSelectedBy = "selected_by"
 	AttrStopReason = "stop_reason"
 
+	// Call-activity facts (SRD-050 FR-10): emitted by the caller — the called
+	// process key, the RESOLVED version bound (the latest-at-launch audit
+	// point), and the launched child instance id.
 	AttrCalledKey       = "called_key"
 	AttrCalledVersion   = "called_version"
 	AttrChildInstanceID = "child_instance_id"
+
+	// AttrObserverType names the concrete Go type of a host observer whose
+	// OnFact panicked (FIX-035). The type is the only handle the engine has on
+	// it: an observer is a host-supplied value the engine assigns no id, so
+	// there is nothing more specific to report it by.
+	AttrObserverType = "observer_type"
+
+	// Model elements that name a real BPMN or engine object but had no
+	// canonical key, so every call site spelled them by hand (FIX-035 §1.4).
+	// AttrAssociationSourceID is spelled in full: the bare "source_id" it
+	// replaces is meaningless away from the association it belongs to.
+	AttrFlowID              = "flow_id"
+	AttrArmID               = "arm_id"
+	AttrAssociationID       = "association_id"
+	AttrAssociationSourceID = "association_source_id"
+	AttrExpressionID        = "expression_id"
+	AttrOperationID         = "operation_id"
+	AttrOperationName       = "operation_name"
+	AttrItemID              = "item_id"
+	AttrLinkName            = "link_name"
+	AttrRendererID          = "renderer_id"
+	AttrRequesterID         = "requester_id"
+	AttrActivityRef         = "activity_ref"
+
+	// The name halves of two entities whose id half was already canonical —
+	// process_name pairs with process_id, decision_name with decision_ref,
+	// exactly as node_name pairs with node_id.
+	AttrProcessName  = "process_name"
+	AttrDecisionName = "decision_name"
 )
 
 // Fact is the canonical observable engine event (ADR-013 v.2 §2.6/§2.9): a

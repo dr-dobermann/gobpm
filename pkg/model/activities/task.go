@@ -3,6 +3,7 @@ package activities
 import (
 	"context"
 	"fmt"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"slices"
 
 	"github.com/dr-dobermann/gobpm/pkg/datastore"
@@ -109,7 +110,7 @@ func (t *task) LoadData(ctx context.Context, f exec.Frame) error {
 				errs.M("couldn't find task input for association's %q target %q",
 					ia.ID(), ia.TargetItemDefID()),
 				errs.C(errorClass),
-				errs.D("task_name", t.Name()))
+				errs.D(observability.AttrNodeName, t.Name()))
 		}
 
 		// A DataStoreReference input reads the engine-global Data Store
@@ -159,7 +160,7 @@ func (t *task) instantiateData(f exec.Frame) error {
 		return errs.New(
 			errs.M("couldn't get task inputs"),
 			errs.C(errorClass, errs.ObjectNotFound),
-			errs.D("task_name", t.Name()),
+			errs.D(observability.AttrNodeName, t.Name()),
 			errs.E(err))
 	}
 
@@ -167,7 +168,7 @@ func (t *task) instantiateData(f exec.Frame) error {
 		return errs.New(
 			errs.M("couldn't instantiate task inputs"),
 			errs.C(errorClass, errs.OperationFailed),
-			errs.D("task_name", t.Name()),
+			errs.D(observability.AttrNodeName, t.Name()),
 			errs.E(err))
 	}
 
@@ -176,7 +177,7 @@ func (t *task) instantiateData(f exec.Frame) error {
 		return errs.New(
 			errs.M("couldn't get task outputs"),
 			errs.C(errorClass, errs.ObjectNotFound),
-			errs.D("task_name", t.Name()),
+			errs.D(observability.AttrNodeName, t.Name()),
 			errs.E(err))
 	}
 
@@ -184,7 +185,7 @@ func (t *task) instantiateData(f exec.Frame) error {
 		return errs.New(
 			errs.M("couldn't instantiate task outputs"),
 			errs.C(errorClass, errs.OperationFailed),
-			errs.D("task_name", t.Name()),
+			errs.D(observability.AttrNodeName, t.Name()),
 			errs.E(err))
 	}
 
@@ -197,7 +198,7 @@ func (t *task) instantiateData(f exec.Frame) error {
 		return errs.New(
 			errs.M("couldn't load task properties"),
 			errs.C(errorClass, errs.OperationFailed),
-			errs.D("task_name", t.Name()),
+			errs.D(observability.AttrNodeName, t.Name()),
 			errs.E(err))
 	}
 

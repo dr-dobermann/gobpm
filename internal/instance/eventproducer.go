@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"errors"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/internal/eventproc"
@@ -44,7 +45,7 @@ func (inst *Instance) RegisterEvent(
 			errs.M("instance is terminal, can't register events (state: %s)",
 				is),
 			errs.C(errorClass, errs.InvalidState),
-			errs.D("requester_id", proc.ID()))
+			errs.D(observability.AttrRequesterID, proc.ID()))
 	}
 
 	if inst.parentEventProducer == nil {
@@ -112,15 +113,15 @@ func (inst *Instance) PropagateEvent(
 			errs.M("instance isn't active"),
 			errs.C(errorClass, errs.InvalidState),
 			errs.D("current_state", st.String()),
-			errs.D("instance_id", inst.ID()))
+			errs.D(observability.AttrInstanceID, inst.ID()))
 	}
 
 	if err := inst.parentEventProducer.PropagateEvent(ctx, eDef); err != nil {
 		return errs.New(
 			errs.M("event propagation failed"),
 			errs.C(errorClass, errs.OperationFailed),
-			errs.D("event_definition_id", eDef.ID()),
-			errs.D("event_definition_type", string(eDef.Type())),
+			errs.D(observability.AttrEventDefinitionID, eDef.ID()),
+			errs.D(observability.AttrEventDefinitionType, string(eDef.Type())),
 			errs.E(err))
 	}
 

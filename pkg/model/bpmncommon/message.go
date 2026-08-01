@@ -1,6 +1,7 @@
 package bpmncommon
 
 import (
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"strings"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
@@ -77,7 +78,7 @@ func msgCloneErr(msgName string, err error) error {
 		errs.M("couldn't rebuild cloned message item"),
 		errs.C(errorClass, errs.OperationFailed),
 		errs.E(err),
-		errs.D("message_name", msgName))
+		errs.D(observability.AttrMessageName, msgName))
 }
 
 // Clone returns a per-instance copy of the Message that preserves the message

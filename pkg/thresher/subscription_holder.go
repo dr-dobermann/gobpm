@@ -3,6 +3,7 @@ package thresher
 import (
 	"context"
 	"errors"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	gerrs "github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/exec"
@@ -129,8 +130,8 @@ func (t *Thresher) ReleaseWaits(instanceID, trackID string) {
 	for _, h := range dropped {
 		if err := t.UnregisterEvent(h, h.eDef.ID()); err != nil {
 			t.cfg.logger.Debug("releasing a held subscription",
-				"instance_id", instanceID, "track_id", trackID,
-				"event_definition_id", h.eDef.ID(), "error", err.Error())
+				observability.AttrInstanceID, instanceID, observability.AttrTrackID, trackID,
+				observability.AttrEventDefinitionID, h.eDef.ID(), observability.AttrError, err.Error())
 		}
 	}
 }
@@ -164,8 +165,8 @@ func (t *Thresher) reportDropOrFailure(
 	var ae *gerrs.ApplicationError
 	if errors.As(err, &ae) && ae.HasClass(correlationDropClass) {
 		t.cfg.logger.Debug("a wake trigger belongs to another conversation",
-			"instance_id", h.instanceID, "track_id", h.trackID,
-			"event_definition_id", eDef.ID())
+			observability.AttrInstanceID, h.instanceID, observability.AttrTrackID, h.trackID,
+			observability.AttrEventDefinitionID, eDef.ID())
 
 		return
 	}

@@ -2,6 +2,7 @@ package script
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"sort"
 	"strings"
 
@@ -131,7 +132,7 @@ func (reg *Registry) Execute(
 		return nil, errs.New(
 			errs.M("Execute: a nil DataReader isn't allowed"),
 			errs.C(errorClass, errs.EmptyNotAllowed),
-			errs.D("script_format", format))
+			errs.D(observability.AttrScriptFormat, format))
 	}
 
 	if len(reg.byFormat) == 0 {
@@ -139,7 +140,7 @@ func (reg *Registry) Execute(
 			errs.M("Execute: no script engine is registered — wire one "+
 				"(e.g. adapters/lua) with thresher.WithScriptEngine"),
 			errs.C(errorClass, errs.InvalidState),
-			errs.D("script_format", format))
+			errs.D(observability.AttrScriptFormat, format))
 	}
 
 	e, ok := reg.EngineFor(format)
@@ -147,7 +148,7 @@ func (reg *Registry) Execute(
 		return nil, errs.New(
 			errs.M("Execute: no registered engine claims the script format"),
 			errs.C(errorClass, errs.ObjectNotFound),
-			errs.D("script_format", normalize(format)),
+			errs.D(observability.AttrScriptFormat, normalize(format)),
 			errs.D("registered_formats", strings.Join(reg.formats, ", ")))
 	}
 

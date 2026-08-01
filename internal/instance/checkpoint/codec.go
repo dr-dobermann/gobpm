@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"strconv"
 	"time"
 
@@ -83,7 +84,7 @@ func EncodeData(
 		return nil, errs.New(
 			errs.M("checkpoint encoding failed"),
 			errs.C(errorClass, errs.OperationFailed),
-			errs.D("scope_path", scopePath),
+			errs.D(observability.AttrScopePath, scopePath),
 			errs.E(err))
 	}
 
@@ -128,7 +129,7 @@ func encErr(scopePath, name, msg string) error {
 	return errs.New(
 		errs.M("checkpoint codec: "+msg),
 		errs.C(errorClass, errs.InvalidParameter),
-		errs.D("scope_path", scopePath),
+		errs.D(observability.AttrScopePath, scopePath),
 		errs.D("datum", name))
 }
 

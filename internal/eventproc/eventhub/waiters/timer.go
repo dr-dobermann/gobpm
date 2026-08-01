@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"slices"
 	"strconv"
 	"strings"
@@ -67,7 +68,7 @@ func NewTimeWaiter(
 			errs.New(
 				errs.M("not an TimerEventDefinition"),
 				errs.C(TimerWaiterError, errs.TypeCastingError),
-				errs.D("event_definition_type", string(eDefI.Type())))
+				errs.D(observability.AttrEventDefinitionType, string(eDefI.Type())))
 	}
 
 	id = strings.TrimSpace(id)
@@ -237,8 +238,8 @@ func (tw *timeWaiter) RemoveEventProcessor(ep eventproc.EventProcessor) error {
 		return errs.New(
 			errs.M("event processor isn't registered with the waiter"),
 			errs.C(TimerWaiterError, errs.ObjectNotFound),
-			errs.D("waiter_id", tw.id),
-			errs.D("event_processor_id", ep.ID()))
+			errs.D(observability.AttrWaiterID, tw.id),
+			errs.D(observability.AttrEventProcessorID, ep.ID()))
 	}
 
 	tw.processors = slices.Delete(tw.processors, idx, idx+1)
@@ -296,7 +297,7 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 		return errs.New(
 			errs.M("waiter duration is not positive"),
 			errs.C(TimerWaiterError, errs.InvalidState),
-			errs.D("waiter_id", tw.ID()),
+			errs.D(observability.AttrWaiterID, tw.ID()),
 			errs.D("next_time", tw.next.String()),
 			errs.D("duration", tw.duration.String()),
 			errs.D("cycles", strconv.Itoa(tw.cyclesLeft)))
@@ -306,7 +307,7 @@ func (tw *timeWaiter) Service(ctx context.Context) error {
 	tw.done = make(chan struct{})
 
 	tw.rt.Logger().Debug("timer waiter serviced",
-		"waiter_id", tw.id, "duration", tw.duration)
+		observability.AttrWaiterID, tw.id, "duration", tw.duration)
 
 	go tw.runTimerService(ctx)
 
@@ -361,7 +362,7 @@ func (tw *timeWaiter) runTimerService(ctx context.Context) {
 
 		case <-tw.stopCh:
 			tw.rt.Logger().Debug("timer waiter stopping",
-				"waiter_id", tw.id)
+				observability.AttrWaiterID, tw.id)
 
 			return
 
@@ -373,7 +374,7 @@ func (tw *timeWaiter) runTimerService(ctx context.Context) {
 				// §2.3/§2.4).
 				if !errors.Is(err, errTimerCompleted) {
 					tw.rt.Logger().Error("timer waiter delivery failed",
-						"waiter_id", tw.id, "error", err.Error())
+						observability.AttrWaiterID, tw.id, observability.AttrError, err.Error())
 				}
 
 				return
@@ -401,7 +402,7 @@ func (tw *timeWaiter) processTimerEvent(ctx context.Context) error {
 	tw.m.Unlock()
 
 	tw.rt.Logger().Debug("timer waiter delivering",
-		"waiter_id", tw.id, "processors", len(processors))
+		observability.AttrWaiterID, tw.id, "processors", len(processors))
 
 	for _, ep := range processors {
 		if err := ep.ProcessEvent(ctx, eDef); err != nil {

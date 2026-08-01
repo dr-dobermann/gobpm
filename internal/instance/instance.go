@@ -12,6 +12,7 @@ package instance
 import (
 	"context"
 	"fmt"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -52,12 +53,12 @@ type Instance struct {
 	// performers records who completed each human task, served read-only through
 	// the RUNTIME subtree and carried across a hydrate (ADR-020 v.2 §2.4.2).
 	performers *performers
-	now                 func() time.Time
-	tracksSnap          atomic.Pointer[[]*track]
-	lastErr             atomic.Pointer[error]
-	s                   *snapshot.Snapshot
-	tracks              map[string]*track
-	loopDone            chan struct{}
+	now        func() time.Time
+	tracksSnap atomic.Pointer[[]*track]
+	lastErr    atomic.Pointer[error]
+	s          *snapshot.Snapshot
+	tracks     map[string]*track
+	loopDone   chan struct{}
 	// settled is closed when the instance reaches a TERMINAL state — and only
 	// then. loopDone closes on EVERY loop exit, dehydration included, so it
 	// cannot answer "has this instance finished?" any more (SRD-071): a
@@ -454,8 +455,8 @@ func New(
 			errs.M("couldn't load process'es properties into Instance scope"),
 			errs.E(err),
 			errs.C(errorClass, errs.BulidingFailed),
-			errs.D("process_name", s.ProcessName),
-			errs.D("process_id", s.ProcessID))
+			errs.D(observability.AttrProcessName, s.ProcessName),
+			errs.D(observability.AttrProcessID, s.ProcessID))
 	}
 
 	// Seed the initial root data: the born-from-event payload (resolving the
@@ -502,7 +503,7 @@ func (inst *Instance) seedInitialData(cfg *newConfig) (flow.Node, error) {
 				errs.M("born-from-event start node %q not found in snapshot",
 					cfg.bornStartID),
 				errs.C(errorClass, errs.ObjectNotFound),
-				errs.D("process_id", inst.s.ProcessID))
+				errs.D(observability.AttrProcessID, inst.s.ProcessID))
 		}
 
 		bornStart = bs

@@ -2,6 +2,7 @@ package instance
 
 import (
 	"fmt"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/internal/scope"
 	"github.com/dr-dobermann/gobpm/pkg/datastore"
@@ -20,8 +21,8 @@ func datumErr(what, name string, path scope.DataPath, err error) error {
 		errs.M("couldn't build %s datum", what),
 		errs.C(errorClass, errs.OperationFailed),
 		errs.E(err),
-		errs.D("datum_name", name),
-		errs.D("data_path", string(path)))
+		errs.D(observability.AttrDataName, name),
+		errs.D(observability.AttrDataPath, string(path)))
 }
 
 // instanceScope owns an instance's data-plane wiring: the scope tree rooted at

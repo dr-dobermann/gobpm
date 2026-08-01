@@ -169,7 +169,7 @@ func (idef *ItemDefinition) String() string {
 // Data Objects, Data Object References, Data Stores, Properties, DataInputs
 // and DataOutputs.
 type ItemAwareElement struct {
-	subject   *ItemDefinition
+	subject *ItemDefinition
 	// name is an optional human/scope name for the element. When set (e.g. a
 	// DataObject names its IAE after itself, SRD-063 FR-5) Name() returns it;
 	// otherwise Name() falls back to the ItemDefinition id, as before.

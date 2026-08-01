@@ -340,8 +340,8 @@ func (ls *loopState) evalCondWatch(
 		ls.inst.fail(errs.New(
 			errs.M("conditional evaluation failed"),
 			errs.C(errorClass, errs.OperationFailed),
-			errs.D("node_id", nodeIDOf(w.node)),
-			errs.D("event_definition_id", w.def.ID()),
+			errs.D(observability.AttrNodeID, nodeIDOf(w.node)),
+			errs.D(observability.AttrEventDefinitionID, w.def.ID()),
 			errs.E(err)))
 		ls.stopAll()
 
@@ -377,7 +377,7 @@ func (ls *loopState) evalCondition(
 		return false, errs.New(
 			errs.M("condition evaluated to a non-boolean value"),
 			errs.C(errorClass, errs.TypeCastingError),
-			errs.D("event_definition_id", def.ID()))
+			errs.D(observability.AttrEventDefinitionID, def.ID()))
 	}
 
 	return b, nil

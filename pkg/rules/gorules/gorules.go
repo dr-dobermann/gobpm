@@ -59,7 +59,7 @@ func (reg *Registry) Register(name string, d rules.DecisionFunc) error {
 		return errs.New(
 			errs.M("Register: a nil DecisionFunc isn't allowed"),
 			errs.C(errorClass, errs.EmptyNotAllowed),
-			errs.D("decision_name", name))
+			errs.D(observability.AttrDecisionName, name))
 	}
 
 	reg.mu.Lock()
@@ -69,7 +69,7 @@ func (reg *Registry) Register(name string, d rules.DecisionFunc) error {
 		return errs.New(
 			errs.M("Register: decision is already registered"),
 			errs.C(errorClass, errs.DuplicateObject),
-			errs.D("decision_name", name))
+			errs.D(observability.AttrDecisionName, name))
 	}
 
 	reg.decisions[name] = d
@@ -143,7 +143,7 @@ func (reg *Registry) Evaluate(
 		return nil, errs.New(
 			errs.M("Evaluate: a nil DataReader isn't allowed"),
 			errs.C(errorClass, errs.EmptyNotAllowed),
-			errs.D("decision_ref", decisionRef))
+			errs.D(observability.AttrDecisionRef, decisionRef))
 	}
 
 	reg.mu.RLock()
@@ -154,7 +154,7 @@ func (reg *Registry) Evaluate(
 		return nil, errs.New(
 			errs.M("Evaluate: decision isn't registered"),
 			errs.C(errorClass, errs.ObjectNotFound),
-			errs.D("decision_ref", decisionRef))
+			errs.D(observability.AttrDecisionRef, decisionRef))
 	}
 
 	row, err := d(ctx, r)
@@ -163,7 +163,7 @@ func (reg *Registry) Evaluate(
 			errs.M("decision evaluation failed"),
 			errs.C(errorClass, errs.OperationFailed),
 			errs.E(err),
-			errs.D("decision_ref", decisionRef))
+			errs.D(observability.AttrDecisionRef, decisionRef))
 	}
 
 	if row == nil {

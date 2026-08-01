@@ -97,9 +97,9 @@ type unclonableDatum struct {
 	name string
 }
 
-func (d *unclonableDatum) Name() string                        { return d.name }
-func (d *unclonableDatum) Value() data.Value                   { return nil }
-func (d *unclonableDatum) State() data.SrcState                { return data.SrcState{} }
+func (d *unclonableDatum) Name() string                         { return d.name }
+func (d *unclonableDatum) Value() data.Value                    { return nil }
+func (d *unclonableDatum) State() data.SrcState                 { return data.SrcState{} }
 func (d *unclonableDatum) ItemDefinition() *data.ItemDefinition { return nil }
 
 // failingCloneDatum adds a Clone that always fails — SnapshotAt's clone-error

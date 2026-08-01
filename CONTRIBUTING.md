@@ -36,12 +36,25 @@ files, which are easy to forget to revert. Workspace mode is the recommended pat
 
 Before pushing, run `make ci` locally. It runs the same checks GitHub Actions runs:
 
+  * `make mock-check` — regenerates the mocks and fails if the result differs from
+    what is committed; run `make gen_mock_files` after changing an interface
+  * `make link-check` — fails on any relative link in the repository's Markdown
+    that does not resolve, reporting `file:line`
   * `make tidy-check-all` — verifies every module's `go.mod` and `go.sum` are tidy
   * `make lint-all-modules` — runs `golangci-lint` (with the depguard
-    import-direction rules from ADR-003 §4.4) on every module
+    import-direction rules from ADR-003 §4.4) and `gofmt` on every module; use
+    `golangci-lint fmt` to fix formatting, not plain `gofmt`, since golangci
+    simplifies by default and the two otherwise disagree
   * `make build-all` — builds every module
+  * `make consumer-smoke` — builds a throwaway module against the library, so a
+    break in the public API is caught even when the repo's own packages compile
   * `make test-all` — runs `go test -race` on every module; core also generates
     `coverage.txt` for Codecov, excluding generated code and `examples/`
+  * `make cover-check` — the blocking diff-coverage gate (SRD-002): the lines your
+    change adds or modifies must be covered at or above `COVER_MIN`. It judges only
+    changed lines, so the untouched-code backlog never blocks you — but note it
+    diffs the **committed** branch against `origin/master`, so run it after
+    committing; on a dirty tree it measures only what is already in
   * `make vuln` — runs `govulncheck` against all modules
 
 The CI workflow (`.github/workflows/check.yml`) calls these same Makefile targets

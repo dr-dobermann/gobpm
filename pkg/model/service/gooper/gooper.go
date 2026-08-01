@@ -6,6 +6,7 @@ package gooper
 
 import (
 	"context"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
@@ -167,7 +168,7 @@ func gooperCloneErr(part, opName string, err error) error {
 		errs.M("couldn't rebuild cloned Go operation (%s)", part),
 		errs.C(errorClass, errs.OperationFailed),
 		errs.E(err),
-		errs.D("operation_name", opName))
+		errs.D(observability.AttrOperationName, opName))
 }
 
 // Execute binds the optional input message from scope, runs the functor with

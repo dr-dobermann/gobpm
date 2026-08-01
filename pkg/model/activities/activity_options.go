@@ -6,6 +6,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
+	"github.com/dr-dobermann/gobpm/pkg/observability"
 )
 
 type (
@@ -87,7 +88,7 @@ func createIOSpecs(ac *activityConfig) (*data.InputOutputSpecification, error) {
 				return nil, errs.New(
 					errs.M("couldn't add parameter"),
 					errs.E(err),
-					errs.D("param_name", p.Name()),
+					errs.D(observability.AttrDataName, p.Name()),
 					errs.D("param_direction", string(d)))
 			}
 		}
