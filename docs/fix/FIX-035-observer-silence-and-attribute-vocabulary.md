@@ -1,11 +1,11 @@
 # FIX-035 — a swallowed observer panic and an unenforced attribute vocabulary
 
 **Type:** FIX (one-shot bug-fix; not rewritten after landing).
-**Status:** Draft (2026-07-31, branch `fix/observer-panic-and-attr-vocabulary`, not yet implemented).
+**Status:** Accepted (2026-08-01, branch `fix/observer-panic-and-attr-vocabulary`).
 **Date:** 2026-07-31.
 **Author:** Ruslan Gabitov.
 **Branch:** `fix/observer-panic-and-attr-vocabulary` — names the two halves; the third (gate docs) rides along as documentation of the same class of defect.
-**Upstream:** [ADR-013 v.2](../design/ADR-013-instance-observability.md) §5 (contain observer failures with *drop-with-warning* — the half this FIX completes), [ADR-022 v.1](../design/ADR-022-error-propagation-and-logging-policy.md) §2.4/§2.5/§2.6 (level discipline, the attribute vocabulary, silence-is-opt-out).
+**Upstream:** [ADR-013 v.2](../design/ADR-013-instance-observability.md) §5 (contain observer failures with *drop-with-warning* — the half this FIX completes), [ADR-022 v.1 → v.2](../design/ADR-022-error-propagation-and-logging-policy.md) §2.4/§2.5/§2.6 (level discipline, the attribute vocabulary, silence-is-opt-out). The v.1 citations in §1.2 and §2.2 are deliberate: they quote the version whose rule went unenforced, which is the defect. Everything this FIX lands conforms to v.2, which it also authors.
 
 **Grounded in (internal artifacts):**
 - `pkg/thresher/observer.go:103` — `deliver`, the containment point that drops the recovered value.
@@ -67,7 +67,7 @@ Nothing enforces it, and it has not held. Measured against
 | Direction | Count | Meaning |
 |---|---|---|
 | `Attr*` constants in code | 47 | the vocabulary as actually used |
-| …absent from ADR-022 §2.5 | 28 | landed without the bump the rule requires |
+| …absent from ADR-022 v.1 §2.5 | 28 | landed without the bump the rule requires |
 | Keys canonized in §2.5 but **not** in the `Attr*` family | 2 | `event_definition_type` (12 uses), `event_processor_id` (8) — bare string literals |
 | Literal occurrences of a key that **has** an `Attr*` constant | 222 across 27 keys | the constant exists and the call site ignores it |
 
@@ -218,7 +218,7 @@ Nothing at all tests the §2.5 vocabulary in either direction.
 
 | | |
 |---|---|
-| Pros | Simplest; loudest reading of ADR-022 §2.6. |
+| Pros | Simplest; loudest reading of ADR-022 v.2 §2.6. |
 | Cons | Violates two rules at once. §2.4 defines `Error` as "an actionable failure handled here: **engine state was affected**" — contained, engine state is untouched. And its corollary: "a **hot path** (per-event, per-token, per-message) never logs above `Debug`" — observer delivery is per-event, so an unbounded per-panic record at any level above Debug is out of contract. A broken observer on a busy engine would drown every other record. |
 | Decision | ❌ rejected. |
 
@@ -238,7 +238,7 @@ ones log at `Debug`; every one increments a counter exposed as
 
 - `Warn` is the level §2.4 defines for "degraded but continuing; someone should
   look eventually", which is exactly a contained observer failure — and it is
-  the level ADR-013 §5 names ("drop-with-**warning**").
+  the level ADR-013 v.2 §5 names ("drop-with-**warning**").
 - Bounding the `Warn` to once per subscription is what keeps the hot-path
   corollary intact: the per-event record is `Debug`, as required.
 - The counter is symmetric with the existing `Subscription.Dropped()`, so the
@@ -413,7 +413,7 @@ evidence, and nothing anywhere on the §2.5 vocabulary.
 | `TestObserverPanickedCounter` | `observer_test.go` | panicking vs healthy observer | panicking `Panicked() > 0`; healthy stays `0` |
 | `TestEngineObserverPanicIsReported` | `observe_engine_test.go` | panicking observer on `Thresher.Observe` | the engine-scope drain reports identically — the call site FIX-034 missed |
 | `TestDeliverReturnsRecoveredValue` | `observer_internal_test.go` (new; follows the existing `producer_internal_test.go` convention) | `deliver` directly, panicking and non-panicking observers, `wantStack` both ways | returns the value; `nil` when no panic; stack present only when asked |
-| `TestAttrConstantsAreRegistered` | `internal/lintcfg` | parse every `Attr*` constant; parse ADR-022 §2.5's tables | every constant appears in one of the two tables — the constants→doc drift cannot silently recur |
+| `TestAttrConstantsAreRegistered` | `internal/lintcfg` | parse every `Attr*` constant; parse ADR-022 v.2 §2.5's tables | every constant appears in one of the two tables — the constants→doc drift cannot silently recur |
 | `TestNoLiteralAttrKeys` | `internal/lintcfg` | AST-walk `pkg/` + `internal/`, collecting string literals equal to any `Attr*` value, skipping `fact.go` and every `ast.Field.Tag` | zero hits — a hand-written key that has a constant fails the gate; struct tags are structurally exempt, not allowlisted |
 
 The last two tests are the machinery §2.2 says was missing, one per
@@ -434,7 +434,7 @@ repo-wide policy guards, so a reader finds every such rule in one package.
   doc comments citing the governing ADR section, so the *why* survives without
   this document.
 - `deliverObserved`'s comment names the two rules its shape satisfies
-  (ADR-013 §5's warning, ADR-022 §2.4's hot-path corollary), so a future
+  (ADR-013 v.2 §5's warning, ADR-022 v.2 §2.4's hot-path corollary), so a future
   simplification to "just log it" meets the reason it is not that.
 - `TestAttrConstantsAreRegistered` converts §2.5's prose rule into a gate.
 - `CLAUDE.md`/`CONTRIBUTING.md` now describe the gate they actually run; a
@@ -473,25 +473,82 @@ Single-commit revert per milestone; no data, schema or wire-format change.
   with the premise §2.1 disproves, and its `link-check` addition is §1.3's
   immediate cause.
 - [FIX-022](FIX-022-error-logging-policy-remediation.md) — the sweep that landed
-  ADR-022 §2.5's vocabulary "grounded against the code"; §1.2 measures how far
+  ADR-022 v.1 §2.5's vocabulary "grounded against the code"; §1.2 measures how far
   it has drifted since.
 
 ---
 
 ## 8 Implementation summary
 
-> Filled after landing.
+### 8.1 Milestones by commit
 
-### 8.1 Stages by commit
-
-| Milestone | Commit | Scope | Tests |
+| # | Commit | Scope | Tests |
 |---|---|---|---|
+| — | `7dba827` | this document | — |
+| M1 | `933b9b3` | `deliver` returns the recovered value; `deliverObserved` holds the policy; `Subscription.Panicked()`; `AttrObserverType` | 9 |
+| M2a | `bb453fe` | gofmt enforced in `.golangci.yml`; 16 drifted files formatted | — |
+| M2 | `9046afe` | ADR-022 v.2 §2.5 reconciled (+ RU twin); 2 missing constants; 2 guards | 2 |
+| M3 | `abdcc48` | 88 literal→constant sites in `pkg/` | — |
+| M3a | `16301c3` | the two error-on-error branches the sweep exposed | 2 |
+| M4 | `3e0fa68` | 145 sites in `internal/`; `TestNoLiteralAttrKeys` | 1 |
+| M4a | `43d81ad` | eventhub/waiter/executeNode/snapshot error paths | 9 |
+| M5 | `8fe990e` | `CLAUDE.md` + `CONTRIBUTING.md` describe the real gate | — |
+| M7 | `638c594` | 45 unregistered entity keys triaged; 14 registered; `TestErrDetailKeysAreVocabulary` | 1 |
 
-### 8.2 Empirical findings — where reality diverged from the §3 draft
+### 8.2 Where reality diverged from the §3 draft
+
+**The blocker recorded in the backlog was false.** It claimed `Logger()` was not
+reachable from `Instance`. It is, promoted through the embedded
+`renv.EngineRuntime`, and `internal/instance/loop.go` already called it. The
+claim had been recorded from the struct rather than the promoted method set, and
+it deterred the fix for as long as it stood.
+
+**`Warn`, not `Error`.** The draft said Error. ADR-022 v.2 §2.4 reserves Error
+for failures that affected *engine state*, and a contained panic affects none —
+and its hot-path corollary forbids any per-event record above Debug, which is
+what makes bounding the loud record to one per subscription necessary rather
+than merely tidy.
+
+**Most "untestable" guards were testable.** A zero-valued
+`MessageEventDefinition` reaches a branch its constructor rejects; a stub
+reporting `EventNodeType` without implementing `flow.EventNode` reaches the
+snapshot assertion; `LockedJob` carries its `WorkerID`, so a handler can consume
+its own job and make the dispatcher's follow-up report fail deterministically.
+Only reading the code found these — the same lesson as FIX-034's.
+
+**The sweep could not find the defects that mattered most.** Mechanical
+substitution only matches keys that already exist. Reading the code found
+`errs.D("event_definition_idf", …)` — a typo naming a key nobody could grep for
+— and `errs.D("event_waiter_id", …)`, a synonym of canonical `waiter_id`.
+Neither matched any canonical value, so no automated pass could have caught
+them.
+
+**The first measurement of §1.4 was wrong.** The pattern
+`[a-z]+_(id|name|…)` matches one word before the suffix, so it found
+`activity_id` and missed `service_task_id`, the most frequent offender in the
+codebase. The corrected pattern raised the count from 28 to 45. A regex that
+looks right is not a measurement until its shape is checked against what it must
+match.
+
+**The gate cannot see uncommitted work.** covercheck diffs the committed branch
+against `origin/master`, so every pre-commit run measured only what was already
+in. M4 passed its gate and then turned the branch red at 91.4% once committed.
+This is now documented in `CLAUDE.md` and `CONTRIBUTING.md`.
+
+**The first version of the third guard contradicted its own rule.** It demanded
+every `errs.D` key be enumerated in §2.5, which §2.5 explicitly does not require
+of descriptive attributes; it fired on `count`, `offset` and `slot`. Narrowing
+it to entity-shaped keys is what makes it agree with the rule it enforces.
 
 ### 8.3 Backlog
 
----
+Seven lines remain uncovered, in `internal/instance/checkpoint/codec.go`,
+`restore.go`, `scope_handler.go` and `scope_runtime.go`, plus three in
+`activities/task.go` needing a failing `exec.Frame` and one in
+`activity_options.go`. All are pre-existing untested error paths that the sweep
+made visible rather than created; they need checkpoint and frame fixtures whose
+cost exceeded their value here. Branch diff-coverage is above the gate with
+them outstanding.
 
 ## 9 Open questions
 

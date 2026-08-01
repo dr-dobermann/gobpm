@@ -80,3 +80,16 @@ func TestCRender(t *testing.T) {
 			require.Error(t, err)
 		})
 }
+
+// TestDuplicateStringInputRejected: WithStringInput's duplicate-name guard had
+// no test, while WithIntInput's did — the two options carry separate checks, so
+// covering one says nothing about the other. A duplicate prompt name would
+// otherwise silently shadow the first input at render time.
+func TestDuplicateStringInputRejected(t *testing.T) {
+	_, err := consinp.NewRenderer(
+		consinp.WithStringInput("who", "Enter your name: "),
+		consinp.WithStringInput("who", "Enter it again: "))
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "duplicate input name")
+}
