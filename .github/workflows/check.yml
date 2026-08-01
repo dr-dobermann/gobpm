@@ -47,7 +47,7 @@ jobs:
             | sh -s -- -b "$(go env GOPATH)/bin" v2.11.4
           go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
           go install github.com/dr-dobermann/covercheck/cmd/covercheck@v0.2.0
-          go install github.com/dr-dobermann/linkcheck/cmd/linkcheck@v0.1.1
+          go install github.com/dr-dobermann/linkcheck/cmd/linkcheck@v0.1.2
 
       # All subsequent checks call into Makefile targets so that running
       # `make ci` locally matches what CI runs (this REQUIRED job = the

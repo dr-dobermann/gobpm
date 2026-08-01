@@ -121,7 +121,7 @@ MOCKERY_VERSION     := v3.5.0
 GOLANGCI_VERSION    := v2.11.4
 GOVULNCHECK_VERSION := v1.6.0
 COVERCHECK_VERSION  := v0.2.0
-LINKCHECK_VERSION   := v0.1.1
+LINKCHECK_VERSION   := v0.1.2
 
 define require-go-tool
 @tool_bin="$$(command -v "$(1)" 2>/dev/null)" || { \
