@@ -82,6 +82,7 @@ func TestUserTaskClone(t *testing.T) {
 	ut, err := activities.NewUserTask("user",
 		activities.WithRenderer(r),
 		activities.WithOutput("name", "string", true),
+		activities.WithTaskPriority(7),
 		activities.WithoutParams())
 	require.NoError(t, err)
 
@@ -101,6 +102,11 @@ func TestUserTaskClone(t *testing.T) {
 	require.Equal(t, ut.ID(), clone.ID())
 	require.Equal(t, ut.Renderers(), clone.Renderers())
 	require.Equal(t, ut.Outputs(), clone.Outputs())
+
+	// the instance graph is CLONED, so a value the distributor reports must
+	// survive the copy — a dropped taskPriority reaches the embedder as 0
+	// (SRD-075 T-15).
+	require.Equal(t, 7, clone.TaskPriority())
 
 	// flows empty, no container.
 	require.Empty(t, clone.Outgoing())

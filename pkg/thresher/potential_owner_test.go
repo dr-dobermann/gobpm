@@ -141,3 +141,54 @@ func TestPotentialOwnerAuthorizes(t *testing.T) {
 	_, err = h.WaitCompletion(wctx)
 	require.NoError(t, err)
 }
+
+// TestTaskPriorityReachesTheDistributor — SRD-075 T-15 (delivery half): the
+// Table 10.14 instance attribute travels to the distributor on TaskInfo, which
+// is the whole of what the engine does with it (ADR-020 v.3 §2.11).
+func TestTaskPriorityReachesTheDistributor(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	proc, err := process.New("ut-priority")
+	require.NoError(t, err)
+
+	start, err := events.NewStartEvent("start")
+	require.NoError(t, err)
+
+	ut, err := activities.NewUserTask("approve",
+		activities.WithTaskPriority(7),
+		activities.WithCandidateUsers("alice"),
+		activities.WithOutput("result", "string", true),
+		activities.WithoutParams())
+	require.NoError(t, err)
+
+	end, err := events.NewEndEvent("end")
+	require.NoError(t, err)
+
+	for _, e := range []flow.Element{start, ut, end} {
+		require.NoError(t, proc.Add(e))
+	}
+
+	link(t, start, ut)
+	link(t, ut, end)
+
+	cap := &captureDist{}
+
+	th, err := thresher.New("test-priority",
+		thresher.WithTaskDistributor(cap))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, th.Run(ctx))
+
+	_, err = th.RegisterProcess(proc)
+	require.NoError(t, err)
+
+	_, err = th.StartLatest(proc.ID())
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool { return cap.taskID() != "" },
+		2*time.Second, 10*time.Millisecond)
+
+	require.Equal(t, 7, cap.priority())
+}

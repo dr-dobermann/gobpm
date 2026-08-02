@@ -30,6 +30,12 @@ type TaskInfo struct {
 	// may act — so it is safe on this pre-authorization announcement, and it lets
 	// the engine authorize an actor without a resident instance (SRD-073 FR-5a).
 	Eligible Eligibility
+
+	// Priority is BPMN's taskPriority instance attribute (Table 10.14), reported
+	// here because ordering an inbox is exactly what a distributor does with it.
+	// The engine assigns the value no meaning and acts on it nowhere
+	// (ADR-020 v.3 §2.11); zero when the model set none.
+	Priority int
 }
 
 // TaskView is the authorized snapshot returned by Take: the renderers to build

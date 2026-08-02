@@ -52,6 +52,10 @@ type HumanTask interface {
 	// Roles returns the task's declared resource roles (for a TaskInfo).
 	Roles() []*hi.ResourceRole
 
+	// TaskPriority returns BPMN's taskPriority instance attribute (for a
+	// TaskInfo). The engine reports it and acts on it nowhere.
+	TaskPriority() int
+
 	// Outputs returns the task's output specification.
 	Outputs() []*bpmncommon.ResourceParameter
 

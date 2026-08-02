@@ -488,6 +488,7 @@ func (inst *Instance) buildTaskInfo(
 		TaskRef:  inst.taskRef(taskID, node),
 		Roles:    ht.Roles(),
 		Eligible: inst.resolveEligibility(ctx, taskID, node),
+		Priority: ht.TaskPriority(),
 	}
 }
 
