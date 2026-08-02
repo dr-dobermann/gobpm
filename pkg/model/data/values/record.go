@@ -64,6 +64,19 @@ func NewRecord(fields ...RecordField) (*Record, error) {
 	return r, nil
 }
 
+// EmptyRecord returns a Record with no fields.
+//
+// It is total: NewRecord's only error source is the loop that validates its
+// fields, so the no-field path can never fail. Expressing it as its own function
+// lets production code build an empty record without a panicking constructor —
+// MustRecord stays for tests and examples.
+func EmptyRecord() *Record {
+	return &Record{
+		fields: make(map[string]data.Value),
+		order:  make([]string, 0),
+	}
+}
+
 // MustRecord is NewRecord that panics on error — for tests and static process
 // construction.
 func MustRecord(fields ...RecordField) *Record {

@@ -101,7 +101,7 @@ func MustTimerEventDefinition(
 // TestTimerReceiverPerInstanceClone.
 func (ted *TimerEventDefinition) CloneForInstance() flow.EventDefinition {
 	return &TimerEventDefinition{
-		definition:   definition{BaseElement: *foundation.MustBaseElement()},
+		definition:   definition{BaseElement: foundation.EmptyBaseElement()},
 		timeDate:     ted.timeDate,
 		timeCycle:    ted.timeCycle,
 		timeDuration: ted.timeDuration,

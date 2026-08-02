@@ -27,7 +27,7 @@ type TaskCompletion struct {
 // constructor does not return an error.
 func NewTaskCompletion(outputs []data.Data) *TaskCompletion {
 	return &TaskCompletion{
-		BaseElement: *foundation.MustBaseElement(),
+		BaseElement: foundation.EmptyBaseElement(),
 		outputs:     append([]data.Data{}, outputs...),
 	}
 }

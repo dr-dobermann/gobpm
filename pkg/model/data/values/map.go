@@ -39,6 +39,16 @@ func NewMap[T any](entries map[string]T) (*Map[T], error) {
 	return &m, nil
 }
 
+// EmptyMap returns a Map with no entries.
+//
+// It is total: NewMap's only error source is the loop that rejects an empty
+// key, so the no-entry path can never fail. Expressing it as its own function
+// lets production code build an empty map without a panicking constructor —
+// MustMap stays for tests and examples.
+func EmptyMap[T any]() *Map[T] {
+	return &Map[T]{entries: make(map[string]T)}
+}
+
 // MustMap is NewMap that panics on error — for tests and static process
 // construction.
 func MustMap[T any](entries map[string]T) *Map[T] {

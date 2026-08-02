@@ -123,6 +123,23 @@ func NewBaseElement(opts ...options.Option) (*BaseElement, error) {
 	return bc.baseElement(), nil
 }
 
+// EmptyBaseElement returns a BaseElement carrying a freshly generated ID and no
+// documentation.
+//
+// It is total: NewBaseElement's only error source is the loop that applies its
+// options, so the no-option path can never fail. Expressing that path as its own
+// function lets production code build an anonymous BaseElement without a
+// panicking constructor — MustBaseElement stays for tests and examples, which is
+// what a Must* twin is for.
+func EmptyBaseElement() BaseElement {
+	bc := baseConfig{
+		id:   GenerateID(),
+		docs: []*Documentation{},
+	}
+
+	return *bc.baseElement()
+}
+
 // MustBaseElement tries to create a new BaseElement and returns its pointer
 // on success or error on failure.
 func MustBaseElement(opts ...options.Option) *BaseElement {

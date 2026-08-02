@@ -10,42 +10,33 @@ import (
 	"testing"
 )
 
-// mustCall matches a Must* constructor call site.
-var mustCall = regexp.MustCompile(`\bMust[A-Z]\w*\(`)
+// mustCall matches a Must* constructor call site, including a generic one:
+// the type-argument list of MustMap[data.Value](nil) sits between the name and
+// the parenthesis, so requiring "(" immediately after the name would miss it —
+// as it did, until SRD-075 §4.6 found that call by hand.
+var mustCall = regexp.MustCompile(`\bMust[A-Z]\w*[([]`)
 
-// sanctioned are the two provably-infallible literal forms FIX-026 §3.1
-// permits in library code: the ARGLESS calls only — with zero options /
-// fields there is no error path in the underlying New* constructor. Any
-// argument-carrying form is banned like every other Must*.
-var sanctioned = map[string]bool{
-	"MustBaseElement(": true,
-	"MustRecord(":      true,
-}
-
-// exemptFiles are the whole-file exemptions FIX-026 §3.1's rationale does not
-// reach: registration sites whose Must* arguments are compile-time constants
-// of their own package, called once from init(). There is no runtime input to
-// reject and no running engine to crash — the only reachable failure is a
-// duplicate registration, i.e. a programming error that must abort at load
-// time rather than be swallowed by an init() that cannot return an error.
+// The ban is now absolute — there are no sanctioned forms and no exempt files.
 //
-// Keyed by slash-separated repo-relative path. Keep this map to
-// registration-only files; anything doing real work belongs under the ban.
-var exemptFiles = map[string]bool{
-	// convert.MustRegisterImporter/Exporter(convert.BPMN, …) — the
-	// image.RegisterFormat idiom (ADR-024 §2.2, SRD-051 §FR-4) that makes a
-	// blank import switch the BPMN format on.
-	"pkg/convert/bpmn/bpmn.go": true,
-}
-
-// TestNoMustCallsInLibrary guards FIX-026 §3.2.16: library runtime code
-// (pkg/ + internal/, non-test files) must not CALL panicking Must*
-// constructors — a bad runtime input has to fail with a classified error
-// through the fault machinery, never crash the engine. Defining Must* twins
-// (fixture surface) stays legal, as do the two sanctioned argless literal
-// forms above and the registration sites in exemptFiles. Tests and examples
-// are structurally out of scope (the walk covers only pkg/ and internal/ and
-// skips *_test.go).
+// FIX-026 §3.1 carried two carve-outs: the argless MustBaseElement()/MustRecord()
+// literals ("provably infallible"), and pkg/convert/bpmn/bpmn.go's init()
+// registrations ("no caller to return an error to"). SRD-075 removed the need
+// for both rather than keeping them documented, because an explanation attached
+// to a panicking call in library code makes it permanent: "provably infallible"
+// is a claim about today's call graph that the next change invalidates silently.
+//
+// The total paths are now expressed as total functions — foundation.
+// EmptyBaseElement and values.EmptyRecord return no error because, with no
+// options or fields, there is nothing that can fail — and convert's
+// self-registration records an init() failure against the format, which Import
+// and Export return at first use (convert.RegisterImporterAtInit).
+// TestNoMustCallsInLibrary guards FIX-026 §3.2.16, tightened by SRD-075:
+// library runtime code (pkg/ + internal/, non-test files) must not CALL
+// panicking Must* constructors — a bad runtime input has to fail with a
+// classified error through the fault machinery, never crash the engine.
+// Defining Must* twins (fixture surface) stays legal; calling one does not,
+// with no exceptions. Tests and examples are structurally out of scope (the
+// walk covers only pkg/ and internal/ and skips *_test.go).
 //
 // A failure names the offending path:line — convert the call to the New*
 // constructor and propagate the error (the FIX-026 reference pattern:
@@ -70,10 +61,6 @@ func TestNoMustCallsInLibrary(t *testing.T) {
 				rel, err := filepath.Rel(root, path)
 				if err != nil {
 					rel = path
-				}
-
-				if exemptFiles[filepath.ToSlash(rel)] {
-					return nil
 				}
 
 				offenders = append(offenders,
@@ -122,11 +109,6 @@ func mustCallSites(t *testing.T, path, rel string) []string {
 		}
 
 		for _, m := range mustCall.FindAllString(text, -1) {
-			// the sanctioned forms pass only as the exact argless call.
-			if sanctioned[m] && strings.Contains(text, m+")") {
-				continue
-			}
-
 			out = append(out, rel+":"+strconv.Itoa(line)+": "+m+"...)")
 		}
 	}

@@ -196,29 +196,41 @@ func TestConvertRegistry(t *testing.T) {
 		}
 	})
 
-	t.Run("Must variants panic on error", func(t *testing.T) {
-		MustRegisterImporter("t-must", stubImporter{})
-		MustRegisterExporter("t-must", &stubExporter{})
+	t.Run("AtInit records a failed registration instead of panicking",
+		func(t *testing.T) {
+			RegisterImporterAtInit("t-init", stubImporter{})
+			RegisterExporterAtInit("t-init", &stubExporter{})
 
-		defer func() {
-			if recover() == nil {
-				t.Error("MustRegisterImporter duplicate: want panic, got none")
+			// the duplicate is the only reachable failure; it must be recorded,
+			// not panicked, because an init() has no caller to return it to.
+			RegisterImporterAtInit("t-init", stubImporter{})
+
+			_, err := Import(context.Background(), "t-init", strings.NewReader(""))
+			if err == nil {
+				t.Fatal("Import after a failed self-registration: want error, got nil")
 			}
-		}()
 
-		MustRegisterImporter("t-must", stubImporter{})
+			if !strings.Contains(err.Error(), "failed to self-register") {
+				t.Errorf("Import error = %q, want it to name the registration failure", err)
+			}
+		})
+
+	t.Run("AtInit surfaces the failure through Export too", func(t *testing.T) {
+		RegisterExporterAtInit("t-init-exp", &stubExporter{})
+		RegisterExporterAtInit("t-init-exp", &stubExporter{})
+
+		err := Export(context.Background(), "t-init-exp", io.Discard, &process.Process{})
+		if err == nil {
+			t.Fatal("Export after a failed self-registration: want error, got nil")
+		}
 	})
 
-	t.Run("Must exporter panics on error", func(t *testing.T) {
-		MustRegisterExporter("t-must-exporter", &stubExporter{})
+	t.Run("AtInit is silent on a clean registration", func(t *testing.T) {
+		RegisterImporterAtInit("t-init-ok", stubImporter{})
 
-		defer func() {
-			if recover() == nil {
-				t.Error("MustRegisterExporter duplicate: want panic, got none")
-			}
-		}()
-
-		MustRegisterExporter("t-must-exporter", &stubExporter{})
+		if err := initFailure("t-init-ok"); err != nil {
+			t.Errorf("initFailure(clean) = %v, want nil", err)
+		}
 	})
 }
 

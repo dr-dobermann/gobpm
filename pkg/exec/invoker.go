@@ -28,7 +28,7 @@ type CallOutcome struct {
 // NewCallOutcome mints a call-completion carrying err (nil = a normal
 // completion, the caller track then just selects its outgoing flows).
 func NewCallOutcome(err error) *CallOutcome {
-	return &CallOutcome{BaseElement: *foundation.MustBaseElement(), err: err}
+	return &CallOutcome{BaseElement: foundation.EmptyBaseElement(), err: err}
 }
 
 // Err returns the child's terminal fault, or nil on a normal completion.

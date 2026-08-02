@@ -71,7 +71,7 @@ type WorkerOutcome struct {
 // the track only commits it (SRD-039 §3.4).
 func NewWorkerComplete(jobID JobID, output []data.Data) *WorkerOutcome {
 	return &WorkerOutcome{
-		BaseElement: *foundation.MustBaseElement(),
+		BaseElement: foundation.EmptyBaseElement(),
 		jobID:       jobID,
 		kind:        OutcomeComplete,
 		output:      output,
@@ -82,7 +82,7 @@ func NewWorkerComplete(jobID JobID, output []data.Data) *WorkerOutcome {
 // raises code (message is an optional diagnostic), caught by an Error boundary.
 func NewWorkerBpmnError(jobID JobID, code, message string) *WorkerOutcome {
 	return &WorkerOutcome{
-		BaseElement: *foundation.MustBaseElement(),
+		BaseElement: foundation.EmptyBaseElement(),
 		jobID:       jobID,
 		kind:        OutcomeBpmnError,
 		bpmnCode:    code,
@@ -94,7 +94,7 @@ func NewWorkerBpmnError(jobID JobID, code, message string) *WorkerOutcome {
 // (written to the ServiceTask's WithStatus variable).
 func NewWorkerStatus(jobID JobID, value data.Value) *WorkerOutcome {
 	return &WorkerOutcome{
-		BaseElement: *foundation.MustBaseElement(),
+		BaseElement: foundation.EmptyBaseElement(),
 		jobID:       jobID,
 		kind:        OutcomeStatus,
 		status:      value,
@@ -105,7 +105,7 @@ func NewWorkerStatus(jobID JobID, value data.Value) *WorkerOutcome {
 // classifies fault's {code, body} at resume.
 func NewWorkerFault(jobID JobID, fault Fault) *WorkerOutcome {
 	return &WorkerOutcome{
-		BaseElement: *foundation.MustBaseElement(),
+		BaseElement: foundation.EmptyBaseElement(),
 		jobID:       jobID,
 		kind:        OutcomeFault,
 		fault:       fault,

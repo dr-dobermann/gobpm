@@ -88,7 +88,7 @@ func NewStandardLoop(
 		// The base element is built from zero options, so it cannot fail —
 		// MustBaseElement documents that invariant and keeps the constructor's
 		// error surface to the two real cases above (nil / non-bool condition).
-		BaseElement:   *foundation.MustBaseElement(),
+		BaseElement:   foundation.EmptyBaseElement(),
 		loopCondition: loopCondition,
 	}
 

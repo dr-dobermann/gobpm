@@ -42,6 +42,19 @@ func TestBaseElement(t *testing.T) {
 		})
 }
 
+// TestEmptyBaseElement checks the total no-option constructor production code
+// uses in place of the panicking Must form: it yields a usable element with a
+// generated, unique id and no documentation.
+func TestEmptyBaseElement(t *testing.T) {
+	be := foundation.EmptyBaseElement()
+
+	require.NotEmpty(t, be.ID())
+	require.Empty(t, be.Docs())
+
+	other := foundation.EmptyBaseElement()
+	require.NotEqual(t, be.ID(), other.ID())
+}
+
 func TestMustBaseElementPanics(t *testing.T) {
 	// a failing option (blank explicit id) makes the Must form panic.
 	require.Panics(t, func() {
