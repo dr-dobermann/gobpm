@@ -195,9 +195,19 @@ test_coverage:
 	rm c.out
 .PHONY: test_coverage
 
+# BPMN_SPEC_SHA is the tree hash of the vendored spec extract the tag is cut
+# against. SAD-001 §14 requires each released version to be pinned to a
+# BPMN-spec snapshot "so conformance claims are reproducible" — the extract is
+# vendored and it changes (a §10.3.4.1 erratum was corrected in it), so
+# "v0.11.0 implements the element set" is ambiguous without saying WHICH
+# snapshot it was checked against. Recording it in the tag object itself makes
+# the pin automatic rather than a step someone has to remember.
+BPMN_SPEC_SHA = $(shell git rev-parse HEAD:docs/bpmn-spec)
+
 tag:
-	@git tag -a ${VERSION} -m "version ${VERSION}"
-	@echo "Tag ${VERSION} created locally. Push manually: git push origin ${VERSION}"
+	@git tag -a ${VERSION} -m "version ${VERSION}" -m "bpmn-spec snapshot: ${BPMN_SPEC_SHA}"
+	@echo "Tag ${VERSION} created locally, pinned to bpmn-spec ${BPMN_SPEC_SHA}."
+	@echo "Push manually: git push origin ${VERSION}"
 .PHONY: tag
 
 clear:
