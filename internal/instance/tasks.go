@@ -439,11 +439,16 @@ func (ls *loopState) withdrawAllTasks() {
 // cleanupTask withdraws and drops any task owned by a track that ended without a
 // normal completion (canceled by an interrupting boundary or instance terminate).
 func (ls *loopState) cleanupTask(ctx context.Context, tr *track) {
-	for id, e := range ls.tasks {
-		if e.track == tr {
-			delete(ls.tasks, id)
-			ls.inst.withdrawTask(ctx, id)
+	// the entry is read by one field only, so range over keys: copying the whole
+	// value per iteration grew past gocritic's threshold when Eligibility gained
+	// its role slot (SRD-075).
+	for id := range ls.tasks {
+		if ls.tasks[id].track != tr {
+			continue
 		}
+
+		delete(ls.tasks, id)
+		ls.inst.withdrawTask(ctx, id)
 	}
 }
 
@@ -483,6 +488,7 @@ func (inst *Instance) buildTaskInfo(
 		TaskRef:  inst.taskRef(taskID, node),
 		Roles:    ht.Roles(),
 		Eligible: inst.resolveEligibility(ctx, taskID, node),
+		Priority: ht.TaskPriority(),
 	}
 }
 

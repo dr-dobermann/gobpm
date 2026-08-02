@@ -53,7 +53,7 @@ func NewComplexBehaviorDefinition(
 	}
 
 	return &ComplexBehaviorDefinition{
-		BaseElement: *foundation.MustBaseElement(),
+		BaseElement: foundation.EmptyBaseElement(),
 		condition:   condition,
 		event:       event,
 	}, nil
@@ -260,7 +260,7 @@ func NewMultiInstance(
 	opts ...MultiInstanceOption,
 ) (*MultiInstanceLoopCharacteristics, error) {
 	mi := &MultiInstanceLoopCharacteristics{
-		BaseElement: *foundation.MustBaseElement(),
+		BaseElement: foundation.EmptyBaseElement(),
 	}
 
 	for _, opt := range opts {

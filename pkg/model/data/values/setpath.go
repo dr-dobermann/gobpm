@@ -163,10 +163,10 @@ func setLast(
 func vivify(next data.Step) data.Value {
 	switch {
 	case next.Field != "":
-		return MustRecord() // zero fields → never errors
+		return EmptyRecord()
 
 	case next.Key != "":
-		return MustMap[data.Value](nil) // zero entries → never errors
+		return EmptyMap[data.Value]()
 
 	default:
 		return NewArray[data.Value]()

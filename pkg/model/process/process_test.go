@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
+	"github.com/dr-dobermann/gobpm/pkg/model/bpmncommon"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/goexpr"
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
@@ -405,4 +406,49 @@ func TestStartConditionalRejected(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, p2.Validate())
+}
+
+// TestProcessValidateResourceRoles — SRD-075 T-7: a Process's OWN roles are
+// checked at registration, since the Process is not one of its own nodes. A
+// directory-mode authorizing role needs a directory the engine doesn't have.
+func TestProcessValidateResourceRoles(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	res, err := bpmncommon.NewResource("approvers",
+		bpmncommon.MustResourceParameter("level", "int", true))
+	require.NoError(t, err)
+
+	owner, err := hi.NewPotentialOwner("process owners", res, nil, nil)
+	require.NoError(t, err)
+
+	p, err := process.New("directory role", activities.WithRoles(owner))
+	require.NoError(t, err)
+	require.NoError(t, p.Add(mustStart(t, "start")))
+
+	err = p.Validate()
+	require.Error(t, err)
+	require.ErrorContains(t, err, "process owners")
+	require.ErrorContains(t, err, "organizational directory")
+
+	// Roles() exposes what was declared, whichever way it resolves.
+	require.Len(t, p.Roles(), 1)
+
+	// a declarative role in the same shape registers cleanly.
+	bare, err := hi.NewResourceRole("printer", res, nil, nil)
+	require.NoError(t, err)
+
+	p2, err := process.New("declarative role", activities.WithRoles(bare))
+	require.NoError(t, err)
+	require.NoError(t, p2.Add(mustStart(t, "start")))
+	require.NoError(t, p2.Validate())
+}
+
+// mustStart builds a plain start event for a minimal valid process.
+func mustStart(t *testing.T, name string) *events.StartEvent {
+	t.Helper()
+
+	se, err := events.NewStartEvent(name)
+	require.NoError(t, err)
+
+	return se
 }

@@ -289,3 +289,71 @@ func TestGateCompleteRefusesBeforeHydration(t *testing.T) {
 	require.Error(t, th.gateComplete("ghost", ownActor{id: "alice"}))
 	require.Error(t, th.gateComplete(id, nil))
 }
+
+// TestOwnershipAgainstRoleSlot — SRD-075 T-17: the ownership operations get the
+// composed eligible set for free, because all of them authorize through
+// interactor.Eligibility (§4.5). This test proves that rather than changing it,
+// and pins the one asymmetry the composition inherits.
+func TestOwnershipAgainstRoleSlot(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a role-eligible actor may claim", func(t *testing.T) {
+		th, id := ownTh(t, interactor.Eligibility{Roles: slot("john")})
+
+		require.NoError(t, th.Claim(ctx, id, ownActor{id: "john"}))
+		require.Equal(t, "john", owner(t, th, id))
+	})
+
+	t.Run("a group-named role identifier authorizes a present actor",
+		func(t *testing.T) {
+			th, id := ownTh(t,
+				interactor.Eligibility{Roles: slot("reviewers")})
+
+			require.NoError(t, th.Claim(ctx, id,
+				ownActor{id: "john", groups: []string{"reviewers"}}))
+			require.Equal(t, "john", owner(t, th, id))
+		})
+
+	t.Run("an actor matching no role identifier is refused",
+		func(t *testing.T) {
+			th, id := ownTh(t, interactor.Eligibility{Roles: slot("john")})
+
+			require.Error(t, th.Claim(ctx, id, ownActor{id: "stranger"}))
+		})
+
+	t.Run("unclaim returns a role-claimed task to the pool",
+		func(t *testing.T) {
+			th, id := ownTh(t, interactor.Eligibility{Roles: slot("john")})
+
+			require.NoError(t, th.Claim(ctx, id, ownActor{id: "john"}))
+			require.NoError(t, th.Unclaim(ctx, id, ownActor{id: "john"}))
+			require.Empty(t, owner(t, th, id))
+		})
+
+	t.Run("reassign to a user-named role identifier succeeds",
+		func(t *testing.T) {
+			th, id := ownTh(t,
+				interactor.Eligibility{Roles: slot("john", "mary")})
+
+			require.NoError(t, th.Claim(ctx, id, ownActor{id: "john"}))
+			require.NoError(t, th.Reassign(ctx, id, "mary"))
+			require.Equal(t, "mary", owner(t, th, id))
+		})
+
+	// The inherited asymmetry (SRD-075 §4.5): Reassign checks its nominee
+	// through userIDActor, whose Groups() is nil, because an absent person's
+	// group membership cannot be authenticated — only a present actor reports
+	// its own. So a nominee eligible ONLY via a group-named role identifier
+	// cannot be reassigned to, exactly as with candidateGroups.
+	t.Run("reassign to a group-only role nominee is refused",
+		func(t *testing.T) {
+			th, id := ownTh(t,
+				interactor.Eligibility{Roles: slot("john", "reviewers")})
+
+			require.NoError(t, th.Claim(ctx, id, ownActor{id: "john"}))
+			require.Error(t, th.Reassign(ctx, id, "mary"),
+				"mary is only eligible as a member of reviewers, which the "+
+					"engine cannot assert for an absent person")
+			require.Equal(t, "john", owner(t, th, id))
+		})
+}

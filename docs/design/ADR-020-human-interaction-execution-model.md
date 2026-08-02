@@ -3,11 +3,26 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.2 |
-| Date | 2026-07-30 |
+| Version | v.3 |
+| Date | 2026-08-01 |
 | Owner | Ruslan Gabitov |
 | Refines | [ADR-001 v.6 Execution Model](ADR-001-execution-model.md), [ADR-017 v.1 Channel-Based Event Processing](ADR-017-channel-based-event-processing.md) §2, [ADR-007 v.2.1 In-Memory Long Waits](ADR-007-in-memory-long-waits.md) §2.4, [SAD-001 v.1](SAD-001-vision-and-architecture.md) §6, §10, §11 |
 
+> **v.3 — the standard-named roles.** This version makes BPMN's own resource-assignment vocabulary
+> **executable**. v.1 decided that the triad and the generic `ResourceRole` "coexist … and neither is
+> projected into the other" (§2.5); the consequence, visible once the engine was complete, is that a
+> modeller who declares the standard's `PotentialOwner` gets a role the engine **carries but never
+> consults** — declared authorization that authorizes nobody. v.3 reverses that half: a declared role
+> **resolves through the same identifier-set path the triad already uses**, so expression-based
+> resource assignment (Table 10.5) becomes a conformant, *executed* implementation rather than a
+> modelled one. The reversal is cheap because the semantics were never missing — only the
+> standard-named surface was. Two further §10.3.4.1 items land with it: **`taskPriority`**, the
+> instance attribute Table 10.14 defines beside `actualOwner` (§2.11), and the registration of
+> **directory-based assignment** (`resourceRef`) as a declared deviation rather than an unmarked
+> absence. Where to read it: **§2.5.4** (the roles, their kinds and resolution), **§2.11**
+> (`taskPriority`), **§1.5** (why a carried-but-unconsulted role is a defect), and **§4** (the
+> alternatives, including the four-Go-types shape this rejects).
+>
 > **v.2 — the ownership lifecycle.** This version adds the **runtime ownership** half of human
 > interaction: who currently holds a parked UserTask, how that holder is acquired, released and
 > replaced, and what it means for completion. BPMN supplies the state being tracked — **Table 10.14**
@@ -131,6 +146,64 @@ simultaneously, equally entitled to complete the task. Three problems follow.
 The standard supplies the attribute and the vocabulary and stops there — no operations for acquiring
 or transferring ownership, and no ownership states in its activity lifecycle (§13.3.2). Those are the
 engine's to decide, and v.2 decides them.
+
+### 1.5 Added in v.3 — a declared role that authorizes nobody
+
+BPMN assigns people to work through one primitive: an `Activity` carries `resources: ResourceRole
+[0..*]` (Table 10.3), and a `ResourceRole` names its people in one of **two mutually exclusive** ways.
+The exclusivity is not inferred — Table 10.5 states it in the attribute text itself:
+
+> **Table 10.5 – Resource Role model associations** (§10.3.1)
+> `resourceRef: Resource [0..1]` — "The Resource that is associated with Activity. **Should not be
+> specified when `resourceAssignmentExpression` is provided.**"
+> `resourceAssignmentExpression: ResourceAssignmentExpression [0..1]` — "This defines the Expression
+> used for the Resource assignment. **Should not be specified when a `resourceRef` is provided.**"
+> `resourceParameterBindings: ResourceParameterBinding [0..*]` — "This defines the Parameter bindings
+> used for the Resource assignment. **Is only applicable if a `resourceRef` is specified.**"
+
+The two modes have very different costs. **Directory mode** (`resourceRef` + its parameter bindings)
+is a *query* — §8.4.12 *Resources* describes a parameterized `Resource` resolved by a query "e.g., into an
+Organizational Directory" — a subsystem the standard assumes and
+gobpm does not have. **Expression mode** needs nothing external: §10.3.1 *Expression Assignment* says
+the expressions "MUST return Resource entity related data types, like Users or Groups", and that "all
+of them are assigned to the respective subclass of the `ResourceRole` element, for example as
+potential owners."
+
+That second mode is **exactly** what v.1's triad already does — resolve an expression (or a static
+list) to identifiers, then check the acting party against them (§2.5, §2.7). So the semantic content
+of expression-based resource assignment has been implemented since v.1. What was never implemented is
+the standard's **name** for it.
+
+v.1 recorded that gap as deliberate coexistence: the triad is the single source of truth, and it
+"coexists with the generic `Roles()` … the two are not conflated and **neither is projected into the
+other**" (§2.5). Read at the time, that is defensible — the triad carries a user-vs-group distinction
+and a static id-list that a bare `ResourceRole` cannot express, so folding one into the other would
+have lost information. Read now, with the element set otherwise complete, its consequence is a defect:
+
+7. **A declared role is inert.** A modeller who writes the standard's own vocabulary — a
+   `PotentialOwner` on a UserTask — declares who may claim the task and gets **no authorization at
+   all**. The role is carried, surfaced to the distributor, and never consulted. This is worse than
+   not supporting the element: an unsupported element can be rejected at registration, loudly, and the
+   modeller learns immediately. A silently inert one looks like it works. The engine's own
+   fail-loud-on-unusable-declaration stance (§14.1's value-less item-aware element, rejected at
+   registration rather than "admitted as a dead placeholder") is not being applied to its own
+   authorization surface.
+
+8. **The conformance claim is understated and the register is wrong.** gobpm targets the Common
+   Executable Subclass, within which the resource model sits. Recording `Performer` / `HumanPerformer`
+   / `PotentialOwner` as simply *absent* mis-states the position twice over: the engine implements one
+   of the standard's two assignment modes completely, and the mode it does **not** implement is
+   missing for a stated architectural reason (no directory subsystem), which is a *registered
+   deviation*, not a gap. A conformance register that says "absent" where the truth is "one mode
+   executed, one mode deliberately declined" is not merely modest — it is inaccurate, and it is the
+   document a reader coming from another engine trusts.
+
+The fix follows from the object model rather than from taste. Because the subclasses add nothing —
+"[t]he `HumanPerformer` element inherits the attributes and model associations of `ResourceRole` …
+but **does not have any additional attributes or model associations**" (§10.3.4.1) — the whole
+`PotentialOwner → HumanPerformer → Performer → ResourceRole` chain is a **discriminator**, not a data
+hierarchy. Naming the role therefore costs one field, and executing it costs a resolution path that
+already exists. v.3 spends both.
 
 ## 2. Decision
 
@@ -391,9 +464,14 @@ it holds one `Resource` ref **or** an expression, with no user-vs-group distinct
 id-**list**, and no slot marker — so, exactly as Camunda keeps the triad in extension attributes rather
 than BPMN `ResourceRole`, the triad is a **typed structure on the UserTask** (each member either static
 identifiers or a `FormalExpression`, §2.7), the **single source of truth**, exposed via a typed accessor
-and read by the UserTask's `Authorizer` (§2.4). It **coexists** with the generic `Roles()` (any BPMN
-`ResourceRole`s declared via `WithRoles`); the two are not conflated and neither is projected into the
-other.
+and read by the UserTask's `Authorizer` (§2.4). It **coexists** with the generic declared roles; the two
+are not conflated and neither is projected into the other.
+
+> **Changed in v.3.** The second half of that sentence is now half true. Nothing is projected *into* the
+> triad — the triad remains a distinct declaration and is never rewritten — but a declared **human-kind
+> role no longer sits inert**: it resolves alongside the triad and contributes to the eligible set
+> (**§2.5.4**). The triad is therefore the single source of truth for its *own* slots, not the single
+> source of authorization. §1.5 records why the original coexistence became a defect.
 
 **The unifying rule: resolve each triad member to a set of identifiers, then check membership.**
 
@@ -410,7 +488,8 @@ Authorization verdict for an `actor`:
   *(v.2)*: this is **eligibility**, design-time. The runtime holder is `actualOwner` (§2.5.1); the two
   are distinct values, and where a single `assignee` resolves it also *initializes* the holder (§2.5.3).
 - **else** → authorized iff `actor.UserID ∈ candidateUsers` **or** `actor.Groups ∩ candidateGroups ≠ ∅`.
-- **no triad member declared** → **open**: any actor is authorized. This is BPMN's "unspecified
+- **no triad member declared** *(v.3: and no human-kind role, §2.5.4)* → **open**: any actor is
+  authorized. This is BPMN's "unspecified
   performer" and the engine's default-permissive stance ([SAD-001 v.1 §12](SAD-001-vision-and-architecture.md):
   "Default impl allows all") — the engine does not gratuitously restrict.
 
@@ -513,6 +592,118 @@ and carries no special immunity.
 
 Where the triad designates **several** actors, or resolves to none (the open case, §2.5), the task is born
 **unowned** and awaits a claim.
+
+#### 2.5.4 The standard-named roles — `Performer` / `HumanPerformer` / `PotentialOwner` *(v.3)*
+
+A `ResourceRole` declared on an activity is an **authorization source**, resolved by the same rule as a
+triad member and unioned with it. This reverses v.1's "neither is projected into the other" (§2.5, §1.5)
+in one direction only: a role now *contributes* eligibility. The triad remains a distinct declaration —
+nothing is projected *into* the triad, and the triad is not rewritten.
+
+**One type, a role kind — not four types.** The chain `PotentialOwner → HumanPerformer → Performer →
+ResourceRole` adds no attributes at any level (§10.3.4.1, quoted in §1.5), so it carries exactly one bit
+of information: *which* role this is. It is modelled as a **kind discriminator on `ResourceRole`**, with
+one typed constant per level of the chain. Four Go types that differ in no field would encode the same
+one bit as three empty wrappers, and Go has no inheritance to make the chain mean anything — a
+`PotentialOwner` could not be passed where a `Performer` is expected without an explicit interface whose
+only method returns the kind. The discriminator *is* the hierarchy, expressed directly.
+
+| Kind | BPMN meaning (§10.3.1, §10.3.4.1) | Authorization effect |
+|---|---|---|
+| `RoleResource` | a bare `ResourceRole` — a resource associated with the activity, human or not | **none** — declarative only |
+| `RolePerformer` | BPMN 1.2's generic performer: the resource that performs the activity | **none** — declarative only |
+| `RoleHumanPerformer` | "a specific `HumanPerformer` element allowing specifying more specific human roles" | **eligible** |
+| `RolePotentialOwner` | "persons who can claim and work on [a User Task]" | **eligible** |
+
+**Only the two human kinds authorize.** A bare `ResourceRole` or a `Performer` may name a machine, a
+system, or a department — the standard says a `Performer` is the resource that performs the activity and
+does not restrict it to people, whereas `HumanPerformer` exists precisely because "BPMN 1.2 traditionally
+only has the `Performer` role" and 2.0 needed a *human* specialization. Treating a generic `Performer` as
+a grant of human authorization would read a claim into the standard that its own §10.3.4.1 rationale
+denies. The two non-human kinds stay declarative — carried, surfaced, never consulted — which is what
+v.1 did with *all* roles, now narrowed to the roles for which it is correct.
+
+**Resolution: identifiers, then membership — the existing rule.** A human-kind role in **expression
+mode** resolves through the same path as a triad member (§2.7): evaluate the
+`resourceAssignmentExpression`, coerce the result to identifiers, and check the actor. A failed
+evaluation yields the empty set, per §10.3.1's directive that "[f]ailed Resource queries are treated like
+Resource queries that return an empty result set" — a broken role authorizes nobody rather than
+everybody, matching the triad's existing stance.
+
+**An identifier matches either the actor's user id or one of its groups.** The standard is doubly explicit
+that a role may name either and doubly silent on which: the expressions "MUST return Resource entity
+related data types, like Users **or** Groups" (§10.3.1), and Table 10.3 says the resource "can be
+specified in the form of a specific individual, **a group**, an organization role or position, or an
+organization" — an enumeration with no accompanying attribute to record which form was used. Unlike the
+triad, whose slots are named by Camunda's vocabulary, a `ResourceRole` therefore has nowhere to put the
+distinction. The engine does not invent one: a resolved identifier authorizes an actor when it equals
+`Actor.UserID()` **or** appears in `Actor.Groups()`. This is the only reading that needs no information
+the standard declines to carry.
+It is deliberately more permissive than a slotted match, and that asymmetry is the honest cost of an
+undistinguished set — a modeller who needs the distinction has the triad, which is exactly why the triad
+exists (§2.5). Note this cannot silently widen an existing model: it applies only to roles, and until
+v.3 no role authorized anything.
+
+**Composition with the triad.** A task's eligible set is the **union** of its triad-derived set and its
+human-role-derived set, evaluated under the triad's existing precedence rule:
+
+- The **restrictive `assignee` gate is unchanged.** A non-empty `assignee` still excludes the candidate
+  slots (§2.5) — and now also excludes roles. A designated performer means *that person*, and a role
+  declared alongside cannot re-open the task to a wider group without contradicting the designation.
+- **Otherwise**, an actor is authorized if it satisfies the candidate slots **or** any human-kind role.
+- **The open case narrows.** "No triad member declared → any actor is authorized" (§2.5) now reads: no
+  triad member **and no human-kind role** declared → open. Declaring a `PotentialOwner` is a
+  restriction, which is its entire purpose; leaving the whole surface undeclared remains permissive.
+
+Roles resolve **once, at distribution**, with the triad and under the same rationale (§2.7): a task's
+eligible set must not change under an actor between the read that offers it and the write that completes
+it. `Claim`, `Unclaim` and `Reassign` (§2.5.2) check nominees against the composed set, so a
+role-eligible actor may claim and own a task exactly as a candidate may — `PotentialOwner`'s normative
+meaning ("[a] potential owner becomes the actual owner of a Task, usually by explicitly claiming it") is
+then the behaviour the engine already implements, reached through the standard's own name for it.
+
+**A role that can never authorize is refused, not carried.** The defect §1.5 names is a declaration that
+looks like authorization and grants none. Two shapes of human-kind role have that property, and both are
+refused rather than admitted:
+
+| Shape | Why it can never authorize | Refused at |
+|---|---|---|
+| **Directory mode** — a `resourceRef`, with or without `resourceParameterBindings` | resolving it needs an Organizational Directory (§8.4.12 *Resources*) gobpm does not provide | **registration** |
+| **Neither mode** — no `resourceRef` and no `resourceAssignmentExpression` | the role names a label and no people, so it resolves to the empty set by construction | **construction** |
+
+Both refusals apply **only to the authorizing kinds** (`HumanPerformer`, `PotentialOwner`). A bare
+`ResourceRole` or a `Performer` is declarative at every moment — it grants nothing whether or not it can
+be resolved — so neither shape is a defect there: a `Performer` naming a directory-held resource, or one
+carrying only a name, is a conformant model the engine handles correctly by carrying and surfacing it.
+Refusing those too would buy uniformity by rejecting models that work.
+
+The two refusals sit at different moments because their evidence arrives at different moments.
+"Names nobody" is visible in the role itself, so the constructor catches it at the line that wrote it.
+"Needs a directory" is a statement about the *engine*, not the role, and the natural place to apply an
+engine capability is where the engine accepts a process — the same principle as the value-less
+item-aware element ([SAD-001 v.1.1](SAD-001-vision-and-architecture.md) §14.1): a declaration the engine
+can never satisfy is refused at build time rather than admitted and silently ignored at run time.
+
+Directory mode is the one place v.3 deliberately fails a model that v.2 accepted — accepted, however,
+only by carrying it inertly, which is the defect §1.5 describes. It is registered as a deviation in
+[SAD-001 v.1.1](SAD-001-vision-and-architecture.md) §14.1; the forward path is the directory subsystem §7
+continues to defer, at which point the same declaration becomes executable with no model change.
+
+Mutual exclusivity is enforced at construction, as Table 10.5 requires: a role carrying both a
+`resourceRef` and a `resourceAssignmentExpression` is refused, as is a `resourceParameterBinding` on a
+role with no `resourceRef` ("only applicable if a `resourceRef` is specified").
+
+**Only *activity*-level roles authorize; process-level roles stay declarative.** A `Process` carries
+`resources: ResourceRole [0..*]` as well (Table 10.1), and the standard distinguishes the two by what
+they are responsible *for*: an Activity's roles define "the resource that will perform or will be
+responsible for the **Activity**" (Table 10.3), a Process's "for the **Process**". Letting a
+process-level `PotentialOwner` authorize every UserTask inside would read a per-task performer
+assignment out of a statement about process-level responsibility — a much stronger claim than the
+standard makes, and one that would silently widen every task in a process the moment a role is declared
+at the top. Process-level roles are therefore carried and surfaced, exactly as before; a task that wants
+role-based eligibility declares it on the task. If a concrete need for process-wide default eligibility
+appears, it is an additive decision (a documented inheritance rule) that this version deliberately does
+not pre-empt.
 
 ### 2.6 The `Actor` — runtime identity
 
@@ -633,6 +824,47 @@ outgoing sequence flow(s) with no descriptor, no distribution, and no wait. This
 [SAD-001 v.1 §15](SAD-001-vision-and-architecture.md) ("the engine treats it as a pass-through … near-zero
 execution value") and closes the last non-operational-task gap for 0.1.0.
 
+### 2.11 `taskPriority` — the other instance attribute *(v.3)*
+
+Table 10.14 defines two UserTask instance attributes. v.2 implemented `actualOwner` (§2.5.1) and deferred
+its sibling; v.3 implements it, because what conformance actually requires here is very small.
+
+**The standard's entire normative text is one sentence:** "`taskPriority: integer` — Returns the priority
+of the User Task." There is no scale, no direction (is 1 urgent or trivial?), no default, no bounds, and
+no behaviour anywhere in §13 that reads it. It is also an **instance** attribute, so — exactly as with
+`actualOwner` — no BPMN XML can set it; the standard describes only a value a *live* task returns.
+Corroborating practice: Camunda 7 exposes task priority through its **own** extension attribute
+(`camunda:priority`, the `camundaPriority` builder method) rather than through the BPMN attribute — which
+is what one would expect if the BPMN one is unsettable from a definition, though the standard does not
+state the motive.
+
+**Therefore the conformant surface is a reader, and gobpm implements exactly that:** a live UserTask
+returns a priority, and it travels to the embedder in the task descriptor the distributor already
+receives (§2.8). That is the whole of the conformance obligation Table 10.14 states.
+
+**It is deliberately *not* published as a process-readable runtime value.** §10.4.3 does make instance
+attributes available to expressions through `getActivityInstanceAttribute`, and gobpm does not implement
+that binding — for `actualOwner` either. The engine's reserved read-only `RUNTIME` subtree publishes what
+a *process* has a modelling reason to route on, and v.2 added exactly one such record (`completedBy`,
+§2.4.2) because routing to the previous performer's manager is a real pattern with no other source. No
+comparable pattern routes on a priority the engine assigns no meaning to (§4, v.3 alternative 13), so
+adding it would grow the closed `RUNTIME` name set for a hypothetical. Should §10.4.3's binding be
+implemented, it should be implemented **uniformly for the instance attributes**, not one attribute at a
+time — the same "build it once for all of them" reasoning that governed dehydration (§7).
+
+**Any setter is an engine extension and is documented as one.** gobpm provides one, because a
+write-only-by-nobody integer is useless: a priority may be declared on the UserTask. But it is registered
+in [SAD-001 v.1.1](SAD-001-vision-and-architecture.md) §14.2 as an extension, not presented as standard behaviour, and the engine **assigns the value
+no meaning**: it does not sort, schedule, escalate, or route on it. The default is the typed zero.
+
+**It is deliberately not wired into any engine decision — in particular not Ad-Hoc routing.** An Ad-Hoc
+Sub-Process Router ([ADR-035 v.1](ADR-035-adhoc-sub-process.md) §2.2) chooses which activities to enable, and "priority" is a tempting
+input. Using it would mean inventing the ordering semantics the standard declined to give — a direction,
+a comparison, a tie-break — and shipping them under the standard's name, where a modeller coming from
+another engine would reasonably assume the standard defined them. An engine that needs priority-ordered
+selection should express it as its own concept in a Router, which is precisely the seam ADR-035 provides.
+Priority is carried and reported; it is not a control input.
+
 ## 3. Standard grounding
 
 | Claim | Source | What it says |
@@ -643,8 +875,15 @@ execution value") and closes the last non-operational-task gap for 0.1.0.
 | Failed resource query ⇒ empty set | BPMN 2.0 spec text | "Failed Resource queries are treated like Resource queries that return an empty result set." |
 | ManualTask is non-operational | [§13.1](../bpmn-spec/semantics/tasks.md) | Listed non-operational; conforming engine MAY treat as no-op pass-through. |
 | **`actualOwner` is a UserTask *instance* attribute, and the act is *claiming*** *(v.2)* | BPMN 2.0 §10.3.4.1, **Table 10.14** | "Returns the 'user' who picked/claimed the User task and became the actual owner of it. The value is a literal representing the user's id, email address etc." |
-| A UserTask has instance attributes inherited from Activity *(v.2)* | BPMN 2.0 §10.3.4.1 | "The User Task inherits the instance attributes of Activity (see Table 8.49). Table 10.14 presents the instance attributes of the User Task element." |
-| `taskPriority` is the sibling instance attribute *(v.2)* | BPMN 2.0 §10.3.4.1, **Table 10.14** | "Returns the priority of the User Task." — unimplemented; deferred (§7). |
+| A UserTask has instance attributes inherited from Activity *(v.2)* | BPMN 2.0 §10.3.4.1 | "The User Task inherits the instance attributes of Activity (see Table 8.49). Table 10.14 presents the instance attributes of the User Task element." **Erratum, corrected in v.3:** Table 8.49 is *"Resource attributes and model associations"*; the Activity instance attributes are **Table 10.4** (spec p151), whose sole row is `state: string = None` → §13.3.2. The inherited set is therefore one attribute, and gobpm implements it as the activity lifecycle. |
+| `taskPriority` is the sibling instance attribute *(v.2, implemented in v.3)* | BPMN 2.0 §10.3.4.1, **Table 10.14** | "Returns the priority of the User Task." — the attribute's *entire* normative text: no scale, no direction, no default, and no §13 behaviour reads it. Implemented as a reader per §2.11; any setter is an engine extension. |
+| **An Activity carries the roles, and a role may name a person *or* a group** *(v.3)* | BPMN 2.0 **Table 10.3** ([activities.md](../bpmn-spec/elements/activities.md)) | `resources: ResourceRole [0..*]` — "Defines the resource that will perform or will be responsible for the Activity. The resource, e.g., a performer, can be specified in the form of **a specific individual, a group, an organization role or position, or an organization**." The attachment point is `Activity`, not `UserTask`; and the enumeration — individual *and* group, with no attribute distinguishing which — is the warrant for §2.5.4's undiscriminated match. |
+| **A Process carries roles too** *(v.3)* | BPMN 2.0 **Table 10.1** (Process Attributes & Model Associations) | `resources: ResourceRole [0..*]` — "Defines the resource that will perform or will be responsible for the **Process**." Process-level responsibility, not per-task performer assignment; §2.5.4 keeps these declarative for that reason. |
+| **The two assignment modes are mutually exclusive** *(v.3)* | BPMN 2.0 §10.3.1, **Table 10.5** | `resourceRef` "Should not be specified when `resourceAssignmentExpression` is provided"; `resourceAssignmentExpression` "Should not be specified when a `resourceRef` is provided"; `resourceParameterBindings` "Is only applicable if a `resourceRef` is specified." The exclusivity is stated in the attribute text — the premise §1.5 and §2.5.4 rest on. |
+| **Expression assignment is directory-free** *(v.3)* | BPMN 2.0 §10.3.1, *Expression Assignment* | "Resources can be assigned to an Activity using Expressions. These Expressions MUST return Resource entity related data types, like Users or Groups. Different Expressions can return multiple Resources. All of them are assigned to the respective subclass of the ResourceRole element, for example as potential owners." — needs no Organizational Directory, which is why gobpm implements this mode and declines the other. |
+| **`HumanPerformer` exists to mark the *human* specialization** *(v.3)* | BPMN 2.0 §10.3.4.1, *Human Performers* | "BPMN 1.2 traditionally only has the Performer role. In addition to supporting the Performer role, BPMN 2.0 defines a specific HumanPerformer element allowing specifying more specific human roles as specialization of HumanPerformer, such as PotentialOwner." — the warrant for §2.5.4 authorizing on the human kinds only. |
+| **The subclasses add nothing** *(v.3)* | BPMN 2.0 §10.3.4.1, *Human Performers* | "The HumanPerformer element inherits the attributes and model associations of ResourceRole (see Table 10.5), through its relationship to Performer, but **does not have any additional attributes or model associations**." — the warrant for modelling the chain as a kind discriminator rather than four types (§2.5.4, §4). |
+| **A potential owner claims to become the actual owner** *(v.3)* | BPMN 2.0 §10.3.4.1, *Potential Owners* | "Potential owners of a User Task are persons who can claim and work on it. A potential owner becomes the actual owner of a Task, usually by explicitly claiming it." — joins `PotentialOwner` (§2.5.4) to the `Claim`/`actualOwner` machinery v.2 already built (§2.5.1, §2.5.2). |
 | `implementation` defaults to `##unspecified` *(v.2)* | BPMN 2.0 §10.3.4.1, **Table 10.13** | "`implementation: string = ##unspecified`… Valid values are `##unspecified`…, `##WebService`… or a URI identifying any other technology or coordination protocol." |
 | The spec directs attribute extensions to **WS-HumanTask** *(v.2)* | BPMN 2.0 §10.3.4.1 | "A User Task for instance can be implemented using WS-HumanTask by setting the implementation attribute to `http://docs.oasis-open.org/ns/bpel4people/ws-humantask/protocol/200803`." … "If implementations extend these attributes …, they **SHOULD** use attributes defined by the OASIS WS-HumanTask specification." |
 | Instance attributes are expression-readable *(v.2)* | BPMN 2.0 §10.4.3 ([data.md](../bpmn-spec/semantics/data.md)) | XPath extension functions for instance attributes, incl. `getActivityInstanceAttribute` — the warrant for §2.4.2. |
@@ -674,6 +913,18 @@ unguarded**, with the embedder as the authority over reassignment (§2.5.2); **b
 single resolved assignee (§2.5.3); **freezing eligibility** at distribution (§2.7); **`completedBy`** as a
 durable instance-data record (§2.4.2) — the standard's `actualOwner` is current ownership only and defines
 no completion record; and ownership operations **not requiring residency** (§2.1.1).
+
+**Engine choices added in v.3.** The standard fixes the role *object model* and the meaning of each role,
+and says nothing about how an engine resolves or combines them. Each of the following is therefore an
+engine decision, not a spec reading: modelling the subclass chain as a **kind discriminator** rather than
+four types (§2.5.4 — warranted by, but not mandated by, the "no additional attributes" clause);
+authorizing on **`HumanPerformer` and `PotentialOwner` only**, leaving `Performer` and a bare
+`ResourceRole` declarative (§2.5.4); matching a resolved identifier against **either** the actor's user id
+**or** its groups, since the standard's "Users or Groups" carries no discriminator (§2.5.4);
+**union-with-the-triad** composition and the `assignee` gate's precedence over roles (§2.5.4); resolving
+roles **once at distribution** (§2.5.4, by extension of §2.7); **rejecting directory mode at
+registration** rather than ignoring it (§2.5.4); and treating `taskPriority` as a **reported value with no
+engine meaning**, with its setter an extension (§2.11).
 
 **Corroborating prior art**, cited as practice rather than authority. **WS-HumanTask** — the specification
 BPMN's `implementation` attribute names, and the source the spec says extensions SHOULD borrow from
@@ -780,6 +1031,76 @@ asymmetry — and materializes identity links at task creation, the §2.7 freeze
    outputs are submitted *by the actor*, so a self-reported performer identity is precisely the field that
    must not be caller-supplied (§2.4.2).
 
+**Considered and rejected in v.3 (the standard-named roles):**
+
+8. **Leaving the roles inert and registering the whole resource model as a deviation.** The cheapest
+   option: no code, one `§14.1` row saying gobpm uses the Camunda triad instead of the `Performer`
+   subclasses. Rejected because the registration would be **false**. A deviation register records
+   behaviour the engine *declines* to implement; here the engine already implements the semantics of
+   expression-based assignment in full (§1.5) and declines only the standard's *name* for it. Registering
+   that as a deviation would understate conformance while leaving `WithRoles` a surface that accepts
+   declarations and silently ignores them — the defect of §1.5 item 7 preserved and, worse, blessed.
+
+9. **Four Go types mirroring the subclass chain** (`Performer`, `HumanPerformer`, `PotentialOwner`
+   embedding one another). The literal transcription of the UML. Rejected: the chain adds no attributes at
+   any level (§3), so three of the four types would be empty wrappers whose only content is their name.
+   Go has no inheritance, so the chain would not even buy substitutability — a `PotentialOwner` could not
+   be passed where a `Performer` is expected except through an interface whose sole method returns the
+   kind, which is the discriminator again with four extra types around it. The kind field expresses the
+   same one bit and keeps one constructor, one validation path, and one place for the mutual-exclusivity
+   check (§2.5.4).
+
+10. **Projecting roles into the triad at registration** — rewriting a declared `PotentialOwner` into
+    `candidateUsers`/`candidateGroups` so only one authorization path exists at run time. Attractive
+    because it leaves the runtime untouched. Rejected: the projection is not well-defined in the direction
+    required. A role's identifiers are *undistinguished* (§2.5.4), so projecting them demands a
+    user-vs-group split the standard does not provide — the engine would have to guess a slot, and guess
+    wrongly for every group named in a role. It also destroys the modeller's declaration: `Roles()` would
+    report something the author never wrote, and an error message would name a triad slot that appears
+    nowhere in their model. Resolving both surfaces and unioning the *results* needs no guess, because
+    membership is checked against the actor's whole identity.
+
+11. **Authorizing on every role kind, including a bare `ResourceRole`.** Simpler — one rule, no kind
+    table. Rejected: it reads a grant of human authorization into elements the standard does not make
+    human. A `Performer` is the resource that performs the activity, and §10.3.4.1's own rationale for
+    introducing `HumanPerformer` is that the generic role was *not* specific to people. An engine that let
+    a `ResourceRole` naming a printer authorize a human completion would be inventing semantics, and would
+    do so in the permissive direction, where the error is a security surface rather than a rejected model.
+
+12. **Accepting directory-mode roles and ignoring them at run time.** Maximally lenient: models from
+    directory-backed engines would register without change. Rejected as the exact defect this version
+    exists to remove — a declaration the engine cannot satisfy, accepted silently, authorizing nobody. A
+    modeller migrating from such an engine is precisely the reader who must be told, and registration is
+    the moment they can still act on it. Failing loud also keeps the forward path honest: when the
+    directory subsystem (§7) lands, the same model starts working instead of silently changing behaviour.
+
+13. **Giving `taskPriority` engine meaning — ordering a distributor's inbox or an Ad-Hoc Router's
+    selection.** The obvious use of a priority. Rejected: Table 10.14 supplies no scale, no direction and
+    no default (§2.11), so any ordering would be invented semantics shipped under the standard's name,
+    and a modeller from another engine would reasonably assume the standard defined them. An embedder
+    wanting priority-ordered work sorts its own inbox on the reported value; an engine wanting
+    priority-driven selection expresses it as its own concept in a Router
+    ([ADR-035 v.1](ADR-035-adhoc-sub-process.md) §2.2).
+
+14. **Refusing directory mode on *every* role kind.** One rule, no kind check, and one consistent story
+    about what gobpm does with a `resourceRef`. Rejected: it would refuse conformant models the engine
+    handles perfectly well. A bare `ResourceRole` or a `Performer` grants no authorization whether or not
+    it can be resolved, so a directory-held resource named there is documentation — exactly what Table
+    10.3 describes it as ("the resource that will perform or will be responsible for the Activity … a
+    specific individual, a group, an organization role or position, or an organization"). Failing it buys
+    uniformity by rejecting a model that costs nothing and loses the modeller a legitimate annotation.
+    The refusal is scoped to the kinds where directory mode would mean *silent non-authorization*, which
+    is the defect being fixed (§2.5.4).
+
+15. **Letting a human-kind role that names nobody register, resolving it to the empty set.** Defensible
+    on the letter of §10.3.1 — a failed resource query yields an empty result set, and a role with no
+    query trivially yields one. Rejected: that rule governs a query that *ran and found nobody*, which is
+    a legitimate runtime outcome; a role with neither a `resourceRef` nor an expression never had a query
+    to run, and is a modelling mistake with exactly one observable effect — a task nobody can act on, for
+    a reason invisible at the point of declaration. Refusing it at construction (§2.5.4) puts the error on
+    the line that wrote it. Declarative kinds keep allowing a name-only role, where it is a label rather
+    than a broken promise.
+
 ## 5. Consequences
 
 - **UserTask parks on the one shared wait-node mechanism.** It reuses `TrackWaitForEvent`/`evtCh` —
@@ -828,6 +1149,37 @@ asymmetry — and materializes identity links at task creation, the §2.7 freeze
   be re-claimed — with strict completion that surfaces as a visible refusal, not a silent loss. Closing it
   belongs with [ADR-033 v.2](ADR-033-persistence-and-state.md): a durable ownership record has no meaning
   until the tasks it refers to are themselves durable.
+
+**Added in v.3 — the standard-named roles.**
+
+- **BPMN's own vocabulary becomes usable.** A modeller may write `PotentialOwner` / `HumanPerformer` and
+  have it authorize, instead of learning a Camunda vocabulary to get any effect. The triad remains — it is
+  the more expressive surface, and the only one with slots — but it is no longer the *only* one.
+- **The conformance position becomes statable and accurate.** Expression-based resource assignment
+  (Table 10.5) is implemented and executed; directory-based assignment is a registered deviation with a
+  named blocker. Both halves are true statements, which the previous bare "absent" was not (§1.5 item 8).
+- **A previously-accepted model is now rejected — narrowly.** A `HumanPerformer` or `PotentialOwner` in
+  directory mode registers today and fails after v.3, and one naming nobody now fails at construction
+  (§2.5.4). This is the intended correction — neither ever authorized anyone — but it *is* a behaviour
+  change, and each error must say so plainly enough that the reader understands they lost nothing but
+  silence. Declarative roles are untouched: a bare `ResourceRole` or `Performer` still accepts both
+  shapes, so nothing that merely *documents* a resource registers differently.
+- **Declaring a role now restricts a task that was previously open.** A UserTask with a human-kind role
+  and no triad member moves from "any actor authorized" to "role members only". This is the declaration
+  doing what it says, and it cannot surprise anyone who wrote the role deliberately — but it is a
+  semantic change for any model that declared roles decoratively, on the assumption they were inert.
+  They were inert, and that was the defect.
+- **Role matching is deliberately looser than the triad's.** An identifier authorizes on user id *or*
+  group (§2.5.4), so a role cannot express "this group only". A modeller needing that precision uses the
+  triad. The engine does not simulate a distinction the standard omits.
+- **`taskPriority` is carried but inert by design** (§2.11). Embedders get a value to sort on; the engine
+  never acts on it, and no future engine behaviour should start acting on it without a decision that
+  supplies the semantics BPMN did not. It reaches the embedder through the task descriptor, not through
+  the `RUNTIME` subtree — §10.4.3's instance-attribute expression binding stays unimplemented, uniformly,
+  for both instance attributes.
+- **One conformance register replaces two half-truths.** The `§14.1`/`§14.2` rows added here (directory
+  mode, the closed `DataState` model, the priority setter) mean a reader coming from another engine finds
+  the deliberate divergences in one place instead of inferring them from absence.
 
 ## 6. Enterprise-readiness recommendations
 
@@ -880,11 +1232,36 @@ independently verifiable:
 6. Embedder-facing updates — the reference distribution boundary and the runnable examples — to the
    claim-then-complete flow.
 
+**v.3 — the standard-named roles** — delivered by the accompanying SRD in one branch:
+
+1. **The role kind** on `ResourceRole` (§2.5.4) with its typed constants, plus construction-time
+   enforcement of Table 10.5's mutual exclusivity and the parameter-binding precondition.
+2. **Refusal of the human-kind roles that can never authorize** (§2.5.4) — directory mode at
+   registration, with an error naming the offending role, its element and the missing subsystem; a role
+   naming nobody at construction. Declarative kinds are unaffected.
+3. **Role resolution and composition** — human-kind roles resolved at distribution alongside the triad,
+   unioned into the eligible set under the `assignee` gate's precedence (§2.5.4), so `Claim` / `Unclaim` /
+   `Reassign` and both authorization checks see one composed set.
+4. **`taskPriority`** (§2.11) — the reader, its delivery in the task descriptor, and the extension setter.
+5. **Conformance-register updates** — [SAD-001 v.1.1](SAD-001-vision-and-architecture.md) §14.1 (directory mode, the closed `DataState` model,
+   group-only reassignment) and §14.2 (the priority setter), plus the `docs/bpmn-spec/` Table 8.49→10.4
+   erratum correction (§3), so the extract stops repeating the spec's misreference.
+6. Embedder-facing updates — the guides and the conformance tracker.
+
 **Deferred (forward pointers, not built now):**
 
 - A directory/resource-query subsystem (LDAP/DB-backed candidate resolution) beyond `FormalExpression`
   — an embedder concern; the pluggable path is the expression form and the actor's self-reported
-  groups.
+  groups. *(v.3)* This is now a **registered deviation** ([SAD-001 v.1.1](SAD-001-vision-and-architecture.md) §14.1) rather than an unmarked
+  absence, and it is what makes a `resourceRef` role unsatisfiable and therefore rejected at
+  registration (§2.5.4). Landing it turns that rejection into execution with no model change.
+- **Reassignment to a group-only nominee** *(v.3)* — `Reassign` validates the nominee against the frozen
+  eligible set (§2.5.2), but group membership can only be authenticated for a *present* actor, who
+  reports its own groups (§2.6); it cannot be asserted for an absent one. So a task eligible solely via
+  `candidateGroups` — or via a role resolving to group identifiers — can be claimed by any member and
+  reassigned to none. Closing it needs the same directory subsystem, for the same reason: the engine
+  needs a way to ask "is this person in that group" without that person being present. Registered in
+  [SAD-001 v.1.1](SAD-001-vision-and-architecture.md) §14.1.
 - A per-deployment **pluggable authorization *policy*** (overriding the triad-membership rule itself,
   not just its inputs). The 0.1.0 check logic lives on the `UserTask` (§2.4); the triad +
   `FormalExpression` already covers dynamic candidate sets, so a policy-override seam is unnecessary now.
@@ -892,8 +1269,11 @@ independently verifiable:
   unclaim / reassign are built in v.2** (§2.5.2). Still deferred from that set: **escalation** (a task
   that breaches a deadline routing itself onward), and the WS-HumanTask **delegate-vs-forward**
   distinction and **suspend/resume** (§4, v.2 alternative 3).
-- **`taskPriority`** *(v.2)* — the sibling instance attribute in Table 10.14 (§3). A distribution and
-  ranking concern with no bearing on ownership or execution semantics; deferred rather than overlooked.
+- ~~**`taskPriority`** *(v.2)* — the sibling instance attribute in Table 10.14 (§3)~~ — **built in v.3**
+  (§2.11). The deferral rested on it being "a distribution and ranking concern with no bearing on
+  ownership or execution semantics", which remains true and is precisely why it is cheap: the conformant
+  surface is a reader, and the engine still assigns the value no meaning. What v.3 rejects is the
+  *ranking* half — priority orders nothing inside the engine (§4, v.3 alternative 13).
 - **Cross-instance / bulk ownership operations** *(v.2)* — transferring a departing employee's whole
   workload (§1.4) spans arbitrarily many instances. The engine's ownership surface is **per task**; a
   sweep over "everything this person holds" is a query over the embedder's own inbox, which already
@@ -937,6 +1317,15 @@ independently verifiable:
   (state transitions and client operations) — the specification BPMN's `implementation` attribute names;
   corroborating prior art (§3).
 - *(v.2)* Camunda 7 `TaskService` — `claim` vs `setAssignee` vs `unclaim` — corroborating prior art (§3).
+- *(v.3)* BPMN 2.0 **§10.3.1 Resource Assignment** with **Table 10.5** (`ResourceRole` model
+  associations and the two mutually exclusive assignment modes) and its *Expression Assignment*
+  subsection; **§10.3.4.1** *Human Performers* / *Potential Owners*; **Table 10.3** (`Activity.resources`,
+  [activities.md](../bpmn-spec/elements/activities.md)); **Table 10.4** (Activity instance attributes —
+  the table §10.3.4.1 misreferences as 8.49); **§8.4.12** *Resources* (the parameterized-`Resource`
+  query "e.g., into an Organizational Directory" that directory mode requires).
+- *(v.3)* Camunda 7 `camunda:priority` (the `camundaPriority` builder method on `AbstractUserTaskBuilder`,
+  7.22 javadoc) — task priority carried as a **vendor extension attribute** rather than as BPMN's
+  `taskPriority` — corroborating prior art (§2.11).
 
 ## Open questions
 
@@ -948,3 +1337,4 @@ None.
 |---|---|---|
 | v.1 | 2026-07-02 | Initial draft — UserTask as a wait node parking on the shared `TrackWaitForEvent`/`evtCh` mechanism (goroutine held, not returned; dehydration deferred uniformly); `TaskDistributor` boundary; `Take`/`Complete` authorization-gated entry points; Camunda triad over `ResourceRole` (static + `FormalExpression`); `Actor` runtime identity; `Authorizer` + `OutputValidator` checks owned by the `UserTask`, `Instance` as orchestrator; `TaskView` return; renderer multiplicity by identity; ManualTask no-op. |
 | v.2 | 2026-07-30 | **The ownership lifecycle** — closes the claim/unclaim deferral §7 recorded, by implementing BPMN's `actualOwner` **instance** attribute (§10.3.4.1, Table 10.14) rather than inventing an ownership concept. New: §2.5.1 `actualOwner` as runtime state distinct from the design-time triad; §2.5.2 `Claim` (checked) / `Unclaim` (owner-only) / `Reassign` (unguarded at the task level, embedder-gated, nominee still eligibility-checked); §2.5.3 birth-ownership for a single resolved assignee, releasable and reassignable; §2.4.1 strict owner-only completion as a third rejectable stage; §2.4.2 a write-once, expression-readable `completedBy` outliving the task; §2.1.1 ownership as an attribute of an `Active` activity — never an activity state, never resuming a token, never resisting cancellation, and served without hydrating a released instance. **Contract change:** §2.7's resolution timing moves from *per authorization call* to **once at distribution** (the declaration model itself is unchanged); §2.5's claim paragraph is reversed — ownership is an engine concern, not distributor bookkeeping, and `Take` sets no holder. §3 gains the instance-attribute, WS-HumanTask-directive and activity-lifecycle rows plus a pin-provenance note, and **corrects v.1's mis-attribution** of three `ResourceRole` prose quotes to the vendored extract, which contains none of them. Refreshed stale v.1 statements: dehydration is no longer "deferred" (landed in ADR-007 v.2.1) in §2.1, §5 and §7; outgoing pins ADR-006 v.2→v.4, ADR-011 v.5→v.7, ADR-013 v.1→v.2. Newly deferred: `taskPriority`, escalation, WS-HumanTask's delegate-vs-forward and suspend/resume, cross-instance bulk operations, restart-durable ownership. Three decisions were refined while landing, each caught by running the code rather than reading it: **`Claim` is idempotent for the actor that already holds the task** (§2.5.2) — a directly-assigned task is born owned, so a guard of "task unowned" left it uncompletable by its own assignee and made the operation unsafe to retry, and Camunda fails only on a *different* assignee for the same reason; the performer record is served from the read-only **`RUNTIME`** subtree rather than committed into the data plane (§2.4.2), because a process must read it and must not be able to overwrite it or collide with it — a data-plane commit granted both by construction, and additionally could not use a `.` in its name (reserved) nor a `Property` datum (uncloneable, which silently deferred every later checkpoint). |
+| v.3 | 2026-08-01 | **The standard-named roles** — makes BPMN's own resource-assignment vocabulary executable, closing the last conformance questions in the human-interaction area. **Contract change:** §2.5's "the triad and `Roles()` coexist … neither is projected into the other" is reversed in one direction — a declared `HumanPerformer`/`PotentialOwner` is now an **authorization source**, resolved at distribution and unioned into the eligible set under the `assignee` gate's precedence (§2.5.4); nothing is projected *into* the triad. New §1.5 (a carried-but-unconsulted role is a defect, and Table 10.5's two mutually exclusive assignment modes — the engine implements the expression mode completely and declines the directory mode for want of an Organizational Directory, §8.4.12); §2.5.4 (the subclass chain as a **kind discriminator** rather than four Go types, since §10.3.4.1 gives the subclasses no additional attributes; authorization on the two *human* kinds only; an identifier matched against user id **or** groups, the standard carrying no discriminator; a human-kind role that can never authorize refused rather than carried inertly — directory mode at registration, a role naming nobody at construction, both scoped to the authorizing kinds since a declarative role grants nothing either way; Table 10.5 exclusivity enforced at construction); §2.11 (`taskPriority` implemented as a reader — the whole conformant obligation, Table 10.14 supplying no scale, direction or default — with its setter an engine extension and the value deliberately wired into **no** engine decision, Ad-Hoc routing included). §3 gains eight v.3 grounding rows and an "engine choices added in v.3" paragraph, and **corrects a spec erratum**: §10.3.4.1 cites Table 8.49 for the Activity instance attributes a UserTask inherits, but 8.49 is *"Resource attributes and model associations"* — the correct table is **10.4**, whose sole row is `state`. §4 adds eight rejected alternatives (register-only, four Go types, projecting roles into the triad, authorizing every role kind, silently ignoring directory mode, giving priority engine meaning, refusing directory mode on every kind, and letting a role that names nobody resolve to the empty set). §7 records the v.3 rollout, closes the `taskPriority` deferral, and re-files the directory subsystem and group-only reassignment as **registered** deviations (SAD-001 §14.1) rather than unmarked absences. |

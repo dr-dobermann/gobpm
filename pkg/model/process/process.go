@@ -102,6 +102,14 @@ func (p *Process) Name() string {
 	return p.name
 }
 
+// Roles returns the resource roles declared on the Process itself
+// (BPMN Table 10.1 — the resources responsible for the Process, as distinct
+// from an Activity's own). They are carried and validated, but contribute to no
+// task's eligibility (ADR-020 v.3 §2.5.4).
+func (p *Process) Roles() []*hi.ResourceRole {
+	return slices.Collect(maps.Values(p.roles))
+}
+
 // Properties returns the Process properties.
 func (p *Process) Properties() []*data.Property {
 	return slices.Collect(maps.Values(p.properties))
@@ -354,6 +362,14 @@ func (p *Process) Validate() error {
 
 	// A compensation handler lives outside the normal flow (SRD-059 FR-2).
 	if err := activities.ValidateCompensationPlacement(p.Nodes()); err != nil {
+		ee = append(ee, err)
+	}
+
+	// An authorizing role cannot name its people through a directory the engine
+	// doesn't have (ADR-020 v.3 §2.5.4, SRD-075 FR-5). The Process passes its
+	// own roles too — it is not one of its own nodes.
+	if err := activities.ValidateResourceRoles(
+		p.Nodes(), p.Roles()); err != nil {
 		ee = append(ee, err)
 	}
 

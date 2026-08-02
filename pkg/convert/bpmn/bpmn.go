@@ -55,6 +55,6 @@ func isSkippableAnnotation(local string) bool {
 }
 
 func init() { //nolint:gochecknoinits // SRD-051 §FR-4: blank-import self-registration, the image.RegisterFormat idiom (ADR-024 §2.2)
-	convert.MustRegisterImporter(convert.BPMN, importer{})
-	convert.MustRegisterExporter(convert.BPMN, exporter{})
+	convert.RegisterImporterAtInit(convert.BPMN, importer{})
+	convert.RegisterExporterAtInit(convert.BPMN, exporter{})
 }

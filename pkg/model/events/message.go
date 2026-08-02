@@ -162,7 +162,7 @@ func (med *MessageEventDefinition) CloneEventDefinition(
 // of CloneEventDefinition, which keeps the id so a FIRED event still matches its waiter.
 func (med *MessageEventDefinition) CloneForInstance() flow.EventDefinition {
 	return &MessageEventDefinition{
-		definition: definition{BaseElement: *foundation.MustBaseElement()},
+		definition: definition{BaseElement: foundation.EmptyBaseElement()},
 		message:    med.message,
 		operation:  med.operation,
 	}

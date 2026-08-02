@@ -58,6 +58,14 @@ type UserTask struct {
 	completedOutputs []data.Data
 
 	task
+
+	// taskPriority is BPMN's Table 10.14 instance attribute. The standard gives
+	// it no scale, direction or default and nothing in §13 reads it, so the
+	// engine carries and reports it and acts on it nowhere (ADR-020 v.3 §2.11).
+	// Immutable after construction, so copied by value on Clone. It trails every
+	// pointer-bearing field, including the embedded task, so it falls outside
+	// the prefix the GC must scan (fieldalignment).
+	taskPriority int
 }
 
 // NewUserTask tries to create a new UserTask with name and options.
@@ -79,6 +87,10 @@ type UserTask struct {
 //     WithCompletionQuantity, WithParameters, WithoutParams
 //
 //   - data.PropertyOption — the process-data property options
+//
+//   - RoleOption — WithRoles. A UserTask rejected this family until SRD-075,
+//     which is why a declared HumanPerformer / PotentialOwner could not reach
+//     the one task type whose eligibility they decide (ADR-020 v.3 §2.5.4).
 //
 //   - foundation.BaseOption — WithID, WithDoc
 //
@@ -114,7 +126,7 @@ func NewUserTask(
 	for _, o := range userTaskOpts {
 		switch opt := o.(type) {
 		case foundation.BaseOption, ActivityOption, taskOption,
-			data.PropertyOption:
+			data.PropertyOption, RoleOption:
 			utc.taskOpts = append(utc.taskOpts, opt)
 
 		case UsrTaskOption:
@@ -157,6 +169,18 @@ func (ut *UserTask) Renderers() []hi.Renderer {
 	return append([]hi.Renderer{}, ut.renderers...)
 }
 
+// TaskPriority returns the task's priority — BPMN's Table 10.14 instance
+// attribute (§10.3.4.1), whose entire normative text is "Returns the priority of
+// the User Task".
+//
+// The standard supplies no scale, no direction, no default and no behavior that
+// reads it, so the engine supplies none either: the value is reported to the
+// distributor on TaskInfo for an embedder to order its own inbox by, and drives
+// no engine decision (ADR-020 v.3 §2.11). Zero when unset.
+func (ut *UserTask) TaskPriority() int {
+	return ut.taskPriority
+}
+
 // Outputs returns outputs expected from renderers.
 func (ut *UserTask) Outputs() []*bpmncommon.ResourceParameter {
 	if ut.outputs == nil {
@@ -190,6 +214,7 @@ func (ut *UserTask) Clone() (flow.Node, error) {
 		assignee:        ut.assignee,
 		candidateUsers:  ut.candidateUsers,
 		candidateGroups: ut.candidateGroups,
+		taskPriority:    ut.taskPriority,
 	}, nil
 }
 

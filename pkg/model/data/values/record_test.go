@@ -119,3 +119,19 @@ func TestRecordValue(t *testing.T) {
 		require.Equal(t, 999, cv.Get(ctx))
 	})
 }
+
+// TestEmptyRecord checks the total no-field constructor production code uses in
+// place of the panicking Must form: a usable, empty record whose Get yields an
+// empty snapshot.
+func TestEmptyRecord(t *testing.T) {
+	ctx := context.Background()
+
+	r := values.EmptyRecord()
+	require.NotNil(t, r)
+	require.Empty(t, r.Keys())
+	require.Equal(t, "record", r.Type())
+	require.Empty(t, r.Get(ctx))
+
+	_, err := r.Field(ctx, "absent")
+	require.Error(t, err)
+}

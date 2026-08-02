@@ -132,7 +132,7 @@ func assembleHead(
 		return d, true, nil
 	}
 
-	rec := values.MustRecord() // zero fields → never errors
+	rec := values.EmptyRecord()
 	wrote := false
 
 	for _, r := range h.rules {

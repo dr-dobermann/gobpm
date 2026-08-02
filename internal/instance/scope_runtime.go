@@ -106,7 +106,7 @@ type scopeDone struct {
 
 // newScopeDone mints one completion sentinel.
 func newScopeDone() *scopeDone {
-	return &scopeDone{BaseElement: *foundation.MustBaseElement()}
+	return &scopeDone{BaseElement: foundation.EmptyBaseElement()}
 }
 
 // Type returns the internal scope-completion trigger.

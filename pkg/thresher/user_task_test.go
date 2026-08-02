@@ -34,6 +34,14 @@ func (c *captureDist) Distribute(_ context.Context, task interactor.TaskInfo) er
 
 func (c *captureDist) Withdraw(context.Context, string) error { return nil }
 
+// priority reads the captured TaskInfo's reported taskPriority.
+func (c *captureDist) priority() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.info.Priority
+}
+
 func (c *captureDist) taskID() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()

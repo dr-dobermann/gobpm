@@ -2,6 +2,7 @@ package convert
 
 import (
 	"context"
+	"errors"
 	"io"
 	"maps"
 	"reflect"
@@ -45,6 +46,13 @@ var (
 	mu        sync.RWMutex
 	importers = map[Format]Importer{}
 	exporters = map[Format]Exporter{}
+
+	// initFailures records registrations that failed inside a converter
+	// package's init(), which has no caller to return an error to. Import and
+	// Export return the recorded failure for that format, so a botched
+	// self-registration surfaces as a classified error at first use instead of
+	// killing the program at load time.
+	initFailures = map[Format]error{}
 )
 
 // RegisterImporter registers imp as the Importer for format f.
@@ -113,20 +121,44 @@ func isNil(v any) bool {
 	}
 }
 
-// MustRegisterImporter is RegisterImporter that panics on error.
-// It exists for converter packages' init() functions (SRD-051 §FR-2).
-func MustRegisterImporter(f Format, imp Importer) {
+// RegisterImporterAtInit registers imp for f from a converter package's init(),
+// the blank-import self-registration idiom (ADR-024 §2.2).
+//
+// An init() has no caller to return an error to, so a failure is recorded
+// against f and returned by Import and Export for that format. The only
+// reachable failure is a duplicate or malformed registration — a programming
+// error — and surfacing it as a classified error at first use is strictly
+// better than panicking at load time: an embedder that never touches f is not
+// killed by a converter it does not use, and one that does gets the cause
+// through the ordinary error path instead of a stack trace.
+func RegisterImporterAtInit(f Format, imp Importer) {
 	if err := RegisterImporter(f, imp); err != nil {
-		panic(err)
+		recordInitFailure(f, err)
 	}
 }
 
-// MustRegisterExporter is RegisterExporter that panics on error.
-// It exists for converter packages' init() functions (SRD-051 §FR-2).
-func MustRegisterExporter(f Format, exp Exporter) {
+// RegisterExporterAtInit registers exp for f from a converter package's init().
+// It records a failure exactly as RegisterImporterAtInit does.
+func RegisterExporterAtInit(f Format, exp Exporter) {
 	if err := RegisterExporter(f, exp); err != nil {
-		panic(err)
+		recordInitFailure(f, err)
 	}
+}
+
+// recordInitFailure stores err against f so Import and Export can return it.
+func recordInitFailure(f Format, err error) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	initFailures[f] = errors.Join(initFailures[f], err)
+}
+
+// initFailure returns the registration failure recorded for f, or nil.
+func initFailure(f Format) error {
+	mu.RLock()
+	defer mu.RUnlock()
+
+	return initFailures[f]
 }
 
 // Import deserializes a process of format f from r using the registered
@@ -149,6 +181,13 @@ func Import(ctx context.Context, f Format, r io.Reader) (*process.Process, error
 		return nil, errs.New(
 			errs.M("convert.Import: r is nil"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if err := initFailure(f); err != nil {
+		return nil, errs.New(
+			errs.M("convert.Import: format %q failed to self-register", f),
+			errs.C(errorClass, errs.InvalidParameter),
+			errs.E(err))
 	}
 
 	mu.RLock()
@@ -188,6 +227,13 @@ func Export(ctx context.Context, f Format, w io.Writer, p *process.Process) erro
 		return errs.New(
 			errs.M("convert.Export: p is nil"),
 			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if err := initFailure(f); err != nil {
+		return errs.New(
+			errs.M("convert.Export: format %q failed to self-register", f),
+			errs.C(errorClass, errs.InvalidParameter),
+			errs.E(err))
 	}
 
 	mu.RLock()

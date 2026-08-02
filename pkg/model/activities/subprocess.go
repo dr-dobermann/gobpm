@@ -307,6 +307,14 @@ func (sp *SubProcess) Validate() error {
 		ee = append(ee, err)
 	}
 
+	// An authorizing role cannot name its people through a directory the engine
+	// doesn't have (ADR-020 v.3 §2.5.4, SRD-075 FR-5). Own roles are passed as
+	// nil: this Sub-Process is a node of its parent, which checks them there —
+	// passing them again would report the same role twice.
+	if err := ValidateResourceRoles(sp.Nodes(), nil); err != nil {
+		ee = append(ee, err)
+	}
+
 	// Transaction shape rules (ADR-028 §2.6/§2.8): a Cancel End Event is legal
 	// only directly inside a Transaction (the shared, container-agnostic rule);
 	// a nested Transaction is out of scope.

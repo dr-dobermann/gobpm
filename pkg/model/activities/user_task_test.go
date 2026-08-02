@@ -14,6 +14,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data/values"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/hinteraction/consinp"
+	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -157,4 +158,51 @@ func TestUserTaskProcessEventAndExec(t *testing.T) {
 
 		require.Error(t, ut.ProcessEvent(t.Context(), other))
 	})
+}
+
+// TestUserTaskPriority — SRD-075 T-15: BPMN's Table 10.14 taskPriority is
+// readable off a UserTask. The reader is the conformance surface; the setter is
+// a documented engine extension, and the engine assigns the value no meaning —
+// so any int is accepted and the default is the typed zero (ADR-020 v.3 §2.11).
+func TestUserTaskPriority(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []options.Option
+		want int
+	}{
+		{
+			name: "unset defaults to the typed zero",
+			want: 0,
+		},
+		{
+			name: "a set priority is returned",
+			opts: []options.Option{activities.WithTaskPriority(7)},
+			want: 7,
+		},
+		{
+			name: "a negative priority is accepted: the standard gives no range",
+			opts: []options.Option{activities.WithTaskPriority(-3)},
+			want: -3,
+		},
+		{
+			name: "the last setting wins",
+			opts: []options.Option{
+				activities.WithTaskPriority(1),
+				activities.WithTaskPriority(9),
+			},
+			want: 9,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			all := append([]options.Option{
+				activities.WithOutput("result", "string", true),
+			}, tt.opts...)
+
+			ut, err := activities.NewUserTask("ut", all...)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, ut.TaskPriority())
+		})
+	}
 }

@@ -129,13 +129,18 @@ func (a *Assignment) Resolve(
 		return nil
 	}
 
-	return toIdentifiers(val.Get(ctx))
+	return Identifiers(val.Get(ctx))
 }
 
-// toIdentifiers coerces an expression result into a list of identifiers. It
+// Identifiers coerces an expression result into a list of identifiers. It
 // accepts a []string, a []any of strings, or a single non-empty string; any
 // other shape (including nil) yields an empty list.
-func toIdentifiers(raw any) []string {
+//
+// Exported because a ResourceRole's assignment expression resolves by the same
+// rule as a triad member's (ADR-020 v.3 §2.5.4): BPMN says both "MUST return
+// Resource entity related data types, like Users or Groups", so accepting a
+// different set of shapes in one of the two would be a silent inconsistency.
+func Identifiers(raw any) []string {
 	switch v := raw.(type) {
 	case []string:
 		return append([]string{}, v...)

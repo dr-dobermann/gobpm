@@ -94,7 +94,7 @@ func New(
 
 	// no foundation options here, so construction cannot fail.
 	g := &goOperation{
-		BaseElement: *foundation.MustBaseElement(),
+		BaseElement: foundation.EmptyBaseElement(),
 		name:        name,
 		f:           f,
 		errors: set.New(

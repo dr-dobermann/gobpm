@@ -171,3 +171,14 @@ func must[T any](v T, err error) T {
 
 	return v
 }
+
+// TestEmptyMap checks the total no-entry constructor production code uses in
+// place of the panicking Must form (values.vivify's key step).
+func TestEmptyMap(t *testing.T) {
+	ctx := context.Background()
+
+	m := values.EmptyMap[data.Value]()
+	require.NotNil(t, m)
+	require.Empty(t, m.Keys())
+	require.Empty(t, m.Get(ctx))
+}

@@ -23,6 +23,11 @@ type (
 		renderers []hi.Renderer
 		taskOpts  []options.Option
 		outputs   []*bpmncommon.ResourceParameter
+
+		// taskPriority is the BPMN instance attribute of Table 10.14. The
+		// standard defines no scale, direction or default, so the engine assigns
+		// it none either (ADR-020 v.3 §2.11).
+		taskPriority int
 	}
 
 	// UsrTaskOption represents a configuration option for UserTask
@@ -60,6 +65,7 @@ func (utc *usrTaskConfig) newUsrTask() (*UserTask, error) {
 		assignee:        utc.assignee,
 		candidateUsers:  utc.candidateUsers,
 		candidateGroups: utc.candidateGroups,
+		taskPriority:    utc.taskPriority,
 	}
 
 	return &ut, nil
@@ -223,6 +229,29 @@ func WithOutput(name, pType string, required bool) UsrTaskOption {
 	}
 
 	return UsrTaskOption(f)
+}
+
+// WithTaskPriority sets the UserTask's priority — the BPMN instance attribute
+// of Table 10.14 (§10.3.4.1).
+//
+// The SETTER is an engine extension, registered as such in SAD-001 §14.2.
+// BPMN defines taskPriority as an instance attribute, which no XML definition
+// can set; the standard's whole normative text for it is "Returns the priority
+// of the User Task" — no scale, no direction, no default, and no behavior in
+// §13 that reads it. Camunda invented camunda:priority for the same reason.
+//
+// The engine therefore assigns the value NO meaning: it does not sort, schedule,
+// escalate or route on it, and deliberately does not feed it to an Ad-Hoc Router
+// (ADR-020 v.3 §2.11). It is carried and reported for an embedder to order its
+// own inbox by. Any value is accepted, including a negative one, because the
+// standard supplies no range to validate against — inventing one would be the
+// same over-reach as inventing an ordering.
+func WithTaskPriority(priority int) UsrTaskOption {
+	return func(cfg *usrTaskConfig) error {
+		cfg.taskPriority = priority
+
+		return nil
+	}
 }
 
 // --------------------- options.Option interface ------------------------------
