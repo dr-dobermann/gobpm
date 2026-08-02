@@ -332,14 +332,23 @@ When goBpm runs in cluster mode, certain extension configurations are fundamenta
 
 ## 14. Conformance & Compliance Scope
 
-`goBpm` targets **BPMN 2.0 Process Execution Conformance** (OMG spec §2.1.2) — the Common Executable Subclass (§2.1.3) plus the **ComplexGateway extension** above it.
+**Conformance is claimed by a *tool*, and the library is not the tool.** The standard's conformance clauses are addressed to an implementation a user deploys — "**The tool** claiming Process Execution Conformance type MUST…" (§2.3.1, §2.3.2). `goBpm` ships as two things (§2): an **embeddable library** and, built on it, the **`gobpm-server`** product. The conformance target therefore splits along that same line, and the two halves are sequenced: the library first, the server after.
 
-Full normative reference lives at [docs/bpmn-spec/](../bpmn-spec/). The [conformance.md](../bpmn-spec/conformance.md) document is the authoritative in/out element list.
+| BPMN 2.0.2 requirement | Owner | State |
+|---|---|---|
+| **§2.3.1 Execution Semantics** — "MUST fully support and interpret the operational semantics and Activity life-cycle"; non-operational elements MAY be ignored | **the library** | the engine's target; substantially built |
+| **§2.3.2 Import of Process Diagrams** — "MUST support import of BPMN Process diagram types including its definitional Collaboration" | **the `gobpm-server` product**, via the converter (N7, `pkg/convert/bpmn`) | an MVP element subset imports today |
+
+**Scope basis: §13 operational semantics, not a modeling sub-class.** The in-scope element set is derived from the families Clause 13 gives operational semantics to — process instantiation and termination (§13.2), activities including Sub-Process, Call Activity, Ad-Hoc, Loop and Multi-Instance (§13.3), all five gateways (§13.4), and all event positions including boundary, event sub-process and compensation (§13.5) — together with the **supporting classes** required to express them (data, foundation, correlation, operations, human interaction), which Clause 13 consumes but does not separately animate. That two-tier structure is the standard's own, and it is what [conformance.md](../bpmn-spec/conformance.md) enumerates as the authoritative in/out list.
+
+**What `goBpm` claims today.** §2.1 is strict about the middle ground: an implementation only partially matching the compliance points "can claim only that the software was **based on** this International Standard, but cannot claim compliance or conformance." So the honest present-tense claim is: *the library implements §13 execution semantics for the element set in `conformance.md`, with the deviations registered in §14.1.* Conformance itself is a claim for the server to make once §2.3.2 is met across the element set.
+
+> **Two citation errors corrected here (2026-08-02).** Earlier revisions cited "§2.1.2" for Process Execution Conformance and "§2.1.3" for the element basis. **Neither clause exists**: §2.1 is *General*, §2.2 is Process **Modeling** Conformance, and Process **Execution** Conformance is **§2.3**. The error is traceable to the specification itself — §2.1's cross-reference paragraph is off by one against its own headings ("the Process Execution Conformance type SHALL comply with … sub clause 2.2"), a second erratum of the same family as §10.3.4.1's Table 8.49 misreference. The **Common Executable Subclass** was also the wrong basis: §2.2.1 defines it as an alternative to full Process **Modeling** Conformance — a sub-class for *modeling tools that emit executable models* — and it mandates that the data-type language "MUST be XML Schema", the service-interface language "MUST be WSDL" and the data-access language "MUST be XPath". `goBpm` uses Go types, Go operations and `goexpr`/Lua by design, so that sub-class was never the applicable target. A consequence: **ComplexGateway stops being an "extension"** — §13.4.5 gives it full operational semantics, so §2.3.1 always required it.
 
 Conformance verification:
 - Per-element implementation reviewed against [docs/bpmn-spec/elements/](../bpmn-spec/elements/) (structural attributes) and [docs/bpmn-spec/state-machines/](../bpmn-spec/state-machines/) + [docs/bpmn-spec/semantics/](../bpmn-spec/semantics/) (behavior).
-- Conformance test suite (to be established): combination of MIWG public fixtures + project-internal element-coverage tests.
-- Each released version pinned to a BPMN-spec snapshot SHA so conformance claims are reproducible.
+- **Element-coverage suite** — an in-repo module binding every element in `conformance.md` to executable evidence, so the register is verified by CI rather than by hand. Operational elements are proven by a suite-owned scenario; supporting classes by a guard-checked binding to a named test. The MIWG public fixtures are a later, separate question: they exercise *interchange*, so they belong with §2.3.2 and the server.
+- Each released version pinned to a BPMN-spec snapshot SHA so the claim above is reproducible against the extract it was checked with.
 
 ### 14.1 Deliberate deviations from BPMN 2.0
 

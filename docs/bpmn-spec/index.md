@@ -11,7 +11,7 @@ Reference extracted from OMG BPMN 2.0 spec, scoped to **Process Execution Confor
 
 | Path | Content |
 |---|---|
-| [conformance.md](conformance.md) | In/out element list per §2.1.2 |
+| [conformance.md](conformance.md) | In/out element list per **§2.3.1** (execution semantics; §2.3.2 import is the server's half) |
 | [elements/](elements/) | Structural metamodel — attributes, associations, type hierarchy. 11 files by category |
 | [state-machines/](state-machines/) | Activity + Process lifecycles from §13 |
 | [semantics/](semantics/) | Token-flow, per-task behavior, sub-process variants, MI/Loop, compensation, events, end-events, data, correlation, event-handling, **instance attributes** |

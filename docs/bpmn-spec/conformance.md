@@ -1,10 +1,23 @@
 # Process Execution Conformance — Scope
 
-Per BPMN 2.0 §2.1.2, **Process Execution Conformance** requires an engine to implement the operational semantics defined in §13 for the set of elements declared as its conformant subset. The minimum conformant subset is the **Common Executable Subclass** (§2.1.3).
+**Process Execution Conformance is BPMN 2.0.2 §2.3**, and it has two requirements, addressed to "the tool":
 
-`gobpm` targets exactly this: Common Executable Subclass + §13 execution semantics, **plus ComplexGateway as an explicit extension**. Anything else is out of scope.
+- **§2.3.1 Execution Semantics** — the tool "MUST fully support and interpret the operational semantics and Activity life-cycle"; non-operational elements "MAY be ignored".
+- **§2.3.2 Import of Process Diagrams** — the tool "MUST support import of BPMN Process diagram types including its definitional Collaboration".
 
-**Scope note on ComplexGateway:** §13.4.5 defines ComplexGateway with a complete operational semantics, but it is NOT in the minimum Common Executable Subclass per §2.1.3. We include it because it enables workflow patterns (Structured Discriminator WCP-9, Blocking Discriminator WCP-28, Structured Partial Join WCP-30, Blocking Partial Join WCP-31) not otherwise expressible. Process Execution Conformance permits supersets of the Common Executable Subclass — including ComplexGateway makes the engine *more* conformant, not less.
+**A library is not a tool.** `gobpm` ships as an embeddable library and, built on it, the `gobpm-server` product ([SAD-001](../design/SAD-001-vision-and-architecture.md) §2, §14). §2.3.1 is the **library's** target and the subject of this document. §2.3.2 belongs to the **server**, through the converter — so the import-side element coverage is tracked with that work, not here.
+
+**This list enumerates §13's operational elements plus the supporting classes they need.** Clause 13 animates process instantiation and termination (§13.2), activities (§13.3, including Sub-Process, Call Activity, Ad-Hoc, Loop and Multi-Instance), all five gateways (§13.4) and every event position (§13.5, including boundary, event sub-process and compensation). The remaining entries fall into two further tiers, and the element-coverage suite proves each differently:
+
+| Tier | What it is | How coverage is proven |
+|---|---|---|
+| **Operational** | animated by Clause 13 — activities, gateways, events, flows, containers, markers | a suite-owned scenario **executes** it |
+| **Supporting** | consumed by Clause 13 to express the above — data, foundation, correlation, operations, human interaction | a guard-checked **binding** to the tests that exercise it |
+| **Model-only** | carried but never executed — `Lane`/`LaneSet` | the type **exists and survives a round-trip**; execution must ignore it |
+
+The first distinction is the standard's own (§13 animates, §8/§10 supply). The third exists because "non-operational" governs execution, not representation: §2.3.1 permits ignoring such elements at run time, while §2.3.2 and ADR-024 §2.8 require the model to hold them.
+
+> **Correction (2026-08-02).** Earlier revisions of this document cited "§2.1.2" for Process Execution Conformance and derived the element set from the **Common Executable Subclass** ("§2.1.3"). Neither clause exists — §2.1 is *General*, §2.2 is Process **Modeling** Conformance — and Common Executable is a sub-class of *Modeling* conformance (§2.2.1) for tools that **emit** executable models, mandating XML Schema, WSDL and XPath, none of which this engine uses. The mis-citation is traceable to §2.1's own cross-reference paragraph, which is off by one against the spec's headings. Consequence: **ComplexGateway is no longer an "extension"** — §13.4.5 gives it complete operational semantics, so §2.3.1 always required it. Its workflow-pattern value (Structured Discriminator WCP-9, Blocking Discriminator WCP-28, Structured Partial Join WCP-30, Blocking Partial Join WCP-31) is a reason it is *useful*, not a reason it is optional.
 
 ## In scope
 
@@ -16,7 +29,7 @@ Per BPMN 2.0 §2.1.2, **Process Execution Conformance** requires an engine to im
 | Transaction | `Transaction` | Sub-process with ACID-like semantics, cancel/compensation triggers |
 | AdHocSubProcess | `AdHocSubProcess` | Unordered activity set with completion condition |
 | CallActivity | `CallActivity` | Invokes a reusable `CallableElement` |
-| Lane / LaneSet | `Lane`, `LaneSet` | Organizational grouping only — no execution semantics attached |
+| Lane / LaneSet | `Lane`, `LaneSet` | **Model-only** — carried, never executed. §2.3.1 lets execution ignore it (no token semantics); §2.3.2 obliges an importer to preserve it, and a model that cannot hold it cannot export it back (ADR-024 §2.8 semantic round-trip). |
 
 ### Activities
 | Element | bpmn-moddle type | Notes |
@@ -69,7 +82,7 @@ Per BPMN 2.0 §2.1.2, **Process Execution Conformance** requires an engine to im
 | ParallelGateway | `ParallelGateway` | AND — all paths split / all paths sync |
 | InclusiveGateway | `InclusiveGateway` | OR — all true conditions; merge waits for all expected tokens |
 | EventBasedGateway | `EventBasedGateway` | Race between catching events |
-| ComplexGateway | `ComplexGateway` | Activation expression over per-gate token counts, 2-phase activation/reset. **Extension above Common Executable** (see scope note). |
+| ComplexGateway | `ComplexGateway` | Activation expression over per-gate token counts, 2-phase activation/reset. Operational per **§13.4.5**, therefore required by §2.3.1 — not an extension (see the correction note above). |
 
 ### Flows
 | Element | bpmn-moddle type | Notes |
@@ -149,7 +162,7 @@ Per BPMN 2.0 §2.1.2, **Process Execution Conformance** requires an engine to im
 |---|---|---|
 | Choreography family | `Choreography`, `SubChoreography`, `CallChoreography`, `ChoreographyTask`, `ChoreographyActivity`, `GlobalChoreographyTask` | Separate Choreography Modeling Conformance subclass |
 | Conversation family | `Conversation`, `SubConversation`, `CallConversation`, `GlobalConversation`, `ConversationNode`, `ConversationLink`, `ConversationAssociation` | Modeling-only, not execution |
-| Collaboration family | `Collaboration`, `Participant`, `ParticipantAssociation`, `ParticipantMultiplicity`, `PartnerEntity`, `PartnerRole`, `InteractionNode`, `MessageFlow`, `MessageFlowAssociation` | Cross-process modeling layer; inter-process messaging covered by Message events |
+| Collaboration family | `Collaboration`, `Participant`, `ParticipantAssociation`, `ParticipantMultiplicity`, `PartnerEntity`, `PartnerRole`, `InteractionNode`, `MessageFlow`, `MessageFlowAssociation` | Not animated by Clause 13; inter-process messaging is covered by Message events. Note §2.3.2 names the "definitional Collaboration" for **import** — that is a server/converter concern, not a library one |
 | Visual artifacts | `TextAnnotation`, `Group`, `Category`, `CategoryValue`, `Artifact` | Pure visual — Association is kept because it carries compensation semantics |
 | Cross-namespace | `Relationship` | Not execution-related |
 | DI / DC | `BPMNShape`, `BPMNEdge`, `Bounds`, `Point`, all `bpmndi:*` and `dc:*`, `di:*` | Visual layout metamodel; not part of execution conformance |
@@ -157,7 +170,7 @@ Per BPMN 2.0 §2.1.2, **Process Execution Conformance** requires an engine to im
 
 ## Boundary cases noted
 
-- **Lane / LaneSet** — kept in scope as organizational grouping only. The spec defines lanes as having no token-flow semantics; activities in lanes execute exactly as if no lanes existed. Engine MUST parse and preserve, MUST NOT attach behavior.
+- **Lane / LaneSet** — **in scope, model-only.** "Non-operational" governs *execution*, not *representation*: §2.3.1 lets a conformant tool ignore lanes at run time (they carry no token semantics — activities in lanes execute exactly as if no lanes existed), but the model must still **hold** them. Two independent reasons: §2.3.2 obliges an importer to support Process diagrams, and dropping a modeller's lanes is not supporting them; and ADR-024 §2.8 guarantees a **semantic round-trip**, which export cannot deliver for a structure the model never stored. So: engine MUST parse and preserve, MUST NOT attach behaviour — the rule this document always stated, now with its clause grounding. The type does **not exist yet**, so this is a genuine model gap (#261), not a scope question.
 - **Boundary events on CallActivity** — explicitly allowed by §10.5.4. In scope.
 - **Event Sub-Process** — modeled as `SubProcess` with `triggeredByEvent=true`. In scope.
 - **Compensation Association** — `Association` between an activity and its compensation handler. The element is visual elsewhere; here it carries normative semantics.
@@ -167,7 +180,8 @@ Per BPMN 2.0 §2.1.2, **Process Execution Conformance** requires an engine to im
 | Topic | Spec section |
 |---|---|
 | Conformance subclasses | §2 |
-| Common Executable Subclass element list | §2.1.3 |
+| Process Execution Conformance (§2.3.1 semantics, §2.3.2 import) | §2.3 |
+| Process **Modeling** Conformance sub-classes (Descriptive / Analytic / Common Executable) — **not** this engine's target | §2.2.1 |
 | Process model | §10 |
 | Activities | §10.5 |
 | Events | §10.4 |

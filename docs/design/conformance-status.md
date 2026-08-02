@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Type | **Continuously-current tracker** (not an SRD/ADR — updated as elements land, in the landing PR) |
-| Scope authority | [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) — Common Executable Subclass + the ComplexGateway extension |
-| Last verified | 2026-08-02, **the standard-named resource roles and `taskPriority` landed** (ADR-020 v.3 / SRD-075) — §3's last four ❌ rows closed, so **no ❌ remains anywhere in this tracker**: the resource model is executed in its expression mode with directory mode a registered deviation, both Table 10.14 instance attributes are implemented, and `DataState` + group-only reassignment are registered in SAD-001 §14.1. Prior: 2026-07-30, **human-task ownership landed** (ADR-020 v.2 / SRD-073 — `actualOwner` §10.3.4.1 Table 10.14, the first *instance* attribute the engine implements; §1 Human interaction + §3 leftovers); Ad-Hoc Sub-Process landed (ADR-035 / SRD-074 — #92 row 13 ✅, the last executable element in scope); prior full re-sweep post-SRD-071/072 (Persistence & State slices — #84 row 12 ✅; #79 row 10 closed 2026-07-22; §1 caught up with the row-1…11 landings; §5 order updated) |
+| Scope authority | [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) — BPMN **§2.3.1** operational semantics (the library's half; §2.3.2 import is the server's) |
+| Last verified | 2026-08-02 (second pass), **conformance target corrected** — Process Execution Conformance is **§2.3**, not the cited "§2.1.2", and its basis is §13 operational semantics, not the Common Executable Subclass (a Process *Modeling* sub-class mandating XML Schema/WSDL/XPath). §2.3.1 is the **library's** half — what this tracker measures; §2.3.2 import is the **server's**. Consequences: `ComplexGateway` is required, not an "extension"; and `Lane`/`LaneSet` **re-opens as a genuine ❌** (row 14) — execution may ignore lanes, but the model must carry them or a diagram cannot survive import→export. Prior same-day pass: **the standard-named resource roles and `taskPriority` landed** (ADR-020 v.3 / SRD-075) — §3's last four ❌ rows closed, so **no ❌ remains anywhere in this tracker**: the resource model is executed in its expression mode with directory mode a registered deviation, both Table 10.14 instance attributes are implemented, and `DataState` + group-only reassignment are registered in SAD-001 §14.1. Prior: 2026-07-30, **human-task ownership landed** (ADR-020 v.2 / SRD-073 — `actualOwner` §10.3.4.1 Table 10.14, the first *instance* attribute the engine implements; §1 Human interaction + §3 leftovers); Ad-Hoc Sub-Process landed (ADR-035 / SRD-074 — #92 row 13 ✅, the last executable element in scope); prior full re-sweep post-SRD-071/072 (Persistence & State slices — #84 row 12 ✅; #79 row 10 closed 2026-07-22; §1 caught up with the row-1…11 landings; §5 order updated) |
 | Owner | Ruslan Gabitov |
 
 Status vocabulary: ✅ **executed** (model type + engine semantics + tests) ·
@@ -17,7 +17,7 @@ Status vocabulary: ✅ **executed** (model type + engine semantics + tests) ·
 |---|---|---|
 | Process container | `Process` (executable, versioned registration) | core; ADR-019 |
 | Activities | `ServiceTask` (in-process + external workers), `UserTask`, `ManualTask`, `SendTask`, `ReceiveTask`, `ScriptTask` (multi-engine seam + the Lua battery), `BusinessRuleTask` (rule-engine seam + `gorules` + the Decision Table adapter), the abstract `Task` base, **`SubProcess` (embedded)** — nested scope in the instance: §13.3.4 shapes + drain, §10.5.7 data visibility, scoped Terminate (§13.5.6), boundary-on-composite, the Error scope-chain — **`CallActivity`**, **Event Sub-Process** (interrupting + non-interrupting), **`Transaction`** (Cancel-driven atomic abort), **Ad-Hoc** (§13.3.5 — Router-driven succession over a flow-less inner set, manual selection, `completionCondition`) | ADR-021/SRD-035…039; ADR-020/SRD-034; SRD-013/014; ADR-031/SRD-064/065; ADR-027/SRD-060, ADR-029/SRD-062; ADR-023/SRD-049/050/052/053; ADR-028/SRD-061; ADR-035/SRD-074 |
-| Gateways — **all five** | `Exclusive`, `Parallel`, `Inclusive` (incl. the OR-join), `EventBased` (incl. Exclusive/Parallel instantiating starts), `Complex` (the declared extension) | SRD-005, SRD-021/022, SRD-023, SRD-024/025 |
+| Gateways — **all five** | `Exclusive`, `Parallel`, `Inclusive` (incl. the OR-join), `EventBased` (incl. Exclusive/Parallel instantiating starts), `Complex` (operational per §13.4.5, therefore required — not an extension) | SRD-005, SRD-021/022, SRD-023, SRD-024/025 |
 | Events (positions) | `StartEvent`, `EndEvent`, `IntermediateCatchEvent`, `IntermediateThrowEvent`, `BoundaryEvent` (interrupting + non-interrupting) | ADR-006; ADR-018/SRD-029 |
 | Event definitions | `Message` (incl. instantiation + correlation), `Timer` (durable — checkpointed deadlines + dehydration/wake), `Signal` (throw/catch/broadcast/start), `Error` (end + boundary), `Terminate`, `Conditional` (catch + boundary + EBG arms + event-sub-process start; top-level start = registered fail-fast rejection 📐), `Escalation` (throw + scope-chain catch), `Compensate` (ledger + throw-driven undo + boundary handler link), `Link` (static GOTO pairing), `Cancel` (Transaction-only end + boundary) | ADR-014/015/016, SRD-013…017, SRD-026, SRD-029, SRD-030, ADR-006 v.3/SRD-048, ADR-023 v.2/SRD-052; SRD-058/059/057/061; ADR-033/SRD-070, ADR-007 v.2.1/SRD-071 |
 | Flows | `SequenceFlow` — conditional + default honored at **gateways and activities** | ADR-005; SRD-046 (#51) |
@@ -45,6 +45,7 @@ Ordered by the recommended implementation sequence (rationale in §4).
 | 10 | Boundary-on-SubProcess/CallActivity + Error **scope-chain propagation** | ✅ | [#79](https://github.com/dr-dobermann/gobpm/issues/79) | **Complete — #79 closed 2026-07-22.** Error scope-chain landed (SRD-049); boundary-on-composite landed with the Sub-Process (SRD-049) and boundary-on-CallActivity with SRD-050 (the base activity's boundary machinery consumes both, Error catch verified e2e); Escalation reuses the same scope-chain matcher (SRD-058) |
 | 11 | `DataObject` execution semantics ✅ + `DataObjectReference` (deferred) + `DataStore`/`DataStoreReference` ✅ | ✅ | [#82](https://github.com/dr-dobermann/gobpm/issues/82) | **Data elements landed (ADR-030 v.1).** `DataObject` scope integration (**SRD-063**): a **per-instance scope-resident named container** — registered on a `Process`/`SubProcess`, seeded into the matching scope (root / child-on-open, disposed at close), resolved by name via the walk-up, with bidirectional DataAssociation flow through per-instance scope. `DataStore`/`DataStoreReference` (**SRD-068**): the **engine-global** store as an infrastructure port (ADR-030 §2.5/§2.6) — a `datastore.Registry` of named stores (`thresher.WithDataStore`, fail-loud on unknown ref, each store its own capacity/backing), and a flow-scope `DataStoreReference` whose DataAssociation I/O routes to the shared store (`capacity` advisory in-memory; durability a swappable adapter = future Persistence & State). `DataObjectReference` is a **deliberate non-implementation** (SAD-001 §14.1 + BPMN-translation rules). **Closes #82** (bar the deferred `DataObjectReference`) |
 | 12 | Timer durability + hydration | ✅ | [#84](https://github.com/dr-dobermann/gobpm/issues/84) | **Landed with the Persistence & State slices.** Consistent-cut checkpoints + restart recovery re-arm a restored timer at its RECORDED absolute deadline, an overdue timer fires once (ADR-033 / SRD-070); goroutine-releasing **dehydration + wake-on-trigger** makes the engine-held deadline the instance's liveness, with a failed wake retried on backoff, never stranding the instance (ADR-007 v.2.1 / SRD-071). **Closes #84** |
+| 14 | `Lane` / `LaneSet` — model-only carrier | ❌ | [#261](https://github.com/dr-dobermann/gobpm/issues/261) | **Re-opened 2026-08-02.** Execution may ignore lanes (§2.3.1 — no token semantics), but the **model must carry them**: §2.3.2 obliges an importer to support a modeller's diagram, and ADR-024 §2.8's semantic round-trip cannot re-export a structure the model never stored. Neither type exists, so a lane-bearing diagram cannot survive import→export. Target status is 🟡 model-only: parse, preserve, attach **no** behaviour |
 | 13 | `AdHocSubProcess` | ✅ | [#92](https://github.com/dr-dobermann/gobpm/issues/92) | **Landed SRD-074 (ADR-035)** — a `WithAdHoc(router)` Sub-Process variant on the landed nested scope, whose inner activities carry **no sequence flows**: a host-supplied **Router** replaces sequence-flow succession, consulted at scope open (the standard's *initially enabled* set) and after each settle (§13.3.5's "the enabled set is updated"), reading the scope's data through a transient frame. An empty answer ends the asking track and the container completes on the existing **scope drain** — no new completion path. `parallel` default + `sequential`; manual selection parks the answer as the enabled set with a per-container handle (`Enabled`/`Running`/`Activate`, unoffered activations rejected); `completionCondition` is a Router decorator and the sole trigger `cancelRemainingInstances` hangs off; batteries `Standard`/`Expression`/`Sequence` ship but **no Router is implied**, never by declaration order. Inner containment validated to leaf Tasks + plain embedded Sub-Processes; `KindAdHoc` facts make a case's routing reconstructible. **Closes #92** |
 
 ## 3. Small items — decide, don't (necessarily) build
@@ -60,17 +61,40 @@ Ordered by the recommended implementation sequence (rationale in §4).
 | Data-availability wait | 📐 | Already registered (§14.1 — error, never wait) |
 | Value-less item-aware elements | 📐 | Already registered (§14.1 — rejected at registration) |
 
-## 4. XML-interchange tier — out of the execution-conformance path
+## 4. XML-interchange tier — the **server's** half of conformance
 
-Per BPMN §2.1.2, **Process Execution Conformance does not require XML
-import/interchange**; gobpm's model is deliberately programmatic (the
-README's "XML parsing is intentionally decoupled"). These elements matter
-only if/when an XML layer arrives, and are **not** conformance gaps today:
+**Corrected 2026-08-02.** This section previously read *"Per BPMN §2.1.2,
+Process Execution Conformance does not require XML import/interchange."*
+That is wrong twice over. There is no §2.1.2 — Process Execution Conformance
+is **§2.3** — and its second requirement says the opposite:
 
-`Definitions` (the registration layer plays the container role), `Lane`/
-`LaneSet` (parse-and-preserve only — no token semantics by spec), `EndPoint`
-(rides the ADR-004 remote transport), `Auditing`/`Monitoring` placeholders,
-the vendor `Extension*` model types.
+> **§2.3.2 Import of Process Diagrams** — "The tool claiming Process Execution
+> Conformance type **MUST support import** of BPMN Process diagram types
+> including its definitional Collaboration."
+
+What makes this tier still absent from *this* tracker is not that it is
+optional, but **whose obligation it is**. Both §2.3 requirements are addressed
+to "the tool", and gobpm ships as a library plus, built on it, the
+`gobpm-server` product ([SAD-001](SAD-001-vision-and-architecture.md) §2, §14).
+§2.3.1 (execution semantics) is the library's target and is what this tracker
+measures. **§2.3.2 is the server's**, delivered through the converter
+(`pkg/convert/bpmn`, ADR-024 / SRD-051), which today imports an MVP element
+subset — so the import-side coverage is tracked with that work.
+
+These elements therefore matter to the **server's** conformance claim, not the
+library's:
+
+`Definitions` (the registration layer plays the container role), `EndPoint`
+(rides the ADR-004 remote transport), `Auditing`/`Monitoring` placeholders, the
+vendor `Extension*` model types.
+
+**`Lane`/`LaneSet` is NOT one of them** — it is a **library** gap, tracked at
+[#261](https://github.com/dr-dobermann/gobpm/issues/261). Execution may ignore
+lanes (§2.3.1, no token semantics), but the *model* must carry them: §2.3.2
+obliges an importer to preserve a modeller's diagram, and ADR-024 §2.8's
+semantic round-trip cannot re-export a structure the model never stored. The
+type does not exist today, so a lane-bearing diagram cannot survive
+import→export. Model-only, no execution wiring — the tracker's 🟡.
 
 ## 5. Recommended order (rationale)
 
