@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.11.0] - 2026-08-02
+
+**The library's element set is complete, and its conformance claim is finally
+accurate.** v0.10.0 announced the element set as done; this release finishes the
+job on both sides of that sentence — the last elements landed, and the statement
+the project makes about the standard was corrected at its root.
+
+`goBpm` targets **BPMN 2.0.2 §2.3 Process Execution Conformance**, whose two
+requirements now have owners: **§2.3.1 execution semantics is the library's**
+and is what this release completes; **§2.3.2 import of Process diagrams is the
+`gobpm-server` product's**, through the converter. The honest present-tense
+claim, in the standard's own terms (§2.1), is that the library **implements §13
+execution semantics for the element set in `conformance.md`, with the deviations
+registered in SAD-001 §14** — conformance itself is a claim for the server to
+make once §2.3.2 is met.
+
+Highlights, for deciding whether to upgrade:
+
+- **BPMN's own resource vocabulary executes.** Declare a `PotentialOwner` or
+  `HumanPerformer` and it decides who may act on a User Task, resolved at
+  distribution alongside the Camunda triad. Previously such a role was carried,
+  surfaced to your distributor, and never consulted.
+- **Both UserTask instance attributes are implemented** — `actualOwner` landed in
+  v0.10.0, `taskPriority` here.
+- **`Lane` / `LaneSet`**, the engine's only model-only elements: carried, nested,
+  validated, and provably never executed. They exist so a diagram survives
+  import → export, which a model without lanes cannot do.
+- **Two role declarations now fail** that previously registered silently — a
+  directory-mode role (needs an organizational directory the engine does not
+  own) and one naming nobody. Both only ever authorized no one.
+- **A `UserTask` accepts `WithRoles`.** It silently rejected the option family,
+  which made the role feature unreachable from the one task type it governs.
+- **No library code calls a panicking `Must*` constructor** — the ban is now
+  absolute, with the previously documented carve-outs removed rather than
+  re-justified.
+
+**Conformance pin.** This release is checked against the vendored BPMN extract at
+tree `9902730`. `make tag` now records that hash in the tag object, so the pin is
+automatic rather than a remembered step (SAD-001 §14).
+
+**Known scope boundaries**, all deliberate and registered in SAD-001 §14:
+directory-based resource assignment and group-only reassignment (both awaiting an
+identity subsystem), the closed `DataState` model, single `InputSet`/`OutputSet`,
+`DataObjectReference`, data-availability wait, and `GlobalTask` — whose authoring
+need the library covers with Go constructors (see the tasks guide, "Reusing
+tasks") and whose by-reference form belongs to the server's registry.
+
+
 ### Added
 
 - **`Lane` / `LaneSet`** — the engine's only *model-only* elements. A `Process`
@@ -50,6 +98,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The conformance target is corrected, and it changes what the project
+  claims.** Earlier releases cited "§2.1.2" for Process Execution Conformance and
+  derived the element set from the Common Executable Subclass. Neither clause
+  exists as cited — Process Execution Conformance is **§2.3** — and Common
+  Executable is a sub-class of Process *Modeling* Conformance, for tools that
+  emit executable models, mandating XML Schema, WSDL and XPath. The basis is now
+  §13's operational semantics, split by tier: §2.3.1 is the library's, §2.3.2
+  (import) the server's. Two consequences reach the API surface indirectly:
+  `ComplexGateway` was never an "extension" (§13.4.5 always required it), and
+  `Lane`/`LaneSet` became a real element rather than a scope question.
 - **Two role declarations that used to register are now refused**, both
   scoped to the authorizing kinds (`HumanPerformer`, `PotentialOwner`) — a bare
   `ResourceRole` or a `Performer` is unaffected, since it grants nothing either
