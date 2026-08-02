@@ -141,6 +141,63 @@ kind of container / reference you get:
 
 See [Composition](../subprocesses/index.md) for the container/reuse family.
 
+## Reusing tasks
+
+BPMN has a `GlobalTask` — a task defined once, outside any process, called from
+many places. gobpm has no such element, and does not need one for authoring: it
+exists because **XML has no functions**. A file cannot call a builder, so the
+standard needs a named, referenceable definition to get reuse at all. You have
+functions.
+
+**Write a constructor.** The reusable definition is a Go function returning a
+configured task:
+
+```go
+// ApprovalTask is the reusable definition: every process that needs an approval
+// step calls this, and each call yields its own configured task.
+func ApprovalTask(name string, approvers ...string) (*activities.UserTask, error) {
+    return activities.NewUserTask(name,
+        activities.WithCandidateUsers(approvers...),
+        activities.WithOutput("decision", "string", true),
+        activities.WithoutParams())
+}
+```
+
+Then use it wherever you need it:
+
+```go
+review, err := ApprovalTask("review", "alice", "bob")
+sign,   err := ApprovalTask("sign", "carol")
+```
+
+This is strictly more capable than `GlobalTask`: the definition takes
+**parameters**, so one constructor covers a family of related tasks that XML
+would need a separate `<globalTask>` for each of.
+
+**Give each task its own node.** A task object belongs to one container — add
+the *same* object to two processes and the second `Add` fails. Call the
+constructor once per use site; that is the point of it being a constructor.
+
+**Reuse by copy vs by reference.** The pattern above is reuse **by copy**: each
+call site gets its own node, built from one definition in your code. BPMN's
+`GlobalTask` is reuse **by reference** — one registered definition, many callers
+— and that needs a registry of callable definitions, which is
+[server-tier functionality](../../design/SAD-001-vision-and-architecture.md)
+rather than library. Today the only by-reference path is `CallActivity`, and it
+resolves against the **process** registry, so it launches a child instance:
+
+```go
+// by reference — but the target is a registered PROCESS, so this call
+// creates a child instance with its own lifecycle and id.
+call, err := activities.NewCallActivity("do-approval", "approval-process")
+```
+
+Wrapping a single task in a one-activity process is a legitimate model, but be
+aware of what it costs: an instance per call, with its own scope and fact
+stream. For a step used in many places, prefer the constructor. When the server's
+task registry lands, `CallActivity` will resolve a key to a task directly and
+`GlobalTask` becomes accessible with no change to your models.
+
 ## What every member implements
 
 An activity is a `flow.Node` and a `flow.ActivityNode` (it adds

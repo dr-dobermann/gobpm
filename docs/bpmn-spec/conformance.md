@@ -138,7 +138,7 @@ The first distinction is the standard's own (§13 animates, §8/§10 supply). Th
 | Interface | `Interface` | Operation grouping |
 | Operation | `Operation` | Service operation with in/out message |
 | EndPoint | `EndPoint` | Operation endpoint reference |
-| GlobalTask / GlobalManualTask / GlobalUserTask / GlobalScriptTask / GlobalBusinessRuleTask | `GlobalTask`, ... | Reusable task definitions invocable via CallActivity |
+| GlobalTask / GlobalManualTask / GlobalUserTask / GlobalScriptTask / GlobalBusinessRuleTask | `GlobalTask`, ... | Reusable task definitions invocable via CallActivity. **Server tier, like §2.3.2** — a GlobalTask is reuse *by reference*, which needs a definition registry, and the registry is a product concern. The **library** covers the same need by construction: a Go constructor returning a configured task is a reusable definition, and a better one, since it can be parameterized ([task reuse](../guides/tasks/index.md#reusing-tasks)). When the server's task registry lands, `CallActivity` resolves a key to a task and GlobalTask becomes accessible with no model change. |
 
 ### Foundation / base types
 | Element | bpmn-moddle type | Notes |
