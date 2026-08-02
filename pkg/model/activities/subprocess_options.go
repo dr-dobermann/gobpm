@@ -1,10 +1,28 @@
 package activities
 
+import "github.com/dr-dobermann/gobpm/pkg/model/lanes"
+
 // subProcessConfig collects the SubProcess-specific construction options.
 type subProcessConfig struct {
-	adHoc         *adHocSpec
+	adHoc *adHocSpec
+
+	// laneSets are carried through to the SubProcess; lanes are model-only and
+	// never reach execution (SRD-076).
+	laneSets []*lanes.LaneSet
+
 	triggered     bool
 	isTransaction bool
+}
+
+// AddLaneSet implements lanes.LaneSetAdder — a Sub-Process is one of the two
+// FlowElementsContainers BPMN hangs laneSets off.
+// A nil set cannot arrive here: lanes.WithLaneSets refuses one before calling,
+// and this config is unexported so nothing else can. A guard would be
+// unreachable code.
+func (cfg *subProcessConfig) AddLaneSet(ls *lanes.LaneSet) error {
+	cfg.laneSets = append(cfg.laneSets, ls)
+
+	return nil
 }
 
 // SubProcessOption is a SubProcess-specific construction option. NewSubProcess

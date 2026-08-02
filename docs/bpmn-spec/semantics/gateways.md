@@ -4,7 +4,7 @@ _Source: BPMN 2.0 §13.4 (spec p434–438)._
 
 All in-scope gateways consume tokens on incoming sequence flows and produce tokens on outgoing flows according to type-specific rules below.
 
-**Scope note:** Common Executable Subclass (§2.1.3) includes Exclusive, Parallel, Inclusive, and Event-Based gateways. **ComplexGateway is an explicit extension** above Common Executable, added because it enables workflow patterns (Structured Discriminator, Partial Joins) not otherwise expressible. See [../conformance.md](../conformance.md).
+**Scope note:** all five gateways are in scope, and **ComplexGateway is not an extension** — §13.4.5 gives it a complete operational semantics, and BPMN 2.0.2 §2.3.1 obliges a conformant tool to "fully support and interpret" that semantics. (Earlier revisions called it "an explicit extension above the Common Executable Subclass (§2.1.3)"; that clause does not exist, and Common Executable is a Process *Modeling* sub-class — see the correction note in [../conformance.md](../conformance.md).) The workflow patterns it enables — Structured Discriminator, Partial Joins — are why it is valuable, not why it was optional.
 
 ## Parallel Gateway (§13.4.1)
 

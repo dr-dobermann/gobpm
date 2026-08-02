@@ -4,7 +4,7 @@ Generate per-element markdown KB files under docs/bpmn-spec/elements/
 from the bpmn-moddle JSON descriptor (bpmn-moddle.json in this dir).
 
 Scope is restricted to BPMN 2.0 Process Execution Conformance (Common
-Executable Subclass per spec §2.1.3) — see ../conformance.md.
+elements BPMN 2.0.2 Clause 13 animates, per spec §2.3.1) — see ../conformance.md.
 
 Re-run after updating bpmn-moddle.json. Output files are overwritten.
 """

@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`Lane` / `LaneSet`** — the engine's only *model-only* elements. A `Process`
+  or `SubProcess` can now carry lane sets (`lanes.WithLaneSets`), lanes nest,
+  and a lane's membership is declared from the lane (`Lane.Place`) — nothing is
+  added to `flow.Node`, so no element reports which lane it is on and no
+  execution path can consult one. Lanes are **never executed**: a laned process
+  runs identically to the same process without lanes, which is asserted rather
+  than assumed. They exist because "non-operational" governs execution, not
+  representation — BPMN obliges a tool to support import of Process diagrams,
+  and the converter's semantic round-trip cannot re-export a structure the model
+  never stored. Registration rejects a lane placing a node its container does
+  not hold, and a lane set whose lanes partition by mixed types.
+
 - **BPMN's own resource roles now decide who may act on a User Task.**
   `PotentialOwner` and `HumanPerformer` are no longer carried and ignored: a
   declared human role resolves its assignment expression when the task is

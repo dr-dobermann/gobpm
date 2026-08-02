@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Status | Accepted |
-| Version | v.2 |
-| Date | 2026-07-30 |
+| Version | v.3 |
+| Date | 2026-08-02 |
 | Owner | Ruslan Gabitov |
 | Refines | [SAD-001 v.1](SAD-001-vision-and-architecture.md) §4 N7 / §5 / §9 / §14, [ADR-002 v.2 Extension Architecture](ADR-002-extension-architecture.md), [ADR-019 v.1 Definition Versioning](ADR-019-definition-versioning.md), [ADR-003 v.1 Module Layout](ADR-003-module-layout.md) |
 
@@ -205,9 +205,10 @@ elements), not a silent auto-id.
 
 ### 2.6 MVP element subset and the conformance fence
 
-The MVP maps the **Common Executable Subclass** core
-([docs/bpmn-spec/conformance.md §2.1.3](../bpmn-spec/conformance.md)) — the
-same fence the engine's own conformance target already draws:
+The MVP maps the **executable core** of the engine's own scope
+([docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md)) — the elements
+BPMN 2.0.2 Clause 13 animates, which is the same fence the engine's conformance
+target draws:
 
 | BPMN XML | Model target | Spec § |
 |---|---|---|
@@ -276,10 +277,16 @@ not require a lossless textual round-trip for Process Execution Conformance.
 All claims cite the vendored KB ([docs/bpmn-spec/](../bpmn-spec/)), which carries
 the OMG §-refs.
 
-- **Conformance target.** *"Process Execution Conformance requires an engine to
-  implement the operational semantics defined in §13 for … the Common
-  Executable Subclass (§2.1.3)"* ([conformance.md:3-5](../bpmn-spec/conformance.md)).
-  The MVP element set is exactly the executable core of that subclass.
+- **Conformance target.** Process Execution Conformance is **§2.3**, and it has
+  two requirements addressed to "the tool": §2.3.1 execution semantics, and
+  **§2.3.2 import of Process diagrams** — *"The tool claiming Process Execution
+  Conformance type MUST support import of BPMN Process diagram types including
+  its definitional Collaboration."* That second requirement is **this ADR's
+  reason to exist**: it is the converter, not the engine, that satisfies it, and
+  it lands with the `gobpm-server` product rather than the library
+  ([conformance.md](../bpmn-spec/conformance.md),
+  [SAD-001](SAD-001-vision-and-architecture.md) §14). The MVP element set is the
+  executable core of the elements Clause 13 animates.
 - **`definitions`/`process` containment.** `Process` is a `rootElements` child
   of `definitions`; flow elements are `flowElements` children of `process`
   ([elements/foundation.md:21-24](../bpmn-spec/elements/foundation.md),
@@ -394,7 +401,7 @@ than the standard requires, to serve the SAD-001 §5 feedback need).
 > baseline until both are ratified.
 
 **Standard (BPMN 2.0 KB):**
-- [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) — §2.1.3 Common Executable Subclass; DI/DC out of scope.
+- [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) — §2.3 Process Execution Conformance (§2.3.1 semantics / §2.3.2 import); the in-scope element list; DI/DC out of scope.
 - [docs/bpmn-spec/elements/](../bpmn-spec/elements/) — structural metamodel (foundation, process, events, activities, flows, gateways).
 - [docs/bpmn-spec/semantics/](../bpmn-spec/semantics/) — token-flow, tasks, gateways, events, end-events.
 
@@ -435,3 +442,4 @@ than the standard requires, to serve the SAD-001 §5 feedback need).
 |---|---|---|
 | v.1 | 2026-07-17 | Initial draft — converter seam (`pkg/convert`), BPMN as the batteries-included separate-module converter, MVP element subset, semantic round-trip. |
 | v.2 | 2026-07-30 | Accepted on the SRD-051 slice-1 landing. §4-A reversed: the converter is the package `pkg/convert/bpmn`, not a top-level module — the stdlib parser costs core no dependency, and a module would have stayed invisible to the diff-coverage gate (§2.3). Q1 (module rename) withdrawn; the SAD-001 §9 `doc-source/` reservation retired. §2.6: `serviceTask` restored to the MVP set with the new `ServiceTask.Operation()` accessor, and the `documentation`/`extensionElements` silent-skip carve-out recorded. |
+| v.3 | 2026-08-02 | Accepted. **Correction only — no contract change.** This ADR defined the MVP fence by reference to *"the Common Executable Subclass (§2.1.3)"*, in §2.6, §3 and §8. That basis does not exist and never applied. There is no §2.1.3 — §2.1 is *General*, §2.2 is Process **Modeling** Conformance, Process **Execution** Conformance is **§2.3** — and the Common Executable Subclass is a **Modeling** sub-class (§2.2.1) for tools that *emit* executable models, mandating XML Schema, WSDL and XPath, none of which gobpm uses. The fence is re-based on the elements **Clause 13 animates**, which is what the engine's scope list enumerates; the MVP element set itself is **unchanged**, so §FR-8's mapping, §2.8's semantic-round-trip guarantee and every incoming pin to v.2 stand. The correction also **sharpens this ADR's standing**: §2.3.2 obliges a tool claiming Process Execution Conformance to "support import of BPMN Process diagram types", so the converter is not an interchange nicety beside conformance — it *is* the second of the two requirements, and it belongs to the `gobpm-server` product rather than the library ([SAD-001](SAD-001-vision-and-architecture.md) §14). One consequence worth carrying into future slices: `Lane`/`LaneSet` must round-trip, so the model has to hold them even though execution ignores them (conformance-status.md row 14). |
