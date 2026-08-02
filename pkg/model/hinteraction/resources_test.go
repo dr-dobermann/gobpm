@@ -198,6 +198,61 @@ func TestRoleMustConstructors(t *testing.T) {
 	}
 }
 
+// TestAuthorizingRoleMustNameSomebody pins FR-3a: an authorizing kind with
+// neither a resourceRef nor an assignment expression resolves to the empty set
+// by construction, so it is refused where it is written. A declarative kind may
+// carry a name alone — there it is a label, not declared authorization that
+// authorizes nobody (ADR-020 v.3 §2.5.4).
+func TestAuthorizingRoleMustNameSomebody(t *testing.T) {
+	tests := []struct {
+		build     func() (*hinteraction.ResourceRole, error)
+		name      string
+		wantError bool
+	}{
+		{
+			name:      "human performer naming nobody is refused",
+			wantError: true,
+			build: func() (*hinteraction.ResourceRole, error) {
+				return hinteraction.NewHumanPerformer("r", nil, nil, nil)
+			},
+		},
+		{
+			name:      "potential owner naming nobody is refused",
+			wantError: true,
+			build: func() (*hinteraction.ResourceRole, error) {
+				return hinteraction.NewPotentialOwner("r", nil, nil, nil)
+			},
+		},
+		{
+			name: "bare resource role may carry a name alone",
+			build: func() (*hinteraction.ResourceRole, error) {
+				return hinteraction.NewResourceRole("r", nil, nil, nil)
+			},
+		},
+		{
+			name: "performer may carry a name alone",
+			build: func() (*hinteraction.ResourceRole, error) {
+				return hinteraction.NewPerformer("r", nil, nil, nil)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rr, err := tt.build()
+			if tt.wantError {
+				require.Error(t, err)
+				require.Nil(t, rr)
+
+				return
+			}
+
+			require.NoError(t, err)
+			require.NotNil(t, rr)
+		})
+	}
+}
+
 // TestResourceRoleAccessors checks that a role's contents are readable — they
 // were write-only before, which is why nothing could resolve one.
 func TestResourceRoleAccessors(t *testing.T) {

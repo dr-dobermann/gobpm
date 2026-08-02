@@ -94,6 +94,21 @@ func newRole(
 				errs.D("role", name))
 	}
 
+	// An authorizing role must name somebody. With neither a resourceRef nor an
+	// assignment expression it resolves to the empty set by construction — a
+	// declaration that looks like authorization and grants none, which is the
+	// defect the role model exists to remove (ADR-020 v.3 §2.5.4). A declarative
+	// kind may carry a name alone: there it is a label, not a broken promise.
+	if kind.Authorizes() && res == nil && assignExpr == nil {
+		return nil,
+			errs.New(
+				errs.M("%s %q names nobody: give it a resource reference or "+
+					"an assignment expression", kind, name),
+				errs.C(errorClass, errs.EmptyNotAllowed),
+				errs.D("role", name),
+				errs.D("kind", string(kind)))
+	}
+
 	be, err := foundation.NewBaseElement(baseOpts...)
 	if err != nil {
 		return nil,
