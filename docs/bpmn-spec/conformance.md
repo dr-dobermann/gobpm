@@ -104,7 +104,7 @@ The first distinction is the standard's own (§13 animates, §8/§10 supply). Th
 | DataOutputAssociation | `DataOutputAssociation` | Data flow out of activity |
 | InputSet / OutputSet | `InputSet`, `OutputSet` | I/O grouping with optional / while-executing semantics |
 | InputOutputSpecification | `InputOutputSpecification` | Activity I/O contract |
-| InputOutputBinding | `InputOutputBinding` | Maps Operation I/O to CallableElement I/O |
+| InputOutputBinding | `InputOutputBinding` | Binds one InputSet + one OutputSet to an `Operation`. **Realized implicitly, with no named type** — gobpm declares a single InputSet and a single OutputSet ([SAD-001](../design/SAD-001-vision-and-architecture.md) §14.1), so there is no pair to select and the binding is the `Operation` contract itself (`BindInputOnly` in, `Execute` out). Absence of the type is a consequence of that deviation, not a gap. |
 | Assignment | `Assignment` | Single from/to expression pair within a DataAssociation |
 | DataState | `DataState` | Optional state qualifier on data |
 | DataAssociation | `DataAssociation` | Abstract base for In/Out associations |
