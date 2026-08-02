@@ -76,18 +76,33 @@ carrying both a `resourceRef` and a `resourceAssignmentExpression` is refused
 (this check exists at `resources.go:53` and is retained); a role carrying
 `resourceParameterBindings` **without** a `resourceRef` is refused (new — the
 spec's "only applicable if a `resourceRef` is specified" is currently
-unenforced).
+unenforced); an assignment expression carrying no expression is refused.
+
+**FR-3a — an authorizing-kind role must name somebody.** A `HumanPerformer` or
+`PotentialOwner` constructed with **neither** a `resourceRef` nor a
+`resourceAssignmentExpression` is refused at construction: it resolves to the
+empty set by construction, so it is declared authorization that authorizes
+nobody — the defect this landing exists to remove (ADR-020 v.3 §2.5.4). A bare
+`ResourceRole` or `Performer` still accepts a name-only role, where it is a
+label rather than a broken promise.
 
 **FR-4 — the role is readable.** `Resource()`, `AssignmentExpression()` and
 `ParameterBindings()` accessors are added, so a role's contents can be inspected
 by the resolver, the validator and an embedder.
 
-**FR-5 — directory-mode roles are rejected at registration.** A role carrying a
-`resourceRef` is refused when the process is registered, by a validator wired
-into `Process.Validate()` (`pkg/model/process/process.go:302`, which
-`internal/instance/snapshot/snapshot.go:96` calls). The check covers roles
-declared on **nodes** and on the **process itself**. The error names the
-offending role, the element carrying it, and the missing directory subsystem.
+**FR-5 — directory-mode roles of an authorizing kind are rejected at
+registration.** A `HumanPerformer` or `PotentialOwner` carrying a `resourceRef`
+is refused when the process is registered, by a validator wired into
+`Process.Validate()` (`pkg/model/process/process.go:302`, which
+`internal/instance/snapshot/snapshot.go:96` calls) **and** into
+`SubProcess.Validate()` (`pkg/model/activities/subprocess.go:275`), which
+recurses into its own children (`subprocess.go:462`) so every nesting level is
+covered. The check spans roles declared on **nodes** and on the **container
+itself**. The error names the offending role, the element carrying it, and the
+missing directory subsystem. Declarative kinds (`RoleResource`,
+`RolePerformer`) are **not** checked: they grant nothing whether or not they
+resolve, so a directory-held resource named there is a conformant annotation
+(ADR-020 v.3 §4, alternative 14).
 
 **FR-6 — human-kind roles resolve at distribution.** `UserTask.ResolveEligibility`
 resolves every `RoleHumanPerformer` / `RolePotentialOwner` role declared on the
@@ -273,16 +288,25 @@ BPMN treats a failed resource query as one returning an empty result set.
 ### §3.4 Registration validation (`pkg/model/activities/role_validation.go`, new)
 
 ```go
-// ValidateResourceRoles rejects a role that names its people through a directory
-// query (ADR-020 v.3 §2.5.4): resourceRef resolution needs an Organizational
-// Directory (§8.4.12 Resources) the engine does not provide, so such a role could
-// only be carried and ignored. It is refused at registration instead, on the same
-// principle as the value-less item-aware element (SAD-001 v.1.1 §14.1).
-func ValidateResourceRoles(nodes []flow.Node, ownerRoles []*hi.ResourceRole) error
+// ValidateResourceRoles rejects an authorizing-kind role that names its people
+// through a directory query (ADR-020 v.3 §2.5.4): resourceRef resolution needs an
+// Organizational Directory (§8.4.12 Resources) the engine does not provide, so
+// such a role could only be carried and ignored — declared authorization that
+// authorizes nobody. It is refused at registration instead, on the same principle
+// as the value-less item-aware element (SAD-001 v.1.1 §14.1).
+//
+// Declarative kinds are not checked: they grant nothing whether or not they
+// resolve, so a directory-held resource named there is a conformant annotation.
+func ValidateResourceRoles(nodes []flow.Node, ownRoles []*hi.ResourceRole) error
 ```
 
 Called from `Process.Validate()` beside `ValidateCompensationPlacement`
-(`process.go:356`), so registration fails through the existing path.
+(`process.go:356`) and from `SubProcess.Validate()` (`subprocess.go:305`), the
+container-agnostic pattern those validators already use. A container passes its
+**own** roles as `ownRoles`; a Sub-Process passes `nil`, because its own roles
+are already checked by the parent that holds it as a node — so no role is
+reported twice. `Process` gains a `Roles()` accessor for this (it has the
+`roles` field at `process.go:36` but no getter), mirroring `Properties()`.
 
 ### §3.5 `taskPriority` (`pkg/model/activities/user_task.go`, `pkg/interactor/taskview.go`)
 
@@ -360,6 +384,42 @@ This is the group-only-reassignment gap that M5 registers in SAD-001 §14.1. It 
 not widened by this change; it is inherited, and the register now names roles
 alongside `candidateGroups`.
 
+### §4.6 M2a — closing FIX-026's `Must*` carve-outs (out of band)
+
+This milestone is not about resource roles. It rides this branch because M1's
+review surfaced it and the owner's rule is that questionable code is fixed where
+it is found, not annotated.
+
+`TestNoMustCallsInLibrary` (`internal/lintcfg`, FIX-026 §3.2.16) already bans
+calling a panicking `Must*` constructor from library code — `pkg/` and
+`internal/`, non-test. It carried two documented carve-outs: a `sanctioned` set
+for the argless `MustBaseElement()` / `MustRecord()` literals, and a whole-file
+exemption for `pkg/convert/bpmn/bpmn.go`'s `init()` registrations. Both were
+justified in comments as structurally infallible.
+
+The justification is the problem. "Provably infallible" is a claim about the
+current call graph; the next change invalidates it silently, and the comment
+keeps reading as settled. M2a removes the need for the carve-outs instead:
+
+- **The total paths become total functions.** `NewBaseElement`, `NewRecord` and
+  `NewMap` each have exactly one error source — the loop that validates their
+  variadic input — so the no-argument path cannot fail. `foundation.
+  EmptyBaseElement`, `values.EmptyRecord` and `values.EmptyMap` express that
+  path and return no error. 15 call sites move to them.
+- **`init()` gets somewhere to put its error.** `convert.RegisterImporterAtInit`
+  / `RegisterExporterAtInit` replace the `MustRegister*` pair: a failure is
+  recorded against the format and returned by `Import`/`Export` at first use.
+  An embedder that never touches the format is no longer killed by a converter
+  it does not use, and one that does gets a classified error rather than a load-
+  time panic.
+- **The guard becomes absolute** — `sanctioned` and `exemptFiles` are deleted,
+  so no `Must*` call in `pkg/` or `internal/` non-test code passes.
+
+`Must*` **declarations** remain, untouched and expected: they exist to simplify
+tests and examples, which the guard does not walk. FIX-026 is an Accepted
+one-shot document and is not retro-edited; the supersession is recorded in the
+guard's own comment, where the next reader of that rule will meet it.
+
 ## §5 API
 
 Added, all additive except the two noted:
@@ -373,6 +433,7 @@ Added, all additive except the two noted:
 | `Eligibility.Roles` | `interactor` | new field (struct literal without field names would break — none exists outside tests) |
 | `TaskInfo.Priority` | `interactor` | new field |
 | `ValidateResourceRoles` | `activities` | new |
+| `Process.Roles()` | `process` | new accessor, mirroring `Properties()` |
 | `UserTask.TaskPriority()`, `WithTaskPriority` | `activities` | new |
 
 ## §6 Tests
@@ -382,11 +443,13 @@ Added, all additive except the two noted:
 | T-1 | `TestRoleKind_Authorizes` | only the two human kinds authorize | FR-1 |
 | T-2 | `TestNewPotentialOwner_kind` | each constructor stamps its kind; `NewResourceRole` stays bare | FR-1 |
 | T-3 | `TestNewResourceRole_exclusivity` | ref+expr refused; bindings without ref refused; each alone accepted | FR-3 |
-| T-4 | `TestNewResourceRole_nilExpression` | a nil `FormalExpression` is refused | FR-2 |
+| T-4 | `TestNewResourceRole_nilExpression` | a nil `FormalExpression` is refused | FR-2, FR-3 |
+| T-4a | `TestAuthorizingRole_mustNameSomebody` | `NewHumanPerformer`/`NewPotentialOwner` with neither mode refused; the same shape accepted for `NewResourceRole`/`NewPerformer` | FR-3a |
 | T-5 | `TestResourceRole_accessors` | the three accessors return what was constructed | FR-4 |
-| T-6 | `TestValidateResourceRoles_directoryMode` | a `resourceRef` role on a node fails registration; the error names role and element | FR-5 |
-| T-7 | `TestValidateResourceRoles_processLevel` | the same role declared on the `Process` fails registration | FR-5, FR-10 |
-| T-8 | `TestValidateResourceRoles_expressionMode` | an expression-mode role registers cleanly | FR-5 |
+| T-6 | `TestValidateResourceRoles_directoryMode` | a `resourceRef` `PotentialOwner` on a node fails registration; the error names role and element | FR-5 |
+| T-7 | `TestValidateResourceRoles_containerLevel` | the same role declared on the `Process` fails registration; a Sub-Process's own roles are reported once, by the parent | FR-5, FR-10 |
+| T-8 | `TestValidateResourceRoles_accepted` | an expression-mode authorizing role, and a **declarative** role in directory mode, both register cleanly | FR-5 |
+| T-8a | `TestValidateResourceRoles_nested` | a directory-mode `PotentialOwner` inside a nested Sub-Process fails registration | FR-5 |
 | T-9 | `TestResolveEligibility_roles` | a `PotentialOwner` populates `Roles`; a `Performer` does not | FR-6 |
 | T-10 | `TestEligibility_roleMatchesUserOrGroup` | one identifier authorizes by user id, another by group | FR-7 |
 | T-11 | `TestEligibility_assigneeExcludesRoles` | a declared assignee denies a role-eligible actor | FR-8 |
@@ -402,7 +465,8 @@ Added, all additive except the two noted:
 | M | Scope | Commit |
 |---|---|---|
 | M1 | Role kind, constructors, `FormalExpression` type change, Table 10.5 enforcement, accessors (T-1…T-5) | one |
-| M2 | `ValidateResourceRoles` + `Process.Validate` wiring (T-6…T-8) | one |
+| M2a | Close FIX-026's `Must*` carve-outs (out of band — see §4.6) | one |
+| M2 | The "can never authorize" refusals: FR-3a at construction, `ValidateResourceRoles` + `Process`/`SubProcess` wiring, `Process.Roles()` (T-4a, T-6…T-8a) | one |
 | M3 | `Eligibility.Roles`, `permits`/`Open`, `resolveRoles` (T-9…T-14, T-16, T-17) | one |
 | M4 | `taskPriority` (T-15) | one |
 | M5 | SAD-001 §14 registrations, the Table 8.49→10.4 extract correction, conformance-tracker rows, ADR-020 RU twin | one |
@@ -421,7 +485,7 @@ No downward references: this document is referenced by none.
 
 ## §9 Definition of Done
 
-1. FR-1…FR-10 implemented and wired; NFR-1…NFR-5 demonstrably held.
+1. FR-1…FR-10 (incl. FR-3a) implemented and wired; NFR-1…NFR-5 demonstrably held.
 2. Every test in §6 exists and passes, including the e2e T-16.
 3. `make ci` green — mock-check, link-check, tidy, lint, build, consumer-smoke,
    race tests, **diff-coverage at `COVER_MIN`**, govulncheck; plus the examples
