@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Version | v.3 |
 | Date | 2026-08-01 |
 | Owner | Ruslan Gabitov |

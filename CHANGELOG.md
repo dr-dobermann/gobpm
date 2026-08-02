@@ -7,7 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **BPMN's own resource roles now decide who may act on a User Task.**
+  `PotentialOwner` and `HumanPerformer` are no longer carried and ignored: a
+  declared human role resolves its assignment expression when the task is
+  announced, and its identifiers join the eligible set beside the Camunda
+  triad. The standard gives a `ResourceRole` two mutually exclusive ways to
+  name people (Table 10.5), and gobpm now implements one of them completely —
+  so expression-based resource assignment is conformant and *executed*, not
+  merely modelled. Declare a role with `activities.WithRoles(...)`, which a
+  `UserTask` finally accepts. A role identifier matches the actor's user id
+  **or** one of its groups, because the standard returns "Users or Groups" and
+  marks neither; a declared `assignee` still excludes everything else, and a
+  task is open to anyone only when neither a triad member nor a human role is
+  declared.
+- **`UserTask.taskPriority`** (Table 10.14), the second of BPMN's two UserTask
+  instance attributes — the first, `actualOwner`, landed in v0.10.0. The
+  standard defines a *reader* and nothing else: no scale, no direction, no
+  default, and no behaviour that consumes it. gobpm reports it to your
+  distributor on `TaskInfo` and acts on it nowhere. `WithTaskPriority` is a
+  documented engine extension, since no BPMN XML can set an instance attribute.
+- `foundation.EmptyBaseElement`, `values.EmptyRecord` and `values.EmptyMap` —
+  total constructors for the no-argument cases that previously needed a
+  panicking `Must*` twin.
+- `convert.RegisterImporterAtInit` / `RegisterExporterAtInit`, replacing the
+  `MustRegister*` pair: a converter package's `init()` has no caller to return
+  an error to, so a failed self-registration is recorded against the format and
+  returned by `Import`/`Export` at first use instead of panicking at load time.
+
+### Changed
+
+- **Two role declarations that used to register are now refused**, both
+  scoped to the authorizing kinds (`HumanPerformer`, `PotentialOwner`) — a bare
+  `ResourceRole` or a `Performer` is unaffected, since it grants nothing either
+  way. A role naming its people through `resourceRef` (a query into an
+  organizational directory gobpm does not have) fails at **registration**; a
+  role with neither a `resourceRef` nor an assignment expression fails at
+  **construction**. Neither ever authorized anyone; they were accepted and
+  silently ignored, which is the defect this release removes. Both are recorded
+  in `SAD-001` §14.1, with the identity subsystem named as what would close the
+  first.
+- **Declaring a human role closes a previously open task.** A `UserTask` with a
+  role and no triad member moves from "any actor authorized" to "role members
+  only" — the declaration doing what it says.
+- `ResourceAssignmentExpression.Expression` is now a `data.FormalExpression`
+  rather than a `data.Expression`. The latter is the natural-language variant
+  the standard defines as "not executable", so the field could never reach an
+  evaluator. The field had no reader anywhere, so no working code depended on
+  it.
+- **No library code calls a panicking `Must*` constructor.** The repository's
+  guard already banned it but carried documented carve-outs for "provably
+  infallible" cases; the carve-outs are gone rather than re-justified, and the
+  ban is now absolute. `Must*` twins remain — they exist to simplify tests and
+  examples.
+
 ### Fixed
+
+- **A `UserTask` rejected `activities.WithRoles`.** Its constructor dispatched
+  on four option families and the role family was in none of them, so a
+  declared `HumanPerformer` or `PotentialOwner` could not reach the one task
+  type whose eligibility it decides.
+- **The vendored BPMN extract repeated a specification erratum.** §10.3.4.1
+  cites Table 8.49 for the Activity instance attributes a UserTask inherits,
+  but 8.49 is *"Resource attributes and model associations"*. The correct table
+  is 10.4, it is now extracted, and it has exactly one row — `state`.
 
 - **Every example now asserts the outcome it demonstrates.** All 46 example
   modules previously failed only on a returned error, so one that completed

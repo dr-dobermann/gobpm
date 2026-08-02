@@ -261,7 +261,13 @@ For human work, see [`examples/usertask/`](examples/usertask/) — a **User
 Task** parks until a person acts, and the engine owns *who* that person is.
 Eligibility is a Camunda-style assignee / candidate-user / candidate-group
 triad, **resolved once when the task is announced** so a candidate set cannot
-shift under a task that is already waiting. On top of it sits BPMN's own
+shift under a task that is already waiting. BPMN's own vocabulary works too:
+declare a **`PotentialOwner`** or **`HumanPerformer`** and it decides
+eligibility alongside the triad, resolved by the same path — the standard's
+expression-based resource assignment, executed rather than merely modelled.
+(Its other mode, a query into an organizational directory, is a declared
+deviation: gobpm has no directory, so such a role is refused at registration
+instead of carried and silently ignored.) On top of it sits BPMN's own
 `actualOwner` (§10.3.4.1, Table 10.14): a candidate **claims** a task to take
 exclusive hold, and only the holder may complete it — so offering one task to
 twenty people no longer means twenty people can work it in parallel and

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-08-02 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-020 v.3](../design/ADR-020-human-interaction-execution-model.md) §2.5.4 (the role kind, its resolution and composition, directory-mode rejection, activity-vs-process scope) and §2.11 (`taskPriority`) |
@@ -438,27 +438,27 @@ Added, all additive except the two noted:
 
 ## §6 Tests
 
-| # | Test | Asserts | FR |
+| # | Test (as landed) | Asserts | FR |
 |---|---|---|---|
-| T-1 | `TestRoleKind_Authorizes` | only the two human kinds authorize | FR-1 |
-| T-2 | `TestNewPotentialOwner_kind` | each constructor stamps its kind; `NewResourceRole` stays bare | FR-1 |
-| T-3 | `TestNewResourceRole_exclusivity` | ref+expr refused; bindings without ref refused; each alone accepted | FR-3 |
-| T-4 | `TestNewResourceRole_nilExpression` | a nil `FormalExpression` is refused | FR-2, FR-3 |
-| T-4a | `TestAuthorizingRole_mustNameSomebody` | `NewHumanPerformer`/`NewPotentialOwner` with neither mode refused; the same shape accepted for `NewResourceRole`/`NewPerformer` | FR-3a |
-| T-5 | `TestResourceRole_accessors` | the three accessors return what was constructed | FR-4 |
-| T-6 | `TestValidateResourceRoles_directoryMode` | a `resourceRef` `PotentialOwner` on a node fails registration; the error names role and element | FR-5 |
-| T-7 | `TestValidateResourceRoles_containerLevel` | the same role declared on the `Process` fails registration; a Sub-Process's own roles are reported once, by the parent | FR-5, FR-10 |
-| T-8 | `TestValidateResourceRoles_accepted` | an expression-mode authorizing role, and a **declarative** role in directory mode, both register cleanly | FR-5 |
-| T-8a | `TestValidateResourceRoles_nested` | a directory-mode `PotentialOwner` inside a nested Sub-Process fails registration | FR-5 |
-| T-9 | `TestResolveEligibility_roles` | a `PotentialOwner` populates `Roles`; a `Performer` does not | FR-6 |
-| T-10 | `TestEligibility_roleMatchesUserOrGroup` | one identifier authorizes by user id, another by group | FR-7 |
-| T-11 | `TestEligibility_assigneeExcludesRoles` | a declared assignee denies a role-eligible actor | FR-8 |
-| T-12 | `TestEligibility_openRequiresNoRole` | `Open()` false with only a role declared; that actor set is enforced | FR-8 |
-| T-13 | `TestEligibility_roleExpressionFailureDenies` | a failing role expression yields a declared-but-empty slot, denying | NFR-2 |
-| T-14 | `TestResolveEligibility_noRolesUnchanged` | a task with no role produces the pre-change verdict for every actor | NFR-1 |
-| T-15 | `TestUserTask_taskPriority` | reader returns the option's value, zero by default; reaches `TaskInfo` | FR-9 |
-| T-16 | e2e `TestProcess_potentialOwnerAuthorizes` | a process whose UserTask declares only a `PotentialOwner`: an eligible actor claims and completes; an ineligible one is refused | FR-6, FR-8 |
-| T-17 | `TestClaimReassign_againstRoleSlot` | `Claim` succeeds for a role-eligible actor; `Reassign` succeeds to a user-named role identifier and fails to a group-only one (§4.5) | FR-6, FR-8 |
+| T-1 | `TestRoleKindAuthorizes` (`hinteraction`) | only the two human kinds authorize; unknown and zero kinds do not | FR-1 |
+| T-2 | `TestRoleConstructorsStampKind`, `TestRoleMustConstructors` | each constructor stamps its own kind; `NewResourceRole` stays bare | FR-1 |
+| T-3 | `TestNewResourceRole` (subtests) | ref+expr refused; bindings without ref refused; each alone accepted; bindings ride along with a ref | FR-3 |
+| T-4 | `TestNewResourceRole` / `TestNewResourceAssignmentExpression` | an assignment expression with no expression is refused; a nil `FormalExpression` is refused | FR-2, FR-3 |
+| T-4a | `TestAuthorizingRoleMustNameSomebody` | both human kinds refused naming nobody; both declarative kinds still accept a name alone | FR-3a |
+| T-5 | `TestResourceRoleAccessors` | the accessors return what was constructed, in both modes; bindings are copied, not aliased | FR-4 |
+| T-6 | `TestValidateResourceRoles` (subtests) | a `resourceRef` `PotentialOwner` / `HumanPerformer` on a node fails; the error names role, element and the missing directory | FR-5 |
+| T-7 | `TestProcessValidateResourceRoles` (`process`) | a container's **own** roles fail registration through `Process.Validate`; `Roles()` exposes them; a declarative role in the same shape passes | FR-5, FR-10 |
+| T-8 | `TestValidateResourceRoles` (subtests) | expression mode accepted; **declarative** kinds in directory mode accepted; a role-less node skipped; every offending role reported | FR-5 |
+| T-8a | `TestValidateResourceRolesNested` | a directory-mode `PotentialOwner` inside a nested Sub-Process fails through its own `Validate` hook | FR-5 |
+| T-9 | `TestUserTaskResolveEligibilityRoles` | both human kinds populate the role slot; declarative kinds leave it undeclared and the task open; several roles union their identifiers | FR-6 |
+| T-10 | `TestEligibilityRoleSlot` (`interactor`) | a role identifier authorizes by user id **and** by group; an actor matching neither is denied | FR-7 |
+| T-11 | `TestEligibilityRoleSlot` (subtests) | a declared assignee excludes the role slot; the assignee still authorizes its own actor; roles union with the candidate slots | FR-8 |
+| T-12 | `TestEligibilityOpenRequiresNoRole` | `Open()` is false with only a role declared, and that set is enforced; no member and no role stays open | FR-8 |
+| T-13 | `TestEligibilityRoleSlot`, `TestDeniedEligibilityIgnoresRoles` | a declared role resolving to nobody denies; `DeniedEligibility` still denies with a role present | NFR-2 |
+| T-14 | `TestUserTaskResolveEligibilityRoles` (subtests) | a failed role expression stays declared and denies; a nil engine leaves it unresolved; no role at all leaves the slot untouched | NFR-1, NFR-2 |
+| T-15 | `TestUserTaskPriority`, `TestTaskPriorityReachesTheDistributor`, `TestUserTaskClone` | default zero, a set value, a negative value, last-setting-wins; the value reaches `TaskInfo` through a running engine; it survives `Clone` | FR-9 |
+| T-16 | `TestPotentialOwnerAuthorizes` (`thresher`, e2e) | a UserTask declaring **only** a `PotentialOwner`: a stranger refused, a user-named and a group-named identifier both authorized, claim-then-strict-completion intact | FR-6, FR-8 |
+| T-17 | `TestOwnershipAgainstRoleSlot` (`thresher`) | `Claim`/`Unclaim` work against the role slot; `Reassign` succeeds to a user-named role identifier and fails to a group-only one (§4.5) | FR-6, FR-8 |
 
 ## §7 Milestones
 
@@ -504,8 +504,76 @@ No downward references: this document is referenced by none.
 
 ## §10 Implementation summary
 
-*(Filled at the final audit, before the status flip: milestones as landed with
-their SHAs, where reality diverged from this draft, and the verification results.)*
+### §10.1 Milestones as landed (branch `feat/conformance-closeout`)
+
+| Commit | Milestone |
+|---|---|
+| `d38f9ca` | ADR-020 v.3 — the decision |
+| `c76b4bb` | this document |
+| `5cec2bd` | **M1** — `RoleKind`, the kind constructors, the `FormalExpression` type change, Table 10.5 enforcement, the accessors |
+| `b8c8ab9` | spec correction — the refusals scoped to the authorizing kinds, FR-3a added |
+| `f219fe3` | **M2a** — every `Must*` call site removed from library code (§4.6) |
+| `14eee90` | **M2** — FR-3a at construction, `ValidateResourceRoles`, `Process.Roles()` |
+| `2f561cb` | **M3** — `Eligibility.Roles`, the verdict branch, `resolveRoles` |
+| `b82807e` | **M4** — `taskPriority` |
+| `bcc5c35` | **M5** — SAD-001 §14 registrations, the Table 8.49→10.4 erratum, the tracker, the RU twin |
+
+### §10.2 Where reality diverged from the draft
+
+Five things this document did not foresee. All were found by the flow rather
+than by review, and each is worth recording because the *reason* it was missed
+generalizes.
+
+1. **The refusals had to be scoped, and one was missing entirely** (`b8c8ab9`).
+   §2.5.4 said directory mode "is rejected at registration" without naming which
+   kinds; scoping it to the authorizing kinds followed from its own rationale
+   (silent non-authorization, which a declarative role cannot commit). The
+   mirror case — an authorizing role with **neither** mode — was in neither
+   document, and it is the same defect in a cheaper disguise. It became FR-3a,
+   refused at construction. *Found by:* grounding the M2 plan against the code
+   and noticing that both existing role-using tests build exactly that shape.
+
+2. **`NewUserTask` rejected `RoleOption`** (`2f561cb`). Its dispatch listed four
+   option families and `WithRoles` was in none, so a declared `HumanPerformer`
+   or `PotentialOwner` could not reach the one task type whose eligibility it
+   decides — the feature was unreachable from a UserTask, and every layer below
+   it was already correct. *Found by:* a resolution test failing to construct
+   its fixture. Nothing in §3's shapes would have caught it, because the model
+   layer was right.
+
+3. **`UserTask.Clone` dropped `taskPriority`** (`b82807e`). The engine runs each
+   instance on a cloned node graph, so a value the distributor reports must
+   survive the copy; without it every task announced a priority of 0 while the
+   model said otherwise. *Found by:* the end-to-end delivery test failing on its
+   first run. A unit test on the model object passes either way — this is the
+   FIX-002 lesson (run the artifact) reaching a field assignment.
+
+4. **`ResourceAssignmentExpression.Expression` was unevaluatable by type**
+   (`5cec2bd`), which §1 recorded, but the consequence for *tests* was not
+   planned: the existing "by assignment expression" case asserted success with a
+   nil expression, so FR-2 turned a green assertion red by design.
+
+5. **Growing `Eligibility` moved an unrelated linter verdict** (`2f561cb`). One
+   extra `ResolvedSlot` pushed `loopState.cleanupTask` over gocritic's
+   `rangeValCopy` threshold. A struct that other code ranges over by value has a
+   size budget, and adding a field spends it.
+
+Also landed out of band: **M2a** (§4.6), which was not in the original milestone
+plan at all.
+
+### §10.3 Verification
+
+- `make ci` green — mock-check, link-check, tidy, lint, build, consumer-smoke,
+  race tests, diff-coverage, govulncheck, plus the examples half (build **and**
+  run).
+- **diff-coverage: 100.0% of 217 changed coverable lines** (gate: 95%).
+- Every function this landing created or updated finishes at **100%**, with one
+  exception: `UserTask.Clone` at **75%** — its uncovered statement is the
+  pre-existing `return nil, err` from `ut.clone()`, reachable only when
+  `data.CloneProperties` fails; the milestone added a field assignment on the
+  success path and an assertion that the field survives the copy.
+- 17 tests added across the §6 matrix (T-1…T-17, plus T-4a and T-8a from the
+  spec correction).
 
 ## Open questions
 

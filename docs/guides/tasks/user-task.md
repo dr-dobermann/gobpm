@@ -72,6 +72,48 @@ instance from a `data.FormalExpression`); the two forms are mutually exclusive:
 | `WithCandidateGroupsExpr(expr data.FormalExpression)` | the candidate groups, computed per instance. |
 | `WithRenderer(r hinteraction.Renderer)` | attach a form; call it more than once for multiple renderings (deduplicated by identity). |
 | `WithOutput(name, pType string, required bool)` | declare a value the form collects; `required: true` rejects completion without it. |
+| `WithTaskPriority(priority int)` | BPMN's `taskPriority` (Table 10.14), reported to your distributor on `TaskInfo`. The engine acts on it **nowhere** — sort your own inbox by it. Any `int`, zero by default. |
+
+**Roles: BPMN's own vocabulary.** Beside the Camunda-style triad, a UserTask
+accepts the standard's resource roles through the activity option
+`WithRoles(...)`, and a declared **human** role decides eligibility just as a
+triad slot does:
+
+| Role constructor | Authorizes? |
+|---|---|
+| `hinteraction.NewPotentialOwner(name, nil, expr, nil)` | **yes** — "persons who can claim and work on" the task |
+| `hinteraction.NewHumanPerformer(name, nil, expr, nil)` | **yes** — the human specialization of `Performer` |
+| `hinteraction.NewPerformer(name, …)` | no — a `Performer` may name a machine or a department |
+| `hinteraction.NewResourceRole(name, …)` | no — a bare role is documentation |
+
+The role's `expr` is a `ResourceAssignmentExpression` wrapping a
+`data.FormalExpression` that resolves to identifiers. Two things differ from a
+triad slot, both following from the standard:
+
+- **An identifier matches a user id *or* a group.** BPMN's expressions return
+  "Users or Groups" and mark neither, and a `ResourceRole` has nowhere to record
+  which — so both halves of the actor's identity are checked. Need the
+  distinction? Use the triad; that is what it is for.
+- **A role naming nobody is refused where you write it.** An authorizing role
+  with neither an assignment expression nor a `resourceRef` could only authorize
+  nobody, so the constructor rejects it. A role using `resourceRef` (a query into
+  an organizational directory) is refused when the process is registered —
+  gobpm has no directory to query.
+
+Roles compose with the triad as a **union**, under the same precedence: a
+declared `assignee` still excludes everything else, and a task is open to
+anyone only when neither a triad member nor a human role is declared.
+
+```go
+owners, _ := hinteraction.NewResourceAssignmentExpression(reviewersExpr)
+role, _ := hinteraction.NewPotentialOwner("reviewers", nil, owners, nil)
+
+ut, _ := activities.NewUserTask("approve",
+    activities.WithRoles(role),
+    activities.WithTaskPriority(5),
+    activities.WithOutput("decision", "string", true),
+    activities.WithoutParams())
+```
 
 **Activity options** (shared by every activity):
 
