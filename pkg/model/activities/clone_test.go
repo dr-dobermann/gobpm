@@ -183,3 +183,24 @@ func TestUserTaskAcceptsProperty(t *testing.T) {
 	require.Len(t, ut.Properties(), 1)
 	require.Equal(t, "counter", ut.Properties()[0].Name())
 }
+
+// TestUserTaskCloneRejectsUnclonableProperty covers Clone's error path: the
+// clone of the embedded task fails when a property cannot be deep-copied, and
+// UserTask.Clone must surface that rather than return a half-built node.
+//
+// A value-less Property is the reachable trigger — an ItemAwareElement with no
+// structure has a nil value, which ItemAwareElement.Clone rejects (FIX-017), and
+// the zero-value struct is the only way to hold one.
+func TestUserTaskCloneRejectsUnclonableProperty(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	ut, err := activities.NewUserTask("user",
+		activities.WithOutput("name", "string", true),
+		activities.WithoutParams(),
+		data.WithProperties(&data.Property{}))
+	require.NoError(t, err)
+
+	cn, err := ut.Clone()
+	require.Error(t, err)
+	require.Nil(t, cn)
+}

@@ -567,13 +567,14 @@ plan at all.
   race tests, diff-coverage, govulncheck, plus the examples half (build **and**
   run).
 - **diff-coverage: 100.0% of 217 changed coverable lines** (gate: 95%).
-- Every function this landing created or updated finishes at **100%**, with one
-  exception: `UserTask.Clone` at **75%** — its uncovered statement is the
-  pre-existing `return nil, err` from `ut.clone()`, reachable only when
-  `data.CloneProperties` fails; the milestone added a field assignment on the
-  success path and an assertion that the field survives the copy.
-- 17 tests added across the §6 matrix (T-1…T-17, plus T-4a and T-8a from the
-  spec correction).
+- Every function this landing created or updated finishes at **100%** — including
+  `UserTask.Clone`, whose `return nil, err` from `ut.clone()` had been uncovered
+  since before this landing. It is reachable: a value-less `Property` cannot be
+  deep-copied (FIX-017), and the zero-value struct is the only way to hold one,
+  so a UserTask built with `data.WithProperties(&data.Property{})` drives the
+  branch (`TestUserTaskCloneRejectsUnclonableProperty`).
+- 18 tests added across the §6 matrix (T-1…T-17, plus T-4a and T-8a from the
+  spec correction, and the Clone error-path test above).
 
 ## Open questions
 
