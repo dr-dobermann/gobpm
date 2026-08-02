@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"github.com/dr-dobermann/gobpm/pkg/observability"
+	"slices"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
 	dataobjects "github.com/dr-dobermann/gobpm/pkg/model/data_objects"
 	datastores "github.com/dr-dobermann/gobpm/pkg/model/data_stores"
 	"github.com/dr-dobermann/gobpm/pkg/model/events"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
+	"github.com/dr-dobermann/gobpm/pkg/model/lanes"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/renv"
 )
@@ -29,6 +31,10 @@ type SubProcess struct {
 	// ElementsContainer (which holds only nodes and flows) and name-keyed, like a
 	// Process's Data Objects.
 	dataObjects map[string]*dataobjects.DataObject
+
+	// laneSets are the Sub-Process-level lane sets — carried, never executed
+	// (SRD-076). Ordered, since lane names are optional and order is visible.
+	laneSets []*lanes.LaneSet
 	// dataStoreRefs are the SubProcess-level Data Store References (SRD-068
 	// FR-3): flow-scope handles to engine-global stores. Not seeded into scope
 	// (their data lives in the engine registry) — kept for containment only.
@@ -71,6 +77,11 @@ func NewSubProcess(
 				return nil, err
 			}
 
+		case lanes.LaneSetOption: // *subProcessConfig implements lanes.LaneSetAdder
+			if err := opt(&cfg); err != nil {
+				return nil, err
+			}
+
 		default:
 			actOpts = append(actOpts, o)
 		}
@@ -108,7 +119,14 @@ func NewSubProcess(
 		adHoc:             cfg.adHoc,
 		dataObjects:       map[string]*dataobjects.DataObject{},
 		dataStoreRefs:     map[string]*datastores.DataStoreReference{},
+		laneSets:          cfg.laneSets,
 	}, nil
+}
+
+// LaneSets returns a copy of the Sub-Process's lane sets, in declaration order.
+// Lanes are carried and never executed (SRD-076).
+func (sp *SubProcess) LaneSets() []*lanes.LaneSet {
+	return slices.Clone(sp.laneSets)
 }
 
 // IsEventSubProcess reports whether this Sub-Process is an Event Sub-Process
@@ -312,6 +330,11 @@ func (sp *SubProcess) Validate() error {
 	// nil: this Sub-Process is a node of its parent, which checks them there —
 	// passing them again would report the same role twice.
 	if err := ValidateResourceRoles(sp.Nodes(), nil); err != nil {
+		ee = append(ee, err)
+	}
+
+	// A lane may only place nodes of its own container (SRD-076 FR-8).
+	if err := lanes.ValidateLaneSets(sp.laneSets, sp.Nodes()); err != nil {
 		ee = append(ee, err)
 	}
 

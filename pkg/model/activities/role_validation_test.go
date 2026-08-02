@@ -9,6 +9,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
+	"github.com/dr-dobermann/gobpm/pkg/model/lanes"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/service"
 	"github.com/stretchr/testify/require"
@@ -158,4 +159,47 @@ func TestValidateResourceRolesNested(t *testing.T) {
 
 	// the child's role surfaces through the Sub-Process's own Validate hook.
 	require.ErrorContains(t, inner.Validate(), "owners")
+}
+
+// TestSubProcessLaneSets — SRD-076 T-9: a Sub-Process is the other
+// FlowElementsContainer BPMN hangs laneSets off, so it accepts, exposes and
+// validates them exactly as a Process does.
+func TestSubProcessLaneSets(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	inner := taskWithRoles(t, "inner")
+
+	outsideNode := taskWithRoles(t, "outside")
+
+	t.Run("carried and exposed", func(t *testing.T) {
+		lane, err := lanes.NewLane("sales", nil, "", nil)
+		require.NoError(t, err)
+		require.NoError(t, lane.Place(inner))
+
+		ls, err := lanes.NewLaneSet("org", []*lanes.Lane{lane})
+		require.NoError(t, err)
+
+		sp, err := activities.NewSubProcess("body", lanes.WithLaneSets(ls))
+		require.NoError(t, err)
+		require.NoError(t, sp.Add(inner))
+
+		require.Len(t, sp.LaneSets(), 1)
+		require.Equal(t, "org", sp.LaneSets()[0].Name())
+	})
+
+	t.Run("a lane placing a foreign node fails validation",
+		func(t *testing.T) {
+			lane, err := lanes.NewLane("outsider", nil, "", nil)
+			require.NoError(t, err)
+			require.NoError(t, lane.Place(outsideNode))
+
+			ls, err := lanes.NewLaneSet("org", []*lanes.Lane{lane})
+			require.NoError(t, err)
+
+			sp, err := activities.NewSubProcess("body", lanes.WithLaneSets(ls))
+			require.NoError(t, err)
+			require.NoError(t, sp.Add(taskWithRoles(t, "own")))
+
+			require.ErrorContains(t, sp.Validate(), "outsider")
+		})
 }

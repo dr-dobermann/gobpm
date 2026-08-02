@@ -14,6 +14,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	"github.com/dr-dobermann/gobpm/pkg/model/gateways"
+	"github.com/dr-dobermann/gobpm/pkg/model/lanes"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 	"github.com/dr-dobermann/gobpm/pkg/model/process"
@@ -451,4 +452,55 @@ func mustStart(t *testing.T, name string) *events.StartEvent {
 	require.NoError(t, err)
 
 	return se
+}
+
+// TestProcessLaneSets — SRD-076 T-9: a Process accepts lane sets, exposes them,
+// and rejects a lane placing a node it does not hold.
+func TestProcessLaneSets(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	mine := mustStart(t, "mine")
+
+	foreign, err := events.NewStartEvent("foreign")
+	require.NoError(t, err)
+
+	t.Run("carried and exposed", func(t *testing.T) {
+		lane, err := lanes.NewLane("sales", nil, "", nil)
+		require.NoError(t, err)
+		require.NoError(t, lane.Place(mine))
+
+		ls, err := lanes.NewLaneSet("org", []*lanes.Lane{lane})
+		require.NoError(t, err)
+
+		p, err := process.New("laned", lanes.WithLaneSets(ls))
+		require.NoError(t, err)
+		require.NoError(t, p.Add(mine))
+
+		require.Len(t, p.LaneSets(), 1)
+		require.Equal(t, "org", p.LaneSets()[0].Name())
+		require.NoError(t, p.Validate())
+	})
+
+	t.Run("a lane placing a foreign node fails registration",
+		func(t *testing.T) {
+			lane, err := lanes.NewLane("outsider", nil, "", nil)
+			require.NoError(t, err)
+			require.NoError(t, lane.Place(foreign))
+
+			ls, err := lanes.NewLaneSet("org", []*lanes.Lane{lane})
+			require.NoError(t, err)
+
+			p, err := process.New("bad-lane", lanes.WithLaneSets(ls))
+			require.NoError(t, err)
+			require.NoError(t, p.Add(mustStart(t, "own")))
+
+			err = p.Validate()
+			require.Error(t, err)
+			require.ErrorContains(t, err, "outsider")
+		})
+
+	t.Run("a nil lane set is refused at construction", func(t *testing.T) {
+		_, err := process.New("nil-set", lanes.WithLaneSets(nil))
+		require.Error(t, err)
+	})
 }

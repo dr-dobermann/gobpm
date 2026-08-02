@@ -19,6 +19,7 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/model/flow"
 	"github.com/dr-dobermann/gobpm/pkg/model/foundation"
 	hi "github.com/dr-dobermann/gobpm/pkg/model/hinteraction"
+	"github.com/dr-dobermann/gobpm/pkg/model/lanes"
 	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
@@ -38,6 +39,7 @@ type Process struct {
 	flows         map[string]*flow.SequenceFlow
 	dataObjects   map[string]*dataobjects.DataObject
 	dataStoreRefs map[string]*datastores.DataStoreReference
+	laneSets      []*lanes.LaneSet
 	name          string
 	foundation.BaseElement
 	CorrelationSubscriptions []*bpmncommon.CorrelationSubscription
@@ -77,6 +79,9 @@ func New(
 		case data.PropertyOption: // *processConfig implements data.PropertyAdder
 			addErr(opt(&pc))
 
+		case lanes.LaneSetOption: // *processConfig implements lanes.LaneSetAdder
+			addErr(opt(&pc))
+
 		case foundation.BaseOption:
 			pc.baseOpts = append(pc.baseOpts, opt)
 
@@ -108,6 +113,12 @@ func (p *Process) Name() string {
 // task's eligibility (ADR-020 v.3 §2.5.4).
 func (p *Process) Roles() []*hi.ResourceRole {
 	return slices.Collect(maps.Values(p.roles))
+}
+
+// LaneSets returns a copy of the Process's lane sets, in declaration order.
+// Lanes are carried and never executed (SRD-076).
+func (p *Process) LaneSets() []*lanes.LaneSet {
+	return slices.Clone(p.laneSets)
 }
 
 // Properties returns the Process properties.
@@ -370,6 +381,12 @@ func (p *Process) Validate() error {
 	// own roles too — it is not one of its own nodes.
 	if err := activities.ValidateResourceRoles(
 		p.Nodes(), p.Roles()); err != nil {
+		ee = append(ee, err)
+	}
+
+	// A lane may only place nodes of its own container (SRD-076 FR-8). Lanes
+	// attach no behavior, so this is the only place the engine reads one.
+	if err := lanes.ValidateLaneSets(p.laneSets, p.Nodes()); err != nil {
 		ee = append(ee, err)
 	}
 
