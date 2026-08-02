@@ -66,7 +66,51 @@ func (ut *UserTask) ResolveEligibility(
 		Assignee:        resolveSlot(ctx, ut.assignee, src, eng),
 		CandidateUsers:  resolveSlot(ctx, ut.candidateUsers, src, eng),
 		CandidateGroups: resolveSlot(ctx, ut.candidateGroups, src, eng),
+		Roles:           resolveRoles(ctx, ut.Roles(), src, eng),
 	}
+}
+
+// resolveRoles resolves every authorizing-kind role declared on the task into
+// one identifier set (ADR-020 v.3 §2.5.4).
+//
+// The slot is Declared when at least one such role exists, independently of what
+// it resolved to — the same rule resolveSlot applies to a triad member, and for
+// the same reason: a declared role that resolves to nobody authorizes nobody,
+// while no role at all leaves the task open. A role whose expression fails
+// contributes nothing rather than an error, because BPMN treats a failed
+// resource query as one returning an empty result set.
+//
+// Declarative kinds (a bare ResourceRole, a Performer) are skipped: they may
+// name a machine or an organization, so they grant no human authorization.
+func resolveRoles(
+	ctx context.Context,
+	roles []*hi.ResourceRole,
+	src data.Source,
+	eng expression.Engine,
+) interactor.ResolvedSlot {
+	slot := interactor.ResolvedSlot{}
+
+	for _, r := range roles {
+		if r == nil || !r.Kind().Authorizes() {
+			continue
+		}
+
+		slot.Declared = true
+
+		ae := r.AssignmentExpression()
+		if ae == nil || ae.Expression == nil || eng == nil {
+			continue
+		}
+
+		val, err := eng.Evaluate(ctx, ae.Expression, src)
+		if err != nil || val == nil {
+			continue
+		}
+
+		slot.IDs = append(slot.IDs, hi.Identifiers(val.Get(ctx))...)
+	}
+
+	return slot
 }
 
 // resolveSlot resolves one optional triad member; a nil member is undeclared.

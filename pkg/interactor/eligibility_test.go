@@ -170,3 +170,110 @@ func TestEligibilityAuthorizeValidatesParameters(t *testing.T) {
 		require.Error(t, open.Authorize("task-1", nil))
 	})
 }
+
+// TestEligibilityRoleSlot covers the fourth resolved slot SRD-075 adds: an
+// authorizing ResourceRole's identifiers, which — unlike a triad slot — match
+// either half of the actor's identity, because BPMN's role carries no
+// user-vs-group discriminator (ADR-020 v.3 §2.5.4).
+func TestEligibilityRoleSlot(t *testing.T) {
+	tests := []struct {
+		name       string
+		eligible   interactor.Eligibility
+		actor      fakeActor
+		authorized bool
+	}{
+		{
+			name:       "a role identifier naming the user authorizes",
+			eligible:   interactor.Eligibility{Roles: declared("john")},
+			actor:      fakeActor{id: "john"},
+			authorized: true,
+		},
+		{
+			name:       "a role identifier naming a group authorizes",
+			eligible:   interactor.Eligibility{Roles: declared("reviewers")},
+			actor:      fakeActor{id: "john", groups: []string{"reviewers"}},
+			authorized: true,
+		},
+		{
+			name:     "an actor matching neither is denied",
+			eligible: interactor.Eligibility{Roles: declared("reviewers")},
+			actor:    fakeActor{id: "john", groups: []string{"clerks"}},
+		},
+		{
+			name:     "a declared role resolving to nobody denies",
+			eligible: interactor.Eligibility{Roles: declared()},
+			actor:    fakeActor{id: "john"},
+		},
+		{
+			name: "a declared assignee excludes the role slot",
+			eligible: interactor.Eligibility{
+				Assignee: declared("mary"),
+				Roles:    declared("john"),
+			},
+			actor: fakeActor{id: "john"},
+		},
+		{
+			name: "the assignee still authorizes its own actor beside a role",
+			eligible: interactor.Eligibility{
+				Assignee: declared("mary"),
+				Roles:    declared("john"),
+			},
+			actor:      fakeActor{id: "mary"},
+			authorized: true,
+		},
+		{
+			name: "a role composes with the candidate slots as a union",
+			eligible: interactor.Eligibility{
+				CandidateUsers: declared("mary"),
+				Roles:          declared("john"),
+			},
+			actor:      fakeActor{id: "john"},
+			authorized: true,
+		},
+		{
+			name: "a candidate user still authorizes beside a role",
+			eligible: interactor.Eligibility{
+				CandidateUsers: declared("mary"),
+				Roles:          declared("john"),
+			},
+			actor:      fakeActor{id: "mary"},
+			authorized: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.eligible.Authorize("t-1", tt.actor)
+			if tt.authorized {
+				require.NoError(t, err)
+
+				return
+			}
+
+			require.Error(t, err)
+		})
+	}
+}
+
+// TestEligibilityOpenRequiresNoRole pins that declaring a role closes an
+// otherwise-open task: a role is a restriction, which is its entire purpose.
+func TestEligibilityOpenRequiresNoRole(t *testing.T) {
+	roleOnly := interactor.Eligibility{Roles: declared("john")}
+
+	require.False(t, roleOnly.Open())
+	require.Error(t, roleOnly.Authorize("t-1", fakeActor{id: "stranger"}))
+	require.NoError(t, roleOnly.Authorize("t-1", fakeActor{id: "john"}))
+
+	// no triad member and no role — still open to anybody.
+	require.True(t, interactor.Eligibility{}.Open())
+}
+
+// TestDeniedEligibilityIgnoresRoles keeps the fail-closed value closed: its
+// declared-assignee slot must short-circuit the role branch too.
+func TestDeniedEligibilityIgnoresRoles(t *testing.T) {
+	denied := interactor.DeniedEligibility()
+	denied.Roles = declared("john")
+
+	require.False(t, denied.Open())
+	require.Error(t, denied.Authorize("t-1", fakeActor{id: "john"}))
+}

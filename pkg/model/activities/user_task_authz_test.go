@@ -279,3 +279,114 @@ func TestUserTaskResolveEligibility(t *testing.T) {
 		require.Error(t, e.Authorize("t1", fakeActor{id: "john"}))
 	})
 }
+
+// roleWithExpr builds an authorizing role of kind resolving through an
+// expression the fakeEngine answers.
+func roleWithExpr(
+	t *testing.T, kind hi.RoleKind, name string,
+) *hi.ResourceRole {
+	t.Helper()
+
+	ae, err := hi.NewResourceAssignmentExpression(
+		mockdata.NewMockFormalExpression(t))
+	require.NoError(t, err)
+
+	build := map[hi.RoleKind]func() (*hi.ResourceRole, error){
+		hi.RoleHumanPerformer: func() (*hi.ResourceRole, error) {
+			return hi.NewHumanPerformer(name, nil, ae, nil)
+		},
+		hi.RolePotentialOwner: func() (*hi.ResourceRole, error) {
+			return hi.NewPotentialOwner(name, nil, ae, nil)
+		},
+		hi.RolePerformer: func() (*hi.ResourceRole, error) {
+			return hi.NewPerformer(name, nil, ae, nil)
+		},
+		hi.RoleResource: func() (*hi.ResourceRole, error) {
+			return hi.NewResourceRole(name, nil, ae, nil)
+		},
+	}
+
+	r, err := build[kind]()
+	require.NoError(t, err)
+
+	return r
+}
+
+// TestUserTaskResolveEligibilityRoles — SRD-075 T-9/T-14: a declared
+// authorizing role joins the eligible set through the same resolution path the
+// triad uses; a declarative one does not; a task with no role behaves exactly
+// as before (ADR-020 v.3 §2.5.4).
+func TestUserTaskResolveEligibilityRoles(t *testing.T) {
+	ctx := t.Context()
+	eng := fakeEngine{val: values.NewVariable([]string{"john", "reviewers"})}
+
+	t.Run("a potential owner populates the role slot", func(t *testing.T) {
+		e := newUT(t, activities.WithRoles(
+			roleWithExpr(t, hi.RolePotentialOwner, "owners")),
+		).ResolveEligibility(ctx, nil, eng)
+
+		require.True(t, e.Roles.Declared)
+		require.Equal(t, []string{"john", "reviewers"}, e.Roles.IDs)
+		require.False(t, e.Open())
+	})
+
+	t.Run("a human performer populates it too", func(t *testing.T) {
+		e := newUT(t, activities.WithRoles(
+			roleWithExpr(t, hi.RoleHumanPerformer, "approver")),
+		).ResolveEligibility(ctx, nil, eng)
+
+		require.True(t, e.Roles.Declared)
+		require.Equal(t, []string{"john", "reviewers"}, e.Roles.IDs)
+	})
+
+	t.Run("declarative kinds leave the slot undeclared", func(t *testing.T) {
+		e := newUT(t, activities.WithRoles(
+			roleWithExpr(t, hi.RolePerformer, "machine"),
+			roleWithExpr(t, hi.RoleResource, "printer")),
+		).ResolveEligibility(ctx, nil, eng)
+
+		require.False(t, e.Roles.Declared)
+		require.True(t, e.Open(),
+			"declarative roles must not restrict an otherwise-open task")
+	})
+
+	t.Run("several authorizing roles union their identifiers",
+		func(t *testing.T) {
+			e := newUT(t, activities.WithRoles(
+				roleWithExpr(t, hi.RolePotentialOwner, "owners"),
+				roleWithExpr(t, hi.RoleHumanPerformer, "approver")),
+			).ResolveEligibility(ctx, nil, eng)
+
+			require.True(t, e.Roles.Declared)
+			require.Len(t, e.Roles.IDs, 4)
+		})
+
+	t.Run("a failed role expression stays declared and denies",
+		func(t *testing.T) {
+			e := newUT(t, activities.WithRoles(
+				roleWithExpr(t, hi.RolePotentialOwner, "owners")),
+			).ResolveEligibility(ctx, nil, fakeEngine{err: errors.New("boom")})
+
+			require.True(t, e.Roles.Declared)
+			require.Empty(t, e.Roles.IDs)
+			require.Error(t, e.Authorize("t-1", fakeActor{id: "john"}))
+		})
+
+	t.Run("a nil engine leaves the role declared but unresolved",
+		func(t *testing.T) {
+			e := newUT(t, activities.WithRoles(
+				roleWithExpr(t, hi.RolePotentialOwner, "owners")),
+			).ResolveEligibility(ctx, nil, nil)
+
+			require.True(t, e.Roles.Declared)
+			require.Empty(t, e.Roles.IDs)
+		})
+
+	t.Run("no role at all leaves the slot untouched", func(t *testing.T) {
+		e := newUT(t).ResolveEligibility(ctx, nil, eng)
+
+		require.False(t, e.Roles.Declared)
+		require.Empty(t, e.Roles.IDs)
+		require.True(t, e.Open())
+	})
+}

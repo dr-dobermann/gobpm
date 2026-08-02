@@ -38,6 +38,18 @@ type Eligibility struct {
 	Assignee        ResolvedSlot
 	CandidateUsers  ResolvedSlot
 	CandidateGroups ResolvedSlot
+
+	// Roles is the union of every authorizing-kind ResourceRole declared on the
+	// task (HumanPerformer, PotentialOwner), resolved to identifiers alongside
+	// the triad (ADR-020 v.3 §2.5.4).
+	//
+	// Unlike the triad slots it is NOT user-vs-group typed. BPMN's expressions
+	// return "Users or Groups" and a ResourceRole has nowhere to record which,
+	// so an identifier here matches either the actor's user id or one of its
+	// groups. That is deliberately looser than a slotted match, and it is the
+	// honest cost of a set the standard declines to discriminate — a modeler
+	// needing the distinction uses the triad, which exists for exactly that.
+	Roles ResolvedSlot
 }
 
 // DeniedEligibility returns an Eligibility that authorizes NOBODY — a declared
@@ -98,7 +110,8 @@ func (e Eligibility) Authorize(taskID string, actor hi.Actor) error {
 func (e Eligibility) Open() bool {
 	return !e.Assignee.Declared &&
 		!e.CandidateUsers.Declared &&
-		!e.CandidateGroups.Declared
+		!e.CandidateGroups.Declared &&
+		!e.Roles.Declared
 }
 
 // permits is the membership predicate Authorize wraps. Unexported so the denial
@@ -119,8 +132,19 @@ func (e Eligibility) permits(actor hi.Actor) bool {
 		return true
 	}
 
-	return e.CandidateGroups.Declared &&
-		intersects(e.CandidateGroups.IDs, actor.Groups())
+	if e.CandidateGroups.Declared &&
+		intersects(e.CandidateGroups.IDs, actor.Groups()) {
+		return true
+	}
+
+	// A role identifier may name a person or a group and says which of the two
+	// it is nowhere, so both halves of the actor's identity are checked. This
+	// branch sits last deliberately: the declared-assignee gate above returns
+	// before reaching it, which is what makes "an assignee excludes roles too"
+	// structural rather than a rule a later edit could forget.
+	return e.Roles.Declared &&
+		(slices.Contains(e.Roles.IDs, actor.UserID()) ||
+			intersects(e.Roles.IDs, actor.Groups()))
 }
 
 // intersects reports whether a and b share at least one element.

@@ -80,6 +80,10 @@ type UserTask struct {
 //
 //   - data.PropertyOption — the process-data property options
 //
+//   - RoleOption — WithRoles. A UserTask rejected this family until SRD-075,
+//     which is why a declared HumanPerformer / PotentialOwner could not reach
+//     the one task type whose eligibility they decide (ADR-020 v.3 §2.5.4).
+//
 //   - foundation.BaseOption — WithID, WithDoc
 //
 //     activity options:
@@ -114,7 +118,7 @@ func NewUserTask(
 	for _, o := range userTaskOpts {
 		switch opt := o.(type) {
 		case foundation.BaseOption, ActivityOption, taskOption,
-			data.PropertyOption:
+			data.PropertyOption, RoleOption:
 			utc.taskOpts = append(utc.taskOpts, opt)
 
 		case UsrTaskOption:
