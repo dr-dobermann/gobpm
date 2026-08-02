@@ -27,13 +27,10 @@ type processConfig struct {
 
 // AddLaneSet implements lanes.LaneSetAdder — a Process is one of the two
 // FlowElementsContainers BPMN hangs laneSets off.
+// A nil set cannot arrive here: lanes.WithLaneSets refuses one before calling,
+// and this config is unexported so nothing else can. A guard would be
+// unreachable code.
 func (pc *processConfig) AddLaneSet(ls *lanes.LaneSet) error {
-	if ls == nil {
-		return errs.New(
-			errs.M("a nil LaneSet isn't allowed"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
 	pc.laneSets = append(pc.laneSets, ls)
 
 	return nil

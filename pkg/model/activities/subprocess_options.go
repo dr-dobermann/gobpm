@@ -1,9 +1,6 @@
 package activities
 
-import (
-	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/lanes"
-)
+import "github.com/dr-dobermann/gobpm/pkg/model/lanes"
 
 // subProcessConfig collects the SubProcess-specific construction options.
 type subProcessConfig struct {
@@ -17,19 +14,12 @@ type subProcessConfig struct {
 	isTransaction bool
 }
 
-// Validate implements options.Configurator; subProcessConfig has no
-// self-contained invariant — NewSubProcess checks the variant exclusions.
-func (cfg *subProcessConfig) Validate() error { return nil }
-
 // AddLaneSet implements lanes.LaneSetAdder — a Sub-Process is one of the two
 // FlowElementsContainers BPMN hangs laneSets off.
+// A nil set cannot arrive here: lanes.WithLaneSets refuses one before calling,
+// and this config is unexported so nothing else can. A guard would be
+// unreachable code.
 func (cfg *subProcessConfig) AddLaneSet(ls *lanes.LaneSet) error {
-	if ls == nil {
-		return errs.New(
-			errs.M("a nil LaneSet isn't allowed"),
-			errs.C(errorClass, errs.EmptyNotAllowed))
-	}
-
 	cfg.laneSets = append(cfg.laneSets, ls)
 
 	return nil

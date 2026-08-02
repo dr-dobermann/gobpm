@@ -5,14 +5,14 @@ import (
 	"strconv"
 
 	"github.com/dr-dobermann/gobpm/pkg/errs"
-	"github.com/dr-dobermann/gobpm/pkg/model/options"
 )
 
 // LaneSetAdder is a container configuration that can hold lane sets — a Process
 // or a Sub-Process, the two FlowElementsContainers BPMN hangs `laneSets` off.
+// It deliberately does NOT embed options.Configurator: nothing here calls
+// Validate, so requiring it would force every container config to carry a stub
+// that exists only to satisfy this interface.
 type LaneSetAdder interface {
-	options.Configurator
-
 	AddLaneSet(ls *LaneSet) error
 }
 

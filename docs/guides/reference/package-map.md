@@ -57,6 +57,7 @@ you construct; `pkg/model/foundation` is the root every element embeds.
 | `pkg/model/service` | `service` | the `Operation` contract a Service Task runs and its `DataReader` read surface. |
 | `pkg/model/service/gooper` | `gooper` | `gooper.New(name, fn)` — wrap a plain Go func as an `Operation`. |
 | `pkg/model/hinteraction` | `hinteraction` | human-interaction model — `Actor`, `Assignment`, assignment slots for User Tasks. |
+| `pkg/model/lanes` | `lanes` | BPMN `Lane` / `LaneSet` — the engine's only **model-only** elements. Carried by `Process` and `SubProcess`, validated at registration, and **never executed**: place elements with `Lane.Place`, and note that nothing on a `flow.Node` reports its lane. |
 | `pkg/model/msgflow` | `msgflow` | message-flow choreography bridging a node's `Message` to the broker (ADR-014). |
 | `pkg/model/artifacts` | `artifacts` | BPMN artifacts — `Artifact`, `Association` (annotations, groups). |
 | `pkg/model/bpmncommon` | `bpmncommon` | shared model elements — `Message`, `CorrelationKey`, and other cross-cutting types. |

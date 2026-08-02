@@ -146,8 +146,6 @@ type fakeAdder struct {
 	got []*lanes.LaneSet
 }
 
-func (a *fakeAdder) Validate() error { return nil }
-
 func (a *fakeAdder) AddLaneSet(ls *lanes.LaneSet) error {
 	a.got = append(a.got, ls)
 
@@ -157,8 +155,6 @@ func (a *fakeAdder) AddLaneSet(ls *lanes.LaneSet) error {
 // failingAdder rejects everything, so WithLaneSets' error-collection path is
 // exercised rather than assumed.
 type failingAdder struct{}
-
-func (failingAdder) Validate() error { return nil }
 
 func (failingAdder) AddLaneSet(*lanes.LaneSet) error {
 	return errs.New(

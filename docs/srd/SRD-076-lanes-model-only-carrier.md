@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-08-02 |
 | Owner | Ruslan Gabitov |
 | Implements | [SAD-001](../design/SAD-001-vision-and-architecture.md) §14 (the library's §2.3.1 half; the model-only tier) and [conformance.md](../bpmn-spec/conformance.md) (Lane/LaneSet in scope, model-only) |
@@ -317,7 +317,71 @@ No downward references.
 
 ## §10 Implementation summary
 
-*(Filled at the final audit, before the status flip.)*
+### §10.1 Milestones as landed (branch `feat/conformance-element-coverage`)
+
+| Commit | Milestone |
+|---|---|
+| `af8eaf9` | this document |
+| `b75814e` | **M1** — `pkg/model/lanes`: the two types, constructors, accessors, `Place` |
+| `ed37e20` | **M2** — `ValidateLaneSets` + `WithLaneSets` + both container wirings |
+| `90c5cd5` | **M3** — the execution-invariance proof; tracker row 14 ❌ → 🟡 |
+
+### §10.2 Where reality diverged from the draft
+
+Three, all found by writing the code rather than by review.
+
+1. **The Table 10.135 same-type MUST moved from registration to construction**
+   (M1). FR-8 listed it with the container checks, but a `LaneSet` sees all its
+   lanes when it is built, so the violation is visible in the object itself —
+   the same test that split ADR-020's two role refusals.
+
+2. **That move exposed a flaw in §3.1's own shape.** `partitionElement` was
+   typed `*foundation.BaseElement`, which would have made the check **vacuous**:
+   every lane would carry the identical Go type, so no two could ever differ. It
+   is now `foundation.Identifyer`, an interface, so distinct partition elements
+   are distinct types and the constraint has something to compare. Had the check
+   stayed at registration, the vacuity would probably have shipped unnoticed.
+
+3. **Three unreachable guards, found by the coverage gate** (M2, final audit).
+   `checkSet`'s nil-Lane guard, and `AddLaneSet`'s nil guard on **both**
+   container configs. `NewLaneSet` refuses a
+   nil lane, so a lane set cannot hold one by the time validation runs. Deleted
+   rather than test-covered, per the standing rule about unreachable code. The
+   nil-`LaneSet` guard in `ValidateLaneSets` was kept — that function is
+   exported and a caller can hand it one directly. The `AddLaneSet` guards went
+   for the same reason: `WithLaneSets` refuses a nil before calling, and both
+   configs are unexported, so nothing else can reach them.
+
+4. **`LaneSetAdder` no longer embeds `options.Configurator`.** It did, mirroring
+   `RoleConfigurator` — but nothing here calls `Validate`, so the embed forced
+   `subProcessConfig` to carry a stub that existed only to satisfy an interface
+   requirement this SRD had invented. Dropping the embed deleted the stub
+   instead of testing it.
+
+Also worth recording: `WithLaneSets` **refuses** a nil lane set rather than
+skipping it, unlike the variadic tolerance of `WithRoles` and `WithProperties`.
+Silently dropping a whole partitioning is the exact loss this element exists to
+prevent.
+
+### §10.3 Verification
+
+- `make ci` green, including the examples half.
+- `make ci` reported **96.4% of 192 changed lines** on the first run — above the
+  95% gate but below this landing's own standard. The shortfall was the three
+  unreachable guards and the stub above; with those removed, every changed line
+  is covered except the `Option()` marker, which `COVER_EXCLUDE` exempts by
+  pattern (`func (…) Option() {}`).
+- **Two claims are proven structurally rather than by test.** `git diff
+  origin/master..HEAD -- pkg/model/flow/` is **empty**, so FR-5's "no element
+  interface changes" is a property of the diff; and nothing under `internal/`,
+  `pkg/thresher/`, `pkg/exec/` or `pkg/tasks/` imports `lanes`, so FR-9's "never
+  executed" is a property of the import graph.
+- 13 tests across §6. The load-bearing one is `TestLanesDoNotAffectExecution`:
+  the same process run bare and fully laned — several lanes, a nested set, and a
+  node deliberately on **two** lanes — completing identically.
+  `TestLaneNodeIdentityIsNotReachableFromNodes` pins the one-directional rule
+  structurally, so adding a `Lane()` accessor to an element would fail a test
+  rather than quietly falsify the claim.
 
 ## Open questions
 
