@@ -40,13 +40,37 @@ human-interaction design initially concluded BPMN was silent on task ownership.)
   operations** for acquiring, releasing or transferring ownership, and no ownership states
   in the activity lifecycle ([../state-machines/activity-lifecycle.md](../state-machines/activity-lifecycle.md),
   §13.3.2). Those are engine decisions.
-- `taskPriority` is not implemented by gobpm.
+- `taskPriority` is implemented as a **reader** (`UserTask.TaskPriority()`), which is the whole
+  of what the table specifies, and reported to the `TaskDistributor` on `TaskInfo`. The engine
+  assigns the value no meaning — the standard supplies no scale, direction, default or
+  behaviour that consumes it — and drives no decision from it. A **setter** exists
+  (`WithTaskPriority`) and is an engine extension, registered in
+  [SAD-001 §14.2](../../design/SAD-001-vision-and-architecture.md); no BPMN XML can set an
+  instance attribute, which is why Camunda added `camunda:priority`.
 
 ## Activity
 
-**Table 8.49 – Activity instance attributes** is referenced by §10.3.4.1 as the set a
-UserTask inherits. It is **not yet extracted here** — do not assume its contents; read the
-spec text before making a claim about them.
+> The User Task inherits the instance attributes of Activity (see Table 8.49).
+
+**This reference is an erratum in the specification.** Table 8.49 is *"Resource attributes and
+model associations"* (§8.4.12) and has nothing to do with instance attributes. The set a
+UserTask actually inherits is **Table 10.4 – Activity instance attributes** (§10.3, spec
+p. 151), and it has exactly one row:
+
+**Table 10.4 – Activity instance attributes**
+
+| Attribute | Description / Usage |
+|---|---|
+| `state: string = None` | See Figure 13.2 ("The Lifecycle of a BPMN Activity") in Section 13.3.2 for permissible values. |
+
+**Engine notes:**
+
+- The inherited set is therefore a single attribute, and gobpm implements it as the activity
+  lifecycle ([../state-machines/activity-lifecycle.md](../state-machines/activity-lifecycle.md)),
+  not as a separately stored field.
+- An earlier revision of this page repeated the spec's misreference and said Table 8.49 was
+  "not yet extracted". It was never extractable *as an instance-attribute table*, because it
+  is not one.
 
 ---
 

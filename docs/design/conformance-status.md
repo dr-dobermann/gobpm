@@ -4,7 +4,7 @@
 |---|---|
 | Type | **Continuously-current tracker** (not an SRD/ADR — updated as elements land, in the landing PR) |
 | Scope authority | [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) — Common Executable Subclass + the ComplexGateway extension |
-| Last verified | 2026-07-30, **human-task ownership landed** (ADR-020 v.2 / SRD-073 — `actualOwner` §10.3.4.1 Table 10.14, the first *instance* attribute the engine implements; §1 Human interaction + §3 leftovers); Ad-Hoc Sub-Process landed (ADR-035 / SRD-074 — #92 row 13 ✅, the last executable element in scope); prior full re-sweep post-SRD-071/072 (Persistence & State slices — #84 row 12 ✅; #79 row 10 closed 2026-07-22; §1 caught up with the row-1…11 landings; §5 order updated) |
+| Last verified | 2026-08-02, **the standard-named resource roles and `taskPriority` landed** (ADR-020 v.3 / SRD-075) — §3's last four ❌ rows closed, so **no ❌ remains anywhere in this tracker**: the resource model is executed in its expression mode with directory mode a registered deviation, both Table 10.14 instance attributes are implemented, and `DataState` + group-only reassignment are registered in SAD-001 §14.1. Prior: 2026-07-30, **human-task ownership landed** (ADR-020 v.2 / SRD-073 — `actualOwner` §10.3.4.1 Table 10.14, the first *instance* attribute the engine implements; §1 Human interaction + §3 leftovers); Ad-Hoc Sub-Process landed (ADR-035 / SRD-074 — #92 row 13 ✅, the last executable element in scope); prior full re-sweep post-SRD-071/072 (Persistence & State slices — #84 row 12 ✅; #79 row 10 closed 2026-07-22; §1 caught up with the row-1…11 landings; §5 order updated) |
 | Owner | Ruslan Gabitov |
 
 Status vocabulary: ✅ **executed** (model type + engine semantics + tests) ·
@@ -24,7 +24,7 @@ Status vocabulary: ✅ **executed** (model type + engine semantics + tests) ·
 | Data | `ItemDefinition`, `Property`, `InputOutputSpecification` (single-set 📐), `DataInput/Output` + associations + `Assignment` shapes, structural values (record/list/**map**, path addressing, commit-diff, native structs), **`DataObject`** (per-instance scope-resident), **`DataStore`/`DataStoreReference`** (engine-global port) | ADR-010/011, SRD-007…011, SRD-042…045, SRD-047; ADR-030/SRD-063/068 |
 | Correlation | `CorrelationKey`/`Property`/`RetrievalExpression`/`Binding`/`Subscription` — key-based, multi-key conversation threading | ADR-016, SRD-015/017 |
 | Operations | `Interface`, `Operation` (polymorphic: external message kind + in-process Go kind 📐-adjacent, SAD-001 §14.2) | ADR-011 v.5, SRD-011 |
-| Human interaction | The Camunda triad (`assignee`/`candidateUsers`/`candidateGroups`), `Rendering`, `Resource`(+`Parameter`) — **plus the ownership half**: `UserTask.actualOwner` (§10.3.4.1, **Table 10.14** — the first *instance* attribute the engine implements, a layer the generated `elements/` pages cannot show), `Claim`/`Unclaim`/`Reassign` as the operations the standard leaves to the engine, strict owner-only completion, and a performer record later nodes route on | ADR-020 v.1/SRD-034; ADR-020 v.2/SRD-073 |
+| Human interaction | The Camunda triad (`assignee`/`candidateUsers`/`candidateGroups`), `Rendering`, `Resource`(+`Parameter`) — the **ownership half**: `UserTask.actualOwner` (§10.3.4.1, **Table 10.14** — a layer the generated `elements/` pages cannot show), `Claim`/`Unclaim`/`Reassign` as the operations the standard leaves to the engine, strict owner-only completion, and a performer record later nodes route on — and the **standard-named roles**: `Performer`/`HumanPerformer`/`PotentialOwner` as a kind on `ResourceRole` (§10.3.4.1 gives the chain no attributes of its own), expression-mode assignment resolved at distribution into the eligible set, directory mode rejected at registration 📐, plus `taskPriority` (**both** Table 10.14 instance attributes now implemented) | ADR-020 v.1/SRD-034; ADR-020 v.2/SRD-073; ADR-020 v.3/SRD-075 |
 | Foundation | `BaseElement`, `Documentation`, `Import`, `FormalExpression` | core |
 
 ## 2. Gaps — mapped to issues
@@ -51,11 +51,11 @@ Ordered by the recommended implementation sequence (rationale in §4).
 
 | Item | Status | Disposition |
 |---|---|---|
-| `Performer`/`HumanPerformer`/`PotentialOwner`, `ResourceParameterBinding`, `ResourceAssignmentExpression` | ❌ | gobpm deliberately chose the Camunda triad (ADR-020). **Candidate for SAD-001 §14.1 registration** as an engine choice — currently an unregistered deviation |
-| `DataState` (the BPMN label element) | ❌ | gobpm's closed three-state model (ADR-010 §2.1) covers the semantics. **Candidate for §14.1 registration** |
+| `Performer`/`HumanPerformer`/`PotentialOwner`, `ResourceAssignmentExpression`, `ResourceParameterBinding` | ✅ 📐 | **Landed SRD-075 (ADR-020 v.3 §2.5.4).** The register was wrong here: these were never absent, they were **modelled and never executed** — declarable on any activity, surfaced to the distributor, consulted by nothing. Table 10.5 gives a `ResourceRole` **two mutually exclusive** assignment modes, and gobpm now implements one **completely**: a `HumanPerformer` / `PotentialOwner` resolves its `resourceAssignmentExpression` at distribution through the same path the triad uses, and its identifiers join the task's eligible set (matching the actor's user id **or** a group, since the standard carries no discriminator). The assignee gate still excludes roles; declaring a role closes an otherwise-open task. `Performer` and the bare `ResourceRole` stay **declarative** — BPMN 2.0 introduced `HumanPerformer` precisely because the generic role is not specific to people. **Directory mode** (`resourceRef` + bindings) is a 📐 **registered deviation** (§14.1): it needs an organizational directory the engine does not own, so an authorizing role carrying one is rejected at registration rather than carried inertly |
+| `DataState` (the BPMN label element) | 📐 | **Registered** (§14.1). BPMN leaves `DataState.name` unconstrained and assigns it **no semantics**; gobpm's closed `SrcState` pair (unavailable / ready, ADR-010 §2.1) carries the one distinction execution acts on. An open label would be an inert passenger that looks like it governs data flow |
 | `ImplicitThrowEvent` | ✅ | **Landed** with Multi-Instance `behavior` (SRD-056.B, row 4) — the activity-thrown, never-token-reached event carrying the behavior's EventDefinition; boundary-catchable |
-| `UserTask.taskPriority` (§10.3.4.1, Table 10.14) | ❌ | The other instance attribute beside `actualOwner`, which landed with ADR-020 v.2/SRD-073. A distribution and ranking concern with no bearing on ownership or execution semantics — deferred, not overlooked (ADR-020 §7). Implement when a distributor needs to sort an inbox by it |
-| Reassignment to a **group-only** nominee | ❌ | `Reassign` checks the nominee against the frozen triad, but group membership is authenticated for a *present* actor and cannot be asserted for an absent one — so a task eligible only via `candidateGroups` can be claimed by any member and reassigned to none (ADR-020 §2.5.2). Closing it needs the directory/resource-query subsystem ADR-020 §7 defers |
+| `UserTask.taskPriority` (§10.3.4.1, Table 10.14) | ✅ 📐 | **Landed SRD-075 (ADR-020 v.3 §2.11).** The table's entire normative text is "Returns the priority of the User Task" — no scale, no direction, no default, and no §13 behaviour reading it — and it is an *instance* attribute, so no XML can set one. The conformant surface is therefore a **reader**, and that is what landed (`TaskPriority()`, reported on `TaskInfo`). The **setter** is a 📐 registered extension (§14.2); the engine assigns the value no meaning and deliberately drives no decision from it, Ad-Hoc routing included |
+| Reassignment to a **group-only** nominee | 📐 | **Registered** (§14.1). `Reassign` checks the nominee against the frozen eligible set, but group membership is authenticated for a *present* actor and cannot be asserted for an absent one — so a task eligible only via `candidateGroups`, or via a role resolving to group identifiers, can be claimed by any member and reassigned to none (ADR-020 v.3 §2.5.2, §7). Bounded: the task stays claimable by every eligible member, so no work is stranded. Closing it needs the directory/resource-query subsystem ADR-020 §7 defers |
 | `InputSet`/`OutputSet` multiplicity | 📐 | Already registered (SAD-001 §14.1 — single set, per-parameter flags) |
 | Data-availability wait | 📐 | Already registered (§14.1 — error, never wait) |
 | Value-less item-aware elements | 📐 | Already registered (§14.1 — rejected at registration) |
@@ -92,8 +92,14 @@ the vendor `Extension*` model types.
 7. ~~#92 Ad-Hoc Sub-Process~~ — **landed** (row 13: ADR-035 / SRD-074).
    It was the last executable element in scope, so the element set for
    Process Execution Conformance is now complete.
-8. Remaining, doc-only: the §3 SAD-001 §14.1 registrations (triad,
-   DataState).
+8. ~~The §3 SAD-001 §14.1 registrations (triad, DataState)~~ — **done**
+   (ADR-020 v.3 / SRD-075). The resource model turned out to be
+   *modelled-but-unexecuted* rather than absent, so it landed as execution
+   plus a registration rather than a registration alone; `taskPriority`
+   landed with it. **§3 now carries no ❌ row**, and with §2 already fully
+   green the conformance register describes a complete Process Execution
+   Conformance surface: every element executed, every remaining divergence
+   deliberate and registered in SAD-001 §14.
 
 ## Maintenance
 
