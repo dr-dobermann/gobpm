@@ -616,3 +616,96 @@ func TestTimerWaiterHonorsInjectedClock(t *testing.T) {
 		}
 	}
 }
+
+// durationOnlyEDef builds the timer form SRD-077 unlocks: a lone timeDuration,
+// BPMN's one-shot relative timer (§10.5.5, Table 10.101). Before the guard fix
+// this combination could not be constructed at all.
+func durationOnlyEDef(
+	t *testing.T,
+	d time.Duration,
+) *events.TimerEventDefinition {
+	t.Helper()
+
+	return events.MustTimerEventDefinition(nil, nil,
+		goexpr.Must(nil,
+			data.MustItemDefinition(values.NewVariable(time.Duration(0))),
+			func(_ context.Context, _ data.Source) (data.Value, error) {
+				return values.NewVariable(d), nil
+			}))
+}
+
+// TestDurationOnlyTimerPlan pins the checkpoint plan for a duration-only timer
+// (SRD-077 T-8): the deadline is measured from now, and the cycle count is zero
+// because the timer is one-shot. ADR-033 §2.1 records that absolute deadline,
+// which is what lets a restored duration timer resume instead of restarting.
+func TestDurationOnlyTimerPlan(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	clk := clocktest.New(time.Now())
+	rt := enginert.Default().WithClock(clk)
+	start := clk.Now()
+
+	deadline, cycles, err := waiters.TimerPlan(
+		durationOnlyEDef(t, 30*time.Minute), nil, rt)
+	require.NoError(t, err)
+
+	require.Zero(t, cycles, "a duration-only timer is one-shot")
+	require.True(t, start.Add(30*time.Minute).Equal(deadline),
+		"deadline must be now+duration, got %v", deadline)
+}
+
+// TestDurationOnlyFires proves the runtime half of SRD-077 FR-1: a lone
+// timeDuration arms, fires EXACTLY once, and terminates.
+//
+// The waiter needs no change for this — Service skips its absolute-time branch
+// when next is zero, arms on duration, and processTimerEvent decrements
+// 0 -> -1 and ends. The guard was the only thing preventing the definition
+// from existing.
+func TestDurationOnlyFires(t *testing.T) {
+	require.NoError(t, data.CreateDefaultStates())
+
+	clk := clocktest.New(time.Now())
+	rt := enginert.Default().WithClock(clk)
+
+	hub := mockeventproc.NewMockEventHub(t)
+	hub.EXPECT().WaiterFired(mock.Anything).Return(nil).Maybe()
+
+	var mu sync.Mutex
+	deliveries := 0
+	fired := make(chan struct{}, 4)
+
+	ep := mockeventproc.NewMockEventProcessor(t)
+	ep.EXPECT().ProcessEvent(mock.Anything, mock.Anything).
+		RunAndReturn(func(context.Context, flow.EventDefinition) error {
+			mu.Lock()
+			deliveries++
+			mu.Unlock()
+
+			fired <- struct{}{}
+
+			return nil
+		})
+
+	w, err := waiters.NewTimeWaiter(hub, ep, durationOnlyEDef(t, time.Minute),
+		"", rt)
+	require.NoError(t, err)
+	require.NoError(t, w.Service(context.Background()))
+
+	advanceUntilFire(t, clk, fired, 10*time.Second)
+
+	select {
+	case <-w.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("duration-only timer did not terminate after its single fire")
+	}
+
+	// Past the deadline the waiter must stay silent — one-shot, not recurring.
+	clk.Advance(10 * time.Minute)
+
+	mu.Lock()
+	got := deliveries
+	mu.Unlock()
+
+	require.Equal(t, 1, got, "a duration-only timer must fire exactly once")
+	require.Equal(t, eventproc.WSEnded, w.State())
+}
