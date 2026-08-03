@@ -276,7 +276,7 @@ Detailed in **ADR-004 Runtime Environment Contract**. Lives in `runtime/` submod
 
 ## 13. Distribution & Scale
 
-> _**Status: preliminary, subject to refinement.** This section was sketched in the first review round but explicitly deferred for deeper discussion before SAD acceptance. The headline framing (additive overlay; an engine-owned async fetch-and-lock job queue per ADR-021; persistence as the foundation) is the working direction. The task-level worker-execution model is now decided in **ADR-021**; remaining specifics — remote protocol choice (ADR-004), cluster-wide state design — will be refined here or relocated to a dedicated ADR (ADR-008) before this SAD flips to Accepted._
+> _**Status: preliminary, subject to refinement.** This section was sketched in the first review round but explicitly deferred for deeper discussion before SAD acceptance. The headline framing (additive overlay; an engine-owned async fetch-and-lock job queue per ADR-021; persistence as the foundation) is the working direction. The task-level worker-execution model is now decided in **ADR-021**; remaining specifics — remote protocol choice (ADR-004), cluster-wide state design — will be refined here or relocated to a dedicated Distribution & Scale ADR before this SAD flips to Accepted._
 
 Single-process execution is the foundation. Distribution is achieved as an **additive overlay** through extension points and runtime-level dispatching — never by rewriting the core orchestration model.
 
@@ -324,11 +324,11 @@ These are solvable through the extension model:
 - Event broadcast layer (an extension of `EventHub`) for Signal distribution.
 - DB-backed `Repository` providing cluster-shared visibility into in-flight instances.
 
-The detailed design is **out of v.1 scope** — to be addressed in a future ADR (ADR-008) when concrete multi-node demand materializes.
+The detailed design is **out of v.1 scope** — to be addressed in a future Distribution & Scale ADR when concrete multi-node demand materializes.
 
 ### 13.5 Cluster-configuration validation (forward-looking note)
 
-When goBpm runs in cluster mode, certain extension configurations are fundamentally incompatible — in-memory `Repository`, in-memory `MessageBroker`, in-memory `EventHub`, fake `Clock`, and so on cannot honor cluster semantics. Each adapter SHOULD declare its cluster compatibility via the `ClusterAware` optional interface (per [ADR-002 §8.3](ADR-002-extension-architecture.md)); the runtime layer validates declared compatibility at startup when `cluster_mode` is enabled, and refuses to start with incompatible adapters wired. The substantive treatment — routing strategies, signal-broadcast backplane requirements, the full hard-block / warn / forces-explicit-choice matrix — lives in the future ADR-008.
+When goBpm runs in cluster mode, certain extension configurations are fundamentally incompatible — in-memory `Repository`, in-memory `MessageBroker`, in-memory `EventHub`, fake `Clock`, and so on cannot honor cluster semantics. Each adapter SHOULD declare its cluster compatibility via the `ClusterAware` optional interface (per [ADR-002 §8.3](ADR-002-extension-architecture.md)); the runtime layer validates declared compatibility at startup when `cluster_mode` is enabled, and refuses to start with incompatible adapters wired. The substantive treatment — routing strategies, signal-broadcast backplane requirements, the full hard-block / warn / forces-explicit-choice matrix — lives in that future Distribution & Scale ADR.
 
 ## 14. Conformance & Compliance Scope
 
@@ -451,7 +451,7 @@ instance-termination story in the runtime ([ADR-001 v.6](ADR-001-execution-model
 | ADR-005 | Gateways & Joins | **Accepted v.2** | Synchronizing join, non-synchronizing merge, OR-join, Event-Based Gateway + `Withdrawn`; fork-flow activation by gateway type |
 | ADR-006 | Events & Subscriptions | **Accepted v.1** | EventHub delivery, Terminate End Event, interrupting boundary events, wait nodes |
 | ADR-007 | In-Memory Long Waits | Draft | Subscription → goroutine ends → re-spawn (durable version → Persistence ADR) |
-| ADR-008 | Distribution & Scale | planned | The §13 preliminary content, when multi-node demand materializes |
+| — | Distribution & Scale | planned, unnumbered | The §13 preliminary content, when multi-node demand materializes; it takes the next free number when authored |
 | ADR-009 | Per-Instance Node Graph | **Accepted v.1** | Node-owned runtime state; each instance clones the node graph — resolves the ADR-001 §4.7 deferral and eliminates the shared-node data race |
 | ADR-010 | Process Data Model | **Accepted v.2** | Container-scope data plane + per-execution frames; §2.7 addressable data access (default scope by name + named `SOURCE/address` providers) |
 | ADR-011 | Process Data Flow | **Accepted v.7** | One input/output set per activity (per-parameter flags, no Set type); availability-gated start; polymorphic Operation (message + in-process Go kinds). v.6: **structural data** — the `Value` family gains a `Record` capability beside `Collection` (navigable `scalar｜list｜record`, schema-by-traversal); path addressing (`order.items[0].price`) in the data-access seam serving mappings/expressions/conditions; commit-diff change detection; native-struct interop via a per-type adapter registry (registration-time reflection standard, codegen upgrade). v.7: adds the **map kind** — a fourth `data.Map` capability (data-keyed dictionary, sorted enumeration, first-class delete, `["key"]` path step, per-entry commit-diff, native `map[string]V` lift; non-string keys stay opaque, an engine choice §14.2). Five slices landed (SRD-042/043/044/045/**047**): S1 read, S2 write, S3 commit-diff + DataChange, S4 native-struct adapters (`adapters.Wrap`/`Register` — the bounded-reflection engine choice, §6 Performance; codegen = additive follow-up), **S5 the map kind** (native-map writes are entry-level — Go maps aren't addressable, §14.2) |

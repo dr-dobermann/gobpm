@@ -42,7 +42,7 @@ ADR-015 decided the model; without it gobpm cannot start a process from a messag
 - **Context-based / predicate correlation** (`CorrelationSubscription` `dataPath` over process context, dynamic re-targeting) — later SRD.
 - **Event-based-gateway start** (the node type isn't implemented).
 - **`Conversation`** — out of conformance scope; keys are declared without it (§4.5).
-- **Durable subscriptions / persistence** across restart; **broker-quality** TTL / dead-letter / ordering (broker / ADR-008). The held-message buffer stays bounded + pull-on-subscribe (ADR-015 §2.5).
+- **Durable subscriptions / persistence** across restart; **broker-quality** TTL / dead-letter / ordering (broker / the Distribution & Scale ADR). The held-message buffer stays bounded + pull-on-subscribe (ADR-015 §2.5).
 - **Composite multi-message conversation-token threading** beyond a single derived key (key init-on-first + match-on-arrival is in; the full back-and-forth token is later).
 
 ## 3. Requirements

@@ -328,8 +328,8 @@ dehydrated instance's tokens still project their wait positions.
 - **Suspend/resume** (ADR-033 §2.6) is dehydration driven by an *operator*
   rather than by idleness, over the same machinery — a following slice.
 - **Multi-node wake** (a trigger arriving at engine B for an instance dehydrated
-  under engine A's lease) rides ADR-033 §2.8's ownership fencing and ADR-008's
-  distribution — out of scope here; a single-engine dehydrated instance is woken
+  under engine A's lease) rides ADR-033 §2.8's ownership fencing and the future
+  Distribution & Scale ADR — out of scope here; a single-engine dehydrated instance is woken
   by its own holder.
 
 The accompanying **SRD** lands the mechanism (`TrackDehydrated`, the idle

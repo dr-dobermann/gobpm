@@ -201,7 +201,7 @@ instance.
   and re-introduced only when service-backed messaging is needed.
 - **Reply/timeout/transactional delivery, message ordering guarantees, dead-letter
   handling** — broker-quality concerns owned by the broker implementation and the
-  future Distribution & Scale ADR (ADR-008), not the model layer.
+  future Distribution & Scale ADR, not the model layer.
 - **Durable subscriptions / persistence** of a pending `ReceiveTask` across a
   restart — the Persistence ADR.
 

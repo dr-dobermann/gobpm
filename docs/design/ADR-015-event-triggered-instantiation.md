@@ -177,7 +177,7 @@ When resolution yields **no target** (nothing waits and the message can't
 instantiate), the disposition (hold / drop / TTL, bounded buffer,
 pull-on-subscribe delivery) is a **broker** concern owned by
 [ADR-016 v.1 §2.7](ADR-016-message-correlation.md) (with
-[ADR-002 v.1](ADR-002-extension-architecture.md) / ADR-008). The
+[ADR-002 v.1](ADR-002-extension-architecture.md) / the Distribution & Scale ADR). The
 bounded-count floor (no-OOM) is non-negotiable; the starter raises no error to
 the publisher (fire-and-forget at this layer).
 
@@ -193,8 +193,8 @@ the publisher (fire-and-forget at this layer).
 - **Durable subscriptions / persistence** of starters and pending receivers
   across a restart — the Persistence ADR.
 - **Cross-instance delivery guarantees, ordering, dead-letter** — broker-quality
-  concerns of the broker implementation and the future Distribution & Scale ADR
-  (ADR-008).
+  concerns of the broker implementation and the future Distribution & Scale
+  ADR.
 
 ## 3. Consequences
 

@@ -217,7 +217,7 @@ message per implementation policy"). This ADR owns **resolution**, not **message
 lifetime**: the disposition of a no-target message (drop / hold / TTL /
 dead-letter) and how a held message reaches a later consumer are **broker
 concerns** ([ADR-002 v.1](ADR-002-extension-architecture.md) / the future
-Distribution & Scale ADR-008). Two properties hold regardless of broker:
+Distribution & Scale ADR). Two properties hold regardless of broker:
 
 - **Held buffering MUST be bounded** — a broker that holds no-target messages
   MUST cap retention (count and/or memory) and evict beyond it, so a backlog can
@@ -231,7 +231,7 @@ Distribution & Scale ADR-008). Two properties hold regardless of broker:
 The no-target disposition is intended to be a **configurable broker policy**:
 **drop vs keep**, **how many** (retention count), **how long** (TTL). The
 **bounded-count floor is non-negotiable**; TTL and drop/keep are operator
-choices. Designing those knobs is the broker's job (ADR-002 / ADR-008), not
+choices. Designing those knobs is the broker's job (ADR-002 / the Distribution & Scale ADR), not
 this ADR. No error is raised to the publisher (fire-and-forget at this layer).
 
 ### 2.8 Phasing
@@ -269,7 +269,7 @@ flowchart LR
 - **Conversation-token threading implementation** — decided (§2.4), Phase 2c.
 - **Durable correlation state across restart** — the Persistence ADR.
 - **Cross-instance delivery guarantees, ordering, dead-letter** — broker-quality
-  concerns (ADR-002 / ADR-008).
+  concerns (ADR-002 / the Distribution & Scale ADR).
 
 ## 3. Consequences
 
