@@ -65,10 +65,10 @@ make tag
 
 `make ci` runs the exact local-equivalent of GitHub CI (`.github/workflows/check.yml`),
 across all modules. Run it before pushing — if it's green, CI is green. The REQUIRED
-half is `ci-core`, and its nine steps run in this order:
+half is `ci-core`, and its ten steps run in this order:
 
-mock-check → **link-check** → tidy-check → lint → build → consumer-smoke →
-race tests → **diff-coverage gate** → govulncheck
+mock-check → **link-check** → **examples-module-check** → tidy-check → lint →
+build → consumer-smoke → race tests → **diff-coverage gate** → govulncheck
 
 Four of those are easy to meet for the first time as a red gate, so they are worth
 knowing before you push: **mock-check** regenerates the mocks and fails if the result
@@ -113,6 +113,14 @@ by `make tools`, and the alternatives add a non-Go toolchain plus a network
 dependency that reddens the gate for unrelated reasons.
 External URLs are therefore out of scope, and so are fenced and inline code spans —
 a Go generic like `values.NewArray[T](vals…)` is indistinguishable from a link.
+
+The **example-module check** (`make examples-module-check`) fails when a directory
+under `examples/` has no `go.mod`. `EXAMPLE_MODULES` is derived from
+`find -name go.mod`, so such a directory is invisible to the run sweep: the core
+build compiles it and nothing ever executes it. `examples/usertask` sat outside the
+gate that way. The check lives in the REQUIRED core gate rather than the
+non-blocking examples job on purpose — a regression here is a hole in *that* job,
+and a guard in the half that can go red unnoticed guards nothing.
 
 ```bash
 # One-time per machine: install the Go dev tools at the versions CI pins
