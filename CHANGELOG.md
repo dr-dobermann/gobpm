@@ -20,6 +20,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   computing `time.Now().Add(d)` at evaluation time — a workaround that bypasses
   the engine's injected `Clock`, so a substituted clock could not govern it.
 
+- **Timers can be written in ISO 8601, the notation the standard uses.**
+  `events.NewISO8601Timer("PT5M")` / `("R3/PT10H")` / `("2011-03-11T12:13:14Z")`
+  takes one string and disassembles it into the attributes the engine stores —
+  a recurrence fills both `timeCycle` and `timeDuration`, so the pair never has
+  to be written by hand. `NewISO8601TimerExpr` makes the timing **dynamic**:
+  the expression yields the ISO string when the timer arms, so a deadline can
+  come from the instance's own data. The form is named by the caller there
+  (`events.Time` / `Duration` / `Cycle`), because the value does not exist
+  until arming while the attribute is fixed at build time — which is how BPMN
+  itself resolves it. Neither path changes the runtime: a dynamic timer
+  installs an adapter expression that parses at evaluation, so the waiter
+  still reads a typed value exactly as before.
+
+  The parser (`pkg/iso8601`) refuses rather than approximates: `P1Y`/`P1M`
+  (not fixed-length), `P1W2D` (ISO makes the week form exclusive), fractional
+  components, lowercase designators, zero and negative values, and unbounded
+  recurrence `R/PT10H` — which nothing in the engine can consume safely. Each
+  refusal names its reason. No new dependency; it is hand-written over stdlib,
+  since `time.ParseDuration` reads Go's `10h` syntax and rejects every ISO form.
+
 - **`examples/usertask-sla`** — SLA warnings on a human task. Three *bounded,
   non-interrupting* timer boundaries mark 50% / 90% / 100% of a User Task's
   budget; the operator deliberately overruns, so every warning fires and the
