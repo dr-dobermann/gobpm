@@ -161,7 +161,7 @@ test that the failure is survivable.*
 |---|---|---|---|
 | A. **Release only after the wake commits**, and on failure push the hold's next attempt out by a backoff | Ordering matches the semantics — "the wait is over" becomes true only once it is; no new subsystem; the instance self-heals the moment the cause clears (the operator registers the missing version); reuses the existing timer wheel | The hold must be marked in-flight so a failing wake is not re-entered while in progress, and its deadline moved so it is not re-fired immediately | ✅ **chosen** |
 | B. **Re-hold on failure** — keep the current order, re-register in the error path | Smallest diff | Compensating-action design: re-registration is itself fallible and racy (a concurrent re-arm may have replaced the hold), and rebuilding a subscription after `ReleaseWaits` needs data the error path no longer has. Not destroying the thing is strictly better than restoring it | ❌ rejected |
-| C. **Periodic orphan sweep** — a background goroutine re-running `recoverInstances` on an interval to reclaim lapsed-lease records | Would also catch instances orphaned by another engine's crash | **Patrols for damage instead of preventing it.** A scan is a symptom of the real problem, and it would be implementing ADR-008's deferred multi-node story by the back door — the wrong layer for that decision (a FIX). With A in place there is nothing for it to find (§2.3), and the crash case is already handled at engine start | ❌ rejected |
+| C. **Periodic orphan sweep** — a background goroutine re-running `recoverInstances` on an interval to reclaim lapsed-lease records | Would also catch instances orphaned by another engine's crash | **Patrols for damage instead of preventing it.** A scan is a symptom of the real problem, and it would be implementing the Distribution & Scale ADR's deferred multi-node story by the back door — the wrong layer for that decision (a FIX). With A in place there is nothing for it to find (§2.3), and the crash case is already handled at engine start | ❌ rejected |
 
 **Why no scan is needed at all** (the §2.3 inventory, applied):
 
@@ -173,7 +173,7 @@ test that the failure is survivable.*
   (SRD-070). That is a bounded start-up step at a known lifecycle point, not a
   scanner.
 - *Another engine's orphans while we run* — multi-node wake, **explicitly
-  deferred** by ADR-007 v.2 §5 and SRD-071 v.1 §4.2 to ADR-008. Out of scope
+  deferred** by ADR-007 v.2 §5 and SRD-071 v.1 §4.2 to the Distribution & Scale ADR. Out of scope
   here by decision, not by omission.
 
 ### §3.1a Scope boundary: the instance starter is NOT a holder
@@ -477,7 +477,7 @@ rather than introduced by it — recorded here because the distinction between
 - **Cross-engine orphan reclamation.** An instance dehydrated under engine A and
   orphaned by A's crash is not picked up by an already-running engine B; it
   waits for a restart. Deliberately out of scope (§3.1.C): that is multi-node
-  coordination, deferred by ADR-007 v.2 §5 and SRD-071 v.1 §4.2 to ADR-008.
+  coordination, deferred by ADR-007 v.2 §5 and SRD-071 v.1 §4.2 to the Distribution & Scale ADR.
 - **Promote-to-ADR candidate** (§7): *irreversible cleanup is ordered after the
   fallible operation it belongs to.* One more site violating it justifies an ADR
   rather than a third FIX.

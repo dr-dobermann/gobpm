@@ -4,211 +4,279 @@
 | :---- | :---- |
 | **Author** | dr-dobermann |
 | **Status** | Living |
-| **Version** | 3.1 |
-| **Date** | 2026-07-30 |
-| **Subordinate to** | [SAD-001 v.1 Vision & Architecture](../design/SAD-001-vision-and-architecture.md) |
+| **Version** | 4.0 |
+| **Date** | 2026-08-03 |
+| **Subordinate to** | [SAD-001 v.1.1 Vision & Architecture](../design/SAD-001-vision-and-architecture.md) |
+| **Element ledger** | [docs/design/conformance-status.md](../design/conformance-status.md) |
 | **Conformance scope** | [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) |
 
-This roadmap sequences the work that delivers the architecture described in [SAD-001 v.1](../design/SAD-001-vision-and-architecture.md) and its subordinate ADRs ([ADR-001 v.6](../design/ADR-001-execution-model.md), [ADR-002 v.2](../design/ADR-002-extension-architecture.md), [ADR-003 v.1](../design/ADR-003-module-layout.md), [ADR-004 v.1](../design/ADR-004-runtime-environment-contract.md), [ADR-005 v.4](../design/ADR-005-gateways-and-joins.md)/[ADR-006 v.4](../design/ADR-006-events-and-subscriptions.md)/[ADR-007 v.2.1](../design/ADR-007-in-memory-long-waits.md)). It is **subordinate** to those documents: where they establish *what* and *why*, this roadmap orders the *when*. It does not introduce architecture — anything that looks like a new decision belongs in an ADR, not here.
+This roadmap orders the work that delivers [SAD-001 v.1.1](../design/SAD-001-vision-and-architecture.md). It is **subordinate** to the SAD and its ADRs: where they establish *what* and *why*, this orders the *when*. Anything here that looks like a new decision belongs in an ADR instead.
 
-It replaces the v2.0 roadmap, which was organised purely as BPMN-element phases and predated the SAD/ADR conception. The element ordering from v2.0 survives (it is sound), but it is now framed inside the dependency chain the SAD/ADRs imply: conception → structural foundation → element completion → runtime overlay.
+It replaces v3.1, which was organised as one product across six workstreams. That framing broke down for two reasons: its conformance premise was retracted two days after it was written (§2.2), and one of its six workstreams — "runtime overlay" — held an entire second product with its own users, its own module and its own obligations. v4.0 splits along that seam.
 
 ## 1. How this roadmap works
 
-gobpm is built **specification-first**. Every non-trivial landing follows the project's SDD flow:
+gobpm is built **specification-first**. Every non-trivial landing follows the SDD flow: a spec exists first (an **SRD** for one landing, a **FIX** for a bug) referencing its governing **ADR** up the hierarchy; the spec is agreed before implementation; implementation lands with tests and demonstrable verification; status flips and the change merges via PR.
 
-1. A spec exists first — an **SRD** (one landing's requirements) or **FIX** (a bug landing), referencing the governing **ADR** up the hierarchy.
-2. Spec is agreed before implementation.
-3. Implementation lands with tests; verification is demonstrable (`make ci` green, acceptance gate met).
-4. Status flips and the change merges via PR.
+Supporting discipline in force:
 
-Supporting discipline already in force:
+- **CI parity** — `make ci` mirrors the GitHub `check` workflow exactly. Green locally ⇒ green on CI. Every tool is version-pinned and installed by `make tools`; the Go toolchain is pinned in every `go.mod`.
+- **Gates that fail** — diff-coverage on changed lines (`COVER_MIN` 95, rising), `-race` tests, `govulncheck`, mock drift, consumer smoke, and a blocking Markdown link check. All 47 examples run end-to-end and assert their own outcome.
+- **Branch protection** — `master` takes changes only through a PR with a green `check`.
+- **Document hierarchy** — references go up or sideways only, version-pinned. SAD ← ADR ← SRD/FIX. Only SAD and ADR carry versions; SRD and FIX are one-shot and never retro-edited.
+- **Bilingual twins** — SAD/ADR get a Russian `.ru.md` twin at Accepted (EN canonical). This roadmap is a Living analytics artifact and stays EN.
 
-- **CI parity** — `make ci` mirrors the GitHub `check` workflow exactly (tidy → lint → build → race tests → govulncheck). Green locally ⇒ green on CI. Tooling is pinned (`make tools`, Go toolchain pinned in `go.mod`).
-- **Branch protection** — `master` takes changes only through a PR with a green `check`; no direct or force pushes, no admin bypass.
-- **Document hierarchy** — references go up or sideways only, version-pinned. SAD ← ADR ← SRD/FIX. This roadmap (a planning artifact subordinate to SAD-001) references up into SAD/ADR/conformance.
-- **Bilingual twins** — SAD/ADR/SRD/FIX get a Russian `.ru.md` twin once they reach Accepted (EN canonical). This roadmap is a Living analytics artifact, not in that set — it stays EN.
+## 2. Two products, one repository
 
-This is a **Living** document: workstreams below are updated as they advance, unlike one-shot SRDs.
+### 2.1 The division
 
-## 2. Current state (baseline refreshed 2026-07-30)
+SAD-001 §2 makes two user journeys first-class, and §9.1 makes the boundary mechanical rather than aspirational:
 
-Grounded in the code, not aspiration.
+```mermaid
+flowchart TB
+    host["Host Go application"]
+    subgraph engine["Engine — the library (root module)"]
+        core["pkg/ · internal/<br>execution semantics · model · extension seams"]
+        conv["pkg/convert<br>BPMN XML import / export"]
+    end
+    subgraph adapters["Adapters — one module each"]
+        ad["lua ✓ · dtable ✓<br>postgres · otel · oidc · casbin · feel · brokers"]
+    end
+    subgraph server["Server — gobpm-server (runtime/ module)"]
+        srv["HTTP/gRPC API · tenancy · AuthN/Z<br>diagnostics · Day-2 operations"]
+    end
+    host -->|imports| engine
+    server -->|imports| engine
+    server -->|imports| adapters
+    adapters -->|implement seams of| engine
+```
 
-### 2.1 Implemented (real logic + tests)
+| | **Engine (library)** | **Server (`gobpm-server`)** |
+|---|---|---|
+| Module | root | `runtime/` |
+| User | a Go developer embedding it | an operator deploying it |
+| Dependencies | stdlib + `uuid` (SAD-001 G2) | whatever it needs |
+| Rule | MUST NOT carry runtime baggage | MUST NOT reimplement the engine |
 
-- **Execution core (ADR-001 v.6 two-layer model).** `Instance` + `track` implemented (SRD-001, Accepted): one event-loop goroutine per instance is the sole state mutator; one goroutine per track; the **token is a projection** of a track's step (no stored type, no `split()`); lineage on `track.prev`. Instance lifecycle `Created → Active → Completed` (+ `Terminating → Terminated`). Token-state projection `Alive / WaitForEvent / Consumed` (`Withdrawn` reserved → ADR-005). Joins/events/long-waits are out of this core (ADR-005/006/007).
-- **Per-instance node graph (ADR-009 / SRD-006, Accepted).** Each instance clones the process template into its own private node graph (`Snapshot.Clone`); node **lifetime** state (join arrivals, timer position, subscriptions) is per-instance, eliminating the shared-node data race (proven under `-race`). Decides the ADR-001 §4.7 runtime-state-ownership deferral; durable persistence stays the future Persistence ADR.
-- **Process data model (ADR-010 / SRD-007, Accepted).** Persistent data lives in the instance's **data plane** (`internal/scope.Scope`): a container-scope tree with whole-operation atomicity and a reserved read-only RUNTIME subtree. Each node execution works on its own **execution frame** keyed by (track, node) — per-frame parameter/property instances, atomic batch commit on success, discard on failure (no scope residue). Nodes hold only immutable data definitions + ADR-009 lifetime state; the track builds a per-execution `RuntimeEnvironment` (also the `data.Source` for conditions). Structurally removes the 2026-06-11 audit's §1.2 critical data race and sheds the Instance's scope role (audit §2.3, first step). The `examples/process-data` example exercises the full data path across a Parallel fork.
-- **Extension skeleton (ADR-002 Accepted / SRD-004, Accepted).** The 9 extension contracts (Logger, Tracer, MetricsRecorder, Clock, Repository, MessageBroker, ExpressionEngine, AuthorizationProvider, WorkerDispatcher) live in `pkg/` each with a **bundled in-memory default**; `thresher.New(id, opts...)` functional-options assembly; the public `pkg/renv.EngineRuntime` / internal `RuntimeEnvironment` split. A zero-option engine runs today's BPMN end-to-end.
-- **CI gates (SRD-002 / SRD-003, Accepted).** Diff-coverage gate (`covercheck`, COVER_MIN now 95) judging only changed lines; `covercheck` extracted to its own module; `make ci` mirrors GitHub CI (tidy, lint, build, `-race`, diff-coverage, govulncheck).
-- **Event processing.** `EventHub` with the synchronous `Start` / blocking `Run` split (FIX-001, Accepted); event registration / propagation / waiter management. **Timer** waiter implemented. Race-clean under `-race` stress.
-- **Scope.** The data plane: hierarchical container-scope tree with atomic operations, walk-up lookup and shadowing, plus per-execution frames (`internal/scope`, ADR-010).
-- **Model elements.** Start/End events; **Exclusive** gateway (conditions, default flow); **Parallel (AND)** gateway (split + node-owned synchronizing join, ADR-005/SRD-005); **Service** and **User** tasks; sequence flow (conditions, default); data objects, item definitions, properties, I/O specification, data associations, `FormalExpression` + Go-native evaluator; service/operation; correlation *structures*; message/resource.
-- **Structural data — navigable values (ADR-011 v.7 §2.9, Accepted; SRD-042→045 + SRD-047).** The `Value` family carries **four kinds** — scalar, list (`Collection`), record (`Record`), and **map** (`Map`, the data-keyed dictionary). Values are navigable by path in every seam (`order.items[0].price`, `rates["EUR"]`) — conditions, expressions, mappings, service code — writable/assemblable by the same grammar (`SetPath`), change-detected per path at commit (the DataChange facts), and a host's **own Go structs and `map[string]V` fields participate live** via `adapters.Wrap` (wrap, not convert). Landed as five slices: S1 read · S2 write · S3 commit-diff · S4 native-struct adapters · **S5 the map kind (SRD-047 — sorted enumeration, first-class delete, `["key"]` step, native-map lift; the map kind is a recorded engine choice, SAD-001 §14.2).** The complete guide is `docs/guides/data/index.md`; six runnable examples (`structural-data`, `structural-output-mapping`, `data-change`, `native-structs`, **`maps`**).
-- **BPMN element completion (2026-07-30).** The Common Executable Subclass is **complete but for Ad-Hoc Sub-Process** — see [conformance-status.md](../design/conformance-status.md), the authoritative per-element tracker. Landed since the 2026-07-20 baseline: **Script Task** (ADR-031 / SRD-064+065 — the multi-engine seam + the pure-Go Lua battery), **Business Rule Task** (ADR-027 / SRD-060 + the `adapters/dtable` Decision Table adapter, ADR-029 / SRD-062), **Multi-Instance** (ADR-025 — sequential SRD-055, parallel SRD-056.A, `behavior` SRD-056.B, all on the off-loop iteration decorator), **Transaction Sub-Process + Cancel** (ADR-028 / SRD-061), **Compensation** (ADR-026 / SRD-059), **Escalation** (SRD-058), **Data Object + Data Store** (ADR-030 / SRD-063+068), and the **language-routed expression layer** (ADR-032 / SRD-066+067). Also **human-task ownership** (ADR-020 v.2 / SRD-073) — not a new element but the runtime half of an existing one: BPMN's `actualOwner` instance attribute (§10.3.4.1, Table 10.14) with `Claim`/`Unclaim`/`Reassign`, strict owner-only completion, and a performer record later nodes route on. It is the first *instance* attribute the engine implements, a layer the generated `elements/` extract pages structurally cannot show — which is why the gap went unnoticed until now.
-- **Persistence & State — first slices landed (2026-07-25…29).** The P0 gap is no longer open: **checkpoints + restart recovery** (ADR-033 / SRD-070 — Schema-1 consistent-cut documents pinned to the registered process version, the canonical tagged-JSON value codec, a Repository grown with CAS record versions and per-instance ownership leases for cluster-safe fencing, re-enter-the-node recovery, recorded-absolute-deadline timers) and **goroutine-releasing dehydration with wake-on-trigger** (ADR-007 v.2.1 / SRD-071 — the engine-held wait *is* the dehydrated instance's liveness; a failed wake keeps the hold and retries on backoff). Remaining: full-fidelity capture of in-flight Call/MI/compensation constructs, suspend/resume, and a durable (non-memory) Repository adapter.
-- **Engineering hygiene.** Typed value extraction `data.As[T]` with the data-layer generics policy (ADR-034 / SRD-072); invariant-only error discards now fail fast (FIX-028, closing the repo-wide sweep); **CI runs every example end-to-end** under a timeout, not just builds it (FIX-029 — closing the FIX-002 §5 follow-up).
-- **Module skeleton.** Multi-module monorepo: core (root), `runtime/` (stub binary), `adapters/dtable/` + `adapters/lua/` (**shipped adapters**), `adapters/sqlite/` (doc-only scaffold), `examples/*` (46 working modules, all executed by CI).
+The division is enforced by **import direction**, not by convention — which is why executing ADR-003's layout ([#269](https://github.com/dr-dobermann/gobpm/issues/269)) is the structural prerequisite it is: nothing in CI checks import direction today.
 
-### 2.2 Stubbed or missing
+**The converter stays in the engine.** SAD-001 N7 justifies it: the parser is stdlib `encoding/xml`, so it costs core no dependency, and the engine never imports the converter — the invariant holds by import direction. The server consumes it.
 
-- **Production extension adapters (per-adapter ADRs, ADR-002 §9):** two have shipped — `adapters/dtable` (Decision Table rule engine, ADR-029) and `adapters/lua` (Script Engine, ADR-031). The rest are still bundled in-memory defaults only (SRD-004): postgres `Repository`, OTel `Tracer`/`MetricsRecorder`, OIDC/Casbin `AuthorizationProvider`, FEEL `ExpressionEngine`, real message brokers — each deferred to its own ADR.
-- **Module layout (ADR-003):** the `pkg/` subpackage catalogue and the 12 migration steps are not started; `runtime/` and `adapters/sqlite/` are scaffolds with no real code.
-- **Persistence & rehydration (P0 per SAD §10/§13) — partially closed.** The first slices landed (§2.1: ADR-033/SRD-070 checkpoints + restart recovery; ADR-007 v.2.1/SRD-071 dehydration + wake-on-trigger). **Still missing:** a durable (non-memory) `Repository` adapter, full-fidelity capture of in-flight Call/MI/compensation constructs, and suspend/resume.
-- **BPMN elements — the remaining gap is `AdHocSubProcess` alone (#92).** The per-element ledger lives in [conformance-status.md](../design/conformance-status.md) (re-verified 2026-07-30); this roadmap no longer duplicates it. Everything else in the Common Executable Subclass + the ComplexGateway extension is executed, including the elements this section listed as absent through 2026-07-20 (Script and Business-Rule tasks, Multi-Instance, Transaction). Out-of-subclass items stay deliberate non-goals or registered deviations (`DataObjectReference`, the Performer family, `startQuantity`/`completionQuantity` ≠ 1) — see conformance-status §3.
-- **Messaging runtime:** Send/Receive tasks + Message throw/catch events (SRD-013/014, ADR-014 Accepted), **Message-Start event-triggered instantiation + key-based correlation** (SRD-015, ADR-015/016 Accepted — phase-2a/2b), **conversation-token threading** (SRD-017 — phase-2c), and the **Event-Based-gateway start** (Exclusive-start + Parallel-start instantiators, SRD-025, ADR-005 v.4 §2.12.4) have landed. Deferred: context-based/predicate correlation (phase-3), durable subscriptions.
-- **Fault tolerance:** no Incident / Retry / DLQ.
-- **Runtime overlay (ADR-004):** no server, API, tenancy, AuthN/Z wiring, diagnostics, health checks.
+### 2.2 What conformance means for each
 
-### 2.3 Document status & integrity
+gobpm targets **BPMN 2.0.2 §2.3 Process Execution Conformance**. Its two requirements have different owners:
 
-> **Note (2026-07-30).** The status inventory below is a **historical snapshot
-> through 2026-07-20**; it predates ADR-026…034 and the ADR-001/006/007 bumps.
-> For current document statuses read the documents themselves (each carries its
-> `Status`/`Version` header) and [conformance-status.md](../design/conformance-status.md)
-> for element coverage. The pins named here were correct when written.
+| Requirement | Owner | State |
+|---|---|---|
+| **§2.3.1** execution semantics (§13) | **Engine** | Element set **complete**; every remaining divergence deliberate and registered in SAD-001 §14 |
+| **§2.3.2** import of Process diagrams | **Server** | The converter covers an MVP subset; the claim is not yet sayable |
 
-- **Statuses:** SAD-001 v.1 Draft; **ADR-001 v.5 Accepted** (now v.6); **ADR-002 v.2 Accepted**; ADR-003 / ADR-004 v.1 Draft; **ADR-005 v.4 Accepted** (gateways & joins — Parallel via SRD-005; Exclusive + Inclusive splits + the OR-join §2.10 via SRD-021/SRD-022; the **Complex** gateway §2.11 — activation-driven threshold join — via SRD-023; FIX-006 fixed the OR-join all-branches-arrive hang; the **Event-Based** gateway §2.12 — mid-flow Exclusive deferred choice (the gate-as-router) via SRD-024, plus the Exclusive-start and Parallel-start instantiators via SRD-025; Conditional arms deferred); **ADR-006 v.2 Accepted** (events & subscriptions — external-signal delivery, Terminate/boundary cancellation triggers, wait-node subscription lifecycle, in-memory delivery contract + sole-hub waiter lifecycle; relocated from ADR-001 and authored in full as conception, grounded in `docs/bpmn-spec/`; **signal events** — throw/catch/broadcast + signal-start instantiation — **landed via SRD-026** (closing the §2.4 no-catcher no-op); remaining event behaviors ride future events-workstream SRD(s)); **ADR-007 v.1 Draft** (in-memory long-waits, relocated from ADR-001); **ADR-009 v.1 Accepted** (per-instance node graph — node-owned runtime state; decides the ADR-001 §4.7 deferral and eliminates the shared-node data race); **ADR-010 v.2 Accepted** (process data model — container-scope data plane + per-execution frames; v.2 added §2.7 addressable data access: default scope by plain name + named data sources by `SOURCE/address` (split on first `/`, provider-owned address space — JSONPath-capable), pluggable providers, `RUNTIME` shipped, `GetSources`/`List` discovery); **SRD-001 v.1 Accepted** (instance/track/token refactor); **SRD-005 v.1 Accepted** (Parallel gateway split + synchronizing join); **SRD-006 v.1 Accepted** (per-instance cloning, lands ADR-009); **SRD-007 v.1 Accepted** (lands ADR-010); **SRD-008 v.1 Accepted** (lands ADR-011's model-layer hardening — single-ownership I/O graph, GetKeys/RemoveParameter defects, Process.Validate at registration); **SRD-009 v.1 Accepted** (lands ADR-011 v.2 single-set I/O evaluation — drops the Set type, per-parameter optional/while-executing flags, runtime start-/completion-gates); **SRD-010 v.1 Accepted** (lands ADR-010 v.2 §2.7 — addressable data access: reserve `/` in data names, public `data.SourceProvider`, `RUNTIME` provider, path-qualified reads, `GetSources`/`List` discovery); **SRD-011 v.1 Accepted** (lands ADR-011 v.5 §2.6 — polymorphic Operation: external message kind + in-process Go kind composing a public `service.DataReader` with optional message I/O; `gooper.New` + functional options; `ServiceTask` = Execute+Put; example reads a property + `RUNTIME/STARTED_AT`); **SRD-012 v.1 Accepted** (lands ADR-012 — execution layering: the five execution contracts the model touches relocated to public packages `pkg/exec` (NodeExecutor/SynchronizingJoin/NodeDataConsumer/NodeDataProducer/Frame), `pkg/renv.RuntimeEnvironment`, `pkg/eventproc`, `pkg/interactor`; `internal/exec`+`internal/renv` retired; `pkg/model` imports zero `internal/*`; `model-no-internal` depguard rule; no behaviour change); **SRD-018 v.1 Accepted** (lands ADR-013's observe slice — public `thresher.InstanceHandle`: `State`/`Tokens`/`History`/`Data`/`WaitCompletion` + a best-effort-lossy observer event stream from `StartProcess`); **ADR-011 v.6 Accepted** (process data flow — model-layer semantics: one input/output set per activity with required/optional/while-executing as per-parameter flags and no reified Set type, availability-gated start with no data wait, the three association shapes, a **polymorphic Operation** — external message kind + in-process Go kind composing a public data reader with optional message I/O, model-layer hardening; landed via SRD-008 (hardening) + SRD-009 (drop-Set + gates), SRD-010 (data-plane addressable access, ADR-010 v.2 §2.7), and SRD-011 (the Go-operation service reader); v.2 dropped the Set type, v.3 made Operation polymorphic, v.4 aligned §2.6 to the data-source model (runtime vars read via `RUNTIME/<var>`), v.5 split Operation by execution locus (in-process composes reader + optional messages); **v.6 structural data** — the `Value` family gains a `Record` capability beside `Collection` (navigable `scalar｜list｜record`, schema-by-traversal), path addressing (`order.items[0].price`) in the data-access seam serving mappings/expressions/conditions, commit-diff change detection, native-struct interop via a per-type adapter registry (registration-time reflection standard, codegen upgrade), **fully landed via SRD-042 S1 (read path) + SRD-043 S2 (write path — SetPath, Collection.SetAt, output-mapping assembly-by-head) + SRD-044 S3 (commit-diff at Scope.Commit → (path, ChangeType) set + the DataChange facts) + SRD-045 S4 (native-struct adapters — `adapters.Wrap`/`MustWrap`/`Register[T]`, the type→adapter registry with the registration-time reflection builder, `gobpm:"..."` tags; the bounded-reflection engine choice registered in SAD-001 §6; codegen = additive follow-up)**; the Go-operation extension is registered in SAD-001 §14.2); FIX-001 v.1 **Accepted**; **FIX-003 v.1 landed** (audit event-subsystem + track-state bug sweep: timer close-owner, unregistration chain, RegisterEvent TOCTOU); **SRD-002 / SRD-003 / SRD-004 Accepted** (CI gates, covercheck, extension skeleton); **ADR-018 v.1 Accepted + SRD-029 v.1 Accepted** (boundary events & activity interruption — the first 0.1.0 element gap (SAD-001 §15.3): a **loop-owned `boundaryWatch` subscription** over the guarded activity's execution window on the ADR-017 single-writer core, a **per-track cancellable context** as the interruption signal, interrupting (cancel the guarded track + token on the exception flow) and non-interrupting (parallel fork + re-arm) firing, and the **Error path** — a `BpmnError` caught by an Error Boundary in `evFailed`, an Error End Event faults the instance; 0.1.0 triggers Timer (priority)/Message/Signal/Error, boundary-on-Sub-Process/Call-Activity deferred to 0.2.0; refines ADR-006 v.2 §2.2/§2.6 + ADR-001 v.6); **SRD-030 v.1 Accepted** (Terminate End Event — the **last** 0.1.0 element gap (SAD-001 §15.3): abnormal whole-instance termination on the ADR-017 loop's native event lane — `EndEvent.Exec` → `renv.Terminate()` → an `evTerminate` `trackEvent` the loop applies in FIFO order ahead of the track's own `evEnded`, so `stopAll` sets `stopping` first and the instance settles `Terminated` deterministically with no `select` race; running siblings interrupted by the per-track `t.cancel()` `stopAll` now issues; no compensation (the conformant default, opt-in deferred); implements ADR-006 v.2 §2.2 + ADR-001 v.6 §4.6). (ADR-008 Distribution & Scale — planned, the home for SAD §13. ADR-012 layering — **landed via SRD-012**; **ADR-014 message handling Accepted (landed via SRD-013/014)**; **ADR-015 event-triggered instantiation + ADR-016 message correlation Accepted (landed via SRD-015 — phase-2a/2b, SRD-017 — phase-2c conversation-token threading, and SRD-025 — Event-Based-gateway start; context-based correlation deferred)**; ADR-013 instance observability — **Accepted v.2** (v.1 conception: the public `InstanceHandle`, the one lifecycle/token/node channel, coarse control, `Shutdown`/`UnregisterProcess`; v.2: the engine-wide observable-event taxonomy — 13 kinds, one Reporter echoing to logs AND fanning out to an engine-scope observer registry, the visibility-policy seam); **observe slice landed via SRD-018**, the **seam wiring landed via SRD-041** (12 kinds) **+ SRD-044** (DataChange — all 13 kinds emit, the deferral closed by the ADR-011 commit-diff); control/engine-lifecycle slice queued; **ADR-006 events & subscriptions — Accepted v.2** (full conception incl. the audit 2.4/2.5 delivery + waiter-lifecycle remediation; v.2 added §2.2 the Terminate End Event & boundary-interruption cancellation realization); **signal events landed via SRD-026** (§2.4 no-catcher no-op now implemented); §2.5 graceful-shutdown rides the ADR-013 control slice. The two deliberate BPMN deviations ADR-011 decides — no data-availability wait, no multiple I/O sets — are registered in SAD-001 v.1 §14.1.)
-- **Document integrity:** FIX-001's earlier dead `SRD-001` reference (a *never-written* doc at the time) was repointed to the real sources (the `chore/ci-audit` `-race` gate + SAD-001 §9 / ADR-003 for the multi-module scaffold); ADR-004's legacy IAM-ADR reference is folded into the AuthN/Z model (§4.7 + `AuthorizationProvider`). A real **SRD-001** was later authored for the two-layer runtime refactor and is Accepted with its implementation (per the rule that SRD/FIX land in the same change-set as their code).
+This corrects v3.1, which derived scope from the **Common Executable Subclass** and cited a non-existent "§2.1.2". The Common Executable Subclass is a Process *Modeling* sub-class mandating XML Schema, WSDL and XPath — the wrong target. Two consequences follow: `ComplexGateway` is **required**, not an extension; and `Lane`/`LaneSet` were a genuine gap, since closed as model-only carriers (SRD-076).
 
-## 3. Sequencing principles
+The honest present-tense claim is therefore:
 
-1. **Conception before the features it governs.** An ADR should be Accepted (its acceptance gate closed) before the bulk of the work it specifies lands — per the SDD discipline. Stabilising ADR-002→003→004 unblocks everything structural.
-2. **Foundation before features.** Extension architecture (ADR-002) and module layout (ADR-003) are enablers the element work and the runtime both stand on. They come first.
-3. **Persistence/rehydration is P0.** SAD §10/§13 make save/restore the foundation for long-waits, restart recovery, and all distribution. It is sequenced early, not deferred to "day-2".
-4. **Embedded-library journey reaches MVP before the runtime overlay.** The runtime (ADR-004) is an additive overlay on a working library; the library must be usable first (SAD's two journeys).
-5. **Each element lands against the spec.** Every BPMN element is implemented + tested and cross-checked against the `docs/bpmn-spec/` KB and `conformance.md`'s in-scope list.
+> The library implements §13 execution semantics for the element set in `conformance.md`, with the deviations registered in SAD-001 §14.
 
-## 4. Workstreams
+**Not** "gobpm conforms". Conformance is a claim the *tool* makes, and it needs both halves.
 
-Workstreams are dependency-ordered tracks. They overlap in calendar time but have the ordering constraints noted. The chain **WS-A → WS-B → (WS-C, WS-D)** is firm; WS-E and WS-F attach where noted.
+A second gap sits between those sentences, and it is the engine's own: the element ledger is green on the strength of per-element review by the person who implemented each element. No gate protects it. That is what E1 exists for.
 
-### WS-A — Conception stabilization
+### 2.3 Sequencing: library first
 
-Close each ADR's test-based acceptance gate (§7 in each) and flip Draft → Accepted, then pin outgoing references and add the Russian twin.
+**gobpm is a library first and a server later.** The engine reaches 1.0 before server work starts.
 
-- Accept **ADR-001** (execution model) — **done (v.3 Accepted)**: scoped to the runtime core; §7 gate exercised and green (race-freedom, leak-free, fork, projection, completion, termination cascade); the gate's former rows for joins/withdrawn/long-wait/boundary/restart were **relocated** to ADR-005/006/007 + the Persistence ADR. Landed with SRD-001 (Accepted). Race-freedom noted as exercised in the engine (no downward FIX reference).
-- Accept **ADR-002 → ADR-003 → ADR-004** in that order (linear dependency: interfaces defined → placed → wired).
-- Author & accept **ADR-005 (Gateways & Joins) → ADR-006 (Events) → ADR-007 (Long Waits)**. ADR-005 and **ADR-006 are Accepted** (full conception, grounded in `docs/bpmn-spec/`); **ADR-007** remains a Draft seed relocated from ADR-001, to be authored & accepted with the long-wait implementation.
-- Accept **SAD-001**: requires §13 Distribution & Scale to be refined or relocated to a dedicated **ADR-008** first (it is explicitly flagged preliminary).
-- **Doc-integrity gaps cleared** (done): FIX-001's dead `SRD-001` reference (never-written at the time) repointed to the real sources; ADR-004's dead IAM-ADR reference folded into the AuthN/Z model. A real SRD-001 was later authored for the two-layer refactor and is Accepted with its code (per the rule that SRD/FIX docs land in the same change-set as their implementation).
+This is a scheduling decision as much as a product one. The project has one developer, and two tracks worked alternately is how both stall. The server milestones in §4 are **direction, not schedule** — they exist so engine work can be judged against where it leads, and so an item can be filed on the correct side the day it appears.
 
-*Output:* a stable, Accepted conception layer with version-pinned cross-references and twins.
+## 3. Engine track
 
-### WS-B — Core structural foundation
+### 3.1 Where it stands
 
-The enablers everything downstream needs. Governed by ADR-002 and ADR-003; each step is its own SRD.
+Grounded in the code, not aspiration. Baseline **v0.11.0** (2026-08-02).
 
-- **B1 Extension architecture (ADR-002).** Functional-options assembly on `thresher.New` (zero-option `New` produces a working engine); promote and extend `RuntimeEnvironment`; define the 11-interface catalogue with in-core default implementations (slog logger, no-op tracer/metrics, in-memory repository/message-broker/event-hub, wall-clock, allow-all authz, local task distributor/dispatcher, Go-native expression engine); startup configuration logging.
-- **B2 Module layout migration (ADR-003, 12 steps).** Scaffold `runtime/` and `adapters/` (partly done); promote `EventHub` → `pkg/messaging/`, `RuntimeEnvironment` → `pkg/renv/`, `Registrator` → `pkg/tasks/TaskDistributor`; create the seven net-new `pkg/` subpackages with their default-impl siblings; add depguard import-direction enforcement to CI; add conformance test-helper packages; clean up emptied `internal/` dirs. Each migration step lands independently with CI green.
-- **B3 Persistence & rehydration (P0).** *(First slice landed — ADR-033/SRD-070: the checkpoint document with the pinned version and the canonical value codec, the grown Repository (CAS + ownership leases, cluster-safe fencing), consistent-cut checkpoints on the loop, restart recovery with re-enter semantics and recorded-deadline timers, the restart-recovery example and the persistence guide. Remaining: full-fidelity capture of in-flight Call/MI/compensation constructs, goroutine-releasing dehydration + wake-on-trigger, suspend/resume.)* `Repository` interface + in-memory default (`pkg/repository/memrepo/`); checkpoint at every observable BPMN lifecycle transition (ADR-001 policy); long-wait token release + rehydration on trigger; restart recovery (query in-flight instances, re-spawn). Likely needs its own SRD set and possibly an ADR refinement of the checkpoint format.
+**Complete.** The BPMN element set for §2.3.1 — all five gateways, every activity type, the full event catalogue (Message, Timer, Signal, Error, Terminate, Conditional, Escalation, Compensate, Link, Cancel), every sub-process shape (embedded, Call Activity, Event, Transaction, Ad-Hoc), Standard Loop and Multi-Instance in all three forms, the data elements, and the human-interaction layer including both Table 10.14 instance attributes. Per-element detail lives in [conformance-status.md](../design/conformance-status.md); this roadmap does not duplicate it.
 
-*Constraint:* B1 precedes B2 (interfaces must exist before they're placed); B3 builds on B1's `Repository` interface.
+**The layers underneath.** Two-layer execution (ADR-001 v.6) with one event-loop goroutine per instance as sole state mutator; the per-instance node graph (ADR-009 v.1); the container-scope data plane with per-execution frames (ADR-010 v.2) and structural navigable values in four kinds (ADR-011 v.7); channel-based event processing (ADR-017 v.1); thirteen extension seams, each with a bundled in-memory default — ADR-002 v.2's original nine, since joined by the rule-engine, script-engine, task-distributor and data-store seams; versioned definition registration (ADR-019 v.1); the observability taxonomy of 13 fact kinds (ADR-013 v.2); consistent-cut checkpoints with restart recovery (ADR-033 v.2) and goroutine-releasing dehydration with wake-on-trigger (ADR-007 v.2.1).
 
-### WS-C — BPMN element completion
+**Reach.** 47 runnable example modules, all executed by CI. A guide tree under `docs/guides/`. Two shipped adapters — `adapters/lua`, `adapters/dtable`.
 
-Fill the Common Executable Subclass + ComplexGateway per `conformance.md`, in dependency order. Each element: implement + tests + cross-check against `docs/bpmn-spec/`. Builds on WS-B (assembly, scope, and — for durable elements — persistence).
+**Not there yet.**
 
-- **C1 Core flow** ✅ — None Start/End, Terminate End; Manual Task; Exclusive and Parallel gateways, Service/User tasks, sequence-flow conditions. **Human-task ownership landed** (ADR-020 v.2 / SRD-073): BPMN's `actualOwner` instance attribute (§10.3.4.1, Table 10.14) with `Claim`/`Unclaim`/`Reassign`, strict owner-only completion, and a performer record later nodes route on. Still open in that family — `taskPriority`, task **escalation** on a breached deadline, and reassignment to a group-only nominee (needs the directory subsystem).
-- **C2 Errors & fault tolerance** — 🟡 partly: the `BpmnError` contract and Boundary Error events with scope-chain resolution landed (SRD-029/049); **Incident / Retry / DLQ ([#80](https://github.com/dr-dobermann/gobpm/issues/80)) remain**, now unblocked by the WS-B3 persistence slices.
-- **C3 Messaging & timers** ✅ — message correlation engine, Message Start/Catch/Throw, Signal events, the Event-Based gateway, and timer **durability + hydration** (checkpointed deadlines, dehydration/wake — ADR-033/SRD-070, ADR-007 v.2.1/SRD-071).
-- **C4 Structure & reuse** ✅ — Embedded Sub-Process, Call Activity (by-name I/O across the boundary), Receive / Send tasks.
-- **C5 Business logic & iteration** ✅ — Script Task (the multi-engine seam + the Lua battery, ADR-031), Business Rule Task (the rule-engine seam + `gorules` + the Decision Table adapter, ADR-027/029), Standard Loop, Multi-Instance (sequential + parallel + `behavior`, ADR-025), Conditional events.
-- **C6 Full conformance** — 🟡 one element left: Inclusive + Complex gateways, Compensation, Escalation, Link, Transaction and Event Sub-Process have all landed; **Ad-Hoc Sub-Process ([#92](https://github.com/dr-dobermann/gobpm/issues/92))** is the remaining executable gap.
+| Gap | Consequence |
+|---|---|
+| **No conformance gate** | The ledger is asserted, not checked — a refactor can regress a green row silently |
+| **No durable Repository** | Restart recovery runs against an in-memory store, which recovers nothing once the process dies |
+| **No incidents or retry** | A technical failure has no record and no policy |
+| **`timeDuration` / `timeCycle` unreachable** | Only absolute-date timers can be modelled; "wait 5 minutes" cannot |
+| **Two role systems** | The Camunda triad and BPMN `ResourceRole` resolve separately and compose badly |
+| **No listeners** | Extension is observe-only; nothing can react in-band |
+| **Layout unexecuted** | ADR-003's `pkg/` catalogue and import-direction CI are not started |
+| **Four documents Draft** | SAD-001 v.1.1, ADR-003 v.1, ADR-004 v.1, ADR-023 v.3 |
 
-*Output:* full BPMN 2.0 Process Execution Conformance (Common Executable + ComplexGateway), validated by the conformance suite.
+### 3.2 What v1.0.0 commits to
 
-### WS-D — Runtime overlay (ADR-004)
+**For a library, 1.0 is an API commitment, not a feature claim.** The question is not what is built but what can still change shape. Sorted by that test:
 
-The standalone `gobpm-server`, built additively on WS-B interfaces and WS-C engine features. Each API service group is its own SRD.
+- **Still breaking** — the ADR-003 layout migration (it relocates every public package) and the postgres adapter (the first *second* implementation of `Repository`; validating an interface routinely changes it).
+- **Additive** — everything else, and safe in any 1.x minor.
 
-- 7-phase startup + reverse-order graceful shutdown with drain.
-- API service groups: process registry; instance lifecycle; **user task** (the inbox surface over the engine's `Take`/`Claim`/`Unclaim`/`Reassign`/`Complete` — note `Reassign` is deliberately unauthorized at the engine, so this group owns deciding who may invoke it and logging who did, ADR-020 v.2 §2.5.2); diagnostics (state/token-positions/history/manual intervention); event streaming; worker dispatch; health & ops.
-- Tenancy via `context.Context` (Repository enforces per-tenant filtering); AuthN provider chain (OIDC/JWT/mTLS, per service group); observability wiring (OTel); health checks (liveness/readiness); hierarchical YAML config.
+1.0 therefore contains **E0 + E1 + E2** and nothing beyond:
 
-### WS-E — Adapters
+- **E0**, because the layout migration is the last breaking change, and you cannot publish 1.0 and then relocate every import path.
+- **E1**, because 1.0 promises *semantics* as much as signatures. Shipping it on a conformance claim nothing tests makes the promise least affordable to break the one never verified.
+- **E2**, because a library whose restart recovery only works in memory is not usable in production, and `Repository` must be held against a real database before it is frozen.
 
-Production implementations of the extension interfaces, each in its own `adapters/*` module, scheduled when its first consumer materialises. Each: implement the public interface, pass the conformance helper suite, declare cluster compatibility (`ClusterAware`).
+The **core stays fully in-memory** on stdlib + `uuid` (G2); durability arrives through a separate adapter module. Both statements hold — the core is in-memory, the product is durable.
 
-- **Landed:** `adapters/dtable/` (the Decision Table rule engine — the first shipped adapter; ADR-029 / SRD-062); `adapters/lua/` (the Lua Script Engine — pure-Go gopher-lua behind the multi-engine script seam; ADR-031 / SRD-065).
-- `adapters/postgres/` (Repository), `adapters/otel/` (Tracer/MetricsRecorder), `adapters/oidc|jwt|mtls/` (AuthN), `adapters/casbin/` (AuthorizationProvider), `adapters/feel/` (ExpressionEngine — the seam now hosts engines side by side: the ADR-032 language registry routes each expression by its language URI, so FEEL plugs in beside the built-ins), `adapters/redis|nats-broker/` (MessageBroker). The existing `adapters/sqlite/` scaffold becomes a Repository adapter.
+### 3.3 Milestones
 
-### WS-F — Distribution & scale (future)
-
-Deferred until multi-node demand materialises; gated on WS-B3 persistence. Specified in a future **ADR-008** (the home for SAD §13's preliminary content):
-
-- Task-level remote execution via `WorkerDispatcher` (direct dispatch, not a queue).
-- Instance-level distribution: sticky routing per instance ID + failover via persistence rehydration.
-- Cluster-wide shared state: signal broadcast backplane, cross-node message correlation, cluster-config validation.
-
-## 5. Milestones
-
-Milestones are demonstrable capability checkpoints cutting across the workstreams.
-
-| # | Milestone | Contains | Demonstrates |
+| # | Milestone | Contains | Done when |
 |---|---|---|---|
-| **M0** | Conception accepted | WS-A | SAD-001 + ADR-001..007 Accepted; conception stable, refs pinned, twins in place. (ADR-001 + SRD-001 already Accepted with twins.) |
-| **M1** | Embedded-library MVP | WS-B1, WS-B2, WS-C1 | `gobpm.New(opts...)` clean assembly; Parallel+Exclusive gateways; Service/User/Manual tasks; None/Terminate events; working example under 20 lines (SAD G3) |
-| **M2** | Durable execution | WS-B3, WS-C2 | Checkpoint + restart recovery ✅; long-wait token release/rehydration ✅; **Incidents/Retry/DLQ + a durable Repository adapter outstanding** |
-| **M3** | Messaging, time & reuse | WS-C3, WS-C4 | Message correlation; Message/Signal/Timer events; Event-Based gateway; Sub-Process & Call Activity |
-| **M4** | Full conformance ✅ | WS-C5, WS-C6 | Script/Business-Rule tasks ✅; loops & multi-instance ✅; Inclusive/Complex gateways ✅; Compensation/Escalation/Link ✅; Transaction/Event sub-processes ✅; **Ad-Hoc Sub-Process ✅** (ADR-035 / SRD-074) — the Common Executable Subclass is complete, released in v0.10.0 |
-| **M5** | Standalone runtime | WS-D, WS-E (core adapters) | `gobpm-server` over HTTP/gRPC with postgres + otel + an AuthN provider |
-| **M6** | Distribution | WS-F | Multi-node operation — when demand materialises |
+| **E0** | **Conception & layout stabilization** | ADR-003's `pkg/` catalogue, its 11 migration steps and depguard import rules ([#269](https://github.com/dr-dobermann/gobpm/issues/269)); SAD-001 accepted by reducing §13 to a stated non-design ([#270](https://github.com/dr-dobermann/gobpm/issues/270)); ADR-004 and ADR-023 re-accepted | No Draft document remains; CI fails on a disallowed import edge; the public package layout is final |
+| **E1** | **Conformance evidence** | The element-coverage suite behind a CI target that fails ([#265](https://github.com/dr-dobermann/gobpm/issues/265)); §10.4.3 instance-attribute binding ([#263](https://github.com/dr-dobermann/gobpm/issues/263)); the process-level `ResourceRole` decision ([#264](https://github.com/dr-dobermann/gobpm/issues/264)); the directory / resource-query seam; **roles convergence**; **`timeDuration` + `timeCycle`** | A green run *is* the tracker — `conformance-status.md` becomes checked rather than asserted |
+| **E2** | **Fault tolerance & durable state** | Incidents, retry, token preservation ([#80](https://github.com/dr-dobermann/gobpm/issues/80)); `adapters/postgres`; checkpoint fidelity for in-flight Call/MI/compensation; suspend/resume; the history / audit store; **event listeners**; **business key** | An engine survives a kill and resumes from a real database; a failure is recorded, retried and visible |
+| → | **v1.0.0 — the public API frozen** | | E0–E2 green; the semver commitment begins |
+| **E3** | **Instance lifecycle operations** *(1.x)* | Token relocation, live variable writes, cross-version token transfer — the primitives under the server's admin and migration APIs | An operator surface can be built on them with no engine change |
+| **E4** | **Interchange element coverage** *(1.x)* | Import and export beyond the 7-element MVP subset; unblocks [#256](https://github.com/dr-dobermann/gobpm/issues/256) and the server's §2.3.2 | A modelled process survives XML → model → XML |
+| **E5** | **Beyond 1.0** | FEEL expression adapter; codegen for native-struct adapters; whatever real use demands | — |
 
-## 6. References
+**Roles convergence** and **event listeners** are pre-1.0 because both change the public surface.
 
-- [SAD-001 v.1 Vision & Architecture](../design/SAD-001-vision-and-architecture.md) — the architecture this roadmap delivers.
-- [ADR-001 v.6 Execution Model](../design/ADR-001-execution-model.md) — two-layer Instance + track; token as projection; ctx cancellation cascade (joins/events/long-waits/persistence relocated).
-- [docs/design/conformance-status.md](../design/conformance-status.md) — the authoritative per-element implementation tracker this roadmap defers to for BPMN coverage.
-- [ADR-002 v.2 Extension Architecture](../design/ADR-002-extension-architecture.md) — 11-interface catalogue; functional-options assembly; defaults.
-- [ADR-003 v.1 Module Layout](../design/ADR-003-module-layout.md) — `pkg/` subpackage catalogue; 12 migration steps; import-direction rules.
-- [ADR-004 v.1 Runtime Environment Contract](../design/ADR-004-runtime-environment-contract.md) — runtime overlay; startup/shutdown; API service groups; tenancy; AuthN/Z.
-- [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) — authoritative in/out-of-scope element list.
-- [docs/bpmn-spec/](../bpmn-spec/) — BPMN 2.0 normative reference KB.
+Convergence means the BPMN `ResourceRole` **lowers into** the triad rather than running beside it — one eligibility model, two authoring paths. Today they resolve separately, and `conformance-status.md` §3 records the symptom: *"the assignee gate still excludes roles; declaring a role closes an otherwise-open task."* A `PotentialOwner` and a `candidateGroups` entry mean the same thing and do not compose.
+
+Listeners are categorically distinct from the ADR-013 observer stream, which is asynchronous, best-effort lossy and read-only **by design**, so that a slow observer cannot stall the engine. A listener is the opposite: synchronous, in-band, and able to fail the activity. Camunda 7's Execution and Task Listeners are the alignment target. Each of the two needs its own ADR.
+
+## 4. Server track
+
+### 4.1 Where it stands
+
+`runtime/` is a `go.mod`, a `doc.go`, and a `cmd/gobpm-server/main.go` that prints "not yet implemented". ADR-004 v.1 is Draft. Nothing else exists.
+
+That is §2.3 applied, not an oversight. The milestones below record **where work goes when it starts**, so an item surfacing during engine work is filed on the right side instead of distorting an engine milestone.
+
+### 4.2 Milestones
+
+| # | Milestone | Contains |
+|---|---|---|
+| **S0** | Server foundation | ADR-004 accepted; `runtime/` becomes real code; 7-phase startup and reverse-order graceful shutdown with drain; hierarchical YAML config; liveness/readiness |
+| **S1** | Core API surface | Process registry; instance lifecycle; diagnostics (state, token positions, history); event streaming; worker dispatch; `adapters/otel` |
+| **S2** | Identity, tenancy & authorization | `TenantID` through `context.Context` with Repository-enforced filtering ([#73](https://github.com/dr-dobermann/gobpm/issues/73)); the AuthN chain (OIDC/JWT/mTLS); `adapters/casbin`; a directory provider behind the engine's seam |
+| **S3** | §2.3.2 import conformance | BPMN diagrams imported through the engine's converter; MIWG fixture selection; the point at which gobpm can state Process Execution Conformance |
+| **S4** | Human interaction surface | The user-task inbox over `Take`/`Claim`/`Unclaim`/`Reassign`/`Complete`; Form Registry ([#75](https://github.com/dr-dobermann/gobpm/issues/75)) |
+| **S5** | Day-2 operations | Incident resolution and the DLQ surface; migration plans, batch and dry-run ([#95](https://github.com/dr-dobermann/gobpm/issues/95)); the admin API and audit trail ([#96](https://github.com/dr-dobermann/gobpm/issues/96)) |
+| **S6** | Distribution | The Distribution & Scale ADR; task-level remote execution; sticky routing with failover — when multi-node demand materialises |
+
+`Reassign` is deliberately unauthorized at the engine (ADR-020 v.3 §2.5.2), so S4 owns deciding who may invoke it and recording who did.
+
+## 5. Adapters — the shared tier
+
+Each adapter is its own module implementing an engine seam, scheduled when its first consumer materialises, and declaring cluster compatibility via `ClusterAware`.
+
+| Adapter | Seam | Scheduled |
+|---|---|---|
+| `lua` ✓ | Script engine | Shipped (ADR-031 v.1) |
+| `dtable` ✓ | Rule engine | Shipped (ADR-029 v.1) |
+| `postgres` | Repository | **E2** — a production *embedded* user needs durable state with no server involved |
+| `otel` | Tracer + MetricsRecorder | S1 |
+| `oidc` / `jwt` / `mtls`, `casbin` | AuthN, AuthorizationProvider | S2 |
+| `feel` | Expression engine — plugs into ADR-032's language registry beside the built-ins | E5 |
+| `redis` / `nats` | MessageBroker | On demand |
+
+`adapters/sqlite/` is an empty reservation; it becomes a Repository adapter or is removed.
+
+## 6. Issue ↔ milestone map
+
+The alignment artifact. Every open issue carries an `engine` or `server` label and exactly one milestone; items below without a number are not yet filed.
+
+| Milestone | Filed | Not yet filed |
+|---|---|---|
+| **E0** | [#269](https://github.com/dr-dobermann/gobpm/issues/269) layout · [#270](https://github.com/dr-dobermann/gobpm/issues/270) SAD-001 | ADR-004 and ADR-023 re-acceptance |
+| **E1** | [#265](https://github.com/dr-dobermann/gobpm/issues/265) suite · [#263](https://github.com/dr-dobermann/gobpm/issues/263) instance attributes · [#264](https://github.com/dr-dobermann/gobpm/issues/264) process roles | directory seam · roles convergence · `timeDuration`/`timeCycle` |
+| **E2** | [#80](https://github.com/dr-dobermann/gobpm/issues/80) fault tolerance | `adapters/postgres` · checkpoint fidelity · suspend/resume · history store · event listeners · business key |
+| **E3** | — | intervention primitives · cross-version token transfer |
+| **E4** | [#256](https://github.com/dr-dobermann/gobpm/issues/256) diagrams | converter element coverage |
+| **S2** | [#73](https://github.com/dr-dobermann/gobpm/issues/73) tenancy & IAM | the AuthN chain |
+| **S4** | [#75](https://github.com/dr-dobermann/gobpm/issues/75) Form Registry | task inbox API |
+| **S5** | [#95](https://github.com/dr-dobermann/gobpm/issues/95) migration API · [#96](https://github.com/dr-dobermann/gobpm/issues/96) admin tools | incident resolution and DLQ surface |
+| **S0 / S1 / S3 / S6** | — | server foundation · core API · import conformance · distribution |
+
+Three former epics straddled the division and were split, engine half from server half: fault tolerance (#80), migration (#95), administration (#96). The engine half is the semantics; the server half is the operator surface.
+
+## 7. Reading v3.x
+
+v3.1's workstreams and milestones map forward as follows. The GitHub "Phase 0–5" milestones predate even v3.0 and are closed.
+
+| v3.x | v4.0 |
+|---|---|
+| WS-A conception | E0 |
+| WS-B1 extension architecture | done (ADR-002 v.2) |
+| WS-B2 module layout | E0 |
+| WS-B3 persistence | partly done; the remainder is E2 |
+| WS-C element completion | done — the ledger is `conformance-status.md` |
+| WS-D runtime overlay | the entire **server track**, S0–S5 |
+| WS-E adapters | §5 |
+| WS-F distribution | S6 |
+| M0–M4 | superseded; M4's "full conformance ✅" was an overclaim (§2.2) |
+| M5 standalone runtime | S0–S5 |
+| M6 distribution | S6 |
+
+v3.1's §2.3 document-status inventory is **deleted**, not migrated. It was a 6,000-character paragraph already labelled a stale snapshot; every document carries its own `Status`/`Version` header, and [conformance-status.md](../design/conformance-status.md) carries element coverage.
+
+## 8. References
+
+- [SAD-001 v.1.1 Vision & Architecture](../design/SAD-001-vision-and-architecture.md) — the architecture this roadmap delivers; §2 two journeys, §9.1 import rules, §14 registered deviations.
+- [docs/design/conformance-status.md](../design/conformance-status.md) — the authoritative per-element tracker.
+- [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) — the in/out-of-scope element list.
+- [ADR-002 v.2 Extension Architecture](../design/ADR-002-extension-architecture.md) · [ADR-003 v.1 Module Layout](../design/ADR-003-module-layout.md) · [ADR-004 v.1 Runtime Environment Contract](../design/ADR-004-runtime-environment-contract.md) — the seams, their placement, and the server contract.
+- [docs/backlog.md](../backlog.md) — the short-term working list. Long-term and blocked work lives in GitHub issues.
 
 ## Changes
 
+### 2026-08-03
+
+- **v4.0 — split into engine and server tracks.** Reorganised around the two
+  products SAD-001 §2 always described but the plan never separated: the
+  **engine** (root module, §2.3.1 execution semantics) and the **server**
+  (`runtime/`, §2.3.2 import). WS-A…F and M0–M6 are retired in favour of
+  **E0–E5** and **S0–S6**, matched one-to-one by GitHub milestones, with an
+  issue↔milestone map (§6) as the alignment artifact. **Library first**: the
+  engine reaches 1.0 before server work starts (§2.3). **v1.0.0 is redefined as
+  an API commitment** rather than a feature claim — E0 + E1 + E2, then freeze
+  (§3.2) — with durability arriving through an adapter while the core stays
+  in-memory.
+  Corrections carried in: the **Common Executable Subclass** premise and the
+  phantom "§2.1.2" citation are replaced by §2.3 with its two owners; M4's
+  "full conformance ✅" is retracted as an overclaim; the Ad-Hoc
+  "remaining gap" contradiction is gone (it landed in v0.10.0); ADR-003 has
+  **11** migration steps, not 12; the §2.3 status inventory is deleted rather
+  than annotated; and the reserved **ADR-008** number is released, so
+  Distribution & Scale is now referred to by topic.
+
 ### 2026-07-30
 
-- **v3.1 — current-state refresh (§2) and the element-tracker split.** §2.1 gains
-  three entries: **BPMN element completion** (Script + Business-Rule tasks,
-  Multi-Instance in all three shapes, Transaction+Cancel, Compensation,
-  Escalation, Data Object + Data Store, the language-routed expression layer),
-  **Persistence & State** (the ADR-033/SRD-070 checkpoint + restart-recovery
-  slice and the ADR-007 v.2.1/SRD-071 dehydration + wake-on-trigger slice), and
-  **engineering hygiene** (`data.As[T]` with ADR-034; the FIX-028 discard sweep;
-  the FIX-029 CI examples run-step). §2.2 stops duplicating the element ledger —
-  the remaining executable gap is **Ad-Hoc Sub-Process (#92)** alone, and
-  [conformance-status.md](../design/conformance-status.md) is named the
-  authoritative per-element tracker. Persistence is no longer listed as wholly
-  missing (a durable Repository adapter, in-flight-construct fidelity and
-  suspend/resume remain); two adapters have shipped (`dtable`, `lua`). §2.3's
-  status inventory is re-framed as a dated historical snapshot rather than a
-  present-tense claim. Version pins refreshed where the roadmap speaks in its
-  own voice (ADR-001 v.6, ADR-005 v.4, ADR-006 v.4, ADR-007 v.2.1).
-
-### 2026-07-20 (b)
-
-- **Link events landed (SRD-057, ADR-006 v.4 §2.8 — #90).** Intra-process GOTO
-  by static name-pairing (throw source → same-name catch target within one
-  Process level); resolved at graph wiring, validated fail-fast at registration,
-  the throw redirects (no hub/waiter), the catch is a bypassed flow label. §2.2
-  moves Link to *landed*; C6 now needs only Compensation of the #90
-  set. The kickoff brief is superseded.
+- **v3.1 — current-state refresh (§2) and the element-tracker split.** §2.1 gained
+  BPMN element completion, the Persistence & State slices, and engineering
+  hygiene; §2.2 stopped duplicating the element ledger, naming
+  `conformance-status.md` authoritative; §2.3's inventory was re-framed as a
+  dated historical snapshot.
 
 ### 2026-07-20
 
-- **Current-state refresh (§2).** Marked the **structural-data workstream complete** through the **map kind** (S5, SRD-047 — ADR-011 now Accepted v.7): §2.1 gains a "Structural data — navigable values" entry (four value kinds: scalar/list/record/**map**). Rewrote the §2.2 BPMN-element gap to reality — Inclusive/Complex/Event-Based gateways, Manual task, Boundary + Event Sub-Process, Embedded Sub-Process, Call Activity, Conditional events, and Standard Loop have all landed since the 2026-06-12 baseline; the genuine remaining executable-conformance gap is Script/Business-Rule tasks, Multi-Instance, Transaction/Ad-Hoc Sub-Process, and the Compensation/Escalation/**Link** events (plus the P0 durable-persistence layer). Positioned **Link events** as the next element pickup with a scoping brief at `docs/analytics/link-events-kickoff.md`.
+- Link events landed (SRD-057); the structural-data workstream marked complete
+  through the map kind (SRD-047).
 
 ### 2026-06-06
 
-- **v3.0 — full rework.** Re-framed from BPMN-element phases to dependency-ordered workstreams (A conception → B structural foundation → C element completion → D runtime overlay → E adapters → F distribution) crossed with capability milestones (M0–M6). Added a grounded "current state" baseline (§2) and explicit sequencing principles (§3). Aligned to SAD-001 v.1 and ADR-001..004 v.1, and to the project's SDD / CI-parity / branch-protection / doc-hierarchy method. The v2.0 element ordering is preserved inside WS-C.
+- **v3.0 — full rework.** Re-framed from BPMN-element phases to
+  dependency-ordered workstreams crossed with capability milestones M0–M6.
+  Added a grounded current-state baseline and explicit sequencing principles.
 
 ### 2026-05-29
 
-- Roadmap refreshed (v2.0): aligned with SAD-001 Vision & Architecture; §1.1 expanded with Security/Observability extension categories; Phase 0 reframed (IAM/multitenancy as runtime concern); ComplexGateway noted as in-scope extension; References added.
+- v2.0: aligned with SAD-001; §1.1 expanded with Security/Observability
+  extension categories; Phase 0 reframed (IAM/multitenancy as a runtime
+  concern).
 
 ### 2026-03-29
 
-- v1.05: translated to English; stages synchronised with architectural GAP analysis. Added Script Task, Event Sub-Process, Complex Gateway; refined Timer Events with Non-interrupting support.
+- v1.05: translated to English; stages synchronised with the architectural GAP
+  analysis. Added Script Task, Event Sub-Process, Complex Gateway.

@@ -199,7 +199,7 @@ per-instance-исполнительской модели, которую реш�
   только когда понадобится service-backed messaging.
 - **Reply/timeout/transactional доставка, гарантии порядка сообщений,
   dead-letter-обработка** — broker-quality-заботы, принадлежащие реализации
-  брокера и будущему Distribution & Scale ADR (ADR-008), не model-слою.
+  брокера и будущему ADR Distribution & Scale, не model-слою.
 - **Durable subscriptions / персистентность** ожидающего `ReceiveTask` через
   рестарт — Persistence ADR.
 

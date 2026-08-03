@@ -249,8 +249,8 @@ pagination stay out — a future history ADR's territory.
 ### 2.8 Many engines, one store — cluster-safe locking
 
 Several engine processes MAY share one database. This layer owns the
-**correctness** of that sharing; the *distribution* of work stays with
-ADR-008 (§5). The model:
+**correctness** of that sharing; the *distribution* of work stays
+with the Distribution & Scale ADR (§5). The model:
 
 - **Instance ownership is a lease.** An engine claims an instance
   before running it (at start, hydration, or wake-on-trigger): a
@@ -281,8 +281,8 @@ ADR-008 (§5). The model:
 - **Deployment parity is the operator's contract.** A checkpoint pins
   its process version (§2.1); an engine can only claim instances whose
   pinned version it has registered — a claim against an unregistered
-  version is refused loud. Distributing definitions themselves is
-  ADR-008 territory.
+  version is refused loud. Distributing definitions themselves is the
+  Distribution & Scale ADR's territory.
 
 ### 2.9 Observability
 
@@ -307,7 +307,7 @@ and masking rules (names and counts, never payload values).
 | The job queue's own durability, lock reclaim | ADR-021 v.1 §2.4/§2.7 |
 | The completion ledger must survive (compensability of completed work) | ADR-026 v.1 §2.7 |
 | The BPMN standard is silent on storage mechanics | no clause governs persistence in §13–§14; the extract covers only the state machines |
-| Instance-level distribution rides sticky ownership + persistence rehydration | SAD-001 v.1 §13 (preliminary; ADR-008's future home) |
+| Instance-level distribution rides sticky ownership + persistence rehydration | SAD-001 v.1 §13 (preliminary; the future Distribution & Scale ADR's home) |
 | Composition at construction; no cross-module imports | ADR-003 v.1 §4.4 (the depguard-enforced rule §2.7 promotes) |
 
 ## 4. Alternatives considered
@@ -325,9 +325,9 @@ and masking rules (names and counts, never payload values).
 
 - **Work distribution** (sticky routing, rebalancing, cluster-wide
   signal broadcast and correlation indexes, definition distribution) —
-  ADR-008 (SAD §13), on top of this layer's state of record and §2.8
-  locking. The boundary: THIS ADR makes engines sharing a store
-  **safe**; ADR-008 makes them **cooperative**.
+  the Distribution & Scale ADR (SAD §13), on top of this layer's state
+  of record and §2.8 locking. The boundary: THIS ADR makes engines
+  sharing a store **safe**; that ADR makes them **cooperative**.
 - **History / audit store** (queryable execution history beyond the
   live checkpoint) — a future ADR; the observer stream remains the
   live audit today.
@@ -348,4 +348,4 @@ finalized); then suspend/resume and the engine pause.
 |---|---|---|---|
 | v.2 | 2026-07-27 | Ruslan Gabitov | Pin refresh: ADR-007 authored in full and Accepted (v.2 — the in-memory dehydration & wake-on-trigger mechanism this ADR's §2.4/§2.5 delegated to), so the §Refines and §3-grounding pins move v.1 → v.2. No content change to the durable model. |
 | v.1 (Accepted) | 2026-07-27 | Ruslan Gabitov | Accepted with the first landing slice (the accompanying checkpoint/recovery SRD): the checkpoint document, the grown Repository (CAS + lease), consistent-cut capture, restart recovery with re-enter semantics and the recorded-deadline timers — all proven live, incl. the §2.8 fencing (a zombie engine's saves rejected) and the ADR-005-style incremental plan: dehydration/wake-on-trigger and suspend/resume ride the remaining slices. One §2.8 sharpening surfaced by the landing: deployment parity covers ELEMENT IDENTITY too — recovery requires stable node ids across engines (pinned ids or a serialized model). |
-| v.1 | 2026-07-26 | Ruslan Gabitov | Initial draft — the deferred Persistence & State conception: one checkpoint document per instance (identity + pinned version, status incl. `Suspended`, scope-tree data, the track table, per-node wait descriptors, the completion ledger; armed/routing state derived at hydration, never stored; schema-versioned, loud on unserializable values); the loop's consistent-cut checkpoint at the normative lifecycle transitions with a pluggable write mode; exactly-once state / at-least-once effects (correlation dedup, job-queue reclaim, idempotent re-announce); dehydration as the durable half of ADR-007's model (one model, two residency levels); wake-on-trigger hydration = single-instance recovery, per-wait-kind semantics (overdue timers fire once, tasks re-announce, subscriptions re-register); suspend/resume as status over the same machinery, engine pause filling the reserved observability slots; the Repository grows CAS + `Suspended` + opaque schema-versioned payloads. Event sourcing, persist-everything and hydration-before-durability rejected. The storage composition rule: the Repository is the checkpoint port only — one narrow port per storage consumer, the backend handle user-owned and shared at construction (no universal Repository, no db-driver seam in core — both named rejected alternatives), namespaced schemas with per-module migrations and the optional `Migrator` capability. Cluster-safe sharing (§2.8): per-instance ownership leases with CAS fencing, claim-first wake, lease-expiry orphan recovery, loud deployment-parity refusals — safety here, work distribution deferred to ADR-008. Implementation rides the accompanying SRDs. |
+| v.1 | 2026-07-26 | Ruslan Gabitov | Initial draft — the deferred Persistence & State conception: one checkpoint document per instance (identity + pinned version, status incl. `Suspended`, scope-tree data, the track table, per-node wait descriptors, the completion ledger; armed/routing state derived at hydration, never stored; schema-versioned, loud on unserializable values); the loop's consistent-cut checkpoint at the normative lifecycle transitions with a pluggable write mode; exactly-once state / at-least-once effects (correlation dedup, job-queue reclaim, idempotent re-announce); dehydration as the durable half of ADR-007's model (one model, two residency levels); wake-on-trigger hydration = single-instance recovery, per-wait-kind semantics (overdue timers fire once, tasks re-announce, subscriptions re-register); suspend/resume as status over the same machinery, engine pause filling the reserved observability slots; the Repository grows CAS + `Suspended` + opaque schema-versioned payloads. Event sourcing, persist-everything and hydration-before-durability rejected. The storage composition rule: the Repository is the checkpoint port only — one narrow port per storage consumer, the backend handle user-owned and shared at construction (no universal Repository, no db-driver seam in core — both named rejected alternatives), namespaced schemas with per-module migrations and the optional `Migrator` capability. Cluster-safe sharing (§2.8): per-instance ownership leases with CAS fencing, claim-first wake, lease-expiry orphan recovery, loud deployment-parity refusals — safety here, work distribution deferred to the Distribution & Scale ADR. Implementation rides the accompanying SRDs. |

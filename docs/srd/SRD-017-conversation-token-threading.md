@@ -41,7 +41,7 @@ Phase-2b makes the **instantiation** decision correct (two parallel instances di
 - **Context-based / predicate correlation** (ADR-016 §2.5, phase-3) — deriving a receiver's key from process **context** (a `CorrelationSubscription` `dataPath` over instance data) rather than from a message. Out of scope; this SRD is message-derived keys only.
 - **`Conversation` as a first-class object** — out of conformance scope (ADR-016 §2.6); keys stay process-level.
 - **Same-name correlation-resume** — a follow-up whose message **name** equals an instantiating start-trigger's name (so the wildcard starter could steal it before a receiver parks). SRD-017 documents **distinct names as a precondition** (FR-6); lifting it needs a starter re-hold of seen-key messages — a separate later concern (it is orthogonal to multi-key).
-- **Broker-quality** TTL / dead-letter / ordering of held messages — broker/ADR-008; the bounded inbox + pull-on-subscribe (SRD-015 / ADR-015 §2.5) is unchanged.
+- **Broker-quality** TTL / dead-letter / ordering of held messages — broker / the Distribution & Scale ADR; the bounded inbox + pull-on-subscribe (SRD-015 / ADR-015 §2.5) is unchanged.
 
 ## 3. Requirements
 
