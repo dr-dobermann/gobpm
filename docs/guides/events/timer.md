@@ -44,14 +44,28 @@ func NewTimerEventDefinition(
 | `tDuration` | a delay/interval — expression result type **`Duration`**. |
 | `baseOpts` | base-element options (e.g. `foundation.WithID`). |
 
-The three timing arguments are **mutually exclusive by rule**: pass **either**
-`tDate` alone **or** `tCycle` *and* `tDuration` together — never a mix, never
-all-nil. Two consistency errors and one type error can come back:
+**Three forms are accepted**, and nothing else:
+
+| Form | Meaning |
+|---|---|
+| `tDate` alone | an **absolute** deadline — fire once, at that instant. |
+| `tDuration` alone | a **relative** deadline — fire once, that long after the timer arms. This is BPMN's `timeDuration` (§10.5.5, Table 10.101): *"wait five minutes, then fire"*. |
+| `tCycle` **with** `tDuration` | a **recurrence** — fire `tCycle` times, `tDuration` apart. |
+
+The recurrence is where gobpm departs from the XML notation. BPMN packs both
+numbers into one ISO 8601 string on `timeCycle` (`R3/PT10H`); the engine carries
+them as two typed expressions instead of a parsed string. That is why
+`tDuration` is required alongside `tCycle`, and why `tCycle` alone is refused —
+a repetition count with no interval has nothing to schedule. Both spellings
+denote the same schedule.
+
+Three errors can come back, each naming the rule it broke:
 
 | Condition | Error |
 |---|---|
-| all three nil | `"all timer expression couldn't be empty"` (`InvalidParameter`) |
-| `tDate` mixed with cycle/duration, or only one of cycle/duration | `"doesn't allow to define Timer Data or Cycle and Duration simultaneously"` (`InvalidParameter`) |
+| all three nil | `"NewTimerEventDefinition: a Timer needs timeDate, timeDuration, or timeCycle with timeDuration"` (`InvalidParameter`) |
+| `tDate` set alongside `tCycle` or `tDuration` | `"NewTimerEventDefinition: timeDate is mutually exclusive with timeCycle and timeDuration (BPMN Table 10.101)"` (`InvalidParameter`) |
+| `tCycle` without `tDuration` | `"NewTimerEventDefinition: timeCycle needs timeDuration as its interval — a recurrence is carried as (count, interval)"` (`InvalidParameter`) |
 | an expression's `ResultType()` ≠ its slot's type | `"expression result isn't desired type"` (`InvalidObject`, with `expected_type`/`expr_type` details) |
 
 It returns an error — never panics. `MustTimerEventDefinition(tDate, tCycle,
@@ -187,7 +201,7 @@ their in-memory waiter and stay resident. See
 
 ## See also
 
-- Examples: [`examples/simple-timer/`](../../../examples/simple-timer/) (start → end) · [`examples/timer-event/`](../../../examples/timer-event/) (start → service task → end)
+- Examples: [`examples/simple-timer/`](../../../examples/simple-timer/) (start → end) · [`examples/timer-event/`](../../../examples/timer-event/) (start → service task → end) · [`examples/usertask-sla/`](../../../examples/usertask-sla/) (**`timeDuration` alone** — three non-interrupting boundary timers marking 50% / 90% / 100% of a UserTask's SLA)
 - Related guides: [Start & End](start-and-end.md) · [Boundary events](boundary.md) · [How events are processed](../concepts/event-processing.md) · [Expressions](../data/expressions.md)
 - Design: [ADR-015 — Event-triggered instantiation](../../design/ADR-015-event-triggered-instantiation.md)
 - Full API: `go doc github.com/dr-dobermann/gobpm/pkg/model/events`

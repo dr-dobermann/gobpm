@@ -166,7 +166,10 @@ task writes to and is read back by name),
 a value one instance writes is read by a *separate* instance through a shared
 `DataStoreReference`), and the timer examples
 [`examples/simple-timer/`](examples/simple-timer/) ·
-[`examples/timer-event/`](examples/timer-event/).
+[`examples/timer-event/`](examples/timer-event/) ·
+[`examples/usertask-sla/`](examples/usertask-sla/) (three **non-interrupting**
+boundary timers marking 50% / 90% / 100% of a User Task's SLA — the task
+overruns, every warning fires, and the work still completes).
 
 For the routing gateways, see
 [`examples/gateway-routing/`](examples/gateway-routing/) (exclusive choice) ·

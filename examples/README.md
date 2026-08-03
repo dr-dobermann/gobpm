@@ -8,7 +8,7 @@ directory:
 cd <example> && go run .
 ```
 
-Every example builds in CI; the list below is grouped by concern.
+Every example runs end-to-end in CI and asserts its own outcome; the list below is grouped by concern.
 
 ## Basics
 
@@ -53,6 +53,7 @@ Every example builds in CI; the list below is grouped by concern.
 |---|---|
 | [`service-task-worker/`](service-task-worker/) | External worker (fetch-and-lock) with in-process retry, trust modes, a Business Status / Business Error verdict, and **structural output mapping** (nested fields extracted from a structured worker body). |
 | [`usertask/`](usertask/) | User task — a human-completed wait node gated by Camunda-style assignee / candidate authorization, then **claimed** for exclusive hold: completion is strict, so only the actual owner may finish it (ADR-020 v.2). |
+| [`usertask-sla/`](usertask-sla/) | **SLA warnings on a human task** — three *bounded, non-interrupting* timer boundaries at 50% / 90% / 100% of a User Task's budget. Each carries a `timeDuration` **alone** (a relative deadline measured from the moment the boundary arms); the operator deliberately overruns, so every warning fires and the approval still completes — which is what non-interrupting means. |
 | [`business-rule-task/`](business-rule-task/) | **Business Rule Task on the pluggable rule-engine seam** — the task evaluates a named decision on the configured engine (here the batteries-included `gorules` Go registry, `##GoRules`), the 1×1 result fold commits the outcome as a scalar, and the task's conditional flows route on it; any DMN/rules service swaps in via `WithRuleEngine` without touching the model (ADR-027 / SRD-060). |
 | [`script-task/`](script-task/) | **Script Task on the multi-engine Script Engine seam** — an embedded `order.lua` runs sandboxed on `adapters/lua` (`##Lua`), routed by the task's `scriptFormat`; lazy fail-loud `data` reads with a `has()` probe, outputs returned as a table and committed per-name; several interpreters can register side by side via repeatable `WithScriptEngine` (ADR-031 / SRD-064 / SRD-065). |
 | [`expression-routing/`](expression-routing/) | **Language-routed expression engines** — one process mixes `gobpm:lite` text conditions (record paths, a map probe, a `time()` comparison) with `goexpr` Go functors at three sites: task flows, an XOR gateway and a UserTask whose assignee is computed by a lite string expression; zero extra registration on the batteries registry (ADR-032 / SRD-066 / SRD-067). |
