@@ -185,21 +185,27 @@ Each adapter is its own module implementing an engine seam, scheduled when its f
 
 ## 6. Issue ↔ milestone map
 
-The alignment artifact. Every open issue carries an `engine` or `server` label and exactly one milestone; items below without a number are not yet filed.
+The alignment artifact. **Every open issue carries an `engine` or `server` label and exactly one milestone** — no issue sits outside this table, and the tracker can be read as a filtered view of it.
 
-| Milestone | Filed | Not yet filed |
-|---|---|---|
-| **E0** | [#269](https://github.com/dr-dobermann/gobpm/issues/269) layout · [#270](https://github.com/dr-dobermann/gobpm/issues/270) SAD-001 | ADR-004 and ADR-023 re-acceptance |
-| **E1** | [#265](https://github.com/dr-dobermann/gobpm/issues/265) suite · [#263](https://github.com/dr-dobermann/gobpm/issues/263) instance attributes · [#264](https://github.com/dr-dobermann/gobpm/issues/264) process roles | directory seam · roles convergence · `timeDuration`/`timeCycle` |
-| **E2** | [#80](https://github.com/dr-dobermann/gobpm/issues/80) fault tolerance | `adapters/postgres` · checkpoint fidelity · suspend/resume · history store · event listeners · business key |
-| **E3** | — | intervention primitives · cross-version token transfer |
-| **E4** | [#256](https://github.com/dr-dobermann/gobpm/issues/256) diagrams | converter element coverage |
-| **S2** | [#73](https://github.com/dr-dobermann/gobpm/issues/73) tenancy & IAM | the AuthN chain |
-| **S4** | [#75](https://github.com/dr-dobermann/gobpm/issues/75) Form Registry | task inbox API |
-| **S5** | [#95](https://github.com/dr-dobermann/gobpm/issues/95) migration API · [#96](https://github.com/dr-dobermann/gobpm/issues/96) admin tools | incident resolution and DLQ surface |
-| **S0 / S1 / S3 / S6** | — | server foundation · core API · import conformance · distribution |
+| Milestone | Issues |
+|---|---|
+| **E0** | [#269](https://github.com/dr-dobermann/gobpm/issues/269) ADR-003 layout · [#270](https://github.com/dr-dobermann/gobpm/issues/270) accept SAD-001 · [#272](https://github.com/dr-dobermann/gobpm/issues/272) re-accept ADR-004 + ADR-023 |
+| **E1** | [#265](https://github.com/dr-dobermann/gobpm/issues/265) conformance suite · [#263](https://github.com/dr-dobermann/gobpm/issues/263) instance-attribute binding · [#264](https://github.com/dr-dobermann/gobpm/issues/264) process-level roles · [#273](https://github.com/dr-dobermann/gobpm/issues/273) directory seam · [#274](https://github.com/dr-dobermann/gobpm/issues/274) roles convergence · [#275](https://github.com/dr-dobermann/gobpm/issues/275) timer duration/cycle 🐛 |
+| **E2** | [#80](https://github.com/dr-dobermann/gobpm/issues/80) incidents + retry · [#276](https://github.com/dr-dobermann/gobpm/issues/276) `adapters/postgres` · [#277](https://github.com/dr-dobermann/gobpm/issues/277) checkpoint fidelity · [#278](https://github.com/dr-dobermann/gobpm/issues/278) suspend/resume · [#279](https://github.com/dr-dobermann/gobpm/issues/279) listeners · [#280](https://github.com/dr-dobermann/gobpm/issues/280) business key · [#281](https://github.com/dr-dobermann/gobpm/issues/281) history store |
+| **E3** | [#282](https://github.com/dr-dobermann/gobpm/issues/282) intervention primitives · [#283](https://github.com/dr-dobermann/gobpm/issues/283) cross-version token transfer |
+| **E4** | [#284](https://github.com/dr-dobermann/gobpm/issues/284) converter coverage · [#256](https://github.com/dr-dobermann/gobpm/issues/256) generated diagrams |
+| **E5** | — beyond 1.0; filed when it becomes concrete |
+| **S0** | [#285](https://github.com/dr-dobermann/gobpm/issues/285) server foundation |
+| **S1** | [#286](https://github.com/dr-dobermann/gobpm/issues/286) registry, lifecycle, diagnostics |
+| **S2** | [#73](https://github.com/dr-dobermann/gobpm/issues/73) tenancy & IAM |
+| **S3** | [#287](https://github.com/dr-dobermann/gobpm/issues/287) §2.3.2 import conformance |
+| **S4** | [#288](https://github.com/dr-dobermann/gobpm/issues/288) task inbox API · [#75](https://github.com/dr-dobermann/gobpm/issues/75) Form Registry |
+| **S5** | [#289](https://github.com/dr-dobermann/gobpm/issues/289) incident resolution + DLQ · [#95](https://github.com/dr-dobermann/gobpm/issues/95) migration API · [#96](https://github.com/dr-dobermann/gobpm/issues/96) administration API |
+| **S6** | — when multi-node demand materialises |
 
-Three former epics straddled the division and were split, engine half from server half: fault tolerance (#80), migration (#95), administration (#96). The engine half is the semantics; the server half is the operator surface.
+Three former epics straddled the division and were split, engine half from server half: fault tolerance ([#80](https://github.com/dr-dobermann/gobpm/issues/80) / [#289](https://github.com/dr-dobermann/gobpm/issues/289)), migration ([#283](https://github.com/dr-dobermann/gobpm/issues/283) / [#95](https://github.com/dr-dobermann/gobpm/issues/95)), administration ([#282](https://github.com/dr-dobermann/gobpm/issues/282) / [#96](https://github.com/dr-dobermann/gobpm/issues/96)). The engine half is the semantics; the server half is the operator surface.
+
+**E5 and S6 are deliberately empty.** Both are "when it becomes concrete" milestones, and filing speculative issues against them would recreate the problem the released ADR-008 number caused — work named before it was designed.
 
 ## 7. Reading v3.x
 
@@ -250,6 +256,18 @@ v3.1's §2.3 document-status inventory is **deleted**, not migrated. It was a 6,
   **11** migration steps, not 12; the §2.3 status inventory is deleted rather
   than annotated; and the reserved **ADR-008** number is released, so
   Distribution & Scale is now referred to by topic.
+- **Tracker aligned.** Of the twenty items §6 first listed as unfiled, eighteen
+  are now filed
+  ([#272](https://github.com/dr-dobermann/gobpm/issues/272)…[#289](https://github.com/dr-dobermann/gobpm/issues/289));
+  the AuthN chain folded into [#73](https://github.com/dr-dobermann/gobpm/issues/73)
+  rather than standing alone, and distribution stayed unfiled because S6 has no
+  trigger yet. The server milestones S0–S6 exist, and the four server epics
+  predating this reorganisation ([#73](https://github.com/dr-dobermann/gobpm/issues/73),
+  [#75](https://github.com/dr-dobermann/gobpm/issues/75),
+  [#95](https://github.com/dr-dobermann/gobpm/issues/95),
+  [#96](https://github.com/dr-dobermann/gobpm/issues/96)) are re-filed and
+  re-scoped. Every open issue now carries a track label and exactly one
+  milestone, so §6 describes the tracker completely rather than partially.
 
 ### 2026-07-30
 
