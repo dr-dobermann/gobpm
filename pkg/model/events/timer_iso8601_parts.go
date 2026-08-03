@@ -43,9 +43,17 @@ func isoErr(s string, cause error) error {
 
 // constExpr wraps an already-parsed value as a FormalExpression, so a literal
 // timer produces exactly the definition a positional constructor would.
-func constExpr[T any](id string, v T) data.FormalExpression {
-	return goexpr.Must(nil,
-		data.MustItemDefinition(values.NewVariable(v)),
+//
+// It returns an error rather than panicking through a Must* twin: those are for
+// tests and fixtures, and a library path must fail with a diagnosable error
+// (FIX-026, guarded by internal/lintcfg).
+func constExpr[T any](id string, v T) (data.FormalExpression, error) {
+	item, err := data.NewItemDefinition(values.NewVariable(v))
+	if err != nil {
+		return nil, errs.Invariant("timer constant %q: %w", id, err)
+	}
+
+	return goexpr.New(nil, item,
 		func(_ context.Context, _ data.Source) (data.Value, error) {
 			return values.NewVariable(v), nil
 		},
@@ -62,11 +70,15 @@ func isoAdapter[T any](
 	e data.FormalExpression,
 	form TimerForm,
 	convert func(string) (T, error),
-) data.FormalExpression {
+) (data.FormalExpression, error) {
 	var zero T
 
-	return goexpr.Must(nil,
-		data.MustItemDefinition(values.NewVariable(zero)),
+	item, err := data.NewItemDefinition(values.NewVariable(zero))
+	if err != nil {
+		return nil, errs.Invariant("timer %s adapter: %w", string(form), err)
+	}
+
+	return goexpr.New(nil, item,
 		func(ctx context.Context, ds data.Source) (data.Value, error) {
 			v, err := e.Evaluate(ctx, ds)
 			if err != nil {

@@ -51,9 +51,17 @@ func NewISO8601Timer(
 			return nil, isoErr(s, err)
 		}
 
-		return NewTimerEventDefinition(nil,
-			constExpr(s+"-count", r.Count),
-			constExpr(s+"-interval", r.Interval), baseOpts...)
+		count, err := constExpr(s+"-count", r.Count)
+		if err != nil {
+			return nil, err
+		}
+
+		interval, err := constExpr(s+"-interval", r.Interval)
+		if err != nil {
+			return nil, err
+		}
+
+		return NewTimerEventDefinition(nil, count, interval, baseOpts...)
 
 	case Duration:
 		d, err := iso8601.ParseDuration(s)
@@ -61,8 +69,12 @@ func NewISO8601Timer(
 			return nil, isoErr(s, err)
 		}
 
-		return NewTimerEventDefinition(nil, nil,
-			constExpr(s+"-after", d), baseOpts...)
+		after, err := constExpr(s+"-after", d)
+		if err != nil {
+			return nil, err
+		}
+
+		return NewTimerEventDefinition(nil, nil, after, baseOpts...)
 
 	default:
 		t, err := iso8601.ParseDateTime(s)
@@ -70,8 +82,12 @@ func NewISO8601Timer(
 			return nil, isoErr(s, err)
 		}
 
-		return NewTimerEventDefinition(
-			constExpr(s+"-at", t), nil, nil, baseOpts...)
+		at, err := constExpr(s+"-at", t)
+		if err != nil {
+			return nil, err
+		}
+
+		return NewTimerEventDefinition(at, nil, nil, baseOpts...)
 	}
 }
 
@@ -111,21 +127,37 @@ func NewISO8601TimerExpr(
 
 	switch form {
 	case Time:
-		return NewTimerEventDefinition(
-			isoAdapter(e, Time, dateOf), nil, nil, baseOpts...)
+		at, err := isoAdapter(e, Time, dateOf)
+		if err != nil {
+			return nil, err
+		}
+
+		return NewTimerEventDefinition(at, nil, nil, baseOpts...)
 
 	case Duration:
-		return NewTimerEventDefinition(nil, nil,
-			isoAdapter(e, Duration, durationOf), baseOpts...)
+		after, err := isoAdapter(e, Duration, durationOf)
+		if err != nil {
+			return nil, err
+		}
+
+		return NewTimerEventDefinition(nil, nil, after, baseOpts...)
 
 	case Cycle:
 		// One recurrence string feeds BOTH attributes, so each gets its own
 		// adapter over the same expression. Re-parsing per attribute keeps the
 		// two honest — no state is shared between them, and arming happens
 		// once per activation.
-		return NewTimerEventDefinition(nil,
-			isoAdapter(e, Cycle, countOf),
-			isoAdapter(e, Cycle, intervalOf), baseOpts...)
+		count, err := isoAdapter(e, Cycle, countOf)
+		if err != nil {
+			return nil, err
+		}
+
+		interval, err := isoAdapter(e, Cycle, intervalOf)
+		if err != nil {
+			return nil, err
+		}
+
+		return NewTimerEventDefinition(nil, count, interval, baseOpts...)
 	}
 
 	return nil, errs.New(
