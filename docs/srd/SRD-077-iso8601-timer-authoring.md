@@ -84,10 +84,10 @@ before it is fired"* and `timeCycle` as `R3/PT10H` or a cron expression
 | **FR-1** | A `TimerEventDefinition` with **only** `timeDuration` is constructible, and fires **once** after that interval. |
 | **FR-2** | Every other attribute combination keeps its current accept/reject verdict. The recurrence stays `timeCycle` + `timeDuration`. |
 | **FR-3** | The rejection error names which rule was broken — `timeDate` combined with another attribute, or a cycle without its interval — instead of the current single message. |
-| **FR-4** | A new internal package parses ISO 8601 **date-time** (`2011-03-11T12:13:14Z`), **duration** (`P10D`, `PT10H`, `P2W`, `P1DT2H3M4S`), and **repeating interval** (`R3/PT10H`, `R/PT10H`). |
+| **FR-4** | A new internal package parses ISO 8601 **date-time** (`2011-03-11T12:13:14Z`), **duration** (`P10D`, `PT10H`, `P2W`, `P1DT2H3M4S`), and **bounded repeating interval** (`R3/PT10H`). |
 | **FR-5** | Calendar-relative designators `Y` and `M` in a duration are **rejected** with an error naming them and stating why (see §4.2). |
 | **FR-6** | `NewISO8601Timer(expr, opts...)` / `MustISO8601Timer(expr, opts...)` build a `TimerEventDefinition` by **disassembling** one ISO 8601 string into the existing `timeDate` / `timeCycle` / `timeDuration` triple. |
-| **FR-7** | An **unbounded** recurrence (`R/PT10H`) is representable and fires indefinitely until the waiter is stopped. |
+| **FR-7** | An **unbounded** recurrence (`R/PT10H`) is recognised by the grammar and **rejected** with an error naming it as unsupported (see §4.6). |
 | **FR-8** | The disassembly is recorded as an engine choice in SAD-001 §14.2 — `timeCycle` carried as (count, interval) rather than one string. |
 
 ### Non-functional
@@ -95,7 +95,7 @@ before it is fired"* and `timeCycle` as `R3/PT10H` or a cron expression
 | # | Requirement |
 |---|---|
 | **NFR-1** | **No new dependency.** The parser is hand-written over stdlib; core stays on stdlib + `uuid` (SAD-001 G2). |
-| **NFR-2** | **No runtime change beyond FR-7.** The waiter, `TimerPlan`, the checkpoint and the restore hint are untouched. |
+| **NFR-2** | **No runtime change at all.** The waiter, `TimerPlan`, the checkpoint and the restore hint are not modified by this SRD. |
 | **NFR-3** | Every touched function finishes at ≥95% line coverage (the `COVER_MIN` gate). |
 | **NFR-4** | `make ci` green, including `-race`. |
 
@@ -111,15 +111,12 @@ func ParseDuration(s string) (time.Duration, error)
 // ParseDateTime accepts the RFC 3339 profile of ISO 8601.
 func ParseDateTime(s string) (time.Time, error)
 
-// Repeat is a parsed ISO 8601 repeating interval: R[n]/<duration>.
-// Count is Unbounded when the designator carries no number.
+// Repeat is a parsed ISO 8601 bounded repeating interval: Rn/<duration>.
+// An unbounded form (R/<duration>) is rejected — see §4.6.
 type Repeat struct {
-    Count    int           // repetitions, or Unbounded
+    Count    int           // repetitions, always >= 1
     Interval time.Duration // the recurrence interval
 }
-
-// Unbounded marks a recurrence with no repetition limit (`R/PT10H`).
-const Unbounded = -1
 
 func ParseRepeat(s string) (Repeat, error)
 ```
@@ -152,23 +149,9 @@ Disassembly, by what the string parses as:
 | `2011-03-11T12:13:14Z` | `timeDate` |
 | `P10D` | `timeDuration` |
 | `R3/PT10H` | `timeCycle` = 3, `timeDuration` = 10h |
-| `R/PT10H` | `timeCycle` = `Unbounded`, `timeDuration` = 10h |
 
 Each field is a constant `goexpr` returning the parsed Go value, so the result
 is an ordinary `TimerEventDefinition` indistinguishable from a hand-built one.
-
-### §3.4 `internal/eventproc/eventhub/waiters` — unbounded
-
-`processTimerEvent` currently decrements unconditionally and terminates at
-`<= 0`, so no value means "forever". Guard the decrement:
-
-```go
-if tw.cyclesLeft != iso8601.Unbounded {
-    tw.cyclesLeft--
-}
-```
-
-This is the **only** runtime change in this SRD.
 
 ## §4 Analysis
 
@@ -219,10 +202,31 @@ nothing to schedule. `NewISO8601Timer("R3/PT10H")` sets **both** fields, so the
 standard's notation is expressible; only the hand-built half-recurrence is
 refused, and FR-3 makes the error say so.
 
+### §4.6 Why an unbounded recurrence is rejected rather than supported
+
+`R/PT10H` is legal ISO 8601, but nothing in the engine can consume it safely.
+A cycle reaches a BPMN element through exactly one path — `boundaryWatch.
+ProcessEvent`, which emits an `evBoundary` per delivery — so the only element
+for which repetition is meaningful is a **non-interrupting** timer boundary.
+An intermediate catch or an interrupting boundary settles on the first firing,
+and further deliveries would target a processor that has moved on. A Timer
+Start Event cannot consume one either: `discoverInstantiatingStarts` builds
+instance-starters only for message and signal definitions, so a timer start
+does not instantiate.
+
+Supporting it therefore needs a **placement rule** — legal on a
+non-interrupting boundary, refused elsewhere — which is model-level validation
+rather than the sentinel it first appeared to be. It would also rest on
+behaviour nothing has exercised: bounded cycles are plumbed through
+`TimerPlan` and the dehydration hold but appear in no example and no
+instance-level test. Rejecting the form keeps the grammar complete and the gap
+named, instead of shipping an unbounded waiter that spins against a stale
+processor.
+
 ## §5 API
 
 Added: `events.NewISO8601Timer`, `events.MustISO8601Timer`,
-`internal/iso8601.{ParseDuration,ParseDateTime,ParseRepeat,Repeat,Unbounded}`.
+`internal/iso8601.{ParseDuration,ParseDateTime,ParseRepeat,Repeat}`.
 
 Changed: none — `NewTimerEventDefinition` keeps its signature and accepts a
 strictly larger set of inputs. No caller breaks.
@@ -235,19 +239,20 @@ strictly larger set of inputs. No caller breaks.
 | T-2 | `TestTimerGuardErrorNamesTheRule` | the two rejection classes carry distinct messages (FR-3) |
 | T-3 | `TestParseDuration` | `P10D`, `PT10H`, `P2W`, `P1DT2H3M4S`; malformed input; `P1Y`/`P1M` rejected by name (FR-4, FR-5) |
 | T-4 | `TestParseDateTime` | RFC 3339 accepted, garbage rejected (FR-4) |
-| T-5 | `TestParseRepeat` | `R3/PT10H` → (3, 10h); `R/PT10H` → (Unbounded, 10h); malformed rejected (FR-4, FR-7) |
+| T-5 | `TestParseRepeat` | `R3/PT10H` → (3, 10h); `R/PT10H` rejected by name; `R0/…` and malformed rejected (FR-4, FR-7) |
 | T-6 | `TestISO8601TimerDisassembly` | each §3.3 row sets exactly the expected fields (FR-6) |
 | T-7 | `TestDurationOnlyFires` | a duration-only waiter fires **once**, on the injected clock (FR-1) |
 | T-8 | `TestDurationOnlyTimerPlan` | `TimerPlan` returns `now+d`, `cyclesLeft == 0` (FR-1) |
-| T-9 | `TestUnboundedCycleKeepsFiring` | an unbounded waiter delivers > N times and stops only on `Stop()` (FR-7) |
+| T-9 | `examples/usertask-sla` | three bounded boundary timers fire in order and the guarded UserTask still completes (FR-1, end-to-end) |
 
 ## §7 Milestones
 
 | # | Milestone | Contents |
 |---|---|---|
 | **M1** | The duration-only gap | §3.2 guard, FR-3 error, doc comment; T-1, T-2, T-7, T-8 |
-| **M2** | The ISO 8601 parser | `internal/iso8601`; T-3, T-4, T-5 |
-| **M3** | The authoring path | §3.3 constructors, §3.4 unbounded, SAD-001 §14.2 entry; T-6, T-9 |
+| **M2** | The SLA example | `examples/usertask-sla` — three bounded, non-interrupting boundary timers on a UserTask at 50% / 90% / 100% of its budget; T-9. Proves M1 end to end before anything is built on it, and is the first duration-only timer and the first non-interrupting timer boundary in the repository |
+| **M3** | The ISO 8601 parser | `internal/iso8601`; T-3, T-4, T-5 |
+| **M4** | The authoring path | §3.3 constructors, SAD-001 §14.2 entry; T-6 |
 
 ## §8 Cross-doc references
 
@@ -266,7 +271,7 @@ strictly larger set of inputs. No caller breaks.
 - [ ] NFR-3: touched functions ≥95%, measured on the diff not the aggregate
 - [ ] NFR-4: `make ci` green
 - [ ] SAD-001 §14.2 carries the disassembly entry
-- [ ] An example demonstrating a duration-only timer, asserting its own outcome
+- [ ] `examples/usertask-sla` runs under the CI timeout and asserts its own outcome — three notifications, in order, with the UserTask completing
 - [ ] `/check-srd` PASS
 
 ## §10 Implementation summary
