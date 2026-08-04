@@ -48,8 +48,11 @@ alignment target the project has already declared.
 
 An **incident** is the durable record of a failure the model did not handle:
 it names the instance, the node, the failing track's lineage, the cause
-chain, the attempt count and the timestamps of first and last failure. It is
-**state, not a fact**: it lives in the instance's state of record, survives
+chain, the attempt count, the timestamps of first and last failure — and a
+**failure-time data snapshot**: the variables visible in the failing node's
+scope chain, captured at each raise, so the operator sees what the attempt
+*saw* rather than what the scope has since become. It is **state, not a
+fact**: it lives in the instance's state of record, survives
 restarts through the checkpoint, and exists until it is resolved. The
 observability stream *announces* it (§2.7) but never carries it — the fact
 stream stays best-effort and lossy by design (ADR-013 v.2).
@@ -83,7 +86,9 @@ failed track as its predecessor, so attempt history is ordinary track lineage
 rather than bookkeeping invented for incidents.
 
 The node was entered but did not complete: no outgoing flow fires, no
-completion is recorded, armed boundary events stay armed (§2.4). While the
+completion is recorded, armed boundary events stay armed (§2.4), and the
+**incident pins its scope open** — retry re-enters against that data, so the
+scope cannot be disposed while the incident is. While the
 incident is open, the **token remains visible at the failing node** — the
 projection derives it from the open incident record, not from the terminal
 track — because a preserved token that no view can see is not preserved in
@@ -181,6 +186,12 @@ Incidents extend the ADR-033 v.2 document additively:
 - **The instance's persisted status vocabulary** gains the *active with
   incidents* condition, so an operator's first query — "what needs me?" —
   is answerable from the store without loading instances.
+- **The snapshot's retention caveat.** The failure-time snapshot (§2.1)
+  makes the incident self-contained for diagnosis, at a price stated
+  openly: data captured into an incident — including a dead-lettered one —
+  outlives the instance's normal data lifecycle. Selecting or excluding
+  values (sensitive data, size) is the data-marker mechanism deferred in
+  §5; until it exists, the snapshot is the full visible scope.
 - **Dead-letter recording.** Giving up on an incident (§2.6) is itself
   durable: the incident closes as *dead-lettered*, its record retained with
   its full history. Draining, replaying or discarding dead letters is an
@@ -256,6 +267,12 @@ never the incident.
   library records (§2.5), the server operates.
 - **Incident history analytics** (mean-time-to-resolve, failure clustering) —
   the history/audit store's concern once it exists.
+- **Data markers / tags** — a general annotation mechanism on data
+  declarations, of which postmortem selection (§2.5) is only one use:
+  retention in incident snapshots, visibility in operator surfaces,
+  operator editability, sensitivity/PII exclusion, and whatever further
+  extensions attach to declared data rather than to code. A modeling-surface
+  decision for its own ADR; tracked in the project tracker.
 - **Bulk resolution semantics** — operator-surface composition; the library
   primitives are per-incident.
 
