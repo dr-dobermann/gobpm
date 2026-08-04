@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-08-03 |
 | Owner | Ruslan Gabitov |
 | Implements | [SAD-001](../design/SAD-001-vision-and-architecture.md) §14 (the library's §2.3.1 half) and [conformance.md](../bpmn-spec/conformance.md) (Timer in scope) |
@@ -84,7 +84,7 @@ before it is fired"* and `timeCycle` as `R3/PT10H` or a cron expression
 | **FR-1** | A `TimerEventDefinition` with **only** `timeDuration` is constructible, and fires **once** after that interval. |
 | **FR-2** | Every other attribute combination keeps its current accept/reject verdict. The recurrence stays `timeCycle` + `timeDuration`. |
 | **FR-3** | The rejection error names which rule was broken — `timeDate` combined with another attribute, or a cycle without its interval — instead of the current single message. |
-| **FR-4** | A new internal package parses ISO 8601 **date-time** (`2011-03-11T12:13:14Z`), **duration** (`P10D`, `PT10H`, `P2W`, `P1DT2H3M4S`), and **bounded repeating interval** (`R3/PT10H`). |
+| **FR-4** | A new package, `pkg/iso8601`, parses ISO 8601 **date-time** (`2011-03-11T12:13:14Z`), **duration** (`P10D`, `PT10H`, `P2W`, `P1DT2H3M4S`), and **bounded repeating interval** (`R3/PT10H`). It is public so the converter ([#284](https://github.com/dr-dobermann/gobpm/issues/284)) and embedding applications can reuse it. |
 | **FR-5** | Calendar-relative designators `Y` and `M` in a duration are **rejected** with an error naming them and stating why (see §4.2). |
 | **FR-6** | `NewISO8601Timer(expr, opts...)` / `MustISO8601Timer(expr, opts...)` build a `TimerEventDefinition` by **disassembling** one ISO 8601 string into the existing `timeDate` / `timeCycle` / `timeDuration` triple. |
 | **FR-7** | An **unbounded** recurrence (`R/PT10H`) is recognised by the grammar and **rejected** with an error naming it as unsupported (see §4.6). |
@@ -101,7 +101,7 @@ before it is fired"* and `timeCycle` as `R3/PT10H` or a cron expression
 
 ## §3 Models
 
-### §3.1 `internal/iso8601` (new)
+### §3.1 `pkg/iso8601` (new)
 
 ```go
 // Duration is a parsed ISO 8601 duration. Weeks, days and time components
@@ -138,8 +138,8 @@ A cycle still requires its interval; a duration no longer requires a cycle.
 ### §3.3 `pkg/model/events` — the ISO 8601 constructor
 
 ```go
-func NewISO8601Timer(expr string, baseOpts ...options.Option) (*TimerEventDefinition, error)
-func MustISO8601Timer(expr string, baseOpts ...options.Option) *TimerEventDefinition
+func NewISO8601Timer(s string, baseOpts ...options.Option) (*TimerEventDefinition, error)
+func MustISO8601Timer(s string, baseOpts ...options.Option) *TimerEventDefinition
 ```
 
 Disassembly, by what the string parses as:
@@ -152,6 +152,26 @@ Disassembly, by what the string parses as:
 
 Each field is a constant `goexpr` returning the parsed Go value, so the result
 is an ordinary `TimerEventDefinition` indistinguishable from a hand-built one.
+
+A second pair covers the **dynamic** case — a deadline that lives in instance
+data (an SLA read off the order, a due date carried on the case):
+
+```go
+type TimerForm string // Time | Duration | Cycle
+
+func NewISO8601TimerExpr(form TimerForm, e data.FormalExpression,
+	baseOpts ...options.Option) (*TimerEventDefinition, error)
+func MustISO8601TimerExpr(form TimerForm, e data.FormalExpression,
+	baseOpts ...options.Option) *TimerEventDefinition
+```
+
+A literal string carries its own form — `R…` is a cycle, `P…` a duration,
+anything else a date — but an expression's value does not exist until the
+timer arms, while the attribute it fills is fixed when the process is built.
+`TimerForm` states that choice up front, the same way BPMN makes the element
+name static and the expression inside it dynamic. A malformed value fails at
+arm time, reported as an ordinary expression failure naming the offending
+string.
 
 ## §4 Analysis
 
@@ -226,7 +246,9 @@ processor.
 ## §5 API
 
 Added: `events.NewISO8601Timer`, `events.MustISO8601Timer`,
-`internal/iso8601.{ParseDuration,ParseDateTime,ParseRepeat,Repeat}`.
+`events.NewISO8601TimerExpr`, `events.MustISO8601TimerExpr`, `events.TimerForm`
+(`Time` / `Duration` / `Cycle`),
+`pkg/iso8601.{ParseDuration,ParseDateTime,ParseRepeat,Repeat}`.
 
 Changed: none — `NewTimerEventDefinition` keeps its signature and accepts a
 strictly larger set of inputs. No caller breaks.
@@ -265,18 +287,37 @@ strictly larger set of inputs. No caller breaks.
 
 ## §9 Definition of Done
 
-- [ ] FR-1…FR-8 implemented and demonstrated by §6
-- [ ] NFR-1: `go.mod` unchanged
-- [ ] NFR-2: the only runtime diff is §3.4
-- [ ] NFR-3: touched functions ≥95%, measured on the diff not the aggregate
-- [ ] NFR-4: `make ci` green
-- [ ] SAD-001 §14.2 carries the disassembly entry
-- [ ] `examples/usertask-sla` runs under the CI timeout and asserts its own outcome — three notifications, in order, with the UserTask completing
-- [ ] `/check-srd` PASS
+- [x] FR-1…FR-8 implemented and demonstrated by §6
+- [x] NFR-1: `go.mod` unchanged
+- [x] NFR-2: no runtime diff — the waiter, `TimerPlan`, the checkpoint and the restore hint are untouched
+- [x] NFR-3: touched functions ≥95%, measured on the diff not the aggregate
+- [x] NFR-4: `make ci` green
+- [x] SAD-001 §14.2 carries the disassembly entry
+- [x] `examples/usertask-sla` runs under the CI timeout and asserts its own outcome — three notifications, in order, with the UserTask completing
+- [x] `/check-srd` PASS
 
 ## §10 Implementation summary
 
-_To be filled after the milestones land._
+Landed on `fix/timer-duration-only`, four milestones plus two follow-ups:
+
+| Milestone | Commits | What landed |
+|---|---|---|
+| M1 — the duration-only gap | `b71424a` | The §3.2 guard split into three named rules (FR-1, FR-3); T-1, T-2, T-7, T-8 |
+| M2 — the SLA example | `fe9a497`, `0ff3b26`, `54f7d24` | `examples/usertask-sla` — three non-interrupting boundary timers at 50/90/100% of the task budget, self-asserting (T-9); linked-docs sync |
+| M3 — the ISO 8601 parser | `fb3bc35` | `pkg/iso8601` (FR-4, FR-5, FR-7); T-3, T-4, T-5 |
+| M4 — the authoring path | `90ff186`, `87b4cdf` | §3.3 constructors, literal and dynamic (FR-6); SAD-001 §14.2 entry (FR-8); timer guide; T-6 |
+| Follow-up | `6264f13` | The `Must*` call sites inside the constructors replaced with error-returning paths (the no-`Must*`-in-library-code rule) |
+
+Two deltas against the draft, folded back into the body above: the parser is
+**`pkg/iso8601`**, not `internal/` — public so the converter (#284) can reuse
+it — and the authoring path gained the **dynamic pair**
+(`NewISO8601TimerExpr` / `MustISO8601TimerExpr` with `TimerForm`), since an
+SLA read from instance data was exactly the case the M2 example needed.
+
+Verification: `make ci` green end to end (both halves, including `-race` and
+the examples run); diff-coverage **100.0% of 234 changed coverable lines**
+(min 95%) — every touched file at 100%; `go.mod` unchanged; `/check-srd`
+audit PASS (18 🟢 / 3 🟡 doc-amendments, all applied pre-flip / 0 🔴).
 
 ## Open questions
 
