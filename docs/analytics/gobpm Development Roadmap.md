@@ -4,8 +4,8 @@
 | :---- | :---- |
 | **Author** | dr-dobermann |
 | **Status** | Living |
-| **Version** | 4.0 |
-| **Date** | 2026-08-03 |
+| **Version** | 4.1 |
+| **Date** | 2026-08-04 |
 | **Subordinate to** | [SAD-001 v.1.1 Vision & Architecture](../design/SAD-001-vision-and-architecture.md) |
 | **Element ledger** | [docs/design/conformance-status.md](../design/conformance-status.md) |
 | **Conformance scope** | [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) |
@@ -87,6 +87,34 @@ A second gap sits between those sentences, and it is the engine's own: the eleme
 
 This is a scheduling decision as much as a product one. The project has one developer, and two tracks worked alternately is how both stall. The server milestones in §4 are **direction, not schedule** — they exist so engine work can be judged against where it leads, and so an item can be filed on the correct side the day it appears.
 
+### 2.4 The adoption yardstick — replacing Camunda in production
+
+A production Camunda user asked the question this roadmap should be able to
+answer: *can gobpm take Camunda's place?* Their workload is the common shape —
+business logic in **Python workers** on the external-task pattern, incidents
+resolved and stalled jobs retried in **Operate**, state on **PostgreSQL**,
+and the whole deployment **multitenant**.
+That question is now the yardstick: when two items compete, the one that moves
+this scenario wins.
+
+| Bar | What Camunda gives them | Where it lives here |
+|---|---|---|
+| Durable state on PostgreSQL | RDB persistence | **E2** — [#276](https://github.com/dr-dobermann/gobpm/issues/276) `adapters/postgres` |
+| Failures recorded, retried, operable | Incidents + Operate | **E2** [#80](https://github.com/dr-dobermann/gobpm/issues/80) → **S5** [#289](https://github.com/dr-dobermann/gobpm/issues/289) / [#96](https://github.com/dr-dobermann/gobpm/issues/96) + the ops console |
+| Business logic in any language | External tasks / job workers | **E2** [#80](https://github.com/dr-dobermann/gobpm/issues/80) (job semantics) → **S1** external-task surface + Python reference client |
+| Existing `.bpmn` files just deploy | Modeler → engine | **E4** [#284](https://github.com/dr-dobermann/gobpm/issues/284) → **S3** [#287](https://github.com/dr-dobermann/gobpm/issues/287) |
+| Isolated tenants on one deployment | Multi-tenancy | **S2** [#73](https://github.com/dr-dobermann/gobpm/issues/73) — with the groundwork laid earlier: the E2 Postgres schema and every S1/S5 API shape carry `TenantID` from day one (§4.2) |
+| Human tasks have an inbox | Tasklist | **S4** [#288](https://github.com/dr-dobermann/gobpm/issues/288) / [#75](https://github.com/dr-dobermann/gobpm/issues/75) |
+
+Three things the yardstick **confirms** rather than changes: E2 is the right
+core for 1.0 (every row above stands on it); the library-first sequencing
+holds (nothing server-side is buildable before the engine records incidents
+durably); and the engine track's content is untouched. What it *does* change
+is weight on the server side: the external-task surface stops being one bullet
+inside an epic, day-2 operations move ahead of tenancy and forms in the server
+ladder (§4.2), and E3 → E4 becomes the stated order of early 1.x engine work,
+because S5 stands on E3's intervention primitives and migration stands on E4.
+
 ## 3. Engine track
 
 ### 3.1 Where it stands
@@ -135,8 +163,8 @@ The **core stays fully in-memory** on stdlib + `uuid` (G2); durability arrives t
 | **E1** | **Conformance evidence** | The element-coverage suite behind a CI target that fails ([#265](https://github.com/dr-dobermann/gobpm/issues/265)); §10.4.3 instance-attribute binding ([#263](https://github.com/dr-dobermann/gobpm/issues/263)); the process-level `ResourceRole` decision ([#264](https://github.com/dr-dobermann/gobpm/issues/264)); the directory / resource-query seam; **roles convergence**; **`timeDuration` + `timeCycle`** | A green run *is* the tracker — `conformance-status.md` becomes checked rather than asserted |
 | **E2** | **Fault tolerance & durable state** | Incidents, retry, token preservation ([#80](https://github.com/dr-dobermann/gobpm/issues/80)); `adapters/postgres`; checkpoint fidelity for in-flight Call/MI/compensation; suspend/resume; the history / audit store; **event listeners**; **business key** | An engine survives a kill and resumes from a real database; a failure is recorded, retried and visible |
 | → | **v1.0.0 — the public API frozen** | | E0–E2 green; the semver commitment begins |
-| **E3** | **Instance lifecycle operations** *(1.x)* | Token relocation, live variable writes, cross-version token transfer — the primitives under the server's admin and migration APIs | An operator surface can be built on them with no engine change |
-| **E4** | **Interchange element coverage** *(1.x)* | Import and export beyond the 7-element MVP subset; unblocks [#256](https://github.com/dr-dobermann/gobpm/issues/256) and the server's §2.3.2 | A modelled process survives XML → model → XML |
+| **E3** | **Instance lifecycle operations** *(first 1.x work — S5 stands on it, §2.4)* | Token relocation, live variable writes, cross-version token transfer — the primitives under the server's admin and migration APIs | An operator surface can be built on them with no engine change |
+| **E4** | **Interchange element coverage** *(second 1.x work — migration from Camunda stands on it, §2.4)* | Import and export beyond the 7-element MVP subset; unblocks [#256](https://github.com/dr-dobermann/gobpm/issues/256) and the server's §2.3.2 | A modelled process survives XML → model → XML |
 | **E5** | **Beyond 1.0** | FEEL expression adapter; codegen for native-struct adapters; whatever real use demands | — |
 
 **Roles convergence** and **event listeners** are pre-1.0 because both change the public surface.
@@ -158,12 +186,31 @@ That is §2.3 applied, not an oversight. The milestones below record **where wor
 | # | Milestone | Contains |
 |---|---|---|
 | **S0** | Server foundation | ADR-004 accepted; `runtime/` becomes real code; 7-phase startup and reverse-order graceful shutdown with drain; hierarchical YAML config; liveness/readiness |
-| **S1** | Core API surface | Process registry; instance lifecycle; diagnostics (state, token positions, history); event streaming; worker dispatch; `adapters/otel` |
+| **S1** | Core API surface | Process registry; instance lifecycle; diagnostics (state, token positions, history); event streaming; **the external-task surface** — fetch-and-lock with lock timeouts and extension, complete / fail-with-retries / throw-BPMN-error, and a **Python reference client** proving the polyglot claim (its own epic, split from [#286](https://github.com/dr-dobermann/gobpm/issues/286) per §2.4); `adapters/otel` |
 | **S2** | Identity, tenancy & authorization | `TenantID` through `context.Context` with Repository-enforced filtering ([#73](https://github.com/dr-dobermann/gobpm/issues/73)); the AuthN chain (OIDC/JWT/mTLS); `adapters/casbin`; a directory provider behind the engine's seam |
 | **S3** | §2.3.2 import conformance | BPMN diagrams imported through the engine's converter; MIWG fixture selection; the point at which gobpm can state Process Execution Conformance |
 | **S4** | Human interaction surface | The user-task inbox over `Take`/`Claim`/`Unclaim`/`Reassign`/`Complete`; Form Registry ([#75](https://github.com/dr-dobermann/gobpm/issues/75)) |
-| **S5** | Day-2 operations | Incident resolution and the DLQ surface; migration plans, batch and dry-run ([#95](https://github.com/dr-dobermann/gobpm/issues/95)); the admin API and audit trail ([#96](https://github.com/dr-dobermann/gobpm/issues/96)) |
+| **S5** | Day-2 operations | Incident resolution and the DLQ surface; migration plans, batch and dry-run ([#95](https://github.com/dr-dobermann/gobpm/issues/95)); the admin API and audit trail ([#96](https://github.com/dr-dobermann/gobpm/issues/96)); a **minimal operations console** — a web UI over the incident, diagnostics and intervention APIs, API-first and deliberately thin: the Operate workflows an operator runs daily (see the queue, retry, skip, resolve), not a modelling or analytics suite |
 | **S6** | Distribution | The Distribution & Scale ADR; task-level remote execution; sticky routing with failover — when multi-node demand materialises |
+
+The numbering is identity, not order. **The build order follows the yardstick
+(§2.4): S0 → S1 → S5 → S2 → S3 → S4.** Day-2 operations come right after the
+core API because resolving incidents and retrying stalled jobs is what a
+production operator does *daily* — it cannot sit behind tenancy and forms.
+S5 ahead of S2 also matches its dependency shape: it stands on E3's
+intervention primitives, which is why E3 is the first 1.x engine work. S2
+follows because the target deployment is multitenant (§2.4), and then S3,
+because migrating existing `.bpmn` files needs import before more surface
+area helps.
+
+**Tenancy is scoped early and enforced later.** Multi-tenancy is the one
+capability that cannot be retrofitted cheaply: bolting a tenant onto a
+tenant-blind API breaks every endpoint shape, and onto a tenant-blind schema,
+every table. So the *groundwork* does not wait for S2 — the E2 Postgres
+schema carries `TenantID` from its first migration, and every S1/S5 API and
+the external-task fetch are tenant-scoped from day one, running against a
+single default tenant until S2 delivers identity, isolation enforcement and
+per-tenant authorization.
 
 `Reassign` is deliberately unauthorized at the engine (ADR-020 v.3 §2.5.2), so S4 owns deciding who may invoke it and recording who did.
 
@@ -196,11 +243,11 @@ The alignment artifact. **Every open issue carries an `engine` or `server` label
 | **E4** | [#284](https://github.com/dr-dobermann/gobpm/issues/284) converter coverage · [#256](https://github.com/dr-dobermann/gobpm/issues/256) generated diagrams |
 | **E5** | — beyond 1.0; filed when it becomes concrete |
 | **S0** | [#285](https://github.com/dr-dobermann/gobpm/issues/285) server foundation |
-| **S1** | [#286](https://github.com/dr-dobermann/gobpm/issues/286) registry, lifecycle, diagnostics |
+| **S1** | [#286](https://github.com/dr-dobermann/gobpm/issues/286) registry, lifecycle, diagnostics · [#292](https://github.com/dr-dobermann/gobpm/issues/292) external-task surface + Python client |
 | **S2** | [#73](https://github.com/dr-dobermann/gobpm/issues/73) tenancy & IAM |
 | **S3** | [#287](https://github.com/dr-dobermann/gobpm/issues/287) §2.3.2 import conformance |
 | **S4** | [#288](https://github.com/dr-dobermann/gobpm/issues/288) task inbox API · [#75](https://github.com/dr-dobermann/gobpm/issues/75) Form Registry |
-| **S5** | [#289](https://github.com/dr-dobermann/gobpm/issues/289) incident resolution + DLQ · [#95](https://github.com/dr-dobermann/gobpm/issues/95) migration API · [#96](https://github.com/dr-dobermann/gobpm/issues/96) administration API |
+| **S5** | [#289](https://github.com/dr-dobermann/gobpm/issues/289) incident resolution + DLQ · [#95](https://github.com/dr-dobermann/gobpm/issues/95) migration API · [#96](https://github.com/dr-dobermann/gobpm/issues/96) administration API · [#293](https://github.com/dr-dobermann/gobpm/issues/293) minimal operations console |
 | **S6** | — when multi-node demand materialises |
 
 Three former epics straddled the division and were split, engine half from server half: fault tolerance ([#80](https://github.com/dr-dobermann/gobpm/issues/80) / [#289](https://github.com/dr-dobermann/gobpm/issues/289)), migration ([#283](https://github.com/dr-dobermann/gobpm/issues/283) / [#95](https://github.com/dr-dobermann/gobpm/issues/95)), administration ([#282](https://github.com/dr-dobermann/gobpm/issues/282) / [#96](https://github.com/dr-dobermann/gobpm/issues/96)). The engine half is the semantics; the server half is the operator surface.
@@ -236,6 +283,25 @@ v3.1's §2.3 document-status inventory is **deleted**, not migrated. It was a 6,
 - [docs/backlog.md](../backlog.md) — the short-term working list. Long-term and blocked work lives in GitHub issues.
 
 ## Changes
+
+### 2026-08-04
+
+- **v4.1 — the adoption yardstick.** A production Camunda user's question —
+  *can gobpm take Camunda's place?* — became the prioritization test (§2.4):
+  Python workers on the external-task pattern, incidents resolved in an
+  Operate-like surface, PostgreSQL persistence, a multitenant deployment.
+  The yardstick **confirms** E2 as 1.0's core and the library-first
+  sequencing; what it changes is server-side weight. The **external-task
+  surface** left #286 for its own epic
+  ([#292](https://github.com/dr-dobermann/gobpm/issues/292)) with a **Python
+  reference client** — the project's first non-Go artifact; S5 gained a
+  **minimal operations console**
+  ([#293](https://github.com/dr-dobermann/gobpm/issues/293)); the server
+  build order is now stated as **S0 → S1 → S5 → S2 → S3 → S4** (§4.2), with
+  day-2 operations ahead of tenancy and forms; **tenancy is scoped early and
+  enforced later** — `TenantID` in the E2 Postgres schema and every S1/S5
+  API from day one, enforcement in S2; and **E3 → E4** is the stated order
+  of early 1.x engine work, since S5 stands on E3 and migration on E4.
 
 ### 2026-08-03
 
