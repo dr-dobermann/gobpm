@@ -74,6 +74,13 @@ jobs:
       - name: Documentation link check
         run: make link-check
 
+      # Example-module gate: every examples/* directory must be its own module,
+      # or it is invisible to EXAMPLE_MODULES and the parallel examples job
+      # never RUNS it (it is only compiled here). Guards that job's coverage
+      # from this REQUIRED one, so a hole cannot land unnoticed.
+      - name: Example-module check
+        run: make examples-module-check
+
       # Library-consumption guard (FIX-024): an external module must build
       # against gobpm with no test-only (testify) / mock dep leak.
       - name: Consumer-consumption smoke

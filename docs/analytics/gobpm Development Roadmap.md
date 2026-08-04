@@ -97,7 +97,7 @@ Grounded in the code, not aspiration. Baseline **v0.11.0** (2026-08-02).
 
 **The layers underneath.** Two-layer execution (ADR-001 v.6) with one event-loop goroutine per instance as sole state mutator; the per-instance node graph (ADR-009 v.1); the container-scope data plane with per-execution frames (ADR-010 v.2) and structural navigable values in four kinds (ADR-011 v.7); channel-based event processing (ADR-017 v.1); thirteen extension seams, each with a bundled in-memory default — ADR-002 v.2's original nine, since joined by the rule-engine, script-engine, task-distributor and data-store seams; versioned definition registration (ADR-019 v.1); the observability taxonomy of 13 fact kinds (ADR-013 v.2); consistent-cut checkpoints with restart recovery (ADR-033 v.2) and goroutine-releasing dehydration with wake-on-trigger (ADR-007 v.2.1).
 
-**Reach.** 47 runnable example modules, all executed by CI. A guide tree under `docs/guides/`. Two shipped adapters — `adapters/lua`, `adapters/dtable`.
+**Reach.** Every example is its own runnable module, each executed end-to-end by CI and asserting its own outcome (a gate guard now keeps that set complete). A guide tree under `docs/guides/`. Two shipped adapters — `adapters/lua`, `adapters/dtable`.
 
 **Not there yet.**
 

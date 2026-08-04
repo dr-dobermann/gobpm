@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A timer can now wait for a plain duration.** `timeDuration` alone —
+  BPMN's one-shot relative timer, *"wait five minutes, then fire"* (§10.5.5,
+  Table 10.101) — was unconstructible: the guard required a `timeCycle` beside
+  it, so the most common timer there is had no expression. It works now, and
+  nothing below the constructor changed to make it work: the waiter already
+  armed on a duration, already terminated after one delivery, and `TimerPlan`
+  already derived `now + d` for the checkpoint. Only the model layer refused.
+  Relative timers previously had to be faked with a `timeDate` expression
+  computing `time.Now().Add(d)` at evaluation time — a workaround that bypasses
+  the engine's injected `Clock`, so a substituted clock could not govern it.
+
+- **Timers can be written in ISO 8601, the notation the standard uses.**
+  `events.NewISO8601Timer("PT5M")` / `("R3/PT10H")` / `("2011-03-11T12:13:14Z")`
+  takes one string and disassembles it into the attributes the engine stores —
+  a recurrence fills both `timeCycle` and `timeDuration`, so the pair never has
+  to be written by hand. `NewISO8601TimerExpr` makes the timing **dynamic**:
+  the expression yields the ISO string when the timer arms, so a deadline can
+  come from the instance's own data. The form is named by the caller there
+  (`events.Time` / `Duration` / `Cycle`), because the value does not exist
+  until arming while the attribute is fixed at build time — which is how BPMN
+  itself resolves it. Neither path changes the runtime: a dynamic timer
+  installs an adapter expression that parses at evaluation, so the waiter
+  still reads a typed value exactly as before.
+
+  The parser (`pkg/iso8601`) refuses rather than approximates: `P1Y`/`P1M`
+  (not fixed-length), `P1W2D` (ISO makes the week form exclusive), fractional
+  components, lowercase designators, zero and negative values, and unbounded
+  recurrence `R/PT10H` — which nothing in the engine can consume safely. Each
+  refusal names its reason. No new dependency; it is hand-written over stdlib,
+  since `time.ParseDuration` reads Go's `10h` syntax and rejects every ISO form.
+
+- **`examples/usertask-sla`** — SLA warnings on a human task. Three *bounded,
+  non-interrupting* timer boundaries mark 50% / 90% / 100% of a User Task's
+  budget; the operator deliberately overruns, so every warning fires and the
+  approval **still completes**. That last part is the point: a non-interrupting
+  boundary must not cancel the work it warns about, and the run asserts it
+  rather than printing it. They are three separate bounded timers, not one
+  recurrence — 50/90/100 is not a uniform interval, so no cycle expresses it.
+
+### Changed
+
+- **Timer construction errors now name the rule they broke.** The three
+  rejections — attributes that are mutually exclusive, a recurrence missing its
+  interval, and nothing set at all — previously shared one message
+  (*"doesn't allow to define Timer Data or Cycle and Duration simultaneously"*),
+  which described the accepted shape without explaining it and made a missing
+  case read as an inverted boolean. Each now identifies itself, names the
+  offending attributes, and cites Table 10.101 where the standard is the reason.
+
+### Fixed
+
+- **`examples/usertask` was compiled but never run.** It had no `go.mod`, so it
+  fell into the root module instead of being one of the example modules — and
+  the run sweep iterates modules, so 46 of 47 examples were executed and the
+  skipped one was the User Task example. It is a module now, and a new
+  `examples-module-check` gate fails when any `examples/*` directory lacks one,
+  so the sweep cannot silently shrink again. The guard runs in the **required**
+  core job, not the non-blocking examples job: a hole in that job cannot be
+  guarded from inside it.
+
+
 ## [v0.11.0] - 2026-08-02
 
 **The library's element set is complete, and its conformance claim is finally

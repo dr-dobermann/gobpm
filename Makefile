@@ -85,6 +85,13 @@ MODULES := $(shell /usr/bin/find . -name go.mod -not -path './.git/*' -exec dirn
 CORE_MODULES    := $(filter-out ./examples/%,$(MODULES))
 EXAMPLE_MODULES := $(filter ./examples/%,$(MODULES))
 
+# Every examples/* directory MUST carry its own go.mod. EXAMPLE_MODULES is
+# derived from find -name go.mod, so a directory without one silently leaves
+# the sweep: it is compiled by the core build and NEVER RUN. examples/usertask
+# sat outside the gate that way, which is the gap examples-module-check closes
+# — the same reason link-check is blocking, since nothing failed while it rotted.
+EXAMPLE_DIRS := $(shell /usr/bin/find ./examples -mindepth 1 -maxdepth 1 -type d)
+
 # Root-module packages eligible for unit-test coverage. Generated mocks are
 # drift-checked; examples are build-checked, and standalone example modules are
 # also run end-to-end. Neither belongs in the coverage denominator. The
@@ -403,8 +410,28 @@ ci-examples:
 	@$(MAKE) run-examples
 .PHONY: ci-examples
 
+# examples-module-check guards the run sweep's completeness: an example
+# directory without a go.mod is invisible to EXAMPLE_MODULES, so it is built
+# but never executed. It lives in the REQUIRED core gate rather than the
+# non-blocking examples job precisely because a regression here is a hole in
+# THAT job — a guard in the half that can go red unnoticed guards nothing.
+.PHONY: examples-module-check
+examples-module-check:
+	@missing=""; \
+	for d in $(EXAMPLE_DIRS); do \
+		[ -f "$$d/go.mod" ] || missing="$$missing $$d"; \
+	done; \
+	if [ -n "$$missing" ]; then \
+		echo "example directories without a go.mod — these are NEVER run by 'make run-examples':"; \
+		for d in $$missing; do echo "    $$d"; done; \
+		echo "each example is its own module (SAD-001 §9); add a go.mod with:"; \
+		echo "    replace github.com/dr-dobermann/gobpm => ../.."; \
+		exit 1; \
+	fi; \
+	echo "example-module check: all $(words $(EXAMPLE_DIRS)) example directories are modules"
+
 # The core gate — everything the REQUIRED CI job runs, in the same order.
-ci-core: mock-check link-check tidy-check-core lint-core build-core consumer-smoke test-core cover-check vuln-core
+ci-core: mock-check link-check examples-module-check tidy-check-core lint-core build-core consumer-smoke test-core cover-check vuln-core
 .PHONY: ci-core
 
 # Umbrella target that runs the full local-equivalent of CI (BOTH CI jobs).

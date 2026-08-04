@@ -21,9 +21,27 @@ func (*TimerEventDefinition) Type() flow.EventTrigger {
 	return flow.TriggerTimer
 }
 
-// NewTimerEventDefinition creates a new TimerEventDefinition and returns its
-// pointer if there are no questions to timer parameters.
-// If parameters arent' consistent then error returned.
+// NewTimerEventDefinition creates a TimerEventDefinition from the three timer
+// attributes BPMN defines as mutually exclusive (§10.5.5, Table 10.101), and
+// returns an error if the combination isn't one the engine can schedule.
+//
+// Exactly one of three forms is accepted:
+//
+//   - tDate alone — an absolute deadline: the timer fires once at that moment.
+//   - tDuration alone — a relative deadline: the timer fires once that long
+//     after it is armed.
+//   - tCycle WITH tDuration — a recurrence: tCycle is the repetition count and
+//     tDuration the interval between firings.
+//
+// The recurrence is where the model departs from the XML notation. BPMN packs
+// both numbers into one ISO 8601 string on timeCycle (R3/PT10H); the engine
+// carries them as two typed expressions instead of a parsed string. That is
+// why tDuration is required alongside tCycle, and why tCycle alone is refused —
+// a repetition count with no interval has nothing to schedule. Both spellings
+// denote the same schedule.
+//
+// Each expression's evaluated result must match its attribute: time.Time for
+// tDate, int for tCycle, time.Duration for tDuration.
 func NewTimerEventDefinition(
 	tDate, tCycle, tDuration data.FormalExpression,
 	baseOpts ...options.Option,
@@ -31,15 +49,26 @@ func NewTimerEventDefinition(
 	if tDate == nil && tCycle == nil && tDuration == nil {
 		return nil,
 			errs.New(
-				errs.M("all timer expression couldn't be empty"),
+				errs.M("NewTimerEventDefinition: a Timer needs timeDate, "+
+					"timeDuration, or timeCycle with timeDuration"),
 				errs.C(errorClass, errs.InvalidParameter))
 	}
 
-	if (tDate != nil && (tCycle != nil || tDuration != nil)) ||
-		(tDate == nil && (tCycle == nil || tDuration == nil)) {
+	if tDate != nil && (tCycle != nil || tDuration != nil) {
 		return nil,
 			errs.New(
-				errs.M("doesn't allow to define Timer Data or Cycle and Duration simultaneously"),
+				errs.M("NewTimerEventDefinition: timeDate is mutually "+
+					"exclusive with timeCycle and timeDuration "+
+					"(BPMN Table 10.101)"),
+				errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	if tDate == nil && tDuration == nil {
+		return nil,
+			errs.New(
+				errs.M("NewTimerEventDefinition: timeCycle needs timeDuration "+
+					"as its interval — a recurrence is carried as "+
+					"(count, interval)"),
 				errs.C(errorClass, errs.InvalidParameter))
 	}
 
