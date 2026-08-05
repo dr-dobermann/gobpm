@@ -19,8 +19,27 @@ func (l *capLogger) Info(string, ...any)  {}
 func (l *capLogger) Warn(string, ...any)  { l.warns++ }
 func (l *capLogger) Error(string, ...any) {}
 
+// testGroup is the engine group the test records live in (SRD-078
+// FR-1: records reference established groups only).
+const testGroup = "test-group"
+
 func rec(id string, st repository.Status) repository.InstanceRecord {
-	return repository.InstanceRecord{Payload: []byte(id), ID: id, Status: st}
+	return repository.InstanceRecord{
+		Payload: []byte(id), ID: id, Status: st, Group: testGroup,
+	}
+}
+
+// newRepo builds a Repo with testGroup established — the engine
+// sequence (RegisterGroup at Run) every save relies on.
+func newRepo(t *testing.T, opts ...Option) *Repo {
+	t.Helper()
+
+	r := New(opts...)
+	if err := r.RegisterGroup(context.Background(), testGroup); err != nil {
+		t.Fatal(err)
+	}
+
+	return r
 }
 
 // resave loads the current version and saves the record over it (the
@@ -45,7 +64,7 @@ func resave(t *testing.T, r *Repo, nr repository.InstanceRecord) {
 }
 
 func TestSaveLoadDelete(t *testing.T) {
-	r := New()
+	r := newRepo(t)
 	ctx := context.Background()
 
 	_ = r.Save(ctx, rec("a", repository.StatusActive))
@@ -68,14 +87,14 @@ func TestSaveLoadDelete(t *testing.T) {
 }
 
 func TestListInFlightOnlyActiveSorted(t *testing.T) {
-	r := New()
+	r := newRepo(t)
 	ctx := context.Background()
 
 	_ = r.Save(ctx, rec("b", repository.StatusActive))
 	_ = r.Save(ctx, rec("a", repository.StatusActive))
 	_ = r.Save(ctx, rec("c", repository.StatusCompleted))
 
-	ids, _ := r.ListInFlight(ctx, time.Now())
+	ids, _ := r.ListInFlight(ctx, testGroup, time.Now())
 	if len(ids) != 2 || ids[0] != "a" || ids[1] != "b" {
 		t.Fatalf("in-flight = %v, want [a b]", ids)
 	}
@@ -83,7 +102,7 @@ func TestListInFlightOnlyActiveSorted(t *testing.T) {
 
 func TestActiveNeverEvictedTerminalCapped(t *testing.T) {
 	lg := &capLogger{}
-	r := New(WithMaxTerminal(2), WithLogger(lg))
+	r := newRepo(t, WithMaxTerminal(2), WithLogger(lg))
 	ctx := context.Background()
 
 	_ = r.Save(ctx, rec("active", repository.StatusActive))
@@ -107,7 +126,7 @@ func TestActiveNeverEvictedTerminalCapped(t *testing.T) {
 }
 
 func TestReSaveTerminalNotDoubleTracked(t *testing.T) {
-	r := New(WithMaxTerminal(1))
+	r := newRepo(t, WithMaxTerminal(1))
 	ctx := context.Background()
 
 	_ = r.Save(ctx, rec("t1", repository.StatusCompleted))
@@ -123,8 +142,32 @@ func TestReSaveTerminalNotDoubleTracked(t *testing.T) {
 	}
 }
 
+// TestTerminalRevivedToActiveNotEvicted is the SRD-078 FR-9 regression
+// (audit remediation row 11): a terminal record re-saved Active leaves
+// the eviction ledger, so cap pressure can never evict a live instance.
+func TestTerminalRevivedToActiveNotEvicted(t *testing.T) {
+	r := newRepo(t, WithMaxTerminal(1))
+	ctx := context.Background()
+
+	_ = r.Save(ctx, rec("i", repository.StatusCompleted)) // tracked terminal
+	resave(t, r, rec("i", repository.StatusActive))       // revived → untracked
+
+	// Fill the cap with real terminals; the revived record must survive.
+	_ = r.Save(ctx, rec("t1", repository.StatusCompleted))
+	_ = r.Save(ctx, rec("t2", repository.StatusCompleted))
+
+	if _, ok, _ := r.Load(ctx, "i"); !ok {
+		t.Fatal("an Active record must never be evicted (FR-9)")
+	}
+
+	ids, _ := r.ListInFlight(ctx, testGroup, time.Now())
+	if len(ids) != 1 || ids[0] != "i" {
+		t.Fatalf("in-flight = %v, want [i]", ids)
+	}
+}
+
 func TestDeleteTerminalUntracks(t *testing.T) {
-	r := New(WithMaxTerminal(2))
+	r := newRepo(t, WithMaxTerminal(2))
 	ctx := context.Background()
 
 	_ = r.Save(ctx, rec("t1", repository.StatusCompleted))
@@ -141,7 +184,7 @@ func TestDeleteTerminalUntracks(t *testing.T) {
 }
 
 func TestMaxTerminalDisabled(t *testing.T) {
-	r := New(WithMaxTerminal(0))
+	r := newRepo(t, WithMaxTerminal(0))
 	ctx := context.Background()
 
 	for i := range 5 {
@@ -173,7 +216,7 @@ func TestRemoveFirst(t *testing.T) {
 }
 
 func TestCASAndLease(t *testing.T) {
-	r := New()
+	r := newRepo(t)
 	ctx := context.Background()
 	now := time.Now()
 
@@ -222,7 +265,7 @@ func TestCASAndLease(t *testing.T) {
 }
 
 func TestListInFlightHonorsLeases(t *testing.T) {
-	r := New()
+	r := newRepo(t)
 	ctx := context.Background()
 	now := time.Now()
 
@@ -245,14 +288,14 @@ func TestListInFlightHonorsLeases(t *testing.T) {
 		}
 	}
 
-	ids, _ := r.ListInFlight(ctx, now)
+	ids, _ := r.ListInFlight(ctx, testGroup, now)
 	if len(ids) != 2 || ids[0] != "free" || ids[1] != "lapsed" {
 		t.Fatalf("claimable = %v, want [free lapsed]", ids)
 	}
 }
 
 func TestPayloadIsCopied(t *testing.T) {
-	r := New()
+	r := newRepo(t)
 	ctx := context.Background()
 
 	orig := rec("c", repository.StatusActive)
@@ -278,7 +321,7 @@ func TestPayloadIsCopied(t *testing.T) {
 }
 
 func TestSaveValidation(t *testing.T) {
-	r := New()
+	r := newRepo(t)
 
 	if err := r.Save(context.Background(),
 		repository.InstanceRecord{}); err == nil {

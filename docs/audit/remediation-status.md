@@ -20,7 +20,7 @@ Legend: ✅ Fixed · 🅿️ Postponed (design backlog) · ⏳ Open
 | 8   | `Run` stays `Started` on starter-registration failure                | 🟠 P2 | ✅ FIX-013 (§1.2)                                                                               |
 | 9   | `WithRenderer` rejects a second renderer of the same impl type       | 🟠 P2 | ✅ SRD-034 (was 🅿️ AB-002 — dedup by `ID()` only, M3)                                          |
 | 10  | `UserTask.Exec` ignores context — goroutine leak                     | 🟠 P2 | ✅ SRD-034 (was 🅿️ AB-002 — UserTask wait-node redesign, M2b)                                  |
-| 11  | `memrepo` can evict an Active instance after terminal→Active re-save | 🟠 P2 | ⏳ Open — Latent (persistence unwired); defer until persistence lands                           |
+| 11  | `memrepo` can evict an Active instance after terminal→Active re-save | 🟠 P2 | ✅ SRD-078 (FR-9)                                                                               |
 | 12  | `bpmncommon.Error.Structure()` nil-derefs; `NewError` accepts nil    | 🟠 P2 | ✅ FIX-010                                                                                      |
 | 13  | `govulncheck` scans only the root module                             | 🟠 P2 | ✅ FIX-015 (1.1)                                                                                |
 | 14  | `scope.namesFrom` omits a `/`-keyed root scope                       | 🟡 P3 | ✅ FIX-014 (1.4)                                                                                |
@@ -44,13 +44,13 @@ Legend: ✅ Fixed · 🅿️ Postponed (design backlog) · ⏳ Open
 
 ## Tally
 
-- **✅ Fixed — 28** (FIX-010: #2, #12 · FIX-011: #3, #4 · FIX-012: #21 ·
+- **✅ Fixed — 29** (FIX-010: #2, #12 · FIX-011: #3, #4 · FIX-012: #21 ·
   FIX-013: #5, #7, #8, #22 · FIX-014: #14–17, #19, #20, #23–27 ·
-  FIX-015: #13, #28, #29, #31 · FIX-016: #1 · SRD-033: #6 · SRD-034: #9, #10).
+  FIX-015: #13, #28, #29, #31 · FIX-016: #1 · SRD-033: #6 · SRD-034: #9, #10 ·
+  SRD-078: #11).
 - **🅿️ Postponed — 2** across 2 backlog entries (AB-003: #18 · AB-004: #30).
   See `audit-backlog.md`.
-- **⏳ Open — 1**: a latent persistence item (#11, `memrepo` evict-Active; defer
-  until persistence lands).
+- **⏳ Open — 0**.
 
 All landed FIX docs are Accepted in `docs/fix/`. Earlier audits
 (`architecture-audit-2026-06-11`, `code-review-codex-second-pass-2026-06-29`)

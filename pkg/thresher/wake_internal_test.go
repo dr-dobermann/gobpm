@@ -351,7 +351,7 @@ func TestClaimForWakeExhausts(t *testing.T) {
 	ctx := context.Background()
 
 	require.NoError(t, repo.Save(ctx, repository.InstanceRecord{
-		ID: "i-cas", Status: repository.StatusActive}))
+		ID: "i-cas", Status: repository.StatusActive, Group: th.group}))
 
 	// a foreign write between every load and save keeps the CAS losing.
 	th.cfg.repository = &casLoser{Repository: repo}
@@ -359,6 +359,27 @@ func TestClaimForWakeExhausts(t *testing.T) {
 	_, err := th.claimForWake(ctx, "i-cas")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "claim the record")
+}
+
+// TestClaimForWakeRefusesForeignGroup: a wake claim on a record of
+// another engine group is refused loud (SRD-078 FR-2) instead of
+// silently stealing across the partition.
+func TestClaimForWakeRefusesForeignGroup(t *testing.T) {
+	th, cancel := armedWakeEngine(t, "engine-own-wake")
+	defer cancel()
+
+	repo := th.cfg.Repository()
+	ctx := context.Background()
+
+	require.NoError(t, repo.RegisterGroup(ctx, "other-group"))
+	require.NoError(t, repo.Save(ctx, repository.InstanceRecord{
+		ID: "i-foreign", Status: repository.StatusActive,
+		Group: "other-group"}))
+
+	_, err := th.claimForWake(ctx, "i-foreign")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "other-group")
+	require.Contains(t, err.Error(), th.group)
 }
 
 // casLoser fails every Save, standing in for a record that keeps moving.
@@ -385,6 +406,7 @@ func TestRebuildAndContinueFailures(t *testing.T) {
 			repository.InstanceRecord{
 				ID:      "bad-doc",
 				Status:  repository.StatusActive,
+				Group:   th.group,
 				Payload: []byte("not json"),
 			}))
 
@@ -412,6 +434,7 @@ func TestRebuildAndContinueFailures(t *testing.T) {
 			repository.InstanceRecord{
 				ID:      "ghost-proc",
 				Status:  repository.StatusActive,
+				Group:   th.group,
 				Payload: payload,
 			}))
 
@@ -776,7 +799,7 @@ func TestRebuildRefusesABrokenRecord(t *testing.T) {
 	require.NoError(t, th.cfg.Repository().Save(context.Background(),
 		repository.InstanceRecord{
 			ID: "broken-node", Status: repository.StatusActive,
-			Payload: payload}))
+			Group: th.group, Payload: payload}))
 
 	err = th.rebuildAndContinue("broken-node", &instance.PendingTrigger{
 		TrackID: "t-1", EDef: wakeSignalDef(t, "broken-sig")})

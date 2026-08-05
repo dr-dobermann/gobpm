@@ -173,6 +173,11 @@ type Thresher struct {
 	// engine-scope Observe registry.
 	producer *producer
 	id       string
+	// group is the engine's resolved group (SRD-078 FR-2, ADR-033 v.3
+	// §2.8): the configured WithEngineGroup/WithExistingEngineGroup
+	// name, or — the solo default — the engine id. Stamped on every
+	// record; recovery and claims are scoped to it.
+	group string
 	// timerSvc is the engine-level durable timer holder (SRD-071 FR-6): a
 	// dehydratable timer registers its deadline here at arm and the service
 	// wakes the released instance on fire. nil until Run when a Repository is
@@ -198,6 +203,33 @@ type Thresher struct {
 	state   atomic.Uint32 // a State; lock-free, NEVER accessed under m
 }
 
+// resolveIdentity settles the engine's id and group (SRD-078 FR-2): a
+// blank id falls back to the default, an unset group forms the solo
+// default — a single-engine group under the engine's own stable id
+// (§4.7), so clustering is explicit opt-in, never accidental. Asserting
+// membership in an existing group is a repository fact, so join-only
+// mode demands an explicitly configured Repository.
+func resolveIdentity(id string, cfg *thresherConfig) (string, string, error) {
+	if cfg.groupJoinOnly && !cfg.repoSet {
+		return "", "", errs.New(
+			errs.M("WithExistingEngineGroup needs an explicitly configured"+
+				" Repository (WithRepository)"),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	id = strings.TrimSpace(id)
+	if id == "" {
+		id = defaultThresherID
+	}
+
+	group := cfg.engineGroup
+	if group == "" {
+		group = id
+	}
+
+	return id, group, nil
+}
+
 // New creates a new empty Thresher in NotStarted state. Engine-level extensions
 // default to their bundled core implementations; each WithXxx option overrides
 // one (a zero-option New produces a fully working engine — no NewDefault).
@@ -213,6 +245,11 @@ func New(id string, opts ...Option) (*Thresher, error) {
 					errs.C(errorClass, errs.InvalidParameter),
 					errs.E(err))
 		}
+	}
+
+	id, group, err := resolveIdentity(id, &cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	reg, err := script.NewRegistry(cfg.scriptEngines...)
@@ -246,13 +283,9 @@ func New(id string, opts ...Option) (*Thresher, error) {
 
 	cfg.exprRegistry = exprReg
 
-	id = strings.TrimSpace(id)
-	if id == "" {
-		id = defaultThresherID
-	}
-
 	t := &Thresher{
 		id:            id,
+		group:         group,
 		cfg:           cfg,
 		registrations: map[string][]*ProcessRegistration{},
 		nextVersion:   map[string]int{},
@@ -557,6 +590,20 @@ func (t *Thresher) Run(ctx context.Context) error {
 			errs.M("couldn't register instance-starters at startup"),
 			errs.C(errorClass, errs.OperationFailed),
 			errs.E(err))
+	}
+
+	// The engine group (SRD-078 FR-2, ADR-033 v.3 §2.8): establish it in
+	// the repository's registry — or, under WithExistingEngineGroup,
+	// assert it is already established, so a misspelled group refuses
+	// here instead of silently minting a fresh partition. Only with a
+	// Repository: a volatile engine writes no records.
+	if t.cfg.repoSet {
+		if err := t.ensureGroup(runCtx); err != nil {
+			t.engineCancel()
+			t.state.Store(uint32(NotStarted))
+
+			return err
+		}
 	}
 
 	// The engine timer service (SRD-071 FR-6, closes #84): the durable holder
@@ -1250,7 +1297,7 @@ func (t *Thresher) instanceOptions(settled chan struct{}) []instance.Option {
 
 	if t.cfg.repoSet {
 		opts = append(opts,
-			instance.WithCheckpointing(t.id, t.cfg.leaseTTL),
+			instance.WithCheckpointing(t.id, t.group, t.cfg.leaseTTL),
 			instance.WithWaitHolders(t))
 	}
 

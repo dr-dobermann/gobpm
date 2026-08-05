@@ -12,18 +12,21 @@ import (
 
 // WithCheckpointing arms the instance's consistent-cut checkpoints
 // (SRD-070 FR-4): owner is the engine id the ownership lease names,
-// ttl its validity window (ADR-033 §2.8). Without this option the
-// instance runs volatile, exactly as before — the engine wires it when
-// a Repository is meant to hold the state of record. An empty owner or
-// non-positive ttl leaves checkpointing off (the option constructors'
-// nil-safety posture: never break a working default).
-func WithCheckpointing(owner string, ttl time.Duration) Option {
+// group the engine's group every record is stamped with (SRD-078 FR-2,
+// ADR-033 §2.8 — never empty for a grouped write), ttl the lease's
+// validity window. Without this option the instance runs volatile,
+// exactly as before — the engine wires it when a Repository is meant
+// to hold the state of record. An empty owner/group or non-positive
+// ttl leaves checkpointing off (the option constructors' nil-safety
+// posture: never break a working default).
+func WithCheckpointing(owner, group string, ttl time.Duration) Option {
 	return func(cfg *newConfig) {
-		if owner == "" || ttl <= 0 {
+		if owner == "" || group == "" || ttl <= 0 {
 			return
 		}
 
 		cfg.cpOwner = owner
+		cfg.cpGroup = group
 		cfg.cpTTL = ttl
 	}
 }
@@ -96,9 +99,13 @@ func (ls *loopState) checkpointNow(ctx context.Context) {
 	}
 
 	rec := repository.InstanceRecord{
-		ID:         inst.ID(),
-		Status:     persistedStatus(inst.State()),
-		Payload:    payload,
+		ID:      inst.ID(),
+		Status:  persistedStatus(inst.State()),
+		Payload: payload,
+		// The partition keys (SRD-078 FR-1/FR-2): the engine's group;
+		// the tenant stays the default ("") until the Multi-tenancy ADR
+		// wires real assignment.
+		Group:      inst.cpGroup,
 		RecVersion: inst.cpRecVersion,
 		Lease: repository.Lease{
 			Owner:       inst.cpOwner,

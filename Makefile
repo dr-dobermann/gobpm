@@ -58,6 +58,13 @@ COVER_BASE ?= origin/master
 # logic — it only ends a void function's guard — so excluding it can never hide
 # untested behaviour; the statement that DID something sits on the line above.
 #
+# Eleventh regex: a `t.Fatal`/`t.Fatalf` call. It appears in non-test files
+# only inside a shipped test-helper package (pkg/repository/repositorytest,
+# SRD-078 FR-6): the suite's failure diagnostics fire only when an adapter
+# under test VIOLATES the contract, so on a green run they are structurally
+# unreachable — the same grounds as the log-call exclusions. The guarding
+# condition's own line stays in the gate.
+#
 # Eighth regex: a bare closing brace. A `}` line carries no statement — it is
 # counted only because it sits inside a profile block's line span (e.g. the
 # excluded propagation return's block). Excluding it can never hide untested
@@ -70,7 +77,7 @@ COVER_BASE ?= origin/master
 # three red gates before it was named. It cannot hide logic: the enclosing
 # statement's own line is still measured, and a matching line is always an
 # argument or a map entry, never a condition or a unit of work.
-COVER_EXCLUDE ?= ^\s*observability\.Attr,\.(logger|Logger\(\))\.(Debug|Info|Warn|Error)\(,func \(.*\) Option\(\) \{\},func \(.*\) mappedOutcome\(\) \{\},func \(.*\) (Lock|Unlock)\(\) \{\},func \(.*\) isLoopCharacteristics\(\) \{\},^\s*return .*[a-z]Err\(.*err\)$$,^\s*return (nil. |\"\". |false. )*err$$,^\s*\}$$,errs\.Invariant\(,failInvariant\(,^\s*return$$
+COVER_EXCLUDE ?= ^\s*observability\.Attr,\.(logger|Logger\(\))\.(Debug|Info|Warn|Error)\(,func \(.*\) Option\(\) \{\},func \(.*\) mappedOutcome\(\) \{\},func \(.*\) (Lock|Unlock)\(\) \{\},func \(.*\) isLoopCharacteristics\(\) \{\},^\s*return .*[a-z]Err\(.*err\)$$,^\s*return (nil. |\"\". |false. )*err$$,^\s*\}$$,errs\.Invariant\(,failInvariant\(,^\s*return$$,^\s*t\.Fatal
 
 # All Go modules in the monorepo (each with its own go.mod).
 # Discovered dynamically so adding a new module needs no Makefile edit.

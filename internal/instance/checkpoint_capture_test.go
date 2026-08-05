@@ -47,6 +47,23 @@ func (cs *cpSink) has(phase observability.Phase) bool {
 	return false
 }
 
+// engineA is the checkpoint owner and engine group the capture tests
+// arm.
+const engineA = "engine-A"
+
+// cpRuntime builds the default runtime with engineA's group already
+// established — mirroring the RegisterGroup the engine issues at Run
+// (SRD-078 FR-2) before any checkpoint save.
+func cpRuntime(t *testing.T) *enginert.Runtime {
+	t.Helper()
+
+	rt := enginert.Default()
+	require.NoError(t,
+		rt.Repository().RegisterGroup(context.Background(), engineA))
+
+	return rt
+}
+
 // parkAndInspect runs a conditional-catch process to its park under an
 // armed checkpoint and returns the runtime, the instance and the parked
 // record's document.
@@ -67,10 +84,10 @@ func parkAndInspect(t *testing.T) (
 	lastCondSnapshot = s
 
 	ep := mockeventproc.NewMockEventProducer(t)
-	rt := enginert.Default()
+	rt := cpRuntime(t)
 
 	inst, err := New(s, scope.EmptyDataPath, rt, ep, nil,
-		WithCheckpointing("engine-A", time.Minute))
+		WithCheckpointing("engine-A", "engine-A", time.Minute))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -182,11 +199,11 @@ func TestCheckpointDeferGuard(t *testing.T) {
 	s := condSnapshot(t, def)
 
 	sink := &cpSink{}
-	rt := enginert.Default().WithReporter(sink)
+	rt := cpRuntime(t).WithReporter(sink)
 	ep := mockeventproc.NewMockEventProducer(t)
 
 	inst, err := New(s, scope.EmptyDataPath, rt, ep, nil,
-		WithCheckpointing("engine-A", time.Minute))
+		WithCheckpointing("engine-A", "engine-A", time.Minute))
 	require.NoError(t, err)
 
 	ls := newLoopState(inst)
@@ -243,11 +260,11 @@ func TestCaptureArms(t *testing.T) {
 		require.NoError(t, err)
 
 		sink := &cpSink{}
-		rt := enginert.Default().WithReporter(sink)
+		rt := cpRuntime(t).WithReporter(sink)
 		ep := mockeventproc.NewMockEventProducer(t)
 
 		inst, err := New(condSnapshot(t, def), scope.EmptyDataPath, rt, ep,
-			nil, WithCheckpointing("engine-A", time.Minute))
+			nil, WithCheckpointing("engine-A", "engine-A", time.Minute))
 		require.NoError(t, err)
 
 		return inst, newLoopState(inst), sink
@@ -312,7 +329,8 @@ func TestCaptureArms(t *testing.T) {
 			// a foreign write bumps the stored version — CAS fences ours.
 			require.NoError(t, inst.Repository().Save(context.Background(),
 				repository.InstanceRecord{ID: inst.ID(),
-					Status: repository.StatusActive}))
+					Status: repository.StatusActive,
+					Group:  engineA}))
 
 			ls.checkpointNow(context.Background())
 			require.True(t,
@@ -722,12 +740,12 @@ func TestRestoreKeysAndLedgerEncodeArms(t *testing.T) {
 				condExpr(t, &val, &evals))
 			require.NoError(t, err)
 
-			rt := enginert.Default()
+			rt := cpRuntime(t)
 			ep := mockeventproc.NewMockEventProducer(t)
 
 			inst, err := New(condSnapshot(t, def), scope.EmptyDataPath,
 				rt, ep, nil,
-				WithCheckpointing("engine-A", time.Minute))
+				WithCheckpointing("engine-A", "engine-A", time.Minute))
 			require.NoError(t, err)
 
 			bad, err := data.ReadyValueParameter("hot",

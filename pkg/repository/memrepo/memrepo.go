@@ -25,7 +25,8 @@ const DefaultMaxTerminal = 1024
 // Repo is an in-memory repository.Repository.
 type Repo struct {
 	logger      observability.Logger
-	records     map[string]repository.InstanceRecord
+	records     map[string]*repository.InstanceRecord
+	groups      map[string]struct{}
 	termSet     map[string]struct{}
 	termOrder   []string
 	maxTerminal int
@@ -47,7 +48,8 @@ func WithLogger(l observability.Logger) Option { return func(r *Repo) { r.logger
 func New(opts ...Option) *Repo {
 	r := &Repo{
 		logger:      slog.Default(),
-		records:     map[string]repository.InstanceRecord{},
+		records:     map[string]*repository.InstanceRecord{},
+		groups:      map[string]struct{}{},
 		termSet:     map[string]struct{}{},
 		maxTerminal: DefaultMaxTerminal,
 	}
@@ -62,7 +64,8 @@ func New(opts ...Option) *Repo {
 // Save stores the record under its ID with compare-and-set semantics
 // (SRD-070 FR-5): rec.RecVersion must equal the stored version (0
 // creates); the stored version increments on success. A mismatch fails
-// with errs.ConcurrentUpdate — the fencing every adapter mirrors.
+// with errs.ConcurrentUpdate — the fencing every adapter mirrors. The
+// record must carry its creator's engine group (SRD-078 FR-1).
 func (r *Repo) Save(_ context.Context, rec repository.InstanceRecord) error {
 	if rec.ID == "" {
 		return errs.New(
@@ -70,8 +73,22 @@ func (r *Repo) Save(_ context.Context, rec repository.InstanceRecord) error {
 			errs.C(errorClass, errs.EmptyNotAllowed))
 	}
 
+	if rec.Group == "" {
+		return errs.New(
+			errs.M("Save: a record needs an engine group"),
+			errs.C(errorClass, errs.EmptyNotAllowed),
+			errs.D("id", rec.ID))
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	if _, ok := r.groups[rec.Group]; !ok {
+		return errs.New(
+			errs.M("Save: engine group %q isn't registered", rec.Group),
+			errs.C(errorClass, errs.ObjectNotFound),
+			errs.D("id", rec.ID))
+	}
 
 	if cur, ok := r.records[rec.ID]; ok && cur.RecVersion != rec.RecVersion {
 		return errs.New(
@@ -82,7 +99,7 @@ func (r *Repo) Save(_ context.Context, rec repository.InstanceRecord) error {
 
 	rec.RecVersion++
 	rec.Payload = append([]byte(nil), rec.Payload...)
-	r.records[rec.ID] = rec
+	r.records[rec.ID] = &rec
 
 	if rec.Status.IsTerminal() {
 		if _, tracked := r.termSet[rec.ID]; !tracked {
@@ -90,6 +107,12 @@ func (r *Repo) Save(_ context.Context, rec repository.InstanceRecord) error {
 			r.termOrder = append(r.termOrder, rec.ID)
 			r.evictTerminalLocked()
 		}
+	} else if _, tracked := r.termSet[rec.ID]; tracked {
+		// A terminal record revived to a non-terminal status leaves the
+		// eviction ledger — an Active instance must never be evicted
+		// (SRD-078 FR-9, audit remediation row 11).
+		delete(r.termSet, rec.ID)
+		r.termOrder = removeFirst(r.termOrder, rec.ID)
 	}
 
 	return nil
@@ -101,12 +124,15 @@ func (r *Repo) Load(_ context.Context, id string) (repository.InstanceRecord, bo
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	rec, ok := r.records[id]
-	if ok {
-		rec.Payload = append([]byte(nil), rec.Payload...)
+	stored, ok := r.records[id]
+	if !ok {
+		return repository.InstanceRecord{}, false, nil
 	}
 
-	return rec, ok, nil
+	rec := *stored
+	rec.Payload = append([]byte(nil), rec.Payload...)
+
+	return rec, true, nil
 }
 
 // Delete removes the record for id (a no-op if absent).
@@ -124,17 +150,33 @@ func (r *Repo) Delete(_ context.Context, id string) error {
 	return nil
 }
 
-// ListInFlight returns the IDs of the CLAIMABLE in-flight instances —
-// Active with no live lease at now — sorted for determinism (the
-// ADR-033 §2.8 recovery listing; Suspended records refuse triggers and
-// never list).
-func (r *Repo) ListInFlight(_ context.Context, now time.Time) ([]string, error) {
+// ListInFlight returns the IDs of the CLAIMABLE in-flight instances of
+// the given engine group — Active with no live lease at now — sorted
+// for determinism (the ADR-033 §2.8 group-scoped recovery listing;
+// Suspended records refuse triggers and never list).
+func (r *Repo) ListInFlight(
+	_ context.Context,
+	group string,
+	now time.Time,
+) ([]string, error) {
+	if group == "" {
+		return nil, errs.New(
+			errs.M("ListInFlight: an engine group is required"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	ids := make([]string, 0, len(r.records))
 	for id, rec := range r.records {
-		if rec.Status == repository.StatusActive && rec.Lease.Expired(now) {
+		// Claimable is defined by EXCLUSION — non-terminal and not
+		// suspended — so a growing status vocabulary (e.g. an
+		// incidents-holding non-terminal status) lists automatically.
+		if rec.Group == group &&
+			!rec.Status.IsTerminal() &&
+			rec.Status != repository.StatusSuspended &&
+			rec.Lease.Expired(now) {
 			ids = append(ids, id)
 		}
 	}
@@ -142,6 +184,39 @@ func (r *Repo) ListInFlight(_ context.Context, now time.Time) ([]string, error) 
 	sort.Strings(ids)
 
 	return ids, nil
+}
+
+// RegisterGroup establishes the engine group in the registry (SRD-078
+// FR-1), idempotently.
+func (r *Repo) RegisterGroup(_ context.Context, group string) error {
+	if group == "" {
+		return errs.New(
+			errs.M("RegisterGroup: an engine group is required"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.groups[group] = struct{}{}
+
+	return nil
+}
+
+// GroupExists reports whether the group is established in the registry.
+func (r *Repo) GroupExists(_ context.Context, group string) (bool, error) {
+	if group == "" {
+		return false, errs.New(
+			errs.M("GroupExists: an engine group is required"),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	_, ok := r.groups[group]
+
+	return ok, nil
 }
 
 // evictTerminalLocked drops oldest terminal records past the cap. Caller holds mu.

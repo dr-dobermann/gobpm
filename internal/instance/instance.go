@@ -74,8 +74,10 @@ type Instance struct {
 	callNodeID       string
 	// cpOwner arms checkpointing (SRD-070 FR-4); its int-sized siblings
 	// (cpTTL/cpRecVersion/cpIncarnation) sit at the struct tail, outside
-	// the GC pointer scan (fieldalignment).
+	// the GC pointer scan (fieldalignment). cpGroup is the engine's
+	// group every record is stamped with (SRD-078 FR-2, ADR-033 §2.8).
 	cpOwner string
+	cpGroup string
 	// waitHeld reports whether a parked track's wait has an engine-level holder
 	// that can wake a released instance (SRD-071 FR-2). nil (the default, and
 	// production without an injected WaitHolders) means "nothing held" — the
@@ -279,10 +281,12 @@ type newConfig struct {
 	parentInstanceID string
 	callNodeID       string
 	// cpOwner arms consistent-cut checkpointing (SRD-070 FR-4): the
-	// lease owner (engine id). Empty = volatile instance (today's
-	// default); restoredID keeps a restored instance's identity
+	// lease owner (engine id); cpGroup the engine's group stamped on
+	// every record (SRD-078 FR-2). Empty owner = volatile instance
+	// (today's default); restoredID keeps a restored instance's identity
 	// (SRD-070 FR-6). The int-sized checkpoint cursors sit at the tail.
 	cpOwner    string
+	cpGroup    string
 	restoredID string
 	// invoker launches child instances for the Call Activities this instance
 	// runs (SRD-050 FR-3); nil for a library embedder without a thresher — a
@@ -431,6 +435,7 @@ func New(
 		parentInstanceID:    cfg.parentInstanceID,
 		callNodeID:          cfg.callNodeID,
 		cpOwner:             cfg.cpOwner,
+		cpGroup:             cfg.cpGroup,
 		cpTTL:               cfg.cpTTL,
 		cpRecVersion:        cfg.cpRecVersion,
 		cpIncarnation:       cfg.cpIncarnation,

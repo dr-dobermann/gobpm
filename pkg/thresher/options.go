@@ -2,6 +2,7 @@ package thresher
 
 import (
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/dr-dobermann/gobpm/pkg/auth"
@@ -31,25 +32,31 @@ import (
 // thresherConfig holds the resolved engine-level extensions (ADR-002 §4.3).
 // EventHub is NOT here — it stays internal and the Thresher builds it itself.
 type thresherConfig struct {
-	exprEngines           []expression.Engine
-	exprRegistry          *expression.Registry
-	logger                observability.Logger
-	workerErrorMapper     tasks.ErrorMapper
-	ruleEngine            rules.Engine
-	clock                 clock.Clock
-	repository            repository.Repository
-	msgBroker             messaging.MessageBroker
-	tracer                observability.Tracer
-	dispatcher            tasks.WorkerDispatcher
-	reporter              observability.Reporter
-	metrics               observability.MetricsRecorder
-	dataStores            *memstore.Registry
-	authz                 auth.AuthorizationProvider
-	workerRetryPolicy     tasks.RetryPolicy
-	taskDist              interactor.TaskDistributor
-	scriptRegistry        *script.Registry
+	exprEngines       []expression.Engine
+	exprRegistry      *expression.Registry
+	logger            observability.Logger
+	workerErrorMapper tasks.ErrorMapper
+	ruleEngine        rules.Engine
+	clock             clock.Clock
+	repository        repository.Repository
+	msgBroker         messaging.MessageBroker
+	tracer            observability.Tracer
+	dispatcher        tasks.WorkerDispatcher
+	reporter          observability.Reporter
+	metrics           observability.MetricsRecorder
+	dataStores        *memstore.Registry
+	authz             auth.AuthorizationProvider
+	workerRetryPolicy tasks.RetryPolicy
+	taskDist          interactor.TaskDistributor
+	scriptRegistry    *script.Registry
+	// engineGroup is the configured engine group (SRD-078 FR-2); empty
+	// means the solo default (New resolves it to the engine id).
+	// groupJoinOnly asserts membership: Run refuses when the group is
+	// not established in the repository's registry.
+	engineGroup           string
 	scriptEngines         []script.Engine
 	workerTrustDefault    tasks.TrustMode
+	groupJoinOnly         bool
 	noDefaultExprEngines  bool
 	suppressBanner        bool
 	suppressStartupConfig bool
@@ -383,6 +390,54 @@ const DefaultLeaseTTL = 30 * time.Second
 // who lengthens the lease is describing a slower-moving deployment, and a retry
 // cadence that outpaced it would just churn.
 const DefaultWakeRetryBackoff = DefaultLeaseTTL / 2
+
+// setEngineGroup validates and stores the group both group options
+// share; joinOnly marks the WithExistingEngineGroup assertion.
+func setEngineGroup(
+	c *thresherConfig, option, name string, joinOnly bool,
+) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errs.New(
+			errs.M("%s: an empty group name isn't allowed", option),
+			errs.C(errorClass, errs.EmptyNotAllowed))
+	}
+
+	if c.engineGroup != "" {
+		return errs.New(
+			errs.M("%s: the engine group is already set to %q",
+				option, c.engineGroup),
+			errs.C(errorClass, errs.InvalidParameter))
+	}
+
+	c.engineGroup = name
+	c.groupJoinOnly = joinOnly
+
+	return nil
+}
+
+// WithEngineGroup names the engine's group (SRD-078 FR-2, ADR-033 v.3
+// §2.8): engines deliberately sharing a group name over one repository
+// form a cluster — they recover and claim each other's instances. The
+// group is established in the repository's group registry at Run if
+// absent. Unset, the engine forms a single-engine group under its own
+// engine id — clustering is explicit opt-in, never accidental.
+func WithEngineGroup(name string) Option {
+	return func(c *thresherConfig) error {
+		return setEngineGroup(c, "WithEngineGroup", name, false)
+	}
+}
+
+// WithExistingEngineGroup joins an ALREADY-established engine group
+// (SRD-078 FR-2): at Run the engine asserts the group exists in the
+// repository's registry and refuses to start when it does not — the
+// typo-guard that keeps a misspelled group name from silently minting
+// a fresh partition.
+func WithExistingEngineGroup(name string) Option {
+	return func(c *thresherConfig) error {
+		return setEngineGroup(c, "WithExistingEngineGroup", name, true)
+	}
+}
 
 // WithLeaseTTL tunes the ownership-lease window (SRD-070 FR-7): how
 // long a crashed engine's instances stay unclaimable before recovery

@@ -41,6 +41,7 @@ func unregisteredRecord(t *testing.T, th *Thresher, instanceID string) {
 		repository.InstanceRecord{
 			ID:      instanceID,
 			Status:  repository.StatusActive,
+			Group:   th.group,
 			Payload: payload,
 		}))
 }
@@ -78,6 +79,11 @@ func retryEngine(
 	require.NoError(t, err)
 
 	th.timerSvc = newTimerService(clk, backoff, th.hydrateFromTimer)
+
+	// the other line Run would have contributed: the engine's solo group
+	// registration (SRD-078 FR-2) the seeds below rely on.
+	require.NoError(t,
+		th.cfg.Repository().RegisterGroup(context.Background(), th.group))
 
 	return th, clk, func() {}
 }
@@ -361,7 +367,8 @@ func TestFailedRebuildKeepsTheSubscriptionSet(t *testing.T) {
 
 	require.NoError(t, th.cfg.Repository().Save(context.Background(),
 		repository.InstanceRecord{
-			ID: instID, Status: repository.StatusActive, Payload: payload}))
+			ID: instID, Status: repository.StatusActive,
+			Group: th.group, Payload: payload}))
 
 	// the gateway's armed set: a timer arm and two subscription arms.
 	require.NoError(t, th.HoldTimer(instID, trackID, wakeTimerDef(t),

@@ -165,6 +165,7 @@ func bndEngine(
 		thresher.WithoutStartupConfig(),
 		thresher.WithRepository(repo),
 		thresher.WithTaskDistributor(dist),
+		thresher.WithEngineGroup(recoveryGroup),
 		thresher.WithLeaseTTL(ttl))
 	require.NoError(t, err)
 
