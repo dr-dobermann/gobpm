@@ -1,0 +1,62 @@
+# gobpm documentation site (SRD-080).
+#
+# Publishes the docs/ tree to https://dr-dobermann.github.io/gobpm/ via
+# .github/workflows/docs.yml. Navigation is auto-derived from the directory
+# tree; the curated docs/index.md and docs/guides/index.md pages are the
+# primary reading-order surface. Links that escape docs/ are rewritten to
+# GitHub URLs by scripts/mkdocs_hooks.py.
+site_name: gobpm
+site_description: >-
+  gobpm — an embeddable BPMN 2.0 process-execution engine for Go.
+site_url: https://dr-dobermann.github.io/gobpm/
+repo_url: https://github.com/dr-dobermann/gobpm
+repo_name: dr-dobermann/gobpm
+edit_uri: ""
+
+docs_dir: docs
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+# camunda7/ is internal migration-analysis material, not developer
+# documentation (SRD-080 FR-2a); bpmn-spec/scripts/ is the elements/
+# generator, not a document. Dot-files (.obsidian/) are excluded by
+# MkDocs' implicit defaults.
+exclude_docs: |
+  /camunda7/
+  /bpmn-spec/scripts/
+
+# Anchor ids must match the GitHub slug convention the repo's in-page links
+# are authored in (see github_slugify's doc comment). The !!python/name
+# import resolves because the site is always built as `python -m mkdocs`
+# from the repo root (Makefile docs-* targets and the docs.yml workflow),
+# which puts the repo root on sys.path.
+markdown_extensions:
+  - toc:
+      permalink: true
+      slugify: !!python/name:scripts.mkdocs_hooks.github_slugify
+
+# Harden --strict: these default to `info`, which strict mode ignores.
+validation:
+  omitted_files: warn
+  unrecognized_links: warn
+  anchors: warn
+
+hooks:
+  - scripts/mkdocs_hooks.py

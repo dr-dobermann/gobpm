@@ -18,7 +18,7 @@ name, wiring) and what a given interface obliges you to provide.
 > This is a concept page. It grounds the **public** interfaces in `pkg/model/…`
 > and describes the runtime layers (`Snapshot`, instance, track, token) as
 > observable behavior — those live in `internal/…` and are not an API you call.
-> The *why* behind each layer lives in [`docs/design/`](../../design/).
+> The *why* behind each layer lives in [`docs/design/`](../../design/index.md).
 
 ## The stack at a glance
 

@@ -12,10 +12,10 @@ Reference extracted from OMG BPMN 2.0 spec, scoped to **Process Execution Confor
 | Path | Content |
 |---|---|
 | [conformance.md](conformance.md) | In/out element list per **§2.3.1** (execution semantics; §2.3.2 import is the server's half) |
-| [elements/](elements/) | Structural metamodel — attributes, associations, type hierarchy. 11 files by category |
-| [state-machines/](state-machines/) | Activity + Process lifecycles from §13 |
-| [semantics/](semantics/) | Token-flow, per-task behavior, sub-process variants, MI/Loop, compensation, events, end-events, data, correlation, event-handling, **instance attributes** |
-| [scripts/](scripts/) | `gen.py` regenerates `elements/*.md` from cached `bpmn-moddle.json` |
+| `elements/` | Structural metamodel — attributes, associations, type hierarchy. 11 files by category |
+| `state-machines/` | Activity + Process lifecycles from §13 |
+| `semantics/` | Token-flow, per-task behavior, sub-process variants, MI/Loop, compensation, events, end-events, data, correlation, event-handling, **instance attributes** |
+| `scripts/` | `gen.py` regenerates `elements/*.md` from cached `bpmn-moddle.json` |
 
 Snapshot, not continuously updated. Regenerate `elements/` via `python3 scripts/gen.py` after updating `scripts/bpmn-moddle.json`. State-machines and semantics are authored from the spec PDF — manual update only.
 

@@ -274,7 +274,7 @@ not require a lossless textual round-trip for Process Execution Conformance.
 
 ## 3. Standard grounding
 
-All claims cite the vendored KB ([docs/bpmn-spec/](../bpmn-spec/)), which carries
+All claims cite the vendored KB ([docs/bpmn-spec/](../bpmn-spec/index.md)), which carries
 the OMG §-refs.
 
 - **Conformance target.** Process Execution Conformance is **§2.3**, and it has
@@ -402,8 +402,8 @@ than the standard requires, to serve the SAD-001 §5 feedback need).
 
 **Standard (BPMN 2.0 KB):**
 - [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) — §2.3 Process Execution Conformance (§2.3.1 semantics / §2.3.2 import); the in-scope element list; DI/DC out of scope.
-- [docs/bpmn-spec/elements/](../bpmn-spec/elements/) — structural metamodel (foundation, process, events, activities, flows, gateways).
-- [docs/bpmn-spec/semantics/](../bpmn-spec/semantics/) — token-flow, tasks, gateways, events, end-events.
+- [docs/bpmn-spec/elements/](../bpmn-spec/index.md) — structural metamodel (foundation, process, events, activities, flows, gateways).
+- [docs/bpmn-spec/semantics/](../bpmn-spec/index.md) — token-flow, tasks, gateways, events, end-events.
 
 **Code (grounding the model targets):**
 - `pkg/model/process/process.go:47,175` — `process.New`, `Add`.
