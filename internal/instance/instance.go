@@ -58,7 +58,13 @@ type Instance struct {
 	lastErr    atomic.Pointer[error]
 	s          *snapshot.Snapshot
 	tracks     map[string]*track
-	loopDone   chan struct{}
+	// incidents is the durable record of unhandled failures (ADR-036 §2.1),
+	// keyed by incident id. Mutated only on the loop goroutine; carried into
+	// the checkpoint by the persistence slice (SRD-079 §3.3). openIncCount
+	// (at the struct tail with the other int-sized fields) mirrors the OPEN
+	// count for lock-free reads off the loop.
+	incidents map[string]*incident
+	loopDone  chan struct{}
 	// settled is closed when the instance reaches a TERMINAL state — and only
 	// then. loopDone closes on EVERY loop exit, dehydration included, so it
 	// cannot answer "has this instance finished?" any more (SRD-071): a
@@ -106,6 +112,9 @@ type Instance struct {
 	// call; the loop's detector honors the pin.
 	dehydrationPins atomic.Int32
 	state           atomic.Uint32
+	// openIncCount mirrors the number of OPEN incidents for lock-free reads
+	// off the loop (OpenIncidents); the loop is its only writer.
+	openIncCount atomic.Int32
 	// The checkpoint cursors (SRD-070 FR-4): the lease TTL, the CAS
 	// record version, the lease fencing incarnation (grows on reclaim,
 	// SRD-071+). Non-pointer tail — see cpOwner above.
@@ -421,6 +430,7 @@ func New(
 		s:                   s,
 		now:                 er.Clock().Now,
 		tracks:              map[string]*track{},
+		incidents:           map[string]*incident{},
 		events:              make(chan trackEvent),
 		taskReq:             make(chan taskRequest),
 		jobReq:              make(chan jobRequest),

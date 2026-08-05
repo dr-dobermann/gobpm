@@ -105,7 +105,7 @@ func tokenStateFor(ts trackState) TokenState {
 	case TrackWaitForEvent:
 		return TokenWaitForEvent
 
-	case TrackEnded, TrackMerged, TrackCanceled, TrackFailed:
+	case TrackEnded, TrackMerged, TrackCanceled, TrackFailed, TrackIncident:
 		// Canceled maps to Consumed here; the Withdrawn case
 		// (Event-Based Gateway race loss) is wired with that gateway
 		// (gateway SRD).

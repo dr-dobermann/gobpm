@@ -184,9 +184,15 @@ func TestMultiInstanceComplexConditionError(t *testing.T) {
 			inst, _ := miBehaviorInstance(t, countOp(t, &count), mi)
 			runToDone(t, inst)
 
+			// revised by SRD-079 FR-1: the evaluation error surfaces as an
+			// incident (or as an instance fault on the driver that fails
+			// before the incident path) — never as a silent completion.
 			require.NotEqual(t, Completed, inst.State(),
-				"a Complex condition evaluation error faults the instance")
-			require.Error(t, inst.LastErr())
+				"a Complex condition evaluation error must not complete silently")
+
+			if inst.OpenIncidents() == 0 {
+				require.Error(t, inst.LastErr())
+			}
 		})
 	}
 }
@@ -214,9 +220,15 @@ func TestMultiInstanceBehaviorPropagateError(t *testing.T) {
 			prod.propagateErr = errRegRejected
 			runToDone(t, inst)
 
+			// revised by SRD-079 FR-1: the propagation failure surfaces as
+			// an incident (or, on the driver that fails before the incident
+			// path, as an instance fault) — never as a silent completion.
 			require.NotEqual(t, Completed, inst.State(),
-				"a failed behavior-event propagation faults the instance")
-			require.Error(t, inst.LastErr())
+				"a failed behavior-event propagation must not complete silently")
+
+			if inst.OpenIncidents() == 0 {
+				require.Error(t, inst.LastErr())
+			}
 		})
 	}
 }

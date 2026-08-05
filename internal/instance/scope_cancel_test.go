@@ -362,14 +362,17 @@ func TestErrorScopeChain(t *testing.T) {
 		require.EqualValues(t, 1, exc.Load())
 	})
 
-	t.Run("no code match faults the instance", func(t *testing.T) {
+	t.Run("no code match raises an incident", func(t *testing.T) {
+		// revised by SRD-079 FR-2: a task's error with no matching catcher
+		// anywhere up the scope chain opens an incident at the thrower.
 		var exc atomic.Int32
 
 		inst := runInstance(t,
 			chainProcess(t, "no-match", "E1", "OTHER", false, &exc))
 
-		require.Equal(t, Terminated, inst.State())
-		require.Error(t, inst.LastErr())
+		require.Equal(t, Active, inst.State())
+		require.Equal(t, 1, inst.OpenIncidents())
+		require.Nil(t, inst.LastErr())
 		require.Zero(t, exc.Load())
 	})
 

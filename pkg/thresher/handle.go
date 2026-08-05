@@ -113,6 +113,14 @@ func (h *InstanceHandle) History() []TokenPath {
 	return out
 }
 
+// OpenIncidents reports the number of open incidents on the instance — the
+// failures waiting for a retry or an operator (SRD-079). Lock-free. The full
+// incident view and the resolution operations arrive with the visibility and
+// resolution slices; this count is the minimal "does it need me?" probe.
+func (h *InstanceHandle) OpenIncidents() int {
+	return h.current().OpenIncidents()
+}
+
 // WaitCompletion blocks until the instance reaches a terminal state (Completed
 // or Terminated) or ctx is done, returning the state observed and the fatal
 // error that stopped the instance (or ctx.Err() on timeout/cancel). It is

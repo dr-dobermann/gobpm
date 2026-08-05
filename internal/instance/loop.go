@@ -268,6 +268,10 @@ func (inst *Instance) loop(ctx context.Context, initial []*track) {
 		return
 	}
 
+	if ls.parkOnIncidents(ctx) {
+		return
+	}
+
 	// the main flow is done — disarm any still-armed Event Sub-Process handlers
 	// (a normal completion never runs drop, so root-scope handlers are torn
 	// down here; idempotent if a terminate already dropped them). SRD-052 FR-5.
@@ -712,6 +716,22 @@ func trackEndKind(t *track) trackEventKind {
 	}
 }
 
+// parkOnIncidents is the loop's incident exit (ADR-036 §2.2, SRD-079 §3.2):
+// when every remaining continuation is an open incident, the instance is not
+// finishing — it is waiting for a retry or an operator. Like the dehydration
+// exit: no settle, no handler teardown, no ledger discard; the incident
+// records carry the continuations. A stopping instance settles normally — a
+// terminate overrides waiting. Reports whether the loop parked.
+func (ls *loopState) parkOnIncidents(ctx context.Context) bool {
+	if ls.stopping || ls.inst.openIncidents() == 0 {
+		return false
+	}
+
+	ls.checkpointNow(ctx)
+
+	return true
+}
+
 // failFromTrack surfaces a TrackFailed track's error as an instance failure: it
 // records lastErr via Instance.fail (which also cancels the ctx so sibling tracks
 // stop) and calls stopAll so the Terminating flag is set synchronously. When this
@@ -797,20 +817,52 @@ func (ls *loopState) applyParked(ev trackEvent) {
 // the track is cleared from the loop-owned views and its boundaries disarmed.
 // Called only from apply.
 func (ls *loopState) applyFailed(ctx context.Context, ev trackEvent) {
-	if !ls.matchErrorBoundary(ctx, ev.track) &&
-		!ls.matchErrorScopeChain(ctx, ev.track) {
+	caught := ls.matchErrorBoundary(ctx, ev.track) ||
+		ls.matchErrorScopeChain(ctx, ev.track)
+
+	incident := false
+
+	if !caught {
 		ls.reportUncaught(ev.track)
-		ls.failFromTrack(ev.track)
+
+		// The failure taxonomy (ADR-036 §2.1, SRD-079 §3.2): an invariant
+		// violation denies the engine's own state; an Error End Event's
+		// uncaught throw is the model's own verdict; and a CHILD instance
+		// propagates every uncaught failure across the call boundary — to
+		// its caller the whole called process is a single task, and the
+		// incident arises only at the top-level call node. All three keep
+		// the fatal path; every other uncaught failure — technical or an
+		// activity's uncaught BpmnError — becomes a durable incident and
+		// the instance runs on.
+		if isInvariantFailure(ev.track.lastErr) ||
+			isModeledErrorEnd(ev.track) ||
+			ls.inst.parentInstanceID != "" {
+			ls.failFromTrack(ev.track)
+		} else {
+			ls.raiseIncident(ev.track)
+			incident = true
+		}
 	}
 
 	ls.active--
 	ls.decScope(ctx, ev.track)
 	ls.flipNotParked(ev.track)
-	ls.clearPosition(ev.track)
+
+	// An incident-holding node keeps its recorded position and its armed
+	// boundaries (ADR-036 §2.4): the node was entered and did not complete, so
+	// an SLA timer must keep ticking against it and an interrupting boundary
+	// may still overtake it.
+	if !incident {
+		ls.clearPosition(ev.track)
+	}
+
 	// the same withdrawal evEnded performs, for the track that failed rather
 	// than ended: its wait is over either way (SRD-071 FR-3b).
 	ev.track.releaseHolds()
-	ls.disarmBoundaries(ev.track.ID())
+
+	if !incident {
+		ls.disarmBoundaries(ev.track.ID())
+	}
 }
 
 // applyMerged flips the tracks the surviving track absorbed at a synchronizing

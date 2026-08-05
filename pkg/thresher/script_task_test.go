@@ -2,6 +2,7 @@ package thresher_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -118,7 +119,37 @@ func runScripts(
 	wctx, wcancel := context.WithTimeout(ctx, 5*time.Second)
 	defer wcancel()
 
-	_, werr := h.WaitCompletion(wctx)
+	// A failing script no longer terminates the instance — it opens an
+	// incident and the instance stays alive (SRD-079 FR-1), so completion
+	// never comes. Race WaitCompletion against the incident: on an incident,
+	// the raised fact's error detail is the failure the callers assert on.
+	done := make(chan error, 1)
+
+	go func() {
+		_, e := h.WaitCompletion(wctx)
+		done <- e
+	}()
+
+	var werr error
+
+wait:
+	for {
+		select {
+		case werr = <-done:
+			break wait
+
+		case <-time.After(5 * time.Millisecond):
+			if h.OpenIncidents() == 0 {
+				continue
+			}
+
+			if e := incidentCause(c); e != nil {
+				werr = e
+
+				break wait
+			}
+		}
+	}
 
 	sub.Cancel()
 
@@ -126,6 +157,60 @@ func runScripts(
 	defer c.mu.Unlock()
 
 	return append([]observability.Fact{}, c.events...), werr
+}
+
+// waitCompletionOrIncident waits for the instance to complete OR to open an
+// incident (SRD-079: a technical failure parks the instance instead of
+// terminating it). On completion it returns WaitCompletion's error; on an
+// incident, an error carrying the raised fact's cause — what the pre-incident
+// tests used to read off the terminal fault.
+func waitCompletionOrIncident(
+	t *testing.T, ctx context.Context, h *thresher.InstanceHandle,
+) error {
+	t.Helper()
+
+	c := &collector{}
+	sub := h.Observe(c)
+	defer sub.Cancel()
+
+	done := make(chan error, 1)
+
+	go func() {
+		_, e := h.WaitCompletion(ctx)
+		done <- e
+	}()
+
+	for {
+		select {
+		case e := <-done:
+			return e
+
+		case <-time.After(5 * time.Millisecond):
+			if h.OpenIncidents() == 0 {
+				continue
+			}
+
+			if e := incidentCause(c); e != nil {
+				return e
+			}
+		}
+	}
+}
+
+// incidentCause extracts the raised incident's cause from the collected facts
+// as an error; nil until the raised fact has arrived.
+func incidentCause(c *collector) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, f := range c.events {
+		if f.Kind == observability.KindFault &&
+			f.Phase == observability.PhaseIncident {
+			return errors.New(f.Details[observability.AttrError])
+		}
+	}
+
+	return nil
 }
 
 // scriptFacts filters the KindScript facts with the given phase.

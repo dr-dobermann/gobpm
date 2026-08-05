@@ -106,6 +106,13 @@ const (
 	// a continuation fork. Retained as a live record (like TrackAwaitingMerge);
 	// its token projects Alive at the wait node.
 	TrackDehydrated
+
+	// TrackIncident represents a track whose technical failure raised an
+	// incident (ADR-036 §2.2): terminal for the track — the incident record
+	// carries the continuation, and a retry is a fresh track spawned from it,
+	// never a resumption. While the incident is open the node's token stays
+	// visible (SRD-079 FR-4) and the track's boundaries stay armed.
+	TrackIncident
 )
 
 // String returns the human-readable name of the track state.
@@ -123,6 +130,7 @@ func (t trackState) String() string {
 		"TrackCanceled",
 		"TrackFailed",
 		"TrackDehydrated",
+		"TrackIncident",
 	}[t]
 }
 
@@ -295,6 +303,8 @@ var trackPhase = map[trackState]observability.Phase{
 	TrackEnded:              observability.PhaseCompleted,
 	TrackCanceled:           observability.PhaseCanceled,
 	TrackFailed:             observability.PhaseFailed,
+	TrackDehydrated:         observability.PhaseDehydrated,
+	TrackIncident:           observability.PhaseIncident,
 }
 
 // nodePhaseFor returns the observable node phase for a track state. Every valid
@@ -1122,6 +1132,11 @@ func (t *track) discardOrFail(ctx context.Context, err error) {
 			Details:  map[string]string{observability.AttrError: be.Code},
 		})
 	}
+
+	// the per-step failure record (SRD-079 FR-11): the failing step is marked
+	// before the track-level terminal state, so the step history names where
+	// the failure happened, not just that it did.
+	t.currentStep().state = StepFailed
 
 	t.updateState(TrackFailed)
 }

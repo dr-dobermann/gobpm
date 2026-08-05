@@ -263,6 +263,18 @@ func waitState(t *testing.T, inst *Instance, want State) {
 		3*time.Second, 5*time.Millisecond)
 }
 
+// waitIncident waits for the call's failure to surface as an open incident on a
+// still-Active caller (SRD-079 FR-1) — the revised contract for the paths that
+// used to terminate the instance.
+func waitIncident(t *testing.T, inst *Instance) {
+	t.Helper()
+
+	require.Eventually(t, func() bool { return inst.OpenIncidents() == 1 },
+		3*time.Second, 5*time.Millisecond)
+	require.Equal(t, Active, inst.State())
+	require.Nil(t, inst.LastErr())
+}
+
 // TestCallParksAndLaunches (SRD-050 M3): a track reaching a Call Activity parks,
 // the loop launches the child through the invoker with the resolved binding and
 // linkage, and the instant-completing child resumes the caller to completion.
@@ -330,7 +342,7 @@ func TestCallMissingOutputFaults(t *testing.T) {
 	p, _, _, _ := callProc(t, "callee", 0, callOpts{outputName: "result"})
 	inst := runCall(t, p, inv)
 
-	waitState(t, inst, Terminated)
+	waitIncident(t, inst)
 }
 
 // TestCallChildErrorCaught (SRD-050 FR-8): a child BpmnError faults the caller
@@ -360,7 +372,7 @@ func TestCallUntypedTerminationFaults(t *testing.T) {
 	p, _, _, _ := callProc(t, "callee", 0, callOpts{})
 	inst := runCall(t, p, inv)
 
-	waitState(t, inst, Terminated)
+	waitIncident(t, inst)
 }
 
 // TestCallNoInvokerFailsFast (SRD-050 FR-3/FR-6): with no ProcessInvoker
@@ -380,7 +392,7 @@ func TestCallNoInvokerFailsFast(t *testing.T) {
 	t.Cleanup(cancel)
 	require.NoError(t, inst.Run(ctx))
 
-	waitState(t, inst, Terminated)
+	waitIncident(t, inst)
 }
 
 // TestCallCascadeOnInstanceCancel (SRD-050 FR-9): terminating the caller while a
@@ -449,7 +461,7 @@ func TestCallOutputCloneFaults(t *testing.T) {
 	p, _, _, _ := callProc(t, "callee", 0, callOpts{outputName: "result"})
 	inst := runCall(t, p, inv)
 
-	waitState(t, inst, Terminated)
+	waitIncident(t, inst)
 }
 
 // TestCallLateReportDropped (SRD-050 FR-9): a completion report for a call
@@ -524,7 +536,7 @@ func TestCallInvokerErrorFaults(t *testing.T) {
 	p, _, _, _ := callProc(t, "callee", 0, callOpts{})
 	inst := runCall(t, p, inv)
 
-	waitState(t, inst, Terminated)
+	waitIncident(t, inst)
 }
 
 // TestCallMissingInputFaults (SRD-050 FR-6): a declared input absent from the
@@ -556,5 +568,5 @@ func TestCallMissingInputFaults(t *testing.T) {
 	require.NoError(t, err)
 
 	inst := runCall(t, p, inv)
-	waitState(t, inst, Terminated)
+	waitIncident(t, inst)
 }

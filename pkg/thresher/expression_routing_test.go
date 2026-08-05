@@ -279,7 +279,7 @@ func TestOptedOutRegistryFaultsFunctorConditions(t *testing.T) {
 	wctx, wcancel := context.WithTimeout(ctx, 5*time.Second)
 	defer wcancel()
 
-	_, werr := h.WaitCompletion(wctx)
+	werr := waitCompletionOrIncident(t, wctx, h)
 	require.Error(t, werr)
 	require.Contains(t, werr.Error(), "WithExpressionEngine")
 }

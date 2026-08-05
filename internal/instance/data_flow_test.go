@@ -188,7 +188,9 @@ func TestFrameDiscardOnFailure(t *testing.T) {
 			}
 
 			for _, tr := range *snap {
-				if tr.inState(TrackFailed) {
+				// the failing task's track now ends TrackIncident
+				// (SRD-079 FR-1) rather than TrackFailed.
+				if tr.inState(TrackIncident) {
 					return true
 				}
 			}
@@ -196,7 +198,7 @@ func TestFrameDiscardOnFailure(t *testing.T) {
 			return false
 		},
 		2*time.Second, 5*time.Millisecond,
-		"the failing task must fail its track")
+		"the failing task must end its track in TrackIncident")
 
 	// nothing of the failed execution reached the container scope.
 	_, err = inst.sc.plane.GetDataByID(inst.sc.root, "res-bad")

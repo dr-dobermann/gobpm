@@ -57,7 +57,7 @@ non-terminal status from recovery.
 | # | Requirement |
 |---|---|
 | **FR-1** | A technical failure of a node ends its track in a new terminal state **`TrackIncident`** and opens an **incident record** on the instance: node, scope path/segment, lineage, cause chain, cause class, attempt count, first/last failure times, and a **failure-time data snapshot** — the variables visible in the node's scope chain, captured at each raise. The open incident **pins its scope open**. Siblings keep executing; the instance stays alive. |
-| **FR-2** | An **uncaught BPMN error** (no boundary, no scope-chain catcher) opens an incident at the throwing node instead of faulting the instance. An **invariant violation** (`errs.BrokenInvariant`) keeps today's path: instance fault. The uncaught-must-log rule holds: every raised incident logs once at `Error`. |
+| **FR-2** | An **uncaught BPMN error thrown by a failing activity** (no boundary, no scope-chain catcher) opens an incident at the throwing node instead of faulting the instance. Three failures keep today's fatal path: an **invariant violation** (`errs.BrokenInvariant`); an **Error End Event** reaching the root uncaught — the modeled outcome; and **any uncaught failure in a child instance** — it propagates across the call boundary, and the incident arises only at the **top-level** caller's Call Activity node, whose retry re-runs the whole child (ADR-036 §2.1). The uncaught-must-log rule holds: every raised incident logs once at `Error`. |
 | **FR-3** | **Job-retries-exhausted** (ADR-021 dispatcher gave up) opens an incident at the service task carrying the job diagnostic (topic, attempts, last error) as its cause. |
 | **FR-4** | While an incident is open, the instance's token views show the token **at the failing node** in a new `TokenIncident` state; on close (resolved / dead-lettered / overtaken) it shows consumed. |
 | **FR-5** | Raising an incident is a **persist point**. Incidents serialize as an instance-level `Incidents` list in the checkpoint document (schema 2→3, additive). The persisted status of an instance with open incidents is a new non-terminal **`StatusActiveIncidents`**; recovery lists it as in-flight and re-arms a scheduled retry's deadline. |
@@ -130,12 +130,22 @@ missing `TrackDehydrated → PhaseDehydrated` entry added beside it, FR-11).
 `applyFailed` reclassifies, in order:
 
 1. typed `BpmnError` with a boundary / scope-chain catcher → caught, as today;
-2. `errs.HasClass(errs.BrokenInvariant)` → `failFromTrack`, as today (FR-2);
+2. `errs.HasClass(errs.BrokenInvariant)` (walked through the wrap chain), an
+   **Error End Event's own throw** (the modeled outcome), or a **child
+   instance** (`parentInstanceID` set — the failure propagates across the
+   call boundary, FR-2) → `failFromTrack`, as today;
 3. everything else → `raiseIncident(ev.track)`: the track ends in
    `TrackIncident` **keeping its recorded position** (no `clearPosition`;
    boundary watches stay armed — no `disarmBoundaries`), the incident is
    opened or re-armed (§3.1), the `raised` fact emits, and the checkpoint
    fires (a new `evIncident` entry in `checkpointTransitions`, FR-5).
+
+The loop's exit gains the **incident park**: when the last active track ends
+and open incidents remain (and the instance is not stopping), the loop
+checkpoints and returns without settling — no handler teardown, no ledger
+discard, the instance stays `Active`. The single-task call contract rides the
+invoker: `childProcess.Done()` reports the **settled** signal, not the loop
+exit, so a child's park (incident or dehydration) never reads as completion.
 
 `StepFailed` is assigned to the failing step's `stepInfo.state` on this path
 (FR-11).
@@ -316,6 +326,7 @@ signature; `repository.Status` is append-only (wire-compatible, no
 |---|---|---|
 | T-1 | `TestTechnicalFailureRaisesIncident` | untyped error → `TrackIncident`, incident open, sibling branch completes, instance not faulted (FR-1) |
 | T-2 | `TestUncaughtBpmnErrorRaisesIncident` | no catcher → incident, one `Error` log, `Uncaught` semantics preserved (FR-2) |
+| T-2a | `TestErrorEndEventFaultsInstance` | an Error End Event uncaught at the root keeps the fatal path — the modeled outcome, no incident (FR-2; the pre-existing test, re-pinned to this contract) |
 | T-3 | `TestInvariantViolationFaultsInstance` | `BrokenInvariant` class → today's fatal path (FR-2) |
 | T-4 | `TestJobExhaustionRaisesIncident` | dispatcher exhaustion → incident with job diagnostic as cause (FR-3) |
 | T-5 | `TestIncidentTokenVisible` | `Tokens()` shows `TokenIncident` at the node while open; consumed after drop (FR-4) |

@@ -79,7 +79,10 @@ func runInstance(t *testing.T, p *process.Process) *Instance {
 		func() bool {
 			st := inst.State()
 
-			return st == Completed || st == Terminated
+			// an incident park is a settled outcome too (SRD-079 FR-1):
+			// the instance stays Active with open incidents.
+			return st == Completed || st == Terminated ||
+				inst.OpenIncidents() > 0
 		},
 		3*time.Second, 5*time.Millisecond)
 

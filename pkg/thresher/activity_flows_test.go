@@ -181,7 +181,7 @@ func runFlows(t *testing.T, proc *process.Process) error {
 	wctx, wcancel := context.WithTimeout(ctx, 5*time.Second)
 	defer wcancel()
 
-	_, werr := h.WaitCompletion(wctx)
+	werr := waitCompletionOrIncident(t, wctx, h)
 
 	require.NoError(t, th.Shutdown(context.Background()))
 

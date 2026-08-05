@@ -219,8 +219,10 @@ func TestServiceTaskWorkerCompleteResumesAndBinds(t *testing.T) {
 		2*time.Second, 5*time.Millisecond)
 }
 
-// TestServiceTaskWorkerFailFaults covers the fault path (SRD-036 FR-6): a worker's
-// Fail outcome faults the parked task, terminating the instance with the cause.
+// TestServiceTaskWorkerFailFaults covers the fault path (SRD-036 FR-6, revised
+// by SRD-079 FR-3): a worker's Fail outcome faults the parked task; the failure
+// now opens an incident at the service task instead of terminating the instance
+// (ADR-036 §2.1), and the incident's cause carries the worker diagnostic.
 func TestServiceTaskWorkerFailFaults(t *testing.T) {
 	disp := &capDispatcher{}
 	inst, cancel := serviceTaskWorkerInst(t, disp,
@@ -232,9 +234,23 @@ func TestServiceTaskWorkerFailFaults(t *testing.T) {
 	require.NoError(t, inst.ReportJobCompletion(context.Background(),
 		tasks.NewWorkerFault(job.ID, tasks.Fault{Cause: errors.New("boom")})))
 
-	require.Eventually(t, func() bool { return inst.State() == Terminated },
+	require.Eventually(t, func() bool { return inst.OpenIncidents() == 1 },
 		2*time.Second, 5*time.Millisecond)
-	require.ErrorContains(t, inst.LastErr(), "worker reported a technical fault")
+	require.Equal(t, Active, inst.State(),
+		"a worker fault opens an incident, not an instance fault")
+	require.Nil(t, inst.LastErr())
+
+	// the incident park exits the loop; Done() is the happens-before edge
+	// that makes reading the loop-owned incidents map safe.
+	select {
+	case <-inst.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("instance loop did not exit")
+	}
+
+	for _, inc := range inst.incidents {
+		require.Contains(t, inc.cause, "worker reported a technical fault")
+	}
 }
 
 // TestServiceTaskWorkerExecutorIgnored covers §2.5: the operation's in-process
@@ -290,18 +306,20 @@ func TestReportJobCompletionRoutesToParkedTrack(t *testing.T) {
 		tasks.NewWorkerComplete(job.ID, nil)))
 }
 
-// TestServiceTaskWorkerEnqueueFailureFaults covers the onJobWaiting fault branch:
-// when the dispatcher's Enqueue fails, the parked track is resumed with a fault so
-// the instance surfaces it instead of parking forever (SRD-036 §4.3).
+// TestServiceTaskWorkerEnqueueFailureFaults covers the onJobWaiting fault branch
+// (revised by SRD-079 FR-1): when the dispatcher's Enqueue fails, the parked
+// track is resumed with a fault, which now opens an incident at the service
+// task instead of terminating the instance.
 func TestServiceTaskWorkerEnqueueFailureFaults(t *testing.T) {
 	disp := &capDispatcher{enqErr: errors.New("enqueue boom")}
 	inst, cancel := serviceTaskWorkerInst(t, disp,
 		service.MustOperation("op", nil, nil, nil))
 	defer cancel()
 
-	require.Eventually(t, func() bool { return inst.State() == Terminated },
+	require.Eventually(t, func() bool { return inst.OpenIncidents() == 1 },
 		2*time.Second, 5*time.Millisecond)
-	require.ErrorContains(t, inst.LastErr(), "worker reported a technical fault")
+	require.Equal(t, Active, inst.State())
+	require.Nil(t, inst.LastErr())
 }
 
 // mustMapper builds a rule mapper yielding a Business Error of code (keyed on
@@ -604,16 +622,18 @@ func TestReportJobCompletionCanceledContext(t *testing.T) {
 func TestServiceTaskWorkerBindInputFailureFaults(t *testing.T) {
 	disp := &capDispatcher{}
 	// the inMessage's item is not a process property, so BindInputOnly can't
-	// resolve it from scope and returns an error.
+	// resolve it from scope and returns an error. Revised by SRD-079 FR-1:
+	// the bind fault opens an incident instead of terminating the instance.
 	op := service.MustOperation("op",
 		bpmncommon.MustMessage("in", data.MustItemDefinition(values.NewVariable(1))),
 		nil, nil)
 	inst, cancel := serviceTaskWorkerInst(t, disp, op)
 	defer cancel()
 
-	require.Eventually(t, func() bool { return inst.State() == Terminated },
+	require.Eventually(t, func() bool { return inst.OpenIncidents() == 1 },
 		2*time.Second, 5*time.Millisecond)
-	require.ErrorContains(t, inst.LastErr(), "worker reported a technical fault")
+	require.Equal(t, Active, inst.State())
+	require.Nil(t, inst.LastErr())
 	_, enqueued := disp.lastJob()
 	require.False(t, enqueued, "no job is enqueued when input binding fails")
 }
@@ -709,8 +729,11 @@ func TestWorkerBpmnErrorUnmatchedFaultsInstance(t *testing.T) {
 	require.NoError(t, inst.ReportJobCompletion(context.Background(),
 		tasks.NewWorkerBpmnError(job.ID, "OtherCode", "x")))
 
-	require.Eventually(t, func() bool { return inst.State() == Terminated },
+	// revised by SRD-079 FR-2: the unmatched business error is the
+	// deployment-mistake case — an incident, not an instance fault.
+	require.Eventually(t, func() bool { return inst.OpenIncidents() == 1 },
 		2*time.Second, 5*time.Millisecond)
+	require.Equal(t, Active, inst.State())
 	require.False(t, reachedNode(inst, excEndID),
 		"no exception flow runs on a no-match")
 }
