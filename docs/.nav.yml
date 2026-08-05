@@ -1,0 +1,14 @@
+# Top-level sidebar structure (SRD-081 FR-2). Section order/titles are
+# curated here; the page listings inside each section stay derived.
+nav:
+  - index.md
+  - Developer Manual: guides
+  - Design documents: design
+  - BPMN 2.0 extract: bpmn-spec
+  - Landing records:
+      - SRDs: srd
+      - FIXes: fix
+  - Project:
+      - Analytics: analytics
+      - Audit: audit
+      - backlog.md

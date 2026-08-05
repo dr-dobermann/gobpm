@@ -301,3 +301,14 @@ carry versions (e.g. `SRD-071 v.2.5`). They are `Accepted`, and an Accepted
 one-shot document is not retro-edited — stripping their versions would rewrite
 history for tidiness. Keep pinning them at the version they carry; the rule
 governs documents written from here on.
+
+## Design docs — Russian twins
+
+**Russian twins (`.ru.md`) are a SAD/ADR privilege, and they live in
+`docs/design/ru/`.** A twin is a full translation of a continuously-current
+contract, kept in sync on every version bump. SRD and FIX documents **never**
+get a twin: they are one-shot landing records, and a translation nobody
+re-reads rots the moment it lands (the 38 stale SRD/FIX twins deleted by
+SRD-081 are the precedent). When adding or refreshing an ADR twin, put it in
+`docs/design/ru/` — its relative links out of the group need one extra `../`
+level — and the site's "Russian" nav group picks it up automatically.

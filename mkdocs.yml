@@ -42,15 +42,31 @@ exclude_docs: |
   /camunda7/
   /bpmn-spec/scripts/
 
+# The section-level nav curation (SRD-081): per-directory .nav.yml files
+# order and title the sections while page listings stay derived. Declaring
+# plugins: disables MkDocs' defaults, so search is listed explicitly.
+plugins:
+  - search
+  - awesome-nav
+
 # Anchor ids must match the GitHub slug convention the repo's in-page links
 # are authored in (see github_slugify's doc comment). The !!python/name
 # import resolves because the site is always built as `python -m mkdocs`
 # from the repo root (Makefile docs-* targets and the docs.yml workflow),
 # which puts the repo root on sys.path.
+#
+# superfences' mermaid custom fence renders the ```mermaid blocks (84 pages
+# carry them) with Material's bundled Mermaid.js integration (SRD-081
+# FR-10) instead of emitting them as plain code.
 markdown_extensions:
   - toc:
       permalink: true
       slugify: !!python/name:scripts.mkdocs_hooks.github_slugify
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
 
 # Harden --strict: these default to `info`, which strict mode ignores.
 validation:

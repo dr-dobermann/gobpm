@@ -14,7 +14,9 @@ This directory holds the *why* behind gobpm — the layered design record:
   standard-grounded decision each: the execution model, the extension
   architecture, events and subscriptions, the data plane, gateways and
   joins, persistence, observability, and so on. ADRs are versioned,
-  continuously-current contracts; several carry a Russian twin (`.ru.md`).
+  continuously-current contracts; several carry a Russian twin — the twins
+  live under [`ru/`](ru/ADR-001-execution-model.ru.md) (Russian twins are a
+  SAD/ADR privilege; SRD/FIX landing records never get one).
 
 Standard-claims in these documents cite the vendored
 [BPMN 2.0 extract](../bpmn-spec/index.md) by section. How each decision

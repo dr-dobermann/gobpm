@@ -1,0 +1,8 @@
+# Design-docs section (SRD-081 FR-4): SAD first, ADRs in numeric order
+# (derived), the Russian ADR twins grouped at the end.
+nav:
+  - index.md
+  - SAD-001-vision-and-architecture.md
+  - "ADR-*.md"
+  - "*"
+  - Russian: ru

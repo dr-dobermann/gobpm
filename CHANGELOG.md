@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The documentation site gets a structured sidebar, a Russian design-docs
+  group, and rendered Mermaid diagrams** (SRD-081): sections read Home →
+  Developer Manual → Design documents → BPMN 2.0 extract → Landing records →
+  Project (curated via pinned `mkdocs-awesome-nav` + `.nav.yml` files; page
+  listings stay derived), the Manual's parts follow the index's reading
+  order, and the 84 pages with ` ```mermaid ` fences now render diagrams
+  instead of code blocks. The Russian-twin convention is enforced in the
+  tree: twins are a SAD/ADR privilege living under `docs/design/ru/`; the
+  38 stale SRD/FIX twins are removed (git history keeps them). The READMEs'
+  status line drops its hardcoded version in favor of the tag badge.
 - **The documentation publishes as a searchable site** (SRD-080):
   <https://dr-dobermann.github.io/gobpm/> — the developer manual, the design
   docs, and the BPMN 2.0 extract, built with MkDocs Material from the `docs/`
