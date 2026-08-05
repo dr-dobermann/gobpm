@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Incidents: a technical failure becomes durable, operable state**
+  (ADR-036, SRD-079). An unhandled failure — an in-process task error, a
+  worker whose job retries exhausted, an uncaught BPMN error — no longer
+  terminates the instance: the failing attempt's track ends and a durable
+  **incident** opens, carrying the node, the cause chain and class, the
+  attempt history and a **failure-time data snapshot** (the variables visible
+  from the failing node's scope, exactly as the attempt saw them). Sibling
+  branches keep running; the token stays visible at the node
+  (`TokenIncident`); the incident rides the checkpoint (schema 3) under a new
+  `repository.StatusActiveIncidents`, so "what needs an operator" is a store
+  query. An **incident retry policy**
+  (`activities.WithIncidentRetryPolicy` / `thresher.WithIncidentRetryPolicy`)
+  re-enters the node by respawn — lineage carried, armed boundary timers
+  transferred, never re-armed, so an SLA clock is never reset by failing —
+  and with no policy (the default) the incident waits for the operator:
+  `InstanceHandle.Incidents()`, `RetryIncident`, `ResolveIncident` (continue
+  past the node without re-executing it), `DropIncident` (a durable dead
+  letter the process never silently completes past). Ops on a parked instance
+  rebuild it from its checkpoint transparently. Three failures deliberately
+  keep the fatal path: invariant violations, an Error End Event's own
+  uncaught throw, and any failure in a called process — that one propagates
+  across the call boundary, and the incident arises at the top-level
+  caller's Call Activity, whose retry re-runs the whole child.
+  Runnable: `examples/incident-retry/`; guide:
+  `docs/guides/operating/incidents.md`.
+
+### Fixed
+
+- **Scope snapshots rejected Properties and DataObjects.** `SnapshotAt`'s
+  value-copy (the compensation ledger's and now the incident snapshot's
+  machinery) asserted one `Clone` shape, but `Property` and `DataObject`
+  declare their own concrete `Clone` methods that shadow it — any walk-up
+  surface reaching a process property failed "isn't clonable".
+- **A parked child instance read as a completed call.** The Call Activity
+  watcher waited on the child's loop-exit signal, which also closes on a
+  dehydration park — the caller then resumed with a phantom success. It now
+  waits on the engine's cross-rebuild settled signal.
+- **In-flight recovery ignored non-`StatusActive` records.** `memrepo`'s
+  `ListInFlight` compared for exactly `StatusActive`, silently hiding any
+  new non-terminal status from recovery.
+
 - **The documentation site gets a structured sidebar, a Russian design-docs
   group, and rendered Mermaid diagrams** (SRD-081): sections read Home →
   Developer Manual → Design documents → BPMN 2.0 extract → Landing records →

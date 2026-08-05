@@ -133,8 +133,6 @@ Grounded in the code, not aspiration. Baseline **v0.11.0** (2026-08-02).
 |---|---|
 | **No conformance gate** | The ledger is asserted, not checked — a refactor can regress a green row silently |
 | **No durable Repository** | Restart recovery runs against an in-memory store, which recovers nothing once the process dies |
-| **No incidents or retry** | A technical failure has no record and no policy |
-| **`timeDuration` / `timeCycle` unreachable** | Only absolute-date timers can be modelled; "wait 5 minutes" cannot |
 | **Two role systems** | The Camunda triad and BPMN `ResourceRole` resolve separately and compose badly |
 | **No listeners** | Extension is observe-only; nothing can react in-band |
 | **Layout unexecuted** | ADR-003's `pkg/` catalogue and import-direction CI are not started |
@@ -241,7 +239,7 @@ The alignment artifact. **Every open issue carries an `engine` or `server` label
 | **E2** | [#80](https://github.com/dr-dobermann/gobpm/issues/80) incidents + retry · [#276](https://github.com/dr-dobermann/gobpm/issues/276) `adapters/postgres` · [#277](https://github.com/dr-dobermann/gobpm/issues/277) checkpoint fidelity · [#278](https://github.com/dr-dobermann/gobpm/issues/278) suspend/resume · [#279](https://github.com/dr-dobermann/gobpm/issues/279) listeners · [#280](https://github.com/dr-dobermann/gobpm/issues/280) business key · [#281](https://github.com/dr-dobermann/gobpm/issues/281) history store |
 | **E3** | [#282](https://github.com/dr-dobermann/gobpm/issues/282) intervention primitives · [#283](https://github.com/dr-dobermann/gobpm/issues/283) cross-version token transfer |
 | **E4** | [#284](https://github.com/dr-dobermann/gobpm/issues/284) converter coverage · [#256](https://github.com/dr-dobermann/gobpm/issues/256) generated diagrams |
-| **E5** | — beyond 1.0; filed when it becomes concrete |
+| **E5** | [#295](https://github.com/dr-dobermann/gobpm/issues/295) data markers/tags on declared data |
 | **S0** | [#285](https://github.com/dr-dobermann/gobpm/issues/285) server foundation |
 | **S1** | [#286](https://github.com/dr-dobermann/gobpm/issues/286) registry, lifecycle, diagnostics · [#292](https://github.com/dr-dobermann/gobpm/issues/292) external-task surface + Python client |
 | **S2** | [#73](https://github.com/dr-dobermann/gobpm/issues/73) tenancy & IAM |
@@ -252,7 +250,12 @@ The alignment artifact. **Every open issue carries an `engine` or `server` label
 
 Three former epics straddled the division and were split, engine half from server half: fault tolerance ([#80](https://github.com/dr-dobermann/gobpm/issues/80) / [#289](https://github.com/dr-dobermann/gobpm/issues/289)), migration ([#283](https://github.com/dr-dobermann/gobpm/issues/283) / [#95](https://github.com/dr-dobermann/gobpm/issues/95)), administration ([#282](https://github.com/dr-dobermann/gobpm/issues/282) / [#96](https://github.com/dr-dobermann/gobpm/issues/96)). The engine half is the semantics; the server half is the operator surface.
 
-**E5 and S6 are deliberately empty.** Both are "when it becomes concrete" milestones, and filing speculative issues against them would recreate the problem the released ADR-008 number caused — work named before it was designed.
+**E5 and S6 fill only when work becomes concrete** — filing speculative
+issues against them would recreate the problem the released ADR-008 number
+caused, work named before it was designed. S6 is still empty;
+[#295](https://github.com/dr-dobermann/gobpm/issues/295) entered E5 concrete:
+the incident work's data-snapshot discussion produced it, with its trigger
+(operator feedback + the E3 editability gate) named in the issue.
 
 ## 7. Reading v3.x
 
