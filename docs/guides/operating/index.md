@@ -14,3 +14,4 @@ messages to the right instance, and dispatching work to external workers.
 - [Correlation & conversations](correlation.md) — route messages to the right instance. *(`inter-instance-correlation`, `conversation-routing`)*
 - [External workers](external-workers.md) — fetch-and-lock job execution. *(`service-task-worker`)*
 - [Persistence & recovery](persistence.md) — checkpoints, restart recovery, dehydration (a long wait costs no goroutines), leases & fencing for shared stores. *(`restart-recovery`)*
+- [Incidents & retry](incidents.md) — a technical failure becomes durable, operable state: retry policies, the operator's retry/resolve/drop, failure-time snapshots. *(`incident-retry`)*

@@ -84,6 +84,7 @@ examples/adhoc-subprocess/adhoc-subprocess
 # but `go build ./cmd/...` drops one here)
 /linkcheck
 examples/usertask-sla/usertask-sla
+examples/incident-retry/incident-retry
 
 # the MkDocs site build output (SRD-080; built by `make docs-build` / CI)
 /site/
