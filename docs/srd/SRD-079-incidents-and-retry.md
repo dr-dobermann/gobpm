@@ -332,14 +332,15 @@ signature; `repository.Status` is append-only (wire-compatible, no
 | T-5 | `TestIncidentTokenVisible` | `Tokens()` shows `TokenIncident` at the node while open; consumed after drop (FR-4) |
 | T-5a | `TestIncidentDataSnapshot` | the snapshot holds the failing attempt's visible variables; a sibling's later write does not alter it; a failed retry refreshes it; the scope stays open while the incident is (FR-1) |
 | T-6 | `TestIncidentCheckpointRecovery` | raise checkpoints (schema 3, `StatusActiveIncidents`); kill+restore keeps the incident and re-arms `RetryAt` (FR-5) |
+| T-6b | `TestIncidentScheduledRetryRecovery` | a scheduled retry survives a restart: the checkpoint carries `RetryAt`, the restored instance fires it to completion (FR-5, FR-6) |
 | T-7 | `TestIncidentRetryRespawns` | retry track's `prev` ends with the failed track; node re-executes; attempts increments; repeat failure updates the same incident (FR-6) |
 | T-8 | `TestIncidentRetryPolicySchedules` | per-activity policy sets `RetryAt` on the injected clock; deadline fires the retry; engine default schedules nothing (FR-6) |
-| T-9 | `TestIncidentResolveContinues` | resolve → outgoing flow taken, node not re-executed, incident closed (FR-7) |
-| T-10 | `TestIncidentDropDeadLetters` | drop → `dead-lettered` state persisted in the document (FR-8) |
-| T-11 | `TestBoundaryAcrossIncident` | non-interrupting timer boundary fires while incident open; retry does not re-arm; interrupting boundary closes it as overtaken (FR-6, FR-9) |
+| T-9 | `TestIncidentSubmitOps` (resolve), `TestIncidentOpsOnParkedInstance` (resolve) | resolve → outgoing flow taken, node not re-executed, incident closed — on a resident loop and through the parked-instance rebuild (FR-7) |
+| T-10 | `TestIncidentSubmitOps` (drop), `TestIncidentOpsOnParkedInstance` (drop) | drop → `dead-lettered`, the instance parks and never completes past it (FR-8) |
+| T-11 | `TestBoundaryFiresAcrossOpenIncident`, `TestInterruptingBoundaryOvertakesIncident` | non-interrupting timer boundary fires while the incident is open and a retry does not re-arm it; an interrupting boundary closes it as overtaken (FR-6, FR-9) |
 | T-12 | `TestLedgerExcludesFailedAttempts` | compensation ledger holds one entry after fail→retry→complete (ADR-036 §2.4) |
 | T-13 | `TestMIIncidentPerInstance` | parallel MI: one inner fails, siblings complete, retry re-runs only the failed instance; sequential MI blocks behind it (ADR-036 §2.4) |
-| T-14 | `TestIncidentFacts` | `PhaseIncident` facts with action detail for raise/retry/resolve/drop (FR-10) |
+| T-14 | `TestIncidentRaisedFact`, `TestIncidentOpValidationAndClose`, plus the fact assertions inside T-8/T-9/T-10 | `PhaseIncident` facts with the action detail for raise / retry-scheduled / retried / resolved / dead-lettered / overtaken (FR-10) |
 | T-15 | `TestListInFlightNonTerminal` | `ListInFlight` returns `StatusActiveIncidents` records; suspended excluded (FR-11) |
 | T-16 | `examples/incident-retry` | end-to-end: failure → incident visible → retry-now → completion; asserts its own outcome |
 
