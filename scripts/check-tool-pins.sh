@@ -1,30 +1,39 @@
 #!/usr/bin/env bash
-# check-tool-pins.sh (FIX-025) — detect newer releases of the pinned go-install
-# dev tools and, if any, bump them in BOTH the Makefile and the CI workflow
+# check-tool-pins.sh (FIX-025) — detect newer releases of the pinned dev
+# tools and, if any, bump them in BOTH the Makefile and the tool's CI workflow
 # (Dependabot can't see version strings embedded in build tooling). Writes
 # `changed=true|false` to $GITHUB_OUTPUT and, when it bumped anything, the PR
 # body to /tmp/pin-notes.md. A no-op run exits 0. Run from the repo root.
 #
-# Every tool is a Go module, so `proxy.golang.org/<module>/@latest` (the highest
-# release, pre-releases excluded) is the one datasource — no GitHub API, no rate
-# limits.
+# Go tools resolve through `proxy.golang.org/<module>/@latest` (the highest
+# release, pre-releases excluded) — no GitHub API, no rate limits. The docs
+# toolchain (SRD-080) resolves through the equivalent PyPI JSON endpoint,
+# marked by a `pypi:` source prefix.
 set -euo pipefail
 
 makefile="Makefile"
-workflow=".github/workflows/check.yml"
+check_wf=".github/workflows/check.yml"
+docs_wf=".github/workflows/docs.yml"
 notes="/tmp/pin-notes.md"
 
-# name | Makefile *_VERSION var | go module
+# name | Makefile *_VERSION var | source (go module or pypi:<pkg>) | workflow
 tools=(
-	"mockery|MOCKERY_VERSION|github.com/vektra/mockery/v3"
-	"golangci-lint|GOLANGCI_VERSION|github.com/golangci/golangci-lint/v2"
-	"govulncheck|GOVULNCHECK_VERSION|golang.org/x/vuln"
-	"covercheck|COVERCHECK_VERSION|github.com/dr-dobermann/covercheck"
+	"mockery|MOCKERY_VERSION|github.com/vektra/mockery/v3|$check_wf"
+	"golangci-lint|GOLANGCI_VERSION|github.com/golangci/golangci-lint/v2|$check_wf"
+	"govulncheck|GOVULNCHECK_VERSION|golang.org/x/vuln|$check_wf"
+	"covercheck|COVERCHECK_VERSION|github.com/dr-dobermann/covercheck|$check_wf"
+	"linkcheck|LINKCHECK_VERSION|github.com/dr-dobermann/linkcheck|$check_wf"
+	"mkdocs-material|MKDOCS_MATERIAL_VERSION|pypi:mkdocs-material|$docs_wf"
 )
 
-latest_version() { # module
+latest_version() { # go module
 	curl -fsSL "https://proxy.golang.org/${1}/@latest" |
 		grep -oE '"Version": *"[^"]*"' | head -1 | cut -d'"' -f4
+}
+
+latest_pypi() { # pypi package ("info" and its "version" precede "releases")
+	curl -fsSL "https://pypi.org/pypi/${1}/json" |
+		grep -oE '"version": *"[^"]*"' | head -1 | cut -d'"' -f4
 }
 
 current_pin() { # *_VERSION var
@@ -35,9 +44,12 @@ current_pin() { # *_VERSION var
 changed=0
 
 for entry in "${tools[@]}"; do
-	IFS='|' read -r name var mod <<<"$entry"
+	IFS='|' read -r name var mod wf <<<"$entry"
 	cur="$(current_pin "$var")"
-	new="$(latest_version "$mod" || true)"
+	case "$mod" in
+	pypi:*) new="$(latest_pypi "${mod#pypi:}" || true)" ;;
+	*) new="$(latest_version "$mod" || true)" ;;
+	esac
 
 	if [ -z "$new" ]; then
 		echo "WARN: could not resolve latest for $name ($mod)" >&2
@@ -54,8 +66,13 @@ for entry in "${tools[@]}"; do
 	fi
 
 	echo "$name: $cur -> $new (bumping)"
-	esc="$(printf '%s' "$cur" | sed 's/[.]/\\./g')" # each pin's version is unique
-	sed -i "s/${esc}/${new}/g" "$makefile" "$workflow"
+	esc="$(printf '%s' "$cur" | sed 's/[.]/\\./g')"
+	# Makefile: touch only the pin line itself — prose comments may cite a
+	# version string that collides with another tool's pin (the covercheck
+	# "-exclude-lines, v0.1.2+" note vs linkcheck's pin). Workflow: every
+	# occurrence is a legit bump target (install command + installer URL).
+	sed -i "s/^\(${var}[[:space:]]*:=[[:space:]]*\)${esc}\$/\1${new}/" "$makefile"
+	sed -i "s/${esc}/${new}/g" "$wf"
 	echo "- \`$name\`: \`$cur\` → \`$new\`" >>"$notes"
 	changed=1
 done
