@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/dr-dobermann/gobpm/internal/instance/checkpoint"
 	"github.com/dr-dobermann/gobpm/pkg/interactor"
 	"github.com/dr-dobermann/gobpm/pkg/model/activities"
 	"github.com/dr-dobermann/gobpm/pkg/model/data"
@@ -25,6 +26,48 @@ import (
 	"github.com/dr-dobermann/gobpm/pkg/repository/memrepo"
 	"github.com/dr-dobermann/gobpm/pkg/thresher"
 )
+
+// waitParkedRecord waits until the instance's durable record carries the
+// PARKED wait: a track in TrackWaitForEvent — with its timer descriptor, when
+// the wait is a timer. Gating the "crash" on Status alone raced the ACTIVATION
+// checkpoint under load, freezing a record without the wait; the recovering
+// engine then legitimately re-entered from the start and re-evaluated an
+// overdue timer from scratch (the parse rejects a past absolute time — the
+// recorded-deadline hint exists precisely to bypass it).
+func waitParkedRecord(
+	t *testing.T, repo repository.Repository, instID string, needTimer bool,
+) {
+	t.Helper()
+
+	require.Eventually(t, func() bool {
+		rec, ok, _ := repo.Load(context.Background(), instID)
+		if !ok || rec.Status != repository.StatusActive {
+			return false
+		}
+
+		d, err := checkpoint.Unmarshal(rec.Payload)
+		if err != nil {
+			return false
+		}
+
+		for i := range d.Tracks {
+			// a parked wait records as TrackWaitForEvent; a released one
+			// (the dehydration exit) as TrackDehydrated — both carry the
+			// wait, either satisfies the crash gate.
+			if d.Tracks[i].State != "TrackWaitForEvent" &&
+				d.Tracks[i].State != "TrackDehydrated" {
+				continue
+			}
+
+			if !needTimer || d.Tracks[i].Timer != nil {
+				return true
+			}
+		}
+
+		return false
+	}, 2*time.Second, 5*time.Millisecond,
+		"the park checkpoint must carry the recorded wait")
+}
 
 // factWatch collects engine-wide facts for the recovery assertions.
 type factWatch struct {
@@ -171,11 +214,7 @@ func TestRestartRecoveryTimer(t *testing.T) {
 	instID := h.ID()
 
 	// wait until the park checkpoint exists, then let the lease lapse.
-	require.Eventually(t, func() bool {
-		rec, ok, _ := repo.Load(context.Background(), instID)
-
-		return ok && rec.Status == repository.StatusActive
-	}, 2*time.Second, 5*time.Millisecond)
+	waitParkedRecord(t, repo, instID, true)
 
 	time.Sleep(120 * time.Millisecond) // > engine-1's lease TTL
 
@@ -255,11 +294,7 @@ func TestRestartRecoveryOverdueTimer(t *testing.T) {
 
 	instID := h.ID()
 
-	require.Eventually(t, func() bool {
-		rec, ok, _ := repo.Load(context.Background(), instID)
-
-		return ok && rec.Status == repository.StatusActive
-	}, 2*time.Second, 5*time.Millisecond)
+	waitParkedRecord(t, repo, instID, true)
 
 	// "crash" engine-1 BEFORE the deadline: fence it out with a foreign
 	// claim whose lease is already expired (claimable by anyone), then
@@ -380,11 +415,7 @@ func TestRestartRecoveryConditional(t *testing.T) {
 
 	instID := h.ID()
 
-	require.Eventually(t, func() bool {
-		rec, ok, _ := repo.Load(context.Background(), instID)
-
-		return ok && rec.Status == repository.StatusActive
-	}, 2*time.Second, 5*time.Millisecond)
+	waitParkedRecord(t, repo, instID, false)
 
 	// "during the downtime" the condition's world changes.
 	require.NoError(t, val.Update(context.Background(), true))
@@ -507,11 +538,7 @@ func TestRestartRecoveryUserTask(t *testing.T) {
 		2*time.Second, 5*time.Millisecond,
 		"engine-1 must announce the parked task")
 
-	require.Eventually(t, func() bool {
-		rec, ok, _ := repo.Load(context.Background(), instID)
-
-		return ok && rec.Status == repository.StatusActive
-	}, 2*time.Second, 5*time.Millisecond)
+	waitParkedRecord(t, repo, instID, false)
 
 	time.Sleep(120 * time.Millisecond) // the lease lapses
 
