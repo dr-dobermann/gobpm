@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Accepted |
 | Date | 2026-08-04 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-033 v.3](../design/ADR-033-persistence-and-state.md) §2.7 (the storage-composition rule, the `Migrator` capability, the tenant-linkage principle), §2.8 (engine groups, CAS fencing, claim-first wake) |
@@ -426,18 +426,56 @@ runs in group `engine-c`, equally blind to `billing`'s instances.
 
 ## §9 Definition of Done
 
-- [ ] FR-1…FR-10 implemented; every §6 test exists and passes (the
+- [x] FR-1…FR-10 implemented; every §6 test exists and passes (the
       DSN-gated ones against `make pg-up`'s container and in CI).
-- [ ] `make ci` green incl. the new module; diff-coverage ≥95% (aim
+- [x] `make ci` green incl. the new module; diff-coverage ≥95% (aim
       100%); touched functions ≥80%.
-- [ ] Audit row 11 flipped with the FR-9 fix referenced.
-- [ ] Guides/README/CHANGELOG synced; the follow-up DataStore issue
-      filed.
-- [ ] §10 filled.
+- [x] Audit row 11 flipped with the FR-9 fix referenced.
+- [x] Guides/README/CHANGELOG synced; the follow-up DataStore issue
+      filed at the PR handover.
+- [x] §10 filled.
 
 ## §10 Implementation summary
 
-*Post-landing placeholder.*
+Landed in four milestones on `feat/postgres-repository`, each with the
+§7-prescribed commit subject:
+
+| Milestone | Commit | Scope |
+|---|---|---|
+| M1 | `a9f0376` | FR-1/FR-2/FR-9, the conformance suite (FR-6); T-1/T-5/T-6; audit row 11 flipped |
+| M2 | `e8b5490` | FR-3 (`pkg/renv/capabilities.go`, the `Run` migrate hook, memrepo's declaration); T-7 |
+| M3 | `c0cfb81` | FR-4/FR-5/FR-10 (`adapters/postgres`, migrations, `pg-up`/`pg-down`, the CI service); T-2/T-4 |
+| M4 | `bd7fcbb` | FR-7/FR-8 (T-3/T-8); guides, README, CHANGELOG |
+
+Verified at `bd7fcbb`: `make ci` green end to end with
+`GOBPM_PG_TEST_DSN` exported (conformance, migrations, fencing and
+both e2e halves against `postgres:17-alpine`, `-race` included);
+diff-coverage **100.0% of 618 changed coverable lines** (min 95);
+govulncheck clean; the `/check-srd` audit PASS (21 🟢 / 3 🟡 / 0 🔴).
+
+Deviations from the §3 sketch, all deliberate:
+
+- **`tenants` is keyed per group** — PK `(engine_group, tenant_id)`,
+  not a global `tenant_id` PK — and gained a human-readable **`name`**
+  column (review request during M3). `instances` references the pair
+  with a **composite FK**, which additionally guarantees a record's
+  tenant belongs to the record's own engine group. Cosmetic deltas:
+  `status integer` (not `smallint`), `lease_expiry timestamptz NOT
+  NULL DEFAULT 'epoch'`, `payload` defaulted, the listing index named
+  `instances_recovery_listing`.
+- **FR-4's `status = active` phrasing was a leftover**: the landed
+  listing follows the FR-1/FR-5 **exclusion rule** (`status NOT IN
+  (terminal…, suspended)`), which is what those requirements mandate.
+- **The diff-coverage gate learned `^\s*t\.Fatal`** (Makefile
+  `COVER_EXCLUDE`, documented in place): the conformance suite is
+  shipped non-test-file library code whose failure diagnostics are
+  structurally unreachable on a green run — the same grounds as the
+  log-call exclusions. A pre-existing gofmt drift in
+  `pkg/model/process/process_test.go` was fixed by the style sweep
+  (no-pre-existing-errors rule).
+- **memrepo's record map holds pointers now** — the grown record
+  crossed the linter's copy threshold; `Load` still returns value
+  copies.
 
 ## Open questions
 
