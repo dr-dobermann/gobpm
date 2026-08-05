@@ -132,7 +132,6 @@ Grounded in the code, not aspiration. Baseline **v0.11.0** (2026-08-02).
 | Gap | Consequence |
 |---|---|
 | **No conformance gate** | The ledger is asserted, not checked — a refactor can regress a green row silently |
-| **No durable Repository** | Restart recovery runs against an in-memory store, which recovers nothing once the process dies |
 | **Two role systems** | The Camunda triad and BPMN `ResourceRole` resolve separately and compose badly |
 | **No listeners** | Extension is observe-only; nothing can react in-band |
 | **Layout unexecuted** | ADR-003's `pkg/` catalogue and import-direction CI are not started |
@@ -236,7 +235,7 @@ The alignment artifact. **Every open issue carries an `engine` or `server` label
 |---|---|
 | **E0** | [#269](https://github.com/dr-dobermann/gobpm/issues/269) ADR-003 layout · [#270](https://github.com/dr-dobermann/gobpm/issues/270) accept SAD-001 · [#272](https://github.com/dr-dobermann/gobpm/issues/272) re-accept ADR-004 + ADR-023 |
 | **E1** | [#265](https://github.com/dr-dobermann/gobpm/issues/265) conformance suite · [#263](https://github.com/dr-dobermann/gobpm/issues/263) instance-attribute binding · [#264](https://github.com/dr-dobermann/gobpm/issues/264) process-level roles · [#273](https://github.com/dr-dobermann/gobpm/issues/273) directory seam · [#274](https://github.com/dr-dobermann/gobpm/issues/274) roles convergence · [#275](https://github.com/dr-dobermann/gobpm/issues/275) timer duration/cycle 🐛 |
-| **E2** | [#80](https://github.com/dr-dobermann/gobpm/issues/80) incidents + retry · [#276](https://github.com/dr-dobermann/gobpm/issues/276) `adapters/postgres` · [#277](https://github.com/dr-dobermann/gobpm/issues/277) checkpoint fidelity · [#278](https://github.com/dr-dobermann/gobpm/issues/278) suspend/resume · [#279](https://github.com/dr-dobermann/gobpm/issues/279) listeners · [#280](https://github.com/dr-dobermann/gobpm/issues/280) business key · [#281](https://github.com/dr-dobermann/gobpm/issues/281) history store |
+| **E2** | [#80](https://github.com/dr-dobermann/gobpm/issues/80) incidents + retry · [#276](https://github.com/dr-dobermann/gobpm/issues/276) `adapters/postgres` · [#277](https://github.com/dr-dobermann/gobpm/issues/277) checkpoint fidelity · [#278](https://github.com/dr-dobermann/gobpm/issues/278) suspend/resume · [#279](https://github.com/dr-dobermann/gobpm/issues/279) listeners · [#280](https://github.com/dr-dobermann/gobpm/issues/280) business key · [#281](https://github.com/dr-dobermann/gobpm/issues/281) history store · [#298](https://github.com/dr-dobermann/gobpm/issues/298) incident wait-holder integration |
 | **E3** | [#282](https://github.com/dr-dobermann/gobpm/issues/282) intervention primitives · [#283](https://github.com/dr-dobermann/gobpm/issues/283) cross-version token transfer |
 | **E4** | [#284](https://github.com/dr-dobermann/gobpm/issues/284) converter coverage · [#256](https://github.com/dr-dobermann/gobpm/issues/256) generated diagrams |
 | **E5** | [#295](https://github.com/dr-dobermann/gobpm/issues/295) data markers/tags on declared data |
