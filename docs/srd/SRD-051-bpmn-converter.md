@@ -7,7 +7,7 @@
 | Date | 2026-07-30 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-024 v.1](../design/ADR-024-process-interchange-converters.md) §2.1–§2.8 (the converter seam + the first BPMN slice) |
-| Upstream | [ADR-002 v.2](../design/ADR-002-extension-architecture.md) (extension interfaces live in `pkg/`; the seam follows it), [ADR-019 v.1](../design/ADR-019-definition-versioning.md) (version key = process id; the id-preservation constraint), [SAD-001 v.1](../design/SAD-001-vision-and-architecture.md) §4 N7 / §5 / §9 (parser outside the engine; modeler feedback; module layout), [docs/bpmn-spec/](../bpmn-spec/) (the BPMN 2.0 KB) |
+| Upstream | [ADR-002 v.2](../design/ADR-002-extension-architecture.md) (extension interfaces live in `pkg/`; the seam follows it), [ADR-019 v.1](../design/ADR-019-definition-versioning.md) (version key = process id; the id-preservation constraint), [SAD-001 v.1](../design/SAD-001-vision-and-architecture.md) §4 N7 / §5 / §9 (parser outside the engine; modeler feedback; module layout), [docs/bpmn-spec/](../bpmn-spec/index.md) (the BPMN 2.0 KB) |
 | Refines | — |
 
 ## §1 Background
@@ -445,7 +445,7 @@ ADR-024 §4-A / §2.6 reconciliation (§4.1, §4.6).
   idiom), [ADR-019 v.1](../design/ADR-019-definition-versioning.md) (id =
   version key), [SAD-001 v.1](../design/SAD-001-vision-and-architecture.md) §4
   N7 / §5 / §9 (parser outside the engine, modeler feedback, layout).
-- **Standard** [docs/bpmn-spec/](../bpmn-spec/) — conformance §2.1.3, elements,
+- **Standard** [docs/bpmn-spec/](../bpmn-spec/index.md) — conformance §2.1.3, elements,
   semantics (§ pins in §FR-8).
 - **Downstream sync (applied at landing):** ADR-024 §4-A re-decided to a package
   (§4.1) and Q1 withdrawn — there is no module left to name; ADR-024 §2.6

@@ -42,6 +42,13 @@ The raw `.md` must read cleanly. The body is Markdown only:
   `!!! note` / `:::note` directives.
 - **Reading order** lives in each `index.md` nav list, not in frontmatter.
 
+The same sources publish as <https://dr-dobermann.github.io/gobpm/> (SRD-080):
+CI builds every docs-touching PR with `mkdocs build --strict`, which fails on
+an unresolved link or anchor. Check locally with `make docs-build`. Two
+site-facing consequences: link a directory through its `index.md` (a bare
+`dir/` link does not resolve on the site), and links that leave `docs/`
+(`../../examples/…`) are fine — the build rewrites them to GitHub URLs.
+
 ## Grounding rule
 
 Every symbol, signature, option, and interface member is verified with

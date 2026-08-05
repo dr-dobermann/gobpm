@@ -1,0 +1,78 @@
+name: docs
+
+# Builds the documentation site (SRD-080) and, on master, deploys it to
+# GitHub Pages via the deployment API — no gh-pages branch, no built HTML in
+# git history. On pull requests the build job alone runs as a validation
+# check: `mkdocs build --strict` fails on any unresolved link or anchor, the
+# site-level complement of the repo's relative-link `linkcheck` gate.
+#
+# One-time repository setting this workflow relies on:
+# Settings → Pages → Source: GitHub Actions.
+on:
+  push:
+    branches:
+      - master
+    # GitHub Actions YAML does not expand anchors — keep this list and the
+    # pull_request copy below identical.
+    paths:
+      - "docs/**"
+      - mkdocs.yml
+      - scripts/mkdocs_hooks.py
+      - .github/workflows/docs.yml
+  pull_request:
+    paths:
+      - "docs/**"
+      - mkdocs.yml
+      - scripts/mkdocs_hooks.py
+      - .github/workflows/docs.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Actions pinned to a commit SHA (not a moving major tag) for a
+      # reproducible supply-chain; the trailing comment names the release so
+      # dependabot (github-actions ecosystem) can bump SHA + comment together.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the site toolchain
+        # Pin mirrored by MKDOCS_MATERIAL_VERSION in the Makefile
+        # (make docs-build) and swept by scripts/check-tool-pins.sh.
+        run: pip install mkdocs-material==9.7.7
+
+      - name: Build the site (strict)
+        # The `python -m` form puts the repo root on sys.path — mkdocs.yml
+        # imports scripts.mkdocs_hooks.github_slugify during config load.
+        run: python -m mkdocs build --strict
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0

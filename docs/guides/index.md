@@ -11,7 +11,7 @@ to the `Thresher` engine, the element taxonomies, how the runtime executes and
 processes events, how to control processes and instances, and how to extend the
 engine with your own implementations. Every page is grounded in the public API
 (`go doc`) and a runnable [`example`](../../examples/); the *why* behind the
-design lives in [`docs/design/`](../design/).
+design lives in [`docs/design/`](../design/index.md).
 
 New here? Start with **[Your first process](getting-started/first-process.md)**.
 

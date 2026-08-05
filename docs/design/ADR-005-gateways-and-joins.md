@@ -866,10 +866,10 @@ The decided model above is complete. Implementation is sliced by dependency read
   Exclusive §13.4.2, Inclusive §13.4.3 + Table 13.3),
   [token-flow.md](../bpmn-spec/semantics/token-flow.md) — normative gateway/token
   semantics.
-- [docs/camunda7/or-join-inclusive-gateway.md](../camunda7/or-join-inclusive-gateway.md)
-  — internal reference analysis of Camunda 7's OR-join (engine precedent) that
-  informed §2.10's conservative, two-tier, re-evaluated-on-token-death realization
-  and the deviations gobpm deliberately keeps or fixes.
+- Camunda 7's OR-join served as the engine precedent: an internal reference
+  analysis of it informed §2.10's conservative, two-tier,
+  re-evaluated-on-token-death realization and the deviations gobpm
+  deliberately keeps or fixes.
 
 ## 7. Open questions
 

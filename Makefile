@@ -167,6 +167,38 @@ tools:
 .PHONY: tools
 
 # ---------------------------------------------------------------------------
+# Documentation site (SRD-080) — builds docs/ into site/ with MkDocs.
+# NOT part of `make ci`: Python is not a prerequisite of the core gate; CI
+# builds and deploys the site in its own workflow (.github/workflows/docs.yml,
+# which mirrors this pin — swept by scripts/check-tool-pins.sh). The
+# `python3 -m` form puts the repo root on sys.path, which mkdocs.yml needs to
+# import scripts.mkdocs_hooks.github_slugify during config load.
+# ---------------------------------------------------------------------------
+
+MKDOCS_MATERIAL_VERSION := 9.7.7
+
+# The docs analogue of require-go-tool: presence alone is insufficient, the
+# installed mkdocs-material must match the CI pin exactly.
+define require-mkdocs
+$(call require-command,python3,Install Python 3 to build the docs site.)
+@actual="$$(python3 -c "from importlib.metadata import version; print(version('mkdocs-material'))" 2>/dev/null)"; \
+if [ "$$actual" != "$(MKDOCS_MATERIAL_VERSION)" ]; then \
+	echo "ERROR: mkdocs-material $${actual:-is not installed}; the site build requires $(MKDOCS_MATERIAL_VERSION). Run 'pip install mkdocs-material==$(MKDOCS_MATERIAL_VERSION)'."; \
+	exit 1; \
+fi
+endef
+
+docs-build:
+	$(require-mkdocs)
+	python3 -m mkdocs build --strict
+.PHONY: docs-build
+
+docs-serve:
+	$(require-mkdocs)
+	python3 -m mkdocs serve
+.PHONY: docs-serve
+
+# ---------------------------------------------------------------------------
 # Single-module targets (operate on the core module at repo root)
 # ---------------------------------------------------------------------------
 

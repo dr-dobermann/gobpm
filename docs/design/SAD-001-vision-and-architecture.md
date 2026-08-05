@@ -82,7 +82,7 @@ Priority levels: **P0** = mandatory for v.1.0; **P1** = required before public r
 
 | Attribute | Priority | Tactic |
 |---|---|---|
-| BPMN conformance | P0 | Conformance test suite (MIWG fixtures + project-internal); KB at [docs/bpmn-spec/](../bpmn-spec/) as normative reference; each implemented element cross-checked against KB |
+| BPMN conformance | P0 | Conformance test suite (MIWG fixtures + project-internal); KB at [docs/bpmn-spec/](../bpmn-spec/index.md) as normative reference; each implemented element cross-checked against KB |
 | Robustness | P0 | Goroutine-leak-free architecture; `context.Context` cancellation cascade; no token spawned for long-wait states (rehydration model); deadlock detection for ComplexGateway |
 | Minimal core deps | P0 | `core` go.mod limited to stdlib + `github.com/google/uuid` (already in use). All other deps live in adapter or runtime modules. |
 | Out-of-the-box usability | P0 | Zero-option `thresher.New(id)` constructor (applies all defaults) + working example under 20 lines |
@@ -349,7 +349,7 @@ When goBpm runs in cluster mode, certain extension configurations are fundamenta
 > **Two citation errors corrected here (2026-08-02).** Earlier revisions cited "§2.1.2" for Process Execution Conformance and "§2.1.3" for the element basis. **Neither clause exists**: §2.1 is *General*, §2.2 is Process **Modeling** Conformance, and Process **Execution** Conformance is **§2.3**. The error is traceable to the specification itself — §2.1's cross-reference paragraph is off by one against its own headings ("the Process Execution Conformance type SHALL comply with … sub clause 2.2"), a second erratum of the same family as §10.3.4.1's Table 8.49 misreference. The **Common Executable Subclass** was also the wrong basis: §2.2.1 defines it as an alternative to full Process **Modeling** Conformance — a sub-class for *modeling tools that emit executable models* — and it mandates that the data-type language "MUST be XML Schema", the service-interface language "MUST be WSDL" and the data-access language "MUST be XPath". `goBpm` uses Go types, Go operations and `goexpr`/Lua by design, so that sub-class was never the applicable target. A consequence: **ComplexGateway stops being an "extension"** — §13.4.5 gives it full operational semantics, so §2.3.1 always required it.
 
 Conformance verification:
-- Per-element implementation reviewed against [docs/bpmn-spec/elements/](../bpmn-spec/elements/) (structural attributes) and [docs/bpmn-spec/state-machines/](../bpmn-spec/state-machines/) + [docs/bpmn-spec/semantics/](../bpmn-spec/semantics/) (behavior).
+- Per-element implementation reviewed against [docs/bpmn-spec/elements/](../bpmn-spec/index.md) (structural attributes) and [docs/bpmn-spec/state-machines/](../bpmn-spec/index.md) + [docs/bpmn-spec/semantics/](../bpmn-spec/index.md) (behavior).
 - **Element-coverage suite** — an in-repo module binding every element in `conformance.md` to executable evidence, so the register is verified by CI rather than by hand. Operational elements are proven by a suite-owned scenario; supporting classes by a guard-checked binding to a named test. The MIWG public fixtures are a later, separate question: they exercise *interchange*, so they belong with §2.3.2 and the server.
 - Each released version pinned to a BPMN-spec snapshot SHA so the claim above is reproducible against the extract it was checked with.
 
@@ -470,7 +470,7 @@ instance-termination story in the runtime ([ADR-001 v.6](ADR-001-execution-model
 
 ### Reference material
 
-- [docs/bpmn-spec/](../bpmn-spec/) — BPMN 2.0 Process Execution Conformance KB
+- [docs/bpmn-spec/](../bpmn-spec/index.md) — BPMN 2.0 Process Execution Conformance KB
 - [docs/bpmn-spec/conformance.md](../bpmn-spec/conformance.md) — in-scope / out-of-scope element list
 - [docs/analytics/gobpm Development Roadmap.md](../analytics/gobpm%20Development%20Roadmap.md) — phased roadmap
 - BPMN 2.0 specification PDF: `docs/BPMN formal-13-12-09.pdf` (OMG formal/2013-12-09, v2.0.2)
