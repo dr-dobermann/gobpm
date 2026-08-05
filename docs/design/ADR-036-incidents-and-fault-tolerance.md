@@ -7,7 +7,7 @@
 | Date | 2026-08-04 |
 | Owner | Ruslan Gabitov |
 | Refines | [SAD-001 v.1.1](SAD-001-vision-and-architecture.md) §10 (persistence as the state of record — this ADR makes *failure* part of that record), [ADR-021 v.1](ADR-021-service-task-execution-model.md) §2.8 (the first-class Incident construct this ADR was deferred to), [ADR-022 v.2](ADR-022-error-propagation-and-logging-policy.md) (the propagation policy whose "goroutine top" consequence this refines) |
-| Related | [ADR-001 v.6](ADR-001-execution-model.md) (tracks and token projection), [ADR-007 v.2.1](ADR-007-in-memory-long-waits.md) (the wait model an incident joins), [ADR-013 v.2](ADR-013-instance-observability.md) (the `Incident` phase reserved in the fact taxonomy), [ADR-017 v.1](ADR-017-channel-based-event-processing.md) (the loop as sole state owner), [ADR-025 v.2](ADR-025-activity-iteration-loop-and-multi-instance.md) (multi-instance interaction), [ADR-026 v.1](ADR-026-compensation-events.md) (the completion ledger interaction), [ADR-033 v.2](ADR-033-persistence-and-state.md) (the checkpoint an incident rides) |
+| Related | [ADR-001 v.6](ADR-001-execution-model.md) (tracks and token projection), [ADR-007 v.2.1](ADR-007-in-memory-long-waits.md) (the wait model an incident joins), [ADR-013 v.2](ADR-013-instance-observability.md) (the `Incident` phase reserved in the fact taxonomy), [ADR-017 v.1](ADR-017-channel-based-event-processing.md) (the loop as sole state owner), [ADR-025 v.2](ADR-025-activity-iteration-loop-and-multi-instance.md) (multi-instance interaction), [ADR-026 v.1](ADR-026-compensation-events.md) (the completion ledger interaction), [ADR-033 v.3](ADR-033-persistence-and-state.md) (the checkpoint an incident rides) |
 
 ## 1. Context & problem
 
@@ -123,7 +123,7 @@ Retry ownership splits along the line ADR-021 v.1 drew:
   retried, which **spawns a fresh track at the failed node** from the
   incident record (§2.2), with the failed track as its predecessor: a fresh
   execution of the activity against the current scope data, under the same
-  contract as the checkpoint-recovery re-entry (ADR-033 v.2 — a step is
+  contract as the checkpoint-recovery re-entry (ADR-033 v.3 — a step is
   atomic, recovery re-enters the node, never the half-step; effects stay
   at-least-once).
 
@@ -176,7 +176,7 @@ no set-wide retry and no set-wide fault.
 
 ### 2.5 Persistence — the incident rides the checkpoint
 
-Incidents extend the ADR-033 v.2 document additively:
+Incidents extend the ADR-033 v.3 document additively:
 
 - **Raising an incident is a persist point.** The transition into
   `TrackIncident` gates a checkpoint, like the wait transitions — an
@@ -239,7 +239,7 @@ notification, never the incident.
 | Job retry below the loop: re-enqueue with backoff, no sleeping goroutine, only the terminal outcome reaches the loop | ADR-021 v.1 §2.4, §2.7 |
 | Business error vs technical fault classification, evaluated off the loop | ADR-021 v.1 §2.6 |
 | One failure ⇒ one handling point ⇒ at most one log record; goroutine tops are the fault boundary | ADR-022 v.2 §2.1, §2.3 |
-| Checkpoint transitions gate persistence; a step is atomic — recovery re-enters the node; effects at-least-once, state exactly-once | ADR-033 v.2 §2.1–§2.3 |
+| Checkpoint transitions gate persistence; a step is atomic — recovery re-enters the node; effects at-least-once, state exactly-once | ADR-033 v.3 §2.1–§2.3 |
 | The fact stream is best-effort, lossy, read-only by design — never load-bearing state | ADR-013 v.2 |
 | `Incident` is a reserved, unused phase in the fact taxonomy | ADR-013 v.2 (JobState catalog and reserved slots) |
 | The completion ledger records completed work only | ADR-026 v.1 §2.1 (the ledger), §2.7 (its lifecycle) |

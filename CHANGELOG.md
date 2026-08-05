@@ -35,21 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Runnable: `examples/incident-retry/`; guide:
   `docs/guides/operating/incidents.md`.
 
-### Fixed
-
-- **Scope snapshots rejected Properties and DataObjects.** `SnapshotAt`'s
-  value-copy (the compensation ledger's and now the incident snapshot's
-  machinery) asserted one `Clone` shape, but `Property` and `DataObject`
-  declare their own concrete `Clone` methods that shadow it — any walk-up
-  surface reaching a process property failed "isn't clonable".
-- **A parked child instance read as a completed call.** The Call Activity
-  watcher waited on the child's loop-exit signal, which also closes on a
-  dehydration park — the caller then resumed with a phantom success. It now
-  waits on the engine's cross-rebuild settled signal.
-- **In-flight recovery ignored non-`StatusActive` records.** `memrepo`'s
-  `ListInFlight` compared for exactly `StatusActive`, silently hiding any
-  new non-terminal status from recovery.
-
 - **The documentation site gets a structured sidebar, a Russian design-docs
   group, and rendered Mermaid diagrams** (SRD-081): sections read Home →
   Developer Manual → Design documents → BPMN 2.0 extract → Landing records →
@@ -143,6 +128,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Scope snapshots rejected Properties and DataObjects.** `SnapshotAt`'s
+  value-copy (the compensation ledger's and now the incident snapshot's
+  machinery) asserted one `Clone` shape, but `Property` and `DataObject`
+  declare their own concrete `Clone` methods that shadow it — any walk-up
+  surface reaching a process property failed "isn't clonable".
+- **A parked child instance read as a completed call.** The Call Activity
+  watcher waited on the child's loop-exit signal, which also closes on a
+  dehydration park — the caller then resumed with a phantom success. It now
+  waits on the engine's cross-rebuild settled signal.
+
 - **memrepo could evict a live instance.** A terminal record re-saved
   back to a non-terminal status stayed in the terminal-eviction
   ledger, so cap pressure could evict an Active instance (audit
@@ -157,7 +152,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so the sweep cannot silently shrink again. The guard runs in the **required**
   core job, not the non-blocking examples job: a hole in that job cannot be
   guarded from inside it.
-
 
 ## [v0.11.0] - 2026-08-02
 

@@ -6,7 +6,7 @@
 | Date | 2026-08-04 |
 | Owner | Ruslan Gabitov |
 | Implements | [ADR-036 v.1](../design/ADR-036-incidents-and-fault-tolerance.md) — the whole decision |
-| Upstream | [ADR-033 v.2](../design/ADR-033-persistence-and-state.md) §2.1–§2.3 (the checkpoint the incident rides); [ADR-021 v.1](../design/ADR-021-service-task-execution-model.md) §2.6–§2.8 (job retry below the loop, the deferred Incident); [ADR-017 v.1](../design/ADR-017-channel-based-event-processing.md) (the loop as sole state owner — resolution ops are loop events); [ADR-013 v.2](../design/ADR-013-instance-observability.md) (the reserved `Incident` phase); [ADR-007 v.2.1](../design/ADR-007-in-memory-long-waits.md) (wake mechanics a scheduled retry reuses); [ADR-025 v.2](../design/ADR-025-activity-iteration-loop-and-multi-instance.md) §2.2 (per-instance scopes); [ADR-026 v.1](../design/ADR-026-compensation-events.md) §2.1 (the ledger records completions only) |
+| Upstream | [ADR-033 v.3](../design/ADR-033-persistence-and-state.md) §2.1–§2.3 (the checkpoint the incident rides); [ADR-021 v.1](../design/ADR-021-service-task-execution-model.md) §2.6–§2.8 (job retry below the loop, the deferred Incident); [ADR-017 v.1](../design/ADR-017-channel-based-event-processing.md) (the loop as sole state owner — resolution ops are loop events); [ADR-013 v.2](../design/ADR-013-instance-observability.md) (the reserved `Incident` phase); [ADR-007 v.2.1](../design/ADR-007-in-memory-long-waits.md) (wake mechanics a scheduled retry reuses); [ADR-025 v.2](../design/ADR-025-activity-iteration-loop-and-multi-instance.md) §2.2 (per-instance scopes); [ADR-026 v.1](../design/ADR-026-compensation-events.md) §2.1 (the ledger records completions only) |
 | Closes | [#80](https://github.com/dr-dobermann/gobpm/issues/80) |
 
 ## §1 Background
@@ -415,7 +415,11 @@ Deltas against the draft, decided at their gates:
   clone-shape gap (`Property`/`DataObject` shadow `Clone`), the call
   watcher's loop-exit-as-completion read (`childProcess.Done` → the settled
   signal), `StepFailed` never assigned, `trackPhase` missing
-  `TrackDehydrated`, and `ListInFlight`'s exact-status filter.
+  `TrackDehydrated`, and `ListInFlight`'s exact-status filter — that last
+  one **landed on master meanwhile** (SRD-078 rewrote the filter as an
+  exclusion, anticipating "an incidents-holding non-terminal status"), so
+  the rebase reduced this branch's share of FR-11 to its regression test,
+  T-15, now pinning the real `StatusActiveIncidents` value.
 
 **Scoped out, recorded**: boundary watches over incident nodes do not yet
 persist across a restart (`boundaryRecords` skips non-live hosts) — in-memory

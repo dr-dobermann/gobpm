@@ -175,6 +175,7 @@ func (r *Repo) ListInFlight(
 		// StatusActiveIncidents) lists automatically.
 		if rec.Group == group &&
 			!rec.Status.IsTerminal() &&
+			rec.Status != repository.StatusSuspended &&
 			rec.Lease.Expired(now) {
 			ids = append(ids, id)
 		}

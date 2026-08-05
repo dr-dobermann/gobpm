@@ -467,10 +467,12 @@ func TestIncidentCheckpointRecovery(t *testing.T) {
 	s, err := snapshot.New(p)
 	require.NoError(t, err)
 
-	rt := enginert.Default()
+	// cpRuntime establishes engineA's group, as the engine's Run does
+	// before any checkpoint save (SRD-078 FR-2).
+	rt := cpRuntime(t)
 
 	inst, err := New(s, scope.EmptyDataPath, rt, &recordingProducer{}, nil,
-		WithCheckpointing("engine-A", time.Minute))
+		WithCheckpointing(engineA, engineA, time.Minute))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1076,10 +1078,12 @@ func TestIncidentScheduledRetryRecovery(t *testing.T) {
 	s, err := snapshot.New(p)
 	require.NoError(t, err)
 
-	rt := enginert.Default()
+	// cpRuntime establishes engineA's group, as the engine's Run does
+	// before any checkpoint save (SRD-078 FR-2).
+	rt := cpRuntime(t)
 
 	inst, err := New(s, scope.EmptyDataPath, rt, &recordingProducer{}, nil,
-		WithCheckpointing("engine-A", time.Minute))
+		WithCheckpointing(engineA, engineA, time.Minute))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())

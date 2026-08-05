@@ -104,7 +104,7 @@ func TestListInFlightOnlyActiveSorted(t *testing.T) {
 // non-suspended status is in flight — StatusActiveIncidents records must be
 // adopted by recovery, suspended ones must not.
 func TestListInFlightNonTerminal(t *testing.T) {
-	r := New()
+	r := newRepo(t)
 	ctx := context.Background()
 
 	_ = r.Save(ctx, rec("plain", repository.StatusActive))
@@ -112,7 +112,7 @@ func TestListInFlightNonTerminal(t *testing.T) {
 	_ = r.Save(ctx, rec("held", repository.StatusSuspended))
 	_ = r.Save(ctx, rec("done", repository.StatusCompleted))
 
-	ids, _ := r.ListInFlight(ctx, time.Now())
+	ids, _ := r.ListInFlight(ctx, testGroup, time.Now())
 	if len(ids) != 2 || ids[0] != "plain" || ids[1] != "stuck" {
 		t.Fatalf("in-flight = %v, want [plain stuck]", ids)
 	}
